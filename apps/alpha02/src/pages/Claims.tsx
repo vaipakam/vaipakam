@@ -159,8 +159,11 @@ function ClaimRow({ loan }: { loan: PositionLoan }) {
       why =
         'An automatic liquidation didn’t complete — claiming finalizes the recovery yourself.';
     } else {
-      what = `${collateralStr} collateral`;
-      why = 'The loan defaulted — the collateral is yours to claim.';
+      // Liquid-collateral defaults settle by swap (proceeds in the
+      // loan asset); only in-kind paths hand over the collateral
+      // itself — promise neither specifically.
+      what = 'What this loan recovered (proceeds or collateral)';
+      why = 'The loan defaulted — collect what the default settlement recovered for you.';
     }
   } else if (defaulted) {
     // After a liquidation only a residue (if any) is claimable — never

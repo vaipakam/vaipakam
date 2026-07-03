@@ -244,6 +244,10 @@ export const copy = {
       'This wallet is flagged by the sanctions oracle, so new positions and payouts are blocked. Nothing was sent. Repaying and closing existing positions stays open.',
     sanctionsCheckRetry:
       'We couldn’t run the compliance check just now — nothing was sent. Please try again in a moment.',
+    collateralNotPriced:
+      'This loan’s collateral isn’t currently priced by the protocol, so collateral top-ups aren’t available for it. Nothing was sent.',
+    pastGrace:
+      'This loan is past its due date and grace window, so repayment is closed on-chain — the default process applies now. Nothing was sent.',
     lenderBlockedPartial:
       'The lender’s wallet can’t receive a direct partial payment right now (compliance flag). Repaying the loan in full stays open — that path holds the funds for a screened claim instead.',
   },

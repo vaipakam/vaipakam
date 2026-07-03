@@ -27,7 +27,7 @@ import { Link, useSearchParams } from 'react-router-dom';
 import { CircleCheck, LoaderCircle, Search } from 'lucide-react';
 import { usePublicClient, useWalletClient } from 'wagmi';
 import { useQueryClient } from '@tanstack/react-query';
-import { parseUnits } from 'viem';
+import { erc20Abi, parseUnits } from 'viem';
 import { useActiveChain } from '../chain/useActiveChain';
 import { getSupportedChain } from '../chain/chains';
 import { useMode } from '../app/ModeContext';
@@ -651,6 +651,23 @@ export function OfferFlow({ side }: { side: Side }) {
       ? payload.lendingAsset
       : payload.collateralAsset) as `0x${string}`;
     const amount = side === 'lender' ? payload.amountMax : payload.collateralAmount;
+    // The checklist's balance item is a CACHED read — approve() would
+    // succeed even for a wallet that moved the funds after review, so
+    // re-read live and fail BEFORE the approval.
+    const heldNow = (await publicClient.readContract({
+      address: token,
+      abi: erc20Abi,
+      functionName: 'balanceOf',
+      args: [address],
+    })) as bigint;
+    if (heldNow < amount) {
+      throw new Error(
+        copy.errors.needMore(
+          (side === 'lender' ? lendingMeta.data?.symbol : collateralMeta.data?.symbol) ??
+            'the locked asset',
+        ),
+      );
+    }
     await ensureAllowance({
       publicClient,
       walletClient,

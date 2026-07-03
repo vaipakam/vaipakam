@@ -274,12 +274,71 @@ export function PositionDetails() {
     setError(null);
     try {
       if (kind === 'repay') {
-        const totalDue = (await publicClient.readContract({
-          address: walletChain.diamondAddress,
-          abi: DIAMOND_ABI_VIEM,
-          functionName: 'calculateRepaymentAmount',
-          args: [BigInt(row.loanId)],
-        })) as bigint;
+        const [calcDue, latestBlock] = await Promise.all([
+          publicClient.readContract({
+            address: walletChain.diamondAddress,
+            abi: DIAMOND_ABI_VIEM,
+            functionName: 'calculateRepaymentAmount',
+            args: [BigInt(row.loanId)],
+          }) as Promise<bigint>,
+          publicClient.getBlock({ blockTag: 'latest' }),
+        ]);
+        const chainNow = latestBlock.timestamp;
+        // repayLoan reverts RepaymentPastGracePeriod once past the
+        // grace window — fail BEFORE the approval. Grace is judged by
+        // the compile-time default schedule (storage buckets can only
+        // be configured by governance; on the deployed testnets none
+        // are). Judged by CHAIN time, never the browser clock.
+        if (row.assetType === AssetType.ERC20) {
+          const endTime = BigInt(row.startTime + row.durationDays * 86_400);
+          const defaultGraceSec =
+            row.durationDays < 7
+              ? 3_600n
+              : row.durationDays < 30
+                ? 86_400n
+                : row.durationDays < 90
+                  ? 3n * 86_400n
+                  : row.durationDays < 180
+                    ? 7n * 86_400n
+                    : row.durationDays < 365
+                      ? 14n * 86_400n
+                      : 30n * 86_400n;
+          if (chainNow > endTime + defaultGraceSec) {
+            setError(copy.errors.pastGrace);
+            return;
+          }
+        }
+        // calculateRepaymentAmount returns 0 for any non-Active status
+        // — but repayLoan ACCEPTS FallbackPending (the cure path) and
+        // still pulls principal + interest. Estimate the pull from the
+        // live loan so the cure flow gets a real allowance; the
+        // estimate only over-approves (repayLoan pulls what it
+        // recomputes) and the pad below is never spent.
+        let totalDue = calcDue;
+        if (
+          totalDue === 0n &&
+          row.status === 'fallback_pending' &&
+          row.assetType === AssetType.ERC20
+        ) {
+          const live = (await publicClient.readContract({
+            address: walletChain.diamondAddress,
+            abi: DIAMOND_ABI_VIEM,
+            functionName: 'getLoanDetails',
+            args: [BigInt(row.loanId)],
+          })) as { principal: bigint; interestRateBps: bigint; startTime: bigint };
+          const elapsedDays =
+            chainNow > live.startTime ? (chainNow - live.startTime) / 86_400n : 0n;
+          const interestEst =
+            (live.principal * live.interestRateBps * (elapsedDays + 2n)) /
+            (365n * 10_000n);
+          // Late fees accrue 0.5%/day past maturity — cover them too.
+          const daysPastEnd =
+            chainNow > live.startTime + BigInt(row.durationDays) * 86_400n
+              ? (chainNow - (live.startTime + BigInt(row.durationDays) * 86_400n)) / 86_400n
+              : 0n;
+          const lateFeeEst = (live.principal * 50n * (daysPastEnd + 2n)) / 10_000n;
+          totalDue = live.principal + interestEst + lateFeeEst;
+        }
         if (row.assetType === AssetType.ERC20 && totalDue > 0n) {
           // The owed amount STEPS UP at each elapsed-day boundary
           // (whole-day interest flooring) and by 0.5%/day late fee —
@@ -372,6 +431,21 @@ export function PositionDetails() {
         walletChain.diamondAddress,
         address,
       );
+      // addCollateral rejects unless the collateral is currently
+      // LIQUID (checkLiquidity == Liquid, enum 0) — fail before the
+      // approval. Fail-open on read errors: the contract still guards.
+      const liquidity = (await publicClient
+        .readContract({
+          address: walletChain.diamondAddress,
+          abi: DIAMOND_ABI_VIEM,
+          functionName: 'checkLiquidity',
+          args: [row.collateralAsset as `0x${string}`],
+        })
+        .catch(() => 0)) as number;
+      if (Number(liquidity) !== 0) {
+        setError(copy.errors.collateralNotPriced);
+        return;
+      }
       await ensureAllowance({
         publicClient,
         walletClient,
@@ -404,17 +478,22 @@ export function PositionDetails() {
       // same transferFrom set. Approve and balance-check the full pull
       // from the LIVE loan (row.principal / startTime go stale after a
       // prior partial re-stamps the accrual clock).
-      const live = (await publicClient.readContract({
-        address: walletChain.diamondAddress,
-        abi: DIAMOND_ABI_VIEM,
-        functionName: 'getLoanDetails',
-        args: [BigInt(row.loanId)],
-      })) as {
-        principal: bigint;
-        interestRateBps: bigint;
-        startTime: bigint;
-        interestAccrualStart: bigint;
-      };
+      const [live, latestBlock] = await Promise.all([
+        publicClient.readContract({
+          address: walletChain.diamondAddress,
+          abi: DIAMOND_ABI_VIEM,
+          functionName: 'getLoanDetails',
+          args: [BigInt(row.loanId)],
+        }) as Promise<{
+          principal: bigint;
+          interestRateBps: bigint;
+          startTime: bigint;
+          interestAccrualStart: bigint;
+        }>,
+        // The contract accrues by block.timestamp — a slow browser
+        // clock must not under-approve past the two-day pad.
+        publicClient.getBlock({ blockTag: 'latest' }),
+      ]);
       // A partial equal to the FULL remaining principal is accepted by
       // the contract but leaves the loan Active at principal 0 —
       // settlement (and collateral release) needs the real repay path.
@@ -450,7 +529,7 @@ export function PositionDetails() {
       }
       const accrualStart =
         live.interestAccrualStart !== 0n ? live.interestAccrualStart : live.startTime;
-      const nowSec = BigInt(Math.floor(Date.now() / 1000));
+      const nowSec = latestBlock.timestamp;
       const elapsedDays = nowSec > accrualStart ? (nowSec - accrualStart) / 86_400n : 0n;
       // +2 days pad for day-boundary steps while the tx is pending —
       // the contract pulls only the recomputed accrued, never the pad.
@@ -524,7 +603,7 @@ export function PositionDetails() {
             ? 'Claim fees & reclaim NFT'
             : row.status === 'repaid'
               ? 'Claim my funds'
-              : 'Claim the collateral'
+              : 'Claim what this loan recovered'
           : null;
 
   // Six-row receipt for the pending position write — same shape and
@@ -562,7 +641,12 @@ export function PositionDetails() {
                 ? 'Your earned rental fees, plus your NFT back.'
                 : row.status === 'repaid'
                   ? `${principalStr} plus the earned interest.`
-                  : `${collateralStr} collateral.`,
+                  : // Liquid-collateral defaults settle by SWAP — the
+                    // lender's claim pays proceeds in the loan asset,
+                    // not the collateral itself. Only in-kind (illiquid)
+                    // paths hand over the raw collateral, so promise
+                    // neither specifically.
+                    `What this loan recovered: sale proceeds in ${principal?.symbol ?? 'the loan asset'}, or the ${collateralStr} collateral itself, depending on how the default settled.`,
               youLock: 'Nothing.',
               youMayOwe: 'Nothing.',
               youCanLose: 'Nothing.',
@@ -726,12 +810,34 @@ export function PositionDetails() {
           ) : null}
           {confirmingCollateral && collateralInputWei !== null ? (
             <div style={{ marginTop: 16 }}>
+              {row.status === 'fallback_pending' ? (
+                // A fallback-pending top-up CURES only if it restores
+                // the loan's required health thresholds — a partial
+                // top-up leaves the lender able to claim AND puts the
+                // added collateral at stake. Never let the generic
+                // "safer now" copy stand alone here.
+                <div className="banner banner-warn" role="alert" style={{ marginBottom: 12 }}>
+                  <span className="banner-body">
+                    This loan is in a failed-liquidation state. Adding
+                    collateral only brings it back to Active if the top-up
+                    restores the required health level — otherwise the lender
+                    can still claim, and the added collateral is at stake too.
+                    Repaying in full always cures. If unsure, repay instead.
+                  </span>
+                </div>
+              ) : null}
               <ReviewReceipt
                 data={{
-                  youReceive: 'Nothing now — a safer loan (liquidation moves further away).',
+                  youReceive:
+                    row.status === 'fallback_pending'
+                      ? 'A chance to bring the loan back to health — ONLY if this top-up restores the required health level (see the warning above).'
+                      : 'Nothing now — a safer loan (liquidation moves further away).',
                   youLock: `${collateralInput} ${collateral.symbol} more collateral, returned with the rest when the loan closes properly.`,
                   youMayOwe: 'Nothing more — this doesn’t change what you owe.',
-                  youCanLose: 'The added amount joins the existing collateral — it’s at stake the same way if the loan defaults.',
+                  youCanLose:
+                    row.status === 'fallback_pending'
+                      ? 'The added amount joins the collateral at stake — if the top-up doesn’t fully cure, the lender can still claim it all.'
+                      : 'The added amount joins the existing collateral — it’s at stake the same way if the loan defaults.',
                   fees: 'None.',
                   whenThisEnds: 'The top-up applies immediately.',
                 }}

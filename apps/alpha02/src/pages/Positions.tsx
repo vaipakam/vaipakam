@@ -16,6 +16,7 @@ import { useActiveChain } from '../chain/useActiveChain';
 import { useDiamondWrite } from '../contracts/diamond';
 import { EmptyState, UnavailableState } from '../components/EmptyState';
 import { LoanRow } from '../components/LoanRow';
+import { ReviewReceipt } from '../components/ReviewReceipt';
 import { useTokenMeta } from '../contracts/erc20';
 import { AssetType } from '../lib/types';
 import { formatTokenAmount, shortAddress } from '../lib/format';
@@ -60,42 +61,76 @@ function OfferRow({ offer }: { offer: IndexedOffer }) {
     }
   }
 
+  const lockedStr = isRental
+    ? `Your NFT ${shortAddress(offer.lendingAsset)} #${offer.tokenId}`
+    : `${amount} ${meta.data?.symbol ?? ''}`;
+
   return (
-    <div className="item-row">
-      <span className="row-main">
-        <span className="row-title">{title}</span>
-        <br />
-        <span className="row-sub">
-          Offer #{offer.offerId} · waiting for the other side to accept
-          {error ? (
-            <>
-              <br />
-              <span style={{ color: 'var(--danger)' }}>{error}</span>
-            </>
-          ) : null}
+    <div>
+      <div className="item-row">
+        <span className="row-main">
+          <span className="row-title">{title}</span>
+          <br />
+          <span className="row-sub">
+            Offer #{offer.offerId} · waiting for the other side to accept
+            {error ? (
+              <>
+                <br />
+                <span style={{ color: 'var(--danger)' }}>{error}</span>
+              </>
+            ) : null}
+          </span>
         </span>
-      </span>
-      {!isCreator ? (
-        <span className="badge badge-neutral">Held — managed by its creator</span>
-      ) : !confirming ? (
-        <button
-          type="button"
-          className="btn btn-secondary btn-sm"
-          disabled={!onSupportedChain}
-          onClick={() => setConfirming(true)}
-        >
-          Cancel offer
-        </button>
-      ) : (
-        <button
-          type="button"
-          className="btn btn-danger btn-sm"
-          disabled={busy}
-          onClick={() => void cancel()}
-        >
-          {busy ? 'Cancelling…' : 'Confirm — unlock my assets'}
-        </button>
-      )}
+        {!isCreator ? (
+          <span className="badge badge-neutral">Held — managed by its creator</span>
+        ) : (
+          <button
+            type="button"
+            className="btn btn-secondary btn-sm"
+            disabled={!onSupportedChain || busy}
+            onClick={() => setConfirming((c) => !c)}
+          >
+            Cancel offer
+          </button>
+        )}
+      </div>
+      {isCreator && confirming ? (
+        // Cancelling is a write like any other — it gets the same
+        // six-row receipt before the wallet prompt (unlocks the
+        // committed side and burns the offer's position NFT).
+        <div className="card" style={{ marginTop: 8 }}>
+          <ReviewReceipt
+            data={{
+              youReceive: `${lockedStr} back — unlocked from this offer immediately.`,
+              youLock: 'Nothing.',
+              youMayOwe: 'Nothing.',
+              youCanLose: 'Nothing — cancelling an open offer has no penalty.',
+              fees: 'None (network gas only).',
+              whenThisEnds:
+                'Immediately — the offer leaves the book and can’t be accepted anymore. Post a new offer any time.',
+            }}
+          />
+          <div className="cluster" style={{ marginTop: 12 }}>
+            <button
+              type="button"
+              className="btn btn-secondary btn-sm"
+              onClick={() => setConfirming(false)}
+              disabled={busy}
+            >
+              Keep the offer
+            </button>
+            <button
+              type="button"
+              className="btn btn-danger btn-sm"
+              style={{ flex: 1 }}
+              disabled={busy}
+              onClick={() => void cancel()}
+            >
+              {busy ? 'Cancelling…' : 'Confirm — cancel & unlock my assets'}
+            </button>
+          </div>
+        </div>
+      ) : null}
     </div>
   );
 }
