@@ -26,8 +26,8 @@ import { copy } from '../content/copy';
 import { submitErrorText } from '../lib/errors';
 import { useActiveChain } from '../chain/useActiveChain';
 import { revokeAllowance } from '../contracts/erc20';
-import { useMyLoans, useMyOffers } from '../data/hooks';
-import { fetchOffersByCreator } from '../data/indexer';
+import { fetchAllPages, useMyLoans, useMyOffers } from '../data/hooks';
+import { fetchOffersByCreator, type IndexedOffer } from '../data/indexer';
 import { ZERO_ADDRESS } from '../lib/offerSchema';
 import { AssetType } from '../lib/types';
 import { formatTokenAmount, shortAddress } from '../lib/format';
@@ -86,18 +86,26 @@ export function ApprovalsCard() {
       address?.toLowerCase(),
       tokens.join(','),
     ],
-    enabled: Boolean(publicClient) && Boolean(address) && tokens.length > 0,
+    // NOT gated on tokens.length: a wallet with zero ACTIVE positions
+    // is exactly the profile most likely to hold pure historical
+    // residue (the history legs below still apply).
+    enabled: Boolean(publicClient) && Boolean(address) && complete,
     refetchInterval: 60_000,
     queryFn: async (): Promise<ApprovalRow[]> => {
       // The rental-prepay approval (the Rent flow's money leg) only
       // appears on OFFERS, and useMyOffers filters to active — pull
-      // the creator's full offer history for prepay legs so residue
-      // on a settled/cancelled rental stays visible.
+      // the creator's FULL offer history (cursor-followed, null on
+      // any page failure per the shared contract: a partial history
+      // must fail the round loudly, never render as a clean bill).
       const historyTokens = new Set<string>(tokens);
-      const page = await fetchOffersByCreator(readChain.chainId, address!, {
-        limit: 100,
-      });
-      for (const o of page?.offers ?? []) {
+      const history = await fetchAllPages<IndexedOffer>((before) =>
+        fetchOffersByCreator(readChain.chainId, address!, {
+          limit: 100,
+          before,
+        }).then((p) => (p === null ? null : { rows: p.offers, nextBefore: p.nextBefore })),
+      );
+      if (history === null) throw new Error('offer history unavailable');
+      for (const o of history) {
         const a = o.prepayAsset?.toLowerCase();
         if (a && a !== ZERO_ADDRESS) historyTokens.add(a);
       }
@@ -175,8 +183,6 @@ export function ApprovalsCard() {
         <p className="muted">{copy.wallet.connectFirst}</p>
       ) : !complete ? (
         <p className="muted">{copy.approvals.sourcesUnavailable}</p>
-      ) : tokens.length === 0 ? (
-        <p className="muted">{copy.approvals.none}</p>
       ) : approvals.isError && !approvals.data ? (
         <p className="muted">{copy.approvals.unavailable}</p>
       ) : !approvals.data ? (
