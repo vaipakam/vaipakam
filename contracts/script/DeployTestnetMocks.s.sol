@@ -94,16 +94,28 @@ contract DeployTestnetMocks is Script {
     address constant ARB_SEPOLIA_WETH_DEFAULT = 0x980B62Da83eFf3D4576C647993b0c1D7faf17c73;
     address constant OP_SEPOLIA_WETH_DEFAULT = 0x4200000000000000000000000000000000000006;
 
-    /// @dev sqrtPriceX96 for price 1.0 — non-zero so slot0 is valid; the
-    ///      liquidity reading (not price) drives the depth floor.
+    /// @dev sqrtPriceX96 for price 1.0 (both legs 18-dec ⇒ a 1:1 raw
+    ///      reserve ratio at the current tick). NON-NEGOTIABLE with the
+    ///      prices below: `OracleFacet._accumulatePoolImpacts` Guard 1
+    ///      rejects a pool whose spot price disagrees with the Chainlink
+    ///      feed ratio beyond `cfgTwapConsistencyBps`. A 1:1 pool
+    ///      therefore REQUIRES the tLIQ feed and the WETH feed to report
+    ///      the same USD price — otherwise the value-balance guard skips
+    ///      the pool and tLIQ never classifies Liquid. Keep TLIQ_USD_PRICE
+    ///      == WETH_USD_PRICE (or re-derive sqrtPriceX96 from their ratio
+    ///      if you make them differ).
     uint160 constant SQRT_PRICE_X96_ONE = 79228162514264337593543950336;
 
     /// @dev Pool depth well above the $1M floor (converted via ETH/USD)
     ///      so classification never flakes on precision.
     uint128 constant MOCK_POOL_LIQUIDITY = 1e24;
 
-    /// @dev Initial prices, 8-dec Chainlink scale.
-    int256 constant TLIQ_USD_PRICE = 100e8; // $100 — arbitrary but stable.
+    /// @dev Initial prices, 8-dec Chainlink scale. tLIQ is priced EQUAL
+    ///      to WETH on purpose so the 1:1 mock pool spot agrees with the
+    ///      feed ratio (see SQRT_PRICE_X96_ONE) — the arbitrary dollar
+    ///      value ($2,000) doesn't matter for a faucet token, only that
+    ///      the two feeds match.
+    int256 constant TLIQ_USD_PRICE = 2_000e8; // == WETH; keeps the 1:1 pool consistent.
     int256 constant WETH_USD_PRICE = 2_000e8; // $2,000.
 
     function run() external {

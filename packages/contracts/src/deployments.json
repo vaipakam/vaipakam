@@ -136,10 +136,16 @@
     "lzEid": 40245,
     "rewardMessenger": "0x1132055D90E9cFD77f30b6420a591781Ac3f10Fe",
     "testnetMocks": {
-      "illiquidToken": "0x2affacdea8119e38d9754b2c2c15ec79af360807",
-      "liquidToken": "0x9d2a1acf65ed12716ca67beb7d108890ccda49f8",
+      "ethUsdFeed": "0x69B61Ff792F9228499372a489a506BB5dFdE0D23",
+      "feedRegistry": "0x2062BF6743a0487617d946acc7A3617ee223e554",
+      "illiquidToken": "0x2AffacDEA8119E38D9754b2C2c15EC79aF360807",
+      "liquidToken": "0x9d2a1acF65Ed12716Ca67Beb7D108890ccDa49f8",
+      "liquidTokenUsdFeed": "0x072B5f6EB660d01852225364A8b0859CD3cfA5d8",
+      "liquidTokenWethPool": "0x2eF6Ab0c8FB2d569d141661Bc5f2f5bDc9Ef0c9c",
       "note": "Testnet-only faucet + oracle mock assets. NEVER present on mainnet slugs. Deployed by script/DeployTestnetMocks.s.sol.",
-      "rentalNft": "0xe435bdcfb59c4026d1607c8d498ef3ecca51d837"
+      "rentalNft": "0xE435bDcFb59c4026d1607c8D498EF3EcCa51D837",
+      "uniswapV3Factory": "0x2DC109C6B6FaD5beE532083aB9b88d167Ca5CA66",
+      "zeroExProxy": "0x03460a6F493383f59319D4E270A063cB1eE9526F"
     },
     "timelock": "0xA957C2F4b159d398e59e5BEf678486EbE915feB2",
     "treasury": "0xca3E735C593088D2f5ea5AEAa553a6bDaa6E7413",
@@ -147,7 +153,8 @@
     "vpfiPoolRateGovernor": "0x993A502A43EdCB9c497F4ae50569F94209C0A08E",
     "vpfiToken": "0x030dB965D504D34e36533acB97638dDF231Cc3CA",
     "vpfiTokenImpl": "0x7C20c01E849411a577BbaCe6284C8406EAb0e6E4",
-    "vpfiTokenPool": "0xA381410936FDB3944428986F0016A172Bb0Ffd86"
+    "vpfiTokenPool": "0xA381410936FDB3944428986F0016A172Bb0Ffd86",
+    "weth": "0x4200000000000000000000000000000000000006"
   },
   "97": {
     "admin": "0xF718BaE5e0dc36140F16dAEF73289294c2372030",
