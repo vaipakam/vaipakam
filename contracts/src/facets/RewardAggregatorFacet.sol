@@ -130,6 +130,11 @@ contract RewardAggregatorFacet is
     /// @custom:event-category informational/config
     event ExpectedSourceChainIdsUpdated(uint32[] chainIds);
 
+    /// @notice #776 — emitted when {backfillDayInclusion} re-derives the
+    ///         participation flags for a pre-gate finalized day.
+    /// @custom:event-category informational/config
+    event DayInclusionBackfilled(uint256 indexed dayId);
+
     // ─── Modifiers ──────────────────────────────────────────────────────────
 
     /// @dev Extracted modifier bodies — the modifiers themselves stay thin
@@ -319,6 +324,9 @@ contract RewardAggregatorFacet is
             if (s.chainDailyReported[dayId][chainId]) {
                 globalLender += s.chainDailyLenderInterestNumeraire18[dayId][chainId];
                 globalBorrower += s.chainDailyBorrowerInterestNumeraire18[dayId][chainId];
+                // #776 — snapshot that this chain's numerator IS part of the
+                // finalized denominator, so its reward-budget slice is coherent.
+                s.chainDailyIncluded[dayId][chainId] = true;
                 unchecked {
                     ++participating;
                 }
@@ -424,6 +432,46 @@ contract RewardAggregatorFacet is
             }
         }
         emit ExpectedSourceChainIdsUpdated(chainIds);
+    }
+
+    /**
+     * @notice #776 — one-time backfill of the per-day `chainDailyIncluded`
+     *         participation flags for a day that was FINALIZED before the
+     *         inclusion gate shipped, so its reward-budget slices become
+     *         remittable again.
+     * @dev    On a genesis deploy this is NEVER needed — {finalizeDay} sets the
+     *         flags from day 1, so no pre-gate finalized day exists. It exists
+     *         only to migrate a deployment that already had finalized days when
+     *         this facet was upgraded in (Codex #776 review): without it,
+     *         `chainRewardBudgetForDay` would return 0 for every pre-upgrade
+     *         `(chain, day)` and the historical mirror-claim backlog would be
+     *         unfundable. Idempotent (re-setting a true flag is a no-op).
+     *
+     *         Re-derives inclusion from the SAME predicate {finalizeDay} used:
+     *         a chain counts iff it is in the CURRENT `expectedSourceChainIds`
+     *         AND reported for `dayId` (`chainDailyReported`). The operator must
+     *         therefore run this while the expected set still matches the set
+     *         that was live when `dayId` finalized — the natural case right
+     *         after the upgrade, before any `setExpectedSourceChainIds` edit.
+     * @param dayId A finalized day to backfill.
+     */
+    function backfillDayInclusion(
+        uint256 dayId
+    ) external onlyRole(LibAccessControl.ADMIN_ROLE) onlyCanonical {
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        if (!s.dailyGlobalFinalized[dayId]) revert DayNotReadyToFinalize();
+        uint32[] storage expected = s.expectedSourceChainIds;
+        uint256 n = expected.length;
+        for (uint256 i; i < n; ) {
+            uint32 chainId = expected[i];
+            if (s.chainDailyReported[dayId][chainId]) {
+                s.chainDailyIncluded[dayId][chainId] = true;
+            }
+            unchecked {
+                ++i;
+            }
+        }
+        emit DayInclusionBackfilled(dayId);
     }
 
     // ─── Views ──────────────────────────────────────────────────────────────

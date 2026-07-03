@@ -134,6 +134,7 @@ import {MirrorTierReceiverFacet} from "../src/facets/MirrorTierReceiverFacet.sol
 import {ProtocolBroadcastFacet} from "../src/facets/ProtocolBroadcastFacet.sol";
 import {InteractionRewardsFacet} from "../src/facets/InteractionRewardsFacet.sol";
 import {RewardAggregatorFacet} from "../src/facets/RewardAggregatorFacet.sol";
+import {RewardRemittanceFacet} from "../src/facets/RewardRemittanceFacet.sol";
 import {RewardReporterFacet} from "../src/facets/RewardReporterFacet.sol";
 // #168 Track A — narrow (not yet close) the test-vs-prod drift. The
 // production diamond cuts these four facets
@@ -297,6 +298,7 @@ contract SetupTest is Test {
     ProtocolBroadcastFacet protocolBroadcastFacet;
     InteractionRewardsFacet interactionRewardsFacet;
     RewardAggregatorFacet rewardAggregatorFacet;
+    RewardRemittanceFacet rewardRemittanceFacet;
     RewardReporterFacet rewardReporterFacet;
     HelperTest helperTest;
 
@@ -400,6 +402,7 @@ contract SetupTest is Test {
         protocolBroadcastFacet = new ProtocolBroadcastFacet();
         interactionRewardsFacet = new InteractionRewardsFacet();
         rewardAggregatorFacet = new RewardAggregatorFacet();
+        rewardRemittanceFacet = new RewardRemittanceFacet();
         rewardReporterFacet = new RewardReporterFacet();
         helperTest = new HelperTest();
 
@@ -429,7 +432,7 @@ contract SetupTest is Test {
         // Preclose / Refinance / EarlyWithdrawal / PartialWithdrawal
         // quartet at slots 24-27 to unblock the PauseGating fold —
         // those slots stay where they are.
-        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](62);
+        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](63);
         cuts[0] = IDiamondCut.FacetCut({
             facetAddress: address(offerCreateFacet),
             action: IDiamondCut.FacetCutAction.Add,
@@ -801,6 +804,11 @@ contract SetupTest is Test {
             facetAddress: address(riskAccessFacet),
             action: IDiamondCut.FacetCutAction.Add,
             functionSelectors: helperTest.getRiskAccessFacetSelectors()
+        });
+        cuts[62] = IDiamondCut.FacetCut({
+            facetAddress: address(rewardRemittanceFacet),
+            action: IDiamondCut.FacetCutAction.Add,
+            functionSelectors: helperTest.getRewardRemittanceFacetSelectors()
         });
         // #594 — standalone holder-only consolidation entry points are cut at
         // slot 33 (see the #687-B note above).
