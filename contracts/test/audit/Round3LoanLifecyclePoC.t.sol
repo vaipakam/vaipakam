@@ -76,7 +76,7 @@ contract Round3LoanLifecyclePoC is SetupTest {
         uint256 principal,
         uint256 rateBps,
         uint256 durationDays,
-        bool partial,
+        bool allowPartial,
         LibVaipakam.PeriodicInterestCadence cadence
     ) internal returns (uint256 offerId) {
         vm.prank(lender);
@@ -97,7 +97,7 @@ contract Round3LoanLifecyclePoC is SetupTest {
                 collateralAssetType: LibVaipakam.AssetType.ERC20,
                 collateralTokenId: 0,
                 collateralQuantity: 0,
-                allowsPartialRepay: partial,
+                allowsPartialRepay: allowPartial,
                 allowsPrepayListing: false,
                 allowsParallelSale: false,
                 amountMax: principal,
