@@ -6,6 +6,7 @@ import {console} from "forge-std/console.sol";
 import {ERC20Mock} from "../test/mocks/ERC20Mock.sol";
 import {ERC4907Mock} from "../test/mocks/ERC4907Mock.sol";
 import {ZeroExProxyMock} from "../test/mocks/ZeroExProxyMock.sol";
+import {MockSwapAdapter} from "../test/mocks/MockSwapAdapter.sol";
 import {OracleAdminFacet} from "../src/facets/OracleAdminFacet.sol";
 import {AdminFacet} from "../src/facets/AdminFacet.sol";
 import {RiskFacet} from "../src/facets/RiskFacet.sol";
@@ -30,9 +31,14 @@ import {Deployments} from "./lib/Deployments.sol";
  *             stays **illiquid** (in-kind default path). The deliberate
  *             counterpart to tLIQ for exercising the illiquid flows.
  *           - `vRENT` — an ERC-4907 rentable NFT for the rental flows.
- *           - `ZeroExProxyMock` — a mock swap venue wired via
- *             `AdminFacet.setZeroExProxy` + `setallowanceTarget` so the
- *             HF-liquidation swap path (Tier 2) has somewhere to route.
+ *           - `MockSwapAdapter` — a registered `ISwapAdapter`
+ *             (`AdminFacet.addSwapAdapter`) that the Phase-7a
+ *             HF-liquidation failover path (`LibSwap.swapWithFailover`)
+ *             routes through (Tier 2). It pays proceeds from its own
+ *             balance, so the script seeds it with a tLIQ float; fund it
+ *             with other principals as needed. `ZeroExProxyMock` +
+ *             `setZeroExProxy`/`setallowanceTarget` are also wired but
+ *             are the LEGACY path, unused by `swapWithFailover`.
  *
  *         The three faucet tokens all expose an unrestricted
  *         `mint(to, amount)` / `mint(to, tokenId)` — that's why the
@@ -52,7 +58,7 @@ import {Deployments} from "./lib/Deployments.sol";
  *         `.testnetMocks` object (`liquidToken`, `illiquidToken`,
  *         `rentalNft`, `feedRegistry`, `liquidTokenUsdFeed`,
  *         `ethUsdFeed`, `uniswapV3Factory`, `liquidTokenWethPool`,
- *         `zeroExProxy`) — the exact shape the `TestnetMocks` interface
+ *         `zeroExProxy`, `mockSwapAdapter`) — the exact shape the `TestnetMocks` interface
  *         in `packages/contracts/src/deployments.ts` consumes. Run the
  *         frontend deployments sync afterwards
  *         (`exportFrontendDeployments.sh`) to fold it into the bundle.
@@ -177,7 +183,18 @@ contract DeployTestnetMocks is Script {
             univ3.createPool(liquidToken, weth, 3000, SQRT_PRICE_X96_ONE, MOCK_POOL_LIQUIDITY);
 
         // Tier 2 — mock swap venue for HF-based liquidation.
+        // ZeroExProxyMock is the LEGACY 0x-proxy shape; retained for
+        // completeness but NOT used by the Phase-7a failover path.
         ZeroExProxyMock zeroEx = new ZeroExProxyMock();
+
+        // The ACTUAL Phase-7a liquidation route: a registered
+        // ISwapAdapter. MockSwapAdapter pays proceeds from its own
+        // balance, so seed it with a generous tLIQ float for
+        // tLIQ-principal liquidations (fund with other principals as
+        // needed — see the run notes). 1:1 output multiplier == fair
+        // value given tLIQ is priced equal to WETH.
+        MockSwapAdapter swapAdapter = new MockSwapAdapter("vaipakam-testnet-mock");
+        ERC20Mock(liquidToken).mint(address(swapAdapter), 1_000_000e18);
 
         vm.stopBroadcast();
 
@@ -189,6 +206,7 @@ contract DeployTestnetMocks is Script {
         console.log("  MockUniswapV3Factory:  ", address(univ3));
         console.log("  tLIQ/WETH pool:        ", liquidPool);
         console.log("  ZeroExProxyMock:       ", address(zeroEx));
+        console.log("  MockSwapAdapter:       ", address(swapAdapter));
 
         // ── Step 2: Admin-side — wire mocks into the Diamond ───────────
         vm.startBroadcast(adminKey);
@@ -205,11 +223,15 @@ contract DeployTestnetMocks is Script {
         RiskFacet(diamond).updateRiskParams(liquidToken, 8000, 300, 1000);
         RiskFacet(diamond).updateRiskParams(weth, 8000, 300, 1000);
 
-        // Tier 2 — route HF-liquidation swaps through the mock venue.
-        // allowanceTarget == the proxy itself for the mock (it pulls via
-        // transferFrom from the Diamond's approval).
+        // Tier 2 — legacy proxy pointers (kept for completeness; the
+        // Phase-7a path ignores them).
         AdminFacet(diamond).setZeroExProxy(address(zeroEx));
         AdminFacet(diamond).setallowanceTarget(address(zeroEx));
+        // Register the mock adapter so `swapWithFailover` has a venue.
+        // Idempotent guard: skip if already registered (re-run safe).
+        if (!_adapterRegistered(diamond, address(swapAdapter))) {
+            AdminFacet(diamond).addSwapAdapter(address(swapAdapter));
+        }
         vm.stopBroadcast();
 
         // ── Step 3: persist the testnetMocks object ────────────────────
@@ -227,7 +249,8 @@ contract DeployTestnetMocks is Script {
         vm.serializeAddress(obj, "ethUsdFeed", address(wethFeed));
         vm.serializeAddress(obj, "uniswapV3Factory", address(univ3));
         vm.serializeAddress(obj, "liquidTokenWethPool", liquidPool);
-        string memory out = vm.serializeAddress(obj, "zeroExProxy", address(zeroEx));
+        vm.serializeAddress(obj, "zeroExProxy", address(zeroEx));
+        string memory out = vm.serializeAddress(obj, "mockSwapAdapter", address(swapAdapter));
         vm.writeJson(out, Deployments.path(), ".testnetMocks");
         // WETH is consumed by both the contract wiring above and the
         // frontend loader — stamp it once as the single source of truth.
@@ -238,8 +261,27 @@ contract DeployTestnetMocks is Script {
         console.log("Verify liquidity (expect 0 = Liquid):");
         console.log("  cast call <diamond> 'checkLiquidity(address)(uint8)' <tLIQ>");
         console.log("Next: bash contracts/script/exportFrontendDeployments.sh");
-        console.log("NOTE: fund the ZeroExProxyMock with output tokens and call");
-        console.log("      setRate(num,den) before exercising HF liquidation.");
+        console.log("HF-liquidation (Phase-7a) uses the registered MockSwapAdapter,");
+        console.log("NOT the ZeroExProxyMock. The adapter pays proceeds from its own");
+        console.log("balance: it was seeded with 1,000,000 tLIQ for tLIQ-principal");
+        console.log("loans. For a WETH- (or other) principal loan, transfer that");
+        console.log("token to the MockSwapAdapter first. Trigger with:");
+        console.log("  triggerLiquidation(loanId, [{adapterIdx, data:0x}])");
+        console.log("where adapterIdx is the adapter's slot in getSwapAdapters().");
+    }
+
+    /// @dev True if `adapter` is already in the Diamond's registered
+    ///      swap-adapter list — makes re-runs idempotent.
+    function _adapterRegistered(address diamond, address adapter)
+        private
+        view
+        returns (bool)
+    {
+        address[] memory existing = AdminFacet(diamond).getSwapAdapters();
+        for (uint256 i; i < existing.length; ++i) {
+            if (existing[i] == adapter) return true;
+        }
+        return false;
     }
 
     function _wethFor(uint256 cid) private view returns (address) {

@@ -245,8 +245,14 @@ export interface TestnetMocks {
   /** Mock Uniswap-V3 factory + liquidToken/WETH pool (liquidity gate). */
   uniswapV3Factory?: HexAddress;
   liquidTokenWethPool?: HexAddress;
-  /** ZeroExProxyMock swap venue for HF-liquidation (Tier 2). */
+  /** ZeroExProxyMock — the LEGACY 0x-proxy swap venue. Retained for
+   *  completeness; NOT used by the Phase-7a liquidation path. */
   zeroExProxy?: HexAddress;
+  /** Registered MockSwapAdapter (ISwapAdapter) that the HF-liquidation
+   *  failover path (`LibSwap.swapWithFailover`) actually routes through
+   *  (Tier 2). Pays proceeds from its own balance, so it must be funded
+   *  with the loan's principal token before a liquidation. */
+  mockSwapAdapter?: HexAddress;
 }
 
 /**
