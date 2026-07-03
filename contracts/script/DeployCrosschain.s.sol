@@ -19,6 +19,8 @@ import {VPFIMirrorToken} from "../src/crosschain/VPFIMirrorToken.sol";
 import {VpfiPoolRateGovernor} from "../src/crosschain/VpfiPoolRateGovernor.sol";
 // T-087 Sub 3.A — Base-side inbound handler for the buyback channel.
 import {BuybackRemittanceReceiver} from "../src/crosschain/BuybackRemittanceReceiver.sol";
+// #776 — mirror-side inbound handler for the reward-budget channel.
+import {RewardRemittanceReceiver} from "../src/crosschain/RewardRemittanceReceiver.sol";
 import {VaipakamRewardMessenger} from "../src/crosschain/VaipakamRewardMessenger.sol";
 import {Deployments} from "./lib/Deployments.sol";
 
@@ -189,6 +191,30 @@ contract DeployCrosschain is Script {
             console.log("BuybackRemittanceReceiver:", buybackReceiver);
         }
 
+        // ── #776 — mirror-side reward-budget remittance receiver ───────
+        // Mirrors RECEIVE the Base→mirror reward-budget CCIP token message and
+        // forward the VPFI into the local Diamond. Base is the SENDER (its
+        // Diamond is the reward-budget channel handler), so it needs no
+        // receiver here; the canonical branch skips this.
+        address rewardReceiverImpl;
+        address rewardReceiver;
+        if (!canonical) {
+            vm.startBroadcast(deployerKey);
+            RewardRemittanceReceiver rrImpl = new RewardRemittanceReceiver();
+            rewardReceiverImpl = address(rrImpl);
+            rewardReceiver = address(
+                new ERC1967Proxy(
+                    rewardReceiverImpl,
+                    abi.encodeCall(
+                        RewardRemittanceReceiver.initialize,
+                        (admin, messenger, diamond, vpfiToken)
+                    )
+                )
+            );
+            vm.stopBroadcast();
+            console.log("RewardRemittanceReceiver: ", rewardReceiver);
+        }
+
         // ── Record to deployments/<chain>/addresses.json ─────────────────
         Deployments.writeCcipMessenger(messenger);
         Deployments.writeVpfiTokenPool(pool);
@@ -199,6 +225,8 @@ contract DeployCrosschain is Script {
             Deployments.writeBuybackRemittanceReceiverImpl(buybackReceiverImpl);
         } else {
             Deployments.writeVpfiMirror(vpfiToken);
+            Deployments.writeRewardRemittanceReceiver(rewardReceiver);
+            Deployments.writeRewardRemittanceReceiverImpl(rewardReceiverImpl);
         }
 
         console.log("");

@@ -130,8 +130,12 @@ list_pause_targets() {
   # success while those inbound/outbound paths stayed live. `vpfiTokenPool` /
   # `vpfiPoolRateGovernor` are governed by CCIP rate-limits, not a pause switch,
   # so they stay out. Missing keys are skipped by the emptiness check below.
+  # #776 — the mirror-side rewardRemittanceReceiver is a GuardianPausable
+  # inbound surface (Base->mirror reward-budget deliveries); include it so an
+  # incident pause actually freezes that ingress and operators can keep just it
+  # paused while resuming other CCIP channels.
   for KEY in diamond rewardMessenger vpfiOftAdapter vpfiMirror \
-             ccipMessenger buybackRemittanceReceiver; do
+             ccipMessenger buybackRemittanceReceiver rewardRemittanceReceiver; do
     local ADDR=$(jq -r --arg k "$KEY" '.[$k] // empty' "$addr_file" 2>/dev/null)
     # Legacy fallback: pre-T-068 deployment artifacts stored the cross-
     # chain reward messenger under the LayerZero-era key `rewardOApp`.

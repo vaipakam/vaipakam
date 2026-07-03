@@ -2261,7 +2261,7 @@ contract DeployDiamond is Script {
     }
 
     function _getRewardRemittanceSelectors() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](7);
+        s = new bytes4[](11);
         s[0] = RewardRemittanceFacet.remitRewardBudget.selector;
         s[1] = RewardRemittanceFacet.setRewardRemittanceKeeper.selector;
         s[2] = RewardRemittanceFacet.quoteRewardBudget.selector;
@@ -2269,6 +2269,10 @@ contract DeployDiamond is Script {
         s[4] = RewardRemittanceFacet.getRewardBudgetRemittedTotal.selector;
         s[5] = RewardRemittanceFacet.getRewardBudgetRemittedGlobal.selector;
         s[6] = RewardRemittanceFacet.getRewardRemittanceKeeper.selector;
+        s[7] = RewardRemittanceFacet.setRewardRemittanceReceiver.selector;
+        s[8] = RewardRemittanceFacet.onRewardBudgetReceived.selector;
+        s[9] = RewardRemittanceFacet.getRewardRemittanceReceiver.selector;
+        s[10] = RewardRemittanceFacet.getRewardBudgetReceivedTotal.selector;
     }
 
     function _getMetricsSelectors() internal pure returns (bytes4[] memory s) {
