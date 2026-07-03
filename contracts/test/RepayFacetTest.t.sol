@@ -1282,12 +1282,22 @@ contract RepayFacetTest is Test {
     ///      succeeds (durationDays 30 → 29).
     function testRepayPartialNFTSkipsMinPartialFloor() public {
         helperOfferLoan();
-        TestMutatorFacet(address(diamond)).setMinPartialBpsRaw(mockERC20, 5000);
+        // Codex #978 — LoanFacet copies the offer's lending asset (the NFT
+        // collection `mockNft721`) into `loan.principalAsset` for a rental, and
+        // the floor is read as `assetRiskParams[loan.principalAsset]`. Set the
+        // floor on THAT asset (not the unrelated `mockERC20`) or the test would
+        // pass even with the ERC-20 guard removed. Assert the asset first.
+        LibVaipakam.Loan memory nftLoan = LoanFacet(address(diamond)).getLoanDetails(2);
+        assertEq(nftLoan.principalAsset, mockNft721, "loan 2 principal asset is the NFT");
+        // 50% floor: minPartial = principal(10) * 5000 / 10000 = 5 token units.
+        // A 1-DAY rental partial is `1`, which the pre-scoping check compared as
+        // `1 < 5` and wrongly reverted `InsufficientPartialAmount`.
+        TestMutatorFacet(address(diamond)).setMinPartialBpsRaw(mockNft721, 5000);
         vm.prank(borrower);
         RepayFacet(address(diamond)).repayPartial(2, 1);
 
         LibVaipakam.Loan memory loan = LoanFacet(address(diamond)).getLoanDetails(2);
-        assertEq(loan.durationDays, 29, "NFT rental day-reduction not blocked by ERC-20 floor");
+        assertEq(loan.durationDays, 29, "NFT rental day-reduction not blocked by the floor");
     }
 
     /// @dev Tests repayPartial NFT "Treasury share failed" path.
