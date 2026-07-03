@@ -38,14 +38,18 @@ export function borrowerPrimaryAction(opts: {
   role: 'borrower' | 'lender' | 'other';
   loanStatus: string;
   healthTone: 'ok' | 'warn' | 'risk';
+  /** When set for `defaulted`, gates the borrower claim CTA on on-chain claimability. */
+  borrowerClaimable?: boolean;
 }): { action: 'repay' | 'claim-collateral' | 'claim-lender' | 'add-collateral' | 'none'; label: string } {
   if (opts.role === 'borrower') {
-    if (
-      opts.loanStatus === 'repaid' ||
-      opts.loanStatus === 'defaulted' ||
-      opts.loanStatus === 'internal_matched'
-    ) {
+    if (opts.loanStatus === 'repaid' || opts.loanStatus === 'internal_matched') {
       return { action: 'claim-collateral', label: 'Claim collateral' };
+    }
+    if (opts.loanStatus === 'defaulted') {
+      if (opts.borrowerClaimable) {
+        return { action: 'claim-collateral', label: 'Claim collateral' };
+      }
+      return { action: 'none', label: 'No action available' };
     }
     if (opts.loanStatus === 'active') {
       if (opts.healthTone === 'risk' || opts.healthTone === 'warn') {

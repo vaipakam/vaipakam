@@ -7,6 +7,7 @@ import {
   claimAsLender,
   fetchLoanById,
   formatBpsAsPercent,
+  isLoanSideClaimable,
   plainHealthLabel,
   loanRoleForWallet,
   repayLoanFull,
@@ -41,6 +42,22 @@ export function PositionDetailPage() {
   const lendingMeta = useTokenMeta(loan?.lendingAsset ?? null);
   const collateralMeta = useTokenMeta(loan?.collateralAsset ?? null);
 
+  const role = loan ? loanRoleForWallet(loan, address) : 'other';
+  const needsBorrowerClaimProbe =
+    role === 'borrower' && loan?.status === 'defaulted' && Boolean(chain.diamondAddress);
+  const { data: borrowerClaimable } = useQuery({
+    queryKey: ['loan-borrower-claimable', chain.chainId, id, chain.diamondAddress],
+    enabled: needsBorrowerClaimProbe,
+    queryFn: () =>
+      isLoanSideClaimable(
+        publicClient,
+        chain.diamondAddress as Address,
+        id,
+        false,
+      ),
+    staleTime: 20_000,
+  });
+
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState<string | null>(null);
 
@@ -70,13 +87,13 @@ export function PositionDetailPage() {
   }
   if (!loan) return <p>Loan not found.</p>;
 
-  const role = loanRoleForWallet(loan, address);
   const isBorrower = role === 'borrower';
   const health = plainHealthLabel(isBorrower ? hf : null);
   const primary = borrowerPrimaryAction({
     role: role === 'other' ? 'other' : role,
     loanStatus: loan.status,
     healthTone: health.tone,
+    borrowerClaimable: loan.status === 'defaulted' ? borrowerClaimable : undefined,
   });
 
   async function run(action: 'repay' | 'claim-lender' | 'claim-borrower') {

@@ -161,6 +161,16 @@ export function filterBorrowerOffersForLend(offers: IndexedOffer[]): IndexedOffe
   );
 }
 
+/** Effective lender-offer principal — zero `amountMax` means use `amount`. */
+export function offerPrincipalWei(o: Pick<IndexedOffer, 'amount' | 'amountMax'>): bigint {
+  const maxRaw = o.amountMax?.trim() ?? '';
+  if (maxRaw && maxRaw !== '0') {
+    const max = BigInt(maxRaw);
+    if (max > 0n) return max;
+  }
+  return BigInt(o.amount?.trim() || '0');
+}
+
 export interface BorrowIntent {
   lendingAsset?: string;
   collateralAsset?: string;
@@ -188,7 +198,7 @@ export function matchOffersToBorrowIntent(
       return false;
     }
     if (intent.minBorrowAmountWei != null && intent.minBorrowAmountWei > 0n) {
-      const principal = BigInt(o.amountMax || o.amount || '0');
+      const principal = offerPrincipalWei(o);
       // Direct accept always opens the full offer principal — treat the
       // user's entered amount as an exact target, not a minimum floor.
       if (principal !== intent.minBorrowAmountWei) return false;

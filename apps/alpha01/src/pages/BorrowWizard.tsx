@@ -549,10 +549,12 @@ export function BorrowWizard() {
               </button>
             ))}
           </div>
-          {!isLoading && !offersError && matched.length === 0 ? (
+          {!isLoading && matched.length === 0 ? (
             <div className="card" style={{ marginTop: 12 }}>
               <p style={{ color: 'var(--text-secondary)', marginBottom: 12 }}>
-                No lender offers fit right now. Post a borrow request — collateral locks now and funds arrive when a lender accepts.
+                {offersError
+                  ? 'Offer list is unavailable, but you can still post a borrow request on-chain — collateral locks now and funds arrive when a lender accepts.'
+                  : 'No lender offers fit right now. Post a borrow request — collateral locks now and funds arrive when a lender accepts.'}
               </p>
               <AmountField
                 label="Collateral to lock"

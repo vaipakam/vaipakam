@@ -7,8 +7,21 @@ describe('borrowerPrimaryAction', () => {
       borrowerPrimaryAction({ role: 'borrower', loanStatus: 'repaid', healthTone: 'ok' }).action,
     ).toBe('claim-collateral');
     expect(
-      borrowerPrimaryAction({ role: 'borrower', loanStatus: 'defaulted', healthTone: 'ok' }).action,
+      borrowerPrimaryAction({
+        role: 'borrower',
+        loanStatus: 'defaulted',
+        healthTone: 'ok',
+        borrowerClaimable: true,
+      }).action,
     ).toBe('claim-collateral');
+    expect(
+      borrowerPrimaryAction({
+        role: 'borrower',
+        loanStatus: 'defaulted',
+        healthTone: 'ok',
+        borrowerClaimable: false,
+      }).action,
+    ).toBe('none');
     expect(
       borrowerPrimaryAction({ role: 'borrower', loanStatus: 'internal_matched', healthTone: 'ok' })
         .action,

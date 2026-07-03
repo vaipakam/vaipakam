@@ -29,3 +29,5 @@ Round 10: Raw formatting uses cache-resolved decimals only; offer pickers requir
 Round 11: Root `alpha:dev`/`alpha:build` target `@vaipakam/alpha01`; alpha01 adds `typecheck` script; Claims unions holder loans in resolution paths and filters empty borrower defaults via on-chain `getClaimable`; activity merge never drops actor rows from a cursor page; borrow matching requires a parsed amount before listing offers.
 
 Round 12: Borrower `fallback_pending` claims filtered via on-chain probe; accept-terms signing fails closed on RiskAccess deploy skew; loan detail surfaces claim CTAs for borrower defaulted/internal-matched and lender fallback/internal-match loans.
+
+Round 13: Zero `amountMax` normalized for offer matching; public offer fetch before wallet connect; defaulted borrower claim CTA gated on `getClaimable`; borrow request fallback stays visible on indexer errors; borrower `fallback_pending` excluded from Claims; Codex watch paginates reviews.

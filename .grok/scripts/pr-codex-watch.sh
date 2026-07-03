@@ -41,7 +41,7 @@ head_sha() {
 codex_reviewed_head() {
   local head="$1"
   local count
-  count=$(gh api "repos/$OWNER/$REPO/pulls/$PR/reviews" \
+  count=$(gh api "repos/$OWNER/$REPO/pulls/$PR/reviews" --paginate \
     | jq --arg head "$head" --arg bot "$CODEX_USER" \
       '[.[] | select(.user.login == $bot and .commit_id == $head)] | length')
   [ "${count:-0}" -gt 0 ] && echo true || echo false
@@ -50,6 +50,16 @@ codex_reviewed_head() {
 already_triggered_for() {
   local head="$1"
   [ -f "$STATE_FILE" ] && grep -qx "triggered:$head" "$STATE_FILE" 2>/dev/null
+}
+
+codex_has_eyes_on_latest_trigger() {
+  local id
+  id=$(gh api "repos/$OWNER/$REPO/issues/$PR/comments?per_page=50" \
+    | jq -r '[.[] | select(.body | test("@codex review"; "i"))] | sort_by(.created_at) | last.id // empty')
+  [ -n "$id" ] || return 1
+  gh api "repos/$OWNER/$REPO/issues/comments/$id/reactions" \
+    | jq -e --arg bot "$CODEX_USER" \
+      '[.[] | select(.content == "eyes" and .user.login == $bot)] | length > 0' >/dev/null
 }
 
 post_trigger() {
@@ -76,10 +86,13 @@ if [ "$(codex_reviewed_head "$HEAD")" = "true" ]; then
   exit 0
 fi
 
-if ! already_triggered_for "$HEAD"; then
-  post_trigger "$HEAD"
-else
+if already_triggered_for "$HEAD"; then
   echo "[pr-codex-watch] trigger already posted for HEAD ${HEAD:0:8}" >&2
+elif codex_has_eyes_on_latest_trigger; then
+  echo "triggered:$HEAD" >> "$STATE_FILE"
+  echo "[pr-codex-watch] Codex 👀 on latest trigger — skip posting another" >&2
+else
+  post_trigger "$HEAD"
 fi
 
 while true; do
@@ -109,7 +122,13 @@ while true; do
 
   RETRIES=$((RETRIES + 1))
   if [ "$RETRIES" -le "$MAX_RETRIES" ]; then
-    echo "[pr-codex-watch] no Codex review yet — retry trigger ($RETRIES/$MAX_RETRIES)" >&2
-    post_trigger "$HEAD"
+    if codex_has_eyes_on_latest_trigger; then
+      echo "[pr-codex-watch] Codex 👀 ack — waiting for review, not re-posting trigger" >&2
+    elif already_triggered_for "$HEAD"; then
+      echo "[pr-codex-watch] trigger already posted for HEAD ${HEAD:0:8} — not re-posting" >&2
+    else
+      echo "[pr-codex-watch] no Codex review yet — retry trigger ($RETRIES/$MAX_RETRIES)" >&2
+      post_trigger "$HEAD"
+    fi
   fi
 done

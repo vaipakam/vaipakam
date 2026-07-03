@@ -83,4 +83,10 @@ describe('matchOffersToBorrowIntent', () => {
     const matched = matchOffersToBorrowIntent(pool, { minBorrowAmountWei: 1000n });
     expect(matched.map((o) => o.offerId)).toEqual([3]);
   });
+
+  it('treats zero amountMax as absent for legacy lender offers', () => {
+    const pool = [baseOffer({ offerId: 9, amount: '1000', amountMax: '0' })];
+    const matched = matchOffersToBorrowIntent(pool, { minBorrowAmountWei: 1000n });
+    expect(matched.map((o) => o.offerId)).toEqual([9]);
+  });
 });

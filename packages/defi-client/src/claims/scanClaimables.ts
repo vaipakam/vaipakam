@@ -59,7 +59,7 @@ async function borrowerLifRebate(
   }
 }
 
-async function sideClaimActionable(
+export async function isLoanSideClaimable(
   publicClient: PublicClient,
   diamondAddress: Address,
   loanId: number,
@@ -111,22 +111,24 @@ export async function fetchWalletClaimables(
     const holderLoans = await fetchAllLoansForWallet(indexerOrigin, chainId, wallet);
     const extras = holderLoans.filter((l) => CLAIMABLE_STATUSES.has(l.status));
     const lenderExtras = extras.filter((l) => l.lenderCurrentOwner?.toLowerCase() === wallet);
-    const borrowerExtras = extras.filter((l) => l.borrowerCurrentOwner?.toLowerCase() === wallet);
+    const borrowerExtras = extras.filter(
+      (l) =>
+        l.borrowerCurrentOwner?.toLowerCase() === wallet && l.status !== 'fallback_pending',
+    );
     asLender = mergeLoanSide(asLender, lenderExtras);
     asBorrower = mergeLoanSide(asBorrower, borrowerExtras);
   }
+
+  // Borrower claims are not actionable while the loan is FallbackPending on-chain.
+  asBorrower = asBorrower.filter((l) => l.status !== 'fallback_pending');
 
   const publicClient = opts.publicClient;
   const diamondAddress = opts.diamondAddress;
   if (publicClient && diamondAddress) {
     const verifiedBorrower: IndexedLoan[] = [];
     for (const loan of asBorrower) {
-      if (
-        loan.status === 'defaulted' ||
-        loan.status === 'liquidated' ||
-        loan.status === 'fallback_pending'
-      ) {
-        if (await sideClaimActionable(publicClient, diamondAddress, loan.loanId, false)) {
+      if (loan.status === 'defaulted' || loan.status === 'liquidated') {
+        if (await isLoanSideClaimable(publicClient, diamondAddress, loan.loanId, false)) {
           verifiedBorrower.push(loan);
         }
       } else {

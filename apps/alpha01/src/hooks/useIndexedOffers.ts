@@ -14,7 +14,7 @@ export function useLenderOffersForBorrow() {
 
   return useQuery({
     queryKey: ['lender-offers', chain.chainId, origin, address],
-    enabled: Boolean(origin && address),
+    enabled: Boolean(origin),
     queryFn: async () => {
       if (!origin) return [];
       const all = await fetchAllActiveOffers(origin, chain.chainId);
