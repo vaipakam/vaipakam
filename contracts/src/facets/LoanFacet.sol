@@ -208,15 +208,18 @@ contract LoanFacet is DiamondPausable, DiamondAccessControl, IVaipakamErrors {
             if (s.offers[offerId].amount != linked.principal) {
                 revert InvalidOffer();
             }
-            // #951 (Codex #959 round-6, P2) — the accept binds only the loan id +
-            // principal, not its live collateral. A collateral-only reduction
-            // while the listing is live (borrower `partialWithdrawCollateral`, or a
-            // periodic-interest auto-liquidation selling collateral for a
-            // shortfall) would hand the buyer a drained position at the listed
-            // price. Reject when the live collateral has drifted from the snapshot
-            // taken at listing. Uniform backstop for every reduction path (the
-            // borrower-withdraw path also fails early with `SaleListingActive`).
-            if (s.saleListingCollateral[linkedLoanId] != linked.collateralAmount) {
+            // #951 (Codex #959 round-6 P2, refined round-7 P2) — the accept binds
+            // only the loan id + principal, not its live collateral. A collateral
+            // REDUCTION while the listing is live (borrower
+            // `partialWithdrawCollateral`, or a periodic-interest auto-liquidation
+            // selling collateral for a shortfall) would hand the buyer a drained
+            // position at the listed price, so reject when live collateral has
+            // fallen BELOW the snapshot taken at listing. An INCREASE
+            // (`addCollateral` is still permitted on a listed loan) only improves
+            // the position the buyer receives, so it must NOT be rejected —
+            // otherwise a borrower could grief every accept with a dust top-up
+            // until the seller cancels and re-lists. Strict `<`, not `!=`.
+            if (linked.collateralAmount < s.saleListingCollateral[linkedLoanId]) {
                 revert InvalidOffer();
             }
             // #951 (Codex #959 round-6, P1) — reject the linked loan's OWN

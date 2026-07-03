@@ -707,6 +707,24 @@ contract EarlyWithdrawalFacetTest is Test {
         LoanFacet(address(diamond)).initiateLoan(saleOfferId, newLender, true);
     }
 
+    /// @dev #951 (Codex #959 round-7, P2) — a collateral INCREASE (`addCollateral`
+    ///      stays permitted on a listed loan) only improves the position the buyer
+    ///      receives, so it must NOT block the accept. The drift guard is a strict
+    ///      `<` (reject reductions only), not `!=` — otherwise a borrower could
+    ///      grief every accept with a dust top-up until the seller re-lists. Live
+    ///      collateral > snapshot proceeds past the drift check to a real loan.
+    function testSaleVehicleAllowsCollateralIncrease() public {
+        uint256 saleOfferId = _listSaleOffer();
+        LibVaipakam.Loan memory ld =
+            LoanFacet(address(diamond)).getLoanDetails(activeLoanId);
+        ld.collateralAmount = ld.collateralAmount * 2; // top-up after listing
+        TestMutatorFacet(address(diamond)).setLoan(activeLoanId, ld);
+        vm.prank(address(diamond));
+        uint256 tempLoanId =
+            LoanFacet(address(diamond)).initiateLoan(saleOfferId, newLender, true);
+        assertGt(tempLoanId, 0, "collateral increase must not block the sale accept");
+    }
+
     /// @dev #951 (Codex #959 round-4, P1) — while an Option-2 sale listing is live
     ///      (lender NFT native-locked, immutable buyer offer pinned), the Option-1
     ///      direct swap-in path (`sellLoanViaBuyOffer`) must refuse to re-anchor

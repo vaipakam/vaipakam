@@ -307,16 +307,27 @@ contract RedeployFacets is Script {
     }
 
     function _earlyWithdrawalSelectors() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](4);
+        s = new bytes4[](3);
         s[0] = EarlyWithdrawalFacet.sellLoanViaBuyOffer.selector;
         s[1] = EarlyWithdrawalFacet.createLoanSaleOffer.selector;
         s[2] = EarlyWithdrawalFacet.completeLoanSale.selector;
-        // #951 (Codex #959 round-5) — the internal, address(this)-gated
-        // auto-complete entry `acceptOffer` routes to. MUST be routed on the
-        // upgrade path too, or a buyer accepting a listed position on a
-        // redeployed diamond hits an unrouted `address(this).call` and reverts
-        // instead of auto-completing. Mirrors DeployDiamond `_getEarlyWithdrawalSelectors` s[3].
-        s[3] = EarlyWithdrawalFacet.completeLoanSaleInternal.selector;
+        // #951 (Codex #959 round-7) — `completeLoanSaleInternal` (the new
+        // address(this)-gated auto-complete entry) is DELIBERATELY NOT routed
+        // here. The lender-sale-vehicle redesign is a MULTI-FACET + shared-storage
+        // change (OfferAcceptFacet's auto-complete + LoanFacet freshness/self-buy
+        // checks + a new `saleListingCollateral` mapping in LibVaipakam), and
+        // RedeployFacets is a CURATED, fixed-facet-set refresh that does NOT cut
+        // OfferAcceptFacet — so it can never route a working sale flow (the old
+        // `acceptOffer` would still call `completeLoanSale` and revert under the
+        // nested `nonReentrant` guard). Per the rollout policy (owner 2026-06-19,
+        // see this file's header + CLAUDE.md), any change that crosses a shared
+        // library deploys FRESH via `DeployDiamond.s.sol` — which routes
+        // `completeLoanSaleInternal` at `_getEarlyWithdrawalSelectors` s[3] and
+        // cuts OfferAcceptFacet. Adding just the selector here (round-5's fix)
+        // would BOTH revert (a `_replace` of a not-yet-routed selector fails the
+        // diamond library's `removeFunction`) AND leave `acceptOffer` on stale
+        // bytecode — so it is removed. #951 is a `DeployDiamond`-fresh change, the
+        // same posture as #394.
     }
 
     /// @dev #658 PR-B2 — RefinanceFacet selectors, mirrors
