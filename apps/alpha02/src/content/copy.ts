@@ -208,6 +208,42 @@ export const copy = {
       'We couldn’t read this loan’s close-early cost right now — retrying. Repaying normally stays available below.',
   },
 
+  refinance: {
+    title: 'Refinance this loan',
+    blurb:
+      'Post a request for a new loan on better terms. The moment a lender accepts it, your current loan is paid off and closed automatically in the same transaction — your collateral moves to the new loan without ever unlocking.',
+    rateLabel: 'Highest yearly rate you’d accept',
+    durationLabel: 'New loan length (days)',
+    action: 'Review refinance request',
+    confirm: 'Confirm — post refinance request',
+    // The payoff wording is deliberately ALWAYS full-term: the
+    // contract pays the exiting lender principal + full-term interest
+    // on the remaining committed term REGARDLESS of the loan's stored
+    // interest mode, and no rate shortfall applies (it was removed —
+    // full-term is the lender's maximum entitlement).
+    payoffNote:
+      'The old loan’s payoff is always principal plus the full remaining term’s interest — even if the loan normally accrues day by day. That is the exiting lender’s fixed entitlement on an early exit.',
+    walletNote: (topUp: string) =>
+      `The payoff is pulled from your wallet automatically at the moment a lender accepts. The new loan’s money arrives in the same transaction, so keep about ${topUp} spare in your wallet (the interest portion plus the new loan’s initiation fee) while the request is open.`,
+    shortIsSafe:
+      'If your wallet is short when a lender tries to accept, the acceptance simply fails — nothing is taken and your current loan continues unchanged.',
+    periodicWarning:
+      'This loan pays interest on a periodic schedule. If a payment period becomes overdue while the request is open, a lender’s acceptance will fail until the period is settled — keep the loan’s payments current.',
+    done:
+      'Refinance request posted. When a lender accepts it, this loan closes automatically — you don’t need to do anything else. You can cancel the request below any time before that.',
+    pending: (offerId: string) =>
+      `Refinance request #${offerId} is live. When a lender accepts it, this loan closes automatically in the same transaction.`,
+    pendingAccepted:
+      'Your refinance request was accepted — this loan is being replaced by the new one. Refresh in a moment to see the final state.',
+    cancel: 'Cancel refinance request',
+    cancelled: 'Refinance request cancelled — this loan continues unchanged.',
+    checking: 'Checking this loan’s refinance details…',
+    checkFailed:
+      'We couldn’t read this loan’s refinance details right now — retrying.',
+    guardrailNote:
+      'Your request carries on-chain guardrails: it can only complete at or below the rate you set here, and only for a new loan ending within the window you reviewed.',
+  },
+
   positions: {
     title: 'My positions',
     lede: 'Your loans and rentals, with the one action each needs right now.',
@@ -285,6 +321,8 @@ export const copy = {
       'This loan looks already settled on-chain — nothing was sent. Refresh in a moment to see its final state.',
     precloseMatured:
       'This loan is past its due date, so closing early no longer applies — nothing was sent. Use Repay instead; it settles the loan including any late fees.',
+    refinanceMatured:
+      'This loan is past its due date, so it can no longer be refinanced — nothing was sent. Use Repay to settle it, including any late fees.',
     lenderBlockedPartial:
       'The lender’s wallet can’t receive a direct partial payment right now (compliance flag). Repaying the loan in full stays open — that path holds the funds for a screened claim instead.',
   },

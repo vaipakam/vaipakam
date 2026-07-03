@@ -10,6 +10,7 @@
  */
 import { useCallback } from 'react';
 import { usePublicClient, useWalletClient } from 'wagmi';
+import type { TransactionReceipt } from 'viem';
 import { DIAMOND_ABI_VIEM } from '@vaipakam/contracts/abis';
 import { useActiveChain } from '../chain/useActiveChain';
 
@@ -17,6 +18,9 @@ export { DIAMOND_ABI_VIEM };
 
 export interface DiamondWriteResult {
   hash: `0x${string}`;
+  /** The mined receipt — for flows that need an id out of the logs
+   *  (e.g. the offer id a createOffer minted). */
+  receipt: TransactionReceipt;
 }
 
 /**
@@ -51,7 +55,7 @@ export function useDiamondWrite() {
       if (receipt.status !== 'success') {
         throw new Error(`Transaction reverted (${hash})`);
       }
-      return { hash };
+      return { hash, receipt };
     },
     [onSupportedChain, walletChain, walletClient, publicClient, address],
   );

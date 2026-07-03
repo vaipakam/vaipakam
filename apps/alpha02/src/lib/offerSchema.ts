@@ -502,6 +502,77 @@ export function toCreateOfferPayload(
   };
 }
 
+/** The live-loan fields {@link toRefinanceOfferPayload} copies. Kept
+ *  structural (not the full LoanLive) so the schema module doesn't
+ *  import from contracts/. */
+export interface RefinanceSourceLoan {
+  principal: bigint;
+  principalAsset: `0x${string}`;
+  allowsPartialRepay: boolean;
+  useFullTermInterest: boolean;
+  collateralAsset: `0x${string}`;
+  /** LibVaipakam.AssetType as a number — copied verbatim, never
+   *  inferred from tokenId/quantity shapes. */
+  collateralAssetType: number;
+  collateralAmount: bigint;
+  collateralTokenId: bigint;
+  collateralQuantity: bigint;
+  prepayAsset: `0x${string}`;
+}
+
+/**
+ * Builds the createOffer payload for a refinance-tagged Borrower
+ * offer from the LIVE old loan (T-092-H atomic path). The wire rules
+ * this encodes, all contract-enforced:
+ *   - AON fill + `amount == amountMax == oldLoan.principal` exactly
+ *     (LibAutoRefinanceCheck requires `amount ≤ principal ≤ amountMax`
+ *     and AON requires a single-value amount).
+ *   - Asset continuity: lending/collateral/prepay assets and the
+ *     collateral asset type must equal the old loan's.
+ *   - Collateral identity repeated EXACTLY (amount/tokenId/quantity,
+ *     single-value) so the old collateral CARRIES OVER — nothing is
+ *     pulled at create and the lien re-tags old→new at accept.
+ *   - Borrower rate mapping: `interestRateBps = 0`,
+ *     `interestRateBpsMax = <ceiling>` — same shape as the standard
+ *     borrower post flow.
+ * Values come from the on-chain loan (wei-native), never from form
+ * strings — no decimals scaling here.
+ */
+export function toRefinanceOfferPayload(
+  oldLoan: RefinanceSourceLoan,
+  oldLoanId: number | bigint,
+  terms: { rateBpsMax: number; durationDays: number; consent: boolean },
+): CreateOfferPayload {
+  return {
+    offerType: 1,
+    lendingAsset: oldLoan.principalAsset,
+    amount: oldLoan.principal,
+    interestRateBps: 0,
+    collateralAsset: oldLoan.collateralAsset,
+    collateralAmount: oldLoan.collateralAmount,
+    durationDays: terms.durationDays,
+    assetType: AssetType.ERC20,
+    tokenId: 0n,
+    quantity: 1n,
+    creatorRiskAndTermsConsent: terms.consent,
+    prepayAsset: oldLoan.prepayAsset,
+    collateralAssetType: oldLoan.collateralAssetType as 0 | 1 | 2,
+    collateralTokenId: oldLoan.collateralTokenId,
+    collateralQuantity: oldLoan.collateralQuantity,
+    allowsPartialRepay: oldLoan.allowsPartialRepay,
+    amountMax: oldLoan.principal,
+    interestRateBpsMax: terms.rateBpsMax,
+    collateralAmountMax: oldLoan.collateralAmount,
+    periodicInterestCadence: 0,
+    allowsParallelSale: false,
+    fillMode: 1,
+    expiresAt: 0n,
+    allowsPrepayListing: false,
+    refinanceTargetLoanId: BigInt(oldLoanId),
+    useFullTermInterest: oldLoan.useFullTermInterest,
+  };
+}
+
 /**
  * Human-readable grace period derived from loan duration. Matches the
  * buckets enforced by `LibVaipakam` on-chain.

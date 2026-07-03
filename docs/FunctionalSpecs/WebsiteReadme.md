@@ -672,6 +672,27 @@ converge. Its intended behaviour (the test oracle for that surface):
   omitting the feature. A compliance-flagged wallet is not shown
   close-early at all; its open path remains the wind-down repayment.
   Only one pending-action review can be open on the page at a time.
+- Advanced mode offers refinancing to the borrower of an active,
+  not-yet-matured ERC-20 loan: the borrower posts a refinance request
+  for exactly the loan's outstanding amount at a chosen rate ceiling
+  and duration, and a lender's acceptance completes everything in one
+  transaction — new loan opened, old lender paid off from the
+  borrower's wallet, old loan closed, collateral moved across without
+  unlocking. Before posting, the review must state: the payoff is
+  always principal plus the full remaining term's interest (never
+  pro-rata, regardless of the loan's interest mode) plus the
+  protocol's cut inside it; the spare wallet balance to keep while
+  the request is open (payoff interest plus the new loan's initiation
+  fee — the new principal arrives in the same transaction); and that
+  a short balance only makes the acceptance fail, taking nothing.
+  Posting sets on-chain guardrails bounding the completion to the
+  reviewed rate ceiling and end-date window, and the request has a
+  stated lifetime after which acceptance fails safely. The page
+  tracks the pending request, verifies it against the chain (a
+  cancelled or replaced request clears itself), shows its state, and
+  offers cancellation any time before acceptance. Loans on a periodic
+  interest schedule carry a visible warning that an overdue period
+  blocks completion until settled.
 
 ## Key UX Requirements
 

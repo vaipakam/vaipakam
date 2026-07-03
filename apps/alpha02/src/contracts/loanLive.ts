@@ -15,6 +15,7 @@ export interface LoanLive {
   /** LibVaipakam.LoanStatus as a number (Active = 0). */
   status: number;
   principal: bigint;
+  principalAsset: `0x${string}`;
   interestRateBps: bigint;
   startTime: bigint;
   /** Term fields come from HERE for any time gate — a term-resetting
@@ -22,7 +23,32 @@ export interface LoanLive {
    *  still carries the old values. */
   durationDays: bigint;
   interestAccrualStart: bigint;
+  /** Remaining committed interest term, re-stamped by partials. Read
+   *  via {@link interestRemainingDaysOf}, never directly — the raw
+   *  field is only meaningful when `interestAccrualStart != 0`. */
+  interestRemainingDays: number;
   useFullTermInterest: boolean;
+  allowsPartialRepay: boolean;
+  /** LibVaipakam.PeriodicInterestCadence as a number (None = 0). */
+  periodicInterestCadence: number;
+  // Collateral identity — a refinance-tagged offer must repeat these
+  // EXACTLY for the collateral to carry over instead of re-pledging.
+  collateralAsset: `0x${string}`;
+  /** LibVaipakam.AssetType as a number (ERC20 = 0). */
+  collateralAssetType: number;
+  collateralAmount: bigint;
+  collateralTokenId: bigint;
+  collateralQuantity: bigint;
+  prepayAsset: `0x${string}`;
+}
+
+/** Mirrors LibVaipakam.interestRemainingDaysOf: the dedicated
+ *  remaining-term field (re-stamped by partials) when the #641
+ *  interest clock is present, else the immutable term. */
+export function interestRemainingDaysOf(live: LoanLive): bigint {
+  return live.interestAccrualStart !== 0n
+    ? BigInt(live.interestRemainingDays)
+    : live.durationDays;
 }
 
 export async function readLoanLive(
@@ -39,11 +65,21 @@ export async function readLoanLive(
   return {
     status: Number(raw.status),
     principal: raw.principal,
+    principalAsset: raw.principalAsset,
     interestRateBps: raw.interestRateBps,
     startTime: raw.startTime,
     durationDays: raw.durationDays,
     interestAccrualStart: raw.interestAccrualStart,
+    interestRemainingDays: Number(raw.interestRemainingDays),
     useFullTermInterest: Boolean(raw.useFullTermInterest),
+    allowsPartialRepay: Boolean(raw.allowsPartialRepay),
+    periodicInterestCadence: Number(raw.periodicInterestCadence),
+    collateralAsset: raw.collateralAsset,
+    collateralAssetType: Number(raw.collateralAssetType),
+    collateralAmount: raw.collateralAmount,
+    collateralTokenId: raw.collateralTokenId,
+    collateralQuantity: raw.collateralQuantity,
+    prepayAsset: raw.prepayAsset,
   };
 }
 

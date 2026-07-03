@@ -40,3 +40,18 @@ collateral is released immediately after closing. After a successful
 close or repayment the page stops offering repay-family actions until
 fresh data confirms the loan's state, and only one pending-action
 review can be open at a time.
+
+Advanced mode also gains refinancing: the borrower of an active,
+not-yet-matured loan can post a refinance request — a borrow offer for
+exactly the loan's outstanding amount, marked so that the moment any
+lender accepts it, one transaction opens the new loan, pays the old
+lender off from the borrower's wallet, closes the old loan, and moves
+the collateral across without ever unlocking it. The review states the
+payoff rule plainly (always principal plus the full remaining term's
+interest — the exiting lender's fixed entitlement, regardless of the
+loan's day-by-day setting), how much spare balance the wallet must
+keep while the request is open, and that a short balance simply makes
+an acceptance fail with nothing taken. Posting sets on-chain
+guardrails at the reviewed rate ceiling and end-date window, and the
+request can be cancelled any time before acceptance from the same
+page, which remembers and live-verifies the pending request.

@@ -51,12 +51,13 @@ import { loanStateView } from '../lib/loanState';
 import { EmptyState, UnavailableState } from '../components/EmptyState';
 import { type ReceiptData } from '../components/ReviewReceipt';
 import { ConfirmReceipt } from '../components/ConfirmReceipt';
+import { RefinanceFlow } from '../components/RefinanceFlow';
 import { AssetType } from '../lib/types';
 
 type Action = 'repay' | 'claim-borrower' | 'claim-lender' | null;
 /** The page's inline confirm surfaces — ONE open at a time, so two
  *  review receipts can never invite conflicting signatures at once. */
-type ConfirmSurface = 'action' | 'collateral' | 'partial' | 'preclose';
+type ConfirmSurface = 'action' | 'collateral' | 'partial' | 'preclose' | 'refinance';
 
 export function PositionDetails() {
   const { loanId: loanIdParam } = useParams();
@@ -1119,6 +1120,7 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
         ) : loanLive.data.chainNow <
           loanLive.data.live.startTime +
             loanLive.data.live.durationDays * 86_400n ? (
+        <>
         <section className="card">
           <h3>{copy.preclose.title}</h3>
           <p className="muted">
@@ -1168,9 +1170,23 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
             </div>
           )}
         </section>
-        ) : // Matured (by live chain time + live term): close-early no
-          // longer applies — the plain Repay path below is the one
-          // that settles a matured loan, late fees included.
+        {/* Refinance shares the strategy gates with close-early:
+            advanced borrower, live-verified Active, pre-maturity by
+            chain time, sanctions-clear (Tier-1 at accept). */}
+        <RefinanceFlow
+          row={row}
+          live={loanLive.data.live}
+          principalMeta={principal}
+          confirmOpen={confirmingSurface === 'refinance'}
+          onOpenConfirm={() => setConfirmingSurface('refinance')}
+          onCloseConfirm={() =>
+            setConfirmingSurface((s) => (s === 'refinance' ? null : s))
+          }
+        />
+        </>
+        ) : // Matured (by live chain time + live term): close-early and
+          // refinance no longer apply — the plain Repay path below is
+          // the one that settles a matured loan, late fees included.
           null
       ) : null}
 
