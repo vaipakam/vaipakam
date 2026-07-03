@@ -4685,6 +4685,14 @@ library LibVaipakam {
         // zero slice. Immune to post-finalize expected-set edits (it snapshots
         // participation AT finalize, not a live membership check).
         mapping(uint256 => mapping(uint32 => bool)) chainDailyIncluded;
+        // ─── #776 receive side (mirror chains) ────────────────────────────
+        // The mirror-side `RewardRemittanceReceiver` authorized to call the
+        // Diamond's `onRewardBudgetReceived` ingress. `address(0)` = ingress
+        // disabled (Base, or an unconfigured mirror).
+        address rewardRemittanceReceiver;
+        // Cumulative VPFI reward budget received from Base on this mirror.
+        // Monitoring/reconciliation only — claims draw from the raw balance.
+        uint256 rewardBudgetReceivedTotal;
     }
 
     /// @notice #393 v1-b — the originating intent of a `matchIntent` loan,

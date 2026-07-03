@@ -65,19 +65,41 @@ contract RewardRemittanceFacet is
     /// @notice Emitted when a reward-budget remittance is sent to a mirror.
     /// @param dstChainId Mirror funded.
     /// @param total      VPFI remitted in this batch (sum of un-remitted slices).
-    /// @param dayCount   Number of day ids the caller passed (incl. skipped).
+    /// @param fundedDayCount Number of days that ACTUALLY funded VPFI in this
+    ///                   batch (skipped/duplicate/zero-slice days excluded) —
+    ///                   matches the day set carried in the CCIP payload.
     /// @param messageId  CCIP message id, for tracing.
     /// @custom:event-category informational/reward-transport
     event RewardBudgetRemitted(
         uint32 indexed dstChainId,
         uint256 total,
-        uint256 dayCount,
+        uint256 fundedDayCount,
         bytes32 messageId
     );
 
     /// @notice Emitted when the optional keeper automation role is set/cleared.
     /// @custom:event-category informational/config
     event RewardRemittanceKeeperUpdated(address indexed keeper);
+
+    /// @notice Emitted (mirror side) when a reward budget is received + credited.
+    /// @param sourceChainId Base chain id the budget came from.
+    /// @param token         Local VPFI token credited.
+    /// @param amount        VPFI credited to this Diamond.
+    /// @param dayIds        The exact day ids the batch funded — the mirror
+    ///                      keeps only `rewardBudgetReceivedTotal`, so this is
+    ///                      the sole per-day reconciliation record (the design
+    ///                      dropped a per-day map in favour of this event).
+    /// @custom:event-category informational/reward-transport
+    event RewardBudgetReceived(
+        uint256 indexed sourceChainId,
+        address indexed token,
+        uint256 amount,
+        uint256[] dayIds
+    );
+
+    /// @notice Emitted when the mirror-side receiver address is set/cleared.
+    /// @custom:event-category informational/config
+    event RewardRemittanceReceiverUpdated(address indexed receiver);
 
     // ─── Errors (facet-local; shared ones come from IVaipakamErrors) ──────
 
@@ -102,6 +124,14 @@ contract RewardRemittanceFacet is
     error InsufficientRemittanceFee(uint256 provided, uint256 required);
     /// @notice Native fee refund to the caller failed.
     error RemittanceRefundFailed();
+    /// @notice `onRewardBudgetReceived` called by an address other than the
+    ///         configured mirror-side receiver.
+    error NotRewardRemittanceReceiver(address caller);
+    /// @notice The credited token is not this Diamond's VPFI token.
+    error RewardBudgetTokenMismatch(address expected, address delivered);
+    /// @notice A non-zero mirror-side receiver was set to an address with no
+    ///         code (likely an EOA typo) — the ingress trusts the receiver.
+    error RewardReceiverNotContract(address receiver);
 
     // ─── Modifiers ────────────────────────────────────────────────────────
 
@@ -182,7 +212,13 @@ contract RewardRemittanceFacet is
 
         // Sum the un-remitted slices and mark each (chain, day) to block a
         // re-send. Every day must be finalized (its denominator is immutable).
+        // Collect ONLY the days that actually contribute VPFI into `fundedDays`
+        // (skipping already-remitted, zero-slice, and duplicate days) — that
+        // filtered set, not the caller's raw `dayIds`, rides the payload so the
+        // mirror's reconciliation events name exactly the funded days.
         uint256 total;
+        uint256[] memory fundedDays = new uint256[](dayIds.length);
+        uint256 fundedCount;
         for (uint256 i; i < dayIds.length; ) {
             uint256 dayId = dayIds[i];
             if (!s.dailyGlobalFinalized[dayId]) {
@@ -197,6 +233,10 @@ contract RewardRemittanceFacet is
                 if (slice > 0) {
                     s.rewardBudgetRemitted[dstChainId][dayId] = slice;
                     total += slice;
+                    fundedDays[fundedCount] = dayId;
+                    unchecked {
+                        ++fundedCount;
+                    }
                 }
             }
             unchecked {
@@ -204,6 +244,11 @@ contract RewardRemittanceFacet is
             }
         }
         if (total == 0) revert NothingToRemit();
+        // Trim `fundedDays` to the days that actually funded (shrink the memory
+        // array's length in place — safe, we only ever reduce it).
+        assembly {
+            mstore(fundedDays, fundedCount)
+        }
         if (total > perRemittanceCap) {
             revert RemittanceExceedsCap(total, perRemittanceCap);
         }
@@ -227,7 +272,7 @@ contract RewardRemittanceFacet is
         // `total` in the payload.
         IERC20(vpfi).forceApprove(messenger, total);
 
-        bytes memory payload = abi.encode(dayIds, total);
+        bytes memory payload = abi.encode(fundedDays, total);
         ICrossChainMessenger.TokenAmount[] memory tokens =
             new ICrossChainMessenger.TokenAmount[](1);
         tokens[0] = ICrossChainMessenger.TokenAmount({token: vpfi, amount: total});
@@ -253,7 +298,7 @@ contract RewardRemittanceFacet is
             if (!ok) revert RemittanceRefundFailed();
         }
 
-        emit RewardBudgetRemitted(dstChainId, total, dayIds.length, messageId);
+        emit RewardBudgetRemitted(dstChainId, total, fundedCount, messageId);
     }
 
     // ─── Admin ────────────────────────────────────────────────────────────
@@ -268,6 +313,59 @@ contract RewardRemittanceFacet is
     ) external onlyRole(LibAccessControl.ADMIN_ROLE) {
         LibVaipakam.storageSlot().rewardRemittanceKeeper = keeper;
         emit RewardRemittanceKeeperUpdated(keeper);
+    }
+
+    /**
+     * @notice Set (or clear, with `address(0)`) the mirror-side
+     *         {RewardRemittanceReceiver} authorized to call
+     *         {onRewardBudgetReceived} on this (mirror) Diamond.
+     * @dev    ADMIN-only. Base leaves this unset. A non-zero receiver MUST have
+     *         code — the ingress trusts this address (it inflates
+     *         `rewardBudgetReceivedTotal` + emits the reconciliation record
+     *         without a balance-delta check), so an EOA typo'd here would let
+     *         that EOA fabricate funded-day events. `address(0)` clears it.
+     */
+    function setRewardRemittanceReceiver(
+        address receiver
+    ) external onlyRole(LibAccessControl.ADMIN_ROLE) {
+        if (receiver != address(0) && receiver.code.length == 0) {
+            revert RewardReceiverNotContract(receiver);
+        }
+        LibVaipakam.storageSlot().rewardRemittanceReceiver = receiver;
+        emit RewardRemittanceReceiverUpdated(receiver);
+    }
+
+    // ─── Mirror-side ingress ──────────────────────────────────────────────
+
+    /**
+     * @notice Record a reward budget the {RewardRemittanceReceiver} has already
+     *         forwarded (as VPFI) into this mirror Diamond.
+     * @dev    Monitoring-only: the VPFI is already in the Diamond's balance
+     *         (the receiver transferred it before this call), and
+     *         `claimInteractionRewards` pays from that balance. This just
+     *         records the funded total + emits an event for reconciliation.
+     *         Trust chain: gated to the registered receiver, whose own
+     *         `onCrossChainMessage` is gated to the CCIP messenger.
+     * @param token         Token credited — must be this Diamond's VPFI.
+     * @param amount        VPFI amount credited.
+     * @param dayIds        Days the batch covered (for the event log).
+     * @param sourceChainId Base chain id the budget came from.
+     */
+    function onRewardBudgetReceived(
+        address token,
+        uint256 amount,
+        uint256[] calldata dayIds,
+        uint256 sourceChainId
+    ) external nonReentrant whenNotPaused {
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        if (msg.sender != s.rewardRemittanceReceiver) {
+            revert NotRewardRemittanceReceiver(msg.sender);
+        }
+        if (token != s.vpfiToken) {
+            revert RewardBudgetTokenMismatch(s.vpfiToken, token);
+        }
+        s.rewardBudgetReceivedTotal += amount;
+        emit RewardBudgetReceived(sourceChainId, token, amount, dayIds);
     }
 
     // ─── Views ────────────────────────────────────────────────────────────
@@ -349,5 +447,15 @@ contract RewardRemittanceFacet is
     /// @notice The configured keeper EOA (address(0) = owner-only).
     function getRewardRemittanceKeeper() external view returns (address) {
         return LibVaipakam.storageSlot().rewardRemittanceKeeper;
+    }
+
+    /// @notice The mirror-side receiver authorized for {onRewardBudgetReceived}.
+    function getRewardRemittanceReceiver() external view returns (address) {
+        return LibVaipakam.storageSlot().rewardRemittanceReceiver;
+    }
+
+    /// @notice Cumulative VPFI reward budget received from Base on this mirror.
+    function getRewardBudgetReceivedTotal() external view returns (uint256) {
+        return LibVaipakam.storageSlot().rewardBudgetReceivedTotal;
     }
 }
