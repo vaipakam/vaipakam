@@ -245,6 +245,13 @@ export function PositionDetails() {
     if (role === 'lender' && (row.status === 'defaulted' || row.status === 'liquidated')) {
       return 'claim-lender';
     }
+    // fallback_pending is claimable for the LENDER too: claimAsLender
+    // runs the claim-time fallback resolution (ClaimFacet accepts
+    // FallbackPending), so the lender can finalize instead of waiting
+    // on a keeper retry. (The borrower's cure path is handled above.)
+    if (role === 'lender' && row.status === 'fallback_pending') {
+      return 'claim-lender';
+    }
     return null;
   })();
 
@@ -567,6 +574,8 @@ export function PositionDetails() {
               disabled={
                 busy ||
                 !onSupportedChain ||
+                !walletClient ||
+                !publicClient ||
                 !sanctionsClear ||
                 collateralInputWei === null ||
                 // balance still loading → over-balance can't be judged
@@ -616,6 +625,8 @@ export function PositionDetails() {
               disabled={
                 busy ||
                 !onSupportedChain ||
+                !walletClient ||
+                !publicClient ||
                 partialInputWei === null ||
                 principalBalance.data === undefined ||
                 partialOverBalance

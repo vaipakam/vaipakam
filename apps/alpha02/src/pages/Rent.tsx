@@ -104,6 +104,13 @@ function ListNftFlow() {
     }
   }, [dailyFee, prepayMeta.data]);
 
+  // Live createOffer duration cap (OfferDurationExceedsCap) — filter
+  // the picker and refuse review when the selected length exceeds it.
+  const durationOptions = OFFER_DURATION_BUCKETS_DAYS.filter(
+    (d) => d <= fees.maxOfferDurationDays,
+  );
+  const durationValid = Number(durationDays) <= fees.maxOfferDurationDays;
+
   const form = useMemo((): OfferFormState | null => {
     if (!dailyFeeWei || !isAddressLike(contract) || !/^\d+$/.test(tokenId)) return null;
     // '0' is truthy as a string — a zero-edition ERC-1155 listing must
@@ -127,7 +134,7 @@ function ListNftFlow() {
     };
   }, [dailyFeeWei, contract, tokenId, standard, durationDays, quantity, prepayAsset, consent]);
 
-  const detailsComplete = form !== null;
+  const detailsComplete = form !== null && durationValid;
 
   const baseChecks = useEligibility({ consent });
   // The contract rejects VPFI as a rental prepay asset
@@ -227,6 +234,7 @@ function ListNftFlow() {
     allChecksPass(checks) &&
     receipt !== null &&
     formError === null &&
+    durationValid &&
     // wallet client hydrates async after isConnected — without these a
     // click in the gap would silently no-op.
     Boolean(walletClient) &&
@@ -353,12 +361,19 @@ function ListNftFlow() {
               value={durationDays}
               onChange={(e) => setDurationDays(e.target.value)}
             >
-              {OFFER_DURATION_BUCKETS_DAYS.map((d) => (
+              {durationOptions.map((d) => (
                 <option key={d} value={String(d)}>
                   {formatDurationDays(d)}
                 </option>
               ))}
             </select>
+            {!durationValid ? (
+              <span className="field-hint">
+                The protocol currently caps listings at{' '}
+                {formatDurationDays(fees.maxOfferDurationDays)} — pick a shorter
+                length.
+              </span>
+            ) : null}
           </div>
           <button
             type="button"

@@ -13,6 +13,11 @@
  * VPFI is 18-decimals on every deploy (OFT-mesh requirement).
  */
 import { useQuery } from '@tanstack/react-query';
+import {
+  BaseError,
+  ContractFunctionRevertedError,
+  ContractFunctionZeroDataError,
+} from 'viem';
 import { usePublicClient } from 'wagmi';
 import { DIAMOND_ABI_VIEM } from '@vaipakam/contracts/abis';
 import { useActiveChain } from '../chain/useActiveChain';
@@ -135,8 +140,20 @@ export function useVpfi() {
             address,
           ]),
           read<boolean>('getVPFIDiscountConsent', [address]),
-          // VPFI pledged as loan collateral can't be withdrawn.
-          read<bigint>('getEncumbered', [address, token, 0n]).catch(() => 0n),
+          // VPFI pledged as loan collateral can't be withdrawn. Only a
+          // REVERT/zero-data (selector absent on an older deploy) may
+          // mean "no encumbrance tracking → 0"; a transport failure is
+          // NOT knowledge — treating it as 0 would offer the full
+          // balance as withdrawable and burn gas on
+          // VPFIEncumberedByActiveLoan. Rethrow → snapshot unavailable.
+          read<bigint>('getEncumbered', [address, token, 0n]).catch((err) => {
+            const isRevert =
+              err instanceof BaseError &&
+              (err.walk((e) => e instanceof ContractFunctionRevertedError) !== null ||
+                err.walk((e) => e instanceof ContractFunctionZeroDataError) !== null);
+            if (isRevert) return 0n;
+            throw err;
+          }),
         ]);
       const [effTier, effBps] = effective;
       const [trackedTier, trackedBal] = tracked;

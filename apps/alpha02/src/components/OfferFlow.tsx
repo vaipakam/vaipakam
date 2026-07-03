@@ -442,8 +442,18 @@ export function OfferFlow({ side }: { side: Side }) {
   const rateValid =
     isPlainDecimal(form.interestRate) &&
     Number(form.interestRate) <= MAX_RATE_PERCENT;
+  // Governance can lower the duration cap below the client buckets
+  // (createOffer reverts OfferDurationExceedsCap above it) — filter
+  // the picker and re-validate the selected value against the LIVE
+  // cap so the approval tx can't mine ahead of a doomed createOffer.
+  const durationOptions = OFFER_DURATION_BUCKETS_DAYS.filter(
+    (d) => d <= fees.maxOfferDurationDays,
+  );
+  const durationValid = Number(form.durationDays) <= fees.maxOfferDurationDays;
   const detailsComplete =
-    isAddressLike(form.lendingAsset) && isPositiveDecimal(form.amount);
+    isAddressLike(form.lendingAsset) &&
+    isPositiveDecimal(form.amount) &&
+    durationValid;
   const formError = validateOfferForm(form);
   const postDetailsComplete =
     detailsComplete &&
@@ -567,7 +577,7 @@ export function OfferFlow({ side }: { side: Side }) {
     allChecksPass(checks) &&
     receipt !== null &&
     !isOwnSelectedOffer &&
-    (mode === 'accept' ? selected !== null : formError === null) &&
+    (mode === 'accept' ? selected !== null : formError === null && durationValid) &&
     // The wallet client hydrates asynchronously after `isConnected`
     // flips true — without this gate a click in that window would
     // no-op silently.
@@ -736,12 +746,19 @@ export function OfferFlow({ side }: { side: Side }) {
               value={form.durationDays}
               onChange={(e) => set({ durationDays: e.target.value })}
             >
-              {OFFER_DURATION_BUCKETS_DAYS.map((d) => (
+              {durationOptions.map((d) => (
                 <option key={d} value={String(d)}>
                   {formatDurationDays(d)}
                 </option>
               ))}
             </select>
+            {!durationValid ? (
+              <span className="field-hint">
+                The protocol currently caps offers at{' '}
+                {formatDurationDays(fees.maxOfferDurationDays)} — pick a shorter
+                duration.
+              </span>
+            ) : null}
           </div>
           <button
             type="button"
