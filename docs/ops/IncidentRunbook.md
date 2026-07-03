@@ -179,6 +179,32 @@ recoverable back-pressure — not a fund-loss event.
 - **Lane capacity:** a single day is remitted atomically, so the reward-budget
   lane capacity must exceed the largest single-day slice. Tracked: #918.
 
+### Automated remittance (keeper, #925)
+The steps above are the **manual** fallback. In normal operation the `apps/keeper`
+Worker drives remittance itself (`runRewardBudgetRemit`): each cron tick, running
+against Base, it re-scans a bounded recent-day window per mirror, batches the
+finalized-but-un-remitted days under the lane cap, quotes the exact fee, and
+remits — keeping mirrors funded ahead of their claim gate. It is **dark by
+default** and requires all of:
+1. `KEEPER_ENABLED=true` (master switch) **and** `REWARD_REMIT_ENABLED=true`
+   (dedicated flag) in the keeper Worker's vars.
+2. The keeper's signing EOA authorized on-chain — either ADMIN, or granted the
+   reward-remittance keeper role via `RewardRemittanceFacet.setRewardRemittanceKeeper(<keeperEOA>)`.
+3. The `RewardRemittanceReceiver` deployed + registered on every mirror and the
+   `vpfi-reward-budget` CCIP lane provisioned (see the DeploymentRunbook).
+
+Optional tuning vars: `REWARD_REMIT_LOOKBACK_DAYS` (default 45) and
+`REWARD_REMIT_LANE_CAP` (wei, default `50000e18` — must stay ≤ the provisioned
+lane bucket; a day whose slice exceeds it is skipped with a loud log until the
+lane + cap are raised together, #918).
+
+**To disable in an incident** (e.g. a misconfigured lane, or to hand back to
+manual control): set `REWARD_REMIT_ENABLED=false` (leaves the rest of the keeper
+running) or `KEEPER_ENABLED=false` (stops all keeper actions), then redeploy the
+Worker. The pass is idempotent and bounds its receipt waits, so stopping it never
+strands funds — any in-flight day simply re-evaluates on the next armed tick or
+via the manual procedure above.
+
 ---
 
 ## 3. Emergency pause
