@@ -42,6 +42,11 @@ function mergeActivityEvents(...lists: IndexedActivityEvent[][]): IndexedActivit
   });
 }
 
+/** Minimum participant-only slots to keep when the actor page already fills `limit`. */
+function participantReserveSlots(limit: number): number {
+  return Math.min(3, Math.max(1, Math.floor(limit / 4)));
+}
+
 /** Keep every actor row for this page; fill leftover slots with participant-only events. */
 export function mergeWalletActivityEvents(
   actorEvents: IndexedActivityEvent[],
@@ -50,10 +55,16 @@ export function mergeWalletActivityEvents(
 ): IndexedActivityEvent[] {
   const actorKeys = new Set(actorEvents.map(activityKey));
   const participantOnly = participantEvents.filter((event) => !actorKeys.has(activityKey(event)));
+  const sortedActors = mergeActivityEvents(actorEvents);
   const sortedExtras = mergeActivityEvents(participantOnly);
-  const room = Math.max(0, limit - actorEvents.length);
-  if (room === 0) return mergeActivityEvents(actorEvents);
-  return mergeActivityEvents(actorEvents, sortedExtras.slice(0, room));
+  let room = Math.max(0, limit - sortedActors.length);
+  let actorSlice = sortedActors;
+  if (room === 0 && sortedExtras.length > 0) {
+    const reserve = participantReserveSlots(limit);
+    actorSlice = sortedActors.slice(0, Math.max(0, limit - reserve));
+    room = limit - actorSlice.length;
+  }
+  return mergeActivityEvents(actorSlice, sortedExtras.slice(0, room));
 }
 
 /**

@@ -45,7 +45,9 @@ export function PositionDetailPage() {
   const role = loan ? loanRoleForWallet(loan, address) : 'other';
   const needsBorrowerClaimProbe =
     (role === 'borrower' || role === 'both') &&
-    (loan?.status === 'defaulted' || loan?.status === 'internal_matched') &&
+    (loan?.status === 'defaulted' ||
+      loan?.status === 'internal_matched' ||
+      loan?.status === 'liquidated') &&
     Boolean(chain.diamondAddress);
   const { data: borrowerClaimable } = useQuery({
     queryKey: ['loan-borrower-claimable', chain.chainId, id, chain.diamondAddress],
@@ -108,7 +110,9 @@ export function PositionDetailPage() {
       healthTone: actionRole === 'borrower' ? health.tone : 'ok',
       borrowerClaimable:
         actionRole === 'borrower' &&
-        (loan.status === 'defaulted' || loan.status === 'internal_matched')
+        (loan.status === 'defaulted' ||
+          loan.status === 'internal_matched' ||
+          loan.status === 'liquidated')
           ? borrowerClaimable
           : undefined,
     });

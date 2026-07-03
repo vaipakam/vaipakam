@@ -33,3 +33,5 @@ Round 12: Borrower `fallback_pending` claims filtered via on-chain probe; accept
 Round 13: Zero `amountMax` normalized for offer matching; public offer fetch before wallet connect; defaulted borrower claim CTA gated on `getClaimable`; borrow request fallback stays visible on indexer errors; borrower `fallback_pending` excluded from Claims; Codex watch paginates reviews.
 
 Round 14: Borrow accept receipt reuses `offerPrincipalWei`; Claims prunes empty lender rows via `getClaimable`; indexer by-current-holder loan/offer routes return 503 when the chain is not configured; dual NFT holders resolve to both roles with lender fallback on loan detail; `internal_matched` borrower claims gated on on-chain claimability.
+
+Round 15: Offer cards use `offerPrincipalWei` for display; `liquidated` borrower claims gated on `getClaimable`; activity merge reserves participant slots when the actor page is full.

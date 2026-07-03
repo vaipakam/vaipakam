@@ -1,5 +1,10 @@
 import type { IndexedOffer } from '@vaipakam/defi-client';
-import { ASSET_TYPE_ERC1155, formatBpsAsPercent, OFFER_TYPE_LENDER } from '@vaipakam/defi-client';
+import {
+  ASSET_TYPE_ERC1155,
+  formatBpsAsPercent,
+  offerPrincipalWei,
+  OFFER_TYPE_LENDER,
+} from '@vaipakam/defi-client';
 import { AssetAmount } from './AssetAmount';
 import { AssetSymbolLink } from './AssetSymbolLink';
 import { useTokenMeta } from '../lib/tokenMeta';
@@ -32,7 +37,7 @@ export function OfferCard({ offer, onCancel, cancelling = false }: Props) {
         {isLender ? 'Lending ' : 'Borrowing '}
         <AssetAmount
           mode="raw"
-          amount={isLender ? offer.amountMax || offer.amount : offer.amount}
+          amount={isLender ? offerPrincipalWei(offer).toString() : offer.amount}
           address={offer.lendingAsset}
           meta={lendingMeta}
           assetType={offer.assetType}

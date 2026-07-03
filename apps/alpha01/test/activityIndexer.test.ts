@@ -35,7 +35,7 @@ describe('mergeWalletActivityEvents', () => {
       event('OfferAccepted', 98, 1, { actor: '0xdef' }),
     ];
     const tight = mergeWalletActivityEvents(actorEvents, participantEvents, 2);
-    expect(tight.map((e) => e.kind)).toEqual(['OfferCanceled', 'OfferCreated']);
+    expect(tight.map((e) => e.kind)).toEqual(['LoanInitiated', 'OfferCanceled']);
     const roomy = mergeWalletActivityEvents(actorEvents, participantEvents, 4);
     expect(roomy.map((e) => e.kind)).toEqual([
       'LoanInitiated',
