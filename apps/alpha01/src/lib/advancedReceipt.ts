@@ -68,3 +68,50 @@ export function lendCreateTechnicalDetails(rate: string, duration: string): Revi
     },
   ];
 }
+
+export function borrowRequestTechnicalDetails(opts: {
+  maxRate: string;
+  duration: string;
+  lifBps: number;
+}): ReviewReceiptRow[] {
+  return [
+    { label: 'Max APR', value: `${opts.maxRate}%` },
+    { label: 'Term', value: `${opts.duration} days` },
+    { label: 'Loan initiation fee (at match)', value: formatBpsAsPercent(opts.lifBps) },
+    {
+      label: 'Min health factor at open',
+      value: formatHealthFactor(MIN_HEALTH_FACTOR_1E18),
+    },
+    {
+      label: 'Matching',
+      value: 'Open until accepted or cancelled; collateral locks at post time.',
+    },
+  ];
+}
+
+/** Compact rows for Advanced-mode offer browse cards. */
+export function offerBrowseTechnicalRows(offer: IndexedOffer): { label: string; value: string }[] {
+  const amount = BigInt(offer.amount?.trim() || '0');
+  const amountMax = BigInt(offer.amountMax?.trim() || '0');
+  const rows: { label: string; value: string }[] = [
+    { label: 'Offer ID', value: `#${offer.offerId}` },
+    {
+      label: 'Collateral class',
+      value: collateralLiquidityLabel(offer.collateralAssetType),
+    },
+    {
+      label: 'Partial repay',
+      value: offer.allowsPartialRepay ? 'Allowed' : 'Full repay only',
+    },
+  ];
+  if (amountMax > amount) {
+    rows.unshift({ label: 'Principal range', value: 'Partial fill enabled' });
+  }
+  if (offer.interestRateBpsMax > offer.interestRateBps) {
+    rows.push({
+      label: 'Rate range',
+      value: `${formatBpsAsPercent(offer.interestRateBps)} – ${formatBpsAsPercent(offer.interestRateBpsMax)}`,
+    });
+  }
+  return rows;
+}

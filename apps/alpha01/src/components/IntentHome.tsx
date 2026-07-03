@@ -7,6 +7,7 @@ import { useMyLoans } from '../hooks/useIndexedLoans';
 import { useMyOffers } from '../hooks/useMyOffers';
 import { HelpLink } from './HelpLink';
 import { PortfolioStrip } from './PortfolioStrip';
+import { DEFI_CLASSIC_LINKS } from '../lib/defiClassicLinks';
 
 const INTENTS = [
   { to: '/borrow', title: 'Borrow assets', body: 'Find a lender and lock collateral to borrow.', icon: ArrowDownLeft },
@@ -41,6 +42,21 @@ export function IntentHome() {
 
       {mode === 'advanced' && address && positionCount > 0 ? (
         <PortfolioStrip loans={loans ?? []} offerCount={offers?.length ?? 0} />
+      ) : null}
+
+      {mode === 'advanced' ? (
+        <nav className="advanced-shortcuts" aria-label="Advanced shortcuts" data-testid="advanced-shortcuts">
+          <Link to="/claims">Claims</Link>
+          <a href={DEFI_CLASSIC_LINKS.vault} target="_blank" rel="noreferrer">
+            VPFI vault
+          </a>
+          <a href={DEFI_CLASSIC_LINKS.allowances} target="_blank" rel="noreferrer">
+            Allowances
+          </a>
+          <a href={DEFI_CLASSIC_LINKS.analytics} target="_blank" rel="noreferrer">
+            Analytics
+          </a>
+        </nav>
       ) : null}
 
       {positionCount > 0 ? (

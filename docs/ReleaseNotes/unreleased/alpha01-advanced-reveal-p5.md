@@ -6,10 +6,12 @@ Turns on Advanced-mode density across alpha01 without new routes: portfolio stri
 
 ## User-visible changes
 
-- **Home (Advanced):** Portfolio strip shows borrower/lender counts, open offers, and loans with HF below 1.5.
-- **Borrow / Lend / Rent receipts (Advanced):** Collapsible technical details (HF floor, LTV class, APR, rental buffer, offer IDs).
+- **Home (Advanced):** Portfolio strip plus shortcuts to Claims, VPFI vault, allowances, and analytics.
+- **Borrow / Lend / Rent (Advanced):** Bounds/construction panels on wizard steps; browse cards show offer IDs, liquidity class, and rental buffer; receipts include collapsible technical details.
 - **Positions (Advanced):** Role and at-risk filters; loan cards show live HF and LTV.
-- **Loan detail (Advanced):** Technical risk panel with on-chain HF and LTV for borrower-side debt loans.
+- **Loan detail (Advanced):** Technical risk panel; link-out to classic app for add-collateral, preclose, and refinance.
+- **Claims (Advanced):** Settlement breakdown panel with status, claim asset, and VPFI LIF rebate when applicable.
+- **More (Advanced):** Keeper settings, risk access, allowances, analytics, and NFT verifier link to `defi.vaipakam.com`.
 - **Open offers:** NFT rental listings/requests use rental vocabulary instead of debt-loan copy.
 
 ## Verification

@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { useWalletClient } from 'wagmi';
 import { parseUnits, type Address } from 'viem';
@@ -21,6 +21,7 @@ import { HelpLink } from '../components/HelpLink';
 import { RentalOfferCard } from '../components/RentalOfferCard';
 import { ReviewReceipt, type ReviewReceiptView } from '../components/ReviewReceipt';
 import { RiskConsentLabel } from '../components/RiskConsentLabel';
+import { useMode } from '../context/ModeContext';
 import { useWallet } from '../context/WalletContext';
 import { useRentalBufferBps } from '../hooks/useProtocolConfig';
 import { useSanctionsCheck } from '../hooks/useSanctionsCheck';
@@ -249,6 +250,7 @@ function acceptReceipt(
 
 export function RentWizard() {
   const navigate = useNavigate();
+  const { mode: uiMode } = useMode();
   const chain = useReadChain();
   const { address, isCorrectChain, connect, switchToAppChain } = useWallet();
   const diamond = useDiamondContract();
@@ -284,6 +286,17 @@ export function RentWizard() {
   );
   const { data: listings = [], isLoading: listingsLoading } = useLenderNftOffersForRent();
   const { data: demands = [] } = useBorrowerNftRentalDemands();
+
+  useEffect(() => {
+    if (!selectedOffer) return;
+    const wallet = address?.toLowerCase();
+    const stillListed = listings.some((o) => o.offerId === selectedOffer.offerId);
+    const selfTrade = wallet && selectedOffer.creator.toLowerCase() === wallet;
+    if (!stillListed || selfTrade) {
+      setSelectedOffer(null);
+      if (path === 'browse') setStep('pick');
+    }
+  }, [address, listings, path, selectedOffer]);
 
   const prepayDecimals = prepayMeta?.decimals ?? 18;
   const needsRentalBuffer =
@@ -522,6 +535,7 @@ export function RentWizard() {
                 key={o.offerId}
                 offer={o}
                 rentalBufferBps={rentalBufferBps}
+                advanced={uiMode === 'advanced'}
                 selected={selectedOffer?.offerId === o.offerId}
                 onSelect={() => {
                   setSelectedOffer(o);

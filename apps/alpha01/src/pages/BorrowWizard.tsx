@@ -29,8 +29,13 @@ import { useSanctionsCheck } from '../hooks/useSanctionsCheck';
 import { useLenderOffersForBorrow } from '../hooks/useIndexedOffers';
 import { useSpendableBalance } from '../hooks/useSpendableBalance';
 import { useDiamondContract, useDiamondPublicClient, useReadChain } from '../hooks/useDiamond';
+import { AdvancedPanel } from '../components/AdvancedPanel';
 import { useMode } from '../context/ModeContext';
-import { borrowAcceptTechnicalDetails } from '../lib/advancedReceipt';
+import {
+  borrowAcceptTechnicalDetails,
+  borrowRequestTechnicalDetails,
+  offerBrowseTechnicalRows,
+} from '../lib/advancedReceipt';
 import { baseEligibilityItems, sanctionsAllowsProceed } from '../lib/eligibility';
 
 import { assessCollateralBalance, parseHumanAmount } from '../lib/balanceCheck';
@@ -121,6 +126,7 @@ function requestReceipt(
   collateralAsset: string,
   lendingMeta: TokenMeta | null,
   collateralMeta: TokenMeta | null,
+  lifBps: number,
 ): ReviewReceiptView {
   return {
     youReceive: {
@@ -154,6 +160,7 @@ function requestReceipt(
     },
     fees: { label: 'Fees', value: 'Protocol fees at settlement (separate from network gas).' },
     whenEnds: { label: 'When this ends', value: 'When cancelled, matched, or the loan closes.' },
+    technicalDetails: borrowRequestTechnicalDetails({ maxRate: rate, duration, lifBps }),
   };
 }
 
@@ -361,6 +368,7 @@ export function BorrowWizard() {
       collateralAsset,
       lendingMeta,
       collateralMeta,
+      lifBps,
     );
   }, [
     amount,
@@ -521,6 +529,18 @@ export function BorrowWizard() {
 
       {step === 'match' ? (
         <>
+          {uiMode === 'advanced' ? (
+            <AdvancedPanel title="Your borrow bounds" testId="borrow-bounds-panel" defaultOpen={false}>
+              <div>
+                Borrow up to <strong>{amount || '—'}</strong>{' '}
+                {resolveSymbol(lendingMeta, lendingAsset)} · max {maxRate}% APR · {duration} days
+              </div>
+              <div>
+                Collateral: {resolveSymbol(collateralMeta, collateralAsset)}
+                {matched.length > 0 ? ` · ${matched.length} offer${matched.length === 1 ? '' : 's'} in range` : ''}
+              </div>
+            </AdvancedPanel>
+          ) : null}
           {offersError ? (
             <div className="banner banner-error">
               Could not load offers: {offersErr instanceof Error ? offersErr.message : 'Indexer request failed'}
@@ -548,6 +568,15 @@ export function BorrowWizard() {
                   Borrow {resolveSymbol(peekTokenMeta(o.lendingAsset, chain.chainId), o.lendingAsset)} · Lock{' '}
                   {resolveSymbol(peekTokenMeta(o.collateralAsset, chain.chainId), o.collateralAsset)}
                 </div>
+                {uiMode === 'advanced' ? (
+                  <div style={{ marginTop: 6, fontSize: '0.8rem', color: 'var(--text-secondary)' }}>
+                    {offerBrowseTechnicalRows(o).map((r) => (
+                      <span key={r.label} style={{ marginRight: 12 }}>
+                        {r.label}: {r.value}
+                      </span>
+                    ))}
+                  </div>
+                ) : null}
               </button>
             ))}
           </div>

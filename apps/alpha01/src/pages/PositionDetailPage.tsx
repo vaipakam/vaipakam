@@ -28,6 +28,7 @@ import { useIndexerOrigin } from '../hooks/useIndexerOrigin';
 import { useWalletClient } from 'wagmi';
 import type { Address } from 'viem';
 import { useDiamondContract, useDiamondPublicClient, useReadChain } from '../hooks/useDiamond';
+import { DEFI_CLASSIC_LINKS } from '../lib/defiClassicLinks';
 
 export function PositionDetailPage() {
   const { loanId } = useParams();
@@ -296,6 +297,24 @@ export function PositionDetailPage() {
           </button>
         ) : null}
       </div>
+
+      {mode === 'advanced' && !rental && loan.status === 'active' ? (
+        <div className="card" style={{ marginTop: 16 }}>
+          <strong>More protocol actions</strong>
+          <p style={{ margin: '8px 0 12px', fontSize: '0.9rem', color: 'var(--text-secondary)' }}>
+            Add collateral, partial repay, preclose, refinance, and early withdrawal live in the classic app
+            until alpha01 catches up.
+          </p>
+          <a
+            href={DEFI_CLASSIC_LINKS.loan(loan.loanId)}
+            className="btn btn-secondary"
+            target="_blank"
+            rel="noreferrer"
+          >
+            Open loan in classic app →
+          </a>
+        </div>
+      ) : null}
 
       <div style={{ marginTop: 16 }}>
         <HelpLink anchor="manage-loan" />
