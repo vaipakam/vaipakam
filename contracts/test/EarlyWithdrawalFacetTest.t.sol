@@ -14,6 +14,8 @@ import {VaipakamNFTFacet} from "../src/facets/VaipakamNFTFacet.sol";
 import {VaultFactoryFacet} from "../src/facets/VaultFactoryFacet.sol";
 import {OfferCreateFacet} from "../src/facets/OfferCreateFacet.sol";
 import {OfferAcceptFacet} from "../src/facets/OfferAcceptFacet.sol";
+import {OfferMutateFacet} from "../src/facets/OfferMutateFacet.sol";
+import {OfferMatchFacet} from "../src/facets/OfferMatchFacet.sol";
 import {LibAcceptTestSigner} from "./helpers/LibAcceptTestSigner.sol";
 import {OfferCancelFacet} from "../src/facets/OfferCancelFacet.sol";
 import {LoanFacet} from "../src/facets/LoanFacet.sol";
@@ -55,6 +57,8 @@ contract EarlyWithdrawalFacetTest is Test {
     DiamondCutFacet cutFacet;
     OfferCreateFacet offerCreateFacet;
     OfferAcceptFacet offerAcceptFacet;
+    OfferMutateFacet offerMutateFacet;
+    OfferMatchFacet offerMatchFacet;
     OfferCancelFacet offerCancelFacet;
     ProfileFacet profileFacet;
     OracleFacet oracleFacet;
@@ -178,6 +182,8 @@ contract EarlyWithdrawalFacetTest is Test {
         diamond  = new VaipakamDiamond(owner, address(cutFacet));
         offerCreateFacet = new OfferCreateFacet();
         offerAcceptFacet = new OfferAcceptFacet();
+        offerMutateFacet = new OfferMutateFacet();
+        offerMatchFacet = new OfferMatchFacet();
         offerCancelFacet = new OfferCancelFacet();
         profileFacet = new ProfileFacet();
         oracleFacet = new OracleFacet();
@@ -200,7 +206,7 @@ contract EarlyWithdrawalFacetTest is Test {
         ConfigFacet configFacet = new ConfigFacet();
         RiskAccessFacet riskAccessFacet = new RiskAccessFacet();
 
-        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](21);
+        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](23);
         cuts[19] = IDiamondCut.FacetCut({
             facetAddress: address(configFacet),
             action: IDiamondCut.FacetCutAction.Add,
@@ -239,6 +245,9 @@ contract EarlyWithdrawalFacetTest is Test {
             action: IDiamondCut.FacetCutAction.Add,
             functionSelectors: helperTest.getEncumbranceMutateFacetSelectors()
         });
+        // #951 redesign — OfferMutate/OfferMatch for the sale-vehicle guard tests.
+        cuts[21] = IDiamondCut.FacetCut({facetAddress: address(offerMutateFacet), action: IDiamondCut.FacetCutAction.Add, functionSelectors: helperTest.getOfferMutateFacetSelectors()});
+        cuts[22] = IDiamondCut.FacetCut({facetAddress: address(offerMatchFacet), action: IDiamondCut.FacetCutAction.Add, functionSelectors: helperTest.getOfferMatchFacetSelectors()});
 
         IDiamondCut(address(diamond)).diamondCut(cuts, address(0), "");
 
@@ -576,6 +585,73 @@ contract EarlyWithdrawalFacetTest is Test {
         vm.prank(lender);
         vm.expectRevert(); // UnauthorizedCrossFacetCall (msg.sender != address(this))
         EarlyWithdrawalFacet(address(diamond)).completeLoanSaleInternal(activeLoanId);
+    }
+
+    /// @dev List a sale offer for `activeLoanId` and return its id (from the
+    ///      `LoanSaleOfferLinked` event). Shared by the D3/D4 guard tests.
+    function _listSaleOffer() internal returns (uint256 saleOfferId) {
+        vm.recordLogs();
+        vm.prank(lender);
+        EarlyWithdrawalFacet(address(diamond)).createLoanSaleOffer(activeLoanId, 500, true);
+        Vm.Log[] memory logs = vm.getRecordedLogs();
+        bytes32 sig = keccak256("LoanSaleOfferLinked(uint256,uint256)");
+        for (uint256 i; i < logs.length; i++) {
+            if (logs[i].topics[0] == sig) saleOfferId = uint256(logs[i].topics[2]);
+        }
+        require(saleOfferId != 0, "sale offer not created");
+    }
+
+    /// @dev #951 (redesign D4) — a linked sale offer is immutable; the seller
+    ///      cannot change its rate (or any field) via OfferMutateFacet.
+    function testLinkedSaleOfferIsImmutable() public {
+        uint256 saleOfferId = _listSaleOffer();
+        vm.prank(lender);
+        vm.expectRevert(OfferMutateFacet.SaleVehicleImmutable.selector);
+        OfferMutateFacet(address(diamond)).setOfferRate(saleOfferId, 600, 600);
+    }
+
+    /// @dev #951 (redesign D3) — a linked sale vehicle cannot be filled through
+    ///      the range matcher; matchOffers reverts before any overlap/HF check.
+    function testSaleVehicleNotMatchable() public {
+        uint256 saleOfferId = _listSaleOffer();
+        ConfigFacet(address(diamond)).setPartialFillEnabled(true);
+
+        // A lender offer as the match counterparty — the sale-vehicle guard fires
+        // before overlap, so this just needs to exist.
+        vm.prank(newLender);
+        uint256 lenderOfferId = OfferCreateFacet(address(diamond)).createOffer(
+            LibVaipakam.CreateOfferParams({
+                offerType: LibVaipakam.OfferType.Lender,
+                lendingAsset: mockERC20,
+                amount: PRINCIPAL,
+                interestRateBps: 500,
+                collateralAsset: mockCollateralERC20,
+                collateralAmount: COLLATERAL,
+                durationDays: 30,
+                assetType: LibVaipakam.AssetType.ERC20,
+                tokenId: 0,
+                quantity: 0,
+                creatorRiskAndTermsConsent: true,
+                prepayAsset: mockERC20,
+                collateralAssetType: LibVaipakam.AssetType.ERC20,
+                collateralTokenId: 0,
+                collateralQuantity: 0,
+                allowsPartialRepay: false,
+                allowsPrepayListing: false,
+                allowsParallelSale: false,
+                amountMax: PRINCIPAL,
+                interestRateBpsMax: 500,
+                collateralAmountMax: COLLATERAL,
+                periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None,
+                expiresAt: 0,
+                fillMode: LibVaipakam.FillMode.Partial,
+                refinanceTargetLoanId: 0,
+                useFullTermInterest: false
+            })
+        );
+
+        vm.expectRevert(OfferMatchFacet.SaleVehicleNotMatchable.selector);
+        OfferMatchFacet(address(diamond)).matchOffers(lenderOfferId, saleOfferId);
     }
 
     // ─── _getTreasury coverage via accrued interest ───────────────────────────

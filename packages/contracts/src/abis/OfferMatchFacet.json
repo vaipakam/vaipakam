@@ -743,6 +743,11 @@
   },
   {
     "type": "error",
+    "name": "SaleVehicleNotMatchable",
+    "inputs": []
+  },
+  {
+    "type": "error",
     "name": "SanctionedAddress",
     "inputs": [
       {

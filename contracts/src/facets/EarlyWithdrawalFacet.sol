@@ -3,6 +3,7 @@
 pragma solidity ^0.8.29;
 
 import {LibVaipakam} from "../libraries/LibVaipakam.sol";
+import {LibConsolidation} from "../libraries/LibConsolidation.sol";
 import {LibSanctionedLock} from "../libraries/LibSanctionedLock.sol";
 import {LibEncumbrance} from "../libraries/LibEncumbrance.sol";
 import {LibLifecycle} from "../libraries/LibLifecycle.sol";
@@ -121,6 +122,12 @@ contract EarlyWithdrawalFacet is
     ///         ERC-721/ERC-1155 the vehicle never held. NFT-collateral lender-sale
     ///         is a tracked follow-up (#974); until then it is rejected at listing.
     error SaleOfferCollateralMustBeERC20();
+    /// @notice #951 (redesign) — the lender position could not be consolidated to
+    ///         its current holder at listing (it carries unreserved held-for-lender
+    ///         VPFI, the #597 `_isExcludedLive` edge). Such a position can't have
+    ///         its stored/economic identity unified, so it can't be safely sold
+    ///         until the held VPFI is resolved. See LenderSaleVehicleRedesign.md D1.
+    error SalePositionNotConsolidatable();
 
     /// @dev #671 phase 2 (Codex #729 r4) — the buyer-side progressive-risk gate
     ///      for the direct Option-1 loan sale. Kept in its own frame so the
@@ -518,6 +525,27 @@ contract EarlyWithdrawalFacet is
         // genuine re-list is still allowed.
         if (s.loanToSaleOfferId[loanId] != 0) revert SaleOfferAlreadyExists();
 
+        // #951 (redesign D1) — consolidate the lender position to its CURRENT
+        // holder (the seller) BEFORE listing, re-anchoring both `loan.lender` and
+        // `heldForLender` to `ownerOf(lenderTokenId)`. This removes the
+        // stale-`loan.lender` divergence that otherwise splits held-proceeds
+        // custody (physically under the stored lender's vault) from accrued /
+        // shortfall settlement and who `acceptOffer` pays (the current holder).
+        // After this, `loan.lender == seller` for the entire sale, so completion
+        // settles uniformly against one identity (see LenderSaleVehicleRedesign.md
+        // D1/D2). `Tier1Strict` reverts on a sanctioned current holder — matching
+        // this entry's Tier-1 gate. A position carrying unreserved held-for-lender
+        // VPFI can't be consolidated (#597) and therefore can't be sold yet.
+        if (
+            LibConsolidation.consolidateToHolder(
+                loanId,
+                /* isLenderSide */ true,
+                LibConsolidation.Ctx.Tier1Strict
+            ) == LibConsolidation.Result.Skipped
+        ) {
+            revert SalePositionNotConsolidatable();
+        }
+
         // Calculate remaining days — revert if loan is past maturity
         uint256 elapsed = block.timestamp - loan.startTime;
         uint256 elapsedDays = elapsed / 1 days;
@@ -719,16 +747,19 @@ contract EarlyWithdrawalFacet is
             /* lenderSide */ true
         );
 
-        // #951 (Codex #959 round-2) — settle against the CURRENT lender-position
-        // holder (the seller), not the latched `loan.lender`. `createLoanSaleOffer`
-        // does not consolidate `loan.lender` to the current holder, so on a
-        // transferred-but-unconsolidated position `loan.lender` is stale — while
-        // the sale principal was paid by `acceptOffer` to the current holder (the
-        // offer creator). Using the stale field here would settle accrued /
-        // shortfall against the departed lender and split it from who was paid.
-        // The lender NFT is native-locked for the sale flow, so the holder cannot
-        // have changed since listing; `ownerOf` is the authoritative seller.
-        address originalLender = LibERC721.ownerOf(loan.lenderTokenId);
+        // #951 (redesign D2) — `createLoanSaleOffer` consolidated the lender
+        // position to its current holder at listing (D1), re-anchoring both
+        // `loan.lender` and `heldForLender` to `ownerOf(lenderTokenId)`. So
+        // `loan.lender` is now authoritative: it is the seller, it is who
+        // `acceptOffer` paid the sale principal to, and it is whose vault
+        // physically holds `heldForLender`. Every operation below — the
+        // held-proceeds migration, the `releaseLenderProceeds` reservation
+        // release, and the accrued / shortfall settlement — keys on this single
+        // identity, so there is no stored-vs-economic divergence to reconcile.
+        // (Codex #959 round-2 tried `ownerOf` here, which split settlement from
+        // the held-proceeds custody under the stored lender; consolidating at the
+        // source is the correct fix.)
+        address originalLender = loan.lender;
 
         // #393 v1-b — the seller EXITS the loan here (receives sale proceeds and
         // hands the position to the buyer), so release their standing-intent
