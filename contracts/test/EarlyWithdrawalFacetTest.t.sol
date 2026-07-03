@@ -676,6 +676,37 @@ contract EarlyWithdrawalFacetTest is Test {
         LoanFacet(address(diamond)).initiateLoan(saleOfferId, newLender, true);
     }
 
+    /// @dev #951 (Codex #959 round-6, P1) — the linked loan's OWN borrower cannot
+    ///      buy the lender position of their own debt (it would leave an Active
+    ///      loan with lender == borrower). The generic self-trade check only
+    ///      compares the buyer with the sale-offer creator (the exiting lender);
+    ///      this branch adds the buyer-vs-borrower guard.
+    function testSaleVehicleRejectsBorrowerSelfBuy() public {
+        uint256 saleOfferId = _listSaleOffer();
+        vm.prank(address(diamond));
+        vm.expectRevert(LoanFacet.InvalidOffer.selector);
+        // `borrower` is the linked loan's borrower (from setUp).
+        LoanFacet(address(diamond)).initiateLoan(saleOfferId, borrower, true);
+    }
+
+    /// @dev #951 (Codex #959 round-6, P2) — a collateral-only reduction after
+    ///      listing (borrower withdraw, or a periodic-interest auto-liquidation)
+    ///      drifts the live position away from the price the buyer reviewed. The
+    ///      accept is rejected when live collateral != the snapshot taken at
+    ///      listing, so the buyer never overpays for a drained position.
+    function testSaleVehicleRejectsCollateralDrift() public {
+        uint256 saleOfferId = _listSaleOffer();
+        // Simulate a collateral-only reduction (e.g. periodic auto-liq sale) —
+        // principal is untouched, so only the collateral-freshness check fires.
+        LibVaipakam.Loan memory ld =
+            LoanFacet(address(diamond)).getLoanDetails(activeLoanId);
+        ld.collateralAmount = ld.collateralAmount / 2;
+        TestMutatorFacet(address(diamond)).setLoan(activeLoanId, ld);
+        vm.prank(address(diamond));
+        vm.expectRevert(LoanFacet.InvalidOffer.selector);
+        LoanFacet(address(diamond)).initiateLoan(saleOfferId, newLender, true);
+    }
+
     /// @dev #951 (Codex #959 round-4, P1) — while an Option-2 sale listing is live
     ///      (lender NFT native-locked, immutable buyer offer pinned), the Option-1
     ///      direct swap-in path (`sellLoanViaBuyOffer`) must refuse to re-anchor

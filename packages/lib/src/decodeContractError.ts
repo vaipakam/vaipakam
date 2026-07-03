@@ -378,6 +378,9 @@ const KNOWN_ERROR_SELECTORS: Record<string, string> = {
 
   // ── Partial withdrawal ────────────────────────────────────────────────
   '0xfd7850ad': 'AmountTooHigh()',
+  // #951 (Codex #959 round-6) — collateral is frozen while a lender-sale listing
+  // is live; `partialWithdrawCollateral` reverts this until the seller cancels.
+  '0x5d3eb8f5': 'SaleListingActive()',
 
   // ── Keeper (ProfileFacet / IVaipakamErrors) ───────────────────────────
   '0x7583f2aa': 'KeeperAccessRequired()',

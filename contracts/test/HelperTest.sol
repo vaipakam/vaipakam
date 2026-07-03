@@ -80,7 +80,7 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](87);
+        selectors = new bytes4[](88);
         selectors[0] = TestMutatorFacet.setLoan.selector;
         selectors[1] = TestMutatorFacet.setOffer.selector;
         selectors[2] = TestMutatorFacet.setNextLoanId.selector;
@@ -252,6 +252,7 @@ contract HelperTest {
         selectors[84] = TestMutatorFacet.callTransferLenderEntry.selector;
         selectors[85] = TestMutatorFacet.getForfeitedLenderEntryIds.selector;
         selectors[86] = TestMutatorFacet.setLoanToSaleOfferIdRaw.selector; // #951 (Codex #959 r5)
+        selectors[87] = TestMutatorFacet.setSaleListingCollateralRaw.selector; // #951 (Codex #959 r6)
         // #687-B: the former tail entries ([83]-[87]: setBackstopAbsorbCashRaw,
         // pushUserLoanIdRaw, vpfiTokenRaw, setLenderProceedsEncumberedRaw,
         // setVpfiTokenRaw) were relocated into the slots freed by the removed

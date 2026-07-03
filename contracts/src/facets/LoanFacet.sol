@@ -14,6 +14,7 @@ import {LibNotificationFee} from "../libraries/LibNotificationFee.sol";
 import {LibAccessControl, DiamondAccessControl} from "../libraries/LibAccessControl.sol";
 import {DiamondPausable} from "../libraries/LibPausable.sol";
 import {IVaipakamErrors} from "../interfaces/IVaipakamErrors.sol";
+import {LibCompliance} from "../libraries/LibCompliance.sol";
 import {RiskFacet} from "./RiskFacet.sol";
 import {VaipakamNFTFacet} from "./VaipakamNFTFacet.sol";
 import {OracleFacet} from "./OracleFacet.sol";
@@ -193,7 +194,8 @@ contract LoanFacet is DiamondPausable, DiamondAccessControl, IVaipakamErrors {
         // completeLoanSale would revert — leaving Noah with no lender rights.
         if (isLenderSaleVehicle) {
             uint256 linkedLoanId = s.saleOfferToLoanId[offerId];
-            if (s.loans[linkedLoanId].status != LibVaipakam.LoanStatus.Active) {
+            LibVaipakam.Loan storage linked = s.loans[linkedLoanId];
+            if (linked.status != LibVaipakam.LoanStatus.Active) {
                 revert InvalidOffer();
             }
             // #951 (Codex #959 round-4) — the sale offer's `amount` was pinned to
@@ -203,9 +205,47 @@ contract LoanFacet is DiamondPausable, DiamondAccessControl, IVaipakamErrors {
             // then pay the old principal for a smaller position. Reject a stale
             // listing here (fail-safe, decoupled from RepayFacet); the seller
             // re-lists at the new principal. See LenderSaleVehicleRedesign.md.
-            if (s.offers[offerId].amount != s.loans[linkedLoanId].principal) {
+            if (s.offers[offerId].amount != linked.principal) {
                 revert InvalidOffer();
             }
+            // #951 (Codex #959 round-6, P2) — the accept binds only the loan id +
+            // principal, not its live collateral. A collateral-only reduction
+            // while the listing is live (borrower `partialWithdrawCollateral`, or a
+            // periodic-interest auto-liquidation selling collateral for a
+            // shortfall) would hand the buyer a drained position at the listed
+            // price. Reject when the live collateral has drifted from the snapshot
+            // taken at listing. Uniform backstop for every reduction path (the
+            // borrower-withdraw path also fails early with `SaleListingActive`).
+            if (s.saleListingCollateral[linkedLoanId] != linked.collateralAmount) {
+                revert InvalidOffer();
+            }
+            // #951 (Codex #959 round-6, P1) — reject the linked loan's OWN
+            // borrower buying the lender position of their own debt. The generic
+            // self-trade check only compares the buyer with the sale-offer creator
+            // (the exiting lender); a borrower-buyer would migrate the lender onto
+            // themselves, leaving an Active loan with `lender == borrower` (a party
+            // owing itself — breaks claim/repay accounting). They exit via
+            // repay/preclose, never by buying their own debt's lender side.
+            if (acceptor == linked.borrower) {
+                revert InvalidOffer();
+            }
+            // #951 (Codex #959 round-6, P2) — recheck the BUYER against the loan's
+            // continuing counterparty (the original borrower), mirroring the
+            // Option-1 `sellLoanViaBuyOffer` compliance gate. The generic offer
+            // KYC/country checks validate only the exiting lender (`offer.creator`)
+            // vs the buyer, not the borrower whose live loan the buyer is stepping
+            // into. No-op on the retail deploy (KYC/country off); load-bearing on
+            // the industrial fork where a borrower's tier/country may have degraded
+            // since origination.
+            LibCompliance.enforceCountryAndKyc(
+                address(this),
+                acceptor,
+                linked.borrower,
+                linked.principalAsset,
+                linked.principal,
+                linked.collateralAsset,
+                linked.collateralAmount
+            );
         }
 
         LibVaipakam.LiquidityStatus lendingAssetLiquidity = OracleFacet(

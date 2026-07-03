@@ -211,6 +211,9 @@ contract OfferCancelFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamE
             LibERC721._unlock(s.loans[lockedSaleLoanId].lenderTokenId);
             delete s.saleOfferToLoanId[offerId];
             delete s.loanToSaleOfferId[lockedSaleLoanId];
+            // #951 (Codex #959 round-6) — clear the collateral snapshot alongside
+            // the sale links so a cancelled-then-relisted position starts fresh.
+            delete s.saleListingCollateral[lockedSaleLoanId];
         }
 
         // #195 — refund destination is ALWAYS the creator's vault (and

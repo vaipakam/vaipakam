@@ -4705,6 +4705,18 @@ library LibVaipakam {
         // Append-only per loan; `_processEntry` is idempotent so a re-sweep (or a
         // later un-flagged claim) double-counts nothing.
         mapping(uint256 => uint256[]) loanForfeitedLenderEntryIds;
+        // ─── #951 (Codex #959 round-6) — collateral snapshot at sale listing ──
+        // `createLoanSaleOffer` records the linked loan's `collateralAmount` here
+        // at listing time. The buyer's accept binds only the loan id + principal,
+        // so any collateral-only reduction while the listing is live (borrower
+        // `partialWithdrawCollateral`, or a periodic-interest auto-liquidation
+        // selling collateral to cover a shortfall) would otherwise leave a stale
+        // listing whose price no longer matches the position. `LoanFacet` rejects
+        // the accept when the live collateral has drifted from this snapshot, so
+        // a buyer can never overpay for a drained position. Keyed by loanId; the
+        // borrower-withdraw path also blocks outright (`SaleListingActive`), this
+        // is the uniform backstop covering the permissionless reduction paths.
+        mapping(uint256 => uint256) saleListingCollateral;
     }
 
     /// @notice #393 v1-b — the originating intent of a `matchIntent` loan,
