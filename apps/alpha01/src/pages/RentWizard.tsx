@@ -243,7 +243,12 @@ export function RentWizard() {
   const publicClient = useDiamondPublicClient();
   const { data: walletClient } = useWalletClient();
   const sanctions = useSanctionsCheck(address);
-  const { data: rentalBufferBps = 500 } = useRentalBufferBps();
+  const {
+    data: rentalBufferBps,
+    isLoading: rentalBufferLoading,
+    isError: rentalBufferError,
+    isSuccess: rentalBufferReady,
+  } = useRentalBufferBps();
 
   const [path, setPath] = useState<Path>('choose');
   const [step, setStep] = useState<Step>('inputs');
@@ -255,7 +260,6 @@ export function RentWizard() {
   const [nftKind, setNftKind] = useState<'erc721' | 'erc1155'>('erc721');
   const [nftContract, setNftContract] = useState('');
   const [tokenId, setTokenId] = useState('');
-  const [quantity, setQuantity] = useState('1');
   const [dailyFee, setDailyFee] = useState('');
   const [prepayAsset, setPrepayAsset] = useState('');
   const [durationDays, setDurationDays] = useState('30');
@@ -270,12 +274,15 @@ export function RentWizard() {
   const { data: demands = [] } = useBorrowerNftRentalDemands();
 
   const prepayDecimals = prepayMeta?.decimals ?? 18;
+  const needsRentalBuffer =
+    path === 'browse' || path === 'request' || (path === 'list' && step !== 'inputs');
 
   const prepayRequired = useMemo(() => {
+    if (!rentalBufferReady || rentalBufferBps == null) return 0n;
     if (path === 'browse' && selectedOffer) {
       return rentalPrepayForOffer(selectedOffer, rentalBufferBps);
     }
-    if ((path === 'request' || path === 'browse') && dailyFee && prepayAsset) {
+    if (path === 'request' && dailyFee && prepayAsset) {
       return computeRentalPrepayWei(
         dailyFeeWeiFromHuman(dailyFee, prepayDecimals),
         Number(durationDays) || 0,
@@ -283,7 +290,16 @@ export function RentWizard() {
       );
     }
     return 0n;
-  }, [path, selectedOffer, dailyFee, prepayAsset, prepayDecimals, durationDays, rentalBufferBps]);
+  }, [
+    path,
+    selectedOffer,
+    dailyFee,
+    prepayAsset,
+    prepayDecimals,
+    durationDays,
+    rentalBufferBps,
+    rentalBufferReady,
+  ]);
 
   const checklist = useMemo(
     () => [
@@ -305,6 +321,15 @@ export function RentWizard() {
               : { id: 'prepay-balance', label: 'Insufficient prepay token balance', ok: false as const },
           ]
         : []),
+      ...(needsRentalBuffer
+        ? [
+            rentalBufferReady
+              ? { id: 'rental-buffer', label: 'Rental buffer loaded from protocol', ok: true as const }
+              : rentalBufferError
+                ? { id: 'rental-buffer', label: 'Could not load rental buffer — refresh and try again', ok: false as const }
+                : { id: 'rental-buffer', label: 'Loading rental buffer from protocol…', ok: false as const },
+          ]
+        : []),
     ],
     [
       address,
@@ -312,8 +337,11 @@ export function RentWizard() {
       connect,
       consent,
       isCorrectChain,
+      needsRentalBuffer,
       path,
       prepayRequired,
+      rentalBufferError,
+      rentalBufferReady,
       sanctions,
       spendable,
       switchToAppChain,
@@ -322,6 +350,7 @@ export function RentWizard() {
 
   const allOk =
     checklist.every((i) => i.ok) &&
+    (!needsRentalBuffer || rentalBufferReady) &&
     sanctionsAllowsProceed({
       isSanctioned: sanctions.isSanctioned,
       sanctionsLoading: sanctions.loading,
@@ -348,7 +377,7 @@ export function RentWizard() {
         nftAssetKind: nftKind,
         nftContract,
         tokenId,
-        quantity: nftKind === 'erc1155' ? quantity : '1',
+        quantity: '1',
         dailyFee,
         prepayAsset,
         durationDays,
@@ -360,6 +389,7 @@ export function RentWizard() {
 
   async function submitDemand() {
     if (!walletClient || !chain.diamondAddress) throw new Error('Wallet not connected');
+    if (rentalBufferBps == null) throw new Error('Rental buffer not loaded');
     const decimals = requireTokenDecimals(prepayMeta, prepayAsset, 'Prepay asset', chain.chainId);
     await createNftRentalDemand({
       diamond,
@@ -370,7 +400,7 @@ export function RentWizard() {
         nftAssetKind: nftKind,
         nftContract,
         tokenId,
-        quantity: nftKind === 'erc1155' ? quantity : '1',
+        quantity: '1',
         maxDailyFee: dailyFee,
         prepayAsset,
         durationDays,
@@ -383,6 +413,7 @@ export function RentWizard() {
 
   async function submitAccept(offer: IndexedOffer) {
     if (!walletClient || !chain.diamondAddress) throw new Error('Wallet not connected');
+    if (rentalBufferBps == null) throw new Error('Rental buffer not loaded');
     await acceptOfferFlow({
       diamond,
       publicClient,
@@ -463,15 +494,16 @@ export function RentWizard() {
         </button>
         <h1 className="page-title" style={{ marginTop: 12 }}>Browse rentals</h1>
         <p className="page-subtitle">Pick a listing. Total prepay includes rental fees plus the protocol buffer.</p>
-        {listingsLoading ? <p>Loading listings…</p> : null}
-        {!listingsLoading && listings.length === 0 ? (
+        {listingsLoading || (listings.length > 0 && rentalBufferLoading) ? <p>Loading listings…</p> : null}
+        {!listingsLoading && !(listings.length > 0 && rentalBufferLoading) && listings.length === 0 ? (
           <div className="card" style={{ marginTop: 16 }}>
             <p>No NFT rental listings match right now.</p>
             <button type="button" className="btn btn-primary" style={{ marginTop: 12 }} onClick={() => resetFlow('request')}>
               Post a rental request instead
             </button>
           </div>
-        ) : (
+        ) : null}
+        {!listingsLoading && rentalBufferReady && listings.length > 0 ? (
           <div style={{ display: 'grid', gap: 12, marginTop: 16 }}>
             {listings.map((o) => (
               <RentalOfferCard
@@ -486,7 +518,15 @@ export function RentWizard() {
               />
             ))}
           </div>
-        )}
+        ) : null}
+        {!listingsLoading && listings.length > 0 ? (
+          <div className="card" style={{ marginTop: 16 }}>
+            <p style={{ margin: 0 }}>Don&apos;t see the NFT you want?</p>
+            <button type="button" className="btn btn-secondary" style={{ marginTop: 12 }} onClick={() => resetFlow('request')}>
+              Post a rental request
+            </button>
+          </div>
+        ) : null}
         {demands.length > 0 ? (
           <p style={{ marginTop: 16, fontSize: '0.9rem', color: 'var(--text-secondary)' }}>
             {demands.length} open rental request{demands.length === 1 ? '' : 's'} on the book.
@@ -528,6 +568,11 @@ export function RentWizard() {
               ERC-1155
             </button>
           </div>
+          {nftKind === 'erc1155' ? (
+            <p style={{ margin: 0, fontSize: '0.9rem', color: 'var(--text-secondary)' }}>
+              ERC-1155 rentals are limited to quantity 1 until multi-unit use rights are supported on-chain.
+            </p>
+          ) : null}
           <label className="form-label">NFT contract address</label>
           <input
             className="form-input"
@@ -543,17 +588,6 @@ export function RentWizard() {
             value={tokenId}
             onChange={(e) => setTokenId(e.target.value.trim())}
           />
-          {nftKind === 'erc1155' ? (
-            <>
-              <label className="form-label">Quantity</label>
-              <input
-                className="form-input"
-                inputMode="numeric"
-                value={quantity}
-                onChange={(e) => setQuantity(e.target.value.trim())}
-              />
-            </>
-          ) : null}
           <BasicAssetPicker
             kind="stablecoin"
             chainId={chain.chainId}
@@ -622,16 +656,20 @@ export function RentWizard() {
   }
 
   if (step === 'review') {
+    if (needsRentalBuffer && !rentalBufferReady) {
+      return <p>Loading protocol settings…</p>;
+    }
+    const bufferBps = rentalBufferBps!;
     const receipt =
       path === 'browse' && selectedOffer
-        ? acceptReceipt(selectedOffer, selectedPrepayMeta, rentalBufferBps)
+        ? acceptReceipt(selectedOffer, selectedPrepayMeta, bufferBps)
         : path === 'request'
           ? requestReceipt({
               dailyFee,
               duration: durationDays,
               prepayAsset,
               prepayMeta,
-              rentalBufferBps,
+              rentalBufferBps: bufferBps,
               prepayDecimals,
             })
           : listReceipt({
@@ -640,7 +678,7 @@ export function RentWizard() {
               prepayAsset,
               prepayMeta,
               nftLabel: `${nftKind === 'erc1155' ? 'ERC-1155' : 'ERC-721'} #${tokenId}`,
-              rentalBufferBps,
+              rentalBufferBps: bufferBps,
               prepayDecimals,
             });
 

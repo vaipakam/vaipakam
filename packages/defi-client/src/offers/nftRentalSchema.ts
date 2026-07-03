@@ -45,6 +45,13 @@ function parseDurationDays(raw: string): bigint {
   return BigInt(duration);
 }
 
+/** ERC-1155 accept still grants one unit of use rights — block multi-quantity until wired. */
+function assertErc1155RentalQuantity(assetType: number, quantity: bigint) {
+  if (assetType === ASSET_TYPE_ERC1155 && quantity !== 1n) {
+    throw new Error('ERC-1155 rentals currently support quantity 1 only');
+  }
+}
+
 /** Lender lists an NFT for rent (N1 / PF-042 / PF-043). */
 export function toNftRentalLenderPayload(
   form: NftRentalListForm,
@@ -59,6 +66,8 @@ export function toNftRentalLenderPayload(
   const assetType = kindToEnum(form.nftAssetKind);
   const prepayAsset = form.prepayAsset || ZERO_ADDRESS;
   if (prepayAsset === ZERO_ADDRESS) throw new Error('Prepay asset required');
+  const quantity = BigInt(form.quantity || '1');
+  assertErc1155RentalQuantity(assetType, quantity);
 
   return {
     offerType: 0 as const,
@@ -75,7 +84,7 @@ export function toNftRentalLenderPayload(
     durationDays,
     tokenId: BigInt(form.tokenId || '0'),
     collateralTokenId: 0n,
-    quantity: BigInt(form.quantity || '1'),
+    quantity,
     collateralQuantity: 0n,
     prepayAsset,
     creatorRiskAndTermsConsent: true,
@@ -104,6 +113,8 @@ export function toNftRentalBorrowerDemandPayload(
   const assetType = kindToEnum(form.nftAssetKind);
   const prepayAsset = form.prepayAsset || ZERO_ADDRESS;
   if (prepayAsset === ZERO_ADDRESS) throw new Error('Prepay asset required');
+  const quantity = BigInt(form.quantity || '1');
+  assertErc1155RentalQuantity(assetType, quantity);
 
   return {
     offerType: 1 as const,
@@ -120,7 +131,7 @@ export function toNftRentalBorrowerDemandPayload(
     durationDays,
     tokenId: BigInt(form.tokenId || '0'),
     collateralTokenId: 0n,
-    quantity: BigInt(form.quantity || '1'),
+    quantity,
     collateralQuantity: 0n,
     prepayAsset,
     creatorRiskAndTermsConsent: true,

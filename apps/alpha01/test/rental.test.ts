@@ -8,6 +8,7 @@ import {
   isNftRentalLoan,
   isNftRentalOffer,
   rentalPrepayForOffer,
+  toNftRentalBorrowerDemandPayload,
   toNftRentalLenderPayload,
   type IndexedOffer,
 } from '@vaipakam/defi-client';
@@ -89,6 +90,26 @@ describe('nft rental payload', () => {
     expect(payload.amount).toBe(10_000_000n);
     expect(payload.assetType).toBe(1);
     expect(payload.tokenId).toBe(42n);
+  });
+
+  it('rejects ERC-1155 quantity greater than 1', () => {
+    const base = {
+      nftAssetKind: 'erc1155' as const,
+      nftContract: '0x00000000000000000000000000000000000000a1',
+      tokenId: '42',
+      quantity: '2',
+      dailyFee: '10',
+      prepayAsset: '0x00000000000000000000000000000000000000b2',
+      durationDays: '7',
+      riskAndTermsConsent: true,
+    };
+    expect(() => toNftRentalLenderPayload(base, { lending: 6 })).toThrow(/quantity 1 only/);
+    expect(() =>
+      toNftRentalBorrowerDemandPayload(
+        { ...base, maxDailyFee: base.dailyFee },
+        { lending: 6 },
+      ),
+    ).toThrow(/quantity 1 only/);
   });
 });
 
