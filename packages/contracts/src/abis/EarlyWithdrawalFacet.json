@@ -14,6 +14,19 @@
   },
   {
     "type": "function",
+    "name": "completeLoanSaleInternal",
+    "inputs": [
+      {
+        "name": "loanId",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
     "name": "createLoanSaleOffer",
     "inputs": [
       {
@@ -52,6 +65,49 @@
     ],
     "outputs": [],
     "stateMutability": "nonpayable"
+  },
+  {
+    "type": "event",
+    "name": "CollateralConsolidated",
+    "inputs": [
+      {
+        "name": "loanId",
+        "type": "uint256",
+        "indexed": true,
+        "internalType": "uint256"
+      },
+      {
+        "name": "isLenderSide",
+        "type": "bool",
+        "indexed": false,
+        "internalType": "bool"
+      },
+      {
+        "name": "from",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      },
+      {
+        "name": "to",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      },
+      {
+        "name": "asset",
+        "type": "address",
+        "indexed": false,
+        "internalType": "address"
+      },
+      {
+        "name": "amount",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      }
+    ],
+    "anonymous": false
   },
   {
     "type": "event",
@@ -926,7 +982,22 @@
   },
   {
     "type": "error",
+    "name": "SaleOfferAlreadyExists",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "SaleOfferCollateralMustBeERC20",
+    "inputs": []
+  },
+  {
+    "type": "error",
     "name": "SaleOfferNotAccepted",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "SalePositionNotConsolidatable",
     "inputs": []
   },
   {

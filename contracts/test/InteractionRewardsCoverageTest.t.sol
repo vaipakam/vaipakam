@@ -10,6 +10,8 @@ import {InteractionRewardsFacet} from "../src/facets/InteractionRewardsFacet.sol
 import {LibVaipakam} from "../src/libraries/LibVaipakam.sol";
 import {TestMutatorFacet} from "./mocks/TestMutatorFacet.sol";
 import {IVaipakamErrors} from "../src/interfaces/IVaipakamErrors.sol";
+import {ProfileFacet} from "../src/facets/ProfileFacet.sol";
+import {MockSanctionsList} from "./mocks/MockSanctionsList.sol";
 
 /// @title InteractionRewardsCoverageTest
 /// @notice Exhaustive coverage for the platform-interaction reward surface
@@ -78,6 +80,59 @@ contract InteractionRewardsCoverageTest is SetupTest, IVaipakamErrors {
 
     function _halfPool(uint256 day) internal view returns (uint256) {
         return _facet().getInteractionHalfPoolForDay(day);
+    }
+
+    // ─── #921 item 1 — Tier-1 sanctions gate ───────────────────────────────
+
+    /// @dev A flagged wallet cannot claim interaction rewards from ANY client;
+    ///      the gate lives on-chain, not just in the alpha02 UI. Clearing the
+    ///      flag restores the claim, proving the gate is the only blocker.
+    function testClaimRevertsWhenCallerSanctioned() public {
+        _mut().setDailyLenderInterest(1, alice, 100e18, 100e18);
+        vm.warp(block.timestamp + 2 days + 1);
+
+        MockSanctionsList m = new MockSanctionsList();
+        ProfileFacet(address(diamond)).setSanctionsOracle(address(m));
+        m.setFlagged(alice, true);
+
+        vm.prank(alice);
+        vm.expectRevert(
+            abi.encodeWithSelector(LibVaipakam.SanctionedAddress.selector, alice)
+        );
+        _facet().claimInteractionRewards();
+
+        // Un-flag → the identical claim now succeeds (gate was the only blocker).
+        m.setFlagged(alice, false);
+        vm.prank(alice);
+        (uint256 paid,,) = _facet().claimInteractionRewards();
+        assertGt(paid, 0, "clean wallet claims normally once un-flagged");
+    }
+
+    /// @dev #953 (Codex) — a lender position sale forfeits the exiting lender's
+    ///      reward entry and advances `loanActiveLenderEntryId` off it, so the
+    ///      forfeited entry becomes unreachable by `sweepForfeitedByLoanId`
+    ///      (which reads only the active pointer). Its only remaining path WAS
+    ///      that holder's own claim — now Tier-1 sanctions-gated by this PR. The
+    ///      fix records the orphaned id so the permissionless, sanctions-open
+    ///      sweep can still route it to treasury even when the holder is flagged.
+    ///      This asserts the recording (the fix's direct guarantee); the sweep's
+    ///      routing of a forfeited entry to treasury is `_processEntry`'s existing,
+    ///      separately-covered behaviour.
+    function testSaleForfeitedEntryRecordedForPermissionlessSweep() public {
+        uint64 loanId = 42;
+
+        // Register a live lender entry, then simulate a position sale.
+        uint256 oldId =
+            _mut().pushRewardEntry(alice, loanId, LibVaipakam.RewardSide.Lender, 1e18, 1);
+        _mut().setLoanActiveLenderEntryId(loanId, oldId);
+        vm.warp(block.timestamp + 2 days + 1);
+        _mut().callTransferLenderEntry(loanId, bob);
+
+        // The entry orphaned off the active pointer is now recorded, so the
+        // permissionless sweep can reach it independently of the flagged holder.
+        uint256[] memory forf = _mut().getForfeitedLenderEntryIds(loanId);
+        assertEq(forf.length, 1, "orphaned entry recorded for the sweep");
+        assertEq(forf[0], oldId, "records the exiting lender's entry id");
     }
 
     // ─── Happy paths ─────────────────────────────────────────────────────────

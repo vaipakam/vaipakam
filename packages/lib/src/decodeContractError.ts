@@ -367,9 +367,20 @@ const KNOWN_ERROR_SELECTORS: Record<string, string> = {
   '0xdce02f61': 'RateShortfallTooHigh()',
   '0x492a2b84': 'SaleNotLinked()',
   '0x1f5d7665': 'SaleOfferNotAccepted()',
+  // #951 lender position-sale vehicle guards (redesign). SaleVehicleNotMatchable
+  // is on OfferMatchFacet and SaleVehicleImmutable on OfferMutateFacet, grouped
+  // here as the decoder map is flat and these are all sale-vehicle reverts.
+  '0x9de6799c': 'SaleOfferAlreadyExists()',
+  '0x04159aeb': 'SaleOfferCollateralMustBeERC20()',
+  '0xfd916a6f': 'SalePositionNotConsolidatable()',
+  '0xf3e9b780': 'SaleVehicleNotMatchable()',
+  '0x236f6aa6': 'SaleVehicleImmutable()',
 
   // ── Partial withdrawal ────────────────────────────────────────────────
   '0xfd7850ad': 'AmountTooHigh()',
+  // #951 (Codex #959 round-6) — collateral is frozen while a lender-sale listing
+  // is live; `partialWithdrawCollateral` reverts this until the seller cancels.
+  '0x5d3eb8f5': 'SaleListingActive()',
 
   // ── Keeper (ProfileFacet / IVaipakamErrors) ───────────────────────────
   '0x7583f2aa': 'KeeperAccessRequired()',

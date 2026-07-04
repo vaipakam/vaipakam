@@ -1513,6 +1513,27 @@ contract MetricsFacet {
         for (uint256 k = 0; k < filled; k++) offerIds[k] = buf[k];
     }
 
+    /// @notice #955 (#921 item 4) — the canonical lifecycle {OfferState} of a
+    ///         single offer, with terminal precedence (Accepted > Cancelled >
+    ///         ConsumedBySale > Open). Companion to the state-filtered paginated
+    ///         views {getOffersByStatePaginated} / {getUserOffersByStatePaginated}
+    ///         for the single-id case.
+    /// @dev    Promotes the previously-private `_offerStateOf` derivation.
+    ///         `getOffer` / `getOfferDetails` return only the raw `Offer` struct,
+    ///         so a Scenario-A `offerConsumedBySale` terminal (the sale fill
+    ///         closed an UNACCEPTED offer) is invisible there — the row still
+    ///         reads open (nonzero creator, not accepted, not expired). This view
+    ///         surfaces that terminal directly, so integrators no longer need the
+    ///         indirect burned-position-NFT (`ownerOf`-reverts) liveness
+    ///         heuristic. A never-existed / cancel-deleted id returns `Cancelled`
+    ///         (see the derivation's legacy-compat note); callers that must
+    ///         distinguish "never existed" pre-filter via {getGlobalCounts}.
+    /// @param  offerId The offer to classify.
+    /// @return state   The offer's canonical {OfferState}.
+    function getOfferState(uint256 offerId) external view returns (OfferState state) {
+        return _offerStateOf(LibVaipakam.storageSlot(), offerId);
+    }
+
     // ─── Internal helpers ───────────────────────────────────────────────────
 
     function _slice(uint256[] storage src, uint256 offset, uint256 limit)

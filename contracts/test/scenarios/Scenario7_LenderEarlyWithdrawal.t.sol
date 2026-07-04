@@ -334,7 +334,7 @@ contract Scenario7_LenderEarlyWithdrawal is Test {
         uint256 expectedSaleOfferId = 3; // offer 1 = lender offer, offer 2 = this sale
         vm.mockCall(
             address(diamond),
-            abi.encodeWithSelector(OfferCreateFacet.createOffer.selector),
+            abi.encodeWithSelector(OfferCreateFacet.createOfferInternal.selector),
             abi.encode(expectedSaleOfferId)
         );
 

@@ -2,6 +2,7 @@
 pragma solidity ^0.8.29;
 
 import {LibVaipakam} from "../../src/libraries/LibVaipakam.sol";
+import {LibInteractionRewards} from "../../src/libraries/LibInteractionRewards.sol";
 import {LibMetricsHooks} from "../../src/libraries/LibMetricsHooks.sol";
 import {LibERC721} from "../../src/libraries/LibERC721.sol";
 import {LibCollateralSettlement} from "../../src/libraries/LibCollateralSettlement.sol";
@@ -413,6 +414,18 @@ contract TestMutatorFacet {
         LibVaipakam.storageSlot().saleOfferToLoanId[offerId] = loanId;
     }
 
+    /// @notice Write `s.loanToSaleOfferId[loanId] = saleOfferId` directly (the
+    ///         loan→listing forward link). Used by #951 (Codex #959) tests that
+    ///         assert a live listing freezes collateral withdrawal / direct sale.
+    function setLoanToSaleOfferIdRaw(uint256 loanId, uint256 saleOfferId) external {
+        LibVaipakam.storageSlot().loanToSaleOfferId[loanId] = saleOfferId;
+    }
+
+    // #951 v2 (Codex #959 bind-to-live) — `setSaleListingCollateralRaw` was
+    // removed with the `saleListingCollateral` snapshot mapping. The accept now
+    // binds collateral `>=` live against the loan in `_bindTermsToOffer`, so
+    // there is no snapshot for tests to scaffold.
+
     /// @notice Write `s.offsetOfferToLoanId[offerId] = loanId` directly.
     ///         Used by OfferFacet auto-complete coverage tests.
     function setOffsetOfferToLoanIdRaw(uint256 offerId, uint256 loanId) external {
@@ -463,6 +476,13 @@ contract TestMutatorFacet {
     /// @notice Flip the offer-cancelled history marker directly.
     function setOfferCancelled(uint256 offerId, bool cancelled) external {
         LibVaipakam.storageSlot().offerCancelled[offerId] = cancelled;
+    }
+
+    /// @notice Flip the Scenario-A consumed-by-sale terminal marker directly.
+    ///         Used by `EnumerationTest.testGetOfferState` to exercise the
+    ///         `ConsumedBySale` branch of `MetricsFacet.getOfferState` (#955).
+    function setOfferConsumedBySaleRaw(uint256 offerId, bool consumed) external {
+        LibVaipakam.storageSlot().offerConsumedBySale[offerId] = consumed;
     }
 
     // ─── Metrics-counter read-through (invariant-suite accessors) ──────────
@@ -589,6 +609,31 @@ contract TestMutatorFacet {
             perDayNumeraire18: perDayNumeraire18
         });
         s.userRewardEntryIds[user].push(id);
+    }
+
+    // ─── #953 test-only — sale-forfeit sweep-reachability scaffolding ───────
+
+    /// @notice Set the per-loan active lender entry pointer so a test can then
+    ///         drive {callTransferLenderEntry} (production sets it in
+    ///         {LibInteractionRewards.registerLoan} at loan init).
+    function setLoanActiveLenderEntryId(uint256 loanId, uint256 entryId) external {
+        LibVaipakam.storageSlot().loanActiveLenderEntryId[loanId] = entryId;
+    }
+
+    /// @notice Invoke the internal {LibInteractionRewards.transferLenderEntry} to
+    ///         simulate a position sale forfeiting the exiting lender's entry and
+    ///         advancing the active pointer off it.
+    function callTransferLenderEntry(uint256 loanId, address newLender) external {
+        LibInteractionRewards.transferLenderEntry(loanId, newLender);
+    }
+
+    /// @notice Read the #953 orphaned-forfeited-lender-entry list for a loan.
+    function getForfeitedLenderEntryIds(uint256 loanId)
+        external
+        view
+        returns (uint256[] memory)
+    {
+        return LibVaipakam.storageSlot().loanForfeitedLenderEntryIds[loanId];
     }
 
     // ─── LibERC721 lock-state direct manipulators (test-only) ───────────

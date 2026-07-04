@@ -168,6 +168,15 @@ contract RepayFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErrors 
     error RepaymentPastGracePeriod();
     error InsufficientPrepay();
     error InsufficientPartialAmount();
+    /// @notice Reverted when {repayPartial} is asked to retire the full
+    ///         remaining ERC-20 principal (`partialAmount >= loan.principal`).
+    ///         #921 item 3 — the partial path only decrements principal; it does
+    ///         NOT run settlement, collateral release, or NFT burns, so accepting
+    ///         a full-principal "partial" left the loan Active at principal 0 (a
+    ///         zombie) with close-out stranded behind a separate {repayLoan}.
+    ///         Callers retiring the whole principal must use {repayLoan}. Mirrors
+    ///         `SwapToRepayFacet.PartialWouldRetireFullPrincipal`.
+    error PartialWouldRetireFullPrincipal();
     /// @notice Reverted when {repayPartial} is called on a loan whose
     ///         `allowsPartialRepay` flag is false. The flag is
     ///         lender-controlled — set on the offer at create-time
@@ -662,10 +671,20 @@ contract RepayFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErrors 
         // no explicit opt-in cannot be partial-repaid.
         if (!loan.allowsPartialRepay) revert PartialRepayNotAllowed();
         if (partialAmount == 0) revert InsufficientPartialAmount();
-        uint256 minPartial = (loan.principal *
-            s.assetRiskParams[loan.principalAsset].minPartialBps) /
-            LibVaipakam.BASIS_POINTS;
-        if (partialAmount < minPartial) revert InsufficientPartialAmount();
+        // #956 (Codex #978) — the asset-level minimum-partial floor is denominated
+        // in ERC-20 principal units (`loan.principal * bps`). For an NFT rental
+        // `partialAmount` is a DAY count while `loan.principal` is the daily fee in
+        // token base units, so applying the floor there would compare days against
+        // token units and wrongly revert legitimate rental-day reductions. Scope
+        // the floor to ERC-20 loans; the NFT-rental path below has its own
+        // day-based validation. (SwapToRepayFacet needs no such guard — its
+        // `partialPrincipal` is always a swapped token amount.)
+        if (loan.assetType == LibVaipakam.AssetType.ERC20) {
+            uint256 minPartial = (loan.principal *
+                s.assetRiskParams[loan.principalAsset].minPartialBps) /
+                LibVaipakam.BASIS_POINTS;
+            if (partialAmount < minPartial) revert InsufficientPartialAmount();
+        }
 
         uint256 endTime = loan.startTime +
             loan.durationDays *
@@ -682,8 +701,14 @@ contract RepayFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErrors 
                 accrued
             );
 
-            if (partialAmount > loan.principal)
-                revert InsufficientPartialAmount();
+            // #921 item 3 — reject a "partial" that would retire the FULL
+            // remaining principal (`>=`, not just overshoot). This path only
+            // decrements `loan.principal`; it runs no settlement / collateral
+            // release / NFT burn, so `partialAmount == loan.principal` would
+            // leave the loan Active at principal 0 (a zombie) until a separate
+            // `repayLoan`. Force full retirement through `repayLoan`.
+            if (partialAmount >= loan.principal)
+                revert PartialWouldRetireFullPrincipal();
 
             // Pay accrued + partial to the CURRENT lender-position holder.
             //

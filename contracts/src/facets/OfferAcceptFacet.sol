@@ -162,6 +162,12 @@ contract OfferAcceptFacet is
     ///         filled (Scenario A — buyer-side won the race). Parallel-
     ///         mapping terminal pattern (same shape as `offerCancelled`).
     error OfferConsumedBySale(uint96 offerId);
+    /// @notice #951 v2 (Codex #959) — the offer was cancelled (its
+    ///         `offerCancelled` marker is set, e.g. by a creator cancel or by
+    ///         `teardownStaleSaleListing` clearing a stale sale listing). The
+    ///         accept path now honors this canonical "dead offer" marker so a
+    ///         torn-down sale offer can't originate a loan as a normal offer.
+    error OfferCancelled(uint96 offerId);
     /// @notice Reverts when a single address would land on both sides of
     ///         the loan — same-wallet direct-accept of one's own offer
     ///         OR a matchOffers between two offers from the same creator.
@@ -524,16 +530,38 @@ contract OfferAcceptFacet is
             ? (isLender ? o.interestRateBps : o.interestRateBpsMax)
             : o.interestRateBps;
 
+        // #951 v2 (Codex #959 bind-to-live) — for a lender-sale vehicle, bind
+        // principal / duration / collateral against the LIVE loan instead of the
+        // immutable offer snapshot. The snapshot drifts (partial-repay shrinks
+        // principal, withdraw/auto-liq shrinks collateral, the term shrinks every
+        // block) so no equality-vs-snapshot check converges — the buyer signs the
+        // live position and #662's anti-phishing guarantee now protects against
+        // loan drift. Bound to IMMUTABLE/DISCRETE facts only, never remaining
+        // term: principal `==` live (a repay between view and mine forces a
+        // correct re-sign), duration `==` the loan's ORIGINAL immutable
+        // `durationDays` (fixed maturity = startTime + durationDays; remaining is
+        // derived + shown live, never bound), collateral `>=`-style (a reduction
+        // fails the buyer's floor; a harmless top-up only improves the position).
+        // Rate stays bound to the seller's offer ask (genuinely immutable there).
+        uint256 saleLoanId = s.saleOfferToLoanId[offerId];
+
         // Field indices match the legend on {OfferTermsMismatch}.
         if (t.offerKey != offerKey) revert OfferTermsMismatch(1);
         if (t.offerCreator != o.creator) revert OfferTermsMismatch(2);
         if (t.offerType != uint8(o.offerType)) revert OfferTermsMismatch(3);
         if (t.lendingAsset != o.lendingAsset) revert OfferTermsMismatch(4);
         if (t.collateralAsset != o.collateralAsset) revert OfferTermsMismatch(5);
-        if (t.amount != roleAmount) revert OfferTermsMismatch(6);
-        if (t.collateralAmount != o.collateralAmount) revert OfferTermsMismatch(7);
+        if (saleLoanId != 0) {
+            LibVaipakam.Loan storage saleLoan = s.loans[saleLoanId];
+            if (t.amount != saleLoan.principal) revert OfferTermsMismatch(6);
+            if (saleLoan.collateralAmount < t.collateralAmount) revert OfferTermsMismatch(7);
+            if (t.durationDays != saleLoan.durationDays) revert OfferTermsMismatch(9);
+        } else {
+            if (t.amount != roleAmount) revert OfferTermsMismatch(6);
+            if (t.collateralAmount != o.collateralAmount) revert OfferTermsMismatch(7);
+            if (t.durationDays != o.durationDays) revert OfferTermsMismatch(9);
+        }
         if (t.interestRateBps != roleRate) revert OfferTermsMismatch(8);
-        if (t.durationDays != o.durationDays) revert OfferTermsMismatch(9);
         if (t.tokenId != o.tokenId) revert OfferTermsMismatch(10);
         if (t.collateralTokenId != o.collateralTokenId) revert OfferTermsMismatch(11);
         if (t.quantity != o.quantity) revert OfferTermsMismatch(12);
@@ -550,7 +578,7 @@ contract OfferAcceptFacet is
         if (t.periodicInterestCadence != uint8(o.periodicInterestCadence)) revert OfferTermsMismatch(23);
         // linkedLoanId — the auto-linked sale/offset target (0 for a normal
         // offer). saleOfferToLoanId takes precedence; both 0 ⇒ must bind 0.
-        uint256 linked = s.saleOfferToLoanId[offerId];
+        uint256 linked = saleLoanId;
         if (linked == 0) linked = s.offsetOfferToLoanId[offerId];
         if (t.linkedLoanId != linked) revert OfferTermsMismatch(24);
     }
@@ -728,6 +756,14 @@ contract OfferAcceptFacet is
         LibVaipakam.Offer storage offer = s.offers[offerId];
         if (offer.creator == address(0)) revert InvalidOffer();
         if (offer.accepted) revert OfferAlreadyAccepted();
+        // #951 v2 (Codex #959) — honor the canonical `offerCancelled` marker.
+        // `teardownStaleSaleListing` sets it (and clears `saleOfferToLoanId`) when
+        // a listed loan goes terminal; without this the torn-down sale offer,
+        // whose `accepted`/`amountFilled`/`consumedBySale` flags are all unset and
+        // which hasn't expired, would bind as a NORMAL offer here and could
+        // originate a loan. Covers every cancellation path, not just sale
+        // teardown.
+        if (s.offerCancelled[offerId]) revert OfferCancelled(uint96(offerId));
         // T-407-C (#566) Codex P1 — a partially-filled offer (amountFilled
         // > 0 but not yet dust-closed, so accepted == false) is a
         // matchOffers-managed entity: the matcher consumes its remaining
@@ -921,13 +957,23 @@ contract OfferAcceptFacet is
         // Used by KYC (must gate on real value at risk), the LIF math,
         // the principal transfer, and the OfferAccepted event payload.
         bool _isErc20 = offer.assetType == LibVaipakam.AssetType.ERC20;
+        // #951 v2 (Codex #959) — for a lender-sale vehicle the buyer's bind
+        // already enforces `t.amount == live saleLoan.principal`
+        // (`_bindTermsToOffer`), but the value actually FUNDED must match: source
+        // it from the LIVE loan, not the stale offer snapshot. Without this the
+        // bind passes on the signed live amount while the charge uses the old
+        // offer amount whenever the principal drifted since listing (over/
+        // underpay). The bind guarantees the two now agree.
+        uint256 _saleLoanId = s.saleOfferToLoanId[offerId];
         uint256 effectivePrincipal = s.matchOverride.active
             ? s.matchOverride.amount
-            : (_isErc20
-                ? (offer.offerType == LibVaipakam.OfferType.Lender
-                    ? offer.amountMax
-                    : offer.amount)
-                : offer.amount);
+            : (_saleLoanId != 0
+                ? s.loans[_saleLoanId].principal
+                : (_isErc20
+                    ? (offer.offerType == LibVaipakam.OfferType.Lender
+                        ? offer.amountMax
+                        : offer.amount)
+                    : offer.amount));
 
         // Tiered KYC check based on transaction value (per README Section 16)
         uint256 valueNumeraire = _calculateTransactionValueNumeraire(offer, effectivePrincipal);
@@ -1016,7 +1062,12 @@ contract OfferAcceptFacet is
                         VaultFactoryFacet.vaultDepositERC20.selector,
                         lender,
                         offer.lendingAsset,
-                        offer.amount
+                        // #951 v2 (Codex #959) — pull `effectivePrincipal`, not the
+                        // stale `offer.amount`. For a normal Borrower offer these
+                        // are identical; for a sale vehicle `effectivePrincipal` is
+                        // the LIVE loan principal, so the pull matches the withdraw
+                        // below (else the tracked-balance counter underflows).
+                        effectivePrincipal
                     ),
                     VaultDepositFailed.selector
                 );
@@ -1075,8 +1126,19 @@ contract OfferAcceptFacet is
             // On any precondition failure tryApplyBorrowerLif returns
             // (false, 0) silently and we fall through to the normal 0.1%
             // lending-asset fee path — no rebate eligibility on that path.
+            // #951 (Codex #959 round-4) — a lender-sale-vehicle accept is a
+            // SECONDARY-MARKET position transfer, not a fresh origination: the
+            // underlying loan already paid its 0.1% LIF when it was first
+            // initiated. Charging LIF again here would haircut the seller's sale
+            // proceeds (or over-charge the buyer) for a fee the position already
+            // bore. Skip the whole LIF machinery — no VPFI custody, no fee split
+            // — and deliver the full sale principal to the seller. The buyer's
+            // real economics settle in `completeLoanSale`. See
+            // LenderSaleVehicleRedesign.md.
+            bool isSaleVehicleAccept = s.saleOfferToLoanId[offerId] != 0;
             bool discountApplied;
             if (
+                !isSaleVehicleAccept &&
                 s.vpfiDiscountConsent[borrower] &&
                 lendingAssetLiquidity == LibVaipakam.LiquidityStatus.Liquid
             ) {
@@ -1085,7 +1147,7 @@ contract OfferAcceptFacet is
             }
 
             uint256 netToBorrower;
-            if (discountApplied) {
+            if (isSaleVehicleAccept || discountApplied) {
                 netToBorrower = effectivePrincipal;
             } else {
                 uint256 initiationFee = (effectivePrincipal *
@@ -1419,9 +1481,16 @@ contract OfferAcceptFacet is
             // Lender-sale vehicle (created by createLoanSaleOffer)
             uint256 saleLoanId = sCheck.saleOfferToLoanId[offerId];
             if (saleLoanId != 0) {
+                // Use `completeLoanSaleInternal` not `completeLoanSale`: this
+                // facet's `acceptOffer` already holds the diamond's `nonReentrant`
+                // lock, so a cross-facet call into `completeLoanSale` (also
+                // `nonReentrant`) would revert `ReentrancyGuardReentrantCall` and
+                // break the atomic accept-then-complete (#951 Codex #959). Same
+                // shape as the offset path below. Internal entry is gated on
+                // `msg.sender == address(this)`.
                 LibFacet.crossFacetCall(
                     abi.encodeWithSelector(
-                        EarlyWithdrawalFacet.completeLoanSale.selector,
+                        EarlyWithdrawalFacet.completeLoanSaleInternal.selector,
                         saleLoanId
                     ),
                     OfferAcceptFailed.selector
@@ -1501,42 +1570,46 @@ contract OfferAcceptFacet is
     ///      `offer.amount` (which under Phase 2 is the lender's
     ///      `minPartialFillAmount` for lender offers, NOT the lent
     ///      amount). KYC must gate on real value at risk.
+    /// @dev 1e18-scaled numeraire value of `amount` units of `asset`, or 0 when
+    ///      the asset is illiquid (unpriced). Shared by both legs of
+    ///      {_calculateTransactionValueNumeraire}; kept as a single private helper
+    ///      so the (oracle price + decimals + scale) sequence isn't emitted twice
+    ///      — the dedup keeps OfferAcceptFacet under the EIP-170 runtime ceiling
+    ///      (#951 Codex #959 round-5). An illiquid NFT-rental leg is worth 0 here,
+    ///      matching the prior explicit `+= 0`.
+    function _liquidNumeraireValue(address asset, uint256 amount)
+        private
+        view
+        returns (uint256)
+    {
+        if (
+            OracleFacet(address(this)).checkLiquidity(asset)
+                != LibVaipakam.LiquidityStatus.Liquid
+        ) return 0;
+        (uint256 price, uint8 feedDecimals) = OracleFacet(address(this))
+            .getAssetPrice(asset);
+        uint8 tokenDecimals = IERC20Metadata(asset).decimals();
+        return (amount * price * 1e18) / (10 ** feedDecimals) / (10 ** tokenDecimals);
+    }
+
     function _calculateTransactionValueNumeraire(
         LibVaipakam.Offer storage offer,
         uint256 lendingAmount
     ) internal view returns (uint256 valueNumeraire) {
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
 
-        // Lent asset value if liquid
-        LibVaipakam.LiquidityStatus lentLiquidity = OracleFacet(address(this))
-            .checkLiquidity(offer.lendingAsset);
-        if (lentLiquidity == LibVaipakam.LiquidityStatus.Liquid) {
-            (uint256 price, uint8 feedDecimals) = OracleFacet(address(this))
-                .getAssetPrice(offer.lendingAsset);
-            uint8 tokenDecimals = IERC20Metadata(offer.lendingAsset).decimals();
-            valueNumeraire += (lendingAmount * price * 1e18) / (10 ** feedDecimals) / (10 ** tokenDecimals);
-        } else if (offer.assetType != LibVaipakam.AssetType.ERC20) {
-            // For NFT rentals: Rental value = amount (fee) * durationDays, but since illiquid, ≡ 0
-            valueNumeraire += 0;
-        }
+        // Lent asset value if liquid (illiquid / NFT-rental leg ≡ 0).
+        valueNumeraire = _liquidNumeraireValue(offer.lendingAsset, lendingAmount);
 
-        // Collateral value if liquid.
-        // For lender-sale vehicle offers (collateralAmount == 0), use the live
-        // loan's actual collateral amount so KYC is not undercounted.
+        // Collateral value if liquid. For lender-sale vehicle offers
+        // (collateralAmount == 0) use the live loan's actual collateral amount so
+        // KYC is not undercounted.
         uint256 effectiveCollateral = offer.collateralAmount;
         uint256 linkedLoanId = s.saleOfferToLoanId[offer.id];
         if (linkedLoanId != 0 && effectiveCollateral == 0) {
             effectiveCollateral = s.loans[linkedLoanId].collateralAmount;
         }
-
-        LibVaipakam.LiquidityStatus collLiquidity = OracleFacet(address(this))
-            .checkLiquidity(offer.collateralAsset);
-        if (collLiquidity == LibVaipakam.LiquidityStatus.Liquid) {
-            (uint256 price, uint8 feedDecimals) = OracleFacet(address(this))
-                .getAssetPrice(offer.collateralAsset);
-            uint8 tokenDecimals = IERC20Metadata(offer.collateralAsset).decimals();
-            valueNumeraire += (effectiveCollateral * price * 1e18) / (10 ** feedDecimals) / (10 ** tokenDecimals);
-        }
+        valueNumeraire += _liquidNumeraireValue(offer.collateralAsset, effectiveCollateral);
     }
 
     /// @notice #627 — public view exposing the canonical KYC transaction value
@@ -1597,7 +1670,21 @@ contract OfferAcceptFacet is
         // `OfferPartiallyFilled`; only `matchOffers` may advance it.
         // APPENDED (never inserted) so every existing classifier's uint8
         // value stays stable for off-chain decoders.
-        OfferPartiallyFilled
+        OfferPartiallyFilled,
+        // #951 v2 (Codex #959 bind-to-live) — sale-vehicle blockers surfaced by
+        // `OfferPreviewFacet.previewAccept` so the UI can disable "Accept"
+        // without a revert. `SaleLoanNotActive`: the linked loan repaid /
+        // defaulted (or was torn down) since listing, so the position no longer
+        // exists. `SaleSelfBuy`: the buyer is the linked loan's CURRENT borrower
+        // (resolved via `ownerOf(borrowerTokenId)`), who may not buy their own
+        // debt's lender side. Both mirror `LoanFacet.initiateLoan`'s sale-vehicle
+        // reverts. APPENDED — existing values stay stable.
+        SaleLoanNotActive,
+        SaleSelfBuy,
+        // #951 v2 (Codex #959) — the offer is cancelled (`offerCancelled` set,
+        // e.g. by a stale-sale-listing teardown). Surfaced so the UI disables
+        // "Accept" without a revert. APPENDED — prior values stay stable.
+        OfferIsCancelled
     }
 
     /// @notice Projection of the loan that would land if the supplied
@@ -1644,256 +1731,6 @@ contract OfferAcceptFacet is
         uint256 lifEstimate;
         uint256 collateralResidualRefund;
         AcceptError errorCode;
-    }
-
-    /// @notice Contract-side dry-run for `acceptOffer(offerId, true)`.
-    ///         The frontend gets the resulting loan shape + a typed
-    ///         classifier for the would-be revert in a single
-    ///         `eth_call` — no off-chain duplication of the role-aware
-    ///         mapping, no 4-RPC client-side computation.
-    ///
-    /// @dev    Walks the same precondition chain as `_acceptOffer` —
-    ///         offer-existence, sanctions, per-asset pause, country
-    ///         pair, creator consent, KYC threshold — and returns the
-    ///         first failing classifier without reverting. Happy-path
-    ///         projection fields are populated unconditionally so a
-    ///         recoverable error (`KYCRequired`) still surfaces "this
-    ///         offer would land 10k @ 300 bps if you tier-up."
-    ///
-    ///         Reverts only on `InvalidOffer` (creator == address(0)) —
-    ///         consistent with `acceptOffer`'s top-of-function behaviour
-    ///         and the right move for a non-existent slot. Every other
-    ///         precondition surfaces through `errorCode`.
-    ///
-    ///         Mirrors the direct-accept role-aware mapping in
-    ///         `LoanFacet`'s loan-init (`acceptOffer`-path, NOT the
-    ///         `matchOffers` matcher-midpoint path — the matcher route
-    ///         already has `previewMatch`). `matchOverride` is ignored
-    ///         here even if active mid-tx; a preview call is by
-    ///         construction outside any in-flight `matchOffers`.
-    ///
-    ///         Pure view — safe to call via `staticcall`. No reentrancy
-    ///         guard, no pause gate (a paused contract still needs to
-    ///         answer preview queries for the explorer / indexer / UI).
-    /// @param offerId  Offer being previewed.
-    /// @param acceptor Address being projected as the acceptor. The
-    ///                  frontend passes `connectedAddress`; the indexer
-    ///                  / keeper can pass any candidate counterparty.
-    /// @return preview The projection plus the first failing precondition.
-    function previewAccept(uint256 offerId, address acceptor)
-        external
-        view
-        returns (AcceptPreview memory preview)
-    {
-        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
-        LibVaipakam.Offer storage offer = s.offers[offerId];
-        if (offer.creator == address(0)) revert InvalidOffer();
-
-        // ─── Happy-path projections (populated unconditionally) ─────
-        bool _isErc20 = offer.assetType == LibVaipakam.AssetType.ERC20;
-        bool _isLender = offer.offerType == LibVaipakam.OfferType.Lender;
-
-        // Role-aware mapping mirrors `LoanFacet._copyOfferToLoan` on the
-        // non-match path. NFT rentals stay structurally single-value
-        // (see the PR #187 Codex P1 comment at LoanFacet.sol L678-L691).
-        preview.effectivePrincipal = _isErc20
-            ? (_isLender ? offer.amountMax : offer.amount)
-            : offer.amount;
-        preview.interestRateBps = _isErc20
-            ? (_isLender ? offer.interestRateBps : offer.interestRateBpsMax)
-            : offer.interestRateBps;
-        preview.collateralAmount = offer.collateralAmount;
-
-        // Collateral residual refund — only fires for borrower offers
-        // on the ERC-20 lending + ERC-20 collateral direct-accept path
-        // (see `_refundBorrowerCollateralResidualIfNeeded` for the exact
-        // gating, including the PR #187 Codex P2 NFT-lending carve-out
-        // which prevents an unfunded refund from underflowing the
-        // protocolTrackedVaultBalance counter). Projecting a residual
-        // for any borrower offer with `collateralAmountMax > collateralAmount`
-        // would drift from execution when the lending leg is NFT (the
-        // create-time excess deposit never fired) or when the collateral
-        // leg is non-ERC-20.
-        if (
-            !_isLender
-                && _isErc20
-                && offer.collateralAssetType == LibVaipakam.AssetType.ERC20
-                && offer.collateralAmountMax > offer.collateralAmount
-        ) {
-            preview.collateralResidualRefund =
-                offer.collateralAmountMax - offer.collateralAmount;
-        }
-
-        // LIF estimate. ERC-20 path only — NFT rental offers don't
-        // charge LIF (the `tryApplyBorrowerLif` chain is guarded behind
-        // `offer.assetType == ERC20` in `_acceptOffer`).
-        //
-        // Mirrors the FULL precondition `tryApplyBorrowerLif` itself
-        // checks before pulling VPFI, in execution order:
-        //   1. borrower has consent flipped
-        //   2. lending asset is liquid (oracle classification)
-        //   3. `quote(...).canQuote` — borrower's vault VPFI balance
-        //      resolves a tier ≥ 1 + the LIF-equivalent VPFI rate
-        //      can be computed (`_feeAssetWeiToVpfi` succeeds)
-        //   4. borrower's vault exists (`userVaipakamVaults[borrower] != 0`)
-        //   5. vault holds ≥ `vpfiRequired` (the full LIF-equivalent VPFI)
-        //
-        // Codex round-1 P1 (#196): an earlier draft of this function
-        // treated `canQuote` alone as equivalent to "discount will
-        // apply" and dropped `vpfiRequired` on the floor. That diverged
-        // from execution on the path where the borrower has tier 1+
-        // bookkeeping (oracle resolves) but the actual vault holds
-        // LESS than the FULL LIF-equivalent — `quote` returned true,
-        // `tryApplyBorrowerLif` returned false on the balance check,
-        // so execution actually charged LIF in the principal asset
-        // while the preview projected zero. The vault-balance check
-        // below closes that gap.
-        //
-        // The borrower address depends on the offer side (lender offer
-        // → acceptor; borrower offer → creator), same as the loan-init
-        // resolution.
-        if (_isErc20) {
-            address _borrower = _isLender ? acceptor : offer.creator;
-            bool _vpfiDiscountApplies;
-            if (
-                s.vpfiDiscountConsent[_borrower]
-                    && OracleFacet(address(this)).checkLiquidity(
-                        offer.lendingAsset
-                    ) == LibVaipakam.LiquidityStatus.Liquid
-            ) {
-                (bool _canQuote, uint256 _vpfiRequired, ) =
-                    LibVPFIDiscount.quote(
-                        offer.lendingAsset,
-                        preview.effectivePrincipal,
-                        _borrower
-                    );
-                if (_canQuote) {
-                    address _borrowerVault =
-                        s.userVaipakamVaults[_borrower];
-                    if (
-                        _borrowerVault != address(0)
-                            && IERC20(s.vpfiToken).balanceOf(_borrowerVault)
-                                >= _vpfiRequired
-                    ) {
-                        _vpfiDiscountApplies = true;
-                    }
-                }
-            }
-            if (!_vpfiDiscountApplies) {
-                preview.lifEstimate =
-                    (preview.effectivePrincipal *
-                        LibVaipakam.cfgLoanInitiationFeeBps()) /
-                    LibVaipakam.BASIS_POINTS;
-            }
-        }
-
-        // ─── Precondition chain (first failure wins) ────────────────
-        // Order mirrors `_acceptOffer`. First failing check sets
-        // `errorCode`; subsequent checks are short-circuited via the
-        // sentinel return below to keep the projection deterministic
-        // for the frontend.
-        if (offer.accepted) {
-            preview.errorCode = AcceptError.OfferAlreadyAccepted;
-            return preview;
-        }
-        // T-407-C (#566) Codex P2 — mirror the direct-accept partial-fill
-        // guard so the preview never quotes an accept that would revert.
-        // A partially-filled offer (`amountFilled > 0`, accepted == false)
-        // must be advanced via `matchOffers`, not `acceptOffer`. Order
-        // matches `_acceptOffer` (right after the `accepted` check).
-        if (offer.amountFilled > 0) {
-            preview.errorCode = AcceptError.OfferPartiallyFilled;
-            return preview;
-        }
-        // #195 — surface the GTT lazy-expiry gate before sanctions /
-        // pause / KYC. Order mirrors `_acceptOffer` (which checks
-        // expiry right after `accepted`) so the classifier the frontend
-        // reads matches the first failure that the real accept call
-        // would hit.
-        if (LibVaipakam.isOfferExpired(offer)) {
-            preview.errorCode = AcceptError.OfferExpired;
-            return preview;
-        }
-        if (LibVaipakam.isSanctionedAddress(acceptor)) {
-            preview.errorCode = AcceptError.SanctionedAcceptor;
-            return preview;
-        }
-        if (LibVaipakam.isSanctionedAddress(offer.creator)) {
-            preview.errorCode = AcceptError.SanctionedCreator;
-            return preview;
-        }
-        // Per-asset pause check — read storage directly so we don't
-        // re-enter the reverting helper (`LibFacet.requireAssetNotPaused`).
-        if (
-            s.assetPaused[offer.lendingAsset]
-                || s.assetPaused[offer.collateralAsset]
-        ) {
-            preview.errorCode = AcceptError.AssetPaused;
-            return preview;
-        }
-        // Country-pair check — only fires when countries differ AND the
-        // pair is not allowed. On retail (`canTradeBetween` pure-true),
-        // this branch is unreachable; left in for the industrial fork.
-        {
-            string memory _creatorCountry = ProfileFacet(address(this))
-                .getUserCountry(offer.creator);
-            string memory _acceptorCountry = ProfileFacet(address(this))
-                .getUserCountry(acceptor);
-            if (
-                keccak256(abi.encodePacked(_creatorCountry))
-                    != keccak256(abi.encodePacked(_acceptorCountry))
-                    && !LibVaipakam.canTradeBetween(
-                        _creatorCountry,
-                        _acceptorCountry
-                    )
-            ) {
-                preview.errorCode = AcceptError.CountriesNotCompatible;
-                return preview;
-            }
-        }
-        // Defensive creator-consent check. `OfferCreateFacet.createOffer`
-        // enforces this at create time, but `_acceptOffer` re-checks
-        // defensively against any future code path that bypasses
-        // creation enforcement — mirror that here.
-        if (!offer.creatorRiskAndTermsConsent) {
-            preview.errorCode = AcceptError.RiskAndTermsConsentRequired;
-            return preview;
-        }
-        // KYC threshold check — both sides must clear the tier gate at
-        // the projected transaction value.
-        {
-            uint256 _valueNumeraire = _calculateTransactionValueNumeraire(
-                offer,
-                preview.effectivePrincipal
-            );
-            if (
-                !ProfileFacet(address(this)).meetsKYCRequirement(
-                    offer.creator,
-                    _valueNumeraire
-                )
-                    || !ProfileFacet(address(this)).meetsKYCRequirement(
-                        acceptor,
-                        _valueNumeraire
-                    )
-            ) {
-                preview.errorCode = AcceptError.KYCRequired;
-                return preview;
-            }
-        }
-
-        // #671 phase 2 (Codex #729 r3 finding C) — the risk-access gate is NOT
-        // mirrored inline in this classifier. OfferAcceptFacet sits ~56 bytes
-        // under the EIP-170 runtime-size limit, and even a single delegated
-        // classification call overflows it; folding the gate into this
-        // `AcceptError` chain would need a larger `previewAccept`-to-own-facet
-        // split. Instead the gate is surfaced as the dedicated, non-reverting
-        // `RiskAccessFacet.previewOfferAcceptBlock(offerId, acceptor)` view
-        // (0 = OK, 1 = tier too low, 2 = illiquid pair needs standing consent) —
-        // the "expose a matching preview error" option from the finding — which
-        // the frontend consults alongside this preview so a risk-blocked accept
-        // is never quoted as acceptable.
-
-        // Happy path: errorCode stays `None`.
     }
 
 }

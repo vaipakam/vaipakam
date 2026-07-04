@@ -1008,10 +1008,16 @@ contract LoanFacetTest is Test {
         );
 
         TestMutatorFacet(address(diamond)).setSaleOfferToLoanIdRaw(saleOfferId, existingLoanId);
+        // #951 v2 (Codex #959 bind-to-live) — no collateral snapshot to scaffold:
+        // the collateral floor now binds `>=` live at `_bindTermsToOffer` (the
+        // accept path). LoanFacet only re-checks the structural invariants
+        // (linked-loan Active + self-buy + compliance) exercised here.
 
-        // Now initiate loan directly via prank as diamond (since this goes through cross-facet)
+        // Now initiate loan directly via prank as diamond (since this goes through
+        // cross-facet). Buy as a THIRD party (`lender`), not the linked loan's own
+        // borrower — the round-6 self-buy guard rejects `acceptor == borrower`.
         vm.prank(address(diamond));
-        uint256 saleLoanId = LoanFacet(address(diamond)).initiateLoan(saleOfferId, borrower, false);
+        uint256 saleLoanId = LoanFacet(address(diamond)).initiateLoan(saleOfferId, lender, false);
 
         LibVaipakam.Loan memory loan = LoanFacet(address(diamond)).getLoanDetails(saleLoanId);
         assertEq(uint8(loan.status), uint8(LibVaipakam.LoanStatus.Active));

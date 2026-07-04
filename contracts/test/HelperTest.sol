@@ -5,6 +5,7 @@ pragma solidity ^0.8.29;
 import {OfferCreateFacet} from "../src/facets/OfferCreateFacet.sol";
 import {OfferParallelSaleFacet} from "../src/facets/OfferParallelSaleFacet.sol";
 import {OfferAcceptFacet} from "../src/facets/OfferAcceptFacet.sol";
+import {OfferPreviewFacet} from "../src/facets/OfferPreviewFacet.sol";
 import {OfferMatchFacet} from "../src/facets/OfferMatchFacet.sol";
 import {OfferCancelFacet} from "../src/facets/OfferCancelFacet.sol";
 import {OfferMutateFacet} from "../src/facets/OfferMutateFacet.sol";
@@ -80,7 +81,7 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](83);
+        selectors = new bytes4[](88);
         selectors[0] = TestMutatorFacet.setLoan.selector;
         selectors[1] = TestMutatorFacet.setOffer.selector;
         selectors[2] = TestMutatorFacet.setNextLoanId.selector;
@@ -247,6 +248,14 @@ contract HelperTest {
         // residual tests (drain-block + claimability).
         selectors[81] = TestMutatorFacet.setLoanCollateralLienRaw.selector;
         selectors[82] = TestMutatorFacet.getLoanCollateralLienAmount.selector;
+        // #953 — sale-forfeit sweep-reachability test scaffolding.
+        selectors[83] = TestMutatorFacet.setLoanActiveLenderEntryId.selector;
+        selectors[84] = TestMutatorFacet.callTransferLenderEntry.selector;
+        selectors[85] = TestMutatorFacet.getForfeitedLenderEntryIds.selector;
+        selectors[86] = TestMutatorFacet.setOfferConsumedBySaleRaw.selector; // #955
+        selectors[87] = TestMutatorFacet.setLoanToSaleOfferIdRaw.selector; // #951 (Codex #959 r5)
+        // #951 v2 (Codex #959 bind-to-live) — setSaleListingCollateralRaw removed
+        // with the snapshot mapping; the accept binds `>=` live collateral.
         // #687-B: the former tail entries ([83]-[87]: setBackstopAbsorbCashRaw,
         // pushUserLoanIdRaw, vpfiTokenRaw, setLenderProceedsEncumberedRaw,
         // setVpfiTokenRaw) were relocated into the slots freed by the removed
@@ -304,7 +313,7 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](6);
+        selectors = new bytes4[](5);
         // #662 — `acceptOffer(uint256,AcceptTerms,bytes)` now binds the
         // acceptor's EIP-712-signed terms to every loan-affecting offer field
         // (anti-phishing; OfferAcceptTermBindingDesign.md).
@@ -314,18 +323,27 @@ contract HelperTest {
         // Cross-facet entry consumed by OfferMatchFacet.matchOffers
         // (Range Orders Phase 1 EIP-170 split) — address(this)-only.
         selectors[2] = OfferAcceptFacet.acceptOfferInternal.selector;
-        // #196 — contract-side dry-run for the frontend / indexer /
-        // keeper. Pure view; consumers `staticcall` it from the
-        // OfferDetails + AcceptOffer modal.
-        selectors[3] = OfferAcceptFacet.previewAccept.selector;
+        // #980 — `previewAccept` moved to OfferPreviewFacet
+        // (`getOfferPreviewFacetSelectors`).
         // #627 — public KYC-value view (aggregator adapter principal screen).
-        selectors[4] = OfferAcceptFacet.calculateTransactionValueNumeraire.selector;
+        selectors[3] = OfferAcceptFacet.calculateTransactionValueNumeraire.selector;
         // #662 — gated cross-facet hop SignedOfferFacet uses to share the one
         // binding impl (`address(this)`-only). Must be cut so signed-offer
         // fills route to it. (The EIP-712 digest is computed off-chain — the
         // `hashAcceptTerms` view was removed for EIP-170 headroom, #730; the test
         // signer uses `LibAcceptTerms.digestFor`.)
-        selectors[5] = OfferAcceptFacet.verifyAndBindAccept.selector;
+        selectors[4] = OfferAcceptFacet.verifyAndBindAccept.selector;
+        return selectors;
+    }
+
+    /// @dev #980 — `OfferPreviewFacet.previewAccept`, split out of OfferAcceptFacet.
+    function getOfferPreviewFacetSelectors()
+        public
+        pure
+        returns (bytes4[] memory selectors)
+    {
+        selectors = new bytes4[](1);
+        selectors[0] = OfferPreviewFacet.previewAccept.selector;
         return selectors;
     }
 
@@ -338,13 +356,15 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](5);
+        selectors = new bytes4[](6);
         selectors[0] = OfferCancelFacet.cancelOffer.selector;
         selectors[1] = OfferCancelFacet.getCompatibleOffers.selector;
         selectors[2] = OfferCancelFacet.getOffer.selector;
         selectors[3] = OfferCancelFacet.getOfferDetails.selector;
         // #662/#725 — linked-loan getter for the AcceptTerms.linkedLoanId field.
         selectors[4] = OfferCancelFacet.getOfferLinkedLoanId.selector;
+        // #951 v2 — permissionless stale-sale-listing teardown.
+        selectors[5] = OfferCancelFacet.teardownStaleSaleListing.selector;
         return selectors;
     }
 
@@ -1132,10 +1152,12 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](3);
+        selectors = new bytes4[](4);
         selectors[0] = EarlyWithdrawalFacet.sellLoanViaBuyOffer.selector;
         selectors[1] = EarlyWithdrawalFacet.createLoanSaleOffer.selector;
         selectors[2] = EarlyWithdrawalFacet.completeLoanSale.selector;
+        // #951 (Codex #959) — cross-facet completion entry.
+        selectors[3] = EarlyWithdrawalFacet.completeLoanSaleInternal.selector;
         return selectors;
     }
 
@@ -1207,7 +1229,7 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](49);
+        selectors = new bytes4[](50);
         selectors[0] = MetricsFacet.getProtocolTVL.selector;
         selectors[1] = MetricsFacet.getProtocolStats.selector;
         selectors[2] = MetricsFacet.getUserCount.selector;
@@ -1281,6 +1303,7 @@ contract HelperTest {
         // #769 — paginated position views (exercised by MetricsPositionPaginatedTest).
         selectors[47] = MetricsFacet.getUserPositionLoansPaginated.selector;
         selectors[48] = MetricsFacet.getUserPositionOffersPaginated.selector;
+        selectors[49] = MetricsFacet.getOfferState.selector; // #955 (#921 item 4)
         return selectors;
     }
 
@@ -1410,7 +1433,7 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](73);
+        selectors = new bytes4[](75);
         selectors[0] = ConfigFacet.setFeesConfig.selector;
         selectors[1] = ConfigFacet.setLiquidationConfig.selector;
         selectors[2] = ConfigFacet.setRiskConfig.selector;
@@ -1537,6 +1560,9 @@ contract HelperTest {
         // access-control tests in RiskAccessFacetTest exercise these).
         selectors[71] = ConfigFacet.setRiskAccessGateEnabled.selector;
         selectors[72] = ConfigFacet.getRiskAccessGateEnabled.selector;
+        // #956 (#921 item 5) — per-asset min-partial floor setter + RiskParams view.
+        selectors[73] = ConfigFacet.setAssetMinPartialBps.selector;
+        selectors[74] = ConfigFacet.getAssetRiskParams.selector;
         return selectors;
     }
 

@@ -6,6 +6,7 @@ import {LibVaipakam} from "../src/libraries/LibVaipakam.sol";
 import {LibOfferMatch} from "../src/libraries/LibOfferMatch.sol";
 import {OfferCreateFacet} from "../src/facets/OfferCreateFacet.sol";
 import {OfferAcceptFacet} from "../src/facets/OfferAcceptFacet.sol";
+import {OfferPreviewFacet} from "../src/facets/OfferPreviewFacet.sol";
 import {OfferCancelFacet} from "../src/facets/OfferCancelFacet.sol";
 import {OfferMatchFacet} from "../src/facets/OfferMatchFacet.sol";
 import {ERC20Mock} from "./mocks/ERC20Mock.sol";
@@ -268,7 +269,7 @@ contract OfferExpiryTest is SetupTest {
         vm.warp(uint256(deadline) + 1);
 
         OfferAcceptFacet.AcceptPreview memory p =
-            OfferAcceptFacet(address(diamond)).previewAccept(id, borrower);
+            OfferPreviewFacet(address(diamond)).previewAccept(id, borrower);
         assertEq(
             uint256(p.errorCode),
             uint256(OfferAcceptFacet.AcceptError.OfferExpired),
@@ -281,7 +282,7 @@ contract OfferExpiryTest is SetupTest {
         uint256 id = _createLender(deadline);
 
         OfferAcceptFacet.AcceptPreview memory p =
-            OfferAcceptFacet(address(diamond)).previewAccept(id, borrower);
+            OfferPreviewFacet(address(diamond)).previewAccept(id, borrower);
         assertEq(
             uint256(p.errorCode),
             uint256(OfferAcceptFacet.AcceptError.None),

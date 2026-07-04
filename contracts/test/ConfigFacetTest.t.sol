@@ -506,6 +506,88 @@ contract ConfigFacetTest is Test {
         assertEq(t3f, 6_900); assertEq(t3c, 8_200); assertEq(t3h, 500);
     }
 
+    // ── #956 (#921 item 5) — per-asset minPartialBps setter + RiskParams view ──
+
+    function testSetAssetMinPartialBps_HappyPath() public {
+        address asset = makeAddr("minPartialAsset");
+        vm.expectEmit(true, false, false, true);
+        emit ConfigFacet.AssetMinPartialBpsUpdated(asset, 250);
+        ConfigFacet(address(diamond)).setAssetMinPartialBps(asset, 250);
+
+        // The new view exposes the previously-unreadable enforced floor.
+        LibVaipakam.RiskParams memory p =
+            ConfigFacet(address(diamond)).getAssetRiskParams(asset);
+        assertEq(p.minPartialBps, 250, "floor set + readable via getAssetRiskParams");
+    }
+
+    function testSetAssetMinPartialBps_RejectsAboveMax() public {
+        address asset = makeAddr("minPartialAsset");
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                IVaipakamErrors.ParameterOutOfRange.selector,
+                bytes32("minPartialBps"),
+                LibVaipakam.BASIS_POINTS + 1,
+                uint256(0),
+                LibVaipakam.BASIS_POINTS - 1
+            )
+        );
+        ConfigFacet(address(diamond)).setAssetMinPartialBps(
+            asset,
+            LibVaipakam.BASIS_POINTS + 1
+        );
+    }
+
+    /// @dev #956 (Codex #978) — a 100% floor is rejected: it would make every
+    ///      ERC-20 partial impossible (a partial can never retire the full
+    ///      principal), so the ceiling is `BASIS_POINTS - 1`, not `BASIS_POINTS`.
+    function testSetAssetMinPartialBps_RejectsFullHundredPercent() public {
+        address asset = makeAddr("minPartialAsset");
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                IVaipakamErrors.ParameterOutOfRange.selector,
+                bytes32("minPartialBps"),
+                LibVaipakam.BASIS_POINTS,
+                uint256(0),
+                LibVaipakam.BASIS_POINTS - 1
+            )
+        );
+        ConfigFacet(address(diamond)).setAssetMinPartialBps(
+            asset,
+            LibVaipakam.BASIS_POINTS
+        );
+    }
+
+    /// @dev #956 (Codex #978) — the new ceiling `BASIS_POINTS - 1` is accepted
+    ///      (boundary), confirming the reject is strict-equality on 100% only.
+    function testSetAssetMinPartialBps_AcceptsJustBelowFull() public {
+        address asset = makeAddr("minPartialAsset");
+        ConfigFacet(address(diamond)).setAssetMinPartialBps(
+            asset,
+            LibVaipakam.BASIS_POINTS - 1
+        );
+        LibVaipakam.RiskParams memory p =
+            ConfigFacet(address(diamond)).getAssetRiskParams(asset);
+        assertEq(p.minPartialBps, LibVaipakam.BASIS_POINTS - 1, "just-below-100% floor accepted");
+    }
+
+    function testSetAssetMinPartialBps_RejectsZeroAsset() public {
+        vm.expectRevert(IVaipakamErrors.InvalidAsset.selector);
+        ConfigFacet(address(diamond)).setAssetMinPartialBps(address(0), 100);
+    }
+
+    function testSetAssetMinPartialBps_RejectsNonAdmin() public {
+        address asset = makeAddr("minPartialAsset");
+        vm.prank(attacker);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                LibAccessControl.AccessControlUnauthorizedAccount.selector,
+                attacker,
+                LibAccessControl.ADMIN_ROLE
+            )
+        );
+        ConfigFacet(address(diamond)).setAssetMinPartialBps(asset, 100);
+    }
+
     function testSetTierLtvParams_GovernanceTightening() public {
         // Aggressive tighter Tier-3 — narrow the cap from 82% to 75%.
         ConfigFacet(address(diamond)).setTierLtvParams(

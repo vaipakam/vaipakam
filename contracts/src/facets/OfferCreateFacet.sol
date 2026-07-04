@@ -948,7 +948,18 @@ contract OfferCreateFacet is
                     params.lendingAsset,
                     params.collateralAsset
                 );
-                if (ceiling != type(uint256).max && offer.amountMax > ceiling) {
+                // #951 — exempt the protocol-authored lender-sale vehicle. It
+                // mimics a Borrower offer with `collateralAmount == 0` (the real
+                // collateral stays on the linked live loan, not re-posted here),
+                // so the collateral-derived ceiling is 0 and any non-zero amount
+                // would revert. The exemption mirrors the risk-access-gate
+                // exemption above; both key off the same `saleVehicleCreate`
+                // transient set only by `EarlyWithdrawalFacet.createLoanSaleOffer`.
+                if (
+                    !s.saleVehicleCreate
+                    && ceiling != type(uint256).max
+                    && offer.amountMax > ceiling
+                ) {
                     revert MaxLendingAboveCeiling(offer.amountMax, ceiling);
                 }
             }
@@ -1194,6 +1205,15 @@ contract OfferCreateFacet is
             }
         } else {
             // Borrower: lock collateral (or prepay for NFT rental).
+            // #951 (Codex #959) — a protocol-authored lender-sale vehicle pledges
+            // NO fresh collateral: the real collateral stays on the linked live
+            // loan and the exiting-lender creator does not own it. Any pull here —
+            // the ERC20 collateral deposit OR the ERC721/ERC1155 `safeTransferFrom`
+            // below — would revert (and the ceiling exemption alone doesn't stop
+            // the pull). Skip the entire borrower-side pull, mirroring the
+            // carry-over refinance skip. The zero-fresh-collateral invariant is
+            // enforced upstream (`collateralAmount == 0` in `_buildSaleParams`).
+            if (LibVaipakam.storageSlot().saleVehicleCreate) return;
             if (params.assetType == LibVaipakam.AssetType.ERC20) {
                 // #576 — a CARRY-OVER refinance offer reuses the OLD loan's
                 // collateral IN PLACE (the non-transferred predicate

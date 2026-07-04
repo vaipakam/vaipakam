@@ -19,6 +19,7 @@ import {VaultFactoryFacet} from "../src/facets/VaultFactoryFacet.sol";
 import {OfferCreateFacet} from "../src/facets/OfferCreateFacet.sol";
 import {OfferParallelSaleFacet} from "../src/facets/OfferParallelSaleFacet.sol";
 import {OfferAcceptFacet} from "../src/facets/OfferAcceptFacet.sol";
+import {OfferPreviewFacet} from "../src/facets/OfferPreviewFacet.sol";
 import {OfferMatchFacet} from "../src/facets/OfferMatchFacet.sol";
 import {OfferCancelFacet} from "../src/facets/OfferCancelFacet.sol";
 import {OfferMutateFacet} from "../src/facets/OfferMutateFacet.sol";
@@ -140,6 +141,7 @@ contract DeployDiamond is Script {
         // (carved off OfferCreateFacet — see _getOfferParallelSaleSelectors).
         OfferParallelSaleFacet offerParallelSaleFacet = new OfferParallelSaleFacet();
         OfferAcceptFacet offerAcceptFacet = new OfferAcceptFacet();
+        OfferPreviewFacet offerPreviewFacet = new OfferPreviewFacet();
         // Range Orders Phase 1 EIP-170 split: matchOffers + previewMatch
         // live on a separate facet to keep OfferFacet under the
         // 24576-byte runtime-bytecode ceiling.
@@ -252,7 +254,7 @@ contract DeployDiamond is Script {
 
         // ── Step 3: Build facet cuts ────────────────────────────────────
         // 37 facets (DiamondCutFacet already added by constructor)
-        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](62);
+        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](63);
 
         cuts[0] = _buildCut(address(loupeFacet), _getLoupeSelectors());
         cuts[1] = _buildCut(address(ownershipFacet), _getOwnershipSelectors());
@@ -308,6 +310,12 @@ contract DeployDiamond is Script {
         cuts[35] = _buildCut(
             address(offerAcceptFacet),
             _getOfferAcceptSelectors()
+        );
+        // #980 — OfferPreviewFacet (the `previewAccept` view split out of
+        // OfferAcceptFacet for EIP-170 headroom).
+        cuts[62] = _buildCut(
+            address(offerPreviewFacet),
+            _getOfferPreviewSelectors()
         );
         // #193 — in-place offer modification facet, sibling of the
         // create / accept / cancel / match facets above.
@@ -1239,7 +1247,7 @@ contract DeployDiamond is Script {
     }
 
     function _getOfferAcceptSelectors() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](6);
+        s = new bytes4[](5);
         s[0] = OfferAcceptFacet.acceptOffer.selector;
         // Phase 8b.1 Permit2 addition.
         s[1] = OfferAcceptFacet.acceptOfferWithPermit.selector;
@@ -1249,13 +1257,11 @@ contract DeployDiamond is Script {
         // nonReentrant lock. `address(this)`-only gated inside the
         // facet body — EOAs cannot call it through the fallback.
         s[2] = OfferAcceptFacet.acceptOfferInternal.selector;
-        // #196 — contract-side dry-run for the frontend / indexer /
-        // keeper. Pure view; mirrors the `_acceptOffer` precondition
-        // chain and the `LoanFacet` direct-accept role-aware mapping.
-        s[3] = OfferAcceptFacet.previewAccept.selector;
+        // #980 — `previewAccept` moved to `OfferPreviewFacet`
+        // (`_getOfferPreviewSelectors`) to free OfferAcceptFacet EIP-170 headroom.
         // #627 — public KYC-value view; the aggregator adapter calls it to
         // screen its real principal at the exact accept-path valuation.
-        s[4] = OfferAcceptFacet.calculateTransactionValueNumeraire.selector;
+        s[3] = OfferAcceptFacet.calculateTransactionValueNumeraire.selector;
         // #662 — anti-phishing accept-term binding surface. `verifyAndBindAccept`
         // is the diamond-internal gated cross-facet hop SignedOfferFacet uses to
         // share the one binding implementation (`address(this)`-only, like
@@ -1264,10 +1270,17 @@ contract DeployDiamond is Script {
         // no on-chain `hashAcceptTerms` view (removed for EIP-170 headroom, #730).
         // The direct-path offerKey (`keccak256(abi.encode(offerId))`) is likewise
         // client-side.
-        s[5] = OfferAcceptFacet.verifyAndBindAccept.selector;
+        s[4] = OfferAcceptFacet.verifyAndBindAccept.selector;
         // `cancelOffer`, `getCompatibleOffers`, `getOffer`, and
         // `getOfferDetails` live on `OfferCancelFacet` — see
         // `_getOfferCancelSelectors`.
+    }
+
+    /// @dev #980 — `OfferPreviewFacet.previewAccept`, split out of
+    ///      OfferAcceptFacet for EIP-170 headroom. Single view selector.
+    function _getOfferPreviewSelectors() internal pure returns (bytes4[] memory s) {
+        s = new bytes4[](1);
+        s[0] = OfferPreviewFacet.previewAccept.selector;
     }
 
     /// @dev OfferMatchFacet — Range Orders Phase 1 bot-driven offer
@@ -1293,13 +1306,15 @@ contract DeployDiamond is Script {
     ///      separate facet — frontend and keeper-bot bindings
     ///      unaffected by the move.
     function _getOfferCancelSelectors() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](5);
+        s = new bytes4[](6);
         s[0] = OfferCancelFacet.cancelOffer.selector;
         s[1] = OfferCancelFacet.getCompatibleOffers.selector;
         s[2] = OfferCancelFacet.getOffer.selector;
         s[3] = OfferCancelFacet.getOfferDetails.selector;
         // #662/#725 — linked-loan getter for the AcceptTerms.linkedLoanId field.
         s[4] = OfferCancelFacet.getOfferLinkedLoanId.selector;
+        // #951 v2 — permissionless stale-sale-listing teardown.
+        s[5] = OfferCancelFacet.teardownStaleSaleListing.selector;
     }
 
     /// @dev OfferMutateFacet — #193 in-place modification surface
@@ -1753,10 +1768,13 @@ contract DeployDiamond is Script {
     }
 
     function _getEarlyWithdrawalSelectors() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](3);
+        s = new bytes4[](4);
         s[0] = EarlyWithdrawalFacet.sellLoanViaBuyOffer.selector;
         s[1] = EarlyWithdrawalFacet.createLoanSaleOffer.selector;
         s[2] = EarlyWithdrawalFacet.completeLoanSale.selector;
+        // #951 (Codex #959) — cross-facet completion entry for the
+        // accept-then-complete auto-link (skips the outer nonReentrant guard).
+        s[3] = EarlyWithdrawalFacet.completeLoanSaleInternal.selector;
     }
 
     function _getPartialWithdrawalSelectors() internal pure returns (bytes4[] memory s) {
@@ -2023,7 +2041,7 @@ contract DeployDiamond is Script {
     }
 
     function _getConfigSelectors() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](73);
+        s = new bytes4[](75);
         // Setters
         s[0] = ConfigFacet.setFeesConfig.selector;
         s[1] = ConfigFacet.setLiquidationConfig.selector;
@@ -2184,6 +2202,9 @@ contract DeployDiamond is Script {
         // #671 — progressive risk-access gate master kill-switch + getter.
         s[71] = ConfigFacet.setRiskAccessGateEnabled.selector;
         s[72] = ConfigFacet.getRiskAccessGateEnabled.selector;
+        // #956 (#921 item 5) — per-asset min-partial floor setter + RiskParams view.
+        s[73] = ConfigFacet.setAssetMinPartialBps.selector;
+        s[74] = ConfigFacet.getAssetRiskParams.selector;
     }
 
     /// T-034 / T-048 numeraire / PAD / periodic-interest config
@@ -2277,7 +2298,7 @@ contract DeployDiamond is Script {
     }
 
     function _getMetricsSelectors() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](50);
+        s = new bytes4[](51);
         s[0] = MetricsFacet.getProtocolTVL.selector;
         s[1] = MetricsFacet.getProtocolStats.selector;
         s[2] = MetricsFacet.getUserCount.selector;
@@ -2371,6 +2392,10 @@ contract DeployDiamond is Script {
         // balanceOf-loop `eth_call` revert and break the holder's reads.
         s[48] = MetricsFacet.getUserPositionLoansPaginated.selector;
         s[49] = MetricsFacet.getUserPositionOffersPaginated.selector;
+        // #955 (#921 item 4) — single-offer canonical lifecycle state, so a
+        // Scenario-A consumed-by-sale terminal is visible to integrators without
+        // the `ownerOf`-liveness heuristic.
+        s[50] = MetricsFacet.getOfferState.selector;
     }
 
     /// AnalyticalGettersDesign §3.1 — per-user dashboard surface. One

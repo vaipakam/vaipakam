@@ -246,6 +246,19 @@ contract PartialWithdrawalFacetTest is Test {
         PartialWithdrawalFacet(address(diamond)).partialWithdrawCollateral(activeLoanId, COLLATERAL + 1);
     }
 
+    /// @dev #951 (Codex #959 round-5) — a live lender-sale listing freezes the
+    ///      position's collateral: `partialWithdrawCollateral` reverts
+    ///      `SaleListingActive` so a pending buyer can't be handed a loan whose
+    ///      collateral was silently drained after the listing was posted.
+    function testPartialWithdrawBlockedWhileSaleListed() public {
+        TestMutatorFacet(address(diamond)).setLoanToSaleOfferIdRaw(activeLoanId, 42);
+        vm.prank(borrower);
+        vm.expectRevert(PartialWithdrawalFacet.SaleListingActive.selector);
+        PartialWithdrawalFacet(address(diamond)).partialWithdrawCollateral(activeLoanId, 1);
+        // Clearing the listing re-enables the withdraw path (state hygiene).
+        TestMutatorFacet(address(diamond)).setLoanToSaleOfferIdRaw(activeLoanId, 0);
+    }
+
     function testPartialWithdrawRevertsAmountZero() public {
         vm.prank(borrower);
         vm.expectRevert(PartialWithdrawalFacet.AmountTooHigh.selector);
