@@ -277,3 +277,100 @@ yarn start
 ```
 
 This opens a browser window with the React app running.
+
+## Part 3: GitHub CLI (`gh`) authentication — keyring-backed `GH_TOKEN`
+
+All PR, review-comment, and GitHub Project operations (and `git push` to
+`origin`) go through the `gh` CLI authenticated as the **`vaipakam`**
+account. Rather than run `gh auth login` interactively on every machine —
+or, worse, hard-code a token in a file that could be committed — the
+Personal Access Token (PAT) is stored **once** in the OS keyring
+(GNOME Keyring via `libsecret`) and resolved into the `GH_TOKEN`
+environment variable on shell start. `gh` reads `GH_TOKEN` automatically.
+
+> **Never** put the PAT in `.env`, a script, or any tracked file. The
+> repo's `contracts/.env` holds only deploy / RPC / chain config — no
+> GitHub token. The keyring is the single source of truth.
+
+### Step 1: Install the keyring CLI
+
+```bash
+sudo apt update
+sudo apt install libsecret-tools    # provides `secret-tool`
+```
+
+### Step 2: Store the PAT in the keyring (one-time, per account)
+
+Create a fine-grained or classic PAT at
+`https://github.com/settings/tokens` for the `vaipakam` account with at
+least the `repo`, `workflow`, `read:org`, `read:discussion`, and
+`project` scopes (the last one is needed for the `@vaipakam-labs` Project
+board automation). Then store it under the `gh-pat` service, keyed by the
+account name — `secret-tool` prompts for the value on stdin so it never
+lands in shell history:
+
+```bash
+secret-tool store --label="gh PAT (vaipakam)" service gh-pat account vaipakam
+# (paste the token at the prompt, press Enter)
+```
+
+A second account (e.g. `raja4shekar`) can be stored the same way with a
+different `account` attribute; they coexist in the keyring.
+
+### Step 3: Auto-resolve `GH_TOKEN` on shell start
+
+VS Code sets a per-workspace env var `GH_PAT_ACCOUNT` (via
+`terminal.integrated.env.linux` in `settings.json`) naming which stored
+account this checkout should use — e.g. `"GH_PAT_ACCOUNT": "vaipakam"`.
+`~/.bashrc` then resolves the token from the keyring into `GH_TOKEN`:
+
+```bash
+# Resolve GH_TOKEN from GNOME Keyring via GH_PAT_ACCOUNT (set per-IDE in
+# VS Code's settings.json -> terminal.integrated.env.linux). No-op where
+# GH_PAT_ACCOUNT isn't set, or where GH_TOKEN is already provided.
+if [ -n "$GH_PAT_ACCOUNT" ] && [ -z "$GH_TOKEN" ]; then
+  __gh_pat="$(secret-tool lookup service gh-pat account "$GH_PAT_ACCOUNT" 2>/dev/null)"
+  if [ -n "$__gh_pat" ]; then
+    export GH_TOKEN="$__gh_pat"
+  fi
+  unset __gh_pat
+fi
+```
+
+Open a fresh VS Code integrated terminal and confirm:
+
+```bash
+gh auth status        # → "Logged in to github.com account vaipakam (GH_TOKEN)"
+```
+
+### Step 4: Let `git push` reuse the same token
+
+Point git's HTTPS credential helper at `gh` once, so pushes use `GH_TOKEN`
+without a username/password prompt:
+
+```bash
+gh auth setup-git
+git push -u origin <branch>
+```
+
+### Step 5: Non-interactive shells (scripts, CI-like runs, agents)
+
+A subprocess or non-login shell does **not** inherit `GH_PAT_ACCOUNT`
+(it's injected only into the VS Code integrated terminal), so the
+`~/.bashrc` block above is a no-op there and `GH_TOKEN` comes up empty.
+Resolve it explicitly at the top of any such command:
+
+```bash
+export GH_TOKEN="$(secret-tool lookup service gh-pat account vaipakam)"
+gh pr list ...        # or: gh auth setup-git && git push ...
+```
+
+Because shell state does not persist between separate invocations, prefix
+**each** `gh`/`git push` command that needs auth with that `export` line.
+
+**Troubleshooting** — `gh auth status` reporting "not logged into any
+GitHub hosts" after an IDE restart almost always means `GH_PAT_ACCOUNT`
+wasn't set for the terminal (so the keyring was never queried). Re-open
+the integrated terminal, or resolve `GH_TOKEN` manually as in Step 5. If
+`secret-tool lookup` returns nothing, the PAT was never stored (or the
+keyring is locked) — repeat Step 2.
