@@ -169,6 +169,46 @@ button on a terminal (Defaulted) loan would be a minor UI defect (the
 repay would revert). Flagged for a quick confirm — low severity, not
 blocking.
 
+## R-5 — VPFI discounts / tiers / interaction rewards — DORMANT on testnet (deploy/config, not an alpha02 defect)
+
+Checked on-chain against the Base Sepolia Diamond:
+
+- **`getVPFIToken()` returns `address(0)`** — VPFI is **not registered**
+  in the deployed Diamond. (The VPFI token *contract* exists at
+  `deployments.vpfiToken`, but the Diamond's discount/reward machinery
+  has no VPFI pointer set.)
+- Consequently every VPFI read is zero for every wallet:
+  `getEffectiveDiscount` = `[tier 0, 0 bps]`,
+  `getTrackedVPFIDiscountTier` = `[0, 0, 0]`,
+  `getVPFIBalanceOf` = 0.
+- `previewInteractionRewards` / `getInteractionClaimability` = all zero —
+  the platform interaction-reward accrual (global reward calc) is not
+  active on this deploy either.
+
+So the VPFI **discount/tier mechanism and interaction-reward global
+calculation cannot be functionally exercised** on the current testnet
+Diamond — this is a deploy/config gap, not an app bug.
+
+What the UI does with the dormant state — verified, correct:
+- **`/vpfi`** renders honestly: "VPFI deposits aren’t available on Base
+  Sepolia yet. Everything else on Vaipakam works without VPFI." + the
+  educational tier explanation, **no crash, no console errors**. It does
+  NOT fabricate a tier table or a fake discount. ✅ (This matches the
+  page's `!snapshot.registered` branch and its honesty rule: "not
+  available on this chain" only when the chain positively says so.)
+- **Claims → Rewards card** correctly shows the empty (0 pending)
+  interaction-rewards state, not an error. ✅
+
+To review VPFI **functionally** (deposit → tier-up → discount applied at
+settlement; global interaction-reward accrual → claim), the testnet
+Diamond needs the same kind of enablement the oracle path just got:
+register VPFI in the Diamond (`setVPFIToken` + the discount-rate/tier
+config), distribute VPFI to the test wallets, and switch on the
+interaction-reward accrual. That's a distinct operator setup — I can
+add a `DeployTestnetVPFI`-style helper (mint + register + configure
+tiers) the same way as the oracle mocks if you want VPFI exercised
+end-to-end.
+
 ## R-3d — What remains (lower priority / harder to exercise)
 
 - **repayPartial full-principal revert (#953 item 3)** — needs a
@@ -220,7 +260,7 @@ out above.)
 | R-3b repayPartial full-principal revert (#953 item 3) | ⏳ pending a partial-enabled loan |
 | R-3d Refinance completion / sanctions-gate | ⏳ contract-unblocked; UI drive pending (indexer) / not observable (oracle unset) |
 | R-4 Home nudge / faucet nav / Claims on-chain / live-sync | ✅ PASS |
-| VPFI discounts / tiers / interaction rewards | ⏳ separate surface — reviewed in R-5 (below) |
+| VPFI discounts / tiers / interaction rewards (R-5) | ⚠️ dormant on testnet (`getVPFIToken()==0`); UI handles it honestly ✅; functional review needs VPFI enablement |
 
 Net: the faucet, the Tier-1 liquid-classification-in-UI, the HF display,
 and the full Tier-2 liquidation are all verified working end-to-end on
