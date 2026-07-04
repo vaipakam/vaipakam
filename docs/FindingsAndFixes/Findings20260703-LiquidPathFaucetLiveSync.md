@@ -199,15 +199,41 @@ What the UI does with the dormant state — verified, correct:
 - **Claims → Rewards card** correctly shows the empty (0 pending)
   interaction-rewards state, not an error. ✅
 
-To review VPFI **functionally** (deposit → tier-up → discount applied at
-settlement; global interaction-reward accrual → claim), the testnet
-Diamond needs the same kind of enablement the oracle path just got:
-register VPFI in the Diamond (`setVPFIToken` + the discount-rate/tier
-config), distribute VPFI to the test wallets, and switch on the
-interaction-reward accrual. That's a distinct operator setup — I can
-add a `DeployTestnetVPFI`-style helper (mint + register + configure
-tiers) the same way as the oracle mocks if you want VPFI exercised
-end-to-end.
+### R-5a — VPFI enablement helper (`DeployTestnetVPFI.s.sol`)
+
+To make VPFI reviewable, added `contracts/script/DeployTestnetVPFI.s.sol`
+— an operator-run one-shot (mirrors `DeployTestnetMocks`) that:
+
+1. (admin) `setVPFIToken(deployments.vpfiToken)` — registers VPFI so
+   `getVPFIToken()` is non-zero and the discount machinery activates.
+   Tier thresholds (100 / 1,000 / 5,000 / 20,000 VPFI → 10 / 15 / 20 /
+   24 %) already have on-chain defaults, so no tier config is needed.
+2. (admin) `setVPFIDiscountETHPriceAsset(WETH)` + `setVPFIDiscountRate`
+   — the ETH-price reference (now oracle-priced via the mocks) and the
+   wei-per-VPFI rate the borrower LIF-rebate quote uses.
+3. (VPFI holder = treasury, which holds the full 23M initial supply on
+   testnet) transfers VPFI to up to four recipient wallets.
+
+**Run (Base Sepolia):**
+```bash
+export ADMIN_PRIVATE_KEY=<admin>
+export VPFI_SOURCE_PRIVATE_KEY=<treasury holder 0xca3E…7413>
+export VPFI_RECIPIENT_1=0xC86BB89f8ddF703c34724Cf11137498bC69F039D  # borrower
+export VPFI_RECIPIENT_2=0x1DAefA360ED370285f003Fa2d92DB75628088282  # lender
+# VPFI_AMOUNT_EACH defaults to 25000 (top tier)
+forge script script/DeployTestnetVPFI.s.sol --rpc-url <base-sepolia> --broadcast
+```
+The 23M VPFI sits in the **treasury** (`0xca3E735C…7413`), so
+`VPFI_SOURCE_PRIVATE_KEY` must be that holder's key (the token's minter
+is the Diamond, so VPFI can't be freshly minted from an EOA). No new
+contracts are deployed and no `deployments.json` change is needed —
+`vpfiToken` is already recorded.
+
+Once run, I can review: the `/vpfi` page going active (tier table +
+deposit), a VPFI deposit climbing tiers (`getEffectiveDiscount`), and —
+with a settled loan — the discount actually applied. **The script was
+NOT compiled here (foundry unavailable); it mirrors `DeployTestnetMocks`
+with every facet signature verified against source.**
 
 ## R-3d — What remains (lower priority / harder to exercise)
 
