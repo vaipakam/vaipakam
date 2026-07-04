@@ -139,12 +139,21 @@ borrower can commit the intent while clean and be flagged before the fill.
 
 **Fix:** apply the *same* freeze pattern as `swapToRepayFull` (this IS the
 must-complete terminal, so freeze, don't screen):
-- lender leg → `begin/end` freeze on `loan.lender`;
-- collateral pull / residual return → `beginMoveOut/endMoveOut(loan.borrower)`;
+- lender leg → `begin/end` freeze on `loan.lender` **AND the full §1.1
+  treatment: encumber the frozen lender proceeds for every ERC20** (Codex #986
+  r2), plus the `frozenVpfiOwedByVault` bump for VPFI — the intent path has the
+  identical stored-lender-vault pattern, so a non-VPFI `plan.lenderDue` frozen
+  here is otherwise spendable by a transferred-away stored lender;
+- collateral pull / residual return → `beginMoveOut/endMoveOut(loan.borrower)`,
+  and **re-lien the returned residual** (Codex #986 r1, above);
 - surplus → the surplus-freeze branch: `isSanctionedAddress(ownerOf(borrowerTokenId))`
   → `depositLocked(s, loan.borrower, …)` + write `s.borrowerSurplusClaims[loanId]`
-  + encumber (§2.1). Requires adding the `LibSanctionedLock` / `LibEncumbrance`
-  imports (currently absent from that file).
+  + encumber-all-ERC20 (§2.1) + `frozenVpfiOwedByVault` for VPFI. Requires adding
+  the `LibSanctionedLock` / `LibEncumbrance` imports (currently absent).
+
+Using the shared `LibCloseoutFreeze` helpers for BOTH the lender-leg freeze and
+the surplus freeze keeps `swapToRepayFull` and the intent path in lockstep, so
+neither can drift on the encumber-all/tier-exclude rules.
 
 To avoid duplicating the surplus-freeze block in two places, factor it into a
 small internal helper (e.g. `LibCloseoutFreeze.freezeOrPayBorrowerSurplus(s,
@@ -229,14 +238,24 @@ exclusion must be scoped to ONLY the frozen surplus owed to someone else.
 **Chosen approach — a dedicated per-owner "frozen VPFI owed to others" counter:**
 
 - Add `mapping(address => uint256) frozenVpfiOwedByVault` (append to Storage).
-  On a VPFI surplus freeze (into `loan.borrower`'s vault for a sanctioned
-  holder), increment `frozenVpfiOwedByVault[loan.borrower] += surplus`. On
-  `claimAsBorrower` paying that surplus (and on any release path), decrement it.
+  Increment it on **every VPFI freeze into a vault whose owner is not the
+  economic owner of the funds** — i.e. BOTH the borrower-surplus freeze (§2.1,
+  into `loan.borrower`'s vault) AND the lender-proceeds freeze (§1.1, into
+  `loan.lender`'s vault) when the position NFT has moved to a sanctioned holder
+  (Codex #986 r2). Decrement it on the matching claim/release
+  (`claimAsBorrower` / `claimAsLender`).
 - The VPFI tier balance for a user becomes `trackedVpfiBalance(user) −
-  frozenVpfiOwedByVault[user]` (floored at 0), applied at every tier-stamp site
-  (`LibConsolidation.restampUserVpfi` / `_restampVpfi`, and `pokeMyTier`'s
-  rollup source). This subtracts ONLY the frozen-surplus VPFI, never the shared
-  `s.encumbered` bucket, so legitimate self-encumbrances keep their tier.
+  frozenVpfiOwedByVault[user]` (floored at 0). **Apply this at EVERY
+  `LibVPFIDiscount.rollupUserDiscount` site, not just the three first named**
+  (Codex #986 r2): centralize by introducing one helper
+  `LibVPFIDiscount.tierVpfiBalance(user) = trackedVpfiBalance(user) −
+  frozenVpfiOwedByVault[user]` and routing ALL stamp paths through it —
+  `LibConsolidation.restampUserVpfi` / `_restampVpfi`, `pokeMyTier`,
+  `VPFIDiscountFacet.depositVPFIToVault` / `withdrawVPFIFromVault`, and the
+  `LoanFacet` stamp sites that call `rollupUserDiscount` with a raw
+  `protocolTrackedVaultBalance`. Enumerate every `rollupUserDiscount` caller and
+  convert it. This subtracts ONLY the frozen-surplus/proceeds VPFI, never the
+  shared `s.encumbered` bucket, so legitimate self-encumbrances keep their tier.
 - The surplus is STILL also encumbered via §2.1 (in `s.encumbered[...][0]`) so
   `freeBalance` blocks the signed-offer spend. The two mechanisms are
   independent: `s.encumbered` gates spendability (shared bucket, fine to share);
@@ -347,6 +366,19 @@ the bind already guarantees `t.amount == live principal`, `effectivePrincipal`
 becomes exactly what the buyer signed. Keep the non-sale path unchanged. Verify
 the LIF / fee split (1091-1094) and the borrower-pull (1010-1023) all key off the
 corrected `effectivePrincipal`.
+
+**Also propagate the live principal into the temporary sale-vehicle loan +
+events (Codex #986 r2).** `LoanFacet._copyFinancialFields` snapshots the
+borrower-offer `offer.amount` into the temp loan and emits
+`LoanInitiated`/`LoanInitiatedDetails` from that stale value; when the live
+principal drifted after listing, the temp loan and its events would carry the
+wrong principal (indexers/consumers would see the stale amount, and any
+downstream read of the temp loan's principal would be wrong). For the
+sale-vehicle path, `LoanFacet` must copy the LIVE
+`s.loans[saleOfferToLoanId[offerId]].principal` into the temp loan's `principal`
+so the temp loan and its emitted events agree with the funded amount. (The temp
+loan is discarded at `completeLoanSale`, but the events are permanent and must
+not mis-report.)
 
 (Alternatively bind-and-use `terms.amount` directly for sale vehicles — but the
 scout shows the codebase deliberately re-derives from storage after the bind, so
