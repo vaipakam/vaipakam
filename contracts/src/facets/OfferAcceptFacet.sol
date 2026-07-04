@@ -524,16 +524,38 @@ contract OfferAcceptFacet is
             ? (isLender ? o.interestRateBps : o.interestRateBpsMax)
             : o.interestRateBps;
 
+        // #951 v2 (Codex #959 bind-to-live) — for a lender-sale vehicle, bind
+        // principal / duration / collateral against the LIVE loan instead of the
+        // immutable offer snapshot. The snapshot drifts (partial-repay shrinks
+        // principal, withdraw/auto-liq shrinks collateral, the term shrinks every
+        // block) so no equality-vs-snapshot check converges — the buyer signs the
+        // live position and #662's anti-phishing guarantee now protects against
+        // loan drift. Bound to IMMUTABLE/DISCRETE facts only, never remaining
+        // term: principal `==` live (a repay between view and mine forces a
+        // correct re-sign), duration `==` the loan's ORIGINAL immutable
+        // `durationDays` (fixed maturity = startTime + durationDays; remaining is
+        // derived + shown live, never bound), collateral `>=`-style (a reduction
+        // fails the buyer's floor; a harmless top-up only improves the position).
+        // Rate stays bound to the seller's offer ask (genuinely immutable there).
+        uint256 saleLoanId = s.saleOfferToLoanId[offerId];
+
         // Field indices match the legend on {OfferTermsMismatch}.
         if (t.offerKey != offerKey) revert OfferTermsMismatch(1);
         if (t.offerCreator != o.creator) revert OfferTermsMismatch(2);
         if (t.offerType != uint8(o.offerType)) revert OfferTermsMismatch(3);
         if (t.lendingAsset != o.lendingAsset) revert OfferTermsMismatch(4);
         if (t.collateralAsset != o.collateralAsset) revert OfferTermsMismatch(5);
-        if (t.amount != roleAmount) revert OfferTermsMismatch(6);
-        if (t.collateralAmount != o.collateralAmount) revert OfferTermsMismatch(7);
+        if (saleLoanId != 0) {
+            LibVaipakam.Loan storage saleLoan = s.loans[saleLoanId];
+            if (t.amount != saleLoan.principal) revert OfferTermsMismatch(6);
+            if (saleLoan.collateralAmount < t.collateralAmount) revert OfferTermsMismatch(7);
+            if (t.durationDays != saleLoan.durationDays) revert OfferTermsMismatch(9);
+        } else {
+            if (t.amount != roleAmount) revert OfferTermsMismatch(6);
+            if (t.collateralAmount != o.collateralAmount) revert OfferTermsMismatch(7);
+            if (t.durationDays != o.durationDays) revert OfferTermsMismatch(9);
+        }
         if (t.interestRateBps != roleRate) revert OfferTermsMismatch(8);
-        if (t.durationDays != o.durationDays) revert OfferTermsMismatch(9);
         if (t.tokenId != o.tokenId) revert OfferTermsMismatch(10);
         if (t.collateralTokenId != o.collateralTokenId) revert OfferTermsMismatch(11);
         if (t.quantity != o.quantity) revert OfferTermsMismatch(12);
@@ -550,7 +572,7 @@ contract OfferAcceptFacet is
         if (t.periodicInterestCadence != uint8(o.periodicInterestCadence)) revert OfferTermsMismatch(23);
         // linkedLoanId — the auto-linked sale/offset target (0 for a normal
         // offer). saleOfferToLoanId takes precedence; both 0 ⇒ must bind 0.
-        uint256 linked = s.saleOfferToLoanId[offerId];
+        uint256 linked = saleLoanId;
         if (linked == 0) linked = s.offsetOfferToLoanId[offerId];
         if (t.linkedLoanId != linked) revert OfferTermsMismatch(24);
     }
@@ -1619,7 +1641,17 @@ contract OfferAcceptFacet is
         // `OfferPartiallyFilled`; only `matchOffers` may advance it.
         // APPENDED (never inserted) so every existing classifier's uint8
         // value stays stable for off-chain decoders.
-        OfferPartiallyFilled
+        OfferPartiallyFilled,
+        // #951 v2 (Codex #959 bind-to-live) — sale-vehicle blockers surfaced by
+        // `OfferPreviewFacet.previewAccept` so the UI can disable "Accept"
+        // without a revert. `SaleLoanNotActive`: the linked loan repaid /
+        // defaulted (or was torn down) since listing, so the position no longer
+        // exists. `SaleSelfBuy`: the buyer is the linked loan's CURRENT borrower
+        // (resolved via `ownerOf(borrowerTokenId)`), who may not buy their own
+        // debt's lender side. Both mirror `LoanFacet.initiateLoan`'s sale-vehicle
+        // reverts. APPENDED — existing values stay stable.
+        SaleLoanNotActive,
+        SaleSelfBuy
     }
 
     /// @notice Projection of the loan that would land if the supplied

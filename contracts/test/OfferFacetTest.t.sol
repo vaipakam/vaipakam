@@ -3256,6 +3256,17 @@ contract OfferFacetTest is Test {
         );
 
         TestMutatorFacet(address(diamond)).setSaleOfferToLoanIdRaw(offerId, 42);
+        // #951 v2 (bind-to-live) — the accept now binds principal / collateral /
+        // duration against the LIVE linked loan, so scaffold loan 42 to match the
+        // terms the buyer signs off the offer (principal 1000, collateral ≥ 1500,
+        // original duration 30).
+        {
+            LibVaipakam.Loan memory _linked;
+            _linked.principal = 1000;
+            _linked.collateralAmount = 1500;
+            _linked.durationDays = 30;
+            TestMutatorFacet(address(diamond)).setLoan(42, _linked);
+        }
 
         // Mock the auto-complete hop to succeed. #951 (Codex #959) — acceptOffer
         // now routes the sale auto-complete through `completeLoanSaleInternal`
@@ -3322,6 +3333,15 @@ contract OfferFacetTest is Test {
         );
 
         TestMutatorFacet(address(diamond)).setSaleOfferToLoanIdRaw(offerId, 42);
+        // #951 v2 (bind-to-live) — scaffold loan 42 to match the signed terms so
+        // the accept clears the live-binding and reaches the auto-complete hop.
+        {
+            LibVaipakam.Loan memory _linked;
+            _linked.principal = 1000;
+            _linked.collateralAmount = 1500;
+            _linked.durationDays = 30;
+            TestMutatorFacet(address(diamond)).setLoan(42, _linked);
+        }
 
         // Mock the auto-complete hop to revert. #951 (Codex #959) — the sale
         // auto-complete now routes through `completeLoanSaleInternal`, so the
@@ -3523,9 +3543,14 @@ contract OfferFacetTest is Test {
         // Set saleOfferToLoanId[offerId] = 77 and create a loan with collateral at that ID
         TestMutatorFacet(address(diamond)).setSaleOfferToLoanIdRaw(offerId, 77);
 
-        // Set loan 77's collateralAmount to 5000 via TestMutatorFacet.
+        // Set loan 77's collateralAmount to 5000 via TestMutatorFacet. #951 v2
+        // (bind-to-live) — also give it the principal + original duration the
+        // accept now binds against (the offer carries zero collateral, so the
+        // `>=` collateral floor is trivially met by the linked loan's 5000).
         LibVaipakam.Loan memory spoofed;
+        spoofed.principal = 1000;
         spoofed.collateralAmount = 5000;
+        spoofed.durationDays = 30;
         TestMutatorFacet(address(diamond)).setLoan(77, spoofed);
 
         // Mock the auto-complete hop to succeed (since saleOfferToLoanId != 0).

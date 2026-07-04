@@ -1008,10 +1008,10 @@ contract LoanFacetTest is Test {
         );
 
         TestMutatorFacet(address(diamond)).setSaleOfferToLoanIdRaw(saleOfferId, existingLoanId);
-        // #951 (Codex #959 round-6) — the real listing path snapshots the linked
-        // loan's collateral; mirror it so the collateral-drift check passes (the
-        // existing loan was created with 1500 ether collateral).
-        TestMutatorFacet(address(diamond)).setSaleListingCollateralRaw(existingLoanId, 1500 ether);
+        // #951 v2 (Codex #959 bind-to-live) — no collateral snapshot to scaffold:
+        // the collateral floor now binds `>=` live at `_bindTermsToOffer` (the
+        // accept path). LoanFacet only re-checks the structural invariants
+        // (linked-loan Active + self-buy + compliance) exercised here.
 
         // Now initiate loan directly via prank as diamond (since this goes through
         // cross-facet). Buy as a THIRD party (`lender`), not the linked loan's own

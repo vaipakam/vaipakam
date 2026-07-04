@@ -421,14 +421,10 @@ contract TestMutatorFacet {
         LibVaipakam.storageSlot().loanToSaleOfferId[loanId] = saleOfferId;
     }
 
-    /// @notice Write `s.saleListingCollateral[loanId] = amount` directly — the
-    ///         collateral snapshot `createLoanSaleOffer` records at listing.
-    ///         Tests that scaffold a sale link (without the real listing path)
-    ///         set this to the linked loan's live collateral so the #951 (Codex
-    ///         #959 round-6) collateral-drift check at accept passes.
-    function setSaleListingCollateralRaw(uint256 loanId, uint256 amount) external {
-        LibVaipakam.storageSlot().saleListingCollateral[loanId] = amount;
-    }
+    // #951 v2 (Codex #959 bind-to-live) — `setSaleListingCollateralRaw` was
+    // removed with the `saleListingCollateral` snapshot mapping. The accept now
+    // binds collateral `>=` live against the loan in `_bindTermsToOffer`, so
+    // there is no snapshot for tests to scaffold.
 
     /// @notice Write `s.offsetOfferToLoanId[offerId] = loanId` directly.
     ///         Used by OfferFacet auto-complete coverage tests.

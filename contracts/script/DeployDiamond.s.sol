@@ -1306,13 +1306,15 @@ contract DeployDiamond is Script {
     ///      separate facet — frontend and keeper-bot bindings
     ///      unaffected by the move.
     function _getOfferCancelSelectors() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](5);
+        s = new bytes4[](6);
         s[0] = OfferCancelFacet.cancelOffer.selector;
         s[1] = OfferCancelFacet.getCompatibleOffers.selector;
         s[2] = OfferCancelFacet.getOffer.selector;
         s[3] = OfferCancelFacet.getOfferDetails.selector;
         // #662/#725 — linked-loan getter for the AcceptTerms.linkedLoanId field.
         s[4] = OfferCancelFacet.getOfferLinkedLoanId.selector;
+        // #951 v2 — permissionless stale-sale-listing teardown.
+        s[5] = OfferCancelFacet.teardownStaleSaleListing.selector;
     }
 
     /// @dev OfferMutateFacet — #193 in-place modification surface

@@ -15,6 +15,7 @@ import {LibAccessControl, DiamondAccessControl} from "../libraries/LibAccessCont
 import {DiamondPausable} from "../libraries/LibPausable.sol";
 import {IVaipakamErrors} from "../interfaces/IVaipakamErrors.sol";
 import {LibCompliance} from "../libraries/LibCompliance.sol";
+import {LibERC721} from "../libraries/LibERC721.sol";
 import {RiskFacet} from "./RiskFacet.sol";
 import {VaipakamNFTFacet} from "./VaipakamNFTFacet.sol";
 import {OracleFacet} from "./OracleFacet.sol";
@@ -195,55 +196,44 @@ contract LoanFacet is DiamondPausable, DiamondAccessControl, IVaipakamErrors {
         if (isLenderSaleVehicle) {
             uint256 linkedLoanId = s.saleOfferToLoanId[offerId];
             LibVaipakam.Loan storage linked = s.loans[linkedLoanId];
+            // The linked loan must still be Active — else the position doesn't
+            // exist and completeLoanSale would revert, stranding the buyer. This
+            // is a real invariant, not snapshot drift, so it stays.
             if (linked.status != LibVaipakam.LoanStatus.Active) {
                 revert InvalidOffer();
             }
-            // #951 (Codex #959 round-4) — the sale offer's `amount` was pinned to
-            // the loan's principal at listing and is immutable thereafter (D4). But
-            // the borrower can partial-repay while the listing is live, shrinking
-            // `loan.principal` and leaving the offer amount stale — the buyer would
-            // then pay the old principal for a smaller position. Reject a stale
-            // listing here (fail-safe, decoupled from RepayFacet); the seller
-            // re-lists at the new principal. See LenderSaleVehicleRedesign.md.
-            if (s.offers[offerId].amount != linked.principal) {
-                revert InvalidOffer();
-            }
-            // #951 (Codex #959 round-6 P2, refined round-7 P2) — the accept binds
-            // only the loan id + principal, not its live collateral. A collateral
-            // REDUCTION while the listing is live (borrower
-            // `partialWithdrawCollateral`, or a periodic-interest auto-liquidation
-            // selling collateral for a shortfall) would hand the buyer a drained
-            // position at the listed price, so reject when live collateral has
-            // fallen BELOW the snapshot taken at listing. An INCREASE
-            // (`addCollateral` is still permitted on a listed loan) only improves
-            // the position the buyer receives, so it must NOT be rejected —
-            // otherwise a borrower could grief every accept with a dust top-up
-            // until the seller cancels and re-lists. Strict `<`, not `!=`.
-            if (linked.collateralAmount < s.saleListingCollateral[linkedLoanId]) {
-                revert InvalidOffer();
-            }
-            // #951 (Codex #959 round-6, P1) — reject the linked loan's OWN
-            // borrower buying the lender position of their own debt. The generic
-            // self-trade check only compares the buyer with the sale-offer creator
-            // (the exiting lender); a borrower-buyer would migrate the lender onto
-            // themselves, leaving an Active loan with `lender == borrower` (a party
+            // #951 v2 (Codex #959 bind-to-live) — the principal / collateral
+            // freshness patches that used to live here are GONE. The buyer's
+            // `AcceptTerms` now binds principal `==` live and collateral `>=` live
+            // directly in `OfferAcceptFacet._bindTermsToOffer` (which runs before
+            // this call in the same accept), so a partial-repay or a collateral
+            // reduction between view and mine is caught structurally at the bind —
+            // no snapshot to store (`saleListingCollateral` removed) or re-check.
+            //
+            // Resolve the loan's CURRENT borrower once (the position NFT may have
+            // changed hands since origination; the stored `linked.borrower` is
+            // stale — Codex #959 round-8 P1). Both the self-buy guard and the
+            // compliance recheck key on this live holder.
+            address currentBorrower = LibERC721.ownerOf(linked.borrowerTokenId);
+            // Reject the linked loan's OWN current borrower buying the lender
+            // position of their own debt: that would migrate the lender onto the
+            // borrower, leaving an Active loan with `lender == borrower` (a party
             // owing itself — breaks claim/repay accounting). They exit via
             // repay/preclose, never by buying their own debt's lender side.
-            if (acceptor == linked.borrower) {
+            if (acceptor == currentBorrower) {
                 revert InvalidOffer();
             }
-            // #951 (Codex #959 round-6, P2) — recheck the BUYER against the loan's
-            // continuing counterparty (the original borrower), mirroring the
-            // Option-1 `sellLoanViaBuyOffer` compliance gate. The generic offer
-            // KYC/country checks validate only the exiting lender (`offer.creator`)
-            // vs the buyer, not the borrower whose live loan the buyer is stepping
-            // into. No-op on the retail deploy (KYC/country off); load-bearing on
-            // the industrial fork where a borrower's tier/country may have degraded
-            // since origination.
+            // Recheck the BUYER against the loan's continuing counterparty (the
+            // current borrower), mirroring the Option-1 `sellLoanViaBuyOffer`
+            // compliance gate. The generic offer KYC/country checks validate only
+            // the exiting lender (`offer.creator`) vs the buyer, not the borrower
+            // whose live loan the buyer is stepping into. No-op on the retail
+            // deploy (KYC/country off); load-bearing on the industrial fork where
+            // a borrower's tier/country may have degraded since origination.
             LibCompliance.enforceCountryAndKyc(
                 address(this),
                 acceptor,
-                linked.borrower,
+                currentBorrower,
                 linked.principalAsset,
                 linked.principal,
                 linked.collateralAsset,

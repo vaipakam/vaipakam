@@ -111,7 +111,13 @@ library LibOfferMatch {
         // ── #747 Codex r1: after the match core + risk gate, the live fill enters
         //    acceptOfferInternal(borrower) with the slice as acceptor; an
         //    accept-time gate can still reject (set by the facet wrapper). ──
-        AcceptGateBlocked        // borrower sanctioned / asset paused / borrower consent missing
+        AcceptGateBlocked,       // borrower sanctioned / asset paused / borrower consent missing
+        // #951 v2 (Codex #959 bind-to-live, round-8 P2/P3 preview parity) — the
+        // counterparty (borrower) offer is a lender-sale vehicle (linked via
+        // `saleOfferToLoanId`). `_executeMatch` reverts `SaleVehicleNotMatchable`
+        // on it, so `matchIntent` reverts too; previewIntent must mirror that
+        // rather than falsely report Ok. APPENDED — prior ordinals stay stable.
+        SaleVehicleTagged
     }
 
     /// @notice Structured outcome of `RiskAccessFacet.previewIntent`. `ok` is
@@ -823,6 +829,17 @@ library LibOfferMatch {
         //     multi-year slice always reverts `CadenceNotAllowed`.
         if (cp.durationDays > 365) {
             return _intentFail(res, IntentError.SliceMultiYearTerm);
+        }
+
+        // #951 v2 (Codex #959 bind-to-live, round-8 P2/P3) — mirror
+        // `_executeMatch`'s sale-vehicle rejection: a borrower offer linked via
+        // `saleOfferToLoanId` is a lender-position sale, fillable ONLY through
+        // direct `acceptOffer`. `matchIntent` → `_executeMatch` reverts
+        // `SaleVehicleNotMatchable` on it, so preview must fail here rather than
+        // return Ok. Ordered to match the live path: `_executeMatch`'s check runs
+        // after the intent body + slice-materialize guards, before the match core.
+        if (s.saleOfferToLoanId[counterpartyOfferId] != 0) {
+            return _intentFail(res, IntentError.SaleVehicleTagged);
         }
 
         // ── Every intent + slice-create guard cleared. Synthesize the single-

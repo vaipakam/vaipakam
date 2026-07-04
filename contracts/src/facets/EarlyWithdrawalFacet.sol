@@ -592,11 +592,11 @@ contract EarlyWithdrawalFacet is
         s.saleVehicleCreate = false;
         s.loanToSaleOfferId[loanId] = saleOfferId;
         s.saleOfferToLoanId[saleOfferId] = loanId;
-        // #951 (Codex #959 round-6) — snapshot the collateral the buyer is
-        // pricing against, so `LoanFacet` can reject the accept if a later
-        // collateral-only reduction (withdraw or periodic auto-liquidation)
-        // drifts the live position away from this listing.
-        s.saleListingCollateral[loanId] = loan.collateralAmount;
+        // #951 v2 (Codex #959 bind-to-live) — no collateral snapshot is stored:
+        // the buyer's accept binds `collateralAmount` `>=`-style against the LIVE
+        // loan in `OfferAcceptFacet._bindTermsToOffer`, so a later collateral
+        // reduction fails the buyer's floor structurally at the bind. Nothing to
+        // snapshot here, nothing to clean up at completion/cancel.
 
         emit LoanSaleOfferLinked(loanId, saleOfferId);
     }
@@ -1055,9 +1055,6 @@ contract EarlyWithdrawalFacet is
         // one-listing-per-loan guard in createLoanSaleOffer would reject it).
         delete s.loanToSaleOfferId[loanId];
         delete s.saleOfferToLoanId[saleOfferId];
-        // #951 (Codex #959 round-6) — clear the collateral snapshot with the
-        // links so a freshly-acquired position re-lists from a clean slate.
-        delete s.saleListingCollateral[loanId];
 
         emit LoanSaleCompleted(loanId, originalLender, newLender);
     }

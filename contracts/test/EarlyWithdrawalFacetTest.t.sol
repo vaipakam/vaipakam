@@ -19,6 +19,7 @@ import {OfferMutateFacet} from "../src/facets/OfferMutateFacet.sol";
 import {OfferMatchFacet} from "../src/facets/OfferMatchFacet.sol";
 import {LibOfferMatch} from "../src/libraries/LibOfferMatch.sol";
 import {LibAcceptTestSigner} from "./helpers/LibAcceptTestSigner.sol";
+import {LibAcceptTerms} from "../src/libraries/LibAcceptTerms.sol";
 import {OfferCancelFacet} from "../src/facets/OfferCancelFacet.sol";
 import {LoanFacet} from "../src/facets/LoanFacet.sol";
 import {ProfileFacet} from "../src/facets/ProfileFacet.sol";
@@ -39,6 +40,8 @@ import {HelperTest} from "./HelperTest.sol";
 import {AccessControlFacet} from "../src/facets/AccessControlFacet.sol";
 import {EncumbranceMutateFacet} from "../src/facets/EncumbranceMutateFacet.sol";
 import {TestMutatorFacet} from "./mocks/TestMutatorFacet.sol";
+import {LibERC721} from "../src/libraries/LibERC721.sol";
+import {MetricsFacet} from "../src/facets/MetricsFacet.sol";
 import {ERC20Mock} from "./mocks/ERC20Mock.sol";
 
 /**
@@ -664,25 +667,32 @@ contract EarlyWithdrawalFacetTest is Test {
         OfferMatchFacet(address(diamond)).matchOffers(lenderOfferId, saleOfferId);
     }
 
-    /// @dev #951 (Codex #959 round-4, P1) — a partial-repay AFTER listing shrinks
-    ///      `loan.principal` while the sale offer's `amount` stays pinned to the
-    ///      old principal (the vehicle is immutable, D4). A later accept
-    ///      (→ `initiateLoan`) must reject the stale listing so the buyer never
-    ///      pays the old principal for a smaller position; the seller re-lists at
-    ///      the new principal. Exercises LoanFacet's freshness guard directly.
+    /// @dev #951 v2 (Codex #959 bind-to-live) — a partial-repay AFTER listing
+    ///      shrinks `loan.principal`. The buyer signs the principal they reviewed;
+    ///      the accept binds `t.amount == live loan.principal` in
+    ///      `_bindTermsToOffer`, so a signature over the old (larger) principal is
+    ///      rejected `OfferTermsMismatch(6)` before any value moves — the buyer
+    ///      can never pay the old price for a shrunk position. Replaces the v1
+    ///      LoanFacet freshness guard (removed; the binding is now structural).
     function testStaleSaleOfferRejectedOnAccept() public {
         uint256 saleOfferId = _listSaleOffer();
-        // Simulate a post-listing partial repay: the live loan's principal
-        // shrinks, but the immutable sale offer still quotes the old principal.
+        (address buyer, uint256 buyerPk) = makeAddrAndKey("v2StaleBuyer");
+        // Sign the live position as it stands at listing (principal == loan).
+        LibAcceptTerms.AcceptTerms memory t = LibAcceptTestSigner.buildSaleTerms(
+            address(diamond), buyer, saleOfferId, true, activeLoanId
+        );
+        bytes memory sig = LibAcceptTestSigner.sign(address(diamond), t, buyerPk);
+        // A post-listing partial repay shrinks the live principal under the buyer.
         LibVaipakam.Loan memory ld =
             LoanFacet(address(diamond)).getLoanDetails(activeLoanId);
         ld.principal = ld.principal / 2;
         TestMutatorFacet(address(diamond)).setLoan(activeLoanId, ld);
-        // `initiateLoan` is `address(this)`-gated; prank as the diamond so the
-        // call reaches the sale-vehicle freshness branch.
-        vm.prank(address(diamond));
-        vm.expectRevert(LoanFacet.InvalidOffer.selector);
-        LoanFacet(address(diamond)).initiateLoan(saleOfferId, newLender, true);
+        // The signed (old) principal no longer equals the live principal → reverts.
+        vm.expectRevert(
+            abi.encodeWithSelector(OfferAcceptFacet.OfferTermsMismatch.selector, uint8(6))
+        );
+        vm.prank(buyer);
+        OfferAcceptFacet(address(diamond)).acceptOffer(saleOfferId, t, sig);
     }
 
     /// @dev #951 (Codex #959 round-6, P1) — the linked loan's OWN borrower cannot
@@ -698,40 +708,70 @@ contract EarlyWithdrawalFacetTest is Test {
         LoanFacet(address(diamond)).initiateLoan(saleOfferId, borrower, true);
     }
 
-    /// @dev #951 (Codex #959 round-6, P2) — a collateral-only reduction after
+    /// @dev #951 v2 (Codex #959 bind-to-live) — a collateral-only reduction after
     ///      listing (borrower withdraw, or a periodic-interest auto-liquidation)
-    ///      drifts the live position away from the price the buyer reviewed. The
-    ///      accept is rejected when live collateral != the snapshot taken at
-    ///      listing, so the buyer never overpays for a drained position.
+    ///      drifts the live position below what the buyer signed. The accept binds
+    ///      `live loan.collateralAmount >= t.collateralAmount` (a floor), so a
+    ///      reduction under the signed floor reverts `OfferTermsMismatch(7)` — the
+    ///      buyer never overpays for a drained position. The v1 listing-time
+    ///      collateral snapshot is gone; the floor is enforced structurally.
     function testSaleVehicleRejectsCollateralDrift() public {
         uint256 saleOfferId = _listSaleOffer();
-        // Simulate a collateral-only reduction (e.g. periodic auto-liq sale) —
-        // principal is untouched, so only the collateral-freshness check fires.
+        (address buyer, uint256 buyerPk) = makeAddrAndKey("v2CollBuyer");
+        LibAcceptTerms.AcceptTerms memory t = LibAcceptTestSigner.buildSaleTerms(
+            address(diamond), buyer, saleOfferId, true, activeLoanId
+        );
+        bytes memory sig = LibAcceptTestSigner.sign(address(diamond), t, buyerPk);
+        // A collateral-only reduction (e.g. periodic auto-liq sale) drops the live
+        // collateral below the floor the buyer signed.
         LibVaipakam.Loan memory ld =
             LoanFacet(address(diamond)).getLoanDetails(activeLoanId);
         ld.collateralAmount = ld.collateralAmount / 2;
         TestMutatorFacet(address(diamond)).setLoan(activeLoanId, ld);
-        vm.prank(address(diamond));
-        vm.expectRevert(LoanFacet.InvalidOffer.selector);
-        LoanFacet(address(diamond)).initiateLoan(saleOfferId, newLender, true);
+        vm.expectRevert(
+            abi.encodeWithSelector(OfferAcceptFacet.OfferTermsMismatch.selector, uint8(7))
+        );
+        vm.prank(buyer);
+        OfferAcceptFacet(address(diamond)).acceptOffer(saleOfferId, t, sig);
     }
 
-    /// @dev #951 (Codex #959 round-7, P2) — a collateral INCREASE (`addCollateral`
-    ///      stays permitted on a listed loan) only improves the position the buyer
-    ///      receives, so it must NOT block the accept. The drift guard is a strict
-    ///      `<` (reject reductions only), not `!=` — otherwise a borrower could
-    ///      grief every accept with a dust top-up until the seller re-lists. Live
-    ///      collateral > snapshot proceeds past the drift check to a real loan.
+    /// @dev #951 v2 (Codex #959 bind-to-live) — a collateral INCREASE
+    ///      (`addCollateral` stays permitted on a listed loan) only improves the
+    ///      position the buyer receives, so it must NOT block the accept. The
+    ///      floor is `>=` (live must be at least the signed amount), so a live
+    ///      collateral ABOVE the signed floor clears the bind. Asserted by a full
+    ///      sale accept succeeding (the auto-complete hop is mocked; the buyer is
+    ///      funded), proving the collateral bind did not spuriously reject.
     function testSaleVehicleAllowsCollateralIncrease() public {
         uint256 saleOfferId = _listSaleOffer();
+        (address buyer, uint256 buyerPk) = makeAddrAndKey("v2TopUpBuyer");
+        // Fund + KYC the buyer so the accept can pull principal into their vault.
+        ERC20Mock(mockERC20).mint(buyer, 100000 ether);
+        vm.prank(buyer); ERC20(mockERC20).approve(address(diamond), type(uint256).max);
+        address buyerVault = VaultFactoryFacet(address(diamond)).getOrCreateUserVault(buyer);
+        vm.prank(buyer); ERC20(mockERC20).approve(buyerVault, type(uint256).max);
+        vm.prank(buyer); ProfileFacet(address(diamond)).setUserCountry("US");
+        ProfileFacet(address(diamond)).updateKYCTier(buyer, LibVaipakam.KYCTier.Tier2);
+
+        LibAcceptTerms.AcceptTerms memory t = LibAcceptTestSigner.buildSaleTerms(
+            address(diamond), buyer, saleOfferId, true, activeLoanId
+        );
+        bytes memory sig = LibAcceptTestSigner.sign(address(diamond), t, buyerPk);
+        // Top-up the live collateral ABOVE the buyer's signed floor.
         LibVaipakam.Loan memory ld =
             LoanFacet(address(diamond)).getLoanDetails(activeLoanId);
-        ld.collateralAmount = ld.collateralAmount * 2; // top-up after listing
+        ld.collateralAmount = ld.collateralAmount * 2;
         TestMutatorFacet(address(diamond)).setLoan(activeLoanId, ld);
-        vm.prank(address(diamond));
-        uint256 tempLoanId =
-            LoanFacet(address(diamond)).initiateLoan(saleOfferId, newLender, true);
-        assertGt(tempLoanId, 0, "collateral increase must not block the sale accept");
+        // Mock the auto-complete hop so the accept resolves after the bind passes.
+        vm.mockCall(
+            address(diamond),
+            abi.encodeWithSelector(EarlyWithdrawalFacet.completeLoanSaleInternal.selector),
+            ""
+        );
+        vm.prank(buyer);
+        uint256 loanId = OfferAcceptFacet(address(diamond)).acceptOffer(saleOfferId, t, sig);
+        assertGt(loanId, 0, "collateral top-up must not block the sale accept");
+        vm.clearMockedCalls();
     }
 
     /// @dev #951 (Codex #959 round-4, P1) — while an Option-2 sale listing is live
@@ -2875,6 +2915,142 @@ contract EarlyWithdrawalFacetTest is Test {
             RiskAccessFacet(address(diamond)).previewCreatorBlock(saleOfferId),
             0,
             "sale-offer creator (seller) is exempt => 0"
+        );
+    }
+
+    // ─── #951 v2 (bind-to-live) — permissionless stale-sale-listing teardown ──
+
+    /// @dev Scaffold the on-chain shape `createLoanSaleOffer` leaves behind for a
+    ///      loan: both link directions + the EarlyWithdrawalSale native lock on
+    ///      the loan's lender NFT. A synthetic (never-accepted) sale-offer id is
+    ///      enough — the teardown only reads `offers[id].accepted` (default false).
+    function _scaffoldSaleListing(uint256 loanId, uint256 saleOfferId) internal {
+        TestMutatorFacet(address(diamond)).setLoanToSaleOfferIdRaw(loanId, saleOfferId);
+        TestMutatorFacet(address(diamond)).setSaleOfferToLoanIdRaw(saleOfferId, loanId);
+        LibVaipakam.Loan memory ld = LoanFacet(address(diamond)).getLoanDetails(loanId);
+        TestMutatorFacet(address(diamond)).lockNFTRaw(
+            ld.lenderTokenId, LibERC721.LockReason.EarlyWithdrawalSale
+        );
+    }
+
+    /// @dev Matrix item 13 — a listed loan that reaches a terminal state without a
+    ///      completed sale: the permissionless teardown unlocks the lender NFT and
+    ///      clears both links (a second call reverting NoStaleSaleListing proves the
+    ///      links were cleared). Anyone may trigger it.
+    function test_teardownStaleSaleListing_afterTerminal_unlocksAndClears() public {
+        uint256 saleOfferId = 987654;
+        _scaffoldSaleListing(activeLoanId, saleOfferId);
+        uint256 lockedBefore = TestMutatorFacet(address(diamond)).getLockedTokenCount(lender);
+        assertGt(lockedBefore, 0, "lender NFT locked while listed");
+
+        // Loan goes terminal (repaid) without the sale completing.
+        _setLoanStatus(activeLoanId, LibVaipakam.LoanStatus.Repaid);
+
+        address anyone = makeAddr("anyone");
+        vm.prank(anyone); // permissionless — not the seller/keeper
+        OfferCancelFacet(address(diamond)).teardownStaleSaleListing(activeLoanId);
+
+        // Lender NFT unlocked.
+        assertEq(
+            TestMutatorFacet(address(diamond)).getLockedTokenCount(lender),
+            lockedBefore - 1,
+            "lender NFT unlocked after teardown"
+        );
+        // Links cleared — a second teardown finds nothing.
+        vm.prank(anyone);
+        vm.expectRevert(OfferCancelFacet.NoStaleSaleListing.selector);
+        OfferCancelFacet(address(diamond)).teardownStaleSaleListing(activeLoanId);
+    }
+
+    /// @dev The listing of a still-Active loan is legitimately live — teardown must
+    ///      refuse it (else anyone could cancel a healthy seller's listing).
+    function test_teardownStaleSaleListing_revertsWhileActive() public {
+        _scaffoldSaleListing(activeLoanId, 987654);
+        // activeLoanId is Active by construction.
+        vm.expectRevert(OfferCancelFacet.SaleListingLoanStillLive.selector);
+        OfferCancelFacet(address(diamond)).teardownStaleSaleListing(activeLoanId);
+    }
+
+    /// @dev A FallbackPending loan can still cure back to Active, so its listing is
+    ///      not yet stale — teardown refuses it too.
+    function test_teardownStaleSaleListing_revertsWhileFallbackPending() public {
+        _scaffoldSaleListing(activeLoanId, 987654);
+        _setLoanStatus(activeLoanId, LibVaipakam.LoanStatus.FallbackPending);
+        vm.expectRevert(OfferCancelFacet.SaleListingLoanStillLive.selector);
+        OfferCancelFacet(address(diamond)).teardownStaleSaleListing(activeLoanId);
+    }
+
+    /// @dev No live listing linked to the loan → nothing to tear down.
+    function test_teardownStaleSaleListing_revertsWhenNoListing() public {
+        _setLoanStatus(activeLoanId, LibVaipakam.LoanStatus.Repaid);
+        vm.expectRevert(OfferCancelFacet.NoStaleSaleListing.selector);
+        OfferCancelFacet(address(diamond)).teardownStaleSaleListing(activeLoanId);
+    }
+
+    /// @dev An accepted (mid-completion) sale is not stale — it settles via
+    ///      completeLoanSale, so this lazy entry must leave it alone.
+    function test_teardownStaleSaleListing_revertsWhenSaleAccepted() public {
+        uint256 saleOfferId = 987654;
+        _scaffoldSaleListing(activeLoanId, saleOfferId);
+        _setLoanStatus(activeLoanId, LibVaipakam.LoanStatus.Repaid);
+        // Mark the sale offer accepted (mid-flight).
+        _setOfferAccepted(saleOfferId);
+        vm.expectRevert(OfferCancelFacet.NoStaleSaleListing.selector);
+        OfferCancelFacet(address(diamond)).teardownStaleSaleListing(activeLoanId);
+    }
+
+    // ─── #951 v2 (bind-to-live) — previewAccept reads live + sale blockers ──────
+
+    /// @dev Matrix item 14 — `previewAccept` for a sale vehicle mirrors the
+    ///      live-bound accept: it quotes the LIVE loan's principal / collateral
+    ///      (not the listing snapshot), charges no LIF, and surfaces the two
+    ///      structural blockers (`SaleSelfBuy` for the loan's current borrower,
+    ///      `SaleLoanNotActive` once the loan has terminated) so the UI can
+    ///      disable "Accept" without a wasted transaction.
+    function test_previewAccept_saleVehicle_readsLiveAndSurfacesBlockers() public {
+        uint256 saleOfferId = _listSaleOffer();
+
+        // Drift the live loan so live != the listing snapshot, proving the
+        // preview reads the live loan rather than the (immutable) offer.
+        LibVaipakam.Loan memory ld =
+            LoanFacet(address(diamond)).getLoanDetails(activeLoanId);
+        uint256 liveP = ld.principal / 2;
+        uint256 liveC = ld.collateralAmount + 100;
+        ld.principal = liveP;
+        ld.collateralAmount = liveC;
+        TestMutatorFacet(address(diamond)).setLoan(activeLoanId, ld);
+
+        // Third-party buyer: happy projection reads live, quotes no LIF.
+        OfferAcceptFacet.AcceptPreview memory p =
+            OfferPreviewFacet(address(diamond)).previewAccept(saleOfferId, newLender);
+        assertEq(p.effectivePrincipal, liveP, "preview quotes live principal");
+        assertEq(p.collateralAmount, liveC, "preview quotes live collateral");
+        assertEq(p.lifEstimate, 0, "no LIF on a sale-vehicle accept");
+        assertEq(
+            uint8(p.errorCode),
+            uint8(OfferAcceptFacet.AcceptError.None),
+            "third-party buyer is not blocked"
+        );
+
+        // The loan's current borrower cannot self-buy the lender side. (`borrower`
+        // is already country/KYC-registered from setUp, so the preview reaches the
+        // sale blockers rather than an earlier compliance gate.)
+        OfferAcceptFacet.AcceptPreview memory pb =
+            OfferPreviewFacet(address(diamond)).previewAccept(saleOfferId, borrower);
+        assertEq(
+            uint8(pb.errorCode),
+            uint8(OfferAcceptFacet.AcceptError.SaleSelfBuy),
+            "current borrower self-buy is surfaced"
+        );
+
+        // Once the loan terminates, the position no longer exists.
+        _setLoanStatus(activeLoanId, LibVaipakam.LoanStatus.Repaid);
+        OfferAcceptFacet.AcceptPreview memory pt =
+            OfferPreviewFacet(address(diamond)).previewAccept(saleOfferId, newLender);
+        assertEq(
+            uint8(pt.errorCode),
+            uint8(OfferAcceptFacet.AcceptError.SaleLoanNotActive),
+            "terminal linked loan is surfaced"
         );
     }
 }

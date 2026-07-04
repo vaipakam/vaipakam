@@ -4,6 +4,7 @@ pragma solidity ^0.8.29;
 
 import {LibVaipakam} from "../libraries/LibVaipakam.sol";
 import {LibVPFIDiscount} from "../libraries/LibVPFIDiscount.sol";
+import {LibERC721} from "../libraries/LibERC721.sol";
 import {OfferAcceptFacet} from "./OfferAcceptFacet.sol";
 import {OracleFacet} from "./OracleFacet.sol";
 import {ProfileFacet} from "./ProfileFacet.sol";
@@ -73,6 +74,19 @@ contract OfferPreviewFacet {
             : offer.interestRateBps;
         preview.collateralAmount = offer.collateralAmount;
 
+        // #951 v2 (Codex #959 bind-to-live) — for a lender-sale vehicle the buyer
+        // binds principal / collateral against the LIVE loan (not the immutable
+        // offer snapshot), so the preview must project the live values too — else
+        // it would quote a stale principal the accept then rejects at the bind.
+        // Principal `==` live, collateral projected as the live floor the buyer
+        // signs (`>=`-bound). Rate stays the seller's offer ask (bound to offer).
+        uint256 _saleLoanId = s.saleOfferToLoanId[offerId];
+        if (_saleLoanId != 0) {
+            LibVaipakam.Loan storage _saleLoan = s.loans[_saleLoanId];
+            preview.effectivePrincipal = _saleLoan.principal;
+            preview.collateralAmount = _saleLoan.collateralAmount;
+        }
+
         // Collateral residual refund — only fires for borrower offers
         // on the ERC-20 lending + ERC-20 collateral direct-accept path
         // (see `_refundBorrowerCollateralResidualIfNeeded` for the exact
@@ -105,7 +119,7 @@ contract OfferPreviewFacet {
         // entirely for it (the underlying loan already paid its LIF at
         // origination). Mirror that carve-out so the preview doesn't quote a
         // phantom fee; `lifEstimate` stays 0.
-        if (_isErc20 && s.saleOfferToLoanId[offerId] == 0) {
+        if (_isErc20 && _saleLoanId == 0) {
             address _borrower = _isLender ? acceptor : offer.creator;
             bool _vpfiDiscountApplies;
             if (
@@ -222,6 +236,25 @@ contract OfferPreviewFacet {
                     )
             ) {
                 preview.errorCode = OfferAcceptFacet.AcceptError.KYCRequired;
+                return preview;
+            }
+        }
+
+        // #951 v2 (Codex #959 bind-to-live) — sale-vehicle structural blockers,
+        // mirroring `LoanFacet.initiateLoan`'s sale-vehicle reverts so the UI can
+        // disable "Accept" without a revert. Placed last: `initiateLoan` runs
+        // after the accept-time checks above. The linked loan must still be Active
+        // (else the position doesn't exist), and the buyer must not be the loan's
+        // CURRENT borrower (resolved live via `ownerOf`, not the stale stored
+        // `borrower` — Codex #959 round-8 P1).
+        if (_saleLoanId != 0) {
+            LibVaipakam.Loan storage _saleLoan = s.loans[_saleLoanId];
+            if (_saleLoan.status != LibVaipakam.LoanStatus.Active) {
+                preview.errorCode = OfferAcceptFacet.AcceptError.SaleLoanNotActive;
+                return preview;
+            }
+            if (acceptor == LibERC721.ownerOf(_saleLoan.borrowerTokenId)) {
+                preview.errorCode = OfferAcceptFacet.AcceptError.SaleSelfBuy;
                 return preview;
             }
         }

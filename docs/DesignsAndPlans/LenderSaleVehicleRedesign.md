@@ -246,10 +246,29 @@ binds the buyer's `AcceptTerms` against `s.loans[linkedLoanId]`:
 
 **Adds** (clean lifecycle hooks, not drift-patches):
 - **Listing teardown on loan exit** (R8 P2): when a listed loan reaches a terminal
-  state without a sale (repay / default), clear both link directions, unlock the
-  lender NFT, and mark the sale offer cancelled — so a stale listing can't linger
-  with a locked NFT. Hook into the repay / default terminal paths (or a shared
-  `LibSaleListing.teardown(loanId)` helper called from them).
+  state without a sale (repay / default / liquidation), clear both link
+  directions, unlock the lender NFT, and mark the sale offer cancelled — so a
+  stale listing can't linger with a locked NFT. Implemented as a shared
+  `LibSaleListing.teardownOnLoanExit(s, loanId)` helper, exposed via a
+  **permissionless** `OfferCancelFacet.teardownStaleSaleListing(loanId)` entry
+  (anyone — seller / keeper / frontend — may trigger it once the loan is
+  terminal; no value moves, mirroring the #195 lazy-clear of expired offers).
+
+  *Why lazy, not an automatic hook on the terminal transition:* the original
+  intent was to call the helper from the single `LibLifecycle` transition
+  chokepoint so no path could forget it. Measured, that inlines the ~500-byte
+  teardown body (and even a slim cross-facet stub) into every facet that
+  transitions a loan — and the three that drive terminal transitions
+  (`RepayFacet`, `DefaultedFacet`, `RiskFacet`) all sit within a few hundred
+  bytes of the EIP-170 ceiling, `RiskFacet` within ~1 byte. Any addition to the
+  transition path overflows them. Crucially, **fund-safety never depended on the
+  teardown**: a stale listing can't be over-accepted because
+  `LoanFacet.initiateLoan` already rejects a sale-vehicle accept whose linked
+  loan is not Active (kept invariant). The teardown is pure hygiene (free the
+  seller's NFT, drop the dead offer from the book), so a permissionless lazy
+  entry is the right cost/benefit — and it's idiomatic here (#195). Making it an
+  automatic hook is a follow-up gated on first freeing headroom in the three
+  terminal facets (a `previewAccept`-style extraction, cf. #980).
 - **Preview reads live** (R8 P2/P3): `previewAccept` computes its sale-vehicle
   projection + blockers from the live loan (mirroring the bind), and
   `previewIntent` / `_previewMatchCore` gains the sale-vehicle non-matchable
@@ -283,9 +302,12 @@ binds the buyer's `AcceptTerms` against `s.loans[linkedLoanId]`:
     immutable loan duration, not remaining).
 12. Borrower NFT transferred after listing → self-buy guard checks the current
     holder; the new holder buying reverts, a third party succeeds.
-13. Loan repaid/defaulted while listed → listing torn down (links cleared, NFT
-    unlocked, offer Cancelled); a later accept reverts as terminal, not as a
-    dangling link.
+13. Loan repaid/defaulted while listed → a later accept already reverts as
+    terminal (the `LoanFacet` Active-check, before any teardown); then the
+    permissionless `teardownStaleSaleListing(loanId)` clears both links, unlocks
+    the lender NFT, and marks the offer Cancelled. Guards: it reverts
+    `SaleListingLoanStillLive` on an Active / FallbackPending loan and
+    `NoStaleSaleListing` when no live (unaccepted) listing exists.
 14. `previewAccept` and `previewIntent` mirror the live-bound blockers.
 
 ## Out of scope / follow-ups

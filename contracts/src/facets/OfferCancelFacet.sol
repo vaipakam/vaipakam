@@ -8,6 +8,7 @@ import {LibVaipakam} from "../libraries/LibVaipakam.sol";
 // see `cancelOffer` for the full rule.
 import {LibFacet} from "../libraries/LibFacet.sol";
 import {LibERC721} from "../libraries/LibERC721.sol";
+import {LibSaleListing} from "../libraries/LibSaleListing.sol";
 import {LibPrepayCleanup} from "../libraries/LibPrepayCleanup.sol";
 import {LibMetricsHooks} from "../libraries/LibMetricsHooks.sol";
 import {DiamondReentrancyGuard} from "../libraries/LibReentrancyGuard.sol";
@@ -211,9 +212,8 @@ contract OfferCancelFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamE
             LibERC721._unlock(s.loans[lockedSaleLoanId].lenderTokenId);
             delete s.saleOfferToLoanId[offerId];
             delete s.loanToSaleOfferId[lockedSaleLoanId];
-            // #951 (Codex #959 round-6) — clear the collateral snapshot alongside
-            // the sale links so a cancelled-then-relisted position starts fresh.
-            delete s.saleListingCollateral[lockedSaleLoanId];
+            // #951 v2 (Codex #959 bind-to-live) — no collateral snapshot to clear
+            // (removed; the accept binds `>=` live collateral directly).
         }
 
         // #195 — refund destination is ALWAYS the creator's vault (and
@@ -476,6 +476,59 @@ contract OfferCancelFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamE
         // address so historical filters continue to work.
         emit OfferCanceled(offerId, creator);
         emit OfferClosed(offerId, OfferCloseReason.Cancelled);
+    }
+
+    /// @notice The loan has no live lender-sale listing to tear down (either
+    ///         none was ever linked, it was already completed/cancelled, or its
+    ///         sale offer is already accepted and mid-completion).
+    error NoStaleSaleListing();
+    /// @notice The linked loan is still Active (or curably FallbackPending), so
+    ///         its listing is legitimately live — nothing stale to clean up.
+    error SaleListingLoanStillLive();
+
+    /**
+     * @notice #951 v2 — permissionlessly tear down a stale lender-sale listing
+     *         whose underlying loan has reached a terminal state without the sale
+     *         completing (the borrower repaid it, it defaulted, or it was
+     *         liquidated). Unlocks the seller's lender position NFT, marks the
+     *         dangling sale offer cancelled so it drops out of the open book, and
+     *         clears both link directions.
+     * @dev Permissionless by design — the cleanup moves no value (it only frees
+     *      the terminal seller's own NFT and cancels their own dead offer), so
+     *      anyone (the seller, a keeper sweep, the frontend) may trigger it. This
+     *      mirrors the #195 lazy-clear of expired offers. It is a LAZY entry
+     *      rather than an automatic hook on the terminal transition because the
+     *      three facets that drive terminal transitions (Repay / Defaulted / Risk)
+     *      sit at the EIP-170 ceiling and cannot absorb the teardown code (see
+     *      {LibSaleListing}). Fund-safety never depended on it: a stale listing
+     *      can't be over-accepted because `LoanFacet.initiateLoan` rejects a
+     *      sale-vehicle accept whose linked loan is not Active.
+     * @param loanId The terminal loan whose dangling listing should be cleaned up.
+     */
+    function teardownStaleSaleListing(uint256 loanId)
+        external
+        nonReentrant
+        whenNotPaused
+    {
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        uint256 saleOfferId = s.loanToSaleOfferId[loanId];
+        // No live listing, or a mid-completion (accepted) sale that settles via
+        // completeLoanSale — nothing stale for this entry to clean up.
+        if (saleOfferId == 0 || s.offers[saleOfferId].accepted) {
+            revert NoStaleSaleListing();
+        }
+        // Only clean up once the loan can no longer be sold. Active is obviously
+        // live; FallbackPending can still cure back to Active (borrower
+        // addCollateral / full repay), so its listing stays until it truly
+        // terminates. Every other status is terminal — safe to tear down.
+        LibVaipakam.LoanStatus st = s.loans[loanId].status;
+        if (
+            st == LibVaipakam.LoanStatus.Active ||
+            st == LibVaipakam.LoanStatus.FallbackPending
+        ) {
+            revert SaleListingLoanStillLive();
+        }
+        LibSaleListing.teardownOnLoanExit(s, loanId);
     }
 
     /**

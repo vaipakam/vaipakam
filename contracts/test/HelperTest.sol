@@ -81,7 +81,7 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](89);
+        selectors = new bytes4[](88);
         selectors[0] = TestMutatorFacet.setLoan.selector;
         selectors[1] = TestMutatorFacet.setOffer.selector;
         selectors[2] = TestMutatorFacet.setNextLoanId.selector;
@@ -254,7 +254,8 @@ contract HelperTest {
         selectors[85] = TestMutatorFacet.getForfeitedLenderEntryIds.selector;
         selectors[86] = TestMutatorFacet.setOfferConsumedBySaleRaw.selector; // #955
         selectors[87] = TestMutatorFacet.setLoanToSaleOfferIdRaw.selector; // #951 (Codex #959 r5)
-        selectors[88] = TestMutatorFacet.setSaleListingCollateralRaw.selector; // #951 (Codex #959 r6)
+        // #951 v2 (Codex #959 bind-to-live) — setSaleListingCollateralRaw removed
+        // with the snapshot mapping; the accept binds `>=` live collateral.
         // #687-B: the former tail entries ([83]-[87]: setBackstopAbsorbCashRaw,
         // pushUserLoanIdRaw, vpfiTokenRaw, setLenderProceedsEncumberedRaw,
         // setVpfiTokenRaw) were relocated into the slots freed by the removed
@@ -355,13 +356,15 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](5);
+        selectors = new bytes4[](6);
         selectors[0] = OfferCancelFacet.cancelOffer.selector;
         selectors[1] = OfferCancelFacet.getCompatibleOffers.selector;
         selectors[2] = OfferCancelFacet.getOffer.selector;
         selectors[3] = OfferCancelFacet.getOfferDetails.selector;
         // #662/#725 — linked-loan getter for the AcceptTerms.linkedLoanId field.
         selectors[4] = OfferCancelFacet.getOfferLinkedLoanId.selector;
+        // #951 v2 — permissionless stale-sale-listing teardown.
+        selectors[5] = OfferCancelFacet.teardownStaleSaleListing.selector;
         return selectors;
     }
 
