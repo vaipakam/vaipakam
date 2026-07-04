@@ -54,6 +54,7 @@ export function Vpfi() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [done, setDone] = useState<string | null>(null);
+  const [watched, setWatched] = useState(false);
 
   const snapshot = vpfi.data;
 
@@ -329,6 +330,34 @@ export function Vpfi() {
                 </div>
               ) : null}
             </dl>
+            {/* wallet_watchAsset — offered only once the user actually
+                HOLDS VPFI somewhere (wallet or vault); before that the
+                button would just add a zero-balance line to MetaMask.
+                Rejecting the wallet prompt is not an error. */}
+            {snapshot.token &&
+            walletClient &&
+            (snapshot.walletBalance > 0n || snapshot.vaultBalance > 0n) ? (
+              <button
+                type="button"
+                className="btn btn-secondary btn-sm"
+                style={{ marginTop: 12 }}
+                onClick={() => {
+                  void walletClient
+                    .watchAsset({
+                      type: 'ERC20',
+                      options: {
+                        address: snapshot.token!,
+                        symbol: 'VPFI',
+                        decimals: VPFI_DECIMALS,
+                      },
+                    })
+                    .then(() => setWatched(true))
+                    .catch(() => {});
+                }}
+              >
+                {watched ? copy.vpfi.addedToWallet : copy.vpfi.addToWallet}
+              </button>
+            ) : null}
             <label
               className="cluster"
               style={{ marginTop: 16, fontSize: '0.9rem', alignItems: 'flex-start' }}

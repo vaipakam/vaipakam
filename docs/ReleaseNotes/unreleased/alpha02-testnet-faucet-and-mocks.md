@@ -33,6 +33,14 @@ every address to the per-chain `addresses.json` under a single
 in `packages/contracts/src/deployments.ts` consumes. Run
 `exportFrontendDeployments.sh` afterwards to fold it into the bundle.
 
+Wallet visibility: after a successful ERC-20 faucet mint the banner
+offers "Add \<symbol\> to MetaMask" (the standard watch-asset prompt;
+declining is not an error), so the minted balance shows up in the
+user's wallet immediately. The VPFI page gets the same affordance —
+an "Add VPFI to MetaMask" button in the discount-status card, shown
+only once the connected user actually holds VPFI in their wallet or
+their vault, so nobody is nudged to track a token they don't have.
+
 Base Sepolia already carries the deployed faucet trio (`tLIQ`, `tILQ`,
 `vRENT`); the oracle/swap wiring is applied when an operator with the
 admin + risk-admin roles runs the script (deployer + admin broadcasts).

@@ -578,6 +578,8 @@ export const copy = {
       'The VPFI token configuration changed since you reviewed. Nothing was approved — please check the updated numbers and try again.',
     tokenCheckRetry:
       'We couldn’t confirm the VPFI token just now — nothing was approved. Please try again in a moment.',
+    addToWallet: 'Add VPFI to MetaMask',
+    addedToWallet: 'Asked your wallet to track VPFI.',
   },
 
   errors: {
