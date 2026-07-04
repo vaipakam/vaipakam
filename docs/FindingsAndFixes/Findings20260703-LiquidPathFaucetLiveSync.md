@@ -235,6 +235,41 @@ with a settled loan — the discount actually applied. **The script was
 NOT compiled here (foundry unavailable); it mirrors `DeployTestnetMocks`
 with every facet signature verified against source.**
 
+### R-5b — VPFI enabled + deposit → tier — PASS ✅ (after running R-5a)
+
+The operator ran `DeployTestnetVPFI.s.sol` on Base Sepolia (registered
+VPFI, set discount rate + WETH reference, sent 25,000 VPFI each to the
+borrower + lender from the treasury). Verified end-to-end:
+
+- **`getVPFIToken()` now non-zero** → the `/vpfi` page is **active**:
+  shows the tier table (10 / 15 / 20 / 24 %), the vault holdings, and
+  deposit/withdraw controls. ✅
+- **Deposit works**: deposited 25,000 VPFI via the UI
+  (`depositVPFIToVault`) — the borrower's **vault now holds 25,000 VPFI**
+  (verified on-chain). Consent (`getVPFIDiscountConsent`) = true. ✅
+- **Tiering is correct**: `getTrackedVPFIDiscountTier` =
+  `[tier 4, 25,000 VPFI, 2400 bps]` — 25,000 clears the 20,000 top
+  threshold → **tier 4 / 24 %**, exactly the ladder default. ✅
+- **Time-weighting handled honestly in the UI**: `getEffectiveDiscount`
+  returns `[0, 0]` immediately after the deposit — this is the
+  *time-weighted* effective discount (via the accumulator facet), which
+  accrues from zero as the balance is held (it is averaged over a loan's
+  lifetime by design — CLAUDE.md §"time-weighted accumulator"). The page
+  does NOT confusingly show "Tier 0 / 0 %": it shows **"In your vault
+  25,000 VPFI · Active discount: None right now · Warming up · Your
+  balance qualifies for a higher tier."** That's the correct, honest
+  framing of the raw-tier-vs-effective-accrual distinction. ✅
+
+What remains for a *full* VPFI proof (optional, deeper): observe the
+time-weighted `getEffectiveDiscount` climb toward 2400 bps over elapsed
+time, and see the discount actually applied at a loan settlement (lender
+yield-fee haircut reduced / borrower LIF rebate paid). Both need elapsed
+time + a settled loan; the mechanism itself is verified correct above.
+
+Interaction rewards (global reward calc) remain zero — that accrual path
+is a separate enablement (not switched on by the VPFI discount script);
+the Claims rewards card correctly shows the empty state.
+
 ## R-3d — What remains (lower priority / harder to exercise)
 
 - **repayPartial full-principal revert (#953 item 3)** — needs a
@@ -286,7 +321,8 @@ out above.)
 | R-3b repayPartial full-principal revert (#953 item 3) | ⏳ pending a partial-enabled loan |
 | R-3d Refinance completion / sanctions-gate | ⏳ contract-unblocked; UI drive pending (indexer) / not observable (oracle unset) |
 | R-4 Home nudge / faucet nav / Claims on-chain / live-sync | ✅ PASS |
-| VPFI discounts / tiers / interaction rewards (R-5) | ⚠️ dormant on testnet (`getVPFIToken()==0`); UI handles it honestly ✅; functional review needs VPFI enablement |
+| VPFI discounts / tiers (R-5b, after enablement) | ✅ PASS — deposit 25k VPFI → tier 4 / 24%; UI "warming up" framing honest |
+| VPFI interaction rewards (global reward calc) | ⚠️ accrual not switched on (separate enablement); UI empty-state correct |
 
 Net: the faucet, the Tier-1 liquid-classification-in-UI, the HF display,
 and the full Tier-2 liquidation are all verified working end-to-end on
