@@ -101,7 +101,7 @@ contract ClaimFacet is
     /// @param claimant The delisted, sanctions-screened current borrower-NFT holder.
     /// @param asset    The principal asset paid out.
     /// @param amount   The surplus amount paid out.
-    /// @custom:event-category state-change/loan-mutation
+    /// @custom:event-category state-change/claim-mutation
     event BorrowerSurplusClaimed(
         uint256 indexed loanId,
         address indexed claimant,
