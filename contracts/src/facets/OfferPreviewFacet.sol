@@ -161,6 +161,11 @@ contract OfferPreviewFacet {
             preview.errorCode = OfferAcceptFacet.AcceptError.OfferAlreadyAccepted;
             return preview;
         }
+        // #951 v2 (Codex #959) — mirror `_acceptOffer`'s cancelled-offer guard.
+        if (s.offerCancelled[offerId]) {
+            preview.errorCode = OfferAcceptFacet.AcceptError.OfferIsCancelled;
+            return preview;
+        }
         // T-407-C (#566) — a partially-filled offer must advance via
         // `matchOffers`, not `acceptOffer`. Order matches `_acceptOffer`.
         if (offer.amountFilled > 0) {

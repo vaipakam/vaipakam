@@ -1129,6 +1129,17 @@
   },
   {
     "type": "error",
+    "name": "OfferCancelled",
+    "inputs": [
+      {
+        "name": "offerId",
+        "type": "uint96",
+        "internalType": "uint96"
+      }
+    ]
+  },
+  {
+    "type": "error",
     "name": "OfferConsumedBySale",
     "inputs": [
       {

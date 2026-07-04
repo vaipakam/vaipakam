@@ -28,4 +28,6 @@ Making the listing actually post revealed that the rest of the flow — accept, 
 
 **User impact:** the position-sale *listing* UI was feature-gated off pending this fix (the instant-exit sell-to-a-buy-offer path was unaffected and stayed available). Re-enabling the listing surface is tracked separately (#927).
 
+Two follow-up correctness fixes from the v2 review: a sale acceptance now charges the **live** loan principal (not the stale offer amount) — the fund movement, the temporary sale-vehicle loan, and its emitted events all use the live value the buyer signed, so a partial-repay drift between listing and acceptance can never make the buyer over- or under-pay. And the accept path now honors the **cancelled-offer** marker: once a stale sale listing is torn down, its offer can no longer be accepted as an ordinary offer.
+
 Closes #951.

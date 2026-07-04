@@ -162,6 +162,12 @@ contract OfferAcceptFacet is
     ///         filled (Scenario A — buyer-side won the race). Parallel-
     ///         mapping terminal pattern (same shape as `offerCancelled`).
     error OfferConsumedBySale(uint96 offerId);
+    /// @notice #951 v2 (Codex #959) — the offer was cancelled (its
+    ///         `offerCancelled` marker is set, e.g. by a creator cancel or by
+    ///         `teardownStaleSaleListing` clearing a stale sale listing). The
+    ///         accept path now honors this canonical "dead offer" marker so a
+    ///         torn-down sale offer can't originate a loan as a normal offer.
+    error OfferCancelled(uint96 offerId);
     /// @notice Reverts when a single address would land on both sides of
     ///         the loan — same-wallet direct-accept of one's own offer
     ///         OR a matchOffers between two offers from the same creator.
@@ -750,6 +756,14 @@ contract OfferAcceptFacet is
         LibVaipakam.Offer storage offer = s.offers[offerId];
         if (offer.creator == address(0)) revert InvalidOffer();
         if (offer.accepted) revert OfferAlreadyAccepted();
+        // #951 v2 (Codex #959) — honor the canonical `offerCancelled` marker.
+        // `teardownStaleSaleListing` sets it (and clears `saleOfferToLoanId`) when
+        // a listed loan goes terminal; without this the torn-down sale offer,
+        // whose `accepted`/`amountFilled`/`consumedBySale` flags are all unset and
+        // which hasn't expired, would bind as a NORMAL offer here and could
+        // originate a loan. Covers every cancellation path, not just sale
+        // teardown.
+        if (s.offerCancelled[offerId]) revert OfferCancelled(uint96(offerId));
         // T-407-C (#566) Codex P1 — a partially-filled offer (amountFilled
         // > 0 but not yet dust-closed, so accepted == false) is a
         // matchOffers-managed entity: the matcher consumes its remaining
@@ -943,13 +957,23 @@ contract OfferAcceptFacet is
         // Used by KYC (must gate on real value at risk), the LIF math,
         // the principal transfer, and the OfferAccepted event payload.
         bool _isErc20 = offer.assetType == LibVaipakam.AssetType.ERC20;
+        // #951 v2 (Codex #959) — for a lender-sale vehicle the buyer's bind
+        // already enforces `t.amount == live saleLoan.principal`
+        // (`_bindTermsToOffer`), but the value actually FUNDED must match: source
+        // it from the LIVE loan, not the stale offer snapshot. Without this the
+        // bind passes on the signed live amount while the charge uses the old
+        // offer amount whenever the principal drifted since listing (over/
+        // underpay). The bind guarantees the two now agree.
+        uint256 _saleLoanId = s.saleOfferToLoanId[offerId];
         uint256 effectivePrincipal = s.matchOverride.active
             ? s.matchOverride.amount
-            : (_isErc20
-                ? (offer.offerType == LibVaipakam.OfferType.Lender
-                    ? offer.amountMax
-                    : offer.amount)
-                : offer.amount);
+            : (_saleLoanId != 0
+                ? s.loans[_saleLoanId].principal
+                : (_isErc20
+                    ? (offer.offerType == LibVaipakam.OfferType.Lender
+                        ? offer.amountMax
+                        : offer.amount)
+                    : offer.amount));
 
         // Tiered KYC check based on transaction value (per README Section 16)
         uint256 valueNumeraire = _calculateTransactionValueNumeraire(offer, effectivePrincipal);
@@ -1038,7 +1062,12 @@ contract OfferAcceptFacet is
                         VaultFactoryFacet.vaultDepositERC20.selector,
                         lender,
                         offer.lendingAsset,
-                        offer.amount
+                        // #951 v2 (Codex #959) — pull `effectivePrincipal`, not the
+                        // stale `offer.amount`. For a normal Borrower offer these
+                        // are identical; for a sale vehicle `effectivePrincipal` is
+                        // the LIVE loan principal, so the pull matches the withdraw
+                        // below (else the tracked-balance counter underflows).
+                        effectivePrincipal
                     ),
                     VaultDepositFailed.selector
                 );
@@ -1651,7 +1680,11 @@ contract OfferAcceptFacet is
         // debt's lender side. Both mirror `LoanFacet.initiateLoan`'s sale-vehicle
         // reverts. APPENDED — existing values stay stable.
         SaleLoanNotActive,
-        SaleSelfBuy
+        SaleSelfBuy,
+        // #951 v2 (Codex #959) — the offer is cancelled (`offerCancelled` set,
+        // e.g. by a stale-sale-listing teardown). Surfaced so the UI disables
+        // "Accept" without a revert. APPENDED — prior values stay stable.
+        OfferIsCancelled
     }
 
     /// @notice Projection of the loan that would land if the supplied

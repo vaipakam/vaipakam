@@ -180,7 +180,10 @@ contract LoanFacet is DiamondPausable, DiamondAccessControl, IVaipakamErrors {
 
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         LibVaipakam.Offer storage offer = s.offers[offerId];
-        if (offer.id == 0 || offer.accepted) revert InvalidOffer();
+        // #951 v2 (Codex #959) — reject a cancelled offer (defense-in-depth; the
+        // accept path already screens `offerCancelled`, but initiateLoan is the
+        // load-bearing loan-creation chokepoint).
+        if (offer.id == 0 || offer.accepted || s.offerCancelled[offerId]) revert InvalidOffer();
 
         // Detect if this offer is a lender-sale vehicle (created by
         // createLoanSaleOffer).  The temporary loan it creates is not a real
@@ -945,9 +948,19 @@ contract LoanFacet is DiamondPausable, DiamondAccessControl, IVaipakamErrors {
             // §3 for the ERC-20 convention.
             bool isERC20 = offer.assetType == LibVaipakam.AssetType.ERC20;
             bool isLender = offer.offerType == LibVaipakam.OfferType.Lender;
-            loan.principal = isERC20
-                ? (isLender ? offer.amountMax : offer.amount)
-                : offer.amount;
+            // #951 v2 (Codex #959) — for a lender-sale vehicle, snapshot the LIVE
+            // linked loan's principal into the temp loan (and thus the permanent
+            // LoanInitiated / LoanInitiatedDetails events, which read it back),
+            // NOT the stale `offer.amount`. The accept funds `effectivePrincipal`
+            // from the same live loan, so the temp loan + events agree with the
+            // funded amount even if the principal drifted since listing. The temp
+            // loan is discarded at completeLoanSale, but its events are permanent.
+            uint256 saleLoanId = LibVaipakam.storageSlot().saleOfferToLoanId[offerId];
+            loan.principal = saleLoanId != 0
+                ? LibVaipakam.storageSlot().loans[saleLoanId].principal
+                : (isERC20
+                    ? (isLender ? offer.amountMax : offer.amount)
+                    : offer.amount);
             loan.interestRateBps = isERC20
                 ? (isLender ? offer.interestRateBps : offer.interestRateBpsMax)
                 : offer.interestRateBps;

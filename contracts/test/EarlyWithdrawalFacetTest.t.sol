@@ -3053,4 +3053,71 @@ contract EarlyWithdrawalFacetTest is Test {
             "terminal linked loan is surfaced"
         );
     }
+
+    // ─── #951 v2 (Codex #959 dcae1049 review) — accept correctness ──────────────
+
+    /// @dev A torn-down sale offer must not be acceptable as a normal offer. After
+    ///      `teardownStaleSaleListing` clears the link and sets `offerCancelled`,
+    ///      the accept path honors that marker and reverts `OfferCancelled`.
+    function test_acceptOffer_rejectsTornDownSaleOffer() public {
+        uint256 saleOfferId = _listSaleOffer();
+        _setLoanStatus(activeLoanId, LibVaipakam.LoanStatus.Repaid);
+        OfferCancelFacet(address(diamond)).teardownStaleSaleListing(activeLoanId);
+
+        (address buyer, uint256 buyerPk) = makeAddrAndKey("v959CancelBuyer");
+        // Link is gone → build NORMAL terms (linkedLoanId 0); the bind passes but
+        // `_acceptOffer`'s offerCancelled guard fires.
+        LibAcceptTerms.AcceptTerms memory t = LibAcceptTestSigner.buildTerms(
+            address(diamond), buyer, saleOfferId, true, 0
+        );
+        bytes memory sig = LibAcceptTestSigner.sign(address(diamond), t, buyerPk);
+        vm.expectRevert(
+            abi.encodeWithSelector(OfferAcceptFacet.OfferCancelled.selector, uint96(saleOfferId))
+        );
+        vm.prank(buyer);
+        OfferAcceptFacet(address(diamond)).acceptOffer(saleOfferId, t, sig);
+    }
+
+    /// @dev A sale accept charges the LIVE loan principal, not the stale offer
+    ///      amount. After a post-listing partial-repay drifts the live principal
+    ///      down, the buyer signs the live value (which the bind requires) and the
+    ///      temp loan + fund movement use the same live principal — proven by the
+    ///      temp loan carrying `liveP` (and no tracked-balance underflow on the
+    ///      pull/withdraw, which would otherwise revert the accept).
+    function test_saleAccept_chargesLivePrincipalAfterDrift() public {
+        uint256 saleOfferId = _listSaleOffer();
+        (address buyer, uint256 buyerPk) = makeAddrAndKey("v959PrincipalBuyer");
+        ERC20Mock(mockERC20).mint(buyer, 100000 ether);
+        vm.prank(buyer); ERC20(mockERC20).approve(address(diamond), type(uint256).max);
+        address bv = VaultFactoryFacet(address(diamond)).getOrCreateUserVault(buyer);
+        vm.prank(buyer); ERC20(mockERC20).approve(bv, type(uint256).max);
+        vm.prank(buyer); ProfileFacet(address(diamond)).setUserCountry("US");
+        ProfileFacet(address(diamond)).updateKYCTier(buyer, LibVaipakam.KYCTier.Tier2);
+
+        // Post-listing partial repay shrinks the live principal.
+        LibVaipakam.Loan memory ld =
+            LoanFacet(address(diamond)).getLoanDetails(activeLoanId);
+        uint256 liveP = ld.principal / 2;
+        ld.principal = liveP;
+        TestMutatorFacet(address(diamond)).setLoan(activeLoanId, ld);
+
+        // Buyer signs the LIVE principal (buildSaleTerms reads the live loan).
+        LibAcceptTerms.AcceptTerms memory t = LibAcceptTestSigner.buildSaleTerms(
+            address(diamond), buyer, saleOfferId, true, activeLoanId
+        );
+        bytes memory sig = LibAcceptTestSigner.sign(address(diamond), t, buyerPk);
+        vm.mockCall(
+            address(diamond),
+            abi.encodeWithSelector(EarlyWithdrawalFacet.completeLoanSaleInternal.selector),
+            ""
+        );
+        vm.prank(buyer);
+        uint256 tempLoanId = OfferAcceptFacet(address(diamond)).acceptOffer(saleOfferId, t, sig);
+        assertEq(
+            LoanFacet(address(diamond)).getLoanDetails(tempLoanId).principal,
+            liveP,
+            "temp loan + accept charge the live principal, not the stale offer amount"
+        );
+        vm.clearMockedCalls();
+    }
 }
