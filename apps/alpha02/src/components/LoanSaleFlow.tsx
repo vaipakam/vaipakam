@@ -17,13 +17,23 @@
  * Feature gate — issue #951: the cross-facet reentrancy bug that made
  * every `createLoanSaleOffer` revert was fixed in #959 and CUT into
  * the Base Sepolia + Arb Sepolia Diamonds on 2026-07-04
- * (CatchUpFacetCut959.s.sol). Verified live before flipping this on:
+ * (CatchUpFacetCut959.s.sol). Verified live before enabling:
  * `createLoanSaleOffer` simulates cleanly on an active loan against
  * the post-cut Diamond (it was ReentrancyGuardReentrantCall before).
- * If a chain WITHOUT the #959 cut is ever added, listing attempts
- * there revert at the wallet step — gate per-chain if that arises.
+ *
+ * PER-CHAIN on purpose: on a chain WITHOUT the cut (e.g. BNB Testnet,
+ * still in the deployments bundle) the flow would mine the standing
+ * settlement approval and only THEN hit the old reverting listing
+ * call — gas burned, best-effort revoke. Add a chain here only after
+ * running the catch-up cut on it and re-verifying the simulation.
  */
-export const LOAN_SALE_LISTING_ENABLED: boolean = true;
+const LOAN_SALE_LISTING_CHAINS: ReadonlySet<number> = new Set([
+  84532, // Base Sepolia — #959 cut 2026-07-04, sim-verified
+  421614, // Arb Sepolia — #959 cut 2026-07-04, loupe-verified
+]);
+export function loanSaleListingEnabled(chainId: number): boolean {
+  return LOAN_SALE_LISTING_CHAINS.has(chainId);
+}
 import { useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import { usePublicClient, useWalletClient } from 'wagmi';

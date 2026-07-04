@@ -55,7 +55,7 @@ import { ConfirmReceipt } from '../components/ConfirmReceipt';
 import { RefinanceFlow } from '../components/RefinanceFlow';
 import { RefinancePendingCard } from '../components/RefinancePendingCard';
 import { EarlyExitFlow } from '../components/EarlyExitFlow';
-import { LOAN_SALE_LISTING_ENABLED, LoanSaleFlow } from '../components/LoanSaleFlow';
+import { loanSaleListingEnabled, LoanSaleFlow } from '../components/LoanSaleFlow';
 import { LoanSalePendingCard } from '../components/LoanSalePendingCard';
 import { LoanKeeperCard } from '../components/LoanKeeperCard';
 import { LOCK_EARLY_WITHDRAWAL_SALE, useLoanSalePending } from '../data/loanSalePending';
@@ -1622,7 +1622,7 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
             setBusy={setBusy}
           />
           <section className="card">
-            {LOAN_SALE_LISTING_ENABLED ? (
+            {loanSaleListingEnabled(readChain.chainId) ? (
               <LoanSaleFlow
                 row={row}
                 live={loanLive.data.live}
