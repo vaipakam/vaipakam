@@ -1021,6 +1021,20 @@ contract LoanFacetTest is Test {
 
         LibVaipakam.Loan memory loan = LoanFacet(address(diamond)).getLoanDetails(saleLoanId);
         assertEq(uint8(loan.status), uint8(LibVaipakam.LoanStatus.Active));
+
+        // #957 (Codex #989 P3) — the sale vehicle skips the LIF charge, so its
+        // LIF receipt must read 0 (no fee paid), while the treasury fee — which
+        // is not path-specific — is still snapshotted at the 1% default.
+        assertEq(
+            loan.loanInitiationFeeBpsAtInit,
+            0,
+            "sale vehicle records NO LIF (fee is skipped on that accept path)"
+        );
+        assertEq(
+            loan.treasuryFeeBpsAtInit,
+            100,
+            "treasury fee is still snapshotted on the sale vehicle"
+        );
     }
 
     /// @dev Covers isLenderSaleVehicle=true with linked loan NOT Active (line 77-79):

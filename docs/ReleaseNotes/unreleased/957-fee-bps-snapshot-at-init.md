@@ -18,9 +18,13 @@ time-based default, HF-liquidation, and the parallel-sale floor — now reads th
 loan's snapshotted rate instead of the live knob. The loan-initiation fee is
 charged once, up front, at the moment the loan is created, so there is no
 later re-read to protect; its snapshot is kept as a per-loan economics receipt,
-surfaced through the existing loan-details view for the frontend, indexer, and
-audit, so anyone can see exactly what rate a given loan paid without
-reconstructing the governance-config history.
+surfaced through the existing loan-details view and on the loan-initiated
+companion event, so anyone — the frontend, a log-only indexer or subgraph, or an
+auditor — can see exactly what rate a given loan paid without reconstructing the
+governance-config history. A lender-sale-vehicle accept, which is a
+secondary-market position transfer that deliberately skips the initiation fee,
+correctly records a zero initiation-fee receipt (no fee was charged), while the
+underlying loan keeps the rate it was truly originated under.
 
 A loan created before this change carries no snapshot; those (and only those)
 fall back to the live config, preserving the prior behaviour exactly. Because

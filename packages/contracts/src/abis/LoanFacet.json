@@ -511,6 +511,16 @@
             "name": "borrowerTokenId",
             "type": "uint256",
             "internalType": "uint256"
+          },
+          {
+            "name": "treasuryFeeBpsAtInit",
+            "type": "uint16",
+            "internalType": "uint16"
+          },
+          {
+            "name": "loanInitiationFeeBpsAtInit",
+            "type": "uint16",
+            "internalType": "uint16"
           }
         ]
       }

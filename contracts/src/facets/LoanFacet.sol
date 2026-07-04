@@ -112,6 +112,17 @@ contract LoanFacet is DiamondPausable, DiamondAccessControl, IVaipakamErrors {
         // current NFT holder is then tracked via ERC-721 Transfer.
         uint256 lenderTokenId;
         uint256 borrowerTokenId;
+        // #957 (#921 item 6) — the fee bps this loan was ORIGINATED under,
+        // snapshotted at init. Carried on the companion event so event-sourced
+        // consumers (frontend IndexedDB, watcher D1, subgraph) reconstruct the
+        // FROZEN treasury/LIF economics from logs alone: after a governance fee
+        // retune, a newly-originated loan's true rates are NOT recoverable from
+        // the live config, so a log-only consumer would otherwise mis-attribute
+        // the row to the live/legacy rate. `loanInitiationFeeBpsAtInit` is 0 on
+        // a lender-sale-vehicle accept (no LIF charged on that secondary-market
+        // path — see `_snapshotFeeBps`).
+        uint16 treasuryFeeBpsAtInit;
+        uint16 loanInitiationFeeBpsAtInit;
     }
 
     /// @notice Companion to {LoanInitiated} — full self-sufficient
@@ -433,6 +444,10 @@ contract LoanFacet is DiamondPausable, DiamondAccessControl, IVaipakamErrors {
         // written onto the loan struct.
         d.lenderTokenId = loan.lenderTokenId;
         d.borrowerTokenId = loan.borrowerTokenId;
+        // #957 (#921 item 6) — the frozen fee bps, so log-only consumers get
+        // the loan's real economics without a `getLoanDetails` read-back.
+        d.treasuryFeeBpsAtInit = loan.treasuryFeeBpsAtInit;
+        d.loanInitiationFeeBpsAtInit = loan.loanInitiationFeeBpsAtInit;
 
         // Best-effort HF — staticcall returns 0 on illiquid (no oracle).
         (bool ok, bytes memory ret) = address(this).staticcall(
@@ -823,7 +838,12 @@ contract LoanFacet is DiamondPausable, DiamondAccessControl, IVaipakamErrors {
         _copyPartyFields(loan, offer, acceptor);
         _snapshotLenderDiscount(loan);
         _snapshotBorrowerDiscount(loan);
-        _snapshotFeeBps(loan);
+        // A lender-sale-vehicle accept (offer mapped to an underlying loan)
+        // skips the LIF charge, so the receipt must NOT record one.
+        _snapshotFeeBps(
+            loan,
+            LibVaipakam.storageSlot().saleOfferToLoanId[offerId] != 0
+        );
         _latchOfferKeepersToLoan(loan.id, offerId, offer.creator);
     }
 
@@ -836,11 +856,21 @@ contract LoanFacet is DiamondPausable, DiamondAccessControl, IVaipakamErrors {
     ///      to the default), so the stored BPS is always non-zero and the `0`
     ///      sentinel unambiguously means a pre-#957 loan. Same immutable-at-init
     ///      discipline as `minHealthFactorAtInit` / `initLtvCapBpsAtInit`.
-    function _snapshotFeeBps(LibVaipakam.Loan storage loan) private {
+    function _snapshotFeeBps(
+        LibVaipakam.Loan storage loan,
+        bool isSaleVehicle
+    ) private {
         loan.treasuryFeeBpsAtInit = uint16(LibVaipakam.cfgTreasuryFeeBps());
-        loan.loanInitiationFeeBpsAtInit = uint16(
-            LibVaipakam.cfgLoanInitiationFeeBps()
-        );
+        // #951 / Codex #989 P3 — a lender-sale-vehicle accept is a secondary-
+        // market position transfer; `OfferAcceptFacet` explicitly skips the
+        // LIF (the underlying loan already paid it at origination). Leave the
+        // LIF snapshot at 0 so the per-loan receipt honestly reports "no LIF
+        // charged" rather than a rate that was never applied.
+        if (!isSaleVehicle) {
+            loan.loanInitiationFeeBpsAtInit = uint16(
+                LibVaipakam.cfgLoanInitiationFeeBps()
+            );
+        }
     }
 
     /// @dev Copy the offer's per-keeper enable flags onto the new loan
