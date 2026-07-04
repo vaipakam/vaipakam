@@ -992,7 +992,7 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](9);
+        selectors = new bytes4[](10);
         selectors[0] = ClaimFacet.claimAsLender.selector;
         selectors[1] = ClaimFacet.claimAsBorrower.selector;
         selectors[2] = ClaimFacet.getClaimableAmount.selector;
@@ -1003,6 +1003,7 @@ contract HelperTest {
         // #399 backstop v0 Role B — liquidator-of-last-resort.
         selectors[7] = ClaimFacet.setLenderBackstopOptIn.selector;
         selectors[8] = ClaimFacet.claimAsLenderViaBackstop.selector;
+        selectors[9] = ClaimFacet.getBorrowerSurplusClaim.selector;
         return selectors;
     }
 

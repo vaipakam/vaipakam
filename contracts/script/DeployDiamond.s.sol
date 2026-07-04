@@ -1653,7 +1653,7 @@ contract DeployDiamond is Script {
     }
 
     function _getClaimSelectors() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](9);
+        s = new bytes4[](10);
         s[0] = ClaimFacet.claimAsLender.selector;
         s[1] = ClaimFacet.claimAsBorrower.selector;
         s[2] = ClaimFacet.getClaimableAmount.selector;
@@ -1664,6 +1664,7 @@ contract DeployDiamond is Script {
         // #399 backstop v0 Role B — liquidator-of-last-resort.
         s[7] = ClaimFacet.setLenderBackstopOptIn.selector;
         s[8] = ClaimFacet.claimAsLenderViaBackstop.selector;
+        s[9] = ClaimFacet.getBorrowerSurplusClaim.selector;
     }
 
     function _getAddCollateralSelectors() internal pure returns (bytes4[] memory s) {

@@ -767,7 +767,13 @@ contract VPFIDiscountFacet is
         view
         returns (uint8 tier, uint256 trackedBal, uint256 discountBps)
     {
-        trackedBal = LibVPFIDiscount.trackedVpfiBalance(user);
+        // #954 (§2.2) — preview the tier from the SAME frozen-adjusted balance
+        // the accumulator actually stamps (`rollupUserDiscount` →
+        // `tierVpfiBalance`), so a stored party holding a transferred
+        // position's frozen VPFI surplus doesn't see an inflated tier preview
+        // that the stamp would never grant.
+        uint256 rawTracked = LibVPFIDiscount.trackedVpfiBalance(user);
+        trackedBal = LibVPFIDiscount.tierVpfiBalance(user, rawTracked);
         tier = LibVPFIDiscount.tierOf(trackedBal);
         discountBps = LibVPFIDiscount.discountBpsForTier(tier);
     }

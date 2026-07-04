@@ -451,6 +451,16 @@ contract BackstopFacet is
         // collateral. No-op when the knob is 0 (default). Backstop-scoped — the
         // general permissionless liquidation path is unaffected.
         LibBackstopOracleGate.assertCoverage(o.collateralAsset);
+        // #954 (§1.5) — RE-SCREEN the offer creator at fill, not just at opt-in
+        // (`setOfferBackstopEligible:352`). `backstopFill` originates a
+        // treasury-funded loan to `o.creator` and routes principal to them, so
+        // it is Tier-1 (creates state + pays value to the caller's economic
+        // party) → hard-revert for a creator flagged in the
+        // opt-in→`eligibleAfter` window. Without this, a borrower flagged after
+        // opting in could still have a loan originated to them here; downstream
+        // `matchIntent` screens only the solver / backstop vault, never
+        // `o.creator`. Mirrors the shape re-assert already done above.
+        LibVaipakam._assertNotSanctioned(o.creator);
         loanId = BackstopVaultImplementation(vault).executeFill(
             o.lendingAsset,
             o.collateralAsset,

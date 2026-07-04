@@ -10,6 +10,7 @@ import {AdminFacet} from "../src/facets/AdminFacet.sol";
 import {VaultFactoryFacet} from "../src/facets/VaultFactoryFacet.sol";
 import {ClaimFacet} from "../src/facets/ClaimFacet.sol";
 import {ProfileFacet} from "../src/facets/ProfileFacet.sol";
+import {VPFIDiscountFacet} from "../src/facets/VPFIDiscountFacet.sol";
 import {MockSanctionsList} from "./mocks/MockSanctionsList.sol";
 import {LibSwap} from "../src/libraries/LibSwap.sol";
 import {LibVaipakam} from "../src/libraries/LibVaipakam.sol";
@@ -579,5 +580,197 @@ contract SwapToRepayFacetTest is SetupTest {
             holderBefore,
             "delisted holder receives the frozen surplus principal"
         );
+    }
+
+    // ── ─────────────────────────────────────────────────────── ──
+    // #954 (§1.1) — flagged LENDER leg must not brick; proceeds frozen
+    //               in the lender vault and claimable after delisting
+    // ── ─────────────────────────────────────────────────────── ──
+
+    /// @dev Wire a sanctions oracle and flag `who`. Returns the mock so the
+    ///      caller can later delist.
+    function _wireSanctionsAndFlag(address who)
+        internal
+        returns (MockSanctionsList sanctions)
+    {
+        sanctions = new MockSanctionsList();
+        ProfileFacet(address(diamond)).setSanctionsOracle(address(sanctions));
+        sanctions.setFlagged(who, true);
+    }
+
+    function test_swapToRepayFull_SanctionedLenderLeg_DoesNotBrick_FrozenClaimable()
+        public
+    {
+        _scaffoldLoan(1, /* allowsPartialRepay */ false, /* useFullTermInterest */ false);
+        adapter1.setOutputMultiplierBps(10_000);
+
+        // Lender flagged AFTER init; borrower (clean) closes via swap.
+        MockSanctionsList sanctions = _wireSanctionsAndFlag(lenderEoa);
+        uint256 lenderVaultBefore =
+            IERC20(address(principalAsset)).balanceOf(lenderVault);
+
+        vm.prank(borrowerEoa);
+        SwapToRepayFacet(address(diamond)).swapToRepayFull(1, _adapterTryList(1), 1_500 ether);
+
+        // Close-out completes despite the flagged lender.
+        LibVaipakam.Loan memory loanAfter = LoanFacet(address(diamond)).getLoanDetails(1);
+        assertEq(
+            uint256(loanAfter.status),
+            uint256(LibVaipakam.LoanStatus.Repaid),
+            "close completes with a flagged lender (freeze-at-source, not brick)"
+        );
+        // Lender proceeds are parked (frozen) in the stored lender's vault.
+        assertGt(
+            IERC20(address(principalAsset)).balanceOf(lenderVault),
+            lenderVaultBefore,
+            "lender proceeds parked in lender vault"
+        );
+
+        // Flagged lender can't claim; delist → claim pays out.
+        vm.prank(lenderEoa);
+        vm.expectRevert(
+            abi.encodeWithSelector(LibVaipakam.SanctionedAddress.selector, lenderEoa)
+        );
+        ClaimFacet(address(diamond)).claimAsLender(1);
+
+        sanctions.setFlagged(lenderEoa, false);
+        uint256 lenderEoaBefore = IERC20(address(principalAsset)).balanceOf(lenderEoa);
+        vm.prank(lenderEoa);
+        ClaimFacet(address(diamond)).claimAsLender(1);
+        assertGt(
+            IERC20(address(principalAsset)).balanceOf(lenderEoa),
+            lenderEoaBefore,
+            "delisted lender claims the frozen proceeds"
+        );
+    }
+
+    // ── ─────────────────────────────────────────────────────── ──
+    // #954 (§1.2) — flagged SELF borrower-holder: the collateral pull
+    //               runs under the move-out exemption and must not brick
+    // ── ─────────────────────────────────────────────────────── ──
+
+    function test_swapToRepayFull_SanctionedSelfBorrower_CollateralPull_DoesNotBrick()
+        public
+    {
+        _scaffoldLoan(1, /* allowsPartialRepay */ false, /* useFullTermInterest */ false);
+        adapter1.setOutputMultiplierBps(10_000);
+
+        // Borrower still holds their own position NFT and is flagged after init.
+        _wireSanctionsAndFlag(borrowerEoa);
+
+        // MUST complete: `getOrCreateUserVault(borrowerEoa)` inside the collateral
+        // withdraw would revert `SanctionedAddress` without the move-out exemption.
+        vm.prank(borrowerEoa);
+        SwapToRepayFacet(address(diamond)).swapToRepayFull(1, _adapterTryList(1), 1_100 ether);
+
+        LibVaipakam.Loan memory loanAfter = LoanFacet(address(diamond)).getLoanDetails(1);
+        assertEq(
+            uint256(loanAfter.status),
+            uint256(LibVaipakam.LoanStatus.Repaid),
+            "self-flagged borrower close-out completes (collateral pull move-out)"
+        );
+    }
+
+    // ── ─────────────────────────────────────────────────────── ──
+    // #954 (§1.3) — swapToRepayPartial hard-SCREENS the direct payees
+    // ── ─────────────────────────────────────────────────────── ──
+
+    function test_swapToRepayPartial_RevertWhen_LenderHolderSanctioned() public {
+        _scaffoldLoan(1, /* allowsPartialRepay */ true, /* useFullTermInterest */ false);
+        adapter1.setOutputMultiplierBps(10_000);
+
+        _wireSanctionsAndFlag(lenderEoa);
+
+        // Discretionary path → Tier-1 screen on the lender payee, hard revert.
+        vm.prank(borrowerEoa);
+        vm.expectRevert(
+            abi.encodeWithSelector(LibVaipakam.SanctionedAddress.selector, lenderEoa)
+        );
+        SwapToRepayFacet(address(diamond)).swapToRepayPartial(1, 250 ether, _adapterTryList(1));
+    }
+
+    // ── ─────────────────────────────────────────────────────── ──
+    // #954 (§2.4) — surplus-only close keeps the loan un-Settled until
+    //               the borrower claims the frozen surplus
+    // ── ─────────────────────────────────────────────────────── ──
+
+    function test_swapToRepayFull_SurplusOnly_LenderFirstClaim_DoesNotSettle() public {
+        _scaffoldLoan(1, /* allowsPartialRepay */ false, /* useFullTermInterest */ false);
+        adapter1.setOutputMultiplierBps(10_000);
+
+        // Sanctioned transferee holder so the surplus is FROZEN (records a
+        // borrowerSurplusClaims row); consume ALL collateral so borrowerClaims
+        // is empty and only the surplus lane remains.
+        address holder = makeAddr("v954SurplusOnlyHolder");
+        MockSanctionsList sanctions = _transferBorrowerNftThenSanction(holder);
+
+        vm.prank(holder);
+        SwapToRepayFacet(address(diamond)).swapToRepayFull(1, _adapterTryList(1), LOAN_COLLATERAL);
+
+        // A pending surplus row exists; collateral claim is empty.
+        (, uint256 surplusAmt, bool surplusClaimed) =
+            ClaimFacet(address(diamond)).getBorrowerSurplusClaim(1);
+        assertGt(surplusAmt, 0, "surplus frozen for the delistable holder");
+        assertEq(surplusClaimed, false, "surplus not yet claimed");
+
+        // Lender claims first — the loan must STAY un-Settled (pending surplus).
+        vm.prank(lenderEoa);
+        ClaimFacet(address(diamond)).claimAsLender(1);
+        assertEq(
+            uint256(LoanFacet(address(diamond)).getLoanDetails(1).status),
+            uint256(LibVaipakam.LoanStatus.Repaid),
+            "surplus-only loan stays un-Settled after the lender claim"
+        );
+
+        // Delist + borrower claims the surplus → loan settles.
+        sanctions.setFlagged(holder, false);
+        vm.prank(holder);
+        ClaimFacet(address(diamond)).claimAsBorrower(1);
+        assertEq(
+            uint256(LoanFacet(address(diamond)).getLoanDetails(1).status),
+            uint256(LibVaipakam.LoanStatus.Settled),
+            "loan settles once the frozen surplus is claimed"
+        );
+    }
+
+    // ── ─────────────────────────────────────────────────────── ──
+    // #954 (§2.2) — a frozen VPFI surplus owed to a transferred, sanctioned
+    //               holder is EXCLUDED from the stored borrower's fee tier
+    // ── ─────────────────────────────────────────────────────── ──
+
+    function test_swapToRepayFull_FrozenVpfiSurplus_ExcludedFromStoredBorrowerTier()
+        public
+    {
+        _scaffoldLoan(1, /* allowsPartialRepay */ false, /* useFullTermInterest */ false);
+        adapter1.setOutputMultiplierBps(10_000);
+
+        // Make the principal asset BE the VPFI token so the frozen surplus is
+        // VPFI and flows through the tier machinery.
+        TestMutatorFacet(address(diamond)).setVpfiTokenRaw(address(principalAsset));
+
+        // Sanctioned transferee holder → the surplus is frozen into the stored
+        // borrower's (borrowerEoa's) vault and the frozen-owed counter is bumped.
+        address holder = makeAddr("v954TierHolder");
+        _transferBorrowerNftThenSanction(holder);
+
+        vm.prank(holder);
+        SwapToRepayFacet(address(diamond)).swapToRepayFull(1, _adapterTryList(1), 1_500 ether);
+
+        // Raw tracked VPFI in the stored borrower's vault IS the frozen surplus...
+        uint256 rawTracked =
+            VPFIDiscountFacet(address(diamond)).getTrackedVPFIBalance(borrowerEoa);
+        assertGt(rawTracked, 0, "frozen VPFI surplus sits in the stored borrower's tracked balance");
+
+        // ...but the tier-adjusted balance excludes it (owed to the delistable
+        // holder, not the vault owner) — threshold-independent proof that
+        // `tierVpfiBalance` subtracted `frozenVpfiOwedByVault`.
+        (uint8 tier, uint256 tierAdjustedBal, ) =
+            VPFIDiscountFacet(address(diamond)).getTrackedVPFIDiscountTier(borrowerEoa);
+        assertEq(
+            tierAdjustedBal,
+            0,
+            "frozen-owed VPFI is excluded from the stored borrower's tier balance"
+        );
+        assertEq(tier, 0, "excluded balance yields tier 0");
     }
 }

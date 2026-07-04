@@ -3,7 +3,6 @@
 pragma solidity ^0.8.29;
 
 import {LibVaipakam} from "../libraries/LibVaipakam.sol";
-import {LibEncumbrance} from "../libraries/LibEncumbrance.sol";
 import {LibLifecycle} from "../libraries/LibLifecycle.sol";
 import {LibAuth} from "../libraries/LibAuth.sol";
 import {LibConsolidation} from "../libraries/LibConsolidation.sol";
@@ -21,6 +20,7 @@ import {VaipakamNFTFacet} from "./VaipakamNFTFacet.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {IERC721} from "@openzeppelin/contracts/token/ERC721/IERC721.sol";
 import {LibSanctionedLock} from "../libraries/LibSanctionedLock.sol";
+import {LibCloseoutFreeze} from "../libraries/LibCloseoutFreeze.sol";
 import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import {DiamondReentrancyGuard} from "../libraries/LibReentrancyGuard.sol";
 import {DiamondPausable} from "../libraries/LibPausable.sol";
@@ -318,15 +318,20 @@ contract SwapToRepayFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamE
             loanId,
             maxCollateralIn
         );
-        LibFacet.crossFacetCall(
-            abi.encodeWithSelector(
-                VaultFactoryFacet.vaultWithdrawERC20.selector,
-                loan.borrower,
-                loan.collateralAsset,
-                address(this),
-                maxCollateralIn
-            ),
-            VaultWithdrawFailed.selector
+        // #954 (§1.2) — pull the collateral OUT of loan.borrower's vault behind
+        // the from-side move-out exemption so a borrower flagged AFTER init (and
+        // holding their own position NFT, so consolidation Skipped) doesn't
+        // brick this must-complete Tier-2 close-out when `getOrCreateUserVault`
+        // screens the vault owner. Custody is LEAVING loan.borrower (to the
+        // Diamond for the swap). The window is NARROW — closed inside the
+        // helper BEFORE `swapWithFailover` runs, so the receive-side exemption
+        // is never open across the untrusted adapter call (Codex #986 r3).
+        LibSanctionedLock.vaultWithdrawERC20MoveOut(
+            s,
+            loan.borrower,
+            loan.collateralAsset,
+            address(this),
+            maxCollateralIn
         );
 
         (bool success, uint256 outputAmount, uint256 adapterUsed) = LibSwap.swapWithFailover(
@@ -356,9 +361,13 @@ contract SwapToRepayFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamE
             LibFacet.recordTreasuryAccrual(loan.principalAsset, plan.treasuryShare);
         }
 
-        address lenderVault = LibFacet.getOrCreateVault(loan.lender);
-        IERC20(loan.principalAsset).safeTransfer(lenderVault, plan.lenderDue);
-        LibVaipakam.recordVaultDeposit(loan.lender, loan.principalAsset, plan.lenderDue);
+        // #954 (§1.1) — deposit the lender proceeds behind the receive-side
+        // sanctions exemption (so a lender flagged after init doesn't brick the
+        // close-out), write the lender claim row, reserve the proceeds against
+        // the stored lender's spend paths for EVERY ERC20, and tier-exclude a
+        // transferred-and-sanctioned holder's VPFI. Shared with the Fusion
+        // intent settlement so the two full-close terminals can't drift.
+        LibCloseoutFreeze.freezeLenderProceeds(s, loanId, loan, plan.lenderDue);
 
         // Surplus principal → CURRENT borrower-position NFT holder's
         // EOA directly (Codex round-4 P1 #2). Routing to the vault
@@ -374,89 +383,19 @@ contract SwapToRepayFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamE
         uint256 surplusPrincipal = outputAmount - requiredPrincipal;
         address currentBorrowerHolder = IERC721(address(this))
             .ownerOf(loan.borrowerTokenId);
-        if (surplusPrincipal > 0) {
-            // #921 item 2 (sanctions sweep) — swap-to-repay is a Tier-2 close-out
-            // that MUST complete (a flagged borrower must still be able to settle
-            // so the honest lender is made whole), so the call itself is never
-            // blocked. But the borrower's own surplus must not be handed to a
-            // SANCTIONED EOA. Freeze it at source instead.
-            if (LibVaipakam.isSanctionedAddress(currentBorrowerHolder)) {
-                // #954 (Codex #981 P1) — freeze the surplus into `loan.borrower`'s
-                // vault, NOT the current holder's. The holder may be a fresh
-                // borrower-NFT transferee that never created a vault, and the
-                // receive-side exemption deliberately REFUSES to mint a vault for
-                // a flagged wallet (`SanctionedRecipientHasNoVault`) — depositing
-                // to it would revert and brick this must-complete close-out.
-                // `loan.borrower`'s vault always exists (collateral was posted
-                // there at init), so this can't brick; `depositLocked` resolves it
-                // behind the exemption and fires `SanctionedProceedsLocked` when
-                // `loan.borrower` itself is flagged. Same custody the residual
-                // collateral already uses — it too sits in `loan.borrower`'s vault
-                // and is paid to the current holder at claim.
-                LibSanctionedLock.depositLocked(
-                    s,
-                    loan.borrower,
-                    loanId,
-                    loan.principalAsset,
-                    surplusPrincipal
-                );
-                // #954 (Codex #981 P2) — record a claim row so the current holder
-                // can withdraw the frozen surplus via `claimAsBorrower` once
-                // delisted. A bare vault balance is unrealizable: the loan's
-                // `borrowerClaims` slot holds the residual COLLATERAL (a different
-                // asset) and `vaultWithdrawERC20` is diamond-internal, so without
-                // this row the surplus would be permanently stuck.
-                s.borrowerSurplusClaims[loanId] = LibVaipakam.ClaimInfo({
-                    asset: loan.principalAsset,
-                    amount: surplusPrincipal,
-                    assetType: LibVaipakam.AssetType.ERC20,
-                    tokenId: 0,
-                    quantity: 0,
-                    claimed: false
-                });
-                // A plain-ERC20 tracked vault balance is not user-drainable
-                // (`vaultWithdrawERC20` is internal; `recoverStuckERC20` only
-                // touches UNtracked excess). VPFI is the exception — a clean
-                // stored `loan.borrower` could unstake it out of their vault
-                // before the current holder claims a TRANSFERRED position's
-                // surplus — so reserve it against the unstake path, released in
-                // `claimAsBorrower`'s `releaseBorrowerProceeds`. No-op for non-VPFI.
-                if (loan.principalAsset == s.vpfiToken) {
-                    LibEncumbrance.encumberBorrowerProceeds(
-                        loanId, loan.borrower, loan.principalAsset, surplusPrincipal
-                    );
-                }
-            } else {
-                // Clean holder — direct-EOA payout. Routing to the vault with
-                // `recordVaultDeposit` would leave the surplus unclaimable
-                // (Codex round-4 P1 #2): `claimAsBorrower` releases only the
-                // collateral asset in `borrowerClaims`, and `vaultWithdrawERC20`
-                // is diamond-internal.
-                IERC20(loan.principalAsset).safeTransfer(
-                    currentBorrowerHolder,
-                    surplusPrincipal
-                );
-            }
-        }
+        // #954 (§2.1) — swap-to-repay is a Tier-2 close-out that MUST complete,
+        // so the surplus is never a blocking revert. A clean holder is paid
+        // directly; a SANCTIONED holder's surplus is frozen into loan.borrower's
+        // vault (records a `borrowerSurplusClaims` row, reserves it against the
+        // stored borrower's signed-offer spend for EVERY ERC20, and tier-excludes
+        // a transferred holder's VPFI). Shared with the Fusion intent settlement.
+        LibCloseoutFreeze.freezeOrPayBorrowerSurplus(
+            s, loanId, loan, currentBorrowerHolder, surplusPrincipal
+        );
 
         // ── Claim slots ──────────────────────────────────────────────
-        s.lenderClaims[loanId] = LibVaipakam.ClaimInfo({
-            asset: loan.principalAsset,
-            amount: plan.lenderDue,
-            assetType: LibVaipakam.AssetType.ERC20,
-            tokenId: 0,
-            quantity: 0,
-            claimed: false
-        });
-        // #592 — reserve VPFI lender proceeds against the unstake path until
-        // the current holder claims (released path-agnostically in ClaimFacet).
-        // Terminal close: `loan.lender` is fixed between this reserve and the
-        // claim. No-op for non-VPFI principal.
-        if (loan.principalAsset == s.vpfiToken) {
-            LibEncumbrance.encumberLenderProceeds(
-                loanId, loan.lender, loan.principalAsset, plan.lenderDue
-            );
-        }
+        // The lender claim row + lender-proceeds reservation are written inside
+        // `freezeLenderProceeds` above (§1.1), so no separate write here.
 
         // Codex round-1 P1 #2 — record the residual pledged collateral
         // (never withdrawn from the borrower vault) + the partial-
@@ -477,10 +416,19 @@ contract SwapToRepayFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamE
         // the unspent input from the swap, so refund it now.
         uint256 partialFillRefund = maxCollateralIn - actualCollateralConsumed;
         if (partialFillRefund > 0) {
+            // #954 (§1.2) — resolving loan.borrower's vault to return their OWN
+            // residual collateral must not brick when the borrower was flagged
+            // after init. Its OWN narrow move-out window — separate from the
+            // pre-swap collateral pull, never spanning the untrusted swap
+            // (Codex #986 r3). This returns the borrower's residual (no locked-
+            // share semantics), so the move-out exemption — which emits no
+            // `SanctionedProceedsLocked` — is the right one.
+            LibSanctionedLock.beginMoveOut(s, loan.borrower);
             IERC20(loan.collateralAsset).safeTransfer(
                 LibFacet.getOrCreateVault(loan.borrower),
                 partialFillRefund
             );
+            LibSanctionedLock.endMoveOut(s);
             LibVaipakam.recordVaultDeposit(
                 loan.borrower,
                 loan.collateralAsset,
@@ -769,6 +717,12 @@ contract SwapToRepayFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamE
         // transfer is the only path to actually realize the funds.
         address currentLenderHolder = IERC721(address(this))
             .ownerOf(loan.lenderTokenId);
+        // #954 (§1.3) — `swapToRepayPartial` is a DISCRETIONARY, loan-stays-
+        // Active path (the analogue of `repayPartial`), so it hard-SCREENS the
+        // direct EOA payee rather than freezing: a flagged party's must-complete
+        // escape hatch is `swapToRepayFull` (which freezes). Mirror
+        // `repayPartial`'s Tier-1 screen on the discretionary payout.
+        LibVaipakam._assertNotSanctioned(currentLenderHolder);
         uint256 lenderTotal = lenderShare + partialPrincipal;
         IERC20(loan.principalAsset).safeTransfer(currentLenderHolder, lenderTotal);
 
@@ -781,6 +735,9 @@ contract SwapToRepayFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamE
         if (surplus > 0) {
             address currentBorrowerHolder = IERC721(address(this))
                 .ownerOf(loan.borrowerTokenId);
+            // #954 (§1.3) — same Tier-1 discretionary screen on the borrower
+            // surplus payee; the must-complete escape is `swapToRepayFull`.
+            LibVaipakam._assertNotSanctioned(currentBorrowerHolder);
             IERC20(loan.principalAsset).safeTransfer(
                 currentBorrowerHolder,
                 surplus

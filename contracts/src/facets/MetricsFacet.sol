@@ -1686,6 +1686,14 @@ contract MetricsFacet {
         bool    isClaimable;             // !claim.claimed && something to claim
         uint256 vpfiHeld;                // borrower-side: still in Diamond custody (Active loans on VPFI path)
         uint256 vpfiRebatePending;       // borrower-side: claimable VPFI after proper close
+        // #954 (§2.3) — borrower-side frozen swap-to-repay principal SURPLUS lane
+        // (parked in loan.borrower's vault for THIS holder when the holder was
+        // sanctioned at the swap-to-repay-full close). A SECOND claimable lane
+        // in the principal asset, distinct from the collateral `claimableAmount`
+        // above — a claim can owe BOTH. Discoverable here because this view is
+        // keyed by the position NFT (current holder), not the stored borrower.
+        address surplusClaimAsset;       // principal asset of the frozen surplus (0x0 if none)
+        uint256 surplusClaimAmount;      // pending surplus amount; 0 once claimed / none
         uint256 createdAt;               // Unix timestamp from offer.createdAt — display_type "date"
         uint256 chainId;
     }
@@ -1767,12 +1775,23 @@ contract MetricsFacet {
             // marketplace card.
             s.isClaimable = claim.asset != address(0) && !claim.claimed;
 
-            // Borrower-side: live vault custody + pending VPFI rebate.
+            // Borrower-side: live vault custody + pending VPFI rebate + the
+            // frozen swap-surplus lane (#954 §2.3). Surfaced here so a delisted
+            // transferee holder (this NFT's owner) can discover the surplus even
+            // though it sits in the STORED borrower's vault and isn't in their
+            // `userLoanIds` index.
             if (!s.isLender) {
                 LibVaipakam.BorrowerLifRebate storage r =
                     vs.borrowerLifRebate[s.loanId];
                 s.vpfiHeld = r.vpfiHeld;
                 s.vpfiRebatePending = r.rebateAmount;
+                LibVaipakam.ClaimInfo storage sc = vs.borrowerSurplusClaims[s.loanId];
+                if (!sc.claimed && sc.amount > 0) {
+                    s.surplusClaimAsset = sc.asset;
+                    s.surplusClaimAmount = sc.amount;
+                    // A pending surplus alone makes the position actionable.
+                    s.isClaimable = true;
+                }
             }
 
             // Locked-collateral signal: still in vault against this loan

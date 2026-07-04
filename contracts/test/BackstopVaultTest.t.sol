@@ -8,6 +8,7 @@ import {LenderIntentFacet} from "../src/facets/LenderIntentFacet.sol";
 import {RepayFacet} from "../src/facets/RepayFacet.sol";
 import {LoanFacet} from "../src/facets/LoanFacet.sol";
 import {ProfileFacet} from "../src/facets/ProfileFacet.sol";
+import {MockSanctionsList} from "./mocks/MockSanctionsList.sol";
 import {TreasuryFacet} from "../src/facets/TreasuryFacet.sol";
 import {VPFITokenFacet} from "../src/facets/VPFITokenFacet.sol";
 import {BackstopFacet} from "../src/facets/BackstopFacet.sol";
@@ -199,6 +200,26 @@ contract BackstopVaultTest is SetupTest {
         assertEq(loan.lender, vault, "loan.lender == backstop vault");
         assertEq(loan.principal, PRINCIPAL, "principal");
         assertEq(loan.principalAsset, mockERC20, "principal asset");
+    }
+
+    // ─── #954 (§1.5) — re-screen the offer creator at FILL ──────────────────
+
+    /// @dev A borrower flagged AFTER `setOfferBackstopEligible` opt-in but before
+    ///      `backstopFill` must not have a treasury-funded loan originated to
+    ///      them. The fill re-screens `o.creator` (Tier-1), not only the opt-in.
+    function test_backstopFill_RevertWhen_CreatorSanctionedAfterOptIn() public {
+        (uint256 offerId, address borrower) = _eligibleOffer();
+
+        MockSanctionsList sanctions = new MockSanctionsList();
+        ProfileFacet(address(diamond)).setSanctionsOracle(address(sanctions));
+        sanctions.setFlagged(borrower, true);
+
+        address poker = makeAddr("poker");
+        vm.prank(poker);
+        vm.expectRevert(
+            abi.encodeWithSelector(LibVaipakam.SanctionedAddress.selector, borrower)
+        );
+        BackstopFacet(address(diamond)).backstopFill(offerId);
     }
 
     // ─── #638 — backstop-only oracle-coverage gate (Role A) ─────────────────

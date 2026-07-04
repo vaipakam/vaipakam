@@ -1,5 +1,14 @@
 # Sanctions-Gate Coverage Matrix (#921 item 2 / #954)
 
+> **Canonical behaviour reference:** the single source of truth for each
+> action family's sanctions posture is
+> [`SanctionsAndTermsGateMatrix.md`](SanctionsAndTermsGateMatrix.md) — the
+> per-method action matrix. THIS document is the point-in-time **audit sweep**
+> that produced those postures (the methodology + the gaps found/fixed) plus the
+> `SanctionsGateGuardrailTest` linkage. When a new state-creating / fund-
+> receiving method is added, classify + gate it and update the action matrix;
+> this sweep record is not re-run per PR.
+
 Audit of **every external/public facet method** for its intended sanctions
 gate, prompted by #921 item 1 finding that `claimInteractionRewards` had
 slipped through the Tier-1/Tier-2 classification without its gate (fixed in
@@ -46,6 +55,33 @@ wrongly-gated Tier-2 close-outs** were found.
 | 2 | `PartialWithdrawalFacet.partialWithdrawCollateral` | Discretionary value-out — borrower pulls excess ERC-20 collateral to `msg.sender` via the plain `vaultWithdrawERC20` (which does not screen the recipient). Loan stays Active, so it is **not** a close-out; blocking a flagged caller strands nothing (collateral keeps backing the loan). A borrower clean at init but flagged later still holds the NFT and could extract unscreened. | `_assertNotSanctioned(msg.sender)` at entry. |
 | 3 | `OfferParallelSaleFacet.postParallelSaleListing` | Stages the offer's collateral for a Seaport sale with a seller-baked fee schedule. The whole facet had **zero** sanctions references — unlike every structurally-identical sibling (`NFTPrepayListingFacet` / `NFTPrepayDutchListingFacet` / `NFTPrepayListingAtomicFacet`), which screen both the caller and the fee-leg recipients. | `_assertNotSanctioned(msg.sender)` + `LibPrepayListingWiring.assertFeeLegRecipientsNotSanctioned(feeLegs)`, mirroring the siblings. |
 | 4 | `SwapToRepayFacet.swapToRepayFull` (surplus payout) | The close-out itself is correctly Tier-2 (a flagged borrower must be able to settle so the honest lender is made whole), but the **surplus** principal was `safeTransfer`'d directly to the (possibly-flagged) holder's EOA — escaping the freeze-at-source that every vault-based close-out enforces. | Keep the call permissionless; when the current holder is sanctioned, freeze the surplus instead of the direct EOA transfer. Park it in the **stored `loan.borrower`'s** vault via `LibSanctionedLock.depositLocked` — NOT the current holder's: a freshly-transferred position may belong to a wallet with no vault, and the receive exemption refuses to mint one for a flagged wallet (`SanctionedRecipientHasNoVault`), which would revert and brick this must-complete close-out (Codex #981 P1). Record it as a dedicated `borrowerSurplusClaims[loanId]` row so the holder can withdraw it via `claimAsBorrower` once delisted — the loan's `borrowerClaims` slot holds the residual collateral (a different asset), so a bare vault balance would be unrealizable (Codex #981 P2). Reserve a VPFI surplus against the unstake path (released at claim) so the stored borrower can't drain a transferred position's proceeds. Unflagged path unchanged (direct EOA). |
+
+## Sweep completion — #954 (Codex #981 / #986)
+
+The initial sweep left five **sibling** close-out surfaces incomplete; #954
+finishes them via the shared `LibCloseoutFreeze` helpers so the swap-to-repay
+family can't drift on the encumber-all / tier-exclude rules. See the canonical
+[`SanctionsAndTermsGateMatrix.md`](SanctionsAndTermsGateMatrix.md) rows for the
+per-action postures.
+
+| # | Surface | Was | Now (#954) |
+|---|---------|-----|-----------|
+| 5 | `swapToRepayFull` **lender leg** | bare `getOrCreateVault(loan.lender)` deposit — bricks for a lender flagged after init | `LibCloseoutFreeze.freezeLenderProceeds` — receive-side `depositLocked` + encumber-all-ERC20 + frozen-VPFI tier-exclude for a transferred-and-sanctioned holder |
+| 6 | `swapToRepayFull` **collateral pull + partial-fill refund** | bare vault withdraw / refund — bricks for a flagged self-holder | two NARROW from-side move-out windows (`vaultWithdrawERC20MoveOut` for the pull; `beginMoveOut`/`endMoveOut` for the refund), neither spanning the external swap |
+| 7 | `swapToRepayFull` **surplus** encumber | reserved VPFI only | encumber EVERY ERC20 surplus (`freeBalance` gates any-asset signed-offer spend) + `frozenVpfiOwedByVault` tier-exclude |
+| 8 | `swapToRepayPartial` direct payouts | unscreened EOA transfers to lender + borrower holders | Tier-1 `_assertNotSanctioned` on both (discretionary → screen, mirrors `repayPartial`) |
+| 9 | Fusion intent fill `LibSwapToRepayIntentSettlement._runSettlement` | ZERO sanctions handling | same freeze pattern via `LibCloseoutFreeze` (lender leg + surplus) + residual move-out window; residual re-lien already present |
+| 10 | `backstopFill` | creator screened only at opt-in | re-screen `o.creator` at fill, before `executeFill` (Tier-1) |
+
+**Escrow hardening (#954 §2):** a frozen surplus is now encumbered for every
+ERC20 (not just VPFI) so the stored party can't spend a transferred position's
+proceeds via the signed-offer path; a dedicated per-owner
+`frozenVpfiOwedByVault` counter (with exact per-loan release records) keeps
+frozen VPFI out of the vault owner's fee tier without touching the shared
+`s.encumbered` bucket; `claimAsLender`'s settle predicate keeps a surplus-only
+loan open until the surplus is claimed; and the surplus lane is surfaced by
+`ClaimFacet.getBorrowerSurplusClaim`, `MetricsFacet.getNFTPositionSummary`, and
+the dashboard claimables + a `BorrowerSurplusClaimed` event.
 
 ## Confirmed-correct highlights (not gaps)
 

@@ -1121,6 +1121,27 @@ The preview should preserve the resolved economic terms even when acceptance is 
   is cleared, and unused pledged collateral becomes borrower-claimable.
   Favorable-quote surplus principal should transfer directly to the
   current borrower-position NFT holder's wallet.
+- Full-mode swap-to-repay is a **must-complete close-out**: it is never
+  blocked by the sanctions screen, so an honest counterparty can always
+  be made whole. A flagged party's proceeds are instead **frozen at the
+  destination** rather than paid to their wallet — this applies uniformly
+  to every leg (the lender's entitlement, the borrower's favorable-quote
+  surplus, and the pulling / returning of the borrower's own collateral
+  during the swap), and to both the direct borrower-driven path and the
+  resolver-filled intent path. A frozen party's share is parked in that
+  party's own vault and remains claimable through the standard claim path
+  once they are delisted; a surplus-only close (all collateral consumed)
+  keeps the loan open until that frozen surplus is claimed, so it can
+  never be stranded behind a settled loan. Frozen proceeds are reserved
+  against the stored party's spend paths (and excluded from their VPFI
+  fee-discount tier when the funds are economically owed to a
+  transferred-away holder) so the stored party cannot spend or benefit
+  from a transferred position's proceeds before the rightful holder claims.
+- Partial-mode swap-to-repay is **discretionary** (the loan stays open),
+  so — like an ordinary partial repayment — it does **not** freeze:
+  it screens the direct payees (the current lender and borrower-surplus
+  holders) and refuses a flagged one outright. A flagged party's
+  must-complete escape is the full-close mode, which freezes.
 - Interest Formula: `Interest = (Principal * AnnualInterestRate * LoanDurationInDays) / (100 * DAYS_PER_YEAR)`. (Note: use standardized protocol constants such as `DAYS_PER_YEAR` and `SECONDS_PER_YEAR` rather than hard-coded literals like `365`, and ensure consistent precision, e.g., rate stored as basis points).
 - Late fees apply if repayment occurs after the due date but within the grace period, or if repayment is forced post-grace period.
 

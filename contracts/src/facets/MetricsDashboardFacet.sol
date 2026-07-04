@@ -405,13 +405,29 @@ contract MetricsDashboardFacet {
             // Skip slots with nothing pending — `claimed` flag is the
             // canonical "this side is settled" marker; absence of any
             // claimable amount AND no held funds also counts as nothing.
-            if (ci.claimed || ci.amount == 0) continue;
+            LibVaipakam.ClaimInfo storage emitCi = ci;
+            bool pending = !ci.claimed && ci.amount > 0;
+            // #954 (§2.3) — a full swap-to-repay that consumed ALL collateral
+            // freezes ONLY a principal surplus, leaving the collateral
+            // `borrowerClaims` slot empty. Surface that surplus-only lane so a
+            // delisted self-holder (`l.borrower == user`) still sees the funds
+            // in the dashboard snapshot instead of a zero count. When the
+            // collateral lane IS pending, it takes the row and the surplus stays
+            // discoverable via `ClaimFacet.getBorrowerSurplusClaim`.
+            if (borrowerSide && !pending) {
+                LibVaipakam.ClaimInfo storage sc = s.borrowerSurplusClaims[lid];
+                if (!sc.claimed && sc.amount > 0) {
+                    emitCi = sc;
+                    pending = true;
+                }
+            }
+            if (!pending) continue;
             if (skipped < offset) {
                 skipped += 1;
                 continue;
             }
             idBuf[written] = lid;
-            claimBuf[written] = ci;
+            claimBuf[written] = emitCi;
             written += 1;
         }
 
@@ -499,7 +515,13 @@ contract MetricsDashboardFacet {
             }
             if (l.borrower == user) {
                 LibVaipakam.ClaimInfo storage ci = s.borrowerClaims[lid];
-                if (!ci.claimed && ci.amount > 0) borrowerCount += 1;
+                // #954 (§2.3) — count the loan once if EITHER the collateral
+                // lane OR the frozen principal-surplus lane is pending, so a
+                // surplus-only close (all collateral consumed) isn't undercounted.
+                LibVaipakam.ClaimInfo storage sc = s.borrowerSurplusClaims[lid];
+                bool colPending = !ci.claimed && ci.amount > 0;
+                bool surPending = !sc.claimed && sc.amount > 0;
+                if (colPending || surPending) borrowerCount += 1;
             }
         }
     }

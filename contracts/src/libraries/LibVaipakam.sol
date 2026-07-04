@@ -4718,6 +4718,29 @@ library LibVaipakam {
         // own claim row. Keyed by loanId; unset (amount 0) on the common unfrozen
         // path.
         mapping(uint256 => ClaimInfo) borrowerSurplusClaims;
+        // ─── #954 (Codex #981/#986) — VPFI held-but-owed-to-another counter ────
+        // When a close-out freezes a VPFI surplus (borrower) or VPFI proceeds
+        // (lender) into a vault whose owner is NOT the economic owner — i.e. the
+        // position NFT was transferred to a now-sanctioned holder — the funds sit
+        // in the STORED party's tracked vault balance but belong to the current
+        // holder (claimable once delisted). This per-owner counter records that
+        // amount so the VPFI fee-tier stamp can EXCLUDE it (tier reads
+        // `protocolTrackedVaultBalance`, which is blind to `s.encumbered`).
+        // Incremented at the transferred-position freeze; decremented at claim/
+        // release. Only the TRANSFERRED case bumps it — a flagged self-holder's
+        // frozen VPFI is their own money and still counts toward their tier.
+        // See docs/DesignsAndPlans/SanctionsCloseoutSweepAndSaleVehicleFixes.md §2.2.
+        mapping(address => uint256) frozenVpfiOwedByVault;
+        // Per-loan record of the EXACT VPFI amount this loan bumped into
+        // `frozenVpfiOwedByVault` on each side, so the matching claim
+        // decrements the aggregate by precisely what was added and can never
+        // erode a DIFFERENT loan's frozen amount on the same owner. The lender
+        // leg needs this because its `lenderClaims` row is written on EVERY
+        // close (clean or frozen), so "was this leg's VPFI frozen-and-owed?"
+        // is not re-derivable at claim time. Kept symmetric for the borrower
+        // surplus. Zero on the common path; cleared to zero on release.
+        mapping(uint256 => uint256) frozenVpfiOwedLenderLeg;
+        mapping(uint256 => uint256) frozenVpfiOwedBorrowerSurplus;
     }
 
     /// @notice #393 v1-b — the originating intent of a `matchIntent` loan,

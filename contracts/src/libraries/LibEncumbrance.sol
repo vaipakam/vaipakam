@@ -234,9 +234,16 @@ library LibEncumbrance {
     ///         ERC20) under the stored lender — exactly the aggregate that
     ///         path's free-balance guard subtracts — blocking a front-run
     ///         unstake until the holder claims. Records the ticked amount
-    ///         per loan so the release is exact. Call ONLY for VPFI
-    ///         proceeds; other assets have no user-facing tracked-withdraw
-    ///         and need no reservation.
+    ///         per loan so the release is exact.
+    ///
+    ///         #954 (§1.1) — now called for EVERY ERC20 lender-proceeds
+    ///         freeze, not just VPFI. `freeBalance` (which the signed-offer
+    ///         materialisation path consults) subtracts `s.encumbered` for
+    ///         any asset, so a transferred-away stored lender could otherwise
+    ///         spend a non-VPFI frozen proceeds as offer/intent capital
+    ///         before the current holder delists and claims. The asset-keyed
+    ///         aggregate makes the reservation correct for any principal
+    ///         asset; the VPFI-only restriction was never a body constraint.
     function encumberLenderProceeds(
         uint256 loanId,
         address lender,
@@ -300,7 +307,16 @@ library LibEncumbrance {
     ///         transferred their position could `withdrawVPFIFromVault` it before
     ///         the current holder claims. Records the asset once per loan
     ///         (always the principal asset here) and adds to the per-loan amount
-    ///         + the shared `encumbered` aggregate. Call ONLY for VPFI surplus.
+    ///         + the shared `encumbered` aggregate.
+    ///
+    ///         #954 (§2.1) — now called for EVERY ERC20 borrower-surplus
+    ///         freeze on the sanctioned swap-to-repay close-out, not just
+    ///         VPFI. Any tracked ERC20 minus `s.encumbered` is spendable via
+    ///         the signed-offer materialisation path, so a transferred-away
+    ///         stored borrower could consume a non-VPFI frozen surplus before
+    ///         the current holder claims. The asset-keyed aggregate handles
+    ///         any principal asset; the VPFI-only note was a call-site
+    ///         convention, never a body constraint.
     function encumberBorrowerProceeds(
         uint256 loanId,
         address borrower,

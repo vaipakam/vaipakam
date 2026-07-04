@@ -46,4 +46,43 @@ verdict now lives at `docs/DesignsAndPlans/SanctionsGateCoverageMatrix.md`, and 
 **regression guardrail** pins the fixed entry points so a future edit that drops
 one of these screens fails the test suite.
 
-Closes #954.
+## Close-out sweep completion + frozen-surplus escrow hardening (#981 / Codex #986)
+
+The first pass hardened the swap-to-repay-full **surplus**, but review (#981)
+found the same freeze-at-source treatment was missing on five sibling close-out
+surfaces. All are now completed through a single shared helper so the
+swap-to-repay family cannot drift:
+
+- **Swap-to-repay lender leg** — a lender flagged after origination no longer
+  bricks an honest borrower's swap-to-repay close: the lender proceeds are parked
+  in the lender's own vault (frozen behind the claim gate) instead of reverting.
+- **Collateral pull for a self-flagged borrower** — pulling a flagged borrower's
+  own collateral out for the swap (and returning any unspent remainder) now runs
+  under the same move-out exemption the other forced close-outs use, so it
+  completes rather than bricking. The exemption is deliberately kept *narrow* —
+  never open across the external swap.
+- **Swap-to-repay partial** — this discretionary, loan-stays-open path now
+  screens the direct payees (the current lender and borrower holders) and refuses
+  a flagged one outright (a flagged party's must-complete escape is the full
+  swap-to-repay, which freezes). Symmetric with ordinary partial repayment.
+- **Fusion intent settlement** — the resolver-filled swap-to-repay terminal, which
+  previously had no sanctions handling at all, now applies the identical freeze
+  pattern (lender leg + surplus) and returns any residual collateral under a
+  move-out window.
+- **Backstop fill** — the offer creator is now re-screened at fill time, not only
+  at eligibility opt-in, so a borrower flagged in the intervening window can't
+  have a treasury-funded loan originated to them.
+
+**Frozen-surplus escrow hardening.** Two subtler leaks in the parked-proceeds
+model were closed. A frozen surplus is now reserved against the stored party's
+spend path for **every** asset (not just VPFI), so a transferred position's
+proceeds can't be consumed as offer/intent capital before the rightful holder
+claims. Frozen **VPFI** owed to a delistable holder is now kept out of the vault
+owner's fee-discount tier via a dedicated counter (scoped precisely so a user's
+own pledged/listed VPFI is never wrongly excluded). A surplus-only close (all
+collateral consumed) now keeps the loan open until the surplus is claimed, so the
+delisted holder can always reach it. And the frozen-surplus lane is surfaced in
+the claim read views (per-loan, by position NFT, and in the dashboard) with its
+own claim event, so a holder can discover funds that would otherwise be invisible.
+
+Closes #954. Addresses #981.
