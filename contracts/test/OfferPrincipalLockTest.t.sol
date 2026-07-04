@@ -6,6 +6,7 @@ import {SetupTest} from "./SetupTest.t.sol";
 import {LibVaipakam} from "../src/libraries/LibVaipakam.sol";
 import {OfferCreateFacet} from "../src/facets/OfferCreateFacet.sol";
 import {OfferAcceptFacet} from "../src/facets/OfferAcceptFacet.sol";
+import {OfferPreviewFacet} from "../src/facets/OfferPreviewFacet.sol";
 import {OfferCancelFacet} from "../src/facets/OfferCancelFacet.sol";
 import {OfferMutateFacet} from "../src/facets/OfferMutateFacet.sol";
 import {VaultFactoryFacet} from "../src/facets/VaultFactoryFacet.sol";
@@ -301,7 +302,7 @@ contract OfferPrincipalLockTest is SetupTest {
         TestMutatorFacet(address(diamond)).setOffer(id, o);
 
         OfferAcceptFacet.AcceptPreview memory p =
-            OfferAcceptFacet(address(diamond)).previewAccept(id, borrower);
+            OfferPreviewFacet(address(diamond)).previewAccept(id, borrower);
         assertEq(
             uint8(p.errorCode),
             uint8(OfferAcceptFacet.AcceptError.OfferPartiallyFilled),

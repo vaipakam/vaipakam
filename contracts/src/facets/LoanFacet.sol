@@ -14,6 +14,8 @@ import {LibNotificationFee} from "../libraries/LibNotificationFee.sol";
 import {LibAccessControl, DiamondAccessControl} from "../libraries/LibAccessControl.sol";
 import {DiamondPausable} from "../libraries/LibPausable.sol";
 import {IVaipakamErrors} from "../interfaces/IVaipakamErrors.sol";
+import {LibCompliance} from "../libraries/LibCompliance.sol";
+import {LibERC721} from "../libraries/LibERC721.sol";
 import {RiskFacet} from "./RiskFacet.sol";
 import {VaipakamNFTFacet} from "./VaipakamNFTFacet.sol";
 import {OracleFacet} from "./OracleFacet.sol";
@@ -178,7 +180,10 @@ contract LoanFacet is DiamondPausable, DiamondAccessControl, IVaipakamErrors {
 
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         LibVaipakam.Offer storage offer = s.offers[offerId];
-        if (offer.id == 0 || offer.accepted) revert InvalidOffer();
+        // #951 v2 (Codex #959) — reject a cancelled offer (defense-in-depth; the
+        // accept path already screens `offerCancelled`, but initiateLoan is the
+        // load-bearing loan-creation chokepoint).
+        if (offer.id == 0 || offer.accepted || s.offerCancelled[offerId]) revert InvalidOffer();
 
         // Detect if this offer is a lender-sale vehicle (created by
         // createLoanSaleOffer).  The temporary loan it creates is not a real
@@ -193,9 +198,50 @@ contract LoanFacet is DiamondPausable, DiamondAccessControl, IVaipakamErrors {
         // completeLoanSale would revert — leaving Noah with no lender rights.
         if (isLenderSaleVehicle) {
             uint256 linkedLoanId = s.saleOfferToLoanId[offerId];
-            if (s.loans[linkedLoanId].status != LibVaipakam.LoanStatus.Active) {
+            LibVaipakam.Loan storage linked = s.loans[linkedLoanId];
+            // The linked loan must still be Active — else the position doesn't
+            // exist and completeLoanSale would revert, stranding the buyer. This
+            // is a real invariant, not snapshot drift, so it stays.
+            if (linked.status != LibVaipakam.LoanStatus.Active) {
                 revert InvalidOffer();
             }
+            // #951 v2 (Codex #959 bind-to-live) — the principal / collateral
+            // freshness patches that used to live here are GONE. The buyer's
+            // `AcceptTerms` now binds principal `==` live and collateral `>=` live
+            // directly in `OfferAcceptFacet._bindTermsToOffer` (which runs before
+            // this call in the same accept), so a partial-repay or a collateral
+            // reduction between view and mine is caught structurally at the bind —
+            // no snapshot to store (`saleListingCollateral` removed) or re-check.
+            //
+            // Resolve the loan's CURRENT borrower once (the position NFT may have
+            // changed hands since origination; the stored `linked.borrower` is
+            // stale — Codex #959 round-8 P1). Both the self-buy guard and the
+            // compliance recheck key on this live holder.
+            address currentBorrower = LibERC721.ownerOf(linked.borrowerTokenId);
+            // Reject the linked loan's OWN current borrower buying the lender
+            // position of their own debt: that would migrate the lender onto the
+            // borrower, leaving an Active loan with `lender == borrower` (a party
+            // owing itself — breaks claim/repay accounting). They exit via
+            // repay/preclose, never by buying their own debt's lender side.
+            if (acceptor == currentBorrower) {
+                revert InvalidOffer();
+            }
+            // Recheck the BUYER against the loan's continuing counterparty (the
+            // current borrower), mirroring the Option-1 `sellLoanViaBuyOffer`
+            // compliance gate. The generic offer KYC/country checks validate only
+            // the exiting lender (`offer.creator`) vs the buyer, not the borrower
+            // whose live loan the buyer is stepping into. No-op on the retail
+            // deploy (KYC/country off); load-bearing on the industrial fork where
+            // a borrower's tier/country may have degraded since origination.
+            LibCompliance.enforceCountryAndKyc(
+                address(this),
+                acceptor,
+                currentBorrower,
+                linked.principalAsset,
+                linked.principal,
+                linked.collateralAsset,
+                linked.collateralAmount
+            );
         }
 
         LibVaipakam.LiquidityStatus lendingAssetLiquidity = OracleFacet(
@@ -902,9 +948,19 @@ contract LoanFacet is DiamondPausable, DiamondAccessControl, IVaipakamErrors {
             // §3 for the ERC-20 convention.
             bool isERC20 = offer.assetType == LibVaipakam.AssetType.ERC20;
             bool isLender = offer.offerType == LibVaipakam.OfferType.Lender;
-            loan.principal = isERC20
-                ? (isLender ? offer.amountMax : offer.amount)
-                : offer.amount;
+            // #951 v2 (Codex #959) — for a lender-sale vehicle, snapshot the LIVE
+            // linked loan's principal into the temp loan (and thus the permanent
+            // LoanInitiated / LoanInitiatedDetails events, which read it back),
+            // NOT the stale `offer.amount`. The accept funds `effectivePrincipal`
+            // from the same live loan, so the temp loan + events agree with the
+            // funded amount even if the principal drifted since listing. The temp
+            // loan is discarded at completeLoanSale, but its events are permanent.
+            uint256 saleLoanId = LibVaipakam.storageSlot().saleOfferToLoanId[offerId];
+            loan.principal = saleLoanId != 0
+                ? LibVaipakam.storageSlot().loans[saleLoanId].principal
+                : (isERC20
+                    ? (isLender ? offer.amountMax : offer.amount)
+                    : offer.amount);
             loan.interestRateBps = isERC20
                 ? (isLender ? offer.interestRateBps : offer.interestRateBpsMax)
                 : offer.interestRateBps;

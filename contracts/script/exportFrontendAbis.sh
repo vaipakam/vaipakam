@@ -112,6 +112,7 @@ FACETS=(
   # tier opt-up / per-pair consent flows from this surface).
   "RiskAccessFacet"
   "OfferAcceptFacet"
+  "OfferPreviewFacet"
   "OfferMatchFacet"
   "OfferMutateFacet"
   # T-086 Round-8 (#358) — borrow-OR-sell parallel-sale entry +

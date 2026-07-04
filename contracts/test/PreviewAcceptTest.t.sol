@@ -4,6 +4,7 @@ pragma solidity ^0.8.29;
 import {SetupTest} from "./SetupTest.t.sol";
 import {OfferCreateFacet} from "../src/facets/OfferCreateFacet.sol";
 import {OfferAcceptFacet} from "../src/facets/OfferAcceptFacet.sol";
+import {OfferPreviewFacet} from "../src/facets/OfferPreviewFacet.sol";
 import {ProfileFacet} from "../src/facets/ProfileFacet.sol";
 import {AdminFacet} from "../src/facets/AdminFacet.sol";
 import {ConfigFacet} from "../src/facets/ConfigFacet.sol";
@@ -170,7 +171,7 @@ contract PreviewAcceptTest is SetupTest {
         });
 
         OfferAcceptFacet.AcceptPreview memory p =
-            OfferAcceptFacet(address(diamond)).previewAccept(offerId, borrower);
+            OfferPreviewFacet(address(diamond)).previewAccept(offerId, borrower);
 
         assertEq(
             uint8(p.errorCode),
@@ -211,7 +212,7 @@ contract PreviewAcceptTest is SetupTest {
         });
 
         OfferAcceptFacet.AcceptPreview memory p =
-            OfferAcceptFacet(address(diamond)).previewAccept(offerId, lender);
+            OfferPreviewFacet(address(diamond)).previewAccept(offerId, lender);
 
         assertEq(uint8(p.errorCode), uint8(OfferAcceptFacet.AcceptError.None));
         assertEq(p.effectivePrincipal, 1_000, "principal = borrower.amount (floor)");
@@ -244,7 +245,7 @@ contract PreviewAcceptTest is SetupTest {
         });
 
         OfferAcceptFacet.AcceptPreview memory p =
-            OfferAcceptFacet(address(diamond)).previewAccept(offerId, lender);
+            OfferPreviewFacet(address(diamond)).previewAccept(offerId, lender);
 
         assertEq(uint8(p.errorCode), uint8(OfferAcceptFacet.AcceptError.None));
         assertEq(p.collateralAmount, 500, "loan locks 500");
@@ -269,7 +270,7 @@ contract PreviewAcceptTest is SetupTest {
         });
 
         OfferAcceptFacet.AcceptPreview memory p =
-            OfferAcceptFacet(address(diamond)).previewAccept(offerId, borrower);
+            OfferPreviewFacet(address(diamond)).previewAccept(offerId, borrower);
         assertEq(uint8(p.errorCode), uint8(OfferAcceptFacet.AcceptError.None));
         assertEq(p.effectivePrincipal, 5_000);
         assertEq(p.interestRateBps, 500);
@@ -298,7 +299,7 @@ contract PreviewAcceptTest is SetupTest {
         // `InvalidOffer` is declared on OfferAcceptFacet itself (not in
         // IVaipakamErrors) — qualify the selector accordingly.
         vm.expectRevert(OfferAcceptFacet.InvalidOffer.selector);
-        OfferAcceptFacet(address(diamond)).previewAccept(99_999, borrower);
+        OfferPreviewFacet(address(diamond)).previewAccept(99_999, borrower);
     }
 
     /// @notice After a successful accept, a second preview of the same
@@ -315,7 +316,7 @@ contract PreviewAcceptTest is SetupTest {
         _signAndAcceptOffer(borrower, borrowerPk, offerId);
 
         OfferAcceptFacet.AcceptPreview memory p =
-            OfferAcceptFacet(address(diamond)).previewAccept(offerId, borrower);
+            OfferPreviewFacet(address(diamond)).previewAccept(offerId, borrower);
         assertEq(
             uint8(p.errorCode),
             uint8(OfferAcceptFacet.AcceptError.OfferAlreadyAccepted),
@@ -354,7 +355,7 @@ contract PreviewAcceptTest is SetupTest {
         });
 
         OfferAcceptFacet.AcceptPreview memory p =
-            OfferAcceptFacet(address(diamond)).previewAccept(offerId, borrower);
+            OfferPreviewFacet(address(diamond)).previewAccept(offerId, borrower);
 
         assertEq(
             uint8(p.errorCode),
@@ -384,7 +385,7 @@ contract PreviewAcceptTest is SetupTest {
         AdminFacet(address(diamond)).pauseAsset(mockERC20);
 
         OfferAcceptFacet.AcceptPreview memory p =
-            OfferAcceptFacet(address(diamond)).previewAccept(offerId, borrower);
+            OfferPreviewFacet(address(diamond)).previewAccept(offerId, borrower);
         assertEq(
             uint8(p.errorCode),
             uint8(OfferAcceptFacet.AcceptError.AssetPaused)
@@ -424,7 +425,7 @@ contract PreviewAcceptTest is SetupTest {
         ProfileFacet(address(diamond)).setSanctionsOracle(sanctionsOracle);
 
         OfferAcceptFacet.AcceptPreview memory p =
-            OfferAcceptFacet(address(diamond)).previewAccept(offerId, borrower);
+            OfferPreviewFacet(address(diamond)).previewAccept(offerId, borrower);
         assertEq(
             uint8(p.errorCode),
             uint8(OfferAcceptFacet.AcceptError.SanctionedAcceptor)
@@ -457,7 +458,7 @@ contract PreviewAcceptTest is SetupTest {
         ProfileFacet(address(diamond)).setSanctionsOracle(sanctionsOracle);
 
         OfferAcceptFacet.AcceptPreview memory p =
-            OfferAcceptFacet(address(diamond)).previewAccept(offerId, borrower);
+            OfferPreviewFacet(address(diamond)).previewAccept(offerId, borrower);
         // Acceptor is screened FIRST (mirrors `_acceptOffer`'s order):
         // when the acceptor is clean, the creator-side flag is what
         // surfaces.

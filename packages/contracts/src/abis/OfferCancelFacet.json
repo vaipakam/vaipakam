@@ -488,6 +488,38 @@
     "stateMutability": "view"
   },
   {
+    "type": "function",
+    "name": "teardownStaleSaleListing",
+    "inputs": [
+      {
+        "name": "loanId",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "event",
+    "name": "LoanSaleListingTornDown",
+    "inputs": [
+      {
+        "name": "loanId",
+        "type": "uint256",
+        "indexed": true,
+        "internalType": "uint256"
+      },
+      {
+        "name": "saleOfferId",
+        "type": "uint256",
+        "indexed": true,
+        "internalType": "uint256"
+      }
+    ],
+    "anonymous": false
+  },
+  {
     "type": "event",
     "name": "OfferCanceled",
     "inputs": [
@@ -942,6 +974,11 @@
   },
   {
     "type": "error",
+    "name": "NoStaleSaleListing",
+    "inputs": []
+  },
+  {
+    "type": "error",
     "name": "NonLiquidAsset",
     "inputs": []
   },
@@ -1218,6 +1255,11 @@
   {
     "type": "error",
     "name": "RiskAndTermsConsentRequired",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "SaleListingLoanStillLive",
     "inputs": []
   },
   {

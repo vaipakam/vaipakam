@@ -46,7 +46,7 @@ abstract contract DiamondFacetNames {
     ///      progressive risk-access setters + EIP-712 self-submit +
     ///      views; dedicated facet keeps the verify path off
     ///      ProfileFacet and within EIP-170).)
-    function cutFacetNames() internal pure returns (string[62] memory) {
+    function cutFacetNames() internal pure returns (string[63] memory) {
         return [
             "AccessControlFacet",
             "AddCollateralFacet",
@@ -65,6 +65,7 @@ abstract contract DiamondFacetNames {
             "MetricsDashboardFacet",
             "MetricsFacet",
             "OfferAcceptFacet",
+            "OfferPreviewFacet",
             "OfferCancelFacet",
             "OfferCreateFacet",
             "OfferMatchFacet",

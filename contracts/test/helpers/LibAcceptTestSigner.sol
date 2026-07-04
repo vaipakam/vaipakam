@@ -6,6 +6,7 @@ import {LibVaipakam} from "../../src/libraries/LibVaipakam.sol";
 import {LibAcceptTerms} from "../../src/libraries/LibAcceptTerms.sol";
 import {OfferAcceptFacet} from "../../src/facets/OfferAcceptFacet.sol";
 import {OfferCancelFacet} from "../../src/facets/OfferCancelFacet.sol";
+import {LoanFacet} from "../../src/facets/LoanFacet.sol";
 import {OracleFacet} from "../../src/facets/OracleFacet.sol";
 import {RiskAccessFacet} from "../../src/facets/RiskAccessFacet.sol";
 
@@ -89,6 +90,28 @@ library LibAcceptTestSigner {
         // ack-substitution gate sees a FRESH acknowledgement (a governance bump
         // re-derives the hash and re-locks any ack signed against the old one).
         t.riskTermsHash = _currentRiskTermsHash(diamond);
+    }
+
+    /// @notice #951 v2 (bind-to-live) — build `AcceptTerms` for a lender-sale
+    ///         vehicle accept. A sale-vehicle buyer binds principal / collateral /
+    ///         duration against the LIVE linked loan, NOT the offer snapshot (the
+    ///         offer's `amount`/`durationDays` are display-only and its
+    ///         `collateralAmount` is 0), so this overrides those three fields from
+    ///         `s.loans[linkedLoanId]`. This mirrors what the frontend must sign
+    ///         for a sale accept. `collateralAmount` is set to the live floor; a
+    ///         caller testing the `>=` floor can lower it further before signing.
+    function buildSaleTerms(
+        address diamond,
+        address acceptor,
+        uint256 offerId,
+        bool consent,
+        uint256 linkedLoanId
+    ) internal view returns (LibAcceptTerms.AcceptTerms memory t) {
+        t = buildTerms(diamond, acceptor, offerId, consent, linkedLoanId);
+        LibVaipakam.Loan memory loan = LoanFacet(diamond).getLoanDetails(linkedLoanId);
+        t.amount = loan.principal;
+        t.collateralAmount = loan.collateralAmount;
+        t.durationDays = loan.durationDays;
     }
 
     /// @dev The diamond's `currentRiskTermsHash`, read DEFENSIVELY: minimal-cut

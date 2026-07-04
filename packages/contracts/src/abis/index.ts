@@ -14,6 +14,7 @@ import ConsolidationFacetABI from './ConsolidationFacet.json';
 import RiskAccessFacetABI from './RiskAccessFacet.json';
 import BackstopVaultImplementationABI from './BackstopVaultImplementation.json';
 import OfferAcceptFacetABI from './OfferAcceptFacet.json';
+import OfferPreviewFacetABI from './OfferPreviewFacet.json';
 import OfferCancelFacetABI from './OfferCancelFacet.json';
 import OfferMatchFacetABI from './OfferMatchFacet.json';
 import OfferMutateFacetABI from './OfferMutateFacet.json';
@@ -115,6 +116,7 @@ export {
   ConsolidationFacetABI,
   RiskAccessFacetABI,
   OfferAcceptFacetABI,
+  OfferPreviewFacetABI,
   OfferCancelFacetABI,
   OfferMatchFacetABI,
   OfferMutateFacetABI,
@@ -195,6 +197,7 @@ export const DIAMOND_ABI = [
   // #671 — RiskAccessFacet IS a Diamond facet -> spread.
   ...RiskAccessFacetABI,
   ...OfferAcceptFacetABI,
+  ...OfferPreviewFacetABI,
   ...OfferCancelFacetABI,
   ...OfferMatchFacetABI,
   ...OfferMutateFacetABI,

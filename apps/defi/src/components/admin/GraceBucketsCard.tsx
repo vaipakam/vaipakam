@@ -21,7 +21,11 @@ import { useState } from 'react';
 import { ExternalLink, Info, Settings2, Save, X, AlertTriangle } from 'lucide-react';
 import { encodeFunctionData } from 'viem';
 import { DIAMOND_ABI_VIEM } from '@vaipakam/contracts/abis';
-import { buildSafeDeepLink } from '../../lib/safeDeepLink';
+import {
+  buildSafeHandoff,
+  openSafeGovernanceHandoff,
+  type SafeHandoff,
+} from '../../lib/safeDeepLink';
 import {
   useGraceBuckets,
   type GraceBucket,
@@ -56,7 +60,7 @@ export function GraceBucketsCard({
       return '';
     }
   });
-  const [openedUrl, setOpenedUrl] = useState<string | null>(null);
+  const [handoff, setHandoff] = useState<SafeHandoff | null>(null);
   const [validationError, setValidationError] = useState<string | null>(null);
 
   const infoHref = `${docsBase}#grace-buckets`;
@@ -68,7 +72,7 @@ export function GraceBucketsCard({
   const beginEdit = () => {
     setDraft(slots.map((b) => ({ ...b })));
     setEditing(true);
-    setOpenedUrl(null);
+    setHandoff(null);
     setValidationError(null);
   };
   const cancelEdit = () => {
@@ -99,7 +103,7 @@ export function GraceBucketsCard({
 
   const propose = () => {
     setValidationError(null);
-    setOpenedUrl(null);
+    setHandoff(null);
     if (!draft || !diamondAddress || !chainId || !safeAddress) {
       setValidationError('Safe address required.');
       return;
@@ -123,13 +127,16 @@ export function GraceBucketsCard({
       setValidationError(`Calldata encoding failed: ${msg.slice(0, 120)}`);
       return;
     }
-    const url = buildSafeDeepLink({
-      chainId,
-      safe: safeAddress,
-      to: diamondAddress,
-      data,
-    });
-    if (!url) {
+    const nextHandoff = buildSafeHandoff(
+      {
+        chainId,
+        safe: safeAddress,
+        to: diamondAddress,
+        data,
+      },
+      { batchName: 'Vaipakam — setGraceBuckets' },
+    );
+    if (!nextHandoff) {
       setValidationError(
         `Safe is not supported on chain ${chainId}. Use the Diamond address directly via your multisig provider.`,
       );
@@ -140,8 +147,8 @@ export function GraceBucketsCard({
     } catch {
       // ignore — quota / private mode
     }
-    window.open(url, '_blank', 'noopener,noreferrer');
-    setOpenedUrl(url);
+    setHandoff(nextHandoff);
+    openSafeGovernanceHandoff(nextHandoff);
   };
 
   return (
@@ -345,20 +352,23 @@ export function GraceBucketsCard({
                   Reload current
                 </button>
               </div>
-              {openedUrl && (
-                <a
-                  href={openedUrl}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  style={{
-                    fontSize: '0.8rem',
-                    display: 'inline-flex',
-                    alignItems: 'center',
-                    gap: 4,
-                  }}
-                >
-                  Open in Safe again <ExternalLink size={12} />
-                </a>
+              {handoff && (
+                <p style={{ margin: 0, fontSize: '0.8rem', lineHeight: 1.45 }}>
+                  Downloaded <strong>{handoff.batchFileName}</strong>. In Safe:
+                  Transaction Builder → upload JSON → Create Batch.{' '}
+                  <a
+                    href={handoff.txBuilderUrl}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    style={{
+                      display: 'inline-flex',
+                      alignItems: 'center',
+                      gap: 4,
+                    }}
+                  >
+                    Open Transaction Builder <ExternalLink size={12} />
+                  </a>
+                </p>
               )}
             </div>
           )}

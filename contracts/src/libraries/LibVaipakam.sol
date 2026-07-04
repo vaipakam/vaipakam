@@ -4741,6 +4741,14 @@ library LibVaipakam {
         // surplus. Zero on the common path; cleared to zero on release.
         mapping(uint256 => uint256) frozenVpfiOwedLenderLeg;
         mapping(uint256 => uint256) frozenVpfiOwedBorrowerSurplus;
+        // ─── #951 v2 (Codex #959 bind-to-live redesign) — historical note ─────
+        // The old `saleListingCollateral` snapshot (formerly the last struct
+        // field) was removed by the #959 bind-to-live redesign merged to main:
+        // the buyer's accept now binds `collateralAmount` `>=`-style against the
+        // LIVE loan in `OfferAcceptFacet._bindTermsToOffer`, so there is no
+        // snapshot to store, clean up, or drift. Pre-live removal is layout-safe.
+        // The #954 frozen-surplus fields above are appended after it. See
+        // docs/DesignsAndPlans/LenderSaleVehicleRedesign.md.
     }
 
     /// @notice #393 v1-b — the originating intent of a `matchIntent` loan,
