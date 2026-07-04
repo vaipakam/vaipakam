@@ -66,6 +66,7 @@ import {
 import { isPlainDecimal, isPositiveDecimal, submitErrorText } from '../lib/errors';
 import { copy } from '../content/copy';
 import { AssetPicker } from './AssetPicker';
+import { MarketFreshnessNote } from './MarketFreshnessNote';
 import { Checklist, allChecksPass, type CheckItem } from './Checklist';
 import { ReviewReceipt, type ReceiptData } from './ReviewReceipt';
 import { StepNav } from './StepNav';
@@ -1107,7 +1108,10 @@ export function OfferFlow({ side }: { side: Side }) {
             ) : matches === null ? (
               <p className="muted">{copy.match.unavailable}</p>
             ) : matches.length === 0 ? (
-              <p className="muted">{text.matchEmpty}</p>
+              <>
+                <MarketFreshnessNote />
+                <p className="muted">{text.matchEmpty}</p>
+              </>
             ) : (
               <>
                 <div className="row-list">

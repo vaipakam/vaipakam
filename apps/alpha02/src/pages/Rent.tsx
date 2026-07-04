@@ -61,6 +61,7 @@ import { AssetType } from '../lib/types';
 import { formatDurationDays, formatTokenAmount, shortAddress } from '../lib/format';
 import { submitErrorText } from '../lib/errors';
 import { AssetPicker } from '../components/AssetPicker';
+import { MarketFreshnessNote } from '../components/MarketFreshnessNote';
 import { Checklist, allChecksPass, type CheckItem } from '../components/Checklist';
 import { ReviewReceipt, type ReceiptData } from '../components/ReviewReceipt';
 import { StepNav } from '../components/StepNav';
@@ -921,7 +922,10 @@ function RentNftFlow() {
           ) : listings === null ? (
             <p className="muted">{copy.rent.browseUnavailable}</p>
           ) : listings.length === 0 ? (
-            <p className="muted">{copy.rent.browseEmpty}</p>
+            <>
+              <MarketFreshnessNote />
+              <p className="muted">{copy.rent.browseEmpty}</p>
+            </>
           ) : (
             <div className="row-list">
               {listings.map((o) => (

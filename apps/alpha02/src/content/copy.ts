@@ -556,6 +556,10 @@ export const copy = {
     lede: 'Open lending offers and borrow requests from other users.',
     emptyTitle: 'No open offers right now',
     emptyBody: 'Create your own offer and let the other side come to you.',
+    // F-20260703-003 (#988) — shown by MarketFreshnessNote when the
+    // indexer cursor has stalled, on every market-list surface.
+    staleList: (age: string) =>
+      `This list last updated ${age} ago and may be behind — new offers may exist that aren’t shown yet. Check back shortly.`,
     unavailable:
       'We couldn’t load the offer book right now. Please try again in a moment.',
     lenderOffer: 'Lending offer',

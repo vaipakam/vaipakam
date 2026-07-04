@@ -257,18 +257,23 @@ export function fetchActivity(
   return getJson<ActivityPage>(`/activity?${params}`);
 }
 
-export interface ClaimablesResponse {
-  chainId: number;
-  address: string;
-  asLender: IndexedLoan[];
-  asBorrower: IndexedLoan[];
+// (The /claimables endpoint client was removed with #988: claimables
+// are on-chain-authoritative now — see data/claimables.ts.)
+
+/** Indexer ingest-cursor freshness, piggybacked on /offers/stats
+ *  (F-20260703-003, #988). `null` = endpoint unreachable OR the chain
+ *  has no cursor yet — "unknown", never treated as fresh OR stale. */
+export interface IndexerFreshness {
+  lastBlock: number;
+  /** Unix SECONDS of the cursor's last advance. */
+  updatedAt: number;
 }
 
-export function fetchClaimables(
+export async function fetchIndexerFreshness(
   chainId: number,
-  address: string,
-): Promise<ClaimablesResponse | null> {
-  return getJson<ClaimablesResponse>(
-    `/claimables/${address.toLowerCase()}?chainId=${chainId}`,
-  );
+): Promise<IndexerFreshness | null> {
+  const res = await getJson<{
+    indexer: { lastBlock: number; updatedAt: number } | null;
+  }>(`/offers/stats?chainId=${chainId}`);
+  return res?.indexer ?? null;
 }

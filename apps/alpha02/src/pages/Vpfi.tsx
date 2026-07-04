@@ -297,9 +297,15 @@ export function Vpfi() {
                 <div className="receipt-row">
                   <dt>Warming up</dt>
                   <dd>
-                    Your balance qualifies for a higher tier, but discounts use
-                    your 30-day average — keep the balance and your active
-                    discount catches up.
+                    Your balance qualifies for
+                    {tierRows[snapshot.rawTier - 1]
+                      ? ` ${tierRows[snapshot.rawTier - 1].discount} off`
+                      : ' a higher tier'}
+                    {snapshot.effectiveBps > 0
+                      ? ` (currently ${formatBpsAsPercent(snapshot.effectiveBps)})`
+                      : ''}
+                    , but discounts use your 30-day average — keep the balance
+                    and your active discount catches up.
                   </dd>
                 </div>
               ) : null}
