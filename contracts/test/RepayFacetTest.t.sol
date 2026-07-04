@@ -441,6 +441,41 @@ contract RepayFacetTest is Test {
         // Assert principal + interest transferred, collateral released
     }
 
+    // #957 (#921 item 6) — the real accept flow must stamp BOTH fee snapshots
+    // onto the loan at init (from the live governance knobs, which are at their
+    // library defaults here: 100bps treasury / 10bps LIF). This guards the
+    // `LoanFacet._snapshotFeeBps` write path end-to-end; the retune-invariance
+    // of the settlement READ is covered precisely in LibCollateralSettlementTest.
+    function test_957_feeBpsSnapshottedAtInit() public {
+        helperOfferLoan();
+        LibVaipakam.Loan memory loan = LoanFacet(address(diamond)).getLoanDetails(1);
+        assertEq(
+            loan.treasuryFeeBpsAtInit,
+            100,
+            "treasury fee snapshotted at the 1% default at init"
+        );
+        assertEq(
+            loan.loanInitiationFeeBpsAtInit,
+            10,
+            "LIF snapshotted at the 0.1% default at init"
+        );
+
+        // Loan 2 (created by helperOfferLoan) is an NFT rental — no ERC-20 LIF
+        // is charged on that path (Codex #989 r2), so its LIF receipt reads 0
+        // while the treasury fee is still stamped.
+        LibVaipakam.Loan memory rental = LoanFacet(address(diamond)).getLoanDetails(2);
+        assertEq(
+            rental.loanInitiationFeeBpsAtInit,
+            0,
+            "NFT rental records NO LIF (fee not charged on the rental path)"
+        );
+        assertEq(
+            rental.treasuryFeeBpsAtInit,
+            100,
+            "treasury fee still snapshotted on the NFT rental"
+        );
+    }
+
     function testPartialRepayERC20() public {
         // Assume loanId 1, principal 1000
         helperOfferLoan();

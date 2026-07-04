@@ -112,6 +112,17 @@ contract LoanFacet is DiamondPausable, DiamondAccessControl, IVaipakamErrors {
         // current NFT holder is then tracked via ERC-721 Transfer.
         uint256 lenderTokenId;
         uint256 borrowerTokenId;
+        // #957 (#921 item 6) — the fee bps this loan was ORIGINATED under,
+        // snapshotted at init. Carried on the companion event so event-sourced
+        // consumers (frontend IndexedDB, watcher D1, subgraph) reconstruct the
+        // FROZEN treasury/LIF economics from logs alone: after a governance fee
+        // retune, a newly-originated loan's true rates are NOT recoverable from
+        // the live config, so a log-only consumer would otherwise mis-attribute
+        // the row to the live/legacy rate. `loanInitiationFeeBpsAtInit` is 0 on
+        // a lender-sale-vehicle accept (no LIF charged on that secondary-market
+        // path — see `_snapshotFeeBps`).
+        uint16 treasuryFeeBpsAtInit;
+        uint16 loanInitiationFeeBpsAtInit;
     }
 
     /// @notice Companion to {LoanInitiated} — full self-sufficient
@@ -433,6 +444,10 @@ contract LoanFacet is DiamondPausable, DiamondAccessControl, IVaipakamErrors {
         // written onto the loan struct.
         d.lenderTokenId = loan.lenderTokenId;
         d.borrowerTokenId = loan.borrowerTokenId;
+        // #957 (#921 item 6) — the frozen fee bps, so log-only consumers get
+        // the loan's real economics without a `getLoanDetails` read-back.
+        d.treasuryFeeBpsAtInit = loan.treasuryFeeBpsAtInit;
+        d.loanInitiationFeeBpsAtInit = loan.loanInitiationFeeBpsAtInit;
 
         // Best-effort HF — staticcall returns 0 on illiquid (no oracle).
         (bool ok, bytes memory ret) = address(this).staticcall(
@@ -823,7 +838,42 @@ contract LoanFacet is DiamondPausable, DiamondAccessControl, IVaipakamErrors {
         _copyPartyFields(loan, offer, acceptor);
         _snapshotLenderDiscount(loan);
         _snapshotBorrowerDiscount(loan);
+        // A lender-sale-vehicle accept (offer mapped to an underlying loan)
+        // skips the LIF charge, so the receipt must NOT record one.
+        _snapshotFeeBps(
+            loan,
+            LibVaipakam.storageSlot().saleOfferToLoanId[offerId] != 0
+        );
         _latchOfferKeepersToLoan(loan.id, offerId, offer.creator);
+    }
+
+    /// @dev #957 (#921 item 6) — freeze the treasury-fee + LIF BPS the loan is
+    ///      originated under from the live governance knobs. Every settlement
+    ///      treasury split for this loan reads `treasuryFeeBpsAtInit` (via
+    ///      `LibVaipakam.effectiveTreasuryFeeBps`) instead of the live knob, so
+    ///      a mid-loan retune can't change the loan's economics vs. the signed
+    ///      receipt. The RESOLVED knob value is stored (`cfg*` map a 0 config
+    ///      to the default), so the stored BPS is always non-zero and the `0`
+    ///      sentinel unambiguously means a pre-#957 loan. Same immutable-at-init
+    ///      discipline as `minHealthFactorAtInit` / `initLtvCapBpsAtInit`.
+    function _snapshotFeeBps(
+        LibVaipakam.Loan storage loan,
+        bool isSaleVehicle
+    ) private {
+        loan.treasuryFeeBpsAtInit = uint16(LibVaipakam.cfgTreasuryFeeBps());
+        // The 0.1% LIF is charged by `OfferAcceptFacet` ONLY on a fresh ERC-20
+        // origination (inside its `assetType == ERC20` branch). Two accept
+        // paths never pay it: a lender-sale-vehicle accept (Codex #989 P3 — a
+        // secondary-market position transfer; the underlying loan already paid
+        // its LIF), and an NFT/ERC1155 rental (Codex #989 r2 — rentals price on
+        // the prepay + buffer model, not the ERC-20 LIF). Stamp the LIF receipt
+        // ONLY when the fee is actually charged, so `getLoanDetails` honestly
+        // reports 0 on the paths that skip it rather than a rate never applied.
+        if (!isSaleVehicle && loan.assetType == LibVaipakam.AssetType.ERC20) {
+            loan.loanInitiationFeeBpsAtInit = uint16(
+                LibVaipakam.cfgLoanInitiationFeeBps()
+            );
+        }
     }
 
     /// @dev Copy the offer's per-keeper enable flags onto the new loan

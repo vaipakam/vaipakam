@@ -998,6 +998,16 @@
             "name": "interestRemainingDays",
             "type": "uint16",
             "internalType": "uint16"
+          },
+          {
+            "name": "treasuryFeeBpsAtInit",
+            "type": "uint16",
+            "internalType": "uint16"
+          },
+          {
+            "name": "loanInitiationFeeBpsAtInit",
+            "type": "uint16",
+            "internalType": "uint16"
           }
         ]
       }

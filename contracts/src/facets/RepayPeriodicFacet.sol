@@ -161,6 +161,7 @@ contract RepayPeriodicFacet is DiamondReentrancyGuard, DiamondPausable, IVaipaka
         if (dayFee > loan.prepayAmount) revert InsufficientPrepay();
 
         (uint256 treasuryShare, uint256 lenderShare) = LibEntitlement.splitTreasury(
+            loan,
             dayFee
         );
         address treasury = LibFacet.getTreasury();

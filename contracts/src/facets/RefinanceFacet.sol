@@ -367,6 +367,7 @@ contract RefinanceFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErr
         uint256 shortfall = 0; // #411 fix — see comment above.
         uint256 interestPortion = oldInterest;
         (uint256 treasuryFee, uint256 lenderInterest) = LibEntitlement.splitTreasury(
+            oldLoan,
             interestPortion
         );
         uint256 yieldVpfiDeducted;

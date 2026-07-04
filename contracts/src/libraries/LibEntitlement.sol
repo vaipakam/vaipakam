@@ -176,19 +176,26 @@ library LibEntitlement {
         return gross > settled ? gross - settled : 0;
     }
 
-    /// @notice Applies the treasury cut to an interest-like amount.
-    /// @return treasuryShare treasury's cut (cfgTreasuryFeeBps of input).
-    /// @return lenderShare the remainder the lender keeps.
-    /// @dev `view`, not `pure`: the treasury fee BPS is now admin-configurable
-    ///      via {ConfigFacet} and resolved through
-    ///      {LibVaipakam.cfgTreasuryFeeBps}. A stored zero falls back to
-    ///      the original `TREASURY_FEE_BPS` constant so Phase-1 deployments
-    ///      keep a 1% cut until governance changes it.
+    /// @notice Applies the treasury cut to an interest-like amount, using the
+    ///         fee BPS the loan was ORIGINATED under.
+    /// @param loan           The loan whose treasury cut is being settled — its
+    ///                       `treasuryFeeBpsAtInit` snapshot (via
+    ///                       {LibVaipakam.effectiveTreasuryFeeBps}) sets the rate.
+    /// @param interestAmount The interest-like amount to split.
+    /// @return treasuryShare treasury's cut.
+    /// @return lenderShare   the remainder the lender keeps.
+    /// @dev #957 (#921 item 6): reads the per-loan snapshot, NOT the live
+    ///      `cfgTreasuryFeeBps()`, so a mid-loan governance retune never
+    ///      changes an open loan's settlement economics vs. the signed
+    ///      receipt. `view`, not `pure`: the snapshot resolver touches
+    ///      storage. A `0` snapshot (pre-#957 loan) falls back to the live
+    ///      knob — see {LibVaipakam.effectiveTreasuryFeeBps}.
     function splitTreasury(
+        LibVaipakam.Loan storage loan,
         uint256 interestAmount
     ) internal view returns (uint256 treasuryShare, uint256 lenderShare) {
         treasuryShare =
-            (interestAmount * LibVaipakam.cfgTreasuryFeeBps()) /
+            (interestAmount * LibVaipakam.effectiveTreasuryFeeBps(loan)) /
             LibVaipakam.BASIS_POINTS;
         lenderShare = interestAmount - treasuryShare;
     }

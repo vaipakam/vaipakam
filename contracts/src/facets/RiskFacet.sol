@@ -846,7 +846,7 @@ contract RiskFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessCont
         if (allocated > loan.principal) {
             uint256 interestRecovered = allocated - loan.principal;
             if (interestRecovered > interestPortion) interestRecovered = interestPortion;
-            (treasuryInterestFee, ) = LibEntitlement.splitTreasury(interestRecovered);
+            (treasuryInterestFee, ) = LibEntitlement.splitTreasury(loan, interestRecovered);
             lenderProceeds = allocated - treasuryInterestFee;
         } else {
             // Undercollateralized below principal: no interest to split
@@ -1216,11 +1216,11 @@ contract RiskFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessCont
         uint256 principalRepaid;
         if (afterFees > interestPortion) {
             interestRepaid = interestPortion;
-            (treasuryInterestFee, ) = LibEntitlement.splitTreasury(interestRepaid);
+            (treasuryInterestFee, ) = LibEntitlement.splitTreasury(loan, interestRepaid);
             principalRepaid = afterFees - interestRepaid;
         } else {
             interestRepaid = afterFees;
-            (treasuryInterestFee, ) = LibEntitlement.splitTreasury(interestRepaid);
+            (treasuryInterestFee, ) = LibEntitlement.splitTreasury(loan, interestRepaid);
             principalRepaid = 0;
         }
 
@@ -1553,7 +1553,7 @@ contract RiskFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessCont
         // share as the atomic path. NO handling fee — the discount IS
         // the liquidator's compensation, paid in collateral, not a
         // separate principal-asset bonus.
-        (uint256 treasuryInterestFee, ) = LibEntitlement.splitTreasury(interestPortion);
+        (uint256 treasuryInterestFee, ) = LibEntitlement.splitTreasury(loan, interestPortion);
         uint256 lenderProceeds = totalDebt - treasuryInterestFee;
 
         address treasury = s.treasury;

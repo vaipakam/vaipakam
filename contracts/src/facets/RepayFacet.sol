@@ -438,6 +438,7 @@ contract RepayFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErrors 
             if (totalDue > loan.prepayAmount) revert InsufficientPrepay();
 
             (uint256 treasuryShare, uint256 lenderShare) = LibEntitlement.splitTreasury(
+                loan,
                 totalDue
             );
 
@@ -698,6 +699,7 @@ contract RepayFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErrors 
             // ERC20: Accrued to now + partial principal
             accrued = LibEntitlement.accruedInterestToTime(loan, block.timestamp);
             (uint256 treasuryShare, uint256 lenderShare) = LibEntitlement.splitTreasury(
+                loan,
                 accrued
             );
 
@@ -862,6 +864,7 @@ contract RepayFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErrors 
             if (accrued > loan.prepayAmount) revert InsufficientPrepay();
 
             (uint256 treasuryShare, uint256 lenderShare) = LibEntitlement.splitTreasury(
+                loan,
                 accrued
             );
 

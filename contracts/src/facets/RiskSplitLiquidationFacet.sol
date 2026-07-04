@@ -284,7 +284,7 @@ contract RiskSplitLiquidationFacet is
         if (allocated > loan.principal) {
             uint256 interestRecovered = allocated - loan.principal;
             if (interestRecovered > interestPortion) interestRecovered = interestPortion;
-            (treasuryInterestFee, ) = LibEntitlement.splitTreasury(interestRecovered);
+            (treasuryInterestFee, ) = LibEntitlement.splitTreasury(loan, interestRecovered);
             lenderProceeds = allocated - treasuryInterestFee;
         } else {
             treasuryInterestFee = 0;
