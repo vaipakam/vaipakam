@@ -611,6 +611,8 @@ export const copy = {
       'This loan is past its due date and grace window, so repayment is closed on-chain — the default process applies now. Nothing was sent.',
     loanAlreadySettled:
       'This loan looks already settled on-chain — nothing was sent. Refresh in a moment to see its final state.',
+    nothingToClaim:
+      'There’s nothing for this side to claim on-chain right now — the payout may be zero or already collected. Nothing was sent.',
     precloseMatured:
       'This loan is past its due date, so closing early no longer applies — nothing was sent. Use Repay instead; it settles the loan including any late fees.',
     refinanceMatured:

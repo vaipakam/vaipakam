@@ -401,21 +401,28 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
   // OBS-2 (#988) — reconcile the indexer row against the live chain
   // status ONCE, here, so every consumer below (action gate, state
   // badge, cards, receipts) sees the same truth. Overrides only toward
-  // MORE settled: a live terminal (or FallbackPending) status replaces
-  // a stale open row; a live "active" never resurrects actions on a
-  // row the indexer already closed (that direction is replica lag, and
-  // the claim paths re-check live at submit anyway).
+  // MORE settled — with ONE deliberate exception: a live "active" DOES
+  // override a `fallback_pending` row, because that state is
+  // REVERSIBLE (a borrower cure returns the loan to Active, after
+  // which claimAsLender rejects — the stale row would keep a doomed
+  // lender claim button). A live "active" never resurrects actions on
+  // a row the indexer already closed (that direction is replica lag,
+  // and the claim paths re-check live at submit anyway).
   // Indexed as a plain number map so an unknown FUTURE enum value
   // yields undefined (→ no override) instead of a lying type.
   const liveOverride =
-    liveStatus.data !== undefined && liveStatus.data !== LoanStatus.Active
-      ? (
-          LIVE_STATUS_TO_INDEXED as Record<
-            number,
-            (typeof LIVE_STATUS_TO_INDEXED)[LoanStatus] | undefined
-          >
-        )[liveStatus.data]
-      : undefined;
+    liveStatus.data === undefined
+      ? undefined
+      : liveStatus.data !== LoanStatus.Active
+        ? (
+            LIVE_STATUS_TO_INDEXED as Record<
+              number,
+              (typeof LIVE_STATUS_TO_INDEXED)[LoanStatus] | undefined
+            >
+          )[liveStatus.data]
+        : loan.data.status === 'fallback_pending'
+          ? ('active' as const)
+          : undefined;
   const statusIsReconciled =
     liveOverride !== undefined && liveOverride !== loan.data.status;
   const row = statusIsReconciled
@@ -430,14 +437,13 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
     row.interestRateBps,
     row.durationDays,
   );
-  // "Closed properly" group: repaid, or the preclose/offset/refinance
-  // terminals (`settled` / `internal_matched`). Same claim shape as a
-  // repaid loan — lender collects funds, borrower collects collateral
-  // — so copy and gating treat the three alike.
+  // Claimable proper-close group: repaid, or an internal match (which
+  // records claim rows for both sides). `settled` is deliberately NOT
+  // here — ClaimFacet rejects Settled on BOTH claim paths
+  // (InvalidLoanStatus): it means the claims are already consumed, so
+  // a settled row gets no action.
   const properClose =
-    row.status === 'repaid' ||
-    row.status === 'settled' ||
-    row.status === 'internal_matched';
+    row.status === 'repaid' || row.status === 'internal_matched';
 
   const action: Action = (() => {
     // Side-scoped: a claim on one side must not suppress the other.
@@ -453,11 +459,12 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
     ) {
       return 'repay';
     }
-    // Proper-close terminals: plain repayment, plus the preclose/
-    // offset/refinance paths that settle to `settled` or
-    // `internal_matched` — ClaimFacet accepts every one of them, and
-    // the on-chain claimables discovery (#988) now surfaces them, so
-    // this page must offer the claim for each.
+    // Claimable proper-close terminals: repaid or internal_matched
+    // (ClaimFacet accepts both; the on-chain claimables discovery
+    // (#988) surfaces them). For the borrower an internal match may
+    // hold only a residual/rebate — the submit path preflights
+    // getClaimable so a zero-entitlement claim errors gracefully
+    // instead of prompting a doomed write.
     if (role === 'borrower' && properClose) return 'claim-borrower';
     // After a default/liquidation the borrower may still have a
     // residual entitlement (liquidation surplus) — the Claim Center
@@ -623,6 +630,55 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
           walletChain.diamondAddress,
           address,
         );
+        // Entitlement preflight: claimAsBorrower reverts NothingToClaim
+        // when the record is empty — a real case for a fully-covered
+        // internal match (only a residual/rebate is borrower-claimable)
+        // and a zero-surplus liquidation. Fail with plain copy instead
+        // of a doomed wallet prompt. Best-effort: a failed READ falls
+        // through to the write (the wallet estimate still guards).
+        try {
+          const [res, rebate] = await Promise.all([
+            publicClient.readContract({
+              address: walletChain.diamondAddress,
+              abi: DIAMOND_ABI_VIEM,
+              functionName: 'getClaimable',
+              args: [BigInt(row.loanId), false],
+            }) as Promise<{
+              amount?: bigint;
+              claimed?: boolean;
+              assetType?: bigint;
+              1?: bigint;
+              2?: boolean;
+              3?: bigint;
+            }>,
+            publicClient
+              .readContract({
+                address: walletChain.diamondAddress,
+                abi: DIAMOND_ABI_VIEM,
+                functionName: 'getBorrowerLifRebate',
+                args: [BigInt(row.loanId)],
+              })
+              .then(
+                (r) =>
+                  (Array.isArray(r)
+                    ? ((r as readonly bigint[])[0] ?? 0n)
+                    : ((r as { rebateAmount?: bigint }).rebateAmount ?? 0n)),
+                () => 0n, // old ABI without the Phase-5 view
+              ),
+          ]);
+          const amount = res.amount ?? res[1] ?? 0n;
+          const alreadyClaimed = res.claimed ?? res[2] ?? false;
+          const assetType = Number(res.assetType ?? res[3] ?? 0n);
+          const actionable =
+            amount > 0n || assetType !== AssetType.ERC20 || rebate > 0n;
+          if (alreadyClaimed || !actionable) {
+            setError(copy.errors.nothingToClaim);
+            return;
+          }
+        } catch {
+          // Read failed (transport) — proceed; the write path's own
+          // estimate surfaces any revert.
+        }
         await write('claimAsBorrower', [BigInt(row.loanId)]);
         setClaimed((c) => ({ ...c, borrower: true }));
         setDoneMessage(copy.claims.claimed);
@@ -968,9 +1024,11 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
       : action === 'claim-borrower'
         ? isRental
           ? 'Claim my buffer back'
-          : properClose
+          : row.status === 'repaid'
             ? 'Claim my collateral'
-            : 'Claim what’s left (if anything)'
+            : // defaulted/liquidated surplus OR internal-match residual +
+              // VPFI rebate — either may be zero, so never promise it.
+              'Claim what’s left (if anything)'
         : action === 'claim-lender'
           ? isRental
             ? 'Claim fees & reclaim NFT'
@@ -1001,11 +1059,13 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
         ? {
             youReceive: isRental
               ? 'Your refundable buffer back.'
-              : properClose
+              : row.status === 'repaid'
                 ? hasCollateral
                   ? `${collateralStr} collateral back.`
                   : 'Whatever this side is still owed (this loan had no collateral, so there may be nothing).'
-                : 'Anything left after liquidation (may be zero).',
+                : row.status === 'internal_matched'
+                  ? 'Any residual the internal match left for you, plus any VPFI rebate (may be zero).'
+                  : 'Anything left after liquidation (may be zero).',
             youLock: 'Nothing.',
             youMayOwe: 'Nothing.',
             youCanLose: 'Nothing.',
@@ -1062,10 +1122,12 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
         <span className={`badge badge-${view.badge}`}>{view.label}</span>
       </div>
 
-      {statusIsReconciled ? (
+      {statusIsReconciled && row.status !== 'active' ? (
         // OBS-2 (#988) — the badge above shows the LIVE on-chain state,
         // which is ahead of the Positions list. Say so, or the mismatch
-        // reads as a bug.
+        // reads as a bug. (Not shown for the fallback-cure direction —
+        // "settled ahead" copy would be wrong for a loan that just went
+        // back to normal.)
         <div className="banner banner-info" role="status">
           <span className="banner-body">{copy.positions.settledAhead}</span>
         </div>

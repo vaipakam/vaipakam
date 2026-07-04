@@ -36,15 +36,11 @@
  */
 import { useQuery } from '@tanstack/react-query';
 import { usePublicClient } from 'wagmi';
-import {
-  BaseError,
-  ContractFunctionRevertedError,
-  ContractFunctionZeroDataError,
-} from 'viem';
 import { DIAMOND_ABI_VIEM } from '@vaipakam/contracts/abis';
 import { useActiveChain } from '../chain/useActiveChain';
-import { AssetType, LIVE_STATUS_TO_INDEXED } from '../lib/types';
-import type { IndexedLoan, IndexedLoanStatus } from './indexer';
+import { AssetType } from '../lib/types';
+import type { IndexedLoanStatus } from './indexer';
+import { isRevert, readLoanRowLive } from './liveLoanRow';
 import { useMyLoans, type PositionLoan } from './hooks';
 
 const REFRESH_MS = 30_000;
@@ -62,17 +58,6 @@ interface ClaimableTuple {
   3?: bigint;
   6?: bigint;
   7?: boolean;
-}
-
-/** True when a failed read is a contract REVERT / empty-data (an
- *  authoritative "no" — e.g. a burned position NFT or a not-claimable
- *  side) rather than a transport error. */
-function isRevert(e: unknown): boolean {
-  return (
-    e instanceof BaseError &&
-    (e.walk((x) => x instanceof ContractFunctionRevertedError) !== null ||
-      e.walk((x) => x instanceof ContractFunctionZeroDataError) !== null)
-  );
 }
 
 /** Claimable loans for the connected wallet, tagged with role.
@@ -179,46 +164,13 @@ export function useMyClaimables() {
         await Promise.all(
           extraIds.map(async (id): Promise<PositionLoan[]> => {
             try {
-              const d = (await publicClient.readContract({
-                address: diamond,
-                abi: DIAMOND_ABI_VIEM,
-                functionName: 'getLoanDetails',
-                args: [BigInt(id)],
-              })) as Record<string, unknown>;
-              const status = (
-                LIVE_STATUS_TO_INDEXED as Record<
-                  number,
-                  IndexedLoanStatus | undefined
-                >
-              )[Number(d.status)];
-              if (!status) return [];
-              const base: IndexedLoan = {
-                chainId: readChain.chainId,
-                loanId: id,
-                offerId: Number(d.offerId ?? 0n),
-                status,
-                lender: String(d.lender),
-                borrower: String(d.borrower),
-                principal: String(d.principal),
-                collateralAmount: String(d.collateralAmount),
-                assetType: Number(d.assetType),
-                collateralAssetType: Number(d.collateralAssetType),
-                lendingAsset: String(d.principalAsset),
-                collateralAsset: String(d.collateralAsset),
-                durationDays: Number(d.durationDays),
-                tokenId: String(d.tokenId),
-                collateralTokenId: String(d.collateralTokenId),
-                lenderTokenId: String(d.lenderTokenId),
-                borrowerTokenId: String(d.borrowerTokenId),
-                interestRateBps: Number(d.interestRateBps),
-                startTime: Number(d.startTime),
-                allowsPartialRepay: Boolean(d.allowsPartialRepay),
-                startBlock: 0,
-                startAt: Number(d.startTime),
-                terminalBlock: null,
-                terminalAt: null,
-                updatedAt: 0,
-              };
+              const base = await readLoanRowLive(
+                publicClient,
+                diamond,
+                readChain.chainId,
+                id,
+              );
+              if (!base) return [];
               return [
                 { ...base, role: 'lender' as const },
                 { ...base, role: 'borrower' as const },
@@ -238,36 +190,32 @@ export function useMyClaimables() {
       // authority for all of them.
       const pool = [...loans.data, ...flipped, ...synthesized];
 
-      // An `active` row normally has nothing to claim — but in the
-      // indexer-lag window a just-settled loan can still read `active`
-      // here, and dropping it on the cached status would hide a real,
-      // ready claim. Probe the LIVE status for those rows instead of
-      // trusting the row: a live-Active loan is then excluded for
-      // real; a live-terminal one proceeds with the reconciled status.
-      const activeIds = [
+      // Rows in a REVERSIBLE state get a live status probe instead of
+      // being trusted:
+      //   - `active`: in the indexer-lag window a just-settled loan can
+      //     still read `active` here, and dropping it on the cached
+      //     status would hide a real, ready claim.
+      //   - `fallback_pending`: the borrower can CURE back to Active,
+      //     after which claimAsLender rejects — a cured loan must drop
+      //     out of the claim list, not keep a doomed lender entry.
+      const isReversible = (s: IndexedLoanStatus) =>
+        s === 'active' || s === 'fallback_pending';
+      const probeIds = [
         ...new Set(
-          pool.filter((l) => l.status === 'active').map((l) => l.loanId),
+          pool.filter((l) => isReversible(l.status)).map((l) => l.loanId),
         ),
       ];
       const liveStatusById = new Map<number, IndexedLoanStatus | null>();
       await Promise.all(
-        activeIds.map(async (id) => {
+        probeIds.map(async (id) => {
           try {
-            const d = (await publicClient.readContract({
-              address: diamond,
-              abi: DIAMOND_ABI_VIEM,
-              functionName: 'getLoanDetails',
-              args: [BigInt(id)],
-            })) as Record<string, unknown>;
-            liveStatusById.set(
+            const live = await readLoanRowLive(
+              publicClient,
+              diamond,
+              readChain.chainId,
               id,
-              (
-                LIVE_STATUS_TO_INDEXED as Record<
-                  number,
-                  IndexedLoanStatus | undefined
-                >
-              )[Number(d.status)] ?? null,
             );
+            liveStatusById.set(id, live?.status ?? null);
           } catch (e) {
             // Revert = no such loan (shouldn't happen for an indexed
             // row) — treat as unknowable and keep the row excluded.
@@ -279,10 +227,17 @@ export function useMyClaimables() {
 
       const candidates = pool
         .map((l): PositionLoan | null => {
-          if (l.status !== 'active') return l;
-          const live = liveStatusById.get(l.loanId);
-          if (live == null || live === 'active') return null;
-          return { ...l, status: live };
+          const status = isReversible(l.status)
+            ? (liveStatusById.get(l.loanId) ?? null)
+            : l.status;
+          // `active` = nothing to claim yet (incl. a cured fallback);
+          // null = unknowable → excluded. `settled` = both sides fully
+          // consumed — ClaimFacet rejects it (InvalidLoanStatus on both
+          // claim paths), matching the old /claimables route's skip.
+          if (status == null || status === 'active' || status === 'settled') {
+            return null;
+          }
+          return status === l.status ? l : { ...l, status };
         })
         .filter((l): l is PositionLoan => l !== null)
         // ClaimFacet.claimAsBorrower REJECTS FallbackPending — the

@@ -132,13 +132,11 @@ function ClaimRow({ loan }: { loan: PositionLoan }) {
   const principalMeta = useTokenMeta(isRental ? undefined : loan.lendingAsset);
   const collateralMeta = useTokenMeta(loan.collateralAsset);
   const defaulted = loan.status === 'defaulted' || loan.status === 'liquidated';
-  // "Closed properly" group: repaid, or the preclose/offset/refinance
-  // terminals (`settled` / `internal_matched`) — same claim shape as a
-  // repaid loan (lender collects funds, borrower collateral).
+  // Claimable proper-close group: repaid or internal_matched. NOT
+  // `settled` — ClaimFacet rejects Settled on both claim paths (claims
+  // already consumed), and the claimables hook filters those out.
   const properClose =
-    loan.status === 'repaid' ||
-    loan.status === 'settled' ||
-    loan.status === 'internal_matched';
+    loan.status === 'repaid' || loan.status === 'internal_matched';
 
   const collateralStr = collateralMeta.data
     ? `${formatTokenAmount(loan.collateralAmount, collateralMeta.data.decimals)} ${collateralMeta.data.symbol}`
@@ -163,7 +161,7 @@ function ClaimRow({ loan }: { loan: PositionLoan }) {
       why =
         loan.status === 'repaid'
           ? 'The borrower repaid this loan.'
-          : 'This loan closed early (matched or refinanced) — collect your funds.';
+          : 'This loan closed by internal matching — collect your funds.';
     } else if (loan.status === 'fallback_pending') {
       what = `${collateralStr} collateral`;
       why =
@@ -180,12 +178,14 @@ function ClaimRow({ loan }: { loan: PositionLoan }) {
     // promise the full original collateral, and never say "you repaid".
     what = 'Anything left after liquidation';
     why = 'This loan defaulted. If the liquidation left a surplus, you can claim it.';
+  } else if (loan.status === 'internal_matched') {
+    // An internal match leaves the borrower a residual and/or VPFI
+    // rebate at most — never promise the full collateral back.
+    what = 'Anything left after the internal match';
+    why = 'This loan closed by internal matching — collect any residual left for you.';
   } else {
     what = `${collateralStr} collateral back`;
-    why =
-      loan.status === 'repaid'
-        ? 'You repaid this loan, so your collateral is released.'
-        : 'This loan closed, so your collateral is released.';
+    why = 'You repaid this loan, so your collateral is released.';
   }
 
   return (
