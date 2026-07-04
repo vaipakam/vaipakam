@@ -9,6 +9,7 @@ import {ZeroExProxyMock} from "../test/mocks/ZeroExProxyMock.sol";
 import {MockSwapAdapter} from "../test/mocks/MockSwapAdapter.sol";
 import {OracleAdminFacet} from "../src/facets/OracleAdminFacet.sol";
 import {AdminFacet} from "../src/facets/AdminFacet.sol";
+import {ConfigFacet} from "../src/facets/ConfigFacet.sol";
 import {RiskFacet} from "../src/facets/RiskFacet.sol";
 import {MockChainlinkRegistry, MockChainlinkFeed} from "./mocks/MockChainlinkRegistry.sol";
 import {MockUniswapV3Factory} from "./mocks/MockUniswapV3.sol";
@@ -69,9 +70,17 @@ import {Deployments} from "./lib/Deployments.sol";
  *
  *        Required env vars:
  *          - DEPLOYER_PRIVATE_KEY : deployer (pays for mock contract gas)
- *          - ADMIN_PRIVATE_KEY    : admin-role key (must hold
- *                                   ADMIN_ROLE + oracle-admin authority
- *                                   on the Diamond so the setters pass)
+ *          - ADMIN_PRIVATE_KEY    : must be the Diamond OWNER, which on
+ *                                   the testnet deploys also holds
+ *                                   ADMIN_ROLE + RISK_ADMIN_ROLE (the
+ *                                   OracleAdminFacet setters gate on
+ *                                   contract-owner; the AdminFacet /
+ *                                   RiskFacet / ConfigFacet ones on
+ *                                   roles). This script intentionally
+ *                                   does NOT support timelock-owned
+ *                                   Diamonds — post-handover chains
+ *                                   route the oracle setters through
+ *                                   governance instead.
  *
  *        Optional REUSE overrides — pass an already-deployed address to
  *        skip re-deploying that mock (idempotent re-runs; e.g. the
@@ -146,6 +155,16 @@ contract DeployTestnetMocks is Script {
         // ── Step 1: Deployer-side — deploy mocks ───────────────────────
         vm.startBroadcast(deployerKey);
 
+        // Anvil-only: when ANVIL_WETH is unset there is no canonical
+        // WETH, and `createPool(liquidToken, address(0), …)` would
+        // revert ZERO_TOKEN after gas was already spent. Deploy a mock
+        // WETH inline so the rest of the wiring matches the testnet
+        // flow (mirrors DeployTestnetLiquidityMocks).
+        if (cid == 31337 && weth == address(0)) {
+            weth = address(new ERC20Mock("Wrapped ETH", "WETH", 18));
+            console.log("Deployed mock WETH for anvil:", weth);
+        }
+
         // Faucet trio: reuse via env if already deployed, else fresh.
         address liquidToken = vm.envOr("FAUCET_LIQUID_TOKEN", address(0));
         if (liquidToken == address(0)) {
@@ -218,6 +237,18 @@ contract DeployTestnetMocks is Script {
         oa.setEthUsdFeed(address(wethFeed));
         oa.setUniswapV3Factory(address(univ3));
 
+        // Pin the PAA quote list to [weth]. When `paaAssets` is already
+        // populated on a chain, OracleFacet routes the liquidity search
+        // over that list instead of the WETH fallback — a WETH-only
+        // mock factory would then be invisible to `checkLiquidity(tLIQ)`
+        // even with correct prices. The Anvil flow performs the same
+        // reset for the same reason (Codex #982 review).
+        {
+            address[] memory paa = new address[](1);
+            paa[0] = weth;
+            ConfigFacet(diamond).setPaaAssets(paa);
+        }
+
         // Risk params so tLIQ (and the WETH quote asset) render + are
         // immediately usable for offers — mirrors DeployTestnetLiquidityMocks.
         RiskFacet(diamond).updateRiskParams(liquidToken, 8000, 300, 1000);
@@ -251,10 +282,15 @@ contract DeployTestnetMocks is Script {
         vm.serializeAddress(obj, "liquidTokenWethPool", liquidPool);
         vm.serializeAddress(obj, "zeroExProxy", address(zeroEx));
         string memory out = vm.serializeAddress(obj, "mockSwapAdapter", address(swapAdapter));
-        vm.writeJson(out, Deployments.path(), ".testnetMocks");
-        // WETH is consumed by both the contract wiring above and the
-        // frontend loader — stamp it once as the single source of truth.
+        // WETH first, and BEFORE the raw keyed write below: the
+        // Deployments helper `_ensureFile`s the artifact, so on a chain
+        // whose addresses.json doesn't exist yet (Diamond resolved via
+        // the env fallback) the `.testnetMocks` write lands in a real
+        // file instead of failing after everything already deployed.
+        // (WETH itself is consumed by both the contract wiring above
+        // and the frontend loader — one stamp, single source of truth.)
         Deployments.writeWeth(weth);
+        vm.writeJson(out, Deployments.path(), ".testnetMocks");
 
         console.log("");
         console.log("Wiring applied. Faucet trio + tLIQ oracle wiring live.");
