@@ -112,8 +112,16 @@ the owner and reverts `SanctionedAddress` — bricking the close-out.
 **Fix:** wrap the collateral pull in `LibSanctionedLock.beginMoveOut(s, loan.borrower)`
 … `endMoveOut(s)`. The move-out exemption is the correct one: custody is LEAVING
 `loan.borrower` (to the diamond for the swap), mirroring `repayLoan`'s NFT-branch
-prepay withdrawal (449-474). Also covers the partial-fill refund back to
-`getOrCreateVault(loan.borrower)` at 480-488 if it can run while flagged.
+prepay withdrawal (449-474).
+
+**Do NOT span the exemption across the external swap** (Codex #986 r3). Close the
+first `beginMoveOut/endMoveOut` around the collateral WITHDRAW only, before
+`LibSwap.swapWithFailover` runs, so the receive-side exemption is never open
+across the untrusted adapter call. The partial-fill refund back to
+`getOrCreateVault(loan.borrower)` (480-488), which also resolves the flagged
+borrower's vault AFTER the swap, gets its OWN separate narrow
+`beginMoveOut/endMoveOut` around just that refund deposit. Two tight windows, not
+one wide one.
 
 ### 1.3 `swapToRepayPartial` — unscreened direct payouts (P1)
 
@@ -187,8 +195,16 @@ done there.
 
 ### 1.6 Matrix update
 
-`SanctionsGateCoverageMatrix.md` currently states the sweep found exactly four
-gaps. Add rows 5-9 for the above and correct the "four gaps" conclusion.
+Add rows for the above (swap-full lender-leg + collateral-pull, swap-partial,
+intent-fill, backstop) and correct any "N gaps found" conclusion.
+
+**Reconcile the matrix file first** (Codex #986 r3): the canonical matrix on
+`main` is `docs/DesignsAndPlans/SanctionsAndTermsGateMatrix.md`, but the
+`audit/954` branch added a separate `SanctionsGateCoverageMatrix.md`. At
+implementation, fold the `audit/954` content into the canonical
+`SanctionsAndTermsGateMatrix.md` (or confirm which is canonical) rather than
+leaving two divergent matrices — then add the new rows to the single canonical
+file so implementers don't update a stale/duplicate doc.
 
 ---
 
@@ -244,18 +260,30 @@ exclusion must be scoped to ONLY the frozen surplus owed to someone else.
   `loan.lender`'s vault) when the position NFT has moved to a sanctioned holder
   (Codex #986 r2). Decrement it on the matching claim/release
   (`claimAsBorrower` / `claimAsLender`).
-- The VPFI tier balance for a user becomes `trackedVpfiBalance(user) −
-  frozenVpfiOwedByVault[user]` (floored at 0). **Apply this at EVERY
-  `LibVPFIDiscount.rollupUserDiscount` site, not just the three first named**
-  (Codex #986 r2): centralize by introducing one helper
-  `LibVPFIDiscount.tierVpfiBalance(user) = trackedVpfiBalance(user) −
-  frozenVpfiOwedByVault[user]` and routing ALL stamp paths through it —
+- The VPFI tier balance is the caller's balance MINUS
+  `frozenVpfiOwedByVault[user]` (floored at 0). **The helper must NOT re-read
+  storage** (Codex #986 r3): `rollupUserDiscount` is deliberately fed a
+  *post-mutation* balance at deposit / withdraw / fee-deduction sites (storage
+  isn't written yet), so a zero-arg helper reading current
+  `protocolTrackedVaultBalance` would miscount an in-flight deposit/withdrawal.
+  Signature: `LibVPFIDiscount.tierVpfiBalance(user, postMutationBal) =
+  postMutationBal > frozen ? postMutationBal − frozen : 0` (`frozen =
+  frozenVpfiOwedByVault[user]`). Route ALL stamp paths through it, EACH passing
+  the SAME post-mutation balance it already computes —
   `LibConsolidation.restampUserVpfi` / `_restampVpfi`, `pokeMyTier`,
-  `VPFIDiscountFacet.depositVPFIToVault` / `withdrawVPFIFromVault`, and the
-  `LoanFacet` stamp sites that call `rollupUserDiscount` with a raw
-  `protocolTrackedVaultBalance`. Enumerate every `rollupUserDiscount` caller and
-  convert it. This subtracts ONLY the frozen-surplus/proceeds VPFI, never the
-  shared `s.encumbered` bucket, so legitimate self-encumbrances keep their tier.
+  `VPFIDiscountFacet.depositVPFIToVault` / `withdrawVPFIFromVault`, and every
+  `LoanFacet` (and any other) `rollupUserDiscount` caller. Enumerate every caller
+  and convert it. Subtracts ONLY the frozen VPFI, never the shared
+  `s.encumbered` bucket, so legitimate self-encumbrances keep their tier.
+- **Gate the `frozenVpfiOwedByVault` bump to the TRANSFERRED-position case**
+  (Codex #986 r3): increment it only when the sanctioned current holder is NOT
+  the vault owner (`ownerOf(borrowerTokenId) != loan.borrower` for the surplus,
+  `ownerOf(lenderTokenId) != loan.lender` for the lender leg). In the flagged
+  SELF-holder case the frozen VPFI is the owner's OWN money (merely withheld
+  pending delisting), so it must still count toward THEIR tier — excluding it
+  would wrongly demote a self-holder. Freeze always (§2.1/§1.1); exclude from
+  tier only when the economic owner (current holder) differs from the vault
+  owner.
 - The surplus is STILL also encumbered via §2.1 (in `s.encumbered[...][0]`) so
   `freeBalance` blocks the signed-offer spend. The two mechanisms are
   independent: `s.encumbered` gates spendability (shared bucket, fine to share);
@@ -279,7 +307,19 @@ sees a zero/collateral-only claim and can't discover the funds:
   (Codex #986 catch) — these walk `s.borrowerClaims[lid]` and SKIP entries with
   `ci.amount == 0`, so a surplus-only loan shows zero borrower claimables in the
   dashboard snapshot too. Must surface the surplus lane here as well (count it +
-  include its asset/amount), else wallets relying on the dashboard miss it.
+  include its asset/amount).
+  - **Index it by the CURRENT HOLDER, not `loan.borrower`** (Codex #986 r3):
+    these readers walk `s.userLoanIds[user]` and require `l.borrower == user`. In
+    the sanctioned-transferee case the surplus is owed to the current
+    borrower-NFT holder (a transferee), who is NOT in `loan.borrower`'s index —
+    so keying off `loan.borrower` would still hide it from the person owed. The
+    surplus must be discoverable by `ownerOf(borrowerTokenId)`. Simplest robust
+    surface: a dedicated view `getBorrowerSurplusClaim(loanId)` +
+    `getFrozenSurplusClaimsForHolder(holder)` that resolves via the position-NFT
+    holder rather than the stored-borrower index (the frontend queries by the
+    connected wallet as the NFT holder). Note this is the same
+    stored-borrower-vs-current-holder split the whole sale/transfer model already
+    handles for claims.
 - `BorrowerFundsClaimed` event (emitted @1322 off `claim.*`).
 
 **Fix:** add the surplus lane to each borrower-side read. Preferred shape: keep
