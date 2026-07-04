@@ -14,17 +14,16 @@
  * lock-disclosure rule.
  */
 /**
- * Feature gate — issue #951: `createLoanSaleOffer` cannot currently
- * succeed on-chain (its cross-facet `createOffer` hop trips the
- * diamond-shared nonReentrant lock, and the collateral=0 borrower
- * validation rejects the vehicle; see the P-T SKIPPED scenario in
- * contracts/script/AnvilNewPartialFlows.s.sol). Every listing attempt
- * would revert at the wallet step, AFTER the standing settlement
- * approval mined. The page renders an honest "not available yet" note
- * instead of this form until the contract fix lands — flip this flag
- * back on WITH that fix, never before.
+ * Feature gate — issue #951: the cross-facet reentrancy bug that made
+ * every `createLoanSaleOffer` revert was fixed in #959 and CUT into
+ * the Base Sepolia + Arb Sepolia Diamonds on 2026-07-04
+ * (CatchUpFacetCut959.s.sol). Verified live before flipping this on:
+ * `createLoanSaleOffer` simulates cleanly on an active loan against
+ * the post-cut Diamond (it was ReentrancyGuardReentrantCall before).
+ * If a chain WITHOUT the #959 cut is ever added, listing attempts
+ * there revert at the wallet step — gate per-chain if that arises.
  */
-export const LOAN_SALE_LISTING_ENABLED: boolean = false;
+export const LOAN_SALE_LISTING_ENABLED: boolean = true;
 import { useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import { usePublicClient, useWalletClient } from 'wagmi';
