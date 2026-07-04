@@ -1923,11 +1923,14 @@ library LibVaipakam {
         uint16 interestRemainingDays;
         // #957 (#921 item 6) — fee BPS SNAPSHOTTED at init from the live
         // governance knobs (`cfgTreasuryFeeBps` / `cfgLoanInitiationFeeBps`),
-        // so a loan's economics are fixed at signature time. Every
+        // so a loan's economics are fixed at origination (the snapshot is
+        // taken when the accept tx executes; a retune between signing and
+        // inclusion still applies — only post-origination retunes are
+        // neutralised). Every
         // settlement / close-out treasury split for THIS loan reads
         // `treasuryFeeBpsAtInit` (via `effectiveTreasuryFeeBps`) — NOT the
         // live knob — so a mid-loan governance retune never changes an
-        // open loan's economics vs. the reviewed/signed receipt.
+        // open loan's economics after it is originated.
         // `loanInitiationFeeBpsAtInit` records the LIF rate the loan was
         // originated under. The LIF is charged ONCE at init from the live knob
         // (the loan struct doesn't exist yet at the charge site), and this
@@ -5381,8 +5384,8 @@ library LibVaipakam {
     ///      originated under, read from its `treasuryFeeBpsAtInit` snapshot.
     ///      Every settlement / close-out treasury split for that loan uses
     ///      this (NOT the live `cfgTreasuryFeeBps()`), so a mid-loan
-    ///      governance retune never changes the loan's economics vs. the
-    ///      signed receipt. `0` (pre-#957 loan) ⇒ the live knob — the
+    ///      governance retune never changes the economics of a loan already
+    ///      originated. `0` (pre-#957 loan) ⇒ the live knob — the
     ///      conservative legacy behaviour.
     function effectiveTreasuryFeeBps(
         Loan storage loan

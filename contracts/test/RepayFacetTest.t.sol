@@ -459,6 +459,21 @@ contract RepayFacetTest is Test {
             10,
             "LIF snapshotted at the 0.1% default at init"
         );
+
+        // Loan 2 (created by helperOfferLoan) is an NFT rental — no ERC-20 LIF
+        // is charged on that path (Codex #989 r2), so its LIF receipt reads 0
+        // while the treasury fee is still stamped.
+        LibVaipakam.Loan memory rental = LoanFacet(address(diamond)).getLoanDetails(2);
+        assertEq(
+            rental.loanInitiationFeeBpsAtInit,
+            0,
+            "NFT rental records NO LIF (fee not charged on the rental path)"
+        );
+        assertEq(
+            rental.treasuryFeeBpsAtInit,
+            100,
+            "treasury fee still snapshotted on the NFT rental"
+        );
     }
 
     function testPartialRepayERC20() public {

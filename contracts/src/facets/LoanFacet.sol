@@ -861,12 +861,15 @@ contract LoanFacet is DiamondPausable, DiamondAccessControl, IVaipakamErrors {
         bool isSaleVehicle
     ) private {
         loan.treasuryFeeBpsAtInit = uint16(LibVaipakam.cfgTreasuryFeeBps());
-        // #951 / Codex #989 P3 — a lender-sale-vehicle accept is a secondary-
-        // market position transfer; `OfferAcceptFacet` explicitly skips the
-        // LIF (the underlying loan already paid it at origination). Leave the
-        // LIF snapshot at 0 so the per-loan receipt honestly reports "no LIF
-        // charged" rather than a rate that was never applied.
-        if (!isSaleVehicle) {
+        // The 0.1% LIF is charged by `OfferAcceptFacet` ONLY on a fresh ERC-20
+        // origination (inside its `assetType == ERC20` branch). Two accept
+        // paths never pay it: a lender-sale-vehicle accept (Codex #989 P3 — a
+        // secondary-market position transfer; the underlying loan already paid
+        // its LIF), and an NFT/ERC1155 rental (Codex #989 r2 — rentals price on
+        // the prepay + buffer model, not the ERC-20 LIF). Stamp the LIF receipt
+        // ONLY when the fee is actually charged, so `getLoanDetails` honestly
+        // reports 0 on the paths that skip it rather than a rate never applied.
+        if (!isSaleVehicle && loan.assetType == LibVaipakam.AssetType.ERC20) {
             loan.loanInitiationFeeBpsAtInit = uint16(
                 LibVaipakam.cfgLoanInitiationFeeBps()
             );
