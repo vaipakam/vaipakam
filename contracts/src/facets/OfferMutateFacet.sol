@@ -436,6 +436,18 @@ contract OfferMutateFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamE
             offerId != 0 &&
             LibVaipakam.storageSlot().offerConsumedBySale[offerId]
         ) revert OfferAlreadyConsumedBySaleMutate();
+        // #951 (redesign D4) — a linked lender-sale vehicle is immutable. Once
+        // `createLoanSaleOffer` links a Borrower offer to a live loan
+        // (`saleOfferToLoanId[offerId] != 0`), its economics are pinned to that
+        // loan (amount == principal, zero collateral, the rate the seller listed
+        // at) until a buyer accepts or the seller cancels. Letting the creator
+        // lower `amount`, change the rate, or set a positive collateral after
+        // linking would desync the vehicle from the live loan and corrupt the
+        // accept / settlement math. See LenderSaleVehicleRedesign.md D4.
+        if (
+            offerId != 0 &&
+            LibVaipakam.storageSlot().saleOfferToLoanId[offerId] != 0
+        ) revert SaleVehicleImmutable();
     }
 
     /// @notice Codex round-6 P2 #5 — raised when a creator attempts
@@ -444,6 +456,11 @@ contract OfferMutateFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamE
     ///         posture: the offer is terminal, mutation makes no
     ///         sense.
     error OfferAlreadyConsumedBySaleMutate();
+    /// @notice #951 (redesign D4) — a Borrower offer linked as a lender
+    ///         position-sale vehicle (`saleOfferToLoanId[offerId] != 0`) is
+    ///         immutable until accepted or cancelled; its terms are pinned to the
+    ///         live loan. See LenderSaleVehicleRedesign.md.
+    error SaleVehicleImmutable();
 
     /// @notice T-086 Round-8 (#358) §19.6 — raised by every mutator
     ///         when a live parallel-sale Seaport listing is bound to

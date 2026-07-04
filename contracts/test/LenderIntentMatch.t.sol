@@ -5,6 +5,7 @@ import {SetupTest} from "./SetupTest.t.sol";
 import {ConfigFacet} from "../src/facets/ConfigFacet.sol";
 import {OfferCreateFacet} from "../src/facets/OfferCreateFacet.sol";
 import {OfferMatchFacet} from "../src/facets/OfferMatchFacet.sol";
+import {TestMutatorFacet} from "./mocks/TestMutatorFacet.sol";
 import {RiskAccessFacet} from "../src/facets/RiskAccessFacet.sol";
 import {AdminFacet} from "../src/facets/AdminFacet.sol";
 import {LibOfferMatch} from "../src/libraries/LibOfferMatch.sol";
@@ -609,6 +610,35 @@ contract LenderIntentMatchTest is SetupTest {
             lender, mockERC20, mockCollateralERC20, cp, PRINCIPAL
         );
         assertGt(loanId, 0, "fill succeeds - agrees with preview Ok");
+    }
+
+    // ── sale-vehicle counterparty (#951 v2, D3) — non-matchable via intent too ──
+    /// @dev A borrower offer linked as a lender-sale vehicle (`saleOfferToLoanId`)
+    ///      is fillable ONLY through direct `acceptOffer`; `matchIntent` reverts
+    ///      `SaleVehicleNotMatchable` (via the shared `_executeMatch` guard).
+    ///      `previewIntent` must mirror that with `SaleVehicleTagged` rather than
+    ///      report Ok (Codex #959 round-8 P2/P3 preview parity).
+    function test_previewIntent_saleVehicleTagged_agrees() public {
+        _setIntent(MAX_EXPOSURE);
+        _fundIntent(PRINCIPAL);
+        address b = _newBorrower("bSale");
+        uint256 cp = _postBorrower(b, PRINCIPAL, 2 * PRINCIPAL);
+        // Tag the otherwise-matchable borrower offer as a sale vehicle.
+        TestMutatorFacet(address(diamond)).setSaleOfferToLoanIdRaw(cp, 4242);
+
+        LibOfferMatch.IntentPreviewResult memory r = _preview(solver, PRINCIPAL, cp);
+        assertFalse(r.ok, "preview !ok for a sale-vehicle counterparty");
+        assertEq(
+            uint8(r.intentError),
+            uint8(LibOfferMatch.IntentError.SaleVehicleTagged),
+            "intentError SaleVehicleTagged"
+        );
+        // matchIntent reverts SaleVehicleNotMatchable ⇒ agrees with the preview.
+        vm.prank(solver);
+        vm.expectRevert(OfferMatchFacet.SaleVehicleNotMatchable.selector);
+        OfferMatchFacet(address(diamond)).matchIntent(
+            lender, mockERC20, mockCollateralERC20, cp, PRINCIPAL
+        );
     }
 
     // ── below-min fill ──

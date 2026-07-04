@@ -55,6 +55,13 @@ contract PartialWithdrawalFacet is DiamondReentrancyGuard, DiamondPausable, IVai
 
     // Facet-specific errors (shared errors inherited from IVaipakamErrors)
     error AmountTooHigh();
+    /// @notice #951 (Codex #959 round-5) — a live lender-sale listing pins the
+    ///         position's terms for a pending buyer, but the buyer's accept binds
+    ///         only the linked loan id + principal, not its live collateral. A
+    ///         collateral withdrawal while the listing is open would let the buyer
+    ///         pay full principal for a now-under-collateralised loan. Block it;
+    ///         the seller cancels the listing to change collateral.
+    error SaleListingActive();
 
     /**
      * @notice Allows borrower to withdraw partial collateral from an active loan.
@@ -74,6 +81,11 @@ contract PartialWithdrawalFacet is DiamondReentrancyGuard, DiamondPausable, IVai
         LibVaipakam.assertNoLiveIntentCommit(loanId);
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         LibVaipakam.Loan storage loan = s.loans[loanId];
+        // #951 (Codex #959 round-5) — freeze collateral while a lender-sale
+        // listing is live for this loan, so a pending buyer can't be handed a
+        // position whose collateral was silently drained after listing. Mirrors
+        // the live-intent freeze above. The seller cancels the listing first.
+        if (s.loanToSaleOfferId[loanId] != 0) revert SaleListingActive();
         // #594 — consolidate a transferred borrower position into the current
         // holder's vault FIRST, so the collateral lives in their vault and the
         // rest of this flow operates on an ordinary (non-pinned) loan rather

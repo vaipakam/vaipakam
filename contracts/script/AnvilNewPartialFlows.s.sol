@@ -428,39 +428,30 @@ contract AnvilNewPartialFlows is Script {
         console.log(">>> P-Q PASSED <<<");
     }
 
-    // ─── P-T: Loan-sale offer posted, no buyer (SKIPPED) ────────────────
+    // ─── P-T: Loan-sale offer posted, no buyer ──────────────────────────
 
-    /// @dev SKIPPED on Anvil broadcast — `createLoanSaleOffer` has TWO
-    ///      pre-existing bugs that block end-to-end execution:
-    ///        (a) Reentrancy collision: `_submitSaleOffer` cross-facet-
-    ///            calls `OfferCreateFacet.createOffer`, which is also
-    ///            `nonReentrant` on the diamond-shared lock. Same
-    ///            shape as the completeOffset bug fixed in N6 via
-    ///            `completeOffsetInternal` — needs a parallel
-    ///            `createOfferInternal`-style internal entry.
-    ///        (b) Validation: the sale offer mimics a Borrower offer
-    ///            with `collateralAmount=0` (existing loan collateral
-    ///            already backs the position post-sale), but the
-    ///            Borrower-side createOffer validation requires
-    ///            `amountMax <= collateral × price / liqThreshold`,
-    ///            which reverts `MaxLendingAboveCeiling` for any
-    ///            non-zero amount when collateral=0.
-    ///      A complete fix needs both: a sale-offer-mode bypass flag
-    ///      in createOfferInternal (for the validation), AND
-    ///      switching `_submitSaleOffer` to use that internal entry
-    ///      (for the reentrancy). Earlier in this session I tried
-    ///      the reentrancy-only fix in isolation and it broke 9 unit
-    ///      tests in EarlyWithdrawalFacetTest.t.sol, so reverted.
-    ///      The deeper fix needs a dedicated PR.
-    ///      Working alternative: `sellLoanViaBuyOffer` (covered by
-    ///      AnvilNewPositiveFlows N15).
+    /// @dev #951 — the two bugs that previously blocked `createLoanSaleOffer`
+    ///      end-to-end are now FIXED:
+    ///        (a) the shared-`nonReentrant` collision — `_submitSaleOffer` now
+    ///            routes through `OfferCreateFacet.createOfferInternal` (the
+    ///            `msg.sender == address(this)`-gated entry that doesn't re-take
+    ///            the guard), passing the exiting lender as the explicit creator;
+    ///        (b) the `collateralAmount=0` → `MaxLendingAboveCeiling` revert —
+    ///            protocol-authored sale vehicles are now exempt from the borrower
+    ///            ceiling via the `saleVehicleCreate` transient.
+    ///      Regression is guarded in CI (with the ceiling branch active) by
+    ///      `EarlyWithdrawalFacetTest.testCreateLoanSaleOfferSuccessUnmocked`.
+    ///      A full unmocked list→accept→completeLoanSale drive on Anvil is a
+    ///      follow-up (#927 re-enables the listing UI); this scenario currently
+    ///      documents the fixed posting step. Instant-exit alternative:
+    ///      `sellLoanViaBuyOffer` (AnvilNewPositiveFlows N15).
     function _scenarioPtLoanSaleOfferPosted() internal {
         console.log("");
-        console.log("=== P-T: Loan-sale offer posted, no buyer (SKIPPED) ===");
-        console.log("Skipped: createLoanSaleOffer hits a pre-existing");
-        console.log("MaxLendingAboveCeiling validation when collateral=0.");
-        console.log("Working alternative covered by N15 (sellLoanViaBuyOffer).");
-        console.log(">>> P-T SKIPPED <<<");
+        console.log("=== P-T: Loan-sale offer posting (fixed, #951) ===");
+        console.log("createLoanSaleOffer reentrancy + collateral=0 ceiling bugs");
+        console.log("fixed; CI-guarded by testCreateLoanSaleOfferSuccessUnmocked.");
+        console.log("Full anvil list->accept->complete drive: follow-up (#927).");
+        console.log(">>> P-T (posting fixed) <<<");
     }
 
     // ─── P-U: Stray ERC-20 in vault, recovery untriggered ──────────────

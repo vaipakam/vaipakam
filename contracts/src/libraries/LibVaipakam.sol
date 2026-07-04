@@ -4705,6 +4705,13 @@ library LibVaipakam {
         // Append-only per loan; `_processEntry` is idempotent so a re-sweep (or a
         // later un-flagged claim) double-counts nothing.
         mapping(uint256 => uint256[]) loanForfeitedLenderEntryIds;
+        // ─── #951 v2 (Codex #959 bind-to-live redesign) ───────────────────────
+        // The old `saleListingCollateral` snapshot lived here (last struct field)
+        // and was removed by the bind-to-live redesign: the buyer's accept now
+        // binds `collateralAmount` `>=`-style against the LIVE loan in
+        // `OfferAcceptFacet._bindTermsToOffer`, so there is no snapshot to store,
+        // cleanup, or drift. Pre-live removal is layout-safe (it was the last
+        // field appended). See docs/DesignsAndPlans/LenderSaleVehicleRedesign.md.
     }
 
     /// @notice #393 v1-b — the originating intent of a `matchIntent` loan,

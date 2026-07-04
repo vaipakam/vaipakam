@@ -414,6 +414,18 @@ contract TestMutatorFacet {
         LibVaipakam.storageSlot().saleOfferToLoanId[offerId] = loanId;
     }
 
+    /// @notice Write `s.loanToSaleOfferId[loanId] = saleOfferId` directly (the
+    ///         loan→listing forward link). Used by #951 (Codex #959) tests that
+    ///         assert a live listing freezes collateral withdrawal / direct sale.
+    function setLoanToSaleOfferIdRaw(uint256 loanId, uint256 saleOfferId) external {
+        LibVaipakam.storageSlot().loanToSaleOfferId[loanId] = saleOfferId;
+    }
+
+    // #951 v2 (Codex #959 bind-to-live) — `setSaleListingCollateralRaw` was
+    // removed with the `saleListingCollateral` snapshot mapping. The accept now
+    // binds collateral `>=` live against the loan in `_bindTermsToOffer`, so
+    // there is no snapshot for tests to scaffold.
+
     /// @notice Write `s.offsetOfferToLoanId[offerId] = loanId` directly.
     ///         Used by OfferFacet auto-complete coverage tests.
     function setOffsetOfferToLoanIdRaw(uint256 offerId, uint256 loanId) external {

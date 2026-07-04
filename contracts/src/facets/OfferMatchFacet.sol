@@ -107,6 +107,11 @@ contract OfferMatchFacet is DiamondReentrancyGuard, DiamondPausable {
     ///         that only the direct accept-and-refinance path can honour
     ///         atomically, so they are excluded from the partial-fill matcher.
     error RefinanceTaggedOfferNotMatchable();
+    /// @notice #951 (redesign D3) — a lender position-sale vehicle (a Borrower
+    ///         offer linked via `saleOfferToLoanId`) cannot be filled through the
+    ///         range matcher; it is a full, all-or-nothing transfer accepted only
+    ///         through the direct `acceptOffer` path. See LenderSaleVehicleRedesign.md.
+    error SaleVehicleNotMatchable();
     /// @notice #595 — an admitted carry-over match where the lender's pro-rated
     ///         collateral requirement exceeds the carried (pinned) amount.
     error RefinanceCarryOverCollateralShortfall();
@@ -761,6 +766,18 @@ contract OfferMatchFacet is DiamondReentrancyGuard, DiamondPausable {
         // admission reverts here, exactly as the atomic path would.
         if (s.offers[lenderOfferId].refinanceTargetLoanId != 0) {
             revert RefinanceTaggedOfferNotMatchable();
+        }
+        // #951 (redesign D3) — a lender position-sale vehicle is a full-principal,
+        // all-or-nothing transfer accepted ONLY through the direct `acceptOffer`
+        // path, where `offer.accepted` is set before the auto-complete hop. On the
+        // match path `_acceptOffer` defers the accepted-flip to the dust-close
+        // block (partialFillEnabled), which runs AFTER the auto-complete would
+        // call `completeLoanSaleInternal` — so a matched sale vehicle reverts
+        // `SaleOfferNotAccepted`. Reject the pair up front (bots skip it at
+        // preview), rather than thread the flip earlier: a position sale is not a
+        // range/partial order. See LenderSaleVehicleRedesign.md D3.
+        if (s.saleOfferToLoanId[borrowerOfferId] != 0) {
+            revert SaleVehicleNotMatchable();
         }
         {
             uint256 bRefiTarget =

@@ -56,7 +56,8 @@ library LibOfferMatch {
         OfferExpired,             // #195 — either offer's GTT deadline (`expiresAt != 0 && block.timestamp >= expiresAt`) has lapsed. The actual revert lives in `_acceptOffer` (`OfferExpired(offerId, expiresAt)`); this variant lets matching bots short-circuit at preview time. Either side can carry the lapse — both lender and borrower offers are GTT-eligible.
         AonRequiresFullFill,      // #125 — either offer carries `fillMode = Aon` but the would-be matchAmount isn't its full single-shot fill (`offer.amount`), or the offer already has a non-zero `amountFilled`. AON offers admit exactly one fill, sized to the AON-side's `amount`; any divergence aborts. Create-time invariant `amount == amountMax` keeps the "AON-required fill size" unambiguous.
         RefinanceTagged,          // #576/#595 — a refinance-tagged offer that is NOT an admissible AON carry-over match: a lender-tagged offer, or a borrower carry-over offer whose target fails the exhaustive admission mirror (`LibAutoRefinanceCheck.matchAdmissible` — stale target, transferred NFT, gated caps/kill-switch, live intent, diverged retag key, etc.). `matchOffers` reverts `RefinanceTaggedOfferNotMatchable`. Lets bots skip the pair at preview time.
-        RefinanceCarryOverCollateralShortfall // #595 — an admitted carry-over match where the lender's pro-rated collateral requirement exceeds the carried (pinned) amount; carry-over pledges no fresh collateral to top it up.
+        RefinanceCarryOverCollateralShortfall, // #595 — an admitted carry-over match where the lender's pro-rated collateral requirement exceeds the carried (pinned) amount; carry-over pledges no fresh collateral to top it up.
+        SaleVehicleTagged         // #951 (Codex #959) — the borrower offer is a lender-sale vehicle (linked via `saleOfferToLoanId`). It is fillable ONLY through `acceptOffer` (which auto-completes the linked sale); `matchOffers` reverts `SaleVehicleNotMatchable`. Appended LAST to keep every prior ordinal ABI-stable. Lets bots skip the pair at preview time.
     }
 
     /// @notice Structured return from `previewMatch`. Bots check
@@ -110,7 +111,13 @@ library LibOfferMatch {
         // ── #747 Codex r1: after the match core + risk gate, the live fill enters
         //    acceptOfferInternal(borrower) with the slice as acceptor; an
         //    accept-time gate can still reject (set by the facet wrapper). ──
-        AcceptGateBlocked        // borrower sanctioned / asset paused / borrower consent missing
+        AcceptGateBlocked,       // borrower sanctioned / asset paused / borrower consent missing
+        // #951 v2 (Codex #959 bind-to-live, round-8 P2/P3 preview parity) — the
+        // counterparty (borrower) offer is a lender-sale vehicle (linked via
+        // `saleOfferToLoanId`). `_executeMatch` reverts `SaleVehicleNotMatchable`
+        // on it, so `matchIntent` reverts too; previewIntent must mirror that
+        // rather than falsely report Ok. APPENDED — prior ordinals stay stable.
+        SaleVehicleTagged
     }
 
     /// @notice Structured outcome of `RiskAccessFacet.previewIntent`. `ok` is
@@ -282,6 +289,17 @@ library LibOfferMatch {
         returns (MatchResult memory r)
     {
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        // #951 (Codex #959 round-4) — a lender-sale vehicle is a borrower offer
+        // linked via `saleOfferToLoanId`. `matchOffers` reverts
+        // `SaleVehicleNotMatchable` on it (D3), so preview MUST mirror that here
+        // or a bot would see an `Ok` verdict for a pair that always reverts on
+        // submit. Checked on the stored id (unavailable in `_previewMatchCore`,
+        // which sees only offer VALUES); the #625 intent path never targets a
+        // sale vehicle and is already `_executeMatch`-guarded.
+        if (s.saleOfferToLoanId[borrowerOfferId] != 0) {
+            r.errorCode = MatchError.SaleVehicleTagged;
+            return r;
+        }
         // Delegate to the struct-based core so the identical match-admission
         // mirror serves both stored-offer matches and a synthesized #625
         // auto-lend intent slice — the latter has no stored lender offer to
@@ -811,6 +829,17 @@ library LibOfferMatch {
         //     multi-year slice always reverts `CadenceNotAllowed`.
         if (cp.durationDays > 365) {
             return _intentFail(res, IntentError.SliceMultiYearTerm);
+        }
+
+        // #951 v2 (Codex #959 bind-to-live, round-8 P2/P3) — mirror
+        // `_executeMatch`'s sale-vehicle rejection: a borrower offer linked via
+        // `saleOfferToLoanId` is a lender-position sale, fillable ONLY through
+        // direct `acceptOffer`. `matchIntent` → `_executeMatch` reverts
+        // `SaleVehicleNotMatchable` on it, so preview must fail here rather than
+        // return Ok. Ordered to match the live path: `_executeMatch`'s check runs
+        // after the intent body + slice-materialize guards, before the match core.
+        if (s.saleOfferToLoanId[counterpartyOfferId] != 0) {
+            return _intentFail(res, IntentError.SaleVehicleTagged);
         }
 
         // ── Every intent + slice-create guard cleared. Synthesize the single-

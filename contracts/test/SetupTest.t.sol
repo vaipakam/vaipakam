@@ -9,6 +9,7 @@ import {IDiamondCut} from "@diamond-3/interfaces/IDiamondCut.sol";
 import {OfferCreateFacet} from "../src/facets/OfferCreateFacet.sol";
 import {OfferParallelSaleFacet} from "../src/facets/OfferParallelSaleFacet.sol";
 import {OfferAcceptFacet} from "../src/facets/OfferAcceptFacet.sol";
+import {OfferPreviewFacet} from "../src/facets/OfferPreviewFacet.sol";
 import {LibVaipakam} from "../src/libraries/LibVaipakam.sol";
 import {IERC721} from "@openzeppelin/contracts/token/ERC721/IERC721.sol";
 import {OracleFacet} from "../src/facets/OracleFacet.sol";
@@ -218,6 +219,7 @@ contract SetupTest is Test {
     OfferCreateFacet offerCreateFacet;
     OfferParallelSaleFacet offerParallelSaleFacet;
     OfferAcceptFacet offerAcceptFacet;
+    OfferPreviewFacet offerPreviewFacet;
     OfferCancelFacet offerCancelFacet;
     // OfferMatchFacet — Range Orders Phase 1 matching surface (#46).
     // Production diamond cuts it (DiamondFacetNames §4 + DeployDiamond
@@ -342,6 +344,7 @@ contract SetupTest is Test {
         offerCreateFacet = new OfferCreateFacet();
         offerParallelSaleFacet = new OfferParallelSaleFacet();
         offerAcceptFacet = new OfferAcceptFacet();
+        offerPreviewFacet = new OfferPreviewFacet();
         offerCancelFacet = new OfferCancelFacet();
         offerMatchFacet = new OfferMatchFacet();
         offerMutateFacet = new OfferMutateFacet();
@@ -432,7 +435,7 @@ contract SetupTest is Test {
         // Preclose / Refinance / EarlyWithdrawal / PartialWithdrawal
         // quartet at slots 24-27 to unblock the PauseGating fold —
         // those slots stay where they are.
-        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](63);
+        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](64);
         cuts[0] = IDiamondCut.FacetCut({
             facetAddress: address(offerCreateFacet),
             action: IDiamondCut.FacetCutAction.Add,
@@ -442,6 +445,12 @@ contract SetupTest is Test {
             facetAddress: address(offerAcceptFacet),
             action: IDiamondCut.FacetCutAction.Add,
             functionSelectors: helperTest.getOfferAcceptFacetSelectors()
+        });
+        // #980 — OfferPreviewFacet (previewAccept split out of OfferAcceptFacet).
+        cuts[63] = IDiamondCut.FacetCut({
+            facetAddress: address(offerPreviewFacet),
+            action: IDiamondCut.FacetCutAction.Add,
+            functionSelectors: helperTest.getOfferPreviewFacetSelectors()
         });
         cuts[1] = IDiamondCut.FacetCut({
             facetAddress: address(profileFacet),
