@@ -130,10 +130,59 @@ Loan #8 has `allowsPartialRepay = false`, so it can't exercise the new
 revert needs a partial-enabled liquid loan — noted as a follow-up drive
 (a second scripted loan with the partial-repay offer flag).
 
-### R-3c — Tier-2 HF-swap liquidation
+### R-3c — Tier-2 HF-swap liquidation — PASS ✅
 
-Driven below (feed-price drop → `triggerLiquidation` via the registered
-`MockSwapAdapter` → UI reflection).
+Full end-to-end HF-based liquidation of loan #8 via the registered
+`MockSwapAdapter` (Tier-2). The tricky part — forcing HF < 1 while the
+collateral stays **Liquid** — was handled by moving the tLIQ feed AND
+the mock pool's `sqrtPriceX96` in **lockstep** (so the oracle's
+value-balance guard, pool-spot ≈ feed-ratio, keeps holding):
+
+1. Funded the `MockSwapAdapter` with 0.005 WETH (the loan's principal =
+   swap output) and set its output multiplier so proceeds clear the
+   oracle slippage floor.
+2. Dropped tLIQ feed → $5 and the pool ratio → 400 tLIQ/WETH in lockstep.
+   Result verified on-chain: **`calculateHealthFactor(8)` = 0.40** AND
+   **`checkLiquidity(tLIQ)` still = 0 (Liquid)** — exactly the state a
+   real HF liquidation needs. ✅
+3. `triggerLiquidation(8, [{adapterIdx: 0, data: 0x}])` (permissionless
+   caller) — **simulated OK and mined**. ✅
+4. On-chain outcome verified: the **`MockSwapAdapter` received the 1 tLIQ
+   collateral** (balance 1,000,000 → 1,000,001) and **paid out ~0.003
+   WETH proceeds**; **loan #8 → status 2 (Defaulted/liquidated)**,
+   terminal. ✅
+5. Restored tLIQ → $2,000 + pool 1:1 so the faucet's liquid
+   classification stays correct for future demos.
+
+UI (`/positions/8`): the page now shows a **defaulted/closed** state and
+no longer shows Active/Healthy. ✅
+
+This confirms the entire Tier-2 stack the PR added — the registered
+adapter, the swap-failover path, and the oracle value-balance guard —
+works end-to-end on the live testnet.
+
+### OBS-2 — a repay affordance may still render on the defaulted loan
+
+On `/positions/8` after liquidation, a repay-related string is still
+present in the page. It may be inert help text, but a live "repay"
+button on a terminal (Defaulted) loan would be a minor UI defect (the
+repay would revert). Flagged for a quick confirm — low severity, not
+blocking.
+
+## R-3d — What remains (lower priority / harder to exercise)
+
+- **repayPartial full-principal revert (#953 item 3)** — needs a
+  partial-repay-enabled liquid loan (loan #8 has it off). A second
+  scripted loan with the partial flag would exercise the
+  `PartialWouldRetireFullPrincipal` revert.
+- **Refinance completion (first pass F-006/F-007)** — now unblocked on
+  the contract side (liquid HF math works); a full New-Lender refinance
+  of a liquid loan through the UI is the remaining drive, gated on the
+  same indexer/UI-accept friction as R-3.
+- **claimInteractionRewards sanctions gate (#953 item 1)** — deployed;
+  hard to exercise live because the testnet sanctions oracle is unset
+  (fail-open → no wallet is flagged), so the gate is a no-op to observe.
+  The UI's own live re-read gate (RewardsCard) remains as belt-and-braces.
 
 ## R-4 — Branch features smoke (preview) — PASS ✅
 
@@ -166,9 +215,15 @@ out above.)
 | Infra (tLIQ Liquid, adapter registered+funded) | ✅ verified on-chain |
 | R-1 Faucet mint tLIQ/tILQ/vRENT | ✅ PASS (balances confirmed) |
 | R-2 Liquid offer creation (illiquid warning absent) | ✅ PASS |
-| R-3 Liquid loan end-to-end (HF/refi/liquidation) UI | ⛔ blocked on stalled indexer (F-001/F-004); contract path unblocked |
+| R-3 Liquid loan HF **display** (loan #8) | ✅ PASS (HF 180 "Healthy" shown) |
+| R-3c Tier-2 HF-swap **liquidation** (loan #8) | ✅ PASS (HF→0.40 liquid, adapter swap, loan Defaulted, UI reflects) |
+| R-3b repayPartial full-principal revert (#953 item 3) | ⏳ pending a partial-enabled loan |
+| R-3d Refinance completion / sanctions-gate | ⏳ contract-unblocked; UI drive pending (indexer) / not observable (oracle unset) |
 | R-4 Home nudge / faucet nav / Claims on-chain / live-sync | ✅ PASS |
+| VPFI discounts / tiers / interaction rewards | ⏳ separate surface — reviewed in R-5 (below) |
 
-Net: everything in PR #982 that could be exercised without a live
-indexer is verified working. The one remaining item (liquid loan UI
-end-to-end) is gated on the indexer being revived, not on this PR.
+Net: the faucet, the Tier-1 liquid-classification-in-UI, the HF display,
+and the full Tier-2 liquidation are all verified working end-to-end on
+the live testnet. Remaining UI drives (partial-repay revert, full
+refinance) are gated on the same stalled-indexer friction, not on this
+PR's code.
