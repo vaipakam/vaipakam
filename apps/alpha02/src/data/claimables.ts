@@ -23,13 +23,16 @@
  * collapses the whole result to `null` (unavailable) rather than a
  * confident short list that hides real, collectable funds.
  *
- * Known parity gap vs apps/defi (deliberate, tracked): the candidate set
- * is the wallet's own loans (`useMyLoans`, keyed on original
- * lender/borrower). A pure secondary-market BUYER — holding a position
- * NFT for a loan it was never an original party to — is not yet
- * discovered here; apps/defi unions an on-chain `getUserPositionLoans`
- * enumeration for that. The current code had the same gap, so this is
- * not a regression; adding the on-chain enumeration is a follow-up.
+ * Candidate discovery is a UNION of two sources (#988, closing the
+ * #958 parity gap vs apps/defi): the wallet's own indexed loans
+ * (`useMyLoans` — fast, approximate) PLUS the on-chain
+ * `getUserPositionLoansPaginated` enumeration (authoritative for the
+ * wallet's CURRENT position-NFT holdings, so a pure secondary-market
+ * buyer — holding a position NFT for a loan it was never an original
+ * party to — is discovered too). Chain-discovered loans absent from
+ * the indexer are synthesized from a live `getLoanDetails` read for
+ * BOTH sides; the ownerOf confirm below prunes the side the wallet
+ * doesn't actually hold.
  */
 import { useQuery } from '@tanstack/react-query';
 import { usePublicClient } from 'wagmi';
@@ -40,7 +43,8 @@ import {
 } from 'viem';
 import { DIAMOND_ABI_VIEM } from '@vaipakam/contracts/abis';
 import { useActiveChain } from '../chain/useActiveChain';
-import { AssetType } from '../lib/types';
+import { AssetType, LIVE_STATUS_TO_INDEXED } from '../lib/types';
+import type { IndexedLoan, IndexedLoanStatus } from './indexer';
 import { useMyLoans, type PositionLoan } from './hooks';
 
 const REFRESH_MS = 30_000;
@@ -100,11 +104,123 @@ export function useMyClaimables() {
       if (!publicClient) return null;
 
       const me = address.toLowerCase();
-      // Fast approximate layer: the wallet's loans, minus Active (a live
-      // loan has nothing to claim yet). `getClaimable` is the authority.
-      const candidates = loans.data.filter((l) => l.status !== 'active');
-
       let transportFailed = false;
+
+      // ── On-chain discovery (#988, closes the #958 parity gap) ──
+      // Enumerate every loan whose position NFT the wallet CURRENTLY
+      // holds — the source the indexer rows can't cover for a pure
+      // secondary-market buyer. A REVERT means the view is absent on
+      // this deploy (fall back to the legacy unbounded view, then give
+      // up gracefully — the indexer set stands alone, matching the
+      // pre-#988 behaviour). A TRANSPORT failure makes the defined
+      // candidate set unknowable → unavailable, per the contract above.
+      const chainIds: bigint[] = [];
+      try {
+        // Paginated so a wallet griefed with a huge position-NFT
+        // inventory can't make one unbounded eth_call revert and hide a
+        // real claimable (mirrors apps/defi #769).
+        const PAGE = 200n;
+        let offset = 0n;
+        for (;;) {
+          const [ids, , total] = (await publicClient.readContract({
+            address: diamond,
+            abi: DIAMOND_ABI_VIEM,
+            functionName: 'getUserPositionLoansPaginated',
+            args: [address, offset, PAGE],
+          })) as readonly [readonly bigint[], readonly bigint[], bigint];
+          chainIds.push(...ids);
+          offset += PAGE;
+          if (offset >= total) break;
+        }
+      } catch (e) {
+        if (!isRevert(e)) return null;
+        try {
+          const legacy = (await publicClient.readContract({
+            address: diamond,
+            abi: DIAMOND_ABI_VIEM,
+            functionName: 'getUserPositionLoans',
+            args: [address],
+          })) as readonly [readonly bigint[], readonly bigint[]];
+          chainIds.push(...legacy[0]);
+        } catch (e2) {
+          if (!isRevert(e2)) return null;
+          // Both views absent — an older deploy without the
+          // enumeration. The indexer candidates stand alone (exactly
+          // the pre-#988 behaviour).
+        }
+      }
+
+      // Chain-discovered loans the indexer rows don't carry: synthesize
+      // a row from the live loan struct, for BOTH sides — the ownerOf
+      // confirm below prunes the side the wallet doesn't hold.
+      const knownIds = new Set(loans.data.map((l) => l.loanId));
+      const extraIds = [...new Set(chainIds.map((id) => Number(id)))].filter(
+        (id) => !knownIds.has(id),
+      );
+      const synthesized = (
+        await Promise.all(
+          extraIds.map(async (id): Promise<PositionLoan[]> => {
+            try {
+              const d = (await publicClient.readContract({
+                address: diamond,
+                abi: DIAMOND_ABI_VIEM,
+                functionName: 'getLoanDetails',
+                args: [BigInt(id)],
+              })) as Record<string, unknown>;
+              const status = (
+                LIVE_STATUS_TO_INDEXED as Record<
+                  number,
+                  IndexedLoanStatus | undefined
+                >
+              )[Number(d.status)];
+              if (!status) return [];
+              const base: IndexedLoan = {
+                chainId: readChain.chainId,
+                loanId: id,
+                offerId: Number(d.offerId ?? 0n),
+                status,
+                lender: String(d.lender),
+                borrower: String(d.borrower),
+                principal: String(d.principal),
+                collateralAmount: String(d.collateralAmount),
+                assetType: Number(d.assetType),
+                collateralAssetType: Number(d.collateralAssetType),
+                lendingAsset: String(d.principalAsset),
+                collateralAsset: String(d.collateralAsset),
+                durationDays: Number(d.durationDays),
+                tokenId: String(d.tokenId),
+                collateralTokenId: String(d.collateralTokenId),
+                lenderTokenId: String(d.lenderTokenId),
+                borrowerTokenId: String(d.borrowerTokenId),
+                interestRateBps: Number(d.interestRateBps),
+                startTime: Number(d.startTime),
+                allowsPartialRepay: Boolean(d.allowsPartialRepay),
+                startBlock: 0,
+                startAt: Number(d.startTime),
+                terminalBlock: null,
+                terminalAt: null,
+                updatedAt: 0,
+              };
+              return [
+                { ...base, role: 'lender' as const },
+                { ...base, role: 'borrower' as const },
+              ];
+            } catch (e) {
+              // Revert = no such loan (stale/forged id) — skip; a
+              // transport failure is "couldn't confirm".
+              if (!isRevert(e)) transportFailed = true;
+              return [];
+            }
+          }),
+        )
+      ).flat();
+
+      // Fast approximate layer: the wallet's loans, minus Active (a live
+      // loan has nothing to claim yet), UNION the chain-discovered
+      // extras. `getClaimable` is the authority for both.
+      const candidates = [...loans.data, ...synthesized].filter(
+        (l) => l.status !== 'active',
+      );
 
       const confirmed = await Promise.all(
         candidates.map(async (loan): Promise<PositionLoan | null> => {

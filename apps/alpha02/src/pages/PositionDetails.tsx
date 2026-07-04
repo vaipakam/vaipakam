@@ -60,7 +60,11 @@ import { LoanKeeperCard } from '../components/LoanKeeperCard';
 import { LOCK_EARLY_WITHDRAWAL_SALE, useLoanSalePending } from '../data/loanSalePending';
 import { useRefinancePending } from '../data/refinancePending';
 import { ZERO_ADDRESS } from '../lib/offerSchema';
-import { AssetType } from '../lib/types';
+import {
+  AssetType,
+  LIVE_STATUS_TO_INDEXED,
+  LoanStatus,
+} from '../lib/types';
 
 type Action = 'repay' | 'claim-borrower' | 'claim-lender' | null;
 /** The page's inline confirm surfaces — ONE open at a time, so two
@@ -320,6 +324,34 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
     },
   });
 
+  // OBS-2 (#988) — the action gate must not trust a stale indexer row.
+  // One cheap live status read reconciles a row that still says
+  // "active" after the loan settled/liquidated on-chain; without it, a
+  // stalled indexer leaves a live "Repay" button on a terminal loan
+  // (doomed write). Enabled only while the ROW looks open — a terminal
+  // row only gets more terminal, so nothing to reconcile there. This is
+  // deliberately separate from `loanLive` above, which is scoped to
+  // advanced-mode strategy cards; the status truth matters in Basic
+  // mode too.
+  const liveStatus = useQuery({
+    queryKey: ['loanLiveStatus', readChain.chainId, loan.data?.loanId],
+    enabled:
+      Boolean(readClient) &&
+      Boolean(loan.data) &&
+      (loan.data?.status === 'active' ||
+        loan.data?.status === 'fallback_pending'),
+    staleTime: 15_000,
+    refetchInterval: 30_000,
+    queryFn: async () =>
+      (
+        await readLoanLive(
+          readClient!,
+          readChain.diamondAddress,
+          loan.data!.loanId,
+        )
+      ).status,
+  });
+
   // Balance gates: approve() succeeds regardless of balance, so check
   // the wallet actually holds the typed amount before any approval.
   const collateralBalance = useTokenBalance(
@@ -366,7 +398,29 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
     );
   }
 
-  const row = loan.data;
+  // OBS-2 (#988) — reconcile the indexer row against the live chain
+  // status ONCE, here, so every consumer below (action gate, state
+  // badge, cards, receipts) sees the same truth. Overrides only toward
+  // MORE settled: a live terminal (or FallbackPending) status replaces
+  // a stale open row; a live "active" never resurrects actions on a
+  // row the indexer already closed (that direction is replica lag, and
+  // the claim paths re-check live at submit anyway).
+  // Indexed as a plain number map so an unknown FUTURE enum value
+  // yields undefined (→ no override) instead of a lying type.
+  const liveOverride =
+    liveStatus.data !== undefined && liveStatus.data !== LoanStatus.Active
+      ? (
+          LIVE_STATUS_TO_INDEXED as Record<
+            number,
+            (typeof LIVE_STATUS_TO_INDEXED)[LoanStatus] | undefined
+          >
+        )[liveStatus.data]
+      : undefined;
+  const statusIsReconciled =
+    liveOverride !== undefined && liveOverride !== loan.data.status;
+  const row = statusIsReconciled
+    ? { ...loan.data, status: liveOverride! }
+    : loan.data;
   const view = loanStateView(row);
   const isRental = row.assetType !== AssetType.ERC20;
   const principal = principalMeta.data;
@@ -424,15 +478,29 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
         const [calcDue, latestBlock, liveGate] = await Promise.all([
           readRepaymentDueLive(publicClient, walletChain.diamondAddress, row.loanId),
           publicClient.getBlock({ blockTag: 'latest' }),
-          // The grace math must use the LIVE term — a keeper extend
-          // (extendLoanInPlace) moves durationDays under the indexer
-          // row, and the contract judges gracePeriod(loan.durationDays)
-          // on the live loan. (Rental closes don't gate on grace.)
-          row.assetType === AssetType.ERC20
-            ? readLoanLive(publicClient, walletChain.diamondAddress, row.loanId)
-            : Promise.resolve(null),
+          // The LIVE loan, unconditionally (OBS-2 #988): its STATUS is
+          // the authoritative repayability gate for rentals too, and
+          // for ERC-20 loans its term fields feed the grace math below
+          // (a keeper extendLoanInPlace moves durationDays under the
+          // indexer row; the contract judges gracePeriod on the live
+          // term).
+          readLoanLive(publicClient, walletChain.diamondAddress, row.loanId),
         ]);
         const chainNow = latestBlock.timestamp;
+        // repayLoan accepts only Active + FallbackPending (the cure
+        // path). Anything else means the loan already settled or was
+        // liquidated — abort BEFORE any balance check, approval, or
+        // wallet prompt instead of estimating a doomed write. This is
+        // the submit-side twin of the render-time reconciliation: it
+        // covers the race where the user clicks before the live-status
+        // query lands.
+        if (
+          liveGate.status !== LoanStatus.Active &&
+          liveGate.status !== LoanStatus.FallbackPending
+        ) {
+          setError(copy.errors.loanAlreadySettled);
+          return;
+        }
         // Two more independent live reads, one round-trip: the role
         // came from a CACHED ownerOf (repayLoan is PERMISSIONLESS — a
         // stale "borrower" could pay off a position whose claim now
@@ -447,7 +515,7 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
           }),
           // Grace only gates ERC-20 repays — don't spend a read on
           // rental closes.
-          liveGate
+          row.assetType === AssetType.ERC20
             ? readGraceSecondsLive({
                 publicClient,
                 diamondAddress: walletChain.diamondAddress,
@@ -458,7 +526,7 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
         // repayLoan reverts RepaymentPastGracePeriod once past the
         // grace window — fail BEFORE the approval, judged on the LIVE
         // term fields (see the liveGate read above).
-        if (liveGate) {
+        if (row.assetType === AssetType.ERC20) {
           const endTime = liveGate.startTime + liveGate.durationDays * 86_400n;
           if (chainNow > endTime + graceSec) {
             setError(copy.errors.pastGrace);
@@ -472,7 +540,10 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
         // estimate only over-approves (repayLoan pulls what it
         // recomputes) and the pad below is never spent.
         let totalDue = calcDue;
-        if (totalDue === 0n && row.status === 'fallback_pending' && liveGate) {
+        // Keyed on the LIVE status (not the row's): the cure estimate
+        // must fire exactly when the chain says FallbackPending, even
+        // if the indexer row hasn't caught up to that state yet.
+        if (totalDue === 0n && liveGate.status === LoanStatus.FallbackPending) {
           const live = liveGate;
           const elapsedDays =
             chainNow > live.startTime ? (chainNow - live.startTime) / 86_400n : 0n;
@@ -978,6 +1049,15 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
         <span className={`badge badge-${view.badge}`}>{view.label}</span>
       </div>
 
+      {statusIsReconciled ? (
+        // OBS-2 (#988) — the badge above shows the LIVE on-chain state,
+        // which is ahead of the Positions list. Say so, or the mismatch
+        // reads as a bug.
+        <div className="banner banner-info" role="status">
+          <span className="banner-body">{copy.positions.settledAhead}</span>
+        </div>
+      ) : null}
+
       <section className="card">
         <dl className="receipt" style={{ margin: 0 }}>
           <div className="receipt-row">
@@ -1127,7 +1207,16 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
           </div>
           {collateralOverBalance ? (
             <p className="field-hint" style={{ color: 'var(--danger)', marginTop: 8 }}>
-              {copy.errors.needMore(collateral.symbol)}
+              {copy.errors.needMore(
+                collateral.symbol,
+                collateralInputWei !== null &&
+                  collateralBalance.data !== undefined
+                  ? formatTokenAmount(
+                      collateralInputWei - collateralBalance.data,
+                      collateral.decimals,
+                    )
+                  : undefined,
+              )}
             </p>
           ) : null}
           {confirmingSurface === 'collateral' && collateralInputWei !== null ? (
@@ -1239,7 +1328,15 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
           </div>
           {partialOverBalance ? (
             <p className="field-hint" style={{ color: 'var(--danger)', marginTop: 8 }}>
-              {copy.errors.needMore(principal.symbol)}
+              {copy.errors.needMore(
+                principal.symbol,
+                partialInputWei !== null && principalBalance.data !== undefined
+                  ? formatTokenAmount(
+                      partialInputWei - principalBalance.data,
+                      principal.decimals,
+                    )
+                  : undefined,
+              )}
             </p>
           ) : null}
           {confirmingSurface === 'partial' && partialInputWei !== null ? (

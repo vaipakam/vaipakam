@@ -535,6 +535,10 @@ export const copy = {
       `If you do nothing and the loan passes its due date and grace period, the lender can receive your ${collateral} collateral.`,
     whatIfNothingLender:
       'If the borrower does not repay by the due date plus grace period, you can claim their collateral.',
+    // OBS-2 (#988) — shown when the page's live on-chain read is ahead
+    // of the position lists (stalled/lagging indexer).
+    settledAhead:
+      'This position has already closed on-chain — the status here is live. Your lists may take a moment to catch up.',
   },
 
   claims: {
@@ -573,7 +577,13 @@ export const copy = {
   },
 
   errors: {
-    needMore: (asset: string) => `You need more ${asset} to continue.`,
+    // F-20260703-005 (#988) — say HOW MUCH more whenever the caller can
+    // compute the shortfall; the amount-less form is the fallback for
+    // sites that can't (e.g. unknown decimals).
+    needMore: (asset: string, shortBy?: string) =>
+      shortBy
+        ? `You need about ${shortBy} more ${asset} to continue.`
+        : `You need more ${asset} to continue.`,
     partialOverPrincipal:
       'That covers the loan’s whole remaining principal. Use “Repay this loan” instead — it settles the loan properly and releases your collateral.',
     notAToken:

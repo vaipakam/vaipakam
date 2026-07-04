@@ -8,6 +8,7 @@ import { useModal } from 'connectkit';
 import { useActiveChain } from '../chain/useActiveChain';
 import { useSanctionsCheck } from '../data/sanctions';
 import { copy } from '../content/copy';
+import { formatTokenAmount } from '../lib/format';
 import type { CheckItem } from './Checklist';
 import type { TokenMeta } from '../contracts/erc20';
 
@@ -106,7 +107,17 @@ export function useEligibility(inputs: EligibilityInputs): CheckItem[] {
       id: 'balance',
       label:
         balanceKnown && asset.balance! < asset.required!
-          ? copy.errors.needMore(symbol)
+          ? // F-20260703-005 (#988) — state the shortfall when decimals
+            // are known; plain "need more" only when they aren't.
+            copy.errors.needMore(
+              symbol,
+              asset.meta
+                ? formatTokenAmount(
+                    asset.required! - asset.balance!,
+                    asset.meta.decimals,
+                  )
+                : undefined,
+            )
           : copy.checks.balanceSufficient(symbol),
       state: !balanceKnown
         ? 'pending'

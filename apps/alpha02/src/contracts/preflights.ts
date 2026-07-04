@@ -23,6 +23,7 @@ import {
 import { DIAMOND_ABI_VIEM } from '@vaipakam/contracts/abis';
 import { copy } from '../content/copy';
 import { defaultGraceSeconds } from '../lib/grace';
+import { formatTokenAmount } from '../lib/format';
 
 export { defaultGraceSeconds };
 
@@ -49,7 +50,25 @@ export async function assertErc20BalanceLive(opts: {
     throw new Error(copy.errors.checkRetry);
   }
   if (held < opts.amount) {
-    throw new Error(copy.errors.needMore(opts.symbol ?? 'the required asset'));
+    // F-20260703-005 (#988) — tell the user HOW MUCH is missing, not
+    // just that something is. The decimals read runs only on this
+    // failure path; if it fails, fall back to the amount-less message
+    // rather than formatting the shortfall at a guessed scale (a wrong
+    // number is worse than none).
+    let shortBy: string | undefined;
+    try {
+      const decimals = await opts.publicClient.readContract({
+        address: opts.token,
+        abi: erc20Abi,
+        functionName: 'decimals',
+      });
+      shortBy = formatTokenAmount(opts.amount - held, decimals);
+    } catch {
+      shortBy = undefined;
+    }
+    throw new Error(
+      copy.errors.needMore(opts.symbol ?? 'the required asset', shortBy),
+    );
   }
 }
 
