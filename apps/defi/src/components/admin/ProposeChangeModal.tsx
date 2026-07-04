@@ -15,19 +15,24 @@
  *      modified are pre-populated from the current on-chain values
  *      so unchanged fields stay unchanged.
  *
- * On submit: encode the calldata via `encodeKnobSetCall`, build the
- * Safe deep-link via `buildSafeDeepLink`, open in a new tab, and
- * show a confirmation that the operator's been handed off to Safe.
+ * On submit: encode the calldata via `encodeKnobSetCall`, build a
+ * Safe Transaction Builder handoff (`buildSafeHandoff`), download
+ * the importable JSON batch, open Transaction Builder in a new tab.
  *
  * No on-chain write happens from this UI — Safe's flow is the
- * canonical signing surface. We're a calldata composer + deep-link
- * builder.
+ * canonical signing surface. We're a calldata composer + handoff
+ * packager.
  */
 
 import { useState, useMemo } from 'react';
 import { ExternalLink, Shield, X } from 'lucide-react';
 import type { KnobMeta } from '../../lib/protocolConsoleKnobs';
-import { encodeKnobSetCall, buildSafeDeepLink } from '../../lib/safeDeepLink';
+import {
+  encodeKnobSetCall,
+  buildSafeHandoff,
+  openSafeGovernanceHandoff,
+  type SafeHandoff,
+} from '../../lib/safeDeepLink';
 import { DIAMOND_ABI_VIEM } from '@vaipakam/contracts/abis';
 import {
   formatBound,
@@ -68,7 +73,7 @@ export function ProposeChangeModal({
     knob.setter.args.map(() => ''),
   );
   const [error, setError] = useState<string | null>(null);
-  const [openedUrl, setOpenedUrl] = useState<string | null>(null);
+  const [handoff, setHandoff] = useState<SafeHandoff | null>(null);
 
   // Pre-fill the matching arg with the current value (if it
   // structurally maps). For single-arg setters the pre-fill is
@@ -125,20 +130,23 @@ export function ProposeChangeModal({
       setError(`Calldata encoding failed: ${e instanceof Error ? e.message : String(e)}`);
       return;
     }
-    const url = buildSafeDeepLink({
-      safe: safeAddress,
-      chainId,
-      to: diamondAddress,
-      data: calldata,
-    });
-    if (!url) {
+    const handoff = buildSafeHandoff(
+      {
+        safe: safeAddress,
+        chainId,
+        to: diamondAddress,
+        data: calldata,
+      },
+      { batchName: `Vaipakam — ${knob.setter.fn}` },
+    );
+    if (!handoff) {
       setError(
         `Chain id ${chainId} isn't currently supported by Safe. Use a Safe-supported chain or coordinate signers manually.`,
       );
       return;
     }
-    setOpenedUrl(url);
-    window.open(url, '_blank', 'noopener,noreferrer');
+    setHandoff(handoff);
+    openSafeGovernanceHandoff(handoff);
   };
 
   return (
@@ -206,10 +214,12 @@ export function ProposeChangeModal({
         >
           <Shield size={16} style={{ flexShrink: 0, marginTop: 2, color: '#f59e0b' }} />
           <span>
-            <strong>Sign in Safe.</strong> Submitting opens app.safe.global
-            with this transaction pre-filled. The proposal won't take
-            effect until enough Safe signers approve and any timelock
-            delay elapses. Vaipakam never signs on your behalf.
+            <strong>Sign in Safe.</strong> Submitting downloads a
+            Transaction Builder JSON batch and opens app.safe.global →
+            Transaction Builder. Import the downloaded file, review the
+            batch, then sign. The proposal won't take effect until
+            enough Safe signers approve and any timelock delay elapses.
+            Vaipakam never signs on your behalf.
           </span>
         </div>
 
@@ -268,18 +278,23 @@ export function ProposeChangeModal({
           </p>
         )}
 
-        {openedUrl && (
-          <p style={{ margin: 0, fontSize: '0.82rem', opacity: 0.85 }}>
-            Opened Safe in a new tab. If it didn't open,{' '}
+        {handoff && (
+          <p style={{ margin: 0, fontSize: '0.82rem', opacity: 0.85, lineHeight: 1.45 }}>
+            Downloaded <strong>{handoff.batchFileName}</strong> and opened
+            Transaction Builder. In Safe: upload that file → Create Batch → sign.
+            If the tab didn't open,{' '}
             <a
-              href={openedUrl}
+              href={handoff.txBuilderUrl}
               target="_blank"
               rel="noopener noreferrer"
               style={{ color: 'var(--brand)' }}
             >
-              click here
+              open Safe here
             </a>
-            .
+            . Manual fallback — To{' '}
+            <code style={{ wordBreak: 'break-all' }}>{handoff.transaction.to}</code>,
+            Data{' '}
+            <code style={{ wordBreak: 'break-all' }}>{handoff.transaction.data}</code>
           </p>
         )}
 

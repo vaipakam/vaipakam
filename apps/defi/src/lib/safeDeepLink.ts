@@ -1,33 +1,39 @@
 /**
- * T-042 Phase 4 — Safe deep-link composer.
+ * T-042 Phase 4 — Safe governance handoff composer.
  *
  * For every "Propose change" button on the admin dashboard, we
  * compose the calldata for the target setter and hand the operator
- * off to Safe (https://app.safe.global) with the transaction
- * pre-filled. The dashboard NEVER signs the proposal — that's
- * Safe's job, and Safe's UI is the world's best multisig signing
- * flow. We just package the calldata and open the right URL.
+ * off to Safe (https://app.safe.global). The dashboard NEVER signs
+ * the proposal — Safe owns the multisig signing flow.
  *
- * The deep-link format used here is Safe's `tx-builder` /
- * `transactions/queue` flow: a query-string-encoded JSON payload
- * Safe parses on landing and pre-populates the proposal review.
- * This is the pattern major DeFi governance UIs already use.
+ * Safe's current web app does NOT honour a `?txs=` query on
+ * `/transactions/queue` (that URL only lists already-proposed txs).
+ * The supported path is:
+ *
+ *   1. Open Transaction Builder inside Safe (`/apps/open?appUrl=…`).
+ *   2. Import a Transaction Builder JSON batch (the format tx-builder
+ *      exports/downloads).
+ *
+ * `buildSafeHandoff` returns both the builder URL and an importable
+ * batch file; `openSafeGovernanceHandoff` downloads the JSON and
+ * opens Safe in a new tab.
  *
  * Phase 4 explicitly does NOT wrap the call inside a TimelockController
  * `schedule` — the protocol's governance topology already routes
  * Safe → TimelockController via the Safe's transaction-execution
  * delegate, and the timelock proposal queue (T-042 reads it
  * separately for the "pending change" indicator) reflects the
- * post-Safe-approval state. If a deploy ever splits Safe and
- * Timelock onto different governance paths, this composer is the
- * place to add the schedule-wrap.
+ * post-Safe-approval state.
  */
 
 import { encodeFunctionData, type Abi } from 'viem';
 import type { KnobMeta } from './protocolConsoleKnobs';
 
-/** Per-network Safe app subdomain. Same Safe URL handles both
- *  mainnet and L2 chains via the `safe=<eip3770-prefix>` query. */
+/** Hosted Transaction Builder Safe App (see safe-wallet-monorepo
+ *  `useTxBuilderApp.ts`). */
+const TX_BUILDER_APP_URL = 'https://apps-portal.safe.global/tx-builder';
+
+/** Per-network Safe app EIP-3770 prefix. */
 const EIP3770_PREFIX_BY_CHAIN_ID: Record<number, string> = {
   1: 'eth',
   10: 'oeth',
@@ -35,7 +41,6 @@ const EIP3770_PREFIX_BY_CHAIN_ID: Record<number, string> = {
   137: 'matic',
   8453: 'base',
   42161: 'arb1',
-  // Testnet equivalents that Safe currently supports:
   11155111: 'sep',
   84532: 'basesep',
   421614: 'arb-sep',
@@ -53,61 +58,130 @@ export interface SafeDeepLinkParams {
   to: string;
   /** Encoded calldata for the setter. */
   data: string;
-  /** Native value to send. Always 0 for governance writes; kept for
-   *  API symmetry with future calls. */
+  /** Native value to send. Always 0 for governance writes. */
   value?: string;
 }
 
-/**
- * Build the Safe deep-link URL. Returns `null` when the chain isn't
- * Safe-supported (e.g. anvil-localhost, polygon-zkevm pre-Safe).
- */
-export function buildSafeDeepLink(p: SafeDeepLinkParams): string | null {
-  const prefix = EIP3770_PREFIX_BY_CHAIN_ID[p.chainId];
-  if (!prefix) return null;
-  // Safe Transaction Builder accepts a base64-or-jsonurl-encoded
-  // payload via the `txs` param. We use the standard
-  // safe-apps-sdk-compatible flat shape: an array of `{to, value, data}`.
-  // This is what the Safe Apps SDK serialises and what Safe's UI
-  // accepts on a deep-link landing.
-  const payload = [
-    {
-      to: p.to,
-      value: p.value ?? '0',
-      data: p.data,
-      operation: 0,
-    },
-  ];
-  const safeIdentifier = `${prefix}:${p.safe}`;
-  // Base URL: Safe's transaction-queue route. Adding the txs param
-  // pre-populates the create-transaction modal.
-  const txsB64 = encodeJsonForUrl(payload);
-  return `https://app.safe.global/transactions/queue?safe=${encodeURIComponent(
-    safeIdentifier,
-  )}&txs=${txsB64}`;
+/** Transaction Builder batch file (custom-hex-data row shape). */
+export interface SafeTxBatchFile {
+  version: '1.0';
+  chainId: string;
+  createdAt: number;
+  meta: {
+    name: string;
+    description: string;
+    createdFromSafeAddress: string;
+    createdFromOwnerAddress: string;
+  };
+  transactions: Array<{
+    to: string;
+    value: string;
+    data: string;
+  }>;
 }
 
-/** URL-safe base64 of a JSON-stringified payload. Browser-native:
- *  no extra dep. */
-function encodeJsonForUrl(value: unknown): string {
-  const json = JSON.stringify(value);
-  // btoa requires Latin-1; route via TextEncoder + spread to bypass.
-  const bytes = new TextEncoder().encode(json);
-  let bin = '';
-  for (let i = 0; i < bytes.length; i++) bin += String.fromCharCode(bytes[i]);
-  return btoa(bin).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+export interface SafeHandoff {
+  /** Opens Safe with Transaction Builder loaded for this Safe. */
+  txBuilderUrl: string;
+  /** Import this file in Transaction Builder → upload JSON batch. */
+  batchFile: SafeTxBatchFile;
+  batchFileName: string;
+  /** Copy-paste fallback if import is skipped. */
+  transaction: {
+    to: string;
+    value: string;
+    data: string;
+  };
+}
+
+export interface SafeHandoffMeta {
+  batchName?: string;
+  description?: string;
+}
+
+/**
+ * Build a Safe governance handoff package. Returns `null` when the
+ * chain isn't Safe-supported (e.g. anvil-localhost).
+ */
+export function buildSafeHandoff(
+  p: SafeDeepLinkParams,
+  meta?: SafeHandoffMeta,
+): SafeHandoff | null {
+  const prefix = EIP3770_PREFIX_BY_CHAIN_ID[p.chainId];
+  if (!prefix) return null;
+
+  const safeIdentifier = `${prefix}:${p.safe}`;
+  const txBuilderUrl =
+    `https://app.safe.global/apps/open?` +
+    `safe=${encodeURIComponent(safeIdentifier)}` +
+    `&appUrl=${encodeURIComponent(TX_BUILDER_APP_URL)}`;
+
+  const transaction = {
+    to: p.to,
+    value: p.value ?? '0',
+    data: p.data,
+  };
+
+  const batchName = meta?.batchName ?? 'Vaipakam governance proposal';
+  const batchFile: SafeTxBatchFile = {
+    version: '1.0',
+    chainId: String(p.chainId),
+    createdAt: Date.now(),
+    meta: {
+      name: batchName,
+      description:
+        meta?.description ?? 'Generated by Vaipakam protocol console',
+      createdFromSafeAddress: p.safe,
+      createdFromOwnerAddress: '',
+    },
+    transactions: [transaction],
+  };
+
+  const slug =
+    batchName
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, '-')
+      .replace(/^-|-$/g, '')
+      .slice(0, 48) || 'vaipakam-proposal';
+
+  return {
+    txBuilderUrl,
+    batchFile,
+    batchFileName: `${slug}.json`,
+    transaction,
+  };
+}
+
+/** Trigger a browser download of the Transaction Builder batch JSON. */
+export function downloadSafeTxBatch(handoff: SafeHandoff): void {
+  const blob = new Blob([JSON.stringify(handoff.batchFile, null, 2)], {
+    type: 'application/json',
+  });
+  const objectUrl = URL.createObjectURL(blob);
+  const anchor = document.createElement('a');
+  anchor.href = objectUrl;
+  anchor.download = handoff.batchFileName;
+  anchor.click();
+  URL.revokeObjectURL(objectUrl);
+}
+
+/** Download the batch file and open Safe Transaction Builder. */
+export function openSafeGovernanceHandoff(handoff: SafeHandoff): void {
+  downloadSafeTxBatch(handoff);
+  window.open(handoff.txBuilderUrl, '_blank', 'noopener,noreferrer');
+}
+
+/**
+ * @deprecated Use `buildSafeHandoff` — returns only the Transaction
+ * Builder URL (the old `?txs=` queue deep-link is not supported by
+ * Safe's current web app).
+ */
+export function buildSafeDeepLink(p: SafeDeepLinkParams): string | null {
+  return buildSafeHandoff(p)?.txBuilderUrl ?? null;
 }
 
 /**
  * Encode the calldata for a knob's setter given a single new value.
- *
- * Most setters take one arg. A few take a tuple (e.g. fees-config
- * sets treasuryFeeBps + loanInitiationFeeBps in one call); for those
- * the dashboard collects all needed args before calling this.
- *
- * The `args` parameter accepts the new values in the same order as
- * `knob.setter.args`. Type coercion to bigint / boolean / 0x-prefixed
- * hex happens here based on each arg's declared type.
  */
 export function encodeKnobSetCall(
   knob: KnobMeta,
@@ -127,8 +201,6 @@ export function encodeKnobSetCall(
   });
 }
 
-/** Coerce a string-or-number input into the right viem-compatible
- *  type for the named Solidity type. */
 function coerceArg(raw: string | number | bigint | boolean, solType: string): unknown {
   if (typeof raw === 'boolean') return raw;
   if (typeof raw === 'bigint') return raw;
@@ -139,7 +211,6 @@ function coerceArg(raw: string | number | bigint | boolean, solType: string): un
   if (solType === 'address') return raw as string;
   if (solType === 'bytes32') return raw as string;
   if (solType === 'string') return raw as string;
-  // Numeric types — uint*, int*. Coerce string/number to bigint.
   if (typeof raw === 'number') return BigInt(raw);
   if (typeof raw === 'string') return BigInt(raw);
   return raw;
