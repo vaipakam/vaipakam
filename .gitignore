@@ -9,6 +9,12 @@ states/
 node_modules
 dist/
 
+# This is a pnpm workspace (packageManager: pnpm@10.4.1). A stray npm/yarn
+# lockfile makes VS Code's package-manager detector report "multiple lockfiles"
+# and can desync installs — keep pnpm-lock.yaml the only lockfile in the tree.
+package-lock.json
+yarn.lock
+
 # Debug info
 *.dbg.json
 *.tsbuildinfo
