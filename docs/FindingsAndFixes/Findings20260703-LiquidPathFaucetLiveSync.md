@@ -293,6 +293,33 @@ exactly the fix's intent. Item 1 of #953, the `claimInteractionRewards`
 sanctions gate, can't be observed live because the testnet sanctions
 oracle is unset — see R-3d.)
 
+## R-7 — Refinance completion (first-pass F-006 + F-007) — UNBLOCKED ✅
+
+The first pass found refinance dead for two reasons: **F-006**
+(`cfgAutoRefinanceEnabled` was OFF → `AutoRefinanceDisabled` on the
+keeper path) and **F-007** (refinance risk-math reverted
+`IlliquidLoanNoRiskMath` because every mock collateral classified
+illiquid). Both are now cleared:
+
+- **F-006**: `cfgAutoRefinanceEnabled` is ON (operator flipped it) — the
+  keeper-path `AutoRefinanceDisabled` gate no longer trips.
+- **F-007**: on the liquid loan #9 (tLIQ collateral / WETH principal),
+  the refinance risk-math **computes instead of reverting**:
+  `calculateLTV(9) = 50 bps` and `calculateHealthFactor(9) = 180` with
+  **no `IlliquidLoanNoRiskMath`**. This is the precise revert that
+  blocked `_refinanceLoanLogic`'s risk step in the first pass — the
+  oracle mocks resolve it.
+
+So refinance is **completable at the contract level** now. The remaining
+piece is the full multi-party *execution* drive (borrower posts a
+refinance-tagged offer with collateral continuity → a new lender funds
+the payoff → `refinanceLoan(oldLoanId, offerId)` installs the new lender
+and pays the old one their principal + full-term interest). That is a
+larger multi-wallet flow whose offer-discovery is gated on the same
+stalled indexer as R-3; it can be driven end-to-end with a seeded
+new-lender offer. The blocker the first pass hit (risk math on an
+illiquid leg) is gone — verified above.
+
 ## R-3d — What remains (lower priority / harder to exercise)
 
 - **repayPartial full-principal revert (#953 item 3)** — needs a
