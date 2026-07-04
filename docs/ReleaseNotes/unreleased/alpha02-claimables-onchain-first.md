@@ -23,9 +23,12 @@ position no longer shows a phantom claim.
 The honesty contract is preserved: a per-loan revert means "not
 claimable this side" and is excluded, while a transport failure means
 "couldn't confirm" and collapses the whole result to unavailable rather
-than a confident short list that could hide real funds. One deliberate,
-tracked parity gap remains vs apps/defi: a pure secondary-market buyer
-(holding a position NFT for a loan it was never an original party to)
-isn't discovered yet — the candidate set is the wallet's own loans. The
-prior code had the same gap, so this isn't a regression; unioning the
-on-chain `getUserPositionLoans` enumeration is a follow-up.
+than a confident short list that could hide real funds. The
+secondary-market parity gap that existed when this thread started —
+a pure position-NFT buyer, never an original party to the loan, wasn't
+discovered because the candidate set was only the wallet's own loans —
+was closed later in this same batch: the candidate set now unions the
+indexed loans with the on-chain position-NFT enumeration
+(`getUserPositionLoansPaginated`), so chain-held positions are found
+even when the indexer has never heard of the wallet (see the #988
+remediation thread).

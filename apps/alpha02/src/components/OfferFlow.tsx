@@ -1107,33 +1107,39 @@ export function OfferFlow({ side }: { side: Side }) {
               <p className="muted">Looking for matches…</p>
             ) : matches === null ? (
               <p className="muted">{copy.match.unavailable}</p>
-            ) : matches.length === 0 ? (
-              <>
-                <MarketFreshnessNote />
-                <p className="muted">{text.matchEmpty}</p>
-              </>
             ) : (
               <>
-                <div className="row-list">
-                  {matches.map((o) => (
-                    <MatchOfferRow
-                      key={o.offerId}
-                      offer={o}
-                      side={side}
-                      onChoose={() => {
-                        setSelected(o);
-                        setMode('accept');
-                        // A DIFFERENT deal needs a fresh acknowledgement
-                        // — never carry consent across selections.
-                        set({ riskAndTermsConsent: false });
-                        setStep('review');
-                      }}
-                    />
-                  ))}
-                </div>
-                <p className="muted" style={{ marginTop: 8 }}>
-                  {copy.match.wholeOfferNote}
-                </p>
+                {/* Rendered for EMPTY and NON-EMPTY lists alike (it
+                    self-gates on cursor staleness): a stale snapshot
+                    with a few old matches is just as misleading as a
+                    stale empty one — better offers may be missing. */}
+                <MarketFreshnessNote />
+                {matches.length === 0 ? (
+                  <p className="muted">{text.matchEmpty}</p>
+                ) : (
+                  <>
+                    <div className="row-list">
+                      {matches.map((o) => (
+                        <MatchOfferRow
+                          key={o.offerId}
+                          offer={o}
+                          side={side}
+                          onChoose={() => {
+                            setSelected(o);
+                            setMode('accept');
+                            // A DIFFERENT deal needs a fresh acknowledgement
+                            // — never carry consent across selections.
+                            set({ riskAndTermsConsent: false });
+                            setStep('review');
+                          }}
+                        />
+                      ))}
+                    </div>
+                    <p className="muted" style={{ marginTop: 8 }}>
+                      {copy.match.wholeOfferNote}
+                    </p>
+                  </>
+                )}
               </>
             )}
           </div>

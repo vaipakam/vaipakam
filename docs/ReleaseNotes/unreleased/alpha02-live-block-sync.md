@@ -4,10 +4,15 @@ alpha02 now reflects on-chain transactions in the UI within a block
 instead of waiting on the 30-second indexer poll. A single mounted
 `LiveChainSync` component watches the head block and, on each new block,
 invalidates only the transaction-driven query caches (offers, loans,
-positions, claimables, vault balances, keeper enables, sale/refinance
-pendings, VPFI) — static config (protocol fees, tier tables, token
-metadata, curated lists) is deliberately left alone so a fast block
-cadence doesn't churn reads that never move per block.
+positions, claimables, vault balances, sale/refinance pendings) —
+static config (protocol fees, tier tables, token metadata, curated
+lists) is deliberately left alone so a fast block cadence doesn't churn
+reads that never move per block. Two transaction-driven surfaces are
+deliberately NOT in the block-driven set: per-loan keeper enables and
+the VPFI snapshot. Their toggles patch the cache with the mined value
+at the call site, and a block-driven refetch through a lagging public
+RPC could overwrite that patch with pre-transaction state — they
+reconcile via their own interval refetch instead.
 
 The layer is transport-adaptive. When a chain has a WebSocket RPC URL
 configured (new optional `VITE_<CHAIN>_WSS_URL` env vars, defaulting to

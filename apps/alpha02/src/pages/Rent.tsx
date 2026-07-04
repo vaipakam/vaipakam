@@ -921,27 +921,33 @@ function RentNftFlow() {
             <p className="muted">Loading rental listings…</p>
           ) : listings === null ? (
             <p className="muted">{copy.rent.browseUnavailable}</p>
-          ) : listings.length === 0 ? (
-            <>
-              <MarketFreshnessNote />
-              <p className="muted">{copy.rent.browseEmpty}</p>
-            </>
           ) : (
-            <div className="row-list">
-              {listings.map((o) => (
-                <RentalListingRow
-                  key={o.offerId}
-                  offer={o}
-                  bufferBps={bufferBps}
-                  onChoose={() => {
-                    setSelected(o);
-                    // A different listing needs a fresh acknowledgement.
-                    setConsent(false);
-                    setStep('review');
-                  }}
-                />
-              ))}
-            </div>
+            <>
+              {/* Rendered for EMPTY and NON-EMPTY lists alike (it
+                  self-gates on cursor staleness): a stale snapshot with
+                  a few old listings is just as misleading as a stale
+                  empty one — newer listings may be missing. */}
+              <MarketFreshnessNote />
+              {listings.length === 0 ? (
+                <p className="muted">{copy.rent.browseEmpty}</p>
+              ) : (
+                <div className="row-list">
+                  {listings.map((o) => (
+                    <RentalListingRow
+                      key={o.offerId}
+                      offer={o}
+                      bufferBps={bufferBps}
+                      onChoose={() => {
+                        setSelected(o);
+                        // A different listing needs a fresh acknowledgement.
+                        setConsent(false);
+                        setStep('review');
+                      }}
+                    />
+                  ))}
+                </div>
+              )}
+            </>
           )}
         </div>
       ) : null}

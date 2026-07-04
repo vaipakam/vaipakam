@@ -45,6 +45,8 @@ Base Sepolia already carries the deployed faucet trio (`tLIQ`, `tILQ`,
 `vRENT`); the oracle/swap wiring is applied when an operator with the
 admin + risk-admin roles runs the script (deployer + admin broadcasts).
 Until then the faucet mints work but `tLIQ` reads illiquid — expected,
-not a regression. Follow-ups: fund the `ZeroExProxyMock` with output
-tokens and set its rate before exercising HF liquidation, and run the
-same script on Arbitrum Sepolia.
+not a regression. Follow-ups: top up the **`mockSwapAdapter`** float
+with output tokens for any loan principal outside the seeded faucet
+set before exercising HF liquidation (the legacy `ZeroExProxyMock`
+needs no funding — the Phase-7a path ignores it), and run the same
+script on Arbitrum Sepolia.
