@@ -344,6 +344,22 @@ contract DeployTestnetMocks is Script {
         if (!_adapterRegistered(diamond, address(swapAdapter))) {
             AdminFacet(diamond).addSwapAdapter(address(swapAdapter));
         }
+        // Prune every OTHER registered adapter. Pre-hardening runs left
+        // an UNGATED MockSwapAdapter registered — its public setters
+        // let anyone force reverts / skew payouts for liquidations
+        // routed at its adapterIdx, so replacing without removing keeps
+        // the griefing surface alive (Codex #982 round-7). Removal by
+        // ADDRESS is order-independent, so iterating a pre-removal
+        // snapshot is safe.
+        {
+            address[] memory existing = AdminFacet(diamond).getSwapAdapters();
+            for (uint256 i; i < existing.length; ++i) {
+                if (existing[i] != swapAdapter) {
+                    AdminFacet(diamond).removeSwapAdapter(existing[i]);
+                    console.log("Removed stale swap adapter:", existing[i]);
+                }
+            }
+        }
         vm.stopBroadcast();
 
         // ── Step 3: persist the testnetMocks object ────────────────────

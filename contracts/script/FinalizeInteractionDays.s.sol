@@ -67,6 +67,12 @@ contract FinalizeInteractionDays is Script {
         address diamond = Deployments.readDiamond();
         uint256 fromDay = vm.envOr("FINALIZE_FROM_DAY", uint256(0));
         uint256 maxDays = vm.envOr("FINALIZE_MAX_DAYS", uint256(30));
+        // Bound the SCAN too, not just finalizations: with the default
+        // FROM_DAY=0 a long-running testnet would re-inspect every
+        // already-finalized day (an RPC view call each) before reaching
+        // the backlog. When the cap trips, the log tells the operator
+        // what FINALIZE_FROM_DAY to pass next.
+        uint256 scanCap = vm.envOr("FINALIZE_SCAN_CAP", uint256(500));
 
         InteractionRewardsFacet ir = InteractionRewardsFacet(diamond);
         RewardReporterFacet rr = RewardReporterFacet(diamond);
@@ -106,7 +112,10 @@ contract FinalizeInteractionDays is Script {
 
         // ── Step 3: close + finalize every elapsed, unfinalized day ──
         uint256 processed;
-        for (uint256 d = fromDay; d < today && processed < maxDays; ++d) {
+        uint256 scanned;
+        uint256 d = fromDay;
+        for (; d < today && processed < maxDays && scanned < scanCap; ++d) {
+            ++scanned;
             (bool finalized, , ) = ra.getDailyGlobalInterest(d);
             if (finalized) continue;
 
@@ -126,6 +135,12 @@ contract FinalizeInteractionDays is Script {
         }
 
         vm.stopBroadcast();
+
+        if (scanned >= scanCap && d < today) {
+            console.log("");
+            console.log("Scan cap reached at day", d - 1, "- re-run with:");
+            console.log("  FINALIZE_FROM_DAY =", d);
+        }
 
         console.log("");
         console.log("Done. Verify a day, then claim from a rewarded wallet:");

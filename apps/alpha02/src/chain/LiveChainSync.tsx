@@ -48,8 +48,13 @@ const LIVE_KEYS: ReadonlySet<string> = new Set([
   'refinancePending',
   'standingApprovals',
   'keeperConfig',
-  'loanKeeperEnabled',
-  'vpfi',
+  // 'loanKeeperEnabled' and 'vpfi' are DELIBERATELY absent: their
+  // toggle writes PATCH the cache with the mined value (read-after-
+  // write honesty — public testnet RPCs serve pre-tx state for
+  // seconds), and a block-driven refetch inside that window would
+  // overwrite the patch with stale state and bounce the checkbox.
+  // Both are own-wallet state that third parties don't move; their
+  // 30s/60s interval refetch reconciles once the RPC caught up.
 ]);
 
 /** Floor between block-driven invalidations. Base Sepolia mines ~every

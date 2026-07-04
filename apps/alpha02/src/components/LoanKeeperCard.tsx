@@ -25,7 +25,7 @@ export function LoanKeeperCard({
   busy: boolean;
   setBusy: (b: boolean) => void;
 }) {
-  const { onSupportedChain } = useActiveChain();
+  const { onSupportedChain, readChain } = useActiveChain();
   const { data: walletClient } = useWalletClient();
   const { write } = useDiamondWrite();
   const queryClient = useQueryClient();
@@ -71,11 +71,17 @@ export function LoanKeeperCard({
       // Read-after-write honesty: the tx is MINED, so `next` IS the
       // chain state — but an immediate invalidate refetches through a
       // possibly-lagging public RPC and can bounce the checkbox back
-      // to the pre-tx value (inviting a duplicate tx). Patch every
-      // matching cache entry with the mined value instead; the 60s
-      // interval reconciles once the RPC catches up.
-      queryClient.setQueriesData(
-        { queryKey: ['loanKeeperEnabled'] },
+      // to the pre-tx value (inviting a duplicate tx). Patch ONLY this
+      // loan's cache entry (exact key incl. chain + loanId — a
+      // root-key patch would stamp the toggle onto every OTHER loan's
+      // card); the 60s interval reconciles once the RPC catches up.
+      queryClient.setQueryData(
+        [
+          'loanKeeperEnabled',
+          readChain.chainId,
+          loanId,
+          [...keepers].sort().join(','),
+        ],
         (old: Record<string, boolean> | undefined) =>
           old ? { ...old, [keeper.toLowerCase()]: next } : old,
       );
