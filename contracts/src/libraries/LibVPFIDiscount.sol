@@ -116,6 +116,45 @@ library LibVPFIDiscount {
         return s.protocolTrackedVaultBalance[user][s.vpfiToken];
     }
 
+    /**
+     * @notice The VPFI balance that should drive `user`'s fee-tier stamp:
+     *         their post-mutation vault balance MINUS any VPFI frozen in
+     *         their vault but economically owed to a delistable position
+     *         holder (`s.frozenVpfiOwedByVault[user]`), floored at 0.
+     *
+     * @dev    Sanctions close-outs (swap-to-repay full / Fusion intent-fill)
+     *         can freeze a transferred position's VPFI surplus / proceeds
+     *         into the STORED party's vault (§1.1 / §2.1). That VPFI lands in
+     *         `protocolTrackedVaultBalance` — which the tier ring buffer is
+     *         stamped from — yet belongs to the current NFT holder, not the
+     *         vault owner. Subtracting the dedicated
+     *         `frozenVpfiOwedByVault` counter (bumped ONLY for the
+     *         transferred-position case, never a flagged self-holder) keeps
+     *         those funds out of the vault owner's tier without touching the
+     *         shared `s.encumbered` bucket — which legitimately holds the
+     *         user's OWN liens / intent / offer capital and must stay in-tier.
+     *
+     *         Takes the balance as an argument and never re-reads it: every
+     *         stamp caller feeds `rollupUserDiscount` a *post-mutation*
+     *         balance computed before storage is written (deposit/withdraw/
+     *         fee-deduction), so re-reading `protocolTrackedVaultBalance`
+     *         here would miscount an in-flight mutation (Codex #986 r3). The
+     *         `frozen` counter, by contrast, only changes at freeze/claim —
+     *         never mid deposit/withdraw — so reading it from storage is safe.
+     *
+     * @param user            Vault owner whose tier balance is being computed.
+     * @param postMutationBal Post-mutation vault VPFI balance the caller has
+     *                        already computed for this stamp.
+     * @return The frozen-adjusted balance to stamp the tier from.
+     */
+    function tierVpfiBalance(
+        address user,
+        uint256 postMutationBal
+    ) internal view returns (uint256) {
+        uint256 frozen = LibVaipakam.storageSlot().frozenVpfiOwedByVault[user];
+        return postMutationBal > frozen ? postMutationBal - frozen : 0;
+    }
+
     /// @notice Pure clamp helper — returns
     ///         `min(actualBalance, trackedAfter)`. Used by every
     ///         staking-checkpoint and discount-accumulator caller to
@@ -202,6 +241,14 @@ library LibVPFIDiscount {
         // ProtocolBroadcastFacet cut OR a misconfigured messenger
         // contract — both are real production bugs that must
         // bubble to the caller, not be silently swallowed.
+        // #954 (Codex #981/#986 §2.2) — every tier stamp funnels through this
+        // wrapper, so applying the frozen-owed exclusion HERE covers every
+        // caller (deposit/withdraw/fee/consolidation/loan-init) uniformly and
+        // future-proofs new call sites. `balPostMutation` is already the
+        // post-mutation balance the caller computed; `tierVpfiBalance` only
+        // subtracts the frozen-owed counter, never re-reads the mutating
+        // balance.
+        balPostMutation = tierVpfiBalance(user, balPostMutation);
         address messenger = LibVaipakam.storageSlot().rewardMessenger;
         (bool ok, bytes memory returnData) = address(this).call(
             abi.encodeWithSelector(

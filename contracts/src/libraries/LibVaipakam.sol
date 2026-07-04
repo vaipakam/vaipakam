@@ -4705,13 +4705,50 @@ library LibVaipakam {
         // Append-only per loan; `_processEntry` is idempotent so a re-sweep (or a
         // later un-flagged claim) double-counts nothing.
         mapping(uint256 => uint256[]) loanForfeitedLenderEntryIds;
-        // ─── #951 v2 (Codex #959 bind-to-live redesign) ───────────────────────
-        // The old `saleListingCollateral` snapshot lived here (last struct field)
-        // and was removed by the bind-to-live redesign: the buyer's accept now
-        // binds `collateralAmount` `>=`-style against the LIVE loan in
-        // `OfferAcceptFacet._bindTermsToOffer`, so there is no snapshot to store,
-        // cleanup, or drift. Pre-live removal is layout-safe (it was the last
-        // field appended). See docs/DesignsAndPlans/LenderSaleVehicleRedesign.md.
+        // ─── #954 (Codex #981 P1/P2) — frozen swap-surplus borrower claim ─────
+        // `SwapToRepayFacet.swapToRepayFull` normally hands the borrower's
+        // principal surplus straight to the CURRENT borrower-NFT holder's EOA.
+        // When that holder is sanctioned the payout is withheld and frozen in
+        // `loan.borrower`'s vault instead (which always exists — collateral was
+        // posted there at init — so a fresh vault-less transferee can't brick the
+        // must-complete close-out). This slot records that frozen principal
+        // surplus so the holder can withdraw it via `ClaimFacet.claimAsBorrower`
+        // once delisted; the loan's ordinary `borrowerClaims` slot is taken by
+        // the residual COLLATERAL (a different asset), so the surplus needs its
+        // own claim row. Keyed by loanId; unset (amount 0) on the common unfrozen
+        // path.
+        mapping(uint256 => ClaimInfo) borrowerSurplusClaims;
+        // ─── #954 (Codex #981/#986) — VPFI held-but-owed-to-another counter ────
+        // When a close-out freezes a VPFI surplus (borrower) or VPFI proceeds
+        // (lender) into a vault whose owner is NOT the economic owner — i.e. the
+        // position NFT was transferred to a now-sanctioned holder — the funds sit
+        // in the STORED party's tracked vault balance but belong to the current
+        // holder (claimable once delisted). This per-owner counter records that
+        // amount so the VPFI fee-tier stamp can EXCLUDE it (tier reads
+        // `protocolTrackedVaultBalance`, which is blind to `s.encumbered`).
+        // Incremented at the transferred-position freeze; decremented at claim/
+        // release. Only the TRANSFERRED case bumps it — a flagged self-holder's
+        // frozen VPFI is their own money and still counts toward their tier.
+        // See docs/DesignsAndPlans/SanctionsCloseoutSweepAndSaleVehicleFixes.md §2.2.
+        mapping(address => uint256) frozenVpfiOwedByVault;
+        // Per-loan record of the EXACT VPFI amount this loan bumped into
+        // `frozenVpfiOwedByVault` on each side, so the matching claim
+        // decrements the aggregate by precisely what was added and can never
+        // erode a DIFFERENT loan's frozen amount on the same owner. The lender
+        // leg needs this because its `lenderClaims` row is written on EVERY
+        // close (clean or frozen), so "was this leg's VPFI frozen-and-owed?"
+        // is not re-derivable at claim time. Kept symmetric for the borrower
+        // surplus. Zero on the common path; cleared to zero on release.
+        mapping(uint256 => uint256) frozenVpfiOwedLenderLeg;
+        mapping(uint256 => uint256) frozenVpfiOwedBorrowerSurplus;
+        // ─── #951 v2 (Codex #959 bind-to-live redesign) — historical note ─────
+        // The old `saleListingCollateral` snapshot (formerly the last struct
+        // field) was removed by the #959 bind-to-live redesign merged to main:
+        // the buyer's accept now binds `collateralAmount` `>=`-style against the
+        // LIVE loan in `OfferAcceptFacet._bindTermsToOffer`, so there is no
+        // snapshot to store, clean up, or drift. Pre-live removal is layout-safe.
+        // The #954 frozen-surplus fields above are appended after it. See
+        // docs/DesignsAndPlans/LenderSaleVehicleRedesign.md.
     }
 
     /// @notice #393 v1-b — the originating intent of a `matchIntent` loan,

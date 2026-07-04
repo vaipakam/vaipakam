@@ -132,12 +132,21 @@ contract RedeployFacets is Script {
         // new (Add); on a pre-#594 diamond all five would be new (Add).
         (bytes4[] memory consToAdd, bytes4[] memory consToReplace) =
             _partitionByRouting(diamond, _consolidationSelectors());
+        // #954 (Codex #981 r-EIP170 P2) — ClaimFacet gained a NEW selector
+        // (`getBorrowerSurplusClaim`) alongside its 8 already-routed ones. On a
+        // current-version diamond the 8 are routed (Replace) and the new one is
+        // unrouted (Add); a blanket Replace would revert on the new selector
+        // (Replace requires a non-zero existing facet). Same Add/Replace-by-
+        // routing split as the HF knob + Consolidation sets above.
+        (bytes4[] memory claimToAdd, bytes4[] memory claimToReplace) =
+            _partitionByRouting(diamond, _claimSelectors());
 
         uint256 nExtra =
             (hfToAdd.length > 0 ? 1 : 0) + (hfToReplace.length > 0 ? 1 : 0) +
-            (consToAdd.length > 0 ? 1 : 0) + (consToReplace.length > 0 ? 1 : 0);
+            (consToAdd.length > 0 ? 1 : 0) + (consToReplace.length > 0 ? 1 : 0) +
+            (claimToAdd.length > 0 ? 1 : 0) + (claimToReplace.length > 0 ? 1 : 0);
         IDiamondCut.FacetCut[] memory cuts =
-            new IDiamondCut.FacetCut[](10 + nExtra);
+            new IDiamondCut.FacetCut[](9 + nExtra);
         cuts[0] = _replace(address(riskFacet), _riskSelectors());
         cuts[1] = _replace(address(defaultedFacet), _defaultedSelectors());
         cuts[2] = _replace(address(loanFacet), _loanSelectors());
@@ -152,16 +161,14 @@ contract RedeployFacets is Script {
         // diamond, so a plain Replace repoints them to the consolidation-aware
         // bytecode.
         cuts[7] = _replace(address(refinanceFacet), _refinanceSelectors());
-        // #658 PR-B2 — ClaimFacet selectors are already routed on a current
-        // diamond, so a plain Replace repoints them to the restamp-aware
-        // bytecode.
-        cuts[8] = _replace(address(claimFacet), _claimSelectors());
         // #691 — RiskMatch selectors are already routed on a current diamond
         // (triggerInternalMatchLiquidation + the cross-facet-only
         // attemptInternalMatchAutoDispatch), so a plain Replace repoints them to
         // the consolidation-aware bytecode.
-        cuts[9] = _replace(address(riskMatchFacet), _riskMatchSelectors());
-        uint256 idx = 10;
+        cuts[8] = _replace(address(riskMatchFacet), _riskMatchSelectors());
+        // ClaimFacet is partitioned below (not a fixed Replace) because #954
+        // added a new-and-possibly-unrouted selector to its set.
+        uint256 idx = 9;
         if (hfToReplace.length > 0) {
             cuts[idx++] = _replace(address(riskFacet), hfToReplace);
         }
@@ -174,16 +181,26 @@ contract RedeployFacets is Script {
         if (consToAdd.length > 0) {
             cuts[idx++] = _add(address(consolidationFacet), consToAdd);
         }
+        // #658 PR-B2 — the already-routed ClaimFacet selectors repoint to the
+        // refreshed bytecode; #954's new selector is Add'ed.
+        if (claimToReplace.length > 0) {
+            cuts[idx++] = _replace(address(claimFacet), claimToReplace);
+        }
+        if (claimToAdd.length > 0) {
+            cuts[idx++] = _add(address(claimFacet), claimToAdd);
+        }
 
         IDiamondCut(diamond).diamondCut(cuts, address(0), "");
 
         vm.stopBroadcast();
 
-        console.log("DiamondCut applied: 10 facets replaced + ConsolidationFacet.");
+        console.log("DiamondCut applied: 9 facets replaced + partitioned Claim/HF/Cons.");
         console.log("  HF selectors added:   ", hfToAdd.length);
         console.log("  HF selectors replaced:", hfToReplace.length);
         console.log("  Cons selectors added: ", consToAdd.length);
         console.log("  Cons selectors repl.: ", consToReplace.length);
+        console.log("  Claim selectors added:", claimToAdd.length);
+        console.log("  Claim selectors repl.:", claimToReplace.length);
     }
 
     function _replace(address facet, bytes4[] memory selectors)
@@ -352,7 +369,7 @@ contract RedeployFacets is Script {
     }
 
     function _claimSelectors() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](9);
+        s = new bytes4[](10);
         s[0] = ClaimFacet.claimAsLender.selector;
         s[1] = ClaimFacet.claimAsBorrower.selector;
         s[2] = ClaimFacet.getClaimableAmount.selector;
@@ -362,6 +379,7 @@ contract RedeployFacets is Script {
         s[6] = ClaimFacet.getFallbackSnapshot.selector;
         s[7] = ClaimFacet.setLenderBackstopOptIn.selector;
         s[8] = ClaimFacet.claimAsLenderViaBackstop.selector;
+        s[9] = ClaimFacet.getBorrowerSurplusClaim.selector;
     }
 
     /// @dev #779 — the prior hand-list carried only 15 of ProfileFacet's 25

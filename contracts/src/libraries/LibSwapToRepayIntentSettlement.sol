@@ -4,6 +4,8 @@ pragma solidity ^0.8.29;
 import {LibVaipakam} from "./LibVaipakam.sol";
 import {LibFacet} from "./LibFacet.sol";
 import {LibEncumbrance} from "./LibEncumbrance.sol";
+import {LibSanctionedLock} from "./LibSanctionedLock.sol";
+import {LibCloseoutFreeze} from "./LibCloseoutFreeze.sol";
 import {LibCollateralSettlement} from "./LibCollateralSettlement.sol";
 import {LibSettlement} from "./LibSettlement.sol";
 import {LibLifecycle} from "./LibLifecycle.sol";
@@ -143,8 +145,15 @@ library LibSwapToRepayIntentSettlement {
         uint256 consumed = makingAmount;
         uint256 residual = commit.custodialCollateral - consumed;
         if (residual > 0) {
+            // #954 (§1.4) — returning the borrower's OWN residual collateral to
+            // their vault must not brick when the borrower was flagged after
+            // commit. Narrow from-side move-out exemption (custody RETURNING to
+            // loan.borrower; emits no locked-share event, matching the v1
+            // partial-fill refund). The residual is re-liened in `_runSettlement`.
+            LibSanctionedLock.beginMoveOut(s, loan.borrower);
             address borrowerVault = LibFacet.getOrCreateVault(loan.borrower);
             IERC20(loan.collateralAsset).safeTransfer(borrowerVault, residual);
+            LibSanctionedLock.endMoveOut(s);
             LibVaipakam.recordVaultDeposit(
                 loan.borrower, loan.collateralAsset, residual
             );
@@ -222,38 +231,26 @@ library LibSwapToRepayIntentSettlement {
             bytes4(0)
         );
 
-        address lenderVault = LibFacet.getOrCreateVault(loan.lender);
-        IERC20(loan.principalAsset).safeTransfer(lenderVault, plan.lenderDue);
-        LibVaipakam.recordVaultDeposit(loan.lender, loan.principalAsset, plan.lenderDue);
+        // #954 (§1.4) — this Fusion intent fill is a MUST-COMPLETE terminal
+        // swap-to-repay-full, so apply the SAME freeze pattern as the v1
+        // `swapToRepayFull` (freeze, don't screen). The shared helper deposits
+        // the lender proceeds behind the receive-side exemption (a lender
+        // flagged after commit doesn't brick), writes the lender claim row,
+        // reserves the proceeds for EVERY ERC20 (§1.1), and tier-excludes a
+        // transferred-and-sanctioned holder's VPFI (§2.2). Keeping both
+        // terminals on `LibCloseoutFreeze` stops them drifting.
+        LibCloseoutFreeze.freezeLenderProceeds(s, loanId, loan, plan.lenderDue);
 
+        // #954 (§1.4) — a clean holder is paid directly; a SANCTIONED holder's
+        // principal surplus is frozen into loan.borrower's vault + recorded as a
+        // `borrowerSurplusClaims` row (previously an UNSCREENED direct transfer).
         uint256 surplusPrincipal = actualDelivered - requiredPrincipal;
-        if (surplusPrincipal > 0) {
-            address currentBorrowerHolder =
-                IERC721(address(this)).ownerOf(loan.borrowerTokenId);
-            IERC20(loan.principalAsset).safeTransfer(
-                currentBorrowerHolder, surplusPrincipal
-            );
-        }
+        address currentBorrowerHolder =
+            IERC721(address(this)).ownerOf(loan.borrowerTokenId);
+        LibCloseoutFreeze.freezeOrPayBorrowerSurplus(
+            s, loanId, loan, currentBorrowerHolder, surplusPrincipal
+        );
 
-        s.lenderClaims[loanId] = LibVaipakam.ClaimInfo({
-            asset: loan.principalAsset,
-            amount: plan.lenderDue,
-            assetType: LibVaipakam.AssetType.ERC20,
-            tokenId: 0,
-            quantity: 0,
-            claimed: false
-        });
-        // #592 — intent-based swap-to-repay mirrors the v1 terminal waterfall:
-        // `plan.lenderDue` lands in the (possibly transferred-away) stored
-        // lender's vault and is owed to the current holder via the claim above.
-        // Reserve VPFI proceeds against the unstake path until the holder
-        // claims (released path-agnostically in ClaimFacet). Terminal close →
-        // `loan.lender` fixed. No-op for non-VPFI principal.
-        if (loan.principalAsset == s.vpfiToken) {
-            LibEncumbrance.encumberLenderProceeds(
-                loanId, loan.lender, loan.principalAsset, plan.lenderDue
-            );
-        }
         s.borrowerClaims[loanId] = LibVaipakam.ClaimInfo({
             asset: loan.collateralAsset,
             amount: loan.collateralAmount - consumed,

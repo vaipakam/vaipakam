@@ -8,6 +8,7 @@ import {LibEncumbrance} from "../libraries/LibEncumbrance.sol";
 import {LibAuth} from "../libraries/LibAuth.sol";
 import {LibFacet} from "../libraries/LibFacet.sol";
 import {LibSanctionedLock} from "../libraries/LibSanctionedLock.sol";
+import {LibCloseoutFreeze} from "../libraries/LibCloseoutFreeze.sol";
 import {LibFallback} from "../libraries/LibFallback.sol";
 import {LibAccessControl, DiamondAccessControl} from "../libraries/LibAccessControl.sol";
 import {LenderIntentFacet} from "./LenderIntentFacet.sol";
@@ -88,6 +89,24 @@ contract ClaimFacet is
         address asset,
         uint256 amount,
         bool newBothClaimed
+    );
+
+    /// @notice #954 (§2.3) — emitted when `claimAsBorrower` pays out a frozen
+    ///         swap-to-repay principal SURPLUS lane (parked in `loan.borrower`'s
+    ///         vault for the current holder when that holder was sanctioned at
+    ///         the `swapToRepayFull` close). Distinct from `BorrowerFundsClaimed`
+    ///         because a single claim can owe BOTH the residual collateral lane
+    ///         AND this principal-surplus lane in different assets.
+    /// @param loanId   The loan whose surplus was claimed.
+    /// @param claimant The delisted, sanctions-screened current borrower-NFT holder.
+    /// @param asset    The principal asset paid out.
+    /// @param amount   The surplus amount paid out.
+    /// @custom:event-category state-change/claim-mutation
+    event BorrowerSurplusClaimed(
+        uint256 indexed loanId,
+        address indexed claimant,
+        address asset,
+        uint256 amount
     );
 
     /// @notice Emitted when both parties have claimed and the loan is fully settled.
@@ -823,6 +842,11 @@ contract ClaimFacet is
         // caller passes no asset: the decrement always hits the same aggregate
         // the reserve ticked, even when the claim record's asset differs.
         LibEncumbrance.releaseLenderProceeds(loanId, loan.lender);
+        // #954 (§2.2) — release the per-loan frozen-VPFI tier exclusion this
+        // loan's lender leg bumped (transferred-and-sanctioned holder case),
+        // decrementing `frozenVpfiOwedByVault[loan.lender]` by EXACTLY what was
+        // added. No-op for every loan that never bumped (the common close).
+        LibCloseoutFreeze.releaseLenderFrozenVpfi(s, loanId, loan.lender);
 
         // #821 (Codex #832 r7 P2) — the payout below WITHDRAWS from the stored
         // `loan.lender`'s vault to the (already-screened) current claimer. For an
@@ -969,9 +993,20 @@ contract ClaimFacet is
         // also runs their claim — this preserves the NFT-owner gating on
         // the rebate payout inside `claimAsBorrower`.
         LibVaipakam.ClaimInfo storage borrowerClaim = s.borrowerClaims[loanId];
+        // #954 (§2.4) — a full swap-to-repay that consumes ALL collateral and
+        // freezes ONLY a principal surplus leaves `borrowerClaim.amount == 0`,
+        // so without the surplus conjunct a lender-first claim would flip
+        // `borrowerHasNothing` true and SETTLE the loan — after which the
+        // delisted holder hits `InvalidLoanStatus` in `claimAsBorrower` and can
+        // never withdraw the frozen surplus. Keep the loan un-Settled while a
+        // pending (unclaimed) surplus row exists, so `claimAsBorrower` stays
+        // reachable to pay it out.
+        LibVaipakam.ClaimInfo storage surplusClaim = s.borrowerSurplusClaims[loanId];
+        uint256 pendingSurplus = surplusClaim.claimed ? 0 : surplusClaim.amount;
         bool borrowerHasNothing = borrowerClaim.amount == 0 &&
             borrowerClaim.assetType == LibVaipakam.AssetType.ERC20 &&
-            s.borrowerLifRebate[loanId].rebateAmount == 0;
+            s.borrowerLifRebate[loanId].rebateAmount == 0 &&
+            pendingSurplus == 0;
         bool willSettle = borrowerClaim.claimed || borrowerHasNothing;
 
         emit LenderFundsClaimed(
@@ -1067,7 +1102,14 @@ contract ClaimFacet is
         // have rebateAmount == 0 and no-op that branch below.
         bool hasNftClaim = claim.assetType != LibVaipakam.AssetType.ERC20;
         uint256 lifRebate = s.borrowerLifRebate[loanId].rebateAmount;
-        if (claim.amount == 0 && !hasNftClaim && lifRebate == 0) {
+        // #954 (Codex #981 P2) — a frozen swap-surplus principal (parked in
+        // `loan.borrower`'s vault for the current holder when the holder was
+        // sanctioned at `swapToRepayFull` close) is a SECOND claimable lane in the
+        // principal asset. Read it here so a surplus-only claim (no residual
+        // collateral, no LIF rebate) isn't wrongly rejected as NothingToClaim.
+        LibVaipakam.ClaimInfo storage surplusClaim = s.borrowerSurplusClaims[loanId];
+        uint256 surplusAmt = surplusClaim.claimed ? 0 : surplusClaim.amount;
+        if (claim.amount == 0 && !hasNftClaim && lifRebate == 0 && surplusAmt == 0) {
             revert NothingToClaim();
         }
 
@@ -1126,6 +1168,12 @@ contract ClaimFacet is
         // record under the asset it was reserved with → a no-op for every loan
         // that never reserved a surplus (non-VPFI, or no liquid-default surplus).
         LibEncumbrance.releaseBorrowerProceeds(loanId, loan.borrower);
+        // #954 (§2.2) — release the per-loan frozen-VPFI tier exclusion this
+        // loan's surplus bumped (transferred-and-sanctioned holder case) BEFORE
+        // the surplus withdraw + restamp below, so the re-stamp sees the
+        // corrected frozen counter alongside the reduced tracked balance.
+        // No-op for every loan that never bumped.
+        LibCloseoutFreeze.releaseBorrowerFrozenVpfi(s, loanId, loan.borrower);
 
         // #821 (Codex #832 r7 P2) — the payout below WITHDRAWS from the stored
         // `loan.borrower`'s vault to the (already-screened) current claimer. As
@@ -1193,6 +1241,34 @@ contract ClaimFacet is
             );
         }
 
+        // #954 (Codex #981 P2) — pay out the frozen swap-surplus principal. It was
+        // parked in `loan.borrower`'s vault for the current holder because the
+        // holder was sanctioned when `swapToRepayFull` closed; `msg.sender` is the
+        // now-delisted, sanctions-screened current NFT holder. Marked claimed
+        // BEFORE the withdraw (reentrancy) and run inside the move-out exemption
+        // armed above; its VPFI reservation (if any) was released at
+        // `releaseBorrowerProceeds` above, so the unstake guard permits it.
+        if (surplusAmt > 0) {
+            surplusClaim.claimed = true;
+            LibFacet.crossFacetCall(
+                abi.encodeWithSelector(
+                    VaultFactoryFacet.vaultWithdrawERC20.selector,
+                    loan.borrower,
+                    surplusClaim.asset,
+                    msg.sender,
+                    surplusAmt
+                ),
+                VaultWithdrawFailed.selector
+            );
+            // #954 (§2.3) — surface the frozen-surplus lane as its OWN event so
+            // indexers / dashboards can distinguish the principal-surplus payout
+            // from the collateral `BorrowerFundsClaimed` below (a claim can owe
+            // BOTH lanes in different assets).
+            emit BorrowerSurplusClaimed(
+                loanId, msg.sender, surplusClaim.asset, surplusAmt
+            );
+        }
+
         // #658 PR-B (Codex #690 round-4 + round-6) — when VPFI has just left
         // `loan.borrower`'s vault via the withdraw(s) above, re-stamp so the
         // vault owner doesn't keep fee-tier / staking credit on VPFI that is no
@@ -1216,7 +1292,12 @@ contract ClaimFacet is
         // cross-call. There is no VPFI to restamp without a token anyway.
         if (
             s.vpfiToken != address(0) &&
-            (claim.asset == s.vpfiToken || extraLienedAsset == s.vpfiToken)
+            (claim.asset == s.vpfiToken ||
+                extraLienedAsset == s.vpfiToken ||
+                // #954 (Codex #981 P2) — a VPFI swap-surplus that just left
+                // loan.borrower's vault via the payout above is a FOURTH form VPFI
+                // can leave here; the user-keyed restamp covers it too.
+                (surplusAmt > 0 && surplusClaim.asset == s.vpfiToken))
         ) {
             LibFacet.crossFacetCall(
                 abi.encodeWithSelector(
@@ -1766,6 +1847,33 @@ contract ClaimFacet is
             hasRentalNftReturn =
                 s.loans[loanId].assetType != LibVaipakam.AssetType.ERC20;
         }
+    }
+
+    /// @notice #954 (§2.3) — the borrower-side frozen swap-to-repay principal
+    ///         SURPLUS lane for a loan. Distinct from the collateral
+    ///         `borrowerClaims` lane surfaced by {getClaimable} /
+    ///         {getClaimableAmount}: a `swapToRepayFull` (or Fusion intent fill)
+    ///         that closed while the current borrower-NFT holder was sanctioned
+    ///         parks the principal surplus in `loan.borrower`'s vault, claimable
+    ///         by the delisted holder via `claimAsBorrower`. A claim can owe BOTH
+    ///         lanes in different assets, so this is a separate getter rather than
+    ///         an overload of the single collateral asset/amount slot.
+    /// @dev    Discoverable by the CURRENT holder: resolve the holder's loanIds
+    ///         via `MetricsFacet.getUserPositionLoans(holder)` (NFT-owner-indexed)
+    ///         and query this per loan; `MetricsFacet.getNFTPositionSummary`
+    ///         also carries the surplus lane keyed by the position NFT.
+    /// @param loanId The loan to query.
+    /// @return asset   Principal asset of the frozen surplus (0x0 if none).
+    /// @return amount  Surplus amount recorded (gross of the claimed flag).
+    /// @return claimed Whether the surplus has already been claimed out.
+    function getBorrowerSurplusClaim(uint256 loanId)
+        external
+        view
+        returns (address asset, uint256 amount, bool claimed)
+    {
+        LibVaipakam.ClaimInfo storage sc =
+            LibVaipakam.storageSlot().borrowerSurplusClaims[loanId];
+        return (sc.asset, sc.amount, sc.claimed);
     }
 
     /// @notice Returns the fallback-path settlement snapshot for a loan.

@@ -342,6 +342,14 @@ contract BackstopFacet is
         external
         whenNotPaused
     {
+        // #921 item 2 (sanctions sweep) — Tier-1 gate. Opting an offer into the
+        // treasury-backed backstop stages it for a fill funded by protocol
+        // (treasury) capital, i.e. a value-flow entry point. `createOffer`
+        // screened the creator at creation, but a wallet flagged AFTERWARDS could
+        // otherwise re-stage here; the downstream `backstopFill → matchIntent`
+        // screens only the vault (solver + lender), never the offer creator. Screen
+        // the caller (== the creator, enforced just below) at this opt-in.
+        LibVaipakam._assertNotSanctioned(msg.sender);
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         LibVaipakam.Offer storage o = s.offers[offerId];
         if (o.creator != msg.sender) revert NotOfferCreator();
@@ -443,6 +451,16 @@ contract BackstopFacet is
         // collateral. No-op when the knob is 0 (default). Backstop-scoped — the
         // general permissionless liquidation path is unaffected.
         LibBackstopOracleGate.assertCoverage(o.collateralAsset);
+        // #954 (§1.5) — RE-SCREEN the offer creator at fill, not just at opt-in
+        // (`setOfferBackstopEligible:352`). `backstopFill` originates a
+        // treasury-funded loan to `o.creator` and routes principal to them, so
+        // it is Tier-1 (creates state + pays value to the caller's economic
+        // party) → hard-revert for a creator flagged in the
+        // opt-in→`eligibleAfter` window. Without this, a borrower flagged after
+        // opting in could still have a loan originated to them here; downstream
+        // `matchIntent` screens only the solver / backstop vault, never
+        // `o.creator`. Mirrors the shape re-assert already done above.
+        LibVaipakam._assertNotSanctioned(o.creator);
         loanId = BackstopVaultImplementation(vault).executeFill(
             o.lendingAsset,
             o.collateralAsset,

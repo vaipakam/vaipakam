@@ -747,7 +747,7 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](8);
+        selectors = new bytes4[](10);
         selectors[0] = EncumbranceMutateFacet.releaseCollateralLien.selector;
         selectors[1] = EncumbranceMutateFacet.decrementCollateralLien.selector;
         selectors[2] = EncumbranceMutateFacet.incrementCollateralLien.selector;
@@ -758,6 +758,9 @@ contract HelperTest {
         selectors[5] = EncumbranceMutateFacet.decrementOfferPrincipalLien.selector;
         selectors[6] = EncumbranceMutateFacet.releaseOfferPrincipalLien.selector;
         selectors[7] = EncumbranceMutateFacet.incrementOfferPrincipalLien.selector;
+        // #954 — swap-to-repay close-out freeze helpers hosted here (EIP-170).
+        selectors[8] = EncumbranceMutateFacet.freezeLenderProceeds.selector;
+        selectors[9] = EncumbranceMutateFacet.freezeOrPayBorrowerSurplus.selector;
     }
 
     /// @notice #396 v0.5 — gasless signed off-chain offer book selectors.
@@ -1007,7 +1010,7 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](9);
+        selectors = new bytes4[](10);
         selectors[0] = ClaimFacet.claimAsLender.selector;
         selectors[1] = ClaimFacet.claimAsBorrower.selector;
         selectors[2] = ClaimFacet.getClaimableAmount.selector;
@@ -1018,6 +1021,7 @@ contract HelperTest {
         // #399 backstop v0 Role B — liquidator-of-last-resort.
         selectors[7] = ClaimFacet.setLenderBackstopOptIn.selector;
         selectors[8] = ClaimFacet.claimAsLenderViaBackstop.selector;
+        selectors[9] = ClaimFacet.getBorrowerSurplusClaim.selector;
         return selectors;
     }
 

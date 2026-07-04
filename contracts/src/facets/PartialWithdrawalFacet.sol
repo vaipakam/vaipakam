@@ -75,6 +75,16 @@ contract PartialWithdrawalFacet is DiamondReentrancyGuard, DiamondPausable, IVai
         uint256 loanId,
         uint256 amount
     ) external nonReentrant whenNotPaused {
+        // #921 item 2 (sanctions sweep) — Tier-1 gate. This is a DISCRETIONARY
+        // value-out: the borrower pulls excess collateral out of the protocol
+        // (loan stays Active), not a close-out that must complete to make an
+        // honest counterparty whole. Blocking a flagged caller strands no honest
+        // party — the collateral simply stays backing the loan — so screen the
+        // caller (the current borrower-position holder who receives the funds),
+        // mirroring the EarlyWithdrawal Tier-1 entry. A wallet clean at loan-init
+        // but flagged afterward still holds the borrower NFT, so this is the only
+        // point that catches it before `vaultWithdrawERC20` pays them out.
+        LibVaipakam._assertNotSanctioned(msg.sender);
         // T-090 v1.1 (#389) §5.8 — partial withdraws reduce
         // `loan.collateralAmount` mid-auction; same baseline-drift
         // problem as `addCollateral`. Block while live.
