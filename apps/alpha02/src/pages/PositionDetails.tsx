@@ -22,6 +22,7 @@ import {
 import { copy } from '../content/copy';
 import { isPositiveDecimal, submitErrorText } from '../lib/errors';
 import { useLoan } from '../data/hooks';
+import { isRevert } from '../data/liveLoanRow';
 import { useLoanRisk, healthView } from '../data/risk';
 import { assertWalletNotSanctionedLive, useSanctionsCheck } from '../data/sanctions';
 import {
@@ -663,7 +664,15 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
                   (Array.isArray(r)
                     ? ((r as readonly bigint[])[0] ?? 0n)
                     : ((r as { rebateAmount?: bigint }).rebateAmount ?? 0n)),
-                () => 0n, // old ABI without the Phase-5 view
+                (e) => {
+                  // Old ABI without the Phase-5 view REVERTS → truly no
+                  // rebate. A TRANSPORT failure must NOT read as zero —
+                  // that would falsely block a rebate-only claim — so
+                  // rethrow to the outer catch, which falls through to
+                  // the write (whose own estimate still guards).
+                  if (isRevert(e)) return 0n;
+                  throw e;
+                },
               ),
           ]);
           const amount = res.amount ?? res[1] ?? 0n;
@@ -1122,12 +1131,15 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
         <span className={`badge badge-${view.badge}`}>{view.label}</span>
       </div>
 
-      {statusIsReconciled && row.status !== 'active' ? (
+      {statusIsReconciled &&
+      row.status !== 'active' &&
+      row.status !== 'fallback_pending' ? (
         // OBS-2 (#988) — the badge above shows the LIVE on-chain state,
         // which is ahead of the Positions list. Say so, or the mismatch
-        // reads as a bug. (Not shown for the fallback-cure direction —
-        // "settled ahead" copy would be wrong for a loan that just went
-        // back to normal.)
+        // reads as a bug. TERMINAL reconciliations only: the copy says
+        // the position "closed on-chain", which is wrong both for the
+        // fallback-cure direction (back to active) and for a live
+        // FallbackPending (curable — repay/top-up still offered).
         <div className="banner banner-info" role="status">
           <span className="banner-body">{copy.positions.settledAhead}</span>
         </div>

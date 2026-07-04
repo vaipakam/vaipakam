@@ -349,7 +349,11 @@ contract DeployTestnetMocks is Script {
         if (cid == 97) return vm.envAddress("BNB_TESTNET_WETH");
         if (cid == 421614) return vm.envOr("ARB_SEPOLIA_WETH", ARB_SEPOLIA_WETH_DEFAULT);
         if (cid == 11155420) return vm.envOr("OP_SEPOLIA_WETH", OP_SEPOLIA_WETH_DEFAULT);
-        // Anvil (31337): no canonical WETH — env-supplied or zero sentinel.
-        return vm.envOr("ANVIL_WETH", address(0));
+        // Anvil (31337): no canonical WETH — env-supplied, else reuse a
+        // mock WETH a prior run persisted to `.weth` (keeps re-runs
+        // idempotent), else zero sentinel → run() deploys one inline.
+        address w = vm.envOr("ANVIL_WETH", address(0));
+        if (w == address(0)) w = Deployments.readWethOptional();
+        return w;
     }
 }

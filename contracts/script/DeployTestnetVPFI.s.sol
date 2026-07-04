@@ -70,9 +70,24 @@ contract DeployTestnetVPFI is Script {
 
         uint256 adminKey = vm.envUint("ADMIN_PRIVATE_KEY");
         address diamond = Deployments.readDiamond();
-        address vpfi = Deployments.readAddressForChain(cid, ".vpfiToken");
-        require(vpfi != address(0), "DeployTestnetVPFI: deployments.vpfiToken missing");
+        // Canonical chains record the chain-local VPFI as `.vpfiToken`;
+        // MIRROR testnets (Arb Sepolia, BNB Testnet, ...) record it as
+        // `.vpfiMirror` (the frontend deployments export aliases it to
+        // vpfiToken later). Accept either — a strict `.vpfiToken` read
+        // reverts on a fresh mirror-chain artifact.
+        address vpfi = Deployments.readVpfiTokenOptional();
+        if (vpfi == address(0)) vpfi = Deployments.readVpfiMirrorOptional();
+        require(
+            vpfi != address(0),
+            "DeployTestnetVPFI: no .vpfiToken/.vpfiMirror in the chain artifact"
+        );
         address weth = _wethFor(cid);
+        // A zero WETH would wire setVPFIDiscountETHPriceAsset(0), which
+        // DISABLES the discount quote while this script reports success.
+        require(
+            weth != address(0),
+            "DeployTestnetVPFI: WETH unresolved (set ANVIL_WETH or run DeployTestnetMocks first)"
+        );
         uint256 rate = vm.envOr("VPFI_DISCOUNT_RATE", uint256(1e12));
 
         console.log("=== Enable Testnet VPFI ===");
@@ -137,6 +152,11 @@ contract DeployTestnetVPFI is Script {
         if (cid == 97) return vm.envAddress("BNB_TESTNET_WETH");
         if (cid == 421614) return vm.envOr("ARB_SEPOLIA_WETH", ARB_SEPOLIA_WETH_DEFAULT);
         if (cid == 11155420) return vm.envOr("OP_SEPOLIA_WETH", OP_SEPOLIA_WETH_DEFAULT);
-        return vm.envOr("ANVIL_WETH", address(0));
+        // Anvil: prefer the explicit env, else reuse the mock WETH
+        // DeployTestnetMocks persisted to the artifact's `.weth` — the
+        // common local sequence runs that script first.
+        address w = vm.envOr("ANVIL_WETH", address(0));
+        if (w == address(0)) w = Deployments.readWethOptional();
+        return w;
     }
 }

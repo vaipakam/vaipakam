@@ -30,10 +30,13 @@ export function isRevert(e: unknown): boolean {
   );
 }
 
+const ZERO_ADDR = '0x0000000000000000000000000000000000000000';
+
 /** Read the live loan struct and map it onto the indexer-row shape.
- *  Returns `null` for an unknown FUTURE status enum value (an honest
- *  "can't represent" instead of a lying row). THROWS on revert or
- *  transport failure — callers split those with `isRevert`. */
+ *  Returns `null` when the loan doesn't exist or carries an unknown
+ *  FUTURE status enum value (an honest "not found / can't represent"
+ *  instead of a lying row). THROWS on revert or transport failure —
+ *  callers split those with `isRevert`. */
 export async function readLoanRowLive(
   publicClient: PublicClient,
   diamond: `0x${string}`,
@@ -46,6 +49,16 @@ export async function readLoanRowLive(
     functionName: 'getLoanDetails',
     args: [BigInt(loanId)],
   })) as Record<string, unknown>;
+  // getLoanDetails does NOT revert for an unknown id — it returns the
+  // ZEROED struct, whose status 0 reads as "Active". Without this
+  // guard a bogus/future id would render as a fake active loan with
+  // zero parties instead of the not-found state.
+  if (
+    String(d.lender).toLowerCase() === ZERO_ADDR &&
+    String(d.borrower).toLowerCase() === ZERO_ADDR
+  ) {
+    return null;
+  }
   const status = (
     LIVE_STATUS_TO_INDEXED as Record<number, IndexedLoanStatus | undefined>
   )[Number(d.status)];
