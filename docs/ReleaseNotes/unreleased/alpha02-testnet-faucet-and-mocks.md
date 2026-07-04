@@ -14,19 +14,23 @@ mock token contracts (not the Diamond); the NFT mint uses a
 client-random 256-bit token id so concurrent reviewers never collide.
 
 Alongside it, a new reproducible Foundry script,
-`contracts/script/DeployTestnetMocks.s.sol`, deploys the faucet trio and
-wires the *faucet's own* liquid token into the Diamond's oracle so
+`contracts/script/DeployTestnetMocks.s.sol`, deploys the faucet assets
+and wires the *faucet's own* liquid tokens into the Diamond's oracle so
 "mint tLIQ → it classifies liquid" holds end-to-end: a mock Chainlink
-feed + registry, a mock Uniswap-V3 `tLIQ/WETH` pool above the $1M depth
-floor (Tier 1), and a `ZeroExProxyMock` wired via `setZeroExProxy` /
-`setallowanceTarget` for the HF-liquidation swap path (Tier 2). The
-illiquid token is left unwired on purpose so the in-kind default flows
-stay exercisable. The script reuses already-deployed tokens via
-`FAUCET_LIQUID_TOKEN` / `FAUCET_ILLIQUID_TOKEN` / `FAUCET_RENTAL_NFT`
-overrides (idempotent re-runs) and persists every address to the
-per-chain `addresses.json` under a single `.testnetMocks` object — the
-exact shape the new `TestnetMocks` interface in
-`packages/contracts/src/deployments.ts` consumes. Run
+feed + registry and a mock Uniswap-V3 `asset/WETH` pool above the $1M
+depth floor per liquid token (Tier 1), plus a **registered
+`MockSwapAdapter`** — the venue the Phase-7a HF-liquidation failover
+(`LibSwap.swapWithFailover`) actually routes through (Tier 2). The
+script seeds that adapter with a float of every liquid faucet token;
+for loans in other principals, fund the **`mockSwapAdapter`** address
+from `.testnetMocks` (NOT the `ZeroExProxyMock` — that is the legacy
+0x-proxy shape, wired for completeness but ignored by the Phase-7a
+path). The illiquid token is left unwired on purpose so the in-kind
+default flows stay exercisable. The script reuses already-deployed
+assets via the `FAUCET_*` overrides (idempotent re-runs) and persists
+every address to the per-chain `addresses.json` under a single
+`.testnetMocks` object — the exact shape the `TestnetMocks` interface
+in `packages/contracts/src/deployments.ts` consumes. Run
 `exportFrontendDeployments.sh` afterwards to fold it into the bundle.
 
 Base Sepolia already carries the deployed faucet trio (`tLIQ`, `tILQ`,

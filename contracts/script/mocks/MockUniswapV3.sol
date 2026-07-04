@@ -12,10 +12,18 @@ pragma solidity ^0.8.29;
  *         registered pool but failing depth).
  */
 contract MockUniswapV3Pool {
+    /// @dev Owner-gated tuning: these pools are wired as a public
+    ///      testnet Diamond's LIVE liquidity source — open setters
+    ///      would let anyone zero the depth or skew the spot and flip
+    ///      `checkLiquidity` for the faucet assets (Codex #982 r9).
+    ///      The factory passes its own owner (the deploying key) down.
+    address public immutable owner;
+
     uint160 public sqrtPriceX96;
     uint128 public poolLiquidity;
 
-    constructor(uint160 _sqrtPriceX96, uint128 _liquidity) {
+    constructor(address _owner, uint160 _sqrtPriceX96, uint128 _liquidity) {
+        owner = _owner;
         sqrtPriceX96 = _sqrtPriceX96;
         poolLiquidity = _liquidity;
     }
@@ -34,11 +42,13 @@ contract MockUniswapV3Pool {
 
     /// @notice Test hook — retune the pool price after deployment.
     function setSqrtPriceX96(uint160 _sqrtPriceX96) external {
+        require(msg.sender == owner, "MockUniswapV3Pool: not owner");
         sqrtPriceX96 = _sqrtPriceX96;
     }
 
     /// @notice Test hook — retune the pool liquidity after deployment.
     function setLiquidity(uint128 _liquidity) external {
+        require(msg.sender == owner, "MockUniswapV3Pool: not owner");
         poolLiquidity = _liquidity;
     }
 }
@@ -58,7 +68,18 @@ contract MockUniswapV3Pool {
  *         `OracleAdminFacet.setUniswapV3Factory`.
  */
 contract MockUniswapV3Factory {
+    /// @dev Deployer-gated: an open `createPool` on the registered
+    ///      factory could NOT overwrite an existing pair (POOL_EXISTS)
+    ///      but could pre-register attacker pools for pairs the
+    ///      operator adds later — and the per-pool tuning setters key
+    ///      off this owner. One key controls the whole mock venue.
+    address public immutable owner;
+
     mapping(address => mapping(address => mapping(uint24 => address))) public pools;
+
+    constructor() {
+        owner = msg.sender;
+    }
 
     event PoolCreated(address indexed token0, address indexed token1, uint24 indexed fee, address pool);
 
@@ -73,12 +94,13 @@ contract MockUniswapV3Factory {
         uint160 sqrtPriceX96,
         uint128 liquidity_
     ) external returns (address pool) {
+        require(msg.sender == owner, "MockUniswapV3Factory: not owner");
         require(tokenA != tokenB, "SAME_TOKEN");
         require(tokenA != address(0) && tokenB != address(0), "ZERO_TOKEN");
         (address token0, address token1) = tokenA < tokenB ? (tokenA, tokenB) : (tokenB, tokenA);
         require(pools[token0][token1][fee] == address(0), "POOL_EXISTS");
 
-        pool = address(new MockUniswapV3Pool(sqrtPriceX96, liquidity_));
+        pool = address(new MockUniswapV3Pool(owner, sqrtPriceX96, liquidity_));
         pools[token0][token1][fee] = pool;
         emit PoolCreated(token0, token1, fee, pool);
     }

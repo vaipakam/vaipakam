@@ -31,6 +31,14 @@ contract MockSwapAdapter is ISwapAdapter {
     uint256 public outputMultiplierBps = 10_000;
     uint256 public callCount;
 
+    /// @dev OPT-IN execute gate. Unset (default) keeps the mock fully
+    ///      open — the shape every existing test relies on. On public
+    ///      testnets the deploy script sets it to the Diamond: a funded
+    ///      adapter with an open `execute` is a public pot (anyone can
+    ///      approve a junk inputToken and drain the seeded output
+    ///      float; Codex #982 r9).
+    address public restrictedTo;
+
     modifier onlyOwner() {
         require(msg.sender == owner, "MockSwapAdapter: not owner");
         _;
@@ -49,6 +57,10 @@ contract MockSwapAdapter is ISwapAdapter {
         outputMultiplierBps = v;
     }
 
+    function setRestrictedTo(address caller) external onlyOwner {
+        restrictedTo = caller;
+    }
+
     function adapterName() external view override returns (string memory) {
         return label;
     }
@@ -62,6 +74,9 @@ contract MockSwapAdapter is ISwapAdapter {
         bytes calldata /* adapterData */
     ) external override returns (uint256 outputAmount) {
         callCount += 1;
+        if (restrictedTo != address(0) && msg.sender != restrictedTo) {
+            revert("MockSwapAdapter: caller not allowed");
+        }
         if (shouldRevert) revert("MockSwapAdapter: forced revert");
 
         IERC20(inputToken).safeTransferFrom(msg.sender, address(this), inputAmount);

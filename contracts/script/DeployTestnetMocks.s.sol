@@ -304,6 +304,11 @@ contract DeployTestnetMocks is Script {
             swapAdapter = address(new MockSwapAdapter("vaipakam-testnet-mock"));
             console.log("Deployed MockSwapAdapter:", swapAdapter);
         }
+        // Restrict `execute` to the Diamond: a funded adapter with an
+        // open execute is a public pot — anyone could approve a junk
+        // inputToken and drain the seeded output float (Codex #982 r9).
+        // Idempotent; owner (deployer) is broadcasting here.
+        MockSwapAdapter(swapAdapter).setRestrictedTo(diamond);
         // Top up the proceeds float every run (harmless testnet mint) —
         // every liquid principal so any side's loans can liquidate.
         ERC20Mock(liquidToken).mint(swapAdapter, 1_000_000e18);
@@ -362,19 +367,31 @@ contract DeployTestnetMocks is Script {
         if (!_adapterRegistered(diamond, address(swapAdapter))) {
             AdminFacet(diamond).addSwapAdapter(address(swapAdapter));
         }
-        // Prune every OTHER registered adapter. Pre-hardening runs left
-        // an UNGATED MockSwapAdapter registered — its public setters
-        // let anyone force reverts / skew payouts for liquidations
-        // routed at its adapterIdx, so replacing without removing keeps
-        // the griefing surface alive (Codex #982 round-7). Removal by
-        // ADDRESS is order-independent, so iterating a pre-removal
-        // snapshot is safe.
+        // Prune stale copies of OUR OWN mock adapter — identified by
+        // `adapterName() == "vaipakam-testnet-mock"` — so pre-hardening
+        // (publicly mutable) instances stop being reachable at their
+        // old adapterIdx (Codex #982 round-7). Anything else is
+        // PRESERVED: real venues (e.g. BNB Testnet's registered uniV3
+        // adapter) must survive a faucet-mock re-run (round-9). An
+        // adapter whose name read reverts is treated as foreign and
+        // kept. Removal by ADDRESS is order-independent, so iterating
+        // a pre-removal snapshot is safe.
         {
             address[] memory existing = AdminFacet(diamond).getSwapAdapters();
             for (uint256 i; i < existing.length; ++i) {
-                if (existing[i] != swapAdapter) {
+                if (existing[i] == swapAdapter) continue;
+                bool isOurMock;
+                try MockSwapAdapter(existing[i]).adapterName() returns (string memory n) {
+                    isOurMock =
+                        keccak256(bytes(n)) == keccak256(bytes("vaipakam-testnet-mock"));
+                } catch {
+                    isOurMock = false;
+                }
+                if (isOurMock) {
                     AdminFacet(diamond).removeSwapAdapter(existing[i]);
-                    console.log("Removed stale swap adapter:", existing[i]);
+                    console.log("Removed stale mock swap adapter:", existing[i]);
+                } else {
+                    console.log("Preserved non-mock swap adapter: ", existing[i]);
                 }
             }
         }
