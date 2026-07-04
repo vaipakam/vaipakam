@@ -32,6 +32,7 @@ import { useActiveChain } from './useActiveChain';
  *  intentionally excluded from per-block refresh. */
 const LIVE_KEYS: ReadonlySet<string> = new Set([
   'activeOffers',
+  'activity',
   'myOffers',
   'offer',
   'offerLinkedLoan',

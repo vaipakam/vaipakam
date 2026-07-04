@@ -218,11 +218,51 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
       return 'checking';
     }, [loan.data, address, nftOwners.data, nftOwners.isError]);
 
+  // OBS-2 (#988) — the action gate must not trust a stale indexer row.
+  // One cheap live status read reconciles a row that still says
+  // "active" after the loan settled/liquidated on-chain; without it, a
+  // stalled indexer leaves a live "Repay" button on a terminal loan
+  // (doomed write). Enabled only while the ROW looks open — a terminal
+  // row only gets more terminal, so nothing to reconcile there. This is
+  // deliberately separate from `loanLive` below, which is scoped to
+  // advanced-mode strategy cards; the status truth matters in Basic
+  // mode too. (Declared BEFORE `risk`/`loanLive` so their enablement
+  // can follow the RECONCILED status, not the stale row.)
+  const liveStatus = useQuery({
+    queryKey: ['loanLiveStatus', readChain.chainId, loan.data?.loanId],
+    enabled:
+      Boolean(readClient) &&
+      Boolean(loan.data) &&
+      (loan.data?.status === 'active' ||
+        loan.data?.status === 'fallback_pending'),
+    staleTime: 15_000,
+    refetchInterval: 30_000,
+    queryFn: async () =>
+      (
+        await readLoanLive(
+          readClient!,
+          readChain.diamondAddress,
+          loan.data!.loanId,
+        )
+      ).status,
+  });
+
+  // Effectively OPEN for the live-read enablements: a stale
+  // `fallback_pending` row whose live status already CURED back to
+  // Active must light up the same live reads an `active` row gets —
+  // otherwise the health/strategy cards sit on "Checking…" and the
+  // close/refinance/exit actions stay hidden until the indexer
+  // catches up (#982 round-5).
+  const effectivelyActive =
+    loan.data?.status === 'active' ||
+    (loan.data?.status === 'fallback_pending' &&
+      liveStatus.data === LoanStatus.Active);
+
   // HF/LTV apply only to active, priced (ERC-20) loans; the hook maps
   // the illiquid-leg revert to `priced: false`.
   const risk = useLoanRisk(
     loan.data?.loanId,
-    Boolean(loan.data && loan.data.status === 'active' && !loanIsRental),
+    Boolean(loan.data && effectivelyActive && !loanIsRental),
   );
 
   // Sanctions: addCollateral and both claim paths screen msg.sender on
@@ -290,7 +330,7 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
     enabled:
       Boolean(readClient) &&
       Boolean(loan.data) &&
-      loan.data?.status === 'active' &&
+      effectivelyActive &&
       !loanIsRental &&
       isAdvanced &&
       (role === 'borrower' || role === 'lender'),
@@ -323,34 +363,6 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
       ]);
       return { live, calcDue, chainNow: latestBlock.timestamp, saleLock };
     },
-  });
-
-  // OBS-2 (#988) — the action gate must not trust a stale indexer row.
-  // One cheap live status read reconciles a row that still says
-  // "active" after the loan settled/liquidated on-chain; without it, a
-  // stalled indexer leaves a live "Repay" button on a terminal loan
-  // (doomed write). Enabled only while the ROW looks open — a terminal
-  // row only gets more terminal, so nothing to reconcile there. This is
-  // deliberately separate from `loanLive` above, which is scoped to
-  // advanced-mode strategy cards; the status truth matters in Basic
-  // mode too.
-  const liveStatus = useQuery({
-    queryKey: ['loanLiveStatus', readChain.chainId, loan.data?.loanId],
-    enabled:
-      Boolean(readClient) &&
-      Boolean(loan.data) &&
-      (loan.data?.status === 'active' ||
-        loan.data?.status === 'fallback_pending'),
-    staleTime: 15_000,
-    refetchInterval: 30_000,
-    queryFn: async () =>
-      (
-        await readLoanLive(
-          readClient!,
-          readChain.diamondAddress,
-          loan.data!.loanId,
-        )
-      ).status,
   });
 
   // Balance gates: approve() succeeds regardless of balance, so check

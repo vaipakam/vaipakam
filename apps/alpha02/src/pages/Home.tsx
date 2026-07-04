@@ -5,6 +5,7 @@
 import { Link } from 'react-router-dom';
 import { Coins, HandCoins, Images, ListChecks, Droplets } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
+import { getDeployment } from '@vaipakam/contracts/deployments';
 import { copy } from '../content/copy';
 import { useMyLoans } from '../data/hooks';
 import { useActiveChain } from '../chain/useActiveChain';
@@ -64,7 +65,10 @@ export function Home() {
         </Link>
       ) : null}
 
-      {readChain.testnet ? (
+      {/* Only advertise the faucet on a testnet whose bundle actually
+          carries the mock assets — an unseeded testnet would land the
+          user on an immediate "not set up here" page. */}
+      {readChain.testnet && getDeployment(readChain.chainId)?.testnetMocks ? (
         <Link to="/faucet" className="banner banner-info" style={{ display: 'flex' }}>
           <Droplets aria-hidden />
           <span className="banner-body">{copy.home.testnetNudge(readChain.name)}</span>

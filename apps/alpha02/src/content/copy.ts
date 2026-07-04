@@ -659,13 +659,24 @@ export const copy = {
       'Minted assets land in your wallet. Use “My vault” and the Borrow, Lend, and NFT Rental screens to put them to work.',
     mintedTokens: (units: number, symbol: string) =>
       `Minted ${units.toLocaleString()} ${symbol} to your wallet.`,
-    mintedNft: (tokenId: bigint) =>
-      `Minted test NFT #${tokenId.toString().slice(0, 8)}… to your wallet.`,
+    // The full token ID matters: the NFT Rental listing form needs the
+    // EXACT id, so the success banner shows it whole with a copy button
+    // (never truncated — a random 256-bit id can't be retyped).
+    mintedNft:
+      'Minted a test rental NFT to your wallet. Its token ID — you’ll need it to list the rental:',
+    copyTokenId: 'Copy token ID',
+    copiedTokenId: 'Copied.',
     liquid: {
       title: 'Liquid test token (tLIQ)',
       blurb:
         'Priced by a test oracle, so it behaves like a liquid asset — health factor, liquidation, and refinancing all work with it.',
       action: (units: number) => `Mint ${units.toLocaleString()} tLIQ`,
+    },
+    liquid2: {
+      title: 'Second liquid test token (tLQ2)',
+      blurb:
+        'Also oracle-priced. Pair it with tLIQ (one as the loan, one as collateral) — the health-factor, liquidation, and refinancing flows need two different liquid tokens.',
+      action: (units: number) => `Mint ${units.toLocaleString()} tLQ2`,
     },
     illiquid: {
       title: 'Illiquid test token (tILQ)',

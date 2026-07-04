@@ -59,6 +59,10 @@ const MOCK_DECIMALS = 18;
 interface MintOutcome {
   hash: `0x${string}`;
   label: string;
+  /** Full minted NFT token id — shown whole + copyable because the
+   *  rental listing form needs the exact value (a random 256-bit id
+   *  can't be retyped from a truncated preview). */
+  tokenId?: string;
 }
 
 export function Faucet() {
@@ -73,6 +77,7 @@ export function Faucet() {
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [done, setDone] = useState<MintOutcome | null>(null);
+  const [copied, setCopied] = useState(false);
 
   const mocks = getDeployment(readChain.chainId)?.testnetMocks;
 
@@ -108,6 +113,7 @@ export function Faucet() {
     setBusy(token);
     setError(null);
     setDone(null);
+    setCopied(false);
     try {
       const hash = await walletClient.writeContract({
         address: token,
@@ -132,6 +138,7 @@ export function Faucet() {
     setBusy(nft);
     setError(null);
     setDone(null);
+    setCopied(false);
     try {
       const tokenId = randomTokenId();
       const hash = await walletClient.writeContract({
@@ -144,7 +151,11 @@ export function Faucet() {
       });
       const receipt = await publicClient.waitForTransactionReceipt({ hash });
       if (receipt.status !== 'success') throw new Error(`Transaction reverted (${hash})`);
-      setDone({ hash, label: copy.faucet.mintedNft(tokenId) });
+      setDone({
+        hash,
+        label: copy.faucet.mintedNft,
+        tokenId: tokenId.toString(),
+      });
     } catch (err) {
       setError(submitErrorText(err));
     } finally {
@@ -201,6 +212,19 @@ export function Faucet() {
             }
           />
           <FaucetRow
+            title={copy.faucet.liquid2.title}
+            blurb={copy.faucet.liquid2.blurb}
+            address={mocks.liquidToken2}
+            explorer={readChain.blockExplorer}
+            actionLabel={copy.faucet.liquid2.action(LIQUID_UNITS)}
+            busy={busy === mocks.liquidToken2}
+            disabled={!canWrite || busy !== null}
+            onClick={() =>
+              mocks.liquidToken2 &&
+              void mintErc20(mocks.liquidToken2, LIQUID_UNITS, 'tLQ2')
+            }
+          />
+          <FaucetRow
             title={copy.faucet.illiquid.title}
             blurb={copy.faucet.illiquid.blurb}
             address={mocks.illiquidToken}
@@ -228,6 +252,26 @@ export function Faucet() {
             <div className="banner banner-info" role="status">
               <span className="banner-body">
                 {done.label}{' '}
+                {done.tokenId ? (
+                  <>
+                    <code
+                      className="mono"
+                      style={{ wordBreak: 'break-all', display: 'block', margin: '4px 0' }}
+                    >
+                      {done.tokenId}
+                    </code>
+                    <button
+                      type="button"
+                      className="btn btn-secondary"
+                      onClick={() => {
+                        void navigator.clipboard.writeText(done.tokenId!);
+                        setCopied(true);
+                      }}
+                    >
+                      {copied ? copy.faucet.copiedTokenId : copy.faucet.copyTokenId}
+                    </button>{' '}
+                  </>
+                ) : null}
                 <a
                   href={`${readChain.blockExplorer}/tx/${done.hash}`}
                   target="_blank"

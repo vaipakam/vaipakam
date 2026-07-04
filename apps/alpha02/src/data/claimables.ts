@@ -81,12 +81,16 @@ export function useMyClaimables() {
     refetchInterval: REFRESH_MS,
     queryFn: async (): Promise<PositionLoan[] | null> => {
       if (!address) return [];
-      // Candidate source (indexer) unavailable, or no RPC to confirm
-      // against → unavailable, never a confident empty/partial list.
-      // (`enabled` already gates on defined data; the `== null` check
-      // covers both the null "unavailable" contract and narrows the type.)
-      if (loans.data == null) return null;
       if (!publicClient) return null;
+      // Indexer down (`null`) is NOT fatal by itself: holding the
+      // side's position NFT is a precondition for every claim, and the
+      // on-chain enumeration below is authoritative for the wallet's
+      // CURRENT holdings — so chain discovery alone still finds every
+      // claimable. Only when the enumeration is ALSO unavailable does
+      // the result collapse to `null` (unavailable, never a confident
+      // partial list).
+      const indexerDown = loans.data == null;
+      const indexed: PositionLoan[] = loans.data ?? [];
 
       const me = address.toLowerCase();
       let transportFailed = false;
@@ -100,6 +104,7 @@ export function useMyClaimables() {
       // pre-#988 behaviour). A TRANSPORT failure makes the defined
       // candidate set unknowable → unavailable, per the contract above.
       const chainIds: bigint[] = [];
+      let enumerationAvailable = true;
       try {
         // Paginated so a wallet griefed with a huge position-NFT
         // inventory can't make one unbounded eth_call revert and hide a
@@ -131,9 +136,12 @@ export function useMyClaimables() {
           if (!isRevert(e2)) return null;
           // Both views absent — an older deploy without the
           // enumeration. The indexer candidates stand alone (exactly
-          // the pre-#988 behaviour).
+          // the pre-#988 behaviour) — unless the indexer is down too,
+          // in which case nothing can discover candidates.
+          enumerationAvailable = false;
         }
       }
+      if (indexerDown && !enumerationAvailable) return null;
 
       // Candidates are keyed by (loanId, role) — NOT loanId alone. The
       // indexer may know one side of a loan while the chain enumeration
@@ -144,7 +152,7 @@ export function useMyClaimables() {
       // confirm below prunes any side the wallet doesn't actually hold.
       const byLoanId = new Map<number, PositionLoan>();
       const knownKeys = new Set<string>();
-      for (const l of loans.data) {
+      for (const l of indexed) {
         knownKeys.add(`${l.loanId}:${l.role}`);
         if (!byLoanId.has(l.loanId)) byLoanId.set(l.loanId, l);
       }
@@ -188,7 +196,7 @@ export function useMyClaimables() {
       // Fast approximate layer: the wallet's loans UNION the flipped
       // sides UNION the chain-discovered extras. `getClaimable` is the
       // authority for all of them.
-      const pool = [...loans.data, ...flipped, ...synthesized];
+      const pool = [...indexed, ...flipped, ...synthesized];
 
       // Rows in a REVERSIBLE state get a live status probe instead of
       // being trusted:

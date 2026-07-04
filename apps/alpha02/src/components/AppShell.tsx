@@ -25,6 +25,7 @@ import {
   Droplets,
 } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
+import { getDeployment } from '@vaipakam/contracts/deployments';
 import { useMode } from '../app/ModeContext';
 import { useActiveChain } from '../chain/useActiveChain';
 import { LiveChainSync } from '../chain/LiveChainSync';
@@ -74,8 +75,16 @@ export function AppShell() {
   const { readChain } = useActiveChain();
   const { pathname } = useLocation();
 
+  // testnetOnly entries (the faucet) additionally require the chain's
+  // deployments bundle to actually carry `testnetMocks` — an unseeded
+  // testnet (e.g. a chain whose mocks haven't been deployed yet) must
+  // not advertise a faucet that immediately says "not set up here".
+  const hasFaucetAssets = Boolean(
+    getDeployment(readChain.chainId)?.testnetMocks,
+  );
   const visible = (item: NavItem) =>
-    (!item.advancedOnly || isAdvanced) && (!item.testnetOnly || readChain.testnet);
+    (!item.advancedOnly || isAdvanced) &&
+    (!item.testnetOnly || (readChain.testnet && hasFaucetAssets));
 
   // On phones the "More" tab fronts every destination without a tab of
   // its own — highlight it on those pages so the user is never "nowhere".
