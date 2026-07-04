@@ -69,5 +69,19 @@
   "vpfiPoolRateGovernor": "0x993A502A43EdCB9c497F4ae50569F94209C0A08E",
   "rewardMessenger": "0x1132055D90E9cFD77f30b6420a591781Ac3f10Fe",
   "buybackRemittanceReceiver": "0x1bE16d5A49a22d26052FC70FEaF1E6e038F56e05",
-  "buybackRemittanceReceiverImpl": "0x808923B2Fd1b308Dd246C906DE28BF63165DAdd3"
+  "buybackRemittanceReceiverImpl": "0x808923B2Fd1b308Dd246C906DE28BF63165DAdd3",
+  "testnetMocks": {
+    "ethUsdFeed": "0xe40e1A700FEDFf587bd3D0b267e56bc26cD8cA9e",
+    "feedRegistry": "0x512DD10B6951A8246f19DA352352bc45C9C77D66",
+    "illiquidToken": "0x2AffacDEA8119E38D9754b2C2c15EC79aF360807",
+    "liquidToken": "0x9d2a1acF65Ed12716Ca67Beb7D108890ccDa49f8",
+    "liquidTokenUsdFeed": "0x534e488390520C595239A9157a6c19CCc3eBf87b",
+    "liquidTokenWethPool": "0x7Ef3a00810cA3F978B9A82f72cE22feAE310AE74",
+    "mockSwapAdapter": "0xad7f437b8f7183F6fF09f4b3504F56efbad60D47",
+    "note": "Testnet-only faucet + oracle mock assets. NEVER present on mainnet slugs. Deployed by script/DeployTestnetMocks.s.sol.",
+    "rentalNft": "0xE435bDcFb59c4026d1607c8D498EF3EcCa51D837",
+    "uniswapV3Factory": "0x29e4f9E58eF8652bc9E1421974da5c7cEe94f954",
+    "zeroExProxy": "0x873088E9Ae876C2aE645D8D8f443875b75F6ce92"
+  },
+  "weth": "0x4200000000000000000000000000000000000006"
 }

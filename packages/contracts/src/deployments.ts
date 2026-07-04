@@ -21,7 +21,7 @@
  * The chain registry in `config.ts` treats that as "Phase-1 Diamond
  * not deployed here" and gates protocol calls accordingly.
  */
-import deploymentsJson from './deployments.json';
+import deploymentsJson from "./deployments.json";
 
 /** A 0x-prefixed hex address. Re-declared locally so this module has
  *  no viem dependency — it's consumed by `config.ts`, which does the
@@ -215,6 +215,44 @@ export interface Deployment {
 
   // ── Deploy metadata ─────────────────────────────────────────────
   deployedAt?: string;
+
+  /** Testnet-ONLY faucet + oracle mock assets, written by
+   *  `contracts/script/DeployTestnetMocks.s.sol`. Present exclusively
+   *  on testnet slugs (Base Sepolia, Arb Sepolia, …) and ABSENT on
+   *  every mainnet slug — the mock ERC-20s expose an unrestricted
+   *  `mint(to, amount)`, so the frontend faucet double-gates on the
+   *  chain's `testnet` flag AND on this field being present. Consumers
+   *  narrow: `if (chain.testnet && dep.testnetMocks) { … }`. */
+  testnetMocks?: TestnetMocks;
+}
+
+/** Addresses of the testnet-only mock assets + oracle wiring the
+ *  faucet + liquid-path testing use. All optional so a partial deploy
+ *  (faucet tokens first, oracle mocks later) type-checks. */
+export interface TestnetMocks {
+  /** Oracle-wired mock ERC-20 (18 dec) → classifies LIQUID. */
+  liquidToken?: HexAddress;
+  /** Unwired mock ERC-20 (18 dec) → classifies ILLIQUID (in-kind). */
+  illiquidToken?: HexAddress;
+  /** ERC-4907 rental NFT for the rental flows. */
+  rentalNft?: HexAddress;
+  /** MockChainlinkAggregator ETH/USD anchor. */
+  ethUsdFeed?: HexAddress;
+  /** MockChainlinkAggregator liquidToken/USD. */
+  liquidTokenUsdFeed?: HexAddress;
+  /** Mock Chainlink FeedRegistry resolving the above. */
+  feedRegistry?: HexAddress;
+  /** Mock Uniswap-V3 factory + liquidToken/WETH pool (liquidity gate). */
+  uniswapV3Factory?: HexAddress;
+  liquidTokenWethPool?: HexAddress;
+  /** ZeroExProxyMock — the LEGACY 0x-proxy swap venue. Retained for
+   *  completeness; NOT used by the Phase-7a liquidation path. */
+  zeroExProxy?: HexAddress;
+  /** Registered MockSwapAdapter (ISwapAdapter) that the HF-liquidation
+   *  failover path (`LibSwap.swapWithFailover`) actually routes through
+   *  (Tier 2). Pays proceeds from its own balance, so it must be funded
+   *  with the loan's principal token before a liquidation. */
+  mockSwapAdapter?: HexAddress;
 }
 
 /**
@@ -225,9 +263,7 @@ export interface Deployment {
 const raw = deploymentsJson as Record<string, Deployment>;
 
 export const DEPLOYMENTS: Readonly<Record<number, Deployment>> = Object.freeze(
-  Object.fromEntries(
-    Object.entries(raw).map(([k, v]) => [Number(k), v]),
-  ),
+  Object.fromEntries(Object.entries(raw).map(([k, v]) => [Number(k), v])),
 );
 
 /** Returns the deployment record for a chain, or `undefined` if the
