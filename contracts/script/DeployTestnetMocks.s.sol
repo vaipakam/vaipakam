@@ -280,11 +280,29 @@ contract DeployTestnetMocks is Script {
         // stale venues in `getSwapAdapters()` and shifting the
         // `adapterIdx` the run notes advertise.
         address swapAdapter = vm.envOr("FAUCET_SWAP_ADAPTER", address(0));
-        if (swapAdapter == address(0)) {
+        if (swapAdapter != address(0)) {
+            // The reuse override must point at a HARDENED adapter: the
+            // pre-gating MockSwapAdapter had public setters — exactly
+            // the stale state this script remediates — and reusing it
+            // (then pruning everything else below) would leave the
+            // griefable venue as the ONLY liquidation route. The old
+            // bytecode has no `owner()` getter, so the call reverting
+            // doubles as the version check; a hardened adapter owned
+            // by a different key is rejected too.
+            try MockSwapAdapter(swapAdapter).owner() returns (address o) {
+                require(
+                    o == vm.addr(deployerKey),
+                    "DeployTestnetMocks: FAUCET_SWAP_ADAPTER owned by another key - unset the env to deploy fresh"
+                );
+            } catch {
+                revert(
+                    "DeployTestnetMocks: FAUCET_SWAP_ADAPTER is a pre-hardening (ungated) adapter - unset the env to deploy fresh"
+                );
+            }
+            console.log("Reusing MockSwapAdapter: ", swapAdapter);
+        } else {
             swapAdapter = address(new MockSwapAdapter("vaipakam-testnet-mock"));
             console.log("Deployed MockSwapAdapter:", swapAdapter);
-        } else {
-            console.log("Reusing MockSwapAdapter: ", swapAdapter);
         }
         // Top up the proceeds float every run (harmless testnet mint) —
         // every liquid principal so any side's loans can liquidate.
