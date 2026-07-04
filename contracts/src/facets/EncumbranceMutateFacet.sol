@@ -4,6 +4,7 @@ pragma solidity ^0.8.29;
 
 import {LibEncumbrance} from "../libraries/LibEncumbrance.sol";
 import {LibVaipakam} from "../libraries/LibVaipakam.sol";
+import {LibCloseoutFreeze} from "../libraries/LibCloseoutFreeze.sol";
 
 /**
  * @title  EncumbranceMutateFacet
@@ -52,6 +53,44 @@ contract EncumbranceMutateFacet {
         onlyDiamondInternal
     {
         LibEncumbrance.releaseCollateralLien(loanId);
+    }
+
+    /// @notice #954 (§1.1) — freeze a full swap-to-repay's LENDER proceeds into
+    ///         the stored lender's vault behind the receive-side sanctions
+    ///         exemption, write the lender claim row, encumber the proceeds for
+    ///         every ERC20, and tier-exclude a transferred-and-sanctioned
+    ///         holder's VPFI. See {LibCloseoutFreeze.freezeLenderProceeds}.
+    /// @dev    Hosted here (not inlined in `SwapToRepayFacet`) so that facet
+    ///         stays under the EIP-170 ceiling after the #959 merge — a
+    ///         crossFacetCall stub is ~50 bytes vs the inlined helper. Runs in
+    ///         the diamond's storage context, so `LibCloseoutFreeze` reads the
+    ///         live loan and the diamond-held proceeds exactly as an inline call
+    ///         would. The Fusion intent path inlines the SAME helper directly
+    ///         (it has bytecode room), so both close-out terminals share one
+    ///         logic source and cannot drift.
+    function freezeLenderProceeds(uint256 loanId, uint256 lenderDue)
+        external
+        onlyDiamondInternal
+    {
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        LibCloseoutFreeze.freezeLenderProceeds(s, loanId, s.loans[loanId], lenderDue);
+    }
+
+    /// @notice #954 (§2.1) — pay or FREEZE a full swap-to-repay's borrower
+    ///         principal SURPLUS: direct EOA payout for a clean current holder,
+    ///         freeze-at-source into the stored borrower's vault (+ surplus claim
+    ///         row + encumber-all + VPFI tier-exclude) for a sanctioned one. See
+    ///         {LibCloseoutFreeze.freezeOrPayBorrowerSurplus}. Hosted here for
+    ///         the same EIP-170 reason as {freezeLenderProceeds}.
+    function freezeOrPayBorrowerSurplus(
+        uint256 loanId,
+        address currentHolder,
+        uint256 surplus
+    ) external onlyDiamondInternal {
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        LibCloseoutFreeze.freezeOrPayBorrowerSurplus(
+            s, loanId, s.loans[loanId], currentHolder, surplus
+        );
     }
 
     /// @notice #407 PR 4 round-1 Codex P1 #1 (2026-06-12) — decrement

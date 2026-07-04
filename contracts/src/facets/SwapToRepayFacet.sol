@@ -20,7 +20,6 @@ import {VaipakamNFTFacet} from "./VaipakamNFTFacet.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {IERC721} from "@openzeppelin/contracts/token/ERC721/IERC721.sol";
 import {LibSanctionedLock} from "../libraries/LibSanctionedLock.sol";
-import {LibCloseoutFreeze} from "../libraries/LibCloseoutFreeze.sol";
 import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import {DiamondReentrancyGuard} from "../libraries/LibReentrancyGuard.sol";
 import {DiamondPausable} from "../libraries/LibPausable.sol";
@@ -365,9 +364,15 @@ contract SwapToRepayFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamE
         // sanctions exemption (so a lender flagged after init doesn't brick the
         // close-out), write the lender claim row, reserve the proceeds against
         // the stored lender's spend paths for EVERY ERC20, and tier-exclude a
-        // transferred-and-sanctioned holder's VPFI. Shared with the Fusion
-        // intent settlement so the two full-close terminals can't drift.
-        LibCloseoutFreeze.freezeLenderProceeds(s, loanId, loan, plan.lenderDue);
+        // transferred-and-sanctioned holder's VPFI. Routed through
+        // `EncumbranceMutateFacet` (which calls the shared `LibCloseoutFreeze`)
+        // via crossFacetCall so this facet stays under EIP-170 after the #959
+        // merge — the Fusion intent path inlines the same helper directly.
+        _callEncumb2(
+            EncumbranceMutateFacet.freezeLenderProceeds.selector,
+            loanId,
+            plan.lenderDue
+        );
 
         // Surplus principal → CURRENT borrower-position NFT holder's
         // EOA directly (Codex round-4 P1 #2). Routing to the vault
@@ -388,10 +393,9 @@ contract SwapToRepayFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamE
         // directly; a SANCTIONED holder's surplus is frozen into loan.borrower's
         // vault (records a `borrowerSurplusClaims` row, reserves it against the
         // stored borrower's signed-offer spend for EVERY ERC20, and tier-excludes
-        // a transferred holder's VPFI). Shared with the Fusion intent settlement.
-        LibCloseoutFreeze.freezeOrPayBorrowerSurplus(
-            s, loanId, loan, currentBorrowerHolder, surplusPrincipal
-        );
+        // a transferred holder's VPFI). Routed through `EncumbranceMutateFacet`
+        // (shared `LibCloseoutFreeze`) for the EIP-170 reason noted above.
+        _callFreezeSurplus(loanId, currentBorrowerHolder, surplusPrincipal);
 
         // ── Claim slots ──────────────────────────────────────────────
         // The lender claim row + lender-proceeds reservation are written inside
@@ -874,5 +878,20 @@ contract SwapToRepayFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamE
 
     function _incrementLienAtSwapToRepayPartial(uint256 loanId, uint256 added) private {
         _callEncumb2(EncumbranceMutateFacet.incrementCollateralLien.selector, loanId, added);
+    }
+
+    /// @dev #954 — crossFacetCall stub for the borrower-surplus freeze/pay
+    ///      (3-arg shape). Keeps the freeze bytecode in `EncumbranceMutateFacet`
+    ///      so `swapToRepayFull` stays under the EIP-170 ceiling.
+    function _callFreezeSurplus(uint256 loanId, address holder, uint256 surplus) private {
+        LibFacet.crossFacetCall(
+            abi.encodeWithSelector(
+                EncumbranceMutateFacet.freezeOrPayBorrowerSurplus.selector,
+                loanId,
+                holder,
+                surplus
+            ),
+            bytes4(0)
+        );
     }
 }
