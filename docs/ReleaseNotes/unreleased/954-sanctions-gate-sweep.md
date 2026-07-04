@@ -25,10 +25,21 @@ points were already screened correctly and found four that were not:
   both the lister and the sale's fee recipients, matching the equivalent
   per-loan listing flows (this surface had been missed entirely).
 - **Swap-to-repay surplus** — when a borrower closes out by swapping collateral
-  and the swap returns more than the debt, the surplus paid back to a *flagged*
-  holder is now frozen at source (parked, not handed over) instead of sent
-  straight to their wallet. The close-out itself still completes, so the honest
-  lender is always made whole.
+  and the swap returns more than the debt, the surplus owed to a *flagged*
+  current holder is now frozen (parked, not handed over) instead of sent straight
+  to their wallet. The close-out itself still completes, so the honest lender is
+  always made whole. The surplus is parked in the **stored borrower's** vault
+  (which always exists, from the collateral posted at origination) rather than the
+  current holder's — a freshly-transferred borrower position may belong to a
+  wallet that never opened a vault, and the protocol refuses to open one for a
+  flagged wallet, so parking it there would have reverted and *bricked* the
+  must-complete close-out. It is recorded as its own claimable row so the holder
+  can withdraw it through the normal borrower-claim path once they are delisted;
+  without that row the frozen principal (a different asset from the loan's
+  collateral, which already occupies the borrower's claim slot) would have been
+  permanently stuck. If the surplus is VPFI it is also reserved against the
+  unstake path until claimed, so the stored borrower can't drain a transferred
+  position's proceeds. (Codex #981 P1/P2.)
 
 A **coverage matrix** documenting the classification rule and every method's
 verdict now lives at `docs/DesignsAndPlans/SanctionsGateCoverageMatrix.md`, and a

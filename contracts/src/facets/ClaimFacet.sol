@@ -1067,7 +1067,14 @@ contract ClaimFacet is
         // have rebateAmount == 0 and no-op that branch below.
         bool hasNftClaim = claim.assetType != LibVaipakam.AssetType.ERC20;
         uint256 lifRebate = s.borrowerLifRebate[loanId].rebateAmount;
-        if (claim.amount == 0 && !hasNftClaim && lifRebate == 0) {
+        // #954 (Codex #981 P2) — a frozen swap-surplus principal (parked in
+        // `loan.borrower`'s vault for the current holder when the holder was
+        // sanctioned at `swapToRepayFull` close) is a SECOND claimable lane in the
+        // principal asset. Read it here so a surplus-only claim (no residual
+        // collateral, no LIF rebate) isn't wrongly rejected as NothingToClaim.
+        LibVaipakam.ClaimInfo storage surplusClaim = s.borrowerSurplusClaims[loanId];
+        uint256 surplusAmt = surplusClaim.claimed ? 0 : surplusClaim.amount;
+        if (claim.amount == 0 && !hasNftClaim && lifRebate == 0 && surplusAmt == 0) {
             revert NothingToClaim();
         }
 
@@ -1193,6 +1200,27 @@ contract ClaimFacet is
             );
         }
 
+        // #954 (Codex #981 P2) — pay out the frozen swap-surplus principal. It was
+        // parked in `loan.borrower`'s vault for the current holder because the
+        // holder was sanctioned when `swapToRepayFull` closed; `msg.sender` is the
+        // now-delisted, sanctions-screened current NFT holder. Marked claimed
+        // BEFORE the withdraw (reentrancy) and run inside the move-out exemption
+        // armed above; its VPFI reservation (if any) was released at
+        // `releaseBorrowerProceeds` above, so the unstake guard permits it.
+        if (surplusAmt > 0) {
+            surplusClaim.claimed = true;
+            LibFacet.crossFacetCall(
+                abi.encodeWithSelector(
+                    VaultFactoryFacet.vaultWithdrawERC20.selector,
+                    loan.borrower,
+                    surplusClaim.asset,
+                    msg.sender,
+                    surplusAmt
+                ),
+                VaultWithdrawFailed.selector
+            );
+        }
+
         // #658 PR-B (Codex #690 round-4 + round-6) — when VPFI has just left
         // `loan.borrower`'s vault via the withdraw(s) above, re-stamp so the
         // vault owner doesn't keep fee-tier / staking credit on VPFI that is no
@@ -1216,7 +1244,12 @@ contract ClaimFacet is
         // cross-call. There is no VPFI to restamp without a token anyway.
         if (
             s.vpfiToken != address(0) &&
-            (claim.asset == s.vpfiToken || extraLienedAsset == s.vpfiToken)
+            (claim.asset == s.vpfiToken ||
+                extraLienedAsset == s.vpfiToken ||
+                // #954 (Codex #981 P2) — a VPFI swap-surplus that just left
+                // loan.borrower's vault via the payout above is a FOURTH form VPFI
+                // can leave here; the user-keyed restamp covers it too.
+                (surplusAmt > 0 && surplusClaim.asset == s.vpfiToken))
         ) {
             LibFacet.crossFacetCall(
                 abi.encodeWithSelector(

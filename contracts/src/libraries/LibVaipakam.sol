@@ -4705,6 +4705,19 @@ library LibVaipakam {
         // Append-only per loan; `_processEntry` is idempotent so a re-sweep (or a
         // later un-flagged claim) double-counts nothing.
         mapping(uint256 => uint256[]) loanForfeitedLenderEntryIds;
+        // ─── #954 (Codex #981 P1/P2) — frozen swap-surplus borrower claim ─────
+        // `SwapToRepayFacet.swapToRepayFull` normally hands the borrower's
+        // principal surplus straight to the CURRENT borrower-NFT holder's EOA.
+        // When that holder is sanctioned the payout is withheld and frozen in
+        // `loan.borrower`'s vault instead (which always exists — collateral was
+        // posted there at init — so a fresh vault-less transferee can't brick the
+        // must-complete close-out). This slot records that frozen principal
+        // surplus so the holder can withdraw it via `ClaimFacet.claimAsBorrower`
+        // once delisted; the loan's ordinary `borrowerClaims` slot is taken by
+        // the residual COLLATERAL (a different asset), so the surplus needs its
+        // own claim row. Keyed by loanId; unset (amount 0) on the common unfrozen
+        // path.
+        mapping(uint256 => ClaimInfo) borrowerSurplusClaims;
     }
 
     /// @notice #393 v1-b — the originating intent of a `matchIntent` loan,

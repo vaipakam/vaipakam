@@ -379,22 +379,59 @@ contract SwapToRepayFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamE
             // that MUST complete (a flagged borrower must still be able to settle
             // so the honest lender is made whole), so the call itself is never
             // blocked. But the borrower's own surplus must not be handed to a
-            // SANCTIONED EOA. Freeze it at source instead: park it in the holder's
-            // vault under the sanctioned-lock (fires `SanctionedProceedsLocked`),
-            // exactly as every other close-out freezes a flagged party's proceeds
-            // (#821/#832). The unflagged path keeps the direct-EOA payout — a plain
-            // vault deposit would be unrealizable for a clean borrower (see the
-            // Codex round-4 note below), whereas the frozen case is intentionally
-            // withheld pending delisting / off-chain reconciliation.
+            // SANCTIONED EOA. Freeze it at source instead.
             if (LibVaipakam.isSanctionedAddress(currentBorrowerHolder)) {
+                // #954 (Codex #981 P1) — freeze the surplus into `loan.borrower`'s
+                // vault, NOT the current holder's. The holder may be a fresh
+                // borrower-NFT transferee that never created a vault, and the
+                // receive-side exemption deliberately REFUSES to mint a vault for
+                // a flagged wallet (`SanctionedRecipientHasNoVault`) — depositing
+                // to it would revert and brick this must-complete close-out.
+                // `loan.borrower`'s vault always exists (collateral was posted
+                // there at init), so this can't brick; `depositLocked` resolves it
+                // behind the exemption and fires `SanctionedProceedsLocked` when
+                // `loan.borrower` itself is flagged. Same custody the residual
+                // collateral already uses — it too sits in `loan.borrower`'s vault
+                // and is paid to the current holder at claim.
                 LibSanctionedLock.depositLocked(
                     s,
-                    currentBorrowerHolder,
+                    loan.borrower,
                     loanId,
                     loan.principalAsset,
                     surplusPrincipal
                 );
+                // #954 (Codex #981 P2) — record a claim row so the current holder
+                // can withdraw the frozen surplus via `claimAsBorrower` once
+                // delisted. A bare vault balance is unrealizable: the loan's
+                // `borrowerClaims` slot holds the residual COLLATERAL (a different
+                // asset) and `vaultWithdrawERC20` is diamond-internal, so without
+                // this row the surplus would be permanently stuck.
+                s.borrowerSurplusClaims[loanId] = LibVaipakam.ClaimInfo({
+                    asset: loan.principalAsset,
+                    amount: surplusPrincipal,
+                    assetType: LibVaipakam.AssetType.ERC20,
+                    tokenId: 0,
+                    quantity: 0,
+                    claimed: false
+                });
+                // A plain-ERC20 tracked vault balance is not user-drainable
+                // (`vaultWithdrawERC20` is internal; `recoverStuckERC20` only
+                // touches UNtracked excess). VPFI is the exception — a clean
+                // stored `loan.borrower` could unstake it out of their vault
+                // before the current holder claims a TRANSFERRED position's
+                // surplus — so reserve it against the unstake path, released in
+                // `claimAsBorrower`'s `releaseBorrowerProceeds`. No-op for non-VPFI.
+                if (loan.principalAsset == s.vpfiToken) {
+                    LibEncumbrance.encumberBorrowerProceeds(
+                        loanId, loan.borrower, loan.principalAsset, surplusPrincipal
+                    );
+                }
             } else {
+                // Clean holder — direct-EOA payout. Routing to the vault with
+                // `recordVaultDeposit` would leave the surplus unclaimable
+                // (Codex round-4 P1 #2): `claimAsBorrower` releases only the
+                // collateral asset in `borrowerClaims`, and `vaultWithdrawERC20`
+                // is diamond-internal.
                 IERC20(loan.principalAsset).safeTransfer(
                     currentBorrowerHolder,
                     surplusPrincipal

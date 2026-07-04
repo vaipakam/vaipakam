@@ -8,6 +8,9 @@ import {RepayFacet} from "../src/facets/RepayFacet.sol";
 import {OracleFacet} from "../src/facets/OracleFacet.sol";
 import {AdminFacet} from "../src/facets/AdminFacet.sol";
 import {VaultFactoryFacet} from "../src/facets/VaultFactoryFacet.sol";
+import {ClaimFacet} from "../src/facets/ClaimFacet.sol";
+import {ProfileFacet} from "../src/facets/ProfileFacet.sol";
+import {MockSanctionsList} from "./mocks/MockSanctionsList.sol";
 import {LibSwap} from "../src/libraries/LibSwap.sol";
 import {LibVaipakam} from "../src/libraries/LibVaipakam.sol";
 import {IVaipakamErrors} from "../src/interfaces/IVaipakamErrors.sol";
@@ -480,6 +483,101 @@ contract SwapToRepayFacetTest is SetupTest {
             IERC20(address(collateralAsset)).balanceOf(borrowerVault),
             LOAN_COLLATERAL - maxCollateralIn,
             "unswapped collateral stays in borrower vault"
+        );
+    }
+
+    // ── ─────────────────────────────────────────────────────── ──
+    // #954 (Codex #981) — sanctioned swap-surplus freeze: no-vault
+    // transferee must not brick (P1); frozen surplus stays claimable (P2)
+    // ── ─────────────────────────────────────────────────────── ──
+
+    /// @dev Re-home the borrower position NFT (tokenId 2) to `to` while it is
+    ///      still clean (mirrors the finding's "then-clean wallet" precondition),
+    ///      then wire a sanctions oracle and flag `to`. `to` ends up the current,
+    ///      vault-less, sanctioned borrower-NFT holder. Uses burn+remint via the
+    ///      mutator (the test diamond doesn't cut the public ERC721 transferFrom;
+    ///      burn+remint is equivalent for `ownerOf`, which is all the surplus
+    ///      freeze reads).
+    function _transferBorrowerNftThenSanction(address to)
+        internal
+        returns (MockSanctionsList sanctions)
+    {
+        TestMutatorFacet(address(diamond)).burnNFTRaw(/* tokenId */ 2);
+        TestMutatorFacet(address(diamond)).mintNFTRaw(to, /* tokenId */ 2);
+        sanctions = new MockSanctionsList();
+        ProfileFacet(address(diamond)).setSanctionsOracle(address(sanctions));
+        sanctions.setFlagged(to, true);
+    }
+
+    /// @dev P1 — a sanctioned current holder that never created a vault must NOT
+    ///      brick `swapToRepayFull`. The old code froze the surplus into the
+    ///      HOLDER's vault under the receive exemption, which refuses to mint a
+    ///      vault for a flagged wallet (`SanctionedRecipientHasNoVault`) and
+    ///      reverted the whole must-complete close-out. The surplus is now frozen
+    ///      into `loan.borrower`'s (always-present) vault, so the close-out
+    ///      completes and the flagged holder is NOT paid directly.
+    function test_swapToRepayFull_SanctionedVaultlessHolder_DoesNotBrick() public {
+        _scaffoldLoan(1, /* allowsPartialRepay */ false, /* useFullTermInterest */ false);
+        adapter1.setOutputMultiplierBps(10_000); // 1:1 → a positive surplus
+
+        address holder = makeAddr("v954VaultlessHolder");
+        _transferBorrowerNftThenSanction(holder);
+        assertEq(
+            VaultFactoryFacet(address(diamond)).getUserVaultAddress(holder),
+            address(0),
+            "holder never created a vault"
+        );
+
+        uint256 holderBefore = IERC20(address(principalAsset)).balanceOf(holder);
+
+        // MUST complete (no SanctionedRecipientHasNoVault brick).
+        vm.prank(holder);
+        SwapToRepayFacet(address(diamond)).swapToRepayFull(1, _adapterTryList(1), 1_500 ether);
+
+        // Surplus withheld from the flagged holder, not handed to their EOA.
+        assertEq(
+            IERC20(address(principalAsset)).balanceOf(holder),
+            holderBefore,
+            "flagged holder is not paid the surplus directly"
+        );
+        // And it is NOT lost — still owned by the (clean) stored borrower's vault.
+        assertGt(
+            IERC20(address(principalAsset)).balanceOf(borrowerVault),
+            0,
+            "frozen surplus is parked in loan.borrower's vault"
+        );
+    }
+
+    /// @dev P2 — the frozen surplus must remain claimable. While flagged the
+    ///      holder can't claim (Tier-1 claim gate); once delisted, the surplus is
+    ///      withdrawable to their EOA via `claimAsBorrower` (a bare vault balance
+    ///      would have had no principal-asset claim path).
+    function test_swapToRepayFull_FrozenSurplusClaimableAfterDelisting() public {
+        _scaffoldLoan(1, /* allowsPartialRepay */ false, /* useFullTermInterest */ false);
+        adapter1.setOutputMultiplierBps(10_000);
+
+        address holder = makeAddr("v954ClaimHolder");
+        MockSanctionsList sanctions = _transferBorrowerNftThenSanction(holder);
+
+        vm.prank(holder);
+        SwapToRepayFacet(address(diamond)).swapToRepayFull(1, _adapterTryList(1), 1_500 ether);
+
+        // Still flagged → the whole borrower claim (collateral + surplus) is gated.
+        vm.prank(holder);
+        vm.expectRevert(
+            abi.encodeWithSelector(LibVaipakam.SanctionedAddress.selector, holder)
+        );
+        ClaimFacet(address(diamond)).claimAsBorrower(1);
+
+        // Delist → the frozen surplus is now realizable to the holder's EOA.
+        sanctions.setFlagged(holder, false);
+        uint256 holderBefore = IERC20(address(principalAsset)).balanceOf(holder);
+        vm.prank(holder);
+        ClaimFacet(address(diamond)).claimAsBorrower(1);
+        assertGt(
+            IERC20(address(principalAsset)).balanceOf(holder),
+            holderBefore,
+            "delisted holder receives the frozen surplus principal"
         );
     }
 }
