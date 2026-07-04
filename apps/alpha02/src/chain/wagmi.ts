@@ -11,7 +11,8 @@
  *   - wagmi's `metaMask()` SDK connector is deliberately NOT used
  *     (broken extension detection on desktop) — injected target only.
  */
-import { createConfig, http } from 'wagmi';
+import { createConfig, fallback, http, webSocket } from 'wagmi';
+import type { Transport } from 'viem';
 import { coinbaseWallet, injected, safe, walletConnect } from 'wagmi/connectors';
 import {
   mainnet,
@@ -78,9 +79,19 @@ for (const c of SUPPORTED_CHAINS) {
 // `batch: true` folds same-tick eth_calls into one JSON-RPC batch —
 // the per-row token-meta reads on list pages go from hundreds of HTTP
 // requests to a handful, with zero call-site changes.
-const transports: Record<number, ReturnType<typeof http>> = {};
+//
+// When a chain has a WebSocket RPC configured, wrap it in a `fallback`
+// AHEAD of HTTP: viem's block watcher then uses `eth_subscribe`
+// (newHeads) for push updates that drive the live query-invalidation
+// layer (`LiveChainSync`), and any WS hiccup transparently drops to the
+// HTTP transport (which the block watcher polls instead). No WS URL ⇒
+// plain HTTP, identical to before.
+const transports: Record<number, Transport> = {};
 for (const c of SUPPORTED_CHAINS) {
-  transports[c.chainId] = http(c.rpcUrl, { batch: true });
+  const httpTransport = http(c.rpcUrl, { batch: true });
+  transports[c.chainId] = c.wsUrl
+    ? fallback([webSocket(c.wsUrl), httpTransport])
+    : httpTransport;
 }
 
 // ENS-READ-ONLY mainnet client: alpha02 doesn't deploy on Ethereum

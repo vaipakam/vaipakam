@@ -87,12 +87,11 @@ contract DeployTestnetLiquidityMocks is Script {
     ///      paths resolve to the same WETH everyone else uses.
     address constant SEPOLIA_WETH_DEFAULT = 0xfFf9976782d46CC05630D1f6eBAb18b2324d6B14;
 
-    /// @dev Canonical PancakeSwap WBNB on BNB Smart Chain Testnet —
-    ///      the wrapped-native asset role-equivalent of WETH on EVM
-    ///      l1/L2s. The protocol stores this under the same WETH
-    ///      pointer in `setWethContract(...)` since the role is
-    ///      identical: quote-asset for v3-style depth checks.
-    address constant BNB_TESTNET_WBNB_DEFAULT = 0xae13d989daC2f0dEbFf460aC112a837C89BAa7cd;
+    // NOTE: no BNB Testnet WBNB default any more — WBNB is NOT WETH.
+    // `setWethContract` is the bridged-WETH oracle reference and the
+    // ETH/USD feed would misprice WBNB as ETH, so chain 97 REQUIRES an
+    // explicit BNB_TESTNET_WETH (bridged/mock WETH), matching
+    // DeployTestnetMocks / DeployTestnetVPFI (#982 review).
 
     /// @dev Canonical Arbitrum Sepolia WETH9 — published by the
     ///      Arbitrum bridge. Required so the testnet rehearsal mesh's
@@ -153,9 +152,10 @@ contract DeployTestnetLiquidityMocks is Script {
         } else if (cid == 11155111) {
             weth = vm.envOr("SEPOLIA_WETH", SEPOLIA_WETH_DEFAULT);
         } else if (cid == 97) {
-            // BNB Smart Chain Testnet — chainid 97. WBNB plays the
-            // WETH role in the Diamond's price-asset wiring.
-            weth = vm.envOr("BNB_TESTNET_WBNB", BNB_TESTNET_WBNB_DEFAULT);
+            // BNB Smart Chain Testnet — chainid 97. WBNB is NOT WETH:
+            // require an explicit bridged/mock WETH (see note on the
+            // removed default above).
+            weth = vm.envAddress("BNB_TESTNET_WETH");
         } else if (cid == 421614) {
             // Arbitrum Sepolia — chainid 421614. Canonical WETH9
             // published by the Arbitrum bridge. Required so the

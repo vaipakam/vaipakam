@@ -215,6 +215,59 @@ export interface Deployment {
 
   // ── Deploy metadata ─────────────────────────────────────────────
   deployedAt?: string;
+
+  /** Testnet-ONLY faucet + oracle mock assets, written by
+   *  `contracts/script/DeployTestnetMocks.s.sol`. Present exclusively
+   *  on testnet slugs (Base Sepolia, Arb Sepolia, …) and ABSENT on
+   *  every mainnet slug — the mock ERC-20s expose an unrestricted
+   *  `mint(to, amount)`, so the frontend faucet double-gates on the
+   *  chain's `testnet` flag AND on this field being present. Consumers
+   *  narrow: `if (chain.testnet && dep.testnetMocks) { … }`. */
+  testnetMocks?: TestnetMocks;
+}
+
+/** Addresses of the testnet-only mock assets + oracle wiring the
+ *  faucet + liquid-path testing use. All optional so a partial deploy
+ *  (faucet tokens first, oracle mocks later) type-checks. */
+export interface TestnetMocks {
+  /** Oracle-wired mock ERC-20 (18 dec) → classifies LIQUID. */
+  liquidToken?: HexAddress;
+  /** SECOND oracle-wired mock ERC-20 (18 dec, tLQ2) — gives
+   *  faucet-only wallets a distinct both-liquid pair for the
+   *  HF / liquidation / refinance demos. */
+  liquidToken2?: HexAddress;
+  /** THIRD oracle-wired mock ERC-20 (18 dec, mWETH) — WETH-flavoured
+   *  mintable principal for demos; NOT the canonical WETH. */
+  mWeth?: HexAddress;
+  /** Unwired mock ERC-20 (18 dec) → classifies ILLIQUID (in-kind). */
+  illiquidToken?: HexAddress;
+  /** ERC-4907 rental NFT for the rental flows. */
+  rentalNft?: HexAddress;
+  /** Second ERC-4907 collection (vART) for two-sided rental demos. */
+  rentalNft2?: HexAddress;
+  /** MockChainlinkAggregator ETH/USD anchor. */
+  ethUsdFeed?: HexAddress;
+  /** MockChainlinkAggregator liquidToken/USD. */
+  liquidTokenUsdFeed?: HexAddress;
+  /** MockChainlinkAggregator liquidToken2/USD. */
+  liquidToken2UsdFeed?: HexAddress;
+  /** MockChainlinkAggregator mWeth/USD. */
+  mWethUsdFeed?: HexAddress;
+  /** Mock Chainlink FeedRegistry resolving the above. */
+  feedRegistry?: HexAddress;
+  /** Mock Uniswap-V3 factory + liquidToken/WETH pool (liquidity gate). */
+  uniswapV3Factory?: HexAddress;
+  liquidTokenWethPool?: HexAddress;
+  liquidToken2WethPool?: HexAddress;
+  mWethWethPool?: HexAddress;
+  /** ZeroExProxyMock — the LEGACY 0x-proxy swap venue. Retained for
+   *  completeness; NOT used by the Phase-7a liquidation path. */
+  zeroExProxy?: HexAddress;
+  /** Registered MockSwapAdapter (ISwapAdapter) that the HF-liquidation
+   *  failover path (`LibSwap.swapWithFailover`) actually routes through
+   *  (Tier 2). Pays proceeds from its own balance, so it must be funded
+   *  with the loan's principal token before a liquidation. */
+  mockSwapAdapter?: HexAddress;
 }
 
 /**

@@ -22,6 +22,7 @@ import {
 import { copy } from '../content/copy';
 import { isPositiveDecimal, submitErrorText } from '../lib/errors';
 import { useLoan } from '../data/hooks';
+import { isRevert } from '../data/liveLoanRow';
 import { useLoanRisk, healthView } from '../data/risk';
 import { assertWalletNotSanctionedLive, useSanctionsCheck } from '../data/sanctions';
 import {
@@ -54,13 +55,17 @@ import { ConfirmReceipt } from '../components/ConfirmReceipt';
 import { RefinanceFlow } from '../components/RefinanceFlow';
 import { RefinancePendingCard } from '../components/RefinancePendingCard';
 import { EarlyExitFlow } from '../components/EarlyExitFlow';
-import { LOAN_SALE_LISTING_ENABLED, LoanSaleFlow } from '../components/LoanSaleFlow';
+import { loanSaleListingEnabled, LoanSaleFlow } from '../components/LoanSaleFlow';
 import { LoanSalePendingCard } from '../components/LoanSalePendingCard';
 import { LoanKeeperCard } from '../components/LoanKeeperCard';
 import { LOCK_EARLY_WITHDRAWAL_SALE, useLoanSalePending } from '../data/loanSalePending';
 import { useRefinancePending } from '../data/refinancePending';
 import { ZERO_ADDRESS } from '../lib/offerSchema';
-import { AssetType } from '../lib/types';
+import {
+  AssetType,
+  LIVE_STATUS_TO_INDEXED,
+  LoanStatus,
+} from '../lib/types';
 
 type Action = 'repay' | 'claim-borrower' | 'claim-lender' | null;
 /** The page's inline confirm surfaces — ONE open at a time, so two
@@ -213,11 +218,51 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
       return 'checking';
     }, [loan.data, address, nftOwners.data, nftOwners.isError]);
 
+  // OBS-2 (#988) — the action gate must not trust a stale indexer row.
+  // One cheap live status read reconciles a row that still says
+  // "active" after the loan settled/liquidated on-chain; without it, a
+  // stalled indexer leaves a live "Repay" button on a terminal loan
+  // (doomed write). Enabled only while the ROW looks open — a terminal
+  // row only gets more terminal, so nothing to reconcile there. This is
+  // deliberately separate from `loanLive` below, which is scoped to
+  // advanced-mode strategy cards; the status truth matters in Basic
+  // mode too. (Declared BEFORE `risk`/`loanLive` so their enablement
+  // can follow the RECONCILED status, not the stale row.)
+  const liveStatus = useQuery({
+    queryKey: ['loanLiveStatus', readChain.chainId, loan.data?.loanId],
+    enabled:
+      Boolean(readClient) &&
+      Boolean(loan.data) &&
+      (loan.data?.status === 'active' ||
+        loan.data?.status === 'fallback_pending'),
+    staleTime: 15_000,
+    refetchInterval: 30_000,
+    queryFn: async () =>
+      (
+        await readLoanLive(
+          readClient!,
+          readChain.diamondAddress,
+          loan.data!.loanId,
+        )
+      ).status,
+  });
+
+  // Effectively OPEN for the live-read enablements: a stale
+  // `fallback_pending` row whose live status already CURED back to
+  // Active must light up the same live reads an `active` row gets —
+  // otherwise the health/strategy cards sit on "Checking…" and the
+  // close/refinance/exit actions stay hidden until the indexer
+  // catches up (#982 round-5).
+  const effectivelyActive =
+    loan.data?.status === 'active' ||
+    (loan.data?.status === 'fallback_pending' &&
+      liveStatus.data === LoanStatus.Active);
+
   // HF/LTV apply only to active, priced (ERC-20) loans; the hook maps
   // the illiquid-leg revert to `priced: false`.
   const risk = useLoanRisk(
     loan.data?.loanId,
-    Boolean(loan.data && loan.data.status === 'active' && !loanIsRental),
+    Boolean(loan.data && effectivelyActive && !loanIsRental),
   );
 
   // Sanctions: addCollateral and both claim paths screen msg.sender on
@@ -285,7 +330,7 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
     enabled:
       Boolean(readClient) &&
       Boolean(loan.data) &&
-      loan.data?.status === 'active' &&
+      effectivelyActive &&
       !loanIsRental &&
       isAdvanced &&
       (role === 'borrower' || role === 'lender'),
@@ -366,7 +411,36 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
     );
   }
 
-  const row = loan.data;
+  // OBS-2 (#988) — reconcile the indexer row against the live chain
+  // status ONCE, here, so every consumer below (action gate, state
+  // badge, cards, receipts) sees the same truth. Overrides only toward
+  // MORE settled — with ONE deliberate exception: a live "active" DOES
+  // override a `fallback_pending` row, because that state is
+  // REVERSIBLE (a borrower cure returns the loan to Active, after
+  // which claimAsLender rejects — the stale row would keep a doomed
+  // lender claim button). A live "active" never resurrects actions on
+  // a row the indexer already closed (that direction is replica lag,
+  // and the claim paths re-check live at submit anyway).
+  // Indexed as a plain number map so an unknown FUTURE enum value
+  // yields undefined (→ no override) instead of a lying type.
+  const liveOverride =
+    liveStatus.data === undefined
+      ? undefined
+      : liveStatus.data !== LoanStatus.Active
+        ? (
+            LIVE_STATUS_TO_INDEXED as Record<
+              number,
+              (typeof LIVE_STATUS_TO_INDEXED)[LoanStatus] | undefined
+            >
+          )[liveStatus.data]
+        : loan.data.status === 'fallback_pending'
+          ? ('active' as const)
+          : undefined;
+  const statusIsReconciled =
+    liveOverride !== undefined && liveOverride !== loan.data.status;
+  const row = statusIsReconciled
+    ? { ...loan.data, status: liveOverride! }
+    : loan.data;
   const view = loanStateView(row);
   const isRental = row.assetType !== AssetType.ERC20;
   const principal = principalMeta.data;
@@ -376,6 +450,13 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
     row.interestRateBps,
     row.durationDays,
   );
+  // Claimable proper-close group: repaid, or an internal match (which
+  // records claim rows for both sides). `settled` is deliberately NOT
+  // here — ClaimFacet rejects Settled on BOTH claim paths
+  // (InvalidLoanStatus): it means the claims are already consumed, so
+  // a settled row gets no action.
+  const properClose =
+    row.status === 'repaid' || row.status === 'internal_matched';
 
   const action: Action = (() => {
     // Side-scoped: a claim on one side must not suppress the other.
@@ -391,7 +472,13 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
     ) {
       return 'repay';
     }
-    if (role === 'borrower' && row.status === 'repaid') return 'claim-borrower';
+    // Claimable proper-close terminals: repaid or internal_matched
+    // (ClaimFacet accepts both; the on-chain claimables discovery
+    // (#988) surfaces them). For the borrower an internal match may
+    // hold only a residual/rebate — the submit path preflights
+    // getClaimable so a zero-entitlement claim errors gracefully
+    // instead of prompting a doomed write.
+    if (role === 'borrower' && properClose) return 'claim-borrower';
     // After a default/liquidation the borrower may still have a
     // residual entitlement (liquidation surplus) — the Claim Center
     // lists these rows, so this page must offer the claim.
@@ -401,7 +488,7 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
     ) {
       return 'claim-borrower';
     }
-    if (role === 'lender' && row.status === 'repaid') return 'claim-lender';
+    if (role === 'lender' && properClose) return 'claim-lender';
     if (role === 'lender' && (row.status === 'defaulted' || row.status === 'liquidated')) {
       return 'claim-lender';
     }
@@ -424,15 +511,29 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
         const [calcDue, latestBlock, liveGate] = await Promise.all([
           readRepaymentDueLive(publicClient, walletChain.diamondAddress, row.loanId),
           publicClient.getBlock({ blockTag: 'latest' }),
-          // The grace math must use the LIVE term — a keeper extend
-          // (extendLoanInPlace) moves durationDays under the indexer
-          // row, and the contract judges gracePeriod(loan.durationDays)
-          // on the live loan. (Rental closes don't gate on grace.)
-          row.assetType === AssetType.ERC20
-            ? readLoanLive(publicClient, walletChain.diamondAddress, row.loanId)
-            : Promise.resolve(null),
+          // The LIVE loan, unconditionally (OBS-2 #988): its STATUS is
+          // the authoritative repayability gate for rentals too, and
+          // for ERC-20 loans its term fields feed the grace math below
+          // (a keeper extendLoanInPlace moves durationDays under the
+          // indexer row; the contract judges gracePeriod on the live
+          // term).
+          readLoanLive(publicClient, walletChain.diamondAddress, row.loanId),
         ]);
         const chainNow = latestBlock.timestamp;
+        // repayLoan accepts only Active + FallbackPending (the cure
+        // path). Anything else means the loan already settled or was
+        // liquidated — abort BEFORE any balance check, approval, or
+        // wallet prompt instead of estimating a doomed write. This is
+        // the submit-side twin of the render-time reconciliation: it
+        // covers the race where the user clicks before the live-status
+        // query lands.
+        if (
+          liveGate.status !== LoanStatus.Active &&
+          liveGate.status !== LoanStatus.FallbackPending
+        ) {
+          setError(copy.errors.loanAlreadySettled);
+          return;
+        }
         // Two more independent live reads, one round-trip: the role
         // came from a CACHED ownerOf (repayLoan is PERMISSIONLESS — a
         // stale "borrower" could pay off a position whose claim now
@@ -447,7 +548,7 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
           }),
           // Grace only gates ERC-20 repays — don't spend a read on
           // rental closes.
-          liveGate
+          row.assetType === AssetType.ERC20
             ? readGraceSecondsLive({
                 publicClient,
                 diamondAddress: walletChain.diamondAddress,
@@ -458,7 +559,7 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
         // repayLoan reverts RepaymentPastGracePeriod once past the
         // grace window — fail BEFORE the approval, judged on the LIVE
         // term fields (see the liveGate read above).
-        if (liveGate) {
+        if (row.assetType === AssetType.ERC20) {
           const endTime = liveGate.startTime + liveGate.durationDays * 86_400n;
           if (chainNow > endTime + graceSec) {
             setError(copy.errors.pastGrace);
@@ -472,7 +573,10 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
         // estimate only over-approves (repayLoan pulls what it
         // recomputes) and the pad below is never spent.
         let totalDue = calcDue;
-        if (totalDue === 0n && row.status === 'fallback_pending' && liveGate) {
+        // Keyed on the LIVE status (not the row's): the cure estimate
+        // must fire exactly when the chain says FallbackPending, even
+        // if the indexer row hasn't caught up to that state yet.
+        if (totalDue === 0n && liveGate.status === LoanStatus.FallbackPending) {
           const live = liveGate;
           const elapsedDays =
             chainNow > live.startTime ? (chainNow - live.startTime) / 86_400n : 0n;
@@ -539,6 +643,63 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
           walletChain.diamondAddress,
           address,
         );
+        // Entitlement preflight: claimAsBorrower reverts NothingToClaim
+        // when the record is empty — a real case for a fully-covered
+        // internal match (only a residual/rebate is borrower-claimable)
+        // and a zero-surplus liquidation. Fail with plain copy instead
+        // of a doomed wallet prompt. Best-effort: a failed READ falls
+        // through to the write (the wallet estimate still guards).
+        try {
+          const [res, rebate] = await Promise.all([
+            publicClient.readContract({
+              address: walletChain.diamondAddress,
+              abi: DIAMOND_ABI_VIEM,
+              functionName: 'getClaimable',
+              args: [BigInt(row.loanId), false],
+            }) as Promise<{
+              amount?: bigint;
+              claimed?: boolean;
+              assetType?: bigint;
+              1?: bigint;
+              2?: boolean;
+              3?: bigint;
+            }>,
+            publicClient
+              .readContract({
+                address: walletChain.diamondAddress,
+                abi: DIAMOND_ABI_VIEM,
+                functionName: 'getBorrowerLifRebate',
+                args: [BigInt(row.loanId)],
+              })
+              .then(
+                (r) =>
+                  (Array.isArray(r)
+                    ? ((r as readonly bigint[])[0] ?? 0n)
+                    : ((r as { rebateAmount?: bigint }).rebateAmount ?? 0n)),
+                (e) => {
+                  // Old ABI without the Phase-5 view REVERTS → truly no
+                  // rebate. A TRANSPORT failure must NOT read as zero —
+                  // that would falsely block a rebate-only claim — so
+                  // rethrow to the outer catch, which falls through to
+                  // the write (whose own estimate still guards).
+                  if (isRevert(e)) return 0n;
+                  throw e;
+                },
+              ),
+          ]);
+          const amount = res.amount ?? res[1] ?? 0n;
+          const alreadyClaimed = res.claimed ?? res[2] ?? false;
+          const assetType = Number(res.assetType ?? res[3] ?? 0n);
+          const actionable =
+            amount > 0n || assetType !== AssetType.ERC20 || rebate > 0n;
+          if (alreadyClaimed || !actionable) {
+            setError(copy.errors.nothingToClaim);
+            return;
+          }
+        } catch {
+          // Read failed (transport) — proceed; the write path's own
+          // estimate surfaces any revert.
+        }
         await write('claimAsBorrower', [BigInt(row.loanId)]);
         setClaimed((c) => ({ ...c, borrower: true }));
         setDoneMessage(copy.claims.claimed);
@@ -886,11 +1047,13 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
           ? 'Claim my buffer back'
           : row.status === 'repaid'
             ? 'Claim my collateral'
-            : 'Claim what’s left (if anything)'
+            : // defaulted/liquidated surplus OR internal-match residual +
+              // VPFI rebate — either may be zero, so never promise it.
+              'Claim what’s left (if anything)'
         : action === 'claim-lender'
           ? isRental
             ? 'Claim fees & reclaim NFT'
-            : row.status === 'repaid'
+            : properClose
               ? 'Claim my funds'
               : 'Claim what this loan recovered'
           : null;
@@ -921,7 +1084,9 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
                 ? hasCollateral
                   ? `${collateralStr} collateral back.`
                   : 'Whatever this side is still owed (this loan had no collateral, so there may be nothing).'
-                : 'Anything left after liquidation (may be zero).',
+                : row.status === 'internal_matched'
+                  ? 'Any residual the internal match left for you, plus any VPFI rebate (may be zero).'
+                  : 'Anything left after liquidation (may be zero).',
             youLock: 'Nothing.',
             youMayOwe: 'Nothing.',
             youCanLose: 'Nothing.',
@@ -932,7 +1097,7 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
           ? {
               youReceive: isRental
                 ? 'Your earned rental fees, plus your NFT back.'
-                : row.status === 'repaid'
+                : properClose
                   ? `${principalStr} plus the earned interest.`
                   : // Liquid-collateral defaults settle by SWAP — the
                     // lender's claim pays proceeds in the loan asset,
@@ -945,7 +1110,7 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
               youLock: 'Nothing.',
               youMayOwe: 'Nothing.',
               youCanLose: 'Nothing.',
-              fees: row.status === 'repaid' && !isRental
+              fees: properClose && !isRental
                 ? 'The protocol’s yield fee comes out of the interest before payout.'
                 : isRental
                   ? 'The protocol’s cut comes out of the rental fees before payout.'
@@ -977,6 +1142,20 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
         </div>
         <span className={`badge badge-${view.badge}`}>{view.label}</span>
       </div>
+
+      {statusIsReconciled &&
+      row.status !== 'active' &&
+      row.status !== 'fallback_pending' ? (
+        // OBS-2 (#988) — the badge above shows the LIVE on-chain state,
+        // which is ahead of the Positions list. Say so, or the mismatch
+        // reads as a bug. TERMINAL reconciliations only: the copy says
+        // the position "closed on-chain", which is wrong both for the
+        // fallback-cure direction (back to active) and for a live
+        // FallbackPending (curable — repay/top-up still offered).
+        <div className="banner banner-info" role="status">
+          <span className="banner-body">{copy.positions.settledAhead}</span>
+        </div>
+      ) : null}
 
       <section className="card">
         <dl className="receipt" style={{ margin: 0 }}>
@@ -1127,7 +1306,16 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
           </div>
           {collateralOverBalance ? (
             <p className="field-hint" style={{ color: 'var(--danger)', marginTop: 8 }}>
-              {copy.errors.needMore(collateral.symbol)}
+              {copy.errors.needMore(
+                collateral.symbol,
+                collateralInputWei !== null &&
+                  collateralBalance.data !== undefined
+                  ? formatTokenAmount(
+                      collateralInputWei - collateralBalance.data,
+                      collateral.decimals,
+                    )
+                  : undefined,
+              )}
             </p>
           ) : null}
           {confirmingSurface === 'collateral' && collateralInputWei !== null ? (
@@ -1239,7 +1427,15 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
           </div>
           {partialOverBalance ? (
             <p className="field-hint" style={{ color: 'var(--danger)', marginTop: 8 }}>
-              {copy.errors.needMore(principal.symbol)}
+              {copy.errors.needMore(
+                principal.symbol,
+                partialInputWei !== null && principalBalance.data !== undefined
+                  ? formatTokenAmount(
+                      partialInputWei - principalBalance.data,
+                      principal.decimals,
+                    )
+                  : undefined,
+              )}
             </p>
           ) : null}
           {confirmingSurface === 'partial' && partialInputWei !== null ? (
@@ -1438,7 +1634,7 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
             setBusy={setBusy}
           />
           <section className="card">
-            {LOAN_SALE_LISTING_ENABLED ? (
+            {loanSaleListingEnabled(readChain.chainId) ? (
               <LoanSaleFlow
                 row={row}
                 live={loanLive.data.live}

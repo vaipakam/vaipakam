@@ -54,6 +54,7 @@ export function Vpfi() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [done, setDone] = useState<string | null>(null);
+  const [watched, setWatched] = useState(false);
 
   const snapshot = vpfi.data;
 
@@ -177,7 +178,20 @@ export function Vpfi() {
         );
       }
       const turningOff = snapshot.consent;
-      await write('setVPFIDiscountConsent', [!snapshot.consent]);
+      const next = !snapshot.consent;
+      await write('setVPFIDiscountConsent', [next]);
+      // Read-after-write honesty: the tx is MINED, so `next` IS the
+      // chain state — but public testnet RPCs can serve pre-tx state
+      // for several seconds, and an immediate invalidate would refetch
+      // the OLD consent and leave the checkbox visually unchanged
+      // (looking like the click did nothing, inviting a second tx).
+      // Patch the cache with the mined value; the periodic refetch
+      // reconciles once the RPC catches up.
+      queryClient.setQueryData(
+        ['vpfi', readChain.chainId, address?.toLowerCase()],
+        (old: typeof snapshot | undefined) =>
+          old ? { ...old, consent: next } : old,
+      );
       if (turningOff) {
         // Per VPFIDiscountFacet: consent-off is only PUSHED to
         // mirror-chain tier caches by a following pokeMyTier() —
@@ -192,7 +206,13 @@ export function Vpfi() {
           );
         }
       }
-      refresh();
+      // Deliberately NO immediate invalidate here: it would refetch
+      // through the (possibly lagging) RPC and could overwrite the
+      // patched consent with pre-tx state. The 30s interval and the
+      // per-block live sync reconcile shortly, when the RPC is caught
+      // up. (Vault deposits/withdrawals keep the immediate refresh —
+      // their figures come with a done-banner, so a briefly-stale
+      // balance doesn't read as "the click did nothing".)
     } catch (err) {
       setError(submitErrorText(err));
     } finally {
@@ -297,13 +317,47 @@ export function Vpfi() {
                 <div className="receipt-row">
                   <dt>Warming up</dt>
                   <dd>
-                    Your balance qualifies for a higher tier, but discounts use
-                    your 30-day average — keep the balance and your active
-                    discount catches up.
+                    Your balance qualifies for
+                    {tierRows[snapshot.rawTier - 1]
+                      ? ` ${tierRows[snapshot.rawTier - 1].discount} off`
+                      : ' a higher tier'}
+                    {snapshot.effectiveBps > 0
+                      ? ` (currently ${formatBpsAsPercent(snapshot.effectiveBps)})`
+                      : ''}
+                    , but discounts use your 30-day average — keep the balance
+                    and your active discount catches up.
                   </dd>
                 </div>
               ) : null}
             </dl>
+            {/* wallet_watchAsset — offered only once the user actually
+                HOLDS VPFI somewhere (wallet or vault); before that the
+                button would just add a zero-balance line to MetaMask.
+                Rejecting the wallet prompt is not an error. */}
+            {snapshot.token &&
+            walletClient &&
+            (snapshot.walletBalance > 0n || snapshot.vaultBalance > 0n) ? (
+              <button
+                type="button"
+                className="btn btn-secondary btn-sm"
+                style={{ marginTop: 12 }}
+                onClick={() => {
+                  void walletClient
+                    .watchAsset({
+                      type: 'ERC20',
+                      options: {
+                        address: snapshot.token!,
+                        symbol: 'VPFI',
+                        decimals: VPFI_DECIMALS,
+                      },
+                    })
+                    .then(() => setWatched(true))
+                    .catch(() => {});
+                }}
+              >
+                {watched ? copy.vpfi.addedToWallet : copy.vpfi.addToWallet}
+              </button>
+            ) : null}
             <label
               className="cluster"
               style={{ marginTop: 16, fontSize: '0.9rem', alignItems: 'flex-start' }}

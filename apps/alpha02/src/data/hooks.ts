@@ -11,10 +11,10 @@
  *   - `data === {...}`      → real result (empty arrays mean truly empty)
  */
 import { useQuery } from '@tanstack/react-query';
+import { usePublicClient } from 'wagmi';
 import { useActiveChain } from '../chain/useActiveChain';
 import {
   fetchActiveOffers,
-  fetchClaimables,
   fetchLoanById,
   fetchLoansByBorrower,
   fetchLoansByLender,
@@ -24,6 +24,7 @@ import {
   type IndexedLoan,
   type IndexedOffer,
 } from './indexer';
+import { readLoanRowLive } from './liveLoanRow';
 
 const REFRESH_MS = 30_000;
 
@@ -149,11 +150,31 @@ export function useOffer(offerId: number | undefined) {
 /** One loan by id on the read chain. */
 export function useLoan(loanId: number | undefined) {
   const { readChain } = useActiveChain();
+  const publicClient = usePublicClient({ chainId: readChain.chainId });
   return useQuery({
     queryKey: ['loan', readChain.chainId, loanId],
     enabled: loanId !== undefined && Number.isFinite(loanId),
     refetchInterval: REFRESH_MS,
-    queryFn: () => fetchLoanById(readChain.chainId, loanId!),
+    queryFn: async (): Promise<IndexedLoan | null> => {
+      const row = await fetchLoanById(readChain.chainId, loanId!);
+      if (row) return row;
+      // Indexer miss (lag on a brand-new loan, or indexer down) — fall
+      // back to the live chain read so the detail page a chain-only
+      // Claim Center entry deep-links to actually renders (#982
+      // review). A revert (no such loan) or transport failure keeps
+      // the indexer verdict: null = unavailable/not found.
+      if (!publicClient) return null;
+      try {
+        return await readLoanRowLive(
+          publicClient,
+          readChain.diamondAddress,
+          readChain.chainId,
+          loanId!,
+        );
+      } catch {
+        return null;
+      }
+    },
   });
 }
 
@@ -199,21 +220,8 @@ export function useMyOffers() {
   });
 }
 
-/** Claimable loans for the connected wallet, tagged with role. */
-export function useMyClaimables() {
-  const { readChain, address } = useActiveChain();
-  return useQuery({
-    queryKey: ['claimables', readChain.chainId, address?.toLowerCase()],
-    enabled: Boolean(address),
-    refetchInterval: REFRESH_MS,
-    queryFn: async (): Promise<PositionLoan[] | null> => {
-      if (!address) return [];
-      const res = await fetchClaimables(readChain.chainId, address);
-      if (res === null) return null;
-      return [
-        ...res.asLender.map((l) => ({ ...l, role: 'lender' as const })),
-        ...res.asBorrower.map((l) => ({ ...l, role: 'borrower' as const })),
-      ];
-    },
-  });
-}
+// `useMyClaimables` now lives in `./claimables` and is on-chain-
+// authoritative (issue #921 item 7 / #958): the indexer stays the fast
+// candidate layer via `useMyLoans`, and `getClaimable` is the authority.
+// Imported directly from `./claimables` by call sites (one-way dep, no
+// cycle with this module).

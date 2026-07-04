@@ -18,21 +18,47 @@ import {ISwapAdapter} from "../../src/interfaces/ISwapAdapter.sol";
 contract MockSwapAdapter is ISwapAdapter {
     using SafeERC20 for IERC20;
 
+    /// @dev Deployer-gated knobs: this mock gets REGISTERED as a live
+    ///      liquidation venue on public testnets (DeployTestnetMocks),
+    ///      where unrestricted setters would let anyone flip it to
+    ///      revert (griefing HF liquidation into the fallback path) or
+    ///      skew payouts. Tests deploy-and-configure from the same
+    ///      address, so the gate is invisible to them.
+    address public immutable owner;
+
     string public label;
     bool public shouldRevert;
     uint256 public outputMultiplierBps = 10_000;
     uint256 public callCount;
 
+    /// @dev OPT-IN execute gate. Unset (default) keeps the mock fully
+    ///      open — the shape every existing test relies on. On public
+    ///      testnets the deploy script sets it to the Diamond: a funded
+    ///      adapter with an open `execute` is a public pot (anyone can
+    ///      approve a junk inputToken and drain the seeded output
+    ///      float; Codex #982 r9).
+    address public restrictedTo;
+
+    modifier onlyOwner() {
+        require(msg.sender == owner, "MockSwapAdapter: not owner");
+        _;
+    }
+
     constructor(string memory _label) {
+        owner = msg.sender;
         label = _label;
     }
 
-    function setShouldRevert(bool v) external {
+    function setShouldRevert(bool v) external onlyOwner {
         shouldRevert = v;
     }
 
-    function setOutputMultiplierBps(uint256 v) external {
+    function setOutputMultiplierBps(uint256 v) external onlyOwner {
         outputMultiplierBps = v;
+    }
+
+    function setRestrictedTo(address caller) external onlyOwner {
+        restrictedTo = caller;
     }
 
     function adapterName() external view override returns (string memory) {
@@ -48,6 +74,9 @@ contract MockSwapAdapter is ISwapAdapter {
         bytes calldata /* adapterData */
     ) external override returns (uint256 outputAmount) {
         callCount += 1;
+        if (restrictedTo != address(0) && msg.sender != restrictedTo) {
+            revert("MockSwapAdapter: caller not allowed");
+        }
         if (shouldRevert) revert("MockSwapAdapter: forced revert");
 
         IERC20(inputToken).safeTransferFrom(msg.sender, address(this), inputAmount);

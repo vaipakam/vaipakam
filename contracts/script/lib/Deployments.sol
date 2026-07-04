@@ -150,6 +150,18 @@ library Deployments {
     function readVpfiMirrorOptional() internal view returns (address) {
         return _tryReadAddr(".vpfiMirror");
     }
+
+    /// @notice Optional, non-reverting artifact read of `.weth` — the
+    ///         wrapped-native oracle reference `DeployTestnetMocks`
+    ///         persists (on Anvil it deploys an inline mock WETH and
+    ///         records it here). Returns address(0) when absent.
+    ///         `DeployTestnetVPFI` uses it so the local Anvil sequence
+    ///         (mocks first, VPFI second) reuses the same WETH instead
+    ///         of silently wiring `setVPFIDiscountETHPriceAsset(0)`,
+    ///         which disables the discount quote.
+    function readWethOptional() internal view returns (address) {
+        return _tryReadAddr(".weth");
+    }
     // T-068 CCIP: the cross-chain reward contract is `VaipakamRewardMessenger`,
     // recorded under `.rewardMessenger` by `DeployCrosschain.s.sol`. Older
     // artifacts (pre-PR #272 contract-side rename) recorded the same

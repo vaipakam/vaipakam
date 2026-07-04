@@ -27,6 +27,8 @@ export const copy = {
   home: {
     title: 'What would you like to do?',
     lede: 'Pick a job to get started. You can switch to Advanced mode any time in Settings.',
+    testnetNudge: (chainName: string) =>
+      `You’re on ${chainName}, a test network. Get free test assets to try things out →`,
     jobs: {
       borrow: {
         title: 'Borrow assets',
@@ -533,6 +535,10 @@ export const copy = {
       `If you do nothing and the loan passes its due date and grace period, the lender can receive your ${collateral} collateral.`,
     whatIfNothingLender:
       'If the borrower does not repay by the due date plus grace period, you can claim their collateral.',
+    // OBS-2 (#988) — shown when the page's live on-chain read is ahead
+    // of the position lists (stalled/lagging indexer).
+    settledAhead:
+      'This position has already closed on-chain — the status here is live. Your lists may take a moment to catch up.',
   },
 
   claims: {
@@ -550,6 +556,10 @@ export const copy = {
     lede: 'Open lending offers and borrow requests from other users.',
     emptyTitle: 'No open offers right now',
     emptyBody: 'Create your own offer and let the other side come to you.',
+    // F-20260703-003 (#988) — shown by MarketFreshnessNote when the
+    // indexer cursor has stalled, on every market-list surface.
+    staleList: (age: string) =>
+      `This list last updated ${age} ago and may be behind — new offers may exist that aren’t shown yet. Check back shortly.`,
     unavailable:
       'We couldn’t load the offer book right now. Please try again in a moment.',
     lenderOffer: 'Lending offer',
@@ -568,10 +578,18 @@ export const copy = {
       'The VPFI token configuration changed since you reviewed. Nothing was approved — please check the updated numbers and try again.',
     tokenCheckRetry:
       'We couldn’t confirm the VPFI token just now — nothing was approved. Please try again in a moment.',
+    addToWallet: 'Add VPFI to MetaMask',
+    addedToWallet: 'Asked your wallet to track VPFI.',
   },
 
   errors: {
-    needMore: (asset: string) => `You need more ${asset} to continue.`,
+    // F-20260703-005 (#988) — say HOW MUCH more whenever the caller can
+    // compute the shortfall; the amount-less form is the fallback for
+    // sites that can't (e.g. unknown decimals).
+    needMore: (asset: string, shortBy?: string) =>
+      shortBy
+        ? `You need about ${shortBy} more ${asset} to continue.`
+        : `You need more ${asset} to continue.`,
     partialOverPrincipal:
       'That covers the loan’s whole remaining principal. Use “Repay this loan” instead — it settles the loan properly and releases your collateral.',
     notAToken:
@@ -595,6 +613,8 @@ export const copy = {
       'This loan is past its due date and grace window, so repayment is closed on-chain — the default process applies now. Nothing was sent.',
     loanAlreadySettled:
       'This loan looks already settled on-chain — nothing was sent. Refresh in a moment to see its final state.',
+    nothingToClaim:
+      'There’s nothing for this side to claim on-chain right now — the payout may be zero or already collected. Nothing was sent.',
     precloseMatured:
       'This loan is past its due date, so closing early no longer applies — nothing was sent. Use Repay instead; it settles the loan including any late fees.',
     refinanceMatured:
@@ -617,6 +637,74 @@ export const copy = {
     // setter), so a static string is accurate here.
     lateFee:
       'Late repayment adds 1% of the outstanding amount after day one, growing 0.5% per day, capped at 5%.',
+  },
+
+  faucet: {
+    title: 'Get test assets',
+    lede: 'Mint mock tokens and a test NFT so you can try borrowing, lending, and renting on a test network — no real value, no cost beyond gas.',
+    // Shown when someone lands on /faucet on a network without mocks
+    // (any mainnet, or a testnet we haven't seeded).
+    notTestnetTitle: 'Test assets aren’t available here',
+    notTestnetBody: (chainName: string) =>
+      `The faucet only works on our test networks. You’re on ${chainName}, which uses real assets — switch to a test network to mint practice tokens.`,
+    // A testnet we support but haven't seeded with faucet assets yet.
+    noMocksBody: (chainName: string) =>
+      `Test assets haven’t been set up on ${chainName} yet. Try a different test network, or check back soon.`,
+    backHome: 'Back to home',
+    testnetNote: (chainName: string) =>
+      `You’re on ${chainName}, a test network. These tokens exist only for testing and have no real value.`,
+    switchTitle: (chainName: string) =>
+      `Switch your wallet to ${chainName} to mint test assets.`,
+    minting: 'Minting…',
+    viewTx: 'View transaction',
+    footer:
+      'Minted assets land in your wallet. Use “My vault” and the Borrow, Lend, and NFT Rental screens to put them to work.',
+    mintedTokens: (units: number, symbol: string) =>
+      `Minted ${units.toLocaleString()} ${symbol} to your wallet.`,
+    // The full token ID matters: the NFT Rental listing form needs the
+    // EXACT id, so the success banner shows it whole with a copy button
+    // (never truncated — a random 256-bit id can't be retyped).
+    mintedNft:
+      'Minted a test rental NFT to your wallet. Its token ID — you’ll need it to list the rental:',
+    copyTokenId: 'Copy token ID',
+    copiedTokenId: 'Copied.',
+    liquid: {
+      title: 'Liquid test token (tLIQ)',
+      blurb:
+        'Priced by a test oracle, so it behaves like a liquid asset — health factor, liquidation, and refinancing all work with it.',
+      action: (units: number) => `Mint ${units.toLocaleString()} tLIQ`,
+    },
+    liquid2: {
+      title: 'Second liquid test token (tLQ2)',
+      blurb:
+        'Also oracle-priced. Pair it with tLIQ (one as the loan, one as collateral) — the health-factor, liquidation, and refinancing flows need two different liquid tokens.',
+      action: (units: number) => `Mint ${units.toLocaleString()} tLQ2`,
+    },
+    mweth: {
+      title: 'Mock wrapped ETH (mWETH)',
+      blurb:
+        'An oracle-priced test token that plays the “wrapped ETH” role in demos. It is NOT real WETH — it mints for free and has no value.',
+      action: (units: number) => `Mint ${units.toLocaleString()} mWETH`,
+    },
+    nft2: {
+      title: 'Second rentable test NFT (vART)',
+      blurb:
+        'Another ERC-4907 collection — handy when you want to list one NFT and rent a different one, or run several rentals at once.',
+      action: 'Mint a vART NFT',
+    },
+    addToWallet: (symbol: string) => `Add ${symbol} to MetaMask`,
+    addedToWallet: 'Asked your wallet to track it.',
+    illiquid: {
+      title: 'Illiquid test token (tILQ)',
+      blurb:
+        'No price feed, so it behaves like an illiquid asset — both sides must consent, and default transfers the collateral in kind.',
+      action: (units: number) => `Mint ${units.toLocaleString()} tILQ`,
+    },
+    nft: {
+      title: 'Rental test NFT (vRENT)',
+      blurb: 'An ERC-4907 rentable NFT for trying the NFT rental flows.',
+      action: 'Mint a test NFT',
+    },
   },
 
   vault: {

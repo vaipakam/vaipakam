@@ -19,6 +19,12 @@ interface ChainMeta {
   name: string;
   rpcUrlEnvKey: string;
   rpcUrlDefault: string;
+  /** Optional WebSocket RPC env key. When the env var is set, the
+   *  wagmi transport prefers it (`eth_subscribe` newHeads → live query
+   *  invalidation); absent, the app falls back to HTTP block polling.
+   *  No default — WS is opt-in per deploy. Defaults to the RPC key with
+   *  `_RPC_URL` → `_WSS_URL` when omitted. */
+  wsUrlEnvKey?: string;
   blockExplorer: string;
   testnet: boolean;
   nativeGasSymbol: string;
@@ -106,6 +112,8 @@ export interface SupportedChain {
   chainId: number;
   name: string;
   rpcUrl: string;
+  /** WebSocket RPC URL when configured (opt-in); undefined otherwise. */
+  wsUrl?: string;
   blockExplorer: string;
   testnet: boolean;
   nativeGasSymbol: string;
@@ -120,6 +128,16 @@ function rpcUrlFor(meta: ChainMeta): string {
   return fromEnv || meta.rpcUrlDefault;
 }
 
+/** WebSocket RPC URL for a chain, or undefined when not configured.
+ *  Reads `wsUrlEnvKey` (defaulting to the RPC key with `_RPC_URL` →
+ *  `_WSS_URL`). No hardcoded default — a deploy opts in by setting the
+ *  env var; absent, the live layer falls back to HTTP block polling. */
+function wsUrlFor(meta: ChainMeta): string | undefined {
+  const key = meta.wsUrlEnvKey ?? meta.rpcUrlEnvKey.replace('_RPC_URL', '_WSS_URL');
+  const fromEnv = (env[key] as string | undefined)?.trim();
+  return fromEnv || undefined;
+}
+
 /** Every chain with a live Diamond, in display order. */
 export const SUPPORTED_CHAINS: readonly SupportedChain[] = CHAIN_META.flatMap(
   (meta) => {
@@ -130,6 +148,7 @@ export const SUPPORTED_CHAINS: readonly SupportedChain[] = CHAIN_META.flatMap(
         chainId: meta.chainId,
         name: meta.name,
         rpcUrl: rpcUrlFor(meta),
+        wsUrl: wsUrlFor(meta),
         blockExplorer: meta.blockExplorer,
         testnet: meta.testnet,
         nativeGasSymbol: meta.nativeGasSymbol,

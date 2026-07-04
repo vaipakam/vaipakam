@@ -22,9 +22,13 @@ import {
   Gift,
   Settings,
   BookOpen,
+  Droplets,
 } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
+import { getDeployment } from '@vaipakam/contracts/deployments';
 import { useMode } from '../app/ModeContext';
+import { useActiveChain } from '../chain/useActiveChain';
+import { LiveChainSync } from '../chain/LiveChainSync';
 import { ConnectButton } from './ConnectButton';
 import { NetworkBanner } from './NetworkBanner';
 import { SanctionsBanner } from './SanctionsBanner';
@@ -34,6 +38,8 @@ interface NavItem {
   label: string;
   icon: LucideIcon;
   advancedOnly?: boolean;
+  /** Shown only while reads target a test network (the faucet). */
+  testnetOnly?: boolean;
 }
 
 const PRIMARY_NAV: NavItem[] = [
@@ -47,6 +53,7 @@ const PRIMARY_NAV: NavItem[] = [
 
 const SECONDARY_NAV: NavItem[] = [
   { to: '/vault', label: 'My vault', icon: Landmark },
+  { to: '/faucet', label: 'Get test assets', icon: Droplets, testnetOnly: true },
   { to: '/offers', label: 'Offer Book', icon: BookOpen, advancedOnly: true },
   { to: '/vpfi', label: 'VPFI discounts', icon: Coins, advancedOnly: true },
   { to: '/activity', label: 'Activity', icon: History, advancedOnly: true },
@@ -65,9 +72,19 @@ const TABBAR: NavItem[] = [
 
 export function AppShell() {
   const { isAdvanced } = useMode();
+  const { readChain } = useActiveChain();
   const { pathname } = useLocation();
 
-  const visible = (item: NavItem) => !item.advancedOnly || isAdvanced;
+  // testnetOnly entries (the faucet) additionally require the chain's
+  // deployments bundle to actually carry `testnetMocks` — an unseeded
+  // testnet (e.g. a chain whose mocks haven't been deployed yet) must
+  // not advertise a faucet that immediately says "not set up here".
+  const hasFaucetAssets = Boolean(
+    getDeployment(readChain.chainId)?.testnetMocks,
+  );
+  const visible = (item: NavItem) =>
+    (!item.advancedOnly || isAdvanced) &&
+    (!item.testnetOnly || (readChain.testnet && hasFaucetAssets));
 
   // On phones the "More" tab fronts every destination without a tab of
   // its own — highlight it on those pages so the user is never "nowhere".
@@ -82,6 +99,9 @@ export function AppShell() {
 
   return (
     <div className="shell">
+      {/* Block-driven live refresh of transaction caches (WS push when
+          configured, HTTP block-poll otherwise). Renders nothing. */}
+      <LiveChainSync />
       <header className="shell-topbar">
         <NavLink to="/" className="shell-brand" style={{ textDecoration: 'none' }}>
           <span className="brand-mark" aria-hidden>

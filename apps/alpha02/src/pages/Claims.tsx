@@ -10,7 +10,7 @@ import { useModal } from 'connectkit';
 import { usePublicClient } from 'wagmi';
 import { useQueryClient } from '@tanstack/react-query';
 import { copy } from '../content/copy';
-import { useMyClaimables, useMyLoans } from '../data/hooks';
+import { useMyClaimables } from '../data/claimables';
 import { useInteractionRewards } from '../data/rewards';
 import { assertWalletNotSanctionedLive, useSanctionsCheck } from '../data/sanctions';
 import { useActiveChain } from '../chain/useActiveChain';
@@ -132,6 +132,11 @@ function ClaimRow({ loan }: { loan: PositionLoan }) {
   const principalMeta = useTokenMeta(isRental ? undefined : loan.lendingAsset);
   const collateralMeta = useTokenMeta(loan.collateralAsset);
   const defaulted = loan.status === 'defaulted' || loan.status === 'liquidated';
+  // Claimable proper-close group: repaid or internal_matched. NOT
+  // `settled` — ClaimFacet rejects Settled on both claim paths (claims
+  // already consumed), and the claimables hook filters those out.
+  const properClose =
+    loan.status === 'repaid' || loan.status === 'internal_matched';
 
   const collateralStr = collateralMeta.data
     ? `${formatTokenAmount(loan.collateralAmount, collateralMeta.data.decimals)} ${collateralMeta.data.symbol}`
@@ -149,11 +154,14 @@ function ClaimRow({ loan }: { loan: PositionLoan }) {
       why = 'The rental closed — the refundable buffer is released.';
     }
   } else if (loan.role === 'lender') {
-    if (loan.status === 'repaid') {
+    if (properClose) {
       what = principalMeta.data
         ? `${formatTokenAmount(loan.principal, principalMeta.data.decimals)} ${principalMeta.data.symbol} + interest`
         : 'Repaid funds';
-      why = 'The borrower repaid this loan.';
+      why =
+        loan.status === 'repaid'
+          ? 'The borrower repaid this loan.'
+          : 'This loan closed by internal matching — collect your funds.';
     } else if (loan.status === 'fallback_pending') {
       what = `${collateralStr} collateral`;
       why =
@@ -170,6 +178,11 @@ function ClaimRow({ loan }: { loan: PositionLoan }) {
     // promise the full original collateral, and never say "you repaid".
     what = 'Anything left after liquidation';
     why = 'This loan defaulted. If the liquidation left a surplus, you can claim it.';
+  } else if (loan.status === 'internal_matched') {
+    // An internal match leaves the borrower a residual and/or VPFI
+    // rebate at most — never promise the full collateral back.
+    what = 'Anything left after the internal match';
+    why = 'This loan closed by internal matching — collect any residual left for you.';
   } else {
     what = `${collateralStr} collateral back`;
     why = 'You repaid this loan, so your collateral is released.';
@@ -192,37 +205,16 @@ function ClaimRow({ loan }: { loan: PositionLoan }) {
 export function Claims() {
   const { isConnected } = useActiveChain();
   const { setOpen } = useModal();
+  // On-chain-authoritative (issue #921 item 7 / #958): the hook confirms
+  // each candidate loan via `getClaimable`, so a lender's
+  // `fallback_pending` loan surfaces without a client-side merge, and a
+  // sold/settled position never shows a phantom claim. `undefined` =
+  // loading, `null` = unavailable (never a confident partial list).
   const claimables = useMyClaimables();
-  // The indexer's /claimables endpoint lists only terminal statuses —
-  // a lender's fallback_pending loan is ALSO claimable (ClaimFacet
-  // runs the claim-time fallback resolution), so merge those in from
-  // the wallet's loan list. Either source failing → unavailable; a
-  // list missing a live claim is exactly the partial-as-complete
-  // dishonesty the null contract exists to prevent.
-  const loans = useMyLoans();
-  const rowsLoading =
-    claimables.isLoading ||
-    claimables.data === undefined ||
-    loans.isLoading ||
-    loans.data === undefined;
-  const rowsUnavailable =
-    claimables.data === null || loans.data === null;
+  const rowsLoading = claimables.isLoading || claimables.data === undefined;
+  const rowsUnavailable = claimables.data === null;
   const rows: PositionLoan[] =
-    rowsLoading || rowsUnavailable
-      ? []
-      : [
-          ...claimables.data!,
-          ...loans
-            .data!.filter(
-              (l) => l.role === 'lender' && l.status === 'fallback_pending',
-            )
-            .filter(
-              (l) =>
-                !claimables.data!.some(
-                  (c) => c.loanId === l.loanId && c.role === 'lender',
-                ),
-            ),
-        ];
+    rowsLoading || rowsUnavailable ? [] : claimables.data!;
 
   return (
     <div>

@@ -25,6 +25,7 @@ import { useActiveOffers } from '../data/hooks';
 import { useActiveChain } from '../chain/useActiveChain';
 import { useMode } from '../app/ModeContext';
 import { EmptyState, UnavailableState } from '../components/EmptyState';
+import { MarketFreshnessNote } from '../components/MarketFreshnessNote';
 import { useTokenMeta } from '../contracts/erc20';
 import { AssetType } from '../lib/types';
 import {
@@ -246,6 +247,8 @@ export function Offers() {
     <div>
       <h1 className="page-title">{copy.offers.title}</h1>
       <p className="page-lede">{copy.offers.lede}</p>
+
+      <MarketFreshnessNote />
 
       {isAdvanced ? (
         <div className="card" style={{ marginBottom: 16 }}>

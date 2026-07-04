@@ -20,6 +20,7 @@ import { Activity } from './pages/Activity';
 import { Vpfi } from './pages/Vpfi';
 import { Settings } from './pages/Settings';
 import { NftVerifier } from './pages/NftVerifier';
+import { Faucet } from './pages/Faucet';
 import { Help } from './pages/Help';
 import { NotFound } from './pages/NotFound';
 
@@ -41,6 +42,7 @@ export function App() {
         <Route path="/nft" element={<NftVerifier />} />
         <Route path="/nft/:tokenId" element={<NftVerifier />} />
         <Route path="/settings" element={<Settings />} />
+        <Route path="/faucet" element={<Faucet />} />
         <Route path="/help" element={<Help />} />
 
         {/* Aliases people will guess or carry over from apps/defi. */}
