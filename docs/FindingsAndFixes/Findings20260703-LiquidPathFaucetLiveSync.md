@@ -344,6 +344,53 @@ completes end-to-end on the live testnet. (The alpha02 `RefinanceFlow`
 UI issues the same caps + carry-over-offer calls; its only friction is
 offer-discovery on the stalled indexer, per R-3.)
 
+## R-8 — Interaction rewards (global reward calc) — ENABLED; per-user accrual not surfacing on single-chain testnet
+
+After the operator ran `SetInteractionLaunch.s.sol`
+(`INTERACTION_LAUNCH_TIMESTAMP = 1782870719`), the system is **enabled
+and configured** on-chain:
+
+- `getInteractionLaunchTimestamp()` = 1782870719, `getInteractionCurrentDay()`
+  = `[3, active]`. ✅
+- The daily pool is live: `getInteractionHalfPoolForDay(3)` ≈ **10,082
+  VPFI**, `getInteractionAnnualRateBps(3)` = **3200 bps (32%)**,
+  `getInteractionCapVpfiPerEth` = 500. ✅
+
+But `previewInteractionRewards` stays `[0,0,0]` for every wallet, even
+after creating a **new** loan (#11) post-launch:
+
+- `registerLoan` (LoanFacet:244) fires at loan init and, by design,
+  starts a loan's reward entry at **`startDay = today + 1`** (accrual
+  begins the day AFTER creation), applying the loan's per-day numeraire
+  as a *delta* to `s.lenderPerDayDeltaNumeraire18` /
+  `s.borrowerPerDayDeltaNumeraire18` (a frontier-summed array — NOT the
+  `getInteractionDayEntry` mapping I probed, which reads a different
+  structure, so those zeros are not conclusive that registration was
+  skipped). Net effect either way: a same-day `previewInteractionRewards`
+  can't show a reward whose entry starts tomorrow.
+- Two real reasons a full end-to-end reward can't be observed within a
+  single session on one chain: **(1)** entries accrue from day+1 and
+  finalized-day rewards need the day to actually close (~24 h wall
+  clock); **(2)** the §4a claim-finalization gate references a
+  **cross-chain global** pool aggregation (`RewardAggregatorFacet` /
+  reporter mesh) that a single testnet chain doesn't run — finalized-day
+  rewards can't finalize without it. (A possible third factor: the
+  reward **numeraire** pricing (`NumeraireConfigFacet`) is a distinct
+  path from the HF oracle mocks; if unconfigured, `registerLoan`'s
+  `perDayNumeraire18 == 0` early-return would skip a loan entirely — not
+  confirmed here, worth a check when the reward mesh is next exercised.)
+
+**Net**: the interaction-reward machinery is switched on and the pool /
+rate config is live, but per-user accrual is not observable in this
+single-chain, single-session testnet — it needs day advancement plus the
+cross-chain reward aggregation (and possibly the reward numeraire wired).
+This is a **timing + cross-chain-topology** matter, not an alpha02 or a
+`SetInteractionLaunch` defect. The alpha02 Claims **Rewards card
+correctly shows the empty state** throughout (it reads
+`previewInteractionRewards` honestly). Verifying non-zero interaction
+rewards end-to-end needs the numeraire wiring + the reward mesh, which is
+a larger cross-chain enablement than a single-chain launch flip.
+
 ## R-3d — What remains (lower priority / harder to exercise)
 
 - **repayPartial full-principal revert (#953 item 3)** — needs a
