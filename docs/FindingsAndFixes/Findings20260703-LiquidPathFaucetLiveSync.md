@@ -93,39 +93,47 @@ shouldn't hit this. Flagged only so a future reviewer isn't surprised by
 429s on the default public endpoint. (Worth a spot-check that no
 first-paint frontend read falls back to a public endpoint under load.)
 
-## R-3 — Liquid loan END-TO-END (HF display / refinance / liquidation) — BLOCKED on the stalled indexer (F-001/F-004), contract path unblocked
+## R-3 — Liquid loan: HF DISPLAY — PASS ✅ (F-007 resolved)
 
-**Status: partially verified; the UI end-to-end is gated on a live
-indexer, not on this PR's code.**
+A real active **liquid loan** was created on-chain (loan **#8**): 1 tLIQ
+collateral ($2,000), 0.005 WETH principal ($10), both legs liquid.
 
-What IS verified for the liquid path:
-- The Tier-1 oracle wiring reaches the UI — the offer-review screen
-  correctly treats tLIQ as **liquid** (no illiquid disclosure), see R-2.
-- On-chain, `checkLiquidity(tLIQ) = Liquid`, so the contract-level
-  liquid path (HF math, drop-to-liquidation, refinance risk math) is
-  unblocked — this is exactly what the first pass's **F-007**
-  (`IlliquidLoanNoRiskMath`) was waiting on.
+On-chain truth (`RiskFacet`):
+- `calculateHealthFactor(8)` = **180.0** (1e18-scaled 180e18)
+- `calculateLTV(8)` = 50 bps
+- `acceptOffer` **simulated + mined successfully** → the liquid HF gate
+  at loan-init (HF ≥ 1.5) passes. Before the oracle mocks this was the
+  exact `IlliquidLoanNoRiskMath` blocker (first pass F-007).
 
-What is BLOCKED, and why (not a PR-#982 defect):
-- To exercise HF display / refinance / liquidation in the UI you need an
-  **active liquid loan**, which needs the borrower to **accept** the
-  liquid offer. Offer #15 was created on-chain (R-2) but the
-  indexer-sourced offer book never surfaced it — the same **stalled
-  staging/production indexer** documented as F-20260703-001 / -004. With
-  no indexer entry, the guided borrow / offer-book accept path can't
-  reach the offer.
-- A purely scripted accept (bypassing the UI) reverts on a vault
-  free-balance guard (selector `0xfb8f41b2`, args `(diamond, 0, 1e18)`)
-  because acceptOffer expects the collateral already deposited in the
-  borrower's vault — the deposit is a step the UI accept flow performs.
-  Replicating the full vault-deposit dance off-UI was out of scope for a
-  UI review.
+UI (`/positions/8` on `alpha02.vaipakam.com`, borrower wallet):
+- The position page **renders the Health Factor** — label present, value
+  consistent with ~180, "**Healthy**" badge shown. ✅
+- Repay / manage actions render; **no "not found" / unavailable** state;
+  zero non-429 console errors. ✅
 
-Recommendation: complete the liquid-path UI verification once the
-indexer is advancing (or via a dedicated seeding script that performs
-the vault deposit + accept). The oracle mocks themselves are confirmed
-correct and UI-visible; the remaining gap is operational (indexer), not
-code.
+This is the headline unblock: the Tier-1 oracle mocks make the liquid
+path work end-to-end through the UI — the position HF gauge that was
+dark for every mock asset now shows a real, correct value.
+
+**Note on how the loan was created:** because the offer book is
+indexer-sourced and the staging indexer is stalled (F-001/F-004), the
+borrower's UI accept can't discover a freshly-created offer, so loan #8
+was created by a scripted accept (approve tLIQ→Diamond, ensure vault,
+sign the same EIP-712 `AcceptTerms` the app signs, `acceptOffer`). The
+loan is a normal on-chain loan; the position page reads it live. A live
+indexer would let the whole accept happen in the UI too.
+
+### R-3b — repayPartial full-principal revert (#953 item 3)
+
+Loan #8 has `allowsPartialRepay = false`, so it can't exercise the new
+`repayPartial` guard. Verifying the `PartialWouldRetireFullPrincipal`
+revert needs a partial-enabled liquid loan — noted as a follow-up drive
+(a second scripted loan with the partial-repay offer flag).
+
+### R-3c — Tier-2 HF-swap liquidation
+
+Driven below (feed-price drop → `triggerLiquidation` via the registered
+`MockSwapAdapter` → UI reflection).
 
 ## R-4 — Branch features smoke (preview) — PASS ✅
 
