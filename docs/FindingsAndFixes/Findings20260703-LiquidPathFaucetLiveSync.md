@@ -310,15 +310,39 @@ illiquid). Both are now cleared:
   blocked `_refinanceLoanLogic`'s risk step in the first pass — the
   oracle mocks resolve it.
 
-So refinance is **completable at the contract level** now. The remaining
-piece is the full multi-party *execution* drive (borrower posts a
-refinance-tagged offer with collateral continuity → a new lender funds
-the payoff → `refinanceLoan(oldLoanId, offerId)` installs the new lender
-and pays the old one their principal + full-term interest). That is a
-larger multi-wallet flow whose offer-discovery is gated on the same
-stalled indexer as R-3; it can be driven end-to-end with a seeded
-new-lender offer. The blocker the first pass hit (risk math on an
-illiquid leg) is gone — verified above.
+So refinance is completable at the contract level now.
+
+### R-7b — Full refinance EXECUTION end-to-end — PASS ✅
+
+Drove the complete atomic refinance of liquid loan #9 across three
+wallets (old lender, borrower, new lender):
+
+1. **Borrower registers caps** — `setAutoRefinanceCaps(9, enabled=true,
+   maxRateBps=1000, maxNewExpiry=+60d)`. (Discovered precondition:
+   without caps, the refinance offer create reverts
+   `RefinanceCapsRequired`.)
+2. **Borrower posts a carry-over refinance offer** (#17): a Borrower
+   offer, `refinanceTargetLoanId=9`, collateral matching loan #9 exactly
+   (so it's a **carry-over** — no fresh collateral pledged), new rate
+   500 bps, **`fillMode=Aon`** (another discovered precondition — a
+   refinance offer must be All-Or-Nothing or create reverts
+   `InvalidRefinanceTarget`).
+3. **New lender accepts** (#17) → the accept **auto-chains into
+   `RefinanceFacet.refinanceLoanFromAccept`** and refinances atomically.
+
+On-chain outcome, all verified:
+- **Old loan #9 → Repaid** (status 1). ✅
+- **New loan #10 → Active**: `lender = newLender`, `interestRateBps =
+  500` (down from 1000), collateral = tLIQ **carried over**, same
+  borrower. ✅
+- **Old lender paid off**: `getClaimable(9, lender=true)` = **0.00504
+  WETH** (principal + accrued interest) waiting as a claim. ✅
+
+The first pass's F-006 (auto-refinance flag off) + F-007 (illiquid
+risk-math revert) are both resolved AND the full lower-rate refinance
+completes end-to-end on the live testnet. (The alpha02 `RefinanceFlow`
+UI issues the same caps + carry-over-offer calls; its only friction is
+offer-discovery on the stalled indexer, per R-3.)
 
 ## R-3d — What remains (lower priority / harder to exercise)
 
