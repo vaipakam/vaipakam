@@ -1168,6 +1168,7 @@ The preview should preserve the resolved economic terms even when acceptance is 
 - The Vaipakam platform treasury collects a fee of 1% of any interest earned by lenders or rental fees earned by NFT owners.
 - The treasury also collects late fees paid.
 - These fees are automatically deducted by the smart contract at the relevant stage of the lifecycle: the `Loan Initiation Fee` at ERC-20 loan start, and the treasury share on interest, rental fees, and late fees when those amounts are settled or claimed.
+- **Fee rates are fixed at signature time.** Both fee rates a loan is subject to — the treasury (yield) fee and the initiation fee — are snapshotted onto the loan when it is created, and the loan's economics are governed by those snapshotted rates for its entire life. A later governance retune of either fee applies only to loans created after the change; an already-open loan settles at the rate it was originated under, never at a rate moved after the fact. This mirrors the loan-admission Health-Factor floor discipline (§224): the borrower and lender who reviewed and accepted an offer are guaranteed the economics they saw. The treasury-fee snapshot is the load-bearing one because that fee is taken at settlement, potentially long after origination; the initiation fee is charged once up front, so its snapshot is a per-loan record of the rate actually paid rather than a value re-read later. A loan created before this rule existed carries no snapshot and falls back to the live rate, preserving the earlier behaviour.
 
 ### Periodic Interest Payments
 

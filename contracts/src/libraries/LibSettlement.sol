@@ -54,7 +54,7 @@ library LibSettlement {
         // interest already paid via partial-repay or periodic
         // settlement is credited exactly once.
         uint256 interest = LibEntitlement.settlementInterestNet(loan, nowTime);
-        (uint256 treasuryShare, uint256 lenderShare) = LibEntitlement.splitTreasury(interest + lateFee);
+        (uint256 treasuryShare, uint256 lenderShare) = LibEntitlement.splitTreasury(loan, interest + lateFee);
         plan = ERC20Settlement({
             principal: principal,
             interest: interest,
@@ -93,7 +93,7 @@ library LibSettlement {
             loan,
             block.timestamp
         );
-        (uint256 treasuryShare, uint256 lenderShare) = LibEntitlement.splitTreasury(interest);
+        (uint256 treasuryShare, uint256 lenderShare) = LibEntitlement.splitTreasury(loan, interest);
         plan = ERC20Settlement({
             principal: principal,
             interest: interest,

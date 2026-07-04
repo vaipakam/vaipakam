@@ -364,6 +364,7 @@ contract PrecloseFacet is
             // Borrower gets unused prepay + buffer refund.
             uint256 fullRental = loan.principal * loan.durationDays; // principal = daily fee for NFTs
             (uint256 treasuryFee, uint256 lenderShare) = LibEntitlement.splitTreasury(
+                loan,
                 fullRental
             );
 
@@ -632,7 +633,7 @@ contract PrecloseFacet is
             : 0;
 
         // ── 2. alice pays accrued + shortfall ───────────────────────────────
-        (uint256 treasuryFee, ) = LibEntitlement.splitTreasury(accruedInterest);
+        (uint256 treasuryFee, ) = LibEntitlement.splitTreasury(loan, accruedInterest);
         uint256 lenderShare = accruedInterest - treasuryFee + shortfall;
 
         address payAsset = _paymentAsset(loan);
@@ -1108,7 +1109,7 @@ contract PrecloseFacet is
                 ? originalExpectedRemaining - newExpectedEarning
                 : 0;
 
-            (treasuryFee, ) = LibEntitlement.splitTreasury(accruedInterest);
+            (treasuryFee, ) = LibEntitlement.splitTreasury(loan, accruedInterest);
             interestToLender = accruedInterest - treasuryFee + shortfall;
             accruedShortfallSum = accruedInterest + shortfall;
         }

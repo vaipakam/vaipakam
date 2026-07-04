@@ -420,7 +420,7 @@ contract DefaultedFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErr
                     uint256 interestRecovered = allocated - loan.principal;
                     // Cap to actual interest portion (rest is principal)
                     if (interestRecovered > interestPortion) interestRecovered = interestPortion;
-                    (treasuryInterestFee, ) = LibEntitlement.splitTreasury(interestRecovered);
+                    (treasuryInterestFee, ) = LibEntitlement.splitTreasury(loan, interestRecovered);
                     lenderProceeds = allocated - treasuryInterestFee;
                 } else {
                     // Undercollateralized below principal: lender bears full loss, no treasury interest fee
@@ -624,6 +624,7 @@ contract DefaultedFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErr
 
             // Lender's prepay share: rental fees minus treasury fee (buffer already sent to treasury)
             (uint256 treasuryFee, uint256 prepayToLender) = LibEntitlement.splitTreasury(
+                loan,
                 loan.prepayAmount
             );
 

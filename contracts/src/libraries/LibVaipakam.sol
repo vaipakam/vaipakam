@@ -1921,6 +1921,29 @@ library LibVaipakam {
         // Append-only tail fields.
         uint64 interestAccrualStart;
         uint16 interestRemainingDays;
+        // #957 (#921 item 6) — fee BPS SNAPSHOTTED at init from the live
+        // governance knobs (`cfgTreasuryFeeBps` / `cfgLoanInitiationFeeBps`),
+        // so a loan's economics are fixed at signature time. Every
+        // settlement / close-out treasury split for THIS loan reads
+        // `treasuryFeeBpsAtInit` (via `effectiveTreasuryFeeBps`) — NOT the
+        // live knob — so a mid-loan governance retune never changes an
+        // open loan's economics vs. the reviewed/signed receipt.
+        // `loanInitiationFeeBpsAtInit` records the LIF rate the loan was
+        // originated under. The LIF is charged ONCE at init from the live knob
+        // (the loan struct doesn't exist yet at the charge site), and this
+        // field is stamped from the SAME live knob in the same tx — so the
+        // recorded rate equals the charged rate by construction. It is a
+        // per-loan economics RECEIPT (exposed via `getLoanDetails` for the
+        // frontend / indexer / audit), with no post-init on-chain reader —
+        // hence there is no `effectiveLoanInitiationFeeBps` resolver, unlike
+        // the treasury field every settlement split reads. The RESOLVED value
+        // is stored (never 0, since `cfg*` map a 0 config to the default), so
+        // `0` unambiguously means a pre-#957 loan ⇒ `effectiveTreasuryFeeBps`
+        // falls back to the live knob. Both fees are bounded by `MAX_FEE_BPS`
+        // (5000) so `uint16` holds them; they pack into one slot. Append-only
+        // tail fields — zero on every existing loan.
+        uint16 treasuryFeeBpsAtInit;
+        uint16 loanInitiationFeeBpsAtInit;
     }
 
     /**
@@ -5352,6 +5375,20 @@ library LibVaipakam {
         uint256 liveCapBps
     ) internal pure returns (uint256) {
         return atInit == 0 ? liveCapBps : uint256(atInit);
+    }
+
+    /// @dev #957 (#921 item 6) — the treasury-fee BPS a SPECIFIC open loan was
+    ///      originated under, read from its `treasuryFeeBpsAtInit` snapshot.
+    ///      Every settlement / close-out treasury split for that loan uses
+    ///      this (NOT the live `cfgTreasuryFeeBps()`), so a mid-loan
+    ///      governance retune never changes the loan's economics vs. the
+    ///      signed receipt. `0` (pre-#957 loan) ⇒ the live knob — the
+    ///      conservative legacy behaviour.
+    function effectiveTreasuryFeeBps(
+        Loan storage loan
+    ) internal view returns (uint256) {
+        uint16 atInit = loan.treasuryFeeBpsAtInit;
+        return atInit == 0 ? cfgTreasuryFeeBps() : uint256(atInit);
     }
 
     /// @dev Phase 1 follow-up — auto-pause duration (seconds) used by

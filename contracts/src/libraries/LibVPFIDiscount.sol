@@ -527,8 +527,11 @@ library LibVPFIDiscount {
         avgBps = lenderTimeWeightedDiscountBps(loan);
         if (avgBps == 0) return (false, 0, 0);
 
-        uint256 normalFee = (interestAmount * LibVaipakam.cfgTreasuryFeeBps()) /
-            LibVaipakam.BASIS_POINTS;
+        // #957 (#921 item 6) — size the yield-fee VPFI requirement against the
+        // loan's snapshotted treasury BPS so the discount matches the treasury
+        // cut `splitTreasury` will actually charge at settlement.
+        uint256 normalFee = (interestAmount *
+            LibVaipakam.effectiveTreasuryFeeBps(loan)) / LibVaipakam.BASIS_POINTS;
         uint256 payBps = LibVaipakam.BASIS_POINTS - avgBps;
         uint256 tierFee = (normalFee * payBps) / LibVaipakam.BASIS_POINTS;
 

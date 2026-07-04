@@ -684,7 +684,7 @@ contract SwapToRepayFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamE
 
         // ── Accrued-interest split + partial bound ───────────────────
         uint256 accrued = LibEntitlement.accruedInterestToTime(loan, block.timestamp);
-        (uint256 treasuryShare, uint256 lenderShare) = LibEntitlement.splitTreasury(accrued);
+        (uint256 treasuryShare, uint256 lenderShare) = LibEntitlement.splitTreasury(loan, accrued);
 
         // Must at least cover the accrued interest.
         if (outputAmount < lenderShare + treasuryShare) revert InsufficientProceeds();

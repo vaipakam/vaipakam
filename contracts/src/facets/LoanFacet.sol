@@ -823,7 +823,24 @@ contract LoanFacet is DiamondPausable, DiamondAccessControl, IVaipakamErrors {
         _copyPartyFields(loan, offer, acceptor);
         _snapshotLenderDiscount(loan);
         _snapshotBorrowerDiscount(loan);
+        _snapshotFeeBps(loan);
         _latchOfferKeepersToLoan(loan.id, offerId, offer.creator);
+    }
+
+    /// @dev #957 (#921 item 6) — freeze the treasury-fee + LIF BPS the loan is
+    ///      originated under from the live governance knobs. Every settlement
+    ///      treasury split for this loan reads `treasuryFeeBpsAtInit` (via
+    ///      `LibVaipakam.effectiveTreasuryFeeBps`) instead of the live knob, so
+    ///      a mid-loan retune can't change the loan's economics vs. the signed
+    ///      receipt. The RESOLVED knob value is stored (`cfg*` map a 0 config
+    ///      to the default), so the stored BPS is always non-zero and the `0`
+    ///      sentinel unambiguously means a pre-#957 loan. Same immutable-at-init
+    ///      discipline as `minHealthFactorAtInit` / `initLtvCapBpsAtInit`.
+    function _snapshotFeeBps(LibVaipakam.Loan storage loan) private {
+        loan.treasuryFeeBpsAtInit = uint16(LibVaipakam.cfgTreasuryFeeBps());
+        loan.loanInitiationFeeBpsAtInit = uint16(
+            LibVaipakam.cfgLoanInitiationFeeBps()
+        );
     }
 
     /// @dev Copy the offer's per-keeper enable flags onto the new loan

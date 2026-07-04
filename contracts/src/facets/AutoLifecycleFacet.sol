@@ -664,7 +664,7 @@ contract AutoLifecycleFacet is DiamondReentrancyGuard, DiamondPausable {
             // lenderShare == interest + lateFee`).
             uint256 totalInterestLike = accruedInterest + lateFee;
             (uint256 treasuryShare, uint256 lenderShare) =
-                LibEntitlement.splitTreasury(totalInterestLike);
+                LibEntitlement.splitTreasury(loan, totalInterestLike);
             // Codex round-4 P2 — if the original lender has VPFI yield-
             // fee consent + sufficient vault VPFI, pay the treasury cut
             // in VPFI from the lender's vault and route 100% of the

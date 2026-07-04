@@ -126,7 +126,10 @@ library LibCollateralSettlement {
         //  (b) the §13 step-5 PR can drop in a single `cfgPrecloseFeeBps()`
         //      read with a one-line diff, no surrounding shape changes.
         uint256 precloseFeeBps = 0;
-        uint256 feeBpsSum = LibVaipakam.cfgTreasuryFeeBps() + precloseFeeBps;
+        // #957 (#921 item 6) — read the loan's snapshotted treasury BPS, NOT
+        // the live knob, so a parallel-sale floor / settlement reflects the
+        // economics the loan was originated under.
+        uint256 feeBpsSum = LibVaipakam.effectiveTreasuryFeeBps(loan) + precloseFeeBps;
 
         return (interestOwed * feeBpsSum) / LibVaipakam.BASIS_POINTS;
     }

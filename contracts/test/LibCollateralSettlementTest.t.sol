@@ -259,6 +259,92 @@ contract LibCollateralSettlementTest is SetupTest {
         );
     }
 
+    // ─── 5b. #957 (#921 item 6) — per-loan treasury-fee SNAPSHOT ────────
+    //
+    // A loan that carries a `treasuryFeeBpsAtInit` snapshot must settle at
+    // THAT rate regardless of a later governance retune — the whole point of
+    // #957. A `0` snapshot (pre-#957 loan) falls back to the live knob. These
+    // guard `LibVaipakam.effectiveTreasuryFeeBps`, which every settlement
+    // treasury split (here: `treasuryAndPrecloseFee`) now routes through.
+
+    /// @dev Scaffold a loan whose `treasuryFeeBpsAtInit` is stamped, so the
+    ///      library reads the snapshot instead of the live knob.
+    function _scaffoldLoanWithTreasurySnapshot(
+        uint256 id,
+        uint256 principal,
+        uint256 rateBps,
+        uint256 startTime,
+        uint256 durationDays,
+        uint16 treasuryFeeBpsAtInit
+    ) internal {
+        LibVaipakam.Loan memory loan;
+        loan.lender = _lender;
+        loan.borrower = _borrower;
+        loan.principal = principal;
+        loan.interestRateBps = rateBps;
+        loan.startTime = uint64(startTime);
+        loan.durationDays = durationDays;
+        loan.status = LibVaipakam.LoanStatus.Active;
+        loan.treasuryFeeBpsAtInit = treasuryFeeBpsAtInit;
+        TestMutatorFacet(address(diamond)).setLoan(id, loan);
+    }
+
+    function test_957_treasurySnapshot_overridesLiveRetune() public {
+        uint256 id = TEST_LOAN_ID + 100;
+        uint256 start = block.timestamp;
+        // Loan born at the 1% (100 bps) default.
+        _scaffoldLoanWithTreasurySnapshot({
+            id: id,
+            principal: PRINCIPAL,
+            rateBps: RATE_BPS,
+            startTime: start,
+            durationDays: DURATION_DAYS,
+            treasuryFeeBpsAtInit: 100
+        });
+
+        // Governance retunes the LIVE treasury fee UP to 5% AFTER init.
+        TestMutatorFacet(address(diamond)).setTreasuryFeeBpsRaw(500);
+
+        vm.warp(start + 30 * ONE_DAY);
+        uint256 accrued = _expectedAccrued(PRINCIPAL, RATE_BPS, 30);
+
+        uint256 snapshotFee = (accrued * 100) / BASIS_POINTS; // what the loan owes
+        uint256 liveFee = (accrued * 500) / BASIS_POINTS; // the WRONG (retuned) amount
+        assertGt(liveFee, snapshotFee, "sanity: retune would change the fee");
+
+        assertEq(
+            TestMutatorFacet(address(diamond)).getTreasuryAndPrecloseFee(id, block.timestamp),
+            snapshotFee,
+            "settlement uses the loan's snapshotted 100bps, NOT the retuned 500bps"
+        );
+    }
+
+    function test_957_zeroSnapshot_fallsBackToLiveConfig() public {
+        uint256 id = TEST_LOAN_ID + 101;
+        uint256 start = block.timestamp;
+        // Pre-#957 loan: no snapshot (0) ⇒ must track the live knob.
+        _scaffoldLoanWithTreasurySnapshot({
+            id: id,
+            principal: PRINCIPAL,
+            rateBps: RATE_BPS,
+            startTime: start,
+            durationDays: DURATION_DAYS,
+            treasuryFeeBpsAtInit: 0
+        });
+
+        TestMutatorFacet(address(diamond)).setTreasuryFeeBpsRaw(500);
+
+        vm.warp(start + 30 * ONE_DAY);
+        uint256 accrued = _expectedAccrued(PRINCIPAL, RATE_BPS, 30);
+        uint256 expectedFeeLeg = (accrued * 500) / BASIS_POINTS;
+
+        assertEq(
+            TestMutatorFacet(address(diamond)).getTreasuryAndPrecloseFee(id, block.timestamp),
+            expectedFeeLeg,
+            "zero snapshot (legacy loan) follows the live 500bps knob"
+        );
+    }
+
     // ─── 6. Zero-principal + zero-rate edge cases ───────────────────────
 
     function test_liveFloor_zeroPrincipalReturnsZero() public {
