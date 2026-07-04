@@ -58,7 +58,14 @@ import {
 } from '../lib/offerSchema';
 import { AssetType } from '../lib/types';
 import {
+  readLoanLive,
+  saleBuyerRemainingInterest,
+  type LoanLive,
+} from '../contracts/loanLive';
+import { saleSettlementNow } from '../data/loanSalePending';
+import {
   formatBpsAsPercent,
+  formatDate,
   formatDurationDays,
   formatTokenAmount,
   fullTermInterest,
@@ -633,6 +640,111 @@ export function OfferFlow({ side }: { side: Side }) {
     }
   }, [acceptIsLoanSale]);
 
+  // #986 P3 — the honest buy-a-running-loan review. A sale-vehicle
+  // offer's stored fields misdescribe the deal (zero collateral, a
+  // term that already partly elapsed), so the review reads the LINKED
+  // LOAN live and describes the position actually being bought. A
+  // sale link is discriminated from a preclose-offset link by the
+  // creator (sale vehicles are created by the loan's lender); offsets
+  // and unknown shapes keep the #951 block. Also preflights the
+  // SELLER's settlement funding: `completeLoanSale` pulls the seller's
+  // accrued-interest forfeit from the seller's WALLET, and a revoked
+  // standing approval fails as an opaque `OfferAcceptFailed` — a
+  // doomed buy must be blocked here with a plain reason instead.
+  const saleReview = useQuery({
+    queryKey: [
+      'offerSaleReview',
+      readChain.chainId,
+      selected?.offerId,
+      linkedLoan.data,
+    ],
+    enabled:
+      acceptIsLoanSale && Boolean(readClient) && Boolean(selected),
+    staleTime: 30_000,
+    refetchInterval: 60_000,
+    queryFn: async () => {
+      const loanId = linkedLoan.data!;
+      const [live, block] = await Promise.all([
+        readLoanLive(readClient!, readChain.diamondAddress, BigInt(loanId)),
+        readClient!.getBlock({ blockTag: 'latest' }),
+      ]);
+      const isSale =
+        live.lender.toLowerCase() === selected!.creator.toLowerCase();
+      if (!isSale) return { kind: 'other' as const };
+      const saleRateBps = BigInt(offerRateBps(selected!));
+      const dueAtSec = Number(live.startTime + live.durationDays * 86_400n);
+      const matured = block.timestamp >= BigInt(dueAtSec);
+      // Seller-funding preflight — same definition the listing flow
+      // approved against (`saleSettlementNow`), read from the wallet
+      // the pull binds to (the stored lender; consolidated at listing).
+      const requiredNow = saleSettlementNow(live, saleRateBps, block.timestamp);
+      const [allowance, balance] = await Promise.all([
+        readClient!.readContract({
+          address: live.principalAsset,
+          abi: [
+            {
+              name: 'allowance',
+              type: 'function',
+              stateMutability: 'view',
+              inputs: [{ type: 'address' }, { type: 'address' }],
+              outputs: [{ type: 'uint256' }],
+            },
+          ] as const,
+          functionName: 'allowance',
+          args: [live.lender, readChain.diamondAddress],
+        }) as Promise<bigint>,
+        readClient!.readContract({
+          address: live.principalAsset,
+          abi: [
+            {
+              name: 'balanceOf',
+              type: 'function',
+              stateMutability: 'view',
+              inputs: [{ type: 'address' }],
+              outputs: [{ type: 'uint256' }],
+            },
+          ] as const,
+          functionName: 'balanceOf',
+          args: [live.lender],
+        }) as Promise<bigint>,
+      ]);
+      return {
+        kind: 'sale' as const,
+        loanId,
+        live,
+        dueAtSec,
+        matured,
+        sellerCovered: allowance >= requiredNow && balance >= requiredNow,
+        buyerInterest: saleBuyerRemainingInterest(
+          live,
+          saleRateBps,
+          block.timestamp,
+        ),
+      };
+    },
+  });
+  const saleData = saleReview.data;
+  const saleLoanLive: LoanLive | null =
+    saleData?.kind === 'sale' ? saleData.live : null;
+  // The sale review is signable only when every gate is POSITIVELY
+  // clear: it is a sale link, the loan is Active and unmatured, and
+  // the seller's settlement funding covers completion right now.
+  const saleReviewReady =
+    saleData?.kind === 'sale' &&
+    saleLoanLive !== null &&
+    saleLoanLive.status === 0 &&
+    !saleData.matured &&
+    saleData.sellerCovered;
+  // Late-arriving sale numbers change the reviewed terms — re-consent,
+  // same rule as the other late disclosures.
+  useEffect(() => {
+    if (saleReviewReady) {
+      setForm((f) =>
+        f.riskAndTermsConsent ? { ...f, riskAndTermsConsent: false } : f,
+      );
+    }
+  }, [saleReviewReady]);
+
   const lifPct = bpsToPercentText(fees.loanInitiationFeeBps);
   const yieldPct = bpsToPercentText(fees.treasuryFeeBps);
 
@@ -644,6 +756,39 @@ export function OfferFlow({ side }: { side: Side }) {
         const lending = lendingMeta.data;
         const collateral = selectedCollateralMeta.data;
         if (!lending || !collateral) return null;
+
+        // #986 P3 — sale-vehicle receipt: every number comes from the
+        // LINKED LOAN live, never the offer row (which shows zero
+        // collateral and a term that already partly elapsed). Renders
+        // only when the sale review is fully clear; any other linked
+        // state stays receipt-less (and blocked below).
+        if (acceptIsLoanSale) {
+          if (
+            side !== 'lender' ||
+            !saleReviewReady ||
+            saleData?.kind !== 'sale' ||
+            saleData.live.collateralAsset.toLowerCase() !==
+              selected.collateralAsset.toLowerCase()
+          ) {
+            return null;
+          }
+          const live = saleData.live;
+          const principalStr = `${formatTokenAmount(live.principal, lending.decimals)} ${lending.symbol}`;
+          const interestStr = `${formatTokenAmount(saleData.buyerInterest, lending.decimals)} ${lending.symbol}`;
+          const collateralStr = `${formatTokenAmount(live.collateralAmount, collateral.decimals)} ${collateral.symbol}`;
+          const dueStr = formatDate(saleData.dueAtSec);
+          const illiquidSuffix = reviewIsIlliquid
+            ? ` ${copy.match.illiquidWarning}`
+            : '';
+          return {
+            youReceive: `The lender position of running loan #${saleData.loanId}: up to ~${interestStr} interest from now to the due date if the borrower repays on time, plus the full ${principalStr} principal back.`,
+            youLock: `${principalStr} paid now to the exiting lender — the loan itself doesn't change for the borrower.`,
+            youMayOwe: 'Nothing — the borrower owes you.',
+            youCanLose: `${copy.lend.defaultOutcome} Their ${collateralStr} is already locked.${illiquidSuffix}`,
+            fees: copy.fees.lenderYieldFee(yieldPct),
+            whenThisEnds: `Repayment is due by ${dueStr} (grace period: ${grace.label}). You then claim your funds.`,
+          };
+        }
         const principal = offerPrincipal(selected);
         const interest = fullTermInterest(
           principal,
@@ -739,6 +884,9 @@ export function OfferFlow({ side }: { side: Side }) {
     lendingMeta.data,
     collateralMeta.data,
     selectedCollateralMeta.data,
+    acceptIsLoanSale,
+    saleData,
+    saleReviewReady,
   ]);
 
   const isOwnSelectedOffer =
@@ -757,10 +905,13 @@ export function OfferFlow({ side }: { side: Side }) {
     grace.ready &&
     // The linked-loan answer gates a BLOCK, not just a disclosure: a
     // linked offer settles/transfers a running loan and the fresh-loan
-    // receipt above does not describe those terms — so signing waits
-    // until the answer is known, and a linked offer never signs here.
+    // receipt does not describe those terms — signing waits until the
+    // answer is known. A SALE link may sign once its own review is
+    // fully clear (#986 P3: loan-derived receipt, loan Active +
+    // unmatured, seller settlement funding covered); offset/unknown
+    // links never sign here.
     linkedLoanKnown &&
-    !acceptIsLoanSale &&
+    (!acceptIsLoanSale || saleReviewReady) &&
     (mode === 'accept'
       ? selected !== null
       : formError === null && durationValid && !selfCollateral) &&
@@ -925,16 +1076,33 @@ export function OfferFlow({ side }: { side: Side }) {
     // review, even in the abort path.
     let signed: Awaited<ReturnType<typeof signAcceptTerms>>;
     try {
+      // #986 P3 — for a sale-vehicle accept the REVIEW showed the
+      // linked loan's live numbers (that is what the receipt promised),
+      // and the canonical terms are loan-derived too — so the
+      // reviewed-vs-canonical guard must compare against those same
+      // values. A move between review and sign (partial repay changing
+      // principal, collateral change) still aborts, exactly as wanted.
+      const saleReviewed =
+        acceptIsLoanSale && saleReviewReady && saleData?.kind === 'sale'
+          ? saleData.live
+          : null;
+      if (acceptIsLoanSale && !saleReviewed) {
+        throw new Error(copy.match.termsChanged);
+      }
       signed = await signAcceptTerms({
         offerId: BigInt(selected.offerId),
         consent: form.riskAndTermsConsent,
         expected: {
           lendingAsset: selected.lendingAsset,
           collateralAsset: selected.collateralAsset,
-          amount: offerPrincipal(selected),
+          amount: saleReviewed ? saleReviewed.principal : offerPrincipal(selected),
           interestRateBps: BigInt(offerRateBps(selected)),
-          collateralAmount: BigInt(selected.collateralAmount),
-          durationDays: selected.durationDays,
+          collateralAmount: saleReviewed
+            ? saleReviewed.collateralAmount
+            : BigInt(selected.collateralAmount),
+          durationDays: saleReviewed
+            ? Number(saleReviewed.durationDays)
+            : selected.durationDays,
           // The interest MODE the reviewed consent line described — a
           // stale indexer flag must abort before the wallet prompt
           // like any other reviewed term.
@@ -1272,11 +1440,50 @@ export function OfferFlow({ side }: { side: Side }) {
             </div>
           ) : null}
           {acceptIsLoanSale ? (
-            <div className="banner banner-warn" role="alert">
-              <span className="banner-body">
-                {copy.match.linkedLoanAcceptBlocked(linkedLoan.data ?? '')}
-              </span>
-            </div>
+            // #986 P3 — a SALE link renders the buy-a-running-loan
+            // review; each blocked state names itself (a dead Sign
+            // button with no reason reads as broken). Offset/unknown
+            // links keep the #951 block.
+            saleReviewReady ? (
+              <div className="banner banner-info">
+                <span className="banner-body">
+                  {copy.match.saleVehicleBanner(linkedLoan.data ?? '')}
+                </span>
+              </div>
+            ) : saleReview.isError ? (
+              <div className="banner banner-warn" role="alert">
+                <span className="banner-body">{copy.match.saleLoanCheckFailed}</span>
+                <button
+                  type="button"
+                  className="btn btn-secondary btn-sm"
+                  onClick={() => void saleReview.refetch()}
+                >
+                  Retry
+                </button>
+              </div>
+            ) : saleData === undefined ? (
+              <div className="banner banner-info">
+                <span className="banner-body">{copy.match.saleLoanChecking}</span>
+              </div>
+            ) : saleData.kind !== 'sale' ? (
+              <div className="banner banner-warn" role="alert">
+                <span className="banner-body">
+                  {copy.match.linkedLoanAcceptBlocked(linkedLoan.data ?? '')}
+                </span>
+              </div>
+            ) : saleData.live.status !== 0 ? (
+              <div className="banner banner-warn" role="alert">
+                <span className="banner-body">{copy.match.saleLoanNotActive}</span>
+              </div>
+            ) : saleData.matured ? (
+              <div className="banner banner-warn" role="alert">
+                <span className="banner-body">{copy.match.saleMaturityPassed}</span>
+              </div>
+            ) : (
+              <div className="banner banner-warn" role="alert">
+                <span className="banner-body">{copy.match.saleSellerNotCovered}</span>
+              </div>
+            )
           ) : null}
           {mode === 'accept' && !linkedLoanKnown && linkedLoan.isError ? (
             // Same dead-Sign-button rule as the liquidity gate: a

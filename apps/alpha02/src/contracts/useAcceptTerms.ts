@@ -262,6 +262,47 @@ export function useAcceptTermsSigning() {
         args: [input.offerId],
       })) as bigint;
 
+      // #986 P3 — a SALE-VEHICLE offer binds against the LINKED LOAN's
+      // LIVE fields, not the stored offer's. Mirrors
+      // `OfferAcceptFacet._verifyAndBindAccept`: amount must equal
+      // `saleLoan.principal`, durationDays must equal the loan's
+      // original `durationDays`, and collateralAmount is a `<=`-floor
+      // against `saleLoan.collateralAmount` (bind the live value so a
+      // collateral reduction between review and accept aborts, while a
+      // harmless top-up still passes). Building these from the offer
+      // would OfferTermsMismatch the moment the loan moved (e.g. a
+      // partial repay after listing). A sale link is discriminated
+      // from a preclose-offset link by the creator: sale vehicles are
+      // created by the loan's LENDER, offsets by its borrower — offset
+      // offers keep the plain offer-field binding (the contract's
+      // else-branch).
+      let saleLoan: {
+        principal: bigint;
+        durationDays: bigint;
+        collateralAmount: bigint;
+      } | null = null;
+      if (linkedLoanId !== 0n) {
+        const loan = (await publicClient.readContract({
+          address: diamondAddr,
+          abi: DIAMOND_ABI_VIEM,
+          functionName: 'getLoanDetails',
+          args: [linkedLoanId],
+        })) as Record<string, unknown>;
+        if ((loan.lender as string).toLowerCase() === creator) {
+          // The completion requires the loan Active — a settled/defaulted
+          // loan's listing can never complete, so fail before any
+          // signature like the other doomed-accept guards.
+          if (Number(loan.status) !== 0) {
+            throw new Error(copy.match.offerGone);
+          }
+          saleLoan = {
+            principal: loan.principal as bigint,
+            durationDays: loan.durationDays as bigint,
+            collateralAmount: loan.collateralAmount as bigint,
+          };
+        }
+      }
+
       // #730 — stamp the live risk-terms HASH. FAIL CLOSED: only a
       // Diamond with RiskAccessFacet entirely absent may sign the zero
       // hash; a transient RPC failure or a partial-#730 deploy must
@@ -325,10 +366,12 @@ export function useAcceptTermsSigning() {
         offerType: Number(o.offerType),
         lendingAsset,
         collateralAsset,
-        amount: roleAmount,
-        collateralAmount: o.collateralAmount as bigint,
+        amount: saleLoan ? saleLoan.principal : roleAmount,
+        collateralAmount: saleLoan
+          ? saleLoan.collateralAmount
+          : (o.collateralAmount as bigint),
         interestRateBps: roleRate,
-        durationDays: o.durationDays as bigint,
+        durationDays: saleLoan ? saleLoan.durationDays : (o.durationDays as bigint),
         tokenId: o.tokenId as bigint,
         collateralTokenId: o.collateralTokenId as bigint,
         quantity: o.quantity as bigint,

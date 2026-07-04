@@ -14,6 +14,10 @@ export const LOAN_STATUS_ACTIVE = 0;
 export interface LoanLive {
   /** LibVaipakam.LoanStatus as a number (Active = 0). */
   status: number;
+  /** The stored lender. For a sale-listed loan, `createLoanSaleOffer`
+   *  consolidated this to the current lender-NFT holder at listing
+   *  (#951 D1/D2) — it is the seller a buy would pay. */
+  lender: `0x${string}`;
   /** The ORIGINAL borrower stored at init — NOT the current
    *  borrower-NFT holder. Carry-over refinance binds to this. */
   borrower: `0x${string}`;
@@ -132,6 +136,28 @@ export function sellerEconomics(
   };
 }
 
+/** What the BUYER of a sale-listed lender position stands to earn if
+ *  the borrower repays at maturity: the sale rate applied to the
+ *  remaining interest-window seconds — the exact `saleRemainingInterest`
+ *  figure `completeLoanSale` settles against, never a fresh-term
+ *  projection (the term is part-elapsed; the buyer only earns from
+ *  now). One definition so the buy review and any future quote can't
+ *  drift from the facet. */
+export function saleBuyerRemainingInterest(
+  live: LoanLive,
+  saleRateBps: bigint,
+  chainNow: bigint,
+): bigint {
+  const start = interestAccrualStartOf(live);
+  const elapsed = chainNow > start ? chainNow - start : 0n;
+  const totalSecs = interestRemainingDaysOf(live) * 86_400n;
+  const remainingSecs = totalSecs > elapsed ? totalSecs - elapsed : 0n;
+  return (
+    (live.principal * saleRateBps * remainingSecs) /
+    (SECONDS_PER_YEAR * BASIS_POINTS)
+  );
+}
+
 /** The sale path's duration-fit bound: the IMMUTABLE term minus
  *  whole days elapsed since the immutable start — NOT the interest
  *  clock (a partial re-stamps that; the borrower-favourability check
@@ -155,6 +181,7 @@ export async function readLoanLive(
   })) as LoanLive;
   return {
     status: Number(raw.status),
+    lender: raw.lender,
     borrower: raw.borrower,
     principal: raw.principal,
     principalAsset: raw.principalAsset,
