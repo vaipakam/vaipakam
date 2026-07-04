@@ -9,6 +9,26 @@ Line references are against the branches as reviewed by Codex
 (`audit/954-sanctions-gate-sweep` @ `cb3c3796` for #981,
 `feat/951-loan-sale-offer-onchain-fix` @ `dcae1049` for #959).
 
+### Baseline already in the target branches (this plan BUILDS ON these)
+
+This doc lives on a branch off `main`, but the fixes land on the two feature
+branches above, which already contain earlier work. When reading the plan,
+assume the following is ALREADY present (so items that look "missing" against
+`main` are done):
+
+- **On `audit/954` @ `cb3c3796`** — `claimAsBorrower` already reads
+  `s.borrowerSurplusClaims[loanId]` (ClaimFacet:1075-1077), folds the surplus
+  into its `NothingToClaim` guard, PAYS it out via a `vaultWithdrawERC20` after
+  the extra-lien block, and includes the surplus asset in its post-withdraw VPFI
+  restamp guard. So §2.4 below is ONLY the *`claimAsLender` settle-predicate*
+  addition; the borrower-side pay-out + restamp already exist.
+- **On `feat/951` @ `dcae1049`** — `_bindTermsToOffer` already binds a
+  sale-vehicle `t.amount == live saleLoan.principal` (and `t.durationDays ==
+  live loan.durationDays`, collateral `>=` live). So §3.2 below only has to make
+  the *fund movement* (`effectivePrincipal`) read the same live loan; the BIND
+  already targets live, so "buyer signs stale then charged live" cannot happen
+  once the charge is aligned (they must sign live to pass the bind).
+
 ---
 
 ## 0. Background — the freeze-at-source model (already established)
@@ -68,6 +88,19 @@ to close via swap-to-repay (the lender-vault resolution reverts
 `repayLoan:332-345`. `loan.lender`'s vault always exists (they funded), so no
 mint is needed; the proceeds are frozen behind `claimAsLender`.
 
+**Also reserve the frozen lender proceeds for EVERY ERC20 (Codex #986 catch).**
+Symmetric to §2.1: parking the lender payment in `loan.lender`'s vault is not
+enough, because `createSignedOfferVault` treats any tracked ERC20 balance minus
+`s.encumbered` as spendable. When the lender NFT was transferred to a
+now-sanctioned holder, consolidation skips and these proceeds are owed to that
+holder while sitting in the STORED `loan.lender`'s vault — so the stored lender
+could spend them via a signed offer before the holder delists. Reserve them via
+`LibEncumbrance.encumberLenderProceeds` for every ERC20 (the existing helper is
+VPFI-only; extend/gate it the same way §2.1 does for the borrower surplus), and
+release it on `claimAsLender`. Confirm `claimAsLender` already calls
+`releaseLenderProceeds` before its withdraw (it does for VPFI today; make the
+reserve+release asset-agnostic).
+
 ### 1.2 `swapToRepayFull` collateral pull bricks for a flagged self-holder (P1)
 
 When the borrower NFT holder IS `loan.borrower` and is flagged after init,
@@ -117,6 +150,18 @@ To avoid duplicating the surplus-freeze block in two places, factor it into a
 small internal helper (e.g. `LibCloseoutFreeze.freezeOrPayBorrowerSurplus(s,
 loanId, loan, currentHolder, surplus)`) that both `SwapToRepayFacet` and
 `LibSwapToRepayIntentSettlement` call. Same for the lender-leg freeze.
+
+**Also re-lien the returned residual collateral (Codex #986 catch).** The intent
+COMMIT path decrements the full collateral lien when it pulls collateral into
+diamond custody; `_runSettlement` returns any partial-fill residual to the
+stored borrower vault and records `loan.collateralAmount − consumed` as a
+`borrowerClaims` row. Adding only sanctions freezes leaves that returned residual
+UN-liened in the stored borrower's vault, so a transferred-away stored borrower
+could drain it before the current holder claims. Mirror `swapToRepayFull`'s
+re-lien (`EncumbranceMutateFacet.incrementCollateralLien(loanId, refund)` after
+the residual is pushed back) so the residual stays protected until
+`claimAsBorrower` releases it. Verify against `swapToRepayFull:480-488` which
+already does this.
 
 ### 1.5 `backstopFill` — creator not re-screened at fill (P1)
 
@@ -172,28 +217,36 @@ LibConsolidation:436), blind to `s.encumbered`. So a clean stored `loan.borrower
 holding a transferred position's frozen VPFI surplus gets a tier/reward boost
 from funds that aren't theirs, until the holder delists and claims.
 
-**Options (design decision — flagged for Codex):**
+**Codex #986 correction — do NOT subtract the whole `s.encumbered` bucket.** My
+first draft proposed stamping the tier from `trackedVpfiBalance(user) −
+s.encumbered[user][vpfi][0]`. That is WRONG: `s.encumbered[user][vpfi][0]` is a
+SHARED aggregate that also holds a user's OWN active VPFI collateral liens,
+lender-intent capital, and lender-offer principal (`LibEncumbrance` lines ~123,
+365, 542). Subtracting all of it would wrongly strip a user's own pledged /
+listed / intent-funded VPFI from their tier — a legitimate-usage regression. The
+exclusion must be scoped to ONLY the frozen surplus owed to someone else.
 
-- **(A) Encumbrance-adjusted tier stamp (preferred).** Change the VPFI tier
-  balance source so it stamps from `trackedVpfiBalance(user) −
-  s.encumbered[user][vpfi][0]` (free VPFI), not the raw tracked balance. This is
-  the smallest change and is arguably *more correct generally*: reserved
-  proceeds owed to another party shouldn't count toward the reserver's tier.
-  Risk: it also excludes any *lender*-proceeds VPFI encumbrance from the
-  lender's tier — need to confirm that is acceptable / already true (lender
-  proceeds are likewise not-yet-owned until claimed). Touch point:
-  `LibConsolidation.restampUserVpfi` + `_restampVpfi` (and any direct
-  `trackedVpfiBalance` tier reader).
+**Chosen approach — a dedicated per-owner "frozen VPFI owed to others" counter:**
 
-- **(B) Escrow VPFI surplus outside the parking vault.** Hold a frozen VPFI
-  surplus in the diamond under a dedicated non-tier counter rather than
-  `loan.borrower`'s vault. Cleaner isolation, but reintroduces the
-  `recoverStuckERC20`-sweep concern and a bespoke claim path — heavier.
+- Add `mapping(address => uint256) frozenVpfiOwedByVault` (append to Storage).
+  On a VPFI surplus freeze (into `loan.borrower`'s vault for a sanctioned
+  holder), increment `frozenVpfiOwedByVault[loan.borrower] += surplus`. On
+  `claimAsBorrower` paying that surplus (and on any release path), decrement it.
+- The VPFI tier balance for a user becomes `trackedVpfiBalance(user) −
+  frozenVpfiOwedByVault[user]` (floored at 0), applied at every tier-stamp site
+  (`LibConsolidation.restampUserVpfi` / `_restampVpfi`, and `pokeMyTier`'s
+  rollup source). This subtracts ONLY the frozen-surplus VPFI, never the shared
+  `s.encumbered` bucket, so legitimate self-encumbrances keep their tier.
+- The surplus is STILL also encumbered via §2.1 (in `s.encumbered[...][0]`) so
+  `freeBalance` blocks the signed-offer spend. The two mechanisms are
+  independent: `s.encumbered` gates spendability (shared bucket, fine to share);
+  `frozenVpfiOwedByVault` gates tier (must be scoped). Both released at claim.
 
-Recommendation: **(A)**. It composes with the encumber-all-ERC20 change (both key
-off `s.encumbered`), needs no new storage, and is a single, auditable balance
-substitution. §2.1 already encumbers the VPFI surplus, so (A) makes the tier
-honor that reservation.
+This keeps the funds in `loan.borrower`'s vault (no `recoverStuckERC20` concern,
+no bespoke escrow claim path) while making both the spend-guard and the tier
+honor the fact that the VPFI belongs to the delistable holder, not the vault
+owner. (Rejected: option B — diamond escrow under a non-tier counter — is
+heavier and reintroduces the sweep concern for no extra safety here.)
 
 ### 2.3 Surface the new claim lane in read views + event (P2)
 
@@ -203,6 +256,11 @@ sees a zero/collateral-only claim and can't discover the funds:
 - `ClaimFacet.getClaimableAmount` (reads borrowerClaims @1729),
 - `ClaimFacet.getClaimable` (@1787),
 - `MetricsFacet.getNFTPositionSummary` (@1760),
+- **`MetricsDashboardFacet.getUserDashboardClaimables` + `_countClaimables`**
+  (Codex #986 catch) — these walk `s.borrowerClaims[lid]` and SKIP entries with
+  `ci.amount == 0`, so a surplus-only loan shows zero borrower claimables in the
+  dashboard snapshot too. Must surface the surplus lane here as well (count it +
+  include its asset/amount), else wallets relying on the dashboard miss it.
 - `BorrowerFundsClaimed` event (emitted @1322 off `claim.*`).
 
 **Fix:** add the surplus lane to each borrower-side read. Preferred shape: keep
@@ -228,6 +286,13 @@ in `claimAsBorrower` and never gets the surplus.
 s.borrowerSurplusClaims[loanId].amount) == 0` as a fourth conjunct to
 `borrowerHasNothing` at 972-974, so a pending surplus keeps the loan un-Settled
 until `claimAsBorrower` pays it.
+
+*Note (re Codex's "add the surplus lane to `claimAsBorrower` itself"):* on the
+target branch (`audit/954` @ `cb3c3796`) `claimAsBorrower` ALREADY folds the
+surplus into its `NothingToClaim` guard AND pays it out (see Baseline). So a
+surplus-only close is payable there; this §2.4 change is the missing *lender*-side
+settle-predicate half that keeps the loan open long enough for that payout to be
+reachable. Both halves are required; only the lender half is new.
 
 ---
 
@@ -262,10 +327,16 @@ accepting a `offerCancelled` offer — none should.
 
 ### 3.2 Charge the live sale principal, not the stale offer amount (P1)
 
-For a sale vehicle the bind enforces `t.amount == saleLoan.principal`
-(OfferAcceptFacet:522/533 via `roleAmount`), but the value actually funded —
-`effectivePrincipal` (924-930) and the borrower-pull (1019) — is read from the
-stale `offer.amountMax`/`offer.amount`, never re-read from `loan.principal`. If
+On the target branch (`feat/951` @ `dcae1049`) the bind ALREADY enforces
+`t.amount == live saleLoan.principal` for a sale vehicle (see Baseline — the v2
+`_bindTermsToOffer` sale branch; NOT the `main` snapshot the review saw). But the
+value actually funded — `effectivePrincipal` (924-930) and the borrower-pull
+(1019) — is still read from the stale `offer.amountMax`/`offer.amount`, never
+re-read from `loan.principal`. So the buyer must SIGN the live principal to pass
+the bind, yet the charge uses the stale offer amount → a mismatch (over/underpay)
+whenever the live principal has drifted since listing. (Codex's concern — "buyer
+signs stale then charged live" — is exactly why bind AND charge must both be
+live; the bind is already live, so aligning the charge closes it.) If
 the live principal moved since listing, the bind passes on the signed `t.amount`
 yet the fund movement charges the stale offer amount (buyer over/under-pays).
 
@@ -313,12 +384,33 @@ reading the live loan is the smaller, more consistent change.)
 11. Sale accept charges the LIVE principal after a post-listing partial-repay
     drift (bind + fund movement agree); buyer neither over- nor under-pays.
 
+## Storage additions (append-only, at Storage struct end)
+
+- `mapping(address => uint256) frozenVpfiOwedByVault` (§2.2) — per-owner VPFI held
+  in-vault but owed to a delistable holder; subtracted from the tier balance.
+- (`borrowerSurplusClaims` already exists on `audit/954`.)
+- A per-loan lender-proceeds encumbrance for non-VPFI already has storage via
+  `LibEncumbrance` (`lenderProceedsEncumbered*`); §1.1 just removes the VPFI gate.
+
+## Resolved from Codex round 1
+
+- §2.2 tier-exclude is now SCOPED to a dedicated `frozenVpfiOwedByVault` counter,
+  not the shared `s.encumbered` bucket (which holds legit self-encumbrances).
+- §1.1 lender leg now also encumbers non-VPFI proceeds (symmetric to §2.1).
+- §1.4 intent path now re-liens the returned residual collateral.
+- §2.3 now includes `MetricsDashboardFacet.getUserDashboardClaimables` /
+  `_countClaimables`.
+- §2.4 / §3.2 baseline clarified — the borrower-side surplus payout (audit/954)
+  and the live-principal BIND (feat/951) already exist; only the lender settle
+  predicate and the fund-movement charge are new.
+
 ## Open questions for Codex
 
-- §2.2: option (A) encumbrance-adjusted tier stamp vs (B) diamond escrow — is (A)'s
-  global "encumbered VPFI excluded from tier" acceptable for lender-proceeds
-  encumbrance too, or must it be scoped to the borrower-surplus reservation only?
-- §3.1: option (A) honor `offerCancelled` globally at accept — any legitimate flow
-  that accepts a cancelled offer? (None known.)
-- §2.3: extra return fields vs a dedicated getter for the surplus lane — preference
-  for the frontend/indexer contract?
+- §3.1: honor `offerCancelled` globally at `_acceptOffer` entry — any legitimate
+  flow that accepts a `offerCancelled` offer? (None known; it's the canonical
+  "dead offer" marker.)
+- §2.3: surface the surplus lane as extra return fields on the existing borrower
+  claim views vs a dedicated `getBorrowerSurplusClaim` getter — preference for the
+  frontend/indexer contract? (Plan leans to explicit extra fields so a claim can
+  report BOTH residual-collateral and principal-surplus lanes without losing the
+  asset/amount of either.)
