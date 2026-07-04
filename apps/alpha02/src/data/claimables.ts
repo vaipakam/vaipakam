@@ -150,13 +150,31 @@ export function useMyClaimables() {
         }
       }
 
-      // Chain-discovered loans the indexer rows don't carry: synthesize
-      // a row from the live loan struct, for BOTH sides — the ownerOf
-      // confirm below prunes the side the wallet doesn't hold.
-      const knownIds = new Set(loans.data.map((l) => l.loanId));
-      const extraIds = [...new Set(chainIds.map((id) => Number(id)))].filter(
-        (id) => !knownIds.has(id),
-      );
+      // Candidates are keyed by (loanId, role) — NOT loanId alone. The
+      // indexer may know one side of a loan while the chain enumeration
+      // proves the wallet also holds the OTHER side's position NFT
+      // (secondary-market Transfer the indexer hasn't caught up to, or
+      // a wallet on both sides of its own loan). For those, add the
+      // missing role reusing the indexed row's fields; the ownerOf
+      // confirm below prunes any side the wallet doesn't actually hold.
+      const byLoanId = new Map<number, PositionLoan>();
+      const knownKeys = new Set<string>();
+      for (const l of loans.data) {
+        knownKeys.add(`${l.loanId}:${l.role}`);
+        if (!byLoanId.has(l.loanId)) byLoanId.set(l.loanId, l);
+      }
+      const chainIdList = [...new Set(chainIds.map((id) => Number(id)))];
+      const flipped: PositionLoan[] = [];
+      for (const id of chainIdList) {
+        const row = byLoanId.get(id);
+        if (!row) continue;
+        const other = row.role === 'lender' ? ('borrower' as const) : ('lender' as const);
+        if (!knownKeys.has(`${id}:${other}`)) flipped.push({ ...row, role: other });
+      }
+
+      // Chain-discovered loans the indexer rows don't carry at all:
+      // synthesize a row from the live loan struct, for BOTH sides.
+      const extraIds = chainIdList.filter((id) => !byLoanId.has(id));
       const synthesized = (
         await Promise.all(
           extraIds.map(async (id): Promise<PositionLoan[]> => {
@@ -215,12 +233,66 @@ export function useMyClaimables() {
         )
       ).flat();
 
-      // Fast approximate layer: the wallet's loans, minus Active (a live
-      // loan has nothing to claim yet), UNION the chain-discovered
-      // extras. `getClaimable` is the authority for both.
-      const candidates = [...loans.data, ...synthesized].filter(
-        (l) => l.status !== 'active',
+      // Fast approximate layer: the wallet's loans UNION the flipped
+      // sides UNION the chain-discovered extras. `getClaimable` is the
+      // authority for all of them.
+      const pool = [...loans.data, ...flipped, ...synthesized];
+
+      // An `active` row normally has nothing to claim — but in the
+      // indexer-lag window a just-settled loan can still read `active`
+      // here, and dropping it on the cached status would hide a real,
+      // ready claim. Probe the LIVE status for those rows instead of
+      // trusting the row: a live-Active loan is then excluded for
+      // real; a live-terminal one proceeds with the reconciled status.
+      const activeIds = [
+        ...new Set(
+          pool.filter((l) => l.status === 'active').map((l) => l.loanId),
+        ),
+      ];
+      const liveStatusById = new Map<number, IndexedLoanStatus | null>();
+      await Promise.all(
+        activeIds.map(async (id) => {
+          try {
+            const d = (await publicClient.readContract({
+              address: diamond,
+              abi: DIAMOND_ABI_VIEM,
+              functionName: 'getLoanDetails',
+              args: [BigInt(id)],
+            })) as Record<string, unknown>;
+            liveStatusById.set(
+              id,
+              (
+                LIVE_STATUS_TO_INDEXED as Record<
+                  number,
+                  IndexedLoanStatus | undefined
+                >
+              )[Number(d.status)] ?? null,
+            );
+          } catch (e) {
+            // Revert = no such loan (shouldn't happen for an indexed
+            // row) — treat as unknowable and keep the row excluded.
+            if (!isRevert(e)) transportFailed = true;
+            liveStatusById.set(id, null);
+          }
+        }),
       );
+
+      const candidates = pool
+        .map((l): PositionLoan | null => {
+          if (l.status !== 'active') return l;
+          const live = liveStatusById.get(l.loanId);
+          if (live == null || live === 'active') return null;
+          return { ...l, status: live };
+        })
+        .filter((l): l is PositionLoan => l !== null)
+        // ClaimFacet.claimAsBorrower REJECTS FallbackPending — the
+        // borrower's move there is cure/repay (on PositionDetails),
+        // not claim — so only the LENDER side is a real candidate
+        // while fallback is pending. Without this gate the Claim
+        // Center would advertise a borrower claim that can't execute.
+        .filter(
+          (l) => !(l.role === 'borrower' && l.status === 'fallback_pending'),
+        );
 
       const confirmed = await Promise.all(
         candidates.map(async (loan): Promise<PositionLoan | null> => {

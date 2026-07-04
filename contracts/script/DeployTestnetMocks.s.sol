@@ -88,10 +88,15 @@ import {Deployments} from "./lib/Deployments.sol";
  *          - FAUCET_LIQUID_TOKEN
  *          - FAUCET_ILLIQUID_TOKEN
  *          - FAUCET_RENTAL_NFT
+ *          - FAUCET_SWAP_ADAPTER (the MockSwapAdapter from a prior run;
+ *            without it a re-run registers a SECOND adapter slot)
  *
  *        Optional WETH override (else the canonical per-chain address):
- *          - one of BASE_SEPOLIA_WETH / SEPOLIA_WETH / BNB_TESTNET_WBNB /
- *            ARB_SEPOLIA_WETH / OP_SEPOLIA_WETH / ANVIL_WETH.
+ *          - one of BASE_SEPOLIA_WETH / SEPOLIA_WETH / ARB_SEPOLIA_WETH /
+ *            OP_SEPOLIA_WETH / ANVIL_WETH.
+ *          - BNB Testnet (97) has NO default: BNB_TESTNET_WETH is
+ *            REQUIRED and must be a bridged/mock WETH — WBNB is not
+ *            WETH and would be mispriced by the ETH/USD feed.
  *
  *        Idempotent: every wiring step is a straight setter, so a re-run
  *        just re-points the Diamond at the (possibly reused) mocks.
@@ -105,7 +110,7 @@ contract DeployTestnetMocks is Script {
     //    depth check). Mirrors DeployTestnetLiquidityMocks. ──
     address constant BASE_WETH_DEFAULT = 0x4200000000000000000000000000000000000006;
     address constant SEPOLIA_WETH_DEFAULT = 0xfFf9976782d46CC05630D1f6eBAb18b2324d6B14;
-    address constant BNB_TESTNET_WBNB_DEFAULT = 0xae13d989daC2f0dEbFf460aC112a837C89BAa7cd;
+    // NOTE: no BNB Testnet default on purpose — WBNB is not WETH; see _wethFor.
     address constant ARB_SEPOLIA_WETH_DEFAULT = 0x980B62Da83eFf3D4576C647993b0c1D7faf17c73;
     address constant OP_SEPOLIA_WETH_DEFAULT = 0x4200000000000000000000000000000000000006;
 
@@ -212,8 +217,21 @@ contract DeployTestnetMocks is Script {
         // tLIQ-principal liquidations (fund with other principals as
         // needed — see the run notes). 1:1 output multiplier == fair
         // value given tLIQ is priced equal to WETH.
-        MockSwapAdapter swapAdapter = new MockSwapAdapter("vaipakam-testnet-mock");
-        ERC20Mock(liquidToken).mint(address(swapAdapter), 1_000_000e18);
+        //
+        // Reused via FAUCET_SWAP_ADAPTER on re-runs: a fresh deploy per
+        // run would always fail the `_adapterRegistered` idempotency
+        // check below and APPEND another adapter slot, accumulating
+        // stale venues in `getSwapAdapters()` and shifting the
+        // `adapterIdx` the run notes advertise.
+        address swapAdapter = vm.envOr("FAUCET_SWAP_ADAPTER", address(0));
+        if (swapAdapter == address(0)) {
+            swapAdapter = address(new MockSwapAdapter("vaipakam-testnet-mock"));
+            console.log("Deployed MockSwapAdapter:", swapAdapter);
+        } else {
+            console.log("Reusing MockSwapAdapter: ", swapAdapter);
+        }
+        // Top up the proceeds float every run (harmless testnet mint).
+        ERC20Mock(liquidToken).mint(swapAdapter, 1_000_000e18);
 
         vm.stopBroadcast();
 
@@ -323,7 +341,12 @@ contract DeployTestnetMocks is Script {
     function _wethFor(uint256 cid) private view returns (address) {
         if (cid == 84532) return vm.envOr("BASE_SEPOLIA_WETH", BASE_WETH_DEFAULT);
         if (cid == 11155111) return vm.envOr("SEPOLIA_WETH", SEPOLIA_WETH_DEFAULT);
-        if (cid == 97) return vm.envOr("BNB_TESTNET_WBNB", BNB_TESTNET_WBNB_DEFAULT);
+        // BNB Testnet: WBNB is NOT WETH — `setWethContract` is the
+        // bridged-WETH oracle reference and the mock ETH/USD feed would
+        // price WBNB as ETH. There is no canonical bridged WETH on 97,
+        // so REQUIRE an explicit address (a bridged/mock WETH the
+        // operator controls) instead of silently defaulting to WBNB.
+        if (cid == 97) return vm.envAddress("BNB_TESTNET_WETH");
         if (cid == 421614) return vm.envOr("ARB_SEPOLIA_WETH", ARB_SEPOLIA_WETH_DEFAULT);
         if (cid == 11155420) return vm.envOr("OP_SEPOLIA_WETH", OP_SEPOLIA_WETH_DEFAULT);
         // Anvil (31337): no canonical WETH — env-supplied or zero sentinel.

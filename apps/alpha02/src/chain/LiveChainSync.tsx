@@ -38,6 +38,7 @@ const LIVE_KEYS: ReadonlySet<string> = new Set([
   'myLoans',
   'loan',
   'loanLive',
+  'loanLiveStatus',
   'loanRisk',
   'positionOwners',
   'claimables',

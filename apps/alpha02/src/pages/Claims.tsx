@@ -132,6 +132,13 @@ function ClaimRow({ loan }: { loan: PositionLoan }) {
   const principalMeta = useTokenMeta(isRental ? undefined : loan.lendingAsset);
   const collateralMeta = useTokenMeta(loan.collateralAsset);
   const defaulted = loan.status === 'defaulted' || loan.status === 'liquidated';
+  // "Closed properly" group: repaid, or the preclose/offset/refinance
+  // terminals (`settled` / `internal_matched`) — same claim shape as a
+  // repaid loan (lender collects funds, borrower collateral).
+  const properClose =
+    loan.status === 'repaid' ||
+    loan.status === 'settled' ||
+    loan.status === 'internal_matched';
 
   const collateralStr = collateralMeta.data
     ? `${formatTokenAmount(loan.collateralAmount, collateralMeta.data.decimals)} ${collateralMeta.data.symbol}`
@@ -149,11 +156,14 @@ function ClaimRow({ loan }: { loan: PositionLoan }) {
       why = 'The rental closed — the refundable buffer is released.';
     }
   } else if (loan.role === 'lender') {
-    if (loan.status === 'repaid') {
+    if (properClose) {
       what = principalMeta.data
         ? `${formatTokenAmount(loan.principal, principalMeta.data.decimals)} ${principalMeta.data.symbol} + interest`
         : 'Repaid funds';
-      why = 'The borrower repaid this loan.';
+      why =
+        loan.status === 'repaid'
+          ? 'The borrower repaid this loan.'
+          : 'This loan closed early (matched or refinanced) — collect your funds.';
     } else if (loan.status === 'fallback_pending') {
       what = `${collateralStr} collateral`;
       why =
@@ -172,7 +182,10 @@ function ClaimRow({ loan }: { loan: PositionLoan }) {
     why = 'This loan defaulted. If the liquidation left a surplus, you can claim it.';
   } else {
     what = `${collateralStr} collateral back`;
-    why = 'You repaid this loan, so your collateral is released.';
+    why =
+      loan.status === 'repaid'
+        ? 'You repaid this loan, so your collateral is released.'
+        : 'This loan closed, so your collateral is released.';
   }
 
   return (

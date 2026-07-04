@@ -430,6 +430,14 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
     row.interestRateBps,
     row.durationDays,
   );
+  // "Closed properly" group: repaid, or the preclose/offset/refinance
+  // terminals (`settled` / `internal_matched`). Same claim shape as a
+  // repaid loan — lender collects funds, borrower collects collateral
+  // — so copy and gating treat the three alike.
+  const properClose =
+    row.status === 'repaid' ||
+    row.status === 'settled' ||
+    row.status === 'internal_matched';
 
   const action: Action = (() => {
     // Side-scoped: a claim on one side must not suppress the other.
@@ -445,7 +453,12 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
     ) {
       return 'repay';
     }
-    if (role === 'borrower' && row.status === 'repaid') return 'claim-borrower';
+    // Proper-close terminals: plain repayment, plus the preclose/
+    // offset/refinance paths that settle to `settled` or
+    // `internal_matched` — ClaimFacet accepts every one of them, and
+    // the on-chain claimables discovery (#988) now surfaces them, so
+    // this page must offer the claim for each.
+    if (role === 'borrower' && properClose) return 'claim-borrower';
     // After a default/liquidation the borrower may still have a
     // residual entitlement (liquidation surplus) — the Claim Center
     // lists these rows, so this page must offer the claim.
@@ -455,7 +468,7 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
     ) {
       return 'claim-borrower';
     }
-    if (role === 'lender' && row.status === 'repaid') return 'claim-lender';
+    if (role === 'lender' && properClose) return 'claim-lender';
     if (role === 'lender' && (row.status === 'defaulted' || row.status === 'liquidated')) {
       return 'claim-lender';
     }
@@ -955,13 +968,13 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
       : action === 'claim-borrower'
         ? isRental
           ? 'Claim my buffer back'
-          : row.status === 'repaid'
+          : properClose
             ? 'Claim my collateral'
             : 'Claim what’s left (if anything)'
         : action === 'claim-lender'
           ? isRental
             ? 'Claim fees & reclaim NFT'
-            : row.status === 'repaid'
+            : properClose
               ? 'Claim my funds'
               : 'Claim what this loan recovered'
           : null;
@@ -988,7 +1001,7 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
         ? {
             youReceive: isRental
               ? 'Your refundable buffer back.'
-              : row.status === 'repaid'
+              : properClose
                 ? hasCollateral
                   ? `${collateralStr} collateral back.`
                   : 'Whatever this side is still owed (this loan had no collateral, so there may be nothing).'
@@ -1003,7 +1016,7 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
           ? {
               youReceive: isRental
                 ? 'Your earned rental fees, plus your NFT back.'
-                : row.status === 'repaid'
+                : properClose
                   ? `${principalStr} plus the earned interest.`
                   : // Liquid-collateral defaults settle by SWAP — the
                     // lender's claim pays proceeds in the loan asset,
@@ -1016,7 +1029,7 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
               youLock: 'Nothing.',
               youMayOwe: 'Nothing.',
               youCanLose: 'Nothing.',
-              fees: row.status === 'repaid' && !isRental
+              fees: properClose && !isRental
                 ? 'The protocol’s yield fee comes out of the interest before payout.'
                 : isRental
                   ? 'The protocol’s cut comes out of the rental fees before payout.'

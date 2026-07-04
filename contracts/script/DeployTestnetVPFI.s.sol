@@ -57,7 +57,7 @@ import {Deployments} from "./lib/Deployments.sol";
 contract DeployTestnetVPFI is Script {
     address constant BASE_WETH_DEFAULT = 0x4200000000000000000000000000000000000006;
     address constant SEPOLIA_WETH_DEFAULT = 0xfFf9976782d46CC05630D1f6eBAb18b2324d6B14;
-    address constant BNB_TESTNET_WBNB_DEFAULT = 0xae13d989daC2f0dEbFf460aC112a837C89BAa7cd;
+    // NOTE: no BNB Testnet default on purpose — WBNB is not WETH; see _wethFor.
     address constant ARB_SEPOLIA_WETH_DEFAULT = 0x980B62Da83eFf3D4576C647993b0c1D7faf17c73;
     address constant OP_SEPOLIA_WETH_DEFAULT = 0x4200000000000000000000000000000000000006;
 
@@ -118,7 +118,7 @@ contract DeployTestnetVPFI is Script {
             }
             vm.stopBroadcast();
         } else {
-            console.log("No VPFI_RECIPIENT_* set — skipped distribution (wiring only).");
+            console.log("No VPFI_RECIPIENT_* set -- skipped distribution (wiring only).");
         }
 
         console.log("");
@@ -130,7 +130,11 @@ contract DeployTestnetVPFI is Script {
     function _wethFor(uint256 cid) private view returns (address) {
         if (cid == 84532) return vm.envOr("BASE_SEPOLIA_WETH", BASE_WETH_DEFAULT);
         if (cid == 11155111) return vm.envOr("SEPOLIA_WETH", SEPOLIA_WETH_DEFAULT);
-        if (cid == 97) return vm.envOr("BNB_TESTNET_WBNB", BNB_TESTNET_WBNB_DEFAULT);
+        // BNB Testnet: WBNB is NOT WETH — the discount math prices the
+        // ETH-reference asset via the ETH/USD feed, so defaulting to
+        // WBNB would misprice it. REQUIRE the same explicit bridged/
+        // mock WETH address DeployTestnetMocks uses.
+        if (cid == 97) return vm.envAddress("BNB_TESTNET_WETH");
         if (cid == 421614) return vm.envOr("ARB_SEPOLIA_WETH", ARB_SEPOLIA_WETH_DEFAULT);
         if (cid == 11155420) return vm.envOr("OP_SEPOLIA_WETH", OP_SEPOLIA_WETH_DEFAULT);
         return vm.envOr("ANVIL_WETH", address(0));
