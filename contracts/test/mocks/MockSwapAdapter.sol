@@ -18,20 +18,34 @@ import {ISwapAdapter} from "../../src/interfaces/ISwapAdapter.sol";
 contract MockSwapAdapter is ISwapAdapter {
     using SafeERC20 for IERC20;
 
+    /// @dev Deployer-gated knobs: this mock gets REGISTERED as a live
+    ///      liquidation venue on public testnets (DeployTestnetMocks),
+    ///      where unrestricted setters would let anyone flip it to
+    ///      revert (griefing HF liquidation into the fallback path) or
+    ///      skew payouts. Tests deploy-and-configure from the same
+    ///      address, so the gate is invisible to them.
+    address public immutable owner;
+
     string public label;
     bool public shouldRevert;
     uint256 public outputMultiplierBps = 10_000;
     uint256 public callCount;
 
+    modifier onlyOwner() {
+        require(msg.sender == owner, "MockSwapAdapter: not owner");
+        _;
+    }
+
     constructor(string memory _label) {
+        owner = msg.sender;
         label = _label;
     }
 
-    function setShouldRevert(bool v) external {
+    function setShouldRevert(bool v) external onlyOwner {
         shouldRevert = v;
     }
 
-    function setOutputMultiplierBps(uint256 v) external {
+    function setOutputMultiplierBps(uint256 v) external onlyOwner {
         outputMultiplierBps = v;
     }
 

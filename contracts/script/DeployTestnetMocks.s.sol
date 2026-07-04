@@ -91,10 +91,17 @@ import {Deployments} from "./lib/Deployments.sol";
  *          - FAUCET_LIQUID_TOKEN_2 (the second liquid ERC-20, tLQ2 —
  *            gives faucet-only wallets a distinct both-liquid pair for
  *            the HF / liquidation / refinance demos)
+ *          - FAUCET_MWETH (third liquid ERC-20, mWETH — WETH-flavoured
+ *            mintable principal; NOT the canonical WETH)
  *          - FAUCET_ILLIQUID_TOKEN
  *          - FAUCET_RENTAL_NFT
+ *          - FAUCET_RENTAL_NFT_2 (second ERC-4907 collection, vART)
  *          - FAUCET_SWAP_ADAPTER (the MockSwapAdapter from a prior run;
- *            without it a re-run registers a SECOND adapter slot)
+ *            without it a re-run registers a SECOND adapter slot.
+ *            NOTE: after the deployer-gating change to the mocks,
+ *            leave this UNSET once so a fresh owner-gated adapter
+ *            replaces the open one; same for the oracle mocks, which
+ *            redeploy fresh every run anyway)
  *
  *        Optional WETH override (else the canonical per-chain address):
  *          - one of BASE_SEPOLIA_WETH / SEPOLIA_WETH / ARB_SEPOLIA_WETH /
@@ -204,6 +211,18 @@ contract DeployTestnetMocks is Script {
             console.log("Reusing tILQ:   ", illiquidToken);
         }
 
+        // Third liquid token, WETH-flavoured: some flows read better in
+        // the demo when the principal LOOKS like wrapped ETH; mWETH is
+        // oracle-priced exactly like tLIQ/tLQ2 (NOT the canonical WETH
+        // — that can't be faucet-minted).
+        address mWeth = vm.envOr("FAUCET_MWETH", address(0));
+        if (mWeth == address(0)) {
+            mWeth = address(new ERC20Mock("Mock Wrapped ETH", "mWETH", 18));
+            console.log("Deployed mWETH: ", mWeth);
+        } else {
+            console.log("Reusing mWETH:  ", mWeth);
+        }
+
         address rentalNft = vm.envOr("FAUCET_RENTAL_NFT", address(0));
         if (rentalNft == address(0)) {
             rentalNft = address(new ERC4907Mock("Vaipakam Test Rental NFT", "vRENT"));
@@ -212,15 +231,27 @@ contract DeployTestnetMocks is Script {
             console.log("Reusing vRENT:  ", rentalNft);
         }
 
+        // Second rentable NFT collection so two-sided rental demos
+        // (and multiple listings per wallet) don't share one contract.
+        address rentalNft2 = vm.envOr("FAUCET_RENTAL_NFT_2", address(0));
+        if (rentalNft2 == address(0)) {
+            rentalNft2 = address(new ERC4907Mock("Vaipakam Test Art NFT", "vART"));
+            console.log("Deployed vART:  ", rentalNft2);
+        } else {
+            console.log("Reusing vART:   ", rentalNft2);
+        }
+
         // Oracle mocks for the LIQUID tokens only (Tier 1). Both liquid
         // tokens use the SAME price as WETH so every 1:1 pool spot
         // agrees with the feed ratio (see SQRT_PRICE_X96_ONE).
         MockChainlinkRegistry registry = new MockChainlinkRegistry();
         MockChainlinkFeed liquidFeed = new MockChainlinkFeed(TLIQ_USD_PRICE, 8);
         MockChainlinkFeed liquid2Feed = new MockChainlinkFeed(TLIQ_USD_PRICE, 8);
+        MockChainlinkFeed mWethFeed = new MockChainlinkFeed(WETH_USD_PRICE, 8);
         MockChainlinkFeed wethFeed = new MockChainlinkFeed(WETH_USD_PRICE, 8);
         registry.setFeed(liquidToken, USD_DENOM, address(liquidFeed));
         registry.setFeed(liquidToken2, USD_DENOM, address(liquid2Feed));
+        registry.setFeed(mWeth, USD_DENOM, address(mWethFeed));
         registry.setFeed(weth, USD_DENOM, address(wethFeed));
 
         MockUniswapV3Factory univ3 = new MockUniswapV3Factory();
@@ -228,6 +259,8 @@ contract DeployTestnetMocks is Script {
             univ3.createPool(liquidToken, weth, 3000, SQRT_PRICE_X96_ONE, MOCK_POOL_LIQUIDITY);
         address liquid2Pool =
             univ3.createPool(liquidToken2, weth, 3000, SQRT_PRICE_X96_ONE, MOCK_POOL_LIQUIDITY);
+        address mWethPool =
+            univ3.createPool(mWeth, weth, 3000, SQRT_PRICE_X96_ONE, MOCK_POOL_LIQUIDITY);
 
         // Tier 2 — mock swap venue for HF-based liquidation.
         // ZeroExProxyMock is the LEGACY 0x-proxy shape; retained for
@@ -254,9 +287,10 @@ contract DeployTestnetMocks is Script {
             console.log("Reusing MockSwapAdapter: ", swapAdapter);
         }
         // Top up the proceeds float every run (harmless testnet mint) —
-        // both liquid principals so either side's loans can liquidate.
+        // every liquid principal so any side's loans can liquidate.
         ERC20Mock(liquidToken).mint(swapAdapter, 1_000_000e18);
         ERC20Mock(liquidToken2).mint(swapAdapter, 1_000_000e18);
+        ERC20Mock(mWeth).mint(swapAdapter, 1_000_000e18);
 
         vm.stopBroadcast();
 
@@ -292,9 +326,13 @@ contract DeployTestnetMocks is Script {
             ConfigFacet(diamond).setPaaAssets(paa);
         }
 
-        // Risk params so tLIQ (and the WETH quote asset) render + are
-        // immediately usable for offers — mirrors DeployTestnetLiquidityMocks.
+        // Risk params for EVERY liquid faucet asset (and the WETH quote
+        // asset) so both orientations of any liquid pair are admissible
+        // — a zero `loanInitMaxLtvBps` on the collateral side rejects
+        // loan admission outright (Codex #982 round-6).
         RiskFacet(diamond).updateRiskParams(liquidToken, 8000, 300, 1000);
+        RiskFacet(diamond).updateRiskParams(liquidToken2, 8000, 300, 1000);
+        RiskFacet(diamond).updateRiskParams(mWeth, 8000, 300, 1000);
         RiskFacet(diamond).updateRiskParams(weth, 8000, 300, 1000);
 
         // Tier 2 — legacy proxy pointers (kept for completeness; the
@@ -317,15 +355,19 @@ contract DeployTestnetMocks is Script {
         );
         vm.serializeAddress(obj, "liquidToken", liquidToken);
         vm.serializeAddress(obj, "liquidToken2", liquidToken2);
+        vm.serializeAddress(obj, "mWeth", mWeth);
         vm.serializeAddress(obj, "illiquidToken", illiquidToken);
         vm.serializeAddress(obj, "rentalNft", rentalNft);
+        vm.serializeAddress(obj, "rentalNft2", rentalNft2);
         vm.serializeAddress(obj, "feedRegistry", address(registry));
         vm.serializeAddress(obj, "liquidTokenUsdFeed", address(liquidFeed));
         vm.serializeAddress(obj, "liquidToken2UsdFeed", address(liquid2Feed));
+        vm.serializeAddress(obj, "mWethUsdFeed", address(mWethFeed));
         vm.serializeAddress(obj, "ethUsdFeed", address(wethFeed));
         vm.serializeAddress(obj, "uniswapV3Factory", address(univ3));
         vm.serializeAddress(obj, "liquidTokenWethPool", liquidPool);
         vm.serializeAddress(obj, "liquidToken2WethPool", liquid2Pool);
+        vm.serializeAddress(obj, "mWethWethPool", mWethPool);
         vm.serializeAddress(obj, "zeroExProxy", address(zeroEx));
         string memory out = vm.serializeAddress(obj, "mockSwapAdapter", address(swapAdapter));
         // WETH first, and BEFORE the raw keyed write below: the

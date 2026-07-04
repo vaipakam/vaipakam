@@ -177,7 +177,20 @@ export function Vpfi() {
         );
       }
       const turningOff = snapshot.consent;
-      await write('setVPFIDiscountConsent', [!snapshot.consent]);
+      const next = !snapshot.consent;
+      await write('setVPFIDiscountConsent', [next]);
+      // Read-after-write honesty: the tx is MINED, so `next` IS the
+      // chain state — but public testnet RPCs can serve pre-tx state
+      // for several seconds, and an immediate invalidate would refetch
+      // the OLD consent and leave the checkbox visually unchanged
+      // (looking like the click did nothing, inviting a second tx).
+      // Patch the cache with the mined value; the periodic refetch
+      // reconciles once the RPC catches up.
+      queryClient.setQueryData(
+        ['vpfi', readChain.chainId, address?.toLowerCase()],
+        (old: typeof snapshot | undefined) =>
+          old ? { ...old, consent: next } : old,
+      );
       if (turningOff) {
         // Per VPFIDiscountFacet: consent-off is only PUSHED to
         // mirror-chain tier caches by a following pokeMyTier() —
@@ -192,7 +205,13 @@ export function Vpfi() {
           );
         }
       }
-      refresh();
+      // Deliberately NO immediate invalidate here: it would refetch
+      // through the (possibly lagging) RPC and could overwrite the
+      // patched consent with pre-tx state. The 30s interval and the
+      // per-block live sync reconcile shortly, when the RPC is caught
+      // up. (Vault deposits/withdrawals keep the immediate refresh —
+      // their figures come with a done-banner, so a briefly-stale
+      // balance doesn't read as "the click did nothing".)
     } catch (err) {
       setError(submitErrorText(err));
     } finally {

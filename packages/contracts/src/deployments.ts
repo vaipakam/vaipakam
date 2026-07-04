@@ -236,22 +236,30 @@ export interface TestnetMocks {
    *  faucet-only wallets a distinct both-liquid pair for the
    *  HF / liquidation / refinance demos. */
   liquidToken2?: HexAddress;
+  /** THIRD oracle-wired mock ERC-20 (18 dec, mWETH) — WETH-flavoured
+   *  mintable principal for demos; NOT the canonical WETH. */
+  mWeth?: HexAddress;
   /** Unwired mock ERC-20 (18 dec) → classifies ILLIQUID (in-kind). */
   illiquidToken?: HexAddress;
   /** ERC-4907 rental NFT for the rental flows. */
   rentalNft?: HexAddress;
+  /** Second ERC-4907 collection (vART) for two-sided rental demos. */
+  rentalNft2?: HexAddress;
   /** MockChainlinkAggregator ETH/USD anchor. */
   ethUsdFeed?: HexAddress;
   /** MockChainlinkAggregator liquidToken/USD. */
   liquidTokenUsdFeed?: HexAddress;
   /** MockChainlinkAggregator liquidToken2/USD. */
   liquidToken2UsdFeed?: HexAddress;
+  /** MockChainlinkAggregator mWeth/USD. */
+  mWethUsdFeed?: HexAddress;
   /** Mock Chainlink FeedRegistry resolving the above. */
   feedRegistry?: HexAddress;
   /** Mock Uniswap-V3 factory + liquidToken/WETH pool (liquidity gate). */
   uniswapV3Factory?: HexAddress;
   liquidTokenWethPool?: HexAddress;
   liquidToken2WethPool?: HexAddress;
+  mWethWethPool?: HexAddress;
   /** ZeroExProxyMock — the LEGACY 0x-proxy swap venue. Retained for
    *  completeness; NOT used by the Phase-7a liquidation path. */
   zeroExProxy?: HexAddress;

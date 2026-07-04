@@ -678,6 +678,20 @@ export const copy = {
         'Also oracle-priced. Pair it with tLIQ (one as the loan, one as collateral) — the health-factor, liquidation, and refinancing flows need two different liquid tokens.',
       action: (units: number) => `Mint ${units.toLocaleString()} tLQ2`,
     },
+    mweth: {
+      title: 'Mock wrapped ETH (mWETH)',
+      blurb:
+        'An oracle-priced test token that plays the “wrapped ETH” role in demos. It is NOT real WETH — it mints for free and has no value.',
+      action: (units: number) => `Mint ${units.toLocaleString()} mWETH`,
+    },
+    nft2: {
+      title: 'Second rentable test NFT (vART)',
+      blurb:
+        'Another ERC-4907 collection — handy when you want to list one NFT and rent a different one, or run several rentals at once.',
+      action: 'Mint a vART NFT',
+    },
+    addToWallet: (symbol: string) => `Add ${symbol} to MetaMask`,
+    addedToWallet: 'Asked your wallet to track it.',
     illiquid: {
       title: 'Illiquid test token (tILQ)',
       blurb:

@@ -63,6 +63,9 @@ interface MintOutcome {
    *  rental listing form needs the exact value (a random 256-bit id
    *  can't be retyped from a truncated preview). */
   tokenId?: string;
+  /** Minted ERC-20 — lets the banner offer wallet_watchAsset so the
+   *  token shows up in MetaMask without hand-adding the address. */
+  asset?: { address: Address; symbol: string };
 }
 
 export function Faucet() {
@@ -78,6 +81,7 @@ export function Faucet() {
   const [error, setError] = useState<string | null>(null);
   const [done, setDone] = useState<MintOutcome | null>(null);
   const [copied, setCopied] = useState(false);
+  const [watched, setWatched] = useState(false);
 
   const mocks = getDeployment(readChain.chainId)?.testnetMocks;
 
@@ -114,6 +118,7 @@ export function Faucet() {
     setError(null);
     setDone(null);
     setCopied(false);
+    setWatched(false);
     try {
       const hash = await walletClient.writeContract({
         address: token,
@@ -125,7 +130,11 @@ export function Faucet() {
       });
       const receipt = await publicClient.waitForTransactionReceipt({ hash });
       if (receipt.status !== 'success') throw new Error(`Transaction reverted (${hash})`);
-      setDone({ hash, label: copy.faucet.mintedTokens(units, symbol) });
+      setDone({
+        hash,
+        label: copy.faucet.mintedTokens(units, symbol),
+        asset: { address: token, symbol },
+      });
     } catch (err) {
       setError(submitErrorText(err));
     } finally {
@@ -139,6 +148,7 @@ export function Faucet() {
     setError(null);
     setDone(null);
     setCopied(false);
+    setWatched(false);
     try {
       const tokenId = randomTokenId();
       const hash = await walletClient.writeContract({
@@ -225,6 +235,18 @@ export function Faucet() {
             }
           />
           <FaucetRow
+            title={copy.faucet.mweth.title}
+            blurb={copy.faucet.mweth.blurb}
+            address={mocks.mWeth}
+            explorer={readChain.blockExplorer}
+            actionLabel={copy.faucet.mweth.action(LIQUID_UNITS)}
+            busy={busy === mocks.mWeth}
+            disabled={!canWrite || busy !== null}
+            onClick={() =>
+              mocks.mWeth && void mintErc20(mocks.mWeth, LIQUID_UNITS, 'mWETH')
+            }
+          />
+          <FaucetRow
             title={copy.faucet.illiquid.title}
             blurb={copy.faucet.illiquid.blurb}
             address={mocks.illiquidToken}
@@ -247,11 +269,48 @@ export function Faucet() {
             disabled={!canWrite || busy !== null}
             onClick={() => mocks.rentalNft && void mintNft(mocks.rentalNft)}
           />
+          <FaucetRow
+            title={copy.faucet.nft2.title}
+            blurb={copy.faucet.nft2.blurb}
+            address={mocks.rentalNft2}
+            explorer={readChain.blockExplorer}
+            actionLabel={copy.faucet.nft2.action}
+            busy={busy === mocks.rentalNft2}
+            disabled={!canWrite || busy !== null}
+            onClick={() => mocks.rentalNft2 && void mintNft(mocks.rentalNft2)}
+          />
 
           {done ? (
             <div className="banner banner-info" role="status">
               <span className="banner-body">
                 {done.label}{' '}
+                {done.asset ? (
+                  <>
+                    <button
+                      type="button"
+                      className="btn btn-secondary"
+                      onClick={() => {
+                        // wallet_watchAsset — MetaMask shows an
+                        // add-token prompt; rejection is not an error.
+                        void walletClient
+                          ?.watchAsset({
+                            type: 'ERC20',
+                            options: {
+                              address: done.asset!.address,
+                              symbol: done.asset!.symbol,
+                              decimals: MOCK_DECIMALS,
+                            },
+                          })
+                          .then(() => setWatched(true))
+                          .catch(() => {});
+                      }}
+                    >
+                      {watched
+                        ? copy.faucet.addedToWallet
+                        : copy.faucet.addToWallet(done.asset.symbol)}
+                    </button>{' '}
+                  </>
+                ) : null}
                 {done.tokenId ? (
                   <>
                     <code
