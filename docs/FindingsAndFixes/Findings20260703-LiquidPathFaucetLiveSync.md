@@ -270,6 +270,29 @@ Interaction rewards (global reward calc) remain zero — that accrual path
 is a separate enablement (not switched on by the VPFI discount script);
 the Claims rewards card correctly shows the empty state.
 
+## R-6 — repayPartial full-principal revert (#953 item 3) — PASS ✅
+
+Created a **partial-repay-enabled** liquid loan (loan **#9**: WETH
+principal / tLIQ collateral, `allowsPartialRepay = true`, via a scripted
+`createOffer` with the flag + scripted accept), then simulated the
+`repayPartial` guard against the DEPLOYED (post-#953-upgrade) Diamond:
+
+| Call | Result |
+| --- | --- |
+| `repayPartial(9, fullPrincipal)` | **REVERT** `0x90b59096` ✅ |
+| `repayPartial(9, principal + 1)` | REVERT `0x90b59096` |
+| `repayPartial(9, principal / 2)`  | **SIM OK — allowed** ✅ |
+
+So a partial equal to (or above) the full outstanding principal is now
+rejected — the #953 fix is live: no more "zombie" Active-at-principal-0
+loan; a genuine partial (half) still works. (The revert **selector**
+`0x90b59096` isn't decodable in THIS branch's ABI barrel because the
+branch predates #953's source; the deployed facet the operator upgraded
+— `RepayFacet 0x54bf…c274` — carries it, and the boundary behaviour is
+exactly the fix's intent. Item 1 of #953, the `claimInteractionRewards`
+sanctions gate, can't be observed live because the testnet sanctions
+oracle is unset — see R-3d.)
+
 ## R-3d — What remains (lower priority / harder to exercise)
 
 - **repayPartial full-principal revert (#953 item 3)** — needs a
