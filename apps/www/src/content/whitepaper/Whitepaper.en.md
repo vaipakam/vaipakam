@@ -132,7 +132,7 @@ The platform's user-facing surface, as specified for the reference web applicati
 
 **Matcher.** Any caller of `matchOffers` when range-order matching is enabled. Like liquidation, matching is permissionless because it can only execute a valid pairing of two live consenting offers under deterministic rules; the matcher earns a configured share of the loan-initiation fee flow (default 1%, governance-tunable).
 
-**Treasury / operator.** The treasury collects protocol fees — the 0.1% loan-initiation fee, the yield fee on interest and rental earnings, late-fee intake, and liquidation-handling entitlements — and is managed through `TreasuryFacet` and admin configuration. Operators run the off-chain surfaces (keeper worker, indexer, deploy ceremonies) but hold no special on-chain authority beyond the roles granted to them.
+**Treasury / operator.** The treasury collects protocol fees — the `{liveValue:loanInitiationFeeBps}`% loan-initiation fee, the yield fee on interest and rental earnings, late-fee intake, and liquidation-handling entitlements — and is managed through `TreasuryFacet` and admin configuration. Operators run the off-chain surfaces (keeper worker, indexer, deploy ceremonies) but hold no special on-chain authority beyond the roles granted to them.
 
 **Governance (multisig → timelock).** Privileged authority is split by blast radius after handover: a Governance Safe holds `DEFAULT_ADMIN_ROLE`, a Timelock holds delayed-action roles (admin, oracle/risk/vault administration, `UNPAUSER_ROLE`) and ERC-173 Diamond ownership, and the deployer renounces every privileged role once grants are confirmed. All parameter changes flow through bounded, range-validated setters composed as Safe/Timelock batches. Broader VPFI token-holder governance is Phase 2 scope.
 
@@ -210,7 +210,7 @@ Upgrade authority over the shared implementation rests with the Diamond owner (t
 
 ### 3.4 Position NFTs
 
-`VaipakamNFTFacet` implements the position-NFT collection (`Vaipakam NFT`, symbol `VAIPAK`) as an ERC-721 with enumerable and metadata extensions, using diamond-safe namespaced storage (`LibERC721`) rather than inherited implementation storage. A lender-side NFT and a borrower-side NFT are minted when offers are created and track the position through its whole life: authorized facets update the status (created, matched, active, repaid, defaulted, liquidated, closed, fallback-pending) as protocol state changes.
+`VaipakamNFTFacet` implements the position-NFT collection (`Vaipakam NFT`, symbol `VAIPAK`) as an ERC-721 with enumerable and metadata extensions, using diamond-safe namespaced storage (`LibERC721`) rather than inherited implementation storage. A lender-side NFT and a borrower-side NFT are minted when offers are created and track the position through its whole life: authorized facets update the position status along its dedicated track (`OfferCreated`, `LoanInitiated`, `LoanRepaid`, `LoanDefaulted`, `LoanLiquidated`, `LoanFallbackPending`, `LoanClosed` — see Section 6.6) as protocol state changes.
 
 Metadata is generated on-chain: `tokenURI()` returns a JSON document with the position's role, status, linked offer and loan IDs, assets, amounts, rate, duration, and whether the token currently governs claim rights, using realized live-state values rather than stale offer minima. Status- and side-keyed images (hosted on IPFS) let external marketplaces distinguish active from terminal positions rather than collapsing them into one generic state.
 
@@ -222,7 +222,7 @@ All facets read and write one storage struct through `LibVaipakam` at a fixed ER
 
 Two conventions run through all protocol math: rates, fees, and ratios are expressed in basis points (1/10,000, `BASIS_POINTS = 10000`), and Health Factor and value quantities are scaled to 1e18 (`HF_SCALE`).
 
-Compile-time constants (fixed until a facet upgrade) include: `HF_LIQUIDATION_THRESHOLD` = 1e18 (liquidation triggers below HF 1.0); `TREASURY_FEE_BPS` = 100 (the 1% yield fee on interest); `RENTAL_BUFFER_BPS` = 500 (the 5% NFT-rental prepayment buffer); `VOLATILITY_LTV_THRESHOLD_BPS` = 11000 (the 110% LTV collapse threshold); `MAX_LIQUIDATION_SLIPPAGE_BPS` = 600 and `MAX_SWAP_TO_REPAY_SLIPPAGE_BPS` = 300 (slippage ceilings for liquidation swaps and borrower swap-to-repay); `LIQUIDATION_HANDLING_FEE_BPS` = 200; `MAX_LIQUIDATOR_INCENTIVE_BPS` = 300; and a 1-day minimum grace period floor.
+Compile-time constants (fixed until a facet upgrade) include: `HF_LIQUIDATION_THRESHOLD` = 1e18 (liquidation triggers below HF 1.0); `RENTAL_BUFFER_BPS` = 500 (the 5% NFT-rental prepayment buffer); `MAX_SWAP_TO_REPAY_SLIPPAGE_BPS` = 300 (the borrower swap-to-repay slippage ceiling); `MAX_LIQUIDATOR_INCENTIVE_BPS` = 300 (the liquidator incentive cap); and the 1-hour global grace-period floor (paired with its 90-day ceiling). Several other headline figures are compile-time *defaults* behind bounded runtime governance knobs rather than fixed constants: `TREASURY_FEE_BPS` = 100 (the `{liveValue:treasuryFeeBps}`% yield fee, retunable within a hard ceiling and snapshotted per loan at origination), `VOLATILITY_LTV_THRESHOLD_BPS` = 11000 (the 110% LTV collapse threshold, governance-overridable), `MAX_LIQUIDATION_SLIPPAGE_BPS` = 600 (the liquidation slippage cap, governance-configurable), and `LIQUIDATION_HANDLING_FEE_BPS` = 200 (the liquidation handling charge).
 
 Governance-tunable parameters are runtime storage values constrained by compile-time bounds. The loan-admission Health Factor floor defaults to `MIN_HEALTH_FACTOR` = 1.5e18 but is retunable within a hard band of [1.2e18, 2.0e18]; a retune applies only to future admissions, never to the liquidation trigger or to open loans. The same bounded-knob discipline covers liquidity-check slippage budgets, TWAP consistency windows, depth-tier probe sizes and per-tier LTV boxes (defaults 50%/60%/65% initial LTV for tiers 1–3, ceiling-capped at 80%), grace-bucket schedules, matcher fee share, oracle staleness and deviation bounds, and treasury-conversion thresholds. Every numeric setter validates against explicit minimum/maximum ranges and reverts through the shared typed `ParameterOutOfRange` error, so a misconfiguration is visible and auditable rather than silently accepted.
 
@@ -398,7 +398,7 @@ Interest is computed as:
 
 > Interest = Principal × AnnualRate × EffectiveDaysOutstanding / DaysPerYear
 
-with the rate held in basis points and `DAYS_PER_YEAR = 365`. The load-bearing term is **EffectiveDaysOutstanding**:
+with the rate as an annual fraction (stored on-chain in basis points and divided by `BASIS_POINTS = 10000` in the actual computation) and `DAYS_PER_YEAR = 365`. The load-bearing term is **EffectiveDaysOutstanding**:
 
 - For a **full-term-interest** loan (the default): `EffectiveDaysOutstanding = max(actual elapsed days, agreed term in days)`. Early repayment does not reduce the interest owed below the full-term amount; where the offer also permits partial repayment, partial principal reductions lower future interest on the reduced balance while the full-term floor still applies to whatever principal remains.
 - For a **pro-rata** loan: interest accrues on the actual elapsed days throughout.
@@ -661,7 +661,7 @@ All swap-based settlement flows route through one shared library, `LibSwap`, dri
 | Maximum liquidation slippage | 6% (governance-configurable within a bounded range) | if exceeded, the swap must not execute → fallback (§8.4) |
 | Liquidator incentive | dynamic: `6% − realized slippage`, capped at **3%** of proceeds | successful swap-path liquidations |
 | Liquidation-handling charge | **2%** of liquidation proceeds, to treasury | successful swap-path liquidations |
-| Treasury fee on recovered interest / late fees | 1% (rate snapshotted at loan origination) | applied to the interest/late-fee portion actually recovered |
+| Treasury fee on recovered interest / late fees | `{liveValue:treasuryFeeBps}`% (rate snapshotted at loan origination) | applied to the interest/late-fee portion actually recovered |
 
 The incentive and the slippage budget share one envelope: `slippage% + liquidator incentive% = 6%`, so a cleanly executed swap earns the liquidator more and a high-slippage one earns less, with the incentive capped at 3% of proceeds. The 2% handling charge is levied because the borrower failed to act before liquidation became necessary; it is separate from the liquidator incentive and separate from the ordinary treasury fee on interest. When recovered proceeds do not even cover principal, no treasury interest fee is taken — the lender is already absorbing a loss.
 
@@ -823,7 +823,7 @@ returned to the owner directly at closure or default.
 - **Buffer disposition.** On a proper, on-time closure with all fees settled, the 5% buffer is refunded to the
   borrower. On default, the buffer is not refunded and is not paid to the lender: it is routed to the treasury (see
   §10.3).
-- **Treasury share.** The treasury collects its standard fee (1%) on rental fees earned by the lender, and its share
+- **Treasury share.** The treasury collects its standard fee (`{liveValue:treasuryFeeBps}`%) on rental fees earned by the lender, and its share
   of any late fees, at settlement or claim time.
 
 ### 10.3 Rental Settlement and Default
@@ -1355,15 +1355,11 @@ Privileged authority over each Diamond deployment is split across three holders 
 
 The split is asymmetric by design: the guardian can freeze the protocol immediately, but cannot
 unfreeze it — `UNPAUSER_ROLE` sits behind the timelock, so a compromised or mistaken fast-pauser
-cannot undo a freeze without the configured review delay. Role-gated surfaces are never keeper-
-executable: all admin, treasury, NFT-ownership, vault-upgrade, pause, oracle- admin, and role-
-management functions remain role-gated or owner-gated, and third-party keepers hold no Diamond role.
+cannot undo a freeze without the configured review delay. Role-gated surfaces are never keeper-executable: all admin, treasury, NFT-ownership, vault-upgrade, pause, oracle-admin, and role-management functions remain role-gated or owner-gated, and third-party keepers hold no Diamond role.
 
 Key-rotation posture. The deploying hot key exists only to bootstrap: after handover it must
 renounce every privileged role, and `DeployerZeroRolesTest` enforces "deployer holds zero roles" as
-a cutover invariant. `AccessControlFacet.transferAdmin` provides a single-transaction role-and-
-ownership handoff that relinquishes `DEFAULT_ADMIN_ROLE` last and rejects zero-address or self-
-transfer targets. Handover preflight refuses to grant roles until bytecode is verified at the
+a cutover invariant. `AccessControlFacet.transferAdmin` provides a single-transaction role-and-ownership handoff that relinquishes `DEFAULT_ADMIN_ROLE` last and rejects zero-address or self-transfer targets. Handover preflight refuses to grant roles until bytecode is verified at the
 configured Governance Safe, Pauser / Guardian Safe, and Timelock addresses — on mainnet, an
 undeployed privileged recipient is a hard stop, because granting admin power to an empty address
 after deployer renounce can make recovery impossible. Worker-side signing keys and API credentials
@@ -1380,8 +1376,7 @@ collateral changes, liquidation, and default triggering are all held (the gated 
 available under global pause is the machinery needed to diagnose and recover: role management,
 Diamond upgrades, oracle administration, vault-implementation upgrade administration, the pause /
 unpause surface itself, and all view functions carry no pause gate. Unpause routes through
-`UNPAUSER_ROLE` behind the timelock (Section 16.1); watcher-triggered `autoPause` paths are write-
-only incident levers with no unpause authority. Fresh deployments are **born paused**: no user entry
+`UNPAUSER_ROLE` behind the timelock (Section 16.1); watcher-triggered `autoPause` paths are write-only incident levers with no unpause authority. Fresh deployments are **born paused**: no user entry
 point can execute while a multi-cut deployment is only partially wired, and automation unpauses only
 after every cut, initializer, selector assertion, and verification phase has succeeded.
 
@@ -1390,7 +1385,7 @@ asset refuses new exposure — offer creation and acceptance involving that asse
 close-out and claim paths for in-flight loans remain available, so counterparties are never trapped
 in a position they can no longer exit. The `PerAssetPause` invariant suite asserts that a paused
 asset blocks new create / accept across all flows, and pause tests cover the asymmetric role split
-at the per-asset level too: the fast pauser cannot un- pause an asset any more than it can un-pause
+at the per-asset level too: the fast pauser cannot un-pause an asset any more than it can un-pause
 the protocol.
 
 **Cross-chain pause.** Every cross-chain contract with a runtime send or receive path carries
@@ -1410,7 +1405,7 @@ through it once handover completes:
   Governance Safe rather than broadcast by an admin EOA.
 - **Treasury and fee parameters** — treasury configuration and the fee, risk, and threshold knobs
   sit under `ADMIN_ROLE` and the risk-admin roles, which are timelock-held.
-- **Swap-adapter registration** — production `addSwapAdapter` is a timelock- governed action after
+- **Swap-adapter registration** — production `addSwapAdapter` is a timelock-governed action after
   handover.
 
 Deliberate exceptions stay off the delayed path: `PAUSER_ROLE` (a pause behind a 48-hour delay is
@@ -1423,8 +1418,8 @@ enforced on-chain through a shared typed range error — there is no unbounded g
 Examples from the specification: risk parameters (`maxLtvBps` bounded to 10–100%, liquidation
 threshold 15–100% and strictly above max LTV, reserve factor at most 50%), reward grace windows (5
 minutes to 30 days), interaction caps, oracle staleness and deviation bounds, the loan-admission
-health-factor floor (range- bounded to `[1.2, 2.0]`), and the six-slot grace schedule, whose setter
-rejects wrong row counts, non-monotonic rows, and out-of-bounds values. Multi- value setters such as
+health-factor floor (range-bounded to `[1.2, 2.0]`), and the six-slot grace schedule, whose setter
+rejects wrong row counts, non-monotonic rows, and out-of-bounds values. Multi-value setters such as
 the tier-LTV parameters and the numeraire rotation apply all-or-nothing, so no intermediate state
 can mix inconsistent values. The `ConfigBounds` invariant suite exercises the bounded surface.
 
@@ -1446,8 +1441,7 @@ credentials than its job needs:
   dispatch, and (operator-enabled, off by default) permissionless liquidation submission and
   delegated auto-lend fills; the only Worker holding a transaction-signing key, and that key maps to
   no protocol role.
-- **Agent** (`agent.vaipakam.com`) — read / index APIs, diagnostics endpoints, and the alert-
-  subscription handshake.
+- **Agent** (`agent.vaipakam.com`) — read / index APIs, diagnostics endpoints, and the alert-subscription handshake.
 
 Alerting is event-driven: borrowers can subscribe to per-loan health-factor thresholds, delivered
 through a user-facing Telegram bot and Push Protocol. A separate ops-internal bot token serves
@@ -1465,12 +1459,11 @@ degrades freshness and convenience, not solvency or access.
 
 A deployment must pass through layered gates before value can route through it:
 
-1. **Pre-deploy check** — `predeploy-check.sh` runs the build, the deploy- sanity suite (Section
-   18.1), shell-script lint, and a committed-ABI-versus- compiler parity check. It is wired as a
+1. **Pre-deploy check** — `predeploy-check.sh` runs the build, the deploy-sanity suite (Section
+   18.1), shell-script lint, and a committed-ABI-versus-compiler parity check. It is wired as a
    preflight step inside every deploy script, so a deploy cannot proceed past a failing check.
 2. **Full regression** — the complete Foundry suite runs before any testnet deployment; the mainnet
-   path runs the pre-deploy gate in `--full` (regression-inclusive) mode, and a dedicated `mainnet-
-   gate` CI workflow runs the same full gate.
+   path runs the pre-deploy gate in `--full` (regression-inclusive) mode, and a dedicated `mainnet-gate` CI workflow runs the same full gate.
 3. **Born-paused wiring** — contracts deploy paused; unpause happens only after facet cuts,
    initializers, facet-count and selector-ownership assertions, and verification phases all succeed
    (Section 16.2). Post-deploy verification compares the live facet count to the recorded count
@@ -1478,16 +1471,15 @@ A deployment must pass through layered gates before value can route through it:
 4. **Adapter registration** — a mainnet deployment must register at least one swap adapter before
    liquidation settlement can operate; with zero adapters, swap-based liquidation reverts outright
    rather than falling through to the collateral fallback path.
-5. **Cross-chain cutover** — CCIP lanes enabled and each messenger's registry configured (chain-
-   selector mappings, remote messengers, channel peers, token pools); per-lane rate limits set on
+5. **Cross-chain cutover** — CCIP lanes enabled and each messenger's registry configured (chain-selector mappings, remote messengers, channel peers, token pools); per-lane rate limits set on
    every VPFI token pool through the bounds-checked rate-limit governor, which refuses to disable a
    lane's limit; and the Cross-Chain Token admin entry plus every cross-chain contract's ownership
    rotated to the governance path before real value routes.
-6. **Admin handover** — the three-role topology installed with bytecode- verified recipients, the
+6. **Admin handover** — the three-role topology installed with bytecode-verified recipients, the
    deployer's roles renounced, and `DeployerZeroRolesTest` green (Section 16.1).
 
 Redeploy is guarded too: deployment phases refuse to overwrite an existing deployment by default,
-mainnet redeploys require explicit purge and orphan- state confirmations after checking live offer /
+mainnet redeploys require explicit purge and orphan-state confirmations after checking live offer /
 loan counts, and every broadcasting phase re-runs its critical preflights (expected-chain
 verification; hardware-signer attestation on mainnet) rather than trusting a stale marker.
 
@@ -1508,8 +1500,7 @@ book, offer creation, loan details, claim center, activity, VPFI vault, rewards,
 alerts — plus public-read shells (analytics, NFT verifier, protocol console) that work without
 connecting a wallet. The app ships in ten locales with a Basic / Advanced mode toggle that controls
 visibility and density, never policy. The technical whitepaper itself is maintained in English only;
-long-form legal and guide content shows a clear English-only notice in other locales until locale-
-matched source text exists.
+long-form legal and guide content shows a clear English-only notice in other locales until locale-matched source text exists.
 
 ### 17.2 Frontend as a Safety Layer
 
@@ -1528,8 +1519,7 @@ principle, the interface is built to make risk legible before commitment:
   default, resolved from the collateral's live on-chain liquidity rather than a stale init-time
   snapshot.
 - **Simulation previews (advisory).** Before signing, supported flows simulate the pending
-  transaction against the active chain and show simulated-OK, would-revert-with-reason, or preview-
-  unavailable. The preview is a gas- safety aid that never blocks signing by itself; the wallet
+  transaction against the active chain and show simulated-OK, would-revert-with-reason, or preview-unavailable. The preview is a gas-safety aid that never blocks signing by itself; the wallet
   transaction and mined receipt remain the source of truth, and the copy avoids false-safe states
   before a real result arrives.
 - **Fail-closed Terms gate.** Connected wallets may be required to accept the current Terms version
@@ -1537,7 +1527,7 @@ principle, the interface is built to make risk legible before commitment:
   show a neutral verification state, and a failed read keeps the routes closed with a retry — a read
   failure is never treated as accepted. A disabled-gate state exists for testnet operation.
 - **Counterparty and status warnings.** Repaying a loan from a wallet that is not the borrower shows
-  a prominent warning before confirmation, and money- moving actions are gated by live on-chain loan
+  a prominent warning before confirmation, and money-moving actions are gated by live on-chain loan
   status rather than the indexed row — the repay path re-checks status before any approval or wallet
   prompt.
 
@@ -1553,7 +1543,7 @@ with receipt status `0` is a failure, inclusion in a block is not a success sign
 parsing distinguishes semantically different outcomes of the same call. Failures decode into
 readable revert reasons where possible, and a structured journey log records step start / success /
 failure events across action paths so a support report can reconstruct exactly what happened; the
-log is user- downloadable and user-clearable.
+log is user-downloadable and user-clearable.
 
 ### 17.4 Transparency Surfaces
 
@@ -1566,7 +1556,7 @@ log is user- downloadable and user-clearable.
 - **NFT verifier.** A public page where anyone — including a prospective secondary-market buyer —
   can check a position NFT: valid-live versus burned versus never-minted (with a chain-specific
   explanation when the token exists on a different chain), the position's side and terms, and the
-  settlement-on- default caveat for in-kind positions.
+  settlement-on-default caveat for in-kind positions.
 - **Protocol console.** A read surface for live protocol configuration — fees, thresholds, tier
   tables, kill-switch states — read from the contracts' bundled config views rather than hardcoded
   copy, so a governance change appears on next page load. Admin cards compose Safe transactions
@@ -1593,7 +1583,7 @@ runs).
 - **Invariant suites** (19, at 100 runs each) assert protocol-wide properties under randomized call
   sequences: funds conservation, vault solvency and uniqueness, claim exclusivity, offer–loan
   linkage, loan-status and collateral monotonicity, self-dealing prevention, NFT owner authority and
-  count parity, per-asset pause, the VPFI supply cap, and liquidation minimum- output caller
+  count parity, per-asset pause, the VPFI supply cap, and liquidation minimum-output caller
   insulation.
 - **Deploy-sanity suite** (`test/deploy/`) — static guardrails that catch deploy-breaking mistakes
   in an ordinary test run: every facet's runtime bytecode within the EIP-170 24,576-byte limit,
@@ -1605,8 +1595,7 @@ runs).
   tests for liquidation routing, oracle reads, the real canonical Permit2 deployment, and Seaport
   settlement.
 
-CI runs in two lanes. The per-PR lane uses a narrow-scope compile profile (source, scripts, deploy-
-sanity, scenarios) so every push is checked quickly; the full regression — the entire suite minus
+CI runs in two lanes. The per-PR lane uses a narrow-scope compile profile (source, scripts, deploy-sanity, scenarios) so every push is checked quickly; the full regression — the entire suite minus
 the separately run invariant pass — is a pre-deploy gate, executed before any testnet deployment
 and, together with the pre-deploy checks, by the dedicated mainnet-gate workflow (Section 16.6).
 Static analysis with Slither runs in CI alongside the test lanes.
@@ -1616,13 +1605,12 @@ Static analysis with Slither runs in CI alongside the test lanes.
 The protocol has been through repeated internal review rounds, tracked in `docs/FindingsAndFixes/`
 and on the project board:
 
-- **Internal adversarial security audit (July 2026).** An AI-assisted, pre- live adversarial audit
+- **Internal adversarial security audit (July 2026).** An AI-assisted, pre-live adversarial audit
   of the full on-chain surface — roughly 80.5k lines across 156 Solidity source files: all facets,
   shared libraries, the per-user vault, the Diamond router, the cross-chain layer, swap adapters,
   and the token contracts — run as seven parallel domain audits against a shared trust model. It
   found no Critical issues; the crown-jewel surfaces (Diamond-cut authorization, upgrade gating,
-  oracle staleness and scaling, cross-chain message authentication, token mint authorization, fee-
-  custody flows) were verified sound, and the High / Medium / Low findings it did raise are tracked
+  oracle staleness and scaling, cross-chain message authentication, token mint authorization, fee-custody flows) were verified sound, and the High / Medium / Low findings it did raise are tracked
   to resolution on the project board. Earlier internal rounds (April–July 2026) covered browser
   flows, naive-user UX, economic parameter modeling, and testnet reviews.
 - **Spec-versus-code conformance.** The functional specifications in `docs/FunctionalSpecs/` are
@@ -1661,8 +1649,7 @@ ranges are published separately.
     https://uniswap.org/whitepaper-v3.pdf
 12. 0x Protocol (Settler / AllowanceHolder) — https://0x.org/docs
 13. Tellor — https://tellor.io/ ; API3 — https://api3.org/ ; DIA — https://www.diadata.org/
-14. OpenZeppelin Contracts Upgradeable — https://github.com/OpenZeppelin/openzeppelin-contracts-
-    upgradeable
+14. OpenZeppelin Contracts Upgradeable — https://github.com/OpenZeppelin/openzeppelin-contracts-upgradeable
 15. Diamond-3 reference implementation (Mudgen) — https://github.com/mudgen/diamond-3-hardhat
 16. Business Source License 1.1 — https://mariadb.com/bsl11/
 17. Vaipakam repository documentation: `SECURITY.md`, `docs/FunctionalSpecs/`,
