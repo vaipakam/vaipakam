@@ -99,7 +99,15 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
   const queryClient = useQueryClient();
 
   const { isAdvanced } = useMode();
-  const [busy, setBusy] = useState(false);
+  // #1037 — which prompt the in-flight action is on (null = idle).
+  // One shared phase for the page's actions (they share the busy
+  // lock already); a status banner narrates approve → submit.
+  const [phase, setPhase] = useState<null | 'pending' | 'approving' | 'submitting'>(null);
+  const busy = phase !== null;
+  // Child action cards (keeper toggles, sale/refinance flows) still
+  // speak boolean busy — adapt onto the phase state so the page-level
+  // narration banner covers their prompts too (as plain 'waiting').
+  const setBusy = (b: boolean) => setPhase(b ? 'pending' : null);
   const [error, setError] = useState<string | null>(null);
   const [doneMessage, setDoneMessage] = useState<string | null>(null);
   const [collateralInput, setCollateralInput] = useState('');
@@ -504,7 +512,7 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
 
   async function run(kind: Exclude<Action, null>) {
     if (!address || !walletChain || !walletClient || !publicClient) return;
-    setBusy(true);
+    setPhase('pending');
     setError(null);
     try {
       if (kind === 'repay') {
@@ -620,6 +628,7 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
             symbol: principalMeta.data?.symbol,
           });
           await ensureAllowance({
+            onPrompt: () => setPhase('approving'),
             publicClient,
             walletClient,
             token: row.lendingAsset as `0x${string}`,
@@ -628,6 +637,7 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
             amount: totalDue + pad,
           });
         }
+        setPhase('submitting');
         await write('repayLoan', [BigInt(row.loanId)]);
         setClosedThisSession(true);
         setDoneMessage(
@@ -700,6 +710,7 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
           // Read failed (transport) — proceed; the write path's own
           // estimate surfaces any revert.
         }
+        setPhase('submitting');
         await write('claimAsBorrower', [BigInt(row.loanId)]);
         setClaimed((c) => ({ ...c, borrower: true }));
         setDoneMessage(copy.claims.claimed);
@@ -709,6 +720,7 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
           walletChain.diamondAddress,
           address,
         );
+        setPhase('submitting');
         await write('claimAsLender', [BigInt(row.loanId)]);
         setClaimed((c) => ({ ...c, lender: true }));
         setDoneMessage(copy.claims.claimed);
@@ -721,7 +733,7 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
     } catch (err) {
       setError(submitErrorText(err));
     } finally {
-      setBusy(false);
+      setPhase(null);
     }
   }
 
@@ -733,7 +745,7 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
     : '…';
   async function runAddCollateral() {
     if (!address || !walletChain || !walletClient || !publicClient || !collateralMeta.data) return;
-    setBusy(true);
+    setPhase('pending');
     setError(null);
     try {
       const wei = parseUnits(collateralInput, collateralMeta.data.decimals);
@@ -774,6 +786,7 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
         return;
       }
       await ensureAllowance({
+            onPrompt: () => setPhase('approving'),
         publicClient,
         walletClient,
         token: row.collateralAsset as `0x${string}`,
@@ -781,6 +794,7 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
         spender: walletChain.diamondAddress,
         amount: wei,
       });
+      setPhase('submitting');
       await write('addCollateral', [BigInt(row.loanId), wei]);
       setDoneMessage('Collateral added — the loan is safer now.');
       setCollateralInput('');
@@ -790,13 +804,13 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
     } catch (err) {
       setError(submitErrorText(err));
     } finally {
-      setBusy(false);
+      setPhase(null);
     }
   }
 
   async function runPartialRepay() {
     if (!address || !walletChain || !walletClient || !publicClient || !principalMeta.data) return;
-    setBusy(true);
+    setPhase('pending');
     setError(null);
     try {
       const wei = parseUnits(partialInput, principalMeta.data.decimals);
@@ -911,6 +925,7 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
         symbol: principalMeta.data.symbol,
       });
       await ensureAllowance({
+            onPrompt: () => setPhase('approving'),
         publicClient,
         walletClient,
         token: row.lendingAsset as `0x${string}`,
@@ -918,6 +933,7 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
         spender: walletChain.diamondAddress,
         amount: required,
       });
+      setPhase('submitting');
       await write('repayPartial', [BigInt(row.loanId), wei]);
       setDoneMessage('Partial repayment confirmed — you now owe less.');
       setPartialInput('');
@@ -931,13 +947,13 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
     } catch (err) {
       setError(submitErrorText(err));
     } finally {
-      setBusy(false);
+      setPhase(null);
     }
   }
 
   async function runPreclose() {
     if (!address || !walletChain || !walletClient || !publicClient || !principalMeta.data) return;
-    setBusy(true);
+    setPhase('pending');
     setError(null);
     try {
       // precloseDirect is a Tier-1 entry point — live re-screen, plus
@@ -998,6 +1014,7 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
         symbol: principalMeta.data.symbol,
       });
       await ensureAllowance({
+            onPrompt: () => setPhase('approving'),
         publicClient,
         walletClient,
         token: row.lendingAsset as `0x${string}`,
@@ -1005,6 +1022,7 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
         spender: walletChain.diamondAddress,
         amount: due,
       });
+      setPhase('submitting');
       await write('precloseDirect', [BigInt(row.loanId)]);
       setClosedThisSession(true);
       setDoneMessage(copy.preclose.done);
@@ -1016,7 +1034,7 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
     } catch (err) {
       setError(submitErrorText(err));
     } finally {
-      setBusy(false);
+      setPhase(null);
     }
   }
 
@@ -1733,6 +1751,17 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
         <div className="banner banner-info" role="status">
           <CircleCheck aria-hidden />
           <span className="banner-body">{doneMessage}</span>
+        </div>
+      ) : null}
+      {busy ? (
+        <div className="banner banner-info" role="status">
+          <span className="banner-body">
+            {phase === 'approving'
+              ? 'Approving in your wallet…'
+              : phase === 'submitting'
+                ? 'Submitting…'
+                : 'Waiting for wallet…'}
+          </span>
         </div>
       ) : null}
       {error ? (
