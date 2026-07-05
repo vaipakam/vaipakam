@@ -72,7 +72,12 @@ import {
 } from '../lib/format';
 import { isPlainDecimal, isPositiveDecimal, submitErrorText } from '../lib/errors';
 import { copy } from '../content/copy';
-import { fetchTokenSecurity, isCuratedAsset, useTokenSecurity } from '../data/tokenSecurity';
+import {
+  fetchTokenSecurity,
+  isCuratedAsset,
+  needsSecurityCheck,
+  useTokenSecurity,
+} from '../data/tokenSecurity';
 import {
   makeStepper,
   plannedApprovePrompts,
@@ -922,6 +927,9 @@ export function OfferFlow({ side }: { side: Side }) {
       ? selected.collateralAsset
       : undefined,
   );
+  // 'needed' derives from the check's INPUTS (shape + curated), never
+  // from query lifecycle state — fetchStatus returns to idle once a
+  // query settles, which must not un-gate a bad verdict.
   const securityLegs =
     mode === 'accept' && selected
       ? [
@@ -929,28 +937,42 @@ export function OfferFlow({ side }: { side: Side }) {
             leg: 'loan asset',
             needed:
               selected.assetType === AssetType.ERC20 &&
-              acceptLendingSec.fetchStatus !== 'idle',
+              needsSecurityCheck(readChain.chainId, selected.lendingAsset),
             verdict: acceptLendingSec.data,
           },
           {
             leg: 'collateral',
             needed:
               selected.collateralAssetType === AssetType.ERC20 &&
-              acceptCollateralSec.fetchStatus !== 'idle',
+              needsSecurityCheck(readChain.chainId, selected.collateralAsset),
             verdict: acceptCollateralSec.data,
           },
-        ].filter(
-          (l) => l.needed || (l.verdict && l.verdict.kind !== 'clean'),
-        )
+        ].filter((l) => l.needed)
       : [];
+  // undefined = loading OR errored ('unknown' throws in the hook so a
+  // transient outage is never cached) — both hold the gate closed.
   const securityBlocked = securityLegs.filter(
-    (l) =>
-      l.verdict === undefined ||
-      l.verdict.kind === 'block' ||
-      l.verdict.kind === 'unknown',
+    (l) => l.verdict === undefined || l.verdict.kind === 'block',
   );
   const securityWarned = securityLegs.filter((l) => l.verdict?.kind === 'warn');
+  const securityUnsupported = securityLegs.filter(
+    (l) => l.verdict?.kind === 'unsupported',
+  );
   const securityGateOk = mode !== 'accept' || securityBlocked.length === 0;
+  // Late-disclosure rule (same as illiquid/sale banners): a warning
+  // or block that ARRIVES after the consent box was ticked voids the
+  // consent — it was given against a review without the disclosure.
+  const securityFingerprint = securityLegs
+    .map((l) => `${l.leg}:${l.verdict?.kind ?? 'pending'}`)
+    .join('|');
+  useEffect(() => {
+    if (securityBlocked.length > 0 || securityWarned.length > 0) {
+      setForm((f) =>
+        f.riskAndTermsConsent ? { ...f, riskAndTermsConsent: false } : f,
+      );
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [securityFingerprint]);
 
   const canSign =
     allChecksPass(checks) &&
@@ -1801,7 +1823,7 @@ export function OfferFlow({ side }: { side: Side }) {
                 <span className="banner-body">
                   {securityBlocked
                     .map((l) =>
-                      l.verdict === undefined || l.verdict.kind === 'unknown'
+                      l.verdict === undefined
                         ? copy.tokenSecurity.gateUnknown(l.leg)
                         : copy.tokenSecurity.gateBlock(
                             l.leg,
@@ -1821,6 +1843,14 @@ export function OfferFlow({ side }: { side: Side }) {
                         l.verdict?.kind === 'warn' ? l.verdict.reasons : [],
                       ),
                     )
+                    .join(' ')}
+                </span>
+              </div>
+            ) : securityUnsupported.length > 0 ? (
+              <div className="banner banner-info" role="note" style={{ marginTop: 16 }}>
+                <span className="banner-body">
+                  {securityUnsupported
+                    .map((l) => copy.tokenSecurity.gateUnsupported(l.leg))
                     .join(' ')}
                 </span>
               </div>

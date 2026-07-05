@@ -134,11 +134,11 @@ export function AssetPicker({
           <span className="field-hint" style={{ color: 'var(--danger)' }}>
             {copy.tokenSecurity.pickerWarn(security.data.reasons)}
           </span>
-        ) : security.data.kind === 'unknown' ? (
-          <span className="field-hint">{copy.tokenSecurity.pickerUnknown}</span>
         ) : security.data.kind === 'unsupported' ? (
           <span className="field-hint">{copy.tokenSecurity.pickerUnsupported}</span>
         ) : null
+      ) : showCustom && isAddressLike(value) && security.isError ? (
+        <span className="field-hint">{copy.tokenSecurity.pickerUnknown}</span>
       ) : null}
       {hint ? <span className="field-hint">{hint}</span> : null}
     </div>

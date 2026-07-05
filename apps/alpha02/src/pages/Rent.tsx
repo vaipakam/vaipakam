@@ -37,7 +37,12 @@ import {
   useAllowanceForPlan,
   type SubmitProgress,
 } from '../lib/submitProgress';
-import { fetchTokenSecurity, isCuratedAsset, useTokenSecurity } from '../data/tokenSecurity';
+import {
+  fetchTokenSecurity,
+  isCuratedAsset,
+  needsSecurityCheck,
+  useTokenSecurity,
+} from '../data/tokenSecurity';
 import {
   ensureNftApproval,
   readNftOwnershipLive,
@@ -782,13 +787,24 @@ function RentNftFlow() {
     readChain.chainId,
     selected?.prepayAsset,
   );
-  const prepaySecNeeded = Boolean(selected) && prepaySec.fetchStatus !== 'idle';
+  // 'needed' derives from the check's inputs, never query lifecycle
+  // state (fetchStatus idles after settling — must not un-gate).
+  const prepaySecNeeded = needsSecurityCheck(
+    readChain.chainId,
+    selected?.prepayAsset,
+  );
+  // undefined = loading OR errored ('unknown' throws in the hook) —
+  // both hold the gate closed.
   const prepaySecBlocked =
     prepaySecNeeded &&
-    (prepaySec.data === undefined ||
-      prepaySec.data.kind === 'block' ||
-      prepaySec.data.kind === 'unknown');
-  const prepaySecWarned = prepaySec.data?.kind === 'warn';
+    (prepaySec.data === undefined || prepaySec.data.kind === 'block');
+  const prepaySecWarned = prepaySecNeeded && prepaySec.data?.kind === 'warn';
+  // Late-disclosure rule: a warning/block arriving after the consent
+  // box was ticked voids the consent.
+  useEffect(() => {
+    if (prepaySecBlocked || prepaySecWarned) setConsent(false);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [prepaySec.data?.kind, prepaySecBlocked]);
 
   const baseChecks = useEligibility({
     asset: selected
@@ -1095,7 +1111,7 @@ function RentNftFlow() {
             {prepaySecBlocked ? (
               <div className="banner banner-danger" role="alert" style={{ marginTop: 16 }}>
                 <span className="banner-body">
-                  {prepaySec.data === undefined || prepaySec.data.kind === 'unknown'
+                  {prepaySec.data === undefined
                     ? copy.tokenSecurity.gateUnknown('prepayment token')
                     : copy.tokenSecurity.gateBlock(
                         'prepayment token',
@@ -1110,6 +1126,12 @@ function RentNftFlow() {
                     'prepayment token',
                     prepaySec.data?.kind === 'warn' ? prepaySec.data.reasons : [],
                   )}
+                </span>
+              </div>
+            ) : prepaySecNeeded && prepaySec.data?.kind === 'unsupported' ? (
+              <div className="banner banner-info" role="note" style={{ marginTop: 16 }}>
+                <span className="banner-body">
+                  {copy.tokenSecurity.gateUnsupported('prepayment token')}
                 </span>
               </div>
             ) : null}

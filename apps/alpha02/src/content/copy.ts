@@ -62,6 +62,8 @@ export const copy = {
       `This deal's ${leg} failed an independent security check: ${reasons.join('; ')}. Accepting it is disabled — a token like this can be impossible to sell or transfer no matter what the deal terms say.`,
     gateUnknown: (leg: string) =>
       `The independent security check for this deal's ${leg} could not run. Try again in a moment — accepting is held back until the token can be verified.`,
+    gateUnsupported: (leg: string) =>
+      `The independent security check does not cover this network (test networks are not indexed), so this deal's ${leg} was not screened. Extra care: only accept tokens you trust.`,
     gateWarn: (leg: string, reasons: string[]) =>
       `Heads up on this deal's ${leg}: ${reasons.join('; ')}. Make sure you understand these before you continue.`,
   },

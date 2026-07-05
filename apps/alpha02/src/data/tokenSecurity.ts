@@ -88,6 +88,8 @@ export function classifyTokenSecurity(row: GoPlusTokenRow): TokenSecurityVerdict
     warn.push('the owner can mint AND rewrite holder balances');
   } else if (flag(row.owner_change_balance)) {
     warn.push('the owner can rewrite holder balances');
+  } else if (flag(row.is_mintable)) {
+    warn.push('the owner can mint more supply (dilution risk)');
   }
   if (block.length) return { kind: 'block', reasons: [...block, ...warn] };
   if (warn.length) return { kind: 'warn', reasons: warn };
@@ -122,6 +124,23 @@ export async function fetchTokenSecurity(
   }
 }
 
+/** Does this token need a security check at all? Valid address shape
+ *  AND not on the curated list — the single definition the gates use
+ *  for "needed", so a settled query can't un-gate a bad verdict (the
+ *  hook's fetchStatus returns to idle after settling and must never
+ *  be the gate's needed-signal). */
+export function needsSecurityCheck(
+  chainId: number | undefined,
+  address: string | undefined,
+): boolean {
+  return Boolean(
+    chainId &&
+      address &&
+      /^0x[a-fA-F0-9]{40}$/.test(address) &&
+      !isCuratedAsset(chainId, address),
+  );
+}
+
 /** Is this address on the chain's curated list (pre-vetted — never
  *  screened, never blocked)? */
 export function isCuratedAsset(chainId: number, address: string): boolean {
@@ -142,18 +161,21 @@ export function useTokenSecurity(
   chainId: number | undefined,
   address: string | undefined,
 ) {
-  const enabled = Boolean(
-    chainId &&
-      address &&
-      /^0x[a-fA-F0-9]{40}$/.test(address) &&
-      !isCuratedAsset(chainId, address),
-  );
+  const enabled = needsSecurityCheck(chainId, address);
   return useQuery({
     queryKey: ['tokenSecurity', chainId, address?.toLowerCase()],
     enabled,
     staleTime: 10 * 60_000,
     gcTime: 60 * 60_000,
     retry: 1,
-    queryFn: () => fetchTokenSecurity(chainId!, address!),
+    queryFn: async () => {
+      const v = await fetchTokenSecurity(chainId!, address!);
+      // A transient outage must NOT become a cached 10-minute
+      // blocking verdict: throw instead, so react-query retries and
+      // keeps refetching (focus/interval) while the gates hold on
+      // `data === undefined` with the same fail-closed copy.
+      if (v.kind === 'unknown') throw new Error('token security check unavailable');
+      return v;
+    },
   });
 }
