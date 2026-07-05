@@ -44,7 +44,7 @@ most Mediums classified "Real bug" are the ones that warrant code changes.
 | S3 | High | Offset (Preclose Option 3) prepays the old lender's full principal at Step 1; cancel never unwinds it → double-pay | Real bug | `PrecloseFacet.sol:1128`, `OfferCancelFacet.sol:202` |
 | S4 | High | Interaction rewards are claimable at contracted maturity while the loan is still open → clean-repay forfeit is front-runnable | Real bug | `LibInteractionRewards.sol:907` |
 | S5 | High | Preclose/Refinance never close reward entries → accrual on retired principal, forfeit unwired (confirms/elevates #969) | Real bug | `PrecloseFacet.sol`, `RefinanceFacet.sol` |
-| S6 | Medium | Grace-period off-by-one at exactly 365 days (30-day grace instead of 2 weeks) | Real bug | `LibVaipakam.sol:5859` |
+| S6 | Medium | Grace-period off-by-one at exactly 365 days (30-day grace instead of 2 weeks) | Stale spec (owner decision 2026-07-05: keep code; spec updated in PR #1011) | `LibVaipakam.sol:5859` |
 | S7 | Medium | Refinance always pays the exiting lender full-term interest, ignoring the loan's pro-rata election | Real bug | `RefinanceFacet.sol:323` |
 | S8 | Medium | NFT-rental late fee is computed on the daily fee, not the overdue rental amount (~D× too small) | Real bug | `LibVaipakam.sol:6036` |
 | S9 | Medium | Empty adapter try-list routes a default/liquidation straight into the collateral fallback with no swap attempt | Real bug | `LibSwap.sol:158` |
@@ -105,7 +105,8 @@ sections. Grand totals: **5 High, 14 Medium, ~14 Low, ~14 Informational.**
 ## Medium
 
 ### S6 — Grace-period off-by-one at exactly 365 days
-- **Spec:** §2 (~264) "≤ 1 year: 2 weeks … > 1 year: 30 days." **Code:** `LibVaipakam.gracePeriod:5859` uses `if (durationDays < 365) return 2 weeks; return 30 days;`. A 365-day loan (both a standard bucket and `MAX_OFFER_DURATION_DAYS_DEFAULT`) falls into the ">1 year" catch-all → **30 days grace, not 2 weeks**, delaying every max-tenor lender's default rights by 16 days. **Real bug** — one-character fix (`<= 365` / `< 366`) in the compile-time default + slot-4 default.
+- **Spec (as reviewed):** §2 (~264) "≤ 1 year: 2 weeks … > 1 year: 30 days." **Code:** `LibVaipakam.gracePeriod:5859` uses `if (durationDays < 365) return 2 weeks; return 30 days;`. A 365-day loan (both a standard bucket and `MAX_OFFER_DURATION_DAYS_DEFAULT`) falls into the ">1 year" catch-all → **30 days grace, not 2 weeks**, delaying every max-tenor lender's default rights by 16 days.
+- **Classification:** **Stale spec** — **owner decision 2026-07-05: KEEP CODE / UPDATE SPEC.** A 365-day (max-tenor) loan intentionally keeps the longer, borrower-friendly 30-day grace; the code is NOT to be changed to shrink it to 2 weeks. §2 has been reworded so the "2 weeks" bucket is documented as `< 365` days and exactly-1-year loans as receiving 30 days. **Resolved via the spec update merged in PR #1011 (2026-07-05).**
 
 ### S7 — Refinance ignores the loan's pro-rata interest election
 - **Spec:** §233 (pro-rata opt-in) + Phase-1-Additions step 4 (~2597) "principal + full-term interest **as per early repayment rules**." **Code:** `RefinanceFacet.sol:323` uses `fullTermInterest(...)` unconditionally, never consulting `loan.useFullTermInterest` — whereas `precloseDirect` on the same loan routes through `settlementInterestNet` (accrued-only for pro-rata). **Real bug candidate:** the two "early close" doors disagree; a pro-rata loan overcharges the borrower / overpays the exiting lender on refinance. Use mode-aware interest, or document that refinance always pays full-term.
@@ -117,7 +118,7 @@ sections. Grand totals: **5 High, 14 Medium, ~14 Low, ~14 Informational.**
 - **Spec:** §7 — the fallback engages only when "every configured swap route fails"; the caller supplies a "ranked try-list" and the Diamond "tries routes in the submitted order." **Code:** `LibSwap.swapWithFailover:158` returns `(false,0)` for `calls.length == 0`, and `DefaultedFacet.triggerDefault:364` / `RiskFacet.triggerLiquidation:754` then invoke `_fullCollateralTransferFallback` — so any permissionless caller pushes an eligible loan into FallbackPending (3%+2% premium, in-kind lender recovery) with **zero routes attempted** on a healthy DEX. `RepayPeriodicFacet.settlePeriodicInterest:458` already rejects an empty list (`PeriodicSettleSwapPathRequired`). **Real bug** — require a non-empty try-list on the two forced-close entry points.
 
 ### S10 — Sanctions screening fails **open** on oracle revert, including claim paths
-- **Spec:** §16 (~2556) "value-moving sanctions checks that cannot determine a clean result should **fail safe**." **Code:** `LibVaipakam.isSanctionedAddress:6940` does `catch { return false; }` ("fail-open on infrastructure failure"), and every Tier-1 gate — including value-releasing `ClaimFacet.claimAsLender/claimAsBorrower` (`:296/:663/:1068`) and the `SanctionedProceedsLocked` release — routes through it. (The stuck-token recovery path *does* fail-closed — `VaultFactoryFacet.sol:753` — showing the intended pattern.) **Real bug:** during an oracle outage a flagged wallet's parked locked-proceeds become claimable. Make the claim/withdraw/proceeds-release screens fail-closed on oracle revert (Tier-2 wind-down may stay fail-open for liveness), or ratify fail-open in the spec.
+- **Spec:** §16 (~2556) "value-moving sanctions checks that cannot determine a clean result should **fail safe**." **Code:** `LibVaipakam.isSanctionedAddress:6940` does `catch { return false; }` ("fail-open on infrastructure failure"), and every Tier-1 gate — including value-releasing `ClaimFacet.claimAsLender/claimAsBorrower` (`:296/:663/:1068`) and the `SanctionedProceedsLocked` release — routes through it. (The stuck-token recovery path *does* fail-closed — `VaultFactoryFacet.sol:753` — showing the intended pattern.) **Real bug — narrowed by owner decision 2026-07-05 (PARTIAL FIX):** during an oracle outage a flagged wallet's parked locked-proceeds become claimable. Normal (never-flagged) claim/withdraw paths **stay fail-open** — an oracle blip must not hold honest users' funds hostage (liveness). Only the **release gate for already-locked `SanctionedProceedsLocked` funds** fails **closed** on oracle revert: the funds stay parked in the flagged wallet's own vault until the oracle recovers AND confirms clean. Filed as #1006.
 
 ### S11 — Tier-1 assignment ignores the $50k tier-1 depth probe
 - **Spec:** §1 (~217) "tier probes are $5k, $50k, $500k, $5M." **Code:** `OracleFacet._liquidityTier:1765` computes all four impacts but decides `best[0]>bound⇒0; best[3]≤bound⇒3; best[2]≤bound⇒2; else 1` — `best[1]` (`tier1SizePad = $50k`) is never consulted, so clearing the $5k floor alone yields Tier 1. **Real bug / Ambiguous:** an asset absorbing $5k but not $50k still gets Tier 1 (and today's 90% threshold per S1), and the `tier1SizePad` governance knob is a no-op. Gate Tier 1 on `best[1] ≤ bound`, or amend the spec to a three-probe model.
@@ -222,10 +223,13 @@ The code faithfully implements the spec across a large surface, including:
   liquidator incentive (6%−slippage capped 3%), split-route liquidation,
   partial-repay/partial-liquidation guards, periodic interest, yield-fee snapshot
   at origination, NFT-gated claims.
-- **Preclose/early-withdrawal/refinance/consolidation** — the three preclose
-  options' splits, obligation-transfer continuity, §9 sale flows, refinance
-  carry-over (#411 no shortfall top-up), consolidation eager/lazy rules,
-  addCollateral cure.
+- **Preclose/early-withdrawal/refinance/consolidation — verified subpaths
+  only** — Option 1 (direct) and Option 2 (obligation-transfer) settlement
+  splits and continuity, §9 sale flows, refinance principal carry-over (#411
+  no shortfall top-up), consolidation eager/lazy rules, addCollateral cure.
+  Explicitly EXCLUDED from this bullet (they carry findings above): Option 3
+  offset's Step-1 payment timing and cancel unwind (S3), reward-entry closure
+  on preclose/refinance (S5), and refinance's interest-mode handling (S7).
 - **Compliance** — KYC pass-through dormant-by-default, retail `canTradeBetween`
   pure-true with the gated variant kept separate, sanctions Tier-1/Tier-2 split,
   proceeds vault-lock, current-holder screening, ToS gate.
@@ -235,20 +239,40 @@ The code faithfully implements the spec across a large surface, including:
 
 ---
 
-## Recommended actions
+## Recommended actions (status as of 2026-07-05 — decisions recorded, cards filed)
 
-1. **Fix as code bugs (before origination volume / mainnet):** S1 (tier gradient
-   inversion — live on every loan), S2 (fallback repay-cure), S3 (offset
-   double-pay), S4 + S5 (reward forfeit/lock), S6 (365-day grace), S9 (empty
-   try-list forced fallback), S10 (sanctions fail-open on claims), S12 (forced-
-   close `interestSettled` — with #915), and S8 (NFT late-fee base).
-2. **Adjudicate intent decisions** (record in `_CodeVsDocsAudit.md`): S7
-   (refinance interest mode), S11 (tier-1 probe), S13 (cap per-day vs per-window),
-   S15 (range-mutate), S17 (keeper execution matrix), L-f/L-g/L-h/L-i.
-3. **Update the specs** (stale-spec items — the spec is the test oracle, so these
-   matter): S14 (HF formula + example), S16 (peer tolerance), S18 (tier-LTV
-   fallback), S19 (insurance surplus), plus the Informational stale-doc cluster
-   and the stale CLAUDE.md constants.
+Every High/Medium finding and the adjudication-list Lows have been triaged by
+the owner (decisions recorded in `docs/FunctionalSpecs/_CodeVsDocsAudit.md`);
+the code-fix cards are filed under umbrella **#998** and the spec updates have
+merged. Remaining state:
+
+1. **Code-fix cards filed (umbrella #998) — fix before origination volume /
+   mainnet:** S1 → #999 (tier gradient inversion — live on every loan),
+   S2 → #1000 (fallback repay-cure), S3 → #1001 (offset double-pay),
+   S4 → #1002 (reward claim while open), S5 → tracked on existing #969
+   (preclose/refinance reward closure), S7 → #1003 (decided: mode-aware
+   refinance interest), S8 → #1004 (NFT late-fee base), S9 → #1005 (empty
+   try-list forced fallback), S10 → #1006 (decided: partial — only the
+   locked-proceeds release gate fails closed; normal claims stay fail-open),
+   S11 → #1007 (decided: gate Tier 1 on the $50k probe), S12 → tracked on
+   existing #915 (forced-close `interestSettled`), S13 → #1008 (decided:
+   per-day cap), S15 → with existing #900 (range-mutate checks),
+   L-g → #1009 (decided: subordinate the 2% treasury handling fee to full
+   lender recovery; keep the liquidator bonus), L-h → #1010 (dynamic
+   incentive on the time-based-default swap path).
+2. **Spec updates — merged in PR #1011 (2026-07-05):** S6 (365-day loans keep
+   30-day grace — owner decision KEEP CODE), S14 (HF formula + example),
+   S16 (peer tolerance), S17 (keeper-init model ratified; execution matrix
+   fixed), S18 (tier-LTV fallback), S19 (insurance surplus stays
+   dormant/operational on retail), L-f (grace-period interest accrual
+   documented — owner decision KEEP CODE), L-l, L-m, plus the Informational
+   stale-doc cluster and the stale CLAUDE.md constants. The whitepaper v4
+   rewrite merged separately as PR #1015.
+3. **Still needs owner adjudication:** L-i (zero-registered-adapters
+   deployment reverts liquidation outright vs the spec's "reaches the
+   fallback" — the spec is self-contradictory here), plus any remaining
+   Low/Informational "Ambiguous" items without a recorded decision
+   (L-a, L-c, L-j, L-o).
 
 This spec-conformance pass complements the 2026-07-02/03 security audit and the
 economic model; together they cover the code's *exploitability*, its *economics*,
