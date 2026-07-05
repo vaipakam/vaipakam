@@ -49,30 +49,37 @@ export type TokenSecurityVerdict =
   | { kind: 'unsupported' } // chain not covered by GoPlus (testnets)
   | { kind: 'unknown' }; // API unreachable / no data — fail-closed at gates
 
+/** GoPlus row fields arrive as '0'/'1'/numeric strings when
+ *  evaluated, and as JSON null, empty string, or absent when the
+ *  check did not run — all three "not evaluated" shapes must be
+ *  handled identically. */
+type GoPlusField = string | null | undefined;
+
 interface GoPlusTokenRow {
-  is_honeypot?: string;
-  cannot_sell_all?: string;
-  cannot_buy?: string;
-  buy_tax?: string;
-  sell_tax?: string;
-  transfer_tax?: string;
-  is_mintable?: string;
-  owner_change_balance?: string;
-  is_blacklisted?: string;
-  transfer_pausable?: string;
-  is_open_source?: string;
+  is_honeypot?: GoPlusField;
+  cannot_sell_all?: GoPlusField;
+  cannot_buy?: GoPlusField;
+  buy_tax?: GoPlusField;
+  sell_tax?: GoPlusField;
+  transfer_tax?: GoPlusField;
+  is_mintable?: GoPlusField;
+  owner_change_balance?: GoPlusField;
+  is_blacklisted?: GoPlusField;
+  transfer_pausable?: GoPlusField;
+  is_open_source?: GoPlusField;
 }
 
-const flag = (v: string | undefined) => v === '1';
-/** GoPlus encodes "we evaluated this" as '0'/'1'; a missing or empty
- *  field means the check did NOT run for this token — which must
- *  never silently read as "clear". */
-const flagKnown = (v: string | undefined) => v === '0' || v === '1';
+const flag = (v: GoPlusField) => v === '1';
+/** GoPlus encodes "we evaluated this" as '0'/'1'; a missing, null,
+ *  or empty field means the check did NOT run for this token — which
+ *  must never silently read as "clear". */
+const flagKnown = (v: GoPlusField) => v === '0' || v === '1';
 /** Tax as a percentage, or null when GoPlus reports it as UNKNOWN —
- *  the docs define an empty tax string as "could not be determined",
- *  which is not the same thing as 0%. */
-const taxPct = (v: string | undefined): number | null => {
-  if (v === undefined || v === '') return null;
+ *  the docs define an empty tax as "could not be determined", which
+ *  is not the same thing as 0% (and Number(null) is 0, so the
+ *  null/empty guard must run before any numeric coercion). */
+const taxPct = (v: GoPlusField): number | null => {
+  if (v === undefined || v === null || v === '') return null;
   const n = Number(v);
   return Number.isFinite(n) ? n * 100 : null;
 };
@@ -105,12 +112,21 @@ export function classifyTokenSecurity(row: GoPlusTokenRow): TokenSecurityVerdict
   if (!flagKnown(row.is_honeypot)) {
     block.push('its critical honeypot check could not be evaluated');
   }
+  // EVERY other risk flag gets the same "unevaluated ≠ clear"
+  // treatment: a null/missing owner-control or trade-restriction
+  // check is disclosed, never silently read as a pass. (Live
+  // sampling 2026-07-05 shows majors carry these as '0'/'1', so
+  // this warn is quiet for normal tokens.)
   const unevaluated: string[] = [];
   if (!flagKnown(row.cannot_sell_all)) unevaluated.push('sell-restriction');
   if (!flagKnown(row.cannot_buy)) unevaluated.push('buy-restriction');
+  if (!flagKnown(row.is_blacklisted)) unevaluated.push('owner-blacklist');
+  if (!flagKnown(row.transfer_pausable)) unevaluated.push('transfer-pause');
+  if (!flagKnown(row.is_mintable)) unevaluated.push('minting');
+  if (!flagKnown(row.owner_change_balance)) unevaluated.push('balance-rewrite');
   if (unevaluated.length > 0) {
     warn.push(
-      `its ${unevaluated.join(' and ')} check${unevaluated.length > 1 ? 's' : ''} could not be evaluated`,
+      `its ${unevaluated.join(', ')} check${unevaluated.length > 1 ? 's' : ''} could not be evaluated`,
     );
   }
   if (flag(row.is_honeypot)) block.push('flagged as a honeypot — buyers cannot sell it');
