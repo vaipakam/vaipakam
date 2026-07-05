@@ -71,6 +71,42 @@ export interface DeploymentFacets {
   vaipakamNFTFacet?: HexAddress;
   vpfiDiscountFacet?: HexAddress;
   vpfiTokenFacet?: HexAddress;
+  // ── Extended facet set (post-#67 splits + later features) ────────
+  // Every facet the current deploy / in-place-refresh persists into
+  // addresses.json, so consumers reach these refreshed addresses
+  // type-safely (explorer links, admin tooling) instead of via casts.
+  aggregatorAdapterFactoryFacet?: HexAddress;
+  autoLifecycleFacet?: HexAddress;
+  backstopFacet?: HexAddress;
+  consolidationFacet?: HexAddress;
+  encumbranceMutateFacet?: HexAddress;
+  intentConfigFacet?: HexAddress;
+  intentDispatchFacet?: HexAddress;
+  lenderIntentFacet?: HexAddress;
+  metricsDashboardFacet?: HexAddress;
+  mirrorTierReceiverFacet?: HexAddress;
+  nftPrepayAutoListFacet?: HexAddress;
+  nftPrepayDutchListingFacet?: HexAddress;
+  nftPrepayListingAtomicFacet?: HexAddress;
+  nftPrepayListingFacet?: HexAddress;
+  numeraireConfigFacet?: HexAddress;
+  offerCancelFacet?: HexAddress;
+  offerMutateFacet?: HexAddress;
+  offerParallelSaleFacet?: HexAddress;
+  offerPreviewFacet?: HexAddress;
+  payrollFacet?: HexAddress;
+  prepayListingFacet?: HexAddress;
+  protocolBroadcastFacet?: HexAddress;
+  receiverFacet?: HexAddress;
+  repayPeriodicFacet?: HexAddress;
+  rewardRemittanceFacet?: HexAddress;
+  riskAccessFacet?: HexAddress;
+  riskMatchLiquidationFacet?: HexAddress;
+  riskSplitLiquidationFacet?: HexAddress;
+  signedOfferFacet?: HexAddress;
+  swapToRepayFacet?: HexAddress;
+  swapToRepayIntentFacet?: HexAddress;
+  vpfiDiscountAccumulatorFacet?: HexAddress;
 }
 
 /**

@@ -193,6 +193,7 @@ Current connected-app surface expectations:
 - For borrower ERC-20 offers that are intended to refinance an existing active loan through a keeper path, `Create Offer` should expose an optional refinance-target loan id field. When present, the UI should force all-or-nothing fill mode, explain that per-loan refinance caps must already permit the terms, warn that tagging the offer does not guarantee a timely match, and pass the target loan id through the create-offer payload so the contract can enforce caps at both create and accept time. Standard offers should send an empty / zero target. Review copy should explain that accepting a refinance-tagged offer is expected to atomically create the replacement loan and close the old loan when the contract path supports it.
 - For borrower ERC-20 offers that opt into treasury backstop funding, `Create Offer` should expose the backstop deadline only when the backstop Role-A feature is readable and enabled for the selected market. The review should explain that the deadline must be after the configured minimum wait and before offer expiry, ordinary lenders retain priority until the deadline, and the backstop can fund only governance-approved liquid collateral within live capacity and oracle-coverage requirements.
 - `Loan Details` should be wallet-gated inside `/app`; after connection it should show the live loan state, role-gated actions, a chronological on-chain timeline, claimable-state action bar, and precise event breakdowns for settlement splits, fallback collateral allocations, partial repayments, swap retries, and VPFI rebates
+- Money-moving Loan Details actions must be gated by live on-chain loan status, not only the indexed row. If a loan has already moved to a terminal state while the indexer is still catching up, the page should suppress live actions such as Repay, update badges and receipts toward the more-settled state, and explain that the lists are catching up. The repay submit path should re-check status before approvals or wallet prompts and stop with a clear message when the loan is no longer repayable.
 - for an active ERC-20 loan whose COLLATERAL settles in-kind (NFT collateral, or an illiquid / no-oracle collateral asset), `Loan Details` should keep the in-kind settlement risk visible for the life of the loan, not only at offer time: alongside the existing risk explainer it should show a prominent warning that on default the lender receives the raw collateral asset itself — not the lending asset, and regardless of market value — with no DEX swap and no LTV-based liquidation, so the downside is impossible to miss after the position is opened. The gate is collateral-driven (the default path routes on the collateral's liquidity), so an illiquid principal whose collateral is liquid does NOT trigger it
 - NFT Verifier should show an active lending position's default settlement mode before a user buys or relies on the position NFT: liquid collateral should be labelled as liquid-settlement eligible, while NFT / illiquid / no-oracle collateral should show an in-kind default warning. The line should render only for active ERC-20-principal loans because NFT rentals use prepaid rental settlement rather than lender collateral-in-kind default.
 - `Loan Details` should render a read-only collateral/proceeds proof card whenever lien or reservation data exists. For live loans, a `Collateral backing this loan` card should show the liened asset, amount, vault owner, and active/released status; lender-facing copy should present it as proof that collateral is locked, while borrower-facing copy should explain that direct withdrawals of the locked amount revert until repayment, refinance, default, or claim flow releases it. For terminal loans with deferred VPFI proceeds or surplus, the claim area should show that the balance is reserved from the withdraw path until the current position-NFT holder claims.
@@ -251,6 +252,8 @@ Wallet connection UX:
 
 - BNB testnet may appear as a user-facing testnet only when its deployment metadata, indexer coverage, wallet-switch metadata, oracle numeraire, and liquidation-route configuration are complete. On BNB testnet, liquidation and liquidity previews should use the configured on-chain DEX route instead of assuming an aggregator backend exists.
 - Chain-specific liquidity caveats should be presented as environment limitations, not generic app failure. For thin testnet markets, valid flows should remain available when the protocol can price and route the selected assets, while unsupported assets should fail conservatively.
+- Testnet-only faucet access should be shown only when the active chain is a testnet and its deployment metadata publishes faucet assets. The faucet should let connected reviewers mint the configured liquid test token, illiquid test token, and rentable test NFT needed for demo flows. On mainnet routes, or on testnets without the required metadata, the surface should stay unavailable rather than exposing unrestricted mint controls.
+- After a successful test ERC-20 faucet mint, the app should offer a wallet watch-asset prompt so the user can see the new balance in their wallet. The VPFI vault page may provide the same add-to-wallet affordance only after the connected wallet or vault actually holds VPFI.
 - ConnectKit remains the wallet picker, but mobile wallet choices should prefer working deep-link paths rather than QR-only flows when the user is already on a phone browser
 - the MetaMask featured wallet path should work on mobile through MetaMask SDK / equivalent mobile-aware connector behavior while preserving direct extension connection on desktop
 - Coinbase Wallet should follow the standard connector path unless mainnet testing proves the SDK flow cannot approve reliably, in which case the documented WalletConnect fallback path may be restored
@@ -422,6 +425,7 @@ Connected-app network model in Phase 1:
 - browser-side log cursors and worker-side D1 cursors should advance only to a safe block (`safe` block tag, or `latest - 32` fallback) so cached rows cannot be stranded by reorgs
 - the worker indexer should treat provider webhooks as freshness accelerators, not as the source of truth. When operators provision a verified chain-event webhook, fresh events may appear within seconds after the chain marks the block safe; when the webhook is absent or a delivery is missed, the per-chain scheduled ingest path must still refresh every active chain on the normal cadence without presenting an error to users.
 - when the realtime indexer channel is enabled, the app may maintain a per-chain WebSocket subscription that receives small invalidation signals such as offers changed, loan updated, or new activity. The signal must not carry authoritative domain data; it only prompts the app to re-read the same indexed / on-chain-confirmed slices it already trusts. If the socket is unavailable, disabled, or drops, the app must continue polling and should show `Polling` rather than treating freshness as failed.
+- transaction-driven app surfaces should also refresh from newly observed blocks instead of waiting only for the ordinary indexer poll. Offers, loans, positions, claimables, vault balances, sale state, and refinance state should re-read promptly after a new block on the active chain, while static configuration and token metadata should not churn on every block. When a chain provides a configured WebSocket transport, block observation should prefer push delivery and fall back to bounded HTTP polling if the socket is absent or unhealthy. These refreshes must be throttled and paused while the tab is hidden so they improve freshness without overloading RPC or indexer infrastructure.
 - frontend caches for app data must include the active `chainId` and relevant account / filter inputs in their keys, so switching chains naturally misses the previous chain's cache and refetches without requiring a manual refresh
 - hooks that read the Diamond should use a shared ready-Diamond helper and short-circuit when the active chain has no deployed Diamond, rather than issuing `readContract` or multicall requests against `ZERO_ADDRESS`
 - Diamond reads must use an app-chain-pinned public client derived from the app-selected chain, not bare wallet-chain `usePublicClient()` calls. The Diamond address and RPC client must switch together when the app chain changes; cross-chain tools that intentionally accept an explicit chain id should document that exception.
@@ -621,7 +625,10 @@ converge. Its intended behaviour (the test oracle for that surface):
   lose, fees, and when this ends — plus a fixable-items eligibility
   checklist (wallet, network, sanctions status, token validity on both
   legs, balance, consent). Fee and buffer percentages in receipts and
-  help copy are read from the live protocol configuration.
+  help copy are read from the live protocol configuration. When a
+  balance or eligibility check can compute a shortfall, the message
+  must name the missing amount and asset rather than only saying the
+  user needs more of that token.
 - When either side of a deal is not priced by the protocol, the review
   must say plainly that default means the entire collateral transfers
   directly, with no price-based liquidation.
@@ -805,8 +812,10 @@ converge. Its intended behaviour (the test oracle for that surface):
   and the borrower's partial-repayment surface is held off with an
   explanation — the listing sells the claim at its frozen outstanding
   amount, and a partial repayment under it would make the buyer
-  overpay for a smaller claim (full repayment and close-early remain
-  open to the borrower). The listing form is offered only on networks
+  overpay for a smaller claim. Full repayment and close-early remain
+  open to the borrower, and a terminal loan state should show the
+  seller a clear cancel-to-unlock path for any stale listing. The
+  listing form is offered only on networks
   where the protocol's listing entry point is known to work
   end-to-end; elsewhere it is withheld and replaced by a plain note
   pointing at the working instant exit. Every standing-surface rule
@@ -820,14 +829,18 @@ converge. Its intended behaviour (the test oracle for that surface):
   projection covers only the remaining part of the term at the
   listing's rate, the collateral shown is what the borrower actually
   has locked, and the end date is the running loan's real due date.
+  The review must also show that no fresh origination fee is charged
+  on a secondary lender-position sale.
   The purchase is signable only when every check is positively clear:
-  the linked loan is still active and not past its due date, and the
-  seller's standing settlement funding still covers completing the
+  the linked loan is still active and not past its due date, the
+  current viewer is not the loan's own borrower, and the seller's
+  standing settlement funding covers completing the
   sale right now (a seller who revoked or spent it would make the
   purchase fail on-chain — the review blocks with a plain reason
   instead of letting a doomed transaction be signed). What the buyer
-  signs is bound to the same live loan numbers the review showed, so
-  any movement between review and signing aborts before the wallet
+  signs is bound to the same live loan numbers the review showed,
+  including the current principal and collateral floor, so any
+  movement between review and signing aborts before the wallet
   prompt. An offset vehicle (or a linked offer whose kind cannot be
   positively identified) remains not acceptable in this app version:
   the review flags the link, names the loan, and blocks signing
@@ -1147,6 +1160,7 @@ Data-fetching strategy:
 - active-loan and active-offer worker fetches should paginate through the returned cursor rather than reading only the first page; frontend hard caps may bound defensive fetches, but the UI must not silently truncate ordinary active sets at a single default page
 - `Offer Book` should consume indexed active offers first, while keeping the existing browser event watcher so newly created global offers appear within seconds according to the existing non-user-customizable sort
 - OfferBook's displayed totals and tab badges should come from the same indexed list that renders rows when in indexer mode, and `Showing X of Y` copy should reflect post-filter visible rows with an explicit hidden-by-filters suffix where applicable
+- Offer Book, guided matching, rental browsing, and Claim Center should distinguish a genuinely empty result from a stale or stalled indexer snapshot. When the app has positive freshness evidence that the indexer is behind, empty-list copy should say the list may be delayed rather than presenting "nothing available" as final. Unknown freshness should stay quiet rather than alarming users without evidence.
 - OfferBook's lending-asset plus collateral-asset filter should use a contract-side active-offers-by-asset-pair primitive when both legs are selected; the UI should require explicit values for both legs, seeded from a per-chain default, instead of using an `all assets` sentinel for either side
 - the `Hide my offers` setting should default on and persist across navigation / reloads under a Vaipakam-namespaced localStorage key
 - dashboard loan lists may consume indexed loan origination data, but current lender / borrower NFT-holder views should be keyed by current position-NFT owner, maintained from ERC-721 `Transfer` events, and verified by direct chain reads on money-relevant screens so transferred loan NFTs are reflected accurately
@@ -1156,6 +1170,7 @@ Data-fetching strategy:
 - Dashboard `Your Offers` should also support current-holder offer lookup so a wallet that received an open offer position NFT can manage or inspect that position when protocol rules allow
 - user-keyed dashboard and analytics views should scale with the connected user's result count by consuming per-user indexes where available rather than walking global active loan / offer sets and filtering client-side
 - Claim Center money-relevant claim payloads should continue to read directly from chain; indexed claimability is only a discovery hint
+- Claim Center should union indexed wallet loans with current position ownership discovered on-chain, so users who acquired lender or borrower positions after origination can discover claimable proceeds even if the indexer never associated them with the original loan parties. A per-loan transport failure should make claimability unavailable rather than present a confidently incomplete list that could hide funds.
 - periodic-interest checkpoint state may be mirrored by the indexer for fast display and reminders, but `previewPeriodicSettle` and transaction review amounts should read the current Diamond state before signing
 - VPFI token-panel scans may remain direct filtered log reads while volume stays low
 - ERC-721 `Transfer` events for Vaipakam position NFTs should enter the shared `activity_events` ledger so ownership history is queryable without maintaining a separate mutable `nft_positions` table

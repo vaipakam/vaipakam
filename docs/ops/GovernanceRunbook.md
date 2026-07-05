@@ -333,6 +333,31 @@ Users observe every queued admin action via the `CallScheduled` and
 `CallExecuted` events on the Timelock contract. A public subgraph /
 dashboard surfacing these is recommended but not strictly required.
 
+#### Fee retunes apply PROSPECTIVELY (#957)
+
+`ConfigFacet.setFeesConfig(treasuryFeeBps, loanInitiationFeeBps)` — like the
+loan-admission Health-Factor floor — is **snapshotted onto each loan at
+origination**. A retune therefore affects **only loans created after it lands**;
+every already-open loan keeps settling at the treasury-fee and initiation-fee
+rates it was born under (`Loan.treasuryFeeBpsAtInit` /
+`loanInitiationFeeBpsAtInit`, resolved via `LibVaipakam.effectiveTreasuryFeeBps`).
+Operationally this means:
+
+- A treasury-fee change does **not** retroactively re-price the interest
+  split of the open book — do not expect settlement revenue on existing
+  loans to move when the knob changes; the effect ramps in only as new
+  loans originate.
+- There is **no migration or sweep** to apply a new rate to open loans, and
+  none should be attempted — the snapshot is the guarantee to counterparties
+  who reviewed the offer.
+- The snapshot is taken when the *accept transaction executes*, not when the
+  offer is signed, so a retune landing between a counterparty signing and the
+  accept being included still applies to that new loan. Only *post-origination*
+  retunes are neutralised. If a retune must be coordinated with in-flight
+  signings, pause the affected offer surface first.
+- Pre-#957 loans (none on a fresh mainnet deploy) carry a zero snapshot and
+  fall back to the live knob.
+
 ### Contract change → public keeper-bot sync (Phase 9.A)
 
 Whenever a contract change touches a selector the public reference
