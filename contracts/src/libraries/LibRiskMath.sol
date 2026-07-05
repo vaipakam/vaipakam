@@ -56,14 +56,35 @@ library LibRiskMath {
         // `liqThresholdBps` was retired in favour of per-tier values.
         // Resolve the collateral asset's effective tier via the
         // cross-facet helper (same pattern as `LibOfferMatch`), then
-        // look up the per-tier liquidation LTV. Tier 0 (illiquid)
-        // returns the conservative Tier-3 default — but callers should
-        // reject illiquid before reaching here, so this is fail-safe.
+        // look up the per-tier liquidation LTV.
+        //
+        // #1007 (S11) — tier 0 is no longer synonymous with illiquid, and the
+        // two tier-0 cases need OPPOSITE treatment:
+        //   • LIQUID + tier 0 (thin-but-liquid: clears the $5k floor, not the
+        //     $50k probe) — must get a real HF bound, priced at the conservative
+        //     tier-0 liquidation threshold (`cfgTierLiquidationLtvBps(0)` = the
+        //     Tier-1 value post-#999).
+        //   • ILLIQUID + tier 0 (no pool / fails the liquidity floor, possibly
+        //     with a live price feed) — must keep the no-bound sentinel: not
+        //     every caller gates on liquidity (`_previewMatchCore` calls this in
+        //     the non-tiered match path, LibOfferMatch.sol:672), and `LoanFacet`
+        //     INTENTIONALLY lets mutually-consented illiquid matches skip the
+        //     HF/LTV gate (LoanFacet non-both-liquid + mutual-consent branch).
+        //     Enforcing an HF floor here would block a match loan-init allows
+        //     (Codex #1053 r2).
+        // So distinguish the two via an explicit liquidity check on the tier-0
+        // path (getEffectiveLiquidityTier collapses both to 0). The runtime
+        // loan-init HF/LTV gate remains the authoritative enforcement.
         uint8 tier = OracleFacet(address(this)).getEffectiveLiquidityTier(collateralAsset);
-        if (tier == 0) {
-            // Illiquid asset — no on-chain bound enforceable; fall through
-            // to the runtime gate (which will revert the loan anyway).
-            return 0;
+        // `checkLiquidity` reverts on address(0), so short-circuit it — a zero
+        // collateral asset is trivially not liquid and takes the sentinel path.
+        if (
+            tier == 0 &&
+            (collateralAsset == address(0) ||
+                OracleFacet(address(this)).checkLiquidity(collateralAsset)
+                    != LibVaipakam.LiquidityStatus.Liquid)
+        ) {
+            return 0; // genuinely illiquid — no on-chain floor (mutual-consent path stays exempt)
         }
         uint256 liqThresholdBps = LibVaipakam.cfgTierLiquidationLtvBps(tier);
 
@@ -118,8 +139,12 @@ library LibRiskMath {
         // is `min(per-asset cap, tier cap)` in the depth-tiered regime (the same
         // `min` `_checkInitialLtvAndHf` applies), else the per-asset cap. Using
         // only the per-asset cap would still under-size a tiered range offer
-        // that the tier gate later rejects with `InitLtvAboveTier`. `tier` here
-        // is ≥ 1 (tier 0 returned early above).
+        // that the tier gate later rejects with `InitLtvAboveTier`. In the
+        // depth-tiered regime a tier-0 (thin-but-liquid, #1007) asset resolves
+        // `effectiveTierMaxInitLtvBps(0) == 0`, so `capBps` collapses to 0 and
+        // the clamp is skipped — the floor stays at the HF-derived value, which
+        // is still finite and positive (tighter than the old `return 0`); the
+        // runtime init-LTV gate blocks the tier-0 borrow itself.
         uint256 capBps = LibVaipakam
             .storageSlot()
             .assetRiskParams[collateralAsset]
@@ -208,9 +233,20 @@ library LibRiskMath {
 
         // PR2 of internal-match work: read per-tier liquidation LTV
         // (same pattern as `minCollateralForLending` above).
+        // #1007 (S11) — distinguish LIQUID tier-0 (thin-but-liquid: price at the
+        // conservative tier-0 threshold + clamp) from ILLIQUID tier-0 (keep the
+        // no-ceiling sentinel so the mutually-consented illiquid match path,
+        // which loan-init exempts from HF/LTV, is not blocked here — Codex #1053
+        // r2). See the sibling helper's note for the full rationale.
         uint8 tier = OracleFacet(address(this)).getEffectiveLiquidityTier(collateralAsset);
-        if (tier == 0) {
-            return type(uint256).max;
+        // `checkLiquidity` reverts on address(0); short-circuit to the sentinel.
+        if (
+            tier == 0 &&
+            (collateralAsset == address(0) ||
+                OracleFacet(address(this)).checkLiquidity(collateralAsset)
+                    != LibVaipakam.LiquidityStatus.Liquid)
+        ) {
+            return type(uint256).max; // genuinely illiquid — no on-chain ceiling
         }
         uint256 liqThresholdBps = LibVaipakam.cfgTierLiquidationLtvBps(tier);
 
@@ -248,8 +284,12 @@ library LibRiskMath {
         // DOWN to the init-LTV-cap ceiling (`LTV = debt/coll ≤ cap ⟺
         // debtUSD ≤ collateralUsd × cap / BASIS_POINTS`).
         // #394 Lever A (Codex #647 round-3 + round-4) — `min(per-asset cap,
-        // tier cap)` in the depth-tiered regime (mirrors `_checkInitialLtvAndHf`);
-        // `tier` is ≥ 1 (tier 0 returned early above).
+        // tier cap)` in the depth-tiered regime (mirrors `_checkInitialLtvAndHf`).
+        // #1007 — for a tier-0 (thin-but-liquid) asset in the depth-tiered
+        // regime `effectiveTierMaxInitLtvBps(0) == 0` collapses `capBps` to 0 and
+        // the LTV clamp is skipped, leaving the finite HF-derived ceiling (still
+        // far tighter than the old `return type(uint256).max`); the runtime gate
+        // blocks the tier-0 borrow itself.
         uint256 capBps = LibVaipakam
             .storageSlot()
             .assetRiskParams[collateralAsset]

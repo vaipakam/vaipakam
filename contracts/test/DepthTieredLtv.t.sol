@@ -65,6 +65,9 @@ contract DepthTieredLtv is Test {
     // `L ≥ 2.5e20`; Tier 1 ($50k @ ≤2%) needs `L ≳ 1.44e21`, Tier 2
     // ($500k) `L ≳ 1.44e22`, Tier 3 ($5M) `L ≳ 1.44e23`.
     uint128 constant L_NOT_LIQUID = uint128(1e20); // below the $1M floor ⇒ Illiquid ⇒ Tier 0
+    // #1007 (S11) — in the band [2.5e20, 1.44e21): clears the `_checkLiquidity`
+    // $5k floor (Liquid) but NOT the $50k tier-1 probe ⇒ untierable Tier 0.
+    uint128 constant L_FLOOR_ONLY = uint128(8e20);
     uint128 constant L_TIER1 = uint128(1e22); // clears $50k, not $500k ⇒ Tier 1
     uint128 constant L_TIER2 = uint128(5e22); // clears $500k, not $5M ⇒ Tier 2
     uint128 constant L_TIER3 = uint128(5e23); // clears $5M ⇒ Tier 3
@@ -180,6 +183,28 @@ contract DepthTieredLtv is Test {
     function test_tier1_pool() public {
         _mockPool(mockUniFactory, mockAsset, 3000, L_TIER1);
         assertEq(OracleFacet(address(diamond)).getLiquidityTier(mockAsset), 1);
+    }
+
+    /// @dev #1007 (S11) — an asset that clears the $5k liquidity floor (so
+    ///      `_checkLiquidity` says Liquid) but cannot absorb the $50k tier-1
+    ///      probe must NOT be promoted to Tier 1; it falls to the untierable
+    ///      Tier 0. Pre-#1007 the `best[1]` ($50k) probe was computed but never
+    ///      read, so such an asset was silently Tier 1 (and, pre-#999, got the
+    ///      90% liquidation threshold).
+    function test_tier_clearsFloorNotTier1Probe_isZero() public {
+        _mockPool(mockUniFactory, mockAsset, 3000, L_FLOOR_ONLY);
+        // Liquid at the base check (clears the $5k floor)...
+        assertEq(
+            uint256(OracleFacet(address(diamond)).checkLiquidity(mockAsset)),
+            uint256(LibVaipakam.LiquidityStatus.Liquid),
+            "clears the $5k liquidity floor"
+        );
+        // ...but untierable because it can't absorb $50k ⇒ Tier 0 (S11).
+        assertEq(
+            OracleFacet(address(diamond)).getLiquidityTier(mockAsset),
+            0,
+            "sub-$50k asset is untierable (Tier 0), not Tier 1"
+        );
     }
 
     function test_tier2_pool() public {
