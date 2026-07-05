@@ -1782,10 +1782,18 @@ contract OracleFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessCo
             }
         }
         uint256 slipBound = LibVaipakam.cfgLiquiditySlippageBps();
-        if (best[0] > slipBound) return 0; // can't clear `floorSizePad` ⇒ untierable
-        if (best[3] <= slipBound) return 3;
-        if (best[2] <= slipBound) return 2;
-        return 1; // cleared the floor ⇒ at least Tier 1
+        if (best[0] > slipBound) return 0; // can't clear `floorSizePad` ($5k) ⇒ untierable
+        if (best[3] <= slipBound) return 3; // clears $5M ⇒ deepest
+        if (best[2] <= slipBound) return 2; // clears $500k
+        // #1007 (S11) — Tier 1 requires clearing the $50k `tier1SizePad` probe
+        // (`best[1]`), not merely the $5k floor. Pre-#1007 `best[1]` was computed
+        // but never read, so an asset that absorbed $5k but not $50k was silently
+        // promoted to Tier 1 (and, pre-#999, its 90% liquidation threshold). Such
+        // an asset now falls to tier 0 (untierable) → the conservative tier-0 caps
+        // (0% init-LTV, the Tier-1 liquidation floor), and the `tier1SizePad`
+        // governance knob becomes live.
+        if (best[1] <= slipBound) return 1; // clears $50k ⇒ Tier 1
+        return 0; // cleared $5k but not $50k ⇒ untierable
     }
 
     /// @notice `getAssetPrice` look-alike but try/catch wrapped — callers
