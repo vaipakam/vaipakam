@@ -490,6 +490,10 @@ interface PutThresholdsBody {
   alert_hf: number;
   critical_hf: number;
   push_channel?: string | null;
+  /** #1033 — opt-out for the periodic-interest pre-notify. Optional
+   *  boolean in the body; absent means opted in (the historical
+   *  behaviour, and what rows created before the column carry). */
+  notify_maturity_approaching?: boolean;
 }
 
 function parsePutThresholds(x: unknown): PutThresholdsBody | null {
@@ -518,6 +522,11 @@ function parsePutThresholds(x: unknown): PutThresholdsBody | null {
     alert_hf: b.alert_hf,
     critical_hf: b.critical_hf,
     push_channel: push,
+    // Absent/non-boolean → opted in, matching the column default.
+    notify_maturity_approaching:
+      typeof b.notify_maturity_approaching === 'boolean'
+        ? b.notify_maturity_approaching
+        : true,
   };
 }
 

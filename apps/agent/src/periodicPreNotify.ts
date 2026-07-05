@@ -74,6 +74,8 @@ interface UserPushRow {
   push_channel: string | null;
   tg_chat_id: string | null;
   locale: string;
+  /** #1033 — 0 = the user opted out of due-date pre-notifies. */
+  notify_maturity_approaching: number;
 }
 
 export async function runPeriodicPreNotify(env: Env): Promise<void> {
@@ -178,13 +180,16 @@ async function pushIfSubscribed(
   role: 'borrower' | 'lender',
 ): Promise<void> {
   const sub = await env.DB.prepare(
-    `SELECT wallet, push_channel, tg_chat_id, locale
+    `SELECT wallet, push_channel, tg_chat_id, locale, notify_maturity_approaching
      FROM user_thresholds
      WHERE chain_id = ? AND wallet = ?`,
   )
     .bind(chain.id, wallet.toLowerCase())
     .first<UserPushRow>();
   if (!sub) return;
+  // #1033 — the alpha02 Alerts card exposes this as a real opt-out;
+  // honor it before any rail fires.
+  if (sub.notify_maturity_approaching === 0) return;
 
   const cadenceLabel = cadenceI18nLabel(loan.periodic_interest_cadence);
   // English-only copy for now — the watcher's existing translation

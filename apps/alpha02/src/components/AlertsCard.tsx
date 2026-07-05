@@ -178,7 +178,7 @@ export function AlertsCard() {
               </div>
             </div>
           ) : (
-            <div>
+            <div className="cluster" style={{ alignItems: 'center' }}>
               <button
                 type="button"
                 className="btn btn-primary"
@@ -186,6 +186,18 @@ export function AlertsCard() {
                 disabled={busy}
               >
                 {copy.alerts.linkButton}
+              </button>
+              {/* The linked flag is a LOCAL mirror — a wallet linked
+                  from another device (or after clearing storage)
+                  still deserves its privacy control, so unlink stays
+                  reachable here too (server-side it's idempotent). */}
+              <button
+                type="button"
+                className="btn btn-ghost"
+                onClick={() => void doUnlink()}
+                disabled={busy}
+              >
+                {copy.alerts.unlinkElsewhere}
               </button>
             </div>
           )}
@@ -220,16 +232,41 @@ export function AlertsCard() {
           </label>
 
           {isAdvanced && prefs.risky ? (
-            <AdvancedBands prefs={prefs} busy={busy} onSave={(b) => void persist({ ...prefs, ...b })} />
+            // Keyed by scope so a wallet/chain switch can never leave
+            // the previous scope's numbers in the inputs and write
+            // them to the new scope on Save.
+            <AdvancedBands
+              key={scope}
+              prefs={prefs}
+              busy={busy}
+              onSave={(b) => void persist({ ...prefs, ...b })}
+            />
           ) : null}
 
           {pushUrl ? (
             <div>
               <h3 style={{ marginBottom: 4 }}>{copy.alerts.pushTitle}</h3>
               <p className="muted" style={{ marginTop: 0 }}>{copy.alerts.pushBody}</p>
-              <a className="btn btn-secondary" href={pushUrl} target="_blank" rel="noreferrer">
-                {copy.alerts.pushButton}
-              </a>
+              <div className="cluster">
+                {/* Delivery needs BOTH halves: the service-side flag
+                    (push_channel, written here) AND the wallet-side
+                    channel subscription (done on app.push.org). */}
+                {!prefs.pushEnabled ? (
+                  <button
+                    type="button"
+                    className="btn btn-secondary"
+                    disabled={busy}
+                    onClick={() => void persist({ ...prefs, pushEnabled: true })}
+                  >
+                    {copy.alerts.pushEnable}
+                  </button>
+                ) : (
+                  <span className="muted">{copy.alerts.pushEnabled}</span>
+                )}
+                <a className="btn btn-secondary" href={pushUrl} target="_blank" rel="noreferrer">
+                  {copy.alerts.pushButton}
+                </a>
+              </div>
             </div>
           ) : null}
 

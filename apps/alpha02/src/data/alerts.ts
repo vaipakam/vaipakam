@@ -63,20 +63,28 @@ export interface AlertBands {
 }
 
 export interface AlertPrefs extends AlertBands {
-  /** "Message me before a repayment or interest payment is due." */
+  /** "Message me before an interest payment comes due" — the
+   *  periodic-interest pre-notify opt-out (honored server-side via
+   *  notify_maturity_approaching). */
   repayDue: boolean;
   /** "Message me if my loan gets risky" — HF-band alerts. */
   risky: boolean;
   /** Optimistic local record that the Telegram handshake was done —
    *  the agent has no read-back endpoint, so this mirrors what the
-   *  user completed on this device. */
+   *  user completed on this device. Unlink stays reachable even when
+   *  this is false (linked elsewhere / storage cleared). */
   telegramLinked: boolean;
+  /** Push rail opt-in. One-way on the backend: `push_channel` is
+   *  COALESCE-preserved on later saves, so enabling sticks and there
+   *  is no unset path through /thresholds today. */
+  pushEnabled: boolean;
 }
 
 export const DEFAULT_PREFS: AlertPrefs = {
   repayDue: true,
   risky: true,
   telegramLinked: false,
+  pushEnabled: false,
   ...DEFAULT_BANDS,
 };
 
@@ -130,9 +138,10 @@ async function post(path: string, body: unknown): Promise<Response> {
 }
 
 /** Persist the outcome toggles as the agent's thresholds row. The
- *  event opt-ins the UI doesn't surface stay `true` — they are
- *  stored-but-dormant until each backend detector lands, and a user
- *  who linked Telegram asked to hear about their positions. */
+ *  body carries EXACTLY what the agent parses — bands, the
+ *  pre-notify opt-out, and (when enabling) the Push flag. No
+ *  aspirational fields: sending flags the parser drops would let the
+ *  UI imply storage that never happens. */
 export async function saveAlertPrefs(
   wallet: `0x${string}`,
   chainId: number,
@@ -147,12 +156,9 @@ export async function saveAlertPrefs(
     warn_hf: bands.warnHf,
     alert_hf: bands.alertHf,
     critical_hf: bands.criticalHf,
-    locale: 'en',
-    notify_claim_available: true,
-    notify_loan_terminal: true,
-    notify_loan_initiated_creator: true,
     notify_maturity_approaching: prefs.repayDue,
-    notify_partial_repay_received: true,
+    // One-way by backend design (COALESCE): only sent when enabling.
+    ...(prefs.pushEnabled ? { push_channel: 'subscribed' } : {}),
   });
   if (!res.ok) throw new Error(`saving alert settings failed (${res.status})`);
 }
