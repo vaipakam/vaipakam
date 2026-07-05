@@ -179,13 +179,29 @@ async function pushIfSubscribed(
   daysUntil: number,
   role: 'borrower' | 'lender',
 ): Promise<void> {
-  const sub = await env.DB.prepare(
-    `SELECT wallet, push_channel, tg_chat_id, locale, notify_maturity_approaching
-     FROM user_thresholds
-     WHERE chain_id = ? AND wallet = ?`,
-  )
-    .bind(chain.id, wallet.toLowerCase())
-    .first<UserPushRow>();
+  let sub: UserPushRow | null;
+  try {
+    sub = await env.DB.prepare(
+      `SELECT wallet, push_channel, tg_chat_id, locale, notify_maturity_approaching
+       FROM user_thresholds
+       WHERE chain_id = ? AND wallet = ?`,
+    )
+      .bind(chain.id, wallet.toLowerCase())
+      .first<UserPushRow>();
+  } catch {
+    // Rollout window — migration 0027 not applied yet. Legacy column
+    // set with the opt-out defaulted to OPTED IN so reminders keep
+    // flowing (the safe direction); same fallback the keeper's
+    // listThresholdsForChain carries.
+    const legacy = await env.DB.prepare(
+      `SELECT wallet, push_channel, tg_chat_id, locale
+       FROM user_thresholds
+       WHERE chain_id = ? AND wallet = ?`,
+    )
+      .bind(chain.id, wallet.toLowerCase())
+      .first<Omit<UserPushRow, 'notify_maturity_approaching'>>();
+    sub = legacy ? { ...legacy, notify_maturity_approaching: 1 } : null;
+  }
   if (!sub) return;
   // #1033 — the alpha02 Alerts card exposes this as a real opt-out;
   // honor it before any rail fires.
