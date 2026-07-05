@@ -21,9 +21,12 @@
  *  - pasted / offer-carried non-curated tokens: fail-CLOSED at the
  *    gates — "couldn't check" is a blocking state with its own copy,
  *    never silently treated as clean;
- *  - hard signals (honeypot / can't-sell-all / blacklist+transfer-
- *    pausable) → BLOCK; soft signals (heavy tax, owner-mint,
- *    owner-balance-mutation) → loud warning the user must explicitly
+ *  - hard signals (honeypot / can't-sell-all / counterfeit /
+ *    self-destruct / per-address tax control / ANY fee-on-transfer /
+ *    blacklist+transfer-pausable) → BLOCK; soft signals (heavy
+ *    buy/sell tax, owner-mint, balance-rewrite, proxy upgradeability,
+ *    hidden owner, modifiable global tax or limits, anti-whale,
+ *    cooldowns, whitelists) → loud warning the user must explicitly
  *    accept via the existing consent mechanics;
  *  - "couldn't evaluate" ≠ "clear": closed-source contracts and rows
  *    whose hard trade signals GoPlus left null/empty BLOCK (the row
@@ -66,7 +69,21 @@ interface GoPlusTokenRow {
   owner_change_balance?: GoPlusField;
   is_blacklisted?: GoPlusField;
   transfer_pausable?: GoPlusField;
+  is_whitelisted?: GoPlusField;
+  is_anti_whale?: GoPlusField;
+  anti_whale_modifiable?: GoPlusField;
+  trading_cooldown?: GoPlusField;
+  hidden_owner?: GoPlusField;
+  can_take_back_ownership?: GoPlusField;
+  is_proxy?: GoPlusField;
+  selfdestruct?: GoPlusField;
+  slippage_modifiable?: GoPlusField;
+  personal_slippage_modifiable?: GoPlusField;
   is_open_source?: GoPlusField;
+  /** Counterfeit detector — an OBJECT, not a '0'/'1' string. Null or
+   *  absent on genuine tokens (live majors 2026-07-05 all carry
+   *  null), so null here means "genuine", NOT "unevaluated". */
+  fake_token?: { value?: number; true_token_address?: GoPlusField } | null;
 }
 
 const flag = (v: GoPlusField) => v === '1';
@@ -115,46 +132,118 @@ export function classifyTokenSecurity(row: GoPlusTokenRow): TokenSecurityVerdict
   // EVERY other risk flag gets the same "unevaluated ≠ clear"
   // treatment: a null/missing owner-control or trade-restriction
   // check is disclosed, never silently read as a pass. (Live
-  // sampling 2026-07-05 shows majors carry these as '0'/'1', so
-  // this warn is quiet for normal tokens.)
-  const unevaluated: string[] = [];
-  if (!flagKnown(row.cannot_sell_all)) unevaluated.push('sell-restriction');
-  if (!flagKnown(row.cannot_buy)) unevaluated.push('buy-restriction');
-  if (!flagKnown(row.is_blacklisted)) unevaluated.push('owner-blacklist');
-  if (!flagKnown(row.transfer_pausable)) unevaluated.push('transfer-pause');
-  if (!flagKnown(row.is_mintable)) unevaluated.push('minting');
-  if (!flagKnown(row.owner_change_balance)) unevaluated.push('balance-rewrite');
+  // sampling 2026-07-05 shows majors carry ALL of these as '0'/'1',
+  // so this warn is quiet for normal tokens. fake_token is exempt on
+  // purpose — it is null on genuine tokens by design.)
+  const unevaluatedChecks: Array<[GoPlusField, string]> = [
+    [row.cannot_sell_all, 'sell-restriction'],
+    [row.cannot_buy, 'buy-restriction'],
+    [row.is_blacklisted, 'owner-blacklist'],
+    [row.transfer_pausable, 'transfer-pause'],
+    [row.is_whitelisted, 'whitelist'],
+    [row.is_anti_whale, 'transfer-size-limit'],
+    [row.anti_whale_modifiable, 'limit-modifiability'],
+    [row.trading_cooldown, 'trading-cooldown'],
+    [row.hidden_owner, 'hidden-owner'],
+    [row.can_take_back_ownership, 'ownership-takeback'],
+    [row.is_proxy, 'proxy-upgradeability'],
+    [row.selfdestruct, 'self-destruct'],
+    [row.slippage_modifiable, 'tax-modifiability'],
+    [row.personal_slippage_modifiable, 'per-address-tax'],
+    [row.is_mintable, 'minting'],
+    [row.owner_change_balance, 'balance-rewrite'],
+  ];
+  const unevaluated = unevaluatedChecks
+    .filter(([v]) => !flagKnown(v))
+    .map(([, name]) => name);
   if (unevaluated.length > 0) {
     warn.push(
       `its ${unevaluated.join(', ')} check${unevaluated.length > 1 ? 's' : ''} could not be evaluated`,
     );
   }
+  // ---- BLOCK-tier signals -----------------------------------------
   if (flag(row.is_honeypot)) block.push('flagged as a honeypot — buyers cannot sell it');
   if (flag(row.cannot_sell_all)) block.push('holders are prevented from selling their full balance');
   if (flag(row.cannot_buy)) block.push('buying is restricted by the contract');
+  if (row.fake_token?.value === 1) {
+    block.push('flagged as a counterfeit imitation of a well-known token');
+  }
+  if (flag(row.selfdestruct)) {
+    block.push('the contract can self-destruct, erasing every holder balance');
+  }
+  // Per-ADDRESS tax control is a targeted-honeypot lever: the owner
+  // can set a punitive rate for one specific holder — e.g. the vault
+  // or the counterparty — after the deal opens. Global modifiability
+  // is warn-tier below (USDT itself carries slippage_modifiable '1').
+  if (flag(row.personal_slippage_modifiable)) {
+    block.push('the owner can set a custom trading tax for individual addresses');
+  }
   if (flag(row.is_blacklisted) && flag(row.transfer_pausable)) {
     block.push('the owner can blacklist holders AND pause all transfers');
   } else {
     if (flag(row.is_blacklisted)) warn.push('the owner can blacklist individual holders');
     if (flag(row.transfer_pausable)) warn.push('the owner can pause all transfers');
   }
-  // All THREE tax surfaces matter here: the protocol moves these
-  // tokens with plain transfers (vault pulls, repayments), so a
-  // transfer tax skews received amounts exactly like a sell tax
-  // skews liquidation. Unknown taxes are disclosed, not zeroed.
-  const taxes: Array<[string, number | null]> = [
-    ['sell', taxPct(row.sell_tax)],
-    ['buy', taxPct(row.buy_tax)],
-    ['transfer', taxPct(row.transfer_tax)],
-  ];
-  for (const [label, pct] of taxes) {
+  // Taxes. Buy/sell taxes hit DEX trades (liquidation swaps) and use
+  // punitive-threshold tiers. A TRANSFER tax is stricter: the vault
+  // records deposits at the REQUESTED amount straight after
+  // safeTransferFrom (no balance-delta check), so ANY fee on plain
+  // transfers under-funds the vault while accounting assumes the
+  // full signed amount — fee-on-transfer tokens are structurally
+  // incompatible, not merely risky. Unknown taxes are disclosed,
+  // never zeroed.
+  const st = taxPct(row.sell_tax);
+  const bt = taxPct(row.buy_tax);
+  const tt = taxPct(row.transfer_tax);
+  for (const [label, pct] of [
+    ['sell', st],
+    ['buy', bt],
+  ] as const) {
     if (pct === null) continue; // folded into one warn line below
     if (pct >= 50) block.push(`a ${pct.toFixed(0)}% ${label} tax`);
     else if (pct >= 10) warn.push(`a ${pct.toFixed(0)}% ${label} tax`);
   }
-  const unknownTaxes = taxes.filter(([, p]) => p === null).map(([l]) => l);
+  if (tt !== null && tt > 0) {
+    block.push(
+      `a ${tt >= 1 ? tt.toFixed(0) : tt.toFixed(2)}% fee on plain transfers — the protocol's vault accounting cannot absorb tokens that take a cut of every transfer`,
+    );
+  }
+  const unknownTaxes = (
+    [
+      ['sell', st],
+      ['buy', bt],
+      ['transfer', tt],
+    ] as const
+  )
+    .filter(([, p]) => p === null)
+    .map(([l]) => l);
   if (unknownTaxes.length > 0) {
     warn.push(`its ${unknownTaxes.join('/')} tax could not be determined`);
+  }
+  // ---- WARN-tier owner powers & structure --------------------------
+  if (flag(row.slippage_modifiable)) {
+    warn.push('the owner can change the trading tax at any time');
+  }
+  if (flag(row.hidden_owner)) {
+    warn.push('the contract has a hidden owner — privileged control is obscured');
+  }
+  if (flag(row.can_take_back_ownership)) {
+    warn.push('ownership can be reclaimed after being renounced');
+  }
+  if (flag(row.is_proxy)) {
+    warn.push('an upgradeable proxy — its behaviour can be changed after review');
+  }
+  if (flag(row.is_whitelisted)) {
+    warn.push('the owner can exempt chosen addresses from its trading restrictions');
+  }
+  if (flag(row.is_anti_whale)) {
+    warn.push('transfers above a size limit can fail (anti-whale limits)');
+  }
+  if (flag(row.anti_whale_modifiable)) {
+    warn.push('the owner can change the transfer size limits at any time');
+  }
+  if (flag(row.trading_cooldown)) {
+    warn.push('enforces a cooldown between trades');
   }
   if (flag(row.is_mintable) && flag(row.owner_change_balance)) {
     warn.push('the owner can mint AND rewrite holder balances');

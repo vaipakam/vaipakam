@@ -7,12 +7,18 @@ a malicious actor creates their offer directly against the contracts —
 never through our website — so the only screen that can protect the
 person accepting is on the accept review itself. Both legs of a loan
 deal and the rental prepayment token are checked; a token flagged as
-a honeypot, sell-restricted, owner-blacklistable-and-pausable, or
-carrying punitive taxes (on buys, sells, or plain transfers) blocks
-acceptance with the reasons in plain words — because a token like
-that can be impossible to sell or transfer no matter what the deal
-terms say, which is exactly the harm the unpriced-asset consent
-warnings cannot catch. "Couldn't verify" is never treated as clean:
+a honeypot, sell-restricted, a counterfeit of a well-known token,
+able to self-destruct, giving its owner per-address tax control,
+owner-blacklistable-and-pausable, carrying punitive buy/sell taxes,
+or taking ANY fee on plain transfers (the protocol's vault
+accounting cannot absorb fee-on-transfer tokens) blocks acceptance
+with the reasons in plain words — because a token like that can be
+impossible to sell or transfer no matter what the deal terms say,
+which is exactly the harm the unpriced-asset consent warnings cannot
+catch. Softer structural risks — upgradeable proxies, hidden or
+reclaimable ownership, owner-modifiable taxes or transfer limits,
+anti-whale limits, trading cooldowns, whitelists, minting and
+balance-rewrite powers — are disclosed as warnings. "Couldn't verify" is never treated as clean:
 a token whose contract source is unverified, or whose critical
 honeypot check the screen could not evaluate, is blocked outright
 (those are precisely the least-checkable tokens); secondary trade
