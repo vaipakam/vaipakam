@@ -784,6 +784,13 @@ Frontend integration requirements:
   a pending LIF rebate
 - `Claim Center` should host platform-interaction reward claims, including
   lifetime claimed and contributing-loan context
+- `Claim Center` should treat the chain as authoritative for per-loan claimability.
+  Indexed claim rows are discovery hints only: before showing a claim action as
+  available, the app should confirm that the connected wallet is the current
+  holder of the relevant position NFT and that the loan side has an unclaimed
+  payout. Candidate discovery should include both indexed wallet loans and
+  on-chain position ownership, so a secondary-market buyer who was never an
+  original loan party can still discover and claim their position proceeds.
 
 Acceptance criteria:
 
