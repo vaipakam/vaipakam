@@ -27,11 +27,17 @@ export default defineConfig({
     screenshot: 'only-on-failure',
   },
   webServer: {
-    command: 'pnpm run dev -- --host 127.0.0.1 --port 4173 --strictPort',
+    // Direct vite invocation (no pnpm indirection) with the Cloudflare
+    // plugin disabled via ALPHA02_E2E — workerd startup stalled the
+    // first CI run's 120s readiness window with zero output.
+    command: 'node node_modules/vite/bin/vite.js --host 127.0.0.1 --port 4173 --strictPort',
     url: 'http://127.0.0.1:4173',
-    timeout: 120_000,
+    timeout: 240_000,
     reuseExistingServer: !process.env.CI,
+    stdout: 'pipe',
+    stderr: 'pipe',
     env: {
+      ALPHA02_E2E: '1',
       VITE_DEFAULT_CHAIN_ID: '84532',
       VITE_BASE_SEPOLIA_RPC_URL: 'http://127.0.0.1:8545',
       VITE_INDEXER_ORIGIN: `http://127.0.0.1:${STUB_PORT}`,
