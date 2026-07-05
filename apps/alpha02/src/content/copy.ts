@@ -49,6 +49,22 @@ export const copy = {
     },
   },
 
+  signing: {
+    intro: (n: number) =>
+      n === 1
+        ? 'One wallet confirmation finishes this:'
+        : `You'll confirm ${n} times in your wallet, in this order:`,
+    sign: 'Sign the terms you just read — a free signature, no gas.',
+    approve:
+      'Approve the token — you allow the protocol to take the amount shown above. This is a transaction.',
+    approveReset:
+      'Approve the token — two confirmations here: your wallet needs an older approval reset to zero before the new amount can be set.',
+    post: 'Post the offer — the final transaction.',
+    accept: 'Open the deal — the final transaction.',
+    phaseSign: (c: number, t: number) => `Signing terms… (${c} of ${t})`,
+    phaseApprove: (c: number, t: number) => `Approving… (${c} of ${t})`,
+    phaseSend: (c: number, t: number) => `Submitting… (${c} of ${t})`,
+  },
   errorBoundary: {
     title: 'Something went wrong on this page',
     body:

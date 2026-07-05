@@ -88,8 +88,12 @@ export async function ensureAllowance(opts: {
   owner: `0x${string}`;
   spender: `0x${string}`;
   amount: bigint;
+  /** Called immediately before EACH approve prompt (once normally,
+   *  twice on the zero-first reset path) — drives the "step x of y"
+   *  submit-progress label (#1037). */
+  onPrompt?: () => void;
 }): Promise<`0x${string}` | null> {
-  const { publicClient, walletClient, token, owner, spender, amount } = opts;
+  const { publicClient, walletClient, token, owner, spender, amount, onPrompt } = opts;
   const current = await publicClient.readContract({
     address: token,
     abi: erc20Abi,
@@ -99,6 +103,7 @@ export async function ensureAllowance(opts: {
   if (current >= amount) return null;
 
   const approve = async (value: bigint): Promise<`0x${string}`> => {
+    onPrompt?.();
     const hash = await walletClient.writeContract({
       address: token,
       abi: erc20Abi,
