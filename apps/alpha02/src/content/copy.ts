@@ -167,6 +167,20 @@ export const copy = {
     gasNote: 'Network gas is separate from Vaipakam protocol fees.',
   },
 
+  /** #1028 item 2 — the free pre-sign dry run under the review. Advisory
+   *  only: it informs, it never blocks the sign button. */
+  simulation: {
+    running: 'Doing a free dry run of this transaction…',
+    passed: 'Dry run passed — this transaction should go through as reviewed.',
+    wouldFail: 'Heads up: a dry run of this exact transaction just failed with',
+    wouldFailNote:
+      '— nothing was sent and no gas was spent. Signing it now would most likely fail too. Check the details above, or try again in a moment; you can still sign if you want to.',
+    approvalNeeded:
+      'A token approval will be requested first — the dry run can’t see that step yet, so this is expected, not a problem.',
+    unavailable:
+      'The free dry run isn’t available right now. You can still continue — this check is only an extra heads-up.',
+  },
+
   consentLabel: 'I understand and agree to the Risk Disclosures and Vaipakam Terms.',
 
   match: {
