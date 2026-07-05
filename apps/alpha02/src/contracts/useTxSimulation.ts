@@ -37,6 +37,11 @@ export interface TxSimInput {
    *  zero, so that one revert is downgraded to the benign
    *  `approval-needed` verdict instead of crying wolf. */
   allowAllowanceRevert?: boolean;
+  /** NFT sibling of the above: set ONLY when the submit path runs
+   *  `setApprovalForAll` / NFT approval first (the rent LIST flow) —
+   *  the missing-operator revert at preview time is then the benign
+   *  `approval-needed` case, not a real failure. */
+  allowNftApprovalRevert?: boolean;
 }
 
 export interface SimResult {
@@ -91,6 +96,7 @@ export function useTxSimulation(input: TxSimInput | null, debounceMs = 400) {
           err,
           input.allowSignatureRevert ?? false,
           input.allowAllowanceRevert ?? false,
+          input.allowNftApprovalRevert ?? false,
         ),
       );
     }
@@ -114,6 +120,7 @@ function classifyError(
   err: unknown,
   allowSignatureRevert: boolean,
   allowAllowanceRevert: boolean,
+  allowNftApprovalRevert: boolean,
 ): SimResult {
   const msg = err instanceof BaseError ? err.shortMessage : String(err);
   const full = err instanceof BaseError ? err.message : String(err);
@@ -129,6 +136,17 @@ function classifyError(
   if (
     allowAllowanceRevert &&
     /0xfb8f41b2|insufficient\s*allowance|ERC20InsufficientAllowance/i.test(full)
+  ) {
+    return { status: 'approval-needed' };
+  }
+  // ERC721InsufficientApproval (0x177e802f) / ERC1155MissingApprovalForAll
+  // (0xe237d922) or the legacy string variants — the rent LIST flow
+  // approves the NFT operator at submit time.
+  if (
+    allowNftApprovalRevert &&
+    /0x177e802f|0xe237d922|InsufficientApproval|MissingApprovalForAll|not (?:token )?owner (?:n?or|or) approved|caller is not .*approved/i.test(
+      full,
+    )
   ) {
     return { status: 'approval-needed' };
   }
