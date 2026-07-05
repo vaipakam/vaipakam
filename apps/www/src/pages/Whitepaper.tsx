@@ -85,7 +85,8 @@ export default function Whitepaper() {
             {!isNonEnglish && (
               <p>
                 This page renders the canonical technical whitepaper. The repository root README
-                is a product overview for quick orientation.
+                is the GitHub-facing project overview; legacy section citations are mapped in
+                docs/LegacyReadmeSectionMap.md.
               </p>
             )}
             <ReactMarkdown
