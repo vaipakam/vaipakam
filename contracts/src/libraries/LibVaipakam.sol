@@ -150,9 +150,12 @@ library LibVaipakam {
     // collateral asset's liquidity tier. Replaces the previous per-asset
     // `RiskParams.liqThresholdBps`.
     //
-    // #999 (S1) — tier numbering is: tier 1 = THINNEST liquidity (clears only
-    // the $5k floor), tier 3 = DEEPEST ($5M probe), matching the init-LTV caps
-    // above (tier 1 = 50% cap, tier 3 = 65% cap) and `OracleFacet._liquidityTier`.
+    // #999 (S1) / #1007 (S11) — tier numbering is: tier 1 = THINNEST tierable
+    // liquidity (clears the $50k tier-1 probe but not $500k), tier 3 = DEEPEST
+    // ($5M probe), matching the init-LTV caps above (tier 1 = 50% cap, tier 3 =
+    // 65% cap) and `OracleFacet._liquidityTier`. A liquid asset that clears only
+    // the $5k floor but not the $50k probe is untierable (tier 0, #1007), not
+    // tier 1.
     // So the gradient runs deeper ⇒ HIGHER pre-liquidation LTV: a DEEP asset
     // (tier 3) can safely tolerate a higher LTV before liquidation because it
     // sells quickly with low slippage, while a THIN asset (tier 1) must be
