@@ -19,9 +19,13 @@ Audience: release engineer + signing multisig.
 > chain deploy + wiring is two scripts:
 >
 > 1. **`DeployCrosschain.s.sol`** — per-chain, deploys `CcipMessenger`,
->    `VaipakamRewardMessenger`, `VpfiPoolRateGovernor`, `VpfiBuyAdapter`
->    (mirror) / `VpfiBuyReceiver` (Base), `VPFIMirrorToken` (mirrors), and
->    the stock CCIP `LockReleaseTokenPool` / `BurnMintTokenPool`.
+>    `VaipakamRewardMessenger`, `VpfiPoolRateGovernor`, `VPFIMirrorToken`
+>    (mirrors), the stock CCIP `LockReleaseTokenPool` /
+>    `BurnMintTokenPool`, and (canonical chain) the buyback-remittance
+>    receiver. (The cross-chain fixed-rate buy pair — `VpfiBuyAdapter`
+>    on mirrors / `VpfiBuyReceiver` on Base — was removed with the
+>    on-chain issuer sale, #687-A; any BuyAdapter step below is
+>    historical.)
 > 2. **`ConfigureCcip.s.sol`** — channel peers, lane rate limits,
 >    `TokenAdminRegistry` registration, guardian wiring. Idempotent.
 >
@@ -53,7 +57,7 @@ Three deploy scripts after the 2026-05-10 modernization sweep
 | Phase | Confirm flag | Description |
 |---|---|---|
 | `preflight` | — | Read-only. RPC chainId, deployer balance, env-var presence, WETH-pull validation on bnb/polygon. Always run first. |
-| `contracts` | `--confirm-i-have-multisig-ready` | Deploys Diamond + Timelock + VPFI lane + Reward OApp. Step `[1b]` runs `predeploy-check.sh` right after the `forge build` — the deploy-sanity forge suite (`test/deploy/*`: facet EIP-170 sizes + selector coverage + selector-collision check), deploy shell-script lint, and committed-ABI sync — and aborts before any broadcast if it fails (the mainnet script runs the full regression too, via `--full`). Auto-steps: master-flag flip (testnet only), `setRateLimits` on mirror's `vpfiBuyAdapter`. Refuses to re-run if `addresses.json` already has a `diamond` key — pass `--fresh` (testnet) or `--fresh --confirm-purging-prior-mainnet-deploy` (mainnet) to archive prior state under `.archive/<ISO-8601>/` and redeploy. **Bump `REWARD_VERSION` in `.env` before `--fresh` re-runs** — the Reward OApp proxy is CREATE2-addressed off `REWARD_VERSION`. |
+| `contracts` | `--confirm-i-have-multisig-ready` | Deploys Diamond + Timelock + VPFI lane + Reward OApp. Step `[1b]` runs `predeploy-check.sh` right after the `forge build` — the deploy-sanity forge suite (`test/deploy/*`: facet EIP-170 sizes + selector coverage + selector-collision check), deploy shell-script lint, and committed-ABI sync — and aborts before any broadcast if it fails (the mainnet script runs the full regression too, via `--full`). Auto-steps: master-flag flip (testnet only). (There is no per-adapter `setRateLimits` step any more — the buy adapter is removed, #687-A; per-lane CCIP rate limits live on the VPFI TokenPool and are set through the bounds-checked `VpfiPoolRateGovernor` in the `ccip-wire` phase.) Refuses to re-run if `addresses.json` already has a `diamond` key — pass `--fresh` (testnet) or `--fresh --confirm-purging-prior-mainnet-deploy` (mainnet) to archive prior state under `.archive/<ISO-8601>/` and redeploy. **Bump `REWARD_VERSION` in `.env` before `--fresh` re-runs** — the Reward OApp proxy is CREATE2-addressed off `REWARD_VERSION`. |
 | `lz-config` | `--confirm-dvn-policy-reviewed` | Runs `ConfigureLZConfig.s.sol`. Requires DVN policy env vars (DVN_REQUIRED_1/2/3 + DVN_OPTIONAL_1/2 + CONFIRMATIONS + REMOTE_EIDS + OAPP + SEND_LIB + RECV_LIB). |
 | `swap-adapters` | — | Phase 7a aggregator adapters via `DeploySwapAdapters.s.sol`. Requires `INITIAL_SETTLERS` env var (current 0x Settler set). |
 | `configure` | — | `DiamondConfigSpell.s.sol` — composes ConfigureOracle + ConfigureRewardReporter + ConfigureVPFIBuy + ConfigureNFTImageURIs into one operator-action. Requires per-chain Chainlink feed addresses + WETH. |
@@ -61,7 +65,7 @@ Three deploy scripts after the 2026-05-10 modernization sweep
 | `abi-sync` | — | Runs the export scripts: `exportFrontendAbis.sh` + `exportFrontendDeployments.sh` + `exportSubgraphAbis.sh` + `exportTenderlyAlerts.sh` + `exportLzWatcherVars.sh` + (sibling repo present) `exportAbis.sh` for the keeper-bot. |
 | `cf-defi` / `cf-www` | — | Build + `wrangler deploy` apps/defi (the dApp) / apps/www (marketing). |
 | `cf-keeper` / `cf-indexer` / `cf-agent` | — | wrangler deploy of each Worker. The indexer phase also runs D1 migrations against `vaipakam-archive`. Each verifies the chain-specific `RPC_<CHAIN>` secret is set on the Worker (hard-fail if missing). |
-| `verify` | — | Read-only smoke checks: `paused()`, `getTreasury()`, facet count (exact-matches the live `DiamondLoupe.facetAddresses().length` against `addresses.json` `.facetCount` recorded at deploy — fails on any mismatch, not just a low count), master flag state, BuyAdapter rate-limit caps (refuses to mark verify-done if either cap is `type(uint256).max`). |
+| `verify` | — | Read-only smoke checks: `paused()`, `getTreasury()`, facet count (exact-matches the live `DiamondLoupe.facetAddresses().length` against `addresses.json` `.facetCount` recorded at deploy — fails on any mismatch, not just a low count), master flag state, and the VPFI TokenPool per-lane CCIP rate-limit wiring: the pool's `rateLimitAdmin` must be the `VpfiPoolRateGovernor` (which range-bounds every value and refuses to disable a lane's limit) and at least one CCIP lane must be configured — refuses to mark verify-done otherwise. (The former BuyAdapter rate-limit-cap check is gone with the adapter, #687-A.) |
 | `pause-rehearsal` (testnet only) | `--mode {calldata\|check\|unpause-calldata}` | Sub-5-min N-chain simultaneous-pause drill. `--mode calldata` (default) prints `pause()` calldata for the operator to sign through the Pauser Safe UI; `--mode check` reads `paused()` on every contract and reports elapsed wall-clock vs the 300s budget; `--mode unpause-calldata` prints the inverse for cleanup. Refused on mainnet. |
 
 ### Flags
@@ -107,7 +111,9 @@ Three deploy scripts after the 2026-05-10 modernization sweep
   of mid-flight failures.
 - `.history/health-<unix-ts>.log` — sentinel reads (`paused()`,
   `getTreasury()`, `nextOfferId()`, `nextLoanId()`, facet count,
-  `getMasterFlags()`, BuyAdapter rate limits) captured by the
+  `getMasterFlags()`, and the VPFI TokenPool's `rateLimitAdmin` —
+  per-lane CCIP rate limits themselves are wired later by the
+  `ccip-wire` pass via `VpfiPoolRateGovernor`) captured by the
   post-deploy health check on every chain.
 
 **What the scripts deliberately do NOT do** (every chain — these stay
@@ -186,10 +192,14 @@ mainnet without preflight discipline:
   in lockstep — otherwise the cross-chain peer wiring (Reward
   mesh) won't match the deployed addresses.
 - **Rate-limit verification gate (Item 1, 2026-05-06).**
-  `VPFIBuyAdapter.getRateLimits()` is now a public view. Step `[5d]`
-  health check on mirror chains hard-fails the deploy when either
-  cap is at `type(uint256).max` — replaces the prior soft-warn that
-  let unverified rate limits through.
+  *(Historical — the BuyAdapter and its `getRateLimits()` view were
+  removed with the on-chain issuer sale, #687-A.)* The production-
+  readiness gate is now the VPFI TokenPool's per-lane CCIP rate
+  limits, configured through the bounds-checked `VpfiPoolRateGovernor`
+  (which refuses to disable a lane's limit): the `verify` phase
+  hard-fails unless the governor is the pool's `rateLimitAdmin` and
+  at least one CCIP lane is configured — same replace-the-soft-warn
+  intent, new lever.
 - **dRPC `eth_estimateGas` stale-view reverts during high-rate
   broadcasts.** `forge script --broadcast --skip-simulation` leans on
   the RPC's `eth_estimateGas` to size each tx's gas before submission.
@@ -559,8 +569,10 @@ context-switch to a terminal during a deploy verification.
 ### 1. Per-chain deploy (run 3 times)
 
 Each invocation deploys contracts, runs the post-cut facet-count
-assertion, applies BuyAdapter rate limits (mirror chains only),
-exports ABIs + `deployments.json` to **both** frontend and watcher,
+assertion (per-lane CCIP rate limits are applied later on the VPFI
+TokenPool via `VpfiPoolRateGovernor` during CCIP wiring — the former
+mirror-only BuyAdapter rate-limit step is gone with the adapter,
+#687-A), exports ABIs + `deployments.json` to **both** frontend and watcher,
 and ships frontend + watcher Cloudflare deploys. The `--fresh`
 flag wipes prior state so each rehearsal starts from zero.
 
@@ -670,9 +682,14 @@ Once the testnet rehearsal is green, declare readiness only after
 each item is checked:
 
 - [ ] All 3 chains' `deploy-chain.sh` finished with `[5d] health
-      check` reporting non-default rate limits on mirror BuyAdapters
-      (`uint256.max` value = FAIL — the script's mainnet `--phase
-      verify` will refuse to ship in this state).
+      check` green, and after the CCIP wiring pass every chain's VPFI
+      TokenPool has finite per-lane CCIP rate limits set through the
+      bounds-checked `VpfiPoolRateGovernor` (the governor refuses to
+      disable a lane's limit; the script's mainnet `--phase verify`
+      refuses to ship unless the governor is the pool's
+      `rateLimitAdmin` and at least one lane is configured). (The
+      former mirror-BuyAdapter rate-limit check is gone with the
+      adapter, #687-A.)
 - [ ] `deploy-peers.sh` ran clean (every `setPeer` line shipped, no
       `⚠` lines).
 - [ ] `PositiveFlows.s.sol` + `PartialFlows.s.sol` green on every
@@ -710,7 +727,8 @@ four code edits**:
 4. **`frontend/src/contracts/config.ts`** — add the per-chain record,
    literally spelling out the `VITE_<PREFIX>_*` keys it consumes
    (`rpcUrl`, `diamondAddress`, `deployBlock`,
-   `metricsFacetAddress`, `vpfiBuyAdapter`, `vpfiBuyPaymentToken`).
+   `metricsFacetAddress`; the historical `vpfiBuyAdapter` /
+   `vpfiBuyPaymentToken` keys are gone with the buy adapter, #687-A).
    Each chain's env-var name is hardcoded in its record — there is no
    general "for chainId N read `VITE_<PREFIX>_*`" rule, only the
    per-chain literal.
@@ -857,8 +875,8 @@ The schema each script populates (no manual editing needed since the
 | `facets.<name>` (×30) | `DeployDiamond` |
 | `vpfiToken`, `vpfiTokenImpl`, `vpfiOftAdapter`, `vpfiOftAdapterImpl`, `isCanonicalVPFI=true` | `DeployVPFICanonical` |
 | `vpfiMirror`, `vpfiMirrorImpl`, `isCanonicalVPFI=false` | `DeployVPFIMirror` |
-| `vpfiBuyReceiver`, `vpfiBuyReceiverImpl` | `DeployVPFIBuyReceiver` |
-| `vpfiBuyAdapter`, `vpfiBuyAdapterImpl`, `vpfiBuyReceiverEid`, `vpfiBuyPaymentToken` | `DeployVPFIBuyAdapter` |
+| `vpfiBuyReceiver`, `vpfiBuyReceiverImpl` | `DeployVPFIBuyReceiver` *(historical — buy flow removed, #687-A)* |
+| `vpfiBuyAdapter`, `vpfiBuyAdapterImpl`, `vpfiBuyReceiverEid`, `vpfiBuyPaymentToken` | `DeployVPFIBuyAdapter` *(historical — buy flow removed, #687-A)* |
 | `rewardOApp`, `rewardOAppBootstrapImpl`, `rewardOAppRealImpl`, `rewardLocalEid`, `rewardBaseEid`, `isCanonicalReward` | `DeployRewardOAppCreate2` |
 | `rewardOApp` / `rewardLocalEid` / `rewardBaseEid` / `rewardGraceSeconds` / `isCanonicalReward` | `ConfigureRewardReporter` (idempotent overwrite) |
 | `vpfiDiscountEthPriceAsset` / `vpfiBuyWeiPerVpfi` / `vpfiBuyGlobalCap` / `vpfiBuyPerWalletCap` / `vpfiBuyEnabled` | `ConfigureVPFIBuy` |
@@ -1567,6 +1585,13 @@ Cloudflare deploy to take effect — same as flipping any other
 
 ## VPFIBuyAdapter — payment-token mode (per-chain MANDATORY config)
 
+> **Historical (#687-A).** The cross-chain VPFI fixed-rate buy flow —
+> `VpfiBuyAdapter` on mirrors / `VpfiBuyReceiver` on Base — was removed
+> alongside the on-chain issuer sale, so this section no longer applies
+> to any deploy. It is retained as a historical reference only. The
+> live cross-chain value-flow guardrail is the VPFI TokenPool's
+> per-lane CCIP rate limits, configured via `VpfiPoolRateGovernor`.
+
 The mirror-chain VPFIBuyAdapter pulls the buyer's funds locally and
 forwards a BUY_REQUEST via LayerZero to the canonical Base receiver,
 which mints + sends VPFI. The receiver quotes a single global
@@ -1668,16 +1693,13 @@ the deploy-script pre-flight will refuse to proceed otherwise.
   The Diamond's price-asset machinery doesn't care about the symbol —
   only that a Chainlink-backed feed exists and the v3-style depth
   check resolves to a non-zero pool.
-- **Buy adapter pays in tBNB**, not tETH. The script writes
-  `vpfiBuyPaymentToken = 0x0` (native-gas mode); the canonical Base
-  receiver still quotes the rate in wei-per-VPFI on its side, so the
-  user pays whatever the local chain's native asset is.
-  **Mainnet equivalent (chainId 56) requires WETH-pull mode** — see
-  the "VPFIBuyAdapter — payment-token mode" section above for the
-  canonical bridged-WETH9 address and the deploy-script pre-flight
-  that gates this. The testnet's native-gas mode is a deliberate
-  exemption for dev-loop convenience; production deploys must
-  flip to WETH-pull.
+- **Buy adapter pays in tBNB**, not tETH. *(Historical — the buy
+  adapter was removed with the on-chain issuer sale, #687-A; no
+  payment-token mode exists to configure any more.)* At the time, the
+  script wrote `vpfiBuyPaymentToken = 0x0` (native-gas mode) as a
+  deliberate testnet exemption, with the mainnet equivalent
+  (chainId 56) requiring WETH-pull mode — see the (equally
+  historical) "VPFIBuyAdapter — payment-token mode" section above.
 - **Funding floor**: the §1 Diamond cut + §2 mocks + §3-§6 contract
   deploys cost ~0.13 tBNB at 1 gwei. Have ≥0.3 tBNB on the deployer
   EOA before starting; admin EOA needs ≥0.05 tBNB for handover +
