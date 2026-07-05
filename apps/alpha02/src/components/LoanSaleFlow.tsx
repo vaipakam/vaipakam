@@ -34,10 +34,10 @@ const LOAN_SALE_LISTING_CHAINS: ReadonlySet<number> = new Set([
 export function loanSaleListingEnabled(chainId: number): boolean {
   return LOAN_SALE_LISTING_CHAINS.has(chainId);
 }
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import { usePublicClient, useWalletClient } from 'wagmi';
-import { parseEventLogs } from 'viem';
+import { encodeFunctionData, parseEventLogs } from 'viem';
 import { copy } from '../content/copy';
 import { isPositiveDecimal, submitErrorText } from '../lib/errors';
 import { flowDisabled } from '../lib/killSwitch';
@@ -59,6 +59,8 @@ import type { IndexedLoan } from '../data/indexer';
 import { MAX_INTEREST_BPS, percentToBps } from '../lib/offerSchema';
 import { formatTokenAmount } from '../lib/format';
 import { ConfirmReceipt } from './ConfirmReceipt';
+import { SimulationPreview } from './SimulationPreview';
+import type { TxSimInput } from '../contracts/useTxSimulation';
 import type { TokenMeta } from '../contracts/erc20';
 
 export function LoanSaleFlow({
@@ -106,6 +108,25 @@ export function LoanSaleFlow({
 
   const rateBps = isPositiveDecimal(rateInput) ? percentToBps(rateInput) : null;
   const rateValid = rateBps !== null && rateBps > 0 && rateBps <= MAX_INTEREST_BPS;
+
+  // #1028 item 2 — advisory pre-sign dry run of the exact listing
+  // calldata. All three args exist pre-sign; built only once consent
+  // is ticked (the contract checks it, and previewing consent=false
+  // would just show that revert). The submit approves the settlement
+  // allowance first — the benign approval-needed case.
+  const simTx = useMemo((): TxSimInput | null => {
+    if (!walletChain || rateBps === null || !rateValid || !consent) return null;
+    return {
+      to: walletChain.diamondAddress,
+      data: encodeFunctionData({
+        abi: DIAMOND_ABI_VIEM,
+        functionName: 'createLoanSaleOffer',
+        args: [BigInt(row.loanId), rateBps, consent],
+      }),
+      value: 0n,
+      allowAllowanceRevert: true,
+    };
+  }, [walletChain, rateBps, rateValid, consent, row.loanId]);
 
   const sym = principalMeta.symbol;
   const dec = principalMeta.decimals;
@@ -328,6 +349,7 @@ export function LoanSaleFlow({
             <div className="banner banner-warn" role="alert" style={{ marginBottom: 12 }}>
               <span className="banner-body">{copy.loanSale.lockWarning}</span>
             </div>
+            <SimulationPreview tx={simTx} />
           </ConfirmReceipt>
         </div>
       ) : null}
