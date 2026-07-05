@@ -806,18 +806,34 @@ converge. Its intended behaviour (the test oracle for that surface):
   explanation — the listing sells the claim at its frozen outstanding
   amount, and a partial repayment under it would make the buyer
   overpay for a smaller claim (full repayment and close-early remain
-  open to the borrower). Until the protocol's listing entry point
-  works end-to-end (it currently cannot complete on-chain), the
-  listing form itself is withheld and replaced by a plain note
-  pointing at the working instant exit; every standing-surface rule
-  above still applies to any listing that exists.
-  On the BUYER side, an offer tied to an already-running loan (a
-  position sale, or an offset vehicle) is not acceptable in this app
-  version: the review flags the link, names the loan, and blocks
-  signing entirely — the fresh-loan receipt does not describe what
-  accepting such an offer really does, and a wrong receipt must never
-  be signable. Signing also waits until the link check resolves, and
-  a failed check shows a visible retry rather than silently passing.
+  open to the borrower). The listing form is offered only on networks
+  where the protocol's listing entry point is known to work
+  end-to-end; elsewhere it is withheld and replaced by a plain note
+  pointing at the working instant exit. Every standing-surface rule
+  above applies to any listing that exists either way.
+  On the BUYER side, an offer tied to an already-running loan is
+  reviewed by KIND. A position sale gets a real buy-a-running-loan
+  review: it is introduced as buying the lender side of a named,
+  already-running loan (the borrower and their obligations do not
+  change), and every number shown comes from that loan read live —
+  the price is the loan's current outstanding principal, the earnings
+  projection covers only the remaining part of the term at the
+  listing's rate, the collateral shown is what the borrower actually
+  has locked, and the end date is the running loan's real due date.
+  The purchase is signable only when every check is positively clear:
+  the linked loan is still active and not past its due date, and the
+  seller's standing settlement funding still covers completing the
+  sale right now (a seller who revoked or spent it would make the
+  purchase fail on-chain — the review blocks with a plain reason
+  instead of letting a doomed transaction be signed). What the buyer
+  signs is bound to the same live loan numbers the review showed, so
+  any movement between review and signing aborts before the wallet
+  prompt. An offset vehicle (or a linked offer whose kind cannot be
+  positively identified) remains not acceptable in this app version:
+  the review flags the link, names the loan, and blocks signing
+  entirely. Signing always waits until the link and kind checks
+  resolve, and a failed check shows a visible retry rather than
+  silently passing.
 - Advanced mode shows the role-relevant position-NFT id on the loan
   page (the lender-side id to lender-side users, the borrower-side
   id to borrower-side users), linking to a verifier page that any
