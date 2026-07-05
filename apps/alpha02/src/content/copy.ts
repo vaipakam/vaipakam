@@ -64,6 +64,10 @@ export const copy = {
       'Approve the token — two confirmations here: your wallet needs an older approval reset to zero before the new amount can be set.',
     post: 'Post the offer — the final transaction.',
     accept: 'Open the deal — the final transaction.',
+    approveNft:
+      'Allow the protocol to move NFTs from this collection — a one-time transaction per collection.',
+    postListing: 'Post the listing — the final transaction.',
+    acceptRental: 'Start the rental — the final transaction.',
     phaseSign: (c: number, t: number) => `Signing terms… (${c} of ${t})`,
     phaseApprove: (c: number, t: number) => `Approving… (${c} of ${t})`,
     phaseSend: (c: number, t: number) => `Submitting… (${c} of ${t})`,
