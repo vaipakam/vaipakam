@@ -1,0 +1,82 @@
+# alpha02 fork-tier e2e — the standard automatic regression for the
+# retail app (docs/TestScopes/Alpha02RegressionFlows.md). Runs the
+# real built app against `anvil --fork-url <base-sepolia>` (the
+# DEPLOYED Diamond's live bytecode + state, disposable and
+# time-travelable) with a fork-hydrated indexer stub and ephemeral
+# per-run wallets — no secrets required.
+#
+# Trigger scope (deliberate): the suite exercises the APP against the
+# DEPLOYED chain, so it cares about apps/alpha02/** and the consumed
+# artifacts in packages/contracts/** (ABIs + deployments — where a
+# contract change actually reaches the app, per the repo's sync
+# convention). Raw contracts/** changes don't alter the fork until
+# they're deployed + synced, so they don't trigger it. The nightly
+# schedule catches the other direction: the live testnet moving under
+# an unchanged app.
+name: alpha02 e2e (anvil fork)
+
+on:
+  pull_request:
+    paths:
+      - 'apps/alpha02/**'
+      - 'packages/contracts/**'
+      - '.github/workflows/alpha02-e2e.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'apps/alpha02/**'
+      - 'packages/contracts/**'
+      - '.github/workflows/alpha02-e2e.yml'
+  schedule:
+    - cron: '17 3 * * *' # nightly: catch live-testnet drift under an unchanged app
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: alpha02-e2e-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  e2e:
+    name: fork-tier scenarios
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - name: Checkout
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+
+      - name: Install Foundry (anvil)
+        uses: foundry-rs/foundry-toolchain@c7450ba673e133f5ee30098b3b54f444d3a2ca2d # v1
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
+
+      - name: Setup Node
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Install workspace deps
+        run: pnpm install --frozen-lockfile
+
+      - name: Install Playwright Chromium
+        run: pnpm --filter @vaipakam/alpha02 exec playwright install --with-deps chromium
+
+      - name: Run fork-tier e2e
+        env:
+          # Falls back to the public endpoint when the secret is unset —
+          # set BASE_SEPOLIA_RPC_URL in repo secrets for a keyed fork
+          # source if the public one throttles the fork's lazy reads.
+          ALPHA02_E2E_FORK_URL: ${{ secrets.BASE_SEPOLIA_RPC_URL || 'https://sepolia.base.org' }}
+        run: pnpm --filter @vaipakam/alpha02 run e2e
+
+      - name: Upload traces on failure
+        if: failure()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: alpha02-e2e-traces
+          path: apps/alpha02/test-results/
+          retention-days: 7

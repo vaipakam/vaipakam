@@ -1,0 +1,212 @@
+/**
+ * Injected-wallet Playwright fixture — the checked-in port of the
+ * campaign harness driver (docs/TestScopes/alpha02-harness-seed/
+ * driver.mjs). Injects an EIP-1193 + EIP-6963 provider whose signing
+ * and RPC happen in THIS node process via viem against the anvil
+ * fork; the app sees a normal injected browser wallet and the
+ * ephemeral key never enters the page.
+ *
+ * `launchWallet(role)` returns an independent context+page, so one
+ * test can drive multiple actors (poster + acceptor, seller + buyer).
+ */
+import { test as base, expect, type BrowserContext, type Page } from '@playwright/test';
+import { createWalletClient, http, numberToHex } from 'viem';
+import type { PrivateKeyAccount } from 'viem';
+import { ANVIL_URL, anvilRpc } from './anvil';
+import { CHAIN_ID, forkChain } from './chain';
+import { accountFor, type Role } from './wallets';
+
+export interface WalletSession {
+  ctx: BrowserContext;
+  page: Page;
+  account: PrivateKeyAccount;
+  consoleErrors: string[];
+}
+
+async function wireWallet(
+  ctx: BrowserContext,
+  account: PrivateKeyAccount,
+): Promise<void> {
+  const wallet = createWalletClient({
+    chain: forkChain,
+    transport: http(ANVIL_URL),
+    account,
+  });
+
+  async function handle({ method, params }: { method: string; params?: unknown[] }) {
+    const p = (params ?? []) as never[];
+    switch (method) {
+      case 'eth_requestAccounts':
+      case 'eth_accounts':
+        return [account.address];
+      case 'eth_chainId':
+        return numberToHex(CHAIN_ID);
+      case 'net_version':
+        return String(CHAIN_ID);
+      case 'wallet_switchEthereumChain': {
+        const wanted = Number((p[0] as { chainId: string }).chainId);
+        if (wanted !== CHAIN_ID) {
+          const err = new Error('Unrecognized chain') as Error & { code: number };
+          err.code = 4902;
+          throw err;
+        }
+        return null;
+      }
+      case 'wallet_requestPermissions':
+      case 'wallet_revokePermissions':
+        return [{ parentCapability: 'eth_accounts' }];
+      case 'wallet_watchAsset':
+        return true;
+      case 'personal_sign':
+        return account.signMessage({ message: { raw: p[0] as `0x${string}` } });
+      case 'eth_signTypedData_v4': {
+        const typed = JSON.parse(p[1] as string);
+        return account.signTypedData({
+          domain: typed.domain,
+          types: typed.types,
+          primaryType: typed.primaryType,
+          message: typed.message,
+        });
+      }
+      case 'eth_sendTransaction': {
+        const tx = p[0] as {
+          to?: `0x${string}`;
+          data?: `0x${string}`;
+          value?: string;
+          gas?: string;
+        };
+        return wallet.sendTransaction({
+          to: tx.to,
+          data: tx.data,
+          value: tx.value ? BigInt(tx.value) : undefined,
+          gas: tx.gas ? BigInt(tx.gas) : undefined,
+          account,
+          chain: forkChain,
+        });
+      }
+      default:
+        // Reads forward to the fork.
+        return anvilRpc(method, p);
+    }
+  }
+
+  await ctx.exposeBinding('__walletRequest', async (_src, payload) => {
+    try {
+      const result = await handle(payload as { method: string; params?: unknown[] });
+      return { result: jsonSafe(result) };
+    } catch (e) {
+      const err = e as Error & { code?: number; shortMessage?: string };
+      return {
+        error: {
+          code: err.code ?? -32603,
+          message: err.shortMessage ?? err.message ?? 'error',
+        },
+      };
+    }
+  });
+
+  await ctx.addInitScript(() => {
+    const w = window as unknown as {
+      ethereum?: { __vaipakamTest?: boolean };
+      __walletRequest: (p: unknown) => Promise<{
+        result?: unknown;
+        error?: { code: number; message: string };
+      }>;
+    };
+    if (w.ethereum?.__vaipakamTest) return;
+    const listeners: Record<string, ((a: unknown) => void)[]> = {};
+    const provider = {
+      __vaipakamTest: true,
+      isMetaMask: true,
+      request: async (payload: unknown) => {
+        const r = await w.__walletRequest(payload);
+        if (r.error) {
+          const err = new Error(r.error.message) as Error & { code: number };
+          err.code = r.error.code;
+          throw err;
+        }
+        return r.result;
+      },
+      on: (ev: string, fn: (a: unknown) => void) => {
+        (listeners[ev] ??= []).push(fn);
+        return provider;
+      },
+      removeListener: (ev: string, fn: (a: unknown) => void) => {
+        listeners[ev] = (listeners[ev] ?? []).filter((f) => f !== fn);
+        return provider;
+      },
+      emit: (ev: string, arg: unknown) =>
+        (listeners[ev] ?? []).forEach((f) => f(arg)),
+    };
+    (window as unknown as { ethereum: unknown }).ethereum = provider;
+    const info = {
+      uuid: '7a3f4b1e-9d2c-4f6a-8e5b-000000000e2e',
+      name: 'Vaipakam Test Wallet',
+      icon: 'data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSIzMiIgaGVpZ2h0PSIzMiI+PHJlY3Qgd2lkdGg9IjMyIiBoZWlnaHQ9IjMyIiBmaWxsPSIjMDA1NUZGIi8+PC9zdmc+',
+      rdns: 'com.vaipakam.testwallet',
+    };
+    const announce = () =>
+      window.dispatchEvent(
+        new CustomEvent('eip6963:announceProvider', {
+          detail: Object.freeze({ info, provider }),
+        }),
+      );
+    window.addEventListener('eip6963:requestProvider', announce);
+    announce();
+  });
+}
+
+function jsonSafe(v: unknown): unknown {
+  return JSON.parse(
+    JSON.stringify(v, (_k, x) => (typeof x === 'bigint' ? numberToHex(x) : x)),
+  );
+}
+
+/** Connect via the app's ConnectKit modal if the page shows the
+ *  connect button (fresh contexts always do). */
+export async function connectWallet(page: Page): Promise<void> {
+  const btn = page.getByRole('button', { name: /^connect wallet$/i }).first();
+  if (!(await btn.isVisible().catch(() => false))) return;
+  await btn.click();
+  for (const name of [/vaipakam test wallet/i, /metamask/i, /browser/i, /injected/i]) {
+    const opt = page.getByRole('button', { name }).first();
+    if (await opt.isVisible({ timeout: 2_000 }).catch(() => false)) {
+      await opt.click();
+      break;
+    }
+  }
+  await page.waitForTimeout(1_500);
+}
+
+export const test = base.extend<{
+  launchWallet: (role: Role, opts?: { advanced?: boolean }) => Promise<WalletSession>;
+}>({
+  launchWallet: async ({ browser, baseURL }, use) => {
+    const sessions: WalletSession[] = [];
+    await use(async (role, opts = {}) => {
+      const account = accountFor(role);
+      const ctx = await browser.newContext({ viewport: { width: 1280, height: 900 } });
+      await wireWallet(ctx, account);
+      if (opts.advanced) {
+        await ctx.addInitScript(() => {
+          localStorage.setItem('alpha02.mode', 'advanced');
+        });
+      }
+      const page = await ctx.newPage();
+      page.setDefaultTimeout(20_000);
+      const consoleErrors: string[] = [];
+      page.on('console', (m) => {
+        if (m.type() === 'error') consoleErrors.push(m.text());
+      });
+      page.on('pageerror', (e) => consoleErrors.push('PAGEERROR: ' + e.message));
+      // Land on the app root once so the origin exists for localStorage.
+      await page.goto(baseURL ?? '/', { waitUntil: 'domcontentloaded' });
+      const session = { ctx, page, account, consoleErrors };
+      sessions.push(session);
+      return session;
+    });
+    for (const s of sessions) await s.ctx.close().catch(() => {});
+  },
+});
+
+export { expect };
