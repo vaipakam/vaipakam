@@ -636,16 +636,26 @@ converge. Its intended behaviour (the test oracle for that surface):
   source positively returned zero; a failed or partial load shows an
   unavailable state. A user's positions list must never silently omit
   one side of their positions.
-- The wallet's OWN current positions (open offers it created, loan
-  positions it currently holds) are discovered from the chain itself,
-  so a just-confirmed transaction appears under My positions within a
-  block — never gated on background ingestion catching up. Historical
-  rows the chain can no longer enumerate (closed positions whose
-  position tokens are gone, listings received by transfer) come from
-  the indexed history; when that history source is unavailable the
-  page still shows the live current positions but must state that
-  older history may be missing, and it shows the unavailable state
-  only when both sources fail.
+- The wallet's OWN current positions (open offers it created, open
+  offers it received by transfer, loan positions it currently holds)
+  are discovered from the chain itself, so a just-confirmed
+  transaction appears under My positions within a block — never gated
+  on background ingestion catching up. The indexed lists serve as the
+  redundancy source for the same current positions; when either
+  source is unavailable the page still renders from the remaining one
+  but must say a data source is degraded, and it shows the
+  unavailable state only when both fail.
+- Live chain state always outranks the indexed snapshot for the
+  wallet's own positions: a just-cancelled offer must not linger as
+  cancellable, and a loan whose position token the wallet no longer
+  holds (transferred away or burned at claim) must not keep rendering
+  as the wallet's active position, even while background ingestion
+  lags.
+- The wallet's activity feed is built from indexed event history and
+  must refuse to render (unavailable state) when its participation
+  filter can't see the wallet's full loan list; an empty feed carries
+  the same staleness note as a non-empty one when ingestion has
+  positively stalled.
 - NFT rentals are never presented as debt: nothing says "repay", the
   NFT stays in the owner's vault, the renter receives temporary use
   rights, and the renter's total up-front payment (fees plus the live

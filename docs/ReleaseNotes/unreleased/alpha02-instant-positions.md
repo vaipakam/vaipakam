@@ -12,15 +12,22 @@ block. The indexed history still contributes what the chain can no
 longer enumerate: closed positions whose position tokens are burned
 and listings received by transfer.
 
+Live chain state also now outranks stale indexed snapshots in both
+directions: a just-cancelled offer can no longer linger looking
+cancellable (the chain's terminal verdict suppresses the lagging
+indexed row), and a loan whose position token the wallet no longer
+holds no longer ghosts in the list. Received/bought open listings are
+chain-discovered too.
+
 Availability improves with honesty preserved: an indexer outage no
 longer blanks the page (live current positions still render), but the
-page then shows a plain warning that older history may be missing —
+page then shows a plain warning that a data source is degraded —
 never a confident partial list. The full unavailable state appears
 only when both the chain and the indexer fail. The Activity page,
-which remains indexer-fed by nature (event history has no chain view),
-now carries the same self-gating staleness note the market lists use,
-so a stalled ingest cursor is stated instead of silently showing an
-incomplete feed.
+which remains indexer-fed by nature (event history has no chain
+view), refuses to render without the indexed loan list its
+participation filter needs, and carries the market lists' self-gating
+staleness note on empty and non-empty feeds alike.
 
 Follow-up tracked separately: push-based indexer ingestion (webhook →
 immediate scan) to shrink the freshness gap for everyone else's views

@@ -91,15 +91,18 @@ export async function fetchAllPages<T>(
   return null; // cap hit with a cursor still open — truncated ≠ complete
 }
 
-/** Union result of chain-authoritative discovery + indexer history.
- *  `historyComplete === false` means the CHAIN answered (current
- *  positions are live and complete) but the INDEXER didn't — history
- *  rows (claimed/cancelled positions whose NFTs are burned, offers
- *  held via transferred NFTs) may be missing, and surfaces that show
- *  history must say so instead of rendering a confident partial. */
+/** Union result of chain-authoritative discovery + the indexer leg.
+ *  The two flags say which SOURCE answered this round — consumers
+ *  decide what that means for their surface: Positions shows a
+ *  degraded-sources note when either is false; Activity refuses to
+ *  run its participation filter without the indexer leg. NOTE the
+ *  indexer's /loans/by-* routes are CURRENT-OWNER filtered (they do
+ *  not return burned-NFT history), so `indexerOk` is availability of
+ *  the redundancy leg — not a burned-history promise. */
 export interface MyRows<T> {
   rows: T[];
-  historyComplete: boolean;
+  chainOk: boolean;
+  indexerOk: boolean;
 }
 
 /** Chain rows win a (key) collision — they are live-read this block;
@@ -148,7 +151,7 @@ export function useMyLoansFull() {
     enabled: Boolean(address),
     refetchInterval: REFRESH_MS,
     queryFn: async (): Promise<MyRows<PositionLoan> | null> => {
-      if (!address) return { rows: [], historyComplete: true };
+      if (!address) return { rows: [], chainOk: true, indexerOk: true };
       const [chainRows, indexedRows] = await Promise.all([
         publicClient
           ? readOwnLoanRowsLive(
@@ -161,20 +164,38 @@ export function useMyLoansFull() {
         fetchIndexedLoans(readChain.chainId, address),
       ]);
       if (chainRows === null && indexedRows === null) return null;
+      // The live enumeration is AUTHORITATIVE for what the wallet
+      // holds right now. An indexed row that still claims an
+      // ownership-implying status but is absent from the live set is
+      // the classic ingest-lag ghost (position NFT transferred away,
+      // or burned at claim) — trusting it would show a loan the
+      // wallet no longer owns. Terminal-status indexed rows pass
+      // through: they are accurate cursor-lag snapshots.
+      const OWNERSHIP_STATUSES = new Set(['active', 'fallback_pending']);
+      const chainKeys = new Set(
+        (chainRows ?? []).map((l) => `${l.loanId}:${l.role}`),
+      );
+      const indexedKept = (indexedRows ?? []).filter(
+        (l) =>
+          chainRows === null ||
+          !OWNERSHIP_STATUSES.has(l.status) ||
+          chainKeys.has(`${l.loanId}:${l.role}`),
+      );
       const rows = unionByKey(
         chainRows ?? [],
-        indexedRows ?? [],
+        indexedKept,
         (l) => `${l.loanId}:${l.role}`,
       ).sort((a, b) => b.startAt - a.startAt);
-      return { rows, historyComplete: indexedRows !== null };
+      return { rows, chainOk: chainRows !== null, indexerOk: indexedRows !== null };
     },
   });
 }
 
 /** Slim view of {@link useMyLoansFull} — same cache entry, rows only.
- *  For consumers that don't render history-completeness (Home,
- *  Activity, vault, claimables — each already tolerates the indexer
- *  being down or does its own authoritative confirms). */
+ *  For consumers that don't render source-degradation (Home, vault,
+ *  claimables — each already tolerates a missing source or does its
+ *  own authoritative confirms). Activity uses the FULL variant: its
+ *  participation filter needs the indexer leg. */
 export function useMyLoans() {
   const full = useMyLoansFull();
   return {
@@ -246,8 +267,8 @@ export function useMyOffersFull() {
     enabled: Boolean(address),
     refetchInterval: REFRESH_MS,
     queryFn: async (): Promise<MyRows<IndexedOffer> | null> => {
-      if (!address) return { rows: [], historyComplete: true };
-      const [chainRows, created, held] = await Promise.all([
+      if (!address) return { rows: [], chainOk: true, indexerOk: true };
+      const [chainLive, created, held] = await Promise.all([
         publicClient
           ? readOwnOfferRowsLive(
               publicClient,
@@ -274,12 +295,20 @@ export function useMyOffersFull() {
         ),
       ]);
       const indexerOk = created !== null && held !== null;
-      if (chainRows === null && !indexerOk) return null;
-      const indexed = indexerOk ? [...created, ...held] : [];
-      const rows = unionByKey(chainRows ?? [], indexed, (o) =>
+      if (chainLive === null && !indexerOk) return null;
+      // Live TOMBSTONES: the chain says these ids are terminally gone
+      // (a cancelled-unfilled offer deletes its slot, so no chain ROW
+      // exists to win the union) — a stale indexed "active" row must
+      // not resurrect a just-cancelled offer until ingestion catches
+      // up.
+      const tombstones = new Set(chainLive?.terminalOfferIds ?? []);
+      const indexed = (indexerOk ? [...created, ...held] : []).filter(
+        (o) => !tombstones.has(o.offerId),
+      );
+      const rows = unionByKey(chainLive?.rows ?? [], indexed, (o) =>
         String(o.offerId),
       ).filter((o) => o.status === 'active');
-      return { rows, historyComplete: indexerOk };
+      return { rows, chainOk: chainLive !== null, indexerOk };
     },
   });
 }

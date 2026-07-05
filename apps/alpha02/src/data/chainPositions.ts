@@ -42,16 +42,26 @@ const OFFER_STATE: readonly IndexedOffer['status'][] = [
   'consumed_by_sale',
 ];
 
-/** Read one offer live and map it onto the indexer-row shape.
- *  Returns `null` for a deleted slot or an unknown FUTURE enum value
- *  (honest "can't represent", mirroring readLoanRowLive). Throws on
- *  transport failure. */
+export interface LiveOfferRead {
+  /** Hydrated row, or null when the slot is deleted / the state enum
+   *  is an unknown FUTURE value (honest "can't represent"). */
+  row: IndexedOffer | null;
+  /** True when the CANONICAL state says this offer is terminally gone
+   *  (Cancelled / ConsumedBySale). A cancelled-unfilled offer deletes
+   *  its storage slot, so `row` is null — but the id must still act
+   *  as a live TOMBSTONE: without it, a stale indexed "active" row
+   *  would outlive the cancel until ingestion catches up. */
+  terminal: boolean;
+}
+
+/** Read one offer live and map it onto the indexer-row shape. Throws
+ *  on transport failure (callers must not treat that as "gone"). */
 export async function readOfferRowLive(
   publicClient: PublicClient,
   diamond: `0x${string}`,
   chainId: number,
   offerId: number,
-): Promise<IndexedOffer | null> {
+): Promise<LiveOfferRead> {
   const [o, stateRaw] = (await Promise.all([
     publicClient.readContract({
       address: diamond,
@@ -66,11 +76,14 @@ export async function readOfferRowLive(
       args: [BigInt(offerId)],
     }),
   ])) as [Record<string, unknown>, number | bigint];
-  // Cancelled-unfilled offers delete the storage slot — the row's
-  // data is gone; history for those stays indexer-only.
-  if (!o.creator || String(o.creator).toLowerCase() === ZERO_ADDR) return null;
   let status = OFFER_STATE[Number(stateRaw)];
-  if (status === undefined) return null;
+  const terminal = status === 'cancelled' || status === 'consumed_by_sale';
+  // Cancelled-unfilled offers delete the storage slot — the row's
+  // data is gone, but the terminal verdict above still stands.
+  if (!o.creator || String(o.creator).toLowerCase() === ZERO_ADDR) {
+    return { row: null, terminal };
+  }
+  if (status === undefined) return { row: null, terminal };
   const nowSec = Math.floor(Date.now() / 1000);
   // GTT expiry overlay on an Open row. Wall clock is the right basis
   // here: on a live network it tracks block time within seconds, and
@@ -78,7 +91,7 @@ export async function readOfferRowLive(
   if (status === 'active' && Number(o.expiresAt ?? 0) !== 0 && nowSec >= Number(o.expiresAt)) {
     status = 'expired';
   }
-  return {
+  const row: IndexedOffer = {
     chainId,
     offerId,
     status,
@@ -113,6 +126,7 @@ export async function readOfferRowLive(
     expiresAt: Number(o.expiresAt) || undefined,
     fillMode: Number(o.fillMode),
   };
+  return { row, terminal };
 }
 
 /** Every loan position the wallet CURRENTLY HOLDS, role decided by
@@ -182,18 +196,28 @@ export async function readOwnLoanRowsLive(
   }
 }
 
-/** Every offer the wallet CREATED, hydrated live. Covers the freshly
- *  posted offer the indexer hasn't ingested yet. Offers merely HELD
- *  via a transferred position NFT stay indexer-discovered (no chain
- *  view enumerates those). `null` = chain side unavailable. */
+export interface OwnOffersLive {
+  rows: IndexedOffer[];
+  /** Offer ids the CHAIN says are terminally gone (cancelled /
+   *  consumed-by-sale). The merge uses these as tombstones to
+   *  suppress stale indexed rows still claiming "active". */
+  terminalOfferIds: number[];
+}
+
+/** Every offer the wallet CREATED plus every OPEN offer whose
+ *  position NFT it currently HOLDS (a received/bought listing),
+ *  hydrated live — covers both the freshly posted offer and the
+ *  freshly transferred one before the indexer ingests either.
+ *  `null` = chain side unavailable. */
 export async function readOwnOfferRowsLive(
   publicClient: PublicClient,
   diamond: `0x${string}`,
   chainId: number,
   address: `0x${string}`,
-): Promise<IndexedOffer[] | null> {
-  const ids: number[] = [];
+): Promise<OwnOffersLive | null> {
+  const ids = new Set<number>();
   try {
+    // Leg 1 — the creator's lifetime offer index.
     for (let offset = 0n; ; offset += PAGE) {
       const [page, total] = (await publicClient.readContract({
         address: diamond,
@@ -201,8 +225,23 @@ export async function readOwnOfferRowsLive(
         functionName: 'getUserOffersPaginated',
         args: [address, offset, PAGE],
       })) as readonly [readonly bigint[], bigint];
-      ids.push(...page.map((id) => Number(id)));
-      if (ids.length >= Number(total) || page.length === 0) break;
+      for (const id of page) ids.add(Number(id));
+      if (ids.size >= Number(total) || page.length === 0) break;
+      if (offset >= BigInt(WALK_CAP)) return null; // truncated ≠ complete
+    }
+    // Leg 2 — OPEN offers whose position NFT the wallet holds
+    // (getUserPositionOffersPaginated resolves offerIdByPositionTokenId
+    // over the wallet's ERC721Enumerable inventory; totalBalance is
+    // the pagination bound over NFT slots, like the loans view).
+    for (let offset = 0n; ; offset += PAGE) {
+      const [offerIds, , totalBalance] = (await publicClient.readContract({
+        address: diamond,
+        abi: DIAMOND_ABI_VIEM,
+        functionName: 'getUserPositionOffersPaginated',
+        args: [address, offset, PAGE],
+      })) as readonly [readonly bigint[], readonly bigint[], bigint];
+      for (const id of offerIds) ids.add(Number(id));
+      if (offset + PAGE >= totalBalance) break;
       if (offset >= BigInt(WALK_CAP)) return null; // truncated ≠ complete
     }
   } catch {
@@ -211,10 +250,17 @@ export async function readOwnOfferRowsLive(
     return null;
   }
   try {
-    const rows = await Promise.all(
-      ids.map((id) => readOfferRowLive(publicClient, diamond, chainId, id)),
+    const reads = await Promise.all(
+      [...ids].map((id) => readOfferRowLive(publicClient, diamond, chainId, id)),
     );
-    return rows.filter((r): r is IndexedOffer => r !== null);
+    const rows: IndexedOffer[] = [];
+    const terminalOfferIds: number[] = [];
+    for (let i = 0; i < reads.length; i++) {
+      const { row, terminal } = reads[i];
+      if (row) rows.push(row);
+      if (terminal) terminalOfferIds.push([...ids][i]);
+    }
+    return { rows, terminalOfferIds };
   } catch {
     return null; // a row read failed — never a confident partial list
   }

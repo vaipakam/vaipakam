@@ -141,12 +141,16 @@ export function Positions() {
   const loans = useMyLoansFull();
   const offers = useMyOffersFull();
   // Current positions come from the CHAIN (authoritative, fresh this
-  // block); `historyComplete === false` means the indexer leg failed,
-  // so history rows (claimed/cancelled positions, offers held via a
-  // transferred NFT) may be missing — say so, never render a partial
-  // list as the whole truth.
-  const historyIncomplete =
-    loans.data?.historyComplete === false || offers.data?.historyComplete === false;
+  // block) with the indexer as the redundancy leg. Either source
+  // failing means the list is served single-sourced — say so, never
+  // render a possibly-degraded list as the whole truth.
+  const sourcesDegraded =
+    loans.data != null &&
+    offers.data != null &&
+    (!loans.data.chainOk ||
+      !loans.data.indexerOk ||
+      !offers.data.chainOk ||
+      !offers.data.indexerOk);
 
   return (
     <div>
@@ -173,9 +177,9 @@ export function Positions() {
         <UnavailableState body={copy.positions.unavailable} />
       ) : (
         <>
-          {historyIncomplete ? (
+          {sourcesDegraded ? (
             <div className="banner banner-warn" role="alert">
-              <span className="banner-body">{copy.positions.historyIncomplete}</span>
+              <span className="banner-body">{copy.positions.sourcesDegraded}</span>
             </div>
           ) : null}
 
