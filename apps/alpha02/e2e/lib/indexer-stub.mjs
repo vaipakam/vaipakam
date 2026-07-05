@@ -206,8 +206,11 @@ async function handler(req, res) {
       return offer ? json(200, offer) : json(404, { error: 'not found' });
     }
 
-    // GET /loans/by-lender/:addr | /loans/by-borrower/:addr — the
-    // chain's position enumeration (lender ids, borrower ids).
+    // GET /loans/by-lender/:addr | /loans/by-borrower/:addr. The chain
+    // view returns `(loanIds, positionTokenIds, totalBalance)` — loans
+    // whose position NFT the wallet HOLDS, both roles mixed — so the
+    // side split comes from each loan's own lender/borrower field
+    // (what the real indexer's columns hold too).
     if (
       parts[0] === 'loans' &&
       (parts[1] === 'by-lender' || parts[1] === 'by-borrower') &&
@@ -215,13 +218,14 @@ async function handler(req, res) {
     ) {
       const side = parts[1] === 'by-lender' ? 'lender' : 'borrower';
       const addr = parts[2].toLowerCase();
-      const [lenderIds, borrowerIds] = await read('getUserPositionLoansPaginated', [
+      const [loanIds] = await read('getUserPositionLoansPaginated', [
         addr,
         0n,
         100n,
-      ]).catch(() => [[], []]);
-      const ids = side === 'lender' ? [...lenderIds] : [...borrowerIds];
-      const loans = (await Promise.all(ids.map(mapLoan))).filter(Boolean);
+      ]).catch(() => [[], [], 0n]);
+      const loans = (await Promise.all([...loanIds].map(mapLoan)))
+        .filter(Boolean)
+        .filter((l) => (side === 'lender' ? l.lender : l.borrower).toLowerCase() === addr);
       return json(200, { chainId: CHAIN_ID, side, address: addr, loans, nextBefore: null });
     }
 

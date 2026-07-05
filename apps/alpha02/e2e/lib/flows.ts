@@ -114,19 +114,33 @@ export async function newestOfferIdFor(creator: `0x${string}`): Promise<bigint> 
   return ids.reduce((a, b) => (b > a ? b : a));
 }
 
-/** Newest loan id where `who` is the given side, from the chain's own
- *  position enumeration (what the app's claims discovery reads too). */
+/** Newest loan id where `who` is the given side. The chain view
+ *  returns `(loanIds, positionTokenIds, totalBalance)` — loans whose
+ *  position NFT the wallet HOLDS, both roles mixed (run 4 failed by
+ *  misreading tuple slot 2 as borrower loan ids — those are NFT token
+ *  ids). Role is a per-loan field, so filter via getLoanDetails. */
 export async function newestLoanIdFor(
   who: `0x${string}`,
   side: 'lender' | 'borrower',
 ): Promise<bigint> {
-  const [lenderIds, borrowerIds] = (await pub.readContract({
+  const [loanIds] = (await pub.readContract({
     address: DIAMOND,
     abi: DIAMOND_ABI_VIEM,
     functionName: 'getUserPositionLoansPaginated',
     args: [who, 0n, 100n],
   })) as [readonly bigint[], readonly bigint[], bigint];
-  const ids = side === 'lender' ? lenderIds : borrowerIds;
-  if (!ids.length) throw new Error(`no ${side} loans for ${who}`);
-  return ids.reduce((a, b) => (b > a ? b : a));
+  let newest: bigint | undefined;
+  for (const id of loanIds) {
+    const loan = (await pub.readContract({
+      address: DIAMOND,
+      abi: DIAMOND_ABI_VIEM,
+      functionName: 'getLoanDetails',
+      args: [id],
+    })) as { lender: string; borrower: string };
+    const party = side === 'lender' ? loan.lender : loan.borrower;
+    if (party.toLowerCase() !== who.toLowerCase()) continue;
+    if (newest === undefined || id > newest) newest = id;
+  }
+  if (newest === undefined) throw new Error(`no ${side} loans for ${who}`);
+  return newest;
 }
