@@ -49,6 +49,24 @@ contract MetricsDashboardFacet {
     /// @notice Hard-cap exceeded.
     error LimitTooLarge(uint256 requested, uint256 max);
 
+    /// @notice #1025 — max id-array length for the bulk batch-by-id views
+    ///         {getOffersWithState} / {getLoansBatch}. Sized with headroom over
+    ///         the frontend's `PAGE = 200` chunk so a correctly-configured
+    ///         client never trips it; the cap only bounds worst-case response
+    ///         size against a hand-rolled oversized call. A `view` over
+    ///         `eth_call` can't OOG the chain, but an unbounded 30-field-per-id
+    ///         array can still blow the RPC's response-size / time budget and
+    ///         fail the whole refresh — the very large-inventory failure mode
+    ///         these views exist to fix (#1025 design §5.2).
+    uint256 public constant MAX_BATCH_IDS = 250;
+
+    /// @notice #1025 — batch id array exceeded {MAX_BATCH_IDS}. A NAMED revert
+    ///         (not a generic OOG / zero-data) so the frontend's revert-probe
+    ///         can tell a cap violation apart from a missing-selector old-deploy
+    ///         and surface the config bug instead of silently falling back to
+    ///         per-id hydration (design §5.4).
+    error BatchTooLarge(uint256 got, uint256 max);
+
     /// @notice Always-small scalar snapshot for the dashboard's
     ///         headline cards. EventSourcingAudit-friendly: every
     ///         field is recoverable from a single `eth_call` so the
@@ -436,6 +454,80 @@ contract MetricsDashboardFacet {
         for (uint256 j = 0; j < written; j++) {
             loanIds[j] = idBuf[j];
             claims[j] = claimBuf[j];
+        }
+    }
+
+    // ─── #1025 bulk wallet-dashboard batch-by-id views ───────────────────────
+
+    /**
+     * @notice #1025 — hydrate an arbitrary array of offer ids into flat
+     *         {LibMetricsTypes.OfferView} DTOs, each already carrying its
+     *         canonical {LibMetricsTypes.OfferState}. Aave-`UiPoolDataProvider`
+     *         shaped: one `eth_call` replaces the per-id `getOffer` +
+     *         `getOfferState` pair the wallet dashboard issues for every
+     *         enumerated offer, cutting `2×N` reads to `⌈N/PAGE⌉` chunked calls.
+     * @dev    STRICTLY POSITIONAL — `views[i]` corresponds to `offerIds[i]`,
+     *         duplicates preserved, NOT deduped (design §5.2). An unknown /
+     *         never-existed / cancel-deleted id yields a zero-value element with
+     *         `state == Cancelled` (matching {LibMetricsTypes.deriveOfferState}'s
+     *         `o.id == 0` legacy-compat contract) — the batch does NOT revert on
+     *         a stale id, so one bad id can't blank a whole refresh. The caller
+     *         MUST chunk its id set into ≤ {MAX_BATCH_IDS} slices (the frontend's
+     *         `PAGE = 200` is well within); an over-cap array reverts
+     *         {BatchTooLarge}. Pure `view`.
+     * @param  offerIds The offer ids to hydrate (caller-bounded, ≤ MAX_BATCH_IDS).
+     * @return views    Positional, non-deduped {OfferView} array.
+     */
+    function getOffersWithState(uint256[] calldata offerIds)
+        external
+        view
+        returns (LibMetricsTypes.OfferView[] memory views)
+    {
+        uint256 n = offerIds.length;
+        if (n > MAX_BATCH_IDS) revert BatchTooLarge(n, MAX_BATCH_IDS);
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        views = new LibMetricsTypes.OfferView[](n);
+        for (uint256 i = 0; i < n; i++) {
+            uint256 id = offerIds[i];
+            // Derive state from the SAME source of truth MetricsFacet uses, then
+            // project the row once. A never-existed id derives to `Cancelled`
+            // and projects a zero-value `Offer` — the frontend filters it
+            // exactly as its per-id guard does today.
+            LibMetricsTypes.OfferState st = LibMetricsTypes.deriveOfferState(s, id);
+            views[i] = LibMetricsTypes.toOfferView(s.offers[id], st);
+        }
+    }
+
+    /**
+     * @notice #1025 — hydrate an arbitrary array of loan ids into flat
+     *         {LibMetricsTypes.LoanView} DTOs (lean {LibMetricsTypes.LoanSummary}
+     *         + the two counterparty display addresses). One `eth_call` replaces
+     *         the per-id `getLoanDetails` fat-struct read the wallet dashboard
+     *         issues for every held loan position.
+     * @dev    STRICTLY POSITIONAL and NON-DEDUPED — load-bearing for dual-role
+     *         holders: when a wallet holds BOTH the lender and borrower position
+     *         NFTs for the same loan, the frontend's holder enumeration returns
+     *         that `loanId` twice (paired with two `heldTokenId`s); echoing the
+     *         duplicate as two identical elements lets the consumer zip each back
+     *         to its role. A collapse-on-dedupe would hide one side from
+     *         Positions/Claimables (design §5.2/§5.4). An unknown id yields a
+     *         zero-value element (`lender == 0 && borrower == 0`) — no revert on a
+     *         stale id. Caller MUST chunk to ≤ {MAX_BATCH_IDS}; over-cap reverts
+     *         {BatchTooLarge}. Pure `view`.
+     * @param  loanIds The loan ids to hydrate (caller-bounded, ≤ MAX_BATCH_IDS).
+     * @return views   Positional, non-deduped {LoanView} array.
+     */
+    function getLoansBatch(uint256[] calldata loanIds)
+        external
+        view
+        returns (LibMetricsTypes.LoanView[] memory views)
+    {
+        uint256 n = loanIds.length;
+        if (n > MAX_BATCH_IDS) revert BatchTooLarge(n, MAX_BATCH_IDS);
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        views = new LibMetricsTypes.LoanView[](n);
+        for (uint256 i = 0; i < n; i++) {
+            views[i] = LibMetricsTypes.toLoanView(s.loans[loanIds[i]]);
         }
     }
 
