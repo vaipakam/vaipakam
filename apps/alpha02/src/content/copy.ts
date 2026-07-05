@@ -93,6 +93,10 @@ export const copy = {
     phaseApprove: (c: number, t: number) => `Approving… (${c} of ${t})`,
     phaseSend: (c: number, t: number) => `Submitting… (${c} of ${t})`,
   },
+  killSwitch: {
+    disabled:
+      'This action is switched off right now — the operators have paused it as a precaution while something is looked into. Anything already yours is unaffected: repayments, claims, and withdrawals all stay open.',
+  },
   alerts: {
     title: 'Alerts',
     lede: 'Get a Telegram message about your positions while the site is closed — deadlines and risk don’t wait for you to open a tab.',

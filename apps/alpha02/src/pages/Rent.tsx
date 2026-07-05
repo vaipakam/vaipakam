@@ -44,6 +44,7 @@ import {
   useTokenSecurity,
   verdictFingerprint,
 } from '../data/tokenSecurity';
+import { flowDisabled } from '../lib/killSwitch';
 import {
   ensureNftApproval,
   readNftOwnershipLive,
@@ -269,6 +270,8 @@ function ListNftFlow() {
   ]);
 
   const formError = form ? validateOfferForm(form) : null;
+  // #1028 — operator kill switch (position-opening flows only).
+  const killed = flowDisabled('nft-list');
   const canSign =
     allChecksPass(checks) &&
     receipt !== null &&
@@ -278,9 +281,14 @@ function ListNftFlow() {
     // click in the gap would silently no-op.
     Boolean(walletClient) &&
     Boolean(publicClient) &&
+    !killed &&
     !busy;
 
   async function submit() {
+    if (killed) {
+      setError(copy.killSwitch.disabled);
+      return;
+    }
     if (!form || !address || !walletChain || !walletClient || !publicClient) {
       setError(copy.wallet.connectFirst);
       return;
@@ -541,6 +549,11 @@ function ListNftFlow() {
           </div>
           <div className="card">
             {receipt ? <ReviewReceipt data={receipt} /> : <p className="muted">Preparing your review…</p>}
+            {killed ? (
+              <div className="banner banner-warn" role="alert" style={{ marginTop: 16 }}>
+                <span className="banner-body">{copy.killSwitch.disabled}</span>
+              </div>
+            ) : null}
             {/* #1037 — every wallet prompt named before the first fires. */}
             <div className="banner banner-info" role="note" style={{ marginTop: 16 }}>
               <span className="banner-body">
@@ -865,6 +878,8 @@ function RentNftFlow() {
     };
   }, [selected, prepayMeta.data, totalPrepay, bufferBps]);
 
+  // #1028 — operator kill switch (position-opening flows only).
+  const killed = flowDisabled('nft-rent');
   const canSign =
     allChecksPass(checks) &&
     receipt !== null &&
@@ -875,9 +890,14 @@ function RentNftFlow() {
     // current fingerprint, not consent left over from before it
     // appeared.
     (!prepaySecWarned || prepayConsentFpRef.current === prepaySecFingerprint) &&
+    !killed &&
     !busy;
 
   async function submit() {
+    if (killed) {
+      setError(copy.killSwitch.disabled);
+      return;
+    }
     if (!selected || !address || !walletChain || !walletClient || !publicClient) {
       setError(copy.wallet.connectFirst);
       return;
@@ -1195,6 +1215,11 @@ function RentNftFlow() {
                 <span className="banner-body">
                   {copy.tokenSecurity.gateUnsupported('prepayment token')}
                 </span>
+              </div>
+            ) : null}
+            {killed ? (
+              <div className="banner banner-warn" role="alert" style={{ marginTop: 16 }}>
+                <span className="banner-body">{copy.killSwitch.disabled}</span>
               </div>
             ) : null}
             {/* #1037 — every wallet prompt named before the first fires. */}

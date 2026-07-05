@@ -72,6 +72,7 @@ import {
 } from '../lib/format';
 import { isPlainDecimal, isPositiveDecimal, submitErrorText } from '../lib/errors';
 import { copy } from '../content/copy';
+import { flowDisabled } from '../lib/killSwitch';
 import {
   fetchTokenSecurity,
   isCuratedAsset,
@@ -981,6 +982,10 @@ export function OfferFlow({ side }: { side: Side }) {
   // vault accounting the accept path does, so both modes hold on a
   // blocked/unverified leg.
   const securityGateOk = securityBlocked.length === 0;
+  // #1028 — operator kill switch. Position-opening flows only; the
+  // banner explains, and close-out paths are structurally unkillable
+  // (see lib/killSwitch.ts).
+  const killed = flowDisabled(mode === 'accept' ? 'accept-offer' : 'post-offer');
   // Late-disclosure rule (same as illiquid/sale banners): a warning
   // or block that ARRIVES after the consent box was ticked voids the
   // consent — it was given against a review without the disclosure.
@@ -1041,6 +1046,7 @@ export function OfferFlow({ side }: { side: Side }) {
     // no-op silently.
     Boolean(walletClient) &&
     Boolean(publicClient) &&
+    !killed &&
     !submitting;
 
   // ---- Prompt-count pre-disclosure (#1037) --------------------------
@@ -1507,6 +1513,13 @@ export function OfferFlow({ side }: { side: Side }) {
   }
 
   async function submit() {
+    // #1028 — kill switch backstop: canSign already holds the button,
+    // but the switch must also stop a submission entered through any
+    // other path.
+    if (killed) {
+      setSubmitError(copy.killSwitch.disabled);
+      return;
+    }
     // Re-entrancy lock BEFORE any await: `submitting` derives from
     // state, and state set inside this call isn't visible to a second
     // click landing in the same tick — while the ref is. Without it, a
@@ -1994,6 +2007,11 @@ export function OfferFlow({ side }: { side: Side }) {
                     .map((l) => copy.tokenSecurity.gateUnsupported(l.leg))
                     .join(' ')}
                 </span>
+              </div>
+            ) : null}
+            {killed ? (
+              <div className="banner banner-warn" role="alert" style={{ marginTop: 16 }}>
+                <span className="banner-body">{copy.killSwitch.disabled}</span>
               </div>
             ) : null}
             {planTotal !== null ? (
