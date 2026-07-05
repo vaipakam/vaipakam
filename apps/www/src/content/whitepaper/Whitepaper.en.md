@@ -210,7 +210,7 @@ Upgrade authority over the shared implementation rests with the Diamond owner (t
 
 ### 3.4 Position NFTs
 
-`VaipakamNFTFacet` implements the position-NFT collection (`Vaipakam NFT`, symbol `VAIPAK`) as an ERC-721 with enumerable and metadata extensions, using diamond-safe namespaced storage (`LibERC721`) rather than inherited implementation storage. A lender-side NFT and a borrower-side NFT are minted when offers are created and track the position through its whole life: authorized facets update the position status along its dedicated track (`OfferCreated`, `LoanInitiated`, `LoanRepaid`, `LoanDefaulted`, `LoanLiquidated`, `LoanFallbackPending`, `LoanClosed` — see Section 6.6) as protocol state changes.
+`VaipakamNFTFacet` implements the position-NFT collection (`Vaipakam NFT`, symbol `VAIPAK`) as an ERC-721 with enumerable and metadata extensions, using diamond-safe namespaced storage (`LibERC721`) rather than inherited implementation storage. The creator's offer-position NFT is minted when the offer is created; the counterparty's position NFT is minted at loan initiation, once the offer is accepted — so an unfilled offer carries exactly one tokenized position, and both sides are tokenized from initiation onward. Each NFT tracks its position through its whole life: authorized facets update the position status along its dedicated track (`OfferCreated`, `LoanInitiated`, `LoanRepaid`, `LoanDefaulted`, `LoanLiquidated`, `LoanFallbackPending`, `LoanClosed` — see Section 6.6) as protocol state changes.
 
 Metadata is generated on-chain: `tokenURI()` returns a JSON document with the position's role, status, linked offer and loan IDs, assets, amounts, rate, duration, and whether the token currently governs claim rights, using realized live-state values rather than stale offer minima. Status- and side-keyed images (hosted on IPFS) let external marketplaces distinguish active from terminal positions rather than collapsing them into one generic state.
 
@@ -311,7 +311,7 @@ Illiquid assets are handled by a deliberately simple, consent-first regime:
 
 ## 5. The Offer Book
 
-Vaipakam's market is a fully on-chain peer-to-peer order book. There is no pooled liquidity and no protocol-set interest curve: lenders and borrowers post offers at the terms they will accept, and the market rate emerges from the book. Every offer is backed by real escrowed assets in the creator's own isolated vault, represented by a position NFT, and governed by the same risk checks whether it is filled by a direct counterparty, a permissionless matcher, or a gasless signed fill.
+Vaipakam's market is a fully on-chain peer-to-peer order book. There is no pooled liquidity and no protocol-set interest curve: lenders and borrowers post offers at the terms they will accept, and the market rate emerges from the book. Every on-chain offer is backed by real escrowed assets in the creator's own isolated vault and represented by a position NFT from the moment it is created. Signed (gasless) offers are the one deliberate exception to that timing: they live off-chain until a filler materializes them, at which point escrow, the position NFT, and the fill all happen in the same transaction — and a wallet-backed signed offer is not pre-escrowed at all until that instant (section 5.3). Whichever path an offer takes — direct counterparty, permissionless matcher, or gasless signed fill — it is governed by the same risk checks at fill time.
 
 ### 5.1 Offer Creation
 
@@ -430,7 +430,7 @@ Governance may retune each row's duration boundary and grace length within per-s
 
 ### 6.4 Repayment
 
-**Full repayment** may be submitted by the borrower **or by any third party** willing to pay on the borrower's behalf. Payment alone never grants rights: a third-party repayer is only the payment sender — the collateral remains claimable exclusively by the current holder of the borrower-side position NFT (section 6.5). A full repayment executes atomically:
+**Full repayment** of an ERC-20 loan may be submitted by the borrower **or by any third party** willing to pay on the borrower's behalf. (NFT-rental close-out is the exception: it settles from the borrower's own vaulted prepayment, so the protocol requires the borrower to submit it.) Payment alone never grants rights: a third-party repayer is only the payment sender — the collateral remains claimable exclusively by the current holder of the borrower-side position NFT (section 6.5). A full repayment executes atomically:
 
 - principal plus interest (plus any late fee) is collected;
 - the settlement waterfall runs — the lender's entitlement is deposited for claim, treasury takes its yield-fee share, and borrower-side custody and reward state are settled;
@@ -1012,9 +1012,12 @@ beyond normal repayment/default rules.
   lender early withdrawal — may be initiated only by the wallet that is the current `ownerOf` the relevant lender-side
   or borrower-side Vaipakam position NFT. Authority follows the current NFT holder, not the wallet that originally
   opened the position; a position sold on the secondary market carries its strategic control with it.
-- **No structural locks.** The protocol does not move position NFTs into protocol custody during strategic flows and
-  does not natively lock their transfers; completion authority is enforced by function-level role and state checks
-  against the currently entitled NFT owner.
+- **No custody moves; locks only for live listings.** The protocol never moves position NFTs into protocol custody
+  during strategic flows. Transfers stay unrestricted with one deliberate exception: a position that is **listed** — a
+  lender position under a live sale listing, or a borrower position under a live collateral listing — is natively
+  locked for the life of the listing (transfers and approvals revert until it settles or is cancelled; see
+  section 3.4), so the listed position cannot change hands out from under a committed buyer. Outside a live listing,
+  completion authority is enforced by function-level role and state checks against the currently entitled NFT owner.
 - **What is never sufficient.** A rented `userOf` address on a position NFT, or an arbitrary third-party helper, can
   never initiate a strategic flow. If position NFTs later support ERC-4907-style `userOf`, that address is treated
   only as a keeper-level operational delegate for the already-keeper-enabled function set — never a substitute owner,
@@ -1217,7 +1220,7 @@ The Phase 1 production scope pairs the canonical Base deployment with Ethereum m
 
 ### 14.4 Pause and Recovery
 
-Every cross-chain contract — the messenger, the mirror token, the pools' governor, the reward messenger, and the remittance receivers — inherits `GuardianPausable`, a two-role emergency-pause pattern covering **both the send and the receive paths**. The owner (the timelock-gated governance multisig) can pause, unpause, and rotate the guardian, all through the full governance path. The guardian — a smaller incident-response multisig with **no timelock** — can only pause. This closes the detect-to-freeze gap a timelock would otherwise impose during an incident, while keeping unpause deliberately owner-only: a compromised or impatient guardian cannot race the incident team to re-enable a live contract, and recovery always goes through governance.
+Every cross-chain contract with a runtime send or receive path — the messenger, the mirror token, the reward messenger, and the remittance receivers — inherits `GuardianPausable`, a two-role emergency-pause pattern covering **both the send and the receive paths**. (`VpfiPoolRateGovernor` is the deliberate exception: it is a bounded rate-limit **admin** contract with no runtime send/receive path, so it carries no pause surface of its own.) The owner (the timelock-gated governance multisig) can pause, unpause, and rotate the guardian, all through the full governance path. The guardian — a smaller incident-response multisig with **no timelock** — can only pause. This closes the detect-to-freeze gap a timelock would otherwise impose during an incident, while keeping unpause deliberately owner-only: a compromised or impatient guardian cannot race the incident team to re-enable a live contract, and recovery always goes through governance.
 
 The pause interacts safely with in-flight traffic. An inbound CCIP delivery to a paused contract reverts; CCIP records it as a **failed message that remains manually re-executable** once the contract is unpaused. Nothing is lost or silently dropped — a pause converts live risk into a queue of recoverable messages, and delayed value (reward remittances, bridged VPFI) resumes exactly where it stopped.
 
