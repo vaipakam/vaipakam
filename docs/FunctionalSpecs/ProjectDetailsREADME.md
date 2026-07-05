@@ -222,9 +222,9 @@ The platform distinguishes between liquid and illiquid assets, which affects how
   - Depth-tiered LTV is controlled by a master enable switch that deploys disabled. While disabled, loan initiation must follow the existing conservative LTV / Health Factor behavior exactly.
   - When the switch is enabled, new ERC-20 loans are capped at the smaller of the existing asset ceiling and the effective tier's current max-init-LTV value. Tier `0` collateral cannot support a new borrow. In this mode the loan-initiation Health Factor floor may be relaxed from the standard admission floor to `1.0` because the tier ceiling becomes the binding buffer below liquidation.
   - The standard (non-tiered) loan-admission Health Factor floor is a governance-tunable knob, range-bounded to `[1.2, 2.0]` and defaulting to `1.5`. Governance (risk-admin) may retune it without a contract change to tighten admission in a volatile regime or loosen it for a proven-safe book. The retune is branch-aware — it moves only the standard admission floor, never the tiered-regime `1.0` floor and never the liquidation trigger (`HF < 1.0`), so a retune can never make an open loan liquidatable — and it applies only to loans admitted after the change; open loans keep the terms they were admitted under. Every health-floor check the protocol enforces — admission, collateral-top-up cure, partial withdrawal, repay/swap-to-repay guards, and the min-collateral / max-borrow previews — uses the same runtime value so they stay mutually consistent.
-  - The tier-to-LTV mapping is data-derived rather than manually set per asset. `OracleFacet.refreshTierLtvCache()` should be permissionless and should refresh per-tier cached max-init-LTV values from peer lending protocol configurations. The cache is fresh for `14 days`; after that, loan initiation falls back to library defaults of `50%`, `62%`, and `73%` for tiers `1`, `2`, and `3`, respectively. A cache-stale-warning event should fire when values are older than `7 days` but still usable.
+  - The tier-to-LTV mapping is data-derived rather than manually set per asset. `OracleFacet.refreshTierLtvCache()` should be permissionless and should refresh per-tier cached max-init-LTV values from peer lending protocol configurations. The cache is fresh for `14 days`; after that, loan initiation falls back to the governance-configured per-tier max-init-LTV caps (defaults of `50%`, `60%`, and `65%` for tiers `1`, `2`, and `3`, respectively) rather than to fixed library constants — so a cap governance has deliberately tightened remains in force even while the peer refresh is paused or stale. A cache-stale-warning event should fire when values are older than `7 days` but still usable.
   - Peer LTV reads should normalize Aave V3 and Compound V3 values into BPS through low-level staticcalls that return clean `ok = false` flags for not-listed or reverted reads. Aave reserves must be active and not frozen; Compound asset info must match the queried asset. Morpho Blue support is a planned follow-up because market-id enumeration is per market rather than per asset.
-  - Each tier refresh should read configured reference assets against configured peer protocols, accept a reference asset only when at least two peers agree within `15` percentage points, then accept a tier only when at least two reference assets contribute. The tier candidate is the resulting median minus the tier haircut.
+  - Each tier refresh should read configured reference assets against configured peer protocols, accept a reference asset only when at least two peers agree within `30` percentage points (structural Aave-vs-Compound configuration spreads of 20–30 percentage points are normal on mid-cap assets, so a tighter 15-point band would wrongly reject LINK/UNI-class references), then accept a tier only when at least two reference assets contribute. The tier candidate is the resulting median minus the tier haircut.
   - Per-tier safety boxes are the constitutional bounds for autonomous LTV values. Defaults are Tier 1 `[37%, 55%]`, Tier 2 `[55%, 69%]`, and Tier 3 `[69%, 82%]`; Tier 1 and Tier 2 default to `0` haircut, Tier 3 defaults to a `5` percentage-point haircut. A candidate outside its tier's box must be rejected and emitted as a refresh-rejection reason rather than clipped into range.
   - `ConfigFacet.setTierLtvParams` may update all three `(floor, ceiling, haircut)` triples atomically. Validation must enforce floor < ceiling, ceiling <= 100%, haircut <= 10 percentage points, no overlapping boxes (`tier1.ceiling <= tier2.floor`, `tier2.ceiling <= tier3.floor`), and all-or-nothing application. Post-handover this setter is Timelock-controlled.
   - Governance knobs for baseline floor size, slippage budget, tier test sizes, tier safety boxes, tier haircuts, price-history window, price-history agreement band, predominantly available asset list, keeper confidence tier, peer protocol addresses, reference asset lists, cache TTL, and the master switch must be bounded and auditable through the shared typed range-error pattern. Emergency levers remain remove-only or global: `pauseAsset`, `setDepthTieredLtvEnabled(false)`, and `autoPause`.
@@ -258,7 +258,7 @@ The platform distinguishes between liquid and illiquid assets, which affects how
 
 ### Loan Terms
 
-- **Durations:** Configurable from 1 day to 1 year (`1–365` days), with the live maximum exposed through protocol configuration. Frontend validation must enforce this range, and the on-chain offer / loan initiation path should enforce the same upper bound so external callers cannot bypass the UI.
+- **Durations:** The launch **product** range is 1 day to 1 year (`1–365` days), with the live maximum exposed through protocol configuration. This is a product default, not an absolute protocol invariant: the on-chain governance ceiling for the configurable maximum is deliberately higher (approximately `4385` days) so future longer-tenor products can be enabled without a contract change. Frontend validation must enforce the live configured range, and the on-chain offer / loan initiation path should enforce the same live upper bound so external callers cannot bypass the UI.
 - **Creation Buckets:** The primary Create Offer flow should present standard duration buckets (`7`, `14`, `30`, `60`, `90`, `180`, and `365` days) rather than a free-form number input. Range Orders still match duration as an exact value, so bucketed durations improve match density without introducing duration-range semantics. Specialized follow-on flows such as refinance or borrower preclose may keep free-form duration entry where preserving a remaining loan tail is more important than marketplace matchability.
 - **Fixed Term Boundary:** Once a loan is initiated, its agreed maturity is fixed by the loan's original start time and committed duration. Partial repayment, partial liquidation, swap-to-repay, or any other non-terminal principal reduction may update the interest-accrual basis for the remaining principal, but must not move the maturity, shorten the committed duration, change the grace-period tier, or restart the grace clock. Repeated small partial payments after maturity must not roll the lender's default / recovery deadline forward.
 - **Grace Periods:** Assigned from a fixed six-slot duration schedule that can be configured by admin / governance within per-slot safety bounds:
@@ -266,9 +266,10 @@ The platform distinguishes between liquid and illiquid assets, which affects how
   - < 1 month: 1 day
   - < 3 months: 3 days
   - < 6 months: 1 week
-  - \le 1 year: 2 weeks
-  - > 1 year / catch-all: 30 days
-  - The first five defaults preserve the original Phase 1 behavior, and the sixth default covers year-plus loans if a later live maximum duration permits them.
+  - strictly less than 365 days: 2 weeks
+  - 365 days or more / catch-all: 30 days
+  - A loan of exactly `365` days — the full 1-year maximum standard tenor — therefore receives the 30-day grace window, not the 2-week one. This is deliberate and borrower-friendly: the longest-tenor loans keep the longest grace period.
+  - The first five defaults preserve the original Phase 1 behavior, and the sixth default covers full-year loans as well as any longer tenors a later live maximum duration permits.
   - The schedule shape is fixed at six rows. Governance may edit each row's `maxDurationDays` and `graceSeconds` within that row's allowed bounds, but must not add or remove rows.
   - A global grace floor of 1 hour and ceiling of 90 days applies in addition to row-level bounds. The catch-all row must use `maxDurationDays = 0`.
   - Clearing the configured schedule reverts to the compile-time defaults.
@@ -312,7 +313,10 @@ An offer may be created two ways, both reaching the same on-chain offer state:
   offer can be filled without a human counterparty directly accepting it. This
   also enables **partial fills** of a vault-backed signed offer: each match
   fills a slice (a large signed offer can be consumed across several matches
-  over time), with the remaining amount tracked off-chain; an all-or-nothing
+  over time), with the remaining amount tracked **on-chain** against the
+  offer's order hash — the same authoritative ledger that replay-protects the
+  offer, so over-filling is prevented on-chain and off-chain order books only
+  mirror the remainder for display; an all-or-nothing
   signed offer must still be filled in a single full match. Every signed match
   runs through the same matching engine — and therefore the same collateral and
   health-factor safety checks — as an on-chain match, so an under-collateralized
@@ -516,7 +520,8 @@ An offer may be created two ways, both reaching the same on-chain offer state:
 - **For ERC-20 Tokens:**
   - Specify the lending asset (e.g., 1000 USDC), loan amount, interest rate (e.g., 5% APR), required collateral type (e.g., WETH) and amount (or maximum LTV or minimum Health Factor requirement if collateral is Liquid), and loan duration.
     - LTV = Borrowed Value / Collateral Value
-    - Helath Factor = Collateral Value / Borrowed Value
+    - Health Factor = (Collateral Value \* the collateral asset's liquidation threshold) / Borrowed Value — the risk-adjusted form, not raw collateral over borrow. The liquidation threshold (for example, around 82% for a typical liquid asset) discounts the collateral to the fraction of its value the protocol trusts at liquidation, so the Health Factor a loan must clear already prices in the collateral's risk profile.
+    - Note: when the optional depth-tiered LTV regime (off by default; see the tiered-LTV rules in §1) is enabled, the loan-initiation Health Factor floor relaxes to `1.0` with the tier's max-init-LTV cap as the binding constraint; the standard (non-tiered) initiation floor is governance-tunable within `[1.2, 2.0]` and defaults to `1.5`.
   - Deposit the lending asset into the Vaipakam smart contract when creating the offer.
   - The deposited principal is **locked against withdrawal for as long as the offer is live**. The creator cannot pull the escrowed principal — or the unfilled remainder of a range offer — back out of their vault while the offer stays open on the book. The lock is placed at create, lifted in full when the offer is accepted outright or cancelled, drawn down slice-by-slice as a range offer is partially filled by the matching engine, and lifted on the final dust-close. An offer's **own** refunds — cancelling, or a downward size edit — release their portion of the lock *before* the funds move, so an offer can always pay itself back; only unrelated / cross-purpose withdrawals are refused. This is the lender-side counterpart of the §2207 collateral-protection invariant: escrowed offer principal, like pledged collateral, is never withdrawable out a side door while it backs a live commitment.
 - **For Rentable NFTs (ERC-721/1155):**
@@ -711,7 +716,7 @@ Vaipakam mints unique NFTs to represent offers, enhancing traceability and user 
 
 **Lender Offer (ERC-20):**
 
-- Alice offers 1000 USDC at 5% interest for 30 days, requiring $1500 (150% Health Factor) worth of ETH as collateral (assuming ETH is liquid).
+- Alice offers 1000 USDC at 5% interest for 30 days, requiring about $1830 worth of ETH as collateral (assuming ETH is liquid). At ETH's ~82% liquidation threshold, the risk-adjusted Health Factor is ($1830 \* 0.82) / $1000 ≈ 1.5, which meets the initiation floor — a raw $1500 (150% of principal) would fall short once the liquidation threshold is applied.
 - Platform locks Alice's 1000 USDC from her wallet into the offer contract.
 - Platform mints an "Vaipakam NFT" for Alice, detailing her offer terms and status as "Offer Created" and with role as "Lender"
 
@@ -771,7 +776,7 @@ Vaipakam mints unique NFTs to represent offers, enhancing traceability and user 
   - Ownership-sensitive logic for Vaipakam position authority should rely on the current `ownerOf(tokenId)` result for the relevant lender-side or borrower-side Vaipakam NFT unless a future protocol phase explicitly defines a different ownership-delegation model.
   - In other words, the protocol should use a function-by-function role-authority model over a single loan-wide shared-keeper model, so opt-in does not become broad public execution by accident and does not unnecessarily force one side to approve the other side's automation.
   - Liquidation remains the exception: any address may trigger liquidation whenever the protocol liquidation conditions are met, for both basic users and advanced users. Liquidation must not depend on keeper whitelists.
-  - The protocol should distinguish between `permissionless`, `party-only`, and `keeper-optional` execution classes at the function level rather than using a single broad MEV / bot flag.
+  - The protocol should distinguish between `permissionless`, `party-only`, `keeper-initiation` (per-action opt-in), and `keeper-optional` execution classes at the function level rather than using a single broad MEV / bot flag.
   - **Permissionless state-changing functions (Phase 1):**
     - `triggerLiquidation`: always permissionless because it is a protocol-safety action
     - `triggerDefault`: permissionless once the documented default conditions are met
@@ -786,11 +791,13 @@ Vaipakam mints unique NFTs to represent offers, enhancing traceability and user 
     - `repayPartial`
     - `claimAsLender`
     - `claimAsBorrower`
-    - `precloseDirect`
-    - `transferObligationViaOffer`
-    - `refinanceLoan`
-    - `createLoanSaleOffer`
     - all admin, treasury, NFT-ownership, vault-upgrade, pause, oracle-admin, and role-management functions must remain role-gated / owner-gated rather than keeper-executable
+  - **Keeper-initiation state-changing functions (Phase 1, per-action opt-in):**
+    - `precloseDirect`
+    - `transferObligationViaOffer` (including the offset variant it settles)
+    - `refinanceLoan`
+    - `createLoanSaleOffer` (sale-listing initiation)
+    - These strategic flows may be **initiated** by a whitelisted keeper on the consenting party's behalf, but only when that party has granted the keeper the matching narrow per-action permission bit (`KEEPER_ACTION_*`) — one bit per flow, never a blanket grant. Every keeper initiation stays bounded by the granting party's configured caps and the protocol kill-switches, executes strictly within the granting party's role, and can never make the keeper a loan party nor route funds, collateral, or claim rights to the keeper itself. Without the specific opt-in bit, each of these functions behaves as party-only. (`addCollateral` deliberately stays party-only and is not keeper-initiable.)
   - **Keeper-optional state-changing functions (Phase 1):**
     - `completeLoanSale`
     - `completeOffset`
@@ -807,12 +814,11 @@ Vaipakam mints unique NFTs to represent offers, enhancing traceability and user 
     - liquidation remains fully permissionless and is not part of this role-scoped keeper restriction model
   - **Functions that should not be broadened to keeper execution in Phase 1:**
     - claims
-    - offer creation / acceptance / cancellation
+    - offer creation / acceptance / cancellation (other than the specific keeper-initiation flows above — e.g., a sale listing posted under an explicit per-action grant)
     - borrower collateral top-ups
-    - borrower refinance / preclose initiation
     - partial repayment
     - admin / treasury / upgrade functions
-    - any action that changes terms, ownership, claim rights, or asset routing unless the acting wallet is already the entitled party
+    - any action that changes terms, ownership, claim rights, or asset routing unless the acting wallet is already the entitled party or holds that party's explicit narrow per-action keeper grant for exactly that flow
   - **Stricter MEV / keeper threat model:**
     - The project should assume that public mempool visibility can create front-running, back-running, griefing, and value-extraction attempts around user-specific transitions such as loan sales, obligation transfers, refinance, preclose, and fallback claim flows.
     - The project should also assume that a broad keeper flag can accidentally convert a consensual helper model into an adversarial public-bot model.
@@ -820,12 +826,12 @@ Vaipakam mints unique NFTs to represent offers, enhancing traceability and user 
       - liquidation and default execution stay permissionless only where protocol safety requires it
       - non-liquidation third-party execution stays default-off
       - advanced-user third-party execution uses explicit whitelisted keeper addresses instead of arbitrary public bots
-      - keeper-enabled functions stay on a narrow allowlist of deterministic completion flows
+      - keeper-enabled functions stay on a narrow allowlist — the deterministic completion flows plus the explicitly per-action opt-in initiation flows listed above, nothing broader
       - keeper permissions should be scoped to the consenting lender-side or borrower-side role wherever the function can be safely isolated to one side
       - claim authority should remain tied to the current Vaipakam NFT owner rather than to the original loan creator or a broad shared keeper permission
       - delegated keepers should be understood as role-managers, not as substitute asset claimants or substitute position owners
       - full repayment stays open to any payer, but payment alone never grants collateral or claim rights
-      - frontend and docs must clearly disclose whether a function is permissionless, party-only, or keeper-optional
+      - frontend and docs must clearly disclose whether a function is permissionless, party-only, keeper-initiation (per-action opt-in), or keeper-optional
       - logs and audit trails should make it clear which external address executed the action and under which consent path it was allowed
 - **Auto-Lifecycle Consent and Keeper Actions:**
   - Auto-lend, auto-refinance, and auto-extend are opt-in convenience surfaces layered on top of the existing offer, refinance, and keeper-authority model. They must default off for every user, loan, and fresh deployment.
@@ -1143,8 +1149,8 @@ The preview should preserve the resolved economic terms even when acceptance is 
   it screens the direct payees (the current lender and borrower-surplus
   holders) and refuses a flagged one outright. A flagged party's
   must-complete escape is the full-close mode, which freezes.
-- Interest Formula: `Interest = (Principal * AnnualInterestRate * LoanDurationInDays) / (100 * DAYS_PER_YEAR)`. (Note: use standardized protocol constants such as `DAYS_PER_YEAR` and `SECONDS_PER_YEAR` rather than hard-coded literals like `365`, and ensure consistent precision, e.g., rate stored as basis points).
-- Late fees apply if repayment occurs after the due date but within the grace period, or if repayment is forced post-grace period.
+- Interest Formula: `Interest = (Principal * AnnualInterestRate * EffectiveDaysOutstanding) / (100 * DAYS_PER_YEAR)`, where for a full-term-interest loan (the protocol default) `EffectiveDaysOutstanding = max(actual elapsed days, agreed loan term in days)`; a pro-rata-opted loan accrues on the actual elapsed days throughout. Either way, once a loan runs past its agreed term into the grace window, interest keeps accruing for the extra days the principal actually remains outstanding — the borrower owes time-value interest for every additional day, not only for the agreed term. (Note: use standardized protocol constants such as `DAYS_PER_YEAR` and `SECONDS_PER_YEAR` rather than hard-coded literals like `365`, and ensure consistent precision, e.g., rate stored as basis points).
+- Late fees apply if repayment occurs after the due date but within the grace period, or if repayment is forced post-grace period. Late fees are a separate penalty charged **in addition to** the continued grace-window interest accrual described above — a late repayment settles both the extra-days interest and the late fee; the late fee never substitutes for that interest.
 
 **NFT Lending (Renting):**
 
@@ -1281,7 +1287,7 @@ Watcher and notification support:
 - **Internal-Match Kill Switch:** Internal matching must default off on fresh deployments and must be independently controllable from the discounted-liquidation path and the depth-tiered-LTV switch. Disabling the internal-match switch should immediately restore the ordinary external liquidation behavior.
 - **Exact-Scope Adapter Approvals:** For each swap attempt, the Diamond approves only the exact input amount needed for that adapter and revokes the approval after the attempt, regardless of success or failure. There are no persistent DEX allowances left behind by liquidation routing.
 - **Oracle-Anchored Slippage Floor:** The on-chain oracle-derived minimum output remains authoritative. Keeper- or frontend-supplied `minOut` values may be stricter but cannot weaken the configured liquidation slippage floor.
-- **Adapter Registration:** Mainnet deployments must register at least one swap adapter before liquidation settlement can operate. A deployment with no registered adapters reverts swap-based liquidation attempts and therefore reaches the documented collateral fallback path.
+- **Adapter Registration:** Mainnet deployments must register at least one swap adapter before liquidation settlement can operate. A deployment with no registered adapters **reverts** swap-based liquidation attempts outright — it does not fall through to the documented collateral fallback path; the operator must register an adapter first.
 - **Permissionless Triggering Preserved:** Any address may call liquidation/default triggers once protocol conditions are met. The caller supplies routing data; there is no new liquidator role gate.
 - **Liquidation Handling Charge:** If liquidation succeeds through the normal swap path, treasury must receive an additional liquidation-handling charge equal to `2%` of liquidation proceeds because the borrower failed to act before liquidation. This handling charge is separate from the liquidator incentive and separate from any treasury fee that may still apply on recovered interest or late-fee amounts.
 - **Slippage Protection:** If the liquidation swap would incur slippage greater than 6%, the collateral conversion must not happen. In that case, the liquidation flow must stop using the DEX conversion path and must follow the same equivalent-collateral fallback procedure used for abnormal liquidation-failure conditions.
@@ -1306,7 +1312,7 @@ Watcher and notification support:
 
 **NFT Lending (Renting) Default:**
 
-- **Collateral Forfeiture:** The borrower’s full ERC-20 prepayment (which includes total rental fees + 5% buffer) is transferred to the NFT owner (lender), after deducting applicable treasury fees from the rental portion.
+- **Collateral Forfeiture:** The borrower forfeits the full ERC-20 prepayment (total rental fees + 5% buffer). The rental-fee portion is transferred to the NFT owner (lender), after deducting applicable treasury fees from that rental portion; the 5% buffer portion is sent to treasury, not to the lender — consistent with the default example below and the illiquid-assets rule in §1.
 - **NFT Return:**
   - For ERC-721: The borrower's 'user' status is revoked by the platform. The NFT remains in Vaipakam Vault until it is returned to the lender through the normal rental/default settlement flow.
   - For ERC-1155: The NFT held in the Vaipakam Vault is returned to the lender. The borrower's 'user' status is revoked.
@@ -1325,7 +1331,7 @@ Watcher and notification support:
 
 - Bob rents a CryptoPunk for 7 days (total rental fee 70 USDC, prepayment 73.5 USDC including buffer).
 - Bob fails to 'return' the NFT or there's an issue with fee settlement by the end of the grace period.
-- The full 70 USDC rental is claimed by Alice (the lender), minus treasury fees on the 70 USDC rental portion. Alice's CryptoPunk 'user' status for Bob is revoked, and the vaulted NFT can be returned to Alice under the rental settlement rules, extra buffere amount will also go to treasury.
+- The full 70 USDC rental is claimed by Alice (the lender), minus treasury fees on the 70 USDC rental portion. Alice's CryptoPunk 'user' status for Bob is revoked, and the vaulted NFT can be returned to Alice under the rental settlement rules, and the extra buffer amount (5%) goes to treasury.
 
 ## 8. Preclosing by Borrower (Early Repayment Options)
 
@@ -1337,7 +1343,7 @@ Borrowers may close or transfer their obligations before the originally schedule
 - The wallet that initiates a borrower preclose flow must also be the current `ownerOf` the borrower-side Vaipakam NFT for that loan. Strategic borrower-side actions must follow the borrower position NFT holder, not merely the original borrower wallet if the NFT has been transferred.
 - When a loan is closed out, any position effects tracked against a side of the loan — the collateral lien, the reward-accrual entry, and the VPFI fee/stake checkpoint — must follow the current position-NFT holder for that side, not the wallet that originally opened the position. The platform consolidates a transferred position to its current holder before the loan goes terminal, so a holder who acquired a position on the secondary market receives the correct reward, fee-tier, and lien accounting at close-out. This holds across the close-out family (repayment, the liquidation paths — HF-based and time-based, the split path, and the multi-loan internal match — direct preclose, and refinance). On a refinance the exiting lender's position effects always follow its current holder. The refinance borrower side depends on whether the collateral carries over: when it carries over into the new loan it is **not** consolidated (it is not closing out — the position simply continues); when it does **not** carry over (a transferred, untagged, or ranged offer), the old collateral is returned and the old loan closes for the borrower too, so the borrower side **is** consolidated to its current holder before the return. Where a close-out withdraws VPFI out of a vault — at the refinance return, or when either side later claims its VPFI payout (the borrower's collateral/surplus, or the lender's proceeds/held top-up) — the platform re-stamps that vault owner's VPFI fee-tier/stake so credit never lingers on VPFI that has left the vault. NFT-rental loans are outside the *consolidation* guarantee (their position effects are not moved/re-anchored), but their lender income must still follow the current lender-position holder: the permissionless daily rental fee is paid to the current `ownerOf(lenderTokenId)` resolved at payment time, and the full-repay / default rental proceeds plus the rented NFT itself reach the current holder through the `ownerOf`-gated claim — never the departed lender after a position transfer. The same current-holder rule applies when a transferred borrower position is LISTED for collateral sale: every listing-creation flow — fixed-price, Dutch-decay, atomic OpenSea-offer match, and the permissionless auto-list-at-floor post — consolidates the borrower side to the current holder before it binds the listing to a vault, so the order references the holder's vault and the position is not left locked out of consolidation once the listing is active. (Rotating an already-live listing needs no consolidation: a live listing locks the borrower position NFT, so it cannot have been transferred since the listing was created.) A holder that is sanctioned or otherwise ineligible must never block a counterparty's close-out: consolidation is skipped for that side, and funds still reach the current holder through the standard claim path, which is independently `ownerOf`- and sanctions-gated.
 - **Sanctions-gate classification (two tiers).** Every external method that creates protocol state or moves value is one of two postures. A **value-creating / value-receiving entry point** — creating or staging an offer / vault / listing / intent, or paying value to the caller — screens the acting wallet up front and refuses a flagged one; this must cover *re-staging* actions a wallet reaches after its position already exists (e.g. opting an offer into treasury-backed backstop eligibility, listing a position's collateral for sale together with the sale's fee recipients, or discretionarily withdrawing excess collateral), because a wallet clean at creation may be flagged afterwards. A **close-out** (repaying, default resolution, liquidation, periodic servicing) must instead stay open regardless of either party's status so the honest counterparty is always made whole — a flagged party's *proceeds* are frozen at the destination (parked in a locked vault position) rather than the transaction being blocked; this includes any *surplus* returned to the closing party (for example the excess a swap-to-repay yields over the debt), which is frozen at source for a flagged holder rather than sent to their wallet, and which remains claimable by that holder once they are no longer flagged (a withhold, not a forfeiture) — and the freeze must never brick the close-out, even when the flagged holder is a freshly-transferred position owner who never opened a vault. This classification is not self-enforcing, so it is backed by a documented per-method coverage matrix and a regression guardrail that fails if a gated entry point loses its screen.
-- A rented `userOf` address, approved keeper, or third-party helper must not be sufficient to start a new borrower preclose flow. Such delegated roles may be allowed only on explicitly documented keeper-enabled completion functions.
+- A rented `userOf` address or an arbitrary third-party helper is never sufficient to start a new borrower preclose flow. An approved keeper **may** initiate one, but only when the borrower-position holder has granted that keeper the matching narrow per-action permission (`KEEPER_ACTION_*` bit) for that specific flow; the initiation then executes within the granting borrower's role, bounded by their configured caps and the protocol kill-switches, and the keeper can never become a loan party or route value to itself. Absent that explicit per-action grant, initiation remains party-only, and delegated roles are otherwise limited to explicitly documented keeper-enabled completion functions.
 - A borrower preclose flow is only valid while the loan status is `Active`.
 - If the loan has already been repaid, defaulted, liquidated, sold, transferred, or settled, borrower preclose is not allowed.
 - During borrower preclose flows, the principal/lending asset type, payment/prepay asset type, and collateral asset type used for the replacement, transfer, or offset flow must remain the same as the original active loan. The amount of the principal/lending asset, payment/prepay asset, or collateral asset may vary if permitted by the specific option, but the asset types themselves must not change. The platform must not allow a different principal/lending asset type, payment/prepay asset type, or collateral asset type in these flows, so that the original lender is not exposed to unexpected asset-substitution risk.
@@ -1588,7 +1594,7 @@ Lenders may exit or attempt to exit their positions before maturity. For Phase 1
 
 - Only the current lender of an active loan may initiate a lender-side early withdrawal flow.
 - The wallet that initiates lender-side early withdrawal must also be the current `ownerOf` the lender-side Vaipakam NFT for that loan. Strategic lender-side exit decisions must remain with the lender position NFT holder.
-- A rented `userOf` address, approved keeper, or third-party helper must not be sufficient to start a new lender early-withdrawal flow. Such delegated roles may be allowed only on explicitly documented keeper-enabled completion functions.
+- A rented `userOf` address or an arbitrary third-party helper is never sufficient to start a new lender early-withdrawal flow. An approved keeper **may** initiate one — for example, posting a sale listing on the lender's behalf — but only when the lender-position holder has granted that keeper the matching narrow per-action permission (`KEEPER_ACTION_*` bit) for that specific flow; the initiation executes within the granting lender's role, bounded by their configured caps and the protocol kill-switches, the sale proceeds and cancel rights still bind to the selling lender, and the keeper can never become a loan party or route value to itself. Absent that explicit per-action grant, initiation remains party-only, and delegated roles are otherwise limited to explicitly documented keeper-enabled completion functions.
 - The loan must be in `Active` status.
 - The loan must be an ERC-20 loan. NFT rental loans and other non-ERC20 loan/rental positions must be rejected from lender early-withdrawal flows.
 - During lender early-withdrawal flows, the principal/lending asset type, payment/prepay asset type, and collateral asset type of the replacement or sale flow must remain the same as the original active loan. The amount of the principal/lending asset, payment/prepay asset, or collateral asset may vary if permitted by the specific option, but the asset types themselves must not change. The platform must not allow a different principal/lending asset type, payment/prepay asset type, or collateral asset type in these flows, so that the original borrower is not exposed to unexpected asset-substitution risk.
@@ -2470,7 +2476,7 @@ target network's fork before the `-mainnet-rc` tag is cut. See
 - **Initially Supported Lending/Collateral Assets (Examples):**
   - **ERC-20 (Liquid):** USDC, USDT, DAI, WETH, WBTC.
   - (The platform will allow any ERC-20, but these will be prominently featured or have easier frontend selection initially).
-- **Loan Durations:** 1 day to 1 year (`1–365` days), enforced consistently by frontend validation and the contract path.
+- **Loan Durations:** launch product default of 1 day to 1 year (`1–365` days), enforced consistently by frontend validation and the contract path through the live configured maximum. Governance retains headroom above 365 days (a ceiling of approximately `4385` days) for future longer-tenor products, so `1–365` is the launch configuration rather than a hard protocol invariant.
 - **Testnet Master Flags:** Testnet deployment automation may flip the Range Orders master flags for amount ranges, rate ranges, borrower collateral ranges, and partial-fill matching on after deployment so flow scripts can exercise the enabled feature surface. Mainnet deployment automation must not auto-flip these flags; production rollout remains governance-controlled through the Timelock / Safe path.
 - **Canonical Limit-Order Enablement:** Fresh deployments intended to exercise canonical limit-order behavior should enable amount ranges, rate ranges, borrower collateral ranges, and partial-fill matching together after initialization. Mainnet may still stage that enablement through the governance path, but operators should treat the four switches as one product surface rather than enabling only one side of partial fills.
 - **Phase-Based Deploy Ceremony:** `deploy-testnet.sh` should mirror `deploy-mainnet.sh` phase-for-phase so rehearsals exercise the same operator flow: preflight, contracts, mocks where applicable, CCIP lane / pool configuration, Diamond configure spell, handover, ABI sync, verification, and per-surface Cloudflare deploys. Testnet may additionally expose a `pause-rehearsal` phase; mainnet pause flows must remain standalone incident-response scripts, not ordinary deploy side effects.
@@ -2544,7 +2550,7 @@ Vaipakam is committed to operating in a compliant manner within the evolving reg
     - **Tier 1 (Limited KYC):** For transaction values between the configured tier-0 and tier-1 thresholds. This might involve basic identity verification.
     - **Tier 2 (Full KYC/AML):** For transaction values at or above the configured tier-1 threshold. This will require more comprehensive identity verification and AML checks.
   - **Valuation for KYC Thresholds:**
-    - **ERC-20 Loans:** The active-numeraire value of the _principal amount being lent_ (if liquid) determines the transaction value. If the principal asset is illiquid, or if collateral is illiquid/NFT, these are considered zero for this specific calculation, relying on the value of the liquid component.
+    - **ERC-20 Loans:** The transaction value is the total value-at-risk: the active-numeraire value of the _principal amount being lent_ (if liquid) **plus** the active-numeraire value of the _collateral being pledged_ (if liquid). Summing both liquid legs is the conservative compliance base, since both sides of the position are exposed. Any illiquid leg — an illiquid principal asset, or illiquid/NFT collateral — is counted as zero for this specific calculation, so the threshold comparison relies on the value of the liquid components only.
     - **NFT Renting:** The _total rental value_ (daily rate \* duration, converted through the same Chainlink-led numeraire path) determines the transaction value.
     - The platform stores KYC tier thresholds in active-numeraire units and compares them directly against active-numeraire asset values returned by `OracleFacet.getAssetPrice`.
 - **Implementation Timing:** Real KYC/AML enforcement is not part of the effective Phase 1 launch behavior. Phase 1 keeps KYC checks in pass-through mode under the Phase 1 flag, while later governance or admin decisions may choose to activate the retained KYC framework.
@@ -2575,7 +2581,7 @@ The following features are planned for Phase 1:
 
 - **Purpose:** If a borrower's liquid collateral has significantly appreciated in value, or if they have over-collateralized initially, they may be able to withdraw some collateral.
 - **Condition:** The withdrawal must not cause the loan's "Health Factor" to drop below a safe threshold (e.g., 150%).
-  - Health Factor defined as: `(Value of Liquid Collateral in active numeraire) / (Value of Borrowed Amount in active numeraire)`
+  - Health Factor defined as: `(Value of Liquid Collateral in active numeraire \* the collateral asset's liquidation threshold) / (Value of Borrowed Amount in active numeraire)` — the same risk-adjusted form used at loan initiation (§3), not raw collateral over borrow.
   - The minimum Health Factor (e.g., 150%) must be maintained post-withdrawal.
 - **Process:** Borrower requests withdrawal of a specific amount of collateral. The system checks if the Health Factor remains above the threshold. If so, the excess collateral is released.
 - **Collateral-protection invariant (binding across the whole platform):** Collateral that backs a live ERC-20 loan must NOT be withdrawable from the borrower's vault through ANY path other than a protocol flow that first accounts for the reduction. The only collateral a borrower can move out is their genuinely-free (un-pledged) balance. This applies uniformly — the risk-checked excess-withdrawal above, repayment, refinance, liquidation, default, swap-to-repay, and obligation transfer each reconcile the pledged amount; and unrelated exits (for example withdrawing VPFI that is simultaneously pledged as ERC-20 collateral) must be refused down to the free balance. A borrower must never be able to leave a loan under-collateralized by routing pledged collateral out a side door.

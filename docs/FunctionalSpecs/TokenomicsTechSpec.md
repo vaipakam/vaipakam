@@ -70,19 +70,26 @@ Implementation target:
 
 | Category                              | Percentage |     VPFI Amount | Vesting / Release Notes                          |
 | ------------------------------------- | ---------: | --------------: | ------------------------------------------------ |
-| Founders                              |       `6%` |    `13,800,000` | 12-month cliff + 36-month linear vesting         |
+| Founders                              |       `6%` |    `13,800,000` | 12-mo (1-yr) cliff; 48-mo (4-yr) total linear vesting, inclusive of the cliff — see §3a |
 | Developers & Team                     |      `12%` |    `27,600,000` | Same vesting as founders                         |
 | Testers & Early Contributors          |       `6%` |    `13,800,000` | 6–12 month cliff                                 |
 | Platform Admins / Operational Roles   |       `3%` |     `6,900,000` | Timelock controlled                              |
 | Security Auditors                     |       `2%` |     `4,600,000` | One-time grants upon delivery                    |
 | Regulatory Compliance Pool            |       `1%` |     `2,300,000` | One-time                                         |
-| Bug Bounty Programs                   |       `2%` |     `4,600,000` | Ongoing, locked in multi-sig                     |
+| Bug Bounty Programs                   |       `2%` |     `4,600,000` | Multisig-held operational treasury bucket — not an on-chain insurance product; see §9 |
 | Exchange Listings & Market Making     |      `12%` |    `27,600,000` | Liquidity + CEX incentives                       |
 | Ecosystem / Community / Marketing     |       `2%` |     `4,600,000` | 0 cliff + ~12–18 mo linear; ops/governance multisig — see §3a |
 | Platform Interaction Rewards          |      `30%` |    `69,000,000` | Usage-based rewards                              |
 | Reserve (pending reallocation)        |      `25%` |    `57,500,000` | Freed by the #687 excision (24% staking + 1% fixed-rate sale) — disposition governance-pending |
 | **Total (pre-reconciliation)**        |   **101%** | **232,300,000** | See note — normalization to 100% / 230M is governance-pending |
 
+> **[owner to reconcile before mainnet mint]** — the granular rows above
+> currently sum to `101%` / `232,300,000` VPFI, which is **above** the `230M`
+> hard `TOTAL_SUPPLY_CAP`, and the Market-Making figure is inconsistent across
+> documents (`12%` here vs `14%` in the whitepaper). Both are open items the
+> owner must resolve before any mainnet mint; the numbers are deliberately left
+> as-is here rather than silently corrected.
+>
 > **Reserve + reconciliation note.** The `25%` Reserve is the allocation freed by
 > the #687 legal-surface excision — the `5% APR` staking-rewards pool (`24%`,
 > removed in #687-B; see §7) and the Early Fixed-Rate Purchase Program (`1%`,
@@ -102,8 +109,13 @@ The four allocation lines that fund people are reserved **mint headroom**,
 not pre-minted bags. The 230M is a *cap*, not a mandatory mint — an
 unallocated pool is simply never minted (lower circulating supply).
 
-- **Founders (6%)** — the founder's genuine ownership stake. 1-year
-  cliff + 4-year linear vesting via a per-grantee `VaipakamVestingWallet`.
+- **Founders (6%)** — the founder's genuine ownership stake. Canonical
+  vesting terms (OpenZeppelin `VestingWallet` semantics): a 12-month
+  (1-year) cliff and a 48-month (4-year) **total** linear-vesting window
+  that is **inclusive of the cliff**, via a per-grantee
+  `VaipakamVestingWallet`. (The §3 table row states the same terms; any
+  older "cliff + separate linear period" phrasing is superseded by this
+  single canonical statement.)
 - **Developers & Team (12%)** — ongoing developer / operational hires.
   The solo founder, being also the sole developer, draws a *defined*
   developer grant from this pool — **not** the whole pool; the remainder
@@ -220,7 +232,7 @@ Topology:
 
 - `Base` is the **canonical reward chain** — consistent with the canonical VPFI token rule and the §7 canonical-address rule
 - every non-canonical Diamond (mirror chains) acts as a **reporter**: at day-close it publishes its daily interest total to `Base` over the approved cross-chain messenger
-- `Base` acts as the **aggregator**: it accumulates chain totals into `dailyGlobalInterestNumeraire` and then **broadcasts that single number back** to every mirror
+- `Base` acts as the **aggregator**: it accumulates the per-side chain totals into the day's global lender-interest and borrower-interest denominators (recorded together as the `dailyGlobalInterestNumeraire` entry for the day) and then **broadcasts that finalized per-side pair back** to every mirror
 - `claimInteractionRewards()` runs **locally on each chain** using the mirror's own user-level interest data and the broadcast global denominator — users never have to leave their lending chain to claim once the relevant loan has closed
 
 Day-close emission contract (mirror → Base):
@@ -228,14 +240,16 @@ Day-close emission contract (mirror → Base):
 - trigger: the first interaction on day `D+1 UTC` (lazy rollover) or a permissionless poke function `closeDay(D)` if no traffic rolls the day naturally
 - payload:
   - `dayId` (uint64, UTC day number)
-  - `chainInterestNumeraire18` (uint256, 1e18-scaled, sum of `lenderInterestEarned + borrowerInterestPaid` on that chain for day `D`, quoted in the active numeraire)
+  - `chainLenderInterestNumeraire18` (uint256, 1e18-scaled, total lender interest **earned** on that chain for day `D`, quoted in the active numeraire)
+  - `chainBorrowerInterestNumeraire18` (uint256, 1e18-scaled, total borrower interest **paid** on that chain for day `D`, quoted in the active numeraire)
+  - the lender-side and borrower-side numbers are carried **separately** because the §4 distribution rule splits each daily pool `50%` to lenders proportional to interest earned and `50%` to borrowers proportional to interest paid — each side needs its own protocol-wide denominator; a single combined number cannot support that split. The combined chain total, where a combined figure is needed, is simply the sum of the two fields
 - transport: the configured cross-chain messenger from the mirror Diamond to the `Base` Diamond, restricted to approved chain and peer channels
 - each `(dayId, sourceChainId)` pair must be idempotent on the `Base` side — duplicate messages for the same day are rejected
 
 Finalization on Base:
 
 - storage key: daily chain interest by day and source EVM chain id
-- finalization rule: `dailyGlobalInterestNumeraire[dayId]` is finalized once all expected mirror chain ids have reported for `dayId`, OR after a **4-hour grace window** past `dayId + 1` UTC, whichever comes first
+- finalization rule: `dailyGlobalInterestNumeraire[dayId]` (the day's lender-side and borrower-side global denominators, finalized together as one record) is finalized once all expected mirror chain ids have reported for `dayId`, OR after a **4-hour grace window** past `dayId + 1` UTC, whichever comes first
 - any late-arriving report is recorded for audit but does **not** retroactively change a finalized global — this preserves claim determinism
 - finalization records must identify participating chains by EVM chain id, not by legacy cross-chain endpoint identifiers
 
@@ -277,7 +291,7 @@ Accounting identity:
 
 Failure modes and safety:
 
-- **missing chain for day D** (e.g. RPC outage on a mirror past the grace window): treated as `chainInterest = 0`; finalization emits a missed-chain report keyed by day and EVM chain id; governance may replay a reconciliation payment from the Insurance pool but must not reopen a finalized `dayId`
+- **missing chain for day D** (e.g. RPC outage on a mirror past the grace window): treated as `chainInterest = 0`; finalization emits a missed-chain report keyed by day and EVM chain id; governance may replay a reconciliation payment as a deliberate treasury action (there is no on-chain insurance pool — see §9) but must not reopen a finalized `dayId`
 - **cross-chain message outage / delayed packet**: claims for affected days are simply delayed (not lost) — the pull model's natural backstop
 - **timestamp drift across chains**: day boundary is fixed to UTC 00:00 on-chain via `block.timestamp / 1 days`; small per-chain block-time drift is absorbed within the 4-hour grace window
 - **double-counting**: `(dayId, chainId)` idempotency key on the Base side prevents replay; mirror emits are guarded by a last-reported-day check
@@ -305,7 +319,7 @@ Testing requirements beyond §9:
 
 ## 5. Yield Fee
 
-The protocol charges a **Yield Fee of `1%`** on all interest accrued by lenders.
+The protocol charges a **Yield Fee of `1%`** on interest **and late fees** accrued by lenders — both are lender yield economically, so both are in the fee base at settlement.
 
 This fee is automatically collected and directed to Treasury for protocol sustainability, buybacks, reward distribution, and ecosystem growth.
 
@@ -546,7 +560,20 @@ VPFI received as fees is recycled through a **governance-configurable** treasury
 
 The specific launch allocation is a governance choice made at deploy time, not a protocol constant. The **authoritative recommended target list lives in the treasury conversion design** ([`docs/DesignsAndPlans/TreasuryFunctionalSpec.md`](../DesignsAndPlans/TreasuryFunctionalSpec.md)); the historical `38 / 38 / 24` (ETH / wBTC / retained-VPFI) split is illustrative only. (The public whitepaper still shows the historical `38 / 38 / 24`; reconciling that marketing copy with the design doc's recommended list is a separate follow-up.)
 
-If the insurance / bug bounty pool exceeds `2%` of total supply, any surplus VPFI is also recycled through the same governance-configured conversion path (using whatever target allocation governance has set — there is no separate surplus-specific split).
+Bug-bounty bucket (owner decision, legal surface — 2026-07-05): the `2%`-of-supply
+bug-bounty allocation (§3) is a plain **multisig-held treasury bucket** — an
+operational matter for the operator, **not** an on-chain insurance product or
+protocol-operated insurance mechanism, and it must **not** be framed as
+"insurance" in any user-facing copy. The retail platform runs with near-zero
+legal surface, so there is **no active on-chain "insurance pool"**: an on-chain
+protocol-operated insurance mechanism could read as the protocol offering
+insurance (a regulated activity). Any automated logic that recycles a surplus of
+that bucket (e.g. an above-`2%`-of-supply excess flowing through the
+governance-configured conversion path above) is **optional,
+disabled-by-default, and industrial-fork-gated** — the same pattern as KYC
+enforcement — and is **never active on the retail deploy**. On retail, any
+disposal of a bucket surplus is a deliberate multisig treasury action, not
+protocol behaviour.
 
 Buyback dormancy and fee-converted VPFI routing:
 
@@ -620,7 +647,7 @@ Deployment flow:
 3. deploy connected mirror-token and cross-chain messenger contracts on the additional supported chains
 4. wire CCIP lanes, remote messengers, token pools, and channel peers so cross-chain transfers preserve one global supply model
 5. keep token symbol and metadata consistent as `VPFI` on every supported chain
-6. configure mirror-chain buy-adapter rate limits to finite caps before verification; adapters that remain at unlimited deployment defaults must be treated as not production-ready
+6. configure the VPFI TokenPool per-lane CCIP rate limits via `VpfiPoolRateGovernor` to finite caps before verification; lanes left at unlimited deployment defaults must be treated as not production-ready, and the governor refuses to disable a lane's limit
 7. mark Base as the canonical VPFI tier chain before opening fee-discount flows
 8. configure mirror chains with the approved reward messenger, Base chain id, mirror-tier max age, and any required broadcast destinations
 9. top up the protocol broadcast budget before expecting automatic tier pushes or version-bump broadcasts to reach mirrors
