@@ -13,7 +13,7 @@ import { spawn } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { waitForAnvil } from './lib/anvil';
+import { ANVIL_URL, waitForAnvil } from './lib/anvil';
 import { createAndFundWallets } from './lib/wallets';
 import { seedRoleAssets } from './lib/seed';
 
@@ -43,12 +43,18 @@ export default async function globalSetup(): Promise<void> {
 
   const forkUrl =
     process.env.ALPHA02_E2E_FORK_URL ?? 'https://sepolia.base.org';
+  // Spawn on the SAME endpoint every helper (and the browser via
+  // playwright.config's VITE_BASE_SEPOLIA_RPC_URL) resolves from
+  // ALPHA02_E2E_ANVIL_URL — a fixed port here would split the suite
+  // across two RPCs the moment someone overrides the URL.
+  const anvilEndpoint = new URL(ANVIL_URL);
   const anvil = spawn(
     'anvil',
     [
       '--fork-url', forkUrl,
       '--chain-id', '84532',
-      '--port', '8545',
+      '--host', anvilEndpoint.hostname,
+      '--port', anvilEndpoint.port || '8545',
       '--silent',
       // Generous gas + instant mining keep UI waits short.
       '--gas-limit', '60000000',

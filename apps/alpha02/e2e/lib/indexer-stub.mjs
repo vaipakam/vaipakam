@@ -58,7 +58,10 @@ function offerStatus(o) {
 }
 
 async function mapOffer(id) {
-  const o = await read('getOffer', [BigInt(id)]).catch(() => null);
+  // No catch: a zeroed struct is the legitimate "gone" signal below;
+  // an RPC/ABI failure must bubble to the handler's 500 instead of
+  // silently dropping the row.
+  const o = await read('getOffer', [BigInt(id)]);
   if (!o) return null;
   const status = offerStatus(o);
   if (status === null) return null;
@@ -101,7 +104,9 @@ async function mapOffer(id) {
 }
 
 async function mapLoan(id) {
-  const l = await read('getLoanDetails', [BigInt(id)]).catch(() => null);
+  // No catch — same rule as mapOffer: zeroed struct = unknown id,
+  // read failure = 500.
+  const l = await read('getLoanDetails', [BigInt(id)]);
   if (!l) return null;
   const Z = /^0x0{40}$/i;
   if (Z.test(l.lender) && Z.test(l.borrower)) return null; // unknown id: zeroed struct
@@ -135,29 +140,56 @@ async function mapLoan(id) {
   };
 }
 
-// Exhaustive active-offer id walk. The stub's responses advertise
-// `nextBefore: null` (= "this page is complete"), so the page must
-// actually BE complete: truncating at one chain page would silently
-// hide later offers from the app's pagination-following client. Pages
-// the chain view until a short page, with a hard cap as a runaway
-// guard (logged, never silent).
-const ACTIVE_IDS_CAP = 2000;
+// Exhaustive id walks. The stub's responses advertise `nextBefore:
+// null` (= "this page is complete"), so every page must actually BE
+// complete: truncating at one chain page would silently hide rows
+// from the app's pagination-following client. Chain-read failures are
+// deliberately NOT caught here — they bubble to the handler's 500
+// path so the app renders "indexer unavailable" instead of a
+// confident empty market (an ABI/RPC break must fail CI, not pass it).
+const WALK_CAP = 2000;
+const PAGE = 200n;
+
 async function activeOfferIds() {
   const ids = [];
-  const PAGE = 200n;
-  for (let offset = 0n; ids.length < ACTIVE_IDS_CAP; offset += PAGE) {
-    const page = await read('getActiveOffersPaginated', [offset, PAGE]).catch(
-      () => [],
-    );
+  for (let offset = 0n; ids.length < WALK_CAP; offset += PAGE) {
+    const page = await read('getActiveOffersPaginated', [offset, PAGE]);
     ids.push(...page);
-    if (page.length < Number(PAGE)) break;
+    if (page.length < Number(PAGE)) return ids;
   }
-  if (ids.length >= ACTIVE_IDS_CAP) {
-    console.warn(
-      `[indexer-stub] active-offer walk hit the ${ACTIVE_IDS_CAP} cap — book truncated`,
-    );
+  throw new Error(`active-offer walk exceeded the ${WALK_CAP} cap`);
+}
+
+// getUserOffersPaginated returns (offerIds slice, total) — walk until
+// the collected count reaches the reported total.
+async function userOfferIds(addr) {
+  const ids = [];
+  for (let offset = 0n; ids.length < WALK_CAP; offset += PAGE) {
+    const [page, total] = await read('getUserOffersPaginated', [addr, offset, PAGE]);
+    ids.push(...page);
+    if (ids.length >= Number(total) || page.length === 0) return ids;
   }
-  return ids;
+  throw new Error(`user-offer walk exceeded the ${WALK_CAP} cap`);
+}
+
+// getUserPositionLoansPaginated returns (loanIds, positionTokenIds,
+// totalBalance) — loans whose position NFT the wallet HOLDS, both
+// roles mixed; `offset` indexes the wallet's NFT inventory and
+// totalBalance bounds it.
+async function userPositionLoanIds(addr) {
+  const ids = [];
+  for (let offset = 0n; ; offset += PAGE) {
+    const [loanIds, , totalBalance] = await read('getUserPositionLoansPaginated', [
+      addr,
+      offset,
+      PAGE,
+    ]);
+    ids.push(...loanIds);
+    if (offset + PAGE >= totalBalance) return ids;
+    if (offset >= BigInt(WALK_CAP)) {
+      throw new Error(`position-loan walk exceeded the ${WALK_CAP} cap`);
+    }
+  }
 }
 
 async function handler(req, res) {
@@ -193,12 +225,10 @@ async function handler(req, res) {
       return json(200, { chainId: CHAIN_ID, offers, nextBefore: null });
     }
 
-    // GET /offers/by-creator/:addr
+    // GET /offers/by-creator/:addr — exhaustive walk (see userOfferIds).
     if (parts[0] === 'offers' && parts[1] === 'by-creator' && parts[2]) {
       const creator = parts[2].toLowerCase();
-      const [ids] = await read('getUserOffersPaginated', [creator, 0n, 100n]).catch(
-        () => [[]],
-      );
+      const ids = await userOfferIds(creator);
       const offers = (await Promise.all([...ids].map(mapOffer))).filter(Boolean);
       return json(200, { chainId: CHAIN_ID, creator, offers, nextBefore: null });
     }
@@ -238,11 +268,7 @@ async function handler(req, res) {
     ) {
       const side = parts[1] === 'by-lender' ? 'lender' : 'borrower';
       const addr = parts[2].toLowerCase();
-      const [loanIds] = await read('getUserPositionLoansPaginated', [
-        addr,
-        0n,
-        100n,
-      ]).catch(() => [[], [], 0n]);
+      const loanIds = await userPositionLoanIds(addr);
       const loans = (await Promise.all([...loanIds].map(mapLoan)))
         .filter(Boolean)
         .filter((l) => (side === 'lender' ? l.lender : l.borrower).toLowerCase() === addr);

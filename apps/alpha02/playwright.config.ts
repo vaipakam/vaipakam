@@ -11,6 +11,9 @@
 import { defineConfig } from '@playwright/test';
 
 const STUB_PORT = Number(process.env.ALPHA02_E2E_STUB_PORT ?? 8788);
+// Single source for the fork RPC the BROWSER talks to — must match
+// the anvil instance global-setup spawns (see e2e/lib/anvil.ts).
+const ANVIL_URL = process.env.ALPHA02_E2E_ANVIL_URL ?? 'http://127.0.0.1:8545';
 
 export default defineConfig({
   testDir: './e2e/tests',
@@ -33,13 +36,18 @@ export default defineConfig({
     command: 'node node_modules/vite/bin/vite.js --host 127.0.0.1 --port 4173 --strictPort',
     url: 'http://127.0.0.1:4173',
     timeout: 240_000,
-    reuseExistingServer: !process.env.CI,
+    // Never reuse a server that happens to sit on the port: it would
+    // have been started WITHOUT the fork-tier env below (public RPC +
+    // production indexer) while the injected wallet signs on anvil —
+    // silently misleading local results. --strictPort makes the clash
+    // a loud failure instead.
+    reuseExistingServer: false,
     stdout: 'pipe',
     stderr: 'pipe',
     env: {
       ALPHA02_E2E: '1',
       VITE_DEFAULT_CHAIN_ID: '84532',
-      VITE_BASE_SEPOLIA_RPC_URL: 'http://127.0.0.1:8545',
+      VITE_BASE_SEPOLIA_RPC_URL: ANVIL_URL,
       VITE_INDEXER_ORIGIN: `http://127.0.0.1:${STUB_PORT}`,
     },
   },
