@@ -3,13 +3,14 @@
   "private": true,
   "version": "0.0.0",
   "type": "module",
-  "description": "Vaipakam chain → D1 indexer + public read-API Cloudflare Worker (Stage 3 PR3 of the Worker split — see docs/DesignsAndPlans/Stage3WorkerSplitPlan.md). Cron-driven event scan: pulls Offer / Loan / VPFI / NFT lifecycle events into D1 round-robin per chain, plus a cancelled-offer retention prune. HTTP-fronted read-API (open CORS, T-041): /offers/{stats,active,recent,by-creator/:addr,:offerId} + /loans/{active,recent,stats,timeseries,by-lender/:addr,by-borrower/:addr,:loanId} + /activity + /claimables/:addr. Read-only — holds no signing keys; never serves user-facing writes.",
+  "description": "Vaipakam chain \u2192 D1 indexer + public read-API Cloudflare Worker (Stage 3 PR3 of the Worker split \u2014 see docs/DesignsAndPlans/Stage3WorkerSplitPlan.md). Cron-driven event scan: pulls Offer / Loan / VPFI / NFT lifecycle events into D1 round-robin per chain, plus a cancelled-offer retention prune. HTTP-fronted read-API (open CORS, T-041): /offers/{stats,active,recent,by-creator/:addr,:offerId} + /loans/{active,recent,stats,timeseries,by-lender/:addr,by-borrower/:addr,:loanId} + /activity + /claimables/:addr. Read-only \u2014 holds no signing keys; never serves user-facing writes.",
   "scripts": {
     "dev": "wrangler dev",
     "deploy": "wrangler deploy",
     "build": "pnpm run typecheck",
     "check-event-coverage": "node scripts/check-event-coverage.mjs",
-    "typecheck": "tsc -p . --noEmit && node scripts/check-event-coverage.mjs"
+    "typecheck": "tsc -p . --noEmit && node scripts/check-event-coverage.mjs",
+    "test": "vitest run"
   },
   "dependencies": {
     "@vaipakam/contracts": "workspace:*",
@@ -19,6 +20,7 @@
   "devDependencies": {
     "@cloudflare/workers-types": "^4.0.0",
     "typescript": "^6.0.0",
+    "vitest": "^4.1.4",
     "wrangler": "^4.0.0"
   }
 }
