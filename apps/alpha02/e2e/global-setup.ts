@@ -84,6 +84,11 @@ export default async function globalSetup(): Promise<void> {
     { stdio: ['ignore', 'inherit', 'inherit'], detached: false },
   );
   if (anvil.pid) pids.push(anvil.pid);
+  // Record the PID IMMEDIATELY: if a readiness wait below throws while
+  // the child is alive, teardown must still find something to kill —
+  // otherwise the orphan squats the port and every following run dies
+  // on the stale-listener guard.
+  fs.writeFileSync(PIDS_FILE, JSON.stringify(pids));
   // A child death before readiness (bad fork URL, port race) must be
   // fatal — resolves (never rejects) so the loser of the race can't
   // become an unhandled rejection.

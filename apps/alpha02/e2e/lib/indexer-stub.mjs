@@ -58,7 +58,16 @@ const n = (v) => Number(v ?? 0);
 // rather than guess.
 const OFFER_STATE = ['active', 'accepted', 'cancelled', 'consumed_by_sale'];
 
-async function mapOffer(id) {
+// The FORK's clock, not the host's: evm_increaseTime moves
+// block.timestamp far from wall time, and the facets judge expiry
+// against block.timestamp — the stub must use the same clock or a
+// time-travelled offer reads active while acceptOffer would revert.
+async function forkNowSec() {
+  const block = await pub.getBlock({ blockTag: 'latest' });
+  return Number(block.timestamp);
+}
+
+async function mapOffer(id, chainNowSec) {
   // No catch: a zeroed struct is the legitimate "gone" signal below;
   // an RPC/ABI failure must bubble to the handler's 500 instead of
   // silently dropping the row.
@@ -73,9 +82,10 @@ async function mapOffer(id) {
   if (status === undefined) {
     throw new Error(`unknown OfferState ${stateRaw} for offer ${id}`);
   }
-  // GTT expiry is a clock-derived overlay on an Open row (matches the
-  // real indexer's 'expired' status).
-  if (status === 'active' && n(o.expiresAt) !== 0 && n(o.expiresAt) < nowSec) {
+  // GTT expiry overlay on an Open row — judged on the FORK's
+  // block.timestamp with the facets' own >= boundary
+  // (OfferAcceptFacet rejects at block.timestamp >= expiresAt).
+  if (status === 'active' && n(o.expiresAt) !== 0 && chainNowSec >= n(o.expiresAt)) {
     status = 'expired';
   }
   return {
@@ -210,17 +220,22 @@ async function userOfferIds(addr) {
 // getUserPositionLoansPaginated returns (loanIds, positionTokenIds,
 // totalBalance) — loans whose position NFT the wallet HOLDS, both
 // roles mixed; `offset` indexes the wallet's NFT inventory and
-// totalBalance bounds it.
-async function userPositionLoanIds(addr) {
-  const ids = [];
+// totalBalance bounds it. Returns aligned {loanId, tokenId} pairs —
+// the HELD token id is what decides which SIDE the wallet occupies
+// (production's by-lender/by-borrower routes key on the CURRENT
+// position-NFT owner, so a transferred/bought position must surface
+// for its new holder, not the original party).
+async function userPositionLoans(addr) {
+  const rows = [];
   for (let offset = 0n; ; offset += PAGE) {
-    const [loanIds, , totalBalance] = await read('getUserPositionLoansPaginated', [
-      addr,
-      offset,
-      PAGE,
-    ]);
-    ids.push(...loanIds);
-    if (offset + PAGE >= totalBalance) return ids;
+    const [loanIds, tokenIds, totalBalance] = await read(
+      'getUserPositionLoansPaginated',
+      [addr, offset, PAGE],
+    );
+    for (let i = 0; i < loanIds.length; i++) {
+      rows.push({ loanId: loanIds[i], tokenId: tokenIds[i] });
+    }
+    if (offset + PAGE >= totalBalance) return rows;
     if (offset >= BigInt(WALK_CAP)) {
       throw new Error(`position-loan walk exceeded the ${WALK_CAP} cap`);
     }
@@ -261,8 +276,8 @@ async function handler(req, res) {
     // (`limit` deliberately ignored: nextBefore null promises
     // completeness, see activeOfferIds).
     if (parts[0] === 'offers' && parts[1] === 'active') {
-      const ids = await activeOfferIds();
-      const offers = (await Promise.all(ids.map(mapOffer)))
+      const [ids, chainNow] = await Promise.all([activeOfferIds(), forkNowSec()]);
+      const offers = (await Promise.all(ids.map((id) => mapOffer(id, chainNow))))
         .filter((o) => o && o.status === 'active')
         // Production serves ORDER BY offer_id DESC; the contract's
         // swap-and-pop active list is unordered — restore the shape.
@@ -273,8 +288,10 @@ async function handler(req, res) {
     // GET /offers/by-creator/:addr — exhaustive walk (see userOfferIds).
     if (parts[0] === 'offers' && parts[1] === 'by-creator' && parts[2]) {
       const creator = parts[2].toLowerCase();
-      const ids = await userOfferIds(creator);
-      const offers = (await Promise.all([...ids].map(mapOffer))).filter(Boolean);
+      const [ids, chainNow] = await Promise.all([userOfferIds(creator), forkNowSec()]);
+      const offers = (
+        await Promise.all([...ids].map((id) => mapOffer(id, chainNow)))
+      ).filter(Boolean);
       return json(200, { chainId: CHAIN_ID, creator, offers, nextBefore: null });
     }
 
@@ -282,10 +299,10 @@ async function handler(req, res) {
     // position NFT the wallet currently holds.
     if (parts[0] === 'offers' && parts[1] === 'by-current-holder' && parts[2]) {
       const holder = parts[2].toLowerCase();
-      const ids = await activeOfferIds();
+      const [ids, chainNow] = await Promise.all([activeOfferIds(), forkNowSec()]);
       const offers = [];
       for (const id of ids) {
-        const o = await mapOffer(id);
+        const o = await mapOffer(id, chainNow);
         if (!o || o.status !== 'active') continue;
         // ownerOf REVERTING is the semantic "NFT burned / nobody
         // holds it" answer; any other failure (ABI/RPC) must 500.
@@ -303,15 +320,16 @@ async function handler(req, res) {
 
     // GET /offers/:id?chainId=
     if (parts[0] === 'offers' && parts[1] && /^\d+$/.test(parts[1])) {
-      const offer = await mapOffer(Number(parts[1]));
+      const offer = await mapOffer(Number(parts[1]), await forkNowSec());
       return offer ? json(200, offer) : json(404, { error: 'not found' });
     }
 
-    // GET /loans/by-lender/:addr | /loans/by-borrower/:addr. The chain
-    // view returns `(loanIds, positionTokenIds, totalBalance)` — loans
-    // whose position NFT the wallet HOLDS, both roles mixed — so the
-    // side split comes from each loan's own lender/borrower field
-    // (what the real indexer's columns hold too).
+    // GET /loans/by-lender/:addr | /loans/by-borrower/:addr. Side is
+    // decided by WHICH position NFT the wallet holds (held tokenId ==
+    // loan.lenderTokenId → lender side; == borrowerTokenId → borrower
+    // side), matching production's current-owner columns — the
+    // immutable lender/borrower fields would hide a transferred or
+    // bought position from its new holder.
     if (
       parts[0] === 'loans' &&
       (parts[1] === 'by-lender' || parts[1] === 'by-borrower') &&
@@ -319,10 +337,18 @@ async function handler(req, res) {
     ) {
       const side = parts[1] === 'by-lender' ? 'lender' : 'borrower';
       const addr = parts[2].toLowerCase();
-      const loanIds = await userPositionLoanIds(addr);
-      const loans = (await Promise.all([...loanIds].map(mapLoan)))
-        .filter(Boolean)
-        .filter((l) => (side === 'lender' ? l.lender : l.borrower).toLowerCase() === addr);
+      const held = await userPositionLoans(addr);
+      const loans = (
+        await Promise.all(
+          held.map(async ({ loanId, tokenId }) => {
+            const l = await mapLoan(loanId);
+            if (!l) return null;
+            const sideTokenId =
+              side === 'lender' ? l.lenderTokenId : l.borrowerTokenId;
+            return String(tokenId) === sideTokenId ? l : null;
+          }),
+        )
+      ).filter(Boolean);
       return json(200, { chainId: CHAIN_ID, side, address: addr, loans, nextBefore: null });
     }
 
