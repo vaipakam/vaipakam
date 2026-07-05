@@ -549,6 +549,8 @@ export const copy = {
     emptyBody: 'Borrow or lend to get started.',
     unavailable:
       'We couldn’t load your positions right now. Your funds are unaffected — please try again in a moment.',
+    sourcesDegraded:
+      'One of this page\u2019s data sources is temporarily unavailable. Your current positions are shown from the remaining source and recently changed items may take a moment to appear.',
     roleBorrower: 'You borrowed',
     roleLender: 'You lent',
     whatIfNothingBorrower: (collateral: string) =>

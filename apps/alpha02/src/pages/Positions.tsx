@@ -11,7 +11,7 @@ import { Link } from 'react-router-dom';
 import { useModal } from 'connectkit';
 import { useQueryClient } from '@tanstack/react-query';
 import { copy } from '../content/copy';
-import { useMyLoans, useMyOffers } from '../data/hooks';
+import { useMyLoansFull, useMyOffersFull } from '../data/hooks';
 import { useActiveChain } from '../chain/useActiveChain';
 import { useDiamondWrite } from '../contracts/diamond';
 import { EmptyState, UnavailableState } from '../components/EmptyState';
@@ -138,8 +138,19 @@ function OfferRow({ offer }: { offer: IndexedOffer }) {
 export function Positions() {
   const { isConnected } = useActiveChain();
   const { setOpen } = useModal();
-  const loans = useMyLoans();
-  const offers = useMyOffers();
+  const loans = useMyLoansFull();
+  const offers = useMyOffersFull();
+  // Current positions come from the CHAIN (authoritative, fresh this
+  // block) with the indexer as the redundancy leg. Either source
+  // failing means the list is served single-sourced — say so, never
+  // render a possibly-degraded list as the whole truth.
+  const sourcesDegraded =
+    loans.data != null &&
+    offers.data != null &&
+    (!loans.data.chainOk ||
+      !loans.data.indexerOk ||
+      !offers.data.chainOk ||
+      !offers.data.indexerOk);
 
   return (
     <div>
@@ -159,35 +170,42 @@ export function Positions() {
       ) : loans.isLoading || offers.isLoading ? (
         <EmptyState icon={LoaderCircle} title="Loading your positions…" />
       ) : loans.data == null || offers.data == null ? (
-        // EITHER source failing means the page can't honestly claim
-        // "you have nothing" — a user's funds may be locked in exactly
-        // the rows we couldn't load (audit F-20260702-001 class).
+        // BOTH sources (chain + indexer) failing for a list means the
+        // page can't honestly claim "you have nothing" — a user's
+        // funds may be locked in exactly the rows we couldn't load
+        // (audit F-20260702-001 class).
         <UnavailableState body={copy.positions.unavailable} />
       ) : (
         <>
-          {offers.data.length > 0 ? (
+          {sourcesDegraded ? (
+            <div className="banner banner-warn" role="alert">
+              <span className="banner-body">{copy.positions.sourcesDegraded}</span>
+            </div>
+          ) : null}
+
+          {offers.data.rows.length > 0 ? (
             <section style={{ marginBottom: 24 }}>
               <h2>Open offers</h2>
               <div className="row-list">
-                {offers.data.map((o) => (
+                {offers.data.rows.map((o) => (
                   <OfferRow key={o.offerId} offer={o} />
                 ))}
               </div>
             </section>
           ) : null}
 
-          {loans.data.length > 0 ? (
+          {loans.data.rows.length > 0 ? (
             <section>
               <h2>Loans</h2>
               <div className="row-list">
-                {loans.data.map((loan) => (
+                {loans.data.rows.map((loan) => (
                   <LoanRow key={`${loan.loanId}-${loan.role}`} loan={loan} />
                 ))}
               </div>
             </section>
           ) : null}
 
-          {loans.data.length === 0 && offers.data.length === 0 ? (
+          {loans.data.rows.length === 0 && offers.data.rows.length === 0 ? (
             <EmptyState
               icon={ListChecks}
               title={copy.positions.emptyTitle}

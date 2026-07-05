@@ -10,9 +10,10 @@ import { useQuery } from '@tanstack/react-query';
 import { useModal } from 'connectkit';
 import { copy } from '../content/copy';
 import { useActiveChain } from '../chain/useActiveChain';
-import { useMyLoans } from '../data/hooks';
+import { useMyLoansFull } from '../data/hooks';
 import { fetchActivity, type IndexedActivityEvent } from '../data/indexer';
 import { EmptyState, UnavailableState } from '../components/EmptyState';
+import { MarketFreshnessNote } from '../components/MarketFreshnessNote';
 import { formatDate } from '../lib/format';
 
 /** camelCase / PascalCase event kind → spaced words
@@ -52,20 +53,31 @@ function ActivityRow({ event }: { event: IndexedActivityEvent }) {
 export function Activity() {
   const { isConnected, readChain, address } = useActiveChain();
   const { setOpen } = useModal();
-  const loans = useMyLoans();
+  const loans = useMyLoansFull();
 
   // The worker's actor column is non-exhaustive (a keeper-triggered
   // LoanDefaulted has actor null; OfferAccepted stores only the
   // acceptor), so fetch broadly and keep an event when the wallet is a
   // PARTICIPANT: recorded actor, mentioned in the event args, or the
   // event belongs to one of the wallet's own loans.
-  const myLoanIds = useMemo(
-    () =>
-      new Set(
-        (Array.isArray(loans.data) ? loans.data : []).map((l) => l.loanId),
-      ),
-    [loans.data],
-  );
+  // The filter needs the wallet's loan-id set INCLUDING the indexer
+  // leg: the live chain enumeration only sees currently-held position
+  // NFTs, so a chain-only fallback would silently drop actor-null
+  // events for closed/transferred loans. `loansUsable` is therefore
+  // "both loan sources answered", not merely "some rows exist".
+  // The set is the UNION of rendered rows (chain-sole-source when the
+  // chain answers — freshest, includes a just-initiated loan the
+  // indexer hasn't ingested) and the indexed leg's own ids (which
+  // keep a just-burned/transferred loan through the ingest-lag
+  // window; permanent history for long-closed positions needs the
+  // historical-participant route tracked as #1023).
+  const loansUsable = loans.data != null && loans.data.indexerOk;
+  const myLoanIds = useMemo(() => {
+    if (!loansUsable) return new Set<number>();
+    const ids = new Set(loans.data!.rows.map((l) => l.loanId));
+    for (const id of loans.data!.indexedLoanIds) ids.add(id);
+    return ids;
+  }, [loansUsable, loans.data]);
 
   const activity = useQuery({
     queryKey: [
@@ -75,10 +87,11 @@ export function Activity() {
       myLoanIds.size,
     ],
     // The participant filter NEEDS the wallet's loan-id set: with the
-    // positions query unavailable, actor-null events tied to the
-    // wallet only by loanId would be silently dropped and the feed
-    // would render confidently incomplete. Wait for a real loan list.
-    enabled: Boolean(address) && Array.isArray(loans.data),
+    // loan sources unavailable (or the indexer leg missing — see
+    // loansUsable), actor-null events tied to the wallet only by
+    // loanId would be silently dropped and the feed would render
+    // confidently incomplete. Wait for a usable loan list.
+    enabled: Boolean(address) && loansUsable,
     refetchInterval: 60_000,
     queryFn: async (): Promise<{
       events: IndexedActivityEvent[];
@@ -134,25 +147,36 @@ export function Activity() {
         />
       ) : loans.isLoading || loans.data === undefined ? (
         <EmptyState icon={LoaderCircle} title="Loading your activity…" />
-      ) : loans.data === null ? (
-        // Positions unavailable → the participation filter can't run;
-        // an activity feed built without it would be silently partial.
+      ) : loans.data === null || !loans.data.indexerOk ? (
+        // Loan sources unavailable (or indexer leg missing) → the
+        // participation filter can't run; an activity feed built
+        // without it would be silently partial.
         <UnavailableState body={copy.activity.unavailable} />
       ) : activity.isLoading || activity.data === undefined ? (
         <EmptyState icon={LoaderCircle} title="Loading your activity…" />
       ) : activity.data === null ? (
         <UnavailableState body={copy.activity.unavailable} />
       ) : activity.data.events.length === 0 ? (
-        <EmptyState
-          icon={History}
-          title={
-            activity.data.truncated
-              ? copy.activity.truncatedEmpty
-              : copy.activity.empty
-          }
-        />
+        <>
+          {/* A STALLED indexer returning zero rows is exactly the
+              misleading empty feed — the self-gating note must cover
+              this branch too, not only the non-empty one. */}
+          <MarketFreshnessNote />
+          <EmptyState
+            icon={History}
+            title={
+              activity.data.truncated
+                ? copy.activity.truncatedEmpty
+                : copy.activity.empty
+            }
+          />
+        </>
       ) : (
         <>
+          {/* Activity stays INDEXER-fed (events have no chain view), so
+              a stalled ingest cursor means recent actions may be
+              missing — the self-gating freshness note says so. */}
+          <MarketFreshnessNote />
           {activity.data.truncated ? (
             <div className="banner banner-info" role="status" style={{ marginBottom: 12 }}>
               <span className="banner-body">{copy.activity.truncatedNote}</span>
