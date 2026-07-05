@@ -41,23 +41,26 @@ function ConnectKitThemed({ children }: { children: React.ReactNode }) {
 
 createRoot(document.getElementById('root')!).render(
   <StrictMode>
+    {/* Outermost boundary: ABOVE the provider stack, because a
+        boundary only catches its descendants — a throw inside
+        ThemeProvider/Wagmi/QueryClient/ConnectKit/router would
+        otherwise still white-screen. ErrorBoundary itself uses no
+        hooks or context, so it is safe out here. No resetKey —
+        reload recovers. */}
+    <ErrorBoundary>
     <ThemeProvider>
       <ModeProvider>
         <WagmiProvider config={wagmiConfig}>
           <QueryClientProvider client={queryClient}>
             <ConnectKitThemed>
               <BrowserRouter>
-                {/* Outer boundary: catches shell/provider-level render
-                    crashes the route-level boundary can't (it lives
-                    inside the shell). No resetKey — reload recovers. */}
-                <ErrorBoundary>
-                  <App />
-                </ErrorBoundary>
+                <App />
               </BrowserRouter>
             </ConnectKitThemed>
           </QueryClientProvider>
         </WagmiProvider>
       </ModeProvider>
     </ThemeProvider>
+    </ErrorBoundary>
   </StrictMode>,
 );

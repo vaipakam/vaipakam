@@ -17,10 +17,12 @@
  * culprit so the next report is diagnosable.
  *
  * Reset behaviour: mounted around the route Outlet with
- * `resetKey={location.pathname}`, so navigating away from a crashed
- * route recovers without a full reload (the nav stays alive because
- * the boundary sits INSIDE the shell). A second instance wraps the
- * whole tree in main.tsx (no resetKey) for shell/provider crashes.
+ * `resetKey={pathname + search}` (query changes count: a crashed
+ * ?offer deep link must recover when the user opens a different
+ * one on the same path), so navigating away recovers without a full
+ * reload (the nav stays alive because the boundary sits INSIDE the
+ * shell). A second instance wraps the whole tree ABOVE the provider
+ * stack in main.tsx (no resetKey) for provider/router crashes.
  *
  * Diagnostics stay console-only for now — alpha02 has no journey-log
  * buffer; the diagnostics-drawer half of #1028 will give this a sink.
@@ -36,8 +38,23 @@ interface ErrorBoundaryProps {
 }
 
 interface ErrorBoundaryState {
+  /** True whenever a descendant threw — REGARDLESS of what it threw.
+   *  React reports thrown null/undefined to boundaries too; keying the
+   *  fallback on the error VALUE would treat those as healthy and
+   *  re-render the failed children. */
+  hasError: boolean;
   error: Error | null;
   componentStack: string | null;
+}
+
+/** Whatever a descendant threw → a real Error for display. */
+function normalizeThrown(value: unknown): Error {
+  if (value instanceof Error) return value;
+  return new Error(
+    value === null || value === undefined
+      ? `A component threw ${String(value)} during render`
+      : String(value),
+  );
 }
 
 /** React production builds throw `Minified React error #NNN` — useless
@@ -72,18 +89,18 @@ function trimComponentStack(raw: string | null | undefined, max: number): string
 }
 
 export class ErrorBoundary extends Component<ErrorBoundaryProps, ErrorBoundaryState> {
-  state: ErrorBoundaryState = { error: null, componentStack: null };
+  state: ErrorBoundaryState = { hasError: false, error: null, componentStack: null };
 
-  static getDerivedStateFromError(error: Error): ErrorBoundaryState {
+  static getDerivedStateFromError(thrown: unknown): ErrorBoundaryState {
     // componentStack arrives later in componentDidCatch's ErrorInfo.
-    return { error, componentStack: null };
+    return { hasError: true, error: normalizeThrown(thrown), componentStack: null };
   }
 
   componentDidUpdate(prevProps: ErrorBoundaryProps): void {
     // Route changed → clear the error so the new route renders clean.
     // Guarded on state.error so healthy renders never churn state.
-    if (this.state.error && prevProps.resetKey !== this.props.resetKey) {
-      this.setState({ error: null, componentStack: null });
+    if (this.state.hasError && prevProps.resetKey !== this.props.resetKey) {
+      this.setState({ hasError: false, error: null, componentStack: null });
     }
   }
 
@@ -99,10 +116,10 @@ export class ErrorBoundary extends Component<ErrorBoundaryProps, ErrorBoundarySt
   };
 
   render(): ReactNode {
-    const { error, componentStack } = this.state;
-    if (!error) return this.props.children;
+    const { hasError, error, componentStack } = this.state;
+    if (!hasError) return this.props.children;
 
-    const message = error.message || String(error);
+    const message = error?.message || String(error);
     const gloss = reactErrorGloss(message);
     return (
       <div className="empty-state" role="alert">

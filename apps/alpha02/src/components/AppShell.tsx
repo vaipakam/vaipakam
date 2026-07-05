@@ -75,7 +75,7 @@ const TABBAR: NavItem[] = [
 export function AppShell() {
   const { isAdvanced } = useMode();
   const { readChain } = useActiveChain();
-  const { pathname } = useLocation();
+  const { pathname, search } = useLocation();
 
   // testnetOnly entries (the faucet) additionally require the chain's
   // deployments bundle to actually carry `testnetMocks` — an unseeded
@@ -152,8 +152,9 @@ export function AppShell() {
           <SanctionsBanner />
           {/* Route-level crash containment: a page that throws during
               render becomes a recoverable card while the nav stays
-              alive; navigating away resets it (resetKey). */}
-          <ErrorBoundary resetKey={pathname}>
+              alive; navigating away — including to a different
+              ?offer/?chain deep link on the same path — resets it. */}
+          <ErrorBoundary resetKey={pathname + search}>
             <Outlet />
           </ErrorBoundary>
         </main>
