@@ -95,12 +95,35 @@ async function wireWallet(
       const result = await handle(payload as { method: string; params?: unknown[] });
       return { result: jsonSafe(result) };
     } catch (e) {
-      const err = e as Error & { code?: number; shortMessage?: string };
+      const err = e as Error & {
+        code?: number;
+        shortMessage?: string;
+        walk?: (fn: (x: unknown) => boolean) => unknown;
+      };
+      // Only {code, message} crosses into the page — a revert's DATA
+      // would be lost at this boundary, and with it the app's friendly
+      // named-revert copy (decodeContractError regex-recovers the
+      // selector from the message string). Walk viem's cause chain for
+      // the revert bytes and append them.
+      let revertData: string | undefined;
+      if (typeof err.walk === 'function') {
+        const hit = err.walk((x) => {
+          const d = (x as { data?: unknown } | null)?.data;
+          return typeof d === 'string' && d.startsWith('0x') && d.length >= 10;
+        }) as { data?: string } | null;
+        revertData = hit?.data;
+      }
+      const base = err.shortMessage ?? err.message ?? 'error';
+      const details = (err as { details?: string }).details;
+      const message = [
+        base,
+        details && details !== base ? details : undefined,
+        revertData ? `(data: ${revertData})` : undefined,
+      ]
+        .filter(Boolean)
+        .join(' | ');
       return {
-        error: {
-          code: err.code ?? -32603,
-          message: err.shortMessage ?? err.message ?? 'error',
-        },
+        error: { code: err.code ?? -32603, message },
       };
     }
   });
