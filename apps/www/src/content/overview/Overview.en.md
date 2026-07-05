@@ -203,15 +203,21 @@ Two fees, both tiny:
 
 Both fees can be **discounted up to `{liveValue:tier4DiscountBps}`%** by holding VPFI in the vault
 (see below). On default or liquidation, recovered funds go toward
-the lender's principal first; the Yield Fee applies only to the
+the lender's principal first; the **Yield Fee** applies only to the
 interest / late-fee portion of what is actually recovered above
 that principal. If the recovery doesn't even cover the principal,
-no Yield Fee is taken at all — every recovered unit goes toward
-making the lender whole.
+no **Yield Fee** is taken at all. One separate charge does apply in
+that scenario: when collateral is sold on a market to cover the
+debt, a small **liquidation handling charge** (2% of the sale
+proceeds by default) is deducted before the proceeds are applied to
+the debt — it covers the cost of running the forced sale, and it
+applies whether or not the sale fully covers the principal.
 
 There are no withdrawal fees, no idle fees, no streaming fees, no
-"performance" fees on principal. The only money the protocol takes
-is the two numbers above.
+"performance" fees on principal. In normal use — lend, borrow,
+repay, withdraw — the only money the protocol takes is the two
+numbers above; the liquidation handling charge only ever arises on
+a forced collateral sale after a default or liquidation.
 
 > **Note on blockchain network gas.** When you create an offer,
 > accept a loan, repay, claim, or do any other on-chain action, you
