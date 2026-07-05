@@ -93,6 +93,10 @@ export const copy = {
     phaseApprove: (c: number, t: number) => `Approving… (${c} of ${t})`,
     phaseSend: (c: number, t: number) => `Submitting… (${c} of ${t})`,
   },
+  killSwitch: {
+    disabled:
+      'This action is switched off right now — the operators have paused it as a precaution while something is looked into. Anything already yours is unaffected: repayments, claims, and withdrawals all stay open.',
+  },
   alerts: {
     title: 'Alerts',
     lede: 'Get a Telegram message about your positions while the site is closed — deadlines and risk don’t wait for you to open a tab.',
@@ -100,8 +104,10 @@ export const copy = {
       'Alerts aren’t set up in this build. The operator hasn’t pointed it at an alerts backend, so nothing here would work — rather than pretend, this section stays off.',
     connectFirst: 'Connect your wallet to set up alerts for it.',
     privacy:
-      'Linking stores your wallet address, your alert preferences from this card, and your Telegram chat id on Vaipakam’s alert service so it knows what to send and where — nothing else. Unlink removes the Telegram connection.',
+      'Linking stores your wallet address, your alert preferences from this card, and your Telegram chat id on Vaipakam’s alert service, plus a small delivery record per alert it sends (which loan, which level, when) so you’re never messaged twice about the same thing. Unlink removes the Telegram connection.',
     linkButton: 'Link Telegram',
+    linkSignNote:
+      'Your wallet will first ask you to sign a short message — it’s free, it’s not a transaction, and it proves this request really comes from you.',
     linkIssued:
       'Open our bot and press Start — or send it this code as a message. That connects this wallet to your Telegram.',
     openBot: 'Open Telegram',
@@ -113,7 +119,7 @@ export const copy = {
     toggleRepayDue: 'Message me before an interest payment comes due',
     toggleRisky: 'Message me if my loan gets risky',
     riskyOffNote:
-      'Even switched off, you still get one last warning right before a loan would be liquidated.',
+      'Even switched off, you’ll still be warned right before a loan would be liquidated.',
     advancedBands:
       'Risk thresholds (health factor): a message is sent when a loan crosses each level.',
     bandsInvalid:

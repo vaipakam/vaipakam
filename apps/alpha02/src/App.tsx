@@ -49,6 +49,11 @@ export function App() {
         <Route path="/earn" element={<Navigate to="/lend" replace />} />
         <Route path="/loans" element={<Navigate to="/positions" replace />} />
         <Route path="/loans/:loanId" element={<AliasLoanRedirect />} />
+        {/* The agent Worker's alert deep links use the /loans/N shape
+            (the alias above); older alert messages carried the
+            pre-flattening /app/loans/N shape — accept that too so a
+            stale alert link still lands on the loan, not NotFound. */}
+        <Route path="/app/loans/:loanId" element={<AliasLoanRedirect />} />
         <Route path="/dashboard" element={<Navigate to="/positions" replace />} />
         <Route path="/manage" element={<Navigate to="/positions" replace />} />
         <Route path="/claim" element={<Navigate to="/claims" replace />} />

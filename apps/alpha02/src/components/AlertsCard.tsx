@@ -19,7 +19,7 @@
  */
 import { useMemo, useState } from 'react';
 import { BellRing } from 'lucide-react';
-import { useAccount } from 'wagmi';
+import { useAccount, useSignMessage } from 'wagmi';
 import { useMode } from '../app/ModeContext';
 import { useActiveChain } from '../chain/useActiveChain';
 import { copy } from '../content/copy';
@@ -38,6 +38,7 @@ import {
 
 export function AlertsCard() {
   const { address } = useAccount();
+  const { signMessageAsync } = useSignMessage();
   const { readChain } = useActiveChain();
   const { isAdvanced } = useMode();
   const chainId = readChain.chainId;
@@ -64,13 +65,22 @@ export function AlertsCard() {
   const configured = alertsConfigured();
   const pushUrl = pushChannelUrl();
 
-  async function persist(next: AlertPrefs) {
+  async function persist(next: AlertPrefs, opts?: { dueDateChanged?: boolean }) {
     if (!address) return;
     setBusy(true);
     setError(null);
     setNotice(null);
     try {
-      await saveAlertPrefs(address, chainId, next);
+      // dueDateChanged rides through so the field is sent ONLY when
+      // this save is the user flipping that toggle — any other save
+      // omits it and the agent preserves the stored value (a fresh
+      // device's defaults must not undo an opt-out made elsewhere).
+      // Switching the reminder OFF additionally signs an ownership
+      // proof; the agent refuses unsigned opt-outs.
+      await saveAlertPrefs(address, chainId, next, {
+        dueDateChanged: opts?.dueDateChanged,
+        signMessage: (message) => signMessageAsync({ message }),
+      });
       storeAlertPrefs(chainId, address, next);
       setPrefs(next);
       setNotice(copy.alerts.saved);
@@ -87,11 +97,21 @@ export function AlertsCard() {
     setError(null);
     setNotice(null);
     try {
-      // Ensure the thresholds row exists before the handshake so the
-      // bot's confirmation lands on a real row (the agent tolerates
-      // either order; this removes the race).
-      if (prefs) await saveAlertPrefs(address, chainId, prefs);
-      setLink(await issueTelegramLink(address, chainId));
+      // Deliberately NO pre-save here: on a fresh device the local
+      // prefs are the DEFAULTS, and writing them before the handshake
+      // would clobber whatever the wallet already configured
+      // elsewhere. The agent tolerates a missing row during the
+      // handshake (locale falls back to 'en'), so linking alone must
+      // never write settings.
+      //
+      // The wallet signs a free ownership proof first — the agent
+      // refuses to issue a link code without it, so nobody can point
+      // another wallet's alerts at their own Telegram.
+      setLink(
+        await issueTelegramLink(address, chainId, (message) =>
+          signMessageAsync({ message }),
+        ),
+      );
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     } finally {
@@ -113,7 +133,11 @@ export function AlertsCard() {
     setError(null);
     setNotice(null);
     try {
-      await unlinkTelegram(address, chainId);
+      // Signed like linking — otherwise anyone could silently switch
+      // off another wallet's risk alerts.
+      await unlinkTelegram(address, chainId, (message) =>
+        signMessageAsync({ message }),
+      );
       const next = { ...prefs, telegramLinked: false };
       storeAlertPrefs(chainId, address, next);
       setPrefs(next);
@@ -184,6 +208,7 @@ export function AlertsCard() {
                 className="btn btn-primary"
                 onClick={() => void startLink()}
                 disabled={busy}
+                title={copy.alerts.linkSignNote}
               >
                 {copy.alerts.linkButton}
               </button>
@@ -199,6 +224,9 @@ export function AlertsCard() {
               >
                 {copy.alerts.unlinkElsewhere}
               </button>
+              <span className="muted" style={{ flexBasis: '100%' }}>
+                {copy.alerts.linkSignNote}
+              </span>
             </div>
           )}
 
@@ -207,7 +235,12 @@ export function AlertsCard() {
               type="checkbox"
               checked={prefs.repayDue}
               disabled={busy}
-              onChange={(e) => void persist({ ...prefs, repayDue: e.target.checked })}
+              onChange={(e) =>
+                void persist(
+                  { ...prefs, repayDue: e.target.checked },
+                  { dueDateChanged: true },
+                )
+              }
               style={{ marginTop: 3 }}
             />
             <span style={{ flex: 1 }}>{copy.alerts.toggleRepayDue}</span>

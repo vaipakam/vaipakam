@@ -1,5 +1,6 @@
 import { useState, type ReactNode } from "react";
 import { useTranslation } from "react-i18next";
+import { useWalletClient } from "wagmi";
 import { useWallet } from "../context/WalletContext";
 import { Bell, MessageCircle, Wallet } from "lucide-react";
 import { ErrorAlert } from "../components/app/ErrorAlert";
@@ -51,9 +52,60 @@ const PUSH_CHANNEL_ADDRESS: string | null = (() => {
  * rails share the same threshold config — you don't configure
  * different `warn_hf` per channel.
  */
+/**
+ * The exact message signed to authorise a Telegram link. MUST stay
+ * byte-identical to `buildTelegramLinkMessage` in
+ * `apps/agent/src/linkAuth.ts` — the agent reconstructs it verbatim
+ * and recovers the signer; any drift rejects every link request.
+ * (Required since #1056: an unsigned link request would let any HTTP
+ * caller point another wallet's alert stream at their own chat.)
+ */
+function buildTelegramLinkMessage(
+  wallet: string,
+  chainId: number,
+  issuedAt: number,
+): string {
+  return [
+    "Vaipakam — Link Telegram alerts",
+    "",
+    "I authorise Telegram alert delivery for the wallet below to the",
+    "chat that completes this link code. Signing this message proves",
+    "ownership of the wallet. It is not a transaction and costs no gas.",
+    "",
+    `Wallet: ${wallet.toLowerCase()}`,
+    `Chain id: ${chainId}`,
+    `Issued at (unix): ${issuedAt}`,
+  ].join("\n");
+}
+
+/**
+ * Mirror of `buildDueDateOptOutMessage` in `apps/agent/src/linkAuth.ts`
+ * — byte-identical, same rule as the link message above. Required
+ * when a save switches the maturity/due-date reminder OFF: silencing
+ * a warning lane needs wallet-ownership proof (#1056 round 6).
+ */
+function buildDueDateOptOutMessage(
+  wallet: string,
+  chainId: number,
+  issuedAt: number,
+): string {
+  return [
+    "Vaipakam — Mute due-date payment reminders",
+    "",
+    "I request that payment due-date reminders for the wallet below",
+    "be switched off. Signing this message proves ownership of the",
+    "wallet. It is not a transaction and costs no gas.",
+    "",
+    `Wallet: ${wallet.toLowerCase()}`,
+    `Chain id: ${chainId}`,
+    `Issued at (unix): ${issuedAt}`,
+  ].join("\n");
+}
+
 export default function Alerts() {
   const { t, i18n } = useTranslation();
   const { address, chainId, isCorrectChain } = useWallet();
+  const { data: walletClient } = useWalletClient();
 
   const [warnHf, setWarnHf] = useState(1.5);
   const [alertHf, setAlertHf] = useState(1.2);
@@ -69,6 +121,12 @@ export default function Alerts() {
   const [notifyLoanTerminal, setNotifyLoanTerminal] = useState(true);
   const [notifyLoanInitiatedCreator, setNotifyLoanInitiatedCreator] = useState(true);
   const [notifyMaturityApproaching, setNotifyMaturityApproaching] = useState(true);
+  // #1056 round 6 — the maturity flag is only SENT when the user
+  // actually touched its checkbox this session. There is no server
+  // read-back, so an untouched local `true` default must not ride
+  // along on unrelated saves and overwrite an opt-out stored from
+  // another device (the agent preserves the flag when absent).
+  const [maturityTouched, setMaturityTouched] = useState(false);
   const [notifyPartialRepayReceived, setNotifyPartialRepayReceived] = useState(true);
 
   const [tgLinkCode, setTgLinkCode] = useState<string | null>(null);
@@ -120,6 +178,25 @@ export default function Alerts() {
     );
   }
 
+  /** Body fields for the maturity/due-date flag. Empty unless the
+   *  user touched the checkbox this session (absence = "no change"
+   *  server-side, protecting opt-outs stored from other devices).
+   *  Disabling additionally carries the EIP-191 ownership proof —
+   *  the agent refuses unsigned opt-outs, since that flag silences
+   *  both due-date warning lanes. */
+  const maturityBodyFields = async (): Promise<Record<string, unknown>> => {
+    if (!maturityTouched) return {};
+    if (notifyMaturityApproaching) return { notify_maturity_approaching: true };
+    if (!walletClient || chainId === null) {
+      throw new Error("Wallet is not ready to sign — reconnect and try again.");
+    }
+    const issuedAt = Math.floor(Date.now() / 1000);
+    const signature = await walletClient.signMessage({
+      message: buildDueDateOptOutMessage(address, chainId, issuedAt),
+    });
+    return { notify_maturity_approaching: false, issuedAt, signature };
+  };
+
   const save = async () => {
     setErr(null);
     setMsg(null);
@@ -149,6 +226,7 @@ export default function Alerts() {
     const fetchUrl = `${HF_WATCHER_ORIGIN}/thresholds`;
     setSaving(true);
     try {
+      const maturityFields = await maturityBodyFields();
       const res = await fetch(fetchUrl, {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
@@ -172,7 +250,9 @@ export default function Alerts() {
           notify_claim_available: notifyClaimAvailable,
           notify_loan_terminal: notifyLoanTerminal,
           notify_loan_initiated_creator: notifyLoanInitiatedCreator,
-          notify_maturity_approaching: notifyMaturityApproaching,
+          // maturity flag: sent only when touched this session, and
+          // signed when disabling — see maturityBodyFields.
+          ...maturityFields,
           notify_partial_repay_received: notifyPartialRepayReceived,
         }),
       });
@@ -186,6 +266,11 @@ export default function Alerts() {
         );
       }
       setMsg("Thresholds saved.");
+      // The maturity flag is now stored server-side — clear the
+      // touched marker so later, unrelated saves in this session go
+      // back to omitting the field (and never re-prompt for the
+      // opt-out signature).
+      setMaturityTouched(false);
       step.success({ note: `warn=${warnHf} alert=${alertHf} critical=${criticalHf}` });
     } catch (e) {
       // User-facing alert stays succinct (the bare error message);
@@ -212,10 +297,28 @@ export default function Alerts() {
     const fetchUrl = `${HF_WATCHER_ORIGIN}/link/telegram`;
     setLinking(true);
     try {
+      // Wallet-ownership proof (#1056): the agent refuses to issue a
+      // link code without an EIP-191 signature from the wallet, so a
+      // third party can't subscribe this wallet's alerts to their own
+      // Telegram chat. Free signature, not a transaction.
+      if (!walletClient || chainId === null) {
+        throw new Error(
+          "Wallet is not ready to sign — reconnect and try again.",
+        );
+      }
+      const issuedAt = Math.floor(Date.now() / 1000);
+      const signature = await walletClient.signMessage({
+        message: buildTelegramLinkMessage(address, chainId, issuedAt),
+      });
       const res = await fetch(fetchUrl, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ wallet: address, chain_id: chainId }),
+        body: JSON.stringify({
+          wallet: address,
+          chain_id: chainId,
+          issuedAt,
+          signature,
+        }),
       });
       if (!res.ok) {
         const bodyText = await res.text().catch(() => "request failed");
@@ -267,6 +370,7 @@ export default function Alerts() {
     const fetchUrl = `${HF_WATCHER_ORIGIN}/thresholds`;
     setSaving(true);
     try {
+      const maturityFields = await maturityBodyFields();
       const res = await fetch(fetchUrl, {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
@@ -288,7 +392,9 @@ export default function Alerts() {
           notify_claim_available: notifyClaimAvailable,
           notify_loan_terminal: notifyLoanTerminal,
           notify_loan_initiated_creator: notifyLoanInitiatedCreator,
-          notify_maturity_approaching: notifyMaturityApproaching,
+          // maturity flag: sent only when touched this session, and
+          // signed when disabling — see maturityBodyFields.
+          ...maturityFields,
           notify_partial_repay_received: notifyPartialRepayReceived,
         }),
       });
@@ -322,6 +428,9 @@ export default function Alerts() {
           "Push rail enabled. You'll also need to subscribe to the Vaipakam Push channel from your Push-enabled wallet to actually receive the notifications — see docs for the channel address.",
         );
       }
+      // Same reason as in save(): the flag (if it rode along) is now
+      // stored — stop sending it on later saves this session.
+      setMaturityTouched(false);
       step.success({ note: "push_channel=subscribed" });
     } catch (e) {
       // User-facing alert stays succinct (the bare error message);
@@ -508,7 +617,10 @@ export default function Alerts() {
             <input
               type="checkbox"
               checked={notifyMaturityApproaching}
-              onChange={(e) => setNotifyMaturityApproaching(e.target.checked)}
+              onChange={(e) => {
+                setNotifyMaturityApproaching(e.target.checked);
+                setMaturityTouched(true);
+              }}
             />
             <span>
               <strong>{t('alertsPage.eventMaturityApproachingTitle')}</strong>

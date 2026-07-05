@@ -18,6 +18,12 @@ export interface UserThresholds {
    *  language to send Telegram / Push notifications in. Defaults to
    *  `'en'` when the user hasn't explicitly set one. */
   locale: string;
+  /** #1033 — 0 = the user opted out of maturity / due-date warnings
+   *  (the "message me before a payment comes due" toggle). Gates the
+   *  pre-grace warning lane; HF-band alerts are governed by the
+   *  bands themselves, not this flag. Column added in migration
+   *  0027 (apps/indexer/migrations). */
+  notify_maturity_approaching: number;
 }
 
 export interface NotifyState {
@@ -35,22 +41,50 @@ export async function listThresholdsForChain(
   db: D1Database,
   chainId: number,
 ): Promise<UserThresholds[]> {
-  const res = await db
-    .prepare(
-      `SELECT wallet, chain_id, warn_hf, alert_hf, critical_hf, tg_chat_id, push_channel, locale
-       FROM user_thresholds
-       WHERE chain_id = ?`,
-    )
-    .bind(chainId)
-    .all<UserThresholds>();
-  return res.results ?? [];
+  try {
+    const res = await db
+      .prepare(
+        `SELECT wallet, chain_id, warn_hf, alert_hf, critical_hf, tg_chat_id, push_channel, locale, notify_maturity_approaching
+         FROM user_thresholds
+         WHERE chain_id = ?`,
+      )
+      .bind(chainId)
+      .all<UserThresholds>();
+    return res.results ?? [];
+  } catch {
+    // Rollout window — migration 0027 (notify_maturity_approaching)
+    // not applied yet. Fall back to the legacy column set with the
+    // flag defaulted to OPTED IN, so the HF watcher and pre-grace
+    // lanes keep running rather than going dark; worst case an
+    // opted-out user still gets a warning until the migration lands
+    // — never the reverse. Same graceful-degradation pattern as the
+    // preNotifyDays chain read.
+    const res = await db
+      .prepare(
+        `SELECT wallet, chain_id, warn_hf, alert_hf, critical_hf, tg_chat_id, push_channel, locale
+         FROM user_thresholds
+         WHERE chain_id = ?`,
+      )
+      .bind(chainId)
+      .all<Omit<UserThresholds, 'notify_maturity_approaching'>>();
+    return (res.results ?? []).map((r) => ({
+      ...r,
+      notify_maturity_approaching: 1,
+    }));
+  }
 }
 
 /** Upsert a user's thresholds. Called from the frontend settings page
  *  via the HTTP handler. */
 export async function upsertThresholds(
   db: D1Database,
-  t: Omit<UserThresholds, 'tg_chat_id' | 'push_channel' | 'locale'> & {
+  // notify_maturity_approaching is read-side only here — writes rely
+  // on the column default (opted in); the agent owns the opt-out
+  // write path.
+  t: Omit<
+    UserThresholds,
+    'tg_chat_id' | 'push_channel' | 'locale' | 'notify_maturity_approaching'
+  > & {
     tg_chat_id?: string | null;
     push_channel?: string | null;
     locale?: string | null;

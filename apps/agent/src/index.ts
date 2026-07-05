@@ -40,8 +40,11 @@
  *   POST /diag/legal-hold                   — protocol admin → place/lift hold
  *   PUT  /thresholds                        — frontend → upsert HF bands
  *   POST /link/telegram                     — frontend → issue handshake code
+ *                                             (EIP-191 wallet signature
+ *                                             required — see linkAuth.ts)
  *   POST /unlink/telegram                   — frontend → clear the stored
- *                                             wallet ↔ tg_chat_id link (#1033)
+ *                                             wallet ↔ tg_chat_id link (#1033;
+ *                                             EIP-191 signature required too)
  *
  * The `/thresholds`, `/link/telegram`, `/diag/record`,
  * `/diag/erasure`, `/diag/erasure/status` and `/diag/legal-hold`
@@ -88,11 +91,16 @@ import {
   consumeTelegramLinkCode,
   issueTelegramLinkCode,
   linkTelegram,
+  OptOutStorageUnavailableError,
   unlinkTelegram,
   upsertThresholds,
 } from './db';
 import { extractLinkCode, sendMessage, type TelegramUpdate } from './telegram';
 import { handshakeExpired, handshakeLinked } from './i18n';
+import {
+  parseSignedLinkRequest,
+  verifySignedLinkRequest,
+} from './linkAuth';
 
 export default {
   async scheduled(
@@ -320,15 +328,63 @@ async function handlePutThresholds(req: Request, env: Env): Promise<Response> {
   const parsed = parsePutThresholds(body);
   if (!parsed) return json({ error: 'invalid-payload' }, 400, corsOrigin);
 
-  // NOTE: this handler trusts the `wallet` field in the JSON body —
-  // that's fine for the settings flow because the Worker's only
-  // output to that wallet is a Telegram alert linked to a chat the
-  // real wallet holder controls. An attacker spamming someone else's
-  // wallet into the thresholds table can't receive their alerts.
-  // However, if the threshold settings ever start to drive on-chain
-  // actions, switch this to an EIP-712-signed payload so msg.sender
-  // parity is cryptographic.
-  await upsertThresholds(env.DB, parsed);
+  // NOTE: this handler trusts the `wallet` field in the JSON body for
+  // plain settings writes — fine, because the Worker's only output to
+  // that wallet is a Telegram alert linked to a chat the real wallet
+  // holder controls, and band tampering stays bounded (the strictly-
+  // decreasing >1.0 rule keeps a final pre-liquidation warning).
+  //
+  // The ONE write that needs more is DISABLING the due-date reminder
+  // (#1056 round 6): notify_maturity_approaching=false silences both
+  // due-date lanes (agent reminder + keeper pre-grace warning), which
+  // is the same alert-suppression threat that got /unlink/telegram
+  // signed. So an opt-out write must carry the EIP-191 ownership
+  // proof over the mute-scoped message; opted-in / field-absent
+  // writes stay signature-free.
+  if (parsed.notify_maturity_approaching === false) {
+    const signed = parseSignedLinkRequest(body);
+    if (!signed.ok) {
+      return json(
+        { error: 'signature-required', reason: signed.reason },
+        401,
+        corsOrigin,
+      );
+    }
+    const verified = await verifySignedLinkRequest(
+      signed.req,
+      Math.floor(Date.now() / 1000),
+      'mute-duedate',
+    );
+    if (!verified.ok) {
+      return json(
+        { error: 'verification_failed', reason: verified.reason },
+        verified.status,
+        corsOrigin,
+      );
+    }
+  }
+  // If the threshold settings ever start to drive on-chain actions,
+  // extend the signed-payload requirement to every write so
+  // msg.sender parity is cryptographic.
+  try {
+    await upsertThresholds(env.DB, parsed);
+  } catch (err) {
+    // Rollout window — an opt-out can't be stored until migration
+    // 0027 lands. A distinct 503 lets the client say "try again
+    // shortly" instead of a generic failure; every other error
+    // propagates as before.
+    if (err instanceof OptOutStorageUnavailableError) {
+      return json(
+        {
+          error: 'optout-unavailable',
+          reason: 'alert settings storage migration pending — try again shortly',
+        },
+        503,
+        corsOrigin,
+      );
+    }
+    throw err;
+  }
   return json({ ok: true }, 200, corsOrigin);
 }
 
@@ -343,13 +399,37 @@ async function handleIssueTelegramLink(
   } catch {
     return json({ error: 'invalid-json' }, 400, corsOrigin);
   }
-  const parsed = parseLinkIssue(body);
-  if (!parsed) return json({ error: 'invalid-payload' }, 400, corsOrigin);
+  // Unlike the other settings endpoints, issuing a link code REQUIRES
+  // wallet-ownership proof: completing the handshake redirects the
+  // wallet's whole alert stream to whichever chat sends the code (and
+  // seeds a thresholds row for first-time wallets), so a body-trusted
+  // wallet here would let any caller subscribe a victim's alerts to
+  // their own Telegram. EIP-191 signature over the fixed message in
+  // `linkAuth.ts`, same pattern as the erasure endpoints.
+  const parsed = parseSignedLinkRequest(body);
+  if (!parsed.ok) {
+    return json(
+      { error: 'invalid-payload', reason: parsed.reason },
+      400,
+      corsOrigin,
+    );
+  }
+  const verified = await verifySignedLinkRequest(
+    parsed.req,
+    Math.floor(Date.now() / 1000),
+  );
+  if (!verified.ok) {
+    return json(
+      { error: 'verification_failed', reason: verified.reason },
+      verified.status,
+      corsOrigin,
+    );
+  }
 
   const code = await issueTelegramLinkCode(
     env.DB,
-    parsed.wallet,
-    parsed.chain_id,
+    parsed.req.wallet,
+    parsed.req.chain_id,
   );
   // Build the Telegram deep link from the operator-configured bot
   // username. Both `TG_BOT_TOKEN` AND `TG_BOT_USERNAME` must be set:
@@ -365,12 +445,12 @@ async function handleIssueTelegramLink(
   return json({ ok: true, code, bot_url: botUrl }, 200, corsOrigin);
 }
 
-/** #1033 — clear a stored wallet ↔ Telegram link. Body-trusted like
- *  the other settings endpoints (see the note in handlePutThresholds:
- *  the only effect is that alerts STOP being delivered to the chat
- *  the real wallet holder linked — an attacker "unlinking" someone
- *  else's wallet is a nuisance-DoS the signature-free settings model
- *  already accepts, and cheaper than the spam vector it mirrors).
+/** #1033 — clear a stored wallet ↔ Telegram link. Requires the same
+ *  EIP-191 wallet-ownership proof as link issuance, over the unlink-
+ *  scoped message (round 5): the Origin gate is not authentication —
+ *  a non-browser caller can spoof an allowed Origin, and silently
+ *  stopping a victim wallet's HF / due-date alerts right before a
+ *  grace window is alert suppression, not settings churn.
  *  Idempotent: unlinking a wallet with no link is still `ok`. */
 async function handleUnlinkTelegram(
   req: Request,
@@ -383,9 +463,30 @@ async function handleUnlinkTelegram(
   } catch {
     return json({ error: 'invalid-json' }, 400, corsOrigin);
   }
-  const parsed = parseLinkIssue(body);
-  if (!parsed) return json({ error: 'invalid-payload' }, 400, corsOrigin);
-  await unlinkTelegram(env.DB, parsed.wallet, parsed.chain_id);
+  const parsed = parseSignedLinkRequest(body);
+  if (!parsed.ok) {
+    return json(
+      { error: 'invalid-payload', reason: parsed.reason },
+      400,
+      corsOrigin,
+    );
+  }
+  const verified = await verifySignedLinkRequest(
+    parsed.req,
+    Math.floor(Date.now() / 1000),
+    'unlink',
+  );
+  if (!verified.ok) {
+    return json(
+      { error: 'verification_failed', reason: verified.reason },
+      verified.status,
+      corsOrigin,
+    );
+  }
+  // chain_id is bound into the signed message (same body shape as the
+  // link issue) but the clear is wallet-wide — see unlinkTelegram for
+  // why.
+  await unlinkTelegram(env.DB, parsed.req.wallet);
   return json({ ok: true }, 200, corsOrigin);
 }
 
@@ -522,25 +623,16 @@ function parsePutThresholds(x: unknown): PutThresholdsBody | null {
     alert_hf: b.alert_hf,
     critical_hf: b.critical_hf,
     push_channel: push,
-    // Absent/non-boolean → opted in, matching the column default.
+    // Absent/non-boolean → undefined = "no change": an older client
+    // updating only its bands must not silently re-enable a stored
+    // opt-out. New rows still default to opted in (column default).
     notify_maturity_approaching:
       typeof b.notify_maturity_approaching === 'boolean'
         ? b.notify_maturity_approaching
-        : true,
+        : undefined,
   };
 }
 
-interface LinkIssueBody {
-  wallet: string;
-  chain_id: number;
-}
-
-function parseLinkIssue(x: unknown): LinkIssueBody | null {
-  if (!x || typeof x !== 'object') return null;
-  const b = x as Record<string, unknown>;
-  if (typeof b.wallet !== 'string' || !/^0x[a-fA-F0-9]{40}$/.test(b.wallet)) {
-    return null;
-  }
-  if (typeof b.chain_id !== 'number') return null;
-  return { wallet: b.wallet, chain_id: b.chain_id };
-}
+// (The unsigned link/unlink body parser lived here until round 5 of
+// #1056 — both endpoints now parse via `parseSignedLinkRequest` in
+// linkAuth.ts.)

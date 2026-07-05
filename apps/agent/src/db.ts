@@ -49,27 +49,43 @@ export async function listThresholdsForChain(
   return res.results ?? [];
 }
 
-/** Upsert a user's thresholds. Called from the frontend settings page
- *  via the HTTP handler. */
-export async function upsertThresholds(
+/** Thrown when an OPT-OUT write arrives before migration 0027 — the
+ *  column to store it doesn't exist yet, and silently dropping the
+ *  flag would make the toggle theater. The HTTP handler maps this to
+ *  a distinct 503 so the client can say "try again shortly". */
+export class OptOutStorageUnavailableError extends Error {
+  constructor() {
+    super(
+      'notify_maturity_approaching column missing (migration 0027 pending)',
+    );
+    this.name = 'OptOutStorageUnavailableError';
+  }
+}
+
+type ThresholdsUpsert = Omit<
+  UserThresholds,
+  'tg_chat_id' | 'push_channel' | 'locale' | 'notify_maturity_approaching'
+> & {
+  tg_chat_id?: string | null;
+  push_channel?: string | null;
+  locale?: string | null;
+  /** #1033 — optional; absent keeps the historical opted-in state. */
+  notify_maturity_approaching?: boolean;
+};
+
+/** The pre-0027 column set. Used when the flag is absent (no change
+ *  intended) AND as the rollout-window fallback for an opted-IN write
+ *  (true equals the column default, so nothing is lost). */
+async function upsertThresholdsLegacy(
   db: D1Database,
-  t: Omit<
-    UserThresholds,
-    'tg_chat_id' | 'push_channel' | 'locale' | 'notify_maturity_approaching'
-  > & {
-    tg_chat_id?: string | null;
-    push_channel?: string | null;
-    locale?: string | null;
-    /** #1033 — optional; absent keeps the historical opted-in state. */
-    notify_maturity_approaching?: boolean;
-  },
+  t: ThresholdsUpsert,
+  now: number,
 ): Promise<void> {
-  const now = Math.floor(Date.now() / 1000);
   await db
     .prepare(
       `INSERT INTO user_thresholds
-         (wallet, chain_id, warn_hf, alert_hf, critical_hf, tg_chat_id, push_channel, locale, notify_maturity_approaching, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+         (wallet, chain_id, warn_hf, alert_hf, critical_hf, tg_chat_id, push_channel, locale, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
        ON CONFLICT(wallet, chain_id) DO UPDATE SET
          warn_hf = excluded.warn_hf,
          alert_hf = excluded.alert_hf,
@@ -77,7 +93,6 @@ export async function upsertThresholds(
          tg_chat_id = COALESCE(excluded.tg_chat_id, user_thresholds.tg_chat_id),
          push_channel = COALESCE(excluded.push_channel, user_thresholds.push_channel),
          locale = COALESCE(excluded.locale, user_thresholds.locale),
-         notify_maturity_approaching = excluded.notify_maturity_approaching,
          updated_at = excluded.updated_at`,
     )
     .bind(
@@ -89,11 +104,79 @@ export async function upsertThresholds(
       t.tg_chat_id ?? null,
       t.push_channel ?? null,
       t.locale ?? 'en',
-      (t.notify_maturity_approaching ?? true) ? 1 : 0,
       now,
       now,
     )
     .run();
+}
+
+/** Upsert a user's thresholds. Called from the frontend settings page
+ *  via the HTTP handler. */
+export async function upsertThresholds(
+  db: D1Database,
+  t: ThresholdsUpsert,
+): Promise<void> {
+  const now = Math.floor(Date.now() / 1000);
+  // The pre-notify opt-out updates ONLY when the caller sent it —
+  // absence must preserve a stored opt-out (an older client updating
+  // its bands must not re-enable reminders), while new rows take the
+  // column default (opted in). Two statements because `excluded.` in
+  // the conflict arm sees post-default values, which can't express
+  // "no change".
+  if (t.notify_maturity_approaching === undefined) {
+    await upsertThresholdsLegacy(db, t, now);
+    return;
+  }
+  try {
+    await db
+      .prepare(
+        `INSERT INTO user_thresholds
+           (wallet, chain_id, warn_hf, alert_hf, critical_hf, tg_chat_id, push_channel, locale, notify_maturity_approaching, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+         ON CONFLICT(wallet, chain_id) DO UPDATE SET
+           warn_hf = excluded.warn_hf,
+           alert_hf = excluded.alert_hf,
+           critical_hf = excluded.critical_hf,
+           tg_chat_id = COALESCE(excluded.tg_chat_id, user_thresholds.tg_chat_id),
+           push_channel = COALESCE(excluded.push_channel, user_thresholds.push_channel),
+           locale = COALESCE(excluded.locale, user_thresholds.locale),
+           notify_maturity_approaching = excluded.notify_maturity_approaching,
+           updated_at = excluded.updated_at`,
+      )
+      .bind(
+        t.wallet.toLowerCase(),
+        t.chain_id,
+        t.warn_hf,
+        t.alert_hf,
+        t.critical_hf,
+        t.tg_chat_id ?? null,
+        t.push_channel ?? null,
+        t.locale ?? 'en',
+        t.notify_maturity_approaching ? 1 : 0,
+        now,
+        now,
+      )
+      .run();
+  } catch (err) {
+    // Rollout window — migration 0027 not applied yet. Only the
+    // missing-column condition gets special handling; anything else
+    // (transient D1 failure, constraint error) propagates untouched.
+    // SQLite phrases the condition differently by statement kind:
+    // "no such column: X" for expressions/SELECT, but "table T has
+    // no column named X" for an INSERT column list — this INSERT
+    // path hits the latter (verified live on the staging D1).
+    if (!/no such column|has no column named/i.test(String(err))) throw err;
+    if (t.notify_maturity_approaching) {
+      // Opted-in equals the column default — the legacy write loses
+      // nothing.
+      await upsertThresholdsLegacy(db, t, now);
+      return;
+    }
+    // An opt-out CANNOT be stored without the column; surface it
+    // rather than pretending (a silently-dropped opt-out would be
+    // the "toggle is theater" bug all over again).
+    throw new OptOutStorageUnavailableError();
+  }
 }
 
 /** Read the notify-state row for a loan. Returns defaults when the
@@ -214,38 +297,65 @@ export async function consumeTelegramLinkCode(
 }
 
 /** Store the Telegram chat id on the user's thresholds row. Called
- *  after a successful handshake. */
+ *  after a successful handshake.
+ *
+ *  UPSERT, not UPDATE (#1033 round-2): a first-time user can complete
+ *  the handshake before ever saving settings — a bare UPDATE would
+ *  match zero rows, the bot would still reply "linked", and alerts
+ *  would silently never deliver. The insert seeds the default bands;
+ *  the conflict arm touches ONLY the chat id so an existing row's
+ *  settings are never clobbered by a re-link.
+ *
+ *  The insert is safe against third parties because a link CODE can
+ *  only be issued to a caller who proved ownership of the wallet with
+ *  an EIP-191 signature (`linkAuth.ts`) — by the time this runs, the
+ *  wallet holder authorised the link. */
 export async function linkTelegram(
   db: D1Database,
   wallet: string,
   chainId: number,
   chatId: string,
 ): Promise<void> {
+  const now = Math.floor(Date.now() / 1000);
   await db
     .prepare(
-      `UPDATE user_thresholds
-       SET tg_chat_id = ?, updated_at = ?
-       WHERE wallet = ? AND chain_id = ?`,
+      `INSERT INTO user_thresholds
+         (wallet, chain_id, warn_hf, alert_hf, critical_hf, tg_chat_id, push_channel, locale, created_at, updated_at)
+       VALUES (?, ?, 1.5, 1.2, 1.05, ?, NULL, 'en', ?, ?)
+       ON CONFLICT(wallet, chain_id) DO UPDATE SET
+         tg_chat_id = excluded.tg_chat_id,
+         updated_at = excluded.updated_at`,
     )
-    .bind(chatId, Math.floor(Date.now() / 1000), wallet.toLowerCase(), chainId)
+    .bind(wallet.toLowerCase(), chainId, chatId, now, now)
     .run();
 }
 
 /** #1033 — clear the stored Telegram chat id for a wallet, stopping
- *  all Telegram delivery for it. The row itself stays (thresholds and
- *  event opt-ins survive a re-link). Idempotent by construction. */
+ *  all Telegram delivery for it. Deliberately clears EVERY chain row
+ *  of the wallet, not just the caller's current chain: the privacy
+ *  copy promises "no more Telegram messages for this wallet", and the
+ *  delivery paths look subscriptions up per (chain_id, wallet) — a
+ *  single-chain clear would keep other chains' rows messaging the
+ *  same chat. Rows themselves stay (thresholds and opt-ins survive a
+ *  re-link). Idempotent by construction. */
 export async function unlinkTelegram(
   db: D1Database,
   wallet: string,
-  chainId: number,
 ): Promise<void> {
   await db
     .prepare(
       `UPDATE user_thresholds
        SET tg_chat_id = NULL, updated_at = ?
-       WHERE wallet = ? AND chain_id = ?`,
+       WHERE wallet = ?`,
     )
-    .bind(Math.floor(Date.now() / 1000), wallet.toLowerCase(), chainId)
+    .bind(Math.floor(Date.now() / 1000), wallet.toLowerCase())
+    .run();
+  // Revoke any pending handshake codes too — an unexpired code from
+  // another tab/device could otherwise re-link the wallet after this
+  // privacy action, silently reversing it.
+  await db
+    .prepare(`DELETE FROM telegram_links WHERE wallet = ?`)
+    .bind(wallet.toLowerCase())
     .run();
 }
 

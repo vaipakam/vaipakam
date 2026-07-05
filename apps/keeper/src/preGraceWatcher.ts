@@ -65,7 +65,7 @@ import {
 import { erc721Abi } from 'viem';
 import type { ChainConfig, Env } from './env';
 import { getChainConfigs } from './env';
-import { listThresholdsForChain } from './db';
+import { listThresholdsForChain, type UserThresholds } from './db';
 import {
   getPreGraceNotifyState,
   putPreGraceNotifyState,
@@ -363,7 +363,7 @@ async function checkLoan(
   publicClient: PublicClient,
   diamond: Address,
   loanIdBig: bigint,
-  subsByWallet: Map<string, { wallet: string; tg_chat_id: string | null; push_channel: string | null; locale: string }>,
+  subsByWallet: Map<string, UserThresholds>,
   lenderOffers: OfferRow[] | null,
   nowSec: number,
 ): Promise<void> {
@@ -412,6 +412,12 @@ async function checkLoan(
 
   const sub = subsByWallet.get(ownerAddr.toLowerCase());
   if (!sub) return; // borrower hasn't subscribed → no channel to dispatch on
+  // #1033 — the "message me before a payment comes due" opt-out
+  // covers this lane too: the pre-grace warning is a due-date
+  // warning, and an advertised opt-out that one detector ignores
+  // isn't a real control. (HF-band alerts stay governed by the
+  // bands, not this flag.)
+  if (sub.notify_maturity_approaching === 0) return;
 
   // Dedupe — throttle re-notifications.
   const lastSent = await getPreGraceNotifyState(

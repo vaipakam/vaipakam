@@ -28,6 +28,7 @@ import { useDiamondWrite } from '../contracts/diamond';
 import { ensureAllowance } from '../contracts/erc20';
 import { exactAmountString, formatBpsAsPercent, formatTokenAmount } from '../lib/format';
 import { isPositiveDecimal, submitErrorText } from '../lib/errors';
+import { flowDisabled } from '../lib/killSwitch';
 import { ReviewReceipt, type ReceiptData } from '../components/ReviewReceipt';
 
 type VaultAction = 'deposit' | 'withdraw';
@@ -105,6 +106,12 @@ export function Vpfi() {
   }
 
   async function runVaultAction() {
+    // #1028 — kill switch: deposits only (opening exposure). The
+    // withdraw path is a close-out and is structurally unkillable.
+    if (action === 'deposit' && flowDisabled('vpfi-deposit')) {
+      setError(copy.killSwitch.disabled);
+      return;
+    }
     if (!amountWei || !address || !walletChain || !walletClient || !publicClient || !snapshot?.token)
       return;
     setPhase('pending');
@@ -446,6 +453,12 @@ export function Vpfi() {
               </div>
             ) : null}
 
+            {action === 'deposit' && flowDisabled('vpfi-deposit') ? (
+              <div className="banner banner-warn" role="alert" style={{ marginTop: 16 }}>
+                <span className="banner-body">{copy.killSwitch.disabled}</span>
+              </div>
+            ) : null}
+
             {done ? (
               <div className="banner banner-info" role="status" style={{ marginTop: 16 }}>
                 <CircleCheck aria-hidden />
@@ -480,6 +493,7 @@ export function Vpfi() {
                   busy ||
                   !onSupportedChain ||
                   !sanctionsClear ||
+                  (action === 'deposit' && flowDisabled('vpfi-deposit')) ||
                   // clients hydrate async after connect — without this
                   // the click lands in runVaultAction's early return
                   // and silently does nothing.

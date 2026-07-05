@@ -42,6 +42,7 @@ import { usePublicClient, useWalletClient } from 'wagmi';
 import { parseEventLogs } from 'viem';
 import { copy } from '../content/copy';
 import { isPositiveDecimal, submitErrorText } from '../lib/errors';
+import { flowDisabled } from '../lib/killSwitch';
 import { useActiveChain } from '../chain/useActiveChain';
 import { DIAMOND_ABI_VIEM, useDiamondWrite } from '../contracts/diamond';
 import { ensureAllowance, revokeAllowance } from '../contracts/erc20';
@@ -170,6 +171,14 @@ export function RefinanceFlow({
   const matured = chainNow >= live.startTime + live.durationDays * 86_400n;
 
   async function submit() {
+    // #1028 — a refinance request IS a createOffer: it must respect
+    // the same kill switch as the direct post path during an
+    // OfferFacet incident. (Refinance is optional — blocking it traps
+    // nothing; normal repayment stays open.)
+    if (flowDisabled('post-offer')) {
+      setError(copy.killSwitch.disabled);
+      return;
+    }
     if (!address || !walletChain || !walletClient || !publicClient) return;
     if (rateBps === null || durationDays === null) return;
     setBusy(true);
@@ -395,12 +404,26 @@ export function RefinanceFlow({
           </p>
         ) : null}
 
+        {/* #1028 — kill switch held up front like every other gated
+            flow, not just at the final confirm. */}
+        {flowDisabled('post-offer') ? (
+          <div className="banner banner-warn" role="alert" style={{ marginTop: 12 }}>
+            <span className="banner-body">{copy.killSwitch.disabled}</span>
+          </div>
+        ) : null}
         {!confirmOpen ? (
           <button
             type="button"
             className="btn btn-secondary"
             style={{ marginTop: 12 }}
-            disabled={busy || !walletReady || !rateValid || !durationValid || !fees.ready}
+            disabled={
+              busy ||
+              !walletReady ||
+              !rateValid ||
+              !durationValid ||
+              !fees.ready ||
+              flowDisabled('post-offer')
+            }
             onClick={onOpenConfirm}
           >
             {copy.refinance.action}
@@ -424,7 +447,7 @@ export function RefinanceFlow({
               confirmLabel={copy.refinance.confirm}
               onBack={onCloseConfirm}
               onConfirm={() => void submit()}
-              disabled={!walletReady || !consent}
+              disabled={!walletReady || !consent || flowDisabled('post-offer')}
               data={{
                 youReceive:
                   'A new loan at your chosen terms the moment a lender accepts — your collateral moves to it automatically and this loan closes in the same transaction.',
