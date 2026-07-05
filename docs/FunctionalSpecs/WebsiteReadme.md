@@ -636,6 +636,16 @@ converge. Its intended behaviour (the test oracle for that surface):
   source positively returned zero; a failed or partial load shows an
   unavailable state. A user's positions list must never silently omit
   one side of their positions.
+- The wallet's OWN current positions (open offers it created, loan
+  positions it currently holds) are discovered from the chain itself,
+  so a just-confirmed transaction appears under My positions within a
+  block — never gated on background ingestion catching up. Historical
+  rows the chain can no longer enumerate (closed positions whose
+  position tokens are gone, listings received by transfer) come from
+  the indexed history; when that history source is unavailable the
+  page still shows the live current positions but must state that
+  older history may be missing, and it shows the unavailable state
+  only when both sources fail.
 - NFT rentals are never presented as debt: nothing says "repay", the
   NFT stays in the owner's vault, the renter receives temporary use
   rights, and the renter's total up-front payment (fees plus the live

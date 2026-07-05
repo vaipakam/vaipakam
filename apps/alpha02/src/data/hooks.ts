@@ -25,6 +25,7 @@ import {
   type IndexedOffer,
 } from './indexer';
 import { readLoanRowLive } from './liveLoanRow';
+import { readOwnLoanRowsLive, readOwnOfferRowsLive } from './chainPositions';
 
 const REFRESH_MS = 30_000;
 
@@ -90,49 +91,97 @@ export async function fetchAllPages<T>(
   return null; // cap hit with a cursor still open — truncated ≠ complete
 }
 
+/** Union result of chain-authoritative discovery + indexer history.
+ *  `historyComplete === false` means the CHAIN answered (current
+ *  positions are live and complete) but the INDEXER didn't — history
+ *  rows (claimed/cancelled positions whose NFTs are burned, offers
+ *  held via transferred NFTs) may be missing, and surfaces that show
+ *  history must say so instead of rendering a confident partial. */
+export interface MyRows<T> {
+  rows: T[];
+  historyComplete: boolean;
+}
+
+/** Chain rows win a (key) collision — they are live-read this block;
+ *  the indexer row for the same key can lag a terminal transition. */
+function unionByKey<T>(chain: T[], indexed: T[], key: (t: T) => string): T[] {
+  const seen = new Set(chain.map(key));
+  return [...chain, ...indexed.filter((t) => !seen.has(key(t)))];
+}
+
+async function fetchIndexedLoans(
+  chainId: number,
+  address: string,
+): Promise<PositionLoan[] | null> {
+  const [asLender, asBorrower] = await Promise.all([
+    fetchAllPages<IndexedLoan>((before) =>
+      fetchLoansByLender(chainId, address, { limit: 100, before }).then(
+        (p) => (p === null ? null : { rows: p.loans, nextBefore: p.nextBefore }),
+      ),
+    ),
+    fetchAllPages<IndexedLoan>((before) =>
+      fetchLoansByBorrower(chainId, address, { limit: 100, before }).then(
+        (p) => (p === null ? null : { rows: p.loans, nextBefore: p.nextBefore }),
+      ),
+    ),
+  ]);
+  // EITHER side failing means the list would be silently partial —
+  // that's "unavailable", never a confident half-answer.
+  if (asLender === null || asBorrower === null) return null;
+  return [
+    ...asLender.map((l) => ({ ...l, role: 'lender' as const })),
+    ...asBorrower.map((l) => ({ ...l, role: 'borrower' as const })),
+  ];
+}
+
 /** Every loan where the connected wallet is lender or borrower,
- *  newest first. `null` = indexer unavailable. Follows pagination so
- *  wallets with more than one page of positions see all of them. */
-export function useMyLoans() {
+ *  newest first, with the completeness flag. CHAIN-AUTHORITATIVE for
+ *  currently-held positions (visible within a block of the tx — the
+ *  indexer's cron ingest lags 30–60s); the indexer contributes the
+ *  history the chain can't enumerate. `data === null` only when BOTH
+ *  sources are unavailable. */
+export function useMyLoansFull() {
   const { readChain, address } = useActiveChain();
+  const publicClient = usePublicClient({ chainId: readChain.chainId });
   return useQuery({
     queryKey: ['myLoans', readChain.chainId, address?.toLowerCase()],
     enabled: Boolean(address),
     refetchInterval: REFRESH_MS,
-    queryFn: async (): Promise<PositionLoan[] | null> => {
-      if (!address) return [];
-      const [asLender, asBorrower] = await Promise.all([
-        fetchAllPages<IndexedLoan>((before) =>
-          fetchLoansByLender(readChain.chainId, address, { limit: 100, before }).then(
-            (p) => (p === null ? null : { rows: p.loans, nextBefore: p.nextBefore }),
-          ),
-        ),
-        fetchAllPages<IndexedLoan>((before) =>
-          fetchLoansByBorrower(readChain.chainId, address, { limit: 100, before }).then(
-            (p) => (p === null ? null : { rows: p.loans, nextBefore: p.nextBefore }),
-          ),
-        ),
+    queryFn: async (): Promise<MyRows<PositionLoan> | null> => {
+      if (!address) return { rows: [], historyComplete: true };
+      const [chainRows, indexedRows] = await Promise.all([
+        publicClient
+          ? readOwnLoanRowsLive(
+              publicClient,
+              readChain.diamondAddress,
+              readChain.chainId,
+              address,
+            )
+          : Promise.resolve(null),
+        fetchIndexedLoans(readChain.chainId, address),
       ]);
-      // EITHER side failing means the list would be silently partial —
-      // that's "unavailable", never a confident half-answer.
-      if (asLender === null || asBorrower === null) return null;
-      const rows: PositionLoan[] = [
-        ...asLender.map((l) => ({ ...l, role: 'lender' as const })),
-        ...asBorrower.map((l) => ({ ...l, role: 'borrower' as const })),
-      ];
-      // A wallet can be both sides of one loan in odd cases; dedupe by
-      // loanId+role and sort newest first.
-      const seen = new Set<string>();
-      return rows
-        .filter((l) => {
-          const key = `${l.loanId}:${l.role}`;
-          if (seen.has(key)) return false;
-          seen.add(key);
-          return true;
-        })
-        .sort((a, b) => b.startAt - a.startAt);
+      if (chainRows === null && indexedRows === null) return null;
+      const rows = unionByKey(
+        chainRows ?? [],
+        indexedRows ?? [],
+        (l) => `${l.loanId}:${l.role}`,
+      ).sort((a, b) => b.startAt - a.startAt);
+      return { rows, historyComplete: indexedRows !== null };
     },
   });
+}
+
+/** Slim view of {@link useMyLoansFull} — same cache entry, rows only.
+ *  For consumers that don't render history-completeness (Home,
+ *  Activity, vault, claimables — each already tolerates the indexer
+ *  being down or does its own authoritative confirms). */
+export function useMyLoans() {
+  const full = useMyLoansFull();
+  return {
+    ...full,
+    data:
+      full.data === undefined ? undefined : full.data === null ? null : full.data.rows,
+  };
 }
 
 /** One offer by id on the read chain (deep-link target from the
@@ -182,16 +231,31 @@ export function useLoan(loanId: number | undefined) {
  *  (cancelOffer authorizes only the creator until expiry —
  *  OfferCancelFacet #195) and offers whose position NFT it currently
  *  HOLDS (visibility for secondary-market recipients). The UI keys
- *  the cancel action on `offer.creator === wallet`. */
-export function useMyOffers() {
+ *  the cancel action on `offer.creator === wallet`.
+ *
+ *  CHAIN-AUTHORITATIVE for created offers (a fresh createOffer shows
+ *  within a block — the indexer's cron ingest lags 30–60s); held-via-
+ *  transferred-NFT offers stay indexer-discovered (no chain view
+ *  enumerates them), so `historyComplete === false` when the indexer
+ *  couldn't answer. `data === null` only when BOTH sources fail. */
+export function useMyOffersFull() {
   const { readChain, address } = useActiveChain();
+  const publicClient = usePublicClient({ chainId: readChain.chainId });
   return useQuery({
     queryKey: ['myOffers', readChain.chainId, address?.toLowerCase()],
     enabled: Boolean(address),
     refetchInterval: REFRESH_MS,
-    queryFn: async (): Promise<IndexedOffer[] | null> => {
-      if (!address) return [];
-      const [created, held] = await Promise.all([
+    queryFn: async (): Promise<MyRows<IndexedOffer> | null> => {
+      if (!address) return { rows: [], historyComplete: true };
+      const [chainRows, created, held] = await Promise.all([
+        publicClient
+          ? readOwnOfferRowsLive(
+              publicClient,
+              readChain.diamondAddress,
+              readChain.chainId,
+              address,
+            )
+          : Promise.resolve(null),
         fetchAllPages<IndexedOffer>((before) =>
           fetchOffersByCreator(readChain.chainId, address, {
             limit: 100,
@@ -209,15 +273,25 @@ export function useMyOffers() {
           ),
         ),
       ]);
-      if (created === null || held === null) return null;
-      const seen = new Set<number>();
-      return [...created, ...held].filter((o) => {
-        if (o.status !== 'active' || seen.has(o.offerId)) return false;
-        seen.add(o.offerId);
-        return true;
-      });
+      const indexerOk = created !== null && held !== null;
+      if (chainRows === null && !indexerOk) return null;
+      const indexed = indexerOk ? [...created, ...held] : [];
+      const rows = unionByKey(chainRows ?? [], indexed, (o) =>
+        String(o.offerId),
+      ).filter((o) => o.status === 'active');
+      return { rows, historyComplete: indexerOk };
     },
   });
+}
+
+/** Slim view of {@link useMyOffersFull} — rows only. */
+export function useMyOffers() {
+  const full = useMyOffersFull();
+  return {
+    ...full,
+    data:
+      full.data === undefined ? undefined : full.data === null ? null : full.data.rows,
+  };
 }
 
 // `useMyClaimables` now lives in `./claimables` and is on-chain-

@@ -13,6 +13,7 @@ import { useActiveChain } from '../chain/useActiveChain';
 import { useMyLoans } from '../data/hooks';
 import { fetchActivity, type IndexedActivityEvent } from '../data/indexer';
 import { EmptyState, UnavailableState } from '../components/EmptyState';
+import { MarketFreshnessNote } from '../components/MarketFreshnessNote';
 import { formatDate } from '../lib/format';
 
 /** camelCase / PascalCase event kind → spaced words
@@ -153,6 +154,10 @@ export function Activity() {
         />
       ) : (
         <>
+          {/* Activity stays INDEXER-fed (events have no chain view), so
+              a stalled ingest cursor means recent actions may be
+              missing — the self-gating freshness note says so. */}
+          <MarketFreshnessNote />
           {activity.data.truncated ? (
             <div className="banner banner-info" role="status" style={{ marginBottom: 12 }}>
               <span className="banner-body">{copy.activity.truncatedNote}</span>
