@@ -25,7 +25,11 @@ import {
   type IndexedOffer,
 } from './indexer';
 import { readLoanRowLive } from './liveLoanRow';
-import { readOwnLoanRowsLive, readOwnOfferRowsLive } from './chainPositions';
+import {
+  readOfferRowLive,
+  readOwnLoanRowsLive,
+  readOwnOfferRowsLive,
+} from './chainPositions';
 
 const REFRESH_MS = 30_000;
 
@@ -220,11 +224,33 @@ export function useMyLoans() {
  *  Offer Book's "Use this offer" action). */
 export function useOffer(offerId: number | undefined) {
   const { readChain } = useActiveChain();
+  const publicClient = usePublicClient({ chainId: readChain.chainId });
   return useQuery({
     queryKey: ['offer', readChain.chainId, offerId],
     enabled: offerId !== undefined && Number.isFinite(offerId),
     refetchInterval: REFRESH_MS,
-    queryFn: () => fetchOfferById(readChain.chainId, offerId!),
+    queryFn: async (): Promise<IndexedOffer | null> => {
+      const row = await fetchOfferById(readChain.chainId, offerId!);
+      if (row) return row;
+      // Indexer miss (ingest lag on a just-posted offer, or indexer
+      // down) — fall back to the live chain read so a shared
+      // ?offer= deep link works the moment the tx mines instead of
+      // "couldn't find that offer" for the length of the ingest
+      // window (#1042; live-repro'd during the #1035 verification).
+      // Same pattern as useLoan: a revert (no such offer) keeps the
+      // not-found verdict, transport failure keeps "unavailable".
+      if (!publicClient) return null;
+      try {
+        return await readOfferRowLive(
+          publicClient,
+          readChain.diamondAddress,
+          readChain.chainId,
+          offerId!,
+        );
+      } catch {
+        return null;
+      }
+    },
   });
 }
 
