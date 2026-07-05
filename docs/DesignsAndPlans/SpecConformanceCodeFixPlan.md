@@ -106,9 +106,19 @@ for each finding it lands.
   not the $50k pad should fall to the *untierable* floor case, not silently get
   Tier 1. Decide (and document) the exact rule: `best[1] > bound ⇒ 0` before the
   `return 1` fallthrough. This makes the `tier1SizePad` governance knob live.
+- **Tier-0 fallback — MUST be handled in this tranche (Codex #1052 r1, P1).**
+  `cfgTierLiquidationLtvBps(0)` today returns the Tier-3 default (the conservative
+  end under the *current* inverted numbering). After the flip, Tier 3 becomes the
+  **highest** (90%) threshold — so a floor-clearing-but-sub-$50k liquid loan
+  (which S11 now sends to Tier 0) would snapshot **90%** and retain the exact
+  bad-debt shape S1 removes. The flip must therefore **remap the tier-0 fallback
+  to the LOWEST/most-conservative threshold** (the new Tier-1 8000-equivalent, or
+  an explicit dedicated tier-0 floor), not leave it aliased to Tier 3. Verify
+  `LoanFacet`'s `effTier == 0` snapshot path lands on the conservative value.
 - **Interaction:** S11 changes *which* tier an asset gets; S1 changes *what
-  threshold* each tier carries — landing together keeps the tier semantics
-  coherent in one review.
+  threshold* each tier carries; and S11's new tier-0 outcomes make the tier-0
+  fallback remap load-bearing — the three are one coherent change, which is why
+  they land together.
 - **Done-criteria (from #999):** re-add the settled per-tier defaults to
   whitepaper §7 + the spec's depth-tier section **in the same PR**.
 - **Tests:** tier-assignment table (floor/$50k/$500k/$5M boundaries), the setter
@@ -122,17 +132,37 @@ for each finding it lands.
   rather than the dead `endDay == 0` sentinel. `endDay` stays purely the accrual
   bound. This closes the "claim at maturity while still open, then default"
   forfeit-bypass: an entry is only payable once its loan is actually closed.
-- **S5:** Wire `LibInteractionRewards.closeLoan(...)` into the two paths that
-  currently flip Active→Repaid without it — `PrecloseFacet` (all options) and
-  `RefinanceFacet`. Borrower-initiated preclose ⇒ `borrowerClean=false`;
-  lender-initiated ⇒ `lenderForfeit=true`; refinance old-loan settlement ⇒
-  `borrowerClean=true` per §6 (record the refinance-intent decision explicitly).
-  Confirms/closes #969, and fixes the refinance double-count (old entries must
-  close before the new loan's entries register).
-- **S13:** Apply the per-user cap **per day** inside the cumRPN walk
-  (`min(raw_d, cap_d)` per day) instead of the single `perDayCap × daysInWindow`
-  window aggregate — in **both** `_processEntry` and `_previewEntryReward` (they
-  must stay identical).
+- **S5:** Wire reward handling into the paths that currently mutate a loan
+  without touching the reward ledger. **Distinguish TERMINAL closes from
+  CONTINUING transfers (Codex #1052 r1, P1) — this is the crux:**
+  - **Terminal** paths that flip Active→Repaid — `precloseDirect`,
+    `completeOffset`, and `RefinanceFacet`'s old-loan settlement — call
+    `closeLoan(...)`: borrower-initiated preclose ⇒ `borrowerClean=false`;
+    lender-initiated ⇒ `lenderForfeit=true`; refinance old-loan ⇒
+    `borrowerClean=true` per §6 (record the refinance-intent decision explicitly).
+  - **Continuing** path `transferObligationViaOffer` (Option 2) rewrites the
+    borrower/collateral but leaves the loan **Active** — it is NOT a terminal
+    close. Calling `closeLoan` there would forfeit the exiting party and stop the
+    surviving loan from ever accruing again. Instead **migrate the entry** to the
+    new counterparty (reuse the existing `transferLenderEntry` /
+    `_allocEntry`-based reopen mechanism the lender-position-transfer path already
+    uses), so the continuing loan keeps a live reward entry under the new owner.
+  - Confirms/closes #969, and fixes the refinance double-count (old entries must
+    close before the new loan's entries register).
+- **S13:** the §4 cap is **per-user-per-day**, not per-entry. Replacing the
+  window aggregate with a per-day `min(raw_d, cap_d)` *inside a single entry* is
+  necessary but **not sufficient (Codex #1052 r1, P2):** a user with several
+  same-side loans opened the same day holds several `RewardEntry`s, and capping
+  each independently lets their sum exceed the user's daily ceiling
+  (`min(Σ raw_d, user_cap_d)` ≠ `Σ min(raw_d, cap_d)`). This tranche therefore
+  needs a **user×day aggregate** accounting, not just per-entry window math —
+  e.g. accumulate a per-`(user, day)` awarded-so-far total that each entry's
+  daily award is clamped against as entries are processed. This is the one
+  finding in the tranche that needs its own small sub-design (storage for the
+  running per-user-day total, and a deterministic processing order so preview and
+  claim agree); flag it as the highest-uncertainty item and design it before
+  coding. Whatever the mechanism, `_processEntry` and `_previewEntryReward` must
+  produce identical numbers.
 - **Sequencing within the tranche:** S4 first (the `closed` primitive), then S5
   (consumes it), then S13 (independent cap math). All three touch `_processEntry`,
   so one PR avoids three-way conflict on that function.
@@ -145,18 +175,27 @@ for each finding it lands.
 
 ### Tranche 3 — Preclose / refinance / repay close-outs (S3, S2, S7, L-c)
 
-- **S3 (pick one, recommend the cancel-unwind):** the offset Step-1 payment
-  (`principal + accruedInterest − treasuryFee + shortfall` into the old lender's
-  vault + `heldForLender += lenderTotal`) is the double-pay root. Options:
+- **S3:** the offset Step-1 payment (`principal + accruedInterest − treasuryFee
+  + shortfall` into the old lender's vault + `heldForLender += lenderTotal`) is
+  the double-pay root. Two candidate fixes:
   (a) move the *principal* portion to `completeOffset` (spec Step 2), leaving
   only the accrued-interest reservation at Step 1; or (b) make
-  `OfferCancelFacet.cancelOffer`'s offset branch pull `lenderTotal` back out of
-  the lender's vault and zero `heldForLender[loanId]`. **Recommend (b)** — it is
-  the smaller, more local change and directly patches the fund-loss path — plus
-  (c) reject a second `offsetWithNewOffer` while `loanToOffsetOfferId[loanId] != 0`
-  (add the guard in `_validateOffsetRequest`), and (d) zero `heldForLender[loanId]`
-  after the `ClaimFacet` withdrawal (it is currently read-and-withdrawn but never
-  cleared — a latent re-withdraw). New error for the double-offset guard.
+  `OfferCancelFacet.cancelOffer`'s offset branch pull the offset contribution
+  back out of the lender's vault and decrement `heldForLender`.
+  **Recommendation revised to (a) — the Step-2 principal move (Codex #1052 r1,
+  P1).** `heldForLender[loanId]` is a **composed accumulator** — a partial
+  internal match or fallback rescue can also add to it, and those prior proceeds
+  are paid with the eventual lender claim. So the cancel-unwind (b) must
+  **subtract exactly `lenderTotal`, never zero the accumulator** (zeroing would
+  wipe legitimate prior held funds), which means tracking the offset's own
+  contribution separately (e.g. `offsetHeld[loanId]`). Option (a) sidesteps this
+  entirely: principal never enters `heldForLender` at Step 1, so a cancel needs
+  no unwind of it — only the accrued-interest reservation (a smaller amount) is
+  in play. Whichever is chosen, also: (c) reject a second `offsetWithNewOffer`
+  while `loanToOffsetOfferId[loanId] != 0` (guard in `_validateOffsetRequest`,
+  new error); and (d) after the `ClaimFacet` withdrawal, **decrement** the
+  offset's held contribution (currently read-and-withdrawn but never cleared — a
+  latent re-withdraw), again by subtraction, not by zeroing the shared bucket.
 - **S2:** exempt the grace gate when `curingFallback == true` (the flag is
   already in scope at `RepayFacet.sol:254`). The cure payment fully compensates
   the lender (principal + interest incl. grace accrual + late fees), so there is
@@ -179,12 +218,19 @@ for each finding it lands.
 
 ### Tranche 4 — Forced-close / liquidation correctness (S12, S9, L-g, L-h)
 
-- **S12:** net `loan.interestSettled` (saturating) into the interest owed at all
-  four forced-close sites — `RiskFacet.triggerLiquidation`,
+- **S12:** net `loan.interestSettled` into the interest owed at all four
+  forced-close sites — `RiskFacet.triggerLiquidation`,
   `RiskSplitLiquidationFacet`, `DefaultedFacet.triggerDefault`,
-  `LibFallback.computeFallbackEntitlements`. Prefer routing them through the
-  existing `LibEntitlement.settlementInterestNet` (or an equivalent netted
-  accrual) so the forced-close paths match the voluntary paths' netting.
+  `LibFallback.computeFallbackEntitlements`. **Do NOT reroute through
+  `settlementInterestNet` (Codex #1052 r1, P1):** that helper rounds to whole
+  days AND applies the `useFullTermInterest` full-term floor, whereas the
+  forced-close paths intentionally accrue **seconds-precise** outstanding
+  interest — rerouting would silently change the forced-close debt model (over/
+  undercharging early liquidations). Instead subtract in place:
+  `owedInterest -= min(interestSettled, accruedInterest)` on each site's
+  *existing* seconds-precise `accruedInterest`, preserving the current accrual
+  semantics and only crediting what was already settled (saturating so it can't
+  underflow).
 - **S9:** reject an empty adapter try-list at the two forced-close entry points
   (`RiskFacet.triggerLiquidation`, `DefaultedFacet.triggerDefault`) before
   falling into `_fullCollateralTransferFallback` — mirror
@@ -195,7 +241,11 @@ for each finding it lands.
   subordinated to full lender recovery** when proceeds are short — keep the
   liquidator bonus senior (it must stay to incentivize the liquidation), but the
   treasury handling fee (and the interest-split fee) yield to making the lender
-  whole first.
+  whole first. **Apply the reorder to BOTH `RiskFacet` AND
+  `RiskSplitLiquidationFacet` (Codex #1052 r1, P2)** — the split-route facet
+  carries the same `bonus → handling-fee → debt` waterfall, so fixing only
+  `RiskFacet` would leave split-route liquidations still paying treasury ahead of
+  a short-changed lender.
 - **L-h:** add the dynamic incentive (6% − realized slippage, capped 3%, per-
   asset `liqBonusBps` ceiling) to the `DefaultedFacet` time-based-default swap
   path so it matches the HF-based path. Since that incentive block is currently
@@ -228,8 +278,15 @@ for each finding it lands.
 - **S15:** re-run the `MinCollateralBelowFloor` / `MaxLendingAboveCeiling` range
   checks in `OfferMutateFacet` (extract the create-time block into a shared
   internal so create and mutate share one definition), so a mutate can't move a
-  compliant range offer into a shape `createOffer` would reject. Guard the same
-  `rangeAmountEnabled` + liquid-both-legs conditions the create path uses.
+  compliant range offer into a shape `createOffer` would reject. **Do NOT gate
+  the checks on the dormant `rangeAmountEnabled` flag (Codex #1052 r1, P2):** the
+  create path no longer *rejects* range offers when that flag is off, so mirroring
+  the flag-guard on mutate would let an off-flag deployment create AND mutate
+  out-of-bounds range shapes — the card would stay open. Apply the bounds
+  **wherever a range shape is allowed** (i.e. keyed on the offer actually being a
+  range shape + liquid-both-legs, not on `rangeAmountEnabled`), at both create and
+  mutate, so the invariant holds regardless of the flag. Keep the liquid-both-legs
+  ERC-20 conditions the create path uses.
 - **Tests:** NFT late fee scales with term + caps at 5% of total; locked-release
   reverts on oracle-revert while a normal claim still succeeds; mutate rejects an
   out-of-bounds range shape create would reject.
