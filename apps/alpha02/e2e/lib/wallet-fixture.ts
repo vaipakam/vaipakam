@@ -162,20 +162,30 @@ function jsonSafe(v: unknown): unknown {
   );
 }
 
-/** Connect via the app's ConnectKit modal if the page shows the
- *  connect button (fresh contexts always do). */
+/** Ensure the wallet is connected. wagmi AUTO-CONNECTS to the injected
+ *  provider (it reports accounts without a prompt, unlike a locked
+ *  MetaMask), so the Connect button often detaches mid-click — the
+ *  first CI run failed on exactly that race. Success is therefore
+ *  "the Connect button is gone"; clicks are best-effort nudges. */
 export async function connectWallet(page: Page): Promise<void> {
   const btn = page.getByRole('button', { name: /^connect wallet$/i }).first();
-  if (!(await btn.isVisible().catch(() => false))) return;
-  await btn.click();
-  for (const name of [/vaipakam test wallet/i, /metamask/i, /browser/i, /injected/i]) {
-    const opt = page.getByRole('button', { name }).first();
-    if (await opt.isVisible({ timeout: 2_000 }).catch(() => false)) {
-      await opt.click();
-      break;
+  const gone = async () => !(await btn.isVisible().catch(() => false));
+  const deadline = Date.now() + 25_000;
+  while (Date.now() < deadline) {
+    if (await gone()) return;
+    await btn.click({ timeout: 2_000 }).catch(() => {});
+    for (const name of [/vaipakam test wallet/i, /metamask/i, /browser/i, /injected/i]) {
+      const opt = page.getByRole('button', { name }).first();
+      if (await opt.isVisible({ timeout: 1_000 }).catch(() => false)) {
+        await opt.click({ timeout: 2_000 }).catch(() => {});
+        break;
+      }
     }
+    await page.waitForTimeout(1_000);
   }
-  await page.waitForTimeout(1_500);
+  if (!(await gone())) {
+    throw new Error('wallet never connected (Connect button still present)');
+  }
 }
 
 export const test = base.extend<{
