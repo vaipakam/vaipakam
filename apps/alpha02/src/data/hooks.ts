@@ -91,25 +91,26 @@ export async function fetchAllPages<T>(
   return null; // cap hit with a cursor still open — truncated ≠ complete
 }
 
-/** Union result of chain-authoritative discovery + the indexer leg.
- *  The two flags say which SOURCE answered this round — consumers
- *  decide what that means for their surface: Positions shows a
+/** Result of the two-source read behind the positions hooks.
+ *
+ *  MERGE RULE — the chain leg, when it answers, is the SOLE row
+ *  source: it enumerates everything the wallet is currently involved
+ *  in (created offers, held offer NFTs, held loan positions) live
+ *  this block, so any indexed row outside it is either an ingest-lag
+ *  ghost (just-cancelled offer, transferred/burned position) or a
+ *  position the wallet no longer holds — merging those back in is
+ *  exactly how ghosts survive. The indexed lists serve ONLY as the
+ *  fallback when the chain leg is unavailable (their pre-existing
+ *  role). The flags say which source answered: Positions shows a
  *  degraded-sources note when either is false; Activity refuses to
  *  run its participation filter without the indexer leg. NOTE the
- *  indexer's /loans/by-* routes are CURRENT-OWNER filtered (they do
- *  not return burned-NFT history), so `indexerOk` is availability of
- *  the redundancy leg — not a burned-history promise. */
+ *  indexer's /loans/by-* routes are CURRENT-OWNER filtered (no
+ *  burned-NFT history), so `indexerOk` is redundancy-leg
+ *  availability — not a history promise. */
 export interface MyRows<T> {
   rows: T[];
   chainOk: boolean;
   indexerOk: boolean;
-}
-
-/** Chain rows win a (key) collision — they are live-read this block;
- *  the indexer row for the same key can lag a terminal transition. */
-function unionByKey<T>(chain: T[], indexed: T[], key: (t: T) => string): T[] {
-  const seen = new Set(chain.map(key));
-  return [...chain, ...indexed.filter((t) => !seen.has(key(t)))];
 }
 
 async function fetchIndexedLoans(
@@ -164,28 +165,14 @@ export function useMyLoansFull() {
         fetchIndexedLoans(readChain.chainId, address),
       ]);
       if (chainRows === null && indexedRows === null) return null;
-      // The live enumeration is AUTHORITATIVE for what the wallet
-      // holds right now. An indexed row that still claims an
-      // ownership-implying status but is absent from the live set is
-      // the classic ingest-lag ghost (position NFT transferred away,
-      // or burned at claim) — trusting it would show a loan the
-      // wallet no longer owns. Terminal-status indexed rows pass
-      // through: they are accurate cursor-lag snapshots.
-      const OWNERSHIP_STATUSES = new Set(['active', 'fallback_pending']);
-      const chainKeys = new Set(
-        (chainRows ?? []).map((l) => `${l.loanId}:${l.role}`),
+      // See MyRows: the live enumeration, when it answers, is the
+      // sole source — an indexed row absent from it is a ghost
+      // (transferred/burned position) or no longer the wallet's,
+      // regardless of status. Indexed rows serve only as the
+      // fallback when the chain leg is unavailable.
+      const rows = [...(chainRows ?? indexedRows ?? [])].sort(
+        (a, b) => b.startAt - a.startAt,
       );
-      const indexedKept = (indexedRows ?? []).filter(
-        (l) =>
-          chainRows === null ||
-          !OWNERSHIP_STATUSES.has(l.status) ||
-          chainKeys.has(`${l.loanId}:${l.role}`),
-      );
-      const rows = unionByKey(
-        chainRows ?? [],
-        indexedKept,
-        (l) => `${l.loanId}:${l.role}`,
-      ).sort((a, b) => b.startAt - a.startAt);
       return { rows, chainOk: chainRows !== null, indexerOk: indexedRows !== null };
     },
   });
@@ -296,18 +283,18 @@ export function useMyOffersFull() {
       ]);
       const indexerOk = created !== null && held !== null;
       if (chainLive === null && !indexerOk) return null;
-      // Live TOMBSTONES: the chain says these ids are terminally gone
-      // (a cancelled-unfilled offer deletes its slot, so no chain ROW
-      // exists to win the union) — a stale indexed "active" row must
-      // not resurrect a just-cancelled offer until ingestion catches
-      // up.
-      const tombstones = new Set(chainLive?.terminalOfferIds ?? []);
-      const indexed = (indexerOk ? [...created, ...held] : []).filter(
-        (o) => !tombstones.has(o.offerId),
-      );
-      const rows = unionByKey(chainLive?.rows ?? [], indexed, (o) =>
-        String(o.offerId),
-      ).filter((o) => o.status === 'active');
+      // See MyRows: chain leg is the sole source when it answers —
+      // it covers created AND held offers, and a cancelled offer
+      // simply isn't in it (no tombstone bookkeeping needed, and no
+      // stale indexed "active" row can resurrect one). Indexed rows
+      // only serve as the fallback when the chain leg is down.
+      const source = chainLive ?? (indexerOk ? [...created, ...held] : []);
+      const seen = new Set<number>();
+      const rows = source.filter((o) => {
+        if (o.status !== 'active' || seen.has(o.offerId)) return false;
+        seen.add(o.offerId);
+        return true;
+      });
       return { rows, chainOk: chainLive !== null, indexerOk };
     },
   });

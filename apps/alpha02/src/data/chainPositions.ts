@@ -42,26 +42,20 @@ const OFFER_STATE: readonly IndexedOffer['status'][] = [
   'consumed_by_sale',
 ];
 
-export interface LiveOfferRead {
-  /** Hydrated row, or null when the slot is deleted / the state enum
-   *  is an unknown FUTURE value (honest "can't represent"). */
-  row: IndexedOffer | null;
-  /** True when the CANONICAL state says this offer is terminally gone
-   *  (Cancelled / ConsumedBySale). A cancelled-unfilled offer deletes
-   *  its storage slot, so `row` is null — but the id must still act
-   *  as a live TOMBSTONE: without it, a stale indexed "active" row
-   *  would outlive the cancel until ingestion catches up. */
-  terminal: boolean;
-}
-
-/** Read one offer live and map it onto the indexer-row shape. Throws
- *  on transport failure (callers must not treat that as "gone"). */
+/** Read one offer live and map it onto the indexer-row shape.
+ *  Returns `null` for a deleted slot (cancelled-unfilled offers
+ *  delete their storage) or an unknown FUTURE state-enum value —
+ *  honest "can't represent", mirroring readLoanRowLive. Safe because
+ *  the hooks treat the chain enumeration as the SOLE row source when
+ *  it answers: a null here just means "not one of your current
+ *  positions", and no stale indexed row is merged over it. Throws on
+ *  transport failure (callers must not treat that as "gone"). */
 export async function readOfferRowLive(
   publicClient: PublicClient,
   diamond: `0x${string}`,
   chainId: number,
   offerId: number,
-): Promise<LiveOfferRead> {
+): Promise<IndexedOffer | null> {
   const [o, stateRaw] = (await Promise.all([
     publicClient.readContract({
       address: diamond,
@@ -77,13 +71,8 @@ export async function readOfferRowLive(
     }),
   ])) as [Record<string, unknown>, number | bigint];
   let status = OFFER_STATE[Number(stateRaw)];
-  const terminal = status === 'cancelled' || status === 'consumed_by_sale';
-  // Cancelled-unfilled offers delete the storage slot — the row's
-  // data is gone, but the terminal verdict above still stands.
-  if (!o.creator || String(o.creator).toLowerCase() === ZERO_ADDR) {
-    return { row: null, terminal };
-  }
-  if (status === undefined) return { row: null, terminal };
+  if (!o.creator || String(o.creator).toLowerCase() === ZERO_ADDR) return null;
+  if (status === undefined) return null;
   const nowSec = Math.floor(Date.now() / 1000);
   // GTT expiry overlay on an Open row. Wall clock is the right basis
   // here: on a live network it tracks block time within seconds, and
@@ -91,7 +80,7 @@ export async function readOfferRowLive(
   if (status === 'active' && Number(o.expiresAt ?? 0) !== 0 && nowSec >= Number(o.expiresAt)) {
     status = 'expired';
   }
-  const row: IndexedOffer = {
+  return {
     chainId,
     offerId,
     status,
@@ -126,7 +115,6 @@ export async function readOfferRowLive(
     expiresAt: Number(o.expiresAt) || undefined,
     fillMode: Number(o.fillMode),
   };
-  return { row, terminal };
 }
 
 /** Every loan position the wallet CURRENTLY HOLDS, role decided by
@@ -196,14 +184,6 @@ export async function readOwnLoanRowsLive(
   }
 }
 
-export interface OwnOffersLive {
-  rows: IndexedOffer[];
-  /** Offer ids the CHAIN says are terminally gone (cancelled /
-   *  consumed-by-sale). The merge uses these as tombstones to
-   *  suppress stale indexed rows still claiming "active". */
-  terminalOfferIds: number[];
-}
-
 /** Every offer the wallet CREATED plus every OPEN offer whose
  *  position NFT it currently HOLDS (a received/bought listing),
  *  hydrated live — covers both the freshly posted offer and the
@@ -214,10 +194,12 @@ export async function readOwnOfferRowsLive(
   diamond: `0x${string}`,
   chainId: number,
   address: `0x${string}`,
-): Promise<OwnOffersLive | null> {
+): Promise<IndexedOffer[] | null> {
   const ids = new Set<number>();
+  // Leg 1 — the creator's lifetime offer index. Any failure here
+  // (transport OR a deploy without the view) disables the chain
+  // source: created offers are the fix's core promise.
   try {
-    // Leg 1 — the creator's lifetime offer index.
     for (let offset = 0n; ; offset += PAGE) {
       const [page, total] = (await publicClient.readContract({
         address: diamond,
@@ -229,10 +211,18 @@ export async function readOwnOfferRowsLive(
       if (ids.size >= Number(total) || page.length === 0) break;
       if (offset >= BigInt(WALK_CAP)) return null; // truncated ≠ complete
     }
-    // Leg 2 — OPEN offers whose position NFT the wallet holds
-    // (getUserPositionOffersPaginated resolves offerIdByPositionTokenId
-    // over the wallet's ERC721Enumerable inventory; totalBalance is
-    // the pagination bound over NFT slots, like the loans view).
+  } catch {
+    return null;
+  }
+  // Leg 2 — OPEN offers whose position NFT the wallet holds
+  // (offerIdByPositionTokenId over the ERC721Enumerable inventory;
+  // totalBalance bounds the walk like the loans view). A REVERT means
+  // the paginated view is absent on this deploy — fall back to the
+  // legacy unbounded view, and if that's absent too, continue with
+  // the created leg alone (never let a missing holder view disable
+  // live created-offer discovery). Transport failures still fail the
+  // whole chain source closed.
+  try {
     for (let offset = 0n; ; offset += PAGE) {
       const [offerIds, , totalBalance] = (await publicClient.readContract({
         address: diamond,
@@ -244,23 +234,28 @@ export async function readOwnOfferRowsLive(
       if (offset + PAGE >= totalBalance) break;
       if (offset >= BigInt(WALK_CAP)) return null; // truncated ≠ complete
     }
-  } catch {
-    // Revert (view missing) and transport failure both mean the chain
-    // side can't answer — indexer stands alone.
-    return null;
+  } catch (e) {
+    if (!isRevert(e)) return null; // transport — chain side unknown
+    try {
+      const [legacyIds] = (await publicClient.readContract({
+        address: diamond,
+        abi: DIAMOND_ABI_VIEM,
+        functionName: 'getUserPositionOffers',
+        args: [address],
+      })) as readonly [readonly bigint[], readonly bigint[]];
+      for (const id of legacyIds) ids.add(Number(id));
+    } catch (e2) {
+      if (!isRevert(e2)) return null;
+      // Both holder views absent — an older deploy. Created-offer
+      // discovery still stands; held-via-transfer listings stay
+      // indexer-only there.
+    }
   }
   try {
-    const reads = await Promise.all(
+    const rows = await Promise.all(
       [...ids].map((id) => readOfferRowLive(publicClient, diamond, chainId, id)),
     );
-    const rows: IndexedOffer[] = [];
-    const terminalOfferIds: number[] = [];
-    for (let i = 0; i < reads.length; i++) {
-      const { row, terminal } = reads[i];
-      if (row) rows.push(row);
-      if (terminal) terminalOfferIds.push([...ids][i]);
-    }
-    return { rows, terminalOfferIds };
+    return rows.filter((r): r is IndexedOffer => r !== null);
   } catch {
     return null; // a row read failed — never a confident partial list
   }
