@@ -277,6 +277,12 @@ export interface TestnetMocks {
   mWeth?: HexAddress;
   /** Unwired mock ERC-20 (18 dec) → classifies ILLIQUID (in-kind). */
   illiquidToken?: HexAddress;
+  /** SECOND unwired mock ERC-20 (18 dec, tILQ2) — pairs with
+   *  illiquidToken so faucet-only wallets can run a deal where BOTH
+   *  the lending asset and the collateral are unpriced (dual-consent,
+   *  in-kind default path). Deliberately has NO feed/pool wiring —
+   *  that absence is what classifies it illiquid. */
+  illiquidToken2?: HexAddress;
   /** ERC-4907 rental NFT for the rental flows. */
   rentalNft?: HexAddress;
   /** Second ERC-4907 collection (vART) for two-sided rental demos. */
