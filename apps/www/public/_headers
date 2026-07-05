@@ -61,12 +61,12 @@
 # `connect-src https:` above — no extra rule needed there.
 
 /*
-X-Content-Type-Options: nosniff
-Referrer-Policy: strict-origin-when-cross-origin
-Permissions-Policy: camera=(), microphone=(), geolocation=(), interest-cohort=()
-Cross-Origin-Opener-Policy: same-origin-allow-popups
-Cross-Origin-Resource-Policy: cross-origin
-Content-Security-Policy: default-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval' https://www.googletagmanager.com https://www.google-analytics.com; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' data: https://fonts.gstatic.com; img-src 'self' data: blob: https:; connect-src 'self' https: wss:; frame-src 'self' https://verify.walletconnect.com https://verify.walletconnect.org; worker-src 'self' blob:; manifest-src 'self'; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'self' https://app.safe.global https://*.safe.global; upgrade-insecure-requests
+  X-Content-Type-Options: nosniff
+  Referrer-Policy: strict-origin-when-cross-origin
+  Permissions-Policy: camera=(), microphone=(), geolocation=(), interest-cohort=()
+  Cross-Origin-Opener-Policy: same-origin-allow-popups
+  Cross-Origin-Resource-Policy: cross-origin
+  Content-Security-Policy: default-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval' https://www.googletagmanager.com https://www.google-analytics.com; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' data: https://fonts.gstatic.com; img-src 'self' data: blob: https:; connect-src 'self' https: wss:; frame-src 'self' https://verify.walletconnect.com https://verify.walletconnect.org; worker-src 'self' blob:; manifest-src 'self'; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'self' https://app.safe.global https://*.safe.global; upgrade-insecure-requests
 
 # SPA entry point — Cloudflare returns this for every non-asset path via
 
@@ -79,12 +79,12 @@ Content-Security-Policy: default-src 'self'; script-src 'self' 'unsafe-inline' '
 # via the /assets/* rule below because Vite emits content-hashed names.
 
 /
-Cache-Control: public, max-age=0, must-revalidate
+  Cache-Control: public, max-age=0, must-revalidate
 
 /index.html
-Cache-Control: public, max-age=0, must-revalidate
+  Cache-Control: public, max-age=0, must-revalidate
 
 # Immutable static assets (Vite emits content-hashed filenames in /assets/*).
 
 /assets/*
-Cache-Control: public, max-age=31536000, immutable
+  Cache-Control: public, max-age=31536000, immutable

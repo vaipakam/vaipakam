@@ -1,8 +1,10 @@
 ## Thread — security headers: alpha02 gains its set; defi + www's broken sets repaired
 
 The retail app now ships browser security headers: a Content-Security
-Policy (self-only scripts — the app loads no analytics and no external
-fonts, so its policy is tighter than the pro app's), clickjacking
+Policy whose script sources carry NO third-party hosts (the app loads
+no analytics and no external fonts, so its policy is tighter than the
+pro app's — though inline/eval script remains allowed for wallet-SDK
+compatibility, with nonce-tightening left as a follow-up), clickjacking
 protection that still allows embedding inside the Safe multisig
 dapp-browser, MIME-sniffing and referrer hardening, and deploy-cache
 rules — the app shell revalidates on every load so a redeploy can
