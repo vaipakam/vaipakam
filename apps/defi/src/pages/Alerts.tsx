@@ -266,6 +266,11 @@ export default function Alerts() {
         );
       }
       setMsg("Thresholds saved.");
+      // The maturity flag is now stored server-side — clear the
+      // touched marker so later, unrelated saves in this session go
+      // back to omitting the field (and never re-prompt for the
+      // opt-out signature).
+      setMaturityTouched(false);
       step.success({ note: `warn=${warnHf} alert=${alertHf} critical=${criticalHf}` });
     } catch (e) {
       // User-facing alert stays succinct (the bare error message);
@@ -423,6 +428,9 @@ export default function Alerts() {
           "Push rail enabled. You'll also need to subscribe to the Vaipakam Push channel from your Push-enabled wallet to actually receive the notifications — see docs for the channel address.",
         );
       }
+      // Same reason as in save(): the flag (if it rode along) is now
+      // stored — stop sending it on later saves this session.
+      setMaturityTouched(false);
       step.success({ note: "push_channel=subscribed" });
     } catch (e) {
       // User-facing alert stays succinct (the bare error message);

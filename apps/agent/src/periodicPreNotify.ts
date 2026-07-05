@@ -156,12 +156,27 @@ async function preNotifyChain(
     // act), then lender (courtesy). Each lookup is a single D1
     // query; subscribers usually overlap with HF-watcher rows so
     // the table is hot in cache.
-    await pushIfSubscribed(env, chain, row, row.borrower, daysUntil, 'borrower');
-    await pushIfSubscribed(env, chain, row, row.lender, daysUntil, 'lender');
+    const borrowerOutcome = await pushIfSubscribed(
+      env, chain, row, row.borrower, daysUntil, 'borrower',
+    );
+    const lenderOutcome = await pushIfSubscribed(
+      env, chain, row, row.lender, daysUntil, 'lender',
+    );
 
-    // Stamp the de-dup column even if neither side is subscribed —
-    // re-querying on every tick is wasteful when we know there's
-    // no one to notify for this checkpoint.
+    // Stamp the de-dup column when a delivery went out, or when
+    // there's genuinely no one to notify (re-querying every tick is
+    // wasteful). Do NOT stamp when the ONLY reason nothing went out
+    // is an opt-out: the user may re-enable the reminder before the
+    // deadline, and the next tick should then deliver it (#1056
+    // round 9). Granularity note: the stamp is per-loan, so when one
+    // side WAS notified, an opted-out counterparty re-enabling
+    // mid-window misses this checkpoint — per-user dedupe would need
+    // a schema change, out of proportion for a courtesy reminder.
+    const anySent = borrowerOutcome === 'sent' || lenderOutcome === 'sent';
+    const onlyBlockedByOptOut =
+      !anySent &&
+      (borrowerOutcome === 'opted-out' || lenderOutcome === 'opted-out');
+    if (onlyBlockedByOptOut) continue;
     await env.DB.prepare(
       `UPDATE loans SET period_pre_notified_at = ?, updated_at = ?
        WHERE chain_id = ? AND loan_id = ?`,
@@ -171,6 +186,9 @@ async function preNotifyChain(
   }
 }
 
+/** Why nothing (or something) went out for one counterparty. */
+type PreNotifyOutcome = 'sent' | 'opted-out' | 'none';
+
 async function pushIfSubscribed(
   env: Env,
   chain: { id: number; name: string },
@@ -178,7 +196,7 @@ async function pushIfSubscribed(
   wallet: string,
   daysUntil: number,
   role: 'borrower' | 'lender',
-): Promise<void> {
+): Promise<PreNotifyOutcome> {
   let sub: UserPushRow | null;
   try {
     sub = await env.DB.prepare(
@@ -202,10 +220,12 @@ async function pushIfSubscribed(
       .first<Omit<UserPushRow, 'notify_maturity_approaching'>>();
     sub = legacy ? { ...legacy, notify_maturity_approaching: 1 } : null;
   }
-  if (!sub) return;
+  if (!sub) return 'none';
   // #1033 — the alpha02 Alerts card exposes this as a real opt-out;
-  // honor it before any rail fires.
-  if (sub.notify_maturity_approaching === 0) return;
+  // honor it before any rail fires. Reported distinctly so the
+  // caller can leave the checkpoint unstamped (a re-enable before
+  // the deadline must still get its reminder).
+  if (sub.notify_maturity_approaching === 0) return 'opted-out';
 
   const cadenceLabel = cadenceI18nLabel(loan.periodic_interest_cadence);
   // English-only copy for now — the watcher's existing translation
@@ -255,6 +275,10 @@ async function pushIfSubscribed(
       );
     }
   }
+  // Delivery was attempted (per-rail failures are logged above, and
+  // a subscriber with no rail configured still counts — matching the
+  // pre-existing stamp semantics for subscribed users).
+  return 'sent';
 }
 
 function cadenceI18nLabel(cadence: number): string {
