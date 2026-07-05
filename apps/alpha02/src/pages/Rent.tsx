@@ -945,6 +945,10 @@ function RentNftFlow() {
           throw new Error(copy.tokenSecurity.gateBlock('prepayment token', v.reasons));
         }
         if (v.kind === 'unknown') {
+          // Invalidate the cached pass so the review re-fetches: a
+          // persistent outage lands the hook in error state (blocked
+          // banner + "Check again") instead of a stale enabled button.
+          void queryClient.invalidateQueries({ queryKey: cacheKey });
           throw new Error(copy.tokenSecurity.gateUnknown('prepayment token'));
         }
         // A live 'warn' passes ONLY when the review already disclosed
@@ -955,6 +959,10 @@ function RentNftFlow() {
           verdictFingerprint(v) !== verdictFingerprint(prepaySec.data)
         ) {
           queryClient.setQueryData(cacheKey, v);
+          // Synchronous consent clear — the fingerprint effect fires
+          // next render; a fast retry inside that window would pass
+          // un-consented.
+          setConsent(false);
           throw new Error(copy.tokenSecurity.gateChanged('prepayment token'));
         }
       }

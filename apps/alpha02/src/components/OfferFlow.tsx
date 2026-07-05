@@ -1206,12 +1206,24 @@ export function OfferFlow({ side }: { side: Side }) {
         throw new Error(copy.tokenSecurity.gateBlock(leg, v.reasons));
       }
       if (v.kind === 'unknown') {
+        // Invalidate the cached pass so the review re-fetches: if the
+        // outage persists the hook lands in error state — blocked
+        // banner + "Check again" — instead of a stale enabled button
+        // that re-enters this same abort forever.
+        void queryClient.invalidateQueries({ queryKey: cacheKey });
         throw new Error(copy.tokenSecurity.gateUnknown(leg));
       }
       if (v.kind === 'warn') {
         const reviewed = securityLegs.find((l) => l.leg === leg);
         if (verdictFingerprint(v) !== verdictFingerprint(reviewed?.verdict)) {
           queryClient.setQueryData(cacheKey, v);
+          // Clear consent SYNCHRONOUSLY — the fingerprint effect only
+          // fires on the next render, and in that window a fast retry
+          // would find the (now-cached) warn equal to the reviewed
+          // one and sail through un-consented.
+          setForm((f) =>
+            f.riskAndTermsConsent ? { ...f, riskAndTermsConsent: false } : f,
+          );
           throw new Error(copy.tokenSecurity.gateChanged(leg));
         }
       }
@@ -1355,6 +1367,11 @@ export function OfferFlow({ side }: { side: Side }) {
           throw new Error(copy.tokenSecurity.gateBlock(leg, v.reasons));
         }
         if (v.kind === 'unknown') {
+          // Invalidate the cached pass so the review re-fetches: if
+          // the outage persists the hook lands in error state —
+          // blocked banner + "Check again" — instead of a stale
+          // enabled button re-entering this abort forever.
+          void queryClient.invalidateQueries({ queryKey: cacheKey });
           throw new Error(copy.tokenSecurity.gateUnknown(leg));
         }
         // A live 'warn' may pass ONLY if the reviewed screen already
@@ -1366,6 +1383,13 @@ export function OfferFlow({ side }: { side: Side }) {
           const reviewed = securityLegs.find((l) => l.leg === leg);
           if (verdictFingerprint(v) !== verdictFingerprint(reviewed?.verdict)) {
             queryClient.setQueryData(cacheKey, v);
+            // Synchronous consent clear — the fingerprint effect only
+            // fires next render; a fast retry inside that window would
+            // find the cached warn equal to the reviewed one and pass
+            // un-consented.
+            setForm((f) =>
+              f.riskAndTermsConsent ? { ...f, riskAndTermsConsent: false } : f,
+            );
             throw new Error(copy.tokenSecurity.gateChanged(leg));
           }
         }

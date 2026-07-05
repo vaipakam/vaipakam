@@ -80,6 +80,11 @@ interface GoPlusTokenRow {
   slippage_modifiable?: GoPlusField;
   personal_slippage_modifiable?: GoPlusField;
   is_open_source?: GoPlusField;
+  /** Scam-only flags — per the GoPlus docs, "no return" on these
+   *  means the behaviour is absent, so like fake_token they block on
+   *  '1' but are exempt from the unevaluated-disclosure line. */
+  gas_abuse?: GoPlusField;
+  is_airdrop_scam?: GoPlusField;
   /** Counterfeit detector — an OBJECT, not a '0'/'1' string. Null or
    *  absent on genuine tokens (live majors 2026-07-05 all carry
    *  null), so null here means "genuine", NOT "unevaluated". */
@@ -170,6 +175,12 @@ export function classifyTokenSecurity(row: GoPlusTokenRow): TokenSecurityVerdict
   }
   if (flag(row.selfdestruct)) {
     block.push('the contract can self-destruct, erasing every holder balance');
+  }
+  if (flag(row.gas_abuse)) {
+    block.push('flagged for gas abuse — interacting with it drains extra gas');
+  }
+  if (flag(row.is_airdrop_scam)) {
+    block.push('flagged as an airdrop scam');
   }
   // Per-ADDRESS tax control is a targeted-honeypot lever: the owner
   // can set a punitive rate for one specific holder — e.g. the vault
