@@ -221,6 +221,24 @@ export async function linkTelegram(
     .run();
 }
 
+/** #1033 — clear the stored Telegram chat id for a wallet, stopping
+ *  all Telegram delivery for it. The row itself stays (thresholds and
+ *  event opt-ins survive a re-link). Idempotent by construction. */
+export async function unlinkTelegram(
+  db: D1Database,
+  wallet: string,
+  chainId: number,
+): Promise<void> {
+  await db
+    .prepare(
+      `UPDATE user_thresholds
+       SET tg_chat_id = NULL, updated_at = ?
+       WHERE wallet = ? AND chain_id = ?`,
+    )
+    .bind(Math.floor(Date.now() / 1000), wallet.toLowerCase(), chainId)
+    .run();
+}
+
 /** Sweep expired handshake codes — run at the start of each cron tick
  *  to keep the table bounded. */
 export async function sweepExpiredLinks(db: D1Database): Promise<void> {
