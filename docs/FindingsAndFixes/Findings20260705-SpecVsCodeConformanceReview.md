@@ -48,7 +48,7 @@ most Mediums classified "Real bug" are the ones that warrant code changes.
 | S7 | Medium | Refinance always pays the exiting lender full-term interest, ignoring the loan's pro-rata election | Real bug | `RefinanceFacet.sol:323` |
 | S8 | Medium | NFT-rental late fee is computed on the daily fee, not the overdue rental amount (~D× too small) | Real bug | `LibVaipakam.sol:6036` |
 | S9 | Medium | Empty adapter try-list routes a default/liquidation straight into the collateral fallback with no swap attempt | Real bug | `LibSwap.sol:158` |
-| S10 | Medium | Sanctions screening fails **open** on oracle revert — including value-releasing claim paths | Real bug | `LibVaipakam.sol:6940` |
+| S10 | Medium | Locked-proceeds release gate (`SanctionedProceedsLocked`) fails **open** on sanctions-oracle revert — must fail closed; normal never-flagged claims stay fail-open by owner decision (#1006) | Real bug (narrowed to the locked-release gate) | `LibVaipakam.sol:6940` |
 | S11 | Medium | Tier-1 assignment ignores the $50k tier-1 depth probe (`tier1SizePad` is a no-op) | Real bug / Ambiguous | `OracleFacet.sol:1765` |
 | S12 | Medium | Forced-close debt (liq/default/fallback) ignores `interestSettled` — periodic interest charged twice (confirms #915) | Real bug | `RiskFacet.sol:770`, `DefaultedFacet.sol:396` |
 | S13 | Medium | Per-user interaction-reward cap enforced per entry-window, not per day as §4 specifies | Real bug (mild) | `LibInteractionRewards.sol:947` |
@@ -109,7 +109,7 @@ sections. Grand totals: **5 High, 14 Medium, ~14 Low, ~14 Informational.**
 - **Classification:** **Stale spec** — **owner decision 2026-07-05: KEEP CODE / UPDATE SPEC.** A 365-day (max-tenor) loan intentionally keeps the longer, borrower-friendly 30-day grace; the code is NOT to be changed to shrink it to 2 weeks. §2 has been reworded so the "2 weeks" bucket is documented as `< 365` days and exactly-1-year loans as receiving 30 days. **Resolved via the spec update merged in PR #1011 (2026-07-05).**
 
 ### S7 — Refinance ignores the loan's pro-rata interest election
-- **Spec:** §233 (pro-rata opt-in) + Phase-1-Additions step 4 (~2597) "principal + full-term interest **as per early repayment rules**." **Code:** `RefinanceFacet.sol:323` uses `fullTermInterest(...)` unconditionally, never consulting `loan.useFullTermInterest` — whereas `precloseDirect` on the same loan routes through `settlementInterestNet` (accrued-only for pro-rata). **Real bug candidate:** the two "early close" doors disagree; a pro-rata loan overcharges the borrower / overpays the exiting lender on refinance. Use mode-aware interest, or document that refinance always pays full-term.
+- **Spec:** §233 (pro-rata opt-in) + Phase-1-Additions step 4 (~2597) "principal + full-term interest **as per early repayment rules**." **Code:** `RefinanceFacet.sol:323` uses `fullTermInterest(...)` unconditionally, never consulting `loan.useFullTermInterest` — whereas `precloseDirect` on the same loan routes through `settlementInterestNet` (accrued-only for pro-rata). **Real bug:** the two "early close" doors disagree; a pro-rata loan overcharges the borrower / overpays the exiting lender on refinance. **Owner decision 2026-07-05: FIX CODE (mode-aware)** — full-term interest by default (a borrower-initiated refinance must not punish the lender), but when the exiting lender opted into pro-rata, settle pro-rata; route the refinance payoff through the same `settlementInterestNet` the preclose path uses. Filed as #1003.
 
 ### S8 — NFT-rental late fee computed on the daily fee, not the overdue rental
 - **Spec:** §6 (~1160) "1% of… overdue rental amount (for NFT renting)… capped at 5% of… total rental amount." **Code:** `LibVaipakam.calculateLateFee:6036` returns `loan.principal × feePercent / 10000` for all asset types, but for rentals `loan.principal` is the **per-day** fee. For a D-day rental the base is ~D× too small and the cap is 5% of one day's fee. **Real bug** (under-charges the late renter, under-compensates lender/treasury). Base the NFT-branch fee on `principal × undeducted days` with a 5%-of-total-rental cap.
@@ -155,7 +155,7 @@ sections. Grand totals: **5 High, 14 Medium, ~14 Low, ~14 Informational.**
 |---|-------|-------|----------|
 | L-a | LIF matcher kickback paid on direct accepts & signed-offer fills, not only `matchOffers` (spec: full LIF → treasury otherwise) | Ambiguous | `OfferAcceptFacet.sol:1153` |
 | L-b | Refinance-tagged offer principal is frozen; spec §3 (841) says it "can still be adjusted" | Stale spec (#595) | `OfferMutateFacet.sol:160` |
-| L-c | Day-granularity rounding lets Option-2/3 replacement terms exceed the original maturity by up to ~24h | Real (minor) | `PrecloseFacet.sol:1414` |
+| L-c | Day-granularity rounding lets Option-2/3 replacement terms exceed the original maturity by up to ~24h | Real (minor, #1032) | `PrecloseFacet.sol:1414` |
 | L-d | §8 Option 1 states unconditional full-term interest; code honors the pro-rata election (§233) | Stale spec | `LibSettlement.sol:82` |
 | L-e | Partial-withdrawal HF formula (§2578) omits the liquidation-threshold weighting the code applies | Stale spec | `PartialWithdrawalFacet.sol:323` |
 | L-f | Interest keeps accruing through grace on top of late fees; not in the spec's interest formula | Ambiguous (#408) | `LibEntitlement.sol:152` |
@@ -184,7 +184,7 @@ sections. Grand totals: **5 High, 14 Medium, ~14 Low, ~14 Informational.**
 - **§10 deployment step 6** still names "mirror-chain buy-adapter rate limits" — the buy adapter was removed (#687-A); the real surface is `VpfiPoolRateGovernor` TokenPool limits.
 - **Stale code NatSpec** referencing the removed `VPFIBuyAdapter` and retired LayerZero/OFT terminology (which §10 forbids in generated docs). — `LibVaipakam.sol:2792`, `OracleAdminFacet.sol:118`, `LibKeeperReward.sol:33`, `VPFITokenFacet.sol:22`
 - **Dead `MIN_LIQUIDITY_PAD`** + stale "$1M depth-at-tick" comment (rework landed); the slippage-at-floor gate now implements §1 correctly. — `LibVaipakam.sol:115`
-- **Stale CLAUDE.md constants**: "$1M volume" liquidity criterion and `KYC_THRESHOLD_USD = 2000e18` no longer exist (actual KYC tiers $1k/$10k).
+- **Stale CLAUDE.md constants**: "$1M volume" liquidity criterion and `KYC_THRESHOLD_USD = 2000e18` no longer exist (actual KYC tiers $1k/$10k). NOT covered by the PR #1011 spec updates — CLAUDE.md still carries both; tracked on open card #1018 (CLAUDE.md staleness).
 - **Rollout chain list** conflict: TokenomicsTechSpec §10 lists Polygon; CLAUDE.md lists BNB/Base (no Polygon). Code is chain-agnostic (config-driven).
 - **Initial-mint recipient / minter** not required to be a contract (`code.length > 0`); §11/§2 expect a Safe/timelock, not an EOA. Cheap hardening.
 - **Sale price** hard-pinned to exactly the outstanding principal; §9's "typically the outstanding principal" flexibility and the "Liam pays the remainder directly" branch are implemented as a revert (net-settlement-only).
@@ -220,9 +220,12 @@ The code faithfully implements the spec across a large surface, including:
   sale, self-trade rejection, previews.
 - **Repayment/liquidation** — late-fee schedule (1% day-1, +0.5%/day, 5% cap),
   fallback three-way split (principal+accrued+3% / 2% / remainder), dynamic
-  liquidator incentive (6%−slippage capped 3%), split-route liquidation,
-  partial-repay/partial-liquidation guards, periodic interest, yield-fee snapshot
-  at origination, NFT-gated claims.
+  liquidator incentive (6%−slippage capped 3%) on the HF-based and split-route
+  liquidation paths, split-route liquidation, partial-repay/partial-liquidation
+  guards, periodic interest, yield-fee snapshot at origination, NFT-gated
+  claims. Explicitly EXCLUDED from this bullet (it carries a finding above):
+  the time-based-default swap path, which pays NO caller incentive (L-h,
+  #1010).
 - **Preclose/early-withdrawal/refinance/consolidation — verified subpaths
   only** — Option 1 (direct) and Option 2 (obligation-transfer) settlement
   splits and continuity, §9 sale flows, refinance principal carry-over (#411
@@ -241,10 +244,13 @@ The code faithfully implements the spec across a large surface, including:
 
 ## Recommended actions (status as of 2026-07-05 — decisions recorded, cards filed)
 
-Every High/Medium finding and the adjudication-list Lows have been triaged by
-the owner (decisions recorded in `docs/FunctionalSpecs/_CodeVsDocsAudit.md`);
-the code-fix cards are filed under umbrella **#998** and the spec updates have
-merged. Remaining state:
+Every High/Medium finding has an owner decision recorded in
+`docs/FunctionalSpecs/_CodeVsDocsAudit.md`: the code-fix items sit under its
+**Open findings** table with their card refs (the fixes have NOT landed),
+while the spec-update items (S6, S14, S16, S17, S18, S19, L-f, L-l, L-m)
+have moved to its **Resolved findings** table, closed by the PR #1011 spec
+update (merged 2026-07-05). The code-fix cards are filed under umbrella
+**#998**. Remaining state:
 
 1. **Code-fix cards filed (umbrella #998) — fix before origination volume /
    mainnet:** S1 → #999 (tier gradient inversion — live on every loan),
@@ -257,6 +263,7 @@ merged. Remaining state:
    S11 → #1007 (decided: gate Tier 1 on the $50k probe), S12 → tracked on
    existing #915 (forced-close `interestSettled`), S13 → #1008 (decided:
    per-day cap), S15 → with existing #900 (range-mutate checks),
+   L-c → #1032 (day-granularity rounding on Option-2/3 replacement terms),
    L-g → #1009 (decided: subordinate the 2% treasury handling fee to full
    lender recovery; keep the liquidator bonus), L-h → #1010 (dynamic
    incentive on the time-based-default swap path).
@@ -266,13 +273,17 @@ merged. Remaining state:
    fixed), S18 (tier-LTV fallback), S19 (insurance surplus stays
    dormant/operational on retail), L-f (grace-period interest accrual
    documented — owner decision KEEP CODE), L-l, L-m, plus the Informational
-   stale-doc cluster and the stale CLAUDE.md constants. The whitepaper v4
-   rewrite merged separately as PR #1015.
-3. **Still needs owner adjudication:** L-i (zero-registered-adapters
+   stale-doc cluster. The whitepaper v4 rewrite merged separately as
+   PR #1015.
+3. **CLAUDE.md constants — NOT resolved:** the stale "$1M volume" liquidity
+   criterion and `KYC_THRESHOLD_USD = 2000e18` are still present in
+   CLAUDE.md (PR #1011 did not touch it); tracked on open card **#1018**
+   (CLAUDE.md staleness — its scope now includes these constants).
+4. **Still needs owner adjudication:** L-i (zero-registered-adapters
    deployment reverts liquidation outright vs the spec's "reaches the
    fallback" — the spec is self-contradictory here), plus any remaining
    Low/Informational "Ambiguous" items without a recorded decision
-   (L-a, L-c, L-j, L-o).
+   (L-a, L-j, L-o).
 
 This spec-conformance pass complements the 2026-07-02/03 security audit and the
 economic model; together they cover the code's *exploitability*, its *economics*,
