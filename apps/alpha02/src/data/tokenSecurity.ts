@@ -79,6 +79,7 @@ interface GoPlusTokenRow {
   selfdestruct?: GoPlusField;
   slippage_modifiable?: GoPlusField;
   personal_slippage_modifiable?: GoPlusField;
+  external_call?: GoPlusField;
   is_open_source?: GoPlusField;
   /** Scam-only flags — per the GoPlus docs, "no return" on these
    *  means the behaviour is absent, so like fake_token they block on
@@ -157,6 +158,7 @@ export function classifyTokenSecurity(row: GoPlusTokenRow): TokenSecurityVerdict
     [row.personal_slippage_modifiable, 'per-address-tax'],
     [row.is_mintable, 'minting'],
     [row.owner_change_balance, 'balance-rewrite'],
+    [row.external_call, 'external-call'],
   ];
   const unevaluated = unevaluatedChecks
     .filter(([v]) => !flagKnown(v))
@@ -255,6 +257,12 @@ export function classifyTokenSecurity(row: GoPlusTokenRow): TokenSecurityVerdict
   }
   if (flag(row.trading_cooldown)) {
     warn.push('enforces a cooldown between trades');
+  }
+  // Warn tier by live evidence: USDT itself carries external_call
+  // '1' — common on legitimate tokens, but the behaviour genuinely
+  // depends on code outside this contract, so it is disclosed.
+  if (flag(row.external_call)) {
+    warn.push('it calls other contracts while transferring — behaviour depends on external code');
   }
   if (flag(row.is_mintable) && flag(row.owner_change_balance)) {
     warn.push('the owner can mint AND rewrite holder balances');

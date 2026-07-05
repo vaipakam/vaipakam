@@ -993,6 +993,14 @@ export function OfferFlow({ side }: { side: Side }) {
         `${l.leg}:${l.errored ? 'errored' : verdictFingerprint(l.verdict)}`,
     )
     .join('|');
+  // The fingerprint that was current when the user LAST ticked the
+  // consent box (stamped in the checkbox handler). canSign requires
+  // it to match the live fingerprint whenever a warning is on screen:
+  // the consent-clear effect below runs only AFTER a commit, leaving
+  // one render where a freshly-arrived warn and stale consent coexist
+  // — this derived gate closes that window without waiting for the
+  // effect.
+  const securityConsentFpRef = useRef<string | null>(null);
   useEffect(() => {
     if (securityBlocked.length > 0 || securityWarned.length > 0) {
       setForm((f) =>
@@ -1020,6 +1028,11 @@ export function OfferFlow({ side }: { side: Side }) {
     linkedLoanKnown &&
     (!acceptIsLoanSale || saleReviewReady) &&
     securityGateOk &&
+    // A disclosed security warning requires consent granted AGAINST
+    // the current fingerprint — not merely consent that is still true
+    // from before the warning appeared.
+    (securityWarned.length === 0 ||
+      securityConsentFpRef.current === securityFingerprint) &&
     (mode === 'accept'
       ? selected !== null
       : formError === null && durationValid && !selfCollateral) &&
@@ -1206,11 +1219,13 @@ export function OfferFlow({ side }: { side: Side }) {
         throw new Error(copy.tokenSecurity.gateBlock(leg, v.reasons));
       }
       if (v.kind === 'unknown') {
-        // Invalidate the cached pass so the review re-fetches: if the
-        // outage persists the hook lands in error state — blocked
-        // banner + "Check again" — instead of a stale enabled button
-        // that re-enters this same abort forever.
-        void queryClient.invalidateQueries({ queryKey: cacheKey });
+        // RESET (not invalidate) the cached pass: reset drops `data`
+        // to undefined immediately, so the gate is closed the moment
+        // the submit lock clears — invalidate would keep the stale
+        // verdict readable (and the button enabled) while the forced
+        // refetch is still in flight. If the outage persists the
+        // refetch errors into the blocked banner + "Check again".
+        void queryClient.resetQueries({ queryKey: cacheKey });
         throw new Error(copy.tokenSecurity.gateUnknown(leg));
       }
       if (v.kind === 'warn') {
@@ -1367,11 +1382,13 @@ export function OfferFlow({ side }: { side: Side }) {
           throw new Error(copy.tokenSecurity.gateBlock(leg, v.reasons));
         }
         if (v.kind === 'unknown') {
-          // Invalidate the cached pass so the review re-fetches: if
-          // the outage persists the hook lands in error state —
-          // blocked banner + "Check again" — instead of a stale
-          // enabled button re-entering this abort forever.
-          void queryClient.invalidateQueries({ queryKey: cacheKey });
+          // RESET (not invalidate): reset drops `data` to undefined
+          // immediately, closing the gate the moment the submit lock
+          // clears — invalidate keeps the stale verdict readable
+          // while the forced refetch is in flight. A persistent
+          // outage then errors into the blocked banner + "Check
+          // again".
+          void queryClient.resetQueries({ queryKey: cacheKey });
           throw new Error(copy.tokenSecurity.gateUnknown(leg));
         }
         // A live 'warn' may pass ONLY if the reviewed screen already
@@ -2009,7 +2026,15 @@ export function OfferFlow({ side }: { side: Side }) {
               <input
                 type="checkbox"
                 checked={form.riskAndTermsConsent}
-                onChange={(e) => set({ riskAndTermsConsent: e.target.checked })}
+                onChange={(e) => {
+                  // Stamp WHAT was on screen when consent was given —
+                  // canSign requires this to match the live security
+                  // fingerprint while a warning is disclosed.
+                  if (e.target.checked) {
+                    securityConsentFpRef.current = securityFingerprint;
+                  }
+                  set({ riskAndTermsConsent: e.target.checked });
+                }}
                 style={{ marginTop: 3 }}
               />
               <span style={{ flex: 1 }}>{copy.consentLabel}</span>

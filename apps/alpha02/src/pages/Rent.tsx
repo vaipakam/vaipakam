@@ -812,6 +812,11 @@ function RentNftFlow() {
   const prepaySecFingerprint = prepaySec.isError
     ? 'errored'
     : verdictFingerprint(prepaySec.data);
+  // Fingerprint current when consent was LAST ticked (stamped in the
+  // checkbox handler). canSign requires a match while a warning is
+  // disclosed — the clear-effect below only runs after a commit,
+  // leaving one render where a fresh warn and stale consent coexist.
+  const prepayConsentFpRef = useRef<string | null>(null);
   useEffect(() => {
     if (prepaySecBlocked || prepaySecWarned) setConsent(false);
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -866,6 +871,10 @@ function RentNftFlow() {
     Boolean(walletClient) &&
     Boolean(publicClient) &&
     !prepaySecBlocked &&
+    // A disclosed warning requires consent granted AGAINST the
+    // current fingerprint, not consent left over from before it
+    // appeared.
+    (!prepaySecWarned || prepayConsentFpRef.current === prepaySecFingerprint) &&
     !busy;
 
   async function submit() {
@@ -945,10 +954,13 @@ function RentNftFlow() {
           throw new Error(copy.tokenSecurity.gateBlock('prepayment token', v.reasons));
         }
         if (v.kind === 'unknown') {
-          // Invalidate the cached pass so the review re-fetches: a
-          // persistent outage lands the hook in error state (blocked
-          // banner + "Check again") instead of a stale enabled button.
-          void queryClient.invalidateQueries({ queryKey: cacheKey });
+          // RESET (not invalidate): reset drops `data` to undefined
+          // immediately, closing the gate the moment the submit lock
+          // clears — invalidate keeps the stale verdict readable
+          // while the forced refetch is in flight. A persistent
+          // outage then errors into the blocked banner + "Check
+          // again".
+          void queryClient.resetQueries({ queryKey: cacheKey });
           throw new Error(copy.tokenSecurity.gateUnknown('prepayment token'));
         }
         // A live 'warn' passes ONLY when the review already disclosed
@@ -1211,7 +1223,15 @@ function RentNftFlow() {
               <input
                 type="checkbox"
                 checked={consent}
-                onChange={(e) => setConsent(e.target.checked)}
+                onChange={(e) => {
+                  // Stamp what was on screen when consent was given —
+                  // canSign requires this to match the live security
+                  // fingerprint while a warning is disclosed.
+                  if (e.target.checked) {
+                    prepayConsentFpRef.current = prepaySecFingerprint;
+                  }
+                  setConsent(e.target.checked);
+                }}
                 style={{ marginTop: 3 }}
               />
               <span style={{ flex: 1 }}>{copy.consentLabel}</span>
