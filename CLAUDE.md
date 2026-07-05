@@ -843,16 +843,34 @@ comment (e.g. an `@codex review` comment). Apply this loop on every PR:
 
 - **Docs-only PRs**: up to 2 Codex review rounds is sufficient (or
   skip entirely for trivial mechanical edits — say so in the thread).
-- **Coding PRs**: keep triggering rounds until findings **converge** —
-  no major findings churned — allowing up to 10 rounds after the last
-  SURFACE CHANGE in the code. Only a substantive code change resets
-  the count; replies, thread resolutions, and comment-only / docs-only
+- **Coding PRs**: keep triggering rounds until findings **converge**,
+  allowing up to 10 rounds after the last SURFACE CHANGE in the code
+  as a hard backstop. Only a substantive code change resets the
+  count; replies, thread resolutions, and comment-only / docs-only
   tweaks do NOT (amended 2026-07-05, superseding the earlier
   "after the last diff push" wording). Re-trigger after every fix
   push.
-- Merge only after the final round is clean / minor-only AND CI is
-  green. All review conversations must be resolved before merge (repo
-  rule).
+- **Converged, operationally** (amendment 2026-07-05b): a round with
+  ZERO P1/P2 findings (Codex's own severity badges). A P3-only round
+  counts as clean — fix or defer P3s at the agent's judgment without
+  restarting the loop.
+- **Triage gate — every finding gets exactly one of** (2026-07-05b):
+  1. *Accept + fix* in the PR (mechanical, minimal — no opportunistic
+     refactors mid-loop; a real refactor legitimately resets the
+     surface-change window).
+  2. *Refute with evidence* in the thread (quote the code/behaviour
+     that disproves it), then resolve.
+  3. *Defer to a follow-up issue* — reply "Deferred to #NNN", open the
+     issue (it lands on the @vaipakam-labs board via the auto-add
+     workflow), resolve the thread. Only accepted fixes may grow the
+     PR diff; deferral exists precisely so the diff stops feeding the
+     next round.
+- **High-risk PRs** (contracts, fund-moving paths): run an
+  independent adversarial self-review BEFORE Codex round 1 so the
+  loop starts from a cleaner base. Not required for app/test-infra
+  PRs.
+- Merge only after a converged round AND green CI. All review
+  conversations must be resolved before merge (repo rule).
 
 ## Release notes — per-PR fragments
 
