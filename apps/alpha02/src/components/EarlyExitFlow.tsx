@@ -22,6 +22,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import { usePublicClient, useWalletClient } from 'wagmi';
+import { encodeFunctionData } from 'viem';
 import { copy } from '../content/copy';
 import { submitErrorText } from '../lib/errors';
 import { useActiveChain } from '../chain/useActiveChain';
@@ -49,6 +50,8 @@ import {
   formatTokenAmount,
 } from '../lib/format';
 import { ConfirmReceipt } from './ConfirmReceipt';
+import { SimulationPreview } from './SimulationPreview';
+import type { TxSimInput } from '../contracts/useTxSimulation';
 import type { TokenMeta } from '../contracts/erc20';
 
 
@@ -163,6 +166,23 @@ export function EarlyExitFlow({
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [toSellerStr]);
+
+  // #1028 item 2 (round 1) — the instant-exit sale is exactly the
+  // preview's best case: both args exist pre-sign, no artefacts, and
+  // a stale or consumed buy offer shows up as a would-fail heads-up
+  // before the wallet prompt.
+  const simTx = useMemo((): TxSimInput | null => {
+    if (!walletChain || !selected) return null;
+    return {
+      to: walletChain.diamondAddress,
+      data: encodeFunctionData({
+        abi: DIAMOND_ABI_VIEM,
+        functionName: 'sellLoanViaBuyOffer',
+        args: [BigInt(row.loanId), BigInt(selected.offerId)],
+      }),
+      value: 0n,
+    };
+  }, [walletChain, selected, row.loanId]);
 
   function choose(offerId: number) {
     setSelectedId(offerId);
@@ -414,7 +434,9 @@ export function EarlyExitFlow({
                     whenThisEnds:
                       'Immediately — your position transfers to the buyer and you’re done with this loan. The borrower’s rate and due date don’t change.',
                   }}
-                />
+                >
+                  <SimulationPreview tx={simTx} />
+                </ConfirmReceipt>
               )}
             </div>
           ) : null}

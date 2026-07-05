@@ -112,8 +112,12 @@ export function LoanSaleFlow({
   // #1028 item 2 — advisory pre-sign dry run of the exact listing
   // calldata. All three args exist pre-sign; built only once consent
   // is ticked (the contract checks it, and previewing consent=false
-  // would just show that revert). The submit approves the settlement
-  // allowance first — the benign approval-needed case.
+  // would just show that revert). NO allowance downgrade here (round
+  // 1): the listing tx itself neither reads nor spends the standing
+  // settlement allowance — that approval serves a LATER buyer
+  // acceptance, is granted alongside the listing, and is disclosed
+  // by the receipt's approvalNote — so a "passed" verdict is
+  // accurate for what this signature actually sends.
   const simTx = useMemo((): TxSimInput | null => {
     if (!walletChain || rateBps === null || !rateValid || !consent) return null;
     return {
@@ -124,7 +128,6 @@ export function LoanSaleFlow({
         args: [BigInt(row.loanId), rateBps, consent],
       }),
       value: 0n,
-      allowAllowanceRevert: true,
     };
   }, [walletChain, rateBps, rateValid, consent, row.loanId]);
 

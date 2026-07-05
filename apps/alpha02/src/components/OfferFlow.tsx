@@ -770,7 +770,10 @@ export function OfferFlow({ side }: { side: Side }) {
   // submit-time builder just to preview a signature-artefact revert.
   // Never feeds canSign — advisory by design.
   const simTx = useMemo((): TxSimInput | null => {
-    if (mode !== 'post' || !walletChain) return null;
+    // Consent gate (round 1): createOffer reverts
+    // RiskAndTermsConsentRequired while the checkbox is unticked —
+    // previewing that would cry wolf on every valid offer.
+    if (mode !== 'post' || !walletChain || !form.riskAndTermsConsent) return null;
     try {
       const payload = toCreateOfferPayload(form, {
         lending: lendingMeta.data?.decimals,

@@ -103,11 +103,17 @@ export function useTxSimulation(input: TxSimInput | null, debounceMs = 400) {
   }, [address, onSupportedChain, publicClient, input]);
 
   useEffect(() => {
+    // Drop the previous verdict SYNCHRONOUSLY on any input change —
+    // a stale "passed" must not sit under a changed receipt during
+    // the debounce window (round 1). The bump also invalidates any
+    // eth_call still in flight for the old input.
+    reqIdRef.current++;
+    setResult(input ? { status: 'loading' } : { status: 'idle' });
     const t = setTimeout(() => {
       void simulate();
     }, debounceMs);
     return () => clearTimeout(t);
-  }, [simulate, debounceMs]);
+  }, [input, simulate, debounceMs]);
 
   return { result, refresh: simulate };
 }

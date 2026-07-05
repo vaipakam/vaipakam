@@ -244,7 +244,9 @@ function ListNftFlow() {
   // calldata. The submit approves the NFT operator first, so the
   // missing-approval revert at preview time is the benign case.
   const simTx = useMemo((): TxSimInput | null => {
-    if (!form || !walletChain) return null;
+    // Consent gate (round 1): same RiskAndTermsConsentRequired
+    // cry-wolf guard as the other createOffer previews.
+    if (!form || !walletChain || !form.riskAndTermsConsent) return null;
     try {
       return {
         to: walletChain.diamondAddress,
