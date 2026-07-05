@@ -72,6 +72,14 @@ import {
 } from '../lib/format';
 import { isPlainDecimal, isPositiveDecimal, submitErrorText } from '../lib/errors';
 import { copy } from '../content/copy';
+import {
+  makeStepper,
+  plannedApprovePrompts,
+  readAllowance,
+  useAllowanceForPlan,
+  type Stepper,
+  type SubmitProgress,
+} from '../lib/submitProgress';
 import { AssetPicker } from './AssetPicker';
 import { MarketFreshnessNote } from './MarketFreshnessNote';
 import { Checklist, allChecksPass, type CheckItem } from './Checklist';
@@ -230,7 +238,13 @@ export function OfferFlow({ side }: { side: Side }) {
     ...initialOfferForm,
     offerType: side,
   });
-  const [submitting, setSubmitting] = useState(false);
+  // #1037 — null while idle; {kind, current, total} during the
+  // multi-prompt submission so the button can say WHERE the user is
+  // ("Approving… (2 of 3)") instead of one flat waiting state.
+  const [progress, setProgress] = useState<SubmitProgress | null>(null);
+  const submitting = progress !== null;
+  // Synchronous re-entrancy lock for submit() — see the comment there.
+  const submitLockRef = useRef(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
   const [deepLinkNotice, setDeepLinkNotice] = useState<string | null>(null);
   const [txHash, setTxHash] = useState<string | null>(null);
@@ -913,11 +927,78 @@ export function OfferFlow({ side }: { side: Side }) {
     Boolean(publicClient) &&
     !submitting;
 
+  // ---- Prompt-count pre-disclosure (#1037) --------------------------
+  // The review screen states how many wallet prompts this submission
+  // takes BEFORE the first one fires. The count needs the live
+  // allowance of the leg this wallet pays: covered → the approve
+  // prompt drops out; non-zero-but-short → the zero-first reset makes
+  // it two. The same numbers drive the runtime plan in submit().
+  const planLeg = useMemo(() => {
+    if (mode === 'accept') {
+      if (!selected) return null;
+      const paysCollateral = side === 'borrower';
+      const erc20Leg = paysCollateral
+        ? selected.collateralAssetType === AssetType.ERC20
+        : selected.assetType === AssetType.ERC20;
+      if (!erc20Leg) return { token: undefined, amount: 0n, needsSign: true };
+      return {
+        token: (paysCollateral
+          ? selected.collateralAsset
+          : selected.lendingAsset) as `0x${string}`,
+        amount: paysCollateral
+          ? BigInt(selected.collateralAmount)
+          : acceptIsLoanSale && saleData?.kind === 'sale'
+            ? saleData.live.principal
+            : offerPrincipal(selected),
+        needsSign: true,
+      };
+    }
+    try {
+      const payload = toCreateOfferPayload(form, {
+        lending: lendingMeta.data?.decimals,
+        collateral: collateralMeta.data?.decimals,
+      });
+      return {
+        token: (side === 'lender'
+          ? payload.lendingAsset
+          : payload.collateralAsset) as `0x${string}`,
+        amount: side === 'lender' ? payload.amountMax : payload.collateralAmount,
+        needsSign: false,
+      };
+    } catch {
+      return null; // form not yet convertible — no roadmap to show
+    }
+  }, [
+    mode,
+    selected,
+    side,
+    form,
+    lendingMeta.data?.decimals,
+    collateralMeta.data?.decimals,
+    acceptIsLoanSale,
+    saleData,
+  ]);
+  const planAllowance = useAllowanceForPlan({
+    chainId: walletChain?.chainId,
+    token: step === 'review' ? planLeg?.token : undefined,
+    owner: address as `0x${string}` | undefined,
+    spender: walletChain?.diamondAddress,
+  });
+  const planApprove = planLeg?.token
+    ? plannedApprovePrompts(planAllowance.data, planLeg.amount)
+    : 0;
+  // Allowance still loading / failed → the count is a CEILING (the
+  // approve leg planned at 2) and the roadmap must say "up to", not
+  // state a number that a zero-first reset would exceed.
+  const planKnown = !planLeg?.token || planAllowance.data !== undefined;
+  const planTotal =
+    planLeg === null ? null : (planLeg.needsSign ? 1 : 0) + planApprove + 1;
+
   // ---- Submission ----------------------------------------------------
   // Inner helpers THROW on missing prerequisites and return the tx
   // hash — the success screen only ever renders behind a real
   // transaction.
-  async function submitPost(): Promise<`0x${string}`> {
+  async function submitPost(stepper: Stepper): Promise<`0x${string}`> {
     if (!receipt || !address || !walletChain || !walletClient || !publicClient) {
       throw new Error(copy.wallet.connectFirst);
     }
@@ -1006,12 +1087,14 @@ export function OfferFlow({ side }: { side: Side }) {
       owner: address,
       spender: walletChain.diamondAddress,
       amount,
+      onPrompt: () => stepper.next('approve'),
     });
+    stepper.next('send');
     const { hash } = await write('createOffer', [payload]);
     return hash;
   }
 
-  async function submitAccept(): Promise<`0x${string}`> {
+  async function submitAccept(stepper: Stepper): Promise<`0x${string}`> {
     if (!selected || !address || !walletChain || !walletClient || !publicClient) {
       throw new Error(copy.wallet.connectFirst);
     }
@@ -1107,6 +1190,7 @@ export function OfferFlow({ side }: { side: Side }) {
           throw new Error(copy.match.saleSellerNotCovered);
         }
       }
+      stepper.next('sign');
       signed = await signAcceptTerms({
         offerId: BigInt(selected.offerId),
         consent: form.riskAndTermsConsent,
@@ -1189,8 +1273,10 @@ export function OfferFlow({ side }: { side: Side }) {
         owner: address,
         spender: walletChain.diamondAddress,
         amount: payAmount,
+        onPrompt: () => stepper.next('approve'),
       });
     }
+    stepper.next('send');
     const { hash } = await write('acceptOffer', [
       BigInt(selected.offerId),
       terms,
@@ -1200,14 +1286,47 @@ export function OfferFlow({ side }: { side: Side }) {
   }
 
   async function submit() {
-    setSubmitting(true);
+    // Re-entrancy lock BEFORE any await: `submitting` derives from
+    // state, and state set inside this call isn't visible to a second
+    // click landing in the same tick — while the ref is. Without it, a
+    // slow allowance read leaves a window where a double-click starts
+    // two concurrent submissions (two create-offer transactions with a
+    // pre-existing allowance).
+    if (submitLockRef.current) return;
+    submitLockRef.current = true;
+    // Busy immediately (total not yet known — current 0 renders the
+    // plain waiting label); the real plan replaces this below.
+    setProgress({
+      kind: mode === 'accept' ? 'sign' : 'approve',
+      current: 0,
+      total: 0,
+    });
     setSubmitError(null);
+    // Runtime plan mirrors the review roadmap: read the allowance NOW
+    // (it may have changed since the roadmap rendered) so the step
+    // numbers the user watches match the prompts that actually fire.
+    let total = 1; // the final transaction
+    if (mode === 'accept') total += 1; // the terms signature
+    if (planLeg?.token && publicClient && address && walletChain) {
+      const cur = await readAllowance({
+        publicClient,
+        token: planLeg.token,
+        owner: address,
+        spender: walletChain.diamondAddress,
+      });
+      total += plannedApprovePrompts(cur, planLeg.amount);
+    }
+    const stepper = makeStepper(total, setProgress);
+    setProgress({ kind: mode === 'accept' ? 'sign' : 'approve', current: 0, total });
+    // (progress already non-null from the immediate set above — this
+    // just fills in the now-known total for the phase labels.)
     try {
       const wasSale =
         mode === 'accept' && acceptIsLoanSale && saleData?.kind === 'sale'
           ? saleData.loanId
           : null;
-      const hash = mode === 'accept' ? await submitAccept() : await submitPost();
+      const hash =
+        mode === 'accept' ? await submitAccept(stepper) : await submitPost(stepper);
       setTxHash(hash);
       setDoneWasSaleBuy(wasSale);
       setStep('done');
@@ -1216,8 +1335,14 @@ export function OfferFlow({ side }: { side: Side }) {
       void queryClient.invalidateQueries({ queryKey: ['myLoans'] });
     } catch (err) {
       setSubmitError(submitErrorText(err));
+      // The approval may have MINED before the final prompt was
+      // rejected — the review re-renders with the allowance changed,
+      // so the roadmap must re-read it or it keeps promising an
+      // approve step the runtime plan will skip.
+      void planAllowance.refetch();
     } finally {
-      setSubmitting(false);
+      submitLockRef.current = false;
+      setProgress(null);
     }
   }
 
@@ -1597,6 +1722,29 @@ export function OfferFlow({ side }: { side: Side }) {
           </div>
           <div className="card">
             {receipt ? <ReviewReceipt data={receipt} /> : <p className="muted">Preparing your review…</p>}
+            {planTotal !== null ? (
+              // #1037 — the roadmap: every wallet prompt named before
+              // the first one fires, so a second or third prompt never
+              // reads as something going wrong.
+              <div className="banner banner-info" role="note" style={{ marginTop: 16 }}>
+                <span className="banner-body">
+                  {planKnown
+                    ? copy.signing.intro(planTotal)
+                    : copy.signing.introUpTo(planTotal)}
+                  <ol style={{ margin: '6px 0 0 18px', padding: 0 }}>
+                    {planLeg?.needsSign ? <li>{copy.signing.sign}</li> : null}
+                    {!planKnown ? (
+                      <li>{copy.signing.approveUnknown}</li>
+                    ) : planApprove === 2 ? (
+                      <li>{copy.signing.approveReset}</li>
+                    ) : planApprove === 1 ? (
+                      <li>{copy.signing.approve}</li>
+                    ) : null}
+                    <li>{mode === 'accept' ? copy.signing.accept : copy.signing.post}</li>
+                  </ol>
+                </span>
+              </div>
+            ) : null}
             <label
               className="cluster"
               style={{ marginTop: 16, fontSize: '0.9rem', alignItems: 'flex-start' }}
@@ -1633,8 +1781,14 @@ export function OfferFlow({ side }: { side: Side }) {
                 {submitting ? (
                   <LoaderCircle className="spin" aria-hidden size={18} />
                 ) : null}
-                {submitting
-                  ? 'Waiting for wallet…'
+                {progress !== null
+                  ? progress.current === 0
+                    ? 'Waiting for wallet…'
+                    : progress.kind === 'sign'
+                      ? copy.signing.phaseSign(progress.current, progress.total)
+                      : progress.kind === 'approve'
+                        ? copy.signing.phaseApprove(progress.current, progress.total)
+                        : copy.signing.phaseSend(progress.current, progress.total)
                   : mode === 'accept'
                     ? text.acceptSubmitLabel
                     : text.submitLabel}
