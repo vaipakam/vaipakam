@@ -573,26 +573,6 @@ export function OfferFlow({ side }: { side: Side }) {
   // is known (in accept mode the indexer flags alone don't count:
   // they can lag the chain in BOTH directions).
   const liquidityKnown = legLiquidity.data !== undefined;
-  // Receipts must show the grace window repayment is actually judged
-  // against — governance buckets can override the default schedule.
-  // While the LIVE bucket read is in flight the label is the default
-  // schedule's wording, which is wrong on a retuned chain — display
-  // may proceed, signing gates on `ready` (like the liquidity check).
-  const activeDurationDays =
-    mode === 'accept' ? (selected?.durationDays ?? 0) : Number(form.durationDays) || 0;
-  const grace = useGraceLabel(activeDurationDays);
-  // If the label MOVES after the user already ticked consent (the
-  // live bucket read resolving to a non-default window), that consent
-  // predates the corrected term — same re-consent rule as the late
-  // illiquid/linked-loan disclosures.
-  const prevGraceLabel = useRef(grace.label);
-  useEffect(() => {
-    if (prevGraceLabel.current === grace.label) return;
-    prevGraceLabel.current = grace.label;
-    setForm((f) =>
-      f.riskAndTermsConsent ? { ...f, riskAndTermsConsent: false } : f,
-    );
-  }, [grace.label]);
   const reviewIsIlliquid = indexerSaysIlliquid || legLiquidity.data === true;
 
   // The liquidity query resolves asynchronously — if the illiquid
@@ -662,66 +642,13 @@ export function OfferFlow({ side }: { side: Side }) {
       acceptIsLoanSale && Boolean(readClient) && Boolean(selected),
     staleTime: 30_000,
     refetchInterval: 60_000,
-    queryFn: async () => {
-      const loanId = linkedLoan.data!;
-      const [live, block] = await Promise.all([
-        readLoanLive(readClient!, readChain.diamondAddress, BigInt(loanId)),
-        readClient!.getBlock({ blockTag: 'latest' }),
-      ]);
-      const isSale =
-        live.lender.toLowerCase() === selected!.creator.toLowerCase();
-      if (!isSale) return { kind: 'other' as const };
-      const saleRateBps = BigInt(offerRateBps(selected!));
-      const dueAtSec = Number(live.startTime + live.durationDays * 86_400n);
-      const matured = block.timestamp >= BigInt(dueAtSec);
-      // Seller-funding preflight — same definition the listing flow
-      // approved against (`saleSettlementNow`), read from the wallet
-      // the pull binds to (the stored lender; consolidated at listing).
-      const requiredNow = saleSettlementNow(live, saleRateBps, block.timestamp);
-      const [allowance, balance] = await Promise.all([
-        readClient!.readContract({
-          address: live.principalAsset,
-          abi: [
-            {
-              name: 'allowance',
-              type: 'function',
-              stateMutability: 'view',
-              inputs: [{ type: 'address' }, { type: 'address' }],
-              outputs: [{ type: 'uint256' }],
-            },
-          ] as const,
-          functionName: 'allowance',
-          args: [live.lender, readChain.diamondAddress],
-        }) as Promise<bigint>,
-        readClient!.readContract({
-          address: live.principalAsset,
-          abi: [
-            {
-              name: 'balanceOf',
-              type: 'function',
-              stateMutability: 'view',
-              inputs: [{ type: 'address' }],
-              outputs: [{ type: 'uint256' }],
-            },
-          ] as const,
-          functionName: 'balanceOf',
-          args: [live.lender],
-        }) as Promise<bigint>,
-      ]);
-      return {
-        kind: 'sale' as const,
-        loanId,
-        live,
-        dueAtSec,
-        matured,
-        sellerCovered: allowance >= requiredNow && balance >= requiredNow,
-        buyerInterest: saleBuyerRemainingInterest(
-          live,
-          saleRateBps,
-          block.timestamp,
-        ),
-      };
-    },
+    queryFn: () =>
+      readSaleReviewLive(
+        readClient!,
+        readChain.diamondAddress,
+        selected!,
+        linkedLoan.data!,
+      ),
   });
   const saleData = saleReview.data;
   const saleLoanLive: LoanLive | null =
@@ -735,15 +662,63 @@ export function OfferFlow({ side }: { side: Side }) {
     saleLoanLive.status === 0 &&
     !saleData.matured &&
     saleData.sellerCovered;
-  // Late-arriving sale numbers change the reviewed terms — re-consent,
-  // same rule as the other late disclosures.
+  // Re-consent when the review-material sale numbers MOVE (first
+  // arrival included): a borrower partial-repay or collateral change
+  // between refetches rewrites what the receipt shows, and a tick
+  // given against the old numbers must not carry over. The decaying
+  // remaining-interest estimate is deliberately NOT in the
+  // fingerprint — it shrinks every refetch by time passing alone
+  // (the receipt says "up to ~"), and resetting consent each minute
+  // would make the checkbox effectively untickable.
+  const saleFingerprint =
+    saleData?.kind === 'sale'
+      ? [
+          saleData.live.principal,
+          saleData.live.collateralAmount,
+          saleData.dueAtSec,
+          saleData.live.status,
+          saleData.matured,
+          saleData.sellerCovered,
+        ].join(':')
+      : null;
+  const prevSaleFingerprint = useRef(saleFingerprint);
   useEffect(() => {
-    if (saleReviewReady) {
+    if (prevSaleFingerprint.current === saleFingerprint) return;
+    prevSaleFingerprint.current = saleFingerprint;
+    if (saleFingerprint !== null) {
       setForm((f) =>
         f.riskAndTermsConsent ? { ...f, riskAndTermsConsent: false } : f,
       );
     }
-  }, [saleReviewReady]);
+  }, [saleFingerprint]);
+
+  // Receipts must show the grace window repayment is actually judged
+  // against — governance buckets can override the default schedule.
+  // While the LIVE bucket read is in flight the label is the default
+  // schedule's wording, which is wrong on a retuned chain — display
+  // may proceed, signing gates on `ready` (like the liquidity check).
+  // For a SALE review the bucket keys off the LINKED LOAN's original
+  // term (LibVaipakam.gracePeriod(loan.durationDays)) — the offer row
+  // may carry a shorter remaining-term duration in a different bucket.
+  const activeDurationDays =
+    mode === 'accept'
+      ? saleData?.kind === 'sale'
+        ? Number(saleData.live.durationDays)
+        : (selected?.durationDays ?? 0)
+      : Number(form.durationDays) || 0;
+  const grace = useGraceLabel(activeDurationDays);
+  // If the label MOVES after the user already ticked consent (the
+  // live bucket read resolving to a non-default window), that consent
+  // predates the corrected term — same re-consent rule as the late
+  // illiquid/linked-loan disclosures.
+  const prevGraceLabel = useRef(grace.label);
+  useEffect(() => {
+    if (prevGraceLabel.current === grace.label) return;
+    prevGraceLabel.current = grace.label;
+    setForm((f) =>
+      f.riskAndTermsConsent ? { ...f, riskAndTermsConsent: false } : f,
+    );
+  }, [grace.label]);
 
   const lifPct = bpsToPercentText(fees.loanInitiationFeeBps);
   const yieldPct = bpsToPercentText(fees.treasuryFeeBps);
@@ -1088,6 +1063,29 @@ export function OfferFlow({ side }: { side: Side }) {
           : null;
       if (acceptIsLoanSale && !saleReviewed) {
         throw new Error(copy.match.termsChanged);
+      }
+      if (saleReviewed) {
+        // The review's seller-funding/maturity/status gates ran on a
+        // CACHED read — the seller can revoke or spend their standing
+        // approval (or the loan can move) inside the refetch window,
+        // and `completeLoanSale` pulls from the seller's wallet DURING
+        // this accept. Re-run the same reader fresh so a doomed buy
+        // fails here, before any signature or buyer approval can mine.
+        const fresh = await readSaleReviewLive(
+          publicClient,
+          walletChain.diamondAddress,
+          selected,
+          linkedLoan.data!,
+        );
+        if (fresh.kind !== 'sale' || fresh.live.status !== 0) {
+          throw new Error(copy.match.saleLoanNotActive);
+        }
+        if (fresh.matured) {
+          throw new Error(copy.match.saleMaturityPassed);
+        }
+        if (!fresh.sellerCovered) {
+          throw new Error(copy.match.saleSellerNotCovered);
+        }
       }
       signed = await signAcceptTerms({
         offerId: BigInt(selected.offerId),
@@ -1625,4 +1623,88 @@ export function OfferFlow({ side }: { side: Side }) {
       ) : null}
     </div>
   );
+}
+
+// ---- #986 P3: sale-review reader --------------------------------------
+// ONE definition for everything the buy-a-running-loan review depends
+// on — the review query AND the submit-time recheck call this, so the
+// blocked-state reasons and the pre-signature guard can never drift.
+// Reads the linked loan live, discriminates sale-vs-offset by creator
+// (sale vehicles are created by the loan's lender), and preflights the
+// SELLER's settlement funding: `completeLoanSale` pulls the seller's
+// accrued-interest forfeit from the seller's WALLET during the buyer's
+// transaction, and a revoked/spent standing approval fails on-chain as
+// an opaque `OfferAcceptFailed`.
+type SaleReview =
+  | { kind: 'other' }
+  | {
+      kind: 'sale';
+      loanId: string;
+      live: LoanLive;
+      dueAtSec: number;
+      matured: boolean;
+      sellerCovered: boolean;
+      buyerInterest: bigint;
+    };
+
+const ERC20_ALLOWANCE_ABI = [
+  {
+    name: 'allowance',
+    type: 'function',
+    stateMutability: 'view',
+    inputs: [{ type: 'address' }, { type: 'address' }],
+    outputs: [{ type: 'uint256' }],
+  },
+  {
+    name: 'balanceOf',
+    type: 'function',
+    stateMutability: 'view',
+    inputs: [{ type: 'address' }],
+    outputs: [{ type: 'uint256' }],
+  },
+] as const;
+
+async function readSaleReviewLive(
+  client: NonNullable<ReturnType<typeof usePublicClient>>,
+  diamondAddress: `0x${string}`,
+  offer: IndexedOffer,
+  loanId: string,
+): Promise<SaleReview> {
+  const [live, block] = await Promise.all([
+    readLoanLive(client, diamondAddress, BigInt(loanId)),
+    client.getBlock({ blockTag: 'latest' }),
+  ]);
+  if (live.lender.toLowerCase() !== offer.creator.toLowerCase()) {
+    return { kind: 'other' };
+  }
+  const saleRateBps = BigInt(offerRateBps(offer));
+  const dueAtSec = Number(live.startTime + live.durationDays * 86_400n);
+  const matured = block.timestamp >= BigInt(dueAtSec);
+  // Same definition the listing flow approved against
+  // (`saleSettlementNow`), read from the wallet the pull binds to
+  // (the stored lender — consolidated to the NFT holder at listing).
+  const requiredNow = saleSettlementNow(live, saleRateBps, block.timestamp);
+  const [allowance, balance] = await Promise.all([
+    client.readContract({
+      address: live.principalAsset,
+      abi: ERC20_ALLOWANCE_ABI,
+      functionName: 'allowance',
+      args: [live.lender, diamondAddress],
+    }) as Promise<bigint>,
+    client.readContract({
+      address: live.principalAsset,
+      abi: ERC20_ALLOWANCE_ABI,
+      functionName: 'balanceOf',
+      args: [live.lender],
+    }) as Promise<bigint>,
+  ]);
+  return {
+    kind: 'sale',
+    loanId,
+    live,
+    dueAtSec,
+    matured,
+    sellerCovered: allowance >= requiredNow && balance >= requiredNow,
+    buyerInterest: saleBuyerRemainingInterest(live, saleRateBps, block.timestamp),
+  };
 }
