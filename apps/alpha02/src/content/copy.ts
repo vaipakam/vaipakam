@@ -49,6 +49,22 @@ export const copy = {
     },
   },
 
+  tokenSecurity: {
+    pickerBlock: (reasons: string[]) =>
+      `Danger — an independent security check flags this token: ${reasons.join('; ')}. The flows will not let a deal with this token proceed.`,
+    pickerWarn: (reasons: string[]) =>
+      `Caution — an independent security check reports: ${reasons.join('; ')}. You can continue, but read these carefully first.`,
+    pickerUnknown:
+      'The independent security check could not verify this token right now. Deals with unverified tokens are held back until the check succeeds.',
+    pickerUnsupported:
+      'The independent security check does not cover this network (test networks are not indexed). Extra care: only use tokens you deployed or trust.',
+    gateBlock: (leg: string, reasons: string[]) =>
+      `This deal's ${leg} failed an independent security check: ${reasons.join('; ')}. Accepting it is disabled — a token like this can be impossible to sell or transfer no matter what the deal terms say.`,
+    gateUnknown: (leg: string) =>
+      `The independent security check for this deal's ${leg} could not run. Try again in a moment — accepting is held back until the token can be verified.`,
+    gateWarn: (leg: string, reasons: string[]) =>
+      `Heads up on this deal's ${leg}: ${reasons.join('; ')}. Make sure you understand these before you continue.`,
+  },
   signing: {
     intro: (n: number) =>
       n === 1

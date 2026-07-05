@@ -72,6 +72,7 @@ import {
 } from '../lib/format';
 import { isPlainDecimal, isPositiveDecimal, submitErrorText } from '../lib/errors';
 import { copy } from '../content/copy';
+import { fetchTokenSecurity, isCuratedAsset, useTokenSecurity } from '../data/tokenSecurity';
 import {
   makeStepper,
   plannedApprovePrompts,
@@ -900,6 +901,57 @@ export function OfferFlow({ side }: { side: Side }) {
     Boolean(address) &&
     selected.creator.toLowerCase() === address!.toLowerCase();
 
+  // #1036 — GoPlus screening of BOTH legs of the deal being ACCEPTED.
+  // The accept side is the primary defense: a malicious offer is
+  // created straight against the contract (no website), so only the
+  // acceptor's screen can catch a honeypot leg. Curated tokens skip
+  // (hook self-disables); testnets resolve to 'unsupported' (allowed,
+  // noticed); 'block' and 'unknown' (couldn't verify) hold the sign
+  // button — fail closed, with copy telling the user why.
+  const acceptLendingSec = useTokenSecurity(
+    readChain.chainId,
+    mode === 'accept' && selected && selected.assetType === AssetType.ERC20
+      ? selected.lendingAsset
+      : undefined,
+  );
+  const acceptCollateralSec = useTokenSecurity(
+    readChain.chainId,
+    mode === 'accept' &&
+      selected &&
+      selected.collateralAssetType === AssetType.ERC20
+      ? selected.collateralAsset
+      : undefined,
+  );
+  const securityLegs =
+    mode === 'accept' && selected
+      ? [
+          {
+            leg: 'loan asset',
+            needed:
+              selected.assetType === AssetType.ERC20 &&
+              acceptLendingSec.fetchStatus !== 'idle',
+            verdict: acceptLendingSec.data,
+          },
+          {
+            leg: 'collateral',
+            needed:
+              selected.collateralAssetType === AssetType.ERC20 &&
+              acceptCollateralSec.fetchStatus !== 'idle',
+            verdict: acceptCollateralSec.data,
+          },
+        ].filter(
+          (l) => l.needed || (l.verdict && l.verdict.kind !== 'clean'),
+        )
+      : [];
+  const securityBlocked = securityLegs.filter(
+    (l) =>
+      l.verdict === undefined ||
+      l.verdict.kind === 'block' ||
+      l.verdict.kind === 'unknown',
+  );
+  const securityWarned = securityLegs.filter((l) => l.verdict?.kind === 'warn');
+  const securityGateOk = mode !== 'accept' || securityBlocked.length === 0;
+
   const canSign =
     allChecksPass(checks) &&
     receipt !== null &&
@@ -917,6 +969,7 @@ export function OfferFlow({ side }: { side: Side }) {
     // links never sign here.
     linkedLoanKnown &&
     (!acceptIsLoanSale || saleReviewReady) &&
+    securityGateOk &&
     (mode === 'accept'
       ? selected !== null
       : formError === null && durationValid && !selfCollateral) &&
@@ -1188,6 +1241,27 @@ export function OfferFlow({ side }: { side: Side }) {
         }
         if (!fresh.sellerCovered) {
           throw new Error(copy.match.saleSellerNotCovered);
+        }
+      }
+      // #1036 — re-verify both legs at SUBMIT time (fail closed): the
+      // review's verdicts are cached; a flag can land inside their
+      // window, and a doomed deal must abort before any signature.
+      for (const [leg, addr, isErc20] of [
+        ['loan asset', selected.lendingAsset, selected.assetType === AssetType.ERC20],
+        [
+          'collateral',
+          selected.collateralAsset,
+          selected.collateralAssetType === AssetType.ERC20,
+        ],
+      ] as const) {
+        if (!isErc20) continue;
+        if (isCuratedAsset(walletChain.chainId, addr)) continue; // pre-vetted
+        const v = await fetchTokenSecurity(walletChain.chainId, addr);
+        if (v.kind === 'block') {
+          throw new Error(copy.tokenSecurity.gateBlock(leg, v.reasons));
+        }
+        if (v.kind === 'unknown') {
+          throw new Error(copy.tokenSecurity.gateUnknown(leg));
         }
       }
       stepper.next('sign');
@@ -1722,6 +1796,35 @@ export function OfferFlow({ side }: { side: Side }) {
           </div>
           <div className="card">
             {receipt ? <ReviewReceipt data={receipt} /> : <p className="muted">Preparing your review…</p>}
+            {securityBlocked.length > 0 ? (
+              <div className="banner banner-danger" role="alert" style={{ marginTop: 16 }}>
+                <span className="banner-body">
+                  {securityBlocked
+                    .map((l) =>
+                      l.verdict === undefined || l.verdict.kind === 'unknown'
+                        ? copy.tokenSecurity.gateUnknown(l.leg)
+                        : copy.tokenSecurity.gateBlock(
+                            l.leg,
+                            l.verdict.kind === 'block' ? l.verdict.reasons : [],
+                          ),
+                    )
+                    .join(' ')}
+                </span>
+              </div>
+            ) : securityWarned.length > 0 ? (
+              <div className="banner banner-warn" role="alert" style={{ marginTop: 16 }}>
+                <span className="banner-body">
+                  {securityWarned
+                    .map((l) =>
+                      copy.tokenSecurity.gateWarn(
+                        l.leg,
+                        l.verdict?.kind === 'warn' ? l.verdict.reasons : [],
+                      ),
+                    )
+                    .join(' ')}
+                </span>
+              </div>
+            ) : null}
             {planTotal !== null ? (
               // #1037 — the roadmap: every wallet prompt named before
               // the first one fires, so a second or third prompt never

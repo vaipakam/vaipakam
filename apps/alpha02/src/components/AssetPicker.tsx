@@ -9,6 +9,8 @@ import { useQuery } from '@tanstack/react-query';
 import { erc20Abi } from 'viem';
 import { usePublicClient } from 'wagmi';
 import { getCanonicalAssetsForChain } from '@vaipakam/lib';
+import { useTokenSecurity } from '../data/tokenSecurity';
+import { copy } from '../content/copy';
 import { useActiveChain } from '../chain/useActiveChain';
 import { shortAddress } from '../lib/format';
 import { isAddressLike } from '../contracts/erc20';
@@ -68,6 +70,7 @@ export function AssetPicker({
   onChange: (address: string) => void;
 }) {
   const curated = useCuratedTokens();
+  const { readChain } = useActiveChain();
   // Case-insensitive match, but the <select> needs the option's EXACT
   // casing — a lowercased address set programmatically (deep links)
   // must still light up the right curated option.
@@ -77,6 +80,14 @@ export function AssetPicker({
   );
   const [customOpen, setCustomOpen] = useState(false);
   const showCustom = customOpen || (value !== '' && curatedMatch === undefined);
+  // #1036 — screen NON-curated pasted addresses through GoPlus. The
+  // picker WARNS at entry; the flows' gates enforce blocking, because
+  // a malicious offer can also arrive from the contract path where no
+  // picker was ever involved.
+  const security = useTokenSecurity(
+    readChain.chainId,
+    showCustom && isAddressLike(value) ? value : undefined,
+  );
 
   return (
     <div className="field">
@@ -113,6 +124,21 @@ export function AssetPicker({
           spellCheck={false}
           autoComplete="off"
         />
+      ) : null}
+      {showCustom && isAddressLike(value) && security.data ? (
+        security.data.kind === 'block' ? (
+          <span className="field-hint" style={{ color: 'var(--danger)' }}>
+            {copy.tokenSecurity.pickerBlock(security.data.reasons)}
+          </span>
+        ) : security.data.kind === 'warn' ? (
+          <span className="field-hint" style={{ color: 'var(--danger)' }}>
+            {copy.tokenSecurity.pickerWarn(security.data.reasons)}
+          </span>
+        ) : security.data.kind === 'unknown' ? (
+          <span className="field-hint">{copy.tokenSecurity.pickerUnknown}</span>
+        ) : security.data.kind === 'unsupported' ? (
+          <span className="field-hint">{copy.tokenSecurity.pickerUnsupported}</span>
+        ) : null
       ) : null}
       {hint ? <span className="field-hint">{hint}</span> : null}
     </div>

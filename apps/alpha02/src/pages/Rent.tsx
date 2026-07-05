@@ -37,6 +37,7 @@ import {
   useAllowanceForPlan,
   type SubmitProgress,
 } from '../lib/submitProgress';
+import { fetchTokenSecurity, isCuratedAsset, useTokenSecurity } from '../data/tokenSecurity';
 import {
   ensureNftApproval,
   readNftOwnershipLive,
@@ -774,6 +775,20 @@ function RentNftFlow() {
   const rentPlanKnown =
     totalPrepay !== undefined && planAllowance.data !== undefined;
   const rentPlanTotal = 2 + rentPlanApprove;
+  // #1036 — screen the prepay token (the leg the renter pays; the
+  // listed NFT itself has no ERC-20 security surface). Fail closed:
+  // 'block'/'unknown' hold the accept button.
+  const prepaySec = useTokenSecurity(
+    readChain.chainId,
+    selected?.prepayAsset,
+  );
+  const prepaySecNeeded = Boolean(selected) && prepaySec.fetchStatus !== 'idle';
+  const prepaySecBlocked =
+    prepaySecNeeded &&
+    (prepaySec.data === undefined ||
+      prepaySec.data.kind === 'block' ||
+      prepaySec.data.kind === 'unknown');
+  const prepaySecWarned = prepaySec.data?.kind === 'warn';
 
   const baseChecks = useEligibility({
     asset: selected
@@ -823,6 +838,7 @@ function RentNftFlow() {
     receipt !== null &&
     Boolean(walletClient) &&
     Boolean(publicClient) &&
+    !prepaySecBlocked &&
     !busy;
 
   async function submit() {
@@ -885,6 +901,17 @@ function RentNftFlow() {
       // comparison (incl. ERC-1155 quantity and asset type) runs
       // before the wallet is asked to sign, so the renter never signs
       // terms that differ from the reviewed listing.
+      // #1036 — re-verify the prepay token at submit time (fail
+      // closed; curated tokens are pre-vetted and skipped).
+      if (!isCuratedAsset(walletChain.chainId, selected.prepayAsset)) {
+        const v = await fetchTokenSecurity(walletChain.chainId, selected.prepayAsset);
+        if (v.kind === 'block') {
+          throw new Error(copy.tokenSecurity.gateBlock('prepayment token', v.reasons));
+        }
+        if (v.kind === 'unknown') {
+          throw new Error(copy.tokenSecurity.gateUnknown('prepayment token'));
+        }
+      }
       let signed: Awaited<ReturnType<typeof signAcceptTerms>>;
       try {
         stepper.next('sign');
@@ -1065,6 +1092,27 @@ function RentNftFlow() {
           </div>
           <div className="card">
             {receipt ? <ReviewReceipt data={receipt} /> : <p className="muted">Preparing your review…</p>}
+            {prepaySecBlocked ? (
+              <div className="banner banner-danger" role="alert" style={{ marginTop: 16 }}>
+                <span className="banner-body">
+                  {prepaySec.data === undefined || prepaySec.data.kind === 'unknown'
+                    ? copy.tokenSecurity.gateUnknown('prepayment token')
+                    : copy.tokenSecurity.gateBlock(
+                        'prepayment token',
+                        prepaySec.data.kind === 'block' ? prepaySec.data.reasons : [],
+                      )}
+                </span>
+              </div>
+            ) : prepaySecWarned ? (
+              <div className="banner banner-warn" role="alert" style={{ marginTop: 16 }}>
+                <span className="banner-body">
+                  {copy.tokenSecurity.gateWarn(
+                    'prepayment token',
+                    prepaySec.data?.kind === 'warn' ? prepaySec.data.reasons : [],
+                  )}
+                </span>
+              </div>
+            ) : null}
             {/* #1037 — every wallet prompt named before the first fires. */}
             <div className="banner banner-info" role="note" style={{ marginTop: 16 }}>
               <span className="banner-body">
