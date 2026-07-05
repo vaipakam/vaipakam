@@ -8,8 +8,9 @@
 >
 > **Kept and unchanged:** the balance-based **fee-discount tiers** (vault-held VPFI
 > still lowers fees — it simply no longer earns a yield) and the **interaction
-> rewards** pool. Their freed `25%` allocation (24% staking + 1% sale) is a Reserve
-> pending governance reallocation (see §3). Any active-voice reference below to
+> rewards** pool. The freed `24%` staking allocation is carried as a Reserve
+> pending governance reallocation; the removed `1%` sale slice was dropped from
+> the table entirely in the 2026-07-05 reconciliation (see §3). Any active-voice reference below to
 > "earning staking rewards/APR" or "buying VPFI at a fixed rate" is **historical**
 > and overridden by this banner.
 
@@ -232,6 +233,7 @@ Topology:
 
 - `Base` is the **canonical reward chain** — consistent with the canonical VPFI token rule and the §7 canonical-address rule
 - every non-canonical Diamond (mirror chains) acts as a **reporter**: at day-close it publishes its daily interest total to `Base` over the approved cross-chain messenger
+- `Base` is itself a reporting source too: its own day-close records its per-side totals directly into the aggregator's storage under `Base`'s own EVM chain id — no cross-chain hop, no message fee — but it counts toward finalization exactly like a mirror's report
 - `Base` acts as the **aggregator**: it accumulates the per-side chain totals into the day's global lender-interest and borrower-interest denominators (recorded together as the `dailyGlobalInterestNumeraire` entry for the day) and then **broadcasts that finalized per-side pair back** to every mirror
 - `claimInteractionRewards()` runs **locally on each chain** using the mirror's own user-level interest data and the broadcast global denominator — users never have to leave their lending chain to claim once the relevant loan has closed
 
@@ -249,15 +251,17 @@ Day-close emission contract (mirror → Base):
 Finalization on Base:
 
 - storage key: per-side (lender and borrower) daily chain interest by day and source EVM chain id — the two sides are stored separately, mirroring the two-field day-close payload
-- finalization rule: `dailyGlobalInterestNumeraire[dayId]` (the day's lender-side and borrower-side global denominators, finalized together as one record) is finalized once all expected mirror chain ids have reported for `dayId`, OR after a **4-hour grace window** past `dayId + 1` UTC, whichever comes first
-- any late-arriving report is recorded for audit but does **not** retroactively change a finalized global — this preserves claim determinism
+- finalization rule: `dailyGlobalInterestNumeraire[dayId]` (the day's lender-side and borrower-side global denominators, finalized together as one record) is finalized once every chain id in the admin-configured expected-source set has reported for `dayId`, OR once a **grace window (default 4 hours, admin-tunable)** has elapsed **measured from the first report received for that day** (`dailyFirstReportAt[dayId]`), whichever comes first. If no report ever arrives for a day, the grace clock never starts and the day can only be closed by the admin force-finalize override
+- the expected-source set includes **`Base` itself plus every mirror chain** — `Base` is a reporting source like any other; its report just arrives via the direct local day-close write rather than a cross-chain message
+- any report arriving after a day is finalized is **rejected** (`ReportAfterFinalization`) rather than stored, so a finalized global can never change retroactively — this preserves claim determinism; the audit trail for missed contributions is the emitted missed-chain/zeroed-contribution events, not stored late reports
 - finalization records must identify participating chains by EVM chain id, not by legacy cross-chain endpoint identifiers
 
 Broadcast back to mirrors (Base → mirror):
 
 - once finalized, `Base` sends the finalized `dailyGlobalInterestNumeraire[dayId]` to every mirror through the configured cross-chain messenger
-- mirrors store it as `knownGlobalInterest[dayId]` — this is the denominator used by their local `claimInteractionRewards()` once the relevant loan-close gate is satisfied
-- a claim for `dayId` reverts locally if `knownGlobalInterest[dayId] == 0` (not yet broadcast)
+- mirrors store the broadcast pair as `knownGlobalInterest[dayId]` (the lender-side and borrower-side global denominators, kept per side) — this is the denominator used by their local `claimInteractionRewards()` once the relevant loan-close gate is satisfied
+- broadcast arrival is tracked by an explicit **known-global-set flag** (`knownGlobalSet[dayId]`), stamped when the broadcast for `dayId` lands; a claim covering `dayId` does not progress past that day until the flag is set
+- the flag — never a zero test on either denominator — is the "broadcast not yet arrived" sentinel, for consumers and UIs as well as for the claim path: a finalized day may legitimately carry a **zero** value on one or both sides (a side with zero global interest that day simply contributes nothing to anyone's reward), so zero is a valid finalized state, not an absence marker
 
 Pull-query alternative:
 
@@ -293,13 +297,13 @@ Failure modes and safety:
 
 - **missing chain for day D** (e.g. RPC outage on a mirror past the grace window): both of that chain's per-side totals are treated as zero (`chainLenderInterest = 0` and `chainBorrowerInterest = 0`); finalization emits a missed-chain report keyed by day and EVM chain id; governance may replay a reconciliation payment as a deliberate treasury action (there is no on-chain insurance pool — see §9) but must not reopen a finalized `dayId`
 - **cross-chain message outage / delayed packet**: claims for affected days are simply delayed (not lost) — the pull model's natural backstop
-- **timestamp drift across chains**: day boundary is fixed to UTC 00:00 on-chain via `block.timestamp / 1 days`; small per-chain block-time drift is absorbed within the 4-hour grace window
+- **timestamp drift across chains**: day boundary is fixed to UTC 00:00 on-chain via `block.timestamp / 1 days`; small per-chain block-time drift is absorbed within the report-anchored grace window
 - **double-counting**: `(dayId, chainId)` idempotency key on the Base side prevents replay; mirror emits are guarded by a last-reported-day check
 - **re-org on a mirror**: if a mirror reorgs after emission, the message may be lost mid-flight; cross-chain message redelivery handles most cases, governance replay handles the long tail
 
 Diamond surface (Phase 1 to add):
 
-- `RewardReporterFacet` (on every mirror): day-close reporting and local chain-interest views
+- `RewardReporterFacet` (on every chain, Base included): day-close reporting and local chain-interest views — on mirrors the report travels over the messenger; on Base it is written directly under Base's own chain id
 - `RewardAggregatorFacet` (on Base only): inbound report handling, day finalization once the grace window elapses, and known-global-interest views
 - `InteractionRewardsFacet` (on every chain): `claimInteractionRewards()` — the argument-less pull-model claim entry point. In one call it pays the caller both (a) their per-loan interaction-reward entries and (b) any newly-finalized daily rewards they are owed, using `knownGlobalInterest[dayId]` as each day's denominator. Observable behaviour that the spec fixes (the exact return tuple and error selectors are implementation detail):
   - a caller is never paid for a `dayId` before that day's global denominator has been finalized/broadcast, and the per-day claim only ever advances over the **contiguous finalized prefix** — a later still-unfinalized day pauses the daily catch-up without discarding the earlier finalized days;
@@ -311,11 +315,11 @@ Testing requirements beyond §9:
 
 - simulate a 3-chain mesh (Base + 2 mirrors) end-to-end including day rollover, finalization, broadcast, and local claim
 - invariant: `sum(userPayout[d]) across all chains == dailyPool[d]` for every finalized `d`
-- invariant: no user can claim `dayId` before `knownGlobalInterest[dayId]` is set on their chain
+- invariant: no user can claim `dayId` before the day's known-global-set flag (`knownGlobalSet[dayId]`) is stamped on their chain — the gate is the flag, not a non-zero denominator (a finalized day may carry zero on either side)
 - test that interaction rewards remain non-claimable while a loan is still active, and become claimable only after the loan is closed
 - test that `day 0` / the first reward day is excluded from interaction-reward calculation
 - test that a user's reward is capped at `0.5 VPFI` per `0.001 ETH` equivalent of eligible interest even when the proportional formula would otherwise pay more
-- negative test: late-arriving mirror report after finalization is stored but does not alter payouts
+- negative test: a mirror report arriving after finalization is rejected (`ReportAfterFinalization`) and does not alter payouts
 
 ## 5. Yield Fee
 

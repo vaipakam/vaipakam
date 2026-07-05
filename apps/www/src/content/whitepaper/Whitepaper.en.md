@@ -918,7 +918,7 @@ emergency brake.
 
 | Category                          |        % |          Amount | Vesting                             |
 | --------------------------------- | -------: | --------------: | ----------------------------------- |
-| Founders                          |       6% |      13,800,000 | 12-mo cliff + 36-mo linear          |
+| Founders                          |       6% |      13,800,000 | 12-mo cliff; 48-mo total linear vesting, inclusive of the cliff |
 | Developers & Team                 |      12% |      27,600,000 | Same as founders                    |
 | Testers & Early Contributors      |       6% |      13,800,000 | 6–12 mo cliff                       |
 | Platform Admins                   |       3% |       6,900,000 | Timelock controlled                 |
@@ -1027,9 +1027,9 @@ VPFI received as fees recycles as:
 - `38%` → Buy wBTC (via approved treasury path)
 - `24%` → Held as VPFI
 
-If the Insurance / Bug Bounty pool exceeds `2%` of total VPFI supply,
-surplus recycles using the same `38 / 38 / 24` split. This is a
-treasury-strengthening conversion, not a token burn.
+The Bug Bounty allocation (§11.2) is a multisig-held operational
+treasury bucket; any disposal of a surplus in that bucket is a
+deliberate multisig treasury action, not an automatic protocol rule.
 
 ---
 
