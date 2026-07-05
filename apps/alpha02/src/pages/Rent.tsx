@@ -366,6 +366,10 @@ function ListNftFlow() {
       void queryClient.invalidateQueries({ queryKey: ['activeOffers'] });
     } catch (err) {
       setError(submitErrorText(err));
+      // setApprovalForAll may have MINED before createOffer was
+      // rejected — re-read so the roadmap stops promising a prompt
+      // the next submit will skip.
+      void nftApproval.refetch();
     } finally {
       submitLockRef.current = false;
       setProgress(null);
@@ -987,6 +991,9 @@ function RentNftFlow() {
       void queryClient.invalidateQueries({ queryKey: ['myLoans'] });
     } catch (err) {
       setError(submitErrorText(err));
+      // The prepay approval may have MINED before acceptOffer was
+      // rejected — re-read so the roadmap matches the next attempt.
+      void planAllowance.refetch();
     } finally {
       submitLockRef.current = false;
       setProgress(null);
