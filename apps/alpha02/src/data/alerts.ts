@@ -14,6 +14,8 @@
  *    chat, so the agent only issues a code to the wallet's owner.
  *  - `POST /unlink/telegram` clears the stored wallet ↔ chat link
  *    (added alongside this feature — the privacy promise needs it).
+ *    Also signature-gated, over a distinct unlink message: silently
+ *    stopping someone else's risk alerts would be the mirror attack.
  *  - The HF-band watcher lives in apps/keeper; the agent runs the
  *    periodic-interest pre-notify. There is NO claim-ready detector
  *    yet, so this UI deliberately does not promise one.
@@ -229,11 +231,46 @@ export async function issueTelegramLink(
   return { code: data.code, botUrl: data.bot_url ?? null };
 }
 
-/** Clear the stored wallet ↔ Telegram link server-side. */
+/**
+ * The unlink counterpart of {@link buildTelegramLinkMessage} — MUST
+ * stay byte-identical to `buildTelegramUnlinkMessage` in
+ * `apps/agent/src/linkAuth.ts`. Deliberately different wording from
+ * the link message so one signature can never authorise the other.
+ */
+export function buildTelegramUnlinkMessage(
+  wallet: string,
+  chainId: number,
+  issuedAt: number,
+): string {
+  return [
+    'Vaipakam — Unlink Telegram alerts',
+    '',
+    'I request that Telegram alert delivery for the wallet below be',
+    'disconnected everywhere. Signing this message proves ownership',
+    'of the wallet. It is not a transaction and costs no gas.',
+    '',
+    `Wallet: ${wallet.toLowerCase()}`,
+    `Chain id: ${chainId}`,
+    `Issued at (unix): ${issuedAt}`,
+  ].join('\n');
+}
+
+/** Clear the stored wallet ↔ Telegram link server-side. Signs the
+ *  unlink ownership proof first (free, not a transaction). */
 export async function unlinkTelegram(
   wallet: `0x${string}`,
   chainId: number,
+  signMessage: (message: string) => Promise<string>,
 ): Promise<void> {
-  const res = await post('/unlink/telegram', { wallet, chain_id: chainId });
+  const issuedAt = Math.floor(Date.now() / 1000);
+  const signature = await signMessage(
+    buildTelegramUnlinkMessage(wallet, chainId, issuedAt),
+  );
+  const res = await post('/unlink/telegram', {
+    wallet,
+    chain_id: chainId,
+    issuedAt,
+    signature,
+  });
   if (!res.ok) throw new Error(`unlinking Telegram failed (${res.status})`);
 }

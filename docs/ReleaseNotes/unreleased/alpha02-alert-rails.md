@@ -11,8 +11,9 @@ are editable only in Advanced mode, using the same defaults the pro
 app exposes directly. Switching the risk toggle off still leaves one
 last-moment warning right before a loan would be liquidated, and the
 card says so. The interest-payment toggle is a REAL opt-out: the
-alert service now stores it and its due-date detector honors it
-before sending anything.
+alert service now stores it and BOTH due-date lanes honor it before
+sending anything — the interest-payment reminder and the pre-grace
+"no refinance match found" warning alike.
 
 The card carries one honest privacy sentence — linking stores the
 wallet address, the alert preferences from the card, and the
@@ -22,10 +23,12 @@ messaged twice about the same event — and an Unlink that actually
 removes the Telegram connection: the alert service gained a
 dedicated unlink endpoint alongside this feature, and unlink stays
 reachable even for a wallet linked from another device. Starting a
-link now asks the wallet for a free signature first — proof the
-request comes from the wallet's owner, so nobody can point another
-wallet's alerts at their own Telegram chat; the pro app's alerts
-page gained the same proof step.
+link — and unlinking — now asks the wallet for a free signature
+first: proof the request comes from the wallet's owner, so nobody
+can point another wallet's alerts at their own Telegram chat, and
+nobody can silently switch off another wallet's risk warnings
+either. The pro app's alerts page gained the same proof step for
+linking.
 A borrower viewing their active loan sees a one-line nudge pointing
 at the alert setup. Users who prefer wallet-native push can enable
 Push delivery (recorded service-side) and open the platform's Push

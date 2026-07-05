@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest';
 import { privateKeyToAccount, type PrivateKeyAccount } from 'viem/accounts';
 import {
   buildTelegramLinkMessage,
+  buildTelegramUnlinkMessage,
   parseSignedLinkRequest,
   verifySignedLinkRequest,
   LINK_SIGNATURE_MAX_AGE_SECONDS,
@@ -92,6 +93,46 @@ describe('verifySignedLinkRequest', () => {
     const v = await verifySignedLinkRequest(parsed.req, NOW);
     expect(v.ok).toBe(false);
     if (!v.ok) expect(v.reason).toContain('stale');
+  });
+
+  it('accepts the owner signature for the unlink action', async () => {
+    const signature = await ACCOUNT_A.signMessage({
+      message: buildTelegramUnlinkMessage(ACCOUNT_A.address, CHAIN_ID, NOW),
+    });
+    const parsed = parseSignedLinkRequest({
+      wallet: ACCOUNT_A.address,
+      chain_id: CHAIN_ID,
+      issuedAt: NOW,
+      signature,
+    });
+    if (!parsed.ok) throw new Error('parse failed');
+    const v = await verifySignedLinkRequest(parsed.req, NOW, 'unlink');
+    expect(v.ok).toBe(true);
+  });
+
+  it('rejects cross-action replay (a link signature used to unlink, and vice versa)', async () => {
+    // The two messages differ on purpose: a captured signature for
+    // one action must never authorise the other.
+    const linkSig = await ACCOUNT_A.signMessage({
+      message: buildTelegramLinkMessage(ACCOUNT_A.address, CHAIN_ID, NOW),
+    });
+    const unlinkSig = await ACCOUNT_A.signMessage({
+      message: buildTelegramUnlinkMessage(ACCOUNT_A.address, CHAIN_ID, NOW),
+    });
+    for (const [signature, action] of [
+      [linkSig, 'unlink'],
+      [unlinkSig, 'link'],
+    ] as const) {
+      const parsed = parseSignedLinkRequest({
+        wallet: ACCOUNT_A.address,
+        chain_id: CHAIN_ID,
+        issuedAt: NOW,
+        signature,
+      });
+      if (!parsed.ok) throw new Error('parse failed');
+      const v = await verifySignedLinkRequest(parsed.req, NOW, action);
+      expect(v.ok).toBe(false);
+    }
   });
 
   it('rejects a signature over a different chain id', async () => {

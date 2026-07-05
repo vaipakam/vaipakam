@@ -43,7 +43,8 @@
  *                                             (EIP-191 wallet signature
  *                                             required — see linkAuth.ts)
  *   POST /unlink/telegram                   — frontend → clear the stored
- *                                             wallet ↔ tg_chat_id link (#1033)
+ *                                             wallet ↔ tg_chat_id link (#1033;
+ *                                             EIP-191 signature required too)
  *
  * The `/thresholds`, `/link/telegram`, `/diag/record`,
  * `/diag/erasure`, `/diag/erasure/status` and `/diag/legal-hold`
@@ -395,13 +396,12 @@ async function handleIssueTelegramLink(
   return json({ ok: true, code, bot_url: botUrl }, 200, corsOrigin);
 }
 
-/** #1033 — clear a stored wallet ↔ Telegram link. Body-trusted like
- *  `/thresholds` — unlike link ISSUANCE, which requires a signature
- *  (see linkAuth.ts) — (see the note in handlePutThresholds:
- *  the only effect is that alerts STOP being delivered to the chat
- *  the real wallet holder linked — an attacker "unlinking" someone
- *  else's wallet is a nuisance-DoS the signature-free settings model
- *  already accepts, and cheaper than the spam vector it mirrors).
+/** #1033 — clear a stored wallet ↔ Telegram link. Requires the same
+ *  EIP-191 wallet-ownership proof as link issuance, over the unlink-
+ *  scoped message (round 5): the Origin gate is not authentication —
+ *  a non-browser caller can spoof an allowed Origin, and silently
+ *  stopping a victim wallet's HF / due-date alerts right before a
+ *  grace window is alert suppression, not settings churn.
  *  Idempotent: unlinking a wallet with no link is still `ok`. */
 async function handleUnlinkTelegram(
   req: Request,
@@ -414,11 +414,30 @@ async function handleUnlinkTelegram(
   } catch {
     return json({ error: 'invalid-json' }, 400, corsOrigin);
   }
-  const parsed = parseLinkIssue(body);
-  if (!parsed) return json({ error: 'invalid-payload' }, 400, corsOrigin);
-  // chain_id is accepted (same body shape as the link issue) but the
-  // clear is wallet-wide — see unlinkTelegram for why.
-  await unlinkTelegram(env.DB, parsed.wallet);
+  const parsed = parseSignedLinkRequest(body);
+  if (!parsed.ok) {
+    return json(
+      { error: 'invalid-payload', reason: parsed.reason },
+      400,
+      corsOrigin,
+    );
+  }
+  const verified = await verifySignedLinkRequest(
+    parsed.req,
+    Math.floor(Date.now() / 1000),
+    'unlink',
+  );
+  if (!verified.ok) {
+    return json(
+      { error: 'verification_failed', reason: verified.reason },
+      verified.status,
+      corsOrigin,
+    );
+  }
+  // chain_id is bound into the signed message (same body shape as the
+  // link issue) but the clear is wallet-wide — see unlinkTelegram for
+  // why.
+  await unlinkTelegram(env.DB, parsed.req.wallet);
   return json({ ok: true }, 200, corsOrigin);
 }
 
@@ -565,17 +584,6 @@ function parsePutThresholds(x: unknown): PutThresholdsBody | null {
   };
 }
 
-interface LinkIssueBody {
-  wallet: string;
-  chain_id: number;
-}
-
-function parseLinkIssue(x: unknown): LinkIssueBody | null {
-  if (!x || typeof x !== 'object') return null;
-  const b = x as Record<string, unknown>;
-  if (typeof b.wallet !== 'string' || !/^0x[a-fA-F0-9]{40}$/.test(b.wallet)) {
-    return null;
-  }
-  if (typeof b.chain_id !== 'number') return null;
-  return { wallet: b.wallet, chain_id: b.chain_id };
-}
+// (The unsigned link/unlink body parser lived here until round 5 of
+// #1056 — both endpoints now parse via `parseSignedLinkRequest` in
+// linkAuth.ts.)

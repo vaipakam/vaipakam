@@ -124,7 +124,11 @@ export function AlertsCard() {
     setError(null);
     setNotice(null);
     try {
-      await unlinkTelegram(address, chainId);
+      // Signed like linking — otherwise anyone could silently switch
+      // off another wallet's risk alerts.
+      await unlinkTelegram(address, chainId, (message) =>
+        signMessageAsync({ message }),
+      );
       const next = { ...prefs, telegramLinked: false };
       storeAlertPrefs(chainId, address, next);
       setPrefs(next);
