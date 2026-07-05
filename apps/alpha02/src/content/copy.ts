@@ -129,6 +129,26 @@ export const copy = {
     // them here is BLOCKED, not warned-past. See issue #951 / #927.
     linkedLoanAcceptBlocked: (loanId: string) =>
       `This offer is tied to already-running loan #${loanId} — accepting it would settle or transfer that loan's position, not start the fresh loan reviewed above. This app can't yet show you the real terms of that kind of deal, so accepting it here is disabled for now.`,
+    // #986 P3 — the honest buy-a-running-loan review. Sale vehicles get
+    // a REAL review (loan-derived numbers) instead of the block above;
+    // preclose-offset links keep the block.
+    saleVehicleBanner: (loanId: string) =>
+      `This is a position sale: you'd be buying the lender side of already-running loan #${loanId}, not starting a new loan. The borrower and their repayment obligations don't change — only the lender does. The numbers below come from that loan, live.`,
+    saleLoanChecking:
+      'Reading the running loan behind this listing — the review must show its real numbers before you can sign.',
+    saleLoanCheckFailed:
+      'We couldn’t read the running loan behind this listing, and the review must show its real numbers — signing stays paused until it succeeds.',
+    saleLoanNotActive:
+      'The loan behind this listing is no longer active, so this purchase can’t complete. Nothing was sent or approved.',
+    saleSellerNotCovered:
+      'The seller’s standing settlement approval no longer covers completing this sale, so the purchase would fail on-chain. Nothing was sent or approved — the seller needs to restore their approval (their listing card shows a restore action).',
+    saleMaturityPassed:
+      'This loan has reached its due date — the position can no longer be bought. Nothing was sent or approved.',
+    saleBought: 'Position bought',
+    saleBuyerNext: (loanId: string) =>
+      `You\u2019re now the lender of loan #${loanId} \u2014 the loan keeps running unchanged for the borrower, and their repayment comes to you. Track it under My positions; when they repay you claim the principal and the remaining interest.`,
+    saleSelfBuy:
+      'You are the borrower of this loan, so you can\u2019t also buy its lender side \u2014 the protocol rejects that. Repaying or closing early from My positions are your moves instead. Nothing was sent or approved.',
     liquidityChecking:
       'Checking how these assets are priced by the protocol…',
     liquidityCheckFailed:
