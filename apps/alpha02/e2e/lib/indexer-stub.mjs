@@ -238,7 +238,10 @@ async function handler(req, res) {
 
     return json(404, { error: 'no such route in the e2e indexer stub' });
   } catch (e) {
-    return json(500, { error: String(e?.message ?? e) });
+    // Server-side log only — even a localhost test stub shouldn't echo
+    // exception internals in a response body (CodeQL js/stack-trace-exposure).
+    console.error('[indexer-stub]', e);
+    return json(500, { error: 'internal stub error' });
   }
 }
 
