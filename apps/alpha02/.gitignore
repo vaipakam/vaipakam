@@ -1,0 +1,5 @@
+
+# e2e fork tier
+e2e/.state/
+test-results/
+playwright-report/
