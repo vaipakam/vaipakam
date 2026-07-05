@@ -8,15 +8,26 @@ never through our website — so the only screen that can protect the
 person accepting is on the accept review itself. Both legs of a loan
 deal and the rental prepayment token are checked; a token flagged as
 a honeypot, sell-restricted, owner-blacklistable-and-pausable, or
-carrying punitive taxes blocks acceptance with the reasons in plain
-words — because a token like that can be impossible to sell or
-transfer no matter what the deal terms say, which is exactly the harm
-the unpriced-asset consent warnings cannot catch. A token the screen
-cannot verify holds acceptance back until it can (never silently
-treated as clean), softer owner-power findings become warnings the
-user knowingly proceeds past, and the verdict is re-checked at
-signing time so a flag landing after review still aborts before any
-signature.
+carrying punitive taxes (on buys, sells, or plain transfers) blocks
+acceptance with the reasons in plain words — because a token like
+that can be impossible to sell or transfer no matter what the deal
+terms say, which is exactly the harm the unpriced-asset consent
+warnings cannot catch. "Couldn't verify" is never treated as clean:
+a token whose contract source is unverified, or whose critical
+honeypot check the screen could not evaluate, is blocked outright
+(those are precisely the least-checkable tokens); secondary trade
+checks or taxes the screen could not evaluate are disclosed as
+warnings rather than assumed clear, and an outage of the
+screening service holds acceptance back with a working retry — the
+check re-probes on its own and the review offers a "Check again"
+button. Softer owner-power findings become warnings the user
+knowingly proceeds past — and consent is re-collected whenever the
+disclosed warning text changes, not just when a verdict first
+appears. The verdict is re-checked at signing time so a flag landing
+after review still aborts before any signature; a warning that was
+never shown on the review screen aborts the signing too, and the
+review then displays it so consent can be given against what is
+actually known.
 
 Pasting an unknown token address when building an offer surfaces the
 same verdict immediately at entry. Curated tokens are pre-vetted and

@@ -24,7 +24,11 @@
  *  - hard signals (honeypot / can't-sell-all / blacklist+transfer-
  *    pausable) → BLOCK; soft signals (heavy tax, owner-mint,
  *    owner-balance-mutation) → loud warning the user must explicitly
- *    accept via the existing consent mechanics.
+ *    accept via the existing consent mechanics;
+ *  - "couldn't evaluate" ≠ "clear": closed-source contracts and rows
+ *    whose hard trade signals GoPlus left null/empty BLOCK (the row
+ *    exists but proves nothing), and an unknown tax is disclosed as
+ *    a warning rather than coerced to 0%.
  */
 import { useQuery } from '@tanstack/react-query';
 import { getCanonicalAssetsForChain } from '@vaipakam/lib';
@@ -51,6 +55,7 @@ interface GoPlusTokenRow {
   cannot_buy?: string;
   buy_tax?: string;
   sell_tax?: string;
+  transfer_tax?: string;
   is_mintable?: string;
   owner_change_balance?: string;
   is_blacklisted?: string;
@@ -59,16 +64,55 @@ interface GoPlusTokenRow {
 }
 
 const flag = (v: string | undefined) => v === '1';
-const taxPct = (v: string | undefined): number => {
+/** GoPlus encodes "we evaluated this" as '0'/'1'; a missing or empty
+ *  field means the check did NOT run for this token — which must
+ *  never silently read as "clear". */
+const flagKnown = (v: string | undefined) => v === '0' || v === '1';
+/** Tax as a percentage, or null when GoPlus reports it as UNKNOWN —
+ *  the docs define an empty tax string as "could not be determined",
+ *  which is not the same thing as 0%. */
+const taxPct = (v: string | undefined): number | null => {
+  if (v === undefined || v === '') return null;
   const n = Number(v);
-  return Number.isFinite(n) ? n * 100 : 0;
+  return Number.isFinite(n) ? n * 100 : null;
 };
 
 /** Map a GoPlus row onto the block/warn/clean verdict. Exported for
  *  tests and for the eligibility gate's copy. */
 export function classifyTokenSecurity(row: GoPlusTokenRow): TokenSecurityVerdict {
+  // Closed-source (or unreported-source) contract: GoPlus leaves the
+  // other risk items null for these, so NOTHING below can clear it —
+  // treating null fields as "no signal" would classify precisely the
+  // least-verifiable tokens as clean. Fail closed with honest copy.
+  if (row.is_open_source !== '1') {
+    return {
+      kind: 'block',
+      reasons: [
+        'the contract source code is not verified, so its behaviour cannot be independently checked',
+      ],
+    };
+  }
   const block: string[] = [];
   const warn: string[] = [];
+  // The honeypot simulation is the load-bearing hard signal and must
+  // be POSITIVELY known-clear ('0') — missing means "couldn't
+  // verify", which the gates hold back, not a pass. The secondary
+  // restriction checks degrade to a LOUD warning instead of a block:
+  // GoPlus leaves them null even on majors (live USDT row 2026-07-05:
+  // is_honeypot '0' but cannot_sell_all null), so blocking on their
+  // absence would flag exactly the tokens users know are fine and
+  // teach them to ignore the screen.
+  if (!flagKnown(row.is_honeypot)) {
+    block.push('its critical honeypot check could not be evaluated');
+  }
+  const unevaluated: string[] = [];
+  if (!flagKnown(row.cannot_sell_all)) unevaluated.push('sell-restriction');
+  if (!flagKnown(row.cannot_buy)) unevaluated.push('buy-restriction');
+  if (unevaluated.length > 0) {
+    warn.push(
+      `its ${unevaluated.join(' and ')} check${unevaluated.length > 1 ? 's' : ''} could not be evaluated`,
+    );
+  }
   if (flag(row.is_honeypot)) block.push('flagged as a honeypot — buyers cannot sell it');
   if (flag(row.cannot_sell_all)) block.push('holders are prevented from selling their full balance');
   if (flag(row.cannot_buy)) block.push('buying is restricted by the contract');
@@ -78,12 +122,24 @@ export function classifyTokenSecurity(row: GoPlusTokenRow): TokenSecurityVerdict
     if (flag(row.is_blacklisted)) warn.push('the owner can blacklist individual holders');
     if (flag(row.transfer_pausable)) warn.push('the owner can pause all transfers');
   }
-  const bt = taxPct(row.buy_tax);
-  const st = taxPct(row.sell_tax);
-  if (st >= 50) block.push(`a ${st.toFixed(0)}% sell tax`);
-  else if (st >= 10) warn.push(`a ${st.toFixed(0)}% sell tax`);
-  if (bt >= 50) block.push(`a ${bt.toFixed(0)}% buy tax`);
-  else if (bt >= 10) warn.push(`a ${bt.toFixed(0)}% buy tax`);
+  // All THREE tax surfaces matter here: the protocol moves these
+  // tokens with plain transfers (vault pulls, repayments), so a
+  // transfer tax skews received amounts exactly like a sell tax
+  // skews liquidation. Unknown taxes are disclosed, not zeroed.
+  const taxes: Array<[string, number | null]> = [
+    ['sell', taxPct(row.sell_tax)],
+    ['buy', taxPct(row.buy_tax)],
+    ['transfer', taxPct(row.transfer_tax)],
+  ];
+  for (const [label, pct] of taxes) {
+    if (pct === null) continue; // folded into one warn line below
+    if (pct >= 50) block.push(`a ${pct.toFixed(0)}% ${label} tax`);
+    else if (pct >= 10) warn.push(`a ${pct.toFixed(0)}% ${label} tax`);
+  }
+  const unknownTaxes = taxes.filter(([, p]) => p === null).map(([l]) => l);
+  if (unknownTaxes.length > 0) {
+    warn.push(`its ${unknownTaxes.join('/')} tax could not be determined`);
+  }
   if (flag(row.is_mintable) && flag(row.owner_change_balance)) {
     warn.push('the owner can mint AND rewrite holder balances');
   } else if (flag(row.owner_change_balance)) {
