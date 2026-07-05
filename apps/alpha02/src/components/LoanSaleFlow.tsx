@@ -40,6 +40,7 @@ import { usePublicClient, useWalletClient } from 'wagmi';
 import { parseEventLogs } from 'viem';
 import { copy } from '../content/copy';
 import { isPositiveDecimal, submitErrorText } from '../lib/errors';
+import { flowDisabled } from '../lib/killSwitch';
 import { useActiveChain } from '../chain/useActiveChain';
 import { DIAMOND_ABI_VIEM, useDiamondWrite } from '../contracts/diamond';
 import { ensureAllowance, revokeAllowance } from '../contracts/erc20';
@@ -125,6 +126,14 @@ export function LoanSaleFlow({
   // user is reading. Rate edits DO void it (below).
 
   async function submit() {
+    // #1028 — a sale listing creates and locks a NEW offer: it rides
+    // the same kill switch as the other offer-creating paths.
+    // (Optional acceleration — blocking it traps nothing; the lender
+    // keeps normal maturity/claim paths.)
+    if (flowDisabled('post-offer')) {
+      setError(copy.killSwitch.disabled);
+      return;
+    }
     if (!address || !walletChain || !walletClient || !publicClient) return;
     if (rateBps === null) return;
     setBusy(true);
@@ -268,12 +277,18 @@ export function LoanSaleFlow({
           {copy.loanSale.sweetenNote}
         </p>
       ) : null}
+      {/* #1028 — kill switch held up front like the other gated flows. */}
+      {flowDisabled('post-offer') ? (
+        <div className="banner banner-warn" role="alert" style={{ marginTop: 12 }}>
+          <span className="banner-body">{copy.killSwitch.disabled}</span>
+        </div>
+      ) : null}
       {!confirmOpen ? (
         <button
           type="button"
           className="btn btn-secondary"
           style={{ marginTop: 12 }}
-          disabled={busy || !walletReady || !rateValid}
+          disabled={busy || !walletReady || !rateValid || flowDisabled('post-offer')}
           onClick={onOpenConfirm}
         >
           {copy.loanSale.action}
@@ -297,7 +312,7 @@ export function LoanSaleFlow({
             confirmLabel={copy.loanSale.confirm}
             onBack={onCloseConfirm}
             onConfirm={() => void submit()}
-            disabled={!walletReady || !consent}
+            disabled={!walletReady || !consent || flowDisabled('post-offer')}
             data={{
               youReceive: `${principalStr} — the full outstanding amount, paid to your wallet the moment a buyer accepts.`,
               youLock:

@@ -367,7 +367,7 @@
   //   - DIAG_RETENTION_DAYS      — int days; default 90.
   "vars": {
     "TG_BOT_USERNAME": "",
-    "FRONTEND_ORIGIN": "https://defi.vaipakam.com,https://labs.vaipakam.com,https://www.vaipakam.com,https://vaipakam.com",
+    "FRONTEND_ORIGIN": "https://defi.vaipakam.com,https://labs.vaipakam.com,https://www.vaipakam.com,https://vaipakam.com,https://alpha02.vaipakam.com",
     "DIAG_SAMPLE_RATE": "1.0",
     "DIAG_RETENTION_DAYS": "90",
   },

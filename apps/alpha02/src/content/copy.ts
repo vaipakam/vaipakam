@@ -104,7 +104,7 @@ export const copy = {
       'Alerts aren’t set up in this build. The operator hasn’t pointed it at an alerts backend, so nothing here would work — rather than pretend, this section stays off.',
     connectFirst: 'Connect your wallet to set up alerts for it.',
     privacy:
-      'Linking stores your wallet address, your alert preferences from this card, and your Telegram chat id on Vaipakam’s alert service so it knows what to send and where — nothing else. Unlink removes the Telegram connection.',
+      'Linking stores your wallet address, your alert preferences from this card, and your Telegram chat id on Vaipakam’s alert service, plus a small delivery record per alert it sends (which loan, which level, when) so you’re never messaged twice about the same thing. Unlink removes the Telegram connection.',
     linkButton: 'Link Telegram',
     linkIssued:
       'Open our bot and press Start — or send it this code as a message. That connects this wallet to your Telegram.',

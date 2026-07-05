@@ -206,7 +206,11 @@ async function pushIfSubscribed(
     role === 'borrower'
       ? `Pay this period's accrued interest before the deadline to avoid an automatic collateral sale during the grace window.`
       : `Loan #${loan.loan_id}'s ${cadenceLabel.toLowerCase()} interest checkpoint is approaching. If the borrower misses the deadline, a permissionless settler can sell collateral to cover the shortfall.`;
-  const deepLink = `${env.FRONTEND_ORIGIN}/app/loans/${loan.loan_id}`;
+  // FRONTEND_ORIGIN is a CSV allow-list — interpolating it whole
+  // produced a malformed URL the moment it grew past one entry. Deep
+  // links use the FIRST origin (the primary app by convention).
+  const linkBase = env.FRONTEND_ORIGIN.split(',')[0]!.trim();
+  const deepLink = `${linkBase}/app/loans/${loan.loan_id}`;
 
   if (sub.push_channel) {
     try {
