@@ -524,11 +524,13 @@ function parsePutThresholds(x: unknown): PutThresholdsBody | null {
     alert_hf: b.alert_hf,
     critical_hf: b.critical_hf,
     push_channel: push,
-    // Absent/non-boolean → opted in, matching the column default.
+    // Absent/non-boolean → undefined = "no change": an older client
+    // updating only its bands must not silently re-enable a stored
+    // opt-out. New rows still default to opted in (column default).
     notify_maturity_approaching:
       typeof b.notify_maturity_approaching === 'boolean'
         ? b.notify_maturity_approaching
-        : true,
+        : undefined,
   };
 }
 

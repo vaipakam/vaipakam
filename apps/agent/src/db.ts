@@ -65,6 +65,42 @@ export async function upsertThresholds(
   },
 ): Promise<void> {
   const now = Math.floor(Date.now() / 1000);
+  // The pre-notify opt-out updates ONLY when the caller sent it —
+  // absence must preserve a stored opt-out (an older client updating
+  // its bands must not re-enable reminders), while new rows take the
+  // column default (opted in). Two statements because `excluded.` in
+  // the conflict arm sees post-default values, which can't express
+  // "no change".
+  if (t.notify_maturity_approaching === undefined) {
+    await db
+      .prepare(
+        `INSERT INTO user_thresholds
+           (wallet, chain_id, warn_hf, alert_hf, critical_hf, tg_chat_id, push_channel, locale, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+         ON CONFLICT(wallet, chain_id) DO UPDATE SET
+           warn_hf = excluded.warn_hf,
+           alert_hf = excluded.alert_hf,
+           critical_hf = excluded.critical_hf,
+           tg_chat_id = COALESCE(excluded.tg_chat_id, user_thresholds.tg_chat_id),
+           push_channel = COALESCE(excluded.push_channel, user_thresholds.push_channel),
+           locale = COALESCE(excluded.locale, user_thresholds.locale),
+           updated_at = excluded.updated_at`,
+      )
+      .bind(
+        t.wallet.toLowerCase(),
+        t.chain_id,
+        t.warn_hf,
+        t.alert_hf,
+        t.critical_hf,
+        t.tg_chat_id ?? null,
+        t.push_channel ?? null,
+        t.locale ?? 'en',
+        now,
+        now,
+      )
+      .run();
+    return;
+  }
   await db
     .prepare(
       `INSERT INTO user_thresholds
@@ -89,7 +125,7 @@ export async function upsertThresholds(
       t.tg_chat_id ?? null,
       t.push_channel ?? null,
       t.locale ?? 'en',
-      (t.notify_maturity_approaching ?? true) ? 1 : 0,
+      t.notify_maturity_approaching ? 1 : 0,
       now,
       now,
     )
@@ -214,20 +250,31 @@ export async function consumeTelegramLinkCode(
 }
 
 /** Store the Telegram chat id on the user's thresholds row. Called
- *  after a successful handshake. */
+ *  after a successful handshake.
+ *
+ *  UPSERT, not UPDATE (#1033 round-2): a first-time user can complete
+ *  the handshake before ever saving settings — a bare UPDATE would
+ *  match zero rows, the bot would still reply "linked", and alerts
+ *  would silently never deliver. The insert seeds the default bands;
+ *  the conflict arm touches ONLY the chat id so an existing row's
+ *  settings are never clobbered by a re-link. */
 export async function linkTelegram(
   db: D1Database,
   wallet: string,
   chainId: number,
   chatId: string,
 ): Promise<void> {
+  const now = Math.floor(Date.now() / 1000);
   await db
     .prepare(
-      `UPDATE user_thresholds
-       SET tg_chat_id = ?, updated_at = ?
-       WHERE wallet = ? AND chain_id = ?`,
+      `INSERT INTO user_thresholds
+         (wallet, chain_id, warn_hf, alert_hf, critical_hf, tg_chat_id, push_channel, locale, created_at, updated_at)
+       VALUES (?, ?, 1.5, 1.2, 1.05, ?, NULL, 'en', ?, ?)
+       ON CONFLICT(wallet, chain_id) DO UPDATE SET
+         tg_chat_id = excluded.tg_chat_id,
+         updated_at = excluded.updated_at`,
     )
-    .bind(chatId, Math.floor(Date.now() / 1000), wallet.toLowerCase(), chainId)
+    .bind(wallet.toLowerCase(), chainId, chatId, now, now)
     .run();
 }
 
@@ -250,6 +297,13 @@ export async function unlinkTelegram(
        WHERE wallet = ?`,
     )
     .bind(Math.floor(Date.now() / 1000), wallet.toLowerCase())
+    .run();
+  // Revoke any pending handshake codes too — an unexpired code from
+  // another tab/device could otherwise re-link the wallet after this
+  // privacy action, silently reversing it.
+  await db
+    .prepare(`DELETE FROM telegram_links WHERE wallet = ?`)
+    .bind(wallet.toLowerCase())
     .run();
 }
 
