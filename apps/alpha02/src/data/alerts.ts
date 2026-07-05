@@ -232,7 +232,22 @@ export async function saveAlertPrefs(
     // One-way by backend design (COALESCE): only sent when enabling.
     ...(prefs.pushEnabled ? { push_channel: 'subscribed' } : {}),
   });
-  if (!res.ok) throw new Error(`saving alert settings failed (${res.status})`);
+  if (!res.ok) {
+    if (res.status === 503) {
+      const data = (await res.json().catch(() => null)) as {
+        error?: string;
+      } | null;
+      if (data?.error === 'optout-unavailable') {
+        // Rollout window: the agent can't store an opt-out until its
+        // storage migration lands. Honest, plain-words failure — the
+        // opposite of silently pretending the switch worked.
+        throw new Error(
+          'That switch can’t be saved right now — the alert service is being upgraded. Please try again in a little while.',
+        );
+      }
+    }
+    throw new Error(`saving alert settings failed (${res.status})`);
+  }
 }
 
 export interface TelegramLink {

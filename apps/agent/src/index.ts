@@ -91,6 +91,7 @@ import {
   consumeTelegramLinkCode,
   issueTelegramLinkCode,
   linkTelegram,
+  OptOutStorageUnavailableError,
   unlinkTelegram,
   upsertThresholds,
 } from './db';
@@ -365,7 +366,25 @@ async function handlePutThresholds(req: Request, env: Env): Promise<Response> {
   // If the threshold settings ever start to drive on-chain actions,
   // extend the signed-payload requirement to every write so
   // msg.sender parity is cryptographic.
-  await upsertThresholds(env.DB, parsed);
+  try {
+    await upsertThresholds(env.DB, parsed);
+  } catch (err) {
+    // Rollout window — an opt-out can't be stored until migration
+    // 0027 lands. A distinct 503 lets the client say "try again
+    // shortly" instead of a generic failure; every other error
+    // propagates as before.
+    if (err instanceof OptOutStorageUnavailableError) {
+      return json(
+        {
+          error: 'optout-unavailable',
+          reason: 'alert settings storage migration pending — try again shortly',
+        },
+        503,
+        corsOrigin,
+      );
+    }
+    throw err;
+  }
   return json({ ok: true }, 200, corsOrigin);
 }
 

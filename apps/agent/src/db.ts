@@ -49,63 +49,43 @@ export async function listThresholdsForChain(
   return res.results ?? [];
 }
 
-/** Upsert a user's thresholds. Called from the frontend settings page
- *  via the HTTP handler. */
-export async function upsertThresholds(
-  db: D1Database,
-  t: Omit<
-    UserThresholds,
-    'tg_chat_id' | 'push_channel' | 'locale' | 'notify_maturity_approaching'
-  > & {
-    tg_chat_id?: string | null;
-    push_channel?: string | null;
-    locale?: string | null;
-    /** #1033 — optional; absent keeps the historical opted-in state. */
-    notify_maturity_approaching?: boolean;
-  },
-): Promise<void> {
-  const now = Math.floor(Date.now() / 1000);
-  // The pre-notify opt-out updates ONLY when the caller sent it —
-  // absence must preserve a stored opt-out (an older client updating
-  // its bands must not re-enable reminders), while new rows take the
-  // column default (opted in). Two statements because `excluded.` in
-  // the conflict arm sees post-default values, which can't express
-  // "no change".
-  if (t.notify_maturity_approaching === undefined) {
-    await db
-      .prepare(
-        `INSERT INTO user_thresholds
-           (wallet, chain_id, warn_hf, alert_hf, critical_hf, tg_chat_id, push_channel, locale, created_at, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-         ON CONFLICT(wallet, chain_id) DO UPDATE SET
-           warn_hf = excluded.warn_hf,
-           alert_hf = excluded.alert_hf,
-           critical_hf = excluded.critical_hf,
-           tg_chat_id = COALESCE(excluded.tg_chat_id, user_thresholds.tg_chat_id),
-           push_channel = COALESCE(excluded.push_channel, user_thresholds.push_channel),
-           locale = COALESCE(excluded.locale, user_thresholds.locale),
-           updated_at = excluded.updated_at`,
-      )
-      .bind(
-        t.wallet.toLowerCase(),
-        t.chain_id,
-        t.warn_hf,
-        t.alert_hf,
-        t.critical_hf,
-        t.tg_chat_id ?? null,
-        t.push_channel ?? null,
-        t.locale ?? 'en',
-        now,
-        now,
-      )
-      .run();
-    return;
+/** Thrown when an OPT-OUT write arrives before migration 0027 — the
+ *  column to store it doesn't exist yet, and silently dropping the
+ *  flag would make the toggle theater. The HTTP handler maps this to
+ *  a distinct 503 so the client can say "try again shortly". */
+export class OptOutStorageUnavailableError extends Error {
+  constructor() {
+    super(
+      'notify_maturity_approaching column missing (migration 0027 pending)',
+    );
+    this.name = 'OptOutStorageUnavailableError';
   }
+}
+
+type ThresholdsUpsert = Omit<
+  UserThresholds,
+  'tg_chat_id' | 'push_channel' | 'locale' | 'notify_maturity_approaching'
+> & {
+  tg_chat_id?: string | null;
+  push_channel?: string | null;
+  locale?: string | null;
+  /** #1033 — optional; absent keeps the historical opted-in state. */
+  notify_maturity_approaching?: boolean;
+};
+
+/** The pre-0027 column set. Used when the flag is absent (no change
+ *  intended) AND as the rollout-window fallback for an opted-IN write
+ *  (true equals the column default, so nothing is lost). */
+async function upsertThresholdsLegacy(
+  db: D1Database,
+  t: ThresholdsUpsert,
+  now: number,
+): Promise<void> {
   await db
     .prepare(
       `INSERT INTO user_thresholds
-         (wallet, chain_id, warn_hf, alert_hf, critical_hf, tg_chat_id, push_channel, locale, notify_maturity_approaching, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+         (wallet, chain_id, warn_hf, alert_hf, critical_hf, tg_chat_id, push_channel, locale, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
        ON CONFLICT(wallet, chain_id) DO UPDATE SET
          warn_hf = excluded.warn_hf,
          alert_hf = excluded.alert_hf,
@@ -113,7 +93,6 @@ export async function upsertThresholds(
          tg_chat_id = COALESCE(excluded.tg_chat_id, user_thresholds.tg_chat_id),
          push_channel = COALESCE(excluded.push_channel, user_thresholds.push_channel),
          locale = COALESCE(excluded.locale, user_thresholds.locale),
-         notify_maturity_approaching = excluded.notify_maturity_approaching,
          updated_at = excluded.updated_at`,
     )
     .bind(
@@ -125,11 +104,75 @@ export async function upsertThresholds(
       t.tg_chat_id ?? null,
       t.push_channel ?? null,
       t.locale ?? 'en',
-      t.notify_maturity_approaching ? 1 : 0,
       now,
       now,
     )
     .run();
+}
+
+/** Upsert a user's thresholds. Called from the frontend settings page
+ *  via the HTTP handler. */
+export async function upsertThresholds(
+  db: D1Database,
+  t: ThresholdsUpsert,
+): Promise<void> {
+  const now = Math.floor(Date.now() / 1000);
+  // The pre-notify opt-out updates ONLY when the caller sent it —
+  // absence must preserve a stored opt-out (an older client updating
+  // its bands must not re-enable reminders), while new rows take the
+  // column default (opted in). Two statements because `excluded.` in
+  // the conflict arm sees post-default values, which can't express
+  // "no change".
+  if (t.notify_maturity_approaching === undefined) {
+    await upsertThresholdsLegacy(db, t, now);
+    return;
+  }
+  try {
+    await db
+      .prepare(
+        `INSERT INTO user_thresholds
+           (wallet, chain_id, warn_hf, alert_hf, critical_hf, tg_chat_id, push_channel, locale, notify_maturity_approaching, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+         ON CONFLICT(wallet, chain_id) DO UPDATE SET
+           warn_hf = excluded.warn_hf,
+           alert_hf = excluded.alert_hf,
+           critical_hf = excluded.critical_hf,
+           tg_chat_id = COALESCE(excluded.tg_chat_id, user_thresholds.tg_chat_id),
+           push_channel = COALESCE(excluded.push_channel, user_thresholds.push_channel),
+           locale = COALESCE(excluded.locale, user_thresholds.locale),
+           notify_maturity_approaching = excluded.notify_maturity_approaching,
+           updated_at = excluded.updated_at`,
+      )
+      .bind(
+        t.wallet.toLowerCase(),
+        t.chain_id,
+        t.warn_hf,
+        t.alert_hf,
+        t.critical_hf,
+        t.tg_chat_id ?? null,
+        t.push_channel ?? null,
+        t.locale ?? 'en',
+        t.notify_maturity_approaching ? 1 : 0,
+        now,
+        now,
+      )
+      .run();
+  } catch (err) {
+    // Rollout window — migration 0027 not applied yet. Only the
+    // missing-column condition gets special handling; anything else
+    // (transient D1 failure, constraint error) propagates untouched.
+    if (!/no such column/i.test(String(err))) throw err;
+    if (t.notify_maturity_approaching) {
+      // Opted-in equals the column default — the legacy write loses
+      // nothing.
+      await upsertThresholdsLegacy(db, t, now);
+      return;
+    }
+    // An opt-out CANNOT be stored without the column; surface it
+    // rather than pretending (a silently-dropped opt-out would be
+    // the "toggle is theater" bug all over again).
+    throw new OptOutStorageUnavailableError();
+  }
 }
 
 /** Read the notify-state row for a loan. Returns defaults when the
