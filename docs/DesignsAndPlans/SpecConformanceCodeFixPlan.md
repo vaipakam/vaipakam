@@ -143,10 +143,16 @@ for each finding it lands.
   - **Continuing** path `transferObligationViaOffer` (Option 2) rewrites the
     borrower/collateral but leaves the loan **Active** — it is NOT a terminal
     close. Calling `closeLoan` there would forfeit the exiting party and stop the
-    surviving loan from ever accruing again. Instead **migrate the entry** to the
-    new counterparty (reuse the existing `transferLenderEntry` /
-    `_allocEntry`-based reopen mechanism the lender-position-transfer path already
-    uses), so the continuing loan keeps a live reward entry under the new owner.
+    surviving loan from ever accruing again. Instead **repoint the BORROWER-side
+    entry** to the incoming borrower. **Note (Codex #1052 r2):**
+    `transferLenderEntry` is NOT a neutral primitive — it operates on
+    `loanActiveLenderEntryId` + the lender deltas + the forfeited-lender orphan
+    list, and Option 2 changes the *borrower* while the lender is unchanged.
+    Reusing it directly would wrongly move/forfeit the *lender* entry and leave
+    the borrower entry attached to the exiting borrower. So this needs a
+    **borrower-side / side-aware repoint helper** (`s.loanBorrowerEntryId[loanId]`
+    → new borrower, re-stamp the borrower delta), authored as part of S5 — not the
+    lender helper. Design the side-aware repoint before coding.
   - Confirms/closes #969, and fixes the refinance double-count (old entries must
     close before the new loan's entries register).
 - **S13:** the §4 cap is **per-user-per-day**, not per-entry. Replacing the
@@ -179,7 +185,14 @@ for each finding it lands.
   + shortfall` into the old lender's vault + `heldForLender += lenderTotal`) is
   the double-pay root. Two candidate fixes:
   (a) move the *principal* portion to `completeOffset` (spec Step 2), leaving
-  only the accrued-interest reservation at Step 1; or (b) make
+  only the accrued-interest reservation at Step 1 — **name the payer explicitly
+  (Codex #1052 r2):** `completeOffset`'s auto-complete path is invoked by
+  `OfferAcceptFacet` via `address(this).call`, so inside the internal completer
+  `msg.sender` is the **Diamond**, not the borrower. The delayed principal must be
+  pulled from the **original borrower / current borrower-NFT holder** (an
+  explicit `vaultDepositERC20From(borrowerHolder, ...)`), and that party must have
+  the required allowance/vault balance staged — do not `safeTransferFrom`
+  `msg.sender`; or (b) make
   `OfferCancelFacet.cancelOffer`'s offset branch pull the offset contribution
   back out of the lender's vault and decrement `heldForLender`.
   **Recommendation revised to (a) — the Step-2 principal move (Codex #1052 r1,
@@ -212,15 +225,21 @@ for each finding it lands.
 - **Note:** all four co-locate in the preclose/refinance/repay facets and rebase
   on Tranche 2's `closeLoan` wiring (S5) already present in `PrecloseFacet`/
   `RefinanceFacet` — preserve those calls when restructuring the offset path.
-- **Tests:** offset-cancel refunds + zeroes `heldForLender` (no later double-
-  claim); second-offset rejected; fallback cure past graceEnd succeeds; pro-rata
-  refinance charges accrued-only; replacement maturity never exceeds original.
+- **Tests:** offset-cancel clears **only the offset contribution** while any
+  unrelated `heldForLender` (from a prior internal match / fallback rescue)
+  **remains intact and still claimable** (Codex #1052 r2 — do NOT assert the
+  whole bucket zeroes); no later double-claim of the offset amount; second-offset
+  rejected; fallback cure past graceEnd succeeds; pro-rata refinance charges
+  accrued-only; replacement maturity never exceeds original.
 
 ### Tranche 4 — Forced-close / liquidation correctness (S12, S9, L-g, L-h)
 
-- **S12:** net `loan.interestSettled` into the interest owed at all four
+- **S12:** net `loan.interestSettled` into the interest owed at **all five**
   forced-close sites — `RiskFacet.triggerLiquidation`,
-  `RiskSplitLiquidationFacet`, `DefaultedFacet.triggerDefault`,
+  **`RiskFacet.triggerPartialLiquidation`** (Codex #1052 r2: also uses
+  `currentBorrowBalance`, pays interest-first, then resets the interest clock —
+  so a periodically-settled coupon can be paid twice before the reset unless
+  netted here too), `RiskSplitLiquidationFacet`, `DefaultedFacet.triggerDefault`,
   `LibFallback.computeFallbackEntitlements`. **Do NOT reroute through
   `settlementInterestNet` (Codex #1052 r1, P1):** that helper rounds to whole
   days AND applies the `useFullTermInterest` full-term floor, whereas the
@@ -231,27 +250,41 @@ for each finding it lands.
   *existing* seconds-precise `accruedInterest`, preserving the current accrual
   semantics and only crediting what was already settled (saturating so it can't
   underflow).
-- **S9:** reject an empty adapter try-list at the two forced-close entry points
-  (`RiskFacet.triggerLiquidation`, `DefaultedFacet.triggerDefault`) before
-  falling into `_fullCollateralTransferFallback` — mirror
+- **S9:** reject an empty adapter try-list on the forced-close swap path
+  (`RiskFacet.triggerLiquidation`, `DefaultedFacet.triggerDefault`) — mirror
   `RepayPeriodicFacet`'s `PeriodicSettleSwapPathRequired` guard so a caller can't
-  push a healthy loan into the premium fallback with zero routes attempted. (The
+  push a healthy loan into the premium fallback with zero routes attempted.
+  **Placement (Codex #1052 r2):** the guard must sit **just before falling into
+  the external `swapWithFailover`/`_fullCollateralTransferFallback` path, NOT at
+  the function entry** — `RiskFacet.triggerLiquidation`'s internal-match
+  auto-dispatch runs first and legitimately needs no adapter calls, so an
+  entry-point guard would wrongly block a no-DEX internal-match settlement. Keep a
+  regression that an internal match still executes with an empty try-list. (The
   genuine "all configured routes failed" path still reaches the fallback.)
 - **L-g:** reorder the waterfall so the **2% treasury handling fee is
   subordinated to full lender recovery** when proceeds are short — keep the
   liquidator bonus senior (it must stay to incentivize the liquidation), but the
   treasury handling fee (and the interest-split fee) yield to making the lender
-  whole first. **Apply the reorder to BOTH `RiskFacet` AND
-  `RiskSplitLiquidationFacet` (Codex #1052 r1, P2)** — the split-route facet
-  carries the same `bonus → handling-fee → debt` waterfall, so fixing only
-  `RiskFacet` would leave split-route liquidations still paying treasury ahead of
-  a short-changed lender.
+  whole first. **Apply the reorder to `RiskFacet`, `RiskSplitLiquidationFacet`,
+  AND `DefaultedFacet.triggerDefault` (Codex #1052 r1+r2, P2)** — all three carry
+  the same `bonus/handling-fee → debt` waterfall (DefaultedFacet's swap path also
+  deducts `cfgLiquidationHandlingFeeBps()` before allocating debt), so limiting
+  scope to the Risk facets would leave the time-based-default forced-close path
+  still paying the 2% treasury fee ahead of a short-changed lender. Regression on
+  all three.
 - **L-h:** add the dynamic incentive (6% − realized slippage, capped 3%, per-
   asset `liqBonusBps` ceiling) to the `DefaultedFacet` time-based-default swap
   path so it matches the HF-based path. Since that incentive block is currently
   **copy-pasted at three sites** (`RiskFacet` ×2, `RiskSplitLiquidationFacet`),
   extract it into a shared helper (`LibEntitlement`/`LibSwap`) and call it from
   all four — a DRY win that also guarantees the time-default path can't drift.
+  **Gate the new recipient (Codex #1052 r2):** paying `msg.sender` an incentive
+  makes the time-default caller a *value recipient* on a path that today has no
+  liquidator sanctions/KYC screen (the Risk paths screen only because they
+  already pay a bonus). Porting only the incentive math would let a sanctioned /
+  KYC-ineligible caller collect the default incentive — so the recipient
+  sanctions (and any bonus-value KYC) gate is **part of L-h's scope and tests**,
+  not just the math/transfer.
 - **Ordering within:** S12 first (the netting touches the same debt math L-g's
   waterfall consumes), then L-g, then L-h (helper extraction), then S9 (guard).
 - **Tests:** periodically-settled loan liquidated/defaulted pays interest once;
@@ -270,11 +303,21 @@ for each finding it lands.
   `OfferAcceptFacet.sol:44`.)
 - **S10:** add a **fail-closed** sanctions variant (mirror the
   `VaultFactoryFacet:753` pattern: oracle-unset ⇒ refuse, oracle-revert ⇒ refuse)
-  and call it **only** at the locked-proceeds release gate (the `ClaimFacet`
-  screen for a `SanctionedProceedsLocked` deposit). Normal never-flagged
+  and call it **only** at the locked-proceeds release gate. Normal never-flagged
   claim/withdraw paths keep calling the fail-open `isSanctionedAddress` so an
   oracle blip can't freeze honest users' funds. The locked funds stay parked in
   the flagged wallet's own vault until the oracle recovers and confirms clean.
+  **Needs a persisted locked marker first (Codex #1052 r2):**
+  `SanctionedProceedsLocked` is today only an **event** emitted by
+  `LibSanctionedLock` — there is no claim-time storage flag distinguishing a
+  locked close-out deposit from an ordinary claim. Without one, changing the
+  `ClaimFacet` screen would either fail-closed for *all* claims (breaking the
+  never-flagged-user liveness guarantee) or be unable to target only the parked
+  funds (S10 stays open). So the sub-design **adds a persisted per-deposit
+  `lockedProceeds` marker** (set where `LibSanctionedLock` parks funds today,
+  cleared on successful clean release) and applies the fail-closed variant only
+  when that marker is set. This is the standalone tranche's highest-uncertainty
+  item — design the marker storage + set/clear paths before coding.
 - **S15:** re-run the `MinCollateralBelowFloor` / `MaxLendingAboveCeiling` range
   checks in `OfferMutateFacet` (extract the create-time block into a shared
   internal so create and mutate share one definition), so a mutate can't move a
