@@ -213,6 +213,17 @@ function getLoansBatch(uint256[] calldata loanIds)
 - Both iterate the caller-supplied id array, load `s.offers[id]` /
   `s.loans[id]` once, project via the (extended) converters, and — for offers —
   stamp `state` via the shared derivation (§5.3).
+- **Strictly positional — `views[i]` ⟷ `ids[i]`, duplicates preserved.** The
+  views map each input id to exactly one output element **in order**, and do
+  **not** dedupe. This is load-bearing for **dual-role loan holders**: when a
+  wallet owns both the lender and borrower position NFTs for the same loan, the
+  frontend's holder enumeration intentionally returns that `loanId` **twice**
+  (paired with two different `heldTokenId`s) and `readOwnLoanRowsLive` produces
+  two role-specific rows. `getLoansBatch` must echo a duplicate `loanId` as two
+  identical elements so the consumer can zip each back to its `heldTokenId` and
+  keep both role rows. A "clever" dedupe (contract-side or in the consumer
+  mapper) would collapse one role and hide one side from Positions / Claimables
+  — explicitly forbidden, and guarded by a duplicate-id test (§7).
 - **Unknown / never-existed id:** return a zero-value element in place (do
   **not** revert the whole batch). `getLoanDetails` already does not revert on
   unknown id; the frontend's existing `lender == 0 && borrower == 0 → null`
@@ -220,10 +231,25 @@ function getLoansBatch(uint256[] calldata loanIds)
   where `o.id == 0` (matching `_offerStateOf`'s existing "never-existed →
   Cancelled" contract). Batch-level all-or-nothing would let one stale id
   blank a whole refresh — element-level zeroing is the safe choice.
-- **No explicit bound / pagination** — the caller (frontend) already bounds the
-  id array via its paginated by-holder enumeration (`PAGE = 200`,
-  `WALK_CAP = 2000`). A gas-DoS is a non-issue for a `view` over `eth_call`.
-  Document the "caller bounds the array" contract in the NatSpec.
+- **Bounded batches — chunk client-side, cap server-side.** A `view` over
+  `eth_call` is still subject to RPC gas / time / response-size limits, and
+  `getOffersWithState` returns a 30-field element per id. `readOwnOfferRowsLive`
+  accumulates **every** created id + every held-offer id into one `Set` before
+  hydration, capped only at `WALK_CAP = 2000` — so a heavy or griefed-inventory
+  wallet could feed thousands of ids into one call and fail the whole refresh,
+  which is the very large-inventory failure mode this design exists to fix.
+  Therefore:
+  - **Consumer chunks** the id set into `PAGE`-sized slices (reuse the existing
+    `PAGE = 200`) and issues `⌈N/PAGE⌉` batch calls, concatenating results.
+    This still collapses the current `2×N` per-id reads into `⌈N/PAGE⌉` calls
+    (e.g. 400 offers: 800 reads → 2 calls) — the win survives chunking.
+  - **Contract caps** the input length defensively: revert
+    `BatchTooLarge(uint256 got, uint256 max)` when
+    `ids.length > MAX_BATCH_IDS` (start `MAX_BATCH_IDS = 250`, a headroom over
+    `PAGE`). A hard cap bounds worst-case response size regardless of caller,
+    and the revert is an honest, probeable signal (not a truncated/partial
+    result) the consumer can react to. Document both the cap and the
+    "chunk by `PAGE`" contract in the NatSpec.
 
 **Home facet — `MetricsDashboardFacet`, not a new facet.** It already owns the
 dashboard aggregate surface (`getUserDashboardLoans`, `getUserDashboardOffers`,
@@ -255,21 +281,35 @@ function deriveOfferState(LibVaipakam.Storage storage s, uint256 offerId)
 `MetricsFacet` keeps `getOfferState` as a thin wrapper over
 `LibMetricsTypes.deriveOfferState` and re-references `LibMetricsTypes.OfferState`
 at its internal call sites (`getUserOffersByStatePaginated`,
-`getOffersByStatePaginated`). **ABI-safe:** a Solidity enum is `uint8` on the
-ABI boundary, so moving the type does not change any facet's ABI JSON;
-`getOfferState`'s external signature is byte-identical. One derivation, both
-facets, zero drift.
+`getOffersByStatePaginated`). **Wire-compatible, not JSON-identical:** a Solidity
+enum is `uint8` on the ABI boundary, so the **selector and calldata/return
+encoding are byte-identical** — no consumer decode breaks. But the exported ABI
+JSON's `internalType` string **does** change for every signature that mentions
+the enum (`getOfferState` return, and the `OfferState` inputs on the two
+state-paginated views) from `enum MetricsFacet.OfferState` to
+`enum LibMetricsTypes.OfferState`. The committed package ABI records the former,
+so the implementation PR's `exportFrontendAbis.sh` re-export will show
+`internalType`-only churn on `MetricsFacet.json` (in addition to the new
+`MetricsDashboardFacet.json` selectors). That diff is cosmetic (no runtime
+effect) but must ship with the PR — call it out in the rollout so a reviewer
+isn't surprised by the extra JSON churn. One derivation, both facets, zero
+drift.
 
 ### 5.4 Consumer switch (apps/alpha02 — follow-up PR, not this contracts PR)
 
-- `readOwnOfferRowsLive`: after enumerating the id `Set`, issue **one**
-  `getOffersWithState([...ids])` and map `OfferView[]` → `IndexedOffer[]`
-  (the `OFFER_STATE` enum array + client-side GTT `'expired'` overlay stays).
-  Revert-probe fallback → today's per-id `getOffer` + `getOfferState` loop.
-- `readOwnLoanRowsLive`: after enumerating `{loanId, heldTokenId}` pairs, issue
-  **one** `getLoansBatch([...loanIds])` and map `LoanView[]` → `PositionLoan[]`
-  (role from `heldTokenId` vs `lenderTokenId`/`borrowerTokenId`, both in
-  `LoanSummary`). Revert-probe fallback → today's per-id `getLoanDetails` loop.
+- `readOwnOfferRowsLive`: after enumerating the id `Set`, **chunk it into
+  `PAGE`-sized slices** and issue one `getOffersWithState(slice)` per chunk,
+  concatenating `OfferView[]` → `IndexedOffer[]` (the `OFFER_STATE` enum array +
+  client-side GTT `'expired'` overlay stays). Revert-probe fallback → today's
+  per-id `getOffer` + `getOfferState` loop.
+- `readOwnLoanRowsLive`: after enumerating `{loanId, heldTokenId}` pairs,
+  **chunk the `loanId` list (order preserved, duplicates kept)** and issue one
+  `getLoansBatch(slice)` per chunk, then **zip `LoanView[]` back to the original
+  pair list positionally** so each element maps to its `heldTokenId` (role from
+  `heldTokenId` vs `lenderTokenId`/`borrowerTokenId`, both in `LoanSummary`).
+  Do **not** dedupe the loanId list before the call — dual-role holders depend
+  on the duplicate (§5.2). Revert-probe fallback → today's per-id
+  `getLoanDetails` loop.
 - Fallback is the existing `isRevert(e)` probe (`liveLoanRow.ts`): an honest
   revert / zero-data (old deploy lacks the selector) → per-id path; a transport
   error → `null` (whole source degraded, existing banner). This is the same
@@ -333,8 +373,15 @@ facets, zero drift.
 6. Empty id array → empty array, no revert.
 7. `getOfferState` ABI/behaviour unchanged after the derivation hoist
    (regression guard on the refactor).
-8. Large array (e.g. 200 ids) compiles and returns without a viaIR/stack
-   failure (the §5.1 build risk, exercised).
+8. Large array (e.g. `MAX_BATCH_IDS` ids) compiles and returns without a
+   viaIR/stack failure (the §5.1 build risk, exercised).
+9. **Over-cap** — `ids.length == MAX_BATCH_IDS + 1` reverts
+   `BatchTooLarge(got, max)` on both views (the §5.2 server-side cap); exactly
+   `MAX_BATCH_IDS` succeeds (boundary).
+10. **Duplicate loanId / dual-role holder** — `getLoansBatch([L, L])` (same
+    loan id twice) returns two identical `LoanView`s positionally, proving the
+    view does not dedupe and the pair-alignment contract holds (§5.2 / §5.4).
+    Symmetric duplicate-offerId case for `getOffersWithState`.
 
 **Verification order:** `FOUNDRY_PROFILE=quick forge build` inner loop →
 `forge build` (default) for the ABI shape → targeted
@@ -345,9 +392,12 @@ rule, not the full regression.
 ## 8. Rollout
 
 1. **This PR (design):** this document only.
-2. **Contracts PR:** DTOs + two views + derivation hoist + deploy-sanity
-   selectors + tests + frontend ABI re-export (`MetricsDashboardFacet.json`) +
-   release-note fragment + FunctionalSpec update.
+2. **Contracts PR:** DTOs + two views (with the `MAX_BATCH_IDS` cap +
+   `BatchTooLarge` error) + derivation hoist + deploy-sanity selectors + tests +
+   frontend ABI re-export + release-note fragment + FunctionalSpec update. The
+   re-export touches **both** `MetricsDashboardFacet.json` (new selectors) and
+   `MetricsFacet.json` (`internalType`-only churn from the enum hoist, §5.3) —
+   expect that second, cosmetic diff.
 3. **Consumer PR (apps/alpha02):** switch `readOwnOfferRowsLive` /
    `readOwnLoanRowsLive` to the batch views with the revert-probe fallback.
 4. **Deferred follow-up:** the `getUserDashboard` mega-aggregate (Alternative
