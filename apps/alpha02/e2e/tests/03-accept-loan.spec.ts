@@ -1,10 +1,12 @@
 /** Flow 4.1 (B1) — two actors: the lender posts through the UI, the
- *  borrower deep-links to that exact offer and accepts through the UI,
- *  and the loan opens on-chain with the borrower's collateral locked. */
+ *  borrower GUIDED-MATCHES (details → matching offers → choose this
+ *  run's card) and accepts through the UI, and the loan opens on-chain
+ *  with the borrower's collateral locked. The deep-link accept path is
+ *  covered separately by 04-repay's setup. */
 import { test, expect } from '../lib/wallet-fixture';
 import {
   postLenderOffer,
-  acceptAsBorrower,
+  acceptViaGuidedMatch,
   newestOfferIdFor,
   newestLoanIdFor,
 } from '../lib/flows';
@@ -19,7 +21,7 @@ test('borrower accepts a matching offer and the loan opens', async ({
   await lender.ctx.close();
 
   const borrower = await launchWallet('borrower');
-  await acceptAsBorrower(borrower.page, offerId);
+  await acceptViaGuidedMatch(borrower.page, offerId);
 
   const loanId = await newestLoanIdFor(borrower.account.address, 'borrower');
   const loan = (await pub.readContract({

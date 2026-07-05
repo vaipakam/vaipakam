@@ -37,12 +37,34 @@ async function waitForHttp(url: string, timeoutMs = 30_000): Promise<void> {
   throw new Error(`service not ready: ${url}`);
 }
 
+/** Readiness probes can't tell OUR fresh child from a stale process
+ *  already squatting the port (the child dies with EADDRINUSE while
+ *  the probe happily answers) — and a stale anvil/stub means the run
+ *  silently uses non-disposable state. Fail closed BEFORE spawning:
+ *  anything answering on the port is fatal. */
+async function assertNothingListening(url: string, what: string): Promise<void> {
+  let responded = false;
+  try {
+    await fetch(url, { signal: AbortSignal.timeout(2_000) });
+    responded = true;
+  } catch {
+    /* connection refused / timeout — port is free, good */
+  }
+  if (responded) {
+    throw new Error(
+      `${what} port already has a listener at ${url} — kill the stale process; the fork tier needs a fresh disposable instance`,
+    );
+  }
+}
+
 export default async function globalSetup(): Promise<void> {
   fs.mkdirSync(STATE_DIR, { recursive: true });
   const pids: number[] = [];
 
   const forkUrl =
     process.env.ALPHA02_E2E_FORK_URL ?? 'https://sepolia.base.org';
+  await assertNothingListening(ANVIL_URL, 'anvil');
+  await assertNothingListening(`http://127.0.0.1:${STUB_PORT}/`, 'indexer stub');
   // Spawn on the SAME endpoint every helper (and the browser via
   // playwright.config's VITE_BASE_SEPOLIA_RPC_URL) resolves from
   // ALPHA02_E2E_ANVIL_URL — a fixed port here would split the suite
@@ -62,12 +84,19 @@ export default async function globalSetup(): Promise<void> {
     { stdio: ['ignore', 'inherit', 'inherit'], detached: false },
   );
   if (anvil.pid) pids.push(anvil.pid);
-  anvil.on('exit', (code) => {
-    if (code !== null && code !== 0) {
-      console.error(`[e2e] anvil exited early with code ${code}`);
-    }
-  });
-  await waitForAnvil(120_000);
+  // A child death before readiness (bad fork URL, port race) must be
+  // fatal — resolves (never rejects) so the loser of the race can't
+  // become an unhandled rejection.
+  const anvilDied = new Promise<number>((resolve) =>
+    anvil.on('exit', (code) => resolve(code ?? -1)),
+  );
+  const anvilOutcome = await Promise.race([
+    waitForAnvil(120_000).then(() => 'ready' as const),
+    anvilDied,
+  ]);
+  if (anvilOutcome !== 'ready') {
+    throw new Error(`anvil exited before ready (code ${anvilOutcome})`);
+  }
   console.log('[e2e] anvil fork ready (chainId 84532)');
 
   const stub = spawn(
@@ -82,6 +111,9 @@ export default async function globalSetup(): Promise<void> {
   if (stub.pid) pids.push(stub.pid);
   fs.writeFileSync(PIDS_FILE, JSON.stringify(pids));
   await waitForHttp(`http://127.0.0.1:${STUB_PORT}/offers/stats?chainId=84532`);
+  if (stub.exitCode !== null) {
+    throw new Error(`indexer stub exited early (code ${stub.exitCode})`);
+  }
   console.log('[e2e] indexer stub ready');
 
   await createAndFundWallets();

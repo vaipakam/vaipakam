@@ -62,7 +62,11 @@ export async function postLenderOffer(page: Page): Promise<void> {
   await expect(see).toBeEnabled({ timeout: 30_000 });
   await see.click();
   await page.getByRole('button', { name: /post my own lending offer/i }).click();
-  await page.locator('input[placeholder="5"]').fill('10');
+  // 9% — deliberately BELOW the stale forked-book offers (the live
+  // campaign posted at 10%), so the borrower-side matcher (rate
+  // ascending on an exact-amount tie) ranks this run's offer inside
+  // the top-5 cards and the guided-match scenario can pick it.
+  await page.locator('input[placeholder="5"]').fill('9');
   // Collateral: paste the faucet tLIQ address (not in the curated list).
   await pasteAsset(page, 'collateral-asset', MOCKS!.liquidToken as string);
   await page.locator('input[placeholder="0.0"]:visible').last().fill('100');
@@ -77,19 +81,9 @@ export async function postLenderOffer(page: Page): Promise<void> {
   });
 }
 
-/** Borrower accepts a SPECIFIC offer via the offer-book deep link
- *  (?offer=<id>). Deliberately not the guided matcher: the fork
- *  inherits Base Sepolia's whole open offer book, so matching
- *  legitimately surfaces stale look-alike offers (run 3's borrower
- *  picked one whose collateral it didn't hold) — the deep link is the
- *  deterministic route to the offer the test just created, and is
- *  itself a first-class flow (Alpha02RegressionFlows §offer book). */
-export async function acceptAsBorrower(
-  page: Page,
-  offerId: bigint,
-): Promise<void> {
-  await page.goto(`/borrow?offer=${offerId}`, { waitUntil: 'domcontentloaded' });
-  await connectWallet(page);
+/** Shared review-step tail of both accept paths: consent (re-ticked
+ *  through late-disclosure resets), sign, wait for the done card. */
+async function signAcceptReview(page: Page): Promise<void> {
   const accept = page.getByRole('button', { name: /borrow this now/i });
   await expect(accept).toBeVisible({ timeout: 30_000 });
   await consentAndWaitEnabled(page, accept);
@@ -97,6 +91,43 @@ export async function acceptAsBorrower(
   await expect(page.getByText(/loan opened|what happens next/i)).toBeVisible({
     timeout: 120_000,
   });
+}
+
+/** Borrower accepts a SPECIFIC offer via the offer-book deep link
+ *  (?offer=<id>) — the Offer Book "Use this offer" journey. */
+export async function acceptAsBorrower(
+  page: Page,
+  offerId: bigint,
+): Promise<void> {
+  await page.goto(`/borrow?offer=${offerId}`, { waitUntil: 'domcontentloaded' });
+  await connectWallet(page);
+  await signAcceptReview(page);
+}
+
+/** Borrower accepts through the GUIDED MATCHER (flow 4.1): details →
+ *  See matching offers → the card for `offerId` → review → sign. The
+ *  fork inherits Base Sepolia's whole open book (stale look-alike
+ *  offers included — run 3's borrower picked one whose collateral it
+ *  didn't hold), so the card is selected by its "offer #<id>" line,
+ *  never positionally. */
+export async function acceptViaGuidedMatch(
+  page: Page,
+  offerId: bigint,
+): Promise<void> {
+  await page.goto('/borrow', { waitUntil: 'domcontentloaded' });
+  await connectWallet(page);
+  await pickCuratedAsset(page, 'lending-asset', WETH);
+  await page.locator('input[placeholder="0.0"]').fill('0.005');
+  const see = page.getByRole('button', { name: /see matching offers/i });
+  await expect(see).toBeEnabled({ timeout: 30_000 });
+  await see.click();
+  const card = page
+    .locator('.item-row')
+    .filter({ has: page.getByText(`offer #${offerId}`) })
+    .first();
+  await expect(card).toBeVisible({ timeout: 30_000 });
+  await card.getByRole('button', { name: /^choose$/i }).click();
+  await signAcceptReview(page);
 }
 
 /** Newest offer id created by `creator`, from the chain's own

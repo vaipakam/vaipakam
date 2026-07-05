@@ -33,6 +33,23 @@ async function wireWallet(
     account,
   });
 
+  // Real injected wallets refuse to act for an account that isn't the
+  // selected one — mirroring that catches from/signer wiring
+  // regressions the suite would otherwise wave through (a stale
+  // address in the app would sign fine here but fail in MetaMask).
+  function assertSessionAccount(requested: unknown, method: string): void {
+    if (
+      typeof requested === 'string' &&
+      requested.toLowerCase() !== account.address.toLowerCase()
+    ) {
+      const err = new Error(
+        `${method} requested account ${requested} but the wallet's selected account is ${account.address}`,
+      ) as Error & { code: number };
+      err.code = 4100; // EIP-1193 "unauthorized"
+      throw err;
+    }
+  }
+
   async function handle({ method, params }: { method: string; params?: unknown[] }) {
     const p = (params ?? []) as never[];
     switch (method) {
@@ -58,8 +75,12 @@ async function wireWallet(
       case 'wallet_watchAsset':
         return true;
       case 'personal_sign':
+        // params: [data, address]
+        assertSessionAccount(p[1], method);
         return account.signMessage({ message: { raw: p[0] as `0x${string}` } });
       case 'eth_signTypedData_v4': {
+        // params: [address, typedDataJson]
+        assertSessionAccount(p[0], method);
         const typed = JSON.parse(p[1] as string);
         return account.signTypedData({
           domain: typed.domain,
@@ -70,11 +91,13 @@ async function wireWallet(
       }
       case 'eth_sendTransaction': {
         const tx = p[0] as {
+          from?: `0x${string}`;
           to?: `0x${string}`;
           data?: `0x${string}`;
           value?: string;
           gas?: string;
         };
+        assertSessionAccount(tx.from, method);
         return wallet.sendTransaction({
           to: tx.to,
           data: tx.data,

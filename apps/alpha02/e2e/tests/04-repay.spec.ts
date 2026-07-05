@@ -1,6 +1,8 @@
 /** Flow 5.1 — borrower repays in full from the position page; the
  *  loan settles Repaid on-chain. Builds its own loan first (post +
- *  accept through the UI) so the scenario is self-contained. */
+ *  DEEP-LINK accept through the UI — the Offer Book "?offer=<id>"
+ *  journey, complementing 03's guided-match path) so the scenario is
+ *  self-contained. */
 import { test, expect } from '../lib/wallet-fixture';
 import {
   postLenderOffer,

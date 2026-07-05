@@ -51,21 +51,33 @@ const LOAN_STATUS = ['active', 'repaid', 'defaulted', 'settled', 'fallback_pendi
 const s = (v) => (v === undefined || v === null ? '0' : String(v));
 const n = (v) => Number(v ?? 0);
 
-function offerStatus(o) {
-  if (!o.creator || /^0x0{40}$/i.test(o.creator)) return null; // gone
-  if (o.accepted) return 'accepted';
-  return 'active';
-}
+// MetricsFacet.OfferState — the CANONICAL lifecycle view. The raw
+// getOffer struct cannot express a ConsumedBySale terminal (the row
+// still reads open), so status must come from getOfferState, exactly
+// like the real indexer's derivation. Unknown enum values throw (500)
+// rather than guess.
+const OFFER_STATE = ['active', 'accepted', 'cancelled', 'consumed_by_sale'];
 
 async function mapOffer(id) {
   // No catch: a zeroed struct is the legitimate "gone" signal below;
   // an RPC/ABI failure must bubble to the handler's 500 instead of
   // silently dropping the row.
-  const o = await read('getOffer', [BigInt(id)]);
+  const [o, stateRaw] = await Promise.all([
+    read('getOffer', [BigInt(id)]),
+    read('getOfferState', [BigInt(id)]),
+  ]);
   if (!o) return null;
-  const status = offerStatus(o);
-  if (status === null) return null;
+  if (!o.creator || /^0x0{40}$/i.test(o.creator)) return null; // slot deleted
   const nowSec = Math.floor(Date.now() / 1000);
+  let status = OFFER_STATE[n(stateRaw)];
+  if (status === undefined) {
+    throw new Error(`unknown OfferState ${stateRaw} for offer ${id}`);
+  }
+  // GTT expiry is a clock-derived overlay on an Open row (matches the
+  // real indexer's 'expired' status).
+  if (status === 'active' && n(o.expiresAt) !== 0 && n(o.expiresAt) < nowSec) {
+    status = 'expired';
+  }
   return {
     chainId: CHAIN_ID,
     offerId: Number(id),
@@ -115,7 +127,13 @@ async function mapLoan(id) {
     chainId: CHAIN_ID,
     loanId: Number(id),
     offerId: n(l.offerId),
-    status: LOAN_STATUS[n(l.status)] ?? 'active',
+    // Unknown enum values fail closed (500) — labelling a future
+    // status 'active' would exercise actions the app can't represent.
+    status:
+      LOAN_STATUS[n(l.status)] ??
+      (() => {
+        throw new Error(`unknown LoanStatus ${l.status} for loan ${id}`);
+      })(),
     lender: l.lender,
     borrower: l.borrower,
     principal: s(l.principal),
@@ -138,6 +156,23 @@ async function mapLoan(id) {
     terminalAt: n(l.status) === 0 ? null : nowSec,
     updatedAt: nowSec,
   };
+}
+
+// A revert is a SEMANTIC answer (e.g. ownerOf on a burned position
+// NFT = "nobody holds it"); a transport/ABI failure is not — the
+// caller must let those 500. viem wraps read reverts in
+// ContractFunctionRevertedError/ZeroData on the cause chain.
+function isRevertError(e) {
+  if (typeof e?.walk === 'function') {
+    return (
+      e.walk(
+        (x) =>
+          x?.name === 'ContractFunctionRevertedError' ||
+          x?.name === 'ContractFunctionZeroDataError',
+      ) != null
+    );
+  }
+  return /revert/i.test(String(e?.message ?? ''));
 }
 
 // Exhaustive id walks. The stub's responses advertise `nextBefore:
@@ -204,6 +239,14 @@ async function handler(req, res) {
   };
 
   try {
+    // The stub serves exactly ONE chain (the fork). An explicit
+    // chainId for anything else must be a loud error, not Base
+    // Sepolia data wearing the wrong label.
+    const chainParam = url.searchParams.get('chainId');
+    if (chainParam !== null && Number(chainParam) !== CHAIN_ID) {
+      return json(400, { error: `stub serves chainId ${CHAIN_ID} only` });
+    }
+
     // GET /offers/stats?chainId= — freshness piggyback. Report the
     // FORK's latest block/timestamp so evm_increaseTime never reads
     // as a stalled cursor.
@@ -219,9 +262,11 @@ async function handler(req, res) {
     // completeness, see activeOfferIds).
     if (parts[0] === 'offers' && parts[1] === 'active') {
       const ids = await activeOfferIds();
-      const offers = (await Promise.all(ids.map(mapOffer))).filter(
-        (o) => o && o.status === 'active',
-      );
+      const offers = (await Promise.all(ids.map(mapOffer)))
+        .filter((o) => o && o.status === 'active')
+        // Production serves ORDER BY offer_id DESC; the contract's
+        // swap-and-pop active list is unordered — restore the shape.
+        .sort((a, b) => b.offerId - a.offerId);
       return json(200, { chainId: CHAIN_ID, offers, nextBefore: null });
     }
 
@@ -242,11 +287,17 @@ async function handler(req, res) {
       for (const id of ids) {
         const o = await mapOffer(id);
         if (!o || o.status !== 'active') continue;
-        const owner = await read('ownerOf', [BigInt(o.positionTokenId)]).catch(
-          () => null,
-        );
+        // ownerOf REVERTING is the semantic "NFT burned / nobody
+        // holds it" answer; any other failure (ABI/RPC) must 500.
+        let owner = null;
+        try {
+          owner = await read('ownerOf', [BigInt(o.positionTokenId)]);
+        } catch (e) {
+          if (!isRevertError(e)) throw e;
+        }
         if (owner && owner.toLowerCase() === holder) offers.push(o);
       }
+      offers.sort((a, b) => b.offerId - a.offerId);
       return json(200, { chainId: CHAIN_ID, offers, nextBefore: null });
     }
 
