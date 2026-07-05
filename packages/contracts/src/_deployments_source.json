@@ -1,10 +1,5 @@
 {
-  "monorepoCommit": "ee0e23fdbd0682774f816978d666992f2fcbc8e4 (+ CatchUpFacetCut981 re-run from rebased branch incl. #989, all 3 chains)",
-  "exportedAt": "2026-07-04T22:55:32Z",
-  "chainIds": [
-    97,
-    84532,
-    421614
-  ],
-  "note": "Facet addresses from the operator 22:55Z export after the post-#989 re-cut on all 3 chains; facetCount from live loupe (base 63, arb 63, bnb 63 - bnb gained offerPreviewFacet + rewardRemittanceFacet)."
+  "monorepoCommit": "bdea70b5084e2e243ea83905e7011d43d1a20128 (dirty)",
+  "exportedAt": "2026-07-05T13:33:30Z",
+  "chainIds": [97, 84532, 421614]
 }

@@ -222,19 +222,6 @@ export function Faucet() {
             }
           />
           <FaucetRow
-            title={copy.faucet.liquid2.title}
-            blurb={copy.faucet.liquid2.blurb}
-            address={mocks.liquidToken2}
-            explorer={readChain.blockExplorer}
-            actionLabel={copy.faucet.liquid2.action(LIQUID_UNITS)}
-            busy={busy === mocks.liquidToken2}
-            disabled={!canWrite || busy !== null}
-            onClick={() =>
-              mocks.liquidToken2 &&
-              void mintErc20(mocks.liquidToken2, LIQUID_UNITS, 'tLQ2')
-            }
-          />
-          <FaucetRow
             title={copy.faucet.mweth.title}
             blurb={copy.faucet.mweth.blurb}
             address={mocks.mWeth}
@@ -257,6 +244,19 @@ export function Faucet() {
             onClick={() =>
               mocks.illiquidToken &&
               void mintErc20(mocks.illiquidToken, ILLIQUID_UNITS, 'tILQ')
+            }
+          />
+          <FaucetRow
+            title={copy.faucet.illiquid2.title}
+            blurb={copy.faucet.illiquid2.blurb}
+            address={mocks.illiquidToken2}
+            explorer={readChain.blockExplorer}
+            actionLabel={copy.faucet.illiquid2.action(ILLIQUID_UNITS)}
+            busy={busy === mocks.illiquidToken2}
+            disabled={!canWrite || busy !== null}
+            onClick={() =>
+              mocks.illiquidToken2 &&
+              void mintErc20(mocks.illiquidToken2, ILLIQUID_UNITS, 'tILQ2')
             }
           />
           <FaucetRow

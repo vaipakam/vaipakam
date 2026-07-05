@@ -693,14 +693,8 @@ export const copy = {
     liquid: {
       title: 'Liquid test token (tLIQ)',
       blurb:
-        'Priced by a test oracle, so it behaves like a liquid asset — health factor, liquidation, and refinancing all work with it.',
+        'Priced by a test oracle, so it behaves like a liquid asset — health factor, liquidation, and refinancing all work with it. Pair it with mWETH (one as the loan, one as collateral) when a flow needs two different liquid tokens.',
       action: (units: number) => `Mint ${units.toLocaleString()} tLIQ`,
-    },
-    liquid2: {
-      title: 'Second liquid test token (tLQ2)',
-      blurb:
-        'Also oracle-priced. Pair it with tLIQ (one as the loan, one as collateral) — the health-factor, liquidation, and refinancing flows need two different liquid tokens.',
-      action: (units: number) => `Mint ${units.toLocaleString()} tLQ2`,
     },
     mweth: {
       title: 'Mock wrapped ETH (mWETH)',
@@ -721,6 +715,12 @@ export const copy = {
       blurb:
         'No price feed, so it behaves like an illiquid asset — both sides must consent, and default transfers the collateral in kind.',
       action: (units: number) => `Mint ${units.toLocaleString()} tILQ`,
+    },
+    illiquid2: {
+      title: 'Second illiquid test token (tILQ2)',
+      blurb:
+        'Also unpriced. Pair it with tILQ (one as the loan, one as collateral) to try a deal where NEITHER side has a price — both parties must consent, no health factor applies, and default hands the collateral over in kind.',
+      action: (units: number) => `Mint ${units.toLocaleString()} tILQ2`,
     },
     nft: {
       title: 'Rental test NFT (vRENT)',
