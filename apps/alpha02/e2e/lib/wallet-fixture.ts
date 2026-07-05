@@ -238,7 +238,21 @@ export const test = base.extend<{
       sessions.push(session);
       return session;
     });
+    // Teardown gate: an UNCAUGHT page exception means the UI broke even
+    // if the awaited success copy already rendered — fail the test.
+    // console.error output stays collected (visible in `consoleErrors`
+    // for scenario-level assertions/debugging) but is not a failure by
+    // itself: expected-failure flows (e.g. the cancel-cooldown revert)
+    // and dev-mode library noise legitimately log errors.
+    const uncaught = sessions.flatMap((s) =>
+      s.consoleErrors.filter((e) => e.startsWith('PAGEERROR: ')),
+    );
     for (const s of sessions) await s.ctx.close().catch(() => {});
+    if (uncaught.length > 0) {
+      throw new Error(
+        `uncaught page exception(s) during the scenario:\n${uncaught.join('\n')}`,
+      );
+    }
   },
 });
 

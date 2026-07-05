@@ -6,13 +6,14 @@
 # per-run wallets — no secrets required.
 #
 # Trigger scope (deliberate): the suite exercises the APP against the
-# DEPLOYED chain, so it cares about apps/alpha02/** and the consumed
-# artifacts in packages/contracts/** (ABIs + deployments — where a
-# contract change actually reaches the app, per the repo's sync
-# convention). Raw contracts/** changes don't alter the fork until
-# they're deployed + synced, so they don't trigger it. The nightly
-# schedule catches the other direction: the live testnet moving under
-# an unchanged app.
+# DEPLOYED chain, so it cares about apps/alpha02/**, the shared
+# workspace code the app imports (packages/lib/** — curated assets,
+# error decoding), and the consumed artifacts in packages/contracts/**
+# (ABIs + deployments — where a contract change actually reaches the
+# app, per the repo's sync convention). Raw contracts/** changes don't
+# alter the fork until they're deployed + synced, so they don't
+# trigger it. The nightly schedule catches the other direction: the
+# live testnet moving under an unchanged app.
 name: alpha02 e2e (anvil fork)
 
 on:
@@ -20,12 +21,14 @@ on:
     paths:
       - 'apps/alpha02/**'
       - 'packages/contracts/**'
+      - 'packages/lib/**'
       - '.github/workflows/alpha02-e2e.yml'
   push:
     branches: [main]
     paths:
       - 'apps/alpha02/**'
       - 'packages/contracts/**'
+      - 'packages/lib/**'
       - '.github/workflows/alpha02-e2e.yml'
   schedule:
     - cron: '17 3 * * *' # nightly: catch live-testnet drift under an unchanged app
@@ -64,6 +67,9 @@ jobs:
 
       - name: Install Playwright Chromium
         run: pnpm --filter @vaipakam/alpha02 exec playwright install --with-deps chromium
+
+      - name: Typecheck the e2e surface
+        run: pnpm --filter @vaipakam/alpha02 run e2e:typecheck
 
       - name: Run fork-tier e2e
         env:

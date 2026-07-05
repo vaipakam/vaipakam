@@ -135,11 +135,29 @@ async function mapLoan(id) {
   };
 }
 
-async function activeOfferIds(limit = 100) {
-  const ids = await read('getActiveOffersPaginated', [0n, BigInt(limit)]).catch(
-    () => [],
-  );
-  return [...ids];
+// Exhaustive active-offer id walk. The stub's responses advertise
+// `nextBefore: null` (= "this page is complete"), so the page must
+// actually BE complete: truncating at one chain page would silently
+// hide later offers from the app's pagination-following client. Pages
+// the chain view until a short page, with a hard cap as a runaway
+// guard (logged, never silent).
+const ACTIVE_IDS_CAP = 2000;
+async function activeOfferIds() {
+  const ids = [];
+  const PAGE = 200n;
+  for (let offset = 0n; ids.length < ACTIVE_IDS_CAP; offset += PAGE) {
+    const page = await read('getActiveOffersPaginated', [offset, PAGE]).catch(
+      () => [],
+    );
+    ids.push(...page);
+    if (page.length < Number(PAGE)) break;
+  }
+  if (ids.length >= ACTIVE_IDS_CAP) {
+    console.warn(
+      `[indexer-stub] active-offer walk hit the ${ACTIVE_IDS_CAP} cap — book truncated`,
+    );
+  }
+  return ids;
 }
 
 async function handler(req, res) {
@@ -164,9 +182,11 @@ async function handler(req, res) {
       });
     }
 
-    // GET /offers/active?chainId=&limit=
+    // GET /offers/active?chainId=&limit= — the full book in one page
+    // (`limit` deliberately ignored: nextBefore null promises
+    // completeness, see activeOfferIds).
     if (parts[0] === 'offers' && parts[1] === 'active') {
-      const ids = await activeOfferIds(Number(url.searchParams.get('limit') ?? 50));
+      const ids = await activeOfferIds();
       const offers = (await Promise.all(ids.map(mapOffer))).filter(
         (o) => o && o.status === 'active',
       );
@@ -187,7 +207,7 @@ async function handler(req, res) {
     // position NFT the wallet currently holds.
     if (parts[0] === 'offers' && parts[1] === 'by-current-holder' && parts[2]) {
       const holder = parts[2].toLowerCase();
-      const ids = await activeOfferIds(100);
+      const ids = await activeOfferIds();
       const offers = [];
       for (const id of ids) {
         const o = await mapOffer(id);
