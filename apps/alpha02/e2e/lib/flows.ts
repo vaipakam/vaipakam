@@ -39,6 +39,16 @@ async function pasteAsset(
   await page.locator(`#${pickerId} ~ input[placeholder="0x…"]`).fill(address);
 }
 
+/** The suite's principal amount. DISTINCTIVE on purpose: the guided
+ *  matcher ranks by |offer amount - desired amount| FIRST, so an
+ *  offer at an amount nothing on the forked live book uses ranks at
+ *  distance 0 for a borrower asking exactly this amount — top-5
+ *  placement is then deterministic against book drift (rate is only
+ *  the tiebreak among same-amount offers, i.e. this run's own).
+ *  Offers created by CI runs live only on the disposable fork, so
+ *  they can never accumulate on the real testnet book. */
+export const OFFER_AMOUNT_WETH = '0.00537';
+
 /** Tick the consent box and wait for the sign button to open. Late
  *  disclosures (the live grace-bucket / liquidity / linked-loan reads
  *  landing after the tick) legitimately RESET the checkbox — that's
@@ -52,20 +62,17 @@ async function consentAndWaitEnabled(page: Page, button: Locator): Promise<void>
   }).toPass({ timeout: 60_000, intervals: [500, 1_000] });
 }
 
-/** Lender posts a 0.005 WETH lending offer against 100 tLIQ collateral. */
+/** Lender posts an OFFER_AMOUNT_WETH lending offer against 100 tLIQ
+ *  collateral. */
 export async function postLenderOffer(page: Page): Promise<void> {
   await page.goto('/lend', { waitUntil: 'domcontentloaded' });
   await connectWallet(page);
   await pickCuratedAsset(page, 'lending-asset', WETH);
-  await page.locator('input[placeholder="0.0"]').fill('0.005');
+  await page.locator('input[placeholder="0.0"]').fill(OFFER_AMOUNT_WETH);
   const see = page.getByRole('button', { name: /see matching offers/i });
   await expect(see).toBeEnabled({ timeout: 30_000 });
   await see.click();
   await page.getByRole('button', { name: /post my own lending offer/i }).click();
-  // 9% — deliberately BELOW the stale forked-book offers (the live
-  // campaign posted at 10%), so the borrower-side matcher (rate
-  // ascending on an exact-amount tie) ranks this run's offer inside
-  // the top-5 cards and the guided-match scenario can pick it.
   await page.locator('input[placeholder="5"]').fill('9');
   // Collateral: paste the faucet tLIQ address (not in the curated list).
   await pasteAsset(page, 'collateral-asset', MOCKS!.liquidToken as string);
@@ -109,7 +116,8 @@ export async function acceptAsBorrower(
  *  fork inherits Base Sepolia's whole open book (stale look-alike
  *  offers included — run 3's borrower picked one whose collateral it
  *  didn't hold), so the card is selected by its "offer #<id>" line,
- *  never positionally. */
+ *  never positionally, and OFFER_AMOUNT_WETH guarantees top-5
+ *  placement (see its doc). */
 export async function acceptViaGuidedMatch(
   page: Page,
   offerId: bigint,
@@ -117,7 +125,7 @@ export async function acceptViaGuidedMatch(
   await page.goto('/borrow', { waitUntil: 'domcontentloaded' });
   await connectWallet(page);
   await pickCuratedAsset(page, 'lending-asset', WETH);
-  await page.locator('input[placeholder="0.0"]').fill('0.005');
+  await page.locator('input[placeholder="0.0"]').fill(OFFER_AMOUNT_WETH);
   const see = page.getByRole('button', { name: /see matching offers/i });
   await expect(see).toBeEnabled({ timeout: 30_000 });
   await see.click();
