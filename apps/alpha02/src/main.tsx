@@ -8,6 +8,7 @@ import { wagmiConfig } from './chain/wagmi';
 import { ThemeProvider, useTheme } from './app/ThemeContext';
 import { ModeProvider } from './app/ModeContext';
 import { App } from './App';
+import { ErrorBoundary } from './components/ErrorBoundary';
 import './styles/global.css';
 
 const queryClient = new QueryClient({
@@ -46,7 +47,12 @@ createRoot(document.getElementById('root')!).render(
           <QueryClientProvider client={queryClient}>
             <ConnectKitThemed>
               <BrowserRouter>
-                <App />
+                {/* Outer boundary: catches shell/provider-level render
+                    crashes the route-level boundary can't (it lives
+                    inside the shell). No resetKey — reload recovers. */}
+                <ErrorBoundary>
+                  <App />
+                </ErrorBoundary>
               </BrowserRouter>
             </ConnectKitThemed>
           </QueryClientProvider>
