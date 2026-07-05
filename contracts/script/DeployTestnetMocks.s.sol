@@ -31,6 +31,10 @@ import {Deployments} from "./lib/Deployments.sol";
  *           - `tILQ` — an 18-dec ERC-20 with NO oracle wiring, so it
  *             stays **illiquid** (in-kind default path). The deliberate
  *             counterpart to tLIQ for exercising the illiquid flows.
+ *           - `tILQ2` — a SECOND unwired 18-dec ERC-20: pairs with tILQ
+ *             so a deal can carry an illiquid asset on BOTH sides
+ *             (dual-consent, no HF, in-kind default). Its absence of
+ *             feed/pool wiring below is deliberate and load-bearing.
  *           - `vRENT` — an ERC-4907 rentable NFT for the rental flows.
  *           - `MockSwapAdapter` — a registered `ISwapAdapter`
  *             (`AdminFacet.addSwapAdapter`) that the Phase-7a
@@ -57,7 +61,7 @@ import {Deployments} from "./lib/Deployments.sol";
  *         All addresses are written to
  *         `deployments/<chain-slug>/addresses.json` under a single
  *         `.testnetMocks` object (`liquidToken`, `liquidToken2`,
- *         `illiquidToken`, `rentalNft`, `feedRegistry`,
+ *         `illiquidToken`, `illiquidToken2`, `rentalNft`, `feedRegistry`,
  *         `liquidTokenUsdFeed`, `liquidToken2UsdFeed`, `ethUsdFeed`,
  *         `uniswapV3Factory`, `liquidTokenWethPool`,
  *         `liquidToken2WethPool`, `zeroExProxy`, `mockSwapAdapter`)
@@ -209,6 +213,18 @@ contract DeployTestnetMocks is Script {
             console.log("Deployed tILQ:  ", illiquidToken);
         } else {
             console.log("Reusing tILQ:   ", illiquidToken);
+        }
+
+        // Second unpriced token: pairs with tILQ so a deal can carry an
+        // illiquid asset on BOTH sides (dual-consent, no HF, in-kind
+        // default). Gets NO feed or pool wiring below — that absence is
+        // what classifies it illiquid.
+        address illiquidToken2 = vm.envOr("FAUCET_ILLIQUID_TOKEN_2", address(0));
+        if (illiquidToken2 == address(0)) {
+            illiquidToken2 = address(new ERC20Mock("Vaipakam Test Illiquid 2", "tILQ2", 18));
+            console.log("Deployed tILQ2: ", illiquidToken2);
+        } else {
+            console.log("Reusing tILQ2:  ", illiquidToken2);
         }
 
         // Third liquid token, WETH-flavoured: some flows read better in
@@ -408,6 +424,7 @@ contract DeployTestnetMocks is Script {
         vm.serializeAddress(obj, "liquidToken2", liquidToken2);
         vm.serializeAddress(obj, "mWeth", mWeth);
         vm.serializeAddress(obj, "illiquidToken", illiquidToken);
+        vm.serializeAddress(obj, "illiquidToken2", illiquidToken2);
         vm.serializeAddress(obj, "rentalNft", rentalNft);
         vm.serializeAddress(obj, "rentalNft2", rentalNft2);
         vm.serializeAddress(obj, "feedRegistry", address(registry));
