@@ -38,6 +38,13 @@ import {
   type SubmitProgress,
 } from '../lib/submitProgress';
 import {
+  fetchTokenSecurity,
+  isCuratedAsset,
+  needsSecurityCheck,
+  useTokenSecurity,
+  verdictFingerprint,
+} from '../data/tokenSecurity';
+import {
   ensureNftApproval,
   readNftOwnershipLive,
   useNftOwnership,
@@ -774,6 +781,46 @@ function RentNftFlow() {
   const rentPlanKnown =
     totalPrepay !== undefined && planAllowance.data !== undefined;
   const rentPlanTotal = 2 + rentPlanApprove;
+  // #1036 — screen the prepay token (the leg the renter pays; the
+  // listed NFT itself has no ERC-20 security surface). Fail closed:
+  // 'block'/'unknown' hold the accept button.
+  const prepaySec = useTokenSecurity(
+    readChain.chainId,
+    selected?.prepayAsset,
+  );
+  // 'needed' derives from the check's inputs, never query lifecycle
+  // state (fetchStatus idles after settling — must not un-gate).
+  const prepaySecNeeded = needsSecurityCheck(
+    readChain.chainId,
+    selected?.prepayAsset,
+  );
+  // Fail-closed on THREE states: no data yet, a 'block' verdict, and
+  // an errored REFETCH — react-query keeps the prior verdict in
+  // `data` when a later refetch fails, so `isError` must dominate
+  // the stale verdict or an outage would silently un-gate.
+  const prepaySecBlocked =
+    prepaySecNeeded &&
+    (prepaySec.isError ||
+      prepaySec.data === undefined ||
+      prepaySec.data.kind === 'block');
+  const prepaySecWarned =
+    prepaySecNeeded && !prepaySec.isError && prepaySec.data?.kind === 'warn';
+  // Late-disclosure rule: a warning/block arriving after the consent
+  // box was ticked voids the consent. Fingerprinted on the REASON
+  // content too — changed warning text is a new disclosure even when
+  // the verdict kind stayed 'warn'.
+  const prepaySecFingerprint = prepaySec.isError
+    ? 'errored'
+    : verdictFingerprint(prepaySec.data);
+  // Fingerprint current when consent was LAST ticked (stamped in the
+  // checkbox handler). canSign requires a match while a warning is
+  // disclosed — the clear-effect below only runs after a commit,
+  // leaving one render where a fresh warn and stale consent coexist.
+  const prepayConsentFpRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (prepaySecBlocked || prepaySecWarned) setConsent(false);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [prepaySecFingerprint, prepaySecBlocked]);
 
   const baseChecks = useEligibility({
     asset: selected
@@ -823,6 +870,11 @@ function RentNftFlow() {
     receipt !== null &&
     Boolean(walletClient) &&
     Boolean(publicClient) &&
+    !prepaySecBlocked &&
+    // A disclosed warning requires consent granted AGAINST the
+    // current fingerprint, not consent left over from before it
+    // appeared.
+    (!prepaySecWarned || prepayConsentFpRef.current === prepaySecFingerprint) &&
     !busy;
 
   async function submit() {
@@ -885,6 +937,47 @@ function RentNftFlow() {
       // comparison (incl. ERC-1155 quantity and asset type) runs
       // before the wallet is asked to sign, so the renter never signs
       // terms that differ from the reviewed listing.
+      // #1036 — re-verify the prepay token at submit time (fail
+      // closed; curated tokens are pre-vetted and skipped). A live
+      // result differing from the reviewed disclosure is pushed into
+      // the query cache before aborting, so the re-review renders the
+      // new finding and the fingerprint effect voids stale consent.
+      if (!isCuratedAsset(walletChain.chainId, selected.prepayAsset)) {
+        const v = await fetchTokenSecurity(walletChain.chainId, selected.prepayAsset);
+        const cacheKey = [
+          'tokenSecurity',
+          readChain.chainId,
+          selected.prepayAsset.toLowerCase(),
+        ];
+        if (v.kind === 'block') {
+          queryClient.setQueryData(cacheKey, v);
+          throw new Error(copy.tokenSecurity.gateBlock('prepayment token', v.reasons));
+        }
+        if (v.kind === 'unknown') {
+          // RESET (not invalidate): reset drops `data` to undefined
+          // immediately, closing the gate the moment the submit lock
+          // clears — invalidate keeps the stale verdict readable
+          // while the forced refetch is in flight. A persistent
+          // outage then errors into the blocked banner + "Check
+          // again".
+          void queryClient.resetQueries({ queryKey: cacheKey });
+          throw new Error(copy.tokenSecurity.gateUnknown('prepayment token'));
+        }
+        // A live 'warn' passes ONLY when the review already disclosed
+        // this exact warning (same reasons) — anything else was never
+        // consented to.
+        if (
+          v.kind === 'warn' &&
+          verdictFingerprint(v) !== verdictFingerprint(prepaySec.data)
+        ) {
+          queryClient.setQueryData(cacheKey, v);
+          // Synchronous consent clear — the fingerprint effect fires
+          // next render; a fast retry inside that window would pass
+          // un-consented.
+          setConsent(false);
+          throw new Error(copy.tokenSecurity.gateChanged('prepayment token'));
+        }
+      }
       let signed: Awaited<ReturnType<typeof signAcceptTerms>>;
       try {
         stepper.next('sign');
@@ -1065,6 +1158,45 @@ function RentNftFlow() {
           </div>
           <div className="card">
             {receipt ? <ReviewReceipt data={receipt} /> : <p className="muted">Preparing your review…</p>}
+            {prepaySecBlocked ? (
+              <div className="banner banner-danger" role="alert" style={{ marginTop: 16 }}>
+                <span className="banner-body">
+                  {prepaySec.isError || prepaySec.data === undefined
+                    ? copy.tokenSecurity.gateUnknown('prepayment token')
+                    : copy.tokenSecurity.gateBlock(
+                        'prepayment token',
+                        prepaySec.data.kind === 'block' ? prepaySec.data.reasons : [],
+                      )}
+                </span>
+                {prepaySec.isError ? (
+                  <button
+                    type="button"
+                    className="btn btn-secondary"
+                    style={{ marginTop: 8 }}
+                    onClick={() => {
+                      void prepaySec.refetch();
+                    }}
+                  >
+                    {copy.tokenSecurity.retry}
+                  </button>
+                ) : null}
+              </div>
+            ) : prepaySecWarned ? (
+              <div className="banner banner-warn" role="alert" style={{ marginTop: 16 }}>
+                <span className="banner-body">
+                  {copy.tokenSecurity.gateWarn(
+                    'prepayment token',
+                    prepaySec.data?.kind === 'warn' ? prepaySec.data.reasons : [],
+                  )}
+                </span>
+              </div>
+            ) : prepaySecNeeded && prepaySec.data?.kind === 'unsupported' ? (
+              <div className="banner banner-info" role="note" style={{ marginTop: 16 }}>
+                <span className="banner-body">
+                  {copy.tokenSecurity.gateUnsupported('prepayment token')}
+                </span>
+              </div>
+            ) : null}
             {/* #1037 — every wallet prompt named before the first fires. */}
             <div className="banner banner-info" role="note" style={{ marginTop: 16 }}>
               <span className="banner-body">
@@ -1091,7 +1223,15 @@ function RentNftFlow() {
               <input
                 type="checkbox"
                 checked={consent}
-                onChange={(e) => setConsent(e.target.checked)}
+                onChange={(e) => {
+                  // Stamp what was on screen when consent was given —
+                  // canSign requires this to match the live security
+                  // fingerprint while a warning is disclosed.
+                  if (e.target.checked) {
+                    prepayConsentFpRef.current = prepaySecFingerprint;
+                  }
+                  setConsent(e.target.checked);
+                }}
                 style={{ marginTop: 3 }}
               />
               <span style={{ flex: 1 }}>{copy.consentLabel}</span>

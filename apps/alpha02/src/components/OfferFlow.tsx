@@ -73,6 +73,13 @@ import {
 import { isPlainDecimal, isPositiveDecimal, submitErrorText } from '../lib/errors';
 import { copy } from '../content/copy';
 import {
+  fetchTokenSecurity,
+  isCuratedAsset,
+  needsSecurityCheck,
+  useTokenSecurity,
+  verdictFingerprint,
+} from '../data/tokenSecurity';
+import {
   makeStepper,
   plannedApprovePrompts,
   readAllowance,
@@ -900,6 +907,109 @@ export function OfferFlow({ side }: { side: Side }) {
     Boolean(address) &&
     selected.creator.toLowerCase() === address!.toLowerCase();
 
+  // #1036 — GoPlus screening of BOTH legs, in BOTH modes. The accept
+  // side is the primary defense (a malicious offer is created straight
+  // against the contract, so only the acceptor's screen can catch a
+  // honeypot leg), but the POST side gates too: createOffer pulls the
+  // creator's own ERC-20 into their vault, and the vault records the
+  // REQUESTED amount — a fee-on-transfer or otherwise-blocked token
+  // locks an underfunded position for the creator themselves. Curated
+  // tokens skip (hook self-disables); testnets resolve to
+  // 'unsupported' (allowed, noticed); 'block' and 'unknown' (couldn't
+  // verify) hold the sign button — fail closed, with copy telling the
+  // user why.
+  const secLendingLeg =
+    mode === 'accept'
+      ? {
+          addr: selected?.lendingAsset,
+          isErc20: selected?.assetType === AssetType.ERC20,
+        }
+      : { addr: form.lendingAsset, isErc20: form.assetType === 'erc20' };
+  const secCollateralLeg =
+    mode === 'accept'
+      ? {
+          addr: selected?.collateralAsset,
+          isErc20: selected?.collateralAssetType === AssetType.ERC20,
+        }
+      : {
+          addr: form.collateralAsset,
+          isErc20: form.collateralAssetType === 'erc20',
+        };
+  const acceptLendingSec = useTokenSecurity(
+    readChain.chainId,
+    secLendingLeg.isErc20 ? secLendingLeg.addr || undefined : undefined,
+  );
+  const acceptCollateralSec = useTokenSecurity(
+    readChain.chainId,
+    secCollateralLeg.isErc20 ? secCollateralLeg.addr || undefined : undefined,
+  );
+  // 'needed' derives from the check's INPUTS (shape + curated), never
+  // from query lifecycle state — fetchStatus returns to idle once a
+  // query settles, which must not un-gate a bad verdict.
+  const securityLegs = [
+    {
+      leg: 'loan asset',
+      needed:
+        secLendingLeg.isErc20 &&
+        needsSecurityCheck(readChain.chainId, secLendingLeg.addr),
+      verdict: acceptLendingSec.data,
+      errored: acceptLendingSec.isError,
+    },
+    {
+      leg: 'collateral',
+      needed:
+        secCollateralLeg.isErc20 &&
+        needsSecurityCheck(readChain.chainId, secCollateralLeg.addr),
+      verdict: acceptCollateralSec.data,
+      errored: acceptCollateralSec.isError,
+    },
+  ].filter((l) => l.needed);
+  // Fail-closed on THREE states: no data yet (loading), a 'block'
+  // verdict, and an errored REFETCH — react-query keeps the prior
+  // verdict in `data` when a later refetch fails, so `isError` must
+  // dominate the stale verdict or an outage would silently un-gate.
+  const securityBlocked = securityLegs.filter(
+    (l) => l.errored || l.verdict === undefined || l.verdict.kind === 'block',
+  );
+  const securityWarned = securityLegs.filter(
+    (l) => !l.errored && l.verdict?.kind === 'warn',
+  );
+  const securityUnsupported = securityLegs.filter(
+    (l) => l.verdict?.kind === 'unsupported',
+  );
+  // No mode bypass: post-mode deposits hit the same requested-amount
+  // vault accounting the accept path does, so both modes hold on a
+  // blocked/unverified leg.
+  const securityGateOk = securityBlocked.length === 0;
+  // Late-disclosure rule (same as illiquid/sale banners): a warning
+  // or block that ARRIVES after the consent box was ticked voids the
+  // consent — it was given against a review without the disclosure.
+  // The fingerprint includes the REASON text, not just the verdict
+  // kind: consent given against "10% sell tax" must not survive the
+  // warning changing to "the owner can pause all transfers".
+  const securityFingerprint = securityLegs
+    .map(
+      (l) =>
+        `${l.leg}:${l.errored ? 'errored' : verdictFingerprint(l.verdict)}`,
+    )
+    .join('|');
+  // The fingerprint that was current when the user LAST ticked the
+  // consent box (stamped in the checkbox handler). canSign requires
+  // it to match the live fingerprint whenever a warning is on screen:
+  // the consent-clear effect below runs only AFTER a commit, leaving
+  // one render where a freshly-arrived warn and stale consent coexist
+  // — this derived gate closes that window without waiting for the
+  // effect.
+  const securityConsentFpRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (securityBlocked.length > 0 || securityWarned.length > 0) {
+      setForm((f) =>
+        f.riskAndTermsConsent ? { ...f, riskAndTermsConsent: false } : f,
+      );
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [securityFingerprint]);
+
   const canSign =
     allChecksPass(checks) &&
     receipt !== null &&
@@ -917,6 +1027,12 @@ export function OfferFlow({ side }: { side: Side }) {
     // links never sign here.
     linkedLoanKnown &&
     (!acceptIsLoanSale || saleReviewReady) &&
+    securityGateOk &&
+    // A disclosed security warning requires consent granted AGAINST
+    // the current fingerprint — not merely consent that is still true
+    // from before the warning appeared.
+    (securityWarned.length === 0 ||
+      securityConsentFpRef.current === securityFingerprint) &&
     (mode === 'accept'
       ? selected !== null
       : formError === null && durationValid && !selfCollateral) &&
@@ -1080,6 +1196,53 @@ export function OfferFlow({ side }: { side: Side }) {
           side === 'lender' ? lendingMeta.data?.symbol : collateralMeta.data?.symbol,
       }),
     ]);
+    // #1036 — re-verify both legs at SUBMIT time, post mode too: the
+    // creator's own ERC-20 goes into vault custody at the requested
+    // amount, so a blocked/unverified token must abort before the
+    // approval can mine. Same disclosure rules as the accept path —
+    // a live verdict differing from the reviewed one is pushed into
+    // the query cache so the re-review renders it and voids consent.
+    for (const [leg, addr, isErc20] of [
+      ['loan asset', form.lendingAsset, form.assetType === 'erc20'],
+      [
+        'collateral',
+        form.collateralAsset,
+        form.collateralAssetType === 'erc20',
+      ],
+    ] as const) {
+      if (!isErc20 || !addr) continue;
+      if (isCuratedAsset(walletChain.chainId, addr)) continue; // pre-vetted
+      const v = await fetchTokenSecurity(walletChain.chainId, addr);
+      const cacheKey = ['tokenSecurity', readChain.chainId, addr.toLowerCase()];
+      if (v.kind === 'block') {
+        queryClient.setQueryData(cacheKey, v);
+        throw new Error(copy.tokenSecurity.gateBlock(leg, v.reasons));
+      }
+      if (v.kind === 'unknown') {
+        // RESET (not invalidate) the cached pass: reset drops `data`
+        // to undefined immediately, so the gate is closed the moment
+        // the submit lock clears — invalidate would keep the stale
+        // verdict readable (and the button enabled) while the forced
+        // refetch is still in flight. If the outage persists the
+        // refetch errors into the blocked banner + "Check again".
+        void queryClient.resetQueries({ queryKey: cacheKey });
+        throw new Error(copy.tokenSecurity.gateUnknown(leg));
+      }
+      if (v.kind === 'warn') {
+        const reviewed = securityLegs.find((l) => l.leg === leg);
+        if (verdictFingerprint(v) !== verdictFingerprint(reviewed?.verdict)) {
+          queryClient.setQueryData(cacheKey, v);
+          // Clear consent SYNCHRONOUSLY — the fingerprint effect only
+          // fires on the next render, and in that window a fast retry
+          // would find the (now-cached) warn equal to the reviewed
+          // one and sail through un-consented.
+          setForm((f) =>
+            f.riskAndTermsConsent ? { ...f, riskAndTermsConsent: false } : f,
+          );
+          throw new Error(copy.tokenSecurity.gateChanged(leg));
+        }
+      }
+    }
     await ensureAllowance({
       publicClient,
       walletClient,
@@ -1188,6 +1351,64 @@ export function OfferFlow({ side }: { side: Side }) {
         }
         if (!fresh.sellerCovered) {
           throw new Error(copy.match.saleSellerNotCovered);
+        }
+      }
+      // #1036 — re-verify both legs at SUBMIT time (fail closed): the
+      // review's verdicts are cached; a flag can land inside their
+      // window, and a doomed deal must abort before any signature.
+      // A live result that DIFFERS from what the reviewed screen
+      // disclosed is pushed into the query cache before aborting, so
+      // the re-review renders the new finding (and the fingerprint
+      // effect voids the stale consent) — the abort message alone
+      // would otherwise be the only place the user ever saw it.
+      for (const [leg, addr, isErc20] of [
+        ['loan asset', selected.lendingAsset, selected.assetType === AssetType.ERC20],
+        [
+          'collateral',
+          selected.collateralAsset,
+          selected.collateralAssetType === AssetType.ERC20,
+        ],
+      ] as const) {
+        if (!isErc20) continue;
+        if (isCuratedAsset(walletChain.chainId, addr)) continue; // pre-vetted
+        const v = await fetchTokenSecurity(walletChain.chainId, addr);
+        const cacheKey = [
+          'tokenSecurity',
+          readChain.chainId,
+          addr.toLowerCase(),
+        ];
+        if (v.kind === 'block') {
+          queryClient.setQueryData(cacheKey, v);
+          throw new Error(copy.tokenSecurity.gateBlock(leg, v.reasons));
+        }
+        if (v.kind === 'unknown') {
+          // RESET (not invalidate): reset drops `data` to undefined
+          // immediately, closing the gate the moment the submit lock
+          // clears — invalidate keeps the stale verdict readable
+          // while the forced refetch is in flight. A persistent
+          // outage then errors into the blocked banner + "Check
+          // again".
+          void queryClient.resetQueries({ queryKey: cacheKey });
+          throw new Error(copy.tokenSecurity.gateUnknown(leg));
+        }
+        // A live 'warn' may pass ONLY if the reviewed screen already
+        // disclosed this exact warning (same reasons) and consent was
+        // given against it. A warn that landed after review — or
+        // whose content changed — was never consented to: abort,
+        // surface it, re-collect consent.
+        if (v.kind === 'warn') {
+          const reviewed = securityLegs.find((l) => l.leg === leg);
+          if (verdictFingerprint(v) !== verdictFingerprint(reviewed?.verdict)) {
+            queryClient.setQueryData(cacheKey, v);
+            // Synchronous consent clear — the fingerprint effect only
+            // fires next render; a fast retry inside that window would
+            // find the cached warn equal to the reviewed one and pass
+            // un-consented.
+            setForm((f) =>
+              f.riskAndTermsConsent ? { ...f, riskAndTermsConsent: false } : f,
+            );
+            throw new Error(copy.tokenSecurity.gateChanged(leg));
+          }
         }
       }
       stepper.next('sign');
@@ -1722,6 +1943,59 @@ export function OfferFlow({ side }: { side: Side }) {
           </div>
           <div className="card">
             {receipt ? <ReviewReceipt data={receipt} /> : <p className="muted">Preparing your review…</p>}
+            {securityBlocked.length > 0 ? (
+              <div className="banner banner-danger" role="alert" style={{ marginTop: 16 }}>
+                <span className="banner-body">
+                  {securityBlocked
+                    .map((l) =>
+                      // An errored leg may still carry a STALE prior
+                      // verdict in `data` — report "couldn't check",
+                      // never the stale text.
+                      l.errored || l.verdict === undefined
+                        ? copy.tokenSecurity.gateUnknown(l.leg)
+                        : copy.tokenSecurity.gateBlock(
+                            l.leg,
+                            l.verdict.kind === 'block' ? l.verdict.reasons : [],
+                          ),
+                    )
+                    .join(' ')}
+                </span>
+                {securityBlocked.some((l) => l.errored) ? (
+                  <button
+                    type="button"
+                    className="btn btn-secondary"
+                    style={{ marginTop: 8 }}
+                    onClick={() => {
+                      void acceptLendingSec.refetch();
+                      void acceptCollateralSec.refetch();
+                    }}
+                  >
+                    {copy.tokenSecurity.retry}
+                  </button>
+                ) : null}
+              </div>
+            ) : securityWarned.length > 0 ? (
+              <div className="banner banner-warn" role="alert" style={{ marginTop: 16 }}>
+                <span className="banner-body">
+                  {securityWarned
+                    .map((l) =>
+                      copy.tokenSecurity.gateWarn(
+                        l.leg,
+                        l.verdict?.kind === 'warn' ? l.verdict.reasons : [],
+                      ),
+                    )
+                    .join(' ')}
+                </span>
+              </div>
+            ) : securityUnsupported.length > 0 ? (
+              <div className="banner banner-info" role="note" style={{ marginTop: 16 }}>
+                <span className="banner-body">
+                  {securityUnsupported
+                    .map((l) => copy.tokenSecurity.gateUnsupported(l.leg))
+                    .join(' ')}
+                </span>
+              </div>
+            ) : null}
             {planTotal !== null ? (
               // #1037 — the roadmap: every wallet prompt named before
               // the first one fires, so a second or third prompt never
@@ -1752,7 +2026,15 @@ export function OfferFlow({ side }: { side: Side }) {
               <input
                 type="checkbox"
                 checked={form.riskAndTermsConsent}
-                onChange={(e) => set({ riskAndTermsConsent: e.target.checked })}
+                onChange={(e) => {
+                  // Stamp WHAT was on screen when consent was given —
+                  // canSign requires this to match the live security
+                  // fingerprint while a warning is disclosed.
+                  if (e.target.checked) {
+                    securityConsentFpRef.current = securityFingerprint;
+                  }
+                  set({ riskAndTermsConsent: e.target.checked });
+                }}
                 style={{ marginTop: 3 }}
               />
               <span style={{ flex: 1 }}>{copy.consentLabel}</span>
