@@ -99,8 +99,9 @@ Implementation target:
 >    governance decision.
 > 2. **Market Making fixed at `12%`.** The `12%` here is the canonical figure
 >    (owner decision, 2026-07-05); it supersedes the `14%` shown in the older
->    whitepaper §11.2 table. Aligning that marketing copy to `12%` is a separate
->    whitepaper edit, tracked outside this spec.
+>    whitepaper §11.2 table. The whitepaper table was aligned to `12%` in the
+>    same change-set as this note, so the two documents now agree — no open
+>    follow-up remains.
 
 ### 3a. People-pool semantics (Founders / Team / Testers / Ecosystem)
 
@@ -247,7 +248,7 @@ Day-close emission contract (mirror → Base):
 
 Finalization on Base:
 
-- storage key: daily chain interest by day and source EVM chain id
+- storage key: per-side (lender and borrower) daily chain interest by day and source EVM chain id — the two sides are stored separately, mirroring the two-field day-close payload
 - finalization rule: `dailyGlobalInterestNumeraire[dayId]` (the day's lender-side and borrower-side global denominators, finalized together as one record) is finalized once all expected mirror chain ids have reported for `dayId`, OR after a **4-hour grace window** past `dayId + 1` UTC, whichever comes first
 - any late-arriving report is recorded for audit but does **not** retroactively change a finalized global — this preserves claim determinism
 - finalization records must identify participating chains by EVM chain id, not by legacy cross-chain endpoint identifiers
@@ -267,7 +268,7 @@ Pull-query alternative:
 Reward pool funding on mirrors:
 
 - the interaction-reward VPFI pool (`69,000,000` cap) is held on `Base` (canonical mint chain)
-- per-day per-chain VPFI payout budget = `(dailyChainInterest[D][chainId] / dailyGlobalInterestNumeraire[D]) × dailyPool[D]`
+- per-day per-chain VPFI payout budget is computed **per side**: `½ × dailyPool[D] × (dailyChainLenderInterest[D][chainId] / dailyGlobalLenderInterest[D]) + ½ × dailyPool[D] × (dailyChainBorrowerInterest[D][chainId] / dailyGlobalBorrowerInterest[D])` — each half of the day's pool is scaled by that side's own chain/global ratio; a side whose global denominator is zero (no interest on that side anywhere that day) contributes nothing to the budget
 - once a day is finalized, `Base` computes that per-chain budget and **remits it on-demand** to each mirror over the configured cross-chain token path (Chainlink CCIP) — a permissioned, batched, retriable send, **decoupled from finalization** rather than bundled into it, so a single stuck lane, native-fee shortfall, or per-day delivery failure never blocks finalization or the other chains' funding (#776). The remittance is bounded so what `Base` has remitted plus what it has itself paid out never exceeds the 69M pool.
 - mirror-side `claimInteractionRewards()` draws from the mirror Diamond's local VPFI balance, credited by the remittance above, after the relevant loan has closed; no synthetic IOUs, no cross-chain claim hops. A mirror whose claim gate is open but whose budget has not yet been remitted has claims revert (empty balance) until the operator/keeper funds it — recoverable back-pressure, never lost value.
 
@@ -284,13 +285,13 @@ Reward-budget remittance automation:
 
 Accounting identity:
 
-- because each chain's VPFI slice is scaled by `chainInterest / globalInterest`, the uncapped per-user payout `½ × (userInterest / globalInterest) × dailyPool` is mathematically identical to `½ × (userInterest / localChainInterest) × chainSlice`
+- because each side's portion of a chain's VPFI slice is scaled by that side's own ratio `chainInterest_side / globalInterest_side`, the uncapped per-user payout on a given side, `½ × (userInterest_side / globalInterest_side) × dailyPool`, is mathematically identical to `(userInterest_side / chainInterest_side) × sideSlice` where `sideSlice = ½ × dailyPool × (chainInterest_side / globalInterest_side)` — the identity holds independently for the lender half and the borrower half, and a user active on both sides in the same day simply receives the sum of the two
 - after that proportional result is computed, the protocol applies the per-user cap: `finalReward = min(rawReward, userRewardCap)`
 - this lets users claim locally while still preserving the protocol-wide denominator and the per-user reward-rate ceiling
 
 Failure modes and safety:
 
-- **missing chain for day D** (e.g. RPC outage on a mirror past the grace window): treated as `chainInterest = 0`; finalization emits a missed-chain report keyed by day and EVM chain id; governance may replay a reconciliation payment as a deliberate treasury action (there is no on-chain insurance pool — see §9) but must not reopen a finalized `dayId`
+- **missing chain for day D** (e.g. RPC outage on a mirror past the grace window): both of that chain's per-side totals are treated as zero (`chainLenderInterest = 0` and `chainBorrowerInterest = 0`); finalization emits a missed-chain report keyed by day and EVM chain id; governance may replay a reconciliation payment as a deliberate treasury action (there is no on-chain insurance pool — see §9) but must not reopen a finalized `dayId`
 - **cross-chain message outage / delayed packet**: claims for affected days are simply delayed (not lost) — the pull model's natural backstop
 - **timestamp drift across chains**: day boundary is fixed to UTC 00:00 on-chain via `block.timestamp / 1 days`; small per-chain block-time drift is absorbed within the 4-hour grace window
 - **double-counting**: `(dayId, chainId)` idempotency key on the Base side prevents replay; mirror emits are guarded by a last-reported-day check
