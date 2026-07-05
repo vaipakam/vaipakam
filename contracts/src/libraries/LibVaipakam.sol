@@ -148,20 +148,29 @@ library LibVaipakam {
     // ── Per-tier LIQUIDATION threshold (PR2 of internal-match work) ────
     // The LTV at which a loan becomes liquidatable, indexed by the
     // collateral asset's liquidity tier. Replaces the previous per-asset
-    // `RiskParams.liqThresholdBps`. Mirror shape of the per-tier init-LTV
-    // caps above: tier 1 (deepest liquidity) tolerates the highest
-    // pre-liquidation LTV because we can sell quickly with low slippage;
-    // tier 3 needs a wider cushion. Each `Loan` snapshots the EFFECTIVE
-    // value at `initiateLoan` onto `Loan.liquidationLtvBpsAtInit`, so
-    // tier-degradation mid-loan never re-gates existing loans.
+    // `RiskParams.liqThresholdBps`.
+    //
+    // #999 (S1) — tier numbering is: tier 1 = THINNEST liquidity (clears only
+    // the $5k floor), tier 3 = DEEPEST ($5M probe), matching the init-LTV caps
+    // above (tier 1 = 50% cap, tier 3 = 65% cap) and `OracleFacet._liquidityTier`.
+    // So the gradient runs deeper ⇒ HIGHER pre-liquidation LTV: a DEEP asset
+    // (tier 3) can safely tolerate a higher LTV before liquidation because it
+    // sells quickly with low slippage, while a THIN asset (tier 1) must be
+    // liquidated earlier (lower threshold, wider cushion) to absorb slippage +
+    // handling + liquidator bonus without bad debt. The pre-#999 defaults were
+    // inverted (thin tier 1 got 90%), leaving thin collateral liquidatable only
+    // at 90% LTV — the exact bad-debt shape this gradient exists to prevent.
+    // Each `Loan` snapshots the EFFECTIVE value at `initiateLoan` onto
+    // `Loan.liquidationLtvBpsAtInit`, so tier-degradation mid-loan never
+    // re-gates existing loans.
     //
     // See docs/DesignsAndPlans/InternalLiquidationLedger.md §0 for the
     // user-locked decision trail. Defaults span a 5% gradient between
     // tiers, mirroring the 5% gradient on the init-LTV side (50/60/65
-    // ⇒ 90/85/80).
-    uint16 constant DEFAULT_TIER1_LIQUIDATION_LTV_BPS = 9_000; // 90%
+    // ⇒ 80/85/90).
+    uint16 constant DEFAULT_TIER1_LIQUIDATION_LTV_BPS = 8_000; // 80% — thinnest
     uint16 constant DEFAULT_TIER2_LIQUIDATION_LTV_BPS = 8_500; // 85%
-    uint16 constant DEFAULT_TIER3_LIQUIDATION_LTV_BPS = 8_000; // 80%
+    uint16 constant DEFAULT_TIER3_LIQUIDATION_LTV_BPS = 9_000; // 90% — deepest
     // Hard range bounds enforced by `ConfigFacet.setTierLiquidationLtvBps`.
     // Floor 50% prevents an accidental "always liquidatable" misconfig;
     // ceiling 95% preserves the ≥5% LTV bad-debt buffer below 100% even
@@ -5600,7 +5609,15 @@ library LibVaipakam {
     ///      so we return Tier-3 (most conservative) as a fail-safe; the
     ///      gating site should already have rejected the loan.
     function cfgTierLiquidationLtvBps(uint8 tier) internal view returns (uint256) {
-        if (tier == 0) return cfgTier3LiquidationLtvBps();
+        // #999 (S1) — tier 0 is the "untierable" / thinnest bucket (an asset that
+        // can't clear the $5k floor, or post-#1007 the $50k tier-1 probe). It must
+        // get the MOST CONSERVATIVE (lowest) threshold. Pre-#999 this aliased to
+        // Tier 3, which was correct only while Tier 3 was the low end (80%) under
+        // the inverted gradient; after the flip Tier 3 is the HIGHEST (90%), so
+        // tier 0 now aliases to Tier 1 (the new conservative low, 80%). Leaving it
+        // on Tier 3 would hand the thinnest collateral a 90% threshold — the exact
+        // bad-debt shape #999 removes.
+        if (tier == 0) return cfgTier1LiquidationLtvBps();
         if (tier == 1) return cfgTier1LiquidationLtvBps();
         if (tier == 2) return cfgTier2LiquidationLtvBps();
         if (tier == 3) return cfgTier3LiquidationLtvBps();

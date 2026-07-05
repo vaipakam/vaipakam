@@ -270,6 +270,17 @@ contract TestMutatorFacet {
         c.tier3LiquidationLtvBps = t3;
     }
 
+    /// @notice #999 (S1) — read-through to the internal
+    ///         `LibVaipakam.cfgTierLiquidationLtvBps(tier)` so a test can assert
+    ///         the per-tier-INDEX mapping directly, including the tier-0
+    ///         untierable fallback (which must alias the conservative Tier-1
+    ///         value post-#999, not Tier 3). No production view exposes the
+    ///         per-index lookup, so this test-only passthrough is the cleanest
+    ///         proof of the tier-0 remap.
+    function tierLiquidationLtvBpsFor(uint8 tier) external view returns (uint256) {
+        return LibVaipakam.cfgTierLiquidationLtvBps(tier);
+    }
+
     /// @notice Write `loans[loanId].liquidationLtvBpsAtInit` directly,
     ///         bypassing the snapshot-at-init logic in `LoanFacet`.
     ///         Lets tests stress edge cases in HF math —

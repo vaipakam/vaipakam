@@ -1460,8 +1460,9 @@ contract ConfigFacet is DiamondAccessControl {
     ///             accidental "always liquidatable" misconfig; ceiling
     ///             95% preserves the ≥5% LTV bad-debt buffer below
     ///             100% at the most permissive setting.
-    ///           - Cross-tier monotonic: `T1 ≥ T2 ≥ T3` (deeper-
-    ///             liquidity tier tolerates higher pre-liquidation LTV).
+    ///           - Cross-tier monotonic: `T1 ≤ T2 ≤ T3` (deeper-
+    ///             liquidity tier tolerates higher pre-liquidation LTV;
+    ///             tier 1 = thinnest = lowest threshold). (#999)
     ///         New loans snapshot the effective value at `initiateLoan`
     ///         onto `Loan.liquidationLtvBpsAtInit`; existing loans
     ///         keep their original snapshot — admin tunes apply
@@ -1481,9 +1482,11 @@ contract ConfigFacet is DiamondAccessControl {
         if (t1 > ceil) revert TierLiquidationLtvBpsTooHigh(t1, ceil);
         if (t2 > ceil) revert TierLiquidationLtvBpsTooHigh(t2, ceil);
         if (t3 > ceil) revert TierLiquidationLtvBpsTooHigh(t3, ceil);
-        // Cross-tier monotonic: deeper-liquidity tier tolerates higher
-        // pre-liquidation LTV, i.e. T1 ≥ T2 ≥ T3.
-        if (!(t1 >= t2 && t2 >= t3)) revert NonMonotoneTierLiquidationLtvBps(t1, t2, t3);
+        // #999 (S1) — cross-tier monotonic: the DEEPER-liquidity tier tolerates
+        // the HIGHER pre-liquidation LTV, i.e. T1 ≤ T2 ≤ T3 (tier 1 = thinnest =
+        // lowest/tightest threshold, tier 3 = deepest = highest). Pre-#999 this
+        // enforced the inverted `T1 ≥ T2 ≥ T3`.
+        if (!(t1 <= t2 && t2 <= t3)) revert NonMonotoneTierLiquidationLtvBps(t1, t2, t3);
         LibVaipakam.ProtocolConfig storage c = LibVaipakam.storageSlot().protocolCfg;
         c.tier1LiquidationLtvBps = tier1;
         c.tier2LiquidationLtvBps = tier2;
