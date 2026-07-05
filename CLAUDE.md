@@ -835,6 +835,22 @@ historical breadcrumb.
    If a needed label is missing from that doc, add it there first
    (with a one-line "use for" entry), then apply.
 
+## Codex PR-review policy (user directive 2026-07-05)
+
+Codex is **NOT auto-invoked** on PR open or on pushes to a PR. It runs
+ONLY when its trigger words appear in the PR description or a PR
+comment (e.g. an `@codex review` comment). Apply this loop on every PR:
+
+- **Docs-only PRs**: up to 2 Codex review rounds is sufficient (or
+  skip entirely for trivial mechanical edits — say so in the thread).
+- **Coding PRs**: keep triggering rounds until findings **converge** —
+  no major findings churned — allowing up to 10 rounds after the LAST
+  diff push. A new push resets the convergence count (the diff
+  changed), so re-trigger after every fix push.
+- Merge only after the final round is clean / minor-only AND CI is
+  green. All review conversations must be resolved before merge (repo
+  rule).
+
 ## Release notes — per-PR fragments
 
 Release notes use a **fragment** model so they merge atomically with the
