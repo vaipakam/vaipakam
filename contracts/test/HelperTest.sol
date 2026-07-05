@@ -1317,7 +1317,7 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](6);
+        selectors = new bytes4[](9);
         selectors[0] = MetricsDashboardFacet.getUserDashboardSnapshot.selector;
         selectors[1] = MetricsDashboardFacet.getUserDashboardLoans.selector;
         selectors[2] = MetricsDashboardFacet.getUserDashboardOffers.selector;
@@ -1326,6 +1326,10 @@ contract HelperTest {
         // `MAX_PAGE_LIMIT` is a `public constant`; its auto-getter has
         // no type-level `.selector`, so the signature is hashed directly.
         selectors[5] = bytes4(keccak256("MAX_PAGE_LIMIT()"));
+        // #1025 — bulk wallet-dashboard batch-by-id views + their public cap.
+        selectors[6] = MetricsDashboardFacet.getOffersWithState.selector;
+        selectors[7] = MetricsDashboardFacet.getLoansBatch.selector;
+        selectors[8] = bytes4(keccak256("MAX_BATCH_IDS()"));
         return selectors;
     }
 

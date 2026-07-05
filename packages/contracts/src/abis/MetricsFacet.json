@@ -1079,7 +1079,7 @@
       {
         "name": "state",
         "type": "uint8",
-        "internalType": "enum MetricsFacet.OfferState"
+        "internalType": "enum LibMetricsTypes.OfferState"
       }
     ],
     "stateMutability": "view"
@@ -1091,7 +1091,7 @@
       {
         "name": "state",
         "type": "uint8",
-        "internalType": "enum MetricsFacet.OfferState"
+        "internalType": "enum LibMetricsTypes.OfferState"
       },
       {
         "name": "offset",
@@ -1705,7 +1705,7 @@
       {
         "name": "state",
         "type": "uint8",
-        "internalType": "enum MetricsFacet.OfferState"
+        "internalType": "enum LibMetricsTypes.OfferState"
       },
       {
         "name": "offset",

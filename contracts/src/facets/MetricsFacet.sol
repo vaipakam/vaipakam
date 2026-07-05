@@ -1163,14 +1163,20 @@ contract MetricsFacet {
     ///      opened" instead of the generic "Cancelled" copy. Added at
     ///      the end of the enum so existing indexed value bindings are
     ///      preserved.
-    enum OfferState { Open, Accepted, Cancelled, ConsumedBySale }
+    /// @dev  #1025 — the `OfferState` enum + its derivation were hoisted into
+    ///       {LibMetricsTypes} so the bulk `MetricsDashboardFacet.getOffersWithState`
+    ///       shares ONE terminal-precedence definition with this facet. The enum
+    ///       is now `LibMetricsTypes.OfferState`; `getOfferState`'s wire ABI is
+    ///       unchanged (enum = uint8), only the exported `internalType` string
+    ///       moves. `_offerStateOf` below is a thin delegate kept so this facet's
+    ///       internal call sites read unchanged.
 
     /**
      * @notice Paginated slice of the user's offers filtered by lifecycle state.
      */
     function getUserOffersByStatePaginated(
         address user,
-        OfferState state,
+        LibMetricsTypes.OfferState state,
         uint256 offset,
         uint256 limit
     ) external view returns (uint256[] memory offerIds, uint256 matched) {
@@ -1182,7 +1188,7 @@ contract MetricsFacet {
         uint256 filled;
         for (uint256 i = 0; i < len; i++) {
             uint256 id = src[i];
-            OfferState actual = _offerStateOf(s, id);
+            LibMetricsTypes.OfferState actual = _offerStateOf(s, id);
             if (actual != state) continue;
             matched += 1;
             if (skipped < offset) { skipped += 1; continue; }
@@ -1493,7 +1499,7 @@ contract MetricsFacet {
 
     /// @notice Paginated slice of offers in a given lifecycle state.
     function getOffersByStatePaginated(
-        OfferState state,
+        LibMetricsTypes.OfferState state,
         uint256 offset,
         uint256 limit
     ) external view returns (uint256[] memory offerIds, uint256 matched) {
@@ -1503,7 +1509,7 @@ contract MetricsFacet {
         uint256 skipped;
         uint256 filled;
         for (uint256 id = 1; id <= end; id++) {
-            OfferState actual = _offerStateOf(s, id);
+            LibMetricsTypes.OfferState actual = _offerStateOf(s, id);
             if (actual != state) continue;
             matched += 1;
             if (skipped < offset) { skipped += 1; continue; }
@@ -1530,7 +1536,9 @@ contract MetricsFacet {
     ///         distinguish "never existed" pre-filter via {getGlobalCounts}.
     /// @param  offerId The offer to classify.
     /// @return state   The offer's canonical {OfferState}.
-    function getOfferState(uint256 offerId) external view returns (OfferState state) {
+    function getOfferState(uint256 offerId)
+        external view returns (LibMetricsTypes.OfferState state)
+    {
         return _offerStateOf(LibVaipakam.storageSlot(), offerId);
     }
 
@@ -1549,41 +1557,20 @@ contract MetricsFacet {
         for (uint256 i = offset; i < end; i++) out[i - offset] = src[i];
     }
 
-    /// @dev Derives the {OfferState} of `offerId` from storage. Matches the
-    ///      terminal flags set by {OfferFacet.acceptOffer} (accepted) and
-    ///      {OfferFacet.cancelOffer} (offerCancelled). Never-existed IDs
-    ///      also return Cancelled — callers filter via
-    ///      {getGlobalCounts}/{getAllOffersPaginated} before reading state.
+    /// @dev #1025 — thin delegate to the hoisted single source of truth
+    ///      {LibMetricsTypes.deriveOfferState} (terminal precedence Accepted >
+    ///      Cancelled > ConsumedBySale > Open; never-existed → Cancelled). Kept
+    ///      as a private wrapper so this facet's internal call sites
+    ///      ({getUserOffersByStatePaginated}, {getOffersByStatePaginated},
+    ///      {getOfferState}) read unchanged. The derivation body — and its full
+    ///      terminal-precedence rationale — now lives in the library so the bulk
+    ///      `MetricsDashboardFacet.getOffersWithState` cannot drift from it.
     function _offerStateOf(LibVaipakam.Storage storage s, uint256 offerId)
         private
         view
-        returns (OfferState)
+        returns (LibMetricsTypes.OfferState)
     {
-        // T-086 Round-8 (#358) §19.7e + Codex round-3 user-directed
-        // redesign — terminal-precedence order:
-        //
-        //   1. `offer.accepted` → Accepted (loan exists; that's the
-        //      primary state even if a parallel sale later settled
-        //      the loan — the loan's own status flip handles that).
-        //   2. `offer.id == 0` → Cancelled (legacy compat for never-
-        //      existed IDs + `cancelOffer`'s storage-delete behaviour;
-        //      both surface as id==0 to the reader).
-        //   3. `offerCancelled[id]` → Cancelled (creator-driven cancel
-        //      that stamped the parallel mapping; storage row may or
-        //      may not still exist).
-        //   4. `offerConsumedBySale[id]` → ConsumedBySale (true
-        //      Scenario A: sale fill closed an UNACCEPTED offer).
-        //
-        // Pre-round-3 ordering checked consumedBySale first, but the
-        // keep-listing-live design lets an offer be BOTH accepted AND
-        // sold — for that path the loan exists and "Accepted" is the
-        // right surface state.
-        LibVaipakam.Offer storage o = s.offers[offerId];
-        if (o.id != 0 && o.accepted) return OfferState.Accepted;
-        if (s.offerCancelled[offerId]) return OfferState.Cancelled;
-        if (o.id == 0) return OfferState.Cancelled; // never-existed OR cancel-deleted
-        if (s.offerConsumedBySale[offerId]) return OfferState.ConsumedBySale;
-        return OfferState.Open;
+        return LibMetricsTypes.deriveOfferState(s, offerId);
     }
 
     /// @dev Safe numeraire-quoted valuation. Returns 0 if feed missing or stale.

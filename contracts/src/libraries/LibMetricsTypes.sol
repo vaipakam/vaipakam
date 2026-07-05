@@ -13,8 +13,23 @@ import {LibVaipakam} from "./LibVaipakam.sol";
  *         the array coder shallow. Lossy vs the full struct on purpose
  *         (rental/periodic/listing/snapshot fields omitted) — consumers
  *         needing those call the single-struct getLoanDetails/getOffer* views.
+ * @dev    #1025 — also home to the canonical {OfferState} enum + its
+ *         {deriveOfferState} derivation (hoisted out of MetricsFacet so both
+ *         MetricsFacet and MetricsDashboardFacet's bulk `getOffersWithState`
+ *         share ONE terminal-precedence definition — no drift), plus the
+ *         {OfferView}/{LoanView} bulk-by-id DTOs those views return.
  */
 library LibMetricsTypes {
+    /// @notice #1025 (hoisted from MetricsFacet, #955) — the canonical
+    ///         lifecycle state of an offer. `ConsumedBySale` is the
+    ///         no-loan parallel-sale terminal (Scenario A) — a distinct
+    ///         surface from `Cancelled` so the frontend can render
+    ///         "Sold — no loan opened". Appended last so existing indexed
+    ///         value bindings (0=Open,1=Accepted,2=Cancelled) are preserved.
+    ///         Enum is `uint8` at the ABI boundary, so hoisting the type is
+    ///         wire-compatible; only the exported `internalType` string moves
+    ///         from `MetricsFacet.OfferState` to `LibMetricsTypes.OfferState`.
+    enum OfferState { Open, Accepted, Cancelled, ConsumedBySale }
     struct OfferSummary {
         uint256 id;
         LibVaipakam.OfferType offerType;
@@ -190,6 +205,134 @@ library LibMetricsTypes {
             allowsPartialRepay: l.allowsPartialRepay,
             liquidationLtvBpsAtInit: l.liquidationLtvBpsAtInit,
             minHealthFactorAtInit: l.minHealthFactorAtInit
+        });
+    }
+
+    // ─── #1025 bulk wallet-dashboard views: state derivation + DTOs ──────────
+
+    /// @notice #1025 (hoisted from MetricsFacet `_offerStateOf`, #955) — the
+    ///         canonical {OfferState} of `offerId` from storage, with terminal
+    ///         precedence Accepted > Cancelled > ConsumedBySale > Open. SINGLE
+    ///         source of truth: both `MetricsFacet.getOfferState` /
+    ///         `get*OffersByStatePaginated` and the bulk
+    ///         `MetricsDashboardFacet.getOffersWithState` call this, so the two
+    ///         facets can never disagree on an offer's lifecycle.
+    /// @dev    Matches the terminal flags set by `OfferFacet.acceptOffer`
+    ///         (accepted) and `cancelOffer` (offerCancelled + storage-delete).
+    ///         A never-existed / cancel-deleted id (`o.id == 0`) returns
+    ///         `Cancelled` — legacy-compat; callers that must distinguish
+    ///         "never existed" pre-filter via getGlobalCounts/getAllOffersPaginated.
+    ///         The keep-listing-live design lets an offer be BOTH accepted AND
+    ///         sold, so `accepted` is checked first (the loan exists — "Accepted"
+    ///         is the right surface state even if a parallel sale later settles).
+    function deriveOfferState(LibVaipakam.Storage storage s, uint256 offerId)
+        internal
+        view
+        returns (OfferState)
+    {
+        LibVaipakam.Offer storage o = s.offers[offerId];
+        if (o.id != 0 && o.accepted) return OfferState.Accepted;
+        if (s.offerCancelled[offerId]) return OfferState.Cancelled;
+        if (o.id == 0) return OfferState.Cancelled; // never-existed OR cancel-deleted
+        if (s.offerConsumedBySale[offerId]) return OfferState.ConsumedBySale;
+        return OfferState.Open;
+    }
+
+    /// @notice #1025 — one element of `getOffersWithState`. A FLAT projection of
+    ///         the exact offer render-set the wallet dashboard draws (the 19
+    ///         {OfferSummary} fields + the 10 it omits that the row needs) PLUS
+    ///         the derived {OfferState}, so one bulk call replaces the per-id
+    ///         `getOffer` + `getOfferState` pair. Flat (not a nested
+    ///         {OfferSummary}) on purpose — sub-structing an ABI-boundary type
+    ///         DEEPENS the array coder's peak stack, the opposite of what the
+    ///         lean-DTO rule wants (#603 lever).
+    struct OfferView {
+        // --- the 19 OfferSummary render fields ---
+        uint256 id;
+        LibVaipakam.OfferType offerType;
+        bool accepted;
+        uint64 createdAt;
+        uint64 expiresAt;
+        address lendingAsset;
+        LibVaipakam.AssetType assetType;
+        uint256 amount;
+        uint256 amountMax;
+        uint256 interestRateBps;
+        uint256 interestRateBpsMax;
+        uint256 durationDays;
+        uint256 tokenId;
+        uint256 amountFilled;
+        address collateralAsset;
+        LibVaipakam.AssetType collateralAssetType;
+        uint256 collateralAmount;
+        uint256 collateralTokenId;
+        uint256 collateralQuantity;
+        // --- the 10 fields OfferSummary omits but the dashboard row renders ---
+        address creator;
+        LibVaipakam.LiquidityStatus principalLiquidity;
+        LibVaipakam.LiquidityStatus collateralLiquidity;
+        uint256 quantity;
+        uint256 positionTokenId;
+        address prepayAsset;
+        bool useFullTermInterest;
+        bool creatorRiskAndTermsConsent;
+        bool allowsPartialRepay;
+        LibVaipakam.FillMode fillMode;
+        // --- the reason this view exists ---
+        OfferState state;
+    }
+
+    /// @notice #1025 — one element of `getLoansBatch`. The lean {LoanSummary}
+    ///         (which already carries `status`, both position tokenIds for role
+    ///         derivation, and every rendered numeric/asset field) PLUS the two
+    ///         counterparty display addresses it omits. Mirrors the proven
+    ///         `MetricsDashboardFacet.LoanWithRisk` wrapper shape (LoanSummary
+    ///         nested + scalar tail) — one-level nesting that ships today.
+    struct LoanView {
+        LoanSummary loan;
+        address lender;
+        address borrower;
+    }
+
+    /// @notice #1025 — project a storage `Offer` (+ its already-derived state)
+    ///         into the flat {OfferView}. `state` is passed in (not re-derived)
+    ///         so the caller loads the row once and derives once.
+    function toOfferView(LibVaipakam.Offer storage o, OfferState st)
+        internal view returns (OfferView memory v)
+    {
+        v = OfferView({
+            id: o.id, offerType: o.offerType, accepted: o.accepted,
+            createdAt: o.createdAt, expiresAt: o.expiresAt,
+            lendingAsset: o.lendingAsset, assetType: o.assetType,
+            amount: o.amount, amountMax: o.amountMax,
+            interestRateBps: o.interestRateBps, interestRateBpsMax: o.interestRateBpsMax,
+            durationDays: o.durationDays, tokenId: o.tokenId, amountFilled: o.amountFilled,
+            collateralAsset: o.collateralAsset, collateralAssetType: o.collateralAssetType,
+            collateralAmount: o.collateralAmount, collateralTokenId: o.collateralTokenId,
+            collateralQuantity: o.collateralQuantity,
+            creator: o.creator,
+            principalLiquidity: o.principalLiquidity,
+            collateralLiquidity: o.collateralLiquidity,
+            quantity: o.quantity,
+            positionTokenId: o.positionTokenId,
+            prepayAsset: o.prepayAsset,
+            useFullTermInterest: o.useFullTermInterest,
+            creatorRiskAndTermsConsent: o.creatorRiskAndTermsConsent,
+            allowsPartialRepay: o.allowsPartialRepay,
+            fillMode: o.fillMode,
+            state: st
+        });
+    }
+
+    /// @notice #1025 — project a storage `Loan` into the {LoanView} (lean
+    ///         summary + the two counterparty addresses).
+    function toLoanView(LibVaipakam.Loan storage l)
+        internal view returns (LoanView memory v)
+    {
+        v = LoanView({
+            loan: toLoanSummary(l),
+            lender: l.lender,
+            borrower: l.borrower
         });
     }
 }

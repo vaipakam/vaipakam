@@ -2406,7 +2406,7 @@ contract DeployDiamond is Script {
     /// scalar snapshot + three paginated list views collapse the
     /// frontend Dashboard's 13-RPC first-load into 3 calls.
     function _getMetricsDashboardSelectors() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](6);
+        s = new bytes4[](9);
         s[0] = MetricsDashboardFacet.getUserDashboardSnapshot.selector;
         s[1] = MetricsDashboardFacet.getUserDashboardLoans.selector;
         s[2] = MetricsDashboardFacet.getUserDashboardOffers.selector;
@@ -2418,6 +2418,11 @@ contract DeployDiamond is Script {
         // is a `public constant`; its auto-getter has no type-level
         // `.selector`, so the signature is hashed directly.
         s[5] = bytes4(keccak256("MAX_PAGE_LIMIT()"));
+        // #1025 — bulk wallet-dashboard batch-by-id views + their public cap.
+        s[6] = MetricsDashboardFacet.getOffersWithState.selector;
+        s[7] = MetricsDashboardFacet.getLoansBatch.selector;
+        // `MAX_BATCH_IDS` is likewise a `public constant`; hash its signature.
+        s[8] = bytes4(keccak256("MAX_BATCH_IDS()"));
     }
 
     /// Phase 4.1 — Terms-of-Service acceptance gate. The gate stays

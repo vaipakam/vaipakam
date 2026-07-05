@@ -1981,6 +1981,7 @@ A comprehensive user dashboard is essential for managing activities on Vaipakam.
 - **Notification Settings:** Manage preferences for SMS/Email alerts.
 - **Analytics:** Basic analytics on lending/borrowing performance.
 - **Data Refresh:** The dashboard will update periodically (e.g., every minute or on user action) to reflect on-chain changes.
+- **Bulk Position Hydration:** The platform should expose a bulk read path that hydrates a whole batch of offer or loan identifiers in a single request, so the dashboard can render a wallet's positions without one round trip per position. Each offer record returned by the bulk path should already carry the offer's canonical lifecycle state (open, accepted, cancelled, or sold-without-a-loan) so the row does not need a second lookup to know whether a listing is still live. The bulk path should return records aligned one-to-one with the requested identifiers, preserving duplicates so a wallet that holds both sides of the same loan still sees both role rows; an unknown or already-closed identifier should return a blank record in place rather than failing the whole batch, and an over-large request should fail with a clear, distinguishable error so the app can fall back or resize rather than silently degrade. The bulk path is an efficiency layer only — it must report exactly the same offer and loan facts the per-item read paths do.
 
 ## 13. Technical Details
 

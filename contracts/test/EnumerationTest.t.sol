@@ -4,6 +4,7 @@ pragma solidity ^0.8.29;
 
 import {SetupTest} from "./SetupTest.t.sol";
 import {LibVaipakam} from "../src/libraries/LibVaipakam.sol";
+import {LibMetricsTypes} from "../src/libraries/LibMetricsTypes.sol";
 import {MetricsFacet} from "../src/facets/MetricsFacet.sol";
 import {VaipakamNFTFacet} from "../src/facets/VaipakamNFTFacet.sol";
 import {TestMutatorFacet} from "./mocks/TestMutatorFacet.sol";
@@ -195,7 +196,7 @@ contract EnumerationTest is SetupTest {
         (uint256[] memory open, uint256 openMatched) = MetricsFacet(address(diamond))
             .getUserOffersByStatePaginated(
                 u1,
-                MetricsFacet.OfferState.Open,
+                LibMetricsTypes.OfferState.Open,
                 0,
                 10
             );
@@ -207,7 +208,7 @@ contract EnumerationTest is SetupTest {
         (uint256[] memory accepted, uint256 acceptedMatched) = MetricsFacet(address(diamond))
             .getUserOffersByStatePaginated(
                 u1,
-                MetricsFacet.OfferState.Accepted,
+                LibMetricsTypes.OfferState.Accepted,
                 0,
                 10
             );
@@ -217,7 +218,7 @@ contract EnumerationTest is SetupTest {
         (uint256[] memory cancelled, uint256 cancelledMatched) = MetricsFacet(address(diamond))
             .getUserOffersByStatePaginated(
                 u1,
-                MetricsFacet.OfferState.Cancelled,
+                LibMetricsTypes.OfferState.Cancelled,
                 0,
                 10
             );
@@ -241,16 +242,16 @@ contract EnumerationTest is SetupTest {
         TestMutatorFacet(address(diamond)).setOfferConsumedBySaleRaw(4, true);
 
         MetricsFacet m = MetricsFacet(address(diamond));
-        assertEq(uint8(m.getOfferState(1)), uint8(MetricsFacet.OfferState.Open), "open");
-        assertEq(uint8(m.getOfferState(2)), uint8(MetricsFacet.OfferState.Accepted), "accepted");
-        assertEq(uint8(m.getOfferState(3)), uint8(MetricsFacet.OfferState.Cancelled), "cancelled");
+        assertEq(uint8(m.getOfferState(1)), uint8(LibMetricsTypes.OfferState.Open), "open");
+        assertEq(uint8(m.getOfferState(2)), uint8(LibMetricsTypes.OfferState.Accepted), "accepted");
+        assertEq(uint8(m.getOfferState(3)), uint8(LibMetricsTypes.OfferState.Cancelled), "cancelled");
         assertEq(
             uint8(m.getOfferState(4)),
-            uint8(MetricsFacet.OfferState.ConsumedBySale),
+            uint8(LibMetricsTypes.OfferState.ConsumedBySale),
             "consumed-by-sale surfaced where raw Offer row reads open"
         );
         // Never-existed id → Cancelled (legacy-compat, per the derivation).
-        assertEq(uint8(m.getOfferState(999)), uint8(MetricsFacet.OfferState.Cancelled), "never-existed");
+        assertEq(uint8(m.getOfferState(999)), uint8(LibMetricsTypes.OfferState.Cancelled), "never-existed");
 
         // Precedence: an accepted offer that was ALSO consumed by a parallel
         // sale reports Accepted (the loan exists; that's the primary state).
@@ -258,7 +259,7 @@ contract EnumerationTest is SetupTest {
         TestMutatorFacet(address(diamond)).setOfferConsumedBySaleRaw(5, true);
         assertEq(
             uint8(m.getOfferState(5)),
-            uint8(MetricsFacet.OfferState.Accepted),
+            uint8(LibMetricsTypes.OfferState.Accepted),
             "accepted beats consumed-by-sale"
         );
     }
