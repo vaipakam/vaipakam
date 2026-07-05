@@ -655,6 +655,19 @@ Rules:
 - When ever running forge build, forge script or forge test, run them in high priority
 - [Run forge build / forge test in high priority](feedback_forge_high_priority.md) — prefix every forge build/test/script with `nice -n -10 ionice -c 2 -n 0`; viaIR runs are 5–15 min and 8 GB RSS, low priority causes 2–3× slowdowns under parallel desktop load
 
+### Live testnet review is part of definition-of-done (user directive 2026-07-05)
+
+Every user-facing change merged to a deployed surface (`apps/*`) gets a
+LIVE review on the deployed testnet site (alpha02.vaipakam.com /
+defi.vaipakam.com) **after the production deploy** — drive the actual
+feature end-to-end with the dev test wallets (the scratchpad Playwright
+driver), and confirm the observable behaviour, not just preview builds,
+typecheck, or CI. Contract-consuming changes additionally verify against
+the live Base Sepolia Diamond (fallback paths proven by blocking the
+other source where applicable). Exception: behaviours with no production
+trigger (e.g. deliberate-crash fallbacks) may be verified on a preview
+build, with the exception stated in the PR.
+
 ### Per-PR verification is TARGETED — full regression is a pre-deploy gate only
 
 This is a standing workflow rule (do not run the full regression as a per-PR
