@@ -1,5 +1,6 @@
 import { useState, type ReactNode } from "react";
 import { useTranslation } from "react-i18next";
+import { useWalletClient } from "wagmi";
 import { useWallet } from "../context/WalletContext";
 import { Bell, MessageCircle, Wallet } from "lucide-react";
 import { ErrorAlert } from "../components/app/ErrorAlert";
@@ -51,9 +52,36 @@ const PUSH_CHANNEL_ADDRESS: string | null = (() => {
  * rails share the same threshold config — you don't configure
  * different `warn_hf` per channel.
  */
+/**
+ * The exact message signed to authorise a Telegram link. MUST stay
+ * byte-identical to `buildTelegramLinkMessage` in
+ * `apps/agent/src/linkAuth.ts` — the agent reconstructs it verbatim
+ * and recovers the signer; any drift rejects every link request.
+ * (Required since #1056: an unsigned link request would let any HTTP
+ * caller point another wallet's alert stream at their own chat.)
+ */
+function buildTelegramLinkMessage(
+  wallet: string,
+  chainId: number,
+  issuedAt: number,
+): string {
+  return [
+    "Vaipakam — Link Telegram alerts",
+    "",
+    "I authorise Telegram alert delivery for the wallet below to the",
+    "chat that completes this link code. Signing this message proves",
+    "ownership of the wallet. It is not a transaction and costs no gas.",
+    "",
+    `Wallet: ${wallet.toLowerCase()}`,
+    `Chain id: ${chainId}`,
+    `Issued at (unix): ${issuedAt}`,
+  ].join("\n");
+}
+
 export default function Alerts() {
   const { t, i18n } = useTranslation();
   const { address, chainId, isCorrectChain } = useWallet();
+  const { data: walletClient } = useWalletClient();
 
   const [warnHf, setWarnHf] = useState(1.5);
   const [alertHf, setAlertHf] = useState(1.2);
@@ -212,10 +240,28 @@ export default function Alerts() {
     const fetchUrl = `${HF_WATCHER_ORIGIN}/link/telegram`;
     setLinking(true);
     try {
+      // Wallet-ownership proof (#1056): the agent refuses to issue a
+      // link code without an EIP-191 signature from the wallet, so a
+      // third party can't subscribe this wallet's alerts to their own
+      // Telegram chat. Free signature, not a transaction.
+      if (!walletClient || chainId === null) {
+        throw new Error(
+          "Wallet is not ready to sign — reconnect and try again.",
+        );
+      }
+      const issuedAt = Math.floor(Date.now() / 1000);
+      const signature = await walletClient.signMessage({
+        message: buildTelegramLinkMessage(address, chainId, issuedAt),
+      });
       const res = await fetch(fetchUrl, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ wallet: address, chain_id: chainId }),
+        body: JSON.stringify({
+          wallet: address,
+          chain_id: chainId,
+          issuedAt,
+          signature,
+        }),
       });
       if (!res.ok) {
         const bodyText = await res.text().catch(() => "request failed");

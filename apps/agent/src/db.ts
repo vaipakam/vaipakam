@@ -257,7 +257,12 @@ export async function consumeTelegramLinkCode(
  *  match zero rows, the bot would still reply "linked", and alerts
  *  would silently never deliver. The insert seeds the default bands;
  *  the conflict arm touches ONLY the chat id so an existing row's
- *  settings are never clobbered by a re-link. */
+ *  settings are never clobbered by a re-link.
+ *
+ *  The insert is safe against third parties because a link CODE can
+ *  only be issued to a caller who proved ownership of the wallet with
+ *  an EIP-191 signature (`linkAuth.ts`) — by the time this runs, the
+ *  wallet holder authorised the link. */
 export async function linkTelegram(
   db: D1Database,
   wallet: string,

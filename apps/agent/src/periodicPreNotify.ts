@@ -208,9 +208,13 @@ async function pushIfSubscribed(
       : `Loan #${loan.loan_id}'s ${cadenceLabel.toLowerCase()} interest checkpoint is approaching. If the borrower misses the deadline, a permissionless settler can sell collateral to cover the shortfall.`;
   // FRONTEND_ORIGIN is a CSV allow-list — interpolating it whole
   // produced a malformed URL the moment it grew past one entry. Deep
-  // links use the FIRST origin (the primary app by convention).
+  // links use the FIRST origin (the primary app by convention). Path
+  // shape is /loans/:id — the pro app root-mounts loan details there
+  // (the historical /app/loans/:id nesting was flattened away and no
+  // current app serves it), and the retail app aliases /loans/:id to
+  // its own positions route.
   const linkBase = env.FRONTEND_ORIGIN.split(',')[0]!.trim();
-  const deepLink = `${linkBase}/app/loans/${loan.loan_id}`;
+  const deepLink = `${linkBase}/loans/${loan.loan_id}`;
 
   if (sub.push_channel) {
     try {

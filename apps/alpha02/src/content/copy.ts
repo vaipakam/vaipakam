@@ -106,6 +106,8 @@ export const copy = {
     privacy:
       'Linking stores your wallet address, your alert preferences from this card, and your Telegram chat id on Vaipakam’s alert service, plus a small delivery record per alert it sends (which loan, which level, when) so you’re never messaged twice about the same thing. Unlink removes the Telegram connection.',
     linkButton: 'Link Telegram',
+    linkSignNote:
+      'Your wallet will first ask you to sign a short message — it’s free, it’s not a transaction, and it proves this request really comes from you.',
     linkIssued:
       'Open our bot and press Start — or send it this code as a message. That connects this wallet to your Telegram.',
     openBot: 'Open Telegram',

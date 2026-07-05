@@ -8,7 +8,10 @@
  *    field is body-trusted (no signature) because the only output is
  *    an alert to a Telegram chat the real wallet holder linked.
  *  - `POST /link/telegram` issues a one-time handshake code (+ bot
- *    deep link when the operator configured the bot username).
+ *    deep link when the operator configured the bot username). This
+ *    one REQUIRES an EIP-191 wallet signature: completing the
+ *    handshake points the wallet's whole alert stream at a Telegram
+ *    chat, so the agent only issues a code to the wallet's owner.
  *  - `POST /unlink/telegram` clears the stored wallet ↔ chat link
  *    (added alongside this feature — the privacy promise needs it).
  *  - The HF-band watcher lives in apps/keeper; the agent runs the
@@ -174,13 +177,48 @@ export interface TelegramLink {
   botUrl: string | null;
 }
 
-/** Start the Telegram handshake: the agent issues a one-time code the
- *  user sends to the bot (deep link when configured). */
+/**
+ * The exact message signed to authorise a Telegram link. MUST stay
+ * byte-identical to `buildTelegramLinkMessage` in
+ * `apps/agent/src/linkAuth.ts` — the agent reconstructs it verbatim
+ * and recovers the signer; any drift rejects every link request.
+ */
+export function buildTelegramLinkMessage(
+  wallet: string,
+  chainId: number,
+  issuedAt: number,
+): string {
+  return [
+    'Vaipakam — Link Telegram alerts',
+    '',
+    'I authorise Telegram alert delivery for the wallet below to the',
+    'chat that completes this link code. Signing this message proves',
+    'ownership of the wallet. It is not a transaction and costs no gas.',
+    '',
+    `Wallet: ${wallet.toLowerCase()}`,
+    `Chain id: ${chainId}`,
+    `Issued at (unix): ${issuedAt}`,
+  ].join('\n');
+}
+
+/** Start the Telegram handshake: the wallet signs a free ownership
+ *  proof (no gas, no transaction), then the agent issues a one-time
+ *  code the user sends to the bot (deep link when configured). */
 export async function issueTelegramLink(
   wallet: `0x${string}`,
   chainId: number,
+  signMessage: (message: string) => Promise<string>,
 ): Promise<TelegramLink> {
-  const res = await post('/link/telegram', { wallet, chain_id: chainId });
+  const issuedAt = Math.floor(Date.now() / 1000);
+  const signature = await signMessage(
+    buildTelegramLinkMessage(wallet, chainId, issuedAt),
+  );
+  const res = await post('/link/telegram', {
+    wallet,
+    chain_id: chainId,
+    issuedAt,
+    signature,
+  });
   if (!res.ok) throw new Error(`starting the Telegram link failed (${res.status})`);
   const data = (await res.json()) as {
     ok?: boolean;

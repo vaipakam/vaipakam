@@ -19,7 +19,7 @@
  */
 import { useMemo, useState } from 'react';
 import { BellRing } from 'lucide-react';
-import { useAccount } from 'wagmi';
+import { useAccount, useSignMessage } from 'wagmi';
 import { useMode } from '../app/ModeContext';
 import { useActiveChain } from '../chain/useActiveChain';
 import { copy } from '../content/copy';
@@ -38,6 +38,7 @@ import {
 
 export function AlertsCard() {
   const { address } = useAccount();
+  const { signMessageAsync } = useSignMessage();
   const { readChain } = useActiveChain();
   const { isAdvanced } = useMode();
   const chainId = readChain.chainId;
@@ -93,7 +94,15 @@ export function AlertsCard() {
       // elsewhere. The agent tolerates a missing row during the
       // handshake (locale falls back to 'en'), so linking alone must
       // never write settings.
-      setLink(await issueTelegramLink(address, chainId));
+      //
+      // The wallet signs a free ownership proof first — the agent
+      // refuses to issue a link code without it, so nobody can point
+      // another wallet's alerts at their own Telegram.
+      setLink(
+        await issueTelegramLink(address, chainId, (message) =>
+          signMessageAsync({ message }),
+        ),
+      );
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     } finally {
@@ -186,6 +195,7 @@ export function AlertsCard() {
                 className="btn btn-primary"
                 onClick={() => void startLink()}
                 disabled={busy}
+                title={copy.alerts.linkSignNote}
               >
                 {copy.alerts.linkButton}
               </button>
@@ -201,6 +211,9 @@ export function AlertsCard() {
               >
                 {copy.alerts.unlinkElsewhere}
               </button>
+              <span className="muted" style={{ flexBasis: '100%' }}>
+                {copy.alerts.linkSignNote}
+              </span>
             </div>
           )}
 

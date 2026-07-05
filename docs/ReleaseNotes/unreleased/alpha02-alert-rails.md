@@ -16,10 +16,16 @@ before sending anything.
 
 The card carries one honest privacy sentence — linking stores the
 wallet address, the alert preferences from the card, and the
-Telegram chat id on the alert service, nothing else — and an Unlink
-that actually removes the Telegram connection: the alert service
-gained a dedicated unlink endpoint alongside this feature, and
-unlink stays reachable even for a wallet linked from another device.
+Telegram chat id on the alert service, plus a small delivery record
+per alert sent (which loan, which level, when) so the user is never
+messaged twice about the same event — and an Unlink that actually
+removes the Telegram connection: the alert service gained a
+dedicated unlink endpoint alongside this feature, and unlink stays
+reachable even for a wallet linked from another device. Starting a
+link now asks the wallet for a free signature first — proof the
+request comes from the wallet's owner, so nobody can point another
+wallet's alerts at their own Telegram chat; the pro app's alerts
+page gained the same proof step.
 A borrower viewing their active loan sees a one-line nudge pointing
 at the alert setup. Users who prefer wallet-native push can enable
 Push delivery (recorded service-side) and open the platform's Push
@@ -31,3 +37,8 @@ feature fails closed rather than pointing at the wrong environment.
 No "something to claim" toggle ships yet on purpose: the backend has
 no claim-ready detector, and the retail surface does not promise
 messages that cannot arrive.
+
+Due-date reminder messages now deep-link to the loan page every
+current app actually serves (`/loans/N` on the pro app, aliased on
+the retail app) instead of a historical URL shape that landed on a
+not-found page.

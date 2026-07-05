@@ -40,6 +40,8 @@
  *   POST /diag/legal-hold                   — protocol admin → place/lift hold
  *   PUT  /thresholds                        — frontend → upsert HF bands
  *   POST /link/telegram                     — frontend → issue handshake code
+ *                                             (EIP-191 wallet signature
+ *                                             required — see linkAuth.ts)
  *   POST /unlink/telegram                   — frontend → clear the stored
  *                                             wallet ↔ tg_chat_id link (#1033)
  *
@@ -93,6 +95,10 @@ import {
 } from './db';
 import { extractLinkCode, sendMessage, type TelegramUpdate } from './telegram';
 import { handshakeExpired, handshakeLinked } from './i18n';
+import {
+  parseSignedLinkRequest,
+  verifySignedLinkRequest,
+} from './linkAuth';
 
 export default {
   async scheduled(
@@ -343,13 +349,37 @@ async function handleIssueTelegramLink(
   } catch {
     return json({ error: 'invalid-json' }, 400, corsOrigin);
   }
-  const parsed = parseLinkIssue(body);
-  if (!parsed) return json({ error: 'invalid-payload' }, 400, corsOrigin);
+  // Unlike the other settings endpoints, issuing a link code REQUIRES
+  // wallet-ownership proof: completing the handshake redirects the
+  // wallet's whole alert stream to whichever chat sends the code (and
+  // seeds a thresholds row for first-time wallets), so a body-trusted
+  // wallet here would let any caller subscribe a victim's alerts to
+  // their own Telegram. EIP-191 signature over the fixed message in
+  // `linkAuth.ts`, same pattern as the erasure endpoints.
+  const parsed = parseSignedLinkRequest(body);
+  if (!parsed.ok) {
+    return json(
+      { error: 'invalid-payload', reason: parsed.reason },
+      400,
+      corsOrigin,
+    );
+  }
+  const verified = await verifySignedLinkRequest(
+    parsed.req,
+    Math.floor(Date.now() / 1000),
+  );
+  if (!verified.ok) {
+    return json(
+      { error: 'verification_failed', reason: verified.reason },
+      verified.status,
+      corsOrigin,
+    );
+  }
 
   const code = await issueTelegramLinkCode(
     env.DB,
-    parsed.wallet,
-    parsed.chain_id,
+    parsed.req.wallet,
+    parsed.req.chain_id,
   );
   // Build the Telegram deep link from the operator-configured bot
   // username. Both `TG_BOT_TOKEN` AND `TG_BOT_USERNAME` must be set:
@@ -366,7 +396,8 @@ async function handleIssueTelegramLink(
 }
 
 /** #1033 — clear a stored wallet ↔ Telegram link. Body-trusted like
- *  the other settings endpoints (see the note in handlePutThresholds:
+ *  `/thresholds` — unlike link ISSUANCE, which requires a signature
+ *  (see linkAuth.ts) — (see the note in handlePutThresholds:
  *  the only effect is that alerts STOP being delivered to the chat
  *  the real wallet holder linked — an attacker "unlinking" someone
  *  else's wallet is a nuisance-DoS the signature-free settings model
