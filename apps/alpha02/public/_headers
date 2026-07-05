@@ -1,0 +1,54 @@
+# Cloudflare Workers static-assets header rules for alpha02.
+# https://developers.cloudflare.com/workers/static-assets/headers/
+#
+# Copied verbatim from `public/` to `dist/` by Vite at build time;
+# Cloudflare serves it as deploy-time routing metadata — nothing here
+# ships as code to the browser.
+#
+# TIGHTER than apps/defi's file on purpose: alpha02 loads no Google
+# Analytics and no external fonts, so script-src carries no third-party
+# hosts and font-src needs no Google origins. The permissive
+# `connect-src https: wss:` is inherent to a crypto frontend — RPC
+# endpoints are env-configurable hosts, the indexer/agent Workers and
+# the realtime push channel (wss://indexer.vaipakam.com/ws/chain/:id)
+# are separate origins, and WalletConnect relays are third-party. Pin
+# narrower only if the RPC set is ever frozen.
+#
+# `unsafe-inline`/`unsafe-eval` in script-src mirror defi (wallet SDK
+# constraints); tightening to nonces is a follow-up hardening pass —
+# do not loosen further without review.
+#
+# Safe-App embed support: `frame-ancestors` allows Safe's dapp-browser
+# origins (alpha02 registers the Safe connector). `X-Frame-Options` is
+# deliberately omitted — it can't express an allowlist; modern browsers
+# enforce `frame-ancestors`, which is the superset.
+# `Cross-Origin-Resource-Policy: cross-origin` lets the Safe parent
+# frame (a different origin) read our resources.
+#
+# frame-src allows the WalletConnect verify iframe the wallet-connect
+# handshake renders.
+
+/*
+  X-Content-Type-Options: nosniff
+  Referrer-Policy: strict-origin-when-cross-origin
+  Permissions-Policy: camera=(), microphone=(), geolocation=(), interest-cohort=()
+  Cross-Origin-Opener-Policy: same-origin-allow-popups
+  Cross-Origin-Resource-Policy: cross-origin
+  Content-Security-Policy: default-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval'; style-src 'self' 'unsafe-inline'; font-src 'self' data:; img-src 'self' data: blob: https:; connect-src 'self' https: wss:; frame-src 'self' https://verify.walletconnect.com https://verify.walletconnect.org; worker-src 'self' blob:; manifest-src 'self'; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'self' https://app.safe.global https://*.safe.global; upgrade-insecure-requests
+
+# SPA entry point — served for every non-asset path via wrangler.jsonc
+# `not_found_handling: single-page-application`. Force revalidation on
+# every load so a deploy can never pin a client to stale JS that signs
+# calldata against stale ABIs/addresses. The bundles themselves stay
+# long-cached via /assets/* because Vite emits content-hashed names.
+
+/
+  Cache-Control: public, max-age=0, must-revalidate
+
+/index.html
+  Cache-Control: public, max-age=0, must-revalidate
+
+# Immutable static assets (content-hashed filenames).
+
+/assets/*
+  Cache-Control: public, max-age=31536000, immutable
