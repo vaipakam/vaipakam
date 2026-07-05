@@ -243,6 +243,8 @@ export function OfferFlow({ side }: { side: Side }) {
   // ("Approving… (2 of 3)") instead of one flat waiting state.
   const [progress, setProgress] = useState<SubmitProgress | null>(null);
   const submitting = progress !== null;
+  // Synchronous re-entrancy lock for submit() — see the comment there.
+  const submitLockRef = useRef(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
   const [deepLinkNotice, setDeepLinkNotice] = useState<string | null>(null);
   const [txHash, setTxHash] = useState<string | null>(null);
@@ -1280,6 +1282,21 @@ export function OfferFlow({ side }: { side: Side }) {
   }
 
   async function submit() {
+    // Re-entrancy lock BEFORE any await: `submitting` derives from
+    // state, and state set inside this call isn't visible to a second
+    // click landing in the same tick — while the ref is. Without it, a
+    // slow allowance read leaves a window where a double-click starts
+    // two concurrent submissions (two create-offer transactions with a
+    // pre-existing allowance).
+    if (submitLockRef.current) return;
+    submitLockRef.current = true;
+    // Busy immediately (total not yet known — current 0 renders the
+    // plain waiting label); the real plan replaces this below.
+    setProgress({
+      kind: mode === 'accept' ? 'sign' : 'approve',
+      current: 0,
+      total: 0,
+    });
     setSubmitError(null);
     // Runtime plan mirrors the review roadmap: read the allowance NOW
     // (it may have changed since the roadmap rendered) so the step
@@ -1297,6 +1314,8 @@ export function OfferFlow({ side }: { side: Side }) {
     }
     const stepper = makeStepper(total, setProgress);
     setProgress({ kind: mode === 'accept' ? 'sign' : 'approve', current: 0, total });
+    // (progress already non-null from the immediate set above — this
+    // just fills in the now-known total for the phase labels.)
     try {
       const wasSale =
         mode === 'accept' && acceptIsLoanSale && saleData?.kind === 'sale'
@@ -1312,7 +1331,13 @@ export function OfferFlow({ side }: { side: Side }) {
       void queryClient.invalidateQueries({ queryKey: ['myLoans'] });
     } catch (err) {
       setSubmitError(submitErrorText(err));
+      // The approval may have MINED before the final prompt was
+      // rejected — the review re-renders with the allowance changed,
+      // so the roadmap must re-read it or it keeps promising an
+      // approve step the runtime plan will skip.
+      void planAllowance.refetch();
     } finally {
+      submitLockRef.current = false;
       setProgress(null);
     }
   }
