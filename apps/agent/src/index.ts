@@ -40,6 +40,8 @@
  *   POST /diag/legal-hold                   — protocol admin → place/lift hold
  *   PUT  /thresholds                        — frontend → upsert HF bands
  *   POST /link/telegram                     — frontend → issue handshake code
+ *   POST /unlink/telegram                   — frontend → clear the stored
+ *                                             wallet ↔ tg_chat_id link (#1033)
  *
  * The `/thresholds`, `/link/telegram`, `/diag/record`,
  * `/diag/erasure`, `/diag/erasure/status` and `/diag/legal-hold`
@@ -86,6 +88,7 @@ import {
   consumeTelegramLinkCode,
   issueTelegramLinkCode,
   linkTelegram,
+  unlinkTelegram,
   upsertThresholds,
 } from './db';
 import { extractLinkCode, sendMessage, type TelegramUpdate } from './telegram';
@@ -191,6 +194,9 @@ export default {
     }
     if (url.pathname === '/link/telegram' && req.method === 'POST') {
       return handleIssueTelegramLink(req, resolved);
+    }
+    if (url.pathname === '/unlink/telegram' && req.method === 'POST') {
+      return handleUnlinkTelegram(req, resolved);
     }
 
     // Erasure (T-075) — user erases their own error-capture records
@@ -359,6 +365,30 @@ async function handleIssueTelegramLink(
   return json({ ok: true, code, bot_url: botUrl }, 200, corsOrigin);
 }
 
+/** #1033 — clear a stored wallet ↔ Telegram link. Body-trusted like
+ *  the other settings endpoints (see the note in handlePutThresholds:
+ *  the only effect is that alerts STOP being delivered to the chat
+ *  the real wallet holder linked — an attacker "unlinking" someone
+ *  else's wallet is a nuisance-DoS the signature-free settings model
+ *  already accepts, and cheaper than the spam vector it mirrors).
+ *  Idempotent: unlinking a wallet with no link is still `ok`. */
+async function handleUnlinkTelegram(
+  req: Request,
+  env: Env,
+): Promise<Response> {
+  const corsOrigin = resolveAllowedOrigin(req, env);
+  let body: unknown;
+  try {
+    body = await req.json();
+  } catch {
+    return json({ error: 'invalid-json' }, 400, corsOrigin);
+  }
+  const parsed = parseLinkIssue(body);
+  if (!parsed) return json({ error: 'invalid-payload' }, 400, corsOrigin);
+  await unlinkTelegram(env.DB, parsed.wallet, parsed.chain_id);
+  return json({ ok: true }, 200, corsOrigin);
+}
+
 async function handleTelegramWebhook(
   req: Request,
   env: Env,
@@ -460,6 +490,10 @@ interface PutThresholdsBody {
   alert_hf: number;
   critical_hf: number;
   push_channel?: string | null;
+  /** #1033 — opt-out for the periodic-interest pre-notify. Optional
+   *  boolean in the body; absent means opted in (the historical
+   *  behaviour, and what rows created before the column carry). */
+  notify_maturity_approaching?: boolean;
 }
 
 function parsePutThresholds(x: unknown): PutThresholdsBody | null {
@@ -488,6 +522,11 @@ function parsePutThresholds(x: unknown): PutThresholdsBody | null {
     alert_hf: b.alert_hf,
     critical_hf: b.critical_hf,
     push_channel: push,
+    // Absent/non-boolean → opted in, matching the column default.
+    notify_maturity_approaching:
+      typeof b.notify_maturity_approaching === 'boolean'
+        ? b.notify_maturity_approaching
+        : true,
   };
 }
 

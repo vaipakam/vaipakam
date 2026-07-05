@@ -93,6 +93,40 @@ export const copy = {
     phaseApprove: (c: number, t: number) => `Approving… (${c} of ${t})`,
     phaseSend: (c: number, t: number) => `Submitting… (${c} of ${t})`,
   },
+  alerts: {
+    title: 'Alerts',
+    lede: 'Get a Telegram message about your positions while the site is closed — deadlines and risk don’t wait for you to open a tab.',
+    notConfigured:
+      'Alerts aren’t set up in this build. The operator hasn’t pointed it at an alerts backend, so nothing here would work — rather than pretend, this section stays off.',
+    connectFirst: 'Connect your wallet to set up alerts for it.',
+    privacy:
+      'Linking stores your wallet address, your alert preferences from this card, and your Telegram chat id on Vaipakam’s alert service so it knows what to send and where — nothing else. Unlink removes the Telegram connection.',
+    linkButton: 'Link Telegram',
+    linkIssued:
+      'Open our bot and press Start — or send it this code as a message. That connects this wallet to your Telegram.',
+    openBot: 'Open Telegram',
+    linkConfirm: 'I’ve done it — the bot replied',
+    linked: 'Telegram linked — alerts for this wallet go to your chat.',
+    unlink: 'Unlink',
+    unlinkElsewhere: 'Linked on another device? Unlink here',
+    unlinked: 'Unlinked. No more Telegram messages for this wallet.',
+    toggleRepayDue: 'Message me before an interest payment comes due',
+    toggleRisky: 'Message me if my loan gets risky',
+    riskyOffNote:
+      'Even switched off, you still get one last warning right before a loan would be liquidated.',
+    advancedBands:
+      'Risk thresholds (health factor): a message is sent when a loan crosses each level.',
+    bandsInvalid:
+      'The three levels must decrease — warn above alert, alert above critical, and critical above 1.00.',
+    saved: 'Saved.',
+    pushTitle: 'Prefer app push instead?',
+    pushBody:
+      'The same alerts are published to Vaipakam’s Push Protocol channel — subscribe there with your wallet and any Push-compatible app delivers them.',
+    pushEnable: 'Enable Push delivery',
+    pushEnabled: 'Push delivery is on for this wallet.',
+    pushButton: 'Open the Push channel',
+    loanNudge: 'Want a Telegram warning if this loan gets risky? Set up alerts in Settings.',
+  },
   errorBoundary: {
     title: 'Something went wrong on this page',
     body:

@@ -18,6 +18,9 @@ export interface UserThresholds {
    *  language to send Telegram / Push notifications in. Defaults to
    *  `'en'` when the user hasn't explicitly set one. */
   locale: string;
+  /** #1033 — 1 = send the periodic-interest pre-notify (default),
+   *  0 = user opted out via the alpha02 Alerts card. */
+  notify_maturity_approaching: number;
 }
 
 export interface NotifyState {
@@ -50,18 +53,23 @@ export async function listThresholdsForChain(
  *  via the HTTP handler. */
 export async function upsertThresholds(
   db: D1Database,
-  t: Omit<UserThresholds, 'tg_chat_id' | 'push_channel' | 'locale'> & {
+  t: Omit<
+    UserThresholds,
+    'tg_chat_id' | 'push_channel' | 'locale' | 'notify_maturity_approaching'
+  > & {
     tg_chat_id?: string | null;
     push_channel?: string | null;
     locale?: string | null;
+    /** #1033 — optional; absent keeps the historical opted-in state. */
+    notify_maturity_approaching?: boolean;
   },
 ): Promise<void> {
   const now = Math.floor(Date.now() / 1000);
   await db
     .prepare(
       `INSERT INTO user_thresholds
-         (wallet, chain_id, warn_hf, alert_hf, critical_hf, tg_chat_id, push_channel, locale, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+         (wallet, chain_id, warn_hf, alert_hf, critical_hf, tg_chat_id, push_channel, locale, notify_maturity_approaching, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
        ON CONFLICT(wallet, chain_id) DO UPDATE SET
          warn_hf = excluded.warn_hf,
          alert_hf = excluded.alert_hf,
@@ -69,6 +77,7 @@ export async function upsertThresholds(
          tg_chat_id = COALESCE(excluded.tg_chat_id, user_thresholds.tg_chat_id),
          push_channel = COALESCE(excluded.push_channel, user_thresholds.push_channel),
          locale = COALESCE(excluded.locale, user_thresholds.locale),
+         notify_maturity_approaching = excluded.notify_maturity_approaching,
          updated_at = excluded.updated_at`,
     )
     .bind(
@@ -80,6 +89,7 @@ export async function upsertThresholds(
       t.tg_chat_id ?? null,
       t.push_channel ?? null,
       t.locale ?? 'en',
+      (t.notify_maturity_approaching ?? true) ? 1 : 0,
       now,
       now,
     )
@@ -218,6 +228,24 @@ export async function linkTelegram(
        WHERE wallet = ? AND chain_id = ?`,
     )
     .bind(chatId, Math.floor(Date.now() / 1000), wallet.toLowerCase(), chainId)
+    .run();
+}
+
+/** #1033 — clear the stored Telegram chat id for a wallet, stopping
+ *  all Telegram delivery for it. The row itself stays (thresholds and
+ *  event opt-ins survive a re-link). Idempotent by construction. */
+export async function unlinkTelegram(
+  db: D1Database,
+  wallet: string,
+  chainId: number,
+): Promise<void> {
+  await db
+    .prepare(
+      `UPDATE user_thresholds
+       SET tg_chat_id = NULL, updated_at = ?
+       WHERE wallet = ? AND chain_id = ?`,
+    )
+    .bind(Math.floor(Date.now() / 1000), wallet.toLowerCase(), chainId)
     .run();
 }
 

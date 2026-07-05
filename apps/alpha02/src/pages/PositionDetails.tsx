@@ -1276,6 +1276,18 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
         </dl>
       </section>
 
+      {/* #1033 — one-line alerts nudge: deadlines happen while the
+          site is closed, and the borrower on an active loan is the
+          person who most needs to hear about them. */}
+      {role === 'borrower' &&
+      row.status === 'active' &&
+      !closedThisSession &&
+      !isRental ? (
+        <p className="muted" style={{ margin: 0 }}>
+          <Link to="/settings">{copy.alerts.loanNudge}</Link>
+        </p>
+      ) : null}
+
       {role === 'borrower' &&
       (row.status === 'active' || row.status === 'fallback_pending') &&
       !closedThisSession &&

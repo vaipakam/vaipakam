@@ -20,6 +20,7 @@ import { useTheme, type ThemePreference } from '../app/ThemeContext';
 import { useMode } from '../app/ModeContext';
 import { KeeperSettingsCard } from '../components/KeeperSettingsCard';
 import { ApprovalsCard } from '../components/ApprovalsCard';
+import { AlertsCard } from '../components/AlertsCard';
 
 const THEME_OPTIONS: Array<{ value: ThemePreference; label: string }> = [
   { value: 'light', label: 'Light' },
@@ -90,6 +91,8 @@ export function Settings() {
           protocol are identical in both.
         </p>
       </section>
+
+      <AlertsCard />
 
       {isAdvanced ? <KeeperSettingsCard /> : null}
       {isAdvanced ? <ApprovalsCard /> : null}
