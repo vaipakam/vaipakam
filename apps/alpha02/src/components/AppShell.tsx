@@ -27,6 +27,7 @@ import {
 import type { LucideIcon } from 'lucide-react';
 import { getDeployment } from '@vaipakam/contracts/deployments';
 import { useMode } from '../app/ModeContext';
+import { ErrorBoundary } from './ErrorBoundary';
 import { useActiveChain } from '../chain/useActiveChain';
 import { LiveChainSync } from '../chain/LiveChainSync';
 import { IndexerPushSync } from '../chain/IndexerPushSync';
@@ -74,7 +75,7 @@ const TABBAR: NavItem[] = [
 export function AppShell() {
   const { isAdvanced } = useMode();
   const { readChain } = useActiveChain();
-  const { pathname } = useLocation();
+  const { pathname, search } = useLocation();
 
   // testnetOnly entries (the faucet) additionally require the chain's
   // deployments bundle to actually carry `testnetMocks` — an unseeded
@@ -149,7 +150,13 @@ export function AppShell() {
         <main className="shell-main">
           <NetworkBanner />
           <SanctionsBanner />
-          <Outlet />
+          {/* Route-level crash containment: a page that throws during
+              render becomes a recoverable card while the nav stays
+              alive; navigating away — including to a different
+              ?offer/?chain deep link on the same path — resets it. */}
+          <ErrorBoundary resetKey={pathname + search}>
+            <Outlet />
+          </ErrorBoundary>
         </main>
       </div>
 

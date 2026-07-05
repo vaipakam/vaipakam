@@ -49,6 +49,13 @@ export const copy = {
     },
   },
 
+  errorBoundary: {
+    title: 'Something went wrong on this page',
+    body:
+      'The page hit an unexpected error and stopped rendering. Your funds and on-chain positions are unaffected — this is a display-side fault, and a transaction you just signed may still have gone through (check My positions after reloading). Reloading usually clears it.',
+    reload: 'Reload page',
+    home: 'Back to Home',
+  },
   wallet: {
     connect: 'Connect wallet',
     connectFirst: 'Connect a wallet to continue.',

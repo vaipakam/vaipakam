@@ -8,6 +8,7 @@ import { wagmiConfig } from './chain/wagmi';
 import { ThemeProvider, useTheme } from './app/ThemeContext';
 import { ModeProvider } from './app/ModeContext';
 import { App } from './App';
+import { ErrorBoundary } from './components/ErrorBoundary';
 import './styles/global.css';
 
 const queryClient = new QueryClient({
@@ -40,6 +41,13 @@ function ConnectKitThemed({ children }: { children: React.ReactNode }) {
 
 createRoot(document.getElementById('root')!).render(
   <StrictMode>
+    {/* Outermost boundary: ABOVE the provider stack, because a
+        boundary only catches its descendants — a throw inside
+        ThemeProvider/Wagmi/QueryClient/ConnectKit/router would
+        otherwise still white-screen. ErrorBoundary itself uses no
+        hooks or context, so it is safe out here. No resetKey —
+        reload recovers. */}
+    <ErrorBoundary>
     <ThemeProvider>
       <ModeProvider>
         <WagmiProvider config={wagmiConfig}>
@@ -53,5 +61,6 @@ createRoot(document.getElementById('root')!).render(
         </WagmiProvider>
       </ModeProvider>
     </ThemeProvider>
+    </ErrorBoundary>
   </StrictMode>,
 );
