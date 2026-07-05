@@ -77,6 +77,7 @@ import {
   isCuratedAsset,
   needsSecurityCheck,
   useTokenSecurity,
+  verdictFingerprint,
 } from '../data/tokenSecurity';
 import {
   makeStepper,
@@ -939,6 +940,7 @@ export function OfferFlow({ side }: { side: Side }) {
               selected.assetType === AssetType.ERC20 &&
               needsSecurityCheck(readChain.chainId, selected.lendingAsset),
             verdict: acceptLendingSec.data,
+            errored: acceptLendingSec.isError,
           },
           {
             leg: 'collateral',
@@ -946,15 +948,20 @@ export function OfferFlow({ side }: { side: Side }) {
               selected.collateralAssetType === AssetType.ERC20 &&
               needsSecurityCheck(readChain.chainId, selected.collateralAsset),
             verdict: acceptCollateralSec.data,
+            errored: acceptCollateralSec.isError,
           },
         ].filter((l) => l.needed)
       : [];
-  // undefined = loading OR errored ('unknown' throws in the hook so a
-  // transient outage is never cached) — both hold the gate closed.
+  // Fail-closed on THREE states: no data yet (loading), a 'block'
+  // verdict, and an errored REFETCH — react-query keeps the prior
+  // verdict in `data` when a later refetch fails, so `isError` must
+  // dominate the stale verdict or an outage would silently un-gate.
   const securityBlocked = securityLegs.filter(
-    (l) => l.verdict === undefined || l.verdict.kind === 'block',
+    (l) => l.errored || l.verdict === undefined || l.verdict.kind === 'block',
   );
-  const securityWarned = securityLegs.filter((l) => l.verdict?.kind === 'warn');
+  const securityWarned = securityLegs.filter(
+    (l) => !l.errored && l.verdict?.kind === 'warn',
+  );
   const securityUnsupported = securityLegs.filter(
     (l) => l.verdict?.kind === 'unsupported',
   );
@@ -962,8 +969,14 @@ export function OfferFlow({ side }: { side: Side }) {
   // Late-disclosure rule (same as illiquid/sale banners): a warning
   // or block that ARRIVES after the consent box was ticked voids the
   // consent — it was given against a review without the disclosure.
+  // The fingerprint includes the REASON text, not just the verdict
+  // kind: consent given against "10% sell tax" must not survive the
+  // warning changing to "the owner can pause all transfers".
   const securityFingerprint = securityLegs
-    .map((l) => `${l.leg}:${l.verdict?.kind ?? 'pending'}`)
+    .map(
+      (l) =>
+        `${l.leg}:${l.errored ? 'errored' : verdictFingerprint(l.verdict)}`,
+    )
     .join('|');
   useEffect(() => {
     if (securityBlocked.length > 0 || securityWarned.length > 0) {
@@ -1268,6 +1281,11 @@ export function OfferFlow({ side }: { side: Side }) {
       // #1036 — re-verify both legs at SUBMIT time (fail closed): the
       // review's verdicts are cached; a flag can land inside their
       // window, and a doomed deal must abort before any signature.
+      // A live result that DIFFERS from what the reviewed screen
+      // disclosed is pushed into the query cache before aborting, so
+      // the re-review renders the new finding (and the fingerprint
+      // effect voids the stale consent) — the abort message alone
+      // would otherwise be the only place the user ever saw it.
       for (const [leg, addr, isErc20] of [
         ['loan asset', selected.lendingAsset, selected.assetType === AssetType.ERC20],
         [
@@ -1279,11 +1297,29 @@ export function OfferFlow({ side }: { side: Side }) {
         if (!isErc20) continue;
         if (isCuratedAsset(walletChain.chainId, addr)) continue; // pre-vetted
         const v = await fetchTokenSecurity(walletChain.chainId, addr);
+        const cacheKey = [
+          'tokenSecurity',
+          readChain.chainId,
+          addr.toLowerCase(),
+        ];
         if (v.kind === 'block') {
+          queryClient.setQueryData(cacheKey, v);
           throw new Error(copy.tokenSecurity.gateBlock(leg, v.reasons));
         }
         if (v.kind === 'unknown') {
           throw new Error(copy.tokenSecurity.gateUnknown(leg));
+        }
+        // A live 'warn' may pass ONLY if the reviewed screen already
+        // disclosed this exact warning (same reasons) and consent was
+        // given against it. A warn that landed after review — or
+        // whose content changed — was never consented to: abort,
+        // surface it, re-collect consent.
+        if (v.kind === 'warn') {
+          const reviewed = securityLegs.find((l) => l.leg === leg);
+          if (verdictFingerprint(v) !== verdictFingerprint(reviewed?.verdict)) {
+            queryClient.setQueryData(cacheKey, v);
+            throw new Error(copy.tokenSecurity.gateChanged(leg));
+          }
         }
       }
       stepper.next('sign');
@@ -1823,7 +1859,10 @@ export function OfferFlow({ side }: { side: Side }) {
                 <span className="banner-body">
                   {securityBlocked
                     .map((l) =>
-                      l.verdict === undefined
+                      // An errored leg may still carry a STALE prior
+                      // verdict in `data` — report "couldn't check",
+                      // never the stale text.
+                      l.errored || l.verdict === undefined
                         ? copy.tokenSecurity.gateUnknown(l.leg)
                         : copy.tokenSecurity.gateBlock(
                             l.leg,
@@ -1832,6 +1871,19 @@ export function OfferFlow({ side }: { side: Side }) {
                     )
                     .join(' ')}
                 </span>
+                {securityBlocked.some((l) => l.errored) ? (
+                  <button
+                    type="button"
+                    className="btn btn-secondary"
+                    style={{ marginTop: 8 }}
+                    onClick={() => {
+                      void acceptLendingSec.refetch();
+                      void acceptCollateralSec.refetch();
+                    }}
+                  >
+                    {copy.tokenSecurity.retry}
+                  </button>
+                ) : null}
               </div>
             ) : securityWarned.length > 0 ? (
               <div className="banner banner-warn" role="alert" style={{ marginTop: 16 }}>

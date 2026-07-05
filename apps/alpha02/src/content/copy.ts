@@ -66,6 +66,9 @@ export const copy = {
       `The independent security check does not cover this network (test networks are not indexed), so this deal's ${leg} was not screened. Extra care: only accept tokens you trust.`,
     gateWarn: (leg: string, reasons: string[]) =>
       `Heads up on this deal's ${leg}: ${reasons.join('; ')}. Make sure you understand these before you continue.`,
+    gateChanged: (leg: string) =>
+      `The security check on this deal's ${leg} reports new findings since you reviewed it. Nothing was signed. The review above now shows the update — read it and tick the consent box again if you still want to proceed.`,
+    retry: 'Check again',
   },
   signing: {
     intro: (n: number) =>

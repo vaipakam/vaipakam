@@ -141,6 +141,19 @@ export function needsSecurityCheck(
   );
 }
 
+/** Stable fingerprint of a verdict INCLUDING its reason content.
+ *  Consent-reset effects and the submit-time "was this disclosed?"
+ *  comparison both key on this: a warn whose REASONS changed (e.g.
+ *  "10% sell tax" → "the owner can pause all transfers") is a new
+ *  disclosure even though the verdict kind stayed 'warn', so consent
+ *  given against the old text must not survive it. */
+export function verdictFingerprint(
+  v: TokenSecurityVerdict | undefined,
+): string {
+  if (v === undefined) return 'pending';
+  return 'reasons' in v ? `${v.kind}:${v.reasons.join(',')}` : v.kind;
+}
+
 /** Is this address on the chain's curated list (pre-vetted — never
  *  screened, never blocked)? */
 export function isCuratedAsset(chainId: number, address: string): boolean {
@@ -168,12 +181,20 @@ export function useTokenSecurity(
     staleTime: 10 * 60_000,
     gcTime: 60 * 60_000,
     retry: 1,
+    // While the check is FAILING the gate holds the flow closed and
+    // the copy says "try again in a moment" — so a moment later must
+    // actually bring a retry. Poll every 30s in the error state only;
+    // a settled verdict never re-polls (staleTime governs those).
+    // Manual retry: the gate banners also expose this hook's
+    // `refetch` as a "Check again" button.
+    refetchInterval: (query) =>
+      query.state.status === 'error' ? 30_000 : false,
     queryFn: async () => {
       const v = await fetchTokenSecurity(chainId!, address!);
       // A transient outage must NOT become a cached 10-minute
       // blocking verdict: throw instead, so react-query retries and
-      // keeps refetching (focus/interval) while the gates hold on
-      // `data === undefined` with the same fail-closed copy.
+      // keeps refetching (interval above + focus) while the gates
+      // hold fail-closed.
       if (v.kind === 'unknown') throw new Error('token security check unavailable');
       return v;
     },

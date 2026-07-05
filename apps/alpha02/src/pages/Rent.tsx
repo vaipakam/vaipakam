@@ -42,6 +42,7 @@ import {
   isCuratedAsset,
   needsSecurityCheck,
   useTokenSecurity,
+  verdictFingerprint,
 } from '../data/tokenSecurity';
 import {
   ensureNftApproval,
@@ -793,18 +794,28 @@ function RentNftFlow() {
     readChain.chainId,
     selected?.prepayAsset,
   );
-  // undefined = loading OR errored ('unknown' throws in the hook) —
-  // both hold the gate closed.
+  // Fail-closed on THREE states: no data yet, a 'block' verdict, and
+  // an errored REFETCH — react-query keeps the prior verdict in
+  // `data` when a later refetch fails, so `isError` must dominate
+  // the stale verdict or an outage would silently un-gate.
   const prepaySecBlocked =
     prepaySecNeeded &&
-    (prepaySec.data === undefined || prepaySec.data.kind === 'block');
-  const prepaySecWarned = prepaySecNeeded && prepaySec.data?.kind === 'warn';
+    (prepaySec.isError ||
+      prepaySec.data === undefined ||
+      prepaySec.data.kind === 'block');
+  const prepaySecWarned =
+    prepaySecNeeded && !prepaySec.isError && prepaySec.data?.kind === 'warn';
   // Late-disclosure rule: a warning/block arriving after the consent
-  // box was ticked voids the consent.
+  // box was ticked voids the consent. Fingerprinted on the REASON
+  // content too — changed warning text is a new disclosure even when
+  // the verdict kind stayed 'warn'.
+  const prepaySecFingerprint = prepaySec.isError
+    ? 'errored'
+    : verdictFingerprint(prepaySec.data);
   useEffect(() => {
     if (prepaySecBlocked || prepaySecWarned) setConsent(false);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [prepaySec.data?.kind, prepaySecBlocked]);
+  }, [prepaySecFingerprint, prepaySecBlocked]);
 
   const baseChecks = useEligibility({
     asset: selected
@@ -918,14 +929,33 @@ function RentNftFlow() {
       // before the wallet is asked to sign, so the renter never signs
       // terms that differ from the reviewed listing.
       // #1036 — re-verify the prepay token at submit time (fail
-      // closed; curated tokens are pre-vetted and skipped).
+      // closed; curated tokens are pre-vetted and skipped). A live
+      // result differing from the reviewed disclosure is pushed into
+      // the query cache before aborting, so the re-review renders the
+      // new finding and the fingerprint effect voids stale consent.
       if (!isCuratedAsset(walletChain.chainId, selected.prepayAsset)) {
         const v = await fetchTokenSecurity(walletChain.chainId, selected.prepayAsset);
+        const cacheKey = [
+          'tokenSecurity',
+          readChain.chainId,
+          selected.prepayAsset.toLowerCase(),
+        ];
         if (v.kind === 'block') {
+          queryClient.setQueryData(cacheKey, v);
           throw new Error(copy.tokenSecurity.gateBlock('prepayment token', v.reasons));
         }
         if (v.kind === 'unknown') {
           throw new Error(copy.tokenSecurity.gateUnknown('prepayment token'));
+        }
+        // A live 'warn' passes ONLY when the review already disclosed
+        // this exact warning (same reasons) — anything else was never
+        // consented to.
+        if (
+          v.kind === 'warn' &&
+          verdictFingerprint(v) !== verdictFingerprint(prepaySec.data)
+        ) {
+          queryClient.setQueryData(cacheKey, v);
+          throw new Error(copy.tokenSecurity.gateChanged('prepayment token'));
         }
       }
       let signed: Awaited<ReturnType<typeof signAcceptTerms>>;
@@ -1111,13 +1141,25 @@ function RentNftFlow() {
             {prepaySecBlocked ? (
               <div className="banner banner-danger" role="alert" style={{ marginTop: 16 }}>
                 <span className="banner-body">
-                  {prepaySec.data === undefined
+                  {prepaySec.isError || prepaySec.data === undefined
                     ? copy.tokenSecurity.gateUnknown('prepayment token')
                     : copy.tokenSecurity.gateBlock(
                         'prepayment token',
                         prepaySec.data.kind === 'block' ? prepaySec.data.reasons : [],
                       )}
                 </span>
+                {prepaySec.isError ? (
+                  <button
+                    type="button"
+                    className="btn btn-secondary"
+                    style={{ marginTop: 8 }}
+                    onClick={() => {
+                      void prepaySec.refetch();
+                    }}
+                  >
+                    {copy.tokenSecurity.retry}
+                  </button>
+                ) : null}
               </div>
             ) : prepaySecWarned ? (
               <div className="banner banner-warn" role="alert" style={{ marginTop: 16 }}>
