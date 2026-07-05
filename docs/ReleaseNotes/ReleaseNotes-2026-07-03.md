@@ -17,8 +17,13 @@ of **testnet deploy-flow and deploy-script hardening** (#853/#855/#856/#862);
 the **naive-user-first frontend redesign** (alpha01 basic-mode build-out and the
 alpha02 connected-app redesign) plus the **auto-lend dedicated page** (#878);
 **realtime-push Phase B** adaptive-polling + live-updates diagnostics; and
-**facet-upgrade tooling** that no longer risks a split Diamond (#778/#779). Each
-section below is the fragment authored with its originating PR.
+**facet-upgrade tooling** that no longer risks a split Diamond (#778/#779). This
+edition also opens the **#921 contract-hardening tranche** flagged by the alpha02
+review — the first batch of on-chain race-window fixes (sanctions gate on reward
+claims and a no-more-zombie partial-repay guard, #953), plus a public
+`getOfferState` view (#955) and a bounded per-asset `minPartialBps` setter with
+its RiskParams view (#956); the remaining #921 items land in the 2026-07-04
+edition. Each section below is the fragment authored with its originating PR.
 
 ## Cross-chain reward-budget bridge — mirror claims are now funded (#776)
 
@@ -705,3 +710,287 @@ environment and does not affect the mainnet BNB configuration.
 
 Note for operators: the deployed app must be re-published for this change to
 appear on the live site.
+
+## Contract-level hardening: sanctions on reward claims + no-zombie partial repay (#921)
+
+The alpha02 review (#887) surfaced a class of protections the app enforced only in the UI — which protects users of *our* client but not keeper bots, third-party frontends, or direct callers. This lands the first two as on-chain guarantees, so every integrator gets the same protection.
+
+**Interaction-reward claims now screen for sanctions.** `claimInteractionRewards` pays VPFI directly to the caller, but — unlike every other payout path — it was missing the sanctions screen. A flagged wallet using any non-app client could claim rewards freely. It now carries the standard Tier-1 sanctions gate: a flagged caller reverts, exactly as the "payouts blocked while flagged" policy always intended. (The sibling forfeited-sweep, which routes to treasury rather than the caller, stays ungated by design.)
+
+**A partial repayment can no longer strand a loan.** `repayPartial` accepted an amount equal to the entire remaining principal, subtracted it, and left the loan open at zero principal — a "zombie" whose settlement, collateral release, and position-NFT burns were stranded behind a separate full-repay call. Retiring the whole principal now reverts and points the borrower at the full-repay path (which runs all the close-out steps atomically), matching the equivalent guard already present on the swap-to-repay path. Genuine partials — anything strictly below the remaining principal — are unaffected.
+
+Both are behaviour-preserving for every legitimate flow; they only close the two race/edge windows the UI was papering over.
+
+Remaining #921 items (contract-level sanctions-gate audit, a public offer-state view, the `minPartialBps` setter/view, fee-snapshot-at-init, and an indexer `/claimables` filter) are tracked as separate follow-ups.
+
+Part of #921.
+
+## A single offer's lifecycle state is now readable on-chain (#955)
+
+The plain offer getters (`getOffer` / `getOfferDetails`) return only the raw offer record, which can't tell every terminal apart. In particular, an offer that was **consumed by a position sale** without ever being accepted (a lender listed and sold their position, closing the listing) leaves an offer row that still *looks* open — nonzero creator, not accepted, not expired — so an integrator reading the raw row would wrongly treat it as a live, fillable offer. The alpha02 reference tooling worked around this indirectly by probing whether the offer's position NFT had been burned (an `ownerOf`-reverts liveness heuristic).
+
+This adds a direct **`getOfferState(offerId)`** view that returns the canonical lifecycle state — Open, Accepted, Cancelled, or ConsumedBySale — with the same terminal-precedence the protocol already applies internally (Accepted wins over a later parallel-sale consumption, since the loan exists and that's the primary state). It promotes the previously-internal derivation that the state-filtered paginated views (`getOffersByStatePaginated` / `getUserOffersByStatePaginated`) already used, so the single-id and filtered-list surfaces now agree by construction.
+
+With this view, integrators no longer need the burned-NFT liveness heuristic to detect a consumed-by-sale offer — they read the state directly. A never-existed or cancel-deleted id reports `Cancelled` (callers that must distinguish "never existed" pre-filter via the global counts), matching the existing derivation's legacy-compatible behaviour.
+
+Closes #955.
+
+## Per-asset minimum partial-repayment floor is now configurable and readable (#956)
+
+The protocol already enforced a per-asset minimum partial-repayment size — a partial repayment (or swap-to-repay) must be at least `minPartialBps` of the remaining principal — but there was no way to actually set that floor in production (only a test-only mutator wrote it) and no way to read it back on-chain. In practice it was therefore permanently zero: the floor existed in the code but never did anything.
+
+This adds the missing surface (a #921 pre-audit follow-up):
+
+- A **bounded admin setter** for the floor, gated to the admin role (governance after handover), the same gate its sibling per-asset/per-tier risk-config setters use. The value is range-checked (`0` disables the floor; the maximum is just under 100% — a full-100% floor is rejected because it would make every partial repayment for that asset impossible, since a partial can never retire the entire remaining principal) and emits an event. The floor applies only to **ERC-20** loans; NFT-rental partials (whose "amount" is a day count, not a token amount) are unaffected by it.
+- A **read-only view** returning an asset's full risk parameters (max initial LTV, liquidation-bonus ceiling, reserve factor, and the min-partial floor), so integrators and the app can display and pre-flight the floor before a user submits a partial repayment.
+
+**Rollout impact — read carefully:** leaving the floor at its default (`0`, which is where every asset starts) preserves today's behaviour exactly. But the enforced floor is read **live** on every partial repayment, so **configuring a nonzero floor takes effect immediately for all active loans of that asset**, not just loans opened afterward — an in-flight loan whose next partial would fall below the new floor will start being rejected (the borrower must submit a larger partial, or a full repayment). Operators should account for that when setting a floor on an asset with open positions. Kept as a dedicated setter rather than folded into the existing risk-params setter so that setter's signature and its callers stay unchanged.
+
+Closes #956.
+
+# Alpha01 P5 — Advanced mode reveal
+
+## Summary
+
+Turns on Advanced-mode density across alpha01 without new routes: portfolio strip, HF/LTV panels, receipt technical details, and position filters.
+
+## User-visible changes
+
+- **Home (Advanced):** Portfolio strip plus shortcuts to Claims, VPFI vault, allowances, and analytics.
+- **Borrow / Lend / Rent (Advanced):** Bounds/construction panels on wizard steps; browse cards show offer IDs, liquidity class, and rental buffer; receipts include collapsible technical details.
+- **Positions (Advanced):** Role and at-risk filters; loan cards show live HF and LTV.
+- **Loan detail (Advanced):** Technical risk panel; link-out to classic app for add-collateral, preclose, and refinance.
+- **Claims (Advanced):** Settlement breakdown panel with status, claim asset, and VPFI LIF rebate when applicable.
+- **More (Advanced):** Keeper settings, risk access, allowances, analytics, and NFT verifier link to `defi.vaipakam.com`.
+- **Open offers:** NFT rental listings/requests use rental vocabulary instead of debt-loan copy.
+
+## Verification
+
+- `pnpm --filter @vaipakam/alpha01 test`
+- `pnpm --filter @vaipakam/alpha01 exec tsc -b --noEmit`
+
+# alpha02 — advanced-mode strategy flows, hardening, and trust surfaces
+
+One batch, eight features: submit-time preflight hardening and
+consent integrity; borrower close-early and refinance; lender early
+exit and sale listing; keeper permissions; the position-NFT verifier;
+standing-approvals cleanup; and smaller health/ENS touches. Details
+below in order.
+
+The naive-user connected app now re-checks every fact that matters at
+the moment of signing, not just at review time. Immediately before any
+token approval or signature, the app re-reads live from the chain: the
+wallet's balance of whatever is being locked or paid, whether either
+asset of the deal is protocol-paused, whether the connected wallet
+still holds the position it is acting on (positions travel with their
+NFTs), the current grace window (including governance-configured
+schedules), and — where the review showed no "unpriced asset" warning
+— whether either side of the deal has since become unpriced. Anything
+stale aborts with a plain explanation before the user pays for a
+doomed transaction; an unreadable answer never silently passes where
+it gates a disclosure.
+
+Consent is now tied to what was actually reviewed: editing any term of
+an offer or listing, or picking a different offer or listing, clears a
+previously ticked risk-and-terms acknowledgement so it must be given
+again against the new facts. If the "unpriced asset" warning appears
+after consent was already ticked (the check resolves asynchronously),
+consent is cleared and must be re-given with the warning visible.
+
+Review copy is more precise: offer receipts state the loan's interest
+mode explicitly (full-term interest applies even when repaying early;
+day-by-day loans cost less when repaid early), self-posted offers with
+unpriced assets get the same in-kind-default warning as accepted ones,
+and one-year offers now show their correct 30-day grace window. The
+shown grace period and the enforced grace window are derived from the
+same schedule so they cannot drift apart.
+
+Advanced mode gains the first loan-strategy action: borrowers on an
+active, not-yet-matured ERC-20 loan can close it early from the loan's
+detail page. The review quotes the protocol's own settlement figure —
+never a locally derived estimate — and states the interest-mode
+implication up front: full-term loans (the protocol default) still pay
+the whole term's interest when closed early, day-by-day loans pay only
+what has accrued. The figure is re-read live at confirmation, maturity
+is judged by chain time at both display and confirmation, and
+collateral is released immediately after closing. After a successful
+close or repayment the page stops offering repay-family actions until
+fresh data confirms the loan's state, and only one pending-action
+review can be open at a time.
+
+Advanced mode also gains refinancing: the original borrower of an
+active, not-yet-matured loan (refinancing is only offered while the
+position hasn't changed hands — collateral carry-over is tied to the
+original borrower) can post a refinance request — a borrow offer for
+exactly the loan's outstanding amount, marked so that the moment any
+lender accepts it, one transaction opens the new loan, pays the old
+lender off from the borrower's wallet, closes the old loan, and moves
+the collateral across without ever unlocking it. The review states the
+payoff rule plainly (always principal plus the full remaining term's
+interest — the exiting lender's fixed entitlement, regardless of the
+loan's day-by-day setting), how much spare balance the wallet must
+keep while the request is open, that a short balance simply makes an
+acceptance fail with nothing taken, that posting takes up to three
+wallet confirmations whose earlier steps persist if abandoned partway,
+and — for loans on a periodic payment schedule — that the replacement
+loan won't carry one. The request expires on-chain at the reviewed
+lifetime, so a forgotten request can't be accepted months later, and
+completion is additionally bounded to the reviewed rate ceiling. The
+page remembers and live-verifies the pending request in a standing
+card that outlives every other gate — it stays through data hiccups,
+mode switches, maturity, and even the loan settling another way. That
+card warns distinctly when the standing payoff approval no longer
+covers completion (with a restore action that first re-verifies the
+request is still completable) or when the wallet balance is short,
+holds off partial repayment and close-early while the request is live
+(either would strand it), warns inside the full-repayment review that
+the request survives settlement until cancelled, and cancels in place
+— cancellation opens a few minutes after posting per the protocol's
+cooldown (judged by chain time) and also removes the standing payoff
+approval. Abandoning the posting sequence partway automatically
+unwinds an already-granted payoff approval.
+
+Lenders get their own advanced-mode exit: selling an active loan
+position into a matching open lending offer. The picker shows only
+offers the sale can really complete against and leads with what the
+seller would receive — principal minus the forfeited accrued interest
+or, if larger, the rate difference the higher-rate buyer expects for
+the remaining term (flagged clearly before review). Payment lands in
+the seller's wallet in the same transaction: nothing to approve,
+nothing to claim, and the borrower's terms don't change. Because a
+bought-out offer can briefly linger as available in off-chain data,
+confirming always re-verifies the chosen offer live and re-reads the
+payout with chain time, asking for a fresh review if anything
+material moved.
+
+Lenders can also list a position for sale at their own rate. The
+review states, before anything is signed, that the lender position
+NFT is locked until the sale completes or the listing is cancelled,
+and that the settlement — the larger of interest accrued by
+acceptance or the rate difference for the remaining term — is pulled
+from the seller's wallet inside the buyer's transaction, which is why
+listing sets a standing approval sized to cover the loan's whole term
+plus a month's headroom. The listing's status card is driven by the
+chain itself (the lock on the position NFT), so a listing made on
+another device still appears, still warns when the approval or
+balance would make a buyer's acceptance fail (with a restore action
+that first verifies the listing still stands and always covers the
+current live requirement; where the listing's record can't be
+identified the card says the funding can't be verified rather than
+showing a false all-clear, and everything money-related binds only
+to the wallet that actually holds the position), and cancelling —
+where the listing id is known, once the protocol's short cancel
+cooldown passes — unlocks the NFT and removes the approval, with the
+outcome reported on the page. A listing that ends off-page (accepted
+or cancelled elsewhere) is announced once instead of silently
+disappearing. On the buyer's side, accepting an offer that is really
+a position sale is clearly disclosed before signing: the review names
+the running loan being bought and waits for that check to resolve.
+
+Advanced mode also gains keeper permissions — the protocol's fully
+opt-in way to let a third-party service (or your own bot) run
+specific loan actions for you. The Settings surface pairs a master
+switch with per-keeper grants explained action by action in plain
+language, and every loan page gets the per-loan switch that actually
+arms a keeper for that loan; all three must agree, everything is off
+by default, and the page states the safety facts up front: a keeper
+can never receive your money, every grant is instantly revocable,
+the protocol can pause all keepers at once, and permissions follow
+whoever holds the position. The editor never overwrites permissions
+it couldn't read, preserves grants it doesn't render, and treats
+"remove everything" as a full revoke whenever no unrendered grants
+remain.
+
+Position NFTs get their trust surface: advanced mode shows your
+position NFT's id on each loan, linking to a verifier where any token
+id can be checked — a live token shows its holder, the side it
+controls, its linked loan, and any transfer lock; a token that
+doesn't exist on the current network says plainly that it was either
+retired after its claim or never minted, and that the network doesn't
+record which. Only a real on-chain answer produces a verdict — a
+connection failure shows a visible retry state instead of a false
+"doesn't exist", and a transfer-lock check that fails or returns
+something this app version doesn't recognise reads as locked/unknown,
+never as transferable. Every verdict names the network it applies
+to.
+
+Advanced mode also gains a standing-approvals view in Settings: every
+spending permission the wallet has granted the protocol for tokens
+its loans and offers touch, with one-click revoke — the cleanup
+counterpart to the flows that deliberately set standing approvals.
+The list names its own limits (it covers known tokens on the current
+network, not the wallet's whole approval history), and warns that
+revoking an approval a live request or listing depends on makes that
+flow fail until restored from its own card.
+
+Two smaller advanced-mode touches: the loan-health detail now also
+says roughly how far the collateral's value can fall before
+liquidation begins (derived from the health factor and framed as
+approximate), and the NFT verifier shows a holder's ENS name next to
+their address when one exists on Ethereum mainnet — display sugar
+only, never part of a verdict.
+
+A follow-up review round hardened the batch further. The biggest
+change: the "list your position at your own price" form is withheld
+for now — the protocol step it depends on cannot complete on-chain
+today (tracked separately as a contracts bug), so the page shows an
+honest "not available yet" note pointing at the working instant exit
+instead of a form whose final wallet step could never succeed. On the
+buyer side, an offer that is really tied to an already-running loan (a
+position sale or an offset vehicle) can no longer be accepted here at
+all: the review named the linked loan before, but its money rows still
+described a fresh loan — and a review that can't show the real terms
+must block signing, not warn past it. Partial repayment now re-checks
+the loan live at submit (still active, still inside the grace window)
+before any approval, and is held off — with an explanation — while the
+lender has the position listed for sale, since a listing sells the
+claim at its frozen outstanding amount. The reviewed interest mode
+(full-term vs day-by-day) is now verified against the protocol's
+canonical record before the wallet is asked to sign, and signing waits
+until the live repayment-grace schedule is confirmed rather than
+letting an acknowledgement cover a fallback label. Cancelling a
+pending refinance request now finishes its whole story before the
+card closes — the approval clean-up prompt arrives while the
+explanation is still on screen, and the outcome lands in the page
+banner. And the automatic clean-up that removes a just-granted
+spending approval when a posting sequence fails now fires only when
+that approval was actually granted by the failed attempt — a
+pre-existing approval that another live request or listing depends on
+is left untouched.
+
+A second follow-up round closed four more gaps. The live grace-window
+read no longer quietly substitutes the default schedule when the
+network call fails — a failed read now pauses signing with a visible
+retry (and a repayment gate that can't confirm the window says so
+instead of guessing either way); only a genuinely empty on-chain
+schedule resolves to the defaults, because that is the live
+configuration. Both repayment gates now judge the grace window against
+the loan's live term rather than the cached row, so a loan whose
+duration was extended in place is judged by its real dates. Before any
+acceptance signature, the app now also asks the protocol's own
+dry-run whether the risk-access gate would reject the acceptance —
+the canonical trap being an NFT rental priced in a token the protocol
+treats as unpriced, which needs a standing on-chain acknowledgement
+this app can't collect yet — and blocks with a plain explanation
+before anything is signed or approved. And cancelling a refinance
+request now carries the same reminder the sale-listing cancel already
+had: removing the standing approval also affects any other request or
+listing using the same token, each of which flags itself and offers a
+one-click restore.
+
+A final polish round tightened five more edges. The repayment
+pre-check for loans in the failed-liquidation state now mirrors the
+protocol's late-fee cap (fees stop growing at 5%) and judges maturity
+by the loan's live term, so a borrower holding exactly enough is no
+longer refused by an over-estimate. An expired refinance request stops
+holding up partial repayment and close-early (nobody can accept it any
+more), says plainly that it expired, and refuses to restore its
+standing approval — cancelling to clean up remains one click. The NFT
+verifier now warns when a token's current holder is compliance-flagged
+(the token is frozen — it cannot be transferred and its claims wait
+until the flag clears; a failed check shows as unknown, never as
+clean), and flags lender claims whose linked loan would pay out raw
+collateral in kind on default. And the standing-approvals list now
+sweeps the lending and collateral sides of past offers too, not just
+rental prepayments, so residue from cancelled offers can't hide behind
+an empty positions list.
