@@ -54,6 +54,9 @@ export const copy = {
       n === 1
         ? 'One wallet confirmation finishes this:'
         : `You'll confirm ${n} times in your wallet, in this order:`,
+    introUpTo: (n: number) => `Up to ${n} wallet confirmations, in this order:`,
+    approveUnknown:
+      'Approve the token — one confirmation, or two if your wallet needs an older approval reset to zero first (still checking).',
     sign: 'Sign the terms you just read — a free signature, no gas.',
     approve:
       'Approve the token — you allow the protocol to take the amount shown above. This is a transaction.',

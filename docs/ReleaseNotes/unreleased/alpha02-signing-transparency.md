@@ -1,8 +1,9 @@
 ## Thread — every wallet prompt announced before it happens (offer flows)
 
-Creating an offer asks for up to two wallet confirmations and
-accepting one for up to three (sign the terms, approve the token,
-submit) — and until now the app never said so: the whole sequence ran
+Creating an offer asks for up to three wallet confirmations and
+accepting one for up to four (sign the terms, approve the token —
+twice when the wallet needs an old approval reset to zero first —
+then submit) — and until now the app never said so: the whole sequence ran
 behind one flat "Waiting for wallet…" spinner, so the second and third
 prompts could read as something going wrong, or worse, something
 suspicious.

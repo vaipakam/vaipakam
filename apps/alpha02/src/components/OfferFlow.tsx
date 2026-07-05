@@ -987,6 +987,10 @@ export function OfferFlow({ side }: { side: Side }) {
   const planApprove = planLeg?.token
     ? plannedApprovePrompts(planAllowance.data, planLeg.amount)
     : 0;
+  // Allowance still loading / failed → the count is a CEILING (the
+  // approve leg planned at 2) and the roadmap must say "up to", not
+  // state a number that a zero-first reset would exceed.
+  const planKnown = !planLeg?.token || planAllowance.data !== undefined;
   const planTotal =
     planLeg === null ? null : (planLeg.needsSign ? 1 : 0) + planApprove + 1;
 
@@ -1724,10 +1728,14 @@ export function OfferFlow({ side }: { side: Side }) {
               // reads as something going wrong.
               <div className="banner banner-info" role="note" style={{ marginTop: 16 }}>
                 <span className="banner-body">
-                  {copy.signing.intro(planTotal)}
+                  {planKnown
+                    ? copy.signing.intro(planTotal)
+                    : copy.signing.introUpTo(planTotal)}
                   <ol style={{ margin: '6px 0 0 18px', padding: 0 }}>
                     {planLeg?.needsSign ? <li>{copy.signing.sign}</li> : null}
-                    {planApprove === 2 ? (
+                    {!planKnown ? (
+                      <li>{copy.signing.approveUnknown}</li>
+                    ) : planApprove === 2 ? (
                       <li>{copy.signing.approveReset}</li>
                     ) : planApprove === 1 ? (
                       <li>{copy.signing.approve}</li>

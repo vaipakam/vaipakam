@@ -28,13 +28,17 @@ export interface SubmitProgress {
 /** Zero-first approval rule → how many approve PROMPTS the payment
  *  leg costs: 0 (allowance already covers), 1 (fresh approve), or 2
  *  (non-zero-but-short allowance: reset to zero first — tokens like
- *  mainnet USDT revert on non-zero→non-zero approves). An unknown
- *  allowance (read unavailable) plans 1 — the roadmap says "up to". */
+ *  mainnet USDT revert on non-zero→non-zero approves). An UNKNOWN
+ *  allowance (read still loading, or failed) plans the CEILING (2):
+ *  telling the user "up to N" and finishing early is honest;
+ *  promising fewer prompts than actually fire is exactly the
+ *  surprise this feature exists to kill. Callers switch to "up to"
+ *  phrasing when the allowance is unknown. */
 export function plannedApprovePrompts(
   current: bigint | undefined,
   amount: bigint,
 ): number {
-  if (current === undefined) return 1;
+  if (current === undefined) return 2;
   if (current >= amount) return 0;
   return current > 0n ? 2 : 1;
 }
