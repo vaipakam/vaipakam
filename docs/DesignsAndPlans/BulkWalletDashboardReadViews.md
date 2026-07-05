@@ -256,8 +256,10 @@ dashboard aggregate surface (`getUserDashboardLoans`, `getUserDashboardOffers`,
 `LoanWithRisk`) and is 533 lines vs MetricsFacet's 1921 (likely near EIP-170),
 so it has the semantic fit and the bytecode headroom. This also avoids the full
 facet-addition checklist — we only add the two selectors to the existing
-`_getMetricsDashboardFacetSelectors()` in `DeployDiamond.s.sol` +
-`HelperTest.sol` + `SelectorCoverageTest`, no `DiamondFacetNames` /
+`_getMetricsDashboardSelectors()` in `DeployDiamond.s.sol` +
+`SelectorCoverageTest.t.sol` and to the public
+`getMetricsDashboardFacetSelectors()` in `HelperTest.sol`, no
+`DiamondFacetNames` /
 `DeployDiamondIntegration` / barrel churn. **Fallback:** if `FacetSizeLimitTest`
 shows `MetricsDashboardFacet` over 24,576 bytes after the addition, split these
 two views into a new dedicated `DashboardViewFacet` and take the full
@@ -310,13 +312,25 @@ drift.
   Do **not** dedupe the loanId list before the call — dual-role holders depend
   on the duplicate (§5.2). Revert-probe fallback → today's per-id
   `getLoanDetails` loop.
-- Fallback is the existing `isRevert(e)` probe (`liveLoanRow.ts`): an honest
-  revert / zero-data (old deploy lacks the selector) → per-id path; a transport
-  error → `null` (whole source degraded, existing banner). This is the same
-  pattern as the pre-#769 `getUserPositionLoansPaginated` → legacy fallback.
-- **Frontend ABI re-export required** (`exportFrontendAbis.sh` re-exports
-  `MetricsDashboardFacet.json`; the barrel already includes it) — part of the
-  consumer PR, not the contracts PR.
+- Fallback probe must **distinguish selector-absent from `BatchTooLarge`.**
+  With the §5.2 cap in place, a batch-view revert no longer implies "old deploy
+  lacks the selector" — it could be `BatchTooLarge` from cap/`PAGE` drift.
+  Treating that as legacy and silently falling back to per-id hydration would
+  hide the cap violation and **recreate the exact large-inventory failure mode
+  the cap exists to prevent.** So the consumer narrows the probe: only a
+  **function-not-found / zero-data** revert (`ContractFunctionZeroDataError`,
+  the old-deploy signature) routes to the per-id path; a decoded
+  `BatchTooLarge` (or any other named contract revert) is surfaced as an error,
+  not swallowed. The `PAGE ≤ MAX_BATCH_IDS` invariant means a correctly
+  configured client never trips `BatchTooLarge`; if it does, that's a config
+  bug to see, not to paper over. A transport error → `null` (whole source
+  degraded, existing banner), as today.
+- **Frontend ABI re-export ships with the CONTRACTS PR** — the PR that adds the
+  selectors runs `exportFrontendAbis.sh` (re-exports `MetricsDashboardFacet.json`
+  new selectors + the `MetricsFacet.json` `internalType` churn from §5.3; the
+  barrel already includes both) so the committed package ABI never lags the
+  deployed surface. The consumer PR only *imports* that already-exported
+  surface — it does not defer the export.
 
 ## 6. Alternatives considered
 
@@ -348,11 +362,14 @@ drift.
 ## 7. Deploy-sanity & test plan
 
 **Deploy-sanity (per CLAUDE.md):**
-- Add `getOffersWithState` + `getLoansBatch` selectors to
-  `_getMetricsDashboardFacetSelectors()` in `DeployDiamond.s.sol` **and**
-  `HelperTest.sol`; `SelectorCoverageTest` covers `MetricsDashboardFacet`
-  already → its `_populateRoutedSet()` picks the new selectors up via that
-  helper. No new facet name in `DiamondFacetNames`.
+- Add `getOffersWithState` + `getLoansBatch` selectors to the production cut
+  helper `_getMetricsDashboardSelectors()` in `DeployDiamond.s.sol` **and** the
+  public test helper `getMetricsDashboardFacetSelectors()` in `HelperTest.sol`
+  (note the different names — the production helper has the leading underscore
+  and no `Facet`, the test helper is the reverse). `SelectorCoverageTest.t.sol`
+  covers `MetricsDashboardFacet` already via its own
+  `_getMetricsDashboardSelectors()` at `_populateRoutedSet()` → add the two
+  selectors there too. No new facet name in `DiamondFacetNames`.
 - `FacetSizeLimitTest` — confirms `MetricsDashboardFacet` stays ≤ 24,576 bytes
   after the addition (the §5.2 fallback trigger).
 
@@ -384,10 +401,13 @@ drift.
     Symmetric duplicate-offerId case for `getOffersWithState`.
 
 **Verification order:** `FOUNDRY_PROFILE=quick forge build` inner loop →
-`forge build` (default) for the ABI shape → targeted
-`forge test --match-path test/BulkDashboardViewsTest.t.sol` +
+**`forge build --skip test`** for the ABI shape / re-export (per CLAUDE.md — a
+bare test-inclusive `forge build` can trip the known viaIR whole-unit stack
+ceiling; `--skip test` compiles `src/`+`script/`, all `forge inspect` needs) →
+targeted `forge test --match-path test/BulkDashboardViewsTest.t.sol` +
 `--match-path test/deploy/*` (selectors/size changed) — per the per-PR targeted
-rule, not the full regression.
+rule, not the full regression. All forge commands take the
+`nice -n -10 ionice -c 2 -n 0` high-priority prefix.
 
 ## 8. Rollout
 
