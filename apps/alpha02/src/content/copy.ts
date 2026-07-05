@@ -144,6 +144,9 @@ export const copy = {
       'The seller’s standing settlement approval no longer covers completing this sale, so the purchase would fail on-chain. Nothing was sent or approved — the seller needs to restore their approval (their listing card shows a restore action).',
     saleMaturityPassed:
       'This loan has reached its due date — the position can no longer be bought. Nothing was sent or approved.',
+    saleBought: 'Position bought',
+    saleBuyerNext: (loanId: string) =>
+      `You\u2019re now the lender of loan #${loanId} \u2014 the loan keeps running unchanged for the borrower, and their repayment comes to you. Track it under My positions; when they repay you claim the principal and the remaining interest.`,
     saleSelfBuy:
       'You are the borrower of this loan, so you can\u2019t also buy its lender side \u2014 the protocol rejects that. Repaying or closing early from My positions are your moves instead. Nothing was sent or approved.',
     liquidityChecking:

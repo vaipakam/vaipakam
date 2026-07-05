@@ -234,6 +234,10 @@ export function OfferFlow({ side }: { side: Side }) {
   const [submitError, setSubmitError] = useState<string | null>(null);
   const [deepLinkNotice, setDeepLinkNotice] = useState<string | null>(null);
   const [txHash, setTxHash] = useState<string | null>(null);
+  // Set at submit time — after success the offer is consumed and the
+  // cached linkage queries reset, so the done screen can't re-derive
+  // what KIND of accept just completed.
+  const [doneWasSaleBuy, setDoneWasSaleBuy] = useState<string | null>(null);
 
   // ANY form edit is potentially disclosure-driving — the central rule
   // voids prior consent on every patch that doesn't itself set the
@@ -1132,6 +1136,13 @@ export function OfferFlow({ side }: { side: Side }) {
       if (err instanceof Error && err.message === copy.match.termsChanged) {
         void queryClient.invalidateQueries({ queryKey: ['activeOffers'] });
         void queryClient.invalidateQueries({ queryKey: ['offer'] });
+        // A sale-linked abort usually means the LINKED LOAN moved
+        // (partial repay, collateral change) — the loan-derived
+        // receipt and consent fingerprint must re-read immediately,
+        // not on the next interval, or a retry repeats the same abort
+        // against the same stale review.
+        void queryClient.invalidateQueries({ queryKey: ['offerSaleReview'] });
+        void queryClient.invalidateQueries({ queryKey: ['offerLinkedLoan'] });
       }
       throw err;
     }
@@ -1192,8 +1203,13 @@ export function OfferFlow({ side }: { side: Side }) {
     setSubmitting(true);
     setSubmitError(null);
     try {
+      const wasSale =
+        mode === 'accept' && acceptIsLoanSale && saleData?.kind === 'sale'
+          ? saleData.loanId
+          : null;
       const hash = mode === 'accept' ? await submitAccept() : await submitPost();
       setTxHash(hash);
+      setDoneWasSaleBuy(wasSale);
       setStep('done');
       void queryClient.invalidateQueries({ queryKey: ['myOffers'] });
       void queryClient.invalidateQueries({ queryKey: ['activeOffers'] });
@@ -1206,8 +1222,20 @@ export function OfferFlow({ side }: { side: Side }) {
   }
 
   // ---- Render ----------------------------------------------------
-  const doneTitle = mode === 'accept' ? copy.match.loanOpened : text.doneTitle;
-  const doneBody = mode === 'accept' ? text.acceptDoneBody : text.doneBody;
+  // A sale buy did NOT open a fresh loan — the generic accept success
+  // ("Loan opened" / funds-lent wording) would misstate what happened.
+  const doneTitle =
+    mode === 'accept'
+      ? doneWasSaleBuy !== null
+        ? copy.match.saleBought
+        : copy.match.loanOpened
+      : text.doneTitle;
+  const doneBody =
+    mode === 'accept'
+      ? doneWasSaleBuy !== null
+        ? copy.match.saleBuyerNext(doneWasSaleBuy)
+        : text.acceptDoneBody
+      : text.doneBody;
 
   return (
     <div>
@@ -1724,15 +1752,18 @@ async function readSaleReviewLive(
       args: [live.lender],
     }) as Promise<bigint>,
     // The CURRENT borrower — the self-buy guard on-chain keys on the
-    // borrower-NFT holder, not the stored origination borrower. A
-    // failed ownerOf (transient) falls back to the stored borrower:
-    // that can only under-block, and the contract still enforces.
-    (client.readContract({
+    // borrower-NFT holder, not the stored origination borrower. FAIL
+    // CLOSED on a read failure: a stored-borrower fallback would
+    // under-block a transferred position's current borrower, letting
+    // a doomed self-buy reach signing. A throw here surfaces as the
+    // review's named check-failed state with a retry (query path) or
+    // aborts before any signature/approval (submit path).
+    client.readContract({
       address: diamondAddress,
       abi: DIAMOND_ABI_VIEM,
       functionName: 'ownerOf',
       args: [live.borrowerTokenId],
-    }) as Promise<`0x${string}`>).catch(() => live.borrower),
+    }) as Promise<`0x${string}`>,
   ]);
   return {
     kind: 'sale',
