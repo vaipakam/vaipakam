@@ -18,6 +18,12 @@ process.env.VITE_BUILD_HASH = (() => {
 })();
 process.env.VITE_BUILD_TIME = new Date().toISOString();
 
+// The Cloudflare plugin boots a workerd sandbox with the dev server —
+// unnecessary for the fork-tier e2e (plain SPA serving is enough) and
+// slow/fragile on CI runners. The e2e webServer sets ALPHA02_E2E=1 to
+// serve without it; every normal dev/build/deploy path is unchanged.
 export default defineConfig({
-  plugins: [react(), cloudflare()],
+  plugins: process.env.ALPHA02_E2E
+    ? [react()]
+    : [react(), cloudflare()],
 });

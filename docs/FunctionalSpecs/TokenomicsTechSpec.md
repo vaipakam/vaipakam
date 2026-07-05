@@ -8,8 +8,9 @@
 >
 > **Kept and unchanged:** the balance-based **fee-discount tiers** (vault-held VPFI
 > still lowers fees — it simply no longer earns a yield) and the **interaction
-> rewards** pool. Their freed `25%` allocation (24% staking + 1% sale) is a Reserve
-> pending governance reallocation (see §3). Any active-voice reference below to
+> rewards** pool. The freed `24%` staking allocation is carried as a Reserve
+> pending governance reallocation; the removed `1%` sale slice was dropped from
+> the table entirely in the 2026-07-05 reconciliation (see §3). Any active-voice reference below to
 > "earning staking rewards/APR" or "buying VPFI at a fixed rate" is **historical**
 > and overridden by this banner.
 
@@ -70,31 +71,38 @@ Implementation target:
 
 | Category                              | Percentage |     VPFI Amount | Vesting / Release Notes                          |
 | ------------------------------------- | ---------: | --------------: | ------------------------------------------------ |
-| Founders                              |       `6%` |    `13,800,000` | 12-month cliff + 36-month linear vesting         |
+| Founders                              |       `6%` |    `13,800,000` | 12-mo (1-yr) cliff; 48-mo (4-yr) total linear vesting, inclusive of the cliff — see §3a |
 | Developers & Team                     |      `12%` |    `27,600,000` | Same vesting as founders                         |
 | Testers & Early Contributors          |       `6%` |    `13,800,000` | 6–12 month cliff                                 |
 | Platform Admins / Operational Roles   |       `3%` |     `6,900,000` | Timelock controlled                              |
 | Security Auditors                     |       `2%` |     `4,600,000` | One-time grants upon delivery                    |
 | Regulatory Compliance Pool            |       `1%` |     `2,300,000` | One-time                                         |
-| Bug Bounty Programs                   |       `2%` |     `4,600,000` | Ongoing, locked in multi-sig                     |
+| Bug Bounty Programs                   |       `2%` |     `4,600,000` | Multisig-held operational treasury bucket — not an on-chain insurance product; see §9 |
 | Exchange Listings & Market Making     |      `12%` |    `27,600,000` | Liquidity + CEX incentives                       |
 | Ecosystem / Community / Marketing     |       `2%` |     `4,600,000` | 0 cliff + ~12–18 mo linear; ops/governance multisig — see §3a |
 | Platform Interaction Rewards          |      `30%` |    `69,000,000` | Usage-based rewards                              |
-| Reserve (pending reallocation)        |      `25%` |    `57,500,000` | Freed by the #687 excision (24% staking + 1% fixed-rate sale) — disposition governance-pending |
-| **Total (pre-reconciliation)**        |   **101%** | **232,300,000** | See note — normalization to 100% / 230M is governance-pending |
+| Reserve (pending reallocation)        |      `24%` |    `55,200,000` | The `24%` staking-rewards pool freed by #687-B (`5% APR` staking, removed; see §7) — now all staking, disposition governance-pending |
+| **Total**                             |  **100%** | **230,000,000** | Sums to the `230M` `TOTAL_SUPPLY_CAP` |
 
-> **Reserve + reconciliation note.** The `25%` Reserve is the allocation freed by
-> the #687 legal-surface excision — the `5% APR` staking-rewards pool (`24%`,
-> removed in #687-B; see §7) and the Early Fixed-Rate Purchase Program (`1%`,
-> removed in #687-A; see §8). Its final disposition — held in reserve, burned to
-> reduce the `230M` cap, or otherwise reallocated — is a **pending governance
-> decision**, shown here as a placeholder so the freed supply is accounted for.
-> The granular rows above currently sum to `101%` / `232.3M` — a **pre-existing**
-> over-allocation that predates this excision. Normalizing to exactly `100%` /
-> `230M` (the Whitepaper §11.2 table shows one candidate reconciliation: dropping
-> the granular Regulatory-Compliance and Ecosystem rows and setting Market Making
-> to `14%`) is part of the same pending governance reallocation; the Market-Making
-> figure itself (`12%` here vs `14%` in the whitepaper) is one of the open items.
+> **Reconciliation note (owner decision, 2026-07-05).** The table now sums to
+> exactly `100%` / `230,000,000` VPFI — the `230M` hard `TOTAL_SUPPLY_CAP`. Two
+> items were resolved to get there:
+>
+> 1. **Reserve normalized `25%` → `24%`.** The reserve represents the supply
+>    freed by the #687 legal-surface excision. That excision freed two slices:
+>    the `24%` `5% APR` staking-rewards pool (removed in #687-B; see §7) and the
+>    `1%` Early Fixed-Rate Purchase Program (removed in #687-A; see §8). Because
+>    the fixed-rate sale program is **removed**, its `1%` slice is not carried
+>    into the reserve — the reserve is now the `24%` staking pool **only**, and
+>    dropping that `1%` is exactly what normalizes the previously over-allocated
+>    `101%` table down to `100%`. Final disposition of the `24%` (held in
+>    reserve, burned to reduce the cap, or reallocated) remains a pending
+>    governance decision.
+> 2. **Market Making fixed at `12%`.** The `12%` here is the canonical figure
+>    (owner decision, 2026-07-05); it supersedes the `14%` shown in the older
+>    whitepaper §11.2 table. The whitepaper table was aligned to `12%` in the
+>    same change-set as this note, so the two documents now agree — no open
+>    follow-up remains.
 
 ### 3a. People-pool semantics (Founders / Team / Testers / Ecosystem)
 
@@ -102,8 +110,13 @@ The four allocation lines that fund people are reserved **mint headroom**,
 not pre-minted bags. The 230M is a *cap*, not a mandatory mint — an
 unallocated pool is simply never minted (lower circulating supply).
 
-- **Founders (6%)** — the founder's genuine ownership stake. 1-year
-  cliff + 4-year linear vesting via a per-grantee `VaipakamVestingWallet`.
+- **Founders (6%)** — the founder's genuine ownership stake. Canonical
+  vesting terms (OpenZeppelin `VestingWallet` semantics): a 12-month
+  (1-year) cliff and a 48-month (4-year) **total** linear-vesting window
+  that is **inclusive of the cliff**, via a per-grantee
+  `VaipakamVestingWallet`. (The §3 table row states the same terms; any
+  older "cliff + separate linear period" phrasing is superseded by this
+  single canonical statement.)
 - **Developers & Team (12%)** — ongoing developer / operational hires.
   The solo founder, being also the sole developer, draws a *defined*
   developer grant from this pool — **not** the whole pool; the remainder
@@ -220,7 +233,8 @@ Topology:
 
 - `Base` is the **canonical reward chain** — consistent with the canonical VPFI token rule and the §7 canonical-address rule
 - every non-canonical Diamond (mirror chains) acts as a **reporter**: at day-close it publishes its daily interest total to `Base` over the approved cross-chain messenger
-- `Base` acts as the **aggregator**: it accumulates chain totals into `dailyGlobalInterestNumeraire` and then **broadcasts that single number back** to every mirror
+- `Base` is itself a reporting source too: its own day-close records its per-side totals directly into the aggregator's storage under `Base`'s own EVM chain id — no cross-chain hop, no message fee — but it counts toward finalization exactly like a mirror's report
+- `Base` acts as the **aggregator**: it accumulates the per-side chain totals into the day's global lender-interest and borrower-interest denominators (recorded together as the `dailyGlobalInterestNumeraire` entry for the day) and then **broadcasts that finalized per-side pair back** to every mirror
 - `claimInteractionRewards()` runs **locally on each chain** using the mirror's own user-level interest data and the broadcast global denominator — users never have to leave their lending chain to claim once the relevant loan has closed
 
 Day-close emission contract (mirror → Base):
@@ -228,22 +242,26 @@ Day-close emission contract (mirror → Base):
 - trigger: the first interaction on day `D+1 UTC` (lazy rollover) or a permissionless poke function `closeDay(D)` if no traffic rolls the day naturally
 - payload:
   - `dayId` (uint64, UTC day number)
-  - `chainInterestNumeraire18` (uint256, 1e18-scaled, sum of `lenderInterestEarned + borrowerInterestPaid` on that chain for day `D`, quoted in the active numeraire)
+  - `chainLenderInterestNumeraire18` (uint256, 1e18-scaled, total lender interest **earned** on that chain for day `D`, quoted in the active numeraire)
+  - `chainBorrowerInterestNumeraire18` (uint256, 1e18-scaled, total borrower interest **paid** on that chain for day `D`, quoted in the active numeraire)
+  - the lender-side and borrower-side numbers are carried **separately** because the §4 distribution rule splits each daily pool `50%` to lenders proportional to interest earned and `50%` to borrowers proportional to interest paid — each side needs its own protocol-wide denominator; a single combined number cannot support that split. The combined chain total, where a combined figure is needed, is simply the sum of the two fields
 - transport: the configured cross-chain messenger from the mirror Diamond to the `Base` Diamond, restricted to approved chain and peer channels
 - each `(dayId, sourceChainId)` pair must be idempotent on the `Base` side — duplicate messages for the same day are rejected
 
 Finalization on Base:
 
-- storage key: daily chain interest by day and source EVM chain id
-- finalization rule: `dailyGlobalInterestNumeraire[dayId]` is finalized once all expected mirror chain ids have reported for `dayId`, OR after a **4-hour grace window** past `dayId + 1` UTC, whichever comes first
-- any late-arriving report is recorded for audit but does **not** retroactively change a finalized global — this preserves claim determinism
+- storage key: per-side (lender and borrower) daily chain interest by day and source EVM chain id — the two sides are stored separately, mirroring the two-field day-close payload
+- finalization rule: `dailyGlobalInterestNumeraire[dayId]` (the day's lender-side and borrower-side global denominators, finalized together as one record) is finalized once every chain id in the admin-configured expected-source set has reported for `dayId`, OR once a **grace window (default 4 hours, admin-tunable)** has elapsed **measured from the first report received for that day** (`dailyFirstReportAt[dayId]`), whichever comes first. If no report ever arrives for a day, the grace clock never starts and the day can only be closed by the admin force-finalize override
+- the expected-source set includes **`Base` itself plus every mirror chain** — `Base` is a reporting source like any other; its report just arrives via the direct local day-close write rather than a cross-chain message
+- any report arriving after a day is finalized is **rejected** (`ReportAfterFinalization`) rather than stored, so a finalized global can never change retroactively — this preserves claim determinism; the audit trail for missed contributions is the emitted missed-chain/zeroed-contribution events, not stored late reports
 - finalization records must identify participating chains by EVM chain id, not by legacy cross-chain endpoint identifiers
 
 Broadcast back to mirrors (Base → mirror):
 
 - once finalized, `Base` sends the finalized `dailyGlobalInterestNumeraire[dayId]` to every mirror through the configured cross-chain messenger
-- mirrors store it as `knownGlobalInterest[dayId]` — this is the denominator used by their local `claimInteractionRewards()` once the relevant loan-close gate is satisfied
-- a claim for `dayId` reverts locally if `knownGlobalInterest[dayId] == 0` (not yet broadcast)
+- mirrors store the broadcast pair as `knownGlobalInterest[dayId]` (the lender-side and borrower-side global denominators, kept per side) — this is the denominator used by their local `claimInteractionRewards()` once the relevant loan-close gate is satisfied
+- broadcast arrival is tracked by an explicit **known-global-set flag** (`knownGlobalSet[dayId]`), stamped when the broadcast for `dayId` lands; a claim covering `dayId` does not progress past that day until the flag is set
+- the flag — never a zero test on either denominator — is the "broadcast not yet arrived" sentinel, for consumers and UIs as well as for the claim path: a finalized day may legitimately carry a **zero** value on one or both sides (a side with zero global interest that day simply contributes nothing to anyone's reward), so zero is a valid finalized state, not an absence marker
 
 Pull-query alternative:
 
@@ -254,7 +272,7 @@ Pull-query alternative:
 Reward pool funding on mirrors:
 
 - the interaction-reward VPFI pool (`69,000,000` cap) is held on `Base` (canonical mint chain)
-- per-day per-chain VPFI payout budget = `(dailyChainInterest[D][chainId] / dailyGlobalInterestNumeraire[D]) × dailyPool[D]`
+- per-day per-chain VPFI payout budget is computed **per side**: `½ × dailyPool[D] × (dailyChainLenderInterest[D][chainId] / dailyGlobalLenderInterest[D]) + ½ × dailyPool[D] × (dailyChainBorrowerInterest[D][chainId] / dailyGlobalBorrowerInterest[D])` — each half of the day's pool is scaled by that side's own chain/global ratio; a side whose global denominator is zero (no interest on that side anywhere that day) contributes nothing to the budget
 - once a day is finalized, `Base` computes that per-chain budget and **remits it on-demand** to each mirror over the configured cross-chain token path (Chainlink CCIP) — a permissioned, batched, retriable send, **decoupled from finalization** rather than bundled into it, so a single stuck lane, native-fee shortfall, or per-day delivery failure never blocks finalization or the other chains' funding (#776). The remittance is bounded so what `Base` has remitted plus what it has itself paid out never exceeds the 69M pool.
 - mirror-side `claimInteractionRewards()` draws from the mirror Diamond's local VPFI balance, credited by the remittance above, after the relevant loan has closed; no synthetic IOUs, no cross-chain claim hops. A mirror whose claim gate is open but whose budget has not yet been remitted has claims revert (empty balance) until the operator/keeper funds it — recoverable back-pressure, never lost value.
 
@@ -271,21 +289,21 @@ Reward-budget remittance automation:
 
 Accounting identity:
 
-- because each chain's VPFI slice is scaled by `chainInterest / globalInterest`, the uncapped per-user payout `½ × (userInterest / globalInterest) × dailyPool` is mathematically identical to `½ × (userInterest / localChainInterest) × chainSlice`
+- because each side's portion of a chain's VPFI slice is scaled by that side's own ratio `chainInterest_side / globalInterest_side`, the uncapped per-user payout on a given side, `½ × (userInterest_side / globalInterest_side) × dailyPool`, is mathematically identical to `(userInterest_side / chainInterest_side) × sideSlice` where `sideSlice = ½ × dailyPool × (chainInterest_side / globalInterest_side)` — the identity holds independently for the lender half and the borrower half, and a user active on both sides in the same day simply receives the sum of the two
 - after that proportional result is computed, the protocol applies the per-user cap: `finalReward = min(rawReward, userRewardCap)`
 - this lets users claim locally while still preserving the protocol-wide denominator and the per-user reward-rate ceiling
 
 Failure modes and safety:
 
-- **missing chain for day D** (e.g. RPC outage on a mirror past the grace window): treated as `chainInterest = 0`; finalization emits a missed-chain report keyed by day and EVM chain id; governance may replay a reconciliation payment from the Insurance pool but must not reopen a finalized `dayId`
+- **missing chain for day D** (e.g. RPC outage on a mirror past the grace window): both of that chain's per-side totals are treated as zero (`chainLenderInterest = 0` and `chainBorrowerInterest = 0`); finalization emits a missed-chain report keyed by day and EVM chain id; governance may replay a reconciliation payment as a deliberate treasury action (there is no on-chain insurance pool — see §9) but must not reopen a finalized `dayId`
 - **cross-chain message outage / delayed packet**: claims for affected days are simply delayed (not lost) — the pull model's natural backstop
-- **timestamp drift across chains**: day boundary is fixed to UTC 00:00 on-chain via `block.timestamp / 1 days`; small per-chain block-time drift is absorbed within the 4-hour grace window
+- **timestamp drift across chains**: day boundary is fixed to UTC 00:00 on-chain via `block.timestamp / 1 days`; small per-chain block-time drift is absorbed within the report-anchored grace window
 - **double-counting**: `(dayId, chainId)` idempotency key on the Base side prevents replay; mirror emits are guarded by a last-reported-day check
 - **re-org on a mirror**: if a mirror reorgs after emission, the message may be lost mid-flight; cross-chain message redelivery handles most cases, governance replay handles the long tail
 
 Diamond surface (Phase 1 to add):
 
-- `RewardReporterFacet` (on every mirror): day-close reporting and local chain-interest views
+- `RewardReporterFacet` (on every chain, Base included): day-close reporting and local chain-interest views — on mirrors the report travels over the messenger; on Base it is written directly under Base's own chain id
 - `RewardAggregatorFacet` (on Base only): inbound report handling, day finalization once the grace window elapses, and known-global-interest views
 - `InteractionRewardsFacet` (on every chain): `claimInteractionRewards()` — the argument-less pull-model claim entry point. In one call it pays the caller both (a) their per-loan interaction-reward entries and (b) any newly-finalized daily rewards they are owed, using `knownGlobalInterest[dayId]` as each day's denominator. Observable behaviour that the spec fixes (the exact return tuple and error selectors are implementation detail):
   - a caller is never paid for a `dayId` before that day's global denominator has been finalized/broadcast, and the per-day claim only ever advances over the **contiguous finalized prefix** — a later still-unfinalized day pauses the daily catch-up without discarding the earlier finalized days;
@@ -297,15 +315,15 @@ Testing requirements beyond §9:
 
 - simulate a 3-chain mesh (Base + 2 mirrors) end-to-end including day rollover, finalization, broadcast, and local claim
 - invariant: `sum(userPayout[d]) across all chains == dailyPool[d]` for every finalized `d`
-- invariant: no user can claim `dayId` before `knownGlobalInterest[dayId]` is set on their chain
+- invariant: no user can claim `dayId` before the day's known-global-set flag (`knownGlobalSet[dayId]`) is stamped on their chain — the gate is the flag, not a non-zero denominator (a finalized day may carry zero on either side)
 - test that interaction rewards remain non-claimable while a loan is still active, and become claimable only after the loan is closed
 - test that `day 0` / the first reward day is excluded from interaction-reward calculation
 - test that a user's reward is capped at `0.5 VPFI` per `0.001 ETH` equivalent of eligible interest even when the proportional formula would otherwise pay more
-- negative test: late-arriving mirror report after finalization is stored but does not alter payouts
+- negative test: a mirror report arriving after finalization is rejected (`ReportAfterFinalization`) and does not alter payouts
 
 ## 5. Yield Fee
 
-The protocol charges a **Yield Fee of `1%`** on all interest accrued by lenders.
+The protocol charges a **Yield Fee of `1%`** on interest **and late fees** accrued by lenders — both are lender yield economically, so both are in the fee base at settlement.
 
 This fee is automatically collected and directed to Treasury for protocol sustainability, buybacks, reward distribution, and ecosystem growth.
 
@@ -546,7 +564,20 @@ VPFI received as fees is recycled through a **governance-configurable** treasury
 
 The specific launch allocation is a governance choice made at deploy time, not a protocol constant. The **authoritative recommended target list lives in the treasury conversion design** ([`docs/DesignsAndPlans/TreasuryFunctionalSpec.md`](../DesignsAndPlans/TreasuryFunctionalSpec.md)); the historical `38 / 38 / 24` (ETH / wBTC / retained-VPFI) split is illustrative only. (The public whitepaper still shows the historical `38 / 38 / 24`; reconciling that marketing copy with the design doc's recommended list is a separate follow-up.)
 
-If the insurance / bug bounty pool exceeds `2%` of total supply, any surplus VPFI is also recycled through the same governance-configured conversion path (using whatever target allocation governance has set — there is no separate surplus-specific split).
+Bug-bounty bucket (owner decision, legal surface — 2026-07-05): the `2%`-of-supply
+bug-bounty allocation (§3) is a plain **multisig-held treasury bucket** — an
+operational matter for the operator, **not** an on-chain insurance product or
+protocol-operated insurance mechanism, and it must **not** be framed as
+"insurance" in any user-facing copy. The retail platform runs with near-zero
+legal surface, so there is **no active on-chain "insurance pool"**: an on-chain
+protocol-operated insurance mechanism could read as the protocol offering
+insurance (a regulated activity). Any automated logic that recycles a surplus of
+that bucket (e.g. an above-`2%`-of-supply excess flowing through the
+governance-configured conversion path above) is **optional,
+disabled-by-default, and industrial-fork-gated** — the same pattern as KYC
+enforcement — and is **never active on the retail deploy**. On retail, any
+disposal of a bucket surplus is a deliberate multisig treasury action, not
+protocol behaviour.
 
 Buyback dormancy and fee-converted VPFI routing:
 
@@ -620,7 +651,7 @@ Deployment flow:
 3. deploy connected mirror-token and cross-chain messenger contracts on the additional supported chains
 4. wire CCIP lanes, remote messengers, token pools, and channel peers so cross-chain transfers preserve one global supply model
 5. keep token symbol and metadata consistent as `VPFI` on every supported chain
-6. configure mirror-chain buy-adapter rate limits to finite caps before verification; adapters that remain at unlimited deployment defaults must be treated as not production-ready
+6. configure the VPFI TokenPool per-lane CCIP rate limits via `VpfiPoolRateGovernor` to finite caps before verification; lanes left at unlimited deployment defaults must be treated as not production-ready, and the governor refuses to disable a lane's limit
 7. mark Base as the canonical VPFI tier chain before opening fee-discount flows
 8. configure mirror chains with the approved reward messenger, Base chain id, mirror-tier max age, and any required broadcast destinations
 9. top up the protocol broadcast budget before expecting automatic tier pushes or version-bump broadcasts to reach mirrors

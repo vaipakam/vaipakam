@@ -1,3 +1,13 @@
+# Release Notes — 2026-07-05
+
+The secondary market completes: alpha02 gains the BUY side of the
+lender position-sale flow (#991), reviewed across four Codex rounds and
+verified end-to-end through the app on Base Sepolia. Alongside it, the
+consolidated deployments bundle was synced with the day-before's
+post-#989 catch-up re-cut on all three testnets and the hardened
+Base Sepolia faucet mocks (#990), so every consumer reads the facet
+addresses and mock assets actually live on-chain.
+
 ## Thread — alpha02 loan-sale BUY flow (#986 Part 3 surface)
 
 The last blocked corner of the secondary market opens: alpha02 can now
