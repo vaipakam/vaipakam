@@ -161,7 +161,11 @@ export async function upsertThresholds(
     // Rollout window — migration 0027 not applied yet. Only the
     // missing-column condition gets special handling; anything else
     // (transient D1 failure, constraint error) propagates untouched.
-    if (!/no such column/i.test(String(err))) throw err;
+    // SQLite phrases the condition differently by statement kind:
+    // "no such column: X" for expressions/SELECT, but "table T has
+    // no column named X" for an INSERT column list — this INSERT
+    // path hits the latter (verified live on the staging D1).
+    if (!/no such column|has no column named/i.test(String(err))) throw err;
     if (t.notify_maturity_approaching) {
       // Opted-in equals the column default — the legacy write loses
       // nothing.

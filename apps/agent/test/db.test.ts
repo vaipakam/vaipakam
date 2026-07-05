@@ -20,8 +20,11 @@ class FakeStmt {
   async run(): Promise<void> {
     if (this.db.failWith) throw new Error(this.db.failWith);
     if (!this.db.migrated && this.sql.includes('notify_maturity_approaching')) {
+      // The exact phrasing the real INSERT path produces (verified
+      // live on the staging D1) — SQLite's INSERT-column-list error,
+      // NOT the "no such column:" expression form.
       throw new Error(
-        'D1_ERROR: no such column: notify_maturity_approaching',
+        'D1_ERROR: table user_thresholds has no column named notify_maturity_approaching: SQLITE_ERROR',
       );
     }
     this.db.executed.push({ sql: this.sql, args: this.args });
