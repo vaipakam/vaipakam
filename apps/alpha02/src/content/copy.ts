@@ -119,7 +119,7 @@ export const copy = {
     toggleRepayDue: 'Message me before an interest payment comes due',
     toggleRisky: 'Message me if my loan gets risky',
     riskyOffNote:
-      'Even switched off, you still get one last warning right before a loan would be liquidated.',
+      'Even switched off, you’ll still be warned right before a loan would be liquidated.',
     advancedBands:
       'Risk thresholds (health factor): a message is sent when a loan crosses each level.',
     bandsInvalid:

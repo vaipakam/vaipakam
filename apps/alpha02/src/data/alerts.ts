@@ -5,8 +5,13 @@
  *
  * Backend reality this module encodes (verified 2026-07-05):
  *  - `PUT /thresholds` upserts HF bands + event opt-ins; the wallet
- *    field is body-trusted (no signature) because the only output is
- *    an alert to a Telegram chat the real wallet holder linked.
+ *    field is body-trusted (no signature) for plain writes, EXCEPT
+ *    that disabling the due-date reminder requires an EIP-191
+ *    ownership proof (silencing a warning lane is the suppression
+ *    tier — same rule as link/unlink). The field is also sent ONLY
+ *    when the user changed that toggle on this device: a fresh
+ *    device's defaults must never overwrite a stored opt-out made
+ *    elsewhere (the agent preserves the flag when absent).
  *  - `POST /link/telegram` issues a one-time handshake code (+ bot
  *    deep link when the operator configured the bot username). This
  *    one REQUIRES an EIP-191 wallet signature: completing the
@@ -62,9 +67,11 @@ export const DEFAULT_BANDS = { warnHf: 1.5, alertHf: 1.2, criticalHf: 1.05 };
  *  PACKED into a 0.002-wide sliver just above 1.0 (the agent
  *  requires strictly decreasing bands, so they cannot be equal): the
  *  watcher alerts per band transition, and a band this narrow is
- *  crossed in one poll tick in practice — one transition, one
- *  message — instead of three spread-out warnings the user opted
- *  out of. */
+ *  usually crossed within one poll tick — one transition, one
+ *  message. A loan drifting slowly enough to land separate ticks
+ *  inside the sliver can still produce up to three closely-spaced
+ *  final warnings; the user-facing copy therefore promises "you'll
+ *  still be warned", not "exactly one message". */
 export const FLOOR_BANDS = { warnHf: 1.012, alertHf: 1.011, criticalHf: 1.01 };
 
 export interface AlertBands {
@@ -148,26 +155,80 @@ async function post(path: string, body: unknown): Promise<Response> {
   }
 }
 
+/**
+ * The mute counterpart of the link/unlink messages — MUST stay
+ * byte-identical to `buildDueDateOptOutMessage` in
+ * `apps/agent/src/linkAuth.ts`. Signed only when the user switches
+ * the due-date reminder OFF: silencing a warning lane needs proof
+ * the request comes from the wallet's owner.
+ */
+export function buildDueDateOptOutMessage(
+  wallet: string,
+  chainId: number,
+  issuedAt: number,
+): string {
+  return [
+    'Vaipakam — Mute due-date payment reminders',
+    '',
+    'I request that payment due-date reminders for the wallet below',
+    'be switched off. Signing this message proves ownership of the',
+    'wallet. It is not a transaction and costs no gas.',
+    '',
+    `Wallet: ${wallet.toLowerCase()}`,
+    `Chain id: ${chainId}`,
+    `Issued at (unix): ${issuedAt}`,
+  ].join('\n');
+}
+
+export interface SaveAlertPrefsOptions {
+  /** True ONLY when this save is the user changing the due-date
+   *  toggle. Otherwise the field is omitted from the body entirely —
+   *  the agent preserves the stored value on absence, so a fresh
+   *  device's defaults can't silently re-enable (or re-disable) an
+   *  opt-out made on another device. */
+  dueDateChanged?: boolean;
+  /** Wallet signer — required when the save switches the due-date
+   *  reminder off (the agent refuses an unsigned opt-out). */
+  signMessage?: (message: string) => Promise<string>;
+}
+
 /** Persist the outcome toggles as the agent's thresholds row. The
  *  body carries EXACTLY what the agent parses — bands, the
- *  pre-notify opt-out, and (when enabling) the Push flag. No
- *  aspirational fields: sending flags the parser drops would let the
- *  UI imply storage that never happens. */
+ *  pre-notify opt-out (only when just changed), and (when enabling)
+ *  the Push flag. No aspirational fields: sending flags the parser
+ *  drops would let the UI imply storage that never happens. */
 export async function saveAlertPrefs(
   wallet: `0x${string}`,
   chainId: number,
   prefs: AlertPrefs,
+  opts: SaveAlertPrefsOptions = {},
 ): Promise<void> {
   const bands: AlertBands = prefs.risky
     ? { warnHf: prefs.warnHf, alertHf: prefs.alertHf, criticalHf: prefs.criticalHf }
     : FLOOR_BANDS;
+  let optOutProof: { issuedAt: number; signature: string } | null = null;
+  if (opts.dueDateChanged && !prefs.repayDue) {
+    if (!opts.signMessage) {
+      throw new Error('switching the reminder off needs a wallet signature');
+    }
+    const issuedAt = Math.floor(Date.now() / 1000);
+    optOutProof = {
+      issuedAt,
+      signature: await opts.signMessage(
+        buildDueDateOptOutMessage(wallet, chainId, issuedAt),
+      ),
+    };
+  }
   const res = await post('/thresholds', {
     wallet,
     chain_id: chainId,
     warn_hf: bands.warnHf,
     alert_hf: bands.alertHf,
     critical_hf: bands.criticalHf,
-    notify_maturity_approaching: prefs.repayDue,
+    ...(opts.dueDateChanged
+      ? { notify_maturity_approaching: prefs.repayDue }
+      : {}),
+    ...(optOutProof ?? {}),
     // One-way by backend design (COALESCE): only sent when enabling.
     ...(prefs.pushEnabled ? { push_channel: 'subscribed' } : {}),
   });

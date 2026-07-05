@@ -65,13 +65,22 @@ export function AlertsCard() {
   const configured = alertsConfigured();
   const pushUrl = pushChannelUrl();
 
-  async function persist(next: AlertPrefs) {
+  async function persist(next: AlertPrefs, opts?: { dueDateChanged?: boolean }) {
     if (!address) return;
     setBusy(true);
     setError(null);
     setNotice(null);
     try {
-      await saveAlertPrefs(address, chainId, next);
+      // dueDateChanged rides through so the field is sent ONLY when
+      // this save is the user flipping that toggle — any other save
+      // omits it and the agent preserves the stored value (a fresh
+      // device's defaults must not undo an opt-out made elsewhere).
+      // Switching the reminder OFF additionally signs an ownership
+      // proof; the agent refuses unsigned opt-outs.
+      await saveAlertPrefs(address, chainId, next, {
+        dueDateChanged: opts?.dueDateChanged,
+        signMessage: (message) => signMessageAsync({ message }),
+      });
       storeAlertPrefs(chainId, address, next);
       setPrefs(next);
       setNotice(copy.alerts.saved);
@@ -226,7 +235,12 @@ export function AlertsCard() {
               type="checkbox"
               checked={prefs.repayDue}
               disabled={busy}
-              onChange={(e) => void persist({ ...prefs, repayDue: e.target.checked })}
+              onChange={(e) =>
+                void persist(
+                  { ...prefs, repayDue: e.target.checked },
+                  { dueDateChanged: true },
+                )
+              }
               style={{ marginTop: 3 }}
             />
             <span style={{ flex: 1 }}>{copy.alerts.toggleRepayDue}</span>

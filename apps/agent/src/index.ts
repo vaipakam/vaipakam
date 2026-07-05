@@ -327,14 +327,44 @@ async function handlePutThresholds(req: Request, env: Env): Promise<Response> {
   const parsed = parsePutThresholds(body);
   if (!parsed) return json({ error: 'invalid-payload' }, 400, corsOrigin);
 
-  // NOTE: this handler trusts the `wallet` field in the JSON body —
-  // that's fine for the settings flow because the Worker's only
-  // output to that wallet is a Telegram alert linked to a chat the
-  // real wallet holder controls. An attacker spamming someone else's
-  // wallet into the thresholds table can't receive their alerts.
-  // However, if the threshold settings ever start to drive on-chain
-  // actions, switch this to an EIP-712-signed payload so msg.sender
-  // parity is cryptographic.
+  // NOTE: this handler trusts the `wallet` field in the JSON body for
+  // plain settings writes — fine, because the Worker's only output to
+  // that wallet is a Telegram alert linked to a chat the real wallet
+  // holder controls, and band tampering stays bounded (the strictly-
+  // decreasing >1.0 rule keeps a final pre-liquidation warning).
+  //
+  // The ONE write that needs more is DISABLING the due-date reminder
+  // (#1056 round 6): notify_maturity_approaching=false silences both
+  // due-date lanes (agent reminder + keeper pre-grace warning), which
+  // is the same alert-suppression threat that got /unlink/telegram
+  // signed. So an opt-out write must carry the EIP-191 ownership
+  // proof over the mute-scoped message; opted-in / field-absent
+  // writes stay signature-free.
+  if (parsed.notify_maturity_approaching === false) {
+    const signed = parseSignedLinkRequest(body);
+    if (!signed.ok) {
+      return json(
+        { error: 'signature-required', reason: signed.reason },
+        401,
+        corsOrigin,
+      );
+    }
+    const verified = await verifySignedLinkRequest(
+      signed.req,
+      Math.floor(Date.now() / 1000),
+      'mute-duedate',
+    );
+    if (!verified.ok) {
+      return json(
+        { error: 'verification_failed', reason: verified.reason },
+        verified.status,
+        corsOrigin,
+      );
+    }
+  }
+  // If the threshold settings ever start to drive on-chain actions,
+  // extend the signed-payload requirement to every write so
+  // msg.sender parity is cryptographic.
   await upsertThresholds(env.DB, parsed);
   return json({ ok: true }, 200, corsOrigin);
 }

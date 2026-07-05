@@ -1,19 +1,27 @@
 ## Thread — Telegram alerts arrive in the retail app, framed as outcomes
 
 The retail app's Settings now carries an Alerts card. Linking Telegram
-takes one tap (or copying a short code to the bot), and from then on
+takes one tap (or copying a short code to the bot) — and the one-tap
+path now genuinely works: the bot understands the payload Telegram
+sends when the user presses Start, where before only the hand-typed
+code was recognised. From then on
 the platform can reach the user while the site is closed — which is
 when repayment deadlines and loan risk actually happen. The controls
 are plain-language outcome toggles — "message me before an interest
 payment comes due", "message me if my loan gets risky" — with
 sensible risk thresholds behind them; the raw health-factor numbers
 are editable only in Advanced mode, using the same defaults the pro
-app exposes directly. Switching the risk toggle off still leaves one
+app exposes directly. Switching the risk toggle off still leaves a
 last-moment warning right before a loan would be liquidated, and the
 card says so. The interest-payment toggle is a REAL opt-out: the
 alert service now stores it and BOTH due-date lanes honor it before
 sending anything — the interest-payment reminder and the pre-grace
-"no refinance match found" warning alike.
+"no refinance match found" warning alike. Because that switch
+silences real warnings, turning it OFF asks the wallet for the same
+free ownership signature that linking does — and the toggle's stored
+value only changes when the user actually flips it, so opening the
+card on a fresh device can never silently undo an opt-out (or
+opt-in) made elsewhere.
 
 The card carries one honest privacy sentence — linking stores the
 wallet address, the alert preferences from the card, and the

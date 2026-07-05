@@ -21,10 +21,13 @@
  * scoped message (round 5): a spoofed-Origin caller could otherwise
  * silently stop a victim wallet's HF / due-date alerts — alert
  * suppression right before a grace window is more than settings
- * churn. The two messages differ in headline and body text, so a
- * captured link signature can never be replayed as an unlink (or
- * vice versa). Only `PUT /thresholds` stays body-trusted — see the
- * note on its handler in `index.ts`.
+ * churn. And a `PUT /thresholds` that DISABLES the due-date reminder
+ * requires it too (round 6) — that flag now silences both due-date
+ * lanes, so an unsigned opt-out would be the same suppression through
+ * a side door. Every message differs in headline and body text, so a
+ * captured signature for one action can never be replayed as another.
+ * Plain threshold writes (bands / push / opted-in saves) stay
+ * body-trusted — see the note on the handler in `index.ts`.
  */
 
 import { recoverMessageAddress, type Hex } from 'viem';
@@ -89,7 +92,40 @@ export function buildTelegramUnlinkMessage(
   ].join('\n');
 }
 
-export type TelegramAuthAction = 'link' | 'unlink';
+/**
+ * The due-date-mute counterpart — required when a `/thresholds` write
+ * sets `notify_maturity_approaching` to false, since that silences
+ * both due-date warning lanes (agent reminder + keeper pre-grace).
+ * Mirrored byte-for-byte by the frontends like the other two.
+ */
+export function buildDueDateOptOutMessage(
+  wallet: string,
+  chainId: number,
+  issuedAt: number,
+): string {
+  return [
+    'Vaipakam — Mute due-date payment reminders',
+    '',
+    'I request that payment due-date reminders for the wallet below',
+    'be switched off. Signing this message proves ownership of the',
+    'wallet. It is not a transaction and costs no gas.',
+    '',
+    `Wallet: ${wallet.toLowerCase()}`,
+    `Chain id: ${chainId}`,
+    `Issued at (unix): ${issuedAt}`,
+  ].join('\n');
+}
+
+export type AlertAuthAction = 'link' | 'unlink' | 'mute-duedate';
+
+const MESSAGE_BUILDERS: Record<
+  AlertAuthAction,
+  (wallet: string, chainId: number, issuedAt: number) => string
+> = {
+  link: buildTelegramLinkMessage,
+  unlink: buildTelegramUnlinkMessage,
+  'mute-duedate': buildDueDateOptOutMessage,
+};
 
 export interface SignedLinkRequest {
   wallet: string;
@@ -146,14 +182,16 @@ export type LinkVerifyResult =
 export async function verifySignedLinkRequest(
   req: SignedLinkRequest,
   nowSeconds: number,
-  action: TelegramAuthAction = 'link',
+  action: AlertAuthAction = 'link',
 ): Promise<LinkVerifyResult> {
   if (Math.abs(nowSeconds - req.issuedAt) > LINK_SIGNATURE_MAX_AGE_SECONDS) {
     return { ok: false, status: 400, reason: 'request timestamp is stale' };
   }
-  const message = (
-    action === 'link' ? buildTelegramLinkMessage : buildTelegramUnlinkMessage
-  )(req.wallet, req.chain_id, req.issuedAt);
+  const message = MESSAGE_BUILDERS[action](
+    req.wallet,
+    req.chain_id,
+    req.issuedAt,
+  );
   let recovered: string;
   try {
     recovered = await recoverMessageAddress({
