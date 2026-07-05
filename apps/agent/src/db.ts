@@ -232,20 +232,24 @@ export async function linkTelegram(
 }
 
 /** #1033 — clear the stored Telegram chat id for a wallet, stopping
- *  all Telegram delivery for it. The row itself stays (thresholds and
- *  event opt-ins survive a re-link). Idempotent by construction. */
+ *  all Telegram delivery for it. Deliberately clears EVERY chain row
+ *  of the wallet, not just the caller's current chain: the privacy
+ *  copy promises "no more Telegram messages for this wallet", and the
+ *  delivery paths look subscriptions up per (chain_id, wallet) — a
+ *  single-chain clear would keep other chains' rows messaging the
+ *  same chat. Rows themselves stay (thresholds and opt-ins survive a
+ *  re-link). Idempotent by construction. */
 export async function unlinkTelegram(
   db: D1Database,
   wallet: string,
-  chainId: number,
 ): Promise<void> {
   await db
     .prepare(
       `UPDATE user_thresholds
        SET tg_chat_id = NULL, updated_at = ?
-       WHERE wallet = ? AND chain_id = ?`,
+       WHERE wallet = ?`,
     )
-    .bind(Math.floor(Date.now() / 1000), wallet.toLowerCase(), chainId)
+    .bind(Math.floor(Date.now() / 1000), wallet.toLowerCase())
     .run();
 }
 

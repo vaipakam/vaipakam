@@ -385,7 +385,9 @@ async function handleUnlinkTelegram(
   }
   const parsed = parseLinkIssue(body);
   if (!parsed) return json({ error: 'invalid-payload' }, 400, corsOrigin);
-  await unlinkTelegram(env.DB, parsed.wallet, parsed.chain_id);
+  // chain_id is accepted (same body shape as the link issue) but the
+  // clear is wallet-wide — see unlinkTelegram for why.
+  await unlinkTelegram(env.DB, parsed.wallet);
   return json({ ok: true }, 200, corsOrigin);
 }
 

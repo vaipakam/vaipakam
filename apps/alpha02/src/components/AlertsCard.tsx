@@ -87,10 +87,12 @@ export function AlertsCard() {
     setError(null);
     setNotice(null);
     try {
-      // Ensure the thresholds row exists before the handshake so the
-      // bot's confirmation lands on a real row (the agent tolerates
-      // either order; this removes the race).
-      if (prefs) await saveAlertPrefs(address, chainId, prefs);
+      // Deliberately NO pre-save here: on a fresh device the local
+      // prefs are the DEFAULTS, and writing them before the handshake
+      // would clobber whatever the wallet already configured
+      // elsewhere. The agent tolerates a missing row during the
+      // handshake (locale falls back to 'en'), so linking alone must
+      // never write settings.
       setLink(await issueTelegramLink(address, chainId));
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));

@@ -42,6 +42,7 @@ import { usePublicClient, useWalletClient } from 'wagmi';
 import { parseEventLogs } from 'viem';
 import { copy } from '../content/copy';
 import { isPositiveDecimal, submitErrorText } from '../lib/errors';
+import { flowDisabled } from '../lib/killSwitch';
 import { useActiveChain } from '../chain/useActiveChain';
 import { DIAMOND_ABI_VIEM, useDiamondWrite } from '../contracts/diamond';
 import { ensureAllowance, revokeAllowance } from '../contracts/erc20';
@@ -170,6 +171,14 @@ export function RefinanceFlow({
   const matured = chainNow >= live.startTime + live.durationDays * 86_400n;
 
   async function submit() {
+    // #1028 — a refinance request IS a createOffer: it must respect
+    // the same kill switch as the direct post path during an
+    // OfferFacet incident. (Refinance is optional — blocking it traps
+    // nothing; normal repayment stays open.)
+    if (flowDisabled('post-offer')) {
+      setError(copy.killSwitch.disabled);
+      return;
+    }
     if (!address || !walletChain || !walletClient || !publicClient) return;
     if (rateBps === null || durationDays === null) return;
     setBusy(true);

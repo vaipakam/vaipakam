@@ -52,9 +52,15 @@ export function pushChannelUrl(): string | null {
 
 /** The bands behind the plain-words "risky loan" toggle. */
 export const DEFAULT_BANDS = { warnHf: 1.5, alertHf: 1.2, criticalHf: 1.05 };
-/** OFF ≠ silence: floor bands keep one final pre-liquidation warning
- *  while muting the earlier, chattier ones. */
-export const FLOOR_BANDS = { warnHf: 1.03, alertHf: 1.02, criticalHf: 1.01 };
+/** OFF ≠ silence: floor bands keep a final pre-liquidation warning
+ *  while muting the earlier, chattier ones. The three values are
+ *  PACKED into a 0.002-wide sliver just above 1.0 (the agent
+ *  requires strictly decreasing bands, so they cannot be equal): the
+ *  watcher alerts per band transition, and a band this narrow is
+ *  crossed in one poll tick in practice — one transition, one
+ *  message — instead of three spread-out warnings the user opted
+ *  out of. */
+export const FLOOR_BANDS = { warnHf: 1.012, alertHf: 1.011, criticalHf: 1.01 };
 
 export interface AlertBands {
   warnHf: number;
