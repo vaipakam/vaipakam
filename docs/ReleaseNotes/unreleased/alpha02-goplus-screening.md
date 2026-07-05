@@ -36,7 +36,11 @@ review then displays it so consent can be given against what is
 actually known.
 
 Pasting an unknown token address when building an offer surfaces the
-same verdict immediately at entry. Curated tokens are pre-vetted and
+same verdict immediately at entry, and posting an offer is gated the
+same way accepting one is — the creator's own tokens go into vault
+custody at the requested amount, so a flagged or unverifiable token
+holds the post button and is re-verified at signing time before any
+approval can mine. Curated tokens are pre-vetted and
 exempt; test networks — which the security service does not index —
 show an honest "not covered here" notice instead of blocking, so
 faucet-token testing keeps working. The screening service's public

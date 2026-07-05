@@ -907,51 +907,63 @@ export function OfferFlow({ side }: { side: Side }) {
     Boolean(address) &&
     selected.creator.toLowerCase() === address!.toLowerCase();
 
-  // #1036 — GoPlus screening of BOTH legs of the deal being ACCEPTED.
-  // The accept side is the primary defense: a malicious offer is
-  // created straight against the contract (no website), so only the
-  // acceptor's screen can catch a honeypot leg. Curated tokens skip
-  // (hook self-disables); testnets resolve to 'unsupported' (allowed,
-  // noticed); 'block' and 'unknown' (couldn't verify) hold the sign
-  // button — fail closed, with copy telling the user why.
+  // #1036 — GoPlus screening of BOTH legs, in BOTH modes. The accept
+  // side is the primary defense (a malicious offer is created straight
+  // against the contract, so only the acceptor's screen can catch a
+  // honeypot leg), but the POST side gates too: createOffer pulls the
+  // creator's own ERC-20 into their vault, and the vault records the
+  // REQUESTED amount — a fee-on-transfer or otherwise-blocked token
+  // locks an underfunded position for the creator themselves. Curated
+  // tokens skip (hook self-disables); testnets resolve to
+  // 'unsupported' (allowed, noticed); 'block' and 'unknown' (couldn't
+  // verify) hold the sign button — fail closed, with copy telling the
+  // user why.
+  const secLendingLeg =
+    mode === 'accept'
+      ? {
+          addr: selected?.lendingAsset,
+          isErc20: selected?.assetType === AssetType.ERC20,
+        }
+      : { addr: form.lendingAsset, isErc20: form.assetType === 'erc20' };
+  const secCollateralLeg =
+    mode === 'accept'
+      ? {
+          addr: selected?.collateralAsset,
+          isErc20: selected?.collateralAssetType === AssetType.ERC20,
+        }
+      : {
+          addr: form.collateralAsset,
+          isErc20: form.collateralAssetType === 'erc20',
+        };
   const acceptLendingSec = useTokenSecurity(
     readChain.chainId,
-    mode === 'accept' && selected && selected.assetType === AssetType.ERC20
-      ? selected.lendingAsset
-      : undefined,
+    secLendingLeg.isErc20 ? secLendingLeg.addr || undefined : undefined,
   );
   const acceptCollateralSec = useTokenSecurity(
     readChain.chainId,
-    mode === 'accept' &&
-      selected &&
-      selected.collateralAssetType === AssetType.ERC20
-      ? selected.collateralAsset
-      : undefined,
+    secCollateralLeg.isErc20 ? secCollateralLeg.addr || undefined : undefined,
   );
   // 'needed' derives from the check's INPUTS (shape + curated), never
   // from query lifecycle state — fetchStatus returns to idle once a
   // query settles, which must not un-gate a bad verdict.
-  const securityLegs =
-    mode === 'accept' && selected
-      ? [
-          {
-            leg: 'loan asset',
-            needed:
-              selected.assetType === AssetType.ERC20 &&
-              needsSecurityCheck(readChain.chainId, selected.lendingAsset),
-            verdict: acceptLendingSec.data,
-            errored: acceptLendingSec.isError,
-          },
-          {
-            leg: 'collateral',
-            needed:
-              selected.collateralAssetType === AssetType.ERC20 &&
-              needsSecurityCheck(readChain.chainId, selected.collateralAsset),
-            verdict: acceptCollateralSec.data,
-            errored: acceptCollateralSec.isError,
-          },
-        ].filter((l) => l.needed)
-      : [];
+  const securityLegs = [
+    {
+      leg: 'loan asset',
+      needed:
+        secLendingLeg.isErc20 &&
+        needsSecurityCheck(readChain.chainId, secLendingLeg.addr),
+      verdict: acceptLendingSec.data,
+      errored: acceptLendingSec.isError,
+    },
+    {
+      leg: 'collateral',
+      needed:
+        secCollateralLeg.isErc20 &&
+        needsSecurityCheck(readChain.chainId, secCollateralLeg.addr),
+      verdict: acceptCollateralSec.data,
+      errored: acceptCollateralSec.isError,
+    },
+  ].filter((l) => l.needed);
   // Fail-closed on THREE states: no data yet (loading), a 'block'
   // verdict, and an errored REFETCH — react-query keeps the prior
   // verdict in `data` when a later refetch fails, so `isError` must
@@ -965,7 +977,10 @@ export function OfferFlow({ side }: { side: Side }) {
   const securityUnsupported = securityLegs.filter(
     (l) => l.verdict?.kind === 'unsupported',
   );
-  const securityGateOk = mode !== 'accept' || securityBlocked.length === 0;
+  // No mode bypass: post-mode deposits hit the same requested-amount
+  // vault accounting the accept path does, so both modes hold on a
+  // blocked/unverified leg.
+  const securityGateOk = securityBlocked.length === 0;
   // Late-disclosure rule (same as illiquid/sale banners): a warning
   // or block that ARRIVES after the consent box was ticked voids the
   // consent — it was given against a review without the disclosure.
@@ -1168,6 +1183,39 @@ export function OfferFlow({ side }: { side: Side }) {
           side === 'lender' ? lendingMeta.data?.symbol : collateralMeta.data?.symbol,
       }),
     ]);
+    // #1036 — re-verify both legs at SUBMIT time, post mode too: the
+    // creator's own ERC-20 goes into vault custody at the requested
+    // amount, so a blocked/unverified token must abort before the
+    // approval can mine. Same disclosure rules as the accept path —
+    // a live verdict differing from the reviewed one is pushed into
+    // the query cache so the re-review renders it and voids consent.
+    for (const [leg, addr, isErc20] of [
+      ['loan asset', form.lendingAsset, form.assetType === 'erc20'],
+      [
+        'collateral',
+        form.collateralAsset,
+        form.collateralAssetType === 'erc20',
+      ],
+    ] as const) {
+      if (!isErc20 || !addr) continue;
+      if (isCuratedAsset(walletChain.chainId, addr)) continue; // pre-vetted
+      const v = await fetchTokenSecurity(walletChain.chainId, addr);
+      const cacheKey = ['tokenSecurity', readChain.chainId, addr.toLowerCase()];
+      if (v.kind === 'block') {
+        queryClient.setQueryData(cacheKey, v);
+        throw new Error(copy.tokenSecurity.gateBlock(leg, v.reasons));
+      }
+      if (v.kind === 'unknown') {
+        throw new Error(copy.tokenSecurity.gateUnknown(leg));
+      }
+      if (v.kind === 'warn') {
+        const reviewed = securityLegs.find((l) => l.leg === leg);
+        if (verdictFingerprint(v) !== verdictFingerprint(reviewed?.verdict)) {
+          queryClient.setQueryData(cacheKey, v);
+          throw new Error(copy.tokenSecurity.gateChanged(leg));
+        }
+      }
+    }
     await ensureAllowance({
       publicClient,
       walletClient,
