@@ -184,6 +184,17 @@ export async function readOwnLoanRowsLive(
   }
 }
 
+/** Result of {@link readOwnOfferRowsLive}. `heldLegOk === false`
+ *  means NEITHER holder view exists on this deploy: the created leg
+ *  still answered (rows are complete for created offers), but
+ *  held-via-transfer listings could not be chain-enumerated — the
+ *  caller must keep the indexer's by-current-holder rows for that
+ *  leg instead of treating `rows` as the whole truth. */
+export interface OwnOfferRead {
+  rows: IndexedOffer[];
+  heldLegOk: boolean;
+}
+
 /** Every offer the wallet CREATED plus every OPEN offer whose
  *  position NFT it currently HOLDS (a received/bought listing),
  *  hydrated live — covers both the freshly posted offer and the
@@ -194,8 +205,9 @@ export async function readOwnOfferRowsLive(
   diamond: `0x${string}`,
   chainId: number,
   address: `0x${string}`,
-): Promise<IndexedOffer[] | null> {
+): Promise<OwnOfferRead | null> {
   const ids = new Set<number>();
+  let heldLegOk = true;
   // Leg 1 — the creator's lifetime offer index. Any failure here
   // (transport OR a deploy without the view) disables the chain
   // source: created offers are the fix's core promise.
@@ -248,14 +260,16 @@ export async function readOwnOfferRowsLive(
       if (!isRevert(e2)) return null;
       // Both holder views absent — an older deploy. Created-offer
       // discovery still stands; held-via-transfer listings stay
-      // indexer-only there.
+      // indexer-only there, and the flag tells the caller to keep
+      // the indexed by-current-holder rows for that leg.
+      heldLegOk = false;
     }
   }
   try {
     const rows = await Promise.all(
       [...ids].map((id) => readOfferRowLive(publicClient, diamond, chainId, id)),
     );
-    return rows.filter((r): r is IndexedOffer => r !== null);
+    return { rows: rows.filter((r): r is IndexedOffer => r !== null), heldLegOk };
   } catch {
     return null; // a row read failed — never a confident partial list
   }

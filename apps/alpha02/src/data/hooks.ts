@@ -101,7 +101,9 @@ export async function fetchAllPages<T>(
  *  position the wallet no longer holds — merging those back in is
  *  exactly how ghosts survive. The indexed lists serve ONLY as the
  *  fallback when the chain leg is unavailable (their pre-existing
- *  role). The flags say which source answered: Positions shows a
+ *  role) — plus the one leg the chain itself reports it could not
+ *  enumerate (see OwnOfferRead.heldLegOk for legacy deploys without
+ *  a holder view). The flags say which source answered: Positions shows a
  *  degraded-sources note when either is false; Activity refuses to
  *  run its participation filter without the indexer leg. NOTE the
  *  indexer's /loans/by-* routes are CURRENT-OWNER filtered (no
@@ -111,6 +113,17 @@ export interface MyRows<T> {
   rows: T[];
   chainOk: boolean;
   indexerOk: boolean;
+}
+
+/** Loans variant of {@link MyRows}: also carries the loan ids the
+ *  INDEXED leg returned (empty when that leg failed). Activity's
+ *  participation filter needs the UNION of both legs — `rows` is
+ *  chain-sole-source when the chain answers, which by design drops
+ *  positions whose NFTs were burned/transferred away, yet actor-null
+ *  events (LoanSettled, keeper LoanDefaulted) for exactly those loans
+ *  still belong in the wallet's feed. */
+export interface MyLoanRows extends MyRows<PositionLoan> {
+  indexedLoanIds: number[];
 }
 
 async function fetchIndexedLoans(
@@ -151,8 +164,9 @@ export function useMyLoansFull() {
     queryKey: ['myLoans', readChain.chainId, address?.toLowerCase()],
     enabled: Boolean(address),
     refetchInterval: REFRESH_MS,
-    queryFn: async (): Promise<MyRows<PositionLoan> | null> => {
-      if (!address) return { rows: [], chainOk: true, indexerOk: true };
+    queryFn: async (): Promise<MyLoanRows | null> => {
+      if (!address)
+        return { rows: [], chainOk: true, indexerOk: true, indexedLoanIds: [] };
       const [chainRows, indexedRows] = await Promise.all([
         publicClient
           ? readOwnLoanRowsLive(
@@ -169,11 +183,18 @@ export function useMyLoansFull() {
       // sole source — an indexed row absent from it is a ghost
       // (transferred/burned position) or no longer the wallet's,
       // regardless of status. Indexed rows serve only as the
-      // fallback when the chain leg is unavailable.
+      // fallback when the chain leg is unavailable — but their ids
+      // still ride along (see MyLoanRows) for Activity's
+      // participation filter.
       const rows = [...(chainRows ?? indexedRows ?? [])].sort(
         (a, b) => b.startAt - a.startAt,
       );
-      return { rows, chainOk: chainRows !== null, indexerOk: indexedRows !== null };
+      return {
+        rows,
+        chainOk: chainRows !== null,
+        indexerOk: indexedRows !== null,
+        indexedLoanIds: (indexedRows ?? []).map((l) => l.loanId),
+      };
     },
   });
 }
@@ -241,11 +262,13 @@ export function useLoan(loanId: number | undefined) {
  *  HOLDS (visibility for secondary-market recipients). The UI keys
  *  the cancel action on `offer.creator === wallet`.
  *
- *  CHAIN-AUTHORITATIVE for created offers (a fresh createOffer shows
- *  within a block — the indexer's cron ingest lags 30–60s); held-via-
- *  transferred-NFT offers stay indexer-discovered (no chain view
- *  enumerates them), so `historyComplete === false` when the indexer
- *  couldn't answer. `data === null` only when BOTH sources fail. */
+ *  CHAIN-AUTHORITATIVE for created AND held offers (a fresh
+ *  createOffer shows within a block — the indexer's cron ingest lags
+ *  30–60s). On older deploys without any holder view, the chain
+ *  helper says so (`heldLegOk === false`) and the indexed
+ *  by-current-holder rows are kept for that leg — never hidden
+ *  behind a chain result that couldn't see them. `data === null`
+ *  only when BOTH sources fail. */
 export function useMyOffersFull() {
   const { readChain, address } = useActiveChain();
   const publicClient = usePublicClient({ chainId: readChain.chainId });
@@ -287,14 +310,29 @@ export function useMyOffersFull() {
       // it covers created AND held offers, and a cancelled offer
       // simply isn't in it (no tombstone bookkeeping needed, and no
       // stale indexed "active" row can resurrect one). Indexed rows
-      // only serve as the fallback when the chain leg is down.
-      const source = chainLive ?? (indexerOk ? [...created, ...held] : []);
+      // only serve as the fallback when the chain leg is down — with
+      // ONE carve-out: on deploys where no holder view exists
+      // (heldLegOk false), the chain result genuinely couldn't see
+      // held-via-transfer listings, so the indexed by-current-holder
+      // rows are kept for that leg rather than discarded.
+      const source =
+        chainLive === null
+          ? indexerOk
+            ? [...created, ...held]
+            : []
+          : chainLive.heldLegOk
+            ? chainLive.rows
+            : [...chainLive.rows, ...(held ?? [])];
       const seen = new Set<number>();
       const rows = source.filter((o) => {
         if (o.status !== 'active' || seen.has(o.offerId)) return false;
         seen.add(o.offerId);
         return true;
       });
+      // The contract enumeration is append-ordered (oldest first) —
+      // sort newest-first so a freshly posted offer tops the list,
+      // matching the indexed routes' offer_id DESC ordering.
+      rows.sort((a, b) => b.offerId - a.offerId);
       return { rows, chainOk: chainLive !== null, indexerOk };
     },
   });

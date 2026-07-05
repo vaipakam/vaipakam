@@ -65,12 +65,17 @@ export function Activity() {
   // NFTs, so a chain-only fallback would silently drop actor-null
   // events for closed/transferred loans. `loansUsable` is therefore
   // "both loan sources answered", not merely "some rows exist".
+  // The set is the UNION of rendered rows (chain-sole-source when the
+  // chain answers — freshest, includes a just-initiated loan the
+  // indexer hasn't ingested) and the indexed leg's own ids (which
+  // keep the burned/transferred loans the chain enumeration drops).
   const loansUsable = loans.data != null && loans.data.indexerOk;
-  const myLoanIds = useMemo(
-    () =>
-      new Set((loansUsable ? loans.data!.rows : []).map((l) => l.loanId)),
-    [loansUsable, loans.data],
-  );
+  const myLoanIds = useMemo(() => {
+    if (!loansUsable) return new Set<number>();
+    const ids = new Set(loans.data!.rows.map((l) => l.loanId));
+    for (const id of loans.data!.indexedLoanIds) ids.add(id);
+    return ids;
+  }, [loansUsable, loans.data]);
 
   const activity = useQuery({
     queryKey: [
