@@ -18,11 +18,11 @@
  * — callers then fall back to the indexer alone, which is exactly the
  * pre-chain-authoritative behaviour.
  */
-import type { PublicClient } from 'viem';
+import { BaseError, ContractFunctionRevertedError, type PublicClient } from 'viem';
 import { DIAMOND_ABI_VIEM } from '@vaipakam/contracts/abis';
 import type { IndexedOffer } from './indexer';
 import type { PositionLoan } from './hooks';
-import { readLoanRowLive, isRevert } from './liveLoanRow';
+import { readLoanRowLive, mapLoanStructToRow, isRevert } from './liveLoanRow';
 
 const ZERO_ADDR = '0x0000000000000000000000000000000000000000';
 const PAGE = 200n;
@@ -31,6 +31,29 @@ const PAGE = 200n;
  *  throws (→ chain side unavailable) instead of serving a silent
  *  truncation as complete. */
 const WALK_CAP = 2000;
+/** MetricsDashboardFacet.MAX_BATCH_IDS — the #1046 batch views revert
+ *  `BatchTooLarge` above this, so hydration chunks at the cap. */
+const MAX_BATCH = 250;
+
+const chunk = <T,>(arr: T[], size: number): T[][] => {
+  const out: T[][] = [];
+  for (let i = 0; i < arr.length; i += size) out.push(arr.slice(i, i + size));
+  return out;
+};
+
+/** True when a revert decoded to the batch views' `BatchTooLarge`.
+ *  With chunking at MAX_BATCH this is unreachable unless the deployed
+ *  cap shrank below ours — a BUG surface, not an old-deploy signal,
+ *  so callers fail the chain source closed (loudly) instead of
+ *  silently degrading to the per-id path. */
+function isBatchTooLarge(e: unknown): boolean {
+  if (!(e instanceof BaseError)) return false;
+  const revert = e.walk((x) => x instanceof ContractFunctionRevertedError);
+  return (
+    revert instanceof ContractFunctionRevertedError &&
+    revert.data?.errorName === 'BatchTooLarge'
+  );
+}
 
 /** MetricsFacet.OfferState — the CANONICAL offer lifecycle (the raw
  *  getOffer struct cannot express a ConsumedBySale terminal; see
@@ -42,34 +65,20 @@ const OFFER_STATE: readonly IndexedOffer['status'][] = [
   'consumed_by_sale',
 ];
 
-/** Read one offer live and map it onto the indexer-row shape.
- *  Returns `null` for a deleted slot (cancelled-unfilled offers
- *  delete their storage) or an unknown FUTURE state-enum value —
- *  honest "can't represent", mirroring readLoanRowLive. Safe because
- *  the hooks treat the chain enumeration as the SOLE row source when
- *  it answers: a null here just means "not one of your current
- *  positions", and no stale indexed row is merged over it. Throws on
- *  transport failure (callers must not treat that as "gone"). */
-export async function readOfferRowLive(
-  publicClient: PublicClient,
-  diamond: `0x${string}`,
+/** Map a live offer struct plus its canonical OfferState onto the
+ *  indexer-row shape. Accepts BOTH read shapes — the per-id pair
+ *  (getOffer struct + getOfferState) and the #1046 batch `OfferView`
+ *  (identical field names, state embedded) — so the two hydration
+ *  paths cannot drift. Returns `null` for a deleted slot
+ *  (cancelled-unfilled offers delete their storage; the batch view
+ *  returns the zeroed struct for unknown ids) or an unknown FUTURE
+ *  state-enum value — honest "can't represent". */
+function mapOfferStructToRow(
+  o: Record<string, unknown>,
+  stateRaw: number | bigint,
   chainId: number,
   offerId: number,
-): Promise<IndexedOffer | null> {
-  const [o, stateRaw] = (await Promise.all([
-    publicClient.readContract({
-      address: diamond,
-      abi: DIAMOND_ABI_VIEM,
-      functionName: 'getOffer',
-      args: [BigInt(offerId)],
-    }),
-    publicClient.readContract({
-      address: diamond,
-      abi: DIAMOND_ABI_VIEM,
-      functionName: 'getOfferState',
-      args: [BigInt(offerId)],
-    }),
-  ])) as [Record<string, unknown>, number | bigint];
+): IndexedOffer | null {
   let status = OFFER_STATE[Number(stateRaw)];
   if (!o.creator || String(o.creator).toLowerCase() === ZERO_ADDR) return null;
   if (status === undefined) return null;
@@ -115,6 +124,68 @@ export async function readOfferRowLive(
     expiresAt: Number(o.expiresAt) || undefined,
     fillMode: Number(o.fillMode),
   };
+}
+
+/** Read one offer live and map it onto the indexer-row shape. Safe
+ *  because the hooks treat the chain enumeration as the SOLE row
+ *  source when it answers: a null just means "not one of your current
+ *  positions", and no stale indexed row is merged over it. Throws on
+ *  transport failure (callers must not treat that as "gone"). */
+export async function readOfferRowLive(
+  publicClient: PublicClient,
+  diamond: `0x${string}`,
+  chainId: number,
+  offerId: number,
+): Promise<IndexedOffer | null> {
+  const [o, stateRaw] = (await Promise.all([
+    publicClient.readContract({
+      address: diamond,
+      abi: DIAMOND_ABI_VIEM,
+      functionName: 'getOffer',
+      args: [BigInt(offerId)],
+    }),
+    publicClient.readContract({
+      address: diamond,
+      abi: DIAMOND_ABI_VIEM,
+      functionName: 'getOfferState',
+      args: [BigInt(offerId)],
+    }),
+  ])) as [Record<string, unknown>, number | bigint];
+  return mapOfferStructToRow(o, stateRaw, chainId, offerId);
+}
+
+/** Hydrate many offers via the #1046 batch view — ONE eth_call per
+ *  MAX_BATCH ids instead of two per id. Strictly positional and
+ *  zero-value-don't-revert on the contract side; unknown ids map to
+ *  null rows here via the zero-creator guard. THROWS on revert
+ *  (selector absent on an old deploy) or transport failure — the
+ *  caller splits those with `isRevert`. */
+async function readOfferRowsBatchLive(
+  publicClient: PublicClient,
+  diamond: `0x${string}`,
+  chainId: number,
+  offerIds: number[],
+): Promise<IndexedOffer[]> {
+  const rows: IndexedOffer[] = [];
+  for (const part of chunk(offerIds, MAX_BATCH)) {
+    const views = (await publicClient.readContract({
+      address: diamond,
+      abi: DIAMOND_ABI_VIEM,
+      functionName: 'getOffersWithState',
+      args: [part.map((id) => BigInt(id))],
+    })) as readonly Record<string, unknown>[];
+    for (let i = 0; i < views.length; i++) {
+      const v = views[i];
+      const row = mapOfferStructToRow(
+        v,
+        v.state as number | bigint,
+        chainId,
+        part[i],
+      );
+      if (row) rows.push(row);
+    }
+  }
+  return rows;
 }
 
 /** Every loan position the wallet CURRENTLY HOLDS, role decided by
@@ -163,19 +234,62 @@ export async function readOwnLoanRowsLive(
       return null; // both views unavailable
     }
   }
+  const withRole = (
+    row: ReturnType<typeof mapLoanStructToRow>,
+    heldTokenId: string,
+  ): PositionLoan | null => {
+    if (!row) return null; // unknown id / unrepresentable status
+    const role =
+      heldTokenId === row.lenderTokenId
+        ? ('lender' as const)
+        : heldTokenId === row.borrowerTokenId
+          ? ('borrower' as const)
+          : null;
+    if (!role) return null; // NFT not a side token of this loan
+    return { ...row, role };
+  };
+  // Hydrate via the #1046 batch view first — one eth_call per
+  // MAX_BATCH ids. The view is strictly positional, so views[i]
+  // pairs with pairs-chunk[i]'s held tokenId.
+  try {
+    const rows: PositionLoan[] = [];
+    for (const part of chunk(pairs, MAX_BATCH)) {
+      const views = (await publicClient.readContract({
+        address: diamond,
+        abi: DIAMOND_ABI_VIEM,
+        functionName: 'getLoansBatch',
+        args: [part.map((p) => BigInt(p.loanId))],
+      })) as readonly {
+        loan: Record<string, unknown>;
+        lender: string;
+        borrower: string;
+      }[];
+      for (let i = 0; i < views.length; i++) {
+        const v = views[i];
+        const row = withRole(
+          mapLoanStructToRow(v.loan, v.lender, v.borrower, chainId, part[i].loanId),
+          part[i].heldTokenId,
+        );
+        if (row) rows.push(row);
+      }
+    }
+    return rows;
+  } catch (e) {
+    if (isBatchTooLarge(e)) {
+      // Chunking makes this unreachable unless the deployed cap
+      // shrank below ours — surface the bug, fail the chain source
+      // closed (indexer fallback), never mask it with per-id reads.
+      console.error('[vaipakam] getLoansBatch reverted BatchTooLarge despite chunking');
+      return null;
+    }
+    if (!isRevert(e)) return null; // transport — chain side unknown
+    // Batch selector absent (pre-#1046 deploy) → per-id path.
+  }
   try {
     const rows = await Promise.all(
       pairs.map(async ({ loanId, heldTokenId }): Promise<PositionLoan | null> => {
         const row = await readLoanRowLive(publicClient, diamond, chainId, loanId);
-        if (!row) return null; // unknown id / unrepresentable status
-        const role =
-          heldTokenId === row.lenderTokenId
-            ? ('lender' as const)
-            : heldTokenId === row.borrowerTokenId
-              ? ('borrower' as const)
-              : null;
-        if (!role) return null; // NFT not a side token of this loan
-        return { ...row, role };
+        return withRole(row, heldTokenId);
       }),
     );
     return rows.filter((r): r is PositionLoan => r !== null);
@@ -264,6 +378,23 @@ export async function readOwnOfferRowsLive(
       // the indexed by-current-holder rows for that leg.
       heldLegOk = false;
     }
+  }
+  // Hydrate via the #1046 batch view first — one eth_call per
+  // MAX_BATCH ids instead of two per id.
+  try {
+    const rows = await readOfferRowsBatchLive(publicClient, diamond, chainId, [
+      ...ids,
+    ]);
+    return { rows, heldLegOk };
+  } catch (e) {
+    if (isBatchTooLarge(e)) {
+      // Unreachable with chunking unless the deployed cap shrank —
+      // a bug surface: fail the chain source closed, loudly.
+      console.error('[vaipakam] getOffersWithState reverted BatchTooLarge despite chunking');
+      return null;
+    }
+    if (!isRevert(e)) return null; // transport — chain side unknown
+    // Batch selector absent (pre-#1046 deploy) → per-id path.
   }
   try {
     const rows = await Promise.all(
