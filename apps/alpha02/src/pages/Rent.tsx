@@ -18,7 +18,7 @@
  * this page intentionally does NOT copy (candidate
  * _CodeVsDocsAudit entry).
  */
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import { CircleCheck, Images, KeyRound, LoaderCircle } from 'lucide-react';
 import { usePublicClient, useWalletClient } from 'wagmi';
@@ -31,10 +31,19 @@ import { DIAMOND_ABI_VIEM, useDiamondWrite } from '../contracts/diamond';
 import { useAcceptTermsSigning } from '../contracts/useAcceptTerms';
 import { ensureAllowance, isAddressLike, useTokenBalance, useTokenMeta } from '../contracts/erc20';
 import {
+  makeStepper,
+  plannedApprovePrompts,
+  readAllowance,
+  useAllowanceForPlan,
+  type SubmitProgress,
+} from '../lib/submitProgress';
+import {
   ensureNftApproval,
   readNftOwnershipLive,
   useNftOwnership,
   useNftRentalSupport,
+  readNftOperatorApproval,
+  useNftOperatorApproval,
 } from '../contracts/nft';
 import { useActiveOffers, useOffer } from '../data/hooks';
 import {
@@ -92,11 +101,22 @@ function ListNftFlow() {
   const [dailyFee, setDailyFee] = useState('');
   const [durationDays, setDurationDays] = useState('30');
   const [consent, setConsent] = useState(false);
-  const [busy, setBusy] = useState(false);
+  // #1037 — staged submit progress (busy derives from it).
+  const [progress, setProgress] = useState<SubmitProgress | null>(null);
+  const busy = progress !== null;
+  const submitLockRef = useRef(false);
   const [error, setError] = useState<string | null>(null);
   const [txHash, setTxHash] = useState<string | null>(null);
 
   const prepayMeta = useTokenMeta(prepayAsset || undefined);
+  // #1037 roadmap input: does the collection-wide operator approval
+  // already stand? true → the listing is a single confirmation.
+  const nftApproval = useNftOperatorApproval({
+    chainId: walletChain?.chainId,
+    contract: isAddressLike(contract) ? (contract as `0x${string}`) : undefined,
+    owner: address as `0x${string}` | undefined,
+    operator: walletChain?.diamondAddress,
+  });
   const standardEnum =
     standard === 'erc721' ? AssetType.ERC721 : AssetType.ERC1155;
   const ownership = useNftOwnership(contract, standardEnum, tokenId, quantity);
@@ -258,8 +278,20 @@ function ListNftFlow() {
       setError(copy.wallet.connectFirst);
       return;
     }
-    setBusy(true);
+    if (submitLockRef.current) return;
+    submitLockRef.current = true;
+    setProgress({ kind: 'approve', current: 0, total: 0 });
     setError(null);
+    // Runtime plan: the collection-approval prompt drops out when the
+    // operator approval already stands (an unknown read plans it IN —
+    // over-promising is the honest direction).
+    const alreadyApproved = await readNftOperatorApproval({
+      publicClient,
+      contract: contract as `0x${string}`,
+      owner: address,
+      operator: walletChain.diamondAddress,
+    });
+    const stepper = makeStepper(alreadyApproved === true ? 1 : 2, setProgress);
     try {
       // The checklist's sanctions item is a CACHED read — re-screen
       // the wallet live before setApprovalForAll can mine.
@@ -323,7 +355,9 @@ function ListNftFlow() {
         contract: contract as `0x${string}`,
         owner: address,
         operator: walletChain.diamondAddress,
+        onPrompt: () => stepper.next('approve'),
       });
+      stepper.next('send');
       const payload = toCreateOfferPayload(form, {});
       const { hash } = await write('createOffer', [payload]);
       setTxHash(hash);
@@ -332,8 +366,13 @@ function ListNftFlow() {
       void queryClient.invalidateQueries({ queryKey: ['activeOffers'] });
     } catch (err) {
       setError(submitErrorText(err));
+      // setApprovalForAll may have MINED before createOffer was
+      // rejected — re-read so the roadmap stops promising a prompt
+      // the next submit will skip.
+      void nftApproval.refetch();
     } finally {
-      setBusy(false);
+      submitLockRef.current = false;
+      setProgress(null);
     }
   }
 
@@ -495,6 +534,20 @@ function ListNftFlow() {
           </div>
           <div className="card">
             {receipt ? <ReviewReceipt data={receipt} /> : <p className="muted">Preparing your review…</p>}
+            {/* #1037 — every wallet prompt named before the first fires. */}
+            <div className="banner banner-info" role="note" style={{ marginTop: 16 }}>
+              <span className="banner-body">
+                {nftApproval.data === true
+                  ? copy.signing.intro(1)
+                  : nftApproval.data === false
+                    ? copy.signing.intro(2)
+                    : copy.signing.introUpTo(2)}
+                <ol style={{ margin: '6px 0 0 18px', padding: 0 }}>
+                  {nftApproval.data !== true ? <li>{copy.signing.approveNft}</li> : null}
+                  <li>{copy.signing.postListing}</li>
+                </ol>
+              </span>
+            </div>
             <label
               className="cluster"
               style={{ marginTop: 16, fontSize: '0.9rem', alignItems: 'flex-start' }}
@@ -529,7 +582,13 @@ function ListNftFlow() {
                 onClick={() => void submit()}
               >
                 {busy ? <LoaderCircle className="spin" aria-hidden size={18} /> : null}
-                {busy ? 'Waiting for wallet…' : copy.rent.postListing}
+                {progress !== null
+                  ? progress.current === 0
+                    ? 'Waiting for wallet…'
+                    : progress.kind === 'approve'
+                      ? copy.signing.phaseApprove(progress.current, progress.total)
+                      : copy.signing.phaseSend(progress.current, progress.total)
+                  : copy.rent.postListing}
               </button>
             </div>
           </div>
@@ -610,7 +669,10 @@ function RentNftFlow() {
   const [step, setStep] = useState<'browse' | 'review' | 'done'>('browse');
   const [selected, setSelected] = useState<IndexedOffer | null>(null);
   const [consent, setConsent] = useState(false);
-  const [busy, setBusy] = useState(false);
+  // #1037 — staged submit progress (busy derives from it).
+  const [progress, setProgress] = useState<SubmitProgress | null>(null);
+  const busy = progress !== null;
+  const submitLockRef = useRef(false);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [txHash, setTxHash] = useState<string | null>(null);
@@ -697,6 +759,21 @@ function RentNftFlow() {
   const totalPrepay = selected
     ? totalRentalPrepay(BigInt(selected.amount), selected.durationDays, bufferBps)
     : undefined;
+  // #1037 roadmap inputs (see OfferFlow): live prepay allowance
+  // decides whether the approve leg is 0, 1, or 2 prompts.
+  const planAllowance = useAllowanceForPlan({
+    chainId: walletChain?.chainId,
+    token: selected?.prepayAsset as `0x${string}` | undefined,
+    owner: address as `0x${string}` | undefined,
+    spender: walletChain?.diamondAddress,
+  });
+  const rentPlanApprove =
+    totalPrepay !== undefined
+      ? plannedApprovePrompts(planAllowance.data, totalPrepay)
+      : 2;
+  const rentPlanKnown =
+    totalPrepay !== undefined && planAllowance.data !== undefined;
+  const rentPlanTotal = 2 + rentPlanApprove;
 
   const baseChecks = useEligibility({
     asset: selected
@@ -753,8 +830,26 @@ function RentNftFlow() {
       setError(copy.wallet.connectFirst);
       return;
     }
-    setBusy(true);
+    if (submitLockRef.current) return;
+    submitLockRef.current = true;
+    setProgress({ kind: 'sign', current: 0, total: 0 });
     setError(null);
+    // Runtime plan: signature + prepay approval (0/1/2 by the live
+    // allowance and zero-first rule; unknown plans the ceiling) +
+    // the accept transaction.
+    let planPromptTotal = 2;
+    if (totalPrepay !== undefined && selected) {
+      const cur = await readAllowance({
+        publicClient,
+        token: selected.prepayAsset as `0x${string}`,
+        owner: address,
+        spender: walletChain.diamondAddress,
+      });
+      planPromptTotal += plannedApprovePrompts(cur, totalPrepay);
+    } else {
+      planPromptTotal += 2; // amount unknowable here — plan the ceiling
+    }
+    const stepper = makeStepper(planPromptTotal, setProgress);
     try {
       // Reviewed row and executing chain must agree — same offerId on
       // another chain is a different rental.
@@ -792,6 +887,7 @@ function RentNftFlow() {
       // terms that differ from the reviewed listing.
       let signed: Awaited<ReturnType<typeof signAcceptTerms>>;
       try {
+        stepper.next('sign');
         signed = await signAcceptTerms({
           offerId: BigInt(selected.offerId),
           consent,
@@ -881,7 +977,9 @@ function RentNftFlow() {
         owner: address,
         spender: walletChain.diamondAddress,
         amount: canonicalTotal,
+        onPrompt: () => stepper.next('approve'),
       });
+      stepper.next('send');
       const { hash } = await write('acceptOffer', [
         BigInt(selected.offerId),
         terms,
@@ -893,8 +991,12 @@ function RentNftFlow() {
       void queryClient.invalidateQueries({ queryKey: ['myLoans'] });
     } catch (err) {
       setError(submitErrorText(err));
+      // The prepay approval may have MINED before acceptOffer was
+      // rejected — re-read so the roadmap matches the next attempt.
+      void planAllowance.refetch();
     } finally {
-      setBusy(false);
+      submitLockRef.current = false;
+      setProgress(null);
     }
   }
 
@@ -963,6 +1065,25 @@ function RentNftFlow() {
           </div>
           <div className="card">
             {receipt ? <ReviewReceipt data={receipt} /> : <p className="muted">Preparing your review…</p>}
+            {/* #1037 — every wallet prompt named before the first fires. */}
+            <div className="banner banner-info" role="note" style={{ marginTop: 16 }}>
+              <span className="banner-body">
+                {rentPlanKnown
+                  ? copy.signing.intro(rentPlanTotal)
+                  : copy.signing.introUpTo(rentPlanTotal)}
+                <ol style={{ margin: '6px 0 0 18px', padding: 0 }}>
+                  <li>{copy.signing.sign}</li>
+                  {!rentPlanKnown ? (
+                    <li>{copy.signing.approveUnknown}</li>
+                  ) : rentPlanApprove === 2 ? (
+                    <li>{copy.signing.approveReset}</li>
+                  ) : rentPlanApprove === 1 ? (
+                    <li>{copy.signing.approve}</li>
+                  ) : null}
+                  <li>{copy.signing.acceptRental}</li>
+                </ol>
+              </span>
+            </div>
             <label
               className="cluster"
               style={{ marginTop: 16, fontSize: '0.9rem', alignItems: 'flex-start' }}
@@ -1000,7 +1121,15 @@ function RentNftFlow() {
                 onClick={() => void submit()}
               >
                 {busy ? <LoaderCircle className="spin" aria-hidden size={18} /> : null}
-                {busy ? 'Waiting for wallet…' : copy.rent.acceptRental}
+                {progress !== null
+                  ? progress.current === 0
+                    ? 'Waiting for wallet…'
+                    : progress.kind === 'sign'
+                      ? copy.signing.phaseSign(progress.current, progress.total)
+                      : progress.kind === 'approve'
+                        ? copy.signing.phaseApprove(progress.current, progress.total)
+                        : copy.signing.phaseSend(progress.current, progress.total)
+                  : copy.rent.acceptRental}
               </button>
             </div>
           </div>

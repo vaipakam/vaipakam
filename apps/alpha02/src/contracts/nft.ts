@@ -7,7 +7,7 @@
 import { parseAbi } from 'viem';
 import type { PublicClient, WalletClient } from 'viem';
 import { useQuery } from '@tanstack/react-query';
-import { usePublicClient } from 'wagmi';
+import { usePublicClient, useReadContract } from 'wagmi';
 import { useActiveChain } from '../chain/useActiveChain';
 import { AssetType } from '../lib/types';
 import { isAddressLike } from './erc20';
@@ -150,8 +150,12 @@ export async function ensureNftApproval(opts: {
   contract: `0x${string}`;
   owner: `0x${string}`;
   operator: `0x${string}`;
+  /** Called immediately before the setApprovalForAll prompt (skipped
+   *  entirely when the collection is already approved) — drives the
+   *  "step x of y" submit-progress label (#1037). */
+  onPrompt?: () => void;
 }): Promise<void> {
-  const { publicClient, walletClient, contract, owner, operator } = opts;
+  const { publicClient, walletClient, contract, owner, operator, onPrompt } = opts;
   const already = await publicClient.readContract({
     address: contract,
     abi: NFT_ABI,
@@ -159,6 +163,7 @@ export async function ensureNftApproval(opts: {
     args: [owner, operator],
   });
   if (already) return;
+  onPrompt?.();
   const hash = await walletClient.writeContract({
     address: contract,
     abi: NFT_ABI,
@@ -171,4 +176,45 @@ export async function ensureNftApproval(opts: {
   if (receipt.status !== 'success') {
     throw new Error(`NFT approval failed (${hash})`);
   }
+}
+
+
+/** One-shot operator-approval read for runtime prompt planning
+ *  (#1037). `undefined` = read failed → callers plan the prompt in. */
+export async function readNftOperatorApproval(opts: {
+  publicClient: PublicClient;
+  contract: `0x${string}`;
+  owner: `0x${string}`;
+  operator: `0x${string}`;
+}): Promise<boolean | undefined> {
+  try {
+    return await opts.publicClient.readContract({
+      address: opts.contract,
+      abi: NFT_ABI,
+      functionName: 'isApprovedForAll',
+      args: [opts.owner, opts.operator],
+    });
+  } catch {
+    return undefined;
+  }
+}
+
+/** Reactive operator-approval read for the review-screen prompt
+ *  roadmap (#1037). */
+export function useNftOperatorApproval(opts: {
+  chainId: number | undefined;
+  contract: `0x${string}` | undefined;
+  owner: `0x${string}` | undefined;
+  operator: `0x${string}` | undefined;
+}) {
+  return useReadContract({
+    chainId: opts.chainId,
+    address: opts.contract,
+    abi: NFT_ABI,
+    functionName: 'isApprovedForAll',
+    args: opts.owner && opts.operator ? [opts.owner, opts.operator] : undefined,
+    query: {
+      enabled: Boolean(opts.chainId && opts.contract && opts.owner && opts.operator),
+    },
+  });
 }
