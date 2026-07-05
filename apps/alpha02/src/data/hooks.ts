@@ -121,7 +121,10 @@ export interface MyRows<T> {
  *  chain-sole-source when the chain answers, which by design drops
  *  positions whose NFTs were burned/transferred away, yet actor-null
  *  events (LoanSettled, keeper LoanDefaulted) for exactly those loans
- *  still belong in the wallet's feed. */
+ *  still belong in the wallet's feed. SCOPE: the indexed by-* routes
+ *  are themselves current-owner filtered, so these ids cover the
+ *  ingest-LAG window after a burn/transfer, not permanent history —
+ *  a true historical-participant route is tracked as #1023. */
 export interface MyLoanRows extends MyRows<PositionLoan> {
   indexedLoanIds: number[];
 }
@@ -333,7 +336,15 @@ export function useMyOffersFull() {
       // sort newest-first so a freshly posted offer tops the list,
       // matching the indexed routes' offer_id DESC ordering.
       rows.sort((a, b) => b.offerId - a.offerId);
-      return { rows, chainOk: chainLive !== null, indexerOk };
+      // chainOk demands BOTH chain legs: on legacy deploys without a
+      // holder view (heldLegOk false) the held leg is indexer-only,
+      // so a freshly transferred listing can lag — the degraded-
+      // sources banner must say so rather than pass as fully live.
+      return {
+        rows,
+        chainOk: chainLive !== null && chainLive.heldLegOk,
+        indexerOk,
+      };
     },
   });
 }

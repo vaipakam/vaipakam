@@ -68,7 +68,9 @@ export function Activity() {
   // The set is the UNION of rendered rows (chain-sole-source when the
   // chain answers — freshest, includes a just-initiated loan the
   // indexer hasn't ingested) and the indexed leg's own ids (which
-  // keep the burned/transferred loans the chain enumeration drops).
+  // keep a just-burned/transferred loan through the ingest-lag
+  // window; permanent history for long-closed positions needs the
+  // historical-participant route tracked as #1023).
   const loansUsable = loans.data != null && loans.data.indexerOk;
   const myLoanIds = useMemo(() => {
     if (!loansUsable) return new Set<number>();
