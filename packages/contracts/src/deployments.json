@@ -7,7 +7,7 @@
     "deployBlock": 282848512,
     "deployedAt": "1782870075-unix",
     "diamond": "0x55d7872cC9738994cc6b04F89d128cB4c8745431",
-    "facetCount": 62,
+    "facetCount": 63,
     "facets": {
       "accessControlFacet": "0xb99f2A690A795ea21b45401Cefe9C3A166f93C1D",
       "addCollateralFacet": "0x2567F39962c68646d4A7dbEB020BC60027e9F986",
@@ -94,7 +94,7 @@
     "deployBlock": 43549790,
     "deployedAt": "1782867868-unix",
     "diamond": "0xd89fd7F787e4415460b23891E97570a4881fb995",
-    "facetCount": 62,
+    "facetCount": 63,
     "facets": {
       "accessControlFacet": "0xE0Fc9CFde9abDFf07E81430B941bfEF695b22b75",
       "addCollateralFacet": "0x5e16DBf5D2525e1550FDE6A81Ca7D8ACd6249C15",
@@ -193,7 +193,7 @@
     "deployBlock": 116504621,
     "deployedAt": "1782870903-unix",
     "diamond": "0x7D4BfD2CA7908Fb088300f29276bF5A2E4FfBAd2",
-    "facetCount": 61,
+    "facetCount": 63,
     "facets": {
       "accessControlFacet": "0x2A9d4D6e709aCef24e14BC3Dc9909079FdDcc949",
       "addCollateralFacet": "0x8ffb6b3f8f721F1E90b5f92a9472D5BE0B1f84C8",

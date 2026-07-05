@@ -205,6 +205,19 @@ contract RefreshAllFacetsInPlace is DeployDiamond {
             console.log("   replace:", reps.length, "add:", adds.length);
         }
 
+        // Codex #992 — pause the diamond across the batched cuts so no
+        // `whenNotPaused` entry point can be exercised under a partially-
+        // refreshed (mixed old/new facet) configuration between batches, or if
+        // a later batch reverts. Shared libraries are inlined across facets, so
+        // a mixed configuration is exactly the unsafe state this full refresh
+        // exists to avoid. The refresh signer is the diamond owner, which on a
+        // testnet holds PAUSER/UNPAUSER. Restore ONLY if we paused it (an
+        // already-paused diamond is left paused), and only AFTER the post-cut
+        // routing verification passes — a failed verify reverts the script
+        // before the unpause broadcasts, so a bad refresh is left safely frozen.
+        bool wasPaused = AdminFacet(diamond).paused();
+        if (!wasPaused) AdminFacet(diamond).pause();
+
         // Dispatch the cut in selector-budgeted batches so no single diamondCut
         // tx exceeds the RPC/block gas cap.
         uint256 batchStart;
@@ -222,10 +235,9 @@ contract RefreshAllFacetsInPlace is DeployDiamond {
             _sendBatch(diamond, cuts, batchStart, nCuts);
         }
 
-        vm.stopBroadcast();
-
         // Post-cut verification: every canonical selector must route to its
-        // fresh implementation.
+        // fresh implementation. Runs BEFORE the unpause (still inside the
+        // broadcast; these are view calls) so a failed refresh stays frozen.
         for (uint256 i; i < items.length; ++i) {
             for (uint256 j; j < items[i].selectors.length; ++j) {
                 address routed = loupe.facetAddress(items[i].selectors[j]);
@@ -234,10 +246,21 @@ contract RefreshAllFacetsInPlace is DeployDiamond {
         }
         console.log("Verified: all selectors route to the fresh implementations.");
 
+        if (!wasPaused) AdminFacet(diamond).unpause();
+
+        vm.stopBroadcast();
+
         // Persist the new addresses so the deployments sync picks them up.
         for (uint256 i; i < items.length; ++i) {
             Deployments.writeFacet(items[i].key, items[i].impl);
         }
+        // Codex #992 — keep `.facetCount` in lockstep with the LIVE diamond.
+        // An in-place refresh can Add net-new facets (the count grows), and the
+        // deploy-verify phase exact-matches this value against the live
+        // `facetAddresses().length`, so a stale count fails verify. Read the
+        // live count rather than `items.length` (which excludes the
+        // construction-time `diamondCutFacet` and any non-routed map entry).
+        Deployments.writeUint(".facetCount", loupe.facetAddresses().length);
         console.log("");
         console.log("addresses.json updated. Next:");
         console.log("  bash script/exportFrontendDeployments.sh");

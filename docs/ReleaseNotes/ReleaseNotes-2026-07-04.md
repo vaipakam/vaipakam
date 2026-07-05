@@ -180,8 +180,10 @@ existing submit-time re-read already narrows that window). What it guarantees is
 that no retune after origination can move an open loan's economics — the
 dominant, long-lived exposure, because the treasury fee is taken at settlement.
 
-Closes #957. Completes the last open contract item of the #921 alpha02 review
-tranche (the remaining #958 indexer item is off-chain and deferred).
+Closes #957 — the last open contract item of the #921 alpha02 review tranche.
+With the off-chain #958 claimables item also shipped (see the on-chain
+claimables thread below), every #921 item is complete and the umbrella is
+closed.
 
 ## Thread — alpha02 testnet-review findings remediation (#988)
 

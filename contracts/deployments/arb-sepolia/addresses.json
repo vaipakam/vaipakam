@@ -6,7 +6,7 @@
   "deployBlock": 282848512,
   "deployedAt": "1782870075-unix",
   "diamond": "0x55d7872cC9738994cc6b04F89d128cB4c8745431",
-  "facetCount": 62,
+  "facetCount": 63,
   "facets": {
     "accessControlFacet": "0xb99f2A690A795ea21b45401Cefe9C3A166f93C1D",
     "addCollateralFacet": "0x2567F39962c68646d4A7dbEB020BC60027e9F986",
