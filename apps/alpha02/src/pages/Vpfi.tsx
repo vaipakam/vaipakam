@@ -51,7 +51,9 @@ export function Vpfi() {
   const [action, setAction] = useState<VaultAction>('deposit');
   const [amount, setAmount] = useState('');
   const [reviewing, setReviewing] = useState(false);
-  const [busy, setBusy] = useState(false);
+  // #1037 — which prompt the in-flight action is on (null = idle).
+  const [phase, setPhase] = useState<null | 'pending' | 'approving' | 'submitting'>(null);
+  const busy = phase !== null;
   const [error, setError] = useState<string | null>(null);
   const [done, setDone] = useState<string | null>(null);
   const [watched, setWatched] = useState(false);
@@ -105,7 +107,7 @@ export function Vpfi() {
   async function runVaultAction() {
     if (!amountWei || !address || !walletChain || !walletClient || !publicClient || !snapshot?.token)
       return;
-    setBusy(true);
+    setPhase('pending');
     setError(null);
     try {
       // The page gates on a CACHED sanctions read — re-screen live
@@ -140,6 +142,7 @@ export function Vpfi() {
           symbol: 'VPFI',
         });
         await ensureAllowance({
+          onPrompt: () => setPhase('approving'),
           publicClient,
           walletClient,
           token: snapshot.token,
@@ -147,9 +150,11 @@ export function Vpfi() {
           spender: walletChain.diamondAddress,
           amount: amountWei,
         });
+        setPhase('submitting');
         await write('depositVPFIToVault', [amountWei]);
         setDone('Deposit confirmed. Your discount history starts building from now.');
       } else {
+        setPhase('submitting');
         await write('withdrawVPFIFromVault', [amountWei]);
         setDone('Withdrawal confirmed. The VPFI is back in your wallet.');
       }
@@ -159,13 +164,13 @@ export function Vpfi() {
     } catch (err) {
       setError(submitErrorText(err));
     } finally {
-      setBusy(false);
+      setPhase(null);
     }
   }
 
   async function toggleConsent() {
     if (!snapshot) return;
-    setBusy(true);
+    setPhase('pending');
     setError(null);
     try {
       // Tier-1 write — re-screen live (the page gate is a cached read;
@@ -216,7 +221,7 @@ export function Vpfi() {
     } catch (err) {
       setError(submitErrorText(err));
     } finally {
-      setBusy(false);
+      setPhase(null);
     }
   }
 
@@ -486,8 +491,12 @@ export function Vpfi() {
                 onClick={() => void runVaultAction()}
               >
                 {busy ? <LoaderCircle className="spin" aria-hidden size={18} /> : null}
-                {busy
-                  ? 'Waiting for wallet…'
+                {phase !== null
+                  ? phase === 'approving'
+                    ? 'Approving VPFI…'
+                    : phase === 'submitting'
+                      ? 'Submitting…'
+                      : 'Waiting for wallet…'
                   : action === 'deposit'
                     ? 'Deposit VPFI'
                     : 'Withdraw VPFI'}
