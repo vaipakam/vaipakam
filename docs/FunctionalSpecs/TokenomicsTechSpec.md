@@ -80,28 +80,27 @@ Implementation target:
 | Exchange Listings & Market Making     |      `12%` |    `27,600,000` | Liquidity + CEX incentives                       |
 | Ecosystem / Community / Marketing     |       `2%` |     `4,600,000` | 0 cliff + ~12–18 mo linear; ops/governance multisig — see §3a |
 | Platform Interaction Rewards          |      `30%` |    `69,000,000` | Usage-based rewards                              |
-| Reserve (pending reallocation)        |      `25%` |    `57,500,000` | Freed by the #687 excision (24% staking + 1% fixed-rate sale) — disposition governance-pending |
-| **Total (pre-reconciliation)**        |   **101%** | **232,300,000** | See note — normalization to 100% / 230M is governance-pending |
+| Reserve (pending reallocation)        |      `24%` |    `55,200,000` | The `24%` staking-rewards pool freed by #687-B (`5% APR` staking, removed; see §7) — now all staking, disposition governance-pending |
+| **Total**                             |  **100%** | **230,000,000** | Sums to the `230M` `TOTAL_SUPPLY_CAP` |
 
-> **[owner to reconcile before mainnet mint]** — the granular rows above
-> currently sum to `101%` / `232,300,000` VPFI, which is **above** the `230M`
-> hard `TOTAL_SUPPLY_CAP`, and the Market-Making figure is inconsistent across
-> documents (`12%` here vs `14%` in the whitepaper). Both are open items the
-> owner must resolve before any mainnet mint; the numbers are deliberately left
-> as-is here rather than silently corrected.
+> **Reconciliation note (owner decision, 2026-07-05).** The table now sums to
+> exactly `100%` / `230,000,000` VPFI — the `230M` hard `TOTAL_SUPPLY_CAP`. Two
+> items were resolved to get there:
 >
-> **Reserve + reconciliation note.** The `25%` Reserve is the allocation freed by
-> the #687 legal-surface excision — the `5% APR` staking-rewards pool (`24%`,
-> removed in #687-B; see §7) and the Early Fixed-Rate Purchase Program (`1%`,
-> removed in #687-A; see §8). Its final disposition — held in reserve, burned to
-> reduce the `230M` cap, or otherwise reallocated — is a **pending governance
-> decision**, shown here as a placeholder so the freed supply is accounted for.
-> The granular rows above currently sum to `101%` / `232.3M` — a **pre-existing**
-> over-allocation that predates this excision. Normalizing to exactly `100%` /
-> `230M` (the Whitepaper §11.2 table shows one candidate reconciliation: dropping
-> the granular Regulatory-Compliance and Ecosystem rows and setting Market Making
-> to `14%`) is part of the same pending governance reallocation; the Market-Making
-> figure itself (`12%` here vs `14%` in the whitepaper) is one of the open items.
+> 1. **Reserve normalized `25%` → `24%`.** The reserve represents the supply
+>    freed by the #687 legal-surface excision. That excision freed two slices:
+>    the `24%` `5% APR` staking-rewards pool (removed in #687-B; see §7) and the
+>    `1%` Early Fixed-Rate Purchase Program (removed in #687-A; see §8). Because
+>    the fixed-rate sale program is **removed**, its `1%` slice is not carried
+>    into the reserve — the reserve is now the `24%` staking pool **only**, and
+>    dropping that `1%` is exactly what normalizes the previously over-allocated
+>    `101%` table down to `100%`. Final disposition of the `24%` (held in
+>    reserve, burned to reduce the cap, or reallocated) remains a pending
+>    governance decision.
+> 2. **Market Making fixed at `12%`.** The `12%` here is the canonical figure
+>    (owner decision, 2026-07-05); it supersedes the `14%` shown in the older
+>    whitepaper §11.2 table. Aligning that marketing copy to `12%` is a separate
+>    whitepaper edit, tracked outside this spec.
 
 ### 3a. People-pool semantics (Founders / Team / Testers / Ecosystem)
 
