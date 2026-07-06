@@ -5,6 +5,7 @@ pragma solidity ^0.8.29;
 import {LibVaipakam} from "../libraries/LibVaipakam.sol";
 import {InteractionRewardsFacet} from "./InteractionRewardsFacet.sol";
 import {LibEncumbrance} from "../libraries/LibEncumbrance.sol";
+import {LibSanctionedLock} from "../libraries/LibSanctionedLock.sol";
 import {LibLifecycle} from "../libraries/LibLifecycle.sol";
 import {LibAuth} from "../libraries/LibAuth.sol";
 import {LibEntitlement} from "../libraries/LibEntitlement.sol";
@@ -1256,6 +1257,17 @@ contract PrecloseFacet is
         // of the funds path AND ticks protocolTrackedVaultBalance under the
         // lender). Alice returns Liam's principal here; her separate new-offer
         // capital was pre-vaulted at `createOffer` when she posted.
+        //
+        // #1001 (S3, Codex #1070 r5 P2) — vault-lock the receive side. Because
+        // this redesign moved the old-lender payoff from posting to completion, a
+        // lender flagged AFTER posting but BEFORE acceptance would otherwise brick
+        // `acceptOffer`/`completeOffsetInternal` on the receiving-vault sanctions
+        // screen — stranding the whole offset even though the proceeds land in the
+        // lender's OWN vault, frozen behind the Tier-1 claim gate. Pin the
+        // receive-side exemption to `loan.lender` so the close-out completes; the
+        // parked-proceeds audit event fires from `end(...)` when flagged. Same
+        // pattern as `RepayFacet`'s terminal lender deposit.
+        LibSanctionedLock.begin(s, loan.lender);
         LibFacet.crossFacetCall(
             abi.encodeWithSelector(
                 VaultFactoryFacet.vaultDepositERC20From.selector,
@@ -1266,6 +1278,7 @@ contract PrecloseFacet is
             ),
             VaultDepositFailed.selector
         );
+        LibSanctionedLock.end(s, loan.lender, loanId, payAssetOffset, lenderTotal);
         s.heldForLender[loanId] += lenderTotal;
         // #597 — reserve the held VPFI against the old lender's unstake path for
         // the (now brief) window between this write and `claimAsLender`. VPFI is
@@ -1311,23 +1324,25 @@ contract PrecloseFacet is
         // through the diamond fallback. Same pattern as
         // `OfferFacet.acceptOfferInternal` for matchOffers.
         //
-        // Pass `msg.sender` (alice, the offset initiator) as
-        // `creator`. Without this the diamond's call() would set
-        // `msg.sender == diamond` inside createOfferInternal,
-        // corrupting `offer.creator` and the asset-pull allowance
-        // check.
-        // #671 (Codex #727 r1 P1) — this offset path creates a NEW lender offer
-        // for `msg.sender` (a real user, not a protocol sale vehicle), so it is
-        // NOT exempt from the create-time risk-access gate: an under-tiered
-        // borrower must not be able to offset an illiquid / tier-1 loan into a
-        // fresh ungated offer. The gate runs inside `createOfferInternal` on the
-        // offer creator. (Only the lender-sale vehicle in `EarlyWithdrawalFacet`
-        // sets `saleVehicleCreate`, because there the risk is the exiting
-        // lender's and was already gated at the original loan.)
+        // #1001 (S3, Codex #1070 r5 P2) — create AND fund the offset offer as the
+        // BORROWER-position holder, NOT `msg.sender`. `offsetWithNewOffer` is a
+        // borrower-entitled action a keeper (INIT_PRECLOSE) may trigger; if the
+        // creator were `msg.sender`, a keeper would own the new lender NFT + fund
+        // its principal, yet completion pulls the old-loan payoff from
+        // `loan.borrower` — so a keeper could strand a fillable offer that later
+        // spends the borrower's allowance while the keeper pockets the lender
+        // position. Binding the creator to the borrower holder keeps the economics
+        // coherent: the borrower funds + owns the new lender position AND pays the
+        // payoff, and the keeper is a pure trigger. For a self-initiated offset
+        // `ownerOf(borrowerTokenId) == msg.sender`, so this is a no-op there.
+        // (The borrower NFT is locked for the offset, so this holder is fixed from
+        // posting through completion.) The #671 create-time risk-access gate still
+        // runs inside `createOfferInternal` on this creator.
+        address offsetCreator = IERC721(address(this)).ownerOf(loan.borrowerTokenId);
         (bool success, bytes memory result) = address(this).call(
             abi.encodeWithSelector(
                 OfferCreateFacet.createOfferInternal.selector,
-                msg.sender,
+                offsetCreator,
                 params
             )
         );
