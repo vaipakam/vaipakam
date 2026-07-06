@@ -13,7 +13,7 @@
  */
 import { spawn, type ChildProcess } from 'node:child_process';
 import { test, expect } from '../lib/wallet-fixture';
-import { lenderOfferFormToReview } from '../lib/flows';
+import { consentAndWaitEnabled, lenderOfferFormToReview } from '../lib/flows';
 import { ANVIL_URL } from '../lib/anvil';
 
 const KILL_PORT = 4174;
@@ -79,10 +79,17 @@ test('a killed flow shows the pause banner and holds the sign button closed', as
   await expect(post).toBeDisabled();
 });
 
-test('control: a build with the flag unset shows no pause banner', async ({
+test('control: the SAME review on an unset build enables the sign button', async ({
   launchWallet,
 }) => {
-  const { page } = await launchWallet('borrower');
-  await page.goto('/lend', { waitUntil: 'domcontentloaded' });
+  // Drive the identical form on the standard server and prove the
+  // normal gates CLEAR (button enables) with no banner — so the
+  // killed case's disabled button can only be the kill gate, not a
+  // hydration/consent/liquidity gate that happens to be closed
+  // (round 3).
+  const { page } = await launchWallet('lender');
+  const post = await lenderOfferFormToReview(page);
+  await consentAndWaitEnabled(page, post);
+  await expect(post).toBeEnabled();
   await expect(page.getByText(KILL_COPY)).toHaveCount(0);
 });

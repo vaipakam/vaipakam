@@ -2,7 +2,7 @@
 // production alpha02: drive the lend post-offer flow to review, tick
 // consent, confirm the footer renders a real verdict.
 import fs from 'node:fs';
-import { launch, SITE } from './driver.mjs';
+import { ensureConnected, launch, SITE } from './driver.mjs';
 
 // Faucet mock addresses (Base Sepolia). Override with FAUCET_JSON to
 // point at a deployments artifact — both the flat shape and the
@@ -20,6 +20,8 @@ const TILQ2 =
 const { page, done } = await launch({ role: 'lender' });
 await page.goto(SITE + '/lend', { waitUntil: 'domcontentloaded' });
 await page.waitForTimeout(2500);
+await ensureConnected(page);
+await page.waitForTimeout(1500);
 await page.locator('#lending-asset').selectOption('__custom__');
 await page.locator('#lending-asset ~ input[placeholder="0x…"]').fill(TILQ);
 await page.waitForTimeout(1500);
@@ -37,23 +39,32 @@ await page.waitForTimeout(800);
 await page.getByRole('button', { name: /continue to review/i }).click();
 await page.waitForTimeout(3000);
 
-// Tick every visible checkbox on the review (consent; both-illiquid
-// acknowledgements if present) — the dry run only builds once the
-// risk/terms consent is on.
-for (const box of await page.locator('input[type="checkbox"]:visible').all()) {
-  await box.check().catch(() => {});
+// Consent can be legitimately RESET by late disclosures (liquidity /
+// grace / security reads landing after the tick) — that's the app's
+// re-consent rule. Keep re-ticking while waiting for a verdict, like
+// the fork-tier helper does, instead of a one-time sweep (round 3).
+console.log('ticking consent, waiting for a hard verdict…');
+let verdicts = {};
+const deadline = Date.now() + 90_000;
+for (;;) {
+  for (const box of await page.locator('input[type="checkbox"]:visible').all()) {
+    if (!(await box.isChecked().catch(() => true))) {
+      await box.check().catch(() => {});
+    }
+  }
+  await page.waitForTimeout(2_000);
+  const body = await page.locator('body').innerText();
+  verdicts = {
+    running: body.includes('free dry run of this transaction'),
+    passed: body.includes('Dry run passed'),
+    approval: body.includes('token approval will be requested first'),
+    wouldFail: body.includes('dry run of this exact transaction just failed'),
+    unavailable: body.includes('dry run isn’t available'),
+  };
+  // Hard verdicts end the wait; running/unavailable may be transient.
+  if (verdicts.passed || verdicts.approval || verdicts.wouldFail) break;
+  if (Date.now() > deadline) break;
 }
-console.log('consent ticked, waiting for dry run…');
-await page.waitForTimeout(8000);
-
-const body = await page.locator('body').innerText();
-const verdicts = {
-  running: body.includes('free dry run of this transaction'),
-  passed: body.includes('Dry run passed'),
-  approval: body.includes('token approval will be requested first'),
-  wouldFail: body.includes('dry run of this exact transaction just failed'),
-  unavailable: body.includes('dry run isn’t available'),
-};
 console.log('verdict flags:', JSON.stringify(verdicts));
 // Only the two truthful outcomes pass — wouldFail IS the #1059
 // regression this driver exists to catch, and unavailable/running

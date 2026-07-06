@@ -77,6 +77,22 @@ function assertInjectedAccount(requested, account) {
   }
 }
 
+/** Connect the injected wallet through ConnectKit if the page shows
+ *  the connect state — a clean profiles/ dir must not depend on a
+ *  pre-primed session (round 3). Safe to call when already
+ *  connected: it no-ops if no connect button is visible. */
+export async function ensureConnected(page) {
+  const connect = page.getByRole('button', { name: /connect wallet/i }).first();
+  if (!(await connect.isVisible().catch(() => false))) return;
+  await connect.click();
+  // ConnectKit lists announced EIP-6963 providers by name.
+  await page.getByText('Vaipakam Test Wallet', { exact: false }).first()
+    .click({ timeout: 15_000 });
+  // Connected when the connect CTA leaves the header.
+  await connect.waitFor({ state: 'hidden', timeout: 20_000 }).catch(() => {});
+  await page.waitForTimeout(1_000);
+}
+
 export function clientsFor(chainId) {
   const { chain, rpc } = CHAINS[chainId];
   return {
