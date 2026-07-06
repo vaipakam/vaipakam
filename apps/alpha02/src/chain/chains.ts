@@ -138,6 +138,17 @@ function wsUrlFor(meta: ChainMeta): string | undefined {
   return fromEnv || undefined;
 }
 
+/** Mainnet RPC for the ENS-read-only client in `wagmi.ts`. Ethereum
+ *  need not be a DEPLOYED chain (testnet phase: no Diamond on chain 1,
+ *  so it never enters SUPPORTED_CHAINS), but ENS reverse lookups still
+ *  resolve there — and they must ride the same env-overridable
+ *  plumbing as every other chain read, never a library's implicit
+ *  default endpoint. */
+export function ensMainnetRpcUrl(): string {
+  const meta = CHAIN_META.find((m) => m.chainId === 1);
+  return meta ? rpcUrlFor(meta) : 'https://ethereum-rpc.publicnode.com';
+}
+
 /** Every chain with a live Diamond, in display order. */
 export const SUPPORTED_CHAINS: readonly SupportedChain[] = CHAIN_META.flatMap(
   (meta) => {

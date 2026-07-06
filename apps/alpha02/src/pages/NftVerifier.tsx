@@ -189,6 +189,14 @@ export function NftVerifier() {
   const ensName = useEnsName({
     address: result.data?.exists ? result.data.owner : undefined,
     chainId: 1,
+    query: {
+      // Same session-static caching as AddressName: one resolution
+      // per owner address, no retry storm against the shared
+      // mainnet endpoint when a lookup fails.
+      staleTime: Infinity,
+      gcTime: 24 * 60 * 60 * 1000,
+      retry: false,
+    },
   });
 
   return (
