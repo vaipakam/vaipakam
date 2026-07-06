@@ -527,7 +527,8 @@
     "revoke": "Widerrufen",
     "revoking": "Wird widerrufen…",
     "cleared": "geleert",
-    "footnote": "Diese Seite scannt nur den Vaipakam Diamond als Spender auf der aktuellen Chain. Genehmigungen für andere Verträge (DEX-Aggregatoren, andere dApps) sind hier nicht aufgeführt — verwenden Sie revoke.cash oder ein ähnliches Tool zur Prüfung."
+    "footnote": "Diese Seite scannt nur den Vaipakam Diamond als Spender auf der aktuellen Chain. Genehmigungen für andere Verträge (DEX-Aggregatoren, andere dApps) sind hier nicht aufgeführt — verwenden Sie revoke.cash oder ein ähnliches Tool zur Prüfung.",
+    "readFailed": "{{count}} Token-Freigabe(n) konnten gerade nicht geprüft werden — die Liste unten kann unvollständig sein. Sie gelten NICHT als widerrufen; bitte erneut prüfen."
   },
   "alerts": {
     "connectBody": "Verbinden Sie Ihre Wallet, um HF-Benachrichtigungen zu konfigurieren.",

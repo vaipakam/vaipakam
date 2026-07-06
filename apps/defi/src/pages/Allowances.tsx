@@ -58,7 +58,7 @@ export default function Allowances() {
     (activeChain && isCorrectChain ? activeChain.blockExplorer : null) ??
     DEFAULT_CHAIN.blockExplorer;
 
-  const { rows, loading, reload } = useAllowances();
+  const { rows, failedTokens, loading, reload } = useAllowances();
   const [revokingToken, setRevokingToken] = useState<string | null>(null);
   const [err, setErr] = useState<string | null>(null);
   const [msg, setMsg] = useState<string | null>(null);
@@ -160,6 +160,17 @@ export default function Allowances() {
         </span>
       </div>
 
+      {/* #1031 — a failed allowance read must never render as "no
+          approval": say which tokens couldn't be checked and offer
+          the retry, in the same alert style as action errors. */}
+      {failedTokens.length > 0 && (
+        <div className="alert alert-warning" style={{ marginBottom: 12 }}>
+          {t('allowances.readFailed', { count: failedTokens.length })}{' '}
+          <button className="btn btn-secondary btn-sm" onClick={reload} disabled={loading}>
+            {t('allowances.refresh')}
+          </button>
+        </div>
+      )}
       {err && <ErrorAlert message={err} onDismiss={() => setErr(null)} style={{ marginBottom: 12 }} />}
       {msg && (
         <div className="alert alert-success" style={{ marginBottom: 12 }}>

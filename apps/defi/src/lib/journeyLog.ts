@@ -14,6 +14,7 @@
  * full wallet unless the user re-types it.
  */
 import { decodeContractError, extractRevertData, extractRevertSelector, namedRevertSelector } from '@vaipakam/lib/decodeContractError';
+import { isUserRejection } from './errors';
 import { getChainByChainId } from '../contracts/config';
 
 export type JourneyArea =
@@ -460,7 +461,13 @@ export function classifyError(err: unknown): {
       data?: { message?: string };
       name?: string;
     };
-    if (e.code === 4001 || e.code === 'ACTION_REJECTED') {
+    // Type-based rejection detection (#1031, ported from alpha02):
+    // walks viem's cause chain so a UserRejectedRequestError wrapped
+    // inside a TransactionExecutionError still classifies as `wallet`,
+    // not `contract-revert` (the wrapper carries a `shortMessage`, so
+    // the old top-level 4001 check fell through to the revert branch).
+    // ACTION_REJECTED is ethers' top-level equivalent — kept as-is.
+    if (isUserRejection(err) || e.code === 'ACTION_REJECTED') {
       return { type: 'wallet', message: 'User rejected the request.' };
     }
     if (e.code === 4100 || e.code === -32601) {
