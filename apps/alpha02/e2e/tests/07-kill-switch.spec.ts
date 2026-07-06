@@ -24,6 +24,19 @@ const KILL_COPY = /switched off right now/i;
 let killServer: ChildProcess | undefined;
 
 test.beforeAll(async () => {
+  // Fail closed BEFORE spawning: if anything already answers on the
+  // port, the readiness probe below could hit that stale listener
+  // before our --strictPort child observes the conflict and exits
+  // (round 5). Nothing may be listening when we start.
+  const stale = await fetch(KILL_BASE).then(
+    () => true,
+    () => false,
+  );
+  if (stale) {
+    throw new Error(
+      `something is already listening on ${KILL_BASE} — kill it before running the kill-switch spec`,
+    );
+  }
   killServer = spawn(
     'node',
     [
@@ -80,12 +93,25 @@ test('a killed flow shows the pause banner and holds the sign button closed', as
   await expect(page.getByText(KILL_COPY).first()).toBeVisible({
     timeout: 30_000,
   });
-  // Consent alone must NOT open the button — the kill gate sits in
-  // canSign, independent of the consent machinery.
-  const consent = page.locator('input[type="checkbox"]:visible').first();
-  await consent.check();
-  await page.waitForTimeout(2_000);
-  await expect(post).toBeDisabled();
+  // Hold the review in the would-be-signable state for the SAME
+  // window the control case needs to prove enablement (60s in
+  // consentAndWaitEnabled), re-ticking consent through any
+  // late-disclosure resets. A short fixed wait could pass because
+  // some OTHER async gate (fees/liquidity/security) hadn't cleared
+  // yet, missing a canSign that lost its kill check (round 5). If
+  // the button ever enables, the kill gate is broken — fail at once.
+  const holdUntil = Date.now() + 60_000;
+  for (;;) {
+    const consent = page.locator('input[type="checkbox"]:visible').first();
+    if (!(await consent.isChecked().catch(() => true))) {
+      await consent.check().catch(() => {});
+    }
+    expect(await post.isEnabled(), 'kill gate must hold the sign button closed').toBe(false);
+    if (Date.now() > holdUntil) break;
+    await page.waitForTimeout(1_000);
+  }
+  // The banner must still be up at the end of the hold.
+  await expect(page.getByText(KILL_COPY).first()).toBeVisible();
 });
 
 test('control: the SAME review on an unset build enables the sign button', async ({

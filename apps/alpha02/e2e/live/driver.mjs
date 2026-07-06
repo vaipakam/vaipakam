@@ -85,12 +85,25 @@ export async function ensureConnected(page) {
   const connect = page.getByRole('button', { name: /connect wallet/i }).first();
   if (!(await connect.isVisible().catch(() => false))) return;
   await connect.click();
-  // ConnectKit lists announced EIP-6963 providers by name.
-  await page.getByText('Vaipakam Test Wallet', { exact: false }).first()
-    .click({ timeout: 15_000 });
-  // Connected when the connect CTA leaves the header.
-  await connect.waitFor({ state: 'hidden', timeout: 20_000 }).catch(() => {});
-  await page.waitForTimeout(1_000);
+  // A remembered session can complete right after the click and hide
+  // the modal before the provider option is clickable — treat "the
+  // connect CTA left the header" as connected, and only try the
+  // option click while the CTA is still up (round 5).
+  const deadline = Date.now() + 30_000;
+  while (Date.now() < deadline) {
+    if (!(await connect.isVisible().catch(() => false))) {
+      await page.waitForTimeout(1_000);
+      return;
+    }
+    // ConnectKit lists announced EIP-6963 providers by name.
+    await page
+      .getByText('Vaipakam Test Wallet', { exact: false })
+      .first()
+      .click({ timeout: 2_000 })
+      .catch(() => {});
+    await page.waitForTimeout(500);
+  }
+  throw new Error('wallet connect did not complete within 30s');
 }
 
 export function clientsFor(chainId) {
