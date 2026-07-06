@@ -74,6 +74,7 @@ import {
 } from '../lib/format';
 import { isPlainDecimal, isPositiveDecimal, submitErrorText } from '../lib/errors';
 import { copy } from '../content/copy';
+import { ConsentLabel } from './ConsentLabel';
 import { flowDisabled } from '../lib/killSwitch';
 import {
   fetchTokenSecurity,
@@ -2091,7 +2092,7 @@ export function OfferFlow({ side }: { side: Side }) {
                 }}
                 style={{ marginTop: 3 }}
               />
-              <span style={{ flex: 1 }}>{copy.consentLabel}</span>
+              <ConsentLabel />
             </label>
             {submitError ? (
               <div className="banner banner-danger" role="alert" style={{ marginTop: 16 }}>

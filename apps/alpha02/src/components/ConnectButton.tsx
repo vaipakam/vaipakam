@@ -1,12 +1,13 @@
 /**
  * Wallet connect button — thin wrapper over ConnectKit so every
- * surface shows the same connect affordance. Shows a short address
- * when connected; the full picker/account modal is ConnectKit's.
+ * surface shows the same connect affordance. Shows the connected
+ * account's ENS name when it has one, else the short address
+ * (#1030); the full picker/account modal is ConnectKit's.
  */
 import { ConnectKitButton } from 'connectkit';
 import { Wallet } from 'lucide-react';
 import { copy } from '../content/copy';
-import { shortAddress } from '../lib/format';
+import { AddressName } from './AddressName';
 
 export function ConnectButton({ block = false }: { block?: boolean }) {
   return (
@@ -18,7 +19,11 @@ export function ConnectButton({ block = false }: { block?: boolean }) {
           onClick={show}
         >
           <Wallet aria-hidden size={18} />
-          {isConnected && address ? shortAddress(address) : copy.wallet.connect}
+          {isConnected && address ? (
+            <AddressName address={address} />
+          ) : (
+            copy.wallet.connect
+          )}
         </button>
       )}
     </ConnectKitButton.Custom>
