@@ -1537,34 +1537,37 @@ Example:
 
 #### Flow (atomic on match)
 
+The load-bearing rule for the whole flow: **nothing about the original loan's settlement changes until the offset actually completes.** A posted offset is a pending intent — while it is live the original loan behaves exactly as if no offset existed, so no other action (a lender sale, a close-out, an obligation transfer, a term edit) can be corrupted by a half-settled offset.
+
 ##### Step 1: Enter the Offsetting Lender Position
 
-1. Alice deposits principal-equivalent assets.
-2. Alice creates a new lender offer (linked to her original borrower loan with Liam).
-3. Alice pays:
-   - accrued interest owed to Liam so far
-   - any shortfall owed to Liam
-4. These amounts are reserved for Liam and tracked separately until the counterparty matches the offer.
+1. Alice deposits her new-loan principal (the capital she will lend as the new offer's lender). This is the offer's own escrow, refundable if she cancels.
+2. Alice creates a new lender offer, linked to her original borrower loan with Liam; her borrower position is locked so it can't be transferred out mid-offset.
+3. **No settlement is paid to Liam at this point.** The accrued-interest + shortfall figure is only *computed for display* — nothing is moved or reserved, and the original loan's lender-side state is untouched.
 
 ##### Step 2: Atomic offset completion when the offsetting offer is accepted
 
-When the counterparty borrower accepts the linked offsetting offer, the Diamond finalises the offset in the same transaction as acceptance — Alice does not click a separate "Complete Offset" button on the happy path. Inside that single transaction:
+When the counterparty borrower accepts the linked offsetting offer, the Diamond finalises the offset in the same transaction as acceptance — Alice does not click a separate "Complete Offset" button on the happy path. Inside that single transaction, and **only here**, the old loan is settled:
 
 1. The offsetting offer is matched through the standard offer flow.
 2. The counterparty borrower locks the required collateral.
 3. Alice's funded principal is transferred under the new loan.
-4. Alice's original borrower-side collateral is released from her old loan with Liam.
-5. Liam's original position is converted into a claimable settlement position under the offset rules.
-6. Alice's original borrower loan is marked repaid or offset-closed.
+4. **Liam is paid his full due — principal + accrued interest + any shortfall, minus the treasury fee — pulled from Alice at this moment and computed from the loan's live terms** (so the accrued interest covers the entire time the loan actually ran, and the shortfall reflects the replacement offer's current rate). The payoff is deposited into the **current** lender holder's balance, so a lender who sold the position in the meantime is paid correctly.
+5. Alice's original borrower-side collateral is released from her old loan with Liam.
+6. Alice's original borrower loan is marked repaid/offset-closed; Liam claims his settled payoff through the normal lender-claim path.
 7. Alice now holds the lender position in the new offsetting loan.
 
-`PrecloseFacet.completeOffset(originalLoanId)` remains exposed as a manual recovery hook — for example, to rescue a loan whose offsetting offer was accepted before the auto-completion path was introduced, or to be driven by a keeper if the atomic completion ever needs to be re-attempted. Under normal operation this entry point is not called directly from the UI.
+Because the payoff is pulled from Alice at completion, she must hold the funds (and standing approval) at acceptance time. If she does not, the acceptance simply reverts and the original loan is left untouched — never partially settled.
+
+`PrecloseFacet.completeOffset(originalLoanId)` remains exposed as a manual recovery hook — for example, to be driven by a keeper if the atomic completion ever needs to be re-attempted. Under normal operation this entry point is not called directly from the UI.
 
 ##### Cancellation before a counterparty matches
 
-Alice may cancel her offsetting offer while it is still un-matched. Cancellation must not leave the outgoing lender's early payoff stranded: whatever was set aside for Liam at posting time — his principal, the accrued interest, and any shortfall — is pulled back out of his balance and returned to Alice, the internal reservation is cleared, and the original loan continues unchanged with Liam as lender. So if the original loan is later closed through any other path, Liam is paid exactly once — never the ordinary close-out **plus** a stranded posting-time reservation. Alice's separately-vaulted new-offer capital is likewise refunded.
+Alice may cancel her offsetting offer while it is still un-matched. Because posting settled nothing, cancellation is trivially loss-free: it releases the borrower-position lock, drops the offset link, and refunds Alice's own new-offer capital through the ordinary offer-cancel path. There is no posting-time reservation to unwind and nothing was ever moved for Liam, so a later close-out of the original loan through any other path pays Liam exactly once.
 
-One residual cost is intentionally **not** clawed back on cancel: the small treasury fee taken on the accrued interest at posting is paid to the protocol treasury (an external destination), so an offset posted after the loan has already run for a while, then cancelled, leaves Alice having paid that fee. It is zero for a freshly-started loan. Moving that fee to completion time is a documented follow-up; until then cancellation returns the principal prepay and the new-offer capital in full but not that accrued-interest treasury fee.
+##### Mutual exclusion while an offset is live
+
+While an offset offer is linked to a loan, three actions that would race the pending settlement are refused until the offset is completed or cancelled (it is short-lived): listing the lender position for sale, transferring the borrower obligation to a new borrower, and editing the linked offset offer's terms. The offset offer is immutable once linked — its terms are pinned to the loan it offsets.
 
 A loan may have at most **one live offsetting offer at a time**: a second offset attempt while an earlier one is still outstanding is rejected, so Liam can never be prepaid twice by stacking offers. The single live offer is cleared when it completes or is cancelled.
 

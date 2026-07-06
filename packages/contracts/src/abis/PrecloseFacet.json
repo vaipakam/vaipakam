@@ -735,11 +735,6 @@
   },
   {
     "type": "error",
-    "name": "OffsetBlockedByHeldProceeds",
-    "inputs": []
-  },
-  {
-    "type": "error",
     "name": "OffsetNotLinked",
     "inputs": []
   },

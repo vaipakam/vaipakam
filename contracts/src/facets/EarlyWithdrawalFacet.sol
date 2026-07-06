@@ -115,6 +115,10 @@ contract EarlyWithdrawalFacet is
     ///         forward link and strand the reverse link, splitting accept/cancel
     ///         authority across two offers.
     error SaleOfferAlreadyExists();
+    /// @notice #1001 (S3, Codex #1070) — the lender position can't be listed for
+    ///         sale while a Preclose Option-3 offset offer is live on the loan;
+    ///         the offset must be cancelled or completed first.
+    error OffsetActiveOnLoan();
     /// @notice #951 (Codex #959 round-2) — Phase 1 lender-sale is limited to loans
     ///         with ERC-20 collateral. The sale vehicle escrows no fresh collateral
     ///         (it stays on the live loan), so the downstream accept / complete /
@@ -532,6 +536,12 @@ contract EarlyWithdrawalFacet is
         // either unlinks both. The link is cleared on cancel + completion, so a
         // genuine re-list is still allowed.
         if (s.loanToSaleOfferId[loanId] != 0) revert SaleOfferAlreadyExists();
+        // #1001 (S3, Codex #1070) — refuse to list the lender position for sale
+        // while a Preclose Option-3 offset offer is live on this loan. The offset
+        // pays the CURRENT lender at completion; letting the position change hands
+        // mid-offset entangles two concurrent close-outs of the same loan. The
+        // offset must be cancelled or completed first (it is short-lived).
+        if (s.loanToOffsetOfferId[loanId] != 0) revert OffsetActiveOnLoan();
 
         // #951 (redesign D1) — consolidate the lender position to its CURRENT
         // holder (the seller) BEFORE listing, re-anchoring both `loan.lender` and

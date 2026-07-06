@@ -156,12 +156,6 @@ contract PrecloseFacet is
     /// accumulator), so it is rejected until the first offer is completed or
     /// cancelled (which clears the link + unwinds the prepay).
     error OffsetAlreadyActive();
-    /// #1001 (S3, Codex #1070) — an offset cannot be opened while the loan
-    /// already carries `heldForLender` proceeds from another source (an Active
-    /// partial internal-match or an obligation transfer). The cancel-unwind
-    /// zeroes the whole accumulator, so mixing the offset prepay with foreign
-    /// proceeds would let a cancel refund the wrong party.
-    error OffsetBlockedByHeldProceeds();
 
     // ─── Option 1: Direct Preclose ────────────────────────────────��─────────
 
@@ -536,6 +530,13 @@ contract PrecloseFacet is
         // and re-opens loan state on behalf of msg.sender.
         LibVaipakam._assertNotSanctioned(msg.sender);
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        // #1001 (S3, Codex #1070) — refuse to transfer the obligation while a
+        // Preclose Option-3 offset offer is live on this loan. The offset settles
+        // the old lender from `loan.borrower` at completion; rewriting the
+        // borrower here would repoint that payer and leave the offset link
+        // pointing at a loan whose borrower has changed under it. The offset must
+        // be cancelled (or completed) first.
+        if (s.loanToOffsetOfferId[loanId] != 0) revert OffsetAlreadyActive();
         LibVaipakam.Loan storage loan = s.loans[loanId];
         // Phase 6: borrower-entitled strategic flow (Preclose Option 2).
         // Authority binds to the current borrower-NFT owner OR a keeper
@@ -1044,22 +1045,12 @@ contract PrecloseFacet is
         // points.
         LibVaipakam.assertNoLiveIntentCommit(loanId);
         LibVaipakam.Loan storage loan = LibVaipakam.storageSlot().loans[loanId];
-        // #1001 (S3) — one live offset offer per loan. Without this, a second
-        // offset would prepay the old lender another `heldForLender` slice
-        // (the accumulator is monotone) before the first is completed/cancelled.
+        // #1001 (S3) — one live offset offer per loan. A second offset would
+        // create a second linked offer racing the same loan; the second's
+        // completion would revert anyway (loan no longer Active), but rejecting
+        // up front is a clean error.
         if (LibVaipakam.storageSlot().loanToOffsetOfferId[loanId] != 0)
             revert OffsetAlreadyActive();
-        // #1001 (S3, Codex #1070 r1 P1) — `heldForLender[loanId]` is a SHARED
-        // accumulator: the Active partial internal-match (`RiskMatchLiquidation-
-        // Facet`) and obligation-transfer paths also add lender-owned proceeds to
-        // it while leaving the loan Active. The cancel-unwind zeroes the whole
-        // slot, so it must be able to attribute all of it to THIS offer. Refuse to
-        // open an offset while the loan already carries foreign held proceeds —
-        // otherwise cancelling would refund another party's proceeds to the offset
-        // creator and wipe the lender's future claim. A cancelled/completed offset
-        // clears its own contribution, so this never blocks a later offset.
-        if (LibVaipakam.storageSlot().heldForLender[loanId] != 0)
-            revert OffsetBlockedByHeldProceeds();
         _validateOffsetRequest(
             loan,
             durationDays,
@@ -1068,12 +1059,15 @@ contract PrecloseFacet is
             prepayAsset
         );
 
-        // ── 1. alice pays accrued interest + shortfall ──────────────────────
-        // All payment-flow locals are consumed inside _settleOffsetPayments so
-        // the outer frame only carries accruedShortfallSum (needed by emit).
-        uint256 accruedShortfallSum = _settleOffsetPayments(
+        // ── 1. NO settlement at posting (Codex #1070 redesign) ──────────────
+        // The old lender's payoff is settled AT COMPLETION, from live terms
+        // (`_settleOldLenderAtCompletion`). Posting moves no settlement funds and
+        // parks nothing in shared state — so an interleaving lender-sale,
+        // close-out, obligation-transfer or term-mutation can't corrupt a prepay
+        // (there is none). We only compute the accrued+shortfall figure read-only
+        // for the informational event.
+        (, , uint256 accruedShortfallSum) = _computeOffsetSettlement(
             loan,
-            loanId,
             interestRateBps,
             durationDays
         );
@@ -1182,91 +1176,106 @@ contract PrecloseFacet is
      *      otherwise `forge coverage --ir-minimum` runs out of stack slots
      *      when the outer function continues with the offer-creation path.
      */
-    function _settleOffsetPayments(
+    /// @dev #1001 (S3, Codex #1070 redesign) — PURE computation of the old
+    ///      lender's offset payoff from the CURRENT loan + replacement terms.
+    ///      Split out so it can be evaluated read-only at posting (for the
+    ///      informational event) and again at completion (for the actual
+    ///      transfers), always against live state. `elapsed` is read at call
+    ///      time, so evaluating at completion naturally pays the old lender for
+    ///      the FULL time the loan actually ran (posting→completion included),
+    ///      and the shortfall reflects the replacement offer's live rate/term —
+    ///      which is why a later term mutation can't undercompensate the lender.
+    /// @return treasuryFee        the treasury cut on accrued interest
+    /// @return lenderTotal        principal + (accrued − fee) + shortfall owed
+    ///                            to the old lender
+    /// @return accruedShortfallSum accrued interest + shortfall (event/preview)
+    function _computeOffsetSettlement(
         LibVaipakam.Loan storage loan,
-        uint256 loanId,
         uint256 interestRateBps,
         uint256 durationDays
-    ) private returns (uint256 accruedShortfallSum) {
-        uint256 treasuryFee;
-        uint256 interestToLender;
-        {
-            // #641 — read the interest clock, not the immutable term tuple.
-            uint256 elapsed = block.timestamp - LibVaipakam.interestAccrualStartOf(loan);
-            uint256 totalSecs = LibVaipakam.interestRemainingDaysOf(loan) * 1 days;
-            uint256 remainingSecs = totalSecs > elapsed ? totalSecs - elapsed : 0;
-            uint256 accruedInterest = (loan.principal *
-                loan.interestRateBps *
-                elapsed) /
-                (LibVaipakam.SECONDS_PER_YEAR * LibVaipakam.BASIS_POINTS);
-            uint256 originalExpectedRemaining = (loan.principal *
-                loan.interestRateBps *
-                remainingSecs) /
-                (LibVaipakam.SECONDS_PER_YEAR * LibVaipakam.BASIS_POINTS);
-            uint256 newExpectedEarning = (loan.principal *
-                interestRateBps *
-                (durationDays * 1 days)) /
-                (LibVaipakam.SECONDS_PER_YEAR * LibVaipakam.BASIS_POINTS);
-            uint256 shortfall = originalExpectedRemaining > newExpectedEarning
-                ? originalExpectedRemaining - newExpectedEarning
-                : 0;
+    )
+        private
+        view
+        returns (uint256 treasuryFee, uint256 lenderTotal, uint256 accruedShortfallSum)
+    {
+        // #641 — read the interest clock, not the immutable term tuple.
+        uint256 elapsed = block.timestamp - LibVaipakam.interestAccrualStartOf(loan);
+        uint256 totalSecs = LibVaipakam.interestRemainingDaysOf(loan) * 1 days;
+        uint256 remainingSecs = totalSecs > elapsed ? totalSecs - elapsed : 0;
+        uint256 accruedInterest = (loan.principal *
+            loan.interestRateBps *
+            elapsed) /
+            (LibVaipakam.SECONDS_PER_YEAR * LibVaipakam.BASIS_POINTS);
+        uint256 originalExpectedRemaining = (loan.principal *
+            loan.interestRateBps *
+            remainingSecs) /
+            (LibVaipakam.SECONDS_PER_YEAR * LibVaipakam.BASIS_POINTS);
+        uint256 newExpectedEarning = (loan.principal *
+            interestRateBps *
+            (durationDays * 1 days)) /
+            (LibVaipakam.SECONDS_PER_YEAR * LibVaipakam.BASIS_POINTS);
+        uint256 shortfall = originalExpectedRemaining > newExpectedEarning
+            ? originalExpectedRemaining - newExpectedEarning
+            : 0;
 
-            (treasuryFee, ) = LibEntitlement.splitTreasury(loan, accruedInterest);
-            interestToLender = accruedInterest - treasuryFee + shortfall;
-            accruedShortfallSum = accruedInterest + shortfall;
-        }
+        (treasuryFee, ) = LibEntitlement.splitTreasury(loan, accruedInterest);
+        lenderTotal = loan.principal + (accruedInterest - treasuryFee) + shortfall;
+        accruedShortfallSum = accruedInterest + shortfall;
+    }
 
+    /// @dev #1001 (S3, Codex #1070 redesign) — settle the old lender AT
+    ///      COMPLETION (not at posting). Runs inside the acceptor's atomic
+    ///      `acceptOffer` tx. This is the ONLY point the offset touches the old
+    ///      loan's settlement state: nothing is parked between posting and
+    ///      accept/cancel, so an interleaving lender-sale / close-out / mutate
+    ///      can't corrupt a prepay (there is none). The payer is `loan.borrower`
+    ///      (Alice) via her standing allowance — NOT `msg.sender`, which at
+    ///      completion is the accepting counterparty / keeper / Diamond. The
+    ///      recipient is `loan.lender` — read live, so a lender that SOLD the
+    ///      position is paid to the current holder's vault.
+    function _settleOldLenderAtCompletion(
+        LibVaipakam.Loan storage loan,
+        uint256 loanId,
+        LibVaipakam.Offer storage offer
+    ) private {
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        (uint256 treasuryFee, uint256 lenderTotal, ) = _computeOffsetSettlement(
+            loan, offer.interestRateBps, offer.durationDays
+        );
         address payAssetOffset = _paymentAsset(loan);
         if (treasuryFee > 0) {
             IERC20(payAssetOffset).safeTransferFrom(
-                msg.sender,
+                loan.borrower,               // payer — Alice (standing allowance)
                 LibFacet.getTreasury(),
                 treasuryFee
             );
             LibFacet.recordTreasuryAccrual(payAssetOffset, treasuryFee);
         }
-
-        // T-037 — Repay original principal + interest/shortfall direct
-        // to old lender's vault via the cross-payer chokepoint. alice
-        // must return liam's principal; the new offer deposit is
-        // separate capital alice puts up to become the new lender.
-        // Routing through `vaultDepositERC20From` keeps the Diamond
-        // out of the funds path AND ticks the
-        // protocolTrackedVaultBalance counter under the old lender.
-        uint256 lenderTotal = loan.principal + interestToLender;
+        // Repay original principal + interest/shortfall into the CURRENT old
+        // lender's vault via the cross-payer chokepoint (keeps the Diamond out
+        // of the funds path AND ticks protocolTrackedVaultBalance under the
+        // lender). Alice returns Liam's principal here; her separate new-offer
+        // capital was pre-vaulted at `createOffer` when she posted.
         LibFacet.crossFacetCall(
             abi.encodeWithSelector(
                 VaultFactoryFacet.vaultDepositERC20From.selector,
-                msg.sender,        // payer — alice
-                loan.lender,       // user — old lender (liam)
+                loan.borrower,               // payer — Alice
+                loan.lender,                 // user — current old-lender holder
                 payAssetOffset,
                 lenderTotal
             ),
             VaultDepositFailed.selector
         );
         s.heldForLender[loanId] += lenderTotal;
-        // #597 / #1001 (S3, Codex #1070 r1 P1) — reserve the held-for-lender
-        // prepay against the old lender's vault. The offset does NOT rewrite
-        // `loan.lender` on THIS (original) loan: the old lender keeps the
-        // position and claims this payoff via `claimAsLender`
-        // (`_completeOffsetImpl` records the held but not `lenderClaims`, and
-        // the claim withdraws `heldForLender[loanId]` from the old lender's
-        // vault). The new lender takes a SEPARATE new loan. So the reservation
-        // and the claim-time release key on the same (old-lender) account.
-        //
-        // Encumber for EVERY ERC20 principal asset, not just VPFI: the prepay
-        // must stay locked in the old lender's vault until the offset either
-        // completes (claim) or is cancelled (unwind). Without the reservation a
-        // non-VPFI old lender could spend or vault-backed-signed-offer-lock the
-        // tracked balance before a cancel, leaving the cancel-unwind withdraw
-        // without free balance and the borrower unable to recover the prepay (the
-        // offset link + NFT lock would stay stuck). `releaseLenderProceeds` at
-        // both terminal-claim and cancel is already asset-agnostic, so this is
-        // symmetric with the release side.
-        LibEncumbrance.encumberLenderProceeds(
-            loanId, loan.lender, payAssetOffset, lenderTotal
-        );
+        // #597 — reserve the held VPFI against the old lender's unstake path for
+        // the (now brief) window between this write and `claimAsLender`. VPFI is
+        // the one principal asset with a user-facing tracked-balance exit; no-op
+        // otherwise. Released path-agnostically in `ClaimFacet._claimAsLenderImpl`.
+        if (payAssetOffset == s.vpfiToken) {
+            LibEncumbrance.encumberLenderProceeds(
+                loanId, loan.lender, payAssetOffset, lenderTotal
+            );
+        }
     }
 
     /**
@@ -1472,6 +1481,13 @@ contract PrecloseFacet is
             /* lenderSide */ false
         );
 
+        // #1001 (S3, Codex #1070 redesign) — settle the old lender HERE, from
+        // live terms, pulling from Alice (`loan.borrower`) into the CURRENT
+        // lender's vault. This is the sole point the offset touches the old
+        // loan's settlement state; posting parked nothing. Runs before the
+        // borrower-collateral claim + the Active→Repaid transition below.
+        _settleOldLenderAtCompletion(loan, originalLoanId, offer);
+
         // Record borrower's claimable (collateral stays in borrower's vault)
         s.borrowerClaims[originalLoanId] = LibVaipakam.ClaimInfo({
             asset: loan.collateralAsset,
@@ -1482,10 +1498,11 @@ contract PrecloseFacet is
             claimed: false
         });
 
-        // heldForLender funds (from offsetWithNewOffer step 1) are already in the
-        // lender's vault. They are withdrawn via ClaimFacet.claimAsLender, which
-        // checks s.heldForLender[loanId] and uses the correct payment asset.
-        // Do NOT record them in lenderClaims to avoid double-counting.
+        // The old lender's payoff was just deposited into their vault and
+        // recorded in `heldForLender[loanId]` by `_settleOldLenderAtCompletion`.
+        // It is withdrawn via `ClaimFacet.claimAsLender`, which reads
+        // `s.heldForLender[loanId]` + the correct payment asset. Do NOT record it
+        // in `lenderClaims` to avoid double-counting.
 
         // If NFT lending: Reset renter
         if (loan.assetType != LibVaipakam.AssetType.ERC20) {
