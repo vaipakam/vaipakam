@@ -463,7 +463,7 @@ export default function OfferDetails() {
                 )}
                 {linkedLoanId && (
                   <Link
-                    to={`/app/loans/${linkedLoanId}`}
+                    to={`/loans/${linkedLoanId}`}
                     className="btn btn-primary btn-sm"
                   >
                     {t('offerDetails.viewLoan', {

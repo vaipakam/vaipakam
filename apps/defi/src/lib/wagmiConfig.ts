@@ -44,7 +44,8 @@
  *     `native` value unless the web app actually registers a custom URL
  *     scheme.
  */
-import { createConfig, http } from "wagmi";
+import { createConfig, fallback, http, webSocket } from "wagmi";
+import type { Transport } from "viem";
 import { coinbaseWallet, injected, safe, walletConnect } from "wagmi/connectors";
 import {
   mainnet,
@@ -138,11 +139,24 @@ if (supportedChains.length === 0) {
 
 /** Transports override the viem default (public RPC) with the RPC URL we
  *  ship in CHAIN_REGISTRY (env-configurable). This keeps the wallet session
- *  and our dashboard's read layer pinned to the same upstream. */
-const transports: Record<number, ReturnType<typeof http>> = {};
+ *  and our dashboard's read layer pinned to the same upstream.
+ *
+ *  #1031 (reverse-ported from alpha02's chain/wagmi.ts):
+ *  - `batch: true` folds same-tick eth_calls into one JSON-RPC batch —
+ *    per-row token reads on list pages go from hundreds of HTTP
+ *    requests to a handful, with zero call-site changes.
+ *  - When a chain has a WebSocket RPC configured (`_WSS_URL` env var,
+ *    opt-in per deploy), it is wrapped in a `fallback` AHEAD of HTTP:
+ *    viem's block watcher then rides `eth_subscribe` (newHeads) and
+ *    any WS hiccup transparently drops to the HTTP transport. No WS
+ *    URL ⇒ plain HTTP, identical to before. */
+const transports: Record<number, Transport> = {};
 for (const c of Object.values(CHAIN_REGISTRY)) {
   if (CHAIN_BY_ID[c.chainId]) {
-    transports[c.chainId] = http(c.rpcUrl);
+    const httpTransport = http(c.rpcUrl, { batch: true });
+    transports[c.chainId] = c.wsUrl
+      ? fallback([webSocket(c.wsUrl), httpTransport])
+      : httpTransport;
   }
 }
 

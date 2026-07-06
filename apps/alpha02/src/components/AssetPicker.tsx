@@ -10,6 +10,7 @@ import { erc20Abi } from 'viem';
 import { usePublicClient } from 'wagmi';
 import { getCanonicalAssetsForChain } from '@vaipakam/lib';
 import { useTokenSecurity } from '../data/tokenSecurity';
+import { reputationNotice, useTokenReputation } from '../data/tokenReputation';
 import { copy } from '../content/copy';
 import { useActiveChain } from '../chain/useActiveChain';
 import { shortAddress } from '../lib/format';
@@ -88,6 +89,17 @@ export function AssetPicker({
     readChain.chainId,
     showCustom && isAddressLike(value) ? value : undefined,
   );
+  // #1036 fallback layer — the market-listing SOFT signal beside the
+  // security verdict. Complementary, not redundant: GoPlus says
+  // "booby-trapped or not", CoinGecko says "does the market know this
+  // token at all", and a positive match doubles as identity
+  // confirmation against paste mistakes. Renders nothing on chains
+  // without market data (testnets) and nothing on a failed lookup.
+  const reputation = useTokenReputation(
+    readChain.chainId,
+    showCustom && isAddressLike(value) ? value : undefined,
+  );
+  const reputationLine = reputationNotice(reputation.data);
 
   return (
     <div className="field">
@@ -139,6 +151,9 @@ export function AssetPicker({
         ) : null
       ) : showCustom && isAddressLike(value) && security.isError ? (
         <span className="field-hint">{copy.tokenSecurity.pickerUnknown}</span>
+      ) : null}
+      {showCustom && isAddressLike(value) && reputationLine !== null ? (
+        <span className="field-hint">{reputationLine}</span>
       ) : null}
       {hint ? <span className="field-hint">{hint}</span> : null}
     </div>

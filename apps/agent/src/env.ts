@@ -174,6 +174,22 @@ interface BaseEnv {
   // typically 1-2 Matches per loan).
   OPENSEA_SIGNED_OFFER_RATELIMIT?: RateLimitBinding;
 
+  // #1040 phase 1 — per-IP gate on `POST /support/ticket`. Human
+  // support requests arrive at human cadence; the binding is an
+  // abuse safety net for the shared D1 + ops-Telegram notify.
+  SUPPORT_TICKET_RATELIMIT?: RateLimitBinding;
+
+  // #1040 phase 1 — ops-INTERNAL Telegram bot for the new-ticket
+  // notify (two-bot policy: the operator reads this alert, so it
+  // must ride TG_OPS_BOT_TOKEN, never the user-facing TG_BOT_TOKEN).
+  // Plain classic secrets set post-deploy via `wrangler secret put`
+  // — deliberately NOT secrets_store_secrets entries, so a
+  // not-yet-created store secret can't break the agent deploy. While
+  // unset the notify skips with a log line and the ticket still
+  // lands in D1.
+  TG_OPS_BOT_TOKEN?: string;
+  TG_OPS_CHAT_ID?: string;
+
   // Diagnostics sampling (0.0–1.0; default 1.0 = write every accepted POST).
   // Coerced from string to float at read time. Out-of-range values
   // clamp to [0, 1].
@@ -397,6 +413,9 @@ export async function resolveEnv(raw: WorkerEnv): Promise<Env> {
     OPENSEA_OFFERS_MAX_PAGES: raw.OPENSEA_OFFERS_MAX_PAGES,
     OPENSEA_OFFERS_UPSTREAM_RATELIMIT: raw.OPENSEA_OFFERS_UPSTREAM_RATELIMIT,
     OPENSEA_SIGNED_OFFER_RATELIMIT: raw.OPENSEA_SIGNED_OFFER_RATELIMIT,
+    SUPPORT_TICKET_RATELIMIT: raw.SUPPORT_TICKET_RATELIMIT,
+    TG_OPS_BOT_TOKEN: raw.TG_OPS_BOT_TOKEN,
+    TG_OPS_CHAT_ID: raw.TG_OPS_CHAT_ID,
     DIAG_SAMPLE_RATE: raw.DIAG_SAMPLE_RATE,
     DIAG_RETENTION_DAYS: raw.DIAG_RETENTION_DAYS,
     DIAG_LEGAL_DOCS: raw.DIAG_LEGAL_DOCS,

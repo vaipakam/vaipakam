@@ -199,7 +199,7 @@ export function formatAlert(
       : band === 'alert'
         ? c.bandTagAlert
         : c.bandTagWarn;
-  const link = `${opts.frontendOrigin}/app/loans/${opts.loanId}`;
+  const link = `${opts.frontendOrigin}/loans/${opts.loanId}`;
   return `${tag}: ${c.alertBody(opts.chainName, opts.loanId, opts.hf.toFixed(3), link)}`;
 }
 

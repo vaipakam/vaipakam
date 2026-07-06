@@ -28,6 +28,7 @@ import { useQuery } from '@tanstack/react-query';
 import { useAccount, usePublicClient } from 'wagmi';
 import { LifeBuoy, X } from 'lucide-react';
 import { copy } from '../content/copy';
+import { SupportTicketCard } from './SupportTicketCard';
 import { useActiveChain } from '../chain/useActiveChain';
 import { indexerConfigured, probeIndexerFreshness } from '../data/indexer';
 import { readLastError } from '../diagnostics/lastError';
@@ -349,6 +350,20 @@ function DrawerPanel({ onClose }: { onClose: () => void }) {
         <p className="muted" style={{ fontSize: 13 }}>
           {copy.diagnostics.reportHint}
         </p>
+
+        {/* #1040 phase 1 — ticket capture with explicit attach
+            consent. The chain id travels with EVERY ticket (the
+            pre-send disclosure says so): on a supported network
+            it's the read chain; on an unsupported one it's the
+            wallet's RAW chain id — exactly the fact support needs
+            for an unsupported-network report, and it must not
+            depend on the diagnostics consent (Codex round-5 P2). */}
+        <SupportTicketCard
+          reportCtx={reportCtx}
+          chainId={
+            walletOnUnsupported ? (walletChainId ?? null) : readChain.chainId
+          }
+        />
       </aside>
     </>,
     document.body,

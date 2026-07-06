@@ -27,6 +27,12 @@ export interface ChainConfig {
   name: string;
   shortName: string;
   rpcUrl: string;
+  /** Optional WebSocket RPC URL (#1031 reverse-port). When set, the
+   *  frontend's wagmi transport prefers it (`eth_subscribe` newHeads
+   *  push updates) with transparent HTTP fallback; when null, plain
+   *  HTTP block polling — identical to before. Opt-in per deploy via
+   *  the chain's `_WSS_URL` env var; never defaulted. */
+  wsUrl?: string | null;
   blockExplorer: string;
   /** Diamond proxy address on this chain, or null if Phase 1 hasn't deployed
    *  here yet. Callers must gate protocol calls on non-null. */

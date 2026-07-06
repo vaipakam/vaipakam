@@ -69,6 +69,38 @@ export const copy = {
     gateChanged: (leg: string) =>
       `The security check on this deal's ${leg} reports new findings since you reviewed it. Nothing was signed. The review above now shows the update — read it and tick the consent box again if you still want to proceed.`,
     retry: 'Check again',
+    // Browsing-surface badges (#1036) — early warning on the book and
+    // the guided-match cards; the accept review stays the enforcement
+    // point and repeats the full reasons there.
+    badge: {
+      block: {
+        label: 'Risk flagged',
+        title:
+          'An independent security check flags a token in this offer as dangerous (for example impossible to sell). The review will not let this deal proceed.',
+      },
+      warn: {
+        label: 'Caution',
+        title:
+          'An independent security check reports owner powers or taxes on a token in this offer. The review shows the details before you sign anything.',
+      },
+      unchecked: {
+        label: 'Not screened',
+        title:
+          'A token in this offer could not be checked by the independent security screen. Treat it with extra care.',
+      },
+    },
+    matchesHidden: (n: number) =>
+      n === 1
+        ? '1 matching offer is hidden because an independent security check flagged one of its tokens as dangerous.'
+        : `${n} matching offers are hidden because an independent security check flagged one of their tokens as dangerous.`,
+    // CoinGecko reputation soft-signal (#1036 fallback layer) — only
+    // on networks with market data; never a block, never a gate.
+    reputationListedTop: (name: string, symbol: string | null, rank: number) =>
+      `Market listing found: ${name}${symbol ? ` (${symbol})` : ''}, ranked #${rank} by market size. Check that this matches the token you meant.`,
+    reputationListedDeep: (name: string, symbol: string | null) =>
+      `Market listing found: ${name}${symbol ? ` (${symbol})` : ''} — outside the top 200 by market size. Smaller tokens move harder and disappear faster; double-check the project.`,
+    reputationUnlisted:
+      'No market listing found for this address — the wider market doesn’t know this token. That alone doesn’t make it bad, but verify the contract address with the project before dealing in it.',
   },
   signing: {
     intro: (n: number) =>
@@ -91,6 +123,8 @@ export const copy = {
     acceptRental: 'Start the rental — the final transaction.',
     phaseSign: (c: number, t: number) => `Signing terms… (${c} of ${t})`,
     phaseApprove: (c: number, t: number) => `Approving… (${c} of ${t})`,
+    phasePermit: (c: number, t: number) =>
+      `Signing the permission… (${c} of ${t}) — free, no gas`,
     phaseSend: (c: number, t: number) => `Submitting… (${c} of ${t})`,
   },
   killSwitch: {
@@ -178,6 +212,38 @@ export const copy = {
       'Opens a pre-filled GitHub issue with the details above and the last recorded error. Your full wallet address is never included.',
     copyDetails: 'Copy details',
     copied: 'Copied.',
+  },
+  support: {
+    title: 'Contact support',
+    lede: 'Send a message to the team — you get a ticket number back right away.',
+    notConfigured:
+      'The support inbox isn’t connected in this build, so in-app messages can’t be sent from here. Email works instead:',
+    messageLabel: 'What happened?',
+    messagePlaceholder:
+      'Tell us what you were doing and what went wrong, in your own words.',
+    emailLabel: 'Email for a reply (optional)',
+    emailHint:
+      'Leave it empty if you’d rather follow up yourself — the ticket number below is all support needs.',
+    attach:
+      'Attach the health details shown above (recommended — they usually hold the cause)',
+    privacy:
+      'Sending stores your message, the page you sent it from and the network you were on, the reply address if you gave one, and — only if you ticked the box — the health details above, on Vaipakam’s support service under your ticket number. The team is notified that a ticket arrived (its number and context flags — never your message text or email). Your full wallet address is never included in the health details.',
+    send: 'Send to support',
+    sending: 'Sending…',
+    sent: (id: string) =>
+      `Sent. Your ticket number is ${id} — keep it; quoting it connects any follow-up to this report.`,
+    mailHint: 'Prefer email, or want to add more? Write to us quoting the ticket number:',
+    mailButton: 'Email support@vaipakam.com',
+    invalidMessage: 'Write a few words about what happened first.',
+    invalidEmail:
+      'That email doesn’t look complete — fix it or clear the field (it’s optional).',
+    rateLimited: 'A few messages went out just now — wait a minute and try again.',
+    unavailable:
+      'The support inbox couldn’t take the message right now. Nothing was lost on your side — email us instead:',
+    failed: 'The message didn’t go through. Try again in a moment, or email us:',
+    helpTitle: 'Need a human?',
+    helpBody:
+      'Open the Support panel (the round button in the corner of every page) to send the team a message with one click — it can attach the app’s own health details, which usually hold the cause. Or email us directly:',
   },
   wallet: {
     connect: 'Connect wallet',

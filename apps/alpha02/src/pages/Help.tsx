@@ -7,6 +7,7 @@
 import { useEffect } from 'react';
 import { copy } from '../content/copy';
 import { useProtocolFees, bpsToPercentText } from '../data/fees';
+import { supportMailto } from '../data/support';
 
 const FAQ: Array<{ q: string; a: string }> = [
   {
@@ -85,6 +86,17 @@ export function Help() {
             <p style={{ margin: 0 }}>{item.a}</p>
           </section>
         ))}
+        {/* #1040 phase 1 — human escalation path. The in-app sender
+            lives in the Support panel (it holds the health details a
+            good report needs); this section points there and offers
+            the direct mail route. */}
+        <section id="contact" className="card">
+          <h3>{copy.support.helpTitle}</h3>
+          <p style={{ marginTop: 0 }}>{copy.support.helpBody}</p>
+          <a className="btn btn-secondary" href={supportMailto({})}>
+            {copy.support.mailButton}
+          </a>
+        </section>
       </div>
 
       <p className="muted" style={{ marginTop: 24 }}>

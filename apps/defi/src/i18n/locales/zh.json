@@ -527,7 +527,8 @@
     "revoke": "撤销",
     "revoking": "撤销中…",
     "cleared": "已清除",
-    "footnote": "此页面仅扫描当前链上作为 spender 的 Vaipakam Diamond。授予其他合约(DEX 聚合器、其他 dApp)的授权不在此列出 — 使用 revoke.cash 或类似工具进行审计。"
+    "footnote": "此页面仅扫描当前链上作为 spender 的 Vaipakam Diamond。授予其他合约(DEX 聚合器、其他 dApp)的授权不在此列出 — 使用 revoke.cash 或类似工具进行审计。",
+    "readFailed": "目前无法检查 {{count}} 个代币授权——下方列表可能不完整。它们不会被显示为已撤销；请重试以进行检查。"
   },
   "alerts": {
     "connectBody": "连接您的钱包以配置 HF 提醒。",

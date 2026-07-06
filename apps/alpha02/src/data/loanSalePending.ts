@@ -39,6 +39,7 @@ import {
 import { fetchOffersByCreator } from './indexer';
 import { makePendingMarkerStore } from '../lib/pendingMarker';
 import { useActiveChain } from '../chain/useActiveChain';
+import { idleAware } from '../lib/idle';
 
 /** LibERC721.LockReason.EarlyWithdrawalSale. */
 export const LOCK_EARLY_WITHDRAWAL_SALE = 2;
@@ -155,7 +156,7 @@ export function useLoanSalePending(
       Boolean(lenderTokenId) &&
       Boolean(principalAsset) &&
       /^[1-9]\d*$/.test(lenderTokenId ?? ''),
-    refetchInterval: 30_000,
+    refetchInterval: idleAware(30_000),
     queryFn: async (): Promise<LoanSalePendingState> => {
       const diamond = readChain.diamondAddress;
       const [lock, live, latestBlock, allowance, balance, holder] =

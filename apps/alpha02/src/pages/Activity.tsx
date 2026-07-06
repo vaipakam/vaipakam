@@ -15,6 +15,7 @@ import { fetchActivity, type IndexedActivityEvent } from '../data/indexer';
 import { EmptyState, UnavailableState } from '../components/EmptyState';
 import { MarketFreshnessNote } from '../components/MarketFreshnessNote';
 import { formatDate } from '../lib/format';
+import { idleAware } from '../lib/idle';
 
 /** camelCase / PascalCase event kind → spaced words
  *  ("LoanRepaid" → "Loan repaid"). */
@@ -92,7 +93,7 @@ export function Activity() {
     // loanId would be silently dropped and the feed would render
     // confidently incomplete. Wait for a usable loan list.
     enabled: Boolean(address) && loansUsable,
-    refetchInterval: 60_000,
+    refetchInterval: idleAware(60_000),
     queryFn: async (): Promise<{
       events: IndexedActivityEvent[];
       truncated: boolean;

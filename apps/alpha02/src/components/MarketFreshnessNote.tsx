@@ -12,6 +12,7 @@ import { useQuery } from '@tanstack/react-query';
 import { copy } from '../content/copy';
 import { fetchIndexerFreshness } from '../data/indexer';
 import { useActiveChain } from '../chain/useActiveChain';
+import { idleAware } from '../lib/idle';
 
 /** Cursor idle time that counts as "stale". Base Sepolia mines every
  *  ~2s and the ingest cron ticks every few minutes, so half an hour of
@@ -23,7 +24,7 @@ export function MarketFreshnessNote() {
   const freshness = useQuery({
     queryKey: ['indexerFreshness', readChain.chainId],
     staleTime: 30_000,
-    refetchInterval: 60_000,
+    refetchInterval: idleAware(60_000),
     queryFn: () => fetchIndexerFreshness(readChain.chainId),
   });
   if (!freshness.data) return null;

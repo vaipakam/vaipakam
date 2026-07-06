@@ -255,7 +255,7 @@ For each table:
 
    **`vaipakam-archive` tables** (born-off-chain): `diag_errors`,
    `diag_legal_holds`, `diag_legal_hold_audit`, `user_thresholds`,
-   `notify_state`, `telegram_links`.
+   `notify_state`, `telegram_links`, `support_tickets`.
 
    ```bash
    wrangler d1 execute vaipakam-archive --file=restore/<table>.sql --remote

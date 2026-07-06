@@ -25,7 +25,7 @@ that, today, lives **only on Cloudflare**:
 | Surface | Store | Owner | Re-derivable from chain? |
 | --- | --- | --- | --- |
 | `vaipakam-archive` D1 — `offers`, `loans`, `activity_events`, `oracle_snapshot_state`, `liquidity_confidence`, `indexer_cursor` | Cloudflare D1 | apps/indexer (writer), apps/keeper + apps/agent (readers / minor writers) | **Yes** — re-index from `block 0` reconstructs every row deterministically. |
-| `vaipakam-archive` D1 — `diag_errors`, `diag_legal_holds`, `diag_legal_hold_audit`, `user_thresholds`, `notify_state`, `telegram_links` | Cloudflare D1 | apps/agent + apps/indexer (write paths) | **No** — born off-chain (frontend error captures, operator legal-hold actions, user-supplied HF thresholds + Telegram chat links + notification dedupe state). |
+| `vaipakam-archive` D1 — `diag_errors`, `diag_legal_holds`, `diag_legal_hold_audit`, `user_thresholds`, `notify_state`, `telegram_links`, `support_tickets` | Cloudflare D1 | apps/agent + apps/indexer (write paths) | **No** — born off-chain (frontend error captures, operator legal-hold actions, user-supplied HF thresholds + Telegram chat links + notification dedupe state). |
 | `vaipakam-lz-alerts-db` D1 — `lz_alert_state`, `scan_cursor`, `oft_balance_history` | Cloudflare D1 | ops/lz-watcher | **Partly** — alerts are derived from chain logs, so re-running the watcher reconstructs them, but the alert dispatch history (who-was-notified-when) is born off-chain. Note: lz-watcher itself is now obsolete post-T-068 (LayerZero → CCIP migration) — tracked for delete/refactor as issue #250. |
 | `vaipakam-legal-vault` R2 bucket — uploaded legal-hold documents | Cloudflare R2 | apps/agent (uploads) | **No** — third-party documents uploaded by operators, not derivable from any external source. |
 
@@ -74,7 +74,7 @@ Schedule a Cloudflare Worker (`ops/offchain-data-archive`) that nightly:
 
 1. Exports the **born off-chain** D1 tables — `diag_errors`,
    `diag_legal_holds`, `diag_legal_hold_audit`, `user_thresholds`,
-   `notify_state`, `telegram_links` from `vaipakam-archive`, plus
+   `notify_state`, `telegram_links`, `support_tickets` from `vaipakam-archive`, plus
    `lz_alert_state`, `scan_cursor`, `oft_balance_history` from
    `vaipakam-lz-alerts-db`.
 2. Exports the **re-derivable** D1 tables (`offers`, `loans`,
@@ -167,6 +167,15 @@ in-place overwrite, only against read/delete.
   lifecycle rule).
 - **Indefinite** for the first archive of each calendar year (for
   legal-hold audit trail durability).
+- The monthly and yearly tiers are built as ONE separate payload
+  that **excludes `support_tickets`** — the Privacy Policy promises
+  ticket deletion no later than 12 months after submission; a ticket
+  caught by a monthly cut would otherwise persist ~13 months, and an
+  indefinite yearly copy forever. Ticket backup copies therefore
+  live only in the 30-day daily tier (at most 30 days past D1
+  deletion). The long-tier build runs AFTER the daily payload is
+  uploaded and released, so the Worker never holds two ciphertexts
+  at once.
 
 ### 3.5 Restore procedure
 

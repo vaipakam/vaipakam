@@ -23,11 +23,16 @@ import { copy } from '../content/copy';
 import { useActiveChain } from '../chain/useActiveChain';
 import { assertWalletNotSanctionedLive, useSanctionsCheck } from '../data/sanctions';
 import { assertErc20BalanceLive } from '../contracts/preflights';
-import { readVpfiTokenLive, useVpfi, useVpfiTierTable, VPFI_DECIMALS } from '../data/vpfi';
+import { readVpfiTokenLive, useVpfi, useVpfiTierTable, VPFI_DECIMALS, clearVpfiTokenCache } from '../data/vpfi';
 import { DIAMOND_ABI_VIEM, useDiamondWrite } from '../contracts/diamond';
 import { SimulationPreview } from '../components/SimulationPreview';
 import type { TxSimInput } from '../contracts/useTxSimulation';
 import { ensureAllowance } from '../contracts/erc20';
+import {
+  disablePermit2ForSession,
+  usePermit2Signing,
+} from '../contracts/usePermit2Signing';
+import { readAllowance } from '../lib/submitProgress';
 import { exactAmountString, formatBpsAsPercent, formatTokenAmount } from '../lib/format';
 import { isPositiveDecimal, submitErrorText } from '../lib/errors';
 import { flowDisabled } from '../lib/killSwitch';
@@ -41,6 +46,7 @@ export function Vpfi() {
   const { setOpen } = useModal();
   const vpfi = useVpfi();
   const { write } = useDiamondWrite();
+  const permit2 = usePermit2Signing();
   const { data: walletClient } = useWalletClient();
   const publicClient = usePublicClient({ chainId: walletChain?.chainId });
   const queryClient = useQueryClient();
@@ -55,7 +61,9 @@ export function Vpfi() {
   const [amount, setAmount] = useState('');
   const [reviewing, setReviewing] = useState(false);
   // #1037 — which prompt the in-flight action is on (null = idle).
-  const [phase, setPhase] = useState<null | 'pending' | 'approving' | 'submitting'>(null);
+  const [phase, setPhase] = useState<
+    null | 'pending' | 'approving' | 'permitting' | 'submitting'
+  >(null);
   const busy = phase !== null;
   const [error, setError] = useState<string | null>(null);
   const [done, setDone] = useState<string | null>(null);
@@ -155,6 +163,9 @@ export function Vpfi() {
           copy.vpfi.tokenCheckRetry,
         );
         if (liveToken.toLowerCase() !== snapshot.token.toLowerCase()) {
+          // The session cache would otherwise re-serve the rotated-out
+          // address to the refetch this invalidation triggers.
+          clearVpfiTokenCache(walletChain.chainId);
           refresh();
           throw new Error(copy.vpfi.tokenChanged);
         }
@@ -168,17 +179,84 @@ export function Vpfi() {
           amount: amountWei,
           symbol: 'VPFI',
         });
-        await ensureAllowance({
-          onPrompt: () => setPhase('approving'),
-          publicClient,
-          walletClient,
-          token: snapshot.token,
-          owner: address,
-          spender: walletChain.diamondAddress,
-          amount: amountWei,
-        });
-        setPhase('submitting');
-        await write('depositVPFIToVault', [amountWei]);
+        // Permit2 first (#1038): one gasless signature instead of the
+        // approval transaction — only when an approval would be
+        // needed at all AND the wallet holds a standing VPFI→Permit2
+        // approval covering the amount (SignatureTransfer pulls AS
+        // the Permit2 contract; without that approval the WithPermit
+        // call categorically reverts).
+        let deposited = false;
+        if (permit2.canSign) {
+          const [cur, permit2Cur] = await Promise.all([
+            readAllowance({
+              publicClient,
+              token: snapshot.token,
+              owner: address,
+              spender: walletChain.diamondAddress,
+            }),
+            readAllowance({
+              publicClient,
+              token: snapshot.token,
+              owner: address,
+              spender: permit2.permit2Address,
+            }),
+          ]);
+          // Zero-only (not merely short): a non-zero-but-short
+          // allowance routes classic so its zero-first reset clears
+          // the stale approval instead of leaving it standing.
+          const freshApprovalNeeded = cur === undefined || cur === 0n;
+          const permit2Funded =
+            permit2Cur !== undefined && permit2Cur >= amountWei;
+          if (freshApprovalNeeded && permit2Funded) {
+            // Phase 1 — the permit signature: any failure is
+            // pre-transaction, fall to classic unconditionally.
+            setPhase('permitting');
+            let signed: Awaited<ReturnType<typeof permit2.sign>> | null = null;
+            try {
+              signed = await permit2.sign({
+                token: snapshot.token,
+                amount: amountWei,
+                spender: walletChain.diamondAddress,
+              });
+            } catch {
+              signed = null;
+            }
+            if (signed) {
+              // Phase 2 — the transaction: NO classic fallback from
+              // here — ambiguous errors may ride a tx that still
+              // mines (double execution), and definitive reverts
+              // would doom the classic retry too, after minting a
+              // fresh approval for nothing. Errors surface after
+              // tripping the session breaker, so a manual retry
+              // routes classic.
+              setPhase('submitting');
+              try {
+                await write('depositVPFIToVaultWithPermit', [
+                  amountWei,
+                  signed.permit,
+                  signed.signature,
+                ]);
+                deposited = true;
+              } catch (permitErr) {
+                disablePermit2ForSession();
+                throw permitErr;
+              }
+            }
+          }
+        }
+        if (!deposited) {
+          await ensureAllowance({
+            onPrompt: () => setPhase('approving'),
+            publicClient,
+            walletClient,
+            token: snapshot.token,
+            owner: address,
+            spender: walletChain.diamondAddress,
+            amount: amountWei,
+          });
+          setPhase('submitting');
+          await write('depositVPFIToVault', [amountWei]);
+        }
         setDone('Deposit confirmed. Your discount history starts building from now.');
       } else {
         setPhase('submitting');
@@ -529,9 +607,11 @@ export function Vpfi() {
                 {phase !== null
                   ? phase === 'approving'
                     ? 'Approving VPFI…'
-                    : phase === 'submitting'
-                      ? 'Submitting…'
-                      : 'Waiting for wallet…'
+                    : phase === 'permitting'
+                      ? 'Signing the permission… — free, no gas'
+                      : phase === 'submitting'
+                        ? 'Submitting…'
+                        : 'Waiting for wallet…'
                   : action === 'deposit'
                     ? 'Deposit VPFI'
                     : 'Withdraw VPFI'}

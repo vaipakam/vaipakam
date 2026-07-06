@@ -25,6 +25,10 @@ import { usePublicClient, useWalletClient } from 'wagmi';
 import { useQueryClient } from '@tanstack/react-query';
 import { encodeFunctionData, parseUnits } from 'viem';
 import { copy } from '../content/copy';
+import {
+  disablePermit2ForSession,
+  usePermit2Signing,
+} from '../contracts/usePermit2Signing';
 import { ConsentLabel } from '../components/ConsentLabel';
 import { useActiveChain } from '../chain/useActiveChain';
 import { getSupportedChain } from '../chain/chains';
@@ -708,6 +712,7 @@ function RentNftFlow() {
   const { data: walletClient } = useWalletClient();
   const publicClient = usePublicClient({ chainId: walletChain?.chainId });
   const { write } = useDiamondWrite();
+  const permit2 = usePermit2Signing();
   const { sign: signAcceptTerms } = useAcceptTermsSigning();
   const queryClient = useQueryClient();
   const { bps: bufferBps, ready: bufferReady } = useRentalBufferBps();
@@ -1110,21 +1115,95 @@ function RentNftFlow() {
           symbol: prepayMeta.data?.symbol,
         }),
       ]);
-      await ensureAllowance({
-        publicClient,
-        walletClient,
-        token: terms.prepayAsset,
-        owner: address,
-        spender: walletChain.diamondAddress,
-        amount: canonicalTotal,
-        onPrompt: () => stepper.next('approve'),
-      });
-      stepper.next('send');
-      const { hash } = await write('acceptOffer', [
-        BigInt(selected.offerId),
-        terms,
-        signature,
-      ]);
+      // Permit2 first (#1038) — same rules as the offer flows: the
+      // classic path must actually need an approval AND the wallet
+      // must hold a standing prepay-token→Permit2 approval covering
+      // the total (SignatureTransfer pulls AS the Permit2 contract —
+      // without that approval the WithPermit call categorically
+      // reverts, so engaging it would burn a doomed transaction).
+      // The renter's prepay is the only ERC-20 pull here; the NFT
+      // side is the owner's and untouched. (A rental listing is a
+      // Lender-type offer with an ERC-20 prepay leg — a valid
+      // acceptOfferWithPermit shape by the facet's own gate.)
+      let hash: `0x${string}` | null = null;
+      if (permit2.canSign) {
+        const [cur, permit2Cur] = await Promise.all([
+          readAllowance({
+            publicClient,
+            token: terms.prepayAsset,
+            owner: address,
+            spender: walletChain.diamondAddress,
+          }),
+          readAllowance({
+            publicClient,
+            token: terms.prepayAsset,
+            owner: address,
+            spender: permit2.permit2Address,
+          }),
+        ]);
+        // Zero-only (not merely short): a non-zero-but-short allowance
+        // routes classic so its zero-first reset clears the stale
+        // approval instead of leaving it standing.
+        const freshApprovalNeeded = cur === undefined || cur === 0n;
+        const permit2Funded =
+          permit2Cur !== undefined && permit2Cur >= canonicalTotal;
+        if (freshApprovalNeeded && permit2Funded) {
+          // Phase 1 — the permit signature: any failure is
+          // pre-transaction, fall to classic unconditionally; the
+          // consumed step is added back to the plan (#1037 honesty).
+          stepper.next('permit');
+          let permitSigned: Awaited<ReturnType<typeof permit2.sign>> | null =
+            null;
+          try {
+            permitSigned = await permit2.sign({
+              token: terms.prepayAsset,
+              amount: canonicalTotal,
+              spender: walletChain.diamondAddress,
+            });
+          } catch {
+            permitSigned = null;
+            stepper.grow(1);
+          }
+          if (permitSigned) {
+            // Phase 2 — the transaction: NO classic fallback from
+            // here — ambiguous errors may ride a tx that still mines
+            // (double execution), and definitive reverts would doom
+            // the classic retry too, after minting a fresh approval
+            // for nothing. Errors surface after tripping the session
+            // breaker, so a manual retry routes classic.
+            stepper.next('send');
+            try {
+              ({ hash } = await write('acceptOfferWithPermit', [
+                BigInt(selected.offerId),
+                terms,
+                signature,
+                permitSigned.permit,
+                permitSigned.signature,
+              ]));
+            } catch (permitErr) {
+              disablePermit2ForSession();
+              throw permitErr;
+            }
+          }
+        }
+      }
+      if (hash === null) {
+        await ensureAllowance({
+          publicClient,
+          walletClient,
+          token: terms.prepayAsset,
+          owner: address,
+          spender: walletChain.diamondAddress,
+          amount: canonicalTotal,
+          onPrompt: () => stepper.next('approve'),
+        });
+        stepper.next('send');
+        ({ hash } = await write('acceptOffer', [
+          BigInt(selected.offerId),
+          terms,
+          signature,
+        ]));
+      }
       setTxHash(hash);
       setStep('done');
       void queryClient.invalidateQueries({ queryKey: ['activeOffers'] });
@@ -1318,9 +1397,11 @@ function RentNftFlow() {
                     ? 'Waiting for wallet…'
                     : progress.kind === 'sign'
                       ? copy.signing.phaseSign(progress.current, progress.total)
-                      : progress.kind === 'approve'
-                        ? copy.signing.phaseApprove(progress.current, progress.total)
-                        : copy.signing.phaseSend(progress.current, progress.total)
+                      : progress.kind === 'permit'
+                        ? copy.signing.phasePermit(progress.current, progress.total)
+                        : progress.kind === 'approve'
+                          ? copy.signing.phaseApprove(progress.current, progress.total)
+                          : copy.signing.phaseSend(progress.current, progress.total)
                   : copy.rent.acceptRental}
               </button>
             </div>

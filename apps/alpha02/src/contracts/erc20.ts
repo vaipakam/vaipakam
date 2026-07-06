@@ -10,6 +10,7 @@ import { erc20Abi } from 'viem';
 import type { PublicClient, WalletClient } from 'viem';
 import { usePublicClient } from 'wagmi';
 import { useActiveChain } from '../chain/useActiveChain';
+import { idleAware } from '../lib/idle';
 
 export interface TokenMeta {
   address: `0x${string}`;
@@ -62,7 +63,7 @@ export function useTokenBalance(tokenAddress: string | undefined) {
       address?.toLowerCase(),
     ],
     enabled: valid && Boolean(publicClient) && Boolean(address) && Boolean(walletChain),
-    refetchInterval: 30_000,
+    refetchInterval: idleAware(30_000),
     queryFn: async (): Promise<bigint> => {
       if (!publicClient || !valid || !address) throw new Error('unreachable');
       return publicClient.readContract({

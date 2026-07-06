@@ -527,7 +527,8 @@
     "revoke": "Révoquer",
     "revoking": "Révocation…",
     "cleared": "effacé",
-    "footnote": "Cette page n'analyse que le Vaipakam Diamond comme spender sur la chaîne actuelle. Les autorisations accordées à d'autres contrats (agrégateurs DEX, autres dApps) ne sont pas listées ici — utilisez revoke.cash ou un outil similaire pour les auditer."
+    "footnote": "Cette page n'analyse que le Vaipakam Diamond comme spender sur la chaîne actuelle. Les autorisations accordées à d'autres contrats (agrégateurs DEX, autres dApps) ne sont pas listées ici — utilisez revoke.cash ou un outil similaire pour les auditer.",
+    "readFailed": "{{count}} approbation(s) de jetons n'ont pas pu être vérifiées pour le moment — la liste ci-dessous peut être incomplète. Elles ne sont PAS considérées comme révoquées ; réessayez pour les vérifier."
   },
   "alerts": {
     "connectBody": "Connectez votre portefeuille pour configurer les alertes HF.",
