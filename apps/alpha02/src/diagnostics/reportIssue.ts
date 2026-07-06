@@ -23,6 +23,21 @@ export function redactAddress(address: string | undefined): string {
   return `${address.slice(0, 6)}…${address.slice(-4)}`;
 }
 
+const ADDRESS_RE = /0x[a-fA-F0-9]{40}/g;
+
+/** Scrub any full address ANYWHERE in report text — crash messages,
+ *  component stacks, and deep-link paths routinely embed the
+ *  connected account, and the redaction contract covers the whole
+ *  public report, not just the wallet row. Applied to the finished
+ *  body/title so future fields can't reintroduce a leak. */
+function redactText(text: string): string {
+  return text.replace(ADDRESS_RE, (m) => `${m.slice(0, 6)}…${m.slice(-4)}`);
+}
+
+/** Paths are user-navigable input (deep links, 404s) — bound them so
+ *  the final no-error fallback stays provably under MAX_URL_LEN. */
+const MAX_PATH_CHARS = 200;
+
 export interface ReportContext {
   path: string;
   chainName: string;
@@ -52,7 +67,7 @@ export function buildReportBody(ctx: ReportContext): string {
     '',
     '### App-collected details',
     '',
-    `- Page: \`${ctx.path}\``,
+    `- Page: \`${cap(ctx.path, MAX_PATH_CHARS)}\``,
     `- Network: ${ctx.chainName} (${ctx.chainId})`,
     `- Wallet: ${ctx.walletRedacted}`,
     `- Blockchain connection: ${ctx.rpcStatusLine}`,
@@ -83,13 +98,17 @@ export function buildReportBody(ctx: ReportContext): string {
       );
     }
   }
-  return lines.join('\n');
+  // Redact the FINISHED text — error messages, stacks, and paths can
+  // all embed the connected account.
+  return redactText(lines.join('\n'));
 }
 
 export function buildIssueUrl(ctx: ReportContext): string {
-  const title = `[alpha02] problem report — ${ctx.path}${
-    ctx.lastError ? ` (${cap(ctx.lastError.message, 60)})` : ''
-  }`;
+  const title = redactText(
+    `[alpha02] problem report — ${cap(ctx.path, MAX_PATH_CHARS)}${
+      ctx.lastError ? ` (${cap(ctx.lastError.message, 60)})` : ''
+    }`,
+  );
   const params = new URLSearchParams({
     title,
     body: buildReportBody(ctx),

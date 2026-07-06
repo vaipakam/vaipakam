@@ -63,12 +63,15 @@ export function DiagnosticsDrawer() {
   }, [open]);
 
   // Reachability = "did the latest block-number read succeed". Only
-  // polled while the drawer is open.
+  // polled while the drawer is open; gcTime 0 drops the cached answer
+  // when it closes, so a reopen during an outage starts from
+  // "Checking…" instead of a stale healthy block.
   const rpc = useQuery({
     queryKey: ['diag', 'rpc', readChain.chainId],
     enabled: open && Boolean(publicClient),
     refetchInterval: RPC_POLL_MS,
     retry: false,
+    gcTime: 0,
     queryFn: async () => {
       const block = await publicClient!.getBlockNumber();
       return { block: block.toString() };
@@ -80,15 +83,18 @@ export function DiagnosticsDrawer() {
     enabled: open && indexerConfigured(),
     refetchInterval: INDEXER_POLL_MS,
     retry: false,
+    gcTime: 0,
     queryFn: () => fetchIndexerFreshness(readChain.chainId),
   });
 
-  const rpcLine = rpc.data
-    ? copy.diagnostics.rpcOk(rpc.data.block)
-    : rpc.isError
-      ? copy.diagnostics.rpcFailing
+  // Error-first: a failed LATEST probe outranks a previously cached
+  // block — "Working" must describe now, not thirty seconds ago.
+  const rpcLine = rpc.error
+    ? copy.diagnostics.rpcFailing
+    : rpc.data
+      ? copy.diagnostics.rpcOk(rpc.data.block)
       : copy.diagnostics.rpcChecking;
-  const rpcTone = rpc.data ? 'ok' : rpc.isError ? 'warn' : 'muted';
+  const rpcTone = rpc.error ? 'warn' : rpc.data ? 'ok' : 'muted';
 
   let indexerLine: string;
   let indexerTone: 'ok' | 'warn' | 'muted';

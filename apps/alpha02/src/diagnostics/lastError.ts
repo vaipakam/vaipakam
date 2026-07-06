@@ -45,7 +45,18 @@ export function readLastError(): LastError | null {
     const raw = sessionStorage.getItem(KEY);
     if (!raw) return null;
     const parsed = JSON.parse(raw) as LastError;
-    if (typeof parsed?.message !== 'string') return null;
+    // Validate the WHOLE shape — a stale/corrupt slot (e.g. a
+    // non-finite `at` reaching toISOString in the report builder)
+    // must read as "no error", never crash the support surface.
+    if (
+      typeof parsed?.message !== 'string' ||
+      typeof parsed?.path !== 'string' ||
+      !Number.isFinite(parsed?.at) ||
+      (parsed.componentStack !== undefined &&
+        typeof parsed.componentStack !== 'string')
+    ) {
+      return null;
+    }
     memory = parsed;
     return parsed;
   } catch {
