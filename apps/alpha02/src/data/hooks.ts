@@ -15,12 +15,14 @@ import { usePublicClient } from 'wagmi';
 import { useActiveChain } from '../chain/useActiveChain';
 import {
   fetchActiveOffers,
+  fetchIndexerFreshness,
   fetchLoanById,
   fetchLoansByBorrower,
   fetchLoansByLender,
   fetchOfferById,
   fetchOffersByCreator,
   fetchOffersByCurrentHolder,
+  indexerConfigured,
   type IndexedLoan,
   type IndexedOffer,
 } from './indexer';
@@ -49,6 +51,13 @@ export function useActiveOffers() {
     queryKey: ['activeOffers', readChain.chainId],
     refetchInterval: REFRESH_MS,
     queryFn: async (): Promise<IndexedOffer[] | null> => {
+      // Freshness cursor snapshotted BEFORE the page walk: an ingest
+      // landing mid-walk could advance the cursor past a terminal
+      // block whose stale row is already collected, and the catch-up
+      // scan would then skip exactly the window that row needs.
+      const freshness = indexerConfigured()
+        ? await fetchIndexerFreshness(readChain.chainId)
+        : null;
       // ANY page failing (including later cursor pages) → unavailable,
       // and so does hitting the page cap with a cursor still open —
       // publishing a confident half-book would let guided matching say
@@ -75,10 +84,10 @@ export function useActiveOffers() {
       // trouble returns the rows unfiltered — the catch-up layer can
       // make the book more honest, never make it unavailable.
       return filterTerminalOffers(all, {
-        chainId: readChain.chainId,
         diamondAddress: readChain.diamondAddress,
         deployBlock: readChain.deployBlock,
         publicClient,
+        freshness,
       });
     },
   });

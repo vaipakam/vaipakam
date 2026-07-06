@@ -29,14 +29,10 @@
  *     `DIAMOND_ABI_VIEM` makes an ABI drift a compile/test failure,
  *     not a silent no-op.
  */
-import { numberToHex, toEventSelector } from 'viem';
+import { decodeEventLog, numberToHex, toEventSelector } from 'viem';
 import type { AbiEvent, Hex, PublicClient } from 'viem';
 import { DIAMOND_ABI_VIEM } from '@vaipakam/contracts/abis';
-import {
-  fetchIndexerFreshness,
-  indexerConfigured,
-  type IndexedOffer,
-} from './indexer';
+import type { IndexedOffer, IndexerFreshness } from './indexer';
 
 /** Serialized 1000-block windows — public RPCs cap eth_getLogs
  *  ranges, and serial requests keep a refocused background tab from
@@ -50,7 +46,7 @@ const CHUNK_BLOCKS = 1000n;
  *  state. */
 const MAX_CATCHUP_BLOCKS = 20_000n;
 
-function eventTopic0(name: string): Hex {
+function findEvent(name: string): AbiEvent {
   // Type-aware lookup — NOT getAbiItem, whose name-only search can
   // return a same-named custom ERROR (OfferConsumedBySale exists as
   // both an event and a revert error in the Diamond ABI; spec 10's
@@ -64,7 +60,11 @@ function eventTopic0(name: string): Hex {
     // loudly instead of silently matching nothing.
     throw new Error(`event ${name} not found in DIAMOND_ABI_VIEM`);
   }
-  return toEventSelector(item);
+  return item;
+}
+
+function eventTopic0(name: string): Hex {
+  return toEventSelector(findEvent(name));
 }
 
 /** Every event that ends an offer's active life. All carry the offer
@@ -83,6 +83,7 @@ export function offerTerminalTopics(): Hex[] {
 
 interface RawLog {
   topics: Hex[];
+  data: Hex;
   blockNumber: Hex | null;
   removed?: boolean;
 }
@@ -129,22 +130,51 @@ export async function chunkedGetLogs(
 }
 
 /** Offer ids from terminal logs — first indexed arg for every event
- *  in the terminal set. Reorged (`removed`) logs are skipped. */
+ *  in the terminal set. Reorged (`removed`) logs are skipped.
+ *
+ *  OfferAccepted needs its data DECODED, not just topic-matched: the
+ *  partial-fill range-order path emits it with `newAccepted=false`
+ *  while the offer stays live (the contract passes `offer.accepted`
+ *  as that arg), and stripping such an offer would over-filter —
+ *  exactly what the no-over-filter contract forbids. An accepted log
+ *  whose data can't be decoded is SKIPPED for the same reason: when
+ *  in doubt, leave the row alone. */
 export function decodeTerminalOfferIds(logs: RawLog[]): Set<number> {
+  const acceptedTopic = eventTopic0('OfferAccepted');
+  const acceptedEvent = findEvent('OfferAccepted');
   const ids = new Set<number>();
   for (const log of logs) {
     if (log.removed) continue;
     if (!log.topics || log.topics.length < 2) continue;
+    if (log.topics[0] === acceptedTopic) {
+      try {
+        const dec = decodeEventLog({
+          abi: [acceptedEvent],
+          data: log.data,
+          topics: log.topics as [Hex, ...Hex[]],
+        });
+        if ((dec.args as { newAccepted?: boolean }).newAccepted !== true) {
+          continue; // partial fill — the offer is still live
+        }
+      } catch {
+        continue; // undecodable accepted log → don't strip
+      }
+    }
     ids.add(Number(BigInt(log.topics[1])));
   }
   return ids;
 }
 
 export interface CatchUpTarget {
-  chainId: number;
   diamondAddress: `0x${string}`;
   deployBlock: number;
   publicClient: PublicClient | undefined;
+  /** The freshness cursor snapshotted BEFORE the /offers/active pages
+   *  were walked — reading it after would let a worker ingest landing
+   *  mid-walk advance the cursor past a terminal block whose stale
+   *  row is already in the collected pages, silently skipping the
+   *  very window that row needs. null = unknown → no filtering. */
+  freshness: IndexerFreshness | null;
 }
 
 /** The merge: strip offers the chain says are already terminal from
@@ -154,13 +184,18 @@ export async function filterTerminalOffers(
   target: CatchUpTarget,
 ): Promise<IndexedOffer[]> {
   try {
-    if (!target.publicClient || rows.length === 0 || !indexerConfigured()) {
+    if (!target.publicClient || rows.length === 0 || !target.freshness) {
       return rows;
     }
-    const fresh = await fetchIndexerFreshness(target.chainId);
-    if (!fresh) return rows;
-    const fromBlock = BigInt(Math.max(fresh.lastBlock + 1, target.deployBlock));
-    const toBlock = await target.publicClient.getBlockNumber();
+    const fromBlock = BigInt(
+      Math.max(target.freshness.lastBlock + 1, target.deployBlock),
+    );
+    // Upper bound = the SAFE head, not latest: a terminal event seen
+    // in a reorgable tip block could strip a row that is live again
+    // after the reorg — over-filtering. Chains/RPCs without a safe
+    // tag land in the catch (fail-open, no filtering).
+    const safeHead = await target.publicClient.getBlock({ blockTag: 'safe' });
+    const toBlock = safeHead.number;
     if (toBlock < fromBlock) return rows;
     if (toBlock - fromBlock + 1n > MAX_CATCHUP_BLOCKS) return rows;
     const logs = await chunkedGetLogs(target.publicClient, {
