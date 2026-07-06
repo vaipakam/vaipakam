@@ -112,6 +112,12 @@ contract OfferMatchFacet is DiamondReentrancyGuard, DiamondPausable {
     ///         range matcher; it is a full, all-or-nothing transfer accepted only
     ///         through the direct `acceptOffer` path. See LenderSaleVehicleRedesign.md.
     error SaleVehicleNotMatchable();
+    /// @notice #1001 (S3, Codex #1070) — a linked Preclose Option-3 offset offer
+    ///         (`offsetOfferToLoanId[lenderOfferId] != 0`) cannot be filled
+    ///         through the matcher; it must settle via the direct `acceptOffer` →
+    ///         `completeOffsetInternal` path so the old lender is paid at
+    ///         completion. Bots skip it at preview.
+    error OffsetVehicleNotMatchable();
     /// @notice #595 — an admitted carry-over match where the lender's pro-rated
     ///         collateral requirement exceeds the carried (pinned) amount.
     error RefinanceCarryOverCollateralShortfall();
@@ -778,6 +784,20 @@ contract OfferMatchFacet is DiamondReentrancyGuard, DiamondPausable {
         // range/partial order. See LenderSaleVehicleRedesign.md D3.
         if (s.saleOfferToLoanId[borrowerOfferId] != 0) {
             revert SaleVehicleNotMatchable();
+        }
+        // #1001 (S3, Codex #1070 r4) — a linked Preclose Option-3 offset offer is
+        // a LENDER offer that MUST settle through `completeOffsetInternal`, which
+        // only fires on the direct `acceptOffer` path (the auto-complete hop keys
+        // on the accepted offer's `offsetOfferToLoanId`). On the match path the
+        // accepted-flip defers to the dust-close block and the offset auto-
+        // complete never runs, so a matched offset would consume the vehicle
+        // WITHOUT settling the old lender — leaving the original loan Active with a
+        // live link + NFT lock and, once time drifts past the maturity guard, no
+        // recovery even by manual `completeOffset`. Reject up front (bots skip it
+        // at preview), exactly as the sale vehicle is rejected above. An offset is
+        // a full-principal transfer, not a range/partial order.
+        if (s.offsetOfferToLoanId[lenderOfferId] != 0) {
+            revert OffsetVehicleNotMatchable();
         }
         {
             uint256 bRefiTarget =
