@@ -1101,10 +1101,14 @@ contract PrecloseFacet is
         if (prepayAsset != loan.prepayAsset) revert InvalidOfferTerms();
         // #1032 (L-c) — seconds-precise maturity bound (not the up-rounded
         // whole-day `_remainingDays`): the replacement term must not carry the
-        // new loan's maturity past the original loan's maturity. Bounding at
-        // request time (`block.timestamp`) is conservative — the new loan is
-        // accepted no earlier than now, so its true maturity can only be ≤ this
-        // bound (never later than the original).
+        // new loan's maturity past the original loan's maturity. This is a
+        // cheap request-time FIRST-LINE guard (fail fast at `offsetWithNewOffer`
+        // rather than at accept); equality is allowed here — a same-term offset
+        // whose replacement matures exactly at the original maturity is fine.
+        // The LOAD-BEARING anti-drift guarantee is re-checked at acceptance in
+        // `_completeOffsetImpl` (the replacement loan re-originates at accept
+        // time, which can be later than this request), where a drift reverts the
+        // whole acceptance atomically.
         if (
             block.timestamp + durationDays * LibVaipakam.ONE_DAY
                 > loan.startTime + loan.durationDays * LibVaipakam.ONE_DAY
@@ -1327,33 +1331,16 @@ contract PrecloseFacet is
         // interest model. See `EarlyWithdrawalFacet._buildSaleParams`
         // for the parallel rationale on the sale-vehicle builder.
         params.useFullTermInterest = loan.useFullTermInterest;
-        // #1032 (L-c, Codex #1069) — bound the offset offer's EXPIRY so a LATE
-        // acceptance can't move the replacement loan's maturity past the
-        // original's. The replacement loan originates with `startTime = accept
-        // time`, so its maturity is `acceptTime + durationDays·1day`. The
-        // request-time check in `_validateOffsetRequest` only bounds the offer at
-        // creation; a lender who accepts a day later would otherwise mature a day
-        // late (the Option-3 drift). Constraining `expiresAt` to the latest
-        // acceptance that still satisfies `acceptTime + durationDays·1day ≤
-        // original maturity` closes it — an accept after that reverts on GTT.
-        //
-        // Codex #1069 round-2: cap the deadline at the earlier of that maturity
-        // bound and the offer-expiry horizon. `setMaxOfferDurationDays` permits
-        // terms up to 4,385 days, so a long-dated loan's maturity bound can sit
-        // far beyond `MAX_OFFER_EXPIRY_HORIZON` (365 days) — and `createOffer`
-        // rejects any non-zero `expiresAt` above `now + horizon`. Taking the min
-        // keeps the offset offer creatable; a horizon cut is strictly SAFER for
-        // the drift concern (acceptance ≤ horizon ≤ maturity bound), it just
-        // forces a re-post if the loan outlives the horizon. Both bounds are
-        // ≥ now (the request-time check for the maturity bound; the 365-day
-        // horizon by construction), so the offer isn't born expired.
-        uint256 offsetMaturityBound = loan.startTime
-            + loan.durationDays * LibVaipakam.ONE_DAY
-            - durationDays * LibVaipakam.ONE_DAY;
-        uint256 offsetExpiryHorizon = block.timestamp + LibVaipakam.MAX_OFFER_EXPIRY_HORIZON;
-        params.expiresAt = uint64(
-            offsetMaturityBound < offsetExpiryHorizon ? offsetMaturityBound : offsetExpiryHorizon
-        );
+        // #1032 (L-c) — the offset offer is left GTC (`expiresAt == 0`). The
+        // replacement-maturity anti-drift guarantee is NOT enforced via
+        // `expiresAt` here (an earlier attempt to do so, Codex #1069 rounds 1-2,
+        // could produce `expiresAt == now` for a legitimate same-term-at-start
+        // offset — `durationDays == remaining` at elapsed 0 — which `createOffer`
+        // rejects, breaking a valid lender-swap). Instead the bound is re-checked
+        // at ACCEPTANCE inside `_completeOffsetImpl`, which fires atomically in
+        // the accepting tx (so `block.timestamp` there IS the replacement loan's
+        // fresh start): a drifting term reverts the whole acceptance, rolling the
+        // replacement loan back cleanly. See the guard there.
         // Phase 6: keeper enables are per-keeper via
         // `offerKeeperEnabled[offerId][keeper]`. The borrower (offset-offer
         // creator) can enable specific keepers on this offset offer via
@@ -1424,6 +1411,22 @@ contract PrecloseFacet is
         // Verify the offer was accepted
         LibVaipakam.Offer storage offer = s.offers[newOfferId];
         if (!offer.accepted) revert OffsetOfferNotAccepted();
+
+        // #1032 (L-c, Codex #1069 round-3) — LOAD-BEARING anti-drift guard.
+        // The replacement loan re-originates with `startTime = its accept time`,
+        // so its maturity is `acceptTime + offer.durationDays·1day`. This
+        // completion runs ATOMICALLY inside the accepting `acceptOffer` tx (via
+        // `completeOffsetInternal`), so `block.timestamp` here IS that fresh
+        // start. Reject if the replacement would mature past the original loan's
+        // maturity — a drift the request-time gate in `_validateOffsetRequest`
+        // can't catch when acceptance lands later than the request. Reverting
+        // here rolls the whole acceptance (and the just-minted replacement loan)
+        // back cleanly, so the original loan is left untouched rather than
+        // silently extended. Equality (matures exactly at the original) is fine.
+        if (
+            block.timestamp + offer.durationDays * LibVaipakam.ONE_DAY
+                > loan.startTime + loan.durationDays * LibVaipakam.ONE_DAY
+        ) revert InvalidOfferTerms();
 
         // Phase 6: borrower-entitled action. Authority resolves against
         // the current borrower-NFT holder OR a keeper with the

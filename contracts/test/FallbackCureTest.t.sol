@@ -148,6 +148,20 @@ contract FallbackCureTest is SetupTest, IVaipakamErrors {
         // (`_toFallback` warped DURATION + 3 days before triggering default).
         assertEq(uint8(_loanStatus()), uint8(LibVaipakam.LoanStatus.FallbackPending));
 
+        // Codex #1069 round-3 P1 (REFUTED empirically): the cure-repay must
+        // RESTORE the diamond-held snapshot collateral into the borrower vault
+        // in the SAME tx, before the borrowerClaim (written by the Repaid path)
+        // is ever claimable — otherwise `claimAsBorrower` would later pull from
+        // an empty vault. Assert the round-trip: the borrower vault gains the
+        // full snapshot sum (`held == COLLATERAL`, see
+        // testGetFallbackSnapshotReturnsLiveSplit) as the repay commits.
+        address borrowerVault =
+            VaultFactoryFacet(address(diamond)).getUserVaultAddress(borrower);
+        uint256 vaultColBefore =
+            ERC20Mock(mockCollateralERC20).balanceOf(borrowerVault);
+        uint256 diamondColBefore =
+            ERC20Mock(mockCollateralERC20).balanceOf(address(diamond));
+
         vm.startPrank(borrower);
         ERC20Mock(mockERC20).approve(address(diamond), type(uint256).max);
         // Must NOT revert RepaymentPastGracePeriod — the cure is exempt.
@@ -159,6 +173,21 @@ contract FallbackCureTest is SetupTest, IVaipakamErrors {
             uint8(LibVaipakam.LoanStatus.Repaid),
             "full repayment cures the fallback past grace"
         );
+        // Collateral moved diamond → borrower vault (not stranded in custody).
+        assertEq(
+            ERC20Mock(mockCollateralERC20).balanceOf(borrowerVault),
+            vaultColBefore + COLLATERAL,
+            "restored collateral lands in the borrower vault"
+        );
+        assertEq(
+            ERC20Mock(mockCollateralERC20).balanceOf(address(diamond)),
+            diamondColBefore - COLLATERAL,
+            "diamond releases the held snapshot collateral"
+        );
+        // Snapshot wiped so neither side can pull against a stale split.
+        (, , , , , bool active, ) =
+            ClaimFacet(address(diamond)).getFallbackSnapshot(loanId);
+        assertFalse(active, "fallback snapshot cleared by the cure-repay");
     }
 
     /// @dev With SetupTest mocks (HF=2e18, LTV=6666) and loanInitMaxLtvBps=8000 for
