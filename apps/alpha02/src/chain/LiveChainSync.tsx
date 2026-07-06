@@ -33,7 +33,7 @@
 import { useCallback, useEffect, useRef, useSyncExternalStore } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import { useWatchBlockNumber } from 'wagmi';
-import { onActivityResume } from '../lib/idle';
+import { isIdle, onActivityResume } from '../lib/idle';
 import { useActiveChain } from './useActiveChain';
 
 /** queryKey[0] values that move when a transaction lands. Everything
@@ -67,6 +67,15 @@ const LIVE_KEYS: ReadonlySet<string> = new Set([
   // 30s/60s interval refetch reconciles once the RPC caught up.
 ]);
 
+/** Extra roots the idle-RESUME refresh covers beyond LIVE_KEYS:
+ *  own-wallet reads that feed form gates (balance / Max / over-max)
+ *  but are deliberately NOT block-invalidated — under WS push they'd
+ *  refetch every floor tick for data only the user's own (cache-
+ *  patched) actions usually move. On resume they must be fresh
+ *  immediately, though: a stretched idle timer may still be in
+ *  flight (Codex round-2 P2). */
+const RESUME_EXTRA_KEYS: ReadonlySet<string> = new Set(['tokenBalance']);
+
 /** Floor between block-driven invalidations. Base Sepolia mines ~every
  *  2s; each invalidation refetches the mounted live set, which
  *  includes indexer pages AND the book catch-up's `eth_getLogs`, so
@@ -98,24 +107,36 @@ export function LiveChainSync() {
   const lastAt = useRef(0);
   const visible = usePageVisible();
 
-  const invalidateLiveKeys = useCallback(() => {
-    void queryClient.invalidateQueries({
-      // Only refetch mounted queries; unmounted ones are just marked
-      // stale and refetch when their screen next opens.
-      refetchType: 'active',
-      predicate: (query) => {
-        const root = query.queryKey[0];
-        return typeof root === 'string' && LIVE_KEYS.has(root);
-      },
-    });
-  }, [queryClient]);
+  const invalidate = useCallback(
+    (extra?: ReadonlySet<string>) => {
+      void queryClient.invalidateQueries({
+        // Only refetch mounted queries; unmounted ones are just marked
+        // stale and refetch when their screen next opens.
+        refetchType: 'active',
+        predicate: (query) => {
+          const root = query.queryKey[0];
+          return (
+            typeof root === 'string' &&
+            (LIVE_KEYS.has(root) || (extra?.has(root) ?? false))
+          );
+        },
+      });
+    },
+    [queryClient],
+  );
 
   const onBlockNumber = useCallback(() => {
+    // Idle sessions don't consume push freshness either — otherwise a
+    // WS deploy would keep refetching the live set (indexer pages +
+    // the catch-up's log scan) at the floor cadence for a parked tab,
+    // bypassing the idle backoff (Codex round-2 P2). The resume path
+    // below catches the tab up the moment the user is back.
+    if (isIdle()) return;
     const now = Date.now();
     if (now - lastAt.current < MIN_INVALIDATE_MS) return;
     lastAt.current = now;
-    invalidateLiveKeys();
-  }, [invalidateLiveKeys]);
+    invalidate();
+  }, [invalidate]);
 
   // Idle→active resume: a stretched idle-cadence timer already in
   // flight runs to completion regardless of new input (TanStack only
@@ -129,9 +150,9 @@ export function LiveChainSync() {
     () =>
       onActivityResume(() => {
         lastAt.current = Date.now();
-        invalidateLiveKeys();
+        invalidate(RESUME_EXTRA_KEYS);
       }),
-    [invalidateLiveKeys],
+    [invalidate],
   );
 
   useWatchBlockNumber({

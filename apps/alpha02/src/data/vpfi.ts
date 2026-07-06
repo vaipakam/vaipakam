@@ -119,15 +119,21 @@ export async function readVpfiTokenLive(
   }
 }
 
-/** Session cache for the VPFI token address — static in practice
- *  (it changes only via a governance registration/rotation), so one
- *  read per session per chain suffices. Two escape hatches keep the
- *  cache honest against exactly those events (Codex round-1 P2):
- *  the not-registered (zero) result is NEVER cached, so a later
- *  registration surfaces on the next cycle; and the rotation
- *  recovery path calls `clearVpfiTokenCache` before invalidating
- *  ['vpfi'], so its refetch re-reads the live address. */
-const vpfiTokenCache = new Map<number, `0x${string}`>();
+/** Cache for the VPFI token address — static in practice (it changes
+ *  only via a governance registration/rotation), so re-reading it
+ *  every 30s cycle was pure waste. Three escape hatches keep it
+ *  honest against exactly those events (Codex rounds 1+2):
+ *  - the not-registered (zero) result is NEVER cached, so a later
+ *    registration surfaces on the next cycle;
+ *  - the deposit path's rotation recovery calls
+ *    `clearVpfiTokenCache` before invalidating ['vpfi'];
+ *  - a TTL bounds EVERY other path (withdraw's encumbrance read,
+ *    the rendered snapshot.token): after a rotation the stale
+ *    address self-heals within one TTL without a reload — still
+ *    ~10× fewer reads than the old per-cycle shape. */
+const VPFI_TOKEN_TTL_MS = 5 * 60_000;
+
+const vpfiTokenCache = new Map<number, { token: `0x${string}`; at: number }>();
 
 export function clearVpfiTokenCache(chainId: number): void {
   vpfiTokenCache.delete(chainId);
@@ -157,11 +163,15 @@ export function useVpfi() {
       // 30s cycle, including for disconnected visitors, where it was
       // the ONLY on-chain call of the whole cycle). Failures are not
       // cached, so a transient RPC blip can't stick.
-      let token = vpfiTokenCache.get(readChain.chainId);
+      const cached = vpfiTokenCache.get(readChain.chainId);
+      let token =
+        cached && Date.now() - cached.at < VPFI_TOKEN_TTL_MS
+          ? cached.token
+          : undefined;
       if (token === undefined) {
         token = await read<`0x${string}`>('getVPFIToken');
         if (token.toLowerCase() !== ZERO_ADDRESS) {
-          vpfiTokenCache.set(readChain.chainId, token);
+          vpfiTokenCache.set(readChain.chainId, { token, at: Date.now() });
         }
       }
       const registered = token.toLowerCase() !== ZERO_ADDRESS;
