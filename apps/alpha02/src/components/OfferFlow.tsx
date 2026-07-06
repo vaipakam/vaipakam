@@ -33,6 +33,7 @@ import { getSupportedChain } from '../chain/chains';
 import { useMode } from '../app/ModeContext';
 import { DIAMOND_ABI_VIEM, useDiamondWrite } from '../contracts/diamond';
 import {
+  disablePermit2ForSession,
   usePermit2Signing,
 } from '../contracts/usePermit2Signing';
 import { useAcceptTermsSigning } from '../contracts/useAcceptTerms';
@@ -1331,7 +1332,7 @@ export function OfferFlow({ side }: { side: Side }) {
         // — Permit2 is an upgrade, never a gate. The consumed step is
         // added back to the plan so the classic sequence's prompts
         // keep an honest "x of y" (#1037).
-        stepper.next('approve');
+        stepper.next('permit');
         let signed: Awaited<ReturnType<typeof permit2.sign>> | null = null;
         try {
           signed = await permit2.sign({
@@ -1349,14 +1350,22 @@ export function OfferFlow({ side }: { side: Side }) {
           // transaction that still mines (double execution), and a
           // definitive revert is protocol state that would doom the
           // classic retry too — after minting a fresh approval for
-          // nothing. Errors surface; a manual retry re-runs the gates.
+          // nothing. Errors surface — but trip the session breaker
+          // first, so the user's MANUAL retry routes classic instead
+          // of re-entering a permit path that may be structurally
+          // broken (locked-out wallets were Codex round-2's P2).
           stepper.next('send');
-          const { hash } = await write('createOfferWithPermit', [
-            payload,
-            signed.permit,
-            signed.signature,
-          ]);
-          return hash;
+          try {
+            const { hash } = await write('createOfferWithPermit', [
+              payload,
+              signed.permit,
+              signed.signature,
+            ]);
+            return hash;
+          } catch (permitErr) {
+            disablePermit2ForSession();
+            throw permitErr;
+          }
         }
       }
     }
@@ -1641,7 +1650,7 @@ export function OfferFlow({ side }: { side: Side }) {
           // Phase 1 — the permit signature: any failure is
           // pre-transaction, fall to classic unconditionally; the
           // consumed step is added back to the plan (#1037 honesty).
-          stepper.next('approve');
+          stepper.next('permit');
           let permitSigned: Awaited<ReturnType<typeof permit2.sign>> | null =
             null;
           try {
@@ -1659,17 +1668,22 @@ export function OfferFlow({ side }: { side: Side }) {
             // here — ambiguous errors may ride a tx that still mines
             // (double execution), and definitive reverts would doom
             // the classic retry too, after minting a fresh approval
-            // for nothing. Errors surface; a manual retry re-runs
-            // the gates.
+            // for nothing. Errors surface after tripping the session
+            // breaker, so a manual retry routes classic.
             stepper.next('send');
-            const { hash } = await write('acceptOfferWithPermit', [
-              BigInt(selected.offerId),
-              terms,
-              signature,
-              permitSigned.permit,
-              permitSigned.signature,
-            ]);
-            return hash;
+            try {
+              const { hash } = await write('acceptOfferWithPermit', [
+                BigInt(selected.offerId),
+                terms,
+                signature,
+                permitSigned.permit,
+                permitSigned.signature,
+              ]);
+              return hash;
+            } catch (permitErr) {
+              disablePermit2ForSession();
+              throw permitErr;
+            }
           }
         }
       }
@@ -2267,9 +2281,11 @@ export function OfferFlow({ side }: { side: Side }) {
                     ? 'Waiting for wallet…'
                     : progress.kind === 'sign'
                       ? copy.signing.phaseSign(progress.current, progress.total)
-                      : progress.kind === 'approve'
-                        ? copy.signing.phaseApprove(progress.current, progress.total)
-                        : copy.signing.phaseSend(progress.current, progress.total)
+                      : progress.kind === 'permit'
+                        ? copy.signing.phasePermit(progress.current, progress.total)
+                        : progress.kind === 'approve'
+                          ? copy.signing.phaseApprove(progress.current, progress.total)
+                          : copy.signing.phaseSend(progress.current, progress.total)
                   : mode === 'accept'
                     ? text.acceptSubmitLabel
                     : text.submitLabel}

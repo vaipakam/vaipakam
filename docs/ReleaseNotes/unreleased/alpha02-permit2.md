@@ -12,8 +12,11 @@ replaced by a free Permit2 signature (#1038):
 - Accepting an offer or renting becomes two instant signatures (the
   terms consent and the permit) plus one transaction — a single gas
   payment.
-- The double-approval case some tokens force (resetting an old
-  approval to zero first) disappears entirely on the permit path.
+- The permit path itself never needs the double-approval dance some
+  tokens force (resetting an old approval to zero first) — it only
+  engages when no approval exists at all. A wallet holding a leftover
+  partial approval keeps the classic sequence, including that
+  clean-up reset.
 - Hygiene bonus: a permit authorises one exact pull and expires in 30
   minutes — no standing allowance is left behind.
 

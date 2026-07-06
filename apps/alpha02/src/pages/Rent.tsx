@@ -26,6 +26,7 @@ import { useQueryClient } from '@tanstack/react-query';
 import { encodeFunctionData, parseUnits } from 'viem';
 import { copy } from '../content/copy';
 import {
+  disablePermit2ForSession,
   usePermit2Signing,
 } from '../contracts/usePermit2Signing';
 import { ConsentLabel } from '../components/ConsentLabel';
@@ -1150,7 +1151,7 @@ function RentNftFlow() {
           // Phase 1 — the permit signature: any failure is
           // pre-transaction, fall to classic unconditionally; the
           // consumed step is added back to the plan (#1037 honesty).
-          stepper.next('approve');
+          stepper.next('permit');
           let permitSigned: Awaited<ReturnType<typeof permit2.sign>> | null =
             null;
           try {
@@ -1168,16 +1169,21 @@ function RentNftFlow() {
             // here — ambiguous errors may ride a tx that still mines
             // (double execution), and definitive reverts would doom
             // the classic retry too, after minting a fresh approval
-            // for nothing. Errors surface; a manual retry re-runs
-            // the gates.
+            // for nothing. Errors surface after tripping the session
+            // breaker, so a manual retry routes classic.
             stepper.next('send');
-            ({ hash } = await write('acceptOfferWithPermit', [
-              BigInt(selected.offerId),
-              terms,
-              signature,
-              permitSigned.permit,
-              permitSigned.signature,
-            ]));
+            try {
+              ({ hash } = await write('acceptOfferWithPermit', [
+                BigInt(selected.offerId),
+                terms,
+                signature,
+                permitSigned.permit,
+                permitSigned.signature,
+              ]));
+            } catch (permitErr) {
+              disablePermit2ForSession();
+              throw permitErr;
+            }
           }
         }
       }
@@ -1391,9 +1397,11 @@ function RentNftFlow() {
                     ? 'Waiting for wallet…'
                     : progress.kind === 'sign'
                       ? copy.signing.phaseSign(progress.current, progress.total)
-                      : progress.kind === 'approve'
-                        ? copy.signing.phaseApprove(progress.current, progress.total)
-                        : copy.signing.phaseSend(progress.current, progress.total)
+                      : progress.kind === 'permit'
+                        ? copy.signing.phasePermit(progress.current, progress.total)
+                        : progress.kind === 'approve'
+                          ? copy.signing.phaseApprove(progress.current, progress.total)
+                          : copy.signing.phaseSend(progress.current, progress.total)
                   : copy.rent.acceptRental}
               </button>
             </div>

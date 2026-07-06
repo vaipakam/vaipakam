@@ -31,6 +31,22 @@ import { useActiveChain } from '../chain/useActiveChain';
 const PERMIT2_ADDRESS = '0x000000000022D473030F116dDEE9F6B43aC78BA3' as const;
 const PERMIT_DEADLINE_SECONDS = 30 * 60;
 
+/** Session circuit breaker. A failed *WithPermit TRANSACTION surfaces
+ *  (never a silent classic retry of the same submission — see the
+ *  header note), but it must not trap the user either: if the permit
+ *  route is broken in a way a retry re-enters (selector not cut on
+ *  this chain, RPC preflight rejecting the calldata) the gates alone
+ *  would route every manual retry straight back into the same
+ *  failure, locking a Permit2-holding wallet out of the classic path
+ *  that works. One tripped write disables permit for the rest of the
+ *  page session; the retry goes classic. A page reload re-arms it, so
+ *  a transient failure doesn't cost the wallet its permit UX forever. */
+let permit2SessionDisabled = false;
+
+export function disablePermit2ForSession(): void {
+  permit2SessionDisabled = true;
+}
+
 // EIP-712 types for `PermitTransferFrom`. Must match Uniswap's
 // canonical definition so the signature verifies inside Permit2.
 const PERMIT2_TYPES = {
@@ -116,8 +132,14 @@ export function usePermit2Signing() {
 
   /** Capability probe — connected wallets generally support EIP-712
    *  v4; the real answer comes from `sign` throwing, which callers
-   *  treat as "use the classic path". */
-  const canSign = Boolean(walletClient) && Boolean(address) && Boolean(walletChain);
+   *  treat as "use the classic path". Also false once the session
+   *  circuit breaker has tripped (the failed submission's re-render
+   *  recomputes this before the user can resubmit). */
+  const canSign =
+    Boolean(walletClient) &&
+    Boolean(address) &&
+    Boolean(walletChain) &&
+    !permit2SessionDisabled;
 
   return { sign, canSign, permit2Address: PERMIT2_ADDRESS };
 }

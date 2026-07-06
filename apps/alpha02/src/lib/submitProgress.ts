@@ -16,7 +16,11 @@
 import { erc20Abi, type PublicClient } from 'viem';
 import { useReadContract } from 'wagmi';
 
-export type PromptKind = 'sign' | 'approve' | 'send';
+/** 'permit' is the Permit2 typed-data prompt: it OCCUPIES the plan's
+ *  approve slot (same position, same count) but is a free signature,
+ *  not a transaction — labelling it 'approve' would show
+ *  approval-transaction copy for a gasless prompt (#1038). */
+export type PromptKind = 'sign' | 'approve' | 'permit' | 'send';
 
 export interface SubmitProgress {
   kind: PromptKind;
