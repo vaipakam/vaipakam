@@ -48,6 +48,15 @@ test.beforeAll(async () => {
   );
   const deadline = Date.now() + 120_000;
   for (;;) {
+    // Fail closed on a stale port: with --strictPort our child EXITS
+    // when 4174 is already taken, so a response from the port would
+    // be some other (possibly unset) server — misleading kill-switch
+    // results, not ours (round 4).
+    if (killServer.exitCode !== null) {
+      throw new Error(
+        `kill-switch vite exited with ${killServer.exitCode} — port ${KILL_PORT} already in use?`,
+      );
+    }
     try {
       const res = await fetch(KILL_BASE);
       if (res.status < 500) return;

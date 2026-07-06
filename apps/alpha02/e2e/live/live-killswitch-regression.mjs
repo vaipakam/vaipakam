@@ -14,6 +14,14 @@ const PAGES = [
 ];
 
 const { page, done } = await launch({ role: 'lender' });
+// Connect BEFORE the sweep: several killable surfaces render only in
+// the connected branch (Vpfi.tsx shows the connect-first card to an
+// unauthenticated visit, hiding the deposit banner spot), so an
+// unauthenticated sweep couldn't honestly claim the vpfi-deposit id
+// (round 4). The session persists across gotos in this context.
+await page.goto(SITE, { waitUntil: 'domcontentloaded', timeout: 60000 });
+await page.waitForTimeout(2500);
+await ensureConnected(page);
 let failures = 0;
 for (const path of PAGES) {
   await page.goto(`${SITE}${path}`, { waitUntil: 'domcontentloaded', timeout: 60000 });
@@ -31,8 +39,9 @@ for (const path of PAGES) {
 // post-offer review — and require BOTH no banner AND the sign button
 // actually enabling (which also proves the normal gates are clear).
 // Per-id coverage: post-offer = this review drive; vpfi-deposit = the
-// /vpfi root visit (deposit is the default tab, its banner renders at
-// root); accept-offer / nft-list / nft-rent share the same
+// CONNECTED /vpfi visit in the sweep above (deposit is the default
+// tab and the wallet is connected before the sweep, so its banner
+// spot renders); accept-offer / nft-list / nft-rent share the same
 // flowDisabled() config read and banner component but their review
 // states need live book/NFT fixtures — root visits only, stated here
 // honestly rather than claimed.

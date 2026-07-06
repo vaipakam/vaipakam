@@ -45,6 +45,9 @@ await page.waitForTimeout(3000);
 // the fork-tier helper does, instead of a one-time sweep (round 3).
 console.log('ticking consent, waiting for a hard verdict…');
 let verdicts = {};
+// Hoisted past the loop — the revert-text diagnostic below reads the
+// final body snapshot after the wait ends.
+let body = '';
 const deadline = Date.now() + 90_000;
 for (;;) {
   for (const box of await page.locator('input[type="checkbox"]:visible').all()) {
@@ -53,7 +56,7 @@ for (;;) {
     }
   }
   await page.waitForTimeout(2_000);
-  const body = await page.locator('body').innerText();
+  body = await page.locator('body').innerText();
   verdicts = {
     running: body.includes('free dry run of this transaction'),
     passed: body.includes('Dry run passed'),
