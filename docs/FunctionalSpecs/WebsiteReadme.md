@@ -180,7 +180,7 @@ Current connected-app surface expectations:
 - `Create Offer` should disable submit until full form validation passes, with typed validator error codes mapped through i18n, and should show token-identification trust blocks under address fields so users can distinguish canonical assets from unknown or suspicious contracts
 - `Create Offer` should present canonical limit-order language from the user's role: lenders enter the maximum they are willing to lend, the minimum rate they will accept, and the collateral they require; borrowers enter the minimum they want to borrow, the maximum rate they will accept, and the collateral they are willing to lock. The UI should not make users reason about raw lower-bound and upper-bound field names during the ordinary flow.
 - `Create Offer` may offer a gasless signed-offer mode for supported ERC-20 lender-principal and ERC-20-collateral borrower offers. The review should make clear that the user signs binding EIP-712 offer terms instead of submitting a transaction, that the act of signing records risk-and-terms consent, and that the offer becomes an ordinary on-chain offer only when a counterparty or keeper fills it. The UI must distinguish vault-backed offers from wallet-backed Permit2 offers, show expiry / nonce cancellation controls, and reject NFT-collateral or refinance-tagged signed offers until those shapes are explicitly supported. Wallet-backed signed offers must force all-or-nothing fill mode; partial signed fills are supported only for vault-backed offers.
-- when a borrower creates an NFT-collateral offer with an ERC-20 principal, `Create Offer` may expose a `Borrow or sell` opt-in that marks the offer as eligible for a parallel marketplace sale of the NFT collateral. The opt-in itself only sets the eligibility flag on the offer; publishing the actual marketplace listing is a separate step performed against the diamond after the offer is live. The review copy should make this two-step nature explicit and explain that, once the listing is published, whichever happens first wins: lender acceptance creates the loan, while a marketplace buyer fill consumes the offer by sale.
+- when a borrower creates an NFT-collateral offer with an ERC-20 principal, `Create Offer` may expose a `Borrow or sell` opt-in that marks the offer as eligible for a parallel marketplace sale of the NFT collateral. The opt-in itself only sets the eligibility flag on the offer; publishing the actual marketplace listing is a separate step performed against the diamond after the offer is live. The review copy should make this two-step nature explicit and explain that, once the listing is published, whichever happens first wins: lender acceptance creates the loan, while a marketplace buyer fill consumes the offer by sale. (This marketplace-listing model applies to the primary app only — the alpha02 naive-user surface intentionally supersedes it; see the alpha02 loan-linked-offer passage: only the lender-position secondary-sale review ships there, and linked offers of any other kind are blocked at review.)
 - lender-facing offer cards and accept-review surfaces should visibly identify when an NFT-collateral offer has a live parallel sale listing, including the ask style, current ask where available, and the fact that a buyer fill can consume the offer before lender acceptance. Offer history surfaces, including My Offers, should render the sale-consumed terminal status distinctly rather than collapsing it into cancelled or filled.
 - in Advanced mode, `Create Offer` should show an ERC-20 / ERC-20 risk-preview card that computes projected Health Factor, LTV, and liquidation-price cushion from live oracle and risk parameters; for canonical limit orders it should show the safest and riskiest relevant outcomes and warn clearly when the worst-case Health Factor falls below the initiation floor
 - Create Offer and Offer Book accept-review should show a cross-chain thin-liquidity notice when the selected collateral is thin on the active chain but appears deeper on another supported chain. This notice is informational only; it must not redirect the user or override the active-chain oracle / liquidity decision.
@@ -672,7 +672,13 @@ converge. Its intended behaviour (the test oracle for that surface):
   must refuse to render (unavailable state) when its participation
   filter can't see the wallet's full loan list; an empty feed carries
   the same staleness note as a non-empty one when ingestion has
-  positively stalled.
+  positively stalled. Completeness scope, recorded as intent: the
+  feed currently covers positions the history service can still link
+  to the wallet — events for a loan whose position token the wallet
+  burned at claim or transferred away long ago join the feed once
+  the history service answers participant-history queries (a tracked
+  indexer follow-up), and until then the feed must not present its
+  narrower scope as the wallet's complete history.
 - NFT rentals are never presented as debt: nothing says "repay", the
   NFT stays in the owner's vault, the renter receives temporary use
   rights, and the renter's total up-front payment (fees plus the live
@@ -915,7 +921,13 @@ converge. Its intended behaviour (the test oracle for that surface):
   the review flags the link, names the loan, and blocks signing
   entirely. Signing always waits until the link and kind checks
   resolve, and a failed check shows a visible retry rather than
-  silently passing.
+  silently passing. This is a deliberate supersession, on this
+  surface, of the primary app's broader `Borrow or sell`
+  marketplace-listing model described in the offer-creation
+  requirements earlier in this document: alpha02 carries ONLY the
+  lender-position secondary-sale review — creating marketplace
+  listings, and accepting offset or other linked-offer kinds, stay
+  out of this surface's scope by intent, not by omission.
 - Advanced mode shows the role-relevant position-NFT id on the loan
   page (the lender-side id to lender-side users, the borrower-side
   id to borrower-side users), linking to a verifier page that any
@@ -925,7 +937,11 @@ converge. Its intended behaviour (the test oracle for that surface):
   after its claim or never minted — the network doesn't record
   which, and the verifier says so rather than guessing (the
   three-way distinction the spec asks for is recorded as a
-  contract-level gap in the code-vs-docs audit). Only an on-chain
+  contract-level gap in the code-vs-docs audit; the general
+  verifier requirements later in this document ask for the full
+  three-way verdict and carry the matching staging note — the
+  enabling follow-up is an on-chain mint-counter view, after which
+  this surface adopts the three-way distinction). Only an on-chain
   answer produces a verdict: a transport failure shows a visible
   check-failed state, never a false "doesn't exist". A transfer-lock
   read that fails — or returns a lock reason this build doesn't
@@ -1014,6 +1030,7 @@ The website/app should clearly communicate:
 - for a live NFT whose underlying ERC-20 (lending) loan is still Active and would settle in-kind on default, the verifier should disclose that settlement caveat: a labelled `Settlement on default` line distinguishing the liquid (collateral is swapped to the lending asset) from the in-kind (collateral transferred as-is) case, and a prominent warning that the position pays the raw collateral asset rather than the lending asset, regardless of market value, so a prospective NFT buyer sees the downside before acquiring the position. The in-kind determination is collateral-driven — the time-default fallback is chosen from the collateral's liquidity, so it fires for NFT collateral or an illiquid / no-oracle ERC-20 collateral, NOT for a liquid collateral whose only illiquid leg is the principal. For an ERC-20 collateral the verdict should reflect the collateral's LIVE on-chain liquidity (the same active-network check the default path routes on), not the loan's init-time liquidity snapshot, which can go stale before default; fall back to the snapshot only when the live read is unavailable. The disclosure is shown only for lending loans (NFT-principal rentals use a different default model) and only while the loan can still default (Active) — it is hidden once the loan is terminal even if the position NFT is still live until claim
 - when the current owner of a live Vaipakam position NFT is sanctions-flagged on a chain with sanctions screening, the verifier should show a frozen-position warning: the owner cannot transfer the position or claim proceeds while flagged, and a prospective buyer should not treat the NFT as freely tradable until the flag clears. A sanctions flag on a stale original loan party should not be shown as freezing a position now held by a clean current owner.
 - when the token ID was never minted on the selected chain, the verifier should show a clear chain-specific error explaining that the token does not exist on that chain and the user may need to switch to the chain where the position was originally opened
+- staging note for the three-way verdict above: the burned-vs-never-minted distinction requires an on-chain mint-counter view the Diamond does not expose yet. Until that contract-level follow-up ships, the alpha02 surface intentionally states a two-way verdict — live, or "doesn't currently exist: either retired after its claim or never minted, the network doesn't record which" — and says so rather than guessing (see the alpha02 verifier passage, which records the same carve-out from its side). The two passages state the same intent at different stages, not a contradiction; once the mint-counter view exists, surfaces adopt the full three-way verdict here.
 - active theme and view-mode controls when relevant
 - ENS and Basenames should be resolved for wallet-address display in Activity, Loan Details, Offer Book, and header/profile surfaces; unresolved names should silently fall back to shortened addresses
 - allowance-management copy should stand on Vaipakam's own revoke flow and avoid unnecessary competitor references in page subtitles or helper text
@@ -1047,7 +1064,7 @@ Offer and acceptance risk warnings:
 - implementation note for the `Offer Book` accept-review modal: the page may additionally show one extra informational illiquid-leg warning above the combined warning-and-consent block when the selected offer contains an illiquid lending asset or collateral asset, so long as that extra warning does not introduce a second consent or a second required acknowledgement
 - the combined warning copy should be short and sharp. It should state in substance that if liquidation cannot execute safely, the lender may receive collateral in-kind instead of the lending asset; if oracle pricing is unavailable or either loan asset is illiquid, the lender may receive all collateral regardless of market value; recovery may be materially less than the asset lent; and proceeding records a binding agreement for the life of the position
 - the same risk-review area should require one combined mandatory checkbox / consent action tied to that single message, using the label: `I understand and agree to the Risk Disclosures and Vaipakam Terms.`
-- the Vaipakam Terms text in that checkbox should be an inline link to the Terms route
+- the Vaipakam Terms text in that checkbox should be an inline link to the Terms route. Decision recorded from the alpha02 copy/legal work: on a surface that carries no in-app Terms route, the link targets the marketing site's public Terms page instead (and the Risk Disclosures phrase links to the surface's in-app risk-disclosures section) — both open without destroying the in-flight flow. An in-app Terms route remains acceptable where one exists; what is mandatory is that both phrases are live links to the controlling texts.
 - the risk-review area should link to the Advanced User Guide explanation rather than embedding the full liquidation branch mechanics in the consent text
 - until localized legal translations are approved, non-English locales may fall back to the English disclosure and checkbox label while preserving the active-locale shell around it
 - on the create-offer page, these warnings only need to appear clearly on the page before submission; they are not required to be repeated in a separate final-confirmation state
