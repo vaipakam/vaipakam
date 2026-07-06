@@ -146,7 +146,7 @@ export default function ClaimCenter() {
                           claim can jump to the full timeline / risk
                           panel without going back to the dashboard. */}
                       <Link
-                        to={`/app/loans/${claim.loanId.toString()}`}
+                        to={`/loans/${claim.loanId.toString()}`}
                         style={{ color: 'var(--brand)' }}
                       >
                         #{claim.loanId.toString()}

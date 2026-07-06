@@ -67,15 +67,15 @@ import Refinance from '../../src/pages/Refinance';
 
 function renderPage(loanId = '11') {
   return render(
-    <MemoryRouter initialEntries={[`/app/loans/${loanId}/refinance`]}>
+    <MemoryRouter initialEntries={[`/loans/${loanId}/refinance`]}>
       <ThemeProvider>
         <ModeProvider>
           <Routes>
             <Route
-              path="/app/loans/:loanId/refinance"
+              path="/loans/:loanId/refinance"
               element={<Refinance />}
             />
-            <Route path="/app/loans/:loanId" element={<div>loan-home</div>} />
+            <Route path="/loans/:loanId" element={<div>loan-home</div>} />
             <Route path="/app" element={<div>app-home</div>} />
             <Route path="/app/create-offer" element={<div>create-offer</div>} />
           </Routes>

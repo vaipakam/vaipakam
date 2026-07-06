@@ -565,7 +565,7 @@ export default function Activity() {
                       </span>
                       {loanId && (
                         <Link
-                          to={`/app/loans/${loanId}`}
+                          to={`/loans/${loanId}`}
                           className="activity-pill activity-pill--link"
                           aria-label={t('activity.viewLoan', { id: loanId })}
                         >

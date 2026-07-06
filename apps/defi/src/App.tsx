@@ -1,5 +1,5 @@
 import { useEffect } from 'react';
-import { BrowserRouter, Routes, Route, Navigate, useLocation } from 'react-router-dom';
+import { BrowserRouter, Routes, Route, Navigate, useLocation, useParams } from 'react-router-dom';
 import { ErrorBoundary } from './components/app/ErrorBoundary';
 import PublicDashboard from './pages/PublicDashboard';
 import AppLayout from './pages/AppLayout';
@@ -88,6 +88,27 @@ function ExternalRedirect({ url }: { url: string }) {
 }
 
 /**
+ * Back-compat redirect for pre-flattening `/app/loans/:loanId` deep
+ * links (#1057). `relative="path"` resolves the `..` segments against
+ * the URL pathname, so the redirect preserves the active locale
+ * prefix (`/es/app/loans/7` → `/es/loans/7`, since this route mounts
+ * under the unprefixed root AND the `:locale` tree — same pattern as
+ * BuyVpfiRedirect below) plus the query + hash an alert deep link
+ * may carry.
+ */
+function LegacyLoanRedirect() {
+  const { loanId } = useParams();
+  const location = useLocation();
+  return (
+    <Navigate
+      to={`../../../loans/${loanId}${location.search}${location.hash}`}
+      relative="path"
+      replace
+    />
+  );
+}
+
+/**
  * Renders the route subtree using v6 *relative* nested-route paths
  * so the same JSX block can mount under either the unprefixed root
  * (English default) or the `:locale` prefix without duplication.
@@ -137,6 +158,11 @@ function pageRoutes(): ReactElement {
         path="admin/docs"
         element={<ExternalRedirect url={marketingUrl('/protocol-console/docs')} />}
       />
+      {/* #1057 — pre-flattening loan-details shape. Alert deep links
+          (Telegram/Push) and bookmarks minted before the /app nesting
+          was flattened carry /app/loans/:id; land them on the loan,
+          never NotFound (same back-compat alias alpha02 carries). */}
+      <Route path="app/loans/:loanId" element={<LegacyLoanRedirect />} />
 
       {/* Connected-app shell mounted at root — `/` is Dashboard,
           `/offers` is OfferBook, etc. AppLayout provides the
