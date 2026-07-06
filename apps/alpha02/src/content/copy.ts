@@ -91,6 +91,8 @@ export const copy = {
     acceptRental: 'Start the rental — the final transaction.',
     phaseSign: (c: number, t: number) => `Signing terms… (${c} of ${t})`,
     phaseApprove: (c: number, t: number) => `Approving… (${c} of ${t})`,
+    phasePermit: (c: number, t: number) =>
+      `Signing the permission… (${c} of ${t}) — free, no gas`,
     phaseSend: (c: number, t: number) => `Submitting… (${c} of ${t})`,
   },
   killSwitch: {

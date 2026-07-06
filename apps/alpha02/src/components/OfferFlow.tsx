@@ -32,6 +32,10 @@ import { useActiveChain } from '../chain/useActiveChain';
 import { getSupportedChain } from '../chain/chains';
 import { useMode } from '../app/ModeContext';
 import { DIAMOND_ABI_VIEM, useDiamondWrite } from '../contracts/diamond';
+import {
+  disablePermit2ForSession,
+  usePermit2Signing,
+} from '../contracts/usePermit2Signing';
 import { useAcceptTermsSigning } from '../contracts/useAcceptTerms';
 import { SimulationPreview } from './SimulationPreview';
 import type { TxSimInput } from '../contracts/useTxSimulation';
@@ -237,6 +241,7 @@ export function OfferFlow({ side }: { side: Side }) {
   const { data: walletClient } = useWalletClient();
   const publicClient = usePublicClient({ chainId: walletChain?.chainId });
   const { write } = useDiamondWrite();
+  const permit2 = usePermit2Signing();
   const { sign: signAcceptTerms } = useAcceptTermsSigning();
   const fees = useProtocolFees();
   const queryClient = useQueryClient();
@@ -1285,6 +1290,85 @@ export function OfferFlow({ side }: { side: Side }) {
         }
       }
     }
+    // Permit2 first (#1038): one gasless signature replaces the
+    // approval TRANSACTION (and leaves no standing Diamond allowance
+    // behind). Two preconditions, read live in one round-trip:
+    //  - the Diamond allowance is exactly zero (or unreadable). Zero
+    //    means classic would need a fresh approval — the case permit
+    //    beats. A covering allowance means classic is a single
+    //    transaction, strictly fewer prompts than sign+transact (the
+    //    #1037 roadmap promised that count); a non-zero-but-SHORT
+    //    allowance routes classic too, so its zero-first reset still
+    //    clears the stale approval instead of leaving it standing;
+    //  - the wallet holds a standing token→Permit2 approval covering
+    //    the amount. SignatureTransfer executes the transferFrom AS
+    //    the Permit2 contract, so without that approval every
+    //    *WithPermit call categorically reverts — engaging permit
+    //    there would burn a doomed transaction. Wallets that have
+    //    used any Permit2 app (Uniswap et al) hold the near-universal
+    //    max approval; everyone else keeps the classic path with zero
+    //    degradation.
+    if (permit2.canSign) {
+      const [cur, permit2Cur] = await Promise.all([
+        readAllowance({
+          publicClient,
+          token,
+          owner: address,
+          spender: walletChain.diamondAddress,
+        }),
+        readAllowance({
+          publicClient,
+          token,
+          owner: address,
+          spender: permit2.permit2Address,
+        }),
+      ]);
+      const freshApprovalNeeded = cur === undefined || cur === 0n;
+      const permit2Funded = permit2Cur !== undefined && permit2Cur >= amount;
+      if (freshApprovalNeeded && permit2Funded) {
+        // Phase 1 — the signature. ANY failure here is pre-transaction
+        // by construction (nothing was broadcast), so a wallet that
+        // declines or can't do EIP-712 falls to classic unconditionally
+        // — Permit2 is an upgrade, never a gate. The consumed step is
+        // added back to the plan so the classic sequence's prompts
+        // keep an honest "x of y" (#1037).
+        stepper.next('permit');
+        let signed: Awaited<ReturnType<typeof permit2.sign>> | null = null;
+        try {
+          signed = await permit2.sign({
+            token,
+            amount,
+            spender: walletChain.diamondAddress,
+          });
+        } catch {
+          signed = null;
+          stepper.grow(1);
+        }
+        if (signed) {
+          // Phase 2 — the transaction. NO classic fallback from here:
+          // an ambiguous broadcast/receipt error may ride on top of a
+          // transaction that still mines (double execution), and a
+          // definitive revert is protocol state that would doom the
+          // classic retry too — after minting a fresh approval for
+          // nothing. Errors surface — but trip the session breaker
+          // first, so the user's MANUAL retry routes classic instead
+          // of re-entering a permit path that may be structurally
+          // broken (locked-out wallets were Codex round-2's P2).
+          stepper.next('send');
+          try {
+            const { hash } = await write('createOfferWithPermit', [
+              payload,
+              signed.permit,
+              signed.signature,
+            ]);
+            return hash;
+          } catch (permitErr) {
+            disablePermit2ForSession();
+            throw permitErr;
+          }
+        }
+      }
+    }
     await ensureAllowance({
       publicClient,
       walletClient,
@@ -1529,6 +1613,80 @@ export function OfferFlow({ side }: { side: Side }) {
             : lendingMeta.data?.symbol,
         }),
       ]);
+      // Permit2 first (#1038) — same rules as submitPost (approval
+      // actually needed + a standing token→Permit2 approval covering
+      // the amount), plus offer-shape eligibility the facet enforces:
+      // acceptOfferWithPermit only serves accepting a LENDER offer
+      // (the acceptor's ERC-20 collateral pull). A borrower-offer
+      // accept has no acceptor pull — the principal moves
+      // vault-internal — and the facet reverts InvalidAssetType.
+      // Sale-vehicle accepts settle via completeLoanSale (the pull
+      // shape is the seller's, not the acceptor's) — not a Permit2
+      // target either; both keep the classic sequence. The
+      // AcceptTerms signature already collected above rides along
+      // unchanged — acceptOfferWithPermit takes BOTH signatures.
+      if (permit2.canSign && selected.offerType === 0 && !acceptIsLoanSale) {
+        const [cur, permit2Cur] = await Promise.all([
+          readAllowance({
+            publicClient,
+            token: payToken,
+            owner: address,
+            spender: walletChain.diamondAddress,
+          }),
+          readAllowance({
+            publicClient,
+            token: payToken,
+            owner: address,
+            spender: permit2.permit2Address,
+          }),
+        ]);
+        // Zero-only (not merely short): a non-zero-but-short allowance
+        // routes classic so its zero-first reset clears the stale
+        // approval instead of leaving it standing.
+        const freshApprovalNeeded = cur === undefined || cur === 0n;
+        const permit2Funded =
+          permit2Cur !== undefined && permit2Cur >= payAmount;
+        if (freshApprovalNeeded && permit2Funded) {
+          // Phase 1 — the permit signature: any failure is
+          // pre-transaction, fall to classic unconditionally; the
+          // consumed step is added back to the plan (#1037 honesty).
+          stepper.next('permit');
+          let permitSigned: Awaited<ReturnType<typeof permit2.sign>> | null =
+            null;
+          try {
+            permitSigned = await permit2.sign({
+              token: payToken,
+              amount: payAmount,
+              spender: walletChain.diamondAddress,
+            });
+          } catch {
+            permitSigned = null;
+            stepper.grow(1);
+          }
+          if (permitSigned) {
+            // Phase 2 — the transaction: NO classic fallback from
+            // here — ambiguous errors may ride a tx that still mines
+            // (double execution), and definitive reverts would doom
+            // the classic retry too, after minting a fresh approval
+            // for nothing. Errors surface after tripping the session
+            // breaker, so a manual retry routes classic.
+            stepper.next('send');
+            try {
+              const { hash } = await write('acceptOfferWithPermit', [
+                BigInt(selected.offerId),
+                terms,
+                signature,
+                permitSigned.permit,
+                permitSigned.signature,
+              ]);
+              return hash;
+            } catch (permitErr) {
+              disablePermit2ForSession();
+              throw permitErr;
+            }
+          }
+        }
+      }
       await ensureAllowance({
         publicClient,
         walletClient,
@@ -2123,9 +2281,11 @@ export function OfferFlow({ side }: { side: Side }) {
                     ? 'Waiting for wallet…'
                     : progress.kind === 'sign'
                       ? copy.signing.phaseSign(progress.current, progress.total)
-                      : progress.kind === 'approve'
-                        ? copy.signing.phaseApprove(progress.current, progress.total)
-                        : copy.signing.phaseSend(progress.current, progress.total)
+                      : progress.kind === 'permit'
+                        ? copy.signing.phasePermit(progress.current, progress.total)
+                        : progress.kind === 'approve'
+                          ? copy.signing.phaseApprove(progress.current, progress.total)
+                          : copy.signing.phaseSend(progress.current, progress.total)
                   : mode === 'accept'
                     ? text.acceptSubmitLabel
                     : text.submitLabel}
