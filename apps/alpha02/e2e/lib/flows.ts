@@ -30,7 +30,7 @@ export async function pickCuratedAsset(
 /** Open an AssetPicker's paste-address branch and fill `address`.
  *  '__custom__' is the picker's stable sentinel option value — never
  *  positional (the curated rows above it hydrate asynchronously). */
-async function pasteAsset(
+export async function pasteAsset(
   page: Page,
   pickerId: string,
   address: string,
