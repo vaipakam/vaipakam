@@ -25,6 +25,7 @@ import {
   type IndexedOffer,
 } from './indexer';
 import { readLoanRowLive } from './liveLoanRow';
+import { filterTerminalOffers } from './bookCatchUp';
 import {
   readOfferRowLive,
   readOwnLoanRowsLive,
@@ -43,6 +44,7 @@ const ACTIVE_OFFERS_MAX_PAGES = 5;
 
 export function useActiveOffers() {
   const { readChain } = useActiveChain();
+  const publicClient = usePublicClient({ chainId: readChain.chainId });
   return useQuery({
     queryKey: ['activeOffers', readChain.chainId],
     refetchInterval: REFRESH_MS,
@@ -60,10 +62,24 @@ export function useActiveOffers() {
         });
         if (page === null) return null;
         all.push(...page.offers);
-        if (page.nextBefore === null) return all;
+        if (page.nextBefore === null) break;
         before = page.nextBefore;
+        if (i === ACTIVE_OFFERS_MAX_PAGES - 1) {
+          return null; // cap reached with more pages remaining → truncated
+        }
       }
-      return null; // cap reached with more pages remaining → truncated
+      // On-chain catch-up (#1029): strip offers the chain already
+      // marked terminal in the tail the indexer hasn't ingested yet,
+      // so an ingest lag can't show a just-filled/cancelled offer a
+      // user would then doom a transaction on. Fail-open: any scan
+      // trouble returns the rows unfiltered — the catch-up layer can
+      // make the book more honest, never make it unavailable.
+      return filterTerminalOffers(all, {
+        chainId: readChain.chainId,
+        diamondAddress: readChain.diamondAddress,
+        deployBlock: readChain.deployBlock,
+        publicClient,
+      });
     },
   });
 }

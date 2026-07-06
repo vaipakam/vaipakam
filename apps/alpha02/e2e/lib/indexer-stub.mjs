@@ -242,6 +242,32 @@ async function userPositionLoans(addr) {
   }
 }
 
+// Pin mode (#1029): a spec can freeze the ACTIVE-OFFERS view and the
+// freshness cursor at "now" while anvil keeps advancing — the only
+// way this always-live stub can honestly simulate ingest lag, which
+// is the state the book's on-chain catch-up merge exists for. Only
+// /offers/active and /offers/stats are frozen; every other route
+// stays live. workers=1 (playwright.config) makes the global pin
+// race-free across specs.
+let pinned = null;
+
+async function capturePin() {
+  const [ids, chainNow, block] = await Promise.all([
+    activeOfferIds(),
+    forkNowSec(),
+    pub.getBlock({ blockTag: 'latest' }),
+  ]);
+  const offers = (await Promise.all(ids.map((id) => mapOffer(id, chainNow))))
+    .filter((o) => o && o.status === 'active')
+    .sort((a, b) => b.offerId - a.offerId);
+  return {
+    active: { chainId: CHAIN_ID, offers, nextBefore: null },
+    stats: {
+      indexer: { lastBlock: Number(block.number), updatedAt: Number(block.timestamp) },
+    },
+  };
+}
+
 async function handler(req, res) {
   const url = new URL(req.url, `http://127.0.0.1:${PORT}`);
   const parts = url.pathname.split('/').filter(Boolean);
@@ -254,6 +280,16 @@ async function handler(req, res) {
   };
 
   try {
+    // Test-control routes (POST) — see the pin-mode note above.
+    if (req.method === 'POST' && parts[0] === '__pin') {
+      pinned = await capturePin();
+      return json(200, { pinnedBlock: pinned.stats.indexer.lastBlock });
+    }
+    if (req.method === 'POST' && parts[0] === '__unpin') {
+      pinned = null;
+      return json(200, { ok: true });
+    }
+
     // The stub serves exactly ONE chain (the fork). An explicit
     // chainId for anything else must be a loud error, not Base
     // Sepolia data wearing the wrong label.
@@ -264,8 +300,9 @@ async function handler(req, res) {
 
     // GET /offers/stats?chainId= — freshness piggyback. Report the
     // FORK's latest block/timestamp so evm_increaseTime never reads
-    // as a stalled cursor.
+    // as a stalled cursor (pin mode: the captured cursor instead).
     if (parts[0] === 'offers' && parts[1] === 'stats') {
+      if (pinned) return json(200, pinned.stats);
       const block = await pub.getBlock({ blockTag: 'latest' });
       return json(200, {
         indexer: { lastBlock: Number(block.number), updatedAt: Number(block.timestamp) },
@@ -274,8 +311,10 @@ async function handler(req, res) {
 
     // GET /offers/active?chainId=&limit= — the full book in one page
     // (`limit` deliberately ignored: nextBefore null promises
-    // completeness, see activeOfferIds).
+    // completeness, see activeOfferIds). Pin mode serves the frozen
+    // snapshot.
     if (parts[0] === 'offers' && parts[1] === 'active') {
+      if (pinned) return json(200, pinned.active);
       const [ids, chainNow] = await Promise.all([activeOfferIds(), forkNowSec()]);
       const offers = (await Promise.all(ids.map((id) => mapOffer(id, chainNow))))
         .filter((o) => o && o.status === 'active')
