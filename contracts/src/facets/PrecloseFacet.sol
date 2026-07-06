@@ -157,6 +157,11 @@ contract PrecloseFacet is
     /// accumulator), so it is rejected until the first offer is completed or
     /// cancelled (which clears the link + unwinds the prepay).
     error OffsetAlreadyActive();
+    /// #1001 (S3, Codex #1070) — an offset can't be opened while a lender sale
+    /// listing (`loanToSaleOfferId`) is live on the same loan; the two close-out
+    /// flows would race and leave one vehicle stale. Symmetric to
+    /// `EarlyWithdrawalFacet.OffsetActiveOnLoan`.
+    error SaleListingActiveOnLoan();
 
     // ─── Option 1: Direct Preclose ────────────────────────────────��─────────
 
@@ -1060,6 +1065,15 @@ contract PrecloseFacet is
         // up front is a clean error.
         if (LibVaipakam.storageSlot().loanToOffsetOfferId[loanId] != 0)
             revert OffsetAlreadyActive();
+        // #1001 (S3, Codex #1070 r8 P2) — SYMMETRIC to the round-4 guard that
+        // blocks `createLoanSaleOffer` while an offset is live. If a lender sale
+        // listing is already open on this loan, don't let the borrower open an
+        // offset too: both flows would be live on one loan, and whichever closes
+        // first leaves the other's vehicle + NFT lock stale (a later accept of the
+        // stale one reverts after the counterparty commits). Require the sale
+        // listing be cancelled first.
+        if (LibVaipakam.storageSlot().loanToSaleOfferId[loanId] != 0)
+            revert SaleListingActiveOnLoan();
         _validateOffsetRequest(
             loan,
             durationDays,
@@ -1518,6 +1532,16 @@ contract PrecloseFacet is
             /* lenderSide */ false
         );
 
+        // #1001 (S3, Codex #1070 r8 P2) — clear any parallel-sale listing BEFORE
+        // the consolidation below. A borrower-side listing (`prepayListingOrderHash`
+        // / offer-keyed) makes `_isExcludedLive` SKIP the borrower-side
+        // consolidation, which would leave `loan.borrower` stale and let
+        // `_settleOldLenderAtCompletion` pull the payoff from the prior holder
+        // instead of the current NFT owner. Ordering it first (as `precloseDirect`
+        // does) guarantees consolidation isn't excluded by a live listing.
+        // Idempotent no-op in the normal flow (the offset lock blocks a listing).
+        LibPrepayCleanup.clearActiveListing(loan, originalLoanId);
+
         // #1001 (S3, Codex #1070 r3 P1/P2) — re-anchor BOTH sides to their
         // current NFT holders BEFORE settling, exactly as `precloseDirect` and
         // `RepayFacet` do at their close-outs. A position NFT transferred before
@@ -1565,16 +1589,8 @@ contract PrecloseFacet is
         if (loan.assetType != LibVaipakam.AssetType.ERC20) {
             _resetNftRenter(loan);
         }
-
-        // T-086 follow-up to step 14 — defensive prepay-listing cleanup.
-        // In normal flow this is a no-op (the borrower must cancel the
-        // listing before initiating an offset, because the borrower-NFT
-        // lock-overwrite-protection from step 6 round 2 blocks
-        // `_lock(PrecloseOffset)` over a live `_lock(PrepayCollateralListing)`).
-        // The call stays as belt-and-suspenders so any future change
-        // that loosens the lock-overwrite invariant doesn't silently
-        // leave stale listing bookkeeping behind. Idempotent.
-        LibPrepayCleanup.clearActiveListing(loan, originalLoanId);
+        // (Parallel-sale listing cleanup moved ABOVE the consolidation — see the
+        // Codex #1070 r8 P2 note there.)
 
         // Close original loan — offset completion transitions Active -> Repaid.
         _setLoanClaimable(loan, originalLoanId);
