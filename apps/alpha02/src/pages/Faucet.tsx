@@ -222,6 +222,19 @@ export function Faucet() {
             }
           />
           <FaucetRow
+            title={copy.faucet.liquid2.title}
+            blurb={copy.faucet.liquid2.blurb}
+            address={mocks.liquidToken2}
+            explorer={readChain.blockExplorer}
+            actionLabel={copy.faucet.liquid2.action(LIQUID_UNITS)}
+            busy={busy === mocks.liquidToken2}
+            disabled={!canWrite || busy !== null}
+            onClick={() =>
+              mocks.liquidToken2 &&
+              void mintErc20(mocks.liquidToken2, LIQUID_UNITS, 'tLQ2')
+            }
+          />
+          <FaucetRow
             title={copy.faucet.mweth.title}
             blurb={copy.faucet.mweth.blurb}
             address={mocks.mWeth}

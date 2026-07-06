@@ -213,12 +213,16 @@ export function SelectMenu({
               // pointerenter (not mousemove) so scroll-into-view can't
               // fight the pointer for the active row.
               onPointerEnter={() => setActiveIndex(i)}
-              // pointerdown-commit keeps the click inside the menu even
-              // if the row re-renders between down and up.
-              onPointerDown={(e) => {
-                e.preventDefault();
-                commit(i);
-              }}
+              // preventDefault ONLY — keeps DOM focus on the trigger
+              // (a row press must not blur the combobox). The COMMIT
+              // waits for click: committing on pointerdown made every
+              // touch a selection, so drag-scrolling an overflowing
+              // menu picked whatever row the finger landed on and the
+              // lower rows were unreachable on mobile (Codex #1085
+              // r1). A pan gesture never fires click on a row; a tap
+              // does.
+              onPointerDown={(e) => e.preventDefault()}
+              onClick={() => commit(i)}
             >
               <span className="select-menu-option-main">
                 <span className="select-menu-option-label">{opt.label}</span>
