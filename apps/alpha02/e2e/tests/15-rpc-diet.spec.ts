@@ -30,7 +30,14 @@ test('parked book visitor does not stream RPC polls', async ({
   // 429s under a list page's first-paint lookup burst.
   let merkleHits = 0;
   page.on('request', (req) => {
-    if (req.url().includes('eth.merkle.io')) merkleHits++;
+    // Hostname compare, not substring (CodeQL js/incomplete-url-
+    // substring-sanitization): the guard must not be satisfiable by
+    // e.g. a path or query merely containing the string.
+    try {
+      if (new URL(req.url()).hostname === 'eth.merkle.io') merkleHits++;
+    } catch {
+      /* non-URL request target */
+    }
     if (!recording) return;
     const body = req.postData();
     if (!body) return;
