@@ -1439,6 +1439,15 @@ contract PrecloseFacet is
     function completeOffset(
         uint256 originalLoanId
     ) external nonReentrant whenNotPaused {
+        // #1001 (S3, Codex #1070 r7 P2) — Tier-1 caller screen on the EXTERNAL
+        // recovery hook. This path pulls the old-loan payoff from the borrower and
+        // deposits it to the lender, so a keeper (COMPLETE_OFFSET) approved before
+        // being sanctioned must not be able to trigger the value-moving close-out —
+        // matching `completeLoanSale` + the sibling preclose entry points. The
+        // internal auto-complete path (`completeOffsetInternal`) is intentionally
+        // NOT screened here: its caller is the diamond itself and the accepting
+        // counterparty was already screened at `acceptOffer`.
+        LibVaipakam._assertNotSanctioned(msg.sender);
         _completeOffsetImpl(originalLoanId);
     }
 
