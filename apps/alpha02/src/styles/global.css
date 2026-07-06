@@ -806,3 +806,100 @@ a.item-row:hover {
     transform: none;
   }
 }
+
+/* Support drawer (#1028 item 4) — the app's first slide-over. The FAB
+   sits above the phone tab bar; the drawer is a right-side panel on
+   wide screens and near-full-width on phones. */
+.diag-fab {
+  position: fixed;
+  right: var(--space-4);
+  /* Clear the fixed tab bar on phones. */
+  bottom: calc(72px + env(safe-area-inset-bottom) + var(--space-3));
+  z-index: 40;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 44px;
+  height: 44px;
+  border-radius: 50%;
+  border: 1px solid var(--border);
+  background: var(--surface-raised);
+  color: var(--text-muted);
+  box-shadow: var(--shadow-card);
+  cursor: pointer;
+}
+
+.diag-fab:hover {
+  color: var(--brand);
+}
+
+.diag-fab svg {
+  width: 22px;
+  height: 22px;
+}
+
+@media (min-width: 720px) {
+  .diag-fab {
+    bottom: var(--space-4);
+  }
+}
+
+.diag-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 41;
+  background: rgba(0, 0, 0, 0.35);
+}
+
+.diag-drawer {
+  position: fixed;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 42;
+  width: min(420px, 100vw);
+  overflow-y: auto;
+  background: var(--surface-raised);
+  border-left: 1px solid var(--border);
+  padding: var(--space-4);
+}
+
+.diag-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: var(--space-2);
+}
+
+.diag-rows {
+  display: grid;
+  gap: var(--space-3);
+  margin: 0;
+}
+
+.diag-row dt {
+  font-size: 0.78rem;
+  font-weight: 600;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+}
+
+.diag-row dd {
+  margin: 2px 0 0;
+  font-size: 0.92rem;
+  color: var(--text-body);
+  word-break: break-word;
+}
+
+.diag-ok {
+  color: var(--ok);
+}
+
+.diag-warn {
+  color: var(--warn);
+}
+
+.diag-muted {
+  color: var(--text-muted);
+}

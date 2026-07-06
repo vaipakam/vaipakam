@@ -140,6 +140,45 @@ export const copy = {
     reload: 'Reload page',
     home: 'Back to Home',
   },
+
+  /** #1028 item 4 — the Support drawer: connection health + report a
+   *  problem. Statuses are honest and next-step-shaped; the report
+   *  never carries the full wallet address. */
+  diagnostics: {
+    open: 'Support and connection check',
+    title: 'Support',
+    lede:
+      'A quick health check of the connections this app depends on, and a way to report a problem.',
+    close: 'Close',
+    network: 'Network',
+    wallet: 'Wallet',
+    walletNotConnected: 'Not connected',
+    rpc: 'Blockchain connection',
+    rpcOk: (block: string) => `Working — latest block ${block}`,
+    rpcChecking: 'Checking…',
+    rpcFailing:
+      'Not responding — the app can’t reach the blockchain right now. Reloading, or switching networks and back, often clears it.',
+    indexer: 'Market data cache',
+    indexerOk: (age: string) => `Up to date (refreshed ${age} ago)`,
+    indexerStale: (age: string) =>
+      `Running behind (last refreshed ${age} ago) — market lists may lag; your own positions still load directly from the chain.`,
+    indexerUnreachable:
+      'Unreachable right now — market lists may not load until it recovers. Your own positions still load directly from the chain.',
+    indexerNoCursor:
+      'Reachable, but no data has been recorded for this network yet — it will fill as activity arrives.',
+    indexerNotConfigured:
+      'Not configured on this build — market lists can’t load here. Your own positions still load directly from the chain.',
+    networkUnsupported: (walletChainId: string, readName: string, readChainId: number) =>
+      `Wallet is on an unsupported network (chain id ${walletChainId}) — data shown comes from ${readName} (${readChainId}). Switch networks to transact.`,
+    build: 'App version',
+    lastErrorTitle: 'Last error on this device',
+    noError: 'No errors recorded in this session.',
+    report: 'Report an issue on GitHub',
+    reportHint:
+      'Opens a pre-filled GitHub issue with the details above and the last recorded error. Your full wallet address is never included.',
+    copyDetails: 'Copy details',
+    copied: 'Copied.',
+  },
   wallet: {
     connect: 'Connect wallet',
     connectFirst: 'Connect a wallet to continue.',
