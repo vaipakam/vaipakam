@@ -18,24 +18,28 @@ replaced by a free Permit2 signature (#1038):
   minutes — no standing allowance is left behind.
 
 The permit path only engages when both preconditions hold, checked
-live at submit time: an approval would actually be needed (with a
-sufficient standing allowance the app keeps the single-transaction
-classic path — fewer prompts still), and the wallet's Permit2
-approval covers the amount (without it the permit variant cannot
-work on-chain, so attempting it would only waste a doomed
+live at submit time: no approval for the protocol exists at all (with
+a sufficient standing allowance the app keeps the single-transaction
+classic path — fewer prompts still; and a leftover partial allowance
+also keeps the classic path, so its clean-up step still resets the
+stale approval rather than leaving it behind), and the wallet's
+Permit2 approval covers the amount (without it the permit variant
+cannot work on-chain, so attempting it would only waste a doomed
 transaction). Wallets without a Permit2 approval never see a permit
 prompt and keep exactly the flow they had before. If the wallet
 declines the permit signature — or can't produce one — the app falls
 back to the classic approve-then-act sequence automatically: the new
 path is an upgrade, never a gate. The pre-submission confirmation
 count shown on the review never under-promises: the permit path
-matches it or finishes early.
+matches it or finishes early, and if a declined permit prompt forces
+the classic sequence, the live step counter widens to count the extra
+interaction honestly instead of repeating a step.
 
-One safety subtlety carried deliberately: once the permit transaction
-has been handed to the wallet, only failures that provably left no
-pending transaction behind (the user declining the prompt, a
-definitive revert) fall back to the classic sequence. Anything
-ambiguous — a network error while broadcasting or while waiting for
-confirmation — surfaces as an error instead, because silently
-retrying the classic way on top of a transaction that may still
-confirm could execute the action twice.
+One safety subtlety carried deliberately: the automatic fallback ends
+at the signature step. Once the permit transaction itself has been
+handed to the wallet, any failure surfaces as an error instead of
+silently retrying the classic way — an ambiguous network failure
+could sit on top of a transaction that still confirms (executing the
+action twice), and a definite rejection usually means the action
+itself can no longer succeed, so a classic retry would only pay for
+an approval it cannot use. Retrying manually re-runs all the checks.

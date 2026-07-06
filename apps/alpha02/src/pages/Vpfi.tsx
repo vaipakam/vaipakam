@@ -29,7 +29,6 @@ import { SimulationPreview } from '../components/SimulationPreview';
 import type { TxSimInput } from '../contracts/useTxSimulation';
 import { ensureAllowance } from '../contracts/erc20';
 import {
-  permitFallbackSafe,
   usePermit2Signing,
 } from '../contracts/usePermit2Signing';
 import { readAllowance } from '../lib/submitProgress';
@@ -196,10 +195,13 @@ export function Vpfi() {
               spender: permit2.permit2Address,
             }),
           ]);
-          const needsApproval = cur === undefined || cur < amountWei;
+          // Zero-only (not merely short): a non-zero-but-short
+          // allowance routes classic so its zero-first reset clears
+          // the stale approval instead of leaving it standing.
+          const freshApprovalNeeded = cur === undefined || cur === 0n;
           const permit2Funded =
             permit2Cur !== undefined && permit2Cur >= amountWei;
-          if (needsApproval && permit2Funded) {
+          if (freshApprovalNeeded && permit2Funded) {
             // Phase 1 — the permit signature: any failure is
             // pre-transaction, fall to classic unconditionally.
             setPhase('approving');
@@ -214,21 +216,19 @@ export function Vpfi() {
               signed = null;
             }
             if (signed) {
-              // Phase 2 — the transaction: only definitive
-              // no-state-change failures fall back; ambiguous
-              // broadcast/receipt errors surface (double-execute risk).
+              // Phase 2 — the transaction: NO classic fallback from
+              // here — ambiguous errors may ride a tx that still
+              // mines (double execution), and definitive reverts
+              // would doom the classic retry too, after minting a
+              // fresh approval for nothing. Errors surface; a manual
+              // retry re-runs the gates.
               setPhase('submitting');
-              try {
-                await write('depositVPFIToVaultWithPermit', [
-                  amountWei,
-                  signed.permit,
-                  signed.signature,
-                ]);
-                deposited = true;
-              } catch (permitErr) {
-                if (!permitFallbackSafe(permitErr)) throw permitErr;
-                /* definitive failure — fall through to the classic path */
-              }
+              await write('depositVPFIToVaultWithPermit', [
+                amountWei,
+                signed.permit,
+                signed.signature,
+              ]);
+              deposited = true;
             }
           }
         }

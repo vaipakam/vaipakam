@@ -13,6 +13,15 @@
  * EIP-712 (old hardware wallets, method-not-found) throws out of
  * `sign`, and the CALLER falls back to the classic approve+action
  * path — Permit2 is an upgrade, never a gate.
+ *
+ * The fallback boundary is the SIGNATURE step only. Once the
+ * *WithPermit transaction itself has been handed to the wallet, any
+ * failure surfaces to the user — never a silent classic retry. An
+ * ambiguous broadcast/receipt error could ride on top of a
+ * transaction that still mines (double execution), and a definitive
+ * revert is almost always protocol state (offer consumed, asset
+ * paused) that would doom the classic retry too — after it mined a
+ * fresh approval for nothing. A manual retry re-evaluates every gate.
  */
 import { useCallback } from 'react';
 import { useWalletClient } from 'wagmi';
@@ -121,47 +130,3 @@ function randomNonce(): bigint {
   return n;
 }
 
-/** Whether a failed `*WithPermit` TRANSACTION may safely fall through
- *  to the classic approve+action path. This is an ALLOWLIST of
- *  failures known to leave no pending transaction behind — everything
- *  unrecognised surfaces (fail closed). A denylist of "unsafe" names
- *  is the wrong shape here: viem's receipt polling rejects immediately
- *  on transport errors (an RPC 429/500 mid-poll throws HttpRequestError,
- *  not a timeout) — post-broadcast failures a denylist would wave
- *  through, letting a classic retry race a WithPermit transaction that
- *  can still mine: two offers, or a double deposit.
- *
- *  Safe to retry classically:
- *  - the user rejected the transaction prompt (EIP-1193 4001 /
- *    UserRejectedRequestError) — nothing was signed or broadcast;
- *  - gas estimation failed (EstimateGasExecutionError) — estimation
- *    strictly precedes signing and broadcast, whatever its cause;
- *  - a definitive revert: the node refused the call as reverting
- *    (ExecutionRevertedError), or the transaction MINED and reverted
- *    (`write()` throws `Transaction reverted (<hash>)` after a
- *    status!=success receipt) — no state changed either way.
- *
- *  (Signature-step failures never reach this gate: call sites wrap
- *  `sign()` separately, and any sign error is pre-transaction by
- *  construction — always safe to fall back.) */
-export function permitFallbackSafe(err: unknown): boolean {
-  let cur: unknown = err;
-  for (let i = 0; i < 10 && cur; i++) {
-    const e = cur as { name?: string; code?: unknown; message?: unknown };
-    if (e.code === 4001 || e.name === 'UserRejectedRequestError') return true;
-    if (
-      e.name === 'EstimateGasExecutionError' ||
-      e.name === 'ExecutionRevertedError'
-    ) {
-      return true;
-    }
-    if (
-      typeof e.message === 'string' &&
-      e.message.startsWith('Transaction reverted (')
-    ) {
-      return true;
-    }
-    cur = (cur as { cause?: unknown }).cause;
-  }
-  return false;
-}

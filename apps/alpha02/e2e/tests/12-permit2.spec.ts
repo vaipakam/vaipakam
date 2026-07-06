@@ -24,7 +24,7 @@
  *     approve+create sequence and still succeeds — Permit2 is an
  *     upgrade, never a gate.
  */
-import { erc20Abi, maxUint256, parseEther } from 'viem';
+import { erc20Abi, maxUint256 } from 'viem';
 import { test, expect } from '../lib/wallet-fixture';
 import { postLenderOffer, newestOfferIdFor } from '../lib/flows';
 import { pub, DIAMOND, WETH, forkChain, walletFor } from '../lib/chain';
@@ -44,18 +44,21 @@ async function wethAllowance(
   });
 }
 
-/** Set the lender's WETH→Permit2 allowance directly against the fork —
- *  the standing approval a real wallet acquires the first time it uses
- *  any Permit2 app (Uniswap et al). Deliberately NOT via the injected
- *  fixture wallet: the spec's transaction counters must only see what
- *  the APP sends. */
-async function setPermit2Allowance(value: bigint): Promise<void> {
+/** Set one of the lender's WETH allowances directly against the fork —
+ *  e.g. the standing Permit2 approval a real wallet acquires the first
+ *  time it uses any Permit2 app (Uniswap et al). Deliberately NOT via
+ *  the injected fixture wallet: the spec's transaction counters must
+ *  only see what the APP sends. */
+async function setLenderWethAllowance(
+  spender: `0x${string}`,
+  value: bigint,
+): Promise<void> {
   const account = accountFor('lender');
   const hash = await walletFor(account).writeContract({
     address: WETH,
     abi: erc20Abi,
     functionName: 'approve',
-    args: [PERMIT2, value],
+    args: [spender, value],
     chain: forkChain,
     account,
   });
@@ -65,7 +68,10 @@ async function setPermit2Allowance(value: bigint): Promise<void> {
 test('a wallet without a Permit2 approval keeps the classic path, silently', async ({
   launchWallet,
 }) => {
-  await setPermit2Allowance(0n);
+  await setLenderWethAllowance(PERMIT2, 0n);
+  // Zero Diamond allowance so the classic path provably needs its
+  // approve transaction (the >= 2 assertion below).
+  await setLenderWethAllowance(DIAMOND, 0n);
   const session = await launchWallet('lender');
   const { page, account, flags } = session;
 
@@ -83,14 +89,18 @@ test('a wallet without a Permit2 approval keeps the classic path, silently', asy
 test('permit path posts an offer in a single transaction, leaving no Diamond allowance', async ({
   launchWallet,
 }) => {
-  await setPermit2Allowance(maxUint256);
+  await setLenderWethAllowance(PERMIT2, maxUint256);
+  // The permit gate engages only on a ZERO Diamond allowance (a
+  // non-zero-but-short one routes classic so its zero-first reset
+  // still cleans up) — zero it explicitly so the test is
+  // order-independent, then assert the precondition: the classic
+  // path WOULD need an approval here (otherwise one transaction
+  // proves nothing).
+  await setLenderWethAllowance(DIAMOND, 0n);
   const session = await launchWallet('lender');
   const { page, account, flags } = session;
-
-  // Precondition for the single-tx claim: the classic path WOULD need
-  // an approval here (otherwise one transaction proves nothing).
   const before = await wethAllowance(account.address, DIAMOND);
-  expect(before < parseEther('0.005')).toBe(true);
+  expect(before).toBe(0n);
 
   await postLenderOffer(page);
   const offerId = await newestOfferIdFor(account.address);
@@ -110,9 +120,11 @@ test('permit path posts an offer in a single transaction, leaving no Diamond all
 test('a wallet refusing Permit2 typed data degrades to the classic approve path', async ({
   launchWallet,
 }) => {
-  // The Permit2 approval is standing, so the app WILL attempt the
-  // permit path — the refusal is what forces the fallback.
-  await setPermit2Allowance(maxUint256);
+  // The Permit2 approval is standing and the Diamond allowance is
+  // zero, so the app WILL attempt the permit path — the refusal is
+  // what forces the fallback.
+  await setLenderWethAllowance(PERMIT2, maxUint256);
+  await setLenderWethAllowance(DIAMOND, 0n);
   const session = await launchWallet('lender');
   const { page, account, flags } = session;
   flags.rejectPermit2 = true;

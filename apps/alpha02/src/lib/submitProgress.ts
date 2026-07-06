@@ -48,6 +48,12 @@ export interface Stepper {
    *  the planned total so a plan/reality drift (allowance changed
    *  between planning and executing) can't render "4 of 3". */
   next: (kind: PromptKind) => void;
+  /** Widen the plan mid-flight. A declined Permit2 signature already
+   *  consumed a step, and the classic sequence it falls back to still
+   *  needs its full approve prompt — without growing the total the
+   *  counter would clamp and repeat ("2 of 2" twice), under-counting
+   *  the prompts actually shown (#1037 honesty). */
+  grow: (extra: number) => void;
 }
 
 export function makeStepper(
@@ -55,10 +61,14 @@ export function makeStepper(
   onChange: (p: SubmitProgress) => void,
 ): Stepper {
   let current = 0;
+  let planned = total;
   return {
     next(kind: PromptKind): void {
-      current = Math.min(current + 1, total);
-      onChange({ kind, current, total });
+      current = Math.min(current + 1, planned);
+      onChange({ kind, current, total: planned });
+    },
+    grow(extra: number): void {
+      planned += extra;
     },
   };
 }

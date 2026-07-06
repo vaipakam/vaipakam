@@ -700,20 +700,25 @@ converge. Its intended behaviour (the test oracle for that surface):
   with a single gas payment, the authorisation covers exactly one
   pull and expires shortly, and no standing protocol allowance is
   left behind. The permit route engages only when both live-checked
-  preconditions hold: an approval would otherwise be needed, and the
-  wallet's Permit2 approval covers the amount (without it the permit
-  variant cannot succeed on-chain, so it is skipped silently rather
-  than attempted). A wallet that declines or cannot produce the
-  signature falls back to the classic approve-then-act sequence
-  automatically, and the pre-disclosed confirmation count never
-  under-promises (the permit route matches it or finishes early).
-  Once the permit-based transaction has been handed to the wallet,
-  only failures that provably left no pending transaction behind
-  (the user declining, a definitive revert) fall back to the classic
-  sequence; any ambiguous broadcast or confirmation failure is
-  surfaced rather than silently retried another way — a retry on top
-  of a transaction that may still confirm could execute the action
-  twice.
+  preconditions hold: no protocol allowance exists at all (a covering
+  allowance keeps the cheaper classic path, and a leftover partial
+  allowance also keeps the classic path so its clean-up reset still
+  clears the stale approval), and the wallet's Permit2 approval
+  covers the amount (without it the permit variant cannot succeed
+  on-chain, so it is skipped silently rather than attempted). A
+  wallet that declines or cannot produce the signature falls back to
+  the classic approve-then-act sequence automatically, and the
+  pre-disclosed confirmation count never under-promises (the permit
+  route matches it or finishes early; a declined permit prompt that
+  forces the classic sequence widens the live step counter to count
+  the extra interaction honestly). The automatic fallback ends at
+  the signature step: once the permit-based transaction has been
+  handed to the wallet, any failure is surfaced rather than silently
+  retried another way — an ambiguous failure could ride on top of a
+  transaction that still confirms (executing the action twice), and
+  a definite rejection usually dooms the classic retry as well,
+  after it paid for an approval it cannot use. A manual retry
+  re-runs every live check.
 - Immediately before any approval or signature, the app re-checks the
   facts that decide the transaction live on-chain — balance of the
   asset being locked or paid, asset pause status, current holdership

@@ -33,7 +33,6 @@ import { getSupportedChain } from '../chain/chains';
 import { useMode } from '../app/ModeContext';
 import { DIAMOND_ABI_VIEM, useDiamondWrite } from '../contracts/diamond';
 import {
-  permitFallbackSafe,
   usePermit2Signing,
 } from '../contracts/usePermit2Signing';
 import { useAcceptTermsSigning } from '../contracts/useAcceptTerms';
@@ -1293,18 +1292,21 @@ export function OfferFlow({ side }: { side: Side }) {
     // Permit2 first (#1038): one gasless signature replaces the
     // approval TRANSACTION (and leaves no standing Diamond allowance
     // behind). Two preconditions, read live in one round-trip:
-    //  - the classic path would actually need an approval — with a
-    //    covering allowance classic is a single transaction, strictly
-    //    fewer prompts than permit's signature+transaction, and the
-    //    #1037 roadmap promised that count;
+    //  - the Diamond allowance is exactly zero (or unreadable). Zero
+    //    means classic would need a fresh approval — the case permit
+    //    beats. A covering allowance means classic is a single
+    //    transaction, strictly fewer prompts than sign+transact (the
+    //    #1037 roadmap promised that count); a non-zero-but-SHORT
+    //    allowance routes classic too, so its zero-first reset still
+    //    clears the stale approval instead of leaving it standing;
     //  - the wallet holds a standing token→Permit2 approval covering
     //    the amount. SignatureTransfer executes the transferFrom AS
     //    the Permit2 contract, so without that approval every
     //    *WithPermit call categorically reverts — engaging permit
-    //    there would burn a doomed transaction before falling back.
-    //    Wallets that have used any Permit2 app (Uniswap et al) hold
-    //    the near-universal max approval; everyone else keeps the
-    //    classic path with zero degradation.
+    //    there would burn a doomed transaction. Wallets that have
+    //    used any Permit2 app (Uniswap et al) hold the near-universal
+    //    max approval; everyone else keeps the classic path with zero
+    //    degradation.
     if (permit2.canSign) {
       const [cur, permit2Cur] = await Promise.all([
         readAllowance({
@@ -1320,13 +1322,15 @@ export function OfferFlow({ side }: { side: Side }) {
           spender: permit2.permit2Address,
         }),
       ]);
-      const needsApproval = cur === undefined || cur < amount;
+      const freshApprovalNeeded = cur === undefined || cur === 0n;
       const permit2Funded = permit2Cur !== undefined && permit2Cur >= amount;
-      if (needsApproval && permit2Funded) {
+      if (freshApprovalNeeded && permit2Funded) {
         // Phase 1 — the signature. ANY failure here is pre-transaction
         // by construction (nothing was broadcast), so a wallet that
         // declines or can't do EIP-712 falls to classic unconditionally
-        // — Permit2 is an upgrade, never a gate.
+        // — Permit2 is an upgrade, never a gate. The consumed step is
+        // added back to the plan so the classic sequence's prompts
+        // keep an honest "x of y" (#1037).
         stepper.next('approve');
         let signed: Awaited<ReturnType<typeof permit2.sign>> | null = null;
         try {
@@ -1337,24 +1341,22 @@ export function OfferFlow({ side }: { side: Side }) {
           });
         } catch {
           signed = null;
+          stepper.grow(1);
         }
         if (signed) {
-          // Phase 2 — the transaction. Only DEFINITIVE no-state-change
-          // failures fall to classic; anything ambiguous (a broadcast
-          // or receipt-poll error — the tx may still mine) surfaces
-          // instead of risking a double-execution retry.
+          // Phase 2 — the transaction. NO classic fallback from here:
+          // an ambiguous broadcast/receipt error may ride on top of a
+          // transaction that still mines (double execution), and a
+          // definitive revert is protocol state that would doom the
+          // classic retry too — after minting a fresh approval for
+          // nothing. Errors surface; a manual retry re-runs the gates.
           stepper.next('send');
-          try {
-            const { hash } = await write('createOfferWithPermit', [
-              payload,
-              signed.permit,
-              signed.signature,
-            ]);
-            return hash;
-          } catch (permitErr) {
-            if (!permitFallbackSafe(permitErr)) throw permitErr;
-            /* definitive failure — fall through to the classic path */
-          }
+          const { hash } = await write('createOfferWithPermit', [
+            payload,
+            signed.permit,
+            signed.signature,
+          ]);
+          return hash;
         }
       }
     }
@@ -1629,12 +1631,16 @@ export function OfferFlow({ side }: { side: Side }) {
             spender: permit2.permit2Address,
           }),
         ]);
-        const needsApproval = cur === undefined || cur < payAmount;
+        // Zero-only (not merely short): a non-zero-but-short allowance
+        // routes classic so its zero-first reset clears the stale
+        // approval instead of leaving it standing.
+        const freshApprovalNeeded = cur === undefined || cur === 0n;
         const permit2Funded =
           permit2Cur !== undefined && permit2Cur >= payAmount;
-        if (needsApproval && permit2Funded) {
+        if (freshApprovalNeeded && permit2Funded) {
           // Phase 1 — the permit signature: any failure is
-          // pre-transaction, fall to classic unconditionally.
+          // pre-transaction, fall to classic unconditionally; the
+          // consumed step is added back to the plan (#1037 honesty).
           stepper.next('approve');
           let permitSigned: Awaited<ReturnType<typeof permit2.sign>> | null =
             null;
@@ -1646,25 +1652,24 @@ export function OfferFlow({ side }: { side: Side }) {
             });
           } catch {
             permitSigned = null;
+            stepper.grow(1);
           }
           if (permitSigned) {
-            // Phase 2 — the transaction: only definitive
-            // no-state-change failures fall back; ambiguous
-            // broadcast/receipt errors surface (double-execute risk).
+            // Phase 2 — the transaction: NO classic fallback from
+            // here — ambiguous errors may ride a tx that still mines
+            // (double execution), and definitive reverts would doom
+            // the classic retry too, after minting a fresh approval
+            // for nothing. Errors surface; a manual retry re-runs
+            // the gates.
             stepper.next('send');
-            try {
-              const { hash } = await write('acceptOfferWithPermit', [
-                BigInt(selected.offerId),
-                terms,
-                signature,
-                permitSigned.permit,
-                permitSigned.signature,
-              ]);
-              return hash;
-            } catch (permitErr) {
-              if (!permitFallbackSafe(permitErr)) throw permitErr;
-              /* definitive failure — fall through to the classic path */
-            }
+            const { hash } = await write('acceptOfferWithPermit', [
+              BigInt(selected.offerId),
+              terms,
+              signature,
+              permitSigned.permit,
+              permitSigned.signature,
+            ]);
+            return hash;
           }
         }
       }

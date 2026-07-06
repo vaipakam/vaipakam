@@ -26,7 +26,6 @@ import { useQueryClient } from '@tanstack/react-query';
 import { encodeFunctionData, parseUnits } from 'viem';
 import { copy } from '../content/copy';
 import {
-  permitFallbackSafe,
   usePermit2Signing,
 } from '../contracts/usePermit2Signing';
 import { ConsentLabel } from '../components/ConsentLabel';
@@ -1141,12 +1140,16 @@ function RentNftFlow() {
             spender: permit2.permit2Address,
           }),
         ]);
-        const needsApproval = cur === undefined || cur < canonicalTotal;
+        // Zero-only (not merely short): a non-zero-but-short allowance
+        // routes classic so its zero-first reset clears the stale
+        // approval instead of leaving it standing.
+        const freshApprovalNeeded = cur === undefined || cur === 0n;
         const permit2Funded =
           permit2Cur !== undefined && permit2Cur >= canonicalTotal;
-        if (needsApproval && permit2Funded) {
+        if (freshApprovalNeeded && permit2Funded) {
           // Phase 1 — the permit signature: any failure is
-          // pre-transaction, fall to classic unconditionally.
+          // pre-transaction, fall to classic unconditionally; the
+          // consumed step is added back to the plan (#1037 honesty).
           stepper.next('approve');
           let permitSigned: Awaited<ReturnType<typeof permit2.sign>> | null =
             null;
@@ -1158,24 +1161,23 @@ function RentNftFlow() {
             });
           } catch {
             permitSigned = null;
+            stepper.grow(1);
           }
           if (permitSigned) {
-            // Phase 2 — the transaction: only definitive
-            // no-state-change failures fall back; ambiguous
-            // broadcast/receipt errors surface (double-execute risk).
+            // Phase 2 — the transaction: NO classic fallback from
+            // here — ambiguous errors may ride a tx that still mines
+            // (double execution), and definitive reverts would doom
+            // the classic retry too, after minting a fresh approval
+            // for nothing. Errors surface; a manual retry re-runs
+            // the gates.
             stepper.next('send');
-            try {
-              ({ hash } = await write('acceptOfferWithPermit', [
-                BigInt(selected.offerId),
-                terms,
-                signature,
-                permitSigned.permit,
-                permitSigned.signature,
-              ]));
-            } catch (permitErr) {
-              if (!permitFallbackSafe(permitErr)) throw permitErr;
-              hash = null; // definitive failure — classic path below
-            }
+            ({ hash } = await write('acceptOfferWithPermit', [
+              BigInt(selected.offerId),
+              terms,
+              signature,
+              permitSigned.permit,
+              permitSigned.signature,
+            ]));
           }
         }
       }
