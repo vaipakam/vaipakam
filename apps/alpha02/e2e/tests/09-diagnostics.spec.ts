@@ -15,6 +15,15 @@
 import { test, expect } from '../lib/wallet-fixture';
 import { connectWallet } from '../lib/wallet-fixture';
 
+/** Decode the pre-filled report out of the issue URL. URLSearchParams
+ *  is the right decoder here — the builder encodes with it, and plain
+ *  decodeURIComponent would leave its `+`-for-space encoding in place
+ *  (the first CI run failed exactly there). */
+function reportTextOf(href: string): string {
+  const params = new URL(href).searchParams;
+  return `${params.get('title') ?? ''}\n${params.get('body') ?? ''}`;
+}
+
 test('support drawer reports healthy connections and a redacted report', async ({
   launchWallet,
 }) => {
@@ -51,10 +60,10 @@ test('support drawer reports healthy connections and a redacted report', async (
   const href = await report.getAttribute('href');
   expect(href).toBeTruthy();
   expect(href!).toContain('github.com/vaipakam/vaipakam/issues/new');
-  const decoded = decodeURIComponent(href!);
-  expect(decoded).toContain('Base Sepolia (84532)');
-  expect(decoded).toContain(short);
-  expect(decoded.toLowerCase()).not.toContain(full);
+  const reportText = reportTextOf(href!);
+  expect(reportText).toContain('Base Sepolia (84532)');
+  expect(reportText).toContain(short);
+  expect(reportText.toLowerCase()).not.toContain(full);
 
   // Dialog semantics: Escape closes.
   await page.keyboard.press('Escape');
@@ -88,7 +97,7 @@ test('a recorded error surfaces in the drawer and its report', async ({
   const href = await dialog
     .getByRole('link', { name: /report an issue/i })
     .getAttribute('href');
-  const decoded = decodeURIComponent(href!);
-  expect(decoded).toContain('E2E seeded render crash');
-  expect(decoded).toContain('CrashCulprit');
+  const reportText = reportTextOf(href!);
+  expect(reportText).toContain('E2E seeded render crash');
+  expect(reportText).toContain('CrashCulprit');
 });
