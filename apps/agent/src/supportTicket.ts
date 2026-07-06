@@ -35,6 +35,21 @@ export interface SupportTicketBody {
   chainId: number | null;
 }
 
+/** Shorten every full EVM address to the `0x1234…abcd` form. Applied
+ *  SERVER-SIDE to `page` and `diagnostics` before storage/notify —
+ *  the widget already redacts client-side, but the endpoint accepts
+ *  arbitrary JSON from any caller that clears the Origin gate, and
+ *  the Privacy Policy's "wallet addresses shortened" promise must
+ *  hold regardless of who built the payload (Codex round-3 P2). The
+ *  user's `message` is deliberately NOT touched: the policy promises
+ *  it is stored exactly as typed. Exported for the vitest suite. */
+export function redactWalletAddresses(s: string): string {
+  return s.replace(
+    /0x[a-fA-F0-9]{40}(?![a-fA-F0-9])/g,
+    (m) => `${m.slice(0, 6)}…${m.slice(-4)}`,
+  );
+}
+
 /** Strict body validation — returns null on any shape violation.
  *  Exported for the vitest unit suite. */
 export function parseSupportTicket(raw: unknown): SupportTicketBody | null {
@@ -67,13 +82,14 @@ export function parseSupportTicket(raw: unknown): SupportTicketBody | null {
       o.diagnostics.length > MAX_DIAGNOSTICS_CHARS
         ? `${o.diagnostics.slice(0, MAX_DIAGNOSTICS_CHARS)}\n[truncated]`
         : o.diagnostics;
+    diagnostics = redactWalletAddresses(diagnostics);
     if (diagnostics.trim() === '') diagnostics = null;
   }
 
   let page: string | null = null;
   if (o.page !== undefined && o.page !== null) {
     if (typeof o.page !== 'string') return null;
-    page = o.page.trim().slice(0, MAX_PAGE_CHARS) || null;
+    page = redactWalletAddresses(o.page.trim()).slice(0, MAX_PAGE_CHARS) || null;
   }
 
   let chainId: number | null = null;
@@ -205,19 +221,62 @@ export async function notifyOpsNewTicket(
     ]
       .filter((l): l is string => l !== null)
       .join('\n');
-    const res = await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        chat_id: chatId,
-        text,
-        disable_web_page_preview: true,
-      }),
-    });
+    const send = () =>
+      fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          chat_id: chatId,
+          text,
+          disable_web_page_preview: true,
+        }),
+      });
+    let res = await send();
     if (!res.ok) {
-      console.error('[support] ops notify failed', res.status);
+      // One spaced retry rides out a transient Telegram blip. A
+      // persistent failure (bad chat id, revoked token) still only
+      // logs — the DAILY backstop is the nightly-backup ops message,
+      // which reports the open-ticket count read straight from D1,
+      // so a ticket can sit un-notified for at most ~24h, never
+      // indefinitely (Codex round-3 P2).
+      await new Promise((r) => setTimeout(r, 5_000));
+      res = await send();
+    }
+    if (!res.ok) {
+      console.error('[support] ops notify failed after retry', res.status);
     }
   } catch (e) {
     console.error('[support] ops notify failed', e);
+  }
+}
+
+/** Cron-driven retention prune — same pattern as
+ *  `pruneOldDiagErrors`. The Privacy Policy promises support tickets
+ *  are deleted no later than 12 months after submission; this is the
+ *  enforcement (deletion-on-request handles the earlier case). Runs
+ *  once per scheduled tick; one indexed DELETE, no measurable cost. */
+const TICKET_RETENTION_DAYS = 365;
+
+let prunedTableMissingWarned = false;
+
+export async function pruneOldSupportTickets(env: Env): Promise<void> {
+  const cutoff = Math.floor(Date.now() / 1000) - TICKET_RETENTION_DAYS * 86400;
+  try {
+    await env.DB
+      .prepare(`DELETE FROM support_tickets WHERE created_at < ?`)
+      .bind(cutoff)
+      .run();
+  } catch (e) {
+    // Pre-migration-0028 environments have no table yet; the cron
+    // fires every minute, so warn once per isolate instead of
+    // spamming the log until the operator applies the migration.
+    if (/no such table/i.test((e as Error).message ?? '')) {
+      if (!prunedTableMissingWarned) {
+        prunedTableMissingWarned = true;
+        console.warn('[support] support_tickets table missing — apply migration 0028');
+      }
+      return;
+    }
+    throw e;
   }
 }

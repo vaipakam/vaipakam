@@ -222,6 +222,25 @@ export default {
   },
 };
 
+/** Open-ticket count for the daily ops message. This is the DAILY
+ *  backstop behind the agent Worker's instant new-ticket notify: if
+ *  that Telegram send fails persistently (bad chat id, outage), the
+ *  operator still sees a non-zero open count here within 24 h — a
+ *  ticket can never sit in D1 unnoticed indefinitely (#1040 phase 1,
+ *  Codex round-3). Read-only, same posture as the backup SELECTs. */
+async function openSupportTicketCount(env: Env): Promise<string> {
+  try {
+    const row = await env.DB_ARCHIVE
+      .prepare(`SELECT COUNT(*) AS n FROM support_tickets WHERE status = 'open'`)
+      .first<{ n: number }>();
+    return String(row?.n ?? 0);
+  } catch {
+    // Pre-migration-0028 environments have no table yet — say so
+    // rather than reporting a misleading 0.
+    return 'n/a (table missing)';
+  }
+}
+
 async function handleNightlyBackup(env: Env, cfg: B2Config): Promise<void> {
   try {
     const out = await runNightlyBackup(env, cfg);
@@ -234,6 +253,7 @@ async function handleNightlyBackup(env: Env, cfg: B2Config): Promise<void> {
         `  size: ${(out.archiveBytes / 1024 / 1024).toFixed(2)} MB`,
         `  sha256: ${out.archiveSha256.slice(0, 16)}…`,
         `  rows: ${out.rowsBackedUp}, R2 objects: ${out.r2ObjectsBackedUp}`,
+        `  open support tickets: ${await openSupportTicketCount(env)}`,
         `  took ${(out.durationMs / 1000).toFixed(1)} s`,
       ].join('\n'),
     );

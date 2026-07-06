@@ -219,7 +219,7 @@ export const copy = {
     attach:
       'Attach the health details shown above (recommended — they usually hold the cause)',
     privacy:
-      'Sending stores your message, the reply address if you gave one, and — only if you ticked the box — the health details above, on Vaipakam’s support service under your ticket number. The team is notified that a ticket arrived (its number and context flags — never your message text or email). Your full wallet address is never included in the health details.',
+      'Sending stores your message, the page you sent it from and the network you were on, the reply address if you gave one, and — only if you ticked the box — the health details above, on Vaipakam’s support service under your ticket number. The team is notified that a ticket arrived (its number and context flags — never your message text or email). Your full wallet address is never included in the health details.',
     send: 'Send to support',
     sending: 'Sending…',
     sent: (id: string) =>

@@ -80,7 +80,7 @@ import { handleOpenSeaOffers } from './openseaOffersProxy';
 import { handleOpenSeaSignedOffer } from './openseaSignedOfferProxy';
 import { handleFeeRecipientPreflight } from './feeRecipientPreflight';
 import { handleDiagRecord, pruneOldDiagErrors } from './diagRecord';
-import { handleSupportTicket } from './supportTicket';
+import { handleSupportTicket, pruneOldSupportTickets } from './supportTicket';
 import {
   handleDiagErasure,
   handleDiagErasureStatus,
@@ -128,6 +128,12 @@ export default {
       pruneOldDiagErrors(resolved).catch((err) => {
         // eslint-disable-next-line no-console
         console.error('[agent] pruneOldDiagErrors pass failed:', err);
+      }),
+    );
+    ctx.waitUntil(
+      pruneOldSupportTickets(resolved).catch((err) => {
+        // eslint-disable-next-line no-console
+        console.error('[agent] pruneOldSupportTickets pass failed:', err);
       }),
     );
   },

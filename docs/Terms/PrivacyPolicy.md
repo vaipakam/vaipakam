@@ -53,15 +53,22 @@ email address if you chose to give one (it is optional — a ticket
 works without it), the app page the report was sent from (with any
 wallet addresses shortened), your chain id, and — only if you ticked
 the attach box — the same redacted connection-health details the
-form showed you. Each ticket gets a reference number, shown to you.
-Our operators are notified over an internal channel that a ticket
-arrived; that notification carries the ticket number and context
-flags, not your message text or email. Support tickets are kept
-while your request is being handled and for up to 12 months after it
-is closed, then deleted; write to the contact address below to have
-a ticket's contents erased earlier (we may keep the bare ticket
-number where the law requires). The legal basis is GDPR Art 6(1)(b)
-— handling the support request you asked us to handle.
+form showed you. Wallet addresses in the page field and the health
+details are shortened on our server as well, whatever the sending
+app did. Each ticket gets a reference number, shown to you. Our
+operators are notified via Telegram (our operations alert channel)
+that a ticket arrived; that notification carries only the ticket
+number and context flags (page, network, whether a reply address
+and health details were included) — never your message text or
+email address — so Telegram processes only that metadata. Support
+tickets are deleted automatically no later than 12 months after
+submission (most sooner, once resolved); write to the contact
+address below to have a ticket's contents erased earlier (we may
+keep the bare ticket number where the law requires). Like our other
+off-chain operational records, tickets are included in encrypted
+nightly backups (see "Data transfer"); backup copies age out on the
+backup rotation schedule. The legal basis is GDPR Art 6(1)(b) —
+handling the support request you asked us to handle.
 
 **Google Analytics — only with consent.** If you accept analytics
 cookies in the consent banner, Google Analytics records anonymous
@@ -94,6 +101,14 @@ for the app to work.
 - **Google.** Only if you consent to analytics cookies, and only
   aggregated usage data — never a payload tying a wallet address to a
   person.
+- **Telegram.** Only if you send a support ticket: our operators are
+  alerted through Telegram with the ticket number and context flags
+  described above — never your message text or email address.
+- **Backblaze.** Our off-chain operational records (server-side
+  error records, alert subscriptions, support tickets) are backed up
+  nightly to Backblaze B2. Archives are encrypted on our side before
+  upload — Backblaze holds ciphertext only, and cannot read any of
+  it.
 - **Nobody else by default.** We do not sell or rent any data.
 - **Legal compliance exception.** If a subpoena or equivalent legal
   order compels disclosure in a jurisdiction we operate in, we will
@@ -121,10 +136,18 @@ are only meaningful to the extent we hold data about you.
 
 ## Data transfer
 
-The frontend is hosted on Cloudflare Pages. Analytics (if consented)
-are processed by Google. Both transfer data across borders as part of
-their standard operation. We do not transfer any additional data
-beyond what these tools inherently handle.
+The frontend is hosted on Cloudflare Pages, and our off-chain
+operational records live in Cloudflare's database service. Analytics
+(if consented) are processed by Google. Support-ticket alert
+metadata (never contents) passes through Telegram. Encrypted backups
+of the off-chain records are stored with Backblaze B2 — encrypted
+before upload, so Backblaze holds only ciphertext; nightly backup
+archives are kept 30 days and monthly archives 12 months, after
+which they age out automatically (one archive per calendar year is
+retained longer for legal-audit durability). All of these providers
+transfer data across borders as part of their standard operation. We
+do not transfer any additional data beyond what these tools
+inherently handle.
 
 ## Data retention
 
@@ -134,9 +157,10 @@ beyond what these tools inherently handle.
   journey-log slice — is sent server-side on each error; see
   "Server-side error capture".)
 - Server-side error records: pruned 90 days after capture.
-- Support tickets: kept while the request is handled and for up to
-  12 months after it is closed, then deleted (earlier on request —
-  see "Support tickets" above).
+- Support tickets: deleted automatically no later than 12 months
+  after submission (earlier on request — see "Support tickets"
+  above). Backup copies age out on the backup rotation schedule
+  described under "Data transfer".
 - Consent choice: kept in your browser's local storage indefinitely
   until you revoke or clear.
 - Google Analytics (with consent): subject to Google's own retention,

@@ -22,13 +22,24 @@ now send a message straight to the team (#1040 phase 1):
   is sent: the message, the reply address if given, the consented
   health details, and the ticket number.
 
-Operators are notified of each new ticket over the internal ops
-channel — the notification carries the ticket number and context
-flags only, never your message text or email — so a ticket is seen
-even if the follow-up email is never written. The Privacy Policy
-gains a matching "Support tickets" section (what a ticket stores,
-the optional reply email, the metadata-only operator notification,
-and the retention window), and support tickets join the nightly
-off-chain backup set so a storage incident cannot silently drop
-them. In builds where no support backend is configured, the panel
-says so and offers the email path — it never pretends.
+- What sending stores also names the page and network context that
+  travels with every ticket, so nothing rides along unstated even
+  when the health-details box is left unticked.
+
+Operators are notified of each new ticket over Telegram (the
+operations alert channel) — the notification carries the ticket
+number and context flags only, never your message text or email —
+so a ticket is seen even if the follow-up email is never written. A
+failed alert is retried once, and a daily operational report of
+open tickets backstops it, so a ticket can never sit unseen
+indefinitely. Wallet addresses in the page field and health details
+are shortened again on the server, whatever the sending app did.
+Tickets are deleted automatically no later than 12 months after
+submission (earlier on request). The Privacy Policy gains a
+matching "Support tickets" section and now names every processor
+involved: Telegram for the metadata-only operator alert, and
+Backblaze for the encrypted nightly backups (ciphertext only) that
+support tickets join alongside the other off-chain records — so a
+storage incident cannot silently drop them, and the restore runbook
+covers them too. In builds where no support backend is configured,
+the panel says so and offers the email path — it never pretends.

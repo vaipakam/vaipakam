@@ -10,6 +10,8 @@ import {
   newTicketId,
   notifyOpsNewTicket,
   parseSupportTicket,
+  pruneOldSupportTickets,
+  redactWalletAddresses,
 } from '../src/supportTicket';
 import type { Env } from '../src/env';
 
@@ -103,6 +105,24 @@ describe('parseSupportTicket', () => {
     });
     expect(parsed?.diagnostics?.length).toBeLessThan(4200);
     expect(parsed?.diagnostics?.endsWith('[truncated]')).toBe(true);
+  });
+
+  it('redacts full wallet addresses in page and diagnostics server-side — never the message', () => {
+    const addr = '0x1DAefA360ED370285f003Fa2d92DB75628088282';
+    const parsed = parseSupportTicket({
+      message: `my wallet is ${addr}`,
+      page: `/offers?owner=${addr}`,
+      diagnostics: `wallet: ${addr}\nrpc ok`,
+    });
+    // The endpoint accepts arbitrary JSON once the Origin gate
+    // passes, so the Privacy Policy's "addresses shortened" promise
+    // cannot rest on the widget's client-side redaction alone.
+    expect(parsed?.page).toBe('/offers?owner=0x1DAe…8282');
+    expect(parsed?.diagnostics).toBe('wallet: 0x1DAe…8282\nrpc ok');
+    // The message is the user's own words, stored exactly as typed.
+    expect(parsed?.message).toContain(addr);
+    // Not a hex-prefix false positive: longer hex blobs stay intact.
+    expect(redactWalletAddresses(`${addr}ff`)).toBe(`${addr}ff`);
   });
 
   it('rejects non-positive or fractional chain ids', () => {
@@ -211,6 +231,24 @@ describe('handleSupportTicket', () => {
     expect(await res.json()).toEqual({ error: 'unavailable' });
   });
 
+  it('retries a non-OK Telegram send once, spaced out', async () => {
+    vi.useFakeTimers();
+    const fetchSpy = vi
+      .fn()
+      .mockResolvedValueOnce(new Response('nope', { status: 502 }))
+      .mockResolvedValueOnce(new Response('{}', { status: 200 }));
+    vi.stubGlobal('fetch', fetchSpy);
+    const p = notifyOpsNewTicket(
+      envWith({ TG_OPS_BOT_TOKEN: 't', TG_OPS_CHAT_ID: '1' }),
+      'VPK-Y',
+      { message: 'm', email: null, diagnostics: null, page: null, chainId: null },
+    );
+    await vi.advanceTimersByTimeAsync(5_000);
+    await p;
+    expect(fetchSpy).toHaveBeenCalledTimes(2);
+    vi.useRealTimers();
+  });
+
   it('rejects invalid bodies with 400 and rate-limited callers with 429', async () => {
     const bad = await handleSupportTicket(
       req({ message: '' }),
@@ -229,5 +267,23 @@ describe('handleSupportTicket', () => {
       'https://alpha02.vaipakam.com',
     );
     expect(limited.status).toBe(429);
+  });
+});
+
+describe('pruneOldSupportTickets', () => {
+  it('deletes rows past the 12-month retention cutoff', async () => {
+    const { db, calls } = fakeDb();
+    await pruneOldSupportTickets(envWith({ DB: db }));
+    expect(calls).toHaveLength(1);
+    expect(calls[0].sql).toContain('DELETE FROM support_tickets');
+    const cutoff = calls[0].args[0] as number;
+    // ~365 days ago, allowing slack for test runtime.
+    const expected = Math.floor(Date.now() / 1000) - 365 * 86400;
+    expect(Math.abs(cutoff - expected)).toBeLessThan(5);
+  });
+
+  it('tolerates the table not existing yet (pre-migration env)', async () => {
+    const { db } = fakeDb({ failInsert: true }); // fake throws 'no such table'
+    await expect(pruneOldSupportTickets(envWith({ DB: db }))).resolves.toBeUndefined();
   });
 });
