@@ -240,11 +240,18 @@ export async function notifyOpsNewTicket(
     let res = await send();
     if (!res.ok) {
       // One spaced retry rides out a transient Telegram blip. A
-      // persistent failure (bad chat id, revoked token) still only
-      // logs — the DAILY backstop is the nightly-backup ops message,
-      // which reports the open-ticket count read straight from D1,
-      // so a ticket can sit un-notified for at most ~24h, never
-      // indefinitely (Codex round-3 P2).
+      // persistent failure still only logs; the backstops are:
+      //  - the nightly-backup ops message reports the open-ticket
+      //    count read straight from D1 (~24h bound for failures
+      //    specific to THIS send — formatting, per-message errors);
+      //  - for a fully broken ops channel (revoked token, bad chat
+      //    id) that daily message itself stops arriving, and its
+      //    ABSENCE is the heartbeat signal: the operator expects
+      //    one backup report per day, so silence = investigate the
+      //    ops bot, which surfaces any queued tickets. The two
+      //    paths share TG_OPS_* on purpose — a shared credential
+      //    means the heartbeat exercises the same channel the
+      //    instant alert needs (Codex round-7 P2).
       await new Promise((r) => setTimeout(r, 5_000));
       res = await send();
     }

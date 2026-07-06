@@ -130,7 +130,11 @@ export default function PrivacyPage() {
             are never messaged twice about the same event. Alert
             messages you subscribe to are delivered through the
             channel you chose — Telegram processes those messages for
-            Telegram alerts. Unlinking removes the connection.
+            Telegram alerts. Unlinking removes the Telegram chat
+            connection; your alert preferences and the delivery
+            dedupe records (no Telegram identity in either) stay, so
+            re-linking restores your setup — erasable on request via
+            support@vaipakam.com.
           </p>
 
           <p>
@@ -300,9 +304,11 @@ export default function PrivacyPage() {
               capture.
             </li>
             <li>
-              Alert subscriptions (Telegram link, alert preferences,
-              delivery dedupe records): kept until you unlink or ask
-              for removal.
+              Alert subscriptions: unlinking removes the Telegram
+              chat connection immediately; alert preferences and
+              delivery dedupe records (which carry no Telegram
+              identity) are kept so re-linking restores your setup,
+              and can be erased on request via support@vaipakam.com.
             </li>
             <li>
               Support tickets: deleted automatically no later than 12

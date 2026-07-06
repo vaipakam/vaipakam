@@ -79,7 +79,10 @@ small per-alert delivery record (which loan, which level, when) so
 you are never messaged twice about the same event. Alert messages
 you subscribe to are delivered through the channel you chose —
 Telegram processes those messages for Telegram alerts. Unlinking
-removes the connection.
+removes the Telegram chat connection; your alert preferences and
+the delivery dedupe records (no Telegram identity in either) stay,
+so re-linking restores your setup — erasable on request via
+support@vaipakam.com.
 
 **Google Analytics — only with consent.** If you accept analytics
 cookies in the consent banner, Google Analytics records anonymous
@@ -174,8 +177,11 @@ inherently handle.
   journey-log slice — is sent server-side on each error; see
   "Server-side error capture".)
 - Server-side error records: pruned 90 days after capture.
-- Alert subscriptions (Telegram link, alert preferences, delivery
-  dedupe records): kept until you unlink or ask for removal.
+- Alert subscriptions: unlinking removes the Telegram chat
+  connection immediately; alert preferences and delivery dedupe
+  records (which carry no Telegram identity) are kept so re-linking
+  restores your setup, and can be erased on request via
+  support@vaipakam.com.
 - Support tickets: deleted automatically no later than 12 months
   after submission (earlier on request — see "Support tickets"
   above). Backup copies age out on the backup rotation schedule

@@ -92,7 +92,13 @@ const ARCHIVE_TABLES_REQUIRED = [
 //     record of user support requests (message, optional reply
 //     email, consented diagnostics). Once the migration lands, a D1
 //     loss without backup would silently drop every ticket.
-const ARCHIVE_TABLES_REQUIRED_ONCE_MIGRATED = ['support_tickets'];
+// The migration prefix lets the export loop ask wrangler's
+// `d1_migrations` bookkeeping whether the table is SUPPOSED to
+// exist: "no such table" post-migration is a table loss and aborts.
+const ARCHIVE_TABLES_REQUIRED_ONCE_MIGRATED: Array<{
+  table: string;
+  migrationPrefix: string;
+}> = [{ table: 'support_tickets', migrationPrefix: '0028' }];
 
 // Re-derivable tables (backed up as restore-performance optimisation only).
 const ARCHIVE_TABLES_OPTIONAL = [
@@ -125,6 +131,25 @@ const LZ_ALERTS_TABLES_REQUIRED = [
 // ceiling is tracked as a Stage A.1 follow-up; the design doc §6
 // sequencing already lists it.
 const MAX_ARCHIVE_BYTES = 100_000_000;
+
+/** True when a migration whose name starts with `namePrefix` has
+ *  been applied to this DB (wrangler records applied migrations in
+ *  its `d1_migrations` bookkeeping table). Used to distinguish the
+ *  legitimate pre-migration rollout state from a post-migration
+ *  table LOSS: "no such table" is only tolerable in the former
+ *  (Codex round-7 P2). A missing `d1_migrations` table itself means
+ *  a fresh / pre-migration environment → false. */
+async function migrationApplied(db: D1Database, namePrefix: string): Promise<boolean> {
+  try {
+    const row = await db
+      .prepare(`SELECT COUNT(*) AS n FROM d1_migrations WHERE name LIKE ?`)
+      .bind(`${namePrefix}%`)
+      .first<{ n: number }>();
+    return (row?.n ?? 0) > 0;
+  } catch {
+    return false;
+  }
+}
 
 async function exportTable(db: D1Database, table: string): Promise<TableExport> {
   // PRAGMA table_info returns one row per column — captures the schema
@@ -201,26 +226,34 @@ export async function runNightlyBackup(env: Env, b2Cfg: B2Config): Promise<Backu
   const archiveTables: TableExport[] = [];
   for (const t of [
     ...ARCHIVE_TABLES_REQUIRED,
-    ...ARCHIVE_TABLES_REQUIRED_ONCE_MIGRATED,
+    ...ARCHIVE_TABLES_REQUIRED_ONCE_MIGRATED.map((g) => g.table),
     ...ARCHIVE_TABLES_OPTIONAL,
   ]) {
     try {
       archiveTables.push(await exportTable(env.DB_ARCHIVE, t));
     } catch (err) {
       // Migration-gated tables tolerate exactly ONE failure shape:
-      // "no such table" before their migration ran. Any other export
-      // error on them (D1 fault, permission problem, query
-      // regression) must abort like the plain required set — a
+      // "no such table" BEFORE their migration ran (checked against
+      // wrangler's d1_migrations bookkeeping — a missing table on a
+      // post-migration DB is a table LOSS, not a rollout state).
+      // Any other export error (D1 fault, permission problem, query
+      // regression) aborts like the plain required set — a
       // "successful" nightly silently missing the durable ticket
       // records is the failure mode this Worker exists to prevent
-      // (Codex round-6 P2).
-      if (
-        ARCHIVE_TABLES_REQUIRED_ONCE_MIGRATED.includes(t) &&
-        !/no such table/i.test((err as Error).message ?? '')
-      ) {
-        throw new Error(
-          `BACKUP ABORT: export of vaipakam-archive.${t} failed post-migration: ${(err as Error).message}`,
-        );
+      // (Codex rounds 6+7 P2).
+      const gated = ARCHIVE_TABLES_REQUIRED_ONCE_MIGRATED.find((g) => g.table === t);
+      if (gated) {
+        const tableMissing = /no such table/i.test((err as Error).message ?? '');
+        if (
+          !tableMissing ||
+          (await migrationApplied(env.DB_ARCHIVE, gated.migrationPrefix))
+        ) {
+          throw new Error(
+            `BACKUP ABORT: export of vaipakam-archive.${t} failed ` +
+            `(${tableMissing ? 'table missing on a post-migration DB' : 'export error'}): ` +
+            `${(err as Error).message}`,
+          );
+        }
       }
       // Tables that don't exist on this deploy (e.g. lz_alerts on
       // a fresh archive DB before lz-watcher ran any migration)
@@ -254,10 +287,10 @@ export async function runNightlyBackup(env: Env, b2Cfg: B2Config): Promise<Backu
   // Migration-gated tables missing → warn loudly but keep the run:
   // aborting here would drop the WHOLE nightly (diag/legal/alerts)
   // over a table that cannot hold data yet.
-  for (const t of ARCHIVE_TABLES_REQUIRED_ONCE_MIGRATED) {
-    if (!archiveTables.some((e) => e.name === t)) {
+  for (const g of ARCHIVE_TABLES_REQUIRED_ONCE_MIGRATED) {
+    if (!archiveTables.some((e) => e.name === g.table)) {
       console.warn(
-        `[backup] migration-gated table ${t} missing — apply its migration; nightly continues without it`,
+        `[backup] migration-gated table ${g.table} missing — apply its migration; nightly continues without it`,
       );
     }
   }
