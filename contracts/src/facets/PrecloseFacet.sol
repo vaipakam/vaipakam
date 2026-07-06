@@ -1058,12 +1058,15 @@ contract PrecloseFacet is
         // funds — the sibling entry points (`precloseDirect`,
         // `transferObligationViaOffer`) all screen the caller here, so match them.
         LibVaipakam._assertNotSanctioned(msg.sender);
-        LibVaipakam.Loan storage loan = LibVaipakam.storageSlot().loans[loanId];
+        // Cache the storage pointer once (EIP-170: PrecloseFacet is size-tight —
+        // three separate `storageSlot()` inlines here cost bytecode).
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        LibVaipakam.Loan storage loan = s.loans[loanId];
         // #1001 (S3) — one live offset offer per loan. A second offset would
         // create a second linked offer racing the same loan; the second's
         // completion would revert anyway (loan no longer Active), but rejecting
         // up front is a clean error.
-        if (LibVaipakam.storageSlot().loanToOffsetOfferId[loanId] != 0)
+        if (s.loanToOffsetOfferId[loanId] != 0)
             revert OffsetAlreadyActive();
         // #1001 (S3, Codex #1070 r8 P2) — SYMMETRIC to the round-4 guard that
         // blocks `createLoanSaleOffer` while an offset is live. If a lender sale
@@ -1072,7 +1075,7 @@ contract PrecloseFacet is
         // first leaves the other's vehicle + NFT lock stale (a later accept of the
         // stale one reverts after the counterparty commits). Require the sale
         // listing be cancelled first.
-        if (LibVaipakam.storageSlot().loanToSaleOfferId[loanId] != 0)
+        if (s.loanToSaleOfferId[loanId] != 0)
             revert SaleListingActiveOnLoan();
         _validateOffsetRequest(
             loan,
@@ -1087,13 +1090,11 @@ contract PrecloseFacet is
         // (`_settleOldLenderAtCompletion`). Posting moves no settlement funds and
         // parks nothing in shared state — so an interleaving lender-sale,
         // close-out, obligation-transfer or term-mutation can't corrupt a prepay
-        // (there is none). We only compute the accrued+shortfall figure read-only
-        // for the informational event.
-        (, , uint256 accruedShortfallSum) = _computeOffsetSettlement(
-            loan,
-            interestRateBps,
-            durationDays
-        );
+        // (there is none). The `OffsetOfferCreated.accruedShortfall` field is a
+        // posting-time PREVIEW only; since the redesign settles nothing here it is
+        // emitted as 0 (the authoritative figure is computed + charged at
+        // completion). Skipping the read-only `_computeOffsetSettlement` preview
+        // also keeps this size-tight god-facet under the EIP-170 limit.
 
         // ── 2. Create lender offer via cross-facet call ─────────────────────
         // alice deposits principal into her vault (handled by createOffer).
@@ -1111,7 +1112,7 @@ contract PrecloseFacet is
         // ── 3+4. Link, lock, emit ─ all moved to a helper so the outer frame
         // has room for the storage-write / lock / emit triplet under
         // --ir-minimum. See _finalizeOffsetLink for details.
-        _finalizeOffsetLink(loan, loanId, newOfferId, accruedShortfallSum);
+        _finalizeOffsetLink(loan, loanId, newOfferId, 0);
     }
 
     /**
@@ -1216,7 +1217,6 @@ contract PrecloseFacet is
     /// @return treasuryFee        the treasury cut on accrued interest
     /// @return lenderTotal        principal + (accrued − fee) + shortfall owed
     ///                            to the old lender
-    /// @return accruedShortfallSum accrued interest + shortfall (event/preview)
     function _computeOffsetSettlement(
         LibVaipakam.Loan storage loan,
         uint256 interestRateBps,
@@ -1224,7 +1224,7 @@ contract PrecloseFacet is
     )
         private
         view
-        returns (uint256 treasuryFee, uint256 lenderTotal, uint256 accruedShortfallSum)
+        returns (uint256 treasuryFee, uint256 lenderTotal)
     {
         // #641 — read the interest clock, not the immutable term tuple.
         uint256 elapsed = block.timestamp - LibVaipakam.interestAccrualStartOf(loan);
@@ -1258,7 +1258,6 @@ contract PrecloseFacet is
 
         (treasuryFee, ) = LibEntitlement.splitTreasury(loan, accruedInterest);
         lenderTotal = loan.principal + (accruedInterest - treasuryFee) + shortfall;
-        accruedShortfallSum = accruedInterest + shortfall;
     }
 
     /// @dev #1001 (S3, Codex #1070 redesign) — settle the old lender AT
@@ -1277,7 +1276,7 @@ contract PrecloseFacet is
         LibVaipakam.Offer storage offer
     ) private {
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
-        (uint256 treasuryFee, uint256 lenderTotal, ) = _computeOffsetSettlement(
+        (uint256 treasuryFee, uint256 lenderTotal) = _computeOffsetSettlement(
             loan, offer.interestRateBps, offer.durationDays
         );
         address payAssetOffset = _paymentAsset(loan);
