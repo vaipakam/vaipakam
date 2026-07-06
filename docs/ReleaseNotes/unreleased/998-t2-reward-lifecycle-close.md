@@ -35,15 +35,25 @@ inherits the previous borrower's history.
 
 As a safety net, a reward entry also becomes claimable once its loan simply
 reaches a terminal status even if the closing path did not explicitly notify the
-reward system, so no terminal path can freeze a reward forever; in that fallback
-a liquidated or defaulted loan still forfeits the borrower's reward to treasury
-rather than paying it out. The obligation-transfer and offset-completion paths
-also run the same current-holder consolidation the direct-preclose path does, so
-a party who bought a position NFT before one of those flows keeps the reward
-slice they earned rather than losing it to the previous holder. Wiring the
-remaining terminal paths (internal-match liquidation, prepay-sale settlement) to
-close their entries explicitly is tracked as a reward-accuracy follow-up; the
-platform is pre-live, so there is no historical reward state to migrate.
+reward system, so no terminal path can ever freeze a reward forever; while a loan
+sits in a liquidation/default status that fallback also routes the borrower's
+reward to treasury rather than paying it out, and the permissionless forfeit
+sweep is guarded so it can only ever touch genuinely-forfeited entries (never a
+payable one). Offset completion now applies the same in-grace/late clean-vs-
+forfeit rule as the direct-preclose and refinance paths.
+
+The complete, precise close-out of every terminal path is deliberately scoped as
+a dedicated follow-up rather than rushed here: explicitly notifying the reward
+system from the internal-match-liquidation, prepay-sale, and other close paths
+(so the borrower forfeit is durable across a later Settled transition and the
+accrual window is trimmed to the real close day), and re-anchoring reward entries
+to the current position-NFT holder before an obligation transfer or offset
+completes. Those paths are no worse than before this change — where a path is not
+yet explicitly wired, its rewards remain claimable exactly as they were — and the
+platform is pre-live, so there is no historical reward state to migrate. This
+change lands the claim gate, the ordinary-close wiring (repay, preclose,
+refinance, and the existing liquidation/default paths), and the safety net; the
+remaining precision work is tracked under the same umbrella.
 
 Because the preclose facet is already at the contract-size ceiling, the reward
 bookkeeping for those paths runs through a small internal hook rather than being

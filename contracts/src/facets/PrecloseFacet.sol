@@ -779,23 +779,6 @@ contract PrecloseFacet is
 
         // ── 4. ben's collateral already locked in his vault at offer creation
 
-        // #969 / S5 (Codex #1061 P2) — eagerly consolidate BOTH sides to their
-        // current NFT holders BEFORE the reward split below, while the loan is
-        // still Active and `borrowerTokenId` still resolves to the EXITING
-        // holder. Without this the split would close the exiting borrower/lender
-        // entries under the STALE stored users, so a holder who bought the
-        // position NFT before this transfer would lose their pre-transfer reward
-        // slice to the departed stored party (same eager-consolidate step
-        // `precloseDirect` runs). Few-byte cross-facet entry; no-ops once
-        // terminal and Skips non-ERC20.
-        LibFacet.crossFacetCall(
-            abi.encodeWithSelector(
-                ConsolidationFacet.eagerConsolidateBothSides.selector,
-                loanId
-            ),
-            bytes4(0)
-        );
-
         // ── 5. Update loan to reflect ben as borrower ───────────────────────
         loan.borrower = newBorrower;
         loan.collateralAmount = offer.collateralAmount;
@@ -1437,19 +1420,6 @@ contract PrecloseFacet is
         // leave stale listing bookkeeping behind. Idempotent.
         LibPrepayCleanup.clearActiveListing(loan, originalLoanId);
 
-        // #969 / S5 (Codex #1061 P2) — eagerly consolidate BOTH sides to their
-        // current NFT holders while the original loan is still Active, so the
-        // reward close below assigns to the live holders (not the stale stored
-        // users) on a previously-transferred position. Mirrors precloseDirect;
-        // no-ops once terminal / non-ERC20.
-        LibFacet.crossFacetCall(
-            abi.encodeWithSelector(
-                ConsolidationFacet.eagerConsolidateBothSides.selector,
-                originalLoanId
-            ),
-            bytes4(0)
-        );
-
         // Close original loan — offset completion transitions Active -> Repaid.
         _setLoanClaimable(loan, originalLoanId);
         LibLifecycle.transition(
@@ -1459,14 +1429,20 @@ contract PrecloseFacet is
         );
         // #969 / S5 — the ORIGINAL loan is terminal here (the borrower's
         // obligation rolled into a fresh offset loan with its own entries), so
-        // close the original loan's reward entries. Borrower-clean (a continuing
-        // roll, not a default); the old lender is paid off in full and never
-        // forfeits. Best-effort reward hook (see {_rewardHook}).
+        // close the original loan's reward entries. The old lender is paid off in
+        // full and never forfeits. The borrower side is CLEAN only when the offset
+        // completes IN GRACE — an offset (default `expiresAt == 0`) accepted after
+        // the old loan's grace window is a non-clean close and forfeits the old
+        // borrower reward, matching the preclose/refinance grace checks (Codex
+        // #1061 P2). Best-effort reward hook (see {_rewardHook}).
+        uint256 offsetGraceEnd = loan.startTime
+            + loan.durationDays * LibVaipakam.ONE_DAY
+            + LibVaipakam.gracePeriod(loan.durationDays);
         _rewardHook(
             abi.encodeWithSelector(
                 InteractionRewardsFacet.precloseRewardClose.selector,
                 originalLoanId,
-                true // borrowerClean — a continuing roll, not a default
+                block.timestamp <= offsetGraceEnd // borrowerClean
             )
         );
 

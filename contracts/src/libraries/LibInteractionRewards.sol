@@ -714,28 +714,20 @@ library LibInteractionRewards {
         uint256 capRatio = LibVaipakam.getInteractionCapVpfiPerEth();
         (uint256 ethPriceRaw, uint8 ethPriceDec) = _ethUsdPriceRawAndDec();
 
+        // #1061 P1 — the sweep DISCARDS `_processEntry`'s `toUser`, so it must
+        // only ever process FORFEITED entries. Otherwise a payable entry made
+        // claimable by the loan-terminal fallback ({_entryClaimable}) would be
+        // marked `processed` with nothing transferred, destroying the user's
+        // reward. Skip any entry that isn't forfeited (explicit or terminal-
+        // derived) — a permissionless sweep can never touch a payable entry.
         uint256 lenderId = s.loanActiveLenderEntryId[loanId];
-        if (lenderId != 0) {
-            (, uint256 t) = _processEntry(
-                s,
-                lenderId,
-                capRatio,
-                ethPriceRaw,
-                ethPriceDec,
-                /* mutate */ true
-            );
+        if (lenderId != 0 && _isForfeited(s, s.rewardEntries[lenderId])) {
+            (, uint256 t) = _processEntry(s, lenderId, capRatio, ethPriceRaw, ethPriceDec, true);
             treasuryTotal += t;
         }
         uint256 borrowerId = s.loanBorrowerEntryId[loanId];
-        if (borrowerId != 0) {
-            (, uint256 t) = _processEntry(
-                s,
-                borrowerId,
-                capRatio,
-                ethPriceRaw,
-                ethPriceDec,
-                /* mutate */ true
-            );
+        if (borrowerId != 0 && _isForfeited(s, s.rewardEntries[borrowerId])) {
+            (, uint256 t) = _processEntry(s, borrowerId, capRatio, ethPriceRaw, ethPriceDec, true);
             treasuryTotal += t;
         }
 
@@ -746,17 +738,21 @@ library LibInteractionRewards {
         uint256[] storage orphaned = s.loanForfeitedLenderEntryIds[loanId];
         uint256 olen = orphaned.length;
         for (uint256 i = 0; i < olen; ) {
-            (, uint256 t) = _processEntry(
-                s,
-                orphaned[i],
-                capRatio,
-                ethPriceRaw,
-                ethPriceDec,
-                /* mutate */ true
-            );
-            treasuryTotal += t;
+            if (_isForfeited(s, s.rewardEntries[orphaned[i]])) {
+                (, uint256 t) = _processEntry(s, orphaned[i], capRatio, ethPriceRaw, ethPriceDec, true);
+                treasuryTotal += t;
+            }
             unchecked { ++i; }
         }
+    }
+
+    /// @dev #1061 P1 — an entry destined for treasury: an explicit forfeit set
+    ///      by `_closeEntry`, OR a terminal-derived liquidation/default forfeit.
+    function _isForfeited(
+        LibVaipakam.Storage storage s,
+        LibVaipakam.RewardEntry storage e
+    ) private view returns (bool) {
+        return e.forfeited || _entryTerminalForfeit(s, e);
     }
 
     // ─── Legacy window claim (used by test mutators) ────────────────────────
