@@ -206,17 +206,25 @@ contract OfferCancelFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamE
         // returned by the ordinary Lender-cancel refund branch below.
         uint256 lockedOffsetLoanId = s.offsetOfferToLoanId[offerId];
         if (lockedOffsetLoanId != 0) {
-            // #1001 (S3, Codex #1070 r8 P2) — only unlock while the loan is still
-            // ACTIVE. Under settle-at-completion an offset can stay linked while
-            // the original loan goes terminal (the borrower repays/defaults
-            // directly instead of completing the offset) and then `claimAsBorrower`
-            // BURNS `borrowerTokenId`. `LibERC721._unlock` reads `ownerOf(tokenId)`,
-            // which reverts on a burned token — so an unconditional unlock here
-            // would brick the cancel and strand the offer's pre-funded principal.
-            // Once terminal the PrecloseOffset lock is moot (the NFT is gone or
-            // about to be), so skip the unlock and just drop the link; the ordinary
-            // Lender-cancel branch below still refunds the creator's principal.
-            if (s.loans[lockedOffsetLoanId].status == LibVaipakam.LoanStatus.Active) {
+            // #1001 (S3, Codex #1070 r8/r9 P2) — unlock only while the borrower
+            // NFT still EXISTS, i.e. the loan is in a NON-terminal state. Under
+            // settle-at-completion an offset can stay linked while the original
+            // loan goes terminal (the borrower repays/defaults directly instead of
+            // completing the offset) and then `claimAsBorrower` BURNS
+            // `borrowerTokenId`. `LibERC721._unlock` reads `ownerOf(tokenId)`,
+            // which reverts on a burned token — so an unconditional unlock would
+            // brick the cancel and strand the offer's pre-funded principal. Both
+            // Active AND FallbackPending are live, curable states whose NFT is
+            // intact (r9: FallbackPending was wrongly excluded by the Active-only
+            // check); the terminal states (Repaid/Defaulted/Settled/InternalMatched)
+            // are where the NFT may be burned, so skip the (now-moot) unlock there
+            // and just drop the link. The Lender-cancel branch below still refunds
+            // the creator's principal.
+            LibVaipakam.LoanStatus offsetStatus = s.loans[lockedOffsetLoanId].status;
+            if (
+                offsetStatus == LibVaipakam.LoanStatus.Active ||
+                offsetStatus == LibVaipakam.LoanStatus.FallbackPending
+            ) {
                 LibERC721._unlock(s.loans[lockedOffsetLoanId].borrowerTokenId);
             }
             delete s.offsetOfferToLoanId[offerId];
