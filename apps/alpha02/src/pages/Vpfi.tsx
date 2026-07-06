@@ -28,6 +28,11 @@ import { DIAMOND_ABI_VIEM, useDiamondWrite } from '../contracts/diamond';
 import { SimulationPreview } from '../components/SimulationPreview';
 import type { TxSimInput } from '../contracts/useTxSimulation';
 import { ensureAllowance } from '../contracts/erc20';
+import {
+  permitFallbackSafe,
+  usePermit2Signing,
+} from '../contracts/usePermit2Signing';
+import { readAllowance } from '../lib/submitProgress';
 import { exactAmountString, formatBpsAsPercent, formatTokenAmount } from '../lib/format';
 import { isPositiveDecimal, submitErrorText } from '../lib/errors';
 import { flowDisabled } from '../lib/killSwitch';
@@ -41,6 +46,7 @@ export function Vpfi() {
   const { setOpen } = useModal();
   const vpfi = useVpfi();
   const { write } = useDiamondWrite();
+  const permit2 = usePermit2Signing();
   const { data: walletClient } = useWalletClient();
   const publicClient = usePublicClient({ chainId: walletChain?.chainId });
   const queryClient = useQueryClient();
@@ -168,17 +174,55 @@ export function Vpfi() {
           amount: amountWei,
           symbol: 'VPFI',
         });
-        await ensureAllowance({
-          onPrompt: () => setPhase('approving'),
-          publicClient,
-          walletClient,
-          token: snapshot.token,
-          owner: address,
-          spender: walletChain.diamondAddress,
-          amount: amountWei,
-        });
-        setPhase('submitting');
-        await write('depositVPFIToVault', [amountWei]);
+        // Permit2 first (#1038): one gasless signature instead of the
+        // approval transaction, only when an approval would be needed
+        // at all; any permit trouble falls through to the classic
+        // approve+deposit sequence below.
+        let deposited = false;
+        if (permit2.canSign) {
+          const cur = await readAllowance({
+            publicClient,
+            token: snapshot.token,
+            owner: address,
+            spender: walletChain.diamondAddress,
+          });
+          if (cur === undefined || cur < amountWei) {
+            try {
+              setPhase('approving');
+              const { permit, signature } = await permit2.sign({
+                token: snapshot.token,
+                amount: amountWei,
+                spender: walletChain.diamondAddress,
+              });
+              setPhase('submitting');
+              await write('depositVPFIToVaultWithPermit', [
+                amountWei,
+                permit,
+                signature,
+              ]);
+              deposited = true;
+            } catch (permitErr) {
+              // Post-broadcast uncertainty (receipt timeout) must SURFACE —
+              // a classic retry could double-execute; everything else falls
+              // through to the classic path.
+              if (!permitFallbackSafe(permitErr)) throw permitErr;
+              /* fall through to the classic path below */
+            }
+          }
+        }
+        if (!deposited) {
+          await ensureAllowance({
+            onPrompt: () => setPhase('approving'),
+            publicClient,
+            walletClient,
+            token: snapshot.token,
+            owner: address,
+            spender: walletChain.diamondAddress,
+            amount: amountWei,
+          });
+          setPhase('submitting');
+          await write('depositVPFIToVault', [amountWei]);
+        }
         setDone('Deposit confirmed. Your discount history starts building from now.');
       } else {
         setPhase('submitting');

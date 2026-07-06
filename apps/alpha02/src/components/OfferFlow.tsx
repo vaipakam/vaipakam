@@ -32,6 +32,10 @@ import { useActiveChain } from '../chain/useActiveChain';
 import { getSupportedChain } from '../chain/chains';
 import { useMode } from '../app/ModeContext';
 import { DIAMOND_ABI_VIEM, useDiamondWrite } from '../contracts/diamond';
+import {
+  permitFallbackSafe,
+  usePermit2Signing,
+} from '../contracts/usePermit2Signing';
 import { useAcceptTermsSigning } from '../contracts/useAcceptTerms';
 import { SimulationPreview } from './SimulationPreview';
 import type { TxSimInput } from '../contracts/useTxSimulation';
@@ -237,6 +241,7 @@ export function OfferFlow({ side }: { side: Side }) {
   const { data: walletClient } = useWalletClient();
   const publicClient = usePublicClient({ chainId: walletChain?.chainId });
   const { write } = useDiamondWrite();
+  const permit2 = usePermit2Signing();
   const { sign: signAcceptTerms } = useAcceptTermsSigning();
   const fees = useProtocolFees();
   const queryClient = useQueryClient();
@@ -1285,6 +1290,46 @@ export function OfferFlow({ side }: { side: Side }) {
         }
       }
     }
+    // Permit2 first (#1038): one gasless signature replaces the
+    // approval TRANSACTION (and leaves no standing allowance behind).
+    // Only when the classic path would actually need an approval —
+    // with an allowance already covering the amount, classic is a
+    // single transaction, strictly fewer prompts than permit's
+    // signature+transaction, and the #1037 roadmap promised that
+    // count. ANY permit failure (wallet refuses typed data, user
+    // declines, unexpected revert) falls through to the classic
+    // approve+create path — Permit2 is an upgrade, never a gate.
+    if (permit2.canSign) {
+      const cur = await readAllowance({
+        publicClient,
+        token,
+        owner: address,
+        spender: walletChain.diamondAddress,
+      });
+      if (cur === undefined || cur < amount) {
+        try {
+          stepper.next('approve');
+          const { permit, signature } = await permit2.sign({
+            token,
+            amount,
+            spender: walletChain.diamondAddress,
+          });
+          stepper.next('send');
+          const { hash } = await write('createOfferWithPermit', [
+            payload,
+            permit,
+            signature,
+          ]);
+          return hash;
+        } catch (permitErr) {
+          // Post-broadcast uncertainty (receipt timeout) must SURFACE —
+          // a classic retry could double-execute; everything else falls
+          // through to the classic path.
+          if (!permitFallbackSafe(permitErr)) throw permitErr;
+          /* fall through to the classic path below */
+        }
+      }
+    }
     await ensureAllowance({
       publicClient,
       walletClient,
@@ -1529,6 +1574,44 @@ export function OfferFlow({ side }: { side: Side }) {
             : lendingMeta.data?.symbol,
         }),
       ]);
+      // Permit2 first (#1038) — same rules as submitPost: only when
+      // the classic path would need an approval, fail-open to the
+      // classic sequence on any permit trouble. The AcceptTerms
+      // signature already collected above rides along unchanged —
+      // acceptOfferWithPermit takes BOTH signatures.
+      if (permit2.canSign) {
+        const cur = await readAllowance({
+          publicClient,
+          token: payToken,
+          owner: address,
+          spender: walletChain.diamondAddress,
+        });
+        if (cur === undefined || cur < payAmount) {
+          try {
+            stepper.next('approve');
+            const { permit, signature: permitSignature } = await permit2.sign({
+              token: payToken,
+              amount: payAmount,
+              spender: walletChain.diamondAddress,
+            });
+            stepper.next('send');
+            const { hash } = await write('acceptOfferWithPermit', [
+              BigInt(selected.offerId),
+              terms,
+              signature,
+              permit,
+              permitSignature,
+            ]);
+            return hash;
+          } catch (permitErr) {
+            // Post-broadcast uncertainty (receipt timeout) must SURFACE —
+            // a classic retry could double-execute; everything else falls
+            // through to the classic path.
+            if (!permitFallbackSafe(permitErr)) throw permitErr;
+            /* fall through to the classic path below */
+          }
+        }
+      }
       await ensureAllowance({
         publicClient,
         walletClient,

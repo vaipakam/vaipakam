@@ -25,6 +25,10 @@ import { usePublicClient, useWalletClient } from 'wagmi';
 import { useQueryClient } from '@tanstack/react-query';
 import { encodeFunctionData, parseUnits } from 'viem';
 import { copy } from '../content/copy';
+import {
+  permitFallbackSafe,
+  usePermit2Signing,
+} from '../contracts/usePermit2Signing';
 import { ConsentLabel } from '../components/ConsentLabel';
 import { useActiveChain } from '../chain/useActiveChain';
 import { getSupportedChain } from '../chain/chains';
@@ -708,6 +712,7 @@ function RentNftFlow() {
   const { data: walletClient } = useWalletClient();
   const publicClient = usePublicClient({ chainId: walletChain?.chainId });
   const { write } = useDiamondWrite();
+  const permit2 = usePermit2Signing();
   const { sign: signAcceptTerms } = useAcceptTermsSigning();
   const queryClient = useQueryClient();
   const { bps: bufferBps, ready: bufferReady } = useRentalBufferBps();
@@ -1110,21 +1115,61 @@ function RentNftFlow() {
           symbol: prepayMeta.data?.symbol,
         }),
       ]);
-      await ensureAllowance({
-        publicClient,
-        walletClient,
-        token: terms.prepayAsset,
-        owner: address,
-        spender: walletChain.diamondAddress,
-        amount: canonicalTotal,
-        onPrompt: () => stepper.next('approve'),
-      });
-      stepper.next('send');
-      const { hash } = await write('acceptOffer', [
-        BigInt(selected.offerId),
-        terms,
-        signature,
-      ]);
+      // Permit2 first (#1038) — same rules as the offer flows: only
+      // when the classic path would need an approval, any permit
+      // trouble falls through to the classic sequence. The renter's
+      // prepay is the only ERC-20 pull here; the NFT side is the
+      // owner's and untouched.
+      let hash: `0x${string}` | null = null;
+      if (permit2.canSign) {
+        const cur = await readAllowance({
+          publicClient,
+          token: terms.prepayAsset,
+          owner: address,
+          spender: walletChain.diamondAddress,
+        });
+        if (cur === undefined || cur < canonicalTotal) {
+          try {
+            stepper.next('approve');
+            const { permit, signature: permitSignature } = await permit2.sign({
+              token: terms.prepayAsset,
+              amount: canonicalTotal,
+              spender: walletChain.diamondAddress,
+            });
+            stepper.next('send');
+            ({ hash } = await write('acceptOfferWithPermit', [
+              BigInt(selected.offerId),
+              terms,
+              signature,
+              permit,
+              permitSignature,
+            ]));
+          } catch (permitErr) {
+            // Post-broadcast uncertainty (receipt timeout) must SURFACE —
+            // a classic retry could double-execute; everything else falls
+            // through to the classic path.
+            if (!permitFallbackSafe(permitErr)) throw permitErr;
+            hash = null; // fall through to the classic path below
+          }
+        }
+      }
+      if (hash === null) {
+        await ensureAllowance({
+          publicClient,
+          walletClient,
+          token: terms.prepayAsset,
+          owner: address,
+          spender: walletChain.diamondAddress,
+          amount: canonicalTotal,
+          onPrompt: () => stepper.next('approve'),
+        });
+        stepper.next('send');
+        ({ hash } = await write('acceptOffer', [
+          BigInt(selected.offerId),
+          terms,
+          signature,
+        ]));
+      }
       setTxHash(hash);
       setStep('done');
       void queryClient.invalidateQueries({ queryKey: ['activeOffers'] });

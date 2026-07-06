@@ -16,16 +16,32 @@ import { ANVIL_URL, anvilRpc } from './anvil';
 import { CHAIN_ID, forkChain } from './chain';
 import { accountFor, type Role } from './wallets';
 
+/** Per-session wallet behaviour switches, mutable from a spec.
+ *  `rejectPermit2` makes the wallet refuse Permit2 typed-data
+ *  requests (EIP-1193 4001 user-reject) while signing everything
+ *  else — the honest way to force the classic approve+action
+ *  fallback (#1038). `permit2Rejections` counts refusals so a spec
+ *  can assert the permit path was actually attempted. */
+export interface WalletFlags {
+  rejectPermit2: boolean;
+  permit2Rejections: number;
+  /** eth_sendTransaction count — lets a spec assert the permit path's
+   *  single-transaction property (classic approve+action sends two). */
+  sentTransactions: number;
+}
+
 export interface WalletSession {
   ctx: BrowserContext;
   page: Page;
   account: PrivateKeyAccount;
   consoleErrors: string[];
+  flags: WalletFlags;
 }
 
 async function wireWallet(
   ctx: BrowserContext,
   account: PrivateKeyAccount,
+  flags: WalletFlags,
 ): Promise<void> {
   const wallet = createWalletClient({
     chain: forkChain,
@@ -82,6 +98,16 @@ async function wireWallet(
         // params: [address, typedDataJson]
         assertSessionAccount(p[0], method);
         const typed = JSON.parse(p[1] as string);
+        // Spec-controlled Permit2 refusal — matched on the canonical
+        // Permit2 domain name so AcceptTerms signing stays untouched.
+        if (flags.rejectPermit2 && typed.domain?.name === 'Permit2') {
+          flags.permit2Rejections += 1;
+          const err = new Error(
+            'User rejected the Permit2 signature request',
+          ) as Error & { code: number };
+          err.code = 4001;
+          throw err;
+        }
         return account.signTypedData({
           domain: typed.domain,
           types: typed.types,
@@ -90,6 +116,7 @@ async function wireWallet(
         });
       }
       case 'eth_sendTransaction': {
+        flags.sentTransactions += 1;
         const tx = p[0] as {
           from?: `0x${string}`;
           to?: `0x${string}`;
@@ -242,7 +269,12 @@ export const test = base.extend<{
     await use(async (role, opts = {}) => {
       const account = accountFor(role);
       const ctx = await browser.newContext({ viewport: { width: 1280, height: 900 } });
-      await wireWallet(ctx, account);
+      const flags: WalletFlags = {
+        rejectPermit2: false,
+        permit2Rejections: 0,
+        sentTransactions: 0,
+      };
+      await wireWallet(ctx, account, flags);
       if (opts.advanced) {
         await ctx.addInitScript(() => {
           localStorage.setItem('alpha02.mode', 'advanced');
@@ -257,7 +289,7 @@ export const test = base.extend<{
       page.on('pageerror', (e) => consoleErrors.push('PAGEERROR: ' + e.message));
       // Land on the app root once so the origin exists for localStorage.
       await page.goto(baseURL ?? '/', { waitUntil: 'domcontentloaded' });
-      const session = { ctx, page, account, consoleErrors };
+      const session = { ctx, page, account, consoleErrors, flags };
       sessions.push(session);
       return session;
     });
