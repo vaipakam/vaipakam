@@ -3,3 +3,5 @@
 e2e/.state/
 test-results/
 playwright-report/
+e2e/testnet-wallets/
+e2e/live/profiles/
