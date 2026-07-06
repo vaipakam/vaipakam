@@ -23,7 +23,7 @@ import { copy } from '../content/copy';
 import { useActiveChain } from '../chain/useActiveChain';
 import { assertWalletNotSanctionedLive, useSanctionsCheck } from '../data/sanctions';
 import { assertErc20BalanceLive } from '../contracts/preflights';
-import { readVpfiTokenLive, useVpfi, useVpfiTierTable, VPFI_DECIMALS } from '../data/vpfi';
+import { readVpfiTokenLive, useVpfi, useVpfiTierTable, VPFI_DECIMALS, clearVpfiTokenCache } from '../data/vpfi';
 import { DIAMOND_ABI_VIEM, useDiamondWrite } from '../contracts/diamond';
 import { SimulationPreview } from '../components/SimulationPreview';
 import type { TxSimInput } from '../contracts/useTxSimulation';
@@ -163,6 +163,9 @@ export function Vpfi() {
           copy.vpfi.tokenCheckRetry,
         );
         if (liveToken.toLowerCase() !== snapshot.token.toLowerCase()) {
+          // The session cache would otherwise re-serve the rotated-out
+          // address to the refetch this invalidation triggers.
+          clearVpfiTokenCache(walletChain.chainId);
           refresh();
           throw new Error(copy.vpfi.tokenChanged);
         }

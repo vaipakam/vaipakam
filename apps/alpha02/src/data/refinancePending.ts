@@ -32,6 +32,7 @@ import { readLiveProtocolFees } from './fees';
 import { ZERO_ADDRESS } from '../lib/offerSchema';
 import { makePendingMarkerStore } from '../lib/pendingMarker';
 import { useActiveChain } from '../chain/useActiveChain';
+import { idleAware } from '../lib/idle';
 
 const marker = makePendingMarkerStore('alpha02.refinanceOffer');
 
@@ -92,7 +93,7 @@ export function useRefinancePending(
       address?.toLowerCase(),
     ],
     enabled: Boolean(readClient) && offerId !== null && Boolean(principalAsset),
-    refetchInterval: 30_000,
+    refetchInterval: idleAware(30_000),
     queryFn: async (): Promise<RefinancePendingState | 'gone'> => {
       const diamond = readChain.diamondAddress;
       const [offer, live, fees, latestBlock, allowance, balance] =

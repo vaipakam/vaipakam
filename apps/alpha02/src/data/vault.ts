@@ -21,6 +21,7 @@ import { getCanonicalAssetsForChain } from '@vaipakam/lib';
 import { useActiveChain } from '../chain/useActiveChain';
 import { AssetType } from '../lib/types';
 import { useMyLoans, useMyOffers } from './hooks';
+import { idleAware } from '../lib/idle';
 
 const ZERO_ADDRESS = '0x0000000000000000000000000000000000000000';
 
@@ -84,7 +85,7 @@ export function useVaultAssets() {
       Boolean(publicClient) &&
       !depsUnavailable &&
       !depsLoading,
-    refetchInterval: 30_000,
+    refetchInterval: idleAware(30_000),
     queryFn: async (): Promise<VaultSnapshot> => {
       const vault = (await publicClient!.readContract({
         address: readChain.diamondAddress,
