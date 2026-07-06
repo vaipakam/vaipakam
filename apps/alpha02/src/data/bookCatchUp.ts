@@ -46,6 +46,21 @@ const CHUNK_BLOCKS = 1000n;
  *  state. */
 const MAX_CATCHUP_BLOCKS = 20_000n;
 
+/** Upper bound = latest minus a small settling buffer, NOT the
+ *  safe/finalized tag. The buffer keeps a terminal event seen in a
+ *  reorgable tip block from stripping a row that is live again after
+ *  the reorg (reorged logs also carry `removed`, which the decoder
+ *  skips). The safe tag is unusable as this bound: anvil forks
+ *  freeze it at the forked block (the 577a3a9 CI run proved it —
+ *  toBlock < fromBlock, scan silently skipped), some RPCs don't
+ *  serve it, and on healthy ingest the cache cursor routinely runs
+ *  AHEAD of safe, emptying the window exactly when the scan matters.
+ *  On the single-sequencer OP-stack chains this app targets, depth-2
+ *  reorgs of the sequencer tip effectively don't happen outside
+ *  catastrophic L1 events — and the failure mode is a ~4s flicker
+ *  followed by the next refetch, not a wrong transaction. */
+const CONFIRMATION_BUFFER = 2n;
+
 function findEvent(name: string): AbiEvent {
   // Type-aware lookup — NOT getAbiItem, whose name-only search can
   // return a same-named custom ERROR (OfferConsumedBySale exists as
@@ -190,12 +205,10 @@ export async function filterTerminalOffers(
     const fromBlock = BigInt(
       Math.max(target.freshness.lastBlock + 1, target.deployBlock),
     );
-    // Upper bound = the SAFE head, not latest: a terminal event seen
-    // in a reorgable tip block could strip a row that is live again
-    // after the reorg — over-filtering. Chains/RPCs without a safe
-    // tag land in the catch (fail-open, no filtering).
-    const safeHead = await target.publicClient.getBlock({ blockTag: 'safe' });
-    const toBlock = safeHead.number;
+    // See CONFIRMATION_BUFFER for why this is latest-minus-buffer and
+    // not the safe tag.
+    const latest = await target.publicClient.getBlockNumber();
+    const toBlock = latest - CONFIRMATION_BUFFER;
     if (toBlock < fromBlock) return rows;
     if (toBlock - fromBlock + 1n > MAX_CATCHUP_BLOCKS) return rows;
     const logs = await chunkedGetLogs(target.publicClient, {

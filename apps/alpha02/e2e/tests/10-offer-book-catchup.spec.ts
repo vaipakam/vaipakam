@@ -19,7 +19,7 @@ import { toEventSelector } from 'viem';
 import type { Abi, AbiEvent } from 'viem';
 import { test, expect } from '../lib/wallet-fixture';
 import { postLenderOffer, newestOfferIdFor } from '../lib/flows';
-import { increaseTime } from '../lib/anvil';
+import { increaseTime, mine } from '../lib/anvil';
 import { pub, DIAMOND, DIAMOND_ABI_VIEM } from '../lib/chain';
 
 const STUB = `http://127.0.0.1:${Number(process.env.ALPHA02_E2E_STUB_PORT ?? 8788)}`;
@@ -103,6 +103,10 @@ test('a just-cancelled offer vanishes from the book while the cache still serves
         { timeout: 60_000 },
       )
       .toBe(true);
+
+    // Let the cancel block clear the scan's reorg-settling buffer
+    // (toBlock = latest − CONFIRMATION_BUFFER).
+    await mine(4);
 
     // The frozen cache STILL serves the ghost row…
     expect(await stubServesOffer(offerId)).toBe(true);
