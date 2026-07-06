@@ -617,6 +617,7 @@ contract TestMutatorFacet {
             side: side,
             processed: false,
             forfeited: false,
+            closed: false, // #1002 (S4) — seeded open; tests close via closeLoan/mutator
             perDayNumeraire18: perDayNumeraire18
         });
         s.userRewardEntryIds[user].push(id);

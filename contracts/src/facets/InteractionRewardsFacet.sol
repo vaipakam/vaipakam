@@ -583,4 +583,38 @@ contract InteractionRewardsFacet is
             entries[i] = s.rewardEntries[ids[i]];
         }
     }
+
+    // ─── #969 / S5 — diamond-internal reward-lifecycle hooks ─────────────────
+    //
+    // PrecloseFacet must close / re-point reward entries when it flips a loan's
+    // lifecycle, but it is a god-facet already at the EIP-170 ceiling, so
+    // inlining the {LibInteractionRewards.closeLoan} / {repointRewardEntry} call
+    // graph there tips it over the limit. These thin `external` hooks keep that
+    // graph HERE (this facet has headroom) and PrecloseFacet reaches them with a
+    // cheap `address(this).call` cross-facet hop. They are strictly
+    // diamond-internal: only the Diamond itself (a routed cross-facet call) may
+    // invoke them — a direct external caller reverts.
+
+    /// @notice Diamond-internal: emitted signal is none — reverts if not self.
+    error RewardHookCallerNotSelf();
+
+    /// @notice Close a loan's reward entries on a clean terminal preclose
+    ///         (borrower-clean full early repayment; lender repaid, no forfeit).
+    /// @param  loanId The loan being terminally preclosed.
+    function precloseRewardCloseClean(uint256 loanId) external {
+        if (msg.sender != address(this)) revert RewardHookCallerNotSelf();
+        LibInteractionRewards.closeLoan(loanId, true, false);
+    }
+
+    /// @notice Re-point a continuing loan's BORROWER reward entry to the
+    ///         incoming borrower on a Preclose Option-2 obligation transfer
+    ///         (the loan stays Active — this is a migrate, not a close).
+    /// @param  loanId      The loan whose obligation transferred.
+    /// @param  newBorrower The incoming borrower (offer creator).
+    function precloseRewardRepointBorrower(uint256 loanId, address newBorrower)
+        external
+    {
+        if (msg.sender != address(this)) revert RewardHookCallerNotSelf();
+        LibInteractionRewards.repointRewardEntry(loanId, newBorrower, false);
+    }
 }

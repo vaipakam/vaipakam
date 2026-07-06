@@ -6,6 +6,7 @@ import {LibVaipakam} from "../libraries/LibVaipakam.sol";
 import {LibEncumbrance} from "../libraries/LibEncumbrance.sol";
 import {LibAutoRefinanceCheck} from "../libraries/LibAutoRefinanceCheck.sol";
 import {LibLifecycle} from "../libraries/LibLifecycle.sol";
+import {LibInteractionRewards} from "../libraries/LibInteractionRewards.sol";
 import {LibAuth} from "../libraries/LibAuth.sol";
 import {LibEntitlement} from "../libraries/LibEntitlement.sol";
 import {LibFacet} from "../libraries/LibFacet.sol";
@@ -705,6 +706,17 @@ contract RefinanceFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErr
             oldLoan,
             LibVaipakam.LoanStatus.Active,
             LibVaipakam.LoanStatus.Repaid
+        );
+        // #969 / S5 (#998 Tranche 2) — close the OLD loan's reward entries. The
+        // new refinanced loan (`newLoanId`) already registered its own fresh
+        // entries at initiation, so leaving the old entries open double-counted
+        // the same principal in both the numerator AND the denominator. The
+        // borrower rolls into the new loan (a continuation per §6, borrower-
+        // clean); the exiting old lender is paid in full and never forfeits.
+        LibInteractionRewards.closeLoan(
+            oldLoanId,
+            /* borrowerClean */ true,
+            /* lenderForfeit */ false
         );
         // #407 PR 4 (T-407-B, 2026-06-12) — collateral lien release
         // moved to BEFORE the old-collateral withdraw above so the

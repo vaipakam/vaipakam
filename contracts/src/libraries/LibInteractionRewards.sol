@@ -675,7 +675,9 @@ library LibInteractionRewards {
         for (uint256 i = 0; i < len; ) {
             uint256 id = ids[i];
             LibVaipakam.RewardEntry storage e = s.rewardEntries[id];
-            if (!e.processed && e.endDay != 0 && !e.forfeited) {
+            // #1002 (S4) — only CLOSED, non-forfeited entries preview to the
+            // user (was the dead `endDay != 0`; the real gate now is `closed`).
+            if (!e.processed && e.closed && !e.forfeited) {
                 uint256 reward = _previewEntryReward(
                     s,
                     e,
@@ -904,7 +906,11 @@ library LibInteractionRewards {
     ) private returns (uint256 toUser, uint256 toTreasury) {
         LibVaipakam.RewardEntry storage e = s.rewardEntries[id];
         if (e.processed) return (0, 0);
-        if (e.endDay == 0) return (0, 0); // still open
+        // #1002 (S4) — an entry is claimable/sweepable ONLY once its loan is
+        // closed (or the lender position sold). `endDay` is purely the accrual
+        // bound; gating on it (the dead `endDay == 0` sentinel) let both parties
+        // claim the full-window reward while the loan was still open.
+        if (!e.closed) return (0, 0); // loan still open ⇒ nothing to route yet
         if (e.startDay >= e.endDay) {
             if (mutate) e.processed = true;
             return (0, 0);
@@ -974,6 +980,9 @@ library LibInteractionRewards {
         uint256 ethPriceRaw,
         uint8 ethPriceDec
     ) private view returns (uint256 reward) {
+        // #1002 (S4) — preview mirrors the claim gate: no reward is payable
+        // until the loan is closed (matches {_processEntry}).
+        if (!e.closed) return 0;
         if (e.startDay >= e.endDay) return 0;
         uint256 need = e.endDay - 1;
         uint256 cumEnd;
@@ -1040,7 +1049,10 @@ library LibInteractionRewards {
     ) private {
         LibVaipakam.Storage storage s_ = LibVaipakam.storageSlot();
         LibVaipakam.RewardEntry storage e = s_.rewardEntries[id];
-        if (e.endDay == 0) return; // already closed somehow; no-op
+        // #1002 (S4) — idempotency guard: re-closing an already-closed entry
+        // would double-apply the end-delta. (Replaces the dead `endDay == 0`
+        // guard — `endDay` is never 0 in practice.)
+        if (e.closed) return;
         uint256 originalEnd = e.endDay;
         uint256 newEnd = today + 1;
         if (newEnd >= originalEnd) newEnd = originalEnd; // natural close or late
@@ -1053,6 +1065,15 @@ library LibInteractionRewards {
             e.endDay = SafeCast.toUint32(newEnd);
         }
         if (forfeited) e.forfeited = true;
+        // #1002 (S4) — mark the entry terminally settled. This is the single
+        // choke point for both {closeLoan} (loan terminal) and
+        // {transferLenderEntry} (lender sold, loan continues — the OLD entry
+        // closes here while a fresh open entry is allocated for the buyer), so
+        // the `closed` gate in {_processEntry}/{_previewEntryReward} opens
+        // exactly when the entry's window is done. {repointRewardEntry}
+        // deliberately does NOT route through here — a re-pointed entry keeps
+        // accruing (its loan is still open), so it stays `closed == false`.
+        e.closed = true;
     }
 
     /// @dev Apply a signed delta to `deltas[day]` only when `day > frontier`.
