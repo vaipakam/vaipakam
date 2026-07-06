@@ -1291,42 +1291,70 @@ export function OfferFlow({ side }: { side: Side }) {
       }
     }
     // Permit2 first (#1038): one gasless signature replaces the
-    // approval TRANSACTION (and leaves no standing allowance behind).
-    // Only when the classic path would actually need an approval —
-    // with an allowance already covering the amount, classic is a
-    // single transaction, strictly fewer prompts than permit's
-    // signature+transaction, and the #1037 roadmap promised that
-    // count. ANY permit failure (wallet refuses typed data, user
-    // declines, unexpected revert) falls through to the classic
-    // approve+create path — Permit2 is an upgrade, never a gate.
+    // approval TRANSACTION (and leaves no standing Diamond allowance
+    // behind). Two preconditions, read live in one round-trip:
+    //  - the classic path would actually need an approval — with a
+    //    covering allowance classic is a single transaction, strictly
+    //    fewer prompts than permit's signature+transaction, and the
+    //    #1037 roadmap promised that count;
+    //  - the wallet holds a standing token→Permit2 approval covering
+    //    the amount. SignatureTransfer executes the transferFrom AS
+    //    the Permit2 contract, so without that approval every
+    //    *WithPermit call categorically reverts — engaging permit
+    //    there would burn a doomed transaction before falling back.
+    //    Wallets that have used any Permit2 app (Uniswap et al) hold
+    //    the near-universal max approval; everyone else keeps the
+    //    classic path with zero degradation.
     if (permit2.canSign) {
-      const cur = await readAllowance({
-        publicClient,
-        token,
-        owner: address,
-        spender: walletChain.diamondAddress,
-      });
-      if (cur === undefined || cur < amount) {
+      const [cur, permit2Cur] = await Promise.all([
+        readAllowance({
+          publicClient,
+          token,
+          owner: address,
+          spender: walletChain.diamondAddress,
+        }),
+        readAllowance({
+          publicClient,
+          token,
+          owner: address,
+          spender: permit2.permit2Address,
+        }),
+      ]);
+      const needsApproval = cur === undefined || cur < amount;
+      const permit2Funded = permit2Cur !== undefined && permit2Cur >= amount;
+      if (needsApproval && permit2Funded) {
+        // Phase 1 — the signature. ANY failure here is pre-transaction
+        // by construction (nothing was broadcast), so a wallet that
+        // declines or can't do EIP-712 falls to classic unconditionally
+        // — Permit2 is an upgrade, never a gate.
+        stepper.next('approve');
+        let signed: Awaited<ReturnType<typeof permit2.sign>> | null = null;
         try {
-          stepper.next('approve');
-          const { permit, signature } = await permit2.sign({
+          signed = await permit2.sign({
             token,
             amount,
             spender: walletChain.diamondAddress,
           });
+        } catch {
+          signed = null;
+        }
+        if (signed) {
+          // Phase 2 — the transaction. Only DEFINITIVE no-state-change
+          // failures fall to classic; anything ambiguous (a broadcast
+          // or receipt-poll error — the tx may still mine) surfaces
+          // instead of risking a double-execution retry.
           stepper.next('send');
-          const { hash } = await write('createOfferWithPermit', [
-            payload,
-            permit,
-            signature,
-          ]);
-          return hash;
-        } catch (permitErr) {
-          // Post-broadcast uncertainty (receipt timeout) must SURFACE —
-          // a classic retry could double-execute; everything else falls
-          // through to the classic path.
-          if (!permitFallbackSafe(permitErr)) throw permitErr;
-          /* fall through to the classic path below */
+          try {
+            const { hash } = await write('createOfferWithPermit', [
+              payload,
+              signed.permit,
+              signed.signature,
+            ]);
+            return hash;
+          } catch (permitErr) {
+            if (!permitFallbackSafe(permitErr)) throw permitErr;
+            /* definitive failure — fall through to the classic path */
+          }
         }
       }
     }
@@ -1574,41 +1602,69 @@ export function OfferFlow({ side }: { side: Side }) {
             : lendingMeta.data?.symbol,
         }),
       ]);
-      // Permit2 first (#1038) — same rules as submitPost: only when
-      // the classic path would need an approval, fail-open to the
-      // classic sequence on any permit trouble. The AcceptTerms
-      // signature already collected above rides along unchanged —
-      // acceptOfferWithPermit takes BOTH signatures.
-      if (permit2.canSign) {
-        const cur = await readAllowance({
-          publicClient,
-          token: payToken,
-          owner: address,
-          spender: walletChain.diamondAddress,
-        });
-        if (cur === undefined || cur < payAmount) {
+      // Permit2 first (#1038) — same rules as submitPost (approval
+      // actually needed + a standing token→Permit2 approval covering
+      // the amount), plus offer-shape eligibility the facet enforces:
+      // acceptOfferWithPermit only serves accepting a LENDER offer
+      // (the acceptor's ERC-20 collateral pull). A borrower-offer
+      // accept has no acceptor pull — the principal moves
+      // vault-internal — and the facet reverts InvalidAssetType.
+      // Sale-vehicle accepts settle via completeLoanSale (the pull
+      // shape is the seller's, not the acceptor's) — not a Permit2
+      // target either; both keep the classic sequence. The
+      // AcceptTerms signature already collected above rides along
+      // unchanged — acceptOfferWithPermit takes BOTH signatures.
+      if (permit2.canSign && selected.offerType === 0 && !acceptIsLoanSale) {
+        const [cur, permit2Cur] = await Promise.all([
+          readAllowance({
+            publicClient,
+            token: payToken,
+            owner: address,
+            spender: walletChain.diamondAddress,
+          }),
+          readAllowance({
+            publicClient,
+            token: payToken,
+            owner: address,
+            spender: permit2.permit2Address,
+          }),
+        ]);
+        const needsApproval = cur === undefined || cur < payAmount;
+        const permit2Funded =
+          permit2Cur !== undefined && permit2Cur >= payAmount;
+        if (needsApproval && permit2Funded) {
+          // Phase 1 — the permit signature: any failure is
+          // pre-transaction, fall to classic unconditionally.
+          stepper.next('approve');
+          let permitSigned: Awaited<ReturnType<typeof permit2.sign>> | null =
+            null;
           try {
-            stepper.next('approve');
-            const { permit, signature: permitSignature } = await permit2.sign({
+            permitSigned = await permit2.sign({
               token: payToken,
               amount: payAmount,
               spender: walletChain.diamondAddress,
             });
+          } catch {
+            permitSigned = null;
+          }
+          if (permitSigned) {
+            // Phase 2 — the transaction: only definitive
+            // no-state-change failures fall back; ambiguous
+            // broadcast/receipt errors surface (double-execute risk).
             stepper.next('send');
-            const { hash } = await write('acceptOfferWithPermit', [
-              BigInt(selected.offerId),
-              terms,
-              signature,
-              permit,
-              permitSignature,
-            ]);
-            return hash;
-          } catch (permitErr) {
-            // Post-broadcast uncertainty (receipt timeout) must SURFACE —
-            // a classic retry could double-execute; everything else falls
-            // through to the classic path.
-            if (!permitFallbackSafe(permitErr)) throw permitErr;
-            /* fall through to the classic path below */
+            try {
+              const { hash } = await write('acceptOfferWithPermit', [
+                BigInt(selected.offerId),
+                terms,
+                signature,
+                permitSigned.permit,
+                permitSigned.signature,
+              ]);
+              return hash;
+            } catch (permitErr) {
+              if (!permitFallbackSafe(permitErr)) throw permitErr;
+              /* definitive failure — fall through to the classic path */
+            }
           }
         }
       }

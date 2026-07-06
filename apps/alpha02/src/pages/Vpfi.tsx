@@ -175,38 +175,60 @@ export function Vpfi() {
           symbol: 'VPFI',
         });
         // Permit2 first (#1038): one gasless signature instead of the
-        // approval transaction, only when an approval would be needed
-        // at all; any permit trouble falls through to the classic
-        // approve+deposit sequence below.
+        // approval transaction — only when an approval would be
+        // needed at all AND the wallet holds a standing VPFI→Permit2
+        // approval covering the amount (SignatureTransfer pulls AS
+        // the Permit2 contract; without that approval the WithPermit
+        // call categorically reverts).
         let deposited = false;
         if (permit2.canSign) {
-          const cur = await readAllowance({
-            publicClient,
-            token: snapshot.token,
-            owner: address,
-            spender: walletChain.diamondAddress,
-          });
-          if (cur === undefined || cur < amountWei) {
+          const [cur, permit2Cur] = await Promise.all([
+            readAllowance({
+              publicClient,
+              token: snapshot.token,
+              owner: address,
+              spender: walletChain.diamondAddress,
+            }),
+            readAllowance({
+              publicClient,
+              token: snapshot.token,
+              owner: address,
+              spender: permit2.permit2Address,
+            }),
+          ]);
+          const needsApproval = cur === undefined || cur < amountWei;
+          const permit2Funded =
+            permit2Cur !== undefined && permit2Cur >= amountWei;
+          if (needsApproval && permit2Funded) {
+            // Phase 1 — the permit signature: any failure is
+            // pre-transaction, fall to classic unconditionally.
+            setPhase('approving');
+            let signed: Awaited<ReturnType<typeof permit2.sign>> | null = null;
             try {
-              setPhase('approving');
-              const { permit, signature } = await permit2.sign({
+              signed = await permit2.sign({
                 token: snapshot.token,
                 amount: amountWei,
                 spender: walletChain.diamondAddress,
               });
+            } catch {
+              signed = null;
+            }
+            if (signed) {
+              // Phase 2 — the transaction: only definitive
+              // no-state-change failures fall back; ambiguous
+              // broadcast/receipt errors surface (double-execute risk).
               setPhase('submitting');
-              await write('depositVPFIToVaultWithPermit', [
-                amountWei,
-                permit,
-                signature,
-              ]);
-              deposited = true;
-            } catch (permitErr) {
-              // Post-broadcast uncertainty (receipt timeout) must SURFACE —
-              // a classic retry could double-execute; everything else falls
-              // through to the classic path.
-              if (!permitFallbackSafe(permitErr)) throw permitErr;
-              /* fall through to the classic path below */
+              try {
+                await write('depositVPFIToVaultWithPermit', [
+                  amountWei,
+                  signed.permit,
+                  signed.signature,
+                ]);
+                deposited = true;
+              } catch (permitErr) {
+                if (!permitFallbackSafe(permitErr)) throw permitErr;
+                /* definitive failure — fall through to the classic path */
+              }
             }
           }
         }

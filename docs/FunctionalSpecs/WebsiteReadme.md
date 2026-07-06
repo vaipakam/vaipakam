@@ -692,21 +692,28 @@ converge. Its intended behaviour (the test oracle for that surface):
   When active filters match nothing, the empty state must say the
   FILTERS matched nothing (with a clear-filters action) — never that
   the market is empty.
-- Where the wallet can sign typed data, the token approval that
-  precedes a position-opening action may be granted as a one-time,
-  gasless permit signature instead of an approval transaction — the
-  sequence becomes sign-then-transact with a single gas payment, the
-  authorisation covers exactly one pull and expires shortly, and no
-  standing allowance is left behind. The permit route engages only
-  when an approval would otherwise be needed; a wallet that declines
-  or cannot produce the signature falls back to the classic
-  approve-then-act sequence automatically, and the pre-disclosed
-  confirmation count never under-promises (the permit route matches
-  it or finishes early). If a permit-based transaction is broadcast
-  but its confirmation cannot be observed, the app surfaces the
-  uncertainty rather than silently retrying another way — a retry on
-  top of a transaction that may still confirm could execute the
-  action twice.
+- Where the wallet already holds a standing Permit2 approval for the
+  token (acquired once, by the first Permit2-based app the wallet
+  used), the token approval that precedes a position-opening action
+  may be granted as a one-time, gasless permit signature instead of
+  an approval transaction — the sequence becomes sign-then-transact
+  with a single gas payment, the authorisation covers exactly one
+  pull and expires shortly, and no standing protocol allowance is
+  left behind. The permit route engages only when both live-checked
+  preconditions hold: an approval would otherwise be needed, and the
+  wallet's Permit2 approval covers the amount (without it the permit
+  variant cannot succeed on-chain, so it is skipped silently rather
+  than attempted). A wallet that declines or cannot produce the
+  signature falls back to the classic approve-then-act sequence
+  automatically, and the pre-disclosed confirmation count never
+  under-promises (the permit route matches it or finishes early).
+  Once the permit-based transaction has been handed to the wallet,
+  only failures that provably left no pending transaction behind
+  (the user declining, a definitive revert) fall back to the classic
+  sequence; any ambiguous broadcast or confirmation failure is
+  surfaced rather than silently retried another way — a retry on top
+  of a transaction that may still confirm could execute the action
+  twice.
 - Immediately before any approval or signature, the app re-checks the
   facts that decide the transaction live on-chain — balance of the
   asset being locked or paid, asset pause status, current holdership

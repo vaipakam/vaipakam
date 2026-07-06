@@ -25,8 +25,14 @@ import { accountFor, type Role } from './wallets';
 export interface WalletFlags {
   rejectPermit2: boolean;
   permit2Rejections: number;
-  /** eth_sendTransaction count — lets a spec assert the permit path's
-   *  single-transaction property (classic approve+action sends two). */
+  /** Permit2-domain typed-data requests SEEN (counted whether signed
+   *  or refused) — lets a spec assert the permit path was attempted,
+   *  or prove it was silently skipped (gated off) with a hard zero. */
+  permit2SignatureRequests: number;
+  /** eth_sendTransaction count, incremented at the provider boundary —
+   *  ATTEMPTS, not confirmed broadcasts (a doomed transaction that
+   *  fails estimation still counts). That makes `=== 1` the strong
+   *  claim a spec wants: one attempt, no hidden failed extras. */
   sentTransactions: number;
 }
 
@@ -100,6 +106,9 @@ async function wireWallet(
         const typed = JSON.parse(p[1] as string);
         // Spec-controlled Permit2 refusal — matched on the canonical
         // Permit2 domain name so AcceptTerms signing stays untouched.
+        if (typed.domain?.name === 'Permit2') {
+          flags.permit2SignatureRequests += 1;
+        }
         if (flags.rejectPermit2 && typed.domain?.name === 'Permit2') {
           flags.permit2Rejections += 1;
           const err = new Error(
@@ -272,6 +281,7 @@ export const test = base.extend<{
       const flags: WalletFlags = {
         rejectPermit2: false,
         permit2Rejections: 0,
+        permit2SignatureRequests: 0,
         sentTransactions: 0,
       };
       await wireWallet(ctx, account, flags);

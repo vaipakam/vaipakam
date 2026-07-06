@@ -1115,41 +1115,67 @@ function RentNftFlow() {
           symbol: prepayMeta.data?.symbol,
         }),
       ]);
-      // Permit2 first (#1038) — same rules as the offer flows: only
-      // when the classic path would need an approval, any permit
-      // trouble falls through to the classic sequence. The renter's
-      // prepay is the only ERC-20 pull here; the NFT side is the
-      // owner's and untouched.
+      // Permit2 first (#1038) — same rules as the offer flows: the
+      // classic path must actually need an approval AND the wallet
+      // must hold a standing prepay-token→Permit2 approval covering
+      // the total (SignatureTransfer pulls AS the Permit2 contract —
+      // without that approval the WithPermit call categorically
+      // reverts, so engaging it would burn a doomed transaction).
+      // The renter's prepay is the only ERC-20 pull here; the NFT
+      // side is the owner's and untouched. (A rental listing is a
+      // Lender-type offer with an ERC-20 prepay leg — a valid
+      // acceptOfferWithPermit shape by the facet's own gate.)
       let hash: `0x${string}` | null = null;
       if (permit2.canSign) {
-        const cur = await readAllowance({
-          publicClient,
-          token: terms.prepayAsset,
-          owner: address,
-          spender: walletChain.diamondAddress,
-        });
-        if (cur === undefined || cur < canonicalTotal) {
+        const [cur, permit2Cur] = await Promise.all([
+          readAllowance({
+            publicClient,
+            token: terms.prepayAsset,
+            owner: address,
+            spender: walletChain.diamondAddress,
+          }),
+          readAllowance({
+            publicClient,
+            token: terms.prepayAsset,
+            owner: address,
+            spender: permit2.permit2Address,
+          }),
+        ]);
+        const needsApproval = cur === undefined || cur < canonicalTotal;
+        const permit2Funded =
+          permit2Cur !== undefined && permit2Cur >= canonicalTotal;
+        if (needsApproval && permit2Funded) {
+          // Phase 1 — the permit signature: any failure is
+          // pre-transaction, fall to classic unconditionally.
+          stepper.next('approve');
+          let permitSigned: Awaited<ReturnType<typeof permit2.sign>> | null =
+            null;
           try {
-            stepper.next('approve');
-            const { permit, signature: permitSignature } = await permit2.sign({
+            permitSigned = await permit2.sign({
               token: terms.prepayAsset,
               amount: canonicalTotal,
               spender: walletChain.diamondAddress,
             });
+          } catch {
+            permitSigned = null;
+          }
+          if (permitSigned) {
+            // Phase 2 — the transaction: only definitive
+            // no-state-change failures fall back; ambiguous
+            // broadcast/receipt errors surface (double-execute risk).
             stepper.next('send');
-            ({ hash } = await write('acceptOfferWithPermit', [
-              BigInt(selected.offerId),
-              terms,
-              signature,
-              permit,
-              permitSignature,
-            ]));
-          } catch (permitErr) {
-            // Post-broadcast uncertainty (receipt timeout) must SURFACE —
-            // a classic retry could double-execute; everything else falls
-            // through to the classic path.
-            if (!permitFallbackSafe(permitErr)) throw permitErr;
-            hash = null; // fall through to the classic path below
+            try {
+              ({ hash } = await write('acceptOfferWithPermit', [
+                BigInt(selected.offerId),
+                terms,
+                signature,
+                permitSigned.permit,
+                permitSigned.signature,
+              ]));
+            } catch (permitErr) {
+              if (!permitFallbackSafe(permitErr)) throw permitErr;
+              hash = null; // definitive failure — classic path below
+            }
           }
         }
       }
