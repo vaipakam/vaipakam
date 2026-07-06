@@ -123,6 +123,22 @@ describe('parseSupportTicket', () => {
     expect(parsed?.message).toContain(addr);
     // Not a hex-prefix false positive: longer hex blobs stay intact.
     expect(redactWalletAddresses(`${addr}ff`)).toBe(`${addr}ff`);
+    // Uppercase 0X prefix (EIP-55 tooling) must redact too.
+    const upper = `0X${addr.slice(2)}`;
+    expect(redactWalletAddresses(upper)).toBe('0X1DAe…8282');
+  });
+
+  it('redacts diagnostics BEFORE the size cap, so a boundary-spanning address cannot survive', () => {
+    const addr = '0x1DAefA360ED370285f003Fa2d92DB75628088282';
+    // Position the address to straddle the 4,000-char cutoff: cap
+    // first would slice it into an unmatchable fragment.
+    const padding = 'p'.repeat(3_980);
+    const parsed = parseSupportTicket({
+      message: 'm',
+      diagnostics: `${padding}${addr}${'q'.repeat(200)}`,
+    });
+    expect(parsed?.diagnostics).not.toContain(addr);
+    expect(parsed?.diagnostics).toContain('0x1DAe…8282');
   });
 
   it('rejects non-positive or fractional chain ids', () => {

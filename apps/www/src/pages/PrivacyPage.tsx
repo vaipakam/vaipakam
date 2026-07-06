@@ -25,9 +25,9 @@ export default function PrivacyPage() {
         <header>
           <h1>Vaipakam Privacy Policy</h1>
           <div className="legal-meta">
-            <span>Version 2</span>
+            <span>Version 3</span>
             <span>·</span>
-            <span>Effective 2026-05-16</span>
+            <span>Effective 2026-07-06</span>
           </div>
         </header>
 
@@ -36,7 +36,7 @@ export default function PrivacyPage() {
           <p>
             Vaipakam is non-custodial and has no accounts, no sign-ups,
             and no off-chain identity system. Given that, the data we
-            observe about you falls into five narrow categories.
+            observe about you falls into six narrow categories.
           </p>
 
           <p>
@@ -90,6 +90,36 @@ export default function PrivacyPage() {
           </p>
 
           <p>
+            <strong>Support tickets — only when you send one.</strong>{' '}
+            If you use the in-app "Contact support" form, we store what
+            you submit on Vaipakam's support service: your message
+            exactly as you typed it, the reply email address if you
+            chose to give one (it is optional — a ticket works without
+            it), the app page the report was sent from (with any wallet
+            addresses shortened), your chain id, and — only if you
+            ticked the attach box — the same redacted connection-health
+            details the form showed you. Wallet addresses in the page
+            field and the health details are shortened on our server as
+            well, whatever the sending app did. Each ticket gets a
+            reference number, shown to you. Our operators are notified
+            via Telegram (our operations alert channel) that a ticket
+            arrived; that notification carries only the ticket number
+            and context flags (page, network, whether a reply address
+            and health details were included) — never your message text
+            or email address — so Telegram processes only that
+            metadata. Support tickets are deleted automatically no
+            later than 12 months after submission (most sooner, once
+            resolved); write to the contact address below to have a
+            ticket's contents erased earlier (we may keep the bare
+            ticket number where the law requires). Like our other
+            off-chain operational records, tickets are included in
+            encrypted nightly backups (see "Data transfer"); backup
+            copies age out on the backup rotation schedule. The legal
+            basis is GDPR Art 6(1)(b) — handling the support request
+            you asked us to handle.
+          </p>
+
+          <p>
             <strong>Google Analytics — only with consent.</strong> If
             you accept analytics cookies in the{' '}
             <button
@@ -135,7 +165,9 @@ export default function PrivacyPage() {
             <li>
               No email, no phone, no social-media handle, unless you
               voluntarily type it into a public channel we don't
-              operate.
+              operate — or voluntarily give an optional reply email
+              with an in-app support ticket (see "Support tickets"
+              above; it is never required).
             </li>
             <li>No tracking pixels beyond Google Analytics (and only with consent).</li>
             <li>No advertising identifiers.</li>
@@ -149,6 +181,20 @@ export default function PrivacyPage() {
               <strong>Google.</strong> Only if you consent to analytics
               cookies, and only aggregated usage data — never a
               payload tying a wallet address to a person.
+            </li>
+            <li>
+              <strong>Telegram.</strong> Only if you send a support
+              ticket: our operators are alerted through Telegram with
+              the ticket number and context flags described above —
+              never your message text or email address.
+            </li>
+            <li>
+              <strong>Backblaze.</strong> Our off-chain operational
+              records (server-side error records, alert subscriptions,
+              support tickets) are backed up nightly to Backblaze B2.
+              Archives are encrypted on our side before upload —
+              Backblaze holds ciphertext only, and cannot read any of
+              it.
             </li>
             <li>
               <strong>Nobody else by default.</strong> We do not sell
@@ -202,11 +248,21 @@ export default function PrivacyPage() {
         <section>
           <h2>Data transfer</h2>
           <p>
-            The frontend is hosted on Cloudflare Pages. Analytics (if
-            consented) are processed by Google. Both transfer data
-            across borders as part of their standard operation. We do
-            not transfer any additional data beyond what these tools
-            inherently handle.
+            The frontend is hosted on Cloudflare Pages, and our
+            off-chain operational records live in Cloudflare's database
+            service. Analytics (if consented) are processed by Google.
+            Support-ticket alert metadata (never contents) passes
+            through Telegram. Encrypted backups of the off-chain
+            records are stored with Backblaze B2 — encrypted before
+            upload, so Backblaze holds only ciphertext; nightly backup
+            archives are kept 30 days and monthly archives 12 months,
+            after which they age out automatically (one archive per
+            calendar year is retained longer for legal-audit
+            durability — support tickets are excluded from that yearly
+            archive, so their deletion promise holds). All of these
+            providers transfer data across borders as part of their
+            standard operation. We do not transfer any additional data
+            beyond what these tools inherently handle.
           </p>
         </section>
 
@@ -224,6 +280,13 @@ export default function PrivacyPage() {
             <li>
               Server-side error records: pruned 90 days after
               capture.
+            </li>
+            <li>
+              Support tickets: deleted automatically no later than 12
+              months after submission (earlier on request — see
+              "Support tickets" above). Backup copies age out on the
+              backup rotation schedule described under "Data
+              transfer".
             </li>
             <li>
               Consent choice: kept in your browser's local storage

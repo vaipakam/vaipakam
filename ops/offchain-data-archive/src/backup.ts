@@ -237,82 +237,88 @@ export async function runNightlyBackup(env: Env, b2Cfg: B2Config): Promise<Backu
   // 2. Export the R2 legal-vault.
   const r2Objects = await exportR2Bucket(env.R2_LEGAL_VAULT);
 
-  // 3. Build the canonical archive object — JSON, then encrypt the
-  //    whole thing as a single AES-256-GCM blob. JSON is fine at
-  //    this scale (≤ 10 GB year-1); if archive size becomes a
-  //    bottleneck a future PR can swap to a streaming format
-  //    (NDJSON line-delimited + Reader-aware encryption).
-  const archive = {
-    version: 1,
-    createdAt: new Date().toISOString(),
-    d1: { archive: archiveTables, lzAlerts: lzAlertsTables },
-    r2: { bucket: 'vaipakam-legal-vault', objects: r2Objects },
-  };
-  const plaintext = new TextEncoder().encode(JSON.stringify(archive));
+  // 3+4. Build the canonical archive blob + its manifest. Extracted
+  //    as a local helper because the Jan-1 run needs a SECOND build
+  //    with a different table set (see the yearly-tier note below).
+  //    JSON is fine at this scale (≤ 10 GB year-1); if archive size
+  //    becomes a bottleneck a future PR can swap to a streaming
+  //    format (NDJSON line-delimited + Reader-aware encryption).
+  const createdAt = new Date().toISOString();
+  const buildPayload = async (tables: TableExport[]) => {
+    const archiveObj = {
+      version: 1,
+      createdAt,
+      d1: { archive: tables, lzAlerts: lzAlertsTables },
+      r2: { bucket: 'vaipakam-legal-vault', objects: r2Objects },
+    };
+    const plaintext = new TextEncoder().encode(JSON.stringify(archiveObj));
 
-  // Memory ceiling — checked BEFORE encrypt because encryption
-  // doubles peak memory (plaintext + ciphertext both resident at
-  // ~equal size; AES-GCM ciphertext is plaintext + 28 bytes IV+tag).
-  // A post-encryption check is too late — the encrypt() call itself
-  // would OOM the isolate first. Comparing plaintext bytes against
-  // the encrypted budget MAX_ARCHIVE_BYTES is conservative by ~28
-  // bytes (plaintext < ciphertext) — safe direction. The 128 MB
-  // isolate cap is the hard ceiling; 100 MB target leaves headroom
-  // for stack + transient buffers.
-  if (plaintext.byteLength > MAX_ARCHIVE_BYTES) {
-    throw new Error(
-      `BACKUP ABORT: archive plaintext size ${plaintext.byteLength} bytes ` +
-      `exceeds MAX_ARCHIVE_BYTES (${MAX_ARCHIVE_BYTES}). Cloudflare Workers' ` +
-      `128 MB isolate cap means encrypt() would OOM the Worker. Time to ship ` +
-      `the streaming implementation (Stage A.1 follow-up).`,
+    // Memory ceiling — checked BEFORE encrypt because encryption
+    // doubles peak memory (plaintext + ciphertext both resident at
+    // ~equal size; AES-GCM ciphertext is plaintext + 28 bytes IV+tag).
+    // A post-encryption check is too late — the encrypt() call itself
+    // would OOM the isolate first. Comparing plaintext bytes against
+    // the encrypted budget MAX_ARCHIVE_BYTES is conservative by ~28
+    // bytes (plaintext < ciphertext) — safe direction. The 128 MB
+    // isolate cap is the hard ceiling; 100 MB target leaves headroom
+    // for stack + transient buffers.
+    if (plaintext.byteLength > MAX_ARCHIVE_BYTES) {
+      throw new Error(
+        `BACKUP ABORT: archive plaintext size ${plaintext.byteLength} bytes ` +
+        `exceeds MAX_ARCHIVE_BYTES (${MAX_ARCHIVE_BYTES}). Cloudflare Workers' ` +
+        `128 MB isolate cap means encrypt() would OOM the Worker. Time to ship ` +
+        `the streaming implementation (Stage A.1 follow-up).`,
+      );
+    }
+
+    // `TextEncoder().encode(...).buffer` is `ArrayBufferLike` in TS's
+    // strict typings (it could be a SharedArrayBuffer in theory).
+    // WebCrypto wants a plain ArrayBuffer; slice(0) returns one
+    // explicitly without an extra copy beyond the bytes we already own.
+    const encrypted = await encrypt(
+      env.encryptionKey,
+      plaintext.buffer.slice(0) as ArrayBuffer,
     );
-  }
+    const archiveSha = await sha256Hex(encrypted);
 
-  // `TextEncoder().encode(...).buffer` is `ArrayBufferLike` in TS's
-  // strict typings (it could be a SharedArrayBuffer in theory).
-  // WebCrypto wants a plain ArrayBuffer; slice(0) returns one
-  // explicitly without an extra copy beyond the bytes we already own.
-  const encrypted = await encrypt(
-    env.encryptionKey,
-    plaintext.buffer.slice(0) as ArrayBuffer,
-  );
-
-  const archiveSha = await sha256Hex(encrypted);
-
-  // 4. Manifest — small, unencrypted (the healthcheck reads it
-  //    without the key). Carries only metadata: row counts, schema
-  //    hashes, archive SHA-256. No plaintext data.
-  const manifest: Manifest = {
-    version: 1,
-    createdAt: archive.createdAt,
-    schemaVersion: 1,
-    archive: {
-      sha256: archiveSha,
-      byteLength: encrypted.byteLength,
-      encryption: 'AES-256-GCM',
-    },
-    d1: {
-      archive: await Promise.all(
-        archiveTables.map(async (t) => ({
-          table: t.name,
-          rowCount: t.rowCount,
-          schemaHash: await schemaHash(t.schema),
-        })),
-      ),
-      lzAlerts: await Promise.all(
-        lzAlertsTables.map(async (t) => ({
-          table: t.name,
-          rowCount: t.rowCount,
-          schemaHash: await schemaHash(t.schema),
-        })),
-      ),
-    },
-    r2: {
-      bucket: 'vaipakam-legal-vault',
-      objectCount: r2Objects.length,
-      totalBytes: r2Objects.reduce((acc, o) => acc + o.size, 0),
-    },
+    // Manifest — small, unencrypted (the healthcheck reads it
+    // without the key). Carries only metadata: row counts, schema
+    // hashes, archive SHA-256. No plaintext data.
+    const manifest: Manifest = {
+      version: 1,
+      createdAt,
+      schemaVersion: 1,
+      archive: {
+        sha256: archiveSha,
+        byteLength: encrypted.byteLength,
+        encryption: 'AES-256-GCM',
+      },
+      d1: {
+        archive: await Promise.all(
+          tables.map(async (t) => ({
+            table: t.name,
+            rowCount: t.rowCount,
+            schemaHash: await schemaHash(t.schema),
+          })),
+        ),
+        lzAlerts: await Promise.all(
+          lzAlertsTables.map(async (t) => ({
+            table: t.name,
+            rowCount: t.rowCount,
+            schemaHash: await schemaHash(t.schema),
+          })),
+        ),
+      },
+      r2: {
+        bucket: 'vaipakam-legal-vault',
+        objectCount: r2Objects.length,
+        totalBytes: r2Objects.reduce((acc, o) => acc + o.size, 0),
+      },
+    };
+    return { encrypted, archiveSha, manifest };
   };
+
+  const { encrypted, archiveSha, manifest } = await buildPayload(archiveTables);
 
   // 5. Upload — archive first, then manifest. Reverse-order failure
   //    means a missing manifest with an existing archive (harmless;
@@ -340,9 +346,9 @@ export async function runNightlyBackup(env: Env, b2Cfg: B2Config): Promise<Backu
   // The same nonce is shared by an archive and its manifest so the
   // healthcheck can pair them deterministically (`archives/<d>/<n>.bin`
   // ↔ `manifests/<d>/<n>.json`).
-  const dateKey = archive.createdAt.slice(0, 10); // YYYY-MM-DD
-  const monthKey = archive.createdAt.slice(0, 7); // YYYY-MM
-  const yearKey = archive.createdAt.slice(0, 4);  // YYYY
+  const dateKey = createdAt.slice(0, 10); // YYYY-MM-DD
+  const monthKey = createdAt.slice(0, 7); // YYYY-MM
+  const yearKey = createdAt.slice(0, 4);  // YYYY
   const isFirstOfMonth = dateKey.endsWith('-01');
   const isFirstOfYear = dateKey.endsWith('-01-01');
 
@@ -367,17 +373,38 @@ export async function runNightlyBackup(env: Env, b2Cfg: B2Config): Promise<Backu
       manifest: `manifests-monthly/${monthKey}/${nonceHex}.json`,
     });
   }
-  if (isFirstOfYear) {
-    writes.push({
-      archive: `archives-yearly/${yearKey}/${nonceHex}.bin`,
-      manifest: `manifests-yearly/${yearKey}/${nonceHex}.json`,
-    });
-  }
 
   const manifestBody = new TextEncoder().encode(JSON.stringify(manifest, null, 2));
   for (const w of writes) {
     await putObject(b2Cfg, w.archive, encrypted, 'application/octet-stream');
     await putObject(b2Cfg, w.manifest, manifestBody, 'application/json');
+  }
+
+  // Yearly tier (Jan-1, NO lifecycle rule — indefinite retention):
+  // built as a SEPARATE payload that EXCLUDES `support_tickets`. The
+  // Privacy Policy promises tickets are deleted no later than 12
+  // months after submission; the daily (30-day) and monthly
+  // (365-day) tiers age out within the disclosed rotation schedule,
+  // but an indefinite copy would keep ticket contents forever and
+  // break that promise (Codex round-4 P2). Everything else in the
+  // yearly archive (legal-hold audit trail etc.) is exactly the
+  // data the indefinite tier exists for.
+  if (isFirstOfYear) {
+    const yearly = await buildPayload(
+      archiveTables.filter((t) => t.name !== 'support_tickets'),
+    );
+    await putObject(
+      b2Cfg,
+      `archives-yearly/${yearKey}/${nonceHex}.bin`,
+      yearly.encrypted,
+      'application/octet-stream',
+    );
+    await putObject(
+      b2Cfg,
+      `manifests-yearly/${yearKey}/${nonceHex}.json`,
+      new TextEncoder().encode(JSON.stringify(yearly.manifest, null, 2)),
+      'application/json',
+    );
   }
 
   // The healthcheck looks up the most recent manifest under

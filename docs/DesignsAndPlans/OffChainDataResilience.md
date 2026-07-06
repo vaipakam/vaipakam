@@ -166,7 +166,11 @@ in-place overwrite, only against read/delete.
 - **12 months** of monthly archives (one per month, retained by
   lifecycle rule).
 - **Indefinite** for the first archive of each calendar year (for
-  legal-hold audit trail durability).
+  legal-hold audit trail durability). The yearly archive is built as
+  a separate payload that **excludes `support_tickets`** — the
+  Privacy Policy promises ticket deletion no later than 12 months
+  after submission, and an indefinite copy would break that promise;
+  the daily/monthly tiers age out within the disclosed rotation.
 
 ### 3.5 Restore procedure
 

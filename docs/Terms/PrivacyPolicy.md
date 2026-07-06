@@ -1,13 +1,13 @@
 # Vaipakam Privacy Policy
 
-**Version:** 2
-**Effective:** 2026-05-16
+**Version:** 3
+**Effective:** 2026-07-06
 
 ## What we collect
 
 Vaipakam is non-custodial and has no accounts, no sign-ups, and no
 off-chain identity system. Given that, the data we observe about you
-falls into five narrow categories.
+falls into six narrow categories.
 
 **On-chain activity.** Your wallet address and the transactions it
 sends are public by design — every action you take on the protocol is
@@ -144,7 +144,9 @@ of the off-chain records are stored with Backblaze B2 — encrypted
 before upload, so Backblaze holds only ciphertext; nightly backup
 archives are kept 30 days and monthly archives 12 months, after
 which they age out automatically (one archive per calendar year is
-retained longer for legal-audit durability). All of these providers
+retained longer for legal-audit durability — support tickets are
+excluded from that yearly archive, so their deletion promise holds).
+All of these providers
 transfer data across borders as part of their standard operation. We
 do not transfer any additional data beyond what these tools
 inherently handle.

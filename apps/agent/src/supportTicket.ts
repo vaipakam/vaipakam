@@ -44,8 +44,11 @@ export interface SupportTicketBody {
  *  user's `message` is deliberately NOT touched: the policy promises
  *  it is stored exactly as typed. Exported for the vitest suite. */
 export function redactWalletAddresses(s: string): string {
+  // `0[xX]` — EIP-55 tooling and some wallets emit an uppercase
+  // prefix; the frontend redactor matches both and this server
+  // fallback must too (Codex round-4 P2).
   return s.replace(
-    /0x[a-fA-F0-9]{40}(?![a-fA-F0-9])/g,
+    /0[xX][a-fA-F0-9]{40}(?![a-fA-F0-9])/g,
     (m) => `${m.slice(0, 6)}…${m.slice(-4)}`,
   );
 }
@@ -76,13 +79,16 @@ export function parseSupportTicket(raw: unknown): SupportTicketBody | null {
   let diagnostics: string | null = null;
   if (o.diagnostics !== undefined && o.diagnostics !== null) {
     if (typeof o.diagnostics !== 'string') return null;
-    // Cap server-side (never trust the client's cap); truncation is
-    // marked so the operator knows the block is partial.
+    // Redact BEFORE capping — truncating first can slice a full
+    // address across the cutoff, leaving a fragment the redactor no
+    // longer matches (Codex round-4 P2). Then cap server-side (never
+    // trust the client's cap); truncation is marked so the operator
+    // knows the block is partial.
+    const redacted = redactWalletAddresses(o.diagnostics);
     diagnostics =
-      o.diagnostics.length > MAX_DIAGNOSTICS_CHARS
-        ? `${o.diagnostics.slice(0, MAX_DIAGNOSTICS_CHARS)}\n[truncated]`
-        : o.diagnostics;
-    diagnostics = redactWalletAddresses(diagnostics);
+      redacted.length > MAX_DIAGNOSTICS_CHARS
+        ? `${redacted.slice(0, MAX_DIAGNOSTICS_CHARS)}\n[truncated]`
+        : redacted;
     if (diagnostics.trim() === '') diagnostics = null;
   }
 
