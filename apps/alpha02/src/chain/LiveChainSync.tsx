@@ -64,7 +64,9 @@ const LIVE_KEYS: ReadonlySet<string> = new Set([
   // seconds), and a block-driven refetch inside that window would
   // overwrite the patch with stale state and bounce the checkbox.
   // Both are own-wallet state that third parties don't move; their
-  // 30s/60s interval refetch reconciles once the RPC caught up.
+  // 30s/60s interval refetch reconciles once the RPC caught up. (The
+  // idle-RESUME refresh below DOES cover them — after 2 min without
+  // interaction no own-write patch can still be in that window.)
 ]);
 
 /** Extra roots the idle-RESUME refresh covers beyond LIVE_KEYS:
@@ -73,8 +75,20 @@ const LIVE_KEYS: ReadonlySet<string> = new Set([
  *  refetch every floor tick for data only the user's own (cache-
  *  patched) actions usually move. On resume they must be fresh
  *  immediately, though: a stretched idle timer may still be in
- *  flight (Codex round-2 P2). */
-const RESUME_EXTRA_KEYS: ReadonlySet<string> = new Set(['tokenBalance']);
+ *  flight (Codex round-2 P2).
+ *
+ *  'vpfi' / 'loanKeeperEnabled' are safe HERE even though LIVE_KEYS
+ *  excludes them for read-after-write honesty: the resume path only
+ *  fires after ≥2 min without interaction, so no own write (writes
+ *  require interaction) can still be inside the public-RPC stale
+ *  window — the refetch reconciles, it can't clobber a fresh cache
+ *  patch (Codex round-3 P2: stale VPFI free balance could gate the
+ *  first post-idle withdraw for another stretched tick). */
+const RESUME_EXTRA_KEYS: ReadonlySet<string> = new Set([
+  'tokenBalance',
+  'vpfi',
+  'loanKeeperEnabled',
+]);
 
 /** Floor between block-driven invalidations. Base Sepolia mines ~every
  *  2s; each invalidation refetches the mounted live set, which
