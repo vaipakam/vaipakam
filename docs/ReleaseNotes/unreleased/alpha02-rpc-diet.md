@@ -27,10 +27,13 @@ per minute, with near zero once you look away:
   restores the normal pace; configuration-style data follows at its
   next tick, and returning to the tab refreshes everything on focus
   as before.
-- **One static read stopped repeating.** The VPFI token address — a
-  value that cannot change without a redeploy — was re-read every 30
-  seconds, and for signed-out visitors it was the only chain call in
-  the cycle; it is now read once per session per network.
+- **One static read stopped repeating.** The VPFI token address —
+  which changes only through an explicit governance registration or
+  rotation — was re-read every 30 seconds, and for signed-out
+  visitors it was the only chain call in the cycle; it is now read
+  once per session per network. The two governance events stay
+  honest: a not-yet-registered result is never cached, and the
+  rotation recovery flow clears the cache before it refreshes.
 
 Nothing visible changes: pages render the same, your own actions
 still reflect instantly, and the block-driven refresh returns
