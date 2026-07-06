@@ -1,0 +1,4 @@
+# Screenshot output from the live drivers' shot() helper — runtime
+# artifacts of post-deploy reviews, never source. Kept out of the
+# repo so a live-batch run leaves the tree clean.
+shots/
