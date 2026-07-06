@@ -346,37 +346,6 @@
   },
   {
     "type": "function",
-    "name": "precloseRewardCloseClean",
-    "inputs": [
-      {
-        "name": "loanId",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ],
-    "outputs": [],
-    "stateMutability": "nonpayable"
-  },
-  {
-    "type": "function",
-    "name": "precloseRewardRepointBorrower",
-    "inputs": [
-      {
-        "name": "loanId",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "newBorrower",
-        "type": "address",
-        "internalType": "address"
-      }
-    ],
-    "outputs": [],
-    "stateMutability": "nonpayable"
-  },
-  {
-    "type": "function",
     "name": "previewInteractionRewards",
     "inputs": [
       {
@@ -1083,11 +1052,6 @@
   },
   {
     "type": "error",
-    "name": "RewardHookCallerNotSelf",
-    "inputs": []
-  },
-  {
-    "type": "error",
     "name": "RewardMessengerNotSet",
     "inputs": []
   },
@@ -1095,33 +1059,6 @@
     "type": "error",
     "name": "RiskAndTermsConsentRequired",
     "inputs": []
-  },
-  {
-    "type": "error",
-    "name": "SafeCastOverflowedUintDowncast",
-    "inputs": [
-      {
-        "name": "bits",
-        "type": "uint8",
-        "internalType": "uint8"
-      },
-      {
-        "name": "value",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ]
-  },
-  {
-    "type": "error",
-    "name": "SafeCastOverflowedUintToInt",
-    "inputs": [
-      {
-        "name": "value",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ]
   },
   {
     "type": "error",

@@ -455,17 +455,21 @@ contract PrecloseFacet is
         }
 
         // #969 / S5 (#998 Tranche 2) — close the interaction-reward entries for
-        // BOTH branches (hoisted out of the if/else). A direct preclose is a FULL
-        // early repayment, so it is CLEAN on the borrower side (matches the
-        // {RepayFacet.repayLoan} convention: "clean only on in-grace full
-        // repayment") and the lender is repaid, never forfeits (the
-        // early-withdrawal SALE path is the sole lender-forfeit route). Without
-        // this both entries kept accruing to the original contracted `endDay`.
-        // Routed via a best-effort reward hook (see {_rewardHook}).
+        // BOTH branches (hoisted out of the if/else). The lender is repaid and
+        // never forfeits (the early-withdrawal SALE path is the sole
+        // lender-forfeit route). The borrower side is CLEAN only for an IN-GRACE
+        // full repayment — a LATE preclose (past grace, before anyone triggered
+        // default) is a non-clean close and forfeits the borrower reward, per the
+        // {RepayFacet.repayLoan} convention (Codex #1061 P2). Best-effort hook
+        // (see {_rewardHook}).
+        uint256 graceEnd = loan.startTime
+            + loan.durationDays * LibVaipakam.ONE_DAY
+            + LibVaipakam.gracePeriod(loan.durationDays);
         _rewardHook(
             abi.encodeWithSelector(
-                InteractionRewardsFacet.precloseRewardCloseClean.selector,
-                loanId
+                InteractionRewardsFacet.precloseRewardClose.selector,
+                loanId,
+                block.timestamp <= graceEnd // borrowerClean
             )
         );
     }
@@ -798,25 +802,17 @@ contract PrecloseFacet is
         loan.interestRateBps = offer.interestRateBps;
 
         // #969 / S5 (#998 Tranche 2) — Option 2 is a CONTINUING transfer, not a
-        // terminal close: the loan stays Active under the incoming borrower. The
-        // critical fix is that the borrower reward entry must follow the NEW
-        // borrower — before this, the entry kept accruing under the EXITING
-        // borrower's name, so the party who left the loan would have claimed the
-        // rewards the continuing borrower's interest earns. Re-point (not close)
-        // keeps the single per-loan entry intact and the loan accruing; the
-        // lender side is unchanged so its entry is untouched.
-        //
-        // NOTE (follow-up): the entry's day-window + `perDayNumeraire18` still
-        // reflect the ORIGINAL term. Option 2 re-originates under a new
-        // rate/duration (set just above), so the incoming borrower accrues on
-        // the old interest profile until natural close. Correcting that needs a
-        // close-and-re-register (numeraire recompute); tracked as a reward-
-        // accuracy follow-up. Best-effort reward hook (see {_rewardHook}).
+        // terminal close: the loan stays Active under the incoming borrower and a
+        // re-originated term (set just above). The hook SPLITS the reward windows
+        // at the transfer day — the exiting borrower + unchanged lender keep what
+        // they earned pre-transfer, and fresh entries cover the continuing loan
+        // under the new rate/duration — so the incoming borrower only earns from
+        // the transfer forward and never the previous borrower's history (Codex
+        // #1061 P2). Best-effort reward hook (see {_rewardHook}).
         _rewardHook(
             abi.encodeWithSelector(
-                InteractionRewardsFacet.precloseRewardRepointBorrower.selector,
-                loanId,
-                loan.borrower // == newBorrower
+                InteractionRewardsFacet.precloseRewardTransferObligation.selector,
+                loanId
             )
         );
 
@@ -1438,8 +1434,9 @@ contract PrecloseFacet is
         // forfeits. Best-effort reward hook (see {_rewardHook}).
         _rewardHook(
             abi.encodeWithSelector(
-                InteractionRewardsFacet.precloseRewardCloseClean.selector,
-                originalLoanId
+                InteractionRewardsFacet.precloseRewardClose.selector,
+                originalLoanId,
+                true // borrowerClean — a continuing roll, not a default
             )
         );
 

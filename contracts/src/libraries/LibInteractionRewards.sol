@@ -675,9 +675,9 @@ library LibInteractionRewards {
         for (uint256 i = 0; i < len; ) {
             uint256 id = ids[i];
             LibVaipakam.RewardEntry storage e = s.rewardEntries[id];
-            // #1002 (S4) — only CLOSED, non-forfeited entries preview to the
-            // user (was the dead `endDay != 0`; the real gate now is `closed`).
-            if (!e.processed && e.closed && !e.forfeited) {
+            // #1002 (S4) — only claimable (closed or loan-terminal), non-
+            // forfeited entries preview to the user (was the dead `endDay != 0`).
+            if (!e.processed && !e.forfeited && _entryClaimable(s, e)) {
                 uint256 reward = _previewEntryReward(
                     s,
                     e,
@@ -892,6 +892,27 @@ library LibInteractionRewards {
 
     // ─── Internals ───────────────────────────────────────────────────────────
 
+    /// @dev #1002 (S4) + Codex #1061 P1 — an entry may be routed (claimed or
+    ///      swept) only once the loan is genuinely over. TWO independent
+    ///      triggers, so no terminal path can strand a reward:
+    ///        1. `e.closed` — the entry's window was explicitly finalized by
+    ///           `closeLoan` (loan terminal) or `transferLenderEntry` (lender
+    ///           sold — the loan may still be Active, but THIS entry is done).
+    ///        2. the loan reached a TERMINAL status — covers terminal flows that
+    ///           don't route through `closeLoan` (e.g. prepay-sale finalize), so
+    ///           their rewards unlock on close instead of being frozen forever.
+    ///      An Active / FallbackPending loan whose entry isn't closed pays
+    ///      nothing (the S4 claim-while-open bug).
+    function _entryClaimable(
+        LibVaipakam.Storage storage s,
+        LibVaipakam.RewardEntry storage e
+    ) private view returns (bool) {
+        if (e.closed) return true;
+        LibVaipakam.LoanStatus st = s.loans[e.loanId].status;
+        return st != LibVaipakam.LoanStatus.Active
+            && st != LibVaipakam.LoanStatus.FallbackPending;
+    }
+
     /// @dev Process (or preview) a single reward entry. When `mutate`,
     ///      flips `processed = true` and returns the routed amounts;
     ///      otherwise returns the pending amount for the user side only
@@ -906,11 +927,12 @@ library LibInteractionRewards {
     ) private returns (uint256 toUser, uint256 toTreasury) {
         LibVaipakam.RewardEntry storage e = s.rewardEntries[id];
         if (e.processed) return (0, 0);
-        // #1002 (S4) — an entry is claimable/sweepable ONLY once its loan is
-        // closed (or the lender position sold). `endDay` is purely the accrual
-        // bound; gating on it (the dead `endDay == 0` sentinel) let both parties
-        // claim the full-window reward while the loan was still open.
-        if (!e.closed) return (0, 0); // loan still open ⇒ nothing to route yet
+        // #1002 (S4) — an entry is claimable/sweepable ONLY once the loan is
+        // actually over, not merely because the calendar passed maturity. See
+        // {_entryClaimable}: either the entry was explicitly closed (window
+        // finalized by closeLoan / lender-sale) OR its loan has reached a
+        // terminal status. `endDay` is purely the accrual bound now.
+        if (!_entryClaimable(s, e)) return (0, 0);
         if (e.startDay >= e.endDay) {
             if (mutate) e.processed = true;
             return (0, 0);
@@ -980,9 +1002,9 @@ library LibInteractionRewards {
         uint256 ethPriceRaw,
         uint8 ethPriceDec
     ) private view returns (uint256 reward) {
-        // #1002 (S4) — preview mirrors the claim gate: no reward is payable
-        // until the loan is closed (matches {_processEntry}).
-        if (!e.closed) return 0;
+        // #1002 (S4) — preview mirrors the claim gate: no reward until the loan
+        // is actually over (matches {_processEntry} / {_entryClaimable}).
+        if (!_entryClaimable(s, e)) return 0;
         if (e.startDay >= e.endDay) return 0;
         uint256 need = e.endDay - 1;
         uint256 cumEnd;

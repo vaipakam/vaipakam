@@ -1665,8 +1665,8 @@ contract HelperTest {
         selectors[16] = InteractionRewardsFacet.sweepForfeitedInteractionRewards.selector;
         selectors[17] = InteractionRewardsFacet.getUserRewardEntries.selector;
         // #969 / S5 — diamond-internal reward-lifecycle hooks for PrecloseFacet.
-        selectors[18] = InteractionRewardsFacet.precloseRewardCloseClean.selector;
-        selectors[19] = InteractionRewardsFacet.precloseRewardRepointBorrower.selector;
+        selectors[18] = InteractionRewardsFacet.precloseRewardClose.selector;
+        selectors[19] = InteractionRewardsFacet.precloseRewardTransferObligation.selector;
         return selectors;
     }
 

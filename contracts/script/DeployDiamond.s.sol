@@ -1972,8 +1972,8 @@ contract DeployDiamond is Script {
         s[16] = InteractionRewardsFacet.sweepForfeitedInteractionRewards.selector;
         s[17] = InteractionRewardsFacet.getUserRewardEntries.selector;
         // #969 / S5 — diamond-internal reward-lifecycle hooks for PrecloseFacet.
-        s[18] = InteractionRewardsFacet.precloseRewardCloseClean.selector;
-        s[19] = InteractionRewardsFacet.precloseRewardRepointBorrower.selector;
+        s[18] = InteractionRewardsFacet.precloseRewardClose.selector;
+        s[19] = InteractionRewardsFacet.precloseRewardTransferObligation.selector;
     }
 
     function _getRewardReporterSelectors() internal pure returns (bytes4[] memory s) {
