@@ -54,7 +54,7 @@ export const OFFER_AMOUNT_WETH = '0.00537';
  *  landing after the tick) legitimately RESET the checkbox — that's
  *  the app's re-consent rule, not a bug — so keep re-ticking until
  *  every canSign gate clears or the deadline passes. */
-async function consentAndWaitEnabled(page: Page, button: Locator): Promise<void> {
+export async function consentAndWaitEnabled(page: Page, button: Locator): Promise<void> {
   await expect(async () => {
     const consent = page.locator('input[type="checkbox"]:visible').first();
     if (!(await consent.isChecked())) await consent.check();
@@ -62,10 +62,16 @@ async function consentAndWaitEnabled(page: Page, button: Locator): Promise<void>
   }).toPass({ timeout: 60_000, intervals: [500, 1_000] });
 }
 
-/** Lender posts an OFFER_AMOUNT_WETH lending offer against 100 tLIQ
- *  collateral. */
-export async function postLenderOffer(page: Page): Promise<void> {
-  await page.goto('/lend', { waitUntil: 'domcontentloaded' });
+/** Drive the lender post-offer form to the REVIEW card and return the
+ *  sign button — no consent tick, no click. The kill-switch and
+ *  dry-run specs assert on the review itself; `base` targets an
+ *  alternate dev server (the kill-switch spec's VITE_DISABLED_FLOWS
+ *  instance on its own port). */
+export async function lenderOfferFormToReview(
+  page: Page,
+  base = '',
+): Promise<Locator> {
+  await page.goto(`${base}/lend`, { waitUntil: 'domcontentloaded' });
   await connectWallet(page);
   await pickCuratedAsset(page, 'lending-asset', WETH);
   await page.locator('input[placeholder="0.0"]').fill(OFFER_AMOUNT_WETH);
@@ -80,7 +86,13 @@ export async function postLenderOffer(page: Page): Promise<void> {
   const cont = page.getByRole('button', { name: /continue to review/i });
   await expect(cont).toBeEnabled({ timeout: 15_000 });
   await cont.click();
-  const post = page.getByRole('button', { name: /post lending offer/i });
+  return page.getByRole('button', { name: /post lending offer/i });
+}
+
+/** Lender posts an OFFER_AMOUNT_WETH lending offer against 100 tLIQ
+ *  collateral. */
+export async function postLenderOffer(page: Page): Promise<void> {
+  const post = await lenderOfferFormToReview(page);
   await consentAndWaitEnabled(page, post);
   await post.click();
   await expect(page.getByText(/lending offer posted/i)).toBeVisible({
