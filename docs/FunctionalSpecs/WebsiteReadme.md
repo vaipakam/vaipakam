@@ -704,7 +704,12 @@ converge. Its intended behaviour (the test oracle for that surface):
   it covered changes: editing an offer or listing term, choosing a
   different offer or listing, or a disclosure (such as the
   unpriced-asset warning) appearing after the acknowledgement was
-  given all require a fresh acknowledgement.
+  given all require a fresh acknowledgement. The acknowledgement's
+  "Risk Disclosures" and "Vaipakam Terms" phrases are live links (to
+  the in-app risk-disclosures section and the marketing site's Terms
+  respectively), opening without destroying the in-flight flow; the
+  Help surface carries the platform disclaimer verbatim as mandated
+  in the shared principles above.
 - Review receipts state the loan's interest mode in plain language:
   full-term interest applies even when the loan is repaid early;
   day-by-day (pro-rata) loans cost less when repaid early. The stated

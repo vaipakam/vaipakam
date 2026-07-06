@@ -25,6 +25,7 @@ import { usePublicClient, useWalletClient } from 'wagmi';
 import { useQueryClient } from '@tanstack/react-query';
 import { encodeFunctionData, parseUnits } from 'viem';
 import { copy } from '../content/copy';
+import { ConsentLabel } from '../components/ConsentLabel';
 import { useActiveChain } from '../chain/useActiveChain';
 import { getSupportedChain } from '../chain/chains';
 import { DIAMOND_ABI_VIEM, useDiamondWrite } from '../contracts/diamond';
@@ -604,7 +605,7 @@ function ListNftFlow() {
                 onChange={(e) => setConsent(e.target.checked)}
                 style={{ marginTop: 3 }}
               />
-              <span style={{ flex: 1 }}>{copy.consentLabel}</span>
+              <ConsentLabel />
             </label>
             {error ? (
               <div className="banner banner-danger" role="alert" style={{ marginTop: 16 }}>
@@ -1285,7 +1286,7 @@ function RentNftFlow() {
                 }}
                 style={{ marginTop: 3 }}
               />
-              <span style={{ flex: 1 }}>{copy.consentLabel}</span>
+              <ConsentLabel />
             </label>
             {error ? (
               <div className="banner banner-danger" role="alert" style={{ marginTop: 16 }}>

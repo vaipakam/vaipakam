@@ -220,7 +220,34 @@ export const copy = {
       'The free dry run isn’t available right now. You can still continue — this check is only an extra heads-up.',
   },
 
-  consentLabel: 'I understand and agree to the Risk Disclosures and Vaipakam Terms.',
+  /** Help page (#1030). `disclaimer` is the EXACT wording the spec
+   *  mandates (WebsiteReadme §29) — don't paraphrase or trim; the
+   *  fork-tier spec asserts the full string. `risks` is the
+   *  plain-language disclosure list the consent checkbox links to. */
+  help: {
+    disclaimer:
+      'Vaipakam is a decentralized, non-custodial protocol. No KYC is required. Users are responsible for their own regulatory compliance.',
+    risksTitle: 'Risk disclosures',
+    risks: [
+      'Borrowing: if you don’t repay by the due date plus the grace period, your locked collateral goes to the lender. Collateral without a live market price transfers in full.',
+      'Borrowing: collateral with a live market price can be sold automatically (liquidated) before the due date if its value falls too far.',
+      'Lending: interest is earned only if the borrower repays. On default, your recovery is whatever the locked collateral turns out to be worth.',
+      'NFT rentals: renters receive temporary use rights, never ownership; the NFT stays in the owner’s vault. Rental fees are prepaid, with a small refundable buffer.',
+      'Smart-contract risk: Vaipakam is code on a public network. Bugs, network failures, or extreme market conditions can cause loss — never commit funds you cannot afford to lose.',
+    ],
+  },
+
+  /** Rendered by components/ConsentLabel.tsx with the two phrases as
+   *  INLINE LINKS (#1030) — risk → /help#risks, terms → the marketing
+   *  site's Terms. Kept in parts so the wording lives here while the
+   *  link structure lives in the component. */
+  consentParts: {
+    prefix: 'I understand and agree to the ',
+    risk: 'Risk Disclosures',
+    mid: ' and ',
+    terms: 'Vaipakam Terms',
+    suffix: '.',
+  },
 
   match: {
     borrowTitle: 'Lenders ready to fund you now',

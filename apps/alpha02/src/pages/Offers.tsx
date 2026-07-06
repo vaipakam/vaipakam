@@ -21,6 +21,7 @@ import { useMemo, useState } from 'react';
 import { BookOpen, LoaderCircle } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import { copy } from '../content/copy';
+import { AddressName } from '../components/AddressName';
 import { useActiveOffers } from '../data/hooks';
 import { useActiveChain } from '../chain/useActiveChain';
 import { useMode } from '../app/ModeContext';
@@ -110,14 +111,14 @@ function OfferRow({ offer }: { offer: IndexedOffer }) {
         prepayMeta.data
           ? `${formatTokenAmount(offer.amount, prepayMeta.data.decimals)} ${prepayMeta.data.symbol}/day`
           : 'daily fee loading…'
-      } · ${formatDurationDays(offer.durationDays)} · fees prepaid · by ${shortAddress(offer.creator)}`
+      } · ${formatDurationDays(offer.durationDays)} · fees prepaid`
     : `${formatBpsAsPercent(
         isLending ? offer.interestRateBps : offer.interestRateBpsMax,
       )} yearly · ${formatDurationDays(offer.durationDays)} · collateral ${
         hasCollateral
           ? (collateralMeta.data?.symbol ?? shortAddress(offer.collateralAsset))
           : 'none'
-      } · by ${shortAddress(offer.creator)}`;
+      }`;
 
   // Advanced detail line: the exact numbers a DEX-versed user expects
   // to see before clicking through — id, bps, expiry, range bounds.
@@ -157,7 +158,9 @@ function OfferRow({ offer }: { offer: IndexedOffer }) {
       <span className="row-main">
         <span className="row-title">{title}</span>
         <br />
-        <span className="row-sub">{sub}</span>
+        <span className="row-sub">
+          {sub} · by <AddressName address={offer.creator} />
+        </span>
         {isAdvanced && advancedBits.length > 0 ? (
           <>
             <br />

@@ -1,8 +1,10 @@
 /**
  * Help — short plain-language answers to the questions naive users
- * actually ask, plus build info for testers. Deep-dive docs stay on
- * the marketing site; this page is deliberately small.
+ * actually ask, plus the risk-disclosures section the consent
+ * checkbox links to (#1030) and build info for testers. Deep-dive
+ * docs stay on the marketing site; this page is deliberately small.
  */
+import { useEffect } from 'react';
 import { copy } from '../content/copy';
 import { useProtocolFees, bpsToPercentText } from '../data/fees';
 
@@ -34,6 +36,22 @@ export function Help() {
   const buildTime = import.meta.env.VITE_BUILD_TIME as string | undefined;
   const fees = useProtocolFees();
 
+  // The consent checkbox links here as /help#risks — the router
+  // doesn't scroll to hashes on its own. getElementById, not
+  // querySelector: the fragment is user-controlled and an invalid
+  // selector (/help#1, encoded chars) would throw during mount.
+  useEffect(() => {
+    const hash = window.location.hash;
+    if (!hash) return;
+    let id = hash.slice(1);
+    try {
+      id = decodeURIComponent(id);
+    } catch {
+      /* malformed escape — use the raw fragment */
+    }
+    document.getElementById(id)?.scrollIntoView();
+  }, []);
+
   // Fee numbers come from the live protocol config — governance can
   // retune them and this answer must track the deployed values.
   const feeFaq = {
@@ -45,13 +63,22 @@ export function Help() {
   return (
     <div>
       <h1 className="page-title">Help</h1>
+      {/* The exact platform disclaimer the spec mandates (§29) —
+          wording is load-bearing, don't paraphrase. */}
       <p className="page-lede">
-        Quick answers in plain language. Vaipakam is a decentralized,
-        non-custodial protocol — no sign-up is required, and you are
-        responsible for your own regulatory compliance.
+        Quick answers in plain language. {copy.help.disclaimer}
       </p>
 
       <div className="stack">
+        {/* The consent checkbox's "Risk Disclosures" link lands here. */}
+        <section id="risks" className="card">
+          <h3>{copy.help.risksTitle}</h3>
+          <ul style={{ margin: 0, paddingLeft: 20 }}>
+            {copy.help.risks.map((r) => (
+              <li key={r}>{r}</li>
+            ))}
+          </ul>
+        </section>
         {faq.map((item) => (
           <section key={item.q} className="card">
             <h3>{item.q}</h3>
