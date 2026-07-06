@@ -44,6 +44,11 @@ export function SupportTicketCard({
   const [attach, setAttach] = useState(false);
   const [sending, setSending] = useState(false);
   const [ticketId, setTicketId] = useState<string | null>(null);
+  // What actually TRAVELLED with the accepted ticket — the live
+  // checkbox stays editable state, but the success view must speak
+  // about the send that happened, not the checkbox's current mood
+  // (Codex round-2 P3).
+  const [sentWithDiagnostics, setSentWithDiagnostics] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   if (!supportConfigured()) {
@@ -70,7 +75,11 @@ export function SupportTicketCard({
         </p>
         <a
           className="btn btn-secondary"
-          href={supportMailto({ ticketId, message, diagnosticsAttached: attach })}
+          href={supportMailto({
+            ticketId,
+            message,
+            diagnosticsAttached: sentWithDiagnostics,
+          })}
         >
           {copy.support.mailButton}
         </a>
@@ -91,6 +100,9 @@ export function SupportTicketCard({
     }
     setSending(true);
     setError(null);
+    // Snapshot the consent at submit time — the response can take
+    // seconds and the checkbox must not rewrite history meanwhile.
+    const attachSnapshot = attach;
     try {
       const { ticketId: id } = await submitSupportTicket({
         message: trimmed.slice(0, 2_000),
@@ -98,7 +110,7 @@ export function SupportTicketCard({
         // The attach consent gates the ONLY non-user-typed content;
         // buildReportBody is the same redacted block the GitHub
         // report path uses (full wallet address never included).
-        diagnostics: attach ? buildReportBody(reportCtx) : null,
+        diagnostics: attachSnapshot ? buildReportBody(reportCtx) : null,
         // Same scrubber as the GitHub report path (Codex round-1 P2):
         // a deep-linked URL can carry a full wallet address in its
         // query, and `page` travels regardless of the diagnostics
@@ -106,6 +118,7 @@ export function SupportTicketCard({
         page: redactCap(reportCtx.path, 200),
         chainId,
       });
+      setSentWithDiagnostics(attachSnapshot);
       setTicketId(id);
     } catch (e) {
       const kind = e instanceof SupportTicketError ? e.kind : 'failed';
@@ -137,6 +150,7 @@ export function SupportTicketCard({
           placeholder={copy.support.messagePlaceholder}
           value={message}
           onChange={(e) => setMessage(e.target.value)}
+          disabled={sending}
         />
       </div>
       <div className="field">
@@ -148,6 +162,7 @@ export function SupportTicketCard({
           autoComplete="email"
           value={email}
           onChange={(e) => setEmail(e.target.value)}
+          disabled={sending}
         />
         <p className="muted" style={{ fontSize: 12, margin: '4px 0 0' }}>
           {copy.support.emailHint}
@@ -160,6 +175,7 @@ export function SupportTicketCard({
           type="checkbox"
           checked={attach}
           onChange={(e) => setAttach(e.target.checked)}
+          disabled={sending}
           style={{ marginTop: 3 }}
         />
         <span>{copy.support.attach}</span>

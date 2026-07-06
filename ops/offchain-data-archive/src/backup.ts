@@ -80,6 +80,11 @@ const ARCHIVE_TABLES_REQUIRED = [
   'user_thresholds',
   'notify_state',
   'telegram_links',
+  // Support tickets (#1040 phase 1) — the DURABLE record of user
+  // support requests (message, optional reply email, consented
+  // diagnostics). Born off chain; a D1 loss without backup would
+  // silently drop every ticket.
+  'support_tickets',
 ];
 
 // Re-derivable tables (backed up as restore-performance optimisation only).

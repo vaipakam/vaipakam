@@ -23,6 +23,12 @@ now send a message straight to the team (#1040 phase 1):
   health details, and the ticket number.
 
 Operators are notified of each new ticket over the internal ops
-channel, so a ticket is seen even if the follow-up email is never
-written. In builds where no support backend is configured, the panel
+channel — the notification carries the ticket number and context
+flags only, never your message text or email — so a ticket is seen
+even if the follow-up email is never written. The Privacy Policy
+gains a matching "Support tickets" section (what a ticket stores,
+the optional reply email, the metadata-only operator notification,
+and the retention window), and support tickets join the nightly
+off-chain backup set so a storage incident cannot silently drop
+them. In builds where no support backend is configured, the panel
 says so and offers the email path — it never pretends.

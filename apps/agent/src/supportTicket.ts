@@ -191,16 +191,17 @@ export async function notifyOpsNewTicket(
     return;
   }
   try {
-    const preview =
-      body.message.length > 300 ? `${body.message.slice(0, 300)}…` : body.message;
+    // METADATA ONLY — deliberately no message text. Telegram is a
+    // third-party processor, and the pre-send disclosure promises
+    // the user's words are stored on Vaipakam's support service
+    // under the ticket number, not forwarded elsewhere (Codex
+    // round-2 P2). The operator reads the full ticket in D1.
     const text = [
       `🧾 New support ticket ${ticketId}`,
       body.page ? `page: ${body.page}` : null,
       body.chainId !== null ? `chain: ${body.chainId}` : null,
       body.email ? 'reply address: provided' : 'reply address: none',
       body.diagnostics ? 'diagnostics: attached' : 'diagnostics: not attached',
-      '',
-      preview,
     ]
       .filter((l): l is string => l !== null)
       .join('\n');

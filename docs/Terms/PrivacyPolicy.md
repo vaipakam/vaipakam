@@ -46,6 +46,23 @@ momentarily to compute that hash and is never stored. In rare cases
 where the law requires us to retain specific records, automated
 erasure will skip them; where the law permits, we will tell you so.
 
+**Support tickets — only when you send one.** If you use the in-app
+"Contact support" form, we store what you submit on Vaipakam's
+support service: your message exactly as you typed it, the reply
+email address if you chose to give one (it is optional — a ticket
+works without it), the app page the report was sent from (with any
+wallet addresses shortened), your chain id, and — only if you ticked
+the attach box — the same redacted connection-health details the
+form showed you. Each ticket gets a reference number, shown to you.
+Our operators are notified over an internal channel that a ticket
+arrived; that notification carries the ticket number and context
+flags, not your message text or email. Support tickets are kept
+while your request is being handled and for up to 12 months after it
+is closed, then deleted; write to the contact address below to have
+a ticket's contents erased earlier (we may keep the bare ticket
+number where the law requires). The legal basis is GDPR Art 6(1)(b)
+— handling the support request you asked us to handle.
+
 **Google Analytics — only with consent.** If you accept analytics
 cookies in the consent banner, Google Analytics records anonymous
 usage stats: page views, time on page, which features you used. We
@@ -66,7 +83,9 @@ for the app to work.
   and a country code, set by authorized ops — not any underlying
   document.
 - No email, no phone, no social-media handle, unless you voluntarily
-  type it into a public channel we don't operate.
+  type it into a public channel we don't operate — or voluntarily
+  give an optional reply email with an in-app support ticket (see
+  "Support tickets" above; it is never required).
 - No tracking pixels beyond Google Analytics (and only with consent).
 - No advertising identifiers.
 
@@ -115,6 +134,9 @@ beyond what these tools inherently handle.
   journey-log slice — is sent server-side on each error; see
   "Server-side error capture".)
 - Server-side error records: pruned 90 days after capture.
+- Support tickets: kept while the request is handled and for up to
+  12 months after it is closed, then deleted (earlier on request —
+  see "Support tickets" above).
 - Consent choice: kept in your browser's local storage indefinitely
   until you revoke or clear.
 - Google Analytics (with consent): subject to Google's own retention,

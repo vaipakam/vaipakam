@@ -168,8 +168,10 @@ describe('handleSupportTicket', () => {
     const sent = JSON.parse(String(init.body)) as { chat_id: string; text: string };
     expect(sent.chat_id).toBe('42');
     expect(sent.text).toContain('diagnostics: attached');
-    // Message preview is capped — the full text lives in D1.
-    expect(sent.text.length).toBeLessThan(700);
+    // Metadata only — the user's words never travel to Telegram
+    // (third-party disclosure boundary); the full text lives in D1.
+    expect(sent.text).not.toContain('m'.repeat(50));
+    expect(sent.text.length).toBeLessThan(300);
   });
 
   it('the response resolves even when Telegram stalls (notify decoupled)', async () => {
