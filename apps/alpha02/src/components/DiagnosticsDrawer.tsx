@@ -28,6 +28,7 @@ import { useQuery } from '@tanstack/react-query';
 import { useAccount, usePublicClient } from 'wagmi';
 import { LifeBuoy, X } from 'lucide-react';
 import { copy } from '../content/copy';
+import { SupportTicketCard } from './SupportTicketCard';
 import { useActiveChain } from '../chain/useActiveChain';
 import { indexerConfigured, probeIndexerFreshness } from '../data/indexer';
 import { readLastError } from '../diagnostics/lastError';
@@ -349,6 +350,15 @@ function DrawerPanel({ onClose }: { onClose: () => void }) {
         <p className="muted" style={{ fontSize: 13 }}>
           {copy.diagnostics.reportHint}
         </p>
+
+        {/* #1040 phase 1 — ticket capture with explicit attach
+            consent; chainId only when the wallet is actually on a
+            supported network (an unsupported-network report already
+            says so in the health details). */}
+        <SupportTicketCard
+          reportCtx={reportCtx}
+          chainId={walletOnUnsupported ? null : readChain.chainId}
+        />
       </aside>
     </>,
     document.body,

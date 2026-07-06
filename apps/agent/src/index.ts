@@ -45,6 +45,9 @@
  *   POST /unlink/telegram                   — frontend → clear the stored
  *                                             wallet ↔ tg_chat_id link (#1033;
  *                                             EIP-191 signature required too)
+ *   POST /support/ticket                    — frontend → capture a support
+ *                                             ticket into D1 + ops-Telegram
+ *                                             notify (#1040 phase 1)
  *
  * The `/thresholds`, `/link/telegram`, `/diag/record`,
  * `/diag/erasure`, `/diag/erasure/status` and `/diag/legal-hold`
@@ -77,6 +80,7 @@ import { handleOpenSeaOffers } from './openseaOffersProxy';
 import { handleOpenSeaSignedOffer } from './openseaSignedOfferProxy';
 import { handleFeeRecipientPreflight } from './feeRecipientPreflight';
 import { handleDiagRecord, pruneOldDiagErrors } from './diagRecord';
+import { handleSupportTicket } from './supportTicket';
 import {
   handleDiagErasure,
   handleDiagErasureStatus,
@@ -205,6 +209,11 @@ export default {
     }
     if (url.pathname === '/unlink/telegram' && req.method === 'POST') {
       return handleUnlinkTelegram(req, resolved);
+    }
+    // #1040 phase 1 — support-ticket capture from the alpha02 support
+    // widget (rate limit + validation inside the handler).
+    if (url.pathname === '/support/ticket' && req.method === 'POST') {
+      return handleSupportTicket(req, resolved, resolveAllowedOrigin(req, resolved));
     }
 
     // Erasure (T-075) — user erases their own error-capture records

@@ -993,6 +993,25 @@ converge. Its intended behaviour (the test oracle for that surface):
   length-capped, and nothing else about the device or browsing is
   included. When a page crash is caught by the app's recovery card,
   the error is recorded so a subsequent report carries it.
+- The same Support panel can send a message DIRECTLY to the team: the
+  user writes what happened in their own words, may leave an email
+  for a reply (optional — and its absence never blocks the send),
+  and receives a ticket number immediately. The panel's health
+  details travel with the message only after one explicit consent
+  tick — never silently — and carry the same redaction as the public
+  report (the full wallet address never appears). What sending
+  stores is stated next to the send control before anything is sent:
+  the message, the reply address if given, the consented health
+  details, and the ticket number. Escalation to a human is a
+  prefilled email to the support address quoting the ticket number
+  (the stored ticket plus an operator notification guarantee the
+  report is seen even if that mail is never written), and the Help
+  page carries the same contact route. Failure states are honest and
+  each ends at the always-available email path: a rate-limited send
+  says to wait, an unavailable inbox says nothing was lost on the
+  user's side, and a build with no support backend configured says
+  so instead of pointing at another environment's service. The app
+  never shows a ticket number it did not actually receive.
 
 ## Key UX Requirements
 
