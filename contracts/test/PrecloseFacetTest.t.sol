@@ -1294,6 +1294,20 @@ contract PrecloseFacetTest is Test {
         vm.clearMockedCalls();
     }
 
+    /// @dev #1001 (S3, Codex #1070 r1 P1) — `heldForLender` is a shared
+    ///      accumulator (an Active partial internal-match / obligation transfer
+    ///      also writes it). Opening an offset while foreign held proceeds exist
+    ///      must be rejected, else the cancel-unwind (which zeroes the whole
+    ///      accumulator) would refund another party's proceeds to the offset
+    ///      creator. Simulated by seeding `heldForLender` directly.
+    function testOffsetRejectsWhenForeignHeldProceedsExist() public {
+        TestMutatorFacet(address(diamond)).setHeldForLenderRaw(activeLoanId, 1 ether);
+
+        vm.expectRevert(PrecloseFacet.OffsetBlockedByHeldProceeds.selector);
+        vm.prank(borrower);
+        PrecloseFacet(address(diamond)).offsetWithNewOffer(activeLoanId, 500, 30, mockCollateralERC20, COLLATERAL, true, mockERC20);
+    }
+
     // ─── precloseDirect NFT rental path ─────────────────────────────────────
 
     function testPrecloseDirectNFTRentalPath() public {

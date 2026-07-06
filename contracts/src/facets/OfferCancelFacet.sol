@@ -8,6 +8,7 @@ import {LibVaipakam} from "../libraries/LibVaipakam.sol";
 // see `cancelOffer` for the full rule.
 import {LibFacet} from "../libraries/LibFacet.sol";
 import {LibEncumbrance} from "../libraries/LibEncumbrance.sol";
+import {LibSanctionedLock} from "../libraries/LibSanctionedLock.sol";
 import {LibERC721} from "../libraries/LibERC721.sol";
 import {LibSaleListing} from "../libraries/LibSaleListing.sol";
 import {LibPrepayCleanup} from "../libraries/LibPrepayCleanup.sol";
@@ -234,6 +235,16 @@ contract OfferCancelFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamE
                 );
                 // Offset is ERC20-only (validated in `_validateOffsetRequest`),
                 // so the prepay asset is the loan's principal asset.
+                //
+                // #1001 (S3, Codex #1070 r1 P1) — the prepay moves OUT of the old
+                // lender's vault. If that lender was flagged after the prepay
+                // landed, the withdraw's source-side sanctions screen would revert
+                // and brick the cancel (borrower NFT stays locked, `Offset-
+                // AlreadyActive` blocks a replacement). Arm the move-out exemption
+                // — the funds leave the flagged vault back to the clean borrower,
+                // so the flagged party loses custody rather than receiving value —
+                // exactly as the other wind-down withdrawals do.
+                LibSanctionedLock.beginMoveOut(s, offsetLoan.lender);
                 LibFacet.crossFacetCall(
                     abi.encodeWithSelector(
                         VaultFactoryFacet.vaultWithdrawERC20.selector,
@@ -244,6 +255,7 @@ contract OfferCancelFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamE
                     ),
                     VaultWithdrawFailed.selector
                 );
+                LibSanctionedLock.endMoveOut(s);
             }
             delete s.offsetOfferToLoanId[offerId];
             delete s.loanToOffsetOfferId[lockedOffsetLoanId];

@@ -156,6 +156,12 @@ contract PrecloseFacet is
     /// accumulator), so it is rejected until the first offer is completed or
     /// cancelled (which clears the link + unwinds the prepay).
     error OffsetAlreadyActive();
+    /// #1001 (S3, Codex #1070) — an offset cannot be opened while the loan
+    /// already carries `heldForLender` proceeds from another source (an Active
+    /// partial internal-match or an obligation transfer). The cancel-unwind
+    /// zeroes the whole accumulator, so mixing the offset prepay with foreign
+    /// proceeds would let a cancel refund the wrong party.
+    error OffsetBlockedByHeldProceeds();
 
     // ─── Option 1: Direct Preclose ────────────────────────────────��─────────
 
@@ -1043,6 +1049,17 @@ contract PrecloseFacet is
         // (the accumulator is monotone) before the first is completed/cancelled.
         if (LibVaipakam.storageSlot().loanToOffsetOfferId[loanId] != 0)
             revert OffsetAlreadyActive();
+        // #1001 (S3, Codex #1070 r1 P1) — `heldForLender[loanId]` is a SHARED
+        // accumulator: the Active partial internal-match (`RiskMatchLiquidation-
+        // Facet`) and obligation-transfer paths also add lender-owned proceeds to
+        // it while leaving the loan Active. The cancel-unwind zeroes the whole
+        // slot, so it must be able to attribute all of it to THIS offer. Refuse to
+        // open an offset while the loan already carries foreign held proceeds —
+        // otherwise cancelling would refund another party's proceeds to the offset
+        // creator and wipe the lender's future claim. A cancelled/completed offset
+        // clears its own contribution, so this never blocks a later offset.
+        if (LibVaipakam.storageSlot().heldForLender[loanId] != 0)
+            revert OffsetBlockedByHeldProceeds();
         _validateOffsetRequest(
             loan,
             durationDays,
@@ -1229,20 +1246,27 @@ contract PrecloseFacet is
             VaultDepositFailed.selector
         );
         s.heldForLender[loanId] += lenderTotal;
-        // #597 — reserve the held-for-lender VPFI against the unstake path.
-        // Contrary to the earlier #592 note, the offset does NOT rewrite
+        // #597 / #1001 (S3, Codex #1070 r1 P1) — reserve the held-for-lender
+        // prepay against the old lender's vault. The offset does NOT rewrite
         // `loan.lender` on THIS (original) loan: the old lender keeps the
         // position and claims this payoff via `claimAsLender`
         // (`_completeOffsetImpl` records the held but not `lenderClaims`, and
         // the claim withdraws `heldForLender[loanId]` from the old lender's
         // vault). The new lender takes a SEPARATE new loan. So the reservation
-        // and the claim-time release key on the same (old-lender) account here
-        // — no migration needed. Gated on VPFI.
-        if (payAssetOffset == s.vpfiToken) {
-            LibEncumbrance.encumberLenderProceeds(
-                loanId, loan.lender, payAssetOffset, lenderTotal
-            );
-        }
+        // and the claim-time release key on the same (old-lender) account.
+        //
+        // Encumber for EVERY ERC20 principal asset, not just VPFI: the prepay
+        // must stay locked in the old lender's vault until the offset either
+        // completes (claim) or is cancelled (unwind). Without the reservation a
+        // non-VPFI old lender could spend or vault-backed-signed-offer-lock the
+        // tracked balance before a cancel, leaving the cancel-unwind withdraw
+        // without free balance and the borrower unable to recover the prepay (the
+        // offset link + NFT lock would stay stuck). `releaseLenderProceeds` at
+        // both terminal-claim and cancel is already asset-agnostic, so this is
+        // symmetric with the release side.
+        LibEncumbrance.encumberLenderProceeds(
+            loanId, loan.lender, payAssetOffset, lenderTotal
+        );
     }
 
     /**
