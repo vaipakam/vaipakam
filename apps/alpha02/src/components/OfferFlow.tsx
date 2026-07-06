@@ -27,12 +27,14 @@ import { Link, useSearchParams } from 'react-router-dom';
 import { CircleCheck, LoaderCircle, Search } from 'lucide-react';
 import { usePublicClient, useWalletClient } from 'wagmi';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { parseUnits } from 'viem';
+import { encodeFunctionData, parseUnits } from 'viem';
 import { useActiveChain } from '../chain/useActiveChain';
 import { getSupportedChain } from '../chain/chains';
 import { useMode } from '../app/ModeContext';
 import { DIAMOND_ABI_VIEM, useDiamondWrite } from '../contracts/diamond';
 import { useAcceptTermsSigning } from '../contracts/useAcceptTerms';
+import { SimulationPreview } from './SimulationPreview';
+import type { TxSimInput } from '../contracts/useTxSimulation';
 import {
   ensureAllowance,
   isAddressLike,
@@ -760,6 +762,39 @@ export function OfferFlow({ side }: { side: Side }) {
 
   const lifPct = bpsToPercentText(fees.loanInitiationFeeBps);
   const yieldPct = bpsToPercentText(fees.treasuryFeeBps);
+
+  // #1028 item 2 — advisory pre-sign dry run of the EXACT calldata
+  // the submit will send. Post mode only: the accept path's calldata
+  // carries an EIP-712 AcceptTerms signed at submit time, and
+  // fabricating placeholder terms here would duplicate the canonical
+  // submit-time builder just to preview a signature-artefact revert.
+  // Never feeds canSign — advisory by design.
+  const simTx = useMemo((): TxSimInput | null => {
+    // Consent gate (round 1): createOffer reverts
+    // RiskAndTermsConsentRequired while the checkbox is unticked —
+    // previewing that would cry wolf on every valid offer.
+    if (mode !== 'post' || !walletChain || !form.riskAndTermsConsent) return null;
+    try {
+      const payload = toCreateOfferPayload(form, {
+        lending: lendingMeta.data?.decimals,
+        collateral: collateralMeta.data?.decimals,
+      });
+      return {
+        to: walletChain.diamondAddress,
+        data: encodeFunctionData({
+          abi: DIAMOND_ABI_VIEM,
+          functionName: 'createOffer',
+          args: [payload],
+        }),
+        value: 0n,
+        // The submit path grants the deposit-leg allowance first, so
+        // the zero-allowance revert at preview time is expected.
+        allowAllowanceRevert: true,
+      };
+    } catch {
+      return null; // form not buildable yet — footer stays hidden
+    }
+  }, [mode, walletChain, form, lendingMeta.data, collateralMeta.data]);
 
   const receipt = useMemo((): ReceiptData | null => {
     // The conversions below throw on inputs the completeness gates
@@ -1956,6 +1991,7 @@ export function OfferFlow({ side }: { side: Side }) {
           </div>
           <div className="card">
             {receipt ? <ReviewReceipt data={receipt} /> : <p className="muted">Preparing your review…</p>}
+            {receipt ? <SimulationPreview tx={simTx} /> : null}
             {securityBlocked.length > 0 ? (
               <div className="banner banner-danger" role="alert" style={{ marginTop: 16 }}>
                 <span className="banner-body">

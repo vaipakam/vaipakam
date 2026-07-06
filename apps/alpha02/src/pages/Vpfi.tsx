@@ -18,13 +18,15 @@ import { CircleCheck, Coins, LoaderCircle } from 'lucide-react';
 import { useModal } from 'connectkit';
 import { usePublicClient, useWalletClient } from 'wagmi';
 import { useQueryClient } from '@tanstack/react-query';
-import { parseUnits } from 'viem';
+import { encodeFunctionData, parseUnits } from 'viem';
 import { copy } from '../content/copy';
 import { useActiveChain } from '../chain/useActiveChain';
 import { assertWalletNotSanctionedLive, useSanctionsCheck } from '../data/sanctions';
 import { assertErc20BalanceLive } from '../contracts/preflights';
 import { readVpfiTokenLive, useVpfi, useVpfiTierTable, VPFI_DECIMALS } from '../data/vpfi';
-import { useDiamondWrite } from '../contracts/diamond';
+import { DIAMOND_ABI_VIEM, useDiamondWrite } from '../contracts/diamond';
+import { SimulationPreview } from '../components/SimulationPreview';
+import type { TxSimInput } from '../contracts/useTxSimulation';
 import { ensureAllowance } from '../contracts/erc20';
 import { exactAmountString, formatBpsAsPercent, formatTokenAmount } from '../lib/format';
 import { isPositiveDecimal, submitErrorText } from '../lib/errors';
@@ -100,6 +102,24 @@ export function Vpfi() {
       whenThisEnds: 'Immediately — your remaining balance keeps earning discount history.',
     };
   }, [action, amountWei, overMax]);
+
+  // #1028 item 2 — advisory pre-sign dry run of the exact vault
+  // action calldata. Deposits approve first, so the zero-allowance
+  // revert at preview time is the expected benign case.
+  const simTx = useMemo((): TxSimInput | null => {
+    if (!walletChain || !amountWei || overMax) return null;
+    return {
+      to: walletChain.diamondAddress,
+      data: encodeFunctionData({
+        abi: DIAMOND_ABI_VIEM,
+        functionName:
+          action === 'deposit' ? 'depositVPFIToVault' : 'withdrawVPFIFromVault',
+        args: [amountWei],
+      }),
+      value: 0n,
+      allowAllowanceRevert: action === 'deposit',
+    };
+  }, [walletChain, action, amountWei, overMax]);
 
   function refresh() {
     void queryClient.invalidateQueries({ queryKey: ['vpfi'] });
@@ -450,6 +470,7 @@ export function Vpfi() {
             {reviewing && receipt ? (
               <div style={{ marginTop: 8 }}>
                 <ReviewReceipt data={receipt} />
+                <SimulationPreview tx={simTx} />
               </div>
             ) : null}
 

@@ -23,11 +23,13 @@ import { Link, useSearchParams } from 'react-router-dom';
 import { CircleCheck, Images, KeyRound, LoaderCircle } from 'lucide-react';
 import { usePublicClient, useWalletClient } from 'wagmi';
 import { useQueryClient } from '@tanstack/react-query';
-import { parseUnits } from 'viem';
+import { encodeFunctionData, parseUnits } from 'viem';
 import { copy } from '../content/copy';
 import { useActiveChain } from '../chain/useActiveChain';
 import { getSupportedChain } from '../chain/chains';
 import { DIAMOND_ABI_VIEM, useDiamondWrite } from '../contracts/diamond';
+import { SimulationPreview } from '../components/SimulationPreview';
+import type { TxSimInput } from '../contracts/useTxSimulation';
 import { useAcceptTermsSigning } from '../contracts/useAcceptTerms';
 import { ensureAllowance, isAddressLike, useTokenBalance, useTokenMeta } from '../contracts/erc20';
 import {
@@ -237,6 +239,29 @@ function ListNftFlow() {
     // wallet + network first, then the rental-specific facts, then consent.
     return [...baseChecks.slice(0, 2), ...extra, ...baseChecks.slice(2)];
   }, [baseChecks, ownership.data, prepayMeta.isError, prepayMeta.data, prepayIsVpfi, vpfiKnown, vpfiCheckFailed, fees.ready]);
+
+  // #1028 item 2 — advisory pre-sign dry run of the exact listing
+  // calldata. The submit approves the NFT operator first, so the
+  // missing-approval revert at preview time is the benign case.
+  const simTx = useMemo((): TxSimInput | null => {
+    // Consent gate (round 1): same RiskAndTermsConsentRequired
+    // cry-wolf guard as the other createOffer previews.
+    if (!form || !walletChain || !form.riskAndTermsConsent) return null;
+    try {
+      return {
+        to: walletChain.diamondAddress,
+        data: encodeFunctionData({
+          abi: DIAMOND_ABI_VIEM,
+          functionName: 'createOffer',
+          args: [toCreateOfferPayload(form, {})],
+        }),
+        value: 0n,
+        allowNftApprovalRevert: true,
+      };
+    } catch {
+      return null;
+    }
+  }, [form, walletChain]);
 
   const receipt = useMemo((): ReceiptData | null => {
     if (!form || !dailyFeeWei || !prepayMeta.data) return null;
@@ -549,6 +574,7 @@ function ListNftFlow() {
           </div>
           <div className="card">
             {receipt ? <ReviewReceipt data={receipt} /> : <p className="muted">Preparing your review…</p>}
+            {receipt ? <SimulationPreview tx={simTx} /> : null}
             {killed ? (
               <div className="banner banner-warn" role="alert" style={{ marginTop: 16 }}>
                 <span className="banner-body">{copy.killSwitch.disabled}</span>
