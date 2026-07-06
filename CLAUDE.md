@@ -668,6 +668,25 @@ other source where applicable). Exception: behaviours with no production
 trigger (e.g. deliberate-crash fallbacks) may be verified on a preview
 build, with the exception stated in the PR.
 
+### alpha02 verification coverage — matrix + tiers (user directive 2026-07-06)
+
+Every behaviour-changing PR to `apps/alpha02` updates
+[`apps/alpha02/e2e/COVERAGE.md`](apps/alpha02/e2e/COVERAGE.md) in the
+same diff — the same per-PR discipline as release-note fragments and
+functional specs. Two tiers:
+
+- **CI-Anvil (default)**: a Playwright spec under `apps/alpha02/e2e/tests/`,
+  run automatically on every PR by the `fork-tier scenarios` job.
+- **Live-only** (stated reason required — deployed Worker, Telegram,
+  third-party API, real build env): a committed driver under
+  `apps/alpha02/e2e/live/`, run post-deploy per the live-review DoD and
+  as a batch via `e2e/live/run-live-batch.mjs` before testnet releases.
+
+The non-blocking `alpha02-coverage-drift` workflow warns on merges that
+change `apps/alpha02/src/` without touching the e2e surface. Never park
+live-review tooling in the session scratchpad — commit the drive with
+the PR (or its follow-up) so the next regression doesn't rebuild it.
+
 ### Per-PR verification is TARGETED — full regression is a pre-deploy gate only
 
 This is a standing workflow rule (do not run the full regression as a per-PR

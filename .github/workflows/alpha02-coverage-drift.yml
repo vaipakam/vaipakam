@@ -1,0 +1,60 @@
+# alpha02 verification-coverage drift check.
+#
+# Non-blocking backstop for the per-PR coverage convention (see
+# apps/alpha02/e2e/COVERAGE.md): a merge that changes alpha02 app code
+# should also touch the e2e surface — a fork-tier spec, a live driver,
+# or at minimum the coverage matrix row saying where the change is
+# verified. Emits a warning + job-summary note when it doesn't; never
+# fails the run — a discipline, not a merge gate (same posture as the
+# docs-drift check).
+name: alpha02 coverage-drift check
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'apps/alpha02/src/**'
+      - 'apps/alpha02/e2e/**'
+
+permissions:
+  contents: read
+
+jobs:
+  drift:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          fetch-depth: 0
+
+      - name: Check that alpha02 code changes carry coverage updates
+        env:
+          BEFORE: ${{ github.event.before }}
+          AFTER: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+
+          if [ -z "${BEFORE:-}" ] || [ "$BEFORE" = "0000000000000000000000000000000000000000" ] \
+             || ! git cat-file -e "$BEFORE^{commit}" 2>/dev/null; then
+            BEFORE="$(git rev-parse HEAD^ 2>/dev/null || echo '')"
+          fi
+          if [ -z "$BEFORE" ]; then
+            echo "No diff base — skipping drift check."
+            exit 0
+          fi
+
+          CHANGED="$(git diff --name-only "$BEFORE" "$AFTER")"
+          SRC_CHANGED="$(echo "$CHANGED" | grep -c '^apps/alpha02/src/' || true)"
+          E2E_CHANGED="$(echo "$CHANGED" | grep -c '^apps/alpha02/e2e/' || true)"
+
+          if [ "$SRC_CHANGED" -gt 0 ] && [ "$E2E_CHANGED" -eq 0 ]; then
+            MSG="alpha02 src changed with no e2e/COVERAGE update — add a fork-tier spec, a live driver, or a COVERAGE.md row saying where this change is verified (apps/alpha02/e2e/COVERAGE.md)."
+            echo "::warning::$MSG"
+            {
+              echo "## alpha02 coverage drift"
+              echo ""
+              echo "$MSG"
+            } >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "Coverage discipline satisfied (src=$SRC_CHANGED e2e=$E2E_CHANGED)."
+          fi
