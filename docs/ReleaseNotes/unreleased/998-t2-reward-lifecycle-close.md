@@ -21,12 +21,28 @@ tell the reward system the loan had closed, so both parties' entries kept
 accruing to the original contracted end date. After a refinance this
 double-counted the same principal because the new loan registered its own fresh
 entries while the old loan's stayed open. These paths now close the old loan's
-reward entries at the moment they settle it (a clean close — the borrower repaid
-or rolled over, and the exiting lender was paid in full, so neither forfeits).
-The obligation-transfer path (which keeps the loan open under a new borrower)
-instead re-points the borrower's reward entry to the incoming borrower, so the
-party who left the loan can no longer claim the rewards the continuing
-borrower's interest earns.
+reward entries at the moment they settle it. The exiting lender is always paid in
+full and never forfeits; the borrower side is clean only when the close happens
+within the loan's grace window — a late preclose or refinance (past grace, before
+anyone triggered default) is treated as a non-clean close and forfeits the
+borrower reward, the same way an ordinary post-grace close does. The
+obligation-transfer path (which keeps the loan open under a new borrower and a
+re-originated term) splits the reward windows at the transfer point: the exiting
+borrower and the unchanged lender keep what they earned before the transfer, and
+fresh entries covering the continuing loan are opened under the new rate and
+duration, so the incoming borrower only earns from the transfer forward and never
+inherits the previous borrower's history.
+
+As a safety net, a reward entry also becomes claimable once its loan simply
+reaches a terminal status even if the closing path did not explicitly notify the
+reward system, so no terminal path can freeze a reward forever; in that fallback
+a liquidated or defaulted loan still forfeits the borrower's reward to treasury
+rather than paying it out. Wiring the remaining terminal paths (internal-match
+liquidation, prepay-sale settlement) to close their entries explicitly — and
+running the current-holder consolidation before an obligation transfer or offset
+completion, as the direct-preclose path already does — are tracked as reward-
+accuracy follow-ups; the platform is pre-live, so there is no historical reward
+state to migrate.
 
 Because the preclose facet is already at the contract-size ceiling, the reward
 bookkeeping for those paths runs through a small internal hook rather than being

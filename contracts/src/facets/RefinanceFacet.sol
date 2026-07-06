@@ -711,11 +711,17 @@ contract RefinanceFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErr
         // new refinanced loan (`newLoanId`) already registered its own fresh
         // entries at initiation, so leaving the old entries open double-counted
         // the same principal in both the numerator AND the denominator. The
-        // borrower rolls into the new loan (a continuation per §6, borrower-
-        // clean); the exiting old lender is paid in full and never forfeits.
+        // exiting old lender is paid in full and never forfeits. The borrower
+        // rolls into the new loan — CLEAN only when the refinance happens IN
+        // GRACE; a late refinance (past grace, before default was triggered) is a
+        // non-clean close and forfeits the old borrower reward, matching the
+        // preclose/repay convention (Codex #1061 P2).
+        uint256 oldGraceEnd = oldLoan.startTime
+            + oldLoan.durationDays * LibVaipakam.ONE_DAY
+            + LibVaipakam.gracePeriod(oldLoan.durationDays);
         LibInteractionRewards.closeLoan(
             oldLoanId,
-            /* borrowerClean */ true,
+            /* borrowerClean */ block.timestamp <= oldGraceEnd,
             /* lenderForfeit */ false
         );
         // #407 PR 4 (T-407-B, 2026-06-12) — collateral lien release

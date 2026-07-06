@@ -675,9 +675,15 @@ library LibInteractionRewards {
         for (uint256 i = 0; i < len; ) {
             uint256 id = ids[i];
             LibVaipakam.RewardEntry storage e = s.rewardEntries[id];
-            // #1002 (S4) — only claimable (closed or loan-terminal), non-
-            // forfeited entries preview to the user (was the dead `endDay != 0`).
-            if (!e.processed && !e.forfeited && _entryClaimable(s, e)) {
+            // #1002 (S4) / #1061 P2 — only claimable (closed or loan-terminal),
+            // non-forfeited (explicit OR terminal-derived) entries preview to the
+            // user (was the dead `endDay != 0`).
+            if (
+                !e.processed
+                && !e.forfeited
+                && !_entryTerminalForfeit(s, e)
+                && _entryClaimable(s, e)
+            ) {
                 uint256 reward = _previewEntryReward(
                     s,
                     e,
@@ -913,6 +919,24 @@ library LibInteractionRewards {
             && st != LibVaipakam.LoanStatus.FallbackPending;
     }
 
+    /// @dev #1061 P2 — for an entry made claimable by the loan-terminal fallback
+    ///      (NOT explicitly closed), derive the forfeit from the terminal reason:
+    ///      a Defaulted / InternalMatched (liquidation) loan forfeits the
+    ///      BORROWER side (the loser), routing its reward to treasury; a clean
+    ///      terminal (Repaid / Settled) and the lender side pay out. An
+    ///      explicitly-closed entry already carries its `forfeited` decision from
+    ///      `_closeEntry`, so this returns false for it (the caller ORs the two).
+    function _entryTerminalForfeit(
+        LibVaipakam.Storage storage s,
+        LibVaipakam.RewardEntry storage e
+    ) private view returns (bool) {
+        if (e.closed) return false;
+        LibVaipakam.LoanStatus st = s.loans[e.loanId].status;
+        return (st == LibVaipakam.LoanStatus.Defaulted
+            || st == LibVaipakam.LoanStatus.InternalMatched)
+            && e.side == LibVaipakam.RewardSide.Borrower;
+    }
+
     /// @dev Process (or preview) a single reward entry. When `mutate`,
     ///      flips `processed = true` and returns the routed amounts;
     ///      otherwise returns the pending amount for the user side only
@@ -987,7 +1011,11 @@ library LibInteractionRewards {
         }
 
         if (mutate) e.processed = true;
-        if (e.forfeited) {
+        // #1061 P2 — route to treasury on an explicit forfeit OR a terminal
+        // forfeit derived from an unclosed liquidation/default (so a liquidated
+        // borrower can't collect via the {_entryClaimable} loan-terminal
+        // fallback).
+        if (e.forfeited || _entryTerminalForfeit(s, e)) {
             toTreasury = reward;
         } else {
             toUser = reward;
