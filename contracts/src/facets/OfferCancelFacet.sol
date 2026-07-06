@@ -217,10 +217,18 @@ contract OfferCancelFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamE
             // creator and zero the reservation so the later close is single-pay.
             uint256 heldPrepay = s.heldForLender[lockedOffsetLoanId];
             if (heldPrepay > 0) {
-                // Release the Step-1 lender-proceeds encumbrance first (the VPFI
-                // unstake reservation from `encumberLenderProceeds`; a no-op for
-                // non-VPFI) so the vault-withdraw chokepoint doesn't treat the
-                // prepay as still locked and block the refund.
+                // Checks-effects-interactions: clear the reservation and its
+                // encumbrance BEFORE the external vault-withdraw. The offset can
+                // only be created on an ACTIVE loan (`_validateOffsetRequest`),
+                // and the only other `heldForLender` writer is the FallbackPending
+                // partial-rescue path — a state the offset gate excludes — so this
+                // accumulator holds exactly the offset's Step-1 prepay here and
+                // zeroing it is correct (not an over-refund of some other slice).
+                s.heldForLender[lockedOffsetLoanId] = 0;
+                // Release the Step-1 lender-proceeds encumbrance (the VPFI unstake
+                // reservation from `encumberLenderProceeds`; a no-op for non-VPFI)
+                // so the vault-withdraw chokepoint doesn't treat the prepay as
+                // still locked and block the refund.
                 LibEncumbrance.releaseLenderProceeds(
                     lockedOffsetLoanId, offsetLoan.lender
                 );
@@ -236,7 +244,6 @@ contract OfferCancelFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamE
                     ),
                     VaultWithdrawFailed.selector
                 );
-                s.heldForLender[lockedOffsetLoanId] = 0;
             }
             delete s.offsetOfferToLoanId[offerId];
             delete s.loanToOffsetOfferId[lockedOffsetLoanId];
