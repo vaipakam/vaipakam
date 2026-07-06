@@ -30,9 +30,10 @@
  *
  * Renders nothing; mount once inside the app shell.
  */
-import { useCallback, useRef, useSyncExternalStore } from 'react';
+import { useCallback, useEffect, useRef, useSyncExternalStore } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import { useWatchBlockNumber } from 'wagmi';
+import { onActivityResume } from '../lib/idle';
 import { useActiveChain } from './useActiveChain';
 
 /** queryKey[0] values that move when a transaction lands. Everything
@@ -97,10 +98,7 @@ export function LiveChainSync() {
   const lastAt = useRef(0);
   const visible = usePageVisible();
 
-  const onBlockNumber = useCallback(() => {
-    const now = Date.now();
-    if (now - lastAt.current < MIN_INVALIDATE_MS) return;
-    lastAt.current = now;
+  const invalidateLiveKeys = useCallback(() => {
     void queryClient.invalidateQueries({
       // Only refetch mounted queries; unmounted ones are just marked
       // stale and refetch when their screen next opens.
@@ -111,6 +109,30 @@ export function LiveChainSync() {
       },
     });
   }, [queryClient]);
+
+  const onBlockNumber = useCallback(() => {
+    const now = Date.now();
+    if (now - lastAt.current < MIN_INVALIDATE_MS) return;
+    lastAt.current = now;
+    invalidateLiveKeys();
+  }, [invalidateLiveKeys]);
+
+  // Idle→active resume: a stretched idle-cadence timer already in
+  // flight runs to completion regardless of new input (TanStack only
+  // re-evaluates a function refetchInterval after a fetch), so the
+  // first interaction after an idle stretch refreshes the
+  // transaction-driven caches directly. Refetching also reschedules
+  // those queries' intervals back at the active cadence. Bypasses the
+  // block throttle (it IS the freshness catch-up) but stamps it, so a
+  // block arriving right after can't double-fire.
+  useEffect(
+    () =>
+      onActivityResume(() => {
+        lastAt.current = Date.now();
+        invalidateLiveKeys();
+      }),
+    [invalidateLiveKeys],
+  );
 
   useWatchBlockNumber({
     chainId: readChain.chainId,

@@ -21,8 +21,12 @@ per minute, with near zero once you look away:
   watcher itself is off while the tab is hidden.
 - **Idle sessions back off.** A visible tab with no interaction
   (taps, keys, scrolling all count) for two minutes stretches every
-  periodic refresh to a quarter of its usual pace; the next
-  interaction or tab return snaps it back and refreshes immediately.
+  periodic refresh to a quarter of its usual pace. The first
+  interaction after an idle stretch immediately refreshes the
+  transaction-driven data (offers, positions, claims, balances) and
+  restores the normal pace; configuration-style data follows at its
+  next tick, and returning to the tab refreshes everything on focus
+  as before.
 - **One static read stopped repeating.** The VPFI token address — a
   value that cannot change without a redeploy — was re-read every 30
   seconds, and for signed-out visitors it was the only chain call in

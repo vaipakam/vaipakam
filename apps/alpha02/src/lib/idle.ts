@@ -23,9 +23,26 @@ const IDLE_FACTOR = 4;
 
 let lastActivityAt = Date.now();
 
+/** Fired when the FIRST interaction after an idle stretch lands.
+ *  TanStack only re-evaluates a function `refetchInterval` after a
+ *  fetch, so a stretched timer already in flight would otherwise run
+ *  to completion (up to 4× the base interval) before the cadence
+ *  snaps back — the resume listener lets the app refresh the
+ *  freshness-critical caches immediately instead (Codex round-1 P2). */
+const resumeListeners = new Set<() => void>();
+
+export function onActivityResume(listener: () => void): () => void {
+  resumeListeners.add(listener);
+  return () => {
+    resumeListeners.delete(listener);
+  };
+}
+
 if (typeof window !== 'undefined') {
   const mark = () => {
+    const wasIdle = isIdle();
     lastActivityAt = Date.now();
+    if (wasIdle) for (const l of resumeListeners) l();
   };
   // Passive + capture: never affects scrolling performance, and sees
   // events consumed inside components.
@@ -33,6 +50,8 @@ if (typeof window !== 'undefined') {
     window.addEventListener(ev, mark, { passive: true, capture: true });
   }
   // Returning to the tab is activity even without an input event.
+  // (TanStack's focus refetch also fires on this path; concurrent
+  // refetches of the same query dedupe, so no double fetch.)
   document.addEventListener('visibilitychange', () => {
     if (!document.hidden) mark();
   });

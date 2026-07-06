@@ -119,8 +119,19 @@ export async function readVpfiTokenLive(
   }
 }
 
-/** Session cache for the deploy-static VPFI token address. */
+/** Session cache for the VPFI token address — static in practice
+ *  (it changes only via a governance registration/rotation), so one
+ *  read per session per chain suffices. Two escape hatches keep the
+ *  cache honest against exactly those events (Codex round-1 P2):
+ *  the not-registered (zero) result is NEVER cached, so a later
+ *  registration surfaces on the next cycle; and the rotation
+ *  recovery path calls `clearVpfiTokenCache` before invalidating
+ *  ['vpfi'], so its refetch re-reads the live address. */
 const vpfiTokenCache = new Map<number, `0x${string}`>();
+
+export function clearVpfiTokenCache(chainId: number): void {
+  vpfiTokenCache.delete(chainId);
+}
 
 export function useVpfi() {
   const { readChain, address } = useActiveChain();
@@ -149,7 +160,9 @@ export function useVpfi() {
       let token = vpfiTokenCache.get(readChain.chainId);
       if (token === undefined) {
         token = await read<`0x${string}`>('getVPFIToken');
-        vpfiTokenCache.set(readChain.chainId, token);
+        if (token.toLowerCase() !== ZERO_ADDRESS) {
+          vpfiTokenCache.set(readChain.chainId, token);
+        }
       }
       const registered = token.toLowerCase() !== ZERO_ADDRESS;
       if (!registered || !address) {
