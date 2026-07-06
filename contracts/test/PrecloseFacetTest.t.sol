@@ -1226,6 +1226,74 @@ contract PrecloseFacetTest is Test {
         vm.clearMockedCalls();
     }
 
+    // ─── #1001 (S3) offset Step-1 prepay unwind + single-live-offset guard ──
+
+    /// @dev #1001 (S3) — cancelling an un-matched offset offer must UNWIND the
+    ///      Step-1 prepayment. `offsetWithNewOffer` moves the old lender's full
+    ///      payoff (principal + accrued − fee + shortfall) into their vault at
+    ///      offer creation (`heldForLender[loanId]`). If cancel didn't pull it
+    ///      back, the loan could later close another way and the old lender would
+    ///      collect the terminal settlement PLUS the stranded prepay — principal
+    ///      paid twice. Asserted at elapsed≈0 (accrued/fee ≈ 0), so the only
+    ///      Step-1 movement is the principal prepay and the borrower is made
+    ///      whole net-zero on cancel.
+    function testCancelOffsetUnwindsStep1Prepay() public {
+        address lenderVault =
+            VaultFactoryFacet(address(diamond)).getUserVaultAddress(lender);
+        uint256 lenderVaultBefore = ERC20(mockERC20).balanceOf(lenderVault);
+        uint256 borrowerWalletBefore = ERC20(mockERC20).balanceOf(borrower);
+
+        // REAL offset (createOffer not mocked) so the replacement offer + its
+        // position NFT are real and cancellable. At elapsed≈0 the Step-1 payoff
+        // is ≈ principal; the new-offer principal is separately pre-vaulted by
+        // createOffer and refunded by the ordinary Lender-cancel branch.
+        vm.prank(borrower);
+        uint256 newOfferId = PrecloseFacet(address(diamond)).offsetWithNewOffer(
+            activeLoanId, 500, 30, mockCollateralERC20, COLLATERAL, true, mockERC20
+        );
+
+        // Step-1 moved the old lender's payoff into their vault (≈ principal).
+        uint256 prepay = ERC20(mockERC20).balanceOf(lenderVault) - lenderVaultBefore;
+        assertGt(prepay, 0, "Step-1 prepay landed in the old lender vault");
+
+        vm.prank(borrower);
+        OfferCancelFacet(address(diamond)).cancelOffer(newOfferId);
+
+        // Unwind: prepay pulled back out of the old lender vault to the borrower;
+        // the new-offer principal is returned from the borrower's own vault.
+        assertEq(
+            ERC20(mockERC20).balanceOf(lenderVault),
+            lenderVaultBefore,
+            "old lender vault restored to pre-offset (no stranded prepay)"
+        );
+        assertEq(
+            ERC20(mockERC20).balanceOf(borrower),
+            borrowerWalletBefore,
+            "borrower made whole on cancel (net-zero at elapsed 0)"
+        );
+
+        // The link is cleared, so a fresh offset is permitted again.
+        vm.prank(borrower);
+        PrecloseFacet(address(diamond)).offsetWithNewOffer(
+            activeLoanId, 500, 30, mockCollateralERC20, COLLATERAL, true, mockERC20
+        );
+    }
+
+    /// @dev #1001 (S3) — only ONE live offset offer per loan. A second
+    ///      `offsetWithNewOffer` while the first is still linked would prepay the
+    ///      old lender another `heldForLender` slice (monotone accumulator), so
+    ///      it must revert before any funds move.
+    function testOffsetRejectsSecondWhileOneLive() public {
+        vm.mockCall(address(diamond), abi.encodeWithSelector(OfferCreateFacet.createOfferInternal.selector), abi.encode(uint256(99)));
+        vm.prank(borrower);
+        PrecloseFacet(address(diamond)).offsetWithNewOffer(activeLoanId, 500, 30, mockCollateralERC20, COLLATERAL, true, mockERC20);
+
+        vm.expectRevert(PrecloseFacet.OffsetAlreadyActive.selector);
+        vm.prank(borrower);
+        PrecloseFacet(address(diamond)).offsetWithNewOffer(activeLoanId, 500, 30, mockCollateralERC20, COLLATERAL, true, mockERC20);
+        vm.clearMockedCalls();
+    }
+
     // ─── precloseDirect NFT rental path ─────────────────────────────────────
 
     function testPrecloseDirectNFTRentalPath() public {

@@ -150,6 +150,12 @@ contract PrecloseFacet is
     error InsufficientCollateral();
     error OffsetNotLinked();
     error OffsetOfferNotAccepted();
+    /// #1001 (S3) — a loan may have at most ONE live offset offer at a time.
+    /// A second `offsetWithNewOffer` while `loanToOffsetOfferId[loanId] != 0`
+    /// would prepay the old lender a SECOND `heldForLender` slice (monotone
+    /// accumulator), so it is rejected until the first offer is completed or
+    /// cancelled (which clears the link + unwinds the prepay).
+    error OffsetAlreadyActive();
 
     // ─── Option 1: Direct Preclose ────────────────────────────────��─────────
 
@@ -1032,6 +1038,11 @@ contract PrecloseFacet is
         // points.
         LibVaipakam.assertNoLiveIntentCommit(loanId);
         LibVaipakam.Loan storage loan = LibVaipakam.storageSlot().loans[loanId];
+        // #1001 (S3) — one live offset offer per loan. Without this, a second
+        // offset would prepay the old lender another `heldForLender` slice
+        // (the accumulator is monotone) before the first is completed/cancelled.
+        if (LibVaipakam.storageSlot().loanToOffsetOfferId[loanId] != 0)
+            revert OffsetAlreadyActive();
         _validateOffsetRequest(
             loan,
             durationDays,

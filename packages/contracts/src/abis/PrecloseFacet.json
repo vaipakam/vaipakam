@@ -730,6 +730,11 @@
   },
   {
     "type": "error",
+    "name": "OffsetAlreadyActive",
+    "inputs": []
+  },
+  {
+    "type": "error",
     "name": "OffsetNotLinked",
     "inputs": []
   },

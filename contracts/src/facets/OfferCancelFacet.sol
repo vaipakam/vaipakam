@@ -7,6 +7,7 @@ import {LibVaipakam} from "../libraries/LibVaipakam.sol";
 // gate that admits the creator OR any caller against an expired offer;
 // see `cancelOffer` for the full rule.
 import {LibFacet} from "../libraries/LibFacet.sol";
+import {LibEncumbrance} from "../libraries/LibEncumbrance.sol";
 import {LibERC721} from "../libraries/LibERC721.sol";
 import {LibSaleListing} from "../libraries/LibSaleListing.sol";
 import {LibPrepayCleanup} from "../libraries/LibPrepayCleanup.sol";
@@ -201,7 +202,42 @@ contract OfferCancelFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamE
         // (a) Preclose Option 3 offset: release the borrower position NFT.
         uint256 lockedOffsetLoanId = s.offsetOfferToLoanId[offerId];
         if (lockedOffsetLoanId != 0) {
-            LibERC721._unlock(s.loans[lockedOffsetLoanId].borrowerTokenId);
+            LibVaipakam.Loan storage offsetLoan = s.loans[lockedOffsetLoanId];
+            LibERC721._unlock(offsetLoan.borrowerTokenId);
+            // #1001 (S3) — UNWIND the Step-1 prepayment. `offsetWithNewOffer`
+            // pays the old lender their full principal + accrued interest +
+            // shortfall UP FRONT (into their vault, recorded as
+            // `heldForLender[loanId]`) at offer creation. If the offset offer is
+            // cancelled before any counterparty matches (explicitly permitted),
+            // that prepay MUST be returned to the borrower who fronted it —
+            // otherwise the loan later closes some other way and the old lender
+            // collects the terminal settlement PLUS the stranded `heldForLender`,
+            // i.e. principal paid twice (or the borrower silently forfeits the
+            // Step-1 payment). Pull it back out of the old lender's vault to the
+            // creator and zero the reservation so the later close is single-pay.
+            uint256 heldPrepay = s.heldForLender[lockedOffsetLoanId];
+            if (heldPrepay > 0) {
+                // Release the Step-1 lender-proceeds encumbrance first (the VPFI
+                // unstake reservation from `encumberLenderProceeds`; a no-op for
+                // non-VPFI) so the vault-withdraw chokepoint doesn't treat the
+                // prepay as still locked and block the refund.
+                LibEncumbrance.releaseLenderProceeds(
+                    lockedOffsetLoanId, offsetLoan.lender
+                );
+                // Offset is ERC20-only (validated in `_validateOffsetRequest`),
+                // so the prepay asset is the loan's principal asset.
+                LibFacet.crossFacetCall(
+                    abi.encodeWithSelector(
+                        VaultFactoryFacet.vaultWithdrawERC20.selector,
+                        offsetLoan.lender,          // old lender — holds the prepay
+                        offsetLoan.principalAsset,
+                        creator,                    // borrower who fronted it
+                        heldPrepay
+                    ),
+                    VaultWithdrawFailed.selector
+                );
+                s.heldForLender[lockedOffsetLoanId] = 0;
+            }
             delete s.offsetOfferToLoanId[offerId];
             delete s.loanToOffsetOfferId[lockedOffsetLoanId];
         }

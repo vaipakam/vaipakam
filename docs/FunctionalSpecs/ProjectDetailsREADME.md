@@ -1560,6 +1560,12 @@ When the counterparty borrower accepts the linked offsetting offer, the Diamond 
 
 `PrecloseFacet.completeOffset(originalLoanId)` remains exposed as a manual recovery hook — for example, to rescue a loan whose offsetting offer was accepted before the auto-completion path was introduced, or to be driven by a keeper if the atomic completion ever needs to be re-attempted. Under normal operation this entry point is not called directly from the UI.
 
+##### Cancellation before a counterparty matches
+
+Alice may cancel her offsetting offer while it is still un-matched. Cancellation must be **loss-free for both parties**: every amount moved or reserved for Liam when the offer was posted is returned to Alice, and the original loan continues unchanged with Liam as lender. In particular, whatever was set aside for Liam's early payoff at posting time is pulled back out and returned to Alice, and the internal reservation is cleared, so if the original loan is later closed through any other path Liam is paid exactly once — never the ordinary close-out **plus** a stranded posting-time reservation. Alice's separately-vaulted new-offer capital is likewise refunded.
+
+A loan may have at most **one live offsetting offer at a time**: a second offset attempt while an earlier one is still outstanding is rejected, so Liam can never be prepaid twice by stacking offers. The single live offer is cleared when it completes or is cancelled.
+
 #### Required Settlement Result
 
 When the offset completes, Liam must have a valid claim path for the full value owed under the old loan, including:
