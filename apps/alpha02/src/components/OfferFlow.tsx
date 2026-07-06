@@ -108,6 +108,7 @@ import { Checklist, allChecksPass, type CheckItem } from './Checklist';
 import { ReviewReceipt, type ReceiptData } from './ReviewReceipt';
 import { StepNav } from './StepNav';
 import { useEligibility } from './useEligibility';
+import { idleAware } from '../lib/idle';
 
 type Side = 'lender' | 'borrower';
 type FlowStep = 'details' | 'choose' | 'terms' | 'review' | 'done';
@@ -454,7 +455,7 @@ export function OfferFlow({ side }: { side: Side }) {
     enabled:
       acceptIsLoanSale && Boolean(readClient) && Boolean(selected),
     staleTime: 30_000,
-    refetchInterval: 60_000,
+    refetchInterval: idleAware(60_000),
     queryFn: () =>
       readSaleReviewLive(
         readClient!,

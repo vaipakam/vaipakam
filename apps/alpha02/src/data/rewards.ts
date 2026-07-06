@@ -13,6 +13,7 @@ import {
 } from 'viem';
 import { DIAMOND_ABI_VIEM } from '@vaipakam/contracts/abis';
 import { useActiveChain } from '../chain/useActiveChain';
+import { idleAware } from '../lib/idle';
 
 export interface RewardsSnapshot {
   /** Claimable VPFI (18-dec) right now. */
@@ -28,7 +29,7 @@ export function useInteractionRewards() {
   return useQuery({
     queryKey: ['interactionRewards', readChain.chainId, address?.toLowerCase()],
     enabled: Boolean(address) && Boolean(publicClient),
-    refetchInterval: 60_000,
+    refetchInterval: idleAware(60_000),
     queryFn: async (): Promise<RewardsSnapshot> => {
       try {
         const [preview, claimability] = await Promise.all([

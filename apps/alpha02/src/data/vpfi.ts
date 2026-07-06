@@ -22,6 +22,7 @@ import { usePublicClient } from 'wagmi';
 import type { PublicClient } from 'viem';
 import { DIAMOND_ABI_VIEM } from '@vaipakam/contracts/abis';
 import { useActiveChain } from '../chain/useActiveChain';
+import { idleAware } from '../lib/idle';
 
 export const VPFI_DECIMALS = 18;
 const ZERO_ADDRESS = '0x0000000000000000000000000000000000000000';
@@ -118,6 +119,9 @@ export async function readVpfiTokenLive(
   }
 }
 
+/** Session cache for the deploy-static VPFI token address. */
+const vpfiTokenCache = new Map<number, `0x${string}`>();
+
 export function useVpfi() {
   const { readChain, address } = useActiveChain();
   const publicClient = usePublicClient({ chainId: readChain.chainId });
@@ -125,7 +129,7 @@ export function useVpfi() {
   return useQuery({
     queryKey: ['vpfi', readChain.chainId, address?.toLowerCase()],
     enabled: Boolean(publicClient),
-    refetchInterval: 30_000,
+    refetchInterval: idleAware(30_000),
     queryFn: async (): Promise<VpfiSnapshot> => {
       if (!publicClient) throw new Error('unreachable');
       const diamond = readChain.diamondAddress;
@@ -137,7 +141,16 @@ export function useVpfi() {
           args: args as unknown[],
         }) as Promise<T>;
 
-      const token = await read<`0x${string}`>('getVPFIToken');
+      // getVPFIToken is deploy-static: one successful read per chain
+      // per session (RPC diet — the previous shape re-read it every
+      // 30s cycle, including for disconnected visitors, where it was
+      // the ONLY on-chain call of the whole cycle). Failures are not
+      // cached, so a transient RPC blip can't stick.
+      let token = vpfiTokenCache.get(readChain.chainId);
+      if (token === undefined) {
+        token = await read<`0x${string}`>('getVPFIToken');
+        vpfiTokenCache.set(readChain.chainId, token);
+      }
       const registered = token.toLowerCase() !== ZERO_ADDRESS;
       if (!registered || !address) {
         return {

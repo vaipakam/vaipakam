@@ -42,6 +42,7 @@ import { AssetType } from '../lib/types';
 import type { IndexedLoanStatus } from './indexer';
 import { isRevert, readLoanRowLive } from './liveLoanRow';
 import { useMyLoans, type PositionLoan } from './hooks';
+import { idleAware } from '../lib/idle';
 
 const REFRESH_MS = 30_000;
 
@@ -78,7 +79,7 @@ export function useMyClaimables() {
       loans.dataUpdatedAt,
     ],
     enabled: Boolean(address) && loans.data !== undefined,
-    refetchInterval: REFRESH_MS,
+    refetchInterval: idleAware(REFRESH_MS),
     queryFn: async (): Promise<PositionLoan[] | null> => {
       if (!address) return [];
       if (!publicClient) return null;

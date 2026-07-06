@@ -31,6 +31,7 @@ import { fetchOffersByCreator, type IndexedOffer } from '../data/indexer';
 import { ZERO_ADDRESS } from '../lib/offerSchema';
 import { AssetType } from '../lib/types';
 import { formatTokenAmount, shortAddress } from '../lib/format';
+import { idleAware } from '../lib/idle';
 
 interface ApprovalRow {
   token: `0x${string}`;
@@ -90,7 +91,7 @@ export function ApprovalsCard() {
     // is exactly the profile most likely to hold pure historical
     // residue (the history legs below still apply).
     enabled: Boolean(publicClient) && Boolean(address) && complete,
-    refetchInterval: 60_000,
+    refetchInterval: idleAware(60_000),
     queryFn: async (): Promise<ApprovalRow[]> => {
       // The rental-prepay approval (the Rent flow's money leg) only
       // appears on OFFERS, and useMyOffers filters to active — pull

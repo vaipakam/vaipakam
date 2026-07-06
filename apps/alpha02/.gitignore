@@ -5,3 +5,4 @@ test-results/
 playwright-report/
 e2e/testnet-wallets/
 e2e/live/profiles/
+e2e/live/shots/

@@ -1,27 +1,36 @@
 /**
- * Live chain sync — turns each new block into an immediate refresh of
- * the transaction-driven query caches, so the UI reflects on-chain
- * changes (the user's own tx AND everyone else's) within a block
- * instead of on the 30s indexer poll.
+ * Live chain sync — turns each new block into a refresh of the
+ * transaction-driven query caches, so the UI reflects on-chain
+ * changes (the user's own tx AND everyone else's) within seconds
+ * instead of on the 30s interval poll.
  *
- * Transport-adaptive by construction: when a chain has a WebSocket RPC
- * configured (`wagmi.ts` wraps it in a `fallback` ahead of HTTP),
- * viem's block watcher uses `eth_subscribe('newHeads')` — a true push,
- * so reflection is near-instant. Without a WS URL it falls back to
- * HTTP block polling (viem's default ~4s cadence), still far tighter
- * than the 30s poll. Either way this component is the single place that
- * fans a new block out to the caches.
+ * PUSH-ONLY BY DESIGN (RPC diet): the block watcher mounts ONLY when
+ * the active chain has a WebSocket RPC configured (`wagmi.ts` wraps it
+ * in a `fallback` ahead of HTTP, so viem subscribes via
+ * `eth_subscribe('newHeads')` — zero request cost per block). Without
+ * a WS URL this component renders nothing at all: the earlier shape
+ * fell back to HTTP block-polling here, and the live measurement on
+ * production (#RPC-diet) showed what that costs — the watcher burned
+ * an `eth_blockNumber` every ~1.2s and its invalidations dragged the
+ * whole live query set (indexer pages + the catch-up's `eth_getLogs`)
+ * from the nominal 30s cadence down to ~5s, ~3,700 RPC calls/hour per
+ * open tab, wallet or not. On HTTP-only deploys the 30s interval
+ * refetch (plus synchronous invalidation at every write call site,
+ * and the indexer push channel) carries freshness instead.
+ *
+ * Also fully off while the tab is hidden — previously only the
+ * invalidation callback early-returned, which stopped the refetches
+ * but left the transport's block subscription running.
  *
  * Only the TRANSACTION-driven keys are invalidated (see LIVE_KEYS) —
  * static config (protocol fees, tier tables, token metadata, curated
- * lists) is left alone so a fast block cadence doesn't churn reads that
- * never move per block. Invalidations are throttled and pause while the
- * tab is hidden, so a burst of blocks or a backgrounded tab can't storm
- * the indexer.
+ * lists) is left alone so a fast block cadence doesn't churn reads
+ * that never move per block. Invalidations are throttled so a burst
+ * of blocks can't storm the indexer.
  *
  * Renders nothing; mount once inside the app shell.
  */
-import { useCallback, useRef } from 'react';
+import { useCallback, useRef, useSyncExternalStore } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import { useWatchBlockNumber } from 'wagmi';
 import { useActiveChain } from './useActiveChain';
@@ -58,21 +67,37 @@ const LIVE_KEYS: ReadonlySet<string> = new Set([
 ]);
 
 /** Floor between block-driven invalidations. Base Sepolia mines ~every
- *  2s, so an unthrottled WS push would refetch the whole live set that
- *  often; 4s halves that while still feeling immediate. A user's own
- *  action refreshes its keys synchronously at the call site regardless
- *  of this throttle. */
-const MIN_INVALIDATE_MS = 4_000;
+ *  2s; each invalidation refetches the mounted live set, which
+ *  includes indexer pages AND the book catch-up's `eth_getLogs`, so
+ *  the floor is what the third-party-freshness feature actually costs
+ *  per unit time. 12s keeps "someone else's action shows up in
+ *  seconds" while cutting that recurring cost 3× vs the previous 4s —
+ *  the user's OWN actions refresh their keys synchronously at the
+ *  call site regardless of this throttle. */
+const MIN_INVALIDATE_MS = 12_000;
+
+/** Page visibility as a React-subscribable store — gates the watcher
+ *  itself (not just the callback) so a hidden tab holds no block
+ *  subscription at all. */
+function subscribeVisibility(onChange: () => void): () => void {
+  document.addEventListener('visibilitychange', onChange);
+  return () => document.removeEventListener('visibilitychange', onChange);
+}
+function usePageVisible(): boolean {
+  return useSyncExternalStore(
+    subscribeVisibility,
+    () => !document.hidden,
+    () => true,
+  );
+}
 
 export function LiveChainSync() {
   const { readChain } = useActiveChain();
   const queryClient = useQueryClient();
   const lastAt = useRef(0);
+  const visible = usePageVisible();
 
   const onBlockNumber = useCallback(() => {
-    // A backgrounded tab shouldn't drive indexer traffic; react-query
-    // refetches active queries on remount/focus anyway.
-    if (typeof document !== 'undefined' && document.hidden) return;
     const now = Date.now();
     if (now - lastAt.current < MIN_INVALIDATE_MS) return;
     lastAt.current = now;
@@ -89,8 +114,10 @@ export function LiveChainSync() {
 
   useWatchBlockNumber({
     chainId: readChain.chainId,
-    // `poll` is intentionally unset: viem uses eth_subscribe on a WS
-    // transport and polls on HTTP — the graceful degrade we want.
+    // Push transports only, and only while the tab is visible. On an
+    // HTTP-only deploy this hook never subscribes — see the header
+    // for why the polling fallback was removed.
+    enabled: Boolean(readChain.wsUrl) && visible,
     onBlockNumber,
     onError: (err) => {
       // A transient subscription drop must not crash the tree; the

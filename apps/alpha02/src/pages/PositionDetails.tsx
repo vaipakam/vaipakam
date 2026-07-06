@@ -66,6 +66,7 @@ import {
   LIVE_STATUS_TO_INDEXED,
   LoanStatus,
 } from '../lib/types';
+import { idleAware } from '../lib/idle';
 
 type Action = 'repay' | 'claim-borrower' | 'claim-lender' | null;
 /** The page's inline confirm surfaces — ONE open at a time, so two
@@ -162,7 +163,7 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
   const nftOwners = useQuery({
     queryKey: ['positionOwners', readChain.chainId, loan.data?.loanId],
     enabled: Boolean(loan.data) && Boolean(readClient),
-    refetchInterval: 60_000,
+    refetchInterval: idleAware(60_000),
     queryFn: async () => {
       const row = loan.data!;
       // Tri-state per side: an address (live owner), 'burned' (the
@@ -244,7 +245,7 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
       (loan.data?.status === 'active' ||
         loan.data?.status === 'fallback_pending'),
     staleTime: 15_000,
-    refetchInterval: 30_000,
+    refetchInterval: idleAware(30_000),
     queryFn: async () =>
       (
         await readLoanLive(
@@ -343,7 +344,7 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
       isAdvanced &&
       (role === 'borrower' || role === 'lender'),
     staleTime: 30_000,
-    refetchInterval: 60_000,
+    refetchInterval: idleAware(60_000),
     queryFn: async () => {
       const [live, calcDue, latestBlock, saleLock] = await Promise.all([
         readLoanLive(readClient!, readChain.diamondAddress, loan.data!.loanId),

@@ -33,6 +33,7 @@ import {
   readOwnLoanRowsLive,
   readOwnOfferRowsLive,
 } from './chainPositions';
+import { idleAware } from '../lib/idle';
 
 const REFRESH_MS = 30_000;
 
@@ -49,7 +50,7 @@ export function useActiveOffers() {
   const publicClient = usePublicClient({ chainId: readChain.chainId });
   return useQuery({
     queryKey: ['activeOffers', readChain.chainId],
-    refetchInterval: REFRESH_MS,
+    refetchInterval: idleAware(REFRESH_MS),
     queryFn: async (): Promise<IndexedOffer[] | null> => {
       // Freshness cursor snapshotted BEFORE the page walk: an ingest
       // landing mid-walk could advance the cursor past a terminal
@@ -195,7 +196,7 @@ export function useMyLoansFull() {
   return useQuery({
     queryKey: ['myLoans', readChain.chainId, address?.toLowerCase()],
     enabled: Boolean(address),
-    refetchInterval: REFRESH_MS,
+    refetchInterval: idleAware(REFRESH_MS),
     queryFn: async (): Promise<MyLoanRows | null> => {
       if (!address)
         return { rows: [], chainOk: true, indexerOk: true, indexedLoanIds: [] };
@@ -253,7 +254,7 @@ export function useOffer(offerId: number | undefined) {
   return useQuery({
     queryKey: ['offer', readChain.chainId, offerId],
     enabled: offerId !== undefined && Number.isFinite(offerId),
-    refetchInterval: REFRESH_MS,
+    refetchInterval: idleAware(REFRESH_MS),
     queryFn: async (): Promise<IndexedOffer | null> => {
       const row = await fetchOfferById(readChain.chainId, offerId!);
       if (row) return row;
@@ -286,7 +287,7 @@ export function useLoan(loanId: number | undefined) {
   return useQuery({
     queryKey: ['loan', readChain.chainId, loanId],
     enabled: loanId !== undefined && Number.isFinite(loanId),
-    refetchInterval: REFRESH_MS,
+    refetchInterval: idleAware(REFRESH_MS),
     queryFn: async (): Promise<IndexedLoan | null> => {
       const row = await fetchLoanById(readChain.chainId, loanId!);
       if (row) return row;
@@ -329,7 +330,7 @@ export function useMyOffersFull() {
   return useQuery({
     queryKey: ['myOffers', readChain.chainId, address?.toLowerCase()],
     enabled: Boolean(address),
-    refetchInterval: REFRESH_MS,
+    refetchInterval: idleAware(REFRESH_MS),
     queryFn: async (): Promise<MyRows<IndexedOffer> | null> => {
       if (!address) return { rows: [], chainOk: true, indexerOk: true };
       const [chainLive, created, held] = await Promise.all([
