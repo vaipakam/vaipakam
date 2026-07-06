@@ -26,15 +26,28 @@ test('review renders a truthful dry-run verdict', async ({ launchWallet }) => {
   await page.goto('/lend', { waitUntil: 'domcontentloaded' });
   await connectWallet(page);
   // Lend the OZ-mock tLIQ (paste branch) against curated WETH.
+  //
+  // TERMS MUST CLEAR THE MIN-COLLATERAL FLOOR (#1007 S11): WETH on
+  // Base Sepolia is Liquid at tier 0, which since S11 gets a REAL
+  // floor (tier-1 threshold, 80%) instead of the old no-floor
+  // sentinel. The original 25 tLIQ / 0.01 WETH terms ($50k vs $20 at
+  // the pinned $2,000 mock feeds) only ever passed because the floor
+  // was dormant on the pre-S11 testnet Diamond — the moment the live
+  // Diamond picked up S11 (2026-07-06 facet refresh) the dry run
+  // truthfully reverted MinCollateralBelowFloor. Both mock feeds are
+  // pinned EQUAL by DeployTestnetMocks (its pool value-balance guard
+  // requires it), so the floor in WETH units is lendAmount × hfFloor
+  // / 0.80 of the tLIQ amount: 0.01 tLIQ ⇒ floor ≈ 0.019 WETH;
+  // 0.05 WETH gives ~2.7× margin and stays under every LTV cap.
   await pasteAsset(page, 'lending-asset', MOCKS!.liquidToken as string);
-  await page.locator('input[placeholder="0.0"]').fill('25');
+  await page.locator('input[placeholder="0.0"]').fill('0.01');
   const see = page.getByRole('button', { name: /see matching offers/i });
   await expect(see).toBeEnabled({ timeout: 30_000 });
   await see.click();
   await page.getByRole('button', { name: /post my own lending offer/i }).click();
   await page.locator('input[placeholder="5"]').fill('9');
   await pickCuratedAsset(page, 'collateral-asset', WETH);
-  await page.locator('input[placeholder="0.0"]:visible').last().fill('0.01');
+  await page.locator('input[placeholder="0.0"]:visible').last().fill('0.05');
   const cont = page.getByRole('button', { name: /continue to review/i });
   await expect(cont).toBeEnabled({ timeout: 15_000 });
   await cont.click();
