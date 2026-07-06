@@ -84,9 +84,16 @@ import {
   fetchTokenSecurity,
   isCuratedAsset,
   needsSecurityCheck,
+  useBookTokenSecurity,
   useTokenSecurity,
   verdictFingerprint,
 } from '../data/tokenSecurity';
+import {
+  OfferRiskBadge,
+  offerRiskLevel,
+  offerScreenableLegs,
+  type OfferRiskLevel,
+} from './TokenRiskBadge';
 import {
   makeStepper,
   plannedApprovePrompts,
@@ -195,10 +202,12 @@ function interestModeNote(
 function MatchOfferRow({
   offer,
   side,
+  risk,
   onChoose,
 }: {
   offer: IndexedOffer;
   side: Side;
+  risk: OfferRiskLevel | null;
   onChoose: () => void;
 }) {
   const lendingMeta = useTokenMeta(offer.lendingAsset);
@@ -216,7 +225,8 @@ function MatchOfferRow({
       <span className="row-main">
         <span className="row-title">
           {side === 'borrower' ? 'Borrow' : 'Lend'} {amountStr} at{' '}
-          {formatBpsAsPercent(offerRateBps(offer))} yearly
+          {formatBpsAsPercent(offerRateBps(offer))} yearly{' '}
+          <OfferRiskBadge level={risk} />
         </span>
         <br />
         <span className="row-sub">
@@ -588,7 +598,7 @@ export function OfferFlow({ side }: { side: Side }) {
     }
   }, [form.amount, lendingMeta.data]);
 
-  const matches = useMemo(() => {
+  const matchCandidates = useMemo(() => {
     const rows = activeOffers.data;
     if (!Array.isArray(rows) || !isAddressLike(form.lendingAsset)) return rows === null ? null : [];
     const wantedType = side === 'borrower' ? 0 : 1;
@@ -615,9 +625,40 @@ export function OfferFlow({ side }: { side: Side }) {
         return side === 'borrower'
           ? offerRateBps(a) - offerRateBps(b)
           : offerRateBps(b) - offerRateBps(a);
-      })
-      .slice(0, 5);
+      });
   }, [activeOffers.data, form.lendingAsset, side, address, desiredWei]);
+
+  // #1036 badges slice — guided matching is a RECOMMENDATION surface
+  // for a naive user, so a hard-flagged offer (a leg the security
+  // screen says is dangerous) is EXCLUDED from the top 5, with an
+  // honest count of what was hidden — never a silently thinner list.
+  // Warn/unscreened offers stay listed, wearing the badge; and the
+  // book page never hides anything (browse must not lie about the
+  // market — the accept gate enforces downstream). Only the head of
+  // the candidate list is screened: a flagged offer lets the next
+  // candidate in, so a bounded headroom (top 15 for a top-5 list)
+  // keeps the batch small; past that pathological tail, unscreened
+  // candidates simply show unbadged.
+  const matchLegs = useMemo(
+    () => (matchCandidates ?? []).slice(0, 15).flatMap(offerScreenableLegs),
+    [matchCandidates],
+  );
+  const matchVerdicts = useBookTokenSecurity(matchLegs);
+  const { matches, hiddenFlagged } = useMemo(() => {
+    if (matchCandidates === null)
+      return { matches: null as IndexedOffer[] | null, hiddenFlagged: 0 };
+    const out: IndexedOffer[] = [];
+    let hidden = 0;
+    for (const o of matchCandidates) {
+      if (out.length === 5) break;
+      if (offerRiskLevel(o, matchVerdicts) === 'block') {
+        hidden += 1;
+        continue;
+      }
+      out.push(o);
+    }
+    return { matches: out, hiddenFlagged: hidden };
+  }, [matchCandidates, matchVerdicts]);
 
   // ---- Step plumbing ----------------------------------------------------
   const stepLabels =
@@ -1878,7 +1919,17 @@ export function OfferFlow({ side }: { side: Side }) {
                     stale empty one — better offers may be missing. */}
                 <MarketFreshnessNote />
                 {matches.length === 0 ? (
-                  <p className="muted">{text.matchEmpty}</p>
+                  <>
+                    <p className="muted">{text.matchEmpty}</p>
+                    {/* "No matches" while flagged ones were withheld
+                        would be a lie of omission — always say what
+                        the safety screen hid. */}
+                    {hiddenFlagged > 0 ? (
+                      <p className="muted">
+                        {copy.tokenSecurity.matchesHidden(hiddenFlagged)}
+                      </p>
+                    ) : null}
+                  </>
                 ) : (
                   <>
                     <div className="row-list">
@@ -1887,6 +1938,7 @@ export function OfferFlow({ side }: { side: Side }) {
                           key={o.offerId}
                           offer={o}
                           side={side}
+                          risk={offerRiskLevel(o, matchVerdicts)}
                           onChoose={() => {
                             setSelected(o);
                             setMode('accept');
@@ -1898,6 +1950,11 @@ export function OfferFlow({ side }: { side: Side }) {
                         />
                       ))}
                     </div>
+                    {hiddenFlagged > 0 ? (
+                      <p className="muted" style={{ marginTop: 8 }}>
+                        {copy.tokenSecurity.matchesHidden(hiddenFlagged)}
+                      </p>
+                    ) : null}
                     <p className="muted" style={{ marginTop: 8 }}>
                       {copy.match.wholeOfferNote}
                     </p>

@@ -69,6 +69,30 @@ export const copy = {
     gateChanged: (leg: string) =>
       `The security check on this deal's ${leg} reports new findings since you reviewed it. Nothing was signed. The review above now shows the update — read it and tick the consent box again if you still want to proceed.`,
     retry: 'Check again',
+    // Browsing-surface badges (#1036) — early warning on the book and
+    // the guided-match cards; the accept review stays the enforcement
+    // point and repeats the full reasons there.
+    badge: {
+      block: {
+        label: 'Risk flagged',
+        title:
+          'An independent security check flags a token in this offer as dangerous (for example impossible to sell). The review will not let this deal proceed.',
+      },
+      warn: {
+        label: 'Caution',
+        title:
+          'An independent security check reports owner powers or taxes on a token in this offer. The review shows the details before you sign anything.',
+      },
+      unchecked: {
+        label: 'Not screened',
+        title:
+          'A token in this offer could not be checked by the independent security screen. Treat it with extra care.',
+      },
+    },
+    matchesHidden: (n: number) =>
+      n === 1
+        ? '1 matching offer is hidden because an independent security check flagged one of its tokens as dangerous.'
+        : `${n} matching offers are hidden because an independent security check flagged one of their tokens as dangerous.`,
   },
   signing: {
     intro: (n: number) =>
