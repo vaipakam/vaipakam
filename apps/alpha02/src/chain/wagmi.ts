@@ -26,7 +26,7 @@ import {
   type Chain,
 } from 'wagmi/chains';
 import { getDefaultConfig } from 'connectkit';
-import { SUPPORTED_CHAINS } from './chains';
+import { SUPPORTED_CHAINS, ensMainnetRpcUrl } from './chains';
 
 const WC_PROJECT_ID =
   (import.meta.env.VITE_WALLETCONNECT_PROJECT_ID as string | undefined)?.trim() ||
@@ -101,11 +101,26 @@ for (const c of SUPPORTED_CHAINS) {
 // app's own supported-network gates derive from SUPPORTED_CHAINS
 // (deployments) and are untouched: mainnet is not a working network
 // here, it just backs ENS reads.
+//
+// The transport must be EXPLICIT: `http(undefined)` silently rides
+// viem's built-in default for chain 1 (eth.merkle.io), a free shared
+// endpoint that 429s under the burst a list page's first paint fires
+// (one reverse lookup per distinct counterparty address). Resolve via
+// the same env-overridable plumbing as every other chain
+// (VITE_ETHEREUM_RPC_URL, else the chains.ts default), with a second
+// public endpoint behind it so a throttled primary degrades to the
+// fallback instead of to a dropped name. dRPC's public gateway as the
+// secondary — maintained and CORS-open; cloudflare-eth.com was
+// rejected here (Codex #1084 r1): Cloudflare's own migration guide
+// lists it as a deprecated legacy gateway hostname.
 const chainsWithEns = chains.some((c) => c.id === mainnet.id)
   ? chains
   : [...chains, mainnet];
 if (!transports[mainnet.id]) {
-  transports[mainnet.id] = http(undefined, { batch: true });
+  transports[mainnet.id] = fallback([
+    http(ensMainnetRpcUrl(), { batch: true }),
+    http('https://eth.drpc.org', { batch: true }),
+  ]);
 }
 
 type NonEmptyChains = readonly [Chain, ...Chain[]];
