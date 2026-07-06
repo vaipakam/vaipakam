@@ -235,7 +235,7 @@ interface RewardEntryRowProps {
 
 /**
  * One row in the "Contributing loans" expandable list. Renders the loan
- * id (clickable → /app/loans/X), the side (lender / borrower), and the
+ * id (clickable → /loans/X), the side (lender / borrower), and the
  * cumulative numeraire-quoted interest contribution computed as
  * `perDayNumeraire18 * (endDay || open) - startDay`. Forfeited entries
  * (e.g. defaulted-borrower side) are visually de-emphasised since they
@@ -265,7 +265,7 @@ function RewardEntryRow({ entry }: RewardEntryRowProps) {
       }}
     >
       <Link
-        to={`/app/loans/${entry.loanId.toString()}`}
+        to={`/loans/${entry.loanId.toString()}`}
         style={{ color: 'var(--brand)', fontWeight: 600 }}
       >
         {t('interactionRewards.entryLoanLink', { id: entry.loanId.toString() })}

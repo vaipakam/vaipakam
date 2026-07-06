@@ -1,5 +1,5 @@
 import { useEffect } from 'react';
-import { BrowserRouter, Routes, Route, Navigate, useLocation } from 'react-router-dom';
+import { BrowserRouter, Routes, Route, Navigate, useLocation, useParams } from 'react-router-dom';
 import { ErrorBoundary } from './components/app/ErrorBoundary';
 import PublicDashboard from './pages/PublicDashboard';
 import AppLayout from './pages/AppLayout';
@@ -72,6 +72,11 @@ function PublicNftVerifier() {
  * hosts the prose reference, only the interactive
  * `/protocol-console` dashboard.
  */
+function LegacyLoanRedirect() {
+  const { loanId } = useParams();
+  return <Navigate to={`/loans/${loanId}`} replace />;
+}
+
 function ExternalRedirect({ url }: { url: string }) {
   useEffect(() => {
     window.location.replace(url);
@@ -137,6 +142,11 @@ function pageRoutes(): ReactElement {
         path="admin/docs"
         element={<ExternalRedirect url={marketingUrl('/protocol-console/docs')} />}
       />
+      {/* #1057 — pre-flattening loan-details shape. Alert deep links
+          (Telegram/Push) and bookmarks minted before the /app nesting
+          was flattened carry /app/loans/:id; land them on the loan,
+          never NotFound (same back-compat alias alpha02 carries). */}
+      <Route path="app/loans/:loanId" element={<LegacyLoanRedirect />} />
 
       {/* Connected-app shell mounted at root — `/` is Dashboard,
           `/offers` is OfferBook, etc. AppLayout provides the

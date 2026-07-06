@@ -160,35 +160,48 @@ export async function chunkedGetLogs(
 
 // ─── Topic0 hashes for the events the live-tail consumers decode ────
 //
-// Computed at module load via viem's `keccak256` to keep this module
-// self-contained — no separate constants file needed. The signatures
-// below MUST match the on-chain event signatures in the contracts
-// exactly; mismatches silently match nothing.
+// DERIVED from the compiled Diamond ABI (#1064) — never hand-typed.
+// The previous hand-typed signature strings silently drifted from the
+// deployed event shapes (a drifted signature matches NOTHING, so the
+// live tail just went blind with no error), which is exactly the
+// "Watcher offer-decode drift" bug class the Worker split eliminated:
+// the Solidity compiler is the single source of truth for the decode
+// surface. A renamed/removed event now throws at module load (and in
+// the unit suite) instead of silently matching nothing.
 
-import { keccak256, toBytes } from 'viem';
+import { toEventSelector, type AbiEvent } from 'viem';
+import { DIAMOND_ABI_VIEM } from '@vaipakam/contracts/abis';
 
-const id = (sig: string): Hex => keccak256(toBytes(sig));
+function findEvent(name: string): AbiEvent {
+  // Type-aware lookup — NOT getAbiItem, whose name-only search can
+  // return a same-named custom ERROR (the Diamond ABI carries
+  // several names as both an event and a revert error; alpha02's
+  // book catch-up hit exactly that on its first CI run).
+  const item = (DIAMOND_ABI_VIEM as readonly { type: string; name?: string }[]).find(
+    (i): i is AbiEvent => i.type === 'event' && i.name === name,
+  );
+  if (!item) throw new Error(`event ${name} not found in DIAMOND_ABI_VIEM`);
+  return item;
+}
+
+const eventTopic0 = (name: string): Hex => toEventSelector(findEvent(name));
 
 export const TOPIC0 = {
   // Offer lifecycle — ID universe and terminal transitions for the
   // active-offers consumer.
-  OFFER_CREATED: id('OfferCreated(uint256,address,uint8)'),
-  OFFER_ACCEPTED: id('OfferAccepted(uint256,address,uint256)'),
-  OFFER_CANCELED: id('OfferCanceled(uint256,address)'),
+  OFFER_CREATED: eventTopic0('OfferCreated'),
+  OFFER_ACCEPTED: eventTopic0('OfferAccepted'),
+  OFFER_CANCELED: eventTopic0('OfferCanceled'),
   // Loan lifecycle — initiate is the create event; the rest mark
   // terminal transitions used by the active-loans consumer.
-  LOAN_INITIATED: id(
-    'LoanInitiated(uint256,uint256,address,address,uint256,uint256)',
-  ),
-  LOAN_REPAID: id('LoanRepaid(uint256,address,uint256,uint256)'),
-  LOAN_DEFAULTED: id('LoanDefaulted(uint256,bool)'),
+  LOAN_INITIATED: eventTopic0('LoanInitiated'),
+  LOAN_REPAID: eventTopic0('LoanRepaid'),
+  LOAN_DEFAULTED: eventTopic0('LoanDefaulted'),
   // T-090 Sub 3 — borrower swap-to-repay full close. Treated as a
   // terminal close (Active → Repaid) identical to LoanRepaid so the
   // near-realtime catch-up scan filters the loan out of active-loans
   // surfaces before the central worker catches up.
-  SWAP_TO_REPAY_EXECUTED: id(
-    'SwapToRepayExecuted(uint256,address,uint256,uint256,uint256)',
-  ),
+  SWAP_TO_REPAY_EXECUTED: eventTopic0('SwapToRepayExecuted'),
 } as const;
 
 /**

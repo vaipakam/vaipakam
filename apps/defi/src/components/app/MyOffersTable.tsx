@@ -573,7 +573,7 @@ export function MyOffersTable({
                           </span>
                           {row.loanId && (
                             <Link
-                              to={`/app/loans/${row.loanId}`}
+                              to={`/loans/${row.loanId}`}
                               style={{
                                 fontSize: '0.78rem',
                                 color: 'var(--brand)',

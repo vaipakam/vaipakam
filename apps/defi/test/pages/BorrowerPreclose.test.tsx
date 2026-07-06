@@ -116,12 +116,12 @@ function mkLoan(over: any = {}) {
 
 function renderBP() {
   return render(
-    <MemoryRouter initialEntries={['/app/loans/7/preclose']}>
+    <MemoryRouter initialEntries={['/loans/7/preclose']}>
       <ThemeProvider>
         <ModeProvider>
           <Routes>
-            <Route path="/app/loans/:loanId/preclose" element={<BorrowerPreclose />} />
-            <Route path="/app/loans/:loanId" element={<div>loan-view</div>} />
+            <Route path="/loans/:loanId/preclose" element={<BorrowerPreclose />} />
+            <Route path="/loans/:loanId" element={<div>loan-view</div>} />
             <Route path="/app/offers" element={<div>offer-book</div>} />
             <Route path="/app" element={<div>dashboard</div>} />
           </Routes>

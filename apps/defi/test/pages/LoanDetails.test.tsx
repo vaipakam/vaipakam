@@ -69,11 +69,11 @@ function mkLoan(over: any = {}) {
 
 function renderLoan(id = '1') {
   return render(
-    <MemoryRouter initialEntries={[`/app/loans/${id}`]}>
+    <MemoryRouter initialEntries={[`/loans/${id}`]}>
       <ThemeProvider>
         <ModeProvider>
           <Routes>
-            <Route path="/app/loans/:loanId" element={<LoanDetails />} />
+            <Route path="/loans/:loanId" element={<LoanDetails />} />
           </Routes>
         </ModeProvider>
       </ThemeProvider>
