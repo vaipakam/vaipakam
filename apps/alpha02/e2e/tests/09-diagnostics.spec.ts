@@ -15,13 +15,17 @@
 import { test, expect } from '../lib/wallet-fixture';
 import { connectWallet } from '../lib/wallet-fixture';
 
-/** Decode the pre-filled report out of the issue URL. URLSearchParams
- *  is the right decoder here — the builder encodes with it, and plain
- *  decodeURIComponent would leave its `+`-for-space encoding in place
- *  (the first CI run failed exactly there). */
+/** Decode the pre-filled report out of the issue-form URL.
+ *  URLSearchParams is the right decoder here — the builder encodes
+ *  with it, and plain decodeURIComponent would leave its
+ *  `+`-for-space encoding in place (the first CI run failed exactly
+ *  there). The builder targets the bug issue FORM, so the report is
+ *  spread across the form's field params. */
 function reportTextOf(href: string): string {
   const params = new URL(href).searchParams;
-  return `${params.get('title') ?? ''}\n${params.get('body') ?? ''}`;
+  return ['title', 'surface', 'chain', 'env', 'extra']
+    .map((k) => params.get(k) ?? '')
+    .join('\n');
 }
 
 test('support drawer reports healthy connections and a redacted report', async ({

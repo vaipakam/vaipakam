@@ -22,6 +22,7 @@
  * polls while closed.
  */
 import { useEffect, useMemo, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { useLocation } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import { useAccount, usePublicClient } from 'wagmi';
@@ -34,7 +35,7 @@ import {
   buildIssueUrl,
   buildReportBody,
   redactAddress,
-  redactText,
+  redactCap,
 } from '../diagnostics/reportIssue';
 
 /** Same staleness bar as MarketFreshnessNote: a cache cursor older
@@ -53,11 +54,12 @@ export function DiagnosticsDrawer() {
   const [open, setOpen] = useState(false);
   const fabRef = useRef<HTMLButtonElement>(null);
 
-  // aria-modal promises the page behind is inert — restore focus to
-  // the Support button when the dialog closes.
+  // Restore focus to the Support button when the dialog closes — a
+  // tick later, so the panel's cleanup has removed `inert` from the
+  // app root (an inert element refuses focus).
   const close = () => {
     setOpen(false);
-    fabRef.current?.focus();
+    setTimeout(() => fabRef.current?.focus(), 0);
   };
 
   return (
@@ -90,6 +92,22 @@ function DrawerPanel({ onClose }: { onClose: () => void }) {
   const publicClient = usePublicClient({ chainId: readChain.chainId });
   const drawerRef = useRef<HTMLElement>(null);
   const closeRef = useRef<HTMLButtonElement>(null);
+
+  // Honour aria-modal for assistive tech, not just Tab: the app root
+  // is made inert (and aria-hidden) while the panel — rendered into a
+  // PORTAL outside it — is up, so screen readers can't wander the
+  // obscured page (round 6). The Tab trap below stays as a fallback
+  // for browsers without inert support.
+  useEffect(() => {
+    const appRoot = document.getElementById('root');
+    if (!appRoot) return;
+    appRoot.setAttribute('inert', '');
+    appRoot.setAttribute('aria-hidden', 'true');
+    return () => {
+      appRoot.removeAttribute('inert');
+      appRoot.removeAttribute('aria-hidden');
+    };
+  }, []);
 
   // Dialog semantics: initial focus lands inside, Escape closes, and
   // Tab is contained while aria-modal declares the page inert.
@@ -238,7 +256,9 @@ function DrawerPanel({ onClose }: { onClose: () => void }) {
     }
   };
 
-  return (
+  // Portal to document.body: the panel must live OUTSIDE the app root
+  // so making that root inert can't inert the dialog itself.
+  return createPortal(
     <>
       <div className="diag-overlay" onClick={onClose} />
       <aside
@@ -298,11 +318,13 @@ function DrawerPanel({ onClose }: { onClose: () => void }) {
             <dt>{copy.diagnostics.lastErrorTitle}</dt>
             <dd>
               {lastError ? (
-                // Same redaction as the report — the on-screen row is
-                // part of the "full address appears nowhere" contract
-                // (round 3).
+                // Same redaction AND cap as the report — the on-screen
+                // row is part of the "full address appears nowhere"
+                // contract (round 3), and a huge serialized error must
+                // not make the panel unwieldy right when the user is
+                // trying to report it (round 6).
                 <span className="mono" style={{ fontSize: 12 }}>
-                  {redactText(lastError.message)}
+                  {redactCap(lastError.message, 300)}
                 </span>
               ) : (
                 copy.diagnostics.noError
@@ -328,6 +350,7 @@ function DrawerPanel({ onClose }: { onClose: () => void }) {
           {copy.diagnostics.reportHint}
         </p>
       </aside>
-    </>
+    </>,
+    document.body,
   );
 }

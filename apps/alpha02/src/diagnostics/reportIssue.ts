@@ -42,8 +42,9 @@ export function redactText(text: string): string {
 
 /** Redact FIRST, then cap: truncation that cuts through an address
  *  would leave a partial hex string the whole-text scrubber no longer
- *  recognises (round 2) — free text must be scrubbed while intact. */
-function redactCap(text: string, max: number): string {
+ *  recognises (round 2) — free text must be scrubbed while intact.
+ *  Exported for the drawer's on-screen last-error row (round 6). */
+export function redactCap(text: string, max: number): string {
   return cap(redactText(text), max);
 }
 
@@ -74,12 +75,10 @@ function cap(text: string, max: number): string {
   return text.length > max ? `${text.slice(0, max)}…` : text;
 }
 
-export function buildReportBody(ctx: ReportContext): string {
+/** The diagnostics section shared by the clipboard copy and the issue
+ *  form's "Additional context" field. */
+function buildDiagnosticsBlock(ctx: ReportContext): string {
   const lines = [
-    '### What happened?',
-    '',
-    '_Please describe what you were doing and what you expected._',
-    '',
     '### App-collected details',
     '',
     `- Page: \`${redactCap(ctx.path, MAX_PATH_CHARS)}\``,
@@ -118,16 +117,36 @@ export function buildReportBody(ctx: ReportContext): string {
   return redactText(lines.join('\n'));
 }
 
+export function buildReportBody(ctx: ReportContext): string {
+  return [
+    '### What happened?',
+    '',
+    '_Please describe what you were doing and what you expected._',
+    '',
+    buildDiagnosticsBlock(ctx),
+  ].join('\n');
+}
+
+/** Targets the repo's Bug issue FORM (blank issues are disabled —
+ *  a bare /issues/new lands users in the template chooser and drops
+ *  every pre-filled param, round 6). Form fields are pre-filled by
+ *  their ids: `surface`/`chain`/`env` from the drawer context and the
+ *  whole diagnostics block into `extra` ("Additional context: logs
+ *  from the diagnostics drawer" — its stated purpose). The user
+ *  writes repro/expected/actual/severity — those are their story. */
 export function buildIssueUrl(ctx: ReportContext): string {
   const title = redactText(
-    `[alpha02] problem report — ${redactCap(ctx.path, MAX_PATH_CHARS)}${
+    `[Bug] alpha02 problem report — ${redactCap(ctx.path, MAX_PATH_CHARS)}${
       ctx.lastError ? ` (${redactCap(ctx.lastError.message, 60)})` : ''
     }`,
   );
   const params = new URLSearchParams({
+    template: 'bug.yml',
     title,
-    body: buildReportBody(ctx),
-    labels: 'bug,diagnostics',
+    surface: redactCap(`apps/alpha02 — ${ctx.path}`, MAX_PATH_CHARS),
+    chain: ctx.networkLine,
+    env: `Build ${ctx.buildHash}${ctx.buildTime ? ` (${ctx.buildTime})` : ''}; wallet ${ctx.walletRedacted}`,
+    extra: buildDiagnosticsBlock(ctx),
   });
   let url = `${issuesBase()}?${params.toString()}`;
   if (url.length > MAX_URL_LEN) {
@@ -137,10 +156,10 @@ export function buildIssueUrl(ctx: ReportContext): string {
       ...ctx,
       lastError: ctx.lastError ? { ...ctx.lastError, componentStack: undefined } : null,
     };
-    params.set('body', buildReportBody(withoutStack));
+    params.set('extra', buildDiagnosticsBlock(withoutStack));
     url = `${issuesBase()}?${params.toString()}`;
     if (url.length > MAX_URL_LEN) {
-      params.set('body', buildReportBody({ ...ctx, lastError: null }));
+      params.set('extra', buildDiagnosticsBlock({ ...ctx, lastError: null }));
       url = `${issuesBase()}?${params.toString()}`;
     }
   }
