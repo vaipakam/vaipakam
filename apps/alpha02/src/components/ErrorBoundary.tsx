@@ -24,12 +24,15 @@
  * shell). A second instance wraps the whole tree ABOVE the provider
  * stack in main.tsx (no resetKey) for provider/router crashes.
  *
- * Diagnostics stay console-only for now — alpha02 has no journey-log
- * buffer; the diagnostics-drawer half of #1028 will give this a sink.
+ * Diagnostics: every caught crash is recorded into the last-error
+ * sink (diagnostics/lastError.ts) so the Support drawer's pre-filled
+ * report carries it — the sink the original console-only note
+ * anticipated (#1028 item 4).
  */
 import { Component, type ErrorInfo, type ReactNode } from 'react';
 import { AlertTriangle } from 'lucide-react';
 import { copy } from '../content/copy';
+import { recordLastError } from '../diagnostics/lastError';
 
 interface ErrorBoundaryProps {
   children: ReactNode;
@@ -107,6 +110,12 @@ export class ErrorBoundary extends Component<ErrorBoundaryProps, ErrorBoundarySt
   componentDidCatch(error: Error, info: ErrorInfo): void {
     const componentStack = trimComponentStack(info.componentStack, 12);
     this.setState({ componentStack: componentStack || null });
+    recordLastError({
+      message: error?.message || String(error),
+      componentStack: componentStack || undefined,
+      path: window.location.pathname,
+      at: Date.now(),
+    });
     // eslint-disable-next-line no-console
     console.error('[vaipakam] uncaught render error:', error, info);
   }

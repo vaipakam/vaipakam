@@ -933,6 +933,24 @@ converge. Its intended behaviour (the test oracle for that surface):
   and the surface says so — the per-loan switch is presented on the
   loan page for either confirmed position holder, with a visible
   reminder when the master switch is off.
+- A Support control is reachable from every page, for every user (not
+  an advanced-mode reveal). It opens a small panel that answers, in
+  plain words, whether the app's connections are working right now:
+  the network in use, the wallet (shortened, never the full address),
+  whether the blockchain connection is responding, whether the
+  market-data cache is up to date / running behind / unreachable
+  (with the reassurance that the user's own positions still load
+  directly from the chain), the app build, and the last error
+  recorded on the device this session. Health checks run only while
+  the panel is open. From the panel the user can report a problem: a
+  pre-filled public issue carrying exactly the details the panel
+  showed — page, network, connection statuses, build, and the last
+  recorded error — plus a copy-to-clipboard fallback for users
+  without an account on the issue tracker. Reports are redacted by
+  construction: the full wallet address never appears, error text is
+  length-capped, and nothing else about the device or browsing is
+  included. When a page crash is caught by the app's recovery card,
+  the error is recorded so a subsequent report carries it.
 
 ## Key UX Requirements
 

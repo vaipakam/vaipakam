@@ -36,6 +36,7 @@ live for the deployed-service half).
 | Telegram alert rails — unlink + signed due-date opt-out (#1056) | **Gap** | not yet driven; verified manually in PR #1056 (curl matrix in the thread) | Extend `live-alerts-link.mjs` with the unlink click and the opt-out toggle on next touch of the alerts surface. |
 | GoPlus token security screen (#1049) | **Gap** | evidence: the 8-check scratch drive recorded in PR #1049; no committed driver yet (the full suite performs on-chain writes, unfit for the auto-run batch untrimmed) | Commit a batch-safe, read-only screening drive under `live/` on next touch of the GoPlus surface. |
 | VPFI vault deposit/withdraw dry run | **Gap** | not yet driven; the footer LOGIC is covered by `tests/08-dryrun-footer.spec.ts` on the offer path, but no test opens `/vpfi` | Add a `/vpfi` drive to 08 (or a 09) on next touch of the VPFI surface. |
+| Support drawer: connection health + report-issue (#1028 item 4) | CI-Anvil | `tests/09-diagnostics.spec.ts` | — (health rows against the fork + stub; the crash→report path is exercised by seeding the ErrorBoundary's sessionStorage sink — a deliberate render crash has no production trigger, per the live-review DoD exception) |
 
 **Gap rows** are allowed but must name the follow-up ('extend X on next touch of Y') — an honest gap beats a false claim; the matrix only works if it never lies.
 

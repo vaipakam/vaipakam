@@ -32,6 +32,7 @@ import { useActiveChain } from '../chain/useActiveChain';
 import { LiveChainSync } from '../chain/LiveChainSync';
 import { IndexerPushSync } from '../chain/IndexerPushSync';
 import { ConnectButton } from './ConnectButton';
+import { DiagnosticsDrawer } from './DiagnosticsDrawer';
 import { NetworkBanner } from './NetworkBanner';
 import { SanctionsBanner } from './SanctionsBanner';
 
@@ -159,6 +160,11 @@ export function AppShell() {
           </ErrorBoundary>
         </main>
       </div>
+
+      {/* Support drawer: connection health + report-a-problem, on
+          every page (#1028 item 4). Fixed-positioned; probes run only
+          while it is open. */}
+      <DiagnosticsDrawer />
 
       <nav className="shell-tabbar" aria-label="Quick navigation">
         {TABBAR.map((item) => (

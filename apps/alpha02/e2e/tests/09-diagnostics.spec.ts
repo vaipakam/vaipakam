@@ -1,0 +1,94 @@
+/** #1028 item 4 — the Support drawer, on Anvil.
+ *
+ *  Asserts the three load-bearing behaviours: (1) the health rows
+ *  render truthful states against a working fork (RPC reachable with
+ *  a block number, indexer stub fresh); (2) the pre-filled GitHub
+ *  report carries the drawer's context but NEVER the full wallet
+ *  address (the redaction contract); (3) the drawer behaves like a
+ *  dialog (Escape closes it).
+ *
+ *  The crash → last-error → report path has no clean production
+ *  trigger (it needs a deliberate render crash), so it is exercised
+ *  here by seeding the sessionStorage sink directly — the same slot
+ *  the ErrorBoundary writes — and asserting the drawer surfaces it.
+ */
+import { test, expect } from '../lib/wallet-fixture';
+import { connectWallet } from '../lib/wallet-fixture';
+
+test('support drawer reports healthy connections and a redacted report', async ({
+  launchWallet,
+}) => {
+  const { page, account } = await launchWallet('lender');
+  await page.goto('/', { waitUntil: 'domcontentloaded' });
+  await connectWallet(page);
+
+  await page
+    .getByRole('button', { name: /support and connection check/i })
+    .click();
+  const dialog = page.getByRole('dialog', { name: /support/i });
+  await expect(dialog).toBeVisible();
+
+  // Truthful health rows against the fork: RPC reachable with a real
+  // block number; the stub's freshness cursor tracks the fork head so
+  // the cache row must read up-to-date (never stale/unreachable).
+  await expect(dialog.getByText(/Working — latest block \d+/)).toBeVisible({
+    timeout: 30_000,
+  });
+  await expect(dialog.getByText(/Up to date \(refreshed/)).toBeVisible({
+    timeout: 30_000,
+  });
+  await expect(dialog.getByText('Base Sepolia (84532)')).toBeVisible();
+  await expect(dialog.getByText(/no errors recorded/i)).toBeVisible();
+
+  // Redaction contract: the shortened wallet renders; the FULL
+  // address appears nowhere in the drawer or the report URL.
+  const full = account.address.toLowerCase();
+  const short = `${account.address.slice(0, 6)}…${account.address.slice(-4)}`;
+  await expect(dialog.getByText(short)).toBeVisible();
+  expect((await dialog.innerText()).toLowerCase()).not.toContain(full);
+
+  const report = dialog.getByRole('link', { name: /report an issue/i });
+  const href = await report.getAttribute('href');
+  expect(href).toBeTruthy();
+  expect(href!).toContain('github.com/vaipakam/vaipakam/issues/new');
+  const decoded = decodeURIComponent(href!);
+  expect(decoded).toContain('Base Sepolia (84532)');
+  expect(decoded).toContain(short);
+  expect(decoded.toLowerCase()).not.toContain(full);
+
+  // Dialog semantics: Escape closes.
+  await page.keyboard.press('Escape');
+  await expect(dialog).toBeHidden();
+});
+
+test('a recorded error surfaces in the drawer and its report', async ({
+  launchWallet,
+}) => {
+  const { page } = await launchWallet('borrower');
+  await page.goto('/', { waitUntil: 'domcontentloaded' });
+  // Seed the ErrorBoundary's sink slot directly (see header).
+  await page.evaluate(() => {
+    sessionStorage.setItem(
+      'vaipakam.alpha02.lastError',
+      JSON.stringify({
+        message: 'E2E seeded render crash',
+        componentStack: 'CrashCulprit\nSomePage',
+        path: '/lend',
+        at: Date.now(),
+      }),
+    );
+  });
+
+  await page
+    .getByRole('button', { name: /support and connection check/i })
+    .click();
+  const dialog = page.getByRole('dialog', { name: /support/i });
+  await expect(dialog.getByText('E2E seeded render crash')).toBeVisible();
+
+  const href = await dialog
+    .getByRole('link', { name: /report an issue/i })
+    .getAttribute('href');
+  const decoded = decodeURIComponent(href!);
+  expect(decoded).toContain('E2E seeded render crash');
+  expect(decoded).toContain('CrashCulprit');
+});
