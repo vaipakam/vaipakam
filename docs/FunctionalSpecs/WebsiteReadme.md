@@ -658,6 +658,16 @@ converge. Its intended behaviour (the test oracle for that surface):
   holds (transferred away or burned at claim) must not keep rendering
   as the wallet's active position, even while background ingestion
   lags.
+- The SHARED offer book applies the same principle one-sidedly: before
+  rendering, the app checks the chain history the cache has not yet
+  ingested and removes any offer the chain already ended (accepted,
+  cancelled, matched, or consumed by a sale), so ingest lag cannot
+  present a dead offer for selection. The check only ever removes
+  rows — new offers appear via the cache's own refresh — and it fails
+  open: if the chain check cannot run, the book renders the cache
+  state unchanged (with the existing staleness note when applicable)
+  rather than becoming unavailable. When the cache is too far behind
+  for a bounded check, the check is skipped for the same reason.
 - The wallet's activity feed is built from indexed event history and
   must refuse to render (unavailable state) when its participation
   filter can't see the wallet's full loan list; an empty feed carries
