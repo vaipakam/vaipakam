@@ -37,12 +37,13 @@ As a safety net, a reward entry also becomes claimable once its loan simply
 reaches a terminal status even if the closing path did not explicitly notify the
 reward system, so no terminal path can freeze a reward forever; in that fallback
 a liquidated or defaulted loan still forfeits the borrower's reward to treasury
-rather than paying it out. Wiring the remaining terminal paths (internal-match
-liquidation, prepay-sale settlement) to close their entries explicitly — and
-running the current-holder consolidation before an obligation transfer or offset
-completion, as the direct-preclose path already does — are tracked as reward-
-accuracy follow-ups; the platform is pre-live, so there is no historical reward
-state to migrate.
+rather than paying it out. The obligation-transfer and offset-completion paths
+also run the same current-holder consolidation the direct-preclose path does, so
+a party who bought a position NFT before one of those flows keeps the reward
+slice they earned rather than losing it to the previous holder. Wiring the
+remaining terminal paths (internal-match liquidation, prepay-sale settlement) to
+close their entries explicitly is tracked as a reward-accuracy follow-up; the
+platform is pre-live, so there is no historical reward state to migrate.
 
 Because the preclose facet is already at the contract-size ceiling, the reward
 bookkeeping for those paths runs through a small internal hook rather than being
