@@ -26,8 +26,9 @@ export function redactAddress(address: string | undefined): string {
 // Exactly 20 bytes: the negative lookahead stops the pattern from
 // eating the first 40 hex chars of a 32-byte tx hash — support needs
 // those hashes intact, and a mangled prefix would neither redact nor
-// preserve anything useful (round 4).
-const ADDRESS_RE = /0x[a-fA-F0-9]{40}(?![a-fA-F0-9])/g;
+// preserve anything useful (round 4). The prefix is case-insensitive:
+// a pasted 0X-prefixed address must redact too (round 5).
+const ADDRESS_RE = /0[xX][a-fA-F0-9]{40}(?![a-fA-F0-9])/g;
 
 /** Scrub any full address ANYWHERE in report text — crash messages,
  *  component stacks, and deep-link paths routinely embed the
@@ -52,8 +53,10 @@ const MAX_PATH_CHARS = 200;
 
 export interface ReportContext {
   path: string;
-  chainName: string;
-  chainId: number;
+  /** The network line EXACTLY as the drawer shows it — including the
+   *  unsupported-wallet-network wording when that's the state (the
+   *  report must carry what the panel showed, round 5). */
+  networkLine: string;
   walletRedacted: string;
   rpcStatusLine: string;
   indexerStatusLine: string;
@@ -80,7 +83,7 @@ export function buildReportBody(ctx: ReportContext): string {
     '### App-collected details',
     '',
     `- Page: \`${redactCap(ctx.path, MAX_PATH_CHARS)}\``,
-    `- Network: ${ctx.chainName} (${ctx.chainId})`,
+    `- Network: ${ctx.networkLine}`,
     `- Wallet: ${ctx.walletRedacted}`,
     `- Blockchain connection: ${ctx.rpcStatusLine}`,
     `- Market data cache: ${ctx.indexerStatusLine}`,

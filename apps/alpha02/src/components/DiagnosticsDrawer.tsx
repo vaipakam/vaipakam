@@ -24,7 +24,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useLocation } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
-import { usePublicClient } from 'wagmi';
+import { useAccount, usePublicClient } from 'wagmi';
 import { LifeBuoy, X } from 'lucide-react';
 import { copy } from '../content/copy';
 import { useActiveChain } from '../chain/useActiveChain';
@@ -80,7 +80,13 @@ export function DiagnosticsDrawer() {
 function DrawerPanel({ onClose }: { onClose: () => void }) {
   const [copied, setCopied] = useState(false);
   const { pathname, search } = useLocation();
-  const { address, isConnected, readChain } = useActiveChain();
+  const { address, isConnected, readChain, onSupportedChain } =
+    useActiveChain();
+  // The RAW wallet chain id — readChain deliberately falls back to
+  // DEFAULT_CHAIN for unsupported wallets, and hiding that fallback
+  // here would misstate the one fact support needs when writes are
+  // blocked (round 5).
+  const { chainId: walletChainId } = useAccount();
   const publicClient = usePublicClient({ chainId: readChain.chainId });
   const drawerRef = useRef<HTMLElement>(null);
   const closeRef = useRef<HTMLButtonElement>(null);
@@ -185,11 +191,22 @@ function DrawerPanel({ onClose }: { onClose: () => void }) {
   // reproduces route-specific problems; the builder redacts + caps.
   const page = pathname + search;
 
+  // A connected wallet on an unsupported chain must be reported AS
+  // that — readChain's DEFAULT_CHAIN fallback is a read-targeting
+  // rule, not the wallet's actual network (round 5).
+  const walletOnUnsupported = isConnected && !onSupportedChain;
+  const networkLine = walletOnUnsupported
+    ? copy.diagnostics.networkUnsupported(
+        walletChainId === undefined ? 'unknown' : String(walletChainId),
+        readChain.name,
+        readChain.chainId,
+      )
+    : `${readChain.name} (${readChain.chainId})`;
+
   const reportCtx = useMemo(
     () => ({
       path: page,
-      chainName: readChain.name,
-      chainId: readChain.chainId,
+      networkLine,
       walletRedacted: isConnected ? redactAddress(address) : 'not connected',
       rpcStatusLine: rpcLine,
       indexerStatusLine: indexerLine,
@@ -199,8 +216,7 @@ function DrawerPanel({ onClose }: { onClose: () => void }) {
     }),
     [
       page,
-      readChain.name,
-      readChain.chainId,
+      networkLine,
       isConnected,
       address,
       rpcLine,
@@ -251,8 +267,8 @@ function DrawerPanel({ onClose }: { onClose: () => void }) {
         <dl className="diag-rows">
           <div className="diag-row">
             <dt>{copy.diagnostics.network}</dt>
-            <dd>
-              {readChain.name} ({readChain.chainId})
+            <dd className={walletOnUnsupported ? 'diag-warn' : undefined}>
+              {networkLine}
             </dd>
           </div>
           <div className="diag-row">

@@ -166,7 +166,10 @@ export const copy = {
       'Unreachable right now — market lists may not load until it recovers. Your own positions still load directly from the chain.',
     indexerNoCursor:
       'Reachable, but no data has been recorded for this network yet — it will fill as activity arrives.',
-    indexerNotConfigured: 'Not used on this build — the app reads the chain directly.',
+    indexerNotConfigured:
+      'Not configured on this build — market lists can’t load here. Your own positions still load directly from the chain.',
+    networkUnsupported: (walletChainId: string, readName: string, readChainId: number) =>
+      `Wallet is on an unsupported network (chain id ${walletChainId}) — data shown comes from ${readName} (${readChainId}). Switch networks to transact.`,
     build: 'App version',
     lastErrorTitle: 'Last error on this device',
     noError: 'No errors recorded in this session.',
