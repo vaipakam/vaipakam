@@ -365,3 +365,38 @@ export async function sweepExpiredLinks(db: D1Database): Promise<void> {
   const now = Math.floor(Date.now() / 1000);
   await db.prepare(`DELETE FROM telegram_links WHERE expires_at < ?`).bind(now).run();
 }
+
+/** #1040 phase 1 — persist a support ticket captured by the alpha02
+ *  support widget. The ticket row is the durable record: the
+ *  ops-Telegram notify and the user's mailto escalation are both
+ *  best-effort layers on top of it. Throws on D1 failure (including
+ *  the migration not being applied yet) — the handler maps that to
+ *  an honest 503 so the widget can fall back to the mailto path. */
+export async function insertSupportTicket(
+  db: D1Database,
+  ticket: {
+    ticketId: string;
+    message: string;
+    email: string | null;
+    diagnostics: string | null;
+    page: string | null;
+    chainId: number | null;
+  },
+): Promise<void> {
+  await db
+    .prepare(
+      `INSERT INTO support_tickets
+         (ticket_id, created_at, message, email, diagnostics, page, chain_id)
+       VALUES (?, ?, ?, ?, ?, ?, ?)`,
+    )
+    .bind(
+      ticket.ticketId,
+      Math.floor(Date.now() / 1000),
+      ticket.message,
+      ticket.email,
+      ticket.diagnostics,
+      ticket.page,
+      ticket.chainId,
+    )
+    .run();
+}

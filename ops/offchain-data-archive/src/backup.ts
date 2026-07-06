@@ -82,6 +82,24 @@ const ARCHIVE_TABLES_REQUIRED = [
   'telegram_links',
 ];
 
+// Rollout-aware required set: REQUIRED once its migration has been
+// applied, but a Worker deploy ordered BEFORE the migration must not
+// abort the whole nightly — no rows can exist in a table that isn't
+// there yet, so nothing is being lost (Codex round-5 P2). Missing →
+// loud warn + the daily ops message's open-ticket count reads
+// "n/a (table missing)", so the gap is operator-visible either way.
+//   - support_tickets (#1040 phase 1, migration 0028) — the DURABLE
+//     record of user support requests (message, optional reply
+//     email, consented diagnostics). Once the migration lands, a D1
+//     loss without backup would silently drop every ticket.
+// The migration prefix lets the export loop ask wrangler's
+// `d1_migrations` bookkeeping whether the table is SUPPOSED to
+// exist: "no such table" post-migration is a table loss and aborts.
+const ARCHIVE_TABLES_REQUIRED_ONCE_MIGRATED: Array<{
+  table: string;
+  migrationPrefix: string;
+}> = [{ table: 'support_tickets', migrationPrefix: '0028' }];
+
 // Re-derivable tables (backed up as restore-performance optimisation only).
 const ARCHIVE_TABLES_OPTIONAL = [
   'offers',
@@ -113,6 +131,25 @@ const LZ_ALERTS_TABLES_REQUIRED = [
 // ceiling is tracked as a Stage A.1 follow-up; the design doc §6
 // sequencing already lists it.
 const MAX_ARCHIVE_BYTES = 100_000_000;
+
+/** True when a migration whose name starts with `namePrefix` has
+ *  been applied to this DB (wrangler records applied migrations in
+ *  its `d1_migrations` bookkeeping table). Used to distinguish the
+ *  legitimate pre-migration rollout state from a post-migration
+ *  table LOSS: "no such table" is only tolerable in the former
+ *  (Codex round-7 P2). A missing `d1_migrations` table itself means
+ *  a fresh / pre-migration environment → false. */
+async function migrationApplied(db: D1Database, namePrefix: string): Promise<boolean> {
+  try {
+    const row = await db
+      .prepare(`SELECT COUNT(*) AS n FROM d1_migrations WHERE name LIKE ?`)
+      .bind(`${namePrefix}%`)
+      .first<{ n: number }>();
+    return (row?.n ?? 0) > 0;
+  } catch {
+    return false;
+  }
+}
 
 async function exportTable(db: D1Database, table: string): Promise<TableExport> {
   // PRAGMA table_info returns one row per column — captures the schema
@@ -187,10 +224,37 @@ export async function runNightlyBackup(env: Env, b2Cfg: B2Config): Promise<Backu
 
   // 1. Export the two D1s.
   const archiveTables: TableExport[] = [];
-  for (const t of [...ARCHIVE_TABLES_REQUIRED, ...ARCHIVE_TABLES_OPTIONAL]) {
+  for (const t of [
+    ...ARCHIVE_TABLES_REQUIRED,
+    ...ARCHIVE_TABLES_REQUIRED_ONCE_MIGRATED.map((g) => g.table),
+    ...ARCHIVE_TABLES_OPTIONAL,
+  ]) {
     try {
       archiveTables.push(await exportTable(env.DB_ARCHIVE, t));
     } catch (err) {
+      // Migration-gated tables tolerate exactly ONE failure shape:
+      // "no such table" BEFORE their migration ran (checked against
+      // wrangler's d1_migrations bookkeeping — a missing table on a
+      // post-migration DB is a table LOSS, not a rollout state).
+      // Any other export error (D1 fault, permission problem, query
+      // regression) aborts like the plain required set — a
+      // "successful" nightly silently missing the durable ticket
+      // records is the failure mode this Worker exists to prevent
+      // (Codex rounds 6+7 P2).
+      const gated = ARCHIVE_TABLES_REQUIRED_ONCE_MIGRATED.find((g) => g.table === t);
+      if (gated) {
+        const tableMissing = /no such table/i.test((err as Error).message ?? '');
+        if (
+          !tableMissing ||
+          (await migrationApplied(env.DB_ARCHIVE, gated.migrationPrefix))
+        ) {
+          throw new Error(
+            `BACKUP ABORT: export of vaipakam-archive.${t} failed ` +
+            `(${tableMissing ? 'table missing on a post-migration DB' : 'export error'}): ` +
+            `${(err as Error).message}`,
+          );
+        }
+      }
       // Tables that don't exist on this deploy (e.g. lz_alerts on
       // a fresh archive DB before lz-watcher ran any migration)
       // shouldn't kill the run — log + skip. Required tables that
@@ -220,6 +284,16 @@ export async function runNightlyBackup(env: Env, b2Cfg: B2Config): Promise<Backu
       `BACKUP ABORT: required tables missing from vaipakam-archive: ${missingArchive.join(', ')}`,
     );
   }
+  // Migration-gated tables missing → warn loudly but keep the run:
+  // aborting here would drop the WHOLE nightly (diag/legal/alerts)
+  // over a table that cannot hold data yet.
+  for (const g of ARCHIVE_TABLES_REQUIRED_ONCE_MIGRATED) {
+    if (!archiveTables.some((e) => e.name === g.table)) {
+      console.warn(
+        `[backup] migration-gated table ${g.table} missing — apply its migration; nightly continues without it`,
+      );
+    }
+  }
   const missingLz = LZ_ALERTS_TABLES_REQUIRED.filter(
     (t) => !lzAlertsTables.some((e) => e.name === t),
   );
@@ -232,81 +306,85 @@ export async function runNightlyBackup(env: Env, b2Cfg: B2Config): Promise<Backu
   // 2. Export the R2 legal-vault.
   const r2Objects = await exportR2Bucket(env.R2_LEGAL_VAULT);
 
-  // 3. Build the canonical archive object — JSON, then encrypt the
-  //    whole thing as a single AES-256-GCM blob. JSON is fine at
-  //    this scale (≤ 10 GB year-1); if archive size becomes a
-  //    bottleneck a future PR can swap to a streaming format
-  //    (NDJSON line-delimited + Reader-aware encryption).
-  const archive = {
-    version: 1,
-    createdAt: new Date().toISOString(),
-    d1: { archive: archiveTables, lzAlerts: lzAlertsTables },
-    r2: { bucket: 'vaipakam-legal-vault', objects: r2Objects },
-  };
-  const plaintext = new TextEncoder().encode(JSON.stringify(archive));
+  // 3+4. Build the canonical archive blob + its manifest. Extracted
+  //    as a local helper because the Jan-1 run needs a SECOND build
+  //    with a different table set (see the yearly-tier note below).
+  //    JSON is fine at this scale (≤ 10 GB year-1); if archive size
+  //    becomes a bottleneck a future PR can swap to a streaming
+  //    format (NDJSON line-delimited + Reader-aware encryption).
+  const createdAt = new Date().toISOString();
+  const buildPayload = async (tables: TableExport[]) => {
+    const archiveObj = {
+      version: 1,
+      createdAt,
+      d1: { archive: tables, lzAlerts: lzAlertsTables },
+      r2: { bucket: 'vaipakam-legal-vault', objects: r2Objects },
+    };
+    const plaintext = new TextEncoder().encode(JSON.stringify(archiveObj));
 
-  // Memory ceiling — checked BEFORE encrypt because encryption
-  // doubles peak memory (plaintext + ciphertext both resident at
-  // ~equal size; AES-GCM ciphertext is plaintext + 28 bytes IV+tag).
-  // A post-encryption check is too late — the encrypt() call itself
-  // would OOM the isolate first. Comparing plaintext bytes against
-  // the encrypted budget MAX_ARCHIVE_BYTES is conservative by ~28
-  // bytes (plaintext < ciphertext) — safe direction. The 128 MB
-  // isolate cap is the hard ceiling; 100 MB target leaves headroom
-  // for stack + transient buffers.
-  if (plaintext.byteLength > MAX_ARCHIVE_BYTES) {
-    throw new Error(
-      `BACKUP ABORT: archive plaintext size ${plaintext.byteLength} bytes ` +
-      `exceeds MAX_ARCHIVE_BYTES (${MAX_ARCHIVE_BYTES}). Cloudflare Workers' ` +
-      `128 MB isolate cap means encrypt() would OOM the Worker. Time to ship ` +
-      `the streaming implementation (Stage A.1 follow-up).`,
+    // Memory ceiling — checked BEFORE encrypt because encryption
+    // doubles peak memory (plaintext + ciphertext both resident at
+    // ~equal size; AES-GCM ciphertext is plaintext + 28 bytes IV+tag).
+    // A post-encryption check is too late — the encrypt() call itself
+    // would OOM the isolate first. Comparing plaintext bytes against
+    // the encrypted budget MAX_ARCHIVE_BYTES is conservative by ~28
+    // bytes (plaintext < ciphertext) — safe direction. The 128 MB
+    // isolate cap is the hard ceiling; 100 MB target leaves headroom
+    // for stack + transient buffers.
+    if (plaintext.byteLength > MAX_ARCHIVE_BYTES) {
+      throw new Error(
+        `BACKUP ABORT: archive plaintext size ${plaintext.byteLength} bytes ` +
+        `exceeds MAX_ARCHIVE_BYTES (${MAX_ARCHIVE_BYTES}). Cloudflare Workers' ` +
+        `128 MB isolate cap means encrypt() would OOM the Worker. Time to ship ` +
+        `the streaming implementation (Stage A.1 follow-up).`,
+      );
+    }
+
+    // `TextEncoder().encode(...).buffer` is `ArrayBufferLike` in TS's
+    // strict typings (it could be a SharedArrayBuffer in theory).
+    // WebCrypto wants a plain ArrayBuffer; slice(0) returns one
+    // explicitly without an extra copy beyond the bytes we already own.
+    const encrypted = await encrypt(
+      env.encryptionKey,
+      plaintext.buffer.slice(0) as ArrayBuffer,
     );
-  }
+    const archiveSha = await sha256Hex(encrypted);
 
-  // `TextEncoder().encode(...).buffer` is `ArrayBufferLike` in TS's
-  // strict typings (it could be a SharedArrayBuffer in theory).
-  // WebCrypto wants a plain ArrayBuffer; slice(0) returns one
-  // explicitly without an extra copy beyond the bytes we already own.
-  const encrypted = await encrypt(
-    env.encryptionKey,
-    plaintext.buffer.slice(0) as ArrayBuffer,
-  );
-
-  const archiveSha = await sha256Hex(encrypted);
-
-  // 4. Manifest — small, unencrypted (the healthcheck reads it
-  //    without the key). Carries only metadata: row counts, schema
-  //    hashes, archive SHA-256. No plaintext data.
-  const manifest: Manifest = {
-    version: 1,
-    createdAt: archive.createdAt,
-    schemaVersion: 1,
-    archive: {
-      sha256: archiveSha,
-      byteLength: encrypted.byteLength,
-      encryption: 'AES-256-GCM',
-    },
-    d1: {
-      archive: await Promise.all(
-        archiveTables.map(async (t) => ({
-          table: t.name,
-          rowCount: t.rowCount,
-          schemaHash: await schemaHash(t.schema),
-        })),
-      ),
-      lzAlerts: await Promise.all(
-        lzAlertsTables.map(async (t) => ({
-          table: t.name,
-          rowCount: t.rowCount,
-          schemaHash: await schemaHash(t.schema),
-        })),
-      ),
-    },
-    r2: {
-      bucket: 'vaipakam-legal-vault',
-      objectCount: r2Objects.length,
-      totalBytes: r2Objects.reduce((acc, o) => acc + o.size, 0),
-    },
+    // Manifest — small, unencrypted (the healthcheck reads it
+    // without the key). Carries only metadata: row counts, schema
+    // hashes, archive SHA-256. No plaintext data.
+    const manifest: Manifest = {
+      version: 1,
+      createdAt,
+      schemaVersion: 1,
+      archive: {
+        sha256: archiveSha,
+        byteLength: encrypted.byteLength,
+        encryption: 'AES-256-GCM',
+      },
+      d1: {
+        archive: await Promise.all(
+          tables.map(async (t) => ({
+            table: t.name,
+            rowCount: t.rowCount,
+            schemaHash: await schemaHash(t.schema),
+          })),
+        ),
+        lzAlerts: await Promise.all(
+          lzAlertsTables.map(async (t) => ({
+            table: t.name,
+            rowCount: t.rowCount,
+            schemaHash: await schemaHash(t.schema),
+          })),
+        ),
+      },
+      r2: {
+        bucket: 'vaipakam-legal-vault',
+        objectCount: r2Objects.length,
+        totalBytes: r2Objects.reduce((acc, o) => acc + o.size, 0),
+      },
+    };
+    return { encrypted, archiveSha, manifest };
   };
 
   // 5. Upload — archive first, then manifest. Reverse-order failure
@@ -335,9 +413,9 @@ export async function runNightlyBackup(env: Env, b2Cfg: B2Config): Promise<Backu
   // The same nonce is shared by an archive and its manifest so the
   // healthcheck can pair them deterministically (`archives/<d>/<n>.bin`
   // ↔ `manifests/<d>/<n>.json`).
-  const dateKey = archive.createdAt.slice(0, 10); // YYYY-MM-DD
-  const monthKey = archive.createdAt.slice(0, 7); // YYYY-MM
-  const yearKey = archive.createdAt.slice(0, 4);  // YYYY
+  const dateKey = createdAt.slice(0, 10); // YYYY-MM-DD
+  const monthKey = createdAt.slice(0, 7); // YYYY-MM
+  const yearKey = createdAt.slice(0, 4);  // YYYY
   const isFirstOfMonth = dateKey.endsWith('-01');
   const isFirstOfYear = dateKey.endsWith('-01-01');
 
@@ -350,29 +428,74 @@ export async function runNightlyBackup(env: Env, b2Cfg: B2Config): Promise<Backu
     nonceHex += nonceBytes[i].toString(16).padStart(2, '0');
   }
 
-  const writes: Array<{ archive: string; manifest: string }> = [
-    {
-      archive: `archives/${dateKey}/${nonceHex}.bin`,
-      manifest: `manifests/${dateKey}/${nonceHex}.json`,
-    },
-  ];
-  if (isFirstOfMonth) {
-    writes.push({
-      archive: `archives-monthly/${monthKey}/${nonceHex}.bin`,
-      manifest: `manifests-monthly/${monthKey}/${nonceHex}.json`,
-    });
-  }
-  if (isFirstOfYear) {
-    writes.push({
-      archive: `archives-yearly/${yearKey}/${nonceHex}.bin`,
-      manifest: `manifests-yearly/${yearKey}/${nonceHex}.json`,
-    });
-  }
+  // DAILY tier (30-day retention) — the FULL table set, including
+  // support_tickets. Built, uploaded, then RELEASED before any
+  // long-tier build: holding two ciphertexts (plus the second
+  // build's plaintext) at once could push a well-under-the-guard
+  // archive past the 128 MB isolate cap on exactly the runs that
+  // build twice (Codex round-5 P2).
+  const archiveKey = `archives/${dateKey}/${nonceHex}.bin`;
+  const manifestKey = `manifests/${dateKey}/${nonceHex}.json`;
+  let daily: Awaited<ReturnType<typeof buildPayload>> | null =
+    await buildPayload(archiveTables);
+  const archiveSha256 = daily.archiveSha;
+  const archiveBytes = daily.encrypted.byteLength;
+  await putObject(b2Cfg, archiveKey, daily.encrypted, 'application/octet-stream');
+  await putObject(
+    b2Cfg,
+    manifestKey,
+    new TextEncoder().encode(JSON.stringify(daily.manifest, null, 2)),
+    'application/json',
+  );
+  daily = null; // release the first ciphertext before any second build
 
-  const manifestBody = new TextEncoder().encode(JSON.stringify(manifest, null, 2));
-  for (const w of writes) {
-    await putObject(b2Cfg, w.archive, encrypted, 'application/octet-stream');
-    await putObject(b2Cfg, w.manifest, manifestBody, 'application/json');
+  // LONG tiers (monthly: 365-day lifecycle; yearly: NO rule,
+  // indefinite) — built as ONE separate payload that EXCLUDES
+  // `support_tickets`. The Privacy Policy promises tickets are
+  // deleted no later than 12 months after submission; a ticket
+  // caught by a monthly cut can outlive that by ~a month (Codex
+  // round-5 P1) and an indefinite yearly copy would keep it forever.
+  // With the exclusion, a ticket's backup copies live ONLY in the
+  // 30-day daily tier — at most 30 days past its D1 deletion.
+  // Everything else in the long tiers (legal-hold audit trail etc.)
+  // is exactly the data they exist for.
+  if (isFirstOfMonth || isFirstOfYear) {
+    let longTier: Awaited<ReturnType<typeof buildPayload>> | null =
+      await buildPayload(
+        archiveTables.filter((t) => t.name !== 'support_tickets'),
+      );
+    const longManifestBody = new TextEncoder().encode(
+      JSON.stringify(longTier.manifest, null, 2),
+    );
+    if (isFirstOfMonth) {
+      await putObject(
+        b2Cfg,
+        `archives-monthly/${monthKey}/${nonceHex}.bin`,
+        longTier.encrypted,
+        'application/octet-stream',
+      );
+      await putObject(
+        b2Cfg,
+        `manifests-monthly/${monthKey}/${nonceHex}.json`,
+        longManifestBody,
+        'application/json',
+      );
+    }
+    if (isFirstOfYear) {
+      await putObject(
+        b2Cfg,
+        `archives-yearly/${yearKey}/${nonceHex}.bin`,
+        longTier.encrypted,
+        'application/octet-stream',
+      );
+      await putObject(
+        b2Cfg,
+        `manifests-yearly/${yearKey}/${nonceHex}.json`,
+        longManifestBody,
+        'application/json',
+      );
+    }
+    longTier = null;
   }
 
   // The healthcheck looks up the most recent manifest under
@@ -380,17 +503,14 @@ export async function runNightlyBackup(env: Env, b2Cfg: B2Config): Promise<Backu
   // key can do that) and dereferences to its sibling archive. The
   // BackupRunOutput surfaces the daily key — monthly / yearly
   // siblings are reflected in the Telegram alert.
-  const archiveKey = writes[0].archive;
-  const manifestKey = writes[0].manifest;
-
   const rowsBackedUp =
     archiveTables.reduce((a, t) => a + t.rowCount, 0) +
     lzAlertsTables.reduce((a, t) => a + t.rowCount, 0);
   return {
     manifestKey,
     archiveKey,
-    archiveBytes: encrypted.byteLength,
-    archiveSha256: archiveSha,
+    archiveBytes,
+    archiveSha256,
     rowsBackedUp,
     r2ObjectsBackedUp: r2Objects.length,
     durationMs: Date.now() - startedAt,

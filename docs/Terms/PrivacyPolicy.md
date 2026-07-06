@@ -1,13 +1,13 @@
 # Vaipakam Privacy Policy
 
-**Version:** 2
-**Effective:** 2026-05-16
+**Version:** 3
+**Effective:** 2026-07-06
 
 ## What we collect
 
 Vaipakam is non-custodial and has no accounts, no sign-ups, and no
 off-chain identity system. Given that, the data we observe about you
-falls into five narrow categories.
+falls into seven narrow categories.
 
 **On-chain activity.** Your wallet address and the transactions it
 sends are public by design — every action you take on the protocol is
@@ -46,6 +46,44 @@ momentarily to compute that hash and is never stored. In rare cases
 where the law requires us to retain specific records, automated
 erasure will skip them; where the law permits, we will tell you so.
 
+**Support tickets — only when you send one.** If you use the in-app
+"Contact support" form, we store what you submit on Vaipakam's
+support service: your message exactly as you typed it, the reply
+email address if you chose to give one (it is optional — a ticket
+works without it), the app page the report was sent from (with any
+wallet addresses shortened), your chain id, and — only if you ticked
+the attach box — the same redacted connection-health details the
+form showed you. Wallet addresses in the page field and the health
+details are shortened on our server as well, whatever the sending
+app did. Each ticket gets a reference number, shown to you. Our
+operators are notified via Telegram (our operations alert channel)
+that a ticket arrived; that notification carries only the ticket
+number and context flags (page, network, whether a reply address
+and health details were included) — never your message text or
+email address — so Telegram processes only that metadata. Support
+tickets are deleted automatically no later than 12 months after
+submission; write to
+support@vaipakam.com to have a ticket's contents erased earlier (we
+may keep the bare ticket number where the law requires). Like our other
+off-chain operational records, tickets are included in encrypted
+nightly backups (see "Data transfer") — but only in the short-cycle
+nightly tier (kept 30 days), never in the long-lived monthly or
+yearly archives, so a ticket's backup copies persist at most 30
+days beyond its deletion. The legal basis is GDPR Art 6(1)(b) —
+handling the support request you asked us to handle.
+
+**Alert subscriptions — only if you link them.** If you connect
+Telegram or Push alerts in the app, we store your wallet address,
+your alert preferences, your Telegram chat id (for Telegram), and a
+small per-alert delivery record (which loan, which level, when) so
+you are never messaged twice about the same event. Alert messages
+you subscribe to are delivered through the channel you chose —
+Telegram processes those messages for Telegram alerts. Unlinking
+removes the Telegram chat connection; your alert preferences and
+the delivery dedupe records (no Telegram identity in either) stay,
+so re-linking restores your setup — erasable on request via
+support@vaipakam.com.
+
 **Google Analytics — only with consent.** If you accept analytics
 cookies in the consent banner, Google Analytics records anonymous
 usage stats: page views, time on page, which features you used. We
@@ -66,7 +104,9 @@ for the app to work.
   and a country code, set by authorized ops — not any underlying
   document.
 - No email, no phone, no social-media handle, unless you voluntarily
-  type it into a public channel we don't operate.
+  type it into a public channel we don't operate — or voluntarily
+  give an optional reply email with an in-app support ticket (see
+  "Support tickets" above; it is never required).
 - No tracking pixels beyond Google Analytics (and only with consent).
 - No advertising identifiers.
 
@@ -75,6 +115,17 @@ for the app to work.
 - **Google.** Only if you consent to analytics cookies, and only
   aggregated usage data — never a payload tying a wallet address to a
   person.
+- **Telegram.** Two opt-in uses. If you link Telegram alerts, your
+  chat id is stored and the alert messages you configured (loan,
+  alert level, timing) are delivered through Telegram. If you send a
+  support ticket, our operators are alerted through Telegram with
+  the ticket number and context flags described above — never your
+  message text or email address.
+- **Backblaze.** Our off-chain operational records (server-side
+  error records, alert subscriptions, support tickets) are backed up
+  nightly to Backblaze B2. Archives are encrypted on our side before
+  upload — Backblaze holds ciphertext only, and cannot read any of
+  it.
 - **Nobody else by default.** We do not sell or rent any data.
 - **Legal compliance exception.** If a subpoena or equivalent legal
   order compels disclosure in a jurisdiction we operate in, we will
@@ -102,10 +153,21 @@ are only meaningful to the extent we hold data about you.
 
 ## Data transfer
 
-The frontend is hosted on Cloudflare Pages. Analytics (if consented)
-are processed by Google. Both transfer data across borders as part of
-their standard operation. We do not transfer any additional data
-beyond what these tools inherently handle.
+The frontend is hosted on Cloudflare Pages, and our off-chain
+operational records live in Cloudflare's database service. Analytics
+(if consented) are processed by Google. Alert messages you opt into and support-ticket alert metadata
+(never ticket contents) pass through Telegram. Encrypted backups
+of the off-chain records are stored with Backblaze B2 — encrypted
+before upload, so Backblaze holds only ciphertext; nightly backup
+archives are kept 30 days and monthly archives 12 months, after
+which they age out automatically (one archive per calendar year is
+retained longer for legal-audit durability — support tickets are
+excluded from the monthly and yearly archives, so a ticket's backup
+copies live only in the 30-day nightly tier).
+All of these providers
+transfer data across borders as part of their standard operation. We
+do not transfer any additional data beyond what these tools
+inherently handle.
 
 ## Data retention
 
@@ -115,6 +177,15 @@ beyond what these tools inherently handle.
   journey-log slice — is sent server-side on each error; see
   "Server-side error capture".)
 - Server-side error records: pruned 90 days after capture.
+- Alert subscriptions: unlinking removes the Telegram chat
+  connection immediately; alert preferences and delivery dedupe
+  records (which carry no Telegram identity) are kept so re-linking
+  restores your setup, and can be erased on request via
+  support@vaipakam.com.
+- Support tickets: deleted automatically no later than 12 months
+  after submission (earlier on request — see "Support tickets"
+  above). Backup copies age out on the backup rotation schedule
+  described under "Data transfer".
 - Consent choice: kept in your browser's local storage indefinitely
   until you revoke or clear.
 - Google Analytics (with consent): subject to Google's own retention,
@@ -129,4 +200,6 @@ the on-chain-signed agreement, and this Policy is a companion.
 
 ## Contact
 
-Privacy-specific questions: via the public Discord link in the footer.
+Privacy-specific questions: via the public Discord link in the
+footer. Support tickets — including early-erasure requests for a
+ticket's contents: support@vaipakam.com.

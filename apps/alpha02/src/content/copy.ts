@@ -213,6 +213,38 @@ export const copy = {
     copyDetails: 'Copy details',
     copied: 'Copied.',
   },
+  support: {
+    title: 'Contact support',
+    lede: 'Send a message to the team — you get a ticket number back right away.',
+    notConfigured:
+      'The support inbox isn’t connected in this build, so in-app messages can’t be sent from here. Email works instead:',
+    messageLabel: 'What happened?',
+    messagePlaceholder:
+      'Tell us what you were doing and what went wrong, in your own words.',
+    emailLabel: 'Email for a reply (optional)',
+    emailHint:
+      'Leave it empty if you’d rather follow up yourself — the ticket number below is all support needs.',
+    attach:
+      'Attach the health details shown above (recommended — they usually hold the cause)',
+    privacy:
+      'Sending stores your message, the page you sent it from and the network you were on, the reply address if you gave one, and — only if you ticked the box — the health details above, on Vaipakam’s support service under your ticket number. The team is notified that a ticket arrived (its number and context flags — never your message text or email). Your full wallet address is never included in the health details.',
+    send: 'Send to support',
+    sending: 'Sending…',
+    sent: (id: string) =>
+      `Sent. Your ticket number is ${id} — keep it; quoting it connects any follow-up to this report.`,
+    mailHint: 'Prefer email, or want to add more? Write to us quoting the ticket number:',
+    mailButton: 'Email support@vaipakam.com',
+    invalidMessage: 'Write a few words about what happened first.',
+    invalidEmail:
+      'That email doesn’t look complete — fix it or clear the field (it’s optional).',
+    rateLimited: 'A few messages went out just now — wait a minute and try again.',
+    unavailable:
+      'The support inbox couldn’t take the message right now. Nothing was lost on your side — email us instead:',
+    failed: 'The message didn’t go through. Try again in a moment, or email us:',
+    helpTitle: 'Need a human?',
+    helpBody:
+      'Open the Support panel (the round button in the corner of every page) to send the team a message with one click — it can attach the app’s own health details, which usually hold the cause. Or email us directly:',
+  },
   wallet: {
     connect: 'Connect wallet',
     connectFirst: 'Connect a wallet to continue.',
