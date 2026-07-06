@@ -23,7 +23,11 @@ export function redactAddress(address: string | undefined): string {
   return `${address.slice(0, 6)}…${address.slice(-4)}`;
 }
 
-const ADDRESS_RE = /0x[a-fA-F0-9]{40}/g;
+// Exactly 20 bytes: the negative lookahead stops the pattern from
+// eating the first 40 hex chars of a 32-byte tx hash — support needs
+// those hashes intact, and a mangled prefix would neither redact nor
+// preserve anything useful (round 4).
+const ADDRESS_RE = /0x[a-fA-F0-9]{40}(?![a-fA-F0-9])/g;
 
 /** Scrub any full address ANYWHERE in report text — crash messages,
  *  component stacks, and deep-link paths routinely embed the
