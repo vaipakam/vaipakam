@@ -150,6 +150,12 @@ function decodeRevert(data: Hex | undefined): string | null {
   for (const abi of [DIAMOND_ABI_VIEM, erc20Abi]) {
     try {
       const dec = decodeErrorResult({ abi, data });
+      // The Solidity built-ins decode to their GENERIC names — for
+      // Error(string)/Panic(uint256) viem's own message already
+      // carries the actual reason text, which beats rendering the
+      // bare word "Error" (round 1). Only a named custom error is
+      // an improvement over the message.
+      if (dec.errorName === 'Error' || dec.errorName === 'Panic') return null;
       return dec.errorName;
     } catch {
       // not in this ABI — try the next
