@@ -206,26 +206,24 @@ contract OfferCancelFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamE
         // returned by the ordinary Lender-cancel refund branch below.
         uint256 lockedOffsetLoanId = s.offsetOfferToLoanId[offerId];
         if (lockedOffsetLoanId != 0) {
-            // #1001 (S3, Codex #1070 r8/r9 P2) — unlock only while the borrower
-            // NFT still EXISTS, i.e. the loan is in a NON-terminal state. Under
+            // #1001 (S3, Codex #1070 r8/r9 P2) — unlock the borrower NFT iff it
+            // still EXISTS, keyed on token existence rather than loan status. Under
             // settle-at-completion an offset can stay linked while the original
             // loan goes terminal (the borrower repays/defaults directly instead of
-            // completing the offset) and then `claimAsBorrower` BURNS
-            // `borrowerTokenId`. `LibERC721._unlock` reads `ownerOf(tokenId)`,
-            // which reverts on a burned token — so an unconditional unlock would
-            // brick the cancel and strand the offer's pre-funded principal. Both
-            // Active AND FallbackPending are live, curable states whose NFT is
-            // intact (r9: FallbackPending was wrongly excluded by the Active-only
-            // check); the terminal states (Repaid/Defaulted/Settled/InternalMatched)
-            // are where the NFT may be burned, so skip the (now-moot) unlock there
-            // and just drop the link. The Lender-cancel branch below still refunds
-            // the creator's principal.
-            LibVaipakam.LoanStatus offsetStatus = s.loans[lockedOffsetLoanId].status;
-            if (
-                offsetStatus == LibVaipakam.LoanStatus.Active ||
-                offsetStatus == LibVaipakam.LoanStatus.FallbackPending
-            ) {
-                LibERC721._unlock(s.loans[lockedOffsetLoanId].borrowerTokenId);
+            // completing the offset). `LibERC721._unlock` reads `ownerOf(tokenId)`,
+            // which reverts on a BURNED token — so an unconditional unlock would
+            // brick the cancel once `claimAsBorrower` has burned `borrowerTokenId`,
+            // stranding the offer's pre-funded principal. But a status guard is
+            // wrong in BOTH directions: FallbackPending (r9 #1) and a terminal-but-
+            // NOT-YET-CLAIMED loan (r9 #4) both keep the NFT intact + locked, so
+            // skipping the unlock would leave it permanently locked. Gate on the
+            // non-reverting `_ownerOfRaw` (address(0) ⇔ burned/nonexistent): unlock
+            // when the token lives (Active / FallbackPending / terminal-unclaimed),
+            // skip the moot unlock only once it's actually burned. The link is
+            // dropped + the creator's principal refunded either way.
+            uint256 offsetBorrowerTokenId = s.loans[lockedOffsetLoanId].borrowerTokenId;
+            if (LibERC721._ownerOfRaw(offsetBorrowerTokenId) != address(0)) {
+                LibERC721._unlock(offsetBorrowerTokenId);
             }
             delete s.offsetOfferToLoanId[offerId];
             delete s.loanToOffsetOfferId[lockedOffsetLoanId];
