@@ -1349,16 +1349,23 @@ contract RefinanceFacetTest is Test {
     //        borrower offer = PRINCIPAL @ 400 bps for 30 days (= lower
     //        new full-term interest → would have triggered shortfall).
 
-    function test_411_RefinanceExitingLenderReceivesFullTermOnly() public {
+    function test_411_S1003_RefinanceExitingLenderModeAwareNoShortfall() public {
         uint256 newLenderOfferId = _acceptBorrowerOffer(borrowerOfferId);
-        // Compute expected: old lender's full-term interest only.
-        uint256 oldFullTermInterest =
-            (PRINCIPAL * 500 * 30) / (10_000 * 365);
+        // #1003 (S7) — the setUp old loan is `useFullTermInterest = false`
+        // (pro-rata / opt-out), so the exiting lender now settles ACCRUED-ONLY
+        // (pro-rata for elapsed days), NOT the old unconditional full-term.
+        // Warp 15 days into the 30-day term so there is a non-zero pro-rata
+        // amount to assert against. The #411 property still holds: NO shortfall
+        // addend on top — the lender receives exactly principal + settlement
+        // interest (mode-aware), minus the treasury cut.
+        vm.warp(block.timestamp + 15 days);
+        uint256 oldProRataInterest =
+            (PRINCIPAL * 500 * 15) / (10_000 * 365);
         // Phase 5 treasury split — 1% of interest as treasury cut.
         // splitTreasury rounds down on the treasury side, so:
-        uint256 expectedTreasuryCut = (oldFullTermInterest * 100) / 10_000;
+        uint256 expectedTreasuryCut = (oldProRataInterest * 100) / 10_000;
         uint256 expectedLenderInterest =
-            oldFullTermInterest - expectedTreasuryCut;
+            oldProRataInterest - expectedTreasuryCut;
         uint256 expectedLenderDue = PRINCIPAL + expectedLenderInterest;
 
         // Snapshot old lender's vault balance before refinance.
@@ -1380,7 +1387,7 @@ contract RefinanceFacetTest is Test {
         assertEq(
             delta,
             expectedLenderDue,
-            "old lender must receive EXACTLY principal + full-term interest (no shortfall addend) post-#411"
+            "exiting lender receives EXACTLY principal + mode-aware settlement interest (pro-rata for an opt-out loan), no shortfall addend (#411 / S7 #1003)"
         );
 
         // suppress unused

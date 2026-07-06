@@ -8,6 +8,7 @@ import {OfferCreateFacet} from "../src/facets/OfferCreateFacet.sol";
 import {OfferAcceptFacet} from "../src/facets/OfferAcceptFacet.sol";
 import {LoanFacet} from "../src/facets/LoanFacet.sol";
 import {DefaultedFacet} from "../src/facets/DefaultedFacet.sol";
+import {RepayFacet} from "../src/facets/RepayFacet.sol";
 import {RiskFacet} from "../src/facets/RiskFacet.sol";
 import {AddCollateralFacet} from "../src/facets/AddCollateralFacet.sol";
 import {ClaimFacet} from "../src/facets/ClaimFacet.sol";
@@ -134,6 +135,30 @@ contract FallbackCureTest is SetupTest, IVaipakamErrors {
     ///      into FallbackPending.
     function testFallbackEntrySanity() public view {
         assertEq(uint8(_loanStatus()), uint8(LibVaipakam.LoanStatus.FallbackPending));
+    }
+
+    /// @dev #1000 (S2) — the FallbackPending cure by FULL repayment must be
+    ///      reachable EVEN THOUGH the loan is already past its original grace
+    ///      window (a time-based-default fallback only exists past graceEnd). The
+    ///      spec twice promises the borrower may fully repay to cancel the
+    ///      fallback before the lender claim executes; before this fix
+    ///      `repayLoan` unconditionally reverted `RepaymentPastGracePeriod` here.
+    function testRepayLoanCuresFallbackPastGrace() public {
+        // Precondition: FallbackPending, and we are past the original graceEnd
+        // (`_toFallback` warped DURATION + 3 days before triggering default).
+        assertEq(uint8(_loanStatus()), uint8(LibVaipakam.LoanStatus.FallbackPending));
+
+        vm.startPrank(borrower);
+        ERC20Mock(mockERC20).approve(address(diamond), type(uint256).max);
+        // Must NOT revert RepaymentPastGracePeriod — the cure is exempt.
+        RepayFacet(address(diamond)).repayLoan(loanId);
+        vm.stopPrank();
+
+        assertEq(
+            uint8(_loanStatus()),
+            uint8(LibVaipakam.LoanStatus.Repaid),
+            "full repayment cures the fallback past grace"
+        );
     }
 
     /// @dev With SetupTest mocks (HF=2e18, LTV=6666) and loanInitMaxLtvBps=8000 for

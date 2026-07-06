@@ -313,18 +313,21 @@ contract RefinanceFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErr
 
         // ── Repay old lender ──────────────────────────────────────────────
         // alice already received new principal from Lender B (via acceptOffer).
-        // README: repay old lender with principal + full-term interest.
-        // (Early-repayment rules — the exiting lender receives full-term
-        // interest, which is the maximum they could have earned on this
-        // loan, so they are strictly whole.)
-        // #641 — full-term interest on the old loan's REMAINING committed term
-        // (the interest clock), not the immutable original `durationDays`, so a
-        // previously partial-repaid/liquidated loan refinances on its true
-        // remaining commitment.
-        uint256 oldInterest = LibEntitlement.fullTermInterest(
-            oldLoan.principal,
-            oldLoan.interestRateBps,
-            LibVaipakam.interestRemainingDaysOf(oldLoan)
+        // #1003 (S7) — settle the exiting lender's interest MODE-AWARE, through
+        // the SAME `settlementInterestNet` the preclose path uses, instead of an
+        // unconditional full-term charge. The two "early close" doors
+        // (preclose / refinance) must agree:
+        //   • useFullTermInterest == true  → full-term (the floor is the
+        //     remaining committed term, so the exiting lender receives their
+        //     maximum and is strictly whole — the historical behaviour), on the
+        //     #641 interest-clock remaining term, not the immutable durationDays.
+        //   • useFullTermInterest == false → accrued-only (pro-rata): a borrower
+        //     who OPTED INTO pro-rata must not be punished with full-term just
+        //     because they refinance rather than repay directly.
+        // `...Net` also credits any periodic `interestSettled` (paid once).
+        uint256 oldInterest = LibEntitlement.settlementInterestNet(
+            oldLoan,
+            block.timestamp
         );
 
         // #411 fix (2026-06-12) — DROPPED the rate-shortfall addend

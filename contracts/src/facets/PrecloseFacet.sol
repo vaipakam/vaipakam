@@ -578,9 +578,17 @@ contract PrecloseFacet is
         if (!LibOfferMatch.assertAssetContinuity(loan, offer))
             revert InvalidOfferTerms();
 
-        // Lender-favorability: replacement terms must not reduce liam's protection
-        uint256 remainingDays = _remainingDays(loan);
-        if (offer.durationDays > remainingDays) revert InvalidOfferTerms();
+        // Lender-favorability: replacement terms must not reduce liam's
+        // protection. #1032 (L-c) — compare MATURITIES with second precision, not
+        // whole-day counts: the loan re-originates with `startTime = now`, so a
+        // day-granular `offer.durationDays <= _remainingDays(loan)` check (where
+        // `_remainingDays` rounds elapsed DOWN, i.e. rounds the remaining count
+        // UP) would let the replacement maturity (`now + durationDays·1day`) land
+        // up to ~24h AFTER the original maturity, extending the lender's exposure.
+        if (
+            block.timestamp + offer.durationDays * LibVaipakam.ONE_DAY
+                > loan.startTime + loan.durationDays * LibVaipakam.ONE_DAY
+        ) revert InvalidOfferTerms();
         if (offer.collateralAmount < loan.collateralAmount)
             revert InsufficientCollateral();
         // Range-aware amount check: legacy single-value offers satisfy
@@ -1091,7 +1099,16 @@ contract PrecloseFacet is
         // Enforce same asset types as original loan (README General Rules)
         if (collateralAsset != loan.collateralAsset) revert InvalidOfferTerms();
         if (prepayAsset != loan.prepayAsset) revert InvalidOfferTerms();
-        if (durationDays > _remainingDays(loan)) revert InvalidOfferTerms();
+        // #1032 (L-c) — seconds-precise maturity bound (not the up-rounded
+        // whole-day `_remainingDays`): the replacement term must not carry the
+        // new loan's maturity past the original loan's maturity. Bounding at
+        // request time (`block.timestamp`) is conservative — the new loan is
+        // accepted no earlier than now, so its true maturity can only be ≤ this
+        // bound (never later than the original).
+        if (
+            block.timestamp + durationDays * LibVaipakam.ONE_DAY
+                > loan.startTime + loan.durationDays * LibVaipakam.ONE_DAY
+        ) revert InvalidOfferTerms();
         // Lender-favorability: collateral from new borrower must not be less than original
         if (collateralAmount < loan.collateralAmount)
             revert InsufficientCollateral();
@@ -1482,15 +1499,9 @@ contract PrecloseFacet is
                 : loan.prepayAsset;
     }
 
-    function _remainingDays(
-        LibVaipakam.Loan storage loan
-    ) internal view returns (uint256) {
-        uint256 elapsedDays = (block.timestamp - loan.startTime) / 1 days;
-        return
-            loan.durationDays > elapsedDays
-                ? loan.durationDays - elapsedDays
-                : 0;
-    }
+    // #1032 (L-c) — `_remainingDays` removed: its two callers (Option-2 +
+    // Option-3 term gates) now bound the replacement MATURITY with second
+    // precision instead of comparing up-rounded whole-day remaining counts.
 
     function _resetNftRenter(LibVaipakam.Loan storage loan) internal {
         LibFacet.crossFacetCall(
