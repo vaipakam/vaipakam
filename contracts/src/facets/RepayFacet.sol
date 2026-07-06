@@ -979,7 +979,15 @@ contract RepayFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErrors 
     ) external view returns (uint256 totalDue) {
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         LibVaipakam.Loan storage loan = s.loans[loanId];
-        if (loan.status != LibVaipakam.LoanStatus.Active) return 0;
+        // #1000 (S2, Codex #1069) — a FallbackPending loan is now curable by full
+        // repayment (past grace), so the quote view must price it too; frontends
+        // and keepers set the borrower's approval/amount from this view, and a
+        // 0 quote would under-approve and brick the cure. The settlement math
+        // below (settlementInterestNet + late fee) is identical for the cure.
+        if (
+            loan.status != LibVaipakam.LoanStatus.Active &&
+            loan.status != LibVaipakam.LoanStatus.FallbackPending
+        ) return 0;
 
         uint256 endTime = loan.startTime +
             loan.durationDays *

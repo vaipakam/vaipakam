@@ -1327,6 +1327,22 @@ contract PrecloseFacet is
         // interest model. See `EarlyWithdrawalFacet._buildSaleParams`
         // for the parallel rationale on the sale-vehicle builder.
         params.useFullTermInterest = loan.useFullTermInterest;
+        // #1032 (L-c, Codex #1069) — bound the offset offer's EXPIRY so a LATE
+        // acceptance can't move the replacement loan's maturity past the
+        // original's. The replacement loan originates with `startTime = accept
+        // time`, so its maturity is `acceptTime + durationDays·1day`. The
+        // request-time check in `_validateOffsetRequest` only bounds the offer at
+        // creation; a lender who accepts a day later would otherwise mature a day
+        // late (the Option-3 drift). Constraining `expiresAt` to the latest
+        // acceptance that still satisfies `acceptTime + durationDays·1day ≤
+        // original maturity` closes it — an accept after that reverts on GTT.
+        // (Non-zero here overrides the GTC default; the request-time check
+        // guarantees this is ≥ now, so the offer isn't born expired.)
+        params.expiresAt = uint64(
+            loan.startTime
+                + loan.durationDays * LibVaipakam.ONE_DAY
+                - durationDays * LibVaipakam.ONE_DAY
+        );
         // Phase 6: keeper enables are per-keeper via
         // `offerKeeperEnabled[offerId][keeper]`. The borrower (offset-offer
         // creator) can enable specific keepers on this offset offer via
