@@ -33,7 +33,8 @@
  *    exists but proves nothing), and an unknown tax is disclosed as
  *    a warning rather than coerced to 0%.
  */
-import { useQuery } from '@tanstack/react-query';
+import { useMemo } from 'react';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { getCanonicalAssetsForChain } from '@vaipakam/lib';
 
 const GOPLUS_ORIGIN = 'https://api.gopluslabs.io';
@@ -44,6 +45,15 @@ const TIMEOUT_MS = 6_000;
  *  soft notice, NOT a block: on test networks every faucet mock would
  *  otherwise be unbuyable (GoPlus doesn't index testnets). */
 const GOPLUS_CHAINS = new Set([1, 56, 8453, 42161, 10, 137]);
+// Test-only widening: the fork tier runs on Base Sepolia, which GoPlus
+// doesn't index, so badge/exclusion behaviour would be structurally
+// invisible to CI. The badges spec spawns a dev server with
+// VITE_GOPLUS_EXTRA_CHAINS=84532 and route-mocks the GoPlus origin.
+// Never set in production builds.
+for (const raw of (import.meta.env.VITE_GOPLUS_EXTRA_CHAINS ?? '').split(',')) {
+  const id = Number(raw.trim());
+  if (Number.isInteger(id) && id > 0) GOPLUS_CHAINS.add(id);
+}
 
 export type TokenSecurityVerdict =
   | { kind: 'clean' }
@@ -344,6 +354,139 @@ export function isCuratedAsset(chainId: number, address: string): boolean {
   } catch {
     return false;
   }
+}
+
+/** Batch variant of {fetchTokenSecurity} — the GoPlus endpoint takes
+ *  comma-separated addresses, so one call screens a page of offers
+ *  (#1036 badges slice; the public per-IP rate limit is the reason
+ *  this exists). Per-address verdicts: an address the response lacks
+ *  a row for is 'unknown' — not indexed proves nothing. A failed
+ *  chunk yields 'unknown' for its addresses only. */
+export async function fetchTokenSecurityBatch(
+  chainId: number,
+  addresses: string[],
+): Promise<Map<string, TokenSecurityVerdict>> {
+  const out = new Map<string, TokenSecurityVerdict>();
+  const lower = [...new Set(addresses.map((a) => a.toLowerCase()))];
+  if (!GOPLUS_CHAINS.has(chainId)) {
+    for (const a of lower) out.set(a, { kind: 'unsupported' });
+    return out;
+  }
+  // Chunk conservatively — very long query strings risk proxy/URL
+  // limits and one failure otherwise voids the whole page's verdicts.
+  const CHUNK = 20;
+  for (let i = 0; i < lower.length; i += CHUNK) {
+    const chunk = lower.slice(i, i + CHUNK);
+    try {
+      const ctrl = new AbortController();
+      const t = setTimeout(() => ctrl.abort(), TIMEOUT_MS);
+      const res = await fetch(
+        `${GOPLUS_ORIGIN}/api/v1/token_security/${chainId}?contract_addresses=${chunk.join(',')}`,
+        { signal: ctrl.signal },
+      );
+      clearTimeout(t);
+      if (!res.ok) throw new Error(`goplus ${res.status}`);
+      const body = (await res.json()) as {
+        result?: Record<string, GoPlusTokenRow>;
+      };
+      for (const a of chunk) {
+        const row = body.result?.[a];
+        out.set(a, row ? classifyTokenSecurity(row) : { kind: 'unknown' });
+      }
+    } catch {
+      for (const a of chunk) out.set(a, { kind: 'unknown' });
+    }
+  }
+  return out;
+}
+
+export interface ScreenableLeg {
+  chainId: number;
+  address: string;
+}
+
+const EMPTY_VERDICTS: Record<string, TokenSecurityVerdict> = {};
+
+/** Verdict lookup key for a book leg — offers on the book can carry
+ *  their own chainId, so verdicts are chain-scoped. */
+export function legVerdictKey(chainId: number, address: string): string {
+  return `${chainId}:${address.toLowerCase()}`;
+}
+
+/** Page-level screening for the browsing surfaces (#1036): ONE query
+ *  batch-screens every distinct non-curated leg currently visible,
+ *  grouped by chain, and returns a `legVerdictKey`-indexed record.
+ *
+ *  Cache discipline: per-address verdicts already settled by the
+ *  accept/paste gates are REUSED (no refetch), and every settled
+ *  batch verdict is seeded back into the per-address
+ *  ['tokenSecurity', chainId, address] key so the gates get it for
+ *  free — one screen per token per session, whichever surface asked
+ *  first. 'unknown' is deliberately never seeded: the gate hook
+ *  treats unknown as a retryable error state and must keep retrying,
+ *  while the badge tier just shows "not screened" (browse is
+ *  early-warning fail-open; the gates stay fail-closed). */
+export function useBookTokenSecurity(
+  legs: ScreenableLeg[],
+): Record<string, TokenSecurityVerdict> {
+  const queryClient = useQueryClient();
+  const wanted = useMemo(() => {
+    const seen = new Set<string>();
+    const out: ScreenableLeg[] = [];
+    for (const leg of legs) {
+      if (!needsSecurityCheck(leg.chainId, leg.address)) continue;
+      const key = legVerdictKey(leg.chainId, leg.address);
+      if (seen.has(key)) continue;
+      seen.add(key);
+      out.push({ chainId: leg.chainId, address: leg.address.toLowerCase() });
+    }
+    return out.sort((a, b) =>
+      legVerdictKey(a.chainId, a.address).localeCompare(
+        legVerdictKey(b.chainId, b.address),
+      ),
+    );
+  }, [legs]);
+
+  const q = useQuery({
+    queryKey: [
+      'tokenSecurityBook',
+      wanted.map((l) => legVerdictKey(l.chainId, l.address)).join(','),
+    ],
+    enabled: wanted.length > 0,
+    staleTime: 10 * 60_000,
+    gcTime: 30 * 60_000,
+    retry: 1,
+    queryFn: async () => {
+      const out: Record<string, TokenSecurityVerdict> = {};
+      const missingByChain = new Map<number, string[]>();
+      for (const { chainId, address } of wanted) {
+        const cached = queryClient.getQueryData<TokenSecurityVerdict>([
+          'tokenSecurity',
+          chainId,
+          address,
+        ]);
+        if (cached) {
+          out[legVerdictKey(chainId, address)] = cached;
+        } else {
+          missingByChain.set(chainId, [
+            ...(missingByChain.get(chainId) ?? []),
+            address,
+          ]);
+        }
+      }
+      for (const [chainId, addrs] of missingByChain) {
+        const fetched = await fetchTokenSecurityBatch(chainId, addrs);
+        for (const [address, v] of fetched) {
+          out[legVerdictKey(chainId, address)] = v;
+          if (v.kind !== 'unknown') {
+            queryClient.setQueryData(['tokenSecurity', chainId, address], v);
+          }
+        }
+      }
+      return out;
+    },
+  });
+  return q.data ?? EMPTY_VERDICTS;
 }
 
 /** Reactive verdict for a NON-curated token. Disabled (returns

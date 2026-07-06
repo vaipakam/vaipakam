@@ -28,6 +28,13 @@ import { useMode } from '../app/ModeContext';
 import { EmptyState, UnavailableState } from '../components/EmptyState';
 import { MarketFreshnessNote } from '../components/MarketFreshnessNote';
 import { useTokenMeta } from '../contracts/erc20';
+import {
+  OfferRiskBadge,
+  offerRiskLevel,
+  offerScreenableLegs,
+  type OfferRiskLevel as RiskLevel,
+} from '../components/TokenRiskBadge';
+import { useBookTokenSecurity } from '../data/tokenSecurity';
 import { AssetType } from '../lib/types';
 import {
   formatBpsAsPercent,
@@ -58,7 +65,7 @@ function rateOf(offer: IndexedOffer): number | null {
     : offer.interestRateBpsMax;
 }
 
-function OfferRow({ offer }: { offer: IndexedOffer }) {
+function OfferRow({ offer, risk }: { offer: IndexedOffer; risk: RiskLevel | null }) {
   const { address } = useActiveChain();
   const { isAdvanced } = useMode();
   const isLending = offer.offerType === 0;
@@ -156,7 +163,9 @@ function OfferRow({ offer }: { offer: IndexedOffer }) {
   return (
     <div className="item-row">
       <span className="row-main">
-        <span className="row-title">{title}</span>
+        <span className="row-title">
+          {title} <OfferRiskBadge level={risk} />
+        </span>
         <br />
         <span className="row-sub">
           {sub} · by <AddressName address={offer.creator} />
@@ -238,6 +247,17 @@ export function Offers() {
     }
     return rows;
   }, [offers.data, activeSide, activeSort, activeAssetFilter]);
+
+  // #1036 badges: one batched screen for every distinct non-curated
+  // leg on the visible page (rows keep their own chainId). Browse
+  // tier is early-warning only — rows are never hidden here, the
+  // book must not lie about what the market holds; the accept gate
+  // downstream is the enforcement point.
+  const screenLegs = useMemo(
+    () => (Array.isArray(visible) ? visible.flatMap(offerScreenableLegs) : []),
+    [visible],
+  );
+  const verdicts = useBookTokenSecurity(screenLegs);
 
   // Only ROW-REMOVING controls count (sort can never empty a list),
   // and the filter-empty copy may only ever appear when the unfiltered
@@ -342,7 +362,11 @@ export function Offers() {
         <>
           <div className="row-list">
             {visible.map((o) => (
-              <OfferRow key={o.offerId} offer={o} />
+              <OfferRow
+                key={o.offerId}
+                offer={o}
+                risk={offerRiskLevel(o, verdicts)}
+              />
             ))}
           </div>
           <p className="muted" style={{ marginTop: 16 }}>
