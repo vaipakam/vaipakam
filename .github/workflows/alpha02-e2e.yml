@@ -86,3 +86,16 @@ jobs:
           name: alpha02-e2e-traces
           path: apps/alpha02/test-results/
           retention-days: 7
+      # Inline failure context: the page snapshot Playwright writes per
+      # failure, printed straight into the job log so a diagnosis never
+      # requires downloading the trace artifact (added while debugging
+      # the #1082 08-spec failure from an environment that can't fetch
+      # artifacts).
+      - name: Print failure context
+        if: failure()
+        run: |
+          for f in apps/alpha02/test-results/*/error-context.md; do
+            [ -f "$f" ] || continue
+            echo "===== $f ====="
+            cat "$f"
+          done
