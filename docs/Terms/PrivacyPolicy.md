@@ -62,7 +62,7 @@ number and context flags (page, network, whether a reply address
 and health details were included) — never your message text or
 email address — so Telegram processes only that metadata. Support
 tickets are deleted automatically no later than 12 months after
-submission (most sooner, once resolved); write to
+submission; write to
 support@vaipakam.com to have a ticket's contents erased earlier (we
 may keep the bare ticket number where the law requires). Like our other
 off-chain operational records, tickets are included in encrypted

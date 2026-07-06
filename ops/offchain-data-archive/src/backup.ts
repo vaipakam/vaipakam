@@ -207,6 +207,21 @@ export async function runNightlyBackup(env: Env, b2Cfg: B2Config): Promise<Backu
     try {
       archiveTables.push(await exportTable(env.DB_ARCHIVE, t));
     } catch (err) {
+      // Migration-gated tables tolerate exactly ONE failure shape:
+      // "no such table" before their migration ran. Any other export
+      // error on them (D1 fault, permission problem, query
+      // regression) must abort like the plain required set — a
+      // "successful" nightly silently missing the durable ticket
+      // records is the failure mode this Worker exists to prevent
+      // (Codex round-6 P2).
+      if (
+        ARCHIVE_TABLES_REQUIRED_ONCE_MIGRATED.includes(t) &&
+        !/no such table/i.test((err as Error).message ?? '')
+      ) {
+        throw new Error(
+          `BACKUP ABORT: export of vaipakam-archive.${t} failed post-migration: ${(err as Error).message}`,
+        );
+      }
       // Tables that don't exist on this deploy (e.g. lz_alerts on
       // a fresh archive DB before lz-watcher ran any migration)
       // shouldn't kill the run — log + skip. Required tables that
