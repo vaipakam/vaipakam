@@ -583,4 +583,56 @@ contract InteractionRewardsFacet is
             entries[i] = s.rewardEntries[ids[i]];
         }
     }
+
+    // ─── #969 / S5 — diamond-internal reward-lifecycle hooks ─────────────────
+    //
+    // PrecloseFacet must close / re-point reward entries when it flips a loan's
+    // lifecycle, but it is a god-facet already at the EIP-170 ceiling, so
+    // inlining the {LibInteractionRewards.closeLoan} / {repointRewardEntry} call
+    // graph there tips it over the limit. These thin `external` hooks keep that
+    // graph HERE (this facet has headroom) and PrecloseFacet reaches them with a
+    // cheap `address(this).call` cross-facet hop. They are strictly
+    // diamond-internal: only the Diamond itself (a routed cross-facet call) may
+    // invoke them — a direct external caller reverts.
+
+    /// @notice Diamond-internal: emitted signal is none — reverts if not self.
+    error RewardHookCallerNotSelf();
+
+    /// @notice Close a loan's reward entries on a terminal preclose. The lender
+    ///         is always repaid (never forfeits); `borrowerClean` is false for a
+    ///         LATE preclose (past grace — a non-clean close forfeits the
+    ///         borrower reward, matching the repay/default convention) and true
+    ///         for an in-grace full early repayment. (Codex #1061 P2)
+    /// @param  loanId       The loan being terminally preclosed.
+    /// @param  borrowerClean Whether the borrower side keeps its reward.
+    function precloseRewardClose(uint256 loanId, bool borrowerClean) external {
+        if (msg.sender != address(this)) revert RewardHookCallerNotSelf();
+        LibInteractionRewards.closeLoan(loanId, borrowerClean, false);
+    }
+
+    /// @notice Preclose Option-2 obligation transfer (loan stays Active under a
+    ///         re-originated term + incoming borrower). SPLITS the reward windows
+    ///         at the transfer day (Codex #1061 P2): closes the exiting parties'
+    ///         entries at today — the exiting borrower paid the accrued interest
+    ///         to complete the transfer so keeps its earned portion (clean, no
+    ///         forfeit) and the unchanged lender keeps its earned portion — then
+    ///         re-registers fresh entries for the continuing loan under the new
+    ///         rate/duration, so the INCOMING borrower only earns from the
+    ///         transfer forward (never the previous borrower's history) and the
+    ///         lender accrues at the re-originated rate.
+    /// @param  loanId The loan whose obligation transferred.
+    function precloseRewardTransferObligation(uint256 loanId) external {
+        if (msg.sender != address(this)) revert RewardHookCallerNotSelf();
+        LibVaipakam.Loan storage l = LibVaipakam.storageSlot().loans[loanId];
+        LibInteractionRewards.closeLoan(loanId, /* borrowerClean */ true, false);
+        LibInteractionRewards.registerLoan(
+            loanId,
+            l.lender,
+            l.borrower, // == incoming borrower (set before this hook)
+            l.principalAsset,
+            l.principal,
+            l.interestRateBps,
+            l.durationDays
+        );
+    }
 }

@@ -2133,10 +2133,19 @@ library LibVaipakam {
         address user;
         uint64 loanId;
         uint32 startDay; // inclusive
-        uint32 endDay; // exclusive; 0 = still open
+        uint32 endDay; // exclusive; ACCRUAL BOUND only (never 0 in practice)
         RewardSide side;
         bool processed; // claim/sweep already routed this entry
         bool forfeited; // true ⇒ route to treasury on processing
+        // #1002 (S4) — set true by {LibInteractionRewards._closeEntry} when the
+        // loan is closed (or the lender position is sold). An entry is claimable
+        // / sweepable ONLY once `closed`; `endDay` is now PURELY the accrual
+        // upper bound. Pre-#1002 the "still open" gate keyed off `endDay == 0`,
+        // but `_allocEntry` always stamps a nonzero `endDay` at registration, so
+        // that gate was dead — both parties could claim the full-window reward at
+        // contracted maturity while the loan was still open (a borrower intending
+        // to default could claim, then default, dodging the §4 forfeit).
+        bool closed;
         uint256 perDayNumeraire18; // Numeraire18 interest-per-day snapshotted at register
     }
 

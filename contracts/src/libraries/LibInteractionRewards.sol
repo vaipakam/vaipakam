@@ -675,7 +675,15 @@ library LibInteractionRewards {
         for (uint256 i = 0; i < len; ) {
             uint256 id = ids[i];
             LibVaipakam.RewardEntry storage e = s.rewardEntries[id];
-            if (!e.processed && e.endDay != 0 && !e.forfeited) {
+            // #1002 (S4) / #1061 P2 — only claimable (closed or loan-terminal),
+            // non-forfeited (explicit OR terminal-derived) entries preview to the
+            // user (was the dead `endDay != 0`).
+            if (
+                !e.processed
+                && !e.forfeited
+                && !_entryTerminalForfeit(s, e)
+                && _entryClaimable(s, e)
+            ) {
                 uint256 reward = _previewEntryReward(
                     s,
                     e,
@@ -706,28 +714,20 @@ library LibInteractionRewards {
         uint256 capRatio = LibVaipakam.getInteractionCapVpfiPerEth();
         (uint256 ethPriceRaw, uint8 ethPriceDec) = _ethUsdPriceRawAndDec();
 
+        // #1061 P1 — the sweep DISCARDS `_processEntry`'s `toUser`, so it must
+        // only ever process FORFEITED entries. Otherwise a payable entry made
+        // claimable by the loan-terminal fallback ({_entryClaimable}) would be
+        // marked `processed` with nothing transferred, destroying the user's
+        // reward. Skip any entry that isn't forfeited (explicit or terminal-
+        // derived) — a permissionless sweep can never touch a payable entry.
         uint256 lenderId = s.loanActiveLenderEntryId[loanId];
-        if (lenderId != 0) {
-            (, uint256 t) = _processEntry(
-                s,
-                lenderId,
-                capRatio,
-                ethPriceRaw,
-                ethPriceDec,
-                /* mutate */ true
-            );
+        if (lenderId != 0 && _isForfeited(s, s.rewardEntries[lenderId])) {
+            (, uint256 t) = _processEntry(s, lenderId, capRatio, ethPriceRaw, ethPriceDec, true);
             treasuryTotal += t;
         }
         uint256 borrowerId = s.loanBorrowerEntryId[loanId];
-        if (borrowerId != 0) {
-            (, uint256 t) = _processEntry(
-                s,
-                borrowerId,
-                capRatio,
-                ethPriceRaw,
-                ethPriceDec,
-                /* mutate */ true
-            );
+        if (borrowerId != 0 && _isForfeited(s, s.rewardEntries[borrowerId])) {
+            (, uint256 t) = _processEntry(s, borrowerId, capRatio, ethPriceRaw, ethPriceDec, true);
             treasuryTotal += t;
         }
 
@@ -738,17 +738,21 @@ library LibInteractionRewards {
         uint256[] storage orphaned = s.loanForfeitedLenderEntryIds[loanId];
         uint256 olen = orphaned.length;
         for (uint256 i = 0; i < olen; ) {
-            (, uint256 t) = _processEntry(
-                s,
-                orphaned[i],
-                capRatio,
-                ethPriceRaw,
-                ethPriceDec,
-                /* mutate */ true
-            );
-            treasuryTotal += t;
+            if (_isForfeited(s, s.rewardEntries[orphaned[i]])) {
+                (, uint256 t) = _processEntry(s, orphaned[i], capRatio, ethPriceRaw, ethPriceDec, true);
+                treasuryTotal += t;
+            }
             unchecked { ++i; }
         }
+    }
+
+    /// @dev #1061 P1 — an entry destined for treasury: an explicit forfeit set
+    ///      by `_closeEntry`, OR a terminal-derived liquidation/default forfeit.
+    function _isForfeited(
+        LibVaipakam.Storage storage s,
+        LibVaipakam.RewardEntry storage e
+    ) private view returns (bool) {
+        return e.forfeited || _entryTerminalForfeit(s, e);
     }
 
     // ─── Legacy window claim (used by test mutators) ────────────────────────
@@ -890,6 +894,45 @@ library LibInteractionRewards {
 
     // ─── Internals ───────────────────────────────────────────────────────────
 
+    /// @dev #1002 (S4) + Codex #1061 P1 — an entry may be routed (claimed or
+    ///      swept) only once the loan is genuinely over. TWO independent
+    ///      triggers, so no terminal path can strand a reward:
+    ///        1. `e.closed` — the entry's window was explicitly finalized by
+    ///           `closeLoan` (loan terminal) or `transferLenderEntry` (lender
+    ///           sold — the loan may still be Active, but THIS entry is done).
+    ///        2. the loan reached a TERMINAL status — covers terminal flows that
+    ///           don't route through `closeLoan` (e.g. prepay-sale finalize), so
+    ///           their rewards unlock on close instead of being frozen forever.
+    ///      An Active / FallbackPending loan whose entry isn't closed pays
+    ///      nothing (the S4 claim-while-open bug).
+    function _entryClaimable(
+        LibVaipakam.Storage storage s,
+        LibVaipakam.RewardEntry storage e
+    ) private view returns (bool) {
+        if (e.closed) return true;
+        LibVaipakam.LoanStatus st = s.loans[e.loanId].status;
+        return st != LibVaipakam.LoanStatus.Active
+            && st != LibVaipakam.LoanStatus.FallbackPending;
+    }
+
+    /// @dev #1061 P2 — for an entry made claimable by the loan-terminal fallback
+    ///      (NOT explicitly closed), derive the forfeit from the terminal reason:
+    ///      a Defaulted / InternalMatched (liquidation) loan forfeits the
+    ///      BORROWER side (the loser), routing its reward to treasury; a clean
+    ///      terminal (Repaid / Settled) and the lender side pay out. An
+    ///      explicitly-closed entry already carries its `forfeited` decision from
+    ///      `_closeEntry`, so this returns false for it (the caller ORs the two).
+    function _entryTerminalForfeit(
+        LibVaipakam.Storage storage s,
+        LibVaipakam.RewardEntry storage e
+    ) private view returns (bool) {
+        if (e.closed) return false;
+        LibVaipakam.LoanStatus st = s.loans[e.loanId].status;
+        return (st == LibVaipakam.LoanStatus.Defaulted
+            || st == LibVaipakam.LoanStatus.InternalMatched)
+            && e.side == LibVaipakam.RewardSide.Borrower;
+    }
+
     /// @dev Process (or preview) a single reward entry. When `mutate`,
     ///      flips `processed = true` and returns the routed amounts;
     ///      otherwise returns the pending amount for the user side only
@@ -904,7 +947,12 @@ library LibInteractionRewards {
     ) private returns (uint256 toUser, uint256 toTreasury) {
         LibVaipakam.RewardEntry storage e = s.rewardEntries[id];
         if (e.processed) return (0, 0);
-        if (e.endDay == 0) return (0, 0); // still open
+        // #1002 (S4) — an entry is claimable/sweepable ONLY once the loan is
+        // actually over, not merely because the calendar passed maturity. See
+        // {_entryClaimable}: either the entry was explicitly closed (window
+        // finalized by closeLoan / lender-sale) OR its loan has reached a
+        // terminal status. `endDay` is purely the accrual bound now.
+        if (!_entryClaimable(s, e)) return (0, 0);
         if (e.startDay >= e.endDay) {
             if (mutate) e.processed = true;
             return (0, 0);
@@ -959,7 +1007,11 @@ library LibInteractionRewards {
         }
 
         if (mutate) e.processed = true;
-        if (e.forfeited) {
+        // #1061 P2 — route to treasury on an explicit forfeit OR a terminal
+        // forfeit derived from an unclosed liquidation/default (so a liquidated
+        // borrower can't collect via the {_entryClaimable} loan-terminal
+        // fallback).
+        if (e.forfeited || _entryTerminalForfeit(s, e)) {
             toTreasury = reward;
         } else {
             toUser = reward;
@@ -974,6 +1026,9 @@ library LibInteractionRewards {
         uint256 ethPriceRaw,
         uint8 ethPriceDec
     ) private view returns (uint256 reward) {
+        // #1002 (S4) — preview mirrors the claim gate: no reward until the loan
+        // is actually over (matches {_processEntry} / {_entryClaimable}).
+        if (!_entryClaimable(s, e)) return 0;
         if (e.startDay >= e.endDay) return 0;
         uint256 need = e.endDay - 1;
         uint256 cumEnd;
@@ -1040,7 +1095,10 @@ library LibInteractionRewards {
     ) private {
         LibVaipakam.Storage storage s_ = LibVaipakam.storageSlot();
         LibVaipakam.RewardEntry storage e = s_.rewardEntries[id];
-        if (e.endDay == 0) return; // already closed somehow; no-op
+        // #1002 (S4) — idempotency guard: re-closing an already-closed entry
+        // would double-apply the end-delta. (Replaces the dead `endDay == 0`
+        // guard — `endDay` is never 0 in practice.)
+        if (e.closed) return;
         uint256 originalEnd = e.endDay;
         uint256 newEnd = today + 1;
         if (newEnd >= originalEnd) newEnd = originalEnd; // natural close or late
@@ -1053,6 +1111,15 @@ library LibInteractionRewards {
             e.endDay = SafeCast.toUint32(newEnd);
         }
         if (forfeited) e.forfeited = true;
+        // #1002 (S4) — mark the entry terminally settled. This is the single
+        // choke point for both {closeLoan} (loan terminal) and
+        // {transferLenderEntry} (lender sold, loan continues — the OLD entry
+        // closes here while a fresh open entry is allocated for the buyer), so
+        // the `closed` gate in {_processEntry}/{_previewEntryReward} opens
+        // exactly when the entry's window is done. {repointRewardEntry}
+        // deliberately does NOT route through here — a re-pointed entry keeps
+        // accruing (its loan is still open), so it stays `closed == false`.
+        e.closed = true;
     }
 
     /// @dev Apply a signed delta to `deltas[day]` only when `day > frontier`.

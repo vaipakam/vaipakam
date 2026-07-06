@@ -3,6 +3,7 @@
 pragma solidity ^0.8.29;
 
 import {LibVaipakam} from "../libraries/LibVaipakam.sol";
+import {InteractionRewardsFacet} from "./InteractionRewardsFacet.sol";
 import {LibEncumbrance} from "../libraries/LibEncumbrance.sol";
 import {LibLifecycle} from "../libraries/LibLifecycle.sol";
 import {LibAuth} from "../libraries/LibAuth.sol";
@@ -450,8 +451,45 @@ contract PrecloseFacet is
                 LibVaipakam.LoanStatus.Active,
                 LibVaipakam.LoanStatus.Repaid
             );
-
             emit LoanPreclosedDirect(loanId, msg.sender, fullRental);
+        }
+
+        // #969 / S5 (#998 Tranche 2) — close the interaction-reward entries for
+        // BOTH branches (hoisted out of the if/else). The lender is repaid and
+        // never forfeits (the early-withdrawal SALE path is the sole
+        // lender-forfeit route). The borrower side is CLEAN only for an IN-GRACE
+        // full repayment — a LATE preclose (past grace, before anyone triggered
+        // default) is a non-clean close and forfeits the borrower reward, per the
+        // {RepayFacet.repayLoan} convention (Codex #1061 P2). Best-effort hook
+        // (see {_rewardHook}).
+        uint256 graceEnd = loan.startTime
+            + loan.durationDays * LibVaipakam.ONE_DAY
+            + LibVaipakam.gracePeriod(loan.durationDays);
+        _rewardHook(
+            abi.encodeWithSelector(
+                InteractionRewardsFacet.precloseRewardClose.selector,
+                loanId,
+                block.timestamp <= graceEnd // borrowerClean
+            )
+        );
+    }
+
+    /// @dev #969 / S5 — best-effort reward-lifecycle hook. Two purposes:
+    ///      (1) the reward call-graph lives on {InteractionRewardsFacet}, not
+    ///          inlined into this EIP-170-bounded facet; and
+    ///      (2) reward bookkeeping is STRICTLY SUBORDINATE to the fund-critical
+    ///          preclose — the close (borrower reclaims collateral) must never
+    ///          revert because of reward accounting, so the low-level call's
+    ///          failure is intentionally not bubbled. Production always cuts
+    ///          InteractionRewardsFacet (deploy-sanity guarantees full-surface
+    ///          routing) so the hook always runs there; a focused test harness
+    ///          that omits that facet simply skips reward bookkeeping. The
+    ///          hook's effect is asserted by RewardLifecycleCloseTest on the
+    ///          full diamond.
+    function _rewardHook(bytes memory data) private {
+        (bool ok, ) = address(this).call(data);
+        if (!ok) {
+            // best-effort — see doc above; the close proceeds regardless.
         }
     }
 
@@ -762,6 +800,21 @@ contract PrecloseFacet is
         loan.interestAccrualStart = uint64(block.timestamp);
         loan.interestRemainingDays = uint16(offer.durationDays);
         loan.interestRateBps = offer.interestRateBps;
+
+        // #969 / S5 (#998 Tranche 2) — Option 2 is a CONTINUING transfer, not a
+        // terminal close: the loan stays Active under the incoming borrower and a
+        // re-originated term (set just above). The hook SPLITS the reward windows
+        // at the transfer day — the exiting borrower + unchanged lender keep what
+        // they earned pre-transfer, and fresh entries cover the continuing loan
+        // under the new rate/duration — so the incoming borrower only earns from
+        // the transfer forward and never the previous borrower's history (Codex
+        // #1061 P2). Best-effort reward hook (see {_rewardHook}).
+        _rewardHook(
+            abi.encodeWithSelector(
+                InteractionRewardsFacet.precloseRewardTransferObligation.selector,
+                loanId
+            )
+        );
 
         // #569 Codex #572 P1 #3 (2026-06-13) — verify the incoming
         // borrower's offer collateral actually backs the loan before
@@ -1373,6 +1426,24 @@ contract PrecloseFacet is
             loan,
             LibVaipakam.LoanStatus.Active,
             LibVaipakam.LoanStatus.Repaid
+        );
+        // #969 / S5 — the ORIGINAL loan is terminal here (the borrower's
+        // obligation rolled into a fresh offset loan with its own entries), so
+        // close the original loan's reward entries. The old lender is paid off in
+        // full and never forfeits. The borrower side is CLEAN only when the offset
+        // completes IN GRACE — an offset (default `expiresAt == 0`) accepted after
+        // the old loan's grace window is a non-clean close and forfeits the old
+        // borrower reward, matching the preclose/refinance grace checks (Codex
+        // #1061 P2). Best-effort reward hook (see {_rewardHook}).
+        uint256 offsetGraceEnd = loan.startTime
+            + loan.durationDays * LibVaipakam.ONE_DAY
+            + LibVaipakam.gracePeriod(loan.durationDays);
+        _rewardHook(
+            abi.encodeWithSelector(
+                InteractionRewardsFacet.precloseRewardClose.selector,
+                originalLoanId,
+                block.timestamp <= offsetGraceEnd // borrowerClean
+            )
         );
 
         // Phase 5 / §5.2b — proper-close settlement on the offset path.

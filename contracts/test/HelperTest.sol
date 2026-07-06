@@ -1645,7 +1645,7 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](18);
+        selectors = new bytes4[](20);
         selectors[0] = InteractionRewardsFacet.claimInteractionRewards.selector;
         selectors[1] = InteractionRewardsFacet.setInteractionLaunchTimestamp.selector;
         selectors[2] = InteractionRewardsFacet.getInteractionLaunchTimestamp.selector;
@@ -1664,6 +1664,9 @@ contract HelperTest {
         selectors[15] = InteractionRewardsFacet.getInteractionCapVpfiPerEthRaw.selector;
         selectors[16] = InteractionRewardsFacet.sweepForfeitedInteractionRewards.selector;
         selectors[17] = InteractionRewardsFacet.getUserRewardEntries.selector;
+        // #969 / S5 — diamond-internal reward-lifecycle hooks for PrecloseFacet.
+        selectors[18] = InteractionRewardsFacet.precloseRewardClose.selector;
+        selectors[19] = InteractionRewardsFacet.precloseRewardTransferObligation.selector;
         return selectors;
     }
 
