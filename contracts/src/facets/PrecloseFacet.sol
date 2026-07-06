@@ -1045,6 +1045,14 @@ contract PrecloseFacet is
         // conflict rationale as the other PrecloseFacet entry
         // points.
         LibVaipakam.assertNoLiveIntentCommit(loanId);
+        // #1001 (S3, Codex #1070 r6 P2) — Tier-1 caller screen. This creates and
+        // funds an offset offer as the borrower-NFT holder (not msg.sender), so
+        // `createOfferInternal`'s create-time screen only catches the borrower
+        // holder. A keeper approved before being sanctioned could otherwise still
+        // trigger the delegated creation and move the clean borrower's approved
+        // funds — the sibling entry points (`precloseDirect`,
+        // `transferObligationViaOffer`) all screen the caller here, so match them.
+        LibVaipakam._assertNotSanctioned(msg.sender);
         LibVaipakam.Loan storage loan = LibVaipakam.storageSlot().loans[loanId];
         // #1001 (S3) — one live offset offer per loan. A second offset would
         // create a second linked offer racing the same loan; the second's
@@ -1161,10 +1169,15 @@ contract PrecloseFacet is
         // Lock is cleared in completeOffset (success) or OfferFacet.cancelOffer
         // (cancel). See LibERC721.LockReason.
         LibERC721._lock(loan.borrowerTokenId, LibERC721.LockReason.PrecloseOffset);
+        // #1001 (S3, Codex #1070 r6 P3) — emit the ACTUAL offset creator (the
+        // borrower-position holder that owns + funds the offer and can cancel it),
+        // NOT `msg.sender` — which on the keeper-triggered path is the keeper.
+        // Matches the `offsetCreator` passed to `createOfferInternal` so indexers
+        // attribute the pending offset to the right party.
         emit OffsetOfferCreated(
             loanId,
             newOfferId,
-            msg.sender,
+            IERC721(address(this)).ownerOf(loan.borrowerTokenId),
             accruedShortfallSum
         );
     }
