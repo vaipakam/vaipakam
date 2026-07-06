@@ -720,6 +720,11 @@
   },
   {
     "type": "error",
+    "name": "OffsetActiveOnLoan",
+    "inputs": []
+  },
+  {
+    "type": "error",
     "name": "PadNumeraireRateFeedStale",
     "inputs": []
   },

@@ -14,6 +14,8 @@ import {OfferCreateFacet} from "../src/facets/OfferCreateFacet.sol";
 import {OfferAcceptFacet} from "../src/facets/OfferAcceptFacet.sol";
 import {LibAcceptTestSigner} from "./helpers/LibAcceptTestSigner.sol";
 import {OfferCancelFacet} from "../src/facets/OfferCancelFacet.sol";
+import {EarlyWithdrawalFacet} from "../src/facets/EarlyWithdrawalFacet.sol";
+import {OfferMutateFacet} from "../src/facets/OfferMutateFacet.sol";
 import {LoanFacet} from "../src/facets/LoanFacet.sol";
 import {IERC721} from "@openzeppelin/contracts/token/ERC721/IERC721.sol";
 import {ProfileFacet} from "../src/facets/ProfileFacet.sol";
@@ -178,7 +180,7 @@ contract PrecloseFacetTest is Test {
         testMutatorFacet = new TestMutatorFacet();
         helperTest = new HelperTest();
 
-        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](22);
+        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](24);
         cuts[0]  = IDiamondCut.FacetCut({facetAddress: address(offerCreateFacet),          action: IDiamondCut.FacetCutAction.Add, functionSelectors: helperTest.getOfferCreateFacetSelectors()});
         cuts[17] = IDiamondCut.FacetCut({
             facetAddress: address(offerAcceptFacet),
@@ -228,6 +230,18 @@ contract PrecloseFacetTest is Test {
             facetAddress: address(new RiskAccessFacet()),
             action: IDiamondCut.FacetCutAction.Add,
             functionSelectors: helperTest.getRiskAccessFacetSelectors()
+        });
+        // #1001 (S3, Codex #1070) — EarlyWithdrawalFacet + OfferMutateFacet so the
+        // offset-vs-lender-sale and offset-offer-immutability guards are testable.
+        cuts[22] = IDiamondCut.FacetCut({
+            facetAddress: address(new EarlyWithdrawalFacet()),
+            action: IDiamondCut.FacetCutAction.Add,
+            functionSelectors: helperTest.getEarlyWithdrawalFacetSelectors()
+        });
+        cuts[23] = IDiamondCut.FacetCut({
+            facetAddress: address(new OfferMutateFacet()),
+            action: IDiamondCut.FacetCutAction.Add,
+            functionSelectors: helperTest.getOfferMutateFacetSelectors()
         });
 
         IDiamondCut(address(diamond)).diamondCut(cuts, address(0), "");
@@ -1224,6 +1238,121 @@ contract PrecloseFacetTest is Test {
         LibVaipakam.Loan memory loan = LoanFacet(address(diamond)).getLoanDetails(activeLoanId);
         assertEq(uint8(loan.status), uint8(LibVaipakam.LoanStatus.Repaid));
         vm.clearMockedCalls();
+    }
+
+    // ─── #1001 (S3) offset settle-at-completion redesign (Codex #1070) ──────
+
+    /// @dev #1001 (S3, redesign) — posting an offset moves NO settlement funds.
+    ///      The old lender's payoff is settled only at completion, so nothing is
+    ///      parked in the lender's vault (`heldForLender`) between posting and
+    ///      accept/cancel — the property that removes the whole interleaving
+    ///      hazard class. Only Alice's new-offer principal leaves her wallet (into
+    ///      her own vault, via createOffer).
+    function testOffsetPostingMovesNoSettlementFunds() public {
+        address lenderVault =
+            VaultFactoryFacet(address(diamond)).getUserVaultAddress(lender);
+        uint256 lenderVaultBefore = ERC20(mockERC20).balanceOf(lenderVault);
+
+        vm.prank(borrower);
+        PrecloseFacet(address(diamond)).offsetWithNewOffer(
+            activeLoanId, 500, 30, mockCollateralERC20, COLLATERAL, true, mockERC20
+        );
+
+        // No prepay parked in the old lender's vault at posting.
+        assertEq(
+            ERC20(mockERC20).balanceOf(lenderVault),
+            lenderVaultBefore,
+            "posting parks nothing for the old lender"
+        );
+    }
+
+    /// @dev #1001 (S3, redesign) — cancelling an un-matched offset is clean: it
+    ///      only unlocks the borrower NFT + drops the link, and the ordinary
+    ///      Lender-cancel branch refunds Alice's new-offer principal. Nothing to
+    ///      unwind, because posting parked nothing. The borrower is made whole and
+    ///      the old lender's vault is untouched throughout.
+    function testCancelOffsetIsCleanNoUnwindNeeded() public {
+        address lenderVault =
+            VaultFactoryFacet(address(diamond)).getUserVaultAddress(lender);
+        uint256 lenderVaultBefore = ERC20(mockERC20).balanceOf(lenderVault);
+        uint256 borrowerWalletBefore = ERC20(mockERC20).balanceOf(borrower);
+
+        vm.prank(borrower);
+        uint256 newOfferId = PrecloseFacet(address(diamond)).offsetWithNewOffer(
+            activeLoanId, 500, 30, mockCollateralERC20, COLLATERAL, true, mockERC20
+        );
+
+        vm.prank(borrower);
+        OfferCancelFacet(address(diamond)).cancelOffer(newOfferId);
+
+        assertEq(
+            ERC20(mockERC20).balanceOf(lenderVault),
+            lenderVaultBefore,
+            "old lender vault untouched across post+cancel"
+        );
+        assertEq(
+            ERC20(mockERC20).balanceOf(borrower),
+            borrowerWalletBefore,
+            "borrower made whole on cancel (new-offer principal refunded)"
+        );
+
+        // Link cleared → a fresh offset is permitted again.
+        vm.prank(borrower);
+        PrecloseFacet(address(diamond)).offsetWithNewOffer(
+            activeLoanId, 500, 30, mockCollateralERC20, COLLATERAL, true, mockERC20
+        );
+    }
+
+    /// @dev #1001 (S3) — only ONE live offset offer per loan.
+    function testOffsetRejectsSecondWhileOneLive() public {
+        vm.mockCall(address(diamond), abi.encodeWithSelector(OfferCreateFacet.createOfferInternal.selector), abi.encode(uint256(99)));
+        vm.prank(borrower);
+        PrecloseFacet(address(diamond)).offsetWithNewOffer(activeLoanId, 500, 30, mockCollateralERC20, COLLATERAL, true, mockERC20);
+
+        vm.expectRevert(PrecloseFacet.OffsetAlreadyActive.selector);
+        vm.prank(borrower);
+        PrecloseFacet(address(diamond)).offsetWithNewOffer(activeLoanId, 500, 30, mockCollateralERC20, COLLATERAL, true, mockERC20);
+        vm.clearMockedCalls();
+    }
+
+    /// @dev #1001 (S3, Codex #1070) — while an offset is live, an obligation
+    ///      transfer (which would repoint `loan.borrower`, the offset's payer at
+    ///      completion) is rejected. Cancel/complete the offset first.
+    function testTransferObligationRejectedWhileOffsetLive() public {
+        vm.mockCall(address(diamond), abi.encodeWithSelector(OfferCreateFacet.createOfferInternal.selector), abi.encode(uint256(99)));
+        vm.prank(borrower);
+        PrecloseFacet(address(diamond)).offsetWithNewOffer(activeLoanId, 500, 30, mockCollateralERC20, COLLATERAL, true, mockERC20);
+        vm.clearMockedCalls();
+
+        vm.expectRevert(PrecloseFacet.OffsetAlreadyActive.selector);
+        vm.prank(borrower);
+        PrecloseFacet(address(diamond)).transferObligationViaOffer(activeLoanId, 12345);
+    }
+
+    /// @dev #1001 (S3, Codex #1070) — while an offset is live, listing the lender
+    ///      position for sale is rejected (two concurrent close-outs of one loan).
+    function testCreateLoanSaleRejectedWhileOffsetLive() public {
+        vm.mockCall(address(diamond), abi.encodeWithSelector(OfferCreateFacet.createOfferInternal.selector), abi.encode(uint256(99)));
+        vm.prank(borrower);
+        PrecloseFacet(address(diamond)).offsetWithNewOffer(activeLoanId, 500, 30, mockCollateralERC20, COLLATERAL, true, mockERC20);
+        vm.clearMockedCalls();
+
+        vm.expectRevert(EarlyWithdrawalFacet.OffsetActiveOnLoan.selector);
+        vm.prank(lender);
+        EarlyWithdrawalFacet(address(diamond)).createLoanSaleOffer(activeLoanId, 500, true);
+    }
+
+    /// @dev #1001 (S3, Codex #1070) — a linked offset offer is immutable: its
+    ///      terms are pinned to the loan it offsets until accepted or cancelled.
+    function testOffsetOfferImmutableWhileLinked() public {
+        vm.prank(borrower);
+        uint256 newOfferId = PrecloseFacet(address(diamond)).offsetWithNewOffer(
+            activeLoanId, 500, 30, mockCollateralERC20, COLLATERAL, true, mockERC20
+        );
+
+        vm.expectRevert(OfferMutateFacet.OffsetVehicleImmutable.selector);
+        vm.prank(borrower);
+        OfferMutateFacet(address(diamond)).setOfferRate(newOfferId, 400, 400);
     }
 
     // ─── precloseDirect NFT rental path ─────────────────────────────────────

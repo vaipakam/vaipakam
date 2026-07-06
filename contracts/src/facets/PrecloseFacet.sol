@@ -5,6 +5,7 @@ pragma solidity ^0.8.29;
 import {LibVaipakam} from "../libraries/LibVaipakam.sol";
 import {InteractionRewardsFacet} from "./InteractionRewardsFacet.sol";
 import {LibEncumbrance} from "../libraries/LibEncumbrance.sol";
+import {LibSanctionedLock} from "../libraries/LibSanctionedLock.sol";
 import {LibLifecycle} from "../libraries/LibLifecycle.sol";
 import {LibAuth} from "../libraries/LibAuth.sol";
 import {LibEntitlement} from "../libraries/LibEntitlement.sol";
@@ -150,6 +151,17 @@ contract PrecloseFacet is
     error InsufficientCollateral();
     error OffsetNotLinked();
     error OffsetOfferNotAccepted();
+    /// #1001 (S3) — a loan may have at most ONE live offset offer at a time.
+    /// A second `offsetWithNewOffer` while `loanToOffsetOfferId[loanId] != 0`
+    /// would prepay the old lender a SECOND `heldForLender` slice (monotone
+    /// accumulator), so it is rejected until the first offer is completed or
+    /// cancelled (which clears the link + unwinds the prepay).
+    error OffsetAlreadyActive();
+    /// #1001 (S3, Codex #1070) — an offset can't be opened while a lender sale
+    /// listing (`loanToSaleOfferId`) is live on the same loan; the two close-out
+    /// flows would race and leave one vehicle stale. Symmetric to
+    /// `EarlyWithdrawalFacet.OffsetActiveOnLoan`.
+    error SaleListingActiveOnLoan();
 
     // ─── Option 1: Direct Preclose ────────────────────────────────��─────────
 
@@ -524,6 +536,13 @@ contract PrecloseFacet is
         // and re-opens loan state on behalf of msg.sender.
         LibVaipakam._assertNotSanctioned(msg.sender);
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        // #1001 (S3, Codex #1070) — refuse to transfer the obligation while a
+        // Preclose Option-3 offset offer is live on this loan. The offset settles
+        // the old lender from `loan.borrower` at completion; rewriting the
+        // borrower here would repoint that payer and leave the offset link
+        // pointing at a loan whose borrower has changed under it. The offset must
+        // be cancelled (or completed) first.
+        if (s.loanToOffsetOfferId[loanId] != 0) revert OffsetAlreadyActive();
         LibVaipakam.Loan storage loan = s.loans[loanId];
         // Phase 6: borrower-entitled strategic flow (Preclose Option 2).
         // Authority binds to the current borrower-NFT owner OR a keeper
@@ -1031,7 +1050,33 @@ contract PrecloseFacet is
         // conflict rationale as the other PrecloseFacet entry
         // points.
         LibVaipakam.assertNoLiveIntentCommit(loanId);
-        LibVaipakam.Loan storage loan = LibVaipakam.storageSlot().loans[loanId];
+        // #1001 (S3, Codex #1070 r6 P2) — Tier-1 caller screen. This creates and
+        // funds an offset offer as the borrower-NFT holder (not msg.sender), so
+        // `createOfferInternal`'s create-time screen only catches the borrower
+        // holder. A keeper approved before being sanctioned could otherwise still
+        // trigger the delegated creation and move the clean borrower's approved
+        // funds — the sibling entry points (`precloseDirect`,
+        // `transferObligationViaOffer`) all screen the caller here, so match them.
+        LibVaipakam._assertNotSanctioned(msg.sender);
+        // Cache the storage pointer once (EIP-170: PrecloseFacet is size-tight —
+        // three separate `storageSlot()` inlines here cost bytecode).
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        LibVaipakam.Loan storage loan = s.loans[loanId];
+        // #1001 (S3) — one live offset offer per loan. A second offset would
+        // create a second linked offer racing the same loan; the second's
+        // completion would revert anyway (loan no longer Active), but rejecting
+        // up front is a clean error.
+        if (s.loanToOffsetOfferId[loanId] != 0)
+            revert OffsetAlreadyActive();
+        // #1001 (S3, Codex #1070 r8 P2) — SYMMETRIC to the round-4 guard that
+        // blocks `createLoanSaleOffer` while an offset is live. If a lender sale
+        // listing is already open on this loan, don't let the borrower open an
+        // offset too: both flows would be live on one loan, and whichever closes
+        // first leaves the other's vehicle + NFT lock stale (a later accept of the
+        // stale one reverts after the counterparty commits). Require the sale
+        // listing be cancelled first.
+        if (s.loanToSaleOfferId[loanId] != 0)
+            revert SaleListingActiveOnLoan();
         _validateOffsetRequest(
             loan,
             durationDays,
@@ -1040,15 +1085,16 @@ contract PrecloseFacet is
             prepayAsset
         );
 
-        // ── 1. alice pays accrued interest + shortfall ──────────────────────
-        // All payment-flow locals are consumed inside _settleOffsetPayments so
-        // the outer frame only carries accruedShortfallSum (needed by emit).
-        uint256 accruedShortfallSum = _settleOffsetPayments(
-            loan,
-            loanId,
-            interestRateBps,
-            durationDays
-        );
+        // ── 1. NO settlement at posting (Codex #1070 redesign) ──────────────
+        // The old lender's payoff is settled AT COMPLETION, from live terms
+        // (`_settleOldLenderAtCompletion`). Posting moves no settlement funds and
+        // parks nothing in shared state — so an interleaving lender-sale,
+        // close-out, obligation-transfer or term-mutation can't corrupt a prepay
+        // (there is none). The `OffsetOfferCreated.accruedShortfall` field is a
+        // posting-time PREVIEW only; since the redesign settles nothing here it is
+        // emitted as 0 (the authoritative figure is computed + charged at
+        // completion). Skipping the read-only `_computeOffsetSettlement` preview
+        // also keeps this size-tight god-facet under the EIP-170 limit.
 
         // ── 2. Create lender offer via cross-facet call ─────────────────────
         // alice deposits principal into her vault (handled by createOffer).
@@ -1066,7 +1112,7 @@ contract PrecloseFacet is
         // ── 3+4. Link, lock, emit ─ all moved to a helper so the outer frame
         // has room for the storage-write / lock / emit triplet under
         // --ir-minimum. See _finalizeOffsetLink for details.
-        _finalizeOffsetLink(loan, loanId, newOfferId, accruedShortfallSum);
+        _finalizeOffsetLink(loan, loanId, newOfferId, 0);
     }
 
     /**
@@ -1138,10 +1184,15 @@ contract PrecloseFacet is
         // Lock is cleared in completeOffset (success) or OfferFacet.cancelOffer
         // (cancel). See LibERC721.LockReason.
         LibERC721._lock(loan.borrowerTokenId, LibERC721.LockReason.PrecloseOffset);
+        // #1001 (S3, Codex #1070 r6 P3) — emit the ACTUAL offset creator (the
+        // borrower-position holder that owns + funds the offer and can cancel it),
+        // NOT `msg.sender` — which on the keeper-triggered path is the keeper.
+        // Matches the `offsetCreator` passed to `createOfferInternal` so indexers
+        // attribute the pending offset to the right party.
         emit OffsetOfferCreated(
             loanId,
             newOfferId,
-            msg.sender,
+            IERC721(address(this)).ownerOf(loan.borrowerTokenId),
             accruedShortfallSum
         );
     }
@@ -1154,79 +1205,121 @@ contract PrecloseFacet is
      *      otherwise `forge coverage --ir-minimum` runs out of stack slots
      *      when the outer function continues with the offer-creation path.
      */
-    function _settleOffsetPayments(
+    /// @dev #1001 (S3, Codex #1070 redesign) — PURE computation of the old
+    ///      lender's offset payoff from the CURRENT loan + replacement terms.
+    ///      Split out so it can be evaluated read-only at posting (for the
+    ///      informational event) and again at completion (for the actual
+    ///      transfers), always against live state. `elapsed` is read at call
+    ///      time, so evaluating at completion naturally pays the old lender for
+    ///      the FULL time the loan actually ran (posting→completion included),
+    ///      and the shortfall reflects the replacement offer's live rate/term —
+    ///      which is why a later term mutation can't undercompensate the lender.
+    /// @return treasuryFee        the treasury cut on accrued interest
+    /// @return lenderTotal        principal + (accrued − fee) + shortfall owed
+    ///                            to the old lender
+    function _computeOffsetSettlement(
         LibVaipakam.Loan storage loan,
-        uint256 loanId,
         uint256 interestRateBps,
         uint256 durationDays
-    ) private returns (uint256 accruedShortfallSum) {
-        uint256 treasuryFee;
-        uint256 interestToLender;
-        {
-            // #641 — read the interest clock, not the immutable term tuple.
-            uint256 elapsed = block.timestamp - LibVaipakam.interestAccrualStartOf(loan);
-            uint256 totalSecs = LibVaipakam.interestRemainingDaysOf(loan) * 1 days;
-            uint256 remainingSecs = totalSecs > elapsed ? totalSecs - elapsed : 0;
-            uint256 accruedInterest = (loan.principal *
-                loan.interestRateBps *
-                elapsed) /
-                (LibVaipakam.SECONDS_PER_YEAR * LibVaipakam.BASIS_POINTS);
-            uint256 originalExpectedRemaining = (loan.principal *
-                loan.interestRateBps *
-                remainingSecs) /
-                (LibVaipakam.SECONDS_PER_YEAR * LibVaipakam.BASIS_POINTS);
-            uint256 newExpectedEarning = (loan.principal *
-                interestRateBps *
-                (durationDays * 1 days)) /
-                (LibVaipakam.SECONDS_PER_YEAR * LibVaipakam.BASIS_POINTS);
-            uint256 shortfall = originalExpectedRemaining > newExpectedEarning
-                ? originalExpectedRemaining - newExpectedEarning
-                : 0;
+    )
+        private
+        view
+        returns (uint256 treasuryFee, uint256 lenderTotal)
+    {
+        // #641 — read the interest clock, not the immutable term tuple.
+        uint256 elapsed = block.timestamp - LibVaipakam.interestAccrualStartOf(loan);
+        uint256 totalSecs = LibVaipakam.interestRemainingDaysOf(loan) * 1 days;
+        uint256 remainingSecs = totalSecs > elapsed ? totalSecs - elapsed : 0;
+        uint256 accruedInterest = (loan.principal *
+            loan.interestRateBps *
+            elapsed) /
+            (LibVaipakam.SECONDS_PER_YEAR * LibVaipakam.BASIS_POINTS);
+        // #1001 (S3, Codex #1070 r9 P2) — NET already-settled periodic interest.
+        // A loan on a periodic-interest cadence may have auto-liquidated some
+        // interest into `loan.interestSettled` (already paid to the lender). The
+        // gross accrual above covers the FULL elapsed window, so without crediting
+        // the settled portion the offset would charge the borrower — and pay the
+        // lender — that interest twice. Saturating subtraction, mirroring
+        // `LibEntitlement.settlementInterestNet` / `RepayFacet` (the same S12
+        // double-charge class the forced-close paths net).
+        uint256 settled = uint256(loan.interestSettled);
+        accruedInterest = accruedInterest > settled ? accruedInterest - settled : 0;
+        uint256 originalExpectedRemaining = (loan.principal *
+            loan.interestRateBps *
+            remainingSecs) /
+            (LibVaipakam.SECONDS_PER_YEAR * LibVaipakam.BASIS_POINTS);
+        uint256 newExpectedEarning = (loan.principal *
+            interestRateBps *
+            (durationDays * 1 days)) /
+            (LibVaipakam.SECONDS_PER_YEAR * LibVaipakam.BASIS_POINTS);
+        uint256 shortfall = originalExpectedRemaining > newExpectedEarning
+            ? originalExpectedRemaining - newExpectedEarning
+            : 0;
 
-            (treasuryFee, ) = LibEntitlement.splitTreasury(loan, accruedInterest);
-            interestToLender = accruedInterest - treasuryFee + shortfall;
-            accruedShortfallSum = accruedInterest + shortfall;
-        }
+        (treasuryFee, ) = LibEntitlement.splitTreasury(loan, accruedInterest);
+        lenderTotal = loan.principal + (accruedInterest - treasuryFee) + shortfall;
+    }
 
+    /// @dev #1001 (S3, Codex #1070 redesign) — settle the old lender AT
+    ///      COMPLETION (not at posting). Runs inside the acceptor's atomic
+    ///      `acceptOffer` tx. This is the ONLY point the offset touches the old
+    ///      loan's settlement state: nothing is parked between posting and
+    ///      accept/cancel, so an interleaving lender-sale / close-out / mutate
+    ///      can't corrupt a prepay (there is none). The payer is `loan.borrower`
+    ///      (Alice) via her standing allowance — NOT `msg.sender`, which at
+    ///      completion is the accepting counterparty / keeper / Diamond. The
+    ///      recipient is `loan.lender` — read live, so a lender that SOLD the
+    ///      position is paid to the current holder's vault.
+    function _settleOldLenderAtCompletion(
+        LibVaipakam.Loan storage loan,
+        uint256 loanId,
+        LibVaipakam.Offer storage offer
+    ) private {
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        (uint256 treasuryFee, uint256 lenderTotal) = _computeOffsetSettlement(
+            loan, offer.interestRateBps, offer.durationDays
+        );
         address payAssetOffset = _paymentAsset(loan);
         if (treasuryFee > 0) {
             IERC20(payAssetOffset).safeTransferFrom(
-                msg.sender,
+                loan.borrower,               // payer — Alice (standing allowance)
                 LibFacet.getTreasury(),
                 treasuryFee
             );
             LibFacet.recordTreasuryAccrual(payAssetOffset, treasuryFee);
         }
-
-        // T-037 — Repay original principal + interest/shortfall direct
-        // to old lender's vault via the cross-payer chokepoint. alice
-        // must return liam's principal; the new offer deposit is
-        // separate capital alice puts up to become the new lender.
-        // Routing through `vaultDepositERC20From` keeps the Diamond
-        // out of the funds path AND ticks the
-        // protocolTrackedVaultBalance counter under the old lender.
-        uint256 lenderTotal = loan.principal + interestToLender;
+        // Repay original principal + interest/shortfall into the CURRENT old
+        // lender's vault via the cross-payer chokepoint (keeps the Diamond out
+        // of the funds path AND ticks protocolTrackedVaultBalance under the
+        // lender). Alice returns Liam's principal here; her separate new-offer
+        // capital was pre-vaulted at `createOffer` when she posted.
+        //
+        // #1001 (S3, Codex #1070 r5 P2) — vault-lock the receive side. Because
+        // this redesign moved the old-lender payoff from posting to completion, a
+        // lender flagged AFTER posting but BEFORE acceptance would otherwise brick
+        // `acceptOffer`/`completeOffsetInternal` on the receiving-vault sanctions
+        // screen — stranding the whole offset even though the proceeds land in the
+        // lender's OWN vault, frozen behind the Tier-1 claim gate. Pin the
+        // receive-side exemption to `loan.lender` so the close-out completes; the
+        // parked-proceeds audit event fires from `end(...)` when flagged. Same
+        // pattern as `RepayFacet`'s terminal lender deposit.
+        LibSanctionedLock.begin(s, loan.lender);
         LibFacet.crossFacetCall(
             abi.encodeWithSelector(
                 VaultFactoryFacet.vaultDepositERC20From.selector,
-                msg.sender,        // payer — alice
-                loan.lender,       // user — old lender (liam)
+                loan.borrower,               // payer — Alice
+                loan.lender,                 // user — current old-lender holder
                 payAssetOffset,
                 lenderTotal
             ),
             VaultDepositFailed.selector
         );
+        LibSanctionedLock.end(s, loan.lender, loanId, payAssetOffset, lenderTotal);
         s.heldForLender[loanId] += lenderTotal;
-        // #597 — reserve the held-for-lender VPFI against the unstake path.
-        // Contrary to the earlier #592 note, the offset does NOT rewrite
-        // `loan.lender` on THIS (original) loan: the old lender keeps the
-        // position and claims this payoff via `claimAsLender`
-        // (`_completeOffsetImpl` records the held but not `lenderClaims`, and
-        // the claim withdraws `heldForLender[loanId]` from the old lender's
-        // vault). The new lender takes a SEPARATE new loan. So the reservation
-        // and the claim-time release key on the same (old-lender) account here
-        // — no migration needed. Gated on VPFI.
+        // #597 — reserve the held VPFI against the old lender's unstake path for
+        // the (now brief) window between this write and `claimAsLender`. VPFI is
+        // the one principal asset with a user-facing tracked-balance exit; no-op
+        // otherwise. Released path-agnostically in `ClaimFacet._claimAsLenderImpl`.
         if (payAssetOffset == s.vpfiToken) {
             LibEncumbrance.encumberLenderProceeds(
                 loanId, loan.lender, payAssetOffset, lenderTotal
@@ -1267,23 +1360,25 @@ contract PrecloseFacet is
         // through the diamond fallback. Same pattern as
         // `OfferFacet.acceptOfferInternal` for matchOffers.
         //
-        // Pass `msg.sender` (alice, the offset initiator) as
-        // `creator`. Without this the diamond's call() would set
-        // `msg.sender == diamond` inside createOfferInternal,
-        // corrupting `offer.creator` and the asset-pull allowance
-        // check.
-        // #671 (Codex #727 r1 P1) — this offset path creates a NEW lender offer
-        // for `msg.sender` (a real user, not a protocol sale vehicle), so it is
-        // NOT exempt from the create-time risk-access gate: an under-tiered
-        // borrower must not be able to offset an illiquid / tier-1 loan into a
-        // fresh ungated offer. The gate runs inside `createOfferInternal` on the
-        // offer creator. (Only the lender-sale vehicle in `EarlyWithdrawalFacet`
-        // sets `saleVehicleCreate`, because there the risk is the exiting
-        // lender's and was already gated at the original loan.)
+        // #1001 (S3, Codex #1070 r5 P2) — create AND fund the offset offer as the
+        // BORROWER-position holder, NOT `msg.sender`. `offsetWithNewOffer` is a
+        // borrower-entitled action a keeper (INIT_PRECLOSE) may trigger; if the
+        // creator were `msg.sender`, a keeper would own the new lender NFT + fund
+        // its principal, yet completion pulls the old-loan payoff from
+        // `loan.borrower` — so a keeper could strand a fillable offer that later
+        // spends the borrower's allowance while the keeper pockets the lender
+        // position. Binding the creator to the borrower holder keeps the economics
+        // coherent: the borrower funds + owns the new lender position AND pays the
+        // payoff, and the keeper is a pure trigger. For a self-initiated offset
+        // `ownerOf(borrowerTokenId) == msg.sender`, so this is a no-op there.
+        // (The borrower NFT is locked for the offset, so this holder is fixed from
+        // posting through completion.) The #671 create-time risk-access gate still
+        // runs inside `createOfferInternal` on this creator.
+        address offsetCreator = IERC721(address(this)).ownerOf(loan.borrowerTokenId);
         (bool success, bytes memory result) = address(this).call(
             abi.encodeWithSelector(
                 OfferCreateFacet.createOfferInternal.selector,
-                msg.sender,
+                offsetCreator,
                 params
             )
         );
@@ -1367,6 +1462,15 @@ contract PrecloseFacet is
     function completeOffset(
         uint256 originalLoanId
     ) external nonReentrant whenNotPaused {
+        // #1001 (S3, Codex #1070 r7 P2) — Tier-1 caller screen on the EXTERNAL
+        // recovery hook. This path pulls the old-loan payoff from the borrower and
+        // deposits it to the lender, so a keeper (COMPLETE_OFFSET) approved before
+        // being sanctioned must not be able to trigger the value-moving close-out —
+        // matching `completeLoanSale` + the sibling preclose entry points. The
+        // internal auto-complete path (`completeOffsetInternal`) is intentionally
+        // NOT screened here: its caller is the diamond itself and the accepting
+        // counterparty was already screened at `acceptOffer`.
+        LibVaipakam._assertNotSanctioned(msg.sender);
         _completeOffsetImpl(originalLoanId);
     }
 
@@ -1437,6 +1541,43 @@ contract PrecloseFacet is
             /* lenderSide */ false
         );
 
+        // #1001 (S3, Codex #1070 r8 P2) — clear any parallel-sale listing BEFORE
+        // the consolidation below. A borrower-side listing (`prepayListingOrderHash`
+        // / offer-keyed) makes `_isExcludedLive` SKIP the borrower-side
+        // consolidation, which would leave `loan.borrower` stale and let
+        // `_settleOldLenderAtCompletion` pull the payoff from the prior holder
+        // instead of the current NFT owner. Ordering it first (as `precloseDirect`
+        // does) guarantees consolidation isn't excluded by a live listing.
+        // Idempotent no-op in the normal flow (the offset lock blocks a listing).
+        LibPrepayCleanup.clearActiveListing(loan, originalLoanId);
+
+        // #1001 (S3, Codex #1070 r3 P1/P2) — re-anchor BOTH sides to their
+        // current NFT holders BEFORE settling, exactly as `precloseDirect` and
+        // `RepayFacet` do at their close-outs. A position NFT transferred before
+        // (borrower) or during (lender — the offset locks only the borrower NFT)
+        // the offset leaves `loan.borrower`/`loan.lender` stale; without this the
+        // completion would pull the payoff from / deposit it to the wrong party
+        // (charging the original borrower, or paying a stale lender that a current
+        // clean holder can't then claim from). Consolidation re-anchors the stored
+        // anchors to `ownerOf(tokenId)` + moves any vaulted assets; the offset's
+        // borrower-NFT lock is untouched (consolidation never moves the NFT).
+        // Best-effort (Tier-2 close-out semantics live inside).
+        LibFacet.crossFacetCall(
+            abi.encodeWithSelector(
+                ConsolidationFacet.eagerConsolidateBothSides.selector,
+                originalLoanId
+            ),
+            bytes4(0)
+        );
+
+        // #1001 (S3, Codex #1070 redesign) — settle the old lender HERE, from
+        // live terms, pulling from the CURRENT borrower holder (`loan.borrower`,
+        // just re-anchored) into the CURRENT lender holder's vault. This is the
+        // sole point the offset touches the old loan's settlement state; posting
+        // parked nothing. Runs before the borrower-collateral claim + the
+        // Active→Repaid transition below.
+        _settleOldLenderAtCompletion(loan, originalLoanId, offer);
+
         // Record borrower's claimable (collateral stays in borrower's vault)
         s.borrowerClaims[originalLoanId] = LibVaipakam.ClaimInfo({
             asset: loan.collateralAsset,
@@ -1447,25 +1588,18 @@ contract PrecloseFacet is
             claimed: false
         });
 
-        // heldForLender funds (from offsetWithNewOffer step 1) are already in the
-        // lender's vault. They are withdrawn via ClaimFacet.claimAsLender, which
-        // checks s.heldForLender[loanId] and uses the correct payment asset.
-        // Do NOT record them in lenderClaims to avoid double-counting.
+        // The old lender's payoff was just deposited into their vault and
+        // recorded in `heldForLender[loanId]` by `_settleOldLenderAtCompletion`.
+        // It is withdrawn via `ClaimFacet.claimAsLender`, which reads
+        // `s.heldForLender[loanId]` + the correct payment asset. Do NOT record it
+        // in `lenderClaims` to avoid double-counting.
 
         // If NFT lending: Reset renter
         if (loan.assetType != LibVaipakam.AssetType.ERC20) {
             _resetNftRenter(loan);
         }
-
-        // T-086 follow-up to step 14 — defensive prepay-listing cleanup.
-        // In normal flow this is a no-op (the borrower must cancel the
-        // listing before initiating an offset, because the borrower-NFT
-        // lock-overwrite-protection from step 6 round 2 blocks
-        // `_lock(PrecloseOffset)` over a live `_lock(PrepayCollateralListing)`).
-        // The call stays as belt-and-suspenders so any future change
-        // that loosens the lock-overwrite invariant doesn't silently
-        // leave stale listing bookkeeping behind. Idempotent.
-        LibPrepayCleanup.clearActiveListing(loan, originalLoanId);
+        // (Parallel-sale listing cleanup moved ABOVE the consolidation — see the
+        // Codex #1070 r8 P2 note there.)
 
         // Close original loan — offset completion transitions Active -> Repaid.
         _setLoanClaimable(loan, originalLoanId);

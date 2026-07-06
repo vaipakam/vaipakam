@@ -448,6 +448,19 @@ contract OfferMutateFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamE
             offerId != 0 &&
             LibVaipakam.storageSlot().saleOfferToLoanId[offerId] != 0
         ) revert SaleVehicleImmutable();
+        // #1001 (S3, Codex #1070) — a linked Preclose-Option-3 offset offer is
+        // likewise immutable. It is pinned to the original loan it offsets
+        // (amount == that loan's principal, collateral >= the loan's, a maturity
+        // that can't outrun the original). `_completeOffsetImpl` settles the old
+        // lender from the offer's LIVE rate/term, so a rate mutation no longer
+        // undercompensates the lender — but letting the creator move the amount,
+        // collateral, or maturity after linking would still desync the offset
+        // vehicle from the loan it is bound to. Freeze it until accepted or
+        // cancelled, same posture as the sale vehicle above.
+        if (
+            offerId != 0 &&
+            LibVaipakam.storageSlot().offsetOfferToLoanId[offerId] != 0
+        ) revert OffsetVehicleImmutable();
     }
 
     /// @notice Codex round-6 P2 #5 — raised when a creator attempts
@@ -461,6 +474,11 @@ contract OfferMutateFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamE
     ///         immutable until accepted or cancelled; its terms are pinned to the
     ///         live loan. See LenderSaleVehicleRedesign.md.
     error SaleVehicleImmutable();
+    /// @notice #1001 (S3, Codex #1070) — a Lender offer linked as a Preclose
+    ///         Option-3 offset vehicle (`offsetOfferToLoanId[offerId] != 0`) is
+    ///         immutable until accepted or cancelled; its terms are pinned to the
+    ///         original loan it offsets.
+    error OffsetVehicleImmutable();
 
     /// @notice T-086 Round-8 (#358) §19.6 — raised by every mutator
     ///         when a live parallel-sale Seaport listing is bound to
