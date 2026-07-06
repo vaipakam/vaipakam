@@ -64,6 +64,17 @@ function str(key: string, fallback: string): string {
   return (env[key] as string | undefined) ?? fallback;
 }
 
+/** WebSocket RPC URL for a chain, or null when the deploy hasn't
+ *  opted in (#1031, ported from alpha02's chains.ts): reads the RPC
+ *  env key with `_RPC_URL` → `_WSS_URL`. Trimmed-empty counts as
+ *  unset — a copied-as-is .env.example must not produce
+ *  `webSocket('')`. */
+function wsStr(rpcUrlEnvKey: string): string | null {
+  const key = rpcUrlEnvKey.replace('_RPC_URL', '_WSS_URL');
+  const fromEnv = (env[key] as string | undefined)?.trim();
+  return fromEnv || null;
+}
+
 /** Static chain metadata — every field that doesn't change between
  *  deploys lives here. The dynamic fields (Diamond address, deploy
  *  block, facet/adapter addresses) are pulled from the deployments
@@ -132,6 +143,7 @@ function buildChainConfig(meta: ChainMeta): ChainConfig {
     name: meta.name,
     shortName: meta.shortName,
     rpcUrl: str(meta.rpcUrlEnvKey, meta.rpcUrlDefault),
+    wsUrl: wsStr(meta.rpcUrlEnvKey),
     blockExplorer: meta.blockExplorer,
     diamondAddress: userFacingDiamond,
     deployBlock: dep?.deployBlock ?? 0,

@@ -1046,6 +1046,9 @@ The website/app should clearly communicate:
 - borrowers should be able to subscribe to loan-specific HF alerts with a chosen threshold such as `1.20`
 - HF alert channels should include Telegram and Push Protocol where available; Push sending may be staged behind production channel setup without changing the client workflow
 - Profile should include an Approvals section where users can inspect and revoke ERC-20, ERC-721, and ERC-1155 allowances granted to the Vaipakam Diamond
+- allowance inspection must be honest about read failures: when an allowance read fails for one or more tokens, the surface must say so (with a count and a retry action) rather than silently omitting the rows — an absent row must never be readable as "no allowance granted"
+- diagnostics classification of a failed action must recognise a wallet rejection even when the wallet's rejection is wrapped inside a library or transport error, so a user-declined signature is recorded as a wallet event and never misfiled as a contract revert
+- where a chain has a WebSocket RPC endpoint configured, the app may prefer it for reads and must silently fall back to ordinary HTTP if the socket cannot connect or drops; chains without one behave exactly as before
 - whether the user is in a basic or advanced experience mode
 - asset identity in a user-friendly format: the default visible label should be the asset symbol, while the full contract address should appear only in a hover / focus tooltip or explicit details view
 - implementation note for asset pickers and token selectors: the UI may additionally show a shortened contract address inline next to the symbol/name when that helps users distinguish similarly named assets or verify they selected the intended token; full raw addresses should still be reserved for hover / focus, copy actions, or explicit details views rather than rendered prominently as the primary asset label

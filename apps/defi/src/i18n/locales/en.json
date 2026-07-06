@@ -1320,7 +1320,8 @@
     "revoke": "Revoke",
     "revoking": "Revoking…",
     "cleared": "cleared",
-    "footnote": "This page scans only the Vaipakam Diamond as spender on the current chain. Approvals granted to other contracts (DEX aggregators, other dApps) aren't listed here — use revoke.cash or a similar tool to audit them."
+    "footnote": "This page scans only the Vaipakam Diamond as spender on the current chain. Approvals granted to other contracts (DEX aggregators, other dApps) aren't listed here — use revoke.cash or a similar tool to audit them.",
+    "readFailed": "{{count}} token approval(s) could not be checked right now — what you see below may be incomplete. They are NOT shown as revoked; retry to check them."
   },
   "alerts": {
     "connectBody": "Connect your wallet to configure HF alerts.",

@@ -47,6 +47,12 @@ export interface AllowanceRow {
 
 interface UseAllowancesResult {
   rows: AllowanceRow[];
+  /** Tokens whose ALLOWANCE read failed this pass (#1031 — ported
+   *  from alpha02's ApprovalsCard posture): a failed read must fail
+   *  LOUD at the surface, never silently render as "no approval".
+   *  Symbol/decimals failures keep their cosmetic fallbacks; only
+   *  the load-bearing allowance read lands a token here. */
+  failedTokens: string[];
   loading: boolean;
   reload: () => Promise<void>;
 }
@@ -75,11 +81,13 @@ export function useAllowances(): UseAllowancesResult {
   const { loans } = useUserLoans(address);
 
   const [rows, setRows] = useState<AllowanceRow[]>([]);
+  const [failedTokens, setFailedTokens] = useState<string[]>([]);
   const [loading, setLoading] = useState(false);
 
   const load = useCallback(async () => {
     if (!address || !chainId) {
       setRows([]);
+      setFailedTokens([]);
       return;
     }
     setLoading(true);
@@ -143,11 +151,19 @@ export function useAllowances(): UseAllowancesResult {
               source,
             } as AllowanceRow;
           } catch {
-            return null;
+            // The allowance read itself failed (symbol/decimals carry
+            // their own fallbacks above). Surface the token instead
+            // of dropping it — a dropped row reads as "no approval",
+            // which is exactly the false-negative a revoke surface
+            // must never show (#1031).
+            return addr;
           }
         }),
       );
-      const good = results.filter((r): r is AllowanceRow => r !== null);
+      const good = results.filter(
+        (r): r is AllowanceRow => r !== null && typeof r !== 'string',
+      );
+      setFailedTokens(results.filter((r): r is string => typeof r === 'string'));
       // Sort: non-zero allowances first (these are the ones the user
       // cares about), then zero-allowance rows.
       good.sort((a, b) => {
@@ -165,7 +181,7 @@ export function useAllowances(): UseAllowancesResult {
     load();
   }, [load]);
 
-  return { rows, loading, reload: load };
+  return { rows, failedTokens, loading, reload: load };
 }
 
 function shortAddr(a: string): string {

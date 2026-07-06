@@ -526,7 +526,8 @@
     "revoke": "Revocar",
     "revoking": "Revocando…",
     "cleared": "limpio",
-    "footnote": "Esta página solo escanea el Vaipakam Diamond como spender en la cadena actual. Las aprobaciones otorgadas a otros contratos (agregadores DEX, otros dApps) no se listan aquí — usa revoke.cash o una herramienta similar para auditarlas."
+    "footnote": "Esta página solo escanea el Vaipakam Diamond como spender en la cadena actual. Las aprobaciones otorgadas a otros contratos (agregadores DEX, otros dApps) no se listan aquí — usa revoke.cash o una herramienta similar para auditarlas.",
+    "readFailed": "No se pudieron comprobar {{count}} aprobación(es) de tokens ahora mismo — la lista de abajo puede estar incompleta. NO se muestran como revocadas; reintenta para comprobarlas."
   },
   "alerts": {
     "connectBody": "Conecta tu billetera para configurar alertas de HF.",
