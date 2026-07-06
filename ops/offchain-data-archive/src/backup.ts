@@ -80,12 +80,19 @@ const ARCHIVE_TABLES_REQUIRED = [
   'user_thresholds',
   'notify_state',
   'telegram_links',
-  // Support tickets (#1040 phase 1) — the DURABLE record of user
-  // support requests (message, optional reply email, consented
-  // diagnostics). Born off chain; a D1 loss without backup would
-  // silently drop every ticket.
-  'support_tickets',
 ];
+
+// Rollout-aware required set: REQUIRED once its migration has been
+// applied, but a Worker deploy ordered BEFORE the migration must not
+// abort the whole nightly — no rows can exist in a table that isn't
+// there yet, so nothing is being lost (Codex round-5 P2). Missing →
+// loud warn + the daily ops message's open-ticket count reads
+// "n/a (table missing)", so the gap is operator-visible either way.
+//   - support_tickets (#1040 phase 1, migration 0028) — the DURABLE
+//     record of user support requests (message, optional reply
+//     email, consented diagnostics). Once the migration lands, a D1
+//     loss without backup would silently drop every ticket.
+const ARCHIVE_TABLES_REQUIRED_ONCE_MIGRATED = ['support_tickets'];
 
 // Re-derivable tables (backed up as restore-performance optimisation only).
 const ARCHIVE_TABLES_OPTIONAL = [
@@ -192,7 +199,11 @@ export async function runNightlyBackup(env: Env, b2Cfg: B2Config): Promise<Backu
 
   // 1. Export the two D1s.
   const archiveTables: TableExport[] = [];
-  for (const t of [...ARCHIVE_TABLES_REQUIRED, ...ARCHIVE_TABLES_OPTIONAL]) {
+  for (const t of [
+    ...ARCHIVE_TABLES_REQUIRED,
+    ...ARCHIVE_TABLES_REQUIRED_ONCE_MIGRATED,
+    ...ARCHIVE_TABLES_OPTIONAL,
+  ]) {
     try {
       archiveTables.push(await exportTable(env.DB_ARCHIVE, t));
     } catch (err) {
@@ -224,6 +235,16 @@ export async function runNightlyBackup(env: Env, b2Cfg: B2Config): Promise<Backu
     throw new Error(
       `BACKUP ABORT: required tables missing from vaipakam-archive: ${missingArchive.join(', ')}`,
     );
+  }
+  // Migration-gated tables missing → warn loudly but keep the run:
+  // aborting here would drop the WHOLE nightly (diag/legal/alerts)
+  // over a table that cannot hold data yet.
+  for (const t of ARCHIVE_TABLES_REQUIRED_ONCE_MIGRATED) {
+    if (!archiveTables.some((e) => e.name === t)) {
+      console.warn(
+        `[backup] migration-gated table ${t} missing — apply its migration; nightly continues without it`,
+      );
+    }
   }
   const missingLz = LZ_ALERTS_TABLES_REQUIRED.filter(
     (t) => !lzAlertsTables.some((e) => e.name === t),
@@ -318,8 +339,6 @@ export async function runNightlyBackup(env: Env, b2Cfg: B2Config): Promise<Backu
     return { encrypted, archiveSha, manifest };
   };
 
-  const { encrypted, archiveSha, manifest } = await buildPayload(archiveTables);
-
   // 5. Upload — archive first, then manifest. Reverse-order failure
   //    means a missing manifest with an existing archive (harmless;
   //    a later GC sweep cleans the orphan via the lifecycle rule).
@@ -361,50 +380,74 @@ export async function runNightlyBackup(env: Env, b2Cfg: B2Config): Promise<Backu
     nonceHex += nonceBytes[i].toString(16).padStart(2, '0');
   }
 
-  const writes: Array<{ archive: string; manifest: string }> = [
-    {
-      archive: `archives/${dateKey}/${nonceHex}.bin`,
-      manifest: `manifests/${dateKey}/${nonceHex}.json`,
-    },
-  ];
-  if (isFirstOfMonth) {
-    writes.push({
-      archive: `archives-monthly/${monthKey}/${nonceHex}.bin`,
-      manifest: `manifests-monthly/${monthKey}/${nonceHex}.json`,
-    });
-  }
+  // DAILY tier (30-day retention) — the FULL table set, including
+  // support_tickets. Built, uploaded, then RELEASED before any
+  // long-tier build: holding two ciphertexts (plus the second
+  // build's plaintext) at once could push a well-under-the-guard
+  // archive past the 128 MB isolate cap on exactly the runs that
+  // build twice (Codex round-5 P2).
+  const archiveKey = `archives/${dateKey}/${nonceHex}.bin`;
+  const manifestKey = `manifests/${dateKey}/${nonceHex}.json`;
+  let daily: Awaited<ReturnType<typeof buildPayload>> | null =
+    await buildPayload(archiveTables);
+  const archiveSha256 = daily.archiveSha;
+  const archiveBytes = daily.encrypted.byteLength;
+  await putObject(b2Cfg, archiveKey, daily.encrypted, 'application/octet-stream');
+  await putObject(
+    b2Cfg,
+    manifestKey,
+    new TextEncoder().encode(JSON.stringify(daily.manifest, null, 2)),
+    'application/json',
+  );
+  daily = null; // release the first ciphertext before any second build
 
-  const manifestBody = new TextEncoder().encode(JSON.stringify(manifest, null, 2));
-  for (const w of writes) {
-    await putObject(b2Cfg, w.archive, encrypted, 'application/octet-stream');
-    await putObject(b2Cfg, w.manifest, manifestBody, 'application/json');
-  }
-
-  // Yearly tier (Jan-1, NO lifecycle rule — indefinite retention):
-  // built as a SEPARATE payload that EXCLUDES `support_tickets`. The
-  // Privacy Policy promises tickets are deleted no later than 12
-  // months after submission; the daily (30-day) and monthly
-  // (365-day) tiers age out within the disclosed rotation schedule,
-  // but an indefinite copy would keep ticket contents forever and
-  // break that promise (Codex round-4 P2). Everything else in the
-  // yearly archive (legal-hold audit trail etc.) is exactly the
-  // data the indefinite tier exists for.
-  if (isFirstOfYear) {
-    const yearly = await buildPayload(
-      archiveTables.filter((t) => t.name !== 'support_tickets'),
+  // LONG tiers (monthly: 365-day lifecycle; yearly: NO rule,
+  // indefinite) — built as ONE separate payload that EXCLUDES
+  // `support_tickets`. The Privacy Policy promises tickets are
+  // deleted no later than 12 months after submission; a ticket
+  // caught by a monthly cut can outlive that by ~a month (Codex
+  // round-5 P1) and an indefinite yearly copy would keep it forever.
+  // With the exclusion, a ticket's backup copies live ONLY in the
+  // 30-day daily tier — at most 30 days past its D1 deletion.
+  // Everything else in the long tiers (legal-hold audit trail etc.)
+  // is exactly the data they exist for.
+  if (isFirstOfMonth || isFirstOfYear) {
+    let longTier: Awaited<ReturnType<typeof buildPayload>> | null =
+      await buildPayload(
+        archiveTables.filter((t) => t.name !== 'support_tickets'),
+      );
+    const longManifestBody = new TextEncoder().encode(
+      JSON.stringify(longTier.manifest, null, 2),
     );
-    await putObject(
-      b2Cfg,
-      `archives-yearly/${yearKey}/${nonceHex}.bin`,
-      yearly.encrypted,
-      'application/octet-stream',
-    );
-    await putObject(
-      b2Cfg,
-      `manifests-yearly/${yearKey}/${nonceHex}.json`,
-      new TextEncoder().encode(JSON.stringify(yearly.manifest, null, 2)),
-      'application/json',
-    );
+    if (isFirstOfMonth) {
+      await putObject(
+        b2Cfg,
+        `archives-monthly/${monthKey}/${nonceHex}.bin`,
+        longTier.encrypted,
+        'application/octet-stream',
+      );
+      await putObject(
+        b2Cfg,
+        `manifests-monthly/${monthKey}/${nonceHex}.json`,
+        longManifestBody,
+        'application/json',
+      );
+    }
+    if (isFirstOfYear) {
+      await putObject(
+        b2Cfg,
+        `archives-yearly/${yearKey}/${nonceHex}.bin`,
+        longTier.encrypted,
+        'application/octet-stream',
+      );
+      await putObject(
+        b2Cfg,
+        `manifests-yearly/${yearKey}/${nonceHex}.json`,
+        longManifestBody,
+        'application/json',
+      );
+    }
+    longTier = null;
   }
 
   // The healthcheck looks up the most recent manifest under
@@ -412,17 +455,14 @@ export async function runNightlyBackup(env: Env, b2Cfg: B2Config): Promise<Backu
   // key can do that) and dereferences to its sibling archive. The
   // BackupRunOutput surfaces the daily key — monthly / yearly
   // siblings are reflected in the Telegram alert.
-  const archiveKey = writes[0].archive;
-  const manifestKey = writes[0].manifest;
-
   const rowsBackedUp =
     archiveTables.reduce((a, t) => a + t.rowCount, 0) +
     lzAlertsTables.reduce((a, t) => a + t.rowCount, 0);
   return {
     manifestKey,
     archiveKey,
-    archiveBytes: encrypted.byteLength,
-    archiveSha256: archiveSha,
+    archiveBytes,
+    archiveSha256,
     rowsBackedUp,
     r2ObjectsBackedUp: r2Objects.length,
     durationMs: Date.now() - startedAt,

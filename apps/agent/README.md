@@ -49,7 +49,9 @@ Worker secrets (via `wrangler secret put`):
 | Secret | Purpose |
 |---|---|
 | `RPC_*` | Per-chain RPC URLs (carry API keys). |
-| `TG_BOT_TOKEN` | Telegram bot credential. |
+| `TG_BOT_TOKEN` | Telegram bot credential (user-facing bot). |
+| `TG_OPS_BOT_TOKEN` | Ops-internal bot credential — instant new-support-ticket alert (#1040 phase 1). While unset the alert skips (warn-logged) and tickets still land in D1; the nightly ops report's open-ticket count is the backstop. |
+| `TG_OPS_CHAT_ID` | Operator chat the ops bot posts to. Same skip-while-unset behaviour. |
 | `PUSH_CHANNEL_PK` | Push channel signing key (not a chain key — a push protocol identity). |
 | `ZEROEX_API_KEY` / `ONEINCH_API_KEY` | Aggregator quote proxy credentials. |
 

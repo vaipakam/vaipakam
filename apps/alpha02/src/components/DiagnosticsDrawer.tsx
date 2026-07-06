@@ -352,12 +352,17 @@ function DrawerPanel({ onClose }: { onClose: () => void }) {
         </p>
 
         {/* #1040 phase 1 — ticket capture with explicit attach
-            consent; chainId only when the wallet is actually on a
-            supported network (an unsupported-network report already
-            says so in the health details). */}
+            consent. The chain id travels with EVERY ticket (the
+            pre-send disclosure says so): on a supported network
+            it's the read chain; on an unsupported one it's the
+            wallet's RAW chain id — exactly the fact support needs
+            for an unsupported-network report, and it must not
+            depend on the diagnostics consent (Codex round-5 P2). */}
         <SupportTicketCard
           reportCtx={reportCtx}
-          chainId={walletOnUnsupported ? null : readChain.chainId}
+          chainId={
+            walletOnUnsupported ? (walletChainId ?? null) : readChain.chainId
+          }
         />
       </aside>
     </>,

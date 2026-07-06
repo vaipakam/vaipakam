@@ -35,9 +35,16 @@ open tickets backstops it, so a ticket can never sit unseen
 indefinitely. Wallet addresses in the page field and health details
 are shortened again on the server, whatever the sending app did.
 Tickets are deleted automatically no later than 12 months after
-submission (earlier on request) — and they are excluded from the
-indefinitely-retained yearly backup archive so that promise holds
-in the backup tier too. The Privacy Policy (bumped to Version 3,
+submission (earlier on request, via support@vaipakam.com — the
+policy's contact section now names that address) — and they are
+excluded from the long-lived monthly and yearly backup archives, so
+a ticket's backup copies live only in the 30-day nightly tier and
+the deletion promise holds everywhere. A ticket sent from an
+unsupported network now carries the wallet's actual network id, the
+key fact for exactly those reports. The policy also gains an
+"Alert subscriptions" section naming Telegram's role in delivering
+the alert messages users already opt into — a pre-existing flow the
+policy had under-disclosed. The Privacy Policy (bumped to Version 3,
 both the source document and the public /privacy page) gains a
 matching "Support tickets" section and now names every processor
 involved: Telegram for the metadata-only operator alert, and

@@ -166,11 +166,16 @@ in-place overwrite, only against read/delete.
 - **12 months** of monthly archives (one per month, retained by
   lifecycle rule).
 - **Indefinite** for the first archive of each calendar year (for
-  legal-hold audit trail durability). The yearly archive is built as
-  a separate payload that **excludes `support_tickets`** — the
-  Privacy Policy promises ticket deletion no later than 12 months
-  after submission, and an indefinite copy would break that promise;
-  the daily/monthly tiers age out within the disclosed rotation.
+  legal-hold audit trail durability).
+- The monthly and yearly tiers are built as ONE separate payload
+  that **excludes `support_tickets`** — the Privacy Policy promises
+  ticket deletion no later than 12 months after submission; a ticket
+  caught by a monthly cut would otherwise persist ~13 months, and an
+  indefinite yearly copy forever. Ticket backup copies therefore
+  live only in the 30-day daily tier (at most 30 days past D1
+  deletion). The long-tier build runs AFTER the daily payload is
+  uploaded and released, so the Worker never holds two ciphertexts
+  at once.
 
 ### 3.5 Restore procedure
 
