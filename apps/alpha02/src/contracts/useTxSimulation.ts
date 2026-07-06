@@ -18,9 +18,16 @@
  * wallet chain reports `unavailable`).
  */
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { BaseError, type Address, type Hex } from 'viem';
+import {
+  BaseError,
+  decodeErrorResult,
+  erc20Abi,
+  type Address,
+  type Hex,
+} from 'viem';
 import { usePublicClient } from 'wagmi';
 import { useActiveChain } from '../chain/useActiveChain';
+import { DIAMOND_ABI_VIEM } from './diamond';
 
 export interface TxSimInput {
   to: Address;
@@ -118,10 +125,51 @@ export function useTxSimulation(input: TxSimInput | null, debounceMs = 400) {
   return { result, refresh: simulate };
 }
 
+/** Pull the RAW revert data out of a viem error, if any. `eth_call`
+ *  through `publicClient.call` has no ABI, so a custom-error revert
+ *  surfaces as "Execution reverted for an unknown reason" with the
+ *  selector hex only in the cause chain — found live on Base
+ *  Sepolia: the allowance artefact was NOT being downgraded because
+ *  neither the short nor the full message carried the selector. */
+function rawRevertData(err: unknown): Hex | undefined {
+  if (!(err instanceof BaseError)) return undefined;
+  const cause = err.walk(
+    (e) => typeof (e as { data?: unknown }).data !== 'undefined',
+  ) as { data?: Hex | { data?: Hex } } | null;
+  const d = cause?.data;
+  if (typeof d === 'string' && d.startsWith('0x')) return d;
+  if (d && typeof d === 'object' && typeof d.data === 'string') return d.data;
+  return undefined;
+}
+
+/** Decode the revert into a readable name when the Diamond / ERC-20
+ *  ABIs know it — "InsufficientAllowance" beats "Execution reverted
+ *  for an unknown reason" in a user-facing footer. */
+function decodeRevert(data: Hex | undefined): string | null {
+  if (!data || data.length < 10) return null;
+  for (const abi of [DIAMOND_ABI_VIEM, erc20Abi]) {
+    try {
+      const dec = decodeErrorResult({ abi, data });
+      // The Solidity built-ins decode to their GENERIC names — for
+      // Error(string)/Panic(uint256) viem's own message already
+      // carries the actual reason text, which beats rendering the
+      // bare word "Error" (round 1). Only a named custom error is
+      // an improvement over the message.
+      if (dec.errorName === 'Error' || dec.errorName === 'Panic') return null;
+      return dec.errorName;
+    } catch {
+      // not in this ABI — try the next
+    }
+  }
+  return null;
+}
+
 /** Map a thrown `eth_call` error to a verdict. Non-revert errors
- *  (network / RPC / timeout) yield no verdict; the two artefact
+ *  (network / RPC / timeout) yield no verdict; the artefact
  *  downgrades are strictly opt-in per call site so real failures
- *  are never masked (same gates as the defi original). */
+ *  are never masked. Matching runs against the RAW selector + the
+ *  decoded error name + both message forms — the message-only
+ *  matching of the first cut missed custom errors entirely. */
 function classifyError(
   err: unknown,
   allowSignatureRevert: boolean,
@@ -133,15 +181,20 @@ function classifyError(
   if (!/revert/i.test(msg)) {
     return { status: 'unavailable' };
   }
-  if (allowSignatureRevert && /permit|signature|ecdsa|invalidsigner/i.test(msg)) {
+  const data = rawRevertData(err);
+  const decoded = decodeRevert(data);
+  const selector = data?.slice(0, 10)?.toLowerCase() ?? '';
+  const haystack = `${selector} ${decoded ?? ''} ${full}`;
+  if (
+    allowSignatureRevert &&
+    /permit|signature|ecdsa|invalidsigner/i.test(`${decoded ?? ''} ${msg}`)
+  ) {
     return { status: 'unavailable' };
   }
-  // ERC20InsufficientAllowance (0xfb8f41b2) or legacy string
-  // variants — matched on the full message (viem puts the selector /
-  // decoded name in the details, not always the shortMessage).
+  // ERC20InsufficientAllowance (0xfb8f41b2) or legacy string variants.
   if (
     allowAllowanceRevert &&
-    /0xfb8f41b2|insufficient\s*allowance|ERC20InsufficientAllowance/i.test(full)
+    /0xfb8f41b2|insufficient\s*allowance|ERC20InsufficientAllowance/i.test(haystack)
   ) {
     return { status: 'approval-needed' };
   }
@@ -151,10 +204,12 @@ function classifyError(
   if (
     allowNftApprovalRevert &&
     /0x177e802f|0xe237d922|InsufficientApproval|MissingApprovalForAll|not (?:token )?owner (?:n?or|or) approved|caller is not .*approved/i.test(
-      full,
+      haystack,
     )
   ) {
     return { status: 'approval-needed' };
   }
-  return { status: 'revert', revertReason: msg };
+  // Prefer the decoded custom-error name over viem's generic
+  // "unknown reason" text.
+  return { status: 'revert', revertReason: decoded ?? msg };
 }
