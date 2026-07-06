@@ -2,7 +2,7 @@
 // production alpha02: drive the lend post-offer flow to review, tick
 // consent, confirm the footer renders a real verdict.
 import fs from 'node:fs';
-import { ensureConnected, launch, SITE } from './driver.mjs';
+import { ensureConnected, launch, SITE, pasteAssetLive } from './driver.mjs';
 
 // Faucet mock addresses (Base Sepolia). Override with FAUCET_JSON to
 // point at a deployments artifact — both the flat shape and the
@@ -22,8 +22,7 @@ await page.goto(SITE + '/lend', { waitUntil: 'domcontentloaded' });
 await page.waitForTimeout(2500);
 await ensureConnected(page);
 await page.waitForTimeout(1500);
-await page.locator('#lending-asset').selectOption('__custom__');
-await page.locator('#lending-asset ~ input[placeholder="0x…"]').fill(TILQ);
+await pasteAssetLive(page, 'lending-asset', TILQ);
 await page.waitForTimeout(1500);
 await page.locator('input[placeholder="0.0"]').fill('25');
 await page.getByRole('button', { name: /see matching offers/i }).click();
@@ -31,8 +30,7 @@ await page.waitForTimeout(2000);
 await page.getByRole('button', { name: /post my own lending offer/i }).click();
 await page.waitForTimeout(800);
 await page.locator('input[placeholder="5"]').fill('9');
-await page.locator('#collateral-asset').selectOption('__custom__').catch(() => {});
-await page.locator('#collateral-asset ~ input[placeholder="0x…"]').fill(TILQ2);
+await pasteAssetLive(page, 'collateral-asset', TILQ2);
 await page.waitForTimeout(1500);
 await page.locator('input[placeholder="0.0"]:visible').last().fill('100');
 await page.waitForTimeout(800);

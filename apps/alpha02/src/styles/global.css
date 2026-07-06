@@ -396,6 +396,150 @@ textarea.input {
   border-color: var(--danger);
 }
 
+/* SelectMenu — the app dropdown (see components/SelectMenu.tsx).
+ * The trigger reuses .input so closed controls sit flush with text
+ * inputs; the list is a raised popover with generous, two-line-capable
+ * rows — the "premium line items" the native <option> can't render. */
+.select-menu {
+  position: relative;
+}
+
+.select-menu-trigger {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+  text-align: left;
+  cursor: pointer;
+  font: inherit;
+}
+
+.select-menu-trigger:focus-visible {
+  border-color: var(--brand);
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 1px;
+}
+
+.select-menu-value {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.select-menu-placeholder {
+  color: var(--text-muted);
+}
+
+.select-menu-chevron {
+  flex: none;
+  width: 18px;
+  height: 18px;
+  color: var(--text-muted);
+  transition: transform 120ms ease;
+}
+
+.select-menu-chevron[data-open='true'] {
+  transform: rotate(180deg);
+}
+
+.select-menu-list {
+  position: absolute;
+  z-index: 30;
+  top: calc(100% + 4px);
+  left: 0;
+  right: 0;
+  margin: 0;
+  padding: var(--space-1);
+  list-style: none;
+  background: var(--surface-raised);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-pop);
+  max-height: 320px;
+  overflow-y: auto;
+  animation: select-menu-in 120ms ease;
+}
+
+@keyframes select-menu-in {
+  from {
+    opacity: 0;
+    transform: translateY(-4px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .select-menu-list {
+    animation: none;
+  }
+  .select-menu-chevron {
+    transition: none;
+  }
+}
+
+.select-menu-option {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  position: relative;
+  padding: 10px var(--space-3);
+  padding-right: calc(var(--space-3) + 24px); /* room for the check */
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+}
+
+.select-menu-option.is-active {
+  background: var(--surface-hover);
+}
+
+.select-menu-option[aria-selected='true'] {
+  background: var(--brand-soft);
+}
+
+.select-menu-option[aria-selected='true'].is-active {
+  background: var(--brand-soft);
+  outline: 1px solid var(--brand);
+  outline-offset: -1px;
+}
+
+.select-menu-option-main {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-width: 0;
+}
+
+.select-menu-option-label {
+  font-weight: 500;
+  color: var(--text-strong);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.select-menu-option[aria-selected='true'] .select-menu-option-label {
+  color: var(--brand-soft-text);
+}
+
+.select-menu-option-sub {
+  font-size: 0.8rem;
+  color: var(--text-muted);
+  font-family: var(--font-mono);
+}
+
+.select-menu-option-check {
+  position: absolute;
+  right: var(--space-3);
+  top: 50%;
+  transform: translateY(-50%);
+  width: 16px;
+  height: 16px;
+  color: var(--brand);
+}
+
 .badge {
   display: inline-flex;
   align-items: center;

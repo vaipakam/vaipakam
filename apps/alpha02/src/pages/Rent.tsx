@@ -30,6 +30,7 @@ import {
   usePermit2Signing,
 } from '../contracts/usePermit2Signing';
 import { ConsentLabel } from '../components/ConsentLabel';
+import { SelectMenu } from '../components/SelectMenu';
 import { useActiveChain } from '../chain/useActiveChain';
 import { getSupportedChain } from '../chain/chains';
 import { DIAMOND_ABI_VIEM, useDiamondWrite } from '../contracts/diamond';
@@ -432,18 +433,18 @@ function ListNftFlow() {
         <div className="card">
           <div className="field">
             <label htmlFor="nft-standard">NFT type</label>
-            <select
+            <SelectMenu
               id="nft-standard"
-              className="input"
               value={standard}
-              onChange={(e) => {
-                setStandard(e.target.value as 'erc721' | 'erc1155');
+              onChange={(next) => {
+                setStandard(next as 'erc721' | 'erc1155');
                 setConsent(false);
               }}
-            >
-              <option value="erc721">Single NFT (ERC-721)</option>
-              <option value="erc1155">Multi-edition NFT (ERC-1155)</option>
-            </select>
+              options={[
+                { value: 'erc721', label: 'Single NFT (ERC-721)' },
+                { value: 'erc1155', label: 'Multi-edition NFT (ERC-1155)' },
+              ]}
+            />
           </div>
           <div className="field">
             <label htmlFor="nft-contract">NFT contract address</label>
@@ -525,21 +526,18 @@ function ListNftFlow() {
           </div>
           <div className="field">
             <label htmlFor="rent-duration">Rental length</label>
-            <select
+            <SelectMenu
               id="rent-duration"
-              className="input"
               value={durationDays}
-              onChange={(e) => {
-                setDurationDays(e.target.value);
+              onChange={(next) => {
+                setDurationDays(next);
                 setConsent(false);
               }}
-            >
-              {durationOptions.map((d) => (
-                <option key={d} value={String(d)}>
-                  {formatDurationDays(d)}
-                </option>
-              ))}
-            </select>
+              options={durationOptions.map((d) => ({
+                value: String(d),
+                label: formatDurationDays(d),
+              }))}
+            />
             {!durationValid ? (
               <span className="field-hint">
                 The protocol currently caps listings at{' '}
