@@ -69,12 +69,12 @@ import LenderEarlyWithdrawal from '../../src/pages/LenderEarlyWithdrawal';
 
 function renderPage(loanId = '7') {
   return render(
-    <MemoryRouter initialEntries={[`/loans/${loanId}/withdraw`]}>
+    <MemoryRouter initialEntries={[`/loans/${loanId}/early-withdrawal`]}>
       <ThemeProvider>
         <ModeProvider>
           <Routes>
             <Route
-              path="/loans/:loanId/withdraw"
+              path="/loans/:loanId/early-withdrawal"
               element={<LenderEarlyWithdrawal />}
             />
             <Route path="/loans/:loanId" element={<div>loan-home</div>} />

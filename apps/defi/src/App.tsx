@@ -72,11 +72,6 @@ function PublicNftVerifier() {
  * hosts the prose reference, only the interactive
  * `/protocol-console` dashboard.
  */
-function LegacyLoanRedirect() {
-  const { loanId } = useParams();
-  return <Navigate to={`/loans/${loanId}`} replace />;
-}
-
 function ExternalRedirect({ url }: { url: string }) {
   useEffect(() => {
     window.location.replace(url);
@@ -89,6 +84,27 @@ function ExternalRedirect({ url }: { url: string }) {
     <main style={{ padding: 32 }}>
       <p>Redirecting…</p>
     </main>
+  );
+}
+
+/**
+ * Back-compat redirect for pre-flattening `/app/loans/:loanId` deep
+ * links (#1057). `relative="path"` resolves the `..` segments against
+ * the URL pathname, so the redirect preserves the active locale
+ * prefix (`/es/app/loans/7` → `/es/loans/7`, since this route mounts
+ * under the unprefixed root AND the `:locale` tree — same pattern as
+ * BuyVpfiRedirect below) plus the query + hash an alert deep link
+ * may carry.
+ */
+function LegacyLoanRedirect() {
+  const { loanId } = useParams();
+  const location = useLocation();
+  return (
+    <Navigate
+      to={`../../../loans/${loanId}${location.search}${location.hash}`}
+      relative="path"
+      replace
+    />
   );
 }
 
