@@ -8,6 +8,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   handleSupportTicket,
   newTicketId,
+  notifyOpsNewTicket,
   parseSupportTicket,
 } from '../src/supportTicket';
 import type { Env } from '../src/env';
@@ -38,6 +39,21 @@ function envWith(overrides: Partial<Env>): Env {
     FRONTEND_ORIGIN: 'https://alpha02.vaipakam.com',
     ...overrides,
   } as Env;
+}
+
+/** Fake ExecutionContext capturing waitUntil promises so the suite
+ *  can await the post-response notify deterministically. */
+function fakeCtx() {
+  const pending: Promise<unknown>[] = [];
+  return {
+    ctx: {
+      waitUntil: (p: Promise<unknown>) => {
+        pending.push(p);
+      },
+      passThroughOnException: () => {},
+    } as unknown as ExecutionContext,
+    pending,
+  };
 }
 
 const req = (body: unknown) =>
@@ -111,10 +127,12 @@ describe('handleSupportTicket', () => {
     const { db, calls } = fakeDb();
     const fetchSpy = vi.fn();
     vi.stubGlobal('fetch', fetchSpy);
+    const { ctx, pending } = fakeCtx();
     const res = await handleSupportTicket(
       req({ message: 'something broke', chainId: 84532, page: '/lend' }),
       envWith({ DB: db }),
       'https://alpha02.vaipakam.com',
+      ctx,
     );
     expect(res.status).toBe(200);
     const body = (await res.json()) as { ticketId: string };
@@ -123,20 +141,27 @@ describe('handleSupportTicket', () => {
     expect(calls[0].args[0]).toBe(body.ticketId);
     // Two-bot policy: with TG_OPS_* unset the notify is skipped —
     // and the USER bot is never a fallback.
+    await Promise.all(pending);
     expect(fetchSpy).not.toHaveBeenCalled();
   });
 
-  it('notifies the ops bot when configured, after the row is durable', async () => {
+  it('notifies the ops bot when configured — AFTER the response, via waitUntil', async () => {
     const { db, calls } = fakeDb();
     const fetchSpy = vi.fn().mockResolvedValue(new Response('{}', { status: 200 }));
     vi.stubGlobal('fetch', fetchSpy);
+    const { ctx, pending } = fakeCtx();
     const res = await handleSupportTicket(
       req({ message: 'm'.repeat(400), diagnostics: 'block' }),
       envWith({ DB: db, TG_OPS_BOT_TOKEN: 'ops-token', TG_OPS_CHAT_ID: '42' }),
       'https://alpha02.vaipakam.com',
+      ctx,
     );
+    // The response never waits on Telegram (Codex round-1 P2): the
+    // notify is HANDED OFF to waitUntil rather than awaited inline.
     expect(res.status).toBe(200);
     expect(calls).toHaveLength(1);
+    expect(pending).toHaveLength(1);
+    await Promise.all(pending);
     expect(fetchSpy).toHaveBeenCalledTimes(1);
     const [url, init] = fetchSpy.mock.calls[0] as [string, RequestInit];
     expect(url).toContain('/botops-token/sendMessage');
@@ -145,6 +170,32 @@ describe('handleSupportTicket', () => {
     expect(sent.text).toContain('diagnostics: attached');
     // Message preview is capped — the full text lives in D1.
     expect(sent.text.length).toBeLessThan(700);
+  });
+
+  it('the response resolves even when Telegram stalls (notify decoupled)', async () => {
+    const { db } = fakeDb();
+    // A never-resolving Telegram send must not block the response.
+    vi.stubGlobal('fetch', vi.fn().mockReturnValue(new Promise(() => {})));
+    const { ctx } = fakeCtx();
+    const res = await handleSupportTicket(
+      req({ message: 'slow telegram' }),
+      envWith({ DB: db, TG_OPS_BOT_TOKEN: 't', TG_OPS_CHAT_ID: '1' }),
+      'https://alpha02.vaipakam.com',
+      ctx,
+    );
+    expect(res.status).toBe(200);
+    expect(((await res.json()) as { ticketId: string }).ticketId).toMatch(/^VPK-/);
+  });
+
+  it('notifyOpsNewTicket never throws on a failed send', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockRejectedValue(new Error('down')));
+    await expect(
+      notifyOpsNewTicket(
+        envWith({ TG_OPS_BOT_TOKEN: 't', TG_OPS_CHAT_ID: '1' }),
+        'VPK-X',
+        { message: 'm', email: null, diagnostics: null, page: null, chainId: null },
+      ),
+    ).resolves.toBeUndefined();
   });
 
   it('returns an honest 503 when the insert fails (migration not applied)', async () => {

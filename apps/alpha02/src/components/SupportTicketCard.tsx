@@ -24,7 +24,11 @@ import {
   supportMailto,
   SupportTicketError,
 } from '../data/support';
-import { buildReportBody, type ReportContext } from '../diagnostics/reportIssue';
+import {
+  buildReportBody,
+  redactCap,
+  type ReportContext,
+} from '../diagnostics/reportIssue';
 
 const EMAIL_SHAPE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
@@ -66,7 +70,7 @@ export function SupportTicketCard({
         </p>
         <a
           className="btn btn-secondary"
-          href={supportMailto({ ticketId, message })}
+          href={supportMailto({ ticketId, message, diagnosticsAttached: attach })}
         >
           {copy.support.mailButton}
         </a>
@@ -95,7 +99,11 @@ export function SupportTicketCard({
         // buildReportBody is the same redacted block the GitHub
         // report path uses (full wallet address never included).
         diagnostics: attach ? buildReportBody(reportCtx) : null,
-        page: reportCtx.path,
+        // Same scrubber as the GitHub report path (Codex round-1 P2):
+        // a deep-linked URL can carry a full wallet address in its
+        // query, and `page` travels regardless of the diagnostics
+        // consent — redact + cap before it leaves the device.
+        page: redactCap(reportCtx.path, 200),
         chainId,
       });
       setTicketId(id);
@@ -163,9 +171,10 @@ export function SupportTicketCard({
         <div className="banner banner-warn" role="alert">
           <span className="banner-body">
             {error}{' '}
-            {error === copy.support.unavailable || error === copy.support.failed ? (
-              <a href={supportMailto({ message })}>{copy.support.mailButton}</a>
-            ) : null}
+            {/* EVERY failure branch ends at the mail path — a user
+                behind a shared NAT hitting the per-IP cap must not be
+                stranded on "wait a minute" (Codex round-1 P3). */}
+            <a href={supportMailto({ message })}>{copy.support.mailButton}</a>
           </span>
         </div>
       ) : null}

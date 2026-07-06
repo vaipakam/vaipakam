@@ -132,7 +132,7 @@ export default {
     );
   },
 
-  async fetch(req: Request, env: WorkerEnv): Promise<Response> {
+  async fetch(req: Request, env: WorkerEnv, ctx: ExecutionContext): Promise<Response> {
     const url = new URL(req.url);
 
     // T-078 — resolve the Secrets Store bindings once, here at the
@@ -213,7 +213,7 @@ export default {
     // #1040 phase 1 — support-ticket capture from the alpha02 support
     // widget (rate limit + validation inside the handler).
     if (url.pathname === '/support/ticket' && req.method === 'POST') {
-      return handleSupportTicket(req, resolved, resolveAllowedOrigin(req, resolved));
+      return handleSupportTicket(req, resolved, resolveAllowedOrigin(req, resolved), ctx);
     }
 
     // Erasure (T-075) — user erases their own error-capture records

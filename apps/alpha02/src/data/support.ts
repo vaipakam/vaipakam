@@ -91,13 +91,16 @@ export async function submitSupportTicket(
 export function supportMailto(opts: {
   ticketId?: string;
   message?: string;
+  /** Only claim diagnostics ride with the ticket when they actually
+   *  did — the no-consent path stored none (Codex round-1 P3). */
+  diagnosticsAttached?: boolean;
 }): string {
   const subject = opts.ticketId
     ? `Vaipakam support — ticket ${opts.ticketId}`
     : 'Vaipakam support';
   const lines = [
     opts.ticketId
-      ? `My ticket number: ${opts.ticketId} (diagnostics already attached to it)`
+      ? `My ticket number: ${opts.ticketId}${opts.diagnosticsAttached ? ' (diagnostics already attached to it)' : ''}`
       : null,
     '',
     opts.message?.slice(0, 1_000) ?? '',

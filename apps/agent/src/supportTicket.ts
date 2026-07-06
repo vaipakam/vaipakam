@@ -120,6 +120,7 @@ export async function handleSupportTicket(
   req: Request,
   env: Env,
   corsOrigin: string,
+  ctx?: ExecutionContext,
 ): Promise<Response> {
   // Per-IP rate limit — skipped silently when the binding isn't
   // configured (local dev), same posture as the other agent gates.
@@ -163,42 +164,59 @@ export async function handleSupportTicket(
     return json({ error: 'unavailable' }, 503, corsOrigin);
   }
 
-  // Best-effort ops notify — the ticket is already durable.
+  // Best-effort ops notify — the ticket is already durable, and the
+  // RESPONSE must not wait on Telegram: the widget aborts after 8s,
+  // and a stalled notify would show "didn't go through" for a ticket
+  // that landed, inviting duplicate resends (Codex round-1 P2). The
+  // send runs after the response via waitUntil (falling back to
+  // fire-and-forget where no ExecutionContext exists, e.g. tests).
+  const notify = notifyOpsNewTicket(env, ticketId, body);
+  if (ctx) ctx.waitUntil(notify);
+
+  return json({ ticketId }, 200, corsOrigin);
+}
+
+/** Post the new-ticket alert to the ops bot. Never throws — a notify
+ *  outage must never surface as a ticket failure. Exported for the
+ *  vitest suite. */
+export async function notifyOpsNewTicket(
+  env: Env,
+  ticketId: string,
+  body: SupportTicketBody,
+): Promise<void> {
   const token = env.TG_OPS_BOT_TOKEN;
   const chatId = env.TG_OPS_CHAT_ID;
   if (!token || !chatId) {
     console.warn('[support] TG_OPS_* unset — skipping new-ticket notify');
-  } else {
-    try {
-      const preview =
-        body.message.length > 300 ? `${body.message.slice(0, 300)}…` : body.message;
-      const text = [
-        `🧾 New support ticket ${ticketId}`,
-        body.page ? `page: ${body.page}` : null,
-        body.chainId !== null ? `chain: ${body.chainId}` : null,
-        body.email ? 'reply address: provided' : 'reply address: none',
-        body.diagnostics ? 'diagnostics: attached' : 'diagnostics: not attached',
-        '',
-        preview,
-      ]
-        .filter((l): l is string => l !== null)
-        .join('\n');
-      const res = await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          chat_id: chatId,
-          text,
-          disable_web_page_preview: true,
-        }),
-      });
-      if (!res.ok) {
-        console.error('[support] ops notify failed', res.status);
-      }
-    } catch (e) {
-      console.error('[support] ops notify failed', e);
-    }
+    return;
   }
-
-  return json({ ticketId }, 200, corsOrigin);
+  try {
+    const preview =
+      body.message.length > 300 ? `${body.message.slice(0, 300)}…` : body.message;
+    const text = [
+      `🧾 New support ticket ${ticketId}`,
+      body.page ? `page: ${body.page}` : null,
+      body.chainId !== null ? `chain: ${body.chainId}` : null,
+      body.email ? 'reply address: provided' : 'reply address: none',
+      body.diagnostics ? 'diagnostics: attached' : 'diagnostics: not attached',
+      '',
+      preview,
+    ]
+      .filter((l): l is string => l !== null)
+      .join('\n');
+    const res = await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        chat_id: chatId,
+        text,
+        disable_web_page_preview: true,
+      }),
+    });
+    if (!res.ok) {
+      console.error('[support] ops notify failed', res.status);
+    }
+  } catch (e) {
+    console.error('[support] ops notify failed', e);
+  }
 }
