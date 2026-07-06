@@ -8,6 +8,7 @@ import {OfferCreateFacet} from "../src/facets/OfferCreateFacet.sol";
 import {OfferAcceptFacet} from "../src/facets/OfferAcceptFacet.sol";
 import {LoanFacet} from "../src/facets/LoanFacet.sol";
 import {DefaultedFacet} from "../src/facets/DefaultedFacet.sol";
+import {RepayFacet} from "../src/facets/RepayFacet.sol";
 import {RiskFacet} from "../src/facets/RiskFacet.sol";
 import {AddCollateralFacet} from "../src/facets/AddCollateralFacet.sol";
 import {ClaimFacet} from "../src/facets/ClaimFacet.sol";
@@ -134,6 +135,59 @@ contract FallbackCureTest is SetupTest, IVaipakamErrors {
     ///      into FallbackPending.
     function testFallbackEntrySanity() public view {
         assertEq(uint8(_loanStatus()), uint8(LibVaipakam.LoanStatus.FallbackPending));
+    }
+
+    /// @dev #1000 (S2) — the FallbackPending cure by FULL repayment must be
+    ///      reachable EVEN THOUGH the loan is already past its original grace
+    ///      window (a time-based-default fallback only exists past graceEnd). The
+    ///      spec twice promises the borrower may fully repay to cancel the
+    ///      fallback before the lender claim executes; before this fix
+    ///      `repayLoan` unconditionally reverted `RepaymentPastGracePeriod` here.
+    function testRepayLoanCuresFallbackPastGrace() public {
+        // Precondition: FallbackPending, and we are past the original graceEnd
+        // (`_toFallback` warped DURATION + 3 days before triggering default).
+        assertEq(uint8(_loanStatus()), uint8(LibVaipakam.LoanStatus.FallbackPending));
+
+        // Codex #1069 round-3 P1 (REFUTED empirically): the cure-repay must
+        // RESTORE the diamond-held snapshot collateral into the borrower vault
+        // in the SAME tx, before the borrowerClaim (written by the Repaid path)
+        // is ever claimable — otherwise `claimAsBorrower` would later pull from
+        // an empty vault. Assert the round-trip: the borrower vault gains the
+        // full snapshot sum (`held == COLLATERAL`, see
+        // testGetFallbackSnapshotReturnsLiveSplit) as the repay commits.
+        address borrowerVault =
+            VaultFactoryFacet(address(diamond)).getUserVaultAddress(borrower);
+        uint256 vaultColBefore =
+            ERC20Mock(mockCollateralERC20).balanceOf(borrowerVault);
+        uint256 diamondColBefore =
+            ERC20Mock(mockCollateralERC20).balanceOf(address(diamond));
+
+        vm.startPrank(borrower);
+        ERC20Mock(mockERC20).approve(address(diamond), type(uint256).max);
+        // Must NOT revert RepaymentPastGracePeriod — the cure is exempt.
+        RepayFacet(address(diamond)).repayLoan(loanId);
+        vm.stopPrank();
+
+        assertEq(
+            uint8(_loanStatus()),
+            uint8(LibVaipakam.LoanStatus.Repaid),
+            "full repayment cures the fallback past grace"
+        );
+        // Collateral moved diamond → borrower vault (not stranded in custody).
+        assertEq(
+            ERC20Mock(mockCollateralERC20).balanceOf(borrowerVault),
+            vaultColBefore + COLLATERAL,
+            "restored collateral lands in the borrower vault"
+        );
+        assertEq(
+            ERC20Mock(mockCollateralERC20).balanceOf(address(diamond)),
+            diamondColBefore - COLLATERAL,
+            "diamond releases the held snapshot collateral"
+        );
+        // Snapshot wiped so neither side can pull against a stale split.
+        (, , , , , bool active, ) =
+            ClaimFacet(address(diamond)).getFallbackSnapshot(loanId);
+        assertFalse(active, "fallback snapshot cleared by the cure-repay");
     }
 
     /// @dev With SetupTest mocks (HF=2e18, LTV=6666) and loanInitMaxLtvBps=8000 for

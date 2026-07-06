@@ -125,6 +125,19 @@ contract PrecloseFacetTest is Test {
         TestMutatorFacet(address(diamond)).setOffer(offerId, o);
     }
 
+    /// @dev As {_setOfferAccepted}, but also backfills `durationDays` — needed
+    ///      by the `_completeOffsetImpl` acceptance-time anti-drift guard (#1032),
+    ///      which reads `offer.durationDays`. Tests that mock `createOfferInternal`
+    ///      otherwise leave the stored offer's duration at 0, making the guard a
+    ///      no-op.
+    function _setOfferAcceptedWithDuration(uint256 offerId, uint256 durationDays) internal {
+        LibVaipakam.Offer memory o = OfferCancelFacet(address(diamond)).getOffer(offerId);
+        o.accepted = true;
+        o.durationDays = durationDays;
+        if (o.creator == address(0)) o.creator = borrower;
+        TestMutatorFacet(address(diamond)).setOffer(offerId, o);
+    }
+
     function setUp() public {
         owner = address(this);
         lender = makeAddr("lender");
@@ -1159,6 +1172,52 @@ contract PrecloseFacetTest is Test {
         // Mock cross-facet calls
         vm.mockCall(address(diamond), abi.encodeWithSelector(VaipakamNFTFacet.updateNFTStatus.selector), "");
 
+        vm.prank(borrower);
+        PrecloseFacet(address(diamond)).completeOffset(activeLoanId);
+
+        LibVaipakam.Loan memory loan = LoanFacet(address(diamond)).getLoanDetails(activeLoanId);
+        assertEq(uint8(loan.status), uint8(LibVaipakam.LoanStatus.Repaid));
+        vm.clearMockedCalls();
+    }
+
+    /// @dev #1032 (L-c, Codex #1069 round-3) — the acceptance-time anti-drift
+    ///      guard in `_completeOffsetImpl`. A same-term (30-day) offset created
+    ///      at elapsed 0 passes the request-time gate (equality), but if the
+    ///      completion (== acceptance, atomic in prod) lands LATER, the
+    ///      replacement would re-originate with `startTime = now` and mature past
+    ///      the original — so completeOffset must revert, rolling the acceptance
+    ///      back. Here we simulate the delay by warping between the accept-mock
+    ///      and completeOffset.
+    function testCompleteOffsetRevertsWhenReplacementMaturityDrifts() public {
+        vm.mockCall(address(diamond), abi.encodeWithSelector(OfferCreateFacet.createOfferInternal.selector), abi.encode(uint256(99)));
+        vm.prank(borrower);
+        // durationDays == 30 == original term, at elapsed 0 (equality: OK at request).
+        PrecloseFacet(address(diamond)).offsetWithNewOffer(activeLoanId, 500, 30, mockCollateralERC20, COLLATERAL, true, mockERC20);
+        vm.clearMockedCalls();
+        _setOfferAcceptedWithDuration(99, 30);
+
+        // Acceptance/completion lands 2 days later → replacement matures 2 days
+        // past the original maturity → drift → revert.
+        vm.warp(block.timestamp + 2 days);
+        vm.expectRevert(PrecloseFacet.InvalidOfferTerms.selector);
+        vm.prank(borrower);
+        PrecloseFacet(address(diamond)).completeOffset(activeLoanId);
+    }
+
+    /// @dev Companion to the drift guard: a SHORTER replacement term that still
+    ///      fits inside the original maturity after the same delay completes
+    ///      cleanly — the guard blocks only genuine drift, not every late accept.
+    function testCompleteOffsetSucceedsWhenLateButWithinOriginalMaturity() public {
+        vm.mockCall(address(diamond), abi.encodeWithSelector(OfferCreateFacet.createOfferInternal.selector), abi.encode(uint256(99)));
+        vm.prank(borrower);
+        // 20-day replacement on a 30-day original: even accepted 5 days late the
+        // replacement matures at now+20d = start+25d ≤ start+30d.
+        PrecloseFacet(address(diamond)).offsetWithNewOffer(activeLoanId, 500, 20, mockCollateralERC20, COLLATERAL, true, mockERC20);
+        vm.clearMockedCalls();
+        _setOfferAcceptedWithDuration(99, 20);
+
+        vm.warp(block.timestamp + 5 days);
+        vm.mockCall(address(diamond), abi.encodeWithSelector(VaipakamNFTFacet.updateNFTStatus.selector), "");
         vm.prank(borrower);
         PrecloseFacet(address(diamond)).completeOffset(activeLoanId);
 

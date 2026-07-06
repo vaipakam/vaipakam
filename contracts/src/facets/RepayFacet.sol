@@ -251,7 +251,16 @@ contract RepayFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErrors 
             loan.durationDays *
             LibVaipakam.ONE_DAY;
         uint256 graceEnd = endTime + LibVaipakam.gracePeriod(loan.durationDays);
-        if (block.timestamp > graceEnd) revert RepaymentPastGracePeriod();
+        // #1000 (S2) — the grace gate blocks an ORDINARY (Active) repayment past
+        // graceEnd (that loan must go through DefaultedFacet). But a
+        // FallbackPending CURE only exists past graceEnd (a time-based default
+        // fires there), and the spec twice promises the borrower may still fully
+        // repay to cancel the fallback before the lender claim executes. So a
+        // cure is exempt: it fully compensates the lender (principal + interest
+        // incl. grace accrual + late fees), so there is no lender-side harm.
+        if (!curingFallback && block.timestamp > graceEnd) {
+            revert RepaymentPastGracePeriod();
+        }
 
         uint256 interest; // Or rental fee
         uint256 lateFee = LibVaipakam.calculateLateFee(loanId, endTime);
@@ -970,7 +979,15 @@ contract RepayFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErrors 
     ) external view returns (uint256 totalDue) {
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         LibVaipakam.Loan storage loan = s.loans[loanId];
-        if (loan.status != LibVaipakam.LoanStatus.Active) return 0;
+        // #1000 (S2, Codex #1069) — a FallbackPending loan is now curable by full
+        // repayment (past grace), so the quote view must price it too; frontends
+        // and keepers set the borrower's approval/amount from this view, and a
+        // 0 quote would under-approve and brick the cure. The settlement math
+        // below (settlementInterestNet + late fee) is identical for the cure.
+        if (
+            loan.status != LibVaipakam.LoanStatus.Active &&
+            loan.status != LibVaipakam.LoanStatus.FallbackPending
+        ) return 0;
 
         uint256 endTime = loan.startTime +
             loan.durationDays *

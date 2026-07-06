@@ -578,9 +578,17 @@ contract PrecloseFacet is
         if (!LibOfferMatch.assertAssetContinuity(loan, offer))
             revert InvalidOfferTerms();
 
-        // Lender-favorability: replacement terms must not reduce liam's protection
-        uint256 remainingDays = _remainingDays(loan);
-        if (offer.durationDays > remainingDays) revert InvalidOfferTerms();
+        // Lender-favorability: replacement terms must not reduce liam's
+        // protection. #1032 (L-c) — compare MATURITIES with second precision, not
+        // whole-day counts: the loan re-originates with `startTime = now`, so a
+        // day-granular `offer.durationDays <= _remainingDays(loan)` check (where
+        // `_remainingDays` rounds elapsed DOWN, i.e. rounds the remaining count
+        // UP) would let the replacement maturity (`now + durationDays·1day`) land
+        // up to ~24h AFTER the original maturity, extending the lender's exposure.
+        if (
+            block.timestamp + offer.durationDays * LibVaipakam.ONE_DAY
+                > loan.startTime + loan.durationDays * LibVaipakam.ONE_DAY
+        ) revert InvalidOfferTerms();
         if (offer.collateralAmount < loan.collateralAmount)
             revert InsufficientCollateral();
         // Range-aware amount check: legacy single-value offers satisfy
@@ -1091,7 +1099,20 @@ contract PrecloseFacet is
         // Enforce same asset types as original loan (README General Rules)
         if (collateralAsset != loan.collateralAsset) revert InvalidOfferTerms();
         if (prepayAsset != loan.prepayAsset) revert InvalidOfferTerms();
-        if (durationDays > _remainingDays(loan)) revert InvalidOfferTerms();
+        // #1032 (L-c) — seconds-precise maturity bound (not the up-rounded
+        // whole-day `_remainingDays`): the replacement term must not carry the
+        // new loan's maturity past the original loan's maturity. This is a
+        // cheap request-time FIRST-LINE guard (fail fast at `offsetWithNewOffer`
+        // rather than at accept); equality is allowed here — a same-term offset
+        // whose replacement matures exactly at the original maturity is fine.
+        // The LOAD-BEARING anti-drift guarantee is re-checked at acceptance in
+        // `_completeOffsetImpl` (the replacement loan re-originates at accept
+        // time, which can be later than this request), where a drift reverts the
+        // whole acceptance atomically.
+        if (
+            block.timestamp + durationDays * LibVaipakam.ONE_DAY
+                > loan.startTime + loan.durationDays * LibVaipakam.ONE_DAY
+        ) revert InvalidOfferTerms();
         // Lender-favorability: collateral from new borrower must not be less than original
         if (collateralAmount < loan.collateralAmount)
             revert InsufficientCollateral();
@@ -1310,6 +1331,16 @@ contract PrecloseFacet is
         // interest model. See `EarlyWithdrawalFacet._buildSaleParams`
         // for the parallel rationale on the sale-vehicle builder.
         params.useFullTermInterest = loan.useFullTermInterest;
+        // #1032 (L-c) — the offset offer is left GTC (`expiresAt == 0`). The
+        // replacement-maturity anti-drift guarantee is NOT enforced via
+        // `expiresAt` here (an earlier attempt to do so, Codex #1069 rounds 1-2,
+        // could produce `expiresAt == now` for a legitimate same-term-at-start
+        // offset — `durationDays == remaining` at elapsed 0 — which `createOffer`
+        // rejects, breaking a valid lender-swap). Instead the bound is re-checked
+        // at ACCEPTANCE inside `_completeOffsetImpl`, which fires atomically in
+        // the accepting tx (so `block.timestamp` there IS the replacement loan's
+        // fresh start): a drifting term reverts the whole acceptance, rolling the
+        // replacement loan back cleanly. See the guard there.
         // Phase 6: keeper enables are per-keeper via
         // `offerKeeperEnabled[offerId][keeper]`. The borrower (offset-offer
         // creator) can enable specific keepers on this offset offer via
@@ -1380,6 +1411,22 @@ contract PrecloseFacet is
         // Verify the offer was accepted
         LibVaipakam.Offer storage offer = s.offers[newOfferId];
         if (!offer.accepted) revert OffsetOfferNotAccepted();
+
+        // #1032 (L-c, Codex #1069 round-3) — LOAD-BEARING anti-drift guard.
+        // The replacement loan re-originates with `startTime = its accept time`,
+        // so its maturity is `acceptTime + offer.durationDays·1day`. This
+        // completion runs ATOMICALLY inside the accepting `acceptOffer` tx (via
+        // `completeOffsetInternal`), so `block.timestamp` here IS that fresh
+        // start. Reject if the replacement would mature past the original loan's
+        // maturity — a drift the request-time gate in `_validateOffsetRequest`
+        // can't catch when acceptance lands later than the request. Reverting
+        // here rolls the whole acceptance (and the just-minted replacement loan)
+        // back cleanly, so the original loan is left untouched rather than
+        // silently extended. Equality (matures exactly at the original) is fine.
+        if (
+            block.timestamp + offer.durationDays * LibVaipakam.ONE_DAY
+                > loan.startTime + loan.durationDays * LibVaipakam.ONE_DAY
+        ) revert InvalidOfferTerms();
 
         // Phase 6: borrower-entitled action. Authority resolves against
         // the current borrower-NFT holder OR a keeper with the
@@ -1482,15 +1529,9 @@ contract PrecloseFacet is
                 : loan.prepayAsset;
     }
 
-    function _remainingDays(
-        LibVaipakam.Loan storage loan
-    ) internal view returns (uint256) {
-        uint256 elapsedDays = (block.timestamp - loan.startTime) / 1 days;
-        return
-            loan.durationDays > elapsedDays
-                ? loan.durationDays - elapsedDays
-                : 0;
-    }
+    // #1032 (L-c) — `_remainingDays` removed: its two callers (Option-2 +
+    // Option-3 term gates) now bound the replacement MATURITY with second
+    // precision instead of comparing up-rounded whole-day remaining counts.
 
     function _resetNftRenter(LibVaipakam.Loan storage loan) internal {
         LibFacet.crossFacetCall(
