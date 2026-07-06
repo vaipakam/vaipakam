@@ -41,8 +41,12 @@ test('parked book visitor does not stream RPC polls', async ({
 
   await page.goto('/offers', { waitUntil: 'domcontentloaded' });
   // The book must actually render — a diet that blanks the page would
-  // pass the counters for the wrong reason.
-  await expect(page.getByRole('heading', { name: /offer book/i })).toBeVisible();
+  // pass the counters for the wrong reason. Level-pinned: the loading
+  // state's <h3>"Loading the offer book…"</h3> also matches a bare
+  // /offer book/i name filter (strict-mode violation on first run).
+  await expect(
+    page.getByRole('heading', { level: 1, name: 'Offer Book' }),
+  ).toBeVisible();
   // Let initial hydration (offers pages + first catch-up) finish
   // before the measurement window opens.
   await page.waitForTimeout(5_000);
