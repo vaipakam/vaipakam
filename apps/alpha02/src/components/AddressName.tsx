@@ -27,6 +27,12 @@ export function AddressName({ address }: { address: string }) {
       staleTime: Infinity,
       gcTime: 24 * 60 * 60 * 1000,
       retry: false,
+      // `retry: false` only bounds ONE fetch — TanStack's
+      // retryOnMount default would re-fire a FAILED (data-less)
+      // lookup on every row remount, recreating exactly the burst
+      // this caps (Codex #1084 r1). One attempt per address per
+      // session, success or failure.
+      retryOnMount: false,
     },
   });
   return <>{ens.data ?? shortAddress(address)}</>;

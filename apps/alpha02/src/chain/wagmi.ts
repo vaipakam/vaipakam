@@ -109,14 +109,17 @@ for (const c of SUPPORTED_CHAINS) {
 // the same env-overridable plumbing as every other chain
 // (VITE_ETHEREUM_RPC_URL, else the chains.ts default), with a second
 // public endpoint behind it so a throttled primary degrades to the
-// fallback instead of to a dropped name.
+// fallback instead of to a dropped name. dRPC's public gateway as the
+// secondary — maintained and CORS-open; cloudflare-eth.com was
+// rejected here (Codex #1084 r1): Cloudflare's own migration guide
+// lists it as a deprecated legacy gateway hostname.
 const chainsWithEns = chains.some((c) => c.id === mainnet.id)
   ? chains
   : [...chains, mainnet];
 if (!transports[mainnet.id]) {
   transports[mainnet.id] = fallback([
     http(ensMainnetRpcUrl(), { batch: true }),
-    http('https://cloudflare-eth.com', { batch: true }),
+    http('https://eth.drpc.org', { batch: true }),
   ]);
 }
 
