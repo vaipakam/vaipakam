@@ -113,7 +113,11 @@ export class ErrorBoundary extends Component<ErrorBoundaryProps, ErrorBoundarySt
     recordLastError({
       message: error?.message || String(error),
       componentStack: componentStack || undefined,
-      path: window.location.pathname,
+      // Search params carry the deep-link state (?offer=, ?chain=)
+      // support needs to reproduce route-specific crashes; the report
+      // builder redacts and caps this before anything leaves the
+      // device.
+      path: window.location.pathname + window.location.search,
       at: Date.now(),
     });
     // eslint-disable-next-line no-console

@@ -164,6 +164,8 @@ export const copy = {
       `Running behind (last refreshed ${age} ago) — market lists may lag; your own positions still load directly from the chain.`,
     indexerUnreachable:
       'Unreachable right now — market lists may be slower while the app reads the chain directly.',
+    indexerNoCursor:
+      'Reachable, but no data has been recorded for this network yet — it will fill as activity arrives.',
     indexerNotConfigured: 'Not used on this build — the app reads the chain directly.',
     build: 'App version',
     lastErrorTitle: 'Last error on this device',

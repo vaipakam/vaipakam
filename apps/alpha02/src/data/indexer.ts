@@ -295,3 +295,25 @@ export async function fetchIndexerFreshness(
   }>(`/offers/stats?chainId=${chainId}`);
   return res?.indexer ?? null;
 }
+
+/** Freshness probe for the Support drawer (#1028 item 4) — unlike
+ *  `fetchIndexerFreshness`, this keeps "endpoint unreachable" and
+ *  "reachable but this chain has no ingest cursor yet" apart: a fresh
+ *  deployment or newly added chain must not read as an outage in a
+ *  user-facing health check. */
+export type IndexerFreshnessProbe =
+  | { kind: 'unreachable' }
+  | { kind: 'no-cursor' }
+  | { kind: 'cursor'; freshness: IndexerFreshness };
+
+export async function probeIndexerFreshness(
+  chainId: number,
+): Promise<IndexerFreshnessProbe> {
+  const res = await getJson<{
+    indexer: { lastBlock: number; updatedAt: number } | null;
+  }>(`/offers/stats?chainId=${chainId}`);
+  if (res === null) return { kind: 'unreachable' };
+  return res.indexer
+    ? { kind: 'cursor', freshness: res.indexer }
+    : { kind: 'no-cursor' };
+}

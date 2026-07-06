@@ -34,6 +34,13 @@ function redactText(text: string): string {
   return text.replace(ADDRESS_RE, (m) => `${m.slice(0, 6)}…${m.slice(-4)}`);
 }
 
+/** Redact FIRST, then cap: truncation that cuts through an address
+ *  would leave a partial hex string the whole-text scrubber no longer
+ *  recognises (round 2) — free text must be scrubbed while intact. */
+function redactCap(text: string, max: number): string {
+  return cap(redactText(text), max);
+}
+
 /** Paths are user-navigable input (deep links, 404s) — bound them so
  *  the final no-error fallback stays provably under MAX_URL_LEN. */
 const MAX_PATH_CHARS = 200;
@@ -67,7 +74,7 @@ export function buildReportBody(ctx: ReportContext): string {
     '',
     '### App-collected details',
     '',
-    `- Page: \`${cap(ctx.path, MAX_PATH_CHARS)}\``,
+    `- Page: \`${redactCap(ctx.path, MAX_PATH_CHARS)}\``,
     `- Network: ${ctx.chainName} (${ctx.chainId})`,
     `- Wallet: ${ctx.walletRedacted}`,
     `- Blockchain connection: ${ctx.rpcStatusLine}`,
@@ -79,10 +86,10 @@ export function buildReportBody(ctx: ReportContext): string {
       '',
       '### Last error recorded on the device',
       '',
-      `At ${new Date(ctx.lastError.at).toISOString()} on \`${ctx.lastError.path}\`:`,
+      `At ${new Date(ctx.lastError.at).toISOString()} on \`${redactCap(ctx.lastError.path, MAX_PATH_CHARS)}\`:`,
       '',
       '```',
-      cap(ctx.lastError.message, MAX_ERROR_CHARS),
+      redactCap(ctx.lastError.message, MAX_ERROR_CHARS),
       '```',
     );
     if (ctx.lastError.componentStack) {
@@ -91,7 +98,7 @@ export function buildReportBody(ctx: ReportContext): string {
         '<details><summary>Component stack</summary>',
         '',
         '```',
-        cap(ctx.lastError.componentStack, MAX_STACK_CHARS),
+        redactCap(ctx.lastError.componentStack, MAX_STACK_CHARS),
         '```',
         '',
         '</details>',
@@ -105,8 +112,8 @@ export function buildReportBody(ctx: ReportContext): string {
 
 export function buildIssueUrl(ctx: ReportContext): string {
   const title = redactText(
-    `[alpha02] problem report — ${cap(ctx.path, MAX_PATH_CHARS)}${
-      ctx.lastError ? ` (${cap(ctx.lastError.message, 60)})` : ''
+    `[alpha02] problem report — ${redactCap(ctx.path, MAX_PATH_CHARS)}${
+      ctx.lastError ? ` (${redactCap(ctx.lastError.message, 60)})` : ''
     }`,
   );
   const params = new URLSearchParams({

@@ -45,13 +45,15 @@ export function readLastError(): LastError | null {
     const raw = sessionStorage.getItem(KEY);
     if (!raw) return null;
     const parsed = JSON.parse(raw) as LastError;
-    // Validate the WHOLE shape — a stale/corrupt slot (e.g. a
-    // non-finite `at` reaching toISOString in the report builder)
-    // must read as "no error", never crash the support surface.
+    // Validate the WHOLE shape — a stale/corrupt slot (e.g. an
+    // out-of-range `at` reaching toISOString in the report builder)
+    // must read as "no error", never crash the support surface. The
+    // Date round-trip rejects finite-but-invalid times like 1e20.
     if (
       typeof parsed?.message !== 'string' ||
       typeof parsed?.path !== 'string' ||
       !Number.isFinite(parsed?.at) ||
+      Number.isNaN(new Date(parsed.at).getTime()) ||
       (parsed.componentStack !== undefined &&
         typeof parsed.componentStack !== 'string')
     ) {
