@@ -6,7 +6,12 @@
 import { launch, SITE } from './driver.mjs';
 
 const KILL_COPY = 'switched off right now';
-const PAGES = ['/', '/borrow', '/lend', '/rent', '/vpfi', '/positions', '/settings'];
+// EVERY public route in App.tsx — the claim is "the banner appears
+// nowhere", so the sweep must cover the whole route table.
+const PAGES = [
+  '/', '/borrow', '/lend', '/rent', '/positions', '/claims', '/offers',
+  '/vault', '/activity', '/vpfi', '/nft', '/settings', '/faucet', '/help',
+];
 
 const { page, done } = await launch({ role: 'lender' });
 let failures = 0;

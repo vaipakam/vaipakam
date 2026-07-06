@@ -5,12 +5,17 @@ import fs from 'node:fs';
 import { launch, SITE } from './driver.mjs';
 
 // Faucet mock addresses (Base Sepolia). Override with FAUCET_JSON to
-// point at a deployments artifact; defaults to the live testnet set.
-const faucet = process.env.FAUCET_JSON
+// point at a deployments artifact — both the flat shape and the
+// repo artifact's nested `testnetMocks` shape are accepted; defaults
+// to the live testnet set.
+const raw = process.env.FAUCET_JSON
   ? JSON.parse(fs.readFileSync(process.env.FAUCET_JSON, 'utf8'))
-  : { illiquidToken: '0x2affacdea8119e38d9754b2c2c15ec79af360807' };
-const TILQ = faucet.illiquidToken;
-const TILQ2 = '0x2A6c7149199991243aCbc04e1d59Aa052A6f00c3';
+  : {};
+const mocks = raw.testnetMocks ?? raw;
+const TILQ =
+  mocks.illiquidToken ?? '0x2affacdea8119e38d9754b2c2c15ec79af360807';
+const TILQ2 =
+  mocks.illiquidToken2 ?? '0x2A6c7149199991243aCbc04e1d59Aa052A6f00c3';
 
 const { page, done } = await launch({ role: 'lender' });
 await page.goto(SITE + '/lend', { waitUntil: 'domcontentloaded' });
