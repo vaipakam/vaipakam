@@ -1336,12 +1336,23 @@ contract PrecloseFacet is
         // late (the Option-3 drift). Constraining `expiresAt` to the latest
         // acceptance that still satisfies `acceptTime + durationDays·1day ≤
         // original maturity` closes it — an accept after that reverts on GTT.
-        // (Non-zero here overrides the GTC default; the request-time check
-        // guarantees this is ≥ now, so the offer isn't born expired.)
+        //
+        // Codex #1069 round-2: cap the deadline at the earlier of that maturity
+        // bound and the offer-expiry horizon. `setMaxOfferDurationDays` permits
+        // terms up to 4,385 days, so a long-dated loan's maturity bound can sit
+        // far beyond `MAX_OFFER_EXPIRY_HORIZON` (365 days) — and `createOffer`
+        // rejects any non-zero `expiresAt` above `now + horizon`. Taking the min
+        // keeps the offset offer creatable; a horizon cut is strictly SAFER for
+        // the drift concern (acceptance ≤ horizon ≤ maturity bound), it just
+        // forces a re-post if the loan outlives the horizon. Both bounds are
+        // ≥ now (the request-time check for the maturity bound; the 365-day
+        // horizon by construction), so the offer isn't born expired.
+        uint256 offsetMaturityBound = loan.startTime
+            + loan.durationDays * LibVaipakam.ONE_DAY
+            - durationDays * LibVaipakam.ONE_DAY;
+        uint256 offsetExpiryHorizon = block.timestamp + LibVaipakam.MAX_OFFER_EXPIRY_HORIZON;
         params.expiresAt = uint64(
-            loan.startTime
-                + loan.durationDays * LibVaipakam.ONE_DAY
-                - durationDays * LibVaipakam.ONE_DAY
+            offsetMaturityBound < offsetExpiryHorizon ? offsetMaturityBound : offsetExpiryHorizon
         );
         // Phase 6: keeper enables are per-keeper via
         // `offerKeeperEnabled[offerId][keeper]`. The borrower (offset-offer
