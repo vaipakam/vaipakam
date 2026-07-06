@@ -81,8 +81,12 @@ export async function launch({ role, startChainId = 84532, headless = true }) {
   fs.mkdirSync(profileDir, { recursive: true });
   const ctx = await chromium.launchPersistentContext(profileDir, {
     headless,
-    executablePath:
-      '/opt/pw-browsers/chromium_headless_shell-1194/chrome-linux/headless_shell',
+    // Optional override for environments with a pre-provisioned
+    // browser image (e.g. a sandbox that blocks downloads); when
+    // unset, Playwright resolves its own installed Chromium.
+    ...(process.env.LIVE_CHROMIUM_PATH
+      ? { executablePath: process.env.LIVE_CHROMIUM_PATH }
+      : {}),
     args: ['--no-sandbox'],
     viewport: { width: 1280, height: 900 },
   });
