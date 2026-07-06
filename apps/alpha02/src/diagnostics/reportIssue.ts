@@ -29,8 +29,9 @@ const ADDRESS_RE = /0x[a-fA-F0-9]{40}/g;
  *  component stacks, and deep-link paths routinely embed the
  *  connected account, and the redaction contract covers the whole
  *  public report, not just the wallet row. Applied to the finished
- *  body/title so future fields can't reintroduce a leak. */
-function redactText(text: string): string {
+ *  body/title so future fields can't reintroduce a leak; exported so
+ *  the drawer's ON-SCREEN error row honours the same contract. */
+export function redactText(text: string): string {
   return text.replace(ADDRESS_RE, (m) => `${m.slice(0, 6)}…${m.slice(-4)}`);
 }
 

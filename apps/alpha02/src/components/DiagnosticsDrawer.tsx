@@ -34,6 +34,7 @@ import {
   buildIssueUrl,
   buildReportBody,
   redactAddress,
+  redactText,
 } from '../diagnostics/reportIssue';
 
 /** Same staleness bar as MarketFreshnessNote: a cache cursor older
@@ -281,8 +282,11 @@ function DrawerPanel({ onClose }: { onClose: () => void }) {
             <dt>{copy.diagnostics.lastErrorTitle}</dt>
             <dd>
               {lastError ? (
+                // Same redaction as the report — the on-screen row is
+                // part of the "full address appears nowhere" contract
+                // (round 3).
                 <span className="mono" style={{ fontSize: 12 }}>
-                  {lastError.message}
+                  {redactText(lastError.message)}
                 </span>
               ) : (
                 copy.diagnostics.noError

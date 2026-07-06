@@ -75,24 +75,31 @@ test('a recorded error surfaces in the drawer and its report', async ({
 }) => {
   const { page } = await launchWallet('borrower');
   await page.goto('/', { waitUntil: 'domcontentloaded' });
-  // Seed the ErrorBoundary's sink slot directly (see header).
-  await page.evaluate(() => {
+  // Seed the ErrorBoundary's sink slot directly (see header). The
+  // message embeds a full address on purpose: crash text is the
+  // classic leak vector, and BOTH the on-screen row and the report
+  // must show only the shortened form (round 3).
+  const embedded = '0x1111222233334444555566667777888899990000';
+  await page.evaluate((addr) => {
     sessionStorage.setItem(
       'vaipakam.alpha02.lastError',
       JSON.stringify({
-        message: 'E2E seeded render crash',
+        message: `E2E seeded render crash for ${addr}`,
         componentStack: 'CrashCulprit\nSomePage',
         path: '/lend',
         at: Date.now(),
       }),
     );
-  });
+  }, embedded);
 
   await page
     .getByRole('button', { name: /support and connection check/i })
     .click();
   const dialog = page.getByRole('dialog', { name: /support/i });
-  await expect(dialog.getByText('E2E seeded render crash')).toBeVisible();
+  await expect(dialog.getByText(/E2E seeded render crash/)).toBeVisible();
+  expect((await dialog.innerText()).toLowerCase()).not.toContain(
+    embedded.toLowerCase(),
+  );
 
   const href = await dialog
     .getByRole('link', { name: /report an issue/i })
@@ -100,4 +107,6 @@ test('a recorded error surfaces in the drawer and its report', async ({
   const reportText = reportTextOf(href!);
   expect(reportText).toContain('E2E seeded render crash');
   expect(reportText).toContain('CrashCulprit');
+  expect(reportText.toLowerCase()).not.toContain(embedded.toLowerCase());
+  expect(reportText).toContain(`${embedded.slice(0, 6)}…${embedded.slice(-4)}`);
 });
