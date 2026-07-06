@@ -93,6 +93,14 @@ export const copy = {
       n === 1
         ? '1 matching offer is hidden because an independent security check flagged one of its tokens as dangerous.'
         : `${n} matching offers are hidden because an independent security check flagged one of their tokens as dangerous.`,
+    // CoinGecko reputation soft-signal (#1036 fallback layer) — only
+    // on networks with market data; never a block, never a gate.
+    reputationListedTop: (name: string, symbol: string | null, rank: number) =>
+      `Market listing found: ${name}${symbol ? ` (${symbol})` : ''}, ranked #${rank} by market size. Check that this matches the token you meant.`,
+    reputationListedDeep: (name: string, symbol: string | null) =>
+      `Market listing found: ${name}${symbol ? ` (${symbol})` : ''} — outside the top 200 by market size. Smaller tokens move harder and disappear faster; double-check the project.`,
+    reputationUnlisted:
+      'No market listing found for this address — the wider market doesn’t know this token. That alone doesn’t make it bad, but verify the contract address with the project before dealing in it.',
   },
   signing: {
     intro: (n: number) =>
