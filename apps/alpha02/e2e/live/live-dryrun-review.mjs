@@ -50,8 +50,15 @@ const verdicts = {
   unavailable: body.includes('dry run isn’t available'),
 };
 console.log('verdict flags:', JSON.stringify(verdicts));
-const any = Object.values(verdicts).some(Boolean);
-console.log(any ? 'PASS — dry-run footer rendered' : 'FAIL — no footer found');
+// Only the two truthful outcomes pass — wouldFail IS the #1059
+// regression this driver exists to catch, and unavailable/running
+// mean no verdict was actually delivered.
+const any = verdicts.passed || verdicts.approval;
+console.log(
+  any
+    ? 'PASS — truthful dry-run verdict rendered'
+    : `FAIL — verdicts: ${JSON.stringify(verdicts)}`,
+);
 {
   const i = body.indexOf('just failed with');
   if (i !== -1) console.log('REVERT TEXT:', body.slice(Math.max(0, i - 80), i + 400));

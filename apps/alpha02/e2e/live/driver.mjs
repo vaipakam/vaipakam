@@ -16,11 +16,13 @@
 if (process.env.LIVE_PROXY_SETUP) {
   await import(process.env.LIVE_PROXY_SETUP);
 }
-import { fetch as ufetch } from 'undici';
+// Node's built-in fetch (undici under the hood) — no extra dep. The
+// optional LIVE_PROXY_SETUP shim may swap the global dispatcher.
+const ufetch = globalThis.fetch;
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { chromium } from 'playwright';
+import { chromium } from '@playwright/test';
 import {
   createPublicClient,
   createWalletClient,
@@ -35,13 +37,19 @@ const HERE = path.dirname(fileURLToPath(import.meta.url));
 // file lives OUTSIDE the repo on purpose (never commit keys); point
 // TESTNET_WALLETS_FILE at a JSON of { <role>: { address, privateKey } }
 // or an array of { role, address, privateKey }.
-const WALLETS = JSON.parse(
+const WALLETS_RAW = JSON.parse(
   fs.readFileSync(
     process.env.TESTNET_WALLETS_FILE ??
       path.join(HERE, '../testnet-wallets/wallets.json'),
     'utf8',
   ),
 );
+// Normalize both documented shapes to a role map — the array form
+// ({ role, address, privateKey }[]) indexed as a map yields
+// undefined.privateKey otherwise.
+const WALLETS = Array.isArray(WALLETS_RAW)
+  ? Object.fromEntries(WALLETS_RAW.map((w) => [w.role ?? w.name, w]))
+  : WALLETS_RAW;
 
 export const CHAINS = {
   84532: {
@@ -55,6 +63,19 @@ export const CHAINS = {
 };
 
 export const SITE = process.env.SITE_URL ?? 'https://alpha02.vaipakam.com';
+
+/** A real wallet rejects operations for an account it doesn't hold —
+ *  mirror that so app regressions can't falsely pass a live review. */
+function assertInjectedAccount(requested, account) {
+  if (
+    typeof requested === 'string' &&
+    requested.toLowerCase() !== account.address.toLowerCase()
+  ) {
+    throw new Error(
+      `wallet request for ${requested} but injected account is ${account.address}`,
+    );
+  }
+}
 
 export function clientsFor(chainId) {
   const { chain, rpc } = CHAINS[chainId];
@@ -154,10 +175,15 @@ export async function launch({ role, startChainId = 84532, headless = true }) {
       case 'wallet_revokePermissions':
         return [{ parentCapability: 'eth_accounts' }];
       case 'personal_sign': {
-        // params: [hexMessage, address]
+        // params: [hexMessage, address] — reject a request for any
+        // address other than the injected account, as a real wallet
+        // would; silently signing would let an app regression (stale
+        // `from`) pass the live review.
+        assertInjectedAccount(params[1], account);
         return account.signMessage({ message: { raw: params[0] } });
       }
       case 'eth_signTypedData_v4': {
+        assertInjectedAccount(params[0], account);
         const typed = JSON.parse(params[1]);
         return account.signTypedData({
           domain: typed.domain,
@@ -168,6 +194,7 @@ export async function launch({ role, startChainId = 84532, headless = true }) {
       }
       case 'eth_sendTransaction': {
         const tx = params[0];
+        if (tx.from) assertInjectedAccount(tx.from, account);
         const hash = await wallet.sendTransaction({
           to: tx.to,
           data: tx.data,

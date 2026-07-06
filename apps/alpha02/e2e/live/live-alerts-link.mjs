@@ -3,10 +3,10 @@
 // FRONTEND_ORIGIN (the original 403) AND the link request requires a
 // wallet signature (#1056). Expects: click Link Telegram → wallet
 // signs the ownership proof → a 6-digit code renders.
-import { launch } from './driver.mjs';
+import { launch, SITE } from './driver.mjs';
 
 const { page, done } = await launch({ role: 'lender' });
-await page.goto('https://alpha02.vaipakam.com/settings', { waitUntil: 'domcontentloaded', timeout: 60000 });
+await page.goto(SITE + '/settings', { waitUntil: 'domcontentloaded', timeout: 60000 });
 await page.waitForTimeout(3000);
 
 const linkBtn = page.getByRole('button', { name: 'Link Telegram' });
