@@ -37,11 +37,19 @@ export function Help() {
   const fees = useProtocolFees();
 
   // The consent checkbox links here as /help#risks — the router
-  // doesn't scroll to hashes on its own.
+  // doesn't scroll to hashes on its own. getElementById, not
+  // querySelector: the fragment is user-controlled and an invalid
+  // selector (/help#1, encoded chars) would throw during mount.
   useEffect(() => {
-    if (window.location.hash) {
-      document.querySelector(window.location.hash)?.scrollIntoView();
+    const hash = window.location.hash;
+    if (!hash) return;
+    let id = hash.slice(1);
+    try {
+      id = decodeURIComponent(id);
+    } catch {
+      /* malformed escape — use the raw fragment */
     }
+    document.getElementById(id)?.scrollIntoView();
   }, []);
 
   // Fee numbers come from the live protocol config — governance can
