@@ -1481,11 +1481,31 @@ contract PrecloseFacet is
             /* lenderSide */ false
         );
 
+        // #1001 (S3, Codex #1070 r3 P1/P2) — re-anchor BOTH sides to their
+        // current NFT holders BEFORE settling, exactly as `precloseDirect` and
+        // `RepayFacet` do at their close-outs. A position NFT transferred before
+        // (borrower) or during (lender — the offset locks only the borrower NFT)
+        // the offset leaves `loan.borrower`/`loan.lender` stale; without this the
+        // completion would pull the payoff from / deposit it to the wrong party
+        // (charging the original borrower, or paying a stale lender that a current
+        // clean holder can't then claim from). Consolidation re-anchors the stored
+        // anchors to `ownerOf(tokenId)` + moves any vaulted assets; the offset's
+        // borrower-NFT lock is untouched (consolidation never moves the NFT).
+        // Best-effort (Tier-2 close-out semantics live inside).
+        LibFacet.crossFacetCall(
+            abi.encodeWithSelector(
+                ConsolidationFacet.eagerConsolidateBothSides.selector,
+                originalLoanId
+            ),
+            bytes4(0)
+        );
+
         // #1001 (S3, Codex #1070 redesign) — settle the old lender HERE, from
-        // live terms, pulling from Alice (`loan.borrower`) into the CURRENT
-        // lender's vault. This is the sole point the offset touches the old
-        // loan's settlement state; posting parked nothing. Runs before the
-        // borrower-collateral claim + the Active→Repaid transition below.
+        // live terms, pulling from the CURRENT borrower holder (`loan.borrower`,
+        // just re-anchored) into the CURRENT lender holder's vault. This is the
+        // sole point the offset touches the old loan's settlement state; posting
+        // parked nothing. Runs before the borrower-collateral claim + the
+        // Active→Repaid transition below.
         _settleOldLenderAtCompletion(loan, originalLoanId, offer);
 
         // Record borrower's claimable (collateral stays in borrower's vault)
