@@ -15,8 +15,8 @@
  *  The topic table is additionally drift-checked below by deriving
  *  every terminal selector from the compiled ABI on the node side.
  */
-import { getAbiItem, toEventSelector } from 'viem';
-import type { AbiEvent } from 'viem';
+import { toEventSelector } from 'viem';
+import type { Abi, AbiEvent } from 'viem';
 import { test, expect } from '../lib/wallet-fixture';
 import { postLenderOffer, newestOfferIdFor } from '../lib/flows';
 import { increaseTime } from '../lib/anvil';
@@ -41,10 +41,13 @@ test('every terminal event the catch-up scans still exists in the ABI', () => {
     'OfferClosed',
     'OfferConsumedBySale',
   ]) {
-    const item = getAbiItem({ abi: DIAMOND_ABI_VIEM, name }) as
-      | AbiEvent
-      | undefined;
-    expect(item?.type, `${name} missing from DIAMOND_ABI_VIEM`).toBe('event');
+    // Type-aware find, mirroring bookCatchUp.eventTopic0 — getAbiItem
+    // by name can return a same-named custom ERROR
+    // (OfferConsumedBySale is both; the first CI run caught it).
+    const item = (DIAMOND_ABI_VIEM as Abi).find(
+      (i): i is AbiEvent => i.type === 'event' && i.name === name,
+    );
+    expect(item, `event ${name} missing from DIAMOND_ABI_VIEM`).toBeTruthy();
     expect(toEventSelector(item!)).toMatch(/^0x[0-9a-f]{64}$/);
   }
 });
@@ -52,9 +55,14 @@ test('every terminal event the catch-up scans still exists in the ABI', () => {
 test('a just-cancelled offer vanishes from the book while the cache still serves it', async ({
   launchWallet,
 }) => {
-  const { page, account } = await launchWallet('lender');
-  await postLenderOffer(page);
-  const offerId = await newestOfferIdFor(account.address);
+  // Two roles on purpose: the LENDER posts and cancels; the BORROWER
+  // watches the book. The ghost-row danger is for OTHER users — and
+  // the book only renders an accept LINK (the row identity this spec
+  // keys on) for offers that aren't the viewer's own (the first CI
+  // run failed on exactly that as the lender).
+  const lender = await launchWallet('lender');
+  await postLenderOffer(lender.page);
+  const offerId = await newestOfferIdFor(lender.account.address);
   // Past the cancel cooldown BEFORE pinning, so the cancel lands in
   // the post-pin window.
   await increaseTime(301);
@@ -65,18 +73,19 @@ test('a just-cancelled offer vanishes from the book while the cache still serves
     // The frozen cache lists the offer…
     expect(await stubServesOffer(offerId)).toBe(true);
 
-    // …and with an empty post-pin window, the rendered book shows it
-    // (positive control: the row's presence proves the catch-up layer
-    // doesn't over-filter).
-    await page.goto('/offers', { waitUntil: 'domcontentloaded' });
-    const bookRow = page.locator(`a[href*="offer=${offerId}&"]`);
+    // …and with an empty post-pin window, the borrower's rendered
+    // book shows it (positive control: the row's presence proves the
+    // catch-up layer doesn't over-filter).
+    const borrower = await launchWallet('borrower');
+    await borrower.page.goto('/offers', { waitUntil: 'domcontentloaded' });
+    const bookRow = borrower.page.locator(`a[href*="offer=${offerId}&"]`);
     await expect(bookRow.first()).toBeVisible({ timeout: 30_000 });
 
     // Cancel ON CHAIN (the proven /positions UI path from spec 05).
-    await page.goto('/positions', { waitUntil: 'domcontentloaded' });
-    const row = page
+    await lender.page.goto('/positions', { waitUntil: 'domcontentloaded' });
+    const row = lender.page
       .locator('.row-list > div')
-      .filter({ has: page.getByText(`Offer #${offerId} ·`) })
+      .filter({ has: lender.page.getByText(`Offer #${offerId} ·`) })
       .first();
     await row.getByRole('button', { name: /cancel offer/i }).click();
     await row.getByRole('button', { name: /confirm.*cancel/i }).click();
@@ -98,19 +107,21 @@ test('a just-cancelled offer vanishes from the book while the cache still serves
     // The frozen cache STILL serves the ghost row…
     expect(await stubServesOffer(offerId)).toBe(true);
 
-    // …but the rendered book must not: the catch-up scan over the
-    // post-pin tail decodes the terminal event and strips it. A full
-    // page load guarantees a fresh query (no SPA cache carry-over).
-    await page.goto('/offers', { waitUntil: 'domcontentloaded' });
-    // Wait for a LOADED book first — some other pinned row visible —
-    // so the absence assert below can't false-pass against a page
-    // that is still loading (and it simultaneously proves the
-    // catch-up layer didn't flip the book to unavailable).
-    await expect(page.locator('a[href*="offer="]').first()).toBeVisible({
+    // …but the borrower's rendered book must not: the catch-up scan
+    // over the post-pin tail decodes the terminal event and strips
+    // it. A full page load guarantees a fresh query (no SPA cache
+    // carry-over).
+    await borrower.page.goto('/offers', { waitUntil: 'domcontentloaded' });
+    // Wait for a POSITIVELY loaded book first — some rendered row
+    // (the pinned snapshot carries the fork's inherited open book, so
+    // rows always exist) — because waiting for the loading text to be
+    // ABSENT would pass trivially before React even mounts, letting
+    // the absence assert below false-pass.
+    await expect(borrower.page.locator('.item-row').first()).toBeVisible({
       timeout: 30_000,
     });
     await expect(
-      page.getByText('We couldn’t load the offer book right now', {
+      borrower.page.getByText('We couldn’t load the offer book right now', {
         exact: false,
       }),
     ).toHaveCount(0);

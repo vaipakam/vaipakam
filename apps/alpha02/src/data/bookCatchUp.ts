@@ -29,7 +29,7 @@
  *     `DIAMOND_ABI_VIEM` makes an ABI drift a compile/test failure,
  *     not a silent no-op.
  */
-import { getAbiItem, numberToHex, toEventSelector } from 'viem';
+import { numberToHex, toEventSelector } from 'viem';
 import type { AbiEvent, Hex, PublicClient } from 'viem';
 import { DIAMOND_ABI_VIEM } from '@vaipakam/contracts/abis';
 import {
@@ -51,12 +51,16 @@ const CHUNK_BLOCKS = 1000n;
 const MAX_CATCHUP_BLOCKS = 20_000n;
 
 function eventTopic0(name: string): Hex {
-  const item = getAbiItem({ abi: DIAMOND_ABI_VIEM, name }) as
-    | AbiEvent
-    | undefined;
-  if (!item || item.type !== 'event') {
-    // Compile-adjacent guard: the fork-tier spec exercises a real
-    // terminal event through this table, so a renamed event fails CI
+  // Type-aware lookup — NOT getAbiItem, whose name-only search can
+  // return a same-named custom ERROR (OfferConsumedBySale exists as
+  // both an event and a revert error in the Diamond ABI; spec 10's
+  // first CI run caught exactly that).
+  const item = DIAMOND_ABI_VIEM.find(
+    (i): i is AbiEvent => i.type === 'event' && i.name === name,
+  );
+  if (!item) {
+    // The fork-tier spec exercises a real terminal event through this
+    // table AND drift-checks each name, so a renamed event fails CI
     // loudly instead of silently matching nothing.
     throw new Error(`event ${name} not found in DIAMOND_ABI_VIEM`);
   }
