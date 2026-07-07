@@ -208,7 +208,12 @@ describe('AssetPicker', () => {
         disabled
       />,
     );
-    expect(screen.getByText('*')).toBeInTheDocument();
+    // #1076: the visible required-marker "*" was intentionally removed
+    // (see AssetPicker.tsx docblock — it was the only Create-Offer field
+    // with an asterisk, making the others look optional). `required` now
+    // only gates the underlying <input required> for browser validation,
+    // so assert that instead of the dropped marker.
+    expect(screen.getByPlaceholderText('0x...')).toBeRequired();
     expect(screen.getByPlaceholderText('0x...')).toBeDisabled();
   });
 });

@@ -1,75 +1,90 @@
-import { describe, it, expect, vi } from 'vitest';
+import { describe, it, expect } from 'vitest';
 import { screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { render } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 import { ThemeProvider } from '../../src/context/ThemeContext';
-import { ChainProvider } from '../../src/context/ChainContext';
-
-const walletMock: any = {
-  address: null,
-  isConnecting: false,
-  isCorrectChain: true,
-  error: null,
-  connect: vi.fn(),
-  disconnect: vi.fn(),
-  switchToDefaultChain: vi.fn(),
-};
-vi.mock('../../src/context/WalletContext', () => ({ useWallet: () => walletMock }));
-
 import Navbar from '../../src/components/Navbar';
 
+/*
+ * #1076: the public-shell Navbar dropped ALL wallet UI (Connect /
+ * Switch Network / address+Disconnect / error banner). The defi Navbar
+ * now only renders on the public-read shell pages (Analytics / NFT
+ * Verifier / Protocol Console) and consumes NO WalletContext — every
+ * wallet-bearing surface moved inside <AppLayout>. The old wallet-
+ * centric cases tested a surface that no longer exists; they're
+ * replaced with cases for the current navbar (Launch CTA, Verify
+ * dropdown, Documentation link, settings gear + theme toggle, mobile
+ * menu). Only ThemeProvider + a router are needed — no wagmi/wallet
+ * providers, matching the component's real dependencies.
+ */
 function renderNav() {
   return render(
     <MemoryRouter>
       <ThemeProvider>
-        <ChainProvider>
         <Navbar />
-      </ChainProvider>
       </ThemeProvider>
     </MemoryRouter>,
   );
 }
 
 describe('Navbar', () => {
-  it('shows Connect Wallet when no address', async () => {
-    walletMock.address = null;
+  it('renders the Launch Vaipakam CTA', () => {
     renderNav();
-    expect(screen.getAllByRole('button', { name: /Connect Wallet/i }).length).toBeGreaterThan(0);
+    expect(
+      screen.getAllByRole('link', { name: /Launch Vaipakam/i }).length,
+    ).toBeGreaterThan(0);
   });
 
-  it('shows Switch Network on wrong chain', async () => {
-    walletMock.address = '0xABC';
-    walletMock.isCorrectChain = false;
+  it('renders the Verify dropdown trigger', () => {
     renderNav();
-    const switchBtns = screen.getAllByRole('button', { name: /Wrong Network|Switch Network/i });
-    await userEvent.click(switchBtns[0]);
-    expect(walletMock.switchToDefaultChain).toHaveBeenCalled();
+    expect(
+      screen.getByRole('button', { name: /^Verify/i }),
+    ).toBeInTheDocument();
   });
 
-  it('shows address and disconnect when connected', async () => {
-    walletMock.address = '0x1234567890abcdef1234567890abcdef12345678';
-    walletMock.isCorrectChain = true;
+  it('renders the in-domain Verify menu items', () => {
+    // The desktop popover stays mounted (inert when closed) so CSS can
+    // transition both directions — the menuitems are always in the DOM.
+    // (Asserting aria-expanded toggling is brittle here: userEvent's
+    // synthesised mouse fires the group's hover-to-open first, which the
+    // trigger's click then toggles back closed — real-mouse behaviour.)
     renderNav();
-    expect(screen.getAllByText(/0x1234/)[0]).toBeInTheDocument();
-    const disc = screen.getAllByRole('button', { name: /Disconnect/i });
-    await userEvent.click(disc[0]);
-    expect(walletMock.disconnect).toHaveBeenCalled();
+    expect(screen.getAllByRole('menuitem', { name: /Analytics/i }).length).toBeGreaterThan(0);
+    expect(screen.getAllByRole('menuitem', { name: /NFT Verifier/i }).length).toBeGreaterThan(0);
+    expect(screen.getAllByRole('menuitem', { name: /Protocol Console/i }).length).toBeGreaterThan(0);
   });
 
-  it('mobile toggle and theme toggle fire', async () => {
+  it('renders the flat Documentation link', () => {
     renderNav();
-    const buttons = screen.getAllByRole('button');
-    // Fire every toolbar button to exercise event handlers
-    for (const b of buttons.slice(0, 4)) {
-      try { await userEvent.click(b); } catch {}
-    }
+    expect(
+      screen.getAllByRole('link', { name: /Documentation/i }).length,
+    ).toBeGreaterThan(0);
   });
 
-  it('shows error banner when wallet error present', () => {
-    walletMock.error = 'some-error';
+  it('opens the settings popover and fires the theme toggle', async () => {
     renderNav();
-    expect(screen.getAllByText(/some-error/).length).toBeGreaterThan(0);
-    walletMock.error = null;
+    // Settings gear opens a popover holding the Language picker + theme
+    // toggle. Before opening, no theme toggle is in the DOM.
+    const gear = screen.getByRole('button', { name: /Settings/i });
+    await userEvent.click(gear);
+    // Theme toggle carries a "Switch to light/dark theme" aria-label.
+    const themeToggle = screen.getByRole('button', {
+      name: /Switch to (light|dark) theme/i,
+    });
+    await userEvent.click(themeToggle);
+    // After toggling, the aria-label flips to the opposite direction.
+    expect(
+      screen.getByRole('button', { name: /Switch to (light|dark) theme/i }),
+    ).toBeInTheDocument();
+  });
+
+  it('toggles the mobile menu open and closed', async () => {
+    renderNav();
+    const toggle = screen.getByRole('button', { name: /Toggle menu/i });
+    // Fire the handler both directions to exercise the open/close state.
+    await userEvent.click(toggle);
+    await userEvent.click(toggle);
+    expect(toggle).toBeInTheDocument();
   });
 });

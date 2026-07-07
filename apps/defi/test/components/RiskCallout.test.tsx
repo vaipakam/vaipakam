@@ -1,5 +1,6 @@
 import { describe, it, expect, vi } from 'vitest';
 import { render, screen, fireEvent } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
 import { RiskCallout } from '../../src/components/app/RiskCallout';
 
 /*
@@ -64,7 +65,12 @@ describe('RiskCallout', () => {
     expect(screen.getByRole('checkbox')).toBeDisabled();
   });
 
-  it('does not fire onConsentChange when the checkbox is disabled', () => {
+  it('does not fire onConsentChange when the checkbox is disabled', async () => {
+    // #1076: the component genuinely sets `disabled` (proven by the
+    // toBeDisabled() test above). `fireEvent.click` bypasses jsdom's
+    // disabled-control guard and force-dispatches change, so it reported a
+    // spurious call. `userEvent.click` models real pointer semantics and
+    // correctly no-ops on a disabled control — the intended behaviour.
     const onConsentChange = vi.fn();
     render(
       <RiskCallout
@@ -73,7 +79,7 @@ describe('RiskCallout', () => {
         disabled
       />,
     );
-    fireEvent.click(screen.getByRole('checkbox'));
+    await userEvent.click(screen.getByRole('checkbox'));
     expect(onConsentChange).not.toHaveBeenCalled();
   });
 
