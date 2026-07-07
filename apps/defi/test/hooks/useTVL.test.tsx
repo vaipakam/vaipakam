@@ -19,6 +19,8 @@ vi.mock('../../src/hooks/useProtocolStats', () => ({
 
 const diamondMock: any = { runner: { provider: {} } };
 vi.mock('../../src/contracts/useDiamond', () => ({
+  useDiamondPublicClient: () => ({}),
+  useReadyDiamond: () => diamondMock,
   useDiamondRead: () => diamondMock,
   useReadChain: () => ({ chainId: 11155111, diamondAddress: '0xDiamond', deployBlock: 1 }),
 }));
@@ -27,7 +29,7 @@ const batchState: {
   priceFor?: (asset: string) => [bigint, number] | null;
   throws?: boolean;
 } = {};
-vi.mock('../../src/lib/multicall', () => ({
+vi.mock('@vaipakam/lib/multicall', () => ({
   batchCalls: async (
     _p: unknown,
     _i: unknown,

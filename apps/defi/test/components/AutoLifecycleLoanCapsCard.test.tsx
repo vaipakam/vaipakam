@@ -33,6 +33,7 @@ const extendDisabled = {
 };
 
 vi.mock('../../src/contracts/useDiamond', () => ({
+  useDiamondPublicClient: () => ({}),
   useDiamondContract: () => null,
   useDiamondRead: () => ({
     getAutoRefinanceCaps: async () => refinanceEnabled,

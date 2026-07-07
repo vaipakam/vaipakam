@@ -16,6 +16,8 @@ vi.mock('ethers', async () => ({
 
 const diamondMock: any = { createOffer: vi.fn() };
 vi.mock('../../src/contracts/useDiamond', () => ({
+  useDiamondPublicClient: () => ({}),
+  useReadyDiamond: () => diamondMock,
   useDiamondContract: () => diamondMock,
   useDiamondRead: () => diamondMock,
 }));

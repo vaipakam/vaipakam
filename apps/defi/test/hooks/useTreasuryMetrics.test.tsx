@@ -8,6 +8,8 @@ const diamondState: {
 };
 
 vi.mock('../../src/contracts/useDiamond', () => ({
+  useDiamondPublicClient: () => ({}),
+  useReadyDiamond: () => diamondState,
   useDiamondRead: () => diamondState,
 }));
 

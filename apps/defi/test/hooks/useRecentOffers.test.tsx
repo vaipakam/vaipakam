@@ -17,6 +17,8 @@ vi.mock('../../src/hooks/useLogIndex', () => ({
 
 const diamondMock: any = { runner: { provider: {} } };
 vi.mock('../../src/contracts/useDiamond', () => ({
+  useDiamondPublicClient: () => ({}),
+  useReadyDiamond: () => diamondMock,
   useDiamondRead: () => diamondMock,
 }));
 
@@ -39,7 +41,7 @@ const batchState: {
   throws?: boolean;
 } = {};
 
-vi.mock('../../src/lib/multicall', () => ({
+vi.mock('@vaipakam/lib/multicall', () => ({
   batchCalls: async (
     _p: unknown,
     _i: unknown,

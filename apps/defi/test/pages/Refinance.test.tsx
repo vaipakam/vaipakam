@@ -18,6 +18,8 @@ const diamondMock: any = {
   refinanceLoan: vi.fn(),
 };
 vi.mock('../../src/contracts/useDiamond', () => ({
+  useDiamondPublicClient: () => ({}),
+  useReadyDiamond: () => diamondMock,
   useDiamondContract: () => diamondMock,
   useDiamondRead: () => diamondMock,
 }));
@@ -55,7 +57,7 @@ vi.mock('../../src/components/app/AssetSymbol', () => ({
 vi.mock('../../src/components/app/TokenAmount', () => ({
   TokenAmount: ({ amount }: { amount: bigint }) => <span>{amount.toString()}</span>,
 }));
-vi.mock('../../src/lib/decodeContractError', () => ({
+vi.mock('@vaipakam/lib/decodeContractError', () => ({
   decodeContractError: (err: unknown, fallback: string) =>
     (err as Error)?.message ?? fallback,
   extractRevertSelector: () => null,

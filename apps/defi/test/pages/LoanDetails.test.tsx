@@ -34,6 +34,7 @@ const diamondMock: any = {
   }),
 };
 vi.mock('../../src/contracts/useDiamond', () => ({
+  useDiamondPublicClient: () => ({}),
   useDiamondContract: () => diamondMock,
   useDiamondRead: () => diamondMock,
   // useLoanCollateralLien reads through useReadyDiamond — return the same

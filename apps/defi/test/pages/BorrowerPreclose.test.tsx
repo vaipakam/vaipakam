@@ -26,6 +26,8 @@ const diamondMock: any = {
   completeOffset: vi.fn(),
 };
 vi.mock('../../src/contracts/useDiamond', () => ({
+  useDiamondPublicClient: () => ({}),
+  useReadyDiamond: () => diamondMock,
   useDiamondContract: () => diamondMock,
   useDiamondRead: () => diamondMock,
 }));
