@@ -4,6 +4,7 @@ import userEvent from '@testing-library/user-event';
 import { render } from '@testing-library/react';
 import { MemoryRouter, Route, Routes } from 'react-router-dom';
 import { ThemeProvider } from '../../src/context/ThemeContext';
+import { ChainProvider } from '../../src/context/ChainContext';
 import { ModeProvider } from '../../src/context/ModeContext';
 
 const walletMock: any = {
@@ -23,6 +24,7 @@ function renderLayout() {
   return render(
     <MemoryRouter initialEntries={['/app']}>
       <ThemeProvider>
+        <ChainProvider>
         <ModeProvider>
           <Routes>
             <Route path="/app/*" element={<AppLayout />}>
@@ -31,6 +33,7 @@ function renderLayout() {
             <Route path="/" element={<div>home</div>} />
           </Routes>
         </ModeProvider>
+      </ChainProvider>
       </ThemeProvider>
     </MemoryRouter>,
   );

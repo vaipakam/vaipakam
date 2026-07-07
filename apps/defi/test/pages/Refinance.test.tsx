@@ -3,6 +3,7 @@ import { screen, waitFor, render } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter, Route, Routes } from 'react-router-dom';
 import { ThemeProvider } from '../../src/context/ThemeContext';
+import { ChainProvider } from '../../src/context/ChainContext';
 import { ModeProvider } from '../../src/context/ModeContext';
 
 vi.mock('ethers', () => ({
@@ -18,6 +19,7 @@ const diamondMock: any = {
   refinanceLoan: vi.fn(),
 };
 vi.mock('../../src/contracts/useDiamond', () => ({
+  useReadChain: (() => { const c = { chainId: 11155111, diamondAddress: '0x00000000000000000000000000000000000000D1', deployBlock: 1, rpcUrl: 'http://localhost:8545', blockExplorer: 'https://sepolia.etherscan.io', name: 'Sepolia' }; return () => c; })(),
   useDiamondPublicClient: (() => { const pc = {}; return () => pc; })(),
   useReadyDiamond: () => diamondMock,
   useDiamondContract: () => diamondMock,
@@ -71,6 +73,7 @@ function renderPage(loanId = '11') {
   return render(
     <MemoryRouter initialEntries={[`/loans/${loanId}/refinance`]}>
       <ThemeProvider>
+        <ChainProvider>
         <ModeProvider>
           <Routes>
             <Route
@@ -82,6 +85,7 @@ function renderPage(loanId = '11') {
             <Route path="/app/create-offer" element={<div>create-offer</div>} />
           </Routes>
         </ModeProvider>
+      </ChainProvider>
       </ThemeProvider>
     </MemoryRouter>,
   );

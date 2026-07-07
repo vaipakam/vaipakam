@@ -4,6 +4,7 @@ import userEvent from '@testing-library/user-event';
 import { render } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 import { ThemeProvider } from '../../src/context/ThemeContext';
+import { ChainProvider } from '../../src/context/ChainContext';
 
 const walletMock: any = {
   address: null,
@@ -22,7 +23,9 @@ function renderNav() {
   return render(
     <MemoryRouter>
       <ThemeProvider>
+        <ChainProvider>
         <Navbar />
+      </ChainProvider>
       </ThemeProvider>
     </MemoryRouter>,
   );

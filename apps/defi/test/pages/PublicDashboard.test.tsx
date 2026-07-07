@@ -3,6 +3,7 @@ import { screen, render, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter, Route, Routes } from 'react-router-dom';
 import { ThemeProvider } from '../../src/context/ThemeContext';
+import { ChainProvider } from '../../src/context/ChainContext';
 import { ModeProvider } from '../../src/context/ModeContext';
 
 vi.mock('ethers', async () => {
@@ -52,12 +53,14 @@ function renderPD() {
   return render(
     <MemoryRouter initialEntries={['/analytics']}>
       <ThemeProvider>
+        <ChainProvider>
         <ModeProvider>
           <Routes>
             <Route path="/analytics" element={<PublicDashboard />} />
             <Route path="/app" element={<div>app-home</div>} />
           </Routes>
         </ModeProvider>
+      </ChainProvider>
       </ThemeProvider>
     </MemoryRouter>,
   );
