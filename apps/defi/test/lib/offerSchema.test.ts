@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { parseUnits } from 'ethers';
+import { parseUnits } from 'viem';
 import {
   validateOfferForm,
   isNFTRental,

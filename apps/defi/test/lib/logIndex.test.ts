@@ -1,5 +1,7 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
-import { id as keccakId } from 'ethers';
+import { keccak256, toBytes } from 'viem';
+// #1076: defi migrated off ethers to viem — ethers.id(sig) == keccak256(utf8Bytes(sig)).
+const keccakId = (sig: string) => keccak256(toBytes(sig));
 
 // Force CHUNK=10 regardless of what `.env.local` sets for VITE_LOG_INDEX_CHUNK.
 // The module reads this at import time, so stub before the dynamic import.

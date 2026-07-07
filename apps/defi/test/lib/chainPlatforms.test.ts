@@ -3,7 +3,7 @@ import {
   platformForChain,
   isTestnet,
   COINGECKO_PLATFORMS,
-} from '../../src/lib/chainPlatforms';
+} from '@vaipakam/lib/chainPlatforms';
 
 describe('platformForChain', () => {
   it('returns the mapped platform for known mainnets', () => {

@@ -2,6 +2,12 @@ import '@testing-library/jest-dom/vitest';
 import { afterEach, vi } from 'vitest';
 import { cleanup, configure } from '@testing-library/react';
 
+// #1076: initialise i18next exactly as the app does (`main.tsx` does
+// `import './i18n'`). Without this, `t('riskGauge.ltvWarning')` returns
+// the raw KEY in tests, so every assertion on user-visible copy failed.
+// Eager English bundles → `t()` resolves synchronously after import.
+import '../src/i18n';
+
 configure({ asyncUtilTimeout: 5_000 });
 
 // Some vitest/jsdom environments expose a `localStorage` without a full Storage

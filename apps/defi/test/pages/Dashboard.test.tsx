@@ -1,6 +1,8 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { screen, waitFor } from '@testing-library/react';
-import { id as keccakId } from 'ethers';
+import { keccak256, toBytes } from 'viem';
+// #1076: defi migrated off ethers to viem — ethers.id(sig) == keccak256(utf8Bytes(sig)).
+const keccakId = (sig: string) => keccak256(toBytes(sig));
 import { renderWithProviders } from '../utils';
 
 const LOAN_INITIATED_TOPIC0 = keccakId('LoanInitiated(uint256,uint256,address,address)');
