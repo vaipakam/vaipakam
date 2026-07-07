@@ -273,19 +273,12 @@ describe('LoanDetails', () => {
     await waitFor(() => expect(diamondMock.triggerDefault).toHaveBeenCalled());
   });
 
-  // #1076 REGRESSION: src/pages/LoanDetails.tsx:1253 gates the entire
-  // "loan-actions-card" on `availability.repay`, but repay is
-  // `canAct && !isLender` (loanActions.ts:86) — false for the lender. The
-  // lender-only Early-Withdrawal CTA (LoanDetails.tsx:1556, gated on
-  // `availability.earlyWithdrawal`) is nested INSIDE that repay-gated card,
-  // so a lender viewing their own active loan can never reach it. The
-  // "You are Lender" badge (rendered outside the card) still shows, but the
-  // action is structurally unreachable. Not masking — left skipped so the
-  // real bug stays visible — tracked as #1091. Fix belongs in src/ (widen the
-  // card gate to include lender-reachable actions, e.g. `availability.repay ||
-  // availability.earlyWithdrawal || availability.triggerDefault`); un-skip
-  // when that lands.
-  it.skip('lender early-withdrawal CTA shown when active and not overdue', async () => {
+  // #1091 (fixed): the actions card now renders whenever ANY nested action is
+  // available (not just `repay` = `canAct && !isLender`, false for the lender),
+  // so the lender-only Early-Withdrawal CTA is reachable on the lender's own
+  // active loan. The repay-specific section stays gated on `availability.repay`
+  // so it doesn't show to the lender.
+  it('lender early-withdrawal CTA shown when active and not overdue', async () => {
     walletMock.address = '0xME';
     diamondMock.getLoanDetails.mockResolvedValue(mkLoan({ lender: '0xME' }));
     diamondMock.ownerOf.mockImplementation(async (t: bigint) => t === 10n ? '0xME' : '0xX');
@@ -294,6 +287,10 @@ describe('LoanDetails', () => {
       expect(screen.getByRole('link', { name: /Initiate Early Withdrawal/i })).toBeInTheDocument(),
     );
     expect(screen.getByText(/You are Lender/i)).toBeInTheDocument();
+    // #1091 — the card renders for the lender's early-exit action, but the
+    // repay-specific section must stay hidden (a lender repaying their own
+    // loan reverts LenderCannotRepayOwnLoan).
+    expect(screen.queryByRole('button', { name: /Repay in Full/i })).not.toBeInTheDocument();
   });
 
   it('repaid loan hides actions card', async () => {
