@@ -332,6 +332,14 @@ interface IVaipakamErrors {
     ///         shortfall cannot be covered without selling collateral.
     error PeriodicSettleSwapPathRequired(uint256 loanId, uint256 shortfall);
 
+    /// @notice #1005 (S9) — a forced liquidation / time-based default with
+    ///         liquid collateral was called with an empty `adapterCalls`
+    ///         try-list. The path reverts instead of routing straight into
+    ///         the full-collateral fallback: an eligible loan must not be
+    ///         pushed into FallbackPending (3%+2% premium, in-kind recovery)
+    ///         with zero swap route attempted on a healthy DEX.
+    error LiquidationSwapPathRequired(uint256 loanId);
+
     /// @notice Auto-liquidate path attempted but every adapter in the
     ///         supplied try-list reverted. Period is still due —
     ///         settler must retry with a fresh quote / different venues.

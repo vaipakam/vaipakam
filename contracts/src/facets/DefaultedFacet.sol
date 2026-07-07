@@ -325,6 +325,16 @@ contract DefaultedFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErr
                 liquidity == LibVaipakam.LiquidityStatus.Liquid &&
                 !isCollateralValueCollapsed
             ) {
+                // #1005 (S9) — a liquid time-based default MUST attempt at least
+                // one swap route. An empty try-list makes `swapWithFailover`
+                // return `(false, 0)`, routing the loan straight into the full-
+                // collateral fallback (FallbackPending, 3%+2% premium) with ZERO
+                // DEX attempt. Reject here — before the collateral move-out —
+                // so a permissionless caller can't force that outcome. (Illiquid
+                // / value-collapsed defaults legitimately need no swap list and
+                // fall through to the in-kind branch below.)
+                if (adapterCalls.length == 0) revert LiquidationSwapPathRequired(loanId);
+
                 // Time-based default with liquid collateral: swap directly without HF check.
                 // RiskFacet.triggerLiquidation requires HF < 1 (for HF-based liquidation),
                 // but time-based defaults are independent — the README treats non-repayment
@@ -388,47 +398,80 @@ contract DefaultedFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErr
                 // Liquid-collateral DEX liquidation succeeded → "Loan Liquidated".
                 terminalStatus = LibVaipakam.LoanPositionStatus.LoanLiquidated;
 
-                // Distribute: principal + accrued interest + late fees.
-                // Treasury fee is split out of the interest/late portion (not added on top).
-                // Lender bears loss if proceeds are insufficient (per README).
+                // Debt: principal + NET accrued interest + late fees.
                 // #641 — accrue from the interest clock (post-partial origin),
-                // not the immutable term start.
-                uint256 elapsed =
-                    block.timestamp - LibVaipakam.interestAccrualStartOf(loan);
-                uint256 accruedInterest = (loan.principal * loan.interestRateBps * elapsed) /
-                    (LibVaipakam.SECONDS_PER_YEAR * LibVaipakam.BASIS_POINTS);
+                // not the immutable term start. #915 (M7) — credit
+                // `loan.interestSettled` (periodic auto-liquidation already
+                // forwarded that interest to the lender and the accrual clock is
+                // NOT reset, so the raw accrual still spans the settled periods);
+                // subtract it (saturating) so the forced-close debt does not
+                // double-count — matching the HF paths' `currentBorrowBalance`
+                // and the proper-close `settlementInterestNet`. Inline accrual
+                // (not `currentBorrowBalance`) avoids a full storage→memory Loan
+                // copy that would blow this facet past EIP-170.
+                uint256 accruedInterest;
+                {
+                    uint256 elapsed =
+                        block.timestamp - LibVaipakam.interestAccrualStartOf(loan);
+                    accruedInterest = (loan.principal * loan.interestRateBps * elapsed) /
+                        (LibVaipakam.SECONDS_PER_YEAR * LibVaipakam.BASIS_POINTS);
+                }
+                accruedInterest = LibEntitlement.creditSettledInterest(loan, accruedInterest);
                 uint256 lateFee = LibVaipakam.calculateLateFee(loanId, endTime);
                 uint256 totalDebt = loan.principal + accruedInterest + lateFee;
                 uint256 interestPortion = accruedInterest + lateFee;
 
-                // README §3 liquidation-handling charge: treasury receives
-                // 2% of gross proceeds on successful DEX liquidation. This is
-                // additive to the treasury fee taken from recovered interest.
+                // L-h #1010 — the time-based default now pays the caller the
+                // SAME dynamic liquidator incentive curve as the HF paths (6% −
+                // slippage, capped 3%) via the shared helper, so permissionless
+                // default-triggering stays economically motivated. Bonus
+                // computed BEFORE the waterfall so it takes first priority
+                // (keeper liveness incentive).
+                //
+                // NOTE — unlike the Tier-1 HF-liquidation bonus
+                // ({RiskFacet.triggerLiquidation}, which `_assertNotSanctioned`s
+                // and tier-KYC-gates its caller), the time-based default is a
+                // Tier-2 close-out: it is DELIBERATELY permissionless and must
+                // not brick (README sanctions policy — `markDefaulted` /
+                // time-based liquidation stay open so the unflagged counterparty
+                // is made whole). The bonus (≤3% of proceeds) is therefore NOT
+                // sanctions/KYC-gated on the caller, consistent with that path's
+                // Tier-2 liveness intent.
+                uint256 bonus = (proceeds *
+                    LibEntitlement.liquidatorIncentiveBps(
+                        loan.collateralAsset, proceeds, expectedProceeds
+                    )) / LibVaipakam.BASIS_POINTS;
+                if (bonus > proceeds) bonus = proceeds;
+                if (bonus > 0) {
+                    IERC20(loan.principalAsset).safeTransfer(msg.sender, bonus);
+                }
+
+                // Waterfall (L-g #1009): bonus first, full lender recovery next,
+                // then the 2% treasury handling fee SUBORDINATED to lender
+                // recovery (taken only from surplus above debt), borrower keeps
+                // the residual. Underwater ⇒ handling fee collapses to 0.
+                uint256 afterBonus = proceeds - bonus;
+                uint256 allocated = afterBonus > totalDebt ? totalDebt : afterBonus;
+                uint256 surplusAfterDebt = afterBonus - allocated;
                 uint256 handlingFee = (proceeds * LibVaipakam.cfgLiquidationHandlingFeeBps())
                     / LibVaipakam.BASIS_POINTS;
-                uint256 afterFees = proceeds - handlingFee;
+                if (handlingFee > surplusAfterDebt) handlingFee = surplusAfterDebt;
+                uint256 borrowerSurplus = surplusAfterDebt - handlingFee;
 
-                // Allocate from proceeds after the handling fee.
-                uint256 allocated = afterFees > totalDebt ? totalDebt : afterFees;
-                uint256 borrowerSurplus = afterFees > totalDebt ? afterFees - totalDebt : 0;
-
-                // Treasury takes its cut from the interest/late portion of allocated amount.
-                // If allocated < principal, lender is already taking a loss — no interest to split.
                 uint256 treasuryInterestFee;
                 uint256 lenderProceeds;
                 if (allocated > loan.principal) {
                     uint256 interestRecovered = allocated - loan.principal;
-                    // Cap to actual interest portion (rest is principal)
                     if (interestRecovered > interestPortion) interestRecovered = interestPortion;
                     (treasuryInterestFee, ) = LibEntitlement.splitTreasury(loan, interestRecovered);
                     lenderProceeds = allocated - treasuryInterestFee;
                 } else {
-                    // Undercollateralized below principal: lender bears full loss, no treasury interest fee
-                    treasuryInterestFee = 0;
                     lenderProceeds = allocated;
                 }
 
-                // Send treasury handling fee + interest fee in a single transfer.
+                // Send treasury (subordinated) handling fee + interest fee.
+                // NOTE: unlike the HF paths this branch does not record a
+                // treasury accrual (pre-existing behaviour, unchanged here).
                 uint256 toTreasury = handlingFee + treasuryInterestFee;
                 if (toTreasury > 0) {
                     IERC20(loan.principalAsset).safeTransfer(treasury, toTreasury);

@@ -230,55 +230,45 @@ contract RiskSplitLiquidationFacet is
             splits
         );
 
-        // Calculate debt — identical to {RiskFacet.triggerLiquidation}.
-        uint256 currentBorrowBalance = LibEntitlement.currentBorrowBalance(loan);
+        // Calculate debt — identical to {RiskFacet.triggerLiquidation}. #915 —
+        // `currentBorrowBalance` nets `interestSettled` (periodic-settled interest).
         uint256 endTime = loan.startTime + loan.durationDays * 1 days;
         uint256 lateFee = LibVaipakam.calculateLateFee(loanId, endTime);
-        uint256 totalDebt = currentBorrowBalance + lateFee;
+        uint256 totalDebt = LibEntitlement.currentBorrowBalance(loan) + lateFee;
         uint256 interestPortion = totalDebt - loan.principal;
 
-        // Dynamic liquidator incentive — identical to {RiskFacet.triggerLiquidation}.
-        uint256 realizedSlippageBps;
-        if (proceeds < expectedProceeds) {
-            realizedSlippageBps = ((expectedProceeds - proceeds) * LibVaipakam.BASIS_POINTS)
-                / expectedProceeds;
-            if (realizedSlippageBps > maxSlippageBps) {
-                realizedSlippageBps = maxSlippageBps;
-            }
-        }
-        uint256 maxIncentiveBps = LibVaipakam.cfgMaxLiquidatorIncentiveBps();
-        uint256 incentiveBps = maxSlippageBps - realizedSlippageBps;
-        if (incentiveBps > maxIncentiveBps) {
-            incentiveBps = maxIncentiveBps;
-        }
-        uint256 assetCapBps = s.assetRiskParams[loan.collateralAsset].liqBonusBps;
-        if (assetCapBps != 0 && incentiveBps > assetCapBps) incentiveBps = assetCapBps;
-        uint256 bonus = (proceeds * incentiveBps) / LibVaipakam.BASIS_POINTS;
+        // Dynamic liquidator incentive — identical curve to the single-route
+        // path via {LibEntitlement.liquidatorIncentiveBps} (L-h #1010).
+        uint256 bonus = (proceeds *
+            LibEntitlement.liquidatorIncentiveBps(loan.collateralAsset, proceeds, expectedProceeds))
+            / LibVaipakam.BASIS_POINTS;
         if (bonus > proceeds) bonus = proceeds;
 
         // Tiered-KYC check for the liquidator — identical to {RiskFacet.triggerLiquidation}.
         (uint256 price, uint8 feedDecimals) = OracleFacet(address(this))
             .getAssetPrice(loan.principalAsset);
         uint8 tokenDecimals = IERC20Metadata(loan.principalAsset).decimals();
-        uint256 bonusNumeraire = (bonus * price * 1e18) / (10 ** feedDecimals) / (10 ** tokenDecimals);
+        uint256 bonusNumeraire =
+            (bonus * price * 1e18) / (10 ** feedDecimals) / (10 ** tokenDecimals);
         if (!ProfileFacet(address(this)).meetsKYCRequirement(msg.sender, bonusNumeraire))
             revert KYCRequired();
 
-        // Bonus to liquidator + treasury handling fee — identical.
         if (bonus > 0) {
             IERC20(loan.principalAsset).safeTransfer(msg.sender, bonus);
         }
+
+        // Waterfall (L-g #1009) — identical to {RiskFacet.triggerLiquidation}:
+        // bonus first, full lender recovery next, 2% treasury handling fee
+        // SUBORDINATED to lender recovery (taken only from surplus above debt),
+        // borrower keeps the residual.
+        uint256 afterBonus = proceeds - bonus;
+        uint256 allocated = afterBonus > totalDebt ? totalDebt : afterBonus;
+        uint256 surplusAfterDebt = afterBonus - allocated;
         uint256 handlingFee = (proceeds * LibVaipakam.cfgLiquidationHandlingFeeBps())
             / LibVaipakam.BASIS_POINTS;
-        if (bonus + handlingFee > proceeds) {
-            handlingFee = proceeds - bonus;
-        }
+        if (handlingFee > surplusAfterDebt) handlingFee = surplusAfterDebt;
+        uint256 borrowerSurplus = surplusAfterDebt - handlingFee;
 
-        // Distribution — identical to {RiskFacet.triggerLiquidation}.
-        uint256 afterFees = proceeds - bonus - handlingFee;
-        address treasury = s.treasury;
-        uint256 allocated = afterFees > totalDebt ? totalDebt : afterFees;
-        uint256 borrowerSurplus = afterFees > totalDebt ? afterFees - totalDebt : 0;
         uint256 treasuryInterestFee;
         uint256 lenderProceeds;
         if (allocated > loan.principal) {
@@ -287,12 +277,12 @@ contract RiskSplitLiquidationFacet is
             (treasuryInterestFee, ) = LibEntitlement.splitTreasury(loan, interestRecovered);
             lenderProceeds = allocated - treasuryInterestFee;
         } else {
-            treasuryInterestFee = 0;
             lenderProceeds = allocated;
         }
+
         uint256 toTreasury = handlingFee + treasuryInterestFee;
         if (toTreasury > 0) {
-            IERC20(loan.principalAsset).safeTransfer(treasury, toTreasury);
+            IERC20(loan.principalAsset).safeTransfer(s.treasury, toTreasury);
             LibFacet.recordTreasuryAccrual(loan.principalAsset, toTreasury);
         }
         // #821 — vault-lock the lender's share through the receive-side exemption

@@ -52,7 +52,7 @@ import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {IERC20Metadata} from "@openzeppelin/contracts/token/ERC20/extensions/IERC20Metadata.sol";
 import {AccessControlFacet} from "../src/facets/AccessControlFacet.sol";
 import {HelperTest} from "./HelperTest.sol";
-import {defaultAdapterCalls} from "./helpers/AdapterCallHelpers.sol";
+import {defaultAdapterCalls, emptyAdapterCalls} from "./helpers/AdapterCallHelpers.sol";
 import {OfferCreateFacet} from "../src/facets/OfferCreateFacet.sol";
 import {OfferAcceptFacet} from "../src/facets/OfferAcceptFacet.sol";
 import {LibVaipakam} from "../src/libraries/LibVaipakam.sol";
@@ -1376,6 +1376,70 @@ contract DefaultedFacetTest is Test {
         // Lender should get at least principal back (proceeds > total debt)
         (, uint256 lenderAmt,) = ClaimFacet(address(diamond)).getClaimableAmount(loanId, true);
         assertGt(lenderAmt, 0);
+        vm.clearMockedCalls();
+    }
+
+    // ─────────────────────────────────────────────────────────────────────
+    // Tranche 4 — time-based-default hardening (#1005 / #1010)
+    // ─────────────────────────────────────────────────────────────────────
+
+    /// @dev #1005 (S9) — a liquid time-based default called with an EMPTY
+    ///      adapter try-list reverts `LiquidationSwapPathRequired` instead of
+    ///      routing into the full-collateral fallback with zero swap attempted.
+    function test_TriggerDefault_RevertsOnEmptyAdapterList() public {
+        uint256 loanId = createAndAcceptOffer(
+            mockERC20, mockCollateralERC20, LibVaipakam.AssetType.ERC20,
+            1000 ether, 1500 ether, 30, 0, 0
+        );
+        vm.warp(block.timestamp + 33 days + 3);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                IVaipakamErrors.LiquidationSwapPathRequired.selector,
+                loanId
+            )
+        );
+        DefaultedFacet(address(diamond)).triggerDefault(loanId, emptyAdapterCalls());
+    }
+
+    /// @dev #1010 (L-h) — a liquid time-based default now pays the CALLER the
+    ///      same dynamic liquidator incentive (6% − slippage, capped 3%) the HF
+    ///      liquidation paths pay, so permissionless default-triggering stays
+    ///      economically motivated. Previously the time-default swap paid the
+    ///      caller nothing. As a Tier-2 close-out the bonus is NOT sanctions/
+    ///      KYC-gated on the caller (see the facet note), so an arbitrary keeper
+    ///      earns it.
+    function test_TriggerDefault_LiquidSwapPaysCallerIncentive() public {
+        uint256 loanId = createAndAcceptOffer(
+            mockERC20, mockCollateralERC20, LibVaipakam.AssetType.ERC20,
+            1000 ether, 1500 ether, 30, 0, 0
+        );
+        vm.warp(block.timestamp + 33 days + 3);
+        deal(mockERC20, address(diamond), 3000 ether);
+        deal(mockCollateralERC20, address(diamond), 3000 ether);
+        vm.mockCall(
+            address(diamond),
+            abi.encodeWithSelector(VaultFactoryFacet.vaultWithdrawERC20.selector),
+            abi.encode(true)
+        );
+        vm.mockCall(
+            address(diamond),
+            abi.encodeWithSelector(VaipakamNFTFacet.updateNFTStatus.selector),
+            ""
+        );
+
+        address keeper = makeAddr("defaultKeeper");
+        uint256 balBefore = ERC20Mock(mockERC20).balanceOf(keeper);
+        vm.prank(keeper);
+        DefaultedFacet(address(diamond)).triggerDefault(loanId, defaultAdapterCalls());
+
+        assertGt(
+            ERC20Mock(mockERC20).balanceOf(keeper) - balBefore,
+            0,
+            "time-based-default caller must receive the liquidator incentive (L-h #1010)"
+        );
+        // Terminal status must be Liquidated (swap succeeded), not just Defaulted.
+        LibVaipakam.Loan memory loan = LoanFacet(address(diamond)).getLoanDetails(loanId);
+        assertEq(uint8(loan.status), uint8(LibVaipakam.LoanStatus.Defaulted));
         vm.clearMockedCalls();
     }
 

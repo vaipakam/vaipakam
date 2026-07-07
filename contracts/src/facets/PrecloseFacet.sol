@@ -684,6 +684,13 @@ contract PrecloseFacet is
             loan.interestRateBps *
             elapsed) /
             (LibVaipakam.SECONDS_PER_YEAR * LibVaipakam.BASIS_POINTS);
+        // #915 (M7) — credit interest already forwarded to the lender via
+        // periodic auto-liquidation (`loan.interestSettled`, saturating at 0)
+        // so the exiting borrower is not billed a second time for it. Mirrors
+        // the offset (Option 3) `_computeOffsetSettlement` netting and the
+        // proper-close `settlementInterestNet`; the accrual clock is not reset
+        // by periodic settlement, so the raw accrual still spans those periods.
+        accruedInterest = LibEntitlement.creditSettledInterest(loan, accruedInterest);
 
         uint256 originalExpectedRemaining = (loan.principal *
             loan.interestRateBps *
@@ -1234,16 +1241,15 @@ contract PrecloseFacet is
             loan.interestRateBps *
             elapsed) /
             (LibVaipakam.SECONDS_PER_YEAR * LibVaipakam.BASIS_POINTS);
-        // #1001 (S3, Codex #1070 r9 P2) — NET already-settled periodic interest.
-        // A loan on a periodic-interest cadence may have auto-liquidated some
-        // interest into `loan.interestSettled` (already paid to the lender). The
-        // gross accrual above covers the FULL elapsed window, so without crediting
-        // the settled portion the offset would charge the borrower — and pay the
-        // lender — that interest twice. Saturating subtraction, mirroring
-        // `LibEntitlement.settlementInterestNet` / `RepayFacet` (the same S12
-        // double-charge class the forced-close paths net).
-        uint256 settled = uint256(loan.interestSettled);
-        accruedInterest = accruedInterest > settled ? accruedInterest - settled : 0;
+        // #1001 (S3, Codex #1070 r9 P2) / #915 (M7) — NET already-settled
+        // periodic interest. A loan on a periodic-interest cadence may have
+        // auto-liquidated some interest into `loan.interestSettled` (already
+        // paid to the lender). The gross accrual above covers the FULL elapsed
+        // window, so without crediting the settled portion the offset would
+        // charge the borrower — and pay the lender — that interest twice.
+        // Shared saturating helper (also used by the Option 2 transfer +
+        // proper-close `settlementInterestNet`).
+        accruedInterest = LibEntitlement.creditSettledInterest(loan, accruedInterest);
         uint256 originalExpectedRemaining = (loan.principal *
             loan.interestRateBps *
             remainingSecs) /

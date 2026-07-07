@@ -1479,6 +1479,17 @@
   },
   {
     "type": "error",
+    "name": "LiquidationSwapPathRequired",
+    "inputs": [
+      {
+        "name": "loanId",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
     "name": "LiquidityMismatch",
     "inputs": []
   },

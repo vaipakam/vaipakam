@@ -105,7 +105,16 @@ library LibEntitlement {
         uint256 accruedInterest = (loan.principal *
             loan.interestRateBps *
             elapsed) / (LibVaipakam.SECONDS_PER_YEAR * LibVaipakam.BASIS_POINTS);
-        return loan.principal + accruedInterest;
+        // #915 (M7) — credit interest already forwarded to the lender via
+        // periodic auto-liquidation (`loan.interestSettled`, saturating at 0)
+        // so the HF / forced-close debt does not double-count it. The accrual
+        // clock is NOT reset by periodic settlement, so the raw `accruedInterest`
+        // still spans the settled periods; subtracting the settled portion here
+        // gives every HF read + single/split liquidation the same net-of-settled
+        // debt the proper-close paths already use via `settlementInterestNet`.
+        uint256 settled = uint256(loan.interestSettled);
+        uint256 netInterest = accruedInterest > settled ? accruedInterest - settled : 0;
+        return loan.principal + netInterest;
     }
 
     /// @notice #408/#410/#413 (2026-06-12) — Gross interest owed on an
@@ -171,9 +180,28 @@ library LibEntitlement {
         LibVaipakam.Loan storage loan,
         uint256 nowTime
     ) internal view returns (uint256) {
-        uint256 gross = settlementInterest(loan, nowTime);
+        return creditSettledInterest(loan, settlementInterest(loan, nowTime));
+    }
+
+    /// @notice #915 (M7) — credit `loan.interestSettled` against an
+    ///         already-computed gross interest figure (saturating at 0).
+    /// @dev    Periodic auto-liquidation forwards interest to the lender
+    ///         (`loan.interestSettled += ...`) WITHOUT resetting the accrual
+    ///         clock, so any raw pro-rata / full-term interest figure still
+    ///         spans the settled periods. Every non-proper-close ERC-20
+    ///         settlement (obligation-transfer Option 2, offset Option 3,
+    ///         time-default, HF liquidation) routes its gross interest through
+    ///         here so the already-paid portion is credited exactly once —
+    ///         the same credit the proper-close paths get via
+    ///         {settlementInterestNet}. Kept as a one-expression helper so
+    ///         stack-tight callers (e.g. `PrecloseFacet.transferObligationViaOffer`
+    ///         under viaIR) don't add a local for `settled`.
+    function creditSettledInterest(
+        LibVaipakam.Loan storage loan,
+        uint256 grossInterest
+    ) internal view returns (uint256) {
         uint256 settled = uint256(loan.interestSettled);
-        return gross > settled ? gross - settled : 0;
+        return grossInterest > settled ? grossInterest - settled : 0;
     }
 
     /// @notice Applies the treasury cut to an interest-like amount, using the
@@ -198,5 +226,39 @@ library LibEntitlement {
             (interestAmount * LibVaipakam.effectiveTreasuryFeeBps(loan)) /
             LibVaipakam.BASIS_POINTS;
         lenderShare = interestAmount - treasuryShare;
+    }
+
+    /// @notice Dynamic liquidator incentive in bps — `cfgMaxLiquidationSlippageBps`
+    ///         (6%) minus realized slippage, capped at `cfgMaxLiquidatorIncentiveBps`
+    ///         (3%) and any per-asset `liqBonusBps` ceiling.
+    /// @dev    #1010 (L-h): shared by the single-route / split-route HF
+    ///         liquidation paths AND the time-based-default swap path so all
+    ///         three pay the SAME keeper incentive. Returns bps only; the caller
+    ///         multiplies by `proceeds`. Kept as an `internal view` helper (one
+    ///         audit surface for the incentive curve) — the surrounding
+    ///         waterfall stays inline in each facet to respect the EIP-170
+    ///         ceiling (a memory-struct-returning distributor inflates each
+    ///         god-facet past 24,576 B).
+    /// @param collateralAsset  Loan collateral asset (for the per-asset cap).
+    /// @param proceeds         Actual swap proceeds.
+    /// @param expectedProceeds Oracle-derived expected proceeds.
+    function liquidatorIncentiveBps(
+        address collateralAsset,
+        uint256 proceeds,
+        uint256 expectedProceeds
+    ) internal view returns (uint256 incentiveBps) {
+        uint256 maxSlippageBps = LibVaipakam.cfgMaxLiquidationSlippageBps();
+        uint256 realizedSlippageBps;
+        if (proceeds < expectedProceeds && expectedProceeds != 0) {
+            realizedSlippageBps =
+                ((expectedProceeds - proceeds) * LibVaipakam.BASIS_POINTS) / expectedProceeds;
+            if (realizedSlippageBps > maxSlippageBps) realizedSlippageBps = maxSlippageBps;
+        }
+        incentiveBps = maxSlippageBps - realizedSlippageBps;
+        uint256 maxIncentiveBps = LibVaipakam.cfgMaxLiquidatorIncentiveBps();
+        if (incentiveBps > maxIncentiveBps) incentiveBps = maxIncentiveBps;
+        uint256 assetCapBps =
+            LibVaipakam.storageSlot().assetRiskParams[collateralAsset].liqBonusBps;
+        if (assetCapBps != 0 && incentiveBps > assetCapBps) incentiveBps = assetCapBps;
     }
 }
