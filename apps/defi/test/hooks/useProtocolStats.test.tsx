@@ -105,26 +105,9 @@ vi.mock('../../src/lib/journeyLog', () => ({
   beginStep: () => ({ success: () => {}, failure: () => {} }),
 }));
 
-// Interface encode has a real implementation from ethers — but we mock the
-// whole module in the ethersMock used by other tests. Here we only need
-// encode to return a string with the asset address suffix we decode above.
-vi.mock('ethers', () => {
-  class InterfaceMock {
-    encodeFunctionData(_fn: string, args: any[]) {
-      // Pack the first arg as address or bigint suffix so batchCalls mock
-      // can route to the right stub.
-      const arg = args[0];
-      if (typeof arg === 'string' && arg.startsWith('0x')) {
-        return '0x' + arg.slice(2).padStart(64, '0');
-      }
-      return '0x' + (arg as bigint).toString(16).padStart(64, '0');
-    }
-    decodeFunctionResult(_fn: string, _data: string) {
-      return [];
-    }
-  }
-  return { Interface: InterfaceMock };
-});
+// #1076: the multicall fan-out is mocked at `@vaipakam/lib/multicall`
+// (encodeBatchCalls/batchCalls) below, and src/ imports no ethers, so the
+// former `vi.mock('ethers', …)` Interface stub was dead — removed.
 
 import { useProtocolStats, __clearProtocolStatsCache } from '../../src/hooks/useProtocolStats';
 

@@ -6,14 +6,9 @@ import { ThemeProvider } from '../../src/context/ThemeContext';
 import { ChainProvider } from '../../src/context/ChainContext';
 import { ModeProvider } from '../../src/context/ModeContext';
 
-vi.mock('ethers', () => ({
-  MaxUint256: 2n ** 256n - 1n,
-  isAddress: (v: unknown) =>
-    typeof v === 'string' && /^0x[0-9a-fA-F]{40}$/.test(v),
-  Contract: class {
-    constructor(..._args: unknown[]) {}
-  },
-}));
+// #1076: src/ imports no ethers (the Refinance page uses viem's
+// maxUint256/isAddress), so the former `vi.mock('ethers', …)` was dead —
+// removed.
 
 const diamondMock: any = {
   refinanceLoan: vi.fn(),

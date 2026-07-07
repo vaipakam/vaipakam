@@ -10,12 +10,17 @@ across 56 files) and adds a CI lane so it can't rot invisibly again.
 The bulk of the work was structural and shared-cause: the test harness now
 mirrors the app's real provider tree (so page hooks that resolve the read
 chain no longer throw), i18n is initialised in tests (so assertions on
-user-visible copy match real English instead of raw keys), the dead
-`ethers` mocks were removed and rewritten against the viem read model
-(`readContract` / `getLogs` / `getContractEvents` / multicall), moved-module
-imports were re-pointed, and assertion drift was triaged case-by-case to
-distinguish deliberate app evolution (renamed fields, reworked copy, new
-consent gates, wallet-gated pages) from genuine regressions.
+user-visible copy match real English instead of raw keys), every dead
+`ethers` mock was removed — the per-file `vi.mock('ethers', …)` stubs and the
+shared `test/ethersMock.ts` helper are all gone, so the suite no longer masks
+a reintroduced ethers dependency — and the read paths were rewritten against
+the viem model (`readContract` / `getLogs` / `getContractEvents` / multicall),
+moved-module imports were re-pointed, and assertion drift was triaged
+case-by-case to distinguish deliberate app evolution (renamed fields, reworked
+copy, new consent gates, wallet-gated pages) from genuine regressions. The
+Vitest config now also discovers source-colocated `src/**/*.test.*` files, not
+just the central `test/` suite, so a colocated test can't silently sit outside
+the run.
 
 Two genuine app bugs surfaced during that triage and were deliberately left
 visible rather than papered over — their covering tests are skipped with a

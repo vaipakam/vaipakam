@@ -76,18 +76,9 @@ vi.mock('@vaipakam/lib/multicall', () => ({
   },
 }));
 
-vi.mock('ethers', () => {
-  class InterfaceMock {
-    encodeFunctionData(_fn: string, args: any[]) {
-      const id = args[0] as bigint;
-      return '0x' + id.toString(16).padStart(64, '0');
-    }
-    decodeFunctionResult() {
-      return [];
-    }
-  }
-  return { Interface: InterfaceMock };
-});
+// #1076: the multicall fan-out is mocked at `@vaipakam/lib/multicall` below
+// and src/ imports no ethers, so the former `vi.mock('ethers', …)` Interface
+// stub was dead — removed.
 
 import {
   useRecentOffers,

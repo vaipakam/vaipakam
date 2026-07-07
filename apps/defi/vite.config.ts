@@ -38,7 +38,10 @@ export default defineConfig({
     globals: true,
     environment: 'jsdom',
     setupFiles: ['./test/setup.ts'],
-    include: ['test/**/*.test.{ts,tsx}'],
+    // Cover BOTH the central `test/` suite and source-colocated `*.test.*`
+    // files (#1076): a colocated test outside this glob would never run —
+    // exactly the silent-rot gap the CI lane exists to close.
+    include: ['test/**/*.test.{ts,tsx}', 'src/**/*.test.{ts,tsx}'],
     css: false,
     testTimeout: 20_000,
     hookTimeout: 20_000,

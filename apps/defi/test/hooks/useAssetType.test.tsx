@@ -42,8 +42,11 @@ const publicClientMock = {
     throw new Error(`unexpected functionName ${functionName}`);
   },
 };
+// Mutable holder so a single test can drive the missing-client guard
+// (`useAssetType` gates detection on `!!publicClient`). Reset in beforeEach.
+let activeClient: typeof publicClientMock | null = publicClientMock;
 vi.mock('../../src/contracts/useDiamond', () => ({
-  useDiamondPublicClient: () => publicClientMock,
+  useDiamondPublicClient: () => activeClient,
 }));
 
 const walletMock: { provider: unknown; chainId: number | null } = {
@@ -67,6 +70,7 @@ beforeEach(() => {
   readContractCount = 0;
   walletMock.provider = { mock: true };
   walletMock.chainId = 1;
+  activeClient = publicClientMock;
 });
 
 describe('useAssetType', () => {
@@ -82,10 +86,15 @@ describe('useAssetType', () => {
     expect(result.current.loading).toBe(false);
   });
 
-  it('returns null when provider is missing', () => {
-    walletMock.provider = null;
+  it('returns null and skips detection when the public client is unavailable', () => {
+    // #1076: the hook gates on `!!publicClient` (useAssetType.ts:70), not on
+    // the old wallet `provider` field — null the client to exercise that
+    // guard. `inputsReady` is false, so it never starts detection.
+    activeClient = null;
     const { result } = renderHook(() => useAssetType(mkAddr('a')));
     expect(result.current.type).toBeNull();
+    expect(result.current.loading).toBe(false);
+    expect(readContractCount).toBe(0);
   });
 
   it('detects ERC-1155 when supportsInterface(d9b67a26) is true', async () => {

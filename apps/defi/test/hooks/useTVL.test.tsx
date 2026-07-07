@@ -77,17 +77,9 @@ vi.mock('../../src/lib/journeyLog', () => ({
   beginStep: () => ({ success: () => {}, failure: () => {} }),
 }));
 
-vi.mock('ethers', () => {
-  class InterfaceMock {
-    encodeFunctionData(_fn: string, args: any[]) {
-      const a = args[0];
-      if (typeof a === 'string') return '0x' + a.slice(2).padStart(64, '0');
-      return '0x' + (a as bigint).toString(16).padStart(64, '0');
-    }
-    decodeFunctionResult() { return []; }
-  }
-  return { Interface: InterfaceMock };
-});
+// #1076: the multicall fan-out is mocked at `@vaipakam/lib/multicall` below
+// and src/ imports no ethers, so the former `vi.mock('ethers', …)` Interface
+// stub was dead — removed.
 
 import { useTVL, __clearTVLCache } from '../../src/hooks/useTVL';
 
