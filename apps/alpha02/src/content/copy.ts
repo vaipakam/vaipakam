@@ -933,6 +933,12 @@ export const copy = {
         'Priced by a test oracle, so it behaves like a liquid asset — health factor, liquidation, and refinancing all work with it. Pair it with mWETH (one as the loan, one as collateral) when a flow needs two different liquid tokens.',
       action: (units: number) => `Mint ${units.toLocaleString()} tLIQ`,
     },
+    liquid2: {
+      title: 'Second liquid test token (tLQ2)',
+      blurb:
+        'Also priced by a test oracle — a second, distinct liquid token so you can run a deal where both the loan and the collateral are liquid without pairing a token against itself.',
+      action: (units: number) => `Mint ${units.toLocaleString()} tLQ2`,
+    },
     mweth: {
       title: 'Mock wrapped ETH (mWETH)',
       blurb:

@@ -38,6 +38,7 @@ import {
 } from '../contracts/usePermit2Signing';
 import { useAcceptTermsSigning } from '../contracts/useAcceptTerms';
 import { SimulationPreview } from './SimulationPreview';
+import { SelectMenu } from './SelectMenu';
 import type { TxSimInput } from '../contracts/useTxSimulation';
 import {
   ensureAllowance,
@@ -1866,18 +1867,15 @@ export function OfferFlow({ side }: { side: Side }) {
           </div>
           <div className="field">
             <label htmlFor="duration">Duration</label>
-            <select
+            <SelectMenu
               id="duration"
-              className="input"
               value={form.durationDays}
-              onChange={(e) => set({ durationDays: e.target.value })}
-            >
-              {durationOptions.map((d) => (
-                <option key={d} value={String(d)}>
-                  {formatDurationDays(d)}
-                </option>
-              ))}
-            </select>
+              onChange={(next) => set({ durationDays: next })}
+              options={durationOptions.map((d) => ({
+                value: String(d),
+                label: formatDurationDays(d),
+              }))}
+            />
             {!durationValid ? (
               <span className="field-hint">
                 The protocol currently caps offers at{' '}

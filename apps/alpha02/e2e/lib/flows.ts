@@ -9,34 +9,49 @@ import { expect, type Locator, type Page } from '@playwright/test';
 import { MOCKS, WETH, pub, DIAMOND, DIAMOND_ABI_VIEM } from './chain';
 import { connectWallet } from './wallet-fixture';
 
-/** Pick a curated token by ADDRESS. The AssetPicker's curated options
- *  hydrate from live symbol reads, so on a cold page the select briefly
- *  holds only "Choose an asset…" + "Paste a token address…" — run 3's
- *  index-based selection raced that hydration and landed on the paste
- *  row, leaving the form address empty forever. */
+/** Choose a SelectMenu row by its stable data-value. The app's
+ *  dropdowns are the custom SelectMenu (button + listbox), not native
+ *  <select> — `selectOption` does not apply. Rows carry `data-value`
+ *  precisely so drivers never select positionally (the suggested
+ *  token rows hydrate from live symbol reads; index-based selection
+ *  raced that hydration in run 3 and landed on the paste row). */
+export async function chooseMenuValue(
+  page: Page,
+  menuId: string,
+  value: string,
+): Promise<void> {
+  await page.locator(`#${menuId}`).click();
+  // `i` flag: token rows carry the suggested list's checksum casing,
+  // the deployments bundle may differ.
+  const row = page.locator(`[role="listbox"] [data-value="${value}" i]`);
+  await expect(row).toBeVisible({ timeout: 30_000 });
+  await row.click();
+}
+
+/** Pick a suggested (curated / faucet) token by ADDRESS. Rows hydrate
+ *  from live symbol reads — chooseMenuValue waits for the row rather
+ *  than racing the hydration. */
 export async function pickCuratedAsset(
   page: Page,
   pickerId: string,
   address: string,
 ): Promise<void> {
-  // `i` flag: option values carry the curated list's checksum casing,
-  // the deployments bundle may differ.
-  const opt = page.locator(`#${pickerId} option[value="${address}" i]`);
-  await expect(opt).toBeAttached({ timeout: 30_000 });
-  const exact = await opt.getAttribute('value');
-  await page.locator(`#${pickerId}`).selectOption(exact!);
+  await chooseMenuValue(page, pickerId, address);
 }
 
 /** Open an AssetPicker's paste-address branch and fill `address`.
- *  '__custom__' is the picker's stable sentinel option value — never
- *  positional (the curated rows above it hydrate asynchronously). */
+ *  '__custom__' is the picker's stable sentinel row value — never
+ *  positional (the suggested rows above it hydrate asynchronously). */
 export async function pasteAsset(
   page: Page,
   pickerId: string,
   address: string,
 ): Promise<void> {
-  await page.locator(`#${pickerId}`).selectOption('__custom__');
-  await page.locator(`#${pickerId} ~ input[placeholder="0x…"]`).fill(address);
+  await chooseMenuValue(page, pickerId, '__custom__');
+  // The paste input renders inside the same .field as the menu.
+  await page
+    .locator(`.field:has(#${pickerId}) input[placeholder="0x…"]`)
+    .fill(address);
 }
 
 /** The suite's principal amount. DISTINCTIVE on purpose: the guided

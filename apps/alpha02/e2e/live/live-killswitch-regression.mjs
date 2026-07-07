@@ -3,7 +3,7 @@
 // is: every page renders normally and the kill-switch banner copy
 // appears NOWHERE. (Flipping the switch on production is an operator
 // action we don't do for a review — exception stated in the PR body.)
-import { ensureConnected, launch, SITE } from './driver.mjs';
+import { ensureConnected, launch, SITE, pasteAssetLive } from './driver.mjs';
 
 const KILL_COPY = 'switched off right now';
 // EVERY public route in App.tsx — the claim is "the banner appears
@@ -49,9 +49,7 @@ console.log('driving lend post-offer review…');
 await page.goto(`${SITE}/lend`, { waitUntil: 'domcontentloaded', timeout: 60000 });
 await page.waitForTimeout(2500);
 await ensureConnected(page);
-await page.locator('#lending-asset').selectOption('__custom__');
-await page.locator('#lending-asset ~ input[placeholder="0x…"]')
-  .fill('0x2affacdea8119e38d9754b2c2c15ec79af360807');
+await pasteAssetLive(page, 'lending-asset', '0x2affacdea8119e38d9754b2c2c15ec79af360807');
 await page.waitForTimeout(1500);
 await page.locator('input[placeholder="0.0"]').fill('25');
 await page.getByRole('button', { name: /see matching offers/i }).click();
@@ -59,9 +57,7 @@ await page.waitForTimeout(2000);
 await page.getByRole('button', { name: /post my own lending offer/i }).click();
 await page.waitForTimeout(800);
 await page.locator('input[placeholder="5"]').fill('9');
-await page.locator('#collateral-asset').selectOption('__custom__').catch(() => {});
-await page.locator('#collateral-asset ~ input[placeholder="0x…"]')
-  .fill('0x2A6c7149199991243aCbc04e1d59Aa052A6f00c3');
+await pasteAssetLive(page, 'collateral-asset', '0x2A6c7149199991243aCbc04e1d59Aa052A6f00c3');
 await page.waitForTimeout(1500);
 await page.locator('input[placeholder="0.0"]:visible').last().fill('100');
 await page.getByRole('button', { name: /continue to review/i }).click();

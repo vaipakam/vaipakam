@@ -330,3 +330,21 @@ function jsonSafe(v) {
     JSON.stringify(v, (_k, x) => (typeof x === 'bigint' ? numberToHex(x) : x)),
   );
 }
+
+/** Choose a row in the app's SelectMenu dropdown (button + listbox —
+ *  NOT a native <select>; selectOption does not apply). Rows carry
+ *  data-value; `i` flag tolerates checksum-vs-lowercase casing. */
+export async function chooseMenuValue(page, menuId, value) {
+  await page.locator(`#${menuId}`).click();
+  const row = page.locator(`[role="listbox"] [data-value="${value}" i]`);
+  await row.waitFor({ state: 'visible', timeout: 30000 });
+  await row.click();
+}
+
+/** Open an AssetPicker's paste branch and fill an address. */
+export async function pasteAssetLive(page, pickerId, address) {
+  await chooseMenuValue(page, pickerId, '__custom__');
+  await page
+    .locator(`.field:has(#${pickerId}) input[placeholder="0x…"]`)
+    .fill(address);
+}

@@ -3,27 +3,52 @@
  * symbols, plus a paste-an-address escape hatch. The curated-first
  * shape exists because making naive users find contract addresses
  * was a top finding of the 2026-07-02 browser audit (F-20260702-002).
+ *
+ * On TEST networks the list additionally offers the faucet's mock
+ * ERC-20s (user directive 2026-07-06): the faucet page mints tLIQ /
+ * tLQ2 / mWETH / tILQ / tILQ2 precisely so people can try lending and
+ * borrowing, but the pickers then made them paste those addresses
+ * back by hand. Faucet rows are badged so it stays obvious they are
+ * test tokens; addresses come from the same deployments bundle the
+ * faucet page reads, symbols resolved live like the curated set.
  */
 import { useMemo, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { erc20Abi } from 'viem';
 import { usePublicClient } from 'wagmi';
 import { getCanonicalAssetsForChain } from '@vaipakam/lib';
+import { getDeployment } from '@vaipakam/contracts/deployments';
 import { useTokenSecurity } from '../data/tokenSecurity';
 import { reputationNotice, useTokenReputation } from '../data/tokenReputation';
 import { copy } from '../content/copy';
 import { useActiveChain } from '../chain/useActiveChain';
 import { shortAddress } from '../lib/format';
 import { isAddressLike } from '../contracts/erc20';
+import { SelectMenu, type SelectMenuOption } from './SelectMenu';
 
-interface CuratedToken {
+interface PickerToken {
   address: `0x${string}`;
   symbol: string;
+  faucet: boolean;
 }
 
-/** Curated tokens for the read chain, symbols resolved live. Tokens
- *  whose reads fail (not deployed / not ERC-20) are dropped. */
-function useCuratedTokens(): CuratedToken[] {
+/** The testnetMocks keys that are mintable faucet ERC-20s — the same
+ *  five the /faucet page offers. Feeds, pools, NFTs, and swap infra
+ *  stay out of a TOKEN picker. */
+const FAUCET_ERC20_KEYS = [
+  'liquidToken',
+  'liquidToken2',
+  'mWeth',
+  'illiquidToken',
+  'illiquidToken2',
+] as const;
+
+/** Suggested tokens for the read chain: curated canonical assets
+ *  first, then (testnets only) the faucet mocks. Symbols resolved
+ *  live; tokens whose reads fail (not deployed / not ERC-20) are
+ *  dropped; a faucet token that is ALSO curated dedupes to the
+ *  curated row. */
+function usePickerTokens(): PickerToken[] {
   const { readChain } = useActiveChain();
   const publicClient = usePublicClient({ chainId: readChain.chainId });
 
@@ -31,23 +56,39 @@ function useCuratedTokens(): CuratedToken[] {
     queryKey: ['curatedTokens', readChain.chainId],
     enabled: Boolean(publicClient),
     staleTime: Infinity,
-    queryFn: async (): Promise<CuratedToken[]> => {
-      const addresses = getCanonicalAssetsForChain(readChain.chainId);
+    queryFn: async (): Promise<PickerToken[]> => {
+      const curated = getCanonicalAssetsForChain(readChain.chainId).map(
+        (address) => ({ address, faucet: false }),
+      );
+      const mocks = readChain.testnet
+        ? getDeployment(readChain.chainId)?.testnetMocks
+        : undefined;
+      const seen = new Set(curated.map((c) => c.address.toLowerCase()));
+      const faucet = FAUCET_ERC20_KEYS.flatMap((key) => {
+        const address = (mocks as Record<string, string> | undefined)?.[key];
+        return address && !seen.has(address.toLowerCase())
+          ? [{ address, faucet: true }]
+          : [];
+      });
       const rows = await Promise.all(
-        addresses.map(async (address) => {
+        [...curated, ...faucet].map(async ({ address, faucet: isFaucet }) => {
           try {
             const symbol = await publicClient!.readContract({
               address: address as `0x${string}`,
               abi: erc20Abi,
               functionName: 'symbol',
             });
-            return { address: address as `0x${string}`, symbol };
+            return {
+              address: address as `0x${string}`,
+              symbol,
+              faucet: isFaucet,
+            };
           } catch {
             return null;
           }
         }),
       );
-      return rows.filter((r): r is CuratedToken => r !== null);
+      return rows.filter((r): r is PickerToken => r !== null);
     },
   });
 
@@ -70,14 +111,14 @@ export function AssetPicker({
   value: string;
   onChange: (address: string) => void;
 }) {
-  const curated = useCuratedTokens();
+  const tokens = usePickerTokens();
   const { readChain } = useActiveChain();
-  // Case-insensitive match, but the <select> needs the option's EXACT
+  // Case-insensitive match, but the menu needs the option's EXACT
   // casing — a lowercased address set programmatically (deep links)
-  // must still light up the right curated option.
+  // must still light up the right suggested option.
   const curatedMatch = useMemo(
-    () => curated.find((t) => t.address.toLowerCase() === value.toLowerCase()),
-    [curated, value],
+    () => tokens.find((t) => t.address.toLowerCase() === value.toLowerCase()),
+    [tokens, value],
   );
   const [customOpen, setCustomOpen] = useState(false);
   const showCustom = customOpen || (value !== '' && curatedMatch === undefined);
@@ -101,31 +142,40 @@ export function AssetPicker({
   );
   const reputationLine = reputationNotice(reputation.data);
 
+  const menuOptions = useMemo<SelectMenuOption[]>(
+    () => [
+      ...tokens.map((t) => ({
+        value: t.address as string,
+        label: t.symbol,
+        sub: shortAddress(t.address),
+        controlLabel: `${t.symbol} (${shortAddress(t.address)})`,
+        ...(t.faucet
+          ? { badge: { text: 'Faucet test token', tone: 'info' as const } }
+          : {}),
+      })),
+      { value: CUSTOM, label: 'Paste a token address…' },
+    ],
+    [tokens],
+  );
+
   return (
     <div className="field">
       <label htmlFor={id}>{label}</label>
-      <select
+      <SelectMenu
         id={id}
-        className="input"
+        placeholder="Choose an asset…"
+        options={menuOptions}
         value={showCustom ? CUSTOM : (curatedMatch?.address ?? value)}
-        onChange={(e) => {
-          if (e.target.value === CUSTOM) {
+        onChange={(next) => {
+          if (next === CUSTOM) {
             setCustomOpen(true);
             onChange('');
           } else {
             setCustomOpen(false);
-            onChange(e.target.value);
+            onChange(next);
           }
         }}
-      >
-        <option value="">Choose an asset…</option>
-        {curated.map((t) => (
-          <option key={t.address} value={t.address}>
-            {t.symbol} ({shortAddress(t.address)})
-          </option>
-        ))}
-        <option value={CUSTOM}>Paste a token address…</option>
-      </select>
+      />
       {showCustom ? (
         <input
           aria-label={`${label} contract address`}

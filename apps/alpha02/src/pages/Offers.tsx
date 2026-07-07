@@ -22,6 +22,7 @@ import { BookOpen, LoaderCircle } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import { copy } from '../content/copy';
 import { AddressName } from '../components/AddressName';
+import { SelectMenu } from '../components/SelectMenu';
 import { useActiveOffers } from '../data/hooks';
 import { useActiveChain } from '../chain/useActiveChain';
 import { useMode } from '../app/ModeContext';
@@ -278,32 +279,32 @@ export function Offers() {
           <div className="cluster" style={{ flexWrap: 'wrap', gap: 12 }}>
             <div className="field" style={{ margin: 0 }}>
               <label htmlFor="book-side">Show</label>
-              <select
+              <SelectMenu
                 id="book-side"
-                className="input"
                 value={side}
-                onChange={(e) => setSide(e.target.value as SideFilter)}
-              >
-                <option value="all">Everything</option>
-                <option value="lending">Lending offers (borrow from these)</option>
-                <option value="borrowing">Borrow requests (lend to these)</option>
-                <option value="rentals">NFT rentals</option>
-              </select>
+                onChange={(next) => setSide(next as SideFilter)}
+                options={[
+                  { value: 'all', label: 'Everything' },
+                  { value: 'lending', label: 'Lending offers (borrow from these)' },
+                  { value: 'borrowing', label: 'Borrow requests (lend to these)' },
+                  { value: 'rentals', label: 'NFT rentals' },
+                ]}
+              />
             </div>
             <div className="field" style={{ margin: 0 }}>
               <label htmlFor="book-sort">Sort by</label>
-              <select
+              <SelectMenu
                 id="book-sort"
-                className="input"
                 value={sort}
-                onChange={(e) => setSort(e.target.value as SortKey)}
-              >
-                <option value="newest">Newest first</option>
-                <option value="rate-low">Rate — low to high</option>
-                <option value="rate-high">Rate — high to low</option>
-                <option value="duration-short">Duration — shortest first</option>
-                <option value="duration-long">Duration — longest first</option>
-              </select>
+                onChange={(next) => setSort(next as SortKey)}
+                options={[
+                  { value: 'newest', label: 'Newest first' },
+                  { value: 'rate-low', label: 'Rate — low to high' },
+                  { value: 'rate-high', label: 'Rate — high to low' },
+                  { value: 'duration-short', label: 'Duration — shortest first' },
+                  { value: 'duration-long', label: 'Duration — longest first' },
+                ]}
+              />
             </div>
             <div className="field" style={{ margin: 0, flex: 1, minWidth: 220 }}>
               <label htmlFor="book-asset">Filter by asset address</label>
