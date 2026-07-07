@@ -321,21 +321,19 @@ contract DeployTestnetMocks is Script {
         // same feed AT DEPLOY TIME.
         uint256 wethQuotePrice8;
         if (mWethUsdFeedOverride != address(0)) {
-            ethUsdFeedAddr = mWethUsdFeedOverride;
-            // Derive the WETH/mWETH leg from the live feed so tLIQ ($2,000)
-            // and mUSDC ($1) — whose static pools quote against WETH —
-            // pass the value-balance guard at deploy time. NOTE: assumes an
-            // 8-dec ETH/USD aggregator (the Chainlink standard). CAVEAT: as
-            // the live price later moves beyond `cfgTwapConsistencyBps`
-            // (3%) the STATIC tLIQ/mUSDC pools drift out of band and can
-            // flip Illiquid until a re-run reprices them; the mWETH/WETH
-            // pool never drifts (both its legs read this same feed).
-            // Validate the round metadata with the SAME freshness rules
-            // OracleFacet enforces on an ETH/USD feed, so a stale live feed
-            // fails the deploy FAST instead of silently wiring a feed that
-            // makes WETH + every WETH-quoted faucet token classify Illiquid
-            // the moment the oracle re-reads it (Codex #1095): a valid,
-            // complete, non-future, non-stale round with a positive answer.
+            // SEED mWETH's price from the real ETH/USD feed at deploy time,
+            // but wire a STATIC SNAPSHOT feed (below) into the registry — NOT
+            // the live aggregator. Registering the LIVE feed made the static
+            // tLIQ/mUSDC pools fail `OracleFacet._accumulatePoolImpacts`'
+            // value-balance guard the moment ETH moved beyond
+            // `cfgTwapConsistencyBps` (~3%), flipping every WETH-quoted faucet
+            // token Illiquid until a redeploy — the pools can't reprice
+            // themselves (Codex #1095). Snapshotting keeps mWETH realistic
+            // (the real ETH price AT DEPLOY) AND every pool consistent
+            // forever; an operator reruns the deploy to refresh mWETH to the
+            // current ETH price. Validate the round with the SAME freshness
+            // rules OracleFacet enforces so a stale/incomplete live feed fails
+            // the deploy fast rather than seeding a bogus price.
             (
                 uint80 roundId,
                 int256 live,
@@ -355,8 +353,9 @@ contract DeployTestnetMocks is Script {
                 "DeployTestnetMocks: MWETH_USD_FEED answer is stale (older than MWETH_USD_FEED_MAX_AGE)"
             );
             wethQuotePrice8 = SafeCast.toUint256(live);
-            console.log("Using live MWETH_USD_FEED for mWETH + WETH:", ethUsdFeedAddr);
-            console.log("  live ETH/USD (8-dec):", wethQuotePrice8);
+            ethUsdFeedAddr = address(new MockChainlinkFeed(SafeCast.toInt256(wethQuotePrice8), 8));
+            console.log("Seeded mWETH + WETH from live MWETH_USD_FEED (static snapshot):", ethUsdFeedAddr);
+            console.log("  seeded ETH/USD (8-dec):", wethQuotePrice8);
             console.log("  round age (s):", block.timestamp - updatedAt);
         } else {
             ethUsdFeedAddr = address(new MockChainlinkFeed(SafeCast.toInt256(mWethUsdPrice), 8));
@@ -420,17 +419,17 @@ contract DeployTestnetMocks is Script {
                     "DeployTestnetMocks: FAUCET_SWAP_ADAPTER is a pre-hardening (ungated) adapter - unset the env to deploy fresh"
                 );
             }
-            // A hardened-but-older adapter passes owner() yet lacks the
-            // oracle-aware `tokenUsdFeed`/`setTokenFeed` this script now wires.
+            // A hardened-but-pre-#1095 adapter passes owner() yet lacks the
+            // price-aware `setTokenPrice`/`tokenUsdPrice8` this script wires.
             // Reusing it would pass the checks here, deploy every OTHER mock
-            // below, and only then revert on the setTokenFeed calls (selector
+            // below, and only then revert on the setTokenPrice calls (selector
             // not found) — a confusing half-applied rerun. Probe the getter and
             // fail early with an actionable message instead (Codex #1095).
-            try MockSwapAdapter(swapAdapter).tokenUsdFeed(weth) returns (address) {
-                // oracle-aware adapter — safe to reuse.
+            try MockSwapAdapter(swapAdapter).tokenUsdPrice8(weth) returns (uint256) {
+                // price-aware adapter — safe to reuse.
             } catch {
                 revert(
-                    "DeployTestnetMocks: FAUCET_SWAP_ADAPTER predates the oracle-aware setTokenFeed (Codex #1095) - unset the env to deploy a fresh adapter"
+                    "DeployTestnetMocks: FAUCET_SWAP_ADAPTER predates the price-aware setTokenPrice (Codex #1095) - unset the env to deploy a fresh adapter"
                 );
             }
             console.log("Reusing MockSwapAdapter: ", swapAdapter);
@@ -450,27 +449,28 @@ contract DeployTestnetMocks is Script {
         // liquidation on an unequal-priced faucet pair would drop into the
         // full-collateral fallback instead of swapping. (Reuses the same 8-dec
         // prices wired into the feeds above.)
+        // Every leg is priced from the SAME static 8-dec snapshot the registry
+        // feeds + pools use (mWETH/WETH seeded from the real ETH price at
+        // deploy), so the adapter's swap ratio always agrees with the
+        // oracle-derived `minOutputAmount` and never drifts — no live-feed
+        // read is needed here now that the registry feed is itself a static
+        // snapshot (Codex #1095).
         MockSwapAdapter(swapAdapter).setTokenPrice(liquidToken, tliqPrice8);
         MockSwapAdapter(swapAdapter).setTokenPrice(liquidToken2, musdcPrice8);
         MockSwapAdapter(swapAdapter).setTokenPrice(mWeth, wethQuotePrice8);
         MockSwapAdapter(swapAdapter).setTokenPrice(weth, wethQuotePrice8);
-        // mWETH + WETH TRACK the LIVE ETH/USD feed (Codex #1095, oracle-aware
-        // choice): the oracle prices them off `ethUsdFeedAddr`, so the swap
-        // payout must read the SAME feed at execute time — otherwise the
-        // deploy-time snapshot above goes stale as ETH moves and mWETH
-        // liquidations drift past the slippage band into the full-collateral
-        // fallback. tLIQ / mUSDC keep their static snapshot (fake stable
-        // prices); the snapshot stays the fallback if a feed read ever returns
-        // a non-positive answer.
-        MockSwapAdapter(swapAdapter).setTokenFeed(mWeth, ethUsdFeedAddr);
-        MockSwapAdapter(swapAdapter).setTokenFeed(weth, ethUsdFeedAddr);
-        // Top up the proceeds float every run (harmless testnet mint) —
-        // every liquid principal so any side's loans can liquidate. The float
-        // is generous enough that even the priciest ratio (mWETH→mUSDC pays
-        // ~3,000× the input) has ample output on hand for demo-sized loans.
-        ERC20Mock(liquidToken).mint(swapAdapter, 1_000_000e18);
-        ERC20Mock(liquidToken2).mint(swapAdapter, 1_000_000e18);
-        ERC20Mock(mWeth).mint(swapAdapter, 1_000_000e18);
+        // Top up the proceeds float every run (harmless testnet mint) so any
+        // side's loans can liquidate. The float must be sized in OUTPUT UNITS,
+        // and with distinct prices the low-priced legs need far MORE units:
+        // selling a high-priced asset (mWETH $3,000 / tLIQ $2,000) into mUSDC
+        // ($1) pays thousands of mUSDC per input unit, so a flat 1M mUSDC ran
+        // dry and dropped the swap into the full-collateral fallback (Codex
+        // #1095). Seed each output leg in USD terms (~$60M-equivalent): mUSDC
+        // needs ~60M units, tLIQ ~30k, mWETH ~20k. (Testnet mint is free —
+        // margins are deliberately generous.)
+        ERC20Mock(liquidToken).mint(swapAdapter, 100_000e18); // tLIQ ($2,000) — ~$200M
+        ERC20Mock(liquidToken2).mint(swapAdapter, 60_000_000e18); // mUSDC ($1) — ~$60M
+        ERC20Mock(mWeth).mint(swapAdapter, 100_000e18); // mWETH ($3,000) — ~$300M
 
         vm.stopBroadcast();
 

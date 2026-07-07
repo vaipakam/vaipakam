@@ -19,12 +19,21 @@ Because the faucet tokens now carry distinct prices, the mock liquidation swap
 venue also had to price cross-asset swaps at the fair ratio (selling 1 mWETH
 for ~3,000 mUSDC) rather than a flat 1:1 — otherwise every liquidation on an
 unequal pair would miss the oracle-derived minimum output and fall into the
-full-collateral fallback. For mWETH and WETH that payout now reads the **live**
-Chainlink ETH/USD feed at swap time — the same feed the oracle prices them with
-— so it tracks ETH as it moves and never drifts out of the slippage band; tLIQ
-and mUSDC use their static fake-stable prices. The deploy script also fails
-fast with an actionable message if an operator tries to reuse a swap adapter
-from an older script version that predates this pricing.
+full-collateral fallback. Its proceeds float is now sized in dollar terms so
+the low-priced leg (mUSDC) can actually cover selling a high-priced asset into
+it.
+
+mWETH is priced from the real ETH/USD feed **at deploy time** and then held
+**static** — the deploy takes a one-time snapshot of the live feed and wires
+that fixed value into the price feed, the AMM pools, and the swap venue. This
+was a deliberate choice: pointing the pools at a *live* ETH feed would make
+them fail the oracle's value-balance guard the moment ETH moved a few percent,
+flipping every faucet token Illiquid until a redeploy (the static mock pools
+can't reprice themselves). The snapshot keeps mWETH realistic (the real ETH
+price when deployed) while keeping every liquid-token flow working; an operator
+reruns the deploy to refresh mWETH to the current ETH price. The deploy script
+also fails fast with an actionable message if an operator tries to reuse a swap
+adapter from an older script version that predates this pricing.
 
 Making the prices differ required re-deriving each mock AMM pool's spot price
 from its assets' feed prices (previously every pool was a trivial 1:1, valid
