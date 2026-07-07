@@ -1,13 +1,13 @@
-# defi vitest — non-blocking drift-warn lane (#1076).
+# defi vitest — blocking gate (#1076).
 #
 # The apps/defi unit suite rotted to 256 failures unnoticed because no
-# CI job ever ran it (only typecheck). This lane runs it on every PR
-# that touches defi (or the shared packages it consumes) and reports
-# the pass/fail counts, but NEVER blocks the merge — a discipline, not
-# a gate, same posture as the alpha02 coverage-drift check. The suite
-# is mid-repair (#1076); once it is fully green, flip `continue-on-error`
-# off (and add it to required checks) to make it a real gate.
-name: defi vitest (non-blocking)
+# CI job ever ran it (only typecheck). It was repaired under #1076 and
+# ran as a non-blocking drift-warn lane while it stabilised. Now that the
+# suite is fully green it is a REAL gate: this job fails (and blocks the
+# merge, once listed as a required check in branch protection) if any
+# defi unit test fails. Add `defi vitest / vitest` to the branch's
+# required status checks to enforce it on merge.
+name: defi vitest
 
 on:
   pull_request:
@@ -18,7 +18,7 @@ on:
       - 'packages/ui/**'
       # Root dependency / workspace inputs: a Vitest/jsdom/React/wagmi bump
       # here can break the suite without touching app/package source, so the
-      # warn lane must fire on these too (Codex #1088 r2).
+      # gate must fire on these too (Codex #1088 r2).
       - 'package.json'
       - 'pnpm-lock.yaml'
       - 'pnpm-workspace.yaml'
@@ -58,28 +58,8 @@ jobs:
       - name: Install
         run: pnpm install --frozen-lockfile
 
-      # Non-blocking: the step records its own outcome and we surface a
-      # warning + summary, but the job stays green so a mid-repair suite
-      # (or a fresh regression) never blocks unrelated PRs.
+      # Blocking: a failing defi unit test fails this job. The suite is
+      # deterministic and green on main (#1076), so a red run means a real
+      # regression the change introduced — fix it, don't ignore it.
       - name: Run defi vitest
-        id: vitest
-        continue-on-error: true
         run: pnpm --filter @vaipakam/defi test
-
-      - name: Report outcome
-        if: always()
-        env:
-          OUTCOME: ${{ steps.vitest.outcome }}
-        run: |
-          set -euo pipefail
-          if [ "$OUTCOME" = "success" ]; then
-            echo "defi vitest passed." | tee -a "$GITHUB_STEP_SUMMARY"
-          else
-            MSG="defi vitest reported failures (see the 'Run defi vitest' step log). Non-blocking while the #1076 suite repair is in progress — do not ignore a NEW regression your change introduced."
-            echo "::warning::$MSG"
-            {
-              echo "## defi vitest (non-blocking)"
-              echo ""
-              echo "$MSG"
-            } >> "$GITHUB_STEP_SUMMARY"
-          fi
