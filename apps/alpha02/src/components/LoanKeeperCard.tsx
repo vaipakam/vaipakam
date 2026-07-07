@@ -9,7 +9,7 @@ import { useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import { useWalletClient } from 'wagmi';
 import { copy } from '../content/copy';
-import { submitErrorText } from '../lib/errors';
+import { captureTxError } from '../lib/errors';
 import { useActiveChain } from '../chain/useActiveChain';
 import { useDiamondWrite } from '../contracts/diamond';
 import { useKeeperConfig, useLoanKeeperEnables } from '../data/keepers';
@@ -86,7 +86,7 @@ export function LoanKeeperCard({
           old ? { ...old, [keeper.toLowerCase()]: next } : old,
       );
     } catch (err) {
-      setError(submitErrorText(err));
+      setError(captureTxError(err));
     } finally {
       setBusy(false);
     }

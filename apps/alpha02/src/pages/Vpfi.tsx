@@ -34,7 +34,7 @@ import {
 } from '../contracts/usePermit2Signing';
 import { readAllowance } from '../lib/submitProgress';
 import { exactAmountString, formatBpsAsPercent, formatTokenAmount } from '../lib/format';
-import { isPositiveDecimal, submitErrorText } from '../lib/errors';
+import { isPositiveDecimal, captureTxError } from '../lib/errors';
 import { flowDisabled } from '../lib/killSwitch';
 import { ReviewReceipt, type ReceiptData } from '../components/ReviewReceipt';
 
@@ -267,7 +267,7 @@ export function Vpfi() {
       setReviewing(false);
       refresh();
     } catch (err) {
-      setError(submitErrorText(err));
+      setError(captureTxError(err));
     } finally {
       setPhase(null);
     }
@@ -324,7 +324,7 @@ export function Vpfi() {
       // their figures come with a done-banner, so a briefly-stale
       // balance doesn't read as "the click did nothing".)
     } catch (err) {
-      setError(submitErrorText(err));
+      setError(captureTxError(err));
     } finally {
       setPhase(null);
     }

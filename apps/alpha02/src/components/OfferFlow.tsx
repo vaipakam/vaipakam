@@ -40,7 +40,6 @@ import { useAcceptTermsSigning } from '../contracts/useAcceptTerms';
 import { SimulationPreview } from './SimulationPreview';
 import { SelectMenu } from './SelectMenu';
 import { useTxSimulation, type TxSimInput } from '../contracts/useTxSimulation';
-import { recordLastError } from '../diagnostics/lastError';
 import {
   ensureAllowance,
   isAddressLike,
@@ -78,7 +77,12 @@ import {
   formatTokenAmount,
   fullTermInterest,
 } from '../lib/format';
-import { isPlainDecimal, isPositiveDecimal, submitErrorText } from '../lib/errors';
+import {
+  isPlainDecimal,
+  isPositiveDecimal,
+  isGasEstimationTrap,
+  captureTxError,
+} from '../lib/errors';
 import { copy } from '../content/copy';
 import { ConsentLabel } from './ConsentLabel';
 import { flowDisabled } from '../lib/killSwitch';
@@ -1814,26 +1818,27 @@ export function OfferFlow({ side }: { side: Side }) {
       void queryClient.invalidateQueries({ queryKey: ['activeOffers'] });
       void queryClient.invalidateQueries({ queryKey: ['myLoans'] });
     } catch (err) {
-      // Prefer the pre-sign dry run's concrete revert reason when it has one:
-      // if `eth_estimateGas` stripped the selector, `submitErrorText` can only
-      // return the generic gas-trap copy, but the advisory sim already decoded
-      // the real cause (e.g. "Your collateral is too low…"). Fall back to the
-      // decoded submit error otherwise (its selector usually survives).
-      const message =
-        preSign.result.status === 'revert' && preSign.result.revertReason
-          ? preSign.result.revertReason
-          : submitErrorText(err);
-      setSubmitError(message);
-      // Capture the failure for the diagnostics drawer + support report so a
-      // tx error is surfaced there, not just render-crash errors.
-      recordLastError({
-        message: preSign.result.revertName
-          ? `${message} [${preSign.result.revertName}]`
-          : message,
-        path:
-          typeof window !== 'undefined' ? window.location.pathname : 'unknown',
-        at: Date.now(),
+      // Prefer the pre-sign dry run's concrete revert reason ONLY for the
+      // #780 gas-cap trap: when `eth_estimateGas` strips the selector,
+      // `submitErrorText` can only return the generic gas-trap copy while the
+      // advisory sim already decoded the real cause (e.g. "Your collateral is
+      // too low…"). For every OTHER failure — a wallet rejection, an approval
+      // hiccup, a concrete decoded revert — the live submit error is the
+      // truth and must NOT be masked by the advisory sim (#1094 Codex). The
+      // sim's revertName only tags the recorded entry when we actually use
+      // the sim's reason; tagging a live rejection with a stale sim name
+      // would mislabel it.
+      const dryRunReason =
+        preSign.result.status === 'revert' ? preSign.result.revertReason : undefined;
+      const useDryRun = dryRunReason != null && isGasEstimationTrap(err);
+      // captureTxError records the failure in the diagnostics sink (support
+      // report) AND returns the banner message, so a tx error is surfaced
+      // there, not just render-crash errors.
+      const message = captureTxError(err, {
+        message: useDryRun ? dryRunReason : undefined,
+        revertName: useDryRun ? preSign.result.revertName : undefined,
       });
+      setSubmitError(message);
       // The approval may have MINED before the final prompt was
       // rejected — the review re-renders with the allowance changed,
       // so the roadmap must re-read it or it keeps promising an

@@ -19,7 +19,7 @@ import { EmptyState, UnavailableState } from '../components/EmptyState';
 import { useTokenMeta } from '../contracts/erc20';
 import { AssetType } from '../lib/types';
 import { formatTokenAmount, shortAddress } from '../lib/format';
-import { submitErrorText } from '../lib/errors';
+import { captureTxError } from '../lib/errors';
 import type { PositionLoan } from '../data/hooks';
 
 /** Interaction-reward VPFI, kept visually separate from loan claims
@@ -79,7 +79,7 @@ function RewardsCard() {
       await write('claimInteractionRewards', []);
       void queryClient.invalidateQueries({ queryKey: ['interactionRewards'] });
     } catch (err) {
-      setError(submitErrorText(err));
+      setError(captureTxError(err));
     } finally {
       setBusy(false);
     }
