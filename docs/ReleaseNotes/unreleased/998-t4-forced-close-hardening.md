@@ -41,10 +41,15 @@ time-based-default paths.
 incentive.** The HF liquidation paths pay the caller a dynamic incentive
 (6% − realized slippage, capped 3%); the time-based-default swap paid nothing,
 leaving permissionless default-triggering economically unmotivated. It now pays
-the same incentive via a shared curve helper. Because the time-based default is
-a Tier-2 close-out that is deliberately permissionless and must not brick (the
-unflagged counterparty has to be made whole), the bonus is intentionally NOT
-sanctions/KYC-gated on the caller — unlike the Tier-1 HF-liquidation bonus.
+the same incentive via a shared curve helper. The time-based default is a Tier-2
+close-out that is deliberately permissionless and must not brick (the unflagged
+counterparty has to be made whole), so the trigger itself is never sanctions-
+gated. But the bonus is a new value payment, so — like the Tier-1 HF-liquidation
+bonus — it is withheld from a sanctioned caller: a sanctioned wallet can still
+trigger the default (the close-out completes), but earns no bonus (the withheld
+amount stays in proceeds and flows to the lender/borrower via the waterfall).
+The bonus is intentionally not KYC-gated, unlike Tier-1, since KYC is off on
+retail and this Tier-2 path must not add a gating revert.
 
 To keep the three god-facets under the EIP-170 bytecode limit while absorbing
 these changes, the liquidator-incentive curve and the interest-netting credit

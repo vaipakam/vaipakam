@@ -428,20 +428,24 @@ contract DefaultedFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErr
                 // computed BEFORE the waterfall so it takes first priority
                 // (keeper liveness incentive).
                 //
-                // NOTE — unlike the Tier-1 HF-liquidation bonus
-                // ({RiskFacet.triggerLiquidation}, which `_assertNotSanctioned`s
-                // and tier-KYC-gates its caller), the time-based default is a
-                // Tier-2 close-out: it is DELIBERATELY permissionless and must
-                // not brick (README sanctions policy — `markDefaulted` /
+                // Sanctions posture — the time-based default is a Tier-2
+                // close-out: the TRIGGER stays DELIBERATELY permissionless and
+                // must not brick (README sanctions policy — `markDefaulted` /
                 // time-based liquidation stay open so the unflagged counterparty
-                // is made whole). The bonus (≤3% of proceeds) is therefore NOT
-                // sanctions/KYC-gated on the caller, consistent with that path's
-                // Tier-2 liveness intent.
+                // is made whole), so we never revert on a sanctioned caller. But
+                // the bonus is a NEW value payment, so — like the Tier-1
+                // HF-liquidation bonus — it is WITHHELD from a sanctioned caller:
+                // the incentive is zeroed (it stays in `proceeds` and flows to
+                // the lender/borrower via the waterfall below) while the default
+                // still completes. Unflagged keepers earn it normally. The bonus
+                // is intentionally NOT KYC-gated (unlike Tier-1): KYC is off on
+                // retail and this Tier-2 path must not add a gating revert.
                 uint256 bonus = (proceeds *
                     LibEntitlement.liquidatorIncentiveBps(
                         loan.collateralAsset, proceeds, expectedProceeds
                     )) / LibVaipakam.BASIS_POINTS;
                 if (bonus > proceeds) bonus = proceeds;
+                if (LibVaipakam.isSanctionedAddress(msg.sender)) bonus = 0;
                 if (bonus > 0) {
                     IERC20(loan.principalAsset).safeTransfer(msg.sender, bonus);
                 }

@@ -53,6 +53,7 @@ import {IERC20Metadata} from "@openzeppelin/contracts/token/ERC20/extensions/IER
 import {AccessControlFacet} from "../src/facets/AccessControlFacet.sol";
 import {HelperTest} from "./HelperTest.sol";
 import {defaultAdapterCalls, emptyAdapterCalls} from "./helpers/AdapterCallHelpers.sol";
+import {MockSanctionsList} from "./mocks/MockSanctionsList.sol";
 import {OfferCreateFacet} from "../src/facets/OfferCreateFacet.sol";
 import {OfferAcceptFacet} from "../src/facets/OfferAcceptFacet.sol";
 import {LibVaipakam} from "../src/libraries/LibVaipakam.sol";
@@ -1440,6 +1441,52 @@ contract DefaultedFacetTest is Test {
         // Terminal status must be Liquidated (swap succeeded), not just Defaulted.
         LibVaipakam.Loan memory loan = LoanFacet(address(diamond)).getLoanDetails(loanId);
         assertEq(uint8(loan.status), uint8(LibVaipakam.LoanStatus.Defaulted));
+        vm.clearMockedCalls();
+    }
+
+    /// @dev #1010 (L-h) sanctions posture — a SANCTIONED caller can still trigger
+    ///      the time-based default (Tier-2 close-out must not brick), but the new
+    ///      bonus is WITHHELD: the caller receives nothing. The close-out still
+    ///      completes so the counterparty is made whole.
+    function test_TriggerDefault_SanctionedCaller_TriggersButEarnsNoBonus() public {
+        uint256 loanId = createAndAcceptOffer(
+            mockERC20, mockCollateralERC20, LibVaipakam.AssetType.ERC20,
+            1000 ether, 1500 ether, 30, 0, 0
+        );
+        vm.warp(block.timestamp + 33 days + 3);
+        deal(mockERC20, address(diamond), 3000 ether);
+        deal(mockCollateralERC20, address(diamond), 3000 ether);
+        vm.mockCall(
+            address(diamond),
+            abi.encodeWithSelector(VaultFactoryFacet.vaultWithdrawERC20.selector),
+            abi.encode(true)
+        );
+        vm.mockCall(
+            address(diamond),
+            abi.encodeWithSelector(VaipakamNFTFacet.updateNFTStatus.selector),
+            ""
+        );
+
+        // Flag the caller on the sanctions oracle.
+        address sanctionedKeeper = makeAddr("sanctionedKeeper");
+        MockSanctionsList sancList = new MockSanctionsList();
+        sancList.setFlagged(sanctionedKeeper, true);
+        ProfileFacet(address(diamond)).setSanctionsOracle(address(sancList));
+
+        uint256 balBefore = ERC20Mock(mockERC20).balanceOf(sanctionedKeeper);
+        vm.prank(sanctionedKeeper);
+        DefaultedFacet(address(diamond)).triggerDefault(loanId, defaultAdapterCalls());
+
+        // Default completed but the sanctioned caller earned nothing.
+        assertEq(
+            ERC20Mock(mockERC20).balanceOf(sanctionedKeeper),
+            balBefore,
+            "sanctioned caller must earn no bonus"
+        );
+        LibVaipakam.Loan memory loan = LoanFacet(address(diamond)).getLoanDetails(loanId);
+        assertEq(uint8(loan.status), uint8(LibVaipakam.LoanStatus.Defaulted));
+        // Reset the oracle so it doesn't leak into other tests.
+        ProfileFacet(address(diamond)).setSanctionsOracle(address(0));
         vm.clearMockedCalls();
     }
 
