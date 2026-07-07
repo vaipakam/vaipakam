@@ -13,7 +13,7 @@ import { useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import { usePublicClient, useWalletClient } from 'wagmi';
 import { copy } from '../content/copy';
-import { submitErrorText } from '../lib/errors';
+import { captureTxError } from '../lib/errors';
 import { useActiveChain } from '../chain/useActiveChain';
 import { DIAMOND_ABI_VIEM, useDiamondWrite } from '../contracts/diamond';
 import { ensureAllowance, revokeAllowance, type TokenMeta } from '../contracts/erc20';
@@ -94,7 +94,7 @@ export function LoanSalePendingCard({
       void queryClient.invalidateQueries({ queryKey: ['loanSalePending'] });
       void queryClient.invalidateQueries({ queryKey: ['myOffers'] });
     } catch (err) {
-      setError(submitErrorText(err));
+      setError(captureTxError(err));
     } finally {
       setBusy(false);
     }
@@ -145,7 +145,7 @@ export function LoanSalePendingCard({
       setDone(copy.loanSale.restored);
       void queryClient.invalidateQueries({ queryKey: ['loanSalePending'] });
     } catch (err) {
-      setError(submitErrorText(err));
+      setError(captureTxError(err));
     } finally {
       setBusy(false);
     }

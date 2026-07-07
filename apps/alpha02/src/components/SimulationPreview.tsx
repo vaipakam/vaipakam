@@ -10,11 +10,25 @@ import { CheckCircle2, Info, Loader2, TriangleAlert } from 'lucide-react';
 import { copy } from '../content/copy';
 import {
   useTxSimulation,
+  type SimResult,
   type TxSimInput,
 } from '../contracts/useTxSimulation';
 
-export function SimulationPreview({ tx }: { tx: TxSimInput | null }) {
-  const { result } = useTxSimulation(tx);
+export function SimulationPreview({
+  tx,
+  result: lifted,
+}: {
+  tx: TxSimInput | null;
+  /** Optional lifted verdict. When a parent already runs `useTxSimulation`
+   *  for the same tx (e.g. OfferFlow, so its submit handler can prefer the
+   *  concrete revert reason over a generic gas message), it passes the
+   *  result here to avoid a duplicate eth_call. */
+  result?: SimResult;
+}) {
+  // Hooks must run unconditionally; ignore the self-run result when a lifted
+  // one is supplied.
+  const own = useTxSimulation(lifted ? null : tx);
+  const result = lifted ?? own.result;
   if (!tx || result.status === 'idle') return null;
 
   if (result.status === 'loading') {
@@ -41,8 +55,13 @@ export function SimulationPreview({ tx }: { tx: TxSimInput | null }) {
       <div className="banner banner-warn" role="status">
         <TriangleAlert aria-hidden />
         <span className="banner-body">
-          {copy.simulation.wouldFail}{' '}
-          <code>{result.revertReason}</code>{' '}
+          {copy.simulation.wouldFail}
+          {result.revertReason ? (
+            <>
+              {' '}
+              <strong>{result.revertReason}</strong>
+            </>
+          ) : null}{' '}
           {copy.simulation.wouldFailNote}
         </span>
       </div>

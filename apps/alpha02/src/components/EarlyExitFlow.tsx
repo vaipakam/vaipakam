@@ -24,7 +24,7 @@ import { useQueryClient } from '@tanstack/react-query';
 import { usePublicClient, useWalletClient } from 'wagmi';
 import { encodeFunctionData } from 'viem';
 import { copy } from '../content/copy';
-import { submitErrorText } from '../lib/errors';
+import { captureTxError } from '../lib/errors';
 import { useActiveChain } from '../chain/useActiveChain';
 import { DIAMOND_ABI_VIEM, useDiamondWrite } from '../contracts/diamond';
 import {
@@ -313,7 +313,7 @@ export function EarlyExitFlow({
       void queryClient.invalidateQueries({ queryKey: ['myLoans'] });
       void queryClient.invalidateQueries({ queryKey: ['activeOffers'] });
     } catch (err) {
-      setError(submitErrorText(err));
+      setError(captureTxError(err));
     } finally {
       setBusy(false);
     }

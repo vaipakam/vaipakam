@@ -22,7 +22,7 @@ import { getDeployment } from '@vaipakam/contracts/deployments';
 import { copy } from '../content/copy';
 import { useActiveChain } from '../chain/useActiveChain';
 import { EmptyState } from '../components/EmptyState';
-import { submitErrorText } from '../lib/errors';
+import { captureTxError } from '../lib/errors';
 import { shortAddress } from '../lib/format';
 
 const ERC20_MINT_ABI = [
@@ -136,7 +136,7 @@ export function Faucet() {
         asset: { address: token, symbol },
       });
     } catch (err) {
-      setError(submitErrorText(err));
+      setError(captureTxError(err));
     } finally {
       setBusy(null);
     }
@@ -167,7 +167,7 @@ export function Faucet() {
         tokenId: tokenId.toString(),
       });
     } catch (err) {
-      setError(submitErrorText(err));
+      setError(captureTxError(err));
     } finally {
       setBusy(null);
     }

@@ -20,7 +20,7 @@ import { ReviewReceipt } from '../components/ReviewReceipt';
 import { useTokenMeta } from '../contracts/erc20';
 import { AssetType } from '../lib/types';
 import { formatTokenAmount, shortAddress } from '../lib/format';
-import { submitErrorText } from '../lib/errors';
+import { captureTxError } from '../lib/errors';
 import type { IndexedOffer } from '../data/indexer';
 
 function OfferRow({ offer }: { offer: IndexedOffer }) {
@@ -54,7 +54,7 @@ function OfferRow({ offer }: { offer: IndexedOffer }) {
       void queryClient.invalidateQueries({ queryKey: ['myOffers'] });
       void queryClient.invalidateQueries({ queryKey: ['activeOffers'] });
     } catch (err) {
-      setError(submitErrorText(err));
+      setError(captureTxError(err));
       setConfirming(false);
     } finally {
       setBusy(false);

@@ -26,6 +26,7 @@ import {
   type Hex,
 } from 'viem';
 import { usePublicClient } from 'wagmi';
+import { friendlyContractError } from '@vaipakam/lib';
 import { useActiveChain } from '../chain/useActiveChain';
 import { DIAMOND_ABI_VIEM } from './diamond';
 
@@ -57,7 +58,12 @@ export interface SimResult {
    *  only blocker is the allowance the submit grants first ·
    *  unavailable: no verdict (RPC down / preview artefact). */
   status: 'idle' | 'loading' | 'ok' | 'revert' | 'approval-needed' | 'unavailable';
+  /** Friendly, user-facing reason (curated copy or a humanized error name). */
   revertReason?: string;
+  /** Raw decoded error name (e.g. `MaxLendingAboveCeiling`) — kept alongside
+   *  the friendly reason for the diagnostics / support report, never shown as
+   *  the primary message. */
+  revertName?: string;
 }
 
 /** Debounced preflight — rapid form edits trigger only the last
@@ -209,7 +215,19 @@ function classifyError(
   ) {
     return { status: 'approval-needed' };
   }
-  // Prefer the decoded custom-error name over viem's generic
-  // "unknown reason" text.
-  return { status: 'revert', revertReason: decoded ?? msg };
+  // Prefer friendly, user-facing copy for the revert. `friendlyContractError`
+  // returns curated copy for the errors a normal user can hit, else a
+  // humanized sentence from the decoded name (e.g. `MaxLendingAboveCeiling`
+  // → "Max lending above ceiling"); fall back to the decoded name, then the
+  // raw short message. The raw name rides along in `revertName` for the
+  // diagnostics/support report.
+  const friendly = friendlyContractError({
+    name: decoded ?? undefined,
+    selector: selector || undefined,
+  });
+  return {
+    status: 'revert',
+    revertReason: friendly ?? decoded ?? msg,
+    revertName: decoded ?? undefined,
+  };
 }

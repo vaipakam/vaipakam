@@ -84,7 +84,7 @@ import {
 } from '../lib/offerSchema';
 import { AssetType } from '../lib/types';
 import { formatDurationDays, formatTokenAmount, shortAddress } from '../lib/format';
-import { submitErrorText } from '../lib/errors';
+import { captureTxError } from '../lib/errors';
 import { AssetPicker } from '../components/AssetPicker';
 import { MarketFreshnessNote } from '../components/MarketFreshnessNote';
 import { Checklist, allChecksPass, type CheckItem } from '../components/Checklist';
@@ -411,7 +411,7 @@ function ListNftFlow() {
       void queryClient.invalidateQueries({ queryKey: ['myOffers'] });
       void queryClient.invalidateQueries({ queryKey: ['activeOffers'] });
     } catch (err) {
-      setError(submitErrorText(err));
+      setError(captureTxError(err));
       // setApprovalForAll may have MINED before createOffer was
       // rejected — re-read so the roadmap stops promising a prompt
       // the next submit will skip.
@@ -1207,7 +1207,7 @@ function RentNftFlow() {
       void queryClient.invalidateQueries({ queryKey: ['activeOffers'] });
       void queryClient.invalidateQueries({ queryKey: ['myLoans'] });
     } catch (err) {
-      setError(submitErrorText(err));
+      setError(captureTxError(err));
       // The prepay approval may have MINED before acceptOffer was
       // rejected — re-read so the roadmap matches the next attempt.
       void planAllowance.refetch();

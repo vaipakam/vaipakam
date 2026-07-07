@@ -20,7 +20,7 @@ import {
   parseUnits,
 } from 'viem';
 import { copy } from '../content/copy';
-import { isPositiveDecimal, submitErrorText } from '../lib/errors';
+import { isPositiveDecimal, captureTxError } from '../lib/errors';
 import { useLoan } from '../data/hooks';
 import { isRevert } from '../data/liveLoanRow';
 import { useLoanRisk, healthView } from '../data/risk';
@@ -732,7 +732,7 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
       void queryClient.invalidateQueries({ queryKey: ['myLoans'] });
       void queryClient.invalidateQueries({ queryKey: ['claimables'] });
     } catch (err) {
-      setError(submitErrorText(err));
+      setError(captureTxError(err));
     } finally {
       setPhase(null);
     }
@@ -803,7 +803,7 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
       void queryClient.invalidateQueries({ queryKey: ['loan'] });
       void queryClient.invalidateQueries({ queryKey: ['loanRisk'] });
     } catch (err) {
-      setError(submitErrorText(err));
+      setError(captureTxError(err));
     } finally {
       setPhase(null);
     }
@@ -946,7 +946,7 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
       void queryClient.invalidateQueries({ queryKey: ['loanRisk'] });
       void queryClient.invalidateQueries({ queryKey: ['myLoans'] });
     } catch (err) {
-      setError(submitErrorText(err));
+      setError(captureTxError(err));
     } finally {
       setPhase(null);
     }
@@ -1033,7 +1033,7 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
       void queryClient.invalidateQueries({ queryKey: ['myLoans'] });
       void queryClient.invalidateQueries({ queryKey: ['claimables'] });
     } catch (err) {
-      setError(submitErrorText(err));
+      setError(captureTxError(err));
     } finally {
       setPhase(null);
     }

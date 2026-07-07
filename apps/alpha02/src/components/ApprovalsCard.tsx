@@ -23,7 +23,7 @@ import { usePublicClient, useWalletClient } from 'wagmi';
 import { erc20Abi } from 'viem';
 import { KeyRound } from 'lucide-react';
 import { copy } from '../content/copy';
-import { submitErrorText } from '../lib/errors';
+import { captureTxError } from '../lib/errors';
 import { useActiveChain } from '../chain/useActiveChain';
 import { revokeAllowance } from '../contracts/erc20';
 import { fetchAllPages, useMyLoans, useMyOffers } from '../data/hooks';
@@ -175,7 +175,7 @@ export function ApprovalsCard() {
       void queryClient.invalidateQueries({ queryKey: ['refinancePending'] });
       void queryClient.invalidateQueries({ queryKey: ['loanSalePending'] });
     } catch (err) {
-      setError(submitErrorText(err));
+      setError(captureTxError(err));
     } finally {
       setBusy(false);
     }

@@ -4,6 +4,8 @@ import {
   extractRevertData,
   extractRevertSelector,
   namedRevertSelector,
+  friendlyContractError,
+  humanizeErrorName,
   // Stage-3 split moved this module to @vaipakam/lib; the old
   // `../../src/lib/decodeContractError` path stopped resolving (the test had
   // silently gone dead). Repointed to the live specifier apps/defi actually
@@ -59,6 +61,24 @@ describe('extractRevertData', () => {
   it('rejects too-short hex stubs (<10 chars) when found in structured fields', () => {
     // The 4-byte selector alone is 10 chars (0x + 8), so a 9-char stub is rejected.
     expect(extractRevertData({ data: '0xabcdefg' })).toBeUndefined();
+  });
+
+  // #1094 Codex: viem wraps the real revert several causes deep — the top
+  // object has no `data`, a nested cause does.
+  it('walks the viem cause chain for revert data', () => {
+    expect(
+      extractRevertData({ shortMessage: 'reverted', cause: { data: SEL_HF_TOO_LOW } }),
+    ).toBe(SEL_HF_TOO_LOW);
+  });
+
+  it('finds nested data.data revert bytes on a cause', () => {
+    expect(
+      extractRevertData({ cause: { cause: { data: { data: SEL_HF_TOO_LOW } } } }),
+    ).toBe(SEL_HF_TOO_LOW);
+  });
+
+  it('reads viem ContractFunctionRevertedError raw bytes on a cause', () => {
+    expect(extractRevertData({ cause: { raw: SEL_HF_TOO_LOW } })).toBe(SEL_HF_TOO_LOW);
   });
 });
 
@@ -160,16 +180,19 @@ describe('decodeContractError', () => {
       const msg = decodeContractError({
         message: 'exceeds max transaction gas limit',
       });
-      expect(msg).toMatch(/usually NOT a real gas shortage/i);
+      expect(msg).toMatch(/NOT a real gas shortage/i);
       expect(msg).toMatch(/token approval/i);
       expect(msg).toMatch(/stale app build/i);
+      // Now also points at the review-step reason instead of only the
+      // approval/stale-build heuristics (friendly-errors work).
+      expect(msg).toMatch(/review step/i);
     });
 
     it('also matches the "exceeds max gas limit" variant', () => {
       const msg = decodeContractError({
         shortMessage: 'RPC Error: exceeds max gas limit',
       });
-      expect(msg).toMatch(/oversized gas limit/i);
+      expect(msg).toMatch(/could not estimate/i);
     });
 
     it('does NOT reword when a concrete revert selector is decodable', () => {
@@ -180,7 +203,132 @@ describe('decodeContractError', () => {
         data: SEL_HF_TOO_LOW,
       });
       expect(msg).toMatch(/Health factor too low/i);
-      expect(msg).not.toMatch(/oversized gas limit/i);
+      expect(msg).not.toMatch(/could not estimate/i);
     });
+  });
+
+  // Friendly-error expansion: naive-user-reachable custom errors get curated
+  // copy, and any named-but-uncurated error humanizes instead of showing hex.
+  describe('reachable-error friendly copy', () => {
+    const MAX_LENDING = '0xa46539d8'; // MaxLendingAboveCeiling(uint256,uint256)
+    const MIN_COLLATERAL = '0x6aac1798'; // MinCollateralBelowFloor(uint256,uint256)
+    const LENDER_REPAY = '0xc602c4b6'; // LenderCannotRepayOwnLoan()
+    // Known selector with a name but NO curated copy → must humanize.
+    const INSUFFICIENT_ALLOWANCE = '0x13be252b'; // InsufficientAllowance()
+
+    it('maps MaxLendingAboveCeiling to friendly copy', () => {
+      expect(decodeContractError({ data: MAX_LENDING })).toMatch(
+        /collateral is too low/i,
+      );
+    });
+
+    it('maps MinCollateralBelowFloor to friendly copy', () => {
+      expect(decodeContractError({ data: MIN_COLLATERAL })).toMatch(
+        /below the minimum/i,
+      );
+    });
+
+    it('maps LenderCannotRepayOwnLoan to friendly copy', () => {
+      expect(decodeContractError({ data: LENDER_REPAY })).toMatch(
+        /you are the lender/i,
+      );
+    });
+
+    it('humanizes a known selector with no curated copy', () => {
+      expect(decodeContractError({ data: INSUFFICIENT_ALLOWANCE })).toBe(
+        'Insufficient allowance',
+      );
+    });
+
+    // #1094 Codex: tiered-LTV accept revert — the alpha02 accept path has no
+    // SimulationPreview, so this must resolve to plain-language risk copy.
+    it('maps InitLtvAboveTier to friendly copy', () => {
+      expect(decodeContractError({ data: '0x8eb7de56' })).toMatch(
+        /LTV limit for its risk tier/i,
+      );
+      expect(friendlyContractError({ name: 'InitLtvAboveTier' })).toMatch(
+        /LTV limit for its risk tier/i,
+      );
+    });
+  });
+
+  // #1094 Codex: some wallets attach the decoded custom-error NAME
+  // (`err.revert.name`) without raw selector bytes — the name-keyed map must
+  // still resolve it, while generic Error/Panic shapes keep their `base` text.
+  describe('revert.name (no selector bytes)', () => {
+    it('resolves a reachable custom error by its decoded name', () => {
+      expect(
+        decodeContractError({ revert: { name: 'MaxLendingAboveCeiling' } }),
+      ).toMatch(/collateral is too low/i);
+    });
+
+    it('keeps the base message for a generic Error(string) revert', () => {
+      expect(
+        decodeContractError({ revert: { name: 'Error' }, reason: 'boom' }),
+      ).toBe('boom');
+    });
+
+    // #1094 Codex: viem stashes the decoded name on
+    // `ContractFunctionRevertedError.data.errorName` in the cause chain, not
+    // on top-level `revert.name`.
+    it('resolves a custom error from a viem cause data.errorName', () => {
+      expect(
+        decodeContractError({
+          shortMessage: 'The contract function "acceptOffer" reverted.',
+          cause: { data: { errorName: 'MaxLendingAboveCeiling' } },
+        }),
+      ).toMatch(/collateral is too low/i);
+    });
+  });
+});
+
+describe('humanizeErrorName', () => {
+  it('splits PascalCase into a readable sentence', () => {
+    expect(humanizeErrorName('MaxLendingAboveCeiling')).toBe(
+      'Max lending above ceiling',
+    );
+  });
+
+  it('keeps acronym runs intact in sentence case', () => {
+    expect(humanizeErrorName('MatchHFTooLow')).toBe('Match HF too low');
+    expect(humanizeErrorName('LTVExceeded')).toBe('LTV exceeded');
+  });
+});
+
+describe('friendlyContractError', () => {
+  it('returns curated copy by name', () => {
+    expect(friendlyContractError({ name: 'MaxLendingAboveCeiling' })).toMatch(
+      /collateral is too low/i,
+    );
+  });
+
+  it('resolves the name from the selector', () => {
+    expect(friendlyContractError({ selector: '0xa46539d8' })).toMatch(
+      /collateral is too low/i,
+    );
+  });
+
+  it('humanizes a known-but-uncurated name', () => {
+    expect(friendlyContractError({ name: 'SomeExoticFacetError' })).toBe(
+      'Some exotic facet error',
+    );
+  });
+
+  // #1094 Codex P3: when a selector carries curated FRIENDLY_ERROR_MESSAGES
+  // copy, the dry-run footer must use it too — not degrade to a humanized
+  // name — so it speaks the SAME voice as the write-path submit banner.
+  it('prefers curated selector copy over a humanized name', () => {
+    const viaSelector = friendlyContractError({
+      name: 'HealthFactorTooLow',
+      selector: SEL_HF_TOO_LOW,
+    });
+    expect(viaSelector).toMatch(/Health factor too low/i);
+    // Identical to what the write-path decoder surfaces for that selector.
+    expect(viaSelector).toBe(decodeContractError({ data: SEL_HF_TOO_LOW }));
+  });
+
+  it('returns null when nothing identifies the error', () => {
+    expect(friendlyContractError({})).toBeNull();
+    expect(friendlyContractError({ selector: '0x00000000' })).toBeNull();
   });
 });

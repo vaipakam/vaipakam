@@ -277,9 +277,10 @@ export const copy = {
   simulation: {
     running: 'Doing a free dry run of this transaction…',
     passed: 'Dry run passed — this transaction should go through as reviewed.',
-    wouldFail: 'Heads up: a dry run of this exact transaction just failed with',
+    wouldFail:
+      'Heads up — this transaction would fail if you signed it now. Nothing was sent and no gas was spent.',
     wouldFailNote:
-      '— nothing was sent and no gas was spent. Signing it now would most likely fail too. Check the details above, or try again in a moment; you can still sign if you want to.',
+      'You can adjust the details above and try again in a moment, or sign anyway.',
     approvalNeeded:
       'A token approval will be requested first — the dry run can’t see that step yet, so this is expected, not a problem.',
     unavailable:
