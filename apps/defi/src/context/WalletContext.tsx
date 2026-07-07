@@ -237,6 +237,14 @@ export function WalletProvider({ children }: { children: ReactNode }) {
         });
         return;
       }
+      // #1093 (Codex): a chain switch never changes wagmi's account
+      // `status` (it stays `connected` throughout), so the status-edge
+      // effect that clears errors on (re)connect never fires here. A user
+      // who rejects a switch, then retries successfully, would keep the
+      // stale "Chain switch rejected or failed." banner forever. Clear it
+      // optimistically as each new attempt begins — a failure below
+      // re-sets it, a success leaves it cleared.
+      setError(null);
       try {
         // wagmi's switchChainAsync handles wallet_switchEthereumChain and
         // the 4902 → wallet_addEthereumChain fallback internally.

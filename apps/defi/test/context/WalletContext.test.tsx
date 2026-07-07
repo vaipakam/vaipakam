@@ -207,6 +207,26 @@ describe('WalletContext', () => {
     await waitFor(() => expect(screen.getByTestId('err').textContent).toMatch(/rejected/i));
   });
 
+  // #1093 (Codex P2): a chain switch never changes wagmi's account status
+  // (it stays `connected`), so the status-edge clear never runs for a
+  // switch retry. A connected user who fails a switch then retries
+  // successfully must NOT keep the stale banner — the attempt clears it
+  // optimistically as it begins.
+  it('clears the stale switch error when a later switch attempt succeeds', async () => {
+    connect();
+    switchChainAsync.mockRejectedValueOnce(new Error('user rejected'));
+    render(<WalletProvider><Probe /></WalletProvider>);
+
+    // First attempt fails → banner shows.
+    await userEvent.click(screen.getByText('switch'));
+    await waitFor(() => expect(screen.getByTestId('err').textContent).toMatch(/rejected/i));
+
+    // Second attempt succeeds (default mock resolves) → banner clears, even
+    // though status stayed `connected` the whole time.
+    await userEvent.click(screen.getByText('switch'));
+    await waitFor(() => expect(screen.getByTestId('err').textContent).toBe(''));
+  });
+
   it('throws when useWallet used without provider', () => {
     const spy = vi.spyOn(console, 'error').mockImplementation(() => {});
     expect(() => render(<Probe />)).toThrow(/WalletProvider/);
