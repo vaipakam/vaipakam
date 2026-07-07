@@ -100,7 +100,10 @@ elapsed-*interest* computation (`RepayFacet.sol:443`) and is filed as an
 
 ```solidity
 uint256 base = loan.principal * loan.durationDays;   // remaining owed rental (term-retirement model)
-return (base * feePercent) / 10000;                  // same slope; cap = 5% of remaining rental
+uint256 capBps = cfgRentalBufferBps();               // actual buffer bps (>=? see r3 P2)
+uint256 feePercent = 100 + daysLate * 50;            // 1% + 0.5%/day
+if (feePercent > capBps) feePercent = capBps;        // cap at the ACTUAL buffer bps, not a hardcoded 5%
+return (base * feePercent) / 10000;
 ```
 
 Only the **NFT-rental branch** of `RepayFacet.repayLoan` switches to the new
@@ -125,10 +128,18 @@ this: `bufferAmount = RENTAL_BUFFER_BPS(5%) × principal × originalDurationDays
   `interest + lateFee <= prepayAmount + bufferAmount` with the split enforced).
 - Refund the borrower any unused `prepayAmount` **and** unused `bufferAmount`.
 
-**The cap and the buffer are exactly matched:** the fee cap is `5% × principal ×
-durationDays` and `bufferAmount ≥ 5% × principal × durationDays` (buffer sized on
-the original term ≥ remaining term), so the buffer always covers the capped fee —
-this is *why* the `durationDays` base is the right one, not a coincidence.
+**Tie the cap to the ACTUAL buffer bps, not a hardcoded 5% (Codex r3 P2).**
+`rentalBufferBps` is configurable (`setRiskConfig` accepts up to a 20% max;
+`cfgRentalBufferBps()` maps only `0` → the 5% default), so an operator can set,
+e.g., 100 bps — giving `bufferAmount = 1% × principal × originalDurationDays <
+5% × principal × durationDays`. With a hardcoded 5% fee cap, a late full-term
+rental could then have `lateFee > bufferAmount` and revert/brick. So the rental
+late-fee cap must be `min(existing 5% slope cap, cfgRentalBufferBps())` — the fee
+is bounded by what the buffer actually pre-funded. Since `bufferAmount = bufferBps
+× principal × originalDurationDays ≥ bufferBps × principal × durationDays`, capping
+the fee at `bufferBps` guarantees `bufferAmount` always covers it, for **any**
+valid config. (The ordinary `calculateLateFee` used by ERC-20 paths keeps its
+hardcoded 5% cap — it is not buffer-funded.)
 
 **(3) The quote path too (Codex r1 P2).** `RepayFacet`'s public quote/preview
 (`repaymentAmount` / `calculateRepaymentAmount`, the `calculateLateFee` caller at
@@ -329,25 +340,28 @@ the slot doesn't leak. Clear only the side being claimed.
 
 ### Edge cases / decisions (for Codex)
 
-- **Position NFT transferred before de-listing.** The marker is keyed by loanId +
-  side, not by address. If a flagged lender's position NFT was transferred to a
-  clean party, that clean `msg.sender` calls `claimAsLender`; the fail-closed
-  screen checks **`msg.sender`** (the current holder), passes (clean), releases.
-  Correct — we freeze the *funds' releasability* to a clean claimant, we don't
-  seize. But note the funds were parked in the **stored (flagged) lender's
-  vault**; the payout withdraws from that vault to `msg.sender` (existing
-  behavior). Confirm the `beginMoveOut` exemption still lets that withdrawal
-  proceed when the stored owner is flagged but `msg.sender` is clean. **This is
-  the subtlest case — call it out explicitly in tests.**
+- **Position NFT transferred while frozen (Codex r3 P1 — MUST fail-closed on the
+  recorded address).** The marker stores the **frozen claimant address**, not just
+  a side bit. If a flagged holder transfers the position to a clean wallet during
+  an oracle outage and the oracle then recovers *with the original holder still
+  flagged*, releasing on a clean `msg.sender` alone would let the transferee
+  launder the confirmed-locked funds. So the release path **fails closed on the
+  stored `frozen` address regardless of who currently holds the NFT** — marked
+  proceeds unlock only once the *recorded frozen claimant* is proven clean. A
+  genuine clean transferee can still claim, but only after the sanctioned party is
+  de-listed (the funds were economically the flagged party's at freeze time). The
+  `beginMoveOut` exemption still lets the withdrawal proceed from the stored
+  (flagged) vault once that fail-closed check passes. **Call this out explicitly in
+  tests — it is the crux laundering case.**
 - **Marker set but oracle now unset (operator un-set it).** Fail-closed ⇒
   `SanctionsOracleUnavailable` ⇒ release blocked. Correct: we will not release
   confirmed-locked funds without a working oracle.
 - **Backstop / retry claim paths** (`_claimViaBackstopImpl`, `:381`): they screen
-  both keeper and nftOwner. Decide whether the fail-closed variant also applies to
-  the nftOwner screen when the marker is set (recommend: yes — same locked funds).
+  both keeper and nftOwner. The fail-closed variant on the recorded `frozen`
+  address also applies here when the marker is set (same locked funds).
 - **In-kind / NFT locked proceeds** (`getOrCreateVaultLocked`, no amount gate):
-  the marker must cover these too (they're the illiquid-collateral lock). The
-  bitfield handles it; the release path for in-kind claims must consult the same
+  the marker must cover these too (illiquid-collateral lock). The per-side
+  frozen-claimant mapping handles it; the in-kind release path consults the same
   marker.
 
 ### Test plan (`ClaimFacetTest` / a sanctions-focused suite)
@@ -490,10 +504,18 @@ solver/preflight caller. So the extraction is two-layer:
   `OfferCreateFacet` and `OfferMutateFacet` (reverts `MinCollateralBelowFloor` /
   `MaxLendingAboveCeiling`).
 - `LibOfferMatch` (both `matchIntent` execution and `previewIntent`) calls the
-  **non-reverting core** and maps `BoundsFail` → the existing `IntentError`
-  (`SliceCollateralBelowFloor` / the ceiling equivalent), preserving the structured
-  preview contract. One math definition ⇒ create/mutate/match/preview can never
-  drift, and the preview stays non-reverting.
+  **non-reverting core** and maps `BoundsFail` → an `IntentError`, preserving the
+  structured preview contract. One math definition ⇒ create/mutate/match/preview
+  can never drift, and the preview stays non-reverting.
+
+**Add a ceiling `IntentError` (Codex r3 P2).** The enum today has
+`SliceCollateralBelowFloor` (floor) but **no ceiling counterpart**, so a
+borrower-side ceiling failure from the shared core can't be represented in the
+preview. Add a new value (e.g. `SliceLendingAboveCeiling`) and map the core's
+ceiling `BoundsFail` to it, so `previewIntent` reports the *same* failure the
+execution path would — never reverting and never reporting a different code.
+(Appending an enum value is a non-breaking addition; note it in the ABI re-export
+if `IntentError` surfaces on a facet.)
 
 ### Sub-decisions (for Codex)
 
