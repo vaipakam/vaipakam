@@ -16,6 +16,12 @@ on:
       - 'packages/lib/**'
       - 'packages/contracts/**'
       - 'packages/ui/**'
+      # Root dependency / workspace inputs: a Vitest/jsdom/React/wagmi bump
+      # here can break the suite without touching app/package source, so the
+      # warn lane must fire on these too (Codex #1088 r2).
+      - 'package.json'
+      - 'pnpm-lock.yaml'
+      - 'pnpm-workspace.yaml'
       - '.github/workflows/defi-vitest.yml'
   push:
     branches: [main]
@@ -24,6 +30,9 @@ on:
       - 'packages/lib/**'
       - 'packages/contracts/**'
       - 'packages/ui/**'
+      - 'package.json'
+      - 'pnpm-lock.yaml'
+      - 'pnpm-workspace.yaml'
 
 permissions:
   contents: read
