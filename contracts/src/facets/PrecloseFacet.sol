@@ -680,19 +680,23 @@ contract PrecloseFacet is
         uint256 totalSecs = LibVaipakam.interestRemainingDaysOf(loan) * 1 days;
         uint256 remainingSecs = totalSecs > elapsed ? totalSecs - elapsed : 0;
         uint256 newSecs = offer.durationDays * 1 days;
-        uint256 accruedInterest = (loan.principal *
-            loan.interestRateBps *
-            elapsed) /
-            (LibVaipakam.SECONDS_PER_YEAR * LibVaipakam.BASIS_POINTS);
+        uint256 accruedInterest = LibEntitlement.proRataInterestSeconds(
+            loan.principal, loan.interestRateBps, elapsed
+        );
+        // #915 (M7) — credit interest already forwarded to the lender via
+        // periodic auto-liquidation (`loan.interestSettled`, saturating at 0)
+        // so the exiting borrower is not billed a second time for it. Mirrors
+        // the offset (Option 3) `_computeOffsetSettlement` netting and the
+        // proper-close `settlementInterestNet`; the accrual clock is not reset
+        // by periodic settlement, so the raw accrual still spans those periods.
+        accruedInterest = LibEntitlement.creditSettledInterest(loan, accruedInterest);
 
-        uint256 originalExpectedRemaining = (loan.principal *
-            loan.interestRateBps *
-            remainingSecs) /
-            (LibVaipakam.SECONDS_PER_YEAR * LibVaipakam.BASIS_POINTS);
-        uint256 newExpectedRemaining = (loan.principal *
-            offer.interestRateBps *
-            newSecs) /
-            (LibVaipakam.SECONDS_PER_YEAR * LibVaipakam.BASIS_POINTS);
+        uint256 originalExpectedRemaining = LibEntitlement.proRataInterestSeconds(
+            loan.principal, loan.interestRateBps, remainingSecs
+        );
+        uint256 newExpectedRemaining = LibEntitlement.proRataInterestSeconds(
+            loan.principal, offer.interestRateBps, newSecs
+        );
         uint256 shortfall = originalExpectedRemaining > newExpectedRemaining
             ? originalExpectedRemaining - newExpectedRemaining
             : 0;
@@ -827,6 +831,13 @@ contract PrecloseFacet is
         loan.interestAccrualStart = uint64(block.timestamp);
         loan.interestRemainingDays = uint16(offer.durationDays);
         loan.interestRateBps = offer.interestRateBps;
+        // #915 (Codex #1087 r1 P2) — the re-originated obligation restarts its
+        // accrual clock above, so any periodic-settled interest credited to the
+        // EXITING borrower (already netted from their step-2 payment) belongs to
+        // the closed accrual window. Clear it so the shared `interestSettled`
+        // credit is not subtracted a SECOND time from the NEW borrower's future
+        // repayment / default settlement (which would underpay the lender).
+        loan.interestSettled = 0;
 
         // #969 / S5 (#998 Tranche 2) — Option 2 is a CONTINUING transfer, not a
         // terminal close: the loan stays Active under the incoming borrower and a
@@ -1230,28 +1241,24 @@ contract PrecloseFacet is
         uint256 elapsed = block.timestamp - LibVaipakam.interestAccrualStartOf(loan);
         uint256 totalSecs = LibVaipakam.interestRemainingDaysOf(loan) * 1 days;
         uint256 remainingSecs = totalSecs > elapsed ? totalSecs - elapsed : 0;
-        uint256 accruedInterest = (loan.principal *
-            loan.interestRateBps *
-            elapsed) /
-            (LibVaipakam.SECONDS_PER_YEAR * LibVaipakam.BASIS_POINTS);
-        // #1001 (S3, Codex #1070 r9 P2) — NET already-settled periodic interest.
-        // A loan on a periodic-interest cadence may have auto-liquidated some
-        // interest into `loan.interestSettled` (already paid to the lender). The
-        // gross accrual above covers the FULL elapsed window, so without crediting
-        // the settled portion the offset would charge the borrower — and pay the
-        // lender — that interest twice. Saturating subtraction, mirroring
-        // `LibEntitlement.settlementInterestNet` / `RepayFacet` (the same S12
-        // double-charge class the forced-close paths net).
-        uint256 settled = uint256(loan.interestSettled);
-        accruedInterest = accruedInterest > settled ? accruedInterest - settled : 0;
-        uint256 originalExpectedRemaining = (loan.principal *
-            loan.interestRateBps *
-            remainingSecs) /
-            (LibVaipakam.SECONDS_PER_YEAR * LibVaipakam.BASIS_POINTS);
-        uint256 newExpectedEarning = (loan.principal *
-            interestRateBps *
-            (durationDays * 1 days)) /
-            (LibVaipakam.SECONDS_PER_YEAR * LibVaipakam.BASIS_POINTS);
+        uint256 accruedInterest = LibEntitlement.proRataInterestSeconds(
+            loan.principal, loan.interestRateBps, elapsed
+        );
+        // #1001 (S3, Codex #1070 r9 P2) / #915 (M7) — NET already-settled
+        // periodic interest. A loan on a periodic-interest cadence may have
+        // auto-liquidated some interest into `loan.interestSettled` (already
+        // paid to the lender). The gross accrual above covers the FULL elapsed
+        // window, so without crediting the settled portion the offset would
+        // charge the borrower — and pay the lender — that interest twice.
+        // Shared saturating helper (also used by the Option 2 transfer +
+        // proper-close `settlementInterestNet`).
+        accruedInterest = LibEntitlement.creditSettledInterest(loan, accruedInterest);
+        uint256 originalExpectedRemaining = LibEntitlement.proRataInterestSeconds(
+            loan.principal, loan.interestRateBps, remainingSecs
+        );
+        uint256 newExpectedEarning = LibEntitlement.proRataInterestSeconds(
+            loan.principal, interestRateBps, durationDays * 1 days
+        );
         uint256 shortfall = originalExpectedRemaining > newExpectedEarning
             ? originalExpectedRemaining - newExpectedEarning
             : 0;

@@ -3,6 +3,7 @@
 pragma solidity ^0.8.29;
 
 import {LibVaipakam} from "./LibVaipakam.sol";
+import {LibEntitlement} from "./LibEntitlement.sol";
 import {IERC20Metadata} from "@openzeppelin/contracts/token/ERC20/extensions/IERC20Metadata.sol";
 import {OracleFacet} from "../facets/OracleFacet.sol";
 
@@ -151,6 +152,12 @@ library LibFallback {
         uint256 elapsed = block.timestamp - LibVaipakam.interestAccrualStartOf(loan);
         uint256 accrued = (loan.principal * loan.interestRateBps * elapsed) /
             (LibVaipakam.SECONDS_PER_YEAR * LibVaipakam.BASIS_POINTS);
+        // #915 (M7 / spec-review S12) — credit interest already forwarded to the
+        // lender via periodic auto-liquidation (`loan.interestSettled`) so the
+        // in-kind fallback split does not over-allocate collateral to the lender
+        // for interest that was already paid. The accrual clock is not reset by
+        // periodic settlement, so the raw `accrued` still spans those periods.
+        accrued = LibEntitlement.creditSettledInterest(loan, accrued);
         // Prospective fallback split: read from the values snapshotted at
         // `initiateLoan` so any subsequent governance change via
         // `ConfigFacet.setFallbackSplit` does NOT retroactively alter the

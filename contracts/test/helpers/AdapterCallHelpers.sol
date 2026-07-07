@@ -24,3 +24,17 @@ function defaultAdapterCalls()
     calls = new LibSwap.AdapterCall[](1);
     calls[0] = LibSwap.AdapterCall({adapterIdx: 0, data: bytes("")});
 }
+
+/**
+ * @notice Empty (zero-length) adapter try-list — exercises the #1005 (S9)
+ *         guard on the forced-close entry points (`triggerLiquidation` /
+ *         `triggerDefault`), which must reject an empty list rather than route
+ *         an eligible loan into the full-collateral fallback with no swap
+ *         route attempted.
+ */
+function emptyAdapterCalls()
+    pure
+    returns (LibSwap.AdapterCall[] memory calls)
+{
+    calls = new LibSwap.AdapterCall[](0);
+}

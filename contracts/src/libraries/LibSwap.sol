@@ -93,6 +93,12 @@ library LibSwap {
 
     error NoSwapAdaptersConfigured();
     error AdapterIndexOutOfRange(uint256 adapterIdx, uint256 registeredCount);
+    /// @notice #1005 (S9) — {swapWithFailover} was handed a try-list with no
+    ///         attemptable route (empty, or every entry a governance-disabled
+    ///         venue), so no enabled DEX was tried. Reverts instead of returning
+    ///         a soft failure that a forced-close caller would treat as
+    ///         "every route failed" and route into the full-collateral fallback.
+    error NoEnabledSwapRoute(uint256 loanId);
     /// @notice #633 — a governance-paused swap venue was supplied to an atomic
     ///         split route (no-arg to minimise inlined bytecode in RiskFacet).
     error SwapVenuePaused();
@@ -156,10 +162,15 @@ library LibSwap {
         if (registeredCount == 0) revert NoSwapAdaptersConfigured();
 
         uint256 n = calls.length;
-        if (n == 0) {
-            emit SwapAllAdaptersFailed(loanId);
-            return (false, 0, type(uint256).max);
-        }
+        // #1005 (S9, Codex #1087 r1 P1): count adapters we actually ATTEMPT
+        // (in-range + not governance-disabled). If the try-list is empty OR
+        // every entry is a disabled venue we'd skip, NO enabled route is tried
+        // — reverting here (rather than the old `(false, 0)` return) stops a
+        // permissionless forced-close caller from pushing an eligible loan into
+        // the full-collateral fallback with zero DEX attempts on a healthy
+        // venue. A length-only guard at the caller could not see the
+        // all-disabled case; centralizing it here fixes every failover caller.
+        uint256 attempted;
 
         IERC20 input = IERC20(inputToken);
         for (uint256 i = 0; i < n; ++i) {
@@ -175,6 +186,7 @@ library LibSwap {
             // #633 — skip a governance-paused venue and fail over to the next
             // entry, so a compromised/illiquid adapter doesn't abort the chain.
             if (s.swapAdapterDisabled[adapter]) continue;
+            ++attempted;
 
             // Exact-scope approval — zero first (handles USDT-style
             // non-zero-approve guards), then set to inputAmount for
@@ -203,6 +215,8 @@ library LibSwap {
             }
         }
 
+        // Reached only after iterating the whole try-list without a success.
+        if (attempted == 0) revert NoEnabledSwapRoute(loanId);
         emit SwapAllAdaptersFailed(loanId);
         return (false, 0, type(uint256).max);
     }

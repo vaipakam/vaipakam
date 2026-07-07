@@ -605,6 +605,13 @@ contract RiskFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessCont
         LibVaipakam.Loan storage loan = s.loans[loanId];
         if (loan.status != LibVaipakam.LoanStatus.Active) revert InvalidLoan();
 
+        // #1005 (S9) — a forced liquidation must attempt at least one enabled
+        // swap route before it can route into the full-collateral fallback.
+        // `LibSwap.swapWithFailover` reverts `NoEnabledSwapRoute` when the
+        // try-list is empty or every entry is a governance-disabled venue (so a
+        // permissionless caller can't push an eligible loan into FallbackPending
+        // with zero DEX attempts), rolling back the collateral withdrawal below.
+
         // T-086 step 10 — clear any live prepay listing FIRST so
         // the borrower-position NFT is unlocked + the diamond /
         // vault / executor bookkeeping is consistent before this
@@ -766,81 +773,46 @@ contract RiskFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessCont
         }
         uint256 proceeds = proceedsFromSwap;
 
-        // Calculate debt: principal + accrued interest + late fees (per README Section 7).
-        uint256 currentBorrowBalance = LibEntitlement.currentBorrowBalance(loan);
+        // Calculate debt: principal + net accrued interest + late fees (README §7).
+        // #915 (M7) — `currentBorrowBalance` nets `interestSettled` so periodic-
+        // settled interest is not double-counted in the liquidation debt.
         uint256 endTime = loan.startTime + loan.durationDays * 1 days;
         uint256 lateFee = LibVaipakam.calculateLateFee(loanId, endTime);
-        uint256 totalDebt = currentBorrowBalance + lateFee;
+        uint256 totalDebt = LibEntitlement.currentBorrowBalance(loan) + lateFee;
         uint256 interestPortion = totalDebt - loan.principal;
 
-        // Dynamic liquidator incentive (README §3 line 148):
-        //   incentive% = 6% − realized slippage%, capped at 3% of proceeds.
-        //   Realized slippage% = (expectedProceeds − actualProceeds) /
-        //     expectedProceeds, clamped to [0, 6%].
-        // Proceeds above expected (negative slippage) yield the full 3% cap;
-        // slippage == 6% yields 0% incentive. The configured asset-level
-        // `liqBonusBps` is preserved as an additional ceiling so governance
-        // can tighten the cap per asset but never exceed the README maximum.
-        uint256 realizedSlippageBps;
-        if (proceeds < expectedProceeds) {
-            realizedSlippageBps = ((expectedProceeds - proceeds) * LibVaipakam.BASIS_POINTS)
-                / expectedProceeds;
-            if (realizedSlippageBps > maxSlippageBps) {
-                realizedSlippageBps = maxSlippageBps;
-            }
-        }
-        uint256 maxIncentiveBps = LibVaipakam.cfgMaxLiquidatorIncentiveBps();
-        uint256 incentiveBps = maxSlippageBps - realizedSlippageBps;
-        if (incentiveBps > maxIncentiveBps) {
-            incentiveBps = maxIncentiveBps;
-        }
-        uint256 assetCapBps = s.assetRiskParams[loan.collateralAsset].liqBonusBps;
-        if (assetCapBps != 0 && incentiveBps > assetCapBps) incentiveBps = assetCapBps;
-        // Rounds DOWN — liquidator bonus slightly under-paid at the wei
-        // boundary. Protocol-favourable. Dust accrues to the treasury
-        // tranche below rather than the liquidator.
-        uint256 bonus = (proceeds * incentiveBps) / LibVaipakam.BASIS_POINTS;
-
-        // Cap bonus to available proceeds
+        // Dynamic liquidator incentive (README §3 line 148): 6% − realized
+        // slippage, capped 3% (+ per-asset ceiling). Shared curve helper (L-h
+        // #1010) so the split-route + time-default paths stay identical. Rounds
+        // DOWN — protocol-favourable; dust accrues to the treasury tranche.
+        uint256 bonus = (proceeds *
+            LibEntitlement.liquidatorIncentiveBps(loan.collateralAsset, proceeds, expectedProceeds))
+            / LibVaipakam.BASIS_POINTS;
         if (bonus > proceeds) bonus = proceeds;
 
-        // Tiered KYC check for liquidator based on bonus value (per README Section 16)
-        (uint256 price, uint8 feedDecimals) = OracleFacet(address(this))
-            .getAssetPrice(loan.principalAsset);
-        uint8 tokenDecimals = IERC20Metadata(loan.principalAsset).decimals();
-        uint256 bonusNumeraire = (bonus * price * 1e18) / (10 ** feedDecimals) / (10 ** tokenDecimals);
-        if (!ProfileFacet(address(this)).meetsKYCRequirement(msg.sender, bonusNumeraire))
-            revert KYCRequired();
+        // Tiered KYC check for liquidator based on bonus value (README §16).
+        _assertLiquidatorKyc(loan.principalAsset, bonus);
 
-        // Liquidation bonus transferred to liquidator immediately
+        // Liquidation bonus transferred to liquidator immediately.
         if (bonus > 0) {
             IERC20(loan.principalAsset).safeTransfer(msg.sender, bonus);
         }
 
-        // Deduct the README §3 liquidation-handling charge: treasury receives
-        // 2% of gross proceeds because the borrower failed to act before
-        // liquidation. This is separate from, and additive to, the treasury
-        // fee taken from recovered interest/late-fee amounts below.
+        // Waterfall (L-g #1009): bonus (keeper incentive) is paid first, then
+        // the lender's debt is satisfied in FULL, and only THEN is the 2%
+        // treasury handling fee taken — SUBORDINATED to lender recovery, i.e.
+        // capped to whatever surplus remains above the debt. On an underwater
+        // close the handling fee collapses to 0 so the treasury never profits
+        // while the lender takes a loss. The treasury interest-cut below is the
+        // standard `splitTreasury` fee on recovered interest, unchanged.
+        uint256 afterBonus = proceeds - bonus;
+        uint256 allocated = afterBonus > totalDebt ? totalDebt : afterBonus;
+        uint256 surplusAfterDebt = afterBonus - allocated; // 0 when underwater
         uint256 handlingFee = (proceeds * LibVaipakam.cfgLiquidationHandlingFeeBps())
             / LibVaipakam.BASIS_POINTS;
-        // Defensive: bonus + handlingFee cannot exceed proceeds. With the
-        // 3% incentive cap and 2% handling fee, the combined deduction is
-        // ≤ 5% of proceeds, so this never triggers in practice but guards
-        // against future parameter changes.
-        if (bonus + handlingFee > proceeds) {
-            handlingFee = proceeds - bonus;
-        }
+        if (handlingFee > surplusAfterDebt) handlingFee = surplusAfterDebt;
+        uint256 borrowerSurplus = surplusAfterDebt - handlingFee;
 
-        // Allocate from remaining proceeds after bonus and handling fee.
-        // Treasury fee on interest is split from the interest/late portion
-        // (not added on top). Lender bears loss if proceeds are insufficient.
-        uint256 afterFees = proceeds - bonus - handlingFee;
-        address treasury = s.treasury;
-
-        uint256 allocated = afterFees > totalDebt ? totalDebt : afterFees;
-        uint256 borrowerSurplus = afterFees > totalDebt ? afterFees - totalDebt : 0;
-
-        // Treasury takes its cut from the interest/late portion of allocated amount.
         uint256 treasuryInterestFee;
         uint256 lenderProceeds;
         if (allocated > loan.principal) {
@@ -849,15 +821,13 @@ contract RiskFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessCont
             (treasuryInterestFee, ) = LibEntitlement.splitTreasury(loan, interestRecovered);
             lenderProceeds = allocated - treasuryInterestFee;
         } else {
-            // Undercollateralized below principal: no interest to split
-            treasuryInterestFee = 0;
             lenderProceeds = allocated;
         }
 
-        // Treasury receives handling fee + interest fee in a single transfer.
+        // Treasury receives the (subordinated) handling fee + interest fee.
         uint256 toTreasury = handlingFee + treasuryInterestFee;
         if (toTreasury > 0) {
-            IERC20(loan.principalAsset).safeTransfer(treasury, toTreasury);
+            IERC20(loan.principalAsset).safeTransfer(s.treasury, toTreasury);
             LibFacet.recordTreasuryAccrual(loan.principalAsset, toTreasury);
         }
 
@@ -1167,33 +1137,18 @@ contract RiskFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessCont
         uint256 currentBorrowBalance = LibEntitlement.currentBorrowBalance(loan);
         uint256 interestPortion = currentBorrowBalance - loan.principal;
 
-        // Dynamic-incentive bonus — same formula as full, scoped to slice.
-        uint256 realizedSlippageBps;
-        if (proceeds < expectedProceeds && expectedProceeds > 0) {
-            realizedSlippageBps = ((expectedProceeds - proceeds) * LibVaipakam.BASIS_POINTS)
-                / expectedProceeds;
-            if (realizedSlippageBps > maxSlippageBps) {
-                realizedSlippageBps = maxSlippageBps;
-            }
-        }
-        uint256 maxIncentiveBps = LibVaipakam.cfgMaxLiquidatorIncentiveBps();
-        uint256 incentiveBps = maxSlippageBps - realizedSlippageBps;
-        if (incentiveBps > maxIncentiveBps) incentiveBps = maxIncentiveBps;
-        uint256 assetCapBps = s.assetRiskParams[loan.collateralAsset].liqBonusBps;
-        if (assetCapBps != 0 && incentiveBps > assetCapBps) incentiveBps = assetCapBps;
-        uint256 bonus = (proceeds * incentiveBps) / LibVaipakam.BASIS_POINTS;
+        // Dynamic-incentive bonus — same curve as full, scoped to slice, via
+        // the shared {LibEntitlement.liquidatorIncentiveBps} helper.
+        uint256 bonus = (proceeds *
+            LibEntitlement.liquidatorIncentiveBps(loan.collateralAsset, proceeds, expectedProceeds))
+            / LibVaipakam.BASIS_POINTS;
         if (bonus > proceeds) bonus = proceeds;
 
         // Tiered-KYC for the liquidator — identical to {triggerLiquidation}.
         // The smaller slice means a smaller bonus, less likely to trip
         // the KYC numeraire threshold, but we apply the same check
         // uniformly for predictable bot behaviour.
-        (uint256 price, uint8 feedDecimals) = OracleFacet(address(this))
-            .getAssetPrice(loan.principalAsset);
-        uint8 tokenDecimals = IERC20Metadata(loan.principalAsset).decimals();
-        uint256 bonusNumeraire = (bonus * price * 1e18) / (10 ** feedDecimals) / (10 ** tokenDecimals);
-        if (!ProfileFacet(address(this)).meetsKYCRequirement(msg.sender, bonusNumeraire))
-            revert KYCRequired();
+        _assertLiquidatorKyc(loan.principalAsset, bonus);
 
         if (bonus > 0) {
             IERC20(loan.principalAsset).safeTransfer(msg.sender, bonus);
@@ -1273,6 +1228,14 @@ contract RiskFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessCont
         uint256 remainingDays = (endTime - block.timestamp) / 1 days;
         loan.interestAccrualStart = uint64(block.timestamp);
         loan.interestRemainingDays = uint16(remainingDays);
+        // #915 (Codex #1087 r1 P2) — the residual loan restarts its accrual
+        // clock at `now`, so any periodic-settled interest (already credited via
+        // `currentBorrowBalance` when the slice debt was priced above, and paid
+        // interest-first from the swap proceeds) belongs to the closed pre-partial
+        // window. Clear it so the shared `interestSettled` credit is not netted a
+        // SECOND time on the residual loan's next settlement (which would
+        // underpay the lender).
+        loan.interestSettled = 0;
 
         // Post-mutation HF check. Strictly improves AND must reach >= 1.
         // `currentBorrow` re-derives from the now-reduced principal, so this
@@ -1804,6 +1767,22 @@ contract RiskFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessCont
 
     //     emit HFLiquidationTriggered(loanId, msg.sender, proceeds);
     // }
+
+    /// @dev Tiered-KYC gate on the liquidator bonus (README §16), shared by the
+    ///      single-route + partial liquidation paths so the numeraire math +
+    ///      threshold check live in one place. Prices `bonus` in the principal
+    ///      asset to a 1e18 USD numeraire and reverts `KYCRequired` if the
+    ///      caller isn't cleared for that value tier. No-op when KYC enforcement
+    ///      is off (retail default — `meetsKYCRequirement` short-circuits true).
+    function _assertLiquidatorKyc(address principalAsset, uint256 bonus) private view {
+        (uint256 price, uint8 feedDecimals) = OracleFacet(address(this))
+            .getAssetPrice(principalAsset);
+        uint8 tokenDecimals = IERC20Metadata(principalAsset).decimals();
+        uint256 bonusNumeraire =
+            (bonus * price * 1e18) / (10 ** feedDecimals) / (10 ** tokenDecimals);
+        if (!ProfileFacet(address(this)).meetsKYCRequirement(msg.sender, bonusNumeraire))
+            revert KYCRequired();
+    }
 
     /// @dev Fallback from triggerLiquidation when the DEX swap reverts or
     ///      would exceed the 6% slippage ceiling (README §7 lines 142–153).

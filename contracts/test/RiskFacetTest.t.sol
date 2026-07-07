@@ -84,7 +84,7 @@ import {ERC20Mock} from "./mocks/ERC20Mock.sol";
 import {HelperTest} from "./HelperTest.sol";
 import {LibAcceptTerms} from "../src/libraries/LibAcceptTerms.sol";
 import {LibAcceptTestSigner} from "./helpers/LibAcceptTestSigner.sol";
-import {defaultAdapterCalls} from "./helpers/AdapterCallHelpers.sol";
+import {defaultAdapterCalls, emptyAdapterCalls} from "./helpers/AdapterCallHelpers.sol";
 import {TestMutatorFacet} from "./mocks/TestMutatorFacet.sol";
 import {ZeroExProxyMock} from "./mocks/ZeroExProxyMock.sol";
 import {MockZeroExLegacyAdapter} from "./mocks/MockZeroExLegacyAdapter.sol";
@@ -1664,6 +1664,174 @@ contract RiskFacetTest is Test {
             .getClaimableAmount(loanId, false);
         assertEq(borrowerAmt, 0, "Borrower should have no surplus");
 
+        vm.clearMockedCalls();
+    }
+
+    // ─────────────────────────────────────────────────────────────────────
+    // Tranche 4 — forced-close hardening (#1005 / #1009 / #915)
+    // ─────────────────────────────────────────────────────────────────────
+
+    /// @dev #1005 (S9) — a forced HF liquidation called with an EMPTY adapter
+    ///      try-list reverts `NoEnabledSwapRoute` (from `LibSwap.swapWithFailover`)
+    ///      instead of routing the loan into the full-collateral fallback with
+    ///      zero swap attempted; the collateral withdrawal rolls back atomically.
+    function test_TriggerLiquidation_RevertsOnEmptyAdapterList() public {
+        uint256 loanId = createAndAcceptOffer();
+        vm.mockCall(
+            address(diamond),
+            abi.encodeWithSelector(RiskFacet.calculateHealthFactor.selector, loanId),
+            abi.encode(HF_SCALE - 1)
+        );
+        vm.mockCall(
+            address(diamond),
+            abi.encodeWithSelector(VaultFactoryFacet.vaultWithdrawERC20.selector),
+            abi.encode(true)
+        );
+        vm.expectRevert(
+            abi.encodeWithSelector(LibSwap.NoEnabledSwapRoute.selector, loanId)
+        );
+        RiskFacet(address(diamond)).triggerLiquidation(loanId, emptyAdapterCalls());
+        vm.clearMockedCalls();
+    }
+
+    /// @dev #1005 (S9, Codex #1087 r1 P1) — a NON-empty try-list whose only entry
+    ///      is a governance-DISABLED adapter ALSO reverts `NoEnabledSwapRoute`.
+    ///      `swapWithFailover` skips the disabled venue, so zero routes are
+    ///      attempted; a length-only guard would have missed this and routed the
+    ///      loan into the full-collateral fallback with no DEX attempt.
+    function test_TriggerLiquidation_RevertsWhenOnlyRouteDisabled() public {
+        uint256 loanId = createAndAcceptOffer();
+        address adapter0 = AdminFacet(address(diamond)).getSwapAdapters()[0];
+        AdminFacet(address(diamond)).setSwapAdapterDisabled(adapter0, true);
+
+        vm.mockCall(
+            address(diamond),
+            abi.encodeWithSelector(RiskFacet.calculateHealthFactor.selector, loanId),
+            abi.encode(HF_SCALE - 1)
+        );
+        vm.mockCall(
+            address(diamond),
+            abi.encodeWithSelector(VaultFactoryFacet.vaultWithdrawERC20.selector),
+            abi.encode(true)
+        );
+        vm.expectRevert(
+            abi.encodeWithSelector(LibSwap.NoEnabledSwapRoute.selector, loanId)
+        );
+        // defaultAdapterCalls() points at adapter slot 0, now disabled.
+        RiskFacet(address(diamond)).triggerLiquidation(loanId, defaultAdapterCalls());
+
+        AdminFacet(address(diamond)).setSwapAdapterDisabled(adapter0, false); // restore
+        vm.clearMockedCalls();
+    }
+
+    /// @dev #1009 (L-g) — on an underwater liquidation (proceeds < debt) the 2%
+    ///      treasury handling fee is SUBORDINATED to full lender recovery: the
+    ///      lender receives the FULL swap proceeds (no handling fee skimmed off
+    ///      the top) while absorbing the shortfall. If the fee were still taken,
+    ///      the lender's claim would be `proceeds − 2%`.
+    function test_TriggerLiquidation_UnderwaterWaivesTreasuryHandlingFee() public {
+        uint256 loanId = createAndAcceptOffer();
+
+        vm.mockCall(
+            address(diamond),
+            abi.encodeWithSelector(RiskFacet.calculateHealthFactor.selector, loanId),
+            abi.encode(HF_SCALE - 1)
+        );
+        vm.mockCall(
+            address(diamond),
+            abi.encodeWithSelector(VaultFactoryFacet.vaultWithdrawERC20.selector),
+            abi.encode(true)
+        );
+        vm.mockCall(
+            address(diamond),
+            abi.encodeWithSelector(VaipakamNFTFacet.updateNFTStatus.selector),
+            abi.encode(true)
+        );
+
+        // proceeds (900) < principal (1000) → deeply underwater. Slippage vs the
+        // ~1800 oracle-expected clamps the incentive to 0, so bonus is 0; the
+        // handling fee must be waived (no surplus above debt) and no interest is
+        // recovered (allocated < principal), so the lender receives the FULL 900.
+        uint256 proceeds = 900 ether;
+        vm.mockCall(
+            address(mockZeroExProxy),
+            abi.encodeWithSelector(IZeroExProxy.swap.selector),
+            abi.encode(proceeds)
+        );
+        deal(mockERC20, address(diamond), 3000 ether);
+        deal(mockCollateralERC20, address(diamond), 1800 ether);
+
+        RiskFacet(address(diamond)).triggerLiquidation(loanId, defaultAdapterCalls());
+
+        (, uint256 lenderAmt, ) = ClaimFacet(address(diamond))
+            .getClaimableAmount(loanId, true);
+        assertEq(
+            lenderAmt,
+            proceeds,
+            "lender receives full proceeds; treasury handling fee waived when underwater"
+        );
+        vm.clearMockedCalls();
+    }
+
+    /// @dev #915 (M7) — a forced liquidation nets `interestSettled` (interest
+    ///      already forwarded to the lender via periodic auto-liquidation) so it
+    ///      is not double-counted in the debt. Here `interestSettled` is set far
+    ///      above the ~20-day accrual, so net interest saturates to 0 and the
+    ///      debt collapses to exactly `principal`. The borrower surplus is then
+    ///      the full over-recovery above principal — if the accrual were NOT
+    ///      credited, `totalDebt` would exceed principal and the surplus would
+    ///      be strictly smaller.
+    function test_TriggerLiquidation_NetsInterestSettled() public {
+        uint256 loanId = createAndAcceptOffer(); // principal 1000, in-term
+        vm.warp(block.timestamp + 20 days); // accrue ~2.7 ether interest
+
+        // Credit far more settled interest than has accrued → net interest 0.
+        LibVaipakam.Loan memory loan = LoanFacet(address(diamond)).getLoanDetails(loanId);
+        loan.interestSettled = 50 ether;
+        TestMutatorFacet(address(diamond)).setLoan(loanId, loan);
+
+        vm.mockCall(
+            address(diamond),
+            abi.encodeWithSelector(RiskFacet.calculateHealthFactor.selector, loanId),
+            abi.encode(HF_SCALE - 1)
+        );
+        vm.mockCall(
+            address(diamond),
+            abi.encodeWithSelector(VaultFactoryFacet.vaultWithdrawERC20.selector),
+            abi.encode(true)
+        );
+        vm.mockCall(
+            address(diamond),
+            abi.encodeWithSelector(VaipakamNFTFacet.updateNFTStatus.selector),
+            abi.encode(true)
+        );
+        // proceeds 5000 >> debt. Actual > oracle-expected → 0 slippage → 3%
+        // incentive cap. Waterfall (debt == principal because interest netted):
+        //   bonus            = 3% × 5000            = 150
+        //   afterBonus       = 4850
+        //   allocated (debt) = principal            = 1000
+        //   surplusAfterDebt = 3850
+        //   handlingFee      = 2% × 5000            = 100
+        //   borrowerSurplus  = 3850 − 100           = 3750
+        // Were interest NOT netted, `allocated` would be 1000 + ~2.7, so the
+        // surplus would be ~3747.3 — strictly less than 3750.
+        uint256 proceeds = 5000 ether;
+        vm.mockCall(
+            address(mockZeroExProxy),
+            abi.encodeWithSelector(IZeroExProxy.swap.selector),
+            abi.encode(proceeds)
+        );
+        deal(mockERC20, address(diamond), 8000 ether);
+        deal(mockCollateralERC20, address(diamond), 1800 ether);
+
+        RiskFacet(address(diamond)).triggerLiquidation(loanId, defaultAdapterCalls());
+        (, uint256 borrowerSurplus, ) = ClaimFacet(address(diamond))
+            .getClaimableAmount(loanId, false);
+        assertEq(
+            borrowerSurplus,
+            3750 ether,
+            "netting interestSettled collapses debt to principal -> exact surplus"
+        );
         vm.clearMockedCalls();
     }
 
@@ -3508,12 +3676,16 @@ contract RiskFacetTest is Test {
         );
         deal(mockCollateralERC20, address(diamond), 1800 ether);
 
-        // Empty adapter list → swapWithFailover iterates zero times,
-        // returns (success=false). Partial entry reverts with the
-        // dedicated error (NOT a soft fallback into the claim-time
-        // settlement, which would corrupt the still-Active loan).
+        // Empty adapter list → swapWithFailover attempts zero routes and now
+        // reverts `NoEnabledSwapRoute` (Codex #1087 r1 P1: unified no-route
+        // rejection across every failover caller), NOT a soft fallback into the
+        // claim-time settlement (which would corrupt the still-Active loan).
+        // `PartialSwapAllFailed` still fires when adapters ARE attempted but all
+        // revert.
         LibSwap.AdapterCall[] memory empty = new LibSwap.AdapterCall[](0);
-        vm.expectRevert(RiskFacet.PartialSwapAllFailed.selector);
+        vm.expectRevert(
+            abi.encodeWithSelector(LibSwap.NoEnabledSwapRoute.selector, loanId)
+        );
         RiskFacet(address(diamond)).triggerPartialLiquidation(loanId, 5_000, empty);
         vm.clearMockedCalls();
     }

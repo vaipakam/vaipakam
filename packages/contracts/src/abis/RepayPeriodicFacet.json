@@ -663,6 +663,17 @@
   },
   {
     "type": "error",
+    "name": "NoEnabledSwapRoute",
+    "inputs": [
+      {
+        "name": "loanId",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
     "name": "NoInteractionRewardsToClaim",
     "inputs": []
   },
