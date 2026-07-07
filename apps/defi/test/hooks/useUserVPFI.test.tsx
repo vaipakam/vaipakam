@@ -12,52 +12,65 @@ const USER = '0xAaAaAaAaAaAaAaAaAaAaAaAaAaAaAaAaAaAaAaAa';
 const OTHER = '0xbbbbBbBbBbBbBbbBBbBbbbbBBBbbbbBbBBbBbBBB';
 const TOKEN = '0xTokenTokenTokenTokenTokenTokenTokenToken';
 
-// Module-scoped state the mocked ethers.Contract reads from. Tests push
-// outgoing/incoming Transfer-event logs here; the Contract mock returns them
-// via `queryFilter` keyed off its `filters.Transfer(from, to)` marker.
+// #1076: useUserVPFI migrated to viem. Module-scoped state the mocked
+// publicClient reads from. Tests push outgoing/incoming Transfer logs
+// here; the `getLogs` stub routes them by the indexed-arg filter
+// (`args.from` → outgoing, `args.to` → incoming), mirroring the hook's
+// two-sided `fetchTransferHistory` fan-out.
 const tokenEvents = {
   outgoing: [] as any[],
   incoming: [] as any[],
   throwOnQuery: false as boolean | string,
 };
 
-vi.mock('ethers', () => {
-  class Contract {
-    target: string;
-    runner: unknown;
-    filters: Record<string, (...args: any[]) => unknown>;
-    constructor(target: string, _abi: unknown, runner: unknown) {
-      this.target = target;
-      this.runner = runner;
-      // Mark filters with (from, to) so queryFilter can route the right list.
-      this.filters = {
-        Transfer: (from: string | null, to: string | null) => ({ kind: 'Transfer', from, to }),
-      };
-    }
-    async queryFilter(filter: any, _from?: unknown, _to?: unknown) {
-      if (tokenEvents.throwOnQuery) {
-        throw new Error(
-          typeof tokenEvents.throwOnQuery === 'string' ? tokenEvents.throwOnQuery : 'rpc rate-limit',
-        );
-      }
-      if (!filter || typeof filter !== 'object') return [];
-      // `from=user` → outgoing; `to=user` → incoming
-      if (filter.from && !filter.to) return tokenEvents.outgoing;
-      if (filter.to && !filter.from) return tokenEvents.incoming;
-      return [];
-    }
-  }
-  return { Contract };
-});
-
-// Diamond read stub — each test overrides what these methods return.
+// Diamond read stub — each test overrides what these methods return. The
+// method names are unchanged from the ethers era on purpose: they're the
+// vi.fns the assertions count calls on. The viem `publicClient.readContract`
+// dispatch below simply routes each `functionName` to the matching fn, and
+// `getContractEvents` (VPFIMinted mint history) routes to `queryFilter` — so
+// every existing `diamondMock.*.mockResolvedValue(...)` / `.toHaveBeenCalled`
+// assertion keeps working against the migrated read path.
 const diamondMock: any = {
   getVPFIToken: vi.fn(),
   getVPFIBalanceOf: vi.fn(),
   getVPFITotalSupply: vi.fn(),
   getTreasury: vi.fn(),
   queryFilter: vi.fn(),
-  runner: { isProvider: true },
+};
+
+const publicClientStub = {
+  readContract: async ({ functionName, args }: { functionName: string; args?: readonly unknown[] }) => {
+    switch (functionName) {
+      case 'getVPFIToken':
+        return diamondMock.getVPFIToken();
+      case 'getVPFIBalanceOf':
+        return diamondMock.getVPFIBalanceOf(...((args ?? []) as unknown[]));
+      case 'getVPFITotalSupply':
+        return diamondMock.getVPFITotalSupply();
+      case 'getTreasury':
+        return diamondMock.getTreasury();
+      default:
+        return null;
+    }
+  },
+  // Protocol-level VPFIMinted history. Routed to `queryFilter` so tests keep
+  // driving it via `diamondMock.queryFilter.mockResolvedValue/mockRejectedValue`.
+  getContractEvents: async ({ eventName }: { eventName: string }) => {
+    if (eventName === 'VPFIMinted') return diamondMock.queryFilter();
+    return [];
+  },
+  // Token-level Transfer logs. Indexed-arg filter picks the list: `from=user`
+  // → outgoing, `to=user` → incoming (matches the hook's two getLogs calls).
+  getLogs: async ({ args }: { args?: { from?: string; to?: string } }) => {
+    if (tokenEvents.throwOnQuery) {
+      throw new Error(
+        typeof tokenEvents.throwOnQuery === 'string' ? tokenEvents.throwOnQuery : 'rpc rate-limit',
+      );
+    }
+    if (args?.from && !args?.to) return tokenEvents.outgoing;
+    if (args?.to && !args?.from) return tokenEvents.incoming;
+    return [];
+  },
 };
 
 const chainMock = {
@@ -67,10 +80,16 @@ const chainMock = {
 };
 
 vi.mock('../../src/contracts/useDiamond', () => ({
-  useDiamondPublicClient: (() => { const pc = {}; return () => pc; })(),
+  useDiamondPublicClient: () => publicClientStub,
   useReadyDiamond: () => diamondMock,
   useDiamondRead: () => diamondMock,
   useReadChain: () => chainMock,
+}));
+
+// vpfiDecimals defaults to 18 when config hasn't loaded — the hook's own
+// fallback — so a null config keeps the 1e18 scale the fixtures assume.
+vi.mock('../../src/hooks/useProtocolConfig', () => ({
+  useProtocolConfig: () => ({ config: null }),
 }));
 
 // `beginStep` logs the flow in production — the stub keeps the hook happy
@@ -90,7 +109,8 @@ function mkTransfer(over: any = {}) {
     },
     blockNumber: over.blockNumber ?? 1,
     transactionHash: over.txHash ?? '0xdead',
-    index: over.index ?? 0,
+    // viem exposes the log's position as `logIndex` (ethers used `index`).
+    logIndex: over.index ?? 0,
   };
 }
 
@@ -163,15 +183,20 @@ describe('useUserVPFI', () => {
     expect(result.current.snapshot!.shareOfCirculating).toBe(0);
   });
 
-  it('skips balance read and returns balance=0 when no wallet is connected', async () => {
+  it('skips the diamond read entirely and returns a null snapshot when no wallet is connected', async () => {
     diamondMock.getVPFIToken.mockResolvedValue(TOKEN);
     diamondMock.getVPFITotalSupply.mockResolvedValue(100n * 10n ** 18n);
     diamondMock.getTreasury.mockResolvedValue('0xTreasury');
     diamondMock.queryFilter.mockResolvedValue([]);
     const { result } = renderHook(() => useUserVPFI(null));
     await waitFor(() => expect(result.current.loading).toBe(false));
-    expect(result.current.snapshot!.balance).toBe(0);
+    // Pre-connect the hook short-circuits to a NULL snapshot rather than a
+    // balance-0 one — caching a phantom zero under the current cacheKey would
+    // otherwise serve it for the whole STALE_MS window once the wallet lands.
+    expect(result.current.snapshot).toBeNull();
     expect(diamondMock.getVPFIBalanceOf).not.toHaveBeenCalled();
+    // The whole diamond read is skipped, not just the balance leg.
+    expect(diamondMock.getVPFIToken).not.toHaveBeenCalled();
   });
 
   it('classifies Transfer directions (in/out/mint/burn/self) and sorts newest-first', async () => {

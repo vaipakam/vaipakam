@@ -5,7 +5,7 @@ vi.mock('../../src/hooks/useLiveWatermark', () => ({
   useLiveWatermark: () => ({ version: 0, snapshot: null, status: 'unreachable' }),
 }));
 
-import { renderHook } from '@testing-library/react';
+import { renderHook, waitFor } from '@testing-library/react';
 
 const statsMock: any = {
   stats: null,
@@ -14,6 +14,24 @@ const statsMock: any = {
 };
 vi.mock('../../src/hooks/useProtocolStats', () => ({
   useProtocolStats: () => statsMock,
+}));
+
+// #1076: the hook is indexer-first with a chain-side fallback. These
+// fixtures (`stats.loans` + `stats.assetInfo`) are the FALLBACK path's
+// data shape — the JS bucket walk over the multicall'd loan list — so we
+// force that path by returning null from the indexer timeseries fetch
+// (worker-unreachable). The indexer-first branch consumes a wholly
+// different shape (`ts.buckets` + on-chain getAssetPrice + fetchTokenMeta)
+// and is exercised elsewhere.
+vi.mock('../../src/lib/indexerClient', () => ({
+  fetchLoanTimeseries: () => Promise.resolve(null),
+}));
+
+// `activeVsCompleted` prefers loanStats (indexer-fresh) when present. Null
+// here so the counts derive from the `stats.loans` status walk the fixtures
+// set up (2 active / 2 completed / 1 defaulted).
+vi.mock('../../src/hooks/useLoanStats', () => ({
+  useLoanStats: () => ({ stats: null }),
 }));
 
 // #1076: source calls useReadChain + useDiamondPublicClient directly.
@@ -67,7 +85,7 @@ describe('useHistoricalData', () => {
     expect(result.current.series).toBeNull();
   });
 
-  it('buckets loans by day and computes rolling TVL', () => {
+  it('buckets loans by day and computes rolling TVL', async () => {
     const today = Math.floor(Date.now() / 1000);
     statsMock.stats = mkStats({
       loans: [
@@ -78,7 +96,9 @@ describe('useHistoricalData', () => {
       ],
     });
     const { result } = renderHook(() => useHistoricalData('30d'));
-    expect(result.current.series).not.toBeNull();
+    // Series is now set asynchronously (the hook awaits the indexer fetch —
+    // mocked to null — before the chain-side bucket walk runs).
+    await waitFor(() => expect(result.current.series).not.toBeNull());
     expect(result.current.series!.dailyVolume.length).toBeGreaterThan(0);
     expect(result.current.series!.activeVsCompleted.active).toBe(2);
     expect(result.current.series!.activeVsCompleted.completed).toBe(2);
@@ -89,7 +109,7 @@ describe('useHistoricalData', () => {
     }
   });
 
-  it('filters out loans older than the requested range', () => {
+  it('filters out loans older than the requested range', async () => {
     const today = Math.floor(Date.now() / 1000);
     statsMock.stats = mkStats({
       loans: [
@@ -98,6 +118,7 @@ describe('useHistoricalData', () => {
       ],
     });
     const { result } = renderHook(() => useHistoricalData('7d'));
+    await waitFor(() => expect(result.current.series).not.toBeNull());
     expect(result.current.series!.dailyVolume.length).toBe(1);
   });
 });
