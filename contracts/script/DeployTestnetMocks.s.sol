@@ -122,11 +122,16 @@ import {SafeCast} from "@openzeppelin/contracts/utils/math/SafeCast.sol";
  *          - MWETH_USD_PRICE (8-dec, default 3000e8 = $3,000) prices both
  *            the mWETH feed and the WETH quote feed, keeping the
  *            mWETH/WETH pool 1:1.
- *          - MWETH_USD_FEED (default unset) — when a non-zero address, it
- *            is registered AS-IS for both mWETH and WETH (and set as the
- *            ETH/USD feed) instead of a static mock, so mWETH tracks the
- *            live chain ETH/USD aggregator. Must be the real chain's
- *            Chainlink ETH/USD feed; unset = static mock at MWETH_USD_PRICE.
+ *          - MWETH_USD_FEED (default unset) — when a non-zero address, the
+ *            script reads that real ETH/USD aggregator's current answer ONCE
+ *            at deploy and wires a STATIC mock feed at that snapshot for both
+ *            mWETH and WETH (registry, pools, adapter). mWETH is therefore
+ *            priced at the real ETH value AT DEPLOY TIME but does NOT keep
+ *            tracking the live feed — rerun the script to refresh it. (A live
+ *            registry feed would declassify the static pools as ETH moves;
+ *            see the snapshot rationale at the read site.) Must be the real
+ *            chain's 8-decimal Chainlink ETH/USD feed; unset = static mock at
+ *            MWETH_USD_PRICE.
  *
  *        Idempotent: every wiring step is a straight setter, so a re-run
  *        just re-points the Diamond at the (possibly reused) mocks.
@@ -134,6 +139,7 @@ import {SafeCast} from "@openzeppelin/contracts/utils/math/SafeCast.sol";
 /// @dev Minimal Chainlink AggregatorV3 view used to read the live
 ///      `MWETH_USD_FEED` override's current answer at deploy time.
 interface IAggregatorV3Like {
+    function decimals() external view returns (uint8);
     function latestRoundData()
         external
         view
@@ -341,6 +347,15 @@ contract DeployTestnetMocks is Script {
                 uint256 updatedAt,
                 uint80 answeredInRound
             ) = IAggregatorV3Like(mWethUsdFeedOverride).latestRoundData();
+            // Reject a non-8-decimal aggregator: we snapshot the raw answer
+            // into an 8-dec MockChainlinkFeed and seed the pools + adapter
+            // from it, so a 6- or 18-dec feed would look internally balanced
+            // while every mWETH/WETH loan + liquidation is off by the
+            // decimal factor (Codex #1095).
+            require(
+                IAggregatorV3Like(mWethUsdFeedOverride).decimals() == 8,
+                "DeployTestnetMocks: MWETH_USD_FEED must be an 8-decimal ETH/USD feed"
+            );
             require(live > 0, "DeployTestnetMocks: MWETH_USD_FEED returned non-positive price");
             require(updatedAt != 0, "DeployTestnetMocks: MWETH_USD_FEED round not complete (updatedAt=0)");
             require(updatedAt <= block.timestamp, "DeployTestnetMocks: MWETH_USD_FEED updatedAt is in the future");
@@ -602,9 +617,10 @@ contract DeployTestnetMocks is Script {
         console.log("Next: bash contracts/script/exportFrontendDeployments.sh");
         console.log("HF-liquidation (Phase-7a) uses the registered MockSwapAdapter,");
         console.log("NOT the ZeroExProxyMock. The adapter pays proceeds from its own");
-        console.log("balance: it was seeded with 1,000,000 tLIQ for tLIQ-principal");
-        console.log("loans. For a WETH- (or other) principal loan, transfer that");
-        console.log("token to the MockSwapAdapter first. Trigger with:");
+        console.log("balance, seeded in USD terms so any liquid-principal loan can");
+        console.log("liquidate without a manual transfer: ~100k tLIQ, ~60M mUSDC,");
+        console.log("~100k mWETH. For a principal token NOT in that set, transfer");
+        console.log("it to the MockSwapAdapter first. Trigger with:");
         console.log("  triggerLiquidation(loanId, [{adapterIdx, data:0x}])");
         console.log("where adapterIdx is the adapter's slot in getSwapAdapters().");
     }
