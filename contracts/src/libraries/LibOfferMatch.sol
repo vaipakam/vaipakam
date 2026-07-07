@@ -834,6 +834,16 @@ library LibOfferMatch {
                 && OracleFacet(address(this)).checkLiquidity(collateralAsset)
                     == LibVaipakam.LiquidityStatus.Liquid;
             if (bothLiquid) {
+                // #998 S15 — lean FLOOR-ONLY slice guard (kept off the shared
+                // no-borrow guard on purpose: inlining it into `previewIntent`
+                // pushes RiskAccessFacet past the EIP-170 24,576-byte limit).
+                // The tier-0 / zero-init-LTV-cap no-borrow case is still enforced
+                // at EXECUTION (materialization → `createSignedOfferVault` →
+                // `LibOfferBounds`); only the preview's reported error code for
+                // that niche case (a later match-core `LtvAboveTier` instead of
+                // `SliceCollateralBelowFloor`) diverges — tracked as a follow-up
+                // (Codex #1101 P2b; needs a cross-facet no-borrow view or a
+                // RiskAccessFacet size refactor #980).
                 uint256 floorColl = LibRiskMath.minCollateralForLending(
                     fillAmount, lendingAsset, collateralAsset
                 );

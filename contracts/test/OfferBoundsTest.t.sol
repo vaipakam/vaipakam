@@ -182,4 +182,15 @@ contract OfferBoundsTest is SetupTest {
         uint256 id = _createLender(1000 ether, 1500 ether); // thin, but illiquid → no bound
         assertGt(id, 0);
     }
+
+    /// @dev Codex #1101 P2: a liquid collateral asset with a 0 per-asset
+    ///      init-LTV cap is no-borrow at loan-init (`LoanFacet._checkInitialLtvAndHf`
+    ///      rejects any positive LTV against it), so the create bound rejects
+    ///      every offer against it fail-fast — even with generous collateral —
+    ///      keeping create/init parity for the unconfigured-cap case.
+    function test_S15_zeroInitLtvCapCollateralRejected() public {
+        TestMutatorFacet(address(diamond)).setLoanInitMaxLtvBpsRaw(mockCollateralERC20, 0);
+        vm.expectPartialRevert(LibOfferBounds.MinCollateralBelowFloor.selector);
+        _createLender(1000 ether, 5000 ether); // generous collateral, still rejected (no-borrow)
+    }
 }

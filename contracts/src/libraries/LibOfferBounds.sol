@@ -98,7 +98,7 @@ library LibOfferBounds {
             // finite HF-derived floor for a liquid tier-0 asset (the LTV-cap
             // clamp is skipped when the cap is 0), so we must reject explicitly
             // here to keep create/mutate parity with init admission.
-            if (_tieredNoBorrow(collateralAsset)) {
+            if (_noBorrowCollateral(collateralAsset)) {
                 return (false, BoundsFail.CollateralBelowFloor);
             }
             uint256 floor = LibRiskMath.minCollateralForLending(
@@ -111,7 +111,7 @@ library LibOfferBounds {
             }
         } else {
             if (skipCeiling) return (true, BoundsFail.None); // sale vehicle
-            if (_tieredNoBorrow(collateralAsset)) {
+            if (_noBorrowCollateral(collateralAsset)) {
                 return (false, BoundsFail.LendingAboveCeiling);
             }
             uint256 ceiling = LibRiskMath.maxLendingForCollateral(
@@ -167,7 +167,7 @@ library LibOfferBounds {
         } else {
             // Tiered tier-0 reject surfaces ceiling 0 (no borrow); otherwise the
             // HF/LTV-derived ceiling.
-            uint256 ceiling = _tieredNoBorrow(collateralAsset)
+            uint256 ceiling = _noBorrowCollateral(collateralAsset)
                 ? 0
                 : LibRiskMath.maxLendingForCollateral(
                     borrowerCollMax,
@@ -178,14 +178,30 @@ library LibOfferBounds {
         }
     }
 
-    /// @dev True when the depth-tiered regime is on AND the collateral's
-    ///      effective tier admits no borrow (`effectiveTierMaxInitLtvBps == 0`,
-    ///      i.e. effective tier 0). Mirrors `LoanFacet._checkInitialLtvAndHf`.
-    function _tieredNoBorrow(address collateralAsset) private view returns (bool) {
-        if (!LibVaipakam.cfgDepthTieredLtvEnabled()) return false;
-        uint8 tier = OracleFacet(address(this)).getEffectiveLiquidityTier(
-            collateralAsset
-        );
-        return LibVaipakam.effectiveTierMaxInitLtvBps(tier) == 0;
+    /// @dev True when the collateral admits NO new borrow at loan-init, so an
+    ///      offer against it can never become a loan and must be rejected
+    ///      fail-fast at create/mutate. Mirrors `LoanFacet._checkInitialLtvAndHf`,
+    ///      whose effective cap is `min(per-asset loanInitMaxLtvBps, tier cap)`:
+    ///        • per-asset `loanInitMaxLtvBps == 0` (unconfigured / explicit
+    ///          no-borrow) rejects any positive LTV in BOTH modes (non-tiered
+    ///          `ltv > 0` reverts `LTVExceeded`; tiered `min(0, tierCap) == 0`);
+    ///        • in the depth-tiered regime an effective tier-0 collateral
+    ///          (`effectiveTierMaxInitLtvBps == 0`) likewise admits no borrow.
+    ///      `LibRiskMath`'s LTV clamp skips a `capBps == 0` and returns a finite
+    ///      HF-derived bound, so without this guard create/mutate would admit
+    ///      offers acceptance always rejects (Codex #1101 P2).
+    function _noBorrowCollateral(address collateralAsset) private view returns (bool) {
+        if (
+            LibVaipakam.storageSlot().assetRiskParams[collateralAsset].loanInitMaxLtvBps == 0
+        ) {
+            return true;
+        }
+        if (LibVaipakam.cfgDepthTieredLtvEnabled()) {
+            uint8 tier = OracleFacet(address(this)).getEffectiveLiquidityTier(
+                collateralAsset
+            );
+            if (LibVaipakam.effectiveTierMaxInitLtvBps(tier) == 0) return true;
+        }
+        return false;
     }
 }

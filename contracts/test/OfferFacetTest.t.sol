@@ -249,6 +249,12 @@ contract OfferFacetTest is Test {
         mockOracleLiquidity(mockNft721, LibVaipakam.LiquidityStatus.Illiquid);
         mockOraclePrice(mockERC20, 1e8, 8); // $1 price, 8 decimals
         mockOraclePrice(mockCollateralERC20, 1e8, 8); // $1 price, 8 decimals
+        // #998 S15: a liquid collateral asset needs a non-zero per-asset
+        // init-LTV cap, else `LibOfferBounds` rejects any offer against it at
+        // create (a 0 cap is no-borrow at loan-init). This bespoke diamond does
+        // not cut RiskFacet, so set it via the test mutator.
+        TestMutatorFacet(address(diamond)).setLoanInitMaxLtvBpsRaw(mockERC20, 8000);
+        TestMutatorFacet(address(diamond)).setLoanInitMaxLtvBpsRaw(mockCollateralERC20, 8000);
 
         console.log("completed Setup Function");
     }

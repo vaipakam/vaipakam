@@ -64,7 +64,10 @@ contract Scenario1_ERC20LendingLifecycle is Test {
     HelperTest helperTest;
 
     uint256 constant PRINCIPAL  = 1000 ether;
-    uint256 constant COLLATERAL = 1500 ether;
+    // #998 S15 (#900): 2000 clears the create-time collateral floor (~1875 for
+    // a 1000 principal at 80% liq-LTV / 1.5 HF admission); 1500 sat below it.
+    // Every assertion references COLLATERAL, so expected values auto-scale.
+    uint256 constant COLLATERAL = 2000 ether;
     uint256 constant DURATION   = 30; // days
     uint256 constant RATE_BPS   = 500; // 5%
     uint256 constant TREASURY_FEE_BPS = 100; // 1%
