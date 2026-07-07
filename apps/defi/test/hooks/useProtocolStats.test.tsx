@@ -32,7 +32,7 @@ const diamondMock: any = {
   } },
 };
 vi.mock('../../src/contracts/useDiamond', () => ({
-  useDiamondPublicClient: (() => { const pc = {}; return () => pc; })(),
+  useDiamondPublicClient: (() => { const pc = { getBlockNumber: async () => 999_000n }; return () => pc; })(),
   useReadyDiamond: () => diamondMock,
   useDiamondRead: () => diamondMock,
   useReadChain: () => ({
@@ -51,6 +51,17 @@ const batchBehavior: {
   priceThrows?: boolean;
 } = {};
 vi.mock('@vaipakam/lib/multicall', () => ({
+  // #1076: source imports encodeBatchCalls alongside batchCalls.
+  encodeBatchCalls: (
+    target: string,
+    _abi: unknown,
+    _fn: string,
+    argsList: ReadonlyArray<readonly unknown[]>,
+  ) =>
+    argsList.map((args) => ({
+      target,
+      callData: '0x' + String(args[0]).slice(2).padStart(64, '0'),
+    })),
   batchCalls: async (
     _provider: unknown,
     _iface: unknown,

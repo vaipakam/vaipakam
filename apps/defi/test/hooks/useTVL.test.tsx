@@ -36,6 +36,20 @@ const batchState: {
   throws?: boolean;
 } = {};
 vi.mock('@vaipakam/lib/multicall', () => ({
+  // #1076: source signature is encodeBatchCalls(target, abi, fn, argsList).
+  // Pack args[0] (the asset) into the low 20 bytes of callData so the
+  // batchCalls mock below can recover it via callData.slice(-40) — the
+  // same contract the retired ethers InterfaceMock upheld.
+  encodeBatchCalls: (
+    target: string,
+    _abi: unknown,
+    _fn: string,
+    argsList: ReadonlyArray<readonly unknown[]>,
+  ) =>
+    argsList.map((args) => ({
+      target,
+      callData: '0x' + String(args[0]).slice(2).padStart(64, '0'),
+    })),
   batchCalls: async (
     _p: unknown,
     _i: unknown,

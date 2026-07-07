@@ -49,6 +49,17 @@ const batchState: {
 } = {};
 
 vi.mock('@vaipakam/lib/multicall', () => ({
+  // #1076: source imports encodeBatchCalls alongside batchCalls.
+  encodeBatchCalls: (
+    target: string,
+    _abi: unknown,
+    _fn: string,
+    argsList: ReadonlyArray<readonly unknown[]>,
+  ) =>
+    argsList.map((args) => ({
+      target,
+      callData: '0x' + BigInt(args[0] as bigint).toString(16).padStart(64, '0'),
+    })),
   batchCalls: async (
     _p: unknown,
     _i: unknown,
