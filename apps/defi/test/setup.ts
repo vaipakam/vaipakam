@@ -1,3 +1,6 @@
+// Storage polyfill FIRST — before ../src/i18n touches localStorage at
+// import time (Codex #1088 r1). Import order = side-effect order in ESM.
+import './setup-storage';
 import '@testing-library/jest-dom/vitest';
 import { afterEach, vi } from 'vitest';
 import { cleanup, configure } from '@testing-library/react';
@@ -9,37 +12,6 @@ import { cleanup, configure } from '@testing-library/react';
 import '../src/i18n';
 
 configure({ asyncUtilTimeout: 5_000 });
-
-// Some vitest/jsdom environments expose a `localStorage` without a full Storage
-// API (no `.clear`/`.getItem`), which makes the `afterEach` cleanup below — and
-// any test that reads/writes localStorage — throw `localStorage.clear is not a
-// function`, failing the WHOLE suite. Install a Map-backed Storage polyfill when
-// the env's localStorage is missing or incomplete.
-if (
-  typeof globalThis.localStorage === 'undefined' ||
-  typeof globalThis.localStorage.clear !== 'function'
-) {
-  const store = new Map<string, string>();
-  const polyfill: Storage = {
-    get length() {
-      return store.size;
-    },
-    clear: () => store.clear(),
-    getItem: (key) => (store.has(key) ? store.get(key)! : null),
-    key: (index) => Array.from(store.keys())[index] ?? null,
-    removeItem: (key) => {
-      store.delete(key);
-    },
-    setItem: (key, value) => {
-      store.set(key, String(value));
-    },
-  };
-  Object.defineProperty(globalThis, 'localStorage', {
-    value: polyfill,
-    configurable: true,
-    writable: true,
-  });
-}
 
 afterEach(() => {
   cleanup();
