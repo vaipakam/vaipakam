@@ -63,87 +63,113 @@ The base `loan.principal` carries **dual semantics** (whole principal for ERC-20
 per-day fee for rentals) and the shared helper was written for the ERC-20
 meaning.
 
-### Latent adjacent issue (OUT OF SCOPE — flag only)
+### The counter-divergence sub-bug — NOW IN SCOPE (Codex r1)
 
 `RepayFacet.sol:431` derives `alreadyDeductedDays = (lastDeductTime − startTime)/
 ONE_DAY`, but `repayPartial` decrements `durationDays` **without advancing
 `lastDeductTime`** (`RepayFacet.sol:924-927`), while `autoDeductDaily` advances
 both (`RepayPeriodicFacet.sol:215-219`). So after a partial repay,
 `undeductedDays = elapsedDays − alreadyDeductedDays` **over-counts** the still-owed
-days. This is a pre-existing bug in the *elapsed-interest* path, independent of
-the late fee. **The chosen S8 design side-steps it entirely** (see below), so we
-do NOT fix it here; it is filed as a separate follow-up.
+days — a pre-existing bug in the *elapsed-interest* path.
 
-### Design — base the fee on the remaining rental, capped at 5% of it
+The draft side-stepped this by basing the late fee on `durationDays`. **Codex r1
+(P2) correctly refuted that:** a fee based on `durationDays` stops tracking the
+*same debt the rental branch charges as overdue rent* — after auto-deduct/partial
+paths move the remaining-term counter away from elapsed-unpaid days, the fee
+under/over-penalizes relative to the real late obligation. The spec (#1004) is
+explicit that the fee must scale with the **overdue rental amount**. So the
+correct design **bases the fee on the overdue rent AND fixes the counter
+divergence** so that quantity is reliable. The divergence fix is therefore folded
+into S8, not deferred.
 
-Per the ratified plan (§6): the late-fee cap is **5% of the total remaining
-rental**, i.e. `loan.principal × loan.durationDays`, not 5% of one day.
-`durationDays` is the **remaining unpaid term** and is reliably decremented by
-**both** `autoDeductDaily` and `repayPartial` — so it is drift-free and needs no
-new counter. This is why the design avoids the latent `lastDeductTime` issue: it
-never reads `undeductedDays`/`lastDeductTime`.
+### Design — fee base = overdue rent; fix the days-paid counter
 
-**Chosen approach — a rental-aware late-fee helper.** Add
-`LibVaipakam.calculateRentalLateFee(loanId, endTime)` that mirrors
-`calculateLateFee` but multiplies by the remaining-rental base:
+**(1) Fix the counter divergence.** Make `repayPartial`'s rental branch advance
+`lastDeductTime` by `partialAmount × ONE_DAY` alongside the existing
+`durationDays -= partialAmount` (`RepayFacet.sol:924-927`), mirroring
+`autoDeductDaily`. Then `alreadyDeductedDays = (lastDeductTime − startTime)/
+ONE_DAY` counts **all** paid days (auto + partial), and `undeductedDays =
+elapsedDays − alreadyDeductedDays` is the true count of still-owed elapsed days.
+
+*Semantic assumption to confirm (Codex r2):* a rental `repayPartial` **pre-pays /
+settles `partialAmount` days**, so advancing the deduct clock forward is correct —
+it pushes the next `autoDeductDaily` out by exactly the pre-paid days (auto-deduct
+gates on `block.timestamp − lastDeductTime >= ONE_DAY`, so a forward clock simply
+waits until real time catches up). This composes coherently with `autoDeductDaily`
+and does not double-charge. If instead `repayPartial` is meant to *retire term
+without pre-paying calendar time*, we would need a dedicated `rentalDaysPaid`
+counter rather than reusing `lastDeductTime` — flagged as the one open semantic
+question for r2.
+
+**(2) Base the late fee on overdue rent.** Add
+`LibVaipakam.calculateRentalLateFee(loanId, endTime)`:
 
 ```solidity
-// base = total remaining rent (per-day fee × remaining days)
-uint256 base = loan.principal * loan.durationDays;
-return (base * feePercent) / 10000;   // same feePercent slope + 5% cap
+// overdueDays = still-owed elapsed days (elapsed − all-paid), full-term ⇒ all remaining
+uint256 overdueDays = loan.useFullTermInterest
+    ? loan.durationDays                              // full-term: every remaining day is owed
+    : _overdueRentalDays(loan);                      // elapsed: elapsedDays − alreadyDeductedDays
+uint256 base = loan.principal * overdueDays;         // the overdue rent (matches the branch's `interest`)
+return (base * feePercent) / 10000;                  // same slope; cap = 5% of overdue rent
 ```
+
+The base is exactly the `interest` the rental branch already computes as the
+overdue obligation (`RepayFacet.sol:436/443`), so the fee tracks the real debt.
+`_overdueRentalDays` reuses the (now-correct) `undeductedDays` computation.
 
 Only the **NFT-rental branch** of `RepayFacet.repayLoan` switches to the new
 helper; the ERC-20 branch and every other `calculateLateFee` caller
 (`DefaultedFacet`, `RiskFacet`, `SwapToRepay*`, `AutoLifecycleFacet`,
 `RiskSplitLiquidationFacet`, `LibSwapToRepayIntentSettlement`) stay on the
-existing helper unchanged — they are all ERC-20/collateral paths where
+existing helper unchanged — they are ERC-20/collateral paths where
 `loan.principal` is already the correct base.
 
-**Why a new helper, not a branch inside `calculateLateFee`:** the shared helper
-has ~10 callers; widening its contract to "sometimes multiply by durationDays"
-risks a wrong base on a collateral-liquidation path. A named rental helper keeps
-the rental semantics local to the one rental caller and is self-documenting.
+**(3) The quote path too (Codex r1 P2).** `RepayFacet`'s public quote/preview
+(`repaymentAmount` / `calculateRepaymentAmount`, the `calculateLateFee` caller at
+`RepayFacet.sol:1032`) must switch to `calculateRentalLateFee` on the rental
+branch as well, or a late-rental repayment preview would quote a lower fee than
+settlement charges. Both the execution and the quote path move together.
 
-**Sub-decision (for Codex): which base — remaining or original term?**
-- **Remaining term (`durationDays`)** — *recommended.* Late fees only accrue
-  once past `endTime`, at which point remaining un-auto-deducted days ARE the
-  overdue obligation. Drift-free. Matches the plan's `principal × durationDays`.
-- Original term — would over-penalize (charges on already-paid days) and there is
-  **no stored original-term field** to read it from anyway (confirmed: no field
-  survives both mutation paths). Rejected.
+**Why a new helper, not a branch inside `calculateLateFee`:** the shared helper
+has ~10 callers; widening its contract to "sometimes multiply by overdue days"
+risks a wrong base on a collateral-liquidation path. A named rental helper keeps
+the rental semantics local to the two rental callers (execute + quote) and is
+self-documenting.
 
 ### Edge cases
 
 - `block.timestamp <= endTime` → fee 0 (unchanged guard, first line of helper).
-- `durationDays == 0` at the time of a late repay → base 0 → fee 0. Can this
-  happen? `autoDeductDaily` closes the rental (`Repaid`) when `durationDays`
-  hits 0 (`RepayPeriodicFacet.sol:238`), so a still-open late rental has
-  `durationDays > 0`. Confirm in tests.
-- `useFullTermInterest` vs elapsed: the base is `principal × durationDays`
-  **regardless** of the interest model, so both branches get a consistent cap.
-  Note `interest` itself still differs by branch — that's unchanged.
-- EIP-170: `RepayFacet` is a god-facet near the ceiling. The new helper lives in
-  `LibVaipakam` (a library — inlined into callers). Adding a *second* inlined
-  formula to the one rental caller costs a few bytes; verify `RepayFacet` stays
-  under 24,576 after the change (measure; if tight, dedupe the shared `feePercent`
-  slope into a private `_lateFeePercent(endTime)` both helpers call).
+- `overdueDays == 0` (nothing elapsed-unpaid, e.g. auto-deduct kept pace) → fee 0.
+- `useFullTermInterest`: every remaining day is owed on a late full-term rental →
+  base `principal × durationDays`. Elapsed model: base `principal × overdueDays`.
+  Each branch's cap now matches that branch's charged debt.
+- `repayPartial`-then-late: with the counter fix, `alreadyDeductedDays` includes
+  the partial-paid days, so `overdueDays` excludes them (no over-penalty).
+- EIP-170: `RepayFacet` is a god-facet near the ceiling. The helper lives in
+  `LibVaipakam` (inlined into callers). Verify `RepayFacet` stays under 24,576
+  after the change (measure; if tight, dedupe the shared `feePercent` slope into a
+  private `_lateFeePercent(endTime)` both helpers call, and share
+  `_overdueRentalDays` with the existing branch computation).
 
 ### Test plan (`RepayFacetTest.t.sol`)
 
-- Late rental fee scales with remaining term (40-day-remaining rental late-fee ≫
-  1-day-remaining, same daily fee).
-- Cap binds at **5% of `principal × durationDays`** (very-late rental).
+- Late rental fee scales with the overdue amount (more overdue days ⇒ higher fee).
+- Cap binds at **5% of the overdue rent** (very-late rental).
 - ERC-20 late fee unchanged (regression).
-- `durationDays`-drift independence: a rental that had a `repayPartial` then goes
-  late still bases the fee on `principal × durationDays` (no `lastDeductTime`
-  read).
+- **Counter-fix regression:** a rental with a `repayPartial` then going late
+  computes `overdueDays` excluding the partial-paid days, and a subsequent
+  `autoDeductDaily` waits the pre-paid days before deducting again (the clock
+  advanced) — proving the fix composes.
+- Quote/preview (`repaymentAmount`) equals settlement for a late rental (no
+  quote/settle divergence).
 
 ### Blast radius / ABI
 
-New internal library function; no facet selector, no struct-shape change → **no
-ABI re-export, no diamond cut**. Single facet touched (`RepayFacet`) +
-`LibVaipakam`.
+New internal library function + a `lastDeductTime` write in `repayPartial`; no
+facet selector, no struct-shape change → **no ABI re-export, no diamond cut**.
+Facets touched: `RepayFacet` (execute + quote + repayPartial) + `LibVaipakam`.
+The `repayPartial` clock write is a fund-adjacent behavior change — exercised by
+the counter-fix regression above and the existing `repayPartial` suite.
 
 ---
 
@@ -206,21 +232,56 @@ Recommend **Option B** — it isolates the new state, avoids touching the
 ABI-exposed `ClaimInfo`, and the two-sided bitfield handles the lender+borrower
 lock case cleanly.
 
-**Set the marker** exactly where `LibSanctionedLock` today decides to emit
-`SanctionedProceedsLocked` — i.e. inside `end`/`getOrCreateVaultLocked`/
-`depositLocked` when `isSanctionedAddress(owner) == true` (`LibSanctionedLock.sol:
-132/165/198`). The library already computes that boolean; we additionally
-persist it. Pass the side (lender/borrower) so the correct bit is set. Because
-the set is **conditioned on an affirmative flag**, a park that happened during an
-oracle outage (predicate fails open → false) does **not** set the marker — those
-funds are treated as ordinary (correct: we never confirmed the party was
-sanctioned, and the close-out itself is Tier-2 permissionless).
+**Set the marker — key it to the FROZEN CLAIMANT, not the credited vault owner
+(Codex r1 P1).** The naive placement (set where `LibSanctionedLock` sees the
+deposited-into vault `owner` flagged, `LibSanctionedLock.sol:132/165/198`) is
+**wrong for transferred positions.** When a close-out would pay a *sanctioned
+current holder*, the funds are intentionally parked in the **stored** party's
+vault (e.g. borrower surplus deposited into `loan.borrower` when the current
+holder is flagged). If `loan.borrower` (the credited vault owner) is *clean*, an
+`isSanctionedAddress(owner)`-driven marker never fires — yet the economic claimant
+(the sanctioned current NFT holder) is exactly who must be frozen. An oracle
+outage would then route that holder through the ordinary fail-open screen. So the
+marker MUST be driven by **the flagged status of the party whose claim is being
+frozen** — the intended economic recipient (the current position-NFT holder at
+close-out), regardless of which vault physically holds the parked funds.
 
-**(2) The fail-closed screen.** Add
-`LibVaipakam.assertNotSanctionedFailClosed(who)` mirroring the
-`VaultFactoryFacet:753` pattern: oracle unset ⇒ `revert SanctionsOracleUnavailable`;
-oracle reverts ⇒ `revert SanctionsOracleUnavailable`; flagged ⇒ `revert
-SanctionedAddress(who)`; clean ⇒ proceed.
+Concretely: at each close-out park site, evaluate `isSanctionedAddress(intended
+Recipient)` where `intendedRecipient` is the current holder the payout is *for*
+(the party that would otherwise have received it), and set the loanId+side bit
+when that is true. This is the same party the existing "deposit to stored party
+when current holder is flagged" fallback already keys on — the marker piggybacks
+on that decision rather than on the credited-vault owner. Pass the side
+(lender/borrower) so the correct bit is set.
+
+Because the set is **conditioned on an affirmative flag**, a park during an oracle
+outage (predicate fails open → false) does **not** set the marker — those funds
+are treated as ordinary (correct: we never confirmed the party was sanctioned, and
+the close-out itself is Tier-2 permissionless). A party flagged *after* a clean
+park is caught by the ordinary fail-open screen at claim time (which reverts
+correctly while the oracle is up); the fail-closed marker exists only to keep
+*confirmed-at-park* freezes from lifting during an outage.
+
+**(2) The fail-closed screen — a fail-closed twin of `isSanctionedAddress`, not a
+bare oracle call (Codex r1 P2).** Add
+`LibVaipakam.assertNotSanctionedFailClosed(who)`. It must replicate **both** legs
+of `isSanctionedAddress` (`LibVaipakam.sol:6969-6996`), each failing **closed**:
+
+1. `oracle == address(0)` ⇒ `revert SanctionsOracleUnavailable` (no fail-open
+   short-circuit).
+2. If `vaultBannedSource[who] != address(0)`: `isSanctioned(bannedSource)` — on
+   revert ⇒ `SanctionsOracleUnavailable`; if flagged ⇒ `SanctionedAddress(who)`.
+   (The recovery-ban leg: `isSanctionedAddress` treats a `who` whose declared
+   recovery source is still flagged as sanctioned. A fail-closed screen that
+   checked only `who`'s own EOA would let a recovery-banned owner withdraw
+   confirmed-locked funds whenever their EOA reads clean — this leg closes that.)
+3. `isSanctioned(who)` — on revert ⇒ `SanctionsOracleUnavailable`; if flagged ⇒
+   `SanctionedAddress(who)`; clean ⇒ proceed.
+
+I.e. it is the existing predicate with every fail-open `return false` / `catch {
+return false }` replaced by a `revert SanctionsOracleUnavailable`. Reuses the
+existing `SanctionsOracleUnavailable` (`VaultFactoryFacet:754`) + `SanctionedAddress`
+errors.
 
 **Wire it at the release gate only.** In `_claimAsLenderImpl` / `claimAsBorrower`,
 after resolving the claim, branch on the marker:
@@ -334,18 +395,15 @@ config, create doesn't enforce it either.
 Per the ratified plan (§6, lines 321–332): **do NOT gate on `rangeAmountEnabled`**
 (mirroring the dead flag on mutate would leave an off-flag deployment able to
 create AND mutate out-of-bounds shapes — the card stays open). **Apply the bounds
-wherever a range shape is allowed** (keyed on the offer actually being a **range
-shape + liquid-both-legs ERC-20**), at **both create and mutate**, extracting the
-create-time block into **one shared internal** so the two paths share a single
-definition.
+at both create and mutate**, extracting the create-time block into **one shared
+internal** so the two paths share a single definition.
 
 **Options considered:**
 
-- **Option 1 — activate, un-gated, keyed on range-shape + liquid-both-legs
-  ERC-20** *(recommended, matches the plan).* Floor/ceiling runs at create AND
-  mutate for any liquid-both-legs ERC-20 offer whose `amount ≠ amountMax` (a range
-  shape). Closes the finding for the live config. Cost: a create-time behavior
-  change for range offers (fail-fast admission) + the create-time test
+- **Option 1 — activate, un-gated, keyed on liquid-both-legs ERC-20**
+  *(recommended).* Floor/ceiling runs at create AND mutate for every
+  liquid-both-legs ERC-20 offer. Closes the finding for the live config. Cost: a
+  create-time behavior change (fail-fast admission) + the create-time test
   reconciliation.
 - **Option 2 — parity, keep the flag on both.** Add a mutate check gated on the
   same dead flag. No behavior change, but the finding stays *inert-open* in
@@ -353,71 +411,98 @@ definition.
 - **Option 3 — un-gate mutate only, leave create gated.** Incoherent asymmetry
   (an offer creatable but not mutatable). Rejected.
 
-**Chosen: Option 1.**
-
-**The `range-shape` key** (`amount != amountMax`) is the plan's scoping lever and
-**bounds the blast radius**: single-value / AON offers (`amount == amountMax`)
-keep today's behavior (loan-init HF gate only). Since #183 makes most canonical
-offers ranges, this still covers the common case, but it cleanly exempts AON and
-degenerate single-value offers from a create-time admission reject.
+**Chosen: Option 1, keyed on `liquid-both-legs ERC-20` — NOT on range-shape
+(Codex r1 P2).** The draft scoped the check to range-shape offers
+(`amount != amountMax`). Codex refuted that: it is both **unnecessary** (the
+existing create-time block already applies to all liquid-both-legs ERC-20 offers,
+single-value included — there is no range-shape sub-condition today, per the
+scout) and **unsound** — lender-**intent** slices materialize as `amount ==
+amountMax == fillAmount` (single-value) yet their `reqColl` can sit below
+`minCollateralForLending`. A range-shape key would skip the floor for exactly
+those slices, re-opening the very bypass we're closing. So the predicate is
+**liquid-both-legs ERC-20**, applied uniformly at create, mutate, AND the
+internal-match slice — every liquid-both-legs shape (single-value or range) is
+bounded.
 
 **Shared internal.** Extract `OfferCreateFacet`'s block into a library/internal
-`_assertRangeBounds(...)` (in `LibRiskMath` or a small `LibOfferBounds`) taking
-the amount/amountMax/collateral + asset legs, callable from both
-`OfferCreateFacet` and `OfferMutateFacet`. One definition ⇒ create and mutate can
+`_assertOfferBounds(...)` (in `LibRiskMath` or a small `LibOfferBounds`) taking
+the amount/amountMax/collateral + asset legs + a `skipCeiling` flag (for the
+sale-vehicle create exemption), callable from `OfferCreateFacet`,
+`OfferMutateFacet`, and `LibOfferMatch`. One definition ⇒ create/mutate/match can
 never drift.
 
 ### Sub-decisions (for Codex)
 
-1. **HF-basis alignment.** `minCollateralForLending`/`maxLendingForCollateral` use
-   `hfFloor = HF_LIQUIDATION_THRESHOLD` (depth-tiered) or `minHealthFactor()`,
-   while loan-init uses `MIN_HEALTH_FACTOR = 1.5e18`. In the depth-tiered regime
-   the create-time floor is **looser** than the init gate, so activating it is a
-   *pre-filter*, not a substitute for the init HF check. The doc must state this:
-   S15 makes egregious shapes fail fast; it does **not** guarantee acceptability.
-   Decide whether that's acceptable (recommend yes — it's strictly more checking
-   than today, and the init gate remains authoritative).
+1. **HF-basis — split by regime (Codex r1 P2).** The create-time bound is NOT
+   simply "looser than a 1.5 init gate": that framing is stale for the
+   depth-tiered regime.
+   - **Non-tiered** (`depthTieredLtvEnabled` off): loan init enforces
+     `MIN_HEALTH_FACTOR = 1.5e18`; the create-time helpers use `minHealthFactor()`
+     (also 1.5 by default), so the create bound ≈ the init gate.
+   - **Tiered** (`depthTieredLtvEnabled` on): loan init uses
+     `HF_LIQUIDATION_THRESHOLD` (1.0) **plus** the tier / per-asset **init-LTV
+     cap**; `minCollateralForLending`/`maxLendingForCollateral` already **clamp to
+     that same init-LTV cap** (scout: floor clamps UP to the cap floor, ceiling
+     clamps DOWN to the cap ceiling). So the create bound aligns with the init-LTV
+     cap, not a looser-than-1.5 pre-filter.
+   In both regimes the create-time check is at worst equal to and at best exactly
+   the init admission bound — it is a **fail-fast of the same admission math**, not
+   a weaker heuristic. Implementation/tests must expect the tiered-mode reject set
+   to match the init-LTV-cap clamp, not a 1.5 gate.
 2. **Create-time behavior change / test reconciliation.** Activating create-time
-   bounds breaks ~15 existing tests that post thin/over-sized liquid range offers
-   relying on the flag being off. Each must be re-baselined: either the test's
-   offer is genuinely out-of-bounds (fix the test's amounts) or it exposes a real
-   exemption we must preserve. Enumerate them during implementation; the
-   `AcceptRangedOfferTest`/`LenderIntentMatch`/`LenderIntentCapital`/
-   `BorrowerPartialFillTest`/`MatchOffersScaffoldTest` suites flip the flag on
-   today and are the likely surface.
-3. **`rangeAmountEnabled` disposition.** After Option 1 the flag gates only the
-   `LibOfferMatch` slice floor. Options: (a) also un-gate that slice check (keyed
-   on range-shape/liquid) and leave the flag as inert dead-config for the #183
-   follow-up sweep to remove; (b) remove the flag now (ConfigFacet setter/getter/
-   event + views + frontend ABI). **Recommend (a)** — keep this PR bounded to the
-   S15 correctness fix; the flag removal is a separate dead-config sweep card.
-4. **Internal-match slice floor (`LibOfferMatch.sol:819`).** For consistency, the
-   slice floor should key on the same range-shape/liquid predicate rather than the
-   dead flag. Include it in this fix so create/mutate/match all agree.
+   bounds breaks ~15 existing tests that post thin/over-sized liquid offers relying
+   on the flag being off. Each must be re-baselined: either the test's offer is
+   genuinely out-of-bounds (fix the amounts) or it exposes a real exemption to
+   preserve. The `AcceptRangedOfferTest`/`LenderIntentMatch`/`LenderIntentCapital`/
+   `BorrowerPartialFillTest`/`MatchOffersScaffoldTest` suites flip the flag on today
+   and are the likely surface.
+3. **`rangeAmountEnabled` disposition.** After Option 1 the flag gates nothing
+   (the slice floor moves to the liquid-both-legs predicate too — see #4). Options:
+   (a) leave it as inert dead-config for the #183 follow-up sweep to remove;
+   (b) remove it now (ConfigFacet setter/getter/event + views + frontend ABI).
+   **Recommend (a)** — keep this PR bounded to the S15 correctness fix; the flag
+   removal is a separate dead-config sweep card.
+4. **Internal-match slice floor (`LibOfferMatch.sol:819`).** Re-key it on the same
+   **liquid-both-legs** predicate (NOT range-shape — intent slices are
+   single-value, per the P2 above) so create/mutate/match all agree. Include it in
+   this fix.
 
 ### Edge cases
 
 - Sale/offset/refinance vehicles: already immutable at mutate ⇒ never reach the
   mutate bounds ⇒ no exemption needed on the mutate side. At **create**, keep the
-  existing `saleVehicleCreate` ceiling exemption (the shared internal must accept a
-  "skip-ceiling" flag or the create caller passes the exemption in).
-- Illiquid / tier-0 legs: `minCollateralForLending` returns 0 (no floor) and
-  `maxLendingForCollateral` returns `type(uint256).max` (no ceiling) — the shared
-  internal must treat those sentinels as "no bound" exactly as create does today.
+  existing `saleVehicleCreate` ceiling exemption via the shared internal's
+  `skipCeiling` flag (the create caller passes it in).
+- **Liquid tier-0 legs MUST stay bounded (Codex r1 P2).** `LibRiskMath` returns
+  the no-bound sentinels (`floor 0` / `ceiling type(uint256).max`) **only when a
+  tier-0 leg is also NOT Liquid**; a **liquid tier-0** leg gets a *finite*
+  floor/ceiling (priced at the conservative threshold, per the Tranche-1
+  liquid-vs-illiquid tier-0 distinction). The shared internal must therefore **not**
+  add any tier-0 exemption of its own — it faithfully passes `LibRiskMath`'s return
+  values through, treating a sentinel as "no bound" but a finite liquid-tier-0
+  bound as binding. Add a **liquid tier-0 regression test** proving a thin-but-liquid
+  ERC-20 offer is rejected at create and mutate.
+- Genuinely illiquid legs: `LibRiskMath` returns the no-bound sentinels → the
+  shared internal applies no bound (mutual-consent illiquid path stays open,
+  matching create today).
 - Non-ERC-20 legs (NFT collateral/rental): excluded by the `both-legs-ERC-20`
   condition — unchanged.
 
 ### Test plan
 
-- Mutate rejects an out-of-bounds range shape create would reject
+- Mutate rejects an out-of-bounds shape create would reject
   (`setOfferAmount` up past ceiling → `MaxLendingAboveCeiling`;
   `setOfferCollateral` down below floor → `MinCollateralBelowFloor`).
 - Create rejects the same shapes (activation regression).
-- Single-value / AON offer is **exempt** at both create and mutate (range-shape
-  key).
-- Sale-vehicle create still exempt from the ceiling; sale-vehicle mutate still
-  `SaleVehicleImmutable` (never reaches bounds).
-- Illiquid/tier-0 legs: no bound applied (regression).
+- **Single-value** liquid-both-legs offer IS bounded (not exempt) at create and
+  mutate — a thin single-value offer is rejected.
+- **Intent-slice floor:** a lender-intent slice materialized single-value with
+  `reqColl` below the floor is rejected by the re-keyed `LibOfferMatch` check.
+- **Liquid tier-0** thin ERC-20 offer is rejected at create and mutate (guards the
+  liquid-vs-illiquid tier-0 distinction).
+- Sale-vehicle create still exempt from the ceiling (`skipCeiling`); sale-vehicle
+  mutate still `SaleVehicleImmutable` (never reaches bounds).
+- Genuinely illiquid legs: no bound applied (regression — mutual-consent path open).
 - Re-baselined ~15 flag-on suites pass with the un-gated logic.
 
 ### Blast radius / ABI
@@ -445,14 +530,17 @@ both facets.
   ClaimFacet), S15 (if the two range errors newly surface on OfferMutateFacet).
   S8 needs none.
 
-## Open questions for reviewers
+## Open questions for reviewers (post-r1)
 
-1. **S8:** confirm `principal × durationDays` (remaining term) is the intended
-   base vs any notion of original term. (Recommend remaining — drift-free, and no
-   original-term field exists.)
+1. **S8 semantics (the one genuinely open question):** does a rental
+   `repayPartial` **pre-pay/settle calendar days** (so advancing `lastDeductTime`
+   by `partialAmount × ONE_DAY` is the correct counter fix, §S8(1)), or does it
+   **retire term without pre-paying calendar time** (needing a dedicated
+   `rentalDaysPaid` counter instead)? The former is assumed; confirm.
 2. **S10:** Option B mapping+bitfield vs Option A `ClaimInfo.sanctionsLocked`?
-   (Recommend B — no ABI-exposed struct change.) And: does the fail-closed screen
-   also apply to the backstop nftOwner screen?
-3. **S15:** accept that create-time activation is a **pre-filter** below the
-   1.5 init HF (does not guarantee acceptability)? And keep `rangeAmountEnabled`
-   as inert dead-config (recommend) vs remove it now?
+   (Recommend B — no ABI-exposed struct change.) And: the fail-closed screen also
+   applies to the backstop `nftOwner` screen (`_claimViaBackstopImpl`) when the
+   marker is set — confirm that's desired.
+3. **S15:** keep `rangeAmountEnabled` as inert dead-config (recommend) vs remove
+   it now? (r1 resolved the HF-basis and range-shape-key questions — see
+   sub-decisions #1 and #4.)
