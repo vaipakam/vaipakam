@@ -8,10 +8,12 @@ tokens" looked absurd rather than instructive.
 The faucet tokens now carry distinct, realistic USD prices. The second liquid
 token is relabelled to look like USDC — "Mock USD Coin" (mUSDC), priced at $1
 — and mWETH is priced like real ETH, defaulting to $3,000 and configurable at
-deploy time. An optional override lets an operator point mWETH (and the WETH
-quote leg) at the network's real Chainlink ETH/USD feed for live price
-tracking; because mWETH and WETH then share the same feed, their pool never
-drifts. tLIQ stays at $2,000. Together these give a wallet three liquid assets
+deploy time. An optional override lets an operator seed mWETH's price from the
+network's real Chainlink ETH/USD feed — the deploy reads that feed once and
+pins mWETH to the real ETH value at deploy time (it does not keep tracking the
+feed afterwards; an operator reruns the deploy to refresh it — see the
+static-snapshot note below for why). tLIQ stays at $2,000. Together these give a
+wallet three liquid assets
 at three realistic price points, so health-factor, LTV, and liquidation
 behave the way they would with real assets.
 
