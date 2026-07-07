@@ -1187,6 +1187,107 @@ contract RepayFacetTest is Test {
         assertGe(due, 0);
     }
 
+    // ─── #998 S8 (#1004): rental late fee scales with remaining rent ─────────
+    // loanId 2 (helperOfferLoan): NFT rental, per-day fee (principal) = 10,
+    // durationDays = 30 ⇒ prepayAmount = 300, bufferAmount = 15 (5% default).
+
+    /// @dev The rental late fee is a % of the REMAINING rental
+    ///      (`principal × durationDays`), not of a single day's fee. At 1 day
+    ///      late the old one-day base (10 × 1.5% = 0) rounded to zero; the fix
+    ///      charges 10 × 30 × 1.5% = 4.
+    function test_998_S8_rentalLateFeeScalesWithRemainingTerm() public {
+        helperOfferLoan();
+        // 1 day past endTime (start + 30 days). Quote has no grace gate.
+        vm.warp(block.timestamp + 31 days + 1);
+        uint256 due = RepayFacet(address(diamond)).calculateRepaymentAmount(2);
+        // NFT quote returns lateFee only (rental fees settle from prepay).
+        assertEq(due, 4, "fee must scale with remaining term (10*30*1.5%=4)");
+        assertGt(due, 0, "old one-day base (10*1.5%) rounded to 0 - the S8 bug");
+    }
+
+    /// @dev Codex #1092 r2 P1: the late fee is funded from `bufferAmount`, not
+    ///      `prepayAmount`. A full-term late rental has `interest ==
+    ///      prepayAmount` (300), so a positive fee (6 at 2 days late) would
+    ///      revert `InsufficientPrepay` if the buffer weren't in the budget.
+    function test_998_S8_rentalLateFeeFundedFromBuffer() public {
+        helperOfferLoan();
+        LibVaipakam.Loan memory loan = LoanFacet(address(diamond)).getLoanDetails(2);
+        loan.useFullTermInterest = true; // interest = principal*durationDays = 300 = prepay
+        TestMutatorFacet(address(diamond)).setLoan(2, loan);
+        // 2 days late (within grace = 3 days for a 30-day term). fee = 10*30*2% = 6.
+        // totalDue = 300 + 6 = 306 <= prepay(300)+buffer(15) = 315 ⇒ must NOT brick.
+        vm.warp(block.timestamp + 32 days + 1);
+        vm.prank(borrower);
+        RepayFacet(address(diamond)).repayLoan(2);
+        loan = LoanFacet(address(diamond)).getLoanDetails(2);
+        assertEq(
+            uint8(loan.status),
+            uint8(LibVaipakam.LoanStatus.Repaid),
+            "buffer-funded late fee must not brick a full-term late rental"
+        );
+    }
+
+    /// @dev The 5% ceiling still binds (default buffer). At 10 days late the raw
+    ///      slope (1% + 0.5%/day = 6%) is capped to 5% of the remaining rental:
+    ///      10 × 30 × 5% = 15 (== the 5% bufferAmount).
+    function test_998_S8_rentalLateFeeCapsAtFivePercent() public {
+        helperOfferLoan();
+        vm.warp(block.timestamp + 40 days + 1); // 10 days late; quote (no grace gate)
+        uint256 due = RepayFacet(address(diamond)).calculateRepaymentAmount(2);
+        assertEq(due, 15, "fee caps at 5% of remaining rental (10*30*5%=15)");
+    }
+
+    /// @dev Codex #1092 r3 P2: with `rentalBufferBps` configured BELOW 5%, the
+    ///      cap tracks the actual buffer bps so the pre-funded buffer always
+    ///      covers the fee. bufferBps = 100 (1%) ⇒ buffer = 3; the fee caps at
+    ///      1% of the remaining rental (3), never exceeding the buffer.
+    function test_998_S8_rentalLateFeeCapTiedToBufferBps() public {
+        TestMutatorFacet(address(diamond)).setRentalBufferBpsRaw(100); // 1%
+        helperOfferLoan(); // loanId 2 buffer = 300 * 1% = 3
+        LibVaipakam.Loan memory loan = LoanFacet(address(diamond)).getLoanDetails(2);
+        loan.useFullTermInterest = true;
+        TestMutatorFacet(address(diamond)).setLoan(2, loan);
+        // 2 days late: raw slope 2% would exceed the 1% buffer cap ⇒ capped to 1%.
+        vm.warp(block.timestamp + 32 days + 1);
+        uint256 due = RepayFacet(address(diamond)).calculateRepaymentAmount(2);
+        assertEq(due, 3, "fee caps at configured buffer bps (10*30*1%=3)");
+        // interest(300) + fee(3) == prepay(300)+buffer(3) ⇒ exact cover, no brick.
+        vm.prank(borrower);
+        RepayFacet(address(diamond)).repayLoan(2);
+        loan = LoanFacet(address(diamond)).getLoanDetails(2);
+        assertEq(
+            uint8(loan.status),
+            uint8(LibVaipakam.LoanStatus.Repaid),
+            "sub-5% buffer must still cover the (capped) late fee"
+        );
+    }
+
+    /// @dev Codex #1096 P1: the cap must track the loan's OWN pre-funded
+    ///      `bufferAmount` (snapshot at origination), NOT the live
+    ///      `rentalBufferBps` config. A rental opened at 1% buffer then repaid
+    ///      after governance resets the config to 5% must still clamp the fee
+    ///      to its actual 3-unit buffer — reading the live 5% config would
+    ///      compute 15 and revert `InsufficientPrepay`, bricking the close-out.
+    function test_998_S8_rentalLateFeeUsesLoanBufferNotLiveConfig() public {
+        TestMutatorFacet(address(diamond)).setRentalBufferBpsRaw(100); // 1% at origination
+        helperOfferLoan(); // loanId 2 buffer = 300 * 1% = 3
+        // Governance raises the global config AFTER origination.
+        TestMutatorFacet(address(diamond)).setRentalBufferBpsRaw(500); // back to 5%
+        LibVaipakam.Loan memory loan = LoanFacet(address(diamond)).getLoanDetails(2);
+        loan.useFullTermInterest = true;
+        TestMutatorFacet(address(diamond)).setLoan(2, loan);
+        // 2 days late: slope 2% of remaining rental = 6; clamped to the loan's
+        // actual buffer 3, NOT the 5% (=15) the live config would now permit.
+        vm.warp(block.timestamp + 32 days + 1);
+        uint256 due = RepayFacet(address(diamond)).calculateRepaymentAmount(2);
+        assertEq(due, 3, "fee must clamp to the loan's pre-funded buffer, not live config");
+        // interest(300) + fee(3) == prepay(300)+buffer(3) => settles, no brick.
+        vm.prank(borrower);
+        RepayFacet(address(diamond)).repayLoan(2);
+        loan = LoanFacet(address(diamond)).getLoanDetails(2);
+        assertEq(uint8(loan.status), uint8(LibVaipakam.LoanStatus.Repaid));
+    }
+
     /// @dev Tests calculateRepaymentAmount ERC20 loan past endTime (late fee branch).
     function testCalculateRepaymentAmountERC20LateFee() public {
         helperOfferLoan();
