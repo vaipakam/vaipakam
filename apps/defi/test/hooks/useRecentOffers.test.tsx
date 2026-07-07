@@ -1,4 +1,10 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+vi.mock('../../src/hooks/useLiveWatermark', () => ({
+  // #1076: watermark needs WatermarkProvider (excluded from the test
+  // harness for its WS/timer side-effects); stub it for hook tests.
+  useLiveWatermark: () => ({ version: 0, snapshot: null, status: 'unreachable' }),
+}));
+
 import { renderHook, waitFor } from '@testing-library/react';
 
 const DIAMOND = '0x77A16D1807F43A12C1DBde0b06064058cb6FC4BD';
@@ -17,6 +23,9 @@ vi.mock('../../src/hooks/useLogIndex', () => ({
 
 const diamondMock: any = { runner: { provider: {} } };
 vi.mock('../../src/contracts/useDiamond', () => ({
+  useReadChain: (() => { const c = { chainId: 11155111, diamondAddress: '0x00000000000000000000000000000000000000D1', deployBlock: 1, rpcUrl: 'http://localhost:8545', blockExplorer: 'https://sepolia.etherscan.io', name: 'Sepolia' }; return () => c; })(),
+  useDiamondPublicClient: (() => { const pc = {}; return () => pc; })(),
+  useReadyDiamond: () => diamondMock,
   useDiamondRead: () => diamondMock,
 }));
 
@@ -39,7 +48,18 @@ const batchState: {
   throws?: boolean;
 } = {};
 
-vi.mock('../../src/lib/multicall', () => ({
+vi.mock('@vaipakam/lib/multicall', () => ({
+  // #1076: source imports encodeBatchCalls alongside batchCalls.
+  encodeBatchCalls: (
+    target: string,
+    _abi: unknown,
+    _fn: string,
+    argsList: ReadonlyArray<readonly unknown[]>,
+  ) =>
+    argsList.map((args) => ({
+      target,
+      callData: '0x' + BigInt(args[0] as bigint).toString(16).padStart(64, '0'),
+    })),
   batchCalls: async (
     _p: unknown,
     _i: unknown,
@@ -56,18 +76,9 @@ vi.mock('../../src/lib/multicall', () => ({
   },
 }));
 
-vi.mock('ethers', () => {
-  class InterfaceMock {
-    encodeFunctionData(_fn: string, args: any[]) {
-      const id = args[0] as bigint;
-      return '0x' + id.toString(16).padStart(64, '0');
-    }
-    decodeFunctionResult() {
-      return [];
-    }
-  }
-  return { Interface: InterfaceMock };
-});
+// #1076: the multicall fan-out is mocked at `@vaipakam/lib/multicall` below
+// and src/ imports no ethers, so the former `vi.mock('ethers', …)` Interface
+// stub was dead — removed.
 
 import {
   useRecentOffers,

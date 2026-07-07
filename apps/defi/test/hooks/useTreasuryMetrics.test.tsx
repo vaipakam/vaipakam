@@ -1,4 +1,10 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+vi.mock('../../src/hooks/useLiveWatermark', () => ({
+  // #1076: watermark needs WatermarkProvider (excluded from the test
+  // harness for its WS/timer side-effects); stub it for hook tests.
+  useLiveWatermark: () => ({ version: 0, snapshot: null, status: 'unreachable' }),
+}));
+
 import { renderHook, waitFor, act } from '@testing-library/react';
 
 const diamondState: {
@@ -8,6 +14,9 @@ const diamondState: {
 };
 
 vi.mock('../../src/contracts/useDiamond', () => ({
+  useReadChain: (() => { const c = { chainId: 11155111, diamondAddress: '0x00000000000000000000000000000000000000D1', deployBlock: 1, rpcUrl: 'http://localhost:8545', blockExplorer: 'https://sepolia.etherscan.io', name: 'Sepolia' }; return () => c; })(),
+  useDiamondPublicClient: (() => { const pc = {}; return () => pc; })(),
+  useReadyDiamond: () => diamondState,
   useDiamondRead: () => diamondState,
 }));
 
@@ -40,10 +49,10 @@ describe('useTreasuryMetrics', () => {
     const { result } = renderHook(() => useTreasuryMetrics());
     await waitFor(() => expect(result.current.loading).toBe(false));
     expect(result.current.metrics).toMatchObject({
-      treasuryBalanceUsd: 100,
-      totalFeesCollectedUsd: 5000,
-      feesLast24hUsd: 25,
-      feesLast7dUsd: 500,
+      treasuryBalanceNumeraire: 100,
+      totalFeesCollectedNumeraire: 5000,
+      feesLast24hNumeraire: 25,
+      feesLast7dNumeraire: 500,
     });
     expect(result.current.error).toBeNull();
   });
@@ -69,7 +78,7 @@ describe('useTreasuryMetrics', () => {
 
     const second = renderHook(() => useTreasuryMetrics());
     await waitFor(() =>
-      expect(second.result.current.metrics?.treasuryBalanceUsd).toBe(1),
+      expect(second.result.current.metrics?.treasuryBalanceNumeraire).toBe(1),
     );
     expect(call).toHaveBeenCalledTimes(1);
   });
@@ -82,13 +91,13 @@ describe('useTreasuryMetrics', () => {
     diamondState.getTreasuryMetrics = call;
     const { result } = renderHook(() => useTreasuryMetrics());
     await waitFor(() =>
-      expect(result.current.metrics?.treasuryBalanceUsd).toBe(1),
+      expect(result.current.metrics?.treasuryBalanceNumeraire).toBe(1),
     );
     await act(async () => {
       await result.current.reload();
     });
     await waitFor(() =>
-      expect(result.current.metrics?.treasuryBalanceUsd).toBe(2),
+      expect(result.current.metrics?.treasuryBalanceNumeraire).toBe(2),
     );
     expect(call).toHaveBeenCalledTimes(2);
   });

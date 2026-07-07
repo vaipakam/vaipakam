@@ -1,4 +1,10 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+vi.mock('../../src/hooks/useLiveWatermark', () => ({
+  // #1076: watermark needs WatermarkProvider (excluded from the test
+  // harness for its WS/timer side-effects); stub it for hook tests.
+  useLiveWatermark: () => ({ version: 0, snapshot: null, status: 'unreachable' }),
+}));
+
 import { renderHook, waitFor } from '@testing-library/react';
 import { AssetType, LoanStatus } from '../../src/types/loan';
 
@@ -19,6 +25,8 @@ vi.mock('../../src/hooks/useProtocolStats', () => ({
 
 const diamondMock: any = { runner: { provider: {} } };
 vi.mock('../../src/contracts/useDiamond', () => ({
+  useDiamondPublicClient: (() => { const pc = {}; return () => pc; })(),
+  useReadyDiamond: () => diamondMock,
   useDiamondRead: () => diamondMock,
   useReadChain: () => ({ chainId: 11155111, diamondAddress: '0xDiamond', deployBlock: 1 }),
 }));
@@ -27,7 +35,21 @@ const batchState: {
   priceFor?: (asset: string) => [bigint, number] | null;
   throws?: boolean;
 } = {};
-vi.mock('../../src/lib/multicall', () => ({
+vi.mock('@vaipakam/lib/multicall', () => ({
+  // #1076: source signature is encodeBatchCalls(target, abi, fn, argsList).
+  // Pack args[0] (the asset) into the low 20 bytes of callData so the
+  // batchCalls mock below can recover it via callData.slice(-40) — the
+  // same contract the retired ethers InterfaceMock upheld.
+  encodeBatchCalls: (
+    target: string,
+    _abi: unknown,
+    _fn: string,
+    argsList: ReadonlyArray<readonly unknown[]>,
+  ) =>
+    argsList.map((args) => ({
+      target,
+      callData: '0x' + String(args[0]).slice(2).padStart(64, '0'),
+    })),
   batchCalls: async (
     _p: unknown,
     _i: unknown,
@@ -55,17 +77,9 @@ vi.mock('../../src/lib/journeyLog', () => ({
   beginStep: () => ({ success: () => {}, failure: () => {} }),
 }));
 
-vi.mock('ethers', () => {
-  class InterfaceMock {
-    encodeFunctionData(_fn: string, args: any[]) {
-      const a = args[0];
-      if (typeof a === 'string') return '0x' + a.slice(2).padStart(64, '0');
-      return '0x' + (a as bigint).toString(16).padStart(64, '0');
-    }
-    decodeFunctionResult() { return []; }
-  }
-  return { Interface: InterfaceMock };
-});
+// #1076: the multicall fan-out is mocked at `@vaipakam/lib/multicall` below
+// and src/ imports no ethers, so the former `vi.mock('ethers', …)` Interface
+// stub was dead — removed.
 
 import { useTVL, __clearTVLCache } from '../../src/hooks/useTVL';
 

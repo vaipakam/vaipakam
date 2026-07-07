@@ -3,21 +3,20 @@ import { screen, waitFor, render } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter, Route, Routes } from 'react-router-dom';
 import { ThemeProvider } from '../../src/context/ThemeContext';
+import { ChainProvider } from '../../src/context/ChainContext';
 import { ModeProvider } from '../../src/context/ModeContext';
 
-vi.mock('ethers', () => ({
-  MaxUint256: 2n ** 256n - 1n,
-  isAddress: (v: unknown) =>
-    typeof v === 'string' && /^0x[0-9a-fA-F]{40}$/.test(v),
-  Contract: class {
-    constructor(..._args: unknown[]) {}
-  },
-}));
+// #1076: src/ imports no ethers (the Refinance page uses viem's
+// maxUint256/isAddress), so the former `vi.mock('ethers', …)` was dead —
+// removed.
 
 const diamondMock: any = {
   refinanceLoan: vi.fn(),
 };
 vi.mock('../../src/contracts/useDiamond', () => ({
+  useReadChain: (() => { const c = { chainId: 11155111, diamondAddress: '0x00000000000000000000000000000000000000D1', deployBlock: 1, rpcUrl: 'http://localhost:8545', blockExplorer: 'https://sepolia.etherscan.io', name: 'Sepolia' }; return () => c; })(),
+  useDiamondPublicClient: (() => { const pc = {}; return () => pc; })(),
+  useReadyDiamond: () => diamondMock,
   useDiamondContract: () => diamondMock,
   useDiamondRead: () => diamondMock,
 }));
@@ -55,7 +54,7 @@ vi.mock('../../src/components/app/AssetSymbol', () => ({
 vi.mock('../../src/components/app/TokenAmount', () => ({
   TokenAmount: ({ amount }: { amount: bigint }) => <span>{amount.toString()}</span>,
 }));
-vi.mock('../../src/lib/decodeContractError', () => ({
+vi.mock('@vaipakam/lib/decodeContractError', () => ({
   decodeContractError: (err: unknown, fallback: string) =>
     (err as Error)?.message ?? fallback,
   extractRevertSelector: () => null,
@@ -69,6 +68,7 @@ function renderPage(loanId = '11') {
   return render(
     <MemoryRouter initialEntries={[`/loans/${loanId}/refinance`]}>
       <ThemeProvider>
+        <ChainProvider>
         <ModeProvider>
           <Routes>
             <Route
@@ -80,6 +80,7 @@ function renderPage(loanId = '11') {
             <Route path="/app/create-offer" element={<div>create-offer</div>} />
           </Routes>
         </ModeProvider>
+      </ChainProvider>
       </ThemeProvider>
     </MemoryRouter>,
   );

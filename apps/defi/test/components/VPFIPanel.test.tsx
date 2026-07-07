@@ -1,6 +1,19 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import { render, screen } from '@testing-library/react';
-import { VPFIPanel } from '../../src/pages/Dashboard';
+
+// #1076: VPFIPanel renders a <CardInfo> help-tooltip in its header. CardInfo
+// consumes ModeContext + useProtocolConfig (a Diamond-reading hook) — neither
+// is under test here and both would need the full provider tree / a live
+// diamond. Stub it so this suite stays focused on VPFIPanel's own rendering.
+vi.mock('../../src/components/CardInfo', () => ({
+  CardInfo: () => null,
+}));
+
+// #1076: VPFIPanel moved out of pages/Dashboard into its own component
+// module. It also grew two required props: `vaultVpfiWei` (vault-locked
+// VPFI, folded into the effective share) and `isAdvanced` (gates the two
+// technical header badges — chain-name+id and Canonical/Mirror pill).
+import { VPFIPanel } from '../../src/components/app/VPFIPanel';
 
 const TOKEN = '0xDeaDBeefdeAdbEEfDeADBeEfDeaDbEEfDEadbeEF';
 const MINTER = '0x1111111111111111111111111111111111111111';
@@ -41,10 +54,12 @@ describe('VPFIPanel', () => {
       <VPFIPanel
         vpfi={mkVpfi({ registered: false })}
         userVpfi={mkUserVpfi({ registered: false })}
+        vaultVpfiWei={null}
         networkName="Sepolia"
         networkChainId={11155111}
         blockExplorer="https://sepolia.etherscan.io"
         isCanonicalVPFI={false}
+        isAdvanced={false}
       />,
     );
     expect(screen.getByText(/VPFI is not yet registered/i)).toBeInTheDocument();
@@ -56,10 +71,13 @@ describe('VPFIPanel', () => {
       <VPFIPanel
         vpfi={mkVpfi()}
         userVpfi={mkUserVpfi()}
+        vaultVpfiWei={null}
         networkName="Base Sepolia"
         networkChainId={84532}
         blockExplorer="https://sepolia.basescan.org"
         isCanonicalVPFI={true}
+        // #1076: the chain badge is advanced-mode-only now.
+        isAdvanced={true}
       />,
     );
     expect(screen.getByText(/Base Sepolia · chainId 84532/i)).toBeInTheDocument();
@@ -70,10 +88,12 @@ describe('VPFIPanel', () => {
       <VPFIPanel
         vpfi={mkVpfi()}
         userVpfi={mkUserVpfi()}
+        vaultVpfiWei={null}
         networkName="Base"
         networkChainId={8453}
         blockExplorer="https://basescan.org"
         isCanonicalVPFI={true}
+        isAdvanced={true}
       />,
     );
     expect(screen.getByText(/^Canonical$/)).toBeInTheDocument();
@@ -85,27 +105,37 @@ describe('VPFIPanel', () => {
       <VPFIPanel
         vpfi={mkVpfi()}
         userVpfi={mkUserVpfi()}
+        vaultVpfiWei={null}
         networkName="Polygon"
         networkChainId={137}
         blockExplorer="https://polygonscan.com"
         isCanonicalVPFI={false}
+        isAdvanced={true}
       />,
     );
     expect(screen.getByText(/^Mirror$/)).toBeInTheDocument();
   });
 
-  it('shows balance, share-of-circulating, and explorer links when registered', () => {
+  it('shows share-of-circulating and explorer links when registered', () => {
+    // #1076: the panel no longer renders a standalone "Your VPFI balance"
+    // stat. Share-of-circulating is now the *effective* share computed on
+    // the fly as (wallet balance + vault-locked balance) / totalSupply
+    // (see vpfiTokenCard.shareTooltip) rather than reading the userVpfi
+    // `shareOfCirculating` field directly. With totalSupply = 1_000_000 and
+    // a wallet balance of 500_000 (vault = 0), the effective share is
+    // 50.00% — the number the assertion below checks.
     render(
       <VPFIPanel
         vpfi={mkVpfi()}
-        userVpfi={mkUserVpfi({ balance: 500, shareOfCirculating: 0.5 })}
+        userVpfi={mkUserVpfi({ balance: 500_000 })}
+        vaultVpfiWei={null}
         networkName="Sepolia"
         networkChainId={11155111}
         blockExplorer="https://sepolia.etherscan.io"
         isCanonicalVPFI={false}
+        isAdvanced={false}
       />,
     );
-    expect(screen.getByText(/Your VPFI balance/i)).toBeInTheDocument();
     expect(screen.getByText(/Share of circulating/i)).toBeInTheDocument();
     expect(screen.getByText(/50\.00%/)).toBeInTheDocument();
 
@@ -128,10 +158,12 @@ describe('VPFIPanel', () => {
       <VPFIPanel
         vpfi={mkVpfi()}
         userVpfi={mkUserVpfi({ recentTransfers: [] })}
+        vaultVpfiWei={null}
         networkName="Sepolia"
         networkChainId={11155111}
         blockExplorer="https://sepolia.etherscan.io"
         isCanonicalVPFI={false}
+        isAdvanced={false}
       />,
     );
     expect(
@@ -170,10 +202,12 @@ describe('VPFIPanel', () => {
       <VPFIPanel
         vpfi={mkVpfi()}
         userVpfi={mkUserVpfi({ recentTransfers })}
+        vaultVpfiWei={null}
         networkName="Sepolia"
         networkChainId={11155111}
         blockExplorer="https://sepolia.etherscan.io"
         isCanonicalVPFI={false}
+        isAdvanced={false}
       />,
     );
     expect(screen.getByText('Received')).toBeInTheDocument();
@@ -203,10 +237,12 @@ describe('VPFIPanel', () => {
       <VPFIPanel
         vpfi={mkVpfi()}
         userVpfi={mkUserVpfi({ recentMints })}
+        vaultVpfiWei={null}
         networkName="Sepolia"
         networkChainId={11155111}
         blockExplorer="https://sepolia.etherscan.io"
         isCanonicalVPFI={false}
+        isAdvanced={false}
       />,
     );
     expect(screen.getByText(/Diamond → Treasury mint events/i)).toBeInTheDocument();

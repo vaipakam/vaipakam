@@ -1,78 +1,119 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { screen, waitFor } from '@testing-library/react';
-import { id as keccakId } from 'ethers';
 import { renderWithProviders } from '../utils';
 
-const LOAN_INITIATED_TOPIC0 = keccakId('LoanInitiated(uint256,uint256,address,address)');
+// #1076: Dashboard migrated off ethers → viem AND off the legacy
+// getUserVault + getLoanDetails + ownerOf walk. It now renders its loan
+// table from a single bundled hook — `useDashboardLoansBothSides` (backed
+// by MetricsDashboardFacet.getUserDashboardLoansBothSides) — mapped through
+// `lib/dashboardAdapters`. So the test drives that hook directly (keeping
+// the real adapter under test) and neutralises the peripheral summary cards
+// (their own suites cover them; here they'd just drag in the watermark /
+// freshness / reward provider chains omitted from the harness).
 
-const getUserVaultFn: any = vi.fn();
-// Dashboard now reads vault via .staticCall to avoid a wallet-sign prompt.
-getUserVaultFn.staticCall = getUserVaultFn;
-const diamondMock: any = {
-  getUserVault: getUserVaultFn,
-  getLoanDetails: vi.fn(),
-  ownerOf: vi.fn(),
-  // Event-indexed loan list consumed by `useLogIndex`. `logIndex` now filters
-  // by topic hash, so we synthesize raw Log shapes (topics + data).
-  runner: {
-    provider: {
-      getBlockNumber: async () => 10_630_900,
-      // `logIndex` now uses `provider.getLogs` directly with topic-hash filters.
-      getLogs: vi.fn().mockImplementation((filter: any) => {
-        const t0: string | undefined = filter?.topics?.[0];
-        if (t0 !== LOAN_INITIATED_TOPIC0) return Promise.resolve([]);
-        const pad = (v: string) => '0x' + v.replace(/^0x/, '').padStart(64, '0').toLowerCase();
-        const mk = (id: bigint) => ({
-          topics: [LOAN_INITIATED_TOPIC0, pad('0x' + id.toString(16)), pad('0x0'), pad('0x0')],
-          data: pad('0x0'),
-        });
-        return Promise.resolve([mk(1n), mk(2n), mk(3n)]);
-      }),
-    },
-  },
+const loansMock: {
+  rows: any[];
+  loading: boolean;
+  error: Error | null;
+  reload: ReturnType<typeof vi.fn>;
+} = { rows: [], loading: false, error: null, reload: vi.fn(async () => {}) };
+
+vi.mock('../../src/hooks/useDashboardLoansBothSides', () => ({
+  useDashboardLoansBothSides: () => loansMock,
+  __clearDashboardLoansBothSidesCache: () => {},
+}));
+
+vi.mock('../../src/hooks/useClaimables', () => ({
+  useClaimables: () => ({ claims: [], loading: false, reload: vi.fn(async () => {}) }),
+}));
+
+vi.mock('../../src/hooks/useMyOffers', () => ({
+  useMyOffers: () => ({ rows: [], loading: false, refetch: vi.fn(async () => {}) }),
+}));
+
+vi.mock('../../src/hooks/useProtocolConfig', () => ({
+  useProtocolConfig: () => ({ config: null, loading: false, error: null, reload: vi.fn() }),
+}));
+
+const diamondMock: any = { cancelOffer: vi.fn() };
+const publicClientStub: any = { readContract: async () => null, multicall: async () => [] };
+const readChainStub = {
+  chainId: 11155111,
+  diamondAddress: '0x00000000000000000000000000000000000000D1',
+  deployBlock: 1,
+  rpcUrl: 'http://localhost:8545',
+  blockExplorer: 'https://sepolia.etherscan.io',
+  name: 'Sepolia',
 };
 vi.mock('../../src/contracts/useDiamond', () => ({
+  useReadChain: () => readChainStub,
+  useDiamondPublicClient: () => publicClientStub,
+  useReadyDiamond: () => diamondMock,
   useDiamondContract: () => diamondMock,
   useDiamondRead: () => diamondMock,
-  useReadChain: () => ({
-    chainId: 11155111,
-    chainIdHex: '0xaa36a7',
-    name: 'Sepolia',
-    shortName: 'sep',
-    rpcUrl: 'https://rpc.sepolia.org',
-    blockExplorer: 'https://sepolia.etherscan.io',
-    diamondAddress: '0x77A16D1807F43A12C1DBde0b06064058cb6FC4BD',
-    deployBlock: 10672636,
-    isCanonicalVPFI: false,
-    testnet: true,
-  }),
 }));
+
+// #1076: token-meta prewarm drives a viem multicall against the read chain;
+// no-op it so the stubbed client isn't exercised.
+vi.mock('../../src/lib/tokenMeta', async (orig) => {
+  const actual = await orig<any>();
+  return { ...actual, prewarmTokenMeta: () => {} };
+});
+
+// Peripheral cards + presentational cells that pull their own hook/provider
+// chains (or the omitted watermark/freshness providers). Stubbed to null so
+// the loan table itself is what's under test.
+vi.mock('../../src/components/app/PrincipalCell', () => ({ PrincipalCell: () => null }));
+vi.mock('../../src/components/app/MyOffersTable', () => ({ MyOffersTable: () => null }));
+vi.mock('../../src/components/app/DataSyncStatus', () => ({ DataSyncStatus: () => null }));
+vi.mock('../../src/components/app/SanctionsBanner', () => ({ SanctionsBanner: () => null }));
+vi.mock('../../src/components/app/VPFIDiscountConsentCard', () => ({ default: () => null }));
+vi.mock('../../src/components/app/AutoLifecycleSettingsCard', () => ({ default: () => null }));
+vi.mock('../../src/components/app/AutoLendSummaryCard', () => ({ AutoLendSummaryCard: () => null }));
+vi.mock('../../src/components/app/StakeVPFICTA', () => ({ StakeVPFICTA: () => null }));
+vi.mock('../../src/components/app/RewardsSummaryCard', () => ({ RewardsSummaryCard: () => null }));
 
 const walletMock = { address: null as string | null };
 vi.mock('../../src/context/WalletContext', async (orig) => {
   const actual = await orig<any>();
-  return { ...actual, useWallet: () => ({ address: walletMock.address }) };
+  return {
+    ...actual,
+    useWallet: () => ({ address: walletMock.address, activeChain: readChainStub }),
+  };
 });
 
 import Dashboard from '../../src/pages/Dashboard';
 
-function mkLoan(over: any = {}) {
+// One `LoanWithRiskAndSide` row (contract shape) → the real adapter shapes
+// it into the `LoanSummary` the table renders.
+function mkRow(over: any = {}) {
+  const { borrowerSide = false, ltvBps = 0n, healthFactor = 0n, ...loanOver } = over;
   return {
-    id: 1n, principal: 1_000_000_000_000_000_000n, principalAsset: '0xPA',
-    interestRateBps: 500n, durationDays: 30n, startTime: 1_700_000_000n,
-    status: 0, lender: '0xLENDER', borrower: '0xBORROWER',
-    collateralAsset: '0xCOL', collateralAmount: 2n * 10n ** 18n,
-    lenderTokenId: 1n, borrowerTokenId: 2n,
-    ...over,
+    borrowerSide,
+    ltvBps,
+    healthFactor,
+    loan: {
+      id: 1n, offerId: 1n,
+      principal: 1_000_000_000_000_000_000n, principalAsset: '0xPA', assetType: 0,
+      tokenId: 0n,
+      interestRateBps: 500n, durationDays: 30n, startTime: 1_700_000_000n, status: 0,
+      collateralAsset: '0xCOL', collateralAmount: 2n * 10n ** 18n,
+      collateralAssetType: 0, collateralTokenId: 0n,
+      lenderTokenId: 1n, borrowerTokenId: 2n,
+      allowsPartialRepay: false,
+      liquidationLtvBpsAtInit: 0,
+      minHealthFactorAtInit: 0n,
+      ...loanOver,
+    },
   };
 }
 
 describe('Dashboard', () => {
   beforeEach(() => {
     walletMock.address = null;
-    diamondMock.getUserVault.mockReset();
-    diamondMock.getLoanDetails.mockReset();
-    diamondMock.ownerOf.mockReset();
+    loansMock.rows = [];
+    loansMock.loading = false;
+    loansMock.error = null;
   });
 
   it('shows connect-wallet empty state without address', () => {
@@ -80,36 +121,26 @@ describe('Dashboard', () => {
     expect(screen.getByRole('heading', { name: /Connect Your Wallet/i })).toBeInTheDocument();
   });
 
-  it('renders loans where user is the current NFT holder', async () => {
+  it('renders loans for the connected wallet', async () => {
     walletMock.address = '0xHOLDER';
-    diamondMock.getUserVault.mockResolvedValue('0xVAULT');
-    diamondMock.getLoanDetails.mockImplementation(async (id: bigint) => {
-      if (id === 1n) return mkLoan({ id: 1n });
-      throw new Error('stop');
-    });
-    diamondMock.ownerOf.mockImplementation(async (tokenId: bigint) =>
-      tokenId === 1n ? '0xHOLDER' : '0xOTHER',
-    );
+    loansMock.rows = [mkRow({ borrowerSide: false })];
     renderWithProviders(<Dashboard />);
     await waitFor(() => expect(screen.getByText(/Your Loans/i)).toBeInTheDocument());
     await waitFor(() => expect(screen.getAllByText(/#1/).length).toBeGreaterThan(0));
     expect(screen.getAllByText(/Lender/).length).toBeGreaterThan(0);
-    expect(screen.getByText(/0xVAULT/i)).toBeInTheDocument();
   });
 
-  it('renders empty state when user holds no position NFTs', async () => {
+  it('renders empty state when the wallet holds no loans', async () => {
     walletMock.address = '0xNOBODY';
-    diamondMock.getUserVault.mockResolvedValue('0x0000000000000000000000000000000000000000');
-    diamondMock.getLoanDetails.mockResolvedValueOnce(mkLoan()).mockRejectedValue(new Error('done'));
-    diamondMock.ownerOf.mockResolvedValue('0xSOMEONE');
+    loansMock.rows = [];
     renderWithProviders(<Dashboard />);
     await waitFor(() => expect(screen.getByText(/No Loans Yet/i)).toBeInTheDocument());
   });
 
-  it('swallows getUserVault errors and still renders', async () => {
+  it('swallows loan-fetch errors and still renders', async () => {
     walletMock.address = '0xX';
-    diamondMock.getUserVault.mockRejectedValue(new Error('nope'));
-    diamondMock.getLoanDetails.mockRejectedValue(new Error('stop'));
+    loansMock.rows = [];
+    loansMock.error = new Error('nope');
     renderWithProviders(<Dashboard />);
     await waitFor(() => expect(screen.getByText(/No Loans Yet/i)).toBeInTheDocument());
   });

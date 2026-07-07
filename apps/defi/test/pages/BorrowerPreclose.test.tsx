@@ -3,21 +3,12 @@ import { screen, waitFor, render } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter, Route, Routes } from 'react-router-dom';
 import { ThemeProvider } from '../../src/context/ThemeContext';
+import { ChainProvider } from '../../src/context/ChainContext';
 import { ModeProvider } from '../../src/context/ModeContext';
 
-vi.mock('ethers', () => ({
-  MaxUint256: 2n ** 256n - 1n,
-  parseUnits: (v: string, decimals: number = 18) => {
-    if (v === 'BAD') throw new Error('invalid number');
-    const [whole, frac = ''] = v.split('.');
-    const padded = (frac + '0'.repeat(decimals)).slice(0, decimals);
-    return BigInt(whole || '0') * 10n ** BigInt(decimals) + BigInt(padded || '0');
-  },
-  isAddress: (v: unknown) => typeof v === 'string' && /^0x[0-9a-fA-F]{40}$/.test(v),
-  Contract: class {
-    constructor(..._args: unknown[]) {}
-  },
-}));
+// #1076: BorrowerPreclose is fully viem (`parseUnits`/`maxUint256` from
+// 'viem'); nothing imports ethers, so the old `vi.mock('ethers')` was dead
+// and has been removed.
 
 const diamondMock: any = {
   precloseDirect: vi.fn(),
@@ -26,6 +17,9 @@ const diamondMock: any = {
   completeOffset: vi.fn(),
 };
 vi.mock('../../src/contracts/useDiamond', () => ({
+  useReadChain: (() => { const c = { chainId: 11155111, diamondAddress: '0x00000000000000000000000000000000000000D1', deployBlock: 1, rpcUrl: 'http://localhost:8545', blockExplorer: 'https://sepolia.etherscan.io', name: 'Sepolia' }; return () => c; })(),
+  useDiamondPublicClient: (() => { const pc = {}; return () => pc; })(),
+  useReadyDiamond: () => diamondMock,
   useDiamondContract: () => diamondMock,
   useDiamondRead: () => diamondMock,
 }));
@@ -118,6 +112,7 @@ function renderBP() {
   return render(
     <MemoryRouter initialEntries={['/loans/7/preclose']}>
       <ThemeProvider>
+        <ChainProvider>
         <ModeProvider>
           <Routes>
             <Route path="/loans/:loanId/preclose" element={<BorrowerPreclose />} />
@@ -126,6 +121,7 @@ function renderBP() {
             <Route path="/app" element={<div>dashboard</div>} />
           </Routes>
         </ModeProvider>
+      </ChainProvider>
       </ThemeProvider>
     </MemoryRouter>,
   );
@@ -294,6 +290,7 @@ describe('BorrowerPreclose', () => {
     await userEvent.type(screen.getByPlaceholderText(/e\.g\. 4/), '0');
     await userEvent.type(screen.getByPlaceholderText(/e\.g\. 30/), '30');
     await userEvent.type(screen.getByPlaceholderText(/e\.g\. 1500/), '100');
+    await userEvent.click(screen.getByRole('checkbox')); // #1076: consent gate
     await userEvent.click(screen.getByRole('button', { name: /Review Offset Offer/i }));
     await userEvent.click(screen.getByRole('button', { name: /Confirm & Create Offset Offer/i }));
     await waitFor(() => expect(screen.getByText(/valid interest rate/i)).toBeInTheDocument());
@@ -306,6 +303,7 @@ describe('BorrowerPreclose', () => {
     await userEvent.type(screen.getByPlaceholderText(/e\.g\. 4/), '4');
     await userEvent.type(screen.getByPlaceholderText(/e\.g\. 30/), '0');
     await userEvent.type(screen.getByPlaceholderText(/e\.g\. 1500/), '100');
+    await userEvent.click(screen.getByRole('checkbox')); // #1076: consent gate
     await userEvent.click(screen.getByRole('button', { name: /Review Offset Offer/i }));
     await userEvent.click(screen.getByRole('button', { name: /Confirm & Create Offset Offer/i }));
     await waitFor(() => expect(screen.getByText(/valid duration/i)).toBeInTheDocument());
@@ -324,7 +322,10 @@ describe('BorrowerPreclose', () => {
     await userEvent.type(screen.getByPlaceholderText(/e\.g\. 4/), '5');
     await userEvent.type(screen.getByPlaceholderText(/e\.g\. 30/), '60');
     await userEvent.type(screen.getByPlaceholderText(/e\.g\. 1500/), '1500');
-    await userEvent.click(screen.getByLabelText(/illiquid-asset exposure/i));
+    // #1076: the offset consent control is now the shared RiskConsentLabel
+    // checkbox (was a bespoke "illiquid-asset exposure" label); ticking it
+    // both unlocks Review and is forwarded as the 6th arg to offsetWithNewOffer.
+    await userEvent.click(screen.getByRole('checkbox'));
     await userEvent.click(screen.getByRole('button', { name: /Review Offset Offer/i }));
     expect(screen.getByText(/5%/)).toBeInTheDocument();
     expect(screen.getByText(/60 days/)).toBeInTheDocument();
@@ -353,6 +354,7 @@ describe('BorrowerPreclose', () => {
     await userEvent.type(screen.getByPlaceholderText(/e\.g\. 4/), '5');
     await userEvent.type(screen.getByPlaceholderText(/e\.g\. 30/), '30');
     await userEvent.type(screen.getByPlaceholderText(/e\.g\. 1500/), '2');
+    await userEvent.click(screen.getByRole('checkbox')); // #1076: consent gate
     await userEvent.click(screen.getByRole('button', { name: /Review Offset Offer/i }));
     await userEvent.click(screen.getByRole('button', { name: /Confirm & Create Offset Offer/i }));
     await waitFor(() => expect(diamondMock.offsetWithNewOffer).toHaveBeenCalled());
@@ -369,6 +371,7 @@ describe('BorrowerPreclose', () => {
     await userEvent.type(screen.getByPlaceholderText(/e\.g\. 4/), '5');
     await userEvent.type(screen.getByPlaceholderText(/e\.g\. 30/), '30');
     await userEvent.type(screen.getByPlaceholderText(/e\.g\. 1500/), '10');
+    await userEvent.click(screen.getByRole('checkbox')); // #1076: consent gate
     await userEvent.click(screen.getByRole('button', { name: /Review Offset Offer/i }));
     await userEvent.click(screen.getByRole('button', { name: /Confirm & Create Offset Offer/i }));
     await waitFor(() => expect(screen.getByText(/offset fail/i)).toBeInTheDocument());
@@ -380,6 +383,7 @@ describe('BorrowerPreclose', () => {
     await userEvent.type(screen.getByPlaceholderText(/e\.g\. 4/), '5');
     await userEvent.type(screen.getByPlaceholderText(/e\.g\. 30/), '30');
     await userEvent.type(screen.getByPlaceholderText(/e\.g\. 1500/), '5');
+    await userEvent.click(screen.getByRole('checkbox')); // #1076: consent gate
     await userEvent.click(screen.getByRole('button', { name: /Review Offset Offer/i }));
     await userEvent.click(screen.getByRole('button', { name: /^Back$/i }));
     expect(screen.getByRole('button', { name: /Review Offset Offer/i })).toBeInTheDocument();

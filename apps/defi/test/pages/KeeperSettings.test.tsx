@@ -3,25 +3,35 @@ import { screen, waitFor, render } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter, Route, Routes } from 'react-router-dom';
 import { ThemeProvider } from '../../src/context/ThemeContext';
+import { ChainProvider } from '../../src/context/ChainContext';
 import { ModeProvider } from '../../src/context/ModeContext';
 
-vi.mock('ethers', () => ({
-  isAddress: (v: unknown) =>
-    typeof v === 'string' && /^0x[0-9a-fA-F]{40}$/.test(v),
-  ethers: {
-    isAddress: (v: unknown) =>
-      typeof v === 'string' && /^0x[0-9a-fA-F]{40}$/.test(v),
-  },
+// #1076: KeeperSettings uses viem's `isAddress` (from 'viem'), not ethers —
+// the old `vi.mock('ethers')` was dead and has been removed.
+
+// #1076: AddressDisplay resolves ENS via wagmi's `useChainId`, which throws
+// outside a WagmiProvider (this bespoke harness omits it). Stub it to render
+// the raw hex so keeper-row assertions (`getByText(keeperAddr)`) resolve
+// instead of the whole tree crashing → waitFor spinning to timeout.
+vi.mock('../../src/components/app/AddressDisplay', () => ({
+  AddressDisplay: ({ address }: { address: string }) => <span>{address}</span>,
 }));
 
 const diamondMock: any = {
   getKeeperAccess: vi.fn(),
   getApprovedKeepers: vi.fn(),
+  // #1076: refresh() reads each keeper's action bitmask via getKeeperActions;
+  // stub it so the per-keeper read path resolves (an unstubbed call throws →
+  // rows render as "permissions unavailable").
+  getKeeperActions: vi.fn(),
   setKeeperAccess: vi.fn(),
   approveKeeper: vi.fn(),
   revokeKeeper: vi.fn(),
 };
 vi.mock('../../src/contracts/useDiamond', () => ({
+  useReadChain: (() => { const c = { chainId: 11155111, diamondAddress: '0x00000000000000000000000000000000000000D1', deployBlock: 1, rpcUrl: 'http://localhost:8545', blockExplorer: 'https://sepolia.etherscan.io', name: 'Sepolia' }; return () => c; })(),
+  useDiamondPublicClient: (() => { const pc = {}; return () => pc; })(),
+  useReadyDiamond: () => diamondMock,
   useDiamondContract: () => diamondMock,
   useDiamondRead: () => diamondMock,
 }));
@@ -34,18 +44,20 @@ vi.mock('../../src/context/WalletContext', () => ({
   useWallet: () => walletMock,
 }));
 
-import KeeperSettings from '../../src/pages/KeeperSettings';
+import KeeperSettings, { DEFAULT_KEEPER_ACTIONS } from '../../src/pages/KeeperSettings';
 
 function renderPage(mode: 'basic' | 'advanced' = 'advanced') {
   localStorage.setItem('vaipakam.uiMode', mode);
   return render(
     <MemoryRouter initialEntries={['/keepers']}>
       <ThemeProvider>
+        <ChainProvider>
         <ModeProvider>
           <Routes>
             <Route path="/keepers" element={<KeeperSettings />} />
           </Routes>
         </ModeProvider>
+      </ChainProvider>
       </ThemeProvider>
     </MemoryRouter>,
   );
@@ -62,6 +74,7 @@ beforeEach(() => {
   Object.values(diamondMock).forEach((m: any) => m.mockReset && m.mockReset());
   diamondMock.getKeeperAccess.mockResolvedValue(false);
   diamondMock.getApprovedKeepers.mockResolvedValue([]);
+  diamondMock.getKeeperActions.mockResolvedValue(DEFAULT_KEEPER_ACTIONS);
 });
 
 describe('KeeperSettings', () => {
@@ -83,8 +96,9 @@ describe('KeeperSettings', () => {
   it('renders wrong-chain prompt when not on Sepolia', async () => {
     walletMock.isCorrectChain = false;
     renderPage('advanced');
+    // #1076: copy is chain-agnostic now ("a supported chain", not "Sepolia").
     expect(
-      screen.getByText(/Switch to Sepolia to manage keepers/i),
+      screen.getByText(/Switch to a supported chain to manage keepers/i),
     ).toBeInTheDocument();
   });
 
@@ -97,7 +111,9 @@ describe('KeeperSettings', () => {
         screen.getByRole('heading', { name: /Keeper Whitelist/i }),
       ).toBeInTheDocument(),
     );
-    expect(screen.getByText(/Keepers cannot claim assets\./i)).toBeInTheDocument();
+    // #1076: the no-custody disclaimer copy was rewritten; assert the current
+    // "cannot claim your funds" phrasing from keeperSettings.noCustodyBoundary.
+    expect(screen.getByText(/cannot claim your funds/i)).toBeInTheDocument();
     expect(screen.getByRole('button', { name: /^Enable$/ })).toBeInTheDocument();
   });
 
@@ -147,10 +163,10 @@ describe('KeeperSettings', () => {
     renderPage('advanced');
     await waitFor(() =>
       expect(
-        screen.getByPlaceholderText(/0xKeeper\.\.\./i),
+        screen.getByPlaceholderText(/0xKeeper/i),
       ).toBeInTheDocument(),
     );
-    const input = screen.getByPlaceholderText(/0xKeeper\.\.\./i);
+    const input = screen.getByPlaceholderText(/0xKeeper/i);
     await userEvent.type(input, '0xNOT-VALID');
     await userEvent.click(screen.getByRole('button', { name: /^Approve$/ }));
     await waitFor(() =>
@@ -165,14 +181,19 @@ describe('KeeperSettings', () => {
     renderPage('advanced');
     await waitFor(() =>
       expect(
-        screen.getByPlaceholderText(/0xKeeper\.\.\./i),
+        screen.getByPlaceholderText(/0xKeeper/i),
       ).toBeInTheDocument(),
     );
-    const input = screen.getByPlaceholderText(/0xKeeper\.\.\./i) as HTMLInputElement;
+    const input = screen.getByPlaceholderText(/0xKeeper/i) as HTMLInputElement;
     await userEvent.type(input, valid);
     await userEvent.click(screen.getByRole('button', { name: /^Approve$/ }));
     await waitFor(() =>
-      expect(diamondMock.approveKeeper).toHaveBeenCalledWith(valid),
+      // #1076: Phase-6 per-action model — approveKeeper now takes the action
+      // bitmask as a 2nd arg (the default grant excludes SIGNED_FILL/AUTO_ROLL).
+      expect(diamondMock.approveKeeper).toHaveBeenCalledWith(
+        valid,
+        DEFAULT_KEEPER_ACTIONS,
+      ),
     );
   });
 
@@ -182,10 +203,10 @@ describe('KeeperSettings', () => {
     renderPage('advanced');
     await waitFor(() =>
       expect(
-        screen.getByPlaceholderText(/0xKeeper\.\.\./i),
+        screen.getByPlaceholderText(/0xKeeper/i),
       ).toBeInTheDocument(),
     );
-    await userEvent.type(screen.getByPlaceholderText(/0xKeeper\.\.\./i), valid);
+    await userEvent.type(screen.getByPlaceholderText(/0xKeeper/i), valid);
     await userEvent.click(screen.getByRole('button', { name: /^Approve$/ }));
     await waitFor(() => expect(screen.getByText(/rpc fail/i)).toBeInTheDocument());
   });
@@ -231,7 +252,7 @@ describe('KeeperSettings', () => {
     await waitFor(() =>
       expect(screen.getByText(/Whitelist full/i)).toBeInTheDocument(),
     );
-    expect(screen.getByPlaceholderText(/0xKeeper\.\.\./i)).toBeDisabled();
+    expect(screen.getByPlaceholderText(/0xKeeper/i)).toBeDisabled();
     expect(screen.getByRole('button', { name: /^Approve$/ })).toBeDisabled();
   });
 

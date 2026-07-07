@@ -3,21 +3,20 @@ import { screen, waitFor, render } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter, Route, Routes } from 'react-router-dom';
 import { ThemeProvider } from '../../src/context/ThemeContext';
+import { ChainProvider } from '../../src/context/ChainContext';
 import { ModeProvider } from '../../src/context/ModeContext';
 
-vi.mock('ethers', () => ({
-  isAddress: (v: unknown) =>
-    typeof v === 'string' && /^0x[0-9a-fA-F]{40}$/.test(v),
-  Contract: class {
-    constructor(..._args: unknown[]) {}
-  },
-}));
+// #1076: src/ is fully viem — nothing imports ethers, so the old
+// `vi.mock('ethers')` was dead and has been removed.
 
 const diamondMock: any = {
   createLoanSaleOffer: vi.fn(),
   completeLoanSale: vi.fn(),
 };
 vi.mock('../../src/contracts/useDiamond', () => ({
+  useReadChain: (() => { const c = { chainId: 11155111, diamondAddress: '0x00000000000000000000000000000000000000D1', deployBlock: 1, rpcUrl: 'http://localhost:8545', blockExplorer: 'https://sepolia.etherscan.io', name: 'Sepolia' }; return () => c; })(),
+  useDiamondPublicClient: (() => { const pc = {}; return () => pc; })(),
+  useReadyDiamond: () => diamondMock,
   useDiamondContract: () => diamondMock,
   useDiamondRead: () => diamondMock,
 }));
@@ -57,7 +56,7 @@ vi.mock('../../src/components/app/AssetSymbol', () => ({
 vi.mock('../../src/components/app/TokenAmount', () => ({
   TokenAmount: ({ amount }: { amount: bigint }) => <span>{amount.toString()}</span>,
 }));
-vi.mock('../../src/lib/decodeContractError', () => ({
+vi.mock('@vaipakam/lib/decodeContractError', () => ({
   decodeContractError: (err: unknown, fallback: string) =>
     (err as Error)?.message ?? fallback,
   extractRevertSelector: () => null,
@@ -71,6 +70,7 @@ function renderPage(loanId = '7') {
   return render(
     <MemoryRouter initialEntries={[`/loans/${loanId}/early-withdrawal`]}>
       <ThemeProvider>
+        <ChainProvider>
         <ModeProvider>
           <Routes>
             <Route
@@ -82,6 +82,7 @@ function renderPage(loanId = '7') {
             <Route path="/app/offers" element={<div>offer-book</div>} />
           </Routes>
         </ModeProvider>
+      </ChainProvider>
       </ThemeProvider>
     </MemoryRouter>,
   );
@@ -177,6 +178,8 @@ describe('LenderEarlyWithdrawal', () => {
     renderPage();
     const input = screen.getByPlaceholderText(/e\.g\. 5/i) as HTMLInputElement;
     await userEvent.type(input, '0');
+    // #1076: Review is now gated behind the risk/terms consent checkbox.
+    await userEvent.click(screen.getByRole('checkbox'));
     await userEvent.click(screen.getByRole('button', { name: /Review Sale Offer/i }));
     await userEvent.click(
       screen.getByRole('button', { name: /Confirm & Create Sale Offer/i }),
@@ -194,6 +197,10 @@ describe('LenderEarlyWithdrawal', () => {
     diamondMock.createLoanSaleOffer.mockResolvedValue(mkTx('0xTXHASH'));
     renderPage();
     await userEvent.type(screen.getByPlaceholderText(/e\.g\. 5/i), '5.5');
+    // #1076: ticking the consent checkbox both unlocks Review and is
+    // forwarded as createLoanSaleOffer's 3rd arg (riskAndTermsConsent),
+    // so the recorded consent is now `true` (was `false` pre-consent-gate).
+    await userEvent.click(screen.getByRole('checkbox'));
     await userEvent.click(screen.getByRole('button', { name: /Review Sale Offer/i }));
     await userEvent.click(
       screen.getByRole('button', { name: /Confirm & Create Sale Offer/i }),
@@ -202,7 +209,7 @@ describe('LenderEarlyWithdrawal', () => {
       expect(diamondMock.createLoanSaleOffer).toHaveBeenCalledWith(
         7n,
         550n,
-        false,
+        true,
       ),
     );
   });
@@ -233,6 +240,7 @@ describe('LenderEarlyWithdrawal', () => {
     diamondMock.createLoanSaleOffer.mockRejectedValue(new Error('rpc err'));
     renderPage();
     await userEvent.type(screen.getByPlaceholderText(/e\.g\. 5/i), '3');
+    await userEvent.click(screen.getByRole('checkbox')); // #1076: consent gate
     await userEvent.click(screen.getByRole('button', { name: /Review Sale Offer/i }));
     await userEvent.click(
       screen.getByRole('button', { name: /Confirm & Create Sale Offer/i }),
@@ -247,6 +255,7 @@ describe('LenderEarlyWithdrawal', () => {
     loanState.lenderHolder = '0xME';
     renderPage();
     await userEvent.type(screen.getByPlaceholderText(/e\.g\. 5/i), '4');
+    await userEvent.click(screen.getByRole('checkbox')); // #1076: consent gate
     await userEvent.click(screen.getByRole('button', { name: /Review Sale Offer/i }));
     await userEvent.click(screen.getByRole('button', { name: /^Back$/ }));
     expect(

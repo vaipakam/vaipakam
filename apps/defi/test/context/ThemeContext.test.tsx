@@ -1,6 +1,7 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { render, screen, act } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
+import { clearCookie, THEME_COOKIE } from '@vaipakam/lib/crossDomainPref';
 import { ThemeProvider, useTheme } from '../../src/context/ThemeContext';
 
 function Probe() {
@@ -14,6 +15,18 @@ function Probe() {
 }
 
 describe('ThemeContext', () => {
+  // #1076: ThemeContext migrated to dual-write its persisted choice to a
+  // cross-domain cookie (`vaipakam_theme`) AND localStorage, and reads the
+  // cookie FIRST at boot. setup.ts's afterEach only clears localStorage, so a
+  // cookie written by one test (e.g. via `toggleTheme`) leaked into the next
+  // and won over the system-preference reads these two cases exercise. Clear
+  // the cookie (and localStorage, belt-and-suspenders) before every test so
+  // each starts from a genuine "no stored value" state.
+  beforeEach(() => {
+    clearCookie(THEME_COOKIE);
+    localStorage.clear();
+  });
+
   it('uses stored theme when valid', () => {
     localStorage.setItem('vaipakam-theme', 'dark');
     render(<ThemeProvider><Probe /></ThemeProvider>);

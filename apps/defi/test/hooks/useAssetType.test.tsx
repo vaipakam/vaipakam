@@ -12,36 +12,42 @@ type ContractBehavior = {
 };
 
 const behaviorsByAddress: Record<string, ContractBehavior> = {};
-let contractConstructionCount = 0;
+let readContractCount = 0;
 
-vi.mock('ethers', () => {
-  class Contract {
-    constructor(
-      public target: string,
-      _abi: unknown,
-      _runner: unknown,
-    ) {
-      contractConstructionCount += 1;
-      const key = target.toLowerCase();
-      const behavior = behaviorsByAddress[key] ?? {};
-      return {
-        target,
-        supportsInterface: async (id: string) => {
-          if (!behavior.supportsInterface) throw new Error('no supportsInterface');
-          return behavior.supportsInterface(id);
-        },
-        decimals: async () => {
-          if (!behavior.decimals) throw new Error('no decimals');
-          return behavior.decimals();
-        },
-      };
+// #1076: defi migrated off ethers to viem. `useAssetType` now detects
+// the standard via `getContract({ address, abi, client }).read.*`, which
+// dispatches to `client.readContract({ address, functionName, args })`.
+// Mock `useDiamondPublicClient` to return a client whose readContract
+// drives the per-address behaviour (was: a mocked ethers `Contract`).
+const publicClientMock = {
+  readContract: async ({
+    address,
+    functionName,
+    args,
+  }: {
+    address: string;
+    functionName: string;
+    args?: readonly unknown[];
+  }) => {
+    readContractCount += 1;
+    const behavior = behaviorsByAddress[address.toLowerCase()] ?? {};
+    if (functionName === 'supportsInterface') {
+      if (!behavior.supportsInterface) throw new Error('no supportsInterface');
+      return behavior.supportsInterface(String(args?.[0]));
     }
-  }
-  return {
-    Contract,
-    isAddress: (v: unknown) => typeof v === 'string' && /^0x[0-9a-fA-F]{40}$/.test(v),
-  };
-});
+    if (functionName === 'decimals') {
+      if (!behavior.decimals) throw new Error('no decimals');
+      return behavior.decimals();
+    }
+    throw new Error(`unexpected functionName ${functionName}`);
+  },
+};
+// Mutable holder so a single test can drive the missing-client guard
+// (`useAssetType` gates detection on `!!publicClient`). Reset in beforeEach.
+let activeClient: typeof publicClientMock | null = publicClientMock;
+vi.mock('../../src/contracts/useDiamond', () => ({
+  useDiamondPublicClient: () => activeClient,
+}));
 
 const walletMock: { provider: unknown; chainId: number | null } = {
   provider: { mock: true },
@@ -61,9 +67,10 @@ function mkAddr(fill: string): string {
 
 beforeEach(() => {
   for (const k of Object.keys(behaviorsByAddress)) delete behaviorsByAddress[k];
-  contractConstructionCount = 0;
+  readContractCount = 0;
   walletMock.provider = { mock: true };
   walletMock.chainId = 1;
+  activeClient = publicClientMock;
 });
 
 describe('useAssetType', () => {
@@ -79,10 +86,15 @@ describe('useAssetType', () => {
     expect(result.current.loading).toBe(false);
   });
 
-  it('returns null when provider is missing', () => {
-    walletMock.provider = null;
+  it('returns null and skips detection when the public client is unavailable', () => {
+    // #1076: the hook gates on `!!publicClient` (useAssetType.ts:70), not on
+    // the old wallet `provider` field — null the client to exercise that
+    // guard. `inputsReady` is false, so it never starts detection.
+    activeClient = null;
     const { result } = renderHook(() => useAssetType(mkAddr('a')));
     expect(result.current.type).toBeNull();
+    expect(result.current.loading).toBe(false);
+    expect(readContractCount).toBe(0);
   });
 
   it('detects ERC-1155 when supportsInterface(d9b67a26) is true', async () => {
@@ -123,10 +135,10 @@ describe('useAssetType', () => {
     behaviorsByAddress[addr.toLowerCase()] = { decimals: () => 6 };
     const first = renderHook(() => useAssetType(addr));
     await waitFor(() => expect(first.result.current.type).toBe('erc20'));
-    const constructionsAfterFirst = contractConstructionCount;
+    const constructionsAfterFirst = readContractCount;
     const second = renderHook(() => useAssetType(addr));
     await waitFor(() => expect(second.result.current.type).toBe('erc20'));
-    expect(contractConstructionCount).toBe(constructionsAfterFirst);
+    expect(readContractCount).toBe(constructionsAfterFirst);
   });
 
   it('does not update state if unmounted before detection resolves', async () => {

@@ -1,7 +1,42 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, fireEvent, act } from '@testing-library/react';
+import { MemoryRouter } from 'react-router-dom';
 import DiagnosticsDrawer from '../../src/components/app/DiagnosticsDrawer';
 import { emit, clearJourney } from '../../src/lib/journeyLog';
+
+/*
+ * #1076: two load-time causes + copy drift.
+ *
+ * 1) DiagnosticsDrawer now consumes ModeContext (`useMode`) and renders a
+ *    <ChainDiagnosticsPanel> inside the open drawer. That panel pulls in the
+ *    whole DataFreshness / RealtimePush / Watermark / Diamond stack — heavy
+ *    contexts the shared harness deliberately omits. We mock `useMode`
+ *    (forced to 'advanced' so the FAB is always visible, matching the tests'
+ *    "open the drawer" intent) and stub ChainDiagnosticsPanel to a no-op; it
+ *    is an independent sub-component with its own concerns.
+ * 2) The drawer's `L`-link to /data-rights needs a router — wrap in
+ *    MemoryRouter.
+ * 3) Copy drift: the FAB/dialog were relabelled "Report Issue" / "Issue
+ *    Details" (aria "Open issue report"); the header count is now
+ *    `(visible/total)` and the default status filter is "failure". The
+ *    old "Copy JSON" clipboard action was removed — the action row is now
+ *    Download + Report + Clear only (see DiagnosticsDrawer.tsx docblock), so
+ *    the two clipboard-copy cases are dropped as a removed feature.
+ */
+vi.mock('../../src/context/ModeContext', () => ({
+  useMode: () => ({ mode: 'advanced', setMode: () => {}, toggleMode: () => {} }),
+}));
+vi.mock('../../src/components/app/ChainDiagnosticsPanel', () => ({
+  ChainDiagnosticsPanel: () => null,
+}));
+
+function renderDrawer() {
+  return render(
+    <MemoryRouter>
+      <DiagnosticsDrawer />
+    </MemoryRouter>,
+  );
+}
 
 beforeEach(() => {
   clearJourney();
@@ -13,14 +48,14 @@ afterEach(() => {
 });
 
 describe('DiagnosticsDrawer', () => {
-  it('renders a floating button labeled "Diagnostics" that opens the drawer on click', () => {
-    render(<DiagnosticsDrawer />);
+  it('renders a floating button that opens the drawer on click', () => {
+    renderDrawer();
     expect(
-      screen.queryByRole('dialog', { name: /Diagnostics/i }),
+      screen.queryByRole('dialog', { name: /Issue Details/i }),
     ).toBeNull();
-    fireEvent.click(screen.getByRole('button', { name: /Open diagnostics/i }));
+    fireEvent.click(screen.getByRole('button', { name: /Open issue report/i }));
     expect(
-      screen.getByRole('dialog', { name: /Diagnostics/i }),
+      screen.getByRole('dialog', { name: /Issue Details/i }),
     ).toBeInTheDocument();
   });
 
@@ -28,13 +63,13 @@ describe('DiagnosticsDrawer', () => {
     emit({ area: 'wallet', flow: 'f', step: 's', status: 'failure' });
     emit({ area: 'wallet', flow: 'f', step: 's2', status: 'failure' });
     emit({ area: 'wallet', flow: 'f', step: 's3', status: 'success' });
-    render(<DiagnosticsDrawer />);
+    renderDrawer();
     expect(screen.getByText('2')).toBeInTheDocument();
   });
 
   it('renders the empty-state hint when the buffer is empty', () => {
-    render(<DiagnosticsDrawer />);
-    fireEvent.click(screen.getByRole('button', { name: /Open diagnostics/i }));
+    renderDrawer();
+    fireEvent.click(screen.getByRole('button', { name: /Open issue report/i }));
     expect(
       screen.getByText(/No events yet — take an action to start recording/i),
     ).toBeInTheDocument();
@@ -50,8 +85,8 @@ describe('DiagnosticsDrawer', () => {
       errorType: 'contract-revert',
       errorMessage: 'Repayment window closed',
     });
-    render(<DiagnosticsDrawer />);
-    fireEvent.click(screen.getByRole('button', { name: /Open diagnostics/i }));
+    renderDrawer();
+    fireEvent.click(screen.getByRole('button', { name: /Open issue report/i }));
     expect(screen.getByText(/^repay$/)).toBeInTheDocument();
     expect(screen.getByText(/repayLoan/)).toBeInTheDocument();
     expect(screen.getByText(/submit-tx · loan #42/)).toBeInTheDocument();
@@ -60,78 +95,36 @@ describe('DiagnosticsDrawer', () => {
   });
 
   it('updates the header count live when new events fire while open', () => {
-    render(<DiagnosticsDrawer />);
-    fireEvent.click(screen.getByRole('button', { name: /Open diagnostics/i }));
-    expect(screen.getByText(/Diagnostics \(0\)/)).toBeInTheDocument();
+    renderDrawer();
+    fireEvent.click(screen.getByRole('button', { name: /Open issue report/i }));
+    // Header now shows `Issue Details (visible/total)`; default filter is
+    // "failure" so an info event bumps the total but not the visible count.
+    expect(screen.getByText(/Issue Details \(0\/0\)/)).toBeInTheDocument();
     act(() => {
       emit({ area: 'wallet', flow: 'f', step: 's1', status: 'info' });
     });
-    expect(screen.getByText(/Diagnostics \(1\)/)).toBeInTheDocument();
+    expect(screen.getByText(/Issue Details \(0\/1\)/)).toBeInTheDocument();
   });
 
-  it('closes the drawer via the close button and the overlay', () => {
-    render(<DiagnosticsDrawer />);
-    fireEvent.click(screen.getByRole('button', { name: /Open diagnostics/i }));
+  it('closes the drawer via the close button', () => {
+    renderDrawer();
+    fireEvent.click(screen.getByRole('button', { name: /Open issue report/i }));
     fireEvent.click(screen.getByRole('button', { name: /Close/i }));
     expect(
-      screen.queryByRole('dialog', { name: /Diagnostics/i }),
+      screen.queryByRole('dialog', { name: /Issue Details/i }),
     ).toBeNull();
   });
 
   it('clears the buffer via the "Clear" action', () => {
     emit({ area: 'wallet', flow: 'f', step: 's', status: 'info' });
-    render(<DiagnosticsDrawer />);
-    fireEvent.click(screen.getByRole('button', { name: /Open diagnostics/i }));
-    expect(screen.getByText(/Diagnostics \(1\)/)).toBeInTheDocument();
+    renderDrawer();
+    fireEvent.click(screen.getByRole('button', { name: /Open issue report/i }));
+    expect(screen.getByText(/Issue Details \(0\/1\)/)).toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', { name: /Clear/i }));
-    expect(screen.getByText(/Diagnostics \(0\)/)).toBeInTheDocument();
+    expect(screen.getByText(/Issue Details \(0\/0\)/)).toBeInTheDocument();
     expect(
       screen.getByText(/No events yet — take an action to start recording/i),
     ).toBeInTheDocument();
-  });
-
-  it('copies redacted JSON to the clipboard when "Copy JSON" is clicked', async () => {
-    const writeText = vi.fn().mockResolvedValue(undefined);
-    Object.defineProperty(navigator, 'clipboard', {
-      configurable: true,
-      value: { writeText },
-    });
-    emit({ area: 'wallet', flow: 'f', step: 's', status: 'info' });
-    render(<DiagnosticsDrawer />);
-    fireEvent.click(screen.getByRole('button', { name: /Open diagnostics/i }));
-    await act(async () => {
-      fireEvent.click(screen.getByRole('button', { name: /Copy JSON/i }));
-    });
-    expect(writeText).toHaveBeenCalledTimes(1);
-    const payload = JSON.parse(writeText.mock.calls[0][0] as string);
-    expect(Array.isArray(payload.events)).toBe(true);
-  });
-
-  it('falls back to download when clipboard write fails', async () => {
-    const writeText = vi.fn().mockRejectedValue(new Error('blocked'));
-    Object.defineProperty(navigator, 'clipboard', {
-      configurable: true,
-      value: { writeText },
-    });
-    const createObjectURL = vi.fn().mockReturnValue('blob:mock');
-    const revokeObjectURL = vi.fn();
-    Object.defineProperty(window.URL, 'createObjectURL', {
-      configurable: true,
-      value: createObjectURL,
-    });
-    Object.defineProperty(window.URL, 'revokeObjectURL', {
-      configurable: true,
-      value: revokeObjectURL,
-    });
-    const clickSpy = vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(() => {});
-    render(<DiagnosticsDrawer />);
-    fireEvent.click(screen.getByRole('button', { name: /Open diagnostics/i }));
-    await act(async () => {
-      fireEvent.click(screen.getByRole('button', { name: /Copy JSON/i }));
-    });
-    expect(createObjectURL).toHaveBeenCalledTimes(1);
-    expect(clickSpy).toHaveBeenCalledTimes(1);
-    expect(revokeObjectURL).toHaveBeenCalledWith('blob:mock');
   });
 
   it('triggers a blob download directly when "Download" is clicked', () => {
@@ -146,8 +139,8 @@ describe('DiagnosticsDrawer', () => {
       value: revokeObjectURL,
     });
     const clickSpy = vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(() => {});
-    render(<DiagnosticsDrawer />);
-    fireEvent.click(screen.getByRole('button', { name: /Open diagnostics/i }));
+    renderDrawer();
+    fireEvent.click(screen.getByRole('button', { name: /Open issue report/i }));
     fireEvent.click(screen.getByRole('button', { name: /Download/i }));
     expect(createObjectURL).toHaveBeenCalledTimes(1);
     expect(clickSpy).toHaveBeenCalledTimes(1);
