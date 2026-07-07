@@ -2,37 +2,29 @@
 #
 # The apps/defi unit suite rotted to 256 failures unnoticed because no
 # CI job ever ran it (only typecheck). It was repaired under #1076 and
-# ran as a non-blocking drift-warn lane while it stabilised. Now that the
-# suite is fully green it is a REAL gate: this job fails (and blocks the
-# merge, once listed as a required check in branch protection) if any
-# defi unit test fails. Add `defi vitest / vitest` to the branch's
-# required status checks to enforce it on merge.
+# now runs as a REAL gate: the `vitest` job fails (and blocks the merge,
+# once listed as a required check in branch protection) if any defi unit
+# test fails.
+#
+# Required-check shape (Codex #1098): this workflow runs on EVERY PR to
+# main — it is NOT scoped with `on.pull_request.paths`. A workflow that
+# never triggers (because its `paths` filter didn't match) produces NO
+# check run at all, so a required status check keyed to it sits PENDING
+# forever and blocks the merge of every PR that doesn't touch those
+# paths. Instead the scoping lives on the `vitest` JOB via a
+# `detect-changes` `if:` guard: when apps/defi (and the packages it
+# imports) are untouched, `vitest` is `if:`-skipped, which branch
+# protection treats as SUCCESS — the same pattern ci.yml uses for its
+# conditionally-required jobs. Wire `defi vitest / vitest` (and, as the
+# defensive backstop ci.yml documents, `defi vitest / detect-changes`)
+# into the branch's required status checks.
 name: defi vitest
 
 on:
   pull_request:
-    paths:
-      - 'apps/defi/**'
-      - 'packages/lib/**'
-      - 'packages/contracts/**'
-      - 'packages/ui/**'
-      # Root dependency / workspace inputs: a Vitest/jsdom/React/wagmi bump
-      # here can break the suite without touching app/package source, so the
-      # gate must fire on these too (Codex #1088 r2).
-      - 'package.json'
-      - 'pnpm-lock.yaml'
-      - 'pnpm-workspace.yaml'
-      - '.github/workflows/defi-vitest.yml'
+    branches: [main]
   push:
     branches: [main]
-    paths:
-      - 'apps/defi/**'
-      - 'packages/lib/**'
-      - 'packages/contracts/**'
-      - 'packages/ui/**'
-      - 'package.json'
-      - 'pnpm-lock.yaml'
-      - 'pnpm-workspace.yaml'
 
 permissions:
   contents: read
@@ -43,7 +35,61 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  # ── detect-changes ──────────────────────────────────────────────────────
+  # Emits a single boolean output (`defi`) — true when this PR touches
+  # apps/defi, the packages it imports, or the workspace/lockfile inputs
+  # that can break the suite without touching app source. Always runs and
+  # always reports a conclusion, so the downstream `if:` guard resolves to
+  # SUCCESS (skipped) rather than leaving a required check pending.
+  detect-changes:
+    name: detect-changes
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    outputs:
+      defi: ${{ steps.diff.outputs.defi }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          # Full history so git diff can resolve the PR base sha.
+          fetch-depth: 0
+
+      - name: Determine changed paths
+        id: diff
+        run: |
+          set -eu
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            BASE="${{ github.event.pull_request.base.sha }}"
+            HEAD="${{ github.event.pull_request.head.sha }}"
+          else
+            # `push` event — diff the pushed commit against its parent.
+            BASE="${{ github.event.before }}"
+            HEAD="${{ github.sha }}"
+            # First commit on a branch → `before` is all-zeros; fall back.
+            if [ "$BASE" = "0000000000000000000000000000000000000000" ]; then
+              BASE=$(git rev-parse HEAD~1 2>/dev/null || git rev-parse HEAD)
+            fi
+          fi
+          echo "Diff range: $BASE..$HEAD"
+          CHANGED=$(git diff --name-only "$BASE" "$HEAD" || git diff --name-only HEAD~1 HEAD)
+          echo "Changed files:"
+          echo "$CHANGED"
+
+          # apps/defi source + the packages it imports (a lib/contracts/ui
+          # change can break the suite), plus the root dependency /
+          # workspace inputs a Vitest/jsdom/React/wagmi bump rides in on,
+          # plus this workflow file itself.
+          DEFI_RE='^(apps/defi/|packages/(lib|contracts|ui)/|package\.json$|pnpm-lock\.yaml$|pnpm-workspace\.yaml$|\.github/workflows/defi-vitest\.yml$)'
+          if echo "$CHANGED" | grep -Eq "$DEFI_RE"; then
+            echo "defi=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "defi=false" >> "$GITHUB_OUTPUT"
+          fi
+
   vitest:
+    name: vitest
+    needs: detect-changes
+    if: needs.detect-changes.outputs.defi == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
