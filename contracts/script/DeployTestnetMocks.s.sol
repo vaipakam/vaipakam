@@ -14,6 +14,8 @@ import {RiskFacet} from "../src/facets/RiskFacet.sol";
 import {MockChainlinkRegistry, MockChainlinkFeed} from "./mocks/MockChainlinkRegistry.sol";
 import {MockUniswapV3Factory} from "./mocks/MockUniswapV3.sol";
 import {Deployments} from "./lib/Deployments.sol";
+import {Math} from "@openzeppelin/contracts/utils/math/Math.sol";
+import {SafeCast} from "@openzeppelin/contracts/utils/math/SafeCast.sol";
 
 /**
  * @title DeployTestnetMocks
@@ -92,9 +94,11 @@ import {Deployments} from "./lib/Deployments.sol";
  *        skip re-deploying that mock (idempotent re-runs; e.g. the
  *        faucet trio already live on Base Sepolia):
  *          - FAUCET_LIQUID_TOKEN
- *          - FAUCET_LIQUID_TOKEN_2 (the second liquid ERC-20, tLQ2 —
- *            gives faucet-only wallets a distinct both-liquid pair for
- *            the HF / liquidation / refinance demos)
+ *          - FAUCET_LIQUID_TOKEN_2 (the second liquid ERC-20, now the
+ *            mUSDC $1 mock — gives faucet-only wallets a distinct
+ *            both-liquid pair with a realistic price spread for the
+ *            HF / liquidation / refinance demos. Leave UNSET on the
+ *            relabel run so the fresh mUSDC deploys in place of tLQ2.)
  *          - FAUCET_MWETH (third liquid ERC-20, mWETH — WETH-flavoured
  *            mintable principal; NOT the canonical WETH)
  *          - FAUCET_ILLIQUID_TOKEN
@@ -114,9 +118,28 @@ import {Deployments} from "./lib/Deployments.sol";
  *            REQUIRED and must be a bridged/mock WETH — WBNB is not
  *            WETH and would be mispriced by the ETH/USD feed.
  *
+ *        Optional mWETH price knobs:
+ *          - MWETH_USD_PRICE (8-dec, default 3000e8 = $3,000) prices both
+ *            the mWETH feed and the WETH quote feed, keeping the
+ *            mWETH/WETH pool 1:1.
+ *          - MWETH_USD_FEED (default unset) — when a non-zero address, it
+ *            is registered AS-IS for both mWETH and WETH (and set as the
+ *            ETH/USD feed) instead of a static mock, so mWETH tracks the
+ *            live chain ETH/USD aggregator. Must be the real chain's
+ *            Chainlink ETH/USD feed; unset = static mock at MWETH_USD_PRICE.
+ *
  *        Idempotent: every wiring step is a straight setter, so a re-run
  *        just re-points the Diamond at the (possibly reused) mocks.
  */
+/// @dev Minimal Chainlink AggregatorV3 view used to read the live
+///      `MWETH_USD_FEED` override's current answer at deploy time.
+interface IAggregatorV3Like {
+    function latestRoundData()
+        external
+        view
+        returns (uint80 roundId, int256 answer, uint256 startedAt, uint256 updatedAt, uint80 answeredInRound);
+}
+
 contract DeployTestnetMocks is Script {
     /// @dev Canonical Chainlink Denominations sentinels (chain-universal).
     address constant USD_DENOM = 0x0000000000000000000000000000000000000348;
@@ -130,29 +153,31 @@ contract DeployTestnetMocks is Script {
     address constant ARB_SEPOLIA_WETH_DEFAULT = 0x980B62Da83eFf3D4576C647993b0c1D7faf17c73;
     address constant OP_SEPOLIA_WETH_DEFAULT = 0x4200000000000000000000000000000000000006;
 
-    /// @dev sqrtPriceX96 for price 1.0 (both legs 18-dec ⇒ a 1:1 raw
-    ///      reserve ratio at the current tick). NON-NEGOTIABLE with the
-    ///      prices below: `OracleFacet._accumulatePoolImpacts` Guard 1
-    ///      rejects a pool whose spot price disagrees with the Chainlink
-    ///      feed ratio beyond `cfgTwapConsistencyBps`. A 1:1 pool
-    ///      therefore REQUIRES the tLIQ feed and the WETH feed to report
-    ///      the same USD price — otherwise the value-balance guard skips
-    ///      the pool and tLIQ never classifies Liquid. Keep TLIQ_USD_PRICE
-    ///      == WETH_USD_PRICE (or re-derive sqrtPriceX96 from their ratio
-    ///      if you make them differ).
-    uint160 constant SQRT_PRICE_X96_ONE = 79228162514264337593543950336;
-
     /// @dev Pool depth well above the $1M floor (converted via ETH/USD)
     ///      so classification never flakes on precision.
     uint128 constant MOCK_POOL_LIQUIDITY = 1e24;
 
-    /// @dev Initial prices, 8-dec Chainlink scale. tLIQ is priced EQUAL
-    ///      to WETH on purpose so the 1:1 mock pool spot agrees with the
-    ///      feed ratio (see SQRT_PRICE_X96_ONE) — the arbitrary dollar
-    ///      value ($2,000) doesn't matter for a faucet token, only that
-    ///      the two feeds match.
-    int256 constant TLIQ_USD_PRICE = 2_000e8; // == WETH; keeps the 1:1 pool consistent.
-    int256 constant WETH_USD_PRICE = 2_000e8; // $2,000.
+    /// @dev Initial prices, 8-dec Chainlink scale. Each liquid faucet
+    ///      token now carries a DISTINCT, realistic USD price so loan math
+    ///      isn't the degenerate "1 tLIQ == 1 mWETH" it used to be:
+    ///        - tLIQ  → $2,000 (an arbitrary blue-chip stand-in)
+    ///        - mUSDC → $1     (a USDC mimic)
+    ///      mWETH's price is env-configurable (see `MWETH_USD_PRICE`,
+    ///      default $3,000) and read at runtime, so it isn't a constant.
+    ///
+    ///      Because the prices now DIFFER, a plain 1:1 pool (the old
+    ///      `SQRT_PRICE_X96_ONE`) would fail `OracleFacet`'s value-balance
+    ///      guard and each token would classify Illiquid. Instead every
+    ///      pool's init `sqrtPriceX96` is RE-DERIVED from its two legs'
+    ///      feed prices via {_poolSqrtPriceX96} so the pool spot agrees
+    ///      with the Chainlink feed ratio within `cfgTwapConsistencyBps`.
+    int256 constant TLIQ_USD_PRICE = 2_000e8; // $2,000
+    int256 constant MUSDC_USD_PRICE = 1e8; // $1 (USDC mimic)
+
+    /// @dev Default mWETH/WETH price when `MWETH_USD_PRICE` is unset:
+    ///      $3,000, 8-dec Chainlink scale — priced like real ETH so mWETH
+    ///      loans behave like ETH loans.
+    uint256 constant DEFAULT_MWETH_USD_PRICE = 3_000e8;
 
     function run() external {
         uint256 cid = block.chainid;
@@ -165,6 +190,16 @@ contract DeployTestnetMocks is Script {
         uint256 adminKey = vm.envUint("ADMIN_PRIVATE_KEY");
         address weth = _wethFor(cid);
         address diamond = Deployments.readDiamond();
+
+        // mWETH pricing knobs. `MWETH_USD_PRICE` (8-dec, default $3,000)
+        // prices BOTH the mWETH feed and the WETH quote feed so the
+        // mWETH/WETH pool stays 1:1. `MWETH_USD_FEED`, when set to a
+        // non-zero address, is used AS-IS (the real chain's Chainlink
+        // ETH/USD aggregator) for BOTH mWeth and weth instead of a static
+        // mock feed — giving live ETH tracking. Default (unset) deploys a
+        // static mock feed at `MWETH_USD_PRICE`.
+        uint256 mWethUsdPrice = vm.envOr("MWETH_USD_PRICE", DEFAULT_MWETH_USD_PRICE);
+        address mWethUsdFeedOverride = vm.envOr("MWETH_USD_FEED", address(0));
 
         console.log("=== Deploy Testnet Faucet + Oracle Mocks ===");
         console.log("Chain id: ", cid);
@@ -198,13 +233,18 @@ contract DeployTestnetMocks is Script {
         // SECOND oracle-wired liquid token — a faucet-only wallet needs
         // a DISTINCT both-liquid ERC-20 pair for the health-factor /
         // HF-liquidation / refinance demos: tLIQ-vs-tLIQ is rejected as
-        // self-collateralized, and tLIQ/tILQ is not bothLiquid.
+        // self-collateralized, and tLIQ/tILQ is not bothLiquid. It is now
+        // a MOCKED USDC ($1) so the pair carries a realistic price spread.
+        // NOTE: real USDC is 6-dec; we deliberately keep 18 dec here so
+        // the faucet/frontend read one uniform decimal for every mock and
+        // the pool math stays decimal-term-free. The USDC mimic is
+        // satisfied by the symbol + the $1 feed price, not by the decimals.
         address liquidToken2 = vm.envOr("FAUCET_LIQUID_TOKEN_2", address(0));
         if (liquidToken2 == address(0)) {
-            liquidToken2 = address(new ERC20Mock("Vaipakam Test Liquid 2", "tLQ2", 18));
-            console.log("Deployed tLQ2:  ", liquidToken2);
+            liquidToken2 = address(new ERC20Mock("Mock USD Coin", "mUSDC", 18));
+            console.log("Deployed mUSDC: ", liquidToken2);
         } else {
-            console.log("Reusing tLQ2:   ", liquidToken2);
+            console.log("Reusing mUSDC:  ", liquidToken2);
         }
 
         address illiquidToken = vm.envOr("FAUCET_ILLIQUID_TOKEN", address(0));
@@ -229,8 +269,10 @@ contract DeployTestnetMocks is Script {
 
         // Third liquid token, WETH-flavoured: some flows read better in
         // the demo when the principal LOOKS like wrapped ETH; mWETH is
-        // oracle-priced exactly like tLIQ/tLQ2 (NOT the canonical WETH
-        // — that can't be faucet-minted).
+        // oracle-priced like real ETH via `MWETH_USD_PRICE` (default
+        // $3,000), NOT the canonical WETH — that can't be faucet-minted.
+        // Its feed and the WETH quote feed are pinned to the SAME price so
+        // the mWETH/WETH pool stays 1:1.
         address mWeth = vm.envOr("FAUCET_MWETH", address(0));
         if (mWeth == address(0)) {
             mWeth = address(new ERC20Mock("Mock Wrapped ETH", "mWETH", 18));
@@ -257,26 +299,66 @@ contract DeployTestnetMocks is Script {
             console.log("Reusing vART:   ", rentalNft2);
         }
 
-        // Oracle mocks for the LIQUID tokens only (Tier 1). Both liquid
-        // tokens use the SAME price as WETH so every 1:1 pool spot
-        // agrees with the feed ratio (see SQRT_PRICE_X96_ONE).
+        // Oracle mocks for the LIQUID tokens only (Tier 1). Each liquid
+        // token carries a DISTINCT USD price (tLIQ $2,000 / mUSDC $1 /
+        // mWETH `mWethUsdPrice`); WETH is priced at `mWethUsdPrice` too so
+        // the mWETH/WETH pool is 1:1. Every pool's `sqrtPriceX96` is
+        // re-derived from its legs' feed prices (see {_poolSqrtPriceX96}),
+        // so the pool spot agrees with the feed ratio and the
+        // value-balance guard admits it.
         MockChainlinkRegistry registry = new MockChainlinkRegistry();
         MockChainlinkFeed liquidFeed = new MockChainlinkFeed(TLIQ_USD_PRICE, 8);
-        MockChainlinkFeed liquid2Feed = new MockChainlinkFeed(TLIQ_USD_PRICE, 8);
-        MockChainlinkFeed mWethFeed = new MockChainlinkFeed(WETH_USD_PRICE, 8);
-        MockChainlinkFeed wethFeed = new MockChainlinkFeed(WETH_USD_PRICE, 8);
+        MockChainlinkFeed liquid2Feed = new MockChainlinkFeed(MUSDC_USD_PRICE, 8);
+        // mWETH + WETH share a feed price. When `MWETH_USD_FEED` is set we
+        // register that live aggregator for BOTH; otherwise we deploy a
+        // single static mock feed at `mWethUsdPrice` and share it across
+        // mWETH and WETH so the two always report an identical price.
+        address ethUsdFeedAddr;
+        // The USD price (8-dec) used for the WETH quote leg AND the mWETH
+        // leg when deriving pool spots. On the static path it's
+        // `mWethUsdPrice`; on the override path it's the feed's LIVE answer
+        // so every pool's spot matches what OracleFacet will read from the
+        // same feed AT DEPLOY TIME.
+        uint256 wethQuotePrice8;
+        if (mWethUsdFeedOverride != address(0)) {
+            ethUsdFeedAddr = mWethUsdFeedOverride;
+            // Derive the WETH/mWETH leg from the live feed so tLIQ ($2,000)
+            // and mUSDC ($1) — whose static pools quote against WETH —
+            // pass the value-balance guard at deploy time. NOTE: assumes an
+            // 8-dec ETH/USD aggregator (the Chainlink standard). CAVEAT: as
+            // the live price later moves beyond `cfgTwapConsistencyBps`
+            // (3%) the STATIC tLIQ/mUSDC pools drift out of band and can
+            // flip Illiquid until a re-run reprices them; the mWETH/WETH
+            // pool never drifts (both its legs read this same feed).
+            (, int256 live, , , ) = IAggregatorV3Like(mWethUsdFeedOverride).latestRoundData();
+            require(live > 0, "DeployTestnetMocks: MWETH_USD_FEED returned non-positive price");
+            wethQuotePrice8 = SafeCast.toUint256(live);
+            console.log("Using live MWETH_USD_FEED for mWETH + WETH:", ethUsdFeedAddr);
+            console.log("  live ETH/USD (8-dec):", wethQuotePrice8);
+        } else {
+            ethUsdFeedAddr = address(new MockChainlinkFeed(SafeCast.toInt256(mWethUsdPrice), 8));
+            wethQuotePrice8 = mWethUsdPrice;
+        }
         registry.setFeed(liquidToken, USD_DENOM, address(liquidFeed));
         registry.setFeed(liquidToken2, USD_DENOM, address(liquid2Feed));
-        registry.setFeed(mWeth, USD_DENOM, address(mWethFeed));
-        registry.setFeed(weth, USD_DENOM, address(wethFeed));
+        registry.setFeed(mWeth, USD_DENOM, ethUsdFeedAddr);
+        registry.setFeed(weth, USD_DENOM, ethUsdFeedAddr);
 
         MockUniswapV3Factory univ3 = new MockUniswapV3Factory();
-        address liquidPool =
-            univ3.createPool(liquidToken, weth, 3000, SQRT_PRICE_X96_ONE, MOCK_POOL_LIQUIDITY);
-        address liquid2Pool =
-            univ3.createPool(liquidToken2, weth, 3000, SQRT_PRICE_X96_ONE, MOCK_POOL_LIQUIDITY);
-        address mWethPool =
-            univ3.createPool(mWeth, weth, 3000, SQRT_PRICE_X96_ONE, MOCK_POOL_LIQUIDITY);
+        // tLIQ ($2,000) / mUSDC ($1) / mWETH (== WETH) all quoted against
+        // WETH (`wethQuotePrice8`). Each pool's spot is re-derived from the
+        // two legs' 8-dec feed prices so it matches the Chainlink ratio.
+        uint256 tliqPrice8 = SafeCast.toUint256(TLIQ_USD_PRICE);
+        uint256 musdcPrice8 = SafeCast.toUint256(MUSDC_USD_PRICE);
+        address liquidPool = univ3.createPool(
+            liquidToken, weth, 3000, _poolSqrtPriceX96(liquidToken, tliqPrice8, weth, wethQuotePrice8), MOCK_POOL_LIQUIDITY
+        );
+        address liquid2Pool = univ3.createPool(
+            liquidToken2, weth, 3000, _poolSqrtPriceX96(liquidToken2, musdcPrice8, weth, wethQuotePrice8), MOCK_POOL_LIQUIDITY
+        );
+        address mWethPool = univ3.createPool(
+            mWeth, weth, 3000, _poolSqrtPriceX96(mWeth, wethQuotePrice8, weth, wethQuotePrice8), MOCK_POOL_LIQUIDITY
+        );
 
         // Tier 2 — mock swap venue for HF-based liquidation.
         // ZeroExProxyMock is the LEGACY 0x-proxy shape; retained for
@@ -337,7 +419,8 @@ contract DeployTestnetMocks is Script {
         console.log("Deployed oracle/swap mocks:");
         console.log("  MockChainlinkRegistry: ", address(registry));
         console.log("  tLIQ/USD feed:         ", address(liquidFeed));
-        console.log("  WETH/USD feed:         ", address(wethFeed));
+        console.log("  mUSDC/USD feed:        ", address(liquid2Feed));
+        console.log("  mWETH+WETH/USD feed:   ", ethUsdFeedAddr);
         console.log("  MockUniswapV3Factory:  ", address(univ3));
         console.log("  tLIQ/WETH pool:        ", liquidPool);
         console.log("  ZeroExProxyMock:       ", address(zeroEx));
@@ -350,7 +433,7 @@ contract DeployTestnetMocks is Script {
         oa.setUsdChainlinkDenominator(USD_DENOM);
         oa.setEthChainlinkDenominator(ETH_DENOM);
         oa.setWethContract(weth);
-        oa.setEthUsdFeed(address(wethFeed));
+        oa.setEthUsdFeed(ethUsdFeedAddr);
         oa.setUniswapV3Factory(address(univ3));
 
         // Pin the PAA quote list to [weth]. When `paaAssets` is already
@@ -420,6 +503,8 @@ contract DeployTestnetMocks is Script {
             "note",
             "Testnet-only faucet + oracle mock assets. NEVER present on mainnet slugs. Deployed by script/DeployTestnetMocks.s.sol."
         );
+        // `liquidToken2` keeps its key (address slot is stable across the
+        // relabel) — it now holds the mUSDC ($1) mock, not the old tLQ2.
         vm.serializeAddress(obj, "liquidToken", liquidToken);
         vm.serializeAddress(obj, "liquidToken2", liquidToken2);
         vm.serializeAddress(obj, "mWeth", mWeth);
@@ -429,9 +514,12 @@ contract DeployTestnetMocks is Script {
         vm.serializeAddress(obj, "rentalNft2", rentalNft2);
         vm.serializeAddress(obj, "feedRegistry", address(registry));
         vm.serializeAddress(obj, "liquidTokenUsdFeed", address(liquidFeed));
+        // liquidToken2UsdFeed now prices mUSDC at $1 (was tLQ2 at $2,000).
         vm.serializeAddress(obj, "liquidToken2UsdFeed", address(liquid2Feed));
-        vm.serializeAddress(obj, "mWethUsdFeed", address(mWethFeed));
-        vm.serializeAddress(obj, "ethUsdFeed", address(wethFeed));
+        // mWETH and WETH share one feed (static mock at MWETH_USD_PRICE, or
+        // the live MWETH_USD_FEED override) so the pool stays 1:1.
+        vm.serializeAddress(obj, "mWethUsdFeed", ethUsdFeedAddr);
+        vm.serializeAddress(obj, "ethUsdFeed", ethUsdFeedAddr);
         vm.serializeAddress(obj, "uniswapV3Factory", address(univ3));
         vm.serializeAddress(obj, "liquidTokenWethPool", liquidPool);
         vm.serializeAddress(obj, "liquidToken2WethPool", liquid2Pool);
@@ -460,6 +548,38 @@ contract DeployTestnetMocks is Script {
         console.log("token to the MockSwapAdapter first. Trigger with:");
         console.log("  triggerLiquidation(loanId, [{adapterIdx, data:0x}])");
         console.log("where adapterIdx is the adapter's slot in getSwapAdapters().");
+    }
+
+    /// @dev Re-derive a v3-clone pool's initialization `sqrtPriceX96` from
+    ///      the two legs' 8-dec USD feed prices, so the pool's SPOT price
+    ///      agrees with the Chainlink feed ratio. `OracleFacet`'s
+    ///      value-balance guard (`_accumulatePoolImpacts`) skips any pool
+    ///      whose spot disagrees with the feed beyond `cfgTwapConsistencyBps`
+    ///      (default 3%) — a plain 1:1 pool would classify a differently-
+    ///      priced token Illiquid.
+    ///
+    ///      All faucet tokens are 18-dec, so there is NO decimal term.
+    ///      Uniswap orders token0 = min(addr); the value-balanced spot is
+    ///      `token1_per_token0 = price(token0)/price(token1)`, hence
+    ///      `sqrtPriceX96 = sqrt(price0 * 2**192 / price1)` where price0 /
+    ///      price1 are the token0 / token1 8-dec feed prices. For equal
+    ///      prices this returns ~2**96 (the old 1:1 `SQRT_PRICE_X96_ONE`),
+    ///      so mWETH/WETH stays 1:1 automatically.
+    ///
+    ///      Overflow-safe: `price0 * 2**192 ≤ ~1e13 * 6.3e57 ≈ 6e70 <
+    ///      2**256` (and `Math.mulDiv` carries the full 512-bit product
+    ///      regardless); the sqrt of a ≤~2**234 value fits well inside
+    ///      uint160.
+    function _poolSqrtPriceX96(
+        address tokenA,
+        uint256 priceA8,
+        address tokenB,
+        uint256 priceB8
+    ) internal pure returns (uint160) {
+        (uint256 price0, uint256 price1) =
+            tokenA < tokenB ? (priceA8, priceB8) : (priceB8, priceA8);
+        uint256 ratioX192 = Math.mulDiv(price0, uint256(1) << 192, price1);
+        return SafeCast.toUint160(Math.sqrt(ratioX192));
     }
 
     /// @dev True if `adapter` is already in the Diamond's registered

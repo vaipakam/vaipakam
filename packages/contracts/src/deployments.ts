@@ -268,9 +268,11 @@ export interface Deployment {
 export interface TestnetMocks {
   /** Oracle-wired mock ERC-20 (18 dec) → classifies LIQUID. */
   liquidToken?: HexAddress;
-  /** SECOND oracle-wired mock ERC-20 (18 dec, tLQ2) — gives
-   *  faucet-only wallets a distinct both-liquid pair for the
-   *  HF / liquidation / refinance demos. */
+  /** SECOND oracle-wired mock ERC-20 (18 dec, mUSDC — priced $1) —
+   *  gives faucet-only wallets a distinct both-liquid pair with a
+   *  realistic price spread for the HF / liquidation / refinance demos.
+   *  Key kept as `liquidToken2` (stable address slot) across the tLQ2→
+   *  mUSDC relabel. */
   liquidToken2?: HexAddress;
   /** THIRD oracle-wired mock ERC-20 (18 dec, mWETH) — WETH-flavoured
    *  mintable principal for demos; NOT the canonical WETH. */

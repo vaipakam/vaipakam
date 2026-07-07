@@ -231,7 +231,7 @@ export function Faucet() {
             disabled={!canWrite || busy !== null}
             onClick={() =>
               mocks.liquidToken2 &&
-              void mintErc20(mocks.liquidToken2, LIQUID_UNITS, 'tLQ2')
+              void mintErc20(mocks.liquidToken2, LIQUID_UNITS, 'mUSDC')
             }
           />
           <FaucetRow
