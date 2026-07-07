@@ -1262,6 +1262,32 @@ contract RepayFacetTest is Test {
         );
     }
 
+    /// @dev Codex #1096 P1: the cap must track the loan's OWN pre-funded
+    ///      `bufferAmount` (snapshot at origination), NOT the live
+    ///      `rentalBufferBps` config. A rental opened at 1% buffer then repaid
+    ///      after governance resets the config to 5% must still clamp the fee
+    ///      to its actual 3-unit buffer — reading the live 5% config would
+    ///      compute 15 and revert `InsufficientPrepay`, bricking the close-out.
+    function test_998_S8_rentalLateFeeUsesLoanBufferNotLiveConfig() public {
+        TestMutatorFacet(address(diamond)).setRentalBufferBpsRaw(100); // 1% at origination
+        helperOfferLoan(); // loanId 2 buffer = 300 * 1% = 3
+        // Governance raises the global config AFTER origination.
+        TestMutatorFacet(address(diamond)).setRentalBufferBpsRaw(500); // back to 5%
+        LibVaipakam.Loan memory loan = LoanFacet(address(diamond)).getLoanDetails(2);
+        loan.useFullTermInterest = true;
+        TestMutatorFacet(address(diamond)).setLoan(2, loan);
+        // 2 days late: slope 2% of remaining rental = 6; clamped to the loan's
+        // actual buffer 3, NOT the 5% (=15) the live config would now permit.
+        vm.warp(block.timestamp + 32 days + 1);
+        uint256 due = RepayFacet(address(diamond)).calculateRepaymentAmount(2);
+        assertEq(due, 3, "fee must clamp to the loan's pre-funded buffer, not live config");
+        // interest(300) + fee(3) == prepay(300)+buffer(3) => settles, no brick.
+        vm.prank(borrower);
+        RepayFacet(address(diamond)).repayLoan(2);
+        loan = LoanFacet(address(diamond)).getLoanDetails(2);
+        assertEq(uint8(loan.status), uint8(LibVaipakam.LoanStatus.Repaid));
+    }
+
     /// @dev Tests calculateRepaymentAmount ERC20 loan past endTime (late fee branch).
     function testCalculateRepaymentAmountERC20LateFee() public {
         helperOfferLoan();

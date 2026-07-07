@@ -18,9 +18,11 @@ whose entire prepayment is consumed by the rent owed — could not complete a la
 repayment at all, because any positive late fee would exceed the remaining
 prepayment. Drawing the fee from the buffer, which exists for exactly this
 purpose, lets the repayment always settle; any unused buffer is refunded to the
-borrower. The late-fee cap is bounded by the actual configured rental-buffer
-percentage (default 5%), so an operator configuring a buffer below 5% cannot
-create a situation where the fee exceeds what the buffer pre-funded.
+borrower. The late-fee cap is clamped to the loan's OWN pre-funded buffer amount
+(the value snapshotted when the rental was originated), not the live global
+buffer setting — so even if governance changes the rental-buffer percentage
+between a loan's origination and its repayment, the fee can never exceed what
+that specific loan actually pre-funded, and the late close-out cannot brick.
 
 This is one of three deferred #998 spec-conformance findings; its approach was
 ratified in the Tranche-5 deferred-trio design doc after three rounds of review.

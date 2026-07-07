@@ -6089,15 +6089,18 @@ library LibVaipakam {
     ///      (term-retirement semantics), so it faithfully tracks the overdue
     ///      rent with no separate paid-days counter.
     ///
-    ///      The cap is `min(5%, cfgRentalBufferBps())` — the historical 5%
-    ///      ceiling, further bounded by the ACTUAL configured rental-buffer
-    ///      bps. Because the pre-funded `bufferAmount`
-    ///      (= bufferBps × principal × originalDurationDays) covers
-    ///      `bufferBps × principal × durationDays` (originalDurationDays ≥
-    ///      durationDays), capping at `bufferBps` guarantees the buffer
-    ///      always covers the fee — RepayFacet funds the rental late fee
-    ///      from `bufferAmount`, so a config with `rentalBufferBps` below 5%
-    ///      cannot brick a late full-term rental repayment.
+    ///      The fee is capped two ways: the historical 5% penalty ceiling on
+    ///      the slope, AND — load-bearingly — clamped to the loan's OWN
+    ///      pre-funded `bufferAmount`. The clamp reads the per-loan
+    ///      `loan.bufferAmount` (snapshotted at origination) rather than the
+    ///      live `rentalBufferBps` config: a rental opened while the config was
+    ///      below 5% pre-funded a smaller buffer, and if governance later
+    ///      raised the config a live-config cap would compute a fee the buffer
+    ///      can't cover, reverting `InsufficientPrepay` and bricking the very
+    ///      close-out this protects (Codex #1096 P1). Clamping to the actual
+    ///      pre-funded buffer guarantees `fee <= bufferAmount` under ANY later
+    ///      config change — RepayFacet funds the rental late fee from
+    ///      `bufferAmount`.
     /// @param loanId  Rental loan id.
     /// @param endTime Unix timestamp at which the rental term expires.
     /// @return fee    Late fee in prepay-asset units.
@@ -6110,14 +6113,15 @@ library LibVaipakam {
 
         if (block.timestamp <= endTime) return 0;
 
-        uint256 capBps = cfgRentalBufferBps();
-        if (capBps > 500) capBps = 500; // never exceed the historical 5% ceiling
-
         uint256 daysLate = (block.timestamp - endTime) / 1 days;
         uint256 feePercent = 100 + (daysLate * 50); // 1% + 0.5% per day
-        if (feePercent > capBps) feePercent = capBps; // cap at the pre-funded buffer
+        if (feePercent > 500) feePercent = 500; // historical 5% penalty ceiling
 
-        return (loan.principal * loan.durationDays * feePercent) / 10000;
+        fee = (loan.principal * loan.durationDays * feePercent) / 10000;
+
+        // Clamp to the loan's ACTUAL pre-funded buffer (per-loan snapshot, not
+        // the mutable global config), so the buffer always covers the fee.
+        if (fee > loan.bufferAmount) fee = loan.bufferAmount;
     }
 
     /**
