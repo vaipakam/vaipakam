@@ -863,4 +863,16 @@ contract TestMutatorFacet {
             LibVaipakam.storageSlot().loanCollateralLien[loanId];
         return (l.amount, l.released);
     }
+
+    /// @notice #1004 (S8) test probe — expose the internal NFT-rental late-fee
+    ///         calculation so the arithmetic can be asserted directly (the
+    ///         repay path is entangled with rental interest + prepay-sufficiency,
+    ///         which reverts past due before the fee is observable).
+    function exposeCalculateRentalLateFee(uint256 loanId, uint256 endTime)
+        external
+        view
+        returns (uint256)
+    {
+        return LibVaipakam.calculateRentalLateFee(loanId, endTime);
+    }
 }

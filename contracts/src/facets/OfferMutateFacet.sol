@@ -12,6 +12,7 @@ import {VaultFactoryFacet} from "./VaultFactoryFacet.sol";
 import {EncumbranceMutateFacet} from "./EncumbranceMutateFacet.sol";
 import {OracleFacet} from "./OracleFacet.sol";
 import {ProfileFacet} from "./ProfileFacet.sol";
+import {LibRiskMath} from "../libraries/LibRiskMath.sol";
 import {IERC20Metadata} from "@openzeppelin/contracts/token/ERC20/extensions/IERC20Metadata.sol";
 
 /**
@@ -181,6 +182,10 @@ contract OfferMutateFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamE
         offer.amount = newAmount;
         offer.amountMax = newAmountMax;
 
+        // #900 — enforce the create-time floor/ceiling on the post-mutation shape
+        // BEFORE moving any vault delta, so an out-of-bounds mutation fails early.
+        _assertRangeFloorCeiling(offer);
+
         _settleAmountDelta(offerId, offer, oldAmount, oldAmountMax, newAmount, newAmountMax);
 
         _emitModified(offerId, offer);
@@ -248,6 +253,10 @@ contract OfferMutateFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamE
 
         offer.collateralAmount = newCollateralAmount;
         offer.collateralAmountMax = newCollateralAmountMax;
+
+        // #900 — enforce the create-time floor/ceiling on the post-mutation shape
+        // BEFORE moving any vault delta, so an out-of-bounds mutation fails early.
+        _assertRangeFloorCeiling(offer);
 
         _settleCollateralDelta(
             offerId,
@@ -354,6 +363,14 @@ contract OfferMutateFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamE
         if (collateralChanged) {
             offer.collateralAmount = params.collateralAmount;
             offer.collateralAmountMax = params.collateralAmountMax;
+        }
+
+        // #900 — re-check the create-time floor/ceiling on the combined post-
+        // mutation shape (the bound cross-references amount + collateral, so it
+        // runs once here after both clusters are written) BEFORE any vault delta.
+        // A rate-only change can't affect it, so skip that case.
+        if (amountChanged || collateralChanged) {
+            _assertRangeFloorCeiling(offer);
         }
 
         if (amountChanged) {
@@ -610,6 +627,67 @@ contract OfferMutateFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamE
                 newCollateralAmountMax,
                 offer.collateralAmountFilled
             );
+        }
+    }
+
+    /// @dev #900 (L1 / spec-review S15) — mirror the create-time system-derived
+    ///      floor/ceiling checks (`OfferCreateFacet._createOfferSetup` "Range
+    ///      Orders Phase 1") on the mutate surface, so a creator can't mutate an
+    ///      offer into a state `createOffer` would reject (an offer that then
+    ///      strands the creator's capital as "created but never matchable" until
+    ///      cancelled). Reads the FULLY-WRITTEN offer, so callers invoke it after
+    ///      the cluster writes. Same scope as create time — active ONLY for
+    ///      range-amount-enabled, both-legs-ERC-20, both-legs-Liquid offers (the
+    ///      runtime HF gate covers everything else). No sale/offset-vehicle
+    ///      exemption is needed here: those vehicles are frozen by
+    ///      `_assertMutableBy` before any mutation reaches this point.
+    function _assertRangeFloorCeiling(LibVaipakam.Offer storage offer) private view {
+        LibVaipakam.ProtocolConfig storage cfg =
+            LibVaipakam.storageSlot().protocolCfg;
+        if (
+            !cfg.rangeAmountEnabled
+            || offer.assetType != LibVaipakam.AssetType.ERC20
+            || offer.collateralAssetType != LibVaipakam.AssetType.ERC20
+        ) return;
+        if (
+            OracleFacet(address(this)).checkLiquidity(offer.lendingAsset)
+                != LibVaipakam.LiquidityStatus.Liquid
+            || OracleFacet(address(this)).checkLiquidity(offer.collateralAsset)
+                != LibVaipakam.LiquidityStatus.Liquid
+        ) return;
+
+        if (offer.offerType == LibVaipakam.OfferType.Lender) {
+            // Lender's posted collateral must clear the floor at the worst-case
+            // lending size (`amountMax` after auto-collapse).
+            uint256 floor = LibRiskMath.minCollateralForLending(
+                offer.amountMax,
+                offer.lendingAsset,
+                offer.collateralAsset
+            );
+            if (floor > 0 && offer.collateralAmount < floor) {
+                revert OfferCreateFacet.MinCollateralBelowFloor(
+                    offer.collateralAmount,
+                    floor
+                );
+            }
+        } else {
+            // Borrower's lending ceiling can't exceed the system-derived ceiling
+            // implied by the MAX collateral they'll lock (auto-collapsed: a
+            // zero `collateralAmountMax` means single-value ⇒ use collateralAmount).
+            uint256 effBorrowerCollMax = offer.collateralAmountMax == 0
+                ? offer.collateralAmount
+                : offer.collateralAmountMax;
+            uint256 ceiling = LibRiskMath.maxLendingForCollateral(
+                effBorrowerCollMax,
+                offer.lendingAsset,
+                offer.collateralAsset
+            );
+            if (ceiling != type(uint256).max && offer.amountMax > ceiling) {
+                revert OfferCreateFacet.MaxLendingAboveCeiling(
+                    offer.amountMax,
+                    ceiling
+                );
+            }
         }
     }
 

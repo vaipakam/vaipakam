@@ -618,6 +618,15 @@ An offer may be created two ways, both reaching the same on-chain offer state:
   MAX_INTEREST_BPS`, lender single-value collateral
   (`collateralAmountMax == collateralAmount`), per-asset pause, and
   sanctions screening on the creator.
+- This includes the create-time **system-derived floor/ceiling** for
+  range-amount-enabled, both-legs-ERC-20, both-legs-liquid offers: a
+  lender's collateral must clear the minimum required at its worst-case
+  lending size (`amountMax`), and a borrower's lending ceiling
+  (`amountMax`) must not exceed what its maximum collateral can back.
+  The check runs on the post-mutation shape before any vault delta, so
+  a creator cannot mutate an offer into a state `createOffer` would
+  reject (which would leave it created-but-never-matchable and strand
+  the creator's capital until cancelled).
 - Partial-fill bound: the new ceiling cannot fall below the portion
   already committed to live loans — `amountMax >= amountFilled` and
   `collateralAmountMax >= collateralAmountFilled`. The remaining

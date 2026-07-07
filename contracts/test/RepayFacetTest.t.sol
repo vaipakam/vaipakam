@@ -611,6 +611,45 @@ contract RepayFacetTest is Test {
         assertEq(uint8(loan.status), uint8(LibVaipakam.LoanStatus.Repaid));
     }
 
+    /// @dev #1004 (S8) — the NFT-rental late fee is based on the OVERDUE rental
+    ///      amount (dayFee × undeductedDays), NOT `loan.principal` (a single
+    ///      day's fee), capped at 5% of the TOTAL rental. loanId 2 is a rental
+    ///      with dayFee = 10 and duration = 30 (no auto-deductions here).
+    function testRentalLateFeeBasedOnOverdueRental() public {
+        helperOfferLoan();
+        LibVaipakam.Loan memory loan = LoanFacet(address(diamond)).getLoanDetails(2);
+        uint256 endTime = uint256(loan.startTime) + 30 days;
+
+        // 3 days past due:
+        //   feePercent      = 100 + 3*50 = 250 bps
+        //   undeductedDays  = 33 (elapsed) − 0 (deducted)
+        //   totalRentalDays = 0 + 30
+        //   fee = 10 * 33 * 250 / 10000 = 8   (cap = 10*30*500/10000 = 15, slack)
+        // The pre-fix formula (10 * 250 / 10000) truncated to 0 — one day's fee.
+        vm.warp(uint256(loan.startTime) + 33 days);
+        assertEq(
+            TestMutatorFacet(address(diamond)).exposeCalculateRentalLateFee(2, endTime),
+            8,
+            "late fee = rate x overdue rental (dayFee * undeductedDays)"
+        );
+
+        // Far past due → capped at 5% of the TOTAL rental (10 * 30 * 500 / 10000 = 15).
+        vm.warp(uint256(loan.startTime) + 230 days);
+        assertEq(
+            TestMutatorFacet(address(diamond)).exposeCalculateRentalLateFee(2, endTime),
+            15,
+            "late fee capped at 5% of total rental"
+        );
+
+        // Still within term → no late fee.
+        vm.warp(uint256(loan.startTime) + 10 days);
+        assertEq(
+            TestMutatorFacet(address(diamond)).exposeCalculateRentalLateFee(2, endTime),
+            0,
+            "no late fee before the due date"
+        );
+    }
+
     /// @dev Tests repayLoan with useFullTermInterest=true for ERC20 loan.
     ///      The helperOfferLoan creates offer without useFullTermInterest=true by default (pro-rata).
     ///      We directly set the storage flag using vm.store to cover the fullTermInterest branch.

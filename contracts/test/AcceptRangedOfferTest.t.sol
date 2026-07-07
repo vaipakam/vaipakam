@@ -4,6 +4,7 @@ pragma solidity ^0.8.29;
 import {SetupTest} from "./SetupTest.t.sol";
 import {ConfigFacet} from "../src/facets/ConfigFacet.sol";
 import {OfferCreateFacet} from "../src/facets/OfferCreateFacet.sol";
+import {OfferMutateFacet} from "../src/facets/OfferMutateFacet.sol";
 import {OfferAcceptFacet} from "../src/facets/OfferAcceptFacet.sol";
 import {OfferCancelFacet} from "../src/facets/OfferCancelFacet.sol";
 import {LoanFacet} from "../src/facets/LoanFacet.sol";
@@ -517,6 +518,29 @@ contract AcceptRangedOfferTest is SetupTest {
             ERC20(mockERC20).balanceOf(borrower),
             borrowerWalletBefore + 4_995,
             "borrower nets 4_995 = principal 5k - LIF (5) - single-value path unchanged from #183"
+        );
+    }
+
+    /// @dev #900 (L1 / S15) sanity — mutating an offer in a NON-liquid context
+    ///      (this suite's default) is unaffected by the new floor/ceiling mirror,
+    ///      which is gated on both legs being Liquid (same scope as create time).
+    ///      The binding-floor revert paths are covered in
+    ///      `EarlyWithdrawalFacetTest` under its Liquid + real-LTV setup.
+    function test_mutate_lenderCollateral_nonLiquid_unaffected() public {
+        uint256 offerId = _postLenderOffer({
+            creator: lender,
+            amount: 1_000,
+            amountMax: 10_000,
+            rateMin: 300,
+            rateMax: 800,
+            collateralRequired: 500
+        });
+        vm.prank(lender);
+        OfferMutateFacet(address(diamond)).setOfferCollateral(offerId, 600, 600);
+        assertEq(
+            OfferCancelFacet(address(diamond)).getOffer(offerId).collateralAmount,
+            600,
+            "non-liquid mutate unaffected by the floor mirror"
         );
     }
 }

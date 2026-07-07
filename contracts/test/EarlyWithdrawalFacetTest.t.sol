@@ -3120,4 +3120,77 @@ contract EarlyWithdrawalFacetTest is Test {
         );
         vm.clearMockedCalls();
     }
+
+    // ─── #900 (L1 / S15) — mutate mirrors the create-time floor/ceiling ──────
+    // Uses this suite's Liquid + $1/$1 + 85%-LTV setUp, so the system-derived
+    // bounds actually BIND (unlike AcceptRangedOfferTest's non-liquid assets).
+
+    function _rangeOffer(
+        LibVaipakam.OfferType offerType,
+        uint256 amount,
+        uint256 amountMax,
+        uint256 collateralAmount,
+        uint256 collateralAmountMax
+    ) internal returns (uint256) {
+        return OfferCreateFacet(address(diamond)).createOffer(
+            LibVaipakam.CreateOfferParams({
+                offerType: offerType,
+                lendingAsset: mockERC20,
+                amount: amount,
+                interestRateBps: 500,
+                collateralAsset: mockCollateralERC20,
+                collateralAmount: collateralAmount,
+                durationDays: 30,
+                assetType: LibVaipakam.AssetType.ERC20,
+                tokenId: 0,
+                quantity: 0,
+                creatorRiskAndTermsConsent: true,
+                prepayAsset: mockERC20,
+                collateralAssetType: LibVaipakam.AssetType.ERC20,
+                collateralTokenId: 0,
+                collateralQuantity: 0,
+                allowsPartialRepay: false,
+                allowsPrepayListing: false,
+                allowsParallelSale: false,
+                amountMax: amountMax,
+                interestRateBpsMax: 500,
+                collateralAmountMax: collateralAmountMax,
+                periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None,
+                expiresAt: 0,
+                fillMode: LibVaipakam.FillMode.Partial,
+                refinanceTargetLoanId: 0,
+                useFullTermInterest: false
+            })
+        );
+    }
+
+    /// @dev A lender can't mutate collateral BELOW the create-time floor. Under
+    ///      this suite's Liquid + real-LTV setup the floor for lending 1000e is
+    ///      ~1764e; 1800e clears it at create, dropping to 1100e is below it →
+    ///      `MinCollateralBelowFloor`.
+    function testMutateLenderCollateralBelowFloorReverts() public {
+        ConfigFacet(address(diamond)).setRangeAmountEnabled(true);
+        vm.prank(newLender);
+        uint256 offerId = _rangeOffer(
+            LibVaipakam.OfferType.Lender, 1000 ether, 1000 ether, 1800 ether, 1800 ether
+        );
+        vm.prank(newLender);
+        vm.expectPartialRevert(OfferCreateFacet.MinCollateralBelowFloor.selector);
+        OfferMutateFacet(address(diamond)).setOfferCollateral(offerId, 1100 ether, 1100 ether);
+    }
+
+    /// @dev A borrower can't mutate `amountMax` ABOVE the ceiling implied by
+    ///      their collateral. The ceiling for 1800e collateral is ~1020e; an
+    ///      offer at amountMax 1000e clears it at create, raising amountMax to
+    ///      2000e exceeds it → `MaxLendingAboveCeiling`.
+    function testMutateBorrowerAmountMaxAboveCeilingReverts() public {
+        ConfigFacet(address(diamond)).setRangeAmountEnabled(true);
+        vm.prank(borrower);
+        uint256 offerId = _rangeOffer(
+            LibVaipakam.OfferType.Borrower, 1000 ether, 1000 ether, 1800 ether, 1800 ether
+        );
+        vm.prank(borrower);
+        vm.expectPartialRevert(OfferCreateFacet.MaxLendingAboveCeiling.selector);
+        OfferMutateFacet(address(diamond)).setOfferAmount(offerId, 1000 ether, 2000 ether);
+    }
 }
