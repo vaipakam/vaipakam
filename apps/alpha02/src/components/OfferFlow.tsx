@@ -278,6 +278,12 @@ export function OfferFlow({ side }: { side: Side }) {
   const submitting = progress !== null;
   // Synchronous re-entrancy lock for submit() — see the comment there.
   const submitLockRef = useRef(false);
+  // Set true the instant submitPost/submitAccept reaches the FINAL
+  // create/accept write (after every approval/permit step). The pre-sign dry
+  // run describes only that final tx, so its reason may substitute the live
+  // error ONLY when the failure happened at/after this point — never for an
+  // earlier approval failure (#1094 Codex).
+  const reachedFinalSendRef = useRef(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
   const [deepLinkNotice, setDeepLinkNotice] = useState<string | null>(null);
   const [txHash, setTxHash] = useState<string | null>(null);
@@ -1411,6 +1417,7 @@ export function OfferFlow({ side }: { side: Side }) {
           // of re-entering a permit path that may be structurally
           // broken (locked-out wallets were Codex round-2's P2).
           stepper.next('send');
+          reachedFinalSendRef.current = true;
           try {
             const { hash } = await write('createOfferWithPermit', [
               payload,
@@ -1435,6 +1442,7 @@ export function OfferFlow({ side }: { side: Side }) {
       onPrompt: () => stepper.next('approve'),
     });
     stepper.next('send');
+    reachedFinalSendRef.current = true;
     const { hash } = await write('createOffer', [payload]);
     return hash;
   }
@@ -1727,6 +1735,7 @@ export function OfferFlow({ side }: { side: Side }) {
             // for nothing. Errors surface after tripping the session
             // breaker, so a manual retry routes classic.
             stepper.next('send');
+          reachedFinalSendRef.current = true;
             try {
               const { hash } = await write('acceptOfferWithPermit', [
                 BigInt(selected.offerId),
@@ -1754,6 +1763,7 @@ export function OfferFlow({ side }: { side: Side }) {
       });
     }
     stepper.next('send');
+    reachedFinalSendRef.current = true;
     const { hash } = await write('acceptOffer', [
       BigInt(selected.offerId),
       terms,
@@ -1778,6 +1788,9 @@ export function OfferFlow({ side }: { side: Side }) {
     // pre-existing allowance).
     if (submitLockRef.current) return;
     submitLockRef.current = true;
+    // Fresh attempt — no final send reached yet. Reset the guard that scopes
+    // the dry-run substitution to a final create/accept failure (#1094 Codex).
+    reachedFinalSendRef.current = false;
     // Busy immediately (total not yet known — current 0 renders the
     // plain waiting label); the real plan replaces this below.
     setProgress({
@@ -1819,18 +1832,22 @@ export function OfferFlow({ side }: { side: Side }) {
       void queryClient.invalidateQueries({ queryKey: ['myLoans'] });
     } catch (err) {
       // Prefer the pre-sign dry run's concrete revert reason ONLY for the
-      // #780 gas-cap trap: when `eth_estimateGas` strips the selector,
-      // `submitErrorText` can only return the generic gas-trap copy while the
-      // advisory sim already decoded the real cause (e.g. "Your collateral is
-      // too low…"). For every OTHER failure — a wallet rejection, an approval
-      // hiccup, a concrete decoded revert — the live submit error is the
-      // truth and must NOT be masked by the advisory sim (#1094 Codex). The
-      // sim's revertName only tags the recorded entry when we actually use
-      // the sim's reason; tagging a live rejection with a stale sim name
-      // would mislabel it.
+      // #780 gas-cap trap on the FINAL create/accept tx: when `eth_estimateGas`
+      // strips the selector, `submitErrorText` can only return the generic
+      // gas-trap copy while the advisory sim already decoded the real cause
+      // (e.g. "Your collateral is too low…"). For every OTHER failure — a
+      // wallet rejection, an approval-step failure BEFORE the final send, a
+      // concrete decoded revert — the live submit error is the truth and must
+      // NOT be masked by the advisory sim, which only ever simulated the final
+      // tx (#1094 Codex). The sim's revertName only tags the recorded entry
+      // when we actually use the sim's reason; tagging a live rejection with a
+      // stale sim name would mislabel it.
       const dryRunReason =
         preSign.result.status === 'revert' ? preSign.result.revertReason : undefined;
-      const useDryRun = dryRunReason != null && isGasEstimationTrap(err);
+      const useDryRun =
+        reachedFinalSendRef.current &&
+        dryRunReason != null &&
+        isGasEstimationTrap(err);
       // captureTxError records the failure in the diagnostics sink (support
       // report) AND returns the banner message, so a tx error is surfaced
       // there, not just render-crash errors.

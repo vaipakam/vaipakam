@@ -275,6 +275,8 @@ const FRIENDLY_ERROR_BY_NAME: Record<string, string> = {
     'The collateral for this loan is below the minimum its size needs. Increase the required collateral or reduce the loan amount, then try again.',
   MatchHFTooLow:
     'This would leave the loan below the minimum health factor (1.5). Add collateral or reduce the borrow amount.',
+  InitLtvAboveTier:
+    'This loan would exceed the LTV limit for its risk tier (prices or tier caps have moved). Lower the borrow amount or add collateral, then try again.',
   InterestRateAboveCeiling:
     "The interest rate is above the protocol's current ceiling. Lower the rate and try again.",
   OfferDurationExceedsCap:
@@ -397,6 +399,7 @@ const KNOWN_ERROR_SELECTORS: Record<string, string> = {
   '0x822054c8': 'InvalidCollateralAmountRange()',
   '0xd68a1e65': 'SelfTrade()',
   '0x48d3adf6': 'MatchHFTooLow()',
+  '0x8eb7de56': 'InitLtvAboveTier(uint256,uint256)',
   '0xc602c4b6': 'LenderCannotRepayOwnLoan()',
   '0x6d5f92a6': 'PartialRepayNotAllowed()',
   '0xd97070dd': 'RiskAndTermsConsentRequired()',
@@ -672,6 +675,21 @@ export function decodeContractError(err: unknown, fallback = 'Transaction failed
   // untouched.
   if (sel) {
     const byName = friendlyContractError({ selector: sel });
+    if (byName) return byName;
+  }
+
+  // Some wallets/libraries attach the DECODED custom-error name to the error
+  // (e.g. `err.revert.name`) without exposing raw revert bytes, so the
+  // selector path above misses it. Consult the name-keyed friendly map before
+  // falling back to the raw `base` text — but skip the generic `Error` /
+  // `Panic` shapes, whose human text lives in `base` (#1094 Codex).
+  const revertName = (e as { revert?: { name?: unknown } }).revert?.name;
+  if (
+    typeof revertName === 'string' &&
+    revertName !== 'Error' &&
+    revertName !== 'Panic'
+  ) {
+    const byName = friendlyContractError({ name: revertName });
     if (byName) return byName;
   }
 

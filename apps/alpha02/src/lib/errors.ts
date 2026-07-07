@@ -11,7 +11,11 @@
  *    which maps known revert selectors to friendly copy and rewrites
  *    the #780 "exceeds max transaction gas limit" RPC trap.
  */
-import { BaseError, UserRejectedRequestError } from 'viem';
+import {
+  BaseError,
+  ContractFunctionRevertedError,
+  UserRejectedRequestError,
+} from 'viem';
 import { decodeContractError, extractRevertSelector } from '@vaipakam/lib';
 import { copy } from '../content/copy';
 import { recordLastError } from '../diagnostics/lastError';
@@ -82,6 +86,18 @@ export function isGasEstimationTrap(err: unknown): boolean {
   // selector-bearing error isn't misclassified and its real reason masked by
   // the advisory dry-run reason (#1094 Codex).
   if (extractRevertSelector(err)) return false;
+  // extractRevertSelector only checks top-level fields; viem often puts the
+  // revert on a NESTED cause. Walk the cause chain — a decoded
+  // ContractFunctionRevertedError, or raw revert bytes on any cause, means a
+  // real revert, not the selector-stripping trap (#1094 Codex).
+  if (err instanceof BaseError) {
+    if (err.walk((e) => e instanceof ContractFunctionRevertedError)) return false;
+    const withData = err.walk((e) => {
+      const d = (e as { data?: unknown }).data;
+      return typeof d === 'string' && d.startsWith('0x') && d.length >= 10;
+    });
+    if (withData) return false;
+  }
   return /exceeds max (?:transaction )?gas limit/i.test(rawErrorText(err));
 }
 
