@@ -605,13 +605,12 @@ contract RiskFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessCont
         LibVaipakam.Loan storage loan = s.loans[loanId];
         if (loan.status != LibVaipakam.LoanStatus.Active) revert InvalidLoan();
 
-        // #1005 (S9) — a forced liquidation MUST attempt at least one swap
-        // route. An empty try-list makes `LibSwap.swapWithFailover` return
-        // `(false, 0)` up front, routing the loan straight into the full-
-        // collateral fallback (FallbackPending, 3%+2% premium) with ZERO DEX
-        // attempt on a healthy venue. Reject before any state mutation so a
-        // permissionless caller can't force that outcome.
-        if (adapterCalls.length == 0) revert LiquidationSwapPathRequired(loanId);
+        // #1005 (S9) — a forced liquidation must attempt at least one enabled
+        // swap route before it can route into the full-collateral fallback.
+        // `LibSwap.swapWithFailover` reverts `NoEnabledSwapRoute` when the
+        // try-list is empty or every entry is a governance-disabled venue (so a
+        // permissionless caller can't push an eligible loan into FallbackPending
+        // with zero DEX attempts), rolling back the collateral withdrawal below.
 
         // T-086 step 10 — clear any live prepay listing FIRST so
         // the borrower-position NFT is unlocked + the diamond /
@@ -1229,6 +1228,14 @@ contract RiskFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessCont
         uint256 remainingDays = (endTime - block.timestamp) / 1 days;
         loan.interestAccrualStart = uint64(block.timestamp);
         loan.interestRemainingDays = uint16(remainingDays);
+        // #915 (Codex #1087 r1 P2) — the residual loan restarts its accrual
+        // clock at `now`, so any periodic-settled interest (already credited via
+        // `currentBorrowBalance` when the slice debt was priced above, and paid
+        // interest-first from the swap proceeds) belongs to the closed pre-partial
+        // window. Clear it so the shared `interestSettled` credit is not netted a
+        // SECOND time on the residual loan's next settlement (which would
+        // underpay the lender).
+        loan.interestSettled = 0;
 
         // Post-mutation HF check. Strictly improves AND must reach >= 1.
         // `currentBorrow` re-derives from the now-reduced principal, so this

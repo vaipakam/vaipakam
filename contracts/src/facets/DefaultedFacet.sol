@@ -325,15 +325,14 @@ contract DefaultedFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErr
                 liquidity == LibVaipakam.LiquidityStatus.Liquid &&
                 !isCollateralValueCollapsed
             ) {
-                // #1005 (S9) — a liquid time-based default MUST attempt at least
-                // one swap route. An empty try-list makes `swapWithFailover`
-                // return `(false, 0)`, routing the loan straight into the full-
-                // collateral fallback (FallbackPending, 3%+2% premium) with ZERO
-                // DEX attempt. Reject here — before the collateral move-out —
-                // so a permissionless caller can't force that outcome. (Illiquid
-                // / value-collapsed defaults legitimately need no swap list and
-                // fall through to the in-kind branch below.)
-                if (adapterCalls.length == 0) revert LiquidationSwapPathRequired(loanId);
+                // #1005 (S9) — a liquid time-based default must attempt at least
+                // one enabled swap route: `LibSwap.swapWithFailover` (below)
+                // reverts `NoEnabledSwapRoute` when the try-list is empty or every
+                // entry is a governance-disabled venue, rolling back the
+                // collateral move-out, so a permissionless caller can't push an
+                // eligible loan into the full-collateral fallback with zero DEX
+                // attempts. (Illiquid / value-collapsed defaults legitimately need
+                // no swap list and fall through to the in-kind branch below.)
 
                 // Time-based default with liquid collateral: swap directly without HF check.
                 // RiskFacet.triggerLiquidation requires HF < 1 (for HF-based liquidation),

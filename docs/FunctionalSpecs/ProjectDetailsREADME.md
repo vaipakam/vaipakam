@@ -1305,7 +1305,7 @@ Watcher and notification support:
   - Any excess funds remaining after covering all obligations are returned to the borrower.
   - If proceeds are insufficient to cover the lender's due amount, the lender bears that loss.
   - This same priority applies to the single-route, split-route, and time-based-default swap paths.
-  - A forced close with a liquid collateral that supplies an **empty swap try-list is rejected** (it must attempt at least one route) rather than silently routing into the in-kind fallback.
+  - A forced close (liquidation or time-based default) on liquid collateral must attempt at least one **enabled** swap route before it can route into the in-kind fallback: a try-list that is empty, or whose entries are all governance-disabled venues, is rejected (no route was actually attempted) rather than silently routing into the fallback.
 
 **ERC-20 Lending with Illiquid Collateral:**
 

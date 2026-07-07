@@ -29,6 +29,22 @@ library LibEntitlement {
             (LibVaipakam.DAYS_PER_YEAR * LibVaipakam.BASIS_POINTS);
     }
 
+    /// @notice Seconds-precise pro-rata interest: `principal * rateBps *
+    ///         elapsedSeconds / (SECONDS_PER_YEAR * BASIS_POINTS)`.
+    /// @dev    The seconds-granularity twin of {proRataInterest}. Shared by the
+    ///         preclose obligation-transfer (Option 2) + offset (Option 3)
+    ///         settlement math so the identical formula isn't inlined six times
+    ///         in `PrecloseFacet` (which sits right at the EIP-170 ceiling).
+    function proRataInterestSeconds(
+        uint256 principal,
+        uint256 rateBps,
+        uint256 elapsedSeconds
+    ) internal pure returns (uint256) {
+        return
+            (principal * rateBps * elapsedSeconds) /
+            (LibVaipakam.SECONDS_PER_YEAR * LibVaipakam.BASIS_POINTS);
+    }
+
     /// @notice Pro-rata interest over `elapsedDays` (integer days).
     function proRataInterest(
         uint256 principal,

@@ -684,17 +684,6 @@
   },
   {
     "type": "error",
-    "name": "LiquidationSwapPathRequired",
-    "inputs": [
-      {
-        "name": "loanId",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ]
-  },
-  {
-    "type": "error",
     "name": "LoanInitiationFailed",
     "inputs": []
   },
@@ -727,6 +716,17 @@
     "type": "error",
     "name": "NFTTransferFailed",
     "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "NoEnabledSwapRoute",
+    "inputs": [
+      {
+        "name": "loanId",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
   },
   {
     "type": "error",

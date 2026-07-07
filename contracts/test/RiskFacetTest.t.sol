@@ -1672,19 +1672,56 @@ contract RiskFacetTest is Test {
     // ─────────────────────────────────────────────────────────────────────
 
     /// @dev #1005 (S9) — a forced HF liquidation called with an EMPTY adapter
-    ///      try-list reverts `LiquidationSwapPathRequired` instead of routing
-    ///      the loan into the full-collateral fallback with zero swap attempted.
-    ///      The guard fires before any state mutation (no HF mock needed — it
-    ///      precedes the HF check).
+    ///      try-list reverts `NoEnabledSwapRoute` (from `LibSwap.swapWithFailover`)
+    ///      instead of routing the loan into the full-collateral fallback with
+    ///      zero swap attempted; the collateral withdrawal rolls back atomically.
     function test_TriggerLiquidation_RevertsOnEmptyAdapterList() public {
         uint256 loanId = createAndAcceptOffer();
+        vm.mockCall(
+            address(diamond),
+            abi.encodeWithSelector(RiskFacet.calculateHealthFactor.selector, loanId),
+            abi.encode(HF_SCALE - 1)
+        );
+        vm.mockCall(
+            address(diamond),
+            abi.encodeWithSelector(VaultFactoryFacet.vaultWithdrawERC20.selector),
+            abi.encode(true)
+        );
         vm.expectRevert(
-            abi.encodeWithSelector(
-                IVaipakamErrors.LiquidationSwapPathRequired.selector,
-                loanId
-            )
+            abi.encodeWithSelector(LibSwap.NoEnabledSwapRoute.selector, loanId)
         );
         RiskFacet(address(diamond)).triggerLiquidation(loanId, emptyAdapterCalls());
+        vm.clearMockedCalls();
+    }
+
+    /// @dev #1005 (S9, Codex #1087 r1 P1) — a NON-empty try-list whose only entry
+    ///      is a governance-DISABLED adapter ALSO reverts `NoEnabledSwapRoute`.
+    ///      `swapWithFailover` skips the disabled venue, so zero routes are
+    ///      attempted; a length-only guard would have missed this and routed the
+    ///      loan into the full-collateral fallback with no DEX attempt.
+    function test_TriggerLiquidation_RevertsWhenOnlyRouteDisabled() public {
+        uint256 loanId = createAndAcceptOffer();
+        address adapter0 = AdminFacet(address(diamond)).getSwapAdapters()[0];
+        AdminFacet(address(diamond)).setSwapAdapterDisabled(adapter0, true);
+
+        vm.mockCall(
+            address(diamond),
+            abi.encodeWithSelector(RiskFacet.calculateHealthFactor.selector, loanId),
+            abi.encode(HF_SCALE - 1)
+        );
+        vm.mockCall(
+            address(diamond),
+            abi.encodeWithSelector(VaultFactoryFacet.vaultWithdrawERC20.selector),
+            abi.encode(true)
+        );
+        vm.expectRevert(
+            abi.encodeWithSelector(LibSwap.NoEnabledSwapRoute.selector, loanId)
+        );
+        // defaultAdapterCalls() points at adapter slot 0, now disabled.
+        RiskFacet(address(diamond)).triggerLiquidation(loanId, defaultAdapterCalls());
+
+        AdminFacet(address(diamond)).setSwapAdapterDisabled(adapter0, false); // restore
+        vm.clearMockedCalls();
     }
 
     /// @dev #1009 (L-g) — on an underwater liquidation (proceeds < debt) the 2%
@@ -3639,12 +3676,16 @@ contract RiskFacetTest is Test {
         );
         deal(mockCollateralERC20, address(diamond), 1800 ether);
 
-        // Empty adapter list → swapWithFailover iterates zero times,
-        // returns (success=false). Partial entry reverts with the
-        // dedicated error (NOT a soft fallback into the claim-time
-        // settlement, which would corrupt the still-Active loan).
+        // Empty adapter list → swapWithFailover attempts zero routes and now
+        // reverts `NoEnabledSwapRoute` (Codex #1087 r1 P1: unified no-route
+        // rejection across every failover caller), NOT a soft fallback into the
+        // claim-time settlement (which would corrupt the still-Active loan).
+        // `PartialSwapAllFailed` still fires when adapters ARE attempted but all
+        // revert.
         LibSwap.AdapterCall[] memory empty = new LibSwap.AdapterCall[](0);
-        vm.expectRevert(RiskFacet.PartialSwapAllFailed.selector);
+        vm.expectRevert(
+            abi.encodeWithSelector(LibSwap.NoEnabledSwapRoute.selector, loanId)
+        );
         RiskFacet(address(diamond)).triggerPartialLiquidation(loanId, 5_000, empty);
         vm.clearMockedCalls();
     }

@@ -54,6 +54,7 @@ import {AccessControlFacet} from "../src/facets/AccessControlFacet.sol";
 import {HelperTest} from "./HelperTest.sol";
 import {defaultAdapterCalls, emptyAdapterCalls} from "./helpers/AdapterCallHelpers.sol";
 import {MockSanctionsList} from "./mocks/MockSanctionsList.sol";
+import {LibSwap} from "../src/libraries/LibSwap.sol";
 import {OfferCreateFacet} from "../src/facets/OfferCreateFacet.sol";
 import {OfferAcceptFacet} from "../src/facets/OfferAcceptFacet.sol";
 import {LibVaipakam} from "../src/libraries/LibVaipakam.sol";
@@ -1385,21 +1386,26 @@ contract DefaultedFacetTest is Test {
     // ─────────────────────────────────────────────────────────────────────
 
     /// @dev #1005 (S9) — a liquid time-based default called with an EMPTY
-    ///      adapter try-list reverts `LiquidationSwapPathRequired` instead of
-    ///      routing into the full-collateral fallback with zero swap attempted.
+    ///      adapter try-list reverts `NoEnabledSwapRoute` (from
+    ///      `LibSwap.swapWithFailover`) instead of routing into the full-
+    ///      collateral fallback with zero swap attempted; the collateral
+    ///      move-out rolls back atomically.
     function test_TriggerDefault_RevertsOnEmptyAdapterList() public {
         uint256 loanId = createAndAcceptOffer(
             mockERC20, mockCollateralERC20, LibVaipakam.AssetType.ERC20,
             1000 ether, 1500 ether, 30, 0, 0
         );
         vm.warp(block.timestamp + 33 days + 3);
+        vm.mockCall(
+            address(diamond),
+            abi.encodeWithSelector(VaultFactoryFacet.vaultWithdrawERC20.selector),
+            abi.encode(true)
+        );
         vm.expectRevert(
-            abi.encodeWithSelector(
-                IVaipakamErrors.LiquidationSwapPathRequired.selector,
-                loanId
-            )
+            abi.encodeWithSelector(LibSwap.NoEnabledSwapRoute.selector, loanId)
         );
         DefaultedFacet(address(diamond)).triggerDefault(loanId, emptyAdapterCalls());
+        vm.clearMockedCalls();
     }
 
     /// @dev #1010 (L-h) — a liquid time-based default now pays the CALLER the

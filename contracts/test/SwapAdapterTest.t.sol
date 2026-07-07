@@ -514,7 +514,7 @@ contract SwapAdapterTest is Test {
         );
     }
 
-    function testSwapFailoverEmptyCallListReturnsFalse() public {
+    function testSwapFailoverEmptyCallListReverts() public {
         SwapFailoverHarness h = new SwapFailoverHarness();
         MockSwapAdapter a = new MockSwapAdapter("A");
         address[] memory adapters = new address[](1);
@@ -522,10 +522,13 @@ contract SwapAdapterTest is Test {
         h.setAdapters(adapters);
         tokenIn.mint(address(h), 1 ether);
 
-        // Adapters registered but empty try-list — returns total-fail
-        // without reverting.
+        // #1005 (S9, Codex #1087 r1 P1) — adapters registered but empty try-list
+        // ⇒ zero routes attempted ⇒ reverts `NoEnabledSwapRoute` (previously a
+        // soft `(false, 0)` return). Callers must not treat "no route tried" as
+        // "every route failed" and route into the collateral fallback.
         LibSwap.AdapterCall[] memory calls = new LibSwap.AdapterCall[](0);
-        (bool ok, uint256 out_, uint256 idx) = h.doSwap(
+        vm.expectRevert(abi.encodeWithSelector(LibSwap.NoEnabledSwapRoute.selector, uint256(1)));
+        h.doSwap(
             1,
             address(tokenIn),
             address(tokenOut),
@@ -534,9 +537,6 @@ contract SwapAdapterTest is Test {
             recipient,
             calls
         );
-        assertFalse(ok);
-        assertEq(out_, 0);
-        assertEq(idx, type(uint256).max);
         assertEq(a.callCount(), 0);
     }
 

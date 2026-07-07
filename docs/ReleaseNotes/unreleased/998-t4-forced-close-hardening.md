@@ -17,14 +17,24 @@ that interest a second time. All four sites now credit `interestSettled`
 split, and the preclose Option 2 obligation-transfer. (The offset Option 3 and
 refinance paths already netted it.)
 
-**#1005 (S9) — an empty swap try-list could force a healthy loan into the
-fallback.** A permissionless caller could invoke `triggerLiquidation` or
-`triggerDefault` with an empty adapter list; the swap helper returned "no
-routes" and the loan dropped straight into the full-collateral fallback (a
-3%+2% premium, in-kind lender recovery) with zero DEX routes ever attempted.
-Both forced-close entry points now reject an empty try-list up front (before any
-state change), mirroring the periodic-settle path. The partial and split
-liquidation paths already reverted on an empty list.
+Two paths that re-originate a still-active loan in place — the Option 2
+obligation transfer (to a new borrower) and a routine partial liquidation (on
+the reduced residual) — restart the interest-accrual clock. Crediting
+`interestSettled` there without clearing it would let the same credit be
+subtracted a second time on the re-originated loan's next settlement, underpaying
+the lender. Both now zero `interestSettled` at the clock restart, since the
+settled interest belongs to the closed pre-reset accrual window.
+
+**#1005 (S9) — a swap try-list with no attemptable route could force a healthy
+loan into the fallback.** A permissionless caller could invoke `triggerLiquidation`
+or `triggerDefault` with an empty adapter list — or, more subtly, a non-empty
+list whose only entries are governance-disabled venues (which the failover
+helper silently skips) — and the swap helper returned "no routes", dropping the
+loan straight into the full-collateral fallback (a 3%+2% premium, in-kind lender
+recovery) with zero DEX routes ever attempted. The failover helper now counts
+the routes it actually attempts and reverts (`NoEnabledSwapRoute`) when none
+were — covering the empty and the all-disabled case in one place, for every
+failover caller. The forced-close collateral withdrawal rolls back atomically.
 
 **#1009 (L-g) — the treasury handling fee is now subordinated to full lender
 recovery.** On an underwater liquidation the old waterfall took the 2% treasury
