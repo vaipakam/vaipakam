@@ -330,11 +330,34 @@ contract DeployTestnetMocks is Script {
             // (3%) the STATIC tLIQ/mUSDC pools drift out of band and can
             // flip Illiquid until a re-run reprices them; the mWETH/WETH
             // pool never drifts (both its legs read this same feed).
-            (, int256 live, , , ) = IAggregatorV3Like(mWethUsdFeedOverride).latestRoundData();
+            // Validate the round metadata with the SAME freshness rules
+            // OracleFacet enforces on an ETH/USD feed, so a stale live feed
+            // fails the deploy FAST instead of silently wiring a feed that
+            // makes WETH + every WETH-quoted faucet token classify Illiquid
+            // the moment the oracle re-reads it (Codex #1095): a valid,
+            // complete, non-future, non-stale round with a positive answer.
+            (
+                uint80 roundId,
+                int256 live,
+                ,
+                uint256 updatedAt,
+                uint80 answeredInRound
+            ) = IAggregatorV3Like(mWethUsdFeedOverride).latestRoundData();
             require(live > 0, "DeployTestnetMocks: MWETH_USD_FEED returned non-positive price");
+            require(updatedAt != 0, "DeployTestnetMocks: MWETH_USD_FEED round not complete (updatedAt=0)");
+            require(updatedAt <= block.timestamp, "DeployTestnetMocks: MWETH_USD_FEED updatedAt is in the future");
+            require(answeredInRound >= roundId, "DeployTestnetMocks: MWETH_USD_FEED stale round (answeredInRound < roundId)");
+            // Max staleness — override with MWETH_USD_FEED_MAX_AGE (seconds);
+            // default 1h matches a typical ETH/USD heartbeat + margin.
+            uint256 maxAge = vm.envOr("MWETH_USD_FEED_MAX_AGE", uint256(3600));
+            require(
+                block.timestamp - updatedAt <= maxAge,
+                "DeployTestnetMocks: MWETH_USD_FEED answer is stale (older than MWETH_USD_FEED_MAX_AGE)"
+            );
             wethQuotePrice8 = SafeCast.toUint256(live);
             console.log("Using live MWETH_USD_FEED for mWETH + WETH:", ethUsdFeedAddr);
             console.log("  live ETH/USD (8-dec):", wethQuotePrice8);
+            console.log("  round age (s):", block.timestamp - updatedAt);
         } else {
             ethUsdFeedAddr = address(new MockChainlinkFeed(SafeCast.toInt256(mWethUsdPrice), 8));
             wethQuotePrice8 = mWethUsdPrice;
@@ -407,8 +430,21 @@ contract DeployTestnetMocks is Script {
         // inputToken and drain the seeded output float (Codex #982 r9).
         // Idempotent; owner (deployer) is broadcasting here.
         MockSwapAdapter(swapAdapter).setRestrictedTo(diamond);
+        // Register each liquid token's USD price so the adapter pays the FAIR
+        // price ratio on cross-asset liquidation swaps (Codex #1095). Without
+        // this, a flat 1:1 payout returns 1 mUSDC for 1 mWETH — far below the
+        // oracle-derived `minOutputAmount` (~3,000) — and every HF/default
+        // liquidation on an unequal-priced faucet pair would drop into the
+        // full-collateral fallback instead of swapping. (Reuses the same 8-dec
+        // prices wired into the feeds above.)
+        MockSwapAdapter(swapAdapter).setTokenPrice(liquidToken, tliqPrice8);
+        MockSwapAdapter(swapAdapter).setTokenPrice(liquidToken2, musdcPrice8);
+        MockSwapAdapter(swapAdapter).setTokenPrice(mWeth, wethQuotePrice8);
+        MockSwapAdapter(swapAdapter).setTokenPrice(weth, wethQuotePrice8);
         // Top up the proceeds float every run (harmless testnet mint) —
-        // every liquid principal so any side's loans can liquidate.
+        // every liquid principal so any side's loans can liquidate. The float
+        // is generous enough that even the priciest ratio (mWETH→mUSDC pays
+        // ~3,000× the input) has ample output on hand for demo-sized loans.
         ERC20Mock(liquidToken).mint(swapAdapter, 1_000_000e18);
         ERC20Mock(liquidToken2).mint(swapAdapter, 1_000_000e18);
         ERC20Mock(mWeth).mint(swapAdapter, 1_000_000e18);
