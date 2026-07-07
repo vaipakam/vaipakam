@@ -19,6 +19,12 @@ function mkForm(over: Partial<OfferFormState> = {}): OfferFormState {
     amount: '100',
     interestRate: '5',
     durationDays: '30',
+    // #1076: `riskAndTermsConsent` is now a required gate in
+    // `validateOfferForm` (returns `riskAndTermsConsentRequired` when
+    // false). A "minimally-valid" form therefore has consent granted;
+    // the error-path cases below still fire because their checks run
+    // before the consent gate.
+    riskAndTermsConsent: true,
     ...over,
   };
 }
@@ -119,13 +125,20 @@ describe('toCreateOfferPayload', () => {
       mkForm({ amount: '100', collateralAmount: '2.5', collateralAsset: GOOD_ADDR }),
       { lending: 6, collateral: 18 },
     );
-    expect(payload.amount).toBe(parseUnits('100', 6));
+    // #1076: per the #183 canonical role-aware mapping, a LENDER offer's
+    // headline (scaled) amount lands in `amountMax`; the storage `amount`
+    // field carries the 10% min-partial-fill floor. The decimals scaling
+    // under test is verified via `amountMax`.
+    expect(payload.amountMax).toBe(parseUnits('100', 6));
+    expect(payload.amount).toBe(parseUnits('100', 6) / 10n);
     expect(payload.collateralAmount).toBe(parseUnits('2.5', 18));
   });
 
   it('defaults to 18 decimals when not provided', () => {
     const payload = toCreateOfferPayload(mkForm({ amount: '1' }));
-    expect(payload.amount).toBe(parseUnits('1', 18));
+    // #1076: headline scaled amount lives in `amountMax` for lender offers
+    // (see the role-aware-mapping note above).
+    expect(payload.amountMax).toBe(parseUnits('1', 18));
   });
 
   it('converts NFT tokenId/quantity as raw BigInt (unscaled)', () => {
@@ -175,12 +188,18 @@ describe('toCreateOfferPayload', () => {
     expect(payload.prepayAsset).toBe('0x0000000000000000000000000000000000000000');
   });
 
-  it('propagates illiquidConsent and keeperAccess flags', () => {
-    const payload = toCreateOfferPayload(
-      mkForm({ illiquidConsent: true, keeperAccess: true }),
-    );
-    expect(payload.creatorIlliquidConsent).toBe(true);
-    expect(payload.keeperAccessEnabled).toBe(true);
+  it('propagates the risk-and-terms consent flag', () => {
+    // #1076: the payload field is `creatorRiskAndTermsConsent` (the old
+    // `creatorIlliquidConsent` / `keeperAccessEnabled` fields were removed
+    // from `CreateOfferParams` — `keeperAccessEnabled` per the frontend-ABI
+    // note in CLAUDE.md — so there is nothing on the payload to assert for
+    // keeper access; the form-only `keeperAccess` flag is not wired through).
+    expect(
+      toCreateOfferPayload(mkForm({ riskAndTermsConsent: true })).creatorRiskAndTermsConsent,
+    ).toBe(true);
+    expect(
+      toCreateOfferPayload(mkForm({ riskAndTermsConsent: false })).creatorRiskAndTermsConsent,
+    ).toBe(false);
   });
 
   it('coerces empty collateral/quantity/tokenId strings to 0n', () => {
