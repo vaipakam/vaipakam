@@ -199,9 +199,32 @@ contract OfferCancelFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamE
         // transfer rights.
         //
         // (a) Preclose Option 3 offset: release the borrower position NFT.
+        // #1001 (S3, Codex #1070 redesign) — the offset settles the old lender
+        // ONLY at completion, so a still-un-matched offer has parked NOTHING for
+        // the lender: cancel just unlocks the borrower NFT and drops the link.
+        // Alice's own new-offer principal (pre-vaulted at `createOffer`) is
+        // returned by the ordinary Lender-cancel refund branch below.
         uint256 lockedOffsetLoanId = s.offsetOfferToLoanId[offerId];
         if (lockedOffsetLoanId != 0) {
-            LibERC721._unlock(s.loans[lockedOffsetLoanId].borrowerTokenId);
+            // #1001 (S3, Codex #1070 r8/r9 P2) — unlock the borrower NFT iff it
+            // still EXISTS, keyed on token existence rather than loan status. Under
+            // settle-at-completion an offset can stay linked while the original
+            // loan goes terminal (the borrower repays/defaults directly instead of
+            // completing the offset). `LibERC721._unlock` reads `ownerOf(tokenId)`,
+            // which reverts on a BURNED token — so an unconditional unlock would
+            // brick the cancel once `claimAsBorrower` has burned `borrowerTokenId`,
+            // stranding the offer's pre-funded principal. But a status guard is
+            // wrong in BOTH directions: FallbackPending (r9 #1) and a terminal-but-
+            // NOT-YET-CLAIMED loan (r9 #4) both keep the NFT intact + locked, so
+            // skipping the unlock would leave it permanently locked. Gate on the
+            // non-reverting `_ownerOfRaw` (address(0) ⇔ burned/nonexistent): unlock
+            // when the token lives (Active / FallbackPending / terminal-unclaimed),
+            // skip the moot unlock only once it's actually burned. The link is
+            // dropped + the creator's principal refunded either way.
+            uint256 offsetBorrowerTokenId = s.loans[lockedOffsetLoanId].borrowerTokenId;
+            if (LibERC721._ownerOfRaw(offsetBorrowerTokenId) != address(0)) {
+                LibERC721._unlock(offsetBorrowerTokenId);
+            }
             delete s.offsetOfferToLoanId[offerId];
             delete s.loanToOffsetOfferId[lockedOffsetLoanId];
         }

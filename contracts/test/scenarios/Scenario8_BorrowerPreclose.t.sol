@@ -387,11 +387,16 @@ contract Scenario8_BorrowerPreclose is Test {
         mockLiquidity(mockCollateralERC20, LibVaipakam.LiquidityStatus.Liquid);
         mockPrice(mockCollateralERC20, 1e8, 8);
 
-        // Verify: borrower paid principal + accrued interest (balance decreased significantly)
-        uint256 borrowerBalAfter = ERC20(mockERC20).balanceOf(borrower);
-        assertLt(borrowerBalAfter, borrowerBalBefore, "Borrower should have paid principal + interest");
-        // Borrower paid at least PRINCIPAL (1000 ether) + accrued
-        assertLt(borrowerBalAfter, borrowerBalBefore - PRINCIPAL, "Borrower should have paid at least principal");
+        // #1001 (S3, Codex #1070 redesign) — posting settles NOTHING. The old
+        // lender's payoff is paid at COMPLETION, not here, so the borrower's
+        // balance is unchanged by posting (only her separate new-offer principal
+        // moves, and that path is mocked here). This is the property that makes
+        // the offset inert to interleaving paths until it fires.
+        assertEq(
+            ERC20(mockERC20).balanceOf(borrower),
+            borrowerBalBefore,
+            "posting must not move any settlement funds (settle-at-completion)"
+        );
 
         // Step 2: Verify completeOffset requires the offer to be accepted
         // First, it should revert with OffsetOfferNotAccepted
@@ -422,12 +427,32 @@ contract Scenario8_BorrowerPreclose is Test {
         emit PrecloseFacet.OffsetCompleted(activeLoanId, expectedNewOfferId, borrower, 0);
 
         // Complete the offset (permissionless)
+        address lenderVault = VaultFactoryFacet(address(diamond)).getUserVaultAddress(lender);
+        uint256 lenderVaultBeforeComplete = ERC20(mockERC20).balanceOf(lenderVault);
+        uint256 borrowerBalBeforeComplete = ERC20(mockERC20).balanceOf(borrower);
+
         vm.prank(borrower);
         PrecloseFacet(address(diamond)).completeOffset(activeLoanId);
 
         // Verify: original loan is now Repaid
         LibVaipakam.Loan memory loan = LoanFacet(address(diamond)).getLoanDetails(activeLoanId);
         assertEq(uint8(loan.status), uint8(LibVaipakam.LoanStatus.Repaid), "Original loan should be Repaid");
+
+        // #1001 (S3, Codex #1070 redesign) — the settlement lands HERE: the
+        // borrower pays the old lender's payoff (>= principal) at completion, and
+        // it is deposited into the old lender's vault (claimed later via
+        // claimAsLender). This is the single point the offset touches the loan's
+        // settlement state.
+        assertLt(
+            ERC20(mockERC20).balanceOf(borrower),
+            borrowerBalBeforeComplete - PRINCIPAL,
+            "borrower pays >= principal at COMPLETION, not at posting"
+        );
+        assertGt(
+            ERC20(mockERC20).balanceOf(lenderVault),
+            lenderVaultBeforeComplete,
+            "old lender's payoff is deposited into their vault at completion"
+        );
 
         vm.clearMockedCalls();
     }

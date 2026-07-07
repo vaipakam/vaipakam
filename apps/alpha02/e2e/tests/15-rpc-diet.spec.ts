@@ -24,7 +24,20 @@ test('parked book visitor does not stream RPC polls', async ({
 
   const counts: Record<string, number> = {};
   let recording = false;
+  // viem's implicit default RPC for chain 1 (ENS reads) — the app must
+  // NEVER reach it: the ENS transport is explicitly configured
+  // (VITE_ETHEREUM_RPC_URL plumbing), and the shared default endpoint
+  // 429s under a list page's first-paint lookup burst.
+  let merkleHits = 0;
   page.on('request', (req) => {
+    // Hostname compare, not substring (CodeQL js/incomplete-url-
+    // substring-sanitization): the guard must not be satisfiable by
+    // e.g. a path or query merely containing the string.
+    try {
+      if (new URL(req.url()).hostname === 'eth.merkle.io') merkleHits++;
+    } catch {
+      /* non-URL request target */
+    }
     if (!recording) return;
     const body = req.postData();
     if (!body) return;
@@ -60,4 +73,8 @@ test('parked book visitor does not stream RPC polls', async ({
   // At most one interval tick can land in the window; each tick runs
   // one chunked log scan.
   expect(counts['eth_getLogs'] ?? 0).toBeLessThanOrEqual(2);
+  // Whole-run assertion (not just the recording window): zero calls to
+  // viem's implicit chain-1 default. A hit means the ENS transport
+  // regressed to `http(undefined)`.
+  expect(merkleHits).toBe(0);
 });

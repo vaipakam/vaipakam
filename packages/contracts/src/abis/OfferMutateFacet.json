@@ -629,6 +629,11 @@
   },
   {
     "type": "error",
+    "name": "OffsetVehicleImmutable",
+    "inputs": []
+  },
+  {
+    "type": "error",
     "name": "PadNumeraireRateFeedStale",
     "inputs": []
   },

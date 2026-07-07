@@ -57,7 +57,8 @@ library LibOfferMatch {
         AonRequiresFullFill,      // #125 — either offer carries `fillMode = Aon` but the would-be matchAmount isn't its full single-shot fill (`offer.amount`), or the offer already has a non-zero `amountFilled`. AON offers admit exactly one fill, sized to the AON-side's `amount`; any divergence aborts. Create-time invariant `amount == amountMax` keeps the "AON-required fill size" unambiguous.
         RefinanceTagged,          // #576/#595 — a refinance-tagged offer that is NOT an admissible AON carry-over match: a lender-tagged offer, or a borrower carry-over offer whose target fails the exhaustive admission mirror (`LibAutoRefinanceCheck.matchAdmissible` — stale target, transferred NFT, gated caps/kill-switch, live intent, diverged retag key, etc.). `matchOffers` reverts `RefinanceTaggedOfferNotMatchable`. Lets bots skip the pair at preview time.
         RefinanceCarryOverCollateralShortfall, // #595 — an admitted carry-over match where the lender's pro-rated collateral requirement exceeds the carried (pinned) amount; carry-over pledges no fresh collateral to top it up.
-        SaleVehicleTagged         // #951 (Codex #959) — the borrower offer is a lender-sale vehicle (linked via `saleOfferToLoanId`). It is fillable ONLY through `acceptOffer` (which auto-completes the linked sale); `matchOffers` reverts `SaleVehicleNotMatchable`. Appended LAST to keep every prior ordinal ABI-stable. Lets bots skip the pair at preview time.
+        SaleVehicleTagged,        // #951 (Codex #959) — the borrower offer is a lender-sale vehicle (linked via `saleOfferToLoanId`). It is fillable ONLY through `acceptOffer` (which auto-completes the linked sale); `matchOffers` reverts `SaleVehicleNotMatchable`. Lets bots skip the pair at preview time.
+        OffsetVehicleTagged       // #1001 (S3, Codex #1070 r4) — the LENDER offer is a linked Preclose Option-3 offset vehicle (`offsetOfferToLoanId`). It settles ONLY through `acceptOffer` → `completeOffsetInternal`; `matchOffers` reverts `OffsetVehicleNotMatchable`. Appended LAST to keep every prior ordinal ABI-stable. Lets bots skip the pair at preview time.
     }
 
     /// @notice Structured return from `previewMatch`. Bots check
@@ -298,6 +299,13 @@ library LibOfferMatch {
         // sale vehicle and is already `_executeMatch`-guarded.
         if (s.saleOfferToLoanId[borrowerOfferId] != 0) {
             r.errorCode = MatchError.SaleVehicleTagged;
+            return r;
+        }
+        // #1001 (S3, Codex #1070 r4) — the LENDER offer being a linked offset
+        // vehicle likewise always reverts `OffsetVehicleNotMatchable` on submit;
+        // mirror it here so a bot doesn't see an `Ok` for a pair that can't match.
+        if (s.offsetOfferToLoanId[lenderOfferId] != 0) {
+            r.errorCode = MatchError.OffsetVehicleTagged;
             return r;
         }
         // Delegate to the struct-based core so the identical match-admission

@@ -697,6 +697,11 @@
   },
   {
     "type": "error",
+    "name": "OffsetVehicleNotMatchable",
+    "inputs": []
+  },
+  {
+    "type": "error",
     "name": "ParameterOutOfRange",
     "inputs": [
       {
