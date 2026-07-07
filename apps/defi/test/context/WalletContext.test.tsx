@@ -195,22 +195,36 @@ describe('WalletContext', () => {
     );
   });
 
-  // #1076 REGRESSION: a connected user's failed chain switch never surfaces
-  // its error banner. `switchToChain` sets `error` on failure, but the
-  // "clear transient errors once connected" effect (WalletContext.tsx:120-122)
-  // is keyed on `[status, error]` and unconditionally clears ANY error while
-  // `status === 'connected'`. Because only a connected wallet can trigger a
-  // switch, the freshly-set "Chain switch rejected or failed." message is
-  // wiped on the very next render before it can be shown. The clear effect
-  // should fire only on the disconnected→connected transition, not on every
-  // error while connected. Left skipped rather than weakened so the bug stays
-  // visible — tracked as #1090; un-skip when that lands.
-  it.skip('surfaces an error when the chain switch is rejected', async () => {
+  // #1090 (fixed): a connected user's failed chain switch now surfaces its
+  // error banner. The "clear errors once connected" effect fires only on the
+  // disconnected→connected transition (tracked via a prev-status ref), not on
+  // every render while connected, so an error raised WHILE connected survives.
+  it('surfaces an error when the chain switch is rejected', async () => {
     connect();
     switchChainAsync.mockRejectedValue(new Error('user rejected'));
     render(<WalletProvider><Probe /></WalletProvider>);
     await userEvent.click(screen.getByText('switch'));
     await waitFor(() => expect(screen.getByTestId('err').textContent).toMatch(/rejected/i));
+  });
+
+  // #1093 (Codex P2): a chain switch never changes wagmi's account status
+  // (it stays `connected`), so the status-edge clear never runs for a
+  // switch retry. A connected user who fails a switch then retries
+  // successfully must NOT keep the stale banner — the attempt clears it
+  // optimistically as it begins.
+  it('clears the stale switch error when a later switch attempt succeeds', async () => {
+    connect();
+    switchChainAsync.mockRejectedValueOnce(new Error('user rejected'));
+    render(<WalletProvider><Probe /></WalletProvider>);
+
+    // First attempt fails → banner shows.
+    await userEvent.click(screen.getByText('switch'));
+    await waitFor(() => expect(screen.getByTestId('err').textContent).toMatch(/rejected/i));
+
+    // Second attempt succeeds (default mock resolves) → banner clears, even
+    // though status stayed `connected` the whole time.
+    await userEvent.click(screen.getByText('switch'));
+    await waitFor(() => expect(screen.getByTestId('err').textContent).toBe(''));
   });
 
   it('throws when useWallet used without provider', () => {

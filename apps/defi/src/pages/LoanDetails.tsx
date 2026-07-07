@@ -1250,7 +1250,18 @@ export default function LoanDetails() {
       </div>
 
       {/* Actions */}
-      {availability.repay && (
+      {/* #1091 — render the actions card whenever ANY nested action is
+          available, not just `repay` (= `canAct && !isLender`, false for the
+          lender). Previously the lender-only Early-Withdrawal CTA and the
+          public (lender-reachable) Trigger-Default CTA were nested inside a
+          repay-gated card, so a lender could never reach either on their own
+          loan. The repay-specific section below is separately gated on
+          `availability.repay` so it stays hidden for the lender. */}
+      {(availability.repay ||
+        availability.addCollateral ||
+        availability.triggerDefault ||
+        availability.earlyWithdrawal ||
+        availability.preclose) && (
         <div id="loan-actions-card" className="card loan-actions-card">
           <div className="card-title" style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
             {t('loanDetails.actions')}
@@ -1270,6 +1281,9 @@ export default function LoanDetails() {
             </div>
           )}
 
+          {/* #1091 — repay-specific; gated so it stays hidden for the lender
+              now that the outer card also renders for lender-only actions. */}
+          {availability.repay && (
           <div className="action-group">
             <h4 className="action-title">{t('loanDetails.repayLoan')}</h4>
             <p className="action-desc">
@@ -1364,6 +1378,7 @@ export default function LoanDetails() {
               </div>
             )}
           </div>
+          )}
 
           {/* T-090 #403 — borrower-initiated swap-to-repay. Mirrors
               the on-chain `SwapToRepayFacet.swapToRepayFull` gating
