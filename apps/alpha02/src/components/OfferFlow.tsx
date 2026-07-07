@@ -39,7 +39,8 @@ import {
 import { useAcceptTermsSigning } from '../contracts/useAcceptTerms';
 import { SimulationPreview } from './SimulationPreview';
 import { SelectMenu } from './SelectMenu';
-import type { TxSimInput } from '../contracts/useTxSimulation';
+import { useTxSimulation, type TxSimInput } from '../contracts/useTxSimulation';
+import { recordLastError } from '../diagnostics/lastError';
 import {
   ensureAllowance,
   isAddressLike,
@@ -844,6 +845,14 @@ export function OfferFlow({ side }: { side: Side }) {
       return null; // form not buildable yet — footer stays hidden
     }
   }, [mode, walletChain, form, lendingMeta.data, collateralMeta.data]);
+
+  // Lift the pre-sign dry run here (SimulationPreview consumes the same
+  // verdict via its `result` prop, so no duplicate eth_call) so the submit
+  // handler can PREFER the concrete revert reason it already decoded over a
+  // generic "oversized gas limit" message. When `eth_estimateGas` strips the
+  // revert selector (#780), `submitErrorText` can only surface the misleading
+  // gas-trap copy; the advisory dry run still knows the real cause.
+  const preSign = useTxSimulation(simTx);
 
   const receipt = useMemo((): ReceiptData | null => {
     // The conversions below throw on inputs the completeness gates
@@ -1805,7 +1814,26 @@ export function OfferFlow({ side }: { side: Side }) {
       void queryClient.invalidateQueries({ queryKey: ['activeOffers'] });
       void queryClient.invalidateQueries({ queryKey: ['myLoans'] });
     } catch (err) {
-      setSubmitError(submitErrorText(err));
+      // Prefer the pre-sign dry run's concrete revert reason when it has one:
+      // if `eth_estimateGas` stripped the selector, `submitErrorText` can only
+      // return the generic gas-trap copy, but the advisory sim already decoded
+      // the real cause (e.g. "Your collateral is too low…"). Fall back to the
+      // decoded submit error otherwise (its selector usually survives).
+      const message =
+        preSign.result.status === 'revert' && preSign.result.revertReason
+          ? preSign.result.revertReason
+          : submitErrorText(err);
+      setSubmitError(message);
+      // Capture the failure for the diagnostics drawer + support report so a
+      // tx error is surfaced there, not just render-crash errors.
+      recordLastError({
+        message: preSign.result.revertName
+          ? `${message} [${preSign.result.revertName}]`
+          : message,
+        path:
+          typeof window !== 'undefined' ? window.location.pathname : 'unknown',
+        at: Date.now(),
+      });
       // The approval may have MINED before the final prompt was
       // rejected — the review re-renders with the allowance changed,
       // so the roadmap must re-read it or it keeps promising an
@@ -2206,7 +2234,9 @@ export function OfferFlow({ side }: { side: Side }) {
           </div>
           <div className="card">
             {receipt ? <ReviewReceipt data={receipt} /> : <p className="muted">Preparing your review…</p>}
-            {receipt ? <SimulationPreview tx={simTx} /> : null}
+            {receipt ? (
+              <SimulationPreview tx={simTx} result={preSign.result} />
+            ) : null}
             {securityBlocked.length > 0 ? (
               <div className="banner banner-danger" role="alert" style={{ marginTop: 16 }}>
                 <span className="banner-body">

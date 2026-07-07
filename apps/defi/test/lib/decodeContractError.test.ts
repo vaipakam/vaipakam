@@ -4,6 +4,8 @@ import {
   extractRevertData,
   extractRevertSelector,
   namedRevertSelector,
+  friendlyContractError,
+  humanizeErrorName,
   // Stage-3 split moved this module to @vaipakam/lib; the old
   // `../../src/lib/decodeContractError` path stopped resolving (the test had
   // silently gone dead). Repointed to the live specifier apps/defi actually
@@ -160,16 +162,19 @@ describe('decodeContractError', () => {
       const msg = decodeContractError({
         message: 'exceeds max transaction gas limit',
       });
-      expect(msg).toMatch(/usually NOT a real gas shortage/i);
+      expect(msg).toMatch(/NOT a real gas shortage/i);
       expect(msg).toMatch(/token approval/i);
       expect(msg).toMatch(/stale app build/i);
+      // Now also points at the review-step reason instead of only the
+      // approval/stale-build heuristics (friendly-errors work).
+      expect(msg).toMatch(/review step/i);
     });
 
     it('also matches the "exceeds max gas limit" variant', () => {
       const msg = decodeContractError({
         shortMessage: 'RPC Error: exceeds max gas limit',
       });
-      expect(msg).toMatch(/oversized gas limit/i);
+      expect(msg).toMatch(/could not estimate/i);
     });
 
     it('does NOT reword when a concrete revert selector is decodable', () => {
@@ -180,7 +185,79 @@ describe('decodeContractError', () => {
         data: SEL_HF_TOO_LOW,
       });
       expect(msg).toMatch(/Health factor too low/i);
-      expect(msg).not.toMatch(/oversized gas limit/i);
+      expect(msg).not.toMatch(/could not estimate/i);
     });
+  });
+
+  // Friendly-error expansion: naive-user-reachable custom errors get curated
+  // copy, and any named-but-uncurated error humanizes instead of showing hex.
+  describe('reachable-error friendly copy', () => {
+    const MAX_LENDING = '0xa46539d8'; // MaxLendingAboveCeiling(uint256,uint256)
+    const MIN_COLLATERAL = '0x6aac1798'; // MinCollateralBelowFloor(uint256,uint256)
+    const LENDER_REPAY = '0xc602c4b6'; // LenderCannotRepayOwnLoan()
+    // Known selector with a name but NO curated copy → must humanize.
+    const INSUFFICIENT_ALLOWANCE = '0x13be252b'; // InsufficientAllowance()
+
+    it('maps MaxLendingAboveCeiling to friendly copy', () => {
+      expect(decodeContractError({ data: MAX_LENDING })).toMatch(
+        /collateral is too low/i,
+      );
+    });
+
+    it('maps MinCollateralBelowFloor to friendly copy', () => {
+      expect(decodeContractError({ data: MIN_COLLATERAL })).toMatch(
+        /below the minimum/i,
+      );
+    });
+
+    it('maps LenderCannotRepayOwnLoan to friendly copy', () => {
+      expect(decodeContractError({ data: LENDER_REPAY })).toMatch(
+        /you are the lender/i,
+      );
+    });
+
+    it('humanizes a known selector with no curated copy', () => {
+      expect(decodeContractError({ data: INSUFFICIENT_ALLOWANCE })).toBe(
+        'Insufficient allowance',
+      );
+    });
+  });
+});
+
+describe('humanizeErrorName', () => {
+  it('splits PascalCase into a readable sentence', () => {
+    expect(humanizeErrorName('MaxLendingAboveCeiling')).toBe(
+      'Max lending above ceiling',
+    );
+  });
+
+  it('keeps acronym runs intact in sentence case', () => {
+    expect(humanizeErrorName('MatchHFTooLow')).toBe('Match HF too low');
+    expect(humanizeErrorName('LTVExceeded')).toBe('LTV exceeded');
+  });
+});
+
+describe('friendlyContractError', () => {
+  it('returns curated copy by name', () => {
+    expect(friendlyContractError({ name: 'MaxLendingAboveCeiling' })).toMatch(
+      /collateral is too low/i,
+    );
+  });
+
+  it('resolves the name from the selector', () => {
+    expect(friendlyContractError({ selector: '0xa46539d8' })).toMatch(
+      /collateral is too low/i,
+    );
+  });
+
+  it('humanizes a known-but-uncurated name', () => {
+    expect(friendlyContractError({ name: 'SomeExoticFacetError' })).toBe(
+      'Some exotic facet error',
+    );
+  });
+
+  it('returns null when nothing identifies the error', () => {
+    expect(friendlyContractError({})).toBeNull();
+    expect(friendlyContractError({ selector: '0x00000000' })).toBeNull();
   });
 });
