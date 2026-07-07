@@ -15,6 +15,17 @@ drifts. tLIQ stays at $2,000. Together these give a wallet three liquid assets
 at three realistic price points, so health-factor, LTV, and liquidation
 behave the way they would with real assets.
 
+Because the faucet tokens now carry distinct prices, the mock liquidation swap
+venue also had to price cross-asset swaps at the fair ratio (selling 1 mWETH
+for ~3,000 mUSDC) rather than a flat 1:1 — otherwise every liquidation on an
+unequal pair would miss the oracle-derived minimum output and fall into the
+full-collateral fallback. For mWETH and WETH that payout now reads the **live**
+Chainlink ETH/USD feed at swap time — the same feed the oracle prices them with
+— so it tracks ETH as it moves and never drifts out of the slippage band; tLIQ
+and mUSDC use their static fake-stable prices. The deploy script also fails
+fast with an actionable message if an operator tries to reuse a swap adapter
+from an older script version that predates this pricing.
+
 Making the prices differ required re-deriving each mock AMM pool's spot price
 from its assets' feed prices (previously every pool was a trivial 1:1, valid
 only because every price was equal). The oracle only treats a token as liquid

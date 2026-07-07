@@ -227,6 +227,41 @@ contract TestnetMockPricesTest is Test, DeployTestnetMocks {
         assertEq(outTok.balanceOf(address(this)), 3_000e18, "recipient got fair output");
     }
 
+    /// @notice A token wired to a LIVE feed prices off the feed's CURRENT
+    ///         answer, not a stale deploy-time snapshot — so an mWETH swap
+    ///         payout tracks ETH as it moves and never drifts past the
+    ///         oracle-derived `minOutputAmount` band into the full-collateral
+    ///         fallback (Codex #1095, oracle-aware choice).
+    function test_mockSwapAdapter_tracksLiveFeedPrice() public {
+        ERC20Mock inTok = new ERC20Mock("In", "IN", 18); // mWETH-like
+        ERC20Mock outTok = new ERC20Mock("Out", "OUT", 18); // mUSDC-like
+        MockChainlinkFeed ethFeed = new MockChainlinkFeed(int256(uint256(3_000e8)), 8);
+        MockSwapAdapter adapter = new MockSwapAdapter("test");
+        adapter.setTokenFeed(address(inTok), address(ethFeed)); // LIVE
+        adapter.setTokenPrice(address(inTok), 3_000e8); // stale fallback (ignored while feed set)
+        adapter.setTokenPrice(address(outTok), 1e8);
+        outTok.mint(address(adapter), 100_000e18);
+        inTok.mint(address(this), 2e18);
+        inTok.approve(address(adapter), 2e18);
+
+        // At the feed's $3,000: 1 IN -> 3,000 OUT.
+        assertEq(
+            adapter.execute(address(inTok), address(outTok), 1e18, 2_900e18, address(this), ""),
+            3_000e18,
+            "tracks feed @ $3,000"
+        );
+
+        // ETH moves to $3,500 — the SAME swap now pays 3,500 off the live
+        // answer, NOT the 3,000 snapshot (which would revert min-out at the
+        // higher oracle floor and fall into the full-collateral path).
+        ethFeed.setPrice(int256(uint256(3_500e8)));
+        assertEq(
+            adapter.execute(address(inTok), address(outTok), 1e18, 3_400e18, address(this), ""),
+            3_500e18,
+            "tracks feed @ $3,500 after move"
+        );
+    }
+
     /// @notice Unset prices preserve the legacy flat `inputAmount * bps`
     ///         payout every existing LibSwap failover test relies on.
     function test_mockSwapAdapter_legacyFlatPathWhenPricesUnset() public {

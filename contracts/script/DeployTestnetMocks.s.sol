@@ -420,6 +420,19 @@ contract DeployTestnetMocks is Script {
                     "DeployTestnetMocks: FAUCET_SWAP_ADAPTER is a pre-hardening (ungated) adapter - unset the env to deploy fresh"
                 );
             }
+            // A hardened-but-older adapter passes owner() yet lacks the
+            // oracle-aware `tokenUsdFeed`/`setTokenFeed` this script now wires.
+            // Reusing it would pass the checks here, deploy every OTHER mock
+            // below, and only then revert on the setTokenFeed calls (selector
+            // not found) — a confusing half-applied rerun. Probe the getter and
+            // fail early with an actionable message instead (Codex #1095).
+            try MockSwapAdapter(swapAdapter).tokenUsdFeed(weth) returns (address) {
+                // oracle-aware adapter — safe to reuse.
+            } catch {
+                revert(
+                    "DeployTestnetMocks: FAUCET_SWAP_ADAPTER predates the oracle-aware setTokenFeed (Codex #1095) - unset the env to deploy a fresh adapter"
+                );
+            }
             console.log("Reusing MockSwapAdapter: ", swapAdapter);
         } else {
             swapAdapter = address(new MockSwapAdapter("vaipakam-testnet-mock"));
@@ -441,6 +454,16 @@ contract DeployTestnetMocks is Script {
         MockSwapAdapter(swapAdapter).setTokenPrice(liquidToken2, musdcPrice8);
         MockSwapAdapter(swapAdapter).setTokenPrice(mWeth, wethQuotePrice8);
         MockSwapAdapter(swapAdapter).setTokenPrice(weth, wethQuotePrice8);
+        // mWETH + WETH TRACK the LIVE ETH/USD feed (Codex #1095, oracle-aware
+        // choice): the oracle prices them off `ethUsdFeedAddr`, so the swap
+        // payout must read the SAME feed at execute time — otherwise the
+        // deploy-time snapshot above goes stale as ETH moves and mWETH
+        // liquidations drift past the slippage band into the full-collateral
+        // fallback. tLIQ / mUSDC keep their static snapshot (fake stable
+        // prices); the snapshot stays the fallback if a feed read ever returns
+        // a non-positive answer.
+        MockSwapAdapter(swapAdapter).setTokenFeed(mWeth, ethUsdFeedAddr);
+        MockSwapAdapter(swapAdapter).setTokenFeed(weth, ethUsdFeedAddr);
         // Top up the proceeds float every run (harmless testnet mint) —
         // every liquid principal so any side's loans can liquidate. The float
         // is generous enough that even the priciest ratio (mWETH→mUSDC pays
