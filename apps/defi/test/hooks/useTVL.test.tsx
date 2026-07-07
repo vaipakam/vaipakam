@@ -19,7 +19,7 @@ vi.mock('../../src/hooks/useProtocolStats', () => ({
 
 const diamondMock: any = { runner: { provider: {} } };
 vi.mock('../../src/contracts/useDiamond', () => ({
-  useDiamondPublicClient: () => ({}),
+  useDiamondPublicClient: (() => { const pc = {}; return () => pc; })(),
   useReadyDiamond: () => diamondMock,
   useDiamondRead: () => diamondMock,
   useReadChain: () => ({ chainId: 11155111, diamondAddress: '0xDiamond', deployBlock: 1 }),

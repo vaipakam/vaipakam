@@ -26,7 +26,7 @@ const diamondMock: any = {
   } },
 };
 vi.mock('../../src/contracts/useDiamond', () => ({
-  useDiamondPublicClient: () => ({}),
+  useDiamondPublicClient: (() => { const pc = {}; return () => pc; })(),
   useReadyDiamond: () => diamondMock,
   useDiamondRead: () => diamondMock,
   useReadChain: () => ({

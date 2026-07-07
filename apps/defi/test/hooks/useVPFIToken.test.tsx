@@ -27,7 +27,7 @@ const chainState: { chainId: number; diamondAddress: string } = {
 };
 
 vi.mock('../../src/contracts/useDiamond', () => ({
-  useDiamondPublicClient: () => ({}),
+  useDiamondPublicClient: (() => { const pc = {}; return () => pc; })(),
   useReadyDiamond: () => diamondState,
   useDiamondRead: () => diamondState,
   useReadChain: () => chainState,

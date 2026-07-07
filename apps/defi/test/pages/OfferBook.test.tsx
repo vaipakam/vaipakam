@@ -23,7 +23,7 @@ const diamondMock: any = {
   runner: { provider: { getBlockNumber: async () => 10_630_900, getLogs: getLogsFn } },
 };
 vi.mock('../../src/contracts/useDiamond', () => ({
-  useDiamondPublicClient: () => ({}),
+  useDiamondPublicClient: (() => { const pc = {}; return () => pc; })(),
   useReadyDiamond: () => diamondMock,
   useDiamondContract: () => diamondMock,
   useDiamondRead: () => diamondMock,

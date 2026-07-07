@@ -31,7 +31,7 @@ const diamondState: {
   ownerOf: vi.fn(),
 };
 vi.mock('../../src/contracts/useDiamond', () => ({
-  useDiamondPublicClient: () => ({}),
+  useDiamondPublicClient: (() => { const pc = {}; return () => pc; })(),
   useReadyDiamond: () => diamondState,
   useDiamondRead: () => diamondState,
 }));

@@ -5,7 +5,7 @@ import { renderWithProviders } from '../utils';
 
 const diamondMock: any = { ownerOf: vi.fn(), tokenURI: vi.fn() };
 vi.mock('../../src/contracts/useDiamond', () => ({
-  useDiamondPublicClient: () => ({}),
+  useDiamondPublicClient: (() => { const pc = {}; return () => pc; })(),
   useReadyDiamond: () => diamondMock,
   useDiamondContract: () => diamondMock,
   useDiamondRead: () => diamondMock,

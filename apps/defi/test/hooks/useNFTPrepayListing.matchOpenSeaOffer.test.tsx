@@ -54,7 +54,7 @@ vi.mock('../../src/hooks/useUserVaultAddress', () => ({
 
 vi.mock('../../src/contracts/useDiamond', () => ({
   useDiamondContract: () => hoisted.diamond,
-  useDiamondPublicClient: () => ({}),
+  useDiamondPublicClient: (() => { const pc = {}; return () => pc; })(),
   useReadChain: () => ({ chainId: 8453 }),
 }));
 
