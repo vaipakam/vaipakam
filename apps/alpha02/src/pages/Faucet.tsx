@@ -129,6 +129,17 @@ export function Faucet() {
 
   async function mintErc20(token: Address, units: number, symbolHint: string) {
     if (!walletClient || !address || !publicClient) return;
+    // #1095 (Codex): engage the mint lock BEFORE any await. The on-chain
+    // symbol read below is async, and the mint button only disables once
+    // `busy` is set — so setting it after the read left a window where a
+    // rapid second click slipped past the guard and fired a duplicate
+    // mint. `busy` also short-circuits a re-entrant call outright.
+    if (busy) return;
+    setBusy(token);
+    setError(null);
+    setDone(null);
+    setCopied(false);
+    setWatched(false);
     // Resolve the REAL on-chain symbol; fall back to the hint if the read
     // fails (#1095 — never label the minted/watched token as something the
     // deployed contract isn't).
@@ -142,11 +153,6 @@ export function Faucet() {
     } catch {
       /* keep the hint — a symbol read failure must not block minting */
     }
-    setBusy(token);
-    setError(null);
-    setDone(null);
-    setCopied(false);
-    setWatched(false);
     try {
       const hash = await walletClient.writeContract({
         address: token,
