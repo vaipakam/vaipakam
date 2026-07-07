@@ -1,27 +1,20 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { screen, waitFor } from '@testing-library/react';
-import { keccak256, toBytes } from 'viem';
-// #1076: defi migrated off ethers to viem — ethers.id(sig) == keccak256(utf8Bytes(sig)).
-const keccakId = (sig: string) => keccak256(toBytes(sig));
 import userEvent from '@testing-library/user-event';
 import { renderWithProviders } from '../utils';
 
-const LOAN_INITIATED_TOPIC0 = keccakId('LoanInitiated(uint256,uint256,address,address)');
+// #1076: ClaimCenter migrated off ethers → viem. `useClaimables` now walks
+// the wallet's position-loan set via `publicClient.readContract(...)` (viem)
+// and the shared `useLogIndex` cache — NOT ethers `getLoanDetails`/`ownerOf`
+// on a diamond handle. We keep the REAL `useClaimables` under test (so its
+// skip-active / not-holder / claimed=true filtering is still exercised) and
+// stub the viem `PublicClient.readContract` dispatch, delegating each
+// contract read to the same per-test vi.fns the assertions configure.
 
-function loanLogs() {
-  const pad = (v: string) => '0x' + v.replace(/^0x/, '').padStart(64, '0').toLowerCase();
-  const mk = (id: bigint) => ({
-    topics: [LOAN_INITIATED_TOPIC0, pad('0x' + id.toString(16)), pad('0x0'), pad('0x0')],
-    data: pad('0x0'),
-  });
-  return [mk(1n), mk(2n), mk(3n)];
-}
-
-const getLogsFn = vi.fn().mockImplementation((filter: any) => {
-  const t0: string | undefined = filter?.topics?.[0];
-  if (t0 !== LOAN_INITIATED_TOPIC0) return Promise.resolve([]);
-  return Promise.resolve(loanLogs());
-});
+// The wallet's authoritative on-chain position-loan id set. `useClaimables`
+// seeds its walk-set from `getUserPositionLoansPaginated`; these are the ids
+// that get hydrated via `getLoanDetails` below (mirrors the old loan-log set).
+const candidateIds = [1n, 2n, 3n];
 
 const diamondMock: any = {
   getLoanDetails: vi.fn(),
@@ -29,20 +22,82 @@ const diamondMock: any = {
   getClaimable: vi.fn(),
   claimAsLender: vi.fn(),
   claimAsBorrower: vi.fn(),
-  runner: {
-    provider: {
-      getBlockNumber: async () => 10_630_900,
-      getLogs: getLogsFn,
-    },
+};
+
+// #1076: viem PublicClient stub — routes `readContract({ functionName })`
+// to the per-test diamond vi.fns so the existing test bodies (which arm
+// `getLoanDetails`/`ownerOf`/`getClaimable`) drive the real hook unchanged.
+const publicClientStub: any = {
+  readContract: async ({ functionName, args }: { functionName: string; args?: readonly unknown[] }) => {
+    switch (functionName) {
+      case 'getUserPositionLoansPaginated':
+        // [loanIds, statuses, total] — single page, total == count so the
+        // hook's pagination loop terminates after one round-trip.
+        return [candidateIds, candidateIds.map(() => 0n), BigInt(candidateIds.length)];
+      case 'getUserPositionLoans':
+        return [candidateIds, candidateIds.map(() => 0n)];
+      case 'getLoanDetails':
+        return diamondMock.getLoanDetails(args?.[0]);
+      case 'ownerOf':
+        return diamondMock.ownerOf(args?.[0]);
+      case 'getClaimable':
+        return diamondMock.getClaimable(args?.[0], args?.[1]);
+      case 'getBorrowerLifRebate':
+        return [0n, 0n];
+      case 'isSanctionedAddress':
+        return false;
+      default:
+        return null;
+    }
   },
 };
+
+// #1076: return STABLE references from every mocked hook — a fresh object
+// literal per render would change `useClaimables`' `load` useCallback deps
+// every render → effect re-fires → setState → infinite re-render (hang).
+const readChainStub = {
+  chainId: 11155111,
+  diamondAddress: '0x00000000000000000000000000000000000000D1',
+  deployBlock: 1,
+  rpcUrl: 'http://localhost:8545',
+  blockExplorer: 'https://sepolia.etherscan.io',
+  name: 'Sepolia',
+};
 vi.mock('../../src/contracts/useDiamond', () => ({
-  useReadChain: (() => { const c = { chainId: 11155111, diamondAddress: '0x00000000000000000000000000000000000000D1', deployBlock: 1, rpcUrl: 'http://localhost:8545', blockExplorer: 'https://sepolia.etherscan.io', name: 'Sepolia' }; return () => c; })(),
-  useDiamondPublicClient: (() => { const pc = {}; return () => pc; })(),
+  useReadChain: () => readChainStub,
+  useDiamondPublicClient: () => publicClientStub,
   useReadyDiamond: () => diamondMock,
   useDiamondContract: () => diamondMock,
   useDiamondRead: () => diamondMock,
 }));
+
+// #1076: `useLogIndex` pulls in `useOfferStats` → `useLiveWatermark`, which
+// needs WatermarkProvider (omitted from the harness for its WS/timer side
+// effects). Stub it to a STABLE empty index so the walk-set comes purely
+// from the authoritative on-chain paginated read above.
+const logIndexStub = {
+  loans: [] as Array<{ loanId: bigint; lender: string; borrower: string }>,
+  getOwner: () => null,
+  loading: false,
+  reload: vi.fn(async () => {}),
+};
+vi.mock('../../src/hooks/useLogIndex', () => ({
+  useLogIndex: () => logIndexStub,
+}));
+
+// #1076: the indexer HTTP holder-projection is a cache that can only ADD
+// candidates; stub to null so the test drives the on-chain path only.
+vi.mock('../../src/lib/indexerClient', async (orig) => {
+  const actual = await orig<any>();
+  return { ...actual, fetchLoansByCurrentHolder: async () => null };
+});
+
+// #1076: peripheral cards pull the watermark/freshness/reward hook chains
+// (WatermarkProvider / DataFreshnessProvider omitted from the harness).
+// They have their own tests; stub to null so ClaimCenter's claim-list
+// logic is what's under test here.
+vi.mock('../../src/components/app/DataSyncStatus', () => ({ DataSyncStatus: () => null }));
+vi.mock('../../src/components/app/InteractionRewardsClaim', () => ({ InteractionRewardsClaim: () => null }));
 
 const walletMock = { address: null as string | null };
 vi.mock('../../src/context/WalletContext', async (orig) => {
@@ -64,13 +119,11 @@ function mkLoan(over: any = {}) {
 describe('ClaimCenter', () => {
   beforeEach(() => {
     walletMock.address = null;
-    Object.values(diamondMock).forEach((m: any) => m.mockReset && m.mockReset());
-    // Re-arm the default loan index for each test.
-    getLogsFn.mockImplementation((filter: any) => {
-      const t0: string | undefined = filter?.topics?.[0];
-      if (t0 !== LOAN_INITIATED_TOPIC0) return Promise.resolve([]);
-      return Promise.resolve(loanLogs());
-    });
+    diamondMock.getLoanDetails.mockReset();
+    diamondMock.ownerOf.mockReset();
+    diamondMock.getClaimable.mockReset();
+    diamondMock.claimAsLender.mockReset();
+    diamondMock.claimAsBorrower.mockReset();
   });
 
   it('shows connect prompt when no wallet', () => {
@@ -108,7 +161,10 @@ describe('ClaimCenter', () => {
     });
     diamondMock.claimAsLender.mockResolvedValue({ hash: '0xTX', wait: vi.fn().mockResolvedValue(undefined) });
     renderWithProviders(<ClaimCenter />);
-    await waitFor(() => expect(screen.getByText(/Loan #\d+/i)).toBeInTheDocument());
+    // #1076: the loan id renders as a deep-link (`Loan` text + a separate
+    // `<Link>#N</Link>`), so `/Loan #N/` can't match a single element.
+    // Target the loan-id link — its presence proves the claim row rendered.
+    await waitFor(() => expect(screen.getByRole('link', { name: '#1' })).toBeInTheDocument());
     await userEvent.click(screen.getByRole('button', { name: /^Claim$/i }));
     await waitFor(() => expect(screen.getByText(/Claim submitted/i)).toBeInTheDocument());
   });
@@ -133,7 +189,8 @@ describe('ClaimCenter', () => {
     diamondMock.getClaimable.mockResolvedValue({ asset: '0xCOL', amount: 5n, claimed: false, assetType: 0n, tokenId: 0n, quantity: 0n, heldForLender: 0n, hasRentalNftReturn: false });
     diamondMock.claimAsBorrower.mockResolvedValue({ hash: '0xTX', wait: vi.fn().mockResolvedValue(undefined) });
     renderWithProviders(<ClaimCenter />);
-    await waitFor(() => expect(screen.getByText(/Loan #\d+/i)).toBeInTheDocument());
+    // #1076: loan-id-as-link — see the lender test above.
+    await waitFor(() => expect(screen.getByRole('link', { name: '#1' })).toBeInTheDocument());
     await userEvent.click(screen.getByRole('button', { name: /^Claim$/i }));
     await waitFor(() => expect(diamondMock.claimAsBorrower).toHaveBeenCalled());
   });
