@@ -627,6 +627,15 @@ contract OfferModificationTest is SetupTest {
         // both collateral fields zero — the createOffer-side branch
         // (assetType ERC-20 + collateralAssetType ERC-20 + both
         // collateral fields zero) skips the strict > 0 enforcement.
+        //
+        // #998 S15 (#900): the system-derived collateral floor now fires at
+        // create AND mutate for LIQUID-both-legs ERC-20 offers, and a
+        // collateral-0 lender offer sits below any positive floor — so the
+        // both-zero exemption is meaningful only where the floor does not
+        // apply (an illiquid collateral leg, or the actual sale-vehicle create
+        // path). Mock the collateral leg illiquid so this test exercises the
+        // both-zero exemption itself, not the (separately-tested) floor bound.
+        mockOracleLiquidity(mockCollateralERC20, LibVaipakam.LiquidityStatus.Illiquid);
         LibVaipakam.CreateOfferParams memory params = _baseLenderParams();
         params.collateralAmount = 0;
         params.collateralAmountMax = 0;

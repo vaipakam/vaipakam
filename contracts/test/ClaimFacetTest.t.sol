@@ -318,7 +318,7 @@ contract ClaimFacetTest is Test {
     // ─── getClaimableAmount ───────────────────────────────────────────────────
 
     function testGetClaimableAmountActiveReturnsZero() public {
-        uint256 loanId = _createAndAcceptErc20Loan(1000 ether, 1500 ether, 30);
+        uint256 loanId = _createAndAcceptErc20Loan(1000 ether, 2000 ether, 30);
         (address asset, uint256 amount, bool claimed) = ClaimFacet(address(diamond)).getClaimableAmount(loanId, true);
         assertEq(asset, address(0));
         assertEq(amount, 0);
@@ -326,7 +326,7 @@ contract ClaimFacetTest is Test {
     }
 
     function testGetClaimableAmountAfterRepay() public {
-        uint256 loanId = _createAndAcceptErc20Loan(1000 ether, 1500 ether, 30);
+        uint256 loanId = _createAndAcceptErc20Loan(1000 ether, 2000 ether, 30);
         _repayLoan(loanId);
 
         // Lender should have a claim (principal + interest)
@@ -341,7 +341,7 @@ contract ClaimFacetTest is Test {
     // ─── claimAsLender ────────────────────────────────────────────────────────
 
     function testClaimAsLenderSuccessAfterRepay() public {
-        uint256 loanId = _createAndAcceptErc20Loan(1000 ether, 1500 ether, 30);
+        uint256 loanId = _createAndAcceptErc20Loan(1000 ether, 2000 ether, 30);
         _repayLoan(loanId);
 
         LibVaipakam.Loan memory loan = LoanFacet(address(diamond)).getLoanDetails(loanId);
@@ -363,7 +363,7 @@ contract ClaimFacetTest is Test {
     }
 
     function testClaimAsLenderRevertsIfActiveLoan() public {
-        uint256 loanId = _createAndAcceptErc20Loan(1000 ether, 1500 ether, 30);
+        uint256 loanId = _createAndAcceptErc20Loan(1000 ether, 2000 ether, 30);
 
         vm.prank(lender);
         vm.expectRevert(IVaipakamErrors.InvalidLoanStatus.selector);
@@ -371,7 +371,7 @@ contract ClaimFacetTest is Test {
     }
 
     function testClaimAsLenderRevertsIfAlreadyClaimed() public {
-        uint256 loanId = _createAndAcceptErc20Loan(1000 ether, 1500 ether, 30);
+        uint256 loanId = _createAndAcceptErc20Loan(1000 ether, 2000 ether, 30);
         _repayLoan(loanId);
 
         vm.prank(lender);
@@ -383,7 +383,7 @@ contract ClaimFacetTest is Test {
     }
 
     function testClaimAsLenderRevertsIfNotNFTOwner() public {
-        uint256 loanId = _createAndAcceptErc20Loan(1000 ether, 1500 ether, 30);
+        uint256 loanId = _createAndAcceptErc20Loan(1000 ether, 2000 ether, 30);
         _repayLoan(loanId);
 
         // borrower tries to claim as lender
@@ -395,7 +395,7 @@ contract ClaimFacetTest is Test {
     // ─── claimAsBorrower ──────────────────────────────────────────────────────
 
     function testClaimAsBorrowerSuccessAfterRepay() public {
-        uint256 loanId = _createAndAcceptErc20Loan(1000 ether, 1500 ether, 30);
+        uint256 loanId = _createAndAcceptErc20Loan(1000 ether, 2000 ether, 30);
         _repayLoan(loanId);
 
         LibVaipakam.Loan memory loan = LoanFacet(address(diamond)).getLoanDetails(loanId);
@@ -425,14 +425,14 @@ contract ClaimFacetTest is Test {
     ///         repay (so the withdraw guard blocks any drain) and zeroes
     ///         exactly at claim is the structural guarantee.
     function test_collateralLienHeldUntilClaim_notReleasedAtRepayTerminal() public {
-        uint256 loanId = _createAndAcceptErc20Loan(1000 ether, 1500 ether, 30);
+        uint256 loanId = _createAndAcceptErc20Loan(1000 ether, 2000 ether, 30);
 
         // Lien active while the loan is live.
         assertEq(
             TestMutatorFacet(address(diamond)).getEncumberedRaw(
                 borrower, mockCollateralERC20, 0
             ),
-            1500 ether,
+            2000 ether,
             "collateral liened while loan active"
         );
 
@@ -445,7 +445,7 @@ contract ClaimFacetTest is Test {
             TestMutatorFacet(address(diamond)).getEncumberedRaw(
                 borrower, mockCollateralERC20, 0
             ),
-            1500 ether,
+            2000 ether,
             "lien HELD after repay terminal (released only at claim)"
         );
 
@@ -464,7 +464,7 @@ contract ClaimFacetTest is Test {
 
     function testClaimAsBorrowerRevertsIfNothingToClaim() public {
         // After default with illiquid collateral, borrower has no claim (full collateral goes to lender)
-        uint256 loanId = _createAndAcceptErc20Loan(1000 ether, 1500 ether, 30);
+        uint256 loanId = _createAndAcceptErc20Loan(1000 ether, 2000 ether, 30);
 
         // Warp past grace period
         uint256 endTime = block.timestamp + 30 days;
@@ -486,7 +486,7 @@ contract ClaimFacetTest is Test {
     }
 
     function testClaimAsBorrowerRevertsIfActiveLoan() public {
-        uint256 loanId = _createAndAcceptErc20Loan(1000 ether, 1500 ether, 30);
+        uint256 loanId = _createAndAcceptErc20Loan(1000 ether, 2000 ether, 30);
 
         vm.prank(borrower);
         vm.expectRevert(IVaipakamErrors.InvalidLoanStatus.selector);
@@ -494,7 +494,7 @@ contract ClaimFacetTest is Test {
     }
 
     function testClaimAsBorrowerRevertsIfNotNFTOwner() public {
-        uint256 loanId = _createAndAcceptErc20Loan(1000 ether, 1500 ether, 30);
+        uint256 loanId = _createAndAcceptErc20Loan(1000 ether, 2000 ether, 30);
         _repayLoan(loanId);
 
         // lender tries to claim as borrower
@@ -529,7 +529,7 @@ contract ClaimFacetTest is Test {
     }
 
     function test_KeeperActionAll_CannotClaimAsLender() public {
-        uint256 loanId = _createAndAcceptErc20Loan(1000 ether, 1500 ether, 30);
+        uint256 loanId = _createAndAcceptErc20Loan(1000 ether, 2000 ether, 30);
         _repayLoan(loanId);
 
         address keeper = makeAddr("keeperAll");
@@ -542,7 +542,7 @@ contract ClaimFacetTest is Test {
     }
 
     function test_KeeperActionAll_CannotClaimAsBorrower() public {
-        uint256 loanId = _createAndAcceptErc20Loan(1000 ether, 1500 ether, 30);
+        uint256 loanId = _createAndAcceptErc20Loan(1000 ether, 2000 ether, 30);
         _repayLoan(loanId);
 
         address keeper = makeAddr("keeperAll");
@@ -557,7 +557,7 @@ contract ClaimFacetTest is Test {
     function test_KeeperActionAll_CannotAddCollateral() public {
         // Active loan (no repay) — add-collateral is a borrower money-in path
         // that is still owner-only; the owner gate reverts before any transfer.
-        uint256 loanId = _createAndAcceptErc20Loan(1000 ether, 1500 ether, 30);
+        uint256 loanId = _createAndAcceptErc20Loan(1000 ether, 2000 ether, 30);
 
         address keeper = makeAddr("keeperAll");
         _fullyApproveKeeper(borrower, keeper, loanId);
@@ -570,7 +570,7 @@ contract ClaimFacetTest is Test {
     // ─── Loan Settled ─────────────────────────────────────────────────────────
 
     function testLoanSettledAfterBothClaim() public {
-        uint256 loanId = _createAndAcceptErc20Loan(1000 ether, 1500 ether, 30);
+        uint256 loanId = _createAndAcceptErc20Loan(1000 ether, 2000 ether, 30);
         _repayLoan(loanId);
 
         // Lender claims
@@ -589,7 +589,7 @@ contract ClaimFacetTest is Test {
 
     function testLoanSettledWhenLenderClaimsAndBorrowerHasNoClaim() public {
         // Illiquid default: only lender has claim; borrower has nothing → loan settles when lender claims
-        uint256 loanId = _createAndAcceptErc20Loan(1000 ether, 1500 ether, 30);
+        uint256 loanId = _createAndAcceptErc20Loan(1000 ether, 2000 ether, 30);
 
         uint256 endTime = block.timestamp + 30 days;
         vm.warp(endTime + LibVaipakam.gracePeriod(30) + 1);
@@ -614,7 +614,7 @@ contract ClaimFacetTest is Test {
 
     /// @dev Tests claimAsLender reverts if loan is Settled (not Repaid/Defaulted).
     function testClaimAsLenderRevertsIfLoanSettled() public {
-        uint256 loanId = _createAndAcceptErc20Loan(1000 ether, 1500 ether, 30);
+        uint256 loanId = _createAndAcceptErc20Loan(1000 ether, 2000 ether, 30);
         _repayLoan(loanId);
 
         // Both parties claim to settle the loan
@@ -631,7 +631,7 @@ contract ClaimFacetTest is Test {
 
     /// @dev Tests claimAsBorrower reverts if already claimed.
     function testClaimAsBorrowerRevertsIfAlreadyClaimed() public {
-        uint256 loanId = _createAndAcceptErc20Loan(1000 ether, 1500 ether, 30);
+        uint256 loanId = _createAndAcceptErc20Loan(1000 ether, 2000 ether, 30);
         _repayLoan(loanId);
 
         vm.prank(borrower);
@@ -644,7 +644,7 @@ contract ClaimFacetTest is Test {
 
     /// @dev Tests that claimAsBorrower settles the loan when lender has already claimed.
     function testLoanSettledWhenBorrowerClaimsAndLenderAlreadyClaimed() public {
-        uint256 loanId = _createAndAcceptErc20Loan(1000 ether, 1500 ether, 30);
+        uint256 loanId = _createAndAcceptErc20Loan(1000 ether, 2000 ether, 30);
         _repayLoan(loanId);
 
         // Lender claims first
@@ -663,7 +663,7 @@ contract ClaimFacetTest is Test {
 
     /// @dev Tests cross-facet call failure in claimAsLender (vault withdraw fails).
     function testClaimAsLenderCrossFacetFails() public {
-        uint256 loanId = _createAndAcceptErc20Loan(1000 ether, 1500 ether, 30);
+        uint256 loanId = _createAndAcceptErc20Loan(1000 ether, 2000 ether, 30);
         _repayLoan(loanId);
 
         // Mock vaultWithdrawERC20 to fail
@@ -680,7 +680,7 @@ contract ClaimFacetTest is Test {
 
     /// @dev Tests cross-facet call failure in claimAsBorrower (vault withdraw fails).
     function testClaimAsBorrowerCrossFacetFails() public {
-        uint256 loanId = _createAndAcceptErc20Loan(1000 ether, 1500 ether, 30);
+        uint256 loanId = _createAndAcceptErc20Loan(1000 ether, 2000 ether, 30);
         _repayLoan(loanId);
 
         // Mock vaultWithdrawERC20 to fail
@@ -697,7 +697,7 @@ contract ClaimFacetTest is Test {
 
     /// @dev Tests getClaimableAmount for lender with isLender=true after default (covers Defaulted status branch).
     function testGetClaimableAmountAfterDefault() public {
-        uint256 loanId = _createAndAcceptErc20Loan(1000 ether, 1500 ether, 30);
+        uint256 loanId = _createAndAcceptErc20Loan(1000 ether, 2000 ether, 30);
 
         uint256 endTime = block.timestamp + 30 days;
         vm.warp(endTime + LibVaipakam.gracePeriod(30) + 1);
@@ -714,7 +714,7 @@ contract ClaimFacetTest is Test {
 
     /// @dev Covers CrossFacetCallFailed("Burn lender NFT failed") in claimAsLender.
     function testClaimAsLenderBurnNFTFails() public {
-        uint256 loanId = _createAndAcceptErc20Loan(1000 ether, 1500 ether, 30);
+        uint256 loanId = _createAndAcceptErc20Loan(1000 ether, 2000 ether, 30);
         _repayLoan(loanId);
 
         // Allow vault withdraw but fail burnNFT
@@ -731,7 +731,7 @@ contract ClaimFacetTest is Test {
 
     /// @dev Covers CrossFacetCallFailed("Burn borrower NFT failed") in claimAsBorrower.
     function testClaimAsBorrowerBurnNFTFails() public {
-        uint256 loanId = _createAndAcceptErc20Loan(1000 ether, 1500 ether, 30);
+        uint256 loanId = _createAndAcceptErc20Loan(1000 ether, 2000 ether, 30);
         _repayLoan(loanId);
 
         // Allow vault withdraw but fail burnNFT
@@ -749,7 +749,7 @@ contract ClaimFacetTest is Test {
     /// @dev Covers line 101: `if (claim.amount == 0) revert NothingToClaim()` in claimAsLender.
     ///      Sets loan to Repaid state with lender claim amount = 0 (before any claim is set).
     function testClaimAsLenderRevertsIfNothingToClaim() public {
-        uint256 loanId = _createAndAcceptErc20Loan(1000 ether, 1500 ether, 30);
+        uint256 loanId = _createAndAcceptErc20Loan(1000 ether, 2000 ether, 30);
         _repayLoan(loanId);
 
         // Zero out lenderClaims[loanId].amount via vm.store
@@ -763,7 +763,7 @@ contract ClaimFacetTest is Test {
 
     /// @dev Covers heldForLender > 0 path in claimAsLender.
     function testClaimAsLenderWithHeldForLender() public {
-        uint256 loanId = _createAndAcceptErc20Loan(1000 ether, 1500 ether, 30);
+        uint256 loanId = _createAndAcceptErc20Loan(1000 ether, 2000 ether, 30);
         _repayLoan(loanId);
 
         // Set heldForLender[loanId] > 0 via vm.store
@@ -787,7 +787,7 @@ contract ClaimFacetTest is Test {
 
     /// @dev Covers held-for-lender claim failure path.
     function testClaimAsLenderHeldForLenderFails() public {
-        uint256 loanId = _createAndAcceptErc20Loan(1000 ether, 1500 ether, 30);
+        uint256 loanId = _createAndAcceptErc20Loan(1000 ether, 2000 ether, 30);
         _repayLoan(loanId);
 
         // Set heldForLender > 0
@@ -813,7 +813,7 @@ contract ClaimFacetTest is Test {
 
     /// @dev Covers hasHeld=true path making NothingToClaim check pass when claim.amount=0
     function testClaimAsLenderWithHeldOnlyNoClaimAmount() public {
-        uint256 loanId = _createAndAcceptErc20Loan(1000 ether, 1500 ether, 30);
+        uint256 loanId = _createAndAcceptErc20Loan(1000 ether, 2000 ether, 30);
         _repayLoan(loanId);
 
         // Set claim.amount = 0 but heldForLender > 0
@@ -836,7 +836,7 @@ contract ClaimFacetTest is Test {
 
     /// @dev Covers ERC721 return path in claimAsLender.
     function testClaimAsLenderERC721Return() public {
-        uint256 loanId = _createAndAcceptErc20Loan(1000 ether, 1500 ether, 30);
+        uint256 loanId = _createAndAcceptErc20Loan(1000 ether, 2000 ether, 30);
         _repayLoan(loanId);
 
         // Override loan assetType to ERC721 to trigger ERC721 return branch
@@ -855,7 +855,7 @@ contract ClaimFacetTest is Test {
 
     /// @dev Covers ERC1155 return path in claimAsLender.
     function testClaimAsLenderERC1155Return() public {
-        uint256 loanId = _createAndAcceptErc20Loan(1000 ether, 1500 ether, 30);
+        uint256 loanId = _createAndAcceptErc20Loan(1000 ether, 2000 ether, 30);
         _repayLoan(loanId);
 
         // Override loan assetType to ERC1155
@@ -873,7 +873,7 @@ contract ClaimFacetTest is Test {
 
     /// @dev Covers ERC721 return failure path.
     function testClaimAsLenderERC721ReturnFails() public {
-        uint256 loanId = _createAndAcceptErc20Loan(1000 ether, 1500 ether, 30);
+        uint256 loanId = _createAndAcceptErc20Loan(1000 ether, 2000 ether, 30);
         _repayLoan(loanId);
 
         _setLoanAssetType(loanId, LibVaipakam.AssetType.ERC721);
@@ -888,7 +888,7 @@ contract ClaimFacetTest is Test {
 
     /// @dev Covers ERC1155 return failure path.
     function testClaimAsLenderERC1155ReturnFails() public {
-        uint256 loanId = _createAndAcceptErc20Loan(1000 ether, 1500 ether, 30);
+        uint256 loanId = _createAndAcceptErc20Loan(1000 ether, 2000 ether, 30);
         _repayLoan(loanId);
 
         _setLoanAssetType(loanId, LibVaipakam.AssetType.ERC1155);
@@ -905,7 +905,7 @@ contract ClaimFacetTest is Test {
 
     /// @dev Test A: claimAsLender with ERC721 claim asset type.
     function testClaimAsLenderWithERC721ClaimAsset() public {
-        uint256 loanId = _createAndAcceptErc20Loan(1000 ether, 1500 ether, 30);
+        uint256 loanId = _createAndAcceptErc20Loan(1000 ether, 2000 ether, 30);
         _repayLoan(loanId);
 
         // Override lenderClaims[loanId].assetType to ERC721 (=1) via vm.store
@@ -924,7 +924,7 @@ contract ClaimFacetTest is Test {
 
     /// @dev Test B: claimAsLender with ERC1155 claim asset type.
     function testClaimAsLenderWithERC1155ClaimAsset() public {
-        uint256 loanId = _createAndAcceptErc20Loan(1000 ether, 1500 ether, 30);
+        uint256 loanId = _createAndAcceptErc20Loan(1000 ether, 2000 ether, 30);
         _repayLoan(loanId);
 
         TestMutatorFacet(address(diamond)).setLenderClaimNFTFieldsRaw(loanId, LibVaipakam.AssetType.ERC1155, 42, 10);
@@ -941,7 +941,7 @@ contract ClaimFacetTest is Test {
 
     /// @dev Test C: claimAsBorrower with ERC721 claim asset type.
     function testClaimAsBorrowerWithERC721ClaimAsset() public {
-        uint256 loanId = _createAndAcceptErc20Loan(1000 ether, 1500 ether, 30);
+        uint256 loanId = _createAndAcceptErc20Loan(1000 ether, 2000 ether, 30);
         _repayLoan(loanId);
 
         TestMutatorFacet(address(diamond)).setBorrowerClaimNFTFieldsRaw(loanId, LibVaipakam.AssetType.ERC721, 42, 0);
@@ -958,7 +958,7 @@ contract ClaimFacetTest is Test {
 
     /// @dev Test D: claimAsBorrower with ERC1155 claim asset type.
     function testClaimAsBorrowerWithERC1155ClaimAsset() public {
-        uint256 loanId = _createAndAcceptErc20Loan(1000 ether, 1500 ether, 30);
+        uint256 loanId = _createAndAcceptErc20Loan(1000 ether, 2000 ether, 30);
         _repayLoan(loanId);
 
         TestMutatorFacet(address(diamond)).setBorrowerClaimNFTFieldsRaw(loanId, LibVaipakam.AssetType.ERC1155, 42, 10);
@@ -975,7 +975,7 @@ contract ClaimFacetTest is Test {
 
     /// @dev Test E: claimAsLender with ERC721 claim asset type, transfer fails.
     function testClaimAsLenderERC721TransferFails() public {
-        uint256 loanId = _createAndAcceptErc20Loan(1000 ether, 1500 ether, 30);
+        uint256 loanId = _createAndAcceptErc20Loan(1000 ether, 2000 ether, 30);
         _repayLoan(loanId);
 
         TestMutatorFacet(address(diamond)).setLenderClaimNFTFieldsRaw(loanId, LibVaipakam.AssetType.ERC721, 42, 0);
@@ -990,7 +990,7 @@ contract ClaimFacetTest is Test {
 
     /// @dev Test F: claimAsBorrower with ERC1155 claim asset type, transfer fails.
     function testClaimAsBorrowerERC1155TransferFails() public {
-        uint256 loanId = _createAndAcceptErc20Loan(1000 ether, 1500 ether, 30);
+        uint256 loanId = _createAndAcceptErc20Loan(1000 ether, 2000 ether, 30);
         _repayLoan(loanId);
 
         TestMutatorFacet(address(diamond)).setBorrowerClaimNFTFieldsRaw(loanId, LibVaipakam.AssetType.ERC1155, 42, 10);
@@ -1005,7 +1005,7 @@ contract ClaimFacetTest is Test {
 
     /// @dev Test G: Loan settles when lender claims and borrower claim amount is 0 with ERC20 type.
     function testLoanSettledWhenBorrowerClaimAmountZero() public {
-        uint256 loanId = _createAndAcceptErc20Loan(1000 ether, 1500 ether, 30);
+        uint256 loanId = _createAndAcceptErc20Loan(1000 ether, 2000 ether, 30);
         _repayLoan(loanId);
 
         // Set borrowerClaims[loanId]: amount=0, assetType=ERC20(0), claimed=false
@@ -1032,7 +1032,7 @@ contract ClaimFacetTest is Test {
     /// @dev Covers lenderClaim.amount == 0 settle path in claimAsBorrower.
     ///      When borrower claims but lender claim amount is 0, loan settles immediately.
     function testClaimAsBorrowerSettlesWhenLenderHasNoClaim() public {
-        uint256 loanId = _createAndAcceptErc20Loan(1000 ether, 1500 ether, 30);
+        uint256 loanId = _createAndAcceptErc20Loan(1000 ether, 2000 ether, 30);
         _repayLoan(loanId);
 
         // Manually zero out lenderClaims[loanId].amount via vm.store
@@ -1054,7 +1054,7 @@ contract ClaimFacetTest is Test {
 
     /// @dev Covers ERC1155 claim transfer failure path in claimAsLender (line 148-149).
     function testClaimAsLenderERC1155ClaimTransferFails() public {
-        uint256 loanId = _createAndAcceptErc20Loan(1000 ether, 1500 ether, 30);
+        uint256 loanId = _createAndAcceptErc20Loan(1000 ether, 2000 ether, 30);
         _repayLoan(loanId);
 
         // Override lenderClaims[loanId] to a non-zero ERC1155 NFT claim
@@ -1080,7 +1080,7 @@ contract ClaimFacetTest is Test {
 
     /// @dev Covers ERC721 claim transfer failure path in claimAsBorrower (line 273-282).
     function testClaimAsBorrowerERC721ClaimTransferFails() public {
-        uint256 loanId = _createAndAcceptErc20Loan(1000 ether, 1500 ether, 30);
+        uint256 loanId = _createAndAcceptErc20Loan(1000 ether, 2000 ether, 30);
         _repayLoan(loanId);
 
         // Override borrowerClaims[loanId].assetType to ERC721 (=1) via vm.store
@@ -1098,7 +1098,7 @@ contract ClaimFacetTest is Test {
     /// @dev Covers lenderHasHeld check in claimAsBorrower (line 319): when borrower claims first
     ///      and heldForLender > 0, loan should NOT settle (lender still has unclaimed held funds).
     function testClaimAsBorrowerDoesNotSettleWhenLenderHasHeld() public {
-        uint256 loanId = _createAndAcceptErc20Loan(1000 ether, 1500 ether, 30);
+        uint256 loanId = _createAndAcceptErc20Loan(1000 ether, 2000 ether, 30);
         _repayLoan(loanId);
 
         // Set heldForLender[loanId] > 0 so lender still has something to claim
@@ -1116,7 +1116,7 @@ contract ClaimFacetTest is Test {
     /// @dev Covers lenderHasNftCollateralClaim check in claimAsBorrower (line 321):
     ///      when borrower claims first and lenderClaim.assetType != ERC20, loan should NOT settle.
     function testClaimAsBorrowerDoesNotSettleWhenLenderHasNFTCollateralClaim() public {
-        uint256 loanId = _createAndAcceptErc20Loan(1000 ether, 1500 ether, 30);
+        uint256 loanId = _createAndAcceptErc20Loan(1000 ether, 2000 ether, 30);
         _repayLoan(loanId);
 
         // Set lenderClaims[loanId].assetType to ERC721 (=1), but amount=0 and not claimed

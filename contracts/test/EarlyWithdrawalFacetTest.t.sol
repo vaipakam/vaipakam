@@ -85,7 +85,10 @@ contract EarlyWithdrawalFacetTest is Test {
     uint256 activeLoanId;
     uint256 buyOfferId;
     uint256 constant PRINCIPAL  = 1000 ether;
-    uint256 constant COLLATERAL = 1800 ether;
+    // #998 S15 (#900): 2000 clears the create-time collateral floor for the
+    // excess buy offers (amount PRINCIPAL+100 = 1100 → floor ~1941); the old
+    // 1800 sat below it. Still a valid ratio for the base PRINCIPAL offers.
+    uint256 constant COLLATERAL = 2000 ether;
 
     function mockLiquidity(address asset, LibVaipakam.LiquidityStatus status) internal {
         vm.mockCall(address(diamond), abi.encodeWithSelector(OracleFacet.checkLiquidity.selector, asset), abi.encode(status));

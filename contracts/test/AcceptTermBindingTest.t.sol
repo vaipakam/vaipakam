@@ -42,7 +42,11 @@ contract AcceptTermBindingTest is SetupTest {
                 amount: 1000 ether,
                 interestRateBps: 500,
                 collateralAsset: collAsset,
-                collateralAmount: 1500 ether,
+                // #998 S15 (#900): 2000 clears the create-time collateral floor
+                // (~1764 for a 1000 principal at the liquid-both-legs 85% tier
+                // LTV / 1.5 HF admission); the old 1500 sat below it. Illiquid-leg
+                // scenarios skip the floor and are unaffected by the bump.
+                collateralAmount: 2000 ether,
                 durationDays: 30,
                 assetType: LibVaipakam.AssetType.ERC20,
                 tokenId: 0,
@@ -57,7 +61,7 @@ contract AcceptTermBindingTest is SetupTest {
                 allowsParallelSale: false,
                 amountMax: 1000 ether,
                 interestRateBpsMax: 500,
-                collateralAmountMax: 1500 ether,
+                collateralAmountMax: 2000 ether,
                 periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None,
                 expiresAt: 0,
                 fillMode: LibVaipakam.FillMode.Partial,

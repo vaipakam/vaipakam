@@ -587,6 +587,10 @@ contract DefaultedFacetTest is Test {
                 amount: amount,
                 interestRateBps: 500,
                 collateralAsset: collateralAsset,
+                // #998 S15: liquid-both-legs ERC-20 lender offers must post
+                // collateral >= ~1.765x the lending amount (amount * 1.5 / 0.85)
+                // to clear the create-time floor (LibOfferBounds). Callers that
+                // used 1500 ether against 1000 ether lending were bumped to 2000.
                 collateralAmount: collateralAmount,
                 durationDays: durationDays,
                 assetType: assetType,
@@ -624,7 +628,7 @@ contract DefaultedFacetTest is Test {
             mockCollateralERC20,
             LibVaipakam.AssetType.ERC20,
             1000 ether,
-            1500 ether,
+            2000 ether, // #998 S15: was 1500 (below ~1764 create floor)
             30,
             0,
             0
@@ -700,7 +704,7 @@ contract DefaultedFacetTest is Test {
             mockCollateralERC20,
             LibVaipakam.AssetType.ERC20,
             1000 ether,
-            1500 ether,
+            2000 ether, // #998 S15: was 1500 (below ~1764 create floor)
             30,
             0,
             0
@@ -840,7 +844,7 @@ contract DefaultedFacetTest is Test {
             mockCollateralERC20,
             LibVaipakam.AssetType.ERC20,
             1000 ether,
-            1500 ether,
+            2000 ether, // #998 S15: was 1500 (below ~1764 create floor)
             30,
             0,
             0
@@ -861,7 +865,7 @@ contract DefaultedFacetTest is Test {
             mockCollateralERC20,
             LibVaipakam.AssetType.ERC20,
             3000 ether,
-            4500 ether,
+            6000 ether, // #998 S15: was 4500 (below ~5294 floor for 3000 lending)
             30,
             0,
             0
@@ -883,7 +887,7 @@ contract DefaultedFacetTest is Test {
             mockCollateralERC20,
             LibVaipakam.AssetType.ERC20,
             1000 ether,
-            1500 ether,
+            2000 ether, // #998 S15: was 1500 (below ~1764 create floor)
             30,
             0,
             0
@@ -905,7 +909,7 @@ contract DefaultedFacetTest is Test {
             mockCollateralERC20,
             LibVaipakam.AssetType.ERC20,
             1000 ether,
-            1500 ether,
+            2000 ether, // #998 S15: was 1500 (below ~1764 create floor)
             30, 0, 0
         );
 
@@ -926,7 +930,7 @@ contract DefaultedFacetTest is Test {
     /// @dev triggerDefault reverts if loan status is not Active.
     function testTriggerDefaultRevertsIfNotActive() public {
         uint256 loanId = createAndAcceptOffer(mockERC20, mockCollateralERC20, LibVaipakam.AssetType.ERC20,
-            1000 ether, 1500 ether, 30, 0, 0
+            1000 ether, 2000 ether, 30, 0, 0 // #998 S15: coll 1500->2000 (create floor)
         );
         vm.warp(block.timestamp + 33 days + 3);
         // Mock HF < 1 so triggerLiquidation succeeds (RiskFacet now always requires HF < 1)
@@ -946,7 +950,7 @@ contract DefaultedFacetTest is Test {
     ///      and riskAndTermsConsentFromBoth is true — takes the illiquid/collapsed else-if branch.
     function testTriggerDefaultLiquidCollateralCollapsed() public {
         uint256 loanId = createAndAcceptOffer(mockERC20, mockCollateralERC20, LibVaipakam.AssetType.ERC20,
-            1000 ether, 1500 ether, 30, 0, 0
+            1000 ether, 2000 ether, 30, 0, 0 // #998 S15: coll 1500->2000 (create floor)
         );
 
         vm.warp(block.timestamp + 33 days + 3);
@@ -1084,7 +1088,7 @@ contract DefaultedFacetTest is Test {
     /// @dev Tests triggerDefault liquid path cross-facet failure: liquidation fails.
     function testTriggerDefaultLiquidCollateralWithdrawalFails() public {
         uint256 loanId = createAndAcceptOffer(mockERC20, mockCollateralERC20, LibVaipakam.AssetType.ERC20,
-            1000 ether, 1500 ether, 30, 0, 0
+            1000 ether, 2000 ether, 30, 0, 0 // #998 S15: coll 1500->2000 (create floor)
         );
         vm.warp(block.timestamp + 33 days + 3);
 
@@ -1276,7 +1280,7 @@ contract DefaultedFacetTest is Test {
     /// @dev Tests triggerDefault liquid path where swap reverts → fallback to full collateral transfer.
     function testTriggerDefaultLiquidSwapReverts() public {
         uint256 loanId = createAndAcceptOffer(mockERC20, mockCollateralERC20, LibVaipakam.AssetType.ERC20,
-            1000 ether, 1500 ether, 30, 0, 0
+            1000 ether, 2000 ether, 30, 0, 0 // #998 S15: coll 1500->2000 (create floor)
         );
         vm.warp(block.timestamp + 33 days + 3);
 
@@ -1314,14 +1318,14 @@ contract DefaultedFacetTest is Test {
     /// @dev Tests triggerDefault liquid path with successful swap where borrower has surplus.
     function testTriggerDefaultLiquidWithBorrowerSurplus() public {
         uint256 loanId = createAndAcceptOffer(mockERC20, mockCollateralERC20, LibVaipakam.AssetType.ERC20,
-            1000 ether, 1500 ether, 30, 0, 0
+            1000 ether, 2000 ether, 30, 0, 0 // #998 S15: coll 1500->2000 (create floor)
         );
         vm.warp(block.timestamp + 33 days + 3);
 
-        // Mock: swap proceeds > total debt. ZeroExProxyMock rate is 11/10 → proceeds=1650 ether.
+        // Mock: swap proceeds > total debt. ZeroExProxyMock rate is 11/10 → proceeds=2200 ether (2000 coll).
         // Total debt = principal (1000) + accrued + late fees. With 33 days elapsed:
         // accrued ≈ (1000 * 500 * 33*86400) / (365*86400 * 10000) = ~4.52 ether
-        // late ≈ some amount. Total ~1005 ether. 1650 > 1005 → surplus exists.
+        // late ≈ some amount. Total ~1005 ether. 2200 > 1005 → surplus exists.
         deal(mockERC20, address(diamond), 2000 ether);
         deal(mockCollateralERC20, address(diamond), 2000 ether);
         vm.mockCall(address(diamond), abi.encodeWithSelector(VaultFactoryFacet.vaultWithdrawERC20.selector), abi.encode(true));
@@ -1337,12 +1341,21 @@ contract DefaultedFacetTest is Test {
 
     /// @dev Tests triggerDefault liquid path where proceeds < principal (undercollateralized)
     function testTriggerDefaultLiquidUndercollateralized() public {
+        // #998 S15: an undercollateralized loan can no longer be ORIGINATED (the
+        // create-time floor rejects thin collateral), so originate HEALTHY (2000
+        // clears the floor) and then reduce the loan's collateral to the
+        // undercollateralized 500 to exercise the loss-bearing liquidation path.
+        // The liquidation sells `loan.collateralAmount` (500) at the 1/10 rate →
+        // proceeds 50 << principal, so the lender bears the loss.
         uint256 loanId = createAndAcceptOffer(mockERC20, mockCollateralERC20, LibVaipakam.AssetType.ERC20,
-            1000 ether, 500 ether, 30, 0, 0
+            1000 ether, 2000 ether, 30, 0, 0
         );
+        LibVaipakam.Loan memory _uc = LoanFacet(address(diamond)).getLoanDetails(loanId);
+        _uc.collateralAmount = 500 ether; // undercollateralized post-origination
+        TestMutatorFacet(address(diamond)).setLoan(loanId, _uc);
         vm.warp(block.timestamp + 33 days + 3);
 
-        // Set ZeroEx rate very low so proceeds < principal (e.g., 1/10 rate → 50 ether proceeds)
+        // Set ZeroEx rate very low so proceeds < principal (1/10 rate → 50 ether proceeds)
         ZeroExProxyMock(mockZeroExProxy).setRate(1, 10);
         deal(mockERC20, address(diamond), 2000 ether);
         deal(mockCollateralERC20, address(diamond), 2000 ether);
@@ -1362,7 +1375,7 @@ contract DefaultedFacetTest is Test {
     /// @dev Tests triggerDefault liquid path where swap proceeds > principal but < total debt (treasury fee on interest)
     function testTriggerDefaultLiquidProceedsAbovePrincipal() public {
         uint256 loanId = createAndAcceptOffer(mockERC20, mockCollateralERC20, LibVaipakam.AssetType.ERC20,
-            1000 ether, 1500 ether, 30, 0, 0
+            1000 ether, 2000 ether, 30, 0, 0 // #998 S15: coll 1500->2000 (create floor)
         );
         vm.warp(block.timestamp + 33 days + 3);
 
@@ -1393,7 +1406,7 @@ contract DefaultedFacetTest is Test {
     function test_TriggerDefault_RevertsOnEmptyAdapterList() public {
         uint256 loanId = createAndAcceptOffer(
             mockERC20, mockCollateralERC20, LibVaipakam.AssetType.ERC20,
-            1000 ether, 1500 ether, 30, 0, 0
+            1000 ether, 2000 ether, 30, 0, 0 // #998 S15: coll 1500->2000 (create floor)
         );
         vm.warp(block.timestamp + 33 days + 3);
         vm.mockCall(
@@ -1418,7 +1431,7 @@ contract DefaultedFacetTest is Test {
     function test_TriggerDefault_LiquidSwapPaysCallerIncentive() public {
         uint256 loanId = createAndAcceptOffer(
             mockERC20, mockCollateralERC20, LibVaipakam.AssetType.ERC20,
-            1000 ether, 1500 ether, 30, 0, 0
+            1000 ether, 2000 ether, 30, 0, 0 // #998 S15: coll 1500->2000 (create floor)
         );
         vm.warp(block.timestamp + 33 days + 3);
         deal(mockERC20, address(diamond), 3000 ether);
@@ -1457,7 +1470,7 @@ contract DefaultedFacetTest is Test {
     function test_TriggerDefault_SanctionedCaller_TriggersButEarnsNoBonus() public {
         uint256 loanId = createAndAcceptOffer(
             mockERC20, mockCollateralERC20, LibVaipakam.AssetType.ERC20,
-            1000 ether, 1500 ether, 30, 0, 0
+            1000 ether, 2000 ether, 30, 0, 0 // #998 S15: coll 1500->2000 (create floor)
         );
         vm.warp(block.timestamp + 33 days + 3);
         deal(mockERC20, address(diamond), 3000 ether);
@@ -1556,9 +1569,17 @@ contract DefaultedFacetTest is Test {
     /// @dev Test J: triggerDefault liquid path where swap proceeds < principal (undercollateralized below principal).
     ///      Lender gets all proceeds, no treasury fee.
     function testTriggerDefaultLiquidUndercollateralizedBelowPrincipal() public {
+        // #998 S15: an undercollateralized loan can no longer be ORIGINATED, so
+        // originate HEALTHY (2000 clears the ~1875 create floor) then reduce the
+        // loan's collateral to 500 to exercise the below-principal loss path. The
+        // liquidation sells `loan.collateralAmount` (500) at the 1/2 rate →
+        // proceeds 250 < principal (1000), preserving the loss-bearing assertion.
         uint256 loanId = createAndAcceptOffer(mockERC20, mockCollateralERC20, LibVaipakam.AssetType.ERC20,
-            1000 ether, 500 ether, 30, 0, 0
+            1000 ether, 2000 ether, 30, 0, 0
         );
+        LibVaipakam.Loan memory _uc = LoanFacet(address(diamond)).getLoanDetails(loanId);
+        _uc.collateralAmount = 500 ether; // undercollateralized post-origination
+        TestMutatorFacet(address(diamond)).setLoan(loanId, _uc);
         vm.warp(block.timestamp + 33 days + 3);
 
         // Set ZeroEx rate very low so proceeds < principal
@@ -1586,11 +1607,11 @@ contract DefaultedFacetTest is Test {
     /// @dev Test K: triggerDefault liquid path where borrower surplus vault lookup fails.
     function testTriggerDefaultBorrowerSurplusVaultFails() public {
         uint256 loanId = createAndAcceptOffer(mockERC20, mockCollateralERC20, LibVaipakam.AssetType.ERC20,
-            1000 ether, 1500 ether, 30, 0, 0
+            1000 ether, 2000 ether, 30, 0, 0 // #998 S15: coll 1500->2000 (create floor)
         );
         vm.warp(block.timestamp + 33 days + 3);
 
-        // Rate 11/10 → proceeds = 1650 > total debt (~1005) → surplus exists
+        // Rate 11/10 → proceeds = 2200 (2000 coll) > total debt (~1005) → surplus exists
         deal(mockERC20, address(diamond), 2000 ether);
         deal(mockCollateralERC20, address(diamond), 2000 ether);
         vm.mockCall(address(diamond), abi.encodeWithSelector(VaultFactoryFacet.vaultWithdrawERC20.selector), abi.encode(true));
@@ -1750,7 +1771,7 @@ contract DefaultedFacetTest is Test {
     ///      The cap is a safety check. Let's trigger the path with proceeds > totalDebt to at least exercise this line.
     function testTriggerDefaultLiquidInterestRecoveredCapping() public {
         uint256 loanId = createAndAcceptOffer(mockERC20, mockCollateralERC20, LibVaipakam.AssetType.ERC20,
-            1000 ether, 1500 ether, 30, 0, 0
+            1000 ether, 2000 ether, 30, 0, 0 // #998 S15: coll 1500->2000 (create floor)
         );
         // Warp minimal time past grace so interest is small
         uint256 endTime = block.timestamp + 30 days;
@@ -1786,7 +1807,7 @@ contract DefaultedFacetTest is Test {
     ///      and lender gets vault creation failure → CrossFacetCallFailed in liquid swap path.
     function testTriggerDefaultLiquidGetLenderVaultFails() public {
         uint256 loanId = createAndAcceptOffer(mockERC20, mockCollateralERC20, LibVaipakam.AssetType.ERC20,
-            1000 ether, 1500 ether, 30, 0, 0
+            1000 ether, 2000 ether, 30, 0, 0 // #998 S15: coll 1500->2000 (create floor)
         );
         vm.warp(block.timestamp + 33 days + 3);
 
@@ -1810,7 +1831,7 @@ contract DefaultedFacetTest is Test {
     ///      so the `if (loan.status != Defaulted)` block is SKIPPED (false branch).
     function testTriggerDefaultLiquidAlreadySetToDefaulted() public {
         uint256 loanId = createAndAcceptOffer(mockERC20, mockCollateralERC20, LibVaipakam.AssetType.ERC20,
-            1000 ether, 1500 ether, 30, 0, 0
+            1000 ether, 2000 ether, 30, 0, 0 // #998 S15: coll 1500->2000 (create floor)
         );
         vm.warp(block.timestamp + 33 days + 3);
 
@@ -1822,8 +1843,10 @@ contract DefaultedFacetTest is Test {
         // The real test: use the real triggerLiquidation flow which sets Defaulted.
         // Use vm.mockCall to mock triggerLiquidation to just work but NOT set the status via storage.
         // Instead: let's use the mock that does set the status by setting up real deal tokens.
-        deal(mockERC20, address(diamond), 1500 ether);
-        deal(mockCollateralERC20, address(diamond), 1500 ether);
+        // #998 S15: collateral bumped to 2000, so the diamond must pre-hold
+        // >= 2000 collateral for the swap's transferFrom (was 1500).
+        deal(mockERC20, address(diamond), 3000 ether);
+        deal(mockCollateralERC20, address(diamond), 3000 ether);
         vm.mockCall(address(diamond), abi.encodeWithSelector(VaultFactoryFacet.vaultWithdrawERC20.selector), abi.encode(true));
         vm.mockCall(address(diamond), abi.encodeWithSelector(VaipakamNFTFacet.updateNFTStatus.selector), "");
         // Mock HF to be low so triggerLiquidation succeeds
@@ -1843,7 +1866,7 @@ contract DefaultedFacetTest is Test {
     ///      AND borrowerSurplus > 0 (TRUE branch). Exercises surplus distribution to borrower vault.
     function testTriggerDefaultLiquidBorrowerSurplus() public {
         uint256 loanId = createAndAcceptOffer(mockERC20, mockCollateralERC20, LibVaipakam.AssetType.ERC20,
-            1000 ether, 1500 ether, 30, 0, 0
+            1000 ether, 2000 ether, 30, 0, 0 // #998 S15: coll 1500->2000 (create floor)
         );
         uint256 endTime = block.timestamp + 30 days;
         uint256 grace = LibVaipakam.gracePeriod(30);
@@ -1906,7 +1929,7 @@ contract DefaultedFacetTest is Test {
     ///      Exercises the `if (!success)` branch after the 0x swap call.
     function testTriggerDefaultLiquidSwapFails_FallbackPath() public {
         uint256 loanId = createAndAcceptOffer(mockERC20, mockCollateralERC20, LibVaipakam.AssetType.ERC20,
-            1000 ether, 1500 ether, 30, 0, 0
+            1000 ether, 2000 ether, 30, 0, 0 // #998 S15: coll 1500->2000 (create floor)
         );
         vm.warp(block.timestamp + 33 days + 3);
 
@@ -1947,7 +1970,7 @@ contract DefaultedFacetTest is Test {
     ///      with ERC20 collateral type specifically.
     function testTriggerDefaultLiquidCollateralCollapsedERC20Transfer() public {
         uint256 loanId = createAndAcceptOffer(mockERC20, mockCollateralERC20, LibVaipakam.AssetType.ERC20,
-            1000 ether, 1500 ether, 30, 0, 0
+            1000 ether, 2000 ether, 30, 0, 0 // #998 S15: coll 1500->2000 (create floor)
         );
         vm.warp(block.timestamp + 33 days + 3);
 
@@ -2000,7 +2023,7 @@ contract DefaultedFacetTest is Test {
     ///      Mocks swap to return low proceeds directly.
     function testTriggerDefaultLiquidAllocatedBelowPrincipal() public {
         uint256 loanId = createAndAcceptOffer(mockERC20, mockCollateralERC20, LibVaipakam.AssetType.ERC20,
-            1000 ether, 1500 ether, 30, 0, 0
+            1000 ether, 2000 ether, 30, 0, 0 // #998 S15: coll 1500->2000 (create floor)
         );
         uint256 endTime = block.timestamp + 30 days;
         uint256 grace = LibVaipakam.gracePeriod(30);
@@ -2066,7 +2089,7 @@ contract DefaultedFacetTest is Test {
     /// @dev Tests triggerDefault _fullCollateralTransferFallback first NFT update fails.
     function testTriggerDefaultFallbackLenderNFTUpdateFails() public {
         uint256 loanId = createAndAcceptOffer(mockERC20, mockCollateralERC20, LibVaipakam.AssetType.ERC20,
-            1000 ether, 1500 ether, 30, 0, 0
+            1000 ether, 2000 ether, 30, 0, 0 // #998 S15: coll 1500->2000 (create floor)
         );
         vm.warp(block.timestamp + 33 days + 3);
 
@@ -2104,7 +2127,7 @@ contract DefaultedFacetTest is Test {
     ///      Exercises the isCollateralValueCollapsed=true && liquid branch.
     function testTriggerDefaultLiquidCollapsedERC20CollateralTransfer() public {
         uint256 loanId = createAndAcceptOffer(mockERC20, mockCollateralERC20, LibVaipakam.AssetType.ERC20,
-            1000 ether, 1500 ether, 30, 0, 0
+            1000 ether, 2000 ether, 30, 0, 0 // #998 S15: coll 1500->2000 (create floor)
         );
         vm.warp(block.timestamp + 33 days + 3);
 
