@@ -443,8 +443,23 @@ contract RepayFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErrors 
                 interest = loan.principal * undeductedDays;
             }
 
+            // #998 S8 (#1004) — the rental late fee is based on the REMAINING
+            // owed rental (`principal × durationDays`, capped at the pre-funded
+            // buffer bps), NOT the one-day `loan.principal` base that the shared
+            // `calculateLateFee` (computed at the top of this fn for the ERC-20
+            // path) uses. Override it here for the rental branch.
+            lateFee = LibVaipakam.calculateRentalLateFee(loanId, endTime);
+
+            // The late fee is funded from the pre-funded 5% `bufferAmount`
+            // (swept at resolution), not from `prepayAmount`. A full-term late
+            // rental has `interest == prepayAmount`, so any positive late fee
+            // would revert `InsufficientPrepay` if the buffer weren't in the
+            // budget. The rental-fee cap ≤ buffer bps guarantees the buffer
+            // covers it; the refund below returns the unused prepay + buffer.
             uint256 totalDue = interest + lateFee;
-            if (totalDue > loan.prepayAmount) revert InsufficientPrepay();
+            if (totalDue > loan.prepayAmount + loan.bufferAmount) {
+                revert InsufficientPrepay();
+            }
 
             (uint256 treasuryShare, uint256 lenderShare) = LibEntitlement.splitTreasury(
                 loan,
@@ -501,8 +516,11 @@ contract RepayFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErrors 
                 claimed: false
             });
 
-            // Borrower's refund (unused prepay + buffer) stays in their vault
-            uint256 refund = loan.prepayAmount - totalDue + loan.bufferAmount;
+            // Borrower's refund (unused prepay + buffer) stays in their vault.
+            // Order the subtraction as (prepay + buffer) − totalDue so it can't
+            // underflow when the late fee draws on the buffer (totalDue may now
+            // exceed prepayAmount alone). Guard above ensures totalDue ≤ pool.
+            uint256 refund = (loan.prepayAmount + loan.bufferAmount) - totalDue;
             s.borrowerClaims[loanId] = LibVaipakam.ClaimInfo({
                 asset: loan.prepayAsset,
                 amount: refund,
@@ -1026,10 +1044,15 @@ contract RepayFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErrors 
             totalDue = 0; // From prepay; borrower approves principal for safety, but internal deduct
         }
 
-        // Late fee if past endTime
+        // Late fee if past endTime. #998 S8 (#1004) — the rental branch quotes
+        // the remaining-rental-based fee so this preview matches what
+        // `repayLoan` charges at settlement (else a late-rental preview would
+        // under-quote the fee).
         uint256 lateFee = 0;
         if (block.timestamp > endTime) {
-            lateFee = LibVaipakam.calculateLateFee(loanId, endTime);
+            lateFee = loan.assetType == LibVaipakam.AssetType.ERC20
+                ? LibVaipakam.calculateLateFee(loanId, endTime)
+                : LibVaipakam.calculateRentalLateFee(loanId, endTime);
         }
 
         totalDue += lateFee;

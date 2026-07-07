@@ -6078,6 +6078,48 @@ library LibVaipakam {
         return (loan.principal * feePercent) / 10000; // Basis points
     }
 
+    /// @dev NFT-rental late fee (#998 S8 / #1004). The shared
+    ///      {calculateLateFee} bases the fee on `loan.principal`, which is
+    ///      correct for an ERC-20 loan (whole principal) but wrong for a
+    ///      rental — there `loan.principal` is the PER-DAY fee, so the fee
+    ///      never scaled with the size of the overdue obligation. This
+    ///      rental variant bases the fee on the REMAINING OWED RENTAL
+    ///      `principal × durationDays`. `durationDays` is the live remaining
+    ///      term, retired by BOTH `autoDeductDaily` and `repayPartial`
+    ///      (term-retirement semantics), so it faithfully tracks the overdue
+    ///      rent with no separate paid-days counter.
+    ///
+    ///      The cap is `min(5%, cfgRentalBufferBps())` — the historical 5%
+    ///      ceiling, further bounded by the ACTUAL configured rental-buffer
+    ///      bps. Because the pre-funded `bufferAmount`
+    ///      (= bufferBps × principal × originalDurationDays) covers
+    ///      `bufferBps × principal × durationDays` (originalDurationDays ≥
+    ///      durationDays), capping at `bufferBps` guarantees the buffer
+    ///      always covers the fee — RepayFacet funds the rental late fee
+    ///      from `bufferAmount`, so a config with `rentalBufferBps` below 5%
+    ///      cannot brick a late full-term rental repayment.
+    /// @param loanId  Rental loan id.
+    /// @param endTime Unix timestamp at which the rental term expires.
+    /// @return fee    Late fee in prepay-asset units.
+    function calculateRentalLateFee(
+        uint256 loanId,
+        uint256 endTime
+    ) internal view returns (uint256 fee) {
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        LibVaipakam.Loan storage loan = s.loans[loanId];
+
+        if (block.timestamp <= endTime) return 0;
+
+        uint256 capBps = cfgRentalBufferBps();
+        if (capBps > 500) capBps = 500; // never exceed the historical 5% ceiling
+
+        uint256 daysLate = (block.timestamp - endTime) / 1 days;
+        uint256 feePercent = 100 + (daysLate * 50); // 1% + 0.5% per day
+        if (feePercent > capBps) feePercent = capBps; // cap at the pre-funded buffer
+
+        return (loan.principal * loan.durationDays * feePercent) / 10000;
+    }
+
     /**
      * @notice Sets trade allowance between two countries (owner-only).
      * @dev Bidirectional by default (sets both A->B and B->A); for asymmetric, call twice.
