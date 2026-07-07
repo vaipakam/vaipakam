@@ -11,11 +11,7 @@
  *    which maps known revert selectors to friendly copy and rewrites
  *    the #780 "exceeds max transaction gas limit" RPC trap.
  */
-import {
-  BaseError,
-  ContractFunctionRevertedError,
-  UserRejectedRequestError,
-} from 'viem';
+import { BaseError, UserRejectedRequestError } from 'viem';
 import { decodeContractError, extractRevertSelector } from '@vaipakam/lib';
 import { copy } from '../content/copy';
 import { recordLastError } from '../diagnostics/lastError';
@@ -58,7 +54,9 @@ function rawErrorText(err: unknown): string {
     if (typeof v !== 'object' || seen.has(v)) return;
     seen.add(v);
     const o = v as Record<string, unknown>;
-    for (const k of ['shortMessage', 'message', 'details'] as const) {
+    // `reason` included: `decodeContractError` treats it as the PRIMARY text,
+    // so a gas-cap signal a provider puts there must be seen here too (#1094).
+    for (const k of ['reason', 'shortMessage', 'message', 'details'] as const) {
       if (typeof o[k] === 'string') parts.push(o[k] as string);
     }
     for (const k of ['data', 'error', 'cause', 'info'] as const) {
@@ -79,25 +77,13 @@ function rawErrorText(err: unknown): string {
  *  `decodeContractError` matches, not on the rewritten copy. */
 export function isGasEstimationTrap(err: unknown): boolean {
   if (isUserRejection(err)) return false;
-  // A decodable revert selector means the estimator did NOT strip it — this
-  // is a real revert (which decodeContractError already surfaces with
-  // concrete copy), NOT the #780 gas-cap trap, even if the wrapper text also
-  // mentions the gas limit. Mirror decodeContractError's `!sel` gate so a
-  // selector-bearing error isn't misclassified and its real reason masked by
-  // the advisory dry-run reason (#1094 Codex).
+  // A decodable revert selector ANYWHERE means the estimator did NOT strip it:
+  // a real revert (which decodeContractError surfaces with concrete copy), NOT
+  // the #780 gas-cap trap, even if the wrapper text also mentions the gas
+  // limit. `extractRevertSelector` now walks the viem cause chain + nested
+  // `data.data` / `.raw`, so this single check covers the deep shapes without
+  // a parallel walker here (#1094 Codex).
   if (extractRevertSelector(err)) return false;
-  // extractRevertSelector only checks top-level fields; viem often puts the
-  // revert on a NESTED cause. Walk the cause chain — a decoded
-  // ContractFunctionRevertedError, or raw revert bytes on any cause, means a
-  // real revert, not the selector-stripping trap (#1094 Codex).
-  if (err instanceof BaseError) {
-    if (err.walk((e) => e instanceof ContractFunctionRevertedError)) return false;
-    const withData = err.walk((e) => {
-      const d = (e as { data?: unknown }).data;
-      return typeof d === 'string' && d.startsWith('0x') && d.length >= 10;
-    });
-    if (withData) return false;
-  }
   return /exceeds max (?:transaction )?gas limit/i.test(rawErrorText(err));
 }
 

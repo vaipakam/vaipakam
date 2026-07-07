@@ -608,16 +608,18 @@ const KNOWN_ERROR_SELECTORS: Record<string, string> = {
   // contract surface.
 };
 
-/** Extracts the raw revert data (hex string starting with 0x) from the tangle of shapes ethers/injected wallets surface. */
-export function extractRevertData(err: unknown): string | undefined {
-  if (!err || typeof err !== 'object') return undefined;
-  const e = err as DecodableError;
+/** Revert bytes carried on a SINGLE error node (no cause traversal). */
+function revertDataFromNode(e: DecodableError): string | undefined {
   const candidates: unknown[] = [
     typeof e.data === 'string' ? e.data : undefined,
     typeof e.data === 'object' ? e.data?.data : undefined,
     e.info?.error?.data,
     e.error?.data,
     e.revert?.data,
+    // viem's ContractFunctionRevertedError keeps the raw revert bytes on
+    // `.raw` (its decoded name lives on `.data.errorName`, handled by
+    // extractRevertName).
+    (e as { raw?: unknown }).raw,
   ];
   for (const c of candidates) {
     if (typeof c === 'string' && c.startsWith('0x') && c.length >= 10) return c;
@@ -636,6 +638,49 @@ export function extractRevertData(err: unknown): string | undefined {
     const len = m.length - 2; // strip 0x
     if (len === 8) return m; // bare 4-byte selector
     if (len >= 8 && (len - 8) % 64 === 0) return m; // selector + N abi-encoded args
+  }
+  return undefined;
+}
+
+/** Extracts the raw revert data (hex string starting with 0x) from the tangle
+ *  of shapes ethers/injected wallets surface. Walks the viem `cause` chain:
+ *  the real revert is usually wrapped several layers deep
+ *  (ContractFunctionExecutionError → ContractFunctionRevertedError), so the
+ *  top-level object has no `data` while a nested cause does. Bounded depth
+ *  guards a cyclic graph. */
+export function extractRevertData(err: unknown): string | undefined {
+  let node: unknown = err;
+  for (let depth = 0; node && typeof node === 'object' && depth < 6; depth++) {
+    const found = revertDataFromNode(node as DecodableError);
+    if (found) return found;
+    node = (node as { cause?: unknown }).cause;
+  }
+  return undefined;
+}
+
+/**
+ * The DECODED custom-error name (not raw bytes), walked out of the error
+ * graph: viem stashes it on `ContractFunctionRevertedError.data.errorName`
+ * in the `cause` chain, and some libraries expose it as `err.revert.name`.
+ * Skips the generic `Error` / `Panic` shapes (their human text lives in the
+ * base message).
+ */
+export function extractRevertName(err: unknown): string | undefined {
+  let node: unknown = err;
+  for (let depth = 0; node && typeof node === 'object' && depth < 6; depth++) {
+    const n = node as {
+      revert?: { name?: unknown };
+      data?: { errorName?: unknown };
+      cause?: unknown;
+    };
+    const name =
+      typeof n.revert?.name === 'string'
+        ? n.revert.name
+        : typeof n.data?.errorName === 'string'
+          ? n.data.errorName
+          : undefined;
+    if (name && name !== 'Error' && name !== 'Panic') return name;
+    node = n.cause;
   }
   return undefined;
 }
@@ -678,17 +723,14 @@ export function decodeContractError(err: unknown, fallback = 'Transaction failed
     if (byName) return byName;
   }
 
-  // Some wallets/libraries attach the DECODED custom-error name to the error
-  // (e.g. `err.revert.name`) without exposing raw revert bytes, so the
-  // selector path above misses it. Consult the name-keyed friendly map before
-  // falling back to the raw `base` text — but skip the generic `Error` /
-  // `Panic` shapes, whose human text lives in `base` (#1094 Codex).
-  const revertName = (e as { revert?: { name?: unknown } }).revert?.name;
-  if (
-    typeof revertName === 'string' &&
-    revertName !== 'Error' &&
-    revertName !== 'Panic'
-  ) {
+  // viem/libraries attach the DECODED custom-error name to the error without
+  // raw selector bytes — on `err.revert.name`, or (the common viem shape)
+  // several layers deep on `cause.data.errorName`. The selector path above
+  // misses those, and the raw `base` text is only viem's generic "The
+  // contract function ... reverted." Walk the graph for the name and consult
+  // the name-keyed friendly map before falling back to `base` (#1094 Codex).
+  const revertName = extractRevertName(err);
+  if (revertName) {
     const byName = friendlyContractError({ name: revertName });
     if (byName) return byName;
   }

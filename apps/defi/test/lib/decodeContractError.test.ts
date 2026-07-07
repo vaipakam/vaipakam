@@ -62,6 +62,24 @@ describe('extractRevertData', () => {
     // The 4-byte selector alone is 10 chars (0x + 8), so a 9-char stub is rejected.
     expect(extractRevertData({ data: '0xabcdefg' })).toBeUndefined();
   });
+
+  // #1094 Codex: viem wraps the real revert several causes deep — the top
+  // object has no `data`, a nested cause does.
+  it('walks the viem cause chain for revert data', () => {
+    expect(
+      extractRevertData({ shortMessage: 'reverted', cause: { data: SEL_HF_TOO_LOW } }),
+    ).toBe(SEL_HF_TOO_LOW);
+  });
+
+  it('finds nested data.data revert bytes on a cause', () => {
+    expect(
+      extractRevertData({ cause: { cause: { data: { data: SEL_HF_TOO_LOW } } } }),
+    ).toBe(SEL_HF_TOO_LOW);
+  });
+
+  it('reads viem ContractFunctionRevertedError raw bytes on a cause', () => {
+    expect(extractRevertData({ cause: { raw: SEL_HF_TOO_LOW } })).toBe(SEL_HF_TOO_LOW);
+  });
 });
 
 describe('extractRevertSelector', () => {
@@ -248,6 +266,18 @@ describe('decodeContractError', () => {
       expect(
         decodeContractError({ revert: { name: 'Error' }, reason: 'boom' }),
       ).toBe('boom');
+    });
+
+    // #1094 Codex: viem stashes the decoded name on
+    // `ContractFunctionRevertedError.data.errorName` in the cause chain, not
+    // on top-level `revert.name`.
+    it('resolves a custom error from a viem cause data.errorName', () => {
+      expect(
+        decodeContractError({
+          shortMessage: 'The contract function "acceptOffer" reverted.',
+          cause: { data: { errorName: 'MaxLendingAboveCeiling' } },
+        }),
+      ).toMatch(/collateral is too low/i);
     });
   });
 });
