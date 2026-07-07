@@ -422,11 +422,6 @@ contract RepayFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErrors 
         } else {
             // NFT rental: only borrower can repay (fees come from borrower's vaulted prepayment)
             LibAuth.requireBorrower(loan);
-            // #1004 (S8) — a rental's late fee is based on the OVERDUE rental
-            // amount, not `loan.principal` (the per-day fee). The `lateFee`
-            // computed above via `calculateLateFee` is the ERC-20 formula and is
-            // not used on this branch; override it with the rental schedule.
-            lateFee = LibVaipakam.calculateRentalLateFee(loanId, endTime);
             // Deduct accrued from prepay, excluding days already
             // deducted by autoDeductDaily. lastDeductTime advances by ONE_DAY
             // per auto-deduction, so (lastDeductTime - startTime) / ONE_DAY

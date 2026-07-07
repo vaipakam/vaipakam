@@ -6056,12 +6056,9 @@ library LibVaipakam {
         revert("graceSlotBounds: slot out of range");
     }
 
-    /// @dev ERC-20 late fee schedule (README §6): 1% on the first day past due,
-    ///      +0.5% each subsequent day, capped at 5% of principal. Returns 0 when
-    ///      the loan is still within `endTime`. NFT rentals use
-    ///      {calculateRentalLateFee} instead (the base + cap differ) — this
-    ///      function is kept lean for the ERC-20 forced-close / repay callers so
-    ///      the rental math isn't inlined into every liquidation facet.
+    /// @dev Late fee schedule: 1% on the first day past due, +0.5% each
+    ///      subsequent day, capped at 5% of principal. Returns 0 when the
+    ///      loan is still within `endTime`.
     /// @param loanId  Loan id.
     /// @param endTime Unix timestamp at which the loan's duration expires.
     /// @return fee    Late fee in principal units (BPS-scaled).
@@ -6079,55 +6076,6 @@ library LibVaipakam {
         if (feePercent > 500) feePercent = 500; // Cap 5%
 
         return (loan.principal * feePercent) / 10000; // Basis points
-    }
-
-    /// @dev #1004 (S8) — NFT-rental late fee. Unlike the ERC-20 schedule, the
-    ///      rate is applied to the OVERDUE rental amount (accrued-but-undeducted
-    ///      rental) and the result is capped at 5% of the TOTAL rental amount —
-    ///      NOT `loan.principal` (which for a rental is only the PER-DAY fee, so
-    ///      the ERC-20 formula charged ~D× too little on a D-day rental and
-    ///      capped at 5% of a single day's fee). Only the rental-repay path
-    ///      (`RepayFacet`) charges a rental late fee — HF-liquidation is ERC-20-
-    ///      only and time-based default's NFT branch settles from prepay without
-    ///      a late fee — so this is a separate function kept out of the ERC-20
-    ///      callers' inlined bytecode.
-    ///
-    ///      `autoDeductDaily` advances `lastDeductTime` by ONE_DAY and decrements
-    ///      `durationDays` by 1 per deducted day, so:
-    ///        alreadyDeductedDays = (lastDeductTime − startTime) / ONE_DAY
-    ///        totalRentalDays     = alreadyDeductedDays + durationDays  (invariant:
-    ///                              the decrement pair keeps the sum = the original
-    ///                              term, recovering it without a stored field)
-    ///        undeductedDays      = elapsedDays − alreadyDeductedDays  (the rental
-    ///                              accrued but not yet paid = the OVERDUE amount)
-    /// @param loanId  Loan id (must be an NFT-rental loan).
-    /// @param endTime Unix timestamp at which the rental term expires.
-    /// @return fee    Late fee in prepay-asset units.
-    function calculateRentalLateFee(
-        uint256 loanId,
-        uint256 endTime
-    ) internal view returns (uint256 fee) {
-        LibVaipakam.Loan storage loan = storageSlot().loans[loanId];
-
-        if (block.timestamp <= endTime) return 0;
-
-        uint256 daysLate = (block.timestamp - endTime) / 1 days;
-        uint256 feePercent = 100 + (daysLate * 50); // 1% + 0.5% per day
-        if (feePercent > 500) feePercent = 500; // Rate capped at 5%
-
-        uint256 dayFee = loan.principal;
-        uint256 elapsedDays = (block.timestamp - loan.startTime) / ONE_DAY;
-        uint256 alreadyDeductedDays = loan.lastDeductTime > loan.startTime
-            ? (loan.lastDeductTime - loan.startTime) / ONE_DAY
-            : 0;
-        uint256 undeductedDays = elapsedDays > alreadyDeductedDays
-            ? elapsedDays - alreadyDeductedDays
-            : 0;
-        uint256 totalRentalDays = alreadyDeductedDays + loan.durationDays;
-
-        uint256 rentalLateFee = (dayFee * undeductedDays * feePercent) / 10000;
-        uint256 cap = (dayFee * totalRentalDays * 500) / 10000; // 5% of total rental
-        return rentalLateFee > cap ? cap : rentalLateFee;
     }
 
     /**
