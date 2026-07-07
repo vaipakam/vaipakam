@@ -12,7 +12,7 @@
  *    the #780 "exceeds max transaction gas limit" RPC trap.
  */
 import { BaseError, UserRejectedRequestError } from 'viem';
-import { decodeContractError } from '@vaipakam/lib';
+import { decodeContractError, extractRevertSelector } from '@vaipakam/lib';
 import { copy } from '../content/copy';
 import { recordLastError } from '../diagnostics/lastError';
 
@@ -75,6 +75,13 @@ function rawErrorText(err: unknown): string {
  *  `decodeContractError` matches, not on the rewritten copy. */
 export function isGasEstimationTrap(err: unknown): boolean {
   if (isUserRejection(err)) return false;
+  // A decodable revert selector means the estimator did NOT strip it — this
+  // is a real revert (which decodeContractError already surfaces with
+  // concrete copy), NOT the #780 gas-cap trap, even if the wrapper text also
+  // mentions the gas limit. Mirror decodeContractError's `!sel` gate so a
+  // selector-bearing error isn't misclassified and its real reason masked by
+  // the advisory dry-run reason (#1094 Codex).
+  if (extractRevertSelector(err)) return false;
   return /exceeds max (?:transaction )?gas limit/i.test(rawErrorText(err));
 }
 
