@@ -1,4 +1,10 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+vi.mock('../../src/hooks/useLiveWatermark', () => ({
+  // #1076: watermark needs WatermarkProvider (excluded from the test
+  // harness for its WS/timer side-effects); stub it for hook tests.
+  useLiveWatermark: () => ({ version: 0, snapshot: null, status: 'unreachable' }),
+}));
+
 import { renderHook, waitFor } from '@testing-library/react';
 
 const DIAMOND = '0x77A16D1807F43A12C1DBde0b06064058cb6FC4BD';
