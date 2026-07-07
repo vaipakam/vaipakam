@@ -272,7 +272,7 @@ const FRIENDLY_ERROR_BY_NAME: Record<string, string> = {
   MaxLendingAboveCeiling:
     'Your collateral is too low for the amount you want to borrow. Lower the borrow amount or lock more collateral, then try again.',
   MinCollateralBelowFloor:
-    'The collateral you are offering is below the minimum this loan size needs. Add more collateral or reduce the amount.',
+    'The collateral for this loan is below the minimum its size needs. Increase the required collateral or reduce the loan amount, then try again.',
   MatchHFTooLow:
     'This would leave the loan below the minimum health factor (1.5). Add collateral or reduce the borrow amount.',
   InterestRateAboveCeiling:
@@ -359,8 +359,15 @@ export function friendlyContractError(opts: {
   name?: string;
   selector?: string;
 }): string | null {
-  const nameFromSelector = opts.selector
-    ? KNOWN_ERROR_SELECTORS[opts.selector.toLowerCase()]?.replace(/\(.*/, '')
+  const sel = opts.selector?.toLowerCase();
+  // Prefer the curated SELECTOR copy the write-path banner uses
+  // (`FRIENDLY_ERROR_MESSAGES`), so the dry-run footer and the submit
+  // banner speak with one voice — e.g. `ERC20InsufficientBalance` /
+  // `HealthFactorTooLow` keep their fuller selector-specific guidance
+  // instead of degrading to a humanized name (#1094 Codex).
+  if (sel && FRIENDLY_ERROR_MESSAGES[sel]) return FRIENDLY_ERROR_MESSAGES[sel];
+  const nameFromSelector = sel
+    ? KNOWN_ERROR_SELECTORS[sel]?.replace(/\(.*/, '')
     : undefined;
   const name = opts.name ?? nameFromSelector;
   if (!name) return null;

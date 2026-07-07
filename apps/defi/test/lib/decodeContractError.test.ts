@@ -256,6 +256,19 @@ describe('friendlyContractError', () => {
     );
   });
 
+  // #1094 Codex P3: when a selector carries curated FRIENDLY_ERROR_MESSAGES
+  // copy, the dry-run footer must use it too — not degrade to a humanized
+  // name — so it speaks the SAME voice as the write-path submit banner.
+  it('prefers curated selector copy over a humanized name', () => {
+    const viaSelector = friendlyContractError({
+      name: 'HealthFactorTooLow',
+      selector: SEL_HF_TOO_LOW,
+    });
+    expect(viaSelector).toMatch(/Health factor too low/i);
+    // Identical to what the write-path decoder surfaces for that selector.
+    expect(viaSelector).toBe(decodeContractError({ data: SEL_HF_TOO_LOW }));
+  });
+
   it('returns null when nothing identifies the error', () => {
     expect(friendlyContractError({})).toBeNull();
     expect(friendlyContractError({ selector: '0x00000000' })).toBeNull();

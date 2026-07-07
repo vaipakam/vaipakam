@@ -33,19 +33,36 @@ export function submitErrorText(err: unknown): string {
   return decodeContractError(err, copy.errors.txFailed);
 }
 
-/** Flatten a raw error's human-readable text (viem `BaseError` layers +
- *  a plain `{message}`), for signal detection that must run on the RAW
- *  error, before `decodeContractError` rewrites it. */
+/** Flatten a raw error's human-readable text for signal detection that
+ *  must run on the RAW error, before `decodeContractError` rewrites it.
+ *  Walks the whole error graph — viem `BaseError` layers AND the nested
+ *  provider shapes an injected wallet surfaces, e.g.
+ *  `{ data: { message: 'exceeds max transaction gas limit' },
+ *     message: 'Internal JSON-RPC error.' }` — so a gas-cap signal buried
+ *  in `data.message` isn't missed (#1094 Codex). Mirrors the fields
+ *  `decodeContractError` reads (`data.message`, `error.data`, the cause
+ *  chain). Bounded depth + a seen-set guard against cyclic error graphs. */
 function rawErrorText(err: unknown): string {
-  if (err instanceof BaseError) {
-    return [err.shortMessage, err.message, err.details]
-      .filter(Boolean)
-      .join(' ');
-  }
-  if (err && typeof err === 'object' && 'message' in err) {
-    return String((err as { message?: unknown }).message ?? '');
-  }
-  return typeof err === 'string' ? err : '';
+  const parts: string[] = [];
+  const seen = new Set<unknown>();
+  const visit = (v: unknown, depth: number): void => {
+    if (v == null || depth > 5) return;
+    if (typeof v === 'string') {
+      parts.push(v);
+      return;
+    }
+    if (typeof v !== 'object' || seen.has(v)) return;
+    seen.add(v);
+    const o = v as Record<string, unknown>;
+    for (const k of ['shortMessage', 'message', 'details'] as const) {
+      if (typeof o[k] === 'string') parts.push(o[k] as string);
+    }
+    for (const k of ['data', 'error', 'cause', 'info'] as const) {
+      if (o[k] != null) visit(o[k], depth + 1);
+    }
+  };
+  visit(err, 0);
+  return parts.join(' ');
 }
 
 /** True when the failure is the #780 `eth_estimateGas` gas-cap trap —
@@ -76,8 +93,16 @@ export function captureTxError(
 ): string {
   const message = opts?.message ?? submitErrorText(err);
   recordLastError({
+    // pathname + search — the deep-link state (?offer=, ?chain=) is the
+    // reproducer support needs, and the rest of the diagnostics flow
+    // (ErrorBoundary, the report builder) already records pathname+search.
+    // The report builder redacts + caps this before anything leaves the
+    // device (#1094 Codex).
     message: opts?.revertName ? `${message} [${opts.revertName}]` : message,
-    path: typeof window !== 'undefined' ? window.location.pathname : 'unknown',
+    path:
+      typeof window !== 'undefined'
+        ? window.location.pathname + window.location.search
+        : 'unknown',
     at: Date.now(),
   });
   return message;
