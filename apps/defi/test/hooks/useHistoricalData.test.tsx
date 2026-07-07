@@ -16,6 +16,12 @@ vi.mock('../../src/hooks/useProtocolStats', () => ({
   useProtocolStats: () => statsMock,
 }));
 
+// #1076: source calls useReadChain + useDiamondPublicClient directly.
+vi.mock('../../src/contracts/useDiamond', () => ({
+  useReadChain: () => ({ chainId: 11155111, diamondAddress: '0x00000000000000000000000000000000000000D1', deployBlock: 1 }),
+  useDiamondPublicClient: () => ({}),
+}));
+
 import { useHistoricalData } from '../../src/hooks/useHistoricalData';
 
 const ASSET = '0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa';

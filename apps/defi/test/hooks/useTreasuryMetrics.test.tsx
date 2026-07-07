@@ -49,10 +49,10 @@ describe('useTreasuryMetrics', () => {
     const { result } = renderHook(() => useTreasuryMetrics());
     await waitFor(() => expect(result.current.loading).toBe(false));
     expect(result.current.metrics).toMatchObject({
-      treasuryBalanceUsd: 100,
-      totalFeesCollectedUsd: 5000,
-      feesLast24hUsd: 25,
-      feesLast7dUsd: 500,
+      treasuryBalanceNumeraire: 100,
+      totalFeesCollectedNumeraire: 5000,
+      feesLast24hNumeraire: 25,
+      feesLast7dNumeraire: 500,
     });
     expect(result.current.error).toBeNull();
   });
@@ -78,7 +78,7 @@ describe('useTreasuryMetrics', () => {
 
     const second = renderHook(() => useTreasuryMetrics());
     await waitFor(() =>
-      expect(second.result.current.metrics?.treasuryBalanceUsd).toBe(1),
+      expect(second.result.current.metrics?.treasuryBalanceNumeraire).toBe(1),
     );
     expect(call).toHaveBeenCalledTimes(1);
   });
@@ -91,13 +91,13 @@ describe('useTreasuryMetrics', () => {
     diamondState.getTreasuryMetrics = call;
     const { result } = renderHook(() => useTreasuryMetrics());
     await waitFor(() =>
-      expect(result.current.metrics?.treasuryBalanceUsd).toBe(1),
+      expect(result.current.metrics?.treasuryBalanceNumeraire).toBe(1),
     );
     await act(async () => {
       await result.current.reload();
     });
     await waitFor(() =>
-      expect(result.current.metrics?.treasuryBalanceUsd).toBe(2),
+      expect(result.current.metrics?.treasuryBalanceNumeraire).toBe(2),
     );
     expect(call).toHaveBeenCalledTimes(2);
   });
