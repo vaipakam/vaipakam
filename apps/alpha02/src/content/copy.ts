@@ -935,10 +935,10 @@ export const copy = {
       action: (units: number) => `Mint ${units.toLocaleString()} tLIQ`,
     },
     liquid2: {
-      title: 'Second liquid test token (tLQ2)',
+      title: 'Mock USD Coin (mUSDC)',
       blurb:
-        'Also priced by a test oracle — a second, distinct liquid token so you can run a deal where both the loan and the collateral are liquid without pairing a token against itself.',
-      action: (units: number) => `Mint ${units.toLocaleString()} tLQ2`,
+        'A test USDC priced at $1 by a test oracle — a second, distinct liquid token so you can run a deal where both the loan and the collateral are liquid (with a realistic price spread against tLIQ / mWETH) without pairing a token against itself.',
+      action: (units: number) => `Mint ${units.toLocaleString()} mUSDC`,
     },
     mweth: {
       title: 'Mock wrapped ETH (mWETH)',

@@ -2,7 +2,7 @@
  *  directive 2026-07-06), on the SelectMenu dropdown that replaced
  *  native <select>.
  *
- *  The faucet page mints tLIQ / tLQ2 / mWETH / tILQ / tILQ2 so people
+ *  The faucet page mints tLIQ / mUSDC / mWETH / tILQ / tILQ2 so people
  *  can try the flows, but the pickers used to make them paste those
  *  addresses back by hand. On a testnet chain the picker must list
  *  every faucet ERC-20 (badged as a test token), selecting one must

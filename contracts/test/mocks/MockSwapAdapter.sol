@@ -31,6 +31,21 @@ contract MockSwapAdapter is ISwapAdapter {
     uint256 public outputMultiplierBps = 10_000;
     uint256 public callCount;
 
+    /// @dev OPTIONAL per-token USD price (8-dec Chainlink scale). When BOTH
+    ///      the input and output token carry a non-zero price, `execute` pays
+    ///      the FAIR price-ratio amount (`inputAmount * priceIn / priceOut`)
+    ///      rather than the flat `inputAmount * bps`. This keeps testnet
+    ///      HF/default-liquidation demos honest once the faucet tokens carry
+    ///      DISTINCT prices (Codex #1095): selling 1 mWETH ($3,000) for mUSDC
+    ///      ($1) returns ~3,000 mUSDC, which clears the oracle-derived
+    ///      `minOutputAmount` instead of falling into the full-collateral
+    ///      fallback. Unset (0) on either leg preserves the legacy flat
+    ///      behaviour every existing LibSwap failover test relies on.
+    ///      NOTE: assumes input/output share the same ERC-20 decimals — true
+    ///      for every faucet mock (all 18-dec); do NOT register mismatched-
+    ///      decimals pairs on this mock without adding a decimals term.
+    mapping(address => uint256) public tokenUsdPrice8;
+
     /// @dev OPT-IN execute gate. Unset (default) keeps the mock fully
     ///      open — the shape every existing test relies on. On public
     ///      testnets the deploy script sets it to the Diamond: a funded
@@ -61,6 +76,12 @@ contract MockSwapAdapter is ISwapAdapter {
         restrictedTo = caller;
     }
 
+    /// @notice Register a token's STATIC USD price (8-dec) so cross-asset
+    ///         swaps pay the fair price ratio. See `tokenUsdPrice8`.
+    function setTokenPrice(address token, uint256 price8) external onlyOwner {
+        tokenUsdPrice8[token] = price8;
+    }
+
     function adapterName() external view override returns (string memory) {
         return label;
     }
@@ -80,7 +101,13 @@ contract MockSwapAdapter is ISwapAdapter {
         if (shouldRevert) revert("MockSwapAdapter: forced revert");
 
         IERC20(inputToken).safeTransferFrom(msg.sender, address(this), inputAmount);
-        outputAmount = (inputAmount * outputMultiplierBps) / 10_000;
+        // Price-aware when both legs have a registered price; else legacy flat.
+        uint256 pIn = tokenUsdPrice8[inputToken];
+        uint256 pOut = tokenUsdPrice8[outputToken];
+        uint256 base = (pIn != 0 && pOut != 0)
+            ? (inputAmount * pIn) / pOut
+            : inputAmount;
+        outputAmount = (base * outputMultiplierBps) / 10_000;
         require(outputAmount >= minOutputAmount, "MockSwapAdapter: min-out");
         IERC20(outputToken).safeTransfer(recipient, outputAmount);
     }
