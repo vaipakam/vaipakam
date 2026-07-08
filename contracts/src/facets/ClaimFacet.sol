@@ -384,11 +384,19 @@ contract ClaimFacet is
         // proceeds on the backstop absorb path too (the lender-side marker applies
         // to the same funds). Confirmed freeze survives an oracle outage here as
         // well; ordinary absorbs carry no marker and stay fail-open.
+        //
+        // Codex r2 P1 — CHECK ONLY, do NOT clear here: the resolution-first
+        // auto-dispatch / retry below can resolve the loan and `return` WITHOUT
+        // paying the lender in this tx. Clearing the marker now would leave the
+        // deferred `claimAsLender` fail-open if the recorded party is re-listed and
+        // the oracle is then down. The marker is cleared by whichever claim path
+        // actually pays the lender (the `_claimAsLenderImpl` gate); a backstop that
+        // does pay + burn in this tx leaves a harmless orphan the already-claimed
+        // guard blocks.
         {
             address frozen = LibSanctionedLock.frozenClaimant(s, loanId, true);
             if (frozen != address(0)) {
                 LibVaipakam.assertNotSanctionedFailClosed(frozen);
-                LibSanctionedLock.clearFrozenClaimant(s, loanId, true);
             }
         }
 

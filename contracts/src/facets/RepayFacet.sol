@@ -228,14 +228,22 @@ contract RepayFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErrors 
             loan.status != LibVaipakam.LoanStatus.FallbackPending
         ) revert InvalidLoanStatus();
         bool curingFallback = loan.status == LibVaipakam.LoanStatus.FallbackPending;
-        // #998 S10 (#1006) — a cure supersedes any fallback-ENTRY freeze recorded
-        // for this loan. Clear both side markers up front so the fresh terminal
-        // re-stamp below is authoritative — a stale flagged marker from the
-        // abandoned fallback episode must not fail-close a now-clean holder's claim
-        // during an oracle outage. No-op (delete of an empty slot) for a normal
+        // #998 S10 (#1006) — a cure supersedes the abandoned fallback-ENTRY freeze,
+        // so clear the entry markers up front and let the fresh terminal re-stamp
+        // below be authoritative (a stale flagged marker must not fail-close a
+        // now-clean holder's claim during an oracle outage). No-op for a normal
         // Active repay that never had a marker.
+        //
+        // Codex r2 P1 — but PRESERVE a LENDER marker that still backs
+        // partial-internal-match proceeds: `heldForLender > 0` means an earlier
+        // Active partial match parked a leg's proceeds under a legitimately-set
+        // frozen claimant unrelated to this fallback episode. Clearing it would let
+        // those prior held proceeds release with no fail-closed marker. The borrower
+        // side has no such cross-episode accumulator, so it always clears.
         if (curingFallback) {
-            LibSanctionedLock.clearFrozenClaimant(s, loanId, true);
+            if (s.heldForLender[loanId] == 0) {
+                LibSanctionedLock.clearFrozenClaimant(s, loanId, true);
+            }
             LibSanctionedLock.clearFrozenClaimant(s, loanId, false);
         }
 

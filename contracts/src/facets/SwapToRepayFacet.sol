@@ -467,6 +467,19 @@ contract SwapToRepayFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamE
             quantity: 0,
             claimed: false
         });
+        // #998 S10 (#1006, Codex r2 P1) — the residual collateral claim is
+        // claim-gated (`claimAsBorrower`) but the borrower side is marked above
+        // (in `freezeOrPayBorrowerSurplus`) ONLY when there is a sanctioned
+        // principal surplus. Stamp the borrower side for the residual collateral
+        // too, so a flagged current holder's residual can't release fail-open
+        // during an oracle outage when there is no surplus. Routed via the
+        // cross-facet host (0 = borrower side); first-write-wins if a surplus
+        // marker already recorded the same holder.
+        _callEncumb2(
+            EncumbranceMutateFacet.recordSanctionsFrozenClaimant.selector,
+            loanId,
+            0
+        );
 
         // ── Position-NFT status flip → LoanRepaid ────────────────────
         // Codex round-1 PR #390 P2 #3 — without this, marketplaces +

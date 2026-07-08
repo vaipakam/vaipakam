@@ -295,6 +295,15 @@ contract PrecloseFacet is
             // protocolTrackedVaultBalance counter ticks under the
             // LENDER (the vault owner) while pulling from the
             // borrower's allowance.
+            // #998 S10 note: the frozen-claimant markers recorded at the top of
+            // precloseDirect protect the transferred-flagged-HOLDER case (stored
+            // `loan.lender` clean → this deposit succeeds → the marker freezes the
+            // flagged current holder's later claim). A flagged STORED `loan.lender`
+            // still bricks this deposit on `getOrCreateUserVault`'s Tier-1 screen —
+            // a PRE-EXISTING #821 completeness gap (the borrower's escape is
+            // `repayLoan`, which carries the exemption). Adding the receive-side
+            // exemption here overflows this EIP-170-maxed facet, so it is deferred
+            // to a follow-up that splits PrecloseFacet (see #1124).
             LibFacet.crossFacetCall(
                 abi.encodeWithSelector(
                     VaultFactoryFacet.vaultDepositERC20From.selector,
@@ -433,6 +442,11 @@ contract PrecloseFacet is
             // transferred-position / keeper reasoning as the treasury-fee
             // deduction above): the lender's rental income comes out of the
             // borrower's prepay, which lives in the original borrower's vault.
+            // #998 S10 note: see the ERC20 branch — the flagged-STORED-lender
+            // brick on this resolution is the same pre-existing #821 gap deferred
+            // to the PrecloseFacet-split follow-up (#1124); the S10 markers here
+            // protect the transferred-flagged-holder case, which resolves a clean
+            // stored `loan.lender` and succeeds.
             address lenderVault = LibFacet.getOrCreateVault(loan.lender);
             LibFacet.crossFacetCall(
                 abi.encodeWithSelector(

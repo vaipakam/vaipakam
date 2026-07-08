@@ -229,10 +229,24 @@ library LibSanctionedLock {
     ) internal {
         if (intendedClaimant == address(0)) return;
         if (!LibVaipakam.isSanctionedAddress(intendedClaimant)) return;
+        // FIRST-WRITE-WINS (Codex r2 P1): never overwrite an already-recorded
+        // frozen claimant for this side. A loan side can accrue proceeds across
+        // multiple parks (an Active partial-internal-match `heldForLender`, then a
+        // terminal); if a flagged holder transferred the position during an oracle
+        // outage, a later park for a DIFFERENT flagged holder would otherwise
+        // overwrite the original recorded address, and the release gate would then
+        // only need the newer holder de-listed — releasing proceeds that were
+        // frozen for the FIRST sanctioned holder while that holder is still listed
+        // (re-opening the transfer-during-outage laundering path). The earliest
+        // confirmed freeze sticks until a clean release clears the slot.
         if (lenderSide) {
-            s.sanctionsLockedLenderClaimant[loanId] = intendedClaimant;
+            if (s.sanctionsLockedLenderClaimant[loanId] == address(0)) {
+                s.sanctionsLockedLenderClaimant[loanId] = intendedClaimant;
+            }
         } else {
-            s.sanctionsLockedBorrowerClaimant[loanId] = intendedClaimant;
+            if (s.sanctionsLockedBorrowerClaimant[loanId] == address(0)) {
+                s.sanctionsLockedBorrowerClaimant[loanId] = intendedClaimant;
+            }
         }
     }
 

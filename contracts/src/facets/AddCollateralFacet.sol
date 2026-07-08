@@ -316,11 +316,16 @@ contract AddCollateralFacet is DiamondReentrancyGuard, DiamondPausable, IVaipaka
         // so a later, distinct fallback must be re-authorized by the then-owner.
         delete s.lenderBackstopOptIn[loanId];
 
-        // #998 S10 (#1006) — this fallback episode is abandoned; clear both
+        // #998 S10 (#1006) — this fallback episode is abandoned; clear the
         // frozen-claimant markers recorded at fallback ENTRY so a stale flagged
         // marker can't fail-close a later, unrelated terminal's claim during an
-        // oracle outage (mirrors the RepayFacet cure clear).
-        LibSanctionedLock.clearFrozenClaimant(s, loanId, true);
+        // oracle outage (mirrors the RepayFacet cure clear). Codex r2 P1 —
+        // PRESERVE a LENDER marker still backing partial-internal-match proceeds
+        // (`heldForLender > 0`); that freeze is from a different, non-abandoned
+        // episode. The borrower side has no such accumulator, so it always clears.
+        if (s.heldForLender[loanId] == 0) {
+            LibSanctionedLock.clearFrozenClaimant(s, loanId, true);
+        }
         LibSanctionedLock.clearFrozenClaimant(s, loanId, false);
 
         // Cure path: FallbackPending -> Active.
