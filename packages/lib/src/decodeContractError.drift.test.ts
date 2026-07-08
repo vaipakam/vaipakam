@@ -98,17 +98,12 @@ describe('KNOWN_ERROR_SELECTORS drift guard (#68)', () => {
  * Friendly selectors with no identified error name — the `check-event-coverage`
  * `DELIBERATELY_NOT_HANDLED` idiom: each entry carries a one-line reason and
  * new orphans still fail the coverage check below.
+ *
+ * Currently empty: the sole entry (`0x0857e728`) was retired in #1108 once it
+ * was confirmed to match no error anywhere in the contract surface. New
+ * genuinely-unidentified selectors may be added here with a reason.
  */
-const UNRESOLVED_FRIENDLY_SELECTORS: Record<string, string> = {
-  // #838 added this "observed in production" copy without a name. Its selector
-  // matches NO error in the compiled Diamond ABI or any of the 713 source-side
-  // error declarations, and RepayFacet has no "repayment exceeds owed" revert
-  // (full repay pays exactly what's owed; partial repay uses
-  // InsufficientPartialAmount / PartialWouldRetireFullPrincipal). Retiring or
-  // re-identifying it is tracked as a #68 follow-up. Harmless meanwhile — the
-  // decoder only reads it if that selector ever actually reverts.
-  '0x0857e728': 'unmatched in ABI + all source decls; retire or re-identify (#68 follow-up)',
-};
+const UNRESOLVED_FRIENDLY_SELECTORS: Record<string, string> = {};
 
 describe('FRIENDLY_ERROR_MESSAGES coverage (#68)', () => {
   const selectors = Object.keys(FRIENDLY_ERROR_MESSAGES);
@@ -135,5 +130,15 @@ describe('FRIENDLY_ERROR_MESSAGES coverage (#68)', () => {
       (sel) => sel in KNOWN_ERROR_SELECTORS,
     );
     expect(stale).toEqual([]);
+  });
+
+  // The allowlist can't outlive the copy it excuses: an entry whose friendly
+  // message has been removed (as #1108 did for 0x0857e728) is dead and must be
+  // dropped from the allowlist too.
+  it('every allowlisted selector still has a FRIENDLY_ERROR_MESSAGES entry', () => {
+    const dead = Object.keys(UNRESOLVED_FRIENDLY_SELECTORS).filter(
+      (sel) => !(sel in FRIENDLY_ERROR_MESSAGES),
+    );
+    expect(dead).toEqual([]);
   });
 });
