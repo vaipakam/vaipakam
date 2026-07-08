@@ -866,13 +866,30 @@ export function OfferFlow({ side }: { side: Side }) {
   // duplicates the review simulation nor previews a half-built form. The
   // CollateralPrecheck component warns ONLY on under-collateral reverts.
   const collateralPreviewTx = useMemo((): TxSimInput | null => {
-    if (mode !== 'post' || side !== 'borrower' || step !== 'terms' || !walletChain) {
+    // Gate on `postDetailsComplete` — the SAME completeness+validity flag the
+    // "Continue" button uses (it requires a POSITIVE collateral amount) — so an
+    // empty/zero collateral field doesn't coerce to 0 and prematurely warn
+    // before the borrower has finished entering terms (#1117 P3a). And require
+    // BOTH tokens' real decimals to have loaded: `toCreateOfferPayload` defaults
+    // to 18, so a mixed-decimal pair (e.g. a 6-dec stablecoin) would otherwise
+    // simulate a materially different borrow and warn/suppress wrongly (#1117
+    // P3b) — unlike the review preview, this banner has no metadata-backed
+    // receipt gating it.
+    if (
+      mode !== 'post' ||
+      side !== 'borrower' ||
+      step !== 'terms' ||
+      !walletChain ||
+      !postDetailsComplete ||
+      lendingMeta.data?.decimals == null ||
+      collateralMeta.data?.decimals == null
+    ) {
       return null;
     }
     try {
       const payload = toCreateOfferPayload(
         { ...form, riskAndTermsConsent: true },
-        { lending: lendingMeta.data?.decimals, collateral: collateralMeta.data?.decimals },
+        { lending: lendingMeta.data.decimals, collateral: collateralMeta.data.decimals },
       );
       return {
         to: walletChain.diamondAddress,
@@ -887,7 +904,16 @@ export function OfferFlow({ side }: { side: Side }) {
     } catch {
       return null; // form not buildable yet — precheck stays hidden
     }
-  }, [mode, side, step, walletChain, form, lendingMeta.data, collateralMeta.data]);
+  }, [
+    mode,
+    side,
+    step,
+    walletChain,
+    postDetailsComplete,
+    form,
+    lendingMeta.data,
+    collateralMeta.data,
+  ]);
 
   // Lift the pre-sign dry run here (SimulationPreview consumes the same
   // verdict via its `result` prop, so no duplicate eth_call) so the submit
