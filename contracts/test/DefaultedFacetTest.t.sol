@@ -871,6 +871,75 @@ contract DefaultedFacetTest is Test {
         );
     }
 
+    /// @dev Finding-1 fix: a FAILED liquidation (FallbackPending) whose lender
+    ///      holder is flagged records the fail-closed marker at fallback ENTRY
+    ///      (oracle up on the HF/grace-gated path), so the lender's later fallback
+    ///      claim — distributed inside a claim that can run during an outage — is
+    ///      still blocked fail-closed. Without the entry marker this path was
+    ///      fail-open (the distribution-time screen no-ops during an outage).
+    function testS10_fallbackEntryFreezesLenderProceeds_duringOutage() public {
+        uint256 loanId = createAndAcceptOffer(
+            mockERC20,
+            mockCollateralERC20,
+            LibVaipakam.AssetType.ERC20,
+            1000 ether,
+            2000 ether,
+            30,
+            0,
+            0
+        );
+
+        MockSanctionsList m = new MockSanctionsList();
+        ProfileFacet(address(diamond)).setSanctionsOracle(address(m));
+        m.setFlagged(lender, true); // current lender-position holder, oracle up
+
+        vm.warp(block.timestamp + 33 days + 3);
+        // Force the swap to revert so triggerDefault falls to the
+        // _fullCollateralTransferFallback entry (FallbackPending).
+        vm.mockCallRevert(
+            address(ZeroExProxyMock(mockZeroExProxy)),
+            abi.encodeWithSelector(IZeroExProxy.swap.selector),
+            "swap failed"
+        );
+        vm.mockCall(
+            address(diamond),
+            abi.encodeWithSelector(VaultFactoryFacet.vaultWithdrawERC20.selector),
+            abi.encode(true)
+        );
+        vm.mockCall(
+            address(diamond),
+            abi.encodeWithSelector(VaipakamNFTFacet.updateNFTStatus.selector),
+            ""
+        );
+        deal(mockERC20, address(diamond), 2000 ether);
+        deal(mockCollateralERC20, address(diamond), 2000 ether);
+
+        vm.prank(lender);
+        DefaultedFacet(address(diamond)).triggerDefault(loanId, defaultAdapterCalls());
+
+        LibVaipakam.Loan memory loan = LoanFacet(address(diamond)).getLoanDetails(loanId);
+        assertEq(
+            uint8(loan.status),
+            uint8(LibVaipakam.LoanStatus.FallbackPending),
+            "loan entered FallbackPending"
+        );
+        // The entry recorded the flagged lender holder as the frozen claimant.
+        assertEq(
+            TestMutatorFacet(address(diamond)).getSanctionsFrozenClaimant(loanId, true),
+            lender,
+            "fallback entry recorded the frozen lender claimant"
+        );
+
+        // During an oracle outage the lender's fallback claim is blocked
+        // fail-closed at the release gate (before any distribution runs).
+        m.setRevertOnRead(true);
+        vm.prank(lender);
+        vm.expectRevert(IVaipakamErrors.SanctionsOracleUnavailable.selector);
+        ClaimFacet(address(diamond)).claimAsLender(loanId);
+
+        vm.clearMockedCalls();
+    }
+
     function testTriggerDefaultIlliquidCollateral() public {
         // Mock principal as illiquid so both assets match (avoids MixedCollateralNotAllowed)
         mockOracleLiquidity(mockERC20, LibVaipakam.LiquidityStatus.Illiquid);

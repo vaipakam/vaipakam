@@ -836,6 +836,14 @@ contract DefaultedFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErr
             claimed: borrowerCol == 0
         });
 
+        // #998 S10 (#1006) — capture a confirmed freeze at fallback ENTRY (oracle
+        // is up on this HF/grace-gated path) for BOTH sides. The shares are
+        // distributed LATER inside a claim that can run during an oracle outage, so
+        // entry is the only reliable point to record an affirmative flag — same
+        // rationale as the RiskFacet fallback entry.
+        _recordFrozenClaimant(loanId, true);
+        _recordFrozenClaimant(loanId, false);
+
         // Enter fallback-pending: borrower may still cure via addCollateral or
         // repayLoan until the lender claims. See LibVaipakam.LoanStatus docs.
         LibLifecycle.transition(

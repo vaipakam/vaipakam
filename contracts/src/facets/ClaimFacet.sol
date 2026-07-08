@@ -1683,11 +1683,11 @@ contract ClaimFacet is
             LibSanctionedLock.depositLocked(
                 s, loan.borrower, loanId, loan.principalAsset, borrowerGets
             );
-            // #998 S10 (#1006) — the borrower residual is parked now and claimed
-            // LATER via `claimAsBorrower` (this distribution is lender-triggered),
-            // so freeze it fail-closed if the current borrower-position holder is
-            // flagged — that deferred claim is the outage-vulnerable window.
-            LibSanctionedLock.recordFrozenClaimantForLoan(s, loan, false);
+            // #998 S10 (#1006) — NO marker here: this distribution runs INSIDE a
+            // claim that may itself be executing during an oracle outage (fallback
+            // distribution needs no oracle), so an affirmative flag can't be
+            // confirmed at this point. The borrower freeze is recorded at fallback
+            // ENTRY (`_fullCollateralTransferFallback`), where the oracle is up.
             // #661 (Codex #674 P1) — the FallbackPending retry is a FOURTH
             // borrower-VPFI-surplus terminal: reserve it against the unstake
             // path, like the default / liquidation surplus sites. Released in
@@ -1750,11 +1750,10 @@ contract ClaimFacet is
             LibSanctionedLock.depositLocked(
                 s, loan.borrower, loanId, loan.collateralAsset, snap.borrowerCollateral
             );
-            // #998 S10 (#1006) — the borrower residual is parked now and claimed
-            // LATER via `claimAsBorrower` (this distribution is lender-triggered),
-            // so freeze it fail-closed if the current borrower-position holder is
-            // flagged.
-            LibSanctionedLock.recordFrozenClaimantForLoan(s, loan, false);
+            // #998 S10 (#1006) — NO marker here: like the retry-proceeds path,
+            // this distribution can run during an oracle outage, so an affirmative
+            // flag can't be confirmed. The borrower freeze is recorded at fallback
+            // ENTRY (`_fullCollateralTransferFallback`), where the oracle is up.
             // #569 Gap A — RE-LIEN the borrower residual pushed BACK into
             // the vault here. The lien was released at liquidation/default
             // ENTRY (when the full collateral left to Diamond custody); the

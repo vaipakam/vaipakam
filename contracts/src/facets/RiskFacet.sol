@@ -1856,6 +1856,16 @@ contract RiskFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessCont
             claimed: borrowerCol == 0
         });
 
+        // #998 S10 (#1006) — capture a confirmed freeze at fallback ENTRY, where
+        // the oracle is up (this path is HF-gated). Unlike an atomic liquidation,
+        // the lender + borrower shares here are distributed LATER inside a claim
+        // that can itself run during an oracle outage (fallback distribution needs
+        // no oracle), so entry is the only reliable moment to record an affirmative
+        // flag for BOTH the lender claim and the deferred borrower claim — matching
+        // the fail-closed guarantee the atomic path gets from its park-site marker.
+        _recordFrozenClaimant(loanId, true);
+        _recordFrozenClaimant(loanId, false);
+
         // Enter fallback-pending state. Borrower may still cure via addCollateral
         // or repayLoan until the lender claims; see LibVaipakam.LoanStatus docs.
         LibLifecycle.transition(
