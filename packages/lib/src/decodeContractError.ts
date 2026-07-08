@@ -249,8 +249,12 @@ export const FRIENDLY_ERROR_MESSAGES: Record<string, string> = {
     'Trade between these two countries is not allowed by the current compliance configuration.',
   '0x01d01c9f':
     'This loan is not in a phase where repayment is accepted right now.',
-  '0x0857e728':
-    'Repayment amount exceeds the remaining principal + interest owed on this loan.',
+  // #1108: the 0x0857e728 "repayment exceeds owed" entry was RETIRED. It was
+  // added as "observed in production" (#838) but matches no error in the
+  // compiled Diamond ABI or any of the 713 source-side error declarations, and
+  // RepayFacet has no such revert (full repay pays exactly what's owed; partial
+  // repay uses InsufficientPartialAmount / PartialWouldRetireFullPrincipal), so
+  // it was dead copy that could only ever mislabel a future selector collision.
   '0xf33650bd':
     'This NFT rental loan is not currently active.',
 };
