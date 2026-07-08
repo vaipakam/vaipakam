@@ -228,6 +228,16 @@ contract RepayFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErrors 
             loan.status != LibVaipakam.LoanStatus.FallbackPending
         ) revert InvalidLoanStatus();
         bool curingFallback = loan.status == LibVaipakam.LoanStatus.FallbackPending;
+        // #998 S10 (#1006) — a cure supersedes any fallback-ENTRY freeze recorded
+        // for this loan. Clear both side markers up front so the fresh terminal
+        // re-stamp below is authoritative — a stale flagged marker from the
+        // abandoned fallback episode must not fail-close a now-clean holder's claim
+        // during an oracle outage. No-op (delete of an empty slot) for a normal
+        // Active repay that never had a marker.
+        if (curingFallback) {
+            LibSanctionedLock.clearFrozenClaimant(s, loanId, true);
+            LibSanctionedLock.clearFrozenClaimant(s, loanId, false);
+        }
 
         // Block lender-side self-repayment. Two checks because `loan.lender`
         // and `ownerOf(lenderTokenId)` can diverge after a free-form ERC-721
@@ -354,7 +364,7 @@ contract RepayFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErrors 
             );
             // #998 S10 (#1006) — fail-closed freeze if the current lender-position
             // holder is flagged (survives an oracle outage at claim time).
-            LibSanctionedLock.recordFrozenClaimantForLoan(s, loan, true);
+            _recordFrozenClaimant(loanId, true);
 
             // Record lender's claimable (principal + interest). heldForLender handled by ClaimFacet.
             s.lenderClaims[loanId] = LibVaipakam.ClaimInfo({
@@ -387,6 +397,11 @@ contract RepayFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErrors 
                 quantity: loan.collateralQuantity,
                 claimed: false
             });
+            // #998 S10 (#1006) — the returned collateral is claim-gated
+            // (`claimAsBorrower`); repay is a Tier-2 close-out that completes even
+            // for a flagged borrower holder, so freeze it fail-closed when the
+            // current borrower-position holder is confirmed flagged.
+            _recordFrozenClaimant(loanId, false);
 
             emit LoanSettlementBreakdown(
                 loanId,
@@ -510,7 +525,7 @@ contract RepayFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErrors 
             );
             // #998 S10 (#1006) — fail-closed freeze if the current lender-position
             // holder is flagged.
-            LibSanctionedLock.recordFrozenClaimantForLoan(s, loan, true);
+            _recordFrozenClaimant(loanId, true);
 
             // Record lender's claimable rental fees. heldForLender handled by ClaimFacet.
             s.lenderClaims[loanId] = LibVaipakam.ClaimInfo({
@@ -632,7 +647,7 @@ contract RepayFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErrors 
                 );
                 // #998 S10 (#1006) — fail-closed freeze if the current borrower-
                 // position holder is flagged.
-                LibSanctionedLock.recordFrozenClaimantForLoan(s, loan, false);
+                _recordFrozenClaimant(loanId, false);
                 // #569 Codex #572 round-5 P1 — RE-LIEN the restored
                 // collateral. The lien was released at default-entry
                 // (when the loan went FallbackPending), so the snapshot
@@ -1084,6 +1099,18 @@ contract RepayFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErrors 
         LibFacet.crossFacetCall(
             abi.encodeWithSelector(selector, loanId, arg2),
             bytes4(0)
+        );
+    }
+
+    /// @dev #998 S10 (#1006) — record the fail-closed frozen-claimant marker via
+    ///      the cross-facet host so the isSanctioned/owner-read machinery stays out
+    ///      of this EIP-170-tight facet (bool encodes as its trailing word: 1 =
+    ///      lender, 0 = borrower).
+    function _recordFrozenClaimant(uint256 loanId, bool lenderSide) private {
+        _callEncumb2(
+            EncumbranceMutateFacet.recordSanctionsFrozenClaimant.selector,
+            loanId,
+            lenderSide ? 1 : 0
         );
     }
 }

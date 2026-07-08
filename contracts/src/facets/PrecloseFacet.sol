@@ -194,6 +194,23 @@ contract PrecloseFacet is
         if (loan.status != LibVaipakam.LoanStatus.Active)
             revert LoanNotActive();
 
+        // #998 S10 (#1006, Codex r1 P1) — record the fail-closed frozen-claimant
+        // markers for BOTH sides up front (branch-independent): precloseDirect is
+        // a Tier-2-style close-out for the counterparties — it writes a lender
+        // payoff claim AND returns the borrower's collateral/refund, each claimed
+        // later via ClaimFacet. A keeper-initiated (or outage-window) close can
+        // complete while a current position holder is sanctioned, so freeze either
+        // side fail-closed when its holder is confirmed flagged. One cross-facet
+        // call covers both sides + both asset branches, keeping this EIP-170-tight
+        // facet small.
+        LibFacet.crossFacetCall(
+            abi.encodeWithSelector(
+                EncumbranceMutateFacet.recordSanctionsFrozenClaimantBoth.selector,
+                loanId
+            ),
+            bytes4(0)
+        );
+
         // #658 PR-B (Codex #690 round-2 P2) — clear any active prepay /
         // parallel-sale listing BEFORE the consolidation hook below. The
         // consolidation primitive EXCLUDES the borrower side while a listing

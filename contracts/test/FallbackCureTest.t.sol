@@ -11,6 +11,7 @@ import {DefaultedFacet} from "../src/facets/DefaultedFacet.sol";
 import {RepayFacet} from "../src/facets/RepayFacet.sol";
 import {RiskFacet} from "../src/facets/RiskFacet.sol";
 import {AddCollateralFacet} from "../src/facets/AddCollateralFacet.sol";
+import {TestMutatorFacet} from "./mocks/TestMutatorFacet.sol";
 import {ClaimFacet} from "../src/facets/ClaimFacet.sol";
 import {VaultFactoryFacet} from "../src/facets/VaultFactoryFacet.sol";
 import {VaipakamNFTFacet} from "../src/facets/VaipakamNFTFacet.sol";
@@ -192,6 +193,62 @@ contract FallbackCureTest is SetupTest, IVaipakamErrors {
         (, , , , , bool active, ) =
             ClaimFacet(address(diamond)).getFallbackSnapshot(loanId);
         assertFalse(active, "fallback snapshot cleared by the cure-repay");
+    }
+
+    /// @dev #998 S10 (#1006, Codex r1 P2) — the addCollateral cure abandons the
+    ///      fallback episode, so it must CLEAR any frozen-claimant markers recorded
+    ///      at fallback entry. Otherwise a stale flagged marker could fail-close a
+    ///      later, unrelated terminal's claim during an oracle outage.
+    function testS10_addCollateralCureClearsFrozenMarkers() public {
+        assertEq(uint8(_loanStatus()), uint8(LibVaipakam.LoanStatus.FallbackPending));
+        address frozen = makeAddr("s10-fbcure-frozen");
+        TestMutatorFacet(address(diamond)).setSanctionsFrozenClaimant(loanId, true, frozen);
+        TestMutatorFacet(address(diamond)).setSanctionsFrozenClaimant(loanId, false, frozen);
+
+        uint256 topUp = 100 ether;
+        ERC20Mock(mockCollateralERC20).mint(borrower, topUp);
+        vm.prank(borrower);
+        AddCollateralFacet(address(diamond)).addCollateral(loanId, topUp);
+        assertEq(uint8(_loanStatus()), uint8(LibVaipakam.LoanStatus.Active));
+
+        assertEq(
+            TestMutatorFacet(address(diamond)).getSanctionsFrozenClaimant(loanId, true),
+            address(0),
+            "lender marker cleared by the addCollateral cure"
+        );
+        assertEq(
+            TestMutatorFacet(address(diamond)).getSanctionsFrozenClaimant(loanId, false),
+            address(0),
+            "borrower marker cleared by the addCollateral cure"
+        );
+    }
+
+    /// @dev #998 S10 (#1006, Codex r1 P2) — the repay-cure likewise clears the
+    ///      stale entry markers up front, then re-stamps against the current holder
+    ///      (a no-op here — no oracle installed, so the holder reads clean). Net:
+    ///      no stale marker survives an abandoned fallback episode.
+    function testS10_repayCureClearsFrozenMarkers() public {
+        assertEq(uint8(_loanStatus()), uint8(LibVaipakam.LoanStatus.FallbackPending));
+        address frozen = makeAddr("s10-fbrepay-frozen");
+        TestMutatorFacet(address(diamond)).setSanctionsFrozenClaimant(loanId, true, frozen);
+        TestMutatorFacet(address(diamond)).setSanctionsFrozenClaimant(loanId, false, frozen);
+
+        vm.startPrank(borrower);
+        ERC20Mock(mockERC20).approve(address(diamond), type(uint256).max);
+        RepayFacet(address(diamond)).repayLoan(loanId);
+        vm.stopPrank();
+        assertEq(uint8(_loanStatus()), uint8(LibVaipakam.LoanStatus.Repaid));
+
+        assertEq(
+            TestMutatorFacet(address(diamond)).getSanctionsFrozenClaimant(loanId, true),
+            address(0),
+            "lender marker cleared by the repay cure"
+        );
+        assertEq(
+            TestMutatorFacet(address(diamond)).getSanctionsFrozenClaimant(loanId, false),
+            address(0),
+            "borrower marker cleared by the repay cure"
+        );
     }
 
     /// @dev With SetupTest mocks (HF=2e18, LTV=6666) and loanInitMaxLtvBps=8000 for

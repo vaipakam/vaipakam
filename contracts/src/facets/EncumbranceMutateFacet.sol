@@ -151,6 +151,22 @@ contract EncumbranceMutateFacet {
         LibSanctionedLock.recordFrozenClaimantForLoan(s, s.loans[loanId], lenderSide);
     }
 
+    /// @notice #998 S10 (#1006) — record BOTH side markers for `loanId` in one
+    ///         cross-facet call. Used by close-outs that write a lender AND a
+    ///         borrower claim in mutually-exclusive branches (e.g.
+    ///         `PrecloseFacet.precloseDirect`), so the caller records once at the
+    ///         top instead of per-branch per-side — keeps that EIP-170-tight facet
+    ///         small. Each side no-ops unless its current holder is flagged.
+    function recordSanctionsFrozenClaimantBoth(uint256 loanId)
+        external
+        onlyDiamondInternal
+    {
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        LibVaipakam.Loan storage loan = s.loans[loanId];
+        LibSanctionedLock.recordFrozenClaimantForLoan(s, loan, true);
+        LibSanctionedLock.recordFrozenClaimantForLoan(s, loan, false);
+    }
+
     // ─── Offer-principal lock (T-407-C, #566) — second lien category ────
     //
     // The per-offer principal lock for ERC20 Lender offers. The creator's

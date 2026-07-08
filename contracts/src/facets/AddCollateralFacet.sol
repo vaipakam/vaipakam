@@ -18,6 +18,7 @@ import {VaipakamNFTFacet} from "./VaipakamNFTFacet.sol";
 import {VaultFactoryFacet} from "./VaultFactoryFacet.sol";
 import {EncumbranceMutateFacet} from "./EncumbranceMutateFacet.sol";
 import {LibEncumbrance} from "../libraries/LibEncumbrance.sol";
+import {LibSanctionedLock} from "../libraries/LibSanctionedLock.sol";
 
 /**
  * @title AddCollateralFacet
@@ -314,6 +315,13 @@ contract AddCollateralFacet is DiamondReentrancyGuard, DiamondPausable, IVaipaka
         // #630 — drop any Role-B cash-exit opt-in: this fallback episode is over,
         // so a later, distinct fallback must be re-authorized by the then-owner.
         delete s.lenderBackstopOptIn[loanId];
+
+        // #998 S10 (#1006) — this fallback episode is abandoned; clear both
+        // frozen-claimant markers recorded at fallback ENTRY so a stale flagged
+        // marker can't fail-close a later, unrelated terminal's claim during an
+        // oracle outage (mirrors the RepayFacet cure clear).
+        LibSanctionedLock.clearFrozenClaimant(s, loanId, true);
+        LibSanctionedLock.clearFrozenClaimant(s, loanId, false);
 
         // Cure path: FallbackPending -> Active.
         LibLifecycle.transition(

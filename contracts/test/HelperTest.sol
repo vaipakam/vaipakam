@@ -753,7 +753,7 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](11);
+        selectors = new bytes4[](12);
         selectors[0] = EncumbranceMutateFacet.releaseCollateralLien.selector;
         selectors[1] = EncumbranceMutateFacet.decrementCollateralLien.selector;
         selectors[2] = EncumbranceMutateFacet.incrementCollateralLien.selector;
@@ -767,8 +767,9 @@ contract HelperTest {
         // #954 — swap-to-repay close-out freeze helpers hosted here (EIP-170).
         selectors[8] = EncumbranceMutateFacet.freezeLenderProceeds.selector;
         selectors[9] = EncumbranceMutateFacet.freezeOrPayBorrowerSurplus.selector;
-        // #998 S10 (#1006) — fail-closed frozen-claimant marker (EIP-170 host).
+        // #998 S10 (#1006) — fail-closed frozen-claimant markers (EIP-170 host).
         selectors[10] = EncumbranceMutateFacet.recordSanctionsFrozenClaimant.selector;
+        selectors[11] = EncumbranceMutateFacet.recordSanctionsFrozenClaimantBoth.selector;
     }
 
     /// @notice #396 v0.5 — gasless signed off-chain offer book selectors.

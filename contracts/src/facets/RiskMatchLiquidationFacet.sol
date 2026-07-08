@@ -902,6 +902,13 @@ contract RiskMatchLiquidationFacet is DiamondReentrancyGuard, DiamondPausable {
                 // adds compose.)
                 LibVaipakam.Storage storage sa = LibVaipakam.storageSlot();
                 sa.heldForLender[loan.id] += lenderProceeds;
+                // #998 S10 (#1006) — a PARTIAL internal match parks this leg's
+                // lender proceeds into `heldForLender` for a LATER terminal claim.
+                // The match is HF-gated (oracle up here), so record the frozen
+                // marker now if the current lender holder is flagged — a later
+                // terminal/claim can run during an oracle outage, when the flag
+                // could not be confirmed.
+                LibSanctionedLock.recordFrozenClaimantForLoan(sa, loan, true);
                 if (loan.principalAsset == sa.vpfiToken) {
                     LibEncumbrance.encumberLenderProceeds(
                         loan.id, loan.lender, loan.principalAsset, lenderProceeds
@@ -1033,6 +1040,11 @@ contract RiskMatchLiquidationFacet is DiamondReentrancyGuard, DiamondPausable {
             // partial branch.
             if (lenderProceeds > 0) {
                 s.heldForLender[loan.id] += lenderProceeds;
+                // #998 S10 (#1006) — same as the Active partial branch: record the
+                // frozen marker now (match is HF-gated, oracle up) since these
+                // held proceeds are claimed at a LATER terminal that can run during
+                // an outage.
+                LibSanctionedLock.recordFrozenClaimantForLoan(s, loan, true);
                 if (loan.principalAsset == s.vpfiToken) {
                     LibEncumbrance.encumberLenderProceeds(
                         loan.id, loan.lender, loan.principalAsset, lenderProceeds
