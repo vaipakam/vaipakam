@@ -935,10 +935,16 @@ export const copy = {
       action: (units: number) => `Mint ${units.toLocaleString()} tLIQ`,
     },
     liquid2: {
-      title: 'Mock USD Coin (mUSDC)',
+      // Symbol is resolved from the token's live on-chain symbol() (#1103).
+      // During the window where the bundled deployment still points this slot
+      // at the pre-relabel token (before an operator reruns the mock deploy +
+      // deployment sync), the row shows the ACTUAL ticker a click will mint
+      // instead of a stale "mUSDC".
+      title: (symbol: string) => `Mock USD Coin (${symbol})`,
       blurb:
         'A test USDC priced at $1 by a test oracle — a second, distinct liquid token so you can run a deal where both the loan and the collateral are liquid (with a realistic price spread against tLIQ / mWETH) without pairing a token against itself.',
-      action: (units: number) => `Mint ${units.toLocaleString()} mUSDC`,
+      action: (units: number, symbol: string) =>
+        `Mint ${units.toLocaleString()} ${symbol}`,
     },
     mweth: {
       title: 'Mock wrapped ETH (mWETH)',
