@@ -6,6 +6,11 @@
 # once listed as a required check in branch protection) if any defi unit
 # test fails.
 #
+# The job also runs the shared @vaipakam/lib unit suite (#1099) — the
+# workflow name stays `defi vitest` so the existing required-check wiring
+# in branch protection keeps resolving; see the `vitest` job for the
+# rationale on gating both suites together.
+#
 # Required-check shape (Codex #1098): this workflow runs on EVERY PR to
 # main — it is NOT scoped with `on.pull_request.paths`. A workflow that
 # never triggers (because its `paths` filter didn't match) produces NO
@@ -104,8 +109,17 @@ jobs:
       - name: Install
         run: pnpm install --frozen-lockfile
 
-      # Blocking: a failing defi unit test fails this job. The suite is
-      # deterministic and green on main (#1076), so a red run means a real
-      # regression the change introduced — fix it, don't ignore it.
+      # Blocking: a failing unit test fails this job. Both suites are
+      # deterministic and green on main (#1076, #1099), so a red run means a
+      # real regression the change introduced — fix it, don't ignore it.
+      #
+      # The shared @vaipakam/lib suite (#1099: multicall + chainPlatforms)
+      # runs in the SAME job: `detect-changes` already flags a packages/lib
+      # edit as `defi=true`, and a lib regression breaks apps/defi (its
+      # primary consumer), so the two suites gate together rather than in a
+      # second workflow.
+      - name: Run @vaipakam/lib vitest
+        run: pnpm --filter @vaipakam/lib test
+
       - name: Run defi vitest
         run: pnpm --filter @vaipakam/defi test
