@@ -10,7 +10,7 @@
   "scripts": {
     "dev": "vite",
     "typecheck": "tsc -b --noEmit",
-    "build": "tsc -b && vite build",
+    "build": "tsc -b tsconfig.build.json && vite build",
     "preview": "vite preview",
     "deploy": "pnpm run build && wrangler deploy",
     "e2e": "playwright test",
