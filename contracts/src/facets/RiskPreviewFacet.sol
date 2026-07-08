@@ -310,34 +310,32 @@ contract RiskPreviewFacet {
                 LibRiskAccess.PairId memory pair
             ) = _resolveMatchActors(s, lender, counterpartyOfferId);
             // The slice-creator (lender) gate `_createOfferSetup` runs at 883 is
-            // against the MATERIALIZED SLICE's own assets — the intent's lend /
-            // collateral legs (ERC-20, single-value; tokenIds 0 and prepay are
-            // immaterial to the ERC-20 pair key) — NOT the borrower offer's pair.
-            // For a well-formed counterparty the two are identical, but a
-            // malformed / stale one (asset-type mismatch => a post-gate
-            // `matchError`) has a different, possibly riskier borrower pair;
-            // gating the lender against THAT would report a spurious risk block
-            // for a fill live rejects at the match core (Codex #1115 r3). So gate
-            // the lender against the SLICE pair. The lender-sale-vehicle branch
-            // (`actorB == 0`) is the exception: the buyer is gated against the
-            // SOLD LOAN's pair `_resolveMatchActors` returns, matching the
-            // enforcing path.
-            LibRiskAccess.PairId memory lenderPair = actorB == address(0)
-                ? pair
-                : LibRiskAccess.PairId({
-                    lendAsset: lendingAsset,
-                    lendType: LibVaipakam.AssetType.ERC20,
-                    lendTokenId: 0,
-                    collAsset: collateralAsset,
-                    collType: LibVaipakam.AssetType.ERC20,
-                    collTokenId: 0,
-                    prepayAsset: address(0)
-                });
-            uint8 rb = LibRiskAccess.previewActorBlock(s, actorA, lenderPair);
-            // Borrower gate (`assertMatchAllowed`) is reached live only after the
-            // slice fully materializes (assets matched), so consult it only on a
-            // clean result, against the borrower/loan pair — never let a borrower
-            // block override an earlier post-gate failure.
+            // ALWAYS against the materialized SLICE's own assets — the intent's
+            // lend / collateral legs (ERC-20, single-value; tokenIds 0 and prepay
+            // immaterial to the ERC-20 pair key) — for BOTH a normal match and a
+            // lender-sale vehicle. It is NOT the borrower offer's pair: for a
+            // well-formed counterparty the two coincide, but a malformed / stale
+            // one (asset-type mismatch => a post-gate `matchError`) has a
+            // different, possibly riskier borrower pair (Codex #1115 r3); and for
+            // a sale vehicle `_executeMatch` reverts `SaleVehicleNotMatchable`
+            // before `assertMatchAllowed` ever gates the sold-loan pair, so the
+            // sold-loan pair must not gate the pre-match lender either (Codex
+            // #1115 r4). Hence: always the slice pair here.
+            LibRiskAccess.PairId memory slicePair = LibRiskAccess.PairId({
+                lendAsset: lendingAsset,
+                lendType: LibVaipakam.AssetType.ERC20,
+                lendTokenId: 0,
+                collAsset: collateralAsset,
+                collType: LibVaipakam.AssetType.ERC20,
+                collTokenId: 0,
+                prepayAsset: address(0)
+            });
+            uint8 rb = LibRiskAccess.previewActorBlock(s, actorA, slicePair);
+            // The borrower gate (`assertMatchAllowed`) is reached live only after
+            // the slice fully materializes (assets matched, not a sale vehicle),
+            // so consult it — against the borrower/loan `pair` — only on a clean
+            // result, never letting a borrower block override an earlier post-gate
+            // failure.
             if (rb == 0 && res.ok && actorB != address(0)) {
                 rb = LibRiskAccess.previewActorBlock(s, actorB, pair);
             }

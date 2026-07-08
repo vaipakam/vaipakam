@@ -806,6 +806,78 @@ contract LenderIntentMatchTest is SetupTest {
         );
     }
 
+    // ── #1115 r4 — sale-vehicle intent preview gates the lender on the SLICE ──
+    //
+    // For a lender-sale vehicle, live `matchIntent` materializes the slice
+    // (gating the lender at 883 against the SLICE assets) and then reverts
+    // `SaleVehicleNotMatchable` in `_executeMatch` BEFORE `assertMatchAllowed`
+    // ever gates the sold-loan pair. So a lender that passes the slice pair but
+    // would fail the (riskier) sold-loan pair must still see `SaleVehicleTagged`,
+    // not a risk block.
+    function test_previewIntent_saleVehicleGatesLenderOnSlicePairNotSoldLoan()
+        public
+    {
+        _setIntent(MAX_EXPOSURE);
+        _fundIntent(PRINCIPAL);
+        address b = _newBorrower("bSaleGate");
+        uint256 cp = _postBorrower(b, PRINCIPAL, 2 * PRINCIPAL);
+
+        // Seed a SOLD LOAN whose collateral is a riskier asset than the intent's,
+        // and tag the borrower offer as its sale vehicle.
+        uint256 saleLoanId = 7777;
+        LibVaipakam.Loan memory soldLoan;
+        soldLoan.principalAsset = mockERC20;
+        soldLoan.assetType = LibVaipakam.AssetType.ERC20;
+        soldLoan.collateralAsset = mockIlliquidERC20; // riskier sold-loan leg
+        soldLoan.collateralAssetType = LibVaipakam.AssetType.ERC20;
+        TestMutatorFacet(address(diamond)).setLoan(saleLoanId, soldLoan);
+        TestMutatorFacet(address(diamond)).setSaleOfferToLoanIdRaw(cp, saleLoanId);
+
+        // Slice legs blue-chip (tier 3, lender passes); sold-loan collateral
+        // tier 1 (would block the default lender if the gate used the sold-loan
+        // pair).
+        vm.mockCall(
+            address(diamond),
+            abi.encodeWithSelector(
+                OracleFacet.getEffectiveLiquidityTier.selector, mockERC20
+            ),
+            abi.encode(uint8(3))
+        );
+        vm.mockCall(
+            address(diamond),
+            abi.encodeWithSelector(
+                OracleFacet.getEffectiveLiquidityTier.selector, mockCollateralERC20
+            ),
+            abi.encode(uint8(3))
+        );
+        vm.mockCall(
+            address(diamond),
+            abi.encodeWithSelector(
+                OracleFacet.getEffectiveLiquidityTier.selector, mockIlliquidERC20
+            ),
+            abi.encode(uint8(1))
+        );
+        vm.prank(owner);
+        ConfigFacet(address(diamond)).setRiskAccessGateEnabled(true);
+
+        // Lender passes its slice-pair gate => SaleVehicleTagged stands, NOT a
+        // risk block (which live never reaches for a sale vehicle).
+        LibOfferMatch.IntentPreviewResult memory r = _preview(solver, PRINCIPAL, cp);
+        assertFalse(r.ok, "sale vehicle is not ok");
+        assertEq(r.riskBlock, 0, "lender passes SLICE-pair gate => no risk block");
+        assertEq(
+            uint8(r.intentError),
+            uint8(LibOfferMatch.IntentError.SaleVehicleTagged),
+            "SaleVehicleTagged preserved (live reverts SaleVehicleNotMatchable)"
+        );
+
+        vm.prank(solver);
+        vm.expectRevert(OfferMatchFacet.SaleVehicleNotMatchable.selector);
+        OfferMatchFacet(address(diamond)).matchIntent(
+            lender, mockERC20, mockCollateralERC20, cp, PRINCIPAL
+        );
+    }
+
     // ── #1115 r3 — lender pre-match gate uses the SLICE pair, not borrower's ──
     //
     // `_createOfferSetup`'s slice-creator (lender) risk gate is against the
