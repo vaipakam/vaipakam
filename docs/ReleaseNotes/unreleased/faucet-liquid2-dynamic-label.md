@@ -9,9 +9,12 @@ operator reruns the mock deploy + the deployments sync), the row would advertise
 
 The row now reads the token's **live on-chain `symbol()`** and labels the title
 ("Mock USD Coin (<symbol>)") and the Mint button ("Mint 10,000 <symbol>") from
-it, falling back to "mUSDC" only until the read resolves. This mirrors what the
-faucet already did at mint time for the success toast and `wallet_watchAsset`,
-so the pre-click label can no longer disagree with what the click mints. The
+it. This mirrors what the faucet already did at mint time for the success toast
+and `wallet_watchAsset`, so the pre-click label can no longer disagree with what
+the click mints. Until the read resolves — or if it errors — the row shows a
+**generic** label ("Mock USD Coin (test stablecoin)" / "Mint 10,000 test
+stablecoin") rather than asserting a specific ticker it hasn't confirmed, so a
+slow or failed read can't re-open the very stale-label window this closes. The
 other faucet rows keep their static tickers because those slots aren't
 relabelled.
 

@@ -104,7 +104,7 @@ export function Faucet() {
   // mUSDC), so its row/button label is the one that can advertise the wrong
   // ticker during the window where the bundled deployment still points at the
   // pre-relabel token. Resolve its live on-chain symbol() and label the row
-  // from that; fall back to the static "mUSDC" hint until the read resolves.
+  // from that.
   const { data: liquid2SymbolRaw } = useReadContract({
     chainId: readChain.chainId,
     address: mocks?.liquidToken2,
@@ -112,10 +112,13 @@ export function Faucet() {
     functionName: 'symbol',
     query: { enabled: Boolean(mocks?.liquidToken2) },
   });
+  // `null` (NOT a hard-coded "mUSDC") until the read resolves — the row then
+  // shows a GENERIC label, so a slow or failed read can never advertise a
+  // specific ticker a click wouldn't actually mint (Codex #1109 P2).
   const liquid2Symbol =
     typeof liquid2SymbolRaw === 'string' && liquid2SymbolRaw.length > 0
       ? liquid2SymbolRaw
-      : 'mUSDC';
+      : null;
 
   // ── Gate 1: the page only DOES anything on a testnet slug that
   // actually carries mock addresses. Both conditions must hold. ──
@@ -282,7 +285,10 @@ export function Faucet() {
             disabled={!canWrite || busy !== null}
             onClick={() =>
               mocks.liquidToken2 &&
-              void mintErc20(mocks.liquidToken2, LIQUID_UNITS, liquid2Symbol)
+              // `mintErc20` re-reads the live symbol at mint time; the hint is
+              // only the toast/watch-asset fallback, so pass "mUSDC" when the
+              // row-level read hasn't resolved.
+              void mintErc20(mocks.liquidToken2, LIQUID_UNITS, liquid2Symbol ?? 'mUSDC')
             }
           />
           <FaucetRow
