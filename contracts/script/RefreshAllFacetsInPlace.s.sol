@@ -70,6 +70,7 @@ import {RiskSplitLiquidationFacet} from "../src/facets/RiskSplitLiquidationFacet
 import {NumeraireConfigFacet} from "../src/facets/NumeraireConfigFacet.sol";
 import {ReceiverFacet} from "../src/facets/ReceiverFacet.sol";
 import {RiskAccessFacet} from "../src/facets/RiskAccessFacet.sol";
+import {RiskPreviewFacet} from "../src/facets/RiskPreviewFacet.sol";
 import {RewardRemittanceFacet} from "../src/facets/RewardRemittanceFacet.sol";
 import {OfferPreviewFacet} from "../src/facets/OfferPreviewFacet.sol";
 
@@ -142,9 +143,9 @@ contract RefreshAllFacetsInPlace is DeployDiamond {
     // cut (no selector overlap, order-independent).
     uint256 internal constant SELECTOR_BUDGET = 120;
 
-    // Must equal DeployDiamond's `cuts` array length (currently cuts[0..62]).
+    // Must equal DeployDiamond's `cuts` array length (currently cuts[0..63]).
     // A mismatch means a facet was added to DeployDiamond but not mirrored here.
-    uint256 internal constant EXPECTED_FACETS = 63;
+    uint256 internal constant EXPECTED_FACETS = 64;
 
     function refresh() external {
         uint256 cid = block.chainid;
@@ -408,6 +409,8 @@ contract RefreshAllFacetsInPlace is DeployDiamond {
             _getRewardRemittanceSelectors()
         );
         items[62] = Item("offerPreviewFacet", address(new OfferPreviewFacet()), _getOfferPreviewSelectors());
+        // #1104 — RiskPreviewFacet split off RiskAccessFacet (items[60]).
+        items[63] = Item("riskPreviewFacet", address(new RiskPreviewFacet()), _getRiskPreviewFacetSelectors());
     }
 
     /// @notice Broadcast one bounded diamondCut for `cuts[start..end)`.

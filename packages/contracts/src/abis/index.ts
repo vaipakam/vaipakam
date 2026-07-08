@@ -12,6 +12,9 @@ import BackstopFacetABI from './BackstopFacet.json';
 import ConsolidationFacetABI from './ConsolidationFacet.json';
 // #671 — self-sovereign progressive risk-access facet.
 import RiskAccessFacetABI from './RiskAccessFacet.json';
+// #1104 — read-only risk preview cluster + cross-facet gate asserts, split
+// off RiskAccessFacet for EIP-170 headroom.
+import RiskPreviewFacetABI from './RiskPreviewFacet.json';
 import BackstopVaultImplementationABI from './BackstopVaultImplementation.json';
 import OfferAcceptFacetABI from './OfferAcceptFacet.json';
 import OfferPreviewFacetABI from './OfferPreviewFacet.json';
@@ -115,6 +118,7 @@ export {
   BackstopVaultImplementationABI,
   ConsolidationFacetABI,
   RiskAccessFacetABI,
+  RiskPreviewFacetABI,
   OfferAcceptFacetABI,
   OfferPreviewFacetABI,
   OfferCancelFacetABI,
@@ -196,6 +200,8 @@ export const DIAMOND_ABI = [
   ...ConsolidationFacetABI,
   // #671 — RiskAccessFacet IS a Diamond facet -> spread.
   ...RiskAccessFacetABI,
+  // #1104 — RiskPreviewFacet IS a Diamond facet -> spread.
+  ...RiskPreviewFacetABI,
   ...OfferAcceptFacetABI,
   ...OfferPreviewFacetABI,
   ...OfferCancelFacetABI,

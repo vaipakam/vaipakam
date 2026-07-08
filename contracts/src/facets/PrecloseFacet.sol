@@ -31,7 +31,7 @@ import {VaultFactoryFacet} from "./VaultFactoryFacet.sol";
 import {OfferCreateFacet} from "./OfferCreateFacet.sol";
 import {VPFIDiscountFacet} from "./VPFIDiscountFacet.sol";
 import {ConsolidationFacet} from "./ConsolidationFacet.sol";
-import {RiskAccessFacet} from "./RiskAccessFacet.sol";
+import {RiskPreviewFacet} from "./RiskPreviewFacet.sol";
 
 /**
  * @title PrecloseFacet
@@ -653,7 +653,7 @@ contract PrecloseFacet is
         // no #662 acknowledgement for this transfer, so nothing substitutes. The
         // EXITING borrower (`msg.sender`, alice) stays exempt: that risk was
         // already accepted at the original loan. The assertion is delegated to
-        // `RiskAccessFacet` via a cross-facet call (PrecloseFacet sits at the
+        // `RiskPreviewFacet` via a cross-facet call (PrecloseFacet sits at the
         // EIP-170 ceiling, so the PairId build can't live inline here); it gates
         // `offer.creator` (= `newBorrower`) against the POST-TRANSFER pair (the
         // loan's lend leg + this offer's collateral leg, since the transfer
@@ -663,7 +663,7 @@ contract PrecloseFacet is
         if (LibVaipakam.cfgRiskAccessGateEnabled()) {
             LibFacet.crossFacetCall(
                 abi.encodeWithSelector(
-                    RiskAccessFacet.assertObligationTransferAllowed.selector,
+                    RiskPreviewFacet.assertObligationTransferAllowed.selector,
                     loanId,
                     borrowerOfferId
                 ),

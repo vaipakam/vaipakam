@@ -8,6 +8,8 @@ import {LibAcceptTerms} from "../src/libraries/LibAcceptTerms.sol";
 import {LibAcceptTestSigner} from "./helpers/LibAcceptTestSigner.sol";
 import {OfferCreateFacet} from "../src/facets/OfferCreateFacet.sol";
 import {OfferAcceptFacet} from "../src/facets/OfferAcceptFacet.sol";
+import {RiskPreviewFacet} from "../src/facets/RiskPreviewFacet.sol";
+import {TestMutatorFacet} from "./mocks/TestMutatorFacet.sol";
 import {RiskAccessFacet} from "../src/facets/RiskAccessFacet.sol";
 import {ConfigFacet} from "../src/facets/ConfigFacet.sol";
 import {OracleFacet} from "../src/facets/OracleFacet.sol";
@@ -630,7 +632,7 @@ contract RiskAccessAcceptGateTest is SetupTest {
 
         // Gate OFF (default): the preview view short-circuits to 0 (OK).
         assertEq(
-            RiskAccessFacet(address(diamond))
+            RiskPreviewFacet(address(diamond))
                 .previewOfferAcceptBlock(offerId, borrower),
             0,
             "gate off => 0 (OK)"
@@ -640,7 +642,7 @@ contract RiskAccessAcceptGateTest is SetupTest {
         // surfaces first as code 1 (tier too low).
         ConfigFacet(address(diamond)).setRiskAccessGateEnabled(true);
         assertEq(
-            RiskAccessFacet(address(diamond))
+            RiskPreviewFacet(address(diamond))
                 .previewOfferAcceptBlock(offerId, borrower),
             1,
             "under-tiered party => 1 (tier too low)"
@@ -655,7 +657,7 @@ contract RiskAccessAcceptGateTest is SetupTest {
         vm.prank(borrower);
         RiskAccessFacet(address(diamond)).setVaultRiskTier(ILLIQUID);
         assertEq(
-            RiskAccessFacet(address(diamond))
+            RiskPreviewFacet(address(diamond))
                 .previewOfferAcceptBlock(offerId, borrower),
             4,
             "tier OK, no standing consent, #662 ack covers => 4 (soft)"
@@ -667,7 +669,7 @@ contract RiskAccessAcceptGateTest is SetupTest {
             _offerPair(mockERC20, mockIlliquidERC20), true
         );
         assertEq(
-            RiskAccessFacet(address(diamond))
+            RiskPreviewFacet(address(diamond))
                 .previewOfferAcceptBlock(offerId, borrower),
             0,
             "standing consent => 0 (OK)"
@@ -696,6 +698,16 @@ contract RiskAccessAcceptGateTest is SetupTest {
         _mockTier(mockIlliquidERC20, 0); // coll leg gate-IlliquidCustom…
         // …but it reads LIQUID (derived tier 0): the #662 ack can't verify it.
         mockOracleLiquidity(mockIlliquidERC20, LibVaipakam.LiquidityStatus.Liquid);
+        // #998 S15 (#900) — a derived-tier-0 collateral is a REAL liquid ERC-20
+        // (positive init-LTV) that is depth-demoted for RISK-ACCESS only; only its
+        // `getEffectiveLiquidityTier` (mocked 0 above) drops, not its loan-init LTV.
+        // Give it a borrowable init-LTV so `createOffer` clears the S15 no-borrow
+        // floor guard (which would otherwise reject an unconfigured, init-LTV-0
+        // collateral up front) — the preview classification still comes from the
+        // mocked tier, so the derived-tier-0 assertion below is unchanged.
+        TestMutatorFacet(address(diamond)).setLoanInitMaxLtvBpsRaw(
+            mockIlliquidERC20, 8000
+        );
 
         uint256 offerId = _lenderOffer(mockERC20, mockIlliquidERC20);
         ConfigFacet(address(diamond)).setRiskAccessGateEnabled(true);
@@ -706,7 +718,7 @@ contract RiskAccessAcceptGateTest is SetupTest {
         // Acceptor is tiered up with no standing consent, but the ack CANNOT cover
         // the derived-tier-0 leg => the preview stays the hard code 2, not 4.
         assertEq(
-            RiskAccessFacet(address(diamond))
+            RiskPreviewFacet(address(diamond))
                 .previewOfferAcceptBlock(offerId, borrower),
             2,
             "derived-tier-0 leg: #662 ack can't verify => stays hard 2"
@@ -719,7 +731,7 @@ contract RiskAccessAcceptGateTest is SetupTest {
             _offerPair(mockERC20, mockIlliquidERC20), true
         );
         assertEq(
-            RiskAccessFacet(address(diamond))
+            RiskPreviewFacet(address(diamond))
                 .previewOfferAcceptBlock(offerId, borrower),
             0,
             "standing consent clears the derived-tier-0 block => 0"
@@ -753,7 +765,7 @@ contract RiskAccessAcceptGateTest is SetupTest {
         );
 
         assertEq(
-            RiskAccessFacet(address(diamond))
+            RiskPreviewFacet(address(diamond))
                 .previewOfferAcceptBlock(offerId, borrower),
             2,
             "creator-side illiquid gap => hard 2 (acceptor ack can't heal it)"
@@ -772,7 +784,7 @@ contract RiskAccessAcceptGateTest is SetupTest {
         uint256 offerId = _lenderOffer(mockERC20, mockIlliquidERC20);
 
         LibRiskAccess.PairId memory got =
-            RiskAccessFacet(address(diamond)).acceptMidTierAckPair(offerId);
+            RiskPreviewFacet(address(diamond)).acceptMidTierAckPair(offerId);
         LibRiskAccess.PairId memory want = _offerPair(mockERC20, mockIlliquidERC20);
         assertEq(got.lendAsset, want.lendAsset, "lendAsset");
         assertEq(uint8(got.lendType), uint8(want.lendType), "lendType");
@@ -795,7 +807,7 @@ contract RiskAccessAcceptGateTest is SetupTest {
 
         // Gate OFF (default) => 0.
         assertEq(
-            RiskAccessFacet(address(diamond)).previewCreatorBlock(offerId),
+            RiskPreviewFacet(address(diamond)).previewCreatorBlock(offerId),
             0,
             "gate off => 0"
         );
@@ -804,7 +816,7 @@ contract RiskAccessAcceptGateTest is SetupTest {
         // creator is under-tiered (code 1).
         ConfigFacet(address(diamond)).setRiskAccessGateEnabled(true);
         assertEq(
-            RiskAccessFacet(address(diamond)).previewCreatorBlock(offerId),
+            RiskPreviewFacet(address(diamond)).previewCreatorBlock(offerId),
             1,
             "creator under-tiered => 1 (tier too low)"
         );
@@ -812,7 +824,7 @@ contract RiskAccessAcceptGateTest is SetupTest {
         // Arm the creator (tier + standing consent) => clears to 0.
         _armCreatorIlliquid(mockERC20, mockIlliquidERC20);
         assertEq(
-            RiskAccessFacet(address(diamond)).previewCreatorBlock(offerId),
+            RiskPreviewFacet(address(diamond)).previewCreatorBlock(offerId),
             0,
             "armed creator => 0"
         );

@@ -32,6 +32,7 @@ import {AddCollateralFacet} from "../src/facets/AddCollateralFacet.sol";
 import {ConsolidationFacet} from "../src/facets/ConsolidationFacet.sol";
 import {ConfigFacet} from "../src/facets/ConfigFacet.sol";
 import {RiskAccessFacet} from "../src/facets/RiskAccessFacet.sol";
+import {RiskPreviewFacet} from "../src/facets/RiskPreviewFacet.sol";
 import {LibRiskAccess} from "../src/libraries/LibRiskAccess.sol";
 import {DiamondCutFacet} from "../src/facets/DiamondCutFacet.sol";
 import {ERC20} from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
@@ -180,7 +181,7 @@ contract PrecloseFacetTest is Test {
         testMutatorFacet = new TestMutatorFacet();
         helperTest = new HelperTest();
 
-        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](24);
+        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](25);
         cuts[0]  = IDiamondCut.FacetCut({facetAddress: address(offerCreateFacet),          action: IDiamondCut.FacetCutAction.Add, functionSelectors: helperTest.getOfferCreateFacetSelectors()});
         cuts[17] = IDiamondCut.FacetCut({
             facetAddress: address(offerAcceptFacet),
@@ -230,6 +231,13 @@ contract PrecloseFacetTest is Test {
             facetAddress: address(new RiskAccessFacet()),
             action: IDiamondCut.FacetCutAction.Add,
             functionSelectors: helperTest.getRiskAccessFacetSelectors()
+        });
+        // #1104 — RiskPreviewFacet hosts `assertObligationTransferAllowed`, the
+        // cross-facet gate assert the obligation-transfer path cross-calls.
+        cuts[24] = IDiamondCut.FacetCut({
+            facetAddress: address(new RiskPreviewFacet()),
+            action: IDiamondCut.FacetCutAction.Add,
+            functionSelectors: helperTest.getRiskPreviewFacetSelectors()
         });
         // #1001 (S3, Codex #1070) — EarlyWithdrawalFacet + OfferMutateFacet so the
         // offset-vs-lender-sale and offset-offer-immutability guards are testable.

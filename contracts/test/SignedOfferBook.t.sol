@@ -26,7 +26,7 @@ import {MockPermit2} from "./mocks/MockPermit2.sol";
  *         book (`SignedOfferFacet` + `LibSignedOffer`).
  *
  * @dev    The signed offer under test is a single-value ERC-20 **Lender**
- *         offer (1000 principal, 1500 collateral, 30 days, 5% rate) — the
+ *         offer (1000 principal, 2000 collateral, 30 days, 5% rate) — the
  *         LTV-safe shape `LoanFacetTest.testInitiateLoanSuccessful` uses, so
  *         the materialize → accept → loan-init path clears the liquidity / HF
  *         gates. The signer is the lender; a borrower fills it by providing
@@ -50,8 +50,13 @@ contract SignedOfferBookTest is SetupTest {
         0x000000000022D473030F116dDEE9F6B43aC78BA3;
 
     // The LTV-safe shape (mirrors LoanFacetTest.testInitiateLoanSuccessful).
+    // #998 S15 (#900) — the shared liquid-both-legs collateral FLOOR is
+    // `principal × MIN_HF(1.5) / liqLTV(0.85) ≈ 1764` for 1000 principal, so the
+    // collateral must clear it or `createOffer` reverts `MinCollateralBelowFloor`.
+    // These tests exercise the signed-offer accept plumbing, not the bound, so
+    // COLLATERAL sits comfortably above the floor.
     uint256 internal constant PRINCIPAL = 1000 ether;
-    uint256 internal constant COLLATERAL = 1500 ether;
+    uint256 internal constant COLLATERAL = 2000 ether;
     uint256 internal constant DURATION = 30;
     uint256 internal constant RATE_BPS = 500;
 

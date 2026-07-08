@@ -5,10 +5,12 @@ import {SetupTest} from "./SetupTest.t.sol";
 import {ConfigFacet} from "../src/facets/ConfigFacet.sol";
 import {OfferCreateFacet} from "../src/facets/OfferCreateFacet.sol";
 import {OfferMatchFacet} from "../src/facets/OfferMatchFacet.sol";
+import {RiskPreviewFacet} from "../src/facets/RiskPreviewFacet.sol";
 import {TestMutatorFacet} from "./mocks/TestMutatorFacet.sol";
 import {RiskAccessFacet} from "../src/facets/RiskAccessFacet.sol";
 import {AdminFacet} from "../src/facets/AdminFacet.sol";
 import {LibOfferMatch} from "../src/libraries/LibOfferMatch.sol";
+import {LibOfferBounds} from "../src/libraries/LibOfferBounds.sol";
 import {LibEncumbrance} from "../src/libraries/LibEncumbrance.sol";
 import {LenderIntentFacet} from "../src/facets/LenderIntentFacet.sol";
 import {LoanFacet} from "../src/facets/LoanFacet.sol";
@@ -530,7 +532,7 @@ contract LenderIntentMatchTest is SetupTest {
         view
         returns (LibOfferMatch.IntentPreviewResult memory)
     {
-        return RiskAccessFacet(address(diamond)).previewIntent(
+        return RiskPreviewFacet(address(diamond)).previewIntent(
             solver_, lender, mockERC20, mockCollateralERC20, boId, fill
         );
     }
@@ -636,6 +638,48 @@ contract LenderIntentMatchTest is SetupTest {
         // matchIntent reverts SaleVehicleNotMatchable ⇒ agrees with the preview.
         vm.prank(solver);
         vm.expectRevert(OfferMatchFacet.SaleVehicleNotMatchable.selector);
+        OfferMatchFacet(address(diamond)).matchIntent(
+            lender, mockERC20, mockCollateralERC20, cp, PRINCIPAL
+        );
+    }
+
+    // ── #1104 — no-borrow (effective-tier-0) collateral floor ──
+    //
+    // A collateral that admits NO borrow at loan-init (per-asset
+    // `loanInitMaxLtvBps == 0`, or effective-tier-0 under depth-tiering) can
+    // never back a loan, yet `minCollateralForLending` returns a FINITE
+    // HF-derived floor for it — so a floor-ONLY slice check would pass the
+    // preview and only fail later in the match core with a different reason.
+    // The #1104 guard mirrors `LibOfferBounds.noBorrowCollateral` in the slice
+    // check so the preview reports `SliceCollateralBelowFloor` up front, exactly
+    // as `matchIntent` reverts `MinCollateralBelowFloor` at slice materialization
+    // (`createSignedOfferVault` → `LibOfferBounds`). Affordable now that the
+    // RiskAccessFacet→RiskPreviewFacet split freed the EIP-170 headroom the
+    // guard's inlining needs. The borrower offer is posted while the collateral
+    // is still borrowable (S15 rejects a no-borrow collateral offer at CREATE),
+    // then demoted — the realistic dynamic-depth-drop path.
+    function test_previewIntent_noBorrowCollateralFloor_agrees() public {
+        _setIntent(MAX_EXPOSURE);
+        _fundIntent(PRINCIPAL);
+        address b = _newBorrower("bNoBorrow");
+        uint256 cp = _postBorrower(b, PRINCIPAL, 2 * PRINCIPAL);
+        // Demote the collateral to no-borrow AFTER the borrower offer is posted.
+        TestMutatorFacet(address(diamond)).setLoanInitMaxLtvBpsRaw(
+            mockCollateralERC20, 0
+        );
+
+        LibOfferMatch.IntentPreviewResult memory r = _preview(solver, PRINCIPAL, cp);
+        assertFalse(r.ok, "preview !ok for no-borrow collateral");
+        assertEq(
+            uint8(r.intentError),
+            uint8(LibOfferMatch.IntentError.SliceCollateralBelowFloor),
+            "intentError SliceCollateralBelowFloor (mirrors materialize revert)"
+        );
+        // matchIntent reverts `MinCollateralBelowFloor` at slice materialization
+        // ⇒ agrees with the preview's SliceCollateralBelowFloor. Selector-only
+        // match (the exact (provided, floor) payload is an internal derivation).
+        vm.prank(solver);
+        vm.expectPartialRevert(LibOfferBounds.MinCollateralBelowFloor.selector);
         OfferMatchFacet(address(diamond)).matchIntent(
             lender, mockERC20, mockCollateralERC20, cp, PRINCIPAL
         );

@@ -45,8 +45,11 @@ abstract contract DiamondFacetNames {
     ///      59 → 60 in #671 with `RiskAccessFacet` (self-sovereign
     ///      progressive risk-access setters + EIP-712 self-submit +
     ///      views; dedicated facet keeps the verify path off
-    ///      ProfileFacet and within EIP-170).)
-    function cutFacetNames() internal pure returns (string[63] memory) {
+    ///      ProfileFacet and within EIP-170);
+    ///      60 → 61 in #1104 with `RiskPreviewFacet` (the read-only preview
+    ///      cluster + the two cross-facet gate asserts split off
+    ///      `RiskAccessFacet` for EIP-170 header room).)
+    function cutFacetNames() internal pure returns (string[64] memory) {
         return [
             "AccessControlFacet",
             "AddCollateralFacet",
@@ -199,7 +202,14 @@ abstract contract DiamondFacetNames {
             // setters + the admin levers (terms-version bump, opt-up cooldown,
             // protocol-managed-vault exemptions) + views. Dedicated facet keeps
             // the EIP-712 verify path off ProfileFacet and within EIP-170.
-            "RiskAccessFacet"
+            "RiskAccessFacet",
+            // #1104 — RiskPreviewFacet: the read-only risk preview cluster
+            // (previewOfferAcceptBlock / previewCreatorBlock / previewIntent /
+            // previewMatchRiskBlock / acceptMidTierAckPair) + the two
+            // cross-facet gate asserts (assertMatchAllowed /
+            // assertObligationTransferAllowed), split off RiskAccessFacet so
+            // both facets keep EIP-170 header room.
+            "RiskPreviewFacet"
         ];
     }
 }

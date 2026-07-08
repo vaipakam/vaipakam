@@ -19,7 +19,7 @@ import {EncumbranceMutateFacet} from "./EncumbranceMutateFacet.sol";
 import {OfferCreateFacet} from "./OfferCreateFacet.sol";
 import {VaipakamNFTFacet} from "./VaipakamNFTFacet.sol";
 import {LibSignedOffer} from "../libraries/LibSignedOffer.sol";
-import {RiskAccessFacet} from "./RiskAccessFacet.sol";
+import {RiskPreviewFacet} from "./RiskPreviewFacet.sol";
 
 /**
  * @title OfferMatchFacet
@@ -709,7 +709,7 @@ contract OfferMatchFacet is DiamondReentrancyGuard, DiamondPausable {
     ///      (`OfferCreateFacet`). The classification + PairId resolution
     ///      (including the borrower-offer-pair surface and the sale-vehicle
     ///      seller-exempt / buyer-gated split) lives in
-    ///      `RiskAccessFacet.assertMatchAllowed` — delegated via a cross-facet
+    ///      `RiskPreviewFacet.assertMatchAllowed` — delegated via a cross-facet
     ///      call so the heavy classifier doesn't inline into this facet (which is
     ///      near the EIP-170 ceiling). The inner `RiskTierTooLow` /
     ///      `IlliquidPairNotConsented` revert bubbles. No-op unless
@@ -722,7 +722,7 @@ contract OfferMatchFacet is DiamondReentrancyGuard, DiamondPausable {
         if (!LibVaipakam.cfgRiskAccessGateEnabled()) return;
         LibFacet.crossFacetCall(
             abi.encodeWithSelector(
-                RiskAccessFacet.assertMatchAllowed.selector,
+                RiskPreviewFacet.assertMatchAllowed.selector,
                 lenderOfferId,
                 borrowerOfferId
             ),
@@ -918,7 +918,7 @@ contract OfferMatchFacet is DiamondReentrancyGuard, DiamondPausable {
         // self-authored offers, design §5), so neither party is re-validated
         // downstream. Re-assert HERE — before any state mutation. The gated
         // parties + the pair they are gated against are resolved in
-        // `RiskAccessFacet.assertMatchAllowed`: a normal match gates BOTH
+        // `RiskPreviewFacet.assertMatchAllowed`: a normal match gates BOTH
         // creators against the BORROWER offer's pair (the resulting loan copies
         // its token ids / prepay from that offer, so the lender must consent to
         // the pair it actually joins, not its own offer's possibly-different

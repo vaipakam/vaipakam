@@ -94,6 +94,7 @@ import {BackstopFacet} from "../src/facets/BackstopFacet.sol";
 import {ReceiverFacet} from "../src/facets/ReceiverFacet.sol";
 import {ConsolidationFacet} from "../src/facets/ConsolidationFacet.sol";
 import {RiskAccessFacet} from "../src/facets/RiskAccessFacet.sol";
+import {RiskPreviewFacet} from "../src/facets/RiskPreviewFacet.sol";
 import {IntentConfigFacet} from "../src/facets/IntentConfigFacet.sol";
 import {AdminFacet} from "../src/facets/AdminFacet.sol";
 import {ClaimFacet} from "../src/facets/ClaimFacet.sol";
@@ -265,6 +266,7 @@ contract SetupTest is Test {
     ConsolidationFacet consolidationFacet;
     // #671 — self-sovereign progressive risk-access facet.
     RiskAccessFacet riskAccessFacet;
+    RiskPreviewFacet riskPreviewFacet;
     IntentConfigFacet intentConfigFacet;
     AdminFacet adminFacet;
     ClaimFacet claimFacet;
@@ -371,6 +373,7 @@ contract SetupTest is Test {
         receiverFacet = new ReceiverFacet();
         consolidationFacet = new ConsolidationFacet();
         riskAccessFacet = new RiskAccessFacet();
+        riskPreviewFacet = new RiskPreviewFacet();
         intentConfigFacet = new IntentConfigFacet();
         adminFacet = new AdminFacet();
         claimFacet = new ClaimFacet();
@@ -435,7 +438,7 @@ contract SetupTest is Test {
         // Preclose / Refinance / EarlyWithdrawal / PartialWithdrawal
         // quartet at slots 24-27 to unblock the PauseGating fold —
         // those slots stay where they are.
-        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](64);
+        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](65);
         cuts[0] = IDiamondCut.FacetCut({
             facetAddress: address(offerCreateFacet),
             action: IDiamondCut.FacetCutAction.Add,
@@ -451,6 +454,13 @@ contract SetupTest is Test {
             facetAddress: address(offerPreviewFacet),
             action: IDiamondCut.FacetCutAction.Add,
             functionSelectors: helperTest.getOfferPreviewFacetSelectors()
+        });
+        // #1104 — RiskPreviewFacet (preview cluster + cross-facet gate asserts
+        // split out of RiskAccessFacet).
+        cuts[64] = IDiamondCut.FacetCut({
+            facetAddress: address(riskPreviewFacet),
+            action: IDiamondCut.FacetCutAction.Add,
+            functionSelectors: helperTest.getRiskPreviewFacetSelectors()
         });
         cuts[1] = IDiamondCut.FacetCut({
             facetAddress: address(profileFacet),

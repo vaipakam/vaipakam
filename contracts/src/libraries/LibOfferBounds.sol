@@ -98,7 +98,7 @@ library LibOfferBounds {
             // finite HF-derived floor for a liquid tier-0 asset (the LTV-cap
             // clamp is skipped when the cap is 0), so we must reject explicitly
             // here to keep create/mutate parity with init admission.
-            if (_noBorrowCollateral(collateralAsset)) {
+            if (noBorrowCollateral(collateralAsset)) {
                 return (false, BoundsFail.CollateralBelowFloor);
             }
             uint256 floor = LibRiskMath.minCollateralForLending(
@@ -111,7 +111,7 @@ library LibOfferBounds {
             }
         } else {
             if (skipCeiling) return (true, BoundsFail.None); // sale vehicle
-            if (_noBorrowCollateral(collateralAsset)) {
+            if (noBorrowCollateral(collateralAsset)) {
                 return (false, BoundsFail.LendingAboveCeiling);
             }
             uint256 ceiling = LibRiskMath.maxLendingForCollateral(
@@ -167,7 +167,7 @@ library LibOfferBounds {
         } else {
             // Tiered tier-0 reject surfaces ceiling 0 (no borrow); otherwise the
             // HF/LTV-derived ceiling.
-            uint256 ceiling = _noBorrowCollateral(collateralAsset)
+            uint256 ceiling = noBorrowCollateral(collateralAsset)
                 ? 0
                 : LibRiskMath.maxLendingForCollateral(
                     borrowerCollMax,
@@ -190,7 +190,12 @@ library LibOfferBounds {
     ///      `LibRiskMath`'s LTV clamp skips a `capBps == 0` and returns a finite
     ///      HF-derived bound, so without this guard create/mutate would admit
     ///      offers acceptance always rejects (Codex #1101 P2).
-    function _noBorrowCollateral(address collateralAsset) private view returns (bool) {
+    /// @dev `internal` (not `private`) so the non-reverting intent preview
+    ///      (`LibOfferMatch.previewIntent`) can mirror the SAME no-borrow guard
+    ///      in its lean slice check — closing the preview-vs-materialize
+    ///      divergence for tier-0 collateral (#1104). Enabled by the
+    ///      RiskAccessFacet→RiskPreviewFacet split's freed EIP-170 headroom.
+    function noBorrowCollateral(address collateralAsset) internal view returns (bool) {
         if (
             LibVaipakam.storageSlot().assetRiskParams[collateralAsset].loanInitMaxLtvBps == 0
         ) {
