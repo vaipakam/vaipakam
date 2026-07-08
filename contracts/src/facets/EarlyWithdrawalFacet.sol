@@ -24,6 +24,7 @@ import {IVaipakamErrors} from "../interfaces/IVaipakamErrors.sol";
 import {VaipakamNFTFacet} from "./VaipakamNFTFacet.sol";
 import {VaultFactoryFacet} from "./VaultFactoryFacet.sol";
 import {EncumbranceMutateFacet} from "./EncumbranceMutateFacet.sol";
+import {ProfileFacet} from "./ProfileFacet.sol";
 import {OfferCreateFacet} from "./OfferCreateFacet.sol";
 
 /**
@@ -431,6 +432,26 @@ contract EarlyWithdrawalFacet is
             LibVaipakam.recordVaultDeposit(buyOffer.creator, payAsset, priorHeld);
         }
 
+        // #1123 — fail-closed position-movement gate BEFORE the burn/mint
+        // migration: a registered-flagged current lender holder (or buyer) can't
+        // move the position via this sale vehicle during an oracle outage. `from`
+        // is the LIVE lender-position holder, captured before `migrateLenderPosition`
+        // rewrites `loan.lender`/`loan.lenderTokenId`.
+        // #1123 — gate only the SELLER (the exiting lender holder), NOT the buyer.
+        // A flagged seller offloading the position during an outage is the
+        // laundering vector this closes; a flagged BUYER's receive is intentionally
+        // NOT blocked — the sale vehicle FREEZES the buyer's proceeds instead
+        // (#831 "frozen not seized": the sale completes, the buyer's held is parked
+        // behind the claim gate). Passing `address(0)` as `to` skips the buyer
+        // check. Routed through the ProfileFacet host (EIP-170).
+        LibFacet.crossFacetCall(
+            abi.encodeWithSelector(
+                ProfileFacet.enforcePositionMoveNotSanctioned.selector,
+                LibERC721.ownerOf(loan.lenderTokenId),
+                address(0)
+            ),
+            bytes4(0)
+        );
         // Migrate lender position: burn old NFT + mint new LoanInitiated NFT
         // for Noah, update loan.lender and loan.lenderTokenId in one place.
         LibLoan.migrateLenderPosition(loanId, buyOffer.creator);
@@ -947,6 +968,19 @@ contract EarlyWithdrawalFacet is
             }
         }
 
+        // #1123 — fail-closed movement gate before the completion-path migration
+        // (same rationale as `sellLoanViaBuyOffer`). `from` = live lender holder.
+        // #1123 — SELLER-only gate (see the `sellLoanViaBuyOffer` rationale): a
+        // flagged buyer's receive is frozen (#831), not blocked, so pass
+        // `address(0)` for the buyer.
+        LibFacet.crossFacetCall(
+            abi.encodeWithSelector(
+                ProfileFacet.enforcePositionMoveNotSanctioned.selector,
+                LibERC721.ownerOf(loan.lenderTokenId),
+                address(0)
+            ),
+            bytes4(0)
+        );
         // Migrate live-loan lender position in one shot.
         LibLoan.migrateLenderPosition(loanId, newLender);
 

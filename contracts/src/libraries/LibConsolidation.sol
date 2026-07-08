@@ -106,6 +106,12 @@ library LibConsolidation {
         if (ctx == Ctx.Tier1Strict) {
             LibVaipakam._assertNotSanctioned(current); // reverts if flagged
         } else if (LibVaipakam.isSanctionedAddress(current)) {
+            // #1123 — non-reverting oracle-up observation of a flagged current
+            // holder: register them in the confirmed-flagged registry so they
+            // cannot move the position during a later oracle outage. Direct write
+            // (the `isSanctionedAddress` read above already confirmed the flag with
+            // the oracle reachable — no second oracle call needed).
+            LibVaipakam.storageSlot().sanctionsConfirmedFlagged[current] = true;
             return Result.Skipped; // Tier-2: skip, never block the close-out
         }
         if (current == stored) {

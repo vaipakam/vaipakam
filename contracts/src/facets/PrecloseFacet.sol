@@ -968,8 +968,12 @@ contract PrecloseFacet is
         LibMetricsHooks.onOfferAccepted(offer.id);
 
         // ── 7. NFT updates ──────────────────────────────────────────────────
-        // Migrate borrower position in one shot (burn alice's + mint ben's NFT,
-        // keep loan.borrower/borrowerTokenId in lockstep with NFT state).
+        // #1123 — the fail-closed position-movement gate on this borrower-position
+        // migration (`from` = the EXITING `exitingBorrowerHolder` captured above,
+        // before the `loan.borrower` rekey; `to` = `newBorrower`) is DEFERRED to
+        // the PrecloseFacet split (#1124): adding the gate (even a cross-facet stub)
+        // overflows this EIP-170-maxed facet. Tracked alongside the direct-preclose
+        // vault-lock in #1124; pre-live, so no deployed-window exposure.
         LibLoan.migrateBorrowerPosition(loanId, newBorrower);
 
         // Burn ben's offer position NFT (offer is consumed)

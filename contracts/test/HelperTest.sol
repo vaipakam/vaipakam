@@ -474,7 +474,7 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](25);
+        selectors = new bytes4[](28);
         selectors[0] = ProfileFacet.updateKYCStatus.selector;
         selectors[1] = ProfileFacet.getUserCountry.selector;
         selectors[2] = ProfileFacet.isKYCVerified.selector;
@@ -501,6 +501,11 @@ contract HelperTest {
         selectors[22] = ProfileFacet.getKeeperActions.selector;
         selectors[23] = ProfileFacet.isLoanKeeperEnabled.selector;
         selectors[24] = ProfileFacet.isOfferKeeperEnabled.selector;
+        // #1123 — confirmed-flagged registry sync (permissionless) + read + the
+        // self-only movement-gate host.
+        selectors[25] = ProfileFacet.refreshSanctionsFlag.selector;
+        selectors[26] = ProfileFacet.isSanctionsConfirmedFlagged.selector;
+        selectors[27] = ProfileFacet.enforcePositionMoveNotSanctioned.selector;
         return selectors;
     }
 
@@ -548,7 +553,7 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](22);
+        selectors = new bytes4[](25);
         selectors[0] = VaipakamNFTFacet.mintNFT.selector;
         selectors[1] = VaipakamNFTFacet.updateNFTStatus.selector;
         selectors[2] = VaipakamNFTFacet.burnNFT.selector;
@@ -581,6 +586,12 @@ contract HelperTest {
         selectors[19] = bytes4(keccak256("setApprovalForAll(address,bool)"));
         selectors[20] = bytes4(keccak256("isApprovedForAll(address,address)"));
         selectors[21] = VaipakamNFTFacet.positionLock.selector;
+        // ERC-721 transfer entrypoints — production cuts these
+        // (DeployDiamond.s.sol s[18-20]); the harness historically omitted them.
+        // Required to exercise the #1123 fail-closed position-movement gate.
+        selectors[22] = VaipakamNFTFacet.transferFrom.selector;
+        selectors[23] = bytes4(keccak256("safeTransferFrom(address,address,uint256)"));
+        selectors[24] = bytes4(keccak256("safeTransferFrom(address,address,uint256,bytes)"));
         return selectors;
     }
 

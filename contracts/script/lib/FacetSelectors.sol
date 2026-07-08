@@ -97,7 +97,7 @@ library FacetSelectors {
 
     /// @notice Full external selector surface of {ProfileFacet} (25).
     function profile() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](25);
+        s = new bytes4[](28);
         s[0] = ProfileFacet.updateKYCStatus.selector;
         s[1] = ProfileFacet.getUserCountry.selector;
         s[2] = ProfileFacet.isKYCVerified.selector;
@@ -123,5 +123,9 @@ library FacetSelectors {
         s[22] = ProfileFacet.getKeeperActions.selector;
         s[23] = ProfileFacet.isLoanKeeperEnabled.selector;
         s[24] = ProfileFacet.isOfferKeeperEnabled.selector;
+        // #1123 — confirmed-flagged registry sync + read + self-only movement-gate host.
+        s[25] = ProfileFacet.refreshSanctionsFlag.selector;
+        s[26] = ProfileFacet.isSanctionsConfirmedFlagged.selector;
+        s[27] = ProfileFacet.enforcePositionMoveNotSanctioned.selector;
     }
 }
