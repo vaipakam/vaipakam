@@ -159,6 +159,17 @@ user-initiated position-movement path**, not just the ERC-721 entrypoints:
   confirm the set is complete. Mint-at-origination and burn-at-terminal are NOT
   movements between users and stay exempt.
 
+**`from` MUST be the live NFT holder, captured before any row rewrite (Codex r2
+P1 #156).** At the migration sites the gate's `from` must be
+`IERC721(address(this)).ownerOf(<positionTokenId>)` read **before** the loan row
+is rekeyed — NOT the stored loan party. `transferObligationViaOffer` rewrites
+`loan.borrower = newBorrower` before calling `migrateBorrowerPosition`, and a
+lender sale can run with `msg.sender != loan.lender` after a prior secondary
+transfer; deriving `from` from the stored party would let a registered flagged
+current holder migrate during an outage (the exact laundering this closes). For
+`transferFrom`/`safeTransferFrom` the ERC-721 `from` argument is already the live
+owner. `to` is the incoming holder (`newLender`/`newBorrower`/ERC-721 `to`).
+
 Per party, `assertPositionMoveNotSanctioned` behaves by oracle state
 (resolving the P2 #129 three-way):
 
@@ -230,10 +241,14 @@ secondary market on every oracle blip) — rejected as disproportionate.
   (strict-clean self-heal).
 - **Register (via a park or `refreshSanctionsFlag`) while up, then outage → move
   of the registered wallet reverts via EACH movement path** — the load-bearing
-  assertions (P1 #162/#143 + the core guarantee): `transferFrom`,
-  `sellLoanViaBuyOffer`, the accepted-sale **completion** path
-  (`completeLoanSaleInternal`, r2 P2 #212), AND borrower-side
+  assertions (P1 #162/#143 + the core guarantee): `transferFrom`, **both**
+  `safeTransferFrom(from,to,tokenId)` and `safeTransferFrom(from,to,tokenId,data)`
+  overloads (r3 P2 #236), `sellLoanViaBuyOffer`, the accepted-sale **completion**
+  path (`completeLoanSaleInternal`, r2 P2 #212), AND borrower-side
   `transferObligationViaOffer` → `migrateBorrowerPosition` (r2 P1 #143).
+- Migration gate keys on the **live** `ownerOf(positionTokenId)` as `from`: a
+  registered flagged CURRENT holder is blocked even when the stored `loan.lender`
+  / `loan.borrower` is a different (clean) party (r3 P1 #156).
 - Outage + never-registered wallet → move succeeds (no over-block).
 - Oracle **unset** with a pre-existing registry entry → move succeeds (registry
   ignored; P2 #129).
@@ -250,15 +265,19 @@ secondary market on every oracle blip) — rejected as disproportionate.
 - Mint-at-origination / burn-at-terminal / internal settlement unaffected while a
   party is registered.
 
-## 7. Open decisions for Codex round 2
+## 7. Settled decisions
 
-1. Confirm the movement surface enumeration in §3.4 is complete — is
-   `migrateLenderPosition` the only burn/mint position-move, or does obligation
-   transfer / any borrower-position re-anchor also need the gate? (Grep-audit to
-   be done at implementation; called out here for review.)
-2. `sanctionsStatus` tri-state helper vs. a narrower
-   `assertNotSanctionedFailClosed`-style pair — the tri-state is needed because
-   registry *clears* require a definitive `Clean` (not just "did not revert").
-   Confirm the enum approach.
-3. Registry as `bool` vs epoch/timestamp — leaning `bool` (de-list is explicit via
-   the oracle; an auto-expire would re-open the outage window on a timer).
+1. **Movement surface — DECIDED (mandatory, not open).** The gate is mandatory at
+   `transferFrom` / both `safeTransferFrom` overloads, the two lender-sale
+   migration paths, AND the borrower-position obligation transfer
+   (`transferObligationViaOffer` → `migrateBorrowerPosition`). Nothing here is
+   optional; the implementation must wire every §3.4 site. A grep-audit
+   (`migrateLenderPosition` / `migrateBorrowerPosition` / `_assertNotSanctioned`
+   at movement sites) runs at implementation only to catch any *additional* site
+   not yet listed — never to drop one (Codex r3 P2 #258).
+2. **`sanctionsStatus` tri-state — DECIDED.** Registry *clears* need a definitive
+   `Clean` (not merely "did not revert"), so the enum
+   `{Clean, Flagged, Unavailable}` is required over an
+   `assertNotSanctionedFailClosed`-style bool/revert pair.
+3. **Registry as `bool` — DECIDED.** De-list is explicit via the oracle; an
+   auto-expiring epoch/timestamp would re-open the outage window on a timer.
