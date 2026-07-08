@@ -15,7 +15,7 @@ import { useState } from 'react';
 import { Link } from 'react-router-dom';
 import { useModal } from 'connectkit';
 import { Droplets, ExternalLink, LoaderCircle, TestTube } from 'lucide-react';
-import { usePublicClient, useWalletClient } from 'wagmi';
+import { usePublicClient, useReadContract, useWalletClient } from 'wagmi';
 import type { Abi, Address } from 'viem';
 import { parseUnits } from 'viem';
 import { getDeployment } from '@vaipakam/contracts/deployments';
@@ -99,6 +99,26 @@ export function Faucet() {
   const [watched, setWatched] = useState(false);
 
   const mocks = getDeployment(readChain.chainId)?.testnetMocks;
+
+  // #1103 — the second liquid slot is the one that gets RELABELLED (tLQ2 →
+  // mUSDC), so its row/button label is the one that can advertise the wrong
+  // ticker during the window where the bundled deployment still points at the
+  // pre-relabel token. Resolve its live on-chain symbol() and label the row
+  // from that.
+  const { data: liquid2SymbolRaw } = useReadContract({
+    chainId: readChain.chainId,
+    address: mocks?.liquidToken2,
+    abi: ERC20_SYMBOL_ABI,
+    functionName: 'symbol',
+    query: { enabled: Boolean(mocks?.liquidToken2) },
+  });
+  // `null` (NOT a hard-coded "mUSDC") until the read resolves — the row then
+  // shows a GENERIC label, so a slow or failed read can never advertise a
+  // specific ticker a click wouldn't actually mint (Codex #1109 P2).
+  const liquid2Symbol =
+    typeof liquid2SymbolRaw === 'string' && liquid2SymbolRaw.length > 0
+      ? liquid2SymbolRaw
+      : null;
 
   // ── Gate 1: the page only DOES anything on a testnet slug that
   // actually carries mock addresses. Both conditions must hold. ──
@@ -256,16 +276,19 @@ export function Faucet() {
             }
           />
           <FaucetRow
-            title={copy.faucet.liquid2.title}
+            title={copy.faucet.liquid2.title(liquid2Symbol)}
             blurb={copy.faucet.liquid2.blurb}
             address={mocks.liquidToken2}
             explorer={readChain.blockExplorer}
-            actionLabel={copy.faucet.liquid2.action(LIQUID_UNITS)}
+            actionLabel={copy.faucet.liquid2.action(LIQUID_UNITS, liquid2Symbol)}
             busy={busy === mocks.liquidToken2}
             disabled={!canWrite || busy !== null}
             onClick={() =>
               mocks.liquidToken2 &&
-              void mintErc20(mocks.liquidToken2, LIQUID_UNITS, 'mUSDC')
+              // `mintErc20` re-reads the live symbol at mint time; the hint is
+              // only the toast/watch-asset fallback, so pass "mUSDC" when the
+              // row-level read hasn't resolved.
+              void mintErc20(mocks.liquidToken2, LIQUID_UNITS, liquid2Symbol ?? 'mUSDC')
             }
           />
           <FaucetRow

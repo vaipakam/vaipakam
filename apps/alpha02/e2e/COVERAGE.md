@@ -28,7 +28,7 @@ live for the deployed-service half).
 | Accept offer → loan initiation | CI-Anvil | `tests/03-accept-loan.spec.ts` | — |
 | Repay loan | CI-Anvil | `tests/04-repay.spec.ts` | — |
 | Cancel offer + cooldown | CI-Anvil | `tests/05-cancel-cooldown.spec.ts` | — |
-| Faucet mint + watch-asset | CI-Anvil | `tests/06-faucet.spec.ts` | — |
+| Faucet mint + watch-asset | CI-Anvil | `tests/06-faucet.spec.ts` — mint lands on-chain + watch-asset affordance; also asserts the relabelled second-liquid row (#1103) labels its Mint button with the token's LIVE on-chain `symbol()`, not a hard-coded "mUSDC" | — |
 | Write-path kill switch (#1056) | CI-Anvil | `tests/07-kill-switch.spec.ts` | — (build-env flag reproducible with a second dev server) |
 | Pre-sign dry-run footer (#1058/#1059) | CI-Anvil + live | `tests/08-dryrun-footer.spec.ts` + `live/live-dryrun-review.mjs` | Live half re-checks the REAL RPC's revert-data shape — the #1059 bug was invisible on Anvil-adjacent assumptions and only surfaced live. |
 | Friendly contract-error messages + tx-error diagnostics capture (borrow-error UX) | CI-Anvil (lib logic) + live | lib logic: `apps/defi/test/lib/decodeContractError.test.ts` (curated reachable-error copy, `humanizeErrorName` fallback, gas-trap only when no selector); alpha02 wiring verified live | The observable behaviour — a real revert (e.g. `MaxLendingAboveCeiling` from an under-collateralised borrow) rendering as plain-language copy in the dry-run footer + submit error instead of the raw selector, the reworded gas-trap message, and the failed tx landing in the diagnostics `lastError` sink / support report — needs a genuine on-chain revert the Anvil fork doesn't reproduce for this path. The decode/humanize logic itself is unit-tested in CI. |

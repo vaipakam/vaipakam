@@ -935,10 +935,22 @@ export const copy = {
       action: (units: number) => `Mint ${units.toLocaleString()} tLIQ`,
     },
     liquid2: {
-      title: 'Mock USD Coin (mUSDC)',
+      // Symbol is resolved from the token's live on-chain symbol() (#1103).
+      // During the window where the bundled deployment still points this slot
+      // at the pre-relabel token (before an operator reruns the mock deploy +
+      // deployment sync), the row shows the ACTUAL ticker a click will mint
+      // instead of a stale "mUSDC". Until the read resolves (or if it errors)
+      // the symbol is `null` and we show a GENERIC label — never asserting a
+      // specific ticker we haven't confirmed, which would re-open the exact
+      // stale-label window this resolves (Codex #1109 P2).
+      title: (symbol: string | null) =>
+        symbol ? `Mock USD Coin (${symbol})` : 'Mock USD Coin (test stablecoin)',
       blurb:
         'A test USDC priced at $1 by a test oracle — a second, distinct liquid token so you can run a deal where both the loan and the collateral are liquid (with a realistic price spread against tLIQ / mWETH) without pairing a token against itself.',
-      action: (units: number) => `Mint ${units.toLocaleString()} mUSDC`,
+      action: (units: number, symbol: string | null) =>
+        symbol
+          ? `Mint ${units.toLocaleString()} ${symbol}`
+          : `Mint ${units.toLocaleString()} test stablecoin`,
     },
     mweth: {
       title: 'Mock wrapped ETH (mWETH)',
