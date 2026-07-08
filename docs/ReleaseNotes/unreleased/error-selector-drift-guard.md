@@ -18,9 +18,10 @@ showed the user raw text. Both are now mapped correctly — an invalid-sender
 revert reads "Invalid sender address for the token transfer." and an
 invalid-spender revert reads "Invalid spender address for the token
 approval." A second, older orphan (`0x0857e728`, a "repayment exceeds owed"
-message that matches no error anywhere in the current contract surface) is
-allowlisted with a documented reason and queued to be retired or
-re-identified.
+message that matches no error anywhere in the current contract surface — not in
+the compiled Diamond ABI nor in any source-side error declaration) was
+**retired** (#1108): it was dead copy that could only ever mislabel a future
+selector collision, so it was removed rather than kept indefinitely.
 
 Guard-only for the contracts (no `src/` logic changed); the user-visible
 effect is that the two ERC-20 approval/transfer errors now decode to correct,
