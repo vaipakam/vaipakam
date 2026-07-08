@@ -728,15 +728,79 @@ contract LenderIntentMatchTest is SetupTest {
             mockCollateralERC20, 0
         );
 
-        // Preview reports the RISK block first (not the floor).
+        // Preview reports the RISK block first (not the floor), and the stale
+        // floor code is cleared so a consumer keying on `intentError` doesn't
+        // still see the floor (Codex #1115 r2 — "clear stale floor error").
         LibOfferMatch.IntentPreviewResult memory r = _preview(solver, PRINCIPAL, cp);
         assertFalse(r.ok, "combined risk+floor failure is not ok");
         assertEq(r.riskBlock, 1, "risk block reported first, before the floor");
+        assertEq(
+            uint8(r.intentError),
+            uint8(LibOfferMatch.IntentError.Ok),
+            "stale floor intentError cleared when risk block is the reason"
+        );
 
         // Live matchIntent reverts with the risk error, not MinCollateralBelowFloor
         // => the preview's risk-first report agrees with the live revert reason.
         vm.prank(solver);
         vm.expectPartialRevert(LibRiskAccess.RiskTierTooLow.selector);
+        OfferMatchFacet(address(diamond)).matchIntent(
+            lender, mockERC20, mockCollateralERC20, cp, PRINCIPAL
+        );
+    }
+
+    // ── #1115 r2 — a BORROWER risk block must NOT override the slice floor ──
+    //
+    // Only the slice CREATOR's (lender's) risk gate runs before the floor bound
+    // in `_createOfferSetup`; the borrower-side `assertMatchAllowed` is reached
+    // only after the slice materializes. So when the lender PASSES risk, the
+    // borrower is under-tiered, AND the slice fails the floor, the live fill
+    // reverts on the FLOOR first — the preview must report the floor, not the
+    // borrower's risk block.
+    function test_previewIntent_borrowerRiskDoesNotOverrideFloor() public {
+        _setIntent(MAX_EXPOSURE);
+        _fundIntent(PRINCIPAL);
+        address b = _newBorrower("bBorrowerRisk");
+        uint256 cp = _postBorrower(b, PRINCIPAL, 2 * PRINCIPAL);
+
+        vm.mockCall(
+            address(diamond),
+            abi.encodeWithSelector(
+                OracleFacet.getEffectiveLiquidityTier.selector, mockERC20
+            ),
+            abi.encode(uint8(1))
+        );
+        vm.mockCall(
+            address(diamond),
+            abi.encodeWithSelector(
+                OracleFacet.getEffectiveLiquidityTier.selector, mockCollateralERC20
+            ),
+            abi.encode(uint8(1))
+        );
+        vm.prank(owner);
+        ConfigFacet(address(diamond)).setRiskAccessGateEnabled(true);
+        // Arm the LENDER to BroadLiquid so its risk gate PASSES; the borrower
+        // stays default-tier (under-tiered). Fail the floor too.
+        vm.prank(lender);
+        RiskAccessFacet(address(diamond)).setVaultRiskTier(1); // BroadLiquid
+        TestMutatorFacet(address(diamond)).setLoanInitMaxLtvBpsRaw(
+            mockCollateralERC20, 0
+        );
+
+        // Lender passes risk; the borrower gate is NOT consulted for a
+        // pre-materialization floor failure => preview reports the floor.
+        LibOfferMatch.IntentPreviewResult memory r = _preview(solver, PRINCIPAL, cp);
+        assertFalse(r.ok, "floor failure is not ok");
+        assertEq(r.riskBlock, 0, "borrower risk block must NOT be reported");
+        assertEq(
+            uint8(r.intentError),
+            uint8(LibOfferMatch.IntentError.SliceCollateralBelowFloor),
+            "floor is the reason (borrower risk is post-floor live)"
+        );
+
+        // Live reverts on the floor, not the borrower risk.
+        vm.prank(solver);
+        vm.expectPartialRevert(LibOfferBounds.MinCollateralBelowFloor.selector);
         OfferMatchFacet(address(diamond)).matchIntent(
             lender, mockERC20, mockCollateralERC20, cp, PRINCIPAL
         );

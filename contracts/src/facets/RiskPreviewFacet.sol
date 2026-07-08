@@ -275,51 +275,63 @@ contract RiskPreviewFacet {
         );
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
 
-        // A non-floor intent / slice-create / match-core failure is the binding
-        // reason AND precedes the risk gate in the live path — the duration cap
-        // and per-asset pause run BEFORE `_createOfferSetup`'s risk gate, and the
-        // match core runs before slice materialization — so return it as-is. A
-        // collateral-FLOOR failure is the one exception: `_createOfferSetup` runs
-        // its per-creator risk gate (`assertActorMayTransact`, gate-on only)
-        // BEFORE the floor/ceiling bound (`assertOfferBounds`), so a slice that
-        // fails BOTH reverts LIVE with the RISK reason. Fall through to evaluate
-        // the risk gate first for a floor failure so the preview reports the same
-        // first reason (Codex #1115 P2 — otherwise #1104's floor guard would
-        // report the floor where the live fill actually reverts on the risk
-        // gate). When the gate clears, the floor is surfaced below as its correct
-        // reason.
-        bool floorFail = !res.ok
-            && res.intentError == LibOfferMatch.IntentError.SliceCollateralBelowFloor;
-        if (!res.ok && !floorFail) return res;
+        // Live order in `_executeMatch` (Codex #1115 r2): the intent-level guards
+        // and the slice's duration-cap + per-asset pause run BEFORE
+        // `_createOfferSetup`'s SLICE-CREATOR (lender) risk gate
+        // (`assertActorMayTransact`, gate-on only); the collateral floor, the
+        // >365d cadence bound, the sale-vehicle rejection, and the match core all
+        // run AFTER it; and the BORROWER-side `assertMatchAllowed` runs only once
+        // the slice has fully materialized. So the reported first reason must be:
+        //   • a PRE-gate failure (intent-level, slice duration-cap, slice pause)
+        //     as-is — the risk gate is never reached live;
+        //   • otherwise the SLICE-CREATOR (lender) risk block if it trips, since
+        //     it precedes every post-gate failure (floor / multi-year /
+        //     sale-vehicle / match-core) live;
+        //   • else the surviving post-gate failure, or (on a clean result) the
+        //     BORROWER risk block, then the accept gates.
+        // The post-gate `intentError` set is exactly {SliceCollateralBelowFloor,
+        // SliceMultiYearTerm, SaleVehicleTagged}; any `matchError` is post-gate
+        // too (the match core runs after materialization).
+        bool precedesLenderRisk = !res.ok
+            && res.matchError == LibOfferMatch.MatchError.Ok
+            && res.intentError != LibOfferMatch.IntentError.SliceCollateralBelowFloor
+            && res.intentError != LibOfferMatch.IntentError.SliceMultiYearTerm
+            && res.intentError != LibOfferMatch.IntentError.SaleVehicleTagged;
+        if (precedesLenderRisk) return res;
 
-        // #671 risk-access gate — mirrors `_executeMatch`'s
-        // `assertMatchAllowed(slice, counterparty)` (before the accept gates) and
-        // `_createOfferSetup`'s per-creator gate (before the floor bound).
-        // Resolve the gated parties via the slice's CREATOR (= `lender`; the
-        // slice has no offer id) and the borrower offer; handles the
-        // lender-sale-vehicle branch identically to the enforcing path. If it
-        // blocks, the live fill reverts here — before the floor bound and before
-        // accept.
+        // #671 risk-access gate. Resolve the gated parties via the slice's
+        // CREATOR (= `lender`; the slice has no offer id) and the borrower offer;
+        // handles the lender-sale-vehicle branch identically to the enforcing
+        // path.
         if (LibVaipakam.cfgRiskAccessGateEnabled()) {
             (
                 address actorA,
                 address actorB,
                 LibRiskAccess.PairId memory pair
             ) = _resolveMatchActors(s, lender, counterpartyOfferId);
+            // Slice-creator (lender) gate — the one `_createOfferSetup` runs
+            // before the post-gate failures above.
             uint8 rb = LibRiskAccess.previewActorBlock(s, actorA, pair);
-            if (rb == 0 && actorB != address(0)) {
+            // Borrower gate (`assertMatchAllowed`) is reached live only after the
+            // slice fully materializes, so consult it only on a clean result —
+            // never let a borrower block override an earlier post-gate failure.
+            if (rb == 0 && res.ok && actorB != address(0)) {
                 rb = LibRiskAccess.previewActorBlock(s, actorB, pair);
             }
             res.riskBlock = rb;
             if (rb != 0) {
+                // The risk gate is the live first-revert reason here; clear any
+                // stale post-gate failure code so consumers keying on
+                // intentError / matchError don't report the later reason.
                 res.ok = false;
+                res.intentError = LibOfferMatch.IntentError.Ok;
+                res.matchError = LibOfferMatch.MatchError.Ok;
                 return res;
             }
         }
 
-        // The risk gate cleared (or is off). A floor failure now surfaces as its
-        // own reason — the live path's floor bound is the first revert once the
-        // risk gate passes — rather than proceeding to the accept gates.
+        // Risk gate cleared (or off): a surviving post-gate failure is now the
+        // correct first reason (its live check comes after the passed risk gate).
         if (!res.ok) return res;
 
         // #747 Codex r1/r2/r3 — accept-time gates. After the match + risk gate
