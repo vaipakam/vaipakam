@@ -46,7 +46,11 @@ import {ERC20} from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
 contract FallbackCureTest is SetupTest, IVaipakamErrors {
     uint256 internal loanId;
     uint256 internal constant PRINCIPAL = 1000 ether;
-    uint256 internal constant COLLATERAL = 1500 ether;
+    // #998 S15 (#900/#1101): was 1500, below the ~1764 create floor introduced
+    // by the offer floor/ceiling work — bumped above the floor (plumbing test,
+    // not the bound). Same fix as DefaultedFacetTest; the broader matcher-suite
+    // fallout is tracked as #1116.
+    uint256 internal constant COLLATERAL = 2000 ether;
     uint256 internal constant DURATION_DAYS = 30;
 
     function setUp() public {

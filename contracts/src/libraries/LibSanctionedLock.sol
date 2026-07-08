@@ -6,6 +6,7 @@ import {LibVaipakam} from "./LibVaipakam.sol";
 import {LibFacet} from "./LibFacet.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
+import {LibERC721} from "./LibERC721.sol";
 import {VaultFactoryFacet} from "../facets/VaultFactoryFacet.sol";
 import {IVaipakamErrors} from "../interfaces/IVaipakamErrors.sol";
 
@@ -233,6 +234,32 @@ library LibSanctionedLock {
         } else {
             s.sanctionsLockedBorrowerClaimant[loanId] = intendedClaimant;
         }
+    }
+
+    /// @notice Convenience wrapper for the common receive-side park: resolve the
+    ///         CURRENT position-NFT holder for `lenderSide` (the intended economic
+    ///         claimant) and record it as the frozen claimant iff flagged.
+    /// @dev    Reads the current position-NFT owner straight from Diamond storage
+    ///         via `LibERC721._ownerOfRaw` — a plain SLOAD, NOT an external
+    ///         `ownerOf` staticcall, which keeps the inlined cost at each of the
+    ///         many EIP-170-tight park sites (RiskFacet / DefaultedFacet /
+    ///         PrecloseFacet et al.) to a storage read. The raw read returns
+    ///         `address(0)` for a burned / never-minted token, so a position with
+    ///         no live holder records nothing (there is no distinct downstream
+    ///         claimant to freeze) without needing a try/catch. Delegates the flag
+    ///         test + the affirmative-only write to `recordFrozenClaimant`, so an
+    ///         oracle-outage park still stays fail-open (no marker). Use this at the
+    ///         standard park sites where the payout is owed to the position holder;
+    ///         pass the address directly to `recordFrozenClaimant` at sites that
+    ///         have already resolved the intended recipient (e.g. a surplus paid to
+    ///         a passed `currentHolder`).
+    function recordFrozenClaimantForLoan(
+        LibVaipakam.Storage storage s,
+        LibVaipakam.Loan storage loan,
+        bool lenderSide
+    ) internal {
+        uint256 tokenId = lenderSide ? loan.lenderTokenId : loan.borrowerTokenId;
+        recordFrozenClaimant(s, loan.id, lenderSide, LibERC721._ownerOfRaw(tokenId));
     }
 
     /// @notice The recorded frozen claimant for a `(loanId, side)`, or

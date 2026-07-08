@@ -5,6 +5,7 @@ pragma solidity ^0.8.29;
 import {LibEncumbrance} from "../libraries/LibEncumbrance.sol";
 import {LibVaipakam} from "../libraries/LibVaipakam.sol";
 import {LibCloseoutFreeze} from "../libraries/LibCloseoutFreeze.sol";
+import {LibSanctionedLock} from "../libraries/LibSanctionedLock.sol";
 
 /**
  * @title  EncumbranceMutateFacet
@@ -129,6 +130,25 @@ contract EncumbranceMutateFacet {
             loanId,
             LibVaipakam.storageSlot().loans[loanId]
         );
+    }
+
+    /// @notice #998 S10 (#1006) — record the fail-closed frozen-claimant marker
+    ///         for a `(loanId, side)` close-out park, keyed to the CURRENT
+    ///         position-NFT holder (the intended economic claimant). See
+    ///         {LibSanctionedLock.recordFrozenClaimantForLoan}.
+    /// @dev    Hosted here (not inlined) for the EIP-170-tight liquidation /
+    ///         close-out facets (`RiskFacet`, `DefaultedFacet`, `PrecloseFacet`),
+    ///         which cross-call it exactly as they cross-call
+    ///         {incrementCollateralLien}. Facets with bytecode room inline the
+    ///         helper directly (same inline-where-possible policy as
+    ///         {freezeLenderProceeds}). Runs in the diamond's storage context, so
+    ///         the marker lands in shared storage regardless of caller.
+    function recordSanctionsFrozenClaimant(uint256 loanId, bool lenderSide)
+        external
+        onlyDiamondInternal
+    {
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        LibSanctionedLock.recordFrozenClaimantForLoan(s, s.loans[loanId], lenderSide);
     }
 
     // ─── Offer-principal lock (T-407-C, #566) — second lien category ────

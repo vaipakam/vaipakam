@@ -872,6 +872,11 @@ contract RiskMatchLiquidationFacet is DiamondReentrancyGuard, DiamondPausable {
                     quantity: 0,
                     claimed: false
                 });
+                // #998 S10 (#1006) — fail-closed freeze if the current lender-
+                // position holder is flagged (claimed via `claimAsLender`).
+                LibSanctionedLock.recordFrozenClaimantForLoan(
+                    LibVaipakam.storageSlot(), loan, true
+                );
                 // #585 — if the proceeds are VPFI, reserve them against the
                 // unstake path (`withdrawVPFIFromVault`) so the stored
                 // lender can't front-run the holder's claim. Released in
@@ -948,6 +953,9 @@ contract RiskMatchLiquidationFacet is DiamondReentrancyGuard, DiamondPausable {
                     quantity: 0,
                     claimed: false
                 });
+                // #998 S10 (#1006) — fail-closed freeze if the current lender-
+                // position holder is flagged.
+                LibSanctionedLock.recordFrozenClaimantForLoan(s, loan, true);
                 // #585 — VPFI proceeds reservation (see the Active branch).
                 if (loan.principalAsset == s.vpfiToken) {
                     LibEncumbrance.encumberLenderProceeds(
@@ -997,6 +1005,9 @@ contract RiskMatchLiquidationFacet is DiamondReentrancyGuard, DiamondPausable {
                         quantity: loan.collateralQuantity,
                         claimed: false
                     });
+                    // #998 S10 (#1006) — fail-closed freeze if the current
+                    // borrower-position holder is flagged.
+                    LibSanctionedLock.recordFrozenClaimantForLoan(s, loan, false);
                 } else {
                     delete s.borrowerClaims[loan.id];
                 }
@@ -1073,6 +1084,9 @@ contract RiskMatchLiquidationFacet is DiamondReentrancyGuard, DiamondPausable {
                     quantity: 0,
                     claimed: false
                 });
+                // #998 S10 (#1006) — fail-closed freeze if the current borrower-
+                // position holder is flagged.
+                LibSanctionedLock.recordFrozenClaimantForLoan(s, loan, false);
                 // The matched proceeds already exited; the lender's residual
                 // collateral claim is zero (Diamond consumed).
                 s.lenderClaims[loan.id].amount = 0;

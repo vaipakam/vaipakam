@@ -881,4 +881,36 @@ contract TestMutatorFacet {
             LibVaipakam.storageSlot().loanCollateralLien[loanId];
         return (l.amount, l.released);
     }
+
+    // ─── #998 S10 (#1006) — frozen-claimant marker direct-write / read ────────
+
+    /// @notice Directly set the fail-closed frozen-claimant marker for a
+    ///         `(loanId, side)` so the release-gate logic can be unit-tested
+    ///         without driving a full close-out lifecycle.
+    function setSanctionsFrozenClaimant(
+        uint256 loanId,
+        bool lenderSide,
+        address who
+    ) external {
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        if (lenderSide) {
+            s.sanctionsLockedLenderClaimant[loanId] = who;
+        } else {
+            s.sanctionsLockedBorrowerClaimant[loanId] = who;
+        }
+    }
+
+    /// @notice Read the recorded frozen-claimant marker for a `(loanId, side)`
+    ///         (`address(0)` when unset) — lets a test assert a close-out park
+    ///         set the marker, or that a clean release cleared it.
+    function getSanctionsFrozenClaimant(uint256 loanId, bool lenderSide)
+        external
+        view
+        returns (address)
+    {
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        return lenderSide
+            ? s.sanctionsLockedLenderClaimant[loanId]
+            : s.sanctionsLockedBorrowerClaimant[loanId];
+    }
 }

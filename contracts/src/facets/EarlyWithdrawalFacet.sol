@@ -950,6 +950,17 @@ contract EarlyWithdrawalFacet is
         // Migrate live-loan lender position in one shot.
         LibLoan.migrateLenderPosition(loanId, newLender);
 
+        // #998 S10 (#1006) — the shortfall + migrated held above were parked into
+        // the BUYER's (`newLender`) vault as `heldForLender`, claimed later via
+        // `claimAsLender`. A flagged buyer is blocked at purchase while the oracle
+        // is up; a buy-during-outage would otherwise slip through, so freeze that
+        // held fail-closed keyed to `newLender` (the future claimant — `ownerOf`
+        // still returned the departing seller at the park points above). No-op for
+        // a clean buyer or when nothing was parked.
+        if (s.heldForLender[loanId] > 0) {
+            LibSanctionedLock.recordFrozenClaimant(s, loanId, true, newLender);
+        }
+
         // #597 — re-reserve the FULL held-for-lender VPFI on the NEW lender,
         // where it now physically lives. `loan.lender` is now the new lender.
         // Released to the new lender at claim. Gated on VPFI.

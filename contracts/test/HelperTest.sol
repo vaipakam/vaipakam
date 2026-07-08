@@ -82,7 +82,7 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](91);
+        selectors = new bytes4[](93);
         selectors[0] = TestMutatorFacet.setLoan.selector;
         selectors[1] = TestMutatorFacet.setOffer.selector;
         selectors[2] = TestMutatorFacet.setNextLoanId.selector;
@@ -258,6 +258,8 @@ contract HelperTest {
         selectors[88] = TestMutatorFacet.tierLiquidationLtvBpsFor.selector; // #999 (S1) tier-0 remap probe
         selectors[89] = TestMutatorFacet.setRentalBufferBpsRaw.selector; // #1004 (S8) rental late-fee buffer cap
         selectors[90] = TestMutatorFacet.setLoanInitMaxLtvBpsRaw.selector; // #900 (S15) per-asset init-LTV cap
+        selectors[91] = TestMutatorFacet.setSanctionsFrozenClaimant.selector; // #1006 (S10)
+        selectors[92] = TestMutatorFacet.getSanctionsFrozenClaimant.selector; // #1006 (S10)
         // #951 v2 (Codex #959 bind-to-live) — setSaleListingCollateralRaw removed
         // with the snapshot mapping; the accept binds `>=` live collateral.
         // #687-B: the former tail entries ([83]-[87]: setBackstopAbsorbCashRaw,
@@ -751,7 +753,7 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](10);
+        selectors = new bytes4[](11);
         selectors[0] = EncumbranceMutateFacet.releaseCollateralLien.selector;
         selectors[1] = EncumbranceMutateFacet.decrementCollateralLien.selector;
         selectors[2] = EncumbranceMutateFacet.incrementCollateralLien.selector;
@@ -765,6 +767,8 @@ contract HelperTest {
         // #954 — swap-to-repay close-out freeze helpers hosted here (EIP-170).
         selectors[8] = EncumbranceMutateFacet.freezeLenderProceeds.selector;
         selectors[9] = EncumbranceMutateFacet.freezeOrPayBorrowerSurplus.selector;
+        // #998 S10 (#1006) — fail-closed frozen-claimant marker (EIP-170 host).
+        selectors[10] = EncumbranceMutateFacet.recordSanctionsFrozenClaimant.selector;
     }
 
     /// @notice #396 v0.5 — gasless signed off-chain offer book selectors.

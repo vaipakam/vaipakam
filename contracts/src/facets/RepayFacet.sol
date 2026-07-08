@@ -352,6 +352,9 @@ contract RepayFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErrors 
             LibSanctionedLock.end(
                 s, loan.lender, loanId, loan.principalAsset, plan.lenderDue
             );
+            // #998 S10 (#1006) — fail-closed freeze if the current lender-position
+            // holder is flagged (survives an oracle outage at claim time).
+            LibSanctionedLock.recordFrozenClaimantForLoan(s, loan, true);
 
             // Record lender's claimable (principal + interest). heldForLender handled by ClaimFacet.
             s.lenderClaims[loanId] = LibVaipakam.ClaimInfo({
@@ -505,6 +508,9 @@ contract RepayFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErrors 
             LibSanctionedLock.depositLocked(
                 s, loan.lender, loanId, loan.prepayAsset, lenderShare
             );
+            // #998 S10 (#1006) — fail-closed freeze if the current lender-position
+            // holder is flagged.
+            LibSanctionedLock.recordFrozenClaimantForLoan(s, loan, true);
 
             // Record lender's claimable rental fees. heldForLender handled by ClaimFacet.
             s.lenderClaims[loanId] = LibVaipakam.ClaimInfo({
@@ -624,6 +630,9 @@ contract RepayFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErrors 
                 LibSanctionedLock.depositLocked(
                     s, loan.borrower, loanId, loan.collateralAsset, held
                 );
+                // #998 S10 (#1006) — fail-closed freeze if the current borrower-
+                // position holder is flagged.
+                LibSanctionedLock.recordFrozenClaimantForLoan(s, loan, false);
                 // #569 Codex #572 round-5 P1 — RE-LIEN the restored
                 // collateral. The lien was released at default-entry
                 // (when the loan went FallbackPending), so the snapshot

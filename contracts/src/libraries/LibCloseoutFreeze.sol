@@ -72,6 +72,10 @@ library LibCloseoutFreeze {
         LibSanctionedLock.depositLocked(
             s, loan.lender, loanId, loan.principalAsset, lenderDue
         );
+        // #998 S10 (#1006) — freeze the lender payout fail-closed if the CURRENT
+        // position holder (the intended claimant) is flagged, so the confirmed
+        // freeze can't lift during an oracle outage.
+        LibSanctionedLock.recordFrozenClaimantForLoan(s, loan, true);
         s.lenderClaims[loanId] = LibVaipakam.ClaimInfo({
             asset: loan.principalAsset,
             amount: lenderDue,
@@ -130,6 +134,10 @@ library LibCloseoutFreeze {
         LibSanctionedLock.depositLocked(
             s, loan.borrower, loanId, loan.principalAsset, surplus
         );
+        // #998 S10 (#1006) — the surplus is frozen precisely because
+        // `currentHolder` is flagged (we are past the clean-holder early return),
+        // so record that address as the frozen claimant for a fail-closed release.
+        LibSanctionedLock.recordFrozenClaimant(s, loanId, false, currentHolder);
         s.borrowerSurplusClaims[loanId] = LibVaipakam.ClaimInfo({
             asset: loan.principalAsset,
             amount: surplus,

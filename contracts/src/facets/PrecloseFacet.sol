@@ -1322,6 +1322,18 @@ contract PrecloseFacet is
             VaultDepositFailed.selector
         );
         LibSanctionedLock.end(s, loan.lender, loanId, payAssetOffset, lenderTotal);
+        // #998 S10 (#1006) — fail-closed freeze if the current old-lender-position
+        // holder is flagged (the payoff is claimed via `claimAsLender`). Routed
+        // through the cross-facet host so the isSanctioned/owner-read machinery
+        // stays out of this EIP-170-tight facet.
+        LibFacet.crossFacetCall(
+            abi.encodeWithSelector(
+                EncumbranceMutateFacet.recordSanctionsFrozenClaimant.selector,
+                loanId,
+                true
+            ),
+            bytes4(0)
+        );
         s.heldForLender[loanId] += lenderTotal;
         // #597 — reserve the held VPFI against the old lender's unstake path for
         // the (now brief) window between this write and `claimAsLender`. VPFI is

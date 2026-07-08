@@ -746,6 +746,131 @@ contract DefaultedFacetTest is Test {
         assertEq(uint8(loan.status), uint8(LibVaipakam.LoanStatus.Defaulted));
     }
 
+    // ─── #998 S10 (#1006) — fail-closed frozen-claimant end-to-end ─────────────
+
+    /// @dev Full close-out proof: a default whose CURRENT lender-position holder
+    ///      is sanctions-flagged records the fail-closed frozen-claimant marker
+    ///      (park threading), the parked proceeds then STAY frozen through an
+    ///      oracle outage (fail-closed release), and only a real de-list releases
+    ///      them + clears the marker.
+    function testS10_defaultFreezesLenderProceeds_untilDelist() public {
+        uint256 loanId = createAndAcceptOffer(
+            mockERC20,
+            mockCollateralERC20,
+            LibVaipakam.AssetType.ERC20,
+            1000 ether,
+            2000 ether,
+            30,
+            0,
+            0
+        );
+
+        // The stored lender still holds the lender position NFT (no transfer):
+        // that current holder is the intended claimant the marker keys on.
+        LibVaipakam.Loan memory loan = LoanFacet(address(diamond)).getLoanDetails(loanId);
+        assertEq(
+            IERC721(address(diamond)).ownerOf(loan.lenderTokenId),
+            lender,
+            "lender holds the position NFT"
+        );
+
+        // Install the oracle and flag the current holder BEFORE the close-out so
+        // the park records an affirmative freeze.
+        MockSanctionsList m = new MockSanctionsList();
+        ProfileFacet(address(diamond)).setSanctionsOracle(address(m));
+        m.setFlagged(lender, true);
+
+        // Drive a real default (liquid-collateral path — same mocks as
+        // testTriggerDefaultLiquidCollateral). triggerDefault is a Tier-2
+        // close-out, so it stays open even with a flagged lender.
+        uint256 endTime = block.timestamp + 30 days;
+        vm.warp(endTime + LibVaipakam.gracePeriod(30) + 1);
+        vm.mockCall(
+            address(diamond),
+            abi.encodeWithSelector(OracleFacet.getAssetPrice.selector, mockCollateralERC20),
+            abi.encode(5e7, 8)
+        );
+        vm.mockCall(
+            address(diamond),
+            abi.encodeWithSelector(RiskFacet.calculateHealthFactor.selector),
+            abi.encode(uint256(0.5e18))
+        );
+        deal(mockERC20, address(diamond), 3000 ether);
+        deal(mockCollateralERC20, address(diamond), 3000 ether);
+
+        vm.prank(lender);
+        DefaultedFacet(address(diamond)).triggerDefault(loanId, defaultAdapterCalls());
+
+        // (1) Park threading: the marker recorded the flagged current holder.
+        assertEq(
+            TestMutatorFacet(address(diamond)).getSanctionsFrozenClaimant(loanId, true),
+            lender,
+            "default park recorded the frozen lender claimant"
+        );
+
+        // (2) Fail-closed release: during an oracle outage the confirmed freeze
+        //     does NOT lift — the lender's own claim reverts fail-closed.
+        m.setRevertOnRead(true);
+        vm.prank(lender);
+        vm.expectRevert(IVaipakamErrors.SanctionsOracleUnavailable.selector);
+        ClaimFacet(address(diamond)).claimAsLender(loanId);
+
+        // (3) De-list (oracle recovers, holder cleared) → the real release
+        //     succeeds and clears the marker.
+        m.setRevertOnRead(false);
+        m.setFlagged(lender, false);
+        vm.prank(lender);
+        ClaimFacet(address(diamond)).claimAsLender(loanId);
+        assertEq(
+            TestMutatorFacet(address(diamond)).getSanctionsFrozenClaimant(loanId, true),
+            address(0),
+            "clean release cleared the frozen-claimant marker"
+        );
+    }
+
+    /// @dev Regression guard: an ordinary default whose holder is NOT flagged
+    ///      records NO marker, so the claim stays fail-open (an oracle blip can
+    ///      never brick an honest claimant).
+    function testS10_defaultWithCleanHolder_recordsNoMarker() public {
+        uint256 loanId = createAndAcceptOffer(
+            mockERC20,
+            mockCollateralERC20,
+            LibVaipakam.AssetType.ERC20,
+            1000 ether,
+            2000 ether,
+            30,
+            0,
+            0
+        );
+        // Oracle installed, but the holder is clean.
+        MockSanctionsList m = new MockSanctionsList();
+        ProfileFacet(address(diamond)).setSanctionsOracle(address(m));
+
+        uint256 endTime = block.timestamp + 30 days;
+        vm.warp(endTime + LibVaipakam.gracePeriod(30) + 1);
+        vm.mockCall(
+            address(diamond),
+            abi.encodeWithSelector(OracleFacet.getAssetPrice.selector, mockCollateralERC20),
+            abi.encode(5e7, 8)
+        );
+        vm.mockCall(
+            address(diamond),
+            abi.encodeWithSelector(RiskFacet.calculateHealthFactor.selector),
+            abi.encode(uint256(0.5e18))
+        );
+        deal(mockERC20, address(diamond), 3000 ether);
+        deal(mockCollateralERC20, address(diamond), 3000 ether);
+
+        vm.prank(lender);
+        DefaultedFacet(address(diamond)).triggerDefault(loanId, defaultAdapterCalls());
+
+        assertEq(
+            TestMutatorFacet(address(diamond)).getSanctionsFrozenClaimant(loanId, true),
+            address(0),
+            "clean-holder default records no frozen marker"
+        );
+    }
+
     function testTriggerDefaultIlliquidCollateral() public {
         // Mock principal as illiquid so both assets match (avoids MixedCollateralNotAllowed)
         mockOracleLiquidity(mockERC20, LibVaipakam.LiquidityStatus.Illiquid);
