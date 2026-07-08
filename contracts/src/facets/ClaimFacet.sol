@@ -380,6 +380,17 @@ contract ClaimFacet is
         // Sanctions: the executing keeper AND the cash recipient (current NFT owner).
         LibVaipakam._assertNotSanctioned(msg.sender);
         LibVaipakam._assertNotSanctioned(nftOwner);
+        // #998 S10 (#1006) — fail-closed release of any sanctioned-LOCKED lender
+        // proceeds on the backstop absorb path too (the lender-side marker applies
+        // to the same funds). Confirmed freeze survives an oracle outage here as
+        // well; ordinary absorbs carry no marker and stay fail-open.
+        {
+            address frozen = LibSanctionedLock.frozenClaimant(s, loanId, true);
+            if (frozen != address(0)) {
+                LibVaipakam.assertNotSanctionedFailClosed(frozen);
+                LibSanctionedLock.clearFrozenClaimant(s, loanId, true);
+            }
+        }
 
         // ── Resolution-first. The internal-match auto-dispatch is calldata-free
         //    and objective; it always runs. A FULL match clears `snap.active`
@@ -702,6 +713,25 @@ contract ClaimFacet is
         // the payout reads it below.)
         LibVaipakam.ClaimInfo storage claim = s.lenderClaims[loanId];
         if (claim.claimed) revert AlreadyClaimed();
+
+        // #998 S10 (#1006) — fail-closed release of sanctioned-LOCKED proceeds.
+        // If this lender side was frozen at close-out because the intended
+        // recipient (the current holder then) was affirmatively sanctions-flagged,
+        // the release must pass a FAIL-CLOSED screen on the RECORDED frozen
+        // claimant — not merely the fail-open `msg.sender` screen above. This
+        // keeps a confirmed freeze from silently lifting during a sanctions-oracle
+        // outage AND defeats the transfer-during-outage laundering vector (the
+        // funds unlock only once the recorded party is proven de-listed, whoever
+        // holds the NFT now). Ordinary (never-locked) claims carry no marker and
+        // stay fail-open, so an oracle blip never bricks an honest claimant. On a
+        // clean pass the marker is cleared (atomic with the payout below).
+        {
+            address frozen = LibSanctionedLock.frozenClaimant(s, loanId, true);
+            if (frozen != address(0)) {
+                LibVaipakam.assertNotSanctionedFailClosed(frozen);
+                LibSanctionedLock.clearFrozenClaimant(s, loanId, true);
+            }
+        }
 
         // EC-007 — verify lender position-NFT ownership BEFORE the
         // claim-time fallback resolution. `_resolveFallbackIfActive`
@@ -1095,6 +1125,21 @@ contract ClaimFacet is
 
         LibVaipakam.ClaimInfo storage claim = s.borrowerClaims[loanId];
         if (claim.claimed) revert AlreadyClaimed();
+
+        // #998 S10 (#1006) — fail-closed release of sanctioned-LOCKED borrower
+        // proceeds (surplus / re-liened collateral / residual). Mirror of the
+        // lender gate: if this borrower side was frozen at close-out on an
+        // affirmative flag of the intended recipient, re-screen the RECORDED
+        // frozen claimant FAIL-CLOSED so the freeze survives an oracle outage and
+        // the transfer-during-outage laundering vector. Ordinary claims carry no
+        // marker and stay fail-open. Cleared atomically on a clean pass.
+        {
+            address frozen = LibSanctionedLock.frozenClaimant(s, loanId, false);
+            if (frozen != address(0)) {
+                LibVaipakam.assertNotSanctionedFailClosed(frozen);
+                LibSanctionedLock.clearFrozenClaimant(s, loanId, false);
+            }
+        }
         // NFT collateral claims have amount=0 but tokenId/quantity as payload.
         // Phase 5 / §5.2b adds a second claimable lane: any pending VPFI
         // rebate credited at proper settlement (borrowerLifRebate). Loans

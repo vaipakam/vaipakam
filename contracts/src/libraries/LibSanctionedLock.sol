@@ -199,4 +199,69 @@ library LibSanctionedLock {
             emit SanctionedProceedsLocked(loanId, owner, asset, amount);
         }
     }
+
+    // ─── #998 S10 (#1006) — frozen-claimant marker (fail-closed release) ──────
+
+    /// @notice Record the FROZEN-CLAIMANT marker for a sanctioned-locked-proceeds
+    ///         park. Call at a receive-side close-out freeze with the INTENDED
+    ///         economic recipient — the CURRENT position-NFT holder the payout is
+    ///         for — and the side (`lenderSide` selects the lender vs borrower
+    ///         mapping).
+    /// @dev    Records the address ONLY when it is affirmatively sanctions-flagged.
+    ///         A park during an oracle outage (the predicate fails OPEN ⇒ false)
+    ///         records nothing, so ordinary / unconfirmed parks stay fail-open at
+    ///         claim time — an oracle blip must never freeze an honest claimant.
+    ///         The recorded address (NOT the credited vault owner, NOT the eventual
+    ///         `msg.sender`) is what the release gate re-checks FAIL-CLOSED, which
+    ///         is what keeps a confirmed freeze from lifting during an oracle
+    ///         outage AND closes the transfer-during-outage laundering hole (the
+    ///         funds unlock only once the RECORDED party is proven de-listed,
+    ///         regardless of who holds the position NFT at claim time). Keyed to
+    ///         the current holder — not the `owner` the funds are parked into —
+    ///         because a transferred position can be held by a flagged party while
+    ///         the stored (credited) party is clean.
+    function recordFrozenClaimant(
+        LibVaipakam.Storage storage s,
+        uint256 loanId,
+        bool lenderSide,
+        address intendedClaimant
+    ) internal {
+        if (intendedClaimant == address(0)) return;
+        if (!LibVaipakam.isSanctionedAddress(intendedClaimant)) return;
+        if (lenderSide) {
+            s.sanctionsLockedLenderClaimant[loanId] = intendedClaimant;
+        } else {
+            s.sanctionsLockedBorrowerClaimant[loanId] = intendedClaimant;
+        }
+    }
+
+    /// @notice The recorded frozen claimant for a `(loanId, side)`, or
+    ///         `address(0)` when that side's proceeds were not locked behind a
+    ///         confirmed flag (the common case).
+    function frozenClaimant(
+        LibVaipakam.Storage storage s,
+        uint256 loanId,
+        bool lenderSide
+    ) internal view returns (address) {
+        return lenderSide
+            ? s.sanctionsLockedLenderClaimant[loanId]
+            : s.sanctionsLockedBorrowerClaimant[loanId];
+    }
+
+    /// @notice Clear the frozen-claimant marker for a `(loanId, side)` after a
+    ///         successful clean release (the fail-closed screen passed ⇒ the
+    ///         oracle is up and the recorded claimant is de-listed), so the slot
+    ///         doesn't leak and a later re-lock stays possible. Clears only the
+    ///         side being released.
+    function clearFrozenClaimant(
+        LibVaipakam.Storage storage s,
+        uint256 loanId,
+        bool lenderSide
+    ) internal {
+        if (lenderSide) {
+            delete s.sanctionsLockedLenderClaimant[loanId];
+        } else {
+            delete s.sanctionsLockedBorrowerClaimant[loanId];
+        }
+    }
 }
