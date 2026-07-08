@@ -26,13 +26,14 @@ interface DecodableError {
  * Human-friendly, user-facing messages for known revert selectors. Falls back
  * to the raw selector name when no friendly copy is defined.
  */
-const FRIENDLY_ERROR_MESSAGES: Record<string, string> = {
+export const FRIENDLY_ERROR_MESSAGES: Record<string, string> = {
   // ── ERC-20 (OpenZeppelin) ─────────────────────────────────────────────
   '0xe450d38c':
     'Insufficient token balance. Your wallet does not hold enough of the token for this amount.',
   '0xfb8f41b2':
     'Insufficient token allowance. Approve the token for the required amount and try again.',
-  '0x94280d62': 'Invalid sender address for the token transfer.',
+  '0x96c6fd1e': 'Invalid sender address for the token transfer.',
+  '0x94280d62': 'Invalid spender address for the token approval.',
   '0xec442f05': 'Invalid recipient address for the token transfer.',
 
   // ── ERC-721 (LibERC721 / OpenZeppelin-style) ──────────────────────────
@@ -381,8 +382,15 @@ export function friendlyContractError(opts: {
  * listed renders as `<name?> (0xselector)` so support can map it by hand
  * against the contract source. Keep this table literal (selectors computed
  * offline with `cast sig`) to avoid pulling a hash lib into the bundle.
+ *
+ * Drift guard (#68): `decodeContractError.drift.test.ts` recomputes every
+ * key with viem's `toFunctionSelector(signature)` and fails if it doesn't
+ * match — so a hand-typed selector that doesn't hash from its signature (the
+ * `ERC20InvalidSender`/`ERC20InvalidSpender` mix-up this table shipped with)
+ * can't recur — and cross-checks each mapped name against the compiled
+ * Diamond ABI so a Solidity-side signature change surfaces at CI time.
  */
-const KNOWN_ERROR_SELECTORS: Record<string, string> = {
+export const KNOWN_ERROR_SELECTORS: Record<string, string> = {
   // ── Range / offer-create bounds (OfferCreateFacet) — reachable friendly set,
   //    selectors derived from the compiled ABI (keccak of the signature). ──
   '0xa46539d8': 'MaxLendingAboveCeiling(uint256,uint256)',
@@ -420,7 +428,13 @@ const KNOWN_ERROR_SELECTORS: Record<string, string> = {
   // ── ERC-20 (OpenZeppelin) ─────────────────────────────────────────────
   '0xe450d38c': 'ERC20InsufficientBalance(address,uint256,uint256)',
   '0xfb8f41b2': 'ERC20InsufficientAllowance(address,uint256,uint256)',
-  '0x94280d62': 'ERC20InvalidSender(address)',
+  // #68 drift fix: 0x94280d62 is ERC20InvalidSpender(address) (the approve
+  // path), NOT ERC20InvalidSender — that hand-transcription was wrong. The
+  // real ERC20InvalidSender(address) is 0x96c6fd1e (the transfer path), which
+  // was entirely missing until now. The drift test asserts selector ==
+  // keccak(signature) so this can't recur.
+  '0x96c6fd1e': 'ERC20InvalidSender(address)',
+  '0x94280d62': 'ERC20InvalidSpender(address)',
   '0xec442f05': 'ERC20InvalidReceiver(address)',
 
   // ── ERC-721 (LibERC721) ───────────────────────────────────────────────
