@@ -92,25 +92,36 @@ with the oracle reachable, on a path that does NOT revert**. There is **no
 population from the movement-screen itself** — its flagged branch reverts and
 would roll the write back (Codex r1 P2 #115).
 
-1. **All close-out park helpers (primary, load-bearing — Codex r1 P2 #80).** The
-   non-reverting park surface is wider than the new S10 hook. Every helper that
-   already computes `isSanctionedAddress(party)` on a non-reverting close-out path
-   must, in that same affirmative branch, set
-   `sanctionsConfirmedFlagged[party] = true`:
-   - `LibSanctionedLock.recordFrozenClaimant` (S10 frozen-claimant),
-   - `LibSanctionedLock.depositLocked`, `getOrCreateVaultLocked`, `end`
-     (the #821/#832 park helpers that already emit `SanctionedProceedsLocked`
-     after an affirmative `isSanctionedAddress`).
+1. **`recordFrozenClaimant`, keyed to the CURRENT HOLDER (primary, load-bearing —
+   Codex r2 P1 #99, superseding r1 P2 #80).** The registry must record the party
+   that must not move the position — the **sanctioned current position-NFT
+   holder** — which is exactly the `intendedClaimant` argument
+   `LibSanctionedLock.recordFrozenClaimant(s, loanId, side, intendedClaimant)`
+   already keys on. Register there (`sanctionsConfirmedFlagged[intendedClaimant] =
+   true` in its affirmative-flag branch).
 
-   These cover default, liquidation (HF / split / internal-match), fallback
-   distribution, swap-to-repay, preclose, and early-withdrawal close-outs — i.e.
-   exactly the wallets whose proceeds get frozen, which are precisely the wallets
-   that must not move their position during an outage. Fold the write into a
-   single `LibSanctionedLock` helper (`_registerIfFlagged`) so all park helpers
-   share one implementation. (They already established the flag with an oracle-up
-   read to decide the park, so no extra oracle call is needed.)
+   Do **NOT** register inside the vault-owner-keyed park helpers
+   (`depositLocked` / `getOrCreateVaultLocked` / `end`): for a
+   transferred-and-flagged position those helpers receive the STORED party (e.g.
+   `loan.borrower`), not the flagged current holder — registering their argument
+   would record the wrong (often clean) wallet and miss the flagged one
+   (`LibCloseoutFreeze.freezeOrPayBorrowerSurplus` is the concrete case: it
+   branches on `isSanctionedAddress(currentHolder)` but calls
+   `depositLocked(s, loan.borrower, …)`). After the S10 threading, **every**
+   close-out freeze site already calls `recordFrozenClaimant` with the current
+   holder (default, HF/split/internal-match liquidation, fallback distribution,
+   swap-to-repay, preclose, early-withdrawal), so this single hook covers them
+   all with the correct party. No extra oracle call — the flag was already read to
+   decide the park.
 
-2. **Permissionless `refreshSanctionsFlag(address who)` (operational + de-list).**
+2. **`LibConsolidation.consolidateToHolder` skip-not-block branch (Codex r2 P2
+   #93).** In Tier-2 close-out mode this observes a flagged current holder
+   (`isSanctionedAddress(current)`) and returns `Skipped` **without reverting** —
+   another non-reverting oracle-up observation. Register `current` there before
+   the skip return, so a holder whose consolidation is skipped (funds route via
+   the claim path) is still barred from moving the position during an outage.
+
+3. **Permissionless `refreshSanctionsFlag(address who)` (operational + de-list).**
    A new `ProfileFacet` entry, callable by anyone:
    - Uses the **strict** `sanctionsStatus` (§3.2). `Unavailable` ⇒ revert
      `SanctionsOracleUnavailable` (never mutate on a non-authoritative read).
@@ -121,7 +132,7 @@ would roll the write back (Codex r1 P2 #115).
    The canonical way to (a) proactively register a listed wallet before any
    outage and (b) lift the restriction once a wallet is de-listed.
 
-3. **Opportunistic clear on an authoritative-clean movement (self-heal).** When
+4. **Opportunistic clear on an authoritative-clean movement (self-heal).** When
    the movement screen (§3.4) runs with `sanctionsStatus(party) == Clean` (strict
    `Clean`, not fail-open), it may `delete sanctionsConfirmedFlagged[party]`. This
    is a non-reverting branch (a clean party's move is allowed), so the write
@@ -130,17 +141,22 @@ would roll the write back (Codex r1 P2 #115).
 ### 3.4 Consumption — one fail-closed helper on the whole movement surface (Codex r1 P1 #162)
 
 Centralize the check in `LibVaipakam.assertPositionMoveNotSanctioned(from, to)`
-(mutating — it may self-heal-clear per §3.3.3), and call it from **every
+(mutating — it may self-heal-clear per §3.3.4), and call it from **every
 user-initiated position-movement path**, not just the ERC-721 entrypoints:
 
 - `VaipakamNFTFacet.transferFrom` / `safeTransferFrom` (both overloads);
-- the **sale-vehicle migrations** that move a position via burn/mint:
-  `EarlyWithdrawalFacet.sellLoanViaBuyOffer` and the loan-sale completion path
-  (both call `LibLoan.migrateLenderPosition`, today gated only by the fail-open
-  `_assertNotSanctioned`);
-- any other path that re-anchors a live position to a new holder — audited via
-  grep for `migrateLenderPosition` / `_assertNotSanctioned` at movement sites
-  (e.g. obligation transfer). Mint-at-origination and burn-at-terminal are NOT
+- the **lender-position sale-vehicle migrations** (`LibLoan.migrateLenderPosition`)
+  — BOTH distinct entry paths: `EarlyWithdrawalFacet.sellLoanViaBuyOffer` (direct
+  swap-in) AND the accepted-sale completion path
+  (`_completeLoanSaleImpl` / `completeLoanSaleInternal`), each today gated only by
+  the fail-open `_assertNotSanctioned` (Codex r2 P2 #212);
+- the **borrower-position obligation transfer** (Codex r2 P1 #143):
+  `PrecloseFacet.transferObligationViaOffer` → `LibLoan.migrateBorrowerPosition`
+  is a burn/mint live-position move (into AND out of the borrower slot) and MUST
+  also call `assertPositionMoveNotSanctioned(from, to)`;
+- audited at implementation via grep for `migrateLenderPosition` /
+  `migrateBorrowerPosition` / `_assertNotSanctioned` across movement sites, to
+  confirm the set is complete. Mint-at-origination and burn-at-terminal are NOT
   movements between users and stay exempt.
 
 Per party, `assertPositionMoveNotSanctioned` behaves by oracle state
@@ -213,18 +229,24 @@ secondary market on every oracle blip) — rejected as disproportionate.
 - Oracle up + clean party → move succeeds AND any stale registry entry cleared
   (strict-clean self-heal).
 - **Register (via a park or `refreshSanctionsFlag`) while up, then outage → move
-  of the registered wallet reverts via BOTH `transferFrom` and the sale-vehicle
-  migration** — the load-bearing assertions (P1 #162 + the core guarantee).
+  of the registered wallet reverts via EACH movement path** — the load-bearing
+  assertions (P1 #162/#143 + the core guarantee): `transferFrom`,
+  `sellLoanViaBuyOffer`, the accepted-sale **completion** path
+  (`completeLoanSaleInternal`, r2 P2 #212), AND borrower-side
+  `transferObligationViaOffer` → `migrateBorrowerPosition` (r2 P1 #143).
 - Outage + never-registered wallet → move succeeds (no over-block).
 - Oracle **unset** with a pre-existing registry entry → move succeeds (registry
   ignored; P2 #129).
 - `refreshSanctionsFlag`: sets on `Flagged`; clears on `Clean`; reverts
   `SanctionsOracleUnavailable` on `Unavailable` (unset/reverting). A refresh
   during an outage does NOT clear a still-flagged wallet (P1 #140).
-- Each park helper (`recordFrozenClaimant`, `depositLocked`,
-  `getOrCreateVaultLocked`, `end`) registers a flagged party (P2 #80): a
-  default / liquidation / fallback / swap-to-repay / preclose close-out that
-  freezes a flagged holder also registers them.
+- `recordFrozenClaimant` registers the flagged CURRENT HOLDER (r2 P1 #99): a
+  transferred-position freeze where the current holder is flagged but the stored
+  vault owner is clean registers the *holder*, not the owner — assert the holder
+  is in the registry after a default / liquidation / fallback / swap-to-repay /
+  preclose close-out.
+- `LibConsolidation.consolidateToHolder` skip-not-block on a flagged holder
+  registers that holder (r2 P2 #93).
 - Mint-at-origination / burn-at-terminal / internal settlement unaffected while a
   party is registered.
 
