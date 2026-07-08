@@ -273,18 +273,33 @@ contract RiskPreviewFacet {
             counterpartyOfferId,
             fillAmount
         );
-        // An intent-guard / slice-create / match-core failure is the binding
-        // reason; the risk + accept gates are moot, so return as-is.
-        if (!res.ok) return res;
-
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
 
+        // A non-floor intent / slice-create / match-core failure is the binding
+        // reason AND precedes the risk gate in the live path — the duration cap
+        // and per-asset pause run BEFORE `_createOfferSetup`'s risk gate, and the
+        // match core runs before slice materialization — so return it as-is. A
+        // collateral-FLOOR failure is the one exception: `_createOfferSetup` runs
+        // its per-creator risk gate (`assertActorMayTransact`, gate-on only)
+        // BEFORE the floor/ceiling bound (`assertOfferBounds`), so a slice that
+        // fails BOTH reverts LIVE with the RISK reason. Fall through to evaluate
+        // the risk gate first for a floor failure so the preview reports the same
+        // first reason (Codex #1115 P2 — otherwise #1104's floor guard would
+        // report the floor where the live fill actually reverts on the risk
+        // gate). When the gate clears, the floor is surfaced below as its correct
+        // reason.
+        bool floorFail = !res.ok
+            && res.intentError == LibOfferMatch.IntentError.SliceCollateralBelowFloor;
+        if (!res.ok && !floorFail) return res;
+
         // #671 risk-access gate — mirrors `_executeMatch`'s
-        // `assertMatchAllowed(slice, counterparty)`, which runs BEFORE the
-        // accept gates. Resolve the gated parties via the slice's CREATOR
-        // (= `lender`; the slice has no offer id) and the borrower offer;
-        // handles the lender-sale-vehicle branch identically to the enforcing
-        // path. If it blocks, the live fill reverts here — before accept.
+        // `assertMatchAllowed(slice, counterparty)` (before the accept gates) and
+        // `_createOfferSetup`'s per-creator gate (before the floor bound).
+        // Resolve the gated parties via the slice's CREATOR (= `lender`; the
+        // slice has no offer id) and the borrower offer; handles the
+        // lender-sale-vehicle branch identically to the enforcing path. If it
+        // blocks, the live fill reverts here — before the floor bound and before
+        // accept.
         if (LibVaipakam.cfgRiskAccessGateEnabled()) {
             (
                 address actorA,
@@ -301,6 +316,11 @@ contract RiskPreviewFacet {
                 return res;
             }
         }
+
+        // The risk gate cleared (or is off). A floor failure now surfaces as its
+        // own reason — the live path's floor bound is the first revert once the
+        // risk gate passes — rather than proceeding to the accept gates.
+        if (!res.ok) return res;
 
         // #747 Codex r1/r2/r3 — accept-time gates. After the match + risk gate
         // the live fill enters `acceptOfferInternal(counterpartyOfferId)` with

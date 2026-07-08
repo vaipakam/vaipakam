@@ -817,6 +817,7 @@ contract DeployDiamond is Script {
         Deployments.writeFacet("lenderIntentFacet",       address(lenderIntentFacet));
         // #671 — progressive risk-access facet (per-vault tiers + consent).
         Deployments.writeFacet("riskAccessFacet",         address(riskAccessFacet));
+        Deployments.writeFacet("riskPreviewFacet",        address(riskPreviewFacet));
 
         console.log(
             "Wrote addresses to deployments/",
