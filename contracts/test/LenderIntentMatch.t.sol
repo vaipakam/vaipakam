@@ -5,10 +5,12 @@ import {SetupTest} from "./SetupTest.t.sol";
 import {ConfigFacet} from "../src/facets/ConfigFacet.sol";
 import {OfferCreateFacet} from "../src/facets/OfferCreateFacet.sol";
 import {OfferMatchFacet} from "../src/facets/OfferMatchFacet.sol";
+import {RiskPreviewFacet} from "../src/facets/RiskPreviewFacet.sol";
 import {TestMutatorFacet} from "./mocks/TestMutatorFacet.sol";
 import {RiskAccessFacet} from "../src/facets/RiskAccessFacet.sol";
 import {AdminFacet} from "../src/facets/AdminFacet.sol";
 import {LibOfferMatch} from "../src/libraries/LibOfferMatch.sol";
+import {LibOfferBounds} from "../src/libraries/LibOfferBounds.sol";
 import {LibEncumbrance} from "../src/libraries/LibEncumbrance.sol";
 import {LenderIntentFacet} from "../src/facets/LenderIntentFacet.sol";
 import {LoanFacet} from "../src/facets/LoanFacet.sol";
@@ -17,6 +19,8 @@ import {ClaimFacet} from "../src/facets/ClaimFacet.sol";
 import {ProfileFacet} from "../src/facets/ProfileFacet.sol";
 import {MetricsFacet} from "../src/facets/MetricsFacet.sol";
 import {LibVaipakam} from "../src/libraries/LibVaipakam.sol";
+import {OracleFacet} from "../src/facets/OracleFacet.sol";
+import {LibRiskAccess} from "../src/libraries/LibRiskAccess.sol";
 import {LibMetricsTypes} from "../src/libraries/LibMetricsTypes.sol";
 import {IVaipakamErrors} from "../src/interfaces/IVaipakamErrors.sol";
 import {ERC20Mock} from "./mocks/ERC20Mock.sol";
@@ -530,7 +534,7 @@ contract LenderIntentMatchTest is SetupTest {
         view
         returns (LibOfferMatch.IntentPreviewResult memory)
     {
-        return RiskAccessFacet(address(diamond)).previewIntent(
+        return RiskPreviewFacet(address(diamond)).previewIntent(
             solver_, lender, mockERC20, mockCollateralERC20, boId, fill
         );
     }
@@ -636,6 +640,340 @@ contract LenderIntentMatchTest is SetupTest {
         // matchIntent reverts SaleVehicleNotMatchable ⇒ agrees with the preview.
         vm.prank(solver);
         vm.expectRevert(OfferMatchFacet.SaleVehicleNotMatchable.selector);
+        OfferMatchFacet(address(diamond)).matchIntent(
+            lender, mockERC20, mockCollateralERC20, cp, PRINCIPAL
+        );
+    }
+
+    // ── #1104 — no-borrow (effective-tier-0) collateral floor ──
+    //
+    // A collateral that admits NO borrow at loan-init (per-asset
+    // `loanInitMaxLtvBps == 0`, or effective-tier-0 under depth-tiering) can
+    // never back a loan, yet `minCollateralForLending` returns a FINITE
+    // HF-derived floor for it — so a floor-ONLY slice check would pass the
+    // preview and only fail later in the match core with a different reason.
+    // The #1104 guard mirrors `LibOfferBounds.noBorrowCollateral` in the slice
+    // check so the preview reports `SliceCollateralBelowFloor` up front, exactly
+    // as `matchIntent` reverts `MinCollateralBelowFloor` at slice materialization
+    // (`createSignedOfferVault` → `LibOfferBounds`). Affordable now that the
+    // RiskAccessFacet→RiskPreviewFacet split freed the EIP-170 headroom the
+    // guard's inlining needs. The borrower offer is posted while the collateral
+    // is still borrowable (S15 rejects a no-borrow collateral offer at CREATE),
+    // then demoted — the realistic dynamic-depth-drop path.
+    function test_previewIntent_noBorrowCollateralFloor_agrees() public {
+        _setIntent(MAX_EXPOSURE);
+        _fundIntent(PRINCIPAL);
+        address b = _newBorrower("bNoBorrow");
+        uint256 cp = _postBorrower(b, PRINCIPAL, 2 * PRINCIPAL);
+        // Demote the collateral to no-borrow AFTER the borrower offer is posted.
+        TestMutatorFacet(address(diamond)).setLoanInitMaxLtvBpsRaw(
+            mockCollateralERC20, 0
+        );
+
+        LibOfferMatch.IntentPreviewResult memory r = _preview(solver, PRINCIPAL, cp);
+        assertFalse(r.ok, "preview !ok for no-borrow collateral");
+        assertEq(
+            uint8(r.intentError),
+            uint8(LibOfferMatch.IntentError.SliceCollateralBelowFloor),
+            "intentError SliceCollateralBelowFloor (mirrors materialize revert)"
+        );
+        // matchIntent reverts `MinCollateralBelowFloor` at slice materialization
+        // ⇒ agrees with the preview's SliceCollateralBelowFloor. Selector-only
+        // match (the exact (provided, floor) payload is an internal derivation).
+        vm.prank(solver);
+        vm.expectPartialRevert(LibOfferBounds.MinCollateralBelowFloor.selector);
+        OfferMatchFacet(address(diamond)).matchIntent(
+            lender, mockERC20, mockCollateralERC20, cp, PRINCIPAL
+        );
+    }
+
+    // ── #1115 P2 — risk gate precedes the collateral floor ──
+    //
+    // When the #671 risk-access gate is ON and a slice fails BOTH the risk gate
+    // (under-tiered lender) AND the no-borrow collateral floor, the live
+    // `matchIntent` reverts with the RISK reason: `_createOfferSetup` runs
+    // `assertActorMayTransact` BEFORE `assertOfferBounds`. The preview must
+    // therefore report the risk block first, not the floor — otherwise #1104's
+    // floor guard would diverge from the live revert for this combined case.
+    function test_previewIntent_noBorrowCollateral_riskGateTakesPrecedence()
+        public
+    {
+        _setIntent(MAX_EXPOSURE);
+        _fundIntent(PRINCIPAL);
+        address b = _newBorrower("bCombined");
+        uint256 cp = _postBorrower(b, PRINCIPAL, 2 * PRINCIPAL);
+
+        // Classify both legs at tier 1 (BroadLiquid) so the default-tier
+        // (BlueChipOnly) lender is under-tiered => risk block code 1, and turn
+        // the gate ON. Done AFTER the borrower offer is posted so its own create
+        // isn't gated.
+        vm.mockCall(
+            address(diamond),
+            abi.encodeWithSelector(
+                OracleFacet.getEffectiveLiquidityTier.selector, mockERC20
+            ),
+            abi.encode(uint8(1))
+        );
+        vm.mockCall(
+            address(diamond),
+            abi.encodeWithSelector(
+                OracleFacet.getEffectiveLiquidityTier.selector, mockCollateralERC20
+            ),
+            abi.encode(uint8(1))
+        );
+        vm.prank(owner);
+        ConfigFacet(address(diamond)).setRiskAccessGateEnabled(true);
+        // Also fail the no-borrow floor, so BOTH failures coincide.
+        TestMutatorFacet(address(diamond)).setLoanInitMaxLtvBpsRaw(
+            mockCollateralERC20, 0
+        );
+
+        // Preview reports the RISK block first (not the floor), and the stale
+        // floor code is cleared so a consumer keying on `intentError` doesn't
+        // still see the floor (Codex #1115 r2 — "clear stale floor error").
+        LibOfferMatch.IntentPreviewResult memory r = _preview(solver, PRINCIPAL, cp);
+        assertFalse(r.ok, "combined risk+floor failure is not ok");
+        assertEq(r.riskBlock, 1, "risk block reported first, before the floor");
+        assertEq(
+            uint8(r.intentError),
+            uint8(LibOfferMatch.IntentError.Ok),
+            "stale floor intentError cleared when risk block is the reason"
+        );
+
+        // Live matchIntent reverts with the risk error, not MinCollateralBelowFloor
+        // => the preview's risk-first report agrees with the live revert reason.
+        vm.prank(solver);
+        vm.expectPartialRevert(LibRiskAccess.RiskTierTooLow.selector);
+        OfferMatchFacet(address(diamond)).matchIntent(
+            lender, mockERC20, mockCollateralERC20, cp, PRINCIPAL
+        );
+    }
+
+    // ── #1115 r2 — a BORROWER risk block must NOT override the slice floor ──
+    //
+    // Only the slice CREATOR's (lender's) risk gate runs before the floor bound
+    // in `_createOfferSetup`; the borrower-side `assertMatchAllowed` is reached
+    // only after the slice materializes. So when the lender PASSES risk, the
+    // borrower is under-tiered, AND the slice fails the floor, the live fill
+    // reverts on the FLOOR first — the preview must report the floor, not the
+    // borrower's risk block.
+    function test_previewIntent_borrowerRiskDoesNotOverrideFloor() public {
+        _setIntent(MAX_EXPOSURE);
+        _fundIntent(PRINCIPAL);
+        address b = _newBorrower("bBorrowerRisk");
+        uint256 cp = _postBorrower(b, PRINCIPAL, 2 * PRINCIPAL);
+
+        vm.mockCall(
+            address(diamond),
+            abi.encodeWithSelector(
+                OracleFacet.getEffectiveLiquidityTier.selector, mockERC20
+            ),
+            abi.encode(uint8(1))
+        );
+        vm.mockCall(
+            address(diamond),
+            abi.encodeWithSelector(
+                OracleFacet.getEffectiveLiquidityTier.selector, mockCollateralERC20
+            ),
+            abi.encode(uint8(1))
+        );
+        vm.prank(owner);
+        ConfigFacet(address(diamond)).setRiskAccessGateEnabled(true);
+        // Arm the LENDER to BroadLiquid so its risk gate PASSES; the borrower
+        // stays default-tier (under-tiered). Fail the floor too.
+        vm.prank(lender);
+        RiskAccessFacet(address(diamond)).setVaultRiskTier(1); // BroadLiquid
+        TestMutatorFacet(address(diamond)).setLoanInitMaxLtvBpsRaw(
+            mockCollateralERC20, 0
+        );
+
+        // Lender passes risk; the borrower gate is NOT consulted for a
+        // pre-materialization floor failure => preview reports the floor.
+        LibOfferMatch.IntentPreviewResult memory r = _preview(solver, PRINCIPAL, cp);
+        assertFalse(r.ok, "floor failure is not ok");
+        assertEq(r.riskBlock, 0, "borrower risk block must NOT be reported");
+        assertEq(
+            uint8(r.intentError),
+            uint8(LibOfferMatch.IntentError.SliceCollateralBelowFloor),
+            "floor is the reason (borrower risk is post-floor live)"
+        );
+
+        // Live reverts on the floor, not the borrower risk.
+        vm.prank(solver);
+        vm.expectPartialRevert(LibOfferBounds.MinCollateralBelowFloor.selector);
+        OfferMatchFacet(address(diamond)).matchIntent(
+            lender, mockERC20, mockCollateralERC20, cp, PRINCIPAL
+        );
+    }
+
+    // ── #1115 r4 — sale-vehicle intent preview gates the lender on the SLICE ──
+    //
+    // For a lender-sale vehicle, live `matchIntent` materializes the slice
+    // (gating the lender at 883 against the SLICE assets) and then reverts
+    // `SaleVehicleNotMatchable` in `_executeMatch` BEFORE `assertMatchAllowed`
+    // ever gates the sold-loan pair. So a lender that passes the slice pair but
+    // would fail the (riskier) sold-loan pair must still see `SaleVehicleTagged`,
+    // not a risk block.
+    function test_previewIntent_saleVehicleGatesLenderOnSlicePairNotSoldLoan()
+        public
+    {
+        _setIntent(MAX_EXPOSURE);
+        _fundIntent(PRINCIPAL);
+        address b = _newBorrower("bSaleGate");
+        uint256 cp = _postBorrower(b, PRINCIPAL, 2 * PRINCIPAL);
+
+        // Seed a SOLD LOAN whose collateral is a riskier asset than the intent's,
+        // and tag the borrower offer as its sale vehicle.
+        uint256 saleLoanId = 7777;
+        LibVaipakam.Loan memory soldLoan;
+        soldLoan.principalAsset = mockERC20;
+        soldLoan.assetType = LibVaipakam.AssetType.ERC20;
+        soldLoan.collateralAsset = mockIlliquidERC20; // riskier sold-loan leg
+        soldLoan.collateralAssetType = LibVaipakam.AssetType.ERC20;
+        TestMutatorFacet(address(diamond)).setLoan(saleLoanId, soldLoan);
+        TestMutatorFacet(address(diamond)).setSaleOfferToLoanIdRaw(cp, saleLoanId);
+
+        // Slice legs blue-chip (tier 3, lender passes); sold-loan collateral
+        // tier 1 (would block the default lender if the gate used the sold-loan
+        // pair).
+        vm.mockCall(
+            address(diamond),
+            abi.encodeWithSelector(
+                OracleFacet.getEffectiveLiquidityTier.selector, mockERC20
+            ),
+            abi.encode(uint8(3))
+        );
+        vm.mockCall(
+            address(diamond),
+            abi.encodeWithSelector(
+                OracleFacet.getEffectiveLiquidityTier.selector, mockCollateralERC20
+            ),
+            abi.encode(uint8(3))
+        );
+        vm.mockCall(
+            address(diamond),
+            abi.encodeWithSelector(
+                OracleFacet.getEffectiveLiquidityTier.selector, mockIlliquidERC20
+            ),
+            abi.encode(uint8(1))
+        );
+        vm.prank(owner);
+        ConfigFacet(address(diamond)).setRiskAccessGateEnabled(true);
+
+        // Lender passes its slice-pair gate => SaleVehicleTagged stands, NOT a
+        // risk block (which live never reaches for a sale vehicle).
+        LibOfferMatch.IntentPreviewResult memory r = _preview(solver, PRINCIPAL, cp);
+        assertFalse(r.ok, "sale vehicle is not ok");
+        assertEq(r.riskBlock, 0, "lender passes SLICE-pair gate => no risk block");
+        assertEq(
+            uint8(r.intentError),
+            uint8(LibOfferMatch.IntentError.SaleVehicleTagged),
+            "SaleVehicleTagged preserved (live reverts SaleVehicleNotMatchable)"
+        );
+
+        vm.prank(solver);
+        vm.expectRevert(OfferMatchFacet.SaleVehicleNotMatchable.selector);
+        OfferMatchFacet(address(diamond)).matchIntent(
+            lender, mockERC20, mockCollateralERC20, cp, PRINCIPAL
+        );
+    }
+
+    // ── #1115 r3 — lender pre-match gate uses the SLICE pair, not borrower's ──
+    //
+    // `_createOfferSetup`'s slice-creator (lender) risk gate is against the
+    // MATERIALIZED SLICE's own assets, not the borrower offer's pair. For a
+    // malformed counterparty (collateral asset mismatch => AssetMismatch match
+    // error) the borrower pair differs and can be riskier; gating the lender
+    // against THAT would report a spurious risk block for a fill that live
+    // rejects at the match core. Here the lender passes its OWN (slice) pair, so
+    // the preview must report the match error — not a risk block.
+    function test_previewIntent_matchErrorGatesLenderOnSlicePairNotBorrower()
+        public
+    {
+        _setIntent(MAX_EXPOSURE);
+        _fundIntent(PRINCIPAL);
+        // Borrower offer with a MISMATCHED collateral asset (mockIlliquidERC20 vs
+        // the intent's mockCollateralERC20) => the match core flags AssetMismatch.
+        // Posted while the gate is off so its own create isn't gated.
+        address b = _newBorrower("bMismatch");
+        // Borrower offers escrow their collateral at create — fund the mismatched
+        // (illiquid) collateral leg the intent's actor set doesn't cover.
+        ERC20Mock(mockIlliquidERC20).mint(b, 1_000_000 ether);
+        vm.prank(b);
+        ERC20(mockIlliquidERC20).approve(address(diamond), type(uint256).max);
+        vm.prank(b);
+        uint256 cp = OfferCreateFacet(address(diamond)).createOffer(
+            LibVaipakam.CreateOfferParams({
+                offerType: LibVaipakam.OfferType.Borrower,
+                lendingAsset: mockERC20,
+                amount: PRINCIPAL,
+                interestRateBps: MIN_RATE_BPS,
+                collateralAsset: mockIlliquidERC20, // ← mismatch vs intent collateral
+                collateralAmount: 2 * PRINCIPAL,
+                durationDays: MAX_DURATION,
+                assetType: LibVaipakam.AssetType.ERC20,
+                tokenId: 0,
+                quantity: 0,
+                creatorRiskAndTermsConsent: true,
+                prepayAsset: mockERC20,
+                collateralAssetType: LibVaipakam.AssetType.ERC20,
+                collateralTokenId: 0,
+                collateralQuantity: 0,
+                allowsPartialRepay: false,
+                allowsPrepayListing: false,
+                allowsParallelSale: false,
+                amountMax: PRINCIPAL,
+                interestRateBpsMax: MIN_RATE_BPS + 100,
+                collateralAmountMax: 2 * PRINCIPAL,
+                periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None,
+                expiresAt: 0,
+                fillMode: LibVaipakam.FillMode.Partial,
+                refinanceTargetLoanId: 0,
+                useFullTermInterest: true
+            })
+        );
+
+        // Tier 3 == blue-chip (lowest required risk level). The intent's OWN legs
+        // are blue-chip so the default-tier lender passes the slice-pair gate; the
+        // mismatched borrower collateral is tier 1 (would block the default lender
+        // if the gate wrongly used the BORROWER pair).
+        vm.mockCall(
+            address(diamond),
+            abi.encodeWithSelector(
+                OracleFacet.getEffectiveLiquidityTier.selector, mockERC20
+            ),
+            abi.encode(uint8(3))
+        );
+        vm.mockCall(
+            address(diamond),
+            abi.encodeWithSelector(
+                OracleFacet.getEffectiveLiquidityTier.selector, mockCollateralERC20
+            ),
+            abi.encode(uint8(3))
+        );
+        vm.mockCall(
+            address(diamond),
+            abi.encodeWithSelector(
+                OracleFacet.getEffectiveLiquidityTier.selector, mockIlliquidERC20
+            ),
+            abi.encode(uint8(1))
+        );
+        vm.prank(owner);
+        ConfigFacet(address(diamond)).setRiskAccessGateEnabled(true);
+
+        // Lender passes its slice-pair gate => the match error stands, NOT a risk
+        // block (which would falsely quote a fixable risk-access issue).
+        LibOfferMatch.IntentPreviewResult memory r = _preview(solver, PRINCIPAL, cp);
+        assertFalse(r.ok, "mismatched counterparty is not ok");
+        assertEq(r.riskBlock, 0, "lender passes the SLICE-pair gate => no risk block");
+        assertEq(
+            uint8(r.matchError),
+            uint8(LibOfferMatch.MatchError.AssetMismatch),
+            "match error preserved (live reverts at the match core)"
+        );
+
+        vm.prank(solver);
+        vm.expectRevert(); // the fill reverts at the match core
         OfferMatchFacet(address(diamond)).matchIntent(
             lender, mockERC20, mockCollateralERC20, cp, PRINCIPAL
         );

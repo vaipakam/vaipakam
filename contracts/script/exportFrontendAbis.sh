@@ -111,6 +111,12 @@ FACETS=(
   # self-submit + views (the frontend pre-flights the gate + drives the
   # tier opt-up / per-pair consent flows from this surface).
   "RiskAccessFacet"
+  # #1104 — RiskPreviewFacet: the read-only risk preview cluster
+  # (previewOfferAcceptBlock / previewCreatorBlock / previewIntent /
+  # previewMatchRiskBlock / acceptMidTierAckPair) + the two cross-facet gate
+  # asserts, split off RiskAccessFacet. The frontend reads the preview views
+  # from THIS facet after the split.
+  "RiskPreviewFacet"
   "OfferAcceptFacet"
   "OfferPreviewFacet"
   "OfferMatchFacet"

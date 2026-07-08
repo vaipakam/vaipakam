@@ -4,6 +4,7 @@ pragma solidity ^0.8.29;
 import {LibVaipakam} from "./LibVaipakam.sol";
 import {LibFacet} from "./LibFacet.sol";
 import {LibRiskMath} from "./LibRiskMath.sol";
+import {LibOfferBounds} from "./LibOfferBounds.sol";
 import {LibAutoRefinanceCheck} from "./LibAutoRefinanceCheck.sol";
 import {LibAuth} from "./LibAuth.sol";
 import {LibPausable} from "./LibPausable.sol";
@@ -121,7 +122,7 @@ library LibOfferMatch {
         SaleVehicleTagged
     }
 
-    /// @notice Structured outcome of `RiskAccessFacet.previewIntent`. `ok` is
+    /// @notice Structured outcome of `RiskPreviewFacet.previewIntent`. `ok` is
     ///         true iff EVERY layer cleared: `intentError == Ok` AND
     ///         `matchError == Ok` AND `riskBlock == 0`. The numeric figures
     ///         mirror what the on-chain fill would lock, so a solver can size a
@@ -312,7 +313,7 @@ library LibOfferMatch {
         // mirror serves both stored-offer matches and a synthesized #625
         // auto-lend intent slice — the latter has no stored lender offer to
         // pass an id for (it is materialised only inside the state-changing
-        // `matchIntent`), so `RiskAccessFacet.previewIntent` builds the slice
+        // `matchIntent`), so `RiskPreviewFacet.previewIntent` builds the slice
         // in memory and previews it through this same core.
         return _previewMatchCore(
             s.offers[lenderOfferId], s.offers[borrowerOfferId], s, borrowerCollFloor
@@ -705,7 +706,7 @@ library LibOfferMatch {
     ///         solver can decide whether to submit `matchIntent` without
     ///         spending gas on a revert.
     /// @dev    The risk-access gate (#671) is layered on by the
-    ///         `RiskAccessFacet.previewIntent` wrapper — it owns the actor
+    ///         `RiskPreviewFacet.previewIntent` wrapper — it owns the actor
     ///         resolver — so `ok` here is provisional (intent + match only);
     ///         the wrapper downgrades it if `riskBlock != 0`. The binding
     ///         guarantee that this preview agrees with the live path is the
@@ -834,16 +835,21 @@ library LibOfferMatch {
                 && OracleFacet(address(this)).checkLiquidity(collateralAsset)
                     == LibVaipakam.LiquidityStatus.Liquid;
             if (bothLiquid) {
-                // #998 S15 — lean FLOOR-ONLY slice guard (kept off the shared
-                // no-borrow guard on purpose: inlining it into `previewIntent`
-                // pushes RiskAccessFacet past the EIP-170 24,576-byte limit).
-                // The tier-0 / zero-init-LTV-cap no-borrow case is still enforced
-                // at EXECUTION (materialization → `createSignedOfferVault` →
-                // `LibOfferBounds`); only the preview's reported error code for
-                // that niche case (a later match-core `LtvAboveTier` instead of
-                // `SliceCollateralBelowFloor`) diverges — tracked as a follow-up
-                // (Codex #1101 P2b; needs a cross-facet no-borrow view or a
-                // RiskAccessFacet size refactor #980).
+                // #1104 — mirror the shared `LibOfferBounds` no-borrow guard.
+                // A tier-0 / zero-init-LTV-cap collateral admits NO new borrow at
+                // loan-init, yet `minCollateralForLending` returns a FINITE
+                // HF-derived floor for it (the LTV clamp skips a zero cap), so a
+                // floor-only check would pass the slice and only fail later in the
+                // match core with a different reason. Materialization
+                // (`createSignedOfferVault` → `LibOfferBounds`) rejects it up
+                // front, so the preview must report the SAME
+                // `SliceCollateralBelowFloor` first (preview⟺execute agreement).
+                // The formerly-deferred inline (Codex #1101 P2b) is now affordable
+                // because the RiskAccessFacet→RiskPreviewFacet split (#1104) freed
+                // the EIP-170 headroom this guard's inlining needs.
+                if (LibOfferBounds.noBorrowCollateral(collateralAsset)) {
+                    return _intentFail(res, IntentError.SliceCollateralBelowFloor);
+                }
                 uint256 floorColl = LibRiskMath.minCollateralForLending(
                     fillAmount, lendingAsset, collateralAsset
                 );

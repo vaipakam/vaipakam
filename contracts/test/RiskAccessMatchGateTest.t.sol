@@ -6,6 +6,7 @@ import {LibVaipakam} from "../src/libraries/LibVaipakam.sol";
 import {LibRiskAccess} from "../src/libraries/LibRiskAccess.sol";
 import {OfferCreateFacet} from "../src/facets/OfferCreateFacet.sol";
 import {OfferMatchFacet} from "../src/facets/OfferMatchFacet.sol";
+import {RiskPreviewFacet} from "../src/facets/RiskPreviewFacet.sol";
 import {OfferCancelFacet} from "../src/facets/OfferCancelFacet.sol";
 import {RiskAccessFacet} from "../src/facets/RiskAccessFacet.sol";
 import {ConfigFacet} from "../src/facets/ConfigFacet.sol";
@@ -301,7 +302,7 @@ contract RiskAccessMatchGateTest is SetupTest {
 
         // Gate OFF → preview is a no-op 0 even though both creators are default.
         assertEq(
-            RiskAccessFacet(address(diamond)).previewMatchRiskBlock(
+            RiskPreviewFacet(address(diamond)).previewMatchRiskBlock(
                 lenderOfferId, borrowerOfferId
             ),
             0,
@@ -312,7 +313,7 @@ contract RiskAccessMatchGateTest is SetupTest {
 
         // Gate ON, default-tier creators, BroadLiquid pair → 1 (tier too low).
         assertEq(
-            RiskAccessFacet(address(diamond)).previewMatchRiskBlock(
+            RiskPreviewFacet(address(diamond)).previewMatchRiskBlock(
                 lenderOfferId, borrowerOfferId
             ),
             1,
@@ -325,7 +326,7 @@ contract RiskAccessMatchGateTest is SetupTest {
         vm.prank(borrower);
         RiskAccessFacet(address(diamond)).setVaultRiskTier(BROAD);
         assertEq(
-            RiskAccessFacet(address(diamond)).previewMatchRiskBlock(
+            RiskPreviewFacet(address(diamond)).previewMatchRiskBlock(
                 lenderOfferId, borrowerOfferId
             ),
             0,

@@ -38,6 +38,7 @@ import {BackstopFacet} from "../src/facets/BackstopFacet.sol";
 import {ReceiverFacet} from "../src/facets/ReceiverFacet.sol";
 import {ConsolidationFacet} from "../src/facets/ConsolidationFacet.sol";
 import {RiskAccessFacet} from "../src/facets/RiskAccessFacet.sol";
+import {RiskPreviewFacet} from "../src/facets/RiskPreviewFacet.sol";
 import {IntentConfigFacet} from "../src/facets/IntentConfigFacet.sol";
 import {DefaultedFacet} from "../src/facets/DefaultedFacet.sol";
 import {RiskFacet} from "../src/facets/RiskFacet.sol";
@@ -185,6 +186,9 @@ contract DeployDiamond is Script {
         ConsolidationFacet consolidationFacet = new ConsolidationFacet();
         // #671 — self-sovereign progressive risk-access facet.
         RiskAccessFacet riskAccessFacet = new RiskAccessFacet();
+        // #1104 — read-only risk preview cluster + cross-facet gate asserts,
+        // split off RiskAccessFacet for EIP-170 headroom.
+        RiskPreviewFacet riskPreviewFacet = new RiskPreviewFacet();
         // T-090 v1.1 (#389) — intent-based swap-to-repay config knobs.
         // Carved off `ConfigFacet` after the round-2 PR #420 CI block
         // pushed it past EIP-170.
@@ -254,7 +258,7 @@ contract DeployDiamond is Script {
 
         // ── Step 3: Build facet cuts ────────────────────────────────────
         // 37 facets (DiamondCutFacet already added by constructor)
-        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](63);
+        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](64);
 
         cuts[0] = _buildCut(address(loupeFacet), _getLoupeSelectors());
         cuts[1] = _buildCut(address(ownershipFacet), _getOwnershipSelectors());
@@ -482,6 +486,14 @@ contract DeployDiamond is Script {
             _getRiskAccessFacetSelectors()
         );
         cuts[61] = _buildCut(address(rewardRemittanceFacet), _getRewardRemittanceSelectors());
+        // #1104 — RiskPreviewFacet: the read-only preview cluster + the two
+        // cross-facet gate asserts split off `RiskAccessFacet` (cuts[60]) so both
+        // facets keep EIP-170 header room. Shares the same `LibRiskAccess` gate
+        // logic through the diamond.
+        cuts[63] = _buildCut(
+            address(riskPreviewFacet),
+            _getRiskPreviewFacetSelectors()
+        );
         // #594 — standalone holder-only consolidation entry points are cut at
         // slot 24 (see the #687-B note above).
 
@@ -805,6 +817,7 @@ contract DeployDiamond is Script {
         Deployments.writeFacet("lenderIntentFacet",       address(lenderIntentFacet));
         // #671 — progressive risk-access facet (per-vault tiers + consent).
         Deployments.writeFacet("riskAccessFacet",         address(riskAccessFacet));
+        Deployments.writeFacet("riskPreviewFacet",        address(riskPreviewFacet));
 
         console.log(
             "Wrote addresses to deployments/",
@@ -866,6 +879,7 @@ contract DeployDiamond is Script {
         console.log("ConfigFacet:          ", address(configFacet));
         console.log("NumeraireConfigFacet: ", address(numeraireConfigFacet));
         console.log("RiskAccessFacet:      ", address(riskAccessFacet));
+        console.log("RiskPreviewFacet:     ", address(riskPreviewFacet));
         console.log("Admin:                ", admin);
         console.log("Treasury:             ", treasury);
         console.log("");
@@ -1480,7 +1494,7 @@ contract DeployDiamond is Script {
     }
 
     function _getRiskAccessFacetSelectors() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](36);
+        s = new bytes4[](29);
         s[0] = RiskAccessFacet.setVaultRiskTier.selector;
         s[1] = RiskAccessFacet.setIlliquidPairConsent.selector;
         s[2] = RiskAccessFacet.setVaultRiskTierBySig.selector;
@@ -1503,26 +1517,33 @@ contract DeployDiamond is Script {
         s[13] = RiskAccessFacet.riskAccessNonceUsed.selector;
         s[14] = RiskAccessFacet.hasIlliquidPairConsent.selector;
         s[15] = RiskAccessFacet.pairRequiredRiskLevel.selector;
-        s[16] = RiskAccessFacet.previewOfferAcceptBlock.selector;
-        s[17] = RiskAccessFacet.assertMatchAllowed.selector;
-        s[18] = RiskAccessFacet.previewMatchRiskBlock.selector;
-        s[19] = RiskAccessFacet.assertObligationTransferAllowed.selector;
-        s[20] = RiskAccessFacet.setRiskStrictMode.selector;
-        s[21] = RiskAccessFacet.setRiskStrictModeBySig.selector;
-        s[22] = RiskAccessFacet.setMidTierPairAck.selector;
-        s[23] = RiskAccessFacet.setMidTierPairAckBySig.selector;
-        s[24] = RiskAccessFacet.getRiskStrictMode.selector;
-        s[25] = RiskAccessFacet.getStrictModeStrictUntil.selector;
-        s[26] = RiskAccessFacet.midTierStrictBlocked.selector;
-        s[27] = RiskAccessFacet.getCurrentRiskTermsHash.selector; // #730 r3
-        s[28] = RiskAccessFacet.revealRiskTermsBump.selector; // #730 r5 commit-reveal
-        s[29] = RiskAccessFacet.getPendingRiskTermsCommitment.selector; // #730 r5
-        s[30] = RiskAccessFacet.getVaultRiskTierVersion.selector; // #735 in-place re-affirm
-        s[31] = RiskAccessFacet.acceptMidTierAckPair.selector; // #735 item 3 sale-aware ack pair
-        s[32] = RiskAccessFacet.previewCreatorBlock.selector; // #735 item 3 creator-side gate
-        s[33] = RiskAccessFacet.isPairConsentPending.selector; // #735 item 3 pending-consent
-        s[34] = RiskAccessFacet.isMidTierAckPending.selector; // #735 item 3 pending-ack
-        s[35] = RiskAccessFacet.previewIntent.selector; // #625 WI-2b intent-fill preview
+        s[16] = RiskAccessFacet.setRiskStrictMode.selector;
+        s[17] = RiskAccessFacet.setRiskStrictModeBySig.selector;
+        s[18] = RiskAccessFacet.setMidTierPairAck.selector;
+        s[19] = RiskAccessFacet.setMidTierPairAckBySig.selector;
+        s[20] = RiskAccessFacet.getRiskStrictMode.selector;
+        s[21] = RiskAccessFacet.getStrictModeStrictUntil.selector;
+        s[22] = RiskAccessFacet.midTierStrictBlocked.selector;
+        s[23] = RiskAccessFacet.getCurrentRiskTermsHash.selector; // #730 r3
+        s[24] = RiskAccessFacet.revealRiskTermsBump.selector; // #730 r5 commit-reveal
+        s[25] = RiskAccessFacet.getPendingRiskTermsCommitment.selector; // #730 r5
+        s[26] = RiskAccessFacet.getVaultRiskTierVersion.selector; // #735 in-place re-affirm
+        s[27] = RiskAccessFacet.isPairConsentPending.selector; // #735 item 3 pending-consent
+        s[28] = RiskAccessFacet.isMidTierAckPending.selector; // #735 item 3 pending-ack
+    }
+
+    /// @dev #1104 — the read-only preview cluster + the two cross-facet gate
+    ///      asserts, split off `RiskAccessFacet` into its own `RiskPreviewFacet`
+    ///      so both facets keep EIP-170 header room. All 7 are `view`.
+    function _getRiskPreviewFacetSelectors() internal pure returns (bytes4[] memory s) {
+        s = new bytes4[](7);
+        s[0] = RiskPreviewFacet.previewOfferAcceptBlock.selector;
+        s[1] = RiskPreviewFacet.assertMatchAllowed.selector;
+        s[2] = RiskPreviewFacet.previewMatchRiskBlock.selector;
+        s[3] = RiskPreviewFacet.assertObligationTransferAllowed.selector;
+        s[4] = RiskPreviewFacet.acceptMidTierAckPair.selector; // #735 item 3 sale-aware ack pair
+        s[5] = RiskPreviewFacet.previewCreatorBlock.selector; // #735 item 3 creator-side gate
+        s[6] = RiskPreviewFacet.previewIntent.selector; // #625 WI-2b intent-fill preview
     }
 
     function _getAggregatorAdapterFactorySelectors()

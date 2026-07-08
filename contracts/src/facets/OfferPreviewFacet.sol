@@ -44,7 +44,7 @@ contract OfferPreviewFacet {
      * @dev Moved verbatim from `OfferAcceptFacet.previewAccept` (#980); the only
      *      change is the KYC value read (now the public cross-facet view). The
      *      risk-access gate is still surfaced separately via
-     *      `RiskAccessFacet.previewOfferAcceptBlock`, which the frontend consults
+     *      `RiskPreviewFacet.previewOfferAcceptBlock`, which the frontend consults
      *      alongside this preview.
      * @param offerId  The offer to preview accepting.
      * @param acceptor The prospective acceptor (the funds-mover).
@@ -265,7 +265,7 @@ contract OfferPreviewFacet {
         }
 
         // The risk-access gate is surfaced separately via
-        // `RiskAccessFacet.previewOfferAcceptBlock(offerId, acceptor)` (0 = OK,
+        // `RiskPreviewFacet.previewOfferAcceptBlock(offerId, acceptor)` (0 = OK,
         // 1 = tier too low, 2 = illiquid pair needs standing consent), which the
         // frontend consults alongside this preview. (#671 phase 2 / Codex #729
         // r3 finding C — kept out-of-facet; now that #980 split the preview out,

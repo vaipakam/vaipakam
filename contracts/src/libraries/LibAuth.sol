@@ -138,7 +138,7 @@ library LibAuth {
     ///         whether `solver` is authorized to act for `principal` on
     ///         `action`, applying the IDENTICAL rules (diamond-internal / self
     ///         exempt, global keeper-pause, per-principal enable + action mask).
-    /// @dev    #625 WI-2b — `RiskAccessFacet.previewIntent` calls this to tell a
+    /// @dev    #625 WI-2b — `RiskPreviewFacet.previewIntent` calls this to tell a
     ///         keeper, off-chain, whether a `requiresKeeperAuth` intent is
     ///         fillable BY THAT SOLVER before it spends gas on `matchIntent`
     ///         (which would revert `KeeperAccessRequired`). Reusing the same

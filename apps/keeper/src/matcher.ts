@@ -51,6 +51,7 @@ import {
   OfferCancelFacetABI,
   OfferMatchFacetABI,
   RiskAccessFacetABI,
+  RiskPreviewFacetABI,
   AdminFacetABI,
   LenderIntentFacetABI,
 } from '@vaipakam/contracts/abis';
@@ -68,7 +69,7 @@ import {
 // relevant facet ABIs so viem can resolve every selector against the
 // Diamond.
 // `getActiveLenderIntents` lives on MetricsFacet; `previewIntent` on
-// RiskAccessFacet; `matchIntent` on OfferMatchFacet — added for the #625
+// RiskPreviewFacet (split off RiskAccessFacet in #1104); `matchIntent` on OfferMatchFacet — added for the #625
 // WI-2c auto-lend intent-fill pass alongside the Range-Orders selectors.
 const MATCHER_ABI: Abi = [
   ...(MetricsFacetABI as Abi),
@@ -77,6 +78,7 @@ const MATCHER_ABI: Abi = [
   ...(OfferCancelFacetABI as Abi),
   ...(OfferMatchFacetABI as Abi),
   ...(RiskAccessFacetABI as Abi),
+  ...(RiskPreviewFacetABI as Abi), // previewIntent — split off RiskAccessFacet (#1104)
   ...(AdminFacetABI as Abi), // keepersPaused() self-gate (Codex #748 r3)
   ...(LenderIntentFacetABI as Abi), // rollIntentLoan — #625 WI-2c part 2b
 ];

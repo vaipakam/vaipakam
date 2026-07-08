@@ -31,6 +31,7 @@ import {DefaultedFacet} from "../src/facets/DefaultedFacet.sol";
 import {AdminFacet} from "../src/facets/AdminFacet.sol";
 import {ConfigFacet} from "../src/facets/ConfigFacet.sol";
 import {RiskAccessFacet} from "../src/facets/RiskAccessFacet.sol";
+import {RiskPreviewFacet} from "../src/facets/RiskPreviewFacet.sol";
 import {LibRiskAccess} from "../src/libraries/LibRiskAccess.sol";
 import {ClaimFacet} from "../src/facets/ClaimFacet.sol";
 import {AddCollateralFacet} from "../src/facets/AddCollateralFacet.sol";
@@ -215,8 +216,11 @@ contract EarlyWithdrawalFacetTest is Test {
         // needed by the buyer-side risk-gate tests for the direct sale path.
         ConfigFacet configFacet = new ConfigFacet();
         RiskAccessFacet riskAccessFacet = new RiskAccessFacet();
+        // #1104 — RiskPreviewFacet hosts previewOfferAcceptBlock /
+        // acceptMidTierAckPair / previewCreatorBlock the buyer-side gate tests read.
+        RiskPreviewFacet riskPreviewFacet = new RiskPreviewFacet();
 
-        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](24);
+        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](25);
         cuts[19] = IDiamondCut.FacetCut({
             facetAddress: address(configFacet),
             action: IDiamondCut.FacetCutAction.Add,
@@ -226,6 +230,11 @@ contract EarlyWithdrawalFacetTest is Test {
             facetAddress: address(riskAccessFacet),
             action: IDiamondCut.FacetCutAction.Add,
             functionSelectors: helperTest.getRiskAccessFacetSelectors()
+        });
+        cuts[24] = IDiamondCut.FacetCut({
+            facetAddress: address(riskPreviewFacet),
+            action: IDiamondCut.FacetCutAction.Add,
+            functionSelectors: helperTest.getRiskPreviewFacetSelectors()
         });
         // #980 — OfferPreviewFacet (previewAccept split out of OfferAcceptFacet).
         cuts[23] = IDiamondCut.FacetCut({
@@ -2877,7 +2886,7 @@ contract EarlyWithdrawalFacetTest is Test {
         // Fresh (BlueChipOnly) buyer => classified against the LINKED loan's
         // IlliquidCustom pair: code 1 (tier too low), NOT 0.
         assertEq(
-            RiskAccessFacet(address(diamond)).previewOfferAcceptBlock(
+            RiskPreviewFacet(address(diamond)).previewOfferAcceptBlock(
                 saleOfferId, newLender
             ),
             1,
@@ -2894,7 +2903,7 @@ contract EarlyWithdrawalFacetTest is Test {
         vm.prank(newLender);
         RiskAccessFacet(address(diamond)).setIlliquidPairConsent(pair, true);
         assertEq(
-            RiskAccessFacet(address(diamond)).previewOfferAcceptBlock(
+            RiskPreviewFacet(address(diamond)).previewOfferAcceptBlock(
                 saleOfferId, newLender
             ),
             0,
@@ -2905,7 +2914,7 @@ contract EarlyWithdrawalFacetTest is Test {
         // for a sale vehicle (so the dapp records a mid-tier ack for the right
         // pair), NOT the sale offer's own surface.
         LibRiskAccess.PairId memory ackPair =
-            RiskAccessFacet(address(diamond)).acceptMidTierAckPair(saleOfferId);
+            RiskPreviewFacet(address(diamond)).acceptMidTierAckPair(saleOfferId);
         assertEq(ackPair.lendAsset, pair.lendAsset, "ackPair lendAsset = loan");
         assertEq(ackPair.collAsset, pair.collAsset, "ackPair collAsset = loan");
         assertEq(uint8(ackPair.collType), uint8(pair.collType), "ackPair collType");
@@ -2915,7 +2924,7 @@ contract EarlyWithdrawalFacetTest is Test {
         // accept gate, so `previewCreatorBlock` returns 0 for a sale vehicle; the
         // dapp must not prompt the seller to record an ack acceptors never need.
         assertEq(
-            RiskAccessFacet(address(diamond)).previewCreatorBlock(saleOfferId),
+            RiskPreviewFacet(address(diamond)).previewCreatorBlock(saleOfferId),
             0,
             "sale-offer creator (seller) is exempt => 0"
         );

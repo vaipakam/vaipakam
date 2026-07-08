@@ -35,6 +35,7 @@ import {EncumbranceMutateFacet} from "../src/facets/EncumbranceMutateFacet.sol";
 import {SignedOfferFacet} from "../src/facets/SignedOfferFacet.sol";
 import {LenderIntentFacet} from "../src/facets/LenderIntentFacet.sol";
 import {RiskAccessFacet} from "../src/facets/RiskAccessFacet.sol";
+import {RiskPreviewFacet} from "../src/facets/RiskPreviewFacet.sol";
 import {AggregatorAdapterFactoryFacet} from "../src/facets/AggregatorAdapterFactoryFacet.sol";
 import {BackstopFacet} from "../src/facets/BackstopFacet.sol";
 import {ReceiverFacet} from "../src/facets/ReceiverFacet.sol";
@@ -810,7 +811,7 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](36);
+        selectors = new bytes4[](29);
         selectors[0] = RiskAccessFacet.setVaultRiskTier.selector;
         selectors[1] = RiskAccessFacet.setIlliquidPairConsent.selector;
         selectors[2] = RiskAccessFacet.setVaultRiskTierBySig.selector;
@@ -827,26 +828,36 @@ contract HelperTest {
         selectors[13] = RiskAccessFacet.riskAccessNonceUsed.selector;
         selectors[14] = RiskAccessFacet.hasIlliquidPairConsent.selector;
         selectors[15] = RiskAccessFacet.pairRequiredRiskLevel.selector;
-        selectors[16] = RiskAccessFacet.previewOfferAcceptBlock.selector;
-        selectors[17] = RiskAccessFacet.assertMatchAllowed.selector;
-        selectors[18] = RiskAccessFacet.previewMatchRiskBlock.selector;
-        selectors[19] = RiskAccessFacet.assertObligationTransferAllowed.selector;
-        selectors[20] = RiskAccessFacet.setRiskStrictMode.selector;
-        selectors[21] = RiskAccessFacet.setRiskStrictModeBySig.selector;
-        selectors[22] = RiskAccessFacet.setMidTierPairAck.selector;
-        selectors[23] = RiskAccessFacet.setMidTierPairAckBySig.selector;
-        selectors[24] = RiskAccessFacet.getRiskStrictMode.selector;
-        selectors[25] = RiskAccessFacet.getStrictModeStrictUntil.selector;
-        selectors[26] = RiskAccessFacet.midTierStrictBlocked.selector;
-        selectors[27] = RiskAccessFacet.getCurrentRiskTermsHash.selector; // #730 r3
-        selectors[28] = RiskAccessFacet.revealRiskTermsBump.selector; // #730 r5
-        selectors[29] = RiskAccessFacet.getPendingRiskTermsCommitment.selector; // #730 r5
-        selectors[30] = RiskAccessFacet.getVaultRiskTierVersion.selector; // #735
-        selectors[31] = RiskAccessFacet.acceptMidTierAckPair.selector; // #735 item 3
-        selectors[32] = RiskAccessFacet.previewCreatorBlock.selector; // #735 item 3
-        selectors[33] = RiskAccessFacet.isPairConsentPending.selector; // #735 item 3
-        selectors[34] = RiskAccessFacet.isMidTierAckPending.selector; // #735 item 3
-        selectors[35] = RiskAccessFacet.previewIntent.selector; // #625 WI-2b
+        selectors[16] = RiskAccessFacet.setRiskStrictMode.selector;
+        selectors[17] = RiskAccessFacet.setRiskStrictModeBySig.selector;
+        selectors[18] = RiskAccessFacet.setMidTierPairAck.selector;
+        selectors[19] = RiskAccessFacet.setMidTierPairAckBySig.selector;
+        selectors[20] = RiskAccessFacet.getRiskStrictMode.selector;
+        selectors[21] = RiskAccessFacet.getStrictModeStrictUntil.selector;
+        selectors[22] = RiskAccessFacet.midTierStrictBlocked.selector;
+        selectors[23] = RiskAccessFacet.getCurrentRiskTermsHash.selector; // #730 r3
+        selectors[24] = RiskAccessFacet.revealRiskTermsBump.selector; // #730 r5
+        selectors[25] = RiskAccessFacet.getPendingRiskTermsCommitment.selector; // #730 r5
+        selectors[26] = RiskAccessFacet.getVaultRiskTierVersion.selector; // #735
+        selectors[27] = RiskAccessFacet.isPairConsentPending.selector; // #735 item 3
+        selectors[28] = RiskAccessFacet.isMidTierAckPending.selector; // #735 item 3
+    }
+
+    /// @dev #1104 — preview cluster + cross-facet gate asserts split into
+    ///      `RiskPreviewFacet`. All 7 are `view`.
+    function getRiskPreviewFacetSelectors()
+        public
+        pure
+        returns (bytes4[] memory selectors)
+    {
+        selectors = new bytes4[](7);
+        selectors[0] = RiskPreviewFacet.previewOfferAcceptBlock.selector;
+        selectors[1] = RiskPreviewFacet.assertMatchAllowed.selector;
+        selectors[2] = RiskPreviewFacet.previewMatchRiskBlock.selector;
+        selectors[3] = RiskPreviewFacet.assertObligationTransferAllowed.selector;
+        selectors[4] = RiskPreviewFacet.acceptMidTierAckPair.selector; // #735 item 3
+        selectors[5] = RiskPreviewFacet.previewCreatorBlock.selector; // #735 item 3
+        selectors[6] = RiskPreviewFacet.previewIntent.selector; // #625 WI-2b
     }
 
     function getAggregatorAdapterFactoryFacetSelectors()
