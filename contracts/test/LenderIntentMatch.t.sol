@@ -883,10 +883,16 @@ contract LenderIntentMatchTest is SetupTest {
         _setIntent(MAX_EXPOSURE);
         _fundIntent(PRINCIPAL);
         address b = _newBorrower("b1");
-        // 1x collateral vs the 2x the 50% init-LTV cap requires ⇒ the match
-        // core rejects on CollateralBelowRequired (an intent-guard-clean pair).
+        // 1.8x collateral: ABOVE the ~1.765x the system create-time admission
+        // floor requires (#998 S15 — else the borrower offer would be rejected
+        // at posting with MaxLendingAboveCeiling, before the match), but BELOW
+        // the 2x the lender intent's stricter 50% init-LTV cap requires ⇒ the
+        // offer posts, and the match core rejects on CollateralBelowRequired
+        // (an intent-guard-clean pair). This exercises the match-core shortfall
+        // path for an offer that clears system admission but fails a specific
+        // lender's tighter LTV preference.
         uint256 cp = _postBorrowerCustom(
-            b, PRINCIPAL, PRINCIPAL, MAX_DURATION, true, false
+            b, PRINCIPAL, 1800 ether, MAX_DURATION, true, false
         );
         LibOfferMatch.IntentPreviewResult memory r = _preview(solver, PRINCIPAL, cp);
         assertFalse(r.ok, "preview !ok on a match-core shortfall");

@@ -810,19 +810,40 @@ library LibOfferMatch {
         if (s.assetPaused[lendingAsset] || s.assetPaused[collateralAsset]) {
             return _intentFail(res, IntentError.SlicePausedAsset);
         }
-        // (c) Range-mode lender collateral floor (OfferCreateFacet:919, lender
-        //     branch). Runs BEFORE the cadence validator, and ONLY when range-
-        //     amount is on AND BOTH legs are classified `Liquid` (same gate as
-        //     the live path — Codex r2: don't apply it to a priced-but-illiquid
-        //     leg). `reqColl` (the intent-LTV-cap collateral) can sit below the
-        //     HF floor when the lender's `maxInitLtvBps` is more permissive.
-        if (s.protocolCfg.rangeAmountEnabled) {
+        // (c) Lender collateral floor (OfferCreateFacet lender branch). #998 S15
+        //     (#900): keyed on the slice actually being liquid-both-legs (NOT
+        //     the now-dead `rangeAmountEnabled` flag — and NOT range-shape,
+        //     since intent slices materialize single-value `amount == amountMax
+        //     == fillAmount`, so a range-shape key would skip them). `reqColl`
+        //     (the intent-LTV-cap collateral) can sit below the HF floor when
+        //     the lender's `maxInitLtvBps` is more permissive.
+        //
+        //     Kept as a lean FLOOR-ONLY inline check here (the same
+        //     `minCollateralForLending` floor {LibOfferBounds} uses on the
+        //     lender path) rather than routed through the shared helper: the
+        //     full helper inlines the ceiling + tiered-tier-0 branches into
+        //     `previewIntent` → RiskAccessFacet, which is at the EIP-170 ceiling.
+        //     Intent slices are lender-side single-fill, so only the floor can
+        //     trip here; the borrower-ceiling and tier-0-no-borrow cases are
+        //     enforced at MATERIALIZATION via `createSignedOfferVault` (which
+        //     runs the full `LibOfferBounds` create-time check).
+        {
             bool bothLiquid =
                 OracleFacet(address(this)).checkLiquidity(lendingAsset)
                     == LibVaipakam.LiquidityStatus.Liquid
                 && OracleFacet(address(this)).checkLiquidity(collateralAsset)
                     == LibVaipakam.LiquidityStatus.Liquid;
             if (bothLiquid) {
+                // #998 S15 — lean FLOOR-ONLY slice guard (kept off the shared
+                // no-borrow guard on purpose: inlining it into `previewIntent`
+                // pushes RiskAccessFacet past the EIP-170 24,576-byte limit).
+                // The tier-0 / zero-init-LTV-cap no-borrow case is still enforced
+                // at EXECUTION (materialization → `createSignedOfferVault` →
+                // `LibOfferBounds`); only the preview's reported error code for
+                // that niche case (a later match-core `LtvAboveTier` instead of
+                // `SliceCollateralBelowFloor`) diverges — tracked as a follow-up
+                // (Codex #1101 P2b; needs a cross-facet no-borrow view or a
+                // RiskAccessFacet size refactor #980).
                 uint256 floorColl = LibRiskMath.minCollateralForLending(
                     fillAmount, lendingAsset, collateralAsset
                 );

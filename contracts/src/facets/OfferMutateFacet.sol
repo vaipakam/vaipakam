@@ -2,6 +2,7 @@
 pragma solidity ^0.8.29;
 
 import {LibVaipakam} from "../libraries/LibVaipakam.sol";
+import {LibOfferBounds} from "../libraries/LibOfferBounds.sol";
 import {LibAuth} from "../libraries/LibAuth.sol";
 import {LibFacet} from "../libraries/LibFacet.sol";
 import {DiamondReentrancyGuard} from "../libraries/LibReentrancyGuard.sol";
@@ -181,6 +182,8 @@ contract OfferMutateFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamE
         offer.amount = newAmount;
         offer.amountMax = newAmountMax;
 
+        _assertOfferBoundsForMutate(offer);
+
         _settleAmountDelta(offerId, offer, oldAmount, oldAmountMax, newAmount, newAmountMax);
 
         _emitModified(offerId, offer);
@@ -248,6 +251,8 @@ contract OfferMutateFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamE
 
         offer.collateralAmount = newCollateralAmount;
         offer.collateralAmountMax = newCollateralAmountMax;
+
+        _assertOfferBoundsForMutate(offer);
 
         _settleCollateralDelta(
             offerId,
@@ -356,6 +361,12 @@ contract OfferMutateFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamE
             offer.collateralAmountMax = params.collateralAmountMax;
         }
 
+        // #998 S15 (#900) — re-check the floor/ceiling bound whenever a
+        // fund-affecting field moved (rate-only changes can't breach it).
+        if (amountChanged || collateralChanged) {
+            _assertOfferBoundsForMutate(offer);
+        }
+
         if (amountChanged) {
             _settleAmountDelta(
                 offerId,
@@ -380,6 +391,35 @@ contract OfferMutateFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamE
 
     // ════════════════════════════════════════════════════════════════
     // Internal helpers
+
+    /// @dev #998 S15 (#900) — enforce the same system-derived floor/ceiling
+    ///      admission bound `createOffer` applies, so a mutate can't move a
+    ///      liquid-both-legs ERC-20 offer into a shape `createOffer` would
+    ///      reject (raise `amountMax` past the ceiling, drop collateral below
+    ///      the floor). Reads the post-write `offer` fields. Shares the single
+    ///      {LibOfferBounds} definition with create + internal-match slice.
+    ///
+    ///      No sale-vehicle exemption is needed here: a linked sale / offset /
+    ///      refinance vehicle is already frozen from mutation by
+    ///      {_assertMutableBy} (`SaleVehicleImmutable` / `OffsetVehicleImmutable`
+    ///      / the refinance-freeze), so it never reaches this bound.
+    function _assertOfferBoundsForMutate(
+        LibVaipakam.Offer storage offer
+    ) private view {
+        LibOfferBounds.assertOfferBounds(
+            offer.offerType == LibVaipakam.OfferType.Lender,
+            offer.assetType,
+            offer.collateralAssetType,
+            offer.amountMax,
+            offer.collateralAmount,
+            offer.collateralAmountMax == 0
+                ? offer.collateralAmount
+                : offer.collateralAmountMax,
+            offer.lendingAsset,
+            offer.collateralAsset,
+            false
+        );
+    }
     // ════════════════════════════════════════════════════════════════
 
     /// @dev Common pre-mutation gate: caller must own the offer, the

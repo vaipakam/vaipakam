@@ -468,12 +468,16 @@ contract LoanFacetTest is Test {
     }
 
     function testInitiateLoanSuccessful() public {
+        // #998 S15: collateral bumped 1500→2000 ether to clear the new
+        // create-time collateral floor (~1875 ether for a 1000-ether liquid
+        // ERC-20 lender offer); 2000*0.85/1000 = 1.7 still clears the 1.5 HF
+        // init gate at accept.
         uint256 offerId = createOffer(
             mockERC20,
             mockCollateralERC20,
             LibVaipakam.AssetType.ERC20,
             1000 ether,
-            1500 ether,
+            2000 ether,
             30,
             0,
             0
@@ -503,7 +507,7 @@ contract LoanFacetTest is Test {
             lender,
             borrower,
             1000 ether,
-            1500 ether
+            2000 ether
         );
         vm.prank(borrower);
         uint256 loanId = OfferAcceptFacet(address(diamond)).acceptOffer(
@@ -529,12 +533,15 @@ contract LoanFacetTest is Test {
             abi.encode(1e18 - 1) // < 1.5e18
         );
 
+        // #998 S15: 2000 ether clears the create-time collateral floor so the
+        // offer is created; the mocked low calculateHealthFactor (not consulted
+        // by the create bound) still trips the loan-init HF gate at acceptOffer.
         uint256 offerId = createOffer(
             mockERC20,
             mockCollateralERC20,
             LibVaipakam.AssetType.ERC20,
             1000 ether,
-            1500 ether,
+            2000 ether,
             30,
             0,
             0
@@ -556,12 +563,15 @@ contract LoanFacetTest is Test {
             abi.encode(8001)
         );
 
+        // #998 S15: 2000 ether clears the create-time collateral floor so the
+        // offer is created; the mocked high calculateLTV (not consulted by the
+        // create bound) still trips the loan-init LTV gate at acceptOffer.
         uint256 offerId = createOffer(
             mockERC20,
             mockCollateralERC20,
             LibVaipakam.AssetType.ERC20,
             1000 ether,
-            1500 ether,
+            2000 ether,
             30,
             0,
             0
@@ -621,12 +631,13 @@ contract LoanFacetTest is Test {
     }
 
     function testGetLoanDetails() public {
+        // #998 S15: collateral bumped 1500→2000 ether to clear the create floor.
         uint256 offerId = createOffer(
             mockERC20,
             mockCollateralERC20,
             LibVaipakam.AssetType.ERC20,
             1000 ether,
-            1500 ether,
+            2000 ether,
             30,
             0,
             0
@@ -638,7 +649,7 @@ contract LoanFacetTest is Test {
             1
         );
         assertEq(loan.principal, 1000 ether);
-        assertEq(loan.collateralAmount, 1500 ether);
+        assertEq(loan.collateralAmount, 2000 ether);
         assertEq(loan.durationDays, 30);
     }
 
@@ -669,9 +680,10 @@ contract LoanFacetTest is Test {
 
     /// @dev Covers line 66 TRUE (offer.accepted == true): prank as diamond, already-accepted offer → InvalidOffer
     function testInitiateLoanRevertsAlreadyAcceptedOfferViaPrank() public {
+        // #998 S15: collateral 1500→2000 ether to clear the create floor.
         uint256 offerId = createOffer(
             mockERC20, mockCollateralERC20, LibVaipakam.AssetType.ERC20,
-            1000 ether, 1500 ether, 30, 0, 0
+            1000 ether, 2000 ether, 30, 0, 0
         );
         LibAcceptTestSigner.signAndAccept(address(diamond), borrower, borrowerPk, offerId); // marks offer.accepted = true
 
@@ -727,9 +739,10 @@ contract LoanFacetTest is Test {
 
     /// @dev Covers line 138 TRUE: calculateLTV staticcall reverts → CrossFacetCallFailed("LTV check failed")
     function testInitiateLoanRevertsLTVCallFailed() public {
+        // #998 S15: collateral 1500→2000 ether to clear the create floor.
         uint256 offerId = createOffer(
             mockERC20, mockCollateralERC20, LibVaipakam.AssetType.ERC20,
-            1000 ether, 1500 ether, 30, 0, 0
+            1000 ether, 2000 ether, 30, 0, 0
         );
         vm.mockCallRevert(
             address(diamond),
@@ -744,9 +757,10 @@ contract LoanFacetTest is Test {
 
     /// @dev Covers line 152 TRUE: calculateHealthFactor staticcall reverts → CrossFacetCallFailed("HF check failed")
     function testInitiateLoanRevertsHFCallFailed() public {
+        // #998 S15: collateral 1500→2000 ether to clear the create floor.
         uint256 offerId = createOffer(
             mockERC20, mockCollateralERC20, LibVaipakam.AssetType.ERC20,
-            1000 ether, 1500 ether, 30, 0, 0
+            1000 ether, 2000 ether, 30, 0, 0
         );
         vm.mockCallRevert(
             address(diamond),
@@ -761,9 +775,10 @@ contract LoanFacetTest is Test {
 
     /// @dev Covers lines 158-165 TRUE: updateNFTStatus call fails → CrossFacetCallFailed("NFT update failed")
     function testInitiateLoanRevertsNFTUpdateFailed() public {
+        // #998 S15: collateral 1500→2000 ether to clear the create floor.
         uint256 offerId = createOffer(
             mockERC20, mockCollateralERC20, LibVaipakam.AssetType.ERC20,
-            1000 ether, 1500 ether, 30, 0, 0
+            1000 ether, 2000 ether, 30, 0, 0
         );
         vm.mockCallRevert(
             address(diamond),
@@ -778,9 +793,10 @@ contract LoanFacetTest is Test {
 
     /// @dev Covers lines 175-185 TRUE: mintNFT call fails → CrossFacetCallFailed("Mint NFT failed")
     function testInitiateLoanReverts_MintNFTFailed() public {
+        // #998 S15: collateral 1500→2000 ether to clear the create floor.
         uint256 offerId = createOffer(
             mockERC20, mockCollateralERC20, LibVaipakam.AssetType.ERC20,
-            1000 ether, 1500 ether, 30, 0, 0
+            1000 ether, 2000 ether, 30, 0, 0
         );
         // updateNFTStatus will succeed naturally (no ownerOf check after fix)
         // Mock mintNFT to fail
@@ -797,9 +813,10 @@ contract LoanFacetTest is Test {
 
     /// @dev Covers getLoanConsents view function
     function testGetLoanConsents() public {
+        // #998 S15: collateral 1500→2000 ether to clear the create floor.
         uint256 offerId = createOffer(
             mockERC20, mockCollateralERC20, LibVaipakam.AssetType.ERC20,
-            1000 ether, 1500 ether, 30, 0, 0
+            1000 ether, 2000 ether, 30, 0, 0
         );
         uint256 loanId = LibAcceptTestSigner.signAndAccept(address(diamond), borrower, borrowerPk, offerId);
 
@@ -837,7 +854,13 @@ contract LoanFacetTest is Test {
                 amount: 1000 ether,
                 interestRateBps: 500,
                 collateralAsset: mockCollateralERC20,
-                collateralAmount: 1800 ether,
+                // #998 S15: this BORROWER offer now hits the create-time lending
+                // CEILING (max lending a collateral can back). At 1800 ether the
+                // ceiling was 960 ether < the 1000-ether amount → MaxLendingAbove-
+                // Ceiling. Raise collateral to 2000 ether (ceiling ≈ 1066 ether ≥
+                // 1000) so the offer is created; amount stays 1000 to match the
+                // dealt principal. The test only asserts lender/borrower roles.
+                collateralAmount: 2000 ether,
                 durationDays: 30,
                 assetType: LibVaipakam.AssetType.ERC20,
                 tokenId: 0,
@@ -852,7 +875,7 @@ contract LoanFacetTest is Test {
                 allowsParallelSale: false,
                 amountMax: 1000 ether,
                 interestRateBpsMax: 500,
-                collateralAmountMax: 1800 ether,
+                collateralAmountMax: 2000 ether,
                 periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None,
                 expiresAt: 0,
                 fillMode: LibVaipakam.FillMode.Partial,
@@ -981,12 +1004,13 @@ contract LoanFacetTest is Test {
     ///      and LTV/HF checks are all skipped.
     function testInitiateLoanLenderSaleVehicle() public {
         // Create a normal offer first (which we'll mark as a sale vehicle)
+        // #998 S15: collateral 1500→2000 ether to clear the create floor.
         uint256 offerId = createOffer(
             mockERC20,
             mockCollateralERC20,
             LibVaipakam.AssetType.ERC20,
             1000 ether,
-            1500 ether,
+            2000 ether,
             30,
             0,
             0
@@ -995,13 +1019,21 @@ contract LoanFacetTest is Test {
         // Create a real active loan first (the linked loan must be Active)
         uint256 existingLoanId = LibAcceptTestSigner.signAndAccept(address(diamond), borrower, borrowerPk, offerId);
 
-        // Create another offer that will be the sale vehicle
+        // Create another offer that will be the sale vehicle.
+        // #998 S15: a real sale vehicle is a Borrower-shaped offer with 0
+        // collateral (exempt from the bound via `skipCeiling`), but this test
+        // fabricates one from the generic Lender `createOffer` helper. A liquid
+        // Lender offer with 0 collateral now fails the create-time floor, so we
+        // give it 2000 ether. The `initiateLoan` sale-vehicle path only RECORDS
+        // `offer.collateralAmount` (no transfer — it early-returns before the
+        // collateral lock), and this test asserts only status/LIF/treasury, so
+        // the collateral value is immaterial to what's exercised.
         uint256 saleOfferId = createOffer(
             mockERC20,
             mockCollateralERC20,
             LibVaipakam.AssetType.ERC20,
             1000 ether,
-            0, // zero collateral for sale vehicle
+            2000 ether,
             30,
             0,
             0
@@ -1041,12 +1073,13 @@ contract LoanFacetTest is Test {
     ///      When the linked loan is not Active, should revert InvalidOffer.
     function testInitiateLoanLenderSaleVehicleLinkedLoanNotActive() public {
         // Create a normal offer and loan
+        // #998 S15: collateral 1500→2000 ether to clear the create floor.
         uint256 offerId = createOffer(
             mockERC20,
             mockCollateralERC20,
             LibVaipakam.AssetType.ERC20,
             1000 ether,
-            1500 ether,
+            2000 ether,
             30,
             0,
             0
@@ -1054,13 +1087,17 @@ contract LoanFacetTest is Test {
 
         uint256 existingLoanId = LibAcceptTestSigner.signAndAccept(address(diamond), borrower, borrowerPk, offerId);
 
-        // Create another offer
+        // Create another offer.
+        // #998 S15: same as the sibling sale-vehicle test — a liquid Lender
+        // offer with 0 collateral now fails the create-time floor, so give it
+        // 2000 ether. The sale-vehicle path records but never transfers this
+        // collateral, and the test asserts only the InvalidOffer revert.
         uint256 saleOfferId = createOffer(
             mockERC20,
             mockCollateralERC20,
             LibVaipakam.AssetType.ERC20,
             1000 ether,
-            0,
+            2000 ether,
             30,
             0,
             0
@@ -1192,7 +1229,8 @@ contract LoanFacetTest is Test {
                 amount: 1000 ether,
                 interestRateBps: 500,
                 collateralAsset: mockCollateralERC20,
-                collateralAmount: 1500 ether,
+                // #998 S15: collateral 1500→2000 ether to clear the create floor.
+                collateralAmount: 2000 ether,
                 durationDays: 30,
                 assetType: LibVaipakam.AssetType.ERC20,
                 tokenId: 0,
@@ -1207,7 +1245,7 @@ contract LoanFacetTest is Test {
                 allowsParallelSale: false,
                 amountMax: 1000 ether,
                 interestRateBpsMax: 500,
-                collateralAmountMax: 1500 ether,
+                collateralAmountMax: 2000 ether,
                 periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None,
                 expiresAt: 0,
                 fillMode: LibVaipakam.FillMode.Partial,
@@ -1266,12 +1304,15 @@ contract LoanFacetTest is Test {
         );
         // HF stays the setUp's 2e18 (≥ 1e18 — switch-on floor).
 
+        // #998 S15: the tiered create floor for a Tier-1 collateral is exactly
+        // 2000 ether (LTV-cap floor = 1000/0.50); 2000 meets it (reject is
+        // strict `<`), so create passes and the mocked LTV trips the init gate.
         uint256 offerId = createOffer(
             mockERC20,
             mockCollateralERC20,
             LibVaipakam.AssetType.ERC20,
             1000 ether,
-            1500 ether,
+            2000 ether,
             30,
             0,
             0
@@ -1309,12 +1350,14 @@ contract LoanFacetTest is Test {
             abi.encode(uint256(4800)) // 48% — under the 50% Tier-1 cap
         );
 
+        // #998 S15: 2000 ether == the Tier-1 create floor (meets it); the mocked
+        // LTV 48% < 50% cap admits the loan at the init gate.
         uint256 offerId = createOffer(
             mockERC20,
             mockCollateralERC20,
             LibVaipakam.AssetType.ERC20,
             1000 ether,
-            1500 ether,
+            2000 ether,
             30,
             0,
             0
@@ -1351,12 +1394,14 @@ contract LoanFacetTest is Test {
             abi.encode(uint256(12 * 1e17)) // 1.2e18 — between the two floors
         );
 
+        // #998 S15: 2000 ether clears the Tier-3 create floor (~1539 ether); the
+        // mocked LTV 60% ≤ 65% cap and HF 1.2e18 ≥ relaxed 1e18 floor admit it.
         uint256 offerId = createOffer(
             mockERC20,
             mockCollateralERC20,
             LibVaipakam.AssetType.ERC20,
             1000 ether,
-            1500 ether,
+            2000 ether,
             30,
             0,
             0
@@ -1393,12 +1438,14 @@ contract LoanFacetTest is Test {
             abi.encode(uint256(9 * 1e17)) // 0.9e18 — below 1.0
         );
 
+        // #998 S15: 2000 ether clears the Tier-3 create floor (~1539 ether); the
+        // mocked HF 0.9e18 < relaxed 1e18 floor still trips the init gate.
         uint256 offerId = createOffer(
             mockERC20,
             mockCollateralERC20,
             LibVaipakam.AssetType.ERC20,
             1000 ether,
-            1500 ether,
+            2000 ether,
             30,
             0,
             0
@@ -1412,8 +1459,15 @@ contract LoanFacetTest is Test {
     }
 
     /// @dev Switch on, Tier 0 (untierable) ⇒ cap is `min(loanInitMaxLtvBps, 0) = 0`
-    ///      ⇒ any positive LTV reverts `InitLtvAboveTier(ltv, 0)` — no
-    ///      borrow against a Tier-0 collateral, regardless of `loanInitMaxLtvBps`.
+    ///      ⇒ no borrow against a Tier-0 collateral, regardless of
+    ///      `loanInitMaxLtvBps`.
+    ///
+    ///      #998 S15: effective-tier-0 collateral is now rejected fail-fast at
+    ///      CREATE (the create bound mirrors the init-gate tier-0 no-borrow
+    ///      rule), preempting the init-gate path this test previously exercised.
+    ///      The offer can never be created — no collateral bump helps — so the
+    ///      assertion is now on the CREATE-time `MinCollateralBelowFloor`
+    ///      rejection rather than the accept-time `InitLtvAboveTier`.
     function testDepthTier_initGate_tier0CollateralRejected() public {
         ConfigFacet(address(diamond)).setDepthTieredLtvEnabled(true);
         vm.mockCall(
@@ -1430,7 +1484,8 @@ contract LoanFacetTest is Test {
             abi.encode(uint256(4000))
         );
 
-        uint256 offerId = createOffer(
+        vm.expectPartialRevert(OfferCreateFacet.MinCollateralBelowFloor.selector);
+        createOffer(
             mockERC20,
             mockCollateralERC20,
             LibVaipakam.AssetType.ERC20,
@@ -1440,18 +1495,6 @@ contract LoanFacetTest is Test {
             0,
             0
         );
-        LibAcceptTerms.AcceptTerms memory _t =
-            LibAcceptTestSigner.buildTerms(address(diamond), borrower, offerId, true, 0);
-        bytes memory _sig = LibAcceptTestSigner.sign(address(diamond), _t, borrowerPk);
-        vm.expectRevert(
-            abi.encodeWithSelector(
-                IVaipakamErrors.InitLtvAboveTier.selector,
-                uint256(4000),
-                uint256(0)
-            )
-        );
-        vm.prank(borrower);
-        OfferAcceptFacet(address(diamond)).acceptOffer(offerId, _t, _sig);
     }
 
     /// @dev Switch on, Tier 2 (cap 60% per library defaults —
@@ -1475,12 +1518,14 @@ contract LoanFacetTest is Test {
             abi.encode(uint256(6300))
         );
 
+        // #998 S15: 2000 ether clears the Tier-2 create floor (~1667 ether); the
+        // mocked LTV 63% > 60% cap trips the init gate as before.
         uint256 offerId = createOffer(
             mockERC20,
             mockCollateralERC20,
             LibVaipakam.AssetType.ERC20,
             1000 ether,
-            1500 ether,
+            2000 ether,
             30,
             0,
             0
@@ -1521,12 +1566,14 @@ contract LoanFacetTest is Test {
             abi.encode(uint256(7400))
         );
 
+        // #998 S15: 2000 ether clears the Tier-3 create floor (~1539 ether); the
+        // mocked LTV 74% > 65% cap trips the init gate as before.
         uint256 offerId = createOffer(
             mockERC20,
             mockCollateralERC20,
             LibVaipakam.AssetType.ERC20,
             1000 ether,
-            1500 ether,
+            2000 ether,
             30,
             0,
             0
@@ -1573,12 +1620,14 @@ contract LoanFacetTest is Test {
             abi.encode(2e18)
         );
 
+        // #998 S15: switch OFF ⇒ non-tiered create floor (~1875 ether); 2000
+        // clears it, then the legacy init gates admit (LTV 75% < 80%, HF 2 ≥ 1.5).
         uint256 offerId = createOffer(
             mockERC20,
             mockCollateralERC20,
             LibVaipakam.AssetType.ERC20,
             1000 ether,
-            1500 ether,
+            2000 ether,
             30,
             0,
             0
@@ -1661,12 +1710,14 @@ contract LoanFacetTest is Test {
             abi.encode(uint256(16 * 1e17)) // 1.6e18 — above 1.5 default, below 1.8
         );
 
+        // #998 S15: 2000 ether clears the non-tiered create floor (~1875 ether);
+        // the runtime HF floor is exercised at the init gate via the mocked HF.
         uint256 offerId = createOffer(
             mockERC20,
             mockCollateralERC20,
             LibVaipakam.AssetType.ERC20,
             1000 ether,
-            1500 ether,
+            2000 ether,
             30,
             0,
             0

@@ -466,6 +466,16 @@ contract TestMutatorFacet {
         LibVaipakam.storageSlot().assetRiskParams[asset].minPartialBps = bps;
     }
 
+    /// @notice Write `s.assetRiskParams[asset].loanInitMaxLtvBps = bps` directly.
+    ///         #998 S15 — a liquid collateral asset needs a configured per-asset
+    ///         init-LTV cap for `LibOfferBounds` to admit an offer against it
+    ///         (a 0 cap is no-borrow at loan-init, so the create/mutate bound
+    ///         rejects it fail-fast). Bespoke diamonds that don't cut `RiskFacet`
+    ///         use this instead of the bounded `RiskFacet.updateRiskParams`.
+    function setLoanInitMaxLtvBpsRaw(address asset, uint256 bps) external {
+        LibVaipakam.storageSlot().assetRiskParams[asset].loanInitMaxLtvBps = bps;
+    }
+
     /// @notice Read `s.userVaipakamVaults[user]` directly. Used by
     ///         `WorkflowComplianceAndRejection` test to look up a
     ///         user's vault proxy address bypassing the

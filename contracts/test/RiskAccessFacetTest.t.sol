@@ -1148,7 +1148,8 @@ contract RiskAccessFacetTest is SetupTest {
                 amount: 1000 ether,
                 interestRateBps: 500,
                 collateralAsset: collAsset,
-                collateralAmount: 1500 ether,
+                // #998 S15: 2000 clears the create-time collateral floor
+                collateralAmount: 2000 ether,
                 durationDays: 30,
                 assetType: LibVaipakam.AssetType.ERC20,
                 tokenId: 0,
@@ -1163,7 +1164,8 @@ contract RiskAccessFacetTest is SetupTest {
                 allowsParallelSale: false,
                 amountMax: 1000 ether,
                 interestRateBpsMax: 500,
-                collateralAmountMax: 1500 ether,
+                // #998 S15: 2000 clears the create-time collateral floor
+                collateralAmountMax: 2000 ether,
                 periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None,
                 expiresAt: 0,
                 fillMode: LibVaipakam.FillMode.Partial,

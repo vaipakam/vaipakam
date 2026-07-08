@@ -8,6 +8,7 @@ import {LibFacet} from "../libraries/LibFacet.sol";
 import {LibMetricsHooks} from "../libraries/LibMetricsHooks.sol";
 import {LibPermit2, ISignatureTransfer} from "../libraries/LibPermit2.sol";
 import {LibRiskMath} from "../libraries/LibRiskMath.sol";
+import {LibOfferBounds} from "../libraries/LibOfferBounds.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {IERC20Metadata} from "@openzeppelin/contracts/token/ERC20/extensions/IERC20Metadata.sol";
 import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
@@ -894,76 +895,36 @@ contract OfferCreateFacet is
             );
         }
 
-        // ── Range Orders Phase 1 — system-derived bound enforcement ────
-        // Active ONLY when the master `rangeAmountEnabled` flag is on
-        // (i.e., the offer's `amountMax > amount` is permissible). When
-        // Range Orders is dormant (default), every offer is effectively
-        // single-value and the runtime HF gate at LoanFacet.initiateLoan
-        // is sufficient — there's no worst-case-corner to defend against.
-        // Apply ONLY to ERC-20-on-both-legs offers where both legs are
-        // Liquid (matches the runtime HF gate's scope; NFT rentals +
-        // illiquid pairs go through different gates).
-        LibVaipakam.ProtocolConfig storage cfg2 =
-            LibVaipakam.storageSlot().protocolCfg;
-        if (
-            cfg2.rangeAmountEnabled
-            && params.assetType == LibVaipakam.AssetType.ERC20
-            && params.collateralAssetType == LibVaipakam.AssetType.ERC20
-            && principalLiq == LibVaipakam.LiquidityStatus.Liquid
-            && collateralLiq == LibVaipakam.LiquidityStatus.Liquid
-        ) {
-            if (params.offerType == LibVaipakam.OfferType.Lender) {
-                // Lender's required collateral must clear the floor at
-                // the worst-case lending size (`offer.amountMax` after
-                // auto-collapse).
-                uint256 floor = LibRiskMath.minCollateralForLending(
-                    offer.amountMax,
-                    params.lendingAsset,
-                    params.collateralAsset
-                );
-                if (floor > 0 && params.collateralAmount < floor) {
-                    revert MinCollateralBelowFloor(params.collateralAmount, floor);
-                }
-            } else {
-                // Borrower's accepted lending ceiling (their `amountMax`)
-                // can't exceed the system-derived ceiling implied by the
-                // MAX collateral they're willing to lock. Issue #164:
-                // the upper bound is the auto-collapsed collateral max
-                // (= `params.collateralAmount` for legacy single-value
-                // offers; the literal `params.collateralAmountMax` for
-                // ranged offers).
-                //
-                // Issue #169 follow-up — compute from `params` rather
-                // than `offer.collateralAmountMax` because the storage
-                // SSTORE was elided in single-value mode to save gas
-                // (storage default `0` ⇒ collateralAmount via the read-
-                // side fallback everywhere else, but here we just use
-                // the local `params` field directly so we don't have to
-                // re-derive the auto-collapse from a storage read).
-                uint256 effBorrowerCollMax = params.collateralAmountMax == 0
-                    ? params.collateralAmount
-                    : params.collateralAmountMax;
-                uint256 ceiling = LibRiskMath.maxLendingForCollateral(
-                    effBorrowerCollMax,
-                    params.lendingAsset,
-                    params.collateralAsset
-                );
-                // #951 — exempt the protocol-authored lender-sale vehicle. It
-                // mimics a Borrower offer with `collateralAmount == 0` (the real
-                // collateral stays on the linked live loan, not re-posted here),
-                // so the collateral-derived ceiling is 0 and any non-zero amount
-                // would revert. The exemption mirrors the risk-access-gate
-                // exemption above; both key off the same `saleVehicleCreate`
-                // transient set only by `EarlyWithdrawalFacet.createLoanSaleOffer`.
-                if (
-                    !s.saleVehicleCreate
-                    && ceiling != type(uint256).max
-                    && offer.amountMax > ceiling
-                ) {
-                    revert MaxLendingAboveCeiling(offer.amountMax, ceiling);
-                }
-            }
-        }
+        // ── System-derived floor/ceiling admission bound (#998 S15 / #900) ──
+        // Formerly gated behind the now-dead `rangeAmountEnabled` flag; the
+        // bound is now enforced whenever the offer is actually liquid-both-legs
+        // ERC-20 (matching the runtime HF gate's scope), via the shared
+        // {LibOfferBounds} so create / mutate / internal-match slice cannot
+        // drift. The keying (ERC-20 + liquid on both legs) lives in the helper.
+        //
+        // NOTE: read `params.amountMax` (calldata), NOT `offer.amountMax` — the
+        // offer struct's `amountMax` is stamped later in `_createOfferFinish`
+        // (`offer.amountMax = params.amountMax`), so it is still 0 here. The
+        // old inline block read `offer.amountMax` and was therefore a DEAD
+        // check (a 0 amountMax yields floor 0 / ceiling comparison against 0);
+        // this fix makes the create-time bound effective for the first time.
+        //
+        // The lender-sale vehicle stays exempt from the ceiling
+        // (`saleVehicleCreate`): it mimics a Borrower offer with
+        // `collateralAmount == 0` (real collateral is on the linked live loan).
+        LibOfferBounds.assertOfferBounds(
+            params.offerType == LibVaipakam.OfferType.Lender,
+            params.assetType,
+            params.collateralAssetType,
+            params.amountMax,
+            params.collateralAmount,
+            params.collateralAmountMax == 0
+                ? params.collateralAmount
+                : params.collateralAmountMax,
+            params.lendingAsset,
+            params.collateralAsset,
+            s.saleVehicleCreate
+        );
 
         // ── T-034 — Periodic Interest Payment cadence validation ──────────
         // See docs/DesignsAndPlans/PeriodicInterestPaymentDesign.md §3.

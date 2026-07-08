@@ -249,6 +249,12 @@ contract OfferFacetTest is Test {
         mockOracleLiquidity(mockNft721, LibVaipakam.LiquidityStatus.Illiquid);
         mockOraclePrice(mockERC20, 1e8, 8); // $1 price, 8 decimals
         mockOraclePrice(mockCollateralERC20, 1e8, 8); // $1 price, 8 decimals
+        // #998 S15: a liquid collateral asset needs a non-zero per-asset
+        // init-LTV cap, else `LibOfferBounds` rejects any offer against it at
+        // create (a 0 cap is no-borrow at loan-init). This bespoke diamond does
+        // not cut RiskFacet, so set it via the test mutator.
+        TestMutatorFacet(address(diamond)).setLoanInitMaxLtvBpsRaw(mockERC20, 8000);
+        TestMutatorFacet(address(diamond)).setLoanInitMaxLtvBpsRaw(mockCollateralERC20, 8000);
 
         console.log("completed Setup Function");
     }
@@ -324,10 +330,14 @@ contract OfferFacetTest is Test {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](3);
+        selectors = new bytes4[](4);
         selectors[0] = OracleFacet.checkLiquidity.selector;
         selectors[1] = OracleFacet.getAssetPrice.selector;
         selectors[2] = OracleFacet.calculateLTV.selector;
+        // #998 S15 — the create/mutate floor/ceiling bound (LibOfferBounds →
+        // LibRiskMath.minCollateralForLending) reads the collateral's effective
+        // liquidity tier, so this bespoke diamond must cut the selector too.
+        selectors[3] = OracleFacet.getEffectiveLiquidityTier.selector;
         return selectors;
     }
 
@@ -565,6 +575,12 @@ contract OfferFacetTest is Test {
     function testAcceptOfferRequiresKYCOverThreshold() public {
         // Mock high value: $3 price * 1000e18 tokens = $3000e18 USD > KYC_TIER0_THRESHOLD ($1000e18)
         mockOraclePrice(mockERC20, 3e8, 8);
+        // #998 S15 (#900): the create-time collateral floor now fires for
+        // liquid-both-legs ERC-20 offers, and this test's 1500 collateral is
+        // below the floor for a $3000 principal. This test is about KYC (the
+        // accept reverts at the KYC gate, before loan-init), not collateral
+        // admission — scope the collateral leg illiquid so the floor is skipped.
+        mockOracleLiquidity(mockCollateralERC20, LibVaipakam.LiquidityStatus.Illiquid);
         deal(mockERC20, user1, 10000 ether);
         deal(mockERC20, user2, 10000 ether);
 
@@ -904,6 +920,13 @@ contract OfferFacetTest is Test {
         // mockOraclePrice(mockERC20, price, 8);
         mockOracleLiquidity(mockERC20, LibVaipakam.LiquidityStatus.Liquid);
         mockOraclePrice(mockERC20, 1 * (10 ** 8), 8);
+        // #998 S15 (#900): the create-time collateral floor now fires for
+        // liquid-both-legs ERC-20 offers, and this test's 1500 collateral is
+        // below the floor for the 2010 principal. This test is about the KYC
+        // value threshold (accept reverts at the KYC gate, before loan-init),
+        // not collateral admission — scope the collateral leg illiquid so the
+        // floor is skipped.
+        mockOracleLiquidity(mockCollateralERC20, LibVaipakam.LiquidityStatus.Illiquid);
 
         deal(mockERC20, user1, 10000 ether);
         deal(mockERC20, user2, 10000 ether);
