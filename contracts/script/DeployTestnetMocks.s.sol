@@ -214,6 +214,96 @@ contract DeployTestnetMocks is Script {
         console.log("Admin:    ", vm.addr(adminKey));
         console.log("WETH:     ", weth);
 
+        // ── Pre-flight (view-only): validate the reuse / override env BEFORE
+        //    any on-chain write, so a misconfigured rerun (a stale/incomplete
+        //    live feed, or a pre-#1095 swap adapter) fails fast with ZERO
+        //    orphaned mocks and zero wasted operator gas — instead of
+        //    broadcasting every other mock and only then reverting (#1102).
+        //    Both blocks are pure staticcalls; the state-writing deploys they
+        //    feed stay inside the broadcast below. ──
+
+        // (a) mWETH price. On the MWETH_USD_FEED override path, read + validate
+        //     the live ETH/USD feed HERE and snapshot its answer into
+        //     `wethQuotePrice8`; the static SNAPSHOT feed itself is deployed
+        //     inside the broadcast. Validate with the SAME freshness rules
+        //     OracleFacet enforces so a stale/incomplete feed fails the deploy
+        //     fast rather than seeding a bogus price. See the snapshot
+        //     rationale (Codex #1095) at the feed deploy below.
+        uint256 wethQuotePrice8;
+        if (mWethUsdFeedOverride != address(0)) {
+            (
+                uint80 roundId,
+                int256 live,
+                ,
+                uint256 updatedAt,
+                uint80 answeredInRound
+            ) = IAggregatorV3Like(mWethUsdFeedOverride).latestRoundData();
+            // Reject a non-8-decimal aggregator: we snapshot the raw answer
+            // into an 8-dec MockChainlinkFeed and seed the pools + adapter from
+            // it, so a 6- or 18-dec feed would look internally balanced while
+            // every mWETH/WETH loan + liquidation is off by the decimal factor
+            // (Codex #1095).
+            require(
+                IAggregatorV3Like(mWethUsdFeedOverride).decimals() == 8,
+                "DeployTestnetMocks: MWETH_USD_FEED must be an 8-decimal ETH/USD feed"
+            );
+            require(live > 0, "DeployTestnetMocks: MWETH_USD_FEED returned non-positive price");
+            require(updatedAt != 0, "DeployTestnetMocks: MWETH_USD_FEED round not complete (updatedAt=0)");
+            require(updatedAt <= block.timestamp, "DeployTestnetMocks: MWETH_USD_FEED updatedAt is in the future");
+            require(answeredInRound >= roundId, "DeployTestnetMocks: MWETH_USD_FEED stale round (answeredInRound < roundId)");
+            // Max staleness — override with MWETH_USD_FEED_MAX_AGE (seconds);
+            // default 1h matches a typical ETH/USD heartbeat + margin.
+            uint256 maxAge = vm.envOr("MWETH_USD_FEED_MAX_AGE", uint256(3600));
+            require(
+                block.timestamp - updatedAt <= maxAge,
+                "DeployTestnetMocks: MWETH_USD_FEED answer is stale (older than MWETH_USD_FEED_MAX_AGE)"
+            );
+            wethQuotePrice8 = SafeCast.toUint256(live);
+            console.log("Validated live MWETH_USD_FEED (pre-broadcast):", mWethUsdFeedOverride);
+            console.log("  seeded ETH/USD (8-dec):", wethQuotePrice8);
+            console.log("  round age (s):", block.timestamp - updatedAt);
+        } else {
+            wethQuotePrice8 = mWethUsdPrice;
+        }
+
+        // (b) FAUCET_SWAP_ADAPTER reuse. Probe the override (owner() version
+        //     gate + the price-aware tokenUsdPrice8 getter) with staticcalls
+        //     HERE, so a pre-hardening (ungated) or pre-#1095 adapter is
+        //     rejected before any mock is deployed. `swapAdapter` stays 0 for
+        //     the fresh-deploy path taken inside the broadcast.
+        address swapAdapter = vm.envOr("FAUCET_SWAP_ADAPTER", address(0));
+        if (swapAdapter != address(0)) {
+            // The reuse override must point at a HARDENED adapter: the
+            // pre-gating MockSwapAdapter had public setters — exactly the stale
+            // state this script remediates — and reusing it (then pruning
+            // everything else below) would leave the griefable venue as the
+            // ONLY liquidation route. The old bytecode has no `owner()` getter,
+            // so the call reverting doubles as the version check; a hardened
+            // adapter owned by a different key is rejected too.
+            try MockSwapAdapter(swapAdapter).owner() returns (address o) {
+                require(
+                    o == vm.addr(deployerKey),
+                    "DeployTestnetMocks: FAUCET_SWAP_ADAPTER owned by another key - unset the env to deploy fresh"
+                );
+            } catch {
+                revert(
+                    "DeployTestnetMocks: FAUCET_SWAP_ADAPTER is a pre-hardening (ungated) adapter - unset the env to deploy fresh"
+                );
+            }
+            // A hardened-but-pre-#1095 adapter passes owner() yet lacks the
+            // price-aware `setTokenPrice`/`tokenUsdPrice8` this script wires.
+            // Probing the getter here fails early with an actionable message
+            // instead of half-applying the rerun and only reverting on the
+            // setTokenPrice calls below (Codex #1095).
+            try MockSwapAdapter(swapAdapter).tokenUsdPrice8(weth) returns (uint256) {
+                // price-aware adapter — safe to reuse.
+            } catch {
+                revert(
+                    "DeployTestnetMocks: FAUCET_SWAP_ADAPTER predates the price-aware setTokenPrice (Codex #1095) - unset the env to deploy a fresh adapter"
+                );
+            }
+        }
+
         // ── Step 1: Deployer-side — deploy mocks ───────────────────────
         vm.startBroadcast(deployerKey);
 
@@ -315,66 +405,22 @@ contract DeployTestnetMocks is Script {
         MockChainlinkRegistry registry = new MockChainlinkRegistry();
         MockChainlinkFeed liquidFeed = new MockChainlinkFeed(TLIQ_USD_PRICE, 8);
         MockChainlinkFeed liquid2Feed = new MockChainlinkFeed(MUSDC_USD_PRICE, 8);
-        // mWETH + WETH share a feed price. When `MWETH_USD_FEED` is set we
-        // register that live aggregator for BOTH; otherwise we deploy a
-        // single static mock feed at `mWethUsdPrice` and share it across
-        // mWETH and WETH so the two always report an identical price.
-        address ethUsdFeedAddr;
-        // The USD price (8-dec) used for the WETH quote leg AND the mWETH
-        // leg when deriving pool spots. On the static path it's
-        // `mWethUsdPrice`; on the override path it's the feed's LIVE answer
-        // so every pool's spot matches what OracleFacet will read from the
-        // same feed AT DEPLOY TIME.
-        uint256 wethQuotePrice8;
+        // mWETH + WETH share a feed price. `wethQuotePrice8` was resolved
+        // pre-broadcast (the live-feed snapshot on the MWETH_USD_FEED override
+        // path, else `mWethUsdPrice`); deploy the STATIC snapshot feed and
+        // share it across mWETH and WETH so the two always report an identical
+        // price. We register the static SNAPSHOT — NOT the live aggregator —
+        // because registering the LIVE feed made the static tLIQ/mUSDC pools
+        // fail `OracleFacet._accumulatePoolImpacts`' value-balance guard the
+        // moment ETH moved beyond `cfgTwapConsistencyBps` (~3%), flipping every
+        // WETH-quoted faucet token Illiquid until a redeploy — the pools can't
+        // reprice themselves (Codex #1095). Snapshotting keeps mWETH realistic
+        // (the real ETH price AT DEPLOY, validated in the pre-flight above) AND
+        // every pool consistent forever; an operator reruns the deploy to
+        // refresh mWETH to the current ETH price.
+        address ethUsdFeedAddr = address(new MockChainlinkFeed(SafeCast.toInt256(wethQuotePrice8), 8));
         if (mWethUsdFeedOverride != address(0)) {
-            // SEED mWETH's price from the real ETH/USD feed at deploy time,
-            // but wire a STATIC SNAPSHOT feed (below) into the registry — NOT
-            // the live aggregator. Registering the LIVE feed made the static
-            // tLIQ/mUSDC pools fail `OracleFacet._accumulatePoolImpacts`'
-            // value-balance guard the moment ETH moved beyond
-            // `cfgTwapConsistencyBps` (~3%), flipping every WETH-quoted faucet
-            // token Illiquid until a redeploy — the pools can't reprice
-            // themselves (Codex #1095). Snapshotting keeps mWETH realistic
-            // (the real ETH price AT DEPLOY) AND every pool consistent
-            // forever; an operator reruns the deploy to refresh mWETH to the
-            // current ETH price. Validate the round with the SAME freshness
-            // rules OracleFacet enforces so a stale/incomplete live feed fails
-            // the deploy fast rather than seeding a bogus price.
-            (
-                uint80 roundId,
-                int256 live,
-                ,
-                uint256 updatedAt,
-                uint80 answeredInRound
-            ) = IAggregatorV3Like(mWethUsdFeedOverride).latestRoundData();
-            // Reject a non-8-decimal aggregator: we snapshot the raw answer
-            // into an 8-dec MockChainlinkFeed and seed the pools + adapter
-            // from it, so a 6- or 18-dec feed would look internally balanced
-            // while every mWETH/WETH loan + liquidation is off by the
-            // decimal factor (Codex #1095).
-            require(
-                IAggregatorV3Like(mWethUsdFeedOverride).decimals() == 8,
-                "DeployTestnetMocks: MWETH_USD_FEED must be an 8-decimal ETH/USD feed"
-            );
-            require(live > 0, "DeployTestnetMocks: MWETH_USD_FEED returned non-positive price");
-            require(updatedAt != 0, "DeployTestnetMocks: MWETH_USD_FEED round not complete (updatedAt=0)");
-            require(updatedAt <= block.timestamp, "DeployTestnetMocks: MWETH_USD_FEED updatedAt is in the future");
-            require(answeredInRound >= roundId, "DeployTestnetMocks: MWETH_USD_FEED stale round (answeredInRound < roundId)");
-            // Max staleness — override with MWETH_USD_FEED_MAX_AGE (seconds);
-            // default 1h matches a typical ETH/USD heartbeat + margin.
-            uint256 maxAge = vm.envOr("MWETH_USD_FEED_MAX_AGE", uint256(3600));
-            require(
-                block.timestamp - updatedAt <= maxAge,
-                "DeployTestnetMocks: MWETH_USD_FEED answer is stale (older than MWETH_USD_FEED_MAX_AGE)"
-            );
-            wethQuotePrice8 = SafeCast.toUint256(live);
-            ethUsdFeedAddr = address(new MockChainlinkFeed(SafeCast.toInt256(wethQuotePrice8), 8));
             console.log("Seeded mWETH + WETH from live MWETH_USD_FEED (static snapshot):", ethUsdFeedAddr);
-            console.log("  seeded ETH/USD (8-dec):", wethQuotePrice8);
-            console.log("  round age (s):", block.timestamp - updatedAt);
-        } else {
-            ethUsdFeedAddr = address(new MockChainlinkFeed(SafeCast.toInt256(mWethUsdPrice), 8));
-            wethQuotePrice8 = mWethUsdPrice;
         }
         registry.setFeed(liquidToken, USD_DENOM, address(liquidFeed));
         registry.setFeed(liquidToken2, USD_DENOM, address(liquid2Feed));
@@ -409,44 +455,14 @@ contract DeployTestnetMocks is Script {
         // needed — see the run notes). 1:1 output multiplier == fair
         // value given tLIQ is priced equal to WETH.
         //
-        // Reused via FAUCET_SWAP_ADAPTER on re-runs: a fresh deploy per
-        // run would always fail the `_adapterRegistered` idempotency
-        // check below and APPEND another adapter slot, accumulating
-        // stale venues in `getSwapAdapters()` and shifting the
-        // `adapterIdx` the run notes advertise.
-        address swapAdapter = vm.envOr("FAUCET_SWAP_ADAPTER", address(0));
+        // `swapAdapter` was resolved + validated in the pre-flight above:
+        // non-zero means a reuse override that passed the owner() + price-aware
+        // probes, zero means deploy fresh. A fresh deploy per run would always
+        // fail the `_adapterRegistered` idempotency check below and APPEND
+        // another adapter slot, accumulating stale venues in
+        // `getSwapAdapters()` and shifting the `adapterIdx` the run notes
+        // advertise — hence the reuse path.
         if (swapAdapter != address(0)) {
-            // The reuse override must point at a HARDENED adapter: the
-            // pre-gating MockSwapAdapter had public setters — exactly
-            // the stale state this script remediates — and reusing it
-            // (then pruning everything else below) would leave the
-            // griefable venue as the ONLY liquidation route. The old
-            // bytecode has no `owner()` getter, so the call reverting
-            // doubles as the version check; a hardened adapter owned
-            // by a different key is rejected too.
-            try MockSwapAdapter(swapAdapter).owner() returns (address o) {
-                require(
-                    o == vm.addr(deployerKey),
-                    "DeployTestnetMocks: FAUCET_SWAP_ADAPTER owned by another key - unset the env to deploy fresh"
-                );
-            } catch {
-                revert(
-                    "DeployTestnetMocks: FAUCET_SWAP_ADAPTER is a pre-hardening (ungated) adapter - unset the env to deploy fresh"
-                );
-            }
-            // A hardened-but-pre-#1095 adapter passes owner() yet lacks the
-            // price-aware `setTokenPrice`/`tokenUsdPrice8` this script wires.
-            // Reusing it would pass the checks here, deploy every OTHER mock
-            // below, and only then revert on the setTokenPrice calls (selector
-            // not found) — a confusing half-applied rerun. Probe the getter and
-            // fail early with an actionable message instead (Codex #1095).
-            try MockSwapAdapter(swapAdapter).tokenUsdPrice8(weth) returns (uint256) {
-                // price-aware adapter — safe to reuse.
-            } catch {
-                revert(
-                    "DeployTestnetMocks: FAUCET_SWAP_ADAPTER predates the price-aware setTokenPrice (Codex #1095) - unset the env to deploy a fresh adapter"
-                );
-            }
             console.log("Reusing MockSwapAdapter: ", swapAdapter);
         } else {
             swapAdapter = address(new MockSwapAdapter("vaipakam-testnet-mock"));
