@@ -24,6 +24,7 @@ import { useActiveChain } from '../chain/useActiveChain';
 import { EmptyState } from '../components/EmptyState';
 import { captureTxError } from '../lib/errors';
 import { shortAddress } from '../lib/format';
+import { resolveMintSymbol } from '../lib/mintSymbol';
 
 const ERC20_MINT_ABI = [
   {
@@ -114,11 +115,9 @@ export function Faucet() {
   });
   // `null` (NOT a hard-coded "mUSDC") until the read resolves — the row then
   // shows a GENERIC label, so a slow or failed read can never advertise a
-  // specific ticker a click wouldn't actually mint (Codex #1109 P2).
-  const liquid2Symbol =
-    typeof liquid2SymbolRaw === 'string' && liquid2SymbolRaw.length > 0
-      ? liquid2SymbolRaw
-      : null;
+  // specific ticker a click wouldn't actually mint (Codex #1109 P2). Pure
+  // helper so the resolution is unit-tested (#1111).
+  const liquid2Symbol = resolveMintSymbol(liquid2SymbolRaw);
 
   // ── Gate 1: the page only DOES anything on a testnet slug that
   // actually carries mock addresses. Both conditions must hold. ──
