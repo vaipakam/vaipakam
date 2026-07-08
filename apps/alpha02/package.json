@@ -14,7 +14,8 @@
     "preview": "vite preview",
     "deploy": "pnpm run build && wrangler deploy",
     "e2e": "playwright test",
-    "e2e:typecheck": "tsc -p e2e/tsconfig.json --noEmit"
+    "e2e:typecheck": "tsc -p e2e/tsconfig.json --noEmit",
+    "test": "vitest run"
   },
   "dependencies": {
     "@tanstack/react-query": "^5.100.1",
@@ -37,6 +38,7 @@
     "@vitejs/plugin-react": "^6.0.1",
     "typescript": "~6.0.2",
     "vite": "^8.0.9",
+    "vitest": "^4.1.4",
     "wrangler": "^4.84.1"
   }
 }

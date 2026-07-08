@@ -6,10 +6,11 @@
 # once listed as a required check in branch protection) if any defi unit
 # test fails.
 #
-# The job also runs the shared @vaipakam/lib unit suite (#1099) — the
-# workflow name stays `defi vitest` so the existing required-check wiring
-# in branch protection keeps resolving; see the `vitest` job for the
-# rationale on gating both suites together.
+# The job also runs the shared @vaipakam/lib suite (#1099) and the
+# apps/alpha02 pure-logic suite (#1111) — the workflow name stays
+# `defi vitest` so the existing required-check wiring in branch protection
+# keeps resolving; see the `vitest` job for the rationale on gating the
+# suites together.
 #
 # Required-check shape (Codex #1098): this workflow runs on EVERY PR to
 # main — it is NOT scoped with `on.pull_request.paths`. A workflow that
@@ -80,11 +81,11 @@ jobs:
           echo "Changed files:"
           echo "$CHANGED"
 
-          # apps/defi source + the packages it imports (a lib/contracts/ui
-          # change can break the suite), plus the root dependency /
-          # workspace inputs a Vitest/jsdom/React/wagmi bump rides in on,
-          # plus this workflow file itself.
-          DEFI_RE='^(apps/defi/|packages/(lib|contracts|ui)/|package\.json$|pnpm-lock\.yaml$|pnpm-workspace\.yaml$|\.github/workflows/defi-vitest\.yml$)'
+          # apps/defi + apps/alpha02 source + the packages they import (a
+          # lib/contracts/ui change can break either suite), plus the root
+          # dependency / workspace inputs a Vitest/jsdom/React/wagmi bump rides
+          # in on, plus this workflow file itself.
+          DEFI_RE='^(apps/(defi|alpha02)/|packages/(lib|contracts|ui)/|package\.json$|pnpm-lock\.yaml$|pnpm-workspace\.yaml$|\.github/workflows/defi-vitest\.yml$)'
           if echo "$CHANGED" | grep -Eq "$DEFI_RE"; then
             echo "defi=true" >> "$GITHUB_OUTPUT"
           else
@@ -120,6 +121,12 @@ jobs:
       # second workflow.
       - name: Run @vaipakam/lib vitest
         run: pnpm --filter @vaipakam/lib test
+
+      # apps/alpha02's pure-logic unit suite (#1111) runs in the SAME gate so it
+      # can't rot unrun (the #1076 lesson). Its Playwright e2e specs stay in the
+      # separate fork-tier job; this is `vitest run` over `src/**` only.
+      - name: Run @vaipakam/alpha02 vitest
+        run: pnpm --filter @vaipakam/alpha02 test
 
       - name: Run defi vitest
         run: pnpm --filter @vaipakam/defi test
