@@ -38,6 +38,7 @@ import {
 } from '../contracts/usePermit2Signing';
 import { useAcceptTermsSigning } from '../contracts/useAcceptTerms';
 import { SimulationPreview } from './SimulationPreview';
+import { CollateralPrecheck } from './CollateralPrecheck';
 import { SelectMenu } from './SelectMenu';
 import { useTxSimulation, type TxSimInput } from '../contracts/useTxSimulation';
 import {
@@ -855,6 +856,64 @@ export function OfferFlow({ side }: { side: Side }) {
       return null; // form not buildable yet — footer stays hidden
     }
   }, [mode, walletChain, form, lendingMeta.data, collateralMeta.data]);
+
+  // #1112 — early under-collateral precheck for the borrow TERMS step. Same
+  // `createOffer` eth_call the review-step SimulationPreview runs, but with
+  // consent FORCED true in the preview payload (read-only, never signed) so the
+  // RiskAndTermsConsentRequired gate — which is only ticked at review — doesn't
+  // mask the collateral/LTV revert the borrower needs to see WHILE still editing
+  // amounts. Scoped to the borrower post path + the terms step so it neither
+  // duplicates the review simulation nor previews a half-built form. The
+  // CollateralPrecheck component warns ONLY on under-collateral reverts.
+  const collateralPreviewTx = useMemo((): TxSimInput | null => {
+    // Gate on `postDetailsComplete` — the SAME completeness+validity flag the
+    // "Continue" button uses (it requires a POSITIVE collateral amount) — so an
+    // empty/zero collateral field doesn't coerce to 0 and prematurely warn
+    // before the borrower has finished entering terms (#1117 P3a). And require
+    // BOTH tokens' real decimals to have loaded: `toCreateOfferPayload` defaults
+    // to 18, so a mixed-decimal pair (e.g. a 6-dec stablecoin) would otherwise
+    // simulate a materially different borrow and warn/suppress wrongly (#1117
+    // P3b) — unlike the review preview, this banner has no metadata-backed
+    // receipt gating it.
+    if (
+      mode !== 'post' ||
+      side !== 'borrower' ||
+      step !== 'terms' ||
+      !walletChain ||
+      !postDetailsComplete ||
+      lendingMeta.data?.decimals == null ||
+      collateralMeta.data?.decimals == null
+    ) {
+      return null;
+    }
+    try {
+      const payload = toCreateOfferPayload(
+        { ...form, riskAndTermsConsent: true },
+        { lending: lendingMeta.data.decimals, collateral: collateralMeta.data.decimals },
+      );
+      return {
+        to: walletChain.diamondAddress,
+        data: encodeFunctionData({
+          abi: DIAMOND_ABI_VIEM,
+          functionName: 'createOffer',
+          args: [payload],
+        }),
+        value: 0n,
+        allowAllowanceRevert: true,
+      };
+    } catch {
+      return null; // form not buildable yet — precheck stays hidden
+    }
+  }, [
+    mode,
+    side,
+    step,
+    walletChain,
+    postDetailsComplete,
+    form,
+    lendingMeta.data,
+    collateralMeta.data,
+  ]);
 
   // Lift the pre-sign dry run here (SimulationPreview consumes the same
   // verdict via its `result` prop, so no duplicate eth_call) so the submit
@@ -2107,6 +2166,10 @@ export function OfferFlow({ side }: { side: Side }) {
               </label>
             </fieldset>
           ) : null}
+
+          {/* #1112 — advisory: warns here if the borrow is under-collateralised,
+              before the user clicks through to review. Never gates Continue. */}
+          <CollateralPrecheck tx={collateralPreviewTx} />
 
           <div className="cluster">
             <button type="button" className="btn btn-secondary" onClick={() => setStep('choose')}>

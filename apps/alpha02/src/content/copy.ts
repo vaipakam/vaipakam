@@ -412,6 +412,11 @@ export const copy = {
       'If you do not repay on time, the lender can receive your collateral.',
     lockNow:
       'Your collateral is locked when you post this request. You can cancel before a lender accepts to unlock it.',
+    // #1112 — early inline lead-in shown above the terms-step "Continue"
+    // button when a read-only pre-check finds the borrow under-collateralised,
+    // so the user learns it here instead of only at the final review. The
+    // specific next-step copy follows (decoded from the contract's own revert).
+    collateralPrecheck: 'Before you continue —',
   },
 
   lend: {
