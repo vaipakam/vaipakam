@@ -60,17 +60,38 @@ try {
   await pasteAssetLive(page, 'collateral-asset', MUSDC);
   await page.locator('#collateral-amount').fill('100');
 
-  // POSITIVE: the under-collateral banner must appear.
+  // POSITIVE: the under-collateral banner must appear — and assert the
+  // DISTINCTIVE friendly sentence, not just the "Before you continue —"
+  // lead-in. A regression that rendered a raw decoded error name / selector
+  // would keep the same prefix, so matching only the prefix would false-pass.
   const banner = page.getByText(/before you continue/i);
   await banner.waitFor({ state: 'visible', timeout: 45_000 });
-  const text = (await banner.textContent())?.trim();
-  console.log(`\nPASS ✓ under-collateral precheck banner shown:\n  "${text}"`);
+  const text = (await banner.textContent())?.trim() ?? '';
+  if (!/collateral is too low for the amount you want to borrow/i.test(text)) {
+    throw new Error(`banner shown but the friendly under-collateral copy regressed: "${text}"`);
+  }
+  if (/MaxLendingAboveCeiling|MinCollateralBelowFloor|0x[0-9a-fA-F]{8}/.test(text)) {
+    throw new Error(`banner leaked a raw contract error name / selector: "${text}"`);
+  }
+  console.log(`\nPASS ✓ under-collateral precheck banner shown with friendly copy:\n  "${text}"`);
   await shot('1112-precheck-warn');
 
   // NEGATIVE: sufficient collateral must CLEAR the banner (no crying wolf).
+  // Changing the field immediately resets useTxSimulation to `loading`, which
+  // unmounts CollateralPrecheck — so a bare waitFor('hidden') can pass in that
+  // transient gap BEFORE the recomputed, debounced createOffer eth_call settles
+  // (Codex #1121 P2). Wait out the debounce + settle, then require the banner to
+  // STAY absent across a stability window so a re-rendered verdict can't slip by.
   await page.locator('#collateral-amount').fill('1000000000');
   await banner.waitFor({ state: 'hidden', timeout: 45_000 });
-  console.log('PASS ✓ banner clears when collateral is sufficient');
+  await page.waitForTimeout(9_000); // debounce + createOffer eth_call round-trip
+  for (let i = 0; i < 4; i++) {
+    if (await banner.isVisible().catch(() => false)) {
+      throw new Error('under-collateral banner re-appeared after the recomputed simulation settled — negative case failed');
+    }
+    await page.waitForTimeout(1_000);
+  }
+  console.log('PASS ✓ banner stays cleared after the recomputed simulation settled');
   await shot('1112-precheck-clear');
 
   console.log('\nLIVE REVIEW PASSED — #1112 verified on', SITE);
