@@ -39,7 +39,7 @@ import {
 import { useAcceptTermsSigning } from '../contracts/useAcceptTerms';
 import { SimulationPreview } from './SimulationPreview';
 import { SelectMenu } from './SelectMenu';
-import type { TxSimInput } from '../contracts/useTxSimulation';
+import { useTxSimulation, type TxSimInput } from '../contracts/useTxSimulation';
 import {
   ensureAllowance,
   isAddressLike,
@@ -77,7 +77,12 @@ import {
   formatTokenAmount,
   fullTermInterest,
 } from '../lib/format';
-import { isPlainDecimal, isPositiveDecimal, submitErrorText } from '../lib/errors';
+import {
+  isPlainDecimal,
+  isPositiveDecimal,
+  isGasEstimationTrap,
+  captureTxError,
+} from '../lib/errors';
 import { copy } from '../content/copy';
 import { ConsentLabel } from './ConsentLabel';
 import { flowDisabled } from '../lib/killSwitch';
@@ -273,6 +278,12 @@ export function OfferFlow({ side }: { side: Side }) {
   const submitting = progress !== null;
   // Synchronous re-entrancy lock for submit() — see the comment there.
   const submitLockRef = useRef(false);
+  // Set true the instant submitPost/submitAccept reaches the FINAL
+  // create/accept write (after every approval/permit step). The pre-sign dry
+  // run describes only that final tx, so its reason may substitute the live
+  // error ONLY when the failure happened at/after this point — never for an
+  // earlier approval failure (#1094 Codex).
+  const reachedFinalSendRef = useRef(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
   const [deepLinkNotice, setDeepLinkNotice] = useState<string | null>(null);
   const [txHash, setTxHash] = useState<string | null>(null);
@@ -845,6 +856,14 @@ export function OfferFlow({ side }: { side: Side }) {
     }
   }, [mode, walletChain, form, lendingMeta.data, collateralMeta.data]);
 
+  // Lift the pre-sign dry run here (SimulationPreview consumes the same
+  // verdict via its `result` prop, so no duplicate eth_call) so the submit
+  // handler can PREFER the concrete revert reason it already decoded over a
+  // generic "oversized gas limit" message. When `eth_estimateGas` strips the
+  // revert selector (#780), `submitErrorText` can only surface the misleading
+  // gas-trap copy; the advisory dry run still knows the real cause.
+  const preSign = useTxSimulation(simTx);
+
   const receipt = useMemo((): ReceiptData | null => {
     // The conversions below throw on inputs the completeness gates
     // can't fully exclude — never let that take down the page.
@@ -1398,6 +1417,7 @@ export function OfferFlow({ side }: { side: Side }) {
           // of re-entering a permit path that may be structurally
           // broken (locked-out wallets were Codex round-2's P2).
           stepper.next('send');
+          reachedFinalSendRef.current = true;
           try {
             const { hash } = await write('createOfferWithPermit', [
               payload,
@@ -1422,6 +1442,7 @@ export function OfferFlow({ side }: { side: Side }) {
       onPrompt: () => stepper.next('approve'),
     });
     stepper.next('send');
+    reachedFinalSendRef.current = true;
     const { hash } = await write('createOffer', [payload]);
     return hash;
   }
@@ -1714,6 +1735,7 @@ export function OfferFlow({ side }: { side: Side }) {
             // for nothing. Errors surface after tripping the session
             // breaker, so a manual retry routes classic.
             stepper.next('send');
+          reachedFinalSendRef.current = true;
             try {
               const { hash } = await write('acceptOfferWithPermit', [
                 BigInt(selected.offerId),
@@ -1741,6 +1763,7 @@ export function OfferFlow({ side }: { side: Side }) {
       });
     }
     stepper.next('send');
+    reachedFinalSendRef.current = true;
     const { hash } = await write('acceptOffer', [
       BigInt(selected.offerId),
       terms,
@@ -1765,6 +1788,9 @@ export function OfferFlow({ side }: { side: Side }) {
     // pre-existing allowance).
     if (submitLockRef.current) return;
     submitLockRef.current = true;
+    // Fresh attempt — no final send reached yet. Reset the guard that scopes
+    // the dry-run substitution to a final create/accept failure (#1094 Codex).
+    reachedFinalSendRef.current = false;
     // Busy immediately (total not yet known — current 0 renders the
     // plain waiting label); the real plan replaces this below.
     setProgress({
@@ -1805,7 +1831,31 @@ export function OfferFlow({ side }: { side: Side }) {
       void queryClient.invalidateQueries({ queryKey: ['activeOffers'] });
       void queryClient.invalidateQueries({ queryKey: ['myLoans'] });
     } catch (err) {
-      setSubmitError(submitErrorText(err));
+      // Prefer the pre-sign dry run's concrete revert reason ONLY for the
+      // #780 gas-cap trap on the FINAL create/accept tx: when `eth_estimateGas`
+      // strips the selector, `submitErrorText` can only return the generic
+      // gas-trap copy while the advisory sim already decoded the real cause
+      // (e.g. "Your collateral is too low…"). For every OTHER failure — a
+      // wallet rejection, an approval-step failure BEFORE the final send, a
+      // concrete decoded revert — the live submit error is the truth and must
+      // NOT be masked by the advisory sim, which only ever simulated the final
+      // tx (#1094 Codex). The sim's revertName only tags the recorded entry
+      // when we actually use the sim's reason; tagging a live rejection with a
+      // stale sim name would mislabel it.
+      const dryRunReason =
+        preSign.result.status === 'revert' ? preSign.result.revertReason : undefined;
+      const useDryRun =
+        reachedFinalSendRef.current &&
+        dryRunReason != null &&
+        isGasEstimationTrap(err);
+      // captureTxError records the failure in the diagnostics sink (support
+      // report) AND returns the banner message, so a tx error is surfaced
+      // there, not just render-crash errors.
+      const message = captureTxError(err, {
+        message: useDryRun ? dryRunReason : undefined,
+        revertName: useDryRun ? preSign.result.revertName : undefined,
+      });
+      setSubmitError(message);
       // The approval may have MINED before the final prompt was
       // rejected — the review re-renders with the allowance changed,
       // so the roadmap must re-read it or it keeps promising an
@@ -2206,7 +2256,9 @@ export function OfferFlow({ side }: { side: Side }) {
           </div>
           <div className="card">
             {receipt ? <ReviewReceipt data={receipt} /> : <p className="muted">Preparing your review…</p>}
-            {receipt ? <SimulationPreview tx={simTx} /> : null}
+            {receipt ? (
+              <SimulationPreview tx={simTx} result={preSign.result} />
+            ) : null}
             {securityBlocked.length > 0 ? (
               <div className="banner banner-danger" role="alert" style={{ marginTop: 16 }}>
                 <span className="banner-body">

@@ -59,7 +59,11 @@ for (;;) {
     running: body.includes('free dry run of this transaction'),
     passed: body.includes('Dry run passed'),
     approval: body.includes('token approval will be requested first'),
-    wouldFail: body.includes('dry run of this exact transaction just failed'),
+    // #1094: the would-fail copy was reworded to the plain-language
+    // "…would fail if you signed it now…" (copy.simulation.wouldFail).
+    // Key on a distinctive slice of the CURRENT copy or this driver
+    // times out on a real would-fail verdict.
+    wouldFail: body.includes('would fail if you signed it now'),
     unavailable: body.includes('dry run isn’t available'),
   };
   // Hard verdicts end the wait; running/unavailable may be transient.
@@ -77,8 +81,11 @@ console.log(
     : `FAIL — verdicts: ${JSON.stringify(verdicts)}`,
 );
 {
-  const i = body.indexOf('just failed with');
-  if (i !== -1) console.log('REVERT TEXT:', body.slice(Math.max(0, i - 80), i + 400));
+  // The concrete revert reason renders right after the would-fail
+  // headline (…"no gas was spent." <strong>reason</strong>…); anchor
+  // on that stable phrase to surface it in the log (#1094 reword).
+  const i = body.indexOf('no gas was spent');
+  if (i !== -1) console.log('REVERT TEXT:', body.slice(i, i + 400));
 }
 await done();
 process.exit(any ? 0 : 1);

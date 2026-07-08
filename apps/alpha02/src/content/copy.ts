@@ -277,9 +277,10 @@ export const copy = {
   simulation: {
     running: 'Doing a free dry run of this transaction…',
     passed: 'Dry run passed — this transaction should go through as reviewed.',
-    wouldFail: 'Heads up: a dry run of this exact transaction just failed with',
+    wouldFail:
+      'Heads up — this transaction would fail if you signed it now. Nothing was sent and no gas was spent.',
     wouldFailNote:
-      '— nothing was sent and no gas was spent. Signing it now would most likely fail too. Check the details above, or try again in a moment; you can still sign if you want to.',
+      'You can adjust the details above and try again in a moment, or sign anyway.',
     approvalNeeded:
       'A token approval will be requested first — the dry run can’t see that step yet, so this is expected, not a problem.',
     unavailable:
@@ -934,10 +935,10 @@ export const copy = {
       action: (units: number) => `Mint ${units.toLocaleString()} tLIQ`,
     },
     liquid2: {
-      title: 'Second liquid test token (tLQ2)',
+      title: 'Mock USD Coin (mUSDC)',
       blurb:
-        'Also priced by a test oracle — a second, distinct liquid token so you can run a deal where both the loan and the collateral are liquid without pairing a token against itself.',
-      action: (units: number) => `Mint ${units.toLocaleString()} tLQ2`,
+        'A test USDC priced at $1 by a test oracle — a second, distinct liquid token so you can run a deal where both the loan and the collateral are liquid (with a realistic price spread against tLIQ / mWETH) without pairing a token against itself.',
+      action: (units: number) => `Mint ${units.toLocaleString()} mUSDC`,
     },
     mweth: {
       title: 'Mock wrapped ETH (mWETH)',

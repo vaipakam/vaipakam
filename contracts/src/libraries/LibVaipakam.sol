@@ -6078,6 +6078,52 @@ library LibVaipakam {
         return (loan.principal * feePercent) / 10000; // Basis points
     }
 
+    /// @dev NFT-rental late fee (#998 S8 / #1004). The shared
+    ///      {calculateLateFee} bases the fee on `loan.principal`, which is
+    ///      correct for an ERC-20 loan (whole principal) but wrong for a
+    ///      rental — there `loan.principal` is the PER-DAY fee, so the fee
+    ///      never scaled with the size of the overdue obligation. This
+    ///      rental variant bases the fee on the REMAINING OWED RENTAL
+    ///      `principal × durationDays`. `durationDays` is the live remaining
+    ///      term, retired by BOTH `autoDeductDaily` and `repayPartial`
+    ///      (term-retirement semantics), so it faithfully tracks the overdue
+    ///      rent with no separate paid-days counter.
+    ///
+    ///      The fee is capped two ways: the historical 5% penalty ceiling on
+    ///      the slope, AND — load-bearingly — clamped to the loan's OWN
+    ///      pre-funded `bufferAmount`. The clamp reads the per-loan
+    ///      `loan.bufferAmount` (snapshotted at origination) rather than the
+    ///      live `rentalBufferBps` config: a rental opened while the config was
+    ///      below 5% pre-funded a smaller buffer, and if governance later
+    ///      raised the config a live-config cap would compute a fee the buffer
+    ///      can't cover, reverting `InsufficientPrepay` and bricking the very
+    ///      close-out this protects (Codex #1096 P1). Clamping to the actual
+    ///      pre-funded buffer guarantees `fee <= bufferAmount` under ANY later
+    ///      config change — RepayFacet funds the rental late fee from
+    ///      `bufferAmount`.
+    /// @param loanId  Rental loan id.
+    /// @param endTime Unix timestamp at which the rental term expires.
+    /// @return fee    Late fee in prepay-asset units.
+    function calculateRentalLateFee(
+        uint256 loanId,
+        uint256 endTime
+    ) internal view returns (uint256 fee) {
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        LibVaipakam.Loan storage loan = s.loans[loanId];
+
+        if (block.timestamp <= endTime) return 0;
+
+        uint256 daysLate = (block.timestamp - endTime) / 1 days;
+        uint256 feePercent = 100 + (daysLate * 50); // 1% + 0.5% per day
+        if (feePercent > 500) feePercent = 500; // historical 5% penalty ceiling
+
+        fee = (loan.principal * loan.durationDays * feePercent) / 10000;
+
+        // Clamp to the loan's ACTUAL pre-funded buffer (per-loan snapshot, not
+        // the mutable global config), so the buffer always covers the fee.
+        if (fee > loan.bufferAmount) fee = loan.bufferAmount;
+    }
+
     /**
      * @notice Sets trade allowance between two countries (owner-only).
      * @dev Bidirectional by default (sets both A->B and B->A); for asymmetric, call twice.

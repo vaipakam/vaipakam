@@ -136,6 +136,14 @@ contract TestMutatorFacet {
         LibVaipakam.storageSlot().protocolCfg.depthTieredLtvEnabled = enabled;
     }
 
+    /// @notice Set `ProtocolConfig.rentalBufferBps` directly for tests that
+    ///         don't cut `ConfigFacet` into the diamond. #998 S8 (#1004) —
+    ///         exercises the rental late-fee cap `min(5%, cfgRentalBufferBps())`
+    ///         so a buffer configured below 5% cannot brick a late rental.
+    function setRentalBufferBpsRaw(uint16 bps) external {
+        LibVaipakam.storageSlot().protocolCfg.rentalBufferBps = bps;
+    }
+
     // ─── Reward-pool mutators (for interaction coverage tests) ───────────────
     // #687-B: setStakingPoolPaidOut removed with the 5% VPFI staking yield.
 

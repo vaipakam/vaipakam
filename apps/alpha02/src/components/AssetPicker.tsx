@@ -6,7 +6,7 @@
  *
  * On TEST networks the list additionally offers the faucet's mock
  * ERC-20s (user directive 2026-07-06): the faucet page mints tLIQ /
- * tLQ2 / mWETH / tILQ / tILQ2 precisely so people can try lending and
+ * mUSDC / mWETH / tILQ / tILQ2 precisely so people can try lending and
  * borrowing, but the pickers then made them paste those addresses
  * back by hand. Faucet rows are badged so it stays obvious they are
  * test tokens; addresses come from the same deployments bundle the

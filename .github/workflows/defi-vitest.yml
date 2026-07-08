@@ -1,38 +1,30 @@
-# defi vitest — non-blocking drift-warn lane (#1076).
+# defi vitest — blocking gate (#1076).
 #
 # The apps/defi unit suite rotted to 256 failures unnoticed because no
-# CI job ever ran it (only typecheck). This lane runs it on every PR
-# that touches defi (or the shared packages it consumes) and reports
-# the pass/fail counts, but NEVER blocks the merge — a discipline, not
-# a gate, same posture as the alpha02 coverage-drift check. The suite
-# is mid-repair (#1076); once it is fully green, flip `continue-on-error`
-# off (and add it to required checks) to make it a real gate.
-name: defi vitest (non-blocking)
+# CI job ever ran it (only typecheck). It was repaired under #1076 and
+# now runs as a REAL gate: the `vitest` job fails (and blocks the merge,
+# once listed as a required check in branch protection) if any defi unit
+# test fails.
+#
+# Required-check shape (Codex #1098): this workflow runs on EVERY PR to
+# main — it is NOT scoped with `on.pull_request.paths`. A workflow that
+# never triggers (because its `paths` filter didn't match) produces NO
+# check run at all, so a required status check keyed to it sits PENDING
+# forever and blocks the merge of every PR that doesn't touch those
+# paths. Instead the scoping lives on the `vitest` JOB via a
+# `detect-changes` `if:` guard: when apps/defi (and the packages it
+# imports) are untouched, `vitest` is `if:`-skipped, which branch
+# protection treats as SUCCESS — the same pattern ci.yml uses for its
+# conditionally-required jobs. Wire `defi vitest / vitest` (and, as the
+# defensive backstop ci.yml documents, `defi vitest / detect-changes`)
+# into the branch's required status checks.
+name: defi vitest
 
 on:
   pull_request:
-    paths:
-      - 'apps/defi/**'
-      - 'packages/lib/**'
-      - 'packages/contracts/**'
-      - 'packages/ui/**'
-      # Root dependency / workspace inputs: a Vitest/jsdom/React/wagmi bump
-      # here can break the suite without touching app/package source, so the
-      # warn lane must fire on these too (Codex #1088 r2).
-      - 'package.json'
-      - 'pnpm-lock.yaml'
-      - 'pnpm-workspace.yaml'
-      - '.github/workflows/defi-vitest.yml'
+    branches: [main]
   push:
     branches: [main]
-    paths:
-      - 'apps/defi/**'
-      - 'packages/lib/**'
-      - 'packages/contracts/**'
-      - 'packages/ui/**'
-      - 'package.json'
-      - 'pnpm-lock.yaml'
-      - 'pnpm-workspace.yaml'
 
 permissions:
   contents: read
@@ -43,7 +35,61 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  # ── detect-changes ──────────────────────────────────────────────────────
+  # Emits a single boolean output (`defi`) — true when this PR touches
+  # apps/defi, the packages it imports, or the workspace/lockfile inputs
+  # that can break the suite without touching app source. Always runs and
+  # always reports a conclusion, so the downstream `if:` guard resolves to
+  # SUCCESS (skipped) rather than leaving a required check pending.
+  detect-changes:
+    name: detect-changes
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    outputs:
+      defi: ${{ steps.diff.outputs.defi }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          # Full history so git diff can resolve the PR base sha.
+          fetch-depth: 0
+
+      - name: Determine changed paths
+        id: diff
+        run: |
+          set -eu
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            BASE="${{ github.event.pull_request.base.sha }}"
+            HEAD="${{ github.event.pull_request.head.sha }}"
+          else
+            # `push` event — diff the pushed commit against its parent.
+            BASE="${{ github.event.before }}"
+            HEAD="${{ github.sha }}"
+            # First commit on a branch → `before` is all-zeros; fall back.
+            if [ "$BASE" = "0000000000000000000000000000000000000000" ]; then
+              BASE=$(git rev-parse HEAD~1 2>/dev/null || git rev-parse HEAD)
+            fi
+          fi
+          echo "Diff range: $BASE..$HEAD"
+          CHANGED=$(git diff --name-only "$BASE" "$HEAD" || git diff --name-only HEAD~1 HEAD)
+          echo "Changed files:"
+          echo "$CHANGED"
+
+          # apps/defi source + the packages it imports (a lib/contracts/ui
+          # change can break the suite), plus the root dependency /
+          # workspace inputs a Vitest/jsdom/React/wagmi bump rides in on,
+          # plus this workflow file itself.
+          DEFI_RE='^(apps/defi/|packages/(lib|contracts|ui)/|package\.json$|pnpm-lock\.yaml$|pnpm-workspace\.yaml$|\.github/workflows/defi-vitest\.yml$)'
+          if echo "$CHANGED" | grep -Eq "$DEFI_RE"; then
+            echo "defi=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "defi=false" >> "$GITHUB_OUTPUT"
+          fi
+
   vitest:
+    name: vitest
+    needs: detect-changes
+    if: needs.detect-changes.outputs.defi == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
@@ -58,28 +104,8 @@ jobs:
       - name: Install
         run: pnpm install --frozen-lockfile
 
-      # Non-blocking: the step records its own outcome and we surface a
-      # warning + summary, but the job stays green so a mid-repair suite
-      # (or a fresh regression) never blocks unrelated PRs.
+      # Blocking: a failing defi unit test fails this job. The suite is
+      # deterministic and green on main (#1076), so a red run means a real
+      # regression the change introduced — fix it, don't ignore it.
       - name: Run defi vitest
-        id: vitest
-        continue-on-error: true
         run: pnpm --filter @vaipakam/defi test
-
-      - name: Report outcome
-        if: always()
-        env:
-          OUTCOME: ${{ steps.vitest.outcome }}
-        run: |
-          set -euo pipefail
-          if [ "$OUTCOME" = "success" ]; then
-            echo "defi vitest passed." | tee -a "$GITHUB_STEP_SUMMARY"
-          else
-            MSG="defi vitest reported failures (see the 'Run defi vitest' step log). Non-blocking while the #1076 suite repair is in progress — do not ignore a NEW regression your change introduced."
-            echo "::warning::$MSG"
-            {
-              echo "## defi vitest (non-blocking)"
-              echo ""
-              echo "$MSG"
-            } >> "$GITHUB_STEP_SUMMARY"
-          fi

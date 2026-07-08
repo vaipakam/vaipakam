@@ -20,7 +20,7 @@ import { useQueryClient } from '@tanstack/react-query';
 import { usePublicClient, useWalletClient } from 'wagmi';
 import { Bot } from 'lucide-react';
 import { copy } from '../content/copy';
-import { submitErrorText } from '../lib/errors';
+import { captureTxError } from '../lib/errors';
 import { useActiveChain } from '../chain/useActiveChain';
 import { useDiamondWrite } from '../contracts/diamond';
 import {
@@ -101,7 +101,7 @@ export function KeeperSettingsCard() {
       // still showing the pre-write value — inviting a duplicate tx.
       await queryClient.invalidateQueries({ queryKey: ['keeperConfig'] });
     } catch (err) {
-      setError(submitErrorText(err));
+      setError(captureTxError(err));
     } finally {
       setBusy(false);
     }

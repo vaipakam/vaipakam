@@ -1164,9 +1164,10 @@ The preview should preserve the resolved economic terms even when acceptance is 
 
 ### Late Fees
 
-- A late fee of 1% of the outstanding principal (for ERC-20 loans) or overdue rental amount (for NFT renting) is applied on the first day after the due date.
+- A late fee of 1% of the outstanding principal (for ERC-20 loans) or overdue rental amount (for NFT renting) is applied on the first day after the due date. For an NFT rental the "overdue rental amount" is the rent still owed on the remaining term (the per-day fee times the remaining rental days) — the late fee scales with the size of that obligation, not with a single day's fee.
 - The late fee increases by an additional 0.5% daily.
-- The total late fee is capped at 5% of the outstanding principal or total rental amount.
+- The total late fee is capped at 5% of the outstanding principal or remaining rental amount. For an NFT rental the cap is further bounded by the configured rental-buffer percentage (default 5%): if an operator sets the rental buffer below 5%, the late-fee cap tracks that lower buffer so the pre-paid buffer always covers the fee.
+- A rental late fee is paid out of the borrower's pre-paid rental **buffer** (the small safety margin collected up front alongside the rental prepayment), not out of the rental prepayment itself. This guarantees a late rental repayment can always settle the fee: a fully-overdue rental has its whole prepayment consumed by the rent owed, so without drawing the fee from the buffer the repayment could not complete. Any unused buffer is refunded to the borrower at repayment.
 - Late fees are collected along with the repayment and are subject to treasury fees.
 
 ### Treasury Fees

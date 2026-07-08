@@ -255,12 +255,168 @@ const FRIENDLY_ERROR_MESSAGES: Record<string, string> = {
 };
 
 /**
+ * Friendly, user-facing copy keyed by the ERROR NAME (not its 4-byte
+ * selector). Name-keying is deliberately drift-proof: a selector is a hash of
+ * the full signature, so a param-type tweak silently breaks a selector-keyed
+ * entry, whereas the name is stable. `decodeContractError` resolves
+ * selector → name (via `KNOWN_ERROR_SELECTORS`) → this map; the alpha02
+ * pre-sign simulation resolves the name straight from the Diamond ABI and
+ * looks it up here directly, so BOTH surfaces share one source of copy.
+ *
+ * Only the errors a NORMAL user can actually reach through the borrow / lend /
+ * accept / repay / claim / VPFI flows are curated here. Everything else falls
+ * through to `humanizeErrorName` (a readable sentence from the PascalCase
+ * name) so no error ever surfaces as a bare hex blob.
+ */
+const FRIENDLY_ERROR_BY_NAME: Record<string, string> = {
+  MaxLendingAboveCeiling:
+    'Your collateral is too low for the amount you want to borrow. Lower the borrow amount or lock more collateral, then try again.',
+  MinCollateralBelowFloor:
+    'The collateral for this loan is below the minimum its size needs. Increase the required collateral or reduce the loan amount, then try again.',
+  MatchHFTooLow:
+    'This would leave the loan below the minimum health factor (1.5). Add collateral or reduce the borrow amount.',
+  InitLtvAboveTier:
+    'This loan would exceed the LTV limit for its risk tier (prices or tier caps have moved). Lower the borrow amount or add collateral, then try again.',
+  InterestRateAboveCeiling:
+    "The interest rate is above the protocol's current ceiling. Lower the rate and try again.",
+  OfferDurationExceedsCap:
+    'The loan duration is longer than the protocol allows. Choose a shorter term.',
+  LenderCannotRepayOwnLoan:
+    "You can't repay a loan where you are the lender — repaying your own loan isn't allowed.",
+  PartialRepayNotAllowed:
+    "This loan doesn't allow partial repayment — repay the full amount instead.",
+  RiskAndTermsConsentRequired:
+    'Please accept the risk disclosures and terms before continuing.',
+  FunctionDisabled:
+    'This feature is currently turned off by protocol governance. Please try again later.',
+  PeriodicInterestDisabled:
+    'Periodic interest payments are currently disabled on this deployment.',
+  AmountMustBePositive: 'Enter an amount greater than zero.',
+  AmountMaxMustBePositive: 'Enter a maximum amount greater than zero.',
+  CollateralMustBePositive: 'Enter a collateral amount greater than zero.',
+  CollateralAmountMaxMustBePositive:
+    'Enter a maximum collateral amount greater than zero.',
+  InvalidAmountRange: 'The amount range is invalid — the maximum must be at least the minimum.',
+  InvalidRateRange: 'The interest-rate range is invalid — the maximum must be at least the minimum.',
+  InvalidCollateralAmountRange:
+    'The collateral range is invalid — the maximum must be at least the minimum.',
+  SelfTrade:
+    "You can't match your own offer — the lender and borrower can't be the same wallet.",
+  SelfCollateralizedOffer:
+    'The loan asset and the collateral asset must be different.',
+  IlliquidAssetNotAcknowledged:
+    'One of the assets is illiquid. Tick the illiquid-asset acknowledgement to continue.',
+  IlliquidPairNotConsented:
+    'Both sides must consent to the illiquid-asset terms before this can proceed.',
+  RiskTierTooLow: 'Your VPFI risk tier is below what this offer requires.',
+  FeeTooHigh: 'The fee for this action exceeds the allowed maximum.',
+  UserHasNoVault:
+    "You don't have a vault yet — it is created on your first deposit or loan. Try the action that opens it, then retry.",
+  NoVault:
+    "This wallet has no vault yet. Open one via a deposit or your first loan, then retry.",
+  UnsupportedLoanShape:
+    "This combination of assets or terms isn't supported for this action.",
+  PrincipalNotKYCd:
+    'This action requires identity verification (KYC) for this size on this deployment.',
+  PrincipalSanctioned:
+    "This wallet is flagged by the on-chain sanctions oracle, so the protocol can't open a new position for it.",
+  BorrowerSanctioned:
+    "The borrower wallet is flagged by the on-chain sanctions oracle, so this match can't proceed.",
+  NotBorrowerNftOwner: 'Only the current borrower-position holder can do this.',
+  NotLenderNftOwner: 'Only the current lender-position holder can do this.',
+};
+
+/**
+ * Turn a PascalCase Solidity error name into a readable sentence fragment —
+ * `MaxLendingAboveCeiling` → `Max lending above ceiling`. Used as the
+ * universal fallback so an error with no curated copy is still legible
+ * instead of a raw `Foo() (0x…)` / hex blob.
+ */
+export function humanizeErrorName(name: string): string {
+  const words = name
+    // split camel/Pascal boundaries, keeping acronym runs (HF, LTV, NFT, KYC)
+    .replace(/([a-z0-9])([A-Z])/g, '$1 $2')
+    .replace(/([A-Z]+)([A-Z][a-z])/g, '$1 $2')
+    .trim()
+    .split(/\s+/);
+  // Sentence case: capitalise the first word, lower-case the rest, but keep
+  // all-caps acronyms (HF, LTV, NFT, KYC) intact so they stay legible.
+  return words
+    .map((w, i) => {
+      const isAcronym = w.length > 1 && w === w.toUpperCase();
+      if (isAcronym) return w;
+      if (i === 0) return w.charAt(0).toUpperCase() + w.slice(1).toLowerCase();
+      return w.toLowerCase();
+    })
+    .join(' ');
+}
+
+/**
+ * Resolve friendly copy from an error NAME and/or 4-byte selector. Returns
+ * curated copy when available, else a humanized sentence from the name, else
+ * `null` (caller falls back to its own default). The pre-sign simulation
+ * passes the ABI-decoded `name`; the write-path decoder passes the `selector`.
+ */
+export function friendlyContractError(opts: {
+  name?: string;
+  selector?: string;
+}): string | null {
+  const sel = opts.selector?.toLowerCase();
+  // Prefer the curated SELECTOR copy the write-path banner uses
+  // (`FRIENDLY_ERROR_MESSAGES`), so the dry-run footer and the submit
+  // banner speak with one voice — e.g. `ERC20InsufficientBalance` /
+  // `HealthFactorTooLow` keep their fuller selector-specific guidance
+  // instead of degrading to a humanized name (#1094 Codex).
+  if (sel && FRIENDLY_ERROR_MESSAGES[sel]) return FRIENDLY_ERROR_MESSAGES[sel];
+  const nameFromSelector = sel
+    ? KNOWN_ERROR_SELECTORS[sel]?.replace(/\(.*/, '')
+    : undefined;
+  const name = opts.name ?? nameFromSelector;
+  if (!name) return null;
+  return FRIENDLY_ERROR_BY_NAME[name] ?? humanizeErrorName(name);
+}
+
+/**
  * Known custom-error selectors from the Vaipakam facets. Any selector not
  * listed renders as `<name?> (0xselector)` so support can map it by hand
  * against the contract source. Keep this table literal (selectors computed
  * offline with `cast sig`) to avoid pulling a hash lib into the bundle.
  */
 const KNOWN_ERROR_SELECTORS: Record<string, string> = {
+  // ── Range / offer-create bounds (OfferCreateFacet) — reachable friendly set,
+  //    selectors derived from the compiled ABI (keccak of the signature). ──
+  '0xa46539d8': 'MaxLendingAboveCeiling(uint256,uint256)',
+  '0x6aac1798': 'MinCollateralBelowFloor(uint256,uint256)',
+  '0xd779ce4f': 'FunctionDisabled(uint8)',
+  '0xfb45ee07': 'InterestRateAboveCeiling()',
+  '0x1df8547f': 'OfferDurationExceedsCap(uint256,uint256)',
+  '0x5c2262de': 'AmountMustBePositive()',
+  '0xb66583b8': 'AmountMaxMustBePositive()',
+  '0x57b061fc': 'CollateralMustBePositive()',
+  '0x3a488e6a': 'CollateralAmountMaxMustBePositive()',
+  '0x424b8933': 'InvalidAmountRange()',
+  '0xdaff1e76': 'InvalidRateRange()',
+  '0x822054c8': 'InvalidCollateralAmountRange()',
+  '0xd68a1e65': 'SelfTrade()',
+  '0x48d3adf6': 'MatchHFTooLow()',
+  '0x8eb7de56': 'InitLtvAboveTier(uint256,uint256)',
+  '0xc602c4b6': 'LenderCannotRepayOwnLoan()',
+  '0x6d5f92a6': 'PartialRepayNotAllowed()',
+  '0xd97070dd': 'RiskAndTermsConsentRequired()',
+  '0x103d10ae': 'PeriodicInterestDisabled()',
+  '0x3a1de410': 'UnsupportedLoanShape()',
+  '0x86b1e0b2': 'IlliquidAssetNotAcknowledged(address)',
+  '0x25a9fe81': 'IlliquidPairNotConsented(address,bytes32)',
+  '0x98369199': 'RiskTierTooLow(address,uint8,uint8)',
+  '0xcd4e6167': 'FeeTooHigh()',
+  '0x7234a923': 'UserHasNoVault()',
+  '0xa1b86ccf': 'NoVault()',
+  '0x761da04b': 'PrincipalNotKYCd()',
+  '0x9739e02f': 'PrincipalSanctioned()',
+  '0xb61be333': 'BorrowerSanctioned(uint256,address)',
+  '0xee7d09a2': 'NotBorrowerNftOwner()',
+  '0xf59924fa': 'NotLenderNftOwner()',
+
   // ── ERC-20 (OpenZeppelin) ─────────────────────────────────────────────
   '0xe450d38c': 'ERC20InsufficientBalance(address,uint256,uint256)',
   '0xfb8f41b2': 'ERC20InsufficientAllowance(address,uint256,uint256)',
@@ -452,16 +608,18 @@ const KNOWN_ERROR_SELECTORS: Record<string, string> = {
   // contract surface.
 };
 
-/** Extracts the raw revert data (hex string starting with 0x) from the tangle of shapes ethers/injected wallets surface. */
-export function extractRevertData(err: unknown): string | undefined {
-  if (!err || typeof err !== 'object') return undefined;
-  const e = err as DecodableError;
+/** Revert bytes carried on a SINGLE error node (no cause traversal). */
+function revertDataFromNode(e: DecodableError): string | undefined {
   const candidates: unknown[] = [
     typeof e.data === 'string' ? e.data : undefined,
     typeof e.data === 'object' ? e.data?.data : undefined,
     e.info?.error?.data,
     e.error?.data,
     e.revert?.data,
+    // viem's ContractFunctionRevertedError keeps the raw revert bytes on
+    // `.raw` (its decoded name lives on `.data.errorName`, handled by
+    // extractRevertName).
+    (e as { raw?: unknown }).raw,
   ];
   for (const c of candidates) {
     if (typeof c === 'string' && c.startsWith('0x') && c.length >= 10) return c;
@@ -480,6 +638,49 @@ export function extractRevertData(err: unknown): string | undefined {
     const len = m.length - 2; // strip 0x
     if (len === 8) return m; // bare 4-byte selector
     if (len >= 8 && (len - 8) % 64 === 0) return m; // selector + N abi-encoded args
+  }
+  return undefined;
+}
+
+/** Extracts the raw revert data (hex string starting with 0x) from the tangle
+ *  of shapes ethers/injected wallets surface. Walks the viem `cause` chain:
+ *  the real revert is usually wrapped several layers deep
+ *  (ContractFunctionExecutionError → ContractFunctionRevertedError), so the
+ *  top-level object has no `data` while a nested cause does. Bounded depth
+ *  guards a cyclic graph. */
+export function extractRevertData(err: unknown): string | undefined {
+  let node: unknown = err;
+  for (let depth = 0; node && typeof node === 'object' && depth < 6; depth++) {
+    const found = revertDataFromNode(node as DecodableError);
+    if (found) return found;
+    node = (node as { cause?: unknown }).cause;
+  }
+  return undefined;
+}
+
+/**
+ * The DECODED custom-error name (not raw bytes), walked out of the error
+ * graph: viem stashes it on `ContractFunctionRevertedError.data.errorName`
+ * in the `cause` chain, and some libraries expose it as `err.revert.name`.
+ * Skips the generic `Error` / `Panic` shapes (their human text lives in the
+ * base message).
+ */
+export function extractRevertName(err: unknown): string | undefined {
+  let node: unknown = err;
+  for (let depth = 0; node && typeof node === 'object' && depth < 6; depth++) {
+    const n = node as {
+      revert?: { name?: unknown };
+      data?: { errorName?: unknown };
+      cause?: unknown;
+    };
+    const name =
+      typeof n.revert?.name === 'string'
+        ? n.revert.name
+        : typeof n.data?.errorName === 'string'
+          ? n.data.errorName
+          : undefined;
+    if (name && name !== 'Error' && name !== 'Panic') return name;
+    node = n.cause;
   }
   return undefined;
 }
@@ -510,6 +711,29 @@ export function decodeContractError(err: unknown, fallback = 'Transaction failed
   if (sel && FRIENDLY_ERROR_MESSAGES[sel]) {
     return FRIENDLY_ERROR_MESSAGES[sel];
   }
+  // Name-keyed friendly copy (drift-proof) + humanized fallback for any
+  // selector we can resolve to a known error name. A decodable custom-error
+  // selector is always more informative than the raw `base` revert text
+  // ("execution reverted" / "unknown custom error 0x…"), so prefer it — but
+  // ONLY when we actually have a selector, so genuine Error(string) reverts
+  // (whose human text lives in `base`) and the #780 gas-limit trap below are
+  // untouched.
+  if (sel) {
+    const byName = friendlyContractError({ selector: sel });
+    if (byName) return byName;
+  }
+
+  // viem/libraries attach the DECODED custom-error name to the error without
+  // raw selector bytes — on `err.revert.name`, or (the common viem shape)
+  // several layers deep on `cause.data.errorName`. The selector path above
+  // misses those, and the raw `base` text is only viem's generic "The
+  // contract function ... reverted." Walk the graph for the name and consult
+  // the name-keyed friendly map before falling back to `base` (#1094 Codex).
+  const revertName = extractRevertName(err);
+  if (revertName) {
+    const byName = friendlyContractError({ name: revertName });
+    if (byName) return byName;
+  }
 
   const base =
     e.reason ??
@@ -534,13 +758,13 @@ export function decodeContractError(err: unknown, fallback = 'Transaction failed
     /exceeds max (?:transaction )?gas limit/i.test(base)
   ) {
     return (
-      'The wallet could not estimate this transaction and fell back to an ' +
-      "oversized gas limit that exceeds this chain's per-transaction cap. " +
-      'This is usually NOT a real gas shortage — the most common causes are ' +
-      'a missing token approval (approve the exact amount and retry) or a ' +
-      'stale app build whose call shape no longer matches the deployed ' +
-      'contract (hard-reload to load the latest version). If it persists, ' +
-      'share the diagnostics export with support.'
+      'The wallet could not estimate this transaction, so it would most ' +
+      'likely fail if signed. This is NOT a real gas shortage — if the ' +
+      'review step flagged a specific reason, that is the actual cause. ' +
+      'Otherwise the usual causes are a missing token approval (approve the ' +
+      'exact amount and retry) or a stale app build whose call shape no ' +
+      'longer matches the deployed contract (hard-reload to load the latest ' +
+      'version). If it persists, share the diagnostics export with support.'
     );
   }
 

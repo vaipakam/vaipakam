@@ -15,6 +15,7 @@ import {
   useContext,
   useEffect,
   useMemo,
+  useRef,
   useState,
   type ReactNode,
 } from 'react';
@@ -116,10 +117,19 @@ export function WalletProvider({ children }: { children: ReactNode }) {
 
   const [error, setError] = useState<string | null>(null);
 
-  // Clear transient errors once a connection succeeds.
+  // Clear a stale PRE-connection error (e.g. a failed connect attempt) only
+  // on the disconnected→connected TRANSITION — not on every render while
+  // connected. #1090: the prior effect was keyed on `[status, error]` and
+  // cleared ANY error whenever `status === 'connected'`, so an error raised
+  // WHILE already connected (a rejected/failed chain switch) was wiped on the
+  // very next render before its banner could show. Tracking the previous
+  // status and firing only on the edge lets a post-connect error survive.
+  const prevStatusRef = useRef(status);
   useEffect(() => {
-    if (status === 'connected' && error) setError(null);
-  }, [status, error]);
+    const prev = prevStatusRef.current;
+    prevStatusRef.current = status;
+    if (status === 'connected' && prev !== 'connected') setError(null);
+  }, [status]);
 
   // Safe-App auto-connect. When Vaipakam is embedded as an iframe inside
   // Safe's multisig UI, the wagmi `safe()` connector completes an iframe
@@ -227,6 +237,14 @@ export function WalletProvider({ children }: { children: ReactNode }) {
         });
         return;
       }
+      // #1093 (Codex): a chain switch never changes wagmi's account
+      // `status` (it stays `connected` throughout), so the status-edge
+      // effect that clears errors on (re)connect never fires here. A user
+      // who rejects a switch, then retries successfully, would keep the
+      // stale "Chain switch rejected or failed." banner forever. Clear it
+      // optimistically as each new attempt begins — a failure below
+      // re-sets it, a success leaves it cleared.
+      setError(null);
       try {
         // wagmi's switchChainAsync handles wallet_switchEthereumChain and
         // the 4902 → wallet_addEthereumChain fallback internally.

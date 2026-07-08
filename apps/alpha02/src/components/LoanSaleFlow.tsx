@@ -39,7 +39,7 @@ import { useQueryClient } from '@tanstack/react-query';
 import { usePublicClient, useWalletClient } from 'wagmi';
 import { encodeFunctionData, parseEventLogs } from 'viem';
 import { copy } from '../content/copy';
-import { isPositiveDecimal, submitErrorText } from '../lib/errors';
+import { isPositiveDecimal, captureTxError } from '../lib/errors';
 import { flowDisabled } from '../lib/killSwitch';
 import { useActiveChain } from '../chain/useActiveChain';
 import { DIAMOND_ABI_VIEM, useDiamondWrite } from '../contracts/diamond';
@@ -250,7 +250,7 @@ export function LoanSaleFlow({
       void queryClient.invalidateQueries({ queryKey: ['loanSalePending'] });
       void queryClient.invalidateQueries({ queryKey: ['myOffers'] });
     } catch (err) {
-      setError(submitErrorText(err));
+      setError(captureTxError(err));
       // The listing never landed but the settlement approval mined —
       // best-effort unwind (mirrors the refinance flow's rule): a
       // second rejection just leaves the wallet's approvals view as

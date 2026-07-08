@@ -63,6 +63,6 @@ test('review renders a truthful dry-run verdict', async ({ launchWallet }) => {
   // …and the false-alarm forms must not (the #1059 regression, and
   // the silent-unavailable state that would mean the eth_call never
   // reached Anvil).
-  await expect(page.getByText(/just failed with/)).toHaveCount(0);
+  await expect(page.getByText(/would fail if you signed it now/)).toHaveCount(0);
   await expect(page.getByText(/dry run isn’t available/)).toHaveCount(0);
 });

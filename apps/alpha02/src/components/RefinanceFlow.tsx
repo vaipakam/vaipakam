@@ -41,7 +41,7 @@ import { useQueryClient } from '@tanstack/react-query';
 import { usePublicClient, useWalletClient } from 'wagmi';
 import { parseEventLogs } from 'viem';
 import { copy } from '../content/copy';
-import { isPositiveDecimal, submitErrorText } from '../lib/errors';
+import { isPositiveDecimal, captureTxError } from '../lib/errors';
 import { flowDisabled } from '../lib/killSwitch';
 import { useActiveChain } from '../chain/useActiveChain';
 import { DIAMOND_ABI_VIEM, useDiamondWrite } from '../contracts/diamond';
@@ -331,7 +331,7 @@ export function RefinanceFlow({
       onCloseConfirm();
       void queryClient.invalidateQueries({ queryKey: ['myOffers'] });
     } catch (err) {
-      setError(submitErrorText(err));
+      setError(captureTxError(err));
       // No offer was created but the payoff approval mined — unwind
       // it so a rejected step 3 leaves no payoff-sized authorization
       // behind a pristine form with nothing to cancel. Best-effort:

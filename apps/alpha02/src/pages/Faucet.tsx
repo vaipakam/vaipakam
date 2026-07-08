@@ -22,7 +22,7 @@ import { getDeployment } from '@vaipakam/contracts/deployments';
 import { copy } from '../content/copy';
 import { useActiveChain } from '../chain/useActiveChain';
 import { EmptyState } from '../components/EmptyState';
-import { submitErrorText } from '../lib/errors';
+import { captureTxError } from '../lib/errors';
 import { shortAddress } from '../lib/format';
 
 const ERC20_MINT_ABI = [
@@ -35,6 +35,21 @@ const ERC20_MINT_ABI = [
       { name: 'amount', type: 'uint256' },
     ],
     outputs: [],
+  },
+] as const satisfies Abi;
+
+// #1095 — read the token's REAL on-chain symbol so watch-asset / the toast
+// never mislabel it. The bundled deployment may briefly point a relabelled
+// slot (e.g. liquidToken2 → mUSDC) at the pre-relabel token until the
+// operator reruns the mock deploy + deployment sync; resolving the symbol
+// live keeps MetaMask honest across that window.
+const ERC20_SYMBOL_ABI = [
+  {
+    name: 'symbol',
+    type: 'function',
+    stateMutability: 'view',
+    inputs: [],
+    outputs: [{ name: '', type: 'string' }],
   },
 ] as const satisfies Abi;
 
@@ -112,13 +127,32 @@ export function Faucet() {
 
   const canWrite = onSupportedChain && Boolean(walletClient) && Boolean(address);
 
-  async function mintErc20(token: Address, units: number, symbol: string) {
+  async function mintErc20(token: Address, units: number, symbolHint: string) {
     if (!walletClient || !address || !publicClient) return;
+    // #1095 (Codex): engage the mint lock BEFORE any await. The on-chain
+    // symbol read below is async, and the mint button only disables once
+    // `busy` is set — so setting it after the read left a window where a
+    // rapid second click slipped past the guard and fired a duplicate
+    // mint. `busy` also short-circuits a re-entrant call outright.
+    if (busy) return;
     setBusy(token);
     setError(null);
     setDone(null);
     setCopied(false);
     setWatched(false);
+    // Resolve the REAL on-chain symbol; fall back to the hint if the read
+    // fails (#1095 — never label the minted/watched token as something the
+    // deployed contract isn't).
+    let symbol = symbolHint;
+    try {
+      symbol = (await publicClient.readContract({
+        address: token,
+        abi: ERC20_SYMBOL_ABI,
+        functionName: 'symbol',
+      })) as string;
+    } catch {
+      /* keep the hint — a symbol read failure must not block minting */
+    }
     try {
       const hash = await walletClient.writeContract({
         address: token,
@@ -136,7 +170,7 @@ export function Faucet() {
         asset: { address: token, symbol },
       });
     } catch (err) {
-      setError(submitErrorText(err));
+      setError(captureTxError(err));
     } finally {
       setBusy(null);
     }
@@ -167,7 +201,7 @@ export function Faucet() {
         tokenId: tokenId.toString(),
       });
     } catch (err) {
-      setError(submitErrorText(err));
+      setError(captureTxError(err));
     } finally {
       setBusy(null);
     }
@@ -231,7 +265,7 @@ export function Faucet() {
             disabled={!canWrite || busy !== null}
             onClick={() =>
               mocks.liquidToken2 &&
-              void mintErc20(mocks.liquidToken2, LIQUID_UNITS, 'tLQ2')
+              void mintErc20(mocks.liquidToken2, LIQUID_UNITS, 'mUSDC')
             }
           />
           <FaucetRow
