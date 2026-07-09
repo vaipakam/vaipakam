@@ -20,35 +20,69 @@ single recurring residual:
 > not freeze.
 
 The fix for any one occurrence is to **register the flagged holder at an
-oracle-up observation before the claim**. Most close-outs already do this: their
-**park** sites call `LibSanctionedLock.recordFrozenClaimantForLoan`, which
-registers the holder when flagged. The residual is confined to the few
-close-outs that write a `lenderClaims` / `borrowerClaims` row **without a park**:
+oracle-up observation before value leaves**. Chasing these one Codex round at a
+time is **incomplete by construction**. The #1127 design review established that
+**two distinct payout classes** each need coverage, and that the "a park already
+registered the holder" assumption is UNSOUND — several terminal paths write a
+claim (or pay inline) without a `LibSanctionedLock` park:
 
-- `ClaimFacet._distributeFallbackCollateral` — the no-retry / failed-retry
-  fallback finalization (borrower collateral split).
-- `ClaimFacet._distributeRetryProceeds` — the retry-swap distribution (a per-site
-  stamp existed in r2 but was removed in r3 under the mistaken assumption the
-  central claim gate fully covered it).
-- `RepayPeriodicFacet.autoDeductDaily` — the final daily deduction
-  (`durationDays == 0`) writes the buffer refund as a borrower claim.
+### Class A — DEFERRED claims (`lenderClaims` / `borrowerClaims`, released later
+by `claimAsLender` / `claimAsBorrower`)
 
-Chasing these one Codex round at a time is **incomplete by construction**: any
-future terminal path that writes a claim without a park re-opens the hole.
+Covered by: **register both current holders at terminalization** + the existing
+central claim gate. The register must run on EVERY terminal path — not only the
+ones that park — because some leave the asset in the existing vault:
 
-## 2. Invariant
+- `RepayFacet.repayLoan` (ERC-20) writes the collateral `borrowerClaims` row
+  after a Tier-2 consolidation that SKIPS a flagged current borrower — no park,
+  no register (#1127 r1).
+- The Active full-internal-match over-collateralized residual writes
+  `borrowerClaims` the same way (#1127 r1).
+- `ClaimFacet._distributeFallbackCollateral` (no-retry / failed-retry
+  finalization), `ClaimFacet._distributeRetryProceeds` (retry distribution; a
+  stamp existed r2, removed r3), and `RepayPeriodicFacet.autoDeductDaily`'s final
+  buffer refund (`durationDays == 0`) — the sites #1122 r6 flagged.
+- The **backstop absorb** (`_absorbLenderSlice`) hard-blocks the LENDER (terminal
+  in-one-tx + NFT burn), but still folds a **borrower** collateral residual into
+  `borrowerClaims`; the borrower holder must be registered there (#1127 r1).
 
-> **Every code path that transitions a loan to a terminal state
-> (`Repaid` / `Defaulted` / `Settled` / `InternalMatched`) MUST register both
-> current position holders in `sanctionsConfirmedFlagged` when they are
-> affirmatively flagged — an oracle-up observation — before any deferred
-> `claimAsLender` / `claimAsBorrower` can run.**
+### Class B — INLINE / IMMEDIATE payouts to a position holder (paid now, not via a
+claim), today gated only by the fail-open `_assertNotSanctioned`
 
-With this invariant, the existing **central claim gate** (stamp the claimant +
-fail-closed release check, added #1122 r3) becomes sufficient: a holder flagged
-at any terminalization is registered there, so a later outage claim reads
-`Unavailable + registered` and freezes. No per-claim-creation-site stamping is
-required, and the residual shrinks to the platform-wide, accepted
+- `RepayPeriodicFacet.autoDeductDaily` transfers the **day's lender share inline**
+  before writing the final claims (#1127 r1). A registered-flagged lender is paid
+  the daily share during an outage — the terminalization register does not help,
+  because the value already left.
+- Any sibling recurring/immediate lender payout (audit the NFT-rental daily fee
+  path) has the same shape.
+
+Class B is NOT fixed by registration — the value leaves immediately. It needs the
+same **registry-aware freeze** the surplus path uses: replace the fail-open
+`_assertNotSanctioned` decision with `LibSanctionedLock.mustFreezeParty`, and
+PARK the payout into the holder's vault (behind the claim gate) when it returns
+true, so the frozen holder claims it once de-listed.
+
+## 2. Invariants
+
+**A (deferred claims).** Every code path that transitions a loan to a terminal
+state (`Repaid` / `Defaulted` / `Settled` / `InternalMatched`) — OR otherwise
+writes a `lenderClaims` / `borrowerClaims` row a position holder will later claim
+— MUST register **both** current position holders in `sanctionsConfirmedFlagged`
+when affirmatively flagged (an oracle-up observation), **regardless of whether it
+parked**. The register is idempotent + registry-aware
+(`recordFrozenClaimantForLoan`: registers on Flagged, self-heals on Clean, no-ops
+otherwise), so calling it universally at terminalization is safe even where a
+park already ran. With this, the existing **central claim gate** (#1122 r3) is
+sufficient for Class A: a holder flagged at any terminalization is registered, so
+a later outage claim reads `Unavailable + registered` and freezes.
+
+**B (inline payouts).** Every path that pays value to a current position holder
+**immediately** (not via a deferred claim) MUST make the pay-or-freeze decision
+with the registry-aware `LibSanctionedLock.mustFreezeParty`, not the fail-open
+`_assertNotSanctioned` — parking the payout into the holder's vault behind the
+claim gate when it returns true.
+
+The residual under both invariants shrinks to the platform-wide, accepted
 "flagged **and** never observed within one uninterrupted outage" window (seeded
 operationally by the permissionless `refreshSanctionsFlag`).
 
@@ -77,17 +111,22 @@ park) runs on every terminal path. `recordFrozenClaimantForLoan` is:
 
 ### 3.2 Where it is applied
 
-Terminal-transition call sites fall in two buckets:
+**Class A** — apply `recordSanctionsFrozenClaimantBoth(loanId)` at EVERY terminal
+path, WITHOUT assuming a prior park registered the holder (#1127 r1 disproved that
+for `repayLoan` ERC-20, the internal-match residual, and others). Implementation
+starts by enumerating every `lenderClaims[…] = ` / `borrowerClaims[…] = ` write
+(grep is exhaustive) and confirming the register runs before the loan can be
+claimed. Sites already calling the register (via a park's
+`recordFrozenClaimantForLoan`) are left as-is; every other terminal-writing site
+gets the host call. This explicitly includes the **backstop absorb**
+(`_absorbLenderSlice`): the lender is hard-blocked (§4), but its folded
+**borrower** collateral residual still needs the borrower register before the
+loan burns/terminalizes (#1127 r1).
 
-- **Already-satisfied** (a park registers both/one relevant holder before the
-  transition): `DefaultedFacet`, `RiskFacet`, `RiskSplitLiquidationFacet`,
-  `RiskMatchLiquidationFacet`, `PrecloseFacet` (direct + offset),
-  `SwapToRepay*Facet`, `RepayFacet` (ERC-20 + NFT-rental, the latter fixed r5),
-  `RefinanceFacet`. These call `recordFrozenClaimantForLoan` /
-  `recordSanctionsFrozenClaimantBoth` already; **no change**.
-- **Gap sites** (terminalize while writing claims without a park) — add
-  `recordSanctionsFrozenClaimantBoth(loanId)` (or the borrower-only variant where
-  only a borrower row is written): the three sites in §1.
+**Class B** — audit every inline holder payout and swap its fail-open
+`_assertNotSanctioned` decision for `mustFreezeParty` + a park:
+- `RepayPeriodicFacet.autoDeductDaily` — the per-day lender share (#1127 r1).
+- The NFT-rental daily fee path (confirm during implementation).
 
 ### 3.3 Guardrail
 
@@ -105,8 +144,9 @@ spirit (fail CI when a new terminal path skips registration).
   blip must never freeze a never-confirmed honest wallet). It is seeded away
   operationally by `refreshSanctionsFlag`.
 - No change to the movement gate (#1123) or the release-gate semantics.
-- The **backstop absorb** stays a hard **block** (revert), not a park — it is
-  terminal-in-one-tx and burns the lender NFT (see #1122 r2 P1 #3).
+- The **backstop absorb**'s LENDER side stays a hard **block** (revert), not a
+  park — it is terminal-in-one-tx and burns the lender NFT (see #1122 r2 P1 #3).
+  Its **borrower** collateral residual is Class A and IS registered (§3.2).
 
 ## 5. Rollout
 
