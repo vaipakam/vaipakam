@@ -24,6 +24,7 @@ import {IVaipakamErrors} from "../interfaces/IVaipakamErrors.sol";
 import {VaipakamNFTFacet} from "./VaipakamNFTFacet.sol";
 import {VaultFactoryFacet} from "./VaultFactoryFacet.sol";
 import {EncumbranceMutateFacet} from "./EncumbranceMutateFacet.sol";
+import {ProfileFacet} from "./ProfileFacet.sol";
 import {OfferCreateFacet} from "./OfferCreateFacet.sol";
 
 /**
@@ -336,6 +337,23 @@ contract EarlyWithdrawalFacet is
             bytes4(0)
         );
 
+        // #1123 (Codex #1126 r2 P2) — fail-closed movement gate BEFORE the buyer's
+        // vault operations. On the DIRECT sale path a flagged BUYER is BLOCKED (user
+        // decision 2026-07-09): acquiring a position is a value-receiving action, so
+        // BOTH parties are gated here — a clean `SanctionedAddress` revert ahead of
+        // the buyer's principal pull below (whose vault resolution would otherwise
+        // brick a flagged buyer with an opaque error). `from` is the LIVE seller.
+        // (The accepted-sale COMPLETION path uses the seller-block/buyer-register
+        // sale gate instead, matching its #831 frozen-buyer-completes semantics.)
+        LibFacet.crossFacetCall(
+            abi.encodeWithSelector(
+                ProfileFacet.enforcePositionMoveNotSanctioned.selector,
+                LibERC721.ownerOf(loan.lenderTokenId),
+                buyOffer.creator
+            ),
+            bytes4(0)
+        );
+
         // Pull Noah's principal into the diamond in a single withdraw,
         // then fan out to liam / treasury / Noah's heldForLender.
         LibFacet.crossFacetCall(
@@ -431,6 +449,14 @@ contract EarlyWithdrawalFacet is
             LibVaipakam.recordVaultDeposit(buyOffer.creator, payAsset, priorHeld);
         }
 
+        // #1123 — fail-closed position-movement gate BEFORE the burn/mint
+        // migration: a registered-flagged current lender holder (or buyer) can't
+        // move the position via this sale vehicle during an oracle outage. `from`
+        // is the LIVE lender-position holder, captured before `migrateLenderPosition`
+        // rewrites `loan.lender`/`loan.lenderTokenId`.
+        // #1123 — the movement gate for this direct sale ran BEFORE the buyer's
+        // vault operations above (block-both; see the comment at the principal
+        // pull). No second gate needed here.
         // Migrate lender position: burn old NFT + mint new LoanInitiated NFT
         // for Noah, update loan.lender and loan.lenderTokenId in one place.
         LibLoan.migrateLenderPosition(loanId, buyOffer.creator);
@@ -947,6 +973,19 @@ contract EarlyWithdrawalFacet is
             }
         }
 
+        // #1123 — fail-closed movement gate before the completion-path migration
+        // (same rationale as `sellLoanViaBuyOffer`). `from` = live lender holder.
+        // #1123 — SALE gate (see the `sellLoanViaBuyOffer` rationale): block a
+        // flagged/registered seller; register a flagged buyer (frozen receive
+        // completes per #831).
+        LibFacet.crossFacetCall(
+            abi.encodeWithSelector(
+                ProfileFacet.enforcePositionSaleMove.selector,
+                LibERC721.ownerOf(loan.lenderTokenId),
+                newLender
+            ),
+            bytes4(0)
+        );
         // Migrate live-loan lender position in one shot.
         LibLoan.migrateLenderPosition(loanId, newLender);
 

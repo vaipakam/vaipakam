@@ -19,6 +19,42 @@
   },
   {
     "type": "function",
+    "name": "enforcePositionMoveNotSanctioned",
+    "inputs": [
+      {
+        "name": "from",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "to",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "enforcePositionSaleMove",
+    "inputs": [
+      {
+        "name": "seller",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "buyer",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
     "name": "getApprovedKeepers",
     "inputs": [
       {
@@ -260,6 +296,25 @@
   },
   {
     "type": "function",
+    "name": "isSanctionsConfirmedFlagged",
+    "inputs": [
+      {
+        "name": "who",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "",
+        "type": "bool",
+        "internalType": "bool"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
     "name": "meetsKYCRequirement",
     "inputs": [
       {
@@ -281,6 +336,19 @@
       }
     ],
     "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "refreshSanctionsFlag",
+    "inputs": [
+      {
+        "name": "who",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
   },
   {
     "type": "function",
@@ -638,6 +706,25 @@
       },
       {
         "name": "enabled",
+        "type": "bool",
+        "indexed": false,
+        "internalType": "bool"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "SanctionsFlagRefreshed",
+    "inputs": [
+      {
+        "name": "who",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      },
+      {
+        "name": "flagged",
         "type": "bool",
         "indexed": false,
         "internalType": "bool"
@@ -1119,6 +1206,11 @@
   },
   {
     "type": "error",
+    "name": "OnlyDiamondInternal",
+    "inputs": []
+  },
+  {
+    "type": "error",
     "name": "PadNumeraireRateFeedStale",
     "inputs": []
   },
@@ -1304,6 +1396,17 @@
     "type": "error",
     "name": "RiskAndTermsConsentRequired",
     "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "SanctionedAddress",
+    "inputs": [
+      {
+        "name": "who",
+        "type": "address",
+        "internalType": "address"
+      }
+    ]
   },
   {
     "type": "error",

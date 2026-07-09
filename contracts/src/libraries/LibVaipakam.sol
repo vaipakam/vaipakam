@@ -4788,6 +4788,18 @@ library LibVaipakam {
         // surplus. Zero on the common path; cleared to zero on release.
         mapping(uint256 => uint256) frozenVpfiOwedLenderLeg;
         mapping(uint256 => uint256) frozenVpfiOwedBorrowerSurplus;
+        // ── #1123 — confirmed-flagged-wallet registry (APPENDED) ──────────────
+        // Wallets CONFIRMED sanctions-flagged from an AUTHORITATIVE
+        // (oracle-reachable) read. Consulted FAIL-CLOSED by the position-movement
+        // restriction (`assertPositionMoveNotSanctioned`) so a flagged wallet can't
+        // move a position NFT during a sanctions-oracle outage — closing the S10
+        // laundering-chain class (#1006). Mutated ONLY from strict reads
+        // (`sanctionsStatus`): registered at non-reverting oracle-up flag
+        // observations (the S10 `recordFrozenClaimant` park hook below, sale-buyer
+        // receives, and `recoverStuckERC20`'s recovery-ban) + the permissionless
+        // `ProfileFacet.refreshSanctionsFlag`; cleared on a confirmed de-list.
+        // Appended (Codex #1126 r1 P1) — no existing slot shifts.
+        mapping(address => bool) sanctionsConfirmedFlagged;
         // ─── #998 S10 (#1006) — sanctioned-locked-proceeds frozen claimant ────
         // Per-(loan, side) record of the ADDRESS whose claim was frozen at
         // close-out because that party — the intended economic recipient (the
@@ -4797,8 +4809,10 @@ library LibVaipakam {
         // (`assertNotSanctionedFailClosed`) so a confirmed freeze cannot lift
         // during an oracle outage AND cannot be laundered by transferring the
         // position to a clean wallet (release keys on the recorded party, not the
-        // current holder / `msg.sender`). Storing the address (not a bit) is what
-        // closes that laundering hole. Cleared on a successful clean release.
+        // current holder / `msg.sender`). With #1123's fail-closed movement gate a
+        // flagged holder can no longer transfer the position mid-outage, so this
+        // stays a single first-write address (no laundering chain to track).
+        // Cleared on a successful clean release.
         mapping(uint256 => address) sanctionsLockedLenderClaimant;
         mapping(uint256 => address) sanctionsLockedBorrowerClaimant;
         // ─── #951 v2 (Codex #959 bind-to-live redesign) — historical note ─────
@@ -7176,6 +7190,130 @@ library LibVaipakam {
         uint256 amount
     ) internal {
         storageSlot().protocolTrackedVaultBalance[user][token] -= amount;
+    }
+
+    // ─── #1123 — fail-closed position-movement restriction ─────────────
+
+    /// @notice Authoritative tri-state sanctions read used ONLY to MUTATE the
+    ///         `sanctionsConfirmedFlagged` registry (#1123). Unlike the fail-open
+    ///         {isSanctionedAddress} (which returns `false` for both clean AND
+    ///         outage), this NEVER conflates a clean read with an unavailable one:
+    ///         a registry write must act only on a definitive `Clean`/`Flagged`,
+    ///         so a mid-outage refresh can't wrongly clear a still-flagged wallet.
+    /// @dev    Folds in the recovery-ban leg (`vaultBannedSource`) exactly as
+    ///         {isSanctionedAddress}. `Unavailable` covers BOTH the oracle-unset
+    ///         and oracle-reverts cases; callers that must distinguish "regime
+    ///         disabled" from "outage" check `sanctionsOracle == address(0)`
+    ///         themselves first (see {assertPositionMoveNotSanctioned}).
+    enum SanctionsRead { Clean, Flagged, Unavailable }
+
+    function sanctionsStatus(address who) internal view returns (SanctionsRead) {
+        address oracle = storageSlot().sanctionsOracle;
+        if (oracle == address(0)) return SanctionsRead.Unavailable;
+
+        // Recovery-ban leg: a `who` whose declared recovery source is still
+        // flagged is Flagged. A de-listed (clean) source falls through to the
+        // direct check below. A FAILED source read must NOT mask a direct flag
+        // (Codex #1126 r4 P2): still try the direct `who` read — a directly
+        // sanctioned wallet is authoritatively Flagged regardless of the source
+        // outage — but a clean/failed direct read stays Unavailable, because with
+        // the source unreadable we can neither confirm nor CLEAR the recovery-ban
+        // flag, so we must not downgrade `who` to Clean.
+        address bannedSource = storageSlot().vaultBannedSource[who];
+        if (bannedSource != address(0)) {
+            try ISanctionsList(oracle).isSanctioned(bannedSource) returns (bool srcFlagged) {
+                if (srcFlagged) return SanctionsRead.Flagged;
+            } catch {
+                try ISanctionsList(oracle).isSanctioned(who) returns (bool flagged) {
+                    return flagged ? SanctionsRead.Flagged : SanctionsRead.Unavailable;
+                } catch {
+                    return SanctionsRead.Unavailable;
+                }
+            }
+        }
+
+        try ISanctionsList(oracle).isSanctioned(who) returns (bool flagged) {
+            return flagged ? SanctionsRead.Flagged : SanctionsRead.Clean;
+        } catch {
+            return SanctionsRead.Unavailable;
+        }
+    }
+
+    /// @notice #1123 — FAIL-CLOSED position-movement gate. Replaces the fail-open
+    ///         `_assertNotSanctioned(from)+(to)` pair at every user-initiated
+    ///         position-NFT MOVEMENT path (ERC-721 `transferFrom`/`safeTransferFrom`,
+    ///         and the burn/mint sale-vehicle / obligation-transfer migrations).
+    ///         A wallet CONFIRMED flagged while the oracle was reachable cannot
+    ///         move a position during an outage, which closes the S10
+    ///         laundering-chain class (#1006).
+    /// @dev    Mutating (may self-heal-clear a de-listed party on an authoritative
+    ///         clean read). Three-way by oracle state:
+    ///           - oracle UNSET      → ignore registry, allow (regime disabled);
+    ///           - oracle set+reachable, Flagged → revert (registry write would be
+    ///             rolled back by the revert, so none is attempted here —
+    ///             population is done by the non-reverting park/refresh paths);
+    ///           - oracle set+reachable, Clean  → clear registry, allow;
+    ///           - oracle set+outage (Unavailable) → fail-closed on the registry.
+    ///         `from` MUST be the LIVE `ownerOf(positionTokenId)` at the migration
+    ///         sites (captured before any loan-row rewrite) — the ERC-721
+    ///         entrypoints already pass the live owner.
+    function assertPositionMoveNotSanctioned(address from, address to) internal {
+        // Regime disabled — ignore the registry entirely (matches the existing
+        // "oracle unset ⇒ no screening" semantics; stale entries must not block).
+        if (storageSlot().sanctionsOracle == address(0)) return;
+        _assertMovePartyNotSanctioned(from);
+        _assertMovePartyNotSanctioned(to);
+    }
+
+    function _assertMovePartyNotSanctioned(address party) private {
+        if (party == address(0)) return;
+        SanctionsRead st = sanctionsStatus(party);
+        if (st == SanctionsRead.Flagged) {
+            // Authoritative flag — block. (No registry write: it would be rolled
+            // back by this revert; population is via the park/refresh paths.)
+            revert SanctionedAddress(party);
+        } else if (st == SanctionsRead.Clean) {
+            // Authoritative clean — self-heal any stale registry entry.
+            delete storageSlot().sanctionsConfirmedFlagged[party];
+        } else {
+            // Unavailable here means OUTAGE (oracle is set — checked above), so
+            // fail CLOSED on a previously-confirmed flag.
+            if (storageSlot().sanctionsConfirmedFlagged[party]) {
+                revert SanctionedAddress(party);
+            }
+        }
+    }
+
+    /// @notice #1123 — sync the registry for a party observed on a non-reverting
+    ///         path that must NOT be blocked (a sale BUYER whose flagged receive is
+    ///         frozen-not-bricked per #831, but who must still be barred from later
+    ///         MOVING the position during an outage). Authoritative `Flagged` ⇒
+    ///         register; authoritative `Clean` ⇒ **self-heal-clear** any stale entry
+    ///         (Codex #1126 r2 — a de-listed buyer's clean receive must lift the
+    ///         restriction, mirroring `_assertMovePartyNotSanctioned`); `Unavailable`
+    ///         ⇒ no-op (never mutate on an unconfirmed read). Never reverts.
+    function syncBuyerSanctionsFlag(address who) internal {
+        if (who == address(0)) return;
+        SanctionsRead st = sanctionsStatus(who);
+        if (st == SanctionsRead.Flagged) {
+            storageSlot().sanctionsConfirmedFlagged[who] = true;
+        } else if (st == SanctionsRead.Clean) {
+            delete storageSlot().sanctionsConfirmedFlagged[who];
+        }
+    }
+
+    /// @notice #1123 — movement gate for the protocol SALE vehicles (lender-sale).
+    ///         Unlike a raw transfer / obligation transfer (both parties blocked),
+    ///         a sale's BUYER receive is intentionally NOT blocked — the sale
+    ///         completes and the buyer's proceeds are FROZEN (#831). So: block a
+    ///         flagged/registered SELLER (the offload — the laundering vector), and
+    ///         REGISTER a flagged BUYER (so they can't later move the position
+    ///         during an outage) without blocking their receive. No-op when the
+    ///         oracle is unset (regime disabled).
+    function assertPositionSaleMoveNotSanctioned(address seller, address buyer) internal {
+        if (storageSlot().sanctionsOracle == address(0)) return;
+        _assertMovePartyNotSanctioned(seller);
+        syncBuyerSanctionsFlag(buyer);
     }
 
     // ─────────────────────────────────────────────────────────────

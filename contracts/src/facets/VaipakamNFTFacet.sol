@@ -297,9 +297,12 @@ contract VaipakamNFTFacet is IERC721, IERC721Metadata, IERC721Enumerable, Diamon
      *      party's position at terminal (the Tier-2 close-out must complete).
      *      No-op while the sanctions oracle is unset.
      */
-    function _assertTransferNotSanctioned(address from, address to) private view {
-        LibVaipakam._assertNotSanctioned(from);
-        LibVaipakam._assertNotSanctioned(to);
+    /// @dev #1123 — FAIL-CLOSED via the confirmed-flagged registry: a wallet
+    ///      confirmed sanctioned while the oracle was reachable cannot move a
+    ///      position even during an oracle outage. No longer `view` (the gate may
+    ///      self-heal-clear a de-listed party on an authoritative clean read).
+    function _assertTransferNotSanctioned(address from, address to) private {
+        LibVaipakam.assertPositionMoveNotSanctioned(from, to);
     }
 
     // ==================== Vaipakam NFT Logic ====================

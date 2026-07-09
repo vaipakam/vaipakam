@@ -666,4 +666,73 @@ contract ProfileFacet is DiamondPausable, DiamondAccessControl, IVaipakamErrors 
     function isSanctionedAddress(address who) external view returns (bool) {
         return LibVaipakam.isSanctionedAddress(who);
     }
+
+    /// @notice #1123 — a wallet was (de)registered in the confirmed-flagged
+    ///         registry from an authoritative oracle read.
+    /// @param who     The synced wallet.
+    /// @param flagged True ⇒ registered (blocked from moving a position during an
+    ///                outage); false ⇒ cleared (de-listed).
+    event SanctionsFlagRefreshed(address indexed who, bool flagged);
+
+    /// @notice #1123 — permissionless sync of the confirmed-flagged-wallet
+    ///         registry from the authoritative sanctions oracle. Registers `who`
+    ///         when the oracle (reachable) reports it flagged, and CLEARS it on a
+    ///         confirmed de-list. Reverts `SanctionsOracleUnavailable` when the
+    ///         oracle is unset or its read reverts — a registry mutation must never
+    ///         act on a non-authoritative read (else a mid-outage refresh could
+    ///         wrongly clear a still-flagged wallet). The registry is consulted
+    ///         FAIL-CLOSED by the position-movement restriction, so a confirmed
+    ///         wallet cannot move a position during an oracle outage. Permissionless
+    ///         and griefing-free: it only ever mirrors the authoritative oracle
+    ///         (cannot set a flag the oracle doesn't confirm; de-list is likewise
+    ///         oracle-gated).
+    /// @param who The wallet to (re)sync.
+    function refreshSanctionsFlag(address who) external {
+        LibVaipakam.SanctionsRead st = LibVaipakam.sanctionsStatus(who);
+        if (st == LibVaipakam.SanctionsRead.Unavailable) {
+            revert IVaipakamErrors.SanctionsOracleUnavailable();
+        }
+        bool flagged = st == LibVaipakam.SanctionsRead.Flagged;
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        if (flagged) {
+            s.sanctionsConfirmedFlagged[who] = true;
+        } else {
+            delete s.sanctionsConfirmedFlagged[who];
+        }
+        emit SanctionsFlagRefreshed(who, flagged);
+    }
+
+    /// @notice #1123 — whether `who` is in the confirmed-flagged registry
+    ///         (barred from moving a position NFT during an oracle outage).
+    function isSanctionsConfirmedFlagged(address who) external view returns (bool) {
+        return LibVaipakam.storageSlot().sanctionsConfirmedFlagged[who];
+    }
+
+    /// @notice #1123 — diamond-internal host for the FAIL-CLOSED position-movement
+    ///         gate. The heavy tri-state oracle-read logic lives here (ProfileFacet
+    ///         has ample bytecode room) so the EIP-170-tight movement facets
+    ///         (`EarlyWithdrawalFacet`, and later `PrecloseFacet` post-split #1124)
+    ///         reach it via a thin `crossFacetCall` stub instead of inlining ~590
+    ///         bytes each. Self-only (`msg.sender == address(this)`), so only the
+    ///         diamond's own movement paths can invoke it.
+    /// @dev    Mutating (self-heal-clears a de-listed party on an authoritative
+    ///         clean read); reverts `SanctionedAddress` on an authoritative flag or
+    ///         a registered wallet during an outage.
+    function enforcePositionMoveNotSanctioned(address from, address to) external {
+        if (msg.sender != address(this)) revert OnlyDiamondInternal();
+        LibVaipakam.assertPositionMoveNotSanctioned(from, to);
+    }
+
+    /// @notice #1123 — self-only host for the SALE-vehicle movement gate: blocks a
+    ///         flagged/registered SELLER offloading a position, but only REGISTERS
+    ///         a flagged BUYER (their frozen receive completes per #831) so the
+    ///         buyer can't later move the position during an outage.
+    function enforcePositionSaleMove(address seller, address buyer) external {
+        if (msg.sender != address(this)) revert OnlyDiamondInternal();
+        LibVaipakam.assertPositionSaleMoveNotSanctioned(seller, buyer);
+    }
+
+    /// @notice Mirror of the `onlyDiamondInternal` pattern used by
+    ///         `EncumbranceMutateFacet` / `VaultFactoryFacet`.
+    error OnlyDiamondInternal();
 }

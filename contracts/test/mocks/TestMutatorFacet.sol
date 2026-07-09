@@ -157,6 +157,14 @@ contract TestMutatorFacet {
         LibVaipakam.storageSlot().interactionLastClaimedDay[user] = day;
     }
 
+    /// @notice Seed a wallet's declared recovery source (`vaultBannedSource`)
+    ///         directly — the real setter is the `recoverStuckERC20` disown flow,
+    ///         far heavier than the #1123 `sanctionsStatus` recovery-ban leg needs
+    ///         under test (Codex #1126 r4 P2 direct-flag-vs-source-outage path).
+    function setVaultBannedSourceRaw(address who, address source) external {
+        LibVaipakam.storageSlot().vaultBannedSource[who] = source;
+    }
+
     /// @notice Seed per-day per-user + total USD counters for the lender
     ///         interaction side. Avoids driving the full OfferFacet +
     ///         RepayFacet E2E path when only the reward-split math is

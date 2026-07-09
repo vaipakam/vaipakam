@@ -37,12 +37,39 @@ contract RedeploySelectorParityTest is Test {
         _assertParity("ProfileFacet", FacetSelectors.profile());
     }
 
+    /// @dev #1123 wires the fail-closed movement gate INLINE into
+    ///      `transferFrom`/`safeTransferFrom`, so the curated redeploy re-cuts
+    ///      this facet from `FacetSelectors.vaipakamNFT()`. Pin that list to the
+    ///      facet's ROUTED surface so a future NFT selector change can't silently
+    ///      leave it incomplete and reintroduce the stale-bytecode split.
+    ///
+    ///      `supportsInterface(bytes4)` is compiled into this facet's ABI but is
+    ///      deliberately NOT cut to it — `DiamondLoupeFacet` owns that selector
+    ///      (see `DeployDiamond._getNFTSelectors`). So the routed surface is the
+    ///      compiled ABI MINUS that one loupe-owned selector; assert against that.
+    function test_VaipakamNFTSelectors_MatchRoutedSurface() public view {
+        bytes4 loupeOwned = bytes4(keccak256("supportsInterface(bytes4)"));
+        _assertParityExcept("VaipakamNFTFacet", FacetSelectors.vaipakamNFT(), loupeOwned);
+    }
+
     /// @dev Assert `libSelectors` equals the facet's compiled-ABI selector set.
     function _assertParity(string memory facet, bytes4[] memory libSelectors)
         private
         view
     {
-        bytes4[] memory abiSelectors = _abiSelectors(facet);
+        _assertParityExcept(facet, libSelectors, bytes4(0));
+    }
+
+    /// @dev Same as {_assertParity} but drops `excluded` from the compiled-ABI
+    ///      set first — for a facet that exposes a selector routed to ANOTHER
+    ///      facet in the Diamond (so its routed surface is the ABI minus that
+    ///      selector). `bytes4(0)` excludes nothing.
+    function _assertParityExcept(
+        string memory facet,
+        bytes4[] memory libSelectors,
+        bytes4 excluded
+    ) private view {
+        bytes4[] memory abiSelectors = _abiSelectorsExcept(facet, excluded);
 
         assertEq(
             libSelectors.length,
@@ -79,8 +106,9 @@ contract RedeploySelectorParityTest is Test {
         }
     }
 
-    /// @dev The facet's authoritative selectors from its compiled artifact.
-    function _abiSelectors(string memory facet)
+    /// @dev The facet's authoritative selectors from its compiled artifact,
+    ///      minus `excluded` (pass `bytes4(0)` to exclude nothing).
+    function _abiSelectorsExcept(string memory facet, bytes4 excluded)
         private
         view
         returns (bytes4[] memory sels)
@@ -90,9 +118,16 @@ contract RedeploySelectorParityTest is Test {
             string.concat("out/", facet, ".sol/", facet, ".json")
         );
         string[] memory sigs = vm.parseJsonKeys(json, ".methodIdentifiers");
-        sels = new bytes4[](sigs.length);
+        uint256 n;
+        bytes4[] memory buf = new bytes4[](sigs.length);
         for (uint256 i; i < sigs.length; ++i) {
-            sels[i] = bytes4(keccak256(bytes(sigs[i])));
+            bytes4 sel = bytes4(keccak256(bytes(sigs[i])));
+            if (sel == excluded) continue;
+            buf[n++] = sel;
+        }
+        sels = new bytes4[](n);
+        for (uint256 i; i < n; ++i) {
+            sels[i] = buf[i];
         }
     }
 
