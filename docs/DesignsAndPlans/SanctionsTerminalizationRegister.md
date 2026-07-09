@@ -152,6 +152,8 @@ park) runs on every terminal path. `recordFrozenClaimantForLoan` is:
   previously-confirmed holder during an outage;
 - **non-reverting** — a Tier-2 close-out must never brick;
 - **`ownerOf`-keyed** — reads the current holder via `_ownerOfRaw` (a plain SLOAD).
+  The register MUST run **before** any position-NFT burn in the same terminal path
+  (a post-burn `_ownerOfRaw` reads `address(0)` and no-ops) — #1127 r4.
 
 ### 3.2 Where it is applied
 
@@ -178,22 +180,35 @@ still needs the borrower register before the loan burns/terminalizes (#1127 r1).
 
 **Class B** — swap every inline holder payout's fail-open `_assertNotSanctioned`
 decision for `mustFreezeParty` + a park into the stored party's vault + a claimable
-lane. Apply to ALL the §1 Class B sites: `autoDeductDaily` (per-day lender share),
-`_autoLiquidatePeriodShortfall` (direct `lenderProceeds`), `repayPartial` (inline
-lender pay), and the NFT-rental daily fee — each confirmed by the grep sweep.
+lane. The set is defined by the grep sweep (every `ownerOf(*TokenId)` → direct
+`safeTransfer`), NOT by the §1 seed list — the §1 sites (`autoDeductDaily`,
+`_autoLiquidatePeriodShortfall`, `repayPartial`, NFT-rental daily fee) are the
+known members, but any not-yet-listed direct payout the sweep finds is in scope
+(#1127 r4). Two active-loan cautions (#1127 r4):
+- **Reserve before exposing** — `repayPartial` / `autoDeductDaily` /
+  `_autoLiquidatePeriodShortfall` run while the loan is still **Active**, so a
+  parked amount added to `heldForLender` / a claim row against `loan.lender`'s
+  vault must be **encumbered** (`LibEncumbrance.encumberLenderProceeds`) so it is
+  not double-counted against, or drained ahead of, the live loan — exactly as the
+  terminal `heldForLender` sites already reserve.
+- **Active-loan lane** — use `heldForLender[loanId]` (the mid-loan accumulator the
+  eventual `claimAsLender` already folds), not a terminal-only `lenderClaims` row.
 
 ### 3.3 Guardrail
 
 Add a test-level guardrail so a **future** path cannot silently reopen the hole,
 covering BOTH classes (#1127 r3):
 
-- **Class A** — for each terminal close-out entry, drive a flagged current holder
-  (oracle up) through the close-out and assert the holder is left **registered**
-  (`isSanctionsConfirmedFlagged`) — the observable proxy for "the invariant held".
-- **Class B** — for each inline-payout path, drive a **registered** holder during
-  an oracle **outage** and assert the payout is **parked** (holder's EOA balance
-  unchanged, the claimable lane credited), not paid — proving the fail-open
-  `_assertNotSanctioned` was replaced by `mustFreezeParty`.
+- **Class A** — for each terminal close-out entry AND each **non-terminal**
+  deferred-payout path (an Active `heldForLender` increment, e.g. a partial
+  internal match — #1127 r4), drive a flagged current holder (oracle up) and assert
+  the holder is left **registered** (`isSanctionsConfirmedFlagged`).
+- **Class B** — for each inline-payout path, assert BOTH (#1127 r4): (a)
+  **first-observation** — a flagged holder, oracle UP, first time → registered +
+  parked (proves the fresh-flag branch registers); and (b) **outage** — a
+  previously-**registered** holder during an outage → parked, holder EOA unchanged,
+  claimable lane credited (proves the fail-open `_assertNotSanctioned` became
+  `mustFreezeParty`).
 
 This mirrors the indexer event-coverage guardrail in spirit (fail CI when a new
 terminal / inline-payout path skips the treatment).
