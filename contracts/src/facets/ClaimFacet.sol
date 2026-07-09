@@ -460,6 +460,18 @@ contract ClaimFacet is
         // FallbackPending loan is excluded from eager consolidation, so a stale
         // `loan.lender` from a LEGITIMATE pre-flag transfer would wrongly freeze
         // the clean current holder's buyout (Codex #832 r6 P2).
+        // #998 S10 (#1006, Codex #1122-rework r2 P1) — the fallback-entry marker
+        // gate above only catches a holder flagged at fallback ENTRY. Also
+        // fail-closed on a holder confirmed flagged AFTER a clean entry
+        // (registry-aware `mustFreezeParty`), so the absorb can't pay a registered
+        // flagged holder their cash during an outage. This path BLOCKS rather than
+        // parks: `_absorbLenderSlice` is terminal-in-one-tx and burns the lender NFT,
+        // so there is no deferred claim to freeze the cash into. The loan stays
+        // FallbackPending — recoverable once the holder de-lists (keeper re-absorbs,
+        // or the holder claims normally). A never-confirmed holder stays fail-open.
+        if (LibSanctionedLock.mustFreezeParty(s, nftOwner)) {
+            revert LibVaipakam.SanctionedAddress(nftOwner);
+        }
         // ── Resolution failed → the backstop buys the lender slice for cash.
         _absorbLenderSlice(loanId, loan, snap, vault, nftOwner);
     }
@@ -832,6 +844,23 @@ contract ClaimFacet is
                     bClaim.quantity = 0;
                     bClaim.claimed = false;
                 }
+            }
+        }
+
+        // Codex #1122-rework r2 P1 — `_resolveFallbackIfActive` above may have run a
+        // claim-time internal match / retry that stamped a FRESH lender frozen
+        // marker: the holder was clean at the top-of-function gate (which cleared
+        // any prior marker), but a match/retry re-observed them as flagged (or,
+        // during an outage, they were previously confirmed). The top gate can't see
+        // that later stamp, so re-check here before the lender payout, mirroring it —
+        // a flagged/unverifiable recorded party fail-closes the whole claim (the
+        // objective match is permissionless and can be re-driven by anyone once the
+        // holder de-lists).
+        {
+            address frozenAfterResolve = LibSanctionedLock.frozenClaimant(s, loanId, true);
+            if (frozenAfterResolve != address(0)) {
+                LibVaipakam.assertNotSanctionedFailClosed(frozenAfterResolve);
+                LibSanctionedLock.clearFrozenClaimant(s, loanId, true);
             }
         }
 
@@ -1684,6 +1713,12 @@ contract ClaimFacet is
             LibSanctionedLock.depositLocked(
                 s, loan.lender, loanId, loan.principalAsset, lenderGets
             );
+            // #998 S10 (#1006, Codex #1122-rework r2 P1) — stamp the lender-side
+            // marker; the registry-aware predicate freezes a PREVIOUSLY-CONFIRMED
+            // holder even during an outage (see the borrower note below). The
+            // `claimAsLender` re-check after `_resolveFallbackIfActive` then
+            // fail-closes on it.
+            LibSanctionedLock.recordFrozenClaimantForLoan(s, loan, true);
         }
         if (borrowerGets > 0) {
             // #821 (Codex #832 r4 P1) — vault-lock the borrower residual so a
@@ -1691,11 +1726,15 @@ contract ClaimFacet is
             LibSanctionedLock.depositLocked(
                 s, loan.borrower, loanId, loan.principalAsset, borrowerGets
             );
-            // #998 S10 (#1006) — NO marker here: this distribution runs INSIDE a
-            // claim that may itself be executing during an oracle outage (fallback
-            // distribution needs no oracle), so an affirmative flag can't be
-            // confirmed at this point. The borrower freeze is recorded at fallback
-            // ENTRY (`_fullCollateralTransferFallback`), where the oracle is up.
+            // #998 S10 (#1006, Codex #1122-rework r2 P1) — record the fail-closed
+            // marker for the current borrower-position holder. The registry-aware
+            // `recordFrozenClaimant` freezes a PREVIOUSLY-CONFIRMED holder even
+            // during an outage: the fallback distribution needs no oracle, so a
+            // holder confirmed flagged AFTER a clean fallback-entry would otherwise
+            // slip `claimAsBorrower` in that window. A never-confirmed holder stays
+            // fail-open. (Supersedes the earlier "no marker here" reasoning, which
+            // predated the #1123 registry.)
+            LibSanctionedLock.recordFrozenClaimantForLoan(s, loan, false);
             // #661 (Codex #674 P1) — the FallbackPending retry is a FOURTH
             // borrower-VPFI-surplus terminal: reserve it against the unstake
             // path, like the default / liquidation surplus sites. Released in

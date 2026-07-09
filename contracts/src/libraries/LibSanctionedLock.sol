@@ -292,39 +292,62 @@ library LibSanctionedLock {
         address intendedClaimant
     ) internal {
         if (intendedClaimant == address(0)) return;
-        // FAIL-CLOSED freeze decision (Codex #1122-rework r1 P1): freeze on a fresh
-        // authoritative flag OR on a prior confirmation during an outage — NOT the
-        // bare fail-open `isSanctionedAddress`, which would skip the marker for a
-        // previously-confirmed holder while the oracle is down and let their
-        // (equally fail-open) claim through.
-        if (!mustFreezeParty(s, intendedClaimant)) return;
-        // #1123 registry population — a fresh oracle-reachable Flagged read enrols
-        // this closing holder in the confirmed-flagged registry so the fail-closed
+        if (s.sanctionsOracle == address(0)) return; // screening regime disabled
+
+        LibVaipakam.SanctionsRead st = LibVaipakam.sanctionsStatus(intendedClaimant);
+        if (st == LibVaipakam.SanctionsRead.Clean) {
+            // P2 (Codex #1122-rework r2) — an authoritative CLEAN read self-heals a
+            // stale registry bit, matching the #1123 movement gate / refresh, so a
+            // de-listed wallet isn't left wrongly blocked from moving another open
+            // position during a later outage. Never freeze a de-listed party.
+            _clearRegistry(s, intendedClaimant);
+            return;
+        }
+        // FAIL-CLOSED freeze (Codex #1122-rework r1 P1): a fresh authoritative flag
+        // OR a prior confirmation during an outage (Unavailable + registered). A
+        // never-confirmed wallet during an outage stays fail-open — an oracle blip
+        // can't freeze an honest claimant.
+        bool freeze = st == LibVaipakam.SanctionsRead.Flagged
+            ? true
+            : s.sanctionsConfirmedFlagged[intendedClaimant];
+        if (!freeze) return;
+        // #1123 registry population — enrol this closing holder so the fail-closed
         // position-movement gate can bar them from shuffling a still-open position
-        // during a later oracle outage (the close-out population #1123 left to S10,
-        // same holder, keyed identically). Idempotent: a no-op when we reached here
-        // via an already-registered outage confirmation. Cleared only by an
-        // authoritative de-list (refresh / clean move), never by a fallback-cure of
-        // the per-loan marker (the holder WAS confirmed flagged).
+        // during a later outage (the close-out population #1123 left to S10, same
+        // holder). Idempotent; cleared only by an authoritative de-list.
         s.sanctionsConfirmedFlagged[intendedClaimant] = true;
-        // FIRST-WRITE-WINS (Codex r2 P1): never overwrite an already-recorded
-        // frozen claimant for this side. A loan side can accrue proceeds across
-        // multiple parks (an Active partial-internal-match `heldForLender`, then a
-        // terminal); if a flagged holder transferred the position during an oracle
-        // outage, a later park for a DIFFERENT flagged holder would otherwise
-        // overwrite the original recorded address, and the release gate would then
-        // only need the newer holder de-listed — releasing proceeds that were
-        // frozen for the FIRST sanctioned holder while that holder is still listed
-        // (re-opening the transfer-during-outage laundering path). The earliest
-        // confirmed freeze sticks until a clean release clears the slot.
+
+        // Per-loan marker, FIRST-WRITE-WINS with one exception (Codex r2 P1 #4).
+        // First-write-wins stops a multi-flagged-holder outage chain from
+        // overwriting the earliest confirmed freeze (which would let the release
+        // gate need only the NEWER holder de-listed). BUT a marker whose recorded
+        // party is now authoritatively CLEAN is moot: if claimant A was frozen,
+        // then de-listed, transferred the still-open position (allowed once clean)
+        // to B, and B is later confirmed flagged, the marker MUST move to B — else
+        // the release gate checks A (clean), clears, and B slips through. So
+        // overwrite when the slot is empty, already this party, OR its recorded
+        // party reads authoritatively Clean (its freeze no longer applies).
+        address existing = lenderSide
+            ? s.sanctionsLockedLenderClaimant[loanId]
+            : s.sanctionsLockedBorrowerClaimant[loanId];
+        if (existing != address(0) && existing != intendedClaimant) {
+            if (LibVaipakam.sanctionsStatus(existing) != LibVaipakam.SanctionsRead.Clean) {
+                return; // existing still flagged / unverifiable during outage — keep it
+            }
+            _clearRegistry(s, existing); // superseded, now-clean party self-heals too
+        }
         if (lenderSide) {
-            if (s.sanctionsLockedLenderClaimant[loanId] == address(0)) {
-                s.sanctionsLockedLenderClaimant[loanId] = intendedClaimant;
-            }
+            s.sanctionsLockedLenderClaimant[loanId] = intendedClaimant;
         } else {
-            if (s.sanctionsLockedBorrowerClaimant[loanId] == address(0)) {
-                s.sanctionsLockedBorrowerClaimant[loanId] = intendedClaimant;
-            }
+            s.sanctionsLockedBorrowerClaimant[loanId] = intendedClaimant;
+        }
+    }
+
+    /// @dev Delete a `sanctionsConfirmedFlagged` entry only when it is set (avoids a
+    ///      redundant SSTORE on the common clean-and-unregistered path).
+    function _clearRegistry(LibVaipakam.Storage storage s, address who) private {
+        if (s.sanctionsConfirmedFlagged[who]) {
+            delete s.sanctionsConfirmedFlagged[who];
         }
     }
 

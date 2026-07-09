@@ -939,6 +939,55 @@ contract DefaultedFacetTest is Test {
         ClaimFacet(address(diamond)).claimAsLender(loanId);
     }
 
+    /// @dev Codex #1122-rework r2 P2 (self-heal): a close-out that reads the holder
+    ///      authoritatively CLEAN must clear a stale `sanctionsConfirmedFlagged`
+    ///      registry bit — so a de-listed wallet isn't left wrongly blocked from
+    ///      moving another open position during a later outage — AND records no
+    ///      frozen marker.
+    function testS10_cleanCloseOut_selfHealsStaleRegistry() public {
+        uint256 loanId = createAndAcceptOffer(
+            mockERC20, mockCollateralERC20, LibVaipakam.AssetType.ERC20,
+            1000 ether, 2000 ether, 30, 0, 0
+        );
+
+        MockSanctionsList m = new MockSanctionsList();
+        ProfileFacet(address(diamond)).setSanctionsOracle(address(m));
+        // Confirm + register the holder, then de-list them (all oracle-up).
+        m.setFlagged(lender, true);
+        ProfileFacet(address(diamond)).refreshSanctionsFlag(lender);
+        assertTrue(ProfileFacet(address(diamond)).isSanctionsConfirmedFlagged(lender));
+        m.setFlagged(lender, false); // authoritatively de-listed
+
+        uint256 endTime = block.timestamp + 30 days;
+        vm.warp(endTime + LibVaipakam.gracePeriod(30) + 1);
+        vm.mockCall(
+            address(diamond),
+            abi.encodeWithSelector(OracleFacet.getAssetPrice.selector, mockCollateralERC20),
+            abi.encode(5e7, 8)
+        );
+        vm.mockCall(
+            address(diamond),
+            abi.encodeWithSelector(RiskFacet.calculateHealthFactor.selector),
+            abi.encode(uint256(0.5e18))
+        );
+        deal(mockERC20, address(diamond), 3000 ether);
+        deal(mockCollateralERC20, address(diamond), 3000 ether);
+
+        vm.prank(lender);
+        DefaultedFacet(address(diamond)).triggerDefault(loanId, defaultAdapterCalls());
+
+        // Self-heal: the clean read cleared the stale registry bit + no marker.
+        assertFalse(
+            ProfileFacet(address(diamond)).isSanctionsConfirmedFlagged(lender),
+            "clean close-out self-healed the stale registry entry"
+        );
+        assertEq(
+            TestMutatorFacet(address(diamond)).getSanctionsFrozenClaimant(loanId, true),
+            address(0),
+            "de-listed holder records no frozen marker"
+        );
+    }
+
     /// @dev Finding-1 fix: a FAILED liquidation (FallbackPending) whose lender
     ///      holder is flagged records the fail-closed marker at fallback ENTRY
     ///      (oracle up on the HF/grace-gated path), so the lender's later fallback

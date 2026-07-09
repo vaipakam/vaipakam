@@ -15,6 +15,8 @@ import {VaipakamNFTFacet} from "../src/facets/VaipakamNFTFacet.sol";
 import {TestMutatorFacet} from "./mocks/TestMutatorFacet.sol";
 import {VPFITokenFacet} from "../src/facets/VPFITokenFacet.sol";
 import {LibVaipakam} from "../src/libraries/LibVaipakam.sol";
+import {ProfileFacet} from "../src/facets/ProfileFacet.sol";
+import {MockSanctionsList} from "./mocks/MockSanctionsList.sol";
 import {ERC20Mock} from "./mocks/ERC20Mock.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {IERC721} from "@openzeppelin/contracts/token/ERC721/IERC721.sol";
@@ -287,6 +289,32 @@ contract BackstopAbsorbTest is SetupTest {
             st == LibVaipakam.LoanStatus.Defaulted || st == LibVaipakam.LoanStatus.Settled,
             "loan terminal"
         );
+    }
+
+    /// @dev Codex #1122-rework r2 P1 #3 — a lender holder confirmed flagged AFTER a
+    ///      clean fallback-entry must block the backstop absorb (fail-closed) during
+    ///      an oracle outage, even though the fallback-entry marker gate finds no
+    ///      marker and the fail-open `msg.sender`/`nftOwner` screens pass. The absorb
+    ///      is terminal-in-one-tx (burns the lender NFT), so it BLOCKS rather than
+    ///      parks; the loan stays FallbackPending and is recoverable once de-listed.
+    function test_absorb_registeredFlaggedOwnerDuringOutage_reverts() public {
+        address lender_ = makeAddr("lenderS10bs");
+        address borrower_ = makeAddr("borrowerS10bs");
+        _fallbackOptedIn(lender_, borrower_);
+
+        // Confirm + register the lender holder while the oracle is up (clean at the
+        // earlier fallback-entry), then take the oracle down.
+        MockSanctionsList m = new MockSanctionsList();
+        ProfileFacet(address(diamond)).setSanctionsOracle(address(m));
+        m.setFlagged(lender_, true);
+        ProfileFacet(address(diamond)).refreshSanctionsFlag(lender_);
+        m.setRevertOnRead(true); // outage
+
+        vm.prank(owner);
+        vm.expectRevert(
+            abi.encodeWithSelector(LibVaipakam.SanctionedAddress.selector, lender_)
+        );
+        ClaimFacet(address(diamond)).claimAsLenderViaBackstop(LOAN, _emptyRetry());
     }
 
     // ─── guards ────────────────────────────────────────────────────────────
