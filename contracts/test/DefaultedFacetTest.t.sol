@@ -808,6 +808,15 @@ contract DefaultedFacetTest is Test {
             "default park recorded the frozen lender claimant"
         );
 
+        // (1b) #1123 registry population — the same authoritative flag that set
+        //      the per-loan marker also registered the holder in the
+        //      confirmed-flagged registry, so the fail-closed MOVEMENT gate can bar
+        //      them from shuffling a still-open position during a later outage.
+        assertTrue(
+            ProfileFacet(address(diamond)).isSanctionsConfirmedFlagged(lender),
+            "default park registered the flagged holder in the #1123 registry"
+        );
+
         // (2) Fail-closed release: during an oracle outage the confirmed freeze
         //     does NOT lift — the lender's own claim reverts fail-closed.
         m.setRevertOnRead(true);

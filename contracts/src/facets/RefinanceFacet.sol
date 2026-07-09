@@ -27,6 +27,7 @@ import {OracleFacet} from "./OracleFacet.sol";
 import {VPFIDiscountFacet} from "./VPFIDiscountFacet.sol";
 import {ConsolidationFacet} from "./ConsolidationFacet.sol";
 import {LibERC721} from "../libraries/LibERC721.sol";
+import {LibSanctionedLock} from "../libraries/LibSanctionedLock.sol";
 
 /**
  * @title RefinanceFacet
@@ -432,6 +433,20 @@ contract RefinanceFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErr
         // payer chokepoint so the protocolTrackedVaultBalance
         // counter ticks under the old lender (the vault owner)
         // while the current borrower-NFT owner remains the payer.
+        //
+        // #998 S10 (#1006) F2 — the old lender is being CLOSED OUT (their loan is
+        // repaid by the refinance); their proceeds must be PARKED, never brick the
+        // (clean) borrower's refinance, even when the old lender-of-record is a
+        // sanctions-flagged current holder (#831 freeze-not-seize). Pin the
+        // receive-side vault exemption to `oldLoan.lender` so the deposit resolves
+        // that party's EXISTING vault instead of reverting the whole refinance
+        // under `getOrCreateUserVault`'s Tier-1 gate. Without this a flagged old
+        // lender-holder would brick every refinance of their loan — and the
+        // frozen-claimant marker below (which keys the fail-closed release) would
+        // be unreachable. `end` clears the pin and emits the parked-proceeds audit
+        // event when that vault owner is flagged; the lock itself is enforced by
+        // the claim-side stored-owner screen + the marker.
+        LibSanctionedLock.begin(s, oldLoan.lender);
         LibFacet.crossFacetCall(
             abi.encodeWithSelector(
                 VaultFactoryFacet.vaultDepositERC20From.selector,
@@ -441,6 +456,9 @@ contract RefinanceFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErr
                 lenderDue
             ),
             VaultDepositFailed.selector
+        );
+        LibSanctionedLock.end(
+            s, oldLoan.lender, oldLoanId, oldLoan.principalAsset, lenderDue
         );
 
         // Record lender's claimable. heldForLender handled by ClaimFacet.
@@ -463,6 +481,19 @@ contract RefinanceFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErr
                 oldLoanId, oldLoan.lender, oldLoan.principalAsset, lenderDue
             );
         }
+        // #998 S10 (#1006) F2 — refinance terminally closes the OLD loan and parks
+        // the old lender's proceeds into `oldLoan.lender`'s vault, owed to the
+        // CURRENT lender-position holder via the claim recorded above. Unlike the
+        // borrower side (whose returned collateral goes to the caller, already
+        // Tier-1-screened at the refinance entry), the old lender is NOT the caller
+        // and its position may have been transferred to a flagged wallet. Record
+        // the fail-closed frozen-claimant marker (keyed to the current holder, iff
+        // affirmatively flagged) so that holder's later claim can't release during
+        // an oracle outage. Inlined (RefinanceFacet has ample EIP-170 headroom, per
+        // the inline-where-possible policy); no-op for a clean/absent holder. The
+        // old lender NFT is only status-updated (not burned) further below, so
+        // `ownerOf(lenderTokenId)` still resolves here.
+        LibSanctionedLock.recordFrozenClaimantForLoan(s, oldLoan, true);
 
         // T-086 follow-up to step 14 — clear any active prepay listing on
         // the OLD loan BEFORE the collateral withdrawal below. Placement

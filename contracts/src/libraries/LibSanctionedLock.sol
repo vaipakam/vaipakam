@@ -201,6 +201,39 @@ library LibSanctionedLock {
         }
     }
 
+    /// @dev Cross-PAYER variant of {depositLocked}: parks a close-out payoff that
+    ///      a THIRD-PARTY `payer` funds (via `IERC20.approve(diamond,≥amount)`)
+    ///      into `owner`'s vault behind the receive-side exemption — the chokepoint
+    ///      shape where the Diamond stays out of the funds path but the
+    ///      protocol-tracked balance still ticks under `owner`. Resolves `owner`'s
+    ///      EXISTING vault under the pin (so a flagged `owner` doesn't brick the
+    ///      close-out), `safeTransferFrom`s `payer → vault`, ticks the counter, and
+    ///      emits the lock event when `owner` is flagged. Mirror of
+    ///      `VaultFactoryFacet.vaultDepositERC20From` + the `begin`/`end` window,
+    ///      folded into one subroutine so an EIP-170-tight close-out facet can park
+    ///      a lender payoff in a single cross-facet CALL (see
+    ///      `EncumbranceMutateFacet.parkLenderPayoffAndFreeze`). Zero `amount` is a
+    ///      no-op.
+    function depositLockedFrom(
+        LibVaipakam.Storage storage s,
+        address payer,
+        address owner,
+        uint256 loanId,
+        address asset,
+        uint256 amount
+    ) internal {
+        if (amount == 0) return;
+        s.sanctionedDepositExemptUser = owner;
+        address vault = LibFacet.getOrCreateVault(owner);
+        s.sanctionedDepositExemptUser = address(0);
+        // slither-disable-next-line arbitrary-send-erc20
+        IERC20(asset).safeTransferFrom(payer, vault, amount);
+        LibVaipakam.recordVaultDeposit(owner, asset, amount);
+        if (LibVaipakam.isSanctionedAddress(owner)) {
+            emit SanctionedProceedsLocked(loanId, owner, asset, amount);
+        }
+    }
+
     // ─── #998 S10 (#1006) — frozen-claimant marker (fail-closed release) ──────
 
     /// @notice Record the FROZEN-CLAIMANT marker for a sanctioned-locked-proceeds
@@ -229,6 +262,18 @@ library LibSanctionedLock {
     ) internal {
         if (intendedClaimant == address(0)) return;
         if (!LibVaipakam.isSanctionedAddress(intendedClaimant)) return;
+        // #1123 registry population — reaching here means `isSanctionedAddress`
+        // returned TRUE, which (being fail-OPEN) can only happen on an
+        // oracle-REACHABLE affirmative flag: an authoritative confirmation. Record
+        // this closing holder in the confirmed-flagged registry so the fail-closed
+        // position-movement gate can bar them from shuffling a still-open position
+        // during a later oracle outage. This is the close-out population that
+        // #1123 deliberately left to S10 (the same holder, keyed identically). The
+        // registry is per-address and idempotent, so it is set regardless of the
+        // per-loan first-write-wins below, and is cleared only by an authoritative
+        // de-list (refresh / clean move), never by a fallback-cure of the per-loan
+        // marker (the holder WAS confirmed flagged).
+        s.sanctionsConfirmedFlagged[intendedClaimant] = true;
         // FIRST-WRITE-WINS (Codex r2 P1): never overwrite an already-recorded
         // frozen claimant for this side. A loan side can accrue proceeds across
         // multiple parks (an Active partial-internal-match `heldForLender`, then a

@@ -5,7 +5,6 @@ pragma solidity ^0.8.29;
 import {LibVaipakam} from "../libraries/LibVaipakam.sol";
 import {InteractionRewardsFacet} from "./InteractionRewardsFacet.sol";
 import {LibEncumbrance} from "../libraries/LibEncumbrance.sol";
-import {LibSanctionedLock} from "../libraries/LibSanctionedLock.sol";
 import {LibLifecycle} from "../libraries/LibLifecycle.sol";
 import {LibAuth} from "../libraries/LibAuth.sol";
 import {LibEntitlement} from "../libraries/LibEntitlement.sol";
@@ -1356,27 +1355,21 @@ contract PrecloseFacet is
         // receive-side exemption to `loan.lender` so the close-out completes; the
         // parked-proceeds audit event fires from `end(...)` when flagged. Same
         // pattern as `RepayFacet`'s terminal lender deposit.
-        LibSanctionedLock.begin(s, loan.lender);
+        // Park the old-lender payoff + apply the fail-closed freeze in ONE
+        // cross-facet call (#998 S10 / S3 #1001). The host folds the receive-side
+        // exemption pin, the cross-payer `vaultDepositERC20From` (payer = Alice →
+        // current old-lender's vault, Diamond out of the funds path), the
+        // parked-proceeds audit event, and the lender-side frozen-claimant marker.
+        // Consolidated here (vs the inline `begin`/deposit/`end`/marker sequence
+        // roomier facets like RefinanceFacet use) because PrecloseFacet is at the
+        // EIP-170 wall — one CALL instead of two keeps it under the limit.
         LibFacet.crossFacetCall(
             abi.encodeWithSelector(
-                VaultFactoryFacet.vaultDepositERC20From.selector,
+                EncumbranceMutateFacet.parkLenderPayoffAndFreeze.selector,
                 loan.borrower,               // payer — Alice
-                loan.lender,                 // user — current old-lender holder
+                loanId,
                 payAssetOffset,
                 lenderTotal
-            ),
-            VaultDepositFailed.selector
-        );
-        LibSanctionedLock.end(s, loan.lender, loanId, payAssetOffset, lenderTotal);
-        // #998 S10 (#1006) — fail-closed freeze if the current old-lender-position
-        // holder is flagged (the payoff is claimed via `claimAsLender`). Routed
-        // through the cross-facet host so the isSanctioned/owner-read machinery
-        // stays out of this EIP-170-tight facet.
-        LibFacet.crossFacetCall(
-            abi.encodeWithSelector(
-                EncumbranceMutateFacet.recordSanctionsFrozenClaimant.selector,
-                loanId,
-                true
             ),
             bytes4(0)
         );

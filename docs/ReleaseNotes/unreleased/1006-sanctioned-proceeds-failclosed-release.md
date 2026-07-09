@@ -31,6 +31,18 @@ flag can't be confirmed) records nothing and stays fail-open — we never freeze
 party we never confirmed as sanctioned. Once a marked release passes cleanly, the
 marker is cleared so a later re-lock stays possible.
 
+Two further gaps are closed here. First, the **refinance** close-out is now fully
+covered: refinancing a loan whose lender position is held by a flagged wallet used
+to *revert* — the old lender's proceeds could not be deposited into a flagged
+vault, which bricked the honest borrower's refinance entirely. It now parks those
+proceeds the same way every other close-out does (frozen behind the claim gate)
+and records the fail-closed marker, so the refinance always completes. Second, the
+same authoritative flag that freezes a closing holder now also enrols them in the
+confirmed-flagged registry that backs the fail-closed *position-movement* gate — so
+a party frozen at close-out cannot later shuffle a still-open position to a clean
+wallet during an outage. Together these mean the freeze can rely on a single
+recorded address per loan side, with no chain of intermediary holders to track.
+
 The freeze survives an oracle outage; a de-listing (oracle back up, address
 cleared) releases the funds. No behaviour changes for any unflagged party.
 

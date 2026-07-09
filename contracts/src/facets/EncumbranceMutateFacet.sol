@@ -167,6 +167,30 @@ contract EncumbranceMutateFacet {
         LibSanctionedLock.recordFrozenClaimantForLoan(s, loan, false);
     }
 
+    /// @notice #998 S10 (#1006) — one-call lender-payoff PARK + fail-closed freeze
+    ///         for an EIP-170-tight close-out facet. Folds the `begin` →
+    ///         cross-payer `vaultDepositERC20From` → `end` → `recordFrozenClaimant`
+    ///         cluster (which roomier facets like `RefinanceFacet` inline) into a
+    ///         single cross-facet CALL: `payer` funds `lenderTotal` of `asset` into
+    ///         the loan's CURRENT lender's vault behind the receive-side exemption
+    ///         (so a flagged lender doesn't brick the close-out), then the
+    ///         lender-side frozen-claimant marker is recorded iff that holder is
+    ///         affirmatively flagged. Used by `PrecloseFacet.completeOffsetInternal`
+    ///         to stay under the size limit.
+    function parkLenderPayoffAndFreeze(
+        address payer,
+        uint256 loanId,
+        address asset,
+        uint256 lenderTotal
+    ) external onlyDiamondInternal {
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        LibVaipakam.Loan storage loan = s.loans[loanId];
+        LibSanctionedLock.depositLockedFrom(
+            s, payer, loan.lender, loanId, asset, lenderTotal
+        );
+        LibSanctionedLock.recordFrozenClaimantForLoan(s, loan, true);
+    }
+
     // ─── Offer-principal lock (T-407-C, #566) — second lien category ────
     //
     // The per-offer principal lock for ERC20 Lender offers. The creator's
