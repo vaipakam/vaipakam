@@ -313,18 +313,28 @@ library LibSanctionedLock {
             // de-listed wallet isn't left wrongly blocked from moving another open
             // position during a later outage. Never freeze a de-listed party.
             clearConfirmedFlag(s, intendedClaimant);
-            // Codex #1122-rework r4 P2 — also clear a stale PER-LOAN marker keyed to
-            // this now-clean holder (e.g. from an earlier partial-match/fallback
-            // episode). Otherwise the central claim gate would fail-close on that
-            // stale marker during a later outage even though we just proved the
-            // recorded claimant de-listed. Only when it IS this holder — a marker
-            // for a DIFFERENT still-flagged party must stick.
-            if (lenderSide) {
-                if (s.sanctionsLockedLenderClaimant[loanId] == intendedClaimant) {
-                    delete s.sanctionsLockedLenderClaimant[loanId];
+            // Codex #1122-rework r4+r6 P2 — clear a stale PER-LOAN marker on this
+            // side when its recorded party is authoritatively de-listed, so the
+            // central claim gate doesn't fail-close on a marker for a party already
+            // proven clean. That party is either THIS now-clean holder, OR a
+            // DIFFERENT recorded party (an earlier partial-match/fallback episode,
+            // or a clean position migration A→B) that ALSO now reads Clean. A marker
+            // for a party still Flagged / unverifiable (outage) must stick.
+            address existingClean = lenderSide
+                ? s.sanctionsLockedLenderClaimant[loanId]
+                : s.sanctionsLockedBorrowerClaimant[loanId];
+            if (
+                existingClean != address(0) &&
+                (existingClean == intendedClaimant ||
+                    LibVaipakam.sanctionsStatus(existingClean) ==
+                    LibVaipakam.SanctionsRead.Clean)
+            ) {
+                if (existingClean != intendedClaimant) {
+                    clearConfirmedFlag(s, existingClean);
                 }
-            } else {
-                if (s.sanctionsLockedBorrowerClaimant[loanId] == intendedClaimant) {
+                if (lenderSide) {
+                    delete s.sanctionsLockedLenderClaimant[loanId];
+                } else {
                     delete s.sanctionsLockedBorrowerClaimant[loanId];
                 }
             }

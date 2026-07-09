@@ -544,8 +544,17 @@ contract ClaimFacet is
                 s, loan.borrower, loanId, c, snap.borrowerCollateral
             );
             // #998 S10 (#1006) — fail-closed freeze if the current borrower-
-            // position holder is flagged.
-            LibSanctionedLock.recordFrozenClaimantForLoan(s, loan, false);
+            // position holder is flagged. Routed through the host (the registry-
+            // aware recordFrozenClaimant is too heavy to inline into this
+            // EIP-170-tight facet).
+            LibFacet.crossFacetCall(
+                abi.encodeWithSelector(
+                    EncumbranceMutateFacet.recordSanctionsFrozenClaimant.selector,
+                    loanId,
+                    false
+                ),
+                bytes4(0)
+            );
             LibFacet.crossFacetCall(
                 abi.encodeWithSelector(
                     EncumbranceMutateFacet.incrementCollateralLien.selector,
@@ -763,12 +772,15 @@ contract ClaimFacet is
         // stamp at every scattered creation site. Registry-aware + idempotent with
         // any existing close-out marker (first-write-wins / overwrite-if-clean).
         // Routed through the cross-facet host — the registry-aware machinery is too
-        // heavy to inline into this EIP-170-tight facet.
+        // heavy to inline into this EIP-170-tight facet. Stamps BOTH holders
+        // (design #1127 Class A): the claim-time fallback / retry distributions run
+        // inside this call and create the OTHER side's deferred claim too, so
+        // registering both here at claim time covers them without a per-distribution
+        // host call (which overflowed EIP-170).
         LibFacet.crossFacetCall(
             abi.encodeWithSelector(
-                EncumbranceMutateFacet.recordSanctionsFrozenClaimant.selector,
-                loanId,
-                true
+                EncumbranceMutateFacet.recordSanctionsFrozenClaimantBoth.selector,
+                loanId
             ),
             bytes4(0)
         );
@@ -1208,12 +1220,13 @@ contract ClaimFacet is
         // close-out regardless of which path created this borrower claim (fallback
         // collateral distribution, retry top-up fold, offset-completion borrower
         // collateral, internal-match residual, …). Registry-aware + idempotent.
-        // Routed through the cross-facet host (EIP-170-tight facet).
+        // Routed through the cross-facet host (EIP-170-tight facet). Stamps BOTH
+        // holders (design #1127 Class A) so the lender side of a claim-time
+        // distribution is registered here too.
         LibFacet.crossFacetCall(
             abi.encodeWithSelector(
-                EncumbranceMutateFacet.recordSanctionsFrozenClaimant.selector,
-                loanId,
-                false
+                EncumbranceMutateFacet.recordSanctionsFrozenClaimantBoth.selector,
+                loanId
             ),
             bytes4(0)
         );
@@ -1834,10 +1847,9 @@ contract ClaimFacet is
             LibSanctionedLock.depositLocked(
                 s, loan.borrower, loanId, loan.collateralAsset, snap.borrowerCollateral
             );
-            // #998 S10 (#1006) — NO marker here: like the retry-proceeds path,
-            // this distribution can run during an oracle outage, so an affirmative
-            // flag can't be confirmed. The borrower freeze is recorded at fallback
-            // ENTRY (`_fullCollateralTransferFallback`), where the oracle is up.
+            // #998 S10 (#1006) — the borrower freeze marker is recorded by the
+            // Class A `recordSanctionsFrozenClaimantBoth` at the top of this
+            // function (registry-aware), plus the fallback-ENTRY marker.
             // #569 Gap A — RE-LIEN the borrower residual pushed BACK into
             // the vault here. The lien was released at liquidation/default
             // ENTRY (when the full collateral left to Diamond custody); the
