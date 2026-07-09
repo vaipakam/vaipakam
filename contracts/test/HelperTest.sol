@@ -82,7 +82,7 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](91);
+        selectors = new bytes4[](92);
         selectors[0] = TestMutatorFacet.setLoan.selector;
         selectors[1] = TestMutatorFacet.setOffer.selector;
         selectors[2] = TestMutatorFacet.setNextLoanId.selector;
@@ -258,6 +258,7 @@ contract HelperTest {
         selectors[88] = TestMutatorFacet.tierLiquidationLtvBpsFor.selector; // #999 (S1) tier-0 remap probe
         selectors[89] = TestMutatorFacet.setRentalBufferBpsRaw.selector; // #1004 (S8) rental late-fee buffer cap
         selectors[90] = TestMutatorFacet.setLoanInitMaxLtvBpsRaw.selector; // #900 (S15) per-asset init-LTV cap
+        selectors[91] = TestMutatorFacet.setVaultBannedSourceRaw.selector; // #1123 (Codex #1126 r4 P2) recovery-ban leg
         // #951 v2 (Codex #959 bind-to-live) — setSaleListingCollateralRaw removed
         // with the snapshot mapping; the accept binds `>=` live collateral.
         // #687-B: the former tail entries ([83]-[87]: setBackstopAbsorbCashRaw,

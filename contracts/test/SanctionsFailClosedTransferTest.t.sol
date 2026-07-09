@@ -73,6 +73,36 @@ contract SanctionsFailClosedTransferTest is SetupTest {
         assertTrue(ProfileFacet(address(diamond)).isSanctionsConfirmedFlagged(wallet));
     }
 
+    /// Codex #1126 r4 P2: a directly-flagged wallet whose recovery-SOURCE read
+    /// reverts must still be caught by the authoritative DIRECT read — the source
+    /// outage must not mask a direct flag. `refreshSanctionsFlag` registers it.
+    function test_refresh_sourceOutageDoesNotMaskDirectFlag() public {
+        MockSanctionsList m = _oracle();
+        address src = makeAddr("s1123-banned-source");
+        TestMutatorFacet(address(diamond)).setVaultBannedSourceRaw(wallet, src);
+        m.setRevertFor(src, true); // source read unreachable...
+        m.setFlagged(wallet, true); // ...but the wallet itself is authoritatively flagged
+        ProfileFacet(address(diamond)).refreshSanctionsFlag(wallet);
+        assertTrue(
+            ProfileFacet(address(diamond)).isSanctionsConfirmedFlagged(wallet),
+            "direct flag registered despite the source-read outage"
+        );
+    }
+
+    /// Complementary: source read reverts AND the direct read is clean → the
+    /// recovery-ban flag is unknowable, so the status is Unavailable (refresh
+    /// reverts, registry untouched) — a clean direct read must NOT clear it.
+    function test_refresh_sourceOutageWithCleanDirect_isUnavailable() public {
+        MockSanctionsList m = _oracle();
+        address src = makeAddr("s1123-banned-source-2");
+        TestMutatorFacet(address(diamond)).setVaultBannedSourceRaw(wallet, src);
+        m.setRevertFor(src, true); // source unreachable
+        // wallet direct read is clean (default) — cannot confirm OR clear.
+        vm.expectRevert(IVaipakamErrors.SanctionsOracleUnavailable.selector);
+        ProfileFacet(address(diamond)).refreshSanctionsFlag(wallet);
+        assertFalse(ProfileFacet(address(diamond)).isSanctionsConfirmedFlagged(wallet));
+    }
+
     // ─── Movement gate — block paths (gate precedes the ownership check) ─────
 
     function test_transfer_flaggedRevertsNormalOp() public {

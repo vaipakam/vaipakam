@@ -4795,10 +4795,12 @@ library LibVaipakam {
         // move a position NFT during a sanctions-oracle outage — closing the S10
         // laundering-chain class (#1006). Mutated ONLY from strict reads
         // (`sanctionsStatus`): registered at non-reverting oracle-up flag
-        // observations (`LibConsolidation.consolidateToHolder` skip, the S10
-        // `recordFrozenClaimant` park hook once #1122 lands, sale-buyer receives,
-        // and `recoverStuckERC20`'s recovery-ban) + the permissionless
-        // `ProfileFacet.refreshSanctionsFlag`; cleared on a confirmed de-list.
+        // observations (sale-buyer receives and `recoverStuckERC20`'s
+        // recovery-ban) + the permissionless `ProfileFacet.refreshSanctionsFlag`;
+        // cleared on a confirmed de-list. Registering the flagged HOLDER of a
+        // closing position is owned by the S10 `recordFrozenClaimant` park hook
+        // that lands with #1006 (keyed to the same holder); until then an
+        // operator refresh is the backstop for those wallets.
         // Appended at the END of Storage so an in-place diamond refresh stays
         // append-only (Codex #1126 r1 P1) — no existing slot shifts.
         mapping(address => bool) sanctionsConfirmedFlagged;
@@ -7154,14 +7156,23 @@ library LibVaipakam {
         if (oracle == address(0)) return SanctionsRead.Unavailable;
 
         // Recovery-ban leg: a `who` whose declared recovery source is still
-        // flagged is Flagged; a failed source read is Unavailable (never silently
-        // clean). A de-listed source falls through to the direct check.
+        // flagged is Flagged. A de-listed (clean) source falls through to the
+        // direct check below. A FAILED source read must NOT mask a direct flag
+        // (Codex #1126 r4 P2): still try the direct `who` read — a directly
+        // sanctioned wallet is authoritatively Flagged regardless of the source
+        // outage — but a clean/failed direct read stays Unavailable, because with
+        // the source unreadable we can neither confirm nor CLEAR the recovery-ban
+        // flag, so we must not downgrade `who` to Clean.
         address bannedSource = storageSlot().vaultBannedSource[who];
         if (bannedSource != address(0)) {
             try ISanctionsList(oracle).isSanctioned(bannedSource) returns (bool srcFlagged) {
                 if (srcFlagged) return SanctionsRead.Flagged;
             } catch {
-                return SanctionsRead.Unavailable;
+                try ISanctionsList(oracle).isSanctioned(who) returns (bool flagged) {
+                    return flagged ? SanctionsRead.Flagged : SanctionsRead.Unavailable;
+                } catch {
+                    return SanctionsRead.Unavailable;
+                }
             }
         }
 
