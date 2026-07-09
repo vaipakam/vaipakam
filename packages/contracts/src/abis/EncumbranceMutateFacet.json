@@ -1,6 +1,19 @@
 [
   {
     "type": "function",
+    "name": "assertNotFrozenParty",
+    "inputs": [
+      {
+        "name": "who",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
     "name": "createOfferPrincipalLien",
     "inputs": [
       {
@@ -322,6 +335,17 @@
     "inputs": [
       {
         "name": "token",
+        "type": "address",
+        "internalType": "address"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "SanctionedAddress",
+    "inputs": [
+      {
+        "name": "who",
         "type": "address",
         "internalType": "address"
       }

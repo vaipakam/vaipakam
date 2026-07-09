@@ -1449,7 +1449,7 @@ contract DeployDiamond is Script {
     ///         offer-principal-lock impl PR adds the lock create /
     ///         decrement / release surface.
     function _getEncumbranceMutateFacetSelectors() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](13);
+        s = new bytes4[](14);
         s[0] = EncumbranceMutateFacet.releaseCollateralLien.selector;
         // #407 PR 4 round-1 (2026-06-12) — decrement/increment cross-
         // facet entries used by active-loan slice flows + addCollateral.
@@ -1470,6 +1470,8 @@ contract DeployDiamond is Script {
         s[11] = EncumbranceMutateFacet.recordSanctionsFrozenClaimantBoth.selector;
         // #998 S10 (#1006) — one-call lender-payoff park+freeze (PrecloseFacet EIP-170).
         s[12] = EncumbranceMutateFacet.parkLenderPayoffAndFreeze.selector;
+        // #998 S10 (#1006, r4) — registry-aware fail-closed gate host (ClaimFacet backstop).
+        s[13] = EncumbranceMutateFacet.assertNotFrozenParty.selector;
     }
 
     /// @notice #396 v0.5 — gasless signed off-chain offer book selectors.

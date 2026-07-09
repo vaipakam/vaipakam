@@ -469,9 +469,16 @@ contract ClaimFacet is
         // so there is no deferred claim to freeze the cash into. The loan stays
         // FallbackPending — recoverable once the holder de-lists (keeper re-absorbs,
         // or the holder claims normally). A never-confirmed holder stays fail-open.
-        if (LibSanctionedLock.mustFreezeParty(s, nftOwner)) {
-            revert LibVaipakam.SanctionedAddress(nftOwner);
-        }
+        // Routed through the cross-facet host (the now state-changing, registry-
+        // aware `mustFreezeParty` is too heavy to inline into this EIP-170-tight
+        // facet); the `SanctionedAddress` revert bubbles via the `bytes4(0)` frame.
+        LibFacet.crossFacetCall(
+            abi.encodeWithSelector(
+                EncumbranceMutateFacet.assertNotFrozenParty.selector,
+                nftOwner
+            ),
+            bytes4(0)
+        );
         // ── Resolution failed → the backstop buys the lender slice for cash.
         _absorbLenderSlice(loanId, loan, snap, vault, nftOwner);
     }

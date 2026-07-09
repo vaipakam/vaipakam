@@ -89,7 +89,14 @@ library LibCloseoutFreeze {
         );
         if (lenderDue > 0 && loan.principalAsset == s.vpfiToken) {
             address holder = IERC721(address(this)).ownerOf(loan.lenderTokenId);
-            if (holder != loan.lender && LibVaipakam.isSanctionedAddress(holder)) {
+            // Codex #1122-rework r4 P2 — tier-exclude via the SAME registry-aware
+            // freeze decision as the marker above (not the bare fail-open
+            // `isSanctionedAddress`): a holder frozen only because they are in the
+            // confirmed-flagged registry during an outage must still have their VPFI
+            // excluded from `loan.lender`'s fee-tier/staking credit, since it is
+            // owed to the frozen claimant. `mustFreezeParty` self-heals the registry
+            // on a clean read here too.
+            if (holder != loan.lender && LibSanctionedLock.mustFreezeParty(s, holder)) {
                 s.frozenVpfiOwedByVault[loan.lender] += lenderDue;
                 s.frozenVpfiOwedLenderLeg[loanId] = lenderDue;
             }

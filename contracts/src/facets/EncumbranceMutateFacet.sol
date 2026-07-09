@@ -191,6 +191,20 @@ contract EncumbranceMutateFacet {
         LibSanctionedLock.recordFrozenClaimantForLoan(s, loan, true);
     }
 
+    /// @notice #998 S10 (#1006, Codex #1122-rework r4) — registry-aware fail-closed
+    ///         gate hosted for EIP-170-tight facets: revert `SanctionedAddress(who)`
+    ///         when `who` must be frozen (fresh flag, or a prior confirmation during
+    ///         an outage), else pass (self-healing the registry on a clean read).
+    ///         Used by `ClaimFacet`'s backstop-absorb path, which BLOCKS a
+    ///         registered-flagged lender holder rather than parking (terminal
+    ///         in-one-tx + NFT burn). Cross-called with a `bytes4(0)` bubble.
+    function assertNotFrozenParty(address who) external onlyDiamondInternal {
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        if (LibSanctionedLock.mustFreezeParty(s, who)) {
+            revert LibVaipakam.SanctionedAddress(who);
+        }
+    }
+
     // ─── Offer-principal lock (T-407-C, #566) — second lien category ────
     //
     // The per-offer principal lock for ERC20 Lender offers. The creator's

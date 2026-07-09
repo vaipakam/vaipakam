@@ -766,7 +766,7 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](13);
+        selectors = new bytes4[](14);
         selectors[0] = EncumbranceMutateFacet.releaseCollateralLien.selector;
         selectors[1] = EncumbranceMutateFacet.decrementCollateralLien.selector;
         selectors[2] = EncumbranceMutateFacet.incrementCollateralLien.selector;
@@ -785,6 +785,8 @@ contract HelperTest {
         selectors[11] = EncumbranceMutateFacet.recordSanctionsFrozenClaimantBoth.selector;
         // #998 S10 (#1006) — one-call lender-payoff park+freeze (PrecloseFacet EIP-170).
         selectors[12] = EncumbranceMutateFacet.parkLenderPayoffAndFreeze.selector;
+        // #998 S10 (#1006, r4) — registry-aware fail-closed gate host (ClaimFacet backstop).
+        selectors[13] = EncumbranceMutateFacet.assertNotFrozenParty.selector;
     }
 
     /// @notice #396 v0.5 — gasless signed off-chain offer book selectors.

@@ -263,24 +263,36 @@ library LibSanctionedLock {
     ///         unreachable, so a close-out that lands during an outage can't hand a
     ///         previously-confirmed-flagged holder their payout (the ordinary claim
     ///         screen fails open in the same window).
-    /// @dev    Mirrors the #1123 movement-gate tri-state exactly:
+    /// @dev    Mirrors the #1123 movement-gate tri-state exactly, and MAINTAINS the
+    ///         registry as a side effect (Codex #1122-rework r4) so the decision
+    ///         sites that pay-or-park directly — with no later claim gate to
+    ///         self-heal — keep the registry honest:
     ///           - oracle UNSET → false (screening regime disabled);
-    ///           - Flagged (oracle up) → true (a fresh authoritative confirmation);
-    ///           - Clean (oracle up) → false (never freeze a de-listed party);
+    ///           - Flagged (oracle up) → REGISTER + true (fresh confirmation);
+    ///           - Clean (oracle up) → CLEAR the stale registry bit + false (never
+    ///             freeze a de-listed party, and don't leave it wrongly blocked from
+    ///             moving another open position during a later outage);
     ///           - Unavailable (oracle set but reverts) → the registry: freeze IFF
     ///             `who` was previously confirmed. An address NEVER confirmed stays
     ///             fail-open during an outage — an oracle blip can't freeze an
     ///             honest claimant.
+    ///         Non-`view` because of the register/clear self-heal; its two callers
+    ///         (backstop absorb gate, surplus pay-or-park) are both state-changing.
     function mustFreezeParty(LibVaipakam.Storage storage s, address who)
         internal
-        view
         returns (bool)
     {
         if (who == address(0)) return false;
         if (s.sanctionsOracle == address(0)) return false; // regime disabled
         LibVaipakam.SanctionsRead st = LibVaipakam.sanctionsStatus(who);
-        if (st == LibVaipakam.SanctionsRead.Flagged) return true;
-        if (st == LibVaipakam.SanctionsRead.Clean) return false;
+        if (st == LibVaipakam.SanctionsRead.Flagged) {
+            s.sanctionsConfirmedFlagged[who] = true;
+            return true;
+        }
+        if (st == LibVaipakam.SanctionsRead.Clean) {
+            clearConfirmedFlag(s, who); // authoritative de-list self-heals
+            return false;
+        }
         // Unavailable: fail-closed on a prior authoritative confirmation only.
         return s.sanctionsConfirmedFlagged[who];
     }
@@ -301,6 +313,21 @@ library LibSanctionedLock {
             // de-listed wallet isn't left wrongly blocked from moving another open
             // position during a later outage. Never freeze a de-listed party.
             clearConfirmedFlag(s, intendedClaimant);
+            // Codex #1122-rework r4 P2 — also clear a stale PER-LOAN marker keyed to
+            // this now-clean holder (e.g. from an earlier partial-match/fallback
+            // episode). Otherwise the central claim gate would fail-close on that
+            // stale marker during a later outage even though we just proved the
+            // recorded claimant de-listed. Only when it IS this holder — a marker
+            // for a DIFFERENT still-flagged party must stick.
+            if (lenderSide) {
+                if (s.sanctionsLockedLenderClaimant[loanId] == intendedClaimant) {
+                    delete s.sanctionsLockedLenderClaimant[loanId];
+                }
+            } else {
+                if (s.sanctionsLockedBorrowerClaimant[loanId] == intendedClaimant) {
+                    delete s.sanctionsLockedBorrowerClaimant[loanId];
+                }
+            }
             return;
         }
         // FAIL-CLOSED freeze (Codex #1122-rework r1 P1): a fresh authoritative flag
