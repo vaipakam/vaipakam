@@ -7217,17 +7217,21 @@ library LibVaipakam {
         }
     }
 
-    /// @notice #1123 — register `who` in the confirmed-flagged registry IFF an
-    ///         AUTHORITATIVE read reports it flagged. No-op on `Clean`/`Unavailable`
-    ///         (never registers on an unconfirmed read; never clears). Used to
-    ///         record a party the protocol observes flagged on a non-reverting path
-    ///         it does NOT block — notably a sale BUYER whose flagged receive is
-    ///         frozen-not-bricked (#831) but who must still be barred from later
-    ///         MOVING the position during an outage.
-    function registerIfConfirmedFlagged(address who) internal {
+    /// @notice #1123 — sync the registry for a party observed on a non-reverting
+    ///         path that must NOT be blocked (a sale BUYER whose flagged receive is
+    ///         frozen-not-bricked per #831, but who must still be barred from later
+    ///         MOVING the position during an outage). Authoritative `Flagged` ⇒
+    ///         register; authoritative `Clean` ⇒ **self-heal-clear** any stale entry
+    ///         (Codex #1126 r2 — a de-listed buyer's clean receive must lift the
+    ///         restriction, mirroring `_assertMovePartyNotSanctioned`); `Unavailable`
+    ///         ⇒ no-op (never mutate on an unconfirmed read). Never reverts.
+    function syncBuyerSanctionsFlag(address who) internal {
         if (who == address(0)) return;
-        if (sanctionsStatus(who) == SanctionsRead.Flagged) {
+        SanctionsRead st = sanctionsStatus(who);
+        if (st == SanctionsRead.Flagged) {
             storageSlot().sanctionsConfirmedFlagged[who] = true;
+        } else if (st == SanctionsRead.Clean) {
+            delete storageSlot().sanctionsConfirmedFlagged[who];
         }
     }
 
@@ -7242,7 +7246,7 @@ library LibVaipakam {
     function assertPositionSaleMoveNotSanctioned(address seller, address buyer) internal {
         if (storageSlot().sanctionsOracle == address(0)) return;
         _assertMovePartyNotSanctioned(seller);
-        registerIfConfirmedFlagged(buyer);
+        syncBuyerSanctionsFlag(buyer);
     }
 
     // ─────────────────────────────────────────────────────────────

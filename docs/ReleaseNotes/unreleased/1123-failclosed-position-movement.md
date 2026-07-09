@@ -35,8 +35,10 @@ This is the foundation that lets the sanctioned-proceeds fail-closed release
 holder can no longer hand the position off mid-outage, no chain of distinct
 flagged holders can form.
 
-One movement path is intentionally left for a follow-up: the borrower-side
-obligation transfer inside the preclose facet, whose facet is at the contract
-size limit; it is tracked with the preclose-facet split in #1124.
+The full user-initiated movement surface is covered — plain transfers, the two
+lender-sale vehicles, and the borrower-side obligation transfer. (A separate,
+pre-existing size-limit item on the preclose facet — the direct-preclose lender
+payoff to a flagged stored lender — remains tracked in #1124; it is unrelated to
+position movement.)
 
 Closes #1123.
