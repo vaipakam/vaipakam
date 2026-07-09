@@ -16,6 +16,8 @@ import {ClaimFacet} from "../src/facets/ClaimFacet.sol";
 import {RiskMatchLiquidationFacet} from "../src/facets/RiskMatchLiquidationFacet.sol";
 import {ProfileFacet} from "../src/facets/ProfileFacet.sol";
 import {ConsolidationFacet} from "../src/facets/ConsolidationFacet.sol";
+import {VaipakamNFTFacet} from "../src/facets/VaipakamNFTFacet.sol";
+import {VaultFactoryFacet} from "../src/facets/VaultFactoryFacet.sol";
 import {Deployments} from "./lib/Deployments.sol";
 import {FacetSelectors} from "./lib/FacetSelectors.sol";
 
@@ -104,6 +106,13 @@ contract RedeployFacets is Script {
         // pre-existing #594 standalone entries, Add the four #658 internal-only
         // ones — partitioned by live routing, same as the #394 HF-floor knob).
         ConsolidationFacet consolidationFacet = new ConsolidationFacet();
+        // #1123 — VaipakamNFTFacet inlines the fail-closed movement gate into
+        // transferFrom/safeTransferFrom, and VaultFactoryFacet registers a
+        // recovery-banned wallet into the confirmed-flagged registry. A curated
+        // redeploy MUST re-cut both or raw transfers / recovery bans stay on the
+        // old fail-open bytecode while the rest of the movement surface is upgraded.
+        VaipakamNFTFacet nftFacet = new VaipakamNFTFacet();
+        VaultFactoryFacet vaultFactoryFacet = new VaultFactoryFacet();
 
         console.log("RiskFacet:            ", address(riskFacet));
         console.log("RiskSplitLiquidation: ", address(riskSplitLiquidationFacet));
@@ -148,12 +157,22 @@ contract RedeployFacets is Script {
         // existing facet).
         (bytes4[] memory profToAdd, bytes4[] memory profToReplace) =
             _partitionByRouting(diamond, _profileSelectors());
+        // #1123 — VaipakamNFTFacet (inline transfer gate) + VaultFactoryFacet
+        // (recovery-ban register) partitioned by routing. On a current-version
+        // diamond every selector is already routed (all Replace); the split just
+        // keeps the script correct against a pre-existing diamond too.
+        (bytes4[] memory nftToAdd, bytes4[] memory nftToReplace) =
+            _partitionByRouting(diamond, FacetSelectors.vaipakamNFT());
+        (bytes4[] memory vfToAdd, bytes4[] memory vfToReplace) =
+            _partitionByRouting(diamond, FacetSelectors.vaultFactory());
 
         uint256 nExtra =
             (hfToAdd.length > 0 ? 1 : 0) + (hfToReplace.length > 0 ? 1 : 0) +
             (consToAdd.length > 0 ? 1 : 0) + (consToReplace.length > 0 ? 1 : 0) +
             (claimToAdd.length > 0 ? 1 : 0) + (claimToReplace.length > 0 ? 1 : 0) +
-            (profToAdd.length > 0 ? 1 : 0) + (profToReplace.length > 0 ? 1 : 0);
+            (profToAdd.length > 0 ? 1 : 0) + (profToReplace.length > 0 ? 1 : 0) +
+            (nftToAdd.length > 0 ? 1 : 0) + (nftToReplace.length > 0 ? 1 : 0) +
+            (vfToAdd.length > 0 ? 1 : 0) + (vfToReplace.length > 0 ? 1 : 0);
         IDiamondCut.FacetCut[] memory cuts =
             new IDiamondCut.FacetCut[](8 + nExtra);
         cuts[0] = _replace(address(riskFacet), _riskSelectors());
@@ -204,6 +223,20 @@ contract RedeployFacets is Script {
         }
         if (profToAdd.length > 0) {
             cuts[idx++] = _add(address(profileFacet), profToAdd);
+        }
+        // #1123 — VaipakamNFTFacet (inline transfer gate) + VaultFactoryFacet
+        // (recovery-ban register) repoint to the refreshed bytecode.
+        if (nftToReplace.length > 0) {
+            cuts[idx++] = _replace(address(nftFacet), nftToReplace);
+        }
+        if (nftToAdd.length > 0) {
+            cuts[idx++] = _add(address(nftFacet), nftToAdd);
+        }
+        if (vfToReplace.length > 0) {
+            cuts[idx++] = _replace(address(vaultFactoryFacet), vfToReplace);
+        }
+        if (vfToAdd.length > 0) {
+            cuts[idx++] = _add(address(vaultFactoryFacet), vfToAdd);
         }
 
         IDiamondCut(diamond).diamondCut(cuts, address(0), "");

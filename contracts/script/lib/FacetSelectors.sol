@@ -4,6 +4,7 @@ pragma solidity ^0.8.29;
 import {OracleFacet} from "../../src/facets/OracleFacet.sol";
 import {VaultFactoryFacet} from "../../src/facets/VaultFactoryFacet.sol";
 import {ProfileFacet} from "../../src/facets/ProfileFacet.sol";
+import {VaipakamNFTFacet} from "../../src/facets/VaipakamNFTFacet.sol";
 
 /**
  * @title  FacetSelectors
@@ -128,5 +129,43 @@ library FacetSelectors {
         s[26] = ProfileFacet.isSanctionsConfirmedFlagged.selector;
         s[27] = ProfileFacet.enforcePositionMoveNotSanctioned.selector;
         s[28] = ProfileFacet.enforcePositionSaleMove.selector;
+    }
+
+    /// @notice Full external selector surface of {VaipakamNFTFacet} (29) — mirrors
+    ///         `DeployDiamond._getNFTSelectors`. #1123 wires the fail-closed
+    ///         movement gate INLINE into `transferFrom`/`safeTransferFrom`, so a
+    ///         curated redeploy MUST re-cut this facet or raw transfers stay on the
+    ///         old fail-open bytecode.
+    function vaipakamNFT() internal pure returns (bytes4[] memory s) {
+        s = new bytes4[](29);
+        s[0] = VaipakamNFTFacet.mintNFT.selector;
+        s[1] = VaipakamNFTFacet.updateNFTStatus.selector;
+        s[2] = VaipakamNFTFacet.burnNFT.selector;
+        s[3] = VaipakamNFTFacet.tokenURI.selector;
+        s[4] = VaipakamNFTFacet.initializeNFT.selector;
+        s[5] = bytes4(keccak256("ownerOf(uint256)"));
+        s[6] = VaipakamNFTFacet.contractURI.selector;
+        s[7] = VaipakamNFTFacet.setContractImageURI.selector;
+        s[8] = VaipakamNFTFacet.royaltyInfo.selector;
+        s[9] = VaipakamNFTFacet.setDefaultRoyalty.selector;
+        s[10] = VaipakamNFTFacet.setImageURIForStatus.selector;
+        s[11] = VaipakamNFTFacet.name.selector;
+        s[12] = VaipakamNFTFacet.symbol.selector;
+        s[13] = VaipakamNFTFacet.balanceOf.selector;
+        s[14] = VaipakamNFTFacet.approve.selector;
+        s[15] = VaipakamNFTFacet.getApproved.selector;
+        s[16] = VaipakamNFTFacet.setApprovalForAll.selector;
+        s[17] = VaipakamNFTFacet.isApprovedForAll.selector;
+        s[18] = VaipakamNFTFacet.transferFrom.selector;
+        s[19] = bytes4(keccak256("safeTransferFrom(address,address,uint256)"));
+        s[20] = bytes4(keccak256("safeTransferFrom(address,address,uint256,bytes)"));
+        s[21] = VaipakamNFTFacet.positionLock.selector;
+        s[22] = bytes4(keccak256("totalSupply()"));
+        s[23] = bytes4(keccak256("tokenByIndex(uint256)"));
+        s[24] = bytes4(keccak256("tokenOfOwnerByIndex(address,uint256)"));
+        s[25] = VaipakamNFTFacet.nftStatusOf.selector;
+        s[26] = VaipakamNFTFacet.setExternalUrlBase.selector;
+        s[27] = VaipakamNFTFacet.setDefaultImage.selector;
+        s[28] = VaipakamNFTFacet.getImageURIFor.selector;
     }
 }
