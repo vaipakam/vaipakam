@@ -198,6 +198,16 @@ contract EncumbranceMutateFacet {
     ///         Used by `ClaimFacet`'s backstop-absorb path, which BLOCKS a
     ///         registered-flagged lender holder rather than parking (terminal
     ///         in-one-tx + NFT burn). Cross-called with a `bytes4(0)` bubble.
+    /// @dev    Codex #1122-rework r5 — this REVERTING gate does NOT seed the
+    ///         registry: `mustFreezeParty`'s Flagged-branch register write rolls
+    ///         back with the revert (and on the backstop path `_assertNotSanctioned`
+    ///         reverts even earlier on an oracle-up flag). So during an OUTAGE the
+    ///         block fires only if `who` was previously registered by a
+    ///         NON-reverting observation — a flagged park at an earlier close-out,
+    ///         or the permissionless `ProfileFacet.refreshSanctionsFlag`. A wallet
+    ///         listed after a clean fallback-entry and never otherwise observed is
+    ///         the accepted fail-open-during-outage residual (an oracle blip can't
+    ///         freeze a never-confirmed wallet); operators seed it via refresh.
     function assertNotFrozenParty(address who) external onlyDiamondInternal {
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         if (LibSanctionedLock.mustFreezeParty(s, who)) {

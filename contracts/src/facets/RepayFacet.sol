@@ -558,6 +558,12 @@ contract RepayFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErrors 
                 quantity: 0,
                 claimed: false
             });
+            // #998 S10 (#1006, Codex #1122-rework r5 P1) — the rental refund is a
+            // borrower claim too; stamp the borrower side so a current renter-holder
+            // flagged at repayment (oracle up) is registered + marked here, and the
+            // later `claimAsBorrower` fail-closes on it during an outage — matching
+            // the ERC-20 repay/preclose paths.
+            _recordFrozenClaimant(loanId, false);
 
             // Reset renter immediately (operational — rental is over)
             LibFacet.crossFacetCall(
