@@ -178,10 +178,18 @@ no-op. This explicitly includes the **backstop absorb** (`_absorbLenderSlice`):
 the lender is hard-blocked (§4), but its folded **borrower** collateral residual
 still needs the borrower register before the loan burns/terminalizes (#1127 r1).
 
-**Class B** — swap every inline holder payout's fail-open `_assertNotSanctioned`
-decision for `mustFreezeParty` + a park into the stored party's vault + a claimable
-lane. The set is defined by the grep sweep (every `ownerOf(*TokenId)` → direct
-`safeTransfer`), NOT by the §1 seed list — the §1 sites (`autoDeductDaily`,
+**Class B SCOPE (#1127 r5).** Class B is only the **Tier-2 servicing / close-out**
+inline payouts to a position holder (daily interest, shortfall auto-liquidation,
+partial-repay lender pay, rental fee). **Discretionary, value-creating** actions a
+holder initiates (e.g. early-withdrawal options) stay **Tier-1 hard-block**
+(revert on flagged) — they are NOT parked, so the grep sweep classifies each hit,
+it does not blanket-convert them. The sweep must also catch payouts that route
+through `VaultFactory` withdraw helpers, not only a raw `safeTransfer`.
+
+**Class B** — swap every Tier-2 inline holder payout's fail-open
+`_assertNotSanctioned` decision for `mustFreezeParty` + a park into the stored
+party's vault + a claimable lane. The set is defined by the grep sweep (every
+`ownerOf(*TokenId)` → direct transfer / vault-withdraw), NOT by the §1 seed list — the §1 sites (`autoDeductDaily`,
 `_autoLiquidatePeriodShortfall`, `repayPartial`, NFT-rental daily fee) are the
 known members, but any not-yet-listed direct payout the sweep finds is in scope
 (#1127 r4). Two active-loan cautions (#1127 r4):
@@ -229,8 +237,27 @@ terminal / inline-payout path skips the treatment).
   not the load-bearing check). Its **borrower** collateral residual is Class A and
   IS registered (§3.2).
 
-## 5. Rollout
+## 5. Per-site mechanics settled in the code phase
 
-Folded into #1122 (the S10 PR): the gap-site registers + the guardrail supersede
-the scattered per-creation-site stamps. Pre-live, in-place — no storage change
-(the registry + markers already exist). Standard EIP-170 re-check + deploy-sanity.
+This doc fixes the **architecture** (the two invariants, the register-at-
+terminalization + inline-park mechanisms, the enumeration cautions, the
+guardrails). A handful of per-site mechanical specifics are deliberately settled
+during implementation, under #1122's own compiler + test + Codex review — not
+pre-solved here (they do not change the architecture, and the code is the precise
+source of truth):
+
+- The exact claimable lane + **reservation** for an Active-loan Class B park —
+  `heldForLender` is per-loan in the loan's payment asset and is folded by the
+  eventual `claimAsLender`; a park in a different asset, or one that must be
+  withdrawable while the loan is still Active, is resolved against the live
+  `heldForLender` / encumbrance code with a test (#1127 r5), and the transferred-
+  lender VPFI tier-exclusion is preserved the same way `freezeLenderProceeds` does.
+- Whether each grep hit is Tier-2 (park) or a Tier-1 discretionary action
+  (hard-block) — decided per site against the §1348 two-tier classification.
+
+## 6. Rollout
+
+Folded into #1122 (the S10 PR): the gap-site registers + the Class B freezes + the
+guardrail supersede the scattered per-creation-site stamps. Pre-live, in-place —
+no storage change (the registry + markers already exist). Standard EIP-170
+re-check + deploy-sanity.
