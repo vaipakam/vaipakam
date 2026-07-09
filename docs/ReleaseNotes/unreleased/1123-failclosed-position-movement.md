@@ -14,21 +14,27 @@ This change adds a small on-chain registry of wallets that were **confirmed
 flagged while the oracle was reachable**, and has the position-movement checks
 consult it **fail-closed**: a registered wallet cannot move a position even while
 the oracle is down. The registry is filled automatically whenever the protocol
-observes a flagged holder on a normal (non-reverting) path — notably when a
-close-out has to skip consolidating a sanctioned holder's position — and can also
-be synced by anyone through a new permissionless `refreshSanctionsFlag` call,
-which both registers a freshly-listed wallet and **clears** a wallet the oracle
-now reports clean (a de-listing lifts the restriction). All registry updates come
+observes a flagged holder on a normal (non-reverting) path — when a flagged
+wallet is caught trying to sell a position (the buyer is registered), and when a
+disowned vault's stuck-token recovery reveals a flagged source — and can also be
+synced by anyone through a new permissionless `refreshSanctionsFlag` call, which
+both registers a freshly-listed wallet and **clears** a wallet the oracle now
+reports clean (a de-listing lifts the restriction). All registry updates come
 only from an authoritative, reachable-oracle read, so an outage can never wrongly
 clear a still-flagged wallet, and an authoritative-clean move self-heals a stale
-entry.
+entry. (Registering the flagged *holder* of a closing position is owned by the
+sanctioned-proceeds fail-closed release, #1006, which records the same holder at
+close-out; the operator refresh is the backstop until that lands.)
 
 Behaviour is unchanged for everyone else: when no oracle is configured the
-registry is ignored entirely; a wallet never previously observed as flagged is
-not blocked during an outage; and a **sale to a flagged buyer still completes**
-with the buyer's proceeds frozen (the existing "frozen, not seized" treatment) —
-only a flagged *seller* offloading a position is blocked. A de-listed wallet
-regains full movement.
+registry is ignored entirely, and a wallet never previously observed as flagged
+is not blocked during an outage. A flagged buyer is treated by *how* they are
+acquiring the position: on the **direct buy-offer sale** — a value-receiving
+acquisition — the transaction now reverts cleanly, blocking a flagged wallet from
+buying in; on the **accepted-sale completion** path a sale still **completes** with
+the flagged buyer's proceeds frozen (the existing "frozen, not seized" treatment),
+and the flagged buyer is registered. On both paths a flagged *seller* offloading a
+position is blocked. A de-listed wallet regains full movement.
 
 This is the foundation that lets the sanctioned-proceeds fail-closed release
 (#1006) rely on a single recorded frozen claimant per loan side: because a flagged

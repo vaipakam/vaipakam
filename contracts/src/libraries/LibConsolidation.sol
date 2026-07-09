@@ -106,12 +106,15 @@ library LibConsolidation {
         if (ctx == Ctx.Tier1Strict) {
             LibVaipakam._assertNotSanctioned(current); // reverts if flagged
         } else if (LibVaipakam.isSanctionedAddress(current)) {
-            // #1123 — non-reverting oracle-up observation of a flagged current
-            // holder: register them in the confirmed-flagged registry so they
-            // cannot move the position during a later oracle outage. Direct write
-            // (the `isSanctionedAddress` read above already confirmed the flag with
-            // the oracle reachable — no second oracle call needed).
-            LibVaipakam.storageSlot().sanctionsConfirmedFlagged[current] = true;
+            // #1123 (Codex #1126 r3 P1) — NO registry write here. `consolidateToHolder`
+            // is inlined into MANY close-out facets (AddCollateral, PartialWithdrawal,
+            // Repay, SwapToRepay, SwapToRepayIntent, …) that a curated `RedeployFacets`
+            // can't all re-cut, so a register-on-skip would silently miss those on an
+            // incremental rollout. Close-out population of the flagged current holder
+            // is instead owned by the `recordFrozenClaimant` hook (keyed to the same
+            // holder) that lands with the S10 rework (#1006); the permissionless
+            // `refreshSanctionsFlag` + the recovery-ban register are the standalone
+            // #1123 population, with the operator refresh as the backstop meanwhile.
             return Result.Skipped; // Tier-2: skip, never block the close-out
         }
         if (current == stored) {
