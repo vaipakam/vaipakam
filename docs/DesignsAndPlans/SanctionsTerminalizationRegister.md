@@ -2,6 +2,28 @@
 
 Status: DRAFT for review · Owner: S10 (#1006) · Relates to: #1122, #1123
 
+## 0. Basis — this design builds ON #1122 (pending merge), not `main`
+
+This doc is reviewed on a branch off `main`, but it **assumes the S10 mechanisms
+already landed on the #1122 branch** and folds into it. When a citation below
+names a helper, it is the **#1122** version, which differs from `main`:
+
+- `LibSanctionedLock.mustFreezeParty(s, who)` — the **registry-aware, fail-CLOSED**
+  freeze decision (tri-state: Flagged→register+freeze, Clean→self-heal+pass,
+  Unavailable→freeze IFF in `sanctionsConfirmedFlagged`). Class B is modelled on
+  THIS, **not** `main`'s fail-open `isSanctionedAddress` surplus check.
+- `LibCloseoutFreeze.freezeOrPayBorrowerSurplus` — on #1122 already switched to
+  `mustFreezeParty` (r1), so it is a valid registry-aware template.
+- `EncumbranceMutateFacet.recordSanctionsFrozenClaimant` /
+  `recordSanctionsFrozenClaimantBoth` / `assertNotFrozenParty` — the hosts added
+  in #1122 (they do not exist on `main`).
+- The backstop lender block (`ClaimFacet` absorb) — on #1122 already routed through
+  the registry-aware `assertNotFrozenParty` (r4), i.e. it IS fail-closed on the
+  registry during an outage; §4 keeps that.
+
+So Codex findings that cite `main`'s fail-open surplus / backstop / missing hosts
+are already resolved on #1122; this design consumes those mechanisms.
+
 ## 1. Problem
 
 The S10 fail-closed release of sanctioned-locked proceeds (#1006) keys on a
@@ -56,11 +78,15 @@ claim), today gated only by the fail-open `_assertNotSanctioned`
 - Any sibling recurring/immediate lender payout (audit the NFT-rental daily fee
   path) has the same shape.
 
-Known Class B sites (audit, #1127 r1–r2):
+Known Class B sites (audit, #1127 r1–r3 — the implementation must grep every
+`ownerOf(lenderTokenId|borrowerTokenId)` → direct `safeTransfer` and confirm each
+is registry-aware; this list is the seed, not a closed set):
 - `RepayPeriodicFacet.autoDeductDaily` — the per-day lender share.
 - `RepayPeriodicFacet._autoLiquidatePeriodShortfall` — resolves
-  `ownerOf(lenderTokenId)`, fail-open `_assertNotSanctioned`, then transfers
+  `ownerOf(lenderTokenId)`, fail-open `_assertNotSanctioned`, transfers
   `lenderProceeds` directly (#1127 r2).
+- `RepayFacet.repayPartial` — resolves `ownerOf(lenderTokenId)` and pays the
+  lender inline (#1127 r3).
 - The NFT-rental daily fee path.
 
 Class B is NOT fixed by registration — the value leaves immediately. It needs the
@@ -93,9 +119,12 @@ a later outage claim reads `Unavailable + registered` and freezes.
 
 **B (inline payouts).** Every path that pays value to a current position holder
 **immediately** (not via a deferred claim) MUST make the pay-or-freeze decision
-with the registry-aware `LibSanctionedLock.mustFreezeParty`, not the fail-open
-`_assertNotSanctioned` — parking the payout into the holder's vault behind the
-claim gate when it returns true.
+with the registry-aware `LibSanctionedLock.mustFreezeParty` (§0), not the fail-open
+`_assertNotSanctioned` — and when it returns true, park the payout into the
+**stored `loan.lender` / `loan.borrower`'s always-existing vault** (never the
+current holder's, which a flagged secondary-market holder cannot have minted) AND
+into an existing claimable lane (`heldForLender` / a claim row) so it is
+withdrawable once de-listed.
 
 The residual under both invariants shrinks to the platform-wide, accepted
 "flagged **and** never observed within one uninterrupted outage" window (seeded
@@ -137,25 +166,37 @@ is broader than the full-struct assignment (#1127 r2):
   payout ONLY via `heldForLender` (e.g. `_settleOldLenderAtCompletion`,
   partial-internal-match residual), not a `lenderClaims` row.
 
-Sites already calling the register (via a park's `recordFrozenClaimantForLoan`)
-are left as-is; every other deferred-payout terminal site gets the host call. This
-explicitly includes the **backstop absorb** (`_absorbLenderSlice`): the lender is
-hard-blocked (§4), but its folded **borrower** collateral residual still needs the
-borrower register before the loan burns/terminalizes (#1127 r1).
+**Register BOTH sides at every terminal — no "already parked" exemption**
+(#1127 r3): a park registers only ITS side's recipient, but the S10 failure
+applies to the OTHER current holder too when the same terminal writes an unparked
+claim/held row for them. So every deferred-payout terminal calls
+`recordSanctionsFrozenClaimantBoth(loanId)` (both sides) — even where one side
+already parked; the redundant re-register on the parked side is an idempotent
+no-op. This explicitly includes the **backstop absorb** (`_absorbLenderSlice`):
+the lender is hard-blocked (§4), but its folded **borrower** collateral residual
+still needs the borrower register before the loan burns/terminalizes (#1127 r1).
 
-**Class B** — audit every inline holder payout and swap its fail-open
-`_assertNotSanctioned` decision for `mustFreezeParty` + a park:
-- `RepayPeriodicFacet.autoDeductDaily` — the per-day lender share (#1127 r1).
-- The NFT-rental daily fee path (confirm during implementation).
+**Class B** — swap every inline holder payout's fail-open `_assertNotSanctioned`
+decision for `mustFreezeParty` + a park into the stored party's vault + a claimable
+lane. Apply to ALL the §1 Class B sites: `autoDeductDaily` (per-day lender share),
+`_autoLiquidatePeriodShortfall` (direct `lenderProceeds`), `repayPartial` (inline
+lender pay), and the NFT-rental daily fee — each confirmed by the grep sweep.
 
 ### 3.3 Guardrail
 
-Add a test-level guardrail so a **future** terminal path cannot silently reopen
-the hole: a scenario test that, for each terminal close-out entry, drives a
-flagged current holder (oracle up) through the close-out and asserts the holder
-is left **registered** (`isSanctionsConfirmedFlagged`) — the observable proxy for
-"the invariant held". This mirrors the indexer event-coverage guardrail in
-spirit (fail CI when a new terminal path skips registration).
+Add a test-level guardrail so a **future** path cannot silently reopen the hole,
+covering BOTH classes (#1127 r3):
+
+- **Class A** — for each terminal close-out entry, drive a flagged current holder
+  (oracle up) through the close-out and assert the holder is left **registered**
+  (`isSanctionsConfirmedFlagged`) — the observable proxy for "the invariant held".
+- **Class B** — for each inline-payout path, drive a **registered** holder during
+  an oracle **outage** and assert the payout is **parked** (holder's EOA balance
+  unchanged, the claimable lane credited), not paid — proving the fail-open
+  `_assertNotSanctioned` was replaced by `mustFreezeParty`.
+
+This mirrors the indexer event-coverage guardrail in spirit (fail CI when a new
+terminal / inline-payout path skips the treatment).
 
 ## 4. Non-goals / accepted residual
 
@@ -166,7 +207,12 @@ spirit (fail CI when a new terminal path skips registration).
 - No change to the movement gate (#1123) or the release-gate semantics.
 - The **backstop absorb**'s LENDER side stays a hard **block** (revert), not a
   park — it is terminal-in-one-tx and burns the lender NFT (see #1122 r2 P1 #3).
-  Its **borrower** collateral residual is Class A and IS registered (§3.2).
+  That block is **registry-aware / fail-closed**: on #1122 it routes through
+  `assertNotFrozenParty` → `mustFreezeParty` (r4), so a previously-confirmed lender
+  is blocked during an outage, not waved through (#1127 r3; the fail-open
+  `_assertNotSanctioned` at the absorb entry is a defence-in-depth layer on top,
+  not the load-bearing check). Its **borrower** collateral residual is Class A and
+  IS registered (§3.2).
 
 ## 5. Rollout
 
