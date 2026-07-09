@@ -98,7 +98,13 @@ library LibCloseoutFreeze {
             // on a clean read here too.
             if (holder != loan.lender && LibSanctionedLock.mustFreezeParty(s, holder)) {
                 s.frozenVpfiOwedByVault[loan.lender] += lenderDue;
-                s.frozenVpfiOwedLenderLeg[loanId] = lenderDue;
+                // #998 S10 Class B — `+=`, not `=`: an Active-loan inline VPFI
+                // share may already have accumulated a per-loan tier exclusion
+                // (`_parkActiveLenderShare`) before this terminal freeze. A bare
+                // assignment would clobber that prior amount, so `releaseLenderFrozenVpfi`
+                // would under-decrement `frozenVpfiOwedByVault` and permanently
+                // over-lock the difference. Accumulate so the release nets exactly.
+                s.frozenVpfiOwedLenderLeg[loanId] += lenderDue;
             }
         }
     }
@@ -166,6 +172,135 @@ library LibCloseoutFreeze {
             s.frozenVpfiOwedByVault[loan.borrower] += surplus;
             s.frozenVpfiOwedBorrowerSurplus[loanId] = surplus;
         }
+    }
+
+    // ─── #998 S10 (#1006) Class B — ACTIVE-loan inline lender-share freeze ─────
+    //
+    // The servicing / interim close-out paths (periodic-interest auto-liquidate,
+    // NFT-rental daily fee, ERC-20 partial repay) pay the CURRENT lender-position
+    // holder INLINE while the loan is still Active, historically gated only by the
+    // FAIL-OPEN `_assertNotSanctioned`. Per SanctionsTerminalizationRegister.md §1
+    // (Class B) that is unsound: a previously-confirmed-flagged holder is paid
+    // during an oracle outage because the fail-open screen waves them through, and
+    // the deferred terminalization register can't help since the value has already
+    // left. These helpers replace the fail-open decision with the registry-aware
+    // `mustFreezeParty`: pay a clean/never-confirmed holder inline exactly as
+    // before, or PARK a frozen holder's share into the STORED `loan.lender`'s
+    // always-existing vault (never the current holder's, which a flagged
+    // secondary-market transferee cannot have minted) + the mid-loan
+    // `heldForLender[loanId]` accumulator (folded by the eventual `claimAsLender`)
+    // + an encumbrance reservation (so the stored lender can't spend it as
+    // offer/intent capital ahead of the frozen holder's claim) + the fail-closed
+    // frozen-claimant marker. The loan stays Active — this is NOT a terminal, so
+    // the park uses `heldForLender`, not a terminal `lenderClaims` row (§3.2).
+
+    /// @dev Shared post-deposit bookkeeping for an Active-loan lender-share park:
+    ///      the funds are ALREADY sitting in `loan.lender`'s vault (deposited by
+    ///      the caller's funds-flow-specific step). Credits the mid-loan held
+    ///      accumulator, records the fail-closed marker for `frozenHolder`,
+    ///      reserves the amount against the stored lender's spend paths, and —
+    ///      for a VPFI share owed to a TRANSFERRED (not self) holder — accumulates
+    ///      the per-loan tier exclusion so the VPFI is kept out of `loan.lender`'s
+    ///      fee tier until released at claim. Uses `+=` on the per-loan tier
+    ///      record because an Active loan can freeze MULTIPLE inline shares over
+    ///      its life (unlike the once-at-terminal `freezeLenderProceeds`).
+    function _parkActiveLenderShare(
+        LibVaipakam.Storage storage s,
+        uint256 loanId,
+        LibVaipakam.Loan storage loan,
+        address frozenHolder,
+        address asset,
+        uint256 amount
+    ) private {
+        s.heldForLender[loanId] += amount;
+        LibSanctionedLock.recordFrozenClaimant(s, loanId, true, frozenHolder);
+        LibEncumbrance.encumberLenderProceeds(loanId, loan.lender, asset, amount);
+        if (asset == s.vpfiToken && frozenHolder != loan.lender) {
+            s.frozenVpfiOwedByVault[loan.lender] += amount;
+            s.frozenVpfiOwedLenderLeg[loanId] += amount;
+        }
+    }
+
+    /// @notice Class B — pay-or-freeze an Active-loan lender share whose funds are
+    ///         sitting in the DIAMOND (e.g. periodic-interest auto-liquidation
+    ///         proceeds, freshly swapped into the Diamond). Clean/never-confirmed
+    ///         holder → direct `safeTransfer` (unchanged behaviour). Frozen holder
+    ///         → `depositLocked` (Diamond → stored lender vault) + the shared park.
+    function freezeOrPayActiveLenderResident(
+        LibVaipakam.Storage storage s,
+        uint256 loanId,
+        LibVaipakam.Loan storage loan,
+        address asset,
+        uint256 amount
+    ) internal {
+        if (amount == 0) return;
+        // Resolve the CURRENT lender-position holder here (the loan is Active, so
+        // the lender NFT is live and `ownerOf` holds) — the intended payee AND the
+        // party the fail-closed marker keys on. Resolving inside the helper keeps
+        // the `ownerOf` + `IERC721` weight out of the EIP-170-tight caller facets.
+        address lenderRecipient = IERC721(address(this)).ownerOf(loan.lenderTokenId);
+        if (!LibSanctionedLock.mustFreezeParty(s, lenderRecipient)) {
+            IERC20(asset).safeTransfer(lenderRecipient, amount);
+            return;
+        }
+        LibSanctionedLock.depositLocked(s, loan.lender, loanId, asset, amount);
+        _parkActiveLenderShare(s, loanId, loan, lenderRecipient, asset, amount);
+    }
+
+    /// @notice Class B — pay-or-freeze an Active-loan lender share funded by a
+    ///         `payer` via `approve` (the ERC-20 partial-repay case: the repaying
+    ///         borrower pays principal+interest straight to the lender). Clean
+    ///         holder → direct `safeTransferFrom(payer → holder)` (unchanged).
+    ///         Frozen holder → `depositLockedFrom` (payer → stored lender vault) +
+    ///         the shared park.
+    function freezeOrPayActiveLenderFromPayer(
+        LibVaipakam.Storage storage s,
+        uint256 loanId,
+        LibVaipakam.Loan storage loan,
+        address payer,
+        address asset,
+        uint256 amount
+    ) internal {
+        if (amount == 0) return;
+        address lenderRecipient = IERC721(address(this)).ownerOf(loan.lenderTokenId);
+        if (!LibSanctionedLock.mustFreezeParty(s, lenderRecipient)) {
+            // slither-disable-next-line arbitrary-send-erc20
+            IERC20(asset).safeTransferFrom(payer, lenderRecipient, amount);
+            return;
+        }
+        LibSanctionedLock.depositLockedFrom(s, payer, loan.lender, loanId, asset, amount);
+        _parkActiveLenderShare(s, loanId, loan, lenderRecipient, asset, amount);
+    }
+
+    /// @notice Class B — pay-or-freeze an Active-loan lender share funded from a
+    ///         loan party's VAULT (the NFT-rental prepay pool). Clean holder →
+    ///         withdraw `fromUser`'s vault → holder EOA (unchanged), arming the
+    ///         move-out exemption so a flagged `fromUser` can still be serviced.
+    ///         Frozen holder → `depositLockedFromVault` (fromUser vault → stored
+    ///         lender vault) + the shared park.
+    /// @dev    Both branches arm the move-out exemption around the withdraw (the
+    ///         payer LOSES custody either way) — Tier-2 servicing must not brick a
+    ///         `fromUser` flagged after init.
+    function freezeOrPayActiveLenderFromVault(
+        LibVaipakam.Storage storage s,
+        uint256 loanId,
+        LibVaipakam.Loan storage loan,
+        address fromUser,
+        address asset,
+        uint256 amount
+    ) internal {
+        if (amount == 0) return;
+        address lenderRecipient = IERC721(address(this)).ownerOf(loan.lenderTokenId);
+        if (!LibSanctionedLock.mustFreezeParty(s, lenderRecipient)) {
+            LibSanctionedLock.vaultWithdrawERC20MoveOut(
+                s, fromUser, asset, lenderRecipient, amount
+            );
+            return;
+        }
+        LibSanctionedLock.depositLockedFromVault(
+            s, fromUser, loan.lender, loanId, asset, amount
+        );
+        _parkActiveLenderShare(s, loanId, loan, lenderRecipient, asset, amount);
     }
 
     /**

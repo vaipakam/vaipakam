@@ -792,26 +792,25 @@ contract RepayFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErrors 
             // `repayLoan`) — so the payout is correct regardless of whether the
             // consolidation ran or was skipped. The loan is Active here, so the
             // lender NFT is live (never burned pre-terminal) and `ownerOf` holds.
-            address lenderRecipient = IERC721(address(this)).ownerOf(
-                loan.lenderTokenId
-            );
-            // Codex #659 P1 — this is a DIRECT payout (no vault+claim deferral
-            // like full repay, where `claimAsLender` blocks a sanctioned
-            // claimer). Gate the resolved recipient so a sanctioned current
-            // lender-holder cannot receive protocol funds. Reverts
-            // `SanctionedAddress`; the borrower's Tier-2 escape is a full
-            // `repayLoan` (stays open, defers the lender proceeds to a
-            // sanctions-gated claim). No-op while the oracle is unset. The
-            // recipient is `ownerOf` (the current holder), and #821's position-NFT
-            // transfer restriction means a flagged wallet can't be that holder via
-            // a post-flag transfer — so screening the live recipient is sufficient;
-            // no stale stored-`loan.lender` screen is needed (it would wrongly
-            // freeze a legitimate pre-flag secondary-market buyer).
-            LibVaipakam._assertNotSanctioned(lenderRecipient);
-            IERC20(loan.principalAsset).safeTransferFrom(
-                msg.sender,
-                lenderRecipient,
-                partialAmount + lenderShare
+            // #998 S10 (#1006) Class B — this is a DIRECT inline payout (no
+            // vault+claim deferral like full repay). Pay the CURRENT lender-position
+            // holder inline when clean, or FREEZE fail-closed (park payer → stored
+            // lender vault + `heldForLender` + encumber + marker) when the holder is
+            // registry-flagged. Replaces the prior fail-open `_assertNotSanctioned`,
+            // which would pay a previously-confirmed-flagged holder during an oracle
+            // outage. Hosted on `EncumbranceMutateFacet`: the host resolves
+            // `ownerOf(lenderTokenId)` and, on the clean path, pays the combined
+            // principal-repayment + interest share via `safeTransferFrom(msg.sender)`
+            // exactly as before.
+            LibFacet.crossFacetCall(
+                abi.encodeWithSelector(
+                    EncumbranceMutateFacet.freezeOrPayActiveLenderFromPayer.selector,
+                    loan.id,
+                    msg.sender,
+                    loan.principalAsset,
+                    partialAmount + lenderShare
+                ),
+                bytes4(0)
             );
             IERC20(loan.principalAsset).safeTransferFrom(
                 msg.sender,
@@ -937,33 +936,31 @@ contract RepayFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErrors 
             // lien (the prepay pool is drained by this very mechanism,
             // not protected by a lien), so no decrement here.
 
-            // #821 (Codex #832 r7 P2) — pay the LIVE lender-NFT holder, NOT the
-            // stored `loan.lender`. NFT-rental loans skip the eager consolidation
-            // at this function's start (`_isExcludedLive` non-ERC-20), so
-            // `loan.lender` can be a stale pre-transfer party; resolve + screen
-            // `ownerOf(lenderTokenId)` (matching the ERC-20 branch) so a flagged
-            // live holder is refused while a legitimate clean holder is paid.
-            address lenderRecipient =
-                IERC721(address(this)).ownerOf(loan.lenderTokenId);
-            LibVaipakam._assertNotSanctioned(lenderRecipient);
-            // #821 (Codex #832 r3 P1) — both deductions pull the prepay from the
-            // payer's (`msg.sender`) own vault. Arm the move-out exemption so a
-            // borrower flagged after init can still service the partial rental
-            // (Tier-2 stays open) — the prepay is pushed OUT to the lender /
-            // treasury, the payer loses custody.
-            LibSanctionedLock.beginMoveOut(LibVaipakam.storageSlot(), msg.sender);
-            // Deduct from prepay (prepayAsset, not collateralAsset)
+            // #998 S10 (#1006) Class B — the lender's prepay share is pulled from
+            // the payer's (`msg.sender`) own rental prepay vault. NFT-rental loans
+            // skip the eager consolidation at this function's start, so `loan.lender`
+            // can be stale; the host resolves the LIVE `ownerOf(lenderTokenId)`.
+            // Pay that current holder inline when clean, or FREEZE fail-closed (park
+            // payer-vault → stored-lender vault + `heldForLender` + encumber +
+            // marker) when they are registry-flagged, replacing the fail-open
+            // `_assertNotSanctioned`. The host arms the from-side move-out exemption
+            // around the withdraw so a borrower flagged after init can still service
+            // the partial rental (Tier-2 stays open) — the payer loses custody.
             LibFacet.crossFacetCall(
                 abi.encodeWithSelector(
-                    VaultFactoryFacet.vaultWithdrawERC20.selector,
+                    EncumbranceMutateFacet.freezeOrPayActiveLenderFromVault.selector,
+                    loan.id,
                     msg.sender,
                     loan.prepayAsset,
-                    lenderRecipient,
                     lenderShare
                 ),
-                VaultWithdrawFailed.selector
+                bytes4(0)
             );
 
+            // #821 (Codex #832 r3 P1) — the treasury deduction also pulls the
+            // prepay from the payer's own vault; arm the move-out exemption so a
+            // borrower flagged after init can still service the partial rental.
+            LibSanctionedLock.beginMoveOut(LibVaipakam.storageSlot(), msg.sender);
             LibFacet.crossFacetCall(
                 abi.encodeWithSelector(
                     VaultFactoryFacet.vaultWithdrawERC20.selector,

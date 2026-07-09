@@ -215,6 +215,64 @@ contract EncumbranceMutateFacet {
         }
     }
 
+    /// @notice #998 S10 (#1006) Class B — pay-or-freeze an ACTIVE-loan inline
+    ///         lender share whose funds sit in the DIAMOND (periodic-interest
+    ///         auto-liquidation proceeds). A clean/never-confirmed holder is paid
+    ///         directly; a registry-frozen holder's share is parked into the stored
+    ///         lender's vault + `heldForLender` + encumbered + marked. See
+    ///         {LibCloseoutFreeze.freezeOrPayActiveLenderResident}.
+    /// @dev    Hosted here (not inlined into `RepayPeriodicFacet`) so that
+    ///         EIP-170-tight servicing facet stays under the size ceiling — the
+    ///         registry-aware `mustFreezeParty` + park machinery is heavy. Runs in
+    ///         the diamond's storage context, so it reads the live loan and the
+    ///         diamond-held proceeds exactly as an inline call would.
+    function freezeOrPayActiveLenderResident(
+        uint256 loanId,
+        address asset,
+        uint256 amount
+    ) external onlyDiamondInternal {
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        LibCloseoutFreeze.freezeOrPayActiveLenderResident(
+            s, loanId, s.loans[loanId], asset, amount
+        );
+    }
+
+    /// @notice #998 S10 (#1006) Class B — pay-or-freeze an ACTIVE-loan inline
+    ///         lender share funded by a `payer` via `approve` (the ERC-20
+    ///         partial-repay principal+interest payout). Direct
+    ///         `safeTransferFrom(payer → holder)` for a clean holder; park into the
+    ///         stored lender's vault for a frozen one. See
+    ///         {LibCloseoutFreeze.freezeOrPayActiveLenderFromPayer}.
+    function freezeOrPayActiveLenderFromPayer(
+        uint256 loanId,
+        address payer,
+        address asset,
+        uint256 amount
+    ) external onlyDiamondInternal {
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        LibCloseoutFreeze.freezeOrPayActiveLenderFromPayer(
+            s, loanId, s.loans[loanId], payer, asset, amount
+        );
+    }
+
+    /// @notice #998 S10 (#1006) Class B — pay-or-freeze an ACTIVE-loan inline
+    ///         lender share funded from a loan party's VAULT (the NFT-rental
+    ///         prepay pool). Withdraw `fromUser`'s vault → holder for a clean
+    ///         holder; vault → stored-lender-vault park for a frozen one. Both
+    ///         branches arm the move-out exemption. See
+    ///         {LibCloseoutFreeze.freezeOrPayActiveLenderFromVault}.
+    function freezeOrPayActiveLenderFromVault(
+        uint256 loanId,
+        address fromUser,
+        address asset,
+        uint256 amount
+    ) external onlyDiamondInternal {
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        LibCloseoutFreeze.freezeOrPayActiveLenderFromVault(
+            s, loanId, s.loans[loanId], fromUser, asset, amount
+        );
+    }
+
     // ─── Offer-principal lock (T-407-C, #566) — second lien category ────
     //
     // The per-offer principal lock for ERC20 Lender offers. The creator's

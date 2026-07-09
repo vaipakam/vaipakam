@@ -82,7 +82,7 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](94);
+        selectors = new bytes4[](99);
         selectors[0] = TestMutatorFacet.setLoan.selector;
         selectors[1] = TestMutatorFacet.setOffer.selector;
         selectors[2] = TestMutatorFacet.setNextLoanId.selector;
@@ -261,6 +261,12 @@ contract HelperTest {
         selectors[91] = TestMutatorFacet.setVaultBannedSourceRaw.selector; // #1123 (Codex #1126 r4 P2) recovery-ban leg
         selectors[92] = TestMutatorFacet.setSanctionsFrozenClaimant.selector; // #1006 (S10)
         selectors[93] = TestMutatorFacet.getSanctionsFrozenClaimant.selector; // #1006 (S10)
+        // #1006 (S10) Class B — Active-loan inline lender-share freeze harness.
+        selectors[94] = TestMutatorFacet.getHeldForLenderRaw.selector;
+        selectors[95] = TestMutatorFacet.getLenderProceedsEncumberedRaw.selector;
+        selectors[96] = TestMutatorFacet.callFreezeOrPayActiveLenderResident.selector;
+        selectors[97] = TestMutatorFacet.callFreezeOrPayActiveLenderFromPayer.selector;
+        selectors[98] = TestMutatorFacet.callFreezeOrPayActiveLenderFromVault.selector;
         // #951 v2 (Codex #959 bind-to-live) — setSaleListingCollateralRaw removed
         // with the snapshot mapping; the accept binds `>=` live collateral.
         // #687-B: the former tail entries ([83]-[87]: setBackstopAbsorbCashRaw,
@@ -766,7 +772,7 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](14);
+        selectors = new bytes4[](17);
         selectors[0] = EncumbranceMutateFacet.releaseCollateralLien.selector;
         selectors[1] = EncumbranceMutateFacet.decrementCollateralLien.selector;
         selectors[2] = EncumbranceMutateFacet.incrementCollateralLien.selector;
@@ -787,6 +793,10 @@ contract HelperTest {
         selectors[12] = EncumbranceMutateFacet.parkLenderPayoffAndFreeze.selector;
         // #998 S10 (#1006, r4) — registry-aware fail-closed gate host (ClaimFacet backstop).
         selectors[13] = EncumbranceMutateFacet.assertNotFrozenParty.selector;
+        // #998 S10 (#1006) Class B — Active-loan inline lender-share pay-or-freeze hosts.
+        selectors[14] = EncumbranceMutateFacet.freezeOrPayActiveLenderResident.selector;
+        selectors[15] = EncumbranceMutateFacet.freezeOrPayActiveLenderFromPayer.selector;
+        selectors[16] = EncumbranceMutateFacet.freezeOrPayActiveLenderFromVault.selector;
     }
 
     /// @notice #396 v0.5 — gasless signed off-chain offer book selectors.

@@ -2,6 +2,7 @@
 pragma solidity ^0.8.29;
 
 import {LibVaipakam} from "../../src/libraries/LibVaipakam.sol";
+import {EncumbranceMutateFacet} from "../../src/facets/EncumbranceMutateFacet.sol";
 import {LibInteractionRewards} from "../../src/libraries/LibInteractionRewards.sol";
 import {LibMetricsHooks} from "../../src/libraries/LibMetricsHooks.sol";
 import {LibERC721} from "../../src/libraries/LibERC721.sol";
@@ -920,5 +921,93 @@ contract TestMutatorFacet {
         return lenderSide
             ? s.sanctionsLockedLenderClaimant[loanId]
             : s.sanctionsLockedBorrowerClaimant[loanId];
+    }
+
+    // ─── #998 S10 (#1006) Class B — Active-loan inline lender-share freeze ─────
+
+    /// @notice Read `s.heldForLender[loanId]` (the mid-loan lender accumulator a
+    ///         Class B park credits and `claimAsLender` later folds).
+    function getHeldForLenderRaw(uint256 loanId) external view returns (uint256) {
+        return LibVaipakam.storageSlot().heldForLender[loanId];
+    }
+
+    /// @notice Read the per-loan lender-proceeds encumbrance record (the amount a
+    ///         Class B park reserves against the stored lender's spend paths).
+    function getLenderProceedsEncumberedRaw(uint256 loanId)
+        external
+        view
+        returns (uint256)
+    {
+        return LibVaipakam.storageSlot().lenderProceedsEncumbered[loanId];
+    }
+
+    /// @notice Drive the Diamond-resident Class B host exactly as
+    ///         `RepayPeriodicFacet._autoLiquidatePeriodShortfall` does, so the
+    ///         pay-or-freeze bookkeeping can be asserted in isolation. Runs as a
+    ///         facet (msg.sender == diamond), so the `onlyDiamondInternal` host
+    ///         accepts the routed self-call.
+    function callFreezeOrPayActiveLenderResident(
+        uint256 loanId,
+        address asset,
+        uint256 amount
+    ) external {
+        _selfCall(
+            abi.encodeWithSelector(
+                EncumbranceMutateFacet.freezeOrPayActiveLenderResident.selector,
+                loanId,
+                asset,
+                amount
+            )
+        );
+    }
+
+    /// @notice Drive the payer-funded Class B host (the ERC-20 `repayPartial`
+    ///         shape). `payer` must have approved the diamond for `amount`.
+    function callFreezeOrPayActiveLenderFromPayer(
+        uint256 loanId,
+        address payer,
+        address asset,
+        uint256 amount
+    ) external {
+        _selfCall(
+            abi.encodeWithSelector(
+                EncumbranceMutateFacet.freezeOrPayActiveLenderFromPayer.selector,
+                loanId,
+                payer,
+                asset,
+                amount
+            )
+        );
+    }
+
+    /// @notice Drive the vault-funded Class B host (the NFT-rental prepay shape).
+    ///         `fromUser`'s vault must hold `amount` of `asset`.
+    function callFreezeOrPayActiveLenderFromVault(
+        uint256 loanId,
+        address fromUser,
+        address asset,
+        uint256 amount
+    ) external {
+        _selfCall(
+            abi.encodeWithSelector(
+                EncumbranceMutateFacet.freezeOrPayActiveLenderFromVault.selector,
+                loanId,
+                fromUser,
+                asset,
+                amount
+            )
+        );
+    }
+
+    /// @dev Route `data` back through the diamond fallback (bubbling the raw
+    ///      revert) so a routed `onlyDiamondInternal` host sees `msg.sender ==
+    ///      address(this)`.
+    function _selfCall(bytes memory data) private {
+        (bool ok, bytes memory ret) = address(this).call(data);
+        if (!ok) {
+            assembly {
+                revert(add(ret, 0x20), mload(ret))
+            }
+        }
     }
 }

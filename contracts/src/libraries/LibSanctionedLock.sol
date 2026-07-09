@@ -234,6 +234,54 @@ library LibSanctionedLock {
         }
     }
 
+    /// @dev Vault-to-vault variant of {depositLocked}: moves `amount` of `asset`
+    ///      OUT of `fromUser`'s vault INTO `owner`'s vault, both behind the
+    ///      relevant sanctions exemptions, and ticks `owner`'s protocol-tracked
+    ///      balance. Used to PARK an ACTIVE-loan inline lender share whose funds
+    ///      sit in a loan party's vault (the NFT-rental prepay pool) into the
+    ///      stored `loan.lender`'s always-existing vault when the current holder
+    ///      is frozen (#998 S10 Class B). `fromUser` LOSES custody, so the
+    ///      from-side move-out exemption is armed (a borrower flagged after init
+    ///      must still be serviceable — Tier-2 stays open); `owner` RECEIVES, so
+    ///      the receive-side exemption is pinned around the vault resolution (a
+    ///      flagged `owner`'s EXISTING vault resolves without minting a new proxy).
+    ///      Emits the lock event when `owner` is flagged. Zero `amount` is a no-op.
+    function depositLockedFromVault(
+        LibVaipakam.Storage storage s,
+        address fromUser,
+        address owner,
+        uint256 loanId,
+        address asset,
+        uint256 amount
+    ) internal {
+        if (amount == 0) return;
+        // Receive side: resolve `owner`'s EXISTING vault behind the pin.
+        s.sanctionedDepositExemptUser = owner;
+        address ownerVault = LibFacet.getOrCreateVault(owner);
+        s.sanctionedDepositExemptUser = address(0);
+        // From side: withdraw `fromUser`'s prepay into `owner`'s vault behind the
+        // move-out exemption (so a flagged `fromUser` doesn't brick the service).
+        s.consolidationMoveFromUser = fromUser;
+        LibFacet.crossFacetCall(
+            abi.encodeWithSelector(
+                VaultFactoryFacet.vaultWithdrawERC20.selector,
+                fromUser,
+                asset,
+                ownerVault,
+                amount
+            ),
+            IVaipakamErrors.VaultWithdrawFailed.selector
+        );
+        s.consolidationMoveFromUser = address(0);
+        // Tick `owner`'s tracked balance (the funds now sit in their vault), the
+        // same bookkeeping `LibFacet.depositForNewLender` does for a Diamond
+        // `safeTransfer` into a vault.
+        LibVaipakam.recordVaultDeposit(owner, asset, amount);
+        if (LibVaipakam.isSanctionedAddress(owner)) {
+            emit SanctionedProceedsLocked(loanId, owner, asset, amount);
+        }
+    }
+
     // ─── #998 S10 (#1006) — frozen-claimant marker (fail-closed release) ──────
 
     /// @notice Record the FROZEN-CLAIMANT marker for a sanctioned-locked-proceeds

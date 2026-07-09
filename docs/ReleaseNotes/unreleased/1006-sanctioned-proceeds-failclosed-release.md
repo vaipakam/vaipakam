@@ -51,6 +51,23 @@ otherwise pay a surplus straight to that holder it is parked instead. Only a
 wallet that was *never* confirmed stays fail-open during an outage, so an oracle
 blip can never freeze an honest, never-flagged claimant.
 
+A final class of payouts is now covered: the **mid-loan servicing payments** that
+go to the lender *immediately* rather than through a later claim — the daily
+NFT-rental fee, the periodic-interest auto-liquidation proceeds, and the ERC-20
+partial-repayment principal-plus-interest. These historically used the same
+fail-open screen, so a lender-position holder confirmed flagged at close-out could
+still be paid their servicing share during an oracle outage — and because the
+money left immediately, the fail-closed claim gate could never recover it. Each of
+these paths now makes the pay-or-freeze decision with the same outage-hardened,
+registry-aware logic: a clean or never-confirmed holder is paid inline exactly as
+before, but a frozen holder's share is diverted into the loan's stored lender
+vault, credited to that loan's lender accumulator (so the eventual claim folds it
+in), reserved against the stored lender's other spend paths, and marked
+fail-closed — the flagged holder's own wallet receives nothing, and the funds only
+release once that holder is proven de-listed. Discretionary, holder-initiated
+actions (such as early-withdrawal options) keep the hard-block behaviour; only the
+must-complete Tier-2 servicing payouts are parked.
+
 The freeze survives an oracle outage; a de-listing (oracle back up, address
 cleared) releases the funds. No behaviour changes for any unflagged party.
 
