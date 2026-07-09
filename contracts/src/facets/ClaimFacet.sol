@@ -748,10 +748,31 @@ contract ClaimFacet is
         // holds the NFT now). Ordinary (never-locked) claims carry no marker and
         // stay fail-open, so an oracle blip never bricks an honest claimant. On a
         // clean pass the marker is cleared (atomic with the payout below).
+        // Central claim-gate stamp (Codex #1122-rework r3) — stamp the CURRENT
+        // holder (= the ownerOf-gated claimant) if they must be frozen, BEFORE the
+        // release gate below. This catches a claimant confirmed flagged after
+        // close-out no matter which distribution path created this claim (fallback
+        // collateral, retry top-up fold, offset borrower, …), so we don't have to
+        // stamp at every scattered creation site. Registry-aware + idempotent with
+        // any existing close-out marker (first-write-wins / overwrite-if-clean).
+        // Routed through the cross-facet host — the registry-aware machinery is too
+        // heavy to inline into this EIP-170-tight facet.
+        LibFacet.crossFacetCall(
+            abi.encodeWithSelector(
+                EncumbranceMutateFacet.recordSanctionsFrozenClaimant.selector,
+                loanId,
+                true
+            ),
+            bytes4(0)
+        );
         {
             address frozen = LibSanctionedLock.frozenClaimant(s, loanId, true);
             if (frozen != address(0)) {
                 LibVaipakam.assertNotSanctionedFailClosed(frozen);
+                // P2 (Codex r3) — the recorded party just passed the fail-closed
+                // screen ⇒ authoritatively clean ⇒ self-heal the global registry
+                // too (not just the per-loan marker), matching the movement gate.
+                LibSanctionedLock.clearConfirmedFlag(s, frozen);
                 LibSanctionedLock.clearFrozenClaimant(s, loanId, true);
             }
         }
@@ -860,6 +881,7 @@ contract ClaimFacet is
             address frozenAfterResolve = LibSanctionedLock.frozenClaimant(s, loanId, true);
             if (frozenAfterResolve != address(0)) {
                 LibVaipakam.assertNotSanctionedFailClosed(frozenAfterResolve);
+                LibSanctionedLock.clearConfirmedFlag(s, frozenAfterResolve);
                 LibSanctionedLock.clearFrozenClaimant(s, loanId, true);
             }
         }
@@ -1173,10 +1195,28 @@ contract ClaimFacet is
         // frozen claimant FAIL-CLOSED so the freeze survives an oracle outage and
         // the transfer-during-outage laundering vector. Ordinary claims carry no
         // marker and stay fail-open. Cleared atomically on a clean pass.
+        // Central claim-gate stamp (Codex #1122-rework r3) — stamp the current
+        // borrower holder (the ownerOf-gated claimant) if they must be frozen,
+        // BEFORE the release gate. Catches a claimant confirmed flagged after
+        // close-out regardless of which path created this borrower claim (fallback
+        // collateral distribution, retry top-up fold, offset-completion borrower
+        // collateral, internal-match residual, …). Registry-aware + idempotent.
+        // Routed through the cross-facet host (EIP-170-tight facet).
+        LibFacet.crossFacetCall(
+            abi.encodeWithSelector(
+                EncumbranceMutateFacet.recordSanctionsFrozenClaimant.selector,
+                loanId,
+                false
+            ),
+            bytes4(0)
+        );
         {
             address frozen = LibSanctionedLock.frozenClaimant(s, loanId, false);
             if (frozen != address(0)) {
                 LibVaipakam.assertNotSanctionedFailClosed(frozen);
+                // P2 (Codex r3) — recorded party passed the fail-closed screen ⇒
+                // authoritatively clean ⇒ self-heal the global registry too.
+                LibSanctionedLock.clearConfirmedFlag(s, frozen);
                 LibSanctionedLock.clearFrozenClaimant(s, loanId, false);
             }
         }
@@ -1713,12 +1753,11 @@ contract ClaimFacet is
             LibSanctionedLock.depositLocked(
                 s, loan.lender, loanId, loan.principalAsset, lenderGets
             );
-            // #998 S10 (#1006, Codex #1122-rework r2 P1) — stamp the lender-side
-            // marker; the registry-aware predicate freezes a PREVIOUSLY-CONFIRMED
-            // holder even during an outage (see the borrower note below). The
-            // `claimAsLender` re-check after `_resolveFallbackIfActive` then
-            // fail-closes on it.
-            LibSanctionedLock.recordFrozenClaimantForLoan(s, loan, true);
+            // #998 S10 (#1006) — no per-site marker: the fail-closed freeze of a
+            // registered-flagged CLAIMANT is now stamped + checked centrally at the
+            // `claimAsLender` / `claimAsBorrower` gate (Codex #1122-rework r3), which
+            // covers every claim-creation path (this retry distribution included)
+            // without inflating this EIP-170-tight facet with a per-site stamp.
         }
         if (borrowerGets > 0) {
             // #821 (Codex #832 r4 P1) — vault-lock the borrower residual so a
@@ -1726,15 +1765,6 @@ contract ClaimFacet is
             LibSanctionedLock.depositLocked(
                 s, loan.borrower, loanId, loan.principalAsset, borrowerGets
             );
-            // #998 S10 (#1006, Codex #1122-rework r2 P1) — record the fail-closed
-            // marker for the current borrower-position holder. The registry-aware
-            // `recordFrozenClaimant` freezes a PREVIOUSLY-CONFIRMED holder even
-            // during an outage: the fallback distribution needs no oracle, so a
-            // holder confirmed flagged AFTER a clean fallback-entry would otherwise
-            // slip `claimAsBorrower` in that window. A never-confirmed holder stays
-            // fail-open. (Supersedes the earlier "no marker here" reasoning, which
-            // predated the #1123 registry.)
-            LibSanctionedLock.recordFrozenClaimantForLoan(s, loan, false);
             // #661 (Codex #674 P1) — the FallbackPending retry is a FOURTH
             // borrower-VPFI-surplus terminal: reserve it against the unstake
             // path, like the default / liquidation surplus sites. Released in

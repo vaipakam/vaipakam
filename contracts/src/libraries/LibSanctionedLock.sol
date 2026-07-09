@@ -300,7 +300,7 @@ library LibSanctionedLock {
             // stale registry bit, matching the #1123 movement gate / refresh, so a
             // de-listed wallet isn't left wrongly blocked from moving another open
             // position during a later outage. Never freeze a de-listed party.
-            _clearRegistry(s, intendedClaimant);
+            clearConfirmedFlag(s, intendedClaimant);
             return;
         }
         // FAIL-CLOSED freeze (Codex #1122-rework r1 P1): a fresh authoritative flag
@@ -334,7 +334,7 @@ library LibSanctionedLock {
             if (LibVaipakam.sanctionsStatus(existing) != LibVaipakam.SanctionsRead.Clean) {
                 return; // existing still flagged / unverifiable during outage — keep it
             }
-            _clearRegistry(s, existing); // superseded, now-clean party self-heals too
+            clearConfirmedFlag(s, existing); // superseded, now-clean party self-heals too
         }
         if (lenderSide) {
             s.sanctionsLockedLenderClaimant[loanId] = intendedClaimant;
@@ -343,9 +343,14 @@ library LibSanctionedLock {
         }
     }
 
-    /// @dev Delete a `sanctionsConfirmedFlagged` entry only when it is set (avoids a
-    ///      redundant SSTORE on the common clean-and-unregistered path).
-    function _clearRegistry(LibVaipakam.Storage storage s, address who) private {
+    /// @notice Self-heal a `sanctionsConfirmedFlagged` registry entry — delete it
+    ///         only when set (avoids a redundant SSTORE on the common
+    ///         clean-and-unregistered path). Call ONLY with an address just proven
+    ///         AUTHORITATIVELY clean (an oracle-reachable clean read or a passed
+    ///         fail-closed release gate), matching the #1123 movement-gate /
+    ///         `refreshSanctionsFlag` self-heal so a de-listed wallet isn't left
+    ///         wrongly blocked from moving another open position during an outage.
+    function clearConfirmedFlag(LibVaipakam.Storage storage s, address who) internal {
         if (s.sanctionsConfirmedFlagged[who]) {
             delete s.sanctionsConfirmedFlagged[who];
         }

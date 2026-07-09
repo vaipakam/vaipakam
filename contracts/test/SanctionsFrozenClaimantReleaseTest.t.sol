@@ -53,6 +53,42 @@ contract SanctionsFrozenClaimantReleaseTest is SetupTest {
         TestMutatorFacet(address(diamond)).setLoan(LOAN_ID, l);
     }
 
+    /// @dev Codex #1122-rework r3 (central claim-gate stamp): a claim whose
+    ///      close-out stamped NO marker must STILL fail-closed when the current
+    ///      claimant is a registry-confirmed flagged wallet and the oracle is down.
+    ///      The claim gate stamps the current holder + re-checks in one step, so a
+    ///      registered claimant is caught regardless of which path created the claim
+    ///      (fallback collateral, retry top-up fold, offset borrower, …).
+    function test_lenderClaimGate_stampsRegisteredHolder_noPriorMarker() public {
+        uint256 lenderTok = 0x1AF;
+        LibVaipakam.Loan memory l;
+        l.id = LOAN_ID;
+        l.lender = frozenParty;
+        l.borrower = borrower;
+        l.status = LibVaipakam.LoanStatus.Defaulted;
+        l.lenderTokenId = lenderTok;
+        TestMutatorFacet(address(diamond)).setLoan(LOAN_ID, l);
+        // Real lender NFT so the gate's ownerOf-keyed stamp resolves the claimant.
+        TestMutatorFacet(address(diamond)).mintNFTRaw(frozenParty, lenderTok);
+
+        MockSanctionsList m = _installOracle();
+        m.setFlagged(frozenParty, true);
+        ProfileFacet(address(diamond)).refreshSanctionsFlag(frozenParty); // registered
+        // No S10 marker was ever recorded for this loan.
+        assertEq(
+            TestMutatorFacet(address(diamond)).getSanctionsFrozenClaimant(LOAN_ID, true),
+            address(0),
+            "no prior close-out marker"
+        );
+
+        m.setRevertOnRead(true); // outage
+
+        // The gate stamps the registered claimant then fail-closes on the fresh marker.
+        vm.prank(frozenParty);
+        vm.expectRevert(IVaipakamErrors.SanctionsOracleUnavailable.selector);
+        ClaimFacet(address(diamond)).claimAsLender(LOAN_ID);
+    }
+
     // ─── Lender side ────────────────────────────────────────────────────────
 
     /// LOAD-BEARING: a confirmed-at-park freeze must NOT lift during an oracle
