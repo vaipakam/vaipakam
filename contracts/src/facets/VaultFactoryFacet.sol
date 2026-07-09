@@ -771,6 +771,15 @@ contract VaultFactoryFacet is DiamondAccessControl, IVaipakamErrors {
             // `VaultBannedFromRecoveryAttempt` event to surface the
             // banned-as-outcome to the user.
             s.vaultBannedSource[msg.sender] = declaredSource;
+            // #1123 (Codex #1126 r1 P2) — a recovery-banned wallet is treated as
+            // sanctioned by `sanctionsStatus` via its `vaultBannedSource` leg. This
+            // ban was recorded from an AUTHORITATIVE flagged-source read (oracle set
+            // + the call succeeded above), so also register the wallet in the
+            // confirmed-flagged registry: otherwise a later source-read OUTAGE would
+            // make `sanctionsStatus` return `Unavailable` and the movement gate's
+            // outage branch — which consults only the registry — would let this
+            // confirmed-flagged holder move a position.
+            s.sanctionsConfirmedFlagged[msg.sender] = true;
             unchecked {
                 s.recoveryNonce[msg.sender] = nonce + 1;
             }

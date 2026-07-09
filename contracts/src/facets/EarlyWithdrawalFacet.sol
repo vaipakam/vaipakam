@@ -437,18 +437,16 @@ contract EarlyWithdrawalFacet is
         // move the position via this sale vehicle during an oracle outage. `from`
         // is the LIVE lender-position holder, captured before `migrateLenderPosition`
         // rewrites `loan.lender`/`loan.lenderTokenId`.
-        // #1123 — gate only the SELLER (the exiting lender holder), NOT the buyer.
-        // A flagged seller offloading the position during an outage is the
-        // laundering vector this closes; a flagged BUYER's receive is intentionally
-        // NOT blocked — the sale vehicle FREEZES the buyer's proceeds instead
-        // (#831 "frozen not seized": the sale completes, the buyer's held is parked
-        // behind the claim gate). Passing `address(0)` as `to` skips the buyer
-        // check. Routed through the ProfileFacet host (EIP-170).
+        // #1123 — SALE gate: block a flagged/registered SELLER (the offload —
+        // the laundering vector), but only REGISTER a flagged BUYER (their frozen
+        // receive completes per #831, so they aren't blocked; registering bars them
+        // from later MOVING the position during an outage — Codex #1126 r1 P1).
+        // Routed through the ProfileFacet host (EIP-170).
         LibFacet.crossFacetCall(
             abi.encodeWithSelector(
-                ProfileFacet.enforcePositionMoveNotSanctioned.selector,
+                ProfileFacet.enforcePositionSaleMove.selector,
                 LibERC721.ownerOf(loan.lenderTokenId),
-                address(0)
+                buyOffer.creator
             ),
             bytes4(0)
         );
@@ -970,14 +968,14 @@ contract EarlyWithdrawalFacet is
 
         // #1123 — fail-closed movement gate before the completion-path migration
         // (same rationale as `sellLoanViaBuyOffer`). `from` = live lender holder.
-        // #1123 — SELLER-only gate (see the `sellLoanViaBuyOffer` rationale): a
-        // flagged buyer's receive is frozen (#831), not blocked, so pass
-        // `address(0)` for the buyer.
+        // #1123 — SALE gate (see the `sellLoanViaBuyOffer` rationale): block a
+        // flagged/registered seller; register a flagged buyer (frozen receive
+        // completes per #831).
         LibFacet.crossFacetCall(
             abi.encodeWithSelector(
-                ProfileFacet.enforcePositionMoveNotSanctioned.selector,
+                ProfileFacet.enforcePositionSaleMove.selector,
                 LibERC721.ownerOf(loan.lenderTokenId),
-                address(0)
+                newLender
             ),
             bytes4(0)
         );

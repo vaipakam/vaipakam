@@ -15,6 +15,7 @@ import {LibCompliance} from "../libraries/LibCompliance.sol";
 import {LibLoan} from "../libraries/LibLoan.sol";
 import {LibFacet} from "../libraries/LibFacet.sol";
 import {EncumbranceMutateFacet} from "./EncumbranceMutateFacet.sol";
+import {ProfileFacet} from "./ProfileFacet.sol";
 import {LibOfferMatch} from "../libraries/LibOfferMatch.sol";
 import {LibERC721} from "../libraries/LibERC721.sol";
 import {IERC721} from "@openzeppelin/contracts/token/ERC721/IERC721.sol";
@@ -968,12 +969,22 @@ contract PrecloseFacet is
         LibMetricsHooks.onOfferAccepted(offer.id);
 
         // ── 7. NFT updates ──────────────────────────────────────────────────
-        // #1123 — the fail-closed position-movement gate on this borrower-position
-        // migration (`from` = the EXITING `exitingBorrowerHolder` captured above,
-        // before the `loan.borrower` rekey; `to` = `newBorrower`) is DEFERRED to
-        // the PrecloseFacet split (#1124): adding the gate (even a cross-facet stub)
-        // overflows this EIP-170-maxed facet. Tracked alongside the direct-preclose
-        // vault-lock in #1124; pre-live, so no deployed-window exposure.
+        // #1123 (Codex #1126 r1 P1) — fail-closed movement gate before the
+        // burn/mint borrower-position migration. BOTH parties are gated: unlike a
+        // lender sale, an obligation transfer has no frozen-receive carve-out (the
+        // `newBorrower` assumes a DEBT + pledges collateral, not proceeds), so a
+        // flagged incoming borrower is blocked, not frozen. `from` is the EXITING
+        // holder captured before the `loan.borrower` rekey. Routed through the
+        // ProfileFacet host so the heavy gate isn't inlined into this
+        // EIP-170-tight facet.
+        LibFacet.crossFacetCall(
+            abi.encodeWithSelector(
+                ProfileFacet.enforcePositionMoveNotSanctioned.selector,
+                exitingBorrowerHolder,
+                newBorrower
+            ),
+            bytes4(0)
+        );
         LibLoan.migrateBorrowerPosition(loanId, newBorrower);
 
         // Burn ben's offer position NFT (offer is consumed)

@@ -723,6 +723,15 @@ contract ProfileFacet is DiamondPausable, DiamondAccessControl, IVaipakamErrors 
         LibVaipakam.assertPositionMoveNotSanctioned(from, to);
     }
 
+    /// @notice #1123 — self-only host for the SALE-vehicle movement gate: blocks a
+    ///         flagged/registered SELLER offloading a position, but only REGISTERS
+    ///         a flagged BUYER (their frozen receive completes per #831) so the
+    ///         buyer can't later move the position during an outage.
+    function enforcePositionSaleMove(address seller, address buyer) external {
+        if (msg.sender != address(this)) revert OnlyDiamondInternal();
+        LibVaipakam.assertPositionSaleMoveNotSanctioned(seller, buyer);
+    }
+
     /// @notice Mirror of the `onlyDiamondInternal` pattern used by
     ///         `EncumbranceMutateFacet` / `VaultFactoryFacet`.
     error OnlyDiamondInternal();

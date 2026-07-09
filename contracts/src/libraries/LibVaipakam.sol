@@ -3267,18 +3267,6 @@ library LibVaipakam {
         // de-listed without any on-chain action by us. Zero ⇒ no
         // recovery-induced ban.
         mapping(address => address) vaultBannedSource;
-        // ── #1123 — confirmed-flagged-wallet registry ───────────────
-        // Wallets CONFIRMED sanctions-flagged from an AUTHORITATIVE
-        // (oracle-reachable) read. Consulted FAIL-CLOSED by the
-        // position-movement restriction (`assertPositionMoveNotSanctioned`)
-        // so a flagged wallet cannot move a position NFT during a
-        // sanctions-oracle outage — closing the S10 laundering-chain class
-        // (#1006). Mutated ONLY from strict reads (`sanctionsStatus`):
-        // registered at non-reverting oracle-up flag observations (the S10
-        // `recordFrozenClaimant` park hook + `LibConsolidation.consolidateToHolder`
-        // skip branch + the permissionless `ProfileFacet.refreshSanctionsFlag`);
-        // cleared on a confirmed de-list. Append-only (pre-live; no migration).
-        mapping(address => bool) sanctionsConfirmedFlagged;
         // ── Vault protocol-tracked balance counter (T-051 / T-054) ──
         // Per-(user, token) running counter of ERC-20 amount the
         // protocol has deposited into / withdrawn from the user's
@@ -4800,6 +4788,20 @@ library LibVaipakam {
         // surplus. Zero on the common path; cleared to zero on release.
         mapping(uint256 => uint256) frozenVpfiOwedLenderLeg;
         mapping(uint256 => uint256) frozenVpfiOwedBorrowerSurplus;
+        // ── #1123 — confirmed-flagged-wallet registry (APPENDED LAST) ─────────
+        // Wallets CONFIRMED sanctions-flagged from an AUTHORITATIVE
+        // (oracle-reachable) read. Consulted FAIL-CLOSED by the position-movement
+        // restriction (`assertPositionMoveNotSanctioned`) so a flagged wallet can't
+        // move a position NFT during a sanctions-oracle outage — closing the S10
+        // laundering-chain class (#1006). Mutated ONLY from strict reads
+        // (`sanctionsStatus`): registered at non-reverting oracle-up flag
+        // observations (`LibConsolidation.consolidateToHolder` skip, the S10
+        // `recordFrozenClaimant` park hook once #1122 lands, sale-buyer receives,
+        // and `recoverStuckERC20`'s recovery-ban) + the permissionless
+        // `ProfileFacet.refreshSanctionsFlag`; cleared on a confirmed de-list.
+        // Appended at the END of Storage so an in-place diamond refresh stays
+        // append-only (Codex #1126 r1 P1) — no existing slot shifts.
+        mapping(address => bool) sanctionsConfirmedFlagged;
         // ─── #951 v2 (Codex #959 bind-to-live redesign) — historical note ─────
         // The old `saleListingCollateral` snapshot (formerly the last struct
         // field) was removed by the #959 bind-to-live redesign merged to main:
@@ -7213,6 +7215,34 @@ library LibVaipakam {
                 revert SanctionedAddress(party);
             }
         }
+    }
+
+    /// @notice #1123 — register `who` in the confirmed-flagged registry IFF an
+    ///         AUTHORITATIVE read reports it flagged. No-op on `Clean`/`Unavailable`
+    ///         (never registers on an unconfirmed read; never clears). Used to
+    ///         record a party the protocol observes flagged on a non-reverting path
+    ///         it does NOT block — notably a sale BUYER whose flagged receive is
+    ///         frozen-not-bricked (#831) but who must still be barred from later
+    ///         MOVING the position during an outage.
+    function registerIfConfirmedFlagged(address who) internal {
+        if (who == address(0)) return;
+        if (sanctionsStatus(who) == SanctionsRead.Flagged) {
+            storageSlot().sanctionsConfirmedFlagged[who] = true;
+        }
+    }
+
+    /// @notice #1123 — movement gate for the protocol SALE vehicles (lender-sale).
+    ///         Unlike a raw transfer / obligation transfer (both parties blocked),
+    ///         a sale's BUYER receive is intentionally NOT blocked — the sale
+    ///         completes and the buyer's proceeds are FROZEN (#831). So: block a
+    ///         flagged/registered SELLER (the offload — the laundering vector), and
+    ///         REGISTER a flagged BUYER (so they can't later move the position
+    ///         during an outage) without blocking their receive. No-op when the
+    ///         oracle is unset (regime disabled).
+    function assertPositionSaleMoveNotSanctioned(address seller, address buyer) internal {
+        if (storageSlot().sanctionsOracle == address(0)) return;
+        _assertMovePartyNotSanctioned(seller);
+        registerIfConfirmedFlagged(buyer);
     }
 
     // ─────────────────────────────────────────────────────────────

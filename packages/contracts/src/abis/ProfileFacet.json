@@ -37,6 +37,24 @@
   },
   {
     "type": "function",
+    "name": "enforcePositionSaleMove",
+    "inputs": [
+      {
+        "name": "seller",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "buyer",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
     "name": "getApprovedKeepers",
     "inputs": [
       {

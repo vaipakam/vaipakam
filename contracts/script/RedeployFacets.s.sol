@@ -140,35 +140,43 @@ contract RedeployFacets is Script {
         // routing split as the HF knob + Consolidation sets above.
         (bytes4[] memory claimToAdd, bytes4[] memory claimToReplace) =
             _partitionByRouting(diamond, _claimSelectors());
+        // #1123 — ProfileFacet gained THREE new selectors (refreshSanctionsFlag,
+        // isSanctionsConfirmedFlagged, enforcePositionSaleMove + enforcePositionMove)
+        // alongside its already-routed ones. Same Add/Replace-by-routing split as
+        // Claim/HF/Consolidation: a blanket Replace would revert on the unrouted
+        // new selectors on a pre-#1123 diamond (Replace requires a non-zero
+        // existing facet).
+        (bytes4[] memory profToAdd, bytes4[] memory profToReplace) =
+            _partitionByRouting(diamond, _profileSelectors());
 
         uint256 nExtra =
             (hfToAdd.length > 0 ? 1 : 0) + (hfToReplace.length > 0 ? 1 : 0) +
             (consToAdd.length > 0 ? 1 : 0) + (consToReplace.length > 0 ? 1 : 0) +
-            (claimToAdd.length > 0 ? 1 : 0) + (claimToReplace.length > 0 ? 1 : 0);
+            (claimToAdd.length > 0 ? 1 : 0) + (claimToReplace.length > 0 ? 1 : 0) +
+            (profToAdd.length > 0 ? 1 : 0) + (profToReplace.length > 0 ? 1 : 0);
         IDiamondCut.FacetCut[] memory cuts =
-            new IDiamondCut.FacetCut[](9 + nExtra);
+            new IDiamondCut.FacetCut[](8 + nExtra);
         cuts[0] = _replace(address(riskFacet), _riskSelectors());
         cuts[1] = _replace(address(defaultedFacet), _defaultedSelectors());
         cuts[2] = _replace(address(loanFacet), _loanSelectors());
         cuts[3] = _replace(address(precloseFacet), _precloseSelectors());
         cuts[4] = _replace(address(earlyWithdrawalFacet), _earlyWithdrawalSelectors());
-        cuts[5] = _replace(address(profileFacet), _profileSelectors());
         // #658 — triggerLiquidationSplit is already routed on a current diamond
         // (relocated to RiskSplitLiquidationFacet in #66/#633), so a plain
         // Replace repoints it to the refreshed bytecode.
-        cuts[6] = _replace(address(riskSplitLiquidationFacet), _riskSplitSelectors());
+        cuts[5] = _replace(address(riskSplitLiquidationFacet), _riskSplitSelectors());
         // #658 PR-B2 — refinance selectors are already routed on a current
         // diamond, so a plain Replace repoints them to the consolidation-aware
         // bytecode.
-        cuts[7] = _replace(address(refinanceFacet), _refinanceSelectors());
+        cuts[6] = _replace(address(refinanceFacet), _refinanceSelectors());
         // #691 — RiskMatch selectors are already routed on a current diamond
         // (triggerInternalMatchLiquidation + the cross-facet-only
         // attemptInternalMatchAutoDispatch), so a plain Replace repoints them to
         // the consolidation-aware bytecode.
-        cuts[8] = _replace(address(riskMatchFacet), _riskMatchSelectors());
-        // ClaimFacet is partitioned below (not a fixed Replace) because #954
-        // added a new-and-possibly-unrouted selector to its set.
-        uint256 idx = 9;
+        cuts[7] = _replace(address(riskMatchFacet), _riskMatchSelectors());
+        // ProfileFacet + ClaimFacet are partitioned below (not fixed Replaces)
+        // because each gained new-and-possibly-unrouted selectors.
+        uint256 idx = 8;
         if (hfToReplace.length > 0) {
             cuts[idx++] = _replace(address(riskFacet), hfToReplace);
         }
@@ -188,6 +196,14 @@ contract RedeployFacets is Script {
         }
         if (claimToAdd.length > 0) {
             cuts[idx++] = _add(address(claimFacet), claimToAdd);
+        }
+        // #1123 — already-routed ProfileFacet selectors repoint to the refreshed
+        // bytecode (Replace); the new #1123 selectors are Add'ed.
+        if (profToReplace.length > 0) {
+            cuts[idx++] = _replace(address(profileFacet), profToReplace);
+        }
+        if (profToAdd.length > 0) {
+            cuts[idx++] = _add(address(profileFacet), profToAdd);
         }
 
         IDiamondCut(diamond).diamondCut(cuts, address(0), "");

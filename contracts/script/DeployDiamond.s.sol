@@ -1012,7 +1012,7 @@ contract DeployDiamond is Script {
     }
 
     function _getProfileSelectors() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](28);
+        s = new bytes4[](29);
         s[0] = ProfileFacet.updateKYCStatus.selector;
         s[1] = ProfileFacet.getUserCountry.selector;
         s[2] = ProfileFacet.isKYCVerified.selector;
@@ -1048,6 +1048,7 @@ contract DeployDiamond is Script {
         s[25] = ProfileFacet.refreshSanctionsFlag.selector;
         s[26] = ProfileFacet.isSanctionsConfirmedFlagged.selector;
         s[27] = ProfileFacet.enforcePositionMoveNotSanctioned.selector;
+        s[28] = ProfileFacet.enforcePositionSaleMove.selector;
     }
 
     function _getOracleSelectors() internal pure returns (bytes4[] memory s) {

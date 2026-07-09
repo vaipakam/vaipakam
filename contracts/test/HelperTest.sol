@@ -474,7 +474,7 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](28);
+        selectors = new bytes4[](29);
         selectors[0] = ProfileFacet.updateKYCStatus.selector;
         selectors[1] = ProfileFacet.getUserCountry.selector;
         selectors[2] = ProfileFacet.isKYCVerified.selector;
@@ -506,6 +506,7 @@ contract HelperTest {
         selectors[25] = ProfileFacet.refreshSanctionsFlag.selector;
         selectors[26] = ProfileFacet.isSanctionsConfirmedFlagged.selector;
         selectors[27] = ProfileFacet.enforcePositionMoveNotSanctioned.selector;
+        selectors[28] = ProfileFacet.enforcePositionSaleMove.selector;
         return selectors;
     }
 
