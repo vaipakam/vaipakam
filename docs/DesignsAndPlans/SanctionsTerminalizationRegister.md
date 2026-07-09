@@ -56,18 +56,33 @@ claim), today gated only by the fail-open `_assertNotSanctioned`
 - Any sibling recurring/immediate lender payout (audit the NFT-rental daily fee
   path) has the same shape.
 
+Known Class B sites (audit, #1127 r1–r2):
+- `RepayPeriodicFacet.autoDeductDaily` — the per-day lender share.
+- `RepayPeriodicFacet._autoLiquidatePeriodShortfall` — resolves
+  `ownerOf(lenderTokenId)`, fail-open `_assertNotSanctioned`, then transfers
+  `lenderProceeds` directly (#1127 r2).
+- The NFT-rental daily fee path.
+
 Class B is NOT fixed by registration — the value leaves immediately. It needs the
 same **registry-aware freeze** the surplus path uses: replace the fail-open
-`_assertNotSanctioned` decision with `LibSanctionedLock.mustFreezeParty`, and
-PARK the payout into the holder's vault (behind the claim gate) when it returns
-true, so the frozen holder claims it once de-listed.
+`_assertNotSanctioned` decision with `LibSanctionedLock.mustFreezeParty`, and when
+it returns true, PARK the payout **into `loan.lender`'s (or `loan.borrower`'s)
+always-existing vault** — NOT the current holder's, which may be an un-minted
+secondary-market vault the receive-side exemption refuses to create for a flagged
+wallet (`VaultFactoryFacet:239-245`, #1127 r2) — AND record it into an
+**existing claimable lane** so the de-listed holder can actually withdraw it. A
+bare vault deposit is not claimable (`withdrawERC20` is `onlyDiamond`); the parked
+amount must land in `heldForLender[loanId]` (folded into the eventual
+`claimAsLender`) or a claim row, exactly as `depositLocked` + the lender-claim /
+`heldForLender` sites already do (#1127 r2).
 
 ## 2. Invariants
 
 **A (deferred claims).** Every code path that transitions a loan to a terminal
 state (`Repaid` / `Defaulted` / `Settled` / `InternalMatched`) — OR otherwise
-writes a `lenderClaims` / `borrowerClaims` row a position holder will later claim
-— MUST register **both** current position holders in `sanctionsConfirmedFlagged`
+creates a deferred position-holder payout via a `lenderClaims` / `borrowerClaims`
+row (full-struct OR field write) or a `heldForLender` increment — MUST register
+**both** current position holders in `sanctionsConfirmedFlagged`
 when affirmatively flagged (an oracle-up observation), **regardless of whether it
 parked**. The register is idempotent + registry-aware
 (`recordFrozenClaimantForLoan`: registers on Flagged, self-heals on Clean, no-ops
@@ -113,15 +128,20 @@ park) runs on every terminal path. `recordFrozenClaimantForLoan` is:
 
 **Class A** — apply `recordSanctionsFrozenClaimantBoth(loanId)` at EVERY terminal
 path, WITHOUT assuming a prior park registered the holder (#1127 r1 disproved that
-for `repayLoan` ERC-20, the internal-match residual, and others). Implementation
-starts by enumerating every `lenderClaims[…] = ` / `borrowerClaims[…] = ` write
-(grep is exhaustive) and confirming the register runs before the loan can be
-claimed. Sites already calling the register (via a park's
-`recordFrozenClaimantForLoan`) are left as-is; every other terminal-writing site
-gets the host call. This explicitly includes the **backstop absorb**
-(`_absorbLenderSlice`): the lender is hard-blocked (§4), but its folded
-**borrower** collateral residual still needs the borrower register before the
-loan burns/terminalizes (#1127 r1).
+for `repayLoan` ERC-20, the internal-match residual, and others). The enumeration
+is broader than the full-struct assignment (#1127 r2):
+- `lenderClaims[…] = ClaimInfo({…})` / `borrowerClaims[…] = ClaimInfo({…})`, AND
+- **storage-pointer FIELD writes** — `bClaim.amount = …` / `.asset = …` etc. (e.g.
+  `_absorbLenderSlice`, the claim-time borrower-lien fold), AND
+- **`heldForLender[loanId]` increments** — some terminals create a later lender
+  payout ONLY via `heldForLender` (e.g. `_settleOldLenderAtCompletion`,
+  partial-internal-match residual), not a `lenderClaims` row.
+
+Sites already calling the register (via a park's `recordFrozenClaimantForLoan`)
+are left as-is; every other deferred-payout terminal site gets the host call. This
+explicitly includes the **backstop absorb** (`_absorbLenderSlice`): the lender is
+hard-blocked (§4), but its folded **borrower** collateral residual still needs the
+borrower register before the loan burns/terminalizes (#1127 r1).
 
 **Class B** — audit every inline holder payout and swap its fail-open
 `_assertNotSanctioned` decision for `mustFreezeParty` + a park:
