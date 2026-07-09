@@ -877,6 +877,16 @@ contract RiskMatchLiquidationFacet is DiamondReentrancyGuard, DiamondPausable {
                 LibSanctionedLock.recordFrozenClaimantForLoan(
                     LibVaipakam.storageSlot(), loan, true
                 );
+                // #998 S10 (#1006, Codex #1122-rework r1 P1) — `_retainInternalMatchResidual`
+                // above writes a `borrowerClaims` row for any over-collateralized
+                // residual (`collateralAmount > 0`), claimed via `claimAsBorrower`.
+                // Stamp the BORROWER side too so a flagged current borrower-position
+                // holder can't release that residual during a later oracle outage.
+                if (loan.collateralAmount > 0) {
+                    LibSanctionedLock.recordFrozenClaimantForLoan(
+                        LibVaipakam.storageSlot(), loan, false
+                    );
+                }
                 // #585 — if the proceeds are VPFI, reserve them against the
                 // unstake path (`withdrawVPFIFromVault`) so the stored
                 // lender can't front-run the holder's claim. Released in

@@ -993,11 +993,21 @@ contract EarlyWithdrawalFacet is
         // the BUYER's (`newLender`) vault as `heldForLender`, claimed later via
         // `claimAsLender`. A flagged buyer is blocked at purchase while the oracle
         // is up; a buy-during-outage would otherwise slip through, so freeze that
-        // held fail-closed keyed to `newLender` (the future claimant — `ownerOf`
-        // still returned the departing seller at the park points above). No-op for
-        // a clean buyer or when nothing was parked.
+        // held fail-closed keyed to the buyer. Routed through the cross-facet host
+        // (Codex #1122-rework r1 P1) — the now registry-aware `mustFreezeParty` /
+        // `sanctionsStatus` machinery is too heavy to inline into this
+        // EIP-170-tight facet. The migration above made `ownerOf(lenderTokenId)`
+        // == `newLender`, which the host resolves — the same address. No-op for a
+        // clean buyer or when nothing was parked.
         if (s.heldForLender[loanId] > 0) {
-            LibSanctionedLock.recordFrozenClaimant(s, loanId, true, newLender);
+            LibFacet.crossFacetCall(
+                abi.encodeWithSelector(
+                    EncumbranceMutateFacet.recordSanctionsFrozenClaimant.selector,
+                    loanId,
+                    true
+                ),
+                bytes4(0)
+            );
         }
 
         // #597 — re-reserve the FULL held-for-lender VPFI on the NEW lender,

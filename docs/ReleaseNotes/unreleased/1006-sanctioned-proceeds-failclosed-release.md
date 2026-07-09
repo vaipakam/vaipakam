@@ -43,6 +43,14 @@ a party frozen at close-out cannot later shuffle a still-open position to a clea
 wallet during an outage. Together these mean the freeze can rely on a single
 recorded address per loan side, with no chain of intermediary holders to track.
 
+Because the platform now keeps a registry of wallets confirmed flagged while the
+oracle was reachable, the freeze decision itself is hardened against outages: a
+close-out that lands *while the oracle is down* still freezes a party who was
+**previously confirmed** — the marker is stamped, and where a close-out would
+otherwise pay a surplus straight to that holder it is parked instead. Only a
+wallet that was *never* confirmed stays fail-open during an outage, so an oracle
+blip can never freeze an honest, never-flagged claimant.
+
 The freeze survives an oracle outage; a de-listing (oracle back up, address
 cleared) releases the funds. No behaviour changes for any unflagged party.
 

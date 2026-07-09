@@ -254,6 +254,37 @@ library LibSanctionedLock {
     ///         the current holder — not the `owner` the funds are parked into —
     ///         because a transferred position can be held by a flagged party while
     ///         the stored (credited) party is clean.
+    /// @notice Registry-aware FREEZE decision (Codex #1122-rework r1 P1). Returns
+    ///         true when `who`'s close-out proceeds must be PARKED (frozen), not
+    ///         paid out. Unlike the bare fail-open {LibVaipakam.isSanctionedAddress}
+    ///         (which waves a party through during ANY outage), this is FAIL-CLOSED
+    ///         on a PRIOR confirmed flag: a wallet already in
+    ///         `sanctionsConfirmedFlagged` stays frozen even while the oracle is
+    ///         unreachable, so a close-out that lands during an outage can't hand a
+    ///         previously-confirmed-flagged holder their payout (the ordinary claim
+    ///         screen fails open in the same window).
+    /// @dev    Mirrors the #1123 movement-gate tri-state exactly:
+    ///           - oracle UNSET → false (screening regime disabled);
+    ///           - Flagged (oracle up) → true (a fresh authoritative confirmation);
+    ///           - Clean (oracle up) → false (never freeze a de-listed party);
+    ///           - Unavailable (oracle set but reverts) → the registry: freeze IFF
+    ///             `who` was previously confirmed. An address NEVER confirmed stays
+    ///             fail-open during an outage — an oracle blip can't freeze an
+    ///             honest claimant.
+    function mustFreezeParty(LibVaipakam.Storage storage s, address who)
+        internal
+        view
+        returns (bool)
+    {
+        if (who == address(0)) return false;
+        if (s.sanctionsOracle == address(0)) return false; // regime disabled
+        LibVaipakam.SanctionsRead st = LibVaipakam.sanctionsStatus(who);
+        if (st == LibVaipakam.SanctionsRead.Flagged) return true;
+        if (st == LibVaipakam.SanctionsRead.Clean) return false;
+        // Unavailable: fail-closed on a prior authoritative confirmation only.
+        return s.sanctionsConfirmedFlagged[who];
+    }
+
     function recordFrozenClaimant(
         LibVaipakam.Storage storage s,
         uint256 loanId,
@@ -261,18 +292,20 @@ library LibSanctionedLock {
         address intendedClaimant
     ) internal {
         if (intendedClaimant == address(0)) return;
-        if (!LibVaipakam.isSanctionedAddress(intendedClaimant)) return;
-        // #1123 registry population — reaching here means `isSanctionedAddress`
-        // returned TRUE, which (being fail-OPEN) can only happen on an
-        // oracle-REACHABLE affirmative flag: an authoritative confirmation. Record
+        // FAIL-CLOSED freeze decision (Codex #1122-rework r1 P1): freeze on a fresh
+        // authoritative flag OR on a prior confirmation during an outage — NOT the
+        // bare fail-open `isSanctionedAddress`, which would skip the marker for a
+        // previously-confirmed holder while the oracle is down and let their
+        // (equally fail-open) claim through.
+        if (!mustFreezeParty(s, intendedClaimant)) return;
+        // #1123 registry population — a fresh oracle-reachable Flagged read enrols
         // this closing holder in the confirmed-flagged registry so the fail-closed
         // position-movement gate can bar them from shuffling a still-open position
-        // during a later oracle outage. This is the close-out population that
-        // #1123 deliberately left to S10 (the same holder, keyed identically). The
-        // registry is per-address and idempotent, so it is set regardless of the
-        // per-loan first-write-wins below, and is cleared only by an authoritative
-        // de-list (refresh / clean move), never by a fallback-cure of the per-loan
-        // marker (the holder WAS confirmed flagged).
+        // during a later oracle outage (the close-out population #1123 left to S10,
+        // same holder, keyed identically). Idempotent: a no-op when we reached here
+        // via an already-registered outage confirmation. Cleared only by an
+        // authoritative de-list (refresh / clean move), never by a fallback-cure of
+        // the per-loan marker (the holder WAS confirmed flagged).
         s.sanctionsConfirmedFlagged[intendedClaimant] = true;
         // FIRST-WRITE-WINS (Codex r2 P1): never overwrite an already-recorded
         // frozen claimant for this side. A loan side can accrue proceeds across

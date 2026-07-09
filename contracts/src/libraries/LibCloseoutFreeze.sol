@@ -127,7 +127,13 @@ library LibCloseoutFreeze {
         uint256 surplus
     ) internal {
         if (surplus == 0) return;
-        if (!LibVaipakam.isSanctionedAddress(currentHolder)) {
+        // Codex #1122-rework r1 P1 — FAIL-CLOSED freeze decision. The bare fail-open
+        // `isSanctionedAddress` would take the direct-transfer branch for a
+        // previously-confirmed-flagged `currentHolder` during an oracle outage,
+        // paying the surplus straight to their EOA and bypassing the claim-side
+        // fail-closed gate entirely. `mustFreezeParty` stays frozen on a prior
+        // confirmation while the oracle is down.
+        if (!LibSanctionedLock.mustFreezeParty(s, currentHolder)) {
             IERC20(loan.principalAsset).safeTransfer(currentHolder, surplus);
             return;
         }

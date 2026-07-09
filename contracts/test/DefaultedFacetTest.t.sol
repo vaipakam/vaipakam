@@ -880,6 +880,65 @@ contract DefaultedFacetTest is Test {
         );
     }
 
+    /// @dev Codex #1122-rework r1 P1 (central fix): a holder PREVIOUSLY confirmed
+    ///      flagged (in the #1123 registry) must still be FROZEN when the close-out
+    ///      lands during an oracle OUTAGE. Bare fail-open `isSanctionedAddress`
+    ///      would skip the marker in that window, and the ordinary claim screen is
+    ///      fail-open too — so the confirmed-flagged holder could take the payout.
+    ///      `mustFreezeParty` is fail-closed on the prior confirmation.
+    function testS10_defaultDuringOutage_registeredHolder_stillFreezes() public {
+        uint256 loanId = createAndAcceptOffer(
+            mockERC20,
+            mockCollateralERC20,
+            LibVaipakam.AssetType.ERC20,
+            1000 ether,
+            2000 ether,
+            30,
+            0,
+            0
+        );
+
+        // Confirm + register the lender-position holder while the oracle is UP.
+        MockSanctionsList m = new MockSanctionsList();
+        ProfileFacet(address(diamond)).setSanctionsOracle(address(m));
+        m.setFlagged(lender, true);
+        ProfileFacet(address(diamond)).refreshSanctionsFlag(lender);
+        assertTrue(ProfileFacet(address(diamond)).isSanctionsConfirmedFlagged(lender));
+
+        uint256 endTime = block.timestamp + 30 days;
+        vm.warp(endTime + LibVaipakam.gracePeriod(30) + 1);
+        vm.mockCall(
+            address(diamond),
+            abi.encodeWithSelector(OracleFacet.getAssetPrice.selector, mockCollateralERC20),
+            abi.encode(5e7, 8)
+        );
+        vm.mockCall(
+            address(diamond),
+            abi.encodeWithSelector(RiskFacet.calculateHealthFactor.selector),
+            abi.encode(uint256(0.5e18))
+        );
+        deal(mockERC20, address(diamond), 3000 ether);
+        deal(mockCollateralERC20, address(diamond), 3000 ether);
+
+        // Oracle goes DOWN before the close-out. `isSanctionedAddress` now fails
+        // open, but the holder is in the registry → `mustFreezeParty` freezes.
+        m.setRevertOnRead(true);
+
+        vm.prank(lender);
+        DefaultedFacet(address(diamond)).triggerDefault(loanId, defaultAdapterCalls());
+
+        // Marker recorded despite the outage (the load-bearing assertion).
+        assertEq(
+            TestMutatorFacet(address(diamond)).getSanctionsFrozenClaimant(loanId, true),
+            lender,
+            "outage close-out of a registered holder still records the frozen marker"
+        );
+        // And the claim stays fail-closed while the oracle is down.
+        vm.prank(lender);
+        vm.expectRevert(IVaipakamErrors.SanctionsOracleUnavailable.selector);
+        ClaimFacet(address(diamond)).claimAsLender(loanId);
+    }
+
     /// @dev Finding-1 fix: a FAILED liquidation (FallbackPending) whose lender
     ///      holder is flagged records the fail-closed marker at fallback ENTRY
     ///      (oracle up on the HF/grace-gated path), so the lender's later fallback
