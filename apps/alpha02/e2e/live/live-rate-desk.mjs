@@ -159,7 +159,11 @@ const INDEXER = process.env.INDEXER_ORIGIN ?? 'https://indexer.vaipakam.com';
  *  leniently (null on non-JSON) — status/shape asserts are the
  *  caller's job so each step can throw its own precise message. */
 async function indexerGet(url) {
-  const res = await fetch(url);
+  // Bounded (Codex #1143 round-1 P2): the History probe runs AFTER a
+  // real offer is posted — an indefinitely-pending fetch would keep
+  // the run from ever reaching the finally-cleanup that cancels the
+  // escrow. A hang becomes a thrown AbortError instead.
+  const res = await fetch(url, { signal: AbortSignal.timeout(20_000) });
   const body = await res.json().catch(() => null);
   return { status: res.status, body };
 }
@@ -534,7 +538,11 @@ try {
   // `copy.desk.chart.emptyRange` — "No fills in this range — try a
   // longer range."
   const chartEmptyRange = chartCard.getByText(/no fills in this range/i);
-  const chartCanvas = chartCard.locator('.desk-chart-canvas');
+  // The wrapper div mounts before lightweight-charts initializes, so a
+  // "drawn series" claim must see the library's actual OUTPUT — a
+  // <canvas> child — not just the container (Codex #1143 round-1 P2:
+  // a chart-init throw would otherwise still record a drawn series).
+  const chartCanvas = chartCard.locator('.desk-chart-canvas canvas');
   await pollChain(
     'the chart to resolve out of its loading state',
     async () =>
@@ -900,6 +908,18 @@ try {
     .locator('.card')
     .filter({ has: page.getByRole('button', { name: 'Positions', exact: true }) });
   await tabsCard.getByRole('button', { name: 'History', exact: true }).click();
+  // Gate every History read on a History-SPECIFIC marker (Codex #1143
+  // round-1 P2): `.row-list .item-row` also matches the Open orders
+  // panel's rows, so if the tab click ever stopped switching panels,
+  // this run's own open order could satisfy a bare row count while
+  // the History panel never rendered. The caption
+  // (`copy.desk.history.caption`) renders in EVERY History state —
+  // rows, empty, and unavailable alike — so it proves the panel
+  // actually swapped before anything else is trusted.
+  const historyCaption = tabsCard.getByText(
+    /everything this wallet ever traded on the desk/i,
+  );
+  await historyCaption.waitFor({ state: 'visible', timeout: 30_000 });
   const historyUnavailable = tabsCard.getByText(
     /couldn.t load your history right now/i,
   );
