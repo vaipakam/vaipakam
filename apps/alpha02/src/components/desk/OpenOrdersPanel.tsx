@@ -749,7 +749,14 @@ function SignedOrdersBlock({
   const { write } = useDiamondWrite();
   const [busyHash, setBusyHash] = useState<string | null>(null);
   const [error, setError] = useState<{ hash: string; msg: string } | null>(null);
-  const [cancelledHash, setCancelledHash] = useState<string | null>(null);
+  // Codex #1145 round-4 P3 — an APPEND-ONLY set of successfully
+  // cancelled order hashes (never cleared when another row's cancel
+  // starts): with two own rows still in the cached book, clearing a
+  // single-hash state on the next cancel would re-show row A's button
+  // and let the same idempotent cancelSignedOffer mine twice.
+  const [cancelledHashes, setCancelledHashes] = useState<ReadonlySet<string>>(
+    () => new Set(),
+  );
 
   const me = address?.toLowerCase();
   const own = useMemo(
@@ -767,10 +774,9 @@ function SignedOrdersBlock({
   async function cancel(row: IndexedSignedOffer) {
     setBusyHash(row.orderHash);
     setError(null);
-    setCancelledHash(null);
     try {
       await write('cancelSignedOffer', [signedOfferTypedMessage(row.order)]);
-      setCancelledHash(row.orderHash);
+      setCancelledHashes((prev) => new Set(prev).add(row.orderHash));
       void queryClient.invalidateQueries({ queryKey: ['deskSignedBook'] });
     } catch (err) {
       setError({ hash: row.orderHash, msg: captureTxError(err) });
@@ -825,7 +831,7 @@ function SignedOrdersBlock({
                     ? `expires ${formatDate(row.expiresAt)}`
                     : 'no expiry'}
                 </span>
-                {cancelledHash === row.orderHash ? (
+                {cancelledHashes.has(row.orderHash) ? (
                   <>
                     <br />
                     <span className="row-sub" style={{ color: 'var(--ok)' }}>
@@ -848,8 +854,9 @@ function SignedOrdersBlock({
                   `cancelSignedOffer` doesn't reject an already-
                   cancelled order, so a second click during the
                   cache/indexer catch-up window would mine a second,
-                  pointless cancellation and burn gas. */}
-              {cancelledHash === row.orderHash ? null : (
+                  pointless cancellation and burn gas. Membership in
+                  the append-only set — see cancelledHashes above. */}
+              {cancelledHashes.has(row.orderHash) ? null : (
                 <button
                   type="button"
                   className="btn btn-secondary btn-sm"

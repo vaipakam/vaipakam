@@ -206,7 +206,7 @@ export function SignedFillConfirm({
       // Sign the AcceptTerms — the hook re-vets the order live (fill
       // ledger, burned nonce, both time windows on chain time, illiquid
       // legs, risk-terms hash) BEFORE the wallet is asked to sign.
-      const { payload } = await signTerms.sign({
+      const { payload, orderHash } = await signTerms.sign({
         order: o,
         consent,
       });
@@ -220,15 +220,36 @@ export function SignedFillConfirm({
         spender: walletChain.diamondAddress,
         amount: payAmount,
       });
-      // Final time-window recheck on CHAIN time (Codex #1145 round-3
-      // P2): the signer's vet ran before the wallet prompts, and a
-      // classic approval may have just spent minutes mining — one
-      // cheap read here means a wallet-delay lapse of the signature
-      // deadline or GTT expiry fails BEFORE the fill transaction is
-      // sent, not as an on-chain revert the taker pays for.
-      const { timestamp: chainNowPreWrite } = await publicClient.getBlock({
-        blockTag: 'latest',
-      });
+      // Final consumption + time-window recheck (Codex #1145 round-3
+      // P2 + round-4 P2): the signer's vet ran before the wallet
+      // prompts, and a classic approval may have just spent minutes
+      // mining — during that window another taker can fill the order
+      // or the maker can cancel / batch-burn its nonce, and the time
+      // windows can lapse. Re-read all three (one Promise.all
+      // round-trip, same call shapes as the pre-signature vet in
+      // useSignedOfferAcceptTermsSigning) so a consumed or lapsed
+      // order fails BEFORE the fill transaction is sent, not as a
+      // SignedOfferConsumed / nonce / expiry revert the taker pays
+      // for.
+      const [{ timestamp: chainNowPreWrite }, filledPreWrite, nonceUsedPreWrite] =
+        await Promise.all([
+          publicClient.getBlock({ blockTag: 'latest' }),
+          publicClient.readContract({
+            address: walletChain.diamondAddress,
+            abi: DIAMOND_ABI_VIEM,
+            functionName: 'signedOfferFilledAmount',
+            args: [orderHash],
+          }) as Promise<bigint>,
+          publicClient.readContract({
+            address: walletChain.diamondAddress,
+            abi: DIAMOND_ABI_VIEM,
+            functionName: 'isSignedOfferNonceUsed',
+            args: [o.signer as `0x${string}`, BigInt(o.nonce)],
+          }) as Promise<boolean>,
+        ]);
+      if (filledPreWrite !== 0n || nonceUsedPreWrite) {
+        throw new Error(text.gone);
+      }
       if (!signedOrderTimeWindowsOpen(o, chainNowPreWrite)) {
         throw new Error(text.gone);
       }
