@@ -9,18 +9,24 @@
 // Desk row: the fork spec (tests/17-rate-desk.spec.ts) owns the exact
 // ladder math and time-travels past the cooldown; this drive proves
 // the same journey against the deployed site, the real Base Sepolia
-// Diamond, and the real indexer — INCLUDING the desk's honest degraded
-// states when the indexer's market routes are down (/offers/markets
-// and the market-scoped /loans/recent). Those degraded states are
-// OBSERVED and reported, never asserted as failures: the desk's
-// doctrine is honest copy over faked data, and the book itself is a
-// chain read that must keep working regardless.
+// Diamond, and the real indexer. The indexer-backed surfaces are
+// ASSERTED healthy: the /offers/markets summary behind the pair
+// dropdown (step 1) and the market-scoped /loans/recent tape (step 7)
+// must render real data or their honest empty copy. Production has
+// carried real market data since D1 migrations 0029–0031 were applied
+// (2026-07-10), so a degraded indexer — either surface showing its
+// "couldn't load" copy (`copy.desk.marketsUnavailable` /
+// `copy.desk.tapeUnavailable`) — now FAILS the drive by design. The
+// book itself is a chain read and is asserted healthy regardless.
 //
 // Money discipline: ONE offer, AMOUNT_WETH escrow + gas at risk; the
 // cancel refunds the escrow. If the UI cancel can't be reached after
 // an offer was created, the cleanup handler cancels directly on-chain
 // via viem (waiting out the cooldown first) — and failing THAT, it
-// reports the orphaned offer id loudly for a manual cancel.
+// reports the orphaned offer id loudly for a manual cancel. If Post
+// was clicked but no create ever surfaced in the offer index (a tx
+// still pending past the cleanup's extended watch), the run exits
+// non-zero as CLEANUP-UNKNOWN rather than claiming "cancelled".
 //
 //   TESTNET_WALLETS_FILE=~/secrets/wallets.json node live-rate-desk.mjs
 //
@@ -279,6 +285,12 @@ let offerId = null;
 let offerCreatedAt = 0;
 let cancelled = false;
 let failed = false;
+// True once the ticket's Post button has actually been clicked (Codex
+// round-2 P2 #1) — from that moment a create tx may exist even if
+// unmined, so an empty cleanup sweep no longer proves "nothing
+// escrowed"; the cleanup must extend its watch and, failing that,
+// report CLEANUP-UNKNOWN instead of "cancelled".
+let postAttempted = false;
 // Snapshot of the lender's offer-index LENGTH just before the post —
 // module scope so the cleanup sweep can find the run's offer(s) even
 // if the drive failed before an id was discovered ("Order posted"
@@ -297,29 +309,60 @@ const ownLadderRow = (pct) =>
   page.locator('.desk-ladder-row.desk-own').filter({ hasText: pct });
 
 try {
-  // ---- step 1: initial /desk state + degraded markets summary -------
+  // ---- step 1: initial /desk state — markets summary ASSERTED healthy
+  // (Codex round-2 P2 #3: production carries real markets data since
+  // the 2026-07-10 D1 migrations, so this is PASS/FAIL, not observed.)
   await page.goto(`${SITE}/desk`, { waitUntil: 'domcontentloaded' });
   await page
     .getByRole('heading', { name: 'Rate Desk', level: 1 })
     .waitFor({ timeout: 30_000 });
-  await page.waitForTimeout(5_000); // let the markets query settle
-  const headerText = await page.locator('.desk-header').innerText();
-  const pairButton = (await page.locator('#desk-pair').innerText()).trim();
+  const deskHeader = page.locator('.desk-header');
+  // `copy.desk.marketsUnavailable` — the degraded /offers/markets copy.
+  const marketsDegraded = deskHeader.getByText(/markets list couldn.t load right now/i);
+  // `copy.desk.marketsEmpty` — the honest zero-markets copy.
+  const marketsEmptyCopy = deskHeader.getByText(/no live markets right now/i);
+  // `copy.desk.pickPair` — the dropdown's no-selection placeholder. A
+  // loaded summary auto-selects the most active market (Desk.tsx's
+  // default-market effect), so the trigger showing a real pair label
+  // proves the dropdown lists at least one market beyond the
+  // "Custom pair…" escape hatch.
+  const PAIR_PLACEHOLDER = /pick a market to load its book/i;
+  const pairLabel = async () =>
+    (await page.locator('#desk-pair').innerText().catch(() => '')).trim();
+  await pollChain(
+    'the markets summary to reach a terminal state',
+    async () => {
+      if (await marketsDegraded.isVisible().catch(() => false)) return true;
+      if (await marketsEmptyCopy.isVisible().catch(() => false)) return true;
+      const label = await pairLabel();
+      return label !== '' && !PAIR_PLACEHOLDER.test(label);
+    },
+    { timeoutMs: 45_000, intervalMs: 2_000 },
+  );
+  const pairButton = await pairLabel();
   await snap('rate-desk-01-initial');
-  if (/pair discovery is limited/i.test(headerText)) {
-    const line = headerText
-      .split('\n')
-      .find((l) => /pair discovery is limited/i.test(l));
-    record(
-      '1. /desk initial — markets summary degraded honestly',
-      'OBSERVED',
-      `dropdown="${pairButton}" · copy="${line?.trim()}"`,
+  if (await marketsDegraded.isVisible().catch(() => false)) {
+    throw new Error(
+      'markets summary rendered DEGRADED (`copy.desk.marketsUnavailable`) — ' +
+        'the indexer /offers/markets route regressed',
     );
-  } else if (/no live markets right now/i.test(headerText)) {
-    record('1. /desk initial — markets summary', 'OBSERVED', 'markets list empty (not degraded)');
-  } else {
-    record('1. /desk initial — markets summary', 'OBSERVED', `dropdown="${pairButton}" (markets list loaded)`);
   }
+  if (
+    (await marketsEmptyCopy.isVisible().catch(() => false)) ||
+    pairButton === '' ||
+    PAIR_PLACEHOLDER.test(pairButton)
+  ) {
+    throw new Error(
+      `markets summary loaded no real market — dropdown shows "${pairButton}"; ` +
+        'production steady state has live markets (post-2026-07-10 migrations), ' +
+        'so an empty summary is a regression',
+    );
+  }
+  record(
+    '1. /desk initial — markets summary healthy (indexer-backed)',
+    'PASS',
+    `dropdown auto-selected "${pairButton}"`,
+  );
 
   // ---- step 2: load WETH/tLIQ via the custom-pair branch ------------
   await chooseMenuValue(page, 'desk-pair', '__custom__');
@@ -376,6 +419,7 @@ try {
 
   const post = page.getByRole('button', { name: /^post order$/i });
   await consentAndWaitEnabled(page, post);
+  postAttempted = true; // a create tx may exist from here on, mined or not
   await post.click();
   // Real testnet tx (possibly approve + create, or Permit2 + create).
   await page.getByText(/order posted/i).waitFor({ timeout: 120_000 });
@@ -426,6 +470,13 @@ try {
       ? null
       : `collateralAmountMax=${posted.collateralAmountMax}`,
     Number(posted.interestRateBps) === POST.bps ? null : `rate=${posted.interestRateBps}`,
+    // Lender rate CEILING left open (Codex round-2 P2 #2): the ticket's
+    // payload mapping (`toCreateOfferPayload` in src/lib/offerSchema.ts)
+    // sets `interestRateBpsMax = MAX_INTEREST_BPS` (10_000 = 100% APR)
+    // for lender offers — no upper limit on rates they'd accept.
+    Number(posted.interestRateBpsMax) === 10_000
+      ? null
+      : `interestRateBpsMax=${posted.interestRateBpsMax}`,
     Number(posted.durationDays) === tenor ? null : `days=${posted.durationDays}`,
     Number(posted.fillMode) === 0 ? null : `fillMode=${posted.fillMode}`,
     Number(posted.expiresAt) === 0 ? null : `expiresAt=${posted.expiresAt}`,
@@ -569,13 +620,39 @@ try {
       `chain=${AMEND.bps} bps with every other term unchanged; row + own ladder level updated`,
   );
 
-  // ---- step 7: tape panel (degraded /loans/recent expected) ----------
+  // ---- step 7: tape panel — indexer-backed, ASSERTED healthy ---------
+  // (Codex round-2 P2 #3.) The market-scoped /loans/recent route is
+  // production-healthy post-migration, so the tape must resolve to
+  // real fills or the honest empty copy (`copy.desk.tapeEmpty`:
+  // "No fills yet for this market.") — the unavailable copy
+  // (`copy.desk.tapeUnavailable`: "We couldn't load recent fills right
+  // now.") is a FAIL.
   const tapeCard = page.locator('.card').filter({ hasText: 'Recent fills' }).first();
-  const tapeText = (await tapeCard.innerText().catch(() => '')).replace(/\n+/g, ' · ');
+  await tapeCard.waitFor({ timeout: 30_000 });
+  const tapeEmpty = tapeCard.getByText('No fills yet for this market.', { exact: true });
+  const tapeUnavailable = tapeCard.getByText(/couldn.t load recent fills right now/i);
+  const tapeRows = tapeCard.locator('.desk-tape-row');
+  await pollChain(
+    'the tape to resolve out of its loading state',
+    async () =>
+      (await tapeEmpty.isVisible().catch(() => false)) ||
+      (await tapeUnavailable.isVisible().catch(() => false)) ||
+      (await tapeRows.count().catch(() => 0)) > 0,
+    { timeoutMs: 45_000, intervalMs: 2_000 },
+  );
+  if (await tapeUnavailable.isVisible().catch(() => false)) {
+    throw new Error(
+      'tape rendered UNAVAILABLE (`copy.desk.tapeUnavailable`) — ' +
+        'the indexer /loans/recent route regressed',
+    );
+  }
+  const tapeFillCount = await tapeRows.count();
   record(
-    '7. tape panel state',
-    'OBSERVED',
-    tapeText ? `"${tapeText}"` : 'tape card not found',
+    '7. tape panel — indexer-backed fills healthy',
+    'PASS',
+    tapeFillCount > 0
+      ? `${tapeFillCount} fill row(s) rendered`
+      : 'honest market-scoped empty state ("No fills yet for this market.")',
   );
 
   // ---- step 8: wait out the REAL cooldown, then cancel ---------------
@@ -643,9 +720,43 @@ try {
         // Give a still-pending create a moment to mine, then sweep.
         await new Promise((r) => setTimeout(r, 15_000));
       }
-      const sweepIds = await offerIdsAppendedSince(lenderAddr, beforePostTotal);
+      let sweepIds = await offerIdsAppendedSince(lenderAddr, beforePostTotal);
+      if (sweepIds.length === 0 && postAttempted) {
+        // Post WAS clicked, so a create tx may still sit in the
+        // mempool (Codex round-2 P2 #1: "Order posted" renders at
+        // SEND time, and Base Sepolia can hold a tx past the normal
+        // 120 s poll + 15 s grace). An empty index delta here does
+        // NOT prove "nothing escrowed" — keep watching the
+        // append-only index for up to 3 more minutes.
+        console.log(
+          'cleanup: Post was clicked but the index delta is empty — ' +
+            'extended watch (up to 180s) for a late-mining create…',
+        );
+        const extendedDeadline = Date.now() + 180_000;
+        while (sweepIds.length === 0 && Date.now() < extendedDeadline) {
+          await new Promise((r) => setTimeout(r, 10_000));
+          sweepIds = await offerIdsAppendedSince(lenderAddr, beforePostTotal);
+        }
+      }
       if (sweepIds.length === 0) {
-        cancelled = true; // nothing ever landed — nothing escrowed
+        if (postAttempted) {
+          // CLEANUP-UNKNOWN — NOT "cancelled": a create sent this run
+          // could still mine after we exit, leaving a live escrowed
+          // offer nobody is watching. Fail loudly with the pre-post
+          // index total so the operator can check the delta manually.
+          record(
+            'cleanup: CLEANUP-UNKNOWN',
+            'FAIL',
+            'Post was clicked but no create surfaced in the offer index even ' +
+              'after the extended watch — if the tx mines later, a live offer ' +
+              `with ${AMOUNT_WETH} WETH escrowed will exist unwatched. Check ` +
+              `getUserOffersPaginated(${lenderAddr}) on ${DIAMOND}: any id at ` +
+              `offset >= ${beforePostTotal} (the pre-post total) is this run's — ` +
+              'cancelOffer it manually after the 300 s cooldown.',
+          );
+        } else {
+          cancelled = true; // Post never clicked — nothing could have escrowed
+        }
       } else {
         const stillLive = [];
         for (const id of sweepIds) {
