@@ -86,6 +86,7 @@ function doIngestEnabled(env: WorkerEnv): boolean {
 import {
   handleOffersStats,
   handleOffersActive,
+  handleOffersMarkets,
   handleOffersRecent,
   handleOfferById,
   handleOffersByCreator,
@@ -244,6 +245,10 @@ export default {
         }
         if (url.pathname === '/offers/active') {
           return handleOffersActive(req, resolved);
+        }
+        if (url.pathname === '/offers/markets') {
+          // Rate Desk (#1129) — market discovery for the pair/tenor chips.
+          return handleOffersMarkets(req, resolved);
         }
         if (url.pathname === '/offers/recent') {
           return handleOffersRecent(req, resolved);

@@ -1047,3 +1047,228 @@ a.item-row:hover {
 .diag-muted {
   color: var(--text-muted);
 }
+
+/* ---------- Rate Desk (#1129) ---------- */
+
+/* Mobile-first: the ladder and the ticket sit SIDE-BY-SIDE as the
+ * primary view (the highest-frequency loop — tap a rate, adjust the
+ * ticket — stays on one screen); the tape stacks below the ladder.
+ * >= 720px widens into the terminal layout: book column + a fixed
+ * ticket column. */
+.desk-main {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: var(--space-3);
+  align-items: start;
+  margin-top: var(--space-4);
+}
+
+.desk-book-col {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  min-width: 0;
+}
+
+.desk-ticket-col {
+  min-width: 0;
+}
+
+@media (min-width: 720px) {
+  .desk-main {
+    grid-template-columns: minmax(0, 1.4fr) minmax(300px, 400px);
+    gap: var(--space-4);
+  }
+}
+
+.desk-header .desk-stats {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-4);
+}
+
+.desk-stat {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.desk-stat-label {
+  font-size: 0.72rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-muted);
+}
+
+.desk-stat-value {
+  font-family: var(--font-mono);
+  font-size: 0.95rem;
+  color: var(--text-strong);
+}
+
+/* Tenor / expiry / fill-mode chips */
+.desk-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+
+.desk-chip {
+  padding: 5px 11px;
+  min-height: 32px;
+  border-radius: var(--radius-full);
+  border: 1px solid var(--border);
+  background: var(--surface-raised);
+  font-size: 0.8rem;
+  font-weight: 600;
+  color: var(--text-faint);
+  cursor: pointer;
+}
+
+/* Tenors with live offers are emphasized; empty tenors stay muted
+ * (honest — they are selectable but the book will say it's empty). */
+.desk-chip.has-liquidity {
+  color: var(--text-body);
+  border-color: var(--border-strong);
+}
+
+.desk-chip.active {
+  background: var(--brand-soft);
+  color: var(--brand-soft-text);
+  border-color: transparent;
+}
+
+/* The rate ladder */
+.desk-ladder {
+  font-family: var(--font-mono);
+  font-size: 0.82rem;
+}
+
+.desk-ladder-head,
+.desk-ladder-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) minmax(0, 1fr) auto;
+  gap: var(--space-2);
+  align-items: center;
+  padding: 3px 6px;
+}
+
+.desk-ladder-head {
+  font-size: 0.7rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  color: var(--text-muted);
+  font-family: var(--font-sans);
+}
+
+.desk-ladder-row {
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+}
+
+.desk-ladder-row:hover,
+.desk-ladder-row:focus-visible {
+  background: var(--surface-hover);
+  outline: none;
+}
+
+.desk-ladder-row.desk-own {
+  background: var(--brand-soft);
+}
+
+.desk-own-dot {
+  display: inline-block;
+  width: 7px;
+  height: 7px;
+  border-radius: var(--radius-full);
+  background: var(--brand);
+}
+
+.desk-ladder-action {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  justify-content: flex-end;
+  min-width: 12px;
+}
+
+.desk-rate-ask {
+  color: var(--danger);
+  font-weight: 600;
+}
+
+.desk-rate-bid {
+  color: var(--ok);
+  font-weight: 600;
+}
+
+.desk-ladder-side-label {
+  font-family: var(--font-sans);
+  font-size: 0.7rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  color: var(--text-faint);
+  padding: 6px 6px 2px;
+}
+
+.desk-mid-row {
+  text-align: center;
+  padding: 5px 6px;
+  margin: 2px 0;
+  border-top: 1px dashed var(--border);
+  border-bottom: 1px dashed var(--border);
+  color: var(--text-muted);
+  font-size: 0.78rem;
+}
+
+/* Tape */
+.desk-tape {
+  font-family: var(--font-mono);
+  font-size: 0.82rem;
+}
+
+.desk-tape-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1.4fr) auto;
+  gap: var(--space-2);
+  padding: 3px 6px;
+  border-radius: var(--radius-sm);
+}
+
+.desk-tape-row:nth-child(odd) {
+  background: var(--surface-sunken);
+}
+
+/* Open orders: fill-progress meter */
+.desk-fill-bar {
+  display: block;
+  height: 4px;
+  margin-top: 6px;
+  max-width: 260px;
+  background: var(--surface-sunken);
+  border-radius: 2px;
+  overflow: hidden;
+}
+
+.desk-fill-bar > span {
+  display: block;
+  height: 100%;
+  background: var(--brand);
+  border-radius: 2px;
+}
+
+/* Amend inline form */
+.desk-amend-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--space-3);
+}
+
+@media (min-width: 720px) {
+  .desk-amend-grid {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+}

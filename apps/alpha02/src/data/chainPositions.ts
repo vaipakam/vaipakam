@@ -159,8 +159,11 @@ export async function readOfferRowLive(
  *  zero-value-don't-revert on the contract side; unknown ids map to
  *  null rows here via the zero-creator guard. THROWS on revert
  *  (selector absent on an old deploy) or transport failure — the
- *  caller splits those with `isRevert`. */
-async function readOfferRowsBatchLive(
+ *  caller splits those with `isRevert`. Exported for the Rate Desk's
+ *  order-book hydration (#1129): ranked pair ids → full offer rows
+ *  (the skinny ranking DTO omits `amountFilled`, so remaining depth
+ *  is computable only from hydrated rows). */
+export async function readOfferRowsBatchLive(
   publicClient: PublicClient,
   diamond: `0x${string}`,
   chainId: number,

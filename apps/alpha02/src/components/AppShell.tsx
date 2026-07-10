@@ -11,6 +11,7 @@
  */
 import { NavLink, Outlet, useLocation } from 'react-router-dom';
 import {
+  CandlestickChart,
   CircleHelp,
   Coins,
   HandCoins,
@@ -58,6 +59,7 @@ const SECONDARY_NAV: NavItem[] = [
   { to: '/vault', label: 'My vault', icon: Landmark },
   { to: '/faucet', label: 'Get test assets', icon: Droplets, testnetOnly: true },
   { to: '/offers', label: 'Offer Book', icon: BookOpen, advancedOnly: true },
+  { to: '/desk', label: 'Rate Desk', icon: CandlestickChart, advancedOnly: true },
   { to: '/vpfi', label: 'VPFI discounts', icon: Coins, advancedOnly: true },
   { to: '/activity', label: 'Activity', icon: History, advancedOnly: true },
   { to: '/settings', label: 'Settings', icon: Settings },
@@ -95,6 +97,7 @@ export function AppShell() {
     '/claims',
     '/vault',
     '/offers',
+    '/desk',
     '/vpfi',
     '/activity',
     '/help',

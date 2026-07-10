@@ -70,10 +70,18 @@ async function forkNowSec() {
 async function mapOffer(id, chainNowSec) {
   // No catch: a zeroed struct is the legitimate "gone" signal below;
   // an RPC/ABI failure must bubble to the handler's 500 instead of
-  // silently dropping the row.
-  const [o, stateRaw] = await Promise.all([
+  // silently dropping the row. getOfferLinkedLoanId backs the worker's
+  // `isSaleVehicle` / `isOffsetVehicle` markers (D1 columns,
+  // migrations 0029 + 0031) — the stub derives both live, matching
+  // production semantics exactly: the worker sets is_sale_vehicle on
+  // LoanSaleOfferLinked (always a borrower-style offer) and
+  // is_offset_vehicle on OffsetOfferCreated (always a lender-style
+  // offer, Codex #1134 round-5), so linked + offerType decides which
+  // flag a row carries.
+  const [o, stateRaw, linkedLoanId] = await Promise.all([
     read('getOffer', [BigInt(id)]),
     read('getOfferState', [BigInt(id)]),
+    read('getOfferLinkedLoanId', [BigInt(id)]),
   ]);
   if (!o) return null;
   if (!o.creator || /^0x0{40}$/i.test(o.creator)) return null; // slot deleted
@@ -122,6 +130,8 @@ async function mapOffer(id, chainNowSec) {
     createdAt: n(o.createdAt) || undefined,
     expiresAt: n(o.expiresAt) || undefined,
     fillMode: n(o.fillMode),
+    isSaleVehicle: n(o.offerType) === 1 && n(linkedLoanId) !== 0,
+    isOffsetVehicle: n(o.offerType) === 0 && n(linkedLoanId) !== 0,
   };
 }
 
@@ -242,6 +252,45 @@ async function userPositionLoans(addr) {
   }
 }
 
+// Rate Desk (#1129) — the worker's optional server-side market scope
+// (lendingAsset / collateralAsset / durationDays query params) applied
+// to a mapped-offer array. The desk's indexer-fallback book relies on
+// this being SERVER-side (its client does no pair filtering), so the
+// stub must honour the params rather than ignore them — an ignored
+// filter would hand the desk every pair's rows wearing one market's
+// label.
+function applyMarketScope(offers, url) {
+  const lend = url.searchParams.get('lendingAsset');
+  const coll = url.searchParams.get('collateralAsset');
+  const days = url.searchParams.get('durationDays');
+  return offers.filter(
+    (o) =>
+      (!lend || o.lendingAsset.toLowerCase() === lend.toLowerCase()) &&
+      (!coll || o.collateralAsset.toLowerCase() === coll.toLowerCase()) &&
+      (days === null || o.durationDays === Number(days)),
+  );
+}
+
+// The worker's opt-in /offers/active drops (Codex #1134 round-3 +
+// round-5): `excludeExpired=1` (expires_at = 0 OR expires_at > now —
+// judged on the FORK's clock, like everything else here),
+// `excludeSaleVehicles=1` (is_sale_vehicle = 0) and
+// `excludeOffsetVehicles=1` (is_offset_vehicle = 0). Applied to BOTH
+// the live and the pinned path, exactly like production applies its
+// SQL predicate to whatever rows the table holds.
+function applyOfferFlags(offers, url, chainNowSec) {
+  const excludeExpired = url.searchParams.get('excludeExpired') === '1';
+  const excludeSaleVehicles = url.searchParams.get('excludeSaleVehicles') === '1';
+  const excludeOffsetVehicles =
+    url.searchParams.get('excludeOffsetVehicles') === '1';
+  return offers.filter(
+    (o) =>
+      (!excludeExpired || !o.expiresAt || o.expiresAt > chainNowSec) &&
+      (!excludeSaleVehicles || o.isSaleVehicle !== true) &&
+      (!excludeOffsetVehicles || o.isOffsetVehicle !== true),
+  );
+}
+
 // Pin mode (#1029): a spec can freeze the ACTIVE-OFFERS view and the
 // freshness cursor at "now" while anvil keeps advancing — the only
 // way this always-live stub can honestly simulate ingest lag, which
@@ -312,16 +361,97 @@ async function handler(req, res) {
     // GET /offers/active?chainId=&limit= — the full book in one page
     // (`limit` deliberately ignored: nextBefore null promises
     // completeness, see activeOfferIds). Pin mode serves the frozen
-    // snapshot.
+    // snapshot. The optional market params (Rate Desk #1129 —
+    // lendingAsset / collateralAsset / durationDays) scope the page
+    // exactly like the worker's server-side filter; the pinned
+    // snapshot gets the same scope applied so pin mode stays honest
+    // for a market-scoped consumer too.
     if (parts[0] === 'offers' && parts[1] === 'active') {
-      if (pinned) return json(200, pinned.active);
+      if (pinned) {
+        return json(200, {
+          ...pinned.active,
+          offers: applyOfferFlags(
+            applyMarketScope(pinned.active.offers, url),
+            url,
+            await forkNowSec(),
+          ),
+        });
+      }
       const [ids, chainNow] = await Promise.all([activeOfferIds(), forkNowSec()]);
       const offers = (await Promise.all(ids.map((id) => mapOffer(id, chainNow))))
         .filter((o) => o && o.status === 'active')
         // Production serves ORDER BY offer_id DESC; the contract's
         // swap-and-pop active list is unordered — restore the shape.
         .sort((a, b) => b.offerId - a.offerId);
-      return json(200, { chainId: CHAIN_ID, offers, nextBefore: null });
+      return json(200, {
+        chainId: CHAIN_ID,
+        offers: applyOfferFlags(applyMarketScope(offers, url), url, chainNow),
+        nextBefore: null,
+      });
+    }
+
+    // GET /offers/markets?chainId= — Rate Desk market discovery
+    // (#1129). Mirrors the worker's SQL aggregation: every DISTINCT
+    // (lendingAsset, collateralAsset, durationDays) triple with live
+    // ERC-20/ERC-20 offers, per-side counts + best headline rates,
+    // most-active first. Not frozen by pin mode (production pins only
+    // the active feed + freshness cursor). NB the desk's tape route
+    // (/loans/recent) is deliberately NOT stubbed: the stub has no
+    // cross-status loan enumeration (only active-loan walks), and a
+    // tape missing repaid fills would be a wrong answer rather than a
+    // degraded one — the app renders its honest "couldn't load recent
+    // fills" state instead.
+    if (parts[0] === 'offers' && parts[1] === 'markets') {
+      const [ids, chainNow] = await Promise.all([activeOfferIds(), forkNowSec()]);
+      const rows = (await Promise.all(ids.map((id) => mapOffer(id, chainNow)))).filter(
+        (o) =>
+          o &&
+          o.status === 'active' &&
+          o.assetType === 0 &&
+          o.collateralAssetType === 0 &&
+          // Production excludes BOTH vehicle kinds unconditionally
+          // (is_sale_vehicle = 0 AND is_offset_vehicle = 0): sale /
+          // offset bookkeeping rows must never advertise a market
+          // (Codex #1134 round-5 P2 — an offset-only "market" would
+          // be auto-selected and then render an empty book).
+          o.isSaleVehicle !== true &&
+          o.isOffsetVehicle !== true,
+      );
+      const byKey = new Map();
+      for (const o of rows) {
+        const key = `${o.lendingAsset.toLowerCase()}:${o.collateralAsset.toLowerCase()}:${o.durationDays}`;
+        let m = byKey.get(key);
+        if (!m) {
+          m = {
+            lendingAsset: o.lendingAsset,
+            collateralAsset: o.collateralAsset,
+            durationDays: o.durationDays,
+            lenderOffers: 0,
+            borrowerOffers: 0,
+            bestAskBps: null,
+            bestBidBps: null,
+          };
+          byKey.set(key, m);
+        }
+        if (o.offerType === 0) {
+          m.lenderOffers += 1;
+          m.bestAskBps =
+            m.bestAskBps === null
+              ? o.interestRateBps
+              : Math.min(m.bestAskBps, o.interestRateBps);
+        } else {
+          m.borrowerOffers += 1;
+          m.bestBidBps =
+            m.bestBidBps === null
+              ? o.interestRateBpsMax
+              : Math.max(m.bestBidBps, o.interestRateBpsMax);
+        }
+      }
+      const markets = [...byKey.values()].sort(
+        (a, b) =>
+          b.lenderOffers + b.borrowerOffers - (a.lenderOffers + a.borrowerOffers),
+      );
+      return json(200, { chainId: CHAIN_ID, markets });
     }
 
     // GET /offers/by-creator/:addr — exhaustive walk (see userOfferIds).
