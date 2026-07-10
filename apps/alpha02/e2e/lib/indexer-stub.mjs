@@ -573,12 +573,18 @@ function readBody(req) {
  * 365-day create horizon, `LibVaipakam.MAX_OFFER_EXPIRY_HORIZON` — and
  * `ranged-collateral-ratio` — ranged principal whose collateral fails
  * the matcher's constant-ratio vet,
- * `OfferMatchFacet._vetSignedOfferForMatch`). Those static rejections
+ * `OfferMatchFacet._vetSignedOfferForMatch`; round-4 P2s:
+ * `cadence-interval-too-long` / `cadence-required-multiyear` — the two
+ * STATIC gates of `OfferCreateFacet._validatePeriodicCadence`: a
+ * non-None periodic cadence whose interval (Monthly 30d / Quarterly 90d
+ * / SemiAnnual 180d / Annual 365d) is >= durationDays, and
+ * durationDays > 365 with cadence None). Those static rejections
  * live under the "loose shape checks" umbrella above — the specs only
  * post ticket-generated orders, which satisfy every invariant (GTT
- * expiries <= 365d, single-value or proportional shapes); if a future
- * spec needs to probe a rejection, drive the WORKER's unit-tested
- * surface, not a stub re-implementation.
+ * expiries <= 365d, single-value or proportional shapes, and cadence
+ * None ('0') on <= 365d tenors — see e2e/lib/desk.ts — so neither
+ * cadence gate can fire); if a future spec needs to probe a rejection,
+ * drive the WORKER's unit-tested surface, not a stub re-implementation.
  */
 async function handleSignedOfferPost(req, json) {
   let body;
@@ -692,7 +698,14 @@ async function handleSignedOffersGet(url, json) {
   );
   const offers = scoped
     .filter((_, i) => !consumed[i])
-    // Worker ordering: newest first, order-hash tiebreak.
+    // Ordering: the WORKER now caps per side at 100 BEST-PRICED rows
+    // (lender asks by interestRateBps ASC, borrower bids by
+    // interestRateBpsMax DESC, ties older-first — Codex #1145 r4). The
+    // stub keeps a simple newest-first sort on purpose: a fork run's
+    // book holds a handful of rows (never near any cap), and the desk
+    // rebuilds its price ladder from row MEMBERSHIP, not array order —
+    // re-implementing the per-side SQL here would only drift from the
+    // worker's unit-tested surface.
     .sort((a, b) => b.createdAt - a.createdAt || (a.orderHash < b.orderHash ? -1 : 1))
     .map((r) => ({
       orderHash: r.orderHash,

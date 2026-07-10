@@ -74,10 +74,22 @@ CREATE TABLE IF NOT EXISTS signed_offers (
   PRIMARY KEY (chain_id, order_hash)
 );
 
--- Market read path: GET /signed-offers scopes on (chainId, status='active',
--- pair, tenor) — same market-triple shape as idx_offers_market (0029).
-CREATE INDEX IF NOT EXISTS idx_signed_offers_market
-  ON signed_offers (chain_id, status, lending_asset, collateral_asset, duration_days);
+-- Market read path (Codex #1145 r4 P2 — price-relevant per-side caps):
+-- GET /signed-offers scopes on (chainId, status='active', pair, tenor,
+-- offer_type) and returns up to 100 BEST-PRICED rows per side — lender
+-- asks ordered by interest_rate_bps ASC, borrower bids by
+-- interest_rate_bps_max DESC, ties older-first — so 200 fresh off-market
+-- spam posts can no longer displace an older best bid/ask from the capped
+-- response. One index per side; each carries the same market-triple
+-- prefix as idx_offers_market (0029), so market-scoped aggregates (the
+-- /offers/markets signed-book union) are served by the prefix too.
+CREATE INDEX IF NOT EXISTS idx_signed_offers_book_ask
+  ON signed_offers (chain_id, status, lending_asset, collateral_asset,
+                    duration_days, offer_type, interest_rate_bps, created_at);
+CREATE INDEX IF NOT EXISTS idx_signed_offers_book_bid
+  ON signed_offers (chain_id, status, lending_asset, collateral_asset,
+                    duration_days, offer_type, interest_rate_bps_max DESC,
+                    created_at);
 
 -- Signer lookup: SignedOfferNonceBurned flips every (signer, nonce) row, and
 -- a future "my signed offers" view reads by signer.

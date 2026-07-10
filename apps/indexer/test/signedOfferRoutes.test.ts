@@ -17,10 +17,15 @@
  * is exercised too: its best-effort chain-state gate is pointed at an
  * unroutable RPC, which the route deliberately treats as accept-and-warn.
  */
+import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import type { Hex } from 'viem';
 import { privateKeyToAccount } from 'viem/accounts';
-import { handleSignedOfferPost } from '../src/signedOfferRoutes';
+import {
+  handleSignedOfferPost,
+  handleSignedOffersGet,
+} from '../src/signedOfferRoutes';
+import { createSqliteD1 } from './helpers/sqliteD1';
 import {
   SIGNED_OFFER_TYPES,
   orderHashOf,
@@ -346,5 +351,204 @@ describe('POST /signed-offers — ranged constant-ratio vet (Codex #1145 r3)', (
       }),
     );
     expect(res.status).toBe(201);
+  });
+});
+
+describe('POST /signed-offers — static cadence gates (Codex #1145 r4)', () => {
+  // Mirrors the two STATIC gates of OfferCreateFacet._validatePeriodicCadence:
+  // Filter 1 (OfferCreateFacet.sol:1065-1075) — non-None cadence with
+  // intervalDays(cadence) >= durationDays; and the multi-year mandatory-
+  // cadence floor (:994-1034) — durationDays > 365 with cadence None.
+  // Cadence wire values: 0 None, 1 Monthly (30d), 4 Annual (365d).
+
+  it('rejects Monthly on a 30d order (interval == duration)', async () => {
+    const res = await post(
+      makeEnv(null),
+      makeOrder({ periodicInterestCadence: '1', durationDays: '30' }),
+    );
+    expect(res.status).toBe(400);
+    expect(await res.json()).toEqual({ error: 'cadence-interval-too-long' });
+  });
+
+  it('accepts Monthly on a 31d order (interval strictly below duration)', async () => {
+    const res = await post(
+      makeEnv(null),
+      makeOrder({ periodicInterestCadence: '1', durationDays: '31' }),
+    );
+    expect(res.status).toBe(201);
+  });
+
+  it('rejects cadence None on a 366d order (multi-year mandatory floor)', async () => {
+    const res = await post(makeEnv(null), makeOrder({ durationDays: '366' }));
+    expect(res.status).toBe(400);
+    expect(await res.json()).toEqual({ error: 'cadence-required-multiyear' });
+  });
+
+  it('accepts cadence None on a 365d order (not multi-year; early return on-chain)', async () => {
+    const res = await post(makeEnv(null), makeOrder({ durationDays: '365' }));
+    expect(res.status).toBe(201);
+  });
+
+  it('accepts Annual on a 366d order (365 < 366 satisfies Filter 1, floor satisfied)', async () => {
+    const res = await post(
+      makeEnv(null),
+      makeOrder({ periodicInterestCadence: '4', durationDays: '366' }),
+    );
+    expect(res.status).toBe(201);
+  });
+});
+
+// ── GET /signed-offers — per-side price-relevant caps (Codex #1145 r4) ──
+//
+// The behaviour under test IS the SQL (per-side LIMIT applied within a
+// price-ordered scan), so these run against a real in-memory SQLite
+// database created from the REAL migration 0033 DDL — which also pins
+// that the migration (incl. the two per-side price indexes) parses.
+
+const MIGRATION_0033 = readFileSync(
+  new URL('../migrations/0033_signed_offer_book.sql', import.meta.url),
+  'utf8',
+);
+const LEND = '0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa';
+const COLL = '0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb';
+const DAYS = 30;
+
+interface SeedRow {
+  orderHash: string;
+  offerType: 0 | 1;
+  rateBps: number;
+  rateBpsMax: number;
+  createdAt: number;
+  expiresAt?: number;
+  deadline?: number;
+  status?: string;
+}
+
+function seedBook(rows: SeedRow[]): Env {
+  const { db, d1 } = createSqliteD1([MIGRATION_0033]);
+  const insert = db.prepare(
+    `INSERT INTO signed_offers
+       (chain_id, order_hash, signer, order_json, signature,
+        offer_type, lending_asset, collateral_asset, duration_days,
+        asset_type, collateral_asset_type,
+        interest_rate_bps, interest_rate_bps_max,
+        amount, amount_max, collateral_amount, collateral_amount_max,
+        fill_mode, expires_at, deadline, nonce,
+        status, filled_amount, created_at, updated_at)
+     VALUES (?, ?, ?, '{}', '0xsig', ?, ?, ?, ?, 0, 0, ?, ?,
+             '100', '100', '10', '10', 0, ?, ?, '1', ?, '0', ?, ?)`,
+  );
+  for (const r of rows) {
+    insert.run(
+      CHAIN_ID,
+      r.orderHash,
+      SIGNER.address.toLowerCase(),
+      r.offerType,
+      LEND,
+      COLL,
+      DAYS,
+      r.rateBps,
+      r.rateBpsMax,
+      r.expiresAt ?? 0,
+      r.deadline ?? 0,
+      r.status ?? 'active',
+      r.createdAt,
+      r.createdAt,
+    );
+  }
+  return {
+    DB: d1,
+    RPC_BASE_SEPOLIA: 'http://127.0.0.1:9',
+  } as unknown as Env;
+}
+
+async function getBook(env: Env): Promise<{ orderHash: string }[]> {
+  const req = new Request(
+    `http://indexer.test/signed-offers?chainId=${CHAIN_ID}` +
+      `&lendingAsset=${LEND}&collateralAsset=${COLL}&durationDays=${DAYS}`,
+  );
+  const res = await handleSignedOffersGet(req, env);
+  expect(res.status).toBe(200);
+  const body = (await res.json()) as { offers: { orderHash: string }[] };
+  return body.offers;
+}
+
+describe('GET /signed-offers — per-side price-relevant caps (Codex #1145 r4)', () => {
+  it('lender spam cannot hide an older best ask: cap keeps the best-priced rows', async () => {
+    // The finding scenario: 150 fresh off-market asks (rate 900) posted
+    // AFTER two older, better-priced asks. The old newest-first LIMIT
+    // returned only the spam; the price-relevant cap must keep the best
+    // asks at the head and evict the newest spam beyond 100 rows.
+    const rows: SeedRow[] = [
+      { orderHash: 'ask-best', offerType: 0, rateBps: 100, rateBpsMax: 100, createdAt: 1_000 },
+      { orderHash: 'ask-mid', offerType: 0, rateBps: 500, rateBpsMax: 500, createdAt: 1_500 },
+    ];
+    for (let i = 0; i < 150; i++) {
+      rows.push({
+        orderHash: `spam-${String(i).padStart(3, '0')}`,
+        offerType: 0,
+        rateBps: 900,
+        rateBpsMax: 900,
+        createdAt: 2_000 + i,
+      });
+    }
+    const offers = await getBook(seedBook(rows));
+    expect(offers).toHaveLength(100); // per-side cap
+    expect(offers[0].orderHash).toBe('ask-best');
+    expect(offers[1].orderHash).toBe('ask-mid');
+    // Equal-priced spam fills the rest OLDER-first: spam-000..spam-097.
+    expect(offers[2].orderHash).toBe('spam-000');
+    expect(offers[99].orderHash).toBe('spam-097');
+    expect(offers.map((o) => o.orderHash)).not.toContain('spam-149');
+  });
+
+  it('borrower bids rank highest-rate-first and are capped independently of lender spam', async () => {
+    // 150 lender rows saturate THEIR side; the borrower side must still
+    // return every bid, best (highest interestRateBpsMax) first.
+    const rows: SeedRow[] = [
+      { orderHash: 'bid-400', offerType: 1, rateBps: 0, rateBpsMax: 400, createdAt: 3_000 },
+      { orderHash: 'bid-950', offerType: 1, rateBps: 0, rateBpsMax: 950, createdAt: 3_100 },
+      { orderHash: 'bid-200', offerType: 1, rateBps: 0, rateBpsMax: 200, createdAt: 3_200 },
+    ];
+    for (let i = 0; i < 150; i++) {
+      rows.push({
+        orderHash: `ask-spam-${String(i).padStart(3, '0')}`,
+        offerType: 0,
+        rateBps: 900,
+        rateBpsMax: 900,
+        createdAt: 2_000 + i,
+      });
+    }
+    const offers = await getBook(seedBook(rows));
+    expect(offers).toHaveLength(103); // 100 asks + all 3 bids
+    // Asks first (merged response), then bids by rate DESC.
+    expect(offers.slice(100).map((o) => o.orderHash)).toEqual([
+      'bid-950',
+      'bid-400',
+      'bid-200',
+    ]);
+  });
+
+  it('equal-priced rows tie-break older-first (a same-price re-post cannot displace)', async () => {
+    const offers = await getBook(
+      seedBook([
+        { orderHash: 'ask-newer', offerType: 0, rateBps: 300, rateBpsMax: 300, createdAt: 5_000 },
+        { orderHash: 'ask-older', offerType: 0, rateBps: 300, rateBpsMax: 300, createdAt: 1_000 },
+      ]),
+    );
+    expect(offers.map((o) => o.orderHash)).toEqual(['ask-older', 'ask-newer']);
+  });
+
+  it('freshness predicates still apply per side (expired / lapsed-deadline / terminal rows drop)', async () => {
+    const now = Math.floor(Date.now() / 1000);
+    const offers = await getBook(
+      seedBook([
+        { orderHash: 'ask-live', offerType: 0, rateBps: 500, rateBpsMax: 500, createdAt: 1_000 },
+        { orderHash: 'ask-expired', offerType: 0, rateBps: 100, rateBpsMax: 100, createdAt: 1_000, expiresAt: now - 60 },
+        { orderHash: 'ask-deadline', offerType: 0, rateBps: 100, rateBpsMax: 100, createdAt: 1_000, deadline: now - 60 },
+        { orderHash: 'ask-filled', offerType: 0, rateBps: 100, rateBpsMax: 100, createdAt: 1_000, status: 'filled' },
+      ]),
+    );
+    expect(offers.map((o) => o.orderHash)).toEqual(['ask-live']);
   });
 });

@@ -117,6 +117,18 @@ const EXPIRY_HORIZON_SECONDS = 365n * 86_400n;
 /** Mirrors `LibVaipakam.MAX_INTEREST_BPS` — the create-time upper-sanity
  *  ceiling on `interestRateBpsMax` (`InterestRateAboveCeiling`). */
 const MAX_INTEREST_BPS = 10_000n;
+/** Mirrors `LibVaipakam.intervalDays` (LibVaipakam.sol:6031-6043) — the
+ *  per-cadence checkpoint interval in days, keyed by the wire enum value
+ *  (`PeriodicInterestCadence`: 0 None, 1 Monthly, 2 Quarterly,
+ *  3 SemiAnnual, 4 Annual). Values are the PERIODIC_INTERVAL_*_DAYS
+ *  constants (LibVaipakam.sol:493-496); None maps to 0 on-chain and is
+ *  handled separately by the gates below. */
+const CADENCE_INTERVAL_DAYS: Record<string, number> = {
+  '1': 30, // Monthly    — PERIODIC_INTERVAL_MONTHLY_DAYS
+  '2': 90, // Quarterly  — PERIODIC_INTERVAL_QUARTERLY_DAYS
+  '3': 180, // SemiAnnual — PERIODIC_INTERVAL_SEMI_ANNUAL_DAYS
+  '4': 365, // Annual     — PERIODIC_INTERVAL_ANNUAL_DAYS
+};
 
 /** uint256-in-decimal-string field names (beyond the specially-bounded ones
  *  handled inline below). */
@@ -185,7 +197,13 @@ const BOOL_FIELDS = [
  * would drift): everything DYNAMIC — the governance-tunable duration cap
  * (`cfgMaxOfferDurationDays`; only the hard 4385 ceiling is static),
  * sanctions, per-asset pause, oracle-derived collateral floors/ceilings,
- * and the signer's vault funding. (The fill-time expiry horizon
+ * the signer's vault funding, and `_validatePeriodicCadence`'s three
+ * DYNAMIC cadence filters — the `periodicInterestEnabled` kill switch
+ * (governance-tunable protocol config), the both-legs-liquid gate
+ * (oracle classification), and the principal-vs-
+ * `minPrincipalForFinerCadence` threshold rows (oracle price + tunable
+ * threshold). Only that function's two STATIC cadence gates are mirrored
+ * — see step (b2) below (Codex #1145 r4). (The fill-time expiry horizon
  * (`OfferExpiryAboveCap`) IS mirrored — see EXPIRY_HORIZON_SECONDS: it
  * judges against `block.timestamp` at fill, so an above-horizon
  * `expiresAt` is guaranteed-unfillable at ingest time even though it
@@ -342,6 +360,43 @@ function validateOrder(
   // above already rejected that shape, so a plain equality check suffices.
   if (out.lendingAsset === out.collateralAsset) {
     return { error: 'self-collateralized' };
+  }
+
+  // (b2) `_validatePeriodicCadence` (called at the tail of
+  // `_createOfferSetup`, i.e. BEFORE the principal/collateral writes
+  // mirrored in (c)/(d)) — its two STATIC cadence-vs-duration gates
+  // (Codex #1145 r4). Both read only the order's own fields; the
+  // function's OTHER filters are dynamic and deliberately unmirrored
+  // (see the doc comment above), but those can only ADD revert reasons
+  // for a violating order, never admit it — so each rejection below is
+  // a guaranteed `CadenceNotAllowed` (or earlier) revert on EVERY fill
+  // path, since they all materialize through `createSignedOfferVault/
+  // Wallet` → `_createOfferSetup`.
+  {
+    const cadence = out.periodicInterestCadence as string;
+    const durationDays = Number(out.durationDays as string);
+    // Filter 1 (OfferCreateFacet.sol:1065-1075): a non-None cadence
+    // whose checkpoint interval lands at or after maturity is
+    // meaningless — `intervalDays(cadence) >= durationDays` reverts
+    // `CadenceNotAllowed` (e.g. Monthly on a 7d or 30d order).
+    if (
+      cadence !== '0' &&
+      CADENCE_INTERVAL_DAYS[cadence] >= durationDays
+    ) {
+      return { error: 'cadence-interval-too-long' };
+    }
+    // Multi-year mandatory-cadence floor (OfferCreateFacet.sol:994-1034):
+    // `durationDays > 365` with cadence None reverts `CadenceNotAllowed`
+    // unconditionally — the early return at :995-1001 only fires for
+    // `None && !isMultiYear`, and the `isMultiYear && cadence == None`
+    // branch at :1025-1034 carries no liquidity/threshold guard. (The
+    // function's own comment at :967-973 claims multi-year ILLIQUID
+    // loans skip the mandatory Annual floor, but the code reverts
+    // regardless — the deployed code is the authority this mirror
+    // follows.)
+    if (cadence === '0' && durationDays > 365) {
+      return { error: 'cadence-required-multiyear' };
+    }
   }
 
   // (c) `_writeOfferPrincipalFields` — principal + rate invariants.
@@ -678,10 +733,16 @@ interface SignedOfferRow {
   deadline: number;
 }
 
-/** Hard response cap — the book is per-market, and a single (pair, tenor)
- *  market with >200 live signed orders is beyond the desk's render depth;
- *  cursor pagination can follow if production signal ever wants it. */
-const MAX_BOOK_ROWS = 200;
+/** Hard response cap PER SIDE, and the capped slice is PRICE-RELEVANT,
+ *  not newest-first (Codex #1145 r4 P2): gasless posts are cheap and only
+ *  per-IP rate-limited, so under a newest-first global cap 200 fresh
+ *  off-market orders could hide an older best bid/ask entirely — wrong
+ *  displayed top-of-book while the better rows are still active. Each
+ *  side instead returns its best-priced rows (see the per-side ORDER BY
+ *  below), tie-broken OLDER-first so an equal-priced spam row can never
+ *  displace an earlier one. 100 per side is beyond the desk's render
+ *  depth; cursor pagination can follow if production signal wants it. */
+const MAX_BOOK_ROWS_PER_SIDE = 100;
 
 /**
  * GET /signed-offers?chainId=8453&lendingAsset=0x..&collateralAsset=0x..&durationDays=30
@@ -691,6 +752,16 @@ const MAX_BOOK_ROWS = 200;
  * desk always reads one market — and an accidental global page would
  * advertise the wrong market's rows). Rows are returned with the order JSON
  * parsed so takers can feed it straight into `acceptSignedOffer`.
+ *
+ * Capping is per-side and by EXECUTABLE PRICE (Codex #1145 r4 P2): a
+ * LENDER order (offer_type 0) rests as an ASK at `interest_rate_bps` —
+ * the rate the taker pays, so LOWEST is best — and a BORROWER order
+ * (offer_type 1) rests as a BID at `interest_rate_bps_max` (the ceiling
+ * the borrower will pay), so HIGHEST is best. Up to
+ * MAX_BOOK_ROWS_PER_SIDE best-priced rows per side, ties older-first,
+ * asks then bids in the merged `offers` array (per-row shape unchanged;
+ * the desk rebuilds its price ladder from the rows, so array order is
+ * not load-bearing — only membership is).
  *
  * Expiry is enforced query-side the same way /offers/markets treats lazy GTT
  * expiry: `expires_at = 0` is GTC, `deadline = 0` is no-deadline (contract
@@ -725,28 +796,43 @@ export async function handleSignedOffersGet(
 
   try {
     const now = Math.floor(Date.now() / 1000);
-    const rows = await env.DB.prepare(
-      `SELECT order_hash, signer, order_json, signature, status,
-              filled_amount, expires_at, deadline
-         FROM signed_offers
-        WHERE chain_id = ? AND status = 'active'
-          AND lending_asset = ? AND collateral_asset = ? AND duration_days = ?
-          AND (expires_at = 0 OR expires_at > ?)
-          AND (deadline = 0 OR deadline > ?)
-        ORDER BY created_at DESC, order_hash
-        LIMIT ?`,
-    )
-      .bind(
-        chainId,
-        lendingAsset,
-        collateralAsset,
-        durationDays,
-        now,
-        now,
-        MAX_BOOK_ROWS,
+    // One query per side so each cap is applied within a PRICE-ordered
+    // slice (see MAX_BOOK_ROWS_PER_SIDE). `orderBy` is a whitelisted
+    // literal chosen here, never caller input.
+    const sideQuery = (offerType: 0 | 1, orderBy: string) =>
+      env.DB.prepare(
+        `SELECT order_hash, signer, order_json, signature, status,
+                filled_amount, expires_at, deadline
+           FROM signed_offers
+          WHERE chain_id = ? AND status = 'active'
+            AND lending_asset = ? AND collateral_asset = ? AND duration_days = ?
+            AND offer_type = ?
+            AND (expires_at = 0 OR expires_at > ?)
+            AND (deadline = 0 OR deadline > ?)
+          ORDER BY ${orderBy}, created_at ASC, order_hash
+          LIMIT ?`,
       )
-      .all<SignedOfferRow>();
-    const offers = (rows.results ?? []).map((r) => ({
+        .bind(
+          chainId,
+          lendingAsset,
+          collateralAsset,
+          durationDays,
+          offerType,
+          now,
+          now,
+          MAX_BOOK_ROWS_PER_SIDE,
+        )
+        .all<SignedOfferRow>();
+    const [asks, bids] = await Promise.all([
+      // Lender side — ASK at interest_rate_bps: lowest first.
+      sideQuery(0, 'interest_rate_bps ASC'),
+      // Borrower side — BID at interest_rate_bps_max: highest first.
+      sideQuery(1, 'interest_rate_bps_max DESC'),
+    ]);
+    const offers = [
+      ...(asks.results ?? []),
+      ...(bids.results ?? []),
+    ].map((r) => ({
       orderHash: r.order_hash,
       signer: r.signer,
       order: JSON.parse(r.order_json) as unknown,

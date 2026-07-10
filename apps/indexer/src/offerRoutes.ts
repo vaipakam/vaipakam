@@ -231,6 +231,18 @@ export async function handleOffersStats(req: Request, env: Env): Promise<Respons
  * from walking the paginated /offers/active feed, whose page cap would
  * silently drop markets (ProRateTerminalDesign.md §8, Codex #1128 round-4).
  *
+ * Since Rate Desk phase 3 (#1131) the discovery set UNIONs the GASLESS
+ * signed-offer book (Codex #1145 round-4 P2): a maker posting the FIRST
+ * liquidity for a market as a signed order would otherwise never surface
+ * in the desk's market picker — the signed book is only fetched AFTER a
+ * market is selected, so signed-only depth in a market absent from this
+ * list is undiscoverable. Active signed_offers rows (same freshness
+ * predicate GET /signed-offers applies: status='active', GTC or unexpired
+ * expires_at, plus an unlapsed signature deadline) group into the same
+ * market triples; a market present in BOTH sources merges — counts sum
+ * and best rates MIN/MAX across both — so activity ordering reflects the
+ * whole book. Response shape is unchanged.
+ *
  * Expired GTT rows are excluded (expiry is lazily enforced on-chain, so a
  * lapsed offer's row can still read status='active' — advertising a market
  * whose only rows are expired would point the desk at liquidity that cannot
@@ -260,23 +272,55 @@ export async function handleOffersMarkets(req: Request, env: Env): Promise<Respo
   const url = new URL(req.url);
   const chainId = parseChainId(url.searchParams.get('chainId')) ?? 8453;
   try {
+    const now = Math.floor(Date.now() / 1000);
+    // Two per-source aggregates UNION ALL'd, then re-aggregated: SUM
+    // merges the counts and MIN/MAX merge the headline rates (SQLite
+    // aggregates ignore NULLs, so a side present in only one source
+    // keeps that source's rate). The signed leg reuses GET
+    // /signed-offers' exact freshness predicate — status='active', GTC
+    // or live expires_at, no-deadline or live deadline — so discovery
+    // can never advertise a market whose only signed rows are already
+    // unservable. asset_type predicates on the signed leg are
+    // ingest-guaranteed today (the POST route rejects non-ERC-20 legs,
+    // v0.5 shape) but stated anyway for parity with the offers leg if a
+    // later book version lifts that gate.
     const rows = await env.DB.prepare(
       `SELECT lending_asset, collateral_asset, duration_days,
-              SUM(CASE WHEN offer_type = 0 THEN 1 ELSE 0 END) AS lender_offers,
-              SUM(CASE WHEN offer_type = 1 THEN 1 ELSE 0 END) AS borrower_offers,
-              MIN(CASE WHEN offer_type = 0 THEN interest_rate_bps END) AS best_ask_bps,
-              MAX(CASE WHEN offer_type = 1 THEN interest_rate_bps_max END) AS best_bid_bps
-         FROM offers
-        WHERE chain_id = ? AND status = 'active'
-          AND asset_type = 0 AND collateral_asset_type = 0
-          AND is_stub = 0
-          AND is_sale_vehicle = 0
-          AND is_offset_vehicle = 0
-          AND (expires_at = 0 OR expires_at > ?)
+              SUM(lender_offers) AS lender_offers,
+              SUM(borrower_offers) AS borrower_offers,
+              MIN(best_ask_bps) AS best_ask_bps,
+              MAX(best_bid_bps) AS best_bid_bps
+         FROM (
+           SELECT lending_asset, collateral_asset, duration_days,
+                  SUM(CASE WHEN offer_type = 0 THEN 1 ELSE 0 END) AS lender_offers,
+                  SUM(CASE WHEN offer_type = 1 THEN 1 ELSE 0 END) AS borrower_offers,
+                  MIN(CASE WHEN offer_type = 0 THEN interest_rate_bps END) AS best_ask_bps,
+                  MAX(CASE WHEN offer_type = 1 THEN interest_rate_bps_max END) AS best_bid_bps
+              FROM offers
+             WHERE chain_id = ? AND status = 'active'
+               AND asset_type = 0 AND collateral_asset_type = 0
+               AND is_stub = 0
+               AND is_sale_vehicle = 0
+               AND is_offset_vehicle = 0
+               AND (expires_at = 0 OR expires_at > ?)
+             GROUP BY lending_asset, collateral_asset, duration_days
+           UNION ALL
+           SELECT lending_asset, collateral_asset, duration_days,
+                  SUM(CASE WHEN offer_type = 0 THEN 1 ELSE 0 END) AS lender_offers,
+                  SUM(CASE WHEN offer_type = 1 THEN 1 ELSE 0 END) AS borrower_offers,
+                  MIN(CASE WHEN offer_type = 0 THEN interest_rate_bps END) AS best_ask_bps,
+                  MAX(CASE WHEN offer_type = 1 THEN interest_rate_bps_max END) AS best_bid_bps
+              FROM signed_offers
+             WHERE chain_id = ? AND status = 'active'
+               AND asset_type = 0 AND collateral_asset_type = 0
+               AND (expires_at = 0 OR expires_at > ?)
+               AND (deadline = 0 OR deadline > ?)
+             GROUP BY lending_asset, collateral_asset, duration_days
+         )
         GROUP BY lending_asset, collateral_asset, duration_days
         ORDER BY (lender_offers + borrower_offers) DESC`,
     )
-      .bind(chainId, Math.floor(Date.now() / 1000))
+      .bind(chainId, now, chainId, now, now)
       .all<{
         lending_asset: string;
         collateral_asset: string;
