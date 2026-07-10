@@ -873,8 +873,11 @@ Codex is **NOT auto-invoked** on PR open or on pushes to a PR. It runs
 ONLY when its trigger words appear in the PR description or a PR
 comment (e.g. an `@codex review` comment). Apply this loop on every PR:
 
-- **Docs-only PRs**: up to 2 Codex review rounds is sufficient (or
-  skip entirely for trivial mechanical edits — say so in the thread).
+- **Docs-only PRs**: keep triggering rounds until findings converge
+  (a round with zero P1/P2 merges immediately), with **up to 5 Codex
+  review rounds** as the backstop (user directive 2026-07-10,
+  superseding the earlier "up to 2 rounds" wording; skipping entirely
+  remains OK for trivial mechanical edits — say so in the thread).
 - **Coding PRs**: keep triggering rounds until findings **converge**,
   allowing up to 10 rounds after the last SURFACE CHANGE in the code
   as a hard backstop. Only a substantive code change resets the
