@@ -55,8 +55,18 @@ import {
   needsSecurityCheck,
   useTokenSecurity,
 } from '../../data/tokenSecurity';
-import { formatDurationDays, shortAddress } from '../../lib/format';
+import {
+  formatDurationDays,
+  formatTokenAmount,
+  shortAddress,
+} from '../../lib/format';
 import type { DeskPair } from '../../data/desk';
+import { indexerConfigured, postSignedOffer } from '../../data/indexer';
+import { useSignedOfferSigning } from '../../contracts/useSignedOfferSigning';
+import {
+  randomSignedOfferNonce,
+  wireFromCreatePayload,
+} from '../../lib/signedOffer';
 
 /** LibVaipakam.FillMode (#125): Partial default, Aon, Ioc. */
 const FILL_PARTIAL = 0;
@@ -64,6 +74,21 @@ const FILL_AON = 1;
 const FILL_IOC = 2;
 
 type ExpiryPreset = 'gtc' | '24h' | '7d' | 'custom';
+
+/** #1131 slice D — how the ticket posts. 'onchain' (the default —
+ *  createOffer, escrow now) vs 'gasless' (ONE EIP-712 signature posted
+ *  to the indexer's signed book; escrow happens at fill). */
+type PostMode = 'onchain' | 'gasless';
+
+/** Gasless GTC signature-deadline policy: a GTT order's signature dies
+ *  WITH the offer (`deadline = expiresAt` — a signature outliving the
+ *  advertised expiry would be a zombie the maker believes lapsed),
+ *  while GTC gets a bounded 7-day deadline rather than the contract's
+ *  unbounded `deadline = 0`: an unbounded signature is irrevocable
+ *  without a gas-costing on-chain cancel forever, which contradicts
+ *  the "posting is free" promise — re-signing after 7 days is free,
+ *  so bounding the maker's exposure wins. */
+const GASLESS_GTC_DEADLINE_SECONDS = 7 * 86_400;
 
 const MAX_RATE_PERCENT = 100;
 
@@ -141,11 +166,20 @@ export function OrderTicket({
   const [expiry, setExpiry] = useState<ExpiryPreset>('gtc');
   const [customExpiry, setCustomExpiry] = useState('');
   const [fillMode, setFillMode] = useState<number>(FILL_PARTIAL);
+  // #1131 slice D — 'onchain' MUST stay the default: the existing Post
+  // order flow (and spec 17's asserts) run it unchanged.
+  const [postMode, setPostMode] = useState<PostMode>('onchain');
   const [consent, setConsent] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [postedHash, setPostedHash] = useState<string | null>(null);
+  /** Gasless success is an ORDER HASH (nothing mined). */
+  const [gaslessPosted, setGaslessPosted] = useState<string | null>(null);
+  /** Advisory only (warn, never block): the maker's vault free balance
+   *  doesn't currently cover the signed commitment. */
+  const [gaslessFundsWarn, setGaslessFundsWarn] = useState<string | null>(null);
   const lockRef = useRef(false);
+  const signedOffer = useSignedOfferSigning();
 
   // Ladder-row tap → limit rate. Applied on every new tap (nonce).
   useEffect(() => {
@@ -153,14 +187,18 @@ export function OrderTicket({
     setRate(String(prefill.rateBps / 100));
     setConsent(false);
     setPostedHash(null);
+    setGaslessPosted(null);
   }, [prefill]);
 
   // Any market change voids consent — the deal being consented to
-  // changed underneath the ticket.
+  // changed underneath the ticket. Posting-mode changes void it too:
+  // the consent line was read against a different escrow reality.
   useEffect(() => {
     setConsent(false);
     setPostedHash(null);
-  }, [pair?.lendingAsset, pair?.collateralAsset, days, side]);
+    setGaslessPosted(null);
+    setGaslessFundsWarn(null);
+  }, [pair?.lendingAsset, pair?.collateralAsset, days, side, postMode]);
 
   // The collateral ASSET is fixed to the selected market's — the ticket
   // posts into the (pair, tenor) market shown in the header, and a
@@ -292,7 +330,11 @@ export function OrderTicket({
     collateralMeta.data?.decimals !== undefined;
 
   // ---- advisory pre-sign dry run (consent-gated, like OfferFlow) ------
+  // On-chain mode only: gasless posting sends NO transaction, so a
+  // "this transaction would…" dry-run footer would preview a write
+  // that isn't going to happen.
   const simTx = useMemo((): TxSimInput | null => {
+    if (postMode !== 'onchain') return null;
     if (!walletChain || !consent || !decimalsReady) return null;
     const payload = buildPayload(true);
     if (!payload) return null;
@@ -312,7 +354,7 @@ export function OrderTicket({
     }
     // buildPayload reads only state captured by these deps.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [walletChain, consent, decimalsReady, form, fillMode, expiry, customExpiry]);
+  }, [postMode, walletChain, consent, decimalsReady, form, fillMode, expiry, customExpiry]);
   const preSign = useTxSimulation(simTx);
 
   // #1112 — early under-collateral warning for the borrow side, consent
@@ -366,6 +408,10 @@ export function OrderTicket({
   );
   const securityOk = securityBlocked.length === 0;
 
+  // Gasless posting additionally needs the order-book service (there
+  // is nowhere else to publish the signed row) and the signing wallet.
+  const gaslessReady = indexerConfigured() && signedOffer.canSign;
+
   const canPost =
     fieldsComplete &&
     formError === null &&
@@ -379,7 +425,8 @@ export function OrderTicket({
     Boolean(publicClient) &&
     onSupportedChain &&
     !killed &&
-    !busy;
+    !busy &&
+    (postMode === 'onchain' || gaslessReady);
 
   // ---- submit — same sequence as OfferFlow.submitPost -----------------
   async function submit() {
@@ -545,6 +592,155 @@ export function OrderTicket({
     void queryClient.invalidateQueries({ queryKey: ['deskMarkets'] });
     void queryClient.invalidateQueries({ queryKey: ['activeOffers'] });
     void queryClient.invalidateQueries({ queryKey: ['myOffers'] });
+  }
+
+  // ---- submit — GASLESS path (#1131 slice D): one EIP-712 signature,
+  // one POST to the indexer's signed book. No transaction, no
+  // approvals, no escrow — the maker's funds move from their VAULT
+  // free balance at fill time (`createSignedOfferVault`), which is why
+  // the balance preflight below WARNS instead of blocking.
+  async function submitGasless() {
+    if (killed) {
+      setError(copy.killSwitch.disabled);
+      return;
+    }
+    if (lockRef.current) return;
+    lockRef.current = true;
+    setBusy(true);
+    setError(null);
+    setGaslessPosted(null);
+    setGaslessFundsWarn(null);
+    try {
+      if (!address || !walletChain || !walletClient || !publicClient) {
+        throw new Error(copy.wallet.connectFirst);
+      }
+      const payload = buildPayload(consent);
+      if (!payload) {
+        throw new Error(
+          customExpiryTooFar()
+            ? copy.desk.ticket.expiryTooFar
+            : copy.desk.ticket.expiryInvalid,
+        );
+      }
+      // A sanctioned signer's order could sit on the book but can never
+      // bind on-chain (the fill Tier-1-gates both parties) — refuse to
+      // post a structurally dead order.
+      await assertWalletNotSanctionedLive(
+        publicClient,
+        walletChain.diamondAddress,
+        address,
+      );
+      // Same live duration-cap + paused-asset gates as the on-chain
+      // path: the offer MATERIALIZES through createOffer at fill, so
+      // an over-cap tenor or paused leg makes every future fill revert
+      // — posting it would only be book pollution.
+      const liveFees = await readLiveProtocolFees(
+        publicClient,
+        walletChain.diamondAddress,
+      );
+      if (days > liveFees.maxOfferDurationDays) {
+        void queryClient.invalidateQueries({ queryKey: ['protocolFees'] });
+        throw new Error(
+          copy.desk.ticket.overDurationCap(liveFees.maxOfferDurationDays),
+        );
+      }
+      await Promise.all([
+        assertAssetNotPausedLive({
+          publicClient,
+          diamondAddress: walletChain.diamondAddress,
+          asset: payload.lendingAsset as `0x${string}`,
+        }),
+        assertAssetNotPausedLive({
+          publicClient,
+          diamondAddress: walletChain.diamondAddress,
+          asset: payload.collateralAsset as `0x${string}`,
+        }),
+      ]);
+      // GTT sanity on chain time — the route rejects a lapsed expiresAt
+      // too, but failing here keeps the wallet from signing a dead order.
+      await assertExpiryStillValidLive(publicClient, payload.expiresAt);
+      // ESCROW-REALITY preflight — WARN, never block: a signed offer
+      // escrows NOTHING at signing; the fill pulls the committed leg
+      // from the maker's vault FREE balance (lender ⇒ amountMax of the
+      // lending asset; borrower ⇒ collateralAmountMax of the
+      // collateral). The maker may legitimately intend to fund the
+      // vault later, so a shortfall only warns that fills will fail
+      // while the funds aren't there. Advisory ⇒ read failures are
+      // swallowed (no warning beats a false one).
+      const stakeToken = (side === 'lender'
+        ? payload.lendingAsset
+        : payload.collateralAsset) as `0x${string}`;
+      const stakeAmount =
+        side === 'lender' ? payload.amountMax : payload.collateralAmountMax;
+      try {
+        const [tracked, encumbered] = await Promise.all([
+          publicClient.readContract({
+            address: walletChain.diamondAddress,
+            abi: DIAMOND_ABI_VIEM,
+            functionName: 'getProtocolTrackedVaultBalance',
+            args: [address, stakeToken],
+          }) as Promise<bigint>,
+          publicClient.readContract({
+            address: walletChain.diamondAddress,
+            abi: DIAMOND_ABI_VIEM,
+            functionName: 'getEncumbered',
+            args: [address, stakeToken, 0n],
+          }) as Promise<bigint>,
+        ]);
+        const free = tracked > encumbered ? tracked - encumbered : 0n;
+        if (free < stakeAmount) {
+          const dec =
+            side === 'lender'
+              ? lendingMeta.data?.decimals
+              : collateralMeta.data?.decimals;
+          const sym =
+            (side === 'lender'
+              ? lendingMeta.data?.symbol
+              : collateralMeta.data?.symbol) ?? shortAddress(stakeToken);
+          setGaslessFundsWarn(
+            copy.desk.ticket.gaslessFundsWarn(
+              dec !== undefined
+                ? formatTokenAmount(stakeAmount, dec)
+                : String(stakeAmount),
+              sym,
+            ),
+          );
+        }
+      } catch {
+        // advisory only — see above
+      }
+      // Nonce + deadline (see randomSignedOfferNonce and
+      // GASLESS_GTC_DEADLINE_SECONDS for the two policies).
+      const nonce = randomSignedOfferNonce();
+      const deadline =
+        payload.expiresAt !== 0n
+          ? payload.expiresAt
+          : BigInt(
+              Math.floor(Date.now() / 1000) + GASLESS_GTC_DEADLINE_SECONDS,
+            );
+      const order = wireFromCreatePayload(payload, address, nonce, deadline);
+      const signature = await signedOffer.sign(order);
+      const res = await postSignedOffer(
+        walletChain.chainId,
+        order,
+        signature,
+      );
+      if (res === null) {
+        throw new Error(copy.desk.ticket.gaslessUnavailable);
+      }
+      if (res.kind === 'rejected') {
+        throw new Error(copy.desk.ticket.gaslessRejected(res.error));
+      }
+      setGaslessPosted(res.orderHash);
+      setConsent(false);
+      setAmount('');
+      void queryClient.invalidateQueries({ queryKey: ['deskSignedBook'] });
+    } catch (err) {
+      setError(captureTxError(err));
+    } finally {
+      setBusy(false);
+      lockRef.current = false;
+    }
   }
 
   const text = copy.desk.ticket;
@@ -724,6 +920,38 @@ export function OrderTicket({
         ) : null}
       </div>
 
+      {/* #1131 slice D — posting mode. On-chain stays the default; the
+          gasless chip only changes HOW the order publishes (signature +
+          book POST), never the terms above. */}
+      <div className="field">
+        <label>{text.modeLabel}</label>
+        <div className="desk-chips" role="group" aria-label={text.modeLabel}>
+          {(
+            [
+              ['onchain', text.modeOnchain, text.modeOnchainHint],
+              ['gasless', text.modeGasless, text.modeGaslessHint],
+            ] as const
+          ).map(([value, label, hint]) => (
+            <button
+              key={value}
+              type="button"
+              className={`desk-chip${postMode === value ? ' active' : ''}`}
+              title={hint}
+              onClick={() => setPostMode(value)}
+            >
+              {label}
+            </button>
+          ))}
+        </div>
+        {postMode === 'gasless' ? (
+          <p className="field-hint">
+            {indexerConfigured()
+              ? text.gaslessEscrowNote
+              : text.gaslessNeedsIndexer}
+          </p>
+        ) : null}
+      </div>
+
       <p className="muted" style={{ fontSize: '0.8rem' }}>
         {text.tenorNote(formatDurationDays(days))}
       </p>
@@ -781,14 +1009,33 @@ export function OrderTicket({
           </span>
         </p>
       ) : null}
+      {gaslessPosted ? (
+        <p className="cluster" style={{ alignItems: 'center', gap: 6, color: 'var(--ok)' }}>
+          <CircleCheck size={16} aria-hidden />
+          <span>{text.gaslessPosted}</span>
+        </p>
+      ) : null}
+      {gaslessFundsWarn ? (
+        <div className="banner banner-warn" role="status" style={{ margin: '8px 0' }}>
+          <span className="banner-body">{gaslessFundsWarn}</span>
+        </div>
+      ) : null}
 
       <button
         type="button"
         className="btn btn-primary btn-block"
         disabled={!canPost}
-        onClick={() => void submit()}
+        onClick={() =>
+          void (postMode === 'gasless' ? submitGasless() : submit())
+        }
       >
-        {busy ? text.posting : text.post}
+        {postMode === 'gasless'
+          ? busy
+            ? text.gaslessPosting
+            : text.gaslessPost
+          : busy
+            ? text.posting
+            : text.post}
       </button>
     </div>
   );

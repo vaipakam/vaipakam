@@ -12,8 +12,15 @@
  *    /lend?offer=N for borrow requests); phase 1 never rebuilds the
  *    accept flow.
  *  - Own orders are highlighted (creator === connected wallet).
+ *  - Signed off-chain rows (#1131 slice D) merge into the same levels
+ *    with a "Signed" badge (they are always indexer-sourced — the badge
+ *    carries that per-row source honesty) and their own inline Fill
+ *    affordance instead of the guided-accept deep link.
+ *  - When the book is crossed AND the contract's previewMatch confirms
+ *    the top-of-book pair is matchable, the MatchBand strip renders at
+ *    the mid row (#1131 slice B).
  */
-import { useEffect, useMemo, useRef } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { BookOpen, LoaderCircle } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import { copy } from '../../content/copy';
@@ -25,7 +32,15 @@ import {
   snapshotLadder,
   type LadderSnapshot,
 } from '../../lib/ladderFlash';
-import { takerCandidate, type DeskLadder, type LadderLevel } from '../../data/desk';
+import type { SignedRowMeta } from '../../lib/signedOffer';
+import {
+  signedFillCandidate,
+  takerCandidate,
+  type DeskLadder,
+  type LadderLevel,
+} from '../../data/desk';
+import { MatchBand } from './MatchBand';
+import { SignedFillConfirm } from './SignedFillConfirm';
 
 const MAX_LEVELS = 12;
 
@@ -37,6 +52,8 @@ function LevelRow({
   takeLabel,
   flash,
   onPick,
+  signedFill,
+  onFillSigned,
 }: {
   level: LadderLevel;
   side: 'ask' | 'bid';
@@ -49,7 +66,15 @@ function LevelRow({
    *  the CSS animation restarts without any timers. */
   flash: boolean;
   onPick: (rateBps: number) => void;
+  /** The level's fillable (not-own, remaining > 0) signed order, from
+   *  `signedFillCandidate` — arms the inline signed-fill affordance
+   *  (#1131 slice D). Null = no affordance. */
+  signedFill: SignedRowMeta | null;
+  onFillSigned: (signed: SignedRowMeta) => void;
 }) {
+  // Any signed depth at this level gets the badge — the level may mix
+  // on-chain and signed rows at the same rate.
+  const hasSigned = level.offers.some((o) => o.signed !== undefined);
   return (
     <div
       className={`desk-ladder-row${level.own ? ' desk-own' : ''}${
@@ -76,6 +101,11 @@ function LevelRow({
         {decimals !== undefined ? formatTokenAmount(level.cumulative, decimals) : '…'}
       </span>
       <span className="desk-ladder-action">
+        {hasSigned ? (
+          <span className="desk-signed-chip" title={copy.desk.signed.badgeTooltip}>
+            {copy.desk.signed.badge}
+          </span>
+        ) : null}
         {level.own ? <span className="desk-own-dot" aria-hidden /> : null}
         {takeHref ? (
           <Link
@@ -85,6 +115,19 @@ function LevelRow({
           >
             {takeLabel}
           </Link>
+        ) : null}
+        {signedFill ? (
+          <button
+            type="button"
+            className="btn btn-secondary btn-sm"
+            title={copy.desk.signed.badgeTooltip}
+            onClick={(e) => {
+              e.stopPropagation();
+              onFillSigned(signedFill);
+            }}
+          >
+            {copy.desk.signed.fill}
+          </button>
         ) : null}
       </span>
     </div>
@@ -128,6 +171,11 @@ export function RateLadder({
   useEffect(() => {
     prevRef.current = snapshotLadder(ladder, chainId);
   }, [ladder, chainId]);
+
+  // Signed-fill inline confirm (#1131 slice D). Keyed by order hash so
+  // a book refresh that drops the selected order also drops the panel
+  // (the confirm re-vets everything live at submit anyway).
+  const [fillTarget, setFillTarget] = useState<SignedRowMeta | null>(null);
 
   if (loading) {
     return (
@@ -196,6 +244,8 @@ export function RateLadder({
                   ? `/borrow?offer=${askTake.offerId}&chain=${chainId}`
                   : null
               }
+              signedFill={signedFillCandidate(l, wallet)?.signed ?? null}
+              onFillSigned={setFillTarget}
             />
           ))}
 
@@ -215,6 +265,12 @@ export function RateLadder({
               : 'one-sided book'}
           </div>
 
+          {/* Crossable-band previewMatch strip (#1131 slice B) — sits
+              directly at the mid row; renders nothing unless the
+              contract's own preview says the top-of-book pair is
+              matchable AND the partial-fill master flag is on. */}
+          <MatchBand ladder={ladder} decimals={decimals} symbol={symbol} />
+
           <div className="desk-ladder-side-label">{copy.desk.bidsHeading}</div>
           {bidsShown.map((l) => (
             <LevelRow
@@ -230,10 +286,19 @@ export function RateLadder({
                   ? `/lend?offer=${bidTake.offerId}&chain=${chainId}`
                   : null
               }
+              signedFill={signedFillCandidate(l, wallet)?.signed ?? null}
+              onFillSigned={setFillTarget}
             />
           ))}
         </div>
       )}
+      {fillTarget ? (
+        <SignedFillConfirm
+          key={fillTarget.orderHash}
+          signed={fillTarget}
+          onDone={() => setFillTarget(null)}
+        />
+      ) : null}
       {!empty ? (
         <p className="muted" style={{ marginTop: 8, fontSize: '0.8rem' }}>
           {copy.desk.rowPrefills}

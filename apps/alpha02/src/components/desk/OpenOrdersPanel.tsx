@@ -34,7 +34,18 @@ import {
 import { assertWalletNotSanctionedLive } from '../../data/sanctions';
 import { CANCEL_COOLDOWN_SECONDS } from '../../contracts/loanLive';
 import { useMyOffersFull } from '../../data/hooks';
-import { readLinkedOfferIds, useAmendSource } from '../../data/desk';
+import {
+  readLinkedOfferIds,
+  useAmendSource,
+  useDeskSignedBook,
+  type DeskPair,
+} from '../../data/desk';
+import {
+  signedOfferRemaining,
+  signedOfferTypedMessage,
+  type SignedOrderWire,
+} from '../../lib/signedOffer';
+import type { IndexedSignedOffer } from '../../data/indexer';
 import { readAllowance, useAllowanceForPlan } from '../../lib/submitProgress';
 import { EmptyState, UnavailableState } from '../EmptyState';
 import { AssetType } from '../../lib/types';
@@ -705,7 +716,160 @@ function OrderRow({ offer }: { offer: IndexedOffer }) {
   );
 }
 
-export function OpenOrdersPanel() {
+/**
+ * The wallet's own GASLESS signed orders for the SELECTED market
+ * (#1131 slice D). Deliberately market-scoped where the on-chain rows
+ * above are market-agnostic (created ∪ holder): the signed book's only
+ * query surface is the market-scoped `GET /signed-offers`, so a
+ * cross-market "all my signed orders" list would need a by-signer
+ * route the worker doesn't expose yet — the honest v1 lists the
+ * selected market and SAYS so (`copy.desk.orders.signedNote`).
+ *
+ * Cancel is the on-chain `cancelSignedOffer(order)` — the ONLY way to
+ * revoke a signature the book already holds (an off-chain delete would
+ * merely hide it; anyone who saved the row could still fill it). The
+ * copy explains that this costs gas, unlike posting.
+ *
+ * Rendering rule: the block appears only when the wallet HAS signed
+ * rows in this market. Empty and unavailable both render nothing — the
+ * block never claims "no signed orders", so the silence stays honest,
+ * and an older worker without the /signed-offers route doesn't pin a
+ * permanent error line into every desk visit.
+ */
+function SignedOrdersBlock({
+  pair,
+  days,
+}: {
+  pair: DeskPair | null;
+  days: number;
+}) {
+  const { address, onSupportedChain } = useActiveChain();
+  const signedBook = useDeskSignedBook(pair, days);
+  const queryClient = useQueryClient();
+  const { write } = useDiamondWrite();
+  const [busyHash, setBusyHash] = useState<string | null>(null);
+  const [error, setError] = useState<{ hash: string; msg: string } | null>(null);
+  const [cancelledHash, setCancelledHash] = useState<string | null>(null);
+
+  const me = address?.toLowerCase();
+  const own = useMemo(
+    () =>
+      (Array.isArray(signedBook.data) ? signedBook.data : []).filter(
+        (r) => me !== undefined && r.signer.toLowerCase() === me,
+      ),
+    [signedBook.data, me],
+  );
+
+  const lendingMeta = useTokenMeta(pair?.lendingAsset);
+
+  if (own.length === 0) return null;
+
+  async function cancel(row: IndexedSignedOffer) {
+    setBusyHash(row.orderHash);
+    setError(null);
+    setCancelledHash(null);
+    try {
+      await write('cancelSignedOffer', [signedOfferTypedMessage(row.order)]);
+      setCancelledHash(row.orderHash);
+      void queryClient.invalidateQueries({ queryKey: ['deskSignedBook'] });
+    } catch (err) {
+      setError({ hash: row.orderHash, msg: captureTxError(err) });
+    } finally {
+      setBusyHash(null);
+    }
+  }
+
+  const rateOf = (o: SignedOrderWire): number =>
+    Number(o.offerType) === 0
+      ? Number(o.interestRateBps)
+      : Number(o.interestRateBpsMax);
+
+  return (
+    <div style={{ marginTop: 16 }}>
+      <p style={{ margin: '0 0 4px', fontWeight: 600 }}>{text.signedTitle}</p>
+      <p className="muted" style={{ margin: '0 0 8px', fontSize: '0.8rem' }}>
+        {text.signedNote} {text.signedCancelNote}
+      </p>
+      <div className="row-list">
+        {own.map((row) => {
+          const remaining = signedOfferRemaining(row.order, row.filledAmount);
+          return (
+            <div className="item-row" key={row.orderHash}>
+              <span className="row-main">
+                <span className="row-title">
+                  {Number(row.order.offerType) === 0
+                    ? copy.offers.lenderOffer
+                    : copy.offers.borrowerOffer}{' '}
+                  ·{' '}
+                  <span title={`${rateOf(row.order)} bps`}>
+                    {formatBpsAsPercent(rateOf(row.order))}
+                  </span>{' '}
+                  ·{' '}
+                  {lendingMeta.data
+                    ? formatTokenAmount(remaining, lendingMeta.data.decimals)
+                    : '…'}{' '}
+                  {lendingMeta.data?.symbol ?? ''}
+                  <span
+                    className="desk-signed-chip"
+                    style={{ marginLeft: 8 }}
+                    title={copy.desk.signed.badgeTooltip}
+                  >
+                    {copy.desk.signed.badge}
+                  </span>
+                </span>
+                <br />
+                <span className="row-sub">
+                  {shortAddress(row.orderHash)} ·{' '}
+                  {formatDurationDays(Number(row.order.durationDays))} ·{' '}
+                  {row.expiresAt
+                    ? `expires ${formatDate(row.expiresAt)}`
+                    : 'no expiry'}
+                </span>
+                {cancelledHash === row.orderHash ? (
+                  <>
+                    <br />
+                    <span className="row-sub" style={{ color: 'var(--ok)' }}>
+                      {text.signedCancelled}
+                    </span>
+                  </>
+                ) : null}
+                {error && error.hash === row.orderHash ? (
+                  <>
+                    <br />
+                    <span className="row-sub" style={{ color: 'var(--danger)' }}>
+                      {error.msg}
+                    </span>
+                  </>
+                ) : null}
+              </span>
+              <button
+                type="button"
+                className="btn btn-secondary btn-sm"
+                disabled={!onSupportedChain || busyHash !== null}
+                title={text.signedCancelNote}
+                onClick={() => void cancel(row)}
+              >
+                {busyHash === row.orderHash
+                  ? text.signedCancelling
+                  : text.signedCancel}
+              </button>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+export function OpenOrdersPanel({
+  pair,
+  days,
+}: {
+  /** The desk's selected market — scopes the signed-orders block ONLY
+   *  (the on-chain list stays market-agnostic, as before). */
+  pair: DeskPair | null;
+  days: number;
+}) {
   const offers = useMyOffersFull();
   const { isConnected, readChain } = useActiveChain();
   const publicClient = usePublicClient({ chainId: readChain.chainId });
@@ -774,13 +938,21 @@ export function OpenOrdersPanel() {
     return <UnavailableState body={text.unavailable} />;
   }
   if (rows.length === 0) {
-    return <EmptyState icon={Inbox} title={text.empty} />;
+    return (
+      <>
+        <EmptyState icon={Inbox} title={text.empty} />
+        <SignedOrdersBlock pair={pair} days={days} />
+      </>
+    );
   }
   return (
-    <div className="row-list">
-      {rows.map((o) => (
-        <OrderRow key={o.offerId} offer={o} />
-      ))}
-    </div>
+    <>
+      <div className="row-list">
+        {rows.map((o) => (
+          <OrderRow key={o.offerId} offer={o} />
+        ))}
+      </div>
+      <SignedOrdersBlock pair={pair} days={days} />
+    </>
   );
 }

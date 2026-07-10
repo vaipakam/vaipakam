@@ -1410,6 +1410,61 @@ a.item-row:hover {
   font-size: 0.78rem;
 }
 
+/* Crossable-band previewMatch strip (#1131 slice B) — a distinct band
+   at the mid row, visually apart from ladder rows (sans font, brand
+   tint) so it can never be misread as book depth. */
+.desk-match-band {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  margin: 2px 0;
+  padding: 6px 8px;
+  border-radius: var(--radius-sm);
+  background: var(--brand-soft);
+  font-family: var(--font-sans);
+  font-size: 0.8rem;
+}
+
+.desk-match-band-main {
+  display: inline-flex;
+  align-items: flex-start;
+  gap: 6px;
+  flex: 1;
+  min-width: 200px;
+}
+
+.desk-match-band-done {
+  color: var(--ok);
+}
+
+.desk-match-band-error {
+  flex-basis: 100%;
+  color: var(--danger);
+}
+
+/* Gasless signed-order badge (#1131 slice D) — marks indexer-sourced
+   signed rows in the ladder and the Open orders signed block. */
+.desk-signed-chip {
+  display: inline-block;
+  padding: 0 6px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-full);
+  background: var(--surface-sunken);
+  color: var(--text-muted);
+  font-family: var(--font-sans);
+  font-size: 0.65rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  line-height: 1.6;
+}
+
+/* Inline signed-fill confirm — regular text, not the ladder's mono. */
+.desk-signed-confirm {
+  font-family: var(--font-sans);
+}
+
 /* Tape */
 .desk-tape {
   font-family: var(--font-mono);
