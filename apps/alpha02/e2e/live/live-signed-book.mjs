@@ -33,13 +33,43 @@
 // 300 s window — verified against SignedOfferFacet.sol). The signed
 // order itself is the rest-risk: until cancelled it is fillable by any
 // taker against the maker's vault free balance, so the cleanup handler
-// ALWAYS hunts the book for this run's signer+rate rows and cancels
-// them directly on-chain if the primary UI cancel didn't happen,
-// verifying the fill ledger reads the ceiling afterwards (the
-// poison-to-ceiling IS the revocation). A signature that was created
+// revokes THIS run's order directly on-chain if the primary UI cancel
+// didn't happen, verifying the fill ledger reads the ceiling afterwards
+// (the poison-to-ceiling IS the revocation). Identity is DETERMINISTIC
+// (Codex #1148): the order hash is captured from the page's own
+// `POST /signed-offers` response (the Worker answers
+// `{ chainId, orderHash }` on 201/200) and every subsequent lookup,
+// cancel, and ledger read keys on that hash — never on a signer+rate
+// shape match, which on a rerun could resolve to an older leftover row
+// (GET ties equal rates by created_at ASC, so a stale row would be
+// exactly the first match). Pre-existing own rows found at preflight
+// are reported LOUDLY for manual attention and excluded from cleanup
+// matching — this run never auto-cancels rows it didn't create (real
+// gas, not this run's mess to spend on). A signature that was created
 // but never accepted by the book rests nowhere (the market-scoped GET
 // is the book's only publication surface), but the run stays loud
 // about any state it could not positively verify.
+//
+// Step-7 accounting — THREE independent post-cancel observations,
+// reported separately in the summary because they fail/defer
+// independently (Codex #1148):
+//   (i)   indexer LIFECYCLE — the cancelled row leaves the
+//         market-scoped GET (the D1 status flip on the ingest scan);
+//   (ii)  WS RAIL — the production push socket delivers the
+//         offer.changed invalidate frame, observed from a NODE-side
+//         client (this sandbox's proxy blocks the PAGE's WebSocket, so
+//         the rail is provable only from Node here);
+//   (iii) BROWSER PUSH PATH — page WS → IndexerPushSync → book refresh
+//         before the poll. Structurally NOT observable from this
+//         sandbox: the driver instruments the page's WebSocket
+//         constructor and, if a socket to the indexer push endpoint
+//         ever reaches OPEN (i.e. a page-WS-capable environment), it
+//         asserts the book refresh beats the 15 s poll; otherwise it
+//         prints an explicit OPEN marker so the gap stays visible
+//         until a run from such an environment closes it. A green
+//         (i)+(ii) does NOT imply (iii) — real browsers could still be
+//         stale until polling if the deployed IndexerPushSync never
+//         receives or maps the production frames.
 //
 //   TESTNET_WALLETS_FILE=~/secrets/wallets.json node live-signed-book.mjs
 //
@@ -357,12 +387,31 @@ const snap = async (name) => shotPaths.push(await shot(name));
 let failed = false;
 // The signed row this run put on the book — module scope so the
 // cleanup can revoke it even when the drive fails between milestones.
+// orderHash is captured DETERMINISTICALLY from the page's own
+// POST /signed-offers response (Codex #1148) — never resolved by a
+// signer+rate shape match, which a stale leftover row could satisfy.
 let orderHash = null;
+let capturedPost = null; // { status, orderHash, url } from the page's POST response
 let wireOrder = null; // the exact replay payload GET served (cancel needs it)
 let signClicked = false; // a signature may exist from here on
 let ledgerPoisoned = false; // signedOfferFilledAmount(orderHash) == ceiling verified
 let cancelTxHash = null;
 let ws = null;
+// Pre-existing ACTIVE signed rows under this signer on the driven
+// market, snapshotted at preflight — leftovers of an earlier partial
+// run. Reported for manual attention; NEVER auto-cancelled by this
+// run, and excluded from the cleanup's no-hash fallback matching.
+let preexistingOwnRows = [];
+const preexistingOwnHashes = new Set();
+// Step-7 three-way accounting (see the header): each observation is
+// reported independently in the structured summary.
+const step7Obs = {
+  lifecycle: 'DEFERRED — the cancel was never reached (drive failed earlier)',
+  wsRail: 'DEFERRED — the cancel was never reached (drive failed earlier)',
+  browserPush:
+    'OPEN — page WS blocked by the sandbox proxy; needs one run from a ' +
+    'page-WS-capable environment (assert book refresh beats the 15 s poll)',
+};
 
 // Own-signed ladder level for THIS run's distinctive rate.
 const signedLadderRow = () =>
@@ -419,6 +468,28 @@ try {
       `GET 200, Cache-Control "${cacheControl}", ${probe.body.offers.length} ` +
       `pre-existing row(s) on WETH/tLIQ@${tenor}d`,
   );
+  // Rerun honesty (Codex #1148): snapshot OUR OWN pre-existing active
+  // rows on this market. Any hit means an earlier run left a live
+  // signed order behind (its cleanup failed or was skipped) — say so
+  // LOUDLY now. These hashes are excluded from the cleanup's no-hash
+  // fallback so this run can never claim (or cancel) a row it didn't
+  // create, and the summary lists them again for manual attention.
+  preexistingOwnRows = probe.body.offers.filter((r) => sameAddr(r.signer, lenderAddr));
+  for (const r of preexistingOwnRows) {
+    preexistingOwnHashes.add(String(r.orderHash).toLowerCase());
+  }
+  if (preexistingOwnRows.length) {
+    record(
+      '1c. pre-existing own signed rows on the driven market',
+      'OBSERVED',
+      `WARNING — ${preexistingOwnRows.length} ACTIVE signed row(s) already rest ` +
+        `under signer ${lenderAddr} on WETH/tLIQ@${tenor}d: ` +
+        `${preexistingOwnRows.map((r) => r.orderHash).join(', ')} — leftovers of ` +
+        'an earlier partial run, each fillable against the vault free balance ' +
+        'until cancelled. This run will NOT auto-cancel them (real gas, not ' +
+        "this run's mess); cancelSignedOffer them manually — see the summary.",
+    );
+  }
   // Ingest-freshness gate for the step-7 observations: the signed-book
   // LIFECYCLE flip (row leaving GET after cancel) and the WS invalidate
   // frame both ride the chain-ingest scan. A stalled cursor makes them
@@ -467,6 +538,51 @@ try {
   );
 
   // ---- step 3: load the market, arm the gasless ticket ---------------
+  // (iii)-detection plumbing: wrap the PAGE's WebSocket constructor so
+  // the drive can tell whether the browser push path is even alive in
+  // this environment (in this sandbox the proxy blocks page WS — the
+  // socket never reaches OPEN — and step 7 prints the OPEN marker
+  // instead of pretending the tab-flip/poll refetch proved push).
+  await page.addInitScript(() => {
+    const entries = [];
+    globalThis.__wsProbe = entries;
+    const Native = globalThis.WebSocket;
+    if (!Native) return;
+    globalThis.WebSocket = class extends Native {
+      constructor(...args) {
+        super(...args);
+        const entry = { url: String(args[0]), opened: false, closed: false };
+        entries.push(entry);
+        this.addEventListener('open', () => {
+          entry.opened = true;
+        });
+        this.addEventListener('close', () => {
+          entry.closed = true;
+        });
+      }
+    };
+  });
+  // Deterministic order identity (Codex #1148): capture the Worker's
+  // { chainId, orderHash } answer to the page's own POST
+  // /signed-offers. Registered before navigation so the capture can
+  // never race the sign click; the undici route fulfill still emits
+  // Playwright response events, so this observes the real wire answer.
+  page.on('response', (res) => {
+    try {
+      if (res.request().method() !== 'POST') return;
+      if (new URL(res.url()).pathname !== '/signed-offers') return;
+      res
+        .json()
+        .then((body) => {
+          if (body?.orderHash) {
+            capturedPost = { status: res.status(), orderHash: body.orderHash, url: res.url() };
+          }
+        })
+        .catch(() => {});
+    } catch {
+      /* non-HTTP or malformed URL — step 4 asserts the capture landed */
+    }
+  });
   await page.goto(`${SITE}/desk`, { waitUntil: 'domcontentloaded' });
   await page
     .getByRole('heading', { name: 'Rate Desk', level: 1 })
@@ -592,36 +708,63 @@ try {
         'covers the order — the preflight read the wrong pocket',
     );
   }
+  // Deterministic identity (Codex #1148): the POST response listener
+  // must have captured the Worker's { chainId, orderHash } answer by
+  // now (the success copy renders only after the POST resolves; the
+  // brief poll absorbs the listener's async body parse). Every later
+  // lookup, cancel, and ledger read keys on THIS hash — a stale row
+  // from an earlier run can never be mistaken for this run's order.
+  await pollFor(
+    "the page's POST /signed-offers response capture",
+    async () => capturedPost,
+    { timeoutMs: 15_000, intervalMs: 250 },
+  );
+  if (capturedPost.status !== 201 && capturedPost.status !== 200) {
+    throw new Error(
+      `POST /signed-offers answered ${capturedPost.status} (expected 201, or ` +
+        '200 idempotent-replay) yet the success copy rendered',
+    );
+  }
+  if (!/^0x[0-9a-fA-F]{64}$/.test(String(capturedPost.orderHash))) {
+    throw new Error(
+      `POST /signed-offers response orderHash is not 32-byte hex: ` +
+        `"${capturedPost.orderHash}"`,
+    );
+  }
+  orderHash = capturedPost.orderHash;
+  if (preexistingOwnHashes.has(orderHash.toLowerCase())) {
+    throw new Error(
+      `POST answered with orderHash ${orderHash}, which was ALREADY on the book ` +
+        'at preflight — the idempotent-replay path resolved to a leftover order ' +
+        'from an earlier run (identical nonce/deadline), not a fresh post',
+    );
+  }
   await snap('signed-book-02-posted');
   record(
     '4. gasless post — ONE signature, ZERO transactions',
     'PASS',
     `success copy rendered; eth_sendTransaction delta 0, eth_signTypedData_v4 ` +
-      `delta 1, pending nonce pinned at ${nonceAfter}; no vault-funding warning. ` +
-      'NB deployed behaviour: the success copy does not print the order hash — ' +
-      'row identity is proven in step 5 via the wire + the Diamond hash view',
+      `delta 1, pending nonce pinned at ${nonceAfter}; no vault-funding warning; ` +
+      `POST answered ${capturedPost.status} with orderHash=${orderHash} ` +
+      '(captured from the page response — the deterministic identity every ' +
+      'later step keys on)',
   );
 
   // ---- step 5: the row lands — wire, chain-hash cross-check, ladder,
   // own-signed block ----------------------------------------------------
   // The POST writes D1 synchronously, so the row should be served on
-  // the next GET; poll briefly for wire/network slack. Identity: OUR
-  // signer + THIS run's distinctive rate.
+  // the next GET; poll briefly for wire/network slack. Identity: the
+  // orderHash the POST response answered in step 4 — deterministic,
+  // immune to a stale same-shape leftover row (Codex #1148).
   const row = await pollFor(
-    "this run's signed row on GET /signed-offers",
+    "this run's signed row on GET /signed-offers (by the POSTed orderHash)",
     async () => {
       const res = await indexerGet(signedBookUrl(tenor));
       if (res.status !== 200 || !Array.isArray(res.body?.offers)) return undefined;
-      return res.body.offers.find(
-        (r) =>
-          sameAddr(r.signer, lenderAddr) &&
-          r.order?.interestRateBps === String(POST.bps) &&
-          r.order?.amountMax === EXPECTED_AMOUNT.toString(),
-      );
+      return res.body.offers.find((r) => sameAddr(r.orderHash, orderHash));
     },
     { timeoutMs: 45_000, intervalMs: 3_000 },
   );
-  orderHash = row.orderHash;
   wireOrder = row.order;
   // Chain-side identity: the Diamond's own pure hash view over the
   // EXACT wire payload must reproduce the indexer's key — proves the
@@ -634,8 +777,14 @@ try {
     );
   }
   // The collapsed single-value AON shape (#1145 round-2) on the wire.
+  // signer + rate are asserted here (no longer the row's identity —
+  // the orderHash is — but they must still match what was posted).
   const wireMismatches = [
     row.status === 'active' ? null : `status=${row.status}`,
+    sameAddr(row.signer, lenderAddr) ? null : `signer=${row.signer}`,
+    wireOrder.interestRateBps === String(POST.bps)
+      ? null
+      : `interestRateBps=${wireOrder.interestRateBps}`,
     wireOrder.amount === EXPECTED_AMOUNT.toString() ? null : `amount=${wireOrder.amount}`,
     wireOrder.amountMax === EXPECTED_AMOUNT.toString()
       ? null
@@ -759,12 +908,18 @@ try {
   );
 
   // ---- step 7: the indexer + push rail catch up ------------------------
-  // Two independent milestones over the same scan (~3 min round-robin;
-  // poll past one full cycle): the row leaving the market-scoped GET
-  // (status flip to 'cancelled' — GET serves active only), and the WS
-  // invalidate frame with offer.changed at/past the cancel block. The
-  // frame criterion is block-pinned via scannedTo so an unrelated
-  // earlier scan's offer.changed can't be credited.
+  // THREE independent observations, accounted separately (see the
+  // header; Codex #1148). (i)+(ii) ride the same ingest scan (~3 min
+  // round-robin; poll past one full cycle): the row leaving the
+  // market-scoped GET (status flip to 'cancelled' — GET serves active
+  // only), and the Node-observed WS invalidate frame with
+  // offer.changed at/past the cancel block (block-pinned via scannedTo
+  // so an unrelated earlier scan's offer.changed can't be credited).
+  // (iii) — the BROWSER push path — is probed afterwards and stays an
+  // explicit OPEN marker in any environment whose page WS can't
+  // connect (this sandbox); it is NEVER inferred from (i)/(ii).
+  step7Obs.lifecycle = 'DEFERRED — timed out waiting for the row to leave GET';
+  step7Obs.wsRail = 'DEFERRED — timed out waiting for the offer.changed frame';
   let wireGoneAt = null;
   let creditedFrame = null;
   const scanMilestones = pollFor(
@@ -775,9 +930,10 @@ try {
         if (
           res.status === 200 &&
           Array.isArray(res.body?.offers) &&
-          !res.body.offers.some((r) => r.orderHash === orderHash)
+          !res.body.offers.some((r) => sameAddr(r.orderHash, orderHash))
         ) {
           wireGoneAt = Date.now();
+          step7Obs.lifecycle = `PASS — row left GET /signed-offers +${((wireGoneAt - cancelObservedAt) / 1000).toFixed(0)}s after cancel`;
           console.log(
             `  milestone: row left /signed-offers +${((wireGoneAt - cancelObservedAt) / 1000).toFixed(0)}s after cancel`,
           );
@@ -793,6 +949,10 @@ try {
               Number(f.obj.scannedTo) >= Number(receipt.blockNumber),
           ) ?? null;
         if (creditedFrame) {
+          step7Obs.wsRail =
+            `PASS — Node-side observer received offer.changed ` +
+            `+${((creditedFrame.at - cancelObservedAt) / 1000).toFixed(0)}s after cancel ` +
+            `(scannedTo=${creditedFrame.obj.scannedTo})`;
           console.log(
             `  milestone: offer.changed push frame +${((creditedFrame.at - cancelObservedAt) / 1000).toFixed(0)}s ` +
               `after cancel (scannedTo=${creditedFrame.obj.scannedTo})`,
@@ -817,6 +977,12 @@ try {
     ).catch(() => null);
     const cur = stats?.body?.indexer ?? null;
     if (cur && Number(cur.lastBlock) < Number(receipt.blockNumber)) {
+      const stallNote =
+        `DEFERRED — production ingest stalled (#1149): cursor at block ` +
+        `${cur.lastBlock} < cancel block ${receipt.blockNumber}; re-run once ` +
+        'the cursor advances past the cancel block';
+      if (wireGoneAt === null) step7Obs.lifecycle = stallNote;
+      if (creditedFrame === null) step7Obs.wsRail = stallNote;
       throw new Error(
         `${scanErr.message} — DIAGNOSIS: production ingest is STALLED for this ` +
           `chain (cursor at block ${cur.lastBlock}, last advanced ` +
@@ -826,6 +992,11 @@ try {
           'event; re-run once the cursor advances past the cancel block.',
       );
     }
+    const regressionNote =
+      'FAIL — ingest cursor is past the cancel block yet the observation ' +
+      'never materialized (treat as a signed-book lifecycle/push regression)';
+    if (wireGoneAt === null) step7Obs.lifecycle = regressionNote;
+    if (creditedFrame === null) step7Obs.wsRail = regressionNote;
     throw new Error(
       `${scanErr.message} — ingest cursor ${cur ? `at block ${cur.lastBlock}` : 'unreadable'} ` +
         `is PAST the cancel block ${receipt.blockNumber} (or unknown): the scan ran ` +
@@ -835,15 +1006,61 @@ try {
   }
   const invalidateCount = ws.frames.filter((f) => f.obj?.t === 'invalidate').length;
   record(
-    '7. indexer scan + WS push after the cancel',
+    '7. indexer scan + WS push after the cancel (observations i + ii)',
     'PASS',
-    `row left /signed-offers +${((wireGoneAt - cancelObservedAt) / 1000).toFixed(0)}s; ` +
-      `invalidate frame keys=[${creditedFrame.obj.keys.join(', ')}] ` +
+    `(i) row left /signed-offers +${((wireGoneAt - cancelObservedAt) / 1000).toFixed(0)}s; ` +
+      `(ii) invalidate frame keys=[${creditedFrame.obj.keys.join(', ')}] ` +
       `scannedTo=${creditedFrame.obj.scannedTo} (cancel block ${receipt.blockNumber}) ` +
-      `+${((creditedFrame.at - cancelObservedAt) / 1000).toFixed(0)}s; ` +
-      `${invalidateCount} invalidate frame(s) total this drive — ` +
-      'the fork tier cannot make this observation (no WS rail); observed live here',
+      `+${((creditedFrame.at - cancelObservedAt) / 1000).toFixed(0)}s, from the ` +
+      `NODE-side observer; ${invalidateCount} invalidate frame(s) total this drive — ` +
+      'the fork tier cannot make the rail observation (no WS); the BROWSER push ' +
+      'path is accounted separately as observation (iii), step 7b',
   );
+
+  // ---- step 7b: observation (iii) — the BROWSER push path --------------
+  // (i)+(ii) prove the Worker flipped the row and the rail emitted the
+  // frame; NEITHER proves the deployed React IndexerPushSync receives
+  // and maps the production frames (real browsers could stay stale
+  // until polling). If this environment's page WS ever reached OPEN on
+  // the push endpoint, assert the ladder lets the row go within the
+  // 15 s stale window of the frame, WITHOUT any tab-flip nudge — push
+  // beating the poll. In this sandbox the proxy blocks page WS, so
+  // this stays an explicit OPEN observation, never silently absorbed
+  // into step 8's poll-path convergence.
+  const pageSockets = await page
+    .evaluate(() => globalThis.__wsProbe ?? [])
+    .catch(() => []);
+  const pushSockets = pageSockets.filter((w) => w.url.includes('/ws/chain/'));
+  const openPushSocket = pushSockets.find((w) => w.opened);
+  if (openPushSocket) {
+    const budgetMs = Math.max(1_000, 15_000 - (Date.now() - creditedFrame.at));
+    try {
+      await pollFor(
+        'the browser push path to clear the Signed ladder row (before the poll)',
+        async () => (await signedLadderRow().count()) === 0,
+        { timeoutMs: budgetMs, intervalMs: 500 },
+      );
+    } catch (pushErr) {
+      step7Obs.browserPush =
+        `FAIL — page WS ${openPushSocket.url} was OPEN yet the Signed ladder ` +
+        'row outlived the 15 s stale window after the push frame: the deployed ' +
+        'IndexerPushSync did not turn the frame into a book refresh (push did ' +
+        'not beat the poll) — the exact phase-3 regression this observation exists for';
+      throw new Error(`${pushErr.message} — ${step7Obs.browserPush}`);
+    }
+    step7Obs.browserPush =
+      `PASS — page WS ${openPushSocket.url} was OPEN and the ladder let the ` +
+      `row go within 15 s of the push frame, no tab flip (push beat the poll)`;
+    record('7b. browser push path (observation iii)', 'PASS', step7Obs.browserPush);
+  } else {
+    step7Obs.browserPush =
+      `OPEN — the page's WebSocket never reached OPEN in this environment ` +
+      `(${pushSockets.length} attempt(s) to the push endpoint observed; the ` +
+      'sandbox proxy blocks page WS), so the deployed IndexerPushSync ' +
+      'frame→refresh path is NOT verified by this run. Re-run from a ' +
+      'page-WS-capable environment to close it.';
+    record('7b. browser push path (observation iii)', 'OBSERVED', step7Obs.browserPush);
+  }
 
   // ---- step 8: the UI lets the dead row go ------------------------------
   // The page in this sandbox has NO WebSocket (driver.mjs routes page
@@ -864,8 +1081,9 @@ try {
   record(
     '8. UI converged — Signed row left the ladder + own-signed block',
     'PASS',
-    'poll-path convergence (the sandboxed page has no WS; the live rail was ' +
-      'proven Node-side in step 7)',
+    'poll/refetch-path convergence ONLY — this step deliberately proves ' +
+      'nothing about push (the rail was observed Node-side in step 7 (ii); ' +
+      'the browser push path is accounted separately in step 7b (iii))',
   );
 } catch (err) {
   failed = true;
@@ -884,18 +1102,31 @@ try {
   // the primary UI cancel didn't get there.
   try {
     if (signClicked && !ledgerPoisoned) {
+      // Adopt the POST-response capture if step 4's assert never ran
+      // (a failure between the click and the capture poll).
+      if (orderHash === null && capturedPost?.orderHash) {
+        orderHash = capturedPost.orderHash;
+      }
       // Recover the replay payload if the drive failed before step 5
       // enumerated it — the market-scoped GET is the book's only
-      // publication surface, so this run's signer+rate rows there are
-      // exactly the orders that could rest.
+      // publication surface. Keyed on the CAPTURED orderHash when we
+      // have one (deterministic — Codex #1148); only when the POST
+      // response was never observed does the fallback consider own
+      // rows, and then ONLY those absent from the preflight snapshot,
+      // so a stale leftover from an earlier run can never be adopted
+      // (or cancelled) as this run's order.
       if (wireOrder === null) {
         try {
           const res = await indexerGet(signedBookUrl(tenor));
-          const mine = (res.body?.offers ?? []).find(
-            (r) =>
-              sameAddr(r.signer, lenderAddr) &&
-              r.order?.interestRateBps === String(POST.bps),
-          );
+          const rows = res.body?.offers ?? [];
+          const mine =
+            orderHash !== null
+              ? rows.find((r) => sameAddr(r.orderHash, orderHash))
+              : rows.find(
+                  (r) =>
+                    sameAddr(r.signer, lenderAddr) &&
+                    !preexistingOwnHashes.has(String(r.orderHash).toLowerCase()),
+                );
           if (mine) {
             orderHash = mine.orderHash;
             wireOrder = mine.order;
@@ -987,6 +1218,26 @@ console.log(
   `order hash: ${orderHash ?? '(none posted)'} · ledger poisoned: ${ledgerPoisoned}` +
     ` · cancel tx: ${cancelTxHash ?? '(none)'}`,
 );
+// Step-7 three-way accounting — printed unconditionally so a PASS run
+// can never read as having proven the browser push path it did not
+// observe (Codex #1148): (i)/(ii) defer together on an ingest stall;
+// (iii) stays OPEN in any environment whose page WS can't connect.
+console.log('step-7 post-cancel observations (three independent rails):');
+console.log(`  (i)   indexer lifecycle (row leaves GET): ${step7Obs.lifecycle}`);
+console.log(`  (ii)  WS rail offer.changed (Node-side observer): ${step7Obs.wsRail}`);
+console.log(
+  `  (iii) browser push path (page WS → IndexerPushSync → book refresh): ${step7Obs.browserPush}`,
+);
+if (preexistingOwnRows.length) {
+  console.log(
+    `ATTENTION — ${preexistingOwnRows.length} PRE-EXISTING own signed row(s) were ` +
+      'already active at preflight and were NOT cancelled by this run (not this ' +
+      "run's orders — manual cancelSignedOffer needed):",
+  );
+  for (const r of preexistingOwnRows) {
+    console.log(`  ${r.orderHash} (signer ${r.signer}, rate ${r.order?.interestRateBps} bps)`);
+  }
+}
 if (ws) {
   const invalidates = ws.frames.filter((f) => f.obj?.t === 'invalidate');
   console.log(
