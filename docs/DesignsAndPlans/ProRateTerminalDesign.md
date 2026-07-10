@@ -156,9 +156,16 @@ Panel-by-panel, with the backing read/write:
 | Positions | **current-holder reads**, not historical parties: indexer `/loans/by-current-holder` (already exists) or position-NFT holder enumeration, hydrated via `getLoansBatch` + `calculateHealthFactor` overlay. `getUserDashboardLoans` walks historical `l.borrower`/`l.lender` (`MetricsDashboardFacet.sol:188-239`) and goes stale the moment a position NFT is transferred/sold — it would omit a buyer's position and show the seller dead manage actions | `repayLoan` / `repayPartial` / add-collateral | HF colour bands per B.1; accrued interest computed client-side (`LibEntitlement` mirror already exists in the dashboard flow) |
 | History | requires a **true server-side historical-participant route** (new indexer endpoint deriving participation from the `loans`/`offers` tables' lender/borrower/creator columns, all statuses) — every client-side composition falls short of permanent history: the actor feed misses lender fills (`LoanInitiated` has `actor = borrower`, `chainIndexer.ts:3110-3175`), `/loans/by-lender`/`by-borrower`/`by-current-holder` are **current-owner** filtered, and burns are written to `0x0` (`chainIndexer.ts:2770-2775`) — a lender whose loan was repaid+claimed disappears from all of them (the gap `Activity.tsx:72-74` already documents). The History tab therefore ships in **phase 2 alongside that route** (§8); phase 1 has no History tab rather than a silently incomplete one | — | |
 
-Mobile: panels stack (header → ticket → book → positions); the chart collapses to a
-sparkline in the header strip. alpha02 is mobile-first; the terminal is the one page
-allowed to be desktop-optimised, but it must degrade honestly rather than hide actions.
+**Mobile (first-class, not a degraded stack).** alpha02 is mobile-first, and the
+reference perp terminals treat mobile as its own layout rather than a reflow (verified
+against the reference desk on a 390×844 viewport, 2026-07-10): a compact sticky market
+header, then the **rate ladder and the order ticket side-by-side as the primary view**
+(the ladder is a narrow column; tapping a ladder row pre-fills the adjacent ticket —
+the highest-frequency loop stays on one screen), the **chart and tape behind a
+bottom-center segmented toggle** (chart arrives in phase 2; the toggle ships with one
+segment until then), and **Open orders / Positions as bottom tabs**. Amend/cancel/repay
+actions stay reachable on mobile — nothing is desktop-only; density is what changes,
+never capability. The honesty rules (§5.3) apply unchanged on the mobile chart view.
 
 ---
 
