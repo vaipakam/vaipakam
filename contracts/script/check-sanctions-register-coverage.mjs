@@ -155,7 +155,42 @@ function extractFunctions(src) {
   return fns;
 }
 
-/** For a side-parameterised register token, OR the lanes of every call site. */
+/** Split a call's argument text on TOP-LEVEL commas (ignoring nested (), [], {}). */
+function splitTopLevel(argStr) {
+  const out = [];
+  let depth = 0;
+  let cur = '';
+  for (const c of argStr) {
+    if (c === '(' || c === '[' || c === '{') depth++;
+    else if (c === ')' || c === ']' || c === '}') depth--;
+    if (c === ',' && depth === 0) {
+      out.push(cur);
+      cur = '';
+    } else cur += c;
+  }
+  if (cur.length) out.push(cur);
+  return out;
+}
+
+/**
+ * A REAL call / selector reference to `token` — `token(` or `token.selector`
+ * (comments are already stripped). NOT a bare word or a leftover local so a
+ * function that only references e.g. `terminalize.selector` after the call was
+ * removed, or names a similar local, doesn't false-satisfy a lane (Codex #1141
+ * P2). `\w*` after the token lets a prefix token match its suffixed sibling
+ * (`terminalize` → `terminalizeFromAny`).
+ */
+function hasCall(body, token) {
+  return new RegExp(`\\b${token}\\w*\\s*(?:\\(|\\.\\s*selector\\b)`).test(body);
+}
+
+/**
+ * For a side-parameterised register token, OR the lanes of every call site.
+ * ONLY a STANDALONE `true`/`false` argument selects a lane — a variable, a
+ * ternary (`c ? true : false`), or any other expression is NOT counted, so the
+ * scanner stays conservative rather than marking BOTH lanes covered off an
+ * expression whose runtime side it can't know (Codex #1141 P2).
+ */
 function sidesFromSidedCall(body, token) {
   const sides = new Set();
   for (const m of body.matchAll(new RegExp(`\\b${token}\\s*\\(`, 'g'))) {
@@ -166,9 +201,37 @@ function sidesFromSidedCall(body, token) {
       if (body[i] === '(') depth++;
       else if (body[i] === ')') depth--;
     }
-    const args = body.slice(argStart, i - 1);
-    if (/\btrue\b/.test(args)) sides.add('lender');
-    if (/\bfalse\b/.test(args)) sides.add('borrower');
+    for (const arg of splitTopLevel(body.slice(argStart, i - 1))) {
+      const a = arg.trim();
+      if (a === 'true') sides.add('lender');
+      else if (a === 'false') sides.add('borrower');
+    }
+  }
+  return sides;
+}
+
+/**
+ * The `.selector` crossFacetCall form of the single-sided host register —
+ * `recordSanctionsFrozenClaimant.selector, loanId, <bool>` (the `Both` variant
+ * is a distinct token handled by BOTH_TOKENS). Read the STANDALONE bool arg that
+ * follows the selector inside the same `abi.encodeWithSelector(...)`.
+ */
+function sidesFromSelectorRegister(body) {
+  const sides = new Set();
+  for (const m of body.matchAll(/recordSanctionsFrozenClaimant\.\s*selector\s*,/g)) {
+    // read the remaining args up to the matching close of the enclosing call
+    let i = m.index + m[0].length;
+    let depth = 1;
+    const start = i;
+    for (; i < body.length && depth > 0; i++) {
+      if (body[i] === '(') depth++;
+      else if (body[i] === ')') depth--;
+    }
+    for (const arg of splitTopLevel(body.slice(start, i - 1))) {
+      const a = arg.trim();
+      if (a === 'true') sides.add('lender');
+      else if (a === 'false') sides.add('borrower');
+    }
   }
   return sides;
 }
@@ -177,24 +240,17 @@ function sidesFromSidedCall(body, token) {
 function coveredLanes(body) {
   const covered = new Set();
   for (const t of BOTH_TOKENS) {
-    if (new RegExp(`\\b${t}`).test(body)) {
+    if (hasCall(body, t)) {
       covered.add('lender');
       covered.add('borrower');
     }
   }
-  for (const t of LENDER_HELPERS) if (body.includes(t)) covered.add('lender');
-  for (const t of BORROWER_HELPERS) if (body.includes(t)) covered.add('borrower');
+  for (const t of LENDER_HELPERS) if (hasCall(body, t)) covered.add('lender');
+  for (const t of BORROWER_HELPERS) if (hasCall(body, t)) covered.add('borrower');
   for (const t of SIDED_REGISTERS) {
     for (const s of sidesFromSidedCall(body, t)) covered.add(s);
   }
-  // The `.selector` crossFacetCall form of the single-sided host register —
-  // `recordSanctionsFrozenClaimant.selector, loanId, <bool>` (the `Both` variant
-  // is a distinct token handled by BOTH_TOKENS). Read the side arg that follows.
-  for (const m of body.matchAll(
-    /recordSanctionsFrozenClaimant\.selector\s*,[^;]*?\b(true|false)\b/g,
-  )) {
-    covered.add(m[1] === 'true' ? 'lender' : 'borrower');
-  }
+  for (const s of sidesFromSelectorRegister(body)) covered.add(s);
   return covered;
 }
 
@@ -204,12 +260,12 @@ function isZeroOrClaimedFieldWrite(field, rhs) {
   return /^\s*0\b/.test(rhs); // `.amount = 0`
 }
 
-/** A full-struct assignment that is an explicit `claimed: true` artifact row. */
-function structIsArtifact(body, lane) {
-  return new RegExp(
-    `\\.${lane}\\[[^\\]]*\\]\\s*=\\s*[^;]*claimed:\\s*true`,
-    's',
-  ).test(body);
+/** A full-struct `ClaimInfo{…}` assignment that is an explicit artifact row. */
+function structRhsIsArtifact(rhs) {
+  // Scoped to THIS assignment's RHS (Codex #1141 P2) — a function-wide check let
+  // a real `claimed: false` payout ride a sibling tombstone's exemption. Exempt
+  // only an explicit `claimed: true` (a computed `claimed: x == 0` is NOT exempt).
+  return /claimed:\s*true\b/.test(rhs);
 }
 
 const violations = [];
@@ -223,6 +279,7 @@ for (const file of listSolFiles(CONTRACTS_SRC)) {
     if (ALLOWLIST[`${base}::${name}`]) continue;
     const covered = coveredLanes(body);
 
+    // Direct `s.{lane}[...]` writes.
     for (const lane of CLAIM_LANES) {
       const need = lane === 'lenderClaims' ? 'lender' : 'borrower';
       let sawRealWrite = false;
@@ -231,16 +288,36 @@ for (const file of listSolFiles(CONTRACTS_SRC)) {
         const rhs = m[2] || '';
         if (field) {
           if (isZeroOrClaimedFieldWrite(field, rhs)) continue;
-          sawRealWrite = true;
         } else {
-          if (structIsArtifact(body, lane)) continue;
-          sawRealWrite = true;
+          if (structRhsIsArtifact(rhs)) continue;
         }
+        sawRealWrite = true;
       }
       if (sawRealWrite && !covered.has(need)) {
         violations.push(
           `${rel}  ::${name}  writes ${lane} but has no co-located ${need}-lane register`,
         );
+      }
+    }
+
+    // Aliased claim-row writes (Codex #1141 P2) — a `ClaimInfo storage x =
+    // s.{lane}[id];` binding followed by `x.field = …`. The direct-write regex
+    // above can't see these, so track the alias → lane and check its field
+    // writes the same way. (A read `x.field` has no `=` and is ignored.)
+    for (const am of body.matchAll(
+      /\bstorage\s+(\w+)\s*=\s*[^;]*?\.(lenderClaims|borrowerClaims|borrowerSurplusClaims)\[/g,
+    )) {
+      const aliasVar = am[1];
+      const lane = am[2];
+      const need = lane === 'lenderClaims' ? 'lender' : 'borrower';
+      if (covered.has(need)) continue;
+      const writeRe = new RegExp(`\\b${aliasVar}\\s*\\.\\s*(\\w+)\\s*=(?!=)([^;]*)`, 'g');
+      for (const wm of body.matchAll(writeRe)) {
+        if (isZeroOrClaimedFieldWrite(wm[1], wm[2] || '')) continue;
+        violations.push(
+          `${rel}  ::${name}  writes ${lane} via alias '${aliasVar}' but has no co-located ${need}-lane register`,
+        );
+        break;
       }
     }
 
