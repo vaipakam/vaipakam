@@ -19,8 +19,8 @@ pass found that the contract surface for a limit-order trading terminal already 
 end-to-end: limit interest rate (`interestRateBps` / `interestRateBpsMax`), GTC/GTT expiry
 (`expiresAt`), fill modes (`Partial`/`AON`/`IOC`), partial fills with `amountFilled`, in-place
 cancel/replace (`modifyOffer` / `setOfferRate` — contracts shipped, **no UI anywhere**), a
-pair-keyed depth read (`getActiveOffersByAssetPairRanked`), positions with pre-computed
-HF/LTV (`getUserDashboardLoans` → `LoanWithRisk`), and partial repay. The executed-rate
+pair-keyed depth read (`getActiveOffersByAssetPairRanked`), positions via current-holder
+reads hydrated with `getLoansBatch` + the HF/LTV risk overlay (§3), and partial repay. The executed-rate
 history for a chart already exists **row-by-row** in the indexer's `loans` table
 (`interest_rate_bps`, `start_at`, `lending_asset`, `collateral_asset`); the only data gap is
 an OHLC aggregation endpoint + a pair index + a chart library (none in the workspace).
@@ -59,9 +59,10 @@ new app and not an apps/defi rework — phased, with the rate chart in phase 2. 
 
 ### 1.2 Data: the rate series exists; the aggregation doesn't
 
-- The indexer's `loans` table (`apps/indexer/migrations/0005_loans_and_activity.sql:29-64`)
-  carries **every executed loan's** `interest_rate_bps`, `start_at`, `lending_asset`,
-  `collateral_asset`, `principal`, `duration_days`, `status`. This is the trade tape.
+- The indexer's `loans` table (`apps/indexer/migrations/0005_loans_and_activity.sql:29-64`,
+  with `interest_rate_bps` added by `0006_loan_token_ids.sql:26`) carries **every executed
+  loan's** `interest_rate_bps`, `start_at`, `lending_asset`, `collateral_asset`,
+  `principal`, `duration_days`, `status`. This is the trade tape.
 - The `offers` table carries the live book (rate bands, `amount_filled`, `expires_at`,
   `fill_mode`). Depth is derivable per pair.
 - **Missing**: an OHLC/candle endpoint (none), per-pair grouping on any endpoint
@@ -146,12 +147,12 @@ Panel-by-panel, with the backing read/write:
 | Panel | Reads | Writes | Notes |
 |---|---|---|---|
 | Header strip | book (see Order book row); last trade from indexer `/loans/recent` with the **pair+tenor server filter (phase 1, §7)**; `getAssetPrice` for the collateral oracle chip | — | Tenor chips show only tenors with live orders + the 3 presets (7/30/90d). The "last" seed must be tenor-scoped: `useMarketAnchorRate` is pair-only today (`useMarketAnchorRate.ts:32-101`) and MUST NOT seed a tenor market as-is — extend it with a `durationDays` check or seed from the tenor-filtered tape instead (a 7d fill must never seed the 30d header). |
-| Order book | **two-step read**: `getActiveOffersByAssetPairRanked` for the pair's ids/ordering, then hydrate via `getOffersWithState(ids)` — the skinny `OfferRanking` DTO omits `amountFilled` (`MetricsFacet.sol:591-600`), so remaining depth is computable only from hydrated rows (`amountMax - amountFilled`). Aggregate rate levels from **remaining** size, never `amountMax`. (Alternative: extend the ranking DTO with `amountFilled` — small contract change, phase-3 candidate.) | click a level → pre-fills the ticket at that rate (maker); taker affordance arms direct `acceptOffer` **only on unfilled rows** — direct accept rejects partially-filled offers (`OfferAcceptFacet.sol:767-781`); partially-filled rows are crossable only via the matcher | Fill-progress from hydrated `amountFilled/amountMax` (A.9); own orders highlighted |
+| Order book | **two-step read**: `getActiveOffersByAssetPairRanked` for the pair's ids/ordering, then hydrate via `getOffersWithState(ids)` — the skinny `OfferRanking` DTO omits `amountFilled` (`MetricsFacet.sol:591-600`), so remaining depth is computable only from hydrated rows (`amountMax - amountFilled`). Hydration MUST be chunked at `MAX_BATCH_IDS = 250` (`MetricsDashboardFacet.sol:61` — the batch view reverts `BatchTooLarge` above it), so a busy pair degrades to a bounded ladder instead of blanking the book. Aggregate rate levels from **remaining** size, never `amountMax`; and **drop lazily-expired GTT rows** (`expiresAt != 0 && expiresAt <= chain time`) before computing best bid/ask, tenor chips, or depth — expiry is lazily enforced, so the ranked read can still return rows that `acceptOffer` rejects with `OfferExpired`. (Alternative: extend the ranking DTO with `amountFilled` — small contract change, phase-3 candidate.) | click a level → pre-fills the ticket at that rate (maker); taker affordance arms direct `acceptOffer` **only on unfilled, unexpired rows** — direct accept rejects partially-filled offers (`OfferAcceptFacet.sol:767-781`) and expired ones (`OfferExpired`); partially-filled rows are crossable only via the matcher | Fill-progress from hydrated `amountFilled/amountMax` (A.9); own orders highlighted |
 | Order ticket | `useTxSimulation` precheck (reuses the #1112 under-collateral banner), `quoteOfferRateBps` as a "suggested rate" hint | `createOffer` / `createOfferWithPermit` | Side toggle, amount (+ optional range), limit rate (+ optional band), collateral, tenor, expiry preset (GTC/24h/7d/custom), fill-mode chip (Partial/AON/IOC) |
 | Tape | indexer `/loans/recent` with the **pair+tenor server filter (phase 1, §7)** — the current handler is a global newest-first page capped at 200 rows (`loanRoutes.ts:764-774`, `:1171-1175`); client-filtering it misses any market not among the latest global fills, so the server filter is a phase-1 prerequisite, not a phase-2 nicety | — | Sparse-honest: shows "N fills this week" not a fake ticker |
-| Open orders | `getUserOffersByStatePaginated` + `OfferView` | **`modifyOffer` / `setOfferRate` (first UI for #193)**, `cancelOffer` | Amend = pencil → inline edit of rate/size/collateral, one tx, same offerId |
+| Open orders | **union of created + held**: `getUserOffersByStatePaginated` (creator walk) ∪ `/offers/by-current-holder` / `getUserPositionOffers` — offers are position NFTs, so an open offer bought/received by a wallet is invisible to the creator walk alone; alpha02's existing hook already does this union | **`modifyOffer` / `setOfferRate` (first UI for #193)**, `cancelOffer` — both gated on `offer.creator === wallet` (the contracts authorize only the creator; held-not-created rows render read-only) | Amend = pencil → inline edit of rate/size/collateral, one tx, same offerId — **for rate-only or shrinking edits**. A grow (more lender principal / more borrower collateral) pulls via `_pullOrRefundErc20` → vault deposit, consuming Diamond allowance, and there is **no `modifyOfferWithPermit`** — the amend modal needs the same allowance precheck + classic-approve fallback as create/accept, or the "one tx" claim reverts for under-approved wallets |
 | Positions | **current-holder reads**, not historical parties: indexer `/loans/by-current-holder` (already exists) or position-NFT holder enumeration, hydrated via `getLoansBatch` + `calculateHealthFactor` overlay. `getUserDashboardLoans` walks historical `l.borrower`/`l.lender` (`MetricsDashboardFacet.sol:188-239`) and goes stale the moment a position NFT is transferred/sold — it would omit a buyer's position and show the seller dead manage actions | `repayLoan` / `repayPartial` / add-collateral | HF colour bands per B.1; accrued interest computed client-side (`LibEntitlement` mirror already exists in the dashboard flow) |
-| History | derive the user's loan/offer ids from the positions + open-orders panels, then query `/activity?loanId=`/`?offerId=` per id — the actor-only filter is incomplete for lenders (`LoanInitiated` is recorded with `actor = borrower`, `chainIndexer.ts:3110-3175`, so a lender whose offer is taken never appears in their own actor feed). A true server-side participant filter is a phase-3 alternative | — | |
+| History | seed the id set from **all-status sources**, not the live panels: `/offers/by-creator` + `/offers/by-current-holder` (all states) + the loan participant/current-holder timelines (`/loans/by-lender`/`by-borrower`/`by-current-holder`), unioned with the actor feed — this is the same seed set alpha02's existing Activity client uses. Live-panel ids alone lose history the moment an object leaves the panel (a cancelled/accepted offer is no longer open; a closed/settled position leaves current-holder reads). The actor-only filter is additionally incomplete for lenders (`LoanInitiated` is recorded with `actor = borrower`, `chainIndexer.ts:3110-3175`). A true server-side participant filter is a phase-3 alternative | — | |
 
 Mobile: panels stack (header → ticket → book → positions); the chart collapses to a
 sparkline in the header strip. alpha02 is mobile-first; the terminal is the one page
@@ -166,8 +167,11 @@ allowed to be desktop-optimised, but it must degrade honestly rather than hide a
   Basic nav, deep-linkable), push-sync client, tx simulation, Permit2, kill-switch,
   GoPlus badges, EIP-712 accept — every flow the terminal composes is already built and
   live-reviewed there. The terminal becomes the *reveal payoff* of Advanced mode.
-- Basic-mode users never see it; the guided Borrow/Lend flows remain the front door.
-  This preserves the naive-user-first thesis while giving power users a reason to stay.
+- Per the shell doctrine (`BasicUserUXSimplification.md`), `/trade` is **hidden from
+  Basic navigation but stays URL-reachable in both modes** — the same
+  hidden-not-blocked rule every advanced route follows today. No mode-based deep-link
+  block. The guided Borrow/Lend flows remain the front door, preserving the
+  naive-user-first thesis while giving power users a reason to stay.
 
 **Option B: rework apps/defi's OfferBook into the terminal.** Rejected: defi already has
 the two-sided book but is the legacy surface; investing the terminal there splits the
@@ -196,12 +200,14 @@ table (tenor → best bid/ask/depth) can sit in the header dropdown for discover
 - **Direct accept** (always on): a taker fills a specific maker offer *in full* at the
   maker's terms. This is "hit the top of book" and is what the book's taker affordance does.
 - **The crossing matcher** (`matchOffers`, midpoint rate/amount, partial fills, 1% LIF to
-  the matcher) is gated by `ConfigFacet.partialFillEnabled` — **ON on testnet deploys
-  (deploy-testnet.sh flips it), OFF by default on a fresh mainnet deploy**. When it's on,
-  a crossed book (best bid ≥ best ask) is *matchable* and the UI shows a "crossable"
-  band with `previewMatch` output ("these two orders can match at 5.23% midpoint —
-  anyone can execute and earn the matcher fee"). When it's off, the crossed band renders
-  as informational only. The flag is read at runtime (`getMasterFlags`); the UI must not
+  the matcher) is gated by `ConfigFacet.partialFillEnabled`. **`DeployDiamond.s.sol:634`
+  flips it ON during deployment, and both deploy-testnet.sh and deploy-mainnet.sh run
+  that script — so the flag is expected ON everywhere**; it exists as a governance
+  kill-switch, not a staged-enablement default. When it's on, a crossed book (best bid ≥
+  best ask) is *matchable* and the UI shows a "crossable" band with `previewMatch`
+  output ("these two orders can match at 5.23% midpoint — anyone can execute and earn
+  the matcher fee"). If governance ever flips it off, the crossed band renders as
+  informational only. The flag is read at runtime (`getMasterFlags`); the UI must not
   hard-code either state.
 - There is **no price-time priority on-chain**. The book's sort is a UI ranking, not an
   execution queue. Copy must never promise "your order is #2 in the queue"; it can say
@@ -296,18 +302,27 @@ first amend UI (#193)**, positions panel (current-holder reads per §3) with HF 
 repay/partial actions. **Includes the small indexer slice**: pair+tenor server filters
 on `/loans/recent` + `/offers/active` — the tape and the book's RPC-outage fallback are
 not honest without them (global 200-row pages can't scope to a market), so they are
-phase-1 scope, not phase-2. All data on the existing 30s idle-aware poll + push-sync
-invalidation. *Estimated: the largest single alpha02 page to date, but composed
-entirely of existing flows — comparable to the OfferFlow build.*
+phase-1 scope, not phase-2 — **plus the matching D1 indexes in the same migration**:
+the filters need route-shaped market indexes (e.g. offers
+`(chain_id, status, lending_asset, collateral_asset, duration_days)` and loans
+`(chain_id, lending_asset, collateral_asset, duration_days, loan_id)`); the existing
+offer indexes cover only `(chain_id, status)` / creator / current-holder lookups, so a
+filter without its index devolves into a global scan exactly where the terminal depends
+on it. All data on the existing 30s idle-aware poll + push-sync invalidation.
+*Estimated: the largest single alpha02 page to date, but composed entirely of existing
+flows — comparable to the OfferFlow build.*
 
 **Phase 2 — Rate history.** Indexer OHLC endpoint + the `(chain, pair, tenor, time)`
-index migration; BigInt-safe principal aggregation (§7); lightweight-charts
+candle index migration; BigInt-safe principal aggregation (§7); lightweight-charts
 integration; sparse-honesty rules (§5.3).
 
-**Phase 3 — Live-ness + depth polish.** Flip `CHAIN_INGEST_VIA_DO` on staging and route
-book/tape invalidations through the existing `IndexerPushSync`; book delta animations;
-crossable-band `previewMatch` surfacing (testnet, where the matcher is on); gasless
-signed-offer posting from the ticket (#396 v0.5 accept paths already exist).
+**Phase 3 — Live-ness + depth polish.** The live-ingest rail is **already rolled out**
+(`CHAIN_INGEST_VIA_DO: "true"` in `apps/indexer/wrangler.jsonc:150`; alpha02 mounts
+`IndexerPushSync` in the app shell) — phase 3's job is to **register the terminal's
+query roots/keys in the push `KEY_MAP`** so book/tape/candle queries invalidate on
+`offer.*`/`loan.*` frames instead of waiting for the 30s poll; book delta animations;
+crossable-band `previewMatch` surfacing (runtime-gated on `getMasterFlags`, §5.2);
+gasless signed-offer posting from the ticket (#396 v0.5 accept paths already exist).
 
 Each phase is independently shippable and independently valuable; phase 1 alone already
 delivers the two things no UI currently offers (a real book view in the flagship app +
@@ -363,9 +378,10 @@ strictly additive.
    (stable × WETH), with the custom-address picker behind "more"? (GoPlus screening
    already covers pasted assets.)
 3. **Tenor presets**: 7 / 30 / 90d as the promoted chips (30d default)?
-4. **Does the tape belong in phase 1** (client-filtered `/loans/recent`) or wait for the
-   server-side pair filter in phase 2? (Recommend phase 1, client-filtered — testnet row
-   counts are small.)
+4. **Tape scope** — resolved during review, no longer open: the tape ships in phase 1
+   **with** the pair+tenor server filter (+ index). Client-filtering the global
+   `/loans/recent` page was considered and rejected — it silently blanks any market
+   whose fills are older than the global first page (§3, §7, §8).
 5. **lightweight-charts** as the chart dependency — any licensing/vendoring objection?
    (Apache-2.0, requires the small "attribution notice" — a one-line link in the chart
    corner, same as every TradingView-lite integration.)
