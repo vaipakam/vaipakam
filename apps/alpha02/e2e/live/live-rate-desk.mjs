@@ -824,7 +824,13 @@ try {
             address: DIAMOND,
             event: offerCreatedAbi,
             args: { creator: lenderAddr },
-            fromBlock: prePostBlock,
+            // (prePostBlock, latest] — the snapshot block is EXCLUDED
+            // (Codex round-5 P3): prePostBlock was already sealed when
+            // sampled, so this run's create can only mine in a later
+            // block, while an adjacent run's OfferCreated already in
+            // that block would otherwise false-trip the belt (the
+            // index total was read after it, so the delta excludes it).
+            fromBlock: prePostBlock + 1n,
             toBlock: 'latest',
           });
           createLogCount = createLogs.length;
@@ -841,7 +847,7 @@ try {
         record(
           'cleanup: create-count cross-check',
           'FAIL',
-          `${createLogCount} OfferCreated log(s) for the lender since block ` +
+          `${createLogCount} OfferCreated log(s) for the lender after block ` +
             `${prePostBlock}, but the offer-index delta enumerated only ` +
             `${sweepIds.length} id(s) — the sweep may have missed a live ` +
             `offer. Check getUserOffersPaginated(${lenderAddr}) on ${DIAMOND} ` +
