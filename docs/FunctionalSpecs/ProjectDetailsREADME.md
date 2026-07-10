@@ -932,6 +932,32 @@ sale proceeds, without weakening the lender's default rights.
 - Direct sale fills must be blocked when the borrower has become
   sanctioned between listing and fill, where an active sanctions oracle
   is configured.
+- **Fail-closed backstop for collateral-sale recipients.** The prepay /
+  parallel collateral sale settles inside the marketplace fill and pays the
+  live position holders (the current lender- and borrower-position owners)
+  plus the recorded fee recipients directly, an instant before the loan flips
+  to settled. The sign-time and fill-time recipient screens are *fail-open*
+  oracle reads, so a recipient flagged during a sanctions-oracle outage could
+  otherwise be paid; and because the fill is atomic, a screen that merely
+  *reverts* on a flagged recipient would roll its own registry write back with
+  the revert, leaving no persistent trace. The platform therefore exposes a
+  **permissionless, committed, non-reverting sanctions sync** — reachable both
+  by loan (for a live loan's listing) and by sale offer (the parallel-sale
+  surface is offer-keyed, and a pre-loan sale has no loan to key on) — that
+  anyone may call: it reads every live consideration recipient the order pays,
+  records any recipient confirmed flagged on a reachable-oracle read into the
+  fail-closed confirmed-flagged registry, and cancels the listing so it can no
+  longer fill. It never reverts on a flag (it acts on it) and self-heals a
+  stale marker on a clean read, so a clean listing is never cancelled. The fill
+  path — both the marketplace recipient screen and the parallel-sale
+  settlement — then additionally consults that registry **fail-closed** as a
+  backstop: a recipient the registry already knows to be flagged is barred from
+  being paid even during an oracle outage, while an honest, never-flagged holder
+  still settles cleanly through a brief oracle blip (the backstop bars only a
+  known-flagged recipient, it does not hard-fail on outage). The residual — a
+  recipient flagged *and* never synced within one uninterrupted outage — is the
+  same accepted window as the rest of the S10 registry (seeded operationally by
+  the sync and the permissionless refresh).
 - Listings may support fixed-price, Dutch-decay, or OpenSea-offer
   assisted English-style discovery. In every mode, the on-chain
   settlement floor remains authoritative and the borrower-facing ask

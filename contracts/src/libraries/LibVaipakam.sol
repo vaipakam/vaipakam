@@ -7177,6 +7177,37 @@ library LibVaipakam {
         }
     }
 
+    /// @notice #1144 (S10 Invariant B) — registry-aware "is this recipient barred
+    ///         from a prepay-sale INLINE payout / fill?" read. The fail-closed
+    ///         BACKSTOP the prepay-sale fill path consults, with the SAME
+    ///         outage-only-registry semantics as the `_assertMovePartyNotSanctioned`
+    ///         position-move gate (Codex #1146-r1 P2):
+    ///           - no oracle configured (`address(0)`, the disabled regime) ⇒ NOT
+    ///             barred (the committed registry is ignored entirely, per §1349);
+    ///           - authoritative `Flagged` ⇒ barred;
+    ///           - authoritative `Clean` ⇒ NOT barred — a stale/not-yet-refreshed
+    ///             marker on a now-clean (or de-listed) wallet never bars, and the
+    ///             sync path self-heals it via `syncBuyerSanctionsFlag`;
+    ///           - `Unavailable` (oracle set but unreachable — a genuine outage) ⇒
+    ///             barred ONLY if the wallet carries a COMMITTED
+    ///             `sanctionsConfirmedFlagged` marker (the outage backstop).
+    ///         Deliberately NOT `assertNotSanctionedFailClosed`, which hard-reverts
+    ///         on ANY outage (bricking an honest holder). `address(0)` (a burned-NFT
+    ///         holder resolved via `_ownerOfRaw`) is never barred.
+    function isRecipientBarred(address who) internal view returns (bool) {
+        if (who == address(0)) return false;
+        if (storageSlot().sanctionsOracle == address(0)) return false; // disabled regime
+        SanctionsRead st = sanctionsStatus(who);
+        if (st == SanctionsRead.Flagged) return true; // oracle-up authoritative flag
+        if (st == SanctionsRead.Clean) return false; // oracle-up clean — stale marker ignored
+        return storageSlot().sanctionsConfirmedFlagged[who]; // Unavailable ⇒ outage backstop
+    }
+
+    /// @notice Revert `SanctionedAddress(who)` when {isRecipientBarred} holds.
+    function assertRecipientNotBarred(address who) internal view {
+        if (isRecipientBarred(who)) revert SanctionedAddress(who);
+    }
+
     /// @notice Internal accountant for protocol-deposited ERC-20
     ///         tokens in a user's vault. Increments the per-(user,
     ///         token) counter that the Asset Viewer and the future

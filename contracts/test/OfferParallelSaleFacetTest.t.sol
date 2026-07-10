@@ -16,6 +16,8 @@ import {MockSeaport} from "./mocks/MockSeaport.sol";
 import {MockConduitController} from "./mocks/MockConduitController.sol";
 import {FeeLeg} from "../src/seaport/PrepayTypes.sol";
 import {IVaipakamErrors} from "../src/interfaces/IVaipakamErrors.sol";
+import {ProfileFacet} from "../src/facets/ProfileFacet.sol";
+import {MockSanctionsList} from "./mocks/MockSanctionsList.sol";
 
 /**
  * @notice T-086 Round-8 (#358) §19.9 — facet-level integration tests for
@@ -377,5 +379,180 @@ contract OfferParallelSaleFacetTest is SetupTest {
                 "lock error MUST NOT fire after release"
             );
         }
+    }
+
+    // ─── #1144 (S10 Invariant B): syncPrepaySaleOffer ───────────────────
+
+    /// @dev Post a clean offer-keyed listing carrying one fee leg to `feeRecipient`
+    ///      (clean at post time) and return its orderHash. Wires the oracle so the
+    ///      sync's authoritative reads work.
+    function _postOfferListingWithFee(MockSanctionsList m, address feeRecipient)
+        internal
+        returns (bytes32)
+    {
+        _scaffoldDefaultOffer();
+        vm.prank(owner);
+        ProfileFacet(address(diamond)).setSanctionsOracle(address(m));
+        FeeLeg[] memory legs = new FeeLeg[](1);
+        legs[0] = FeeLeg({recipient: feeRecipient, startAmount: 1, endAmount: 1});
+        vm.prank(borrowerHolder);
+        return OfferParallelSaleFacet(address(diamond)).postParallelSaleListing(
+            uint96(OFFER_ID), SAFE_ASK, conduitKey, legs
+        );
+    }
+
+    function test_syncPrepaySaleOffer_flaggedFeeLegRecipient_registersAndCancels() public {
+        MockSanctionsList m = new MockSanctionsList();
+        address feeRecipient = makeAddr("offerSaleFeeRecipient");
+        _postOfferListingWithFee(m, feeRecipient);
+
+        // Flag AFTER the clean post — the sign-time fee-recipient screen is fail-open.
+        m.setFlagged(feeRecipient, true);
+
+        vm.expectEmit(true, true, false, true, address(diamond));
+        emit OfferParallelSaleFacet.PrepaySaleOfferSynced(uint96(OFFER_ID), nonCreator, true);
+        vm.prank(nonCreator); // permissionless
+        OfferParallelSaleFacet(address(diamond)).syncPrepaySaleOffer(uint96(OFFER_ID));
+
+        assertTrue(
+            ProfileFacet(address(diamond)).isSanctionsConfirmedFlagged(feeRecipient),
+            "flagged fee-leg recipient MUST be committed to the registry"
+        );
+        // Cancelled — the listing slot is cleared, so a second sync finds nothing.
+        vm.prank(nonCreator);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                OfferParallelSaleFacet.ParallelSaleListingNotFound.selector, uint96(OFFER_ID)
+            )
+        );
+        OfferParallelSaleFacet(address(diamond)).syncPrepaySaleOffer(uint96(OFFER_ID));
+    }
+
+    function test_syncPrepaySaleOffer_scenarioB_flaggedLenderHolder_registersAndCancels()
+        public
+    {
+        MockSanctionsList m = new MockSanctionsList();
+        address cleanFee = makeAddr("cleanOfferFee");
+        _postOfferListingWithFee(m, cleanFee);
+
+        // Accept the offer into a loan (Scenario B): pin offerId→loanId and mint
+        // the live lender / borrower position NFTs the settlement pays.
+        uint256 loanId = 9_100;
+        uint256 lenderTokenId = 501;
+        uint256 borrowerTokenId = 502;
+        address lenderHolder = makeAddr("saleLoanLender");
+        LibVaipakam.Loan memory loan;
+        loan.status = LibVaipakam.LoanStatus.Active;
+        loan.lenderTokenId = lenderTokenId;
+        loan.borrowerTokenId = borrowerTokenId;
+        TestMutatorFacet(address(diamond)).setLoan(loanId, loan);
+        TestMutatorFacet(address(diamond)).mintNFTRaw(lenderHolder, lenderTokenId);
+        TestMutatorFacet(address(diamond)).mintNFTRaw(borrowerHolder, borrowerTokenId);
+        TestMutatorFacet(address(diamond)).setOfferIdToLoanId(OFFER_ID, loanId);
+
+        m.setFlagged(lenderHolder, true); // the live lender-position holder
+
+        vm.prank(nonCreator);
+        OfferParallelSaleFacet(address(diamond)).syncPrepaySaleOffer(uint96(OFFER_ID));
+
+        assertTrue(
+            ProfileFacet(address(diamond)).isSanctionsConfirmedFlagged(lenderHolder),
+            "flagged Scenario-B lender holder MUST be registered"
+        );
+        vm.prank(nonCreator);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                OfferParallelSaleFacet.ParallelSaleListingNotFound.selector, uint96(OFFER_ID)
+            )
+        );
+        OfferParallelSaleFacet(address(diamond)).syncPrepaySaleOffer(uint96(OFFER_ID));
+    }
+
+    function test_syncPrepaySaleOffer_flaggedScenarioASeller_registersAndCancels() public {
+        // Codex #1146-r1 P1 — the pre-loan (Scenario A) sale routes proceeds to the
+        // offer creator (borrower/seller); the sync MUST register that recipient too.
+        MockSanctionsList m = new MockSanctionsList();
+        address cleanFee = makeAddr("cleanOfferFeeA");
+        _postOfferListingWithFee(m, cleanFee); // borrowerHolder is the offer creator
+
+        m.setFlagged(borrowerHolder, true); // seller flagged AFTER the clean post
+
+        vm.prank(nonCreator);
+        OfferParallelSaleFacet(address(diamond)).syncPrepaySaleOffer(uint96(OFFER_ID));
+
+        assertTrue(
+            ProfileFacet(address(diamond)).isSanctionsConfirmedFlagged(borrowerHolder),
+            "flagged Scenario-A seller (offer creator) MUST be registered"
+        );
+        vm.prank(nonCreator);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                OfferParallelSaleFacet.ParallelSaleListingNotFound.selector, uint96(OFFER_ID)
+            )
+        );
+        OfferParallelSaleFacet(address(diamond)).syncPrepaySaleOffer(uint96(OFFER_ID));
+    }
+
+    function test_syncPrepaySaleOffer_scenarioB_flaggedOriginalSeller_doesNotCancel()
+        public
+    {
+        // Codex #1146-r2 P2 — once the offer is accepted (Scenario B), the original
+        // seller (offer creator) is no longer a live recipient: the settlement pays
+        // the CURRENT holders. A flagged original seller must NOT be synced and must
+        // NOT cancel a listing whose live holders are clean.
+        MockSanctionsList m = new MockSanctionsList();
+        address cleanFee = makeAddr("cleanOfferFeeB");
+        _postOfferListingWithFee(m, cleanFee); // creator = borrowerHolder
+
+        uint256 loanId = 9_200;
+        address cleanLender = makeAddr("cleanScenBLender");
+        address cleanBorrower = makeAddr("cleanScenBBorrower");
+        LibVaipakam.Loan memory loan;
+        loan.status = LibVaipakam.LoanStatus.Active;
+        loan.lenderTokenId = 601;
+        loan.borrowerTokenId = 602;
+        TestMutatorFacet(address(diamond)).setLoan(loanId, loan);
+        TestMutatorFacet(address(diamond)).mintNFTRaw(cleanLender, 601);
+        TestMutatorFacet(address(diamond)).mintNFTRaw(cleanBorrower, 602);
+        TestMutatorFacet(address(diamond)).setOfferIdToLoanId(OFFER_ID, loanId);
+
+        m.setFlagged(borrowerHolder, true); // the ORIGINAL seller, now transferred out
+
+        vm.prank(nonCreator);
+        OfferParallelSaleFacet(address(diamond)).syncPrepaySaleOffer(uint96(OFFER_ID));
+
+        assertFalse(
+            ProfileFacet(address(diamond)).isSanctionsConfirmedFlagged(borrowerHolder),
+            "the original seller MUST NOT be synced in Scenario B"
+        );
+        // Still live — a second sync does not revert NotFound.
+        vm.prank(nonCreator);
+        OfferParallelSaleFacet(address(diamond)).syncPrepaySaleOffer(uint96(OFFER_ID));
+    }
+
+    function test_syncPrepaySaleOffer_cleanRecipients_leavesListingLive() public {
+        MockSanctionsList m = new MockSanctionsList();
+        address cleanFee = makeAddr("cleanOfferFee2");
+        _postOfferListingWithFee(m, cleanFee);
+
+        vm.expectEmit(true, true, false, true, address(diamond));
+        emit OfferParallelSaleFacet.PrepaySaleOfferSynced(uint96(OFFER_ID), nonCreator, false);
+        vm.prank(nonCreator);
+        OfferParallelSaleFacet(address(diamond)).syncPrepaySaleOffer(uint96(OFFER_ID));
+
+        // Still live — a second clean sync must NOT revert with NotFound.
+        vm.prank(nonCreator);
+        OfferParallelSaleFacet(address(diamond)).syncPrepaySaleOffer(uint96(OFFER_ID));
+    }
+
+    function test_syncPrepaySaleOffer_noListing_reverts() public {
+        _scaffoldDefaultOffer(); // offer exists, no parallel-sale listing posted
+        vm.prank(nonCreator);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                OfferParallelSaleFacet.ParallelSaleListingNotFound.selector, uint96(OFFER_ID)
+            )
+        );
+        OfferParallelSaleFacet(address(diamond)).syncPrepaySaleOffer(uint96(OFFER_ID));
     }
 }

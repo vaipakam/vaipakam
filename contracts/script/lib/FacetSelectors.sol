@@ -98,7 +98,7 @@ library FacetSelectors {
 
     /// @notice Full external selector surface of {ProfileFacet} (25).
     function profile() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](29);
+        s = new bytes4[](30);
         s[0] = ProfileFacet.updateKYCStatus.selector;
         s[1] = ProfileFacet.getUserCountry.selector;
         s[2] = ProfileFacet.isKYCVerified.selector;
@@ -129,6 +129,8 @@ library FacetSelectors {
         s[26] = ProfileFacet.isSanctionsConfirmedFlagged.selector;
         s[27] = ProfileFacet.enforcePositionMoveNotSanctioned.selector;
         s[28] = ProfileFacet.enforcePositionSaleMove.selector;
+        // #1144 — registry-aware prepay-sale fill bar (read by CollateralListingExecutor).
+        s[29] = ProfileFacet.isRecipientBarred.selector;
     }
 
     /// @notice Full external selector surface of {VaipakamNFTFacet} (29) — mirrors

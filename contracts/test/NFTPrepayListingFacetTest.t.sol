@@ -1562,4 +1562,151 @@ contract NFTPrepayListingFacetTest is SetupTest {
             "lock continuous"
         );
     }
+
+    // ─── #1144 (S10 Invariant B): syncPrepaySaleListing ─────────────────
+
+    /// @dev Post a clean loan-keyed listing (no fee legs) and return its
+    ///      orderHash. Sets an oracle so the sync's authoritative reads work.
+    function _postCleanListing(MockSanctionsList m) internal returns (bytes32) {
+        _scaffoldActiveLoan({allowsPrepay: true});
+        vm.prank(owner);
+        ProfileFacet(address(diamond)).setSanctionsOracle(address(m));
+        vm.prank(borrowerHolder);
+        return NFTPrepayListingFacet(address(diamond)).postPrepayListing(
+            LOAN_ID, _floorPlusBuffer(), TEST_SALT_A, conduitKey, _emptyFeeLegs()
+        );
+    }
+
+    function test_syncPrepaySaleListing_flaggedLenderHolder_registersAndCancels() public {
+        MockSanctionsList m = new MockSanctionsList();
+        bytes32 orderHash = _postCleanListing(m);
+        address lenderHolder = makeAddr("loanLender"); // scaffold mints lender NFT here
+
+        // Flag the lender holder AFTER the (clean) post — the post-time screen is
+        // fail-open, so a holder flagged mid-listing would settle fail-open too.
+        m.setFlagged(lenderHolder, true);
+        uint256 clearsBefore = mockExecutor.clearCallCount();
+
+        vm.expectEmit(true, true, false, true, address(diamond));
+        emit NFTPrepayListingFacet.PrepaySaleListingSynced(LOAN_ID, randomCaller, true);
+        vm.prank(randomCaller); // permissionless
+        NFTPrepayListingFacet(address(diamond)).syncPrepaySaleListing(LOAN_ID);
+
+        assertTrue(
+            ProfileFacet(address(diamond)).isSanctionsConfirmedFlagged(lenderHolder),
+            "flagged lender holder MUST be committed to the registry"
+        );
+        assertEq(
+            NFTPrepayListingFacet(address(diamond)).getPrepayListingOrderHash(LOAN_ID),
+            bytes32(0),
+            "listing MUST be cancelled"
+        );
+        assertEq(mockExecutor.clearCallCount(), clearsBefore + 1, "executor.clearOrder fired");
+        assertEq(mockExecutor.lastClearedOrderHash(), orderHash, "cleared the right order");
+    }
+
+    function test_syncPrepaySaleListing_flaggedFeeLegRecipient_registersAndCancels() public {
+        _scaffoldActiveLoan({allowsPrepay: true});
+        MockSanctionsList m = new MockSanctionsList();
+        vm.prank(owner);
+        ProfileFacet(address(diamond)).setSanctionsOracle(address(m));
+
+        address feeRecipient = makeAddr("saleFeeRecipient"); // clean at post time
+        FeeLeg[] memory legs = new FeeLeg[](1);
+        legs[0] = FeeLeg({recipient: feeRecipient, startAmount: 1, endAmount: 1});
+        // Ask must cover floor+buffer PLUS the fee leg (else AskBelowFloorPlusFees).
+        vm.prank(borrowerHolder);
+        NFTPrepayListingFacet(address(diamond)).postPrepayListing(
+            LOAN_ID, _floorPlusBuffer() + 1 ether, TEST_SALT_A, conduitKey, legs
+        );
+
+        m.setFlagged(feeRecipient, true);
+        vm.prank(randomCaller);
+        NFTPrepayListingFacet(address(diamond)).syncPrepaySaleListing(LOAN_ID);
+
+        assertTrue(
+            ProfileFacet(address(diamond)).isSanctionsConfirmedFlagged(feeRecipient),
+            "flagged fee-leg recipient MUST be registered"
+        );
+        assertEq(
+            NFTPrepayListingFacet(address(diamond)).getPrepayListingOrderHash(LOAN_ID),
+            bytes32(0),
+            "listing MUST be cancelled on a flagged fee recipient"
+        );
+    }
+
+    function test_syncPrepaySaleListing_cleanRecipients_leavesListingLive() public {
+        MockSanctionsList m = new MockSanctionsList();
+        bytes32 orderHash = _postCleanListing(m); // every recipient clean
+        uint256 clearsBefore = mockExecutor.clearCallCount();
+
+        vm.expectEmit(true, true, false, true, address(diamond));
+        emit NFTPrepayListingFacet.PrepaySaleListingSynced(LOAN_ID, randomCaller, false);
+        vm.prank(randomCaller);
+        NFTPrepayListingFacet(address(diamond)).syncPrepaySaleListing(LOAN_ID);
+
+        assertEq(
+            NFTPrepayListingFacet(address(diamond)).getPrepayListingOrderHash(LOAN_ID),
+            orderHash,
+            "clean listing MUST stay live"
+        );
+        assertEq(mockExecutor.clearCallCount(), clearsBefore, "no cancel on a clean sync");
+    }
+
+    function test_syncPrepaySaleListing_oracleUnavailable_isNoop() public {
+        MockSanctionsList m = new MockSanctionsList();
+        bytes32 orderHash = _postCleanListing(m);
+        address lenderHolder = makeAddr("loanLender");
+        // Oracle would flag the holder, but it now reverts (Unavailable). The sync
+        // must NOT register on a non-authoritative read, and must NOT cancel.
+        m.setFlagged(lenderHolder, true);
+        m.setRevertOnRead(true);
+
+        vm.prank(randomCaller);
+        NFTPrepayListingFacet(address(diamond)).syncPrepaySaleListing(LOAN_ID);
+
+        assertFalse(
+            ProfileFacet(address(diamond)).isSanctionsConfirmedFlagged(lenderHolder),
+            "an outage read MUST NOT register a marker"
+        );
+        assertEq(
+            NFTPrepayListingFacet(address(diamond)).getPrepayListingOrderHash(LOAN_ID),
+            orderHash,
+            "an outage sync MUST leave the listing live"
+        );
+    }
+
+    function test_syncPrepaySaleListing_noListing_reverts() public {
+        _scaffoldActiveLoan({allowsPrepay: true}); // loan exists, no listing posted
+        vm.prank(randomCaller);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                NFTPrepayListingFacet.PrepayListingNotFound.selector, LOAN_ID
+            )
+        );
+        NFTPrepayListingFacet(address(diamond)).syncPrepaySaleListing(LOAN_ID);
+    }
+
+    function test_syncPrepaySaleListing_disabledRegime_staleMarker_doesNotCancel() public {
+        // Codex #1146-r2 P2 — a stale marker must not drive a cancel once the oracle
+        // is disabled (the disabled regime ignores the registry entirely).
+        MockSanctionsList m = new MockSanctionsList();
+        bytes32 orderHash = _postCleanListing(m);
+        address lenderHolder = makeAddr("loanLender");
+        m.setFlagged(lenderHolder, true);
+        ProfileFacet(address(diamond)).refreshSanctionsFlag(lenderHolder); // marker committed
+        vm.prank(owner);
+        ProfileFacet(address(diamond)).setSanctionsOracle(address(0)); // regime disabled
+
+        vm.expectEmit(true, true, false, true, address(diamond));
+        emit NFTPrepayListingFacet.PrepaySaleListingSynced(LOAN_ID, randomCaller, false);
+        vm.prank(randomCaller);
+        NFTPrepayListingFacet(address(diamond)).syncPrepaySaleListing(LOAN_ID);
+
+        assertEq(
+            NFTPrepayListingFacet(address(diamond)).getPrepayListingOrderHash(LOAN_ID),
+            orderHash,
+            "a disabled-regime stale marker MUST NOT cancel the listing"
+        );
+    }
 }

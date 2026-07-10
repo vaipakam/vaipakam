@@ -70,6 +70,10 @@ const DELIBERATELY_NOT_HANDLED = {
     'T-086 Round-8 (#358) §19.7 — companion event recording the proceeds amount credited to the borrower\'s vault protocol-tracked balance. UI-facing breadcrumb so the borrower\'s "withdrawable balance" pane can refresh; no loans/offers row field for it directly (the proceeds land in `vaultProtocolTrackedBalance` which the standard `vaultWithdrawERC20` pulls from). Schema-side activity_events surfacing is a follow-up.',
   OfferSaleProceedsSplit:
     'T-086 Round-8 (#358) Codex round-3 user-directed redesign — fires on the post-acceptance parallel-sale fill path (lender accepted first, buyer fills later, diamond splits proceeds + settles the loan atomically). The loan-side terminal flip is recorded via the `LoanRepaid` / `LoanSettled` event chain that the existing executorFinalizePrepaySale path emits via LibLifecycle; this companion event carries the per-recipient split breakdown for activity_events surfacing. Schema-side handler is a Round-9 follow-up.',
+  PrepaySaleListingSynced:
+    '#1144 (S10 Invariant B) — permissionless sanctions-sync breadcrumb for a LOAN-keyed prepay listing. Its authoritative state effects are handled elsewhere: when a flagged recipient is found the sync cancels the listing via the shared `_cancel`, which co-emits `PrepayListingCanceled` (reason SanctionsSync) — an event the indexer ALREADY handles — and the confirmed-flagged registration is the on-chain fail-closed `sanctionsConfirmedFlagged` registry (read at fill time, not modelled in the indexer schema). The sync event itself is a UI/keeper breadcrumb with no loans-row field.',
+  PrepaySaleOfferSynced:
+    '#1144 (S10 Invariant B) — offer-keyed twin of PrepaySaleListingSynced. Mirrors the allowlisted `ParallelSaleLockReleased` rationale: the offer row stays Open (the parallel-sale binding is a UI-facing signal, not an offers-row mutation), and the security-authoritative effect is the on-chain `sanctionsConfirmedFlagged` registration consulted fail-closed at fill, not indexed.',
 };
 
 /** Recursively collect every `.sol` file under a directory. */

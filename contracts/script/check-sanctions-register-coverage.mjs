@@ -33,9 +33,16 @@
  *   - a `borrowerClaims` / `borrowerSurplusClaims` write needs the BORROWER lane
  *   A both-holder host covers either lane.
  *
- * Scope note (#1132 Invariant A): this run covers the DEFERRED-CLAIM / HELD half
- * of the design's guardrail. The inline-holder-payout (Invariant B) call-graph
- * scan + the Seaport prepay-sale sync are tracked as the #1132-B follow-up.
+ * Two scans (design §2):
+ *   - Invariant A (#1132): every DEFERRED-CLAIM / HELD write is co-located with a
+ *     side-matched frozen-claimant register.
+ *   - Invariant B (#1144): every INLINE holder payout — a function that resolves
+ *     `ownerOf(*TokenId)` and pays that holder raw (directly or by threading the
+ *     resolved value into a private paying helper) — routes through the
+ *     fail-closed freeze helpers or carries a freeze/sync guard, NOT a bare
+ *     fail-open `_assertNotSanctioned`. See the Invariant-B block below.
+ *   The runtime `syncPrepaySaleListing/Offer` counterpart to Invariant B (the
+ *   Seaport consideration channel) lives in the contracts, not this scanner.
  *
  * Run: `node contracts/script/check-sanctions-register-coverage.mjs`
  * Wired into `contracts/script/predeploy-check.sh` and CI (`ci.yml`).
@@ -132,12 +139,14 @@ function extractFunctions(src) {
     const name = m[1];
     let i = m.index + m[0].length;
     // walk past the parameter list (paren depth from the header's `(`)
+    const paramStart = i;
     let paren = 1;
     while (i < src.length && paren > 0) {
       const c = src[i++];
       if (c === '(') paren++;
       else if (c === ')') paren--;
     }
+    const params = parseParamNames(src.slice(paramStart, i - 1));
     // skip modifiers / returns to the body `{` (or `;` for a declaration)
     while (i < src.length && src[i] !== '{' && src[i] !== ';') i++;
     if (i >= src.length || src[i] === ';') continue; // no body
@@ -150,9 +159,25 @@ function extractFunctions(src) {
         break;
       }
     }
-    fns.push({ name, body: src.slice(start, i) });
+    fns.push({ name, params, body: src.slice(start, i) });
   }
   return fns;
+}
+
+/**
+ * Parameter NAMES from a header's parameter text — the last identifier of each
+ * top-level, comma-separated declaration (`address nftOwner` → `nftOwner`,
+ * `LibVaipakam.Loan storage loan` → `loan`, `uint256[] memory a` → `a`). Used by
+ * the Invariant-B scan to map a caller's argument POSITION to the callee param a
+ * resolved-holder value flows into.
+ */
+function parseParamNames(paramText) {
+  return splitTopLevel(paramText)
+    .map((p) => {
+      const ids = p.trim().match(/\w+/g);
+      return ids ? ids[ids.length - 1] : null;
+    })
+    .filter(Boolean);
 }
 
 /** Split a call's argument text on TOP-LEVEL commas (ignoring nested (), [], {}). */
@@ -268,15 +293,228 @@ function structRhsIsArtifact(rhs) {
   return /claimed:\s*true\b/.test(rhs);
 }
 
-const violations = [];
+// ===========================================================================
+// Invariant B (#1144) — INLINE HOLDER-PAYOUT call-graph scan.
+//
+// The other half of docs/DesignsAndPlans/S10CentralEnforcement.md §2. Beyond the
+// DEFERRED-claim writes above, S10 also requires that an INLINE "pay
+// `ownerOf(positionTokenId)` now" payout be sanctions-aware: it must route
+// through the fail-closed `LibCloseoutFreeze.freezeOrPayActiveLender*` /
+// `freezeOrPayBorrowerSurplus` helpers (park-or-pay) or carry an
+// `assertNotFrozenParty` / `mustFreezeParty` guard — NOT a bare fail-open
+// `_assertNotSanctioned` (which returns false during an oracle outage, the exact
+// gap Invariant B targets).
+//
+// The scan is a COARSE, false-positive-tolerant dataflow backstop (design §2
+// Keystone bullet 2 — "a full taint analysis is the ideal; the call-graph ban is
+// the practical check + a reasoned allowlist"). A function is FLAGGED when it
+//   (1) resolves a position holder — binds a local from `ownerOf(…)` /
+//       `_ownerOfRaw(…)` — AND
+//   (2) pays that holder raw, either DIRECTLY (a `safeTransfer` /
+//       `safeTransferFrom` / `vaultWithdrawERC20*` whose recipient arg is the
+//       resolved local) OR by THREADING the local into a private helper that
+//       does the raw payout (the ClaimFacet `_claimViaBackstopImpl` →
+//       `_absorbLenderSlice` split the design names) — AND
+//   (3) carries NO co-located freeze/guard token.
+// Deliberate, reviewed raw-payout paths live in ALLOWLIST_B with a reason.
+// ===========================================================================
 
-for (const file of listSolFiles(CONTRACTS_SRC)) {
+/**
+ * Functions that DO resolve `ownerOf` + pay it raw, but by conscious design
+ * (a discretionary hard-block path, or a prepay-sale vehicle covered by the
+ * committed non-reverting `syncPrepaySale*` sync). Each entry is
+ * `File.sol::functionName` → reason. Keep SMALL — every entry is a hole.
+ */
+const ALLOWLIST_B = {
+  'SwapToRepayFacet.sol::swapToRepayPartial':
+    'DISCRETIONARY loan-stays-Active partial swap (the analogue of repayPartial): it hard-SCREENS the direct EOA payee at Tier-1 (_assertNotSanctioned) rather than freezing — a flagged party\'s must-complete escape hatch is swapToRepayFull, which freeze-routes. Design §1.3 / §2 Invariant B channel 1 discretionary path.',
+  'PrepayListingFacet.sol::_settleLoanFromParallelSale':
+    'accepted-offer parallel-sale settlement: the inline ownerOf(lenderTokenId) payout is a PREPAY-SALE vehicle covered by the committed non-reverting syncPrepaySaleOffer + fail-closed-fill backstop (design §2 Invariant B channel 1→2), NOT a bare freeze — a mustFreezeParty-revert inside the atomic fill would roll back its own registry marker (Codex #1136-r5 R5-1).',
+  'PrecloseFacet.sol::transferObligationViaOffer':
+    'returns the EXITING borrower\'s OWN collateral to them inline; discretionary holder-initiated obligation transfer, function-entry Tier-1 sanctions-screened on that exact holder (requireKeeperFor authority + an explicit _assertNotSanctioned at entry). The lender payoff on this path IS freeze-routed via parkLenderPayoffAndFreeze (#1132).',
+};
+
+// Owner-resolution SOURCES — bind the LHS local when the RHS resolves a
+// position-NFT holder. Comparisons (`x == ownerOf`) can't match: the `[^;=]`
+// class stops at the second `=`.
+const OWNER_RESOLVE_RE = /\b(\w+)\s*=\s*[^;=]*?\b(?:ownerOf|_ownerOfRaw)\s*\(/g;
+
+// Raw fund-payout SINKS. Two SafeERC20 calling conventions coexist and put the
+// recipient in DIFFERENT argument slots:
+//   member form  `IERC20(token).safeTransfer(to, amt)`            → to = arg0
+//   library form `SafeERC20.safeTransfer(IERC20(token), to, amt)` → to = arg1
+// (and the `…From` variants shift one further). Capture the optional `SafeERC20`
+// receiver so the recipient index is read from the right slot.
+const SAFE_TRANSFER_RE =
+  /(\bSafeERC20\b)?\s*\.\s*(safeTransfer|safeTransferFrom)\s*\(/g;
+const VAULT_WITHDRAW_SEL_RE =
+  /\b(?:vaultWithdrawERC20|vaultWithdrawERC20MoveOut|recordVaultWithdrawERC20)\s*\.\s*selector\s*,/g;
+
+// Tokens that make a resolved-holder payout FAIL-CLOSED (the park-or-pay helpers,
+// the hard-block gate, and the locking-deposit variants). `hasCall`'s `\w*`
+// prefix match means `depositLocked` covers `depositLockedFrom(Vault)`,
+// `recordFrozenClaimant` covers `…ForLoan`, `freezeOrPayActiveLender` covers all
+// three variants. `_assertNotSanctioned` is DELIBERATELY absent — it is fail-open.
+const FREEZE_GUARD_TOKENS = [
+  'mustFreezeParty',
+  'assertNotFrozenParty',
+  'depositLocked',
+  'freezeLenderProceeds',
+  'freezeOrPayBorrowerSurplus',
+  'freezeOrPayActiveLender',
+  'recordFrozenClaimant',
+  'recordSanctionsFrozenClaimant',
+];
+
+function hasFreezeGuard(body) {
+  return FREEZE_GUARD_TOKENS.some((t) => hasCall(body, t));
+}
+
+/** Read the balanced argument list starting just after an open `(` (or after a
+ *  `.selector,` inside an `encodeWithSelector`, where paren depth is already 1). */
+function readArgs(body, startIdx) {
+  let i = startIdx;
+  let depth = 1;
+  for (; i < body.length && depth > 0; i++) {
+    if (body[i] === '(') depth++;
+    else if (body[i] === ')') depth--;
+  }
+  return splitTopLevel(body.slice(startIdx, i - 1)).map((a) => a.trim());
+}
+
+/** The recipient-position argument of every raw sink in `body` (safeTransfer →
+ *  arg0, safeTransferFrom → arg1, vaultWithdrawERC20 selector-form (owner, asset,
+ *  to, amt) → the `to` = second-to-last arg). */
+function rawSinkRecipients(body) {
+  const recips = [];
+  for (const m of body.matchAll(SAFE_TRANSFER_RE)) {
+    const args = readArgs(body, m.index + m[0].length);
+    const isLib = !!m[1]; // `SafeERC20.` prepends the token arg → shift +1
+    const base = m[2] === 'safeTransfer' ? 0 : 1;
+    const to = args[base + (isLib ? 1 : 0)];
+    if (to != null) recips.push(to);
+  }
+  for (const m of body.matchAll(VAULT_WITHDRAW_SEL_RE)) {
+    const args = readArgs(body, m.index + m[0].length); // (owner, asset, to, amt)
+    if (args.length >= 2) recips.push(args[args.length - 2]);
+  }
+  return recips;
+}
+
+/** Map each local var to the ROOT param it aliases (seeded param→itself), so a
+ *  sink recipient that is `nftOwner` OR a plain `x = nftOwner;` copy traces back
+ *  to the param it flowed from. */
+function provenanceRoots(body, params) {
+  const root = new Map(params.map((p) => [p, p]));
+  for (let pass = 0; pass < 3; pass++) {
+    for (const m of body.matchAll(/\b(\w+)\s*=\s*([^;]+);/g)) {
+      const rhs = m[2].trim();
+      if (/^\w+$/.test(rhs) && root.has(rhs)) root.set(m[1], root.get(rhs));
+    }
+  }
+  return root;
+}
+
+/** name → Set(param index) for every function whose raw sink pays one of its own
+ *  parameters. Lets the main scan follow a holder threaded into such a helper. */
+function buildPayingHelpers(allFns) {
+  const map = {};
+  for (const { name, params, body } of allFns) {
+    if (!params.length) continue;
+    const recips = rawSinkRecipients(body);
+    if (!recips.length) continue;
+    const root = provenanceRoots(body, params);
+    for (const r of recips) {
+      const paramRoot = root.get(r);
+      const idx = paramRoot != null ? params.indexOf(paramRoot) : -1;
+      if (idx >= 0) (map[name] ||= new Set()).add(idx);
+    }
+  }
+  return map;
+}
+
+/** Local vars in `body` that hold a resolved position holder (from ownerOf, plus
+ *  one-hop `x = holder;` aliases). */
+function collectHolderVars(body) {
+  const holders = new Set();
+  for (const m of body.matchAll(OWNER_RESOLVE_RE)) holders.add(m[1]);
+  if (!holders.size) return holders;
+  for (let pass = 0; pass < 3; pass++) {
+    for (const m of body.matchAll(/\b(\w+)\s*=\s*([^;]+);/g)) {
+      const rhs = m[2].trim();
+      if (/^\w+$/.test(rhs) && holders.has(rhs)) holders.add(m[1]);
+    }
+  }
+  return holders;
+}
+
+/** Does `recipText` (a sink/arg expression) name a resolved holder, incl. a
+ *  `payable(x)` / `address(x)` wrap? */
+function recipientMatchesHolder(recipText, holders) {
+  const t = recipText.trim();
+  if (holders.has(t)) return true;
+  const wrap = t.match(/^(?:payable|address)\s*\(\s*(\w+)\s*\)$/);
+  return !!(wrap && holders.has(wrap[1]));
+}
+
+/** Function-scope Invariant-B predicate: resolves a holder AND pays it raw
+ *  (directly, or by threading it into a known holder-paying helper). */
+function paysResolvedHolder(body, payingHelpers) {
+  const holders = collectHolderVars(body);
+  if (!holders.size) return false;
+  for (const r of rawSinkRecipients(body)) {
+    if (recipientMatchesHolder(r, holders)) return true;
+  }
+  for (const [helper, idxs] of Object.entries(payingHelpers)) {
+    for (const m of body.matchAll(new RegExp(`\\b${helper}\\s*\\(`, 'g'))) {
+      const args = readArgs(body, m.index + m[0].length);
+      for (const i of idxs) {
+        if (args[i] != null && recipientMatchesHolder(args[i], holders)) return true;
+      }
+    }
+  }
+  return false;
+}
+
+const violations = [];
+const violationsB = [];
+
+// Parse every production `.sol` once (comments stripped). Invariant B needs the
+// full file set — inline payouts live in files with no claim-lane surface too —
+// and the paying-helper pre-pass indexes across ALL functions.
+const parsed = listSolFiles(CONTRACTS_SRC).map((file) => {
   const src = stripComments(readFileSync(file, 'utf8'));
-  if (!CLAIM_LANES.some((l) => src.includes(l)) && !src.includes(HELD_LANE)) continue;
-  const rel = relative(REPO_ROOT, file);
-  const base = file.split('/').pop();
-  for (const { name, body } of extractFunctions(src)) {
-    if (ALLOWLIST[`${base}::${name}`]) continue;
+  return {
+    rel: relative(REPO_ROOT, file),
+    base: file.split('/').pop(),
+    src,
+    fns: extractFunctions(src),
+  };
+});
+
+// Pre-pass: index every holder-paying helper so the Invariant-B scan can follow a
+// resolved holder threaded into a private helper (the ClaimFacet
+// `_claimViaBackstopImpl` → `_absorbLenderSlice` call-graph split).
+const payingHelpers = buildPayingHelpers(parsed.flatMap((f) => f.fns));
+
+for (const { rel, base, src, fns } of parsed) {
+  const hasClaimSurface =
+    CLAIM_LANES.some((l) => src.includes(l)) || src.includes(HELD_LANE);
+  for (const { name, params, body } of fns) {
+    // ---- Invariant B (#1144): inline holder-payout call-graph ----
+    if (
+      !ALLOWLIST_B[`${base}::${name}`] &&
+      paysResolvedHolder(body, payingHelpers) &&
+      !hasFreezeGuard(body)
+    ) {
+      violationsB.push(
+        `${rel}  ::${name}  resolves ownerOf(*TokenId) and pays that holder raw ` +
+          `(safeTransfer / vaultWithdrawERC20) outside a freeze/sync guard`,
+      );
+    }
+
+    // ---- Invariant A: deferred-claim / held register coverage ----
+    if (!hasClaimSurface || ALLOWLIST[`${base}::${name}`]) continue;
     const covered = coveredLanes(body);
 
     // Direct `s.{lane}[...]` writes.
@@ -329,16 +567,16 @@ for (const file of listSolFiles(CONTRACTS_SRC)) {
   }
 }
 
-// Dead-allowlist check: flag an entry whose file no longer exists.
+// Dead-allowlist check: flag an entry (in either allowlist) whose file is gone.
 const allFiles = listSolFiles(CONTRACTS_SRC);
-const deadAllow = Object.keys(ALLOWLIST).filter(
+const deadAllow = [...Object.keys(ALLOWLIST), ...Object.keys(ALLOWLIST_B)].filter(
   (k) => !allFiles.some((f) => f.endsWith('/' + k.split('::')[0])),
 );
 
-if (violations.length > 0 || deadAllow.length > 0) {
+if (violations.length > 0 || violationsB.length > 0 || deadAllow.length > 0) {
   console.error('\n✗ Sanctions register-coverage guardrail FAILED\n');
   if (violations.length) {
-    console.error('  Un-registered deferred-claim / held writes:');
+    console.error('  [Invariant A] Un-registered deferred-claim / held writes:');
     for (const v of violations) console.error('   • ' + v);
     console.error(
       '\n  Each write above must be co-located with a side-matched frozen-claimant\n' +
@@ -346,6 +584,18 @@ if (violations.length > 0 || deadAllow.length > 0) {
         '  or call the matching recordFrozenClaimant* / freeze* helper), OR — if it is a\n' +
         '  zero/claimed artifact row or a burned-side write — added to the ALLOWLIST with\n' +
         '  a one-line reason. See docs/DesignsAndPlans/S10CentralEnforcement.md §2.',
+    );
+  }
+  if (violationsB.length) {
+    console.error('\n  [Invariant B] Inline holder payouts outside a freeze/sync guard:');
+    for (const v of violationsB) console.error('   • ' + v);
+    console.error(
+      '\n  Each function above resolves a position holder via ownerOf and pays it raw.\n' +
+        '  Route the payout through LibCloseoutFreeze.freezeOrPayActiveLender* /\n' +
+        '  freezeOrPayBorrowerSurplus (park-or-pay), or guard it with assertNotFrozenParty /\n' +
+        '  mustFreezeParty, OR — if it is a deliberate discretionary hard-block or a\n' +
+        '  prepay-sale vehicle covered by syncPrepaySale* — add it to ALLOWLIST_B with a\n' +
+        '  one-line reason. See docs/DesignsAndPlans/S10CentralEnforcement.md §2 Invariant B.',
     );
   }
   if (deadAllow.length) {
@@ -357,5 +607,6 @@ if (violations.length > 0 || deadAllow.length > 0) {
 }
 
 console.log(
-  '✓ Sanctions register-coverage guardrail passed (every deferred-claim / held write is register-covered)',
+  '✓ Sanctions register-coverage guardrail passed ' +
+    '(deferred-claim/held writes register-covered; inline holder payouts freeze/sync-guarded)',
 );

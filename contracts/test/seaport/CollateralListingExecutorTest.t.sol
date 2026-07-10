@@ -102,6 +102,12 @@ contract MockVaipakamDiamond is IVaipakamPrepayContext, IVaipakamPrepayCallbacks
     function isSanctionedAddress(address who) external view returns (bool) {
         return sanctioned[who];
     }
+    // #1144 — the executor's fill-time screen now calls the registry-aware
+    // `isRecipientBarred`. The mock answers it (default clean); `setSanctioned`
+    // flags a recipient for both reads so existing fill tests are unaffected.
+    function isRecipientBarred(address who) external view returns (bool) {
+        return sanctioned[who];
+    }
 }
 
 contract CollateralListingExecutorTest is Test {

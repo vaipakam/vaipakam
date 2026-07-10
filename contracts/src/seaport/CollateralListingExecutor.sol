@@ -1487,10 +1487,7 @@ contract CollateralListingExecutor is
         {
             FeeLeg[] memory offerLegs = _offerFeeLegs[params.orderHash];
             for (uint256 i = 0; i < offerLegs.length; ) {
-                if (
-                    IVaipakamSanctionsView(vaipakamDiamond)
-                        .isSanctionedAddress(offerLegs[i].recipient)
-                ) {
+                if (_recipientBarred(offerLegs[i].recipient)) {
                     revert SanctionedListingRecipient(offerLegs[i].recipient);
                 }
                 unchecked {
@@ -1654,24 +1651,15 @@ contract CollateralListingExecutor is
         // directly, plus the recorded fee legs; treasury is the protocol (no
         // screen). (#821 covers the diamond-side close-out deposits on the
         // non-fill paths.)
-        if (
-            IVaipakamSanctionsView(vaipakamDiamond)
-                .isSanctionedAddress(pctx.lenderNftOwner)
-        ) {
+        if (_recipientBarred(pctx.lenderNftOwner)) {
             revert SanctionedListingRecipient(pctx.lenderNftOwner);
         }
-        if (
-            IVaipakamSanctionsView(vaipakamDiamond)
-                .isSanctionedAddress(pctx.borrowerNftOwner)
-        ) {
+        if (_recipientBarred(pctx.borrowerNftOwner)) {
             revert SanctionedListingRecipient(pctx.borrowerNftOwner);
         }
         FeeLeg[] memory liveFeeLegs = _orderFeeLegs[params.orderHash];
         for (uint256 i = 0; i < liveFeeLegs.length; ) {
-            if (
-                IVaipakamSanctionsView(vaipakamDiamond)
-                    .isSanctionedAddress(liveFeeLegs[i].recipient)
-            ) {
+            if (_recipientBarred(liveFeeLegs[i].recipient)) {
                 revert SanctionedListingRecipient(liveFeeLegs[i].recipient);
             }
             unchecked {
@@ -1794,6 +1782,19 @@ contract CollateralListingExecutor is
     }
 
     // ─── Internal helpers ──────────────────────────────────────────────
+
+    /// @notice #1144 (S10 Invariant B) — at-fill recipient bar. Delegates to the
+    ///         diamond's registry-aware, outage-hardened `isRecipientBarred`: it
+    ///         bars an authoritatively-`Flagged` recipient AND — during a genuine
+    ///         oracle outage — a recipient the committed `sanctionsConfirmedFlagged`
+    ///         registry already knows (seeded by the permissionless
+    ///         `syncPrepaySale*` / `refreshSanctionsFlag`), while never barring a
+    ///         disabled-regime or oracle-up-clean wallet on a stale marker. A single
+    ///         `staticcall` the diamond routes to `ProfileFacet`; the fill path is
+    ///         not gas-critical.
+    function _recipientBarred(address who) private view returns (bool) {
+        return IVaipakamSanctionsView(vaipakamDiamond).isRecipientBarred(who);
+    }
 
     /// @notice Verify a consideration leg matches the loan's lending-asset
     ///         schema: ERC20 itemType, token == `loan.principalAsset`,

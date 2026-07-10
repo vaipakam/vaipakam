@@ -708,6 +708,16 @@ contract ProfileFacet is DiamondPausable, DiamondAccessControl, IVaipakamErrors 
         return LibVaipakam.storageSlot().sanctionsConfirmedFlagged[who];
     }
 
+    /// @notice #1144 (S10 Invariant B) — registry-aware "barred from a prepay-sale
+    ///         payout/fill?" read consumed by `CollateralListingExecutor` at fill
+    ///         time (via `IVaipakamSanctionsView`). Combines the authoritative
+    ///         oracle read with the committed registry using the outage-only
+    ///         semantics of {LibVaipakam.isRecipientBarred} — a disabled regime or
+    ///         an oracle-up-clean wallet is never barred by a stale marker.
+    function isRecipientBarred(address who) external view returns (bool) {
+        return LibVaipakam.isRecipientBarred(who);
+    }
+
     /// @notice #1123 — diamond-internal host for the FAIL-CLOSED position-movement
     ///         gate. The heavy tri-state oracle-read logic lives here (ProfileFacet
     ///         has ample bytecode room) so the EIP-170-tight movement facets

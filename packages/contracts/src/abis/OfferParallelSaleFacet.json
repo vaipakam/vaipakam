@@ -64,6 +64,19 @@
     "stateMutability": "nonpayable"
   },
   {
+    "type": "function",
+    "name": "syncPrepaySaleOffer",
+    "inputs": [
+      {
+        "name": "offerId",
+        "type": "uint96",
+        "internalType": "uint96"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
     "type": "event",
     "name": "ParallelSaleLockReleased",
     "inputs": [
@@ -156,6 +169,31 @@
             "internalType": "uint96"
           }
         ]
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "PrepaySaleOfferSynced",
+    "inputs": [
+      {
+        "name": "offerId",
+        "type": "uint96",
+        "indexed": true,
+        "internalType": "uint96"
+      },
+      {
+        "name": "caller",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      },
+      {
+        "name": "flaggedFound",
+        "type": "bool",
+        "indexed": false,
+        "internalType": "bool"
       }
     ],
     "anonymous": false
@@ -659,6 +697,17 @@
         "name": "existingOrderHash",
         "type": "bytes32",
         "internalType": "bytes32"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "ParallelSaleListingNotFound",
+    "inputs": [
+      {
+        "name": "offerId",
+        "type": "uint96",
+        "internalType": "uint96"
       }
     ]
   },

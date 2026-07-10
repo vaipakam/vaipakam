@@ -472,7 +472,17 @@ contract PrepayListingFacet is
         // flagged wallet from becoming a holder via a post-flag transfer, so a
         // flagged party can't be paid here, while a legitimate pre-flag buyer
         // (whom a stored-party screen would wrongly freeze) settles cleanly.
-        LibVaipakam._assertNotSanctioned(lenderHolder);
+        //
+        // #1144 (S10 Invariant B) — the sign-time screen and this fill-time screen
+        // are both fail-OPEN oracle reads, so a holder flagged during an oracle
+        // outage would still be paid. `assertRecipientNotBarred` adds the fail-
+        // closed BACKSTOP: it ALSO reverts on a COMMITTED `sanctionsConfirmedFlagged`
+        // marker, which the permissionless `syncPrepaySaleOffer(offerId)` (or
+        // `refreshSanctionsFlag`) commits out-of-band. So even mid-outage a
+        // registered-flagged holder can't be paid, and — because the marker was
+        // committed by a SEPARATE call — the atomic fill's revert here doesn't roll
+        // it back (the revert-loses-the-marker failure the sync is designed around).
+        LibVaipakam.assertRecipientNotBarred(lenderHolder);
         address treasury = s.treasury;
         SafeERC20.safeTransfer(IERC20(principalAsset), lenderHolder, lenderLeg);
         SafeERC20.safeTransfer(IERC20(principalAsset), treasury, treasuryLeg);
@@ -501,6 +511,10 @@ contract PrepayListingFacet is
         // proxy address Vaipakam already expects.
         address remainderRecipient = VaipakamNFTFacet(address(this))
             .ownerOf(loan.borrowerTokenId);
+        // #1144 (S10 Invariant B) — same fail-closed registry backstop on the
+        // borrower-remainder recipient (the `getOrCreateUserVault` screen below is
+        // itself fail-OPEN, so a registered-flagged holder needs this explicit bar).
+        LibVaipakam.assertRecipientNotBarred(remainderRecipient);
         address remainderVault = LibUserVault.getOrCreate(remainderRecipient);
         uint256 remainder;
         unchecked { remainder = amount - lenderLeg - treasuryLeg; }
@@ -644,7 +658,25 @@ contract PrepayListingFacet is
         // `LibVaipakam._assertNotSanctioned` directly — that helper
         // keys by `address(this)`, so an executor-context call would
         // miss the diamond's sanctions oracle config).
-        LibVaipakam._assertNotSanctioned(borrowerWallet);
+        //
+        // #1144 (S10 Invariant B) — SCENARIO-DEPENDENT (Codex #1146-r2 P2):
+        //  - Scenario A (pre-loan, `offerIdToLoanId == 0`): `borrowerWallet` (the
+        //    offer creator/seller) is the live proceeds recipient and this is its
+        //    ONLY screen. A fail-OPEN `_assertNotSanctioned` would let a seller
+        //    flagged after listing fill during an outage, so use the registry-aware
+        //    fail-closed bar — paired with `syncPrepaySaleOffer` registering the
+        //    Scenario-A creator (r1 P1).
+        //  - Scenario B (accepted): the sale proceeds are split to the CURRENT
+        //    position holders (screened live by `_settleLoanFromParallelSale`'s
+        //    `assertRecipientNotBarred`), and `borrowerWallet` here is the STORED
+        //    original seller — NOT a live recipient. Applying the registry bar would
+        //    let a stale/original-seller marker revert a clean current holder's fill,
+        //    so keep the fail-open screen on that vestigial party.
+        if (LibVaipakam.storageSlot().offerIdToLoanId[uint256(offerId)] == 0) {
+            LibVaipakam.assertRecipientNotBarred(borrowerWallet);
+        } else {
+            LibVaipakam._assertNotSanctioned(borrowerWallet);
+        }
     }
 
     /// @notice T-086 Round-8 (#358) — emitted on every

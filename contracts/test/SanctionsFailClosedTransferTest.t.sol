@@ -174,4 +174,56 @@ contract SanctionsFailClosedTransferTest is SetupTest {
         vm.expectRevert(ProfileFacet.OnlyDiamondInternal.selector);
         ProfileFacet(address(diamond)).enforcePositionMoveNotSanctioned(wallet, recipient);
     }
+
+    // ─── #1144 isRecipientBarred — outage-only registry semantics (Codex r1 P2) ──
+
+    function _register(MockSanctionsList m) internal {
+        m.setFlagged(wallet, true);
+        ProfileFacet(address(diamond)).refreshSanctionsFlag(wallet); // registry marked
+    }
+
+    function test_isRecipientBarred_oracleUpFlagged_bars() public {
+        MockSanctionsList m = _oracle();
+        m.setFlagged(wallet, true); // authoritative Flagged, no registry entry needed
+        assertTrue(ProfileFacet(address(diamond)).isRecipientBarred(wallet));
+    }
+
+    function test_isRecipientBarred_outageWithMarker_bars() public {
+        MockSanctionsList m = _oracle();
+        _register(m);
+        m.setRevertOnRead(true); // genuine outage — oracle set but unreachable
+        assertTrue(
+            ProfileFacet(address(diamond)).isRecipientBarred(wallet),
+            "a committed marker MUST bar during an outage"
+        );
+    }
+
+    function test_isRecipientBarred_outageNoMarker_doesNotBar() public {
+        MockSanctionsList m = _oracle(); // wallet clean, never registered
+        m.setRevertOnRead(true);
+        assertFalse(
+            ProfileFacet(address(diamond)).isRecipientBarred(wallet),
+            "an unregistered wallet MUST settle through an outage"
+        );
+    }
+
+    function test_isRecipientBarred_oracleUpClean_ignoresStaleMarker() public {
+        MockSanctionsList m = _oracle();
+        _register(m);
+        m.setFlagged(wallet, false); // oracle now reads CLEAN, marker not yet refreshed
+        assertFalse(
+            ProfileFacet(address(diamond)).isRecipientBarred(wallet),
+            "an oracle-up clean read MUST ignore a stale marker"
+        );
+    }
+
+    function test_isRecipientBarred_disabledRegime_ignoresRegistry() public {
+        MockSanctionsList m = _oracle();
+        _register(m);
+        ProfileFacet(address(diamond)).setSanctionsOracle(address(0)); // regime disabled
+        assertFalse(
+            ProfileFacet(address(diamond)).isRecipientBarred(wallet),
+            "a disabled regime MUST ignore the committed registry entirely"
+        );
+    }
 }
