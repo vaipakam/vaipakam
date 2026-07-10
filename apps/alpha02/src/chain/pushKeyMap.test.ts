@@ -81,7 +81,10 @@ describe('IndexerPushSync KEY_MAP (#1131 desk roots)', () => {
     // targeted invalidations. Deliberate absence — pinned so a future
     // addition is a conscious decision, not drift.
     expect(allRoots).not.toContain('deskSignedBook');
-    // previewMatch / chain-now anchors are LiveChainSync territory.
+    // previewMatch / chain-now anchors are LiveChainSync territory —
+    // 'deskPreviewMatch' is registered in its LIVE_KEYS (#1145 round-5),
+    // not here (double-invalidating a chain read from push frames would
+    // just burn RPC).
     expect(allRoots).not.toContain('deskPreviewMatch');
   });
 });

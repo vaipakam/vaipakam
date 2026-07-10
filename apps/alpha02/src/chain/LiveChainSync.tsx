@@ -58,6 +58,14 @@ const LIVE_KEYS: ReadonlySet<string> = new Set([
   'refinancePending',
   'standingApprovals',
   'keeperConfig',
+  // #1131/#1145 round-5 — the crossable band's chain reads (previewMatch
+  // + previewMatchRiskBlock share this root). A partial fill or cancel
+  // flips a previously-Ok preview without any own-wallet action, and the
+  // push KEY_MAP deliberately excludes chain-read caches (its unit test
+  // pins previewMatch as "LiveChainSync territory") — so WS deploys
+  // refresh it per block here; HTTP-only deploys keep the 30s interval,
+  // and the band's execute() re-reads live before the write either way.
+  'deskPreviewMatch',
   // 'loanKeeperEnabled' and 'vpfi' are DELIBERATELY absent: their
   // toggle writes PATCH the cache with the mined value (read-after-
   // write honesty — public testnet RPCs serve pre-tx state for

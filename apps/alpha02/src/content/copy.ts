@@ -884,6 +884,11 @@ export const copy = {
       execute: 'Execute match',
       executing: 'Matching…',
       executed: 'Match executed — the crossed offers settled into a loan.',
+      // Pre-write live recheck failed (Codex #1145 round-5): the book
+      // moved between render and click — the pair the band showed is no
+      // longer contract-confirmed matchable. Nothing was sent.
+      noLongerMatchable:
+        'These offers can no longer cross — the book moved before the match was sent. Nothing was sent.',
     },
     // #1131 slice D — gasless signed orders merged into the ladder.
     signed: {

@@ -13,6 +13,10 @@
  *  - The governance kill switch gates it: `getMasterFlags().partialFill`
  *    is the runtime gate on `matchOffers`, so flags unknown or OFF →
  *    nothing (fail closed for an advisory surface).
+ *  - The risk-access gate gates it too (Codex #1145 round-5):
+ *    `previewMatchRiskBlock` must read 0 — `_executeMatch` asserts the
+ *    creators' risk access on gated deployments, so an Ok previewMatch
+ *    alone could still render a band the contract would refuse.
  *
  * Execution is PERMISSIONLESS — `matchOffers(lenderOfferId,
  * borrowerOfferId)`; `msg.sender` earns the LIF matcher kickback (1% of
@@ -22,17 +26,22 @@
  */
 import { useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
+import { usePublicClient } from 'wagmi';
 import { Zap } from 'lucide-react';
 import { copy } from '../../content/copy';
 import { useActiveChain } from '../../chain/useActiveChain';
 import { useDiamondWrite } from '../../contracts/diamond';
 import { useMasterFlags } from '../../data/protocol';
+import { assertWalletNotSanctionedLive } from '../../data/sanctions';
 import { captureTxError } from '../../lib/errors';
 import { flowDisabled } from '../../lib/killSwitch';
 import { formatBpsAsPercent, formatTokenAmount } from '../../lib/format';
 import {
+  readMatchPreviewLive,
+  readMatchRiskBlockLive,
   topOfBookMatchPair,
   usePreviewMatch,
+  usePreviewMatchRiskBlock,
   type DeskLadder,
 } from '../../data/desk';
 
@@ -47,7 +56,8 @@ export function MatchBand({
   decimals: number | undefined;
   symbol: string | undefined;
 }) {
-  const { onSupportedChain } = useActiveChain();
+  const { address, walletChain, onSupportedChain } = useActiveChain();
+  const publicClient = usePublicClient({ chainId: walletChain?.chainId });
   const { write } = useDiamondWrite();
   const queryClient = useQueryClient();
   const flags = useMasterFlags();
@@ -58,6 +68,16 @@ export function MatchBand({
   // The preview hook self-disables on a null pair; keying on the ids
   // means a book change (new top of book) re-runs it automatically.
   const preview = usePreviewMatch(pair);
+  // Risk-access gate mirror (Codex #1145 round-5 P2): previewMatch Ok
+  // alone is NOT sufficient on risk-gated deployments —
+  // `OfferMatchFacet._executeMatch` also runs
+  // `_assertMatchCreatorsRiskAccess(lenderOfferId, borrowerOfferId)`
+  // (OfferMatchFacet.sol:930), whose non-reverting mirror is
+  // `RiskPreviewFacet.previewMatchRiskBlock` (RiskPreviewFacet.sol:220).
+  // Anything but 0 means the write would revert; see the hook for the
+  // missing-selector (fail-open) vs transport-failure (fail-closed)
+  // postures.
+  const riskBlock = usePreviewMatchRiskBlock(pair);
 
   const [busy, setBusy] = useState(false);
   // Executed / failed state is KEYED to the pair it happened on (Codex
@@ -84,6 +104,14 @@ export function MatchBand({
   const p = preview.data;
   // §5.2: ONLY a contract-confirmed Ok preview may render the band.
   if (!p || p.errorCode !== 0) return null;
+  // …and only a clear risk gate (0). Loading (`undefined`) and
+  // transport failure (`null`) both hide — fail closed while unknown,
+  // consistent with the masterFlags posture above. A missing selector
+  // on an older Diamond already resolved to 0 inside the hook (fail
+  // open — the direct-accept path's posture for a missing
+  // `previewOfferAcceptBlock`; the contract still enforces at write
+  // time, and the live recheck in execute() re-asks anyway).
+  if (riskBlock.data !== 0) return null;
 
   const pairKey = `${pair.lenderOfferId}:${pair.borrowerOfferId}`;
   const done = doneKey === pairKey;
@@ -96,6 +124,40 @@ export function MatchBand({
     setBusy(true);
     setErrorState(null);
     try {
+      if (!address || !walletChain || !publicClient) {
+        throw new Error(copy.wallet.connectFirst);
+      }
+      // 1) Screen the MATCHER live (Codex #1145 round-5 P2):
+      // `matchOffers` runs `LibVaipakam._assertNotSanctioned(msg.sender)`
+      // (OfferMatchFacet.sol:296 — the matcher is the LIF recipient), so
+      // a flagged wallet would pay gas into SanctionedAddress. Standard
+      // guard every write flow uses; fail-open on read errors — the
+      // contract still screens this path.
+      await assertWalletNotSanctionedLive(
+        publicClient,
+        walletChain.diamondAddress,
+        address,
+      );
+      // 2) Re-confirm matchability LIVE, right before the write (Codex
+      // #1145 round-5 P2): the rendered band rides a 30s-interval cache,
+      // so a partial fill / cancel / rate move since the last refetch
+      // could leave a stale Ok on screen and submit a doomed
+      // `matchOffers`. Direct reads (never the cached query), one
+      // round-trip: the contract's own `previewMatch` verdict plus the
+      // risk-gate mirror (`_executeMatch` enforces both — see the
+      // render-time comments). Non-Ok / blocked / unreadable all abort
+      // BEFORE gas; the invalidation below re-syncs the band with what
+      // the chain just said (it hides or re-renders on fresh data).
+      const [livePreview, liveRisk] = await Promise.all([
+        readMatchPreviewLive(publicClient, walletChain.diamondAddress, pair!),
+        readMatchRiskBlockLive(publicClient, walletChain.diamondAddress, pair!),
+      ]);
+      if (livePreview === null || livePreview.errorCode !== 0 || liveRisk !== 0) {
+        void queryClient.invalidateQueries({ queryKey: ['deskPreviewMatch'] });
+        void queryClient.invalidateQueries({ queryKey: ['deskBook'] });
+        throw new Error(text.noLongerMatchable);
+      }
+      // 3) The write.
       await write('matchOffers', [
         BigInt(pair!.lenderOfferId),
         BigInt(pair!.borrowerOfferId),

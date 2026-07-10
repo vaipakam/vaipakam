@@ -53,6 +53,7 @@ import {
   type DeskBookRow,
 } from '../lib/signedOffer';
 import { readOfferRowsBatchLive } from './chainPositions';
+import { isMissingSelectorError } from '../contracts/preflights';
 
 const REFRESH_MS = 30_000;
 /** Indexer-fallback page walk bound — same shape as useActiveOffers'
@@ -706,11 +707,90 @@ export interface MatchPreview {
   lenderRemainingPostMatch: bigint;
 }
 
+/** One LIVE `previewMatch` read — shared by the cached hook below AND
+ *  the MatchBand's pre-write recheck (Codex #1145 round-5 P2: the 30s
+ *  interval can leave a stale Ok on screen, so the submit handler
+ *  re-reads the contract's verdict directly, never through the cache,
+ *  immediately before `matchOffers`). `null` = read failed / selector
+ *  missing — callers treat it as "not confirmed matchable" (fail
+ *  closed; the band is advisory AND previewMatch is the only source of
+ *  the rate/amount it displays, so there is nothing to render without
+ *  it). */
+export async function readMatchPreviewLive(
+  publicClient: PublicClient,
+  diamondAddress: `0x${string}`,
+  pair: { lenderOfferId: number; borrowerOfferId: number },
+): Promise<MatchPreview | null> {
+  try {
+    const r = (await publicClient.readContract({
+      address: diamondAddress,
+      abi: DIAMOND_ABI_VIEM,
+      functionName: 'previewMatch',
+      args: [BigInt(pair.lenderOfferId), BigInt(pair.borrowerOfferId)],
+    })) as {
+      errorCode: number;
+      matchAmount: bigint;
+      matchRateBps: bigint;
+      reqCollateral: bigint;
+      lenderRemainingPostMatch: bigint;
+    };
+    return {
+      errorCode: Number(r.errorCode),
+      matchAmount: r.matchAmount,
+      matchRateBps: Number(r.matchRateBps),
+      reqCollateral: r.reqCollateral,
+      lenderRemainingPostMatch: r.lenderRemainingPostMatch,
+    };
+  } catch {
+    return null; // older deploy without the selector / RPC failure
+  }
+}
+
+/** One LIVE `RiskPreviewFacet.previewMatchRiskBlock` read (Codex #1145
+ *  round-5 P2: `previewMatch` Ok alone is NOT sufficient on risk-gated
+ *  deployments — `OfferMatchFacet._executeMatch` additionally runs
+ *  `_assertMatchCreatorsRiskAccess(lenderOfferId, borrowerOfferId)`
+ *  (OfferMatchFacet.sol:930), and `previewMatchRiskBlock`
+ *  (RiskPreviewFacet.sol:220) is its non-reverting mirror). Returns the
+ *  contract's block code (0 = clear; gate disabled also reads 0 — the
+ *  retail default), with two deliberate failure postures:
+ *   - MISSING SELECTOR → 0 (fail OPEN): a pre-#1104 Diamond without
+ *     RiskPreviewFacet may still enforce the gate at write time, but
+ *     the band is advisory and hiding it FOREVER on old deployments
+ *     would kill the feature — the same posture the direct-accept path
+ *     takes for a missing `previewOfferAcceptBlock`
+ *     (useAcceptTerms.ts: "older deploy without the preview — proceed,
+ *     the contract still enforces").
+ *   - TRANSPORT failure → `null` (fail CLOSED): callers hide/refuse
+ *     while the answer is unknown, consistent with the band's
+ *     masterFlags posture — retrying a read is free, a doomed
+ *     `matchOffers` costs the matcher gas. */
+export async function readMatchRiskBlockLive(
+  publicClient: PublicClient,
+  diamondAddress: `0x${string}`,
+  pair: { lenderOfferId: number; borrowerOfferId: number },
+): Promise<number | null> {
+  try {
+    const code = (await publicClient.readContract({
+      address: diamondAddress,
+      abi: DIAMOND_ABI_VIEM,
+      functionName: 'previewMatchRiskBlock',
+      args: [BigInt(pair.lenderOfferId), BigInt(pair.borrowerOfferId)],
+    })) as number | bigint;
+    return Number(code);
+  } catch (e) {
+    if (isMissingSelectorError(e)) return 0; // fail open — see above
+    return null; // transport failure — fail closed
+  }
+}
+
 /** Live `previewMatch` read for the top-of-book pair. Keyed on the two
  *  offer ids so a book change (new top of book) re-runs it; the poll
  *  interval additionally re-checks the SAME pair (a partial fill can
- *  flip a previously-Ok preview without changing the ids). `null` =
- *  read failed — the band hides (advisory surface fails closed). */
+ *  flip a previously-Ok preview without changing the ids), and the
+ *  root also sits in LiveChainSync's LIVE_KEYS so WS deploys refresh
+ *  it per block. `null` = read failed — the band hides (advisory
+ *  surface fails closed). */
 export function usePreviewMatch(
   pair: { lenderOfferId: number; borrowerOfferId: number } | null,
 ) {
@@ -725,31 +805,34 @@ export function usePreviewMatch(
     ],
     enabled: pair !== null && Boolean(publicClient),
     refetchInterval: idleAware(REFRESH_MS),
-    queryFn: async (): Promise<MatchPreview | null> => {
-      try {
-        const r = (await publicClient!.readContract({
-          address: readChain.diamondAddress,
-          abi: DIAMOND_ABI_VIEM,
-          functionName: 'previewMatch',
-          args: [BigInt(pair!.lenderOfferId), BigInt(pair!.borrowerOfferId)],
-        })) as {
-          errorCode: number;
-          matchAmount: bigint;
-          matchRateBps: bigint;
-          reqCollateral: bigint;
-          lenderRemainingPostMatch: bigint;
-        };
-        return {
-          errorCode: Number(r.errorCode),
-          matchAmount: r.matchAmount,
-          matchRateBps: Number(r.matchRateBps),
-          reqCollateral: r.reqCollateral,
-          lenderRemainingPostMatch: r.lenderRemainingPostMatch,
-        };
-      } catch {
-        return null; // older deploy without the selector / RPC failure
-      }
-    },
+    queryFn: () =>
+      readMatchPreviewLive(publicClient!, readChain.diamondAddress, pair!),
+  });
+}
+
+/** Cached `previewMatchRiskBlock` for the top-of-book pair — the
+ *  render-time half of the risk gate (see readMatchRiskBlockLive for
+ *  the codes + failure postures). Shares the 'deskPreviewMatch' root
+ *  (with a discriminator segment) so every existing invalidation of
+ *  the preview — MatchBand's post-write sweep and LiveChainSync's
+ *  per-block pass — covers both reads without a second registration. */
+export function usePreviewMatchRiskBlock(
+  pair: { lenderOfferId: number; borrowerOfferId: number } | null,
+) {
+  const { readChain } = useActiveChain();
+  const publicClient = usePublicClient({ chainId: readChain.chainId });
+  return useQuery({
+    queryKey: [
+      'deskPreviewMatch',
+      readChain.chainId,
+      pair?.lenderOfferId ?? null,
+      pair?.borrowerOfferId ?? null,
+      'riskBlock',
+    ],
+    enabled: pair !== null && Boolean(publicClient),
+    refetchInterval: idleAware(REFRESH_MS),
+    queryFn: () =>
+      readMatchRiskBlockLive(publicClient!, readChain.diamondAddress, pair!),
   });
 }
 

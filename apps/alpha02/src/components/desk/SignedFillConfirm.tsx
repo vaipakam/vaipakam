@@ -220,38 +220,65 @@ export function SignedFillConfirm({
         spender: walletChain.diamondAddress,
         amount: payAmount,
       });
-      // Final consumption + time-window recheck (Codex #1145 round-3
-      // P2 + round-4 P2): the signer's vet ran before the wallet
-      // prompts, and a classic approval may have just spent minutes
-      // mining — during that window another taker can fill the order
-      // or the maker can cancel / batch-burn its nonce, and the time
-      // windows can lapse. Re-read all three (one Promise.all
-      // round-trip, same call shapes as the pre-signature vet in
-      // useSignedOfferAcceptTermsSigning) so a consumed or lapsed
-      // order fails BEFORE the fill transaction is sent, not as a
-      // SignedOfferConsumed / nonce / expiry revert the taker pays
-      // for.
-      const [{ timestamp: chainNowPreWrite }, filledPreWrite, nonceUsedPreWrite] =
-        await Promise.all([
-          publicClient.getBlock({ blockTag: 'latest' }),
-          publicClient.readContract({
-            address: walletChain.diamondAddress,
-            abi: DIAMOND_ABI_VIEM,
-            functionName: 'signedOfferFilledAmount',
-            args: [orderHash],
-          }) as Promise<bigint>,
-          publicClient.readContract({
-            address: walletChain.diamondAddress,
-            abi: DIAMOND_ABI_VIEM,
-            functionName: 'isSignedOfferNonceUsed',
-            args: [o.signer as `0x${string}`, BigInt(o.nonce)],
-          }) as Promise<boolean>,
-        ]);
+      // Final consumption + time-window + maker-funding recheck (Codex
+      // #1145 round-3 P2 + round-4 P2 + round-5 P2): the signer's vet
+      // and the funding preflight above ran before the wallet prompts,
+      // and a classic approval may have just spent minutes mining —
+      // during that window another taker can fill the order, the maker
+      // can cancel / batch-burn its nonce OR spend their vault's free
+      // balance (nothing was escrowed at signing), and the time windows
+      // can lapse. Re-read all five (one Promise.all round-trip, same
+      // call shapes as the pre-signature vet in
+      // useSignedOfferAcceptTermsSigning and the funding preflight
+      // above) so a consumed, lapsed, or defunded order fails BEFORE
+      // the fill transaction is sent, not as a SignedOfferConsumed /
+      // nonce / expiry / SignedOfferInsufficientFreeBalance revert the
+      // taker pays for.
+      const [
+        { timestamp: chainNowPreWrite },
+        filledPreWrite,
+        nonceUsedPreWrite,
+        trackedPreWrite,
+        encumberedPreWrite,
+      ] = await Promise.all([
+        publicClient.getBlock({ blockTag: 'latest' }),
+        publicClient.readContract({
+          address: walletChain.diamondAddress,
+          abi: DIAMOND_ABI_VIEM,
+          functionName: 'signedOfferFilledAmount',
+          args: [orderHash],
+        }) as Promise<bigint>,
+        publicClient.readContract({
+          address: walletChain.diamondAddress,
+          abi: DIAMOND_ABI_VIEM,
+          functionName: 'isSignedOfferNonceUsed',
+          args: [o.signer as `0x${string}`, BigInt(o.nonce)],
+        }) as Promise<boolean>,
+        publicClient.readContract({
+          address: walletChain.diamondAddress,
+          abi: DIAMOND_ABI_VIEM,
+          functionName: 'getProtocolTrackedVaultBalance',
+          args: [signed.signer as `0x${string}`, stakeToken],
+        }) as Promise<bigint>,
+        publicClient.readContract({
+          address: walletChain.diamondAddress,
+          abi: DIAMOND_ABI_VIEM,
+          functionName: 'getEncumbered',
+          args: [signed.signer as `0x${string}`, stakeToken, 0n],
+        }) as Promise<bigint>,
+      ]);
       if (filledPreWrite !== 0n || nonceUsedPreWrite) {
         throw new Error(text.gone);
       }
       if (!signedOrderTimeWindowsOpen(o, chainNowPreWrite)) {
         throw new Error(text.gone);
+      }
+      const makerFreePreWrite =
+        trackedPreWrite > encumberedPreWrite
+          ? trackedPreWrite - encumberedPreWrite
+          : 0n;
+      if (makerFreePreWrite < stakeAmount) {
+        throw new Error(text.makerNotFunded);
       }
       const { hash } = await write('acceptSignedOffer', [
         signedOfferTypedMessage(o),
