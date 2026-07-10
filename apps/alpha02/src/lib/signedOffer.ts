@@ -227,6 +227,55 @@ export function wireFromCreatePayload(
   };
 }
 
+/**
+ * Collapse a LENDER payload to the single-value shape a signed post must
+ * carry to be consumable (#1145 round-2 Codex P2).
+ *
+ * `OfferMatchFacet._vetSignedOfferForMatch` requires a CONSTANT
+ * collateral:principal ratio across the signed range before it will
+ * materialize any slice:
+ *
+ *   `if (o.collateralAmount * ceiling != effCollMax * o.amount)
+ *        revert SignedOfferRatioNotConstant();`
+ *
+ * A lender order's collateral is structurally single-value
+ * (`LenderCollateralRangeNotAllowed` at materialize, mirrored by the
+ * indexer's ingest gate), so with `collMin == collMax > 0` the check
+ * reduces to `ceiling == amount` — a RANGED lender signed order
+ * (`amount < amountMax`, e.g. the ticket's default 10% min-partial
+ * floor) can NEVER pass the matcher; only a direct full fill could
+ * consume it, while the book would advertise it as sliceable partial
+ * depth. The only matcher-compatible lender shape is single-value, so:
+ *
+ *  - `amount` collapses to `amountMax` (the full size).
+ *  - `fillMode` Partial is relabelled AON: a single-value non-AON order
+ *    is already fillable ONLY as one whole fill (the matcher's minimum
+ *    slice is `amount` = the full size), so AON is the honest wire tag
+ *    rather than a behaviour change. IOC keeps its tag — its expiry
+ *    semantics are load-bearing and a single-value IOC ("fill in full
+ *    before the deadline") is already honest.
+ *
+ * BORROWER payloads pass through untouched: the ticket ships them
+ * single-value on both legs already (`amount == amountMax`,
+ * `collateralAmount == collateralAmountMax`), which satisfies the ratio
+ * check as-is — and unlike lenders, a future ranged borrower order CAN
+ * be matcher-compatible by ranging collateral proportionally (borrower
+ * collateral ranges are allowed on-chain).
+ *
+ * Pure + idempotent: an already-single-value lender payload only gets
+ * the Partial→AON relabel; everything else is returned unchanged.
+ */
+export function collapseForSignedPost(
+  payload: CreateOfferPayload,
+): CreateOfferPayload {
+  if (payload.offerType !== 0) return payload; // borrower — see above
+  const fillMode = payload.fillMode === 0 ? 1 : payload.fillMode;
+  if (payload.amount === payload.amountMax && fillMode === payload.fillMode) {
+    return payload;
+  }
+  return { ...payload, amount: payload.amountMax, fillMode };
+}
+
 /** Random 64-bit nonce. The contract's signed-offer nonces are ARBITRARY
  *  (a `signer → nonce → used` mapping, burned only by an explicit
  *  `invalidateSignedOfferNonce`), NOT sequential — so a random draw needs

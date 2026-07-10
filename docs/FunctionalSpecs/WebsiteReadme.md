@@ -1128,6 +1128,13 @@ converge. Its intended behaviour (the test oracle for that surface):
   maker can fill one in a single transaction, at which point the terms
   the maker signed — and only those — settle into a loan, with the
   maker's side drawn from their vault's spendable balance at fill time.
+  A gasless lend order always posts as a single whole fill
+  (all-or-nothing): a signed lend order carries one fixed collateral
+  requirement, so it cannot honestly be sliced into partial fills — the
+  ticket says so, reflects it in the fill-mode choice, and never
+  publishes signed lend depth that partial fills could not actually
+  consume. Gasless borrow orders are unaffected — they already post as
+  a single fixed size.
   Because nothing is locked at signing, a signed order can rest
   unbacked; the platform warns the maker when their vault does not
   currently cover the commitment (without blocking — funding later is

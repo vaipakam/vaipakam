@@ -354,6 +354,21 @@ test('gasless loop: maker posts a signed order with ONE signature (no transactio
   await expect(
     maker.page.getByText(/Nothing is escrowed when you sign/),
   ).toBeVisible();
+  // #1145 round-2 — gasless LENDER posts are single-fill only: a signed
+  // lender order can't be sliced (the matcher's constant
+  // collateral:principal ratio is unsatisfiable with the lender's
+  // single-value collateral), so the ticket auto-switches the default
+  // Partial to AON, disables the Partial chip, and says why.
+  const fillGroup = maker.page.getByRole('group', { name: 'Fill mode' });
+  await expect(
+    fillGroup.getByRole('button', { name: 'AON', exact: true }),
+  ).toHaveClass(/active/);
+  await expect(
+    fillGroup.getByRole('button', { name: 'Partial', exact: true }),
+  ).toBeDisabled();
+  await expect(
+    maker.page.getByText(/Gasless lend orders fill only as one whole loan/),
+  ).toBeVisible();
 
   const post = maker.page.getByRole('button', {
     name: 'Sign & post to the book',
@@ -379,13 +394,23 @@ test('gasless loop: maker posts a signed order with ONE signature (no transactio
   expect(row.signer).toBe(makerAddr.toLowerCase());
   expect(row.order.offerType).toBe('0');
   // The custom-pair load drove the signed order's collateral leg. A
-  // lender payload auto-collapses collateralAmountMax to 0 (the
-  // offerSchema single-value rule), so the amount pin binds on
-  // collateralAmount — the figure the fill confirm displays.
+  // lender payload ships single-value collateral (the offerSchema /
+  // LenderCollateralRangeNotAllowed invariant), so the pin binds both
+  // fields to the same figure the fill confirm displays.
   expect(row.order.collateralAsset).toBe(MUSDC.toLowerCase());
   expect(row.order.collateralAmount).toBe(parseUnits('100', decimals).toString());
+  expect(row.order.collateralAmountMax).toBe(row.order.collateralAmount);
   expect(row.order.interestRateBps).toBe('777');
   expect(row.order.amountMax).toBe(parseEther('0.002').toString());
+  // #1145 round-2 — the SIGNED wire order is the collapsed single-value
+  // AON shape (`amount == amountMax`, fillMode 1): with the lender's
+  // single-value collateral, the matcher's constant-ratio gate
+  // (`collateralAmount × ceiling == collateralAmountMax × amount`)
+  // admits ONLY this shape — a ranged lender order would rest as
+  // unmatchable partial depth. This also keeps the indexer's static
+  // AON invariant (`fillMode 1 ⇒ amount == amountMax`) satisfied.
+  expect(row.order.amount).toBe(row.order.amountMax);
+  expect(row.order.fillMode).toBe('1');
   expect(row.order.durationDays).toBe(String(tenor));
   expect(row.order.expiresAt).toBe('0'); // GTC
   expect(row.order.deadline).not.toBe('0'); // bounded 7d signature deadline

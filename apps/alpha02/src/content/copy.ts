@@ -1001,6 +1001,13 @@ export const copy = {
         'Nothing is escrowed when you sign — a taker’s fill pulls from your vault’s free balance at that moment. Cancelling later is an on-chain transaction (unlike posting).',
       gaslessNeedsIndexer:
         'Gasless posting needs the order-book service, which isn’t configured right now. On-chain posting still works.',
+      // #1145 round-2 — signed lender orders carry a single collateral
+      // requirement, so partial slices can’t keep the contract’s
+      // constant collateral-to-principal ratio; only a full fill can
+      // consume them. Shown as the fill-mode note (and the disabled
+      // Partial chip’s tooltip) in gasless lender mode.
+      gaslessLenderAonNote:
+        'Gasless lend orders fill only as one whole loan — a signed lender order can’t be sliced on-chain, so it posts all-or-nothing. Partial stays available with on-chain posting.',
       gaslessPost: 'Sign & post to the book',
       gaslessPosting: 'Signing…',
       gaslessConsentRequired:

@@ -23,7 +23,13 @@ matching is off or its state is unknown.
 Posting from the order ticket gained a gasless mode: instead of sending
 a transaction, the maker signs the order once and the signature is
 published to the indexer's new signed-offer book — posting is free, and
-nothing is escrowed until someone fills it. Signed orders merge into
+nothing is escrowed until someone fills it. Gasless lend orders always
+post as a single whole fill (all-or-nothing): a signed lend order
+carries one fixed collateral requirement, so it cannot honestly be
+sliced into partial fills — the ticket disables the Partial choice in
+that mode and says why, rather than publishing signed depth that
+partial fills could never actually consume (gasless borrow orders are
+unaffected; they already post as a single fixed size). Signed orders merge into
 the ladder alongside on-chain offers wearing a "Signed" badge, and any
 taker can fill one in a single transaction (the taker pays that
 transaction; the maker's side moves from their vault's free balance at

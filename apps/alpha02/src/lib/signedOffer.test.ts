@@ -14,6 +14,7 @@ import {
 } from '../data/desk';
 import {
   SIGNED_OFFER_FIELD_NAMES,
+  collapseForSignedPost,
   signedOfferCeiling,
   signedOfferRemaining,
   signedOrderHash,
@@ -141,6 +142,63 @@ describe('wireFromCreatePayload', () => {
     expect(w.nonce).toBe('42');
     expect(w.deadline).toBe('123');
     expect(w.allowsPartialRepay).toBe(true);
+  });
+});
+
+describe('collapseForSignedPost (#1145 round-2)', () => {
+  /** The matcher's constant-ratio gate, verbatim from
+   *  `OfferMatchFacet._vetSignedOfferForMatch`:
+   *  `collateralAmount * ceiling == effCollMax * amount` — every signed
+   *  post the ticket publishes must satisfy it or no keeper slice can
+   *  ever materialize. */
+  function passesRatioCheck(p: CreateOfferPayload): boolean {
+    const ceiling = p.amountMax === 0n ? p.amount : p.amountMax;
+    const effCollMax =
+      p.collateralAmountMax === 0n ? p.collateralAmount : p.collateralAmountMax;
+    return p.collateralAmount * ceiling === effCollMax * p.amount;
+  }
+
+  it('the ticket-default ranged lender Partial payload FAILS the ratio check (the round-2 defect)', () => {
+    // Lender default: amount = 10% min-partial floor, amountMax = full,
+    // collateral single-value — `C*ceiling != C*amount`.
+    expect(passesRatioCheck(payload())).toBe(false);
+  });
+
+  it('collapses a ranged lender Partial payload to single-value AON that passes the ratio check', () => {
+    const out = collapseForSignedPost(payload());
+    expect(out.amount).toBe(1_000n);
+    expect(out.amountMax).toBe(1_000n);
+    expect(out.fillMode).toBe(1); // Partial → AON: single-value ⇒ one full fill
+    expect(passesRatioCheck(out)).toBe(true);
+    // Collateral stays the lender single-value pair — untouched.
+    expect(out.collateralAmount).toBe(2_000n);
+    expect(out.collateralAmountMax).toBe(2_000n);
+  });
+
+  it('collapses a ranged lender IOC payload but keeps the IOC tag (expiry semantics are load-bearing)', () => {
+    const out = collapseForSignedPost(payload({ fillMode: 2, expiresAt: 123n }));
+    expect(out.amount).toBe(1_000n);
+    expect(out.fillMode).toBe(2);
+    expect(out.expiresAt).toBe(123n);
+    expect(passesRatioCheck(out)).toBe(true);
+  });
+
+  it('returns an already-single-value lender AON payload unchanged (identity)', () => {
+    const p = payload({ amount: 1_000n, fillMode: 1 });
+    expect(collapseForSignedPost(p)).toBe(p);
+  });
+
+  it('relabels a single-value lender Partial payload as AON without touching amounts', () => {
+    const out = collapseForSignedPost(payload({ amount: 1_000n }));
+    expect(out.amount).toBe(1_000n);
+    expect(out.amountMax).toBe(1_000n);
+    expect(out.fillMode).toBe(1);
+  });
+
+  it('passes borrower payloads through untouched (single-value both legs already satisfies the ratio)', () => {
+    const p = payload({ offerType: 1, amount: 1_000n, interestRateBps: 0 });
+    expect(collapseForSignedPost(p)).toBe(p);
+    expect(passesRatioCheck(p)).toBe(true);
   });
 });
 

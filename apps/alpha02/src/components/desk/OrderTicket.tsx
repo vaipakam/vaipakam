@@ -64,6 +64,7 @@ import type { DeskPair } from '../../data/desk';
 import { indexerConfigured, postSignedOffer } from '../../data/indexer';
 import { useSignedOfferSigning } from '../../contracts/useSignedOfferSigning';
 import {
+  collapseForSignedPost,
   randomSignedOfferNonce,
   wireFromCreatePayload,
 } from '../../lib/signedOffer';
@@ -266,6 +267,24 @@ export function OrderTicket({
   };
   // IOC requires an expiry (#125) — GTC + IOC is contract-invalid.
   const iocNeedsExpiry = fillMode === FILL_IOC && expiry === 'gtc';
+
+  // #1145 round-2 (Codex P2) — gasless LENDER posts are single-fill
+  // only. The matcher requires a constant collateral:principal ratio
+  // across a signed range (`SignedOfferRatioNotConstant`), and lender
+  // collateral is structurally single-value
+  // (`LenderCollateralRangeNotAllowed`), so a ranged lender signed
+  // order can never be sliced — posting one would advertise partial
+  // depth no keeper can consume. The UI says so honestly: the Partial
+  // chip is unavailable in this mode (auto-switched to AON below), and
+  // `collapseForSignedPost` in submitGasless enforces the same shape
+  // structurally, independent of this state. Borrower gasless posts are
+  // single-value already and stay untouched.
+  const gaslessLenderSingleFill = postMode === 'gasless' && side === 'lender';
+  useEffect(() => {
+    if (gaslessLenderSingleFill && fillMode === FILL_PARTIAL) {
+      setFillMode(FILL_AON);
+    }
+  }, [gaslessLenderSingleFill, fillMode]);
 
   // ---- form + payload -------------------------------------------------
   const form = useMemo(
@@ -633,7 +652,15 @@ export function OrderTicket({
       if (!consent) {
         throw new Error(copy.desk.ticket.gaslessConsentRequired);
       }
-      const payload = buildPayload(consent);
+      // #1145 round-2 (Codex P2) — a signed LENDER order must be
+      // single-value to be consumable: the matcher's constant
+      // collateral:principal ratio check (`SignedOfferRatioNotConstant`)
+      // rejects every slice of a ranged lender order because lender
+      // collateral is single-value by invariant. Collapse here —
+      // structurally, not just via the fill-mode chip state — so the
+      // signed wire order can never publish unmatchable partial depth.
+      const built = buildPayload(consent);
+      const payload = built === null ? null : collapseForSignedPost(built);
       if (!payload) {
         throw new Error(
           customExpiryTooFar()
@@ -917,25 +944,35 @@ export function OrderTicket({
               [FILL_AON, text.fillAon, text.fillAonHint],
               [FILL_IOC, text.fillIoc, text.fillIocHint],
             ] as const
-          ).map(([value, label, hint]) => (
-            <button
-              key={value}
-              type="button"
-              className={`desk-chip${fillMode === value ? ' active' : ''}`}
-              title={hint}
-              onClick={() => {
-                setFillMode(value);
-                setConsent(false);
-              }}
-            >
-              {label}
-            </button>
-          ))}
+          ).map(([value, label, hint]) => {
+            // Partial is not offerable for gasless lender posts — see
+            // gaslessLenderSingleFill above.
+            const unavailable =
+              value === FILL_PARTIAL && gaslessLenderSingleFill;
+            return (
+              <button
+                key={value}
+                type="button"
+                className={`desk-chip${fillMode === value ? ' active' : ''}`}
+                title={unavailable ? text.gaslessLenderAonNote : hint}
+                disabled={unavailable}
+                onClick={() => {
+                  setFillMode(value);
+                  setConsent(false);
+                }}
+              >
+                {label}
+              </button>
+            );
+          })}
         </div>
         {iocNeedsExpiry ? (
           <p className="field-hint" style={{ color: 'var(--danger)' }}>
             {text.iocNeedsExpiry}
           </p>
+        ) : null}
+        {gaslessLenderSingleFill ? (
+          <p className="field-hint">{text.gaslessLenderAonNote}</p>
         ) : null}
       </div>
 
