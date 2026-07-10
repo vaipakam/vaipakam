@@ -27,24 +27,40 @@ in the pattern the codebase already uses.
 
 ## 2. Design — two invariants, one hook + one setter + one guardrail
 
-### Invariant A — register both holders at every DEFERRED-CLAIM-CREATING transition
+### Invariant A — register the holder(s) at every LIVE-NFT deferred-claim creation
 
-The trigger is **not** "terminal" but "**this transition creates a deferred position-holder payout
-whose position NFTs are still live**." The register-triggering set is:
+**The load-bearing rule is the guardrail (Keystone below), NOT a mechanical per-target-state hook.**
+The register must be CO-LOCATED with each non-zero deferred-claim / `heldForLender` write,
+side-matched to the lane written, whenever the credited side's position NFT is still live. The
+`terminalize` host is simply the CONVENIENT both-holder register point for the COMMON close where both
+NFTs are live and both deferred claims are created at the transition — routing *every* terminal edge
+through it is wrong, because several edges burn a position NFT before the transition, pay inline, or
+write only zero rows.
 
-1. `Active/* → Repaid`, `→ Defaulted`, `→ InternalMatched` — the deferred-claim-creating closes.
-2. **`Active → FallbackPending`** — `RiskFacet`/`DefaultedFacet` write the fallback-entry
-   lender/borrower claim rows HERE, at a NON-terminal state (Codex #1136-r1 D3). The next *terminal*
-   transition (`FallbackPending → Defaulted`) may not run until a much later claim, so a terminal-only
-   hook is too late: a holder flagged (oracle up) at fallback entry, whose Defaulted transition later
-   runs during an outage, would never be registered → fail-open. Fallback entry MUST register too.
+Register via the both-holder `terminalize[FromAny]` host at: `Active/* → Repaid`, `→ Defaulted`,
+`→ InternalMatched`, and `Active → FallbackPending` (fallback-entry claim rows are written at this
+NON-terminal state — Codex #1136-r1 D3; a terminal-only hook is too late because the eventual
+`FallbackPending → Defaulted` may run during a later outage) — for the common case where BOTH position
+NFTs are live and non-zero deferred claims are created.
 
-**`→ Settled` is EXCLUDED (Codex #1136-r4 R4-1/R4-2).** Settled is never a live-NFT claim creation:
-(a) claim-time `→ Settled` runs *inside* `claimAsLender`/`claimAsBorrower` AFTER the claiming side's
-position NFT is burned (the lender path can burn the borrower NFT too on zero-residual matches), so a
-`terminalize` register keyed on `ownerOf` would revert or mis-register; (b) the direct parallel-sale
-`Active → Settled` pays the holder INLINE with no deferred claim (it is a Class B inline-payout /
-position-movement — see Invariant B). So `→ Settled` transitions stay PLAIN (no register).
+**EXCLUDED / side-specific — the register-before-burn assumption is FALSE for these (Codex #1136 r4/r5):**
+- Every `→ Settled` (r4 R4-1/R4-2): claim-time Settled runs AFTER the claiming NFT burn; the direct
+  parallel-sale Settled pays inline (Invariant B). Plain transition.
+- `EarlyWithdrawalFacet._completeLoanSaleImpl` temp-loan `→ Repaid` (r5 R5-2): burns BOTH temp-loan
+  NFTs first, then writes zero/claimed rows only to avoid a stuck artifact — no live-NFT deferred
+  payout. Plain transition.
+- `ClaimFacet.claimAsLenderViaBackstop` `FallbackPending → Defaulted` (r5 R5-3): burns the lender NFT
+  first and the lender payout is already CASH-ABSORBED (consumed, not deferred); only the BORROWER
+  fold is deferred. Use a **borrower-side-only** register — the host exposes single-side variants
+  (`terminalizeRegister{Lender,Borrower}` or a side param) — a both-holder register would revert on
+  the burned lender token.
+
+So the host exposes both-holder AND single-side register modes; each site selects by which sides are
+live + deferred. Crucially, the **guardrail** enforces the side-match structurally and EXEMPTS
+zero/claimed rows + burned-holder writes (no live holder to register), so a post-burn edge we did NOT
+enumerate here still cannot silently ship a fail-open live-NFT claim: either it has a live holder +
+non-zero claim (guardrail demands a side-matched register) or it does not (exempt). The enumeration
+above is the *starting* allowlist; the guardrail is what makes the invariant structural.
 
 **Host — preserving `expectedFrom` (Codex #1136-r1 D2).** `LibLifecycle.transition(loan,
 expectedFrom, to)` and `transitionFromAny(loan, to)` each validate a *caller-specific* source edge
@@ -95,12 +111,17 @@ Two payout channels:
    `LibCloseoutFreeze.freezeOrPayActiveLender{Resident,FromPayer,FromVault}` helpers (park-or-pay).
    The **park** variant is valid ONLY where a later `claimAsLender`/`claimAsBorrower` can release the
    parked funds — i.e. on an Active/FallbackPending/Defaulted loan. A payout on a path that
-   immediately transitions the loan to **`Settled`** (the accepted-offer parallel-sale
-   `PrepayListingFacet._settleLoanFromParallelSale` pays `ownerOf(lenderTokenId)` then `Active →
-   Settled`, which `claimAsLender` REJECTS) has NO claim path, so parking there would strand a flagged
-   holder's funds (Codex #1136-r4 R4-1). Those payouts, and every discretionary holder-initiated
-   action (Refinance/backstop), use the **hard-block** variant (`mustFreezeParty` → revert / cancel
-   the sale), never the park.
+   immediately transitions the loan to **`Settled`** has NO claim path, so parking there would strand
+   a flagged holder's funds (Codex #1136-r4 R4-1). Discretionary holder-initiated actions
+   (Refinance/backstop) use the **hard-block** variant (`mustFreezeParty` → revert), never the park.
+   BUT a hard-block that only `mustFreezeParty`-reverts inside an atomic sale fill does NOT persist —
+   the registry write rolls back with the revert (Codex #1136-r5 R5-1), so a first oracle-up fill
+   blocks but leaves no marker and a later outage fill pays fail-open. The accepted-offer parallel-sale
+   `PrepayListingFacet._settleLoanFromParallelSale` (`ownerOf(lenderTokenId)` paid, then `Active →
+   Settled`) IS a prepay-sale vehicle → it is covered by the SAME committed non-reverting
+   `syncPrepaySaleListing` + fail-closed-fill mechanism as the Seaport channel (2), NOT a bare
+   `mustFreezeParty`-revert. (The revert-rollback lesson applies to any hard-block inside an atomic,
+   listing-fillable path: it needs a committed pre-fill sync, not just a revert.)
 2. **Seaport prepay-sale — a permissionless NON-REVERTING sync over EVERY holder recipient.** The
    prepay-collateral-sale settles inside Seaport, which pays consideration **directly to the current
    position-NFT holders — BOTH the borrower/seller AND the current lender-position holder** (Codex
@@ -144,8 +165,13 @@ included, NOT just `src/facets/` (Codex #1136-r1 D1)** (claim/held mutations alr
   `recordFrozenClaimantForLoan(…, true)` in the same body (lender lane ↔ lender register), so it passes
   without an allowlist while its callers do the transition. A claim/held mutation whose side is NOT
   register-matched in its function FAILS CI, unless allowlisted with a reason. (`LibClaims` + the host
-  bodies are exempt.) The
-  allowlist is thus reserved for genuine exceptions, not for punching a hole around every helper.
+  bodies are exempt.) The allowlist is thus reserved for genuine exceptions, not for punching a hole
+  around every helper. **EXEMPT (no live holder to register — Codex #1136-r5):** a write that stores a
+  ZERO / `claimed:true` row (an artifact-avoidance row, not a real deferred payout — e.g. the temp-loan
+  `→ Repaid` sale close, the zero-amount rental lender row) and a write on a side whose position NFT is
+  already burned in the same flow (the payout was consumed inline / cash-absorbed). These carry no
+  live-NFT payout, so the rule does not demand a register — but they must be *recognizably* zero/burned
+  (the scan checks the row is zero-valued or the side burned), not blanket-allowlisted.
 - **Inline holder payouts, ALIAS-AWARE (Codex #1136-r2 R2-2).** A literal `safeTransfer(…, ownerOf(…))`
   scan misses the common pattern of resolving `ownerOf` into a local and transferring it later
   (`SwapToRepayFacet:735-744`, the `LibCloseoutFreeze` helpers). So the rule is FUNCTION-SCOPE: any
