@@ -79,18 +79,24 @@ Two payout channels:
    `LibCloseoutFreeze.freezeOrPayActiveLender{Resident,FromPayer,FromVault}` helpers (park-or-pay);
    discretionary holder-initiated actions use the hard-block variant (`mustFreezeParty` → revert),
    as Refinance/backstop do.
-2. **Seaport prepay-sale.** The prepay-collateral-sale is a POSITION-MOVEMENT vehicle (the holder
-   lists + Seaport pays consideration directly to them on fill, BEFORE the diamond callback flips the
-   loan to `Settled`), so it is governed by the **#1123 fail-closed movement gate, NOT a new Class B
-   park** (Codex #1136-r1 D5 / r2 R2-1). Crucially, a block-AT-FILL cannot persist a registration: the
-   fill revert rolls back any `mustFreezeParty` write done during validation, so a holder first
-   observed flagged on an attempted fill (oracle up) could wait for an outage and have the still-live
-   listing pay them fail-open. The committed observation is therefore the **LISTING creation** — an
-   ordinary oracle-up tx the holder signs — where the movement gate registers the holder; a later
-   outage-fill of a still-live listing then finds them registered and the fail-closed gate blocks the
-   fill (no rollback problem, the registration already committed at listing). This routes the
-   prepay-sale seller through the SAME #1123 mechanism as the other sale vehicles, gated at listing +
-   fill. A holder flagged AFTER listing and never re-observed is the FR-1 accepted residual (§4).
+2. **Seaport prepay-sale — a permissionless NON-REVERTING sync over EVERY holder recipient.** The
+   prepay-collateral-sale settles inside Seaport, which pays consideration **directly to the current
+   position-NFT holders — BOTH the borrower/seller AND the current lender-position holder** (Codex
+   #1136-r3 R3-3) — BEFORE the diamond callback flips the loan to `Settled`. Relying on the #1123
+   movement gate at listing/fill does NOT commit a registration (Codex #1136-r3 R3-1): that gate
+   *reverts* on an authoritative `Flagged` read and deliberately does not write `sanctionsConfirmedFlagged`
+   (the write would roll back), so a flagged-at-listing seller yields no live order AND no marker, and a
+   flagged-at-fill recipient rolls the marker back too. The fill is atomic — nothing can commit a
+   registration inside a reverting fill.
+
+   So the design adds an EXPLICIT **committed, non-reverting sync**: `syncPrepaySaleListing(loanId)`
+   (permissionless, like `refreshSanctionsFlag`) reads the live consideration recipients — every
+   current position-NFT holder the order pays — and, on an authoritative oracle-up read, REGISTERS any
+   flagged recipient in `sanctionsConfirmedFlagged` (committed) AND CANCELS the listing so it cannot
+   fill. It never reverts on a flag (it *acts* on it), so the registration persists. Anyone (a keeper,
+   the counterparty) can call it; the fill path additionally consults the registry fail-closed as a
+   backstop. The residual — a recipient flagged AND never synced/observed within one uninterrupted
+   outage — is the FR-1 accepted residual (§4), seeded operationally by the sync + `refreshSanctionsFlag`.
 
 ### Keystone — a CI guardrail (deploy-sanity test)
 
@@ -104,10 +110,16 @@ included, NOT just `src/facets/` (Codex #1136-r1 D1)** (claim/held mutations alr
   compute + store their own claim rows around the status change). So the rule is co-location, not a
   setter mandate: a `{lender,borrower,borrowerSurplus}Claims[…]` full-struct assignment OR field-write
   (`.amount = …` / `.asset = …`, incl. fold/rewrite — Codex #1136-r1 D4), or a `heldForLender[…] +=`,
-  must sit in a function that ALSO invokes the `terminalize`/`terminalizeFromAny` host (which registers
-  both holders) or `LibClaims.creditHeldForLender` (which registers). A claim/held mutation in a
-  function that neither terminalizes nor credit-registers FAILS CI, unless allowlisted with a reason.
-  (`LibClaims` + the host bodies are exempt.)
+  must sit in a function that ALSO performs a register **in any of its committed forms** (Codex
+  #1136-r3 R3-2): the `terminalize`/`terminalizeFromAny` host (registers both holders),
+  `LibClaims.creditHeldForLender` (registers the lender), OR a DIRECT
+  `recordFrozenClaimant`/`recordFrozenClaimantForLoan`/`recordSanctionsFrozenClaimant[Both]` call. This
+  makes the rule compositional with the existing claim-writing HELPERS that self-register — e.g.
+  `LibCloseoutFreeze.freezeLenderProceeds` assigns `s.lenderClaims[loanId]` AND calls
+  `recordFrozenClaimantForLoan` in the same body, so it passes without an allowlist while its callers
+  do the transition. A claim/held mutation in a function that performs NONE of these register forms
+  FAILS CI, unless allowlisted with a reason. (`LibClaims` + the host bodies are exempt.) The
+  allowlist is thus reserved for genuine exceptions, not for punching a hole around every helper.
 - **Inline holder payouts, ALIAS-AWARE (Codex #1136-r2 R2-2).** A literal `safeTransfer(…, ownerOf(…))`
   scan misses the common pattern of resolving `ownerOf` into a local and transferring it later
   (`SwapToRepayFacet:735-744`, the `LibCloseoutFreeze` helpers). So the rule is FUNCTION-SCOPE: any
