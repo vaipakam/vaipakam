@@ -1,4 +1,4 @@
-# Pro Rate Terminal — a trading-terminal page for the Vaipakam offer book
+# Rate Desk — a trading-terminal page for the Vaipakam offer book
 
 **Status:** Design pass — proposed (scouted 2026-07-10, awaiting operator ratification)
 **Reference inspiration:** perp-DEX trade pages (chart + order book + ticket + positions in one dense screen)
@@ -32,7 +32,7 @@ per pair; we have one market per pair **per tenor**. The terminal must therefore
 **tenor selector** (7d / 30d / 90d / custom) next to the pair selector — closer to a futures
 expiry picker than a perp market chip, and honest to the protocol's actual microstructure.
 
-**Recommended approach**: build it as an **alpha02 Advanced-mode route** (`/trade`), not a
+**Recommended approach**: build it as an **alpha02 Advanced-mode route** (`/desk`), not a
 new app and not an apps/defi rework — phased, with the rate chart in phase 2. Rationale in §4.
 
 ---
@@ -162,12 +162,12 @@ allowed to be desktop-optimised, but it must degrade honestly rather than hide a
 
 ## 4. Where it lives — decision
 
-**Option A (recommended): alpha02 Advanced-mode route `/trade`.**
+**Option A (recommended): alpha02 Advanced-mode route `/desk`.**
 - alpha02 is the flagship; it already has the mode doctrine (advanced routes hidden from
   Basic nav, deep-linkable), push-sync client, tx simulation, Permit2, kill-switch,
   GoPlus badges, EIP-712 accept — every flow the terminal composes is already built and
   live-reviewed there. The terminal becomes the *reveal payoff* of Advanced mode.
-- Per the shell doctrine (`BasicUserUXSimplification.md`), `/trade` is **hidden from
+- Per the shell doctrine (`BasicUserUXSimplification.md`), `/desk` is **hidden from
   Basic navigation but stays URL-reachable in both modes** — the same
   hidden-not-blocked rule every advanced route follows today. No mode-based deep-link
   block. The guided Borrow/Lend flows remain the front door, preserving the
@@ -180,8 +180,15 @@ roadmap and duplicates alpha02's newer flow plumbing (simulation, push, kill-swi
 **Option C: a new `apps/pro` app.** Rejected: a third SPA to deploy/maintain for one
 page; loses shared mode/session context; nothing about the terminal needs an app boundary.
 
-**Naming**: route `/trade`, nav label **"Trade"** (advanced-only). The page title uses
-"Rate Terminal" — rate-first, per the vocabulary lock.
+**Naming**: route `/desk`, nav label + page title **"Rate Desk"** (advanced-only).
+"Rates desk" is the real-world finance term for the desk that operates in
+interest-rate products — exactly what this page is — and it keeps the vocabulary
+rate-first per the lock in §2.1. Alternatives considered: **"Trade"/`/trade`
+(rejected — implies asset swapping, the exact semantic drift the #166 ADR exists to
+prevent)**; "Markets"/`/markets` (accurate but passive — names where you are, not what
+you do); "Rates"/`/rates` (reads as a comparison/info page); "Terminal"/`/terminal`
+(sterile, collides with the CLI sense); "Pro"/`/pro` (names the persona, not the
+function).
 
 ---
 
@@ -281,7 +288,7 @@ It is the de-facto standard for exactly this aesthetic and supports candles, ste
 and markers natively. Alternatives considered: recharts (SVG, wrong idiom for a
 terminal, heavier per-point), d3 (a toolkit, not a chart — highest build cost), visx
 (same). New dependency scoped to alpha02 only (`apps/alpha02/package.json`), lazy-loaded
-with the `/trade` route chunk so Basic-mode users never download it.
+with the `/desk` route chunk so Basic-mode users never download it.
 
 **Chart content**: executed-rate series (candles/step per §5.3) + "quoted mid" overlay
 derived from the live book + optional volume (principal) histogram. The header's
@@ -294,7 +301,7 @@ a `durationDays` parameter.
 
 ## 8. Phasing
 
-**Phase 1 — Terminal shell (no chart), alpha02 `/trade`.** Header strip + pair/tenor
+**Phase 1 — Terminal shell (no chart), alpha02 `/desk`.** Header strip + pair/tenor
 selectors, rate-ladder book (ranked ids + `getOffersWithState` hydration per §3 —
 remaining-size depth, never headline size), order ticket (createOffer with expiry +
 fill-mode chips, simulation precheck), tape, open-orders panel with **cancel + the
@@ -357,7 +364,8 @@ liquid market misleads exactly the users a terminal attracts. §5.3 is the diffe
 
 **The risk to manage is persona confusion, not effort.** Vaipakam's thesis (alpha02) is
 naive-user-first; a terminal is the opposite persona. The Advanced-mode boundary already
-solves this — Basic users never see `/trade`; the guided flows remain the front door.
+solves this — `/desk` stays out of Basic navigation (URL-reachable per the shell
+doctrine); the guided flows remain the front door.
 The failure mode to avoid is letting terminal idioms leak back into Basic surfaces.
 
 **Better-approach check**: the plausible alternatives — enriching the flat Offers list
@@ -372,8 +380,9 @@ strictly additive.
 
 ## 10. Open questions for ratification
 
-1. **Route + nav**: `/trade` with advanced-only nav entry — confirm, or keep it
-   unlinked (URL-only) for a soft launch?
+1. **Route + nav**: "Rate Desk" at `/desk` with an advanced-only nav entry (naming
+   rationale + rejected alternatives in §4) — confirm, or keep it unlinked (URL-only)
+   for a soft launch?
 2. **Pair universe**: chip row limited to pairs with live offers + curated defaults
    (stable × WETH), with the custom-address picker behind "more"? (GoPlus screening
    already covers pasted assets.)
