@@ -38,6 +38,7 @@ import {
   assertAssetNotPausedLive,
   assertErc20BalanceLive,
   assertSignedFillKycEligibleLive,
+  assertSignedFillRiskAccessLive,
 } from '../../contracts/preflights';
 import { assertWalletNotSanctionedLive } from '../../data/sanctions';
 import { ConsentLabel } from '../ConsentLabel';
@@ -203,6 +204,29 @@ export function SignedFillConfirm({
         collateralAsset: o.collateralAsset as `0x${string}`,
         collateralAmount: BigInt(o.collateralAmount),
       });
+      // Risk-access gate (Codex #1145 round-6 P2): the fill runs the
+      // normal accept-time risk gates — the materialization gates the
+      // MAKER (their create-time gate deferred to fill, since signing
+      // touched no chain) and loan-init re-gates the maker + gates the
+      // TAKER. A maker who down-tiered / revoked consent after posting,
+      // or a taker below the pair's required tier, reverts only at the
+      // write — preview it here so it costs the taker no signature or
+      // approval. One cheap read + passthrough on the retail deploy
+      // (gate off — the deploy default); see the preflight for the
+      // exact on-chain mirrors and postures.
+      await assertSignedFillRiskAccessLive({
+        publicClient,
+        diamondAddress: walletChain.diamondAddress,
+        maker: signed.signer as `0x${string}`,
+        taker: address,
+        lendingAsset: o.lendingAsset as `0x${string}`,
+        lendingAssetType: Number(o.assetType),
+        lendingTokenId: BigInt(o.tokenId),
+        collateralAsset: o.collateralAsset as `0x${string}`,
+        collateralAssetType: Number(o.collateralAssetType),
+        collateralTokenId: BigInt(o.collateralTokenId),
+        prepayAsset: o.prepayAsset as `0x${string}`,
+      });
       // Sign the AcceptTerms — the hook re-vets the order live (fill
       // ledger, burned nonce, both time windows on chain time, illiquid
       // legs, risk-terms hash) BEFORE the wallet is asked to sign.
@@ -294,6 +318,12 @@ export function SignedFillConfirm({
       void queryClient.invalidateQueries({ queryKey: ['activeOffers'] });
       void queryClient.invalidateQueries({ queryKey: ['myOffers'] });
       void queryClient.invalidateQueries({ queryKey: ['myLoans'] });
+      // Desk History tab (Codex #1145 round-6 P2): the fill just made
+      // the taker a participant in a brand-new loan — refetch the
+      // by-participant walk so the History panel shows it without a
+      // reload (same root useDeskHistory keys on; the chainId/wallet
+      // segments are covered by root-prefix matching).
+      void queryClient.invalidateQueries({ queryKey: ['deskHistory'] });
     } catch (err) {
       setError(captureTxError(err));
     } finally {

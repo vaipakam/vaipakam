@@ -30,7 +30,7 @@ import { usePublicClient } from 'wagmi';
 import { Zap } from 'lucide-react';
 import { copy } from '../../content/copy';
 import { useActiveChain } from '../../chain/useActiveChain';
-import { useDiamondWrite } from '../../contracts/diamond';
+import { DIAMOND_ABI_VIEM, useDiamondWrite } from '../../contracts/diamond';
 import { useMasterFlags } from '../../data/protocol';
 import { assertWalletNotSanctionedLive } from '../../data/sanctions';
 import { captureTxError } from '../../lib/errors';
@@ -145,13 +145,42 @@ export function MatchBand({
       // `matchOffers`. Direct reads (never the cached query), one
       // round-trip: the contract's own `previewMatch` verdict plus the
       // risk-gate mirror (`_executeMatch` enforces both — see the
-      // render-time comments). Non-Ok / blocked / unreadable all abort
-      // BEFORE gas; the invalidation below re-syncs the band with what
-      // the chain just said (it hides or re-renders on fresh data).
-      const [livePreview, liveRisk] = await Promise.all([
+      // render-time comments), plus the `partialFill` MASTER FLAG
+      // (Codex #1145 round-6 P2): the rendered flag rides
+      // useMasterFlags' 10-min staleTime, and `matchOffers` re-checks
+      // `s.protocolCfg.partialFillEnabled` at runtime — reverting
+      // `FunctionDisabled(3)` when governance switched it off
+      // (OfferMatchFacet.sol:184-188) — while `previewMatch` does NOT
+      // mirror that flag (OfferMatchFacet.sol:140-146 delegates to
+      // `LibOfferMatch.previewMatch`, which never reads it; only the
+      // intent preview does, LibOfferMatch.sol:734), so the preview
+      // recheck alone would wave a doomed write through. Same read
+      // shape as useMasterFlags (`getMasterFlags` tuple, index 2 =
+      // partialFill); an unreadable flag resolves `null` → abort (fail
+      // closed, the render-time posture). Non-Ok / blocked / flag-off /
+      // unreadable all abort BEFORE gas; the invalidations below
+      // re-sync the band with what the chain just said (it hides or
+      // re-renders on fresh data).
+      const [livePreview, liveRisk, livePartialFill] = await Promise.all([
         readMatchPreviewLive(publicClient, walletChain.diamondAddress, pair!),
         readMatchRiskBlockLive(publicClient, walletChain.diamondAddress, pair!),
+        (
+          publicClient.readContract({
+            address: walletChain.diamondAddress,
+            abi: DIAMOND_ABI_VIEM,
+            functionName: 'getMasterFlags',
+          }) as Promise<readonly [boolean, boolean, boolean]>
+        )
+          .then((flags) => flags[2])
+          .catch(() => null),
       ]);
+      if (livePartialFill !== true) {
+        // Refetching masterFlags unmounts the band (the render gate
+        // above keys on it) — the honest end state for a kill-switch
+        // flip, with its own copy (a "book moved" message would lie).
+        void queryClient.invalidateQueries({ queryKey: ['masterFlags'] });
+        throw new Error(text.matchingDisabled);
+      }
       if (livePreview === null || livePreview.errorCode !== 0 || liveRisk !== 0) {
         void queryClient.invalidateQueries({ queryKey: ['deskPreviewMatch'] });
         void queryClient.invalidateQueries({ queryKey: ['deskBook'] });

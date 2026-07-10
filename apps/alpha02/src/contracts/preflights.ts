@@ -300,6 +300,196 @@ export async function assertSignedFillKycEligibleLive(opts: {
   }
 }
 
+/** `LibVaipakam.RiskAccessLevel` ordinals (BlueChipOnly = 0,
+ *  BroadLiquid = 1, IlliquidCustom = 2). */
+const RISK_LEVEL_BROAD_LIQUID = 1;
+const RISK_LEVEL_ILLIQUID_CUSTOM = 2;
+
+/**
+ * #1145 (Codex round-6 P2) — fail a SIGNED-OFFER fill BEFORE the
+ * AcceptTerms signature and allowance approval when the progressive
+ * risk-access gate (#671/#728) would reject it on-chain. A signed
+ * order's MAKER is never gated at signing (nothing touches the chain),
+ * so the fill is where their create-time gate finally runs: the
+ * materialization (`OfferCreateFacet` create chokepoint,
+ * OfferCreateFacet.sol:882) asserts the MAKER against the pair, and the
+ * loan-init gate (`LoanFacet._maybeRunInitialRiskGates`,
+ * LoanFacet.sol:608-646) re-asserts the maker (standing consent only)
+ * and gates the TAKER via `assertAcceptorMayTransact`. A down-tiered /
+ * consent-revoked maker or an under-tiered taker therefore reverts
+ * `RiskTierTooLow` / `IlliquidPairNotConsented` /
+ * `MidTierPairNotAcknowledged` only at the write — after the taker
+ * signed and possibly mined an approval — unless it's previewed here.
+ *
+ * WHY NOT `previewOfferAcceptBlock`: it is offerId-keyed
+ * (RiskPreviewFacet.sol:71) and a signed order has no offer id until it
+ * materializes mid-fill. Instead this composes the party/pair-keyed
+ * views `RiskAccessFacet` exposes for exactly this pre-flight purpose
+ * ("Surfaced so the frontend can pre-flight the gate" —
+ * RiskAccessFacet.sol:469), which are the SAME primitives
+ * `LibRiskAccess.previewActorBlock` (LibRiskAccess.sol:482-500) chains:
+ *   - `pairRequiredRiskLevel(pair)`  = `_pairRequiredLevel`;
+ *   - `getEffectiveRiskTier(actor)`  = `effectiveTier` (read-time
+ *     re-locked: stale terms anchor + raise-cooldown both fold in);
+ *   - `hasIlliquidPairConsent(actor, pair)` = `_illiquidConsentEffective`
+ *     (set + version-fresh + arming cooldown elapsed);
+ *   - `midTierStrictBlocked(actor, pair)`   = `midTierStrictBlock`.
+ * The PairId is built from the signed order verbatim — the same fields
+ * `toCreateOfferParams` materializes, which both enforcing gates
+ * classify against, so preview and gate cannot disagree on the pair.
+ *
+ * MAKER posture: exact `previewActorBlock` mirror (tier, then standing
+ * illiquid consent, then strict-mode mid-tier ack) — both enforcing
+ * sites gate the maker standing-consent-only (the creator authors no
+ * #662 accept ack).
+ *
+ * TAKER posture: `assertAcceptorMayTransact` (LibRiskAccess.sol:366)
+ * additionally lets the taker's #662 acknowledgement SUBSTITUTE for a
+ * standing illiquid-pair consent — but only for legs the gate VERIFIED
+ * illiquid via `checkLiquidity` (`_ackCoversIlliquidLegs`'s
+ * `*AckVerified` flags, LibRiskAccess.sol:445-470). On THIS flow that
+ * substitution can never be the deciding factor: the signed-fill
+ * signer (useSignedOfferAcceptTermsSigning) hard-aborts on any
+ * checkLiquidity-illiquid leg before signing (the compact confirm has
+ * no in-kind-default disclosure surface), so an `IlliquidCustom`-
+ * required pair that would reach the write owes its level to a
+ * non-checkLiquidity reason (derived tier-0 asset, rental prepay) —
+ * exactly the legs the ack is never verified for and standing consent
+ * remains mandatory. Requiring the taker's standing consent here is
+ * therefore exact for this flow, not a lossy approximation.
+ *
+ * Gated on `ConfigFacet.getRiskAccessGateEnabled` FIRST
+ * (ConfigFacet.sol:1865) — the retail deploy (gate OFF, the deploy
+ * default) pays one cheap read and passes through, the same
+ * flag-gating posture as the KYC preflight above.
+ *
+ * Fail postures (matching the KYC preflight): a missing selector
+ * PASSES — an older deploy without the gate machinery (or its views)
+ * still enforces on-chain; any transport failure fails CLOSED
+ * (retrying is free, a wasted signature + approval is not).
+ */
+export async function assertSignedFillRiskAccessLive(opts: {
+  publicClient: PublicClient;
+  diamondAddress: `0x${string}`;
+  /** The order's maker (`order.signer`). */
+  maker: `0x${string}`;
+  /** The prospective taker (the connected wallet). */
+  taker: `0x${string}`;
+  lendingAsset: `0x${string}`;
+  /** `LibVaipakam.AssetType` ordinal of the lending leg (`order.assetType`). */
+  lendingAssetType: number;
+  lendingTokenId: bigint;
+  collateralAsset: `0x${string}`;
+  collateralAssetType: number;
+  collateralTokenId: bigint;
+  prepayAsset: `0x${string}`;
+}): Promise<void> {
+  let gateEnabled: boolean;
+  try {
+    gateEnabled = (await opts.publicClient.readContract({
+      address: opts.diamondAddress,
+      abi: DIAMOND_ABI_VIEM,
+      functionName: 'getRiskAccessGateEnabled',
+    })) as boolean;
+  } catch (err) {
+    if (isMissingSelectorError(err)) return; // pre-gate deploy — nothing to mirror
+    throw new Error(copy.errors.checkRetry);
+  }
+  if (!gateEnabled) return; // retail default — every enforcing site short-circuits
+
+  // The exact PairId both enforcing gates classify against — the
+  // signed order's fields verbatim (`toCreateOfferParams` copies them
+  // into the materialized offer unchanged). `pairKey` canonicalizes
+  // ERC-20 token ids / unused prepay on-chain, so passing them through
+  // is safe for every asset shape.
+  const pair = {
+    lendAsset: opts.lendingAsset,
+    lendType: opts.lendingAssetType,
+    lendTokenId: opts.lendingTokenId,
+    collAsset: opts.collateralAsset,
+    collType: opts.collateralAssetType,
+    collTokenId: opts.collateralTokenId,
+    prepayAsset: opts.prepayAsset,
+  };
+
+  let blocked: boolean;
+  try {
+    const [required, makerTier, takerTier] = (await Promise.all([
+      opts.publicClient.readContract({
+        address: opts.diamondAddress,
+        abi: DIAMOND_ABI_VIEM,
+        functionName: 'pairRequiredRiskLevel',
+        args: [pair],
+      }),
+      opts.publicClient.readContract({
+        address: opts.diamondAddress,
+        abi: DIAMOND_ABI_VIEM,
+        functionName: 'getEffectiveRiskTier',
+        args: [opts.maker],
+      }),
+      opts.publicClient.readContract({
+        address: opts.diamondAddress,
+        abi: DIAMOND_ABI_VIEM,
+        functionName: 'getEffectiveRiskTier',
+        args: [opts.taker],
+      }),
+    ])) as [number, number, number];
+
+    if (Number(makerTier) < Number(required) || Number(takerTier) < Number(required)) {
+      blocked = true; // RiskTierTooLow, either party
+    } else if (Number(required) === RISK_LEVEL_ILLIQUID_CUSTOM) {
+      // Standing per-pair consent, BOTH parties (taker included — see
+      // the header note on why the #662 ack substitution can never
+      // decide this flow).
+      const [makerConsent, takerConsent] = (await Promise.all([
+        opts.publicClient.readContract({
+          address: opts.diamondAddress,
+          abi: DIAMOND_ABI_VIEM,
+          functionName: 'hasIlliquidPairConsent',
+          args: [opts.maker, pair],
+        }),
+        opts.publicClient.readContract({
+          address: opts.diamondAddress,
+          abi: DIAMOND_ABI_VIEM,
+          functionName: 'hasIlliquidPairConsent',
+          args: [opts.taker, pair],
+        }),
+      ])) as [boolean, boolean];
+      blocked = !makerConsent || !takerConsent;
+    } else if (Number(required) === RISK_LEVEL_BROAD_LIQUID) {
+      // Strict-mode mid-tier ack — the #662 ack does NOT substitute
+      // (`assertAcceptorMayTransact`'s non-illiquid branch), so both
+      // parties mirror the same view. False for non-strict vaults.
+      const [makerStrict, takerStrict] = (await Promise.all([
+        opts.publicClient.readContract({
+          address: opts.diamondAddress,
+          abi: DIAMOND_ABI_VIEM,
+          functionName: 'midTierStrictBlocked',
+          args: [opts.maker, pair],
+        }),
+        opts.publicClient.readContract({
+          address: opts.diamondAddress,
+          abi: DIAMOND_ABI_VIEM,
+          functionName: 'midTierStrictBlocked',
+          args: [opts.taker, pair],
+        }),
+      ])) as [boolean, boolean];
+      blocked = makerStrict || takerStrict;
+    } else {
+      blocked = false; // BlueChipOnly pair — the base tier always covers it
+    }
+  } catch (err) {
+    // The gate flag read TRUE but a view is missing: a partial /
+    // pre-#728 deploy — the contract still enforces; pass, like the
+    // KYC preflight's missing-getter branch.
+    if (isMissingSelectorError(err)) return;
+    throw new Error(copy.errors.checkRetry);
+  }
+  if (blocked) {
+    throw new Error(copy.desk.signed.riskBlocked);
+  }
+}
+
 /** One leg of `_liquidNumeraireValue`, read live. Throws the raw
  *  transport error on an unreadable leg (the caller maps it to
  *  `checkRetry`) — an unknown price must not silently value a leg at 0

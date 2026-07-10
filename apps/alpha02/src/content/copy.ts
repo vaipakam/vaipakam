@@ -889,6 +889,12 @@ export const copy = {
       // longer contract-confirmed matchable. Nothing was sent.
       noLongerMatchable:
         'These offers can no longer cross — the book moved before the match was sent. Nothing was sent.',
+      // Pre-write live master-flag recheck failed (Codex #1145
+      // round-6): governance switched offer matching off after the
+      // band rendered — the honest reason is the kill switch, not a
+      // book move. Nothing was sent.
+      matchingDisabled:
+        'Offer matching was just switched off by protocol governance, so this match can’t be sent right now. Nothing was sent.',
     },
     // #1131 slice D — gasless signed orders merged into the ladder.
     signed: {
@@ -918,6 +924,11 @@ export const copy = {
       // off and the preflight passes through).
       kycBlocked:
         'This deployment’s identity-verification rules don’t cover one side of this order at this value, so the fill would fail on-chain. Nothing was sent or approved.',
+      // Shown only on deploys with the progressive risk-access gate
+      // enabled (never on this retail deploy, where the gate is off
+      // and the preflight passes through after one read).
+      riskBlocked:
+        'This deployment’s risk-access rules block one side of this order right now — the maker or your wallet needs an on-chain access level or standing consent this compact confirm can’t collect. Nothing was sent or approved.',
       accept: 'Fill order',
       accepting: 'Filling…',
       accepted: 'Signed order filled — the loan is live.',
