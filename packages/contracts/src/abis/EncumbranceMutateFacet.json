@@ -331,6 +331,47 @@
     "stateMutability": "nonpayable"
   },
   {
+    "type": "function",
+    "name": "terminalize",
+    "inputs": [
+      {
+        "name": "loanId",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "expectedFrom",
+        "type": "uint8",
+        "internalType": "enum LibVaipakam.LoanStatus"
+      },
+      {
+        "name": "to",
+        "type": "uint8",
+        "internalType": "enum LibVaipakam.LoanStatus"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "terminalizeFromAny",
+    "inputs": [
+      {
+        "name": "loanId",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "to",
+        "type": "uint8",
+        "internalType": "enum LibVaipakam.LoanStatus"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
     "type": "event",
     "name": "SanctionedProceedsLocked",
     "inputs": [
@@ -400,6 +441,22 @@
         "name": "available",
         "type": "uint256",
         "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "InvalidTransition",
+    "inputs": [
+      {
+        "name": "from",
+        "type": "uint8",
+        "internalType": "enum LibVaipakam.LoanStatus"
+      },
+      {
+        "name": "to",
+        "type": "uint8",
+        "internalType": "enum LibVaipakam.LoanStatus"
       }
     ]
   },

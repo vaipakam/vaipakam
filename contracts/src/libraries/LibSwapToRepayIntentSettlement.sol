@@ -8,7 +8,6 @@ import {LibSanctionedLock} from "./LibSanctionedLock.sol";
 import {LibCloseoutFreeze} from "./LibCloseoutFreeze.sol";
 import {LibCollateralSettlement} from "./LibCollateralSettlement.sol";
 import {LibSettlement} from "./LibSettlement.sol";
-import {LibLifecycle} from "./LibLifecycle.sol";
 import {LibPrepayCleanup} from "./LibPrepayCleanup.sol";
 import {LibVPFIDiscount} from "./LibVPFIDiscount.sol";
 import {LibInteractionRewards} from "./LibInteractionRewards.sol";
@@ -17,6 +16,7 @@ import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol
 import {IERC721} from "@openzeppelin/contracts/token/ERC721/IERC721.sol";
 import {IERC1271} from "@openzeppelin/contracts/interfaces/IERC1271.sol";
 import {VaipakamNFTFacet} from "../facets/VaipakamNFTFacet.sol";
+import {EncumbranceMutateFacet} from "../facets/EncumbranceMutateFacet.sol";
 import {ConsolidationFacet} from "../facets/ConsolidationFacet.sol";
 
 /**
@@ -259,13 +259,13 @@ library LibSwapToRepayIntentSettlement {
             quantity: 0,
             claimed: false
         });
-        // #998 S10 (#1006, Codex r2 P1) — the residual collateral claim is
-        // borrower-side claim-gated, but `freezeOrPayBorrowerSurplus` above marks
-        // the borrower ONLY when there is a sanctioned principal surplus. Stamp the
-        // residual collateral too (reuse the already-resolved current holder;
-        // first-write-wins if the surplus branch already recorded the same holder),
-        // so a flagged holder's residual can't release fail-open during an outage.
-        LibSanctionedLock.recordFrozenClaimant(s, loanId, false, currentBorrowerHolder);
+        // #998 S10 (#1006 / #1132) — the residual collateral claim is borrower-side
+        // claim-gated. Both holders' fail-closed frozen-claimant markers are
+        // recorded centrally at the `Repaid` transition below (via
+        // `EncumbranceMutateFacet.terminalize`), covering the residual collateral whether or
+        // not a sanctioned principal surplus was present. The
+        // `freezeOrPayBorrowerSurplus` self-register (above) and this central
+        // register are idempotent + first-write-wins.
 
         LibFacet.crossFacetCall(
             abi.encodeWithSelector(
@@ -288,10 +288,18 @@ library LibSwapToRepayIntentSettlement {
 
         LibPrepayCleanup.clearActiveListing(loan, loanId);
 
-        LibLifecycle.transition(
-            loan,
-            LibVaipakam.LoanStatus.Active,
-            LibVaipakam.LoanStatus.Repaid
+        // #1132 (S10 central enforcement) — route through the
+        // `EncumbranceMutateFacet.terminalize` host so the validated Active→Repaid
+        // transition AND both holders' fail-closed frozen-claimant markers land
+        // in one place (the standalone borrower register above was folded here).
+        LibFacet.crossFacetCall(
+            abi.encodeWithSelector(
+                EncumbranceMutateFacet.terminalize.selector,
+                loanId,
+                LibVaipakam.LoanStatus.Active,
+                LibVaipakam.LoanStatus.Repaid
+            ),
+            bytes4(0)
         );
 
         // #569 Gap B (round-6 P1) — RE-LIEN the residual rather than

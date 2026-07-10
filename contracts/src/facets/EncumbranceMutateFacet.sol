@@ -6,6 +6,7 @@ import {LibEncumbrance} from "../libraries/LibEncumbrance.sol";
 import {LibVaipakam} from "../libraries/LibVaipakam.sol";
 import {LibCloseoutFreeze} from "../libraries/LibCloseoutFreeze.sol";
 import {LibSanctionedLock} from "../libraries/LibSanctionedLock.sol";
+import {LibLifecycle} from "../libraries/LibLifecycle.sol";
 
 /**
  * @title  EncumbranceMutateFacet
@@ -163,6 +164,70 @@ contract EncumbranceMutateFacet {
     {
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         LibVaipakam.Loan storage loan = s.loans[loanId];
+        LibSanctionedLock.recordFrozenClaimantForLoan(s, loan, true);
+        LibSanctionedLock.recordFrozenClaimantForLoan(s, loan, false);
+    }
+
+    // ─── #1132 (S10 central enforcement) — terminal-transition register host ──
+    //
+    // The single host that performs a loan's TERMINAL status transition AND
+    // records BOTH holders' fail-closed frozen-claimant markers in one place.
+    // Before this, the S10 register was enforced by CONVENTION — every close-out
+    // had to remember to call `recordFrozenClaimant*` next to its deferred-claim
+    // write, and the #1122 review found the SAME missing-marker bug on a
+    // different path in nearly every round. Every register-triggering terminal
+    // edge now cross-calls `terminalize[FromAny]` instead of inlining
+    // `LibLifecycle.transition`, so the register is structural (and the
+    // deploy-sanity guardrail `check-sanctions-register-coverage.mjs` makes it
+    // non-regressable). Hosted on THIS mutate host — already the cross-facet
+    // home for the EIP-170-tight close-out terminals, and already cut into every
+    // diamond — so the heavy register (a `sanctionsStatus` staticcall per side +
+    // registry writes) is borne ONCE here, not inlined into every `transition`
+    // caller; the tight close-out facets DROP their inlined `transition` body for
+    // a ~50-byte cross-facet stub and get SMALLER. See
+    // `docs/DesignsAndPlans/S10CentralEnforcement.md`.
+    //
+    // BOTH-holder register is safe at every routed edge — including the post-burn
+    // backstop `FallbackPending → Defaulted`, whose lender NFT is burned first:
+    // `recordFrozenClaimantForLoan` resolves the holder via `_ownerOfRaw` (a raw
+    // SLOAD that returns `address(0)` for a burned token) and `recordFrozenClaimant`
+    // no-ops on `address(0)`, so a burned side records nothing. Hence no
+    // single-side variant is needed (both ⊇ any single side), which also keeps
+    // the guardrail's side-match trivially satisfied. Registers are idempotent +
+    // registry-aware (no-op for a clean/absent/unconfirmed holder). Every
+    // `→ Settled` edge, the temp-loan-sale `→ Repaid`, and the cure edge
+    // `FallbackPending → Active` are EXCLUDED (they burn a side first, pay inline,
+    // or write only artifact rows) — they keep the plain inlined
+    // `LibLifecycle.transition`.
+
+    /// @notice Perform the validated `expectedFrom → to` terminal transition and
+    ///         record BOTH holders' fail-closed frozen-claimant markers. Mirrors
+    ///         `LibLifecycle.transition`'s edge-check exactly (same caller-specific
+    ///         `expectedFrom`), so it is behavior-identical to today plus the
+    ///         central register.
+    function terminalize(
+        uint256 loanId,
+        LibVaipakam.LoanStatus expectedFrom,
+        LibVaipakam.LoanStatus to
+    ) external onlyDiamondInternal {
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        LibVaipakam.Loan storage loan = s.loans[loanId];
+        LibLifecycle.transition(loan, expectedFrom, to);
+        LibSanctionedLock.recordFrozenClaimantForLoan(s, loan, true);
+        LibSanctionedLock.recordFrozenClaimantForLoan(s, loan, false);
+    }
+
+    /// @notice `transitionFromAny` variant of {terminalize}: validate only the
+    ///         target edge (for the multi-source convergence cases, e.g. both
+    ///         `Active` and `FallbackPending → Defaulted / InternalMatched`), then
+    ///         record both holders.
+    function terminalizeFromAny(uint256 loanId, LibVaipakam.LoanStatus to)
+        external
+        onlyDiamondInternal
+    {
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        LibVaipakam.Loan storage loan = s.loans[loanId];
+        LibLifecycle.transitionFromAny(loan, to);
         LibSanctionedLock.recordFrozenClaimantForLoan(s, loan, true);
         LibSanctionedLock.recordFrozenClaimantForLoan(s, loan, false);
     }

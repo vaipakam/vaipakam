@@ -417,10 +417,16 @@ contract ClaimFacet is
             if (ok) {
                 _distributeRetryProceeds(loanId, loan, snap, proceeds);
                 snap.active = false;
-                LibLifecycle.transition(
-                    loan,
-                    LibVaipakam.LoanStatus.FallbackPending,
-                    LibVaipakam.LoanStatus.Defaulted
+                // #1132 (S10 central enforcement) — route the FP→Defaulted terminal
+                // through the `terminalize` host so both holders' fail-closed markers
+                // are recorded for the retry-swap distribution's deferred claims.
+                LibFacet.crossFacetCall(
+                    abi.encodeWithSelector(
+                        EncumbranceMutateFacet.terminalizeFromAny.selector,
+                        loanId,
+                        LibVaipakam.LoanStatus.Defaulted
+                    ),
+                    bytes4(0)
                 );
                 // Terminal default hooks — same as the absorb branch: the retry
                 // swap is an HF-liquidation outcome (collateral sold to cover the
@@ -543,18 +549,11 @@ contract ClaimFacet is
             LibSanctionedLock.depositLocked(
                 s, loan.borrower, loanId, c, snap.borrowerCollateral
             );
-            // #998 S10 (#1006) — fail-closed freeze if the current borrower-
-            // position holder is flagged. Routed through the host (the registry-
-            // aware recordFrozenClaimant is too heavy to inline into this
-            // EIP-170-tight facet).
-            LibFacet.crossFacetCall(
-                abi.encodeWithSelector(
-                    EncumbranceMutateFacet.recordSanctionsFrozenClaimant.selector,
-                    loanId,
-                    false
-                ),
-                bytes4(0)
-            );
+            // #998 S10 (#1006 / #1132) — the borrower-side fail-closed marker for
+            // this deferred collateral residual is recorded centrally at the
+            // FallbackPending→Defaulted transition below (terminalizeFromAny records
+            // BOTH holders; the burned lender side no-ops, the live borrower side is
+            // stamped). The standalone borrower register here was folded into it.
             LibFacet.crossFacetCall(
                 abi.encodeWithSelector(
                     EncumbranceMutateFacet.incrementCollateralLien.selector,
@@ -675,10 +674,17 @@ contract ClaimFacet is
             ),
             NFTBurnFailed.selector
         );
-        LibLifecycle.transition(
-            loan,
-            LibVaipakam.LoanStatus.FallbackPending,
-            LibVaipakam.LoanStatus.Defaulted
+        // #1132 (S10 central enforcement) — route through the terminalize host.
+        // The lender NFT was just burned, so its both-holder register no-ops the
+        // lender side (correct: the lender was cash-satisfied, no deferred claim)
+        // and stamps the live borrower side for the collateral-residual claim.
+        LibFacet.crossFacetCall(
+            abi.encodeWithSelector(
+                EncumbranceMutateFacet.terminalizeFromAny.selector,
+                loanId,
+                LibVaipakam.LoanStatus.Defaulted
+            ),
+            bytes4(0)
         );
 
         // Terminal hooks the direct default/liquidation paths run (DefaultedFacet /
@@ -860,10 +866,19 @@ contract ClaimFacet is
             // transition's allow-list edge from FallbackPending stays
             // unchanged.
             if (loan.status == LibVaipakam.LoanStatus.FallbackPending) {
-                LibLifecycle.transition(
-                    loan,
-                    LibVaipakam.LoanStatus.FallbackPending,
-                    LibVaipakam.LoanStatus.Defaulted
+                // #1132 (S10 central enforcement) — route through the terminalize
+                // host. Both holders were already stamped at the top of this claim
+                // (recordSanctionsFrozenClaimantBoth, which feeds the fail-closed
+                // gate above); this register is an idempotent no-op on the reachable
+                // (gate-passed, clean-lender) path, kept for structural consistency
+                // + the EIP-170 saving of dropping the inlined transition body.
+                LibFacet.crossFacetCall(
+                    abi.encodeWithSelector(
+                        EncumbranceMutateFacet.terminalizeFromAny.selector,
+                        loanId,
+                        LibVaipakam.LoanStatus.Defaulted
+                    ),
+                    bytes4(0)
                 );
             }
             // #569 Gap C (round-6 P1 + round-9 P1) — fold the borrower's

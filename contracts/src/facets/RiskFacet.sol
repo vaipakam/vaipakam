@@ -4,7 +4,6 @@ pragma solidity ^0.8.29;
 
 import {LibVaipakam} from "../libraries/LibVaipakam.sol";
 import {SwapToRepayIntentFacet} from "./SwapToRepayIntentFacet.sol";
-import {LibLifecycle} from "../libraries/LibLifecycle.sol";
 import {LibFallback} from "../libraries/LibFallback.sol";
 import {LibEntitlement} from "../libraries/LibEntitlement.sol";
 import {LibFacet} from "../libraries/LibFacet.sol";
@@ -837,9 +836,9 @@ contract RiskFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessCont
         LibSanctionedLock.depositLocked(
             s, loan.lender, loanId, loan.principalAsset, lenderProceeds
         );
-        // #998 S10 (#1006) — fail-closed freeze if the current lender-position
-        // holder is flagged (survives an oracle outage at claim time).
-        _recordFrozenClaimant(loanId, true);
+        // #998 S10 (#1006 / #1132) — both holders' fail-closed markers are
+        // recorded centrally at the `Defaulted` transition (via
+        // `EncumbranceMutateFacet.terminalize`).
 
         // Record lender's claimable proceeds. heldForLender handled by ClaimFacet.
         s.lenderClaims[loanId] = LibVaipakam.ClaimInfo({
@@ -864,9 +863,8 @@ contract RiskFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessCont
             LibSanctionedLock.depositLocked(
                 s, loan.borrower, loanId, loan.principalAsset, borrowerSurplus
             );
-            // #998 S10 (#1006) — fail-closed freeze if the current borrower-
-            // position holder is flagged.
-            _recordFrozenClaimant(loanId, false);
+            // #998 S10 (#1006 / #1132) — both holders' fail-closed markers are
+            // recorded centrally at the `Defaulted` transition (terminalize).
             // #661 — reserve a VPFI surplus against the unstake path until the
             // current borrower-position holder claims it. No-op for non-VPFI.
             if (loan.principalAsset == s.vpfiToken) {
@@ -885,10 +883,18 @@ contract RiskFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessCont
         });
 
         // Close loan — liquidation is triggered only from Active (HF < 1.0).
-        LibLifecycle.transition(
-            loan,
-            LibVaipakam.LoanStatus.Active,
-            LibVaipakam.LoanStatus.Defaulted
+        // #1132 (S10 central enforcement) — route through the
+        // `EncumbranceMutateFacet.terminalize` host so the validated Active→Defaulted
+        // transition AND both holders' fail-closed frozen-claimant markers land
+        // in one place (the per-branch standalone registers above were folded here).
+        LibFacet.crossFacetCall(
+            abi.encodeWithSelector(
+                EncumbranceMutateFacet.terminalize.selector,
+                loanId,
+                LibVaipakam.LoanStatus.Active,
+                LibVaipakam.LoanStatus.Defaulted
+            ),
+            bytes4(0)
         );
 
         // Phase 5 / §5.2b — HF liquidation is NOT a proper close, so
@@ -1535,9 +1541,8 @@ contract RiskFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessCont
         LibSanctionedLock.depositLocked(
             s, loan.lender, loanId, loan.principalAsset, lenderProceeds
         );
-        // #998 S10 (#1006) — fail-closed freeze if the current lender-position
-        // holder is flagged.
-        _recordFrozenClaimant(loanId, true);
+        // #998 S10 (#1006 / #1132) — both holders' fail-closed markers are
+        // recorded centrally at the `Defaulted` transition (terminalize).
 
         // Record lender claim metadata for NFT-state tracking.
         s.lenderClaims[loanId] = LibVaipakam.ClaimInfo({
@@ -1604,20 +1609,25 @@ contract RiskFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessCont
             quantity: 0,
             claimed: borrowerSurplus == 0
         });
-        // #998 S10 (#1006) — the surplus stays ENCUMBERED in the borrower's own
-        // vault (no fresh park) but is claim-gated: freeze it fail-closed if the
-        // current borrower-position holder is flagged, so an oracle outage can't
-        // release a confirmed-flagged holder's surplus. Unconditional — the marker
-        // is a no-op for a clean holder (and for a zero surplus the claim is
-        // already flagged `claimed`, so a marker on it is harmless).
-        _recordFrozenClaimant(loanId, false);
+        // #998 S10 (#1006 / #1132) — the surplus stays ENCUMBERED in the borrower's
+        // own vault (no fresh park) but is claim-gated. Both holders' fail-closed
+        // frozen-claimant markers are recorded centrally at the `Defaulted`
+        // transition below (via `EncumbranceMutateFacet.terminalize`).
 
         // Lifecycle: Active → Defaulted. Same terminal as atomic-path
         // liquidations.
-        LibLifecycle.transition(
-            loan,
-            LibVaipakam.LoanStatus.Active,
-            LibVaipakam.LoanStatus.Defaulted
+        // #1132 (S10 central enforcement) — route through the
+        // `EncumbranceMutateFacet.terminalize` host so the validated Active→Defaulted
+        // transition AND both holders' fail-closed frozen-claimant markers land
+        // in one place (the standalone registers above were folded here).
+        LibFacet.crossFacetCall(
+            abi.encodeWithSelector(
+                EncumbranceMutateFacet.terminalize.selector,
+                loanId,
+                LibVaipakam.LoanStatus.Active,
+                LibVaipakam.LoanStatus.Defaulted
+            ),
+            bytes4(0)
         );
 
         // HF liquidation is NOT a proper close — borrower's VPFI LIF
@@ -1856,22 +1866,30 @@ contract RiskFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessCont
             claimed: borrowerCol == 0
         });
 
-        // #998 S10 (#1006) — capture a confirmed freeze at fallback ENTRY, where
-        // the oracle is up (this path is HF-gated). Unlike an atomic liquidation,
-        // the lender + borrower shares here are distributed LATER inside a claim
-        // that can itself run during an oracle outage (fallback distribution needs
-        // no oracle), so entry is the only reliable moment to record an affirmative
-        // flag for BOTH the lender claim and the deferred borrower claim — matching
-        // the fail-closed guarantee the atomic path gets from its park-site marker.
-        _recordFrozenClaimant(loanId, true);
-        _recordFrozenClaimant(loanId, false);
+        // #998 S10 (#1006 / #1132) — capture a confirmed freeze at fallback ENTRY,
+        // where the oracle is up (this path is HF-gated). Unlike an atomic
+        // liquidation, the lender + borrower shares here are distributed LATER inside
+        // a claim that can itself run during an oracle outage (fallback distribution
+        // needs no oracle), so entry is the only reliable moment to record an
+        // affirmative flag for BOTH the lender claim and the deferred borrower claim.
+        // The `EncumbranceMutateFacet.terminalize` host records both holders AT this
+        // Active→FallbackPending entry transition (design §2 Invariant A —
+        // fallback-entry is a register-triggering edge).
 
         // Enter fallback-pending state. Borrower may still cure via addCollateral
         // or repayLoan until the lender claims; see LibVaipakam.LoanStatus docs.
-        LibLifecycle.transition(
-            loan,
-            LibVaipakam.LoanStatus.Active,
-            LibVaipakam.LoanStatus.FallbackPending
+        // #1132 (S10 central enforcement) — route through the
+        // `EncumbranceMutateFacet.terminalize` host so the validated Active→FallbackPending
+        // transition AND both holders' fail-closed frozen-claimant markers land
+        // in one place (the standalone registers above were folded here).
+        LibFacet.crossFacetCall(
+            abi.encodeWithSelector(
+                EncumbranceMutateFacet.terminalize.selector,
+                loanId,
+                LibVaipakam.LoanStatus.Active,
+                LibVaipakam.LoanStatus.FallbackPending
+            ),
+            bytes4(0)
         );
 
         // Mark NFTs with pending status — final Defaulted/Liquidated label is
@@ -2051,20 +2069,5 @@ contract RiskFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessCont
 
     function _decrementLienAtPartialLiq(uint256 loanId, uint256 consumed) private {
         _callEncumb2(EncumbranceMutateFacet.decrementCollateralLien.selector, loanId, consumed);
-    }
-
-    /// @dev #998 S10 (#1006) — record the fail-closed frozen-claimant marker via
-    ///      the cross-facet host so the isSanctioned/owner-read machinery stays out
-    ///      of this EIP-170-tight facet (same policy as the `_callEncumb*` helpers).
-    ///      Reuses the generic uint-arg cross-caller: a `bool` ABI-encodes as its
-    ///      trailing 32-byte word, so `1` (lender) / `0` (borrower) decodes
-    ///      correctly against the host's `(uint256, bool)` signature — no extra
-    ///      encode stub in this facet's bytecode.
-    function _recordFrozenClaimant(uint256 loanId, bool lenderSide) private {
-        _callEncumb2(
-            EncumbranceMutateFacet.recordSanctionsFrozenClaimant.selector,
-            loanId,
-            lenderSide ? 1 : 0
-        );
     }
 }

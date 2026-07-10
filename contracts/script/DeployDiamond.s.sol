@@ -173,6 +173,9 @@ contract DeployDiamond is Script {
         // #407 PR 2 — thin cross-facet mutate surface for the
         // vault encumbrance sub-ledger; see facet natspec.
         EncumbranceMutateFacet encumbranceMutateFacet = new EncumbranceMutateFacet();
+        // #1132 (S10 central enforcement) — diamond-internal host that performs
+        // a loan's TERMINAL status transition AND records both holders'
+        // fail-closed frozen-claimant markers in one place; see facet natspec.
         // #396 v0.5 — gasless signed off-chain offer book fill surface.
         SignedOfferFacet signedOfferFacet = new SignedOfferFacet();
         // #393 v1 — LenderIntentVault standing-terms surface.
@@ -1449,7 +1452,7 @@ contract DeployDiamond is Script {
     ///         offer-principal-lock impl PR adds the lock create /
     ///         decrement / release surface.
     function _getEncumbranceMutateFacetSelectors() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](17);
+        s = new bytes4[](19);
         s[0] = EncumbranceMutateFacet.releaseCollateralLien.selector;
         // #407 PR 4 round-1 (2026-06-12) — decrement/increment cross-
         // facet entries used by active-loan slice flows + addCollateral.
@@ -1477,6 +1480,11 @@ contract DeployDiamond is Script {
         s[14] = EncumbranceMutateFacet.freezeOrPayActiveLenderResident.selector;
         s[15] = EncumbranceMutateFacet.freezeOrPayActiveLenderFromPayer.selector;
         s[16] = EncumbranceMutateFacet.freezeOrPayActiveLenderFromVault.selector;
+        // #1132 (S10 central enforcement) — terminal-transition + both-holder
+        // frozen-claimant register host (hosted here, not a separate facet, so it
+        // is cut into every diamond that already cuts this mutate host).
+        s[17] = EncumbranceMutateFacet.terminalize.selector;
+        s[18] = EncumbranceMutateFacet.terminalizeFromAny.selector;
     }
 
     /// @notice #396 v0.5 — gasless signed off-chain offer book selectors.

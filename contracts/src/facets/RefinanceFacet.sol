@@ -5,7 +5,6 @@ pragma solidity ^0.8.29;
 import {LibVaipakam} from "../libraries/LibVaipakam.sol";
 import {LibEncumbrance} from "../libraries/LibEncumbrance.sol";
 import {LibAutoRefinanceCheck} from "../libraries/LibAutoRefinanceCheck.sol";
-import {LibLifecycle} from "../libraries/LibLifecycle.sol";
 import {LibInteractionRewards} from "../libraries/LibInteractionRewards.sol";
 import {LibAuth} from "../libraries/LibAuth.sol";
 import {LibEntitlement} from "../libraries/LibEntitlement.sol";
@@ -495,19 +494,15 @@ contract RefinanceFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErr
                 oldLoanId, oldLoan.lender, oldLoan.principalAsset, lenderDue
             );
         }
-        // #998 S10 (#1006) F2 — refinance terminally closes the OLD loan and parks
-        // the old lender's proceeds into `oldLoan.lender`'s vault, owed to the
-        // CURRENT lender-position holder via the claim recorded above. Unlike the
-        // borrower side (whose returned collateral goes to the caller, already
-        // Tier-1-screened at the refinance entry), the old lender is NOT the caller
-        // and its position may have been transferred to a flagged wallet. Record
-        // the fail-closed frozen-claimant marker (keyed to the current holder, iff
-        // affirmatively flagged) so that holder's later claim can't release during
-        // an oracle outage. Inlined (RefinanceFacet has ample EIP-170 headroom, per
-        // the inline-where-possible policy); no-op for a clean/absent holder. The
-        // old lender NFT is only status-updated (not burned) further below, so
-        // `ownerOf(lenderTokenId)` still resolves here.
-        LibSanctionedLock.recordFrozenClaimantForLoan(s, oldLoan, true);
+        // #998 S10 (#1006 / #1132) F2 — refinance terminally closes the OLD loan
+        // and parks the old lender's proceeds into `oldLoan.lender`'s vault, owed to
+        // the CURRENT lender-position holder via the claim recorded above. The old
+        // lender is NOT the caller and its position may have been transferred to a
+        // flagged wallet, so it needs a fail-closed frozen-claimant marker; both
+        // holders' markers are recorded centrally at the `Repaid` transition below
+        // (via `EncumbranceMutateFacet.terminalize`). The old lender NFT is only
+        // status-updated (not burned) further below, so `ownerOf` still resolves at
+        // the transition.
 
         // T-086 follow-up to step 14 — clear any active prepay listing on
         // the OLD loan BEFORE the collateral withdrawal below. Placement
@@ -750,10 +745,18 @@ contract RefinanceFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErr
         );
 
         // Mark old loan closed — refinance only operates on Active loans.
-        LibLifecycle.transition(
-            oldLoan,
-            LibVaipakam.LoanStatus.Active,
-            LibVaipakam.LoanStatus.Repaid
+        // #1132 (S10 central enforcement) — route through the
+        // `EncumbranceMutateFacet.terminalize` host so the validated Active→Repaid
+        // transition AND both holders' fail-closed frozen-claimant markers land
+        // in one place (the standalone lender register above was folded here).
+        LibFacet.crossFacetCall(
+            abi.encodeWithSelector(
+                EncumbranceMutateFacet.terminalize.selector,
+                oldLoanId,
+                LibVaipakam.LoanStatus.Active,
+                LibVaipakam.LoanStatus.Repaid
+            ),
+            bytes4(0)
         );
         // #969 / S5 (#998 Tranche 2) — close the OLD loan's reward entries. The
         // new refinanced loan (`newLoanId`) already registered its own fresh

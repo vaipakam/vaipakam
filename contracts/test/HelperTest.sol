@@ -776,7 +776,7 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](17);
+        selectors = new bytes4[](19);
         selectors[0] = EncumbranceMutateFacet.releaseCollateralLien.selector;
         selectors[1] = EncumbranceMutateFacet.decrementCollateralLien.selector;
         selectors[2] = EncumbranceMutateFacet.incrementCollateralLien.selector;
@@ -801,6 +801,9 @@ contract HelperTest {
         selectors[14] = EncumbranceMutateFacet.freezeOrPayActiveLenderResident.selector;
         selectors[15] = EncumbranceMutateFacet.freezeOrPayActiveLenderFromPayer.selector;
         selectors[16] = EncumbranceMutateFacet.freezeOrPayActiveLenderFromVault.selector;
+        // #1132 (S10 central enforcement) — terminal-transition register host.
+        selectors[17] = EncumbranceMutateFacet.terminalize.selector;
+        selectors[18] = EncumbranceMutateFacet.terminalizeFromAny.selector;
     }
 
     /// @notice #396 v0.5 — gasless signed off-chain offer book selectors.

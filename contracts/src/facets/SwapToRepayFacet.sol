@@ -3,7 +3,6 @@
 pragma solidity ^0.8.29;
 
 import {LibVaipakam} from "../libraries/LibVaipakam.sol";
-import {LibLifecycle} from "../libraries/LibLifecycle.sol";
 import {LibAuth} from "../libraries/LibAuth.sol";
 import {LibConsolidation} from "../libraries/LibConsolidation.sol";
 import {LibEntitlement} from "../libraries/LibEntitlement.sol";
@@ -467,19 +466,13 @@ contract SwapToRepayFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamE
             quantity: 0,
             claimed: false
         });
-        // #998 S10 (#1006, Codex r2 P1) — the residual collateral claim is
-        // claim-gated (`claimAsBorrower`) but the borrower side is marked above
-        // (in `freezeOrPayBorrowerSurplus`) ONLY when there is a sanctioned
-        // principal surplus. Stamp the borrower side for the residual collateral
-        // too, so a flagged current holder's residual can't release fail-open
-        // during an oracle outage when there is no surplus. Routed via the
-        // cross-facet host (0 = borrower side); first-write-wins if a surplus
-        // marker already recorded the same holder.
-        _callEncumb2(
-            EncumbranceMutateFacet.recordSanctionsFrozenClaimant.selector,
-            loanId,
-            0
-        );
+        // #998 S10 (#1006 / #1132) — the residual collateral claim is claim-gated
+        // (`claimAsBorrower`). Both holders' fail-closed frozen-claimant markers
+        // are recorded centrally at the `Repaid` transition below (via
+        // `EncumbranceMutateFacet.terminalize`), which covers the borrower side for the
+        // residual collateral case whether or not a sanctioned principal surplus
+        // was present. The `freezeOrPayBorrowerSurplus` self-register (above) and
+        // this central register are idempotent + first-write-wins.
 
         // ── Position-NFT status flip → LoanRepaid ────────────────────
         // Codex round-1 PR #390 P2 #3 — without this, marketplaces +
@@ -515,10 +508,18 @@ contract SwapToRepayFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamE
         LibPrepayCleanup.clearActiveListing(loan, loanId);
 
         // ── Transition + LIF VPFI settlement ─────────────────────────
-        LibLifecycle.transition(
-            loan,
-            LibVaipakam.LoanStatus.Active,
-            LibVaipakam.LoanStatus.Repaid
+        // #1132 (S10 central enforcement) — route through the
+        // `EncumbranceMutateFacet.terminalize` host so the validated Active→Repaid
+        // transition AND both holders' fail-closed frozen-claimant markers land
+        // in one place (the standalone borrower register above was folded here).
+        LibFacet.crossFacetCall(
+            abi.encodeWithSelector(
+                EncumbranceMutateFacet.terminalize.selector,
+                loanId,
+                LibVaipakam.LoanStatus.Active,
+                LibVaipakam.LoanStatus.Repaid
+            ),
+            bytes4(0)
         );
 
         // Codex round-1 PR #390 P1 #2 — Phase 5 / §5.2b proper-close

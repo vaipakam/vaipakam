@@ -8,7 +8,7 @@ import {LibSanctionedLock} from "../libraries/LibSanctionedLock.sol";
 import {ConsolidationFacet} from "./ConsolidationFacet.sol";
 import {LibVPFIDiscount} from "../libraries/LibVPFIDiscount.sol";
 import {SwapToRepayIntentFacet} from "./SwapToRepayIntentFacet.sol";
-import {LibLifecycle} from "../libraries/LibLifecycle.sol";
+import {EncumbranceMutateFacet} from "./EncumbranceMutateFacet.sol";
 import {OracleFacet} from "./OracleFacet.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
@@ -826,10 +826,18 @@ contract RiskMatchLiquidationFacet is DiamondReentrancyGuard, DiamondPausable {
         // Here we only tombstone the now-zeroed lien on a full close.
         if (status == LibVaipakam.LoanStatus.Active) {
             if (loan.principal == 0) {
-                LibLifecycle.transition(
-                    loan,
-                    LibVaipakam.LoanStatus.Active,
-                    LibVaipakam.LoanStatus.InternalMatched
+                // #1132 (S10 central enforcement) — route the Active→InternalMatched
+                // terminal through the `terminalize` host so both holders'
+                // fail-closed markers are recorded there (the standalone
+                // lender/borrower registers below were folded into this call).
+                LibFacet.crossFacetCall(
+                    abi.encodeWithSelector(
+                        EncumbranceMutateFacet.terminalize.selector,
+                        loan.id,
+                        LibVaipakam.LoanStatus.Active,
+                        LibVaipakam.LoanStatus.InternalMatched
+                    ),
+                    bytes4(0)
                 );
                 // #585 (Codex round-3 P1) — an internal match is a
                 // LIQUIDATION-class terminal for the borrower (their
@@ -872,21 +880,10 @@ contract RiskMatchLiquidationFacet is DiamondReentrancyGuard, DiamondPausable {
                     quantity: 0,
                     claimed: false
                 });
-                // #998 S10 (#1006) — fail-closed freeze if the current lender-
-                // position holder is flagged (claimed via `claimAsLender`).
-                LibSanctionedLock.recordFrozenClaimantForLoan(
-                    LibVaipakam.storageSlot(), loan, true
-                );
-                // #998 S10 (#1006, Codex #1122-rework r1 P1) — `_retainInternalMatchResidual`
-                // above writes a `borrowerClaims` row for any over-collateralized
-                // residual (`collateralAmount > 0`), claimed via `claimAsBorrower`.
-                // Stamp the BORROWER side too so a flagged current borrower-position
-                // holder can't release that residual during a later oracle outage.
-                if (loan.collateralAmount > 0) {
-                    LibSanctionedLock.recordFrozenClaimantForLoan(
-                        LibVaipakam.storageSlot(), loan, false
-                    );
-                }
+                // #998 S10 (#1006 / #1132) — both holders' fail-closed markers
+                // (lender for the `lenderClaims` row above, borrower for any
+                // `_retainInternalMatchResidual` over-collateralized residual) are
+                // recorded centrally at the `InternalMatched` transition (terminalize).
                 // #585 — if the proceeds are VPFI, reserve them against the
                 // unstake path (`withdrawVPFIFromVault`) so the stored
                 // lender can't front-run the holder's claim. Released in
@@ -970,9 +967,8 @@ contract RiskMatchLiquidationFacet is DiamondReentrancyGuard, DiamondPausable {
                     quantity: 0,
                     claimed: false
                 });
-                // #998 S10 (#1006) — fail-closed freeze if the current lender-
-                // position holder is flagged.
-                LibSanctionedLock.recordFrozenClaimantForLoan(s, loan, true);
+                // #998 S10 (#1006 / #1132) — both holders' fail-closed markers are
+                // recorded centrally at the `InternalMatched` transition (terminalize).
                 // #585 — VPFI proceeds reservation (see the Active branch).
                 if (loan.principalAsset == s.vpfiToken) {
                     LibEncumbrance.encumberLenderProceeds(
@@ -1022,9 +1018,9 @@ contract RiskMatchLiquidationFacet is DiamondReentrancyGuard, DiamondPausable {
                         quantity: loan.collateralQuantity,
                         claimed: false
                     });
-                    // #998 S10 (#1006) — fail-closed freeze if the current
-                    // borrower-position holder is flagged.
-                    LibSanctionedLock.recordFrozenClaimantForLoan(s, loan, false);
+                    // #998 S10 (#1006 / #1132) — the borrower-side fail-closed
+                    // marker is recorded centrally at the `InternalMatched`
+                    // transition below (terminalize).
                 } else {
                     delete s.borrowerClaims[loan.id];
                 }
@@ -1033,9 +1029,15 @@ contract RiskMatchLiquidationFacet is DiamondReentrancyGuard, DiamondPausable {
                 // forfeit the borrower VPFI LIF custody to treasury (see the
                 // Active full-match branch). No-op when none was paid.
                 LibVPFIDiscount.forfeitBorrowerLif(loan);
-                LibLifecycle.transitionFromAny(
-                    loan,
-                    LibVaipakam.LoanStatus.InternalMatched
+                // #1132 (S10 central enforcement) — route through the terminalize
+                // host (both holders' markers recorded there).
+                LibFacet.crossFacetCall(
+                    abi.encodeWithSelector(
+                        EncumbranceMutateFacet.terminalizeFromAny.selector,
+                        loan.id,
+                        LibVaipakam.LoanStatus.InternalMatched
+                    ),
+                    bytes4(0)
                 );
                 return;
             }
@@ -1106,17 +1108,24 @@ contract RiskMatchLiquidationFacet is DiamondReentrancyGuard, DiamondPausable {
                     quantity: 0,
                     claimed: false
                 });
-                // #998 S10 (#1006) — fail-closed freeze if the current borrower-
-                // position holder is flagged.
-                LibSanctionedLock.recordFrozenClaimantForLoan(s, loan, false);
+                // #998 S10 (#1006 / #1132) — the borrower-side fail-closed marker
+                // is recorded centrally at the `InternalMatched` transition below
+                // (terminalize). The lender held-credit marker for this partial
+                // leg was already stamped at the `heldForLender +=` above.
                 // The matched proceeds already exited; the lender's residual
                 // collateral claim is zero (Diamond consumed).
                 s.lenderClaims[loan.id].amount = 0;
                 loan.principal = 0; // fallback shortfall written off — loan terminal.
                 s.fallbackSnapshot[loan.id].active = false;
                 LibVPFIDiscount.forfeitBorrowerLif(loan);
-                LibLifecycle.transitionFromAny(
-                    loan, LibVaipakam.LoanStatus.InternalMatched
+                // #1132 (S10 central enforcement) — route through the terminalize host.
+                LibFacet.crossFacetCall(
+                    abi.encodeWithSelector(
+                        EncumbranceMutateFacet.terminalizeFromAny.selector,
+                        loan.id,
+                        LibVaipakam.LoanStatus.InternalMatched
+                    ),
+                    bytes4(0)
                 );
                 return;
             }
