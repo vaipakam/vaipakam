@@ -1045,6 +1045,31 @@ converge. Its intended behaviour (the test oracle for that surface):
   user's side, and a build with no support backend configured says
   so instead of pointing at another environment's service. The app
   never shows a ticket number it did not actually receive.
+- **Rate Desk (Advanced mode).** An Advanced-mode page presents one
+  lending market — a lending asset / collateral asset pair at one
+  chosen duration — as a two-sided rate book. Lender offers are shown
+  as asks at each lender's minimum yearly rate, borrower requests as
+  bids at each borrower's maximum, aggregated per rate level with the
+  amount still fillable (never the original headline size) and running
+  depth totals; offers past their expiry time and offers whose legs are
+  not both plain fungible tokens never appear. The page's market list
+  covers every pair-and-duration with live offers (a market never
+  disappears from navigation merely because its offers are old), and
+  duration choices are the same set the guided flows offer. A ticket on
+  the same screen posts a limit-rate offer with expiry presets (never /
+  a chosen time) and fill modes (partial fills allowed, all-or-none,
+  immediate-or-cancel), with the same consent, simulation precheck, and
+  under-collateral warning the guided flows enforce. The user's own
+  open offers can be repriced or resized in place in one transaction —
+  only by their creator; a bought offer position is view-only — and an
+  amend that increases the locked amount asks for the token approval
+  first. Recent fills for the market are listed honestly: a market with
+  no fills says so, and internal bookkeeping from a loan-sale never
+  appears as a fill. Positions show under the book with their health
+  status and lead to the existing manage flows. Nothing on this page
+  invents liquidity, queue positions, or price-change percentages the
+  protocol cannot back; the page is reachable by link in either mode
+  but appears in navigation only in Advanced mode.
 
 ## Key UX Requirements
 
