@@ -35,6 +35,10 @@ const TEST_PK =
 const SIGNER = privateKeyToAccount(TEST_PK);
 const CHAIN_ID = 84532; // Base Sepolia — present in the deployments bundle
 const FUTURE = 4102444800; // 2100-01-01
+/** In-horizon signature deadline for the GTC fixture — the desk ticket's
+ *  own policy is chainNow + 7d, well inside the route's 30-day
+ *  API-abuse cap on uncovered non-zero deadlines (#1145 round-2). */
+const DEADLINE_7D = Math.floor(Date.now() / 1000) + 7 * 86_400;
 
 function makeOrder(overrides: Partial<SignedOrderWire> = {}): SignedOrderWire {
   return {
@@ -65,7 +69,7 @@ function makeOrder(overrides: Partial<SignedOrderWire> = {}): SignedOrderWire {
     useFullTermInterest: false,
     signer: SIGNER.address.toLowerCase(),
     nonce: '7',
-    deadline: String(FUTURE),
+    deadline: String(DEADLINE_7D),
     ...overrides,
   };
 }
@@ -141,5 +145,56 @@ describe('POST /signed-offers — re-post status branching (Codex #1145 r2)', ()
     expect(res.status).toBe(201);
     const body = (await res.json()) as Record<string, unknown>;
     expect(body).toEqual({ chainId: CHAIN_ID, orderHash: orderHashOf(order) });
+  });
+});
+
+describe('POST /signed-offers — deadline horizon cap (Codex #1145 r2)', () => {
+  const NOW = () => Math.floor(Date.now() / 1000);
+
+  it('rejects a GTC order whose deadline exceeds now + 30d (the API-abuse cap)', async () => {
+    // expiresAt 0 = GTC, so the deadline IS the order's validity bound;
+    // a year-2100 signature is effectively unbounded exposure.
+    const res = await post(
+      makeEnv(null),
+      makeOrder({ expiresAt: '0', deadline: String(FUTURE) }),
+    );
+    expect(res.status).toBe(400);
+    expect(await res.json()).toEqual({ error: 'deadline-above-horizon' });
+  });
+
+  it('rejects an above-horizon deadline that also outlives the advertised expiry', async () => {
+    // GTT, but the deadline outlives expiresAt AND the horizon — the
+    // uncovered tail is the same unbounded shape as the GTC case.
+    const res = await post(
+      makeEnv(null),
+      makeOrder({
+        expiresAt: String(NOW() + 10 * 86_400),
+        deadline: String(FUTURE),
+      }),
+    );
+    expect(res.status).toBe(400);
+    expect(await res.json()).toEqual({ error: 'deadline-above-horizon' });
+  });
+
+  it('accepts deadline = 0 (contract-GTC signature semantics, untouched)', async () => {
+    const res = await post(makeEnv(null), makeOrder({ deadline: '0' }));
+    expect(res.status).toBe(201);
+  });
+
+  it('accepts a beyond-horizon GTT deadline covered by expiresAt (signature dies with the offer)', async () => {
+    // deadline == expiresAt at 90 days — the desk ticket's own GTT
+    // policy; on-chain exposure is min(deadline, expiresAt), so the
+    // 30-day cap must not reject it.
+    const ninetyDays = String(NOW() + 90 * 86_400);
+    const res = await post(
+      makeEnv(null),
+      makeOrder({ expiresAt: ninetyDays, deadline: ninetyDays }),
+    );
+    expect(res.status).toBe(201);
+  });
+
+  it('accepts an in-horizon GTC deadline (the ticket-policy 7d shape)', async () => {
+    const res = await post(makeEnv(null), makeOrder());
+    expect(res.status).toBe(201);
   });
 });

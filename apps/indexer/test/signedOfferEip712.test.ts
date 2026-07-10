@@ -81,6 +81,13 @@ const DIAMOND = '0x00000000000000000000000000000000000d1a0d' as Hex;
 const CHAIN_ID = 84532;
 
 const FUTURE = 4102444800; // 2100-01-01 — safely past any test clock
+/** Fixed validateOrder clock — well before FUTURE. */
+const NOW = 1783000000;
+/** In-horizon signature deadline for the GTC fixture — the ticket-policy
+ *  7d shape. Non-zero deadlines not covered by the order's own
+ *  `expiresAt` are capped at now + 30d (#1145 round-2), so the fixture
+ *  can't use FUTURE any more. */
+const DEADLINE_7D = String(NOW + 7 * 86_400);
 
 function makeOrder(overrides: Partial<SignedOrderWire> = {}): SignedOrderWire {
   return {
@@ -113,7 +120,7 @@ function makeOrder(overrides: Partial<SignedOrderWire> = {}): SignedOrderWire {
     useFullTermInterest: false,
     signer: SIGNER.address.toLowerCase(),
     nonce: '7',
-    deadline: String(FUTURE),
+    deadline: DEADLINE_7D,
     ...overrides,
   };
 }
@@ -263,8 +270,6 @@ describe('ceilingOf — mirrors SignedOfferFacet._ceiling', () => {
 });
 
 describe('validateOrder — the POST shape gate', () => {
-  const NOW = 1783000000; // fixed clock well before FUTURE
-
   it('accepts a canonical order and lowercases addresses', () => {
     const raw = makeOrder({
       lendingAsset: '0xAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA',
@@ -366,6 +371,58 @@ describe('validateOrder — the POST shape gate', () => {
       NOW,
     );
     expect('order' in gtc).toBe(true);
+  });
+
+  // #1145 round-2 — non-zero deadlines the order's own expiresAt does
+  // not cover are horizon-capped at now + 30d (the API-abuse cap; the
+  // ticket's own GTC policy is chainNow + 7d). `deadline = 0` keeps its
+  // contract-GTC semantics (pinned above); a deadline ≤ expiresAt is
+  // exempt — the signature dies with the advertised GTT expiry and
+  // on-chain exposure is min(deadline, expiresAt) anyway.
+  it('caps uncovered non-zero deadlines at now + 30d; expiresAt-covered ones pass', () => {
+    // GTC + far deadline: effectively-unbounded signature → rejected.
+    expectError(
+      makeOrder({ deadline: String(FUTURE) }) as unknown as Record<
+        string,
+        unknown
+      >,
+      'deadline-above-horizon',
+    );
+    expectError(
+      makeOrder({ deadline: String(NOW + 31 * 86_400) }) as unknown as Record<
+        string,
+        unknown
+      >,
+      'deadline-above-horizon',
+    );
+    // A deadline outliving a shorter expiresAt AND the horizon: the
+    // uncovered tail is the same unbounded shape → rejected.
+    expectError(
+      makeOrder({
+        expiresAt: String(NOW + 10 * 86_400),
+        deadline: String(FUTURE),
+      }) as unknown as Record<string, unknown>,
+      'deadline-above-horizon',
+    );
+    // deadline == expiresAt at 90d (the ticket's GTT policy): covered,
+    // beyond-horizon is fine.
+    const gtt = validateOrder(
+      makeOrder({
+        expiresAt: String(NOW + 90 * 86_400),
+        deadline: String(NOW + 90 * 86_400),
+      }) as unknown as Record<string, unknown>,
+      NOW,
+    );
+    expect('order' in gtt).toBe(true);
+    // Exactly at the horizon boundary: allowed (cap is strict-greater).
+    const atCap = validateOrder(
+      makeOrder({ deadline: String(NOW + 30 * 86_400) }) as unknown as Record<
+        string,
+        unknown
+      >,
+      NOW,
+    );
+    expect('order' in atCap).toBe(true);
   });
 
   it('rejects a wrongly-typed bool', () => {

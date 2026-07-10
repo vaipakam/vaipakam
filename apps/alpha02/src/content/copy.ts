@@ -892,6 +892,8 @@ export const copy = {
         'Gasless signed order from the off-chain book — the maker signed it without a transaction, and it fills in a single on-chain transaction by whoever takes it. Signed rows always come from the order-book service, never the chain, until they fill.',
       partialBadgeTooltip:
         'Partially matched signed order — its remainder still counts as depth and fills through the permissionless matcher, but a direct fill is no longer possible.',
+      rangedBadgeTooltip:
+        'Range-sized signed order — its size still counts as depth, but only the permissionless matcher can consume it in slices; there is no whole-order direct fill.',
       fill: 'Fill',
       confirmTitle: 'Fill signed order',
       confirmLede:

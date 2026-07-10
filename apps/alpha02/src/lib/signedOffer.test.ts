@@ -264,7 +264,13 @@ describe('ladder merge', () => {
   });
 
   it('takerCandidate skips signed rows; signedFillCandidate skips own + on-chain', () => {
-    const signed = signedRowToDeskRow(signedRow(wire()), CHAIN, NOW)!;
+    // Single-value on principal — ranged rows never arm the direct
+    // fill (#1145 round-2, pinned separately below).
+    const signed = signedRowToDeskRow(
+      signedRow(wire({ amount: '1000' })),
+      CHAIN,
+      NOW,
+    )!;
     const ladder = buildLadder([signed, chainOffer()], 30, NOW, undefined);
     const level = ladder.asks[0];
     // The on-chain row is the deep-link candidate even when the signed
@@ -309,12 +315,56 @@ describe('ladder merge', () => {
       CHAIN,
       NOW,
     )!;
-    const freshOrder = wire({ nonce: '43' }); // distinct hash, same rate level
+    // Distinct hash, same rate level; single-value so the direct-fill
+    // gate (#1145 round-2) admits it.
+    const freshOrder = wire({ nonce: '43', amount: '1000' });
     const fresh = signedRowToDeskRow(signedRow(freshOrder), CHAIN, NOW)!;
     const ladder = buildLadder([partial, fresh], 30, NOW, undefined);
     expect(ladder.asks).toHaveLength(1); // same 937 bps level
     expect(signedFillCandidate(ladder.asks[0], TAKER)?.signed?.orderHash).toBe(
       fresh.signed!.orderHash,
+    );
+  });
+
+  // Codex #1145 round-2 P2 — a RANGED signed order (amount < ceiling)
+  // must never arm the direct fill: `acceptSignedOffer` consumes the
+  // fill ledger to the CEILING (`signedOfferFilled[orderHash] =
+  // _ceiling(o)`) while the materialized accept binds only the ROLE
+  // amount (a borrower offer's headline FLOOR), so a direct fill would
+  // vaporize the advertised remainder. The desk's own ticket can no
+  // longer produce this shape (lender payloads are collapsed, borrower
+  // payloads ship single-value) — the gate defends against range orders
+  // POSTed straight to the public indexer API.
+  it('signedFillCandidate skips RANGED rows (API-posted shape) while their ceiling still rests as depth', () => {
+    // A ranged BORROWER order — the exact depth-vaporizing shape:
+    // floor 100, ceiling 1000, advertised depth 1000.
+    const ranged = signedRowToDeskRow(
+      signedRow(wire({ offerType: '1', interestRateBps: '0' })),
+      CHAIN,
+      NOW,
+    )!;
+    const ladder = buildLadder([ranged], 30, NOW, undefined);
+    // The full ceiling rests as (matcher-consumable) depth…
+    expect(ladder.bids[0].size).toBe(1_000n);
+    // …but no direct-fill affordance.
+    expect(signedFillCandidate(ladder.bids[0], TAKER)).toBeNull();
+    // A ranged LENDER row is gated identically.
+    const rangedLender = signedRowToDeskRow(signedRow(wire()), CHAIN, NOW)!;
+    const askLadder = buildLadder([rangedLender], 30, NOW, undefined);
+    expect(askLadder.asks[0].size).toBe(1_000n);
+    expect(signedFillCandidate(askLadder.asks[0], TAKER)).toBeNull();
+  });
+
+  it('signedFillCandidate arms on the amountMax==0 single-value wire sentinel', () => {
+    const sentinel = signedRowToDeskRow(
+      signedRow(wire({ amount: '77', amountMax: '0' })),
+      CHAIN,
+      NOW,
+    )!;
+    const ladder = buildLadder([sentinel], 30, NOW, undefined);
+    expect(ladder.asks[0].size).toBe(77n);
+    expect(signedFillCandidate(ladder.asks[0], TAKER)?.signed?.orderHash).toBe(
+      sentinel.signed!.orderHash,
     );
   });
 });

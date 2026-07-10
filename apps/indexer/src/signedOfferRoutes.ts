@@ -87,6 +87,20 @@ const U64_MAX = (1n << 64n) - 1n;
  *  wants "no deadline" uses 0, which the contract treats as GTC). Keeps the
  *  INTEGER columns within SQLite/Number-safe range. */
 const TS_SANITY_MAX = 253402300799n;
+/** API-abuse horizon cap on NON-ZERO signature deadlines that are the
+ *  order's TRUE validity bound (Codex #1145 round-2 P2) — i.e. any
+ *  deadline not covered by the order's own advertised `expiresAt`. The
+ *  desk ticket's GTC policy signs `chainNow + 7d`; 30 days gives
+ *  third-party integrators generous room while still refusing the
+ *  "effectively unbounded signature" shape (a far-future deadline on a
+ *  GTC order is irrevocable without a gas-costing on-chain cancel).
+ *  `deadline = 0` keeps its contract-GTC semantics untouched (the GET
+ *  filter honors it — earlier-round decision); a non-zero deadline
+ *  `<= expiresAt` is always allowed regardless of horizon, because the
+ *  signature then dies with the advertised GTT expiry (the ticket's own
+ *  GTT policy) and on-chain exposure is `min(deadline, expiresAt)`
+ *  anyway (`_vetSignedOffer` checks both). */
+const DEADLINE_HORIZON_SECONDS = 30n * 86_400n;
 /** Mirrors `LibVaipakam.MAX_INTEREST_BPS` — the create-time upper-sanity
  *  ceiling on `interestRateBpsMax` (`InterestRateAboveCeiling`). */
 const MAX_INTEREST_BPS = 10_000n;
@@ -264,6 +278,18 @@ function validateOrder(
     const b = BigInt(v);
     if (b !== 0n && (b <= BigInt(now) || b > TS_SANITY_MAX)) {
       return { error: 'invalid-deadline' };
+    }
+    // Horizon cap (see DEADLINE_HORIZON_SECONDS): a non-zero deadline
+    // beyond now + 30d is rejected UNLESS the order's own `expiresAt`
+    // covers it (GTT: signature dies with the offer, so the deadline is
+    // not the validity bound). `expiresAt` was validated just above, so
+    // `out.expiresAt` is trustworthy here.
+    if (
+      b !== 0n &&
+      b > BigInt(now) + DEADLINE_HORIZON_SECONDS &&
+      (out.expiresAt === '0' || b > BigInt(out.expiresAt as string))
+    ) {
+      return { error: 'deadline-above-horizon' };
     }
     out.deadline = v;
   }

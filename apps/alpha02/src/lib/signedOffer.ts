@@ -155,6 +155,16 @@ export function signedOfferCeiling(order: SignedOrderWire): bigint {
   return max === 0n ? BigInt(order.amount) : max;
 }
 
+/** Whether a signed order is SINGLE-VALUE on principal — `amount ==
+ *  ceiling` (an `amountMax` of `0` is the wire's single-value sentinel:
+ *  the ceiling falls back to `amount`, so it always passes). Load-bearing
+ *  for the direct-fill affordance (#1145 round-2 Codex P2): see
+ *  `signedFillCandidate` for why a RANGED signed order must never arm a
+ *  direct fill. */
+export function signedOrderIsSingleValue(order: SignedOrderWire): boolean {
+  return signedOfferCeiling(order) === BigInt(order.amount);
+}
+
 /** Unfilled remainder of a signed order: `ceiling − filledAmount`,
  *  floored at 0 (a consumed/cancelled order has `filled == ceiling`). */
 export function signedOfferRemaining(

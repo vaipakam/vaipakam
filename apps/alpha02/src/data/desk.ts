@@ -48,7 +48,10 @@ import {
   type MarketSummary,
   type RateCandleBucket,
 } from './indexer';
-import type { DeskBookRow } from '../lib/signedOffer';
+import {
+  signedOrderIsSingleValue,
+  type DeskBookRow,
+} from '../lib/signedOffer';
 import { readOfferRowsBatchLive } from './chainPositions';
 
 const REFRESH_MS = 30_000;
@@ -618,7 +621,23 @@ export function takerCandidate(
  *  signing). The remainder is still honestly on the book: it stays
  *  matchable via `matchSignedOffer` (whose vetting allows
  *  `filled < ceiling`), so the row keeps resting as ladder DEPTH — it
- *  just carries no direct-fill button (the badge tooltip says why). */
+ *  just carries no direct-fill button (the badge tooltip says why).
+ *
+ *  The candidate must also be SINGLE-VALUE on principal (Codex #1145
+ *  round-2 P2): `acceptSignedOffer` marks the fill ledger consumed to
+ *  the CEILING (`signedOfferFilled[orderHash] = _ceiling(o)`) but the
+ *  materialized accept binds the ROLE amount — for a borrower offer
+ *  that is the headline FLOOR (`offer.amount`, OfferAcceptFacet's
+ *  `effectivePrincipal`). A ranged borrower order advertising 100 of
+ *  depth would direct-fill only its floor and vaporize the rest of the
+ *  ledger. Ranged rows keep resting as depth for the matcher path
+ *  (`matchSignedOffer` slices decrement the ledger honestly); only
+ *  single-value rows (`amount == ceiling`; `amountMax == 0` is the
+ *  single-value wire sentinel) arm the direct fill. The desk's own
+ *  ticket can no longer produce a ranged signed order (lender payloads
+ *  are collapsed by `collapseForSignedPost`, borrower payloads ship
+ *  single-value on both legs) — this gate defends against RANGE orders
+ *  posted straight to the public indexer API. */
 export function signedFillCandidate(
   level: LadderLevel | undefined,
   wallet: string | undefined,
@@ -634,6 +653,9 @@ export function signedFillCandidate(
         // the direct-accept vetting rejects it.
         BigInt(o.amountFilled || '0') === 0n &&
         offerRemaining(o) > 0n &&
+        // Ranged rows never direct-fill (floor-bind / ceiling-consume
+        // depth vaporization — see the doc comment above).
+        signedOrderIsSingleValue(o.signed.order) &&
         (!me || o.signed.signer.toLowerCase() !== me),
     ) ?? null
   );

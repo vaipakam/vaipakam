@@ -339,9 +339,10 @@ test('gasless loop: maker posts a signed order with ONE signature (no transactio
   await maker.page.locator('#desk-rate').fill('7.77');
   await maker.page.locator('#desk-collateral-amount').fill('100');
   // GTC on purpose: the gasless GTC policy stamps a 7-day signature
-  // deadline from wall time, which stays live across the suite's fork
-  // time travel (~2 days); the GTT presets also resolve from wall time
-  // and WOULD lapse against the travelled chain clock.
+  // deadline anchored to LIVE chain time (#1145 round-2 — never the
+  // device clock), so it stays live across the suite's fork time
+  // travel (~2 days) by construction; the GTT presets resolve from
+  // wall time and WOULD lapse against the travelled chain clock.
   await maker.page
     .getByRole('group', { name: 'Expiry' })
     .getByRole('button', { name: 'GTC', exact: true })
@@ -413,7 +414,9 @@ test('gasless loop: maker posts a signed order with ONE signature (no transactio
   expect(row.order.fillMode).toBe('1');
   expect(row.order.durationDays).toBe(String(tenor));
   expect(row.order.expiresAt).toBe('0'); // GTC
-  expect(row.order.deadline).not.toBe('0'); // bounded 7d signature deadline
+  // Bounded 7d signature deadline, anchored to chain time (#1145 r2):
+  // never the contract's unbounded `deadline = 0`.
+  expect(row.order.deadline).not.toBe('0');
   expect(row.status).toBe('active');
   // The stub/app hash must agree with the CONTRACT's own hashStruct —
   // the ledger key every consumer (fill, cancel, D1) binds on.

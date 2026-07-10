@@ -32,7 +32,10 @@ import {
   snapshotLadder,
   type LadderSnapshot,
 } from '../../lib/ladderFlash';
-import type { SignedRowMeta } from '../../lib/signedOffer';
+import {
+  signedOrderIsSingleValue,
+  type SignedRowMeta,
+} from '../../lib/signedOffer';
 import {
   signedFillCandidate,
   takerCandidate,
@@ -86,6 +89,19 @@ function LevelRow({
     level.offers.some(
       (o) => o.signed !== undefined && BigInt(o.amountFilled || '0') > 0n,
     );
+  // RANGE-shaped signed depth with no Fill button (Codex #1145 round-2
+  // P2 — `signedFillCandidate` gates direct fills to single-value rows
+  // because a ranged direct accept floor-binds while ceiling-consuming
+  // the fill ledger). The row is NOT partially matched — it is
+  // range-SHAPED, so it gets its own copy rather than the partial one.
+  // Partial takes precedence when the level holds both shapes.
+  const signedRangedOnly =
+    hasSigned &&
+    signedFill === null &&
+    !signedPartialOnly &&
+    level.offers.some(
+      (o) => o.signed !== undefined && !signedOrderIsSingleValue(o.signed.order),
+    );
   return (
     <div
       className={`desk-ladder-row${level.own ? ' desk-own' : ''}${
@@ -118,7 +134,9 @@ function LevelRow({
             title={
               signedPartialOnly
                 ? copy.desk.signed.partialBadgeTooltip
-                : copy.desk.signed.badgeTooltip
+                : signedRangedOnly
+                  ? copy.desk.signed.rangedBadgeTooltip
+                  : copy.desk.signed.badgeTooltip
             }
           >
             {copy.desk.signed.badge}

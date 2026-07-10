@@ -88,7 +88,10 @@ type PostMode = 'onchain' | 'gasless';
  *  unbounded `deadline = 0`: an unbounded signature is irrevocable
  *  without a gas-costing on-chain cancel forever, which contradicts
  *  the "posting is free" promise — re-signing after 7 days is free,
- *  so bounding the maker's exposure wins. */
+ *  so bounding the maker's exposure wins. Anchored to LIVE chain time
+ *  at signing (see submitGasless), never the device clock; the
+ *  indexer's ingest route enforces a matching (more generous) horizon
+ *  cap server-side. */
 const GASLESS_GTC_DEADLINE_SECONDS = 7 * 86_400;
 
 const MAX_RATE_PERCENT = 100;
@@ -124,19 +127,28 @@ const EXPIRY_SUBMIT_MARGIN_SECONDS = 60n;
  *  form's device-clock horizon gate while the resolved deadline sits
  *  beyond `block.timestamp + MAX_OFFER_EXPIRY_HORIZON` — the facet
  *  would revert `OfferExpiryAboveCap` after the approval mined. */
+/** LIVE chain time (`block.timestamp` of the latest block) — the single
+ *  time anchor the chain-time doctrine allows for anything a facet (or a
+ *  signed order's on-chain vetting) will judge against `block.timestamp`.
+ *  Shared by `assertExpiryStillValidLive` and the gasless GTC signature
+ *  deadline (Codex #1145 round-2 P2) — never the device clock. */
+async function liveChainTimestamp(
+  publicClient: NonNullable<ReturnType<typeof usePublicClient>>,
+): Promise<bigint> {
+  const block = await publicClient.getBlock({ blockTag: 'latest' });
+  return block.timestamp;
+}
+
 async function assertExpiryStillValidLive(
   publicClient: NonNullable<ReturnType<typeof usePublicClient>>,
   expiresAt: bigint,
 ): Promise<void> {
   if (expiresAt === 0n) return; // GTC — nothing to lapse
-  const block = await publicClient.getBlock({ blockTag: 'latest' });
-  if (expiresAt <= block.timestamp + EXPIRY_SUBMIT_MARGIN_SECONDS) {
+  const chainNow = await liveChainTimestamp(publicClient);
+  if (expiresAt <= chainNow + EXPIRY_SUBMIT_MARGIN_SECONDS) {
     throw new Error(copy.desk.ticket.expiryInvalid);
   }
-  if (
-    expiresAt >
-    block.timestamp + BigInt(MAX_OFFER_EXPIRY_HORIZON_SECONDS)
-  ) {
+  if (expiresAt > chainNow + BigInt(MAX_OFFER_EXPIRY_HORIZON_SECONDS)) {
     throw new Error(copy.desk.ticket.expiryTooFar);
   }
 }
@@ -757,13 +769,26 @@ export function OrderTicket({
       }
       // Nonce + deadline (see randomSignedOfferNonce and
       // GASLESS_GTC_DEADLINE_SECONDS for the two policies).
+      //
+      //  - GTT: `deadline = expiresAt` — the signature dies with the
+      //    advertised expiry. Its chain-time sanity is already enforced
+      //    by `assertExpiryStillValidLive` above (both bounds, against
+      //    LIVE `block.timestamp`).
+      //  - GTC: `chainNow + 7d`, anchored to the LIVE block timestamp
+      //    (Codex #1145 round-2 P2) — never the device clock. A device
+      //    clock running far AHEAD would otherwise sign an order that
+      //    stays fillable until that future wall-time, leaving a
+      //    gas-costing on-chain cancel as the maker's only revocation —
+      //    exactly the unbounded exposure the 7-day policy exists to
+      //    bound. `_vetSignedOffer` judges the deadline against
+      //    `block.timestamp`, so chain time is the only honest anchor
+      //    (the same doctrine as `assertExpiryStillValidLive`).
       const nonce = randomSignedOfferNonce();
       const deadline =
         payload.expiresAt !== 0n
           ? payload.expiresAt
-          : BigInt(
-              Math.floor(Date.now() / 1000) + GASLESS_GTC_DEADLINE_SECONDS,
-            );
+          : (await liveChainTimestamp(publicClient)) +
+            BigInt(GASLESS_GTC_DEADLINE_SECONDS);
       const order = wireFromCreatePayload(payload, address, nonce, deadline);
       const signature = await signedOffer.sign(order);
       const res = await postSignedOffer(
