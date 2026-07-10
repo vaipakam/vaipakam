@@ -2,11 +2,20 @@
  *  B) + the gasless signed-offer loop (slice D: post → discover → fill),
  *  on the fork, per the #1131 DoD and the COVERAGE.md phase-3 row.
  *
- *  Market convention follows specs 17/18 (lib/desk.ts): WETH / faucet
- *  tLIQ at a tenor verified live-empty first, so the inherited Base
- *  Sepolia book can never pad the ladder or cross against this run's
- *  seeds. Each test recomputes `freshTenor()`, so a previous test's
- *  resting seeds exclude their bucket automatically.
+ *  Market convention follows specs 17/18 (lib/desk.ts) EXCEPT the pair:
+ *  this spec trades WETH / faucet mUSDC (deployments `liquidToken2` —
+ *  18 decimals, $1 USD feed, Liquid tier), at a tenor verified
+ *  live-empty first, so the inherited Base Sepolia book can never pad
+ *  the ladder or cross against this run's seeds. The pair is this
+ *  spec's OWN on purpose: a pair has only six tenor buckets and specs
+ *  17/18 (plus retries) already spend WETH/tLIQ's — test 1 below
+ *  deliberately rests a crossed pair forever, which exhausted the
+ *  shared pair's budget (see the bucket-budget note at
+ *  lib/desk.ts#freshTenor). mUSDC's decimals/symbol are read LIVE from
+ *  the fork (like the app does), never assumed; the borrower wallet
+ *  self-funds via the mock's open mint (lib/seed.ts only funds tLIQ).
+ *  Each test recomputes `freshTenor(WETH, MUSDC)`, so a previous
+ *  test's resting seeds exclude their bucket automatically.
  *
  *  §5.2 honesty doctrine (ProRateTerminalDesign.md) is the spine here:
  *  bid >= ask alone is NOT matchable — the band may render ONLY when
@@ -28,13 +37,21 @@
  *  are pinned by the vitest unit test (src/chain/pushKeyMap.test.ts)
  *  and the live half rides the production WS rail per COVERAGE.md.
  */
-import { parseEther } from 'viem';
+import { parseEther, parseUnits } from 'viem';
 import { test, expect, connectWallet } from '../lib/wallet-fixture';
 import { consentAndWaitEnabled, newestLoanIdFor } from '../lib/flows';
-import { DIAMOND, DIAMOND_ABI_VIEM, WETH, pub } from '../lib/chain';
+import {
+  DIAMOND,
+  DIAMOND_ABI_VIEM,
+  ERC20_MIN_ABI,
+  WETH,
+  forkChain,
+  pub,
+  walletFor,
+} from '../lib/chain';
 import { accountFor } from '../lib/wallets';
 import {
-  TLIQ,
+  MUSDC,
   freshTenor,
   openMarketViaCustomPair,
   seedDeskOffer,
@@ -45,6 +62,43 @@ import {
   signedFilledAmount,
   signedOrderHashOnChain,
 } from '../lib/signed';
+
+/** mUSDC (liquidToken2) metadata read LIVE from the fork — the same
+ *  runtime `decimals()`/`symbol()` reads the app makes, so the seeded
+ *  base-unit amounts and the symbol asserts can never drift from the
+ *  deployed mock (it is 18-dec / "mUSDC" today, but that is a deploy
+ *  detail, not a contract of this spec). Cached per worker. */
+let musdcMetaCache: { decimals: number; symbol: string } | undefined;
+async function musdcMeta(): Promise<{ decimals: number; symbol: string }> {
+  if (!musdcMetaCache) {
+    const [decimals, symbol] = await Promise.all([
+      pub.readContract({ address: MUSDC, abi: ERC20_MIN_ABI, functionName: 'decimals' }),
+      pub.readContract({ address: MUSDC, abi: ERC20_MIN_ABI, functionName: 'symbol' }),
+    ]);
+    musdcMetaCache = { decimals: Number(decimals), symbol };
+  }
+  return musdcMetaCache;
+}
+
+/** Fund the borrower-side wallet with mUSDC collateral via the faucet
+ *  mock's open `mint(address,uint256)` — the same direct-write style as
+ *  lib/seed.ts, which only funds tLIQ (the specs-17/18 pair). Only the
+ *  borrower role ever escrows/locks the collateral leg here (the
+ *  lender leg is always WETH), so it is the only wallet funded.
+ *  Additive and idempotent-enough: each call mints a fresh 100,000. */
+async function fundBorrowerMusdc(decimals: number): Promise<void> {
+  const account = accountFor('borrower');
+  const wallet = walletFor(account);
+  const hash = await wallet.writeContract({
+    address: MUSDC,
+    abi: ERC20_MIN_ABI,
+    functionName: 'mint',
+    args: [account.address, parseUnits('100000', decimals)],
+    account,
+    chain: forkChain,
+  });
+  await pub.waitForTransactionReceipt({ hash });
+}
 
 /** `OfferMatchFacet.previewMatch(L, B)` — the contract's own verdict
  *  the band must obey (§5.2). */
@@ -89,7 +143,9 @@ async function newestBorrowerLoanOrZero(who: `0x${string}`): Promise<bigint> {
 test('§5.2 honesty inverse: a crossed-but-unmatchable book renders NO match band', async ({
   launchWallet,
 }) => {
-  const tenor = await freshTenor();
+  const tenor = await freshTenor(WETH, MUSDC);
+  const { decimals } = await musdcMeta();
+  await fundBorrowerMusdc(decimals);
   await assertPartialFillFlagOn();
 
   // Crossed on RATE (ask 6% floor < bid 9% ceiling) but with amount
@@ -104,6 +160,8 @@ test('§5.2 honesty inverse: a crossed-but-unmatchable book renders NO match ban
     amountWeth: '0.004',
     collateralTliq: '100',
     days: tenor,
+    collateralAsset: MUSDC,
+    collateralDecimals: decimals,
   });
   const borrowerOfferId = await seedDeskOffer({
     role: 'borrower',
@@ -112,6 +170,8 @@ test('§5.2 honesty inverse: a crossed-but-unmatchable book renders NO match ban
     amountWeth: '0.0002',
     collateralTliq: '100',
     days: tenor,
+    collateralAsset: MUSDC,
+    collateralDecimals: decimals,
   });
 
   // The contract's own verdict FIRST, so the DOM assert below can't
@@ -123,7 +183,7 @@ test('§5.2 honesty inverse: a crossed-but-unmatchable book renders NO match ban
 
   const session = await launchWallet('newLender', { advanced: true });
   const { page } = session;
-  await openMarketViaCustomPair(page, tenor);
+  await openMarketViaCustomPair(page, tenor, MUSDC);
   await connectWallet(page);
 
   // The book IS crossed — the mid row says so (a crossed resting book
@@ -144,13 +204,23 @@ test('§5.2 honesty inverse: a crossed-but-unmatchable book renders NO match ban
 test('contract-confirmed crossable band: previewMatch Ok renders the band, a third wallet executes the match, the loan initiates on-chain and the ladder depth clears', async ({
   launchWallet,
 }) => {
-  const tenor = await freshTenor();
+  const tenor = await freshTenor(WETH, MUSDC);
+  const { decimals } = await musdcMeta();
+  await fundBorrowerMusdc(decimals);
   await assertPartialFillFlagOn();
 
   // A genuinely matchable pair: ask 6% floor × bid 9% ceiling at the
   // SAME single amount (borrower's 0.002 sits inside the lender's
-  // [0.0002, 0.002] range) with the collateral shape spec 18's accepts
-  // already prove passes the HF/LTV gate. Expected midpoint: 7.5%.
+  // [0.0002, 0.002] range). Expected midpoint: 7.5%.
+  //
+  // HF headroom (previewMatch's synthetic init gate, mirrored from
+  // LoanFacet's HF >= 1.5 check): collateral 100 mUSDC ≈ $100 (the
+  // deploy's $1 mUSDC/USD feed) vs principal 0.002 WETH ≈ $6 at the
+  // deploy's ~$3,000 ETH quote. The floor is
+  // principalUsd × 1.5 / tierLiquidationLtv(>= 80%) ≈ $11.25 —
+  // 100 mUSDC clears it ~9×, and stays Ok for any ETH quote below
+  // ~$26,600 (= 100 × 0.8 / 1.5 / 0.002). Same margin class as the
+  // 100-tLIQ shape specs 17/18 use on their pair.
   const lenderOfferId = await seedDeskOffer({
     role: 'lender',
     side: 'lend',
@@ -158,6 +228,8 @@ test('contract-confirmed crossable band: previewMatch Ok renders the band, a thi
     amountWeth: '0.002',
     collateralTliq: '100',
     days: tenor,
+    collateralAsset: MUSDC,
+    collateralDecimals: decimals,
   });
   const borrowerOfferId = await seedDeskOffer({
     role: 'borrower',
@@ -166,6 +238,8 @@ test('contract-confirmed crossable band: previewMatch Ok renders the band, a thi
     amountWeth: '0.002',
     collateralTliq: '100',
     days: tenor,
+    collateralAsset: MUSDC,
+    collateralDecimals: decimals,
   });
 
   // The contract confirms Ok BEFORE any DOM assert — if this fails the
@@ -179,7 +253,7 @@ test('contract-confirmed crossable band: previewMatch Ok renders the band, a thi
   // it and earns the matcher kickback; it needs only gas.
   const matcher = await launchWallet('newLender', { advanced: true });
   const { page } = matcher;
-  await openMarketViaCustomPair(page, tenor);
+  await openMarketViaCustomPair(page, tenor, MUSDC);
   await connectWallet(page);
 
   const band = page.locator('.desk-match-band');
@@ -239,7 +313,11 @@ test('contract-confirmed crossable band: previewMatch Ok renders the band, a thi
 test('gasless loop: maker posts a signed order with ONE signature (no transaction), the book discovers it, a taker fills it on-chain, and the row leaves the book', async ({
   launchWallet,
 }) => {
-  const tenor = await freshTenor();
+  const tenor = await freshTenor(WETH, MUSDC);
+  const { decimals, symbol } = await musdcMeta();
+  // The TAKER (borrower role) posts the collateral leg at fill time —
+  // fund its wallet with the pair's mUSDC.
+  await fundBorrowerMusdc(decimals);
   const makerAddr = accountFor('lender').address;
   const borrowerAddr = accountFor('borrower').address;
 
@@ -252,7 +330,7 @@ test('gasless loop: maker posts a signed order with ONE signature (no transactio
 
   // ---- maker: sign & post from the ticket -------------------------
   const maker = await launchWallet('lender', { advanced: true });
-  await openMarketViaCustomPair(maker.page, tenor);
+  await openMarketViaCustomPair(maker.page, tenor, MUSDC);
   await connectWallet(maker.page);
   const txsBefore = maker.flags.sentTransactions;
 
@@ -295,11 +373,17 @@ test('gasless loop: maker posts a signed order with ONE signature (no transactio
   expect(maker.flags.sentTransactions).toBe(txsBefore);
 
   // ---- the stub's book holds the order, wire-shape + hash pinned ----
-  const book = await fetchSignedBook(WETH, TLIQ, tenor);
+  const book = await fetchSignedBook(WETH, MUSDC, tenor);
   expect(book).toHaveLength(1);
   const row = book[0];
   expect(row.signer).toBe(makerAddr.toLowerCase());
   expect(row.order.offerType).toBe('0');
+  // The custom-pair load drove the signed order's collateral leg. A
+  // lender payload auto-collapses collateralAmountMax to 0 (the
+  // offerSchema single-value rule), so the amount pin binds on
+  // collateralAmount — the figure the fill confirm displays.
+  expect(row.order.collateralAsset).toBe(MUSDC.toLowerCase());
+  expect(row.order.collateralAmount).toBe(parseUnits('100', decimals).toString());
   expect(row.order.interestRateBps).toBe('777');
   expect(row.order.amountMax).toBe(parseEther('0.002').toString());
   expect(row.order.durationDays).toBe(String(tenor));
@@ -339,7 +423,7 @@ test('gasless loop: maker posts a signed order with ONE signature (no transactio
 
   // ---- taker: discover on the ladder, fill via the inline confirm ---
   const taker = await launchWallet('borrower', { advanced: true });
-  await openMarketViaCustomPair(taker.page, tenor);
+  await openMarketViaCustomPair(taker.page, tenor, MUSDC);
   await connectWallet(taker.page);
 
   const takerRow = taker.page
@@ -354,8 +438,11 @@ test('gasless loop: maker posts a signed order with ONE signature (no transactio
   await expect(confirm).toBeVisible();
   await expect(confirm).toContainText('Fill signed order');
   // Filling a signed LENDER order: the taker posts the collateral leg.
+  // The symbol is the LIVE on-chain read (never a hard-coded ticker),
+  // and "100" holds whatever the mock's decimals are — the seeded
+  // base-unit amount used the same runtime `decimals()`.
   await expect(confirm).toContainText(
-    /You lock 100 \S* ?as collateral and receive the loan principal\./,
+    `You lock 100 ${symbol} as collateral and receive the loan principal.`,
     { timeout: 30_000 },
   );
   const baseline = await newestBorrowerLoanOrZero(borrowerAddr);
@@ -400,7 +487,7 @@ test('gasless loop: maker posts a signed order with ONE signature (no transactio
   // ---- lifecycle: the consumed row leaves the book everywhere -------
   // Stub GET live-probes the fill ledger and drops the row (the
   // fork-scale substitute for the worker's event-driven lifecycle).
-  expect(await fetchSignedBook(WETH, TLIQ, tenor)).toHaveLength(0);
+  expect(await fetchSignedBook(WETH, MUSDC, tenor)).toHaveLength(0);
   // Taker's ladder: the fill's invalidations refetch the signed book;
   // with the only row consumed the market reads honestly empty.
   await expect(

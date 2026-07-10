@@ -5,12 +5,13 @@
  * two specs can never drift on the market/seeding conventions.
  *
  * Market convention (see spec 17's header note): every desk test
- * trades WETH (lending) / faucet tLIQ (collateral) — the pair the
- * role wallets are seeded for — but at a TENOR bucket verified
- * live-empty on the fork first. The on-chain matcher requires exact
- * durationDays equality, so a fresh tenor IS a fresh market: the
- * inherited Base Sepolia book can never leak rows into the ladder
- * under test.
+ * trades WETH (lending) against a faucet collateral mock, at a TENOR
+ * bucket verified live-empty on the fork first. The on-chain matcher
+ * requires exact durationDays equality, so a fresh tenor IS a fresh
+ * market: the inherited Base Sepolia book can never leak rows into
+ * the ladder under test. Each spec FILE that rests GTC offers owns
+ * its own collateral pair — WETH/tLIQ for 17/18, WETH/mUSDC for 19 —
+ * see the bucket-budget note at {@link freshTenor}.
  */
 import { expect } from '@playwright/test';
 import {
@@ -36,6 +37,12 @@ import {
 import { accountFor, type Role } from './wallets';
 
 export const TLIQ = MOCKS!.liquidToken as `0x${string}`;
+/** Second liquid faucet mock (deployments key `liquidToken2`): mUSDC —
+ *  18 decimals, $1 USD feed, WETH pool ⇒ classifies Liquid like tLIQ.
+ *  Spec 19's collateral leg (see the bucket-budget note at
+ *  {@link freshTenor}); read decimals/symbol live in the spec, never
+ *  assume. */
+export const MUSDC = MOCKS!.liquidToken2 as `0x${string}`;
 export const ZERO = '0x0000000000000000000000000000000000000000';
 
 /** Bucket preference for the fresh-tenor pick. 365 is left out to stay
@@ -44,28 +51,44 @@ export const ZERO = '0x0000000000000000000000000000000000000000';
  *  posts into. */
 export const BUCKET_PREFERENCE = [60, 90, 14, 180, 7, 30] as const;
 
-/** Tenor buckets with live WETH/tLIQ offers on the fork right now.
- *  The ranked view is active-only; treating its lazily-expired GTT
- *  rows as live is a safe over-approximation — it can only skip a
- *  bucket, never return a false-empty one. */
-export async function liveOfferTenors(): Promise<Set<number>> {
+/** Tenor buckets with live offers for the pair on the fork right now
+ *  (default WETH/tLIQ). The ranked view is active-only; treating its
+ *  lazily-expired GTT rows as live is a safe over-approximation — it
+ *  can only skip a bucket, never return a false-empty one. */
+export async function liveOfferTenors(
+  lend: `0x${string}` = WETH,
+  coll: `0x${string}` = TLIQ,
+): Promise<Set<number>> {
   const [rankings] = (await pub.readContract({
     address: DIAMOND,
     abi: DIAMOND_ABI_VIEM,
     functionName: 'getActiveOffersByAssetPairRanked',
-    args: [WETH, TLIQ],
+    args: [lend, coll],
   })) as readonly [readonly { durationDays: bigint }[], bigint];
   return new Set(rankings.map((r) => Number(r.durationDays)));
 }
 
-/** A WETH/tLIQ tenor bucket with NO live offers on the fork right now.
- *  Each test recomputes, so a previous test's (or retry's) seeds
- *  exclude their bucket automatically. */
-export async function freshTenor(): Promise<number> {
-  const live = await liveOfferTenors();
+/** A tenor bucket for the pair with NO live offers on the fork right
+ *  now (default WETH/tLIQ). Each test recomputes, so a previous test's
+ *  (or retry's) seeds exclude their bucket automatically.
+ *
+ *  CROSS-SPEC BUCKET BUDGET: a pair has only the six
+ *  {@link BUCKET_PREFERENCE} buckets, shared by EVERY spec that seeds
+ *  resting GTC offers into it — plus every retry burns another bucket.
+ *  A spec file that rests GTC offers must therefore own its OWN pair:
+ *  WETH/tLIQ belongs to specs 17/18; spec 19 trades WETH/mUSDC
+ *  ({@link MUSDC}, deployments `liquidToken2`). When a new spec needs
+ *  resting desk offers, give it the next untouched pair instead of
+ *  squeezing into an owned one — exhaustion throws here, but only at
+ *  runtime, in whichever spec runs last. */
+export async function freshTenor(
+  lend: `0x${string}` = WETH,
+  coll: `0x${string}` = TLIQ,
+): Promise<number> {
+  const live = await liveOfferTenors(lend, coll);
   for (const d of BUCKET_PREFERENCE) if (!live.has(d)) return d;
   throw new Error(
-    'every duration bucket for WETH/tLIQ already has live offers on the fork — no fresh market to test in',
+    `every duration bucket for pair ${lend}/${coll} already has live offers on the fork — no fresh market to test in (see freshTenor's bucket-budget note: one pair per resting-GTC spec file)`,
   );
 }
 
@@ -80,19 +103,27 @@ export async function seedDeskOffer(opts: {
   side: 'lend' | 'borrow';
   rateBps: number;
   amountWeth: string;
+  /** Collateral amount in WHOLE units of the collateral token (name is
+   *  historical — parsed with `collateralDecimals`, tLIQ by default). */
   collateralTliq: string;
   days: number;
+  /** Collateral token override (default tLIQ). Pair it with the token's
+   *  REAL `collateralDecimals` — read live via `decimals()`, never
+   *  assumed — so `collateralTliq` parses to the right base units. */
+  collateralAsset?: `0x${string}`;
+  collateralDecimals?: number;
 }): Promise<bigint> {
   const account = accountFor(opts.role);
   const wallet = walletFor(account);
+  const collateralAsset = opts.collateralAsset ?? TLIQ;
   const amount = parseEther(opts.amountWeth);
-  const collateral = parseUnits(opts.collateralTliq, 18);
+  const collateral = parseUnits(opts.collateralTliq, opts.collateralDecimals ?? 18);
   const isLend = opts.side === 'lend';
   // Escrowed leg per side: lender pre-vaults amountMax of the lending
   // asset; borrower pre-vaults collateralAmountMax of the collateral.
   const [token, locked] = isLend
     ? [WETH, amount]
-    : ([TLIQ, collateral] as const);
+    : ([collateralAsset, collateral] as const);
   const approveHash = await wallet.writeContract({
     address: token,
     abi: ERC20_MIN_ABI,
@@ -107,7 +138,7 @@ export async function seedDeskOffer(opts: {
     lendingAsset: WETH,
     amount: isLend ? (amount / 10n > 0n ? amount / 10n : 1n) : amount,
     interestRateBps: isLend ? BigInt(opts.rateBps) : 0n,
-    collateralAsset: TLIQ,
+    collateralAsset,
     collateralAmount: collateral,
     durationDays: BigInt(opts.days),
     assetType: 0,
@@ -151,15 +182,20 @@ export async function getOffer(offerId: bigint): Promise<Record<string, unknown>
   })) as Record<string, unknown>;
 }
 
-/** Load the WETH/tLIQ market via the header's CUSTOM-pair branch —
- *  deterministic even before anything is seeded (the markets summary
- *  only lists pairs with live offers). The dropdown selection path is
- *  exercised separately by spec 17's ticket test. */
-export async function openMarketViaCustomPair(page: Page, days: number): Promise<void> {
+/** Load the WETH/`coll` market (default tLIQ) via the header's
+ *  CUSTOM-pair branch — deterministic even before anything is seeded
+ *  (the markets summary only lists pairs with live offers). The
+ *  dropdown selection path is exercised separately by spec 17's
+ *  ticket test. */
+export async function openMarketViaCustomPair(
+  page: Page,
+  days: number,
+  coll: `0x${string}` = TLIQ,
+): Promise<void> {
   await page.goto('/desk', { waitUntil: 'domcontentloaded' });
   await chooseMenuValue(page, 'desk-pair', '__custom__');
   await page.locator('#desk-custom-lend').fill(WETH);
-  await page.locator('#desk-custom-coll').fill(TLIQ);
+  await page.locator('#desk-custom-coll').fill(coll);
   await page.getByRole('button', { name: 'Load market' }).click();
   await selectTenor(page, days);
 }
