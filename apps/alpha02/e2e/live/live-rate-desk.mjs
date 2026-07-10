@@ -31,7 +31,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { pad, toEventSelector } from 'viem';
+import { pad, parseUnits, toEventSelector } from 'viem';
 import {
   addressOf,
   chooseMenuValue,
@@ -70,6 +70,27 @@ if (!WETH || !TLIQ) throw new Error('bundle missing weth/testnetMocks.liquidToke
 const ABI = loadDiamondAbi();
 const { pub } = clientsFor(CHAIN_ID);
 
+// Minimal ERC-20 read surface — the Diamond bundle carries no token
+// ABI, and the escrow/decimals asserts below read the tokens directly.
+const ERC20_ABI = [
+  {
+    type: 'function',
+    name: 'balanceOf',
+    stateMutability: 'view',
+    inputs: [{ name: 'owner', type: 'address' }],
+    outputs: [{ type: 'uint256' }],
+  },
+  {
+    type: 'function',
+    name: 'decimals',
+    stateMutability: 'view',
+    inputs: [],
+    outputs: [{ type: 'uint8' }],
+  },
+];
+const erc20Read = (token, functionName, args = []) =>
+  pub.readContract({ address: token, abi: ERC20_ABI, functionName, args });
+
 // Distinctive rates on purpose — nothing else on the live book quotes
 // these, so a UI row showing them is unambiguously THIS run's offer.
 const POST = { bps: 843, text: '8.43', pct: '8.43%' };
@@ -82,6 +103,26 @@ const CANCEL_COOLDOWN_SECS = 300;
 // into).
 const BUCKET_PREFERENCE = [60, 90, 14, 180, 7, 30];
 const ZERO_CREATOR = /^0x0{40}$/i;
+
+// Expected on-chain amounts (Codex round-1 P2 #1) — mirror of the
+// ticket's payload mapping (`toCreateOfferPayload` in
+// src/lib/offerSchema.ts, used by OrderTicket with fill mode Partial):
+//   - amountMax          = the headline lend size,
+//   - amount             = minPartialFillAmount = amountMax / 10,
+//                          floored at 1 wei (Partial-mode lender),
+//   - collateralAmount   = collateralAmountMax (lender collateral is
+//                          single-value by contract invariant).
+// Decimals are read LIVE from the tokens, exactly like the ticket does
+// — a hardcoded 18 would mask the very drift this assert exists for.
+const [WETH_DECIMALS, TLIQ_DECIMALS] = await Promise.all([
+  erc20Read(WETH, 'decimals'),
+  erc20Read(TLIQ, 'decimals'),
+]);
+const EXPECTED_AMOUNT_MAX = parseUnits(AMOUNT_WETH, WETH_DECIMALS);
+const EXPECTED_AMOUNT_MIN_PARTIAL =
+  EXPECTED_AMOUNT_MAX / 10n > 0n ? EXPECTED_AMOUNT_MAX / 10n : 1n;
+const EXPECTED_COLLATERAL = parseUnits(COLLATERAL_TLIQ, TLIQ_DECIMALS);
+const sameAddr = (a, b) => String(a).toLowerCase() === String(b).toLowerCase();
 
 // ---- step ledger — PASS/OBSERVED/FAIL per drive step ---------------
 const steps = [];
@@ -101,19 +142,41 @@ async function getOffer(offerId) {
   });
 }
 
-/** Newest offer id created by `creator` (the lib/flows.ts pattern) —
- *  roles are reused across runs, so "newest" is the one this run just
- *  minted; the caller additionally checks it against the pre-post
- *  snapshot. */
-async function newestOfferIdFor(creator) {
-  const [ids] = await pub.readContract({
+/** Length of `creator`'s LIFETIME offer index. getUserOffersPaginated
+ *  (MetricsFacet) returns `(page-slice-at-offset, total)` over the
+ *  append-only `userOfferIds[user]` array — a limit-0 read is a cheap
+ *  total-only probe. */
+async function offerIndexTotal(creator) {
+  const [, total] = await pub.readContract({
     address: DIAMOND,
     abi: ABI,
     functionName: 'getUserOffersPaginated',
-    args: [creator, 0n, 200n],
+    args: [creator, 0n, 0n],
   });
-  if (!ids.length) throw new Error(`no offers for ${creator}`);
-  return ids.reduce((a, b) => (b > a ? b : a));
+  return total;
+}
+
+/** Every offer id appended to `creator`'s index AFTER `beforeTotal` —
+ *  pages from the END (Codex round-1 P2 #3: a fixed offset-0/limit-200
+ *  read stops seeing new offers once the reused lender has >200
+ *  historical ones), looping until the slice is exhausted. Sound
+ *  because the index is append-only: `OfferCreateFacet` push is its
+ *  only writer and cancel never removes entries, so the delta since
+ *  the pre-post snapshot is exactly this run's offers. */
+async function offerIdsAppendedSince(creator, beforeTotal) {
+  const out = [];
+  const PAGE = 200n;
+  for (let offset = beforeTotal; ; ) {
+    const [ids, total] = await pub.readContract({
+      address: DIAMOND,
+      abi: ABI,
+      functionName: 'getUserOffersPaginated',
+      args: [creator, offset, PAGE],
+    });
+    out.push(...ids);
+    offset += BigInt(ids.length);
+    if (ids.length === 0 || offset >= total) return out;
+  }
 }
 
 async function pollChain(label, fn, { timeoutMs = 120_000, intervalMs = 4_000 } = {}) {
@@ -216,11 +279,15 @@ let offerId = null;
 let offerCreatedAt = 0;
 let cancelled = false;
 let failed = false;
-// Snapshot of the lender's offer ids just before the post — module
-// scope so the cleanup sweep can find the run's offer even if the
-// drive failed before its id was discovered ("Order posted" renders
-// at SEND time; the tx can mine after a failure).
-let beforePostIds = null;
+// Snapshot of the lender's offer-index LENGTH just before the post —
+// module scope so the cleanup sweep can find the run's offer(s) even
+// if the drive failed before an id was discovered ("Order posted"
+// renders at SEND time; the tx can mine after a failure). The index
+// is append-only, so every id at offsets >= this total is this run's.
+let beforePostTotal = null;
+// Lender wallet WETH just before the post (Codex round-1 P2 #2) — the
+// escrow-pulled and escrow-refunded asserts both compare against it.
+let wethBeforePost = null;
 
 // Open-orders row for THIS run's offer — id-scoped, so reused roles
 // and leftover offers can never satisfy (or break) an assert.
@@ -299,12 +366,13 @@ try {
     .getByRole('button', { name: 'Partial', exact: true })
     .click();
 
-  [beforePostIds] = await pub.readContract({
-    address: DIAMOND,
-    abi: ABI,
-    functionName: 'getUserOffersPaginated',
-    args: [lenderAddr, 0n, 200n],
-  });
+  beforePostTotal = await offerIndexTotal(lenderAddr);
+  // Escrow baseline: the create pulls the WETH escrow out of the
+  // WALLET (vault deposit via transferFrom / Permit2 — either way the
+  // wallet balance drops), gas is paid in ETH, and the cancel refund
+  // withdraws back to the wallet — so this exact value must be
+  // restored after cancel.
+  wethBeforePost = await erc20Read(WETH, 'balanceOf', [lenderAddr]);
 
   const post = page.getByRole('button', { name: /^post order$/i });
   await consentAndWaitEnabled(page, post);
@@ -321,15 +389,42 @@ try {
   // ---- step 4: on-chain verification of the posted terms ------------
   // "Order posted" renders when the wallet returns the tx HASH — the
   // tx may still be in the mempool. Poll until the lender's offer
-  // enumeration shows an id the pre-post snapshot didn't have.
-  offerId = await pollChain('the posted offer to mine', async () => {
-    const id = await newestOfferIdFor(lenderAddr);
-    return beforePostIds.includes(id) ? undefined : id;
+  // index grows past the pre-post snapshot, then take a settle beat
+  // and recompute the FULL delta: one Post click must have minted
+  // EXACTLY one offer (Codex round-1 P2 #4 — a duplicate create
+  // otherwise slips through on "first new id wins" and leaves a
+  // second escrowed offer behind; the cleanup sweep below cancels
+  // every delta id either way).
+  await pollChain('the posted offer to mine', async () => {
+    const ids = await offerIdsAppendedSince(lenderAddr, beforePostTotal);
+    return ids.length > 0;
   });
+  await new Promise((r) => setTimeout(r, 8_000)); // let a straggler duplicate mine
+  const newIds = await offerIdsAppendedSince(lenderAddr, beforePostTotal);
+  if (newIds.length !== 1) {
+    throw new Error(
+      `one Post click minted ${newIds.length} offers [${newIds.join(', ')}] — ` +
+        'expected exactly one; cleanup will cancel every one of them',
+    );
+  }
+  offerId = newIds[0];
   const posted = await getOffer(offerId);
   offerCreatedAt = Number(posted.createdAt);
+  // Full-term mismatch list (Codex round-1 P2 #1): assets and amounts
+  // included — a custom-pair regression posting the wrong asset or a
+  // mis-scaled amount must fail here, not pass on rate/tenor alone.
   const mismatches = [
     Number(posted.offerType) === 0 ? null : `offerType=${posted.offerType}`,
+    sameAddr(posted.lendingAsset, WETH) ? null : `lendingAsset=${posted.lendingAsset}`,
+    sameAddr(posted.collateralAsset, TLIQ) ? null : `collateralAsset=${posted.collateralAsset}`,
+    posted.amountMax === EXPECTED_AMOUNT_MAX ? null : `amountMax=${posted.amountMax}`,
+    posted.amount === EXPECTED_AMOUNT_MIN_PARTIAL ? null : `amount=${posted.amount}`,
+    posted.collateralAmount === EXPECTED_COLLATERAL
+      ? null
+      : `collateralAmount=${posted.collateralAmount}`,
+    posted.collateralAmountMax === EXPECTED_COLLATERAL
+      ? null
+      : `collateralAmountMax=${posted.collateralAmountMax}`,
     Number(posted.interestRateBps) === POST.bps ? null : `rate=${posted.interestRateBps}`,
     Number(posted.durationDays) === tenor ? null : `days=${posted.durationDays}`,
     Number(posted.fillMode) === 0 ? null : `fillMode=${posted.fillMode}`,
@@ -338,10 +433,24 @@ try {
   if (mismatches.length) {
     throw new Error(`offer #${offerId} on-chain terms mismatch: ${mismatches.join(', ')}`);
   }
+  // Escrow proof (Codex round-1 P2 #2): the lender ERC-20 create
+  // pre-vaults exactly `amountMax` in the lending asset, pulled from
+  // the WALLET; gas is ETH and an approve/permit leg moves no WETH —
+  // so the wallet's WETH must now read the pre-post snapshot minus
+  // the escrow, exactly.
+  await pollChain(
+    `lender wallet WETH to drop by the ${AMOUNT_WETH} escrow`,
+    async () =>
+      (await erc20Read(WETH, 'balanceOf', [lenderAddr])) ===
+      wethBeforePost - EXPECTED_AMOUNT_MAX,
+    { timeoutMs: 60_000 },
+  );
   record(
     '4. on-chain terms of the posted offer',
     'PASS',
-    `offer #${offerId}: lend, ${POST.bps} bps, ${tenor}d, Partial, GTC`,
+    `offer #${offerId}: lend ${AMOUNT_WETH} WETH vs ${COLLATERAL_TLIQ} tLIQ, ` +
+      `${POST.bps} bps, ${tenor}d, Partial, GTC; single create; ` +
+      `wallet WETH down exactly ${EXPECTED_AMOUNT_MAX} wei (escrow pulled)`,
   );
 
   // ---- step 5: UI — own ladder row + open-orders row + cooldown gate -
@@ -387,14 +496,64 @@ try {
     { timeoutMs: 30_000, intervalMs: 1_000 },
   );
   await rateInput.fill(AMEND.text);
+  // Block mark just before Save — the single-modifyOffer event count
+  // below scans [preSaveBlock, latest].
+  const preSaveBlock = await pub.getBlockNumber();
   await page.getByRole('button', { name: /save changes/i }).click();
   await pollChain(
     `offer #${offerId} rate to become ${AMEND.bps} bps`,
     async () => Number((await getOffer(offerId)).interestRateBps) === AMEND.bps,
   );
-  const amendedId = await newestOfferIdFor(lenderAddr);
-  if (amendedId !== offerId) {
-    throw new Error(`amend minted a NEW offer #${amendedId} — expected in-place #${offerId}`);
+  const idsAfterAmend = await offerIdsAppendedSince(lenderAddr, beforePostTotal);
+  if (idsAfterAmend.length !== 1 || idsAfterAmend[0] !== offerId) {
+    throw new Error(
+      `amend minted NEW offer(s) — index delta is now [${idsAfterAmend.join(', ')}], ` +
+        `expected in-place #${offerId} only`,
+    );
+  }
+  // Exactly ONE OfferModified for this offer since just before Save
+  // (Codex round-1 P2 #6) — the event OfferMutateFacet emits on every
+  // mutation entry point, with `offerId` as topic1, so getLogs can
+  // filter server-side over this short block range.
+  const offerModifiedAbi = ABI.find((e) => e.type === 'event' && e.name === 'OfferModified');
+  if (!offerModifiedAbi) throw new Error('OfferModified event missing from the bundled ABI');
+  const modLogs = await pollChain(
+    `the OfferModified log for offer #${offerId}`,
+    async () => {
+      const logs = await pub.getLogs({
+        address: DIAMOND,
+        event: offerModifiedAbi,
+        args: { offerId },
+        fromBlock: preSaveBlock,
+        toBlock: 'latest',
+      });
+      return logs.length ? logs : undefined; // [] is truthy — gate on length
+    },
+    { timeoutMs: 60_000 },
+  );
+  if (modLogs.length !== 1) {
+    throw new Error(
+      `expected exactly 1 OfferModified for offer #${offerId} since block ` +
+        `${preSaveBlock}, saw ${modLogs.length}`,
+    );
+  }
+  // Amend must change interestRateBps and NOTHING else (Codex round-1
+  // P2 #5). OfferMutateFacet.modifyOffer writes only the caller-changed
+  // clusters (amount/amountMax, interestRateBps/interestRateBpsMax,
+  // collateralAmount/collateralAmountMax) and mutates no bookkeeping
+  // fields (no updatedAt/nonce — see modifyOffer's storage writes), so
+  // every other getOffer field must round-trip identical. The rate
+  // cluster does re-write interestRateBpsMax, but to the same value
+  // the form seeded from the live read — so it too must compare equal.
+  const amended = await getOffer(offerId);
+  const changedFields = Object.keys(posted).filter(
+    (k) => String(posted[k]) !== String(amended[k]),
+  );
+  if (changedFields.length !== 1 || changedFields[0] !== 'interestRateBps') {
+    throw new Error(
+      `amend touched unexpected fields [${changedFields.join(', ')}] — ` +
+        'expected only interestRateBps to change',
+    );
   }
   await pollChain(
     'open-orders row to show the amended rate',
@@ -406,7 +565,8 @@ try {
   record(
     '6. amend in place to ' + AMEND.pct,
     'PASS',
-    `same offer #${offerId}; chain=${AMEND.bps} bps; row + own ladder level updated`,
+    `same offer #${offerId}; exactly 1 OfferModified (tx ${modLogs[0].transactionHash}); ` +
+      `chain=${AMEND.bps} bps with every other term unchanged; row + own ladder level updated`,
   );
 
   // ---- step 7: tape panel (degraded /loans/recent expected) ----------
@@ -433,6 +593,15 @@ try {
     async () => ZERO_CREATOR.test(String((await getOffer(offerId)).creator)),
   );
   cancelled = true;
+  // Escrow refund proof (Codex round-1 P2 #2): cancel withdraws the
+  // unfilled escrow (here: all of it) back to the creator's WALLET,
+  // and no WETH was spent on gas — so the balance must return to
+  // EXACTLY the pre-post snapshot.
+  await pollChain(
+    'lender wallet WETH to return exactly to the pre-post snapshot',
+    async () => (await erc20Read(WETH, 'balanceOf', [lenderAddr])) === wethBeforePost,
+    { timeoutMs: 60_000 },
+  );
   await pollChain(
     'cancelled offer to leave Open orders and the ladder',
     async () =>
@@ -446,7 +615,8 @@ try {
   record(
     '8. cancel after the real 300 s cooldown',
     'PASS',
-    `offer #${offerId} creator zeroed on-chain; row left Open orders + ladder (escrow refunded)`,
+    `offer #${offerId} creator zeroed on-chain; wallet WETH restored to the exact ` +
+      'pre-post balance (escrow refunded); row left Open orders + ladder',
   );
 } catch (err) {
   failed = true;
@@ -460,53 +630,61 @@ try {
 } finally {
   // Never leave the lender's WETH escrowed in an orphaned live offer:
   // if the post was attempted but the UI cancel didn't complete,
-  // cancel directly on-chain (waiting out the cooldown first). When
-  // the drive failed before the offer id was even discovered, sweep
-  // the enumeration for ids the pre-post snapshot didn't have — the
-  // tx can mine AFTER a failure ("Order posted" renders at send time).
-  if (!cancelled && beforePostIds !== null) {
+  // cancel directly on-chain (waiting out the cooldown first). The
+  // sweep covers EVERY id the append-only index gained since the
+  // pre-post snapshot — not just the first (Codex round-1 P2 #4: a
+  // duplicate create from one Post click must not leave a second
+  // escrowed offer live) — and pages from the snapshot offset, so
+  // >200 historical offers can't hide this run's (P2 #3). The tx can
+  // mine AFTER a failure ("Order posted" renders at send time).
+  if (!cancelled && beforePostTotal !== null) {
     try {
       if (offerId === null) {
         // Give a still-pending create a moment to mine, then sweep.
         await new Promise((r) => setTimeout(r, 15_000));
-        const [ids] = await pub.readContract({
-          address: DIAMOND,
-          abi: ABI,
-          functionName: 'getUserOffersPaginated',
-          args: [lenderAddr, 0n, 200n],
-        });
-        offerId = ids.find((id) => !beforePostIds.includes(id)) ?? null;
       }
-      if (offerId === null) {
+      const sweepIds = await offerIdsAppendedSince(lenderAddr, beforePostTotal);
+      if (sweepIds.length === 0) {
         cancelled = true; // nothing ever landed — nothing escrowed
       } else {
-        const live = await getOffer(offerId);
-        if (ZERO_CREATOR.test(String(live.creator))) {
-          cancelled = true;
-        } else {
-          const now = Number((await pub.getBlock({ blockTag: 'latest' })).timestamp);
-          const wait = Math.max(0, Number(live.createdAt) + CANCEL_COOLDOWN_SECS + 5 - now);
-          console.log(`cleanup: direct on-chain cancelOffer(#${offerId}) in ~${wait}s…`);
-          await new Promise((r) => setTimeout(r, wait * 1000));
-          const hash = await clientsFor(CHAIN_ID)
-            .wallet('lender')
-            .writeContract({
-              address: DIAMOND,
-              abi: ABI,
-              functionName: 'cancelOffer',
-              args: [offerId],
-            });
-          await pub.waitForTransactionReceipt({ hash });
-          cancelled = true;
-          record('cleanup: direct on-chain cancel', 'PASS', `tx ${hash}`);
+        const stillLive = [];
+        for (const id of sweepIds) {
+          try {
+            const live = await getOffer(id);
+            if (ZERO_CREATOR.test(String(live.creator))) continue; // already cancelled
+            const now = Number((await pub.getBlock({ blockTag: 'latest' })).timestamp);
+            const wait = Math.max(0, Number(live.createdAt) + CANCEL_COOLDOWN_SECS + 5 - now);
+            console.log(`cleanup: direct on-chain cancelOffer(#${id}) in ~${wait}s…`);
+            await new Promise((r) => setTimeout(r, wait * 1000));
+            const hash = await clientsFor(CHAIN_ID)
+              .wallet('lender')
+              .writeContract({
+                address: DIAMOND,
+                abi: ABI,
+                functionName: 'cancelOffer',
+                args: [id],
+              });
+            await pub.waitForTransactionReceipt({ hash });
+            record('cleanup: direct on-chain cancel', 'PASS', `offer #${id} — tx ${hash}`);
+          } catch (idErr) {
+            stillLive.push(id);
+            record(
+              'cleanup: direct on-chain cancel',
+              'FAIL',
+              `OFFER #${id} MAY STILL BE LIVE WITH ESCROW HELD — cancel it ` +
+                `manually (cancelOffer on ${DIAMOND}). ${idErr.message}`,
+            );
+          }
         }
+        if (stillLive.length === 0) cancelled = true;
       }
     } catch (cleanupErr) {
       record(
-        'cleanup: direct on-chain cancel',
+        'cleanup: offer sweep',
         'FAIL',
-        `OFFER #${offerId ?? '(unknown)'} MAY STILL BE LIVE WITH ${AMOUNT_WETH} WETH ESCROWED — ` +
-          `cancel it manually (cancelOffer on ${DIAMOND}). ${cleanupErr.message}`,
+        `could not enumerate this run's offers — offer #${offerId ?? '(unknown)'} ` +
+          `may still be live with ${AMOUNT_WETH} WETH escrowed ` +
+          `(cancelOffer on ${DIAMOND}). ${cleanupErr.message}`,
       );
     }
   }
