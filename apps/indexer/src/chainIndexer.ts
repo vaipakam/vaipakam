@@ -1485,11 +1485,19 @@ async function processLoanLogs(
     }
   }
 
+  // Rate Desk (#1129) — (loanId, offerId) pairs initiated in this batch.
+  // After the log loop, each is checked against the initiating offer's
+  // `is_sale_vehicle` flag and the loans row marked to match, covering all
+  // three LoanInitiated insert paths (companion / read-back / stub) with one
+  // idempotent correlated UPDATE.
+  const initiatedPairs: Array<{ loanId: number; offerId: number }> = [];
+
   for (const log of logs) {
     const a = log.args;
     if (log.eventName === 'LoanInitiated') {
       const loanId = Number(a.loanId as bigint);
       const offerId = Number(a.offerId as bigint);
+      initiatedPairs.push({ loanId, offerId });
       const blockAt = blockTimestamps.get(log.blockNumber) ?? now;
       const lender = (a.lender as string).toLowerCase();
       const borrower = (a.borrower as string).toLowerCase();
@@ -2055,6 +2063,27 @@ async function processLoanLogs(
           Number(a.loanId as bigint),
         )
         .run();
+    } else if (log.eventName === 'LoanSaleOfferLinked') {
+      // Rate Desk (#1129) — mark the borrower-style SALE offer so the temp
+      // bookkeeping loan it later initiates can be excluded from the desk's
+      // tape/candles (ProRateTerminalDesign.md §7: "a secondary sale is not a
+      // fresh rate print"). createLoanSaleOffer emits OfferCreated +
+      // LoanSaleOfferLinked in the same tx and processOfferLogs runs before
+      // processLoanLogs, so the offers row exists here; a zero-change UPDATE
+      // means ingest raced ahead of the offer row — log it loudly, the desk
+      // routes fail open (row shows) rather than dropping real fills.
+      const saleOfferId = Number(a.saleOfferId as bigint);
+      const marked = await env.DB.prepare(
+        `UPDATE offers SET is_sale_vehicle = 1, updated_at = ?
+          WHERE chain_id = ? AND offer_id = ?`,
+      )
+        .bind(Math.floor(Date.now() / 1000), chainId, saleOfferId)
+        .run();
+      if ((marked.meta?.changes ?? 0) === 0) {
+        console.error(
+          `[chainIndexer] LoanSaleOfferLinked: sale offer ${saleOfferId} row missing — is_sale_vehicle not set (chain ${chainId})`,
+        );
+      }
     } else if (log.eventName === 'LoanSold') {
       // EarlyWithdrawal — the lender position is sold to a new lender; the loan
       // stays Active. #749: like the obligation transfer, this BURNS the old
@@ -2743,9 +2772,10 @@ async function processLoanLogs(
     //    the indexer keeps `loans.status = 'active'` through the episode
     //    and the eventual terminal event (LoanRepaid / LoanDefaulted)
     //    still applies correctly.
-    //  - LoanSold / LoanSaleCompleted / LoanSaleOfferLinked
-    //    (EarlyWithdrawal) — the *original* loan stays Active with a new
-    //    lender (covered by the position-NFT Transfer handler below);
+    //  - LoanSaleCompleted (EarlyWithdrawal) — the *original* loan stays
+    //    Active with a new lender (LoanSold has its own handler above;
+    //    LoanSaleOfferLinked now marks the sale offer's is_sale_vehicle
+    //    flag for the Rate Desk tape/candle exclusion, #1129);
     //    the internal "temp loan" the sale spins up transitions
     //    Active→Repaid on-chain but does NOT currently emit a status
     //    event, so the indexer can't mirror it — see the contract-side
@@ -2792,6 +2822,25 @@ async function processLoanLogs(
       ]);
     }
   }
+
+  // Rate Desk (#1129) — propagate the sale-vehicle flag from the initiating
+  // offer onto the freshly-inserted loan row. The temp bookkeeping loan a
+  // lender-sale vehicle initiates must never print on the desk's tape/candles
+  // as a market fill. Idempotent (flag-only UPDATE gated on the offer flag);
+  // runs after the log loop so it covers every insert path, and after the
+  // same-batch LoanSaleOfferLinked handler above has marked the offer.
+  for (const { loanId, offerId } of initiatedPairs) {
+    await env.DB.prepare(
+      `UPDATE loans SET is_sale_vehicle = 1
+        WHERE chain_id = ?1 AND loan_id = ?2
+          AND EXISTS (SELECT 1 FROM offers o
+                       WHERE o.chain_id = ?1 AND o.offer_id = ?3
+                         AND o.is_sale_vehicle = 1)`,
+    )
+      .bind(chainId, loanId, offerId)
+      .run();
+  }
+
   return { newLoans, statusUpdates };
 }
 

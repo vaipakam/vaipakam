@@ -209,27 +209,112 @@ export async function handleOffersStats(req: Request, env: Env): Promise<Respons
   }
 }
 
+
+/**
+ * GET /offers/markets?chainId=8453
+ *
+ * Rate Desk (#1129) — market discovery. Returns every DISTINCT
+ * (lendingAsset, collateralAsset, durationDays) triple that has live
+ * ERC-20/ERC-20 offers, with per-side live counts and best headline rates.
+ * The desk's pair chips + tenor emphasis derive from THIS endpoint — never
+ * from walking the paginated /offers/active feed, whose page cap would
+ * silently drop markets (ProRateTerminalDesign.md §8, Codex #1128 round-4).
+ *
+ * ERC-20-only by construction (asset_type = 0 AND collateral_asset_type = 0):
+ * NFT/1155 legs carry token identity and must not merge into a fungible
+ * market row. Sale-vehicle offers are excluded — they are bookkeeping, not
+ * quotable markets. Rates are small integers (bps), safe to aggregate in SQL.
+ *
+ * bestAskBps = MIN(lender interest_rate_bps)      — lender floor (offer_type 0)
+ * bestBidBps = MAX(borrower interest_rate_bps_max) — borrower ceiling (offer_type 1)
+ */
+export async function handleOffersMarkets(req: Request, env: Env): Promise<Response> {
+  const url = new URL(req.url);
+  const chainId = parseChainId(url.searchParams.get('chainId')) ?? 8453;
+  try {
+    const rows = await env.DB.prepare(
+      `SELECT lending_asset, collateral_asset, duration_days,
+              SUM(CASE WHEN offer_type = 0 THEN 1 ELSE 0 END) AS lender_offers,
+              SUM(CASE WHEN offer_type = 1 THEN 1 ELSE 0 END) AS borrower_offers,
+              MIN(CASE WHEN offer_type = 0 THEN interest_rate_bps END) AS best_ask_bps,
+              MAX(CASE WHEN offer_type = 1 THEN interest_rate_bps_max END) AS best_bid_bps
+         FROM offers
+        WHERE chain_id = ? AND status = 'active'
+          AND asset_type = 0 AND collateral_asset_type = 0
+          AND is_sale_vehicle = 0
+        GROUP BY lending_asset, collateral_asset, duration_days
+        ORDER BY (lender_offers + borrower_offers) DESC`,
+    )
+      .bind(chainId)
+      .all<{
+        lending_asset: string;
+        collateral_asset: string;
+        duration_days: number;
+        lender_offers: number;
+        borrower_offers: number;
+        best_ask_bps: number | null;
+        best_bid_bps: number | null;
+      }>();
+    const markets = (rows.results ?? []).map((r) => ({
+      lendingAsset: r.lending_asset,
+      collateralAsset: r.collateral_asset,
+      durationDays: r.duration_days,
+      lenderOffers: r.lender_offers,
+      borrowerOffers: r.borrower_offers,
+      bestAskBps: r.best_ask_bps,
+      bestBidBps: r.best_bid_bps,
+    }));
+    return jsonResponse({ chainId, markets });
+  } catch (err) {
+    console.error('[offerRoutes] markets failed', err);
+    return jsonResponse({ error: 'markets-failed' }, 500);
+  }
+}
+
 /**
  * GET /offers/active?chainId=8453&limit=50&before=<offer_id>
+ *     [&lendingAsset=0x..&collateralAsset=0x..&durationDays=30]
  * Returns the page of active offers. Newest-first.
+ *
+ * Rate Desk (#1129) — the optional market params scope the page to one
+ * (pair, tenor) market server-side (riding `idx_offers_market`, migration
+ * 0029). Without them this is a GLOBAL newest-first page capped at 200 rows,
+ * which cannot honestly serve a per-market book fallback — a market whose
+ * offers are older than the first page would render as missing liquidity.
  */
 export async function handleOffersActive(req: Request, env: Env): Promise<Response> {
   const url = new URL(req.url);
   const chainId = parseChainId(url.searchParams.get('chainId')) ?? 8453;
   const limit = parseLimit(url.searchParams.get('limit'));
   const before = parseBefore(url.searchParams.get('before'));
+  const market = parseMarketFilter(url);
+  if (market === 'bad') {
+    return jsonResponse({ error: 'bad-market-filter' }, 400);
+  }
   try {
-    const stmt = before
-      ? env.DB.prepare(
-          `SELECT * FROM offers
-           WHERE chain_id = ? AND status = 'active' AND offer_id < ?
-           ORDER BY offer_id DESC LIMIT ?`,
-        ).bind(chainId, before, limit)
-      : env.DB.prepare(
-          `SELECT * FROM offers
-           WHERE chain_id = ? AND status = 'active'
-           ORDER BY offer_id DESC LIMIT ?`,
-        ).bind(chainId, limit);
+    const conds: string[] = [`chain_id = ?`, `status = 'active'`];
+    const binds: (number | string)[] = [chainId];
+    if (before) {
+      conds.push('offer_id < ?');
+      binds.push(before);
+    }
+    if (market.lendingAsset) {
+      conds.push('lending_asset = ?');
+      binds.push(market.lendingAsset);
+    }
+    if (market.collateralAsset) {
+      conds.push('collateral_asset = ?');
+      binds.push(market.collateralAsset);
+    }
+    if (market.durationDays !== null) {
+      conds.push('duration_days = ?');
+      binds.push(market.durationDays);
+    }
+    const stmt = env.DB.prepare(
+      `SELECT * FROM offers
+       WHERE ${conds.join(' AND ')}
+       ORDER BY offer_id DESC LIMIT ?`,
+    ).bind(...binds, limit);
     const rows = await stmt.all<OfferRow>();
     const offers = (rows.results ?? []).map(toJson);
     const next =
@@ -428,6 +513,33 @@ export function handleOffersPreflight(): Response {
       'Access-Control-Max-Age': '86400',
     },
   });
+}
+
+/** Rate Desk (#1129) — optional (pair, tenor) market scoping. Addresses are
+ *  stored lowercase at ingest; malformed values are a 400, never a silent
+ *  unfiltered fallback. Mirrors loanRoutes' helper (file-local per the
+ *  existing parser convention in these route files). */
+type MarketFilter = {
+  lendingAsset: string | null;
+  collateralAsset: string | null;
+  durationDays: number | null;
+};
+function parseMarketFilter(url: URL): MarketFilter | 'bad' {
+  const out: MarketFilter = { lendingAsset: null, collateralAsset: null, durationDays: null };
+  for (const key of ['lendingAsset', 'collateralAsset'] as const) {
+    const raw = url.searchParams.get(key);
+    if (raw === null) continue;
+    const addr = raw.toLowerCase();
+    if (!/^0x[0-9a-f]{40}$/.test(addr)) return 'bad';
+    out[key] = addr;
+  }
+  const rawDays = url.searchParams.get('durationDays');
+  if (rawDays !== null) {
+    const n = Number(rawDays);
+    if (!Number.isInteger(n) || n < 1 || n > 365) return 'bad';
+    out.durationDays = n;
+  }
+  return out;
 }
 
 function parseChainId(raw: string | null): number | null {

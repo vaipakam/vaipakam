@@ -748,6 +748,7 @@ export async function handleLoansStats(req: Request, env: Env): Promise<Response
 
 /**
  * GET /loans/recent?chainId=8453&limit=50&before=<loan_id>
+ *     [&lendingAsset=0x..&collateralAsset=0x..&durationDays=30&excludeSaleVehicles=1]
  *
  * Cross-status recent feed: most recent N loans regardless of state
  * (active / repaid / defaulted / liquidated / settled). Mirrors
@@ -760,18 +761,46 @@ export async function handleLoansRecent(req: Request, env: Env): Promise<Respons
   const chainId = parseChainId(url.searchParams.get('chainId')) ?? 8453;
   const limit = parseLimit(url.searchParams.get('limit'));
   const before = parseBefore(url.searchParams.get('before'));
+  // Rate Desk (#1129) — optional market scoping (lendingAsset /
+  // collateralAsset / durationDays). Without it this is a GLOBAL newest-first
+  // page capped at 200 rows, which cannot honestly serve a per-market tape —
+  // a market whose fills are older than the first page would render falsely
+  // empty. The filters ride `idx_loans_market` (migration 0029).
+  // `excludeSaleVehicles=1` additionally drops lender-sale temp bookkeeping
+  // loans (not market fills); opt-in so existing consumers of the unfiltered
+  // feed keep their exact behaviour.
+  const market = parseMarketFilter(url);
+  if (market === 'bad') {
+    return jsonResponse({ error: 'bad-market-filter' }, 400);
+  }
+  const excludeSaleVehicles = url.searchParams.get('excludeSaleVehicles') === '1';
   try {
-    const stmt = before
-      ? env.DB.prepare(
-          `SELECT * FROM loans
-           WHERE chain_id = ? AND loan_id < ?
-           ORDER BY loan_id DESC LIMIT ?`,
-        ).bind(chainId, before, limit)
-      : env.DB.prepare(
-          `SELECT * FROM loans
-           WHERE chain_id = ?
-           ORDER BY loan_id DESC LIMIT ?`,
-        ).bind(chainId, limit);
+    const conds: string[] = ['chain_id = ?'];
+    const binds: (number | string)[] = [chainId];
+    if (before) {
+      conds.push('loan_id < ?');
+      binds.push(before);
+    }
+    if (market.lendingAsset) {
+      conds.push('lending_asset = ?');
+      binds.push(market.lendingAsset);
+    }
+    if (market.collateralAsset) {
+      conds.push('collateral_asset = ?');
+      binds.push(market.collateralAsset);
+    }
+    if (market.durationDays !== null) {
+      conds.push('duration_days = ?');
+      binds.push(market.durationDays);
+    }
+    if (excludeSaleVehicles) {
+      conds.push('is_sale_vehicle = 0');
+    }
+    const stmt = env.DB.prepare(
+      `SELECT * FROM loans
+       WHERE ${conds.join(' AND ')}
+       ORDER BY loan_id DESC LIMIT ?`,
+    ).bind(...binds, limit);
     const rows = await stmt.all<LoanRow>();
     const loans = (rows.results ?? []).map(loanToJson);
     const next =
@@ -1160,6 +1189,34 @@ export async function handleLoanPrepayMatchSource(
     console.error('[loanRoutes] match-source insert failed', err);
     return jsonResponse({ error: 'insert-failed' }, 500);
   }
+}
+
+/** Rate Desk (#1129) — optional (pair, tenor) market scoping shared by the
+ *  desk-facing feeds. Addresses are stored lowercase at ingest, so params are
+ *  lowercased before matching; malformed values are a 400, never a silent
+ *  unfiltered fallback (an unfiltered "filtered" response would advertise the
+ *  wrong market's rows as the requested one). */
+type MarketFilter = {
+  lendingAsset: string | null;
+  collateralAsset: string | null;
+  durationDays: number | null;
+};
+function parseMarketFilter(url: URL): MarketFilter | 'bad' {
+  const out: MarketFilter = { lendingAsset: null, collateralAsset: null, durationDays: null };
+  for (const key of ['lendingAsset', 'collateralAsset'] as const) {
+    const raw = url.searchParams.get(key);
+    if (raw === null) continue;
+    const addr = raw.toLowerCase();
+    if (!/^0x[0-9a-f]{40}$/.test(addr)) return 'bad';
+    out[key] = addr;
+  }
+  const rawDays = url.searchParams.get('durationDays');
+  if (rawDays !== null) {
+    const n = Number(rawDays);
+    if (!Number.isInteger(n) || n < 1 || n > 365) return 'bad';
+    out.durationDays = n;
+  }
+  return out;
 }
 
 function parseChainId(raw: string | null): number | null {
