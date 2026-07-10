@@ -405,6 +405,14 @@ contract EarlyWithdrawalFacet is
         // loan. The full held is re-reserved on the new lender after the
         // position migrates (see end of this block).
         LibEncumbrance.releaseLenderProceeds(loanId, loan.lender);
+        // #998 S10 Class B (Codex fresh-round P2) — migrate the dedicated
+        // active-held reservation off the OLD lender NOW, BEFORE the `priorHeld`
+        // withdrawal below: `vaultWithdrawERC20` subtracts `encumbered[oldLender]`,
+        // so a still-locked active-held reservation would revert a clean/de-listed
+        // holder's sale. Moves the aggregate old → buyer (reads the old lender from
+        // the live loan, still un-migrated here); covers every asset. No-op when
+        // nothing was parked.
+        LibEncumbrance.migrateActiveHeld(loanId, buyOffer.creator);
 
         // Migrate only the pre-existing heldForLender from old lender's vault to new lender's.
         // priorHeld was snapshotted before any shortfall deposits in this transaction.
@@ -939,6 +947,13 @@ contract EarlyWithdrawalFacet is
         // lender here. No-op for a non-VPFI / never-reserved loan. Re-reserved
         // on the new lender after the position migrates (below).
         LibEncumbrance.releaseLenderProceeds(loanId, loan.lender);
+        // #998 S10 Class B (Codex fresh-round P2) — migrate the dedicated
+        // active-held reservation off the OLD lender NOW, BEFORE the `priorHeldSale`
+        // withdrawal below (the withdraw's free-balance guard subtracts
+        // `encumbered[oldLender]`, so a still-locked reservation would revert the
+        // sale). `loan.lender` is still the old lender here. No-op when nothing was
+        // parked.
+        LibEncumbrance.migrateActiveHeld(loanId, newLender);
 
         // Migrate only pre-existing heldForLender from old lender's vault to new lender's
         {
