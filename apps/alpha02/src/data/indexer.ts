@@ -340,6 +340,99 @@ export function fetchRecentLoans(
   return getJson<RecentLoansPage>(`/loans/recent?${params}`);
 }
 
+// ---------------------------------------------------------------------------
+// Rate Desk phase 2 (#1130)
+// ---------------------------------------------------------------------------
+
+export type CandleInterval = '1h' | '4h' | '1d';
+export type CandleRange = '7d' | '30d' | '90d' | 'all';
+
+/** One executed-rate bucket from `GET /loans/rate-candles`. Only
+ *  buckets with >= 1 fill exist — gaps in the series are REAL gaps
+ *  (§5.3 rule 1: no interpolation, ever). */
+export interface RateCandleBucket {
+  /** Bucket start, unix SECONDS (ascending in the response). */
+  t: number;
+  /** Executed rates in BPS. */
+  open: number;
+  high: number;
+  low: number;
+  close: number;
+  /** Fill count in the bucket (>= 1 by construction). */
+  fills: number;
+  /** Total principal as a decimal STRING in the lending asset's raw
+   *  base units — format with the token's decimals metadata, same as
+   *  every other indexer amount field. */
+  principalTotal: string;
+}
+
+export interface RateCandlesResponse {
+  chainId: number;
+  buckets: RateCandleBucket[];
+}
+
+/** Executed-rate candles for one (pair, tenor) market — the Rate Desk
+ *  chart (#1130). Market fills only (sale vehicles excluded
+ *  server-side); `Cache-Control: max-age=60` on the worker, mirrored
+ *  by the hook's 60 s staleTime. */
+export function fetchRateCandles(
+  chainId: number,
+  market: {
+    lendingAsset: string;
+    collateralAsset: string;
+    durationDays: number;
+  },
+  interval: CandleInterval,
+  range: CandleRange,
+): Promise<RateCandlesResponse | null> {
+  const params = new URLSearchParams({
+    chainId: String(chainId),
+    lendingAsset: market.lendingAsset.toLowerCase(),
+    collateralAsset: market.collateralAsset.toLowerCase(),
+    durationDays: String(market.durationDays),
+    interval,
+    range,
+  });
+  return getJson<RateCandlesResponse>(`/loans/rate-candles?${params}`);
+}
+
+export type ParticipantRole = 'lender' | 'borrower';
+
+/** Loan row + the wallet's role(s) in it, from the persisted
+ *  participation history (`loan_participants`) — NOT current-holder
+ *  filtered, so a repaid+claimed lender position stays visible. */
+export interface IndexedParticipantLoan extends IndexedLoan {
+  roles: ParticipantRole[];
+}
+
+export interface ParticipantLoansHistoryPage {
+  chainId: number;
+  loans: IndexedParticipantLoan[];
+  nextBefore: number | null;
+}
+
+/** A wallet's PERMANENT desk history — every loan the wallet ever
+ *  participated in (as lender, borrower, or a position-NFT transferee),
+ *  ALL statuses, newest first. This is the true historical-participant
+ *  route the design's History tab requires (§3): the by-lender /
+ *  by-borrower / by-current-holder reads all drop a lender whose loan
+ *  was repaid and claimed. */
+export function fetchLoansByParticipant(
+  chainId: number,
+  wallet: string,
+  opts: { limit?: number; before?: number } = {},
+): Promise<ParticipantLoansHistoryPage | null> {
+  const params = new URLSearchParams({
+    chainId: String(chainId),
+    wallet: wallet.toLowerCase(),
+  });
+  if (opts.limit) params.set('limit', String(opts.limit));
+  if (opts.before) params.set('before', String(opts.before));
+  return getJson<ParticipantLoansHistoryPage>(
+    `/loans/by-participant?${params}`,
+  );
+}
+
 /** Activity event row — mirrors the worker's shape (see apps/defi
  *  indexerClient IndexedActivityEvent). */
 export interface IndexedActivityEvent {

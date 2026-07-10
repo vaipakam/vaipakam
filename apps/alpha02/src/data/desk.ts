@@ -24,7 +24,7 @@
  * size), per-rate aggregation with cumulative sums.
  */
 import { useMemo } from 'react';
-import { useQuery } from '@tanstack/react-query';
+import { useInfiniteQuery, useQuery } from '@tanstack/react-query';
 import { usePublicClient } from 'wagmi';
 import { erc20Abi, type PublicClient } from 'viem';
 import { DIAMOND_ABI_VIEM } from '@vaipakam/contracts/abis';
@@ -33,12 +33,18 @@ import { idleAware } from '../lib/idle';
 import { AssetType } from '../lib/types';
 import {
   fetchActiveOffers,
+  fetchLoansByParticipant,
   fetchOffersMarkets,
+  fetchRateCandles,
   fetchRecentLoans,
   indexerConfigured,
+  type CandleInterval,
+  type CandleRange,
   type IndexedLoan,
   type IndexedOffer,
+  type IndexedParticipantLoan,
   type MarketSummary,
+  type RateCandleBucket,
 } from './indexer';
 import { readOfferRowsBatchLive } from './chainPositions';
 
@@ -308,6 +314,113 @@ export function useDeskTape(pair: DeskPair | null, durationDays: number) {
       return null; // cap hit on an untrusted feed — truncated ≠ complete
     },
   });
+}
+
+/** Executed-rate candle buckets for the (pair, tenor) market (#1130).
+ *  Tri-state per the app contract: `undefined` loading, `null`
+ *  unavailable (fetch failed / wrong-chain response / no indexer
+ *  origin), `[]` honestly empty (a market with zero fills in the
+ *  range). 60 s staleTime mirrors the worker's `Cache-Control:
+ *  max-age=60` — refetching harder would only re-download the same
+ *  cached body. */
+export function useDeskCandles(
+  pair: DeskPair | null,
+  durationDays: number,
+  interval: CandleInterval,
+  range: CandleRange,
+) {
+  const { readChain } = useActiveChain();
+  return useQuery({
+    queryKey: [
+      'deskCandles',
+      readChain.chainId,
+      pair ? pairKey(pair) : null,
+      durationDays,
+      interval,
+      range,
+    ],
+    enabled: pair !== null,
+    staleTime: 60_000,
+    refetchInterval: idleAware(60_000),
+    queryFn: async (): Promise<RateCandleBucket[] | null> => {
+      if (!indexerConfigured()) return null;
+      const res = await fetchRateCandles(
+        readChain.chainId,
+        {
+          lendingAsset: pair!.lendingAsset,
+          collateralAsset: pair!.collateralAsset,
+          durationDays,
+        },
+        interval,
+        range,
+      );
+      if (res === null) return null;
+      // A response for another chain is not this market's history —
+      // treat it as unavailable, never render it.
+      if (res.chainId !== readChain.chainId) return null;
+      return Array.isArray(res.buckets) ? res.buckets : null;
+    },
+  });
+}
+
+/** One page of the History tab's paginated walk — `rows: null` keeps
+ *  the tri-state "unavailable" distinguishable inside useInfiniteQuery
+ *  (whose queryFn must not return plain null/undefined). */
+interface DeskHistoryPage {
+  rows: IndexedParticipantLoan[] | null;
+  nextBefore: number | null;
+}
+
+const HISTORY_PAGE_SIZE = 25;
+
+/** The wallet's PERMANENT desk history (#1130) — every loan it ever
+ *  participated in, ALL statuses, newest first, via the indexer's
+ *  historical-participant route (`/loans/by-participant`). Deliberately
+ *  market-AGNOSTIC: it is the wallet's desk history, not the selected
+ *  market's. Paginated: `rows` accumulates the loaded pages;
+ *  `loadMore()` follows `nextBefore`. `rows === null` = unavailable
+ *  (any failed page poisons the answer — a partial list presented as
+ *  complete history would be a lie). */
+export function useDeskHistory(wallet: string | undefined) {
+  const { readChain } = useActiveChain();
+  const q = useInfiniteQuery({
+    queryKey: ['deskHistory', readChain.chainId, wallet?.toLowerCase()],
+    enabled: wallet !== undefined,
+    initialPageParam: undefined as number | undefined,
+    getNextPageParam: (last: DeskHistoryPage) => last.nextBefore ?? undefined,
+    queryFn: async ({ pageParam }): Promise<DeskHistoryPage> => {
+      if (!indexerConfigured()) return { rows: null, nextBefore: null };
+      const page = await fetchLoansByParticipant(readChain.chainId, wallet!, {
+        limit: HISTORY_PAGE_SIZE,
+        before: pageParam,
+      });
+      // Wrong-chain responses are as unusable as failed ones.
+      if (page === null || page.chainId !== readChain.chainId) {
+        return { rows: null, nextBefore: null };
+      }
+      return { rows: page.loans, nextBefore: page.nextBefore };
+    },
+  });
+
+  const rows = useMemo((): IndexedParticipantLoan[] | null | undefined => {
+    const pages = q.data?.pages;
+    if (pages === undefined) return undefined; // still loading page 1
+    const out: IndexedParticipantLoan[] = [];
+    for (const p of pages) {
+      if (p.rows === null) return null; // any failed page → unavailable
+      out.push(...p.rows);
+    }
+    return out;
+  }, [q.data]);
+
+  return {
+    rows,
+    isLoading: q.isLoading,
+    hasMore: q.hasNextPage,
+    isLoadingMore: q.isFetchingNextPage,
+    loadMore: () => void q.fetchNextPage(),
+    retry: () => void q.refetch(),
+  };
 }
 
 // ---------------------------------------------------------------------------

@@ -12,13 +12,22 @@
  * A market = (lendingAsset, collateralAsset, durationDays) — the
  * on-chain matcher requires EXACT duration equality, so depth exists
  * per tenor and the tenor chip is a first-class market selector.
- * No chart panel in phase 1 (§8) and no History tab (phase 2) —
- * neither is faked with placeholders.
+ *
+ * Phase 2 (#1130) adds the executed-rate chart (central panel on
+ * desktop; behind the mobile Book|Chart toggle per the ratified
+ * mobile pattern — the primary mobile view stays ladder + ticket
+ * side-by-side, with the chart AND tape behind the bottom segmented
+ * toggle) and the History bottom tab (the wallet's permanent desk
+ * activity via the historical-participant route).
+ *
+ * The chart component is React.lazy-loaded: `lightweight-charts`
+ * lands in RateChart's own chunk, so users who never open /desk never
+ * download it (§7 of the design doc).
  *
  * Route rule: hidden from Basic navigation but URL-reachable in both
  * modes (the shell's hidden-not-blocked doctrine, same as /offers).
  */
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { Suspense, lazy, useEffect, useMemo, useRef, useState } from 'react';
 import { copy } from '../content/copy';
 import { useActiveChain } from '../chain/useActiveChain';
 import { MarketFreshnessNote } from '../components/MarketFreshnessNote';
@@ -28,6 +37,7 @@ import { OrderTicket } from '../components/desk/OrderTicket';
 import { TapePanel } from '../components/desk/TapePanel';
 import { OpenOrdersPanel } from '../components/desk/OpenOrdersPanel';
 import { PositionsPanel } from '../components/desk/PositionsPanel';
+import { HistoryPanel } from '../components/desk/HistoryPanel';
 import { useTokenMeta } from '../contracts/erc20';
 import { OFFER_DURATION_DEFAULT_DAYS } from '../lib/offerSchema';
 import {
@@ -38,7 +48,11 @@ import {
   type DeskPair,
 } from '../data/desk';
 
-type BottomTab = 'orders' | 'positions';
+/** Lazy boundary — keeps lightweight-charts out of the entry chunk. */
+const RateChart = lazy(() => import('../components/desk/RateChart'));
+
+type BottomTab = 'orders' | 'positions' | 'history';
+type MobileView = 'book' | 'chart';
 
 export function Desk() {
   const { address, readChain } = useActiveChain();
@@ -49,6 +63,7 @@ export function Desk() {
     null,
   );
   const [tab, setTab] = useState<BottomTab>('orders');
+  const [mobileView, setMobileView] = useState<MobileView>('book');
 
   const markets = useDeskMarkets();
 
@@ -123,7 +138,43 @@ export function Desk() {
         lastFill={lastFill}
       />
 
-      <div className="desk-main">
+      <div
+        className={`desk-main${mobileView === 'chart' ? ' desk-mobile-chart' : ''}`}
+      >
+        {/* Chart column — central panel on desktop (chart above the
+            tape, mirroring the reference terminals' chart-center-left
+            arrangement); behind the Book|Chart toggle on mobile. */}
+        <div className="desk-chart-col">
+          <Suspense
+            fallback={
+              <div className="card desk-chart-card">
+                <h2 className="card-title">{copy.desk.chart.title}</h2>
+                <p className="muted">{copy.desk.chart.loading}</p>
+              </div>
+            }
+          >
+            <RateChart
+              pair={pair}
+              days={days}
+              decimals={lendingMeta.data?.decimals}
+              symbol={lendingMeta.data?.symbol}
+              quotedMidBps={ladder?.midBps ?? null}
+              tapeNewest={
+                lastFill
+                  ? { rateBps: lastFill.interestRateBps, at: lastFill.startAt }
+                  : null
+              }
+            />
+          </Suspense>
+          {pair !== null ? (
+            <TapePanel
+              fills={tape.data}
+              loading={tape.isLoading}
+              decimals={lendingMeta.data?.decimals}
+              symbol={lendingMeta.data?.symbol}
+            />
+          ) : null}
+        </div>
         <div className="desk-book-col">
           {pair === null ? (
             <div className="card">
@@ -133,27 +184,19 @@ export function Desk() {
               </p>
             </div>
           ) : (
-            <>
-              <RateLadder
-                ladder={ladder}
-                loading={book.isLoading}
-                unavailable={!book.isLoading && book.data === null}
-                source={book.data?.source ?? null}
-                decimals={lendingMeta.data?.decimals}
-                symbol={lendingMeta.data?.symbol}
-                chainId={readChain.chainId}
-                wallet={address}
-                onPickRate={(rateBps) =>
-                  setPrefill({ rateBps, nonce: Date.now() })
-                }
-              />
-              <TapePanel
-                fills={tape.data}
-                loading={tape.isLoading}
-                decimals={lendingMeta.data?.decimals}
-                symbol={lendingMeta.data?.symbol}
-              />
-            </>
+            <RateLadder
+              ladder={ladder}
+              loading={book.isLoading}
+              unavailable={!book.isLoading && book.data === null}
+              source={book.data?.source ?? null}
+              decimals={lendingMeta.data?.decimals}
+              symbol={lendingMeta.data?.symbol}
+              chainId={readChain.chainId}
+              wallet={address}
+              onPickRate={(rateBps) =>
+                setPrefill({ rateBps, nonce: Date.now() })
+              }
+            />
           )}
         </div>
         <div className="desk-ticket-col">
@@ -161,8 +204,34 @@ export function Desk() {
         </div>
       </div>
 
+      {/* Mobile-only bottom-center toggle (ratified pattern §3): the
+          primary view stays ladder + ticket; chart + tape sit behind
+          the Chart segment. Hidden ≥ 720px where all columns render. */}
+      <div className="desk-view-toggle">
+        <div
+          className="segmented"
+          role="group"
+          aria-label={copy.desk.chart.mobileViewLabel}
+        >
+          <button
+            type="button"
+            className={mobileView === 'book' ? 'active' : ''}
+            onClick={() => setMobileView('book')}
+          >
+            {copy.desk.chart.mobileBook}
+          </button>
+          <button
+            type="button"
+            className={mobileView === 'chart' ? 'active' : ''}
+            onClick={() => setMobileView('chart')}
+          >
+            {copy.desk.chart.mobileChart}
+          </button>
+        </div>
+      </div>
+
       <div className="card" style={{ marginTop: 16 }}>
-        <div className="segmented" style={{ marginBottom: 12, maxWidth: 360 }}>
+        <div className="segmented" style={{ marginBottom: 12, maxWidth: 420 }}>
           <button
             type="button"
             className={tab === 'orders' ? 'active' : ''}
@@ -177,8 +246,21 @@ export function Desk() {
           >
             {copy.desk.positions.tab}
           </button>
+          <button
+            type="button"
+            className={tab === 'history' ? 'active' : ''}
+            onClick={() => setTab('history')}
+          >
+            {copy.desk.history.tab}
+          </button>
         </div>
-        {tab === 'orders' ? <OpenOrdersPanel /> : <PositionsPanel />}
+        {tab === 'orders' ? (
+          <OpenOrdersPanel />
+        ) : tab === 'positions' ? (
+          <PositionsPanel />
+        ) : (
+          <HistoryPanel />
+        )}
       </div>
     </div>
   );

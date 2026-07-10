@@ -1052,9 +1052,11 @@ a.item-row:hover {
 
 /* Mobile-first: the ladder and the ticket sit SIDE-BY-SIDE as the
  * primary view (the highest-frequency loop — tap a rate, adjust the
- * ticket — stays on one screen); the tape stacks below the ladder.
- * >= 720px widens into the terminal layout: book column + a fixed
- * ticket column. */
+ * ticket — stays on one screen); the chart AND tape sit behind the
+ * bottom Book|Chart segmented toggle (`.desk-view-toggle`, the
+ * ratified mobile pattern — density changes, capability never).
+ * >= 720px: chart panel full-width on top, book + ticket below.
+ * >= 1080px: the full terminal — chart center-left, ladder, ticket. */
 .desk-main {
   display: grid;
   grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
@@ -1074,11 +1076,155 @@ a.item-row:hover {
   min-width: 0;
 }
 
+.desk-chart-col {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  min-width: 0;
+  grid-column: 1 / -1;
+}
+
+@media (max-width: 719.98px) {
+  /* Book view (default): chart + tape hidden behind the toggle. The
+   * chart stays MOUNTED (display:none) so switching back is instant —
+   * lightweight-charts' autoSize re-measures when shown. */
+  .desk-main .desk-chart-col {
+    display: none;
+  }
+
+  .desk-main.desk-mobile-chart .desk-chart-col {
+    display: flex;
+  }
+
+  .desk-main.desk-mobile-chart .desk-book-col,
+  .desk-main.desk-mobile-chart .desk-ticket-col {
+    display: none;
+  }
+}
+
 @media (min-width: 720px) {
   .desk-main {
     grid-template-columns: minmax(0, 1.4fr) minmax(300px, 400px);
     gap: var(--space-4);
   }
+}
+
+@media (min-width: 1080px) {
+  .desk-main {
+    grid-template-columns: minmax(0, 1.6fr) minmax(0, 1.1fr) minmax(300px, 380px);
+  }
+
+  /* Auto-placement: chart col 1 (center-left, per the reference
+   * terminals), ladder col 2, ticket col 3. */
+  .desk-chart-col {
+    grid-column: auto;
+  }
+}
+
+/* Mobile-only bottom-center Book|Chart toggle. Sticky so it stays
+ * reachable while scrolling the main view; hidden once every column
+ * renders (>= 720px). */
+.desk-view-toggle {
+  position: sticky;
+  bottom: calc(env(safe-area-inset-bottom, 0px) + 12px);
+  display: flex;
+  justify-content: center;
+  z-index: 5;
+  margin-top: var(--space-3);
+  pointer-events: none;
+}
+
+.desk-view-toggle .segmented {
+  pointer-events: auto;
+  border: 1px solid var(--border);
+  box-shadow: var(--shadow-card);
+  background: var(--surface-raised);
+}
+
+@media (min-width: 720px) {
+  .desk-view-toggle {
+    display: none;
+  }
+}
+
+/* Executed-rate chart (#1130) */
+.desk-chart-card {
+  min-width: 0;
+}
+
+.desk-chart-head {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-3);
+  justify-content: space-between;
+  align-items: flex-start;
+  margin-bottom: var(--space-3);
+}
+
+.desk-chart-lastfill {
+  font-family: var(--font-mono);
+  font-size: 0.82rem;
+  margin: 0;
+}
+
+.desk-chart-controls {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  align-items: flex-end;
+}
+
+.desk-chart-plot {
+  position: relative;
+}
+
+.desk-chart-canvas {
+  height: 300px;
+  min-width: 0;
+}
+
+.desk-chart-tooltip {
+  display: none;
+  position: absolute;
+  z-index: 4;
+  padding: 6px 8px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface-raised);
+  box-shadow: var(--shadow-card);
+  font-family: var(--font-mono);
+  font-size: 0.72rem;
+  line-height: 1.5;
+  white-space: pre-line;
+  pointer-events: none;
+  max-width: 280px;
+}
+
+.desk-chart-sparse-note {
+  font-size: 0.78rem;
+  margin-bottom: var(--space-2);
+}
+
+.desk-chart-midhint {
+  font-size: 0.72rem;
+  margin-top: var(--space-2);
+}
+
+/* lightweight-charts Apache-2.0 text credit — always visible. */
+.desk-chart-attribution {
+  margin-top: var(--space-2);
+  text-align: right;
+  font-size: 0.68rem;
+}
+
+.desk-chart-attribution a {
+  color: var(--text-faint);
+  text-decoration: none;
+}
+
+.desk-chart-attribution a:hover,
+.desk-chart-attribution a:focus-visible {
+  text-decoration: underline;
 }
 
 .desk-header .desk-stats {
