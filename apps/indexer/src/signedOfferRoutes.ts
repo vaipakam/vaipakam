@@ -38,13 +38,18 @@ import {
   type SignedOrderWire,
 } from './signedOfferEip712';
 
-/** Open CORS. `max-age=15` — a signed book must be fresher than the 10s
- *  offer-projection reads' default is fine for, but candles-grade staleness
- *  (60s) would advertise consumed orders for a whole minute. */
+/** Open CORS. `no-store` (Codex #1145 r8 P3) — the desk's mutation flows
+ *  (gasless post / cancel / fill) invalidate their react-query caches and
+ *  refetch THIS URL immediately; any HTTP-layer freshness window (the
+ *  original max-age=15) let the browser/proxy hand that refetch the
+ *  pre-mutation body, silently defeating the invalidation. The desk
+ *  already self-paces at a 15s poll, so an HTTP cache adds nothing a
+ *  well-behaved client needs — correctness wins over the marginal
+ *  shared-cache savings. */
 function corsHeaders(): HeadersInit {
   return {
     'Access-Control-Allow-Origin': '*',
-    'Cache-Control': 'public, max-age=15',
+    'Cache-Control': 'no-store',
   };
 }
 

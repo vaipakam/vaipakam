@@ -315,6 +315,9 @@ export function SignedFillConfirm({
       void queryClient.invalidateQueries({ queryKey: ['deskBook'] });
       void queryClient.invalidateQueries({ queryKey: ['deskMarkets'] });
       void queryClient.invalidateQueries({ queryKey: ['deskTape'] });
+      // The fill's print belongs in the chart too — deskCandles rides a
+      // 60s interval (same reasoning as MatchBand; Codex #1145 r8 P3).
+      void queryClient.invalidateQueries({ queryKey: ['deskCandles'] });
       void queryClient.invalidateQueries({ queryKey: ['activeOffers'] });
       void queryClient.invalidateQueries({ queryKey: ['myOffers'] });
       void queryClient.invalidateQueries({ queryKey: ['myLoans'] });

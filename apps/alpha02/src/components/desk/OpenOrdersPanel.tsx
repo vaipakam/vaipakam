@@ -778,6 +778,11 @@ function SignedOrdersBlock({
       await write('cancelSignedOffer', [signedOfferTypedMessage(row.order)]);
       setCancelledHashes((prev) => new Set(prev).add(row.orderHash));
       void queryClient.invalidateQueries({ queryKey: ['deskSignedBook'] });
+      // Cancelling the market's last/best signed row changes
+      // /offers/markets (it unions active signed rows) — refresh the
+      // pair/tenor chips now, mirroring the gasless-post path (Codex
+      // #1145 r8 P3).
+      void queryClient.invalidateQueries({ queryKey: ['deskMarkets'] });
     } catch (err) {
       setError({ hash: row.orderHash, msg: captureTxError(err) });
     } finally {

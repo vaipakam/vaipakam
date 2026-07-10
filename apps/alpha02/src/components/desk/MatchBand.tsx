@@ -202,6 +202,12 @@ export function MatchBand({
       void queryClient.invalidateQueries({ queryKey: ['deskPreviewMatch'] });
       void queryClient.invalidateQueries({ queryKey: ['activeOffers'] });
       void queryClient.invalidateQueries({ queryKey: ['myOffers'] });
+      // The connected wallet may OWN one of the matched offers — the
+      // match then initiates a loan involving this wallet, so refresh
+      // the wallet roots too; harmless no-op when the matcher is a
+      // third party (Codex #1145 r8 P3).
+      void queryClient.invalidateQueries({ queryKey: ['myLoans'] });
+      void queryClient.invalidateQueries({ queryKey: ['deskHistory'] });
     } catch (err) {
       setErrorState({ key: pairKey, message: captureTxError(err) });
     } finally {

@@ -35,6 +35,7 @@ describe('IndexerPushSync KEY_MAP (#1131 desk roots)', () => {
         'deskMarkets',
         'deskBook',
         'deskAmendSource',
+        'deskSignedBook',
       ],
       'loan.created': [
         'myLoans',
@@ -75,12 +76,14 @@ describe('IndexerPushSync KEY_MAP (#1131 desk roots)', () => {
     const allRoots = Object.values(KEY_MAP).flat();
     // Token metadata is immutable — invalidating it is pure waste.
     expect(allRoots).not.toContain('deskSymbols');
-    // The signed book is indexer-fed but NOT chain-ingest-fed: a
-    // gasless post never touches the chain, so no DO frame can carry
-    // it; its freshness contract is the 15s cache + the fill path's
-    // targeted invalidations. Deliberate absence — pinned so a future
-    // addition is a conscious decision, not drift.
-    expect(allRoots).not.toContain('deskSignedBook');
+    // The signed book rides offer.changed ONLY (Codex #1145 r8 P3):
+    // on-chain lifecycle flips (fill / cancel / nonce burn) flow
+    // through the ingest scan's signedOfferUpdates count, but gasless
+    // POSTS never touch the chain — offer.created is a chain-offer
+    // signal and must not drag the signed book with it.
+    expect(KEY_MAP['offer.changed']).toContain('deskSignedBook');
+    expect(KEY_MAP['offer.created']).not.toContain('deskSignedBook');
+    expect(KEY_MAP['loan.created']).not.toContain('deskSignedBook');
     // previewMatch / chain-now anchors are LiveChainSync territory —
     // 'deskPreviewMatch' is registered in its LIVE_KEYS (#1145 round-5),
     // not here (double-invalidating a chain read from push frames would

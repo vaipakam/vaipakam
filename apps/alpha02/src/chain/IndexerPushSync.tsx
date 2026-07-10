@@ -59,6 +59,14 @@ export const KEY_MAP: Record<string, string[]> = {
     'deskMarkets',
     'deskBook',
     'deskAmendSource',
+    // Signed-book LIFECYCLE flips (fill / cancel / nonce burn) are
+    // on-chain events the ingest scan folds into this same coarse key
+    // (chainIndexer.signedOfferUpdates → offer.changed; Codex #1145 r8
+    // P3) — without this a WS client keeps showing a cancelled signed
+    // row until the 30s poll. Gasless POSTS still can't be pushed
+    // (they never touch the chain); their freshness stays the poll +
+    // the post path's own targeted invalidation.
+    'deskSignedBook',
   ],
   // A fill prints on the tape/candles/history and moves the markets
   // stats. The accept also consumes offer principal, but the indexer

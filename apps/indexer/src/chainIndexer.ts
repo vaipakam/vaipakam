@@ -148,10 +148,10 @@ export interface ChainIndexerResult {
   activityEvents: number;
   /** #1131 Rate Desk phase 3 — signed-offer book rows whose status /
    *  filled_amount changed this scan (SignedOfferFilled / Matched /
-   *  Cancelled / NonceBurned). Optional so the early-return paths and the
-   *  #757 invalidation-key mapping stay untouched — the signed book has no
-   *  dapp push surface in this slice (GET is served with max-age=15);
-   *  mapping this to a push key is a follow-up when the desk consumes it. */
+   *  Cancelled / NonceBurned). Optional so the early-return paths stay
+   *  untouched; the #757 invalidation mapping folds it into the coarse
+   *  `offer.changed` key (the desk consumes the signed book + the
+   *  signed-aware /offers/markets — see invalidationKeysFromResult). */
   signedOfferUpdates?: number;
   skipped?: string;
 }
