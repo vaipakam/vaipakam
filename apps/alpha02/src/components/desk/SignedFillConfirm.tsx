@@ -37,6 +37,7 @@ import { ensureAllowance, useTokenMeta } from '../../contracts/erc20';
 import {
   assertAssetNotPausedLive,
   assertErc20BalanceLive,
+  assertSignedFillKycEligibleLive,
 } from '../../contracts/preflights';
 import { assertWalletNotSanctionedLive } from '../../data/sanctions';
 import { ConsentLabel } from '../ConsentLabel';
@@ -44,6 +45,7 @@ import { captureTxError } from '../../lib/errors';
 import { flowDisabled } from '../../lib/killSwitch';
 import {
   signedOfferTypedMessage,
+  signedOrderTimeWindowsOpen,
   type SignedRowMeta,
 } from '../../lib/signedOffer';
 import {
@@ -182,6 +184,25 @@ export function SignedFillConfirm({
           symbol: payMeta.data?.symbol,
         }),
       ]);
+      // KYC gate (Codex #1145 round-3 P2): the materialized fill runs
+      // `_acceptOffer`'s `meetsKYCRequirement` for BOTH parties at the
+      // deal's numeraire value and reverts `KYCRequired` — preview it
+      // here, like the direct-accept signer previews its gates, so an
+      // ineligible party costs the taker no signature or approval. A
+      // no-op passthrough on the retail deploy (enforcement off); real
+      // on the KYC-enabled industrial forks. The lending amount is the
+      // role-aware effective principal `_acceptOffer` gates on (lender
+      // order ⇒ amountMax, borrower order ⇒ amount = headlineAmount).
+      await assertSignedFillKycEligibleLive({
+        publicClient,
+        diamondAddress: walletChain.diamondAddress,
+        maker: signed.signer as `0x${string}`,
+        taker: address,
+        lendingAsset: o.lendingAsset as `0x${string}`,
+        lendingAmount: headlineAmount,
+        collateralAsset: o.collateralAsset as `0x${string}`,
+        collateralAmount: BigInt(o.collateralAmount),
+      });
       // Sign the AcceptTerms — the hook re-vets the order live (fill
       // ledger, burned nonce, both time windows on chain time, illiquid
       // legs, risk-terms hash) BEFORE the wallet is asked to sign.
@@ -199,6 +220,18 @@ export function SignedFillConfirm({
         spender: walletChain.diamondAddress,
         amount: payAmount,
       });
+      // Final time-window recheck on CHAIN time (Codex #1145 round-3
+      // P2): the signer's vet ran before the wallet prompts, and a
+      // classic approval may have just spent minutes mining — one
+      // cheap read here means a wallet-delay lapse of the signature
+      // deadline or GTT expiry fails BEFORE the fill transaction is
+      // sent, not as an on-chain revert the taker pays for.
+      const { timestamp: chainNowPreWrite } = await publicClient.getBlock({
+        blockTag: 'latest',
+      });
+      if (!signedOrderTimeWindowsOpen(o, chainNowPreWrite)) {
+        throw new Error(text.gone);
+      }
       const { hash } = await write('acceptSignedOffer', [
         signedOfferTypedMessage(o),
         signed.signature,

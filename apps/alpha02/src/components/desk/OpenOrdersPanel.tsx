@@ -842,17 +842,26 @@ function SignedOrdersBlock({
                   </>
                 ) : null}
               </span>
-              <button
-                type="button"
-                className="btn btn-secondary btn-sm"
-                disabled={!onSupportedChain || busyHash !== null}
-                title={text.signedCancelNote}
-                onClick={() => void cancel(row)}
-              >
-                {busyHash === row.orderHash
-                  ? text.signedCancelling
-                  : text.signedCancel}
-              </button>
+              {/* Codex #1145 round-3 P3 — once THIS row's cancel
+                  succeeded, hide the button until the cached
+                  /signed-offers query drops the row:
+                  `cancelSignedOffer` doesn't reject an already-
+                  cancelled order, so a second click during the
+                  cache/indexer catch-up window would mine a second,
+                  pointless cancellation and burn gas. */}
+              {cancelledHash === row.orderHash ? null : (
+                <button
+                  type="button"
+                  className="btn btn-secondary btn-sm"
+                  disabled={!onSupportedChain || busyHash !== null}
+                  title={text.signedCancelNote}
+                  onClick={() => void cancel(row)}
+                >
+                  {busyHash === row.orderHash
+                    ? text.signedCancelling
+                    : text.signedCancel}
+                </button>
+              )}
             </div>
           );
         })}

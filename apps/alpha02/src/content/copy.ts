@@ -908,6 +908,11 @@ export const copy = {
         'The maker’s vault doesn’t currently cover this order, so the fill would fail on-chain. Nothing was sent — the maker must top up their vault first.',
       illiquid:
         'One of this order’s assets isn’t priced by the protocol right now, and this compact confirm can’t walk you through the in-kind default terms that implies. Nothing was sent.',
+      // Shown only on deploys with tiered identity verification
+      // enforced (never on this retail deploy, where enforcement is
+      // off and the preflight passes through).
+      kycBlocked:
+        'This deployment’s identity-verification rules don’t cover one side of this order at this value, so the fill would fail on-chain. Nothing was sent or approved.',
       accept: 'Fill order',
       accepting: 'Filling…',
       accepted: 'Signed order filled — the loan is live.',

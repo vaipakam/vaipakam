@@ -28,8 +28,12 @@ import { usePublicClient, useWalletClient } from 'wagmi';
 import { DIAMOND_ABI_VIEM } from '@vaipakam/contracts/abis';
 import { useActiveChain } from '../chain/useActiveChain';
 import { copy } from '../content/copy';
-import { signedOrderHash, type SignedOrderWire } from '../lib/signedOffer';
-import { isAssetIlliquidLive } from './preflights';
+import {
+  signedOrderHash,
+  signedOrderTimeWindowsOpen,
+  type SignedOrderWire,
+} from '../lib/signedOffer';
+import { isAssetIlliquidLive, isMissingSelectorError } from './preflights';
 
 const ACCEPT_DEADLINE_SECONDS = 30 * 60; // 30 minutes, matching the Permit2 window.
 
@@ -564,12 +568,15 @@ export function useSignedOfferAcceptTermsSigning() {
       if (filled !== 0n || nonceUsed) {
         throw new Error(copy.desk.signed.gone);
       }
-      const sigDeadline = BigInt(o.deadline);
-      if (sigDeadline !== 0n && chainNow > sigDeadline) {
-        throw new Error(copy.desk.signed.gone);
-      }
-      const gttExpiry = BigInt(o.expiresAt);
-      if (gttExpiry !== 0n && chainNow > gttExpiry) {
+      // Codex #1145 round-3 P2 — both windows judged with the shared
+      // 60 s submit margin (`signedOrderTimeWindowsOpen`), not a bare
+      // `chainNow > t` compare: the fill MATERIALIZES through
+      // `createOffer`, whose `expiresAt <= block.timestamp` boundary
+      // treats equality as expired, and wallet prompts + a possible
+      // approval transaction sit between this read and the write
+      // landing — an at-or-near-expiry order must fail HERE, before
+      // the taker signs or approves anything.
+      if (!signedOrderTimeWindowsOpen(o, chainNow)) {
         throw new Error(copy.desk.signed.gone);
       }
 
@@ -679,18 +686,6 @@ export function useSignedOfferAcceptTermsSigning() {
   );
 
   return { sign };
-}
-
-// True when a contract read failed because the Diamond doesn't cut the
-// selector — as opposed to a transient RPC/ABI error. `0xa9ad62f8` is
-// the Diamond's FunctionNotFound selector.
-function isMissingSelectorError(e: unknown): boolean {
-  const msg = String(
-    (e as { data?: string; message?: string })?.data ??
-      (e as Error)?.message ??
-      '',
-  );
-  return /function does not exist|functionnotfound|0xa9ad62f8/i.test(msg);
 }
 
 function randomNonce(): bigint {

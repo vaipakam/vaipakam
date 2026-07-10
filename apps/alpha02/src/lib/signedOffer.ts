@@ -165,6 +165,43 @@ export function signedOrderIsSingleValue(order: SignedOrderWire): boolean {
   return signedOfferCeiling(order) === BigInt(order.amount);
 }
 
+/** Submit-time safety margin (seconds) for the signed-order time
+ *  windows — the same 60 s convention as the ticket's
+ *  `EXPIRY_SUBMIT_MARGIN_SECONDS` (Codex #1134 round-4): wallet
+ *  prompts and a possible classic-approval transaction sit between
+ *  the preflight read and the fill landing, so a window that clears
+ *  chain-now by less than this is treated as already shut. */
+export const SIGNED_ORDER_SUBMIT_MARGIN_SECONDS = 60n;
+
+/**
+ * Whether BOTH of a signed order's time windows are still open at
+ * `chainNow` (`block.timestamp` of the latest block — the chain-time
+ * doctrine forbids the device clock here), with
+ * {@link SIGNED_ORDER_SUBMIT_MARGIN_SECONDS} applied (Codex #1145
+ * round-3 P2). Zero is each field's "no window" sentinel (GTC).
+ *
+ *  - `deadline` — maker-signature validity. `_vetSignedOffer` rejects
+ *    `block.timestamp > deadline`.
+ *  - `expiresAt` — the GTT expiry of the offer the fill MATERIALIZES.
+ *    The fill routes through `createOffer`, which rejects
+ *    `params.expiresAt <= block.timestamp` (`OfferExpiryInPast`) —
+ *    equality IS expired, a STRICTER boundary than `_vetSignedOffer`'s
+ *    own `>` check, so the preflight must judge `>=`-at-equality (plus
+ *    the margin) or the taker signs and approves into a guaranteed
+ *    revert.
+ */
+export function signedOrderTimeWindowsOpen(
+  order: SignedOrderWire,
+  chainNow: bigint,
+): boolean {
+  const horizon = chainNow + SIGNED_ORDER_SUBMIT_MARGIN_SECONDS;
+  const deadline = BigInt(order.deadline);
+  if (deadline !== 0n && deadline <= horizon) return false;
+  const expiresAt = BigInt(order.expiresAt);
+  if (expiresAt !== 0n && expiresAt <= horizon) return false;
+  return true;
+}
+
 /** Unfilled remainder of a signed order: `ceiling − filledAmount`,
  *  floored at 0 (a consumed/cancelled order has `filled == ceiling`). */
 export function signedOfferRemaining(

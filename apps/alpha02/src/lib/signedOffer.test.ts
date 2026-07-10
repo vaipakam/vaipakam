@@ -14,10 +14,12 @@ import {
 } from '../data/desk';
 import {
   SIGNED_OFFER_FIELD_NAMES,
+  SIGNED_ORDER_SUBMIT_MARGIN_SECONDS,
   collapseForSignedPost,
   signedOfferCeiling,
   signedOfferRemaining,
   signedOrderHash,
+  signedOrderTimeWindowsOpen,
   signedRowToDeskRow,
   wireFromCreatePayload,
   type SignedOrderWire,
@@ -215,6 +217,59 @@ describe('ceiling / remaining', () => {
     expect(signedOfferRemaining(o, '1000')).toBe(0n);
     expect(signedOfferRemaining(o, '2000')).toBe(0n);
     expect(signedOfferRemaining(o, 'garbage')).toBe(0n);
+  });
+});
+
+describe('signedOrderTimeWindowsOpen (#1145 round-3 P2)', () => {
+  const now = BigInt(NOW);
+  const margin = SIGNED_ORDER_SUBMIT_MARGIN_SECONDS;
+
+  it('GTC on both windows (zero sentinels) is always open', () => {
+    expect(
+      signedOrderTimeWindowsOpen(wire({ expiresAt: '0', deadline: '0' }), now),
+    ).toBe(true);
+  });
+
+  it('GTT expiry EQUAL to chain-now is closed — createOffer rejects expiresAt <= block.timestamp', () => {
+    expect(
+      signedOrderTimeWindowsOpen(wire({ expiresAt: String(NOW) }), now),
+    ).toBe(false);
+  });
+
+  it('GTT expiry inside the submit margin is closed; just past it is open', () => {
+    expect(
+      signedOrderTimeWindowsOpen(
+        wire({ expiresAt: String(now + margin) }),
+        now,
+      ),
+    ).toBe(false);
+    expect(
+      signedOrderTimeWindowsOpen(
+        wire({ expiresAt: String(now + margin + 1n) }),
+        now,
+      ),
+    ).toBe(true);
+  });
+
+  it('signature deadline inside the submit margin is closed; a far deadline is open', () => {
+    expect(
+      signedOrderTimeWindowsOpen(wire({ deadline: String(now + margin) }), now),
+    ).toBe(false);
+    expect(
+      signedOrderTimeWindowsOpen(
+        wire({ deadline: String(now + 7n * 86_400n) }),
+        now,
+      ),
+    ).toBe(true);
+  });
+
+  it('an already-past window is closed', () => {
+    expect(
+      signedOrderTimeWindowsOpen(wire({ expiresAt: String(NOW - 1) }), now),
+    ).toBe(false);
+    expect(
+      signedOrderTimeWindowsOpen(wire({ deadline: String(NOW - 1) }), now),
+    ).toBe(false);
   });
 });
 
