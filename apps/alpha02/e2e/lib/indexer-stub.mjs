@@ -178,6 +178,57 @@ async function mapLoan(id) {
   };
 }
 
+// Rate Desk phase 2 (#1130) — executed-rate candle enums + fold.
+// Small re-implementation of apps/indexer/src/rateCandles.ts (the
+// SOURCE OF TRUTH — keep the two in sync; the worker's version is
+// unit-tested, this one only mirrors it for the fork tier): fills
+// sort chronologically with the loan-id tiebreak, only buckets with
+// >= 1 fill are emitted (§5.3 rule 1 — gaps render as gaps, no
+// interpolation), and principal folds with BigInt into a decimal
+// STRING (18-dec base-unit sums overflow doubles; a JSON number
+// would silently lose precision).
+const CANDLE_INTERVALS = { '1h': 3600, '4h': 14400, '1d': 86400 };
+const CANDLE_RANGES = { '7d': 7, '30d': 30, '90d': 90, all: null };
+
+function foldRateCandles(rows, intervalSec) {
+  const sorted = [...rows].sort(
+    (x, y) => x.startAt - y.startAt || x.loanId - y.loanId,
+  );
+  const buckets = new Map();
+  for (const row of sorted) {
+    const rate = row.rateBps;
+    const t = Math.floor(row.startAt / intervalSec) * intervalSec;
+    const acc = buckets.get(t);
+    if (!acc) {
+      buckets.set(t, {
+        open: rate,
+        high: rate,
+        low: rate,
+        close: rate,
+        fills: 1,
+        principalTotal: row.principal,
+      });
+    } else {
+      acc.high = Math.max(acc.high, rate);
+      acc.low = Math.min(acc.low, rate);
+      acc.close = rate; // rows are chronological — last write wins
+      acc.fills += 1;
+      acc.principalTotal += row.principal;
+    }
+  }
+  return Array.from(buckets.entries())
+    .sort(([a], [b]) => a - b)
+    .map(([t, acc]) => ({
+      t,
+      open: acc.open,
+      high: acc.high,
+      low: acc.low,
+      close: acc.close,
+      fills: acc.fills,
+      principalTotal: acc.principalTotal.toString(),
+    }));
+}
+
 // A revert is a SEMANTIC answer (e.g. ownerOf on a burned position
 // NFT = "nobody holds it"); a transport/ABI failure is not — the
 // caller must let those 500. viem wraps read reverts in
@@ -250,6 +301,58 @@ async function userPositionLoans(addr) {
       throw new Error(`position-loan walk exceeded the ${WALK_CAP} cap`);
     }
   }
+}
+
+// Cross-status loan-id walk (Rate Desk #1130). getAllLoansPaginated
+// pages over the 1-INDEXED ID SPACE (offset is an id offset, not a
+// row offset; `total` is the highest assigned id), so completeness is
+// judged on `offset + PAGE >= total`, never on page length — pages
+// legitimately come back short where ids were skipped.
+async function allLoanIds() {
+  const ids = [];
+  for (let offset = 0n; ; offset += PAGE) {
+    const [page, total] = await read('getAllLoansPaginated', [offset, PAGE]);
+    ids.push(...page);
+    if (offset + PAGE >= total) return ids;
+    if (ids.length >= WALK_CAP) {
+      throw new Error(`all-loan walk exceeded the ${WALK_CAP} cap`);
+    }
+  }
+}
+
+// Every loan the wallet was EVER a party to — the chain's own
+// append-only userLoanIds index (LoanFacet pushes BOTH parties at
+// init, all statuses, never deletes). getUserLoansPaginated returns
+// (ids slice, total) like the sibling user-offer walk. De-duped: a
+// self-loan (same wallet both sides) lands in the index twice.
+async function userAllLoanIds(addr) {
+  const ids = [];
+  for (let offset = 0n; ids.length < WALK_CAP; offset += PAGE) {
+    const [page, total] = await read('getUserLoansPaginated', [addr, offset, PAGE]);
+    ids.push(...page);
+    if (ids.length >= Number(total) || page.length === 0) {
+      return [...new Set(ids.map((id) => Number(id)))];
+    }
+  }
+  throw new Error(`user-loan walk exceeded the ${WALK_CAP} cap`);
+}
+
+// A loan is the lender-sale TEMP BOOKKEEPING row (never a fresh rate
+// print — §7) when the offer that initiated it is a borrower-style
+// offer linked to an existing loan: exactly the shape mapOffer flags
+// as `isSaleVehicle`, derived live the same way. Production persists
+// the flag onto the loan at LoanInitiated (migration 0029); the fork
+// stub re-derives per request. A deleted/zeroed originating offer
+// reads as not-a-sale — acceptable at fork scale (an accepted sale
+// offer persists; only cancelled offers zero out, and those never
+// initiated a loan).
+async function isSaleVehicleLoan(loan) {
+  const [o, linkedLoanId] = await Promise.all([
+    read('getOffer', [BigInt(loan.offerId)]),
+    read('getOfferLinkedLoanId', [BigInt(loan.offerId)]),
+  ]);
+  if (!o || !o.creator || /^0x0{40}$/i.test(o.creator)) return false;
+  return n(o.offerType) === 1 && n(linkedLoanId) !== 0;
 }
 
 // Rate Desk (#1129) — the worker's optional server-side market scope
@@ -396,11 +499,10 @@ async function handler(req, res) {
     // ERC-20/ERC-20 offers, per-side counts + best headline rates,
     // most-active first. Not frozen by pin mode (production pins only
     // the active feed + freshness cursor). NB the desk's tape route
-    // (/loans/recent) is deliberately NOT stubbed: the stub has no
-    // cross-status loan enumeration (only active-loan walks), and a
-    // tape missing repaid fills would be a wrong answer rather than a
-    // degraded one — the app renders its honest "couldn't load recent
-    // fills" state instead.
+    // (/loans/recent) is deliberately still NOT stubbed: nothing in
+    // the suite asserts on the tape, so the app's honest "couldn't
+    // load recent fills" state stands in — the phase-2 chart/History
+    // routes below cover the cross-status reads the specs DO assert.
     if (parts[0] === 'offers' && parts[1] === 'markets') {
       const [ids, chainNow] = await Promise.all([activeOfferIds(), forkNowSec()]);
       const rows = (await Promise.all(ids.map((id) => mapOffer(id, chainNow)))).filter(
@@ -519,6 +621,112 @@ async function handler(req, res) {
         )
       ).filter(Boolean);
       return json(200, { chainId: CHAIN_ID, side, address: addr, loans, nextBefore: null });
+    }
+
+    // GET /loans/rate-candles?chainId=&lendingAsset=&collateralAsset=
+    //   &durationDays=&interval=&range= — Rate Desk phase 2 (#1130).
+    // Mirrors the worker's handleLoansRateCandles (loanRoutes.ts): all
+    // three market params REQUIRED (a candle series is per-market by
+    // definition), interval/range default 1h/30d and 400 outside the
+    // enums; the 400 mirroring is deliberately loose — the desk only
+    // ever sends valid params. Fill scope matches production exactly:
+    // cross-status loans for the market, ERC-20 both legs, sale
+    // vehicles excluded (see isSaleVehicleLoan). The range lower bound
+    // is judged on the FORK's clock — evm_increaseTime moves fills far
+    // from wall time, and a wall-clock bound would drop every
+    // time-travelled fill from a "30d" window.
+    if (parts[0] === 'loans' && parts[1] === 'rate-candles') {
+      const lend = url.searchParams.get('lendingAsset');
+      const coll = url.searchParams.get('collateralAsset');
+      const daysRaw = url.searchParams.get('durationDays');
+      const days = daysRaw === null ? null : Number(daysRaw);
+      if (
+        (lend !== null && !/^0x[0-9a-f]{40}$/i.test(lend)) ||
+        (coll !== null && !/^0x[0-9a-f]{40}$/i.test(coll)) ||
+        (days !== null && (!Number.isInteger(days) || days < 1 || days > 4385))
+      ) {
+        return json(400, { error: 'bad-market-filter' });
+      }
+      if (lend === null || coll === null || days === null) {
+        return json(400, { error: 'market-filter-required' });
+      }
+      const intervalSec = CANDLE_INTERVALS[url.searchParams.get('interval') ?? '1h'];
+      if (intervalSec === undefined) return json(400, { error: 'bad-interval' });
+      const rangeDays = CANDLE_RANGES[url.searchParams.get('range') ?? '30d'];
+      if (rangeDays === undefined) return json(400, { error: 'bad-range' });
+
+      const [ids, chainNow] = await Promise.all([allLoanIds(), forkNowSec()]);
+      const loans = (await Promise.all(ids.map((id) => mapLoan(Number(id))))).filter(
+        (l) =>
+          l &&
+          l.lendingAsset.toLowerCase() === lend.toLowerCase() &&
+          l.collateralAsset.toLowerCase() === coll.toLowerCase() &&
+          l.durationDays === days &&
+          l.assetType === 0 &&
+          l.collateralAssetType === 0 &&
+          (rangeDays === null || l.startAt >= chainNow - rangeDays * 86400),
+      );
+      // Sale-vehicle probe only for rows that already match the market
+      // — two extra reads per surviving loan, not per loan on the fork.
+      const saleFlags = await Promise.all(loans.map((l) => isSaleVehicleLoan(l)));
+      const fills = loans
+        .filter((_, i) => !saleFlags[i])
+        .map((l) => ({
+          loanId: l.loanId,
+          startAt: l.startAt,
+          rateBps: l.interestRateBps,
+          principal: BigInt(l.principal || '0'),
+        }));
+      return json(200, { chainId: CHAIN_ID, buckets: foldRateCandles(fills, intervalSec) });
+    }
+
+    // GET /loans/by-participant?chainId=&wallet=&limit=&before= — Rate
+    // Desk phase 2 (#1130), the History tab's persisted-participation
+    // view: every loan the wallet ever participated in, ALL statuses,
+    // roles[] aggregated, newest-first loan-id pagination. Production
+    // reads the append-only `loan_participants` table (seeded at
+    // LoanInitiated, appended on every position-NFT transfer, never
+    // deleted). SIMPLIFICATION: the fork tier's data has no
+    // position-NFT-transfer history to replay, so a loan's CURRENT
+    // parties ARE its participants — the chain's own userLoanIds index
+    // (both sides at init, append-only, all statuses) is exactly that
+    // projection, and roles derive from which side(s) the wallet
+    // occupies on the loan struct.
+    if (parts[0] === 'loans' && parts[1] === 'by-participant') {
+      const walletRaw = url.searchParams.get('wallet');
+      if (!walletRaw) return json(400, { error: 'wallet-required' });
+      const wallet = walletRaw.toLowerCase();
+      if (!/^0x[0-9a-f]{40}$/.test(wallet)) {
+        return json(400, { error: 'bad-address' });
+      }
+      const limitRaw = Number(url.searchParams.get('limit'));
+      const limit =
+        Number.isFinite(limitRaw) && limitRaw > 0 ? Math.min(limitRaw, 200) : 50;
+      const beforeRaw = Number(url.searchParams.get('before'));
+      const before = Number.isFinite(beforeRaw) && beforeRaw > 0 ? beforeRaw : null;
+
+      const ids = (await userAllLoanIds(wallet))
+        .filter((id) => before === null || id < before)
+        .sort((a, b) => b - a);
+      const pageIds = ids.slice(0, limit);
+      const loans = (
+        await Promise.all(
+          pageIds.map(async (id) => {
+            const l = await mapLoan(id);
+            if (!l) return null;
+            const roles = [];
+            if (l.borrower.toLowerCase() === wallet) roles.push('borrower');
+            if (l.lender.toLowerCase() === wallet) roles.push('lender');
+            // Sorted, like the worker's deterministic wire shape.
+            return { ...l, roles: roles.sort() };
+          }),
+        )
+      ).filter(Boolean);
+      const nextBefore =
+        pageIds.length === limit && pageIds.length > 0
+          ? pageIds[pageIds.length - 1]
+          : null;
+      return json(200, { chainId: CHAIN_ID, wallet, loans, nextBefore });
     }
 
     // GET /loans/:id?chainId=

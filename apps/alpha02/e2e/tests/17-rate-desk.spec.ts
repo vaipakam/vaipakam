@@ -16,160 +16,22 @@
  *  aggregates live from the fork. The tape route (/loans/recent) is
  *  deliberately not stubbed — the tape shows its honest unavailable
  *  state, which none of these tests assert on.
+ *
+ *  The market/seeding helpers live in lib/desk.ts, shared with spec 18
+ *  (chart + History) so the two desk specs can't drift on conventions.
  */
-import { parseEther, parseUnits } from 'viem';
 import { test, expect, connectWallet } from '../lib/wallet-fixture';
-import {
-  chooseMenuValue,
-  consentAndWaitEnabled,
-  newestOfferIdFor,
-} from '../lib/flows';
+import { chooseMenuValue, consentAndWaitEnabled, newestOfferIdFor } from '../lib/flows';
 import { increaseTime } from '../lib/anvil';
+import { DIAMOND, DIAMOND_ABI_VIEM, WETH, pub } from '../lib/chain';
 import {
-  DIAMOND,
-  DIAMOND_ABI_VIEM,
-  ERC20_MIN_ABI,
-  MOCKS,
-  WETH,
-  forkChain,
-  pub,
-  walletFor,
-} from '../lib/chain';
-import { accountFor, type Role } from '../lib/wallets';
-import type { Page } from '@playwright/test';
-
-const TLIQ = MOCKS!.liquidToken as `0x${string}`;
-const ZERO = '0x0000000000000000000000000000000000000000';
-
-/** Bucket preference for the fresh-tenor pick. 365 is left out to stay
- *  clear of the protocol's offer-duration cap whatever its live value;
- *  30 goes last because it's the app-wide default every other spec
- *  posts into. */
-const BUCKET_PREFERENCE = [60, 90, 14, 180, 7, 30] as const;
-
-/** A WETH/tLIQ tenor bucket with NO live offers on the fork right now.
- *  The ranked view is active-only; treating its lazily-expired GTT
- *  rows as live is a safe over-approximation — it can only skip a
- *  bucket, never return a false-empty one. Each test recomputes, so a
- *  previous test's (or retry's) seeds exclude their bucket
- *  automatically. */
-async function freshTenor(): Promise<number> {
-  const [rankings] = (await pub.readContract({
-    address: DIAMOND,
-    abi: DIAMOND_ABI_VIEM,
-    functionName: 'getActiveOffersByAssetPairRanked',
-    args: [WETH, TLIQ],
-  })) as readonly [readonly { durationDays: bigint }[], bigint];
-  const live = new Set(rankings.map((r) => Number(r.durationDays)));
-  for (const d of BUCKET_PREFERENCE) if (!live.has(d)) return d;
-  throw new Error(
-    'every duration bucket for WETH/tLIQ already has live offers on the fork — no fresh market to test in',
-  );
-}
-
-/** Direct-write seeding (the lib/seed.ts pattern): approve + createOffer
- *  from the role wallet, mirroring offerSchema's canonical
- *  role-asymmetric payload mapping — lender ships floor rate + open
- *  ceiling with amount = the 10% min-partial default; borrower ships a
- *  rate ceiling + zero floor, single-value amount. GTC + Partial, like
- *  the guided flows. */
-async function seedDeskOffer(opts: {
-  role: Role;
-  side: 'lend' | 'borrow';
-  rateBps: number;
-  amountWeth: string;
-  collateralTliq: string;
-  days: number;
-}): Promise<bigint> {
-  const account = accountFor(opts.role);
-  const wallet = walletFor(account);
-  const amount = parseEther(opts.amountWeth);
-  const collateral = parseUnits(opts.collateralTliq, 18);
-  const isLend = opts.side === 'lend';
-  // Escrowed leg per side: lender pre-vaults amountMax of the lending
-  // asset; borrower pre-vaults collateralAmountMax of the collateral.
-  const [token, locked] = isLend
-    ? [WETH, amount]
-    : ([TLIQ, collateral] as const);
-  const approveHash = await wallet.writeContract({
-    address: token,
-    abi: ERC20_MIN_ABI,
-    functionName: 'approve',
-    args: [DIAMOND, locked],
-    account,
-    chain: forkChain,
-  });
-  await pub.waitForTransactionReceipt({ hash: approveHash });
-  const params = {
-    offerType: isLend ? 0 : 1,
-    lendingAsset: WETH,
-    amount: isLend ? (amount / 10n > 0n ? amount / 10n : 1n) : amount,
-    interestRateBps: isLend ? BigInt(opts.rateBps) : 0n,
-    collateralAsset: TLIQ,
-    collateralAmount: collateral,
-    durationDays: BigInt(opts.days),
-    assetType: 0,
-    tokenId: 0n,
-    quantity: 1n,
-    creatorRiskAndTermsConsent: true,
-    prepayAsset: ZERO,
-    collateralAssetType: 0,
-    collateralTokenId: 0n,
-    collateralQuantity: 0n,
-    allowsPartialRepay: true,
-    amountMax: amount,
-    interestRateBpsMax: isLend ? 10_000n : BigInt(opts.rateBps),
-    collateralAmountMax: collateral,
-    periodicInterestCadence: 0,
-    expiresAt: 0n, // GTC
-    fillMode: 0, // Partial
-    allowsPrepayListing: false,
-    allowsParallelSale: false,
-    refinanceTargetLoanId: 0n,
-    useFullTermInterest: false,
-  };
-  const hash = await wallet.writeContract({
-    address: DIAMOND,
-    abi: DIAMOND_ABI_VIEM,
-    functionName: 'createOffer',
-    args: [params],
-    account,
-    chain: forkChain,
-  });
-  await pub.waitForTransactionReceipt({ hash });
-  return newestOfferIdFor(account.address);
-}
-
-async function getOffer(offerId: bigint): Promise<Record<string, unknown>> {
-  return (await pub.readContract({
-    address: DIAMOND,
-    abi: DIAMOND_ABI_VIEM,
-    functionName: 'getOffer',
-    args: [offerId],
-  })) as Record<string, unknown>;
-}
-
-/** Load the WETH/tLIQ market via the header's CUSTOM-pair branch —
- *  deterministic even before anything is seeded (the markets summary
- *  only lists pairs with live offers). The dropdown selection path is
- *  exercised separately by the ticket test. */
-async function openMarketViaCustomPair(page: Page, days: number): Promise<void> {
-  await page.goto('/desk', { waitUntil: 'domcontentloaded' });
-  await chooseMenuValue(page, 'desk-pair', '__custom__');
-  await page.locator('#desk-custom-lend').fill(WETH);
-  await page.locator('#desk-custom-coll').fill(TLIQ);
-  await page.getByRole('button', { name: 'Load market' }).click();
-  await selectTenor(page, days);
-}
-
-/** Tenor chips are scoped to the header's "Term" group — the ticket's
- *  expiry chips reuse the '7d' label. */
-async function selectTenor(page: Page, days: number): Promise<void> {
-  await page
-    .getByRole('group', { name: 'Term' })
-    .getByRole('button', { name: `${days}d`, exact: true })
-    .click();
-}
+  TLIQ,
+  freshTenor,
+  getOffer,
+  openMarketViaCustomPair,
+  seedDeskOffer,
+  selectTenor,
+} from '../lib/desk';
 
 test('Rate Desk nav entry is advanced-only but /desk stays URL-reachable in Basic', async ({
   launchWallet,

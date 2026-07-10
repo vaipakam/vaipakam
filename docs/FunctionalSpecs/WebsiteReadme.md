@@ -1066,7 +1066,40 @@ converge. Its intended behaviour (the test oracle for that surface):
   first. Recent fills for the market are listed honestly: a market with
   no fills says so, and internal bookkeeping from a loan-sale never
   appears as a fill. Positions show under the book with their health
-  status and lead to the existing manage flows. Nothing on this page
+  status and lead to the existing manage flows. A rate-history chart
+  shows the market's **executed** rates over a chosen interval and
+  range, under strict thin-market honesty rules: points exist only
+  where fills actually happened and quiet periods render as visible
+  gaps — nothing is interpolated or synthesized; when the visible range
+  holds only a handful of fills (below a stated density threshold) the
+  chart must present the individual prints as a sparse tape — a stepped
+  line with per-fill markers and a note saying so — rather than
+  candlestick shapes, which would misrepresent a thin market as a
+  liquid one; every plotted bucket's hover detail discloses the number
+  of fills and the total principal it aggregates, never bare
+  open/high/low/close alone; the order book's current quoted mid may be
+  overlaid for context but must be drawn in a visibly distinct style
+  and labelled as a quote — a resting intention, never blended with
+  executed rates; and the chart area shows no daily percent-change
+  ticker — the header states the last executed fill's rate and its age
+  instead. A market with no executed fills says so honestly instead of
+  drawing anything, and internal loan-sale bookkeeping never plots as a
+  fill (the same rule as the tape). On small screens the ladder and
+  ticket remain the primary view with the chart and tape behind an
+  explicit view toggle — density changes, capability never. A History
+  view lists every loan the connected wallet ever participated in — as
+  lender or borrower, including positions acquired by buying or
+  receiving a position token — across every market and every status.
+  History is permanent: repaid, defaulted, and otherwise closed loans
+  remain listed with their final status and the wallet's role(s), and
+  each entry links to the loan's detail view; this is deliberately
+  different from current-holdings views, which follow the present
+  position holder and therefore drop settled or transferred positions.
+  Participation is recorded as append-only history — a later transfer
+  of the position adds the new holder without erasing the earlier
+  participant. Longer histories load in pages on request, and a history
+  that cannot be loaded says so rather than showing a partial list as
+  if it were complete. Nothing on this page
   invents liquidity, queue positions, or price-change percentages the
   protocol cannot back; the page is reachable by link in either mode
   but appears in navigation only in Advanced mode.
