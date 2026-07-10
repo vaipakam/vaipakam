@@ -60,11 +60,15 @@ happen at claim, not at these transitions), so `ownerOf` resolves.
 
 **Non-terminal held credits — an ASSET-AWARE setter (Codex #1136-r1 D6).** The partial-internal-match
 / preclose-top-up `heldForLender +=` sites (loan stays Active, no transition) funnel through
-`LibClaims.creditHeldForLender(loanId, lender, asset, amount)` — NOT `(loanId, amount)`. The setter
-owns the FULL accounting those sites do today: the register, the protocol-tracked deposit tick, AND
-the encumbrance reservation (`encumberLenderProceeds` / the dedicated active-held ledger), so the
-funnel cannot silently drop the reservation that stops the stored lender spending value owed to the
-current holder before claim.
+`LibClaims.creditHeldForLender(loanId, lender, asset, amount, bool alreadyTracked)`. It ALWAYS owns
+the register + the encumbrance reservation (`encumberLenderProceeds` / the dedicated active-held
+ledger). The protocol-tracked deposit tick is CONDITIONAL, because the funding move varies by caller
+(Codex #1136-r2 R2-3): callers whose move already ticked tracking — `vaultDepositERC20From` in
+`PrecloseFacet.transferObligationViaOffer`, `_settleLeg`'s `recordVaultDepositERC20` before the
+partial-match `+=` — pass `alreadyTracked=true`; a Diamond-resident raw transfer passes `false` so
+the setter ticks after the move. (Split `deposit+credit` entry points are the equivalent alternative;
+the mode flag keeps one funnel.) A single unconditional tick would double-count the pre-ticked paths
+or drop it on raw-transfer paths — both break vault accounting at claim/recovery.
 
 ### Invariant B — registry-aware decision on every inline holder payout
 
@@ -75,33 +79,44 @@ Two payout channels:
    `LibCloseoutFreeze.freezeOrPayActiveLender{Resident,FromPayer,FromVault}` helpers (park-or-pay);
    discretionary holder-initiated actions use the hard-block variant (`mustFreezeParty` → revert),
    as Refinance/backstop do.
-2. **Seaport prepay-sale (Codex #1136-r1 D5).** The prepay-collateral-sale path settles inside
-   Seaport, which pays *consideration directly to the current lender/borrower NFT holders* BEFORE
-   the diamond callback flips the loan to `Settled`. A terminal hook runs only AFTER the holder was
-   paid, and a `safeTransfer`/`vaultWithdraw` scan never sees a Seaport consideration recipient. So
-   this channel must be made registry-aware **before the order fills** — the diamond validates/builds
-   the order, so gate the consideration recipients (`mustFreezeParty` → block-or-redirect a frozen
-   holder's consideration) at order construction/validation, not at the post-fill callback.
+2. **Seaport prepay-sale.** The prepay-collateral-sale is a POSITION-MOVEMENT vehicle (the holder
+   lists + Seaport pays consideration directly to them on fill, BEFORE the diamond callback flips the
+   loan to `Settled`), so it is governed by the **#1123 fail-closed movement gate, NOT a new Class B
+   park** (Codex #1136-r1 D5 / r2 R2-1). Crucially, a block-AT-FILL cannot persist a registration: the
+   fill revert rolls back any `mustFreezeParty` write done during validation, so a holder first
+   observed flagged on an attempted fill (oracle up) could wait for an outage and have the still-live
+   listing pay them fail-open. The committed observation is therefore the **LISTING creation** — an
+   ordinary oracle-up tx the holder signs — where the movement gate registers the holder; a later
+   outage-fill of a still-live listing then finds them registered and the fail-closed gate blocks the
+   fill (no rollback problem, the registration already committed at listing). This routes the
+   prepay-sale seller through the SAME #1123 mechanism as the other sale vehicles, gated at listing +
+   fill. A holder flagged AFTER listing and never re-observed is the FR-1 accepted residual (§4).
 
 ### Keystone — a CI guardrail (deploy-sanity test)
 
 In the repo's existing idiom (`SelectorCoverageTest`, `FacetSizeLimitTest`,
 `check-event-coverage.mjs`), a test that scans **all production Solidity — `src/**/*.sol`, libraries
-included, NOT just `src/facets/` (Codex #1136-r1 D1)** — because claim/held mutations already live in
-libraries (`LibCloseoutFreeze` writes claim rows + `heldForLender`, `LibFacet` increments
-`heldForLender`, `LibSwapToRepayIntentSettlement` writes `borrowerClaims`). It FAILS CI on:
+included, NOT just `src/facets/` (Codex #1136-r1 D1)** (claim/held mutations already live in
+`LibCloseoutFreeze`, `LibFacet`, `LibSwapToRepayIntentSettlement`). It FAILS CI on:
 
-- a `{lender,borrower,borrowerSurplus}Claims[…] =` **full-struct assignment**, a claim **field-write
-  via a storage pointer** (`…Claims[…].amount = …` / `.asset = …`, incl. the fold/rewrite paths —
-  Codex #1136-r1 D4), or a `heldForLender[…] +=`, anywhere outside `LibClaims` / the `terminalize`
-  host path, and not on an explicit allowlist; or
-- a `safeTransfer`/`safeTransferFrom`/`vaultWithdrawERC20` whose recipient is `ownerOf(…)`, or a
-  Seaport consideration item constructed to a position-holder, outside the payout helper — unless
-  allowlisted with a one-line reason.
+- **Deferred-payout writes without a CO-LOCATED register (resolves the option-(c) tension — Codex
+  #1136-r2 R2-4).** We do NOT funnel every claim write through a setter (option (c) rejected — callers
+  compute + store their own claim rows around the status change). So the rule is co-location, not a
+  setter mandate: a `{lender,borrower,borrowerSurplus}Claims[…]` full-struct assignment OR field-write
+  (`.amount = …` / `.asset = …`, incl. fold/rewrite — Codex #1136-r1 D4), or a `heldForLender[…] +=`,
+  must sit in a function that ALSO invokes the `terminalize`/`terminalizeFromAny` host (which registers
+  both holders) or `LibClaims.creditHeldForLender` (which registers). A claim/held mutation in a
+  function that neither terminalizes nor credit-registers FAILS CI, unless allowlisted with a reason.
+  (`LibClaims` + the host bodies are exempt.)
+- **Inline holder payouts, ALIAS-AWARE (Codex #1136-r2 R2-2).** A literal `safeTransfer(…, ownerOf(…))`
+  scan misses the common pattern of resolving `ownerOf` into a local and transferring it later
+  (`SwapToRepayFacet:735-744`, the `LibCloseoutFreeze` helpers). So the rule is FUNCTION-SCOPE: any
+  function that resolves `ownerOf(*TokenId)` AND performs a raw `safeTransfer*` / `vaultWithdrawERC20`
+  (to any local) outside the `freezeOrPayActiveLender*` helpers FAILS — plus the Seaport consideration
+  channel, covered via #1123 above. This is a coarse dataflow backstop (a full taint analysis is the
+  ideal); the function-scope ban is the practical, false-positive-tolerant check + a reasoned allowlist.
 
-Enforcing the mutations through checked setters (so a raw write cannot compile) is stronger than a
-regex scan; the design prefers setters where practical and uses the scan as the backstop. This is
-what durably ends the whack-a-mole: a future path that forgets the treatment fails CI.
+This is what durably ends the whack-a-mole: a future path that forgets the treatment fails CI.
 
 ## 3. The EIP-170 tension (the load-bearing design decision)
 
