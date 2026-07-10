@@ -62,6 +62,17 @@ export function formatDate(unixSeconds: number): string {
   });
 }
 
+/** Unix-seconds → compact relative age ("2m ago", "3h ago", "5d ago").
+ *  Used by the Rate Desk tape; clamps future/clock-skew to "just now". */
+export function formatTimeAgo(unixSeconds: number): string {
+  const diff = Math.floor(Date.now() / 1000) - unixSeconds;
+  if (diff < 60) return 'just now';
+  if (diff < 3_600) return `${Math.floor(diff / 60)}m ago`;
+  if (diff < 86_400) return `${Math.floor(diff / 3_600)}h ago`;
+  if (diff < 30 * 86_400) return `${Math.floor(diff / 86_400)}d ago`;
+  return formatDate(unixSeconds);
+}
+
 /** Days remaining until (startTime + durationDays). Negative the
  *  moment the due time passes — Math.floor, NOT ceil: ceil returns -0
  *  for the first 24h past due (and -0 < 0 is false), which showed

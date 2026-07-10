@@ -831,6 +831,121 @@ export const copy = {
     borrowerOffer: 'Borrow request',
   },
 
+  // Rate Desk (#1129) — the advanced-only trading terminal for the
+  // offer book. Vocabulary is rate-first per the #166 ADR: the price
+  // column is always "Rate (APR %)", never "price"; exact bps live in
+  // tooltips only.
+  desk: {
+    title: 'Rate Desk',
+    lede: 'The order book for one market — read the rates, post or amend limit-rate offers, and watch your open orders and positions in one place.',
+    marketLabel: 'Market',
+    tenorLabel: 'Term',
+    customPair: 'Custom pair…',
+    customLend: 'Loan asset address',
+    customCollateral: 'Collateral asset address',
+    marketsUnavailable:
+      'The markets list couldn’t load right now, so pair discovery is limited — enter a pair manually and the book itself can still load.',
+    marketsEmpty:
+      'No live markets right now. Pick a pair and post the first offer with the ticket.',
+    pickPair: 'Pick a market to load its book.',
+    lastFill: 'Last fill',
+    quotedMid: 'Quoted mid',
+    spread: 'Spread',
+    crossed: 'crossed',
+    statUnknown: '—',
+    bookTitle: 'Order book',
+    rateHeading: 'Rate (APR %)',
+    sizeHeading: 'Size',
+    cumHeading: 'Σ',
+    asksHeading: 'Lender offers (asks)',
+    bidsHeading: 'Borrow requests (bids)',
+    bookEmpty: 'No open offers for this market yet — yours can be the first.',
+    bookUnavailable:
+      'We couldn’t load the order book right now. Please try again in a moment.',
+    bookIndexedCopy:
+      'Live chain read unavailable — showing the indexed copy of the book, which can lag the chain.',
+    yourOrderMark: 'Your order at this rate',
+    takeAsk: 'Borrow this',
+    takeBid: 'Lend to this',
+    rowPrefills:
+      'Tap a rate to pre-fill the ticket. Taking the top of the book goes through the same guided review as Borrow/Lend.',
+    tapeTitle: 'Recent fills',
+    tapeEmpty: 'No fills yet for this market.',
+    tapeUnavailable: 'We couldn’t load recent fills right now.',
+    ticket: {
+      title: 'Order ticket',
+      sideLend: 'Lend',
+      sideBorrow: 'Borrow',
+      amountLend: 'Amount to lend',
+      amountBorrow: 'Amount to borrow',
+      rateLend: 'Rate — minimum you’ll accept (APR %)',
+      rateBorrow: 'Rate — maximum you’ll pay (APR %)',
+      collateralRequire: 'Collateral you require',
+      collateralLock: 'Collateral you lock',
+      expiryLabel: 'Expiry',
+      expiryGtc: 'GTC',
+      expiryCustom: 'Custom…',
+      expiryInvalid: 'The custom expiry must be a future date and time.',
+      fillModeLabel: 'Fill mode',
+      fillPartial: 'Partial',
+      fillAon: 'AON',
+      fillIoc: 'IOC',
+      fillPartialHint: 'Partial: the offer can fill in pieces down to a minimum.',
+      fillAonHint: 'All-or-nothing: fills only as one whole loan at the full amount.',
+      fillIocHint: 'Immediate-or-cancel: rests only until its expiry — an expiry is required.',
+      iocNeedsExpiry: 'IOC orders need an expiry — pick 24h, 7d, or a custom time.',
+      tenorNote: (label: string) =>
+        `Posting into the selected ${label} market — change the term with the chips above.`,
+      overDurationCap: (max: number) =>
+        `The protocol currently caps offer duration at ${max} days — pick a shorter term above.`,
+      post: 'Post order',
+      posting: 'Posting…',
+      posted: 'Order posted',
+      postedNext:
+        'Your offer is live on the book. Manage it under Open orders below — amend or cancel any time before it fills.',
+      securityBlocked: (leg: string, reasons: string[]) =>
+        `Posting is held: an independent security check flags the ${leg} (${reasons.join('; ')}).`,
+      securityUnknown: (leg: string) =>
+        `Posting is held until the independent security check for the ${leg} succeeds.`,
+    },
+    orders: {
+      tab: 'Open orders',
+      empty: 'No open orders. Post one with the ticket.',
+      unavailable: 'We couldn’t load your open orders right now.',
+      heldNotCreated: 'Held — managed by its creator',
+      cancel: 'Cancel',
+      cancelling: 'Cancelling…',
+      amend: 'Amend',
+      amendTitle: 'Amend in place — same offer, same position, one transaction.',
+      amendLoadFailed:
+        'We couldn’t read this offer’s live values, and amending must start from them. Please try again.',
+      amendMinAmount: 'Min amount',
+      amendMaxAmount: 'Max amount',
+      amendRate: 'Rate (APR %)',
+      amendRateMax: 'Rate max (APR %)',
+      amendCollateral: 'Collateral',
+      amendCollateralMax: 'Collateral max',
+      amendNoChange: 'Nothing changed yet.',
+      amendInvalid: 'Each minimum must be at or below its maximum, and the max amount can’t drop below what’s already filled.',
+      amendGrowNote: (amount: string, symbol: string) =>
+        `Growing this order locks ${amount} ${symbol} more from your wallet — it needs a token approval first.`,
+      approveFirst: 'Approve first',
+      approving: 'Approving…',
+      save: 'Save changes',
+      saving: 'Amending…',
+      amended: 'Order amended.',
+    },
+    positions: {
+      tab: 'Positions',
+      empty: 'No open positions in this wallet.',
+      unavailable: 'We couldn’t load your positions right now.',
+      health: 'Health',
+      notPriced: 'No auto-liquidation',
+      manage: 'Manage',
+      allPositions: 'All positions →',
+    },
+  },
+
   vpfi: {
     title: 'VPFI fee discounts',
     optional:

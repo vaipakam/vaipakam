@@ -101,14 +101,60 @@ export interface ActiveOffersPage {
   nextBefore: number | null;
 }
 
+/** Optional server-side market scoping (Rate Desk #1129): the worker
+ *  filters on the exact (pair, tenor) triple, riding a purpose-built
+ *  index. Client-filtering the GLOBAL page instead would silently
+ *  blank any market whose rows sit past the 200-row page cap. */
+export interface MarketScope {
+  lendingAsset?: string;
+  collateralAsset?: string;
+  durationDays?: number;
+}
+
+function applyMarketScope(params: URLSearchParams, scope: MarketScope): void {
+  if (scope.lendingAsset) params.set('lendingAsset', scope.lendingAsset.toLowerCase());
+  if (scope.collateralAsset) {
+    params.set('collateralAsset', scope.collateralAsset.toLowerCase());
+  }
+  if (scope.durationDays !== undefined) {
+    params.set('durationDays', String(scope.durationDays));
+  }
+}
+
 export function fetchActiveOffers(
   chainId: number,
-  opts: { limit?: number; before?: number } = {},
+  opts: { limit?: number; before?: number } & MarketScope = {},
 ): Promise<ActiveOffersPage | null> {
   const params = new URLSearchParams({ chainId: String(chainId) });
   if (opts.limit) params.set('limit', String(opts.limit));
   if (opts.before) params.set('before', String(opts.before));
+  applyMarketScope(params, opts);
   return getJson<ActiveOffersPage>(`/offers/active?${params}`);
+}
+
+/** One market row from `GET /offers/markets` — a distinct ERC-20/ERC-20
+ *  (lendingAsset, collateralAsset, durationDays) triple with live-offer
+ *  counts and per-side best headline rates. The Rate Desk's pair chips
+ *  + tenor emphasis derive from this endpoint (never from walking the
+ *  paginated active feed, whose page cap would drop markets). */
+export interface MarketSummary {
+  lendingAsset: string;
+  collateralAsset: string;
+  durationDays: number;
+  lenderOffers: number;
+  borrowerOffers: number;
+  /** Lowest lender floor rate (bps) — best ask. Null when no lender side. */
+  bestAskBps: number | null;
+  /** Highest borrower ceiling rate (bps) — best bid. Null when no borrower side. */
+  bestBidBps: number | null;
+}
+
+export function fetchOffersMarkets(
+  chainId: number,
+): Promise<{ chainId: number; markets: MarketSummary[] } | null> {
+  return getJson<{ chainId: number; markets: MarketSummary[] }>(
+    `/offers/markets?chainId=${chainId}`,
+  );
 }
 
 export interface CreatorOffersPage {
@@ -237,6 +283,32 @@ export function fetchLoanById(
   loanId: number,
 ): Promise<IndexedLoan | null> {
   return getJson<IndexedLoan>(`/loans/${loanId}?chainId=${chainId}`);
+}
+
+export interface RecentLoansPage {
+  chainId: number;
+  loans: IndexedLoan[];
+  nextBefore: number | null;
+}
+
+/** Cross-status recent loans, optionally market-scoped server-side —
+ *  the Rate Desk's tape (executed fills for one (pair, tenor) market).
+ *  `excludeSaleVehicles` drops the lender-sale temp bookkeeping loans:
+ *  a secondary position sale is not a fresh rate print. */
+export function fetchRecentLoans(
+  chainId: number,
+  opts: {
+    limit?: number;
+    before?: number;
+    excludeSaleVehicles?: boolean;
+  } & MarketScope = {},
+): Promise<RecentLoansPage | null> {
+  const params = new URLSearchParams({ chainId: String(chainId) });
+  if (opts.limit) params.set('limit', String(opts.limit));
+  if (opts.before) params.set('before', String(opts.before));
+  if (opts.excludeSaleVehicles) params.set('excludeSaleVehicles', '1');
+  applyMarketScope(params, opts);
+  return getJson<RecentLoansPage>(`/loans/recent?${params}`);
 }
 
 /** Activity event row — mirrors the worker's shape (see apps/defi

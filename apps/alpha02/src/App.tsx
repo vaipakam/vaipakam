@@ -15,6 +15,7 @@ import { Positions } from './pages/Positions';
 import { PositionDetails } from './pages/PositionDetails';
 import { Claims } from './pages/Claims';
 import { Offers } from './pages/Offers';
+import { Desk } from './pages/Desk';
 import { Vault } from './pages/Vault';
 import { Activity } from './pages/Activity';
 import { Vpfi } from './pages/Vpfi';
@@ -36,6 +37,7 @@ export function App() {
         <Route path="/positions/:loanId" element={<PositionDetails />} />
         <Route path="/claims" element={<Claims />} />
         <Route path="/offers" element={<Offers />} />
+        <Route path="/desk" element={<Desk />} />
         <Route path="/vault" element={<Vault />} />
         <Route path="/activity" element={<Activity />} />
         <Route path="/vpfi" element={<Vpfi />} />
@@ -59,6 +61,8 @@ export function App() {
         <Route path="/claim" element={<Navigate to="/claims" replace />} />
         <Route path="/claim-center" element={<Navigate to="/claims" replace />} />
         <Route path="/offer-book" element={<Navigate to="/offers" replace />} />
+        <Route path="/trade" element={<Navigate to="/desk" replace />} />
+        <Route path="/terminal" element={<Navigate to="/desk" replace />} />
         <Route path="/vpfi-vault" element={<Navigate to="/vpfi" replace />} />
         <Route path="/nft-rental" element={<Navigate to="/rent" replace />} />
         <Route path="/vault-assets" element={<Navigate to="/vault" replace />} />
