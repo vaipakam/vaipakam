@@ -692,15 +692,23 @@ async function handler(req, res) {
     // GET /loans/by-participant?chainId=&wallet=&limit=&before= — Rate
     // Desk phase 2 (#1130), the History tab's persisted-participation
     // view: every loan the wallet ever participated in, ALL statuses,
-    // roles[] aggregated, newest-first loan-id pagination. Production
-    // reads the append-only `loan_participants` table (seeded at
-    // LoanInitiated, appended on every position-NFT transfer, never
-    // deleted). SIMPLIFICATION: the fork tier's data has no
-    // position-NFT-transfer history to replay, so a loan's CURRENT
-    // parties ARE its participants — the chain's own userLoanIds index
-    // (both sides at init, append-only, all statuses) is exactly that
-    // projection, and roles derive from which side(s) the wallet
-    // occupies on the loan struct.
+    // roles[] aggregated. Production reads the append-only
+    // `loan_participants` table (seeded at LoanInitiated, appended on
+    // every position-NFT transfer, never deleted). SIMPLIFICATION: the
+    // fork tier's data has no position-NFT-transfer history to replay,
+    // so a loan's CURRENT parties ARE its participants — the chain's
+    // own userLoanIds index (both sides at init, append-only, all
+    // statuses) is exactly that projection, roles derive from which
+    // side(s) the wallet occupies on the loan struct, and the loan's
+    // startAt stands in for the worker's MAX(from_at) participation
+    // time (participation began at init — there are no transfers).
+    //
+    // Mirrors the worker's round-3 shape (Codex #1139): desk scoping
+    // (ERC-20 both legs, sale vehicles excluded — the participants
+    // SOURCE stays append-everything, the desk ROUTE scopes), ordering
+    // by newest participation with loan-id tiebreak, and the composite
+    // `before=<participatedAt>_<loanId>` cursor with `nextBefore` in
+    // the same encoding.
     if (parts[0] === 'loans' && parts[1] === 'by-participant') {
       const walletRaw = url.searchParams.get('wallet');
       if (!walletRaw) return json(400, { error: 'wallet-required' });
@@ -711,29 +719,41 @@ async function handler(req, res) {
       const limitRaw = Number(url.searchParams.get('limit'));
       const limit =
         Number.isFinite(limitRaw) && limitRaw > 0 ? Math.min(limitRaw, 200) : 50;
-      const beforeRaw = Number(url.searchParams.get('before'));
-      const before = Number.isFinite(beforeRaw) && beforeRaw > 0 ? beforeRaw : null;
+      const beforeRaw = url.searchParams.get('before');
+      const beforeMatch =
+        beforeRaw === null ? null : /^(\d+)_(\d+)$/.exec(beforeRaw);
+      const before = beforeMatch
+        ? { at: Number(beforeMatch[1]), loanId: Number(beforeMatch[2]) }
+        : null;
 
-      const ids = (await userAllLoanIds(wallet))
-        .filter((id) => before === null || id < before)
-        .sort((a, b) => b - a);
-      const pageIds = ids.slice(0, limit);
-      const loans = (
-        await Promise.all(
-          pageIds.map(async (id) => {
-            const l = await mapLoan(id);
-            if (!l) return null;
-            const roles = [];
-            if (l.borrower.toLowerCase() === wallet) roles.push('borrower');
-            if (l.lender.toLowerCase() === wallet) roles.push('lender');
-            // Sorted, like the worker's deterministic wire shape.
-            return { ...l, roles: roles.sort() };
-          }),
+      const ids = await userAllLoanIds(wallet);
+      const mapped = (await Promise.all(ids.map((id) => mapLoan(id)))).filter(
+        (l) => l && l.assetType === 0 && l.collateralAssetType === 0,
+      );
+      // Sale-vehicle probe only for rows that already passed the cheap
+      // ERC-20 scope check — same idiom as the rate-candles route above.
+      const saleFlags = await Promise.all(mapped.map((l) => isSaleVehicleLoan(l)));
+      const rows = mapped
+        .filter((_, i) => !saleFlags[i])
+        .map((l) => ({ l, at: l.startAt }))
+        .filter(
+          ({ l, at }) =>
+            before === null ||
+            at < before.at ||
+            (at === before.at && l.loanId < before.loanId),
         )
-      ).filter(Boolean);
+        .sort((a, b) => b.at - a.at || b.l.loanId - a.l.loanId);
+      const page = rows.slice(0, limit);
+      const loans = page.map(({ l, at }) => {
+        const roles = [];
+        if (l.borrower.toLowerCase() === wallet) roles.push('borrower');
+        if (l.lender.toLowerCase() === wallet) roles.push('lender');
+        // Sorted, like the worker's deterministic wire shape.
+        return { ...l, participatedAt: at, roles: roles.sort() };
+      });
       const nextBefore =
-        pageIds.length === limit && pageIds.length > 0
-          ? pageIds[pageIds.length - 1]
+        page.length === limit && page.length > 0
+          ? `${page[page.length - 1].at}_${page[page.length - 1].l.loanId}`
           : null;
       return json(200, { chainId: CHAIN_ID, wallet, loans, nextBefore });
     }

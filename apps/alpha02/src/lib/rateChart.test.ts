@@ -7,12 +7,14 @@ import type { RateCandleBucket } from '../data/indexer';
 import {
   INTERVAL_SECONDS,
   SPARSE_FILLS_THRESHOLD,
+  WHITESPACE_SLOT_CAP,
   chartEmptyKind,
   fillPointsFromTape,
   isSparseTape,
   newestPrint,
   tapeCoversSparseFills,
   totalFills,
+  whitespaceBucketTimes,
   type TapeFillLike,
 } from './rateChart';
 
@@ -205,5 +207,49 @@ describe('sparse-mode per-fill markers from the tape (#1139)', () => {
         '18014398509481988',
       );
     });
+  });
+});
+
+describe('whitespaceBucketTimes (#1139 round-3 — §5.3 rule 1, gaps stay gaps)', () => {
+  const H = INTERVAL_SECONDS['1h'];
+
+  it('returns [] with no occupied slots, one slot, or adjacent slots', () => {
+    expect(whitespaceBucketTimes([], H)).toEqual([]);
+    expect(whitespaceBucketTimes([5 * H], H)).toEqual([]);
+    expect(whitespaceBucketTimes([0, H], H)).toEqual([]);
+  });
+
+  it('enumerates every empty grid slot strictly between the endpoints', () => {
+    expect(whitespaceBucketTimes([0, 4 * H], H)).toEqual([H, 2 * H, 3 * H]);
+    // A filled middle bucket is never emitted as whitespace.
+    expect(whitespaceBucketTimes([0, 2 * H, 4 * H], H)).toEqual([H, 3 * H]);
+  });
+
+  it('folds exact fill times onto the grid and dedupes same-bucket fills', () => {
+    // Two fills in bucket 0, one in bucket 2H — only bucket H is empty,
+    // and no whitespace time can collide with a fill time (an occupied
+    // slot is excluded by construction).
+    expect(whitespaceBucketTimes([100, 200, 2 * H + 5], H)).toEqual([H]);
+  });
+
+  it('is order-insensitive', () => {
+    expect(whitespaceBucketTimes([3 * H, 0], H)).toEqual([H, 2 * H]);
+  });
+
+  it('caps defensively: an extreme span yields no whitespace at all', () => {
+    // Exactly at the cap → still generated…
+    const atCap = whitespaceBucketTimes([0, (WHITESPACE_SLOT_CAP + 1) * H], H);
+    expect(atCap).toHaveLength(WHITESPACE_SLOT_CAP);
+    expect(atCap[0]).toBe(H);
+    expect(atCap[atCap.length - 1]).toBe(WHITESPACE_SLOT_CAP * H);
+    // …one slot beyond → skipped entirely (points render adjacent, the
+    // pre-whitespace behaviour — no price is fabricated either way).
+    expect(
+      whitespaceBucketTimes([0, (WHITESPACE_SLOT_CAP + 2) * H], H),
+    ).toEqual([]);
+  });
+
+  it('guards a non-positive interval', () => {
+    expect(whitespaceBucketTimes([0, 100], 0)).toEqual([]);
   });
 });

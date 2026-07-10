@@ -85,6 +85,58 @@ export function chartEmptyKind(
   return 'range';
 }
 
+/** Defensive ceiling on generated whitespace slots (see
+ *  whitespaceBucketTimes). Past this the series simply gets no
+ *  whitespace — lightweight-charts then renders the filled points
+ *  adjacent (the pre-whitespace behaviour). TRADEOFF, on purpose:
+ *  beyond the cap the honest-gap rendering degrades rather than the
+ *  page allocating unbounded arrays (1h buckets over range=all across
+ *  months would mint thousands of slots); realistic testnet ranges sit
+ *  far below it, and no price is ever fabricated either way. */
+export const WHITESPACE_SLOT_CAP = 2000;
+
+/**
+ * §5.3 rule 1 — gaps STAY gaps. Bucket-grid times for every EMPTY slot
+ * strictly between the first and last OCCUPIED slot, for use as
+ * lightweight-charts whitespace data (`{ time }`-only entries — a
+ * reserved x-axis slot with no bar/point drawn). Without them the time
+ * scale only knows the executed buckets, so a quiet day/hour compresses
+ * away instead of rendering as visible empty space.
+ *
+ * This is NOT interpolation: a whitespace entry carries no price — it
+ * is purely a time-scale slot, so nothing synthetic is ever plotted.
+ *
+ * `occupiedTimes` may be exact fill times (sparse tape mode) or bucket
+ * starts (candle mode) — each is folded onto the interval grid, so a
+ * grid slot holding any real print is never emitted as whitespace (no
+ * time collisions with the data series).
+ */
+export function whitespaceBucketTimes(
+  occupiedTimes: readonly number[],
+  intervalSec: number,
+): number[] {
+  if (occupiedTimes.length === 0 || intervalSec <= 0) return [];
+  const occupied = new Set<number>();
+  for (const t of occupiedTimes) {
+    occupied.add(Math.floor(t / intervalSec) * intervalSec);
+  }
+  let min = Infinity;
+  let max = -Infinity;
+  for (const t of occupied) {
+    if (t < min) min = t;
+    if (t > max) max = t;
+  }
+  // Candidate slots strictly between the endpoints; cap check before
+  // the loop so an extreme span costs nothing (see WHITESPACE_SLOT_CAP).
+  const between = (max - min) / intervalSec - 1;
+  if (between <= 0 || between > WHITESPACE_SLOT_CAP) return [];
+  const out: number[] = [];
+  for (let t = min + intervalSec; t < max; t += intervalSec) {
+    if (!occupied.has(t)) out.push(t);
+  }
+  return out;
+}
+
 /** The tape fields the sparse-mode per-fill markers need — a subset of
  *  the data layer's IndexedLoan (kept structural so this module stays
  *  hook- and fetch-free). */

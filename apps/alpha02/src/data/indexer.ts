@@ -403,12 +403,19 @@ export type ParticipantRole = 'lender' | 'borrower';
  *  filtered, so a repaid+claimed lender position stays visible. */
 export interface IndexedParticipantLoan extends IndexedLoan {
   roles: ParticipantRole[];
+  /** When the wallet's newest participation on the loan was observed
+   *  (unix seconds) — the value the route's newest-participation
+   *  ordering and cursor run on. */
+  participatedAt: number;
 }
 
 export interface ParticipantLoansHistoryPage {
   chainId: number;
   loans: IndexedParticipantLoan[];
-  nextBefore: number | null;
+  /** Opaque composite cursor (`<participatedAt>_<loanId>`) matching the
+   *  route's (participation time DESC, loan_id DESC) ordering — pass
+   *  back verbatim as `before` for the next page. */
+  nextBefore: string | null;
 }
 
 /** A wallet's PERMANENT desk history — every loan the wallet ever
@@ -420,14 +427,14 @@ export interface ParticipantLoansHistoryPage {
 export function fetchLoansByParticipant(
   chainId: number,
   wallet: string,
-  opts: { limit?: number; before?: number } = {},
+  opts: { limit?: number; before?: string } = {},
 ): Promise<ParticipantLoansHistoryPage | null> {
   const params = new URLSearchParams({
     chainId: String(chainId),
     wallet: wallet.toLowerCase(),
   });
   if (opts.limit) params.set('limit', String(opts.limit));
-  if (opts.before) params.set('before', String(opts.before));
+  if (opts.before) params.set('before', opts.before);
   return getJson<ParticipantLoansHistoryPage>(
     `/loans/by-participant?${params}`,
   );

@@ -2,9 +2,11 @@
  * Rate Desk executed-rate chart (#1130 phase 2), per the §5.3
  * thin-market honesty rules — every one of them load-bearing:
  *
- *  1. Candles exist only where fills exist. The series gets exactly
- *     the buckets the indexer returns — gaps render as gaps, nothing
- *     is interpolated.
+ *  1. Candles exist only where fills exist. The series gets the
+ *     buckets the indexer returns plus { time }-only WHITESPACE slots
+ *     for the empty buckets between them — gaps render as visible
+ *     gaps instead of compressing away, and nothing is interpolated
+ *     (whitespace carries no price).
  *  2. Below SPARSE_FILLS_THRESHOLD fills in the loaded range the chart
  *     drops to a step-line + per-fill markers ("sparse tape") — OHLC
  *     shapes drawn from a handful of prints would be theatre.
@@ -52,6 +54,7 @@ import {
   isSparseTape,
   newestPrint,
   totalFills,
+  whitespaceBucketTimes,
 } from '../../lib/rateChart';
 import {
   formatBpsAsPercent,
@@ -237,11 +240,23 @@ export default function RateChart({
         lastValueVisible: true,
         priceFormat,
       });
+      // §5.3 rule 1 — gaps stay gaps (Codex #1139 round-3): whitespace
+      // ({ time }-only, NO price — not interpolation) at every empty
+      // bucket-grid slot between the first and last print, so quiet
+      // stretches render as visible empty space instead of the fills
+      // compressing together. Works for both point sources: exact fill
+      // times (tape-backed) are folded onto the grid inside the helper.
       line.setData(
-        points.map((p) => ({
-          time: p.t as UTCTimestamp,
-          value: ('close' in p ? p.close : p.rateBps) / 100,
-        })),
+        [
+          ...points.map((p) => ({
+            time: p.t as UTCTimestamp,
+            value: ('close' in p ? p.close : p.rateBps) / 100,
+          })),
+          ...whitespaceBucketTimes(
+            points.map((p) => p.t),
+            INTERVAL_SECONDS[interval],
+          ).map((t) => ({ time: t as UTCTimestamp })),
+        ].sort((a, b) => (a.time as number) - (b.time as number)),
       );
       createSeriesMarkers(
         line,
@@ -265,14 +280,25 @@ export default function RateChart({
         priceLineVisible: false,
         priceFormat,
       });
+      // §5.3 rule 1 (Codex #1139 round-3) — same whitespace treatment
+      // as the sparse branch: empty buckets between the first and last
+      // fill become { time }-only slots, so a candle-free day renders
+      // as a visible gap rather than adjacent candles. No prices are
+      // synthesized — whitespace is a time-scale slot, nothing more.
       series.setData(
-        buckets.map((b) => ({
-          time: b.t as UTCTimestamp,
-          open: b.open / 100,
-          high: b.high / 100,
-          low: b.low / 100,
-          close: b.close / 100,
-        })),
+        [
+          ...buckets.map((b) => ({
+            time: b.t as UTCTimestamp,
+            open: b.open / 100,
+            high: b.high / 100,
+            low: b.low / 100,
+            close: b.close / 100,
+          })),
+          ...whitespaceBucketTimes(
+            buckets.map((b) => b.t),
+            INTERVAL_SECONDS[interval],
+          ).map((t) => ({ time: t as UTCTimestamp })),
+        ].sort((a, b) => (a.time as number) - (b.time as number)),
       );
     }
 

@@ -368,14 +368,16 @@ export function useDeskCandles(
  *  (whose queryFn must not return plain null/undefined). */
 interface DeskHistoryPage {
   rows: IndexedParticipantLoan[] | null;
-  nextBefore: number | null;
+  /** Composite (participation-time, loan-id) cursor, opaque here —
+   *  passed back verbatim as the next page's `before`. */
+  nextBefore: string | null;
 }
 
 const HISTORY_PAGE_SIZE = 25;
 
 /** The wallet's PERMANENT desk history (#1130) — every loan it ever
- *  participated in, ALL statuses, newest first, via the indexer's
- *  historical-participant route (`/loans/by-participant`). Deliberately
+ *  participated in, ALL statuses, newest participation first, via the
+ *  indexer's historical-participant route (`/loans/by-participant`). Deliberately
  *  market-AGNOSTIC: it is the wallet's desk history, not the selected
  *  market's. Paginated: `rows` accumulates the loaded pages;
  *  `loadMore()` follows `nextBefore`. `rows === null` = unavailable
@@ -386,7 +388,7 @@ export function useDeskHistory(wallet: string | undefined) {
   const q = useInfiniteQuery({
     queryKey: ['deskHistory', readChain.chainId, wallet?.toLowerCase()],
     enabled: wallet !== undefined,
-    initialPageParam: undefined as number | undefined,
+    initialPageParam: undefined as string | undefined,
     getNextPageParam: (last: DeskHistoryPage) => last.nextBefore ?? undefined,
     queryFn: async ({ pageParam }): Promise<DeskHistoryPage> => {
       if (!indexerConfigured()) return { rows: null, nextBefore: null };

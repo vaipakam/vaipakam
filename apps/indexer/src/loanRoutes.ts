@@ -1094,10 +1094,10 @@ export async function handleLoansRateCandles(
 
 /**
  * Rate Desk phase 2 (#1130) — GET /loans/by-participant
- *   ?chainId=8453&wallet=0x..&limit=50&before=<loan_id>
+ *   ?chainId=8453&wallet=0x..&limit=50&before=<participatedAt>_<loanId>
  *
- * → { chainId, wallet, loans: [{ ...loanToJson, roles: ['lender'|'borrower'] }],
- *     nextBefore }
+ * → { chainId, wallet, loans: [{ ...loanToJson, participatedAt,
+ *     roles: ['lender'|'borrower'] }], nextBefore }
  *
  * HISTORICAL-participant view backing the desk's History tab
  * (ProRateTerminalDesign.md §3 History row): every loan — ANY status — where
@@ -1111,8 +1111,14 @@ export async function handleLoansRateCandles(
  * Activity.tsx:72-74 documents).
  *
  * `roles` aggregates the wallet's participation roles on that loan (a wallet
- * can be both sides, e.g. it bought the counterparty NFT). Newest-first
- * loan_id pagination, same idiom as the sibling wallet routes.
+ * can be both sides, e.g. it bought the counterparty NFT).
+ *
+ * Ordering + pagination (Codex #1139 round-3): newest PARTICIPATION first —
+ * MAX(from_at) over the wallet's rows on the loan, DESC, loan_id DESC as
+ * the stable tiebreak. Loan-id-only ordering buried a recent transfer into
+ * an older loan id behind older participation in newer ids. The cursor is
+ * composite to match: `before=<participatedAt>_<loanId>`, strict
+ * lexicographic less-than; `nextBefore` is returned in the same encoding.
  */
 export async function handleLoansByHistoricalParticipant(
   req: Request,
@@ -1121,7 +1127,7 @@ export async function handleLoansByHistoricalParticipant(
   const url = new URL(req.url);
   const chainId = parseChainId(url.searchParams.get('chainId')) ?? 8453;
   const limit = parseLimit(url.searchParams.get('limit'));
-  const before = parseBefore(url.searchParams.get('before'));
+  const before = parseParticipationCursor(url.searchParams.get('before'));
   const walletRaw = url.searchParams.get('wallet');
   if (!walletRaw) {
     return jsonResponse({ error: 'wallet-required' }, 400);
@@ -1137,36 +1143,62 @@ export async function handleLoansByHistoricalParticipant(
     return jsonResponse({ error: 'chain-not-configured' }, 503);
   }
   try {
-    const conds = ['p.chain_id = ?', 'p.wallet = ?'];
+    // Desk scoping lives in the ROUTE, not the table (Codex #1139 round-3):
+    // `loan_participants` deliberately stays append-EVERYTHING — every
+    // LoanInitiated / position transfer, any asset shape — so a future
+    // all-history consumer can reuse it unfiltered. The desk's History tab
+    // is an ERC-20/ERC-20, non-sale-vehicle surface (the same scope the
+    // tape and candle routes apply); without these three predicates
+    // NFT-leg loans and internal sale vehicles would present as desk
+    // history.
+    const conds = [
+      'p.chain_id = ?',
+      'p.wallet = ?',
+      'l.asset_type = 0',
+      'l.collateral_asset_type = 0',
+      'l.is_sale_vehicle = 0',
+    ];
     const binds: (number | string)[] = [chainId, wallet];
+    // The composite cursor compares against the per-loan MAX(from_at)
+    // aggregate, so it must live in HAVING, not WHERE — OR-expanded
+    // lexicographic (participated_at, loan_id) < (:t, :id).
+    let having = '';
     if (before) {
-      conds.push('p.loan_id < ?');
-      binds.push(before);
+      having = `HAVING MAX(p.from_at) < ?
+                OR (MAX(p.from_at) = ? AND l.loan_id < ?)`;
+      binds.push(before.participatedAt, before.participatedAt, before.loanId);
     }
     // One row per loan; GROUP_CONCAT folds the wallet's roles on it. The
-    // participation index (chain_id, wallet, loan_id) serves filter +
-    // newest-first pagination; the loans join is a PK lookup per row.
+    // participation index (chain_id, wallet, loan_id) serves the filter;
+    // the newest-participation sort runs over just the wallet's own rows,
+    // and the loans join is a PK lookup per row.
     const rows = await env.DB.prepare(
-      `SELECT l.*, GROUP_CONCAT(DISTINCT p.role) AS participant_roles
+      `SELECT l.*, GROUP_CONCAT(DISTINCT p.role) AS participant_roles,
+              MAX(p.from_at) AS participated_at
        FROM loan_participants p
        JOIN loans l ON l.chain_id = p.chain_id AND l.loan_id = p.loan_id
        WHERE ${conds.join(' AND ')}
        GROUP BY l.chain_id, l.loan_id
-       ORDER BY l.loan_id DESC
+       ${having}
+       ORDER BY participated_at DESC, l.loan_id DESC
        LIMIT ?`,
     )
       .bind(...binds, limit)
-      .all<LoanRow & { participant_roles: string }>();
+      .all<LoanRow & { participant_roles: string; participated_at: number }>();
     const results = rows.results ?? [];
     const loans = results.map((row) => ({
       ...loanToJson(row),
+      // When the wallet's newest participation on the loan was observed
+      // (unix seconds) — the value the ordering + cursor run on.
+      participatedAt: row.participated_at,
       // Sorted for a deterministic wire shape (GROUP_CONCAT order is
       // unspecified in SQLite).
       roles: (row.participant_roles ?? '').split(',').filter(Boolean).sort(),
     }));
+    const last = results.length > 0 ? results[results.length - 1] : null;
     const next =
-      results.length === limit && results.length > 0
-        ? results[results.length - 1].loan_id
+      last !== null && results.length === limit
+        ? `${last.participated_at}_${last.loan_id}`
         : null;
     return jsonResponse({ chainId, wallet, loans, nextBefore: next });
   } catch (err) {
@@ -1463,4 +1495,27 @@ function parseBefore(raw: string | null): number | null {
   if (!raw) return null;
   const n = Number.parseInt(raw, 10);
   return Number.isFinite(n) && n > 0 ? n : null;
+}
+
+/** Composite cursor for /loans/by-participant — `<participatedAt>_<loanId>`,
+ *  matching that route's (newest-participation DESC, loan_id DESC) ordering
+ *  (Codex #1139 round-3). A plain loan-id cursor cannot page that order: a
+ *  recent transfer into an older loan id sorts to the top, and a
+ *  loan-id-only `before` would skip or repeat it. Malformed values are
+ *  treated as "no cursor" — first page — same lenient posture as
+ *  parseBefore. */
+function parseParticipationCursor(
+  raw: string | null,
+): { participatedAt: number; loanId: number } | null {
+  if (!raw) return null;
+  const m = /^(\d+)_(\d+)$/.exec(raw);
+  if (!m) return null;
+  const participatedAt = Number.parseInt(m[1], 10);
+  const loanId = Number.parseInt(m[2], 10);
+  return Number.isFinite(participatedAt) &&
+    participatedAt >= 0 &&
+    Number.isFinite(loanId) &&
+    loanId > 0
+    ? { participatedAt, loanId }
+    : null;
 }
