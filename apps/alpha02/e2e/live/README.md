@@ -43,6 +43,7 @@ SITE_URL=https://<branch-preview>.workers.dev node live-dryrun-review.mjs
 | `live-dryrun-review.mjs` | #1058/#1059 — drives a fresh lend offer to the review step and asserts the pre-sign dry-run footer renders a real verdict (and, post-#1059, the benign approval note rather than the cry-wolf would-fail). |
 | `live-alerts-link.mjs` | #1055/#1056 — Settings → Link Telegram → wallet signs the ownership proof → a six-digit handshake code renders. |
 | `live-killswitch-regression.mjs` | #1056 — zero-regression sweep: every page renders and the kill-switch banner copy appears nowhere while `VITE_DISABLED_FLOWS` is unset in production. |
+| `live-rate-desk.mjs` | #1129/#1134 — Rate Desk live half: loads the WETH/tLIQ market via the custom-pair branch (chain-read book), posts a 0.002 WETH GTC/Partial lend order at a distinctive rate, amends it in place (one `modifyOffer`, same offer id), waits out the REAL 300 s cancel cooldown, cancels (escrow refunded) — every offer-scoped step verified on-chain via viem, and the indexer-backed surfaces (markets summary + tape) ASSERTED healthy: a degraded indexer (either surface rendering its "couldn't load" copy) fails the drive by design. NB: performs real testnet writes and blocks ~6 min on the genuine cooldown; self-cleans via an unconditional offer-index delta sweep with a receipt-verified direct on-chain cancel fallback. |
 
 When a live review for a new feature needs a new drive, add the
 script here in the same PR (or the follow-up fix PR) so the next
