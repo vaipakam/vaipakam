@@ -25,6 +25,9 @@
 // book on the public testnet, so this drive records its absence
 // honestly (the driven market's book is not crossed) instead of
 // pretending to exercise it — the band's full loop is fork-covered.
+// If a band DOES render, it is accepted only when the Diamond itself
+// confirms it (Codex #1148 r4): the driver reconstructs the app's
+// top-of-book on-chain pair and demands previewMatch errorCode 0.
 //
 // Money discipline: a gasless post moves NOTHING on-chain — no escrow,
 // no approval, no gas. The single real transaction in this drive is
@@ -294,10 +297,12 @@ async function noncesSettled(address, { timeoutMs = 120_000, intervalMs = 5_000 
  *  Returns { days, bucketWasEmpty } (Codex #1148 r3): `bucketWasEmpty`
  *  records WHICH branch picked the bucket — true means genuinely empty
  *  at preflight, false means the least-populated fallback (on-chain
- *  offers present). Step 5b needs the distinction: a previewMatch band
- *  cannot exist without an on-chain top-of-book pair to cross, so a
- *  band rendered over a picked-empty bucket is a FAIL unless the
- *  bucket re-verifies as populated at that moment. */
+ *  offers present). Step 5b reports the distinction for context; since
+ *  Codex #1148 r4 a rendered band is ALWAYS verified against the
+ *  Diamond itself (top-of-book pair reconstruction + previewMatch
+ *  errorCode 0), whichever branch picked the bucket — a count-only
+ *  re-verify would wave past a band justified by nothing more than a
+ *  single one-sided third-party offer. */
 async function pickTenor() {
   const [rankings] = await diamondRead('getActiveOffersByAssetPairRanked', [WETH, TLIQ]);
   const counts = new Map();
@@ -648,22 +653,31 @@ try {
         this.addEventListener('open', () => {
           entry.opened = true;
         });
-        // MESSAGE records (Codex #1148 r2; parsed since r3): an extra
-        // listener from inside the wrapped constructor is the
-        // least-invasive capture — it observes every frame whether the
-        // app attaches via onmessage or addEventListener, and never
-        // touches dispatch. Each frame is parsed so step 7b can demand
-        // a REAL invalidate frame whose keys include offer.changed — a
-        // hello frame after a page-socket reconnect must never credit
-        // the browser push path.
+        // MESSAGE records (Codex #1148 r2; parsed since r3; scannedTo
+        // since r4): an extra listener from inside the wrapped
+        // constructor is the least-invasive capture — it observes
+        // every frame whether the app attaches via onmessage or
+        // addEventListener, and never touches dispatch. Each frame is
+        // parsed so step 7b can demand a REAL invalidate frame whose
+        // keys include offer.changed — a hello frame after a
+        // page-socket reconnect must never credit the browser push
+        // path — and carries scannedTo so the frame can be tied to the
+        // exact CROSSING SCAN the Node observer saw (an arrival-time
+        // window has no upper bound, so any later offer.changed frame
+        // could otherwise credit the rail).
         this.addEventListener('message', (ev) => {
           let parsed = null;
           try {
             parsed = JSON.parse(String(ev.data));
           } catch {
-            /* non-JSON frame — recorded with t/keys undefined */
+            /* non-JSON frame — recorded with t/keys/scannedTo undefined */
           }
-          entry.messages.push({ at: Date.now(), t: parsed?.t, keys: parsed?.keys });
+          entry.messages.push({
+            at: Date.now(),
+            t: parsed?.t,
+            keys: parsed?.keys,
+            scannedTo: parsed?.scannedTo,
+          });
         });
         this.addEventListener('close', () => {
           entry.closed = true;
@@ -993,45 +1007,77 @@ try {
   // Phase-3 slice B honesty note: the crossable-band previewMatch strip
   // must be ABSENT on this un-crossed book (rendering it would violate
   // the §5.2 rule the band is built on). Not a crossed-book exercise —
-  // that loop is fork-covered (spec 19). Codex #1148 r3: when this
-  // run's bucket was picked EMPTY, a rendered band is explicable only
-  // by third-party ON-CHAIN offers posted since the preflight snapshot
-  // (our own signed row cannot produce a top-of-book pair) — so
-  // re-verify the bucket AT THIS MOMENT and FAIL if it is still empty.
+  // that loop is fork-covered (spec 19). Codex #1148 r4: when a band
+  // DOES render, a count-only bucket re-verify is NOT enough — a
+  // single one-sided third-party offer makes the count nonzero with no
+  // matchable pair, and the band would be waved past. Verify the band
+  // the way the app itself defines it (desk.ts topOfBookMatchPair +
+  // previewMatch): re-read the on-chain book NOW, reconstruct the
+  // top-of-book pair for the driven market — best ask = LOWEST lender
+  // interestRateBps, best bid = HIGHEST borrower interestRateBpsMax
+  // (the same headline rates buildLadder quotes per side), crossed
+  // only when bid >= ask, first offer at each best level (the rankings
+  // read serves ON-CHAIN offers only, so the app's skip-signed filter
+  // is inherently satisfied) — and demand the Diamond's
+  // previewMatch(lenderOfferId, borrowerOfferId) answers errorCode 0
+  // (MatchError.Ok, the ONLY state the app renders the band on). No
+  // crossed on-chain pair, or a non-Ok preview, IS the §5.2 violation
+  // this step polices → FAIL.
   const bandAbsent = (await page.locator('.desk-match-band').count()) === 0;
   let bandDetail;
   if (bandAbsent) {
     bandDetail =
       'absent on this un-crossed book — the honest §5.2 state; the matchable ' +
       'loop is fork-covered (spec 19) and needs a seeded crossed book to show live';
-  } else if (!tenorBucketWasEmpty) {
-    bandDetail =
-      'a match band rendered on the driven market — plausible: the tenor bucket ' +
-      'was the least-populated FALLBACK and carries on-chain offers (crossed ' +
-      'book present this run)';
   } else {
-    // Re-verify NOW, not from the preflight snapshot: a third party
-    // could have posted between preflight and this moment.
     const [rankingsNow] = await diamondRead('getActiveOffersByAssetPairRanked', [
       WETH,
       TLIQ,
     ]);
-    const bucketCountNow = rankingsNow.filter(
-      (r) => Number(r.durationDays) === tenor,
-    ).length;
-    if (bucketCountNow === 0) {
+    const bucketNow = rankingsNow.filter((r) => Number(r.durationDays) === tenor);
+    const asksNow = bucketNow.filter((r) => Number(r.offerType) === 0);
+    const bidsNow = bucketNow.filter((r) => Number(r.offerType) === 1);
+    const bestAskBps = asksNow.length
+      ? Math.min(...asksNow.map((r) => Number(r.interestRateBps)))
+      : null;
+    const bestBidBps = bidsNow.length
+      ? Math.max(...bidsNow.map((r) => Number(r.interestRateBpsMax)))
+      : null;
+    if (bestAskBps === null || bestBidBps === null || bestBidBps < bestAskBps) {
       throw new Error(
-        `a .desk-match-band rendered although the ${tenor}d bucket held zero ` +
-          'on-chain offers at preflight AND re-verifies as still empty right ' +
-          'now — a previewMatch band cannot exist without an on-chain ' +
-          'top-of-book pair to cross (phase-3 crossable-band regression)',
+        `a .desk-match-band rendered but the ${tenor}d bucket holds NO crossed ` +
+          `on-chain top-of-book pair right now (best lender ask=` +
+          `${bestAskBps ?? '(none)'} bps, best borrower bid=` +
+          `${bestBidBps ?? '(none)'} bps) — the app renders the band only on a ` +
+          'previewMatch-Ok pair, which cannot exist here (§5.2 violation, ' +
+          'phase-3 crossable-band regression)',
+      );
+    }
+    const lenderTop = asksNow.find((r) => Number(r.interestRateBps) === bestAskBps);
+    const borrowerTop = bidsNow.find(
+      (r) => Number(r.interestRateBpsMax) === bestBidBps,
+    );
+    const preview = await diamondRead('previewMatch', [lenderTop.id, borrowerTop.id]);
+    if (Number(preview.errorCode) !== 0) {
+      throw new Error(
+        `a .desk-match-band rendered but previewMatch(${lenderTop.id}, ` +
+          `${borrowerTop.id}) — the reconstructed top-of-book pair (ask ` +
+          `${bestAskBps} bps × bid ${bestBidBps} bps) — answered errorCode=` +
+          `${preview.errorCode}, not Ok: the contract would refuse the match ` +
+          'the band advertises (§5.2 violation, phase-3 crossable-band ' +
+          'regression)',
       );
     }
     bandDetail =
-      `a match band rendered and the ${tenor}d bucket — empty at preflight — ` +
-      `re-verifies with ${bucketCountNow} on-chain offer(s) now: a third party ` +
-      'posted since preflight, so the band is plausible (crossed book present ' +
-      'this run)';
+      `a match band rendered and the Diamond confirms it: top-of-book pair ` +
+      `lender #${lenderTop.id} × borrower #${borrowerTop.id} (ask ${bestAskBps} ` +
+      `bps ≤ bid ${bestBidBps} bps) answers previewMatch Ok — matchAmount=` +
+      `${preview.matchAmount}, rate=${preview.matchRateBps} bps (crossed book ` +
+      `present this run; tenor bucket was ${
+        tenorBucketWasEmpty
+          ? 'picked EMPTY at preflight — a third party crossed it since'
+          : 'the least-populated fallback'
+      })`;
   }
   await snap('signed-book-03-row-landed');
   record(
@@ -1054,6 +1100,12 @@ try {
   // ceiling; the indexer's next scan flips the row and the push rail
   // must carry offer.changed (→ deskSignedBook per KEY_MAP).
   const preCancelBlock = await pub.getBlockNumber();
+  // Codex #1148 r4: the WS continuity window (and the milestone timing
+  // prints) anchor at the SUBMISSION moment, not at "cancel observed"
+  // (which is sampled only after the log poll + receipt land) — a
+  // socket close/reconnect while the cancel is being mined and
+  // receipted is a real observation gap the later anchor would hide.
+  const cancelSubmittedAt = Date.now();
   await cancelBtn.click();
   await page
     .getByText(/signed order cancelled on-chain/i)
@@ -1079,7 +1131,6 @@ try {
   if (receipt.status !== 'success') {
     throw new Error(`cancel tx ${cancelTxHash} mined but reverted`);
   }
-  const cancelObservedAt = Date.now();
   // (a) the ledger poisoned to the ceiling — the revocation itself.
   const ceiling = ceilingOf(wireOrder);
   const ledgerAfter = await diamondRead('signedOfferFilledAmount', [orderHash]);
@@ -1123,11 +1174,14 @@ try {
   //     within a short grace of the frame → concurrent offer activity
   //     in the same scan may own the key → AMBIGUOUS caveat with the
   //     facts printed, never silent credit.
-  // Two further honesty gates (Codex #1148 r3):
-  //   - a Node-socket close/reconnect between the cancel and the
-  //     crossing frame breaks the "all prior frames were below the
-  //     cancel block" proof (the true crossing frame may have been
+  // Three further honesty gates (Codex #1148 r3 + r4):
+  //   - a Node-socket close/reconnect between the cancel SUBMISSION
+  //     and the crossing frame breaks the "all prior frames were below
+  //     the cancel block" proof (the true crossing frame may have been
   //     lost in the gap) → AMBIGUOUS with the lifecycle printed;
+  //   - a crossing frame that is the FIRST frame observed leaves the
+  //     crossing scan's START unknown (no-op scans broadcast nothing),
+  //     so its confound window is not sweepable → AMBIGUOUS (r4);
   //   - offer.changed is COARSE, so even a clean crossing frame is
   //     swept for same-window unrelated offer-mutation events
   //     (sweepOfferChangedConfounds) — any hit downgrades the PASS to
@@ -1159,9 +1213,9 @@ try {
           !res.body.offers.some((r) => sameAddr(r.orderHash, orderHash))
         ) {
           wireGoneAt = Date.now();
-          step7Obs.lifecycle = `PASS — row left GET /signed-offers +${((wireGoneAt - cancelObservedAt) / 1000).toFixed(0)}s after cancel`;
+          step7Obs.lifecycle = `PASS — row left GET /signed-offers +${((wireGoneAt - cancelSubmittedAt) / 1000).toFixed(0)}s after cancel submission`;
           console.log(
-            `  milestone: row left /signed-offers +${((wireGoneAt - cancelObservedAt) / 1000).toFixed(0)}s after cancel`,
+            `  milestone: row left /signed-offers +${((wireGoneAt - cancelSubmittedAt) / 1000).toFixed(0)}s after cancel submission`,
           );
         }
       }
@@ -1179,8 +1233,8 @@ try {
               ? Math.max(...invalidates.slice(0, idx).map((f) => Number(f.obj.scannedTo)))
               : null;
           console.log(
-            `  milestone: crossing invalidate frame +${((crossingFrame.at - cancelObservedAt) / 1000).toFixed(0)}s ` +
-              `after cancel — scannedTo=${crossingFrame.obj.scannedTo} >= cancel block ${receipt.blockNumber} ` +
+            `  milestone: crossing invalidate frame +${((crossingFrame.at - cancelSubmittedAt) / 1000).toFixed(0)}s ` +
+              `after cancel submission — scannedTo=${crossingFrame.obj.scannedTo} >= cancel block ${receipt.blockNumber} ` +
               `(prior invalidate frames peaked at scannedTo=${priorMaxScannedTo ?? '(none — first frame seen)'}), ` +
               `keys=[${crossingFrame.obj.keys.join(', ')}]`,
           );
@@ -1195,36 +1249,56 @@ try {
         // Codex #1148 r3 (WS observation gap): "every prior frame's
         // scannedTo was below the cancel block" is provable only over
         // a CONTINUOUS observation. If the Node socket closed or
-        // reconnected anywhere in [cancel, crossing frame], the TRUE
-        // crossing frame may have been emitted (and lost) inside the
-        // gap — the frame found here may be a LATER scan, so its keys
-        // can neither credit nor indict the rail. AMBIGUOUS, with the
+        // reconnected anywhere in [cancel SUBMISSION, crossing frame]
+        // (r4: anchored at submission — a gap while the cancel was
+        // being mined and receipted counts too), the TRUE crossing
+        // frame may have been emitted (and lost) inside the gap — the
+        // frame found here may be a LATER scan, so its keys can
+        // neither credit nor indict the rail. AMBIGUOUS, with the
         // lifecycle events printed. (A gap with NO frame by timeout
         // keeps the existing DEFERRED/FAIL diagnosis below.)
         const gapEvents = ws.lifecycle.filter(
-          (l) => l.at >= cancelObservedAt && l.at <= crossingFrame.at,
+          (l) => l.at >= cancelSubmittedAt && l.at <= crossingFrame.at,
         );
         if (gapEvents.length > 0 && wireGoneAt !== null) {
           wsVerdict = 'AMBIGUOUS';
           step7Obs.wsRail =
             `AMBIGUOUS — the Node WS observer lost continuity between the cancel ` +
-            `and the crossing frame [${gapEvents
+            `submission and the crossing frame [${gapEvents
               .map((l) => `${l.ev} @${new Date(l.at).toISOString()}`)
               .join(', ')}] — the true crossing frame may have been missed inside ` +
             `the gap, so this frame (keys=[${crossingFrame.obj.keys.join(', ')}]; ` +
             `${provenance}) may be a LATER scan; attribution genuinely uncertain — ` +
             'caveat recorded instead of credit (or blame)';
+        } else if (hasKey && wireGoneAt !== null && priorMaxScannedTo === null) {
+          // Codex #1148 r4 (unknown scan-window start): the crossing
+          // frame was the FIRST frame this observer saw, so no earlier
+          // frame's scannedTo pins where the crossing scan STARTED —
+          // no-op scans broadcast nothing, so the scan may span
+          // arbitrarily many blocks before the cancel block. Sweeping
+          // from the cancel block could miss same-scan offer-mutation
+          // events in those unswept earlier blocks, so the confound
+          // sweep cannot be trusted to clear the coarse key: downgrade
+          // to AMBIGUOUS instead of pretending the sweep was
+          // exhaustive. Only a known priorMaxScannedTo yields a
+          // sweepable window and a possible clean PASS.
+          wsVerdict = 'AMBIGUOUS';
+          step7Obs.wsRail =
+            `AMBIGUOUS — offer.changed rode the crossing frame (${provenance}) ` +
+            'and the row left GET, but the crossing frame was the first frame ' +
+            'observed: the scan window start is unknown (no-op scans broadcast ' +
+            'nothing), so the crossing scan may include unswept earlier blocks ' +
+            'and concurrent offer activity there cannot be ruled out — caveat ' +
+            'recorded instead of credit';
         } else if (hasKey && wireGoneAt !== null) {
           // Codex #1148 r3 (same-scan confounds): offer.changed is
           // coarse — before crediting, sweep the crossing scan's block
-          // window (priorMaxScannedTo + 1, or the cancel block when
-          // this was the first frame seen, .. crossingFrame.scannedTo)
-          // for any OTHER event that feeds the key. Zero hits ⇒ the
-          // signed update was the window's only offer.changed source.
-          const sweepFrom =
-            priorMaxScannedTo !== null
-              ? BigInt(priorMaxScannedTo) + 1n
-              : receipt.blockNumber;
+          // window (priorMaxScannedTo + 1 .. crossingFrame.scannedTo;
+          // the first-frame case with no priorMaxScannedTo never
+          // reaches here — r4 downgrades it above) for any OTHER event
+          // that feeds the key. Zero hits ⇒ the signed update was the
+          // window's only offer.changed source.
+          const sweepFrom = BigInt(priorMaxScannedTo) + 1n;
           const sweepTo = BigInt(crossingFrame.obj.scannedTo);
           let confounds = null;
           let sweepError = null;
@@ -1252,7 +1326,7 @@ try {
             wsVerdict = 'PASS';
             step7Obs.wsRail =
               `PASS — offer.changed rode the CROSSING frame ` +
-              `+${((crossingFrame.at - cancelObservedAt) / 1000).toFixed(0)}s after cancel ` +
+              `+${((crossingFrame.at - cancelSubmittedAt) / 1000).toFixed(0)}s after cancel submission ` +
               `(${provenance}), the row left GET across the same scan, and the ` +
               `confound sweep over blocks ${sweepFrom}..${sweepTo} found NO other ` +
               'offer-mutation event — the key is attributable to THIS cancel alone';
@@ -1347,8 +1421,11 @@ try {
   // (Codex #1148 r2): the 15 s window can coincide with
   // useDeskSignedBook's normal 30 s poll tick, so the refresh must be
   // TIED to the push by the init-script probes' evidence chain —
-  //   a page-WS INVALIDATE frame carrying offer.changed (≈ the crossing
-  //   frame's arrival; a hello from a reconnect never credits — r3)
+  //   a page-WS INVALIDATE frame carrying offer.changed at the
+  //   crossing frame's EXACT scannedTo (same scan, delivered to both
+  //   observers — r4; a hello from a reconnect never credits — r3; a
+  //   page frame with a LATER scannedTo means the page missed the
+  //   crossing frame → AMBIGUOUS with both values printed)
   //     → a /signed-offers refetch STARTING within ~3 s of the message
   //     → the Signed ladder row gone, no tab-flip nudge.
   // If the previous /signed-offers fetch was old enough that the 30 s
@@ -1379,9 +1456,10 @@ try {
       rowGone = false;
     }
     // Evidence chain, read AFTER the row settled so the probes hold
-    // the full window. Same host clock as crossingFrame.at (both are
-    // Date.now() on this machine); 5 s of slack absorbs delivery skew
-    // between the Node socket and the page socket.
+    // the full window. The page frame is tied to the crossing scan by
+    // scannedTo EQUALITY (r4) — never by an arrival-time window, which
+    // has no upper bound and would let any later offer.changed frame
+    // credit the rail.
     const evidence = await page
       .evaluate(() => ({
         wsMessages: (globalThis.__wsProbe ?? [])
@@ -1392,20 +1470,32 @@ try {
       .catch(() => null);
     // Codex #1148 r3: only a parsed `invalidate` frame whose keys
     // include offer.changed may anchor the push credit — a hello frame
-    // from a page-socket reconnect (or any other frame kind) landing
-    // near the crossing moment must not false-credit the chain.
+    // from a page-socket reconnect (or any other frame kind) must not
+    // false-credit the chain. Codex #1148 r4: the frame must further
+    // belong to the SAME SCAN the Node observer credited — scannedTo
+    // EQUALITY with the crossing frame is the tie (an arrival-time
+    // window has no upper bound, so ANY later offer.changed frame
+    // could otherwise credit rail (iii)). A page frame with a LATER
+    // scannedTo means the page socket missed the crossing frame itself
+    // → AMBIGUOUS with both values printed, never PASS.
+    const crossingScannedTo = Number(crossingFrame.obj.scannedTo);
+    const pageOfferChangedFrames = (evidence?.wsMessages ?? []).filter(
+      (m) =>
+        m != null &&
+        typeof m === 'object' &&
+        m.t === 'invalidate' &&
+        Array.isArray(m.keys) &&
+        m.keys.includes('offer.changed'),
+    );
     const pageMsgAt =
-      evidence?.wsMessages
-        .filter(
-          (m) =>
-            m != null &&
-            typeof m === 'object' &&
-            m.t === 'invalidate' &&
-            Array.isArray(m.keys) &&
-            m.keys.includes('offer.changed') &&
-            m.at >= crossingFrame.at - 5_000,
-        )
+      pageOfferChangedFrames
+        .filter((m) => Number(m.scannedTo) === crossingScannedTo)
         .map((m) => m.at)
+        .sort((a, b) => a - b)[0] ?? null;
+    const laterPageScannedTo =
+      pageOfferChangedFrames
+        .map((m) => Number(m.scannedTo))
+        .filter((s) => Number.isFinite(s) && s > crossingScannedTo)
         .sort((a, b) => a - b)[0] ?? null;
     const bookFetches = (evidence?.fetches ?? [])
       .filter((f) => f.url.includes('/signed-offers'))
@@ -1421,8 +1511,8 @@ try {
         ? null
         : [...bookFetches].reverse().find((f) => f.at < pageMsgAt) ?? null;
     const stamps =
-      `[crossing frame (Node)=${new Date(crossingFrame.at).toISOString()}, ` +
-      `page WS offer.changed invalidate=${pageMsgAt === null ? '(none)' : new Date(pageMsgAt).toISOString()}, ` +
+      `[crossing frame (Node)=${new Date(crossingFrame.at).toISOString()} scannedTo=${crossingScannedTo}, ` +
+      `page WS offer.changed invalidate (same scannedTo)=${pageMsgAt === null ? '(none)' : new Date(pageMsgAt).toISOString()}, ` +
       `refetch start=${refetch ? new Date(refetch.at).toISOString() : '(none within bound)'}, ` +
       `previous /signed-offers fetch=${prevFetch ? new Date(prevFetch.at).toISOString() : '(none recorded)'}]`;
     if (!rowGone) {
@@ -1433,23 +1523,36 @@ try {
         `not beat the poll) — the exact phase-3 regression this observation exists for. ${stamps}`;
       throw new Error(step7Obs.browserPush);
     }
-    if (pageMsgAt === null) {
+    if (pageMsgAt === null && laterPageScannedTo !== null) {
+      // Codex #1148 r4: the page socket carried offer.changed frames,
+      // but only from a LATER scan than the crossing one — the page
+      // missed the crossing frame (reconnect, delivery gap), so the
+      // row-gone flip cannot be tied to THIS cancel's scan. Not a
+      // clean FAIL (a later frame still proves the frame→page path is
+      // alive) and never a PASS — AMBIGUOUS with both values printed.
+      step7Obs.browserPush =
+        `AMBIGUOUS — the page WS recorded offer.changed invalidate frame(s) ` +
+        `only at scannedTo=${laterPageScannedTo}, LATER than the crossing ` +
+        `frame's scannedTo=${crossingScannedTo}: the page socket missed the ` +
+        'crossing frame itself, so the book refresh cannot be attributed to ' +
+        `THIS cancel's scan — push vs poll genuinely uncertain. ${stamps}`;
+      record('7b. browser push path (observation iii)', 'OBSERVED', step7Obs.browserPush);
+    } else if (pageMsgAt === null) {
       step7Obs.browserPush =
         `FAIL — page WS ${openPushSocket.url} was OPEN but recorded NO invalidate ` +
-        'frame carrying offer.changed around the crossing frame (hello/other ' +
-        'frames do not credit — Codex #1148 r3) — the row-gone DOM flip is ' +
-        `attributable to polling, not push. ${stamps}`;
+        `frame carrying offer.changed at the crossing frame's scannedTo=` +
+        `${crossingScannedTo} (hello/other frames do not credit — Codex #1148 ` +
+        'r3/r4) — the row-gone DOM flip is attributable to polling, not push. ' +
+        `${stamps}`;
       throw new Error(step7Obs.browserPush);
-    }
-    if (refetch === null) {
+    } else if (refetch === null) {
       step7Obs.browserPush =
         `FAIL — the page WS message arrived but no /signed-offers refetch ` +
         `STARTED within ${PUSH_REFETCH_BOUND_MS / 1000}s of it — the row-gone ` +
         `DOM flip is attributable to the ${POLL_TICK_MS / 1000}s poll, not the ` +
         `push frame. ${stamps}`;
       throw new Error(step7Obs.browserPush);
-    }
-    if (
+    } else if (
       prevFetch !== null &&
       refetch.at - prevFetch.at >= POLL_TICK_MS - POLL_AMBIGUITY_MARGIN_MS
     ) {
@@ -1593,6 +1696,24 @@ try {
             'invalidateSignedOfferNonce its nonce) manually.',
         );
       } else {
+        // Codex #1148 r4: the UI Cancel click may have SUBMITTED a tx
+        // that is still pending (the drive can die between the click
+        // and step 6's ledger verify). Reading the ledger while that
+        // tx is in flight sees below-ceiling and would mint a SECOND
+        // cancelSignedOffer for the same order — wasted gas. Wait for
+        // pending==latest FIRST; only after settlement (or its
+        // timeout, reported loudly) may the ledger read decide whether
+        // a direct cancel is needed.
+        if (!(await noncesSettled(lenderAddr))) {
+          record(
+            'cleanup: pre-ledger nonce settle',
+            'OBSERVED',
+            'WARNING — an in-flight tx (possibly the UI cancel) did not settle ' +
+              'within 120 s; the ledger read below may still see the pre-cancel ' +
+              'state, so the direct cancel that follows could duplicate a ' +
+              'pending UI cancel (spending gas twice on the same revocation)',
+          );
+        }
         const ledger = await diamondRead('signedOfferFilledAmount', [orderHash]);
         const ceiling = ceilingOf(wireOrder);
         if (ledger >= ceiling) {
