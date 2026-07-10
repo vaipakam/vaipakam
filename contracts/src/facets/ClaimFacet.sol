@@ -589,6 +589,10 @@ contract ClaimFacet is
             );
         }
         LibEncumbrance.releaseLenderProceeds(loanId, loan.lender);
+        // #998 S10 Class B — release any active-loan held reservation before the
+        // held withdraw below, so the vault-withdraw guard sees the parked funds as
+        // free. Idempotent no-op when no Class B share was parked on this loan.
+        LibEncumbrance.releaseActiveHeld(loanId, loan.lender);
 
         // Pay the lender (current NFT owner) CASH = lenderPrincipalDue from the
         // backstop vault's absorb-cash balance.
@@ -630,6 +634,29 @@ contract ClaimFacet is
         }
 
         s.lenderBackstopOptIn[loanId] = address(0);
+
+        // #998 S10 (#1006, Codex #1122-rework) — the lender slice is bought out
+        // and this absorb is terminal (the lender NFT burns just below), so no
+        // deferred lender claim remains to gate. Clear the lender-side frozen
+        // marker here so it can't orphan on the settled loan — unlike
+        // `_claimAsLenderImpl` (whose clean-release tail clears it), this backstop
+        // branch reaches its terminal without that cleanup. `nftOwner` already
+        // passed the fail-closed `assertNotFrozenParty` gate above (⇒
+        // authoritatively clean / never-confirmed, with `mustFreezeParty` having
+        // self-healed its registry bit on a clean read), so also clear the recorded
+        // party's REGISTRY bit when it IS that proven-clean holder, mirroring the
+        // clean-release self-heal. A DIFFERENT stale recorded party is left to its
+        // own authoritative-clean self-heal (we did not screen it here, so clearing
+        // its bit could wrongly unblock a still-flagged wallet's position moves).
+        {
+            address frozenL = LibSanctionedLock.frozenClaimant(s, loanId, true);
+            if (frozenL != address(0)) {
+                if (frozenL == nftOwner) {
+                    LibSanctionedLock.clearConfirmedFlag(s, frozenL);
+                }
+                LibSanctionedLock.clearFrozenClaimant(s, loanId, true);
+            }
+        }
 
         // Burn the lender NFT + go terminal (mirrors the vanilla claim tail).
         LibFacet.crossFacetCall(
@@ -953,6 +980,11 @@ contract ClaimFacet is
         // caller passes no asset: the decrement always hits the same aggregate
         // the reserve ticked, even when the claim record's asset differs.
         LibEncumbrance.releaseLenderProceeds(loanId, loan.lender);
+        // #998 S10 Class B — release any active-loan held reservation (dedicated
+        // ledger) before the held withdraw folds `heldForLender` into this claim,
+        // so the vault-withdraw guard sees the parked funds as free. Idempotent
+        // no-op when no Class B share was parked on this loan.
+        LibEncumbrance.releaseActiveHeld(loanId, loan.lender);
         // #954 (§2.2) — release the per-loan frozen-VPFI tier exclusion this
         // loan's lender leg bumped (transferred-and-sanctioned holder case),
         // decrementing `frozenVpfiOwedByVault[loan.lender]` by EXACTLY what was

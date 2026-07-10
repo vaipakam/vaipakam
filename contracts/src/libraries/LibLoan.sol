@@ -4,6 +4,7 @@ pragma solidity ^0.8.29;
 
 import {LibVaipakam} from "./LibVaipakam.sol";
 import {LibRevert} from "./LibRevert.sol";
+import {LibEncumbrance} from "./LibEncumbrance.sol";
 import {IVaipakamErrors} from "../interfaces/IVaipakamErrors.sol";
 import {VaipakamNFTFacet} from "../facets/VaipakamNFTFacet.sol";
 
@@ -26,6 +27,13 @@ library LibLoan {
     ) internal returns (uint256 newTokenId) {
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         LibVaipakam.Loan storage loan = s.loans[loanId];
+        // #998 S10 Class B — migrate the DEDICATED active-held reservation to
+        // `newLender` BEFORE re-anchoring `loan.lender` below (it reads the old
+        // lender from the live loan). Centralised here so EVERY lender-position
+        // sale path carries the reservation with the held it moves, without each
+        // caller remembering to. No-op when nothing was parked. (Consolidation
+        // does not route through here; it migrates via `rekeyLienToHolder`.)
+        LibEncumbrance.migrateActiveHeld(loanId, newLender);
         address diamond = address(this);
 
         (bool success, bytes memory data) = diamond.call(

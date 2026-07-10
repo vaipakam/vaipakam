@@ -82,7 +82,7 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](99);
+        selectors = new bytes4[](102);
         selectors[0] = TestMutatorFacet.setLoan.selector;
         selectors[1] = TestMutatorFacet.setOffer.selector;
         selectors[2] = TestMutatorFacet.setNextLoanId.selector;
@@ -267,6 +267,10 @@ contract HelperTest {
         selectors[96] = TestMutatorFacet.callFreezeOrPayActiveLenderResident.selector;
         selectors[97] = TestMutatorFacet.callFreezeOrPayActiveLenderFromPayer.selector;
         selectors[98] = TestMutatorFacet.callFreezeOrPayActiveLenderFromVault.selector;
+        // #1006 (S10) Class B — dedicated active-held reservation harness.
+        selectors[99] = TestMutatorFacet.getHeldForLenderEncumberedRaw.selector;
+        selectors[100] = TestMutatorFacet.callEncumberLenderProceeds.selector;
+        selectors[101] = TestMutatorFacet.callMigrateActiveHeld.selector;
         // #951 v2 (Codex #959 bind-to-live) — setSaleListingCollateralRaw removed
         // with the snapshot mapping; the accept binds `>=` live collateral.
         // #687-B: the former tail entries ([83]-[87]: setBackstopAbsorbCashRaw,

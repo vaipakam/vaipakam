@@ -459,6 +459,8 @@ contract EarlyWithdrawalFacet is
         // pull). No second gate needed here.
         // Migrate lender position: burn old NFT + mint new LoanInitiated NFT
         // for Noah, update loan.lender and loan.lenderTokenId in one place.
+        // (#998 S10 Class B — `migrateLenderPosition` carries the dedicated
+        // active-held reservation to the buyer internally.)
         LibLoan.migrateLenderPosition(loanId, buyOffer.creator);
 
         // #597 — re-reserve the FULL held-for-lender VPFI on the NEW lender,
@@ -986,7 +988,9 @@ contract EarlyWithdrawalFacet is
             ),
             bytes4(0)
         );
-        // Migrate live-loan lender position in one shot.
+        // Migrate live-loan lender position in one shot. (#998 S10 Class B —
+        // `migrateLenderPosition` carries the dedicated active-held reservation to
+        // `newLender` internally, before it re-anchors `loan.lender`.)
         LibLoan.migrateLenderPosition(loanId, newLender);
 
         // #998 S10 (#1006) — the shortfall + migrated held above were parked into

@@ -894,7 +894,17 @@ contract DefaultedFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErr
     ///      private function gives it a fresh stack frame that
     ///      doesn't compete with the caller's locals.
     function _releaseLienAtDefault(uint256 loanId) private {
-        LibEncumbrance.releaseCollateralLien(loanId);
+        // #998 S10 (fresh-round) — routed through the EXISTING releaseCollateralLien
+        // host (no new selector) to reclaim EIP-170 headroom: the Class B storage +
+        // LibEncumbrance additions this session tipped this edge facet over the
+        // limit, and hosting this substantial lib call is the cheapest reclaim.
+        LibFacet.crossFacetCall(
+            abi.encodeWithSelector(
+                EncumbranceMutateFacet.releaseCollateralLien.selector,
+                loanId
+            ),
+            bytes4(0)
+        );
     }
 
     /// @dev #998 S10 (#1006) — record the fail-closed frozen-claimant marker via

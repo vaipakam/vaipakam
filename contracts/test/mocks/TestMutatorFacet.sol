@@ -3,6 +3,7 @@ pragma solidity ^0.8.29;
 
 import {LibVaipakam} from "../../src/libraries/LibVaipakam.sol";
 import {EncumbranceMutateFacet} from "../../src/facets/EncumbranceMutateFacet.sol";
+import {LibEncumbrance} from "../../src/libraries/LibEncumbrance.sol";
 import {LibInteractionRewards} from "../../src/libraries/LibInteractionRewards.sol";
 import {LibMetricsHooks} from "../../src/libraries/LibMetricsHooks.sol";
 import {LibERC721} from "../../src/libraries/LibERC721.sol";
@@ -939,6 +940,37 @@ contract TestMutatorFacet {
         returns (uint256)
     {
         return LibVaipakam.storageSlot().lenderProceedsEncumbered[loanId];
+    }
+
+    /// @notice Read the per-loan DEDICATED active-held encumbrance record (the
+    ///         amount a Class B park reserves through its own ledger, separate from
+    ///         the terminal `lenderProceedsEncumbered`).
+    function getHeldForLenderEncumberedRaw(uint256 loanId)
+        external
+        view
+        returns (uint256)
+    {
+        return LibVaipakam.storageSlot().heldForLenderEncumbered[loanId];
+    }
+
+    /// @notice Set the terminal `lenderProceedsEncumberedAsset` directly — used to
+    ///         prove a Class B active park (dedicated ledger) and a later in-kind
+    ///         terminal reservation (this ledger) coexist on one loan under
+    ///         DIFFERENT assets without tripping the single-asset assert (F1).
+    function callEncumberLenderProceeds(
+        uint256 loanId,
+        address lender,
+        address asset,
+        uint256 amount
+    ) external {
+        LibEncumbrance.encumberLenderProceeds(loanId, lender, asset, amount);
+    }
+
+    /// @notice Drive `LibEncumbrance.migrateActiveHeld` (the consolidation/sale
+    ///         reservation migration) so a test can assert the aggregate moves
+    ///         old-lender → new-holder while the per-loan record stays put.
+    function callMigrateActiveHeld(uint256 loanId, address newUser) external {
+        LibEncumbrance.migrateActiveHeld(loanId, newUser);
     }
 
     /// @notice Drive the Diamond-resident Class B host exactly as

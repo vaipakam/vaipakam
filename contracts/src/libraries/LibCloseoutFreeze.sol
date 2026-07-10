@@ -98,13 +98,7 @@ library LibCloseoutFreeze {
             // on a clean read here too.
             if (holder != loan.lender && LibSanctionedLock.mustFreezeParty(s, holder)) {
                 s.frozenVpfiOwedByVault[loan.lender] += lenderDue;
-                // #998 S10 Class B — `+=`, not `=`: an Active-loan inline VPFI
-                // share may already have accumulated a per-loan tier exclusion
-                // (`_parkActiveLenderShare`) before this terminal freeze. A bare
-                // assignment would clobber that prior amount, so `releaseLenderFrozenVpfi`
-                // would under-decrement `frozenVpfiOwedByVault` and permanently
-                // over-lock the difference. Accumulate so the release nets exactly.
-                s.frozenVpfiOwedLenderLeg[loanId] += lenderDue;
+                s.frozenVpfiOwedLenderLeg[loanId] = lenderDue;
             }
         }
     }
@@ -214,11 +208,23 @@ library LibCloseoutFreeze {
     ) private {
         s.heldForLender[loanId] += amount;
         LibSanctionedLock.recordFrozenClaimant(s, loanId, true, frozenHolder);
-        LibEncumbrance.encumberLenderProceeds(loanId, loan.lender, asset, amount);
-        if (asset == s.vpfiToken && frozenHolder != loan.lender) {
-            s.frozenVpfiOwedByVault[loan.lender] += amount;
-            s.frozenVpfiOwedLenderLeg[loanId] += amount;
-        }
+        // #998 S10 Class B — reserve through the DEDICATED active-held ledger, NOT
+        // the single-terminal `encumberLenderProceeds` ledger. That ledger records
+        // ONE asset per loan and asserts every later reservation matches it, so an
+        // active park in the payment asset would brick a subsequent in-kind default
+        // reserving the collateral asset on the same loan (Codex #1122-rework
+        // fresh-round P1). The dedicated ledger reserves against the same
+        // asset-keyed aggregate under its own per-loan record and MIGRATES with the
+        // held on consolidation/sale, so the reservation always follows the funds.
+        //
+        // No VPFI fee-tier exclusion here (unlike the once-at-terminal
+        // `freezeLenderProceeds`): an active park can be consolidated/sold before
+        // claim, and the `frozenVpfiOwedByVault` counter is keyed to the STALE
+        // stored lender and NOT re-pointed by those migrations — leaving it would
+        // strand a permanent over-exclusion on the old vault (fresh-round P2). The
+        // reservation above already blocks the stored lender from spending the
+        // parked VPFI; the fee-tier nicety is dropped for the active-park case.
+        LibEncumbrance.encumberActiveHeld(loanId, loan.lender, asset, amount);
     }
 
     /// @notice Class B — pay-or-freeze an Active-loan lender share whose funds are

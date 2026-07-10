@@ -38,6 +38,7 @@ contract SanctionsActiveLenderFreezeTest is SetupTest {
     address internal storedLender = makeAddr("s10b-stored-lender");
     address internal holder = makeAddr("s10b-current-holder");
     address internal payer = makeAddr("s10b-payer");
+    address internal cleanTransferee = makeAddr("s10b-clean-transferee");
 
     function setUp() public {
         setupHelper();
@@ -82,9 +83,19 @@ contract SanctionsActiveLenderFreezeTest is SetupTest {
             "heldForLender credited"
         );
         assertEq(
-            TestMutatorFacet(address(diamond)).getLenderProceedsEncumberedRaw(LOAN_ID),
+            TestMutatorFacet(address(diamond)).getHeldForLenderEncumberedRaw(LOAN_ID),
             AMOUNT,
-            "proceeds encumbered against stored lender"
+            "reserved via the DEDICATED active-held ledger"
+        );
+        assertEq(
+            TestMutatorFacet(address(diamond)).getLenderProceedsEncumberedRaw(LOAN_ID),
+            0,
+            "the single-asset TERMINAL ledger is left untouched by an active park"
+        );
+        assertEq(
+            TestMutatorFacet(address(diamond)).getEncumberedRaw(storedLender, mockERC20, 0),
+            AMOUNT,
+            "reservation ticks the stored lender's asset-keyed aggregate"
         );
         assertEq(
             TestMutatorFacet(address(diamond)).getSanctionsFrozenClaimant(LOAN_ID, true),
@@ -228,6 +239,94 @@ contract SanctionsActiveLenderFreezeTest is SetupTest {
             TestMutatorFacet(address(diamond)).getUserVaipakamVaultRaw(holder),
             address(0),
             "no vault minted for the flagged holder"
+        );
+    }
+
+    // ─── Dedicated-ledger regressions (fresh-round P1/P2 fixes) ───────────────
+
+    /// F1 (P1) — a Class B active park (payment asset) and a later in-kind
+    /// terminal reservation (collateral asset) must COEXIST on one loan. The
+    /// dedicated active-held ledger is separate from the single-asset terminal
+    /// `lenderProceedsEncumbered` ledger, so the terminal reserve does NOT trip the
+    /// single-asset assert (which would revert the in-kind default and brick the
+    /// loan). Both reservations land in their own asset-keyed aggregate.
+    function test_activePark_thenInKindTerminalReserve_doesNotBrick() public {
+        MockSanctionsList m = _installOracle();
+        _scaffoldActiveLoan();
+        m.setFlagged(holder, true);
+        ERC20Mock(mockERC20).mint(address(diamond), AMOUNT);
+
+        // Class B park reserves the PAYMENT asset via the dedicated ledger.
+        TestMutatorFacet(address(diamond)).callFreezeOrPayActiveLenderResident(
+            LOAN_ID, mockERC20, AMOUNT
+        );
+
+        // A later in-kind default reserves the COLLATERAL asset through the
+        // terminal ledger — this used to trip `encumberLenderProceeds`'s
+        // single-asset assert when the active park had (wrongly) shared it.
+        TestMutatorFacet(address(diamond)).callEncumberLenderProceeds(
+            LOAN_ID, storedLender, mockCollateralERC20, 500 ether
+        );
+
+        assertEq(
+            TestMutatorFacet(address(diamond)).getHeldForLenderEncumberedRaw(LOAN_ID),
+            AMOUNT,
+            "active-held reservation intact (payment asset)"
+        );
+        assertEq(
+            TestMutatorFacet(address(diamond)).getLenderProceedsEncumberedRaw(LOAN_ID),
+            500 ether,
+            "terminal reservation recorded (collateral asset) with no assert revert"
+        );
+        // Both aggregates ticked independently.
+        assertEq(
+            TestMutatorFacet(address(diamond)).getEncumberedRaw(storedLender, mockERC20, 0),
+            AMOUNT,
+            "payment-asset aggregate"
+        );
+        assertEq(
+            TestMutatorFacet(address(diamond)).getEncumberedRaw(storedLender, mockCollateralERC20, 0),
+            500 ether,
+            "collateral-asset aggregate"
+        );
+    }
+
+    /// F3 (P2) — when the lender position migrates (consolidation / sale), the
+    /// active-held reservation must follow the held to the new holder: the
+    /// aggregate moves old → new while the per-loan record stays put, so a later
+    /// `releaseActiveHeld(loanId, loan.lender)` (now the new holder) unwinds the
+    /// right bucket. Covers EVERY asset, not just VPFI.
+    function test_activeHeldReservation_migratesToNewHolder() public {
+        MockSanctionsList m = _installOracle();
+        _scaffoldActiveLoan();
+        m.setFlagged(holder, true);
+        ERC20Mock(mockERC20).mint(address(diamond), AMOUNT);
+        TestMutatorFacet(address(diamond)).callFreezeOrPayActiveLenderResident(
+            LOAN_ID, mockERC20, AMOUNT
+        );
+        assertEq(
+            TestMutatorFacet(address(diamond)).getEncumberedRaw(storedLender, mockERC20, 0),
+            AMOUNT,
+            "precondition: reserved on the stored lender"
+        );
+
+        // Simulate the reservation half of a consolidation/sale migration.
+        TestMutatorFacet(address(diamond)).callMigrateActiveHeld(LOAN_ID, cleanTransferee);
+
+        assertEq(
+            TestMutatorFacet(address(diamond)).getEncumberedRaw(storedLender, mockERC20, 0),
+            0,
+            "old lender no longer over-locked"
+        );
+        assertEq(
+            TestMutatorFacet(address(diamond)).getEncumberedRaw(cleanTransferee, mockERC20, 0),
+            AMOUNT,
+            "reservation followed the held to the new holder"
+        );
+        assertEq(
+            TestMutatorFacet(address(diamond)).getHeldForLenderEncumberedRaw(LOAN_ID),
+            AMOUNT,
+            "per-loan record unchanged (loan-keyed)"
         );
     }
 }

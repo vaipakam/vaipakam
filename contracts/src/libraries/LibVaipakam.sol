@@ -4815,6 +4815,23 @@ library LibVaipakam {
         // Cleared on a successful clean release.
         mapping(uint256 => address) sanctionsLockedLenderClaimant;
         mapping(uint256 => address) sanctionsLockedBorrowerClaimant;
+        // ─── #998 S10 (#1006) Class B — ACTIVE-loan held reservation ──────────
+        // A DEDICATED per-loan reservation for a mid-loan Class B lender-share
+        // park (`LibCloseoutFreeze._parkActiveLenderShare`), kept SEPARATE from
+        // the single-terminal `lenderProceedsEncumbered` ledger. Reusing that
+        // single-asset terminal ledger for an active park bricks a later in-kind
+        // default: the park reserves the `principalAsset` mid-loan, then the
+        // in-kind terminal tries to reserve the `collateralAsset` under the same
+        // per-loan record and trips its single-asset assert (Codex #1122-rework
+        // fresh-round P1). This bucket reserves the held amount against the stored
+        // lender's spend paths under its OWN per-loan (amount, asset) record, so
+        // the two reservations coexist. Released alongside `heldForLender` at
+        // `claimAsLender` (and the backstop absorb), and MIGRATED with the held
+        // whenever the lender position moves (consolidation / sale), mirroring the
+        // `lenderProceedsEncumbered` rekey — so a later release under the CURRENT
+        // `loan.lender` always decrements the aggregate the reserve now sits in.
+        mapping(uint256 => uint256) heldForLenderEncumbered;
+        mapping(uint256 => address) heldForLenderEncumberedAsset;
         // ─── #951 v2 (Codex #959 bind-to-live redesign) — historical note ─────
         // The old `saleListingCollateral` snapshot (formerly the last struct
         // field) was removed by the #959 bind-to-live redesign merged to main:
