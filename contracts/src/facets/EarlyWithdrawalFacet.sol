@@ -471,14 +471,24 @@ contract EarlyWithdrawalFacet is
         // active-held reservation to the buyer internally.)
         LibLoan.migrateLenderPosition(loanId, buyOffer.creator);
 
-        // #597 — re-reserve the FULL held-for-lender VPFI on the NEW lender,
-        // where it now physically lives (pre-existing `priorHeld` migrated above
-        // + this tx's `shortfall` deposit). `loan.lender` is now the new lender.
-        // Released to the new lender at claim. Gated on VPFI (held is in the
-        // principal asset; NFT-rental prepay can't be VPFI — D-2).
+        // #597 — re-reserve the held-for-lender VPFI on the NEW lender, where it
+        // now physically lives (pre-existing `priorHeld` migrated above + this tx's
+        // `shortfall` deposit). `loan.lender` is now the new lender. Released to the
+        // new lender at claim. Gated on VPFI (held is in the principal asset;
+        // NFT-rental prepay can't be VPFI — D-2).
+        //
+        // #998 S10 Class B (Codex fresh-round P2) — re-reserve only the
+        // NON-active-held slice: the Class B active-held portion
+        // (`heldForLenderEncumbered`) was already migrated to the buyer in its
+        // dedicated ledger above, so re-reserving the FULL `heldForLender` here
+        // would DOUBLE-count that slice and understate the buyer's VPFI free
+        // balance until claim. The active portion is always a subset of the total
+        // held (each park ticks both), so the subtraction can't underflow.
         if (loan.principalAsset == s.vpfiToken) {
+            uint256 nonActiveHeld = s.heldForLender[loanId] -
+                s.heldForLenderEncumbered[loanId];
             LibEncumbrance.encumberLenderProceeds(
-                loanId, loan.lender, loan.principalAsset, s.heldForLender[loanId]
+                loanId, loan.lender, loan.principalAsset, nonActiveHeld
             );
         }
 
@@ -1029,12 +1039,19 @@ contract EarlyWithdrawalFacet is
             );
         }
 
-        // #597 — re-reserve the FULL held-for-lender VPFI on the NEW lender,
-        // where it now physically lives. `loan.lender` is now the new lender.
-        // Released to the new lender at claim. Gated on VPFI.
+        // #597 — re-reserve the held-for-lender VPFI on the NEW lender, where it
+        // now physically lives. `loan.lender` is now the new lender. Released to
+        // the new lender at claim. Gated on VPFI.
+        //
+        // #998 S10 Class B (Codex fresh-round P2) — re-reserve only the
+        // NON-active-held slice; the Class B active portion was already migrated to
+        // the buyer in its dedicated ledger above, so re-reserving the full held
+        // would double-count it (subset ⇒ no underflow).
         if (loan.principalAsset == s.vpfiToken) {
+            uint256 nonActiveHeld = s.heldForLender[loanId] -
+                s.heldForLenderEncumbered[loanId];
             LibEncumbrance.encumberLenderProceeds(
-                loanId, loan.lender, loan.principalAsset, s.heldForLender[loanId]
+                loanId, loan.lender, loan.principalAsset, nonActiveHeld
             );
         }
 

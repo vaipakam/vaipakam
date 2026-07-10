@@ -189,6 +189,20 @@ contract RefinanceFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErr
         // on the fund-receiving wallet.
         address currentBorrowerNftOwner =
             LibERC721.ownerOf(oldLoan.borrowerTokenId);
+        // #998 S10 (#1006, Codex #1122-rework 186c60ff-round P1) — the fail-open
+        // `_assertNotSanctioned` screens (entry + keeper-path below) would let a
+        // PREVIOUSLY-CONFIRMED-flagged borrower holder through during an oracle
+        // outage, who then receives the OLD collateral directly in the
+        // non-carry-over branch with no registry-aware block. Refinance is a
+        // discretionary, borrower-initiated action (Tier-1), so hard-BLOCK a
+        // registry-frozen holder FAIL-CLOSED here (a previously-confirmed party
+        // during an outage, or a fresh oracle-up flag), mirroring the lender-side
+        // fail-closed protection. `mustFreezeParty` self-heals the registry on a
+        // clean read; a clean / never-confirmed holder passes unchanged, so an
+        // oracle blip can't freeze an honest borrower.
+        if (LibSanctionedLock.mustFreezeParty(s, currentBorrowerNftOwner)) {
+            revert LibVaipakam.SanctionedAddress(currentBorrowerNftOwner);
+        }
         if (currentBorrowerNftOwner != msg.sender) {
             LibVaipakam._assertNotSanctioned(currentBorrowerNftOwner);
             // T-092 #508 — admin kill switch only fires on the

@@ -640,20 +640,20 @@ contract ClaimFacet is
         // deferred lender claim remains to gate. Clear the lender-side frozen
         // marker here so it can't orphan on the settled loan — unlike
         // `_claimAsLenderImpl` (whose clean-release tail clears it), this backstop
-        // branch reaches its terminal without that cleanup. `nftOwner` already
-        // passed the fail-closed `assertNotFrozenParty` gate above (⇒
-        // authoritatively clean / never-confirmed, with `mustFreezeParty` having
-        // self-healed its registry bit on a clean read), so also clear the recorded
-        // party's REGISTRY bit when it IS that proven-clean holder, mirroring the
-        // clean-release self-heal. A DIFFERENT stale recorded party is left to its
-        // own authoritative-clean self-heal (we did not screen it here, so clearing
-        // its bit could wrongly unblock a still-flagged wallet's position moves).
+        // branch reaches its terminal without that cleanup.
+        //
+        // Codex 186c60ff-round P3 — clear the recorded party's REGISTRY bit
+        // UNCONDITIONALLY (not only when it equals `nftOwner`): the SOLE caller
+        // (`claimAsLenderViaBackstop`) already proved the recorded lender claimant
+        // authoritatively clean via `assertNotSanctionedFailClosed(frozen)` before
+        // reaching here, and nothing re-stamps the lender marker in between, so this
+        // tx has the authoritative clean read needed to self-heal the global bit.
+        // Leaving it set would wrongly block a de-listed prior holder from moving
+        // unrelated positions during a later outage until a manual refresh.
         {
             address frozenL = LibSanctionedLock.frozenClaimant(s, loanId, true);
             if (frozenL != address(0)) {
-                if (frozenL == nftOwner) {
-                    LibSanctionedLock.clearConfirmedFlag(s, frozenL);
-                }
+                LibSanctionedLock.clearConfirmedFlag(s, frozenL);
                 LibSanctionedLock.clearFrozenClaimant(s, loanId, true);
             }
         }

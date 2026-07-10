@@ -1645,6 +1645,22 @@ contract PrecloseFacet is
             quantity: loan.collateralQuantity,
             claimed: false
         });
+        // #998 S10 (#1006, Codex #1122-rework 186c60ff-round P1) — Class A: the
+        // lender side was registered by `_settleOldLenderAtCompletion`'s park, but
+        // this deferred BORROWER collateral claim had NO borrower-side marker. A
+        // clean keeper running `completeOffsetInternal` after the borrower-position
+        // holder became sanctioned would complete the offset with the borrower
+        // never registered, so a later oracle-outage `claimAsBorrower` would release
+        // the collateral fail-open. Register the borrower holder here (oracle-up
+        // observation) via the host; no-op unless affirmatively flagged.
+        LibFacet.crossFacetCall(
+            abi.encodeWithSelector(
+                EncumbranceMutateFacet.recordSanctionsFrozenClaimant.selector,
+                originalLoanId,
+                false
+            ),
+            bytes4(0)
+        );
 
         // The old lender's payoff was just deposited into their vault and
         // recorded in `heldForLender[loanId]` by `_settleOldLenderAtCompletion`.
