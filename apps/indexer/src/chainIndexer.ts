@@ -47,8 +47,10 @@ import { DIAMOND_ABI_VIEM } from '@vaipakam/contracts/abis';
 import {
   DIAMOND_OFFER_DETAILS_ABI,
   DIAMOND_LOAN_DETAILS_ABI,
+  DIAMOND_SIGNED_OFFER_ABI,
   ERC721_OWNER_OF_ABI,
 } from './diamondAbi';
+import { ceilingOf } from './signedOfferEip712';
 import { indexerPublishPrepayListing } from './openseaPublish';
 
 /** Resolve a chain's deployBlock from the consolidated deployments
@@ -144,6 +146,13 @@ export interface ChainIndexerResult {
    *  status transition, so #757 Phase B maps this to a `loan.updated` push. */
   loanDetailRefreshes: number;
   activityEvents: number;
+  /** #1131 Rate Desk phase 3 — signed-offer book rows whose status /
+   *  filled_amount changed this scan (SignedOfferFilled / Matched /
+   *  Cancelled / NonceBurned). Optional so the early-return paths and the
+   *  #757 invalidation-key mapping stay untouched — the signed book has no
+   *  dapp push surface in this slice (GET is served with max-age=15);
+   *  mapping this to a push key is a follow-up when the desk consumes it. */
+  signedOfferUpdates?: number;
   skipped?: string;
 }
 
@@ -552,6 +561,16 @@ export async function runChainIndexerForChain(
     client,
     diamond,
   );
+  // #1131 Rate Desk phase 3 — signed-offer book lifecycle. Reconciles the
+  // off-chain `signed_offers` rows against the on-chain fill/cancel/nonce
+  // events. Runs after the offer/loan passes; it touches only its own table.
+  const signedOfferUpdates = await processSignedOfferLogs(
+    allLogs,
+    env,
+    chainId,
+    client,
+    diamond,
+  );
   // Activity ledger captures EVERY decoded event in `allLogs`. Phase
   // A and Phase B handlers above mutate domain tables; this writer
   // appends one row per log to the unified feed for the Activity
@@ -608,6 +627,7 @@ export async function runChainIndexerForChain(
     loanStatusUpdates: loanStats.statusUpdates,
     loanDetailRefreshes,
     activityEvents,
+    signedOfferUpdates,
   };
 }
 
@@ -1121,6 +1141,193 @@ async function processOfferLogs(
   }
 
   return { newOffers, statusUpdates };
+}
+
+// ──────────────────────────────────────────────────────────────────
+// #1131 Rate Desk phase 3 — signed-offer book lifecycle.
+// ──────────────────────────────────────────────────────────────────
+
+/**
+ * Reconcile the off-chain `signed_offers` book (migration 0033, populated by
+ * `POST /signed-offers`) against the on-chain lifecycle events:
+ *
+ *   - `SignedOfferFilled` (SignedOfferFacet) — the DIRECT accept path.
+ *     Full-consume by contract construction: `acceptSignedOffer` /
+ *     `acceptSignedOfferWithPermit` set the `signedOfferFilled` ledger to
+ *     the offer's CEILING before materializing (SignedOfferFacet.sol:94/130
+ *     — "v0.5 is DIRECT counterparty accept = full consume (AON
+ *     semantics)"), so there is NO partial fill on this path — vault-backed
+ *     or wallet-backed alike. The row flips to 'filled' with
+ *     `filled_amount = ceiling` (amount_max, or amount when amount_max
+ *     is '0' — mirroring `_ceiling`).
+ *
+ *   - `SignedOfferMatched` (OfferMatchFacet, v0.6 keeper-matcher) — the
+ *     PARTIAL-fill path. Each event carries this slice's `fillAmount`, and
+ *     the on-chain ledger accumulates (`filledBefore + fillAmount`). Rather
+ *     than accumulating in D1 (non-idempotent under a partial-failure
+ *     re-scan — the same hazard #760 fixed for `OfferMatched`), we write the
+ *     ABSOLUTE cumulative read block-pinned to the event via
+ *     `signedOfferFilledAmount(orderHash)`: deterministic on every replay.
+ *     FAIL-CLOSED like #760: a read failure propagates so the cursor doesn't
+ *     advance past a never-applied update. When the cumulative reaches the
+ *     ceiling the row flips to 'filled'; otherwise it stays 'active' with
+ *     the ratcheted `filled_amount` (AON signed offers are single-match-only
+ *     on-chain, so they always arrive here at the ceiling).
+ *
+ *   - `SignedOfferCancelled` — signer cancelled on-chain. Status →
+ *     'cancelled'. `filled_amount` is deliberately KEPT at the actual
+ *     cumulative (the chain ledger poisons itself to the ceiling as the
+ *     unfillable marker, but mirroring that would conflate "cancelled with
+ *     2 of 10 filled" with "fully filled" in the book's history).
+ *
+ *   - `SignedOfferNonceBurned` — batch invalidation: EVERY still-active row
+ *     for (signer, nonce) on this chain flips to 'nonce_burned' at once.
+ *
+ * Only-active guards keep terminal states sticky (a cancel after a full
+ * fill, or a nonce burn after a cancel, is a no-op — first terminal wins,
+ * matching the on-chain reality that a consumed order can't be re-consumed).
+ *
+ * A missing row is an INSERT-less no-op with a debug log: the book only
+ * knows offers that were POSTed to it — fills of signed offers distributed
+ * out-of-band are not this table's concern (the materialized on-chain offer
+ * + loan are indexed by the normal offer/loan handlers regardless).
+ *
+ * These events are NOT `@custom:event-category state-change/{loan,offer}-
+ * mutation` annotated, so check-event-coverage does not force handlers —
+ * they're handled here anyway because the `signed_offers` projection would
+ * otherwise advertise consumed orders forever.
+ */
+async function processSignedOfferLogs(
+  logs: DecodedLog[],
+  env: Env,
+  chainId: number,
+  client: PublicClient,
+  diamond: Address,
+): Promise<number> {
+  const SIGNED_OFFER_EVENTS = new Set([
+    'SignedOfferFilled',
+    'SignedOfferMatched',
+    'SignedOfferCancelled',
+    'SignedOfferNonceBurned',
+  ]);
+  // Replay in chain log order (the scan already delivers logs ordered by
+  // (blockNumber, logIndex)): a match ratchet followed by a cancel in the
+  // same window must land as cancelled-with-partial-fill, not the reverse.
+  const relevant = logs.filter((l) => SIGNED_OFFER_EVENTS.has(l.eventName));
+  if (relevant.length === 0) return 0;
+
+  const now = Math.floor(Date.now() / 1000);
+  let updates = 0;
+
+  for (const log of relevant) {
+    const a = log.args;
+    if (log.eventName === 'SignedOfferFilled') {
+      const orderHash = (a.orderHash as string).toLowerCase();
+      const r = await env.DB.prepare(
+        `UPDATE signed_offers
+         SET status = 'filled',
+             filled_amount = CASE WHEN amount_max = '0' THEN amount ELSE amount_max END,
+             updated_at = ?
+         WHERE chain_id = ? AND order_hash = ? AND status = 'active'`,
+      )
+        .bind(now, chainId, orderHash)
+        .run();
+      if ((r.meta?.changes ?? 0) > 0) {
+        updates++;
+      } else {
+        console.log(
+          `[chainIndexer] SignedOfferFilled for untracked/terminal order ${orderHash} (chain ${chainId}) — no-op`,
+        );
+      }
+    } else if (log.eventName === 'SignedOfferMatched') {
+      const orderHash = (a.orderHash as string).toLowerCase();
+      // Row-existence check FIRST so an untracked order never spends the
+      // block-pinned RPC read (and never trips the fail-closed abort below
+      // for an order the book doesn't even carry).
+      const row = await env.DB.prepare(
+        `SELECT amount, amount_max, status FROM signed_offers
+         WHERE chain_id = ? AND order_hash = ?`,
+      )
+        .bind(chainId, orderHash)
+        .first<{ amount: string; amount_max: string; status: string }>();
+      if (!row) {
+        console.log(
+          `[chainIndexer] SignedOfferMatched for untracked order ${orderHash} (chain ${chainId}) — no-op`,
+        );
+        continue;
+      }
+      // #760 pattern — absolute cumulative, block-pinned to THIS event, so a
+      // partial-failure re-scan of the same window writes the same value
+      // instead of double-accumulating `fillAmount`. FAIL-CLOSED: a read
+      // failure propagates → the scan aborts → the cursor doesn't advance →
+      // this event is re-processed next tick.
+      let absFilled: bigint;
+      try {
+        absFilled = (await client.readContract({
+          address: diamond,
+          abi: DIAMOND_SIGNED_OFFER_ABI,
+          functionName: 'signedOfferFilledAmount',
+          args: [orderHash],
+          blockNumber: log.blockNumber,
+        })) as bigint;
+      } catch (err) {
+        // eslint-disable-next-line no-console
+        console.error(
+          `[chainIndexer] signedOfferFilledAmount(${orderHash}) for SignedOfferMatched failed; aborting scan so the cursor doesn't advance`,
+          err,
+        );
+        throw err;
+      }
+      const ceiling = ceilingOf(row.amount, row.amount_max);
+      const fullyFilled = absFilled >= ceiling;
+      const r = await env.DB.prepare(
+        fullyFilled
+          ? `UPDATE signed_offers
+             SET status = 'filled', filled_amount = ?, updated_at = ?
+             WHERE chain_id = ? AND order_hash = ? AND status = 'active'`
+          : `UPDATE signed_offers
+             SET filled_amount = ?, updated_at = ?
+             WHERE chain_id = ? AND order_hash = ? AND status = 'active'`,
+      )
+        .bind(absFilled.toString(), now, chainId, orderHash)
+        .run();
+      if ((r.meta?.changes ?? 0) > 0) updates++;
+    } else if (log.eventName === 'SignedOfferCancelled') {
+      const orderHash = (a.orderHash as string).toLowerCase();
+      const r = await env.DB.prepare(
+        `UPDATE signed_offers SET status = 'cancelled', updated_at = ?
+         WHERE chain_id = ? AND order_hash = ? AND status = 'active'`,
+      )
+        .bind(now, chainId, orderHash)
+        .run();
+      if ((r.meta?.changes ?? 0) > 0) {
+        updates++;
+      } else {
+        console.log(
+          `[chainIndexer] SignedOfferCancelled for untracked/terminal order ${orderHash} (chain ${chainId}) — no-op`,
+        );
+      }
+    } else if (log.eventName === 'SignedOfferNonceBurned') {
+      const signer = (a.signer as string).toLowerCase();
+      const nonce = (a.nonce as bigint).toString();
+      const r = await env.DB.prepare(
+        `UPDATE signed_offers SET status = 'nonce_burned', updated_at = ?
+         WHERE chain_id = ? AND signer = ? AND nonce = ? AND status = 'active'`,
+      )
+        .bind(now, chainId, signer, nonce)
+        .run();
+      const changed = r.meta?.changes ?? 0;
+      if (changed > 0) {
+        updates += changed;
+      } else {
+        console.log(
+          `[chainIndexer] SignedOfferNonceBurned(${signer}, ${nonce}) matched no active rows (chain ${chainId}) — no-op`,
+        );
+      }
+    }
+  }
+
+  return updates;
 }
 
 /**

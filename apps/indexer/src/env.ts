@@ -84,6 +84,12 @@ export interface WorkerEnv {
   OPENSEA_OFFERS_MATCH_SOURCE_RATELIMIT?: {
     limit: (args: { key: string }) => Promise<{ success: boolean }>;
   };
+  // #1131 Rate Desk phase 3 — per-IP rate-limit on `POST /signed-offers`
+  // (the signed-offer book ingest). Same shape + no-op-when-unprovisioned
+  // posture as the #335 binding above.
+  SIGNED_OFFERS_RATELIMIT?: {
+    limit: (args: { key: string }) => Promise<{ success: boolean }>;
+  };
   // #757 Phase A — Alchemy webhook HMAC signing key. Read DIRECTLY from this
   // raw `WorkerEnv` in the `/hooks/chain-event` route (which is dispatched
   // BEFORE the global `resolveEnv`, so an unauthenticated POST never triggers
@@ -159,6 +165,16 @@ export interface Env {
   OPENSEA_OFFERS_MATCH_SOURCE_RATELIMIT?: {
     limit: (args: { key: string }) => Promise<{ success: boolean }>;
   };
+
+  // #1131 Rate Desk phase 3 — per-IP rate-limit binding for
+  // `POST /signed-offers` (signed-offer book ingest). No-op when the
+  // operator hasn't provisioned the wrangler.jsonc binding yet; the
+  // strict field validation + local EIP-712 signature verification
+  // keep the endpoint defensible without it, but provisioning it is
+  // the expected operator action post-merge.
+  SIGNED_OFFERS_RATELIMIT?: {
+    limit: (args: { key: string }) => Promise<{ success: boolean }>;
+  };
 }
 
 /**
@@ -232,6 +248,8 @@ export async function resolveEnv(raw: WorkerEnv): Promise<Env> {
     // even when operators provision it in wrangler.jsonc.
     OPENSEA_OFFERS_MATCH_SOURCE_RATELIMIT:
       raw.OPENSEA_OFFERS_MATCH_SOURCE_RATELIMIT,
+    // #1131 — pass through the signed-offer book rate-limit binding.
+    SIGNED_OFFERS_RATELIMIT: raw.SIGNED_OFFERS_RATELIMIT,
     RPC_BASE: base,
     RPC_ETH: eth,
     RPC_ARB: arb,

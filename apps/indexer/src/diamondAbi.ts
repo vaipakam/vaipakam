@@ -35,11 +35,22 @@
  * specifically a positional-decode issue; events are immune.)
  */
 
-import { OfferCancelFacetABI, LoanFacetABI } from '@vaipakam/contracts/abis';
+import {
+  OfferCancelFacetABI,
+  LoanFacetABI,
+  SignedOfferFacetABI,
+} from '@vaipakam/contracts/abis';
 
 export const DIAMOND_OFFER_DETAILS_ABI = OfferCancelFacetABI;
 
 export const DIAMOND_LOAN_DETAILS_ABI = LoanFacetABI;
+
+/** #1131 Rate Desk phase 3 — hosts `signedOfferFilledAmount(bytes32)`, the
+ *  cumulative-fill ledger read the SignedOfferMatched handler block-pins for
+ *  an idempotent absolute `filled_amount` write (the #760 pattern), and the
+ *  ingest-gate views the POST /signed-offers route consults. Full facet ABI
+ *  re-exported per the same rationale as the two above. */
+export const DIAMOND_SIGNED_OFFER_ABI = SignedOfferFacetABI;
 
 /** ERC-721 `ownerOf` — the Vaipakam position NFT is a facet ON the Diamond, so
  *  the diamond address IS the NFT contract. Reverts on burned / nonexistent

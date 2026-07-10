@@ -95,6 +95,11 @@ import {
   handleOffersPreflight,
 } from './offerRoutes';
 import {
+  handleSignedOfferPost,
+  handleSignedOffersGet,
+  handleSignedOffersPreflight,
+} from './signedOfferRoutes';
+import {
   handleLoansActive,
   handleLoansRecent,
   handleLoansStats,
@@ -269,6 +274,18 @@ export default {
         const byId = url.pathname.match(/^\/offers\/(\d+)$/);
         if (byId) return handleOfferById(req, resolved, byId[1]);
       }
+      return new Response('Not found', { status: 404 });
+    }
+
+    // ─── /signed-offers ─────────────────────────────────────────
+    // #1131 Rate Desk phase 3 — the gasless signed-offer book. POST
+    // publishes an EIP-712-signed order (verified locally before
+    // acceptance, rate-limited per IP); GET serves one (pair, tenor)
+    // market's active book for takers to replay on-chain.
+    if (url.pathname === '/signed-offers') {
+      if (req.method === 'OPTIONS') return handleSignedOffersPreflight();
+      if (req.method === 'POST') return handleSignedOfferPost(req, resolved);
+      if (req.method === 'GET') return handleSignedOffersGet(req, resolved);
       return new Response('Not found', { status: 404 });
     }
 
