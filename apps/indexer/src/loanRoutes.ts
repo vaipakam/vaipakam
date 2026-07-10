@@ -1027,15 +1027,32 @@ export async function handleLoansRateCandles(
   ) {
     return jsonResponse({ error: 'market-filter-required' }, 400);
   }
+  // Own-property lookups only: a raw query key like `interval=toString`
+  // must read as undefined (→ 400), never an inherited Object.prototype
+  // member (Codex #1139 round-1 P3). The enum objects are null-prototype
+  // too (rateCandles.ts) — belt and suspenders on a public query surface.
   const intervalRaw = url.searchParams.get('interval') ?? '1h';
-  const intervalSec = CANDLE_INTERVALS[intervalRaw];
+  const intervalSec = Object.hasOwn(CANDLE_INTERVALS, intervalRaw)
+    ? CANDLE_INTERVALS[intervalRaw]
+    : undefined;
   if (intervalSec === undefined) {
     return jsonResponse({ error: 'bad-interval' }, 400);
   }
   const rangeRaw = url.searchParams.get('range') ?? '30d';
-  const rangeDays = CANDLE_RANGES[rangeRaw];
+  const rangeDays = Object.hasOwn(CANDLE_RANGES, rangeRaw)
+    ? CANDLE_RANGES[rangeRaw]
+    : undefined;
   if (rangeDays === undefined) {
     return jsonResponse({ error: 'bad-range' }, 400);
+  }
+  // Fail closed when this chain isn't indexed here (Codex #1139 round-1
+  // P2): an unindexed chain would otherwise query D1 anyway and serve a
+  // CACHEABLE 200 with empty/stale buckets, which the chart renders as
+  // an honest zero-fill market. Same #749 posture as the participant /
+  // current-holder routes — a 503 keeps the frontend's tri-state on
+  // "unavailable", never a false empty.
+  if (!chainConfigured(env, chainId)) {
+    return jsonResponse({ error: 'chain-not-configured' }, 503);
   }
   try {
     const conds = [

@@ -159,11 +159,10 @@ export function Desk() {
               decimals={lendingMeta.data?.decimals}
               symbol={lendingMeta.data?.symbol}
               quotedMidBps={ladder?.midBps ?? null}
-              tapeNewest={
-                lastFill
-                  ? { rateBps: lastFill.interestRateBps, at: lastFill.startAt }
-                  : null
-              }
+              // The whole tape, not just the newest fill (#1139): sparse
+              // mode draws one marker per tape fill, and the empty-copy
+              // split needs to know whether older fills exist at all.
+              tape={tape.data}
             />
           </Suspense>
           {pair !== null ? (

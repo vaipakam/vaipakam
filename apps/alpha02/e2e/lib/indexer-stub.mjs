@@ -650,9 +650,18 @@ async function handler(req, res) {
       if (lend === null || coll === null || days === null) {
         return json(400, { error: 'market-filter-required' });
       }
-      const intervalSec = CANDLE_INTERVALS[url.searchParams.get('interval') ?? '1h'];
+      // Own-property lookups only, mirroring the worker (Codex #1139
+      // round-1 P3): a raw `interval=toString` must 400, never resolve
+      // an inherited Object.prototype member.
+      const intervalRaw = url.searchParams.get('interval') ?? '1h';
+      const intervalSec = Object.hasOwn(CANDLE_INTERVALS, intervalRaw)
+        ? CANDLE_INTERVALS[intervalRaw]
+        : undefined;
       if (intervalSec === undefined) return json(400, { error: 'bad-interval' });
-      const rangeDays = CANDLE_RANGES[url.searchParams.get('range') ?? '30d'];
+      const rangeRaw = url.searchParams.get('range') ?? '30d';
+      const rangeDays = Object.hasOwn(CANDLE_RANGES, rangeRaw)
+        ? CANDLE_RANGES[rangeRaw]
+        : undefined;
       if (rangeDays === undefined) return json(400, { error: 'bad-range' });
 
       const [ids, chainNow] = await Promise.all([allLoanIds(), forkNowSec()]);

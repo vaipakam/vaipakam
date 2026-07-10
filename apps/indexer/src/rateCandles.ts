@@ -19,20 +19,37 @@
  *   for zero gain at any realistic per-market row count.
  */
 
-/** Allowed `interval` values → bucket width in seconds. */
-export const CANDLE_INTERVALS: Record<string, number> = {
-  '1h': 3600,
-  '4h': 14400,
-  '1d': 86400,
-};
+/**
+ * Allowed `interval` values → bucket width in seconds.
+ *
+ * NULL-PROTOTYPE + frozen (both public candle enums): these are looked
+ * up with RAW query-string keys, and a plain object literal would
+ * resolve inherited keys — `?interval=toString` returns
+ * `Object.prototype.toString` instead of `undefined`, bypassing the
+ * 400 validation and feeding the fold a non-numeric interval (Codex
+ * #1139 round-1 P3). The handler ALSO gates each lookup with
+ * `Object.hasOwn` so neither layer's discipline can silently regress.
+ */
+export const CANDLE_INTERVALS: Readonly<Record<string, number>> =
+  Object.freeze(
+    Object.assign(Object.create(null) as Record<string, number>, {
+      '1h': 3600,
+      '4h': 14400,
+      '1d': 86400,
+    }),
+  );
 
-/** Allowed `range` values → lookback in days (null = no lower time bound). */
-export const CANDLE_RANGES: Record<string, number | null> = {
-  '7d': 7,
-  '30d': 30,
-  '90d': 90,
-  all: null,
-};
+/** Allowed `range` values → lookback in days (null = no lower time
+ *  bound). Null-prototype + frozen — see CANDLE_INTERVALS. */
+export const CANDLE_RANGES: Readonly<Record<string, number | null>> =
+  Object.freeze(
+    Object.assign(Object.create(null) as Record<string, number | null>, {
+      '7d': 7,
+      '30d': 30,
+      '90d': 90,
+      all: null,
+    }),
+  );
 
 /** The columns the candle SQL selects per fill. */
 export interface CandleFillRow {

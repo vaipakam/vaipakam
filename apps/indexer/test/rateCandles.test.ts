@@ -37,6 +37,20 @@ describe('enums', () => {
     expect(CANDLE_INTERVALS).toEqual({ '1h': 3600, '4h': 14400, '1d': 86400 });
     expect(CANDLE_RANGES).toEqual({ '7d': 7, '30d': 30, '90d': 90, all: null });
   });
+
+  it('rejects inherited object keys — raw query strings must not resolve Object.prototype members', () => {
+    // Codex #1139 round-1 P3: `?interval=toString` on a plain object
+    // literal returns Object.prototype.toString, bypassing the 400.
+    // The enums are null-prototype, so every inherited name is undefined.
+    for (const key of ['toString', 'constructor', 'hasOwnProperty', 'valueOf']) {
+      expect(CANDLE_INTERVALS[key]).toBeUndefined();
+      expect(CANDLE_RANGES[key]).toBeUndefined();
+      expect(Object.hasOwn(CANDLE_INTERVALS, key)).toBe(false);
+      expect(Object.hasOwn(CANDLE_RANGES, key)).toBe(false);
+    }
+    expect(Object.getPrototypeOf(CANDLE_INTERVALS)).toBeNull();
+    expect(Object.getPrototypeOf(CANDLE_RANGES)).toBeNull();
+  });
 });
 
 describe('bucket boundary assignment', () => {

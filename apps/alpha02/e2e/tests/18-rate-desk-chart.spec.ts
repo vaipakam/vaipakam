@@ -123,9 +123,23 @@ test('a zero-fill market shows the honest empty chart; seeded fills render spars
   await expect(page.locator('.desk-book-col .card').first()).toBeVisible();
   await expect(page.locator('.desk-view-toggle')).toBeHidden();
 
-  // §5.3 honesty, zero-fill side: the chart states there is nothing to
-  // draw (copy.desk.chart.empty) and draws NO series — never a fake
-  // one. The header's last-fill line shows its honest none state.
+  // §5.3 honesty, zero-fill side (#1139 empty-copy split): the DEFAULT
+  // view is a 30d range, and under the stub the tape route
+  // (/loans/recent) is deliberately unserved — the app cannot prove
+  // the market never filled, so the empty copy must be RANGE-scoped
+  // (copy.desk.chart.emptyRange), never a "no fills yet for this
+  // market" claim it can't back. No series is drawn either way.
+  await expect(
+    chartCard.getByText(/No fills in this range — try a longer range\./),
+  ).toBeVisible({ timeout: 30_000 });
+  await expect(chartCard.locator('.desk-chart-canvas')).toHaveCount(0);
+  // Switching to range=all makes the empty series the market's WHOLE
+  // history — only then is the never-filled copy (copy.desk.chart.empty)
+  // claimable.
+  await chartCard
+    .getByRole('group', { name: 'Range' })
+    .getByRole('button', { name: 'all', exact: true })
+    .click();
   await expect(
     chartCard.getByText(
       /No fills yet for this market — the chart draws only executed rates\./,
@@ -205,7 +219,12 @@ test('a zero-fill market shows the honest empty chart; seeded fills render spars
 
   // §5.3 rule 2 — the sparse-tape note names the honest fill count
   // (copy.desk.chart.sparseNote). Default view is 1d × 30d; the three
-  // fills sit within ~2 fork-days, all in range.
+  // fills sit within ~2 fork-days, all in range. Marker source under
+  // the stub (#1139): the tape route is unserved, so sparse mode
+  // deterministically takes the BUCKET-marker fallback (one point per
+  // bucket, ×N on collapsed buckets) — per-fill tape markers are the
+  // live tier's surface; the decision math (fillPointsFromTape /
+  // tapeCoversSparseFills) is pinned in src/lib/rateChart.test.ts.
   await expect(page.locator('.desk-chart-sparse-note')).toHaveText(
     /Sparse market — 3 fills in this range, drawn individually\./,
     { timeout: 30_000 },

@@ -40,8 +40,19 @@ import { copy } from '../../content/copy';
 import { useTheme, type ResolvedTheme } from '../../app/ThemeContext';
 import { UnavailableState } from '../EmptyState';
 import { useDeskCandles, type DeskPair } from '../../data/desk';
-import type { CandleInterval, CandleRange } from '../../data/indexer';
-import { isSparseTape, newestPrint, totalFills } from '../../lib/rateChart';
+import type {
+  CandleInterval,
+  CandleRange,
+  IndexedLoan,
+} from '../../data/indexer';
+import {
+  INTERVAL_SECONDS,
+  chartEmptyKind,
+  fillPointsFromTape,
+  isSparseTape,
+  newestPrint,
+  totalFills,
+} from '../../lib/rateChart';
 import {
   formatBpsAsPercent,
   formatDate,
@@ -106,7 +117,7 @@ export default function RateChart({
   decimals,
   symbol,
   quotedMidBps,
-  tapeNewest,
+  tape,
 }: {
   pair: DeskPair | null;
   days: number;
@@ -117,9 +128,12 @@ export default function RateChart({
    *  the page from the live book and passed down, so the header stat
    *  and the overlay can never disagree. */
   quotedMidBps: number | null;
-  /** Newest tape fill for the market — freshness backstop for the
-   *  "last fill" line (the candle response is 60 s-cached). */
-  tapeNewest: { rateBps: number; at: number } | null;
+  /** The market's tape (Desk.tsx already holds it for the TapePanel —
+   *  passed down, never re-fetched), newest first, tri-state per the
+   *  app contract. Feeds three things: the "last fill" freshness
+   *  backstop (the candle response is 60 s-cached), sparse mode's
+   *  per-fill markers, and the never-filled vs empty-range copy split. */
+  tape: IndexedLoan[] | null | undefined;
 }) {
   const [interval, setInterval] = useState<CandleInterval>(DEFAULT_INTERVAL);
   const [range, setRange] = useState<CandleRange>(DEFAULT_RANGE);
@@ -132,9 +146,30 @@ export default function RateChart({
     () => (Array.isArray(buckets) ? isSparseTape(buckets) : false),
     [buckets],
   );
+  const tapeNewest = useMemo(
+    () =>
+      Array.isArray(tape) && tape.length > 0
+        ? { rateBps: tape[0].interestRateBps, at: tape[0].startAt }
+        : null,
+    [tape],
+  );
   const lastPrint = useMemo(
     () => newestPrint(Array.isArray(buckets) ? buckets : [], tapeNewest),
     [buckets, tapeNewest],
+  );
+  /** Sparse mode's per-fill points from the tape (Codex #1139 round-1
+   *  P2): with < 10 fills in range those fills are by definition the
+   *  market's newest, so the tape rows cover them — one marker per
+   *  actual print instead of one per bucket (which collapses
+   *  same-bucket fills into a single point at the bucket close).
+   *  `null` = tape unavailable or provably not covering the folded
+   *  fills → the effect falls back to bucket markers. */
+  const fillPoints = useMemo(
+    () =>
+      sparse && Array.isArray(buckets) && Array.isArray(tape)
+        ? fillPointsFromTape(buckets, tape, INTERVAL_SECONDS[interval])
+        : null,
+    [sparse, buckets, tape, interval],
   );
 
   const containerRef = useRef<HTMLDivElement | null>(null);
@@ -178,9 +213,22 @@ export default function RateChart({
 
     let series: ISeriesApi<'Line'> | ISeriesApi<'Candlestick'>;
     if (sparse) {
-      // §5.3 rule 2 — step-line + one marker per bucket. With < 10
-      // fills in range nearly every bucket IS a single fill; a marker
-      // carrying the count covers the multi-fill buckets honestly.
+      // §5.3 rule 2 — step-line + markers, two data sources:
+      //
+      //  - Tape-backed (fillPoints ≠ null): one point per ACTUAL fill
+      //    at its exact time (Codex #1139 round-1 P2 — bucket points
+      //    collapse same-bucket prints into one marker at the bucket
+      //    close, hiding intra-bucket fills). Same-second collisions
+      //    still collapse — two points can't share an x — but keep
+      //    their ×N count visible.
+      //  - Bucket fallback (tape unavailable or provably not covering
+      //    the folded fills): the pre-#1139 shape — one point per
+      //    bucket at the bucket close, with the ×N count marking every
+      //    collapsed multi-fill bucket. TRADEOFF, on purpose: markers
+      //    are drawn only from data we actually hold — a bucket close
+      //    is real, an interpolated intra-bucket position would be
+      //    fabricated. The ×N text is what keeps the collapse honest.
+      const points = fillPoints ?? buckets;
       const line = chart.addSeries(LineSeries, {
         color: colors.executed,
         lineWidth: 2,
@@ -190,20 +238,20 @@ export default function RateChart({
         priceFormat,
       });
       line.setData(
-        buckets.map((b) => ({
-          time: b.t as UTCTimestamp,
-          value: b.close / 100,
+        points.map((p) => ({
+          time: p.t as UTCTimestamp,
+          value: ('close' in p ? p.close : p.rateBps) / 100,
         })),
       );
       createSeriesMarkers(
         line,
-        buckets.map((b) => ({
-          time: b.t as Time,
+        points.map((p) => ({
+          time: p.t as Time,
           position: 'inBar' as const,
           shape: 'circle' as const,
           color: colors.marker,
           size: 1,
-          text: b.fills > 1 ? `×${b.fills}` : undefined,
+          text: p.fills > 1 ? `×${p.fills}` : undefined,
         })),
       );
       series = line;
@@ -243,9 +291,27 @@ export default function RateChart({
 
     chart.timeScale().fitContent();
 
-    // §5.3 rule 3 — crosshair tooltip with the bucket's fill count +
+    // §5.3 rule 3 — crosshair tooltip with the point's fill count +
     // total principal (formatted with the lending asset's metadata).
-    const byTime = new Map(buckets.map((b) => [b.t, b]));
+    // Keyed on whatever the series actually plots: exact fill times in
+    // tape-backed sparse mode, bucket starts otherwise.
+    const tipRows =
+      sparse && fillPoints !== null
+        ? fillPoints.map((p) => ({
+            t: p.t,
+            rateLine: formatBpsAsPercent(p.rateBps),
+            fills: p.fills,
+            principalTotal: p.principalTotal,
+          }))
+        : buckets.map((b) => ({
+            t: b.t,
+            rateLine: sparse
+              ? formatBpsAsPercent(b.close)
+              : `O ${formatBpsAsPercent(b.open)} · H ${formatBpsAsPercent(b.high)} · L ${formatBpsAsPercent(b.low)} · C ${formatBpsAsPercent(b.close)}`,
+            fills: b.fills,
+            principalTotal: b.principalTotal,
+          }));
+    const byTime = new Map(tipRows.map((r) => [r.t, r]));
     const onCrosshair = (param: MouseEventParams) => {
       const tip = tooltipRef.current;
       if (!tip) return;
@@ -255,15 +321,12 @@ export default function RateChart({
         tip.style.display = 'none';
         return;
       }
-      const rateLine = sparse
-        ? formatBpsAsPercent(b.close)
-        : `O ${formatBpsAsPercent(b.open)} · H ${formatBpsAsPercent(b.high)} · L ${formatBpsAsPercent(b.low)} · C ${formatBpsAsPercent(b.close)}`;
       const principal =
         decimals !== undefined
           ? `${formatTokenAmount(b.principalTotal, decimals)}${symbol ? ` ${symbol}` : ''}`
           : '…';
       tip.textContent = [
-        rateLine,
+        b.rateLine,
         `${text.tooltipFills(b.fills)} · ${principal}`,
         formatDate(b.t),
       ].join('\n');
@@ -284,7 +347,17 @@ export default function RateChart({
     // Rebuilding the whole chart per change is deliberate: the data is
     // thin by definition (§5.3) and a rebuild is cheaper to reason
     // about than mutating series/theme/marker state in place.
-  }, [buckets, sparse, resolved, quotedMidBps, decimals, symbol, interval, text]);
+  }, [
+    buckets,
+    sparse,
+    fillPoints,
+    resolved,
+    quotedMidBps,
+    decimals,
+    symbol,
+    interval,
+    text,
+  ]);
 
   return (
     <div className="card desk-chart-card">
@@ -355,7 +428,14 @@ export default function RateChart({
           </p>
         </div>
       ) : buckets.length === 0 ? (
-        <p className="muted">{text.empty}</p>
+        // "Never filled" vs "empty in this range" (Codex #1139 round-1
+        // P3): the market copy is only claimable when the evidence
+        // covers the whole history — see chartEmptyKind.
+        <p className="muted">
+          {chartEmptyKind(range, tape) === 'market'
+            ? text.empty
+            : text.emptyRange}
+        </p>
       ) : (
         <>
           {sparse ? (
