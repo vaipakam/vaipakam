@@ -380,6 +380,25 @@ contract ClaimFacet is
         // Sanctions: the executing keeper AND the cash recipient (current NFT owner).
         LibVaipakam._assertNotSanctioned(msg.sender);
         LibVaipakam._assertNotSanctioned(nftOwner);
+        // #998 S10 (#1006) — fail-closed release of any sanctioned-LOCKED lender
+        // proceeds on the backstop absorb path too (the lender-side marker applies
+        // to the same funds). Confirmed freeze survives an oracle outage here as
+        // well; ordinary absorbs carry no marker and stay fail-open.
+        //
+        // Codex r2 P1 — CHECK ONLY, do NOT clear here: the resolution-first
+        // auto-dispatch / retry below can resolve the loan and `return` WITHOUT
+        // paying the lender in this tx. Clearing the marker now would leave the
+        // deferred `claimAsLender` fail-open if the recorded party is re-listed and
+        // the oracle is then down. The marker is cleared by whichever claim path
+        // actually pays the lender (the `_claimAsLenderImpl` gate); a backstop that
+        // does pay + burn in this tx leaves a harmless orphan the already-claimed
+        // guard blocks.
+        {
+            address frozen = LibSanctionedLock.frozenClaimant(s, loanId, true);
+            if (frozen != address(0)) {
+                LibVaipakam.assertNotSanctionedFailClosed(frozen);
+            }
+        }
 
         // ── Resolution-first. The internal-match auto-dispatch is calldata-free
         //    and objective; it always runs. A FULL match clears `snap.active`
@@ -441,6 +460,25 @@ contract ClaimFacet is
         // FallbackPending loan is excluded from eager consolidation, so a stale
         // `loan.lender` from a LEGITIMATE pre-flag transfer would wrongly freeze
         // the clean current holder's buyout (Codex #832 r6 P2).
+        // #998 S10 (#1006, Codex #1122-rework r2 P1) — the fallback-entry marker
+        // gate above only catches a holder flagged at fallback ENTRY. Also
+        // fail-closed on a holder confirmed flagged AFTER a clean entry
+        // (registry-aware `mustFreezeParty`), so the absorb can't pay a registered
+        // flagged holder their cash during an outage. This path BLOCKS rather than
+        // parks: `_absorbLenderSlice` is terminal-in-one-tx and burns the lender NFT,
+        // so there is no deferred claim to freeze the cash into. The loan stays
+        // FallbackPending — recoverable once the holder de-lists (keeper re-absorbs,
+        // or the holder claims normally). A never-confirmed holder stays fail-open.
+        // Routed through the cross-facet host (the now state-changing, registry-
+        // aware `mustFreezeParty` is too heavy to inline into this EIP-170-tight
+        // facet); the `SanctionedAddress` revert bubbles via the `bytes4(0)` frame.
+        LibFacet.crossFacetCall(
+            abi.encodeWithSelector(
+                EncumbranceMutateFacet.assertNotFrozenParty.selector,
+                nftOwner
+            ),
+            bytes4(0)
+        );
         // ── Resolution failed → the backstop buys the lender slice for cash.
         _absorbLenderSlice(loanId, loan, snap, vault, nftOwner);
     }
@@ -505,6 +543,18 @@ contract ClaimFacet is
             LibSanctionedLock.depositLocked(
                 s, loan.borrower, loanId, c, snap.borrowerCollateral
             );
+            // #998 S10 (#1006) — fail-closed freeze if the current borrower-
+            // position holder is flagged. Routed through the host (the registry-
+            // aware recordFrozenClaimant is too heavy to inline into this
+            // EIP-170-tight facet).
+            LibFacet.crossFacetCall(
+                abi.encodeWithSelector(
+                    EncumbranceMutateFacet.recordSanctionsFrozenClaimant.selector,
+                    loanId,
+                    false
+                ),
+                bytes4(0)
+            );
             LibFacet.crossFacetCall(
                 abi.encodeWithSelector(
                     EncumbranceMutateFacet.incrementCollateralLien.selector,
@@ -539,6 +589,10 @@ contract ClaimFacet is
             );
         }
         LibEncumbrance.releaseLenderProceeds(loanId, loan.lender);
+        // #998 S10 Class B — release any active-loan held reservation before the
+        // held withdraw below, so the vault-withdraw guard sees the parked funds as
+        // free. Idempotent no-op when no Class B share was parked on this loan.
+        LibEncumbrance.releaseActiveHeld(loanId, loan.lender);
 
         // Pay the lender (current NFT owner) CASH = lenderPrincipalDue from the
         // backstop vault's absorb-cash balance.
@@ -580,6 +634,29 @@ contract ClaimFacet is
         }
 
         s.lenderBackstopOptIn[loanId] = address(0);
+
+        // #998 S10 (#1006, Codex #1122-rework) — the lender slice is bought out
+        // and this absorb is terminal (the lender NFT burns just below), so no
+        // deferred lender claim remains to gate. Clear the lender-side frozen
+        // marker here so it can't orphan on the settled loan — unlike
+        // `_claimAsLenderImpl` (whose clean-release tail clears it), this backstop
+        // branch reaches its terminal without that cleanup.
+        //
+        // Codex 186c60ff-round P3 — clear the recorded party's REGISTRY bit
+        // UNCONDITIONALLY (not only when it equals `nftOwner`): the SOLE caller
+        // (`claimAsLenderViaBackstop`) already proved the recorded lender claimant
+        // authoritatively clean via `assertNotSanctionedFailClosed(frozen)` before
+        // reaching here, and nothing re-stamps the lender marker in between, so this
+        // tx has the authoritative clean read needed to self-heal the global bit.
+        // Leaving it set would wrongly block a de-listed prior holder from moving
+        // unrelated positions during a later outage until a manual refresh.
+        {
+            address frozenL = LibSanctionedLock.frozenClaimant(s, loanId, true);
+            if (frozenL != address(0)) {
+                LibSanctionedLock.clearConfirmedFlag(s, frozenL);
+                LibSanctionedLock.clearFrozenClaimant(s, loanId, true);
+            }
+        }
 
         // Burn the lender NFT + go terminal (mirrors the vanilla claim tail).
         LibFacet.crossFacetCall(
@@ -703,6 +780,49 @@ contract ClaimFacet is
         LibVaipakam.ClaimInfo storage claim = s.lenderClaims[loanId];
         if (claim.claimed) revert AlreadyClaimed();
 
+        // #998 S10 (#1006) — fail-closed release of sanctioned-LOCKED proceeds.
+        // If this lender side was frozen at close-out because the intended
+        // recipient (the current holder then) was affirmatively sanctions-flagged,
+        // the release must pass a FAIL-CLOSED screen on the RECORDED frozen
+        // claimant — not merely the fail-open `msg.sender` screen above. This
+        // keeps a confirmed freeze from silently lifting during a sanctions-oracle
+        // outage AND defeats the transfer-during-outage laundering vector (the
+        // funds unlock only once the recorded party is proven de-listed, whoever
+        // holds the NFT now). Ordinary (never-locked) claims carry no marker and
+        // stay fail-open, so an oracle blip never bricks an honest claimant. On a
+        // clean pass the marker is cleared (atomic with the payout below).
+        // Central claim-gate stamp (Codex #1122-rework r3) — stamp the CURRENT
+        // holder (= the ownerOf-gated claimant) if they must be frozen, BEFORE the
+        // release gate below. This catches a claimant confirmed flagged after
+        // close-out no matter which distribution path created this claim (fallback
+        // collateral, retry top-up fold, offset borrower, …), so we don't have to
+        // stamp at every scattered creation site. Registry-aware + idempotent with
+        // any existing close-out marker (first-write-wins / overwrite-if-clean).
+        // Routed through the cross-facet host — the registry-aware machinery is too
+        // heavy to inline into this EIP-170-tight facet. Stamps BOTH holders
+        // (design #1127 Class A): the claim-time fallback / retry distributions run
+        // inside this call and create the OTHER side's deferred claim too, so
+        // registering both here at claim time covers them without a per-distribution
+        // host call (which overflowed EIP-170).
+        LibFacet.crossFacetCall(
+            abi.encodeWithSelector(
+                EncumbranceMutateFacet.recordSanctionsFrozenClaimantBoth.selector,
+                loanId
+            ),
+            bytes4(0)
+        );
+        {
+            address frozen = LibSanctionedLock.frozenClaimant(s, loanId, true);
+            if (frozen != address(0)) {
+                LibVaipakam.assertNotSanctionedFailClosed(frozen);
+                // P2 (Codex r3) — the recorded party just passed the fail-closed
+                // screen ⇒ authoritatively clean ⇒ self-heal the global registry
+                // too (not just the per-loan marker), matching the movement gate.
+                LibSanctionedLock.clearConfirmedFlag(s, frozen);
+                LibSanctionedLock.clearFrozenClaimant(s, loanId, true);
+            }
+        }
+
         // EC-007 — verify lender position-NFT ownership BEFORE the
         // claim-time fallback resolution. `_resolveFallbackIfActive`
         // runs the internal-match auto-dispatch, which pays the 1%
@@ -794,6 +914,24 @@ contract ClaimFacet is
             }
         }
 
+        // Codex #1122-rework r2 P1 — `_resolveFallbackIfActive` above may have run a
+        // claim-time internal match / retry that stamped a FRESH lender frozen
+        // marker: the holder was clean at the top-of-function gate (which cleared
+        // any prior marker), but a match/retry re-observed them as flagged (or,
+        // during an outage, they were previously confirmed). The top gate can't see
+        // that later stamp, so re-check here before the lender payout, mirroring it —
+        // a flagged/unverifiable recorded party fail-closes the whole claim (the
+        // objective match is permissionless and can be re-driven by anyone once the
+        // holder de-lists).
+        {
+            address frozenAfterResolve = LibSanctionedLock.frozenClaimant(s, loanId, true);
+            if (frozenAfterResolve != address(0)) {
+                LibVaipakam.assertNotSanctionedFailClosed(frozenAfterResolve);
+                LibSanctionedLock.clearConfirmedFlag(s, frozenAfterResolve);
+                LibSanctionedLock.clearFrozenClaimant(s, loanId, true);
+            }
+        }
+
         // Claimable if there's a recorded amount, or heldForLender funds, or an NFT rental to return,
         // or an NFT collateral claim (for ERC-20 loans defaulting into NFT collateral).
         // `claim` + the already-claimed guard were resolved at the top
@@ -842,6 +980,11 @@ contract ClaimFacet is
         // caller passes no asset: the decrement always hits the same aggregate
         // the reserve ticked, even when the claim record's asset differs.
         LibEncumbrance.releaseLenderProceeds(loanId, loan.lender);
+        // #998 S10 Class B — release any active-loan held reservation (dedicated
+        // ledger) before the held withdraw folds `heldForLender` into this claim,
+        // so the vault-withdraw guard sees the parked funds as free. Idempotent
+        // no-op when no Class B share was parked on this loan.
+        LibEncumbrance.releaseActiveHeld(loanId, loan.lender);
         // #954 (§2.2) — release the per-loan frozen-VPFI tier exclusion this
         // loan's lender leg bumped (transferred-and-sanctioned holder case),
         // decrementing `frozenVpfiOwedByVault[loan.lender]` by EXACTLY what was
@@ -1095,6 +1238,40 @@ contract ClaimFacet is
 
         LibVaipakam.ClaimInfo storage claim = s.borrowerClaims[loanId];
         if (claim.claimed) revert AlreadyClaimed();
+
+        // #998 S10 (#1006) — fail-closed release of sanctioned-LOCKED borrower
+        // proceeds (surplus / re-liened collateral / residual). Mirror of the
+        // lender gate: if this borrower side was frozen at close-out on an
+        // affirmative flag of the intended recipient, re-screen the RECORDED
+        // frozen claimant FAIL-CLOSED so the freeze survives an oracle outage and
+        // the transfer-during-outage laundering vector. Ordinary claims carry no
+        // marker and stay fail-open. Cleared atomically on a clean pass.
+        // Central claim-gate stamp (Codex #1122-rework r3) — stamp the current
+        // borrower holder (the ownerOf-gated claimant) if they must be frozen,
+        // BEFORE the release gate. Catches a claimant confirmed flagged after
+        // close-out regardless of which path created this borrower claim (fallback
+        // collateral distribution, retry top-up fold, offset-completion borrower
+        // collateral, internal-match residual, …). Registry-aware + idempotent.
+        // Routed through the cross-facet host (EIP-170-tight facet). Stamps BOTH
+        // holders (design #1127 Class A) so the lender side of a claim-time
+        // distribution is registered here too.
+        LibFacet.crossFacetCall(
+            abi.encodeWithSelector(
+                EncumbranceMutateFacet.recordSanctionsFrozenClaimantBoth.selector,
+                loanId
+            ),
+            bytes4(0)
+        );
+        {
+            address frozen = LibSanctionedLock.frozenClaimant(s, loanId, false);
+            if (frozen != address(0)) {
+                LibVaipakam.assertNotSanctionedFailClosed(frozen);
+                // P2 (Codex r3) — recorded party passed the fail-closed screen ⇒
+                // authoritatively clean ⇒ self-heal the global registry too.
+                LibSanctionedLock.clearConfirmedFlag(s, frozen);
+                LibSanctionedLock.clearFrozenClaimant(s, loanId, false);
+            }
+        }
         // NFT collateral claims have amount=0 but tokenId/quantity as payload.
         // Phase 5 / §5.2b adds a second claimable lane: any pending VPFI
         // rebate credited at proper settlement (borrowerLifRebate). Loans
@@ -1628,6 +1805,11 @@ contract ClaimFacet is
             LibSanctionedLock.depositLocked(
                 s, loan.lender, loanId, loan.principalAsset, lenderGets
             );
+            // #998 S10 (#1006) — no per-site marker: the fail-closed freeze of a
+            // registered-flagged CLAIMANT is now stamped + checked centrally at the
+            // `claimAsLender` / `claimAsBorrower` gate (Codex #1122-rework r3), which
+            // covers every claim-creation path (this retry distribution included)
+            // without inflating this EIP-170-tight facet with a per-site stamp.
         }
         if (borrowerGets > 0) {
             // #821 (Codex #832 r4 P1) — vault-lock the borrower residual so a
@@ -1697,6 +1879,9 @@ contract ClaimFacet is
             LibSanctionedLock.depositLocked(
                 s, loan.borrower, loanId, loan.collateralAsset, snap.borrowerCollateral
             );
+            // #998 S10 (#1006) — the borrower freeze marker is recorded by the
+            // Class A `recordSanctionsFrozenClaimantBoth` at the top of this
+            // function (registry-aware), plus the fallback-ENTRY marker.
             // #569 Gap A — RE-LIEN the borrower residual pushed BACK into
             // the vault here. The lien was released at liquidation/default
             // ENTRY (when the full collateral left to Diamond custody); the

@@ -5,7 +5,6 @@ pragma solidity ^0.8.29;
 import {LibVaipakam} from "../libraries/LibVaipakam.sol";
 import {InteractionRewardsFacet} from "./InteractionRewardsFacet.sol";
 import {LibEncumbrance} from "../libraries/LibEncumbrance.sol";
-import {LibSanctionedLock} from "../libraries/LibSanctionedLock.sol";
 import {LibLifecycle} from "../libraries/LibLifecycle.sol";
 import {LibAuth} from "../libraries/LibAuth.sol";
 import {LibEntitlement} from "../libraries/LibEntitlement.sol";
@@ -195,6 +194,23 @@ contract PrecloseFacet is
         if (loan.status != LibVaipakam.LoanStatus.Active)
             revert LoanNotActive();
 
+        // #998 S10 (#1006, Codex r1 P1) — record the fail-closed frozen-claimant
+        // markers for BOTH sides up front (branch-independent): precloseDirect is
+        // a Tier-2-style close-out for the counterparties — it writes a lender
+        // payoff claim AND returns the borrower's collateral/refund, each claimed
+        // later via ClaimFacet. A keeper-initiated (or outage-window) close can
+        // complete while a current position holder is sanctioned, so freeze either
+        // side fail-closed when its holder is confirmed flagged. One cross-facet
+        // call covers both sides + both asset branches, keeping this EIP-170-tight
+        // facet small.
+        LibFacet.crossFacetCall(
+            abi.encodeWithSelector(
+                EncumbranceMutateFacet.recordSanctionsFrozenClaimantBoth.selector,
+                loanId
+            ),
+            bytes4(0)
+        );
+
         // #658 PR-B (Codex #690 round-2 P2) — clear any active prepay /
         // parallel-sale listing BEFORE the consolidation hook below. The
         // consolidation primitive EXCLUDES the borrower side while a listing
@@ -279,6 +295,15 @@ contract PrecloseFacet is
             // protocolTrackedVaultBalance counter ticks under the
             // LENDER (the vault owner) while pulling from the
             // borrower's allowance.
+            // #998 S10 note: the frozen-claimant markers recorded at the top of
+            // precloseDirect protect the transferred-flagged-HOLDER case (stored
+            // `loan.lender` clean → this deposit succeeds → the marker freezes the
+            // flagged current holder's later claim). A flagged STORED `loan.lender`
+            // still bricks this deposit on `getOrCreateUserVault`'s Tier-1 screen —
+            // a PRE-EXISTING #821 completeness gap (the borrower's escape is
+            // `repayLoan`, which carries the exemption). Adding the receive-side
+            // exemption here overflows this EIP-170-maxed facet, so it is deferred
+            // to a follow-up that splits PrecloseFacet (see #1124).
             LibFacet.crossFacetCall(
                 abi.encodeWithSelector(
                     VaultFactoryFacet.vaultDepositERC20From.selector,
@@ -417,6 +442,11 @@ contract PrecloseFacet is
             // transferred-position / keeper reasoning as the treasury-fee
             // deduction above): the lender's rental income comes out of the
             // borrower's prepay, which lives in the original borrower's vault.
+            // #998 S10 note: see the ERC20 branch — the flagged-STORED-lender
+            // brick on this resolution is the same pre-existing #821 gap deferred
+            // to the PrecloseFacet-split follow-up (#1124); the S10 markers here
+            // protect the transferred-flagged-holder case, which resolves a clean
+            // stored `loan.lender` and succeeds.
             address lenderVault = LibFacet.getOrCreateVault(loan.lender);
             LibFacet.crossFacetCall(
                 abi.encodeWithSelector(
@@ -1325,18 +1355,24 @@ contract PrecloseFacet is
         // receive-side exemption to `loan.lender` so the close-out completes; the
         // parked-proceeds audit event fires from `end(...)` when flagged. Same
         // pattern as `RepayFacet`'s terminal lender deposit.
-        LibSanctionedLock.begin(s, loan.lender);
+        // Park the old-lender payoff + apply the fail-closed freeze in ONE
+        // cross-facet call (#998 S10 / S3 #1001). The host folds the receive-side
+        // exemption pin, the cross-payer `vaultDepositERC20From` (payer = Alice →
+        // current old-lender's vault, Diamond out of the funds path), the
+        // parked-proceeds audit event, and the lender-side frozen-claimant marker.
+        // Consolidated here (vs the inline `begin`/deposit/`end`/marker sequence
+        // roomier facets like RefinanceFacet use) because PrecloseFacet is at the
+        // EIP-170 wall — one CALL instead of two keeps it under the limit.
         LibFacet.crossFacetCall(
             abi.encodeWithSelector(
-                VaultFactoryFacet.vaultDepositERC20From.selector,
+                EncumbranceMutateFacet.parkLenderPayoffAndFreeze.selector,
                 loan.borrower,               // payer — Alice
-                loan.lender,                 // user — current old-lender holder
+                loanId,
                 payAssetOffset,
                 lenderTotal
             ),
-            VaultDepositFailed.selector
+            bytes4(0)
         );
-        LibSanctionedLock.end(s, loan.lender, loanId, payAssetOffset, lenderTotal);
         s.heldForLender[loanId] += lenderTotal;
         // #597 — reserve the held VPFI against the old lender's unstake path for
         // the (now brief) window between this write and `claimAsLender`. VPFI is
@@ -1609,6 +1645,22 @@ contract PrecloseFacet is
             quantity: loan.collateralQuantity,
             claimed: false
         });
+        // #998 S10 (#1006, Codex #1122-rework 186c60ff-round P1) — Class A: the
+        // lender side was registered by `_settleOldLenderAtCompletion`'s park, but
+        // this deferred BORROWER collateral claim had NO borrower-side marker. A
+        // clean keeper running `completeOffsetInternal` after the borrower-position
+        // holder became sanctioned would complete the offset with the borrower
+        // never registered, so a later oracle-outage `claimAsBorrower` would release
+        // the collateral fail-open. Register the borrower holder here (oracle-up
+        // observation) via the host; no-op unless affirmatively flagged.
+        LibFacet.crossFacetCall(
+            abi.encodeWithSelector(
+                EncumbranceMutateFacet.recordSanctionsFrozenClaimant.selector,
+                originalLoanId,
+                false
+            ),
+            bytes4(0)
+        );
 
         // The old lender's payoff was just deposited into their vault and
         // recorded in `heldForLender[loanId]` by `_settleOldLenderAtCompletion`.

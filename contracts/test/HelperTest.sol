@@ -82,7 +82,7 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](92);
+        selectors = new bytes4[](102);
         selectors[0] = TestMutatorFacet.setLoan.selector;
         selectors[1] = TestMutatorFacet.setOffer.selector;
         selectors[2] = TestMutatorFacet.setNextLoanId.selector;
@@ -259,6 +259,18 @@ contract HelperTest {
         selectors[89] = TestMutatorFacet.setRentalBufferBpsRaw.selector; // #1004 (S8) rental late-fee buffer cap
         selectors[90] = TestMutatorFacet.setLoanInitMaxLtvBpsRaw.selector; // #900 (S15) per-asset init-LTV cap
         selectors[91] = TestMutatorFacet.setVaultBannedSourceRaw.selector; // #1123 (Codex #1126 r4 P2) recovery-ban leg
+        selectors[92] = TestMutatorFacet.setSanctionsFrozenClaimant.selector; // #1006 (S10)
+        selectors[93] = TestMutatorFacet.getSanctionsFrozenClaimant.selector; // #1006 (S10)
+        // #1006 (S10) Class B — Active-loan inline lender-share freeze harness.
+        selectors[94] = TestMutatorFacet.getHeldForLenderRaw.selector;
+        selectors[95] = TestMutatorFacet.getLenderProceedsEncumberedRaw.selector;
+        selectors[96] = TestMutatorFacet.callFreezeOrPayActiveLenderResident.selector;
+        selectors[97] = TestMutatorFacet.callFreezeOrPayActiveLenderFromPayer.selector;
+        selectors[98] = TestMutatorFacet.callFreezeOrPayActiveLenderFromVault.selector;
+        // #1006 (S10) Class B — dedicated active-held reservation harness.
+        selectors[99] = TestMutatorFacet.getHeldForLenderEncumberedRaw.selector;
+        selectors[100] = TestMutatorFacet.callEncumberLenderProceeds.selector;
+        selectors[101] = TestMutatorFacet.callMigrateActiveHeld.selector;
         // #951 v2 (Codex #959 bind-to-live) — setSaleListingCollateralRaw removed
         // with the snapshot mapping; the accept binds `>=` live collateral.
         // #687-B: the former tail entries ([83]-[87]: setBackstopAbsorbCashRaw,
@@ -764,7 +776,7 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](10);
+        selectors = new bytes4[](17);
         selectors[0] = EncumbranceMutateFacet.releaseCollateralLien.selector;
         selectors[1] = EncumbranceMutateFacet.decrementCollateralLien.selector;
         selectors[2] = EncumbranceMutateFacet.incrementCollateralLien.selector;
@@ -778,6 +790,17 @@ contract HelperTest {
         // #954 — swap-to-repay close-out freeze helpers hosted here (EIP-170).
         selectors[8] = EncumbranceMutateFacet.freezeLenderProceeds.selector;
         selectors[9] = EncumbranceMutateFacet.freezeOrPayBorrowerSurplus.selector;
+        // #998 S10 (#1006) — fail-closed frozen-claimant markers (EIP-170 host).
+        selectors[10] = EncumbranceMutateFacet.recordSanctionsFrozenClaimant.selector;
+        selectors[11] = EncumbranceMutateFacet.recordSanctionsFrozenClaimantBoth.selector;
+        // #998 S10 (#1006) — one-call lender-payoff park+freeze (PrecloseFacet EIP-170).
+        selectors[12] = EncumbranceMutateFacet.parkLenderPayoffAndFreeze.selector;
+        // #998 S10 (#1006, r4) — registry-aware fail-closed gate host (ClaimFacet backstop).
+        selectors[13] = EncumbranceMutateFacet.assertNotFrozenParty.selector;
+        // #998 S10 (#1006) Class B — Active-loan inline lender-share pay-or-freeze hosts.
+        selectors[14] = EncumbranceMutateFacet.freezeOrPayActiveLenderResident.selector;
+        selectors[15] = EncumbranceMutateFacet.freezeOrPayActiveLenderFromPayer.selector;
+        selectors[16] = EncumbranceMutateFacet.freezeOrPayActiveLenderFromVault.selector;
     }
 
     /// @notice #396 v0.5 — gasless signed off-chain offer book selectors.

@@ -228,6 +228,24 @@ contract RepayFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErrors 
             loan.status != LibVaipakam.LoanStatus.FallbackPending
         ) revert InvalidLoanStatus();
         bool curingFallback = loan.status == LibVaipakam.LoanStatus.FallbackPending;
+        // #998 S10 (#1006) — a cure supersedes the abandoned fallback-ENTRY freeze,
+        // so clear the entry markers up front and let the fresh terminal re-stamp
+        // below be authoritative (a stale flagged marker must not fail-close a
+        // now-clean holder's claim during an oracle outage). No-op for a normal
+        // Active repay that never had a marker.
+        //
+        // Codex r2 P1 — but PRESERVE a LENDER marker that still backs
+        // partial-internal-match proceeds: `heldForLender > 0` means an earlier
+        // Active partial match parked a leg's proceeds under a legitimately-set
+        // frozen claimant unrelated to this fallback episode. Clearing it would let
+        // those prior held proceeds release with no fail-closed marker. The borrower
+        // side has no such cross-episode accumulator, so it always clears.
+        if (curingFallback) {
+            if (s.heldForLender[loanId] == 0) {
+                LibSanctionedLock.clearFrozenClaimant(s, loanId, true);
+            }
+            LibSanctionedLock.clearFrozenClaimant(s, loanId, false);
+        }
 
         // Block lender-side self-repayment. Two checks because `loan.lender`
         // and `ownerOf(lenderTokenId)` can diverge after a free-form ERC-721
@@ -352,6 +370,9 @@ contract RepayFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErrors 
             LibSanctionedLock.end(
                 s, loan.lender, loanId, loan.principalAsset, plan.lenderDue
             );
+            // #998 S10 (#1006) — fail-closed freeze if the current lender-position
+            // holder is flagged (survives an oracle outage at claim time).
+            _recordFrozenClaimant(loanId, true);
 
             // Record lender's claimable (principal + interest). heldForLender handled by ClaimFacet.
             s.lenderClaims[loanId] = LibVaipakam.ClaimInfo({
@@ -384,6 +405,11 @@ contract RepayFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErrors 
                 quantity: loan.collateralQuantity,
                 claimed: false
             });
+            // #998 S10 (#1006) — the returned collateral is claim-gated
+            // (`claimAsBorrower`); repay is a Tier-2 close-out that completes even
+            // for a flagged borrower holder, so freeze it fail-closed when the
+            // current borrower-position holder is confirmed flagged.
+            _recordFrozenClaimant(loanId, false);
 
             emit LoanSettlementBreakdown(
                 loanId,
@@ -505,6 +531,9 @@ contract RepayFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErrors 
             LibSanctionedLock.depositLocked(
                 s, loan.lender, loanId, loan.prepayAsset, lenderShare
             );
+            // #998 S10 (#1006) — fail-closed freeze if the current lender-position
+            // holder is flagged.
+            _recordFrozenClaimant(loanId, true);
 
             // Record lender's claimable rental fees. heldForLender handled by ClaimFacet.
             s.lenderClaims[loanId] = LibVaipakam.ClaimInfo({
@@ -529,6 +558,12 @@ contract RepayFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErrors 
                 quantity: 0,
                 claimed: false
             });
+            // #998 S10 (#1006, Codex #1122-rework r5 P1) — the rental refund is a
+            // borrower claim too; stamp the borrower side so a current renter-holder
+            // flagged at repayment (oracle up) is registered + marked here, and the
+            // later `claimAsBorrower` fail-closes on it during an outage — matching
+            // the ERC-20 repay/preclose paths.
+            _recordFrozenClaimant(loanId, false);
 
             // Reset renter immediately (operational — rental is over)
             LibFacet.crossFacetCall(
@@ -624,6 +659,9 @@ contract RepayFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErrors 
                 LibSanctionedLock.depositLocked(
                     s, loan.borrower, loanId, loan.collateralAsset, held
                 );
+                // #998 S10 (#1006) — fail-closed freeze if the current borrower-
+                // position holder is flagged.
+                _recordFrozenClaimant(loanId, false);
                 // #569 Codex #572 round-5 P1 — RE-LIEN the restored
                 // collateral. The lien was released at default-entry
                 // (when the loan went FallbackPending), so the snapshot
@@ -754,26 +792,25 @@ contract RepayFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErrors 
             // `repayLoan`) — so the payout is correct regardless of whether the
             // consolidation ran or was skipped. The loan is Active here, so the
             // lender NFT is live (never burned pre-terminal) and `ownerOf` holds.
-            address lenderRecipient = IERC721(address(this)).ownerOf(
-                loan.lenderTokenId
-            );
-            // Codex #659 P1 — this is a DIRECT payout (no vault+claim deferral
-            // like full repay, where `claimAsLender` blocks a sanctioned
-            // claimer). Gate the resolved recipient so a sanctioned current
-            // lender-holder cannot receive protocol funds. Reverts
-            // `SanctionedAddress`; the borrower's Tier-2 escape is a full
-            // `repayLoan` (stays open, defers the lender proceeds to a
-            // sanctions-gated claim). No-op while the oracle is unset. The
-            // recipient is `ownerOf` (the current holder), and #821's position-NFT
-            // transfer restriction means a flagged wallet can't be that holder via
-            // a post-flag transfer — so screening the live recipient is sufficient;
-            // no stale stored-`loan.lender` screen is needed (it would wrongly
-            // freeze a legitimate pre-flag secondary-market buyer).
-            LibVaipakam._assertNotSanctioned(lenderRecipient);
-            IERC20(loan.principalAsset).safeTransferFrom(
-                msg.sender,
-                lenderRecipient,
-                partialAmount + lenderShare
+            // #998 S10 (#1006) Class B — this is a DIRECT inline payout (no
+            // vault+claim deferral like full repay). Pay the CURRENT lender-position
+            // holder inline when clean, or FREEZE fail-closed (park payer → stored
+            // lender vault + `heldForLender` + encumber + marker) when the holder is
+            // registry-flagged. Replaces the prior fail-open `_assertNotSanctioned`,
+            // which would pay a previously-confirmed-flagged holder during an oracle
+            // outage. Hosted on `EncumbranceMutateFacet`: the host resolves
+            // `ownerOf(lenderTokenId)` and, on the clean path, pays the combined
+            // principal-repayment + interest share via `safeTransferFrom(msg.sender)`
+            // exactly as before.
+            LibFacet.crossFacetCall(
+                abi.encodeWithSelector(
+                    EncumbranceMutateFacet.freezeOrPayActiveLenderFromPayer.selector,
+                    loan.id,
+                    msg.sender,
+                    loan.principalAsset,
+                    partialAmount + lenderShare
+                ),
+                bytes4(0)
             );
             IERC20(loan.principalAsset).safeTransferFrom(
                 msg.sender,
@@ -899,33 +936,31 @@ contract RepayFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErrors 
             // lien (the prepay pool is drained by this very mechanism,
             // not protected by a lien), so no decrement here.
 
-            // #821 (Codex #832 r7 P2) — pay the LIVE lender-NFT holder, NOT the
-            // stored `loan.lender`. NFT-rental loans skip the eager consolidation
-            // at this function's start (`_isExcludedLive` non-ERC-20), so
-            // `loan.lender` can be a stale pre-transfer party; resolve + screen
-            // `ownerOf(lenderTokenId)` (matching the ERC-20 branch) so a flagged
-            // live holder is refused while a legitimate clean holder is paid.
-            address lenderRecipient =
-                IERC721(address(this)).ownerOf(loan.lenderTokenId);
-            LibVaipakam._assertNotSanctioned(lenderRecipient);
-            // #821 (Codex #832 r3 P1) — both deductions pull the prepay from the
-            // payer's (`msg.sender`) own vault. Arm the move-out exemption so a
-            // borrower flagged after init can still service the partial rental
-            // (Tier-2 stays open) — the prepay is pushed OUT to the lender /
-            // treasury, the payer loses custody.
-            LibSanctionedLock.beginMoveOut(LibVaipakam.storageSlot(), msg.sender);
-            // Deduct from prepay (prepayAsset, not collateralAsset)
+            // #998 S10 (#1006) Class B — the lender's prepay share is pulled from
+            // the payer's (`msg.sender`) own rental prepay vault. NFT-rental loans
+            // skip the eager consolidation at this function's start, so `loan.lender`
+            // can be stale; the host resolves the LIVE `ownerOf(lenderTokenId)`.
+            // Pay that current holder inline when clean, or FREEZE fail-closed (park
+            // payer-vault → stored-lender vault + `heldForLender` + encumber +
+            // marker) when they are registry-flagged, replacing the fail-open
+            // `_assertNotSanctioned`. The host arms the from-side move-out exemption
+            // around the withdraw so a borrower flagged after init can still service
+            // the partial rental (Tier-2 stays open) — the payer loses custody.
             LibFacet.crossFacetCall(
                 abi.encodeWithSelector(
-                    VaultFactoryFacet.vaultWithdrawERC20.selector,
+                    EncumbranceMutateFacet.freezeOrPayActiveLenderFromVault.selector,
+                    loan.id,
                     msg.sender,
                     loan.prepayAsset,
-                    lenderRecipient,
                     lenderShare
                 ),
-                VaultWithdrawFailed.selector
+                bytes4(0)
             );
 
+            // #821 (Codex #832 r3 P1) — the treasury deduction also pulls the
+            // prepay from the payer's own vault; arm the move-out exemption so a
+            // borrower flagged after init can still service the partial rental.
+            LibSanctionedLock.beginMoveOut(LibVaipakam.storageSlot(), msg.sender);
             LibFacet.crossFacetCall(
                 abi.encodeWithSelector(
                     VaultFactoryFacet.vaultWithdrawERC20.selector,
@@ -1075,6 +1110,18 @@ contract RepayFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErrors 
         LibFacet.crossFacetCall(
             abi.encodeWithSelector(selector, loanId, arg2),
             bytes4(0)
+        );
+    }
+
+    /// @dev #998 S10 (#1006) — record the fail-closed frozen-claimant marker via
+    ///      the cross-facet host so the isSanctioned/owner-read machinery stays out
+    ///      of this EIP-170-tight facet (bool encodes as its trailing word: 1 =
+    ///      lender, 0 = borrower).
+    function _recordFrozenClaimant(uint256 loanId, bool lenderSide) private {
+        _callEncumb2(
+            EncumbranceMutateFacet.recordSanctionsFrozenClaimant.selector,
+            loanId,
+            lenderSide ? 1 : 0
         );
     }
 }

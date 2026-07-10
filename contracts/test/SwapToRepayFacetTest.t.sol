@@ -549,6 +549,43 @@ contract SwapToRepayFacetTest is SetupTest {
         );
     }
 
+    /// @dev Codex #1122-rework r1 P1 — a PREVIOUSLY-confirmed-flagged holder (in
+    ///      the #1123 registry) must have their swap surplus FROZEN even when the
+    ///      close-out lands during an oracle OUTAGE. The old fail-open decision
+    ///      would take the direct-EOA-transfer branch during the outage; the new
+    ///      `mustFreezeParty` predicate stays fail-closed on the prior confirmation.
+    function test_swapToRepayFull_RegisteredHolderDuringOutage_SurplusFrozen() public {
+        _scaffoldLoan(1, /* allowsPartialRepay */ false, /* useFullTermInterest */ false);
+        adapter1.setOutputMultiplierBps(10_000); // 1:1 → a positive surplus
+
+        address holder = makeAddr("s10OutageSurplusHolder");
+        MockSanctionsList sanctions = _transferBorrowerNftThenSanction(holder);
+        // Confirm + register the holder while the oracle is UP.
+        ProfileFacet(address(diamond)).refreshSanctionsFlag(holder);
+        // Oracle goes DOWN before the close-out.
+        sanctions.setRevertOnRead(true);
+
+        uint256 holderBefore = IERC20(address(principalAsset)).balanceOf(holder);
+
+        vm.prank(holder);
+        SwapToRepayFacet(address(diamond)).swapToRepayFull(1, _adapterTryList(1), 1_500 ether);
+
+        // Fail-closed: the freeze branch ran (the surplus is parked behind the
+        // claim gate and the fail-closed marker is stamped for the registered
+        // holder), NOT the direct-EOA-transfer branch — proven by both the marker
+        // and the holder's EOA balance being untouched during the outage.
+        assertEq(
+            TestMutatorFacet(address(diamond)).getSanctionsFrozenClaimant(1, false),
+            holder,
+            "outage: registered holder's surplus frozen (marker stamped)"
+        );
+        assertEq(
+            IERC20(address(principalAsset)).balanceOf(holder),
+            holderBefore,
+            "outage: registered holder not paid the surplus directly"
+        );
+    }
+
     /// @dev P2 — the frozen surplus must remain claimable. While flagged the
     ///      holder can't claim (Tier-1 claim gate); once delisted, the surplus is
     ///      withdrawable to their EOA via `claimAsBorrower` (a bare vault balance

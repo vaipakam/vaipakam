@@ -32,6 +32,7 @@ import {LibAcceptTestSigner} from "./helpers/LibAcceptTestSigner.sol";
 import {AccessControlFacet} from "../src/facets/AccessControlFacet.sol";
 import {TestMutatorFacet} from "./mocks/TestMutatorFacet.sol";
 import {ERC20Mock} from "./mocks/ERC20Mock.sol";
+import {MockSanctionsList} from "./mocks/MockSanctionsList.sol";
 
 /**
  * @title RefinanceFacetTest
@@ -482,6 +483,83 @@ contract RefinanceFacetTest is Test {
 
         LibVaipakam.Loan memory loan = LoanFacet(address(diamond)).getLoanDetails(activeLoanId);
         assertEq(uint8(loan.status), uint8(LibVaipakam.LoanStatus.Repaid));
+
+        vm.clearMockedCalls();
+    }
+
+    /// @dev #998 S10 (#1006) F2 — refinance terminally closes the OLD loan and
+    ///      parks the old lender's proceeds into their vault. When the current
+    ///      lender-position holder is sanctions-flagged, the refinance must still
+    ///      COMPLETE (freeze-not-brick, #831) via the receive-side exemption, AND
+    ///      record the fail-closed frozen-claimant marker + register the holder in
+    ///      the #1123 movement registry. Runs the real deposit path (only HF/LTV
+    ///      mocked) so the flagged-lender `getOrCreateUserVault` gate + the S10
+    ///      exemption are actually exercised.
+    function testS10_refinanceFlaggedOldLender_parksNotBricks_recordsMarker() public {
+        _acceptBorrowerOffer(borrowerOfferId);
+
+        // Flag the current old-lender-position holder (== `lender`, no transfer)
+        // while the oracle is up, BEFORE the refinance close-out.
+        MockSanctionsList m = new MockSanctionsList();
+        ProfileFacet(address(diamond)).setSanctionsOracle(address(m));
+        m.setFlagged(lender, true);
+
+        vm.mockCall(address(diamond), abi.encodeWithSelector(RiskFacet.calculateHealthFactor.selector), abi.encode(2e18));
+        vm.mockCall(address(diamond), abi.encodeWithSelector(RiskFacet.calculateLTV.selector), abi.encode(uint256(5000)));
+
+        vm.prank(borrower);
+        RefinanceFacet(address(diamond)).refinanceLoan(activeLoanId, borrowerOfferId);
+
+        // (1) Freeze-not-brick: the refinance completed despite the flagged old
+        //     lender — the deposit resolved their existing vault under the pin
+        //     instead of reverting the whole flow at the Tier-1 gate.
+        LibVaipakam.Loan memory loan = LoanFacet(address(diamond)).getLoanDetails(activeLoanId);
+        assertEq(
+            uint8(loan.status),
+            uint8(LibVaipakam.LoanStatus.Repaid),
+            "refinance completed (not bricked) for a flagged old lender"
+        );
+
+        // (2) F2 marker recorded for the lender side, keyed to the flagged holder.
+        assertEq(
+            TestMutatorFacet(address(diamond)).getSanctionsFrozenClaimant(activeLoanId, true),
+            lender,
+            "refinance parked the frozen old-lender claimant"
+        );
+
+        // (3) #1123 registry populated by the same authoritative flag.
+        assertTrue(
+            ProfileFacet(address(diamond)).isSanctionsConfirmedFlagged(lender),
+            "refinance park registered the flagged holder in the #1123 registry"
+        );
+
+        vm.clearMockedCalls();
+    }
+
+    /// @dev Regression: a refinance with a CLEAN old lender records no marker and
+    ///      registers nothing (an oracle blip can never freeze an honest lender).
+    function testS10_refinanceCleanOldLender_recordsNoMarker() public {
+        _acceptBorrowerOffer(borrowerOfferId);
+
+        MockSanctionsList m = new MockSanctionsList();
+        ProfileFacet(address(diamond)).setSanctionsOracle(address(m));
+        // lender NOT flagged.
+
+        vm.mockCall(address(diamond), abi.encodeWithSelector(RiskFacet.calculateHealthFactor.selector), abi.encode(2e18));
+        vm.mockCall(address(diamond), abi.encodeWithSelector(RiskFacet.calculateLTV.selector), abi.encode(uint256(5000)));
+
+        vm.prank(borrower);
+        RefinanceFacet(address(diamond)).refinanceLoan(activeLoanId, borrowerOfferId);
+
+        assertEq(
+            TestMutatorFacet(address(diamond)).getSanctionsFrozenClaimant(activeLoanId, true),
+            address(0),
+            "clean old lender records no frozen-claimant marker"
+        );
+        assertFalse(
+            ProfileFacet(address(diamond)).isSanctionsConfirmedFlagged(lender),
+            "clean old lender is not registered"
+        );
 
         vm.clearMockedCalls();
     }

@@ -298,6 +298,71 @@ library LibEncumbrance {
         s.lenderProceedsEncumberedAsset[loanId] = address(0);
     }
 
+    // ─── #998 S10 (#1006) Class B — ACTIVE-loan held reservation ─────────────
+    //
+    // A DEDICATED per-loan reservation for a mid-loan Class B lender-share park
+    // (`LibCloseoutFreeze._parkActiveLenderShare`), kept SEPARATE from the
+    // single-terminal `lenderProceedsEncumbered` ledger so an active park's
+    // reservation (payment asset) and a later in-kind terminal reservation
+    // (collateral asset) coexist on ONE loan without tripping the single-asset
+    // assert (Codex #1122-rework fresh-round P1). The aggregate is asset-keyed, so
+    // both land in different slots; only the per-loan ledger was single-asset.
+
+    /// @notice Reserve `amount` of `asset` held for the lender, under a per-loan
+    ///         (amount, asset) record distinct from {encumberLenderProceeds}. `+=`
+    ///         accumulates — an active loan may freeze several inline shares (all
+    ///         in the same payment asset, so the per-loan asset stays consistent).
+    function encumberActiveHeld(
+        uint256 loanId,
+        address lender,
+        address asset,
+        uint256 amount
+    ) internal {
+        if (amount == 0) return;
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        if (s.heldForLenderEncumbered[loanId] == 0) {
+            s.heldForLenderEncumberedAsset[loanId] = asset;
+        } else {
+            assert(s.heldForLenderEncumberedAsset[loanId] == asset);
+        }
+        s.encumbered[lender][asset][0] += amount;
+        s.heldForLenderEncumbered[loanId] += amount;
+    }
+
+    /// @notice Release the active-held reservation in full, under the RECORDED
+    ///         asset (loan-keyed) so it unwinds the exact aggregate the reserve
+    ///         ticked even after a migration re-pointed `loan.lender`. Idempotent
+    ///         no-op when nothing was parked. Called at `claimAsLender` + backstop
+    ///         absorb, alongside {releaseLenderProceeds}, before the held withdraw.
+    function releaseActiveHeld(uint256 loanId, address lender) internal {
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        uint256 reserved = s.heldForLenderEncumbered[loanId];
+        if (reserved == 0) return;
+        address asset = s.heldForLenderEncumberedAsset[loanId];
+        _decrementAggregate(lender, asset, 0, reserved);
+        s.heldForLenderEncumbered[loanId] = 0;
+        s.heldForLenderEncumberedAsset[loanId] = address(0);
+    }
+
+    /// @notice Migrate the active-held reservation `oldLender → newUser` when the
+    ///         lender position moves (consolidation / sale) and the held follows.
+    ///         Moves ONLY the aggregate; the per-loan record is loan-keyed and
+    ///         untouched, so a later `releaseActiveHeld(loanId, loan.lender)` (now
+    ///         `newUser`) unwinds the right bucket. Mirrors {rekeyLienToHolder}'s
+    ///         lender branch. Reads `oldLender` from the live loan, so callers
+    ///         invoke it BEFORE re-anchoring `loan.lender`. No-op when nothing is
+    ///         reserved or the holder is unchanged.
+    function migrateActiveHeld(uint256 loanId, address newUser) internal {
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        uint256 reserved = s.heldForLenderEncumbered[loanId];
+        if (reserved == 0) return;
+        address oldLender = s.loans[loanId].lender;
+        if (newUser == oldLender) return;
+        address asset = s.heldForLenderEncumberedAsset[loanId];
+        _decrementAggregate(oldLender, asset, 0, reserved);
+        s.encumbered[newUser][asset][0] += reserved;
+    }
+
     // ─── #661 — borrower default-surplus reservation (mirror of #592) ───────
 
     /// @notice #661 — reserve a VPFI borrower-surplus against the unstake path,
@@ -709,8 +774,15 @@ library LibEncumbrance {
     ) internal {
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         if (isLenderSide) {
+            // #998 S10 Class B — migrate the DEDICATED active-held reservation too
+            // (independent of the terminal `lenderProceedsEncumbered` ledger; both
+            // can be live on one active loan — e.g. a preclose top-up plus a Class B
+            // park). Reads the old lender internally, so it must run BEFORE the
+            // caller re-anchors `loan.lender`; consolidation calls this at step 5,
+            // before that reassignment.
+            migrateActiveHeld(loanId, newUser);
             uint256 reserved = s.lenderProceedsEncumbered[loanId];
-            if (reserved == 0) return; // common case — no reservation, no-op
+            if (reserved == 0) return; // no terminal reservation — active-held done above
             address oldLender = s.loans[loanId].lender;
             if (newUser == oldLender) return;
             address asset = s.lenderProceedsEncumberedAsset[loanId];

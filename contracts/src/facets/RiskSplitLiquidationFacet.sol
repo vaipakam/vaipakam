@@ -291,6 +291,9 @@ contract RiskSplitLiquidationFacet is
         LibSanctionedLock.depositLocked(
             s, loan.lender, loanId, loan.principalAsset, lenderProceeds
         );
+        // #998 S10 (#1006) — fail-closed freeze if the current lender-position
+        // holder is flagged.
+        LibSanctionedLock.recordFrozenClaimantForLoan(s, loan, true);
         s.lenderClaims[loanId] = LibVaipakam.ClaimInfo({
             asset: loan.principalAsset,
             amount: lenderProceeds,
@@ -310,6 +313,9 @@ contract RiskSplitLiquidationFacet is
             LibSanctionedLock.depositLocked(
                 s, loan.borrower, loanId, loan.principalAsset, borrowerSurplus
             );
+            // #998 S10 (#1006) — fail-closed freeze if the current borrower-
+            // position holder is flagged.
+            LibSanctionedLock.recordFrozenClaimantForLoan(s, loan, false);
             // #661 — reserve a VPFI surplus against the unstake path until the
             // current borrower-position holder claims it. No-op for non-VPFI.
             if (loan.principalAsset == s.vpfiToken) {
