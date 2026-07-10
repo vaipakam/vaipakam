@@ -42,18 +42,61 @@ CREATE TABLE IF NOT EXISTS loan_participants (
 CREATE INDEX IF NOT EXISTS idx_loan_participants_wallet
   ON loan_participants (chain_id, wallet, loan_id);
 
--- 2. Candle index — the phase-2 executed-rate candle endpoint
+-- 2. Immutable initiation-term snapshot (Codex #1139 round-5 P2). The
+--    candle endpoint reconstructs EXECUTED fills, and a fill's terms are
+--    immutable history — but the loans row is a MUTABLE projection:
+--    PartialRepaid / SwapToRepayPartialExecuted / InternalMatchExecuted
+--    rewrite `principal`, and LoanExtended rewrites `interest_rate_bps` +
+--    `duration_days` in place (see the matching handlers in
+--    chainIndexer.ts). Without a snapshot, a partial repay retroactively
+--    shrinks the chart's executed volume and an extended 30d loan
+--    teleports into the 60d market at its original start_at. The
+--    chainIndexer stamps these at every LoanInitiated insert path (same
+--    values as the mutable columns at insert time) and NO mutation
+--    handler ever touches them. NULL — not 0 — when unknown, so the read
+--    side can COALESCE to the mutable column for any row written by a
+--    pre-snapshot worker between this migration's apply and the worker
+--    deploy.
+--
+--    Plain ALTER TABLE ADD COLUMN is the repo's 0006/0012/0029 idiom: it
+--    is NOT re-apply-safe on its own (SQLite has no ADD COLUMN IF NOT
+--    EXISTS) and relies on wrangler's migrations ledger applying each
+--    file exactly once — the same contract every prior column-add
+--    migration in this directory rides. Every OTHER statement in this
+--    file stays independently idempotent.
+ALTER TABLE loans ADD COLUMN init_principal TEXT;
+ALTER TABLE loans ADD COLUMN init_rate_bps INTEGER;
+ALTER TABLE loans ADD COLUMN init_duration_days INTEGER;
+
+-- 3. Candle index — the phase-2 executed-rate candle endpoint
 --    (`/loans/rate-candles`) range-scans one market's fills by start time:
 --      WHERE chain_id = ? AND lending_asset = ? AND collateral_asset = ?
---        AND duration_days = ? AND start_at >= ?
+--        AND COALESCE(init_duration_days, duration_days) = ?
+--        AND start_at >= ?
 --      ORDER BY start_at ASC
 --    The key matches the market boundary exactly, `start_at` last so the
 --    range predicate + ORDER BY ride the index tail (ProRateTerminalDesign.md
 --    §7 "Migration" note — deliberately deferred out of 0029 to this slice).
+--
+--    The tenor key is the COALESCE EXPRESSION, not the bare column: market
+--    scoping must use the INIT duration (an extended loan's fill stays in
+--    the market it executed in — Codex #1139 round-5 P2), falling back to
+--    the mutable column only for rows whose snapshot is NULL (written by a
+--    pre-snapshot worker in the migration→deploy window; the backfill
+--    below fills every row that exists at apply time). SQLite matches
+--    expression indexes TEXTUALLY, and the candle SQL in loanRoutes.ts
+--    spells the identical expression, so the equality + range predicates
+--    ride this index. Correct first, fast second: correctness never
+--    depends on the planner taking it — a miss still answers via the
+--    (chain_id, lending_asset, collateral_asset) prefix + post-filter,
+--    just slower. (An index on the bare `duration_days` was rejected: the
+--    query MUST filter on the init tenor, and a bare-column index cannot
+--    serve that equality at all once a loan has been extended.)
 CREATE INDEX IF NOT EXISTS idx_loans_market_start_at
-  ON loans (chain_id, lending_asset, collateral_asset, duration_days, start_at);
+  ON loans (chain_id, lending_asset, collateral_asset,
+            COALESCE(init_duration_days, duration_days), start_at);
 
--- 3. Backfill participation for loans indexed BEFORE this deploy — the ingest
+-- 4. Backfill participation for loans indexed BEFORE this deploy — the ingest
 --    cursor never replays old logs (same rationale as the 0030/0031
 --    backfills), so without this every pre-migration loan would be invisible
 --    to the History route.
@@ -108,3 +151,78 @@ SELECT chain_id, loan_id, borrower_current_owner, 'borrower', updated_at
  WHERE borrower_current_owner LIKE '0x%' AND length(borrower_current_owner) = 42
    AND borrower_current_owner != '0x0000000000000000000000000000000000000000'
    AND borrower_current_owner != borrower;
+
+-- 5. Backfill the init_* snapshot (section 2) for loans indexed BEFORE
+--    this deploy.
+--
+--    Preferred source — the append-only activity ledger, which preserved
+--    the ORIGINAL event payloads even for loans whose mutable columns
+--    have since been rewritten:
+--      a) `LoanInitiated` rows carry the executed principal in args_json
+--         ("principal": "<decimal string>" — serializeArgs coerces
+--         bigints to decimal strings, matching the TEXT column) and land
+--         with loan_id denormalized (pluckActivityRefs has a case).
+--      b) `LoanInitiatedDetails` rows carry interestRateBps +
+--         durationDays inside args_json's nested `details` tuple, but
+--         land with loan_id NULL (no pluckActivityRefs case — same shape
+--         0030 handled for LoanSaleOfferLinked), so the correlated
+--         lookup extracts + CASTs `$.loanId` from the JSON itself. Cost
+--         is O(loans × per-chain details rows) json_extracts via the
+--         (chain_id, kind) prefix of idx_activity_chain_kind — a
+--         one-shot migration cost, acceptable at this archive's scale.
+--
+--    A reorg-replayed duplicate event lands as a second ledger row with
+--    identical args, so `ORDER BY block_number, log_index LIMIT 1` is
+--    deterministic AND value-stable across duplicates.
+--
+--    Fallback — the current mutable column values. BEST-EFFORT
+--    LIMITATION: a pre-migration loan with no usable ledger row (it
+--    predates the details companion event, or the principal arg is
+--    absent) that was ALSO already mutated (partial-repaid principal,
+--    extended rate/duration) cannot be reconstructed and inherits
+--    today's values; its historical fill stays wrong exactly as far as
+--    it already was pre-migration, and every loan from this deploy on is
+--    stamped exactly at insert.
+--
+--    Idempotent: every UPDATE is guarded `WHERE init_* IS NULL`, so a
+--    re-run never overwrites a previously-stamped snapshot.
+UPDATE loans
+   SET init_principal = (
+     SELECT json_extract(ae.args_json, '$.principal')
+       FROM activity_events ae
+      WHERE ae.chain_id = loans.chain_id
+        AND ae.loan_id  = loans.loan_id
+        AND ae.kind = 'LoanInitiated'
+        AND json_extract(ae.args_json, '$.principal') IS NOT NULL
+      ORDER BY ae.block_number ASC, ae.log_index ASC
+      LIMIT 1)
+ WHERE init_principal IS NULL;
+
+UPDATE loans
+   SET init_rate_bps = (
+     SELECT CAST(json_extract(ae.args_json, '$.details.interestRateBps') AS INTEGER)
+       FROM activity_events ae
+      WHERE ae.chain_id = loans.chain_id
+        AND ae.kind = 'LoanInitiatedDetails'
+        AND CAST(json_extract(ae.args_json, '$.loanId') AS INTEGER) = loans.loan_id
+        AND json_extract(ae.args_json, '$.details.interestRateBps') IS NOT NULL
+      ORDER BY ae.block_number ASC, ae.log_index ASC
+      LIMIT 1)
+ WHERE init_rate_bps IS NULL;
+
+UPDATE loans
+   SET init_duration_days = (
+     SELECT CAST(json_extract(ae.args_json, '$.details.durationDays') AS INTEGER)
+       FROM activity_events ae
+      WHERE ae.chain_id = loans.chain_id
+        AND ae.kind = 'LoanInitiatedDetails'
+        AND CAST(json_extract(ae.args_json, '$.loanId') AS INTEGER) = loans.loan_id
+        AND json_extract(ae.args_json, '$.details.durationDays') IS NOT NULL
+      ORDER BY ae.block_number ASC, ae.log_index ASC
+      LIMIT 1)
+ WHERE init_duration_days IS NULL;
+
+-- Fallback to the current mutable values (see the limitation note above).
+UPDATE loans SET init_principal     = principal         WHERE init_principal     IS NULL;
+UPDATE loans SET init_rate_bps      = interest_rate_bps WHERE init_rate_bps      IS NULL;
+UPDATE loans SET init_duration_days = duration_days     WHERE init_duration_days IS NULL;

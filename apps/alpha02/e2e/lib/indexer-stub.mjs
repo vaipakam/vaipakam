@@ -635,6 +635,25 @@ async function handler(req, res) {
     // is judged on the FORK's clock — evm_increaseTime moves fills far
     // from wall time, and a wall-clock bound would drop every
     // time-travelled fill from a "30d" window.
+    //
+    // KNOWN DIVERGENCE — mutable vs init fill terms (Codex #1139
+    // round-5 P2): production candles read the IMMUTABLE init_*
+    // snapshot columns (COALESCE(init_rate_bps, interest_rate_bps),
+    // init_principal, and the init tenor for market scoping —
+    // migration 0032 §2), while this stub hydrates from live
+    // getLoanDetails, i.e. CURRENT loan state. A fill whose terms
+    // mutate mid-suite (partial repay shrinks principal + resets
+    // startTime — which also feeds startAt here, extendLoanInPlace
+    // rewrites rate/duration and would move the loan across tenor
+    // markets) would fold post-mutation terms into the candles.
+    // Acceptable for the current suite: spec 18 seeds fills and runs
+    // every candle assert BEFORE any repay (the History test's
+    // repayLoanInFull happens after all candle asserts, in its own
+    // freshMarketTenor — never a candle-asserted market), and no spec
+    // drives partial repays or extensions against a market whose
+    // candles are asserted. If a future spec needs mutation-proof
+    // candles, hydrate the init terms from the fork's LoanInitiated /
+    // LoanInitiatedDetails logs instead of getLoanDetails.
     if (parts[0] === 'loans' && parts[1] === 'rate-candles') {
       const lend = url.searchParams.get('lendingAsset');
       const coll = url.searchParams.get('collateralAsset');

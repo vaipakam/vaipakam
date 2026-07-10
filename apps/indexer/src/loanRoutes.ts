@@ -998,6 +998,23 @@ export async function handleLoansTimeseries(
  *     insert paths in chainIndexer.ts); its market/rate/principal columns are
  *     real and its fill belongs on the chart.
  *
+ * IMMUTABLE FILL TERMS (Codex #1139 round-5 P2): a candle is a record of
+ * EXECUTED fills, but the loans row is a mutable projection — PartialRepaid /
+ * swap-partial / internal-match rewrite `principal`, and LoanExtended
+ * rewrites `interest_rate_bps` + `duration_days` in place. Reading those
+ * live would retroactively shrink executed volume and teleport an extended
+ * 30d fill into the 60d market at its original start_at. So BOTH the tenor
+ * scope AND the selected rate/principal read the init_* snapshot columns
+ * (stamped at every LoanInitiated insert path, never mutated — migration
+ * 0032 §2), COALESCEd to the mutable column only for rows written by a
+ * pre-snapshot worker in the migration→deploy window (the 0032 backfill
+ * fills everything that exists at apply time). The COALESCE tenor
+ * expression is spelled IDENTICALLY to the 0032 expression index so the
+ * planner can match it textually; correctness doesn't depend on the index.
+ * `start_at` needs no snapshot — it is written once at insert and no
+ * handler updates it (LoanExtended/partial repay reset `start_time`, a
+ * different column).
+ *
  * Aggregation split (§7): SQL selects the market's rows in the range ordered
  * by (start_at, loan_id); ALL folding — OHLC, fills, principal — happens in
  * JS (`foldRateCandles`). Rationale in rateCandles.ts: principal MUST be
@@ -1059,7 +1076,10 @@ export async function handleLoansRateCandles(
       'chain_id = ?',
       'lending_asset = ?',
       'collateral_asset = ?',
-      'duration_days = ?',
+      // Tenor scope on the INIT duration (see the immutable-fill-terms
+      // header note) — an extended loan's fill stays in the market it
+      // executed in. Expression spelled exactly like the 0032 index.
+      'COALESCE(init_duration_days, duration_days) = ?',
       'is_sale_vehicle = 0',
       'asset_type = 0',
       'collateral_asset_type = 0',
@@ -1074,8 +1094,12 @@ export async function handleLoansRateCandles(
       conds.push('start_at >= ?');
       binds.push(Math.floor(Date.now() / 1000) - rangeDays * 86400);
     }
+    // Aliased so CandleFillRow / foldRateCandles stay shape-agnostic: the
+    // fill's terms are the INIT snapshot, never the mutated live values.
     const rows = await env.DB.prepare(
-      `SELECT loan_id, start_at, interest_rate_bps, principal
+      `SELECT loan_id, start_at,
+              COALESCE(init_rate_bps, interest_rate_bps) AS interest_rate_bps,
+              COALESCE(init_principal, principal) AS principal
        FROM loans
        WHERE ${conds.join(' AND ')}
        ORDER BY start_at ASC, loan_id ASC`,
