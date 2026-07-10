@@ -497,6 +497,21 @@ describe('validateOrder — the POST shape gate', () => {
       expectError(raw({ allowsParallelSale: true }), 'unsupported-parallel-sale');
     });
 
+    it('rejects zero lendingAsset / collateralAsset / signer; prepayAsset keeps the zero sentinel', () => {
+      // Codex #1145 r2 — a zero leg is guaranteed-unfillable: every fill
+      // path classifies both legs via OracleFacet.checkLiquidity, which
+      // reverts InvalidAsset() on address(0). Zero signer can never recover
+      // from a signature; per-field error beats an opaque bad-signature.
+      const ZERO = '0x0000000000000000000000000000000000000000';
+      expectError(raw({ lendingAsset: ZERO }), 'zero-lendingAsset');
+      expectError(raw({ collateralAsset: ZERO }), 'zero-collateralAsset');
+      expectError(raw({ signer: ZERO }), 'zero-signer');
+      // prepayAsset zero is the contract's "no prepay asset" sentinel — the
+      // base fixture already carries it and must keep validating.
+      const zeroPrepay = validateOrder(raw({ prepayAsset: ZERO }), NOW);
+      expect('order' in zeroPrepay).toBe(true);
+    });
+
     it('rejects a self-collateralized pair (SelfCollateralizedOffer)', () => {
       expectError(
         raw({

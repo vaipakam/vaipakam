@@ -1178,7 +1178,10 @@ async function processOfferLogs(
  *     'cancelled'. `filled_amount` is deliberately KEPT at the actual
  *     cumulative (the chain ledger poisons itself to the ceiling as the
  *     unfillable marker, but mirroring that would conflate "cancelled with
- *     2 of 10 filled" with "fully filled" in the book's history).
+ *     2 of 10 filled" with "fully filled" in the book's history). The same
+ *     poisoning makes an end-of-block ledger read untrustworthy for a match
+ *     that shares a block with a later cancel — see the same-block note
+ *     inside the handler.
  *
  *   - `SignedOfferNonceBurned` — batch invalidation: EVERY still-active row
  *     for (signer, nonce) on this chain flips to 'nonce_burned' at once.
@@ -1215,6 +1218,42 @@ async function processSignedOfferLogs(
   // same window must land as cancelled-with-partial-fill, not the reverse.
   const relevant = logs.filter((l) => SIGNED_OFFER_EVENTS.has(l.eventName));
   if (relevant.length === 0) return 0;
+
+  // Same-block cancel poisoning (Codex #1145 r2) — `cancelSignedOffer` sets
+  // the on-chain `signedOfferFilled` ledger to the CEILING as its unfillable
+  // marker (SignedOfferFacet.sol:158). For a block holding a partial
+  // `SignedOfferMatched` followed by `SignedOfferCancelled` for the same
+  // order, the block-pinned ledger read in the Matched handler sees the
+  // END-of-block (poisoned) value: trusting it would flip the row 'filled',
+  // and the later cancel UPDATE (guarded on status='active' — terminal
+  // stickiness is meant to apply across scan batches, not within one order's
+  // in-block event sequence) would no-op, corrupting the intended
+  // cancelled-with-partial-fill terminal state. Collect the (orderHash,
+  // block) pairs that carry a cancel up front; for those the Matched handler
+  // reconstructs the TRUE pre-cancel cumulative instead: the ledger at
+  // blockNumber-1 (the pre-block base — a cancel BEFORE a match in the same
+  // block is impossible on-chain, the match would revert
+  // `SignedOfferConsumed`, so every same-block cancel sits after every
+  // same-block match) plus event-local accumulation of the block's
+  // `fillAmount`s in log order. Both inputs are block-pinned / carried by
+  // the event, so a partial-failure re-scan recomputes identical values —
+  // the #760 idempotency property is preserved. `SignedOfferNonceBurned`
+  // never touches the per-order ledger (it flips the nonce bitmap only), so
+  // it needs no poisoning treatment: a match that legitimately reaches the
+  // ceiling before a same-block nonce burn IS consumed, and 'filled' is the
+  // correct terminal.
+  const cancelPoisonedBlocks = new Set<string>();
+  for (const l of relevant) {
+    if (l.eventName === 'SignedOfferCancelled') {
+      cancelPoisonedBlocks.add(
+        `${(l.args.orderHash as string).toLowerCase()}|${l.blockNumber}`,
+      );
+    }
+  }
+  // Running per-(orderHash, block) cumulative for the poisoned path: seeded
+  // with the blockNumber-1 ledger base on first use, then advanced by each
+  // match's event-local fillAmount in log order.
+  const poisonedBlockCumulative = new Map<string, bigint>();
 
   const now = Math.floor(Date.now() / 1000);
   let updates = 0;
@@ -1263,13 +1302,33 @@ async function processSignedOfferLogs(
       // this event is re-processed next tick.
       let absFilled: bigint;
       try {
-        absFilled = (await client.readContract({
-          address: diamond,
-          abi: DIAMOND_SIGNED_OFFER_ABI,
-          functionName: 'signedOfferFilledAmount',
-          args: [orderHash],
-          blockNumber: log.blockNumber,
-        })) as bigint;
+        const poisonKey = `${orderHash}|${log.blockNumber}`;
+        if (cancelPoisonedBlocks.has(poisonKey)) {
+          // A later SignedOfferCancelled in this SAME block poisoned the
+          // end-of-block ledger to the ceiling — reconstruct the true
+          // pre-cancel cumulative instead (rationale in the header note
+          // above): pre-block ledger base + this block's fillAmounts so far.
+          let base = poisonedBlockCumulative.get(poisonKey);
+          if (base === undefined) {
+            base = (await client.readContract({
+              address: diamond,
+              abi: DIAMOND_SIGNED_OFFER_ABI,
+              functionName: 'signedOfferFilledAmount',
+              args: [orderHash],
+              blockNumber: log.blockNumber - 1n,
+            })) as bigint;
+          }
+          absFilled = base + (a.fillAmount as bigint);
+          poisonedBlockCumulative.set(poisonKey, absFilled);
+        } else {
+          absFilled = (await client.readContract({
+            address: diamond,
+            abi: DIAMOND_SIGNED_OFFER_ABI,
+            functionName: 'signedOfferFilledAmount',
+            args: [orderHash],
+            blockNumber: log.blockNumber,
+          })) as bigint;
+        }
       } catch (err) {
         // eslint-disable-next-line no-console
         console.error(

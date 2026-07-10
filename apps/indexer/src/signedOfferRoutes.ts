@@ -188,6 +188,24 @@ function validateOrder(
     }
     out[f] = v.toLowerCase();
   }
+  // Zero-address gate (Codex #1145 r2) — the shape regex above accepts
+  // 0x000…0 for every address field, but for three of the four it is
+  // guaranteed-garbage:
+  //   - lendingAsset / collateralAsset: every fill path materializes through
+  //     `createOffer`, which classifies BOTH legs via
+  //     `OracleFacet.checkLiquidity` — and that reverts `InvalidAsset()` on
+  //     address(0) (OracleFacet.sol:137). A zero-leg row would sit 'active'
+  //     in the book while being unfillable by construction.
+  //   - signer: ECDSA recovery can never yield address(0), so the signature
+  //     check below already rejects it — the explicit check here just turns
+  //     an opaque 'bad-signature' into a per-field error.
+  // `prepayAsset` deliberately KEEPS the zero sentinel: zero there is the
+  // contract's "no prepay asset" value, not a missing field.
+  for (const f of ['lendingAsset', 'collateralAsset', 'signer'] as const) {
+    if (out[f] === '0x0000000000000000000000000000000000000000') {
+      return { error: `zero-${f}` };
+    }
+  }
   for (const f of BOOL_FIELDS) {
     if (typeof raw[f] !== 'boolean') return { error: `invalid-${f}` };
     out[f] = raw[f];
@@ -267,12 +285,10 @@ function validateOrder(
     return { error: 'unsupported-refinance' };
   }
   // (b) `_createOfferSetup` self-lending guard: principal and collateral
-  // must be distinct contracts (`SelfCollateralizedOffer`; the contract
-  // exempts a zero lendingAsset, mirrored via the non-zero check).
-  if (
-    out.lendingAsset !== '0x0000000000000000000000000000000000000000' &&
-    out.lendingAsset === out.collateralAsset
-  ) {
+  // must be distinct contracts (`SelfCollateralizedOffer`). The contract
+  // exempts a zero lendingAsset from this guard, but the zero-address gate
+  // above already rejected that shape, so a plain equality check suffices.
+  if (out.lendingAsset === out.collateralAsset) {
     return { error: 'self-collateralized' };
   }
 
@@ -364,8 +380,9 @@ function canonicalOrderJson(order: SignedOrderWire): string {
  *   5. insert.
  *
  * Responses: 201 `{ chainId, orderHash }` on first accept; 200 on an
- * idempotent re-post of an already-stored order; per-field 400s; 409 when
- * chain state says the order is already consumed / nonce-burned.
+ * idempotent re-post of an already-stored ACTIVE order; per-field 400s; 409
+ * when the stored row is already terminal (filled / cancelled /
+ * nonce_burned) or chain state says the order is consumed / nonce-burned.
  */
 export async function handleSignedOfferPost(
   req: Request,
@@ -452,11 +469,12 @@ export async function handleSignedOfferPost(
   }
 
   // Idempotent re-post: the order hash binds every field, so an existing row
-  // IS this order. Return 200 without touching the row — deliberately NOT
-  // INSERT OR REPLACE: a blind REPLACE would resurrect a
-  // filled/cancelled/nonce_burned row to status 'active' (the chain ledger
-  // is monotonic — a consumed order can never become fillable again), and
-  // would let a re-post clobber lifecycle columns the chainIndexer owns.
+  // IS this order. An ACTIVE row returns 200 without being touched, a
+  // terminal row returns 409 — deliberately NOT INSERT OR REPLACE: a blind
+  // REPLACE would resurrect a filled/cancelled/nonce_burned row to status
+  // 'active' (the chain ledger is monotonic — a consumed order can never
+  // become fillable again), and would let a re-post clobber lifecycle
+  // columns the chainIndexer owns.
   try {
     const existing = await env.DB.prepare(
       `SELECT status FROM signed_offers WHERE chain_id = ? AND order_hash = ?`,
@@ -464,7 +482,20 @@ export async function handleSignedOfferPost(
       .bind(chainId, orderHash)
       .first<{ status: string }>();
     if (existing) {
-      return jsonResponse({ chainId, orderHash }, 200);
+      if (existing.status === 'active') {
+        return jsonResponse({ chainId, orderHash }, 200);
+      }
+      // Terminal re-post (Codex #1145 r2): the chain ledger is monotonic —
+      // a filled / cancelled / nonce_burned order can never become fillable
+      // again. A bare 200 here would tell the poster "accepted" while GET
+      // will never list the row and every on-chain fill attempt reverts
+      // (`SignedOfferConsumed` / `SignedOfferNonceInvalidated`); surface the
+      // dead order instead, with its terminal status so the caller can tell
+      // "you cancelled this" apart from "this already filled".
+      return jsonResponse(
+        { error: 'order-terminal', status: existing.status },
+        409,
+      );
     }
   } catch (err) {
     console.error('[signedOfferRoutes] existing-row lookup failed', err);
