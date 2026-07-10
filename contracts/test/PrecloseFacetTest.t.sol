@@ -2245,11 +2245,16 @@ contract PrecloseFacetTest is Test {
             })
         );
 
-        // T-051 — vault resolution moved inside the chokepoint;
-        // mock the chokepoint selector instead.
+        // T-051 — vault resolution moved inside the chokepoint.
+        // #1132 (S10 central enforcement) — the lender top-up chokepoint is now
+        // `EncumbranceMutateFacet.parkLenderPayoffAndFreeze` (sanctions-locking
+        // deposit + fail-closed lender register), replacing the plain
+        // `vaultDepositERC20From`. Mock THAT selector to revert: the funding
+        // plumbing failing must still bubble out of `transferObligationViaOffer`
+        // (the cross-facet call bubbles the raw revert).
         vm.mockCallRevert(
             address(diamond),
-            abi.encodeWithSelector(VaultFactoryFacet.vaultDepositERC20From.selector),
+            abi.encodeWithSelector(EncumbranceMutateFacet.parkLenderPayoffAndFreeze.selector),
             "vault fail"
         );
 
@@ -2257,6 +2262,70 @@ contract PrecloseFacetTest is Test {
         vm.expectRevert();
         PrecloseFacet(address(diamond)).transferObligationViaOffer(activeLoanId, validOffer);
         vm.clearMockedCalls();
+    }
+
+    /// @dev #1132 (S10 central enforcement) — a flagged LENDER-position holder no
+    ///      longer BRICKS an obligation transfer. Pre-#1132 the lender top-up used
+    ///      a plain `vaultDepositERC20From(loan.lender)`, whose receive-side vault
+    ///      resolution runs through the Tier-1 sanctions gate and REVERTED for a
+    ///      flagged lender — trapping the honest borrower's transfer. It now routes
+    ///      through `parkLenderPayoffAndFreeze` (sanctions-locking deposit + a
+    ///      fail-closed lender frozen-claimant register), so the transfer COMPLETES
+    ///      and the lender share parks frozen in the stored lender's vault.
+    function test_transferObligationViaOffer_FlaggedLender_ParksNotBricks() public {
+        vm.warp(block.timestamp + 10 days); // accrue interest → lenderShare > 0
+
+        vm.prank(newBorrower);
+        uint256 validOffer = OfferCreateFacet(address(diamond)).createOffer(
+            LibVaipakam.CreateOfferParams({
+                offerType: LibVaipakam.OfferType.Borrower,
+                lendingAsset: mockERC20,
+                amount: PRINCIPAL,
+                interestRateBps: 500,
+                collateralAsset: mockCollateralERC20,
+                collateralAmount: COLLATERAL,
+                durationDays: 20,
+                assetType: LibVaipakam.AssetType.ERC20,
+                tokenId: 0,
+                quantity: 0,
+                creatorRiskAndTermsConsent: true,
+                prepayAsset: mockERC20,
+                collateralAssetType: LibVaipakam.AssetType.ERC20,
+                collateralTokenId: 0,
+                collateralQuantity: 0,
+                allowsPartialRepay: false,
+                allowsPrepayListing: false,
+                allowsParallelSale: false,
+                amountMax: PRINCIPAL,
+                interestRateBpsMax: 500,
+                collateralAmountMax: COLLATERAL,
+                periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None,
+                expiresAt: 0,
+                fillMode: LibVaipakam.FillMode.Partial,
+                refinanceTargetLoanId: 0,
+                useFullTermInterest: false
+            })
+        );
+
+        LibVaipakam.Loan memory before_ =
+            LoanFacet(address(diamond)).getLoanDetails(activeLoanId);
+
+        // Flag the current lender-position holder AFTER init (oracle reachable).
+        // The borrower/new borrower stay clean, so the Tier-1 entry gate passes and
+        // the ONLY flagged party is the lender the top-up funds.
+        MockSanctionsList m = new MockSanctionsList();
+        ProfileFacet(address(diamond)).setSanctionsOracle(address(m));
+        m.setFlagged(before_.lender, true);
+
+        // Clean borrower initiates — must COMPLETE (pre-#1132 this reverted on the
+        // flagged lender's receive-side vault resolution).
+        vm.prank(borrower);
+        PrecloseFacet(address(diamond)).transferObligationViaOffer(activeLoanId, validOffer);
+
+        LibVaipakam.Loan memory after_ =
+            LoanFacet(address(diamond)).getLoanDetails(activeLoanId);
+        assertEq(after_.borrower, newBorrower, "obligation transferred despite flagged lender");
+        assertEq(after_.lender, before_.lender, "lender unchanged by obligation transfer");
     }
 
     /// @dev Covers precloseDirect _getOrCreateVault failure (line 709) in ERC20 path.

@@ -5,7 +5,6 @@ pragma solidity ^0.8.29;
 import {LibVaipakam} from "../libraries/LibVaipakam.sol";
 import {InteractionRewardsFacet} from "./InteractionRewardsFacet.sol";
 import {LibEncumbrance} from "../libraries/LibEncumbrance.sol";
-import {LibLifecycle} from "../libraries/LibLifecycle.sol";
 import {LibAuth} from "../libraries/LibAuth.sol";
 import {LibEntitlement} from "../libraries/LibEntitlement.sol";
 import {LibSettlement} from "../libraries/LibSettlement.sol";
@@ -200,16 +199,11 @@ contract PrecloseFacet is
         // payoff claim AND returns the borrower's collateral/refund, each claimed
         // later via ClaimFacet. A keeper-initiated (or outage-window) close can
         // complete while a current position holder is sanctioned, so freeze either
-        // side fail-closed when its holder is confirmed flagged. One cross-facet
-        // call covers both sides + both asset branches, keeping this EIP-170-tight
-        // facet small.
-        LibFacet.crossFacetCall(
-            abi.encodeWithSelector(
-                EncumbranceMutateFacet.recordSanctionsFrozenClaimantBoth.selector,
-                loanId
-            ),
-            bytes4(0)
-        );
+        // side fail-closed when its holder is confirmed flagged.
+        // #1132 (S10 central enforcement) — both holders' fail-closed markers are
+        // recorded centrally at the `Repaid` transition (terminalize) in each asset
+        // branch below; the standalone `recordSanctionsFrozenClaimantBoth` here was
+        // folded into those calls.
 
         // #658 PR-B (Codex #690 round-2 P2) — clear any active prepay /
         // parallel-sale listing BEFORE the consolidation hook below. The
@@ -348,10 +342,15 @@ contract PrecloseFacet is
             // of `precloseDirect` (before the #658 consolidation hook); see
             // {RepayFacet.repayLoan} for the full rationale. Idempotent, so no
             // second clear is needed here.
-            LibLifecycle.transition(
-                loan,
-                LibVaipakam.LoanStatus.Active,
-                LibVaipakam.LoanStatus.Repaid
+            // #1132 (S10 central enforcement) — route through the terminalize host.
+            LibFacet.crossFacetCall(
+                abi.encodeWithSelector(
+                    EncumbranceMutateFacet.terminalize.selector,
+                    loanId,
+                    LibVaipakam.LoanStatus.Active,
+                    LibVaipakam.LoanStatus.Repaid
+                ),
+                bytes4(0)
             );
             // #569 Codex #572 round-4 P2 — the collateral-lien release
             // is NO LONGER done at this proper-close terminal. The
@@ -489,10 +488,15 @@ contract PrecloseFacet is
             // rejecting non-ERC20 principals, PR #317) now runs at the top of
             // `precloseDirect`, before the #658 consolidation hook. Idempotent,
             // so no second clear is needed on this branch.
-            LibLifecycle.transition(
-                loan,
-                LibVaipakam.LoanStatus.Active,
-                LibVaipakam.LoanStatus.Repaid
+            // #1132 (S10 central enforcement) — route through the terminalize host.
+            LibFacet.crossFacetCall(
+                abi.encodeWithSelector(
+                    EncumbranceMutateFacet.terminalize.selector,
+                    loanId,
+                    LibVaipakam.LoanStatus.Active,
+                    LibVaipakam.LoanStatus.Repaid
+                ),
+                bytes4(0)
             );
             emit LoanPreclosedDirect(loanId, msg.sender, fullRental);
         }
@@ -746,18 +750,29 @@ contract PrecloseFacet is
             LibFacet.recordTreasuryAccrual(payAsset, treasuryFee);
         }
         if (lenderShare > 0) {
-            // T-037 — direct borrower → lender's vault via the
-            // cross-payer chokepoint. Counter ticks up under the
-            // lender even though the borrower is paying.
+            // T-037 — direct borrower → lender's vault via the cross-payer
+            // chokepoint. Counter ticks up under the lender even though the
+            // borrower is paying.
+            // #1132 (S10 central enforcement) — route through the SAME
+            // `parkLenderPayoffAndFreeze` host the offset-completion top-up
+            // (`_settleOldLenderAtCompletion`) uses: it funds the lender's vault
+            // behind the sanctions-LOCKING receive-side exemption AND records the
+            // fail-closed lender frozen-claimant marker. The guardrail surfaced
+            // this held-credit site's pre-existing gap — the plain
+            // `vaultDepositERC20From` would (a) BRICK the obligation transfer when
+            // a stored/current lender flagged after init resolves their vault
+            // through the Tier-1 gate, and (b) leave the held credit fail-open at
+            // claim time (no marker). `transferObligationViaOffer` KEEPS
+            // `loan.lender`, so the deposit + register key on the same account.
             LibFacet.crossFacetCall(
                 abi.encodeWithSelector(
-                    VaultFactoryFacet.vaultDepositERC20From.selector,
+                    EncumbranceMutateFacet.parkLenderPayoffAndFreeze.selector,
                     msg.sender,        // payer
-                    loan.lender,       // user (vault owner)
+                    loanId,
                     payAsset,
                     lenderShare
                 ),
-                VaultDepositFailed.selector
+                bytes4(0)
             );
             s.heldForLender[loanId] += lenderShare;
             // #597 — reserve the held-for-lender VPFI against the unstake path
@@ -1645,22 +1660,11 @@ contract PrecloseFacet is
             quantity: loan.collateralQuantity,
             claimed: false
         });
-        // #998 S10 (#1006, Codex #1122-rework 186c60ff-round P1) — Class A: the
-        // lender side was registered by `_settleOldLenderAtCompletion`'s park, but
-        // this deferred BORROWER collateral claim had NO borrower-side marker. A
-        // clean keeper running `completeOffsetInternal` after the borrower-position
-        // holder became sanctioned would complete the offset with the borrower
-        // never registered, so a later oracle-outage `claimAsBorrower` would release
-        // the collateral fail-open. Register the borrower holder here (oracle-up
-        // observation) via the host; no-op unless affirmatively flagged.
-        LibFacet.crossFacetCall(
-            abi.encodeWithSelector(
-                EncumbranceMutateFacet.recordSanctionsFrozenClaimant.selector,
-                originalLoanId,
-                false
-            ),
-            bytes4(0)
-        );
+        // #998 S10 (#1006 / #1132) — Class A: the lender side is registered by
+        // `_settleOldLenderAtCompletion`'s park; this deferred BORROWER collateral
+        // claim's fail-closed marker is recorded centrally at the `Repaid`
+        // transition below (terminalize records BOTH holders), so a later
+        // oracle-outage `claimAsBorrower` fail-closes on a flagged holder.
 
         // The old lender's payoff was just deposited into their vault and
         // recorded in `heldForLender[loanId]` by `_settleOldLenderAtCompletion`.
@@ -1677,10 +1681,15 @@ contract PrecloseFacet is
 
         // Close original loan — offset completion transitions Active -> Repaid.
         _setLoanClaimable(loan, originalLoanId);
-        LibLifecycle.transition(
-            loan,
-            LibVaipakam.LoanStatus.Active,
-            LibVaipakam.LoanStatus.Repaid
+        // #1132 (S10 central enforcement) — route through the terminalize host.
+        LibFacet.crossFacetCall(
+            abi.encodeWithSelector(
+                EncumbranceMutateFacet.terminalize.selector,
+                originalLoanId,
+                LibVaipakam.LoanStatus.Active,
+                LibVaipakam.LoanStatus.Repaid
+            ),
+            bytes4(0)
         );
         // #969 / S5 — the ORIGINAL loan is terminal here (the borrower's
         // obligation rolled into a fresh offset loan with its own entries), so

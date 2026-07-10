@@ -170,7 +170,11 @@ abstract contract DiamondFacetNames {
             // direct `LibEncumbrance.releaseCollateralLien(...)`.
             // Unlocks release wiring at `RepayFacet.repayLoan` and
             // the other terminals that were blocked by EIP-170 in
-            // #407 PR 1. See `EncumbranceMutateFacet.sol` natspec.
+            // #407 PR 1. See `EncumbranceMutateFacet.sol` natspec. #1132 (S10
+            // central enforcement) added the `terminalize` / `terminalizeFromAny`
+            // terminal-transition + both-holder frozen-claimant register host to
+            // this same mutate facet (not a separate facet), so no new facet-name
+            // entry is needed — the two new selectors ride this facet's cut list.
             "EncumbranceMutateFacet",
             // #396 v0.5 — gasless signed off-chain offer book. A creator
             // signs offer terms once off-chain; a counterparty fills on

@@ -10,7 +10,6 @@ import {LibFallback} from "../libraries/LibFallback.sol";
 import {LibEntitlement} from "../libraries/LibEntitlement.sol";
 import {LibInteractionRewards} from "../libraries/LibInteractionRewards.sol";
 import {LibPrepayCleanup} from "../libraries/LibPrepayCleanup.sol";
-import {LibLifecycle} from "../libraries/LibLifecycle.sol";
 import {LibVPFIDiscount} from "../libraries/LibVPFIDiscount.sol";
 import {LibEncumbrance} from "../libraries/LibEncumbrance.sol";
 import {IVaipakamErrors} from "../interfaces/IVaipakamErrors.sol";
@@ -291,9 +290,9 @@ contract RiskSplitLiquidationFacet is
         LibSanctionedLock.depositLocked(
             s, loan.lender, loanId, loan.principalAsset, lenderProceeds
         );
-        // #998 S10 (#1006) — fail-closed freeze if the current lender-position
-        // holder is flagged.
-        LibSanctionedLock.recordFrozenClaimantForLoan(s, loan, true);
+        // #998 S10 (#1006 / #1132) — both holders' fail-closed markers are
+        // recorded centrally at the `Defaulted` transition (via
+        // `EncumbranceMutateFacet.terminalize`).
         s.lenderClaims[loanId] = LibVaipakam.ClaimInfo({
             asset: loan.principalAsset,
             amount: lenderProceeds,
@@ -313,9 +312,8 @@ contract RiskSplitLiquidationFacet is
             LibSanctionedLock.depositLocked(
                 s, loan.borrower, loanId, loan.principalAsset, borrowerSurplus
             );
-            // #998 S10 (#1006) — fail-closed freeze if the current borrower-
-            // position holder is flagged.
-            LibSanctionedLock.recordFrozenClaimantForLoan(s, loan, false);
+            // #998 S10 (#1006 / #1132) — both holders' fail-closed markers are
+            // recorded centrally at the `Defaulted` transition (terminalize).
             // #661 — reserve a VPFI surplus against the unstake path until the
             // current borrower-position holder claims it. No-op for non-VPFI.
             if (loan.principalAsset == s.vpfiToken) {
@@ -334,10 +332,18 @@ contract RiskSplitLiquidationFacet is
         });
 
         // Close loan + VPFI forfeit + rewards + NFT status — identical.
-        LibLifecycle.transition(
-            loan,
-            LibVaipakam.LoanStatus.Active,
-            LibVaipakam.LoanStatus.Defaulted
+        // #1132 (S10 central enforcement) — route through the
+        // `EncumbranceMutateFacet.terminalize` host so the validated Active→Defaulted
+        // transition AND both holders' fail-closed frozen-claimant markers land
+        // in one place (the per-branch standalone registers above were folded here).
+        LibFacet.crossFacetCall(
+            abi.encodeWithSelector(
+                EncumbranceMutateFacet.terminalize.selector,
+                loanId,
+                LibVaipakam.LoanStatus.Active,
+                LibVaipakam.LoanStatus.Defaulted
+            ),
+            bytes4(0)
         );
         LibVPFIDiscount.forfeitBorrowerLif(loan);
         LibInteractionRewards.closeLoan(loanId, false, false);

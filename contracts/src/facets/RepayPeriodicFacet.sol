@@ -5,7 +5,6 @@ pragma solidity ^0.8.29;
 import {LibVaipakam} from "../libraries/LibVaipakam.sol";
 import {SwapToRepayIntentFacet} from "./SwapToRepayIntentFacet.sol";
 import {ConsolidationFacet} from "./ConsolidationFacet.sol";
-import {LibLifecycle} from "../libraries/LibLifecycle.sol";
 import {LibEntitlement} from "../libraries/LibEntitlement.sol";
 import {LibFacet} from "../libraries/LibFacet.sol";
 import {EncumbranceMutateFacet} from "./EncumbranceMutateFacet.sol";
@@ -257,22 +256,13 @@ contract RepayPeriodicFacet is DiamondReentrancyGuard, DiamondPausable, IVaipaka
                 claimed: false
             });
 
-            // #998 S10 (#1006) Class A — this terminal writes a borrower buffer
+            // #998 S10 (#1006 / #1132) — this terminal writes a borrower buffer
             // claim (and the zero-amount lender claim) that are released LATER by
-            // `claimAsBorrower` / `claimAsLender`. Register both current position
-            // holders in the confirmed-flagged registry now (an oracle-up
-            // observation) so a holder flagged at this close-out but claiming
-            // during a later oracle outage is caught fail-closed by the central
-            // claim gate. Position NFTs are not burned on this path (status-only
-            // update below), so `ownerOf` still resolves both holders. Hosted for
-            // EIP-170; each side no-ops unless its holder is affirmatively flagged.
-            LibFacet.crossFacetCall(
-                abi.encodeWithSelector(
-                    EncumbranceMutateFacet.recordSanctionsFrozenClaimantBoth.selector,
-                    loanId
-                ),
-                bytes4(0)
-            );
+            // `claimAsBorrower` / `claimAsLender`. Both current position holders'
+            // fail-closed frozen-claimant markers are recorded centrally at the
+            // `Repaid` transition below (via `EncumbranceMutateFacet.terminalize`). Position
+            // NFTs are not burned on this path (status-only update below), so
+            // `ownerOf` still resolves both holders.
 
             // Three best-effort cleanup calls below. Each writes to the
             // same `ok` local, which Slither flags as `write-after-write`.
@@ -320,10 +310,18 @@ contract RepayPeriodicFacet is DiamondReentrancyGuard, DiamondPausable, IVaipaka
             );
             ok; // silence unused warning
 
-            LibLifecycle.transition(
-                loan,
-                LibVaipakam.LoanStatus.Active,
-                LibVaipakam.LoanStatus.Repaid
+            // #1132 (S10 central enforcement) — route through the
+            // `EncumbranceMutateFacet.terminalize` host so the validated Active→Repaid
+            // transition AND both holders' fail-closed frozen-claimant markers
+            // land in one place (the standalone register above was folded here).
+            LibFacet.crossFacetCall(
+                abi.encodeWithSelector(
+                    EncumbranceMutateFacet.terminalize.selector,
+                    loanId,
+                    LibVaipakam.LoanStatus.Active,
+                    LibVaipakam.LoanStatus.Repaid
+                ),
+                bytes4(0)
             );
         }
 

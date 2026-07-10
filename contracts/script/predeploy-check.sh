@@ -120,6 +120,26 @@ else
   fi
 fi
 
+# ── 2b. Sanctions frozen-claimant register-coverage (source scan, #1132) ──
+# Complements the compiled-artifact deploy-sanity suite above with a SOURCE
+# scan: every deferred-claim / held-credit write in src/ must be co-located
+# with a side-matched fail-closed frozen-claimant register (S10 central
+# enforcement). Fails the gate on any un-registered write.
+echo
+echo "[predeploy 2b/4] sanctions register-coverage guardrail (#1132)"
+if command -v node >/dev/null 2>&1; then
+  if node "$SCRIPT_DIR/check-sanctions-register-coverage.mjs"; then
+    : # the script prints its own ✓ line
+  else
+    echo "  ✗ a deferred-claim / held write is missing its co-located" >&2
+    echo "    fail-closed frozen-claimant register (S10) — see the" >&2
+    echo "    offenders above." >&2
+    FAIL=1
+  fi
+else
+  echo "  · node not installed — skipping (CI's contracts-fast job enforces it)"
+fi
+
 # ── 3. Deploy shell-script lint ───────────────────────────────────────
 echo
 echo "[predeploy 3/4] deploy shell-script lint"

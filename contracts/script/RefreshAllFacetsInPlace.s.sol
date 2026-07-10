@@ -411,6 +411,7 @@ contract RefreshAllFacetsInPlace is DeployDiamond {
         items[62] = Item("offerPreviewFacet", address(new OfferPreviewFacet()), _getOfferPreviewSelectors());
         // #1104 — RiskPreviewFacet split off RiskAccessFacet (items[60]).
         items[63] = Item("riskPreviewFacet", address(new RiskPreviewFacet()), _getRiskPreviewFacetSelectors());
+        // #1132 (S10 central enforcement) — terminal-transition register host.
     }
 
     /// @notice Broadcast one bounded diamondCut for `cuts[start..end)`.

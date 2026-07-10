@@ -425,22 +425,6 @@
   },
   {
     "type": "error",
-    "name": "InvalidTransition",
-    "inputs": [
-      {
-        "name": "from",
-        "type": "uint8",
-        "internalType": "enum LibVaipakam.LoanStatus"
-      },
-      {
-        "name": "to",
-        "type": "uint8",
-        "internalType": "enum LibVaipakam.LoanStatus"
-      }
-    ]
-  },
-  {
-    "type": "error",
     "name": "KYCRequired",
     "inputs": []
   },
