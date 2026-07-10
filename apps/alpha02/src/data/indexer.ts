@@ -93,6 +93,10 @@ export interface IndexedOffer {
   createdAt?: number;
   expiresAt?: number;
   fillMode?: number;
+  /** Lender-sale vehicle marker (0029) — a borrower-style offer linked
+   *  to an existing loan; bookkeeping, never quotable market liquidity.
+   *  Optional: older workers (and the chain-hydration path) omit it. */
+  isSaleVehicle?: boolean;
 }
 
 export interface ActiveOffersPage {

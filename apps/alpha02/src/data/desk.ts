@@ -118,7 +118,36 @@ export function useDeskBook(pair: DeskPair | null) {
             readChain.chainId,
             ids,
           );
-          return { rows: rows.filter((r) => r.status === 'active'), source: 'chain' };
+          const active = rows.filter((r) => r.status === 'active');
+          // Lender-sale vehicles (borrower-style offers linked to an
+          // existing loan) are bookkeeping, not quotable liquidity —
+          // rendering one as a bid would arm a taker affordance on a
+          // non-market row. Only borrower offers can be sale vehicles;
+          // the same-tick reads fold into ONE JSON-RPC batch (the
+          // transports use `batch: true`), so this is one extra batch
+          // per book load. The indexer fallback below filters on the
+          // worker's `isSaleVehicle` instead.
+          const borrowerRows = active.filter((r) => r.offerType === 1);
+          const linkedLoanIds = await Promise.all(
+            borrowerRows.map(
+              (r) =>
+                publicClient.readContract({
+                  address: readChain.diamondAddress,
+                  abi: DIAMOND_ABI_VIEM,
+                  functionName: 'getOfferLinkedLoanId',
+                  args: [BigInt(r.offerId)],
+                }) as Promise<bigint>,
+            ),
+          );
+          const saleVehicleIds = new Set(
+            borrowerRows
+              .filter((_, i) => linkedLoanIds[i] !== 0n)
+              .map((r) => r.offerId),
+          );
+          return {
+            rows: active.filter((r) => !saleVehicleIds.has(r.offerId)),
+            source: 'chain',
+          };
         } catch {
           // fall through to the indexer copy
         }
@@ -136,7 +165,10 @@ export function useDeskBook(pair: DeskPair | null) {
           collateralAsset: pair!.collateralAsset,
         });
         if (page === null) return null;
-        all.push(...page.offers);
+        // Sale vehicles are excluded here too (the worker marks them
+        // via `isSaleVehicle`); an older worker without the field
+        // keeps its rows — same behaviour as before the filter.
+        all.push(...page.offers.filter((o) => o.isSaleVehicle !== true));
         if (page.nextBefore === null) return { rows: all, source: 'indexer' };
         before = page.nextBefore;
       }

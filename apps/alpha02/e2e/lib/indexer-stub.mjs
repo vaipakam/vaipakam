@@ -70,10 +70,13 @@ async function forkNowSec() {
 async function mapOffer(id, chainNowSec) {
   // No catch: a zeroed struct is the legitimate "gone" signal below;
   // an RPC/ABI failure must bubble to the handler's 500 instead of
-  // silently dropping the row.
-  const [o, stateRaw] = await Promise.all([
+  // silently dropping the row. getOfferLinkedLoanId backs the worker's
+  // `isSaleVehicle` marker (D1 column, migration 0029) — the stub
+  // derives it live, exactly like the desk's own chain-path filter.
+  const [o, stateRaw, linkedLoanId] = await Promise.all([
     read('getOffer', [BigInt(id)]),
     read('getOfferState', [BigInt(id)]),
+    read('getOfferLinkedLoanId', [BigInt(id)]),
   ]);
   if (!o) return null;
   if (!o.creator || /^0x0{40}$/i.test(o.creator)) return null; // slot deleted
@@ -122,6 +125,7 @@ async function mapOffer(id, chainNowSec) {
     createdAt: n(o.createdAt) || undefined,
     expiresAt: n(o.expiresAt) || undefined,
     fillMode: n(o.fillMode),
+    isSaleVehicle: n(linkedLoanId) !== 0,
   };
 }
 

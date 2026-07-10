@@ -52,8 +52,11 @@ export function Desk() {
 
   const markets = useDeskMarkets();
 
-  // Default pair: the most active market (the endpoint orders by live
+  // Default market: the most active one (the endpoint orders by live
   // offer count) once the list lands, if the user hasn't picked one.
+  // The TENOR comes with the pair — a market is the full (pair, tenor)
+  // triple, and keeping the hard-coded 30d default would land on an
+  // empty book whenever the most active market trades another tenor.
   useEffect(() => {
     if (pair !== null) return;
     const first = markets.data?.[0];
@@ -62,6 +65,7 @@ export function Desk() {
         lendingAsset: first.lendingAsset,
         collateralAsset: first.collateralAsset,
       });
+      setDays(first.durationDays);
     }
   }, [markets.data, pair]);
 

@@ -23,7 +23,6 @@ import {
   chooseMenuValue,
   consentAndWaitEnabled,
   newestOfferIdFor,
-  pasteAsset,
 } from '../lib/flows';
 import { increaseTime } from '../lib/anvil';
 import {
@@ -316,7 +315,12 @@ test('ticket posts a GTC/Partial lend order, amend reprices it in ONE modifyOffe
   await page.getByRole('button', { name: 'Lend', exact: true }).click();
   await page.locator('#desk-amount').fill('0.004');
   await page.locator('#desk-rate').fill('8');
-  await pasteAsset(page, 'desk-collateral-asset', TLIQ);
+  // The collateral ASSET is fixed to the selected market's (read-only
+  // display, no picker) — the ticket can never post into a pair the
+  // ladder isn't showing. Only the AMOUNT is typed.
+  await expect(page.locator('#desk-collateral-asset')).toContainText(
+    new RegExp(`${TLIQ.slice(0, 6)}…${TLIQ.slice(-4)}`, 'i'),
+  );
   await page.locator('#desk-collateral-amount').fill('100');
   await page
     .getByRole('group', { name: 'Expiry' })

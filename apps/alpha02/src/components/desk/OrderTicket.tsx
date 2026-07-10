@@ -30,10 +30,8 @@ import { useTxSimulation, type TxSimInput } from '../../contracts/useTxSimulatio
 import { SimulationPreview } from '../SimulationPreview';
 import { CollateralPrecheck } from '../CollateralPrecheck';
 import { ConsentLabel } from '../ConsentLabel';
-import { AssetPicker } from '../AssetPicker';
 import {
   ensureAllowance,
-  isAddressLike,
   useTokenMeta,
 } from '../../contracts/erc20';
 import {
@@ -52,12 +50,12 @@ import {
   type OfferFormState,
   type OfferSide,
 } from '../../lib/offerSchema';
-import { useProtocolFees } from '../../data/fees';
+import { readLiveProtocolFees, useProtocolFees } from '../../data/fees';
 import {
   needsSecurityCheck,
   useTokenSecurity,
 } from '../../data/tokenSecurity';
-import { formatDurationDays } from '../../lib/format';
+import { formatDurationDays, shortAddress } from '../../lib/format';
 import type { DeskPair } from '../../data/desk';
 
 /** LibVaipakam.FillMode (#125): Partial default, Aon, Ioc. */
@@ -91,7 +89,6 @@ export function OrderTicket({
   const [side, setSide] = useState<OfferSide>('lender');
   const [amount, setAmount] = useState('');
   const [rate, setRate] = useState('');
-  const [collateralAsset, setCollateralAsset] = useState('');
   const [collateralAmount, setCollateralAmount] = useState('');
   const [expiry, setExpiry] = useState<ExpiryPreset>('gtc');
   const [customExpiry, setCustomExpiry] = useState('');
@@ -117,24 +114,27 @@ export function OrderTicket({
     setPostedHash(null);
   }, [pair?.lendingAsset, pair?.collateralAsset, days, side]);
 
+  // The collateral ASSET is fixed to the selected market's — the ticket
+  // posts into the (pair, tenor) market shown in the header, and a
+  // free-picked asset would post an offer that never appears in the
+  // current ladder. A different pair (custom included) is selected in
+  // the header, never here; only the collateral AMOUNT is the ticket's.
+  const collateralAsset = pair?.collateralAsset ?? '';
+
   const lendingMeta = useTokenMeta(pair?.lendingAsset);
-  const collateralMeta = useTokenMeta(
-    isAddressLike(collateralAsset) ? collateralAsset : undefined,
-  );
+  const collateralMeta = useTokenMeta(pair?.collateralAsset);
 
   const killed = flowDisabled('post-offer');
 
   const selfCollateral =
     pair !== null &&
-    isAddressLike(collateralAsset) &&
-    pair.lendingAsset.toLowerCase() === collateralAsset.toLowerCase();
+    pair.lendingAsset.toLowerCase() === pair.collateralAsset.toLowerCase();
 
   const rateValid = isPlainDecimal(rate) && Number(rate) <= MAX_RATE_PERCENT;
   const fieldsComplete =
     pair !== null &&
     isPositiveDecimal(amount) &&
     rateValid &&
-    isAddressLike(collateralAsset) &&
     isPositiveDecimal(collateralAmount) &&
     !selfCollateral;
 
@@ -270,10 +270,7 @@ export function OrderTicket({
 
   // ---- token security (#1036) — fail closed on blocked/unverified ----
   const lendingSec = useTokenSecurity(readChain.chainId, pair?.lendingAsset);
-  const collateralSec = useTokenSecurity(
-    readChain.chainId,
-    isAddressLike(collateralAsset) ? collateralAsset : undefined,
-  );
+  const collateralSec = useTokenSecurity(readChain.chainId, pair?.collateralAsset);
   const securityLegs = [
     {
       leg: 'loan asset',
@@ -285,8 +282,8 @@ export function OrderTicket({
     {
       leg: 'collateral',
       needed:
-        isAddressLike(collateralAsset) &&
-        needsSecurityCheck(readChain.chainId, collateralAsset),
+        pair !== null &&
+        needsSecurityCheck(readChain.chainId, pair.collateralAsset),
       verdict: collateralSec.data,
       errored: collateralSec.isError,
     },
@@ -334,6 +331,19 @@ export function OrderTicket({
         walletChain.diamondAddress,
         address,
       );
+      // The duration-cap gate above validated against the 5-min-cached
+      // fee read — governance lowering maxOfferDurationDays inside that
+      // window would let the user mine an approval ahead of an
+      // OfferDurationExceedsCap revert. Re-read live before any
+      // approval/write (same move as OfferFlow.submitPost).
+      const liveFees = await readLiveProtocolFees(
+        publicClient,
+        walletChain.diamondAddress,
+      );
+      if (days > liveFees.maxOfferDurationDays) {
+        void queryClient.invalidateQueries({ queryKey: ['protocolFees'] });
+        throw new Error(copy.desk.ticket.overDurationCap(liveFees.maxOfferDurationDays));
+      }
       const token = (side === 'lender'
         ? payload.lendingAsset
         : payload.collateralAsset) as `0x${string}`;
@@ -501,15 +511,21 @@ export function OrderTicket({
         />
       </div>
 
-      <AssetPicker
-        id="desk-collateral-asset"
-        label={side === 'lender' ? text.collateralRequire : text.collateralLock}
-        value={collateralAsset}
-        onChange={(addr) => {
-          setCollateralAsset(addr);
-          setConsent(false);
-        }}
-      />
+      {/* The collateral ASSET is the selected market's — read-only, so
+          the ticket can never post into a pair the ladder isn't
+          showing. Switching pairs (custom included) happens in the
+          header. */}
+      <div className="field">
+        <label>{side === 'lender' ? text.collateralRequire : text.collateralLock}</label>
+        <p id="desk-collateral-asset" className="muted" style={{ margin: 0 }}>
+          {pair
+            ? `${collateralMeta.data ? `${collateralMeta.data.symbol} · ` : ''}${shortAddress(pair.collateralAsset)}`
+            : copy.desk.statUnknown}
+        </p>
+        {pair ? (
+          <p className="field-hint">{text.collateralFixedNote}</p>
+        ) : null}
+      </div>
       {selfCollateral ? (
         <p className="field-hint" style={{ color: 'var(--danger)' }}>
           Collateral can’t be the same token as the loan asset.

@@ -882,6 +882,8 @@ export const copy = {
       rateBorrow: 'Rate — maximum you’ll pay (APR %)',
       collateralRequire: 'Collateral you require',
       collateralLock: 'Collateral you lock',
+      collateralFixedNote:
+        'Set by the selected market — switch markets in the header to post against a different collateral asset.',
       expiryLabel: 'Expiry',
       expiryGtc: 'GTC',
       expiryCustom: 'Custom…',

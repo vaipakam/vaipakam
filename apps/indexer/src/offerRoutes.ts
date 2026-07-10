@@ -103,6 +103,10 @@ interface OfferRow {
   created_at: number;
   expires_at: number;
   fill_mode: number;
+  // 0029 — lender-sale vehicle marker (borrower-style offer linked to
+  // an existing loan). Exposed so book consumers can drop these rows:
+  // they are bookkeeping, never quotable market liquidity.
+  is_sale_vehicle: number;
   first_seen_block: number;
   first_seen_at: number;
   updated_at: number;
@@ -140,6 +144,7 @@ function toJson(row: OfferRow): Record<string, unknown> {
     createdAt: row.created_at,
     expiresAt: row.expires_at,
     fillMode: row.fill_mode,
+    isSaleVehicle: row.is_sale_vehicle === 1,
     firstSeenBlock: row.first_seen_block,
     firstSeenAt: row.first_seen_at,
     updatedAt: row.updated_at,
