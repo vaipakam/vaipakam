@@ -1050,13 +1050,26 @@ a.item-row:hover {
 
 /* ---------- Rate Desk (#1129) ---------- */
 
+/* The desk's layout breakpoints key on the CONTAINER's width, not
+ * the viewport: the app shell's sidebar consumes ~350px, so viewport
+ * media queries overstate the desk's real estate by that much — at a
+ * 1280px viewport the desk has only ~810px, and the three-column
+ * template crushed the ladder's minmax(0,1fr) rate cells to zero
+ * width (spec 17's first phase-2 fork-tier failure). The thresholds
+ * below are therefore what the desk ACTUALLY has to lay out in. */
+.desk-container {
+  container-type: inline-size;
+  container-name: desk;
+}
+
 /* Mobile-first: the ladder and the ticket sit SIDE-BY-SIDE as the
  * primary view (the highest-frequency loop — tap a rate, adjust the
  * ticket — stays on one screen); the chart AND tape sit behind the
  * bottom Book|Chart segmented toggle (`.desk-view-toggle`, the
  * ratified mobile pattern — density changes, capability never).
- * >= 720px: chart panel full-width on top, book + ticket below.
- * >= 1080px: the full terminal — chart center-left, ladder, ticket. */
+ * container >= 720px: chart panel full-width on top, book + ticket
+ * below. container >= 1080px: the full terminal — chart center-left,
+ * ladder, ticket. */
 .desk-main {
   display: grid;
   grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
@@ -1084,7 +1097,7 @@ a.item-row:hover {
   grid-column: 1 / -1;
 }
 
-@media (max-width: 719.98px) {
+@container desk (max-width: 719.98px) {
   /* Book view (default): chart + tape hidden behind the toggle. The
    * chart stays MOUNTED (display:none) so switching back is instant —
    * lightweight-charts' autoSize re-measures when shown. */
@@ -1102,14 +1115,14 @@ a.item-row:hover {
   }
 }
 
-@media (min-width: 720px) {
+@container desk (min-width: 720px) {
   .desk-main {
     grid-template-columns: minmax(0, 1.4fr) minmax(300px, 400px);
     gap: var(--space-4);
   }
 }
 
-@media (min-width: 1080px) {
+@container desk (min-width: 1080px) {
   .desk-main {
     grid-template-columns: minmax(0, 1.6fr) minmax(0, 1.1fr) minmax(300px, 380px);
   }
@@ -1123,7 +1136,7 @@ a.item-row:hover {
 
 /* Mobile-only bottom-center Book|Chart toggle. Sticky so it stays
  * reachable while scrolling the main view; hidden once every column
- * renders (>= 720px). */
+ * renders (container >= 720px). */
 .desk-view-toggle {
   position: sticky;
   bottom: calc(env(safe-area-inset-bottom, 0px) + 12px);
@@ -1141,7 +1154,7 @@ a.item-row:hover {
   background: var(--surface-raised);
 }
 
-@media (min-width: 720px) {
+@container desk (min-width: 720px) {
   .desk-view-toggle {
     display: none;
   }
@@ -1294,7 +1307,12 @@ a.item-row:hover {
 .desk-ladder-head,
 .desk-ladder-row {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) minmax(0, 1fr) auto;
+  /* min-content floors: rate/size/depth text must never collapse to
+   * zero width under a squeezed parent — a too-narrow ladder should
+   * overflow visibly, not silently hide the numbers. */
+  grid-template-columns:
+    minmax(min-content, 1fr) minmax(min-content, 1fr)
+    minmax(min-content, 1fr) auto;
   gap: var(--space-2);
   align-items: center;
   padding: 3px 6px;

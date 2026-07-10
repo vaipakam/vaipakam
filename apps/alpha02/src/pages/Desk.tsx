@@ -117,7 +117,14 @@ export function Desk() {
   const lastFill = tape.data === undefined ? undefined : (tape.data?.[0] ?? null);
 
   return (
-    <div>
+    // The desk-container class establishes a size container so the
+    // desk's layout breakpoints key on the width the desk ACTUALLY
+    // has — the app shell's sidebar consumes ~350px, so a viewport
+    // media query overstates the available width by that much (the
+    // CI 1280px viewport leaves only ~812px here, which crushed the
+    // three-column ladder to zero-width rate cells — spec 17's
+    // first fork-tier failure on this branch).
+    <div className="desk-container">
       <h1 className="page-title">{copy.desk.title}</h1>
       <p className="page-lede">{copy.desk.lede}</p>
 

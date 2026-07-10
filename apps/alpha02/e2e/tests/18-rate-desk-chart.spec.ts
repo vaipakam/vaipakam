@@ -20,11 +20,15 @@
  *  rules hang off (sparse note, last-fill header, empty copy, quoted-
  *  mid hint, attribution) plus the stub/worker wire shape directly.
  *
- *  Layout note: the wallet fixture's 1280px viewport sits above the
- *  1080px desktop breakpoint, so chart + ladder + ticket all render
- *  side-by-side and the mobile Book|Chart toggle is display:none —
- *  which is why spec 17's ladder asserts needed no changes for the
- *  phase-2 layout (asserted below as a cheap layout-assumption guard).
+ *  Layout note: the desk's breakpoints are CONTAINER queries (the app
+ *  shell's sidebar consumes ~350px, so at the fixture's 1280px
+ *  viewport the desk container is ~810px). That renders the mid-tier
+ *  layout — chart card full-width on top, book + ticket side by side
+ *  below, mobile Book|Chart toggle display:none — which keeps every
+ *  panel visible at full assertable width (the earlier viewport-keyed
+ *  1080px three-column template crushed the ladder's rate cells to
+ *  zero width here — spec 17's first phase-2 fork-tier failure).
+ *  Asserted below as a cheap layout-assumption guard.
  */
 import { parseEther } from 'viem';
 import { test, expect, connectWallet } from '../lib/wallet-fixture';
@@ -116,9 +120,10 @@ test('a zero-fill market shows the honest empty chart; seeded fills render spars
   await connectWallet(page);
   const chartCard = page.locator('.desk-chart-card');
 
-  // Layout-assumption guard (see the header note): desktop 3-column
-  // grid at the fixture's 1280px viewport — chart card visible
-  // alongside the ladder, mobile Book|Chart toggle hidden.
+  // Layout-assumption guard (see the header note): at the fixture's
+  // 1280px viewport the ~810px desk container renders the mid-tier
+  // layout — chart card visible above the ladder at full width,
+  // mobile Book|Chart toggle hidden.
   await expect(chartCard).toBeVisible({ timeout: 30_000 });
   await expect(page.locator('.desk-book-col .card').first()).toBeVisible();
   await expect(page.locator('.desk-view-toggle')).toBeHidden();
