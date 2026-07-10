@@ -36,13 +36,56 @@ type ServerFrame =
 /** Coarse DO invalidation key → the react-query key ROOTS it dirties.
  *  Only INDEXER-fed caches belong here — chain-read caches are
  *  LiveChainSync's per-block job, and double-invalidating them would
- *  just burn RPC. */
-const KEY_MAP: Record<string, string[]> = {
-  'offer.created': ['activeOffers', 'myOffers', 'offer'],
-  'offer.changed': ['activeOffers', 'myOffers', 'offer'],
-  'loan.created': ['myLoans', 'loan'],
-  'loan.updated': ['myLoans', 'loan', 'claimables'],
+ *  just burn RPC.
+ *
+ *  Exported for the unit test (src/chain/pushKeyMap.test.ts): the fork
+ *  e2e harness has no WebSocket rail (spec 15 pins that posture), so
+ *  the desk-root registrations (#1131 slice A) are pinned here in CI
+ *  and observed live on the production WS rail per COVERAGE.md. */
+export const KEY_MAP: Record<string, string[]> = {
+  // desk* roots (#1131): markets/book/amend-seed are offer-fed views.
+  'offer.created': [
+    'activeOffers',
+    'myOffers',
+    'offer',
+    'deskMarkets',
+    'deskBook',
+    'deskAmendSource',
+  ],
+  'offer.changed': [
+    'activeOffers',
+    'myOffers',
+    'offer',
+    'deskMarkets',
+    'deskBook',
+    'deskAmendSource',
+    // Signed-book LIFECYCLE flips (fill / cancel / nonce burn) are
+    // on-chain events the ingest scan folds into this same coarse key
+    // (chainIndexer.signedOfferUpdates → offer.changed; Codex #1145 r8
+    // P3) — without this a WS client keeps showing a cancelled signed
+    // row until the 30s poll. Gasless POSTS still can't be pushed
+    // (they never touch the chain); their freshness stays the poll +
+    // the post path's own targeted invalidation.
+    'deskSignedBook',
+  ],
+  // A fill prints on the tape/candles/history and moves the markets
+  // stats. The accept also consumes offer principal, but the indexer
+  // counts that as an offer statusUpdate/detailRefresh, so the SAME
+  // frame carries 'offer.changed' (chainIngestDO derives both keys
+  // from one scan's counts) — deskBook/deskAmendSource ride that key
+  // rather than being duplicated here.
+  'loan.created': [
+    'myLoans',
+    'loan',
+    'deskTape',
+    'deskCandles',
+    'deskHistory',
+    'deskMarkets',
+  ],
+  // Loan status transitions (repaid / defaulted / …) restate history rows.
+  'loan.updated': ['myLoans', 'loan', 'claimables', 'deskHistory'],
   'activity.appended': ['activity'],
+  // NOT mapped on purpose: 'deskSymbols' (token metadata is immutable).
 };
 
 const NUDGE_DEBOUNCE_MS = 300;

@@ -37,16 +37,23 @@ import {
   fetchOffersMarkets,
   fetchRateCandles,
   fetchRecentLoans,
+  fetchSignedOffers,
   indexerConfigured,
   type CandleInterval,
   type CandleRange,
   type IndexedLoan,
   type IndexedOffer,
   type IndexedParticipantLoan,
+  type IndexedSignedOffer,
   type MarketSummary,
   type RateCandleBucket,
 } from './indexer';
+import {
+  signedOrderIsSingleValue,
+  type DeskBookRow,
+} from '../lib/signedOffer';
 import { readOfferRowsBatchLive } from './chainPositions';
+import { isMissingSelectorError } from '../contracts/preflights';
 
 const REFRESH_MS = 30_000;
 /** Indexer-fallback page walk bound — same shape as useActiveOffers'
@@ -244,6 +251,47 @@ export function useDeskBook(pair: DeskPair | null, durationDays: number) {
         before = page.nextBefore;
       }
       return null; // cap hit with a cursor still open — truncated ≠ complete
+    },
+  });
+}
+
+/** How stale the signed book may sit — mirrors the worker's
+ *  `Cache-Control: max-age=15` on /signed-offers; refetching harder
+ *  would only re-download the same cached body. */
+const SIGNED_BOOK_STALE_MS = 15_000;
+
+/** The GASLESS signed-offer book for one (pair, tenor) market (#1131
+ *  slice D). Always indexer-sourced — signed orders exist ONLY off-chain
+ *  until a taker fills them, so there is no chain leg to prefer; the
+ *  ladder's signed-row badge carries that source honesty per row.
+ *  Tri-state per the app contract: `undefined` loading, `null`
+ *  unavailable (fetch failed / wrong-chain response / no indexer
+ *  origin), `[]` honestly empty. The desk merges these ADDITIVELY into
+ *  the ladder — an unavailable signed book degrades to a chain-only
+ *  ladder rather than blanking the whole market. */
+export function useDeskSignedBook(pair: DeskPair | null, durationDays: number) {
+  const { readChain } = useActiveChain();
+  return useQuery({
+    queryKey: [
+      'deskSignedBook',
+      readChain.chainId,
+      pair ? pairKey(pair) : null,
+      durationDays,
+    ],
+    enabled: pair !== null,
+    staleTime: SIGNED_BOOK_STALE_MS,
+    refetchInterval: idleAware(REFRESH_MS),
+    queryFn: async (): Promise<IndexedSignedOffer[] | null> => {
+      if (!indexerConfigured()) return null;
+      const res = await fetchSignedOffers(readChain.chainId, {
+        lendingAsset: pair!.lendingAsset,
+        collateralAsset: pair!.collateralAsset,
+        durationDays,
+      });
+      if (res === null) return null;
+      // A response for another chain is not this market's book.
+      if (res.chainId !== readChain.chainId) return null;
+      return Array.isArray(res.offers) ? res.offers : null;
     },
   });
 }
@@ -464,9 +512,13 @@ export interface LadderLevel {
   rateBps: number;
   /** Total remaining principal at this rate (lending-asset base units). */
   size: bigint;
-  /** Running depth from the top of this side. */
+  /** Running depth from the top of this side. Signed off-chain rows
+   *  (rows carrying the `signed` tag — see `DeskBookRow`) aggregate
+   *  into the same level as on-chain rows at the same rate; consumers
+   *  that must not treat a signed row as an on-chain offer
+   *  discriminate on the tag. */
   cumulative: bigint;
-  offers: IndexedOffer[];
+  offers: DeskBookRow[];
   /** The connected wallet has an order at this level. */
   own: boolean;
 }
@@ -486,7 +538,7 @@ export interface DeskLadder {
 }
 
 export function buildLadder(
-  rows: IndexedOffer[],
+  rows: DeskBookRow[],
   durationDays: number,
   nowSec: number,
   wallet: string | undefined,
@@ -537,7 +589,11 @@ export function buildLadder(
  *  — direct `acceptOffer` rejects partially-filled offers
  *  (`OfferPartiallyFilled`) and expired ones (`OfferExpired`), so a
  *  button on any other shape would mint a doomed transaction. Expiry
- *  is already excluded by `isLiveMarketRow` upstream. */
+ *  is already excluded by `isLiveMarketRow` upstream. Signed off-chain
+ *  rows are SKIPPED: they have no on-chain offer id to deep-link into
+ *  the guided accept (their sentinel id would mint /borrow?offer=-1) —
+ *  they carry their own inline fill affordance instead (#1131 slice D,
+ *  see `signedFillCandidate`). */
 export function takerCandidate(
   level: LadderLevel | undefined,
   wallet: string | undefined,
@@ -547,10 +603,237 @@ export function takerCandidate(
   return (
     level.offers.find(
       (o) =>
+        o.signed === undefined &&
         BigInt(o.amountFilled || '0') === 0n &&
         (!me || o.creator.toLowerCase() !== me),
     ) ?? null
   );
+}
+
+/** The signed-fill affordance's candidate at a level: the first signed
+ *  row that is not the connected wallet's own (a maker can't fill their
+ *  own order — `acceptSignedOffer` would have the same party on both
+ *  legs), still has remaining size, AND is completely unfilled. The
+ *  last condition mirrors the contract (Codex #1145 round-1 P2 #5):
+ *  `SignedOfferFacet._vetSignedOffer` reverts `SignedOfferConsumed` on
+ *  ANY non-zero `signedOfferFilled[orderHash]`, so a signed order the
+ *  matcher partially filled can never be DIRECT-filled — arming Fill on
+ *  it would walk the taker into a doomed confirm ("gone" before
+ *  signing). The remainder is still honestly on the book: it stays
+ *  matchable via `matchSignedOffer` (whose vetting allows
+ *  `filled < ceiling`), so the row keeps resting as ladder DEPTH — it
+ *  just carries no direct-fill button (the badge tooltip says why).
+ *
+ *  The candidate must also be SINGLE-VALUE on principal (Codex #1145
+ *  round-2 P2): `acceptSignedOffer` marks the fill ledger consumed to
+ *  the CEILING (`signedOfferFilled[orderHash] = _ceiling(o)`) but the
+ *  materialized accept binds the ROLE amount — for a borrower offer
+ *  that is the headline FLOOR (`offer.amount`, OfferAcceptFacet's
+ *  `effectivePrincipal`). A ranged borrower order advertising 100 of
+ *  depth would direct-fill only its floor and vaporize the rest of the
+ *  ledger. Ranged rows keep resting as depth for the matcher path
+ *  (`matchSignedOffer` slices decrement the ledger honestly); only
+ *  single-value rows (`amount == ceiling`; `amountMax == 0` is the
+ *  single-value wire sentinel) arm the direct fill. The desk's own
+ *  ticket can no longer produce a ranged signed order (lender payloads
+ *  are collapsed by `collapseForSignedPost`, borrower payloads ship
+ *  single-value on both legs) — this gate defends against RANGE orders
+ *  posted straight to the public indexer API. */
+export function signedFillCandidate(
+  level: LadderLevel | undefined,
+  wallet: string | undefined,
+): DeskBookRow | null {
+  if (!level) return null;
+  const me = wallet?.toLowerCase();
+  return (
+    level.offers.find(
+      (o) =>
+        o.signed !== undefined &&
+        // `amountFilled` on a signed row is the mapper's mirror of the
+        // on-chain fill ledger (`signedRowToDeskRow`) — non-zero means
+        // the direct-accept vetting rejects it.
+        BigInt(o.amountFilled || '0') === 0n &&
+        offerRemaining(o) > 0n &&
+        // Ranged rows never direct-fill (floor-bind / ceiling-consume
+        // depth vaporization — see the doc comment above).
+        signedOrderIsSingleValue(o.signed.order) &&
+        (!me || o.signed.signer.toLowerCase() !== me),
+    ) ?? null
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Crossable-band previewMatch (#1131 slice B)
+// ---------------------------------------------------------------------------
+
+/**
+ * The TOP-of-book pair `previewMatch` / `matchOffers` runs on when the
+ * book is crossed/crossable (`bestBidBps >= bestAskBps`): the best ask
+ * level's first offer id × the best bid level's first offer id. Signed
+ * off-chain rows are skipped when picking each side's first offer —
+ * `matchOffers` can only cross ON-CHAIN offers (a signed order has no
+ * offer id until a taker materializes it), so a purely-signed best
+ * level yields no matchable pair even though the QUOTED book crosses.
+ * Returns `null` when the book isn't crossed or either side lacks an
+ * on-chain offer at its best level.
+ */
+export function topOfBookMatchPair(
+  ladder: DeskLadder | null,
+): { lenderOfferId: number; borrowerOfferId: number } | null {
+  if (
+    ladder === null ||
+    ladder.bestAskBps === null ||
+    ladder.bestBidBps === null ||
+    ladder.bestBidBps < ladder.bestAskBps
+  ) {
+    return null;
+  }
+  const lender = ladder.asks[0]?.offers.find((o) => o.signed === undefined);
+  const borrower = ladder.bids[0]?.offers.find((o) => o.signed === undefined);
+  if (!lender || !borrower) return null;
+  return { lenderOfferId: lender.offerId, borrowerOfferId: borrower.offerId };
+}
+
+/** `OfferMatchFacet.previewMatch` result, decoded. `errorCode === 0`
+ *  (`MatchError.Ok`) is the ONLY state that renders the crossable band
+ *  — bid >= ask alone is NOT matchable (range offers' amount/collateral
+ *  constraints can still fail), and showing a band the contract would
+ *  refuse is exactly the dishonesty the design's §5.2 rule forbids. */
+export interface MatchPreview {
+  errorCode: number;
+  matchAmount: bigint;
+  matchRateBps: number;
+  reqCollateral: bigint;
+  lenderRemainingPostMatch: bigint;
+}
+
+/** One LIVE `previewMatch` read — shared by the cached hook below AND
+ *  the MatchBand's pre-write recheck (Codex #1145 round-5 P2: the 30s
+ *  interval can leave a stale Ok on screen, so the submit handler
+ *  re-reads the contract's verdict directly, never through the cache,
+ *  immediately before `matchOffers`). `null` = read failed / selector
+ *  missing — callers treat it as "not confirmed matchable" (fail
+ *  closed; the band is advisory AND previewMatch is the only source of
+ *  the rate/amount it displays, so there is nothing to render without
+ *  it). */
+export async function readMatchPreviewLive(
+  publicClient: PublicClient,
+  diamondAddress: `0x${string}`,
+  pair: { lenderOfferId: number; borrowerOfferId: number },
+): Promise<MatchPreview | null> {
+  try {
+    const r = (await publicClient.readContract({
+      address: diamondAddress,
+      abi: DIAMOND_ABI_VIEM,
+      functionName: 'previewMatch',
+      args: [BigInt(pair.lenderOfferId), BigInt(pair.borrowerOfferId)],
+    })) as {
+      errorCode: number;
+      matchAmount: bigint;
+      matchRateBps: bigint;
+      reqCollateral: bigint;
+      lenderRemainingPostMatch: bigint;
+    };
+    return {
+      errorCode: Number(r.errorCode),
+      matchAmount: r.matchAmount,
+      matchRateBps: Number(r.matchRateBps),
+      reqCollateral: r.reqCollateral,
+      lenderRemainingPostMatch: r.lenderRemainingPostMatch,
+    };
+  } catch {
+    return null; // older deploy without the selector / RPC failure
+  }
+}
+
+/** One LIVE `RiskPreviewFacet.previewMatchRiskBlock` read (Codex #1145
+ *  round-5 P2: `previewMatch` Ok alone is NOT sufficient on risk-gated
+ *  deployments — `OfferMatchFacet._executeMatch` additionally runs
+ *  `_assertMatchCreatorsRiskAccess(lenderOfferId, borrowerOfferId)`
+ *  (OfferMatchFacet.sol:930), and `previewMatchRiskBlock`
+ *  (RiskPreviewFacet.sol:220) is its non-reverting mirror). Returns the
+ *  contract's block code (0 = clear; gate disabled also reads 0 — the
+ *  retail default), with two deliberate failure postures:
+ *   - MISSING SELECTOR → 0 (fail OPEN): a pre-#1104 Diamond without
+ *     RiskPreviewFacet may still enforce the gate at write time, but
+ *     the band is advisory and hiding it FOREVER on old deployments
+ *     would kill the feature — the same posture the direct-accept path
+ *     takes for a missing `previewOfferAcceptBlock`
+ *     (useAcceptTerms.ts: "older deploy without the preview — proceed,
+ *     the contract still enforces").
+ *   - TRANSPORT failure → `null` (fail CLOSED): callers hide/refuse
+ *     while the answer is unknown, consistent with the band's
+ *     masterFlags posture — retrying a read is free, a doomed
+ *     `matchOffers` costs the matcher gas. */
+export async function readMatchRiskBlockLive(
+  publicClient: PublicClient,
+  diamondAddress: `0x${string}`,
+  pair: { lenderOfferId: number; borrowerOfferId: number },
+): Promise<number | null> {
+  try {
+    const code = (await publicClient.readContract({
+      address: diamondAddress,
+      abi: DIAMOND_ABI_VIEM,
+      functionName: 'previewMatchRiskBlock',
+      args: [BigInt(pair.lenderOfferId), BigInt(pair.borrowerOfferId)],
+    })) as number | bigint;
+    return Number(code);
+  } catch (e) {
+    if (isMissingSelectorError(e)) return 0; // fail open — see above
+    return null; // transport failure — fail closed
+  }
+}
+
+/** Live `previewMatch` read for the top-of-book pair. Keyed on the two
+ *  offer ids so a book change (new top of book) re-runs it; the poll
+ *  interval additionally re-checks the SAME pair (a partial fill can
+ *  flip a previously-Ok preview without changing the ids), and the
+ *  root also sits in LiveChainSync's LIVE_KEYS so WS deploys refresh
+ *  it per block. `null` = read failed — the band hides (advisory
+ *  surface fails closed). */
+export function usePreviewMatch(
+  pair: { lenderOfferId: number; borrowerOfferId: number } | null,
+) {
+  const { readChain } = useActiveChain();
+  const publicClient = usePublicClient({ chainId: readChain.chainId });
+  return useQuery({
+    queryKey: [
+      'deskPreviewMatch',
+      readChain.chainId,
+      pair?.lenderOfferId ?? null,
+      pair?.borrowerOfferId ?? null,
+    ],
+    enabled: pair !== null && Boolean(publicClient),
+    refetchInterval: idleAware(REFRESH_MS),
+    queryFn: () =>
+      readMatchPreviewLive(publicClient!, readChain.diamondAddress, pair!),
+  });
+}
+
+/** Cached `previewMatchRiskBlock` for the top-of-book pair — the
+ *  render-time half of the risk gate (see readMatchRiskBlockLive for
+ *  the codes + failure postures). Shares the 'deskPreviewMatch' root
+ *  (with a discriminator segment) so every existing invalidation of
+ *  the preview — MatchBand's post-write sweep and LiveChainSync's
+ *  per-block pass — covers both reads without a second registration. */
+export function usePreviewMatchRiskBlock(
+  pair: { lenderOfferId: number; borrowerOfferId: number } | null,
+) {
+  const { readChain } = useActiveChain();
+  const publicClient = usePublicClient({ chainId: readChain.chainId });
+  return useQuery({
+    queryKey: [
+      'deskPreviewMatch',
+      readChain.chainId,
+      pair?.lenderOfferId ?? null,
+      pair?.borrowerOfferId ?? null,
+      'riskBlock',
+    ],
+    enabled: pair !== null && Boolean(publicClient),
+    refetchInterval: idleAware(REFRESH_MS),
+    queryFn: () =>
+      readMatchRiskBlockLive(publicClient!, readChain.diamondAddress, pair!),
+  });
 }
 
 // ---------------------------------------------------------------------------

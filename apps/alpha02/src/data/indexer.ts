@@ -8,6 +8,8 @@
  * field shapes in sync with the worker.
  */
 
+import type { SignedOrderWire } from '../lib/signedOffer';
+
 const TIMEOUT_MS = 4_000;
 
 function baseUrl(): string | null {
@@ -478,6 +480,99 @@ export function fetchActivity(
 
 // (The /claimables endpoint client was removed with #988: claimables
 // are on-chain-authoritative now — see data/claimables.ts.)
+
+// ---------------------------------------------------------------------------
+// Rate Desk phase 3, slice D (#1131) — the gasless SIGNED-offer book
+// ---------------------------------------------------------------------------
+
+/** One signed-book row as `GET /signed-offers` serves it: the exact
+ *  order JSON + signature a taker replays into `acceptSignedOffer`,
+ *  plus the worker's lifecycle projection (status / filledAmount). */
+export interface IndexedSignedOffer {
+  orderHash: string;
+  signer: string;
+  order: SignedOrderWire;
+  signature: string;
+  status: string;
+  filledAmount: string;
+  /** GTT expiry, unix seconds; 0 = GTC. */
+  expiresAt: number;
+  /** Signature validity deadline, unix seconds; 0 = no deadline. */
+  deadline: number;
+}
+
+export interface SignedOffersBook {
+  chainId: number;
+  offers: IndexedSignedOffer[];
+}
+
+/** The ACTIVE, unexpired signed book for one (pair, tenor) market. All
+ *  three market params are REQUIRED by the route (an unscoped signed
+ *  book has no consumer). `null` = unavailable, same contract as every
+ *  other fetch here. */
+export function fetchSignedOffers(
+  chainId: number,
+  market: {
+    lendingAsset: string;
+    collateralAsset: string;
+    durationDays: number;
+  },
+): Promise<SignedOffersBook | null> {
+  const params = new URLSearchParams({
+    chainId: String(chainId),
+    lendingAsset: market.lendingAsset.toLowerCase(),
+    collateralAsset: market.collateralAsset.toLowerCase(),
+    durationDays: String(market.durationDays),
+  });
+  return getJson<SignedOffersBook>(`/signed-offers?${params}`);
+}
+
+/** POST /signed-offers outcome, keeping the three cases the ticket's
+ *  copy must distinguish apart: accepted (201 first post / 200
+ *  idempotent re-post), rejected with the route's per-field error
+ *  (4xx/409 — the order will never be accepted as-is), and transport
+ *  failure (`null` — retrying may succeed; nothing can be claimed). */
+export type SignedOfferPostResult =
+  | { kind: 'ok'; orderHash: string }
+  | { kind: 'rejected'; error: string };
+
+export async function postSignedOffer(
+  chainId: number,
+  order: SignedOrderWire,
+  signature: string,
+): Promise<SignedOfferPostResult | null> {
+  const root = baseUrl();
+  if (!root) return null;
+  const ac = new AbortController();
+  const timer = setTimeout(() => ac.abort(), TIMEOUT_MS);
+  try {
+    const res = await fetch(root + '/signed-offers', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Accept: 'application/json',
+      },
+      body: JSON.stringify({ chainId, order, signature }),
+      signal: ac.signal,
+    });
+    const body = (await res.json().catch(() => null)) as
+      | { orderHash?: string; error?: string }
+      | null;
+    if (res.ok && body?.orderHash) {
+      return { kind: 'ok', orderHash: body.orderHash };
+    }
+    // 4xx/409 carry a machine-readable reason; 5xx is a transport-class
+    // failure (the order may be fine — treat as unavailable).
+    if (res.status >= 400 && res.status < 500) {
+      return { kind: 'rejected', error: body?.error ?? `http-${res.status}` };
+    }
+    return null;
+  } catch {
+    return null;
+  } finally {
+    clearTimeout(timer);
+  }
+}
 
 /** Indexer ingest-cursor freshness, piggybacked on /offers/stats
  *  (F-20260703-003, #988). `null` = endpoint unreachable OR the chain

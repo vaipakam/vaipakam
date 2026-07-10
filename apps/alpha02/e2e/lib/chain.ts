@@ -55,6 +55,20 @@ export function walletFor(account: Account): WalletClient {
 
 export const ERC20_MIN_ABI = [
   {
+    name: 'decimals',
+    type: 'function',
+    stateMutability: 'view',
+    inputs: [],
+    outputs: [{ type: 'uint8' }],
+  },
+  {
+    name: 'symbol',
+    type: 'function',
+    stateMutability: 'view',
+    inputs: [],
+    outputs: [{ type: 'string' }],
+  },
+  {
     name: 'balanceOf',
     type: 'function',
     stateMutability: 'view',
@@ -70,6 +84,13 @@ export const ERC20_MIN_ABI = [
   },
   {
     name: 'approve',
+    type: 'function',
+    stateMutability: 'nonpayable',
+    inputs: [{ type: 'address' }, { type: 'uint256' }],
+    outputs: [{ type: 'bool' }],
+  },
+  {
+    name: 'transfer',
     type: 'function',
     stateMutability: 'nonpayable',
     inputs: [{ type: 'address' }, { type: 'uint256' }],

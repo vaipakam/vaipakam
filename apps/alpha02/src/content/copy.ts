@@ -872,6 +872,67 @@ export const copy = {
     tapeTitle: 'Recent fills',
     tapeEmpty: 'No fills yet for this market.',
     tapeUnavailable: 'We couldn’t load recent fills right now.',
+    // #1131 slice B — the crossable-band previewMatch strip. Shown ONLY
+    // when the contract's own previewMatch says Ok (§5.2 honesty rule:
+    // bid >= ask alone is NOT matchable — range constraints can still
+    // fail) and the partial-fill master flag is on.
+    match: {
+      matchable: (rate: string) => `Matchable at ${rate}`,
+      body: 'These top-of-book offers can cross. Anyone can execute this match and earn the matcher fee.',
+      amount: (amount: string, symbol: string) =>
+        `${amount} ${symbol} would match.`,
+      execute: 'Execute match',
+      executing: 'Matching…',
+      executed: 'Match executed — the crossed offers settled into a loan.',
+      // Pre-write live recheck failed (Codex #1145 round-5): the book
+      // moved between render and click — the pair the band showed is no
+      // longer contract-confirmed matchable. Nothing was sent.
+      noLongerMatchable:
+        'These offers can no longer cross — the book moved before the match was sent. Nothing was sent.',
+      // Pre-write live master-flag recheck failed (Codex #1145
+      // round-6): governance switched offer matching off after the
+      // band rendered — the honest reason is the kill switch, not a
+      // book move. Nothing was sent.
+      matchingDisabled:
+        'Offer matching was just switched off by protocol governance, so this match can’t be sent right now. Nothing was sent.',
+    },
+    // #1131 slice D — gasless signed orders merged into the ladder.
+    signed: {
+      badge: 'Signed',
+      badgeTooltip:
+        'Gasless signed order from the off-chain book — the maker signed it without a transaction, and it fills in a single on-chain transaction by whoever takes it. Signed rows always come from the order-book service, never the chain, until they fill.',
+      partialBadgeTooltip:
+        'Partially matched signed order — its remainder still counts as depth and fills through the permissionless matcher, but a direct fill is no longer possible.',
+      rangedBadgeTooltip:
+        'Range-sized signed order — its size still counts as depth, but only the permissionless matcher can consume it in slices; there is no whole-order direct fill.',
+      fill: 'Fill',
+      confirmTitle: 'Fill signed order',
+      confirmLede:
+        'You execute the whole fill in one transaction: your side moves from your wallet, the maker’s side from their vault, and the loan starts immediately.',
+      payCollateral: (amount: string, symbol: string) =>
+        `You lock ${amount} ${symbol} as collateral and receive the loan principal.`,
+      payPrincipal: (amount: string, symbol: string) =>
+        `You fund the ${amount} ${symbol} loan principal.`,
+      rateLine: (rate: string, days: string) => `${rate} APR · ${days}`,
+      gone: 'This signed order is no longer fillable (filled, cancelled, or expired). The book will catch up shortly. Nothing was sent.',
+      makerNotFunded:
+        'The maker’s vault doesn’t currently cover this order, so the fill would fail on-chain. Nothing was sent — the maker must top up their vault first.',
+      illiquid:
+        'One of this order’s assets isn’t priced by the protocol right now, and this compact confirm can’t walk you through the in-kind default terms that implies. Nothing was sent.',
+      // Shown only on deploys with tiered identity verification
+      // enforced (never on this retail deploy, where enforcement is
+      // off and the preflight passes through).
+      kycBlocked:
+        'This deployment’s identity-verification rules don’t cover one side of this order at this value, so the fill would fail on-chain. Nothing was sent or approved.',
+      // Shown only on deploys with the progressive risk-access gate
+      // enabled (never on this retail deploy, where the gate is off
+      // and the preflight passes through after one read).
+      riskBlocked:
+        'This deployment’s risk-access rules block one side of this order right now — the maker or your wallet needs an on-chain access level or standing consent this compact confirm can’t collect. Nothing was sent or approved.',
+      accept: 'Fill order',
+      accepting: 'Filling…',
+      accepted: 'Signed order filled — the loan is live.',
+    },
     chart: {
       title: 'Executed rates',
       loading: 'Loading chart…',
@@ -951,6 +1012,37 @@ export const copy = {
       posted: 'Order posted',
       postedNext:
         'Your offer is live on the book. Manage it under Open orders below — amend or cancel any time before it fills.',
+      // #1131 slice D — gasless posting mode.
+      modeLabel: 'Posting',
+      modeOnchain: 'On-chain',
+      modeGasless: 'Gasless (sign only)',
+      modeOnchainHint:
+        'Post the offer as a transaction — funds are escrowed in your vault now.',
+      modeGaslessHint:
+        'Sign the order off-chain and post it to the book — no transaction, no gas. Funds move only when a taker fills it.',
+      gaslessEscrowNote:
+        'Nothing is escrowed when you sign — a taker’s fill pulls from your vault’s free balance at that moment. Cancelling later is an on-chain transaction (unlike posting).',
+      gaslessNeedsIndexer:
+        'Gasless posting needs the order-book service, which isn’t configured right now. On-chain posting still works.',
+      // #1145 round-2 — signed lender orders carry a single collateral
+      // requirement, so partial slices can’t keep the contract’s
+      // constant collateral-to-principal ratio; only a full fill can
+      // consume them. Shown as the fill-mode note (and the disabled
+      // Partial chip’s tooltip) in gasless lender mode.
+      gaslessLenderAonNote:
+        'Gasless lend orders fill only as one whole loan — a signed lender order can’t be sliced on-chain, so it posts all-or-nothing. Partial stays available with on-chain posting.',
+      gaslessPost: 'Sign & post to the book',
+      gaslessPosting: 'Signing…',
+      gaslessConsentRequired:
+        'Review and accept the risk disclosures and terms first — for a gasless order, your signature is what records that consent.',
+      gaslessPosted:
+        'Signed order posted to the book — no gas spent. It fills when a taker accepts it.',
+      gaslessFundsWarn: (amount: string, symbol: string) =>
+        `Heads up: your vault’s free balance is below the ${amount} ${symbol} this order commits. The fill will fail if the funds aren’t there when a taker accepts — deposit to your vault to keep the order fillable.`,
+      gaslessRejected: (reason: string) =>
+        `The book rejected this order (${reason}). Nothing was posted.`,
+      gaslessUnavailable:
+        'We couldn’t reach the order book right now — the order was NOT posted. Please try again in a moment.',
       securityBlocked: (leg: string, reasons: string[]) =>
         `Posting is held: an independent security check flags the ${leg} (${reasons.join('; ')}).`,
       securityUnknown: (leg: string) =>
@@ -990,6 +1082,15 @@ export const copy = {
       save: 'Save changes',
       saving: 'Amending…',
       amended: 'Order amended.',
+      // #1131 slice D — the wallet's own gasless signed orders.
+      signedTitle: 'Signed orders (this market)',
+      signedNote:
+        'Gasless signed orders you posted for the selected market. Orders for other markets don’t show here — switch the market in the header to manage them.',
+      signedCancel: 'Cancel on-chain',
+      signedCancelling: 'Cancelling…',
+      signedCancelNote:
+        'Posting was free, but cancelling costs gas: the only way to revoke a signature the book already holds is an on-chain transaction.',
+      signedCancelled: 'Signed order cancelled on-chain.',
     },
     positions: {
       tab: 'Positions',

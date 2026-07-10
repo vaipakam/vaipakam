@@ -83,6 +83,45 @@ export function useGraceLabel(durationDays: number): {
   };
 }
 
+/** The protocol's range/partial-fill master flags
+ *  (`ConfigFacet.getMasterFlags`) — governance kill switches for the
+ *  range-order machinery. `partialFill` gates `matchOffers` at runtime,
+ *  so the desk's crossable-band surface (#1131 slice B) must key on it:
+ *  a band whose Execute action the contract refuses is a lie. */
+export interface MasterFlags {
+  rangeAmount: boolean;
+  rangeRate: boolean;
+  partialFill: boolean;
+}
+
+/** Long-staleTime read of the master flags. `data === undefined` covers
+ *  loading AND read failure — consumers of the ADVISORY surfaces treat
+ *  that as "flags unknown → show nothing" (fail closed: rendering a
+ *  matchable band while the kill switch might be OFF is worse than
+ *  briefly hiding a real one). */
+export function useMasterFlags(): { data: MasterFlags | undefined } {
+  const { readChain } = useActiveChain();
+  const publicClient = usePublicClient({ chainId: readChain.chainId });
+  const { data } = useQuery({
+    queryKey: ['masterFlags', readChain.chainId],
+    enabled: Boolean(publicClient),
+    // Governance kill-switch — flips rarely; 10 min bounds the window a
+    // just-flipped switch keeps the band visible (the Execute write
+    // would revert harmlessly inside it).
+    staleTime: 10 * 60_000,
+    queryFn: async (): Promise<MasterFlags> => {
+      const [rangeAmount, rangeRate, partialFill] =
+        (await publicClient!.readContract({
+          address: readChain.diamondAddress,
+          abi: DIAMOND_ABI_VIEM,
+          functionName: 'getMasterFlags',
+        })) as readonly [boolean, boolean, boolean];
+      return { rangeAmount, rangeRate, partialFill };
+    },
+  });
+  return { data };
+}
+
 /** Renter's total up-front payment for a rental:
  *  dailyFee × days, plus the refundable buffer. Mirrors OfferFacet's
  *  pull (`amount * durationDays * (BPS + buffer) / BPS`). */

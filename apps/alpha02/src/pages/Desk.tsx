@@ -40,10 +40,12 @@ import { PositionsPanel } from '../components/desk/PositionsPanel';
 import { HistoryPanel } from '../components/desk/HistoryPanel';
 import { useTokenMeta } from '../contracts/erc20';
 import { OFFER_DURATION_DEFAULT_DAYS } from '../lib/offerSchema';
+import { signedRowToDeskRow, type DeskBookRow } from '../lib/signedOffer';
 import {
   buildLadder,
   useDeskBook,
   useDeskMarkets,
+  useDeskSignedBook,
   useDeskTape,
   type DeskPair,
 } from '../data/desk';
@@ -101,18 +103,30 @@ export function Desk() {
   }, [readChain.chainId]);
 
   const book = useDeskBook(pair, days);
+  const signedBook = useDeskSignedBook(pair, days);
   const tape = useDeskTape(pair, days);
   const lendingMeta = useTokenMeta(pair?.lendingAsset);
 
   const ladder = useMemo(() => {
     if (!Array.isArray(book.data?.rows)) return null;
+    const nowSec = Math.floor(Date.now() / 1000);
+    // #1131 slice D — merge the gasless signed book ADDITIVELY: signed
+    // orders map into IndexedOffer-compatible rows tagged `signed` (see
+    // lib/signedOffer's DeskBookRow note for why one unified row type
+    // beats a parallel signed-level composition) and aggregate into the
+    // same rate levels. An unavailable/loading signed book merges
+    // nothing — the ladder degrades to chain-only rather than blanking;
+    // the per-row "Signed" badge carries the indexer-sourced honesty.
+    const signedRows = (Array.isArray(signedBook.data) ? signedBook.data : [])
+      .map((r) => signedRowToDeskRow(r, readChain.chainId, nowSec))
+      .filter((r): r is DeskBookRow => r !== null);
     return buildLadder(
-      book.data.rows,
+      [...book.data.rows, ...signedRows],
       days,
-      Math.floor(Date.now() / 1000),
+      nowSec,
       address,
     );
-  }, [book.data, days, address]);
+  }, [book.data, signedBook.data, days, address, readChain.chainId]);
 
   const lastFill = tape.data === undefined ? undefined : (tape.data?.[0] ?? null);
 
@@ -261,7 +275,7 @@ export function Desk() {
           </button>
         </div>
         {tab === 'orders' ? (
-          <OpenOrdersPanel />
+          <OpenOrdersPanel pair={pair} days={days} />
         ) : tab === 'positions' ? (
           <PositionsPanel />
         ) : (

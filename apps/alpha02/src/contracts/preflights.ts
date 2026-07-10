@@ -158,6 +158,20 @@ export async function readGraceSecondsLive(opts: {
   return defaultGraceSeconds(opts.durationDays);
 }
 
+/** True when a contract read failed because the Diamond doesn't cut the
+ *  selector — as opposed to a transient RPC/ABI error. `0xa9ad62f8` is
+ *  the Diamond's FunctionNotFound selector. Shared by the accept
+ *  signers' gate previews and the signed-fill KYC preflight so every
+ *  "older deploy without the view" branch classifies identically. */
+export function isMissingSelectorError(e: unknown): boolean {
+  const msg = String(
+    (e as { data?: string; message?: string })?.data ??
+      (e as Error)?.message ??
+      '',
+  );
+  return /function does not exist|functionnotfound|0xa9ad62f8/i.test(msg);
+}
+
 /** LiquidityStatus enum values (LibVaipakam): 0 = Liquid, 1 = Illiquid. */
 export const LIQUIDITY_LIQUID = 0;
 
@@ -196,4 +210,319 @@ export async function isAssetIlliquidLive(opts: {
     void err;
   }
   return Number(status) !== LIQUIDITY_LIQUID;
+}
+
+/**
+ * #1145 (Codex round-3 P2) — fail a SIGNED-OFFER fill BEFORE the
+ * AcceptTerms signature and allowance approval when tiered KYC
+ * enforcement would reject it on-chain. The materialized fill runs
+ * `_acceptOffer`'s check — `ProfileFacet.meetsKYCRequirement` for BOTH
+ * parties at the transaction's numeraire value — and reverts
+ * `KYCRequired`; the direct-accept signer previews its gates before any
+ * signature, so the signed path must too. A signed order has no offer
+ * id until it materializes, so the offer-keyed previews
+ * (`OfferPreviewFacet.previewAccept`, the #627
+ * `calculateTransactionValueNumeraire` view) can't be reused — the
+ * value is recomputed here mirroring
+ * `OfferAcceptFacet._liquidNumeraireValue` exactly: each LIQUID leg
+ * contributes `amount × price × 1e18 / 10^feedDecimals /
+ * 10^tokenDecimals` (OracleFacet.getAssetPrice); an illiquid/unpriced
+ * leg contributes 0. A just-materialized offer can carry no sale link,
+ * so the sale-vehicle collateral substitution never applies.
+ *
+ * Gated on `AdminFacet.isKYCEnforcementEnabled` FIRST, so the retail
+ * deploy (enforcement OFF — `meetsKYCRequirement` short-circuits true)
+ * pays one cheap read and zero oracle round-trips — the same
+ * flag-gating `RiskPreviewFacet.previewIntent` applies for the same
+ * reason. This makes the preflight a no-op passthrough on retail while
+ * staying real on the KYC-enabled industrial forks.
+ *
+ * Fail postures: a missing selector (older deploy without the getter)
+ * PASSES — the contract still enforces; any transport failure fails
+ * CLOSED (retrying is free, a wasted signature + approval is not — the
+ * same posture as the direct signer's risk-gate preview).
+ */
+export async function assertSignedFillKycEligibleLive(opts: {
+  publicClient: PublicClient;
+  diamondAddress: `0x${string}`;
+  /** The order's maker (`order.signer`). */
+  maker: `0x${string}`;
+  /** The prospective taker (the connected wallet). */
+  taker: `0x${string}`;
+  lendingAsset: `0x${string}`;
+  /** Role-aware effective principal — what `_acceptOffer` gates KYC
+   *  on: a LENDER order's headline max (`amountMax`), a BORROWER
+   *  order's headline floor (`amount`). */
+  lendingAmount: bigint;
+  collateralAsset: `0x${string}`;
+  collateralAmount: bigint;
+}): Promise<void> {
+  let enforced: boolean;
+  try {
+    enforced = (await opts.publicClient.readContract({
+      address: opts.diamondAddress,
+      abi: DIAMOND_ABI_VIEM,
+      functionName: 'isKYCEnforcementEnabled',
+    })) as boolean;
+  } catch (err) {
+    if (isMissingSelectorError(err)) return; // pre-getter deploy — the contract still enforces
+    throw new Error(copy.errors.checkRetry);
+  }
+  if (!enforced) return; // retail default — the on-chain check short-circuits true
+
+  let makerOk: boolean;
+  let takerOk: boolean;
+  try {
+    const [lendValue, collValue] = await Promise.all([
+      liquidNumeraireValueLive(opts, opts.lendingAsset, opts.lendingAmount),
+      liquidNumeraireValueLive(opts, opts.collateralAsset, opts.collateralAmount),
+    ]);
+    const valueNumeraire = lendValue + collValue;
+    [makerOk, takerOk] = (await Promise.all([
+      opts.publicClient.readContract({
+        address: opts.diamondAddress,
+        abi: DIAMOND_ABI_VIEM,
+        functionName: 'meetsKYCRequirement',
+        args: [opts.maker, valueNumeraire],
+      }),
+      opts.publicClient.readContract({
+        address: opts.diamondAddress,
+        abi: DIAMOND_ABI_VIEM,
+        functionName: 'meetsKYCRequirement',
+        args: [opts.taker, valueNumeraire],
+      }),
+    ])) as [boolean, boolean];
+  } catch {
+    throw new Error(copy.errors.checkRetry);
+  }
+  if (!makerOk || !takerOk) {
+    throw new Error(copy.desk.signed.kycBlocked);
+  }
+}
+
+/** `LibVaipakam.RiskAccessLevel` ordinals (BlueChipOnly = 0,
+ *  BroadLiquid = 1, IlliquidCustom = 2). */
+const RISK_LEVEL_BROAD_LIQUID = 1;
+const RISK_LEVEL_ILLIQUID_CUSTOM = 2;
+
+/**
+ * #1145 (Codex round-6 P2) — fail a SIGNED-OFFER fill BEFORE the
+ * AcceptTerms signature and allowance approval when the progressive
+ * risk-access gate (#671/#728) would reject it on-chain. A signed
+ * order's MAKER is never gated at signing (nothing touches the chain),
+ * so the fill is where their create-time gate finally runs: the
+ * materialization (`OfferCreateFacet` create chokepoint,
+ * OfferCreateFacet.sol:882) asserts the MAKER against the pair, and the
+ * loan-init gate (`LoanFacet._maybeRunInitialRiskGates`,
+ * LoanFacet.sol:608-646) re-asserts the maker (standing consent only)
+ * and gates the TAKER via `assertAcceptorMayTransact`. A down-tiered /
+ * consent-revoked maker or an under-tiered taker therefore reverts
+ * `RiskTierTooLow` / `IlliquidPairNotConsented` /
+ * `MidTierPairNotAcknowledged` only at the write — after the taker
+ * signed and possibly mined an approval — unless it's previewed here.
+ *
+ * WHY NOT `previewOfferAcceptBlock`: it is offerId-keyed
+ * (RiskPreviewFacet.sol:71) and a signed order has no offer id until it
+ * materializes mid-fill. Instead this composes the party/pair-keyed
+ * views `RiskAccessFacet` exposes for exactly this pre-flight purpose
+ * ("Surfaced so the frontend can pre-flight the gate" —
+ * RiskAccessFacet.sol:469), which are the SAME primitives
+ * `LibRiskAccess.previewActorBlock` (LibRiskAccess.sol:482-500) chains:
+ *   - `pairRequiredRiskLevel(pair)`  = `_pairRequiredLevel`;
+ *   - `getEffectiveRiskTier(actor)`  = `effectiveTier` (read-time
+ *     re-locked: stale terms anchor + raise-cooldown both fold in);
+ *   - `hasIlliquidPairConsent(actor, pair)` = `_illiquidConsentEffective`
+ *     (set + version-fresh + arming cooldown elapsed);
+ *   - `midTierStrictBlocked(actor, pair)`   = `midTierStrictBlock`.
+ * The PairId is built from the signed order verbatim — the same fields
+ * `toCreateOfferParams` materializes, which both enforcing gates
+ * classify against, so preview and gate cannot disagree on the pair.
+ *
+ * MAKER posture: exact `previewActorBlock` mirror (tier, then standing
+ * illiquid consent, then strict-mode mid-tier ack) — both enforcing
+ * sites gate the maker standing-consent-only (the creator authors no
+ * #662 accept ack).
+ *
+ * TAKER posture: `assertAcceptorMayTransact` (LibRiskAccess.sol:366)
+ * additionally lets the taker's #662 acknowledgement SUBSTITUTE for a
+ * standing illiquid-pair consent — but only for legs the gate VERIFIED
+ * illiquid via `checkLiquidity` (`_ackCoversIlliquidLegs`'s
+ * `*AckVerified` flags, LibRiskAccess.sol:445-470). On THIS flow that
+ * substitution can never be the deciding factor: the signed-fill
+ * signer (useSignedOfferAcceptTermsSigning) hard-aborts on any
+ * checkLiquidity-illiquid leg before signing (the compact confirm has
+ * no in-kind-default disclosure surface), so an `IlliquidCustom`-
+ * required pair that would reach the write owes its level to a
+ * non-checkLiquidity reason (derived tier-0 asset, rental prepay) —
+ * exactly the legs the ack is never verified for and standing consent
+ * remains mandatory. Requiring the taker's standing consent here is
+ * therefore exact for this flow, not a lossy approximation.
+ *
+ * Gated on `ConfigFacet.getRiskAccessGateEnabled` FIRST
+ * (ConfigFacet.sol:1865) — the retail deploy (gate OFF, the deploy
+ * default) pays one cheap read and passes through, the same
+ * flag-gating posture as the KYC preflight above.
+ *
+ * Fail postures (matching the KYC preflight): a missing selector
+ * PASSES — an older deploy without the gate machinery (or its views)
+ * still enforces on-chain; any transport failure fails CLOSED
+ * (retrying is free, a wasted signature + approval is not).
+ */
+export async function assertSignedFillRiskAccessLive(opts: {
+  publicClient: PublicClient;
+  diamondAddress: `0x${string}`;
+  /** The order's maker (`order.signer`). */
+  maker: `0x${string}`;
+  /** The prospective taker (the connected wallet). */
+  taker: `0x${string}`;
+  lendingAsset: `0x${string}`;
+  /** `LibVaipakam.AssetType` ordinal of the lending leg (`order.assetType`). */
+  lendingAssetType: number;
+  lendingTokenId: bigint;
+  collateralAsset: `0x${string}`;
+  collateralAssetType: number;
+  collateralTokenId: bigint;
+  prepayAsset: `0x${string}`;
+}): Promise<void> {
+  let gateEnabled: boolean;
+  try {
+    gateEnabled = (await opts.publicClient.readContract({
+      address: opts.diamondAddress,
+      abi: DIAMOND_ABI_VIEM,
+      functionName: 'getRiskAccessGateEnabled',
+    })) as boolean;
+  } catch (err) {
+    if (isMissingSelectorError(err)) return; // pre-gate deploy — nothing to mirror
+    throw new Error(copy.errors.checkRetry);
+  }
+  if (!gateEnabled) return; // retail default — every enforcing site short-circuits
+
+  // The exact PairId both enforcing gates classify against — the
+  // signed order's fields verbatim (`toCreateOfferParams` copies them
+  // into the materialized offer unchanged). `pairKey` canonicalizes
+  // ERC-20 token ids / unused prepay on-chain, so passing them through
+  // is safe for every asset shape.
+  const pair = {
+    lendAsset: opts.lendingAsset,
+    lendType: opts.lendingAssetType,
+    lendTokenId: opts.lendingTokenId,
+    collAsset: opts.collateralAsset,
+    collType: opts.collateralAssetType,
+    collTokenId: opts.collateralTokenId,
+    prepayAsset: opts.prepayAsset,
+  };
+
+  let blocked: boolean;
+  try {
+    const [required, makerTier, takerTier] = (await Promise.all([
+      opts.publicClient.readContract({
+        address: opts.diamondAddress,
+        abi: DIAMOND_ABI_VIEM,
+        functionName: 'pairRequiredRiskLevel',
+        args: [pair],
+      }),
+      opts.publicClient.readContract({
+        address: opts.diamondAddress,
+        abi: DIAMOND_ABI_VIEM,
+        functionName: 'getEffectiveRiskTier',
+        args: [opts.maker],
+      }),
+      opts.publicClient.readContract({
+        address: opts.diamondAddress,
+        abi: DIAMOND_ABI_VIEM,
+        functionName: 'getEffectiveRiskTier',
+        args: [opts.taker],
+      }),
+    ])) as [number, number, number];
+
+    if (Number(makerTier) < Number(required) || Number(takerTier) < Number(required)) {
+      blocked = true; // RiskTierTooLow, either party
+    } else if (Number(required) === RISK_LEVEL_ILLIQUID_CUSTOM) {
+      // Standing per-pair consent, BOTH parties (taker included — see
+      // the header note on why the #662 ack substitution can never
+      // decide this flow).
+      const [makerConsent, takerConsent] = (await Promise.all([
+        opts.publicClient.readContract({
+          address: opts.diamondAddress,
+          abi: DIAMOND_ABI_VIEM,
+          functionName: 'hasIlliquidPairConsent',
+          args: [opts.maker, pair],
+        }),
+        opts.publicClient.readContract({
+          address: opts.diamondAddress,
+          abi: DIAMOND_ABI_VIEM,
+          functionName: 'hasIlliquidPairConsent',
+          args: [opts.taker, pair],
+        }),
+      ])) as [boolean, boolean];
+      blocked = !makerConsent || !takerConsent;
+    } else if (Number(required) === RISK_LEVEL_BROAD_LIQUID) {
+      // Strict-mode mid-tier ack — the #662 ack does NOT substitute
+      // (`assertAcceptorMayTransact`'s non-illiquid branch), so both
+      // parties mirror the same view. False for non-strict vaults.
+      const [makerStrict, takerStrict] = (await Promise.all([
+        opts.publicClient.readContract({
+          address: opts.diamondAddress,
+          abi: DIAMOND_ABI_VIEM,
+          functionName: 'midTierStrictBlocked',
+          args: [opts.maker, pair],
+        }),
+        opts.publicClient.readContract({
+          address: opts.diamondAddress,
+          abi: DIAMOND_ABI_VIEM,
+          functionName: 'midTierStrictBlocked',
+          args: [opts.taker, pair],
+        }),
+      ])) as [boolean, boolean];
+      blocked = makerStrict || takerStrict;
+    } else {
+      blocked = false; // BlueChipOnly pair — the base tier always covers it
+    }
+  } catch (err) {
+    // The gate flag read TRUE but a view is missing: a partial /
+    // pre-#728 deploy — the contract still enforces; pass, like the
+    // KYC preflight's missing-getter branch.
+    if (isMissingSelectorError(err)) return;
+    throw new Error(copy.errors.checkRetry);
+  }
+  if (blocked) {
+    throw new Error(copy.desk.signed.riskBlocked);
+  }
+}
+
+/** One leg of `_liquidNumeraireValue`, read live. Throws the raw
+ *  transport error on an unreadable leg (the caller maps it to
+ *  `checkRetry`) — an unknown price must not silently value a leg at 0
+ *  and wave through a taker the contract would reject. */
+async function liquidNumeraireValueLive(
+  opts: { publicClient: PublicClient; diamondAddress: `0x${string}` },
+  asset: `0x${string}`,
+  amount: bigint,
+): Promise<bigint> {
+  if (amount === 0n) return 0n;
+  const status = await opts.publicClient.readContract({
+    address: opts.diamondAddress,
+    abi: DIAMOND_ABI_VIEM,
+    functionName: 'checkLiquidity',
+    args: [asset],
+  });
+  if (Number(status) !== LIQUIDITY_LIQUID) return 0n; // illiquid leg ≡ 0, per the contract
+  const [[price, feedDecimals], tokenDecimals] = await Promise.all([
+    opts.publicClient.readContract({
+      address: opts.diamondAddress,
+      abi: DIAMOND_ABI_VIEM,
+      functionName: 'getAssetPrice',
+      args: [asset],
+    }) as Promise<[bigint, number]>,
+    opts.publicClient.readContract({
+      address: asset,
+      abi: erc20Abi,
+      functionName: 'decimals',
+    }),
+  ]);
+  return (
+    (amount * price * 10n ** 18n) /
+    10n ** BigInt(feedDecimals) /
+    10n ** BigInt(tokenDecimals)
+  );
 }

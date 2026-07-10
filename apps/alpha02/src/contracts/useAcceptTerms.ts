@@ -28,7 +28,12 @@ import { usePublicClient, useWalletClient } from 'wagmi';
 import { DIAMOND_ABI_VIEM } from '@vaipakam/contracts/abis';
 import { useActiveChain } from '../chain/useActiveChain';
 import { copy } from '../content/copy';
-import { isAssetIlliquidLive } from './preflights';
+import {
+  signedOrderHash,
+  signedOrderTimeWindowsOpen,
+  type SignedOrderWire,
+} from '../lib/signedOffer';
+import { isAssetIlliquidLive, isMissingSelectorError } from './preflights';
 
 const ACCEPT_DEADLINE_SECONDS = 30 * 60; // 30 minutes, matching the Permit2 window.
 
@@ -303,39 +308,12 @@ export function useAcceptTermsSigning() {
         }
       }
 
-      // #730 — stamp the live risk-terms HASH. FAIL CLOSED: only a
-      // Diamond with RiskAccessFacet entirely absent may sign the zero
-      // hash; a transient RPC failure or a partial-#730 deploy must
-      // throw instead of silently signing a rejectable ack.
-      let riskTermsHash = ZERO_HASH;
-      try {
-        riskTermsHash = (await publicClient.readContract({
-          address: diamondAddr,
-          abi: DIAMOND_ABI_VIEM,
-          functionName: 'getCurrentRiskTermsHash',
-        })) as Hex;
-      } catch (e) {
-        if (!isMissingSelectorError(e)) throw e;
-        // Getter absent — distinguish "no RiskAccessFacet at all" (zero
-        // hash OK) from a partial upgrade (fail) by probing a stable
-        // pre-#730 selector.
-        let riskFacetPresent = true;
-        try {
-          await publicClient.readContract({
-            address: diamondAddr,
-            abi: DIAMOND_ABI_VIEM,
-            functionName: 'getCurrentRiskTermsVersion',
-          });
-        } catch (probe) {
-          if (isMissingSelectorError(probe)) riskFacetPresent = false;
-          else throw probe;
-        }
-        if (riskFacetPresent) {
-          throw new Error(
-            'RiskAccessFacet is deployed without getCurrentRiskTermsHash (#730 deploy skew) — refusing to sign with a zero risk-terms anchor.',
-          );
-        }
-      }
+      // #730 — stamp the live risk-terms HASH (fail-closed helper below,
+      // shared with the signed-offer accept signer).
+      const riskTermsHash = await readRiskTermsHashFailClosed(
+        publicClient,
+        diamondAddr,
+      );
 
       const isERC20 = Number(o.assetType) === ASSET_TYPE_ERC20;
       const isLender = Number(o.offerType) === OFFER_TYPE_LENDER;
@@ -479,16 +457,235 @@ export function useAcceptTermsSigning() {
   return { sign };
 }
 
-// True when a contract read failed because the Diamond doesn't cut the
-// selector — as opposed to a transient RPC/ABI error. `0xa9ad62f8` is
-// the Diamond's FunctionNotFound selector.
-function isMissingSelectorError(e: unknown): boolean {
-  const msg = String(
-    (e as { data?: string; message?: string })?.data ??
-      (e as Error)?.message ??
-      '',
+/** #730 — read the live risk-terms HASH. FAIL CLOSED: only a Diamond
+ *  with RiskAccessFacet entirely absent may sign the zero hash; a
+ *  transient RPC failure or a partial-#730 deploy must throw instead
+ *  of silently signing a rejectable ack. Shared by the direct-accept
+ *  and signed-offer accept signers. */
+async function readRiskTermsHashFailClosed(
+  publicClient: NonNullable<ReturnType<typeof usePublicClient>>,
+  diamondAddr: Address,
+): Promise<Hex> {
+  try {
+    return (await publicClient.readContract({
+      address: diamondAddr,
+      abi: DIAMOND_ABI_VIEM,
+      functionName: 'getCurrentRiskTermsHash',
+    })) as Hex;
+  } catch (e) {
+    if (!isMissingSelectorError(e)) throw e;
+    // Getter absent — distinguish "no RiskAccessFacet at all" (zero
+    // hash OK) from a partial upgrade (fail) by probing a stable
+    // pre-#730 selector.
+    let riskFacetPresent = true;
+    try {
+      await publicClient.readContract({
+        address: diamondAddr,
+        abi: DIAMOND_ABI_VIEM,
+        functionName: 'getCurrentRiskTermsVersion',
+      });
+    } catch (probe) {
+      if (isMissingSelectorError(probe)) riskFacetPresent = false;
+      else throw probe;
+    }
+    if (riskFacetPresent) {
+      throw new Error(
+        'RiskAccessFacet is deployed without getCurrentRiskTermsHash (#730 deploy skew) — refusing to sign with a zero risk-terms anchor.',
+      );
+    }
+    return ZERO_HASH;
+  }
+}
+
+/**
+ * #1131 slice D — `AcceptTerms` builder + signer for filling a GASLESS
+ * signed offer (`SignedOfferFacet.acceptSignedOffer`). Same anti-
+ * phishing contract as {@link useAcceptTermsSigning}, adapted to the
+ * one structural difference: the offer doesn't exist on-chain at sign
+ * time, so the terms are built from the SIGNED ORDER itself and
+ * `offerKey` binds the signed-offer ORDER HASH (the value
+ * `verifyAndBindAccept` receives on the fill path) instead of
+ * `keccak256(abi.encode(offerId))`.
+ *
+ * The order hash is RECOMPUTED LOCALLY from the order fields — the
+ * indexer row's `orderHash` is never trusted for signing, so a stale or
+ * hostile book cache can't bind the taker to terms that differ from
+ * what is displayed (the displayed terms come from the same `order`
+ * object being hashed).
+ *
+ * Field binding mirrors the materialize path exactly:
+ * `LibSignedOffer.toCreateOfferParams` copies every order field
+ * verbatim into the stored offer, so `_bindTermsToOffer`'s role-correct
+ * endpoints resolve against the order's own values (ERC-20 lender ⇒
+ * `amountMax` / `interestRateBps`; ERC-20 borrower ⇒ `amount` /
+ * `interestRateBpsMax`). A freshly-materialized offer can never carry a
+ * sale/offset link, so `linkedLoanId = 0` and `parallelSaleOrderHash`
+ * is the storage-default zero hash.
+ */
+export function useSignedOfferAcceptTermsSigning() {
+  const { address, walletChain } = useActiveChain();
+  const { data: walletClient } = useWalletClient();
+  const publicClient = usePublicClient({ chainId: walletChain?.chainId });
+
+  const sign = useCallback(
+    async (input: {
+      order: SignedOrderWire;
+      /** The single mandatory risk-and-terms consent checkbox. */
+      consent: boolean;
+    }): Promise<{ payload: AcceptTermsPayload; orderHash: Hex }> => {
+      if (!address || !walletChain) {
+        throw new Error('Connect a wallet on a supported network first.');
+      }
+      if (!walletClient) throw new Error('Wallet client not available');
+      if (!publicClient) throw new Error('No RPC client for the active chain.');
+
+      const diamondAddr = walletChain.diamondAddress;
+      const o = input.order;
+      const orderHash = signedOrderHash(o);
+
+      // Refuse DOOMED fills before any signature or approval — the
+      // signed-offer analogue of the direct path's staleness guards:
+      // the on-chain fill ledger (non-zero ⇒ filled OR cancelled), the
+      // signer's batch-invalidated nonce, and both time windows judged
+      // on CHAIN time (what `_vetSignedOffer` judges on), never the
+      // device clock.
+      const [latestBlock, filled, nonceUsed] = await Promise.all([
+        publicClient.getBlock({ blockTag: 'latest' }),
+        publicClient.readContract({
+          address: diamondAddr,
+          abi: DIAMOND_ABI_VIEM,
+          functionName: 'signedOfferFilledAmount',
+          args: [orderHash],
+        }) as Promise<bigint>,
+        publicClient.readContract({
+          address: diamondAddr,
+          abi: DIAMOND_ABI_VIEM,
+          functionName: 'isSignedOfferNonceUsed',
+          args: [o.signer as Address, BigInt(o.nonce)],
+        }) as Promise<boolean>,
+      ]);
+      const chainNow = latestBlock.timestamp;
+      if (filled !== 0n || nonceUsed) {
+        throw new Error(copy.desk.signed.gone);
+      }
+      // Codex #1145 round-3 P2 — both windows judged with the shared
+      // 60 s submit margin (`signedOrderTimeWindowsOpen`), not a bare
+      // `chainNow > t` compare: the fill MATERIALIZES through
+      // `createOffer`, whose `expiresAt <= block.timestamp` boundary
+      // treats equality as expired, and wallet prompts + a possible
+      // approval transaction sit between this read and the write
+      // landing — an at-or-near-expiry order must fail HERE, before
+      // the taker signs or approves anything.
+      if (!signedOrderTimeWindowsOpen(o, chainNow)) {
+        throw new Error(copy.desk.signed.gone);
+      }
+
+      // The compact fill confirm has NO surface for the in-kind
+      // (illiquid) default disclosure — re-read liquidity live and
+      // abort on an illiquid leg, exactly the safe-side default the
+      // direct signer applies when the review didn't warn. Reads fail
+      // CLOSED — an unknown must not sign as "liquid".
+      const [lendingIlliquid, collateralIlliquid] = await Promise.all([
+        isAssetIlliquidLive({
+          publicClient,
+          diamondAddress: diamondAddr,
+          asset: o.lendingAsset as Address,
+          failClosed: true,
+        }),
+        isAssetIlliquidLive({
+          publicClient,
+          diamondAddress: diamondAddr,
+          asset: o.collateralAsset as Address,
+          failClosed: true,
+        }),
+      ]);
+      if (lendingIlliquid || collateralIlliquid) {
+        throw new Error(copy.desk.signed.illiquid);
+      }
+
+      const riskTermsHash = await readRiskTermsHashFailClosed(
+        publicClient,
+        diamondAddr,
+      );
+
+      // Role-correct endpoints against the offer AS MATERIALIZED
+      // (toCreateOfferParams copies the order verbatim) — mirrors
+      // `_bindTermsToOffer` / the direct signer's mapping.
+      const isERC20 = Number(o.assetType) === ASSET_TYPE_ERC20;
+      const isLender = Number(o.offerType) === OFFER_TYPE_LENDER;
+      const roleAmount = isERC20
+        ? isLender
+          ? BigInt(o.amountMax)
+          : BigInt(o.amount)
+        : BigInt(o.amount);
+      const roleRate = isERC20
+        ? isLender
+          ? BigInt(o.interestRateBps)
+          : BigInt(o.interestRateBpsMax)
+        : BigInt(o.interestRateBps);
+
+      const lendingAsset = o.lendingAsset as Address;
+      const collateralAsset = o.collateralAsset as Address;
+
+      const terms: AcceptTerms = {
+        acceptor: address,
+        offerCreator: o.signer as Address,
+        // Signed-offer fills bind the ORDER HASH (no offerId existed at
+        // sign time) — SignedOfferFacet passes it to verifyAndBindAccept.
+        offerKey: orderHash,
+        offerType: Number(o.offerType),
+        lendingAsset,
+        collateralAsset,
+        amount: roleAmount,
+        collateralAmount: BigInt(o.collateralAmount),
+        interestRateBps: roleRate,
+        durationDays: BigInt(o.durationDays),
+        tokenId: BigInt(o.tokenId),
+        collateralTokenId: BigInt(o.collateralTokenId),
+        quantity: BigInt(o.quantity),
+        collateralQuantity: BigInt(o.collateralQuantity),
+        assetType: Number(o.assetType),
+        collateralAssetType: Number(o.collateralAssetType),
+        prepayAsset: o.prepayAsset as Address,
+        useFullTermInterest: o.useFullTermInterest,
+        allowsPartialRepay: o.allowsPartialRepay,
+        allowsPrepayListing: o.allowsPrepayListing,
+        allowsParallelSale: o.allowsParallelSale,
+        refinanceTargetLoanId: BigInt(o.refinanceTargetLoanId),
+        // A just-materialized offer can carry no sale/offset link.
+        linkedLoanId: 0n,
+        parallelSaleOrderHash: ZERO_HASH,
+        periodicInterestCadence: Number(o.periodicInterestCadence),
+        riskAndTermsConsent: input.consent,
+        // Acknowledge BOTH legs — same rationale as the direct signer
+        // (the contract reads the ack only for a leg it classifies
+        // illiquid; both-acked is robust against a mid-flight flip).
+        acknowledgedIlliquidLendingAsset: lendingAsset,
+        acknowledgedIlliquidCollateralAsset: collateralAsset,
+        nonce: randomNonce(),
+        deadline: chainNow + BigInt(ACCEPT_DEADLINE_SECONDS),
+        riskTermsHash,
+      };
+
+      const signature = (await walletClient.signTypedData({
+        account: address,
+        domain: {
+          name: 'Vaipakam AcceptOffer',
+          version: '1',
+          chainId: walletChain.chainId,
+          verifyingContract: diamondAddr,
+        },
+        types: ACCEPT_TERMS_TYPES,
+        primaryType: 'AcceptTerms',
+        message: terms as never,
+      })) as Hex;
+
+      return { payload: { terms, signature }, orderHash };
+    },
+    [address, walletChain, walletClient, publicClient],
   );
-  return /function does not exist|functionnotfound|0xa9ad62f8/i.test(msg);
+
+  return { sign };
 }
 
 function randomNonce(): bigint {

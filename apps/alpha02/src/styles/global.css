@@ -1342,6 +1342,28 @@ a.item-row:hover {
   background: var(--brand-soft);
 }
 
+/* Book delta pulse (#1131 phase 3): a level whose size changed (or
+   that just appeared) plays ONE background flash. The row's render
+   key embeds the size, so a delta remounts the node and the mount
+   animation fires — no timers. Only `from` is keyframed: the pulse
+   decays to the row's OWN resting background (transparent, or
+   --brand-soft for own orders). */
+.desk-ladder-row.desk-row-flash {
+  animation: desk-row-flash 800ms ease-out;
+}
+
+@keyframes desk-row-flash {
+  from {
+    background-color: var(--surface-hover);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .desk-ladder-row.desk-row-flash {
+    animation: none;
+  }
+}
+
 .desk-own-dot {
   display: inline-block;
   width: 7px;
@@ -1386,6 +1408,61 @@ a.item-row:hover {
   border-bottom: 1px dashed var(--border);
   color: var(--text-muted);
   font-size: 0.78rem;
+}
+
+/* Crossable-band previewMatch strip (#1131 slice B) — a distinct band
+   at the mid row, visually apart from ladder rows (sans font, brand
+   tint) so it can never be misread as book depth. */
+.desk-match-band {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  margin: 2px 0;
+  padding: 6px 8px;
+  border-radius: var(--radius-sm);
+  background: var(--brand-soft);
+  font-family: var(--font-sans);
+  font-size: 0.8rem;
+}
+
+.desk-match-band-main {
+  display: inline-flex;
+  align-items: flex-start;
+  gap: 6px;
+  flex: 1;
+  min-width: 200px;
+}
+
+.desk-match-band-done {
+  color: var(--ok);
+}
+
+.desk-match-band-error {
+  flex-basis: 100%;
+  color: var(--danger);
+}
+
+/* Gasless signed-order badge (#1131 slice D) — marks indexer-sourced
+   signed rows in the ladder and the Open orders signed block. */
+.desk-signed-chip {
+  display: inline-block;
+  padding: 0 6px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-full);
+  background: var(--surface-sunken);
+  color: var(--text-muted);
+  font-family: var(--font-sans);
+  font-size: 0.65rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  line-height: 1.6;
+}
+
+/* Inline signed-fill confirm — regular text, not the ladder's mono. */
+.desk-signed-confirm {
+  font-family: var(--font-sans);
 }
 
 /* Tape */

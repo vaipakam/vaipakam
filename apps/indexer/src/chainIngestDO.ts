@@ -81,7 +81,17 @@ export function invalidationKeysFromResult(
 ): InvalidationKey[] {
   const keys: InvalidationKey[] = [];
   if (result.newOffers > 0) keys.push('offer.created');
-  if (result.statusUpdates > 0 || result.detailRefreshes > 0) {
+  // `signedOfferUpdates` rides the coarse offer.changed key (Codex #1145
+  // r8 P3): a signed-book lifecycle flip (fill / cancel / nonce burn) is
+  // an offer change in this signal's coarse sense, and the desk consumes
+  // the signed book + the signed-aware /offers/markets — without it a
+  // scan containing ONLY signed lifecycle events would broadcast nothing
+  // and WS clients would show cancelled signed rows until the poll.
+  if (
+    result.statusUpdates > 0 ||
+    result.detailRefreshes > 0 ||
+    (result.signedOfferUpdates ?? 0) > 0
+  ) {
     keys.push('offer.changed');
   }
   if (result.newLoans > 0) keys.push('loan.created');
