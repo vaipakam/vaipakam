@@ -511,7 +511,10 @@ function canonicalOrderJson(order: SignedOrderWire): string {
  * Responses: 201 `{ chainId, orderHash }` on first accept; 200 on an
  * idempotent re-post of an already-stored ACTIVE order; per-field 400s; 409
  * when the stored row is already terminal (filled / cancelled /
- * nonce_burned) or chain state says the order is consumed / nonce-burned.
+ * nonce_burned) or chain state says the order is consumed (ledger AT the
+ * ceiling — a BELOW-ceiling partial fill on a ranged non-AON order is live
+ * matcher depth and is ACCEPTED with `filled_amount` initialized to the
+ * observed cumulative; Codex #1145 r7) or nonce-burned.
  */
 export async function handleSignedOfferPost(
   req: Request,
@@ -632,18 +635,37 @@ export async function handleSignedOfferPost(
   }
 
   // Chain-state ingest gate — reject orders the chain already knows are
-  // consumed (filled/cancelled ⇒ signedOfferFilledAmount != 0) or
-  // batch-invalidated (isSignedOfferNonceUsed). This closes the "posted
-  // AFTER its lifecycle events were indexed" hole: the cursor is past those
-  // events, so the handlers would never revisit them and the row would sit
-  // 'active' forever. Cost: 2 eth_calls, only reachable AFTER the signature
-  // verified (spam can't spend them) and inside the per-IP rate limit.
+  // dead: batch-invalidated (isSignedOfferNonceUsed — terminal for every
+  // order under the nonce) or ledgered AT the ceiling
+  // (signedOfferFilledAmount >= amountMax ⇒ fully filled OR cancelled: the
+  // cancel path poisons the ledger to the ceiling as its unfillable
+  // marker). This closes the "posted AFTER its lifecycle events were
+  // indexed" hole: the cursor is past those events, so the handlers would
+  // never revisit them and the row would sit 'active' forever. Cost: 2
+  // eth_calls, only reachable AFTER the signature verified (spam can't
+  // spend them) and inside the per-IP rate limit.
+  //
+  // A ledger value BELOW the ceiling is NOT consumption (Codex #1145 r7):
+  // a ranged order distributed out-of-band can take SignedOfferMatched
+  // slices before ever being posted here, and the contract treats the
+  // remainder as live matcher-fillable depth (`_vetSignedOfferForMatch`
+  // only reverts SignedOfferConsumed at `filled >= ceiling`). The
+  // SignedOfferMatched handler models exactly that (row stays 'active'
+  // with a ratcheted filled_amount below the ceiling) — so this gate
+  // accepts the remainder and seeds `filled_amount` with the observed
+  // cumulative instead of rejecting still-live depth.
   //
   // BEST-EFFORT on RPC failure: accept + warn rather than fail closed. For
   // orders posted BEFORE consumption (the overwhelmingly common flow) the
   // lifecycle handlers reconcile within the scan cadence, and a taker who
   // hits the rare stale row gets a clean on-chain revert
   // (SignedOfferConsumed) — availability over strictness for an ingest gate.
+  // The same posture applies to the partial-fill seed: an already-partially-
+  // filled order posted during an RPC blip lands with filled_amount '0'
+  // until the next SignedOfferMatched slice / scan reconciles it —
+  // acceptable, because the direct-fill decision re-vets the LIVE ledger
+  // client-side and `matchSignedOffer` reads the on-chain ledger anyway.
+  let initialFilledAmount = '0';
   try {
     const client = createPublicClient({ transport: http(chain.rpc) });
     const [nonceUsed, filled] = await Promise.all([
@@ -664,7 +686,41 @@ export async function handleSignedOfferPost(
       return jsonResponse({ error: 'nonce-used' }, 409);
     }
     if (filled !== 0n) {
-      return jsonResponse({ error: 'order-consumed' }, 409);
+      // The contract's `_ceiling` collapses a zero amountMax to `amount`,
+      // but validateOrder rejected zero (`invalid-amountMax`), so the
+      // ceiling here is always amountMax itself.
+      const ceiling = BigInt(order.amountMax);
+      if (filled >= ceiling) {
+        return jsonResponse({ error: 'order-consumed' }, 409);
+      }
+      // 0 < filled < ceiling — accept as live remainder ONLY for a shape
+      // the matcher can still consume: RANGED (amountMax > amount) and
+      // non-AON. Mode reasoning:
+      //   - Partial (0) ranged: the canonical matcher-slice shape; the
+      //     on-chain vet even guarantees the remainder >= the signed
+      //     minimum (`postRemainder != 0 && < amount` reverts).
+      //   - AON (1): validateOrder pins amount == amountMax, and both
+      //     on-chain consumers write the ledger 0 → ceiling in one step
+      //     (direct accept sets the ceiling; the matcher's AON branch
+      //     requires filled == 0 && fillAmount == ceiling), so any
+      //     non-zero AON ledger is AT the ceiling and the branch above
+      //     already 409'd it. The explicit check below is defensive.
+      //   - IOC (2) ranged: slices exactly like Partial while its GTT
+      //     window is open (`_vetSignedOfferForMatch` puts Ioc in the
+      //     same else-branch as Partial; the window itself is enforced
+      //     by validateOrder at ingest, the GET freshness predicates,
+      //     and on-chain at fill) — so a below-ceiling IOC remainder is
+      //     live depth too and is accepted.
+      // A SINGLE-VALUE (amount == amountMax) ledger can also only be 0 or
+      // ceiling on-chain (direct fill and cancel both write the ceiling;
+      // the matcher's min-slice rule makes the only legal slice the full
+      // amount) — a below-ceiling non-zero value there is unreachable
+      // state; treat it as consumed rather than advertise a remainder no
+      // path can fill.
+      if (order.fillMode === '1' || BigInt(order.amount) >= ceiling) {
+        return jsonResponse({ error: 'order-consumed' }, 409);
+      }
+      initialFilledAmount = filled.toString();
     }
   } catch (err) {
     console.warn(
@@ -683,7 +739,7 @@ export async function handleSignedOfferPost(
          amount, amount_max, collateral_amount, collateral_amount_max,
          fill_mode, expires_at, deadline, nonce,
          status, filled_amount, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'active', '0', ?, ?)`,
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'active', ?, ?, ?)`,
     )
       .bind(
         chainId,
@@ -707,6 +763,9 @@ export async function handleSignedOfferPost(
         Number(order.expiresAt),
         Number(order.deadline),
         order.nonce,
+        // '0' on a fresh order; the observed on-chain cumulative when the
+        // ingest gate saw a live below-ceiling remainder (Codex #1145 r7).
+        initialFilledAmount,
         now,
         now,
       )

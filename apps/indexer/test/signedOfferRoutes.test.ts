@@ -16,11 +16,17 @@
  * so these tests run offline with a stubbed D1. The 201 first-accept path
  * is exercised too: its best-effort chain-state gate is pointed at an
  * unroutable RPC, which the route deliberately treats as accept-and-warn.
+ * The chain-state ingest-gate suite at the bottom (Codex #1145 r7) instead
+ * stubs global fetch with a canned JSON-RPC responder so the gate's
+ * nonce-used / at-ceiling / below-ceiling branches are pinned against
+ * REAL eth_call answers.
  */
 import { readFileSync } from 'node:fs';
-import { describe, expect, it } from 'vitest';
-import type { Hex } from 'viem';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import type { Abi, AbiFunction, Hex } from 'viem';
+import { encodeFunctionResult, getAbiItem, toFunctionSelector } from 'viem';
 import { privateKeyToAccount } from 'viem/accounts';
+import { DIAMOND_SIGNED_OFFER_ABI } from '../src/diamondAbi';
 import {
   handleSignedOfferPost,
   handleSignedOffersGet,
@@ -550,5 +556,230 @@ describe('GET /signed-offers — per-side price-relevant caps (Codex #1145 r4)',
       ]),
     );
     expect(offers.map((o) => o.orderHash)).toEqual(['ask-live']);
+  });
+});
+
+// ── POST /signed-offers — chain-state ingest gate (Codex #1145 r7) ──
+//
+// The gate's decision table needs REAL eth_call answers, so these tests
+// stub global fetch with a canned JSON-RPC responder keyed on the two view
+// selectors the route reads (derived from the same ABI the route imports —
+// zero signature drift). D1 is the real in-memory SQLite adapter so the
+// 201 path's stored `filled_amount` seed is asserted end-to-end, including
+// through GET.
+
+const RPC_MOCK = 'http://rpc.mock';
+
+const SEL_NONCE_USED = toFunctionSelector(
+  getAbiItem({
+    abi: DIAMOND_SIGNED_OFFER_ABI as Abi,
+    name: 'isSignedOfferNonceUsed',
+  }) as AbiFunction,
+);
+const SEL_FILLED = toFunctionSelector(
+  getAbiItem({
+    abi: DIAMOND_SIGNED_OFFER_ABI as Abi,
+    name: 'signedOfferFilledAmount',
+  }) as AbiFunction,
+);
+
+interface RpcReq {
+  jsonrpc: string;
+  id: number;
+  method: string;
+  params: unknown[];
+}
+
+/** Answer the gate's two eth_calls from canned chain state; anything else
+ *  (other URLs, other methods, other selectors) throws loudly. */
+function stubRpc(state: { nonceUsed: boolean; filled: bigint }): void {
+  vi.stubGlobal(
+    'fetch',
+    async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
+      const url =
+        typeof input === 'string'
+          ? input
+          : input instanceof URL
+            ? input.href
+            : input.url;
+      if (!url.startsWith(RPC_MOCK)) {
+        throw new Error(`unexpected fetch to ${url}`);
+      }
+      const raw =
+        typeof init?.body === 'string'
+          ? init.body
+          : await new Request(url, init).text();
+      const parsed = JSON.parse(raw) as RpcReq | RpcReq[];
+      const answer = (r: RpcReq) => {
+        if (r.method !== 'eth_call') {
+          throw new Error(`unexpected RPC method ${r.method}`);
+        }
+        const data = (r.params[0] as { data: string }).data;
+        let result: string;
+        if (data.startsWith(SEL_NONCE_USED)) {
+          result = encodeFunctionResult({
+            abi: DIAMOND_SIGNED_OFFER_ABI as Abi,
+            functionName: 'isSignedOfferNonceUsed',
+            result: state.nonceUsed,
+          });
+        } else if (data.startsWith(SEL_FILLED)) {
+          result = encodeFunctionResult({
+            abi: DIAMOND_SIGNED_OFFER_ABI as Abi,
+            functionName: 'signedOfferFilledAmount',
+            result: state.filled,
+          });
+        } else {
+          throw new Error(`unexpected eth_call selector ${data.slice(0, 10)}`);
+        }
+        return { jsonrpc: '2.0', id: r.id, result };
+      };
+      const payload = Array.isArray(parsed) ? parsed.map(answer) : answer(parsed);
+      return new Response(JSON.stringify(payload), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      });
+    },
+  );
+}
+
+/** Real-SQLite env pointed at the fetch-stubbed RPC. */
+function makeChainEnv() {
+  const { db, d1 } = createSqliteD1([MIGRATION_0033]);
+  const env = { DB: d1, RPC_BASE_SEPOLIA: RPC_MOCK } as unknown as Env;
+  return { env, db };
+}
+
+/** The matcher-sliceable shape: ranged Partial borrower order with the
+ *  constant collateral:principal ratio the r3 vet requires. Ceiling 1000. */
+function rangedPartialOrder(
+  overrides: Partial<SignedOrderWire> = {},
+): SignedOrderWire {
+  return makeOrder({
+    offerType: '1',
+    amount: '100',
+    amountMax: '1000',
+    collateralAmount: '10',
+    collateralAmountMax: '100',
+    ...overrides,
+  });
+}
+
+describe('POST /signed-offers — chain-state ingest gate (Codex #1145 r7)', () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it('a below-ceiling partial fill on a ranged Partial order lands 201 with the remainder ledgered', async () => {
+    // The finding scenario: the order was distributed out-of-band, took a
+    // 300/1000 SignedOfferMatched slice, and is only NOW posted here. The
+    // 700 remainder is live matcher depth — the old gate 409'd it.
+    stubRpc({ nonceUsed: false, filled: 300n });
+    const { env, db } = makeChainEnv();
+    const order = rangedPartialOrder();
+    const res = await post(env, order);
+    expect(res.status).toBe(201);
+    const row = db
+      .prepare(
+        `SELECT status, filled_amount FROM signed_offers WHERE order_hash = ?`,
+      )
+      .get(orderHashOf(order)) as { status: string; filled_amount: string };
+    expect(row).toEqual({ status: 'active', filled_amount: '300' });
+  });
+
+  it('a ledger AT the ceiling stays 409 order-consumed (filled or cancel-poisoned)', async () => {
+    stubRpc({ nonceUsed: false, filled: 1000n });
+    const { env } = makeChainEnv();
+    const res = await post(env, rangedPartialOrder());
+    expect(res.status).toBe(409);
+    expect(await res.json()).toEqual({ error: 'order-consumed' });
+  });
+
+  it('an AON order with any non-zero ledger is 409 — at ceiling by construction', async () => {
+    // Both on-chain AON consumers write 0 → ceiling in one step, so the
+    // realistic non-zero AON ledger IS the ceiling (>= branch).
+    stubRpc({ nonceUsed: false, filled: 5000000000000000000n });
+    const { env } = makeChainEnv();
+    const res = await post(env, makeOrder({ fillMode: '1' }));
+    expect(res.status).toBe(409);
+    expect(await res.json()).toEqual({ error: 'order-consumed' });
+  });
+
+  it('a below-ceiling non-zero ledger on a single-value order is 409 (unreachable-state defense)', async () => {
+    // No contract path can leave a single-value (== AON-shaped) ledger
+    // strictly between 0 and the ceiling; the defensive branch refuses to
+    // advertise a remainder no fill path can consume.
+    stubRpc({ nonceUsed: false, filled: 1n });
+    const { env } = makeChainEnv();
+    const res = await post(env, makeOrder({ fillMode: '1' }));
+    expect(res.status).toBe(409);
+    expect(await res.json()).toEqual({ error: 'order-consumed' });
+  });
+
+  it('a partially-filled ranged IOC order inside its window is live remainder too (201)', async () => {
+    // _vetSignedOfferForMatch puts Ioc in the same partial-fillable branch
+    // as Partial; only the GTT window (already enforced at validation /
+    // GET / fill) distinguishes it.
+    stubRpc({ nonceUsed: false, filled: 300n });
+    const { env, db } = makeChainEnv();
+    const order = rangedPartialOrder({
+      fillMode: '2',
+      expiresAt: String(Math.floor(Date.now() / 1000) + 10 * 86_400),
+    });
+    const res = await post(env, order);
+    expect(res.status).toBe(201);
+    const row = db
+      .prepare(
+        `SELECT status, filled_amount FROM signed_offers WHERE order_hash = ?`,
+      )
+      .get(orderHashOf(order)) as { status: string; filled_amount: string };
+    expect(row).toEqual({ status: 'active', filled_amount: '300' });
+  });
+
+  it('a burned nonce stays 409 nonce-used (batch invalidation is terminal)', async () => {
+    stubRpc({ nonceUsed: true, filled: 0n });
+    const { env } = makeChainEnv();
+    const res = await post(env, rangedPartialOrder());
+    expect(res.status).toBe(409);
+    expect(await res.json()).toEqual({ error: 'nonce-used' });
+  });
+
+  it('an untouched ledger still lands 201 with filled_amount 0', async () => {
+    stubRpc({ nonceUsed: false, filled: 0n });
+    const { env, db } = makeChainEnv();
+    const order = rangedPartialOrder();
+    const res = await post(env, order);
+    expect(res.status).toBe(201);
+    const row = db
+      .prepare(
+        `SELECT status, filled_amount FROM signed_offers WHERE order_hash = ?`,
+      )
+      .get(orderHashOf(order)) as { status: string; filled_amount: string };
+    expect(row).toEqual({ status: 'active', filled_amount: '0' });
+  });
+
+  it('GET serves the partially-filled row as active depth with the seeded filledAmount', async () => {
+    stubRpc({ nonceUsed: false, filled: 300n });
+    const { env } = makeChainEnv();
+    const order = rangedPartialOrder();
+    expect((await post(env, order)).status).toBe(201);
+    vi.unstubAllGlobals(); // GET never touches the RPC
+
+    const req = new Request(
+      `http://indexer.test/signed-offers?chainId=${CHAIN_ID}` +
+        `&lendingAsset=${order.lendingAsset}` +
+        `&collateralAsset=${order.collateralAsset}` +
+        `&durationDays=${order.durationDays}`,
+    );
+    const res = await handleSignedOffersGet(req, env);
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as {
+      offers: { orderHash: string; status: string; filledAmount: string }[];
+    };
+    expect(body.offers).toHaveLength(1);
+    expect(body.offers[0]).toMatchObject({
+      orderHash: orderHashOf(order),
+      status: 'active',
+      filledAmount: '300',
+    });
   });
 });
