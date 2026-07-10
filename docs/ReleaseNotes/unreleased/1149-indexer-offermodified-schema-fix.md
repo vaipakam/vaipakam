@@ -19,4 +19,6 @@ succeeds and the cursor catches up on its own.
 A new automated guard now prepares every database statement in the
 indexer against the exact schema the migrations produce, so a statement
 referencing a table or column that doesn't exist fails in CI instead of
-wedging production ingest.
+wedging production ingest. The indexer's test suite — which previously
+ran only on developer machines — is now wired into the blocking
+per-change CI gate, closing the coverage gap that let this fault ship.
