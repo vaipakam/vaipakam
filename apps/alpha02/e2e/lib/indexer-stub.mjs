@@ -265,6 +265,22 @@ function applyMarketScope(offers, url) {
   );
 }
 
+// The worker's opt-in /offers/active drops (Codex #1134 round-3):
+// `excludeExpired=1` (expires_at = 0 OR expires_at > now — judged on
+// the FORK's clock, like everything else here) and
+// `excludeSaleVehicles=1` (is_sale_vehicle = 0). Applied to BOTH the
+// live and the pinned path, exactly like production applies its SQL
+// predicate to whatever rows the table holds.
+function applyOfferFlags(offers, url, chainNowSec) {
+  const excludeExpired = url.searchParams.get('excludeExpired') === '1';
+  const excludeSaleVehicles = url.searchParams.get('excludeSaleVehicles') === '1';
+  return offers.filter(
+    (o) =>
+      (!excludeExpired || !o.expiresAt || o.expiresAt > chainNowSec) &&
+      (!excludeSaleVehicles || o.isSaleVehicle !== true),
+  );
+}
+
 // Pin mode (#1029): a spec can freeze the ACTIVE-OFFERS view and the
 // freshness cursor at "now" while anvil keeps advancing — the only
 // way this always-live stub can honestly simulate ingest lag, which
@@ -344,7 +360,11 @@ async function handler(req, res) {
       if (pinned) {
         return json(200, {
           ...pinned.active,
-          offers: applyMarketScope(pinned.active.offers, url),
+          offers: applyOfferFlags(
+            applyMarketScope(pinned.active.offers, url),
+            url,
+            await forkNowSec(),
+          ),
         });
       }
       const [ids, chainNow] = await Promise.all([activeOfferIds(), forkNowSec()]);
@@ -355,7 +375,7 @@ async function handler(req, res) {
         .sort((a, b) => b.offerId - a.offerId);
       return json(200, {
         chainId: CHAIN_ID,
-        offers: applyMarketScope(offers, url),
+        offers: applyOfferFlags(applyMarketScope(offers, url), url, chainNow),
         nextBefore: null,
       });
     }

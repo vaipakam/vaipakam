@@ -125,13 +125,26 @@ function applyMarketScope(params: URLSearchParams, scope: MarketScope): void {
   }
 }
 
+/** `excludeExpired` / `excludeSaleVehicles` are opt-in server-side
+ *  drops (Codex #1134 round-3): lazily-expired GTT rows and lender-
+ *  sale bookkeeping offers are not book liquidity, and letting them
+ *  through wastes the desk fallback's bounded page-walk budget. Older
+ *  workers ignore the params — callers keep their client-side filters
+ *  as belt-and-suspenders. */
 export function fetchActiveOffers(
   chainId: number,
-  opts: { limit?: number; before?: number } & MarketScope = {},
+  opts: {
+    limit?: number;
+    before?: number;
+    excludeExpired?: boolean;
+    excludeSaleVehicles?: boolean;
+  } & MarketScope = {},
 ): Promise<ActiveOffersPage | null> {
   const params = new URLSearchParams({ chainId: String(chainId) });
   if (opts.limit) params.set('limit', String(opts.limit));
   if (opts.before) params.set('before', String(opts.before));
+  if (opts.excludeExpired) params.set('excludeExpired', '1');
+  if (opts.excludeSaleVehicles) params.set('excludeSaleVehicles', '1');
   applyMarketScope(params, opts);
   return getJson<ActiveOffersPage>(`/offers/active?${params}`);
 }

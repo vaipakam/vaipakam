@@ -188,11 +188,18 @@ export function useDeskBook(pair: DeskPair | null, durationDays: number) {
           lendingAsset: pair!.lendingAsset,
           collateralAsset: pair!.collateralAsset,
           durationDays,
+          // Codex #1134 round-3 — drop non-book rows SERVER-side so
+          // lazily-expired GTT rows and sale vehicles can't eat the
+          // bounded page budget and truncate a busy market's book.
+          excludeExpired: true,
+          excludeSaleVehicles: true,
         });
         if (page === null) return null;
-        // Sale vehicles are excluded here too (the worker marks them
-        // via `isSaleVehicle`); an older worker without the field
-        // keeps its rows — same behaviour as before the filter.
+        // Sale vehicles are excluded client-side too as belt-and-
+        // suspenders (an older worker ignores the params); rows
+        // without the field keep their rows — same behaviour as
+        // before the filter. Expired rows are already dropped by the
+        // ladder's isLiveMarketRow.
         all.push(...page.offers.filter((o) => o.isSaleVehicle !== true));
         if (page.nextBefore === null) return { rows: all, source: 'indexer' };
         before = page.nextBefore;
@@ -402,6 +409,11 @@ export function useSymbolMap(addresses: string[]): Record<string, string> {
  *  silently mutate the wrong cluster). */
 export interface AmendSource {
   offerType: number;
+  /** LibVaipakam.FillMode (0 Partial / 1 Aon / 2 Ioc) — AON offers
+   *  must keep `amount == amountMax` through a modify (the invariant
+   *  is enforced at create and NOT re-checked by the facet, so a
+   *  diverging amend would silently break all-or-none semantics). */
+  fillMode: number;
   lendingAsset: string;
   collateralAsset: string;
   amount: bigint;
@@ -411,6 +423,9 @@ export interface AmendSource {
   interestRateBpsMax: number;
   collateralAmount: bigint;
   collateralAmountMax: bigint;
+  /** Borrower collateral already committed to live partial fills —
+   *  `collateralAmountMax` cannot drop below it (ModifyBelowFilledFloor). */
+  collateralAmountFilled: bigint;
 }
 
 export function useAmendSource(offerId: number | undefined) {
@@ -429,6 +444,7 @@ export function useAmendSource(offerId: number | undefined) {
       })) as Record<string, unknown>;
       return {
         offerType: Number(o.offerType),
+        fillMode: Number(o.fillMode),
         lendingAsset: String(o.lendingAsset),
         collateralAsset: String(o.collateralAsset),
         amount: BigInt(o.amount as bigint),
@@ -438,6 +454,7 @@ export function useAmendSource(offerId: number | undefined) {
         interestRateBpsMax: Number(o.interestRateBpsMax),
         collateralAmount: BigInt(o.collateralAmount as bigint),
         collateralAmountMax: BigInt(o.collateralAmountMax as bigint),
+        collateralAmountFilled: BigInt(o.collateralAmountFilled as bigint),
       };
     },
   });

@@ -888,6 +888,8 @@ export const copy = {
       expiryGtc: 'GTC',
       expiryCustom: 'Custom…',
       expiryInvalid: 'The custom expiry must be a future date and time.',
+      expiryTooFar:
+        'The custom expiry can be at most one year ahead — the protocol caps offer expiry at 365 days out.',
       fillModeLabel: 'Fill mode',
       fillPartial: 'Partial',
       fillAon: 'AON',
@@ -917,12 +919,15 @@ export const copy = {
       heldNotCreated: 'Held — managed by its creator',
       cancel: 'Cancel',
       cancelling: 'Cancelling…',
+      cancelCooldown: (secs: number) =>
+        `Cancel available in ${secs}s — new unfilled offers have a short protocol cooldown.`,
       amend: 'Amend',
       amendTitle: 'Amend in place — same offer, same position, one transaction.',
       amendLoadFailed:
         'We couldn’t read this offer’s live values, and amending must start from them. Please try again.',
       amendMinAmount: 'Min amount',
       amendMaxAmount: 'Max amount',
+      amendAmountAon: 'Amount (all-or-nothing)',
       amendRate: 'Rate (APR %)',
       amendRateMax: 'Rate max (APR %)',
       amendCollateral: 'Collateral',
@@ -930,7 +935,8 @@ export const copy = {
       amendNoChange: 'Nothing changed yet.',
       amendMalformed:
         'Enter plain decimal numbers only — digits with an optional decimal point.',
-      amendInvalid: 'Each minimum must be at or below its maximum, and the max amount can’t drop below what’s already filled.',
+      amendInvalid: 'Each minimum must be at or below its maximum, and neither maximum can drop below what’s already filled.',
+      amendPositive: 'Amounts and collateral must be greater than zero.',
       amendGrowNote: (amount: string, symbol: string) =>
         `Growing this order locks ${amount} ${symbol} more from your wallet — it needs a token approval first.`,
       approveFirst: 'Approve first',

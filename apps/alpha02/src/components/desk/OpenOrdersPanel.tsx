@@ -18,7 +18,7 @@
  * allowance, and there is NO `modifyOfferWithPermit` — so grows get
  * an allowance precheck + a classic "Approve first" button.
  */
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { Inbox, LoaderCircle, Pencil } from 'lucide-react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { usePublicClient, useWalletClient } from 'wagmi';
@@ -27,6 +27,7 @@ import { copy } from '../../content/copy';
 import { useActiveChain } from '../../chain/useActiveChain';
 import { useDiamondWrite } from '../../contracts/diamond';
 import { ensureAllowance, useTokenMeta } from '../../contracts/erc20';
+import { CANCEL_COOLDOWN_SECONDS } from '../../contracts/loanLive';
 import { useMyOffersFull } from '../../data/hooks';
 import { readSaleVehicleOfferIds, useAmendSource } from '../../data/desk';
 import { useAllowanceForPlan } from '../../lib/submitProgress';
@@ -45,6 +46,21 @@ import {
 import type { IndexedOffer } from '../../data/indexer';
 
 const text = copy.desk.orders;
+
+/** Chain-time anchor for the cancel-cooldown gate: block.timestamp at
+ *  fetch + the device stamp it was read at, so renders between polls
+ *  can tick `nowSec + wall-elapsed` WITHOUT ever trusting the device
+ *  clock as the base (same doctrine as refinancePending /
+ *  loanSalePending — the facet judges the window on chain time). */
+interface ChainNowAnchor {
+  nowSec: number;
+  atMs: number;
+}
+
+function anchorEffNow(anchor: ChainNowAnchor | undefined): number | null {
+  if (!anchor) return null;
+  return anchor.nowSec + Math.max(0, Math.floor((Date.now() - anchor.atMs) / 1000));
+}
 
 /** Percent-string → bps for the amend inputs; `null` = unparseable.
  *  Gated on the same strict decimal shape the OrderTicket's inputs
@@ -151,6 +167,15 @@ function AmendForm({
   }, [fields, malformed, lendDec, collDec]);
 
   const src = source.data;
+  // Contract-locked single-value shapes (Codex #1134 round-3): a
+  // lender ERC-20 offer must keep `collateralAmountMax ==
+  // collateralAmount` (LenderCollateralRangeNotAllowed), and an AON
+  // offer must keep `amount == amountMax` — create enforces it
+  // (AonRequiresSingleValueAmount) and the facet does NOT re-check on
+  // modify, so a diverging amend would silently break the all-or-none
+  // size semantics. Each pair renders as ONE field driving both.
+  const isLenderRow = src?.offerType === 0;
+  const isAon = src?.fillMode === 1;
   const changed =
     parsed !== null &&
     src !== undefined &&
@@ -161,16 +186,35 @@ function AmendForm({
       parsed.collateralAmount !== src.collateralAmount ||
       parsed.collateralAmountMax !== src.collateralAmountMax);
 
+  // Strictly-positive amounts — the facet's AmountMustBePositive /
+  // AmountMaxMustBePositive fire on ANY amount mutation, and the
+  // collateral pair mirrors _assertCollateralInvariants' strict rule
+  // for ERC-20/ERC-20 rows (the only shape the desk lists) WITH its
+  // one carve-out: an explicit both-zero collateral pair (the
+  // no-collateral lender shape) stays valid; mixed zero/positive
+  // never is.
+  const nonPositive =
+    parsed !== null &&
+    (parsed.amount <= 0n ||
+      parsed.amountMax <= 0n ||
+      (!(parsed.collateralAmount === 0n && parsed.collateralAmountMax === 0n) &&
+        (parsed.collateralAmount <= 0n || parsed.collateralAmountMax <= 0n)));
+
   // Client-side mirror of the contract invariants that would waste a
-  // transaction: min ≤ max per cluster, and the max amount can't drop
-  // below what's already filled.
+  // transaction: min ≤ max per cluster, neither ceiling below its
+  // already-filled floor (ModifyBelowFilledFloor covers the borrower
+  // collateral leg too), and the locked single-value pairs staying
+  // equal (belt-and-suspenders — the UI drives both from one field).
   const invalid =
     parsed !== null &&
     src !== undefined &&
     (parsed.amount > parsed.amountMax ||
       parsed.interestRateBps > parsed.interestRateBpsMax ||
       parsed.collateralAmount > parsed.collateralAmountMax ||
-      parsed.amountMax < src.amountFilled);
+      parsed.amountMax < src.amountFilled ||
+      parsed.collateralAmountMax < src.collateralAmountFilled ||
+      (isAon && parsed.amount !== parsed.amountMax) ||
+      (isLenderRow && parsed.collateralAmountMax !== parsed.collateralAmount));
 
   // GROW detection — the escrowed leg per side (#193 settle helpers):
   // lender ERC-20 pre-vaults `amountMax` in the lending asset;
@@ -242,7 +286,7 @@ function AmendForm({
   }
 
   async function save() {
-    if (!parsed || !changed || invalid) return;
+    if (!parsed || !changed || invalid || nonPositive) return;
     setBusy('save');
     setError(null);
     try {
@@ -281,15 +325,37 @@ function AmendForm({
   }
 
   const setField = (key: keyof NonNullable<typeof fields>, value: string) =>
-    setFields((f) => (f ? { ...f, [key]: value.trim() } : f));
+    setFields((f) => {
+      if (!f) return f;
+      const v = value.trim();
+      const next = { ...f, [key]: v };
+      // Locked single-value pairs — one field drives both (see the
+      // isLenderRow / isAon derivation above for the contract rules).
+      if (key === 'amount' && isAon) next.amountMax = v;
+      if (key === 'collateral' && isLenderRow) next.collateralMax = v;
+      return next;
+    });
 
-  const inputs: readonly [keyof NonNullable<typeof fields>, string, string][] = [
-    ['amount', text.amendMinAmount, lendingMeta.data?.symbol ?? ''],
-    ['amountMax', text.amendMaxAmount, lendingMeta.data?.symbol ?? ''],
+  type AmendInput = [keyof NonNullable<typeof fields>, string, string];
+  const inputs: readonly AmendInput[] = [
+    [
+      'amount',
+      isAon ? text.amendAmountAon : text.amendMinAmount,
+      lendingMeta.data?.symbol ?? '',
+    ],
+    // AON size is single-value — the min field above drives both.
+    ...(isAon
+      ? []
+      : ([['amountMax', text.amendMaxAmount, lendingMeta.data?.symbol ?? '']] as AmendInput[])),
     ['rate', text.amendRate, 'bps stored on-chain'],
     ['rateMax', text.amendRateMax, 'bps stored on-chain'],
     ['collateral', text.amendCollateral, collateralMeta.data?.symbol ?? ''],
-    ['collateralMax', text.amendCollateralMax, collateralMeta.data?.symbol ?? ''],
+    // Lender collateral is single-value — the field above drives both.
+    ...(isLenderRow
+      ? []
+      : ([
+          ['collateralMax', text.amendCollateralMax, collateralMeta.data?.symbol ?? ''],
+        ] as AmendInput[])),
   ];
 
   return (
@@ -316,6 +382,11 @@ function AmendForm({
       {malformed ? (
         <p style={{ color: 'var(--danger)', fontSize: '0.85rem', marginTop: 8 }}>
           {text.amendMalformed}
+        </p>
+      ) : null}
+      {nonPositive ? (
+        <p style={{ color: 'var(--danger)', fontSize: '0.85rem', marginTop: 8 }}>
+          {text.amendPositive}
         </p>
       ) : null}
       {invalid ? (
@@ -365,6 +436,7 @@ function AmendForm({
             !onSupportedChain ||
             !changed ||
             invalid ||
+            nonPositive ||
             !allowanceKnown ||
             needsApproval
           }
@@ -379,7 +451,8 @@ function AmendForm({
 }
 
 function OrderRow({ offer }: { offer: IndexedOffer }) {
-  const { address, onSupportedChain } = useActiveChain();
+  const { address, onSupportedChain, readChain } = useActiveChain();
+  const publicClient = usePublicClient({ chainId: readChain.chainId });
   const { write } = useDiamondWrite();
   const queryClient = useQueryClient();
   const meta = useTokenMeta(offer.lendingAsset);
@@ -394,6 +467,60 @@ function OrderRow({ offer }: { offer: IndexedOffer }) {
   const filled = BigInt(offer.amountFilled || '0');
   const max = BigInt(offer.amountMax || '0');
   const filledPct = max > 0n ? Number((filled * 100n) / max) : 0;
+
+  // Cancel-cooldown gate (Codex #1134 round-3) — mirrors
+  // OfferCancelFacet's exact CancelCooldownActive condition:
+  // `partialFillEnabled && amountFilled == 0 && createdAt != 0 &&
+  // block.timestamp < createdAt + MIN_OFFER_CANCEL_DELAY &&
+  // !isOfferExpired(offer)` — so expired and partially-filled rows
+  // keep the immediate cancel, exactly like the contract. The
+  // `partialFillEnabled` protocol flag isn't surfaced client-side;
+  // assuming it ON (it is, on every live deploy) costs at most a
+  // five-minute wait on a deploy where the contract wouldn't enforce
+  // one — strictly better than arming a doomed transaction. A row
+  // without `createdAt` (older indexer worker) fails open: the chain-
+  // sourced rows that normally feed this panel always carry it.
+  const createdAt = offer.createdAt ?? 0;
+  const cooldownDeadline = createdAt + Number(CANCEL_COOLDOWN_SECONDS);
+  const rowExpiresAt =
+    offer.expiresAt !== undefined && offer.expiresAt !== 0 ? offer.expiresAt : null;
+  const cooldownBase = isCreator && filled === 0n && createdAt > 0;
+  const blockedGiven = (nowSec: number | null): boolean =>
+    cooldownBase &&
+    (nowSec === null || // chain time unknown yet — hold (fail closed)
+      (nowSec < cooldownDeadline &&
+        !(rowExpiresAt !== null && nowSec >= rowExpiresAt)));
+
+  // ONE shared anchor per chain (queryKey-deduped across rows), polled
+  // only while this row might still be inside its window and stopped
+  // the moment the anchor proves it elapsed — a parked desk tab must
+  // not stream block reads (RPC-diet doctrine).
+  const chainNowKey = ['deskChainNow', readChain.chainId];
+  const cachedAnchor = queryClient.getQueryData<ChainNowAnchor>(chainNowKey);
+  const chainNowQ = useQuery({
+    queryKey: chainNowKey,
+    enabled: Boolean(publicClient) && blockedGiven(anchorEffNow(cachedAnchor)),
+    refetchInterval: 5_000,
+    queryFn: async (): Promise<ChainNowAnchor> => {
+      const block = await publicClient!.getBlock({ blockTag: 'latest' });
+      return { nowSec: Number(block.timestamp), atMs: Date.now() };
+    },
+  });
+  const effNow = anchorEffNow(chainNowQ.data ?? cachedAnchor);
+  const cancelBlocked = blockedGiven(effNow);
+  const cooldownRemaining =
+    effNow === null
+      ? Number(CANCEL_COOLDOWN_SECONDS)
+      : Math.max(1, cooldownDeadline - effNow);
+
+  // 1 s re-render tick while blocked, so the countdown title and the
+  // enable flip track the anchored clock between polls.
+  const [, setTick] = useState(0);
+  useEffect(() => {
+    if (!cancelBlocked) return;
+    const timer = setInterval(() => setTick((n) => n + 1), 1_000);
+    return () => clearInterval(timer);
+  }, [cancelBlocked]);
 
   async function cancel() {
     setCancelling(true);
@@ -463,7 +590,10 @@ function OrderRow({ offer }: { offer: IndexedOffer }) {
             <button
               type="button"
               className="btn btn-secondary btn-sm"
-              disabled={!onSupportedChain || cancelling}
+              disabled={!onSupportedChain || cancelling || cancelBlocked}
+              title={
+                cancelBlocked ? text.cancelCooldown(cooldownRemaining) : undefined
+              }
               onClick={() => void cancel()}
             >
               {cancelling ? text.cancelling : text.cancel}

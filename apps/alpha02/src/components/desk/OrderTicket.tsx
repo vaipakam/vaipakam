@@ -67,6 +67,13 @@ type ExpiryPreset = 'gtc' | '24h' | '7d' | 'custom';
 
 const MAX_RATE_PERCENT = 100;
 
+/** Mirrors `LibVaipakam.MAX_OFFER_EXPIRY_HORIZON` (365 days) —
+ *  `createOffer` rejects a non-zero `expiresAt` beyond
+ *  `block.timestamp + MAX_OFFER_EXPIRY_HORIZON`
+ *  (`OfferExpiryAboveCap`), so a custom deadline past the horizon
+ *  must never reach the wallet. */
+const MAX_OFFER_EXPIRY_HORIZON_SECONDS = 365 * 86_400;
+
 export function OrderTicket({
   pair,
   days,
@@ -156,11 +163,28 @@ export function OrderTicket({
         if (!customExpiry) return null;
         const ts = Math.floor(new Date(customExpiry).getTime() / 1000);
         if (!Number.isFinite(ts) || ts <= now) return null;
+        // Upper bound too (Codex #1134 round-3): the contract caps the
+        // horizon at one year out. Enforced HERE so both the canPost
+        // gate and submit's fresh re-resolution reject it — a ticket
+        // left open can drift a deadline INTO validity, never out of
+        // the horizon, but the mirror keeps both ends contract-true.
+        if (ts > now + MAX_OFFER_EXPIRY_HORIZON_SECONDS) return null;
         return BigInt(ts);
       }
     }
   };
   const expiryOk = expiry !== 'custom' || resolveExpiresAt() !== null;
+  /** The custom stamp parses but sits past the contract's one-year
+   *  horizon — split out so the inline copy can say WHY the ticket is
+   *  held instead of the generic "must be in the future". */
+  const customExpiryTooFar = (): boolean => {
+    if (expiry !== 'custom' || !customExpiry) return false;
+    const ts = Math.floor(new Date(customExpiry).getTime() / 1000);
+    return (
+      Number.isFinite(ts) &&
+      ts > Math.floor(Date.now() / 1000) + MAX_OFFER_EXPIRY_HORIZON_SECONDS
+    );
+  };
   // IOC requires an expiry (#125) — GTC + IOC is contract-invalid.
   const iocNeedsExpiry = fillMode === FILL_IOC && expiry === 'gtc';
 
@@ -332,7 +356,13 @@ export function OrderTicket({
         throw new Error(copy.wallet.connectFirst);
       }
       const payload = buildPayload(consent);
-      if (!payload) throw new Error(copy.desk.ticket.expiryInvalid);
+      if (!payload) {
+        throw new Error(
+          customExpiryTooFar()
+            ? copy.desk.ticket.expiryTooFar
+            : copy.desk.ticket.expiryInvalid,
+        );
+      }
       // Re-screen the wallet live before any approval can mine.
       await assertWalletNotSanctionedLive(
         publicClient,
@@ -601,7 +631,7 @@ export function OrderTicket({
         ) : null}
         {expiry === 'custom' && customExpiry !== '' && !expiryOk ? (
           <p className="field-hint" style={{ color: 'var(--danger)' }}>
-            {text.expiryInvalid}
+            {customExpiryTooFar() ? text.expiryTooFar : text.expiryInvalid}
           </p>
         ) : null}
       </div>

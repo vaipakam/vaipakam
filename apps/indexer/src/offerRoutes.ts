@@ -285,6 +285,7 @@ export async function handleOffersMarkets(req: Request, env: Env): Promise<Respo
 /**
  * GET /offers/active?chainId=8453&limit=50&before=<offer_id>
  *     [&lendingAsset=0x..&collateralAsset=0x..&durationDays=30]
+ *     [&excludeExpired=1&excludeSaleVehicles=1]
  * Returns the page of active offers. Newest-first.
  *
  * Rate Desk (#1129) — the optional market params scope the page to one
@@ -292,6 +293,14 @@ export async function handleOffersMarkets(req: Request, env: Env): Promise<Respo
  * 0029). Without them this is a GLOBAL newest-first page capped at 200 rows,
  * which cannot honestly serve a per-market book fallback — a market whose
  * offers are older than the first page would render as missing liquidity.
+ *
+ * `excludeExpired=1` drops lazily-expired GTT rows (expiry is enforced
+ * lazily on-chain, so a lapsed offer's row can still read status='active');
+ * `excludeSaleVehicles=1` drops lender-sale bookkeeping offers — both
+ * opt-in flags (Codex #1134 round-3), mirroring /loans/recent's
+ * excludeSaleVehicles convention, so existing consumers of the unfiltered
+ * feed keep byte-identical behaviour. The desk's fallback book passes both
+ * so non-book rows can't eat its bounded page-walk budget.
  */
 export async function handleOffersActive(req: Request, env: Env): Promise<Response> {
   const url = new URL(req.url);
@@ -302,6 +311,8 @@ export async function handleOffersActive(req: Request, env: Env): Promise<Respon
   if (market === 'bad') {
     return jsonResponse({ error: 'bad-market-filter' }, 400);
   }
+  const excludeExpired = url.searchParams.get('excludeExpired') === '1';
+  const excludeSaleVehicles = url.searchParams.get('excludeSaleVehicles') === '1';
   try {
     const conds: string[] = [`chain_id = ?`, `status = 'active'`];
     const binds: (number | string)[] = [chainId];
@@ -320,6 +331,14 @@ export async function handleOffersActive(req: Request, env: Env): Promise<Respon
     if (market.durationDays !== null) {
       conds.push('duration_days = ?');
       binds.push(market.durationDays);
+    }
+    if (excludeExpired) {
+      // Same predicate /offers/markets applies: 0 = GTC (never expires).
+      conds.push('(expires_at = 0 OR expires_at > ?)');
+      binds.push(Math.floor(Date.now() / 1000));
+    }
+    if (excludeSaleVehicles) {
+      conds.push('is_sale_vehicle = 0');
     }
     const stmt = env.DB.prepare(
       `SELECT * FROM offers

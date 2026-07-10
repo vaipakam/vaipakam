@@ -101,8 +101,13 @@ export function DeskHeader({
   // market (say 45d, posted by a power user against the Diamond
   // directly) must be selectable, not advertised-yet-unreachable. The
   // currently-selected tenor stays a chip too (a market emptying out
-  // must not strand the active selection). Non-bucket chips render
-  // identically; live emphasis below is unchanged.
+  // must not strand the active selection). The selected pair's own
+  // book rows join the union as well (Codex #1134 round-3): when
+  // /offers/markets is unavailable or lagging, a custom pair's
+  // non-bucket tenor discovered in the CHAIN book would otherwise be
+  // unreachable — visible in the ladder's source rows yet with no
+  // chip to select it. Non-bucket chips render identically; live
+  // emphasis below is unchanged.
   const tenorChips = useMemo((): number[] => {
     const out = new Set<number>(OFFER_DURATION_BUCKETS_DAYS);
     out.add(days);
@@ -116,8 +121,14 @@ export function DeskHeader({
         }
       }
     }
+    const nowSec = Math.floor(Date.now() / 1000);
+    for (const o of bookRows ?? []) {
+      // Same liveness rule the emphasis fallback uses — a tenor whose
+      // only rows are expired/empty should not mint a chip.
+      if (isLiveMarketRow(o, o.durationDays, nowSec)) out.add(o.durationDays);
+    }
     return [...out].sort((a, b) => a - b);
-  }, [markets, pair, days]);
+  }, [markets, pair, days, bookRows]);
 
   // Tenor emphasis: which durations have live offers for the selected
   // pair. Markets summary first; the pair's own book rows as the
