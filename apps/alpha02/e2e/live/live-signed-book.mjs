@@ -62,14 +62,23 @@
 //   (iii) BROWSER PUSH PATH — page WS → IndexerPushSync → book refresh
 //         before the poll. Structurally NOT observable from this
 //         sandbox: the driver instruments the page's WebSocket
-//         constructor and, if a socket to the indexer push endpoint
-//         ever reaches OPEN (i.e. a page-WS-capable environment), it
-//         asserts the book refresh beats the 15 s poll; otherwise it
-//         prints an explicit OPEN marker so the gap stays visible
-//         until a run from such an environment closes it. A green
-//         (i)+(ii) does NOT imply (iii) — real browsers could still be
-//         stale until polling if the deployed IndexerPushSync never
-//         receives or maps the production frames.
+//         constructor (open/close + MESSAGE timestamps) and
+//         window.fetch (/signed-offers refetch start times) and, if a
+//         socket to the indexer push endpoint ever reaches OPEN (a
+//         page-WS-capable environment), it demands the EVIDENCE CHAIN
+//         — a page-WS message at the crossing scan → a /signed-offers
+//         refetch STARTING within ~3 s of that message → the ladder
+//         row gone — before crediting push. The DOM flip alone is NOT
+//         proof: it can coincide with useDeskSignedBook's normal 30 s
+//         poll tick, and when the tick was itself plausibly due inside
+//         the message→refetch window the verdict is AMBIGUOUS with the
+//         timestamps printed, never PASS (Codex #1148 r2). Until step
+//         7b actually probes, the rail reads UNCHECKED; a probed but
+//         never-OPEN socket reads OPEN so the gap stays visible until
+//         a run from such an environment closes it. A green (i)+(ii)
+//         does NOT imply (iii) — real browsers could still be stale
+//         until polling if the deployed IndexerPushSync never receives
+//         or maps the production frames.
 //
 //   TESTNET_WALLETS_FILE=~/secrets/wallets.json node live-signed-book.mjs
 //
@@ -392,6 +401,13 @@ let failed = false;
 // signer+rate shape match, which a stale leftover row could satisfy.
 let orderHash = null;
 let capturedPost = null; // { status, orderHash, url } from the page's POST response
+// The exact { order } the page itself POSTed — parsed from the REQUEST
+// body of the same exchange (Codex #1148 r2). Fallback replay payload
+// for the cleanup: if the drive dies after the POST succeeded but
+// before GET served the row back, the market GET cannot be the
+// recovery source, yet the order still rests fillable. It is the same
+// wire shape GET serves, so wireToStruct consumes it directly.
+let capturedPostOrder = null;
 let wireOrder = null; // the exact replay payload GET served (cancel needs it)
 let signClicked = false; // a signature may exist from here on
 let ledgerPoisoned = false; // signedOfferFilledAmount(orderHash) == ceiling verified
@@ -408,9 +424,13 @@ const preexistingOwnHashes = new Set();
 const step7Obs = {
   lifecycle: 'DEFERRED — the cancel was never reached (drive failed earlier)',
   wsRail: 'DEFERRED — the cancel was never reached (drive failed earlier)',
-  browserPush:
-    'OPEN — page WS blocked by the sandbox proxy; needs one run from a ' +
-    'page-WS-capable environment (assert book refresh beats the 15 s poll)',
+  // (iii) starts UNCHECKED (Codex #1148 r2): ONLY step 7b — after
+  // actually inspecting the page's __wsProbe — may set OPEN (socket
+  // never connected), PASS, FAIL, or AMBIGUOUS. Initializing this to
+  // the sandbox-blocked OPEN text made an early failure print "page WS
+  // blocked" even in a page-WS-capable environment, or before the page
+  // existed at all.
+  browserPush: 'UNCHECKED — drive ended before the browser-push probe (step 7b) ran',
 };
 
 // Own-signed ladder level for THIS run's distinctive rate.
@@ -551,15 +571,45 @@ try {
     globalThis.WebSocket = class extends Native {
       constructor(...args) {
         super(...args);
-        const entry = { url: String(args[0]), opened: false, closed: false };
+        const entry = { url: String(args[0]), opened: false, closed: false, messages: [] };
         entries.push(entry);
         this.addEventListener('open', () => {
           entry.opened = true;
+        });
+        // MESSAGE timestamps (Codex #1148 r2): an extra listener from
+        // inside the wrapped constructor is the least-invasive capture
+        // — it observes every frame whether the app attaches via
+        // onmessage or addEventListener, and never touches dispatch.
+        // Step 7b ties the book refetch to these timestamps.
+        this.addEventListener('message', () => {
+          entry.messages.push(Date.now());
         });
         this.addEventListener('close', () => {
           entry.closed = true;
         });
       }
+    };
+  });
+  // (iii)-evidence plumbing (Codex #1148 r2): record when the page
+  // STARTS a fetch to /signed-offers. Step 7b requires the post-frame
+  // book refetch to start within ~3 s of the page-WS message — a DOM
+  // row-gone flip that merely coincided with useDeskSignedBook's 30 s
+  // poll tick must not masquerade as push. Scoped to /signed-offers so
+  // the probe array stays bounded.
+  await page.addInitScript(() => {
+    const entries = [];
+    globalThis.__fetchProbe = entries;
+    const native = globalThis.fetch?.bind(globalThis);
+    if (!native) return;
+    globalThis.fetch = (...args) => {
+      try {
+        const url =
+          typeof args[0] === 'string' ? args[0] : String(args[0]?.url ?? args[0]);
+        if (url.includes('/signed-offers')) entries.push({ url, at: Date.now() });
+      } catch {
+        /* the probe must never break a real fetch */
+      }
+      return native(...args);
     };
   });
   // Deterministic order identity (Codex #1148): capture the Worker's
@@ -571,6 +621,22 @@ try {
     try {
       if (res.request().method() !== 'POST') return;
       if (new URL(res.url()).pathname !== '/signed-offers') return;
+      // The REQUEST body too (Codex #1148 r2): the page sent
+      // { chainId, order, signature } — keep the order as the cleanup's
+      // fallback replay payload for the window where the POST landed
+      // but GET never served the row back to this run.
+      try {
+        const reqOrder = JSON.parse(res.request().postData() ?? '')?.order;
+        if (reqOrder) {
+          capturedPostOrder = reqOrder;
+          console.log(
+            `captured POST /signed-offers request order (nonce=${reqOrder.nonce}) ` +
+              'as the cleanup fallback replay payload',
+          );
+        }
+      } catch {
+        /* body unavailable/malformed — GET recovery stays the fallback */
+      }
       res
         .json()
         .then((body) => {
@@ -912,18 +978,44 @@ try {
   // header; Codex #1148). (i)+(ii) ride the same ingest scan (~3 min
   // round-robin; poll past one full cycle): the row leaving the
   // market-scoped GET (status flip to 'cancelled' — GET serves active
-  // only), and the Node-observed WS invalidate frame with
-  // offer.changed at/past the cancel block (block-pinned via scannedTo
-  // so an unrelated earlier scan's offer.changed can't be credited).
-  // (iii) — the BROWSER push path — is probed afterwards and stays an
-  // explicit OPEN marker in any environment whose page WS can't
-  // connect (this sandbox); it is NEVER inferred from (i)/(ii).
+  // only), and the Node-observed WS invalidate frame.
+  //
+  // (ii) ATTRIBUTION (Codex #1148 r2) — the credit is tied to the
+  // CROSSING frame, never to "any offer.changed frame at/past the
+  // cancel block" (that shape lets unrelated offer activity in a LATER
+  // scan mask a signed-push regression). scannedTo advances
+  // monotonically per scan, so the FIRST invalidate frame whose
+  // scannedTo >= the cancel block was emitted by exactly the scan that
+  // processed the cancel event: every prior frame's scannedTo (tracked
+  // as priorMaxScannedTo) is < the cancel block by construction of
+  // find-first, or the crossing frame is the first frame seen at all.
+  // offer.changed must appear in THAT frame's keys. Correlation with
+  // (i) — the row's D1 status flip rides the same scan:
+  //   - crossing frame LACKS offer.changed but the row left GET
+  //     → FAIL, with the frame's actual keys (the scan processed the
+  //       cancel yet pushed no signed-book key);
+  //   - crossing frame HAS offer.changed but the row did NOT leave GET
+  //     within a short grace of the frame → concurrent offer activity
+  //     in the same scan may own the key → AMBIGUOUS caveat with the
+  //     facts printed, never silent credit.
+  // (iii) — the BROWSER push path — is probed afterwards (step 7b) and
+  // is NEVER inferred from (i)/(ii).
   step7Obs.lifecycle = 'DEFERRED — timed out waiting for the row to leave GET';
-  step7Obs.wsRail = 'DEFERRED — timed out waiting for the offer.changed frame';
+  step7Obs.wsRail =
+    'DEFERRED — timed out waiting for the crossing invalidate frame ' +
+    '(first scannedTo at/past the cancel block)';
   let wireGoneAt = null;
-  let creditedFrame = null;
+  let crossingFrame = null; // FIRST invalidate frame with scannedTo >= cancel block
+  let priorMaxScannedTo = null; // max scannedTo across invalidate frames BEFORE it
+  let wsVerdict = null; // 'PASS' | 'AMBIGUOUS' | 'FAIL' once attributable
+  // Grace the GET flip gets after the crossing frame before an
+  // offer.changed-carrying frame is called ambiguous: the D1 status
+  // write happens in the same scan BEFORE the frame is emitted, so the
+  // very next GET poll should already miss the row — this only absorbs
+  // the 5 s poll cadence + network slack.
+  const CROSSING_GRACE_MS = 25_000;
   const scanMilestones = pollFor(
-    'the cancelled row to leave GET /signed-offers AND the offer.changed push frame',
+    'the cancelled row to leave GET /signed-offers AND the crossing-frame verdict',
     async () => {
       if (wireGoneAt === null) {
         const res = await indexerGet(signedBookUrl(tenor));
@@ -939,27 +1031,60 @@ try {
           );
         }
       }
-      if (creditedFrame === null) {
-        creditedFrame =
-          ws.frames.find(
-            (f) =>
-              f.obj?.t === 'invalidate' &&
-              Array.isArray(f.obj.keys) &&
-              f.obj.keys.includes('offer.changed') &&
-              Number(f.obj.scannedTo) >= Number(receipt.blockNumber),
-          ) ?? null;
-        if (creditedFrame) {
-          step7Obs.wsRail =
-            `PASS — Node-side observer received offer.changed ` +
-            `+${((creditedFrame.at - cancelObservedAt) / 1000).toFixed(0)}s after cancel ` +
-            `(scannedTo=${creditedFrame.obj.scannedTo})`;
+      if (crossingFrame === null) {
+        const invalidates = ws.frames.filter(
+          (f) => f.obj?.t === 'invalidate' && Array.isArray(f.obj.keys),
+        );
+        const idx = invalidates.findIndex(
+          (f) => Number(f.obj.scannedTo) >= Number(receipt.blockNumber),
+        );
+        if (idx !== -1) {
+          crossingFrame = invalidates[idx];
+          priorMaxScannedTo =
+            idx > 0
+              ? Math.max(...invalidates.slice(0, idx).map((f) => Number(f.obj.scannedTo)))
+              : null;
           console.log(
-            `  milestone: offer.changed push frame +${((creditedFrame.at - cancelObservedAt) / 1000).toFixed(0)}s ` +
-              `after cancel (scannedTo=${creditedFrame.obj.scannedTo})`,
+            `  milestone: crossing invalidate frame +${((crossingFrame.at - cancelObservedAt) / 1000).toFixed(0)}s ` +
+              `after cancel — scannedTo=${crossingFrame.obj.scannedTo} >= cancel block ${receipt.blockNumber} ` +
+              `(prior invalidate frames peaked at scannedTo=${priorMaxScannedTo ?? '(none — first frame seen)'}), ` +
+              `keys=[${crossingFrame.obj.keys.join(', ')}]`,
           );
         }
       }
-      return wireGoneAt !== null && creditedFrame !== null;
+      if (crossingFrame !== null && wsVerdict === null) {
+        const hasKey = crossingFrame.obj.keys.includes('offer.changed');
+        const provenance =
+          `crossing frame scannedTo=${crossingFrame.obj.scannedTo} >= cancel block ` +
+          `${receipt.blockNumber}, prior frames peaked at ` +
+          `${priorMaxScannedTo ?? '(none — first frame seen)'}`;
+        if (hasKey && wireGoneAt !== null) {
+          wsVerdict = 'PASS';
+          step7Obs.wsRail =
+            `PASS — offer.changed rode the CROSSING frame ` +
+            `+${((crossingFrame.at - cancelObservedAt) / 1000).toFixed(0)}s after cancel ` +
+            `(${provenance}) and the row left GET across the same scan — the key is ` +
+            'attributable to THIS cancel, not to later unrelated offer activity';
+        } else if (!hasKey && wireGoneAt !== null) {
+          wsVerdict = 'FAIL';
+          step7Obs.wsRail =
+            `FAIL — the row left GET but the crossing frame carried ` +
+            `keys=[${crossingFrame.obj.keys.join(', ')}] WITHOUT offer.changed ` +
+            `(${provenance}) — the scan that processed this cancel pushed no ` +
+            'signed-book key; a later unrelated offer.changed frame is NOT credited';
+        } else if (hasKey && Date.now() > crossingFrame.at + CROSSING_GRACE_MS) {
+          wsVerdict = 'AMBIGUOUS';
+          step7Obs.wsRail =
+            `AMBIGUOUS — the crossing frame carried offer.changed (${provenance}) ` +
+            `but the D1 row had NOT left GET within ${CROSSING_GRACE_MS / 1000}s of ` +
+            'the frame: concurrent offer activity in the same scan may own the key — ' +
+            'attribution genuinely uncertain, caveat recorded instead of credit';
+        }
+        // No key AND the row still on GET: hold — either GET is lagging
+        // or the scan missed the cancel entirely; the timeout branch
+        // below diagnoses which.
+      }
+      return wireGoneAt !== null && wsVerdict !== null;
     },
     { timeoutMs: SCAN_WAIT_MS, intervalMs: 5_000 },
   );
@@ -982,7 +1107,7 @@ try {
         `${cur.lastBlock} < cancel block ${receipt.blockNumber}; re-run once ` +
         'the cursor advances past the cancel block';
       if (wireGoneAt === null) step7Obs.lifecycle = stallNote;
-      if (creditedFrame === null) step7Obs.wsRail = stallNote;
+      if (wsVerdict === null) step7Obs.wsRail = stallNote;
       throw new Error(
         `${scanErr.message} — DIAGNOSIS: production ingest is STALLED for this ` +
           `chain (cursor at block ${cur.lastBlock}, last advanced ` +
@@ -996,7 +1121,7 @@ try {
       'FAIL — ingest cursor is past the cancel block yet the observation ' +
       'never materialized (treat as a signed-book lifecycle/push regression)';
     if (wireGoneAt === null) step7Obs.lifecycle = regressionNote;
-    if (creditedFrame === null) step7Obs.wsRail = regressionNote;
+    if (wsVerdict === null) step7Obs.wsRail = regressionNote;
     throw new Error(
       `${scanErr.message} — ingest cursor ${cur ? `at block ${cur.lastBlock}` : 'unreadable'} ` +
         `is PAST the cancel block ${receipt.blockNumber} (or unknown): the scan ran ` +
@@ -1004,15 +1129,19 @@ try {
         'lifecycle/push regression.',
     );
   }
+  if (wsVerdict === 'FAIL') {
+    // The crossing scan processed the cancel (the row left) but pushed
+    // no signed-book key — the exact regression the block-pinned
+    // attribution exists to catch. Fail the drive; step7Obs.wsRail
+    // already carries the frame's actual keys for the summary.
+    throw new Error(`step 7 (ii): ${step7Obs.wsRail}`);
+  }
   const invalidateCount = ws.frames.filter((f) => f.obj?.t === 'invalidate').length;
   record(
     '7. indexer scan + WS push after the cancel (observations i + ii)',
-    'PASS',
-    `(i) row left /signed-offers +${((wireGoneAt - cancelObservedAt) / 1000).toFixed(0)}s; ` +
-      `(ii) invalidate frame keys=[${creditedFrame.obj.keys.join(', ')}] ` +
-      `scannedTo=${creditedFrame.obj.scannedTo} (cancel block ${receipt.blockNumber}) ` +
-      `+${((creditedFrame.at - cancelObservedAt) / 1000).toFixed(0)}s, from the ` +
-      `NODE-side observer; ${invalidateCount} invalidate frame(s) total this drive — ` +
+    wsVerdict === 'PASS' ? 'PASS' : 'OBSERVED',
+    `(i) ${step7Obs.lifecycle}; (ii) ${step7Obs.wsRail} — from the NODE-side ` +
+      `observer; ${invalidateCount} invalidate frame(s) total this drive — ` +
       'the fork tier cannot make the rail observation (no WS); the BROWSER push ' +
       'path is accounted separately as observation (iii), step 7b',
   );
@@ -1021,37 +1150,120 @@ try {
   // (i)+(ii) prove the Worker flipped the row and the rail emitted the
   // frame; NEITHER proves the deployed React IndexerPushSync receives
   // and maps the production frames (real browsers could stay stale
-  // until polling). If this environment's page WS ever reached OPEN on
-  // the push endpoint, assert the ladder lets the row go within the
-  // 15 s stale window of the frame, WITHOUT any tab-flip nudge — push
-  // beating the poll. In this sandbox the proxy blocks page WS, so
-  // this stays an explicit OPEN observation, never silently absorbed
-  // into step 8's poll-path convergence.
+  // until polling). If this environment's page WS reached OPEN on the
+  // push endpoint, the DOM row leaving is necessary but NOT sufficient
+  // (Codex #1148 r2): the 15 s window can coincide with
+  // useDeskSignedBook's normal 30 s poll tick, so the refresh must be
+  // TIED to the push by the init-script probes' evidence chain —
+  //   page-WS MESSAGE timestamp (≈ the crossing frame's arrival)
+  //     → a /signed-offers refetch STARTING within ~3 s of the message
+  //     → the Signed ladder row gone, no tab-flip nudge.
+  // If the previous /signed-offers fetch was old enough that the 30 s
+  // poll tick was itself due within <5 s of the refetch, push vs poll
+  // cannot be attributed — the verdict is AMBIGUOUS with the
+  // timestamps printed, never PASS. Honest accounting over false
+  // certainty. In this sandbox the proxy blocks page WS, so this stays
+  // an explicit OPEN observation, never silently absorbed into step
+  // 8's poll-path convergence.
+  const PUSH_REFETCH_BOUND_MS = 3_000; // message → refetch-start bound
+  const POLL_TICK_MS = 30_000; // useDeskSignedBook's poll cadence
+  const POLL_AMBIGUITY_MARGIN_MS = 5_000; // tick due within this of the refetch → ambiguous
   const pageSockets = await page
     .evaluate(() => globalThis.__wsProbe ?? [])
     .catch(() => []);
   const pushSockets = pageSockets.filter((w) => w.url.includes('/ws/chain/'));
   const openPushSocket = pushSockets.find((w) => w.opened);
   if (openPushSocket) {
-    const budgetMs = Math.max(1_000, 15_000 - (Date.now() - creditedFrame.at));
+    const budgetMs = Math.max(1_000, 15_000 - (Date.now() - crossingFrame.at));
+    let rowGone = true;
     try {
       await pollFor(
         'the browser push path to clear the Signed ladder row (before the poll)',
         async () => (await signedLadderRow().count()) === 0,
         { timeoutMs: budgetMs, intervalMs: 500 },
       );
-    } catch (pushErr) {
+    } catch {
+      rowGone = false;
+    }
+    // Evidence chain, read AFTER the row settled so the probes hold
+    // the full window. Same host clock as crossingFrame.at (both are
+    // Date.now() on this machine); 5 s of slack absorbs delivery skew
+    // between the Node socket and the page socket.
+    const evidence = await page
+      .evaluate(() => ({
+        wsMessages: (globalThis.__wsProbe ?? [])
+          .filter((w) => String(w.url).includes('/ws/chain/'))
+          .flatMap((w) => w.messages ?? []),
+        fetches: (globalThis.__fetchProbe ?? []).map((f) => ({ url: f.url, at: f.at })),
+      }))
+      .catch(() => null);
+    const pageMsgAt =
+      evidence?.wsMessages
+        .filter((t) => t >= crossingFrame.at - 5_000)
+        .sort((a, b) => a - b)[0] ?? null;
+    const bookFetches = (evidence?.fetches ?? [])
+      .filter((f) => f.url.includes('/signed-offers'))
+      .sort((a, b) => a.at - b.at);
+    const refetch =
+      pageMsgAt === null
+        ? null
+        : bookFetches.find(
+            (f) => f.at >= pageMsgAt && f.at <= pageMsgAt + PUSH_REFETCH_BOUND_MS,
+          ) ?? null;
+    const prevFetch =
+      pageMsgAt === null
+        ? null
+        : [...bookFetches].reverse().find((f) => f.at < pageMsgAt) ?? null;
+    const stamps =
+      `[crossing frame (Node)=${new Date(crossingFrame.at).toISOString()}, ` +
+      `page WS message=${pageMsgAt === null ? '(none)' : new Date(pageMsgAt).toISOString()}, ` +
+      `refetch start=${refetch ? new Date(refetch.at).toISOString() : '(none within bound)'}, ` +
+      `previous /signed-offers fetch=${prevFetch ? new Date(prevFetch.at).toISOString() : '(none recorded)'}]`;
+    if (!rowGone) {
       step7Obs.browserPush =
         `FAIL — page WS ${openPushSocket.url} was OPEN yet the Signed ladder ` +
         'row outlived the 15 s stale window after the push frame: the deployed ' +
         'IndexerPushSync did not turn the frame into a book refresh (push did ' +
-        'not beat the poll) — the exact phase-3 regression this observation exists for';
-      throw new Error(`${pushErr.message} — ${step7Obs.browserPush}`);
+        `not beat the poll) — the exact phase-3 regression this observation exists for. ${stamps}`;
+      throw new Error(step7Obs.browserPush);
     }
-    step7Obs.browserPush =
-      `PASS — page WS ${openPushSocket.url} was OPEN and the ladder let the ` +
-      `row go within 15 s of the push frame, no tab flip (push beat the poll)`;
-    record('7b. browser push path (observation iii)', 'PASS', step7Obs.browserPush);
+    if (pageMsgAt === null) {
+      step7Obs.browserPush =
+        `FAIL — page WS ${openPushSocket.url} was OPEN but recorded NO message ` +
+        'around the crossing frame — the row-gone DOM flip is attributable to ' +
+        `polling, not push. ${stamps}`;
+      throw new Error(step7Obs.browserPush);
+    }
+    if (refetch === null) {
+      step7Obs.browserPush =
+        `FAIL — the page WS message arrived but no /signed-offers refetch ` +
+        `STARTED within ${PUSH_REFETCH_BOUND_MS / 1000}s of it — the row-gone ` +
+        `DOM flip is attributable to the ${POLL_TICK_MS / 1000}s poll, not the ` +
+        `push frame. ${stamps}`;
+      throw new Error(step7Obs.browserPush);
+    }
+    if (
+      prevFetch !== null &&
+      refetch.at - prevFetch.at >= POLL_TICK_MS - POLL_AMBIGUITY_MARGIN_MS
+    ) {
+      step7Obs.browserPush =
+        `AMBIGUOUS — a /signed-offers refetch started ` +
+        `${((refetch.at - pageMsgAt) / 1000).toFixed(1)}s after the page WS ` +
+        `message, but the previous book fetch was ` +
+        `${((refetch.at - prevFetch.at) / 1000).toFixed(1)}s earlier, so the ` +
+        `${POLL_TICK_MS / 1000}s poll tick was itself plausibly due inside the ` +
+        `message→refetch window — push vs poll cannot be attributed. ${stamps}`;
+      record('7b. browser push path (observation iii)', 'OBSERVED', step7Obs.browserPush);
+    } else {
+      step7Obs.browserPush =
+        `PASS — page WS ${openPushSocket.url} was OPEN; the book refetch started ` +
+        `${((refetch.at - pageMsgAt) / 1000).toFixed(1)}s after the page WS message ` +
+        `(within the ${PUSH_REFETCH_BOUND_MS / 1000}s push bound), the next ` +
+        `${POLL_TICK_MS / 1000}s poll tick was not due` +
+        `${prevFetch ? ` (previous fetch only ${((refetch.at - prevFetch.at) / 1000).toFixed(1)}s earlier)` : ' (no earlier fetch recorded)'}, ` +
+        `and the ladder let the row go, no tab flip — push beat the poll. ${stamps}`;
+      record('7b. browser push path (observation iii)', 'PASS', step7Obs.browserPush);
+    }
   } else {
     step7Obs.browserPush =
       `OPEN — the page's WebSocket never reached OPEN in this environment ` +
@@ -1135,19 +1347,43 @@ try {
           /* handled below — wireOrder stays null */
         }
       }
+      // GET recovery failed but the page's own POST REQUEST body was
+      // captured (Codex #1148 r2): cancel with the exact { order } the
+      // page sent — the same wire shape GET would have served, so
+      // wireToStruct consumes it directly. This closes the window
+      // where the POST landed but the drive died before GET read the
+      // row back (indexer unreachable / row not yet served) — the
+      // order would otherwise rest fillable with no replay payload.
+      if (wireOrder === null && capturedPostOrder !== null) {
+        wireOrder = capturedPostOrder;
+        if (orderHash === null) {
+          // POST response never captured either — derive the ledger
+          // key from the Diamond's own pure hash view over the payload.
+          orderHash = await diamondRead('signedOfferOrderHash', [wireToStruct(wireOrder)]);
+        }
+        record(
+          'cleanup: replay payload recovered from the captured POST request',
+          'OBSERVED',
+          `GET /signed-offers could not serve the row back — cancelling with the ` +
+            `order the page itself POSTed (orderHash ${orderHash}, ` +
+            `nonce ${wireOrder.nonce})`,
+        );
+      }
       if (wireOrder === null) {
-        // No row on the book: either the POST never succeeded (the
-        // signature was never published anywhere) or the book is
-        // unreachable. The first rests nothing; the second cannot be
-        // verified from here — stay loud.
+        // No row on the book AND no captured request body: either the
+        // POST never happened (the signature was never published
+        // anywhere) or both recovery sources failed at once. The first
+        // rests nothing; the second cannot be verified from here —
+        // stay loud.
         record(
           'cleanup: signed order',
           'FAIL',
           'sign was clicked but no matching row could be read back from ' +
-            `${INDEXER}/signed-offers — if the POST did land, a live signed order ` +
-            `for ${AMOUNT_WETH} WETH @ ${POST.pct} rests under signer ${lenderAddr}. ` +
-            'Re-run the book GET when the indexer is reachable and cancelSignedOffer ' +
-            'it (or invalidateSignedOfferNonce its nonce) manually.',
+            `${INDEXER}/signed-offers and no POST request body was captured — if ` +
+            `the POST did land, a live signed order for ${AMOUNT_WETH} WETH @ ` +
+            `${POST.pct} rests under signer ${lenderAddr}. Re-run the book GET ` +
+            'when the indexer is reachable and cancelSignedOffer it (or ' +
+            'invalidateSignedOfferNonce its nonce) manually.',
         );
       } else {
         const ledger = await diamondRead('signedOfferFilledAmount', [orderHash]);
@@ -1221,7 +1457,8 @@ console.log(
 // Step-7 three-way accounting — printed unconditionally so a PASS run
 // can never read as having proven the browser push path it did not
 // observe (Codex #1148): (i)/(ii) defer together on an ingest stall;
-// (iii) stays OPEN in any environment whose page WS can't connect.
+// (iii) reads UNCHECKED until step 7b actually probes the page socket,
+// and OPEN when the probe found it never connected in this environment.
 console.log('step-7 post-cancel observations (three independent rails):');
 console.log(`  (i)   indexer lifecycle (row leaves GET): ${step7Obs.lifecycle}`);
 console.log(`  (ii)  WS rail offer.changed (Node-side observer): ${step7Obs.wsRail}`);
