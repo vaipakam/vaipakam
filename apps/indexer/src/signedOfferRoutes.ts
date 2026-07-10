@@ -87,6 +87,9 @@ const U64_MAX = (1n << 64n) - 1n;
  *  wants "no deadline" uses 0, which the contract treats as GTC). Keeps the
  *  INTEGER columns within SQLite/Number-safe range. */
 const TS_SANITY_MAX = 253402300799n;
+/** Mirrors `LibVaipakam.MAX_INTEREST_BPS` — the create-time upper-sanity
+ *  ceiling on `interestRateBpsMax` (`InterestRateAboveCeiling`). */
+const MAX_INTEREST_BPS = 10_000n;
 
 /** uint256-in-decimal-string field names (beyond the specially-bounded ones
  *  handled inline below). */
@@ -134,12 +137,30 @@ const BOOL_FIELDS = [
  * Validate the POSTed order strictly and return the CANONICAL wire order
  * (addresses lowercased, field order fixed) or a per-field error string.
  *
- * Deliberately checks shape + local bounds only — the contract-side economic
- * validation (range semantics, AON invariants, liquidity, sanctions) all
- * re-runs on-chain at fill; re-implementing it here would drift. The bounds
- * that ARE enforced (enum ranges, duration 1..4385, non-zero amount,
- * timestamp sanity) are the garbage-gate: values no honest signer flow can
- * produce and that would otherwise pollute the queryable columns.
+ * Two layers of checks:
+ *
+ *  1. Shape + local bounds (enum ranges, duration 1..4385, timestamp
+ *     sanity) — the garbage-gate: values no honest signer flow can produce
+ *     and that would otherwise pollute the queryable columns.
+ *  2. STATIC fill-path materialization invariants (Codex #1145 round-1) —
+ *     every fill path (`acceptSignedOffer`, `acceptSignedOfferWithPermit`,
+ *     the v0.6 matcher's `matchSignedOffer` slices) materializes the order
+ *     through `OfferCreateFacet.createSignedOfferVault/Wallet`, which
+ *     re-validates it as a fresh offer. An order violating any of those
+ *     time-independent invariants is a GUARANTEED revert at fill — storing
+ *     it would advertise an actively harmful row: a taker can be prompted
+ *     to sign AcceptTerms and mine an approval for an order that can never
+ *     fill. Each check below is commented with the exact contract error it
+ *     mirrors (see `_materializeSignedOffer`, `_createOfferSetup`,
+ *     `_writeOfferPrincipalFields`, `_writeOfferCollateralFields`).
+ *
+ * Deliberately NOT mirrored (they re-run on-chain at fill and mirroring
+ * would drift): everything DYNAMIC — the governance-tunable duration cap
+ * (`cfgMaxOfferDurationDays`; only the hard 4385 ceiling is static), the
+ * fill-time expiry horizon (`OfferExpiryAboveCap` judges against
+ * `block.timestamp` at fill, so an above-horizon `expiresAt` becomes
+ * fillable as time advances), sanctions, per-asset pause, oracle-derived
+ * collateral floors/ceilings, and the signer's vault funding.
  */
 function validateOrder(
   raw: Record<string, unknown>,
@@ -227,6 +248,87 @@ function validateOrder(
       return { error: 'invalid-deadline' };
     }
     out.deadline = v;
+  }
+
+  // ── Static fill-path materialization invariants (Codex #1145 r1) ──
+  // Checked in the order the fill path hits them so a multi-violation
+  // order reports the same FIRST reason the live revert would.
+
+  // (a) v0.5 supported shape — `_materializeSignedOffer` /
+  // `_resolveSignedOfferStakeAsset` (OfferCreateFacet): BOTH legs must
+  // be ERC-20 (`SignedOfferUnsupportedShape`; NFT lender / NFT-rental
+  // funding is deferred past v0.5)…
+  if (out.assetType !== '0' || out.collateralAssetType !== '0') {
+    return { error: 'unsupported-asset-type' };
+  }
+  // …and refinance-tagged signed offers are out of v0.5 scope
+  // (`SignedOfferUnsupportedShape`).
+  if (BigInt(out.refinanceTargetLoanId as string) !== 0n) {
+    return { error: 'unsupported-refinance' };
+  }
+  // (b) `_createOfferSetup` self-lending guard: principal and collateral
+  // must be distinct contracts (`SelfCollateralizedOffer`; the contract
+  // exempts a zero lendingAsset, mirrored via the non-zero check).
+  if (
+    out.lendingAsset !== '0x0000000000000000000000000000000000000000' &&
+    out.lendingAsset === out.collateralAsset
+  ) {
+    return { error: 'self-collateralized' };
+  }
+
+  // (c) `_writeOfferPrincipalFields` — principal + rate invariants.
+  const amount = BigInt(out.amount as string);
+  const amountMax = BigInt(out.amountMax as string);
+  // `AmountMaxMustBePositive` — Phase 2 (#183) dropped the 0 ⇒ collapse
+  // fallback; a zero max is fail-loud at materialize.
+  if (amountMax === 0n) return { error: 'invalid-amountMax' };
+  // `InvalidAmountRange` — max below min.
+  if (amountMax < amount) return { error: 'amount-range' };
+  const rate = BigInt(out.interestRateBps as string);
+  const rateMax = BigInt(out.interestRateBpsMax as string);
+  // `InvalidRateRange` — max below min (zero on BOTH ends is a
+  // legitimate no-interest shape and stays accepted).
+  if (rateMax < rate) return { error: 'rate-range' };
+  // `InterestRateAboveCeiling` — LibVaipakam.MAX_INTEREST_BPS = 10000.
+  if (rateMax > MAX_INTEREST_BPS) return { error: 'rate-above-ceiling' };
+  // `AonRequiresSingleValueAmount` — a range under AON is meaningless.
+  if (out.fillMode === '1' && amount !== amountMax) {
+    return { error: 'aon-single-value' };
+  }
+  // `IocRequiresExpiry` — IOC's defining knob IS the window.
+  if (out.fillMode === '2' && out.expiresAt === '0') {
+    return { error: 'ioc-requires-expiry' };
+  }
+
+  // (d) `_writeOfferCollateralFields` — collateral invariants. The v0.5
+  // shape gate above guarantees ERC-20/ERC-20, so the contract's
+  // "true ERC-20 loan" strictness applies to every stored order.
+  // `allowsParallelSale` needs Borrower + NFT collateral + AON
+  // (`ParallelSaleRequiresBorrowerOffer` / `…RequiresNFTCollateral`) —
+  // under the ERC-20-collateral-only v0.5 shape it ALWAYS reverts.
+  if (out.allowsParallelSale === true) {
+    return { error: 'unsupported-parallel-sale' };
+  }
+  const collateralAmount = BigInt(out.collateralAmount as string);
+  const collateralAmountMax = BigInt(out.collateralAmountMax as string);
+  // `CollateralMustBePositive` / `CollateralAmountMaxMustBePositive` —
+  // both-zero passes (the explicit no-collateral lender shape); a mixed
+  // zero is the silent-zero bug the contract fail-louds on.
+  if (!(collateralAmount === 0n && collateralAmountMax === 0n)) {
+    if (collateralAmount === 0n) return { error: 'invalid-collateralAmount' };
+    if (collateralAmountMax === 0n) {
+      return { error: 'invalid-collateralAmountMax' };
+    }
+  }
+  // `InvalidCollateralAmountRange` — max below min.
+  if (collateralAmountMax < collateralAmount) {
+    return { error: 'collateral-range' };
+  }
+  // `LenderCollateralRangeNotAllowed` — lender collateral is single-value
+  // by #164's structural invariant (their collateralAmount IS the derived
+  // requirement); only Borrower offers range on collateral.
+  if (out.offerType === '0' && collateralAmountMax !== collateralAmount) {
+    return { error: 'lender-collateral-range' };
   }
 
   return { order: out as unknown as SignedOrderWire };

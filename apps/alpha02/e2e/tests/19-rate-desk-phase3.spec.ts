@@ -450,9 +450,24 @@ test('gasless loop: maker posts a signed order with ONE signature (no transactio
   const fill = confirm.getByRole('button', { name: 'Fill order', exact: true });
   await expect(fill).toBeEnabled({ timeout: 30_000 });
   await fill.click();
-  await expect(
-    confirm.getByText('Signed order filled — the loan is live.'),
-  ).toBeVisible({ timeout: 120_000 });
+  // The transient success copy is deliberately NOT the primary assert
+  // (same posture as the MatchBand's executed note): the fill's
+  // invalidation refetches the signed book, the stub GET drops the
+  // consumed row, and RateLadder's stale-target clear (#1145 round-1
+  // P2) then auto-closes the confirm — the text lives only for the
+  // refetch round-trip. The ON-CHAIN loan poll below is the success
+  // criterion; here we only require that the confirm either shows the
+  // success copy or has already auto-closed (never an error state).
+  await expect
+    .poll(
+      async () =>
+        (await confirm
+          .getByText('Signed order filled — the loan is live.')
+          .isVisible()
+          .catch(() => false)) || (await confirm.count()) === 0,
+      { timeout: 120_000 },
+    )
+    .toBe(true);
 
   // ---- on-chain: the loan carries the SIGNED terms exactly ----------
   await expect

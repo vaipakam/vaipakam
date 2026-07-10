@@ -225,6 +225,40 @@ describe('ladder merge', () => {
     const ladder = buildLadder([signed], 30, NOW, undefined);
     expect(takerCandidate(ladder.asks[0], undefined)).toBeNull();
   });
+
+  // Codex #1145 round-1 P2 #5 — `acceptSignedOffer`'s vetting
+  // (`_vetSignedOffer`) reverts `SignedOfferConsumed` on ANY non-zero
+  // fill ledger, so a matcher-partially-filled signed order must never
+  // arm the direct Fill affordance. Its remainder is still real depth
+  // (matchable via `matchSignedOffer`), so the row stays on the ladder.
+  it('signedFillCandidate skips partially matched rows while their remainder still rests as depth', () => {
+    const partial = signedRowToDeskRow(
+      signedRow(wire(), { filledAmount: '400' }),
+      CHAIN,
+      NOW,
+    )!;
+    const ladder = buildLadder([partial], 30, NOW, undefined);
+    // The remainder is honest depth…
+    expect(ladder.asks[0].size).toBe(600n);
+    // …but no direct-fill button: the confirm would be doomed ("gone"
+    // before signing).
+    expect(signedFillCandidate(ladder.asks[0], TAKER)).toBeNull();
+  });
+
+  it('signedFillCandidate picks the unfilled signed row when a level mixes partial and fresh', () => {
+    const partial = signedRowToDeskRow(
+      signedRow(wire(), { filledAmount: '400' }),
+      CHAIN,
+      NOW,
+    )!;
+    const freshOrder = wire({ nonce: '43' }); // distinct hash, same rate level
+    const fresh = signedRowToDeskRow(signedRow(freshOrder), CHAIN, NOW)!;
+    const ladder = buildLadder([partial, fresh], 30, NOW, undefined);
+    expect(ladder.asks).toHaveLength(1); // same 937 bps level
+    expect(signedFillCandidate(ladder.asks[0], TAKER)?.signed?.orderHash).toBe(
+      fresh.signed!.orderHash,
+    );
+  });
 });
 
 describe('topOfBookMatchPair (slice B)', () => {

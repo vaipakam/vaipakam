@@ -92,7 +92,9 @@ function makeOrder(overrides: Partial<SignedOrderWire> = {}): SignedOrderWire {
     interestRateBpsMax: '800',
     collateralAsset: '0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb',
     collateralAmount: '2000000000000000000',
-    collateralAmountMax: '10000000000000000000',
+    // Single-value: the default fixture is a LENDER order (offerType 0)
+    // and `validateOrder` mirrors `LenderCollateralRangeNotAllowed`.
+    collateralAmountMax: '2000000000000000000',
     durationDays: '30',
     assetType: '0',
     collateralAssetType: '0',
@@ -373,5 +375,135 @@ describe('validateOrder — the POST shape gate', () => {
       }) as unknown as Record<string, unknown>,
       'invalid-allowsPartialRepay',
     );
+  });
+
+  // ── Static fill-path materialization invariants (Codex #1145 r1) ──
+  // Each mirrors the contract error `createSignedOfferVault`'s path
+  // would revert with — a stored violation would advertise an order a
+  // taker signs + approves for that can NEVER fill.
+  describe('materialization invariants', () => {
+    const raw = (o: Partial<SignedOrderWire>) =>
+      makeOrder(o) as unknown as Record<string, unknown>;
+
+    it('rejects zero amountMax (AmountMaxMustBePositive)', () => {
+      expectError(raw({ amountMax: '0' }), 'invalid-amountMax');
+    });
+
+    it('rejects amountMax below amount (InvalidAmountRange)', () => {
+      expectError(
+        raw({ amount: '100', amountMax: '99' }),
+        'amount-range',
+      );
+    });
+
+    it('rejects an inverted rate range (InvalidRateRange); a zero-zero rate stays valid', () => {
+      expectError(
+        raw({ interestRateBps: '800', interestRateBpsMax: '500' }),
+        'rate-range',
+      );
+      // No-interest shape: zero on both ends is structurally meaningful.
+      const zeroRate = validateOrder(
+        raw({ interestRateBps: '0', interestRateBpsMax: '0' }),
+        NOW,
+      );
+      expect('order' in zeroRate).toBe(true);
+    });
+
+    it('rejects a rate ceiling above 10000 bps (InterestRateAboveCeiling)', () => {
+      expectError(
+        raw({ interestRateBps: '500', interestRateBpsMax: '10001' }),
+        'rate-above-ceiling',
+      );
+    });
+
+    it('rejects AON with a non-trivial amount range (AonRequiresSingleValueAmount)', () => {
+      expectError(raw({ fillMode: '1' }), 'aon-single-value'); // fixture: 1e18..5e18
+      const single = validateOrder(
+        raw({ fillMode: '1', amount: '5', amountMax: '5' }),
+        NOW,
+      );
+      expect('order' in single).toBe(true);
+    });
+
+    it('rejects IOC without an expiry (IocRequiresExpiry)', () => {
+      expectError(
+        raw({ fillMode: '2', amount: '5', amountMax: '5', expiresAt: '0' }),
+        'ioc-requires-expiry',
+      );
+      const withExpiry = validateOrder(
+        raw({ fillMode: '2', expiresAt: String(NOW + 86_400) }),
+        NOW,
+      );
+      expect('order' in withExpiry).toBe(true);
+    });
+
+    it('rejects a mixed-zero collateral pair; both-zero (explicit no-collateral) passes', () => {
+      expectError(
+        raw({ collateralAmount: '0', collateralAmountMax: '5' }),
+        'invalid-collateralAmount', // CollateralMustBePositive
+      );
+      expectError(
+        raw({ collateralAmount: '5', collateralAmountMax: '0' }),
+        'invalid-collateralAmountMax', // CollateralAmountMaxMustBePositive
+      );
+      const noCollateral = validateOrder(
+        raw({ collateralAmount: '0', collateralAmountMax: '0' }),
+        NOW,
+      );
+      expect('order' in noCollateral).toBe(true);
+    });
+
+    it('rejects collateralAmountMax below collateralAmount (InvalidCollateralAmountRange)', () => {
+      expectError(
+        raw({
+          offerType: '1',
+          collateralAmount: '10',
+          collateralAmountMax: '9',
+        }),
+        'collateral-range',
+      );
+    });
+
+    it('rejects a RANGED lender collateral (LenderCollateralRangeNotAllowed); borrower ranges pass', () => {
+      expectError(
+        raw({
+          offerType: '0',
+          collateralAmount: '10',
+          collateralAmountMax: '20',
+        }),
+        'lender-collateral-range',
+      );
+      const borrowerRange = validateOrder(
+        raw({
+          offerType: '1',
+          collateralAmount: '10',
+          collateralAmountMax: '20',
+        }),
+        NOW,
+      );
+      expect('order' in borrowerRange).toBe(true);
+    });
+
+    it('rejects non-ERC-20 legs and refinance tags (SignedOfferUnsupportedShape, v0.5 scope)', () => {
+      expectError(raw({ assetType: '1' }), 'unsupported-asset-type');
+      expectError(raw({ collateralAssetType: '2' }), 'unsupported-asset-type');
+      expectError(
+        raw({ refinanceTargetLoanId: '7' }),
+        'unsupported-refinance',
+      );
+    });
+
+    it('rejects allowsParallelSale (needs NFT collateral — impossible under the v0.5 ERC-20 shape)', () => {
+      expectError(raw({ allowsParallelSale: true }), 'unsupported-parallel-sale');
+    });
+
+    it('rejects a self-collateralized pair (SelfCollateralizedOffer)', () => {
+      expectError(
+        raw({
+          collateralAsset: '0xAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA',
+        }),
+        'self-collateralized', // lendingAsset is the same 0xaa… address
+      );
+    });
   });
 });

@@ -60,8 +60,18 @@ export function MatchBand({
   const preview = usePreviewMatch(pair);
 
   const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const [done, setDone] = useState(false);
+  // Executed / failed state is KEYED to the pair it happened on (Codex
+  // #1145 round-1 P2 #3): the component lives across book refetches, so
+  // plain booleans would leak the previous pair's terminal state onto a
+  // NEW crossable pair (a fresh matchable pair rendering "Match
+  // executed", or a stale error). Deriving `done`/`error` from a
+  // stored pair key means a top-of-book change resets both for free —
+  // no effect, no one-frame stale flash.
+  const [doneKey, setDoneKey] = useState<string | null>(null);
+  const [errorState, setErrorState] = useState<{
+    key: string;
+    message: string;
+  } | null>(null);
 
   // Executing a match INITIATES a loan for the two makers — gate it on
   // the same operator kill switch as accepting an offer.
@@ -75,15 +85,22 @@ export function MatchBand({
   // §5.2: ONLY a contract-confirmed Ok preview may render the band.
   if (!p || p.errorCode !== 0) return null;
 
+  const pairKey = `${pair.lenderOfferId}:${pair.borrowerOfferId}`;
+  const done = doneKey === pairKey;
+  const error =
+    errorState !== null && errorState.key === pairKey
+      ? errorState.message
+      : null;
+
   async function execute() {
     setBusy(true);
-    setError(null);
+    setErrorState(null);
     try {
       await write('matchOffers', [
         BigInt(pair!.lenderOfferId),
         BigInt(pair!.borrowerOfferId),
       ]);
-      setDone(true);
+      setDoneKey(pairKey);
       void queryClient.invalidateQueries({ queryKey: ['deskBook'] });
       void queryClient.invalidateQueries({ queryKey: ['deskMarkets'] });
       void queryClient.invalidateQueries({ queryKey: ['deskTape'] });
@@ -91,7 +108,7 @@ export function MatchBand({
       void queryClient.invalidateQueries({ queryKey: ['activeOffers'] });
       void queryClient.invalidateQueries({ queryKey: ['myOffers'] });
     } catch (err) {
-      setError(captureTxError(err));
+      setErrorState({ key: pairKey, message: captureTxError(err) });
     } finally {
       setBusy(false);
     }

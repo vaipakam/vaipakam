@@ -75,6 +75,17 @@ function LevelRow({
   // Any signed depth at this level gets the badge — the level may mix
   // on-chain and signed rows at the same rate.
   const hasSigned = level.offers.some((o) => o.signed !== undefined);
+  // When the level's only signed depth is PARTIALLY MATCHED (fill
+  // ledger non-zero ⇒ direct accept reverts SignedOfferConsumed, so
+  // `signedFillCandidate` armed no button — Codex #1145 round-1 P2
+  // #5), the badge tooltip explains why there's depth but no Fill:
+  // the remainder fills through the matcher path only.
+  const signedPartialOnly =
+    hasSigned &&
+    signedFill === null &&
+    level.offers.some(
+      (o) => o.signed !== undefined && BigInt(o.amountFilled || '0') > 0n,
+    );
   return (
     <div
       className={`desk-ladder-row${level.own ? ' desk-own' : ''}${
@@ -102,7 +113,14 @@ function LevelRow({
       </span>
       <span className="desk-ladder-action">
         {hasSigned ? (
-          <span className="desk-signed-chip" title={copy.desk.signed.badgeTooltip}>
+          <span
+            className="desk-signed-chip"
+            title={
+              signedPartialOnly
+                ? copy.desk.signed.partialBadgeTooltip
+                : copy.desk.signed.badgeTooltip
+            }
+          >
             {copy.desk.signed.badge}
           </span>
         ) : null}
@@ -176,6 +194,25 @@ export function RateLadder({
   // a book refresh that drops the selected order also drops the panel
   // (the confirm re-vets everything live at submit anyway).
   const [fillTarget, setFillTarget] = useState<SignedRowMeta | null>(null);
+
+  // A stale fill target must not outlive the book it was armed from
+  // (Codex #1145 round-1 P2 #4): switching market/tenor swaps the
+  // ladder under the panel, and a refetch can drop the order (filled /
+  // cancelled elsewhere) — either way the lingering confirm would offer
+  // a fill for a row the rendered book no longer shows. Clear it as
+  // soon as a REAL ladder no longer lists the target's order hash. A
+  // routine refetch that still contains the order never trips the
+  // containment check, so an open confirm is never closed spuriously
+  // mid-fill; `ladder === null` (loading / transient unavailability)
+  // deliberately keeps the target — the early returns below hide the
+  // confirm then anyway, and a blip must not eat an in-progress fill.
+  useEffect(() => {
+    if (fillTarget === null || ladder === null) return;
+    const listed = [...ladder.asks, ...ladder.bids].some((lvl) =>
+      lvl.offers.some((o) => o.signed?.orderHash === fillTarget.orderHash),
+    );
+    if (!listed) setFillTarget(null);
+  }, [ladder, fillTarget]);
 
   if (loading) {
     return (

@@ -890,6 +890,8 @@ export const copy = {
       badge: 'Signed',
       badgeTooltip:
         'Gasless signed order from the off-chain book — the maker signed it without a transaction, and it fills in a single on-chain transaction by whoever takes it. Signed rows always come from the order-book service, never the chain, until they fill.',
+      partialBadgeTooltip:
+        'Partially matched signed order — its remainder still counts as depth and fills through the permissionless matcher, but a direct fill is no longer possible.',
       fill: 'Fill',
       confirmTitle: 'Fill signed order',
       confirmLede:
@@ -1001,6 +1003,8 @@ export const copy = {
         'Gasless posting needs the order-book service, which isn’t configured right now. On-chain posting still works.',
       gaslessPost: 'Sign & post to the book',
       gaslessPosting: 'Signing…',
+      gaslessConsentRequired:
+        'Review and accept the risk disclosures and terms first — for a gasless order, your signature is what records that consent.',
       gaslessPosted:
         'Signed order posted to the book — no gas spent. It fills when a taker accepts it.',
       gaslessFundsWarn: (amount: string, symbol: string) =>

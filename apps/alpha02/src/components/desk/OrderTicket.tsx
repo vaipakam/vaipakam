@@ -415,6 +415,13 @@ export function OrderTicket({
   const canPost =
     fieldsComplete &&
     formError === null &&
+    // Explicit consent gate (Codex #1145 round-1 P2 #2). `formError`
+    // already encodes it (validateOfferForm rejects consent-false
+    // forms), but the GASLESS path has no contract backstop — the fill
+    // stamps `creatorRiskAndTermsConsent = true` from the signature —
+    // so the button gate must not hinge on a validator's internal
+    // check ordering.
+    consent &&
     expiryOk &&
     !iocNeedsExpiry &&
     !overDurationCap &&
@@ -613,6 +620,18 @@ export function OrderTicket({
     try {
       if (!address || !walletChain || !walletClient || !publicClient) {
         throw new Error(copy.wallet.connectFirst);
+      }
+      // Consent is LOAD-BEARING on this path, not just a UX gate (Codex
+      // #1145 round-1 P2 #2): the signed wire order carries NO consent
+      // field — `LibSignedOffer.toCreateOfferParams` stamps
+      // `creatorRiskAndTermsConsent = true` at fill ("the signature IS
+      // the consent") — so signing without the checkbox would
+      // manufacture a consent the maker never gave. The on-chain path
+      // has a contract backstop (`RiskAndTermsConsentRequired` reverts
+      // a consent-false payload); this guard is the gasless
+      // equivalent: the button gate can regress, this must not.
+      if (!consent) {
+        throw new Error(copy.desk.ticket.gaslessConsentRequired);
       }
       const payload = buildPayload(consent);
       if (!payload) {

@@ -565,6 +565,14 @@ function readBody(req) {
  * Diamond's domain, and chain state must not already know the order as
  * consumed / nonce-burned (2 eth_calls — free against the fork).
  * 201 first accept, 200 idempotent re-post, 400/409 like the worker.
+ *
+ * The worker additionally rejects orders that can never materialize
+ * (#1145 round-1 P2: amountMax/rate-range/collateral invariants
+ * mirrored from OfferCreateFacet's signed fill path). Those static
+ * rejections live under the "loose shape checks" umbrella above —
+ * the specs only post ticket-generated orders, which satisfy every
+ * invariant; if a future spec needs to probe a rejection, drive the
+ * WORKER's unit-tested surface, not a stub re-implementation.
  */
 async function handleSignedOfferPost(req, json) {
   let body;

@@ -609,9 +609,16 @@ export function takerCandidate(
 /** The signed-fill affordance's candidate at a level: the first signed
  *  row that is not the connected wallet's own (a maker can't fill their
  *  own order — `acceptSignedOffer` would have the same party on both
- *  legs) and still has remaining size. Partial fills don't disqualify:
- *  v0.5's direct fill consumes the whole remaining ceiling, so any
- *  positive remainder is fillable. */
+ *  legs), still has remaining size, AND is completely unfilled. The
+ *  last condition mirrors the contract (Codex #1145 round-1 P2 #5):
+ *  `SignedOfferFacet._vetSignedOffer` reverts `SignedOfferConsumed` on
+ *  ANY non-zero `signedOfferFilled[orderHash]`, so a signed order the
+ *  matcher partially filled can never be DIRECT-filled — arming Fill on
+ *  it would walk the taker into a doomed confirm ("gone" before
+ *  signing). The remainder is still honestly on the book: it stays
+ *  matchable via `matchSignedOffer` (whose vetting allows
+ *  `filled < ceiling`), so the row keeps resting as ladder DEPTH — it
+ *  just carries no direct-fill button (the badge tooltip says why). */
 export function signedFillCandidate(
   level: LadderLevel | undefined,
   wallet: string | undefined,
@@ -622,6 +629,10 @@ export function signedFillCandidate(
     level.offers.find(
       (o) =>
         o.signed !== undefined &&
+        // `amountFilled` on a signed row is the mapper's mirror of the
+        // on-chain fill ledger (`signedRowToDeskRow`) — non-zero means
+        // the direct-accept vetting rejects it.
+        BigInt(o.amountFilled || '0') === 0n &&
         offerRemaining(o) > 0n &&
         (!me || o.signed.signer.toLowerCase() !== me),
     ) ?? null
