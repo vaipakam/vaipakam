@@ -27,39 +27,81 @@ in the pattern the codebase already uses.
 
 ## 2. Design — two invariants, one hook + one setter + one guardrail
 
-### Invariant A — register both holders when a loan terminalizes (the primary fix)
+### Invariant A — register both holders at every DEFERRED-CLAIM-CREATING transition
 
-Add `LibSanctionsHooks.onLoanTerminalized(loan)` and call it from `transition`/`transitionFromAny`
-when `to` is terminal (Repaid / Defaulted / Settled / InternalMatched). It registers BOTH current
-position holders (registry-aware `recordFrozenClaimantForLoan`, idempotent, no-op for clean/absent).
-Because every close-out ends in a terminal transition, **every deferred claim's holder is now
-registered by construction** — the ~27 terminal claim writes need no per-site register.
+The trigger is **not** "terminal" but "**this transition creates a deferred position-holder
+payout**." Two transition classes create claims (Codex #1136-r1 D3):
 
-- Timing: transition fires at close-out (oracle-up observation), BEFORE the position NFTs burn
-  (they burn at claim), so `ownerOf` resolves. Where a path burns at close-out, order the hook
-  before the burn (audited in the guardrail).
-- Non-terminal deferred payouts (partial internal-match / preclose top-up `heldForLender +=`,
-  loan stays Active) are NOT covered by the terminal hook → funnel those 2–3 sites through a
-  `LibClaims.creditHeldForLender(loanId, amount)` setter that registers the lender holder.
+1. The terminal edges (`* → Repaid / Defaulted / Settled / InternalMatched`).
+2. **`Active → FallbackPending`** — `RiskFacet`/`DefaultedFacet` write the fallback-entry
+   lender/borrower claim rows HERE, at a NON-terminal state. The next *terminal* transition
+   (`FallbackPending → Defaulted`) may not run until a much later claim, so a terminal-only hook is
+   too late: a holder flagged (oracle up) at fallback entry, whose Defaulted transition later runs
+   during an outage, would never be registered → fail-open. Fallback entry MUST register too.
+
+**Host — preserving `expectedFrom` (Codex #1136-r1 D2).** `LibLifecycle.transition(loan,
+expectedFrom, to)` and `transitionFromAny(loan, to)` each validate a *caller-specific* source edge;
+the lifecycle table permits multiple sources per target (`FallbackPending → Repaid/Defaulted`,
+`Active/… → Settled`). A host taking only `(loanId, to)` could validate only "some legal edge" —
+NOT behavior-preserving. So the host mirrors BOTH signatures:
+
+```
+LifecycleFacet.terminalize(uint256 loanId, LoanStatus expectedFrom, LoanStatus to)  // onlyDiamondInternal
+LifecycleFacet.terminalizeFromAny(uint256 loanId, LoanStatus to)
+  → LibLifecycle.transition(loan, expectedFrom, to)  // SAME validated edge as today
+  → recordFrozenClaimantForLoan(loan, lender=true) + (…, false)   // both current holders, once
+```
+
+Every claim-creating transition (the terminal edges + `Active → FallbackPending`) swaps its inline
+`LibLifecycle.transition(...)` for a `crossFacetCall(terminalize[FromAny], loanId, [expectedFrom,] to)`.
+Non-claim-creating transitions keep the plain inlined `LibLifecycle.transition`. The register is
+idempotent + registry-aware (no-op for clean/absent), and runs BEFORE any position-NFT burn (burns
+happen at claim, not at these transitions), so `ownerOf` resolves.
+
+**Non-terminal held credits — an ASSET-AWARE setter (Codex #1136-r1 D6).** The partial-internal-match
+/ preclose-top-up `heldForLender +=` sites (loan stays Active, no transition) funnel through
+`LibClaims.creditHeldForLender(loanId, lender, asset, amount)` — NOT `(loanId, amount)`. The setter
+owns the FULL accounting those sites do today: the register, the protocol-tracked deposit tick, AND
+the encumbrance reservation (`encumberLenderProceeds` / the dedicated active-held ledger), so the
+funnel cannot silently drop the reservation that stops the stored lender spending value owed to the
+current holder before claim.
 
 ### Invariant B — registry-aware decision on every inline holder payout
 
-Every "pay `ownerOf(positionTokenId)` now" site routes through the existing
-`LibCloseoutFreeze.freezeOrPayActiveLender{Resident,FromPayer,FromVault}` helpers (park-or-pay);
-discretionary, holder-initiated actions use the hard-block variant (`mustFreezeParty` → revert),
-as Refinance/backstop now do.
+Two payout channels:
+
+1. **Diamond-mediated** — every "pay `ownerOf(positionTokenId)` now" via `safeTransfer` /
+   `safeTransferFrom` / `vaultWithdrawERC20` routes through the existing
+   `LibCloseoutFreeze.freezeOrPayActiveLender{Resident,FromPayer,FromVault}` helpers (park-or-pay);
+   discretionary holder-initiated actions use the hard-block variant (`mustFreezeParty` → revert),
+   as Refinance/backstop do.
+2. **Seaport prepay-sale (Codex #1136-r1 D5).** The prepay-collateral-sale path settles inside
+   Seaport, which pays *consideration directly to the current lender/borrower NFT holders* BEFORE
+   the diamond callback flips the loan to `Settled`. A terminal hook runs only AFTER the holder was
+   paid, and a `safeTransfer`/`vaultWithdraw` scan never sees a Seaport consideration recipient. So
+   this channel must be made registry-aware **before the order fills** — the diamond validates/builds
+   the order, so gate the consideration recipients (`mustFreezeParty` → block-or-redirect a frozen
+   holder's consideration) at order construction/validation, not at the post-fill callback.
 
 ### Keystone — a CI guardrail (deploy-sanity test)
 
 In the repo's existing idiom (`SelectorCoverageTest`, `FacetSizeLimitTest`,
-`check-event-coverage.mjs`): a test that scans `src/facets/*.sol` and FAILS CI if it finds
-- a `{lender,borrower,borrowerSurplus}Claims[…] =` or `heldForLender[…] +=` in a facet whose
-  enclosing function does not also terminalize via `transition` (hook-covered) and is not on an
-  explicit allowlist, or
-- a `safeTransfer`/`safeTransferFrom`/`vaultWithdrawERC20` whose recipient is `ownerOf(…)` outside
-  the payout helper, unless allowlisted with a one-line reason.
+`check-event-coverage.mjs`), a test that scans **all production Solidity — `src/**/*.sol`, libraries
+included, NOT just `src/facets/` (Codex #1136-r1 D1)** — because claim/held mutations already live in
+libraries (`LibCloseoutFreeze` writes claim rows + `heldForLender`, `LibFacet` increments
+`heldForLender`, `LibSwapToRepayIntentSettlement` writes `borrowerClaims`). It FAILS CI on:
 
-This is what durably ends the whack-a-mole: a future path that forgets the treatment fails CI.
+- a `{lender,borrower,borrowerSurplus}Claims[…] =` **full-struct assignment**, a claim **field-write
+  via a storage pointer** (`…Claims[…].amount = …` / `.asset = …`, incl. the fold/rewrite paths —
+  Codex #1136-r1 D4), or a `heldForLender[…] +=`, anywhere outside `LibClaims` / the `terminalize`
+  host path, and not on an explicit allowlist; or
+- a `safeTransfer`/`safeTransferFrom`/`vaultWithdrawERC20` whose recipient is `ownerOf(…)`, or a
+  Seaport consideration item constructed to a position-holder, outside the payout helper — unless
+  allowlisted with a one-line reason.
+
+Enforcing the mutations through checked setters (so a raw write cannot compile) is stronger than a
+regex scan; the design prefers setters where practical and uses the scan as the backstop. This is
+what durably ends the whack-a-mole: a future path that forgets the treatment fails CI.
 
 ## 3. The EIP-170 tension (the load-bearing design decision)
 
@@ -68,15 +110,17 @@ Chainlink staticcall + registry/marker writes) so it MUST be host-routed; the ho
 then inlines into every `transition` caller. Facets already at the wall (Preclose ~262 B,
 EarlyWithdrawal ~81 B, Defaulted ~59 B headroom) would overflow.
 
-**DECISION (owner, 2026-07-10): option (b) — host the terminal transition.**
+**DECISION (owner, 2026-07-10): option (b) — host the transition (register once in the host).**
 
-A new `LifecycleFacet.terminalize(loanId, to)` host (onlyDiamondInternal) performs the terminal
-transition AND the both-holder register ONCE, in the host's own bytecode. Every close-out replaces
-its inline `LibLifecycle.transition(loan, from, Repaid/Defaulted/…)` at a TERMINAL edge with a
-`crossFacetCall(terminalize.selector, loanId, to)`. The register cost is borne once (in the host),
-not inlined into every caller → the EIP-170 spread is permanently removed, and tight facets
-(Preclose/EarlyWithdrawal/Defaulted) get SMALLER (they drop the inlined `transition` body for a
-~50 B stub). Non-terminal transitions keep the plain inlined `LibLifecycle.transition`.
+A new `LifecycleFacet.terminalize(loanId, expectedFrom, to)` + `terminalizeFromAny(loanId, to)` host
+pair (onlyDiamondInternal) performs the *validated* transition (SAME `expectedFrom` edge-check as
+`LibLifecycle.transition`/`transitionFromAny` today — Codex #1136-r1 D2) AND the both-holder register
+ONCE, in the host's own bytecode. Every CLAIM-CREATING transition (the terminal edges + `Active →
+FallbackPending`) replaces its inline `LibLifecycle.transition(loan, expectedFrom, to)` with a
+`crossFacetCall(terminalize[FromAny], loanId, [expectedFrom,] to)`. The register cost is borne once
+(in the host), not inlined into every caller → the EIP-170 spread is permanently removed, and tight
+facets (Preclose/EarlyWithdrawal/Defaulted) get SMALLER (they drop the inlined `transition` body for
+a ~50 B stub). Non-claim-creating transitions keep the plain inlined `LibLifecycle.transition`.
 
 Considered and rejected: (a) gate+host-route the hook inside inlined `transition` (absorbs the
 spread, ongoing headroom pressure); (c) setter-funnel of the 27 claim writes (largest diff, no
