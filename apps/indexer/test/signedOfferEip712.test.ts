@@ -93,7 +93,11 @@ function makeOrder(overrides: Partial<SignedOrderWire> = {}): SignedOrderWire {
   return {
     offerType: '0',
     lendingAsset: '0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
-    amount: '1000000000000000000',
+    // Single-value principal (#1145 r3): a RANGED lender order with
+    // constant non-zero collateral can never satisfy the matcher's
+    // constant-ratio vet ('ranged-collateral-ratio'), so the base fixture
+    // carries the desk's collapse-to-single-value lender shape.
+    amount: '5000000000000000000',
     amountMax: '5000000000000000000',
     interestRateBps: '500',
     interestRateBpsMax: '800',
@@ -425,6 +429,41 @@ describe('validateOrder — the POST shape gate', () => {
     expect('order' in atCap).toBe(true);
   });
 
+  // #1145 round-3 — non-zero expiresAt is capped at the contract's create
+  // horizon (LibVaipakam.MAX_OFFER_EXPIRY_HORIZON = 365 days): every fill
+  // attempted before the horizon catches up reverts OfferExpiryAboveCap
+  // in OfferCreateFacet._writeOfferPrincipalFields, so a beyond-horizon
+  // row is guaranteed-unfillable depth at ingest time.
+  it('caps non-zero expiresAt at now + 365d (OfferExpiryAboveCap mirror)', () => {
+    const YEAR = 365 * 86_400;
+    expectError(
+      makeOrder({ expiresAt: String(NOW + YEAR + 1) }) as unknown as Record<
+        string,
+        unknown
+      >,
+      'expiry-above-horizon',
+    );
+    // Exactly at the horizon: allowed — the contract's cap is
+    // strict-greater, same as the deadline cap above.
+    const atCap = validateOrder(
+      makeOrder({ expiresAt: String(NOW + YEAR) }) as unknown as Record<
+        string,
+        unknown
+      >,
+      NOW,
+    );
+    expect('order' in atCap).toBe(true);
+    // The deadline exemption (deadline <= expiresAt) is now transitively
+    // bounded: a 2-year deadline == expiresAt fails on the EXPIRY first.
+    expectError(
+      makeOrder({
+        expiresAt: String(NOW + 2 * YEAR),
+        deadline: String(NOW + 2 * YEAR),
+      }) as unknown as Record<string, unknown>,
+      'expiry-above-horizon',
+    );
+  });
+
   it('rejects a wrongly-typed bool', () => {
     expectError(
       makeOrder({
@@ -474,7 +513,11 @@ describe('validateOrder — the POST shape gate', () => {
     });
 
     it('rejects AON with a non-trivial amount range (AonRequiresSingleValueAmount)', () => {
-      expectError(raw({ fillMode: '1' }), 'aon-single-value'); // fixture: 1e18..5e18
+      // Explicit range — the base fixture is single-value since #1145 r3.
+      expectError(
+        raw({ fillMode: '1', amount: '1000000000000000000' }),
+        'aon-single-value',
+      );
       const single = validateOrder(
         raw({ fillMode: '1', amount: '5', amountMax: '5' }),
         NOW,
@@ -567,6 +610,53 @@ describe('validateOrder — the POST shape gate', () => {
       // base fixture already carries it and must keep validating.
       const zeroPrepay = validateOrder(raw({ prepayAsset: ZERO }), NOW);
       expect('order' in zeroPrepay).toBe(true);
+    });
+
+    it('rejects a ranged row with a non-constant collateral ratio (SignedOfferRatioNotConstant)', () => {
+      // #1145 r3 — mirrors OfferMatchFacet._vetSignedOfferForMatch:
+      // `collateralAmount * ceiling == effCollMax * amount`, ranged rows
+      // only (they are matcher-only depth).
+      expectError(
+        raw({
+          offerType: '1',
+          amount: '100',
+          amountMax: '1000',
+          collateralAmount: '10',
+          collateralAmountMax: '20',
+        }),
+        'ranged-collateral-ratio',
+      );
+      // Ranged LENDER + constant non-zero collateral is the same dead
+      // shape (lender collateral is structurally single-value, so the
+      // ratio can never hold across the range).
+      expectError(
+        raw({ amount: '1000000000000000000' }),
+        'ranged-collateral-ratio',
+      );
+      // Proportional borrower range slices cleanly: 10*1000 == 100*100.
+      const proportional = validateOrder(
+        raw({
+          offerType: '1',
+          amount: '100',
+          amountMax: '1000',
+          collateralAmount: '10',
+          collateralAmountMax: '100',
+        }),
+        NOW,
+      );
+      expect('order' in proportional).toBe(true);
+      // Both-zero no-collateral carve-out: 0*ceiling == 0*amount on-chain
+      // too, so the ranged no-collateral shape stays accepted.
+      const noCollateral = validateOrder(
+        raw({
+          amount: '100',
+          amountMax: '1000',
+          collateralAmount: '0',
+          collateralAmountMax: '0',
+        }),
+        NOW,
+      );
+      expect('order' in noCollateral).toBe(true);
     });
 
     it('rejects a self-collateralized pair (SelfCollateralizedOffer)', () => {

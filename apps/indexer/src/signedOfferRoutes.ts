@@ -101,6 +101,19 @@ const TS_SANITY_MAX = 253402300799n;
  *  GTT policy) and on-chain exposure is `min(deadline, expiresAt)`
  *  anyway (`_vetSignedOffer` checks both). */
 const DEADLINE_HORIZON_SECONDS = 30n * 86_400n;
+/** Mirrors `LibVaipakam.MAX_OFFER_EXPIRY_HORIZON` (365 days,
+ *  LibVaipakam.sol:401) — the create-time expiry horizon every fill path
+ *  re-enforces at materialize (`OfferExpiryAboveCap`,
+ *  `OfferCreateFacet._writeOfferPrincipalFields`). A non-zero `expiresAt`
+ *  beyond `now + 365d` means every fill attempted TODAY is a guaranteed
+ *  revert — the row would rest as unfillable depth until enough time
+ *  passes; reject at ingest and let the maker re-post once the horizon
+ *  covers their expiry (Codex #1145 r3 P2). This also bounds the
+ *  DEADLINE_HORIZON_SECONDS exemption below: a non-zero deadline
+ *  `<= expiresAt` stays exempt from the 30-day cap, but since `expiresAt`
+ *  itself is now capped at 365d the exemption can no longer be stretched
+ *  past 365 days either. */
+const EXPIRY_HORIZON_SECONDS = 365n * 86_400n;
 /** Mirrors `LibVaipakam.MAX_INTEREST_BPS` — the create-time upper-sanity
  *  ceiling on `interestRateBpsMax` (`InterestRateAboveCeiling`). */
 const MAX_INTEREST_BPS = 10_000n;
@@ -170,11 +183,13 @@ const BOOL_FIELDS = [
  *
  * Deliberately NOT mirrored (they re-run on-chain at fill and mirroring
  * would drift): everything DYNAMIC — the governance-tunable duration cap
- * (`cfgMaxOfferDurationDays`; only the hard 4385 ceiling is static), the
- * fill-time expiry horizon (`OfferExpiryAboveCap` judges against
- * `block.timestamp` at fill, so an above-horizon `expiresAt` becomes
- * fillable as time advances), sanctions, per-asset pause, oracle-derived
- * collateral floors/ceilings, and the signer's vault funding.
+ * (`cfgMaxOfferDurationDays`; only the hard 4385 ceiling is static),
+ * sanctions, per-asset pause, oracle-derived collateral floors/ceilings,
+ * and the signer's vault funding. (The fill-time expiry horizon
+ * (`OfferExpiryAboveCap`) IS mirrored — see EXPIRY_HORIZON_SECONDS: it
+ * judges against `block.timestamp` at fill, so an above-horizon
+ * `expiresAt` is guaranteed-unfillable at ingest time even though it
+ * would drift fillable later; Codex #1145 r3.)
  */
 function validateOrder(
   raw: Record<string, unknown>,
@@ -256,7 +271,15 @@ function validateOrder(
   // unfillable garbage by construction.
   if (BigInt(out.amount as string) === 0n) return { error: 'invalid-amount' };
 
-  // expiresAt — uint64 GTT expiry; 0 = GTC. Reject already-lapsed windows.
+  // expiresAt — uint64 GTT expiry; 0 = GTC. Reject already-lapsed windows,
+  // then cap the window to the contract's 365-day create horizon (Codex
+  // #1145 r3 P2): `OfferCreateFacet._writeOfferPrincipalFields` reverts
+  // `OfferExpiryAboveCap` when `expiresAt > block.timestamp +
+  // LibVaipakam.MAX_OFFER_EXPIRY_HORIZON`, so a beyond-horizon expiry is a
+  // guaranteed revert on every fill attempted now (see
+  // EXPIRY_HORIZON_SECONDS, incl. its interplay with the deadline
+  // exemption below). The TS_SANITY_MAX branch keeps its own error code —
+  // a year-9999 timestamp is malformed input, not an out-of-policy window.
   {
     const v = raw.expiresAt;
     if (typeof v !== 'string' || !DEC.test(v) || BigInt(v) > U64_MAX) {
@@ -265,6 +288,9 @@ function validateOrder(
     const b = BigInt(v);
     if (b !== 0n && (b <= BigInt(now) || b > TS_SANITY_MAX)) {
       return { error: 'invalid-expiresAt' };
+    }
+    if (b !== 0n && b > BigInt(now) + EXPIRY_HORIZON_SECONDS) {
+      return { error: 'expiry-above-horizon' };
     }
     out.expiresAt = v;
   }
@@ -371,6 +397,28 @@ function validateOrder(
   // requirement); only Borrower offers range on collateral.
   if (out.offerType === '0' && collateralAmountMax !== collateralAmount) {
     return { error: 'lender-collateral-range' };
+  }
+  // `SignedOfferRatioNotConstant` (OfferMatchFacet._vetSignedOfferForMatch,
+  // Codex #1145 r3 P2) — a RANGED order (`amountMax > amount`) is consumed
+  // through `matchSignedOffer` slices (direct fill is disabled for ranged
+  // principal), and the matcher requires a CONSTANT collateral:principal
+  // ratio across the signed range before it will slice, cross-multiplied
+  // to avoid division:
+  //     effCollMax = collateralAmountMax == 0 ? collateralAmount
+  //                                           : collateralAmountMax;
+  //     if (collateralAmount * ceiling != effCollMax * amount) revert;
+  // `ceiling` is `amountMax` here (its 0-sentinel collapse can't apply —
+  // a zero amountMax was rejected above). Mirrored EXACTLY so a ranged row
+  // with non-proportional collateral (e.g. 100..1000 principal against
+  // 10..20 collateral) can't rest as ladder depth no keeper can consume.
+  // The both-zero no-collateral shape passes trivially (0 == 0), same as
+  // on-chain; single-value rows (amountMax == amount) are untouched.
+  if (amountMax > amount) {
+    const effCollMax =
+      collateralAmountMax === 0n ? collateralAmount : collateralAmountMax;
+    if (collateralAmount * amountMax !== effCollMax * amount) {
+      return { error: 'ranged-collateral-ratio' };
+    }
   }
 
   return { order: out as unknown as SignedOrderWire };

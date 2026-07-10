@@ -44,7 +44,12 @@ function makeOrder(overrides: Partial<SignedOrderWire> = {}): SignedOrderWire {
   return {
     offerType: '0',
     lendingAsset: '0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
-    amount: '1000000000000000000',
+    // Single-value principal — the desk's collapseForSignedPost shape for
+    // lenders. A RANGED lender order with constant non-zero collateral can
+    // never satisfy the matcher's constant-ratio vet and is now rejected at
+    // ingest (see the r3 ratio-vet suite below), so the base fixture must
+    // not carry that shape.
+    amount: '5000000000000000000',
     amountMax: '5000000000000000000',
     interestRateBps: '500',
     interestRateBpsMax: '800',
@@ -195,6 +200,151 @@ describe('POST /signed-offers — deadline horizon cap (Codex #1145 r2)', () => 
 
   it('accepts an in-horizon GTC deadline (the ticket-policy 7d shape)', async () => {
     const res = await post(makeEnv(null), makeOrder());
+    expect(res.status).toBe(201);
+  });
+});
+
+describe('POST /signed-offers — expiresAt create-horizon cap (Codex #1145 r3)', () => {
+  const NOW = () => Math.floor(Date.now() / 1000);
+  const YEAR = 365 * 86_400;
+
+  it('rejects expiresAt beyond now + 365d (OfferExpiryAboveCap mirror)', async () => {
+    // 1h past the horizon — comfortably beyond even with clock skew
+    // between the test's NOW() and the route's own clock read.
+    const res = await post(
+      makeEnv(null),
+      makeOrder({ expiresAt: String(NOW() + YEAR + 3_600) }),
+    );
+    expect(res.status).toBe(400);
+    expect(await res.json()).toEqual({ error: 'expiry-above-horizon' });
+  });
+
+  it('rejects a far-future expiresAt (year-2100) the old check let through', async () => {
+    const res = await post(makeEnv(null), makeOrder({ expiresAt: String(FUTURE) }));
+    expect(res.status).toBe(400);
+    expect(await res.json()).toEqual({ error: 'expiry-above-horizon' });
+  });
+
+  it('accepts expiresAt just under the horizon', async () => {
+    // 1h inside — the route's clock can only be AT or AFTER the test's
+    // NOW(), which moves the threshold later, never earlier, so this
+    // margin is one-sided-safe.
+    const res = await post(
+      makeEnv(null),
+      makeOrder({ expiresAt: String(NOW() + YEAR - 3_600) }),
+    );
+    expect(res.status).toBe(201);
+  });
+
+  it('accepts expiresAt exactly at now + 365d (cap is inclusive, like the contract)', async () => {
+    // Route-clock >= test-clock ⇒ route threshold >= this value; the
+    // contract's own check is `>` (strictly above the cap reverts).
+    const res = await post(
+      makeEnv(null),
+      makeOrder({ expiresAt: String(NOW() + YEAR) }),
+    );
+    expect(res.status).toBe(201);
+  });
+
+  it('keeps GTC (expiresAt = 0) exempt from the horizon', async () => {
+    const res = await post(makeEnv(null), makeOrder({ expiresAt: '0' }));
+    expect(res.status).toBe(201);
+  });
+
+  it('a beyond-horizon deadline can no longer ride the expiresAt exemption past 365d', async () => {
+    // deadline == expiresAt at 2 years: the 30d deadline cap's
+    // covered-by-expiry exemption would allow the deadline, but the
+    // expiry itself now fails the 365d create horizon first.
+    const twoYears = String(NOW() + 2 * YEAR);
+    const res = await post(
+      makeEnv(null),
+      makeOrder({ expiresAt: twoYears, deadline: twoYears }),
+    );
+    expect(res.status).toBe(400);
+    expect(await res.json()).toEqual({ error: 'expiry-above-horizon' });
+  });
+});
+
+describe('POST /signed-offers — ranged constant-ratio vet (Codex #1145 r3)', () => {
+  // Mirrors OfferMatchFacet._vetSignedOfferForMatch's
+  // `collateralAmount * ceiling == effCollMax * amount` cross-multiplication
+  // for ranged rows (amountMax > amount), which are matcher-only depth.
+
+  it('rejects a ranged borrower order with non-proportional collateral', async () => {
+    // The finding's own example: 100..1000 principal against 10..20
+    // collateral — 10*1000 != 20*100, so no keeper slice can ever vet.
+    const res = await post(
+      makeEnv(null),
+      makeOrder({
+        offerType: '1',
+        amount: '100',
+        amountMax: '1000',
+        collateralAmount: '10',
+        collateralAmountMax: '20',
+      }),
+    );
+    expect(res.status).toBe(400);
+    expect(await res.json()).toEqual({ error: 'ranged-collateral-ratio' });
+  });
+
+  it('accepts a ranged borrower order with proportional collateral', async () => {
+    // 10*1000 == 100*100 — constant ratio across the range, sliceable.
+    const res = await post(
+      makeEnv(null),
+      makeOrder({
+        offerType: '1',
+        amount: '100',
+        amountMax: '1000',
+        collateralAmount: '10',
+        collateralAmountMax: '100',
+      }),
+    );
+    expect(res.status).toBe(201);
+  });
+
+  it('accepts a ranged order with the both-zero no-collateral carve-out', async () => {
+    // collMin = collMax = 0 ⇒ 0*ceiling == 0*amount on-chain too — the
+    // explicit no-collateral shape stays sliceable.
+    const res = await post(
+      makeEnv(null),
+      makeOrder({
+        amount: '100',
+        amountMax: '1000',
+        collateralAmount: '0',
+        collateralAmountMax: '0',
+      }),
+    );
+    expect(res.status).toBe(201);
+  });
+
+  it('rejects a ranged lender order — constant collateral can never satisfy the ratio', async () => {
+    // The pre-fix base fixture's shape: lender collateral is structurally
+    // single-value, so with ceiling > amount the ratio is unsatisfiable —
+    // the same reasoning the desk's collapseForSignedPost encodes.
+    const res = await post(
+      makeEnv(null),
+      makeOrder({
+        amount: '1000000000000000000',
+        amountMax: '5000000000000000000',
+      }),
+    );
+    expect(res.status).toBe(400);
+    expect(await res.json()).toEqual({ error: 'ranged-collateral-ratio' });
+  });
+
+  it('leaves single-value rows untouched (borrower collateral range still allowed)', async () => {
+    // ceiling == amount ⇒ direct-fillable; the matcher-only ratio vet
+    // must not reject an on-chain-legal borrower collateral range.
+    const res = await post(
+      makeEnv(null),
+      makeOrder({
+        offerType: '1',
+        amount: '1000',
+        amountMax: '1000',
+        collateralAmount: '10',
+        collateralAmountMax: '20',
+      }),
+    );
     expect(res.status).toBe(201);
   });
 });

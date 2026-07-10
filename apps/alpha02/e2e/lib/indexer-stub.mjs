@@ -568,11 +568,17 @@ function readBody(req) {
  *
  * The worker additionally rejects orders that can never materialize
  * (#1145 round-1 P2: amountMax/rate-range/collateral invariants
- * mirrored from OfferCreateFacet's signed fill path). Those static
- * rejections live under the "loose shape checks" umbrella above —
- * the specs only post ticket-generated orders, which satisfy every
- * invariant; if a future spec needs to probe a rejection, drive the
- * WORKER's unit-tested surface, not a stub re-implementation.
+ * mirrored from OfferCreateFacet's signed fill path; round-3 P2s:
+ * `expiry-above-horizon` — non-zero expiresAt beyond the contract's
+ * 365-day create horizon, `LibVaipakam.MAX_OFFER_EXPIRY_HORIZON` — and
+ * `ranged-collateral-ratio` — ranged principal whose collateral fails
+ * the matcher's constant-ratio vet,
+ * `OfferMatchFacet._vetSignedOfferForMatch`). Those static rejections
+ * live under the "loose shape checks" umbrella above — the specs only
+ * post ticket-generated orders, which satisfy every invariant (GTT
+ * expiries <= 365d, single-value or proportional shapes); if a future
+ * spec needs to probe a rejection, drive the WORKER's unit-tested
+ * surface, not a stub re-implementation.
  */
 async function handleSignedOfferPost(req, json) {
   let body;
