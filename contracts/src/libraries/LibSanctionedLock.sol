@@ -6,6 +6,7 @@ import {LibVaipakam} from "./LibVaipakam.sol";
 import {LibFacet} from "./LibFacet.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
+import {LibERC721} from "./LibERC721.sol";
 import {VaultFactoryFacet} from "../facets/VaultFactoryFacet.sol";
 import {IVaipakamErrors} from "../interfaces/IVaipakamErrors.sol";
 
@@ -197,6 +198,302 @@ library LibSanctionedLock {
         LibVaipakam.recordVaultDeposit(owner, asset, amount);
         if (LibVaipakam.isSanctionedAddress(owner)) {
             emit SanctionedProceedsLocked(loanId, owner, asset, amount);
+        }
+    }
+
+    /// @dev Cross-PAYER variant of {depositLocked}: parks a close-out payoff that
+    ///      a THIRD-PARTY `payer` funds (via `IERC20.approve(diamond,≥amount)`)
+    ///      into `owner`'s vault behind the receive-side exemption — the chokepoint
+    ///      shape where the Diamond stays out of the funds path but the
+    ///      protocol-tracked balance still ticks under `owner`. Resolves `owner`'s
+    ///      EXISTING vault under the pin (so a flagged `owner` doesn't brick the
+    ///      close-out), `safeTransferFrom`s `payer → vault`, ticks the counter, and
+    ///      emits the lock event when `owner` is flagged. Mirror of
+    ///      `VaultFactoryFacet.vaultDepositERC20From` + the `begin`/`end` window,
+    ///      folded into one subroutine so an EIP-170-tight close-out facet can park
+    ///      a lender payoff in a single cross-facet CALL (see
+    ///      `EncumbranceMutateFacet.parkLenderPayoffAndFreeze`). Zero `amount` is a
+    ///      no-op.
+    function depositLockedFrom(
+        LibVaipakam.Storage storage s,
+        address payer,
+        address owner,
+        uint256 loanId,
+        address asset,
+        uint256 amount
+    ) internal {
+        if (amount == 0) return;
+        s.sanctionedDepositExemptUser = owner;
+        address vault = LibFacet.getOrCreateVault(owner);
+        s.sanctionedDepositExemptUser = address(0);
+        // slither-disable-next-line arbitrary-send-erc20
+        IERC20(asset).safeTransferFrom(payer, vault, amount);
+        LibVaipakam.recordVaultDeposit(owner, asset, amount);
+        if (LibVaipakam.isSanctionedAddress(owner)) {
+            emit SanctionedProceedsLocked(loanId, owner, asset, amount);
+        }
+    }
+
+    /// @dev Vault-to-vault variant of {depositLocked}: moves `amount` of `asset`
+    ///      OUT of `fromUser`'s vault INTO `owner`'s vault, both behind the
+    ///      relevant sanctions exemptions, and ticks `owner`'s protocol-tracked
+    ///      balance. Used to PARK an ACTIVE-loan inline lender share whose funds
+    ///      sit in a loan party's vault (the NFT-rental prepay pool) into the
+    ///      stored `loan.lender`'s always-existing vault when the current holder
+    ///      is frozen (#998 S10 Class B). `fromUser` LOSES custody, so the
+    ///      from-side move-out exemption is armed (a borrower flagged after init
+    ///      must still be serviceable — Tier-2 stays open); `owner` RECEIVES, so
+    ///      the receive-side exemption is pinned around the vault resolution (a
+    ///      flagged `owner`'s EXISTING vault resolves without minting a new proxy).
+    ///      Emits the lock event when `owner` is flagged. Zero `amount` is a no-op.
+    function depositLockedFromVault(
+        LibVaipakam.Storage storage s,
+        address fromUser,
+        address owner,
+        uint256 loanId,
+        address asset,
+        uint256 amount
+    ) internal {
+        if (amount == 0) return;
+        // Receive side: resolve `owner`'s EXISTING vault behind the pin.
+        s.sanctionedDepositExemptUser = owner;
+        address ownerVault = LibFacet.getOrCreateVault(owner);
+        s.sanctionedDepositExemptUser = address(0);
+        // From side: withdraw `fromUser`'s prepay into `owner`'s vault behind the
+        // move-out exemption (so a flagged `fromUser` doesn't brick the service).
+        s.consolidationMoveFromUser = fromUser;
+        LibFacet.crossFacetCall(
+            abi.encodeWithSelector(
+                VaultFactoryFacet.vaultWithdrawERC20.selector,
+                fromUser,
+                asset,
+                ownerVault,
+                amount
+            ),
+            IVaipakamErrors.VaultWithdrawFailed.selector
+        );
+        s.consolidationMoveFromUser = address(0);
+        // Tick `owner`'s tracked balance (the funds now sit in their vault), the
+        // same bookkeeping `LibFacet.depositForNewLender` does for a Diamond
+        // `safeTransfer` into a vault.
+        LibVaipakam.recordVaultDeposit(owner, asset, amount);
+        if (LibVaipakam.isSanctionedAddress(owner)) {
+            emit SanctionedProceedsLocked(loanId, owner, asset, amount);
+        }
+    }
+
+    // ─── #998 S10 (#1006) — frozen-claimant marker (fail-closed release) ──────
+
+    /// @notice Record the FROZEN-CLAIMANT marker for a sanctioned-locked-proceeds
+    ///         park. Call at a receive-side close-out freeze with the INTENDED
+    ///         economic recipient — the CURRENT position-NFT holder the payout is
+    ///         for — and the side (`lenderSide` selects the lender vs borrower
+    ///         mapping).
+    /// @dev    Records the address ONLY when it is affirmatively sanctions-flagged.
+    ///         A park during an oracle outage (the predicate fails OPEN ⇒ false)
+    ///         records nothing, so ordinary / unconfirmed parks stay fail-open at
+    ///         claim time — an oracle blip must never freeze an honest claimant.
+    ///         The recorded address (NOT the credited vault owner, NOT the eventual
+    ///         `msg.sender`) is what the release gate re-checks FAIL-CLOSED, which
+    ///         is what keeps a confirmed freeze from lifting during an oracle
+    ///         outage AND closes the transfer-during-outage laundering hole (the
+    ///         funds unlock only once the RECORDED party is proven de-listed,
+    ///         regardless of who holds the position NFT at claim time). Keyed to
+    ///         the current holder — not the `owner` the funds are parked into —
+    ///         because a transferred position can be held by a flagged party while
+    ///         the stored (credited) party is clean.
+    /// @notice Registry-aware FREEZE decision (Codex #1122-rework r1 P1). Returns
+    ///         true when `who`'s close-out proceeds must be PARKED (frozen), not
+    ///         paid out. Unlike the bare fail-open {LibVaipakam.isSanctionedAddress}
+    ///         (which waves a party through during ANY outage), this is FAIL-CLOSED
+    ///         on a PRIOR confirmed flag: a wallet already in
+    ///         `sanctionsConfirmedFlagged` stays frozen even while the oracle is
+    ///         unreachable, so a close-out that lands during an outage can't hand a
+    ///         previously-confirmed-flagged holder their payout (the ordinary claim
+    ///         screen fails open in the same window).
+    /// @dev    Mirrors the #1123 movement-gate tri-state exactly, and MAINTAINS the
+    ///         registry as a side effect (Codex #1122-rework r4) so the decision
+    ///         sites that pay-or-park directly — with no later claim gate to
+    ///         self-heal — keep the registry honest:
+    ///           - oracle UNSET → false (screening regime disabled);
+    ///           - Flagged (oracle up) → REGISTER + true (fresh confirmation);
+    ///           - Clean (oracle up) → CLEAR the stale registry bit + false (never
+    ///             freeze a de-listed party, and don't leave it wrongly blocked from
+    ///             moving another open position during a later outage);
+    ///           - Unavailable (oracle set but reverts) → the registry: freeze IFF
+    ///             `who` was previously confirmed. An address NEVER confirmed stays
+    ///             fail-open during an outage — an oracle blip can't freeze an
+    ///             honest claimant.
+    ///         Non-`view` because of the register/clear self-heal; its two callers
+    ///         (backstop absorb gate, surplus pay-or-park) are both state-changing.
+    function mustFreezeParty(LibVaipakam.Storage storage s, address who)
+        internal
+        returns (bool)
+    {
+        if (who == address(0)) return false;
+        if (s.sanctionsOracle == address(0)) return false; // regime disabled
+        LibVaipakam.SanctionsRead st = LibVaipakam.sanctionsStatus(who);
+        if (st == LibVaipakam.SanctionsRead.Flagged) {
+            s.sanctionsConfirmedFlagged[who] = true;
+            return true;
+        }
+        if (st == LibVaipakam.SanctionsRead.Clean) {
+            clearConfirmedFlag(s, who); // authoritative de-list self-heals
+            return false;
+        }
+        // Unavailable: fail-closed on a prior authoritative confirmation only.
+        return s.sanctionsConfirmedFlagged[who];
+    }
+
+    function recordFrozenClaimant(
+        LibVaipakam.Storage storage s,
+        uint256 loanId,
+        bool lenderSide,
+        address intendedClaimant
+    ) internal {
+        if (intendedClaimant == address(0)) return;
+        if (s.sanctionsOracle == address(0)) return; // screening regime disabled
+
+        LibVaipakam.SanctionsRead st = LibVaipakam.sanctionsStatus(intendedClaimant);
+        if (st == LibVaipakam.SanctionsRead.Clean) {
+            // P2 (Codex #1122-rework r2) — an authoritative CLEAN read self-heals a
+            // stale registry bit, matching the #1123 movement gate / refresh, so a
+            // de-listed wallet isn't left wrongly blocked from moving another open
+            // position during a later outage. Never freeze a de-listed party.
+            clearConfirmedFlag(s, intendedClaimant);
+            // Codex #1122-rework r4+r6 P2 — clear a stale PER-LOAN marker on this
+            // side when its recorded party is authoritatively de-listed, so the
+            // central claim gate doesn't fail-close on a marker for a party already
+            // proven clean. That party is either THIS now-clean holder, OR a
+            // DIFFERENT recorded party (an earlier partial-match/fallback episode,
+            // or a clean position migration A→B) that ALSO now reads Clean. A marker
+            // for a party still Flagged / unverifiable (outage) must stick.
+            address existingClean = lenderSide
+                ? s.sanctionsLockedLenderClaimant[loanId]
+                : s.sanctionsLockedBorrowerClaimant[loanId];
+            if (
+                existingClean != address(0) &&
+                (existingClean == intendedClaimant ||
+                    LibVaipakam.sanctionsStatus(existingClean) ==
+                    LibVaipakam.SanctionsRead.Clean)
+            ) {
+                if (existingClean != intendedClaimant) {
+                    clearConfirmedFlag(s, existingClean);
+                }
+                if (lenderSide) {
+                    delete s.sanctionsLockedLenderClaimant[loanId];
+                } else {
+                    delete s.sanctionsLockedBorrowerClaimant[loanId];
+                }
+            }
+            return;
+        }
+        // FAIL-CLOSED freeze (Codex #1122-rework r1 P1): a fresh authoritative flag
+        // OR a prior confirmation during an outage (Unavailable + registered). A
+        // never-confirmed wallet during an outage stays fail-open — an oracle blip
+        // can't freeze an honest claimant.
+        bool freeze = st == LibVaipakam.SanctionsRead.Flagged
+            ? true
+            : s.sanctionsConfirmedFlagged[intendedClaimant];
+        if (!freeze) return;
+        // #1123 registry population — enrol this closing holder so the fail-closed
+        // position-movement gate can bar them from shuffling a still-open position
+        // during a later outage (the close-out population #1123 left to S10, same
+        // holder). Idempotent; cleared only by an authoritative de-list.
+        s.sanctionsConfirmedFlagged[intendedClaimant] = true;
+
+        // Per-loan marker, FIRST-WRITE-WINS with one exception (Codex r2 P1 #4).
+        // First-write-wins stops a multi-flagged-holder outage chain from
+        // overwriting the earliest confirmed freeze (which would let the release
+        // gate need only the NEWER holder de-listed). BUT a marker whose recorded
+        // party is now authoritatively CLEAN is moot: if claimant A was frozen,
+        // then de-listed, transferred the still-open position (allowed once clean)
+        // to B, and B is later confirmed flagged, the marker MUST move to B — else
+        // the release gate checks A (clean), clears, and B slips through. So
+        // overwrite when the slot is empty, already this party, OR its recorded
+        // party reads authoritatively Clean (its freeze no longer applies).
+        address existing = lenderSide
+            ? s.sanctionsLockedLenderClaimant[loanId]
+            : s.sanctionsLockedBorrowerClaimant[loanId];
+        if (existing != address(0) && existing != intendedClaimant) {
+            if (LibVaipakam.sanctionsStatus(existing) != LibVaipakam.SanctionsRead.Clean) {
+                return; // existing still flagged / unverifiable during outage — keep it
+            }
+            clearConfirmedFlag(s, existing); // superseded, now-clean party self-heals too
+        }
+        if (lenderSide) {
+            s.sanctionsLockedLenderClaimant[loanId] = intendedClaimant;
+        } else {
+            s.sanctionsLockedBorrowerClaimant[loanId] = intendedClaimant;
+        }
+    }
+
+    /// @notice Self-heal a `sanctionsConfirmedFlagged` registry entry — delete it
+    ///         only when set (avoids a redundant SSTORE on the common
+    ///         clean-and-unregistered path). Call ONLY with an address just proven
+    ///         AUTHORITATIVELY clean (an oracle-reachable clean read or a passed
+    ///         fail-closed release gate), matching the #1123 movement-gate /
+    ///         `refreshSanctionsFlag` self-heal so a de-listed wallet isn't left
+    ///         wrongly blocked from moving another open position during an outage.
+    function clearConfirmedFlag(LibVaipakam.Storage storage s, address who) internal {
+        if (s.sanctionsConfirmedFlagged[who]) {
+            delete s.sanctionsConfirmedFlagged[who];
+        }
+    }
+
+    /// @notice Convenience wrapper for the common receive-side park: resolve the
+    ///         CURRENT position-NFT holder for `lenderSide` (the intended economic
+    ///         claimant) and record it as the frozen claimant iff flagged.
+    /// @dev    Reads the current position-NFT owner straight from Diamond storage
+    ///         via `LibERC721._ownerOfRaw` — a plain SLOAD, NOT an external
+    ///         `ownerOf` staticcall, which keeps the inlined cost at each of the
+    ///         many EIP-170-tight park sites (RiskFacet / DefaultedFacet /
+    ///         PrecloseFacet et al.) to a storage read. The raw read returns
+    ///         `address(0)` for a burned / never-minted token, so a position with
+    ///         no live holder records nothing (there is no distinct downstream
+    ///         claimant to freeze) without needing a try/catch. Delegates the flag
+    ///         test + the affirmative-only write to `recordFrozenClaimant`, so an
+    ///         oracle-outage park still stays fail-open (no marker). Use this at the
+    ///         standard park sites where the payout is owed to the position holder;
+    ///         pass the address directly to `recordFrozenClaimant` at sites that
+    ///         have already resolved the intended recipient (e.g. a surplus paid to
+    ///         a passed `currentHolder`).
+    function recordFrozenClaimantForLoan(
+        LibVaipakam.Storage storage s,
+        LibVaipakam.Loan storage loan,
+        bool lenderSide
+    ) internal {
+        uint256 tokenId = lenderSide ? loan.lenderTokenId : loan.borrowerTokenId;
+        recordFrozenClaimant(s, loan.id, lenderSide, LibERC721._ownerOfRaw(tokenId));
+    }
+
+    /// @notice The recorded frozen claimant for a `(loanId, side)`, or
+    ///         `address(0)` when that side's proceeds were not locked behind a
+    ///         confirmed flag (the common case).
+    function frozenClaimant(
+        LibVaipakam.Storage storage s,
+        uint256 loanId,
+        bool lenderSide
+    ) internal view returns (address) {
+        return lenderSide
+            ? s.sanctionsLockedLenderClaimant[loanId]
+            : s.sanctionsLockedBorrowerClaimant[loanId];
+    }
+
+    /// @notice Clear the frozen-claimant marker for a `(loanId, side)` after a
+    ///         successful clean release (the fail-closed screen passed ⇒ the
+    ///         oracle is up and the recorded claimant is de-listed), so the slot
+    ///         doesn't leak and a later re-lock stays possible. Clears only the
+    ///         side being released.
+    function clearFrozenClaimant(
+        LibVaipakam.Storage storage s,
+        uint256 loanId,
+        bool lenderSide
+    ) internal {
+        if (lenderSide) {
+            delete s.sanctionsLockedLenderClaimant[loanId];
+        } else {
+            delete s.sanctionsLockedBorrowerClaimant[loanId];
         }
     }
 }

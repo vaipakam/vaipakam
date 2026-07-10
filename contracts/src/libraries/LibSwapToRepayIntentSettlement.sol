@@ -259,6 +259,13 @@ library LibSwapToRepayIntentSettlement {
             quantity: 0,
             claimed: false
         });
+        // #998 S10 (#1006, Codex r2 P1) — the residual collateral claim is
+        // borrower-side claim-gated, but `freezeOrPayBorrowerSurplus` above marks
+        // the borrower ONLY when there is a sanctioned principal surplus. Stamp the
+        // residual collateral too (reuse the already-resolved current holder;
+        // first-write-wins if the surplus branch already recorded the same holder),
+        // so a flagged holder's residual can't release fail-open during an outage.
+        LibSanctionedLock.recordFrozenClaimant(s, loanId, false, currentBorrowerHolder);
 
         LibFacet.crossFacetCall(
             abi.encodeWithSelector(

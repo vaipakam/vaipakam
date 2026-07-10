@@ -4788,22 +4788,50 @@ library LibVaipakam {
         // surplus. Zero on the common path; cleared to zero on release.
         mapping(uint256 => uint256) frozenVpfiOwedLenderLeg;
         mapping(uint256 => uint256) frozenVpfiOwedBorrowerSurplus;
-        // ── #1123 — confirmed-flagged-wallet registry (APPENDED LAST) ─────────
+        // ── #1123 — confirmed-flagged-wallet registry (APPENDED) ──────────────
         // Wallets CONFIRMED sanctions-flagged from an AUTHORITATIVE
         // (oracle-reachable) read. Consulted FAIL-CLOSED by the position-movement
         // restriction (`assertPositionMoveNotSanctioned`) so a flagged wallet can't
         // move a position NFT during a sanctions-oracle outage — closing the S10
         // laundering-chain class (#1006). Mutated ONLY from strict reads
         // (`sanctionsStatus`): registered at non-reverting oracle-up flag
-        // observations (sale-buyer receives and `recoverStuckERC20`'s
-        // recovery-ban) + the permissionless `ProfileFacet.refreshSanctionsFlag`;
-        // cleared on a confirmed de-list. Registering the flagged HOLDER of a
-        // closing position is owned by the S10 `recordFrozenClaimant` park hook
-        // that lands with #1006 (keyed to the same holder); until then an
-        // operator refresh is the backstop for those wallets.
-        // Appended at the END of Storage so an in-place diamond refresh stays
-        // append-only (Codex #1126 r1 P1) — no existing slot shifts.
+        // observations (the S10 `recordFrozenClaimant` park hook below, sale-buyer
+        // receives, and `recoverStuckERC20`'s recovery-ban) + the permissionless
+        // `ProfileFacet.refreshSanctionsFlag`; cleared on a confirmed de-list.
+        // Appended (Codex #1126 r1 P1) — no existing slot shifts.
         mapping(address => bool) sanctionsConfirmedFlagged;
+        // ─── #998 S10 (#1006) — sanctioned-locked-proceeds frozen claimant ────
+        // Per-(loan, side) record of the ADDRESS whose claim was frozen at
+        // close-out because that party — the intended economic recipient (the
+        // current position-NFT holder the payout was for) — was affirmatively
+        // sanctions-flagged while the oracle was up. `address(0)` = not locked.
+        // The claim release gate re-checks THIS recorded address fail-closed
+        // (`assertNotSanctionedFailClosed`) so a confirmed freeze cannot lift
+        // during an oracle outage AND cannot be laundered by transferring the
+        // position to a clean wallet (release keys on the recorded party, not the
+        // current holder / `msg.sender`). With #1123's fail-closed movement gate a
+        // flagged holder can no longer transfer the position mid-outage, so this
+        // stays a single first-write address (no laundering chain to track).
+        // Cleared on a successful clean release.
+        mapping(uint256 => address) sanctionsLockedLenderClaimant;
+        mapping(uint256 => address) sanctionsLockedBorrowerClaimant;
+        // ─── #998 S10 (#1006) Class B — ACTIVE-loan held reservation ──────────
+        // A DEDICATED per-loan reservation for a mid-loan Class B lender-share
+        // park (`LibCloseoutFreeze._parkActiveLenderShare`), kept SEPARATE from
+        // the single-terminal `lenderProceedsEncumbered` ledger. Reusing that
+        // single-asset terminal ledger for an active park bricks a later in-kind
+        // default: the park reserves the `principalAsset` mid-loan, then the
+        // in-kind terminal tries to reserve the `collateralAsset` under the same
+        // per-loan record and trips its single-asset assert (Codex #1122-rework
+        // fresh-round P1). This bucket reserves the held amount against the stored
+        // lender's spend paths under its OWN per-loan (amount, asset) record, so
+        // the two reservations coexist. Released alongside `heldForLender` at
+        // `claimAsLender` (and the backstop absorb), and MIGRATED with the held
+        // whenever the lender position moves (consolidation / sale), mirroring the
+        // `lenderProceedsEncumbered` rekey — so a later release under the CURRENT
+        // `loan.lender` always decrements the aggregate the reserve now sits in.
+        mapping(uint256 => uint256) heldForLenderEncumbered;
+        mapping(uint256 => address) heldForLenderEncumberedAsset;
         // ─── #951 v2 (Codex #959 bind-to-live redesign) — historical note ─────
         // The old `saleListingCollateral` snapshot (formerly the last struct
         // field) was removed by the #959 bind-to-live redesign merged to main:
@@ -7101,6 +7129,51 @@ library LibVaipakam {
     function _assertNotSanctioned(address who) internal view {
         if (isSanctionedAddress(who)) {
             revert SanctionedAddress(who);
+        }
+    }
+
+    /// @notice FAIL-CLOSED twin of {isSanctionedAddress}/{_assertNotSanctioned}
+    ///         (#998 S10 / #1006). Reverts `SanctionedAddress(who)` when `who`
+    ///         (or its recovery-declared source) is flagged, AND reverts
+    ///         `SanctionsOracleUnavailable()` whenever the oracle is unset or its
+    ///         call reverts — i.e. every fail-OPEN `return false` / `catch { return
+    ///         false }` leg of {isSanctionedAddress} becomes a fail-CLOSED revert.
+    /// @dev    Used ONLY at the sanctioned-locked-proceeds release gate, applied to
+    ///         the RECORDED frozen-claimant address (not `msg.sender`), so that
+    ///         confirmed-at-close-out freezes cannot silently lift during a
+    ///         sanctions-oracle outage. Ordinary (never-locked) claims keep using
+    ///         the fail-open {_assertNotSanctioned} on `msg.sender`, so an oracle
+    ///         blip never bricks honest users. Mirrors the fail-closed pattern in
+    ///         `VaultFactoryFacet.recoverStuckERC20`. Reuses the shared
+    ///         `IVaipakamErrors.SanctionsOracleUnavailable` + local
+    ///         `SanctionedAddress` errors.
+    function assertNotSanctionedFailClosed(address who) internal view {
+        address oracle = storageSlot().sanctionsOracle;
+        // Leg 1 — oracle unset ⇒ fail CLOSED (isSanctionedAddress returns false).
+        if (oracle == address(0)) revert IVaipakamErrors.SanctionsOracleUnavailable();
+
+        // Leg 2 — recovery-induced ban: a `who` whose declared recovery source is
+        // still flagged is treated as sanctioned. A screen that checked only
+        // `who`'s own EOA would let a recovery-banned owner withdraw locked funds
+        // once their EOA reads clean, so this leg is load-bearing. On an oracle
+        // revert here we must fail CLOSED (isSanctionedAddress falls through /
+        // catches to false).
+        address bannedSource = storageSlot().vaultBannedSource[who];
+        if (bannedSource != address(0)) {
+            try ISanctionsList(oracle).isSanctioned(bannedSource) returns (bool sourceFlagged) {
+                if (sourceFlagged) revert SanctionedAddress(who);
+                // Source de-listed → ban lifted → fall through to the direct check.
+            } catch {
+                revert IVaipakamErrors.SanctionsOracleUnavailable();
+            }
+        }
+
+        // Leg 3 — direct check on `who`. Flagged ⇒ SanctionedAddress; oracle
+        // revert ⇒ fail CLOSED; clean ⇒ proceed.
+        try ISanctionsList(oracle).isSanctioned(who) returns (bool flagged) {
+            if (flagged) revert SanctionedAddress(who);
+        } catch {
+            revert IVaipakamErrors.SanctionsOracleUnavailable();
         }
     }
 

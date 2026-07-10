@@ -1449,7 +1449,7 @@ contract DeployDiamond is Script {
     ///         offer-principal-lock impl PR adds the lock create /
     ///         decrement / release surface.
     function _getEncumbranceMutateFacetSelectors() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](10);
+        s = new bytes4[](17);
         s[0] = EncumbranceMutateFacet.releaseCollateralLien.selector;
         // #407 PR 4 round-1 (2026-06-12) — decrement/increment cross-
         // facet entries used by active-loan slice flows + addCollateral.
@@ -1465,6 +1465,18 @@ contract DeployDiamond is Script {
         // #954 — swap-to-repay close-out freeze helpers hosted here (EIP-170).
         s[8] = EncumbranceMutateFacet.freezeLenderProceeds.selector;
         s[9] = EncumbranceMutateFacet.freezeOrPayBorrowerSurplus.selector;
+        // #998 S10 (#1006) — fail-closed frozen-claimant markers (EIP-170 host).
+        s[10] = EncumbranceMutateFacet.recordSanctionsFrozenClaimant.selector;
+        s[11] = EncumbranceMutateFacet.recordSanctionsFrozenClaimantBoth.selector;
+        // #998 S10 (#1006) — one-call lender-payoff park+freeze (PrecloseFacet EIP-170).
+        s[12] = EncumbranceMutateFacet.parkLenderPayoffAndFreeze.selector;
+        // #998 S10 (#1006, r4) — registry-aware fail-closed gate host (ClaimFacet backstop).
+        s[13] = EncumbranceMutateFacet.assertNotFrozenParty.selector;
+        // #998 S10 (#1006) Class B — Active-loan inline lender-share pay-or-freeze
+        // hosts (RepayPeriodicFacet + RepayFacet servicing paths, EIP-170).
+        s[14] = EncumbranceMutateFacet.freezeOrPayActiveLenderResident.selector;
+        s[15] = EncumbranceMutateFacet.freezeOrPayActiveLenderFromPayer.selector;
+        s[16] = EncumbranceMutateFacet.freezeOrPayActiveLenderFromVault.selector;
     }
 
     /// @notice #396 v0.5 — gasless signed off-chain offer book selectors.

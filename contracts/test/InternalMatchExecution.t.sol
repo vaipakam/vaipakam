@@ -325,6 +325,45 @@ contract InternalMatchExecutionTest is SetupTest {
         );
     }
 
+    /// @notice #998 S10 (#1006, Codex #1122-rework r1 P1) — an over-collateralized
+    ///         full internal match that retains a residual borrower claim must
+    ///         stamp the BORROWER-side fail-closed marker when the current
+    ///         borrower-position holder is flagged, so `claimAsBorrower` can't
+    ///         release that residual during a later oracle outage.
+    function test_S10_overCollateralizedMatch_flaggedBorrowerResidualFrozen() public {
+        _seedLoan(LOAN_A, lender, borrower, mockERC20, 600, mockCollateralERC20, 1000);
+        _seedLoan(LOAN_B, lenderB, borrowerB, mockCollateralERC20, 600, mockERC20, 600);
+        _mockLtv(LOAN_A, 9_000);
+        _mockLtv(LOAN_B, 9_000);
+        TestMutatorFacet(address(diamond)).setLoanCollateralLienRaw(
+            LOAN_A, borrower, mockCollateralERC20, 0, 1000, LibVaipakam.AssetType.ERC20
+        );
+
+        // The seed only MOCKED ownerOf; `recordFrozenClaimant` reads RAW storage,
+        // so mint the LOAN_A borrower NFT for real to a flagged holder and align
+        // the external ownerOf mock to it.
+        address flaggedHolder = makeAddr("s10MatchBorrowerHolder");
+        TestMutatorFacet(address(diamond)).mintNFTRaw(flaggedHolder, LOAN_A * 2);
+        vm.mockCall(
+            address(diamond),
+            abi.encodeWithSelector(IERC721.ownerOf.selector, LOAN_A * 2),
+            abi.encode(flaggedHolder)
+        );
+        MockSanctionsList m = new MockSanctionsList();
+        ProfileFacet(address(diamond)).setSanctionsOracle(address(m));
+        m.setFlagged(flaggedHolder, true);
+
+        vm.prank(matcher);
+        RiskMatchLiquidationFacet(address(diamond)).triggerInternalMatchLiquidation(LOAN_A, LOAN_B, 0);
+
+        assertEq(_getLoan(LOAN_A).collateralAmount, 400, "residual borrower claim exists");
+        assertEq(
+            TestMutatorFacet(address(diamond)).getSanctionsFrozenClaimant(LOAN_A, false),
+            flaggedHolder,
+            "residual borrower claim carries the fail-closed marker"
+        );
+    }
+
     /// @notice #577 — the borrower's residual claim on an InternalMatched
     ///         loan must NOT touch the lender side. Any `heldForLender`
     ///         (from a prior offset the liquidation pre-empted) stays put,

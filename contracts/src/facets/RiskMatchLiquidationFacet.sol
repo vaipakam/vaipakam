@@ -872,6 +872,21 @@ contract RiskMatchLiquidationFacet is DiamondReentrancyGuard, DiamondPausable {
                     quantity: 0,
                     claimed: false
                 });
+                // #998 S10 (#1006) — fail-closed freeze if the current lender-
+                // position holder is flagged (claimed via `claimAsLender`).
+                LibSanctionedLock.recordFrozenClaimantForLoan(
+                    LibVaipakam.storageSlot(), loan, true
+                );
+                // #998 S10 (#1006, Codex #1122-rework r1 P1) — `_retainInternalMatchResidual`
+                // above writes a `borrowerClaims` row for any over-collateralized
+                // residual (`collateralAmount > 0`), claimed via `claimAsBorrower`.
+                // Stamp the BORROWER side too so a flagged current borrower-position
+                // holder can't release that residual during a later oracle outage.
+                if (loan.collateralAmount > 0) {
+                    LibSanctionedLock.recordFrozenClaimantForLoan(
+                        LibVaipakam.storageSlot(), loan, false
+                    );
+                }
                 // #585 — if the proceeds are VPFI, reserve them against the
                 // unstake path (`withdrawVPFIFromVault`) so the stored
                 // lender can't front-run the holder's claim. Released in
@@ -897,6 +912,13 @@ contract RiskMatchLiquidationFacet is DiamondReentrancyGuard, DiamondPausable {
                 // adds compose.)
                 LibVaipakam.Storage storage sa = LibVaipakam.storageSlot();
                 sa.heldForLender[loan.id] += lenderProceeds;
+                // #998 S10 (#1006) — a PARTIAL internal match parks this leg's
+                // lender proceeds into `heldForLender` for a LATER terminal claim.
+                // The match is HF-gated (oracle up here), so record the frozen
+                // marker now if the current lender holder is flagged — a later
+                // terminal/claim can run during an oracle outage, when the flag
+                // could not be confirmed.
+                LibSanctionedLock.recordFrozenClaimantForLoan(sa, loan, true);
                 if (loan.principalAsset == sa.vpfiToken) {
                     LibEncumbrance.encumberLenderProceeds(
                         loan.id, loan.lender, loan.principalAsset, lenderProceeds
@@ -948,6 +970,9 @@ contract RiskMatchLiquidationFacet is DiamondReentrancyGuard, DiamondPausable {
                     quantity: 0,
                     claimed: false
                 });
+                // #998 S10 (#1006) — fail-closed freeze if the current lender-
+                // position holder is flagged.
+                LibSanctionedLock.recordFrozenClaimantForLoan(s, loan, true);
                 // #585 — VPFI proceeds reservation (see the Active branch).
                 if (loan.principalAsset == s.vpfiToken) {
                     LibEncumbrance.encumberLenderProceeds(
@@ -997,6 +1022,9 @@ contract RiskMatchLiquidationFacet is DiamondReentrancyGuard, DiamondPausable {
                         quantity: loan.collateralQuantity,
                         claimed: false
                     });
+                    // #998 S10 (#1006) — fail-closed freeze if the current
+                    // borrower-position holder is flagged.
+                    LibSanctionedLock.recordFrozenClaimantForLoan(s, loan, false);
                 } else {
                     delete s.borrowerClaims[loan.id];
                 }
@@ -1022,6 +1050,11 @@ contract RiskMatchLiquidationFacet is DiamondReentrancyGuard, DiamondPausable {
             // partial branch.
             if (lenderProceeds > 0) {
                 s.heldForLender[loan.id] += lenderProceeds;
+                // #998 S10 (#1006) — same as the Active partial branch: record the
+                // frozen marker now (match is HF-gated, oracle up) since these
+                // held proceeds are claimed at a LATER terminal that can run during
+                // an outage.
+                LibSanctionedLock.recordFrozenClaimantForLoan(s, loan, true);
                 if (loan.principalAsset == s.vpfiToken) {
                     LibEncumbrance.encumberLenderProceeds(
                         loan.id, loan.lender, loan.principalAsset, lenderProceeds
@@ -1073,6 +1106,9 @@ contract RiskMatchLiquidationFacet is DiamondReentrancyGuard, DiamondPausable {
                     quantity: 0,
                     claimed: false
                 });
+                // #998 S10 (#1006) — fail-closed freeze if the current borrower-
+                // position holder is flagged.
+                LibSanctionedLock.recordFrozenClaimantForLoan(s, loan, false);
                 // The matched proceeds already exited; the lender's residual
                 // collateral claim is zero (Diamond consumed).
                 s.lenderClaims[loan.id].amount = 0;

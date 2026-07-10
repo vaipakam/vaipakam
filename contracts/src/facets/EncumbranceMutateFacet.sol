@@ -5,6 +5,7 @@ pragma solidity ^0.8.29;
 import {LibEncumbrance} from "../libraries/LibEncumbrance.sol";
 import {LibVaipakam} from "../libraries/LibVaipakam.sol";
 import {LibCloseoutFreeze} from "../libraries/LibCloseoutFreeze.sol";
+import {LibSanctionedLock} from "../libraries/LibSanctionedLock.sol";
 
 /**
  * @title  EncumbranceMutateFacet
@@ -128,6 +129,147 @@ contract EncumbranceMutateFacet {
         LibEncumbrance.recreateCollateralLien(
             loanId,
             LibVaipakam.storageSlot().loans[loanId]
+        );
+    }
+
+    /// @notice #998 S10 (#1006) — record the fail-closed frozen-claimant marker
+    ///         for a `(loanId, side)` close-out park, keyed to the CURRENT
+    ///         position-NFT holder (the intended economic claimant). See
+    ///         {LibSanctionedLock.recordFrozenClaimantForLoan}.
+    /// @dev    Hosted here (not inlined) for the EIP-170-tight liquidation /
+    ///         close-out facets (`RiskFacet`, `DefaultedFacet`, `PrecloseFacet`),
+    ///         which cross-call it exactly as they cross-call
+    ///         {incrementCollateralLien}. Facets with bytecode room inline the
+    ///         helper directly (same inline-where-possible policy as
+    ///         {freezeLenderProceeds}). Runs in the diamond's storage context, so
+    ///         the marker lands in shared storage regardless of caller.
+    function recordSanctionsFrozenClaimant(uint256 loanId, bool lenderSide)
+        external
+        onlyDiamondInternal
+    {
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        LibSanctionedLock.recordFrozenClaimantForLoan(s, s.loans[loanId], lenderSide);
+    }
+
+    /// @notice #998 S10 (#1006) — record BOTH side markers for `loanId` in one
+    ///         cross-facet call. Used by close-outs that write a lender AND a
+    ///         borrower claim in mutually-exclusive branches (e.g.
+    ///         `PrecloseFacet.precloseDirect`), so the caller records once at the
+    ///         top instead of per-branch per-side — keeps that EIP-170-tight facet
+    ///         small. Each side no-ops unless its current holder is flagged.
+    function recordSanctionsFrozenClaimantBoth(uint256 loanId)
+        external
+        onlyDiamondInternal
+    {
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        LibVaipakam.Loan storage loan = s.loans[loanId];
+        LibSanctionedLock.recordFrozenClaimantForLoan(s, loan, true);
+        LibSanctionedLock.recordFrozenClaimantForLoan(s, loan, false);
+    }
+
+    /// @notice #998 S10 (#1006) — one-call lender-payoff PARK + fail-closed freeze
+    ///         for an EIP-170-tight close-out facet. Folds the `begin` →
+    ///         cross-payer `vaultDepositERC20From` → `end` → `recordFrozenClaimant`
+    ///         cluster (which roomier facets like `RefinanceFacet` inline) into a
+    ///         single cross-facet CALL: `payer` funds `lenderTotal` of `asset` into
+    ///         the loan's CURRENT lender's vault behind the receive-side exemption
+    ///         (so a flagged lender doesn't brick the close-out), then the
+    ///         lender-side frozen-claimant marker is recorded iff that holder is
+    ///         affirmatively flagged. Used by `PrecloseFacet.completeOffsetInternal`
+    ///         to stay under the size limit.
+    function parkLenderPayoffAndFreeze(
+        address payer,
+        uint256 loanId,
+        address asset,
+        uint256 lenderTotal
+    ) external onlyDiamondInternal {
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        LibVaipakam.Loan storage loan = s.loans[loanId];
+        LibSanctionedLock.depositLockedFrom(
+            s, payer, loan.lender, loanId, asset, lenderTotal
+        );
+        LibSanctionedLock.recordFrozenClaimantForLoan(s, loan, true);
+    }
+
+    /// @notice #998 S10 (#1006, Codex #1122-rework r4) — registry-aware fail-closed
+    ///         gate hosted for EIP-170-tight facets: revert `SanctionedAddress(who)`
+    ///         when `who` must be frozen (fresh flag, or a prior confirmation during
+    ///         an outage), else pass (self-healing the registry on a clean read).
+    ///         Used by `ClaimFacet`'s backstop-absorb path, which BLOCKS a
+    ///         registered-flagged lender holder rather than parking (terminal
+    ///         in-one-tx + NFT burn). Cross-called with a `bytes4(0)` bubble.
+    /// @dev    Codex #1122-rework r5 — this REVERTING gate does NOT seed the
+    ///         registry: `mustFreezeParty`'s Flagged-branch register write rolls
+    ///         back with the revert (and on the backstop path `_assertNotSanctioned`
+    ///         reverts even earlier on an oracle-up flag). So during an OUTAGE the
+    ///         block fires only if `who` was previously registered by a
+    ///         NON-reverting observation — a flagged park at an earlier close-out,
+    ///         or the permissionless `ProfileFacet.refreshSanctionsFlag`. A wallet
+    ///         listed after a clean fallback-entry and never otherwise observed is
+    ///         the accepted fail-open-during-outage residual (an oracle blip can't
+    ///         freeze a never-confirmed wallet); operators seed it via refresh.
+    function assertNotFrozenParty(address who) external onlyDiamondInternal {
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        if (LibSanctionedLock.mustFreezeParty(s, who)) {
+            revert LibVaipakam.SanctionedAddress(who);
+        }
+    }
+
+    /// @notice #998 S10 (#1006) Class B — pay-or-freeze an ACTIVE-loan inline
+    ///         lender share whose funds sit in the DIAMOND (periodic-interest
+    ///         auto-liquidation proceeds). A clean/never-confirmed holder is paid
+    ///         directly; a registry-frozen holder's share is parked into the stored
+    ///         lender's vault + `heldForLender` + encumbered + marked. See
+    ///         {LibCloseoutFreeze.freezeOrPayActiveLenderResident}.
+    /// @dev    Hosted here (not inlined into `RepayPeriodicFacet`) so that
+    ///         EIP-170-tight servicing facet stays under the size ceiling — the
+    ///         registry-aware `mustFreezeParty` + park machinery is heavy. Runs in
+    ///         the diamond's storage context, so it reads the live loan and the
+    ///         diamond-held proceeds exactly as an inline call would.
+    function freezeOrPayActiveLenderResident(
+        uint256 loanId,
+        address asset,
+        uint256 amount
+    ) external onlyDiamondInternal {
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        LibCloseoutFreeze.freezeOrPayActiveLenderResident(
+            s, loanId, s.loans[loanId], asset, amount
+        );
+    }
+
+    /// @notice #998 S10 (#1006) Class B — pay-or-freeze an ACTIVE-loan inline
+    ///         lender share funded by a `payer` via `approve` (the ERC-20
+    ///         partial-repay principal+interest payout). Direct
+    ///         `safeTransferFrom(payer → holder)` for a clean holder; park into the
+    ///         stored lender's vault for a frozen one. See
+    ///         {LibCloseoutFreeze.freezeOrPayActiveLenderFromPayer}.
+    function freezeOrPayActiveLenderFromPayer(
+        uint256 loanId,
+        address payer,
+        address asset,
+        uint256 amount
+    ) external onlyDiamondInternal {
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        LibCloseoutFreeze.freezeOrPayActiveLenderFromPayer(
+            s, loanId, s.loans[loanId], payer, asset, amount
+        );
+    }
+
+    /// @notice #998 S10 (#1006) Class B — pay-or-freeze an ACTIVE-loan inline
+    ///         lender share funded from a loan party's VAULT (the NFT-rental
+    ///         prepay pool). Withdraw `fromUser`'s vault → holder for a clean
+    ///         holder; vault → stored-lender-vault park for a frozen one. Both
+    ///         branches arm the move-out exemption. See
+    ///         {LibCloseoutFreeze.freezeOrPayActiveLenderFromVault}.
+    function freezeOrPayActiveLenderFromVault(
+        uint256 loanId,
+        address fromUser,
+        address asset,
+        uint256 amount
+    ) external onlyDiamondInternal {
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        LibCloseoutFreeze.freezeOrPayActiveLenderFromVault(
+            s, loanId, s.loans[loanId], fromUser, asset, amount
         );
     }
 

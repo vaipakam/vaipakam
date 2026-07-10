@@ -262,7 +262,7 @@ contract AddCollateralFacetTest is Test {
                 amount: 1000 ether,
                 interestRateBps: 500,
                 collateralAsset: mockCollateralERC20,
-                collateralAmount: 1500 ether,
+                collateralAmount: 2000 ether, // #998 S15 (#900/#1101): above the ~1875 create floor (was 1500)
                 durationDays: 30,
                 assetType: LibVaipakam.AssetType.ERC20,
                 tokenId: 0,
@@ -277,7 +277,7 @@ contract AddCollateralFacetTest is Test {
                 allowsParallelSale: false,
                 amountMax: 1000 ether,
                 interestRateBpsMax: 500,
-                collateralAmountMax: 1500 ether,
+                collateralAmountMax: 2000 ether, // #998 S15 (#900/#1101): above the ~1875 create floor (was 1500)
                 periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None,
                 expiresAt: 0,
                 fillMode: LibVaipakam.FillMode.Partial,
@@ -301,7 +301,7 @@ contract AddCollateralFacetTest is Test {
                 amount: 1000 ether,
                 interestRateBps: 500,
                 collateralAsset: mockIlliquidERC20,
-                collateralAmount: 1500 ether,
+                collateralAmount: 2000 ether, // #998 S15 (#900/#1101): above the ~1875 create floor (was 1500)
                 durationDays: 30,
                 assetType: LibVaipakam.AssetType.ERC20,
                 tokenId: 0,
@@ -316,7 +316,7 @@ contract AddCollateralFacetTest is Test {
                 allowsParallelSale: false,
                 amountMax: 1000 ether,
                 interestRateBpsMax: 500,
-                collateralAmountMax: 1500 ether,
+                collateralAmountMax: 2000 ether, // #998 S15 (#900/#1101): above the ~1875 create floor (was 1500)
                 periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None,
                 expiresAt: 0,
                 fillMode: LibVaipakam.FillMode.Partial,

@@ -13,7 +13,6 @@ import {LibPeriodicInterest} from "../libraries/LibPeriodicInterest.sol";
 import {LibSwap} from "../libraries/LibSwap.sol";
 import {LibFallback} from "../libraries/LibFallback.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
-import {IERC721} from "@openzeppelin/contracts/token/ERC721/IERC721.sol";
 import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import {DiamondReentrancyGuard} from "../libraries/LibReentrancyGuard.sol";
 import {DiamondPausable} from "../libraries/LibPausable.sol";
@@ -179,25 +178,24 @@ contract RepayPeriodicFacet is DiamondReentrancyGuard, DiamondPausable, IVaipaka
         // direct-recipient sanctions gate, mirroring
         // `_autoLiquidatePeriodShortfall` + `RepayFacet.repayPartial`. The loan
         // is Active here, so the lender NFT is live and `ownerOf` holds.
-        address lenderRecipient = IERC721(address(this)).ownerOf(
-            loan.lenderTokenId
-        );
-        // The recipient is `ownerOf` (the current holder); #821's position-NFT
-        // transfer restriction means a flagged wallet can't be that holder via a
-        // post-flag transfer, so screening the live recipient is sufficient (a
-        // stale stored-`loan.lender` screen would wrongly freeze a legitimate
-        // pre-flag secondary-market buyer).
-        LibVaipakam._assertNotSanctioned(lenderRecipient);
-
+        // #998 S10 (#1006) Class B — the daily lender share is funded from the
+        // borrower's prepay vault. Pay the CURRENT lender-position holder inline
+        // when clean, or FREEZE fail-closed (park borrower-vault → stored-lender
+        // vault + `heldForLender` + encumber + marker) when the holder is
+        // registry-flagged, replacing the prior fail-open `_assertNotSanctioned`
+        // (a previously-confirmed-flagged holder would otherwise be paid during an
+        // oracle outage). Hosted on `EncumbranceMutateFacet`; the host resolves
+        // `ownerOf(lenderTokenId)` and arms the from-side move-out exemption so a
+        // borrower flagged after init can still be serviced (Tier-2 stays open).
         LibFacet.crossFacetCall(
             abi.encodeWithSelector(
-                VaultFactoryFacet.vaultWithdrawERC20.selector,
+                EncumbranceMutateFacet.freezeOrPayActiveLenderFromVault.selector,
+                loanId,
                 loan.borrower,
                 loan.prepayAsset,
-                lenderRecipient,
                 lenderShare
             ),
-            VaultWithdrawFailed.selector
+            bytes4(0)
         );
 
         LibFacet.crossFacetCall(
@@ -258,6 +256,23 @@ contract RepayPeriodicFacet is DiamondReentrancyGuard, DiamondPausable, IVaipaka
                 quantity: 0,
                 claimed: false
             });
+
+            // #998 S10 (#1006) Class A — this terminal writes a borrower buffer
+            // claim (and the zero-amount lender claim) that are released LATER by
+            // `claimAsBorrower` / `claimAsLender`. Register both current position
+            // holders in the confirmed-flagged registry now (an oracle-up
+            // observation) so a holder flagged at this close-out but claiming
+            // during a later oracle outage is caught fail-closed by the central
+            // claim gate. Position NFTs are not burned on this path (status-only
+            // update below), so `ownerOf` still resolves both holders. Hosted for
+            // EIP-170; each side no-ops unless its holder is affirmatively flagged.
+            LibFacet.crossFacetCall(
+                abi.encodeWithSelector(
+                    EncumbranceMutateFacet.recordSanctionsFrozenClaimantBoth.selector,
+                    loanId
+                ),
+                bytes4(0)
+            );
 
             // Three best-effort cleanup calls below. Each writes to the
             // same `ok` local, which Slither flags as `write-after-write`.
@@ -615,14 +630,22 @@ contract RepayPeriodicFacet is DiamondReentrancyGuard, DiamondPausable, IVaipaka
             // holder, not the stale `loan.lender`: the eager consolidation above
             // is Tier2 skip-not-block, so it can leave `loan.lender` stale (e.g.
             // a `_isExcludedLive` lender exclusion), and this is a DIRECT payout.
-            // Resolve `ownerOf(lenderTokenId)` + apply the direct-recipient
-            // sanctions gate, mirroring `RepayFacet.repayPartial`. The loan is
-            // Active here so the lender NFT is live and `ownerOf` holds.
-            address lenderRecipient = IERC721(address(this)).ownerOf(
-                loan.lenderTokenId
+            //
+            // #998 S10 (#1006) Class B — the proceeds sit in the Diamond (just
+            // swapped). Pay the current holder inline when clean, or FREEZE
+            // fail-closed (park into the stored lender's vault + `heldForLender` +
+            // encumber + marker) when the holder is registry-flagged. Hosted on
+            // `EncumbranceMutateFacet` so the registry-aware freeze machinery stays
+            // out of this EIP-170-tight facet; the host resolves `ownerOf` itself.
+            LibFacet.crossFacetCall(
+                abi.encodeWithSelector(
+                    EncumbranceMutateFacet.freezeOrPayActiveLenderResident.selector,
+                    loanId,
+                    loan.principalAsset,
+                    lenderProceeds
+                ),
+                bytes4(0)
             );
-            LibVaipakam._assertNotSanctioned(lenderRecipient);
-            IERC20(loan.principalAsset).safeTransfer(lenderRecipient, lenderProceeds);
             // #408 / #410 / #413 (2026-06-12) — credit
             // `interestSettled` by the interest just forwarded to the
             // lender so a later full repay / preclose nets the
