@@ -1,16 +1,17 @@
-// #1129/#1134 post-merge live review — Rate Desk phase 1 on production
-// alpha02: drive the desk's chain-path feature end-to-end as the lender
-// (custom-pair market load → post a GTC/Partial lend order → amend it
-// in place → wait out the real 300 s protocol cooldown → cancel), with
-// every offer-scoped assert verified BOTH in the UI and directly
-// on-chain via viem.
+// #1129/#1134 + #1130/#1139 post-merge live review — Rate Desk
+// phases 1+2 on production alpha02: drive the desk's chain-path
+// feature end-to-end as the lender (custom-pair market load → post a
+// GTC/Partial lend order → amend it in place → wait out the real
+// 300 s protocol cooldown → cancel), with every offer-scoped assert
+// verified BOTH in the UI and directly on-chain via viem.
 //
 // This driver is the "remaining live half" of the COVERAGE.md Rate
-// Desk row: the fork spec (tests/17-rate-desk.spec.ts) owns the exact
-// ladder math and time-travels past the cooldown; this drive proves
-// the same journey against the deployed site, the real Base Sepolia
-// Diamond, and the real indexer. The indexer-backed surfaces are
-// ASSERTED healthy: the /offers/markets summary behind the pair
+// Desk rows: the fork specs (tests/17-rate-desk.spec.ts + phase-2's
+// tests/18-rate-desk-chart.spec.ts) own the exact ladder math /
+// chart-decision math and time-travel past the cooldown; this drive
+// proves the same journey against the deployed site, the real Base
+// Sepolia Diamond, and the real indexer. The indexer-backed surfaces
+// are ASSERTED healthy: the /offers/markets summary behind the pair
 // dropdown (step 1) and the market-scoped /loans/recent tape (step 7)
 // must render real data or their honest empty copy. Production has
 // carried real market data since D1 migrations 0029–0031 were applied
@@ -18,6 +19,42 @@
 // "couldn't load" copy (`copy.desk.marketsUnavailable` /
 // `copy.desk.tapeUnavailable`) — now FAILS the drive by design. The
 // book itself is a chain read and is asserted healthy regardless.
+//
+// Phase-2 pass (#1130/#1139) — two new ASSERT steps ride the existing
+// drive at its natural points (no new waits, so the ~6-min
+// cooldown-bound runtime holds):
+//  - step 2b (right after the market loads): the executed-rate chart
+//    card must NOT render `copy.desk.chart.unavailable` — a drawn
+//    series or either honest empty copy (market-history `empty` /
+//    range-scoped `emptyRange`) passes; the driven WETH/tLIQ market is
+//    usually fill-free, so which empty copy renders depends on the
+//    tape evidence (`chartEmptyKind`) and the step records the state
+//    seen. The interval/range chip groups and the TradingView
+//    attribution link (structural chrome, rendered in every chart
+//    state) are asserted, and the worker wire is probed directly:
+//    GET {INDEXER}/loans/rate-candles for the driven market with the
+//    UI's default view params (1d × 30d) must 200 with a `buckets`
+//    array (empty is fine — the bucket count is recorded).
+//  - step 7b (at the bottom tabs, inside the cooldown window): the
+//    History tab as the lender must NOT render
+//    `copy.desk.history.unavailable` — rows or the honest empty copy
+//    pass. NOTE the lender's phase-1 drives (offers #32–36 era) only
+//    created offers that were cancelled without ever filling, so an
+//    EMPTY history is legitimate unless this wallet has past loans;
+//    other wallets' loans on the market don't matter — the surface is
+//    wallet-scoped. Wire probe: GET {INDEXER}/loans/by-participant
+//    ?chainId=84532&wallet=<lender> must 200 with a `loans` array +
+//    `nextBefore`; loan count and roles are recorded, and the UI's
+//    emptiness must agree with the wire's. The step restores the Open
+//    orders tab afterwards (step 8's cancel asserts live there).
+// The deployed layout needs no viewport accommodation: at the
+// driver's 1280×900 viewport the desk container measures ~810–930px
+// (the shell sidebar eats ~350px), which is the ≥720px container
+// branch — chart card full-width above book+ticket, mobile Book|Chart
+// toggle hidden — so both new surfaces are directly reachable.
+// INDEXER_ORIGIN overrides the probed worker origin (defaults to the
+// production indexer, https://indexer.vaipakam.com — the origin the
+// deployed app's VITE_INDEXER_ORIGIN points at).
 //
 // Money discipline: ONE offer, AMOUNT_WETH escrow + gas at risk; the
 // cancel refunds the escrow. The cleanup handler ALWAYS sweeps the
@@ -44,7 +81,9 @@
 // NB for the batch runner: this script performs real testnet writes
 // (approve/permit + create + modify + cancel) and blocks ~5–7 minutes
 // on the genuine cancel cooldown. It self-cleans, so batch inclusion
-// is safe — just slow.
+// is safe — just slow. The phase-2 steps are read-only (UI asserts +
+// two indexer GETs) and add no waits — the History pass runs inside
+// the cooldown window, so the runtime bound is unchanged.
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -107,6 +146,40 @@ const ERC20_ABI = [
 ];
 const erc20Read = (token, functionName, args = []) =>
   pub.readContract({ address: token, abi: ERC20_ABI, functionName, args });
+
+// ---- phase-2 wire probes (#1130/#1139) -------------------------------
+// The indexer Worker origin the deployed app's VITE_INDEXER_ORIGIN
+// points at — override with INDEXER_ORIGIN when probing a staging
+// worker. Node's global fetch rides the same optional LIVE_PROXY_SETUP
+// dispatcher swap driver.mjs performs at import time, so the probes
+// work wherever the page traffic does.
+const INDEXER = process.env.INDEXER_ORIGIN ?? 'https://indexer.vaipakam.com';
+
+/** GET an indexer route; returns { status, body } with the body parsed
+ *  leniently (null on non-JSON) — status/shape asserts are the
+ *  caller's job so each step can throw its own precise message. */
+async function indexerGet(url) {
+  // Bounded (Codex #1143 round-1 P2): the History probe runs AFTER a
+  // real offer is posted — an indefinitely-pending fetch would keep
+  // the run from ever reaching the finally-cleanup that cancels the
+  // escrow. A hang becomes a thrown AbortError instead.
+  const res = await fetch(url, { signal: AbortSignal.timeout(20_000) });
+  const body = await res.json().catch(() => null);
+  return { status: res.status, body };
+}
+
+/** Validate an address loaded from a bundle/wallet FILE and rebuild it
+ *  numerically before it may enter a probe URL (CodeQL
+ *  js/file-data-in-outbound-network-request): the returned string is
+ *  derived from the parsed integer value, not the file bytes, so a
+ *  corrupted bundle can only throw here — never smuggle URL syntax
+ *  into an outbound request. */
+function asAddress(value, label) {
+  if (typeof value !== 'string' || !/^0x[0-9a-fA-F]{40}$/.test(value)) {
+    throw new Error(`${label} is not a 0x-40-hex address: "${value}"`);
+  }
+  return `0x${BigInt(value).toString(16).padStart(40, '0')}`;
+}
 
 // Distinctive rates on purpose — nothing else on the live book quotes
 // these, so a UI row showing them is unambiguously THIS run's offer.
@@ -310,7 +383,8 @@ const startBlock = await pub.getBlockNumber();
 const { days: tenor, empty: tenorEmpty } = await pickTenor();
 console.log(
   `run: lender=${lenderAddr} market=WETH/tLIQ tenor=${tenor}d` +
-    `${tenorEmpty ? ' (verified live-empty)' : ' (least-populated fallback)'} site=${SITE}`,
+    `${tenorEmpty ? ' (verified live-empty)' : ' (least-populated fallback)'} site=${SITE}` +
+    ` indexer=${INDEXER} (phase 1 lifecycle + phase 2 chart/History)`,
 );
 
 const { page, shot, done, consoleErrors } = await launch({ role: 'lender' });
@@ -436,6 +510,113 @@ try {
       `${tenorEmpty ? 'verified live-empty tenor' : 'least-populated tenor fallback'})`,
     'PASS',
     bookState,
+  );
+
+  // ---- step 2b (phase 2, #1130): chart panel — ASSERTED healthy ------
+  // The executed-rate chart is the desk's third indexer-backed surface
+  // (/loans/rate-candles). Same posture as the markets summary + tape:
+  // the unavailable copy (`copy.desk.chart.unavailable`) FAILS the
+  // drive; acceptable terminal states are a drawn series or one of the
+  // two honest empty copies — the driven WETH/tLIQ market is usually
+  // fill-free, and `chartEmptyKind` picks market-history `empty` vs
+  // range-scoped `emptyRange` from the tape evidence, so BOTH are
+  // legitimate here (the record states which was seen). Layout note:
+  // at the driver's 1280×900 viewport the desk container is in its
+  // ≥720px branch (chart full-width above book+ticket, mobile toggle
+  // hidden), so the card is directly visible — waitFor(visible) below
+  // fails loudly if that container-query layout ever regresses.
+  const chartCard = page.locator('.desk-chart-card');
+  await chartCard.waitFor({ timeout: 30_000 });
+  const chartUnavailable = chartCard.getByText(
+    /couldn.t load the rate history right now/i,
+  );
+  // `copy.desk.chart.empty` — "No fills yet for this market — the
+  // chart draws only executed rates." (matched on its distinctive
+  // second half so the tape's similar "No fills yet…" copy can't
+  // collide even if scoping ever changes).
+  const chartEmptyMarket = chartCard.getByText(/chart draws only executed rates/i);
+  // `copy.desk.chart.emptyRange` — "No fills in this range — try a
+  // longer range."
+  const chartEmptyRange = chartCard.getByText(/no fills in this range/i);
+  // The wrapper div mounts before lightweight-charts initializes, so a
+  // "drawn series" claim must see the library's actual OUTPUT — a
+  // <canvas> child — not just the container (Codex #1143 round-1 P2:
+  // a chart-init throw would otherwise still record a drawn series).
+  const chartCanvas = chartCard.locator('.desk-chart-canvas canvas');
+  await pollChain(
+    'the chart to resolve out of its loading state',
+    async () =>
+      (await chartUnavailable.isVisible().catch(() => false)) ||
+      (await chartEmptyMarket.isVisible().catch(() => false)) ||
+      (await chartEmptyRange.isVisible().catch(() => false)) ||
+      (await chartCanvas.count().catch(() => 0)) > 0,
+    { timeoutMs: 45_000, intervalMs: 2_000 },
+  );
+  if (await chartUnavailable.isVisible().catch(() => false)) {
+    throw new Error(
+      'chart rendered UNAVAILABLE (`copy.desk.chart.unavailable`) — ' +
+        'the indexer /loans/rate-candles route regressed',
+    );
+  }
+  const chartState =
+    (await chartCanvas.count()) > 0
+      ? `drawn series${
+          (await chartCard.locator('.desk-chart-sparse-note').count()) > 0
+            ? ' (sparse-tape mode)'
+            : ''
+        }`
+      : (await chartEmptyMarket.isVisible().catch(() => false))
+        ? 'honest market-history empty copy ("…chart draws only executed rates.")'
+        : 'honest range-scoped empty copy ("No fills in this range…")';
+  // Structural chrome renders in EVERY chart state (it sits outside
+  // the tri-state branch): the interval/range chip groups and the
+  // Apache-2.0 TradingView attribution link.
+  for (const [groupName, chips] of [
+    ['Interval', ['1h', '4h', '1d']],
+    ['Range', ['7d', '30d', '90d', 'all']],
+  ]) {
+    for (const chip of chips) {
+      const chipBtn = chartCard
+        .getByRole('group', { name: groupName })
+        .getByRole('button', { name: chip, exact: true });
+      if (!(await chipBtn.isVisible().catch(() => false))) {
+        throw new Error(`chart ${groupName} chip "${chip}" missing from the card`);
+      }
+    }
+  }
+  const attribution = chartCard.getByRole('link', { name: 'Charts by TradingView' });
+  if (!(await attribution.isVisible().catch(() => false))) {
+    throw new Error('TradingView attribution link missing from the chart card');
+  }
+  const attrHref = await attribution.getAttribute('href');
+  // Anchored to the URL start (CodeQL js/regex/missing-regexp-anchor):
+  // an unanchored host test would also match a hostile origin that
+  // embeds the TradingView path later in the URL.
+  if (!/^https:\/\/(www\.)?tradingview\.com\/lightweight-charts\/?/.test(attrHref ?? '')) {
+    throw new Error(`TradingView attribution href unexpected: "${attrHref}"`);
+  }
+  // Wire probe — the exact worker route the chart reads, for the
+  // driven market with the UI's default view params (1d × 30d): must
+  // 200 with a `buckets` array (empty is fine — the driven market
+  // usually has no fills; the count is recorded either way).
+  const candlesProbe = await indexerGet(
+    `${INDEXER}/loans/rate-candles?chainId=${CHAIN_ID}` +
+      `&lendingAsset=${asAddress(WETH, 'bundle weth')}` +
+      `&collateralAsset=${asAddress(TLIQ, 'bundle liquidToken')}` +
+      `&durationDays=${tenor}&interval=1d&range=30d`,
+  );
+  if (candlesProbe.status !== 200 || !Array.isArray(candlesProbe.body?.buckets)) {
+    throw new Error(
+      `/loans/rate-candles wire probe failed — status ${candlesProbe.status}, ` +
+        `body ${JSON.stringify(candlesProbe.body)?.slice(0, 300)}`,
+    );
+  }
+  await snap('rate-desk-02b-chart');
+  record(
+    '2b. chart panel healthy (indexer-backed, phase 2)',
+    'PASS',
+    `${chartState}; interval/range chips + TradingView attribution present; ` +
+      `wire probe 200 with ${candlesProbe.body.buckets.length} bucket(s)`,
   );
 
   // ---- step 3: connect + post the lend order ------------------------
@@ -708,6 +889,108 @@ try {
       ? `${tapeFillCount} fill row(s) rendered`
       : 'honest market-scoped empty state ("No fills yet for this market.")',
   );
+
+  // ---- step 7b (phase 2, #1130): History tab — ASSERTED healthy ------
+  // The wallet's PERMANENT desk activity via the historical-participant
+  // route (/loans/by-participant — persisted loan_participants rows,
+  // ALL statuses, market-agnostic). Runs here on purpose: the 300 s
+  // cancel cooldown is already ticking, so this step costs no extra
+  // wall-clock. The lender's phase-1 drives (offers #32–36 era) only
+  // created offers that were cancelled without ever filling — offers
+  // never become loans, so an EMPTY history is legitimate unless this
+  // wallet has real past loans; the unavailable copy
+  // (`copy.desk.history.unavailable`) is a FAIL. Other wallets' loans
+  // on the market are irrelevant — the surface is wallet-scoped.
+  // The bottom-tab card renders only the ACTIVE panel, so the step
+  // restores the Open orders tab before step 8 (whose cancel button +
+  // row-exit asserts live there).
+  const tabsCard = page
+    .locator('.card')
+    .filter({ has: page.getByRole('button', { name: 'Positions', exact: true }) });
+  await tabsCard.getByRole('button', { name: 'History', exact: true }).click();
+  // Gate every History read on a History-SPECIFIC marker (Codex #1143
+  // round-1 P2): `.row-list .item-row` also matches the Open orders
+  // panel's rows, so if the tab click ever stopped switching panels,
+  // this run's own open order could satisfy a bare row count while
+  // the History panel never rendered. The caption
+  // (`copy.desk.history.caption`) renders in EVERY History state —
+  // rows, empty, and unavailable alike — so it proves the panel
+  // actually swapped before anything else is trusted.
+  const historyCaption = tabsCard.getByText(
+    /everything this wallet ever traded on the desk/i,
+  );
+  await historyCaption.waitFor({ state: 'visible', timeout: 30_000 });
+  const historyUnavailable = tabsCard.getByText(
+    /couldn.t load your history right now/i,
+  );
+  const historyEmpty = tabsCard.getByText(/no desk history for this wallet yet/i);
+  const historyRows = tabsCard.locator('.row-list .item-row');
+  await pollChain(
+    'the History tab to resolve out of its loading state',
+    async () =>
+      (await historyUnavailable.isVisible().catch(() => false)) ||
+      (await historyEmpty.isVisible().catch(() => false)) ||
+      (await historyRows.count().catch(() => 0)) > 0,
+    { timeoutMs: 45_000, intervalMs: 2_000 },
+  );
+  if (await historyUnavailable.isVisible().catch(() => false)) {
+    throw new Error(
+      'History tab rendered UNAVAILABLE (`copy.desk.history.unavailable`) — ' +
+        'the indexer /loans/by-participant route regressed',
+    );
+  }
+  const historyRowCount = await historyRows.count();
+  // Role badges (`badge-info` is the role badge class in HistoryRow;
+  // the status badge uses the state's own tone class).
+  const historyRoles =
+    historyRowCount > 0
+      ? [...new Set(await tabsCard.locator('.badge-info').allInnerTexts())]
+      : [];
+  // Wire probe — the same route, lender-scoped: must 200 with a
+  // `loans` array plus a `nextBefore` key (null on a final page).
+  const histProbe = await indexerGet(
+    `${INDEXER}/loans/by-participant?chainId=${CHAIN_ID}` +
+      `&wallet=${asAddress(lenderAddr, 'lender wallet address')}`,
+  );
+  if (
+    histProbe.status !== 200 ||
+    !Array.isArray(histProbe.body?.loans) ||
+    !('nextBefore' in histProbe.body)
+  ) {
+    throw new Error(
+      `/loans/by-participant wire probe failed — status ${histProbe.status}, ` +
+        `body ${JSON.stringify(histProbe.body)?.slice(0, 300)}`,
+    );
+  }
+  const wireRoles = [
+    ...new Set(histProbe.body.loans.flatMap((l) => l.roles ?? [])),
+  ];
+  // UI and wire read the SAME wallet-scoped route (the desk scoping —
+  // ERC-20/ERC-20, non-sale-vehicle — lives server-side in the route),
+  // so their emptiness must agree; a wire page with loans behind an
+  // empty UI tab (or vice versa) is a rendering/decode regression.
+  if ((historyRowCount === 0) !== (histProbe.body.loans.length === 0)) {
+    throw new Error(
+      `History UI/wire emptiness disagree — UI rows=${historyRowCount}, ` +
+        `wire loans=${histProbe.body.loans.length}`,
+    );
+  }
+  await snap('rate-desk-05b-history');
+  record(
+    '7b. History tab healthy (indexer-backed, phase 2)',
+    'PASS',
+    (historyRowCount > 0
+      ? `${historyRowCount} history row(s), role badge(s): ` +
+        `${historyRoles.join('/') || '(none)'}`
+      : 'honest empty state ("No desk history for this wallet yet.")') +
+      `; wire probe 200 with ${histProbe.body.loans.length} loan(s)` +
+      (wireRoles.length ? ` (roles: ${wireRoles.join('/')})` : '') +
+      `, nextBefore=${histProbe.body.nextBefore}`,
+  );
+  // Restore the Open orders tab for step 8 and re-anchor on this run's
+  // offer row before touching its cancel button.
+  await tabsCard.getByRole('button', { name: 'Open orders', exact: true }).click();
+  await ordersRow().waitFor({ timeout: 30_000 });
 
   // ---- step 8: wait out the REAL cooldown, then cancel ---------------
   const chainNow = Number((await pub.getBlock({ blockTag: 'latest' })).timestamp);
@@ -993,7 +1276,9 @@ if (offerId !== null) {
   });
 }
 
-console.log('\n━━━ live-rate-desk summary ━━━');
+console.log(
+  '\n━━━ live-rate-desk summary (phase 1 lifecycle + phase 2 chart/History) ━━━',
+);
 for (const s of steps) console.log(`${s.status.padEnd(8)} ${s.name}${s.detail ? ` — ${s.detail}` : ''}`);
 console.log(`offer id: ${offerId ?? '(none created)'} · cancelled: ${cancelled}`);
 for (const t of evidence) console.log(`tx ${t.hash} — ${t.events.join(', ')}`);
