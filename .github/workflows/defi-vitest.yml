@@ -81,11 +81,15 @@ jobs:
           echo "Changed files:"
           echo "$CHANGED"
 
-          # apps/defi + apps/alpha02 source + the packages they import (a
-          # lib/contracts/ui change can break either suite), plus the root
-          # dependency / workspace inputs a Vitest/jsdom/React/wagmi bump rides
-          # in on, plus this workflow file itself.
-          DEFI_RE='^(apps/(defi|alpha02)/|packages/(lib|contracts|ui)/|package\.json$|pnpm-lock\.yaml$|pnpm-workspace\.yaml$|\.github/workflows/defi-vitest\.yml$)'
+          # apps/defi + apps/alpha02 + apps/indexer source + the packages
+          # they import (a lib/contracts/ui change can break any suite),
+          # plus the root dependency / workspace inputs a
+          # Vitest/jsdom/React/wagmi bump rides in on, plus this workflow
+          # file itself. apps/indexer joined post-#1149: its vitest suite
+          # (route SQL semantics + the SQL-vs-schema guard) previously ran
+          # nowhere in CI, so the exact statement that wedged production
+          # ingest had no gate.
+          DEFI_RE='^(apps/(defi|alpha02|indexer)/|packages/(lib|contracts|ui)/|package\.json$|pnpm-lock\.yaml$|pnpm-workspace\.yaml$|\.github/workflows/defi-vitest\.yml$)'
           if echo "$CHANGED" | grep -Eq "$DEFI_RE"; then
             echo "defi=true" >> "$GITHUB_OUTPUT"
           else
@@ -130,3 +134,13 @@ jobs:
 
       - name: Run defi vitest
         run: pnpm --filter @vaipakam/defi test
+
+      # apps/indexer's vitest suite (#1149) gates here too: it holds the
+      # real-SQLite route-semantics tests AND the SQL-vs-schema guard that
+      # prepares every static statement in apps/indexer/src against the
+      # exact migrated schema. Before this step existed the suite ran only
+      # on developer machines — the phantom-column UPDATE that wedged
+      # Base-Sepolia ingest for 17h sailed through CI because nothing here
+      # executed it. Needs Node >= 22 for node:sqlite (this job pins '22').
+      - name: Run @vaipakam/indexer vitest
+        run: pnpm --filter @vaipakam/indexer test
