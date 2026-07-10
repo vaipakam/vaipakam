@@ -220,6 +220,11 @@ export async function handleOffersStats(req: Request, env: Env): Promise<Respons
  * from walking the paginated /offers/active feed, whose page cap would
  * silently drop markets (ProRateTerminalDesign.md §8, Codex #1128 round-4).
  *
+ * Expired GTT rows are excluded (expiry is lazily enforced on-chain, so a
+ * lapsed offer's row can still read status='active' — advertising a market
+ * whose only rows are expired would point the desk at liquidity that cannot
+ * be accepted and then render an empty book).
+ *
  * ERC-20-only by construction (asset_type = 0 AND collateral_asset_type = 0):
  * NFT/1155 legs carry token identity and must not merge into a fungible
  * market row. Sale-vehicle offers are excluded — they are bookkeeping, not
@@ -242,10 +247,11 @@ export async function handleOffersMarkets(req: Request, env: Env): Promise<Respo
         WHERE chain_id = ? AND status = 'active'
           AND asset_type = 0 AND collateral_asset_type = 0
           AND is_sale_vehicle = 0
+          AND (expires_at = 0 OR expires_at > ?)
         GROUP BY lending_asset, collateral_asset, duration_days
         ORDER BY (lender_offers + borrower_offers) DESC`,
     )
-      .bind(chainId)
+      .bind(chainId, Math.floor(Date.now() / 1000))
       .all<{
         lending_asset: string;
         collateral_asset: string;
@@ -536,7 +542,10 @@ function parseMarketFilter(url: URL): MarketFilter | 'bad' {
   const rawDays = url.searchParams.get('durationDays');
   if (rawDays !== null) {
     const n = Number(rawDays);
-    if (!Number.isInteger(n) || n < 1 || n > 365) return 'bad';
+    // Upper bound is input SANITY only (the protocol's maxOfferDurationDays
+    // is governance-tunable and can exceed one year) — reject only clearly
+    // malformed values, never a tenor the contracts could legitimately allow.
+    if (!Number.isInteger(n) || n < 1 || n > 3650) return 'bad';
     out.durationDays = n;
   }
   return out;

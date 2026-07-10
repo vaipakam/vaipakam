@@ -1213,7 +1213,10 @@ function parseMarketFilter(url: URL): MarketFilter | 'bad' {
   const rawDays = url.searchParams.get('durationDays');
   if (rawDays !== null) {
     const n = Number(rawDays);
-    if (!Number.isInteger(n) || n < 1 || n > 365) return 'bad';
+    // Upper bound is input SANITY only (the protocol's maxOfferDurationDays
+    // is governance-tunable and can exceed one year) — reject only clearly
+    // malformed values, never a tenor the contracts could legitimately allow.
+    if (!Number.isInteger(n) || n < 1 || n > 3650) return 'bad';
     out.durationDays = n;
   }
   return out;
