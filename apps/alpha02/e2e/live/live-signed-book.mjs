@@ -66,8 +66,10 @@
 //         window.fetch (/signed-offers refetch start times) and, if a
 //         socket to the indexer push endpoint ever reaches OPEN (a
 //         page-WS-capable environment), it demands the EVIDENCE CHAIN
-//         — a page-WS message at the crossing scan → a /signed-offers
-//         refetch STARTING within ~3 s of that message → the ladder
+//         — a page-WS INVALIDATE frame carrying offer.changed at the
+//         crossing scan (parsed, so a reconnect hello can't credit) →
+//         a /signed-offers refetch STARTING within ~3 s of that
+//         message → the ladder
 //         row gone — before crediting push. The DOM flip alone is NOT
 //         proof: it can coincide with useDeskSignedBook's normal 30 s
 //         poll tick, and when the tick was itself plausibly due inside
@@ -287,7 +289,15 @@ async function noncesSettled(address, { timeoutMs = 120_000, intervalMs = 5_000 
 
 /** A WETH/tLIQ tenor bucket with no live ON-CHAIN offers right now
  *  (keeps the driven ladder free of third-party levels); falls back to
- *  the least-populated bucket if every one is taken. */
+ *  the least-populated bucket if every one is taken.
+ *
+ *  Returns { days, bucketWasEmpty } (Codex #1148 r3): `bucketWasEmpty`
+ *  records WHICH branch picked the bucket — true means genuinely empty
+ *  at preflight, false means the least-populated fallback (on-chain
+ *  offers present). Step 5b needs the distinction: a previewMatch band
+ *  cannot exist without an on-chain top-of-book pair to cross, so a
+ *  band rendered over a picked-empty bucket is a FAIL unless the
+ *  bucket re-verifies as populated at that moment. */
 async function pickTenor() {
   const [rankings] = await diamondRead('getActiveOffersByAssetPairRanked', [WETH, TLIQ]);
   const counts = new Map();
@@ -295,10 +305,70 @@ async function pickTenor() {
     const d = Number(r.durationDays);
     counts.set(d, (counts.get(d) ?? 0) + 1);
   }
-  for (const d of BUCKET_PREFERENCE) if (!counts.has(d)) return d;
-  return [...BUCKET_PREFERENCE].sort(
+  for (const d of BUCKET_PREFERENCE) {
+    if (!counts.has(d)) return { days: d, bucketWasEmpty: true };
+  }
+  const fallback = [...BUCKET_PREFERENCE].sort(
     (a, b) => (counts.get(a) ?? 0) - (counts.get(b) ?? 0),
   )[0];
+  return { days: fallback, bucketWasEmpty: false };
+}
+
+// ---- offer.changed confound sweep (Codex #1148 r3) --------------------
+// The push frame's `offer.changed` key is COARSE: the indexer's
+// invalidationKeysFromResult (apps/indexer/src/chainIngestDO.ts) emits
+// it when a scan counted ANY of `statusUpdates` (on-chain Offer*
+// mutations, chainIndexer.ts processOfferLogs), `detailRefreshes`
+// (stub-offer heals, seeded by OfferCreated), or `signedOfferUpdates`
+// (SignedOffer* lifecycle, processSignedOfferLogs). So a crossing
+// frame's key could belong to concurrent third-party offer activity
+// scanned in the same pass, not to OUR cancel. Before step 7 credits
+// the rail, this sweep getLogs the crossing scan's block window for
+// every event that feeds those counters and drops the one EXPECTED hit
+// (any log whose args carry OUR orderHash — our own SignedOfferCancelled);
+// any remaining log makes the PASS unattributable → AMBIGUOUS. A
+// third party's SignedOffer* event is deliberately IN the confound set
+// (it rides the same coarse key via signedOfferUpdates). The single
+// event-free residual is a cross-scan stub heal (an OfferCreated from
+// an EARLIER window healed in this one) — unavoidable without
+// Worker-side per-id keys, noted here for honesty.
+const OFFER_CHANGED_EVENT_NAMES = [
+  // statusUpdates sources (processOfferLogs) + the stub-row seed whose
+  // heal drives detailRefreshes:
+  'OfferCreated',
+  'OfferAccepted',
+  'OfferCanceled',
+  'OfferConsumedBySale',
+  'OfferMatched',
+  'OfferClosed',
+  'OfferModified',
+  // signedOfferUpdates sources (processSignedOfferLogs):
+  'SignedOfferFilled',
+  'SignedOfferMatched',
+  'SignedOfferCancelled',
+  'SignedOfferNonceBurned',
+];
+
+/** getLogs the Diamond over [fromBlock, toBlock] for every event that
+ *  can feed the coarse offer.changed invalidate key, excluding logs
+ *  whose args carry `ownOrderHash` (the expected hit — this run's own
+ *  cancel). Returns printable "EventName@block N" strings; empty ⇒ the
+ *  signed update was the window's only offer.changed source. Bounded:
+ *  the window is one scan (typically a handful of blocks), one call. */
+async function sweepOfferChangedConfounds(fromBlock, toBlock, ownOrderHash) {
+  // Dedupe by name — the bundled ABI repeats some events across facet
+  // JSONs (e.g. OfferClosed in OfferCancelFacet + OfferMatchFacet).
+  const seen = new Set();
+  const events = ABI.filter((e) => {
+    if (e.type !== 'event' || !OFFER_CHANGED_EVENT_NAMES.includes(e.name)) return false;
+    if (seen.has(e.name)) return false;
+    seen.add(e.name);
+    return true;
+  });
+  const logs = await pub.getLogs({ address: DIAMOND, events, fromBlock, toBlock });
+  return logs
+    .filter((l) => !(l.args?.orderHash && sameAddr(l.args.orderHash, ownOrderHash)))
+    .map((l) => `${l.eventName}@block ${l.blockNumber}`);
 }
 
 // ---- WS collector — the production push rail, observed from Node ----
@@ -384,7 +454,7 @@ async function selectTenor(page, days) {
 
 // ----------------------------------------------------------------------
 const lenderAddr = addressOf('lender');
-const tenor = await pickTenor();
+const { days: tenor, bucketWasEmpty: tenorBucketWasEmpty } = await pickTenor();
 console.log(
   `run: lender=${lenderAddr} market=WETH/tLIQ tenor=${tenor}d site=${SITE}` +
     ` indexer=${INDEXER} ws=${INDEXER_WS}/ws/chain/${CHAIN_ID} (phase 3 gasless signed book)`,
@@ -402,11 +472,13 @@ let failed = false;
 let orderHash = null;
 let capturedPost = null; // { status, orderHash, url } from the page's POST response
 // The exact { order } the page itself POSTed — parsed from the REQUEST
-// body of the same exchange (Codex #1148 r2). Fallback replay payload
-// for the cleanup: if the drive dies after the POST succeeded but
-// before GET served the row back, the market GET cannot be the
-// recovery source, yet the order still rests fillable. It is the same
-// wire shape GET serves, so wireToStruct consumes it directly.
+// body the moment the POST is SENT (Codex #1148 r2; r3 moved the
+// capture off the response event so a lost/hung response can't cost
+// it). Fallback replay payload for the cleanup: if the drive dies
+// after the POST went out but before GET served the row back (or the
+// response never arrived), the market GET cannot be the recovery
+// source, yet the order may rest fillable. It is the same wire shape
+// GET serves, so wireToStruct consumes it directly.
 let capturedPostOrder = null;
 let wireOrder = null; // the exact replay payload GET served (cancel needs it)
 let signClicked = false; // a signature may exist from here on
@@ -576,13 +648,22 @@ try {
         this.addEventListener('open', () => {
           entry.opened = true;
         });
-        // MESSAGE timestamps (Codex #1148 r2): an extra listener from
-        // inside the wrapped constructor is the least-invasive capture
-        // — it observes every frame whether the app attaches via
-        // onmessage or addEventListener, and never touches dispatch.
-        // Step 7b ties the book refetch to these timestamps.
-        this.addEventListener('message', () => {
-          entry.messages.push(Date.now());
+        // MESSAGE records (Codex #1148 r2; parsed since r3): an extra
+        // listener from inside the wrapped constructor is the
+        // least-invasive capture — it observes every frame whether the
+        // app attaches via onmessage or addEventListener, and never
+        // touches dispatch. Each frame is parsed so step 7b can demand
+        // a REAL invalidate frame whose keys include offer.changed — a
+        // hello frame after a page-socket reconnect must never credit
+        // the browser push path.
+        this.addEventListener('message', (ev) => {
+          let parsed = null;
+          try {
+            parsed = JSON.parse(String(ev.data));
+          } catch {
+            /* non-JSON frame — recorded with t/keys undefined */
+          }
+          entry.messages.push({ at: Date.now(), t: parsed?.t, keys: parsed?.keys });
         });
         this.addEventListener('close', () => {
           entry.closed = true;
@@ -612,31 +693,40 @@ try {
       return native(...args);
     };
   });
+  // The REQUEST body (Codex #1148 r2; r3 moved it to the request
+  // event): the page sends { chainId, order, signature } — keep the
+  // order as the cleanup's fallback replay payload. Captured the moment
+  // the request is SENT, not when (or if) the response arrives: a
+  // lost/hung POST response must not cost the cleanup its replay
+  // payload, so this capture is independent of BOTH the GET recovery
+  // and the POST response below.
+  page.on('request', (req) => {
+    try {
+      if (req.method() !== 'POST') return;
+      if (new URL(req.url()).pathname !== '/signed-offers') return;
+      const reqOrder = JSON.parse(req.postData() ?? '')?.order;
+      if (reqOrder) {
+        capturedPostOrder = reqOrder;
+        console.log(
+          `captured POST /signed-offers request order (nonce=${reqOrder.nonce}) ` +
+            'as the cleanup fallback replay payload',
+        );
+      }
+    } catch {
+      /* body unavailable/malformed — GET recovery stays the fallback */
+    }
+  });
   // Deterministic order identity (Codex #1148): capture the Worker's
   // { chainId, orderHash } answer to the page's own POST
   // /signed-offers. Registered before navigation so the capture can
   // never race the sign click; the undici route fulfill still emits
   // Playwright response events, so this observes the real wire answer.
+  // This listener carries SOLELY the { orderHash } answer (Codex #1148
+  // r3) — the request-body capture above already landed at send time.
   page.on('response', (res) => {
     try {
       if (res.request().method() !== 'POST') return;
       if (new URL(res.url()).pathname !== '/signed-offers') return;
-      // The REQUEST body too (Codex #1148 r2): the page sent
-      // { chainId, order, signature } — keep the order as the cleanup's
-      // fallback replay payload for the window where the POST landed
-      // but GET never served the row back to this run.
-      try {
-        const reqOrder = JSON.parse(res.request().postData() ?? '')?.order;
-        if (reqOrder) {
-          capturedPostOrder = reqOrder;
-          console.log(
-            `captured POST /signed-offers request order (nonce=${reqOrder.nonce}) ` +
-              'as the cleanup fallback replay payload',
-          );
-        }
-      } catch {
-        /* body unavailable/malformed — GET recovery stays the fallback */
-      }
       res
         .json()
         .then((body) => {
@@ -903,8 +993,46 @@ try {
   // Phase-3 slice B honesty note: the crossable-band previewMatch strip
   // must be ABSENT on this un-crossed book (rendering it would violate
   // the §5.2 rule the band is built on). Not a crossed-book exercise —
-  // that loop is fork-covered (spec 19).
+  // that loop is fork-covered (spec 19). Codex #1148 r3: when this
+  // run's bucket was picked EMPTY, a rendered band is explicable only
+  // by third-party ON-CHAIN offers posted since the preflight snapshot
+  // (our own signed row cannot produce a top-of-book pair) — so
+  // re-verify the bucket AT THIS MOMENT and FAIL if it is still empty.
   const bandAbsent = (await page.locator('.desk-match-band').count()) === 0;
+  let bandDetail;
+  if (bandAbsent) {
+    bandDetail =
+      'absent on this un-crossed book — the honest §5.2 state; the matchable ' +
+      'loop is fork-covered (spec 19) and needs a seeded crossed book to show live';
+  } else if (!tenorBucketWasEmpty) {
+    bandDetail =
+      'a match band rendered on the driven market — plausible: the tenor bucket ' +
+      'was the least-populated FALLBACK and carries on-chain offers (crossed ' +
+      'book present this run)';
+  } else {
+    // Re-verify NOW, not from the preflight snapshot: a third party
+    // could have posted between preflight and this moment.
+    const [rankingsNow] = await diamondRead('getActiveOffersByAssetPairRanked', [
+      WETH,
+      TLIQ,
+    ]);
+    const bucketCountNow = rankingsNow.filter(
+      (r) => Number(r.durationDays) === tenor,
+    ).length;
+    if (bucketCountNow === 0) {
+      throw new Error(
+        `a .desk-match-band rendered although the ${tenor}d bucket held zero ` +
+          'on-chain offers at preflight AND re-verifies as still empty right ' +
+          'now — a previewMatch band cannot exist without an on-chain ' +
+          'top-of-book pair to cross (phase-3 crossable-band regression)',
+      );
+    }
+    bandDetail =
+      `a match band rendered and the ${tenor}d bucket — empty at preflight — ` +
+      `re-verifies with ${bucketCountNow} on-chain offer(s) now: a third party ` +
+      'posted since preflight, so the band is plausible (crossed book present ' +
+      'this run)';
+  }
   await snap('signed-book-03-row-landed');
   record(
     '5. signed row landed — wire + chain cross-check + both UI surfaces',
@@ -917,10 +1045,7 @@ try {
   record(
     '5b. crossable-band previewMatch strip',
     'OBSERVED',
-    bandAbsent
-      ? 'absent on this un-crossed book — the honest §5.2 state; the matchable ' +
-        'loop is fork-covered (spec 19) and needs a seeded crossed book to show live'
-      : 'a match band rendered on the driven market (crossed book present this run)',
+    bandDetail,
   );
 
   // ---- step 6: cancel on-chain — the ONLY revocation -------------------
@@ -998,6 +1123,15 @@ try {
   //     within a short grace of the frame → concurrent offer activity
   //     in the same scan may own the key → AMBIGUOUS caveat with the
   //     facts printed, never silent credit.
+  // Two further honesty gates (Codex #1148 r3):
+  //   - a Node-socket close/reconnect between the cancel and the
+  //     crossing frame breaks the "all prior frames were below the
+  //     cancel block" proof (the true crossing frame may have been
+  //     lost in the gap) → AMBIGUOUS with the lifecycle printed;
+  //   - offer.changed is COARSE, so even a clean crossing frame is
+  //     swept for same-window unrelated offer-mutation events
+  //     (sweepOfferChangedConfounds) — any hit downgrades the PASS to
+  //     AMBIGUOUS with the confounding events printed.
   // (iii) — the BROWSER push path — is probed afterwards (step 7b) and
   // is NEVER inferred from (i)/(ii).
   step7Obs.lifecycle = 'DEFERRED — timed out waiting for the row to leave GET';
@@ -1058,13 +1192,71 @@ try {
           `crossing frame scannedTo=${crossingFrame.obj.scannedTo} >= cancel block ` +
           `${receipt.blockNumber}, prior frames peaked at ` +
           `${priorMaxScannedTo ?? '(none — first frame seen)'}`;
-        if (hasKey && wireGoneAt !== null) {
-          wsVerdict = 'PASS';
+        // Codex #1148 r3 (WS observation gap): "every prior frame's
+        // scannedTo was below the cancel block" is provable only over
+        // a CONTINUOUS observation. If the Node socket closed or
+        // reconnected anywhere in [cancel, crossing frame], the TRUE
+        // crossing frame may have been emitted (and lost) inside the
+        // gap — the frame found here may be a LATER scan, so its keys
+        // can neither credit nor indict the rail. AMBIGUOUS, with the
+        // lifecycle events printed. (A gap with NO frame by timeout
+        // keeps the existing DEFERRED/FAIL diagnosis below.)
+        const gapEvents = ws.lifecycle.filter(
+          (l) => l.at >= cancelObservedAt && l.at <= crossingFrame.at,
+        );
+        if (gapEvents.length > 0 && wireGoneAt !== null) {
+          wsVerdict = 'AMBIGUOUS';
           step7Obs.wsRail =
-            `PASS — offer.changed rode the CROSSING frame ` +
-            `+${((crossingFrame.at - cancelObservedAt) / 1000).toFixed(0)}s after cancel ` +
-            `(${provenance}) and the row left GET across the same scan — the key is ` +
-            'attributable to THIS cancel, not to later unrelated offer activity';
+            `AMBIGUOUS — the Node WS observer lost continuity between the cancel ` +
+            `and the crossing frame [${gapEvents
+              .map((l) => `${l.ev} @${new Date(l.at).toISOString()}`)
+              .join(', ')}] — the true crossing frame may have been missed inside ` +
+            `the gap, so this frame (keys=[${crossingFrame.obj.keys.join(', ')}]; ` +
+            `${provenance}) may be a LATER scan; attribution genuinely uncertain — ` +
+            'caveat recorded instead of credit (or blame)';
+        } else if (hasKey && wireGoneAt !== null) {
+          // Codex #1148 r3 (same-scan confounds): offer.changed is
+          // coarse — before crediting, sweep the crossing scan's block
+          // window (priorMaxScannedTo + 1, or the cancel block when
+          // this was the first frame seen, .. crossingFrame.scannedTo)
+          // for any OTHER event that feeds the key. Zero hits ⇒ the
+          // signed update was the window's only offer.changed source.
+          const sweepFrom =
+            priorMaxScannedTo !== null
+              ? BigInt(priorMaxScannedTo) + 1n
+              : receipt.blockNumber;
+          const sweepTo = BigInt(crossingFrame.obj.scannedTo);
+          let confounds = null;
+          let sweepError = null;
+          try {
+            confounds = await sweepOfferChangedConfounds(sweepFrom, sweepTo, orderHash);
+          } catch (e) {
+            sweepError = e;
+          }
+          if (sweepError !== null) {
+            wsVerdict = 'AMBIGUOUS';
+            step7Obs.wsRail =
+              `AMBIGUOUS — offer.changed rode the crossing frame (${provenance}) ` +
+              `and the row left GET, but the confound sweep over blocks ` +
+              `${sweepFrom}..${sweepTo} failed (${sweepError.message}) — ` +
+              'concurrent offer activity in the same scan cannot be ruled out';
+          } else if (confounds.length > 0) {
+            wsVerdict = 'AMBIGUOUS';
+            step7Obs.wsRail =
+              `AMBIGUOUS — offer.changed rode the crossing frame (${provenance}) ` +
+              `and the row left GET, but the same scan window (blocks ` +
+              `${sweepFrom}..${sweepTo}) also carried ${confounds.length} unrelated ` +
+              `offer-mutation event(s) [${confounds.join(', ')}] — offer.changed ` +
+              'may be attributable to concurrent offer activity, not to THIS cancel';
+          } else {
+            wsVerdict = 'PASS';
+            step7Obs.wsRail =
+              `PASS — offer.changed rode the CROSSING frame ` +
+              `+${((crossingFrame.at - cancelObservedAt) / 1000).toFixed(0)}s after cancel ` +
+              `(${provenance}), the row left GET across the same scan, and the ` +
+              `confound sweep over blocks ${sweepFrom}..${sweepTo} found NO other ` +
+              'offer-mutation event — the key is attributable to THIS cancel alone';
+          }
         } else if (!hasKey && wireGoneAt !== null) {
           wsVerdict = 'FAIL';
           step7Obs.wsRail =
@@ -1155,7 +1347,8 @@ try {
   // (Codex #1148 r2): the 15 s window can coincide with
   // useDeskSignedBook's normal 30 s poll tick, so the refresh must be
   // TIED to the push by the init-script probes' evidence chain —
-  //   page-WS MESSAGE timestamp (≈ the crossing frame's arrival)
+  //   a page-WS INVALIDATE frame carrying offer.changed (≈ the crossing
+  //   frame's arrival; a hello from a reconnect never credits — r3)
   //     → a /signed-offers refetch STARTING within ~3 s of the message
   //     → the Signed ladder row gone, no tab-flip nudge.
   // If the previous /signed-offers fetch was old enough that the 30 s
@@ -1197,9 +1390,22 @@ try {
         fetches: (globalThis.__fetchProbe ?? []).map((f) => ({ url: f.url, at: f.at })),
       }))
       .catch(() => null);
+    // Codex #1148 r3: only a parsed `invalidate` frame whose keys
+    // include offer.changed may anchor the push credit — a hello frame
+    // from a page-socket reconnect (or any other frame kind) landing
+    // near the crossing moment must not false-credit the chain.
     const pageMsgAt =
       evidence?.wsMessages
-        .filter((t) => t >= crossingFrame.at - 5_000)
+        .filter(
+          (m) =>
+            m != null &&
+            typeof m === 'object' &&
+            m.t === 'invalidate' &&
+            Array.isArray(m.keys) &&
+            m.keys.includes('offer.changed') &&
+            m.at >= crossingFrame.at - 5_000,
+        )
+        .map((m) => m.at)
         .sort((a, b) => a - b)[0] ?? null;
     const bookFetches = (evidence?.fetches ?? [])
       .filter((f) => f.url.includes('/signed-offers'))
@@ -1216,7 +1422,7 @@ try {
         : [...bookFetches].reverse().find((f) => f.at < pageMsgAt) ?? null;
     const stamps =
       `[crossing frame (Node)=${new Date(crossingFrame.at).toISOString()}, ` +
-      `page WS message=${pageMsgAt === null ? '(none)' : new Date(pageMsgAt).toISOString()}, ` +
+      `page WS offer.changed invalidate=${pageMsgAt === null ? '(none)' : new Date(pageMsgAt).toISOString()}, ` +
       `refetch start=${refetch ? new Date(refetch.at).toISOString() : '(none within bound)'}, ` +
       `previous /signed-offers fetch=${prevFetch ? new Date(prevFetch.at).toISOString() : '(none recorded)'}]`;
     if (!rowGone) {
@@ -1229,9 +1435,10 @@ try {
     }
     if (pageMsgAt === null) {
       step7Obs.browserPush =
-        `FAIL — page WS ${openPushSocket.url} was OPEN but recorded NO message ` +
-        'around the crossing frame — the row-gone DOM flip is attributable to ' +
-        `polling, not push. ${stamps}`;
+        `FAIL — page WS ${openPushSocket.url} was OPEN but recorded NO invalidate ` +
+        'frame carrying offer.changed around the crossing frame (hello/other ' +
+        'frames do not credit — Codex #1148 r3) — the row-gone DOM flip is ' +
+        `attributable to polling, not push. ${stamps}`;
       throw new Error(step7Obs.browserPush);
     }
     if (refetch === null) {
