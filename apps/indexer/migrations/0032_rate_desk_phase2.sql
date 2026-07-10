@@ -14,20 +14,26 @@
 --    LoanObligationTransferred token-id migrations) and NEVER deletes or
 --    updates one. Participation is history, not a pointer.
 --
---    PK (chain_id, loan_id, wallet, role) doubles as the idempotency
+--    PK (chain_id, loan_id, wallet, role, from_at) doubles as the idempotency
 --    constraint: re-scans / webhook replays / the backfill below all write
---    INSERT OR IGNORE, so a duplicate observation of the same participation
---    is a no-op. `from_at` records the FIRST time the participation was
---    observed (block timestamp at ingest; backfill approximates — see below).
---    Wallets are stored lowercase (repo convention, matches every other
---    address column).
+--    INSERT OR IGNORE, so a duplicate observation of the SAME acquisition
+--    (same event → same block timestamp → same from_at) is a no-op, while a
+--    wallet RE-acquiring a role it previously held (sold the position NFT,
+--    bought it back later) appends a fresh row at the new timestamp — the
+--    history's MAX(from_at) ordering then bubbles the reacquisition up
+--    (Codex #1139 round-4: with from_at outside the PK the reacquisition
+--    was silently dropped and the loan stayed sorted by the ORIGINAL
+--    acquisition). Each row is one acquisition event; participation is
+--    append-only history, never a mutable pointer. `from_at` is the block
+--    timestamp at ingest (backfill approximates — see below). Wallets are
+--    stored lowercase (repo convention, matches every other address column).
 CREATE TABLE IF NOT EXISTS loan_participants (
   chain_id  INTEGER NOT NULL,
   loan_id   INTEGER NOT NULL,
   wallet    TEXT    NOT NULL,             -- lowercase 0x-40-hex
   role      TEXT    NOT NULL CHECK (role IN ('lender', 'borrower')),
-  from_at   INTEGER NOT NULL,             -- unix seconds, first observed
-  PRIMARY KEY (chain_id, loan_id, wallet, role)
+  from_at   INTEGER NOT NULL,             -- unix seconds, this acquisition
+  PRIMARY KEY (chain_id, loan_id, wallet, role, from_at)
 );
 
 -- Wallet lookups are the hot path (`/loans/by-participant`): the composite
@@ -70,7 +76,13 @@ CREATE INDEX IF NOT EXISTS idx_loans_market_start_at
 --
 --    `from_at` approximations: start_at for the init parties (correct for
 --    the untransferred common case), updated_at for a differing current
---    owner (upper bound of when they acquired it).
+--    owner (upper bound of when they acquired it). Both are values READ
+--    FROM THE ROW (never strftime('now')), so within one migration apply
+--    every statement is deterministic and INSERT OR IGNORE dedupes an
+--    accidental re-run under the (…, from_at)-inclusive PK. (This
+--    migration applies exactly once per environment via wrangler's
+--    migrations ledger; a re-apply months later could see a moved
+--    updated_at, but that path doesn't exist under the ledger.)
 INSERT OR IGNORE INTO loan_participants (chain_id, loan_id, wallet, role, from_at)
 SELECT chain_id, loan_id, lender, 'lender', start_at
   FROM loans

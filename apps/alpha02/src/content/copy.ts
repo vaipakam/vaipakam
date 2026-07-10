@@ -879,11 +879,12 @@ export const copy = {
       // a %-change ticker.
       lastFill: (rate: string, ago: string) => `last fill: ${rate} · ${ago}`,
       lastFillNone: 'no fills yet',
-      // Two empty states (Codex #1139 round-1 P3): `empty` may only
-      // claim "never filled" when the evidence covers the whole
-      // history (range = all, or a confirmed-empty tape); a narrower
-      // range that comes back empty gets the range-scoped line — older
-      // fills may exist outside it (see chartEmptyKind).
+      // Two empty states (Codex #1139 round-1 P3, tightened round 4):
+      // `empty` may only claim "never filled" when the evidence covers
+      // the whole history (range = all, or a confirmed-empty tape) AND
+      // the tape holds no fill — a tape-proven fill always gets the
+      // range-scoped line, even at range = all (the 60 s candle-cache
+      // skew window after a first fill). See chartEmptyKind.
       empty:
         'No fills yet for this market — the chart draws only executed rates.',
       emptyRange: 'No fills in this range — try a longer range.',

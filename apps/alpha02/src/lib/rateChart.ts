@@ -65,21 +65,32 @@ export function newestPrint(
 
 /**
  * Which empty-state copy an empty bucket array earns (Codex #1139
- * round-1 P3): "this market never filled" is only claimable when the
- * evidence actually covers the market's whole history —
+ * round-1 P3, tightened in round 4): "this market never filled" is
+ * only claimable when the evidence actually covers the market's whole
+ * history AND nothing on hand disproves it —
  *
- *  - `range === 'all'`: the empty series IS the whole history → market
- *    copy.
- *  - narrower range + the tape (the market's newest fills, all-time) is
- *    a CONFIRMED empty array → no fill exists anywhere → market copy.
- *  - otherwise (tape unavailable/loading, or tape holds older fills the
- *    range excludes) → range-scoped copy. Saying "no fills yet" here
- *    would misstate history and contradict the last-fill header.
+ *  - the tape (the market's newest fills, all-time) holds ≥1 fill →
+ *    NEVER market copy, even at `range === 'all'`. In the 60 s
+ *    candle-cache skew window after a market's first fill, the candle
+ *    response can still be empty while the tape already proves the
+ *    fill (and the last-fill header shows it) — claiming "no fills
+ *    yet" would contradict the header. The range-scoped copy is
+ *    factually safe there.
+ *  - `range === 'all'` (tape empty or unavailable): the empty series
+ *    IS the whole history → market copy.
+ *  - narrower range + a CONFIRMED-empty tape → no fill exists anywhere
+ *    → market copy.
+ *  - otherwise (tape unavailable/loading on a narrower range) →
+ *    range-scoped copy. Saying "no fills yet" here would misstate
+ *    history.
  */
 export function chartEmptyKind(
   range: CandleRange,
   tape: readonly unknown[] | null | undefined,
 ): 'market' | 'range' {
+  // A non-empty tape PROVES a fill exists — the market copy is never
+  // honest, regardless of range (candle-cache skew, see above).
+  if (Array.isArray(tape) && tape.length > 0) return 'range';
   if (range === 'all') return 'market';
   if (Array.isArray(tape) && tape.length === 0) return 'market';
   return 'range';

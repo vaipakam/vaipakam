@@ -455,8 +455,9 @@ export default function RateChart({
         </div>
       ) : buckets.length === 0 ? (
         // "Never filled" vs "empty in this range" (Codex #1139 round-1
-        // P3): the market copy is only claimable when the evidence
-        // covers the whole history — see chartEmptyKind.
+        // P3, tightened round 4): the market copy is only claimable
+        // when the evidence covers the whole history AND the tape holds
+        // no fill (candle-cache skew) — see chartEmptyKind.
         <p className="muted">
           {chartEmptyKind(range, tape) === 'market'
             ? text.empty

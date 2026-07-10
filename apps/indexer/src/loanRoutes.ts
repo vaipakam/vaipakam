@@ -1151,12 +1151,26 @@ export async function handleLoansByHistoricalParticipant(
     // tape and candle routes apply); without these three predicates
     // NFT-leg loans and internal sale vehicles would present as desk
     // history.
+    // Stub-shape guard (Codex #1139 round-4): the LoanInitiated
+    // fallback-B insert writes placeholder market fields —
+    // lending_asset / collateral_asset = '0x', duration_days = 0 —
+    // until `refreshStubLoans` heals the row (and forever, if the heal
+    // keeps failing). Such a row would otherwise pass the ERC-20 scope
+    // (asset_type 0 is the placeholder too) and render a fake desk-
+    // history entry. Guard on the SHAPE (real 42-char 0x addresses +
+    // a real ≥1-day term) rather than a blanket `is_stub = 0`: the
+    // companion-event insert path can land `is_stub = 1` with fully
+    // real market fields while only its position-token ids await the
+    // heal, and hiding those rows would drop genuine desk history.
     const conds = [
       'p.chain_id = ?',
       'p.wallet = ?',
       'l.asset_type = 0',
       'l.collateral_asset_type = 0',
       'l.is_sale_vehicle = 0',
+      "l.lending_asset LIKE '0x%' AND length(l.lending_asset) = 42",
+      "l.collateral_asset LIKE '0x%' AND length(l.collateral_asset) = 42",
+      'l.duration_days >= 1',
     ];
     const binds: (number | string)[] = [chainId, wallet];
     // The composite cursor compares against the per-loan MAX(from_at)

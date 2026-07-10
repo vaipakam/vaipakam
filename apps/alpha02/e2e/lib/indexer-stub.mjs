@@ -709,6 +709,13 @@ async function handler(req, res) {
     // by newest participation with loan-id tiebreak, and the composite
     // `before=<participatedAt>_<loanId>` cursor with `nextBefore` in
     // the same encoding.
+    //
+    // NO mirror of the worker's round-4 stub-shape guard (placeholder
+    // '0x' assets / duration_days = 0 from the D1 fallback-B insert):
+    // this stub hydrates every row from live getLoanDetails chain
+    // reads, so a loan here always carries real asset addresses and a
+    // real term — the stub-row window the worker guards against cannot
+    // occur on the fork tier.
     if (parts[0] === 'loans' && parts[1] === 'by-participant') {
       const walletRaw = url.searchParams.get('wallet');
       if (!walletRaw) return json(400, { error: 'wallet-required' });

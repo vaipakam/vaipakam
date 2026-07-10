@@ -1465,9 +1465,14 @@ async function refreshStubLoans(
  *     attribute the fresh token to the loan before the row's token-id column
  *     is repointed, so these handlers append the new party themselves.
  *
- * INSERT OR IGNORE onto PK (chain_id, loan_id, wallet, role) makes re-scans /
- * webhook replays / the 0032 backfill idempotent. The zero address (burns)
- * is never a participant. Wallets stored lowercase (repo convention).
+ * INSERT OR IGNORE onto PK (chain_id, loan_id, wallet, role, from_at) makes
+ * re-scans / webhook replays / the 0032 backfill idempotent (the same event
+ * re-observed carries the same block timestamp → same from_at → no-op),
+ * while a wallet RE-acquiring a role it previously held appends a fresh row
+ * at the new timestamp — Codex #1139 round-4: with from_at outside the PK
+ * the reacquisition was silently dropped, so the by-participant route's
+ * MAX(from_at) ordering never surfaced it. The zero address (burns) is
+ * never a participant. Wallets stored lowercase (repo convention).
  */
 async function recordLoanParticipant(
   env: Env,

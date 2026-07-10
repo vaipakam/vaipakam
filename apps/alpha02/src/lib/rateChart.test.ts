@@ -95,10 +95,19 @@ describe('newestPrint', () => {
 });
 
 describe('chartEmptyKind (#1139 — never-filled vs empty-in-range copy)', () => {
-  it('range=all always earns the market copy — the empty series IS the history', () => {
+  it('range=all earns the market copy when the tape cannot disprove it', () => {
     expect(chartEmptyKind('all', undefined)).toBe('market');
     expect(chartEmptyKind('all', null)).toBe('market');
-    expect(chartEmptyKind('all', [{}])).toBe('market');
+    expect(chartEmptyKind('all', [])).toBe('market');
+  });
+
+  it('a tape-proven fill NEVER earns the market copy — even at range=all (round-4: 60 s candle-cache skew after a first fill)', () => {
+    // The candle response is still empty (60 s cache) but the tape —
+    // and hence the last-fill header — already shows the fill; the
+    // body must not claim "no fills yet" against its own header.
+    expect(chartEmptyKind('all', [{}])).toBe('range');
+    expect(chartEmptyKind('7d', [{}])).toBe('range');
+    expect(chartEmptyKind('30d', [{}, {}])).toBe('range');
   });
 
   it('a narrower range with a confirmed-empty tape is a never-filled market', () => {
@@ -106,8 +115,7 @@ describe('chartEmptyKind (#1139 — never-filled vs empty-in-range copy)', () =>
     expect(chartEmptyKind('30d', [])).toBe('market');
   });
 
-  it('a narrower range is range-scoped when older fills exist or the tape is unknown', () => {
-    expect(chartEmptyKind('7d', [{}])).toBe('range'); // older fills proven
+  it('a narrower range is range-scoped when the tape is unknown', () => {
     expect(chartEmptyKind('7d', null)).toBe('range'); // tape unavailable
     expect(chartEmptyKind('30d', undefined)).toBe('range'); // tape loading
   });
