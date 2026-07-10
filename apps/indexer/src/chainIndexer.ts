@@ -1452,6 +1452,43 @@ async function refreshStubLoans(
 // Phase B — loan-domain handler.
 // ──────────────────────────────────────────────────────────────────
 
+/**
+ * Rate Desk phase 2 (#1130) — append ONE participation row (append-only
+ * history; never updated, never deleted). Called from every site where a
+ * wallet becomes the holder of a loan position:
+ *   - LoanInitiated (all three insert paths) — both parties from the
+ *     current-owner projection at that moment (a pre-accept offer-NFT buyer
+ *     is the participant, not the exited creator);
+ *   - the position-NFT Transfer handler — the recipient of a live transfer;
+ *   - LoanSold / LoanSaleCompleted / LoanObligationTransferred — token-id
+ *     MIGRATIONS (burn old + mint fresh): the plain Transfer handler can't
+ *     attribute the fresh token to the loan before the row's token-id column
+ *     is repointed, so these handlers append the new party themselves.
+ *
+ * INSERT OR IGNORE onto PK (chain_id, loan_id, wallet, role) makes re-scans /
+ * webhook replays / the 0032 backfill idempotent. The zero address (burns)
+ * is never a participant. Wallets stored lowercase (repo convention).
+ */
+async function recordLoanParticipant(
+  env: Env,
+  chainId: number,
+  loanId: number,
+  wallet: string,
+  role: 'lender' | 'borrower',
+  fromAt: number,
+): Promise<void> {
+  const w = (wallet || '').toLowerCase();
+  if (!/^0x[0-9a-f]{40}$/.test(w)) return;
+  if (w === '0x0000000000000000000000000000000000000000') return;
+  await env.DB.prepare(
+    `INSERT OR IGNORE INTO loan_participants
+       (chain_id, loan_id, wallet, role, from_at)
+     VALUES (?, ?, ?, ?, ?)`,
+  )
+    .bind(chainId, loanId, w, role, fromAt)
+    .run();
+}
+
 async function processLoanLogs(
   logs: DecodedLog[],
   env: Env,
@@ -1601,6 +1638,13 @@ async function processLoanLogs(
           )
           .run();
         if ((result.meta?.changes ?? 0) > 0) newLoans++;
+        // #1130 — seed participation from the current-owner projection at
+        // init (lenderOwner/borrowerOwner already resolve a pre-accept
+        // offer-NFT buyer above). Runs regardless of the INSERT OR IGNORE
+        // outcome — on a re-scan the loans row exists but the participant
+        // insert is itself idempotent.
+        await recordLoanParticipant(env, chainId, loanId, lenderOwner, 'lender', blockAt);
+        await recordLoanParticipant(env, chainId, loanId, borrowerOwner, 'borrower', blockAt);
         continue;
       }
 
@@ -1686,6 +1730,11 @@ async function processLoanLogs(
           )
           .run();
         if ((result.meta?.changes ?? 0) > 0) newLoans++;
+        // #1130 — participation seed. The read-back has no offer-projection
+        // resolution, so the event/read-back parties are the best available
+        // (identical in the no-pre-accept-transfer common case).
+        await recordLoanParticipant(env, chainId, loanId, loanDetail.lender, 'lender', blockAt);
+        await recordLoanParticipant(env, chainId, loanId, loanDetail.borrower, 'borrower', blockAt);
         continue;
       }
 
@@ -1717,6 +1766,11 @@ async function processLoanLogs(
         )
         .run();
       if ((result.meta?.changes ?? 0) > 0) newLoans++;
+      // #1130 — participation seed from the event parties (all the stub
+      // path has). Same-tx mint Transfers can't attribute these (the stub
+      // row's token ids are '0'), so this write is the only seed here.
+      await recordLoanParticipant(env, chainId, loanId, lender, 'lender', blockAt);
+      await recordLoanParticipant(env, chainId, loanId, borrower, 'borrower', blockAt);
     } else if (log.eventName === 'LoanRepaid') {
       // Full repay (or a FallbackPending-cure repay). On-chain this is
       // a transition to Repaid; the indexer's `status = 'active'` guard
@@ -2063,6 +2117,18 @@ async function processLoanLogs(
           Number(a.loanId as bigint),
         )
         .run();
+      // #1130 — the new obligor is a participant. The token-id migration
+      // (burn + fresh mint) means the plain Transfer handler can't attribute
+      // the mint (the row still carried the OLD id at that log), so this
+      // handler appends the participation itself.
+      await recordLoanParticipant(
+        env,
+        chainId,
+        Number(a.loanId as bigint),
+        String(a.newBorrower as string),
+        'borrower',
+        blockTimestamps.get(log.blockNumber) ?? now,
+      );
     } else if (log.eventName === 'LoanSaleOfferLinked') {
       // Rate Desk (#1129) — mark the borrower-style SALE offer so the temp
       // bookkeeping loan it later initiates can be excluded from the desk's
@@ -2135,6 +2201,16 @@ async function processLoanLogs(
           Number(a.loanId as bigint),
         )
         .run();
+      // #1130 — the buying lender is a participant (token-id migration; see
+      // the LoanObligationTransferred note).
+      await recordLoanParticipant(
+        env,
+        chainId,
+        Number(a.loanId as bigint),
+        String(a.newLender as string),
+        'lender',
+        blockTimestamps.get(log.blockNumber) ?? now,
+      );
     } else if (log.eventName === 'LoanSaleCompleted') {
       // EarlyWithdrawal TWO-STEP sale-offer flow (`completeLoanSale`): like the
       // direct `sellLoanViaBuyOffer`→`LoanSold` path, it migrates the ORIGINAL
@@ -2181,6 +2257,16 @@ async function processLoanLogs(
           loanId,
         )
         .run();
+      // #1130 — the sale-offer buyer is a participant (token-id migration;
+      // see the LoanObligationTransferred note).
+      await recordLoanParticipant(
+        env,
+        chainId,
+        loanId,
+        newLender,
+        'lender',
+        blockTimestamps.get(log.blockNumber) ?? now,
+      );
     } else if (log.eventName === 'LoanDefaulted') {
       const r = await flipLoanStatus(env, chainId, a, log, 'defaulted');
       if (r) statusUpdates++;
@@ -2849,6 +2935,36 @@ async function processLoanLogs(
            WHERE chain_id = ? AND position_token_id = ?`,
         ).bind(to, now, chainId, tokenId),
       ]);
+      // #1130 — append-only participation history: the transfer RECIPIENT
+      // becomes a participant of whichever loan side this tokenId sits on.
+      // Burns (to = 0x0) append nothing — leaving the previous holder's row
+      // in place is exactly the "history, not a pointer" property the
+      // History tab needs. tokenId '0' is the stub-row sentinel (matches
+      // every unhealed stub via lender_token_id = '0'), never a real ERC721
+      // id — skip it. Mint Transfers for a loan initiated in this same
+      // batch usually precede the loans-row INSERT within the tx, so the
+      // SELECT finds nothing — the LoanInitiated handler is the seed there;
+      // this path covers post-init secondary transfers.
+      if (
+        tokenId !== '0' &&
+        to !== '0x0000000000000000000000000000000000000000'
+      ) {
+        const sideMatches = (
+          await env.DB.prepare(
+            `SELECT loan_id, 'lender' AS role FROM loans
+              WHERE chain_id = ?1 AND lender_token_id = ?2
+             UNION ALL
+             SELECT loan_id, 'borrower' AS role FROM loans
+              WHERE chain_id = ?1 AND borrower_token_id = ?2`,
+          )
+            .bind(chainId, tokenId)
+            .all<{ loan_id: number; role: 'lender' | 'borrower' }>()
+        ).results ?? [];
+        const transferAt = blockTimestamps.get(log.blockNumber) ?? now;
+        for (const m of sideMatches) {
+          await recordLoanParticipant(env, chainId, m.loan_id, to, m.role, transferAt);
+        }
+      }
     }
   }
 

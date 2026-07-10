@@ -14,6 +14,12 @@
  */
 
 import { type Env, getChainConfigs } from './env';
+import {
+  CANDLE_INTERVALS,
+  CANDLE_RANGES,
+  foldRateCandles,
+  type CandleFillRow,
+} from './rateCandles';
 
 const DEFAULT_PAGE_LIMIT = 50;
 const MAX_PAGE_LIMIT = 200;
@@ -25,12 +31,19 @@ function corsHeaders(): HeadersInit {
   };
 }
 
-function jsonResponse(body: unknown, status = 200): Response {
+function jsonResponse(
+  body: unknown,
+  status = 200,
+  extraHeaders?: Record<string, string>,
+): Response {
   return new Response(JSON.stringify(body), {
     status,
     headers: {
       'Content-Type': 'application/json',
       ...corsHeaders(),
+      // Spread LAST so a route can override the default Cache-Control
+      // (the candle endpoint serves max-age=60 per the §7 spec).
+      ...extraHeaders,
     },
   });
 }
@@ -957,6 +970,191 @@ export async function handleLoansTimeseries(
   } catch (err) {
     console.error('[loanRoutes] timeseries failed', err);
     return jsonResponse({ error: 'timeseries-failed' }, 500);
+  }
+}
+
+/**
+ * Rate Desk phase 2 (#1130) — GET /loans/rate-candles
+ *   ?chainId=8453&lendingAsset=0x..&collateralAsset=0x..&durationDays=30
+ *   &interval=1h|4h|1d&range=7d|30d|90d|all
+ *
+ * → { chainId, buckets: [{ t, open, high, low, close, fills, principalTotal }] }
+ *
+ * Executed-rate OHLC series for ONE market (ProRateTerminalDesign.md §7). All
+ * three market params are REQUIRED — a candle series is per-market by
+ * definition; there is no "global candles" fallback. `interval`/`range`
+ * default to 1h/30d when omitted and 400 on anything outside the enums.
+ *
+ * Row scope — executed MARKET FILLS only:
+ *   - `is_sale_vehicle = 0`: the temp bookkeeping loan a lender-sale vehicle
+ *     initiates is a secondary sale, never a fresh rate print (§7).
+ *   - `asset_type = 0 AND collateral_asset_type = 0`: ERC-20 both legs. The
+ *     desk's markets are ERC-20/ERC-20 pairs; NFT-legged loans are a
+ *     different product surface (rentals) and their rate isn't comparable.
+ *   - Metadata-less stub rows (fallback-B inserts, lending_asset = '0x')
+ *     can never match the market equality filter, so no explicit `is_stub`
+ *     predicate is needed — and MUST NOT be added: a companion-path row with
+ *     is_stub = 1 only lacks its position token ids (see the LoanInitiated
+ *     insert paths in chainIndexer.ts); its market/rate/principal columns are
+ *     real and its fill belongs on the chart.
+ *
+ * Aggregation split (§7): SQL selects the market's rows in the range ordered
+ * by (start_at, loan_id); ALL folding — OHLC, fills, principal — happens in
+ * JS (`foldRateCandles`). Rationale in rateCandles.ts: principal MUST be
+ * BigInt-folded (the /loans/stats pattern), and SQLite has no first/last
+ * aggregate for open/close, so one ordered select + one JS pass is the
+ * simplest correct shape. Rides `idx_loans_market_start_at` (migration 0032).
+ *
+ * Buckets: only where fills >= 1 (no empty/interpolated buckets — §5.3),
+ * ascending by t. `range=all` = no lower time bound.
+ * `Cache-Control: max-age=60` per the spec (candles are heavier to compute
+ * and change at fill cadence, not block cadence).
+ */
+export async function handleLoansRateCandles(
+  req: Request,
+  env: Env,
+): Promise<Response> {
+  const url = new URL(req.url);
+  const chainId = parseChainId(url.searchParams.get('chainId')) ?? 8453;
+  const market = parseMarketFilter(url);
+  if (market === 'bad') {
+    return jsonResponse({ error: 'bad-market-filter' }, 400);
+  }
+  if (
+    !market.lendingAsset ||
+    !market.collateralAsset ||
+    market.durationDays === null
+  ) {
+    return jsonResponse({ error: 'market-filter-required' }, 400);
+  }
+  const intervalRaw = url.searchParams.get('interval') ?? '1h';
+  const intervalSec = CANDLE_INTERVALS[intervalRaw];
+  if (intervalSec === undefined) {
+    return jsonResponse({ error: 'bad-interval' }, 400);
+  }
+  const rangeRaw = url.searchParams.get('range') ?? '30d';
+  const rangeDays = CANDLE_RANGES[rangeRaw];
+  if (rangeDays === undefined) {
+    return jsonResponse({ error: 'bad-range' }, 400);
+  }
+  try {
+    const conds = [
+      'chain_id = ?',
+      'lending_asset = ?',
+      'collateral_asset = ?',
+      'duration_days = ?',
+      'is_sale_vehicle = 0',
+      'asset_type = 0',
+      'collateral_asset_type = 0',
+    ];
+    const binds: (number | string)[] = [
+      chainId,
+      market.lendingAsset,
+      market.collateralAsset,
+      market.durationDays,
+    ];
+    if (rangeDays !== null) {
+      conds.push('start_at >= ?');
+      binds.push(Math.floor(Date.now() / 1000) - rangeDays * 86400);
+    }
+    const rows = await env.DB.prepare(
+      `SELECT loan_id, start_at, interest_rate_bps, principal
+       FROM loans
+       WHERE ${conds.join(' AND ')}
+       ORDER BY start_at ASC, loan_id ASC`,
+    )
+      .bind(...binds)
+      .all<CandleFillRow>();
+    const buckets = foldRateCandles(rows.results ?? [], intervalSec);
+    return jsonResponse({ chainId, buckets }, 200, {
+      'Cache-Control': 'public, max-age=60',
+    });
+  } catch (err) {
+    console.error('[loanRoutes] rate-candles failed', err);
+    return jsonResponse({ error: 'rate-candles-failed' }, 500);
+  }
+}
+
+/**
+ * Rate Desk phase 2 (#1130) — GET /loans/by-participant
+ *   ?chainId=8453&wallet=0x..&limit=50&before=<loan_id>
+ *
+ * → { chainId, wallet, loans: [{ ...loanToJson, roles: ['lender'|'borrower'] }],
+ *     nextBefore }
+ *
+ * HISTORICAL-participant view backing the desk's History tab
+ * (ProRateTerminalDesign.md §3 History row): every loan — ANY status — where
+ * the wallet has a persisted `loan_participants` row (seeded at LoanInitiated
+ * from the current-owner projection, appended on every position-NFT
+ * transfer / token-id migration, never deleted). This is deliberately NOT
+ * derivable from the immutable loans.lender/borrower columns (they miss
+ * pre-accept offer-NFT buyers and later transferees) nor from the
+ * `*_current_owner` projection (burned-on-claim positions drop out — the
+ * exact "lender whose loan was repaid+claimed disappears" gap
+ * Activity.tsx:72-74 documents).
+ *
+ * `roles` aggregates the wallet's participation roles on that loan (a wallet
+ * can be both sides, e.g. it bought the counterparty NFT). Newest-first
+ * loan_id pagination, same idiom as the sibling wallet routes.
+ */
+export async function handleLoansByHistoricalParticipant(
+  req: Request,
+  env: Env,
+): Promise<Response> {
+  const url = new URL(req.url);
+  const chainId = parseChainId(url.searchParams.get('chainId')) ?? 8453;
+  const limit = parseLimit(url.searchParams.get('limit'));
+  const before = parseBefore(url.searchParams.get('before'));
+  const walletRaw = url.searchParams.get('wallet');
+  if (!walletRaw) {
+    return jsonResponse({ error: 'wallet-required' }, 400);
+  }
+  const wallet = walletRaw.toLowerCase();
+  if (!/^0x[0-9a-f]{40}$/.test(wallet)) {
+    return jsonResponse({ error: 'bad-address' }, 400);
+  }
+  // Fail closed when this chain isn't indexed here, so the frontend's
+  // indexer-first → on-chain-fallback wrapper actually falls back (#749) —
+  // same posture as the sibling wallet routes.
+  if (!chainConfigured(env, chainId)) {
+    return jsonResponse({ error: 'chain-not-configured' }, 503);
+  }
+  try {
+    const conds = ['p.chain_id = ?', 'p.wallet = ?'];
+    const binds: (number | string)[] = [chainId, wallet];
+    if (before) {
+      conds.push('p.loan_id < ?');
+      binds.push(before);
+    }
+    // One row per loan; GROUP_CONCAT folds the wallet's roles on it. The
+    // participation index (chain_id, wallet, loan_id) serves filter +
+    // newest-first pagination; the loans join is a PK lookup per row.
+    const rows = await env.DB.prepare(
+      `SELECT l.*, GROUP_CONCAT(DISTINCT p.role) AS participant_roles
+       FROM loan_participants p
+       JOIN loans l ON l.chain_id = p.chain_id AND l.loan_id = p.loan_id
+       WHERE ${conds.join(' AND ')}
+       GROUP BY l.chain_id, l.loan_id
+       ORDER BY l.loan_id DESC
+       LIMIT ?`,
+    )
+      .bind(...binds, limit)
+      .all<LoanRow & { participant_roles: string }>();
+    const results = rows.results ?? [];
+    const loans = results.map((row) => ({
+      ...loanToJson(row),
+      // Sorted for a deterministic wire shape (GROUP_CONCAT order is
+      // unspecified in SQLite).
+      roles: (row.participant_roles ?? '').split(',').filter(Boolean).sort(),
+    }));
+    const next =
+      results.length === limit && results.length > 0
+        ? results[results.length - 1].loan_id
+        : null;
+    return jsonResponse({ chainId, wallet, loans, nextBefore: next });
+  } catch (err) {
+    console.error('[loanRoutes] by-participant failed', err);
+    return jsonResponse({ error: 'by-participant-failed' }, 500);
   }
 }
 
