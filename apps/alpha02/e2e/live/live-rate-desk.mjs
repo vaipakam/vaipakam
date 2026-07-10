@@ -20,13 +20,17 @@
 // book itself is a chain read and is asserted healthy regardless.
 //
 // Money discipline: ONE offer, AMOUNT_WETH escrow + gas at risk; the
-// cancel refunds the escrow. If the UI cancel can't be reached after
-// an offer was created, the cleanup handler cancels directly on-chain
-// via viem (waiting out the cooldown first) — and failing THAT, it
-// reports the orphaned offer id loudly for a manual cancel. If Post
-// was clicked but no create ever surfaced in the offer index (a tx
-// still pending past the cleanup's extended watch), the run exits
-// non-zero as CLEANUP-UNKNOWN rather than claiming "cancelled".
+// cancel refunds the escrow. The cleanup handler ALWAYS sweeps the
+// append-only offer-index delta since the pre-post snapshot — even
+// when the primary UI cancel succeeded — so a duplicate create from
+// the same Post click that mines late can't stay live while the run
+// exits green. Any live delta id is cancelled directly on-chain via
+// viem (waiting out the cooldown first, verifying the receipt AND the
+// zeroed creator) — and failing THAT, it reports the orphaned offer
+// id loudly for a manual cancel. If Post was clicked but no create
+// ever surfaced in the offer index (a tx still pending past the
+// cleanup's extended watch), the run exits non-zero as
+// CLEANUP-UNKNOWN rather than claiming "cancelled".
 //
 //   TESTNET_WALLETS_FILE=~/secrets/wallets.json node live-rate-desk.mjs
 //
@@ -705,18 +709,26 @@ try {
     .catch(() => '(page text unavailable)');
   console.log('--- page text at failure ---\n' + body.slice(0, 4_000) + '\n---');
 } finally {
-  // Never leave the lender's WETH escrowed in an orphaned live offer:
-  // if the post was attempted but the UI cancel didn't complete,
-  // cancel directly on-chain (waiting out the cooldown first). The
-  // sweep covers EVERY id the append-only index gained since the
-  // pre-post snapshot — not just the first (Codex round-1 P2 #4: a
-  // duplicate create from one Post click must not leave a second
-  // escrowed offer live) — and pages from the snapshot offset, so
-  // >200 historical offers can't hide this run's (P2 #3). The tx can
-  // mine AFTER a failure ("Order posted" renders at send time).
-  if (!cancelled && beforePostTotal !== null) {
+  // Never leave the lender's WETH escrowed in an orphaned live offer.
+  // Once the pre-post snapshot exists, the delta sweep below runs
+  // UNCONDITIONALLY — even when the primary offer reached the normal
+  // UI cancel (Codex round-3 P2 #2: a second create from the same
+  // Post click can mine AFTER step 4's duplicate check, and skipping
+  // the sweep on `cancelled` would leave that late duplicate live
+  // with WETH escrow while the run exits clean). The sweep covers
+  // EVERY id the append-only index gained since the pre-post snapshot
+  // — not just the first (round-1 P2 #4) — and pages from the
+  // snapshot offset, so >200 historical offers can't hide this run's
+  // (round-1 P2 #3). Ids whose creator already reads zero (the
+  // UI-cancelled primary) are skipped, so the sweep never
+  // double-cancels; every other id is cancelled directly on-chain
+  // (waiting out the cooldown first) with the receipt AND post-cancel
+  // state verified (round-3 P2 #1). The run may only stay green once
+  // the sweep accounts for every delta id.
+  if (beforePostTotal !== null) {
+    const primaryUiCancelled = cancelled; // step 8 verified creator zeroed
     try {
-      if (offerId === null) {
+      if (offerId === null && postAttempted) {
         // Give a still-pending create a moment to mine, then sweep.
         await new Promise((r) => setTimeout(r, 15_000));
       }
@@ -775,8 +787,28 @@ try {
                 functionName: 'cancelOffer',
                 args: [id],
               });
-            await pub.waitForTransactionReceipt({ hash });
-            record('cleanup: direct on-chain cancel', 'PASS', `offer #${id} — tx ${hash}`);
+            // A mined receipt alone is NOT success (Codex round-3 P2
+            // #1): the tx can revert after submission (e.g. the offer
+            // was accepted while the cooldown wait ran) and
+            // waitForTransactionReceipt still resolves. Require
+            // status=success AND re-read that the creator was zeroed
+            // before treating this id as cleaned.
+            const receipt = await pub.waitForTransactionReceipt({ hash });
+            if (receipt.status !== 'success') {
+              throw new Error(`cancelOffer tx ${hash} mined but REVERTED (status=${receipt.status})`);
+            }
+            const after = await getOffer(id);
+            if (!ZERO_CREATOR.test(String(after.creator))) {
+              throw new Error(
+                `cancelOffer tx ${hash} reported success but offer #${id} creator ` +
+                  `still reads ${after.creator} — offer NOT cancelled`,
+              );
+            }
+            record(
+              'cleanup: direct on-chain cancel',
+              'PASS',
+              `offer #${id} — tx ${hash} (receipt success, creator re-read as zero)`,
+            );
           } catch (idErr) {
             stillLive.push(id);
             record(
@@ -787,15 +819,30 @@ try {
             );
           }
         }
-        if (stillLive.length === 0) cancelled = true;
+        if (stillLive.length === 0) {
+          cancelled = true;
+          record(
+            'cleanup: index delta sweep',
+            'PASS',
+            `${sweepIds.length} id(s) appended since the pre-post snapshot — ` +
+              'every one verified cancelled (creator zeroed on-chain)',
+          );
+        } else {
+          cancelled = false; // a delta id is (or may be) live with escrow
+        }
       }
     } catch (cleanupErr) {
+      cancelled = false;
       record(
         'cleanup: offer sweep',
         'FAIL',
-        `could not enumerate this run's offers — offer #${offerId ?? '(unknown)'} ` +
-          `may still be live with ${AMOUNT_WETH} WETH escrowed ` +
-          `(cancelOffer on ${DIAMOND}). ${cleanupErr.message}`,
+        (primaryUiCancelled
+          ? `primary offer #${offerId} was verified cancelled via the UI, but the ` +
+            'delta sweep for late-mining duplicate creates did not complete — '
+          : `could not enumerate this run's offers — offer #${offerId ?? '(unknown)'} ` +
+            `may still be live with ${AMOUNT_WETH} WETH escrowed — `) +
+          `check getUserOffersPaginated(${lenderAddr}) on ${DIAMOND} for live ids at ` +
+          `offset >= ${beforePostTotal} and cancelOffer them manually. ${cleanupErr.message}`,
       );
     }
   }
