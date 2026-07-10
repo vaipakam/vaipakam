@@ -242,6 +242,25 @@ async function userPositionLoans(addr) {
   }
 }
 
+// Rate Desk (#1129) — the worker's optional server-side market scope
+// (lendingAsset / collateralAsset / durationDays query params) applied
+// to a mapped-offer array. The desk's indexer-fallback book relies on
+// this being SERVER-side (its client does no pair filtering), so the
+// stub must honour the params rather than ignore them — an ignored
+// filter would hand the desk every pair's rows wearing one market's
+// label.
+function applyMarketScope(offers, url) {
+  const lend = url.searchParams.get('lendingAsset');
+  const coll = url.searchParams.get('collateralAsset');
+  const days = url.searchParams.get('durationDays');
+  return offers.filter(
+    (o) =>
+      (!lend || o.lendingAsset.toLowerCase() === lend.toLowerCase()) &&
+      (!coll || o.collateralAsset.toLowerCase() === coll.toLowerCase()) &&
+      (days === null || o.durationDays === Number(days)),
+  );
+}
+
 // Pin mode (#1029): a spec can freeze the ACTIVE-OFFERS view and the
 // freshness cursor at "now" while anvil keeps advancing — the only
 // way this always-live stub can honestly simulate ingest lag, which
@@ -312,16 +331,86 @@ async function handler(req, res) {
     // GET /offers/active?chainId=&limit= — the full book in one page
     // (`limit` deliberately ignored: nextBefore null promises
     // completeness, see activeOfferIds). Pin mode serves the frozen
-    // snapshot.
+    // snapshot. The optional market params (Rate Desk #1129 —
+    // lendingAsset / collateralAsset / durationDays) scope the page
+    // exactly like the worker's server-side filter; the pinned
+    // snapshot gets the same scope applied so pin mode stays honest
+    // for a market-scoped consumer too.
     if (parts[0] === 'offers' && parts[1] === 'active') {
-      if (pinned) return json(200, pinned.active);
+      if (pinned) {
+        return json(200, {
+          ...pinned.active,
+          offers: applyMarketScope(pinned.active.offers, url),
+        });
+      }
       const [ids, chainNow] = await Promise.all([activeOfferIds(), forkNowSec()]);
       const offers = (await Promise.all(ids.map((id) => mapOffer(id, chainNow))))
         .filter((o) => o && o.status === 'active')
         // Production serves ORDER BY offer_id DESC; the contract's
         // swap-and-pop active list is unordered — restore the shape.
         .sort((a, b) => b.offerId - a.offerId);
-      return json(200, { chainId: CHAIN_ID, offers, nextBefore: null });
+      return json(200, {
+        chainId: CHAIN_ID,
+        offers: applyMarketScope(offers, url),
+        nextBefore: null,
+      });
+    }
+
+    // GET /offers/markets?chainId= — Rate Desk market discovery
+    // (#1129). Mirrors the worker's SQL aggregation: every DISTINCT
+    // (lendingAsset, collateralAsset, durationDays) triple with live
+    // ERC-20/ERC-20 offers, per-side counts + best headline rates,
+    // most-active first. Not frozen by pin mode (production pins only
+    // the active feed + freshness cursor). NB the desk's tape route
+    // (/loans/recent) is deliberately NOT stubbed: the stub has no
+    // cross-status loan enumeration (only active-loan walks), and a
+    // tape missing repaid fills would be a wrong answer rather than a
+    // degraded one — the app renders its honest "couldn't load recent
+    // fills" state instead.
+    if (parts[0] === 'offers' && parts[1] === 'markets') {
+      const [ids, chainNow] = await Promise.all([activeOfferIds(), forkNowSec()]);
+      const rows = (await Promise.all(ids.map((id) => mapOffer(id, chainNow)))).filter(
+        (o) =>
+          o &&
+          o.status === 'active' &&
+          o.assetType === 0 &&
+          o.collateralAssetType === 0,
+      );
+      const byKey = new Map();
+      for (const o of rows) {
+        const key = `${o.lendingAsset.toLowerCase()}:${o.collateralAsset.toLowerCase()}:${o.durationDays}`;
+        let m = byKey.get(key);
+        if (!m) {
+          m = {
+            lendingAsset: o.lendingAsset,
+            collateralAsset: o.collateralAsset,
+            durationDays: o.durationDays,
+            lenderOffers: 0,
+            borrowerOffers: 0,
+            bestAskBps: null,
+            bestBidBps: null,
+          };
+          byKey.set(key, m);
+        }
+        if (o.offerType === 0) {
+          m.lenderOffers += 1;
+          m.bestAskBps =
+            m.bestAskBps === null
+              ? o.interestRateBps
+              : Math.min(m.bestAskBps, o.interestRateBps);
+        } else {
+          m.borrowerOffers += 1;
+          m.bestBidBps =
+            m.bestBidBps === null
+              ? o.interestRateBpsMax
+              : Math.max(m.bestBidBps, o.interestRateBpsMax);
+        }
+      }
+      const markets = [...byKey.values()].sort(
+        (a, b) =>
+          b.lenderOffers + b.borrowerOffers - (a.lenderOffers + a.borrowerOffers),
+      );
+      return json(200, { chainId: CHAIN_ID, markets });
     }
 
     // GET /offers/by-creator/:addr — exhaustive walk (see userOfferIds).
