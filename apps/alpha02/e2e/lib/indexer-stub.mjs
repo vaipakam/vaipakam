@@ -71,13 +71,13 @@ async function mapOffer(id, chainNowSec) {
   // No catch: a zeroed struct is the legitimate "gone" signal below;
   // an RPC/ABI failure must bubble to the handler's 500 instead of
   // silently dropping the row. getOfferLinkedLoanId backs the worker's
-  // `isSaleVehicle` marker (D1 column, migration 0029) — the stub
-  // derives it live. BORROWER rows only, matching production exactly:
-  // the worker sets is_sale_vehicle on LoanSaleOfferLinked (always a
-  // borrower-style offer); a lender-side Preclose Option-3 OFFSET
-  // vehicle is linked too (offsetOfferToLoanId) but carries NO
-  // indexer flag — the app must catch those with its own chain probe,
-  // and an over-flagging stub would mask that gap in tests.
+  // `isSaleVehicle` / `isOffsetVehicle` markers (D1 columns,
+  // migrations 0029 + 0031) — the stub derives both live, matching
+  // production semantics exactly: the worker sets is_sale_vehicle on
+  // LoanSaleOfferLinked (always a borrower-style offer) and
+  // is_offset_vehicle on OffsetOfferCreated (always a lender-style
+  // offer, Codex #1134 round-5), so linked + offerType decides which
+  // flag a row carries.
   const [o, stateRaw, linkedLoanId] = await Promise.all([
     read('getOffer', [BigInt(id)]),
     read('getOfferState', [BigInt(id)]),
@@ -131,6 +131,7 @@ async function mapOffer(id, chainNowSec) {
     expiresAt: n(o.expiresAt) || undefined,
     fillMode: n(o.fillMode),
     isSaleVehicle: n(o.offerType) === 1 && n(linkedLoanId) !== 0,
+    isOffsetVehicle: n(o.offerType) === 0 && n(linkedLoanId) !== 0,
   };
 }
 
@@ -270,19 +271,23 @@ function applyMarketScope(offers, url) {
   );
 }
 
-// The worker's opt-in /offers/active drops (Codex #1134 round-3):
-// `excludeExpired=1` (expires_at = 0 OR expires_at > now — judged on
-// the FORK's clock, like everything else here) and
-// `excludeSaleVehicles=1` (is_sale_vehicle = 0). Applied to BOTH the
-// live and the pinned path, exactly like production applies its SQL
-// predicate to whatever rows the table holds.
+// The worker's opt-in /offers/active drops (Codex #1134 round-3 +
+// round-5): `excludeExpired=1` (expires_at = 0 OR expires_at > now —
+// judged on the FORK's clock, like everything else here),
+// `excludeSaleVehicles=1` (is_sale_vehicle = 0) and
+// `excludeOffsetVehicles=1` (is_offset_vehicle = 0). Applied to BOTH
+// the live and the pinned path, exactly like production applies its
+// SQL predicate to whatever rows the table holds.
 function applyOfferFlags(offers, url, chainNowSec) {
   const excludeExpired = url.searchParams.get('excludeExpired') === '1';
   const excludeSaleVehicles = url.searchParams.get('excludeSaleVehicles') === '1';
+  const excludeOffsetVehicles =
+    url.searchParams.get('excludeOffsetVehicles') === '1';
   return offers.filter(
     (o) =>
       (!excludeExpired || !o.expiresAt || o.expiresAt > chainNowSec) &&
-      (!excludeSaleVehicles || o.isSaleVehicle !== true),
+      (!excludeSaleVehicles || o.isSaleVehicle !== true) &&
+      (!excludeOffsetVehicles || o.isOffsetVehicle !== true),
   );
 }
 
@@ -403,7 +408,14 @@ async function handler(req, res) {
           o &&
           o.status === 'active' &&
           o.assetType === 0 &&
-          o.collateralAssetType === 0,
+          o.collateralAssetType === 0 &&
+          // Production excludes BOTH vehicle kinds unconditionally
+          // (is_sale_vehicle = 0 AND is_offset_vehicle = 0): sale /
+          // offset bookkeeping rows must never advertise a market
+          // (Codex #1134 round-5 P2 — an offset-only "market" would
+          // be auto-selected and then render an empty book).
+          o.isSaleVehicle !== true &&
+          o.isOffsetVehicle !== true,
       );
       const byKey = new Map();
       for (const o of rows) {

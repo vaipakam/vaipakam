@@ -97,6 +97,11 @@ export interface IndexedOffer {
    *  to an existing loan; bookkeeping, never quotable market liquidity.
    *  Optional: older workers (and the chain-hydration path) omit it. */
   isSaleVehicle?: boolean;
+  /** Preclose Option-3 OFFSET vehicle marker (0031) — a lender-style
+   *  offer pinned to an existing loan (Codex #1134 round-5); same
+   *  bookkeeping-not-liquidity rationale as `isSaleVehicle` on the
+   *  other side of the book. Optional: older workers omit it. */
+  isOffsetVehicle?: boolean;
 }
 
 export interface ActiveOffersPage {
@@ -125,12 +130,12 @@ function applyMarketScope(params: URLSearchParams, scope: MarketScope): void {
   }
 }
 
-/** `excludeExpired` / `excludeSaleVehicles` are opt-in server-side
- *  drops (Codex #1134 round-3): lazily-expired GTT rows and lender-
- *  sale bookkeeping offers are not book liquidity, and letting them
- *  through wastes the desk fallback's bounded page-walk budget. Older
- *  workers ignore the params — callers keep their client-side filters
- *  as belt-and-suspenders. */
+/** `excludeExpired` / `excludeSaleVehicles` / `excludeOffsetVehicles`
+ *  are opt-in server-side drops (Codex #1134 round-3 + round-5):
+ *  lazily-expired GTT rows and sale/offset bookkeeping offers are not
+ *  book liquidity, and letting them through wastes the desk fallback's
+ *  bounded page-walk budget. Older workers ignore the params — callers
+ *  keep their client-side filters as belt-and-suspenders. */
 export function fetchActiveOffers(
   chainId: number,
   opts: {
@@ -138,6 +143,7 @@ export function fetchActiveOffers(
     before?: number;
     excludeExpired?: boolean;
     excludeSaleVehicles?: boolean;
+    excludeOffsetVehicles?: boolean;
   } & MarketScope = {},
 ): Promise<ActiveOffersPage | null> {
   const params = new URLSearchParams({ chainId: String(chainId) });
@@ -145,6 +151,7 @@ export function fetchActiveOffers(
   if (opts.before) params.set('before', String(opts.before));
   if (opts.excludeExpired) params.set('excludeExpired', '1');
   if (opts.excludeSaleVehicles) params.set('excludeSaleVehicles', '1');
+  if (opts.excludeOffsetVehicles) params.set('excludeOffsetVehicles', '1');
   applyMarketScope(params, opts);
   return getJson<ActiveOffersPage>(`/offers/active?${params}`);
 }
@@ -254,6 +261,11 @@ export interface IndexedLoan {
   interestRateBps: number;
   startTime: number;
   allowsPartialRepay: boolean;
+  /** Lender-sale temp bookkeeping loan marker (0029) — never a fresh
+   *  market fill. Optional: older workers omit it, so tape consumers
+   *  filter `isSaleVehicle !== true` (belt-and-suspenders alongside
+   *  the equally-ignorable excludeSaleVehicles=1 param). */
+  isSaleVehicle?: boolean;
   startBlock: number;
   startAt: number;
   terminalBlock: number | null;

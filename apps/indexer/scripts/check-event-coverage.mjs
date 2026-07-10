@@ -53,8 +53,6 @@ const DELIBERATELY_NOT_HANDLED = {
   OfferCreatedDetails:
     'companion to OfferCreated — the offer row is still built via a getOfferDetails read-back; switching the offer side to consume this companion event (the loan side already consumes LoanInitiatedDetails) is a follow-up',
   OfferCanceledDetails: 'companion to OfferCanceled — extra fields not needed beyond the status flip',
-  OffsetOfferCreated:
-    'internal offset offer for preclose-option-3 — not surfaced in the public /offers list',
   AutoDailyDeducted: 'NFT-rental daily-fee deduction — surfaced via activity_events, no loans row field for it',
   HFLiquidationTriggered:
     'liquidation-attempt marker — the actual status change to Defaulted arrives via LoanLiquidated / LoanDefaulted, which ARE handled',

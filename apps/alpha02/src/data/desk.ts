@@ -167,9 +167,8 @@ export function useDeskBook(pair: DeskPair | null, durationDays: number) {
           // one would arm a taker affordance on a row whose terms are
           // pinned to an existing loan. One extra JSON-RPC batch per
           // book load (see readLinkedOfferIds). The indexer fallback
-          // below filters sale vehicles on the worker's
-          // `isSaleVehicle`; offset vehicles have no indexer flag —
-          // an accepted gap on the (chain-down) fallback leg.
+          // below filters both on the worker's `isSaleVehicle` /
+          // `isOffsetVehicle` flags (migrations 0029 + 0031).
           const linkedIds = await readLinkedOfferIds(
             publicClient,
             readChain.diamondAddress,
@@ -200,11 +199,13 @@ export function useDeskBook(pair: DeskPair | null, durationDays: number) {
           lendingAsset: pair!.lendingAsset,
           collateralAsset: pair!.collateralAsset,
           durationDays,
-          // Codex #1134 round-3 — drop non-book rows SERVER-side so
-          // lazily-expired GTT rows and sale vehicles can't eat the
-          // bounded page budget and truncate a busy market's book.
+          // Codex #1134 round-3 + round-5 — drop non-book rows
+          // SERVER-side so lazily-expired GTT rows and sale/offset
+          // vehicles can't eat the bounded page budget and truncate a
+          // busy market's book.
           excludeExpired: true,
           excludeSaleVehicles: true,
+          excludeOffsetVehicles: true,
         });
         if (page === null) return null;
         // Belt-and-suspenders client-side filters (an older worker
@@ -214,15 +215,16 @@ export function useDeskBook(pair: DeskPair | null, durationDays: number) {
         // pairs would render under this market and arm taker links
         // for the wrong assets). Keep only rows matching the
         // requested market: pair (case-insensitive — indexer rows
-        // are lowercase, but don't depend on it) AND tenor. Sale
-        // vehicles are excluded client-side too; rows without the
-        // field keep their rows — same behaviour as before the
+        // are lowercase, but don't depend on it) AND tenor. Sale and
+        // offset vehicles are excluded client-side too; rows without
+        // the fields keep their rows — same behaviour as before the
         // filter. Expired rows are already dropped by the ladder's
         // isLiveMarketRow.
         all.push(
           ...page.offers.filter(
             (o) =>
               o.isSaleVehicle !== true &&
+              o.isOffsetVehicle !== true &&
               o.lendingAsset.toLowerCase() === wantLending &&
               o.collateralAsset.toLowerCase() === wantCollateral &&
               o.durationDays === durationDays,
@@ -257,7 +259,25 @@ export function useDeskTape(pair: DeskPair | null, durationDays: number) {
         durationDays,
         excludeSaleVehicles: true,
       });
-      return page === null ? null : page.loans;
+      if (page === null) return null;
+      // Belt-and-suspenders client-side verification, mirroring the
+      // book fallback (Codex #1134 round-5 P2): an older worker
+      // ignores the market params AND excludeSaleVehicles=1, so the
+      // response may be the GLOBAL cross-status feed — other pairs'
+      // fills would print on this market's tape. Keep only rows
+      // matching the requested pair (case-insensitive — indexer rows
+      // are lowercase, but don't depend on it) + tenor, and drop sale
+      // vehicles by the row flag (rows from workers too old to carry
+      // `isSaleVehicle` keep their rows — same behaviour as before).
+      const wantLending = pair!.lendingAsset.toLowerCase();
+      const wantCollateral = pair!.collateralAsset.toLowerCase();
+      return page.loans.filter(
+        (l) =>
+          l.isSaleVehicle !== true &&
+          l.lendingAsset.toLowerCase() === wantLending &&
+          l.collateralAsset.toLowerCase() === wantCollateral &&
+          l.durationDays === durationDays,
+      );
     },
   });
 }

@@ -80,14 +80,17 @@ const MAX_OFFER_EXPIRY_HORIZON_SECONDS = 365 * 86_400;
  *  mempool. */
 const EXPIRY_SUBMIT_MARGIN_SECONDS = 60n;
 
-/** Re-validate a resolved `expiresAt` against LIVE chain time
- *  immediately before the createOffer / createOfferWithPermit write.
- *  The payload is built (and validated against the DEVICE clock) at
- *  the top of submit — but sanction/fee/pause reads, wallet prompts,
- *  and a possible classic approval transaction all run between that
- *  and the write. A near-future custom deadline can lapse inside that
- *  window, so without this gate the user pays approval gas and then
- *  hits `OfferExpiryInPast`. Chain-time anchor doctrine: judge on
+/** Re-validate a resolved `expiresAt` against LIVE chain time — once
+ *  BEFORE any Permit2 signature / classic approval is requested
+ *  (Codex #1134 round-5: approval gas must never be spent on an
+ *  already-lapsed deadline) and again immediately before the
+ *  createOffer / createOfferWithPermit write. The payload is built
+ *  (and validated against the DEVICE clock) at the top of submit —
+ *  but sanction/fee/pause reads, wallet prompts, and a possible
+ *  classic approval transaction all run between that and the write.
+ *  A near-future custom deadline can lapse inside those windows, so
+ *  without these gates the user pays approval gas and then hits
+ *  `OfferExpiryInPast`. Chain-time anchor doctrine: judge on
  *  `block.timestamp` (what the facet judges on), never the device
  *  clock — same anchor the Open orders cancel-cooldown gate uses. */
 async function assertExpiryStillValidLive(
@@ -438,6 +441,15 @@ export function OrderTicket({
               : collateralMeta.data?.symbol,
         }),
       ]);
+      // First look BEFORE any approval/signature work (Codex #1134
+      // round-5 P2): the ticket can sit open long enough for a custom
+      // deadline to lapse, and the checks below end with either a
+      // Permit2 EIP-712 prompt or a classic approval TRANSACTION —
+      // gas that must never be spent on an offer the facet will
+      // reject with OfferExpiryInPast. The post-approval last looks
+      // further down stay: the deadline can also lapse while the
+      // approval itself sits in the wallet/mempool.
+      await assertExpiryStillValidLive(publicClient, payload.expiresAt);
       // Permit2 first (#1038): one gasless signature replaces the
       // approval transaction — only when a fresh approval would be
       // needed anyway AND the wallet holds a standing token→Permit2

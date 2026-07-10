@@ -107,6 +107,11 @@ interface OfferRow {
   // an existing loan). Exposed so book consumers can drop these rows:
   // they are bookkeeping, never quotable market liquidity.
   is_sale_vehicle: number;
+  // 0031 — Preclose Option-3 offset-vehicle marker (lender-style offer
+  // pinned to an existing loan via offsetOfferToLoanId). Same
+  // bookkeeping-not-liquidity rationale as is_sale_vehicle, on the
+  // other side of the book (Codex #1134 round-5 P2).
+  is_offset_vehicle: number;
   first_seen_block: number;
   first_seen_at: number;
   updated_at: number;
@@ -145,6 +150,7 @@ function toJson(row: OfferRow): Record<string, unknown> {
     expiresAt: row.expires_at,
     fillMode: row.fill_mode,
     isSaleVehicle: row.is_sale_vehicle === 1,
+    isOffsetVehicle: row.is_offset_vehicle === 1,
     firstSeenBlock: row.first_seen_block,
     firstSeenAt: row.first_seen_at,
     updatedAt: row.updated_at,
@@ -233,7 +239,11 @@ export async function handleOffersStats(req: Request, env: Env): Promise<Respons
  * ERC-20-only by construction (asset_type = 0 AND collateral_asset_type = 0):
  * NFT/1155 legs carry token identity and must not merge into a fungible
  * market row. Sale-vehicle offers are excluded — they are bookkeeping, not
- * quotable markets. Rates are small integers (bps), safe to aggregate in SQL.
+ * quotable markets — and so are Preclose Option-3 OFFSET vehicles
+ * (lender-style rows pinned to an existing loan; Codex #1134 round-5 P2 —
+ * a market whose only row is an offset vehicle would get advertised and
+ * auto-selected, then render an empty book). Rates are small integers
+ * (bps), safe to aggregate in SQL.
  *
  * bestAskBps = MIN(lender interest_rate_bps)      — lender floor (offer_type 0)
  * bestBidBps = MAX(borrower interest_rate_bps_max) — borrower ceiling (offer_type 1)
@@ -252,6 +262,7 @@ export async function handleOffersMarkets(req: Request, env: Env): Promise<Respo
         WHERE chain_id = ? AND status = 'active'
           AND asset_type = 0 AND collateral_asset_type = 0
           AND is_sale_vehicle = 0
+          AND is_offset_vehicle = 0
           AND (expires_at = 0 OR expires_at > ?)
         GROUP BY lending_asset, collateral_asset, duration_days
         ORDER BY (lender_offers + borrower_offers) DESC`,
@@ -285,7 +296,7 @@ export async function handleOffersMarkets(req: Request, env: Env): Promise<Respo
 /**
  * GET /offers/active?chainId=8453&limit=50&before=<offer_id>
  *     [&lendingAsset=0x..&collateralAsset=0x..&durationDays=30]
- *     [&excludeExpired=1&excludeSaleVehicles=1]
+ *     [&excludeExpired=1&excludeSaleVehicles=1&excludeOffsetVehicles=1]
  * Returns the page of active offers. Newest-first.
  *
  * Rate Desk (#1129) — the optional market params scope the page to one
@@ -296,11 +307,13 @@ export async function handleOffersMarkets(req: Request, env: Env): Promise<Respo
  *
  * `excludeExpired=1` drops lazily-expired GTT rows (expiry is enforced
  * lazily on-chain, so a lapsed offer's row can still read status='active');
- * `excludeSaleVehicles=1` drops lender-sale bookkeeping offers — both
- * opt-in flags (Codex #1134 round-3), mirroring /loans/recent's
- * excludeSaleVehicles convention, so existing consumers of the unfiltered
- * feed keep byte-identical behaviour. The desk's fallback book passes both
- * so non-book rows can't eat its bounded page-walk budget.
+ * `excludeSaleVehicles=1` drops lender-sale bookkeeping offers;
+ * `excludeOffsetVehicles=1` drops Preclose Option-3 offset bookkeeping
+ * offers (Codex #1134 round-5 P2) — all opt-in flags (round-3 convention),
+ * mirroring /loans/recent's excludeSaleVehicles, so existing consumers of
+ * the unfiltered feed keep byte-identical behaviour. The desk's fallback
+ * book passes all three so non-book rows can't eat its bounded page-walk
+ * budget.
  */
 export async function handleOffersActive(req: Request, env: Env): Promise<Response> {
   const url = new URL(req.url);
@@ -313,6 +326,8 @@ export async function handleOffersActive(req: Request, env: Env): Promise<Respon
   }
   const excludeExpired = url.searchParams.get('excludeExpired') === '1';
   const excludeSaleVehicles = url.searchParams.get('excludeSaleVehicles') === '1';
+  const excludeOffsetVehicles =
+    url.searchParams.get('excludeOffsetVehicles') === '1';
   try {
     const conds: string[] = [`chain_id = ?`, `status = 'active'`];
     const binds: (number | string)[] = [chainId];
@@ -339,6 +354,9 @@ export async function handleOffersActive(req: Request, env: Env): Promise<Respon
     }
     if (excludeSaleVehicles) {
       conds.push('is_sale_vehicle = 0');
+    }
+    if (excludeOffsetVehicles) {
+      conds.push('is_offset_vehicle = 0');
     }
     const stmt = env.DB.prepare(
       `SELECT * FROM offers
@@ -566,10 +584,13 @@ function parseMarketFilter(url: URL): MarketFilter | 'bad' {
   const rawDays = url.searchParams.get('durationDays');
   if (rawDays !== null) {
     const n = Number(rawDays);
-    // Upper bound is input SANITY only (the protocol's maxOfferDurationDays
-    // is governance-tunable and can exceed one year) — reject only clearly
-    // malformed values, never a tenor the contracts could legitimately allow.
-    if (!Number.isInteger(n) || n < 1 || n > 3650) return 'bad';
+    // Upper bound is the contracts' hard governance ceiling:
+    // `LibVaipakam.MAX_OFFER_DURATION_DAYS_CEIL = 4385` (LibVaipakam.sol:417)
+    // — `ConfigFacet.setMaxOfferDurationDays` range-bounds every value to it,
+    // so no offer/loan can ever carry a longer tenor. Anything above is
+    // clearly malformed input, never a tenor the contracts could allow
+    // (Codex #1134 round-5 P2 — the earlier 3650 under-shot the ceiling).
+    if (!Number.isInteger(n) || n < 1 || n > 4385) return 'bad';
     out.durationDays = n;
   }
   return out;

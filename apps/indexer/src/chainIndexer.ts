@@ -2084,6 +2084,33 @@ async function processLoanLogs(
           `[chainIndexer] LoanSaleOfferLinked: sale offer ${saleOfferId} row missing — is_sale_vehicle not set (chain ${chainId})`,
         );
       }
+    } else if (log.eventName === 'OffsetOfferCreated') {
+      // Rate Desk (Codex #1134 round-5 P2) — mark the lender-style OFFSET
+      // vehicle a Preclose Option-3 `offsetWithNewOffer` posts. It rides the
+      // normal createOfferInternal path, so it lands in `offers` as a live
+      // ERC20/ERC20 lender row, but its terms are pinned to the original loan
+      // — bookkeeping, never quotable market liquidity. Without the flag a
+      // market whose only row is an offset vehicle gets advertised by
+      // /offers/markets and auto-selected, then the book (correctly) renders
+      // empty. Same ordering guarantee as LoanSaleOfferLinked above:
+      // offsetWithNewOffer emits OfferCreated (via _submitOffsetOffer →
+      // createOfferInternal) BEFORE _finalizeOffsetLink emits
+      // OffsetOfferCreated in the same tx, and processOfferLogs runs before
+      // processLoanLogs, so the offers row exists here. A zero-change UPDATE
+      // means ingest raced ahead — log it loudly; the desk routes fail open
+      // (row shows) rather than dropping real liquidity.
+      const offsetOfferId = Number(a.newOfferId as bigint);
+      const marked = await env.DB.prepare(
+        `UPDATE offers SET is_offset_vehicle = 1, updated_at = ?
+          WHERE chain_id = ? AND offer_id = ?`,
+      )
+        .bind(Math.floor(Date.now() / 1000), chainId, offsetOfferId)
+        .run();
+      if ((marked.meta?.changes ?? 0) === 0) {
+        console.error(
+          `[chainIndexer] OffsetOfferCreated: offset offer ${offsetOfferId} row missing — is_offset_vehicle not set (chain ${chainId})`,
+        );
+      }
     } else if (log.eventName === 'LoanSold') {
       // EarlyWithdrawal — the lender position is sold to a new lender; the loan
       // stays Active. #749: like the obligation transfer, this BURNS the old
@@ -2780,8 +2807,10 @@ async function processLoanLogs(
     //    Active→Repaid on-chain but does NOT currently emit a status
     //    event, so the indexer can't mirror it — see the contract-side
     //    payload-completeness follow-up.
-    //  - LoanKeeperEnabled / OfferKeeperEnabled / *Details companions /
-    //    OffsetOfferCreated — not modelled in the indexer schema.
+    //  - LoanKeeperEnabled / OfferKeeperEnabled / *Details companions —
+    //    not modelled in the indexer schema. (OffsetOfferCreated IS
+    //    handled above — it marks the offer row's is_offset_vehicle
+    //    flag for the desk's market-discovery exclusion, #1134 r5.)
     //
     // ─── Position-NFT Transfer: maintain current_owner columns ───
     // ERC721 Transfer events (mint = from 0x0, trade between holders,

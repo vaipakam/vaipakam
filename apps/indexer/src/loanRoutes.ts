@@ -83,6 +83,11 @@ interface LoanRow {
   interest_rate_bps: number;
   start_time: number;
   allows_partial_repay: number;
+  // 0029 — lender-sale vehicle marker: the temp bookkeeping loan a
+  // lender-sale offer initiates (never a fresh market fill). Exposed so
+  // tape consumers can drop these rows client-side even when an older
+  // worker ignored the excludeSaleVehicles=1 param (Codex #1134 round-5).
+  is_sale_vehicle: number;
   start_block: number;
   start_at: number;
   terminal_block: number | null;
@@ -114,6 +119,7 @@ function loanToJson(row: LoanRow): Record<string, unknown> {
     interestRateBps: row.interest_rate_bps,
     startTime: row.start_time,
     allowsPartialRepay: row.allows_partial_repay === 1,
+    isSaleVehicle: row.is_sale_vehicle === 1,
     startBlock: row.start_block,
     startAt: row.start_at,
     terminalBlock: row.terminal_block,
@@ -1213,10 +1219,13 @@ function parseMarketFilter(url: URL): MarketFilter | 'bad' {
   const rawDays = url.searchParams.get('durationDays');
   if (rawDays !== null) {
     const n = Number(rawDays);
-    // Upper bound is input SANITY only (the protocol's maxOfferDurationDays
-    // is governance-tunable and can exceed one year) — reject only clearly
-    // malformed values, never a tenor the contracts could legitimately allow.
-    if (!Number.isInteger(n) || n < 1 || n > 3650) return 'bad';
+    // Upper bound is the contracts' hard governance ceiling:
+    // `LibVaipakam.MAX_OFFER_DURATION_DAYS_CEIL = 4385` (LibVaipakam.sol:417)
+    // — `ConfigFacet.setMaxOfferDurationDays` range-bounds every value to it,
+    // so no offer/loan can ever carry a longer tenor. Anything above is
+    // clearly malformed input, never a tenor the contracts could allow
+    // (Codex #1134 round-5 P2 — the earlier 3650 under-shot the ceiling).
+    if (!Number.isInteger(n) || n < 1 || n > 4385) return 'bad';
     out.durationDays = n;
   }
   return out;
