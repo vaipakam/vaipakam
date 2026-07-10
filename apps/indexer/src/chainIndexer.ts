@@ -694,8 +694,13 @@ async function processOfferLogs(
         amountMax: bigint;
         interestRateBps: bigint;
         interestRateBpsMax: bigint;
-        collateralAmount: bigint;
-        collateralAmountMax: bigint; }
+        // NOTE: the event's post-image also carries collateralAmountMax,
+        // deliberately NOT captured here — the `offers` schema stores
+        // collateral min only (no collateral_amount_max column exists;
+        // the create/refresh paths never wrote one and no read path
+        // consumes one). Persisting it wedged production ingest with
+        // `D1_ERROR: no such column` on every OfferModified (#1149).
+        collateralAmount: bigint; }
     | { kind: 'matched';
         lenderOfferId: bigint;
         // #760 — block of the OfferMatched log, for the block-pinned
@@ -757,7 +762,6 @@ async function processOfferLogs(
         interestRateBps: a.interestRateBps as bigint,
         interestRateBpsMax: a.interestRateBpsMax as bigint,
         collateralAmount: a.collateralAmount as bigint,
-        collateralAmountMax: a.collateralAmountMax as bigint,
       });
     }
   }
@@ -1068,6 +1072,17 @@ async function processOfferLogs(
       // (modifications are only allowed on unaccepted offers;
       // OfferAlreadyAccepted reverts the modify call), so we don't
       // touch the status column.
+      //
+      // #1149 — do NOT write `collateral_amount_max`: that column has
+      // never existed on `offers` (0004 created amount_max +
+      // interest_rate_bps_max but collateral min only, and no later
+      // migration added a max). The over-eager post-image write here
+      // failed the whole scan with `D1_ERROR: no such column` on any
+      // OfferModified in the window, and the fail-closed design then
+      // wedged the chain's cursor permanently. Nothing reads a
+      // collateral max from this table; if a ranged-collateral display
+      // ever needs it, add the column via migration FIRST, then extend
+      // the create/refresh writes alongside this one.
       const r = await env.DB.prepare(
         `UPDATE offers
          SET amount = ?,
@@ -1075,7 +1090,6 @@ async function processOfferLogs(
              interest_rate_bps = ?,
              interest_rate_bps_max = ?,
              collateral_amount = ?,
-             collateral_amount_max = ?,
              updated_at = ?
          WHERE chain_id = ? AND offer_id = ?`,
       )
@@ -1085,7 +1099,6 @@ async function processOfferLogs(
           Number(ev.interestRateBps),
           Number(ev.interestRateBpsMax),
           ev.collateralAmount.toString(),
-          ev.collateralAmountMax.toString(),
           now,
           chainId,
           Number(ev.offerId),
