@@ -806,6 +806,11 @@ export function OrderTicket({
       setConsent(false);
       setAmount('');
       void queryClient.invalidateQueries({ queryKey: ['deskSignedBook'] });
+      // A signed post can CREATE a market — /offers/markets unions
+      // active signed rows (Codex #1145 r4) — so the pair/tenor chips
+      // and counts must refresh now, same as afterPost() on the
+      // on-chain path, not on the next 30s poll (Codex #1145 r7 P3).
+      void queryClient.invalidateQueries({ queryKey: ['deskMarkets'] });
     } catch (err) {
       setError(captureTxError(err));
     } finally {

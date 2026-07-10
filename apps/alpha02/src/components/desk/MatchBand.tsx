@@ -195,6 +195,10 @@ export function MatchBand({
       void queryClient.invalidateQueries({ queryKey: ['deskBook'] });
       void queryClient.invalidateQueries({ queryKey: ['deskMarkets'] });
       void queryClient.invalidateQueries({ queryKey: ['deskTape'] });
+      // The match's loan print belongs in the chart too — deskCandles
+      // rides a 60s interval, so without this the executed match's
+      // candle lags the tape on push-less deploys (Codex #1145 r7 P3).
+      void queryClient.invalidateQueries({ queryKey: ['deskCandles'] });
       void queryClient.invalidateQueries({ queryKey: ['deskPreviewMatch'] });
       void queryClient.invalidateQueries({ queryKey: ['activeOffers'] });
       void queryClient.invalidateQueries({ queryKey: ['myOffers'] });
