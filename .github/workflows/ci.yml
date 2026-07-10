@@ -620,20 +620,19 @@ jobs:
       needs.detect-changes.outputs.contracts == 'true'
       && needs.contracts-fast.result == 'success'
     runs-on: ubuntu-latest
-    # `forge doc --build` only reads src/ NatSpec — it doesn't need test/
-    # at all. Pre-#290 it inherited the default profile, so a cache miss
-    # on any test file triggered a full-scope re-compile (which is what
-    # timed this job out under #295's narrowed `contracts-fast` cache).
-    # Running under FOUNDRY_PROFILE=cifast aligns this job's compile
-    # graph with contracts-fast's cache, so a warm restore is a no-op
-    # compile + just the NatSpec → mdbook rendering step. On a cache MISS
-    # though, forge doc still drives its own cold src compile, and as the
-    # src/ surface has grown (RiskSplitLiquidationFacet, #395 sizing, …)
-    # that cold path now overruns 15 min on a slow runner — #640 hit the
-    # cap mid-`forge doc --build`. Raised to 30 (in line with the heavier
-    # forge jobs: contracts-fast 25, slither 20) so a cold-cache run has
-    # headroom; a warm run is still the usual few minutes.
-    timeout-minutes: 30
+    # `forge doc --build` only reads src/ NatSpec — it doesn't need test/.
+    # It runs under FOUNDRY_PROFILE=cifast, and the "Warm compile (in-job,
+    # memory-safe)" step below runs `forge build --skip test` FIRST so the
+    # doc step always reuses warm `out/` artifacts regardless of whether the
+    # cross-job `actions/cache` restore hit (on #1122 it MISSED — a 3 s
+    # restore — leaving forge doc to cold-compile the full unit, which
+    # overran the old 30 min cap and got the job cancelled, blocking the
+    # merge). With the in-job warm compile the doc step is just src+script
+    # (memory-safe ~3 GB) + mdbook rendering. Cap kept generous for the one
+    # cold src compile per PR on a slow runner. (History: 15 → 30 for #640's
+    # cold-cache overrun; the in-job warm step is the real fix so a cache
+    # miss can't cancel the job again.)
+    timeout-minutes: 40
     env:
       FOUNDRY_PROFILE: cifast
     defaults:
@@ -669,10 +668,25 @@ jobs:
           restore-keys: |
             forge-${{ runner.os }}-${{ hashFiles('contracts/foundry.toml', 'contracts/remappings.txt', 'contracts/.submodule-state') }}-
 
+      - name: Warm compile (in-job, memory-safe)
+        # The cross-job `actions/cache` restore above is best-effort — when
+        # `src/` changed it can MISS (observed on #1122: a 3 s restore = no
+        # warm `out/`), which left `forge doc --build` to drive its OWN cold
+        # compile that overran the 30 min cap. Do a deterministic, in-job warm
+        # compile FIRST so the doc step never depends on a cross-job cache hit.
+        # `--skip test` compiles `src/` + `script/` only (the exact graph
+        # `forge doc` reads — it never needs `test/`), which is also the
+        # memory-safe scope: the test-inclusive whole unit peaks ~17.7 GB RSS
+        # (over the 16 GB runner ceiling → thrash), while src+script stays
+        # ~3 GB. `forge doc --build` below then hits warm artifacts and only
+        # renders the NatSpec → mdbook (fast). One cold src compile per PR.
+        run: forge build --skip test
+
       - name: Forge doc --build
         # Builds an mdbook tree under `contracts/docs/book` from the
         # per-function NatSpec comments in `contracts/src/`. Output is
-        # governed by `foundry.toml [doc]`.
+        # governed by `foundry.toml [doc]`. Reuses the warm `out/` from the
+        # step above — no recompile.
         run: forge doc --build
 
       - name: Inject site root breadcrumb
