@@ -38,11 +38,41 @@ type ServerFrame =
  *  LiveChainSync's per-block job, and double-invalidating them would
  *  just burn RPC. */
 const KEY_MAP: Record<string, string[]> = {
-  'offer.created': ['activeOffers', 'myOffers', 'offer'],
-  'offer.changed': ['activeOffers', 'myOffers', 'offer'],
-  'loan.created': ['myLoans', 'loan'],
-  'loan.updated': ['myLoans', 'loan', 'claimables'],
+  // desk* roots (#1131): markets/book/amend-seed are offer-fed views.
+  'offer.created': [
+    'activeOffers',
+    'myOffers',
+    'offer',
+    'deskMarkets',
+    'deskBook',
+    'deskAmendSource',
+  ],
+  'offer.changed': [
+    'activeOffers',
+    'myOffers',
+    'offer',
+    'deskMarkets',
+    'deskBook',
+    'deskAmendSource',
+  ],
+  // A fill prints on the tape/candles/history and moves the markets
+  // stats. The accept also consumes offer principal, but the indexer
+  // counts that as an offer statusUpdate/detailRefresh, so the SAME
+  // frame carries 'offer.changed' (chainIngestDO derives both keys
+  // from one scan's counts) — deskBook/deskAmendSource ride that key
+  // rather than being duplicated here.
+  'loan.created': [
+    'myLoans',
+    'loan',
+    'deskTape',
+    'deskCandles',
+    'deskHistory',
+    'deskMarkets',
+  ],
+  // Loan status transitions (repaid / defaulted / …) restate history rows.
+  'loan.updated': ['myLoans', 'loan', 'claimables', 'deskHistory'],
   'activity.appended': ['activity'],
+  // NOT mapped on purpose: 'deskSymbols' (token metadata is immutable).
 };
 
 const NUDGE_DEBOUNCE_MS = 300;

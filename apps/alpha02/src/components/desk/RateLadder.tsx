@@ -13,11 +13,18 @@
  *    accept flow.
  *  - Own orders are highlighted (creator === connected wallet).
  */
+import { useEffect, useMemo, useRef } from 'react';
 import { BookOpen, LoaderCircle } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import { copy } from '../../content/copy';
 import { EmptyState, UnavailableState } from '../EmptyState';
 import { formatBpsAsPercent, formatTokenAmount } from '../../lib/format';
+import {
+  ladderFlashIds,
+  levelFlashId,
+  snapshotLadder,
+  type LadderSnapshot,
+} from '../../lib/ladderFlash';
 import { takerCandidate, type DeskLadder, type LadderLevel } from '../../data/desk';
 
 const MAX_LEVELS = 12;
@@ -28,6 +35,7 @@ function LevelRow({
   decimals,
   takeHref,
   takeLabel,
+  flash,
   onPick,
 }: {
   level: LadderLevel;
@@ -35,11 +43,18 @@ function LevelRow({
   decimals: number | undefined;
   takeHref: string | null;
   takeLabel: string;
+  /** Book delta pulse (#1131): the level's size changed (or the level
+   *  appeared) within the same market — play one background flash.
+   *  The render key embeds the size, so the changed row REMOUNTS and
+   *  the CSS animation restarts without any timers. */
+  flash: boolean;
   onPick: (rateBps: number) => void;
 }) {
   return (
     <div
-      className={`desk-ladder-row${level.own ? ' desk-own' : ''}`}
+      className={`desk-ladder-row${level.own ? ' desk-own' : ''}${
+        flash ? ' desk-row-flash' : ''
+      }`}
       role="button"
       tabIndex={0}
       title={`${level.rateBps} bps · ${level.offers.length} offer${
@@ -97,6 +112,23 @@ export function RateLadder({
   wallet: string | undefined;
   onPickRate: (rateBps: number) => void;
 }) {
+  // Book delta animations (#1131 phase 3). Diff the incoming ladder
+  // against the snapshot committed on the PREVIOUS render; only levels
+  // that changed within the same (pair, tenor) market flash — a market
+  // switch or first population re-stamps the snapshot silently.
+  // Memoised on the ladder's identity so unrelated re-renders reuse the
+  // same set (recomputing against the updated ref would strip the class
+  // mid-animation); the ref itself is only advanced post-commit, which
+  // keeps render pure (StrictMode double-render safe).
+  const prevRef = useRef<LadderSnapshot>({ marketKey: null, sizes: new Map() });
+  const flashIds = useMemo(
+    () => ladderFlashIds(prevRef.current, ladder, chainId),
+    [ladder, chainId],
+  );
+  useEffect(() => {
+    prevRef.current = snapshotLadder(ladder, chainId);
+  }, [ladder, chainId]);
+
   if (loading) {
     return (
       <div className="card">
@@ -150,10 +182,13 @@ export function RateLadder({
           <div className="desk-ladder-side-label">{copy.desk.asksHeading}</div>
           {asksShown.map((l) => (
             <LevelRow
-              key={`ask-${l.rateBps}`}
+              // Size in the key: a size change remounts the row so the
+              // flash animation plays once per delta (#1131).
+              key={`ask-${l.rateBps}:${l.size}`}
               level={l}
               side="ask"
               decimals={decimals}
+              flash={flashIds.has(levelFlashId('ask', l.rateBps))}
               onPick={onPickRate}
               takeLabel={copy.desk.takeAsk}
               takeHref={
@@ -183,10 +218,11 @@ export function RateLadder({
           <div className="desk-ladder-side-label">{copy.desk.bidsHeading}</div>
           {bidsShown.map((l) => (
             <LevelRow
-              key={`bid-${l.rateBps}`}
+              key={`bid-${l.rateBps}:${l.size}`}
               level={l}
               side="bid"
               decimals={decimals}
+              flash={flashIds.has(levelFlashId('bid', l.rateBps))}
               onPick={onPickRate}
               takeLabel={copy.desk.takeBid}
               takeHref={

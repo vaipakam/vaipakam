@@ -1342,6 +1342,28 @@ a.item-row:hover {
   background: var(--brand-soft);
 }
 
+/* Book delta pulse (#1131 phase 3): a level whose size changed (or
+   that just appeared) plays ONE background flash. The row's render
+   key embeds the size, so a delta remounts the node and the mount
+   animation fires — no timers. Only `from` is keyframed: the pulse
+   decays to the row's OWN resting background (transparent, or
+   --brand-soft for own orders). */
+.desk-ladder-row.desk-row-flash {
+  animation: desk-row-flash 800ms ease-out;
+}
+
+@keyframes desk-row-flash {
+  from {
+    background-color: var(--surface-hover);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .desk-ladder-row.desk-row-flash {
+    animation: none;
+  }
+}
+
 .desk-own-dot {
   display: inline-block;
   width: 7px;
