@@ -132,14 +132,18 @@ Two payout channels:
    flagged-at-fill recipient rolls the marker back too. The fill is atomic — nothing can commit a
    registration inside a reverting fill.
 
-   So the design adds an EXPLICIT **committed, non-reverting sync**: `syncPrepaySaleListing(loanId)`
-   (permissionless, like `refreshSanctionsFlag`) reads the live consideration recipients — every
-   current position-NFT holder the order pays — and, on an authoritative oracle-up read, REGISTERS any
-   flagged recipient in `sanctionsConfirmedFlagged` (committed) AND CANCELS the listing so it cannot
-   fill. It never reverts on a flag (it *acts* on it), so the registration persists. Anyone (a keeper,
-   the counterparty) can call it; the fill path additionally consults the registry fail-closed as a
-   backstop. The residual — a recipient flagged AND never synced/observed within one uninterrupted
-   outage — is the FR-1 accepted residual (§4), seeded operationally by the sync + `refreshSanctionsFlag`.
+   So the design adds an EXPLICIT **committed, non-reverting sync**, keyed to MATCH the listing's own
+   key (Codex #1136-r6): a LOAN-keyed `syncPrepaySaleListing(loanId)` AND an OFFER-keyed
+   `syncPrepaySaleOffer(offerId)` — because the parallel-sale surface is offer-keyed
+   (`offerPrepayListingOrderHash[offerId]`, and Scenario A has NO loan at all), so a loan-only sync
+   couldn't reach those listings. (Permissionless, like `refreshSanctionsFlag`.) Each reads the live
+   consideration recipients — every current position-NFT holder the order pays — and, on an
+   authoritative oracle-up read, REGISTERS any flagged recipient in `sanctionsConfirmedFlagged`
+   (committed) AND CANCELS the listing so it cannot fill. It never reverts on a flag (it *acts* on it),
+   so the registration persists. Anyone (a keeper, the counterparty) can call it; the fill path
+   additionally consults the registry fail-closed as a backstop. The residual — a recipient flagged AND
+   never synced/observed within one uninterrupted outage — is the FR-1 accepted residual (§4), seeded
+   operationally by the sync + `refreshSanctionsFlag`.
 
 ### Keystone — a CI guardrail (deploy-sanity test)
 
@@ -164,9 +168,13 @@ included, NOT just `src/facets/` (Codex #1136-r1 D1)** (claim/held mutations alr
   `LibCloseoutFreeze.freezeLenderProceeds` assigns `s.lenderClaims[loanId]` AND calls
   `recordFrozenClaimantForLoan(…, true)` in the same body (lender lane ↔ lender register), so it passes
   without an allowlist while its callers do the transition. A claim/held mutation whose side is NOT
-  register-matched in its function FAILS CI, unless allowlisted with a reason. (`LibClaims` + the host
-  bodies are exempt.) The allowlist is thus reserved for genuine exceptions, not for punching a hole
-  around every helper. **EXEMPT (no live holder to register — Codex #1136-r5):** a write that stores a
+  register-matched in its function FAILS CI, unless allowlisted with a reason. The allowlist is thus
+  reserved for genuine exceptions, not for punching a hole around every helper. The `LibClaims`
+  setters and the `terminalize` host bodies are NOT blanket-exempt (Codex #1136-r6 R6-4): they are the
+  funnel callers TRUST, so the guardrail POSITIVELY asserts each contains its own side-matched
+  `recordFrozenClaimant*` — a regression that drops the lender register inside `creditHeldForLender`
+  would otherwise be invisible at both the caller (which relied on the setter) and the setter (if
+  exempt). Verify the funnel, don't trust it. **EXEMPT (no live holder to register — Codex #1136-r5):** a write that stores a
   ZERO / `claimed:true` row (an artifact-avoidance row, not a real deferred payout — e.g. the temp-loan
   `→ Repaid` sale close, the zero-amount rental lender row) and a write on a side whose position NFT is
   already burned in the same flow (the payout was consumed inline / cash-absorbed). These carry no
@@ -177,8 +185,14 @@ included, NOT just `src/facets/` (Codex #1136-r1 D1)** (claim/held mutations alr
   (`SwapToRepayFacet:735-744`, the `LibCloseoutFreeze` helpers). So the rule is FUNCTION-SCOPE: any
   function that resolves `ownerOf(*TokenId)` AND performs a raw `safeTransfer*` / `vaultWithdrawERC20`
   (to any local) outside the `freezeOrPayActiveLender*` helpers FAILS — plus the Seaport consideration
-  channel, covered via #1123 above. This is a coarse dataflow backstop (a full taint analysis is the
-  ideal); the function-scope ban is the practical, false-positive-tolerant check + a reasoned allowlist.
+  channel, covered via #1123 above. The resolve and the payout also SPLIT ACROSS FUNCTIONS (Codex
+  #1136-r6 R6-2): `ClaimFacet._claimViaBackstopImpl` resolves `nftOwner` and passes it into
+  `_absorbLenderSlice`, which does the `vaultWithdrawERC20`. So the rule is CALL-GRAPH-scoped, not
+  single-function: a holder value resolved from `ownerOf(*TokenId)` and threaded into a private helper
+  that pays it is treated the same as an in-function payout — the whole resolve→pay call chain must be
+  inside the helpers (or carry the `assertNotFrozenParty`/sync). This is a coarse dataflow backstop (a
+  full taint analysis is the ideal); the call-graph ban is the practical, false-positive-tolerant check
+  + a reasoned allowlist.
 
 This is what durably ends the whack-a-mole: a future path that forgets the treatment fails CI.
 
@@ -194,14 +208,16 @@ EarlyWithdrawal ~81 B, Defaulted ~59 B headroom) would overflow.
 A new `LifecycleFacet.terminalize(loanId, expectedFrom, to)` + `terminalizeFromAny(loanId, to)` host
 pair (onlyDiamondInternal) performs the *validated* transition (SAME `expectedFrom` edge-check as
 `LibLifecycle.transition`/`transitionFromAny` today — Codex #1136-r1 D2) AND the both-holder register
-ONCE, in the host's own bytecode. Every register-triggering transition (`→ Repaid / Defaulted /
-InternalMatched` + `Active → FallbackPending`; **NOT `→ Settled`** — §2 Invariant A / Codex #1136-r4)
-replaces its inline `LibLifecycle.transition(loan, expectedFrom, to)` with a
-`crossFacetCall(terminalize[FromAny], loanId, [expectedFrom,] to)`. The register cost is borne once
-(in the host), not inlined into every caller → the EIP-170 spread is permanently removed, and tight
-facets (Preclose/EarlyWithdrawal/Defaulted) get SMALLER (they drop the inlined `transition` body for
-a ~50 B stub). All other transitions (including every `→ Settled`) keep the plain inlined
-`LibLifecycle.transition`.
+ONCE, in the host's own bytecode. A register-triggering transition with BOTH holders live (`→ Repaid /
+Defaulted / InternalMatched` + `Active → FallbackPending`; **NOT `→ Settled`**) replaces its inline
+`LibLifecycle.transition(loan, expectedFrom, to)` with `crossFacetCall(terminalize[FromAny], loanId,
+[expectedFrom,] to)`. The host ALSO exposes **single-side variants** (`terminalizeRegister{Lender,
+Borrower}` / a side param) for the enumerated post-burn edges where only one side is live+deferred
+(the backstop `FallbackPending → Defaulted` → borrower-only) and PLAIN `LibLifecycle.transition` for
+the fully-excluded edges (claim-time `→ Settled`, temp-loan-sale `→ Repaid`) — see §2 Invariant A. The
+register cost is borne once (in the host), not inlined into every caller → the EIP-170 spread is
+permanently removed, and tight facets (Preclose/EarlyWithdrawal/Defaulted) get SMALLER (they drop the
+inlined `transition` body for a ~50 B stub).
 
 Considered and rejected: (a) gate+host-route the hook inside inlined `transition` (absorbs the
 spread, ongoing headroom pressure); (c) setter-funnel of the 27 claim writes (largest diff, no
