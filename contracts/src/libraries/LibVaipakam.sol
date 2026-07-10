@@ -7177,6 +7177,25 @@ library LibVaipakam {
         }
     }
 
+    /// @notice #1144 (S10 Invariant B) — registry-aware recipient screen for the
+    ///         prepay-sale INLINE holder payout. Reverts `SanctionedAddress(who)`
+    ///         when `who` is flagged by the fail-OPEN oracle read OR carries a
+    ///         COMMITTED `sanctionsConfirmedFlagged` marker (seeded out-of-band by
+    ///         `syncPrepaySale{Listing,Offer}` / `refreshSanctionsFlag`).
+    /// @dev    This is the fail-closed BACKSTOP the prepay-sale fill path consults.
+    ///         It is deliberately NOT `assertNotSanctionedFailClosed`: that hard-
+    ///         reverts on ANY oracle outage (bricking an honest holder's settlement
+    ///         during a blip). Here an UNregistered recipient still settles during
+    ///         an outage — only a recipient the committed registry already knows to
+    ///         be flagged is barred. `address(0)` is a no-op (a burned-NFT holder
+    ///         resolved via `_ownerOfRaw` — nothing to pay, nothing to bar).
+    function assertRecipientNotBarred(address who) internal view {
+        if (who == address(0)) return;
+        if (isSanctionedAddress(who) || storageSlot().sanctionsConfirmedFlagged[who]) {
+            revert SanctionedAddress(who);
+        }
+    }
+
     /// @notice Internal accountant for protocol-deposited ERC-20
     ///         tokens in a user's vault. Increments the per-(user,
     ///         token) counter that the Asset Viewer and the future

@@ -43,6 +43,14 @@ contract TestMutatorFacet {
         LibVaipakam.storageSlot().offers[offerId] = data;
     }
 
+    /// @notice #1144 test-only — pin the `offerId → loanId` link so an
+    ///         offer-keyed parallel-sale scaffold can exercise the accepted-offer
+    ///         (Scenario B) branch of `syncPrepaySaleOffer`, which resolves the
+    ///         live lender/borrower holders from the associated loan.
+    function setOfferIdToLoanId(uint256 offerId, uint256 loanId) external {
+        LibVaipakam.storageSlot().offerIdToLoanId[offerId] = loanId;
+    }
+
     /// @notice Scaffold an active loan end-to-end — writes the struct AND
     ///         fires {LibMetricsHooks.onLoanInitialized} so counters, the
     ///         active-loan list, NFT-by-collection tallies, unique-user

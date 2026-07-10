@@ -214,6 +214,18 @@ contract NFTPrepayListingFacet is
         CancelReason reason
     );
 
+    /// @notice #1144 (S10 Invariant B) — emitted by `syncPrepaySaleListing`. When
+    ///         `flaggedFound` is true, at least one live consideration recipient
+    ///         was sanctions-flagged, was registered in `sanctionsConfirmedFlagged`,
+    ///         and the listing was cancelled. When false, every recipient read
+    ///         clean (or the oracle was unavailable) and the listing is untouched.
+    /// @custom:event-category state-change/loan-mutation
+    event PrepaySaleListingSynced(
+        uint256 indexed loanId,
+        address indexed caller,
+        bool flaggedFound
+    );
+
     // ─── Errors ─────────────────────────────────────────────────────────
 
     /// @notice `msg.sender` does not currently hold the loan's
@@ -386,7 +398,12 @@ contract NFTPrepayListingFacet is
     enum CancelReason {
         Borrower,
         GraceExpired,
-        ReplacedByMatch
+        ReplacedByMatch,
+        // #1144 (S10 Invariant B) — cancelled by the permissionless
+        // `syncPrepaySaleListing`: a live consideration recipient was found
+        // sanctions-flagged and registered, so the listing is torn down so it
+        // can't fill.
+        SanctionsSync
     }
 
     // ─── Borrower entry: postPrepayListing ──────────────────────────────
@@ -1054,6 +1071,79 @@ contract NFTPrepayListingFacet is
         }
 
         _cancel(s, loan, loanId, orderHash, CancelReason.GraceExpired);
+    }
+
+    // ─── #1144 (S10 Invariant B): syncPrepaySaleListing ─────────────────
+
+    /// @notice Permissionless sanctions sync for a LOAN-keyed prepay-collateral
+    ///         listing. Reads every LIVE consideration recipient the order pays —
+    ///         the current lender- and borrower-position holders plus the recorded
+    ///         fee-leg recipients — and, on an authoritative oracle-up `Flagged`
+    ///         read, COMMITS the flag to `sanctionsConfirmedFlagged` (via
+    ///         `LibVaipakam.syncBuyerSanctionsFlag`) and CANCELS the listing so it
+    ///         can no longer fill.
+    /// @dev    The S10 Invariant B counterpart to Invariant A's deferred-claim
+    ///         freeze: the prepay-sale channel pays holders INLINE inside the atomic
+    ///         Seaport fill, where a `mustFreezeParty`-revert would roll its own
+    ///         registry write back (Codex #1136-r5 R5-1). So the registration must
+    ///         be committed by THIS separate, non-reverting call; the fill path then
+    ///         consults the registry fail-closed as a backstop
+    ///         (`CollateralListingExecutor._recipientBarred`). Permissionless like
+    ///         `refreshSanctionsFlag` — a keeper, the counterparty, or anyone can
+    ///         call it. Never reverts on a flag (it ACTS on it); reverts only when
+    ///         there is no live listing to sync. `syncBuyerSanctionsFlag` no-ops on
+    ///         an oracle outage and self-heals a stale marker on a clean read, so a
+    ///         clean listing is never cancelled. See
+    ///         docs/DesignsAndPlans/S10CentralEnforcement.md §2 Invariant B.
+    function syncPrepaySaleListing(uint256 loanId) external nonReentrant {
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        LibVaipakam.Loan storage loan = s.loans[loanId];
+
+        bytes32 orderHash = s.prepayListingOrderHash[loanId];
+        if (orderHash == bytes32(0)) {
+            revert PrepayListingNotFound(loanId);
+        }
+
+        bool flaggedFound = false;
+        // The two live position holders paid by consideration[0] / consideration[2].
+        // `_ownerOfRaw` (raw SLOAD → address(0) for a burned token) keeps the sync
+        // non-reverting even on a terminalized loan whose NFTs are gone.
+        flaggedFound =
+            _syncRecipientFlag(s, LibERC721._ownerOfRaw(loan.lenderTokenId)) ||
+            flaggedFound;
+        flaggedFound =
+            _syncRecipientFlag(s, LibERC721._ownerOfRaw(loan.borrowerTokenId)) ||
+            flaggedFound;
+
+        // The recorded fee-leg recipients (the executor persisted them at post
+        // time; the zone callback re-screens the live set, which this pre-registers).
+        address pinnedExecutor = s.prepayListingExecutor[loanId];
+        if (pinnedExecutor != address(0)) {
+            FeeLeg[] memory legs =
+                IListingExecutorRecorder(pinnedExecutor).orderFeeLegs(orderHash);
+            for (uint256 i = 0; i < legs.length; ) {
+                flaggedFound = _syncRecipientFlag(s, legs[i].recipient) || flaggedFound;
+                unchecked {
+                    ++i;
+                }
+            }
+        }
+
+        if (flaggedFound) {
+            _cancel(s, loan, loanId, orderHash, CancelReason.SanctionsSync);
+        }
+        emit PrepaySaleListingSynced(loanId, msg.sender, flaggedFound);
+    }
+
+    /// @dev Register `who`'s live sanctions status into the committed registry
+    ///      (no-op on `address(0)` / an oracle outage; self-heals a stale marker on
+    ///      a clean read) and report whether it is now confirmed-flagged.
+    function _syncRecipientFlag(LibVaipakam.Storage storage s, address who)
+        private
+        returns (bool)
+    {
+        LibVaipakam.syncBuyerSanctionsFlag(who);
+        return who != address(0) && s.sanctionsConfirmedFlagged[who];
     }
 
     // ─── View: getPrepayListingOrderHash (read-side for frontends) ──────

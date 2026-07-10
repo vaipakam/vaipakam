@@ -1264,9 +1264,12 @@ contract DeployDiamond is Script {
     ///      jump-table reservation stays under the "Tag too large" ICE
     ///      ceiling.
     function _getOfferParallelSaleSelectors() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](2);
+        s = new bytes4[](3);
         s[0] = OfferParallelSaleFacet.postParallelSaleListing.selector;
         s[1] = OfferParallelSaleFacet.releaseParallelSaleLock.selector;
+        // #1144 (S10 Invariant B) — permissionless offer-keyed prepay-sale
+        // sanctions sync (register flagged consideration recipients + cancel).
+        s[2] = OfferParallelSaleFacet.syncPrepaySaleOffer.selector;
     }
 
     function _getOfferAcceptSelectors() internal pure returns (bytes4[] memory s) {
@@ -1879,11 +1882,14 @@ contract DeployDiamond is Script {
     ///      facet's bytecode within solc's jump-table reservation
     ///      budget.
     function _getNFTPrepayListingSelectors() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](9);
+        s = new bytes4[](10);
         s[0] = NFTPrepayListingFacet.postPrepayListing.selector;
         s[1] = NFTPrepayListingFacet.updatePrepayListing.selector;
         s[2] = NFTPrepayListingFacet.cancelPrepayListing.selector;
         s[3] = NFTPrepayListingFacet.cancelExpiredPrepayListing.selector;
+        // #1144 (S10 Invariant B) — permissionless loan-keyed prepay-sale
+        // sanctions sync (register flagged consideration recipients + cancel).
+        s[9] = NFTPrepayListingFacet.syncPrepaySaleListing.selector;
         s[4] = NFTPrepayListingFacet.getPrepayListingOrderHash.selector;
         s[5] = NFTPrepayListingFacet.getPrepayListingBufferBps.selector;
         // Round-3 fix on PR #308 — Codex P2: frontend needs to read the

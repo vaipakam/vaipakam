@@ -82,7 +82,7 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](102);
+        selectors = new bytes4[](103);
         selectors[0] = TestMutatorFacet.setLoan.selector;
         selectors[1] = TestMutatorFacet.setOffer.selector;
         selectors[2] = TestMutatorFacet.setNextLoanId.selector;
@@ -271,6 +271,8 @@ contract HelperTest {
         selectors[99] = TestMutatorFacet.getHeldForLenderEncumberedRaw.selector;
         selectors[100] = TestMutatorFacet.callEncumberLenderProceeds.selector;
         selectors[101] = TestMutatorFacet.callMigrateActiveHeld.selector;
+        // #1144 — offer→loan link pin for the syncPrepaySaleOffer Scenario-B test.
+        selectors[102] = TestMutatorFacet.setOfferIdToLoanId.selector;
         // #951 v2 (Codex #959 bind-to-live) — setSaleListingCollateralRaw removed
         // with the snapshot mapping; the accept binds `>=` live collateral.
         // #687-B: the former tail entries ([83]-[87]: setBackstopAbsorbCashRaw,
@@ -319,9 +321,11 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](2);
+        selectors = new bytes4[](3);
         selectors[0] = OfferParallelSaleFacet.postParallelSaleListing.selector;
         selectors[1] = OfferParallelSaleFacet.releaseParallelSaleLock.selector;
+        // #1144 (S10 Invariant B) — offer-keyed prepay-sale sanctions sync.
+        selectors[2] = OfferParallelSaleFacet.syncPrepaySaleOffer.selector;
         return selectors;
     }
 
@@ -1938,7 +1942,7 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](9);
+        selectors = new bytes4[](10);
         selectors[0] = NFTPrepayListingFacet.postPrepayListing.selector;
         selectors[1] = NFTPrepayListingFacet.updatePrepayListing.selector;
         selectors[2] = NFTPrepayListingFacet.cancelPrepayListing.selector;
@@ -1951,6 +1955,8 @@ contract HelperTest {
         // T-086 Round-7 follow-up (Codex round-13 P2 #3) — production
         // getter for the auto-list opt-out flag.
         selectors[8] = NFTPrepayListingFacet.getPrepayListingAutoListOptedOut.selector;
+        // #1144 (S10 Invariant B) — loan-keyed prepay-sale sanctions sync.
+        selectors[9] = NFTPrepayListingFacet.syncPrepaySaleListing.selector;
         return selectors;
     }
 

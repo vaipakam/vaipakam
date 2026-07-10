@@ -15,6 +15,7 @@ import {IVaipakamErrors} from "../interfaces/IVaipakamErrors.sol";
 import {IListingExecutorRecorder} from "../seaport/IListingExecutorRecorder.sol";
 import {VaipakamVaultImplementation} from "../VaipakamVaultImplementation.sol";
 import {IERC721} from "@openzeppelin/contracts/token/ERC721/IERC721.sol";
+import {LibERC721} from "../libraries/LibERC721.sol";
 import {
     FeeLeg,
     MAX_FEE_LEGS,
@@ -76,12 +77,29 @@ contract OfferParallelSaleFacet is
     /// @custom:event-category state-change/offer-mutation
     event ParallelSaleLockReleased(uint96 indexed offerId, address indexed borrower);
 
+    /// @notice #1144 (S10 Invariant B) — emitted by `syncPrepaySaleOffer`. When
+    ///         `flaggedFound` is true, at least one live consideration recipient
+    ///         (a fee-leg recipient, or — for an accepted-offer Scenario B — a live
+    ///         position holder the settlement pays) was sanctions-flagged, was
+    ///         registered in `sanctionsConfirmedFlagged`, and the offer-keyed
+    ///         listing was cancelled. When false the listing is untouched.
+    /// @custom:event-category state-change/offer-mutation
+    event PrepaySaleOfferSynced(
+        uint96 indexed offerId,
+        address indexed caller,
+        bool flaggedFound
+    );
+
     // ─── Errors ────────────────────────────────────────────────────────
     //
     // `NotOfferCreator()` inherits from IVaipakamErrors (parameterless,
     // same shape OfferCreateFacet uses for its creator-only paths).
 
     error ParallelSaleNotEnabled(uint96 offerId);
+
+    /// @notice #1144 — `syncPrepaySaleOffer` was called for an offer with no live
+    ///         offer-keyed parallel-sale listing (`offerPrepayListingOrderHash == 0`).
+    error ParallelSaleListingNotFound(uint96 offerId);
     /// @notice T-086 Round-8 (#358) Codex round-2 P1 #3 — raised when
     ///         `s.cfgPrepayListingEnabled` is false at post time.
     ///         Mirrors `NFTPrepayListingFacet.PrepayListingDisabled`.
@@ -325,6 +343,85 @@ contract OfferParallelSaleFacet is
         }
 
         emit ParallelSaleLockReleased(offerId, msg.sender);
+    }
+
+    // ─── #1144 (S10 Invariant B): syncPrepaySaleOffer ───────────────────
+
+    /// @notice Permissionless sanctions sync for an OFFER-keyed parallel-sale
+    ///         listing (the surface is offer-keyed via
+    ///         `offerPrepayListingOrderHash[offerId]`, and pre-loan Scenario A has
+    ///         no loan at all, so a loan-only sync couldn't reach it). Reads every
+    ///         live consideration recipient — the recorded fee-leg recipients, plus
+    ///         (once the offer is accepted into a loan, Scenario B) the current
+    ///         lender- and borrower-position holders the parallel-sale settlement
+    ///         pays — and, on an authoritative oracle-up `Flagged` read, COMMITS the
+    ///         flag to `sanctionsConfirmedFlagged` and CANCELS the listing so it can
+    ///         no longer fill.
+    /// @dev    The offer-keyed twin of `NFTPrepayListingFacet.syncPrepaySaleListing`;
+    ///         same rationale — the parallel sale pays holders INLINE inside the
+    ///         atomic Seaport fill, so the registration must be committed by this
+    ///         separate non-reverting call and the fill path
+    ///         (`CollateralListingExecutor._recipientBarred` +
+    ///         `PrepayListingFacet._settleLoanFromParallelSale`'s
+    ///         `assertRecipientNotBarred`) consults the registry fail-closed as the
+    ///         backstop. Permissionless like `refreshSanctionsFlag`; never reverts
+    ///         on a flag (it acts on it); reverts only when there is no live listing.
+    ///         See docs/DesignsAndPlans/S10CentralEnforcement.md §2 Invariant B.
+    function syncPrepaySaleOffer(uint96 offerId) external nonReentrant {
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+
+        bytes32 orderHash = s.offerPrepayListingOrderHash[offerId];
+        if (orderHash == bytes32(0)) {
+            revert ParallelSaleListingNotFound(offerId);
+        }
+
+        bool flaggedFound = false;
+
+        // The seller-signed fee-leg recipients recorded on the executor.
+        address pinnedExecutor = s.offerPrepayListingExecutor[offerId];
+        if (pinnedExecutor != address(0)) {
+            FeeLeg[] memory legs =
+                IListingExecutorRecorder(pinnedExecutor).offerFeeLegs(orderHash);
+            for (uint256 i = 0; i < legs.length; ) {
+                flaggedFound = _syncRecipientFlag(s, legs[i].recipient) || flaggedFound;
+                unchecked {
+                    ++i;
+                }
+            }
+        }
+
+        // Scenario B — an accepted offer already has a loan; its settlement
+        // (`PrepayListingFacet._settleLoanFromParallelSale`) pays the LIVE lender-
+        // and borrower-position holders directly. `_ownerOfRaw` (raw SLOAD →
+        // address(0) for a burned token) keeps the sync non-reverting if the loan
+        // has since terminalized. Scenario A (no loan) resolves loanId == 0 and is
+        // covered by the fee-leg recipients above.
+        uint256 loanId = s.offerIdToLoanId[uint256(offerId)];
+        if (loanId != 0) {
+            LibVaipakam.Loan storage loan = s.loans[loanId];
+            flaggedFound =
+                _syncRecipientFlag(s, LibERC721._ownerOfRaw(loan.lenderTokenId)) ||
+                flaggedFound;
+            flaggedFound =
+                _syncRecipientFlag(s, LibERC721._ownerOfRaw(loan.borrowerTokenId)) ||
+                flaggedFound;
+        }
+
+        if (flaggedFound) {
+            LibPrepayCleanup.clearOfferListing(offerId);
+        }
+        emit PrepaySaleOfferSynced(offerId, msg.sender, flaggedFound);
+    }
+
+    /// @dev Register `who`'s live sanctions status into the committed registry
+    ///      (no-op on `address(0)` / an oracle outage; self-heals a stale marker on
+    ///      a clean read) and report whether it is now confirmed-flagged.
+    function _syncRecipientFlag(LibVaipakam.Storage storage s, address who)
+        private
+        returns (bool)
+    {
+        LibVaipakam.syncBuyerSanctionsFlag(who);
+        return who != address(0) && s.sanctionsConfirmedFlagged[who];
     }
 
     // ─── Private helpers ───────────────────────────────────────────────
