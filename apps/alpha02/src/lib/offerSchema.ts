@@ -274,17 +274,29 @@ export type OfferFormError =
  * Shallow field-by-field validation. Returns the first error found, or null
  * when everything looks submittable. We intentionally keep this simple —
  * the contract re-validates everything, so this is purely UX.
+ *
+ * `opts.maxDurationDays` lets a caller validate against the LIVE
+ * protocol duration cap (ConfigFacet's governance-tunable
+ * `maxOfferDurationDays`) instead of the static product convention —
+ * the Rate Desk ticket passes its `useProtocolFees` value so a
+ * governance-raised cap doesn't dead-lock posting a longer tenor
+ * (Codex #1134 round-2 P2). Omitted ⇒ the static
+ * `MAX_OFFER_DURATION_DAYS`, so the guided flows are unchanged.
  */
-export function validateOfferForm(s: OfferFormState): OfferFormError | null {
+export function validateOfferForm(
+  s: OfferFormState,
+  opts?: { maxDurationDays?: number },
+): OfferFormError | null {
+  const maxDurationDays = opts?.maxDurationDays ?? MAX_OFFER_DURATION_DAYS;
   if (!ADDRESS_RE.test(s.lendingAsset)) return { code: 'lendingAssetInvalid' };
   if (!s.amount || Number(s.amount) <= 0) return { code: 'amountNonPositive' };
   if (s.interestRate === '' || Number(s.interestRate) < 0) return { code: 'rateNegative' };
   const duration = Number(s.durationDays);
-  if (!Number.isFinite(duration) || duration < MIN_OFFER_DURATION_DAYS || duration > MAX_OFFER_DURATION_DAYS) {
+  if (!Number.isFinite(duration) || duration < MIN_OFFER_DURATION_DAYS || duration > maxDurationDays) {
     return {
       code: 'durationOutOfRange',
       min: MIN_OFFER_DURATION_DAYS,
-      max: MAX_OFFER_DURATION_DAYS,
+      max: maxDurationDays,
     };
   }
   if (isNFTRental(s.assetType) && !s.tokenId) return { code: 'nftTokenIdRequired' };

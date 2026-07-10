@@ -20,7 +20,7 @@
  */
 import { useMemo, useState } from 'react';
 import { Inbox, LoaderCircle, Pencil } from 'lucide-react';
-import { useQueryClient } from '@tanstack/react-query';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { usePublicClient, useWalletClient } from 'wagmi';
 import { parseUnits } from 'viem';
 import { copy } from '../../content/copy';
@@ -28,11 +28,11 @@ import { useActiveChain } from '../../chain/useActiveChain';
 import { useDiamondWrite } from '../../contracts/diamond';
 import { ensureAllowance, useTokenMeta } from '../../contracts/erc20';
 import { useMyOffersFull } from '../../data/hooks';
-import { useAmendSource } from '../../data/desk';
+import { readSaleVehicleOfferIds, useAmendSource } from '../../data/desk';
 import { useAllowanceForPlan } from '../../lib/submitProgress';
 import { EmptyState, UnavailableState } from '../EmptyState';
 import { AssetType } from '../../lib/types';
-import { captureTxError } from '../../lib/errors';
+import { captureTxError, isPlainDecimal } from '../../lib/errors';
 import { percentToBps, MAX_INTEREST_BPS } from '../../lib/offerSchema';
 import {
   exactAmountString,
@@ -46,8 +46,12 @@ import type { IndexedOffer } from '../../data/indexer';
 
 const text = copy.desk.orders;
 
-/** Percent-string → bps for the amend inputs; `null` = unparseable. */
+/** Percent-string → bps for the amend inputs; `null` = unparseable.
+ *  Gated on the same strict decimal shape the OrderTicket's inputs
+ *  use — `percentToBps` is parseFloat-backed, so without the gate
+ *  '11abc' / '5%' silently become 11% / 5%. */
 function pctToBpsStrict(s: string): number | null {
+  if (!isPlainDecimal(s)) return null;
   const bps = percentToBps(s);
   if (bps === null || bps < 0 || bps > MAX_INTEREST_BPS) return null;
   return bps;
@@ -103,9 +107,28 @@ function AmendForm({
     });
   }
 
+  // Strict decimal gate — the same `isPlainDecimal` rule the
+  // OrderTicket's inputs enforce. viem's parseUnits throws on letters
+  // (fail closed already) but ACCEPTS a leading minus, and the rate
+  // fields are parseFloat-backed — so '-5' / '11abc' / '5%' must be
+  // rejected here, not silently coerced. Amount-style fields may be
+  // empty (the parser below treats empty as '0').
+  const malformed =
+    fields !== null &&
+    ![
+      fields.amount || '0',
+      fields.amountMax || '0',
+      fields.collateral || '0',
+      fields.collateralMax || '0',
+      fields.rate,
+      fields.rateMax,
+    ].every(isPlainDecimal);
+
   /** Parse the form back into `OfferModifyParams`; null while invalid. */
   const parsed = useMemo(() => {
-    if (!fields || lendDec === undefined || collDec === undefined) return null;
+    if (!fields || malformed || lendDec === undefined || collDec === undefined) {
+      return null;
+    }
     try {
       const amount = parseUnits(fields.amount || '0', lendDec);
       const amountMax = parseUnits(fields.amountMax || '0', lendDec);
@@ -125,7 +148,7 @@ function AmendForm({
     } catch {
       return null;
     }
-  }, [fields, lendDec, collDec]);
+  }, [fields, malformed, lendDec, collDec]);
 
   const src = source.data;
   const changed =
@@ -290,6 +313,11 @@ function AmendForm({
         ))}
       </div>
 
+      {malformed ? (
+        <p style={{ color: 'var(--danger)', fontSize: '0.85rem', marginTop: 8 }}>
+          {text.amendMalformed}
+        </p>
+      ) : null}
       {invalid ? (
         <p style={{ color: 'var(--danger)', fontSize: '0.85rem', marginTop: 8 }}>
           {text.amendInvalid}
@@ -454,11 +482,12 @@ function OrderRow({ offer }: { offer: IndexedOffer }) {
 
 export function OpenOrdersPanel() {
   const offers = useMyOffersFull();
-  const { isConnected } = useActiveChain();
+  const { isConnected, readChain } = useActiveChain();
+  const publicClient = usePublicClient({ chainId: readChain.chainId });
 
   // Desk scope: ERC-20/ERC-20 rate offers only — NFT/rental listings
   // stay on their own pages.
-  const rows = useMemo(
+  const erc20Rows = useMemo(
     () =>
       offers.data?.rows.filter(
         (o) =>
@@ -467,6 +496,39 @@ export function OpenOrdersPanel() {
       ) ?? null,
     [offers.data],
   );
+
+  // Lender-sale vehicles never belong here — the sale is managed from
+  // its own surface, and OfferMutateFacet._assertMutableBy reverts
+  // SaleVehicleImmutable, so an Amend button on one only mints a
+  // doomed transaction. Indexer-sourced rows carry `isSaleVehicle`;
+  // rows without the field (chain-sourced, or an older worker) get
+  // the same batched getOfferLinkedLoanId read the desk book uses.
+  // Only borrower-style rows can be sale vehicles. Fails open (rows
+  // kept) while the read is in flight or when it errors.
+  const unflagged = useMemo(
+    () =>
+      (erc20Rows ?? []).filter(
+        (o) => o.offerType === 1 && o.isSaleVehicle === undefined,
+      ),
+    [erc20Rows],
+  );
+  const saleCheck = useQuery({
+    queryKey: [
+      'deskOrdersSaleVehicles',
+      readChain.chainId,
+      unflagged.map((o) => o.offerId),
+    ],
+    enabled: unflagged.length > 0 && Boolean(publicClient),
+    queryFn: () =>
+      readSaleVehicleOfferIds(publicClient!, readChain.diamondAddress, unflagged),
+  });
+  const rows = useMemo(() => {
+    if (erc20Rows === null) return null;
+    return erc20Rows.filter(
+      (o) =>
+        o.isSaleVehicle !== true && saleCheck.data?.has(o.offerId) !== true,
+    );
+  }, [erc20Rows, saleCheck.data]);
 
   if (!isConnected) {
     return <EmptyState icon={Inbox} title={copy.wallet.connectFirst} />;

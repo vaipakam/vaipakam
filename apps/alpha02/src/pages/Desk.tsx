@@ -76,7 +76,7 @@ export function Desk() {
     setPrefill(null);
   }, [readChain.chainId]);
 
-  const book = useDeskBook(pair);
+  const book = useDeskBook(pair, days);
   const tape = useDeskTape(pair, days);
   const lendingMeta = useTokenMeta(pair?.lendingAsset);
 

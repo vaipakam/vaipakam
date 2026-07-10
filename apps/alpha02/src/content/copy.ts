@@ -928,6 +928,8 @@ export const copy = {
       amendCollateral: 'Collateral',
       amendCollateralMax: 'Collateral max',
       amendNoChange: 'Nothing changed yet.',
+      amendMalformed:
+        'Enter plain decimal numbers only — digits with an optional decimal point.',
       amendInvalid: 'Each minimum must be at or below its maximum, and the max amount can’t drop below what’s already filled.',
       amendGrowNote: (amount: string, symbol: string) =>
         `Growing this order locks ${amount} ${symbol} more from your wallet — it needs a token approval first.`,

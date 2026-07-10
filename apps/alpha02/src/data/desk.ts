@@ -26,7 +26,7 @@
 import { useMemo } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { usePublicClient } from 'wagmi';
-import { erc20Abi } from 'viem';
+import { erc20Abi, type PublicClient } from 'viem';
 import { DIAMOND_ABI_VIEM } from '@vaipakam/contracts/abis';
 import { useActiveChain } from '../chain/useActiveChain';
 import { idleAware } from '../lib/idle';
@@ -73,9 +73,40 @@ export function useDeskMarkets() {
   });
 }
 
+/** Offer ids among `rows` that are lender-sale vehicles: borrower-
+ *  style offers linked to an existing loan (`getOfferLinkedLoanId !=
+ *  0`). Only borrower offers can be sale vehicles, so only those rows
+ *  are read; the same-tick reads fold into ONE JSON-RPC batch (the
+ *  transports use `batch: true`). Shared by the desk book and the
+ *  Open orders panel so the two surfaces can't drift on the rule. */
+export async function readSaleVehicleOfferIds(
+  publicClient: PublicClient,
+  diamondAddress: `0x${string}`,
+  rows: readonly IndexedOffer[],
+): Promise<Set<number>> {
+  const borrowerRows = rows.filter((r) => r.offerType === 1);
+  const linkedLoanIds = await Promise.all(
+    borrowerRows.map(
+      (r) =>
+        publicClient.readContract({
+          address: diamondAddress,
+          abi: DIAMOND_ABI_VIEM,
+          functionName: 'getOfferLinkedLoanId',
+          args: [BigInt(r.offerId)],
+        }) as Promise<bigint>,
+    ),
+  );
+  return new Set(
+    borrowerRows.filter((_, i) => linkedLoanIds[i] !== 0n).map((r) => r.offerId),
+  );
+}
+
 export interface DeskBook {
-  /** ALL live rows for the pair (every tenor — the ladder slices to
-   *  the selected tenor; the full set drives tenor-emphasis fallback). */
+  /** Live rows for the pair. Chain-sourced books carry EVERY tenor
+   *  (the ladder slices to the selected tenor; the full set drives
+   *  tenor-emphasis fallback). The indexer fallback is scoped to the
+   *  SELECTED tenor server-side — a busy pair's other tenors must not
+   *  eat the page cap and blank a small market. */
   rows: IndexedOffer[];
   /** Which source answered — the ladder shows an honesty note when
    *  the book is the indexed copy (can lag the chain). */
@@ -83,8 +114,11 @@ export interface DeskBook {
 }
 
 /** The order book for one pair. Chain-first (ranked ids + chunked
- *  hydration), indexer fallback, `null` when both fail. */
-export function useDeskBook(pair: DeskPair | null) {
+ *  hydration), indexer fallback, `null` when both fail.
+ *  `durationDays` scopes the FALLBACK only (the chain read is already
+ *  pair-complete in two calls); it sits in the query key, so a tenor
+ *  switch refetches — the cost of keeping the fallback honest. */
+export function useDeskBook(pair: DeskPair | null, durationDays: number) {
   const { readChain } = useActiveChain();
   const publicClient = usePublicClient({ chainId: readChain.chainId });
   return useQuery({
@@ -92,6 +126,7 @@ export function useDeskBook(pair: DeskPair | null) {
       'deskBook',
       readChain.chainId,
       pair ? pairKey(pair) : null,
+      durationDays,
     ],
     enabled: pair !== null,
     refetchInterval: idleAware(REFRESH_MS),
@@ -122,27 +157,13 @@ export function useDeskBook(pair: DeskPair | null) {
           // Lender-sale vehicles (borrower-style offers linked to an
           // existing loan) are bookkeeping, not quotable liquidity —
           // rendering one as a bid would arm a taker affordance on a
-          // non-market row. Only borrower offers can be sale vehicles;
-          // the same-tick reads fold into ONE JSON-RPC batch (the
-          // transports use `batch: true`), so this is one extra batch
-          // per book load. The indexer fallback below filters on the
-          // worker's `isSaleVehicle` instead.
-          const borrowerRows = active.filter((r) => r.offerType === 1);
-          const linkedLoanIds = await Promise.all(
-            borrowerRows.map(
-              (r) =>
-                publicClient.readContract({
-                  address: readChain.diamondAddress,
-                  abi: DIAMOND_ABI_VIEM,
-                  functionName: 'getOfferLinkedLoanId',
-                  args: [BigInt(r.offerId)],
-                }) as Promise<bigint>,
-            ),
-          );
-          const saleVehicleIds = new Set(
-            borrowerRows
-              .filter((_, i) => linkedLoanIds[i] !== 0n)
-              .map((r) => r.offerId),
+          // non-market row. One extra JSON-RPC batch per book load
+          // (see readSaleVehicleOfferIds). The indexer fallback below
+          // filters on the worker's `isSaleVehicle` instead.
+          const saleVehicleIds = await readSaleVehicleOfferIds(
+            publicClient,
+            readChain.diamondAddress,
+            active,
           );
           return {
             rows: active.filter((r) => !saleVehicleIds.has(r.offerId)),
@@ -153,7 +174,10 @@ export function useDeskBook(pair: DeskPair | null) {
         }
       }
       // Indexer fallback — market-scoped server-side (the global page
-      // cap can't honestly serve a per-market book).
+      // cap can't honestly serve a per-market book). Scoped to the
+      // SELECTED tenor too: walking every tenor for a busy pair can
+      // exhaust the page cap and blank a small market (Codex #1134
+      // round-2 P3).
       if (!indexerConfigured()) return null;
       const all: IndexedOffer[] = [];
       let before: number | undefined;
@@ -163,6 +187,7 @@ export function useDeskBook(pair: DeskPair | null) {
           before,
           lendingAsset: pair!.lendingAsset,
           collateralAsset: pair!.collateralAsset,
+          durationDays,
         });
         if (page === null) return null;
         // Sale vehicles are excluded here too (the worker marks them

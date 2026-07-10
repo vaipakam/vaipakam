@@ -96,6 +96,29 @@ export function DeskHeader({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [pairs, symbolMap]);
 
+  // Tenor chips: the fixed buckets UNION whatever tenors the markets
+  // summary advertises for the selected pair — a discovered non-bucket
+  // market (say 45d, posted by a power user against the Diamond
+  // directly) must be selectable, not advertised-yet-unreachable. The
+  // currently-selected tenor stays a chip too (a market emptying out
+  // must not strand the active selection). Non-bucket chips render
+  // identically; live emphasis below is unchanged.
+  const tenorChips = useMemo((): number[] => {
+    const out = new Set<number>(OFFER_DURATION_BUCKETS_DAYS);
+    out.add(days);
+    if (Array.isArray(markets) && pair) {
+      for (const m of markets) {
+        if (
+          m.lendingAsset.toLowerCase() === pair.lendingAsset.toLowerCase() &&
+          m.collateralAsset.toLowerCase() === pair.collateralAsset.toLowerCase()
+        ) {
+          out.add(m.durationDays);
+        }
+      }
+    }
+    return [...out].sort((a, b) => a - b);
+  }, [markets, pair, days]);
+
   // Tenor emphasis: which durations have live offers for the selected
   // pair. Markets summary first; the pair's own book rows as the
   // fallback when that list is unavailable.
@@ -152,7 +175,7 @@ export function DeskHeader({
         <div className="field" style={{ margin: 0 }}>
           <label>{copy.desk.tenorLabel}</label>
           <div className="desk-chips" role="group" aria-label={copy.desk.tenorLabel}>
-            {OFFER_DURATION_BUCKETS_DAYS.map((d) => (
+            {tenorChips.map((d) => (
               <button
                 key={d}
                 type="button"

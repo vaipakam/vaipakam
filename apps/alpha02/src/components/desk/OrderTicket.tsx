@@ -179,7 +179,15 @@ export function OrderTicket({
     }),
     [side, pair, amount, rate, collateralAsset, collateralAmount, days, consent],
   );
-  const formError = validateOfferForm(form);
+  // Validate the duration against the LIVE protocol cap, not the
+  // schema's static 365 — a governance-raised cap must not dead-lock
+  // posting a longer tenor (submit re-reads the live cap anyway, so
+  // this only aligns the canPost gate with what submit enforces).
+  // While the fee read is in flight the hook already falls back to
+  // the static default.
+  const formError = validateOfferForm(form, {
+    maxDurationDays: fees.maxOfferDurationDays,
+  });
 
   /** The desk's fill-mode/expiry overrides on the shared payload:
    *  `toCreateOfferPayload` always ships Partial + GTC (the guided
