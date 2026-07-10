@@ -111,9 +111,20 @@ rejections wholesale (§6).
   sorted ascending; best ask = lowest lender rate.
 - **Bids = borrower offers** (each borrower's `interestRateBpsMax` ceiling — "I pay ≤ Y%"),
   sorted descending; best bid = highest borrower rate.
-- **Book mid** = midpoint of best bid / best ask when both exist. The market is **crossed**
-  when best bid ≥ best ask — unlike a CEX this is a *normal resting state* here (see §5.2).
-- A **market** = `(lendingAsset, collateralAsset, durationDays)`. UI: pair chip + tenor chip.
+- **Book mid** = midpoint of best bid / best ask when both exist. Best bid ≥ best ask
+  is the *hint* that the market may be crossed — unlike a CEX this is a normal resting
+  state here — but for range offers it is necessary, not sufficient: `previewMatch`
+  computes the rate overlap as `[max(L.rateBps, B.rateBps), min(L.rateBpsMax,
+  B.rateBpsMax)]` and returns `RateNoOverlap` when that interval is empty
+  (`LibOfferMatch.sol:538-547` — a lender band 5–6% vs a borrower band 7–8% has bid 8 ≥
+  ask 5 yet cannot match). The desk labels orders **crossable only when
+  `previewMatch(L, B)` returns `Ok`** (§5.2).
+- A **market** = `(lendingAsset, collateralAsset, durationDays)` — **ERC-20 on both
+  legs only**. Offers with ERC-721/1155 legs carry token ids/quantities that are not
+  fungible; merging them into a rate ladder or OHLC series would aggregate
+  non-interchangeable things (the guided flows already reject non-ERC-20 offers at
+  accept, `OfferFlow.tsx:351-355`). NFT and rental offers stay on the Offers list page;
+  the desk filters its book/tape/candles to ERC-20/ERC-20 rows. UI: pair chip + tenor chip.
 
 ---
 
@@ -154,7 +165,7 @@ Panel-by-panel, with the backing read/write:
 | Tape | indexer `/loans/recent` with the **pair+tenor server filter (phase 1, §7)** — the current handler is a global newest-first page capped at 200 rows (`loanRoutes.ts:764-774`, `:1171-1175`); client-filtering it misses any market not among the latest global fills, so the server filter is a phase-1 prerequisite, not a phase-2 nicety | — | Sparse-honest: shows "N fills this week" not a fake ticker |
 | Open orders | **union of created + held**: `getUserOffersByStatePaginated` (creator walk) ∪ `/offers/by-current-holder` / `getUserPositionOffers` — offers are position NFTs, so an open offer bought/received by a wallet is invisible to the creator walk alone; alpha02's existing hook already does this union | **`modifyOffer` / `setOfferRate` (first UI for #193)**, `cancelOffer` — both gated on `offer.creator === wallet` (the contracts authorize only the creator; held-not-created rows render read-only) | Amend = pencil → inline edit of rate/size/collateral, one tx, same offerId — **for rate-only or shrinking edits**. A grow (more lender principal / more borrower collateral) pulls via `_pullOrRefundErc20` → vault deposit, consuming Diamond allowance, and there is **no `modifyOfferWithPermit`** — the amend modal needs the same allowance precheck + classic-approve fallback as create/accept, or the "one tx" claim reverts for under-approved wallets |
 | Positions | **current-holder reads**, not historical parties: indexer `/loans/by-current-holder` (already exists) or position-NFT holder enumeration, hydrated via `getLoansBatch` + `calculateHealthFactor` overlay. `getUserDashboardLoans` walks historical `l.borrower`/`l.lender` (`MetricsDashboardFacet.sol:188-239`) and goes stale the moment a position NFT is transferred/sold — it would omit a buyer's position and show the seller dead manage actions | `repayLoan` / `repayPartial` / add-collateral | HF colour bands per B.1; accrued interest computed client-side (`LibEntitlement` mirror already exists in the dashboard flow) |
-| History | requires a **true server-side historical-participant route** (new indexer endpoint deriving participation from the `loans`/`offers` tables' lender/borrower/creator columns, all statuses) — every client-side composition falls short of permanent history: the actor feed misses lender fills (`LoanInitiated` has `actor = borrower`, `chainIndexer.ts:3110-3175`), `/loans/by-lender`/`by-borrower`/`by-current-holder` are **current-owner** filtered, and burns are written to `0x0` (`chainIndexer.ts:2770-2775`) — a lender whose loan was repaid+claimed disappears from all of them (the gap `Activity.tsx:72-74` already documents). The History tab therefore ships in **phase 2 alongside that route** (§8); phase 1 has no History tab rather than a silently incomplete one | — | |
+| History | requires a **true server-side historical-participant route** (new indexer endpoint backed by **persisted participation rows** — e.g. `loan_participants(chain_id, loan_id, wallet, role, from_at)` — seeded at `LoanInitiated` from the current-owner projection and appended on every position-NFT transfer; the immutable `loans` party columns alone are NOT enough, because `loan.lender`/`loan.borrower` snapshot `offer.creator` + acceptor at init (`LoanFacet.sol:1169-1180`), so a wallet that bought the offer NFT before accept, or any later transferee, never appears in them. Participation is append-only history, never a mutable pointer) — every client-side composition falls short of permanent history: the actor feed misses lender fills (`LoanInitiated` has `actor = borrower`, `chainIndexer.ts:3110-3175`), `/loans/by-lender`/`by-borrower`/`by-current-holder` are **current-owner** filtered, and burns are written to `0x0` (`chainIndexer.ts:2770-2775`) — a lender whose loan was repaid+claimed disappears from all of them (the gap `Activity.tsx:72-74` already documents). The History tab therefore ships in **phase 2 alongside that route** (§8); phase 1 has no History tab rather than a silently incomplete one | — | |
 
 **Mobile (first-class, not a degraded stack).** alpha02 is mobile-first, and the
 reference perp terminals treat mobile as its own layout rather than a reflow (verified
@@ -267,9 +278,17 @@ exist to prevent. Rules:
 **Endpoint** (new, `apps/indexer`):
 `GET /loans/rate-candles?chainId&lendingAsset&collateralAsset&durationDays&interval=1h|4h|1d&range=7d|30d|90d|all`
 → `{ buckets: [{ t, open, high, low, close, fills, principalTotal }] }` — `principalTotal`
-is a **decimal string** (wei), matching every existing indexer amount field; a JSON
-number would lose precision and a raw `BigInt` cannot be JSON-serialized,
-`Cache-Control: max-age=60`. Executed fills only (`LoanInitiated`); no synthetic data.
+is a **decimal string in the lending asset's raw base units** (not "wei": a 6-dec
+USDC-style asset's totals are 6-dec base units; the client formats with the token's
+decimals metadata), matching every existing indexer amount field; a JSON number would
+lose precision and a raw `BigInt` cannot be JSON-serialized,
+`Cache-Control: max-age=60`. Executed **market fills only** — not every `LoanInitiated`
+row qualifies: lender-sale vehicles mint a temporary bookkeeping loan that is "not a
+real borrower position" (`LoanFacet.sol:199-204`) yet emits `LoanInitiated` (`:312-319`).
+The indexer must persist a sale-vehicle marker at ingest (from the initiation context /
+companion events; if no emitted signal distinguishes the temp loan, closing that is a
+small contracts prerequisite) and BOTH the candle endpoint and the phase-1 tape filter
+those rows out — a secondary sale is not a fresh rate print. No synthetic data.
 
 **Aggregation split — BigInt-safe by construction**: the rate fields
 (`open/high/low/close`, from `interest_rate_bps`) and `fills` counts are small integers
@@ -320,8 +339,12 @@ remaining-size depth, never headline size), order ticket (createOffer with expir
 fill-mode chips, simulation precheck), tape, open-orders panel with **cancel + the
 first amend UI (#193)**, positions panel (current-holder reads per §3) with HF bands +
 repay/partial actions (no History tab in phase 1 — see the History row in §3).
-**Includes the small indexer slice**: pair+tenor server filters
-on `/loans/recent` + `/offers/active` — the tape and the book's RPC-outage fallback are
+**Includes the small indexer slice**: a **market-summary endpoint**
+(`GET /offers/markets?chainId` → distinct ERC-20/ERC-20 `(lendingAsset,
+collateralAsset, durationDays)` triples with live-offer counts + per-side best rates)
+that the pair chips + tenor emphasis derive from — deriving chips from the paginated
+`/offers/active` walk would drop any market whose rows sit beyond the page cap — plus
+pair+tenor server filters on `/loans/recent` + `/offers/active` — the tape and the book's RPC-outage fallback are
 not honest without them (global 200-row pages can't scope to a market), so they are
 phase-1 scope, not phase-2 — **plus the matching D1 indexes in the same migration**:
 the filters need route-shaped market indexes (e.g. offers
