@@ -872,6 +872,50 @@ export const copy = {
     tapeTitle: 'Recent fills',
     tapeEmpty: 'No fills yet for this market.',
     tapeUnavailable: 'We couldn’t load recent fills right now.',
+    chart: {
+      title: 'Executed rates',
+      loading: 'Loading chart…',
+      // §5.3 rule 5 — the header shows the last executed print, never
+      // a %-change ticker.
+      lastFill: (rate: string, ago: string) => `last fill: ${rate} · ${ago}`,
+      lastFillNone: 'no fills yet',
+      // Two empty states (Codex #1139 round-1 P3, tightened round 4):
+      // `empty` may only claim "never filled" when the evidence covers
+      // the whole history (range = all, or a confirmed-empty tape) AND
+      // the tape holds no fill — a tape-proven fill always gets the
+      // range-scoped line, even at range = all (the 60 s candle-cache
+      // skew window after a first fill). See chartEmptyKind.
+      empty:
+        'No fills yet for this market — the chart draws only executed rates.',
+      emptyRange: 'No fills in this range — try a longer range.',
+      unavailable: 'We couldn’t load the rate history right now.',
+      retry: 'Retry',
+      quotedMid: 'quoted mid',
+      quotedMidHint:
+        'Dashed line = the book’s current quoted mid — a resting quote, not an executed rate.',
+      sparseNote: (n: number) =>
+        `Sparse market — ${n} fill${n === 1 ? '' : 's'} in this range, drawn individually. Candles appear once there’s enough tape to mean something.`,
+      intervalLabel: 'Interval',
+      rangeLabel: 'Range',
+      attribution: 'Charts by TradingView',
+      tooltipFills: (n: number) => `${n} fill${n === 1 ? '' : 's'}`,
+      mobileBook: 'Book',
+      mobileChart: 'Chart',
+      mobileViewLabel: 'Desk view',
+    },
+    history: {
+      tab: 'History',
+      caption:
+        'Everything this wallet ever traded on the desk — every market, every status. Repaid, claimed, and transferred positions stay listed.',
+      empty: 'No desk history for this wallet yet.',
+      unavailable: 'We couldn’t load your history right now.',
+      loadMore: 'Load more',
+      loadingMore: 'Loading…',
+      loading: 'Loading your history…',
+      roleLender: 'Lender',
+      roleBorrower: 'Borrower',
+      started: 'started',
+    },
     ticket: {
       title: 'Order ticket',
       sideLend: 'Lend',

@@ -14,6 +14,12 @@
  */
 
 import { type Env, getChainConfigs } from './env';
+import {
+  CANDLE_INTERVALS,
+  CANDLE_RANGES,
+  foldRateCandles,
+  type CandleFillRow,
+} from './rateCandles';
 
 const DEFAULT_PAGE_LIMIT = 50;
 const MAX_PAGE_LIMIT = 200;
@@ -25,12 +31,19 @@ function corsHeaders(): HeadersInit {
   };
 }
 
-function jsonResponse(body: unknown, status = 200): Response {
+function jsonResponse(
+  body: unknown,
+  status = 200,
+  extraHeaders?: Record<string, string>,
+): Response {
   return new Response(JSON.stringify(body), {
     status,
     headers: {
       'Content-Type': 'application/json',
       ...corsHeaders(),
+      // Spread LAST so a route can override the default Cache-Control
+      // (the candle endpoint serves max-age=60 per the §7 spec).
+      ...extraHeaders,
     },
   });
 }
@@ -960,6 +973,278 @@ export async function handleLoansTimeseries(
   }
 }
 
+/**
+ * Rate Desk phase 2 (#1130) — GET /loans/rate-candles
+ *   ?chainId=8453&lendingAsset=0x..&collateralAsset=0x..&durationDays=30
+ *   &interval=1h|4h|1d&range=7d|30d|90d|all
+ *
+ * → { chainId, buckets: [{ t, open, high, low, close, fills, principalTotal }] }
+ *
+ * Executed-rate OHLC series for ONE market (ProRateTerminalDesign.md §7). All
+ * three market params are REQUIRED — a candle series is per-market by
+ * definition; there is no "global candles" fallback. `interval`/`range`
+ * default to 1h/30d when omitted and 400 on anything outside the enums.
+ *
+ * Row scope — executed MARKET FILLS only:
+ *   - `is_sale_vehicle = 0`: the temp bookkeeping loan a lender-sale vehicle
+ *     initiates is a secondary sale, never a fresh rate print (§7).
+ *   - `asset_type = 0 AND collateral_asset_type = 0`: ERC-20 both legs. The
+ *     desk's markets are ERC-20/ERC-20 pairs; NFT-legged loans are a
+ *     different product surface (rentals) and their rate isn't comparable.
+ *   - Metadata-less stub rows (fallback-B inserts, lending_asset = '0x')
+ *     can never match the market equality filter, so no explicit `is_stub`
+ *     predicate is needed — and MUST NOT be added: a companion-path row with
+ *     is_stub = 1 only lacks its position token ids (see the LoanInitiated
+ *     insert paths in chainIndexer.ts); its market/rate/principal columns are
+ *     real and its fill belongs on the chart.
+ *
+ * IMMUTABLE FILL TERMS (Codex #1139 round-5 P2): a candle is a record of
+ * EXECUTED fills, but the loans row is a mutable projection — PartialRepaid /
+ * swap-partial / internal-match rewrite `principal`, and LoanExtended
+ * rewrites `interest_rate_bps` + `duration_days` in place. Reading those
+ * live would retroactively shrink executed volume and teleport an extended
+ * 30d fill into the 60d market at its original start_at. So BOTH the tenor
+ * scope AND the selected rate/principal read the init_* snapshot columns
+ * (stamped at every LoanInitiated insert path, never mutated — migration
+ * 0032 §2), COALESCEd to the mutable column only for rows written by a
+ * pre-snapshot worker in the migration→deploy window (the 0032 backfill
+ * fills everything that exists at apply time). The COALESCE tenor
+ * expression is spelled IDENTICALLY to the 0032 expression index so the
+ * planner can match it textually; correctness doesn't depend on the index.
+ * `start_at` needs no snapshot — it is written once at insert and no
+ * handler updates it (LoanExtended/partial repay reset `start_time`, a
+ * different column).
+ *
+ * Aggregation split (§7): SQL selects the market's rows in the range ordered
+ * by (start_at, loan_id); ALL folding — OHLC, fills, principal — happens in
+ * JS (`foldRateCandles`). Rationale in rateCandles.ts: principal MUST be
+ * BigInt-folded (the /loans/stats pattern), and SQLite has no first/last
+ * aggregate for open/close, so one ordered select + one JS pass is the
+ * simplest correct shape. Rides `idx_loans_market_start_at` (migration 0032).
+ *
+ * Buckets: only where fills >= 1 (no empty/interpolated buckets — §5.3),
+ * ascending by t. `range=all` = no lower time bound.
+ * `Cache-Control: max-age=60` per the spec (candles are heavier to compute
+ * and change at fill cadence, not block cadence).
+ */
+export async function handleLoansRateCandles(
+  req: Request,
+  env: Env,
+): Promise<Response> {
+  const url = new URL(req.url);
+  const chainId = parseChainId(url.searchParams.get('chainId')) ?? 8453;
+  const market = parseMarketFilter(url);
+  if (market === 'bad') {
+    return jsonResponse({ error: 'bad-market-filter' }, 400);
+  }
+  if (
+    !market.lendingAsset ||
+    !market.collateralAsset ||
+    market.durationDays === null
+  ) {
+    return jsonResponse({ error: 'market-filter-required' }, 400);
+  }
+  // Own-property lookups only: a raw query key like `interval=toString`
+  // must read as undefined (→ 400), never an inherited Object.prototype
+  // member (Codex #1139 round-1 P3). The enum objects are null-prototype
+  // too (rateCandles.ts) — belt and suspenders on a public query surface.
+  const intervalRaw = url.searchParams.get('interval') ?? '1h';
+  const intervalSec = Object.hasOwn(CANDLE_INTERVALS, intervalRaw)
+    ? CANDLE_INTERVALS[intervalRaw]
+    : undefined;
+  if (intervalSec === undefined) {
+    return jsonResponse({ error: 'bad-interval' }, 400);
+  }
+  const rangeRaw = url.searchParams.get('range') ?? '30d';
+  const rangeDays = Object.hasOwn(CANDLE_RANGES, rangeRaw)
+    ? CANDLE_RANGES[rangeRaw]
+    : undefined;
+  if (rangeDays === undefined) {
+    return jsonResponse({ error: 'bad-range' }, 400);
+  }
+  // Fail closed when this chain isn't indexed here (Codex #1139 round-1
+  // P2): an unindexed chain would otherwise query D1 anyway and serve a
+  // CACHEABLE 200 with empty/stale buckets, which the chart renders as
+  // an honest zero-fill market. Same #749 posture as the participant /
+  // current-holder routes — a 503 keeps the frontend's tri-state on
+  // "unavailable", never a false empty.
+  if (!chainConfigured(env, chainId)) {
+    return jsonResponse({ error: 'chain-not-configured' }, 503);
+  }
+  try {
+    const conds = [
+      'chain_id = ?',
+      'lending_asset = ?',
+      'collateral_asset = ?',
+      // Tenor scope on the INIT duration (see the immutable-fill-terms
+      // header note) — an extended loan's fill stays in the market it
+      // executed in. Expression spelled exactly like the 0032 index.
+      'COALESCE(init_duration_days, duration_days) = ?',
+      'is_sale_vehicle = 0',
+      'asset_type = 0',
+      'collateral_asset_type = 0',
+    ];
+    const binds: (number | string)[] = [
+      chainId,
+      market.lendingAsset,
+      market.collateralAsset,
+      market.durationDays,
+    ];
+    if (rangeDays !== null) {
+      conds.push('start_at >= ?');
+      binds.push(Math.floor(Date.now() / 1000) - rangeDays * 86400);
+    }
+    // Aliased so CandleFillRow / foldRateCandles stay shape-agnostic: the
+    // fill's terms are the INIT snapshot, never the mutated live values.
+    const rows = await env.DB.prepare(
+      `SELECT loan_id, start_at,
+              COALESCE(init_rate_bps, interest_rate_bps) AS interest_rate_bps,
+              COALESCE(init_principal, principal) AS principal
+       FROM loans
+       WHERE ${conds.join(' AND ')}
+       ORDER BY start_at ASC, loan_id ASC`,
+    )
+      .bind(...binds)
+      .all<CandleFillRow>();
+    const buckets = foldRateCandles(rows.results ?? [], intervalSec);
+    return jsonResponse({ chainId, buckets }, 200, {
+      'Cache-Control': 'public, max-age=60',
+    });
+  } catch (err) {
+    console.error('[loanRoutes] rate-candles failed', err);
+    return jsonResponse({ error: 'rate-candles-failed' }, 500);
+  }
+}
+
+/**
+ * Rate Desk phase 2 (#1130) — GET /loans/by-participant
+ *   ?chainId=8453&wallet=0x..&limit=50&before=<participatedAt>_<loanId>
+ *
+ * → { chainId, wallet, loans: [{ ...loanToJson, participatedAt,
+ *     roles: ['lender'|'borrower'] }], nextBefore }
+ *
+ * HISTORICAL-participant view backing the desk's History tab
+ * (ProRateTerminalDesign.md §3 History row): every loan — ANY status — where
+ * the wallet has a persisted `loan_participants` row (seeded at LoanInitiated
+ * from the current-owner projection, appended on every position-NFT
+ * transfer / token-id migration, never deleted). This is deliberately NOT
+ * derivable from the immutable loans.lender/borrower columns (they miss
+ * pre-accept offer-NFT buyers and later transferees) nor from the
+ * `*_current_owner` projection (burned-on-claim positions drop out — the
+ * exact "lender whose loan was repaid+claimed disappears" gap
+ * Activity.tsx:72-74 documents).
+ *
+ * `roles` aggregates the wallet's participation roles on that loan (a wallet
+ * can be both sides, e.g. it bought the counterparty NFT).
+ *
+ * Ordering + pagination (Codex #1139 round-3): newest PARTICIPATION first —
+ * MAX(from_at) over the wallet's rows on the loan, DESC, loan_id DESC as
+ * the stable tiebreak. Loan-id-only ordering buried a recent transfer into
+ * an older loan id behind older participation in newer ids. The cursor is
+ * composite to match: `before=<participatedAt>_<loanId>`, strict
+ * lexicographic less-than; `nextBefore` is returned in the same encoding.
+ */
+export async function handleLoansByHistoricalParticipant(
+  req: Request,
+  env: Env,
+): Promise<Response> {
+  const url = new URL(req.url);
+  const chainId = parseChainId(url.searchParams.get('chainId')) ?? 8453;
+  const limit = parseLimit(url.searchParams.get('limit'));
+  const before = parseParticipationCursor(url.searchParams.get('before'));
+  const walletRaw = url.searchParams.get('wallet');
+  if (!walletRaw) {
+    return jsonResponse({ error: 'wallet-required' }, 400);
+  }
+  const wallet = walletRaw.toLowerCase();
+  if (!/^0x[0-9a-f]{40}$/.test(wallet)) {
+    return jsonResponse({ error: 'bad-address' }, 400);
+  }
+  // Fail closed when this chain isn't indexed here, so the frontend's
+  // indexer-first → on-chain-fallback wrapper actually falls back (#749) —
+  // same posture as the sibling wallet routes.
+  if (!chainConfigured(env, chainId)) {
+    return jsonResponse({ error: 'chain-not-configured' }, 503);
+  }
+  try {
+    // Desk scoping lives in the ROUTE, not the table (Codex #1139 round-3):
+    // `loan_participants` deliberately stays append-EVERYTHING — every
+    // LoanInitiated / position transfer, any asset shape — so a future
+    // all-history consumer can reuse it unfiltered. The desk's History tab
+    // is an ERC-20/ERC-20, non-sale-vehicle surface (the same scope the
+    // tape and candle routes apply); without these three predicates
+    // NFT-leg loans and internal sale vehicles would present as desk
+    // history.
+    // Stub-shape guard (Codex #1139 round-4): the LoanInitiated
+    // fallback-B insert writes placeholder market fields —
+    // lending_asset / collateral_asset = '0x', duration_days = 0 —
+    // until `refreshStubLoans` heals the row (and forever, if the heal
+    // keeps failing). Such a row would otherwise pass the ERC-20 scope
+    // (asset_type 0 is the placeholder too) and render a fake desk-
+    // history entry. Guard on the SHAPE (real 42-char 0x addresses +
+    // a real ≥1-day term) rather than a blanket `is_stub = 0`: the
+    // companion-event insert path can land `is_stub = 1` with fully
+    // real market fields while only its position-token ids await the
+    // heal, and hiding those rows would drop genuine desk history.
+    const conds = [
+      'p.chain_id = ?',
+      'p.wallet = ?',
+      'l.asset_type = 0',
+      'l.collateral_asset_type = 0',
+      'l.is_sale_vehicle = 0',
+      "l.lending_asset LIKE '0x%' AND length(l.lending_asset) = 42",
+      "l.collateral_asset LIKE '0x%' AND length(l.collateral_asset) = 42",
+      'l.duration_days >= 1',
+    ];
+    const binds: (number | string)[] = [chainId, wallet];
+    // The composite cursor compares against the per-loan MAX(from_at)
+    // aggregate, so it must live in HAVING, not WHERE — OR-expanded
+    // lexicographic (participated_at, loan_id) < (:t, :id).
+    let having = '';
+    if (before) {
+      having = `HAVING MAX(p.from_at) < ?
+                OR (MAX(p.from_at) = ? AND l.loan_id < ?)`;
+      binds.push(before.participatedAt, before.participatedAt, before.loanId);
+    }
+    // One row per loan; GROUP_CONCAT folds the wallet's roles on it. The
+    // participation index (chain_id, wallet, loan_id) serves the filter;
+    // the newest-participation sort runs over just the wallet's own rows,
+    // and the loans join is a PK lookup per row.
+    const rows = await env.DB.prepare(
+      `SELECT l.*, GROUP_CONCAT(DISTINCT p.role) AS participant_roles,
+              MAX(p.from_at) AS participated_at
+       FROM loan_participants p
+       JOIN loans l ON l.chain_id = p.chain_id AND l.loan_id = p.loan_id
+       WHERE ${conds.join(' AND ')}
+       GROUP BY l.chain_id, l.loan_id
+       ${having}
+       ORDER BY participated_at DESC, l.loan_id DESC
+       LIMIT ?`,
+    )
+      .bind(...binds, limit)
+      .all<LoanRow & { participant_roles: string; participated_at: number }>();
+    const results = rows.results ?? [];
+    const loans = results.map((row) => ({
+      ...loanToJson(row),
+      // When the wallet's newest participation on the loan was observed
+      // (unix seconds) — the value the ordering + cursor run on.
+      participatedAt: row.participated_at,
+      // Sorted for a deterministic wire shape (GROUP_CONCAT order is
+      // unspecified in SQLite).
+      roles: (row.participant_roles ?? '').split(',').filter(Boolean).sort(),
+    }));
+    const last = results.length > 0 ? results[results.length - 1] : null;
+    const next =
+      last !== null && results.length === limit
+        ? `${last.participated_at}_${last.loan_id}`
+        : null;
+    return jsonResponse({ chainId, wallet, loans, nextBefore: next });
+  } catch (err) {
+    console.error('[loanRoutes] by-participant failed', err);
+    return jsonResponse({ error: 'by-participant-failed' }, 500);
+  }
+}
+
 export function handleLoansPreflight(): Response {
   return new Response(null, {
     status: 204,
@@ -1248,4 +1533,27 @@ function parseBefore(raw: string | null): number | null {
   if (!raw) return null;
   const n = Number.parseInt(raw, 10);
   return Number.isFinite(n) && n > 0 ? n : null;
+}
+
+/** Composite cursor for /loans/by-participant — `<participatedAt>_<loanId>`,
+ *  matching that route's (newest-participation DESC, loan_id DESC) ordering
+ *  (Codex #1139 round-3). A plain loan-id cursor cannot page that order: a
+ *  recent transfer into an older loan id sorts to the top, and a
+ *  loan-id-only `before` would skip or repeat it. Malformed values are
+ *  treated as "no cursor" — first page — same lenient posture as
+ *  parseBefore. */
+function parseParticipationCursor(
+  raw: string | null,
+): { participatedAt: number; loanId: number } | null {
+  if (!raw) return null;
+  const m = /^(\d+)_(\d+)$/.exec(raw);
+  if (!m) return null;
+  const participatedAt = Number.parseInt(m[1], 10);
+  const loanId = Number.parseInt(m[2], 10);
+  return Number.isFinite(participatedAt) &&
+    participatedAt >= 0 &&
+    Number.isFinite(loanId) &&
+    loanId > 0
+    ? { participatedAt, loanId }
+    : null;
 }

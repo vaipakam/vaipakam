@@ -1402,6 +1402,15 @@ async function refreshStubLoans(
       // `getLoanDetails` return now carries everything, so a single
       // RPC + UPDATE restores the row to canonical state and flips
       // is_stub back to 0.
+      // init_* snapshot heal: COALESCE never overwrites a snapshot the
+      // insert path already stamped (the stub path stamps init_principal
+      // from the event), and only fills the still-NULL rate/duration a
+      // stub insert couldn't know. BEST-EFFORT: this read is CURRENT
+      // state, not init-block-pinned — a stub loan mutated (extended /
+      // partial-repaid) before this heal lane reaches it would stamp
+      // post-mutation terms. Acceptable: stubs are vanishingly rare
+      // (companion event in the same tx), heal runs on the next tick,
+      // and mutations inside that window are rarer still.
       const updated = await env.DB.prepare(
         `UPDATE loans SET asset_type = ?, collateral_asset_type = ?,
                           lending_asset = ?, collateral_asset = ?,
@@ -1413,6 +1422,9 @@ async function refreshStubLoans(
                           allows_partial_repay = ?,
                           periodic_interest_cadence = ?,
                           last_period_settled_at = ?,
+                          init_principal = COALESCE(init_principal, ?),
+                          init_rate_bps = COALESCE(init_rate_bps, ?),
+                          init_duration_days = COALESCE(init_duration_days, ?),
                           is_stub = 0,
                           updated_at = ?
          WHERE chain_id = ? AND loan_id = ?`,
@@ -1434,6 +1446,9 @@ async function refreshStubLoans(
           detail.allowsPartialRepay ? 1 : 0,
           Number(detail.periodicInterestCadence ?? 0),
           Number(detail.lastPeriodicInterestSettledAt ?? 0n),
+          detail.principal.toString(),
+          Number(detail.interestRateBps),
+          Number(detail.durationDays),
           Math.floor(Date.now() / 1000),
           chainId,
           row.loan_id,
@@ -1451,6 +1466,48 @@ async function refreshStubLoans(
 // ──────────────────────────────────────────────────────────────────
 // Phase B — loan-domain handler.
 // ──────────────────────────────────────────────────────────────────
+
+/**
+ * Rate Desk phase 2 (#1130) — append ONE participation row (append-only
+ * history; never updated, never deleted). Called from every site where a
+ * wallet becomes the holder of a loan position:
+ *   - LoanInitiated (all three insert paths) — both parties from the
+ *     current-owner projection at that moment (a pre-accept offer-NFT buyer
+ *     is the participant, not the exited creator);
+ *   - the position-NFT Transfer handler — the recipient of a live transfer;
+ *   - LoanSold / LoanSaleCompleted / LoanObligationTransferred — token-id
+ *     MIGRATIONS (burn old + mint fresh): the plain Transfer handler can't
+ *     attribute the fresh token to the loan before the row's token-id column
+ *     is repointed, so these handlers append the new party themselves.
+ *
+ * INSERT OR IGNORE onto PK (chain_id, loan_id, wallet, role, from_at) makes
+ * re-scans / webhook replays / the 0032 backfill idempotent (the same event
+ * re-observed carries the same block timestamp → same from_at → no-op),
+ * while a wallet RE-acquiring a role it previously held appends a fresh row
+ * at the new timestamp — Codex #1139 round-4: with from_at outside the PK
+ * the reacquisition was silently dropped, so the by-participant route's
+ * MAX(from_at) ordering never surfaced it. The zero address (burns) is
+ * never a participant. Wallets stored lowercase (repo convention).
+ */
+async function recordLoanParticipant(
+  env: Env,
+  chainId: number,
+  loanId: number,
+  wallet: string,
+  role: 'lender' | 'borrower',
+  fromAt: number,
+): Promise<void> {
+  const w = (wallet || '').toLowerCase();
+  if (!/^0x[0-9a-f]{40}$/.test(w)) return;
+  if (w === '0x0000000000000000000000000000000000000000') return;
+  await env.DB.prepare(
+    `INSERT OR IGNORE INTO loan_participants
+       (chain_id, loan_id, wallet, role, from_at)
+     VALUES (?, ?, ?, ?, ?)`,
+  )
+    .bind(chainId, loanId, w, role, fromAt)
+    .run();
+}
 
 async function processLoanLogs(
   logs: DecodedLog[],
@@ -1564,8 +1621,9 @@ async function processLoanLogs(
              periodic_interest_cadence, last_period_settled_at,
              lender_current_owner, borrower_current_owner,
              is_stub,
+             init_principal, init_rate_bps, init_duration_days,
              start_block, start_at, updated_at)
-           VALUES (?, ?, ?, 'active', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+           VALUES (?, ?, ?, 'active', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         )
           .bind(
             chainId,
@@ -1595,12 +1653,37 @@ async function processLoanLogs(
             lenderOwner,
             borrowerOwner,
             isStub,
+            // Immutable initiation-term snapshot (Codex #1139 round-5 P2):
+            // same values as the mutable columns AT INSERT TIME. The
+            // candle endpoint reads these; no mutation handler (PartialRepaid /
+            // SwapToRepayPartialExecuted / InternalMatchExecuted /
+            // LoanExtended) may ever touch them — a fill's executed terms
+            // are history, not state.
+            principal,
+            Number(det.interestRateBps ?? 0n),
+            Number(det.durationDays ?? 0n),
             Number(log.blockNumber),
             blockAt,
             now,
           )
           .run();
-        if ((result.meta?.changes ?? 0) > 0) newLoans++;
+        const freshInsert = (result.meta?.changes ?? 0) > 0;
+        if (freshInsert) newLoans++;
+        // #1130 — seed participation from the current-owner projection at
+        // init (lenderOwner/borrowerOwner already resolve a pre-accept
+        // offer-NFT buyer above). ONLY when the INSERT actually wrote the
+        // row (Codex #1139 round-5 P2): on a REPLAY (a scan that failed
+        // after a later Transfer landed but before the cursor advanced),
+        // the loans INSERT is ignored, but lenderOwner/borrowerOwner were
+        // recomputed from the MUTABLE offers current-owner projection —
+        // which that later Transfer may have advanced — so seeding here
+        // would backdate the later holder to the loan's original blockAt.
+        // The original pass recorded the true init participants; the
+        // Transfer handler records later holders at their own timestamps.
+        if (freshInsert) {
+          await recordLoanParticipant(env, chainId, loanId, lenderOwner, 'lender', blockAt);
+          await recordLoanParticipant(env, chainId, loanId, borrowerOwner, 'borrower', blockAt);
+        }
         continue;
       }
 
@@ -1642,6 +1725,33 @@ async function processLoanLogs(
         );
       }
       if (loanDetail) {
+        // #749 mirror (Codex #1139 round-5 P3) — resolve the CREATOR
+        // side's current owner from the offers-table projection, exactly
+        // like the primary path above: the creator's offer-position NFT
+        // is REUSED as one loan side's token, so if it was sold on the
+        // secondary market BEFORE accept, getLoanDetails' origination
+        // parties name the EXITED creator, not the actual holder — and
+        // refreshStubLoans later only heals metadata, never participants
+        // or owners. The creator side is whichever loan token equals the
+        // offer's position_token_id; falls back to the read-back parties
+        // when the offer row isn't resolvable (identical in the
+        // no-pre-accept-transfer common case).
+        let lenderOwner = loanDetail.lender.toLowerCase();
+        let borrowerOwner = loanDetail.borrower.toLowerCase();
+        const offerRow = await env.DB.prepare(
+          `SELECT position_token_id, creator_current_owner FROM offers
+            WHERE chain_id = ? AND offer_id = ?`,
+        )
+          .bind(chainId, offerId)
+          .first<{ position_token_id: string; creator_current_owner: string }>();
+        if (offerRow?.creator_current_owner) {
+          const creatorTok = String(offerRow.position_token_id);
+          if (creatorTok !== '0' && creatorTok === loanDetail.lenderTokenId.toString()) {
+            lenderOwner = offerRow.creator_current_owner;
+          } else if (creatorTok !== '0' && creatorTok === loanDetail.borrowerTokenId.toString()) {
+            borrowerOwner = offerRow.creator_current_owner;
+          }
+        }
         const result = await env.DB.prepare(
           `INSERT OR IGNORE INTO loans
             (chain_id, loan_id, offer_id, status, lender, borrower,
@@ -1653,8 +1763,9 @@ async function processLoanLogs(
              periodic_interest_cadence, last_period_settled_at,
              lender_current_owner, borrower_current_owner,
              is_stub,
+             init_principal, init_rate_bps, init_duration_days,
              start_block, start_at, updated_at)
-           VALUES (?, ?, ?, 'active', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?)`,
+           VALUES (?, ?, ?, 'active', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?, ?, ?, ?)`,
         )
           .bind(
             chainId,
@@ -1678,18 +1789,41 @@ async function processLoanLogs(
             loanDetail.allowsPartialRepay ? 1 : 0,
             Number(loanDetail.periodicInterestCadence ?? 0),
             Number(loanDetail.lastPeriodicInterestSettledAt ?? 0n),
-            loanDetail.lender.toLowerCase(),
-            loanDetail.borrower.toLowerCase(),
+            // Creator side from the offer's current holder (see the #749
+            // mirror note above), acceptor side from the read-back party.
+            lenderOwner,
+            borrowerOwner,
+            // Immutable initiation-term snapshot — the read-back runs in
+            // the LoanInitiated scan window, so the loan's current terms
+            // ARE its initiation terms here (no mutation event can
+            // precede this insert; same-window mutations dispatch AFTER
+            // this handler in scan order).
+            loanDetail.principal.toString(),
+            Number(loanDetail.interestRateBps),
+            Number(loanDetail.durationDays),
             Number(log.blockNumber),
             blockAt,
             now,
           )
           .run();
-        if ((result.meta?.changes ?? 0) > 0) newLoans++;
+        const freshInsert = (result.meta?.changes ?? 0) > 0;
+        if (freshInsert) newLoans++;
+        // #1130 — participation seed via the offer-projection resolution
+        // above. Fresh-insert-gated for the same replay reason as the
+        // primary path: on a replay the projection may already point at a
+        // LATER holder, and seeding would backdate them to init blockAt.
+        if (freshInsert) {
+          await recordLoanParticipant(env, chainId, loanId, lenderOwner, 'lender', blockAt);
+          await recordLoanParticipant(env, chainId, loanId, borrowerOwner, 'borrower', blockAt);
+        }
         continue;
       }
 
       // ── Fallback B: stub INSERT (is_stub=1) — refreshStubLoans heals. ──
+      // init_principal comes from the event (immutable snapshot — the bare
+      // LoanInitiated carries it); init_rate_bps / init_duration_days stay
+      // NULL here (the event doesn't carry them) and refreshStubLoans
+      // COALESCE-stamps them on heal.
       const result = await env.DB.prepare(
         `INSERT OR IGNORE INTO loans
           (chain_id, loan_id, offer_id, status, lender, borrower,
@@ -1697,9 +1831,9 @@ async function processLoanLogs(
            asset_type, collateral_asset_type, lending_asset, collateral_asset,
            duration_days, token_id, collateral_token_id,
            lender_current_owner, borrower_current_owner,
-           is_stub,
+           is_stub, init_principal,
            start_block, start_at, updated_at)
-         VALUES (?, ?, ?, 'active', ?, ?, ?, ?, 0, 0, '0x', '0x', 0, '0', '0', ?, ?, 1, ?, ?, ?)`,
+         VALUES (?, ?, ?, 'active', ?, ?, ?, ?, 0, 0, '0x', '0x', 0, '0', '0', ?, ?, 1, ?, ?, ?, ?)`,
       )
         .bind(
           chainId,
@@ -1711,12 +1845,26 @@ async function processLoanLogs(
           collateralAmount,
           lender,
           borrower,
+          principal,
           Number(log.blockNumber),
           blockAt,
           now,
         )
         .run();
-      if ((result.meta?.changes ?? 0) > 0) newLoans++;
+      const freshInsert = (result.meta?.changes ?? 0) > 0;
+      if (freshInsert) newLoans++;
+      // #1130 — participation seed from the event parties (all the stub
+      // path has). Same-tx mint Transfers can't attribute these (the stub
+      // row's token ids are '0'), so this write is the only seed here.
+      // Fresh-insert-gated like the other two paths (Codex #1139 round-5
+      // P2): the event parties themselves are replay-stable, but gating
+      // keeps all three LoanInitiated paths on one invariant — init
+      // participants are seeded exactly once, by the pass that wrote the
+      // row.
+      if (freshInsert) {
+        await recordLoanParticipant(env, chainId, loanId, lender, 'lender', blockAt);
+        await recordLoanParticipant(env, chainId, loanId, borrower, 'borrower', blockAt);
+      }
     } else if (log.eventName === 'LoanRepaid') {
       // Full repay (or a FallbackPending-cure repay). On-chain this is
       // a transition to Repaid; the indexer's `status = 'active'` guard
@@ -1865,6 +2013,9 @@ async function processLoanLogs(
       // place. No NFT or status change. The event carries the
       // post-state values for all three so we can update the row
       // without a follow-up `getLoanDetails` read.
+      // NEVER touch init_rate_bps / init_duration_days here — the
+      // executed fill's terms are immutable history the candle
+      // endpoint reads (Codex #1139 round-5 P2; migration 0032 §2).
       const loanId = Number(a.loanId as bigint);
       await env.DB.prepare(
         `UPDATE loans
@@ -1893,6 +2044,8 @@ async function processLoanLogs(
     } else if (log.eventName === 'PartialRepaid') {
       // Partial repayment — loan stays Active, but `principal` shrinks.
       // The event carries the post-state `newPrincipal`, so mirror it.
+      // NEVER touch init_principal here — the executed fill's principal
+      // is immutable history the candle endpoint reads (0032 §2).
       const loanId = Number(a.loanId as bigint);
       await env.DB.prepare(
         `UPDATE loans SET principal = ?, updated_at = ?
@@ -2063,6 +2216,18 @@ async function processLoanLogs(
           Number(a.loanId as bigint),
         )
         .run();
+      // #1130 — the new obligor is a participant. The token-id migration
+      // (burn + fresh mint) means the plain Transfer handler can't attribute
+      // the mint (the row still carried the OLD id at that log), so this
+      // handler appends the participation itself.
+      await recordLoanParticipant(
+        env,
+        chainId,
+        Number(a.loanId as bigint),
+        String(a.newBorrower as string),
+        'borrower',
+        blockTimestamps.get(log.blockNumber) ?? now,
+      );
     } else if (log.eventName === 'LoanSaleOfferLinked') {
       // Rate Desk (#1129) — mark the borrower-style SALE offer so the temp
       // bookkeeping loan it later initiates can be excluded from the desk's
@@ -2135,6 +2300,16 @@ async function processLoanLogs(
           Number(a.loanId as bigint),
         )
         .run();
+      // #1130 — the buying lender is a participant (token-id migration; see
+      // the LoanObligationTransferred note).
+      await recordLoanParticipant(
+        env,
+        chainId,
+        Number(a.loanId as bigint),
+        String(a.newLender as string),
+        'lender',
+        blockTimestamps.get(log.blockNumber) ?? now,
+      );
     } else if (log.eventName === 'LoanSaleCompleted') {
       // EarlyWithdrawal TWO-STEP sale-offer flow (`completeLoanSale`): like the
       // direct `sellLoanViaBuyOffer`→`LoanSold` path, it migrates the ORIGINAL
@@ -2181,6 +2356,16 @@ async function processLoanLogs(
           loanId,
         )
         .run();
+      // #1130 — the sale-offer buyer is a participant (token-id migration;
+      // see the LoanObligationTransferred note).
+      await recordLoanParticipant(
+        env,
+        chainId,
+        loanId,
+        newLender,
+        'lender',
+        blockTimestamps.get(log.blockNumber) ?? now,
+      );
     } else if (log.eventName === 'LoanDefaulted') {
       const r = await flipLoanStatus(env, chainId, a, log, 'defaulted');
       if (r) statusUpdates++;
@@ -2849,6 +3034,36 @@ async function processLoanLogs(
            WHERE chain_id = ? AND position_token_id = ?`,
         ).bind(to, now, chainId, tokenId),
       ]);
+      // #1130 — append-only participation history: the transfer RECIPIENT
+      // becomes a participant of whichever loan side this tokenId sits on.
+      // Burns (to = 0x0) append nothing — leaving the previous holder's row
+      // in place is exactly the "history, not a pointer" property the
+      // History tab needs. tokenId '0' is the stub-row sentinel (matches
+      // every unhealed stub via lender_token_id = '0'), never a real ERC721
+      // id — skip it. Mint Transfers for a loan initiated in this same
+      // batch usually precede the loans-row INSERT within the tx, so the
+      // SELECT finds nothing — the LoanInitiated handler is the seed there;
+      // this path covers post-init secondary transfers.
+      if (
+        tokenId !== '0' &&
+        to !== '0x0000000000000000000000000000000000000000'
+      ) {
+        const sideMatches = (
+          await env.DB.prepare(
+            `SELECT loan_id, 'lender' AS role FROM loans
+              WHERE chain_id = ?1 AND lender_token_id = ?2
+             UNION ALL
+             SELECT loan_id, 'borrower' AS role FROM loans
+              WHERE chain_id = ?1 AND borrower_token_id = ?2`,
+          )
+            .bind(chainId, tokenId)
+            .all<{ loan_id: number; role: 'lender' | 'borrower' }>()
+        ).results ?? [];
+        const transferAt = blockTimestamps.get(log.blockNumber) ?? now;
+        for (const m of sideMatches) {
+          await recordLoanParticipant(env, chainId, m.loan_id, to, m.role, transferAt);
+        }
+      }
     }
   }
 

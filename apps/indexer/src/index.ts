@@ -26,6 +26,7 @@
  *       GET  /offers/:offerId     GET  /loans/timeseries
  *       GET  /offers/by-creator/:address     GET /loans/:loanId
  *       GET  /loans/by-lender/:address   GET /loans/by-borrower/:address
+ *       GET  /loans/rate-candles  GET  /loans/by-participant
  *       GET  /activity            GET  /claimables/:address
  *
  * T-078 — both entry points call `resolveEnv()` first. `RPC_*` are
@@ -98,8 +99,10 @@ import {
   handleLoansRecent,
   handleLoansStats,
   handleLoansTimeseries,
+  handleLoansRateCandles,
   handleLoanById,
   handleLoansByParticipant,
+  handleLoansByHistoricalParticipant,
   handleLoansByCurrentHolder,
   handleActivity,
   handleClaimables,
@@ -298,6 +301,15 @@ export default {
         }
         if (url.pathname === '/loans/timeseries') {
           return handleLoansTimeseries(req, resolved);
+        }
+        if (url.pathname === '/loans/rate-candles') {
+          // Rate Desk phase 2 (#1130) — per-market executed-rate OHLC series.
+          return handleLoansRateCandles(req, resolved);
+        }
+        if (url.pathname === '/loans/by-participant') {
+          // Rate Desk phase 2 (#1130) — historical-participation view (History
+          // tab): every loan the wallet EVER held a position of, all statuses.
+          return handleLoansByHistoricalParticipant(req, resolved);
         }
         const byLender = url.pathname.match(
           /^\/loans\/by-lender\/(0x[0-9a-fA-F]{40})$/,
