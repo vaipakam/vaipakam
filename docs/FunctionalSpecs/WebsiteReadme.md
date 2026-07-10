@@ -1099,7 +1099,47 @@ converge. Its intended behaviour (the test oracle for that surface):
   of the position adds the new holder without erasing the earlier
   participant. Longer histories load in pages on request, and a history
   that cannot be loaded says so rather than showing a partial list as
-  if it were complete. Nothing on this page
+  if it were complete. The desk updates live: when other participants'
+  actions land on the market — a new offer, a change to one, a fill —
+  the book and its companion views refresh within seconds rather than
+  waiting for the next periodic refresh, and a rate level whose depth
+  just changed is briefly highlighted so the change is visible; live
+  delivery is a freshness improvement only, never load-bearing — the
+  periodic refresh continues underneath, and a deployment without the
+  live channel simply refreshes at the normal cadence. When the book is
+  crossed (a borrower's maximum meets or exceeds a lender's minimum), a
+  match band appears at the book's midpoint ONLY when the protocol
+  itself confirms that the two best resting offers can actually settle
+  into a loan — crossed rates alone are not enough (their amount or
+  collateral constraints can still be incompatible), and a crossed book
+  that cannot execute shows no band and no speculation. The band names
+  the rate and amount that would match; anyone — not just the two
+  makers — may execute the match and earn the protocol's matcher fee
+  share, and the resulting loan belongs to the two offer creators at
+  the stated midpoint terms. If governance disables the matching
+  machinery, the band does not appear. The ticket can also post an
+  order gaslessly: instead of a transaction, the maker signs the
+  order's full terms once and the signature is published to the
+  platform's order-book service — posting costs nothing, nothing is
+  locked at signing, and the order is discoverable by anyone reading
+  the market. Signed orders appear in the ladder alongside on-chain
+  offers, visibly badged as signed so their off-chain, service-sourced
+  nature is never disguised as on-chain state; anyone other than the
+  maker can fill one in a single transaction, at which point the terms
+  the maker signed — and only those — settle into a loan, with the
+  maker's side drawn from their vault's spendable balance at fill time.
+  Because nothing is locked at signing, a signed order can rest
+  unbacked; the platform warns the maker when their vault does not
+  currently cover the commitment (without blocking — funding later is
+  legitimate), and a taker is told before paying anything when a fill
+  would fail for that reason. The maker's own signed orders for the
+  selected market are listed with their open orders; withdrawing one is
+  an on-chain cancellation that costs a transaction — the platform is
+  explicit that this is the only real revocation, since a published
+  signature merely hidden from the service could still be filled by
+  anyone who saved it. A filled, cancelled, or expired signed order
+  leaves the book rather than advertising liquidity that no longer
+  exists. Nothing on this page
   invents liquidity, queue positions, or price-change percentages the
   protocol cannot back; the page is reachable by link in either mode
   but appears in navigation only in Advanced mode.

@@ -76,6 +76,13 @@ export const ERC20_MIN_ABI = [
     outputs: [{ type: 'bool' }],
   },
   {
+    name: 'transfer',
+    type: 'function',
+    stateMutability: 'nonpayable',
+    inputs: [{ type: 'address' }, { type: 'uint256' }],
+    outputs: [{ type: 'bool' }],
+  },
+  {
     name: 'mint',
     type: 'function',
     stateMutability: 'nonpayable',

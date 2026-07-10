@@ -36,8 +36,13 @@ type ServerFrame =
 /** Coarse DO invalidation key → the react-query key ROOTS it dirties.
  *  Only INDEXER-fed caches belong here — chain-read caches are
  *  LiveChainSync's per-block job, and double-invalidating them would
- *  just burn RPC. */
-const KEY_MAP: Record<string, string[]> = {
+ *  just burn RPC.
+ *
+ *  Exported for the unit test (src/chain/pushKeyMap.test.ts): the fork
+ *  e2e harness has no WebSocket rail (spec 15 pins that posture), so
+ *  the desk-root registrations (#1131 slice A) are pinned here in CI
+ *  and observed live on the production WS rail per COVERAGE.md. */
+export const KEY_MAP: Record<string, string[]> = {
   // desk* roots (#1131): markets/book/amend-seed are offer-fed views.
   'offer.created': [
     'activeOffers',

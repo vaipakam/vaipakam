@@ -12,7 +12,12 @@ import http from 'node:http';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { createPublicClient, http as viemHttp } from 'viem';
+import {
+  createPublicClient,
+  hashStruct,
+  http as viemHttp,
+  recoverTypedDataAddress,
+} from 'viem';
 
 const CHAIN_ID = 84532;
 const ANVIL_URL = process.env.ALPHA02_E2E_ANVIL_URL ?? 'http://127.0.0.1:8545';
@@ -420,6 +425,274 @@ async function capturePin() {
   };
 }
 
+// ---------------------------------------------------------------------------
+// Rate Desk phase 3 (#1131) — the GASLESS signed-offer book
+// (apps/indexer/src/signedOfferRoutes.ts is the SOURCE OF TRUTH; this
+// mirrors the wire contract for the fork tier).
+//
+// Storage is one in-memory Map (orderHash → row): the stub is per-run
+// and the fork is disposable, so no persistence is needed — a suite
+// run's whole signed book is a handful of rows.
+// ---------------------------------------------------------------------------
+
+/** orderHash → { orderHash, signer, order, signature, createdAt }. */
+const signedOffers = new Map();
+
+/** The 28-field SignedOffer typed-data description — struct order
+ *  EXACTLY as `LibSignedOffer.SignedOffer` declares it. Keep in sync
+ *  with apps/indexer/src/signedOfferEip712.ts (whose unit test pins
+ *  the derived typehash against the contract's canonical type string). */
+const SIGNED_OFFER_TYPES = {
+  SignedOffer: [
+    { name: 'offerType', type: 'uint8' },
+    { name: 'lendingAsset', type: 'address' },
+    { name: 'amount', type: 'uint256' },
+    { name: 'amountMax', type: 'uint256' },
+    { name: 'interestRateBps', type: 'uint256' },
+    { name: 'interestRateBpsMax', type: 'uint256' },
+    { name: 'collateralAsset', type: 'address' },
+    { name: 'collateralAmount', type: 'uint256' },
+    { name: 'collateralAmountMax', type: 'uint256' },
+    { name: 'durationDays', type: 'uint256' },
+    { name: 'assetType', type: 'uint8' },
+    { name: 'collateralAssetType', type: 'uint8' },
+    { name: 'tokenId', type: 'uint256' },
+    { name: 'quantity', type: 'uint256' },
+    { name: 'collateralTokenId', type: 'uint256' },
+    { name: 'collateralQuantity', type: 'uint256' },
+    { name: 'prepayAsset', type: 'address' },
+    { name: 'allowsPartialRepay', type: 'bool' },
+    { name: 'allowsPrepayListing', type: 'bool' },
+    { name: 'allowsParallelSale', type: 'bool' },
+    { name: 'expiresAt', type: 'uint64' },
+    { name: 'fillMode', type: 'uint8' },
+    { name: 'periodicInterestCadence', type: 'uint8' },
+    { name: 'refinanceTargetLoanId', type: 'uint256' },
+    { name: 'useFullTermInterest', type: 'bool' },
+    { name: 'signer', type: 'address' },
+    { name: 'nonce', type: 'uint256' },
+    { name: 'deadline', type: 'uint256' },
+  ],
+};
+
+/** Wire shape (decimal strings / bools) → the bigint-typed message
+ *  viem's typed-data encoder expects. Throws on malformed numerics —
+ *  the handler's catch answers 500, which is honest for a body the
+ *  desk (the only client) never produces. */
+function signedTypedMessage(o) {
+  return {
+    offerType: Number(o.offerType),
+    lendingAsset: o.lendingAsset,
+    amount: BigInt(o.amount),
+    amountMax: BigInt(o.amountMax),
+    interestRateBps: BigInt(o.interestRateBps),
+    interestRateBpsMax: BigInt(o.interestRateBpsMax),
+    collateralAsset: o.collateralAsset,
+    collateralAmount: BigInt(o.collateralAmount),
+    collateralAmountMax: BigInt(o.collateralAmountMax),
+    durationDays: BigInt(o.durationDays),
+    assetType: Number(o.assetType),
+    collateralAssetType: Number(o.collateralAssetType),
+    tokenId: BigInt(o.tokenId),
+    quantity: BigInt(o.quantity),
+    collateralTokenId: BigInt(o.collateralTokenId),
+    collateralQuantity: BigInt(o.collateralQuantity),
+    prepayAsset: o.prepayAsset,
+    allowsPartialRepay: Boolean(o.allowsPartialRepay),
+    allowsPrepayListing: Boolean(o.allowsPrepayListing),
+    allowsParallelSale: Boolean(o.allowsParallelSale),
+    expiresAt: BigInt(o.expiresAt),
+    fillMode: Number(o.fillMode),
+    periodicInterestCadence: Number(o.periodicInterestCadence),
+    refinanceTargetLoanId: BigInt(o.refinanceTargetLoanId),
+    useFullTermInterest: Boolean(o.useFullTermInterest),
+    signer: o.signer,
+    nonce: BigInt(o.nonce),
+    deadline: BigInt(o.deadline),
+  };
+}
+
+/** The order hash — the EIP-712 STRUCT hash, matching
+ *  `SignedOfferFacet.signedOfferOrderHash` and the worker's D1 key. */
+function signedOrderHash(order) {
+  return hashStruct({
+    data: signedTypedMessage(order),
+    primaryType: 'SignedOffer',
+    types: SIGNED_OFFER_TYPES,
+  });
+}
+
+/** Verify the maker's signature EXACTLY like the worker's ingest gate:
+ *  recover over the full EIP-712 digest for the fork's Diamond domain
+ *  and compare to `order.signer` (EOA-only, like the worker's v1). */
+async function verifySignedOfferSignature(order, signature) {
+  try {
+    const recovered = await recoverTypedDataAddress({
+      domain: {
+        name: 'Vaipakam SignedOffer',
+        version: '1',
+        chainId: CHAIN_ID,
+        verifyingContract: DIAMOND,
+      },
+      types: SIGNED_OFFER_TYPES,
+      primaryType: 'SignedOffer',
+      message: signedTypedMessage(order),
+      signature,
+    });
+    return recovered.toLowerCase() === String(order.signer).toLowerCase();
+  } catch {
+    return false; // malformed signature bytes — a 400, never a 500
+  }
+}
+
+/** Buffer a request body (the stub's only POST-with-body route). */
+function readBody(req) {
+  return new Promise((resolve, reject) => {
+    const chunks = [];
+    req.on('data', (c) => chunks.push(c));
+    req.on('end', () => resolve(Buffer.concat(chunks).toString('utf8')));
+    req.on('error', reject);
+  });
+}
+
+/**
+ * POST /signed-offers — mirror of the worker's acceptance pipeline,
+ * minus the parts that don't exist at fork scale (rate limit, D1):
+ * loose shape checks (the desk only sends valid bodies — the worker's
+ * strict per-field 400s are ITS unit-tested surface, re-implementing
+ * them here would only drift), then the two load-bearing gates kept
+ * EXACT: the EIP-712 signature must recover the signer over the fork
+ * Diamond's domain, and chain state must not already know the order as
+ * consumed / nonce-burned (2 eth_calls — free against the fork).
+ * 201 first accept, 200 idempotent re-post, 400/409 like the worker.
+ */
+async function handleSignedOfferPost(req, json) {
+  let body;
+  try {
+    body = JSON.parse(await readBody(req));
+  } catch {
+    return json(400, { error: 'invalid-json' });
+  }
+  if (body === null || typeof body !== 'object') {
+    return json(400, { error: 'invalid-body' });
+  }
+  if (Number(body.chainId) !== CHAIN_ID) {
+    return json(400, { error: `stub serves chainId ${CHAIN_ID} only` });
+  }
+  if (typeof body.signature !== 'string' || !/^0x[0-9a-fA-F]+$/.test(body.signature)) {
+    return json(400, { error: 'invalid-signature-shape' });
+  }
+  const order = body.order;
+  if (order === null || typeof order !== 'object') {
+    return json(400, { error: 'invalid-order' });
+  }
+
+  let orderHash;
+  try {
+    orderHash = signedOrderHash(order);
+  } catch {
+    return json(400, { error: 'invalid-order' });
+  }
+  if (!(await verifySignedOfferSignature(order, body.signature))) {
+    return json(400, { error: 'bad-signature' });
+  }
+
+  // Idempotent re-post — the hash binds every field, so an existing
+  // row IS this order (mirrors the worker's no-REPLACE rule).
+  if (signedOffers.has(orderHash)) {
+    return json(200, { chainId: CHAIN_ID, orderHash });
+  }
+
+  // Chain-state ingest gate — same two reads the worker does, but NOT
+  // best-effort here: the fork RPC is local, so a read failure is a
+  // harness bug and should 500 loudly.
+  const [nonceUsed, filled] = await Promise.all([
+    read('isSignedOfferNonceUsed', [order.signer, BigInt(order.nonce)]),
+    read('signedOfferFilledAmount', [orderHash]),
+  ]);
+  if (nonceUsed) return json(409, { error: 'nonce-used' });
+  if (filled !== 0n) return json(409, { error: 'order-consumed' });
+
+  signedOffers.set(orderHash, {
+    orderHash,
+    signer: String(order.signer).toLowerCase(),
+    order,
+    signature: body.signature,
+    createdAt: Math.floor(Date.now() / 1000),
+  });
+  return json(201, { chainId: CHAIN_ID, orderHash });
+}
+
+/**
+ * GET /signed-offers?chainId=&lendingAsset=&collateralAsset=&durationDays=
+ * — the market-scoped ACTIVE book, worker wire shape (all three market
+ * params REQUIRED, rows carry the replayable order + signature).
+ *
+ * Lifecycle at fork scale: production's chainIndexer marks rows
+ * filled/cancelled from `SignedOfferFilled`/`SignedOfferCancelled`/
+ * `SignedOfferNonceBurned` events; this stub has no event pipeline, so
+ * it LIVE-PROBES `signedOfferFilledAmount(orderHash)` (+ the burned
+ * nonce) per stored row on every GET and drops consumed rows — the
+ * fork-scale substitute for the worker's lifecycle handlers. Same
+ * observable contract (a filled order leaves the book), affordable
+ * because the per-run Map holds a handful of rows.
+ *
+ * Expiry windows are judged on the FORK clock (same doctrine as every
+ * other route here): the fill path's `_vetSignedOffer` judges them on
+ * block.timestamp, and evm_increaseTime moves that far from wall time.
+ */
+async function handleSignedOffersGet(url, json) {
+  const lend = (url.searchParams.get('lendingAsset') ?? '').toLowerCase();
+  const coll = (url.searchParams.get('collateralAsset') ?? '').toLowerCase();
+  const daysRaw = url.searchParams.get('durationDays');
+  if (!/^0x[0-9a-f]{40}$/.test(lend)) {
+    return json(400, { error: 'bad-lending-asset' });
+  }
+  if (!/^0x[0-9a-f]{40}$/.test(coll)) {
+    return json(400, { error: 'bad-collateral-asset' });
+  }
+  const days = daysRaw === null ? NaN : Number(daysRaw);
+  if (!Number.isInteger(days) || days < 1 || days > 4385) {
+    return json(400, { error: 'bad-duration-days' });
+  }
+
+  const chainNow = await forkNowSec();
+  const scoped = [...signedOffers.values()].filter(
+    (r) =>
+      r.order.lendingAsset.toLowerCase() === lend &&
+      r.order.collateralAsset.toLowerCase() === coll &&
+      Number(r.order.durationDays) === days &&
+      (Number(r.order.expiresAt) === 0 || Number(r.order.expiresAt) > chainNow) &&
+      (Number(r.order.deadline) === 0 || Number(r.order.deadline) > chainNow),
+  );
+  // Live lifecycle probe (see the route note) — two reads per
+  // market-surviving row, fork-scale only.
+  const consumed = await Promise.all(
+    scoped.map(async (r) => {
+      const [filled, nonceUsed] = await Promise.all([
+        read('signedOfferFilledAmount', [r.orderHash]),
+        read('isSignedOfferNonceUsed', [r.signer, BigInt(r.order.nonce)]),
+      ]);
+      return filled !== 0n || nonceUsed;
+    }),
+  );
+  const offers = scoped
+    .filter((_, i) => !consumed[i])
+    // Worker ordering: newest first, order-hash tiebreak.
+    .sort((a, b) => b.createdAt - a.createdAt || (a.orderHash < b.orderHash ? -1 : 1))
+    .map((r) => ({
+      orderHash: r.orderHash,
+      signer: r.signer,
+      order: r.order,
+      signature: r.signature,
+      status: 'active',
+      filledAmount: '0',
+      expiresAt: Number(r.order.expiresAt),
+      deadline: Number(r.order.deadline),
+    }));
+  return json(200, { chainId: CHAIN_ID, offers });
+}
+
 async function handler(req, res) {
   const url = new URL(req.url, `http://127.0.0.1:${PORT}`);
   const parts = url.pathname.split('/').filter(Boolean);
@@ -432,6 +705,25 @@ async function handler(req, res) {
   };
 
   try {
+    // CORS preflight — required for the browser's cross-origin JSON
+    // POST to /signed-offers (the app runs on :4173, the stub on
+    // :8788; a Content-Type: application/json POST always preflights).
+    // Mirrors the worker's handleSignedOffersPreflight.
+    if (req.method === 'OPTIONS') {
+      res.writeHead(204, {
+        'Access-Control-Allow-Origin': '*',
+        'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
+        'Access-Control-Allow-Headers': 'Content-Type',
+        'Access-Control-Max-Age': '86400',
+      });
+      return res.end();
+    }
+
+    // Signed-offer book (#1131) — POST carries chainId in the BODY, so
+    // it dispatches before the query-param chain guard below.
+    if (req.method === 'POST' && parts[0] === 'signed-offers') {
+      return await handleSignedOfferPost(req, json);
+    }
     // Test-control routes (POST) — see the pin-mode note above.
     if (req.method === 'POST' && parts[0] === '__pin') {
       pinned = await capturePin();
@@ -448,6 +740,12 @@ async function handler(req, res) {
     const chainParam = url.searchParams.get('chainId');
     if (chainParam !== null && Number(chainParam) !== CHAIN_ID) {
       return json(400, { error: `stub serves chainId ${CHAIN_ID} only` });
+    }
+
+    // GET /signed-offers?chainId=&lendingAsset=&collateralAsset=
+    //   &durationDays= — the market-scoped signed book (#1131).
+    if (parts[0] === 'signed-offers') {
+      return await handleSignedOffersGet(url, json);
     }
 
     // GET /offers/stats?chainId= — freshness piggyback. Report the
