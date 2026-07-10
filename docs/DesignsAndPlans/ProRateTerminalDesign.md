@@ -47,11 +47,11 @@ new app and not an apps/defi rework — phased, with the rate chart in phase 2. 
 | Limit order (post to book) | `createOffer(CreateOfferParams)` (`OfferCreateFacet.sol:369`), mints a position NFT | 1:1 |
 | GTC / GTT | `expiresAt == 0` sentinel / non-zero `expiresAt` + lazy expiry + permissionless clean-up of lapsed offers (#195) | 1:1 |
 | IOC / AON | `FillMode { Partial, Aon, Ioc }` (`LibVaipakam.sol:731`); IOC requires expiry, AON requires single-value amount (#125). FOK folded into AON, POST deliberately not built (every offer is a maker) | 1:1 (FOK/POST rejected by design) |
-| Order-book depth by rate | `MetricsFacet.getActiveOffersByAssetPairRanked(lend, coll)` → `OfferRanking[]` (`MetricsFacet.sol:634`) — the pair-keyed book read | 1:1 (client sorts/aggregates; must additionally slice by `durationDays`) |
-| Taker crossing the book | Two paths: manual `acceptOffer` (full fill at maker terms, EIP-712 term-bound #662) and the permissionless midpoint-crossing matcher `matchOffers(L, B)` + `previewMatch` (`OfferMatchFacet.sol:140/170`) | Partial — see §5.2 |
+| Order-book depth by rate | `MetricsFacet.getActiveOffersByAssetPairRanked(lend, coll)` → `OfferRanking[]` (`MetricsFacet.sol:634`) — the pair-keyed book read. Caveat: the skinny DTO omits `amountFilled`, so depth needs a `getOffersWithState` hydration step (§3) | 1:1 with hydration (client sorts/aggregates; must additionally slice by `durationDays`) |
+| Taker crossing the book | Two paths: manual `acceptOffer` (full fill at maker terms, EIP-712 term-bound #662; rejects partially-filled offers) and the permissionless midpoint-crossing matcher `matchOffers(L, B)` + `previewMatch` (`OfferMatchFacet.sol:140/170`) | Partial — see §5.2 |
 | Cancel / replace (amend) | `OfferMutateFacet.modifyOffer` / `setOfferRate` / `setOfferAmount` / `setOfferCollateral` (in-place, same offerId, unaccepted only) + `cancelOffer` | 1:1 — **contracts shipped, no UI in either app** |
 | Open orders panel | `getUserOffersByStatePaginated`, `OfferView` DTO (state, filled, expiry) | 1:1 |
-| Positions panel | `Loan` struct + `getUserDashboardLoans` → `LoanWithRisk` (pre-computed `ltvBps` + `healthFactor`) | 1:1 |
+| Positions panel | `Loan` struct + `LoanWithRisk` (pre-computed `ltvBps` + `healthFactor`); position ownership follows the **position NFT's current holder**, so the panel reads current-holder routes, not the historical-party `getUserDashboardLoans` walk (§3) | 1:1 via current-holder reads |
 | Reduce / partial close | `RepayFacet.repayPartial` (gated on `loan.allowsPartialRepay`) | 1:1 (opt-in per loan) |
 | Mark / index price | `OracleFacet.getAssetPrice` (Chainlink + 2-of-N cross-validation) — spot only | Partial — no mark/funding construct, deliberately (see §6) |
 | Gasless order posting | `SignedOfferFacet` EIP-712 signed offers (v0.5 shipped) + `matchSignedOffer` (v0.6) | Exists — phase-3 candidate |
@@ -66,8 +66,8 @@ new app and not an apps/defi rework — phased, with the rate chart in phase 2. 
   `fill_mode`). Depth is derivable per pair.
 - **Missing**: an OHLC/candle endpoint (none), per-pair grouping on any endpoint
   (`/loans/timeseries` buckets TVL by `lending_asset` only; `/loans/stats` returns one
-  global mean rate), a `(chain_id, lending_asset, collateral_asset, start_at)` index, and
-  a charting library (no viz dependency anywhere in the workspace).
+  global mean rate), a `(chain_id, lending_asset, collateral_asset, duration_days,
+  start_at)` index, and a charting library (no viz dependency anywhere in the workspace).
 - **Realtime**: the indexer has a per-chain WebSocket push (`/ws/chain/:chainId` →
   `ChainIngestDO`) and alpha02 already mounts the client (`IndexerPushSync.tsx`) — but the
   server flag `CHAIN_INGEST_VIA_DO` is **off by default**, so today everything is a 30s
@@ -145,13 +145,13 @@ Panel-by-panel, with the backing read/write:
 
 | Panel | Reads | Writes | Notes |
 |---|---|---|---|
-| Header strip | book from `getActiveOffersByAssetPairRanked` sliced by tenor; last trade from indexer `/loans/recent` (pair-filtered); `getAssetPrice` for the collateral oracle chip | — | Tenor chips show only tenors with live orders + the 3 presets (7/30/90d) |
-| Order book | same ranked read, client-aggregated into rate levels (sum size per rate; own orders highlighted) | click a level → pre-fills the ticket at that rate (maker) or arms a direct `acceptOffer` on the top row (taker) | Fill-progress from `amountFilled/amountMax` (A.9) |
+| Header strip | book (see Order book row); last trade from indexer `/loans/recent` with the **pair+tenor server filter (phase 1, §7)**; `getAssetPrice` for the collateral oracle chip | — | Tenor chips show only tenors with live orders + the 3 presets (7/30/90d). The "last" seed must be tenor-scoped: `useMarketAnchorRate` is pair-only today (`useMarketAnchorRate.ts:32-101`) and MUST NOT seed a tenor market as-is — extend it with a `durationDays` check or seed from the tenor-filtered tape instead (a 7d fill must never seed the 30d header). |
+| Order book | **two-step read**: `getActiveOffersByAssetPairRanked` for the pair's ids/ordering, then hydrate via `getOffersWithState(ids)` — the skinny `OfferRanking` DTO omits `amountFilled` (`MetricsFacet.sol:591-600`), so remaining depth is computable only from hydrated rows (`amountMax - amountFilled`). Aggregate rate levels from **remaining** size, never `amountMax`. (Alternative: extend the ranking DTO with `amountFilled` — small contract change, phase-3 candidate.) | click a level → pre-fills the ticket at that rate (maker); taker affordance arms direct `acceptOffer` **only on unfilled rows** — direct accept rejects partially-filled offers (`OfferAcceptFacet.sol:767-781`); partially-filled rows are crossable only via the matcher | Fill-progress from hydrated `amountFilled/amountMax` (A.9); own orders highlighted |
 | Order ticket | `useTxSimulation` precheck (reuses the #1112 under-collateral banner), `quoteOfferRateBps` as a "suggested rate" hint | `createOffer` / `createOfferWithPermit` | Side toggle, amount (+ optional range), limit rate (+ optional band), collateral, tenor, expiry preset (GTC/24h/7d/custom), fill-mode chip (Partial/AON/IOC) |
-| Tape | indexer `/loans/recent` pair+tenor filtered (new server-side filter, §7 P2) | — | Sparse-honest: shows "N fills this week" not a fake ticker |
+| Tape | indexer `/loans/recent` with the **pair+tenor server filter (phase 1, §7)** — the current handler is a global newest-first page capped at 200 rows (`loanRoutes.ts:764-774`, `:1171-1175`); client-filtering it misses any market not among the latest global fills, so the server filter is a phase-1 prerequisite, not a phase-2 nicety | — | Sparse-honest: shows "N fills this week" not a fake ticker |
 | Open orders | `getUserOffersByStatePaginated` + `OfferView` | **`modifyOffer` / `setOfferRate` (first UI for #193)**, `cancelOffer` | Amend = pencil → inline edit of rate/size/collateral, one tx, same offerId |
-| Positions | `getUserDashboardLoans` → `LoanWithRisk` | `repayLoan` / `repayPartial` / add-collateral | HF colour bands per B.1; accrued interest computed client-side (`LibEntitlement` mirror already exists in the dashboard flow) |
-| History | indexer `/activity?actor=` | — | |
+| Positions | **current-holder reads**, not historical parties: indexer `/loans/by-current-holder` (already exists) or position-NFT holder enumeration, hydrated via `getLoansBatch` + `calculateHealthFactor` overlay. `getUserDashboardLoans` walks historical `l.borrower`/`l.lender` (`MetricsDashboardFacet.sol:188-239`) and goes stale the moment a position NFT is transferred/sold — it would omit a buyer's position and show the seller dead manage actions | `repayLoan` / `repayPartial` / add-collateral | HF colour bands per B.1; accrued interest computed client-side (`LibEntitlement` mirror already exists in the dashboard flow) |
+| History | derive the user's loan/offer ids from the positions + open-orders panels, then query `/activity?loanId=`/`?offerId=` per id — the actor-only filter is incomplete for lenders (`LoanInitiated` is recorded with `actor = borrower`, `chainIndexer.ts:3110-3175`, so a lender whose offer is taken never appears in their own actor feed). A true server-side participant filter is a phase-3 alternative | — | |
 
 Mobile: panels stack (header → ticket → book → positions); the chart collapses to a
 sparkline in the header strip. alpha02 is mobile-first; the terminal is the one page
@@ -244,15 +244,30 @@ exist to prevent. Rules:
 
 **Endpoint** (new, `apps/indexer`):
 `GET /loans/rate-candles?chainId&lendingAsset&collateralAsset&durationDays&interval=1h|4h|1d&range=7d|30d|90d|all`
-→ `{ buckets: [{ t, open, high, low, close, fills, principalTotal }] }`, computed by SQL
-`GROUP BY` over `loans` (`interest_rate_bps`, `start_at`), pair+tenor filtered,
+→ `{ buckets: [{ t, open, high, low, close, fills, principalTotal }] }`,
 `Cache-Control: max-age=60`. Executed fills only (`LoanInitiated`); no synthetic data.
 
-**Migration**: add index `(chain_id, lending_asset, collateral_asset, start_at)` on
-`loans` (new file under `apps/indexer/migrations/`, per the D1 schema discipline).
+**Aggregation split — BigInt-safe by construction**: the rate fields
+(`open/high/low/close`, from `interest_rate_bps`) and `fills` counts are small integers
+and MAY be SQL-aggregated. `principalTotal` MUST NOT be summed in SQL: `loans.principal`
+is stored as a decimal **string** precisely because wei-denominated 18-dec amounts
+overflow SQLite's 64-bit integers — the existing `/loans/stats` deliberately selects
+rows and sums with JS `BigInt` (`loanRoutes.ts:676-703`). The candle endpoint follows
+the same pattern: SQL selects the bucketed rows, JS `BigInt` folds the principal per
+bucket. (Testnet row counts make this cheap; if a pair's range query ever gets hot, a
+materialized per-bucket total is the escalation, never SQL `SUM`.)
 
-**Server-side pair filters** added to `/loans/recent` (tape) and `/offers/active`
-(book fallback when RPC is unavailable) — both currently return unfiltered rows.
+**Migration**: add index `(chain_id, lending_asset, collateral_asset, duration_days,
+start_at)` on `loans` (new file under `apps/indexer/migrations/`, per the D1 schema
+discipline). The index key matches the market boundary exactly — omitting
+`duration_days` would leave a hot multi-tenor pair scanning every fill for the pair and
+post-filtering the tenor.
+
+**Server-side pair+tenor filters** on `/loans/recent` (tape) and `/offers/active`
+(book fallback when RPC is unavailable) are a **phase-1 prerequisite** (see §8) — both
+endpoints today are global newest-first pages capped at 200 rows
+(`loanRoutes.ts:764-774`, `offerRoutes.ts:225-234`); a market whose rows are older than
+the first page would falsely render as empty if the terminal client-filtered them.
 
 **Chart library**: `lightweight-charts` (TradingView's OSS canvas lib, ~45 kB gzipped,
 zero network calls — CSP-clean, MIT-adjacent license (Apache-2.0), dark/light theming).
@@ -263,25 +278,31 @@ terminal, heavier per-point), d3 (a toolkit, not a chart — highest build cost)
 with the `/trade` route chunk so Basic-mode users never download it.
 
 **Chart content**: executed-rate series (candles/step per §5.3) + "quoted mid" overlay
-derived from the live book + optional volume (principal) histogram. The existing
-`useMarketAnchorRate` logic (freshest matched rate) seeds the header's "last" value on
-cold start.
+derived from the live book + optional volume (principal) histogram. The header's
+cold-start "last" value comes from the pair+tenor-filtered tape (or the last candle) —
+NOT from `useMarketAnchorRate` as-is, which matches on pair only and would seed a 30d
+market with a 7d fill (§3 header-strip note); if that hook is reused it must first gain
+a `durationDays` parameter.
 
 ---
 
 ## 8. Phasing
 
 **Phase 1 — Terminal shell (no chart), alpha02 `/trade`.** Header strip + pair/tenor
-selectors, rate-ladder book (from `getActiveOffersByAssetPairRanked` + indexer fallback),
-order ticket (createOffer with expiry + fill-mode chips, simulation precheck), tape from
-`/loans/recent` (client-filtered until P2 lands), open-orders panel with **cancel + the
-first amend UI (#193)**, positions panel with HF bands + repay/partial actions. All
-data on the existing 30s idle-aware poll + push-sync invalidation. *Estimated: the
-largest single alpha02 page to date, but composed entirely of existing flows —
-comparable to the OfferFlow build.*
+selectors, rate-ladder book (ranked ids + `getOffersWithState` hydration per §3 —
+remaining-size depth, never headline size), order ticket (createOffer with expiry +
+fill-mode chips, simulation precheck), tape, open-orders panel with **cancel + the
+first amend UI (#193)**, positions panel (current-holder reads per §3) with HF bands +
+repay/partial actions. **Includes the small indexer slice**: pair+tenor server filters
+on `/loans/recent` + `/offers/active` — the tape and the book's RPC-outage fallback are
+not honest without them (global 200-row pages can't scope to a market), so they are
+phase-1 scope, not phase-2. All data on the existing 30s idle-aware poll + push-sync
+invalidation. *Estimated: the largest single alpha02 page to date, but composed
+entirely of existing flows — comparable to the OfferFlow build.*
 
-**Phase 2 — Rate history.** Indexer OHLC endpoint + migration + pair filters;
-lightweight-charts integration; sparse-honesty rules (§5.3); tape goes server-filtered.
+**Phase 2 — Rate history.** Indexer OHLC endpoint + the `(chain, pair, tenor, time)`
+index migration; BigInt-safe principal aggregation (§7); lightweight-charts
+integration; sparse-honesty rules (§5.3).
 
 **Phase 3 — Live-ness + depth polish.** Flip `CHAIN_INGEST_VIA_DO` on staging and route
 book/tape invalidations through the existing `IndexerPushSync`; book delta animations;
