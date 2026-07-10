@@ -18,7 +18,7 @@
  * Route rule: hidden from Basic navigation but URL-reachable in both
  * modes (the shell's hidden-not-blocked doctrine, same as /offers).
  */
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { copy } from '../content/copy';
 import { useActiveChain } from '../chain/useActiveChain';
 import { MarketFreshnessNote } from '../components/MarketFreshnessNote';
@@ -70,8 +70,17 @@ export function Desk() {
   }, [markets.data, pair]);
 
   // Chain switch invalidates the selected pair (addresses are
-  // per-chain) — reset to rediscover from that chain's markets.
+  // per-chain) — reset to rediscover from that chain's markets. Gated
+  // to ACTUAL post-mount chain changes (Codex #1134 round-6 P3): an
+  // unconditional first run also fires on remount with the markets
+  // list already cached, where its queued setPair(null) lands after
+  // the default-market pick above — and the default effect never
+  // re-runs (same markets.data, pair null both renders), stranding
+  // the desk on "Pick a market".
+  const prevChainId = useRef(readChain.chainId);
   useEffect(() => {
+    if (prevChainId.current === readChain.chainId) return;
+    prevChainId.current = readChain.chainId;
     setPair(null);
     setPrefill(null);
   }, [readChain.chainId]);

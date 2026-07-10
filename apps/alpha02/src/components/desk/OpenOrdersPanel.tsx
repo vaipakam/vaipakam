@@ -27,6 +27,11 @@ import { copy } from '../../content/copy';
 import { useActiveChain } from '../../chain/useActiveChain';
 import { useDiamondWrite } from '../../contracts/diamond';
 import { ensureAllowance, useTokenMeta } from '../../contracts/erc20';
+import {
+  assertAssetNotPausedLive,
+  assertErc20BalanceLive,
+} from '../../contracts/preflights';
+import { assertWalletNotSanctionedLive } from '../../data/sanctions';
 import { CANCEL_COOLDOWN_SECONDS } from '../../contracts/loanLive';
 import { useMyOffersFull } from '../../data/hooks';
 import { readLinkedOfferIds, useAmendSource } from '../../data/desk';
@@ -270,6 +275,49 @@ function AmendForm({
   // Allowance unknown on a grow → hold Save (fail closed) until read.
   const allowanceKnown = growInfo === null || allowance.data !== undefined;
 
+  /** Mirror of the OrderTicket submit preflights, scoped to the amend
+   *  (Codex #1134 round-6 P2): `modifyOffer`'s `_assertMutableBy` gate
+   *  screens the caller for sanctions and requires BOTH legs unpaused
+   *  on every mutation, and a GROW additionally pulls the delta from
+   *  the wallet — so all three facts must be re-checked LIVE before
+   *  the "Approve first" transaction can spend allowance gas, and
+   *  again before the save (they can go stale while the approval
+   *  mines). Balance check is scoped to the grow delta asset+amount;
+   *  same failure copy as the ticket (the helpers throw the friendly
+   *  messages). */
+  async function runAmendPreflights(): Promise<void> {
+    if (!address || !walletChain || !publicClient || !src) return;
+    await assertWalletNotSanctionedLive(
+      publicClient,
+      walletChain.diamondAddress,
+      address,
+    );
+    const checks: Promise<void>[] = [
+      assertAssetNotPausedLive({
+        publicClient,
+        diamondAddress: walletChain.diamondAddress,
+        asset: src.lendingAsset as `0x${string}`,
+      }),
+      assertAssetNotPausedLive({
+        publicClient,
+        diamondAddress: walletChain.diamondAddress,
+        asset: src.collateralAsset as `0x${string}`,
+      }),
+    ];
+    if (growInfo) {
+      checks.push(
+        assertErc20BalanceLive({
+          publicClient,
+          token: growInfo.token,
+          owner: address,
+          amount: growInfo.delta,
+          symbol: growInfo.symbol,
+        }),
+      );
+    }
+    await Promise.all(checks);
+  }
+
   async function approve() {
     if (!growInfo || !address || !walletChain || !walletClient || !publicClient) {
       return;
@@ -277,6 +325,9 @@ function AmendForm({
     setBusy('approve');
     setError(null);
     try {
+      // Preflights BEFORE the allowance transaction — approval gas
+      // must never be spent on an amend modifyOffer will reject.
+      await runAmendPreflights();
       await ensureAllowance({
         publicClient,
         walletClient,
@@ -298,6 +349,9 @@ function AmendForm({
     setBusy('save');
     setError(null);
     try {
+      // Last look — the same facts re-checked after any approval
+      // mined and immediately before the state-changing write.
+      await runAmendPreflights();
       await write('modifyOffer', [BigInt(offer.offerId), parsed]);
       void queryClient.invalidateQueries({ queryKey: ['myOffers'] });
       void queryClient.invalidateQueries({ queryKey: ['activeOffers'] });
@@ -640,14 +694,16 @@ export function OpenOrdersPanel() {
   // offset vehicle (`offsetOfferToLoanId`, Codex #1134 round-4 P3) is
   // managed from its own surface, and OfferMutateFacet._assertMutableBy
   // reverts SaleVehicleImmutable / OffsetVehicleImmutable, so an Amend
-  // button on one only mints a doomed transaction. The indexer's
-  // `isSaleVehicle` flag covers BORROWER sale vehicles only (the
-  // worker sets it on LoanSaleOfferLinked; offset vehicles have no
-  // flag) — so lender rows are ALWAYS probed with the batched
-  // getOfferLinkedLoanId read the desk book uses, and borrower rows
-  // are probed when the flag is absent (chain-sourced, or an older
-  // worker). Fails open (rows kept) while the read is in flight or
-  // when it errors.
+  // button on one only mints a doomed transaction. Both worker flags
+  // (`isSaleVehicle` / `isOffsetVehicle`) drop the row IMMEDIATELY in
+  // the filter below (Codex #1134 round-6 P2 — honoring the offset
+  // flag only via the RPC linked-check left a worker-flagged offset
+  // vehicle showing Amend/Cancel while that batch loads or after it
+  // fails). The batched getOfferLinkedLoanId probe stays as the
+  // authoritative backstop: lender rows are ALWAYS probed (an older
+  // worker omits `isOffsetVehicle`), and borrower rows are probed when
+  // `isSaleVehicle` is absent (chain-sourced, or an older worker).
+  // The probe fails open (rows kept) while in flight or on error.
   const unflagged = useMemo(
     () =>
       (erc20Rows ?? []).filter(
@@ -669,7 +725,9 @@ export function OpenOrdersPanel() {
     if (erc20Rows === null) return null;
     return erc20Rows.filter(
       (o) =>
-        o.isSaleVehicle !== true && linkedCheck.data?.has(o.offerId) !== true,
+        o.isSaleVehicle !== true &&
+        o.isOffsetVehicle !== true &&
+        linkedCheck.data?.has(o.offerId) !== true,
     );
   }, [erc20Rows, linkedCheck.data]);
 

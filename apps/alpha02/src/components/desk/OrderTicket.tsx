@@ -92,7 +92,12 @@ const EXPIRY_SUBMIT_MARGIN_SECONDS = 60n;
  *  without these gates the user pays approval gas and then hits
  *  `OfferExpiryInPast`. Chain-time anchor doctrine: judge on
  *  `block.timestamp` (what the facet judges on), never the device
- *  clock — same anchor the Open orders cancel-cooldown gate uses. */
+ *  clock — same anchor the Open orders cancel-cooldown gate uses.
+ *  Both bounds are checked (Codex #1134 round-6 P3): the UPPER one
+ *  too, because a device clock running AHEAD of the chain passes the
+ *  form's device-clock horizon gate while the resolved deadline sits
+ *  beyond `block.timestamp + MAX_OFFER_EXPIRY_HORIZON` — the facet
+ *  would revert `OfferExpiryAboveCap` after the approval mined. */
 async function assertExpiryStillValidLive(
   publicClient: NonNullable<ReturnType<typeof usePublicClient>>,
   expiresAt: bigint,
@@ -101,6 +106,12 @@ async function assertExpiryStillValidLive(
   const block = await publicClient.getBlock({ blockTag: 'latest' });
   if (expiresAt <= block.timestamp + EXPIRY_SUBMIT_MARGIN_SECONDS) {
     throw new Error(copy.desk.ticket.expiryInvalid);
+  }
+  if (
+    expiresAt >
+    block.timestamp + BigInt(MAX_OFFER_EXPIRY_HORIZON_SECONDS)
+  ) {
+    throw new Error(copy.desk.ticket.expiryTooFar);
   }
 }
 

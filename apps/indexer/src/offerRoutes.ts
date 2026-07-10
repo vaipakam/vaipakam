@@ -238,7 +238,15 @@ export async function handleOffersStats(req: Request, env: Env): Promise<Respons
  *
  * ERC-20-only by construction (asset_type = 0 AND collateral_asset_type = 0):
  * NFT/1155 legs carry token identity and must not merge into a fungible
- * market row. Sale-vehicle offers are excluded — they are bookkeeping, not
+ * market row. Unhealed STUB rows are excluded too (is_stub = 0, Codex #1134
+ * round-6 P2): when the inline getOfferDetails read fails, processOfferLogs
+ * inserts a placeholder row with '0x' assets, asset_type 0 and
+ * duration_days 0 — which wears the ERC-20 shape and would otherwise
+ * aggregate into a fake ('0x','0x',0) market that the desk could advertise
+ * and auto-select. (/offers/active market-scoped reads don't need the
+ * predicate: any valid market filter — a 40-hex address or a 1..4385
+ * durationDays — can never match a stub's placeholder values.)
+ * Sale-vehicle offers are excluded — they are bookkeeping, not
  * quotable markets — and so are Preclose Option-3 OFFSET vehicles
  * (lender-style rows pinned to an existing loan; Codex #1134 round-5 P2 —
  * a market whose only row is an offset vehicle would get advertised and
@@ -261,6 +269,7 @@ export async function handleOffersMarkets(req: Request, env: Env): Promise<Respo
          FROM offers
         WHERE chain_id = ? AND status = 'active'
           AND asset_type = 0 AND collateral_asset_type = 0
+          AND is_stub = 0
           AND is_sale_vehicle = 0
           AND is_offset_vehicle = 0
           AND (expires_at = 0 OR expires_at > ?)

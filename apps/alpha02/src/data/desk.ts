@@ -47,6 +47,10 @@ const REFRESH_MS = 30_000;
  *  cap: hitting it with a cursor still open returns null (truncated
  *  ≠ complete), never a confident half-book. */
 const BOOK_FALLBACK_PAGES = 5;
+/** Tape page-walk bound — only ever consumed against an OLDER worker
+ *  that ignored the market params and served the global feed (a
+ *  market-scoping worker answers the tape in its first page). */
+const TAPE_FALLBACK_PAGES = 5;
 
 export interface DeskPair {
   lendingAsset: string;
@@ -252,14 +256,6 @@ export function useDeskTape(pair: DeskPair | null, durationDays: number) {
     refetchInterval: idleAware(REFRESH_MS),
     queryFn: async (): Promise<IndexedLoan[] | null> => {
       if (!indexerConfigured()) return null;
-      const page = await fetchRecentLoans(readChain.chainId, {
-        limit: 50,
-        lendingAsset: pair!.lendingAsset,
-        collateralAsset: pair!.collateralAsset,
-        durationDays,
-        excludeSaleVehicles: true,
-      });
-      if (page === null) return null;
       // Belt-and-suspenders client-side verification, mirroring the
       // book fallback (Codex #1134 round-5 P2): an older worker
       // ignores the market params AND excludeSaleVehicles=1, so the
@@ -271,13 +267,45 @@ export function useDeskTape(pair: DeskPair | null, durationDays: number) {
       // `isSaleVehicle` keep their rows — same behaviour as before).
       const wantLending = pair!.lendingAsset.toLowerCase();
       const wantCollateral = pair!.collateralAsset.toLowerCase();
-      return page.loans.filter(
-        (l) =>
-          l.isSaleVehicle !== true &&
-          l.lendingAsset.toLowerCase() === wantLending &&
-          l.collateralAsset.toLowerCase() === wantCollateral &&
-          l.durationDays === durationDays,
-      );
+      const matchesMarket = (l: IndexedLoan): boolean =>
+        l.isSaleVehicle !== true &&
+        l.lendingAsset.toLowerCase() === wantLending &&
+        l.collateralAsset.toLowerCase() === wantCollateral &&
+        l.durationDays === durationDays;
+      // Bounded `nextBefore` walk, same shape as the book fallback
+      // (Codex #1134 round-6 P2): against an older worker the first
+      // page is the newest 50 GLOBAL loans, so a market whose fills
+      // are older than that page would render a false "No fills yet"
+      // — a truncated scan presented as a complete empty tape. A row
+      // failing the market filter is the tell that the worker ignored
+      // the params (a market-scoping worker can only return matching
+      // rows); only then does the walk continue, and hitting the page
+      // cap with a cursor still open returns null (tri-state
+      // "unavailable"), never a possibly-false empty [].
+      const fills: IndexedLoan[] = [];
+      let before: number | undefined;
+      let untrusted = false;
+      for (let i = 0; i < TAPE_FALLBACK_PAGES; i++) {
+        const page = await fetchRecentLoans(readChain.chainId, {
+          limit: 50,
+          before,
+          lendingAsset: pair!.lendingAsset,
+          collateralAsset: pair!.collateralAsset,
+          durationDays,
+          excludeSaleVehicles: true,
+        });
+        if (page === null) return null;
+        const matched = page.loans.filter(matchesMarket);
+        if (matched.length !== page.loans.length) untrusted = true;
+        fills.push(...matched);
+        // Feed exhausted — the scan is complete either way. A clean
+        // first page keeps the pre-walk semantics: whether the worker
+        // filtered or the global page happened to be all-this-market,
+        // those ARE the newest fills of this market.
+        if (page.nextBefore === null || !untrusted) return fills;
+        before = page.nextBefore;
+      }
+      return null; // cap hit on an untrusted feed — truncated ≠ complete
     },
   });
 }
