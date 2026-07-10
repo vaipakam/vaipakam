@@ -1,0 +1,350 @@
+# Pro Rate Terminal — a trading-terminal page for the Vaipakam offer book
+
+**Status:** Design pass — proposed (scouted 2026-07-10, awaiting operator ratification)
+**Reference inspiration:** perp-DEX trade pages (chart + order book + ticket + positions in one dense screen)
+**Prior art this builds on:** [`UxDirectionDexCexHybrid.md`](UxDirectionDexCexHybrid.md) (#166),
+[`CanonicalLimitOrderPhase2Design.md`](CanonicalLimitOrderPhase2Design.md) (#183),
+[`RangeOffersDesign.md`](RangeOffersDesign.md), [`OfferModificationDesign.md`](OfferModificationDesign.md) (#193),
+[`OfferFillModesDesign.md`](OfferFillModesDesign.md) (#125), [`OfferExpiryGTTDesign.md`](OfferExpiryGTTDesign.md) (#195),
+[`MarketRateWidgetAndDepthTieredLTV.md`](MarketRateWidgetAndDepthTieredLTV.md),
+[`SignedOfferBookV05Design.md`](SignedOfferBookV05Design.md) (#396),
+[`BasicUserUXSimplification.md`](BasicUserUXSimplification.md).
+
+---
+
+## TL;DR — verdict first
+
+**Yes, it is possible — and it is mostly an assembly job, not a build job.** The scouting
+pass found that the contract surface for a limit-order trading terminal already exists
+end-to-end: limit interest rate (`interestRateBps` / `interestRateBpsMax`), GTC/GTT expiry
+(`expiresAt`), fill modes (`Partial`/`AON`/`IOC`), partial fills with `amountFilled`, in-place
+cancel/replace (`modifyOffer` / `setOfferRate` — contracts shipped, **no UI anywhere**), a
+pair-keyed depth read (`getActiveOffersByAssetPairRanked`), positions with pre-computed
+HF/LTV (`getUserDashboardLoans` → `LoanWithRisk`), and partial repay. The executed-rate
+history for a chart already exists **row-by-row** in the indexer's `loans` table
+(`interest_rate_bps`, `start_at`, `lending_asset`, `collateral_asset`); the only data gap is
+an OHLC aggregation endpoint + a pair index + a chart library (none in the workspace).
+
+**The one structural divergence from a perp DEX**: Vaipakam's book is keyed by the triple
+`(lendingAsset, collateralAsset, durationDays)` — the on-chain matcher requires *exact*
+duration equality (`LibOfferMatch.sol` `DurationMismatch`). A perp has one perpetual market
+per pair; we have one market per pair **per tenor**. The terminal must therefore surface a
+**tenor selector** (7d / 30d / 90d / custom) next to the pair selector — closer to a futures
+expiry picker than a perp market chip, and honest to the protocol's actual microstructure.
+
+**Recommended approach**: build it as an **alpha02 Advanced-mode route** (`/trade`), not a
+new app and not an apps/defi rework — phased, with the rate chart in phase 2. Rationale in §4.
+
+---
+
+## 1. Context — what the scout found
+
+### 1.1 On-chain: the terminal surface is ~90% shipped
+
+| Terminal concept | Vaipakam counterpart | Fit |
+|---|---|---|
+| Limit price → **limit interest rate** | `interestRateBps` (single-value) or `[interestRateBps, interestRateBpsMax]` band (`LibVaipakam.sol:1550/1585`) | 1:1 |
+| Limit order (post to book) | `createOffer(CreateOfferParams)` (`OfferCreateFacet.sol:369`), mints a position NFT | 1:1 |
+| GTC / GTT | `expiresAt == 0` sentinel / non-zero `expiresAt` + lazy expiry + permissionless clean-up of lapsed offers (#195) | 1:1 |
+| IOC / AON | `FillMode { Partial, Aon, Ioc }` (`LibVaipakam.sol:731`); IOC requires expiry, AON requires single-value amount (#125). FOK folded into AON, POST deliberately not built (every offer is a maker) | 1:1 (FOK/POST rejected by design) |
+| Order-book depth by rate | `MetricsFacet.getActiveOffersByAssetPairRanked(lend, coll)` → `OfferRanking[]` (`MetricsFacet.sol:634`) — the pair-keyed book read | 1:1 (client sorts/aggregates; must additionally slice by `durationDays`) |
+| Taker crossing the book | Two paths: manual `acceptOffer` (full fill at maker terms, EIP-712 term-bound #662) and the permissionless midpoint-crossing matcher `matchOffers(L, B)` + `previewMatch` (`OfferMatchFacet.sol:140/170`) | Partial — see §5.2 |
+| Cancel / replace (amend) | `OfferMutateFacet.modifyOffer` / `setOfferRate` / `setOfferAmount` / `setOfferCollateral` (in-place, same offerId, unaccepted only) + `cancelOffer` | 1:1 — **contracts shipped, no UI in either app** |
+| Open orders panel | `getUserOffersByStatePaginated`, `OfferView` DTO (state, filled, expiry) | 1:1 |
+| Positions panel | `Loan` struct + `getUserDashboardLoans` → `LoanWithRisk` (pre-computed `ltvBps` + `healthFactor`) | 1:1 |
+| Reduce / partial close | `RepayFacet.repayPartial` (gated on `loan.allowsPartialRepay`) | 1:1 (opt-in per loan) |
+| Mark / index price | `OracleFacet.getAssetPrice` (Chainlink + 2-of-N cross-validation) — spot only | Partial — no mark/funding construct, deliberately (see §6) |
+| Gasless order posting | `SignedOfferFacet` EIP-712 signed offers (v0.5 shipped) + `matchSignedOffer` (v0.6) | Exists — phase-3 candidate |
+| Self-trade prevention | Blocked in the matcher (`SelfTrade`) per `SelfTradePreventionADR.md` | 1:1 |
+
+### 1.2 Data: the rate series exists; the aggregation doesn't
+
+- The indexer's `loans` table (`apps/indexer/migrations/0005_loans_and_activity.sql:29-64`)
+  carries **every executed loan's** `interest_rate_bps`, `start_at`, `lending_asset`,
+  `collateral_asset`, `principal`, `duration_days`, `status`. This is the trade tape.
+- The `offers` table carries the live book (rate bands, `amount_filled`, `expires_at`,
+  `fill_mode`). Depth is derivable per pair.
+- **Missing**: an OHLC/candle endpoint (none), per-pair grouping on any endpoint
+  (`/loans/timeseries` buckets TVL by `lending_asset` only; `/loans/stats` returns one
+  global mean rate), a `(chain_id, lending_asset, collateral_asset, start_at)` index, and
+  a charting library (no viz dependency anywhere in the workspace).
+- **Realtime**: the indexer has a per-chain WebSocket push (`/ws/chain/:chainId` →
+  `ChainIngestDO`) and alpha02 already mounts the client (`IndexerPushSync.tsx`) — but the
+  server flag `CHAIN_INGEST_VIA_DO` is **off by default**, so today everything is a 30s
+  idle-aware poll. A terminal is the first surface that genuinely justifies flipping it.
+
+### 1.3 UI: one order-book layout exists; the flagship app has none
+
+- `apps/defi/src/pages/OfferBook.tsx` (2.6k lines) is already a two-sided book: lender
+  table above, borrower table below, a **market-anchor rate band** between them,
+  pair/duration/liquidity filters, rank-by-distance-to-anchor, accept modal with Permit2.
+- `apps/alpha02` (the flagship redesign) has only a flat advanced-mode list
+  (`pages/Offers.tsx`) — no table, no depth, no pair pivot.
+- `packages/ui` is deliberately thin (5 primitives). No dense multi-panel layout
+  primitive, no chart. Both would be net-new.
+- The Basic/Advanced doctrine (`ModeContext`, `BasicUserUXSimplification.md`) gives the
+  terminal a natural home: an advanced-only route, hidden from Basic nav, deep-linkable.
+
+---
+
+## 2. What the page is (and is not)
+
+**It is**: the power-user surface for the offer book — a single dense screen where a rate
+trader can (a) read the market for a (pair, tenor), (b) post/amend/cancel limit-rate
+offers without leaving the screen, (c) hit the other side, and (d) watch their open
+orders and live positions with HF risk. It is the culmination of the #166 ADR's Tier-A
+program: every idiom it uses (limit ticket, book sides, GTC/GTT chips, fill-mode chips,
+in-place amend, fill-progress bars) is already ratified there.
+
+**It is not**: a perp venue. There is no leverage slider, no funding rate, no mark-price
+liquidation, no 24h-ticker theatre. The #166 ADR explicitly rejected "funding rate",
+"margin ratio", "stop-loss", and AMM depth idioms — this design inherits those
+rejections wholesale (§6).
+
+### 2.1 Vocabulary (locked per #166)
+
+- The y-axis / price column is **"Rate (APR %)"** — never "price". BPS on hover (A.6).
+- **Asks = lender offers** (each lender's `interestRateBps` floor — "I lend at ≥ X%"),
+  sorted ascending; best ask = lowest lender rate.
+- **Bids = borrower offers** (each borrower's `interestRateBpsMax` ceiling — "I pay ≤ Y%"),
+  sorted descending; best bid = highest borrower rate.
+- **Book mid** = midpoint of best bid / best ask when both exist. The market is **crossed**
+  when best bid ≥ best ask — unlike a CEX this is a *normal resting state* here (see §5.2).
+- A **market** = `(lendingAsset, collateralAsset, durationDays)`. UI: pair chip + tenor chip.
+
+---
+
+## 3. Page layout
+
+```
+┌──────────────────────────────────────────────────────────────────────────────┐
+│ [WETH / USDC ▾]  [30d ▾]   last 5.20%   book 5.05 / 5.40   oracle $2,431     │  header strip
+├───────────────────────────────────────────┬──────────────────────────────────┤
+│                                           │  ORDER BOOK (rate ladder)        │
+│   RATE CHART (phase 2)                    │   asks (lenders)   size   Σ      │
+│   executed-rate candles / step-line       │   5.90%            12.0k  38.2k  │
+│   + book-mid overlay                      │   5.40%            26.2k  26.2k  │
+│   + trade markers when sparse             │   ── mid 5.23% · spread -0.35 ── │
+│                                           │   5.05%            18.0k  18.0k  │
+│                                           │   4.80%             7.5k  25.5k  │
+│                                           │   bids (borrowers)               │
+│                                           ├──────────────────────────────────┤
+│                                           │  ORDER TICKET                    │
+│                                           │  [Lend | Borrow]                 │
+├───────────────────────────────────────────┤  amount ▸ rate ▸ collateral      │
+│  TAPE — recent fills (loans initiated)    │  [GTC ▾] [Partial ▾]             │
+│  5.20%  8.0k  2m ago   5.35%  1.2k  1h    │  live precheck (sim) ▸ [Post]    │
+├───────────────────────────────────────────┴──────────────────────────────────┤
+│  [Open orders]  [Positions]  [History]                                       │
+│  own offers: rate/size/filled-bar/expiry/✎ amend/✕ cancel                     │
+│  loans: side/principal/rate/HF-band/accrued/actions (repay·partial·top-up)   │
+└──────────────────────────────────────────────────────────────────────────────┘
+```
+
+Panel-by-panel, with the backing read/write:
+
+| Panel | Reads | Writes | Notes |
+|---|---|---|---|
+| Header strip | book from `getActiveOffersByAssetPairRanked` sliced by tenor; last trade from indexer `/loans/recent` (pair-filtered); `getAssetPrice` for the collateral oracle chip | — | Tenor chips show only tenors with live orders + the 3 presets (7/30/90d) |
+| Order book | same ranked read, client-aggregated into rate levels (sum size per rate; own orders highlighted) | click a level → pre-fills the ticket at that rate (maker) or arms a direct `acceptOffer` on the top row (taker) | Fill-progress from `amountFilled/amountMax` (A.9) |
+| Order ticket | `useTxSimulation` precheck (reuses the #1112 under-collateral banner), `quoteOfferRateBps` as a "suggested rate" hint | `createOffer` / `createOfferWithPermit` | Side toggle, amount (+ optional range), limit rate (+ optional band), collateral, tenor, expiry preset (GTC/24h/7d/custom), fill-mode chip (Partial/AON/IOC) |
+| Tape | indexer `/loans/recent` pair+tenor filtered (new server-side filter, §7 P2) | — | Sparse-honest: shows "N fills this week" not a fake ticker |
+| Open orders | `getUserOffersByStatePaginated` + `OfferView` | **`modifyOffer` / `setOfferRate` (first UI for #193)**, `cancelOffer` | Amend = pencil → inline edit of rate/size/collateral, one tx, same offerId |
+| Positions | `getUserDashboardLoans` → `LoanWithRisk` | `repayLoan` / `repayPartial` / add-collateral | HF colour bands per B.1; accrued interest computed client-side (`LibEntitlement` mirror already exists in the dashboard flow) |
+| History | indexer `/activity?actor=` | — | |
+
+Mobile: panels stack (header → ticket → book → positions); the chart collapses to a
+sparkline in the header strip. alpha02 is mobile-first; the terminal is the one page
+allowed to be desktop-optimised, but it must degrade honestly rather than hide actions.
+
+---
+
+## 4. Where it lives — decision
+
+**Option A (recommended): alpha02 Advanced-mode route `/trade`.**
+- alpha02 is the flagship; it already has the mode doctrine (advanced routes hidden from
+  Basic nav, deep-linkable), push-sync client, tx simulation, Permit2, kill-switch,
+  GoPlus badges, EIP-712 accept — every flow the terminal composes is already built and
+  live-reviewed there. The terminal becomes the *reveal payoff* of Advanced mode.
+- Basic-mode users never see it; the guided Borrow/Lend flows remain the front door.
+  This preserves the naive-user-first thesis while giving power users a reason to stay.
+
+**Option B: rework apps/defi's OfferBook into the terminal.** Rejected: defi already has
+the two-sided book but is the legacy surface; investing the terminal there splits the
+roadmap and duplicates alpha02's newer flow plumbing (simulation, push, kill-switch).
+
+**Option C: a new `apps/pro` app.** Rejected: a third SPA to deploy/maintain for one
+page; loses shared mode/session context; nothing about the terminal needs an app boundary.
+
+**Naming**: route `/trade`, nav label **"Trade"** (advanced-only). The page title uses
+"Rate Terminal" — rate-first, per the vocabulary lock.
+
+---
+
+## 5. Market-microstructure honesty (the load-bearing design constraints)
+
+### 5.1 The tenor dimension is not optional
+
+The matcher requires exact `durationDays` equality, so depth at "WETH/USDC" as a single
+market **does not exist** on-chain — depth exists per tenor. Rendering one merged book
+would advertise liquidity that cannot cross. The tenor chip is therefore a first-class
+market selector, and the book/chart/tape all key on the triple. A "all tenors" overview
+table (tenor → best bid/ask/depth) can sit in the header dropdown for discovery.
+
+### 5.2 Two crossing regimes — and the UI must be honest about which is live
+
+- **Direct accept** (always on): a taker fills a specific maker offer *in full* at the
+  maker's terms. This is "hit the top of book" and is what the book's taker affordance does.
+- **The crossing matcher** (`matchOffers`, midpoint rate/amount, partial fills, 1% LIF to
+  the matcher) is gated by `ConfigFacet.partialFillEnabled` — **ON on testnet deploys
+  (deploy-testnet.sh flips it), OFF by default on a fresh mainnet deploy**. When it's on,
+  a crossed book (best bid ≥ best ask) is *matchable* and the UI shows a "crossable"
+  band with `previewMatch` output ("these two orders can match at 5.23% midpoint —
+  anyone can execute and earn the matcher fee"). When it's off, the crossed band renders
+  as informational only. The flag is read at runtime (`getMasterFlags`); the UI must not
+  hard-code either state.
+- There is **no price-time priority on-chain**. The book's sort is a UI ranking, not an
+  execution queue. Copy must never promise "your order is #2 in the queue"; it can say
+  "best rate on your side".
+
+### 5.3 Thin-market honesty (this decides whether the chart adds or destroys value)
+
+Testnet (and early mainnet) volumes are a handful of fills per day per pair. A
+candlestick chart pretending to be a liquid market would be theatre — and misleading
+theatre is exactly what alpha02's honesty rules (empty-state doctrine, F-20260702-001)
+exist to prevent. Rules:
+
+1. **Candles only when a bucket has ≥ 1 fill; no interpolation.** Gaps render as gaps.
+2. Below a density threshold (e.g. < 10 fills in the visible range) the chart drops to
+   **step-line + discrete trade markers** — visually "sparse tape", not "flat market".
+3. Every bucket's tooltip shows **fill count + total principal**, not just OHLC.
+4. The **book-mid overlay** (quoted, not executed) is drawn in a distinct style and
+   labelled "quoted mid" — never blended with executed candles.
+5. No 24h %-change ticker until a pair sustains meaningful daily fills; the header shows
+   "last fill: 5.20% · 2h ago" instead. (A %-change on 2 trades is noise sold as signal.)
+
+---
+
+## 6. Explicitly out of scope (inherited rejections from #166 + new)
+
+- **Funding rate, mark price, leverage, margin ratio, stop-loss** — no protocol
+  counterpart; the loan rate is fixed at init (E2). Rejected in #166; stays rejected.
+- **AMM-style depth curve** — we are an order book; the AMM idiom implies continuous fill.
+- **Price-time priority / matching-engine telemetry** — doesn't exist on-chain (§5.2).
+- **FOK / POST fill modes** — deliberately not built contract-side (#125 rationale).
+- **An order-management backend** (server-held orders) — the book is on-chain + signed
+  offers; the terminal never custodies intent server-side beyond what #396 already does.
+- **New contract work.** Phase 1–2 require **zero** contract changes. (The only candidate
+  — a paginated variant of `getActiveOffersByAssetPairRanked` if pair buckets grow large —
+  is deferred until a real pair exceeds ~200 live offers.)
+
+---
+
+## 7. The rate chart — data plan (phase 2)
+
+**Endpoint** (new, `apps/indexer`):
+`GET /loans/rate-candles?chainId&lendingAsset&collateralAsset&durationDays&interval=1h|4h|1d&range=7d|30d|90d|all`
+→ `{ buckets: [{ t, open, high, low, close, fills, principalTotal }] }`, computed by SQL
+`GROUP BY` over `loans` (`interest_rate_bps`, `start_at`), pair+tenor filtered,
+`Cache-Control: max-age=60`. Executed fills only (`LoanInitiated`); no synthetic data.
+
+**Migration**: add index `(chain_id, lending_asset, collateral_asset, start_at)` on
+`loans` (new file under `apps/indexer/migrations/`, per the D1 schema discipline).
+
+**Server-side pair filters** added to `/loans/recent` (tape) and `/offers/active`
+(book fallback when RPC is unavailable) — both currently return unfiltered rows.
+
+**Chart library**: `lightweight-charts` (TradingView's OSS canvas lib, ~45 kB gzipped,
+zero network calls — CSP-clean, MIT-adjacent license (Apache-2.0), dark/light theming).
+It is the de-facto standard for exactly this aesthetic and supports candles, step-lines,
+and markers natively. Alternatives considered: recharts (SVG, wrong idiom for a
+terminal, heavier per-point), d3 (a toolkit, not a chart — highest build cost), visx
+(same). New dependency scoped to alpha02 only (`apps/alpha02/package.json`), lazy-loaded
+with the `/trade` route chunk so Basic-mode users never download it.
+
+**Chart content**: executed-rate series (candles/step per §5.3) + "quoted mid" overlay
+derived from the live book + optional volume (principal) histogram. The existing
+`useMarketAnchorRate` logic (freshest matched rate) seeds the header's "last" value on
+cold start.
+
+---
+
+## 8. Phasing
+
+**Phase 1 — Terminal shell (no chart), alpha02 `/trade`.** Header strip + pair/tenor
+selectors, rate-ladder book (from `getActiveOffersByAssetPairRanked` + indexer fallback),
+order ticket (createOffer with expiry + fill-mode chips, simulation precheck), tape from
+`/loans/recent` (client-filtered until P2 lands), open-orders panel with **cancel + the
+first amend UI (#193)**, positions panel with HF bands + repay/partial actions. All
+data on the existing 30s idle-aware poll + push-sync invalidation. *Estimated: the
+largest single alpha02 page to date, but composed entirely of existing flows —
+comparable to the OfferFlow build.*
+
+**Phase 2 — Rate history.** Indexer OHLC endpoint + migration + pair filters;
+lightweight-charts integration; sparse-honesty rules (§5.3); tape goes server-filtered.
+
+**Phase 3 — Live-ness + depth polish.** Flip `CHAIN_INGEST_VIA_DO` on staging and route
+book/tape invalidations through the existing `IndexerPushSync`; book delta animations;
+crossable-band `previewMatch` surfacing (testnet, where the matcher is on); gasless
+signed-offer posting from the ticket (#396 v0.5 accept paths already exist).
+
+Each phase is independently shippable and independently valuable; phase 1 alone already
+delivers the two things no UI currently offers (a real book view in the flagship app +
+amend-in-place).
+
+**Verification (per the alpha02 DoD)**: each phase ships CI-Anvil e2e specs (book
+rendering from seeded offers, ticket posting, amend, cancel) + a live driver under
+`e2e/live/` (post → amend → cancel a real testnet offer; chart renders seeded history),
+and updates `apps/alpha02/e2e/COVERAGE.md` in the same diff.
+
+---
+
+## 9. Does this add value? (the honest take)
+
+**For three personas, clearly yes:**
+1. **Rate-shopping power users** — today comparing offers means scrolling a flat list;
+   a rate ladder answers "what's the market for WETH/USDC 30d" in one glance. This is
+   the single highest-leverage view the platform lacks.
+2. **Lender market-makers** — range offers + partial fills + amend-in-place *are* a
+   market-making toolkit; the contracts shipped it, but without a terminal UI nobody can
+   actually operate it. The amend UI alone (one tx reprice, keeps offerId/NFT/indexer
+   follow-state) is a real cost saving vs today's cancel+recreate.
+3. **Keepers/solvers** — the crossable-band + `previewMatch` surfacing makes the 1% LIF
+   matcher opportunity visible, which seeds the third-party matcher ecosystem the
+   protocol design assumes.
+
+**The rate chart adds value with the honesty rules, and destroys it without them.**
+"What does this pair actually clear at?" is genuine price discovery that no lending
+UI here answers today — even 20 lifetime fills, drawn honestly (markers + step-line +
+fill counts), beat the current nothing. But a candlestick pretending thin data is a
+liquid market misleads exactly the users a terminal attracts. §5.3 is the difference.
+
+**The risk to manage is persona confusion, not effort.** Vaipakam's thesis (alpha02) is
+naive-user-first; a terminal is the opposite persona. The Advanced-mode boundary already
+solves this — Basic users never see `/trade`; the guided flows remain the front door.
+The failure mode to avoid is letting terminal idioms leak back into Basic surfaces.
+
+**Better-approach check**: the plausible alternatives — enriching the flat Offers list
+incrementally, or building the terminal into apps/defi — were considered and rejected
+(§4): the first can't express a two-sided ladder + ticket + positions in one screen
+(which is the entire point), the second invests in the legacy surface. One genuinely
+cheaper alternative exists: **phase 1 without the chart panel** (chart column collapsed
+to the header sparkline) — that is in fact what phasing already does; the chart is
+strictly additive.
+
+---
+
+## 10. Open questions for ratification
+
+1. **Route + nav**: `/trade` with advanced-only nav entry — confirm, or keep it
+   unlinked (URL-only) for a soft launch?
+2. **Pair universe**: chip row limited to pairs with live offers + curated defaults
+   (stable × WETH), with the custom-address picker behind "more"? (GoPlus screening
+   already covers pasted assets.)
+3. **Tenor presets**: 7 / 30 / 90d as the promoted chips (30d default)?
+4. **Does the tape belong in phase 1** (client-filtered `/loans/recent`) or wait for the
+   server-side pair filter in phase 2? (Recommend phase 1, client-filtered — testnet row
+   counts are small.)
+5. **lightweight-charts** as the chart dependency — any licensing/vendoring objection?
+   (Apache-2.0, requires the small "attribution notice" — a one-line link in the chart
+   corner, same as every TradingView-lite integration.)
