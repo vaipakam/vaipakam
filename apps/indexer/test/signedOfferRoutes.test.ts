@@ -602,7 +602,12 @@ function stubRpc(state: { nonceUsed: boolean; filled: bigint }): void {
           : input instanceof URL
             ? input.href
             : input.url;
-      if (!url.startsWith(RPC_MOCK)) {
+      // Exact-origin comparison (not startsWith/includes): a substring
+      // match would also accept e.g. http://rpc.mockevil.com — harmless
+      // in a throw-on-mismatch test guard, but CodeQL rightly flags the
+      // pattern (js/incomplete-url-substring-sanitization), and the
+      // parsed comparison is strictly more precise anyway.
+      if (new URL(url).origin !== new URL(RPC_MOCK).origin) {
         throw new Error(`unexpected fetch to ${url}`);
       }
       const raw =
