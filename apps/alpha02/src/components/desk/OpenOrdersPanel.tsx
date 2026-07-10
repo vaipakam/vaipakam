@@ -35,7 +35,7 @@ import { assertWalletNotSanctionedLive } from '../../data/sanctions';
 import { CANCEL_COOLDOWN_SECONDS } from '../../contracts/loanLive';
 import { useMyOffersFull } from '../../data/hooks';
 import { readLinkedOfferIds, useAmendSource } from '../../data/desk';
-import { useAllowanceForPlan } from '../../lib/submitProgress';
+import { readAllowance, useAllowanceForPlan } from '../../lib/submitProgress';
 import { EmptyState, UnavailableState } from '../EmptyState';
 import { AssetType } from '../../lib/types';
 import { captureTxError, isPlainDecimal } from '../../lib/errors';
@@ -319,6 +319,14 @@ function AmendForm({
   }
 
   async function approve() {
+    // Same validity gates as Save (Codex #1134 round-7 P2): a grow
+    // with an otherwise-invalid shape (lender raising `amountMax`
+    // while setting `amount > amountMax`, or zeroing a required
+    // amount) still computes a positive delta, so `needsApproval`
+    // can be true while Save is disabled — without this gate the
+    // Approve button would spend an approval transaction on an
+    // amend the UI already knows cannot be saved.
+    if (invalid || nonPositive) return;
     if (!growInfo || !address || !walletChain || !walletClient || !publicClient) {
       return;
     }
@@ -352,6 +360,28 @@ function AmendForm({
       // Last look — the same facts re-checked after any approval
       // mined and immediately before the state-changing write.
       await runAmendPreflights();
+      // Grow allowance last look (Codex #1134 round-7 P2): the cached
+      // `useAllowanceForPlan` read that armed Save can go stale — the
+      // user can spend or revoke the Diamond allowance after the
+      // Approve step, and `modifyOffer` would then revert inside its
+      // delta pull AFTER gas is spent. Re-read live immediately before
+      // the write; on a shortfall re-arm the explicit Approve-first
+      // step (this form's two-step UX) instead of silently minting a
+      // second wallet transaction inside Save. An unreadable allowance
+      // fails closed the same way.
+      if (growInfo) {
+        if (!address || !walletChain || !publicClient) return;
+        const live = await readAllowance({
+          publicClient,
+          token: growInfo.token,
+          owner: address,
+          spender: walletChain.diamondAddress,
+        });
+        if (live === undefined || live < growInfo.delta) {
+          void allowance.refetch();
+          throw new Error(text.amendAllowanceLost);
+        }
+      }
       await write('modifyOffer', [BigInt(offer.offerId), parsed]);
       void queryClient.invalidateQueries({ queryKey: ['myOffers'] });
       void queryClient.invalidateQueries({ queryKey: ['activeOffers'] });
@@ -483,7 +513,10 @@ function AmendForm({
           <button
             type="button"
             className="btn btn-secondary btn-sm"
-            disabled={busy !== null || !onSupportedChain}
+            // Mirrors Save's validity gates (Codex #1134 round-7 P2) —
+            // approval gas must never be spent while the form is in a
+            // shape Save itself refuses.
+            disabled={busy !== null || !onSupportedChain || invalid || nonPositive}
             onClick={() => void approve()}
           >
             {busy === 'approve' ? text.approving : text.approveFirst}

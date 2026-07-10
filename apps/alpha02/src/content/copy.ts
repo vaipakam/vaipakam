@@ -939,6 +939,8 @@ export const copy = {
       amendPositive: 'Amounts and collateral must be greater than zero.',
       amendGrowNote: (amount: string, symbol: string) =>
         `Growing this order locks ${amount} ${symbol} more from your wallet — it needs a token approval first.`,
+      amendAllowanceLost:
+        'The token approval for this grow is no longer sufficient — nothing was changed. Please approve again.',
       approveFirst: 'Approve first',
       approving: 'Approving…',
       save: 'Save changes',
