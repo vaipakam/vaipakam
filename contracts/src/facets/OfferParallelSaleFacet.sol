@@ -377,6 +377,15 @@ contract OfferParallelSaleFacet is
 
         bool flaggedFound = false;
 
+        // Scenario A (pre-loan) — the sale routes proceeds to the offer creator
+        // (the borrower/seller); it is the ONLY value recipient on that path, and
+        // its fill screen (`assertOfferFillNotSanctioned`) now consults the registry
+        // fail-closed (Codex #1146-r1 P1). Register it so an outage-time fill is
+        // barred. In Scenario B the creator is superseded by the live holders below,
+        // but registering it is harmless (self-heals on a clean read).
+        flaggedFound =
+            _syncRecipientFlag(s, s.offers[uint256(offerId)].creator) || flaggedFound;
+
         // The seller-signed fee-leg recipients recorded on the executor.
         address pinnedExecutor = s.offerPrepayListingExecutor[offerId];
         if (pinnedExecutor != address(0)) {

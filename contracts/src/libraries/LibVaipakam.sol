@@ -7177,23 +7177,35 @@ library LibVaipakam {
         }
     }
 
-    /// @notice #1144 (S10 Invariant B) — registry-aware recipient screen for the
-    ///         prepay-sale INLINE holder payout. Reverts `SanctionedAddress(who)`
-    ///         when `who` is flagged by the fail-OPEN oracle read OR carries a
-    ///         COMMITTED `sanctionsConfirmedFlagged` marker (seeded out-of-band by
-    ///         `syncPrepaySale{Listing,Offer}` / `refreshSanctionsFlag`).
-    /// @dev    This is the fail-closed BACKSTOP the prepay-sale fill path consults.
-    ///         It is deliberately NOT `assertNotSanctionedFailClosed`: that hard-
-    ///         reverts on ANY oracle outage (bricking an honest holder's settlement
-    ///         during a blip). Here an UNregistered recipient still settles during
-    ///         an outage — only a recipient the committed registry already knows to
-    ///         be flagged is barred. `address(0)` is a no-op (a burned-NFT holder
-    ///         resolved via `_ownerOfRaw` — nothing to pay, nothing to bar).
+    /// @notice #1144 (S10 Invariant B) — registry-aware "is this recipient barred
+    ///         from a prepay-sale INLINE payout / fill?" read. The fail-closed
+    ///         BACKSTOP the prepay-sale fill path consults, with the SAME
+    ///         outage-only-registry semantics as the `_assertMovePartyNotSanctioned`
+    ///         position-move gate (Codex #1146-r1 P2):
+    ///           - no oracle configured (`address(0)`, the disabled regime) ⇒ NOT
+    ///             barred (the committed registry is ignored entirely, per §1349);
+    ///           - authoritative `Flagged` ⇒ barred;
+    ///           - authoritative `Clean` ⇒ NOT barred — a stale/not-yet-refreshed
+    ///             marker on a now-clean (or de-listed) wallet never bars, and the
+    ///             sync path self-heals it via `syncBuyerSanctionsFlag`;
+    ///           - `Unavailable` (oracle set but unreachable — a genuine outage) ⇒
+    ///             barred ONLY if the wallet carries a COMMITTED
+    ///             `sanctionsConfirmedFlagged` marker (the outage backstop).
+    ///         Deliberately NOT `assertNotSanctionedFailClosed`, which hard-reverts
+    ///         on ANY outage (bricking an honest holder). `address(0)` (a burned-NFT
+    ///         holder resolved via `_ownerOfRaw`) is never barred.
+    function isRecipientBarred(address who) internal view returns (bool) {
+        if (who == address(0)) return false;
+        if (storageSlot().sanctionsOracle == address(0)) return false; // disabled regime
+        SanctionsRead st = sanctionsStatus(who);
+        if (st == SanctionsRead.Flagged) return true; // oracle-up authoritative flag
+        if (st == SanctionsRead.Clean) return false; // oracle-up clean — stale marker ignored
+        return storageSlot().sanctionsConfirmedFlagged[who]; // Unavailable ⇒ outage backstop
+    }
+
+    /// @notice Revert `SanctionedAddress(who)` when {isRecipientBarred} holds.
     function assertRecipientNotBarred(address who) internal view {
-        if (who == address(0)) return;
-        if (isSanctionedAddress(who) || storageSlot().sanctionsConfirmedFlagged[who]) {
-            revert SanctionedAddress(who);
-        }
+        if (isRecipientBarred(who)) revert SanctionedAddress(who);
     }
 
     /// @notice Internal accountant for protocol-deposited ERC-20

@@ -491,7 +491,7 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](29);
+        selectors = new bytes4[](30);
         selectors[0] = ProfileFacet.updateKYCStatus.selector;
         selectors[1] = ProfileFacet.getUserCountry.selector;
         selectors[2] = ProfileFacet.isKYCVerified.selector;
@@ -524,6 +524,8 @@ contract HelperTest {
         selectors[26] = ProfileFacet.isSanctionsConfirmedFlagged.selector;
         selectors[27] = ProfileFacet.enforcePositionMoveNotSanctioned.selector;
         selectors[28] = ProfileFacet.enforcePositionSaleMove.selector;
+        // #1144 — registry-aware prepay-sale fill bar.
+        selectors[29] = ProfileFacet.isRecipientBarred.selector;
         return selectors;
     }
 

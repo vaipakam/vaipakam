@@ -468,6 +468,31 @@ contract OfferParallelSaleFacetTest is SetupTest {
         OfferParallelSaleFacet(address(diamond)).syncPrepaySaleOffer(uint96(OFFER_ID));
     }
 
+    function test_syncPrepaySaleOffer_flaggedScenarioASeller_registersAndCancels() public {
+        // Codex #1146-r1 P1 — the pre-loan (Scenario A) sale routes proceeds to the
+        // offer creator (borrower/seller); the sync MUST register that recipient too.
+        MockSanctionsList m = new MockSanctionsList();
+        address cleanFee = makeAddr("cleanOfferFeeA");
+        _postOfferListingWithFee(m, cleanFee); // borrowerHolder is the offer creator
+
+        m.setFlagged(borrowerHolder, true); // seller flagged AFTER the clean post
+
+        vm.prank(nonCreator);
+        OfferParallelSaleFacet(address(diamond)).syncPrepaySaleOffer(uint96(OFFER_ID));
+
+        assertTrue(
+            ProfileFacet(address(diamond)).isSanctionsConfirmedFlagged(borrowerHolder),
+            "flagged Scenario-A seller (offer creator) MUST be registered"
+        );
+        vm.prank(nonCreator);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                OfferParallelSaleFacet.ParallelSaleListingNotFound.selector, uint96(OFFER_ID)
+            )
+        );
+        OfferParallelSaleFacet(address(diamond)).syncPrepaySaleOffer(uint96(OFFER_ID));
+    }
+
     function test_syncPrepaySaleOffer_cleanRecipients_leavesListingLive() public {
         MockSanctionsList m = new MockSanctionsList();
         address cleanFee = makeAddr("cleanOfferFee2");

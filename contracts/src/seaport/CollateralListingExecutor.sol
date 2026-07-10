@@ -1783,18 +1783,17 @@ contract CollateralListingExecutor is
 
     // ─── Internal helpers ──────────────────────────────────────────────
 
-    /// @notice #1144 (S10 Invariant B) — at-fill recipient bar. Combines the
-    ///         fail-OPEN oracle screen (`isSanctionedAddress`) with the fail-CLOSED
-    ///         committed-registry read (`isSanctionsConfirmedFlagged`). The latter
-    ///         is the backstop: a recipient flagged during an oracle outage but
-    ///         already registered by the permissionless `syncPrepaySale*` /
-    ///         `refreshSanctionsFlag` is barred from the fill even while the oracle
-    ///         reads open. Both are `staticcall`s the diamond routes to
-    ///         `ProfileFacet`; the fill path is not gas-critical.
+    /// @notice #1144 (S10 Invariant B) — at-fill recipient bar. Delegates to the
+    ///         diamond's registry-aware, outage-hardened `isRecipientBarred`: it
+    ///         bars an authoritatively-`Flagged` recipient AND — during a genuine
+    ///         oracle outage — a recipient the committed `sanctionsConfirmedFlagged`
+    ///         registry already knows (seeded by the permissionless
+    ///         `syncPrepaySale*` / `refreshSanctionsFlag`), while never barring a
+    ///         disabled-regime or oracle-up-clean wallet on a stale marker. A single
+    ///         `staticcall` the diamond routes to `ProfileFacet`; the fill path is
+    ///         not gas-critical.
     function _recipientBarred(address who) private view returns (bool) {
-        return
-            IVaipakamSanctionsView(vaipakamDiamond).isSanctionedAddress(who) ||
-            IVaipakamSanctionsView(vaipakamDiamond).isSanctionsConfirmedFlagged(who);
+        return IVaipakamSanctionsView(vaipakamDiamond).isRecipientBarred(who);
     }
 
     /// @notice Verify a consideration leg matches the loan's lending-asset

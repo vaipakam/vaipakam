@@ -658,7 +658,15 @@ contract PrepayListingFacet is
         // `LibVaipakam._assertNotSanctioned` directly — that helper
         // keys by `address(this)`, so an executor-context call would
         // miss the diamond's sanctions oracle config).
-        LibVaipakam._assertNotSanctioned(borrowerWallet);
+        //
+        // #1144 (S10 Invariant B, Codex #1146-r1 P1) — the pre-loan (Scenario A)
+        // parallel sale routes proceeds to this borrower/seller, and this is the
+        // ONLY screen on that recipient. A fail-OPEN `_assertNotSanctioned` would
+        // let a seller flagged after listing fill during an oracle outage. Use the
+        // registry-aware fail-closed bar so a seller the permissionless
+        // `syncPrepaySaleOffer` (which registers the offer creator) has committed
+        // to `sanctionsConfirmedFlagged` is barred even mid-outage.
+        LibVaipakam.assertRecipientNotBarred(borrowerWallet);
     }
 
     /// @notice T-086 Round-8 (#358) — emitted on every
