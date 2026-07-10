@@ -164,6 +164,19 @@ async function indexerGet(url) {
   return { status: res.status, body };
 }
 
+/** Validate an address loaded from a bundle/wallet FILE and rebuild it
+ *  numerically before it may enter a probe URL (CodeQL
+ *  js/file-data-in-outbound-network-request): the returned string is
+ *  derived from the parsed integer value, not the file bytes, so a
+ *  corrupted bundle can only throw here — never smuggle URL syntax
+ *  into an outbound request. */
+function asAddress(value, label) {
+  if (typeof value !== 'string' || !/^0x[0-9a-fA-F]{40}$/.test(value)) {
+    throw new Error(`${label} is not a 0x-40-hex address: "${value}"`);
+  }
+  return `0x${BigInt(value).toString(16).padStart(40, '0')}`;
+}
+
 // Distinctive rates on purpose — nothing else on the live book quotes
 // these, so a UI row showing them is unambiguously THIS run's offer.
 const POST = { bps: 843, text: '8.43', pct: '8.43%' };
@@ -568,7 +581,10 @@ try {
     throw new Error('TradingView attribution link missing from the chart card');
   }
   const attrHref = await attribution.getAttribute('href');
-  if (!/tradingview\.com\/lightweight-charts/.test(attrHref ?? '')) {
+  // Anchored to the URL start (CodeQL js/regex/missing-regexp-anchor):
+  // an unanchored host test would also match a hostile origin that
+  // embeds the TradingView path later in the URL.
+  if (!/^https:\/\/(www\.)?tradingview\.com\/lightweight-charts\/?/.test(attrHref ?? '')) {
     throw new Error(`TradingView attribution href unexpected: "${attrHref}"`);
   }
   // Wire probe — the exact worker route the chart reads, for the
@@ -577,8 +593,9 @@ try {
   // usually has no fills; the count is recorded either way).
   const candlesProbe = await indexerGet(
     `${INDEXER}/loans/rate-candles?chainId=${CHAIN_ID}` +
-      `&lendingAsset=${WETH}&collateralAsset=${TLIQ}&durationDays=${tenor}` +
-      `&interval=1d&range=30d`,
+      `&lendingAsset=${asAddress(WETH, 'bundle weth')}` +
+      `&collateralAsset=${asAddress(TLIQ, 'bundle liquidToken')}` +
+      `&durationDays=${tenor}&interval=1d&range=30d`,
   );
   if (candlesProbe.status !== 200 || !Array.isArray(candlesProbe.body?.buckets)) {
     throw new Error(
@@ -912,7 +929,8 @@ try {
   // Wire probe — the same route, lender-scoped: must 200 with a
   // `loans` array plus a `nextBefore` key (null on a final page).
   const histProbe = await indexerGet(
-    `${INDEXER}/loans/by-participant?chainId=${CHAIN_ID}&wallet=${lenderAddr}`,
+    `${INDEXER}/loans/by-participant?chainId=${CHAIN_ID}` +
+      `&wallet=${asAddress(lenderAddr, 'lender wallet address')}`,
   );
   if (
     histProbe.status !== 200 ||
