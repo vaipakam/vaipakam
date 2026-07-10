@@ -493,6 +493,43 @@ contract OfferParallelSaleFacetTest is SetupTest {
         OfferParallelSaleFacet(address(diamond)).syncPrepaySaleOffer(uint96(OFFER_ID));
     }
 
+    function test_syncPrepaySaleOffer_scenarioB_flaggedOriginalSeller_doesNotCancel()
+        public
+    {
+        // Codex #1146-r2 P2 — once the offer is accepted (Scenario B), the original
+        // seller (offer creator) is no longer a live recipient: the settlement pays
+        // the CURRENT holders. A flagged original seller must NOT be synced and must
+        // NOT cancel a listing whose live holders are clean.
+        MockSanctionsList m = new MockSanctionsList();
+        address cleanFee = makeAddr("cleanOfferFeeB");
+        _postOfferListingWithFee(m, cleanFee); // creator = borrowerHolder
+
+        uint256 loanId = 9_200;
+        address cleanLender = makeAddr("cleanScenBLender");
+        address cleanBorrower = makeAddr("cleanScenBBorrower");
+        LibVaipakam.Loan memory loan;
+        loan.status = LibVaipakam.LoanStatus.Active;
+        loan.lenderTokenId = 601;
+        loan.borrowerTokenId = 602;
+        TestMutatorFacet(address(diamond)).setLoan(loanId, loan);
+        TestMutatorFacet(address(diamond)).mintNFTRaw(cleanLender, 601);
+        TestMutatorFacet(address(diamond)).mintNFTRaw(cleanBorrower, 602);
+        TestMutatorFacet(address(diamond)).setOfferIdToLoanId(OFFER_ID, loanId);
+
+        m.setFlagged(borrowerHolder, true); // the ORIGINAL seller, now transferred out
+
+        vm.prank(nonCreator);
+        OfferParallelSaleFacet(address(diamond)).syncPrepaySaleOffer(uint96(OFFER_ID));
+
+        assertFalse(
+            ProfileFacet(address(diamond)).isSanctionsConfirmedFlagged(borrowerHolder),
+            "the original seller MUST NOT be synced in Scenario B"
+        );
+        // Still live — a second sync does not revert NotFound.
+        vm.prank(nonCreator);
+        OfferParallelSaleFacet(address(diamond)).syncPrepaySaleOffer(uint96(OFFER_ID));
+    }
+
     function test_syncPrepaySaleOffer_cleanRecipients_leavesListingLive() public {
         MockSanctionsList m = new MockSanctionsList();
         address cleanFee = makeAddr("cleanOfferFee2");

@@ -377,42 +377,44 @@ contract OfferParallelSaleFacet is
 
         bool flaggedFound = false;
 
-        // Scenario A (pre-loan) — the sale routes proceeds to the offer creator
-        // (the borrower/seller); it is the ONLY value recipient on that path, and
-        // its fill screen (`assertOfferFillNotSanctioned`) now consults the registry
-        // fail-closed (Codex #1146-r1 P1). Register it so an outage-time fill is
-        // barred. In Scenario B the creator is superseded by the live holders below,
-        // but registering it is harmless (self-heals on a clean read).
-        flaggedFound =
-            _syncRecipientFlag(s, s.offers[uint256(offerId)].creator) || flaggedFound;
-
-        // The seller-signed fee-leg recipients recorded on the executor.
+        // The seller-signed fee-leg recipients recorded on the executor — value
+        // recipients in BOTH scenarios.
         address pinnedExecutor = s.offerPrepayListingExecutor[offerId];
         if (pinnedExecutor != address(0)) {
             FeeLeg[] memory legs =
                 IListingExecutorRecorder(pinnedExecutor).offerFeeLegs(orderHash);
             for (uint256 i = 0; i < legs.length; ) {
-                flaggedFound = _syncRecipientFlag(s, legs[i].recipient) || flaggedFound;
+                flaggedFound = _syncRecipientFlag(legs[i].recipient) || flaggedFound;
                 unchecked {
                     ++i;
                 }
             }
         }
 
-        // Scenario B — an accepted offer already has a loan; its settlement
-        // (`PrepayListingFacet._settleLoanFromParallelSale`) pays the LIVE lender-
-        // and borrower-position holders directly. `_ownerOfRaw` (raw SLOAD →
-        // address(0) for a burned token) keeps the sync non-reverting if the loan
-        // has since terminalized. Scenario A (no loan) resolves loanId == 0 and is
-        // covered by the fee-leg recipients above.
         uint256 loanId = s.offerIdToLoanId[uint256(offerId)];
-        if (loanId != 0) {
+        if (loanId == 0) {
+            // Scenario A (pre-loan) — the sale routes proceeds to the offer creator
+            // (the borrower/seller); it is the value recipient on that path, screened
+            // at fill by the registry-aware `assertOfferFillNotSanctioned`. Register
+            // it so an outage-time fill is barred. Codex #1146-r2 P2: ONLY on the
+            // pre-loan path — once accepted, the creator is no longer a live recipient
+            // (the settlement pays the CURRENT holders below), so syncing it in
+            // Scenario B would let a stale/original-seller marker cancel a clean
+            // current holder's sale.
+            flaggedFound =
+                _syncRecipientFlag(s.offers[uint256(offerId)].creator) || flaggedFound;
+        } else {
+            // Scenario B — the accepted offer's settlement
+            // (`PrepayListingFacet._settleLoanFromParallelSale`) pays the LIVE lender-
+            // and borrower-position holders directly. `_ownerOfRaw` (raw SLOAD →
+            // address(0) for a burned token) keeps the sync non-reverting if the loan
+            // has since terminalized.
             LibVaipakam.Loan storage loan = s.loans[loanId];
             flaggedFound =
-                _syncRecipientFlag(s, LibERC721._ownerOfRaw(loan.lenderTokenId)) ||
+                _syncRecipientFlag(LibERC721._ownerOfRaw(loan.lenderTokenId)) ||
                 flaggedFound;
             flaggedFound =
-                _syncRecipientFlag(s, LibERC721._ownerOfRaw(loan.borrowerTokenId)) ||
+                _syncRecipientFlag(LibERC721._ownerOfRaw(loan.borrowerTokenId)) ||
                 flaggedFound;
         }
 
@@ -423,14 +425,16 @@ contract OfferParallelSaleFacet is
     }
 
     /// @dev Register `who`'s live sanctions status into the committed registry
-    ///      (no-op on `address(0)` / an oracle outage; self-heals a stale marker on
-    ///      a clean read) and report whether it is now confirmed-flagged.
-    function _syncRecipientFlag(LibVaipakam.Storage storage s, address who)
-        private
-        returns (bool)
-    {
+    ///      (`syncBuyerSanctionsFlag`: registers on an authoritative Flagged,
+    ///      self-heals a stale marker on a Clean read, no-ops on an outage / disabled
+    ///      regime). Reports "found" ONLY on an AUTHORITATIVE `Flagged` read (Codex
+    ///      #1146-r2 P2), so a stale marker under a disabled oracle or a genuine
+    ///      outage never cancels an otherwise-clean listing — mirroring the
+    ///      outage-only `isRecipientBarred` fill backstop.
+    function _syncRecipientFlag(address who) private returns (bool) {
+        if (who == address(0)) return false;
         LibVaipakam.syncBuyerSanctionsFlag(who);
-        return who != address(0) && s.sanctionsConfirmedFlagged[who];
+        return LibVaipakam.sanctionsStatus(who) == LibVaipakam.SanctionsRead.Flagged;
     }
 
     // ─── Private helpers ───────────────────────────────────────────────

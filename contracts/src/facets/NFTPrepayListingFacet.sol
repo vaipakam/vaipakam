@@ -1109,10 +1109,10 @@ contract NFTPrepayListingFacet is
         // `_ownerOfRaw` (raw SLOAD → address(0) for a burned token) keeps the sync
         // non-reverting even on a terminalized loan whose NFTs are gone.
         flaggedFound =
-            _syncRecipientFlag(s, LibERC721._ownerOfRaw(loan.lenderTokenId)) ||
+            _syncRecipientFlag(LibERC721._ownerOfRaw(loan.lenderTokenId)) ||
             flaggedFound;
         flaggedFound =
-            _syncRecipientFlag(s, LibERC721._ownerOfRaw(loan.borrowerTokenId)) ||
+            _syncRecipientFlag(LibERC721._ownerOfRaw(loan.borrowerTokenId)) ||
             flaggedFound;
 
         // The recorded fee-leg recipients (the executor persisted them at post
@@ -1122,7 +1122,7 @@ contract NFTPrepayListingFacet is
             FeeLeg[] memory legs =
                 IListingExecutorRecorder(pinnedExecutor).orderFeeLegs(orderHash);
             for (uint256 i = 0; i < legs.length; ) {
-                flaggedFound = _syncRecipientFlag(s, legs[i].recipient) || flaggedFound;
+                flaggedFound = _syncRecipientFlag(legs[i].recipient) || flaggedFound;
                 unchecked {
                     ++i;
                 }
@@ -1136,14 +1136,16 @@ contract NFTPrepayListingFacet is
     }
 
     /// @dev Register `who`'s live sanctions status into the committed registry
-    ///      (no-op on `address(0)` / an oracle outage; self-heals a stale marker on
-    ///      a clean read) and report whether it is now confirmed-flagged.
-    function _syncRecipientFlag(LibVaipakam.Storage storage s, address who)
-        private
-        returns (bool)
-    {
+    ///      (`syncBuyerSanctionsFlag`: registers on an authoritative Flagged,
+    ///      self-heals a stale marker on a Clean read, no-ops on an outage / disabled
+    ///      regime). Reports "found" ONLY on an AUTHORITATIVE `Flagged` read (Codex
+    ///      #1146-r2 P2), so a stale marker under a disabled oracle or a genuine
+    ///      outage never cancels an otherwise-clean listing — mirroring the
+    ///      outage-only `isRecipientBarred` fill backstop.
+    function _syncRecipientFlag(address who) private returns (bool) {
+        if (who == address(0)) return false;
         LibVaipakam.syncBuyerSanctionsFlag(who);
-        return who != address(0) && s.sanctionsConfirmedFlagged[who];
+        return LibVaipakam.sanctionsStatus(who) == LibVaipakam.SanctionsRead.Flagged;
     }
 
     // ─── View: getPrepayListingOrderHash (read-side for frontends) ──────

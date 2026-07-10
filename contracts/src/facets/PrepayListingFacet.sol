@@ -659,14 +659,24 @@ contract PrepayListingFacet is
         // keys by `address(this)`, so an executor-context call would
         // miss the diamond's sanctions oracle config).
         //
-        // #1144 (S10 Invariant B, Codex #1146-r1 P1) — the pre-loan (Scenario A)
-        // parallel sale routes proceeds to this borrower/seller, and this is the
-        // ONLY screen on that recipient. A fail-OPEN `_assertNotSanctioned` would
-        // let a seller flagged after listing fill during an oracle outage. Use the
-        // registry-aware fail-closed bar so a seller the permissionless
-        // `syncPrepaySaleOffer` (which registers the offer creator) has committed
-        // to `sanctionsConfirmedFlagged` is barred even mid-outage.
-        LibVaipakam.assertRecipientNotBarred(borrowerWallet);
+        // #1144 (S10 Invariant B) — SCENARIO-DEPENDENT (Codex #1146-r2 P2):
+        //  - Scenario A (pre-loan, `offerIdToLoanId == 0`): `borrowerWallet` (the
+        //    offer creator/seller) is the live proceeds recipient and this is its
+        //    ONLY screen. A fail-OPEN `_assertNotSanctioned` would let a seller
+        //    flagged after listing fill during an outage, so use the registry-aware
+        //    fail-closed bar — paired with `syncPrepaySaleOffer` registering the
+        //    Scenario-A creator (r1 P1).
+        //  - Scenario B (accepted): the sale proceeds are split to the CURRENT
+        //    position holders (screened live by `_settleLoanFromParallelSale`'s
+        //    `assertRecipientNotBarred`), and `borrowerWallet` here is the STORED
+        //    original seller — NOT a live recipient. Applying the registry bar would
+        //    let a stale/original-seller marker revert a clean current holder's fill,
+        //    so keep the fail-open screen on that vestigial party.
+        if (LibVaipakam.storageSlot().offerIdToLoanId[uint256(offerId)] == 0) {
+            LibVaipakam.assertRecipientNotBarred(borrowerWallet);
+        } else {
+            LibVaipakam._assertNotSanctioned(borrowerWallet);
+        }
     }
 
     /// @notice T-086 Round-8 (#358) — emitted on every

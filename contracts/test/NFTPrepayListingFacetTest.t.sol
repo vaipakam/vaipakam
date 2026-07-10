@@ -1686,4 +1686,27 @@ contract NFTPrepayListingFacetTest is SetupTest {
         );
         NFTPrepayListingFacet(address(diamond)).syncPrepaySaleListing(LOAN_ID);
     }
+
+    function test_syncPrepaySaleListing_disabledRegime_staleMarker_doesNotCancel() public {
+        // Codex #1146-r2 P2 — a stale marker must not drive a cancel once the oracle
+        // is disabled (the disabled regime ignores the registry entirely).
+        MockSanctionsList m = new MockSanctionsList();
+        bytes32 orderHash = _postCleanListing(m);
+        address lenderHolder = makeAddr("loanLender");
+        m.setFlagged(lenderHolder, true);
+        ProfileFacet(address(diamond)).refreshSanctionsFlag(lenderHolder); // marker committed
+        vm.prank(owner);
+        ProfileFacet(address(diamond)).setSanctionsOracle(address(0)); // regime disabled
+
+        vm.expectEmit(true, true, false, true, address(diamond));
+        emit NFTPrepayListingFacet.PrepaySaleListingSynced(LOAN_ID, randomCaller, false);
+        vm.prank(randomCaller);
+        NFTPrepayListingFacet(address(diamond)).syncPrepaySaleListing(LOAN_ID);
+
+        assertEq(
+            NFTPrepayListingFacet(address(diamond)).getPrepayListingOrderHash(LOAN_ID),
+            orderHash,
+            "a disabled-regime stale marker MUST NOT cancel the listing"
+        );
+    }
 }
