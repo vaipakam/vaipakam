@@ -29,7 +29,7 @@ import { useDiamondWrite } from '../../contracts/diamond';
 import { ensureAllowance, useTokenMeta } from '../../contracts/erc20';
 import { CANCEL_COOLDOWN_SECONDS } from '../../contracts/loanLive';
 import { useMyOffersFull } from '../../data/hooks';
-import { readSaleVehicleOfferIds, useAmendSource } from '../../data/desk';
+import { readLinkedOfferIds, useAmendSource } from '../../data/desk';
 import { useAllowanceForPlan } from '../../lib/submitProgress';
 import { EmptyState, UnavailableState } from '../EmptyState';
 import { AssetType } from '../../lib/types';
@@ -191,13 +191,21 @@ function AmendForm({
   // collateral pair mirrors _assertCollateralInvariants' strict rule
   // for ERC-20/ERC-20 rows (the only shape the desk lists) WITH its
   // one carve-out: an explicit both-zero collateral pair (the
-  // no-collateral lender shape) stays valid; mixed zero/positive
-  // never is.
+  // no-collateral LENDER shape) stays valid; mixed zero/positive
+  // never is. The carve-out is lender-side ONLY (Codex #1134
+  // round-4 P2): a BORROWER row zeroing both collateral fields would
+  // have the modify path refund the borrower's escrowed collateral
+  // and leave an active borrow order with no lock — borrower rows
+  // require strictly positive collateral + collateralMax.
   const nonPositive =
     parsed !== null &&
     (parsed.amount <= 0n ||
       parsed.amountMax <= 0n ||
-      (!(parsed.collateralAmount === 0n && parsed.collateralAmountMax === 0n) &&
+      (!(
+        isLenderRow &&
+        parsed.collateralAmount === 0n &&
+        parsed.collateralAmountMax === 0n
+      ) &&
         (parsed.collateralAmount <= 0n || parsed.collateralAmountMax <= 0n)));
 
   // Client-side mirror of the contract invariants that would waste a
@@ -627,38 +635,43 @@ export function OpenOrdersPanel() {
     [offers.data],
   );
 
-  // Lender-sale vehicles never belong here — the sale is managed from
-  // its own surface, and OfferMutateFacet._assertMutableBy reverts
-  // SaleVehicleImmutable, so an Amend button on one only mints a
-  // doomed transaction. Indexer-sourced rows carry `isSaleVehicle`;
-  // rows without the field (chain-sourced, or an older worker) get
-  // the same batched getOfferLinkedLoanId read the desk book uses.
-  // Only borrower-style rows can be sale vehicles. Fails open (rows
-  // kept) while the read is in flight or when it errors.
+  // Linked vehicles never belong here — a borrower-style lender-sale
+  // vehicle (`saleOfferToLoanId`) or a lender-style Preclose Option-3
+  // offset vehicle (`offsetOfferToLoanId`, Codex #1134 round-4 P3) is
+  // managed from its own surface, and OfferMutateFacet._assertMutableBy
+  // reverts SaleVehicleImmutable / OffsetVehicleImmutable, so an Amend
+  // button on one only mints a doomed transaction. The indexer's
+  // `isSaleVehicle` flag covers BORROWER sale vehicles only (the
+  // worker sets it on LoanSaleOfferLinked; offset vehicles have no
+  // flag) — so lender rows are ALWAYS probed with the batched
+  // getOfferLinkedLoanId read the desk book uses, and borrower rows
+  // are probed when the flag is absent (chain-sourced, or an older
+  // worker). Fails open (rows kept) while the read is in flight or
+  // when it errors.
   const unflagged = useMemo(
     () =>
       (erc20Rows ?? []).filter(
-        (o) => o.offerType === 1 && o.isSaleVehicle === undefined,
+        (o) => o.offerType === 0 || o.isSaleVehicle === undefined,
       ),
     [erc20Rows],
   );
-  const saleCheck = useQuery({
+  const linkedCheck = useQuery({
     queryKey: [
-      'deskOrdersSaleVehicles',
+      'deskOrdersLinkedOffers',
       readChain.chainId,
       unflagged.map((o) => o.offerId),
     ],
     enabled: unflagged.length > 0 && Boolean(publicClient),
     queryFn: () =>
-      readSaleVehicleOfferIds(publicClient!, readChain.diamondAddress, unflagged),
+      readLinkedOfferIds(publicClient!, readChain.diamondAddress, unflagged),
   });
   const rows = useMemo(() => {
     if (erc20Rows === null) return null;
     return erc20Rows.filter(
       (o) =>
-        o.isSaleVehicle !== true && saleCheck.data?.has(o.offerId) !== true,
+        o.isSaleVehicle !== true && linkedCheck.data?.has(o.offerId) !== true,
     );
-  }, [erc20Rows, saleCheck.data]);
+  }, [erc20Rows, linkedCheck.data]);
 
   if (!isConnected) {
     return <EmptyState icon={Inbox} title={copy.wallet.connectFirst} />;

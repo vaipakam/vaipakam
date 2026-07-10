@@ -73,20 +73,25 @@ export function useDeskMarkets() {
   });
 }
 
-/** Offer ids among `rows` that are lender-sale vehicles: borrower-
- *  style offers linked to an existing loan (`getOfferLinkedLoanId !=
- *  0`). Only borrower offers can be sale vehicles, so only those rows
- *  are read; the same-tick reads fold into ONE JSON-RPC batch (the
- *  transports use `batch: true`). Shared by the desk book and the
- *  Open orders panel so the two surfaces can't drift on the rule. */
-export async function readSaleVehicleOfferIds(
+/** Offer ids among `rows` that are LINKED VEHICLES: offers bound to an
+ *  existing loan (`getOfferLinkedLoanId != 0`). That covers BOTH
+ *  shapes — borrower-style lender-sale vehicles (`saleOfferToLoanId`)
+ *  AND lender-style Preclose Option-3 offset vehicles
+ *  (`offsetOfferToLoanId`, Codex #1134 round-4 P3). Both are
+ *  bookkeeping pinned to a live loan, not fresh market liquidity, and
+ *  OfferMutateFacet freezes both (`SaleVehicleImmutable` /
+ *  `OffsetVehicleImmutable`), so every row handed in is probed — the
+ *  CALLER decides the candidate set. The same-tick reads fold into
+ *  ONE JSON-RPC batch (the transports use `batch: true`). Shared by
+ *  the desk book and the Open orders panel so the two surfaces can't
+ *  drift on the rule. */
+export async function readLinkedOfferIds(
   publicClient: PublicClient,
   diamondAddress: `0x${string}`,
   rows: readonly IndexedOffer[],
 ): Promise<Set<number>> {
-  const borrowerRows = rows.filter((r) => r.offerType === 1);
   const linkedLoanIds = await Promise.all(
-    borrowerRows.map(
+    rows.map(
       (r) =>
         publicClient.readContract({
           address: diamondAddress,
@@ -97,7 +102,7 @@ export async function readSaleVehicleOfferIds(
     ),
   );
   return new Set(
-    borrowerRows.filter((_, i) => linkedLoanIds[i] !== 0n).map((r) => r.offerId),
+    rows.filter((_, i) => linkedLoanIds[i] !== 0n).map((r) => r.offerId),
   );
 }
 
@@ -154,19 +159,24 @@ export function useDeskBook(pair: DeskPair | null, durationDays: number) {
             ids,
           );
           const active = rows.filter((r) => r.status === 'active');
-          // Lender-sale vehicles (borrower-style offers linked to an
-          // existing loan) are bookkeeping, not quotable liquidity —
-          // rendering one as a bid would arm a taker affordance on a
-          // non-market row. One extra JSON-RPC batch per book load
-          // (see readSaleVehicleOfferIds). The indexer fallback below
-          // filters on the worker's `isSaleVehicle` instead.
-          const saleVehicleIds = await readSaleVehicleOfferIds(
+          // Linked vehicles are bookkeeping, not quotable liquidity —
+          // borrower-style lender-sale vehicles as bids AND lender-
+          // style Preclose Option-3 offset vehicles as asks (both DO
+          // land in the ranked pair bucket: creation runs the normal
+          // createOffer path before the link is written). Rendering
+          // one would arm a taker affordance on a row whose terms are
+          // pinned to an existing loan. One extra JSON-RPC batch per
+          // book load (see readLinkedOfferIds). The indexer fallback
+          // below filters sale vehicles on the worker's
+          // `isSaleVehicle`; offset vehicles have no indexer flag —
+          // an accepted gap on the (chain-down) fallback leg.
+          const linkedIds = await readLinkedOfferIds(
             publicClient,
             readChain.diamondAddress,
             active,
           );
           return {
-            rows: active.filter((r) => !saleVehicleIds.has(r.offerId)),
+            rows: active.filter((r) => !linkedIds.has(r.offerId)),
             source: 'chain',
           };
         } catch {
@@ -180,6 +190,8 @@ export function useDeskBook(pair: DeskPair | null, durationDays: number) {
       // round-2 P3).
       if (!indexerConfigured()) return null;
       const all: IndexedOffer[] = [];
+      const wantLending = pair!.lendingAsset.toLowerCase();
+      const wantCollateral = pair!.collateralAsset.toLowerCase();
       let before: number | undefined;
       for (let i = 0; i < BOOK_FALLBACK_PAGES; i++) {
         const page = await fetchActiveOffers(readChain.chainId, {
@@ -195,12 +207,27 @@ export function useDeskBook(pair: DeskPair | null, durationDays: number) {
           excludeSaleVehicles: true,
         });
         if (page === null) return null;
-        // Sale vehicles are excluded client-side too as belt-and-
-        // suspenders (an older worker ignores the params); rows
-        // without the field keep their rows — same behaviour as
-        // before the filter. Expired rows are already dropped by the
-        // ladder's isLiveMarketRow.
-        all.push(...page.offers.filter((o) => o.isSaleVehicle !== true));
+        // Belt-and-suspenders client-side filters (an older worker
+        // ignores unknown params — Codex #1134 round-4 P2: it may
+        // return the GLOBAL feed, and buildLadder filters only
+        // status/asset-type/tenor, so same-tenor rows from OTHER
+        // pairs would render under this market and arm taker links
+        // for the wrong assets). Keep only rows matching the
+        // requested market: pair (case-insensitive — indexer rows
+        // are lowercase, but don't depend on it) AND tenor. Sale
+        // vehicles are excluded client-side too; rows without the
+        // field keep their rows — same behaviour as before the
+        // filter. Expired rows are already dropped by the ladder's
+        // isLiveMarketRow.
+        all.push(
+          ...page.offers.filter(
+            (o) =>
+              o.isSaleVehicle !== true &&
+              o.lendingAsset.toLowerCase() === wantLending &&
+              o.collateralAsset.toLowerCase() === wantCollateral &&
+              o.durationDays === durationDays,
+          ),
+        );
         if (page.nextBefore === null) return { rows: all, source: 'indexer' };
         before = page.nextBefore;
       }

@@ -74,6 +74,33 @@ const MAX_RATE_PERCENT = 100;
  *  must never reach the wallet. */
 const MAX_OFFER_EXPIRY_HORIZON_SECONDS = 365 * 86_400;
 
+/** Safety margin for the pre-write expiry re-check (Codex #1134
+ *  round-4 P2): the deadline must clear chain-now by at least this
+ *  much, so the transaction can't land past it while it's in the
+ *  mempool. */
+const EXPIRY_SUBMIT_MARGIN_SECONDS = 60n;
+
+/** Re-validate a resolved `expiresAt` against LIVE chain time
+ *  immediately before the createOffer / createOfferWithPermit write.
+ *  The payload is built (and validated against the DEVICE clock) at
+ *  the top of submit — but sanction/fee/pause reads, wallet prompts,
+ *  and a possible classic approval transaction all run between that
+ *  and the write. A near-future custom deadline can lapse inside that
+ *  window, so without this gate the user pays approval gas and then
+ *  hits `OfferExpiryInPast`. Chain-time anchor doctrine: judge on
+ *  `block.timestamp` (what the facet judges on), never the device
+ *  clock — same anchor the Open orders cancel-cooldown gate uses. */
+async function assertExpiryStillValidLive(
+  publicClient: NonNullable<ReturnType<typeof usePublicClient>>,
+  expiresAt: bigint,
+): Promise<void> {
+  if (expiresAt === 0n) return; // GTC — nothing to lapse
+  const block = await publicClient.getBlock({ blockTag: 'latest' });
+  if (expiresAt <= block.timestamp + EXPIRY_SUBMIT_MARGIN_SECONDS) {
+    throw new Error(copy.desk.ticket.expiryInvalid);
+  }
+}
+
 export function OrderTicket({
   pair,
   days,
@@ -447,6 +474,10 @@ export function OrderTicket({
             signed = null; // wallet declined EIP-712 — classic path
           }
           if (signed) {
+            // Last look BEFORE the write (and OUTSIDE the catch below
+            // — a lapsed deadline is not a Permit2 failure and must
+            // not trip the session breaker).
+            await assertExpiryStillValidLive(publicClient, payload.expiresAt);
             try {
               const { hash } = await write('createOfferWithPermit', [
                 payload,
@@ -470,6 +501,9 @@ export function OrderTicket({
         spender: walletChain.diamondAddress,
         amount: lockedAmount,
       });
+      // Last look AFTER the (possible) approval mined: the deadline
+      // may have lapsed while the approval sat in the wallet/mempool.
+      await assertExpiryStillValidLive(publicClient, payload.expiresAt);
       const { hash } = await write('createOffer', [payload]);
       afterPost(hash);
     } catch (err) {

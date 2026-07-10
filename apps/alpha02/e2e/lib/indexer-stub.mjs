@@ -72,7 +72,12 @@ async function mapOffer(id, chainNowSec) {
   // an RPC/ABI failure must bubble to the handler's 500 instead of
   // silently dropping the row. getOfferLinkedLoanId backs the worker's
   // `isSaleVehicle` marker (D1 column, migration 0029) — the stub
-  // derives it live, exactly like the desk's own chain-path filter.
+  // derives it live. BORROWER rows only, matching production exactly:
+  // the worker sets is_sale_vehicle on LoanSaleOfferLinked (always a
+  // borrower-style offer); a lender-side Preclose Option-3 OFFSET
+  // vehicle is linked too (offsetOfferToLoanId) but carries NO
+  // indexer flag — the app must catch those with its own chain probe,
+  // and an over-flagging stub would mask that gap in tests.
   const [o, stateRaw, linkedLoanId] = await Promise.all([
     read('getOffer', [BigInt(id)]),
     read('getOfferState', [BigInt(id)]),
@@ -125,7 +130,7 @@ async function mapOffer(id, chainNowSec) {
     createdAt: n(o.createdAt) || undefined,
     expiresAt: n(o.expiresAt) || undefined,
     fillMode: n(o.fillMode),
-    isSaleVehicle: n(linkedLoanId) !== 0,
+    isSaleVehicle: n(o.offerType) === 1 && n(linkedLoanId) !== 0,
   };
 }
 
