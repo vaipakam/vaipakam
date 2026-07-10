@@ -105,47 +105,59 @@ uint256 perDayCap = _capVpfiForInterestUsd(
     e.perDayNumeraire18, ethPriceRaw, ethPriceDec, capRatio
 );
 uint256 reward;
-uint256 prev = e.startDay == 0 ? 0 : cumArr[e.startDay - 1];
-for (uint256 d = e.startDay; d < e.endDay; ) {
-    uint256 cur = cumArr[d];
-    uint256 rawD = (e.perDayNumeraire18 * (cur - prev)) / 1e18;
-    reward += (perDayCap != type(uint256).max && rawD > perDayCap) ? perDayCap : rawD;
-    prev = cur;
-    unchecked { ++d; }
+if (perDayCap == type(uint256).max) {
+    // Cap disabled — the cap never bites, so the telescoped single division
+    // is EXACT and O(1). Keep it (no per-day flooring, no window walk).
+    reward = (e.perDayNumeraire18 * (cumEnd - cumStart)) / 1e18;
+} else {
+    // Cap enabled — walk the window applying the per-day min.
+    uint256 prev = e.startDay == 0 ? 0 : cumArr[e.startDay - 1];
+    for (uint256 d = e.startDay; d < e.endDay; ) {
+        uint256 cur = cumArr[d];
+        uint256 rawD = (e.perDayNumeraire18 * (cur - prev)) / 1e18;
+        reward += rawD > perDayCap ? perDayCap : rawD;
+        prev = cur;
+        unchecked { ++d; }
+    }
 }
 ```
 
 where `cumArr` is `s.cumLenderRpn18` or `s.cumBorrowerRpn18` chosen by `e.side` (the
 same array the telescoped read already selected). **Keep both existing fast-path
-guards** ahead of the loop: `startDay >= endDay` and `cumEnd <= cumStart` (compute
+guards** ahead of this block: `startDay >= endDay` and `cumEnd <= cumStart` (compute
 `cumEnd`/`cumStart` as today, return 0 / mark `processed` when the whole window has no
-RPN growth) — so the O(window) loop only runs when there is a non-zero reward to
-apportion. The `if (mutate) e.processed = true;` and the forfeit-routing tail
-(`_processEntry:1009-1018`) are unchanged; only the middle `reward = telescoped;
-window-cap` block is replaced.
+RPN growth) — so the O(window) loop only runs when the cap is enabled AND there is a
+non-zero reward to apportion. The `if (mutate) e.processed = true;` and the
+forfeit-routing tail (`_processEntry:1009-1018`) are unchanged; only the middle
+`reward = telescoped; window-cap` block is replaced.
 
 **Decisions baked in (surface these for Codex):**
 
-1. **Per-day flooring.** The telescoped form floored once (`… / 1e18` over the window
-   sum); the per-day form floors each day, losing ≤1 wei/day of a `1e18`-scaled VPFI
-   amount. This is a conservative, protocol-favoring rounding change, negligible in
-   magnitude, and only reached when the cap is *disabled* (`type(uint256).max`) would
-   otherwise be identical. Acceptable — but stated explicitly so it isn't mistaken for
-   a bug in review.
-2. **Gas: O(window) SLOADs.** The telescoped read was O(1) (2 SLOADs); the per-day walk
-   is O(`endDay − startDay`) SLOADs of `cumRpn18[d]`. Bounded by the loan term and by
-   the fact the whole window must already be finalized (`cursor ≥ endDay−1`) before the
-   loop runs. This matches the existing per-day cost of `advanceCum*ThroughEntries` and
-   `claimForUserWindow`; claims are user-initiated and per-entry. No new unbounded loop
-   is introduced. (If a future very-long-term product makes this a concern, a windowed
-   claim already exists as the legacy path — out of scope here.)
-3. **Cap-disabled fast path unchanged.** When `perDayCap == type(uint256).max` the loop
-   sums `rawD` verbatim, reproducing the uncapped telescoped total exactly (modulo the
-   per-day floor in (1)). We keep the branch inside the loop rather than duplicating the
-   loop; the compare is cheap next to the SLOAD.
-4. **`_processEntry` and `_previewEntryReward` must stay identical** (preview parity is a
+1. **Uncapped fast path preserves exactness (Codex r1 F2).** When the cap is disabled
+   (`perDayCap == type(uint256).max` — ETH feed unavailable or admin `capRatio == max`)
+   the code keeps the **telescoped single division**, so the result is byte-for-byte the
+   pre-fix value: no per-day flooring, no window walk, O(1). The per-day loop — and its
+   per-day flooring — is reached **only when the cap is enabled** (where the cap already
+   makes the amount a bound, so sub-wei-per-day flooring is immaterial and
+   protocol-favoring). This both removes the "≤1 wei/day" divergence on the common
+   cap-disabled config and restores O(1) gas there.
+2. **Gas: O(window) SLOADs only when the cap is enabled.** With the cap on, the per-day
+   walk is O(`endDay − startDay`) SLOADs of `cumRpn18[d]` — the only correct shape for a
+   per-day min (daily RPN varies with global activity; no per-band or global-cumulative
+   shortcut exists). Bounded by the loan term and by the whole window being finalized
+   (`cursor ≥ endDay−1`) before the loop runs; matches the existing per-day cost of the
+   `advanceCum*` loops. Claims are user-initiated and per-entry. **The legacy
+   `claimForUserWindow` is NOT a fallback for long entry windows (Codex r1 F1):** it pays
+   from the pre-entry per-user daily maps (`userLenderInterestNumeraire18` /
+   `userBorrowerInterestNumeraire18`) that the entry path never populates
+   (`registerLoan` only writes `RewardEntry` rows + the delta/cumRPN machinery), so
+   routing an entry-path loan through it would pay **zero**. If a future very-long-term
+   product ever makes the loop a concern, the only valid shape is a **paginated
+   entry-claim** (claim `[startDay, k)` then `[k, endDay)` across txs), NOT the legacy
+   path — explicitly out of scope here; the O(window) entry loop stands.
+3. **`_processEntry` and `_previewEntryReward` must stay identical** (preview parity is a
    standing invariant of this lib — a preview that over-reports vs the claim is itself a
-   bug). Both get the same loop.
+   bug). Both get the same fast-path + loop.
 
 ### Blast radius / ABI — Part 1
 
@@ -166,7 +178,8 @@ tightens), so no downstream over-payment risk.
 3. **All days over cap** — result equals `perDayCap · daysInWindow` (the loop saturates
    every day; matches the old window cap in this degenerate case).
 4. **Cap disabled** (`ethPriceRaw == 0` or `capRatio == max`) — result equals the
-   uncapped telescoped total.
+   uncapped telescoped total **exactly** (the uncapped fast path keeps the single
+   division — no per-day-floor tolerance needed here; Codex r1 F2).
 5. **Preview == claim** — `previewInteractionRewards` equals the amount a subsequent
    `claimInteractionRewards` routes, for cases 1–4.
 6. **Single-day window** — `endDay − startDay == 1` reduces to `min(raw_0, cap)`.
@@ -217,25 +230,69 @@ affordable even at the EIP-170 ceiling). Existing self-only hooks:
 `precloseRewardTransferObligation(loanId)` (`:624`), each guarded by
 `if (msg.sender != address(this)) revert RewardHookCallerNotSelf();`.
 
+### The re-anchor invariant — every close pays the current NFT holder (Codex r1 F4+F5)
+
+Codex r1 surfaced that a reward close **freezes** the reward under the entry's stored
+`RewardEntry.user`, but the fund side of every terminal path resolves the **live NFT
+holder** (`PrepayListingFacet` pays `ownerOf`; `ClaimFacet` gates on the live position
+NFT). If a position NFT was passively transferred (without consolidation) before the
+terminal event, the funds go to the live holder while the reward would close to the
+**stale** stored party. So the design adopts one uniform invariant:
+
+> **Every reward close re-anchors both sides to the current position-NFT holders
+> *before* closing.**
+
+A shared self-only helper on `InteractionRewardsFacet` (which has the headroom + already
+owns `repointRewardEntry`):
+
+```solidity
+function _reanchorBothSides(uint256 loanId) private {
+    LibVaipakam.Loan storage l = LibVaipakam.storageSlot().loans[loanId];
+    _reanchorSide(loanId, l.lenderTokenId,   /* isLenderSide */ true);
+    _reanchorSide(loanId, l.borrowerTokenId, /* isLenderSide */ false);
+}
+function _reanchorSide(uint256 loanId, uint256 tokenId, bool isLenderSide) private {
+    try IERC721(address(this)).ownerOf(tokenId) returns (address holder) {
+        if (holder != address(0)) {
+            LibInteractionRewards.repointRewardEntry(loanId, holder, isLenderSide);
+        }
+    } catch { /* token burned/absent — nothing to re-anchor */ }
+}
+```
+
+`repointRewardEntry` no-ops when the side's entry is absent or already on that user and
+keeps the per-loan pointer intact (so `sweepForfeitedByLoanId` still finds it). This is
+cheap (two `ownerOf` reads) and safe on a burned token (try/catch). It runs inside the
+best-effort hook, so any failure is swallowed by the caller's `_rewardHook`.
+
 ### New hook variants on `InteractionRewardsFacet`
 
-Add two self-only hooks (headroom is here, per the L590-596 rationale):
+Add two self-only hooks (headroom is here, per the L590-596 rationale); **both
+re-anchor first**:
 
-1. **`liquidationRewardClose(uint256 loanId)`** → `closeLoan(loanId, false, false)`.
-   Durable borrower forfeit + lender keeps + both windows shrunk to `today+1`. This is
-   #1067 **item 1** — the forfeit is stamped `forfeited=true, closed=true` *durably*, so a
-   later `InternalMatched → Settled` transition can't relive it as payable (see below).
-2. **`terminalRewardClose(uint256 loanId, bool borrowerClean)`** → `closeLoan(loanId,
-   borrowerClean, false)`. The proper-close / window-shrink family (#1067 **item 2**);
-   lender never forfeits (the SALE path is the only lender-forfeit route). *Body is
-   identical to the existing `precloseRewardClose`; a generic name is added so the
+1. **`liquidationRewardClose(uint256 loanId)`** → `_reanchorBothSides(loanId)` then
+   `closeLoan(loanId, false, false)`. Durable borrower forfeit + lender keeps + both
+   windows shrunk to `today+1`. This is #1067 **item 1** — the forfeit is stamped
+   `forfeited=true, closed=true` *durably*, so a later `InternalMatched → Settled`
+   transition can't relive it as payable (see below). (Re-anchor still matters for the
+   lender side — a transferred lender NFT's holder gets the kept reward; the forfeited
+   borrower side routes to treasury regardless of holder, but re-anchoring is harmless.)
+2. **`terminalRewardClose(uint256 loanId, bool borrowerClean)`** →
+   `_reanchorBothSides(loanId)` then `closeLoan(loanId, borrowerClean, false)`. The
+   proper-close / window-shrink family (#1067 **item 2**); lender never forfeits (the
+   SALE path is the only lender-forfeit route). *Body body-shares with the existing
+   `precloseRewardClose` except for the re-anchor prefix; a generic name is added so the
    prepay-sale / periodic paths don't call a "preclose"-named hook. `precloseRewardClose`
-   stays for `PrecloseFacet`. (Decision for Codex: add the generic name, or reuse
-   `precloseRewardClose` verbatim and accept the cosmetic mismatch? Leaning: add the
-   generic — one extra ~small selector, clearer call sites, no behavior change.)*
+   stays for `PrecloseFacet` (its callers already consolidate/re-anchor upstream — the
+   `precloseDirect` `eagerConsolidateBothSides` at `:242` and the offset path — so it
+   does not need the prefix; leaving it untouched avoids churn). (Q3 for Codex: acceptable
+   to keep `precloseRewardClose` distinct, or unify? Leaning: keep distinct — the preclose
+   callers already re-anchor, so adding the prefix there would double-repoint harmlessly
+   but needlessly.)*
 
-For #1067 **item 3** (holder re-anchor), fold the reanchor into the existing
-`precloseRewardTransferObligation` hook (see item-3 section) rather than a new selector.
+For #1067 **item 3** (obligation-transfer split), the same `_reanchorBothSides` runs
+inside `precloseRewardTransferObligation` before the split close (see item-3 section);
+no new selector.
 
 ### Why item 1 is genuinely unfixable by the status fallback
 
@@ -261,7 +318,7 @@ existing `EncumbranceMutateFacet.terminalize` cross-call that flips the status.
 | # | Facet · fn · terminal line | Transition | Hook | Semantics |
 |---|---|---|---|---|
 | 1 | `RiskMatchLiquidationFacet._settleFallbackOrTransitionPostMatch` — `:833` (Active), `:1038` + `:1126` (FallbackPending) | → InternalMatched | `liquidationRewardClose(loanId)` | **Forfeit** (item 1). Place beside the existing `LibVPFIDiscount.forfeitBorrowerLif(loan)` at `:851`. Add a local `_rewardHook`. |
-| 2 | `PrepayListingFacet.executorFinalizePrepaySale` — `:197`; `_settleLoanFromParallelSale` — `:556` | → Settled | `terminalRewardClose(loanId, block.timestamp <= graceEnd)` | **Proper close / window-shrink** (item 2). Grace-aware borrowerClean (same `graceEnd` formula as preclose). Add a local `_rewardHook`. |
+| 2 | `PrepayListingFacet.executorFinalizePrepaySale` — `:197`; `_settleLoanFromParallelSale` — `:556` | → Settled | `terminalRewardClose(loanId, true)` | **Proper close / window-shrink** (item 2). `borrowerClean = true` **unconditionally** — a LATE prepay sale is **unreachable**: the executor rejects `block.timestamp > pctx.graceEnd` with `GraceExpired` and `_settleLoanFromParallelSale` rejects it with `ParallelSaleFillPastGrace` *before* transitioning, so a settled prepay sale is always in-grace (Codex r1 F3). Add a local `_rewardHook`. |
 | 3 | `RepayPeriodicFacet.autoDeductDaily` — `:317` | → Repaid | `terminalRewardClose(loanId, true)` | **Proper close**, natural full repayment → `borrowerClean = true`. Add a local `_rewardHook`. (`_autoLiquidatePeriodShortfall` at `:480` is **non-terminal** — loan stays Active; it already repoints via `eagerConsolidateBothSides` at `:507`; **no reward close there**.) |
 | 4 | `LenderIntentFacet.rollIntentLoan` — `:690` | Repaid → Settled | `terminalRewardClose(loanId, true)` (idempotent) | **Defensive no-op.** `rollIntentLoan` requires `status == Repaid` (`:529`) — entries were already closed at the earlier Active→Repaid by `RepayFacet.closeLoan`. The `_closeEntry` idempotency guard (`:1101`) makes the re-close a safe no-op. *Decision for Codex: wire defensively for completeness, or omit and document as already-covered? Leaning: omit the close (it can only no-op) and instead confirm the rolled-forward capital, if re-registered as fresh accrual, opens its own entry — verify at implementation.* |
 
@@ -287,45 +344,50 @@ before its split hook (`:896`). Verified NFT-lifecycle facts that make the fix s
   (already stale by `:896`).
 
 **Fix — fold the reanchor into `precloseRewardTransferObligation`** (no new selector,
-single cross-facet hop). New body:
+single cross-facet hop), reusing the shared `_reanchorBothSides` helper. New body:
 
 ```solidity
 function precloseRewardTransferObligation(uint256 loanId) external {
     if (msg.sender != address(this)) revert RewardHookCallerNotSelf();
     LibVaipakam.Loan storage l = LibVaipakam.storageSlot().loans[loanId];
     // #1067 item 3 — re-anchor the EXITING entries to the current NFT holders
-    // (a buyer who took the position NFT keeps the slice they earned) BEFORE
-    // the split close. Keys off ownerOf(tokenId), not the (already-reassigned)
-    // loan anchor. try/guard: repointRewardEntry no-ops on a burned/absent side.
-    _reanchorSide(loanId, l.lenderTokenId,   /* isLenderSide */ true);
-    _reanchorSide(loanId, l.borrowerTokenId, /* isLenderSide */ false);
+    // (a buyer who took the position NFT keeps the slice they earned) BEFORE the
+    // split close. Keys off ownerOf(tokenId), not the (already-reassigned) loan
+    // anchor; repointRewardEntry no-ops on a burned/absent side.
+    _reanchorBothSides(loanId);
     LibInteractionRewards.closeLoan(loanId, /* borrowerClean */ true, false);
+    // Fresh continuing-loan entries. Codex r1 F4 — the LENDER side anchors to the
+    // CURRENT lender-NFT holder, not the (possibly stale) l.lender, so post-transfer
+    // lender rewards don't accrue to a prior stored lender who sold their NFT. The
+    // BORROWER side is the incoming obligor l.borrower (Ben) — he pays the interest
+    // going forward, and the borrower position NFT is NOT reassigned here (it stays
+    // with the exiting holder), so ownerOf(borrowerTokenId) would be the WRONG party.
+    address freshLender = _currentHolderOr(l.lenderTokenId, l.lender);
     LibInteractionRewards.registerLoan(
-        loanId, l.lender, l.borrower, l.principalAsset,
+        loanId, freshLender, l.borrower, l.principalAsset,
         l.principal, l.interestRateBps, l.durationDays
     );
 }
 
-function _reanchorSide(uint256 loanId, uint256 tokenId, bool isLenderSide) private {
+function _currentHolderOr(uint256 tokenId, address fallbackAddr) private view returns (address) {
     try IERC721(address(this)).ownerOf(tokenId) returns (address holder) {
-        if (holder != address(0)) {
-            LibInteractionRewards.repointRewardEntry(loanId, holder, isLenderSide);
-        }
-    } catch { /* token burned/absent — nothing to re-anchor */ }
+        return holder == address(0) ? fallbackAddr : holder;
+    } catch { return fallbackAddr; }
 }
 ```
 
 Sequence: repoint exiting lender+borrower entries to current holders → `closeLoan`
 (pays those current holders their pre-transfer slice, clean) → `registerLoan` (fresh
-entries for the *continuing* loan; borrower side = incoming `l.borrower`; lender side =
-`l.lender` anchor, matching the `registerLoan` convention used everywhere else).
+entries: **lender = current lender-NFT holder**, borrower = incoming obligor `l.borrower`).
 
 **Scope decisions for Codex (item 3):**
-- **Fresh entries anchor to `l.lender`/`l.borrower`, not `ownerOf`.** Only the *exiting*
-  (already-earned) entries are reanchored. The continuing loan's fresh entries follow
-  the standard `registerLoan` anchor convention; if the lender NFT was passively
-  transferred, that stale-anchor case is pre-existing and handled by normal
-  consolidation — out of scope for this fix.
+- **Fresh LENDER entry anchors to the live lender-NFT holder (Codex r1 F4)**, not the
+  stale `l.lender`. **Fresh BORROWER entry anchors to `l.borrower`** (the incoming
+  obligor) — the borrower position NFT is not reassigned in this flow (verified above),
+  so it is decoupled from the obligation; the reward-earning going-forward party is the
+  obligor who pays interest, matching the existing `registerLoan` convention. *(The
+  broader "should the borrower reward follow the NFT holder or the obligor when they
+  diverge?" question is a pre-existing model choice, unchanged here — out of scope.)*
 - **Reuse `repointRewardEntry`** — the exact #1061-approved reward-only primitive; do
   **NOT** re-add `eagerConsolidateBothSides` to `transferObligationViaOffer` (that moved
   vaulted collateral AFTER the old collateral was released → double-withdraw / bricked
@@ -355,8 +417,10 @@ entries for the *continuing* loan; borrower side = incoming `l.borrower`; lender
    `claimInteractionRewards`. **This is the regression that the status fallback alone
    fails** — assert it explicitly against a pre-fix baseline.
 2. **Prepay-sale window-shrink (item 2).** Finalize a prepay sale (both the executor and
-   parallel-sale entrypoints) mid-window; assert both entries `closed`, `endDay`
-   shrunk to `today+1`, in-grace → borrower keeps / late → borrower forfeits.
+   parallel-sale entrypoints) mid-window, in-grace; assert both entries `closed`, `endDay`
+   shrunk to `today+1`, borrower **keeps** (always clean). Separately assert a **late**
+   fill is **rejected** at the entrypoint (`GraceExpired` / `ParallelSaleFillPastGrace`)
+   and never reaches the close — no late-close/forfeit path exists to test (Codex r1 F3).
 3. **Periodic auto-deduct close.** `autoDeductDaily` to full repayment; assert clean
    close + window shrink; assert `_autoLiquidatePeriodShortfall` (non-terminal) does
    **not** close.
@@ -372,6 +436,10 @@ entries for the *continuing* loan; borrower side = incoming `l.borrower`; lender
    completes every terminal close (hook swallow proven).
 7. **LenderIntent roll (if wired).** `rollIntentLoan` close is a safe no-op (entries
    already closed) — assert no double-forfeit / no reward change.
+8. **Terminal re-anchor (Codex r1 F5).** Passively transfer a position NFT (no
+   consolidation) to a new holder, then drive a terminal close on a non-consolidating
+   path (prepay sale / periodic auto-deduct); assert the reward entry closed to the
+   **live** holder (matching where the funds went), not the stale stored user.
 
 ---
 
@@ -386,17 +454,28 @@ entries for the *continuing* loan; borrower side = incoming `l.borrower`; lender
 3. High-risk (fund-adjacent forfeit logic) → independent adversarial self-review before
    Codex round 1; then the Codex convergence loop to merge.
 
-## Open questions for reviewers (Codex design rounds)
+## Resolved after Codex round 1
 
-- **Q1 (#1008 gas):** is the O(window) per-day walk acceptable for the longest supported
-  loan term, or should very-long windows fall back to the legacy windowed claim? (Design
-  position: acceptable — bounded by term, matches sibling loops, claims are user-paid.)
-- **Q2 (#1008 rounding):** confirm per-day flooring (≤1 wei/day, protocol-favoring) is
-  the intended trade vs a single window-level floor.
-- **Q3 (#1067 hook naming):** add generic `terminalRewardClose` or reuse
-  `precloseRewardClose`?
+- **F1 (legacy fallback)** — dropped; the legacy window claim can't pay entry-path
+  rewards (pays from the pre-entry per-user daily maps). O(window) entry loop stands;
+  the only valid future scaling is a paginated entry-claim.
+- **F2 (uncapped exactness)** — added the uncapped telescoped fast path; cap-disabled
+  config is now byte-exact and O(1), and the per-day floor is confined to the
+  cap-enabled branch where it's immaterial.
+- **F3 (unreachable late prepay sale)** — prepay close is unconditionally
+  `borrowerClean = true`; the late path reverts at the entrypoint and is tested as a
+  revert, not a close.
+- **F4 (fresh lender anchor)** — fresh continuing-loan **lender** entry anchors to the
+  live lender-NFT holder; borrower stays `l.borrower` (obligor; NFT not reassigned).
+- **F5 (re-anchor before terminal close)** — adopted the uniform invariant: every
+  reward close (`terminalRewardClose` / `liquidationRewardClose` / the obligation-transfer
+  hook) re-anchors both sides to the live NFT holders first, so the reward closes to the
+  same party the funds pay.
+
+## Open questions still for reviewers
+
+- **Q3 (#1067 hook naming):** keep `precloseRewardClose` distinct (its callers already
+  re-anchor upstream) vs unify with `terminalRewardClose`? (Leaning: keep distinct.)
 - **Q4 (#1067 LenderIntent):** wire the roll close defensively, or omit as
-  already-covered?
-- **Q5 (#1067 item 3 fresh-entry anchor):** fresh continuing-loan entries on
-  `l.lender`/`l.borrower` (proposed) vs current NFT holders?
+  already-covered by the prior Active→Repaid close? (Leaning: omit.)
 - **Q6 (sequencing):** two PRs (proposed) or one?
