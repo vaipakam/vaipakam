@@ -82,7 +82,7 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](103);
+        selectors = new bytes4[](105);
         selectors[0] = TestMutatorFacet.setLoan.selector;
         selectors[1] = TestMutatorFacet.setOffer.selector;
         selectors[2] = TestMutatorFacet.setNextLoanId.selector;
@@ -273,6 +273,9 @@ contract HelperTest {
         selectors[101] = TestMutatorFacet.callMigrateActiveHeld.selector;
         // #1144 — offer→loan link pin for the syncPrepaySaleOffer Scenario-B test.
         selectors[102] = TestMutatorFacet.setOfferIdToLoanId.selector;
+        // #1008 (S13) — entry-path per-day-cap test scaffolding.
+        selectors[103] = TestMutatorFacet.closeRewardEntryRaw.selector;
+        selectors[104] = TestMutatorFacet.setDayCapThreshold18.selector;
         // #951 v2 (Codex #959 bind-to-live) — setSaleListingCollateralRaw removed
         // with the snapshot mapping; the accept binds `>=` live collateral.
         // #687-B: the former tail entries ([83]-[87]: setBackstopAbsorbCashRaw,
