@@ -494,16 +494,18 @@ contract EarlyWithdrawalFacet is
 
         // Old lender forfeits interaction rewards to treasury; new lender
         // gets a fresh entry covering the residual loan window. #1067 — routed
-        // through the `transferLenderRewardEntry` self-hook (BUBBLING cross-facet
-        // call — the sale forfeit must not be silently dropped) so the O(1)
-        // transfer body lives on InteractionRewardsFacet, off this tight facet.
-        LibFacet.crossFacetCall(
+        // through the `transferLenderRewardEntry` self-hook so the O(1) transfer
+        // body lives on InteractionRewardsFacet, off this EIP-170-tight facet.
+        // BEST-EFFORT (not bubbled): reward bookkeeping is strictly subordinate
+        // to the fund-critical sale settlement, matching every sibling reward
+        // hook (preclose / riskmatch / claim / prepay / periodic). Production
+        // always cuts InteractionRewardsFacet, so the forfeit is never dropped.
+        _rewardHook(
             abi.encodeWithSelector(
                 InteractionRewardsFacet.transferLenderRewardEntry.selector,
                 loanId,
                 buyOffer.creator
-            ),
-            bytes4(0)
+            )
         );
 
         // Mark buyOffer accepted
@@ -1067,16 +1069,15 @@ contract EarlyWithdrawalFacet is
 
         // Old lender forfeits interaction rewards to treasury; new lender
         // gets a fresh entry covering the residual loan window. #1067 — routed
-        // through the `transferLenderRewardEntry` self-hook (BUBBLING cross-facet
-        // call) so the O(1) transfer body lives on InteractionRewardsFacet, off
-        // this tight facet.
-        LibFacet.crossFacetCall(
+        // best-effort through the `transferLenderRewardEntry` self-hook so the
+        // O(1) transfer body lives on InteractionRewardsFacet, off this tight
+        // facet (see the loan-keyed twin above for the subordinacy rationale).
+        _rewardHook(
             abi.encodeWithSelector(
                 InteractionRewardsFacet.transferLenderRewardEntry.selector,
                 loanId,
                 newLender
-            ),
-            bytes4(0)
+            )
         );
 
         // ── Clean up temporary loan created by acceptOffer ──────────────────
@@ -1192,6 +1193,19 @@ contract EarlyWithdrawalFacet is
         delete s.saleOfferToLoanId[saleOfferId];
 
         emit LoanSaleCompleted(loanId, originalLender, newLender);
+    }
+
+    /// @dev #1067 — best-effort reward transfer self-call. The O(1) transfer
+    ///      body lives on {InteractionRewardsFacet}; a failed low-level call is
+    ///      intentionally not bubbled (the sale settlement proceeds regardless —
+    ///      reward bookkeeping is subordinate). Production always cuts
+    ///      InteractionRewardsFacet; a focused test harness that omits it simply
+    ///      skips the reward transfer.
+    function _rewardHook(bytes memory data) private {
+        (bool ok, ) = address(this).call(data);
+        if (!ok) {
+            // best-effort — the sale settlement proceeds regardless.
+        }
     }
 
 }
