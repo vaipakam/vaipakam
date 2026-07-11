@@ -8,6 +8,7 @@ import {DiamondReentrancyGuard} from "../libraries/LibReentrancyGuard.sol";
 import {DiamondPausable} from "../libraries/LibPausable.sol";
 import {IVaipakamErrors} from "../interfaces/IVaipakamErrors.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
+import {IERC721} from "@openzeppelin/contracts/token/ERC721/IERC721.sol";
 import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 
 /**
@@ -624,15 +625,76 @@ contract InteractionRewardsFacet is
     function precloseRewardTransferObligation(uint256 loanId) external {
         if (msg.sender != address(this)) revert RewardHookCallerNotSelf();
         LibVaipakam.Loan storage l = LibVaipakam.storageSlot().loans[loanId];
+        // #1067 — `closeLoan` re-anchors the EXITING entries to their live NFT
+        // holders (centralized) then closes them clean, so the buyer of a
+        // transferred position keeps the slice they earned pre-transfer.
         LibInteractionRewards.closeLoan(loanId, /* borrowerClean */ true, false);
+        // Fresh continuing-loan entries. Codex #1147 r1 F4 — the LENDER side
+        // anchors to the CURRENT lender-NFT holder, not the (possibly stale)
+        // l.lender, so post-transfer lender rewards don't accrue to a prior
+        // stored lender who sold their NFT. The BORROWER side is the incoming
+        // obligor l.borrower (migrateBorrowerPosition re-mints the borrower NFT
+        // to it right AFTER this hook, so l.borrower is both the obligor and the
+        // post-tx NFT holder — Codex r2 F7).
+        address freshLender = _currentHolderOr(l.lenderTokenId, l.lender);
         LibInteractionRewards.registerLoan(
             loanId,
-            l.lender,
+            freshLender,
             l.borrower, // == incoming borrower (set before this hook)
             l.principalAsset,
             l.principal,
             l.interestRateBps,
             l.durationDays
         );
+    }
+
+    /// @notice #1067 — terminal reward close for a LIQUIDATION-class terminal
+    ///         (borrower forfeits DURABLY, lender keeps). Diamond-internal.
+    ///         Stamping `forfeited + closed` here is the one fix no status-based
+    ///         fallback can cover: a later `InternalMatched → Settled` transition
+    ///         would otherwise drop the status-derived forfeit and pay the
+    ///         liquidated borrower (Codex #1061 P1). `closeLoan` also re-anchors
+    ///         the (kept) lender side to its live holder.
+    function liquidationRewardClose(uint256 loanId) external {
+        if (msg.sender != address(this)) revert RewardHookCallerNotSelf();
+        LibInteractionRewards.closeLoan(loanId, /* borrowerClean */ false, false);
+    }
+
+    /// @notice #1067 — terminal reward close for a PROPER close / window-shrink
+    ///         (lender never forfeits; the SALE path is the only lender-forfeit
+    ///         route). Diamond-internal. Used by the prepay-sale + periodic
+    ///         auto-deduct terminal paths. `closeLoan` re-anchors both sides to
+    ///         their live holders before shrinking + closing.
+    function terminalRewardClose(uint256 loanId, bool borrowerClean) external {
+        if (msg.sender != address(this)) revert RewardHookCallerNotSelf();
+        LibInteractionRewards.closeLoan(loanId, borrowerClean, false);
+    }
+
+    /// @notice #1067 — lender-position SALE reward transfer (early-withdrawal):
+    ///         forfeit the exiting lender's entry to treasury and open a fresh
+    ///         entry for `newLender` over the residual window. Diamond-internal.
+    ///         Hosted here (not inlined at the {EarlyWithdrawalFacet} call sites)
+    ///         so the O(1)-indexed transfer body lives once, off that
+    ///         EIP-170-tight facet. Called via a BUBBLING self cross-facet call
+    ///         (the sale forfeit must not be silently dropped), so the caller-self
+    ///         guard is the trust boundary.
+    function transferLenderRewardEntry(uint256 loanId, address newLender) external {
+        if (msg.sender != address(this)) revert RewardHookCallerNotSelf();
+        LibInteractionRewards.transferLenderEntry(loanId, newLender);
+    }
+
+    /// @dev #1067 — current holder of `tokenId` (falls back to `fallbackAddr`
+    ///      on a burned/absent token). Used only for the fresh continuing-loan
+    ///      lender anchor in {precloseRewardTransferObligation}.
+    function _currentHolderOr(uint256 tokenId, address fallbackAddr)
+        private
+        view
+        returns (address)
+    {
+        try IERC721(address(this)).ownerOf(tokenId) returns (address holder) {
+            return holder == address(0) ? fallbackAddr : holder;
+        } catch {
+            return fallbackAddr;
+        }
     }
 }

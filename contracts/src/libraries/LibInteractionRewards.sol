@@ -4,6 +4,7 @@ pragma solidity ^0.8.29;
 import {LibVaipakam} from "./LibVaipakam.sol";
 import {OracleFacet} from "../facets/OracleFacet.sol";
 import {IERC20Metadata} from "@openzeppelin/contracts/token/ERC20/extensions/IERC20Metadata.sol";
+import {IERC721} from "@openzeppelin/contracts/token/ERC721/IERC721.sol";
 import {AggregatorV3Interface} from "@chainlink/contracts/src/v0.8/shared/interfaces/AggregatorV3Interface.sol";
 import {SafeCast} from "@openzeppelin/contracts/utils/math/SafeCast.sol";
 
@@ -344,8 +345,17 @@ library LibInteractionRewards {
         if (!active) return;
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
 
+        // #1067 (S13 Part 2) — CENTRALIZED holder re-anchor: before closing an
+        // OPEN entry, re-point it to the live position-NFT holder so the reward
+        // closes to the same party the funds go to (every close path routes
+        // through here, so repay / default / HF-liquidation / preclose all
+        // inherit it — Codex #1147 r2 F6). Skips already-closed entries so a
+        // frozen slice is never moved to a later holder (F8).
+        LibVaipakam.Loan storage l = s.loans[loanId];
+
         uint256 lenderId = s.loanActiveLenderEntryId[loanId];
         if (lenderId != 0) {
+            _reanchorOpenSide(s, loanId, lenderId, l.lenderTokenId, true);
             _closeEntry(
                 s,
                 lenderId,
@@ -358,6 +368,7 @@ library LibInteractionRewards {
         }
         uint256 borrowerId = s.loanBorrowerEntryId[loanId];
         if (borrowerId != 0) {
+            _reanchorOpenSide(s, loanId, borrowerId, l.borrowerTokenId, false);
             _closeEntry(
                 s,
                 borrowerId,
@@ -368,6 +379,31 @@ library LibInteractionRewards {
             );
             // Leave s.loanBorrowerEntryId set so {sweepForfeitedByLoanId}
             // can still locate it after close.
+        }
+    }
+
+    /// @dev #1067 — re-point an OPEN entry to the current position-NFT holder
+    ///      before it is closed. Reads `ownerOf(tokenId)` in the diamond context
+    ///      (`address(this)` routes to {VaipakamNFTFacet}). Never re-anchors an
+    ///      already-closed entry (its reward is earned + frozen — moving it would
+    ///      hand a prior holder's slice to a later one). Tolerates a burned/absent
+    ///      token via try/catch. `repointRewardEntry` is O(1) (see
+    ///      {rewardEntryUserIdx}), so this is safe on the fund-critical close path.
+    function _reanchorOpenSide(
+        LibVaipakam.Storage storage s,
+        uint256 loanId,
+        uint256 entryId,
+        uint256 tokenId,
+        bool isLenderSide
+    ) private {
+        if (entryId == 0) return;
+        if (s.rewardEntries[entryId].closed) return;
+        try IERC721(address(this)).ownerOf(tokenId) returns (address holder) {
+            if (holder != address(0)) {
+                repointRewardEntry(loanId, holder, isLenderSide);
+            }
+        } catch {
+            // Token burned / absent — nothing to re-anchor.
         }
     }
 
@@ -468,30 +504,36 @@ library LibInteractionRewards {
 
         _removeUserEntry(s, oldUser, id);
         s.userRewardEntryIds[newUser].push(id);
+        // #1067 — maintain the O(1) membership index on the newUser push.
+        s.rewardEntryUserIdx[id] = s.userRewardEntryIds[newUser].length;
         e.user = newUser;
         // Per-loan pointer already references `id`; sweep + per-user claim now
         // resolve to `newUser`.
     }
 
-    /// @dev Swap-pop `id` out of `userRewardEntryIds[user]` (membership move
-    ///      for {repointRewardEntry}). No-op if absent.
+    /// @dev Swap-pop `id` out of `userRewardEntryIds[user]` in O(1) via the
+    ///      {rewardEntryUserIdx} index (#1067). No-op if absent. Rewrites the
+    ///      moved tail entry's index and clears `id`'s.
     function _removeUserEntry(
         LibVaipakam.Storage storage s,
         address user,
         uint256 id
     ) private {
+        uint256 idxPlus1 = s.rewardEntryUserIdx[id];
+        if (idxPlus1 == 0) return; // not indexed / already removed
         uint256[] storage ids = s.userRewardEntryIds[user];
+        uint256 i = idxPlus1 - 1;
         uint256 n = ids.length;
-        for (uint256 i; i < n; ) {
-            if (ids[i] == id) {
-                ids[i] = ids[n - 1];
-                ids.pop();
-                return;
-            }
-            unchecked {
-                ++i;
-            }
+        // Defensive: the index must point at `id` in THIS user's array.
+        if (i >= n || ids[i] != id) return;
+        uint256 lastIdx = n - 1;
+        if (i != lastIdx) {
+            uint256 moved = ids[lastIdx];
+            ids[i] = moved;
+            s.rewardEntryUserIdx[moved] = i + 1; // rewrite the moved entry's index
         }
+        ids.pop();
+        s.rewardEntryUserIdx[id] = 0;
     }
 
     // ─── Frontier advance (local totals + cum-per-USD) ──────────────────────
@@ -1072,6 +1114,8 @@ library LibInteractionRewards {
         e.perDayNumeraire18 = perDayNumeraire18;
         // processed/forfeited default to false
         s.userRewardEntryIds[user].push(id);
+        // #1067 — O(1) membership index (1-based; 0 = absent).
+        s.rewardEntryUserIdx[id] = s.userRewardEntryIds[user].length;
     }
 
     /// @dev Shrink `entry` to `[startDay, min(originalEnd, today+1))`,

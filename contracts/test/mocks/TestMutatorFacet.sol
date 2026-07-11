@@ -657,6 +657,9 @@ contract TestMutatorFacet {
             perDayNumeraire18: perDayNumeraire18
         });
         s.userRewardEntryIds[user].push(id);
+        // #1067 — mirror production `_allocEntry`: maintain the O(1) membership
+        // index (1-based) so a seeded entry re-anchors/removes cleanly.
+        s.rewardEntryUserIdx[id] = s.userRewardEntryIds[user].length;
     }
 
     /// @notice #1008 (S13) — mark a seeded reward entry claimable with a real
@@ -701,6 +704,44 @@ contract TestMutatorFacet {
         returns (uint256[] memory)
     {
         return LibVaipakam.storageSlot().loanForfeitedLenderEntryIds[loanId];
+    }
+
+    // ─── #1067 (S13 Part 2) test-only — re-anchor + O(1) index scaffolding ────
+
+    /// @notice Set the per-loan borrower entry pointer (production sets it in
+    ///         {LibInteractionRewards.registerLoan} at loan init) so a re-anchor
+    ///         test can seed the borrower side alongside the lender one.
+    function setLoanBorrowerEntryId(uint256 loanId, uint256 entryId) external {
+        LibVaipakam.storageSlot().loanBorrowerEntryId[loanId] = entryId;
+    }
+
+    /// @notice Invoke the internal {LibInteractionRewards.repointRewardEntry} to
+    ///         drive the O(1) holder re-anchor directly (production reaches it via
+    ///         `closeLoan` / consolidation). Lets a unit test assert the per-user
+    ///         index (`userRewardEntryIds` + `rewardEntryUserIdx`) stays consistent
+    ///         across successive re-points without a full lifecycle.
+    function callRepointRewardEntry(
+        uint256 loanId,
+        address newUser,
+        bool isLenderSide
+    ) external {
+        LibInteractionRewards.repointRewardEntry(loanId, newUser, isLenderSide);
+    }
+
+    /// @notice Read a user's reward-entry id list (`userRewardEntryIds[user]`) so
+    ///         a test can assert the O(1) swap-remove membership moves cleanly.
+    function getUserRewardEntryIds(address user)
+        external
+        view
+        returns (uint256[] memory)
+    {
+        return LibVaipakam.storageSlot().userRewardEntryIds[user];
+    }
+
+    /// @notice Read the 1-based back-index (`rewardEntryUserIdx[id]`) an entry
+    ///         holds into its owner's `userRewardEntryIds` array (0 = absent).
+    function getRewardEntryUserIdx(uint256 id) external view returns (uint256) {
+        return LibVaipakam.storageSlot().rewardEntryUserIdx[id];
     }
 
     // ─── LibERC721 lock-state direct manipulators (test-only) ───────────

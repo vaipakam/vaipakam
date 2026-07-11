@@ -13,7 +13,7 @@ import {LibFallback} from "../libraries/LibFallback.sol";
 import {LibAccessControl, DiamondAccessControl} from "../libraries/LibAccessControl.sol";
 import {LenderIntentFacet} from "./LenderIntentFacet.sol";
 import {LibVPFIDiscount} from "../libraries/LibVPFIDiscount.sol";
-import {LibInteractionRewards} from "../libraries/LibInteractionRewards.sol";
+import {InteractionRewardsFacet} from "./InteractionRewardsFacet.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {IERC20Metadata} from "@openzeppelin/contracts/token/ERC20/extensions/IERC20Metadata.sol";
 import {IERC721} from "@openzeppelin/contracts/token/ERC721/IERC721.sol";
@@ -433,8 +433,7 @@ contract ClaimFacet is
                 // lender), so the borrower forfeits any LIF VPFI and interaction
                 // rewards close. The deferred fallback entry never ran them; no
                 // double-run (this returns; the absorb branch isn't reached).
-                LibVPFIDiscount.forfeitBorrowerLif(loan);
-                LibInteractionRewards.closeLoan(loanId, false, false);
+                _closeDefaultTerminalRewards(loanId, loan);
                 // Emit a terminal signal: no claim/absorb event fires in this
                 // keeper tx, so without this the indexer would leave the loan
                 // stuck pre-terminal until the lender later claims.
@@ -657,6 +656,21 @@ contract ClaimFacet is
             }
         }
 
+        // Terminal hooks the direct default/liquidation paths run (DefaultedFacet /
+        // RiskFacet) but the deferred FallbackPending entry did NOT: forfeit any
+        // up-front borrower LIF VPFI to treasury (a default is not a proper close)
+        // and close interaction-reward accounting (borrower forfeits, lender keeps).
+        // Both are no-ops when there's nothing held/open; the full-internal-match
+        // path returns earlier (these don't double-run). Per the CLAUDE.md invariant
+        // that every default terminal MUST forfeitBorrowerLif.
+        //
+        // #1067 — run the reward close BEFORE the lender NFT burns below:
+        // `closeLoan`'s centralized re-anchor reads `ownerOf`, which reverts
+        // once the token is burned (its try/catch would then skip and strand
+        // the kept lender entry on a stale holder). Running it here, while the
+        // NFT still resolves, re-anchors the lender side to the live holder.
+        _closeDefaultTerminalRewards(loanId, loan);
+
         // Burn the lender NFT + go terminal (mirrors the vanilla claim tail).
         LibFacet.crossFacetCall(
             abi.encodeWithSelector(
@@ -686,16 +700,6 @@ contract ClaimFacet is
             ),
             bytes4(0)
         );
-
-        // Terminal hooks the direct default/liquidation paths run (DefaultedFacet /
-        // RiskFacet) but the deferred FallbackPending entry did NOT: forfeit any
-        // up-front borrower LIF VPFI to treasury (a default is not a proper close)
-        // and close interaction-reward accounting (borrower forfeits, lender keeps).
-        // Both are no-ops when there's nothing held/open; the full-internal-match
-        // path returns earlier (these don't double-run). Per the CLAUDE.md invariant
-        // that every default terminal MUST forfeitBorrowerLif.
-        LibVPFIDiscount.forfeitBorrowerLif(loan);
-        LibInteractionRewards.closeLoan(loanId, false, false);
 
         // #569 borrower-lien fold (same as the vanilla Defaulted path): record the
         // re-liened borrower residual as the borrower claim so the verified
@@ -880,6 +884,18 @@ contract ClaimFacet is
                     ),
                     bytes4(0)
                 );
+                // #1067 — this claim-time FallbackPending → Defaulted force IS
+                // the loan's terminal: fallback ENTRY is reversible (cure back
+                // to Active) so neither the LIF forfeit nor the reward close
+                // ran there — they are deferred to here, exactly as the two
+                // sibling default terminals do (`_absorbLenderSlice` and the
+                // backstop early-Defaulted branch). forfeitBorrowerLif honours
+                // the CLAUDE.md invariant "every default terminal MUST
+                // forfeitBorrowerLif" (idempotent no-op when nothing is held);
+                // closeLoan durably closes both reward sides (borrower forfeits,
+                // lender keeps) and re-anchors the still-live lender NFT holder
+                // BEFORE the lender NFT burns in the payout tail below.
+                _closeDefaultTerminalRewards(loanId, loan);
             }
             // #569 Gap C (round-6 P1 + round-9 P1) — fold the borrower's
             // vault collateral lien into the borrower claim. The lien
@@ -2129,5 +2145,46 @@ contract ClaimFacet is
             snap.active,
             snap.retryAttempted
         );
+    }
+
+    /// @dev #1067 — shared default/liquidation-terminal reward + LIF close used
+    ///      by the three claim-time default terminals (the backstop retry-swap
+    ///      branch, `_absorbLenderSlice`, and the vanilla FallbackPending→Defaulted
+    ///      force). `forfeitBorrowerLif` honours the CLAUDE.md invariant that
+    ///      every default terminal MUST forfeitBorrowerLif (idempotent no-op when
+    ///      nothing is held); `closeLoan` durably closes both reward sides
+    ///      (borrower forfeits, lender keeps) and re-anchors the kept lender side
+    ///      to its live NFT holder. Factored to ONE call site so the terminals
+    ///      don't each inline the pair — keeps ClaimFacet under EIP-170.
+    /// @dev  The reward close routes through the `liquidationRewardClose`
+    ///       SELF-HOOK (not an inline `LibInteractionRewards.closeLoan`) so the
+    ///       heavy close/re-anchor body lives on {InteractionRewardsFacet}, not
+    ///       inlined into this EIP-170-tight facet — the same lever
+    ///       {RiskMatchLiquidationFacet} uses. Reward bookkeeping is strictly
+    ///       subordinate to the fund-critical claim, so the low-level call is
+    ///       best-effort (not bubbled); `forfeitBorrowerLif` stays inline + hard
+    ///       (it moves VPFI to treasury — fund-critical, per the invariant).
+    function _closeDefaultTerminalRewards(
+        uint256 loanId,
+        LibVaipakam.Loan storage loan
+    ) private {
+        LibVPFIDiscount.forfeitBorrowerLif(loan);
+        _rewardHook(
+            abi.encodeWithSelector(
+                InteractionRewardsFacet.liquidationRewardClose.selector,
+                loanId
+            )
+        );
+    }
+
+    /// @dev #1067 — best-effort reward close-out self-call. The close/re-anchor
+    ///      logic lives on {InteractionRewardsFacet}; a failed low-level call is
+    ///      intentionally not bubbled (the claim proceeds regardless). Production
+    ///      always cuts InteractionRewardsFacet.
+    function _rewardHook(bytes memory data) private {
+        (bool ok, ) = address(this).call(data);
+        if (!ok) {
+            // best-effort — the close proceeds regardless.
+        }
     }
 }

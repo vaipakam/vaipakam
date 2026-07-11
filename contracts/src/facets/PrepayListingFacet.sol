@@ -19,6 +19,7 @@ import {IVaipakamPrepayContext} from "../seaport/IVaipakamPrepayContext.sol";
 import {IVaipakamPrepayCallbacks} from "../seaport/IVaipakamPrepayCallbacks.sol";
 import {IListingExecutorRecorder} from "../seaport/IListingExecutorRecorder.sol";
 import {VaipakamNFTFacet} from "./VaipakamNFTFacet.sol";
+import {InteractionRewardsFacet} from "./InteractionRewardsFacet.sol";
 import {VaipakamVaultImplementation} from "../VaipakamVaultImplementation.sol";
 import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
@@ -197,6 +198,18 @@ contract PrepayListingFacet is
         LibLifecycle.transition(loan, LibVaipakam.LoanStatus.Active, LibVaipakam.LoanStatus.Settled);
         LibERC721._unlock(loan.borrowerTokenId);
         LibVPFIDiscount.settleBorrowerLifProper(loan);
+        // #1067 — DURABLE terminal reward close: a prepay-sale finalize is a
+        // proper close, so shrink both reward entries' active windows to
+        // today and re-anchor each open side to the live NFT holder here.
+        // `borrowerClean = true`. Best-effort — reward bookkeeping is
+        // strictly subordinate to the fund-critical settlement.
+        _rewardHook(
+            abi.encodeWithSelector(
+                InteractionRewardsFacet.terminalRewardClose.selector,
+                loanId,
+                true
+            )
+        );
 
         // T-086 step 6 — clear the diamond's per-loan listing
         // bookkeeping (`s.prepayListingOrderHash[loanId]` +
@@ -558,6 +571,18 @@ contract PrepayListingFacet is
         );
         LibERC721._unlock(loan.borrowerTokenId);
         LibVPFIDiscount.settleBorrowerLifProper(loan);
+        // #1067 — DURABLE terminal reward close (offer-keyed parallel-sale
+        // twin of executorFinalizePrepaySale). Proper close, so shrink both
+        // reward entries to today and re-anchor each open side to the live
+        // NFT holder. `borrowerClean = true`. Best-effort — subordinate to
+        // the fund-critical settlement.
+        _rewardHook(
+            abi.encodeWithSelector(
+                InteractionRewardsFacet.terminalRewardClose.selector,
+                loanId,
+                true
+            )
+        );
 
         // Codex round-6 P2 #2 — borrower could have ALSO posted a
         // loan-keyed prepay listing on top of the carried-through
@@ -727,5 +752,19 @@ contract PrepayListingFacet is
     ///         prepay-listing path is disabled (no executor configured).
     function getCollateralListingExecutor() external view returns (address) {
         return LibVaipakam.storageSlot().collateralListingExecutor;
+    }
+
+    /// @dev #1067 — best-effort reward close-out hook. The reward window
+    ///      logic lives on {InteractionRewardsFacet}; this facet only fires
+    ///      the self-call at its proper-close terminals. Reward bookkeeping
+    ///      is STRICTLY SUBORDINATE to the fund-critical settlement, so a
+    ///      failed low-level call is intentionally not bubbled. Production
+    ///      always cuts InteractionRewardsFacet; a focused test harness that
+    ///      omits it simply skips reward bookkeeping.
+    function _rewardHook(bytes memory data) private {
+        (bool ok, ) = address(this).call(data);
+        if (!ok) {
+            // best-effort — the close proceeds regardless.
+        }
     }
 }

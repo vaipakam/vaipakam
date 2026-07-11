@@ -15,7 +15,7 @@ import {LibFacet} from "../libraries/LibFacet.sol";
 import {LenderIntentFacet} from "./LenderIntentFacet.sol";
 import {LibERC721} from "../libraries/LibERC721.sol";
 import {LibMetricsHooks} from "../libraries/LibMetricsHooks.sol";
-import {LibInteractionRewards} from "../libraries/LibInteractionRewards.sol";
+import {InteractionRewardsFacet} from "./InteractionRewardsFacet.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import {DiamondReentrancyGuard} from "../libraries/LibReentrancyGuard.sol";
@@ -493,8 +493,20 @@ contract EarlyWithdrawalFacet is
         }
 
         // Old lender forfeits interaction rewards to treasury; new lender
-        // gets a fresh entry covering the residual loan window.
-        LibInteractionRewards.transferLenderEntry(loanId, buyOffer.creator);
+        // gets a fresh entry covering the residual loan window. #1067 — routed
+        // through the `transferLenderRewardEntry` self-hook so the O(1) transfer
+        // body lives on InteractionRewardsFacet, off this EIP-170-tight facet.
+        // BEST-EFFORT (not bubbled): reward bookkeeping is strictly subordinate
+        // to the fund-critical sale settlement, matching every sibling reward
+        // hook (preclose / riskmatch / claim / prepay / periodic). Production
+        // always cuts InteractionRewardsFacet, so the forfeit is never dropped.
+        _rewardHook(
+            abi.encodeWithSelector(
+                InteractionRewardsFacet.transferLenderRewardEntry.selector,
+                loanId,
+                buyOffer.creator
+            )
+        );
 
         // Mark buyOffer accepted
         buyOffer.accepted = true;
@@ -1056,8 +1068,17 @@ contract EarlyWithdrawalFacet is
         }
 
         // Old lender forfeits interaction rewards to treasury; new lender
-        // gets a fresh entry covering the residual loan window.
-        LibInteractionRewards.transferLenderEntry(loanId, newLender);
+        // gets a fresh entry covering the residual loan window. #1067 — routed
+        // best-effort through the `transferLenderRewardEntry` self-hook so the
+        // O(1) transfer body lives on InteractionRewardsFacet, off this tight
+        // facet (see the loan-keyed twin above for the subordinacy rationale).
+        _rewardHook(
+            abi.encodeWithSelector(
+                InteractionRewardsFacet.transferLenderRewardEntry.selector,
+                loanId,
+                newLender
+            )
+        );
 
         // ── Clean up temporary loan created by acceptOffer ──────────────────
         LibVaipakam.Loan storage tempLoan = s.loans[tempLoanId];
@@ -1172,6 +1193,19 @@ contract EarlyWithdrawalFacet is
         delete s.saleOfferToLoanId[saleOfferId];
 
         emit LoanSaleCompleted(loanId, originalLender, newLender);
+    }
+
+    /// @dev #1067 — best-effort reward transfer self-call. The O(1) transfer
+    ///      body lives on {InteractionRewardsFacet}; a failed low-level call is
+    ///      intentionally not bubbled (the sale settlement proceeds regardless —
+    ///      reward bookkeeping is subordinate). Production always cuts
+    ///      InteractionRewardsFacet; a focused test harness that omits it simply
+    ///      skips the reward transfer.
+    function _rewardHook(bytes memory data) private {
+        (bool ok, ) = address(this).call(data);
+        if (!ok) {
+            // best-effort — the sale settlement proceeds regardless.
+        }
     }
 
 }

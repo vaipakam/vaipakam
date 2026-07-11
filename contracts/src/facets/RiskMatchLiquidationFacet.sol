@@ -7,6 +7,7 @@ import {LibFacet} from "../libraries/LibFacet.sol";
 import {LibSanctionedLock} from "../libraries/LibSanctionedLock.sol";
 import {ConsolidationFacet} from "./ConsolidationFacet.sol";
 import {LibVPFIDiscount} from "../libraries/LibVPFIDiscount.sol";
+import {InteractionRewardsFacet} from "./InteractionRewardsFacet.sol";
 import {SwapToRepayIntentFacet} from "./SwapToRepayIntentFacet.sol";
 import {EncumbranceMutateFacet} from "./EncumbranceMutateFacet.sol";
 import {OracleFacet} from "./OracleFacet.sol";
@@ -849,6 +850,20 @@ contract RiskMatchLiquidationFacet is DiamondReentrancyGuard, DiamondPausable {
                 // the loan settles (claimAsBorrower rejects a Settled loan).
                 // Idempotent / no-op when the borrower paid no VPFI LIF.
                 LibVPFIDiscount.forfeitBorrowerLif(loan);
+                // #1067 — DURABLE liquidation reward forfeit: an internal match
+                // is a liquidation-class terminal, so close the reward entries
+                // here (borrower forfeits durably, lender keeps). Stamping it now
+                // is the one item no status fallback can cover — a later
+                // ClaimFacet `InternalMatched → Settled` would otherwise drop the
+                // status-derived forfeit and pay the liquidated borrower (Codex
+                // #1061 P1). Best-effort (reward bookkeeping never blocks the
+                // fund-critical close).
+                _rewardHook(
+                    abi.encodeWithSelector(
+                        InteractionRewardsFacet.liquidationRewardClose.selector,
+                        loan.id
+                    )
+                );
                 // #577 — a full internal-match closes the loan, but an
                 // OVER-collateralized loan leaves a residual
                 // (`loan.collateralAmount`) still in `loan.borrower`'s
@@ -1029,6 +1044,20 @@ contract RiskMatchLiquidationFacet is DiamondReentrancyGuard, DiamondPausable {
                 // forfeit the borrower VPFI LIF custody to treasury (see the
                 // Active full-match branch). No-op when none was paid.
                 LibVPFIDiscount.forfeitBorrowerLif(loan);
+                // #1067 — DURABLE liquidation reward forfeit: an internal match
+                // is a liquidation-class terminal, so close the reward entries
+                // here (borrower forfeits durably, lender keeps). Stamping it now
+                // is the one item no status fallback can cover — a later
+                // ClaimFacet `InternalMatched → Settled` would otherwise drop the
+                // status-derived forfeit and pay the liquidated borrower (Codex
+                // #1061 P1). Best-effort (reward bookkeeping never blocks the
+                // fund-critical close).
+                _rewardHook(
+                    abi.encodeWithSelector(
+                        InteractionRewardsFacet.liquidationRewardClose.selector,
+                        loan.id
+                    )
+                );
                 // #1132 (S10 central enforcement) — route through the terminalize
                 // host (both holders' markers recorded there).
                 LibFacet.crossFacetCall(
@@ -1118,6 +1147,20 @@ contract RiskMatchLiquidationFacet is DiamondReentrancyGuard, DiamondPausable {
                 loan.principal = 0; // fallback shortfall written off — loan terminal.
                 s.fallbackSnapshot[loan.id].active = false;
                 LibVPFIDiscount.forfeitBorrowerLif(loan);
+                // #1067 — DURABLE liquidation reward forfeit: an internal match
+                // is a liquidation-class terminal, so close the reward entries
+                // here (borrower forfeits durably, lender keeps). Stamping it now
+                // is the one item no status fallback can cover — a later
+                // ClaimFacet `InternalMatched → Settled` would otherwise drop the
+                // status-derived forfeit and pay the liquidated borrower (Codex
+                // #1061 P1). Best-effort (reward bookkeeping never blocks the
+                // fund-critical close).
+                _rewardHook(
+                    abi.encodeWithSelector(
+                        InteractionRewardsFacet.liquidationRewardClose.selector,
+                        loan.id
+                    )
+                );
                 // #1132 (S10 central enforcement) — route through the terminalize host.
                 LibFacet.crossFacetCall(
                     abi.encodeWithSelector(
@@ -1231,5 +1274,19 @@ contract RiskMatchLiquidationFacet is DiamondReentrancyGuard, DiamondPausable {
             r.incentiveX, r.incentiveY, 0
         );
         return true;
+    }
+
+    /// @dev #1067 — best-effort reward-lifecycle hook. The reward call-graph
+    ///      lives on {InteractionRewardsFacet} (this facet is EIP-170-tight), and
+    ///      reward bookkeeping is STRICTLY SUBORDINATE to the fund-critical
+    ///      internal-match close — so the low-level call's failure is
+    ///      intentionally not bubbled. Production always cuts
+    ///      InteractionRewardsFacet; a focused test harness that omits it simply
+    ///      skips reward bookkeeping.
+    function _rewardHook(bytes memory data) private {
+        (bool ok, ) = address(this).call(data);
+        if (!ok) {
+            // best-effort — the close proceeds regardless.
+        }
     }
 }
