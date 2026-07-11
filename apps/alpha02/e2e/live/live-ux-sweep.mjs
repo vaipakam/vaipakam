@@ -188,7 +188,7 @@ const report = {
 };
 report.startedAt = new Date().toISOString();
 
-const { page, done } = await launch({ role: 'lender', headless: true, readOnly: true });
+const { page, done, blockedRequests } = await launch({ role: 'lender', headless: true, readOnly: true });
 
 // One console/request tap for the lifetime of the context.
 let sink = null;
@@ -205,10 +205,15 @@ page.on('requestfailed', (req) => {
   sink?.network.failed.push({ entry: text.slice(0, 400), noise: classifyNoise(text) });
 });
 page.on('response', async (res) => {
-  if (!sink) return;
+  // Snapshot the CURRENT route's sink: the sizes() await below can
+  // resolve after the loop has moved on, and updating the live `sink`
+  // binding then would attribute bytes to the wrong route (or throw
+  // on null) — Codex #1154 r3 P2.
+  const s = sink;
+  if (!s) return;
   const url = res.url();
   const status = res.status();
-  sink.network.responses += 1;
+  s.network.responses += 1;
   // The driver's undici route shim strips upstream content-length;
   // Playwright re-synthesizes it on fulfill, but don't depend on that:
   // prefer the CDP-measured body size (Codex #1154 P2).
@@ -226,9 +231,9 @@ page.on('response', async (res) => {
       /* streamed */
     }
   }
-  sink.network.bytes += bytes;
-  if (status >= 400) sink.network.errors.push({ status, url: url.slice(0, 300) });
-  if (bytes > 500_000) sink.network.heavy.push({ bytes, url: url.slice(0, 300) });
+  s.network.bytes += bytes;
+  if (status >= 400) s.network.errors.push({ status, url: url.slice(0, 300) });
+  if (bytes > 500_000) s.network.heavy.push({ bytes, url: url.slice(0, 300) });
 });
 
 await page.goto(SITE, { waitUntil: 'domcontentloaded' });
@@ -311,9 +316,27 @@ for (const pass of PASSES) {
   }
 }
 
+// The read-only route guard aborts + logs any page-initiated backend
+// write; a non-empty list means some surface tried to mutate state
+// during a read-only audit — surface it loudly in report + exit code.
+report.blockedWriteRequests = blockedRequests;
+
 const reportName = PROBE_ONLY ? 'report-devtools.json' : 'report.json';
 fs.writeFileSync(path.join(OUT_DIR, reportName), JSON.stringify(report, null, 2));
 // eslint-disable-next-line no-console
 console.log(`\nSweep complete → ${path.relative(process.cwd(), OUT_DIR)}/${reportName}`);
+if (blockedRequests.length > 0) {
+  // eslint-disable-next-line no-console
+  console.error(
+    `READ-ONLY VIOLATIONS: ${blockedRequests.length} page-initiated write(s) were blocked — see blockedWriteRequests in the report`,
+  );
+}
+// The sweep's last pass leaves 'advanced' in the PERSISTENT lender
+// profile that every live driver reuses — reset to the app default so
+// a later focused review doesn't silently start on the wrong surface
+// (Codex #1154 r3 P2).
+await page
+  .evaluate(() => localStorage.setItem('alpha02.mode', 'basic'))
+  .catch(() => {});
 await done().catch(() => {});
-process.exit(0);
+process.exit(blockedRequests.length > 0 ? 2 : 0);
