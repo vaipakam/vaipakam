@@ -1204,7 +1204,9 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
                   ? row.status === 'repaid'
                     ? copy.positions.owedRepaid(principalStr)
                     : row.status === 'defaulted' || row.status === 'liquidated'
-                      ? copy.positions.owedDefaulted
+                      ? hasCollateral
+                        ? copy.positions.owedDefaulted
+                        : copy.positions.owedDefaultedNoCollateral
                       : copy.positions.owedClosed
                   : `${principalStr} + up to ~${interestStr} interest`}
             </dd>

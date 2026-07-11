@@ -22,8 +22,19 @@ export function ConnectButton({ block = false }: { block?: boolean }) {
           {isConnected && address ? (
             /* The shortened address is one token — never let the header
                chip wrap it onto two lines ("0x1DAe…" / "8282" reads
-               like two unrelated values on phones — UX-020). */
-            <span style={{ whiteSpace: 'nowrap' }}>
+               like two unrelated values on phones — UX-020). Long ENS
+               reverse names get ellipsized instead of forcing the chip
+               wider than a narrow viewport (Codex #1156 r2). */
+            <span
+              style={{
+                whiteSpace: 'nowrap',
+                maxWidth: '14ch',
+                overflow: 'hidden',
+                textOverflow: 'ellipsis',
+                display: 'inline-block',
+                verticalAlign: 'bottom',
+              }}
+            >
               <AddressName address={address} />
             </span>
           ) : (

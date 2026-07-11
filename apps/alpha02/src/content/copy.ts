@@ -807,6 +807,8 @@ export const copy = {
       `Nothing — ${principal} plus interest was repaid in full.`,
     owedDefaulted:
       'Nothing to repay anymore — this loan ended in default and the collateral covers it.',
+    owedDefaultedNoCollateral:
+      'Nothing to repay anymore — this loan ended in default and was settled.',
     owedClosed: 'Nothing — this loan is closed and settled.',
     whatNextRepaidBorrower:
       'You repaid this loan. Nothing else can happen to it — claim your collateral back below if you haven’t yet.',

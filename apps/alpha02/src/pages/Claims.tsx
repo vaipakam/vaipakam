@@ -155,13 +155,11 @@ function ClaimRow({ loan }: { loan: ClaimableLoan }) {
     loan.claim.lifRebate > 0n
       ? `${formatTokenAmount(loan.claim.lifRebate, 18)} VPFI rebate`
       : null;
-  const heldSuffix =
-    loan.role === 'lender' && loan.claim.heldForLender > 0n ? ' + held proceeds' : '';
-  const claimAmountStr = baseAmountStr
-    ? `${baseAmountStr}${rebateStr ? ` + ${rebateStr}` : ''}${heldSuffix}`
-    : rebateStr
-      ? rebateStr
-      : null;
+  const hasHeld = loan.role === 'lender' && loan.claim.heldForLender > 0n;
+  const heldSuffix = hasHeld ? ' + held proceeds' : '';
+  // Per-branch composition below (Codex #1156 r2): a blended string
+  // can't distinguish "this number IS the collateral leg" from "this
+  // is only a VPFI rebate", and a held-only lane must still surface.
   const defaulted = loan.status === 'defaulted' || loan.status === 'liquidated';
   // Claimable proper-close group: repaid or internal_matched. NOT
   // `settled` — ClaimFacet rejects Settled on both claim paths (claims
@@ -180,23 +178,25 @@ function ClaimRow({ loan }: { loan: ClaimableLoan }) {
     if (loan.role === 'lender') {
       // getClaimable's amount is the fee payout (in the prepay asset)
       // when fungible fees are due — show the number (Codex #1156 r2).
-      what = claimAmountStr
-        ? `${claimAmountStr} fees + your ${nft} back`
+      what = baseAmountStr
+        ? `${baseAmountStr} fees + your ${nft} back`
         : `Rental fees + your ${nft} back`;
       why = 'The rental ended — collect your earned fees and reclaim the NFT.';
     } else {
-      what = claimAmountStr
-        ? `${claimAmountStr} buffer back`
+      what = baseAmountStr
+        ? `${baseAmountStr} buffer back`
         : 'Your prepaid buffer back';
       why = 'The rental closed — the refundable buffer is released.';
     }
   } else if (loan.role === 'lender') {
     if (properClose) {
-      what =
-        claimAmountStr ??
-        (principalMeta.data
-          ? `${formatTokenAmount(loan.principal, principalMeta.data.decimals)} ${principalMeta.data.symbol} + interest`
-          : 'Repaid funds');
+      what = baseAmountStr
+        ? `${baseAmountStr}${heldSuffix}`
+        : hasHeld
+          ? 'Held proceeds for this loan'
+          : principalMeta.data
+            ? `${formatTokenAmount(loan.principal, principalMeta.data.decimals)} ${principalMeta.data.symbol} + interest`
+            : 'Repaid funds';
       why =
         loan.status === 'repaid'
           ? 'The borrower repaid this loan.'
@@ -211,23 +211,31 @@ function ClaimRow({ loan }: { loan: ClaimableLoan }) {
       // getClaimable names the exact asset + amount, so show it; only
       // when the read gave no fungible amount (pure in-kind transfer)
       // fall back to a plain-language title.
-      what = claimAmountStr
-        ? `${claimAmountStr} recovered from the default`
-        : `Default recovery — ${collateralStr}`;
+      what = baseAmountStr
+        ? `${baseAmountStr}${heldSuffix} recovered from the default`
+        : hasHeld
+          ? 'Held proceeds recovered from the default'
+          : `Default recovery — ${collateralStr}`;
       why = 'The loan defaulted — collect what the default settlement recovered for you.';
     }
   } else if (defaulted) {
     // After a liquidation only a residue (if any) is claimable — never
     // promise the full original collateral, and never say "you repaid".
-    what = claimAmountStr ?? 'Anything left after liquidation';
+    what = baseAmountStr
+      ? `${baseAmountStr}${rebateStr ? ` + ${rebateStr}` : ''}`
+      : (rebateStr ?? 'Anything left after liquidation');
     why = 'This loan defaulted. If the liquidation left a surplus, you can claim it.';
   } else if (loan.status === 'internal_matched') {
     // An internal match leaves the borrower a residual and/or VPFI
     // rebate at most — never promise the full collateral back.
-    what = claimAmountStr ?? 'Anything left after the internal match';
+    what = baseAmountStr
+      ? `${baseAmountStr}${rebateStr ? ` + ${rebateStr}` : ''}`
+      : (rebateStr ?? 'Anything left after the internal match');
     why = 'This loan closed by internal matching — collect any residual left for you.';
   } else {
-    what = claimAmountStr ? `${claimAmountStr} collateral back` : `${collateralStr} collateral back`;
+    what = baseAmountStr
+      ? `${baseAmountStr} collateral back${rebateStr ? ` + ${rebateStr}` : ''}`
+      : (rebateStr ?? `${collateralStr} collateral back`);
     why = 'You repaid this loan, so your collateral is released.';
   }
 
