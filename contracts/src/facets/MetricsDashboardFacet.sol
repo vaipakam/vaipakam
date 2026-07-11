@@ -3,6 +3,7 @@
 pragma solidity ^0.8.29;
 
 import {LibVaipakam} from "../libraries/LibVaipakam.sol";
+import {LibMetricsHooks} from "../libraries/LibMetricsHooks.sol";
 import {LibMetricsTypes} from "../libraries/LibMetricsTypes.sol";
 import {LibVPFIDiscount} from "../libraries/LibVPFIDiscount.sol";
 import {RiskFacet} from "./RiskFacet.sol";
@@ -210,7 +211,12 @@ contract MetricsDashboardFacet {
             // The per-user index includes lifetime loans (every
             // status); the dashboard's "Your Loans" panel is the
             // active subset.
-            if (l.status != LibVaipakam.LoanStatus.Active) continue;
+            // #940 — the active dashboard set is Active OR FallbackPending (a
+            // FallbackPending loan is still borrower-curable until the lender
+            // claims). Share the protocol-wide predicate instead of a bare
+            // `!= Active`, which silently dropped FallbackPending loans and could
+            // let a borrower miss the cure window.
+            if (!LibMetricsHooks._isActive(l.status)) continue;
             bool sideMatch = borrowerSide ? (l.borrower == user) : (l.lender == user);
             if (!sideMatch) continue;
             if (skipped < offset) {
@@ -289,7 +295,12 @@ contract MetricsDashboardFacet {
         for (uint256 i = 0; i < total && written < limit; i++) {
             LibVaipakam.Loan storage l = s.loans[userLoans[i]];
             // Filter to ACTIVE only — `userLoanIds` covers lifetime.
-            if (l.status != LibVaipakam.LoanStatus.Active) continue;
+            // #940 — the active dashboard set is Active OR FallbackPending (a
+            // FallbackPending loan is still borrower-curable until the lender
+            // claims). Share the protocol-wide predicate instead of a bare
+            // `!= Active`, which silently dropped FallbackPending loans and could
+            // let a borrower miss the cure window.
+            if (!LibMetricsHooks._isActive(l.status)) continue;
             bool isBorrower = l.borrower == user;
             bool isLender = l.lender == user;
             if (!isBorrower && !isLender) continue;
@@ -559,7 +570,12 @@ contract MetricsDashboardFacet {
         uint256 total = userLoans.length;
         for (uint256 i = 0; i < total; i++) {
             LibVaipakam.Loan storage l = s.loans[userLoans[i]];
-            if (l.status != LibVaipakam.LoanStatus.Active) continue;
+            // #940 — the active dashboard set is Active OR FallbackPending (a
+            // FallbackPending loan is still borrower-curable until the lender
+            // claims). Share the protocol-wide predicate instead of a bare
+            // `!= Active`, which silently dropped FallbackPending loans and could
+            // let a borrower miss the cure window.
+            if (!LibMetricsHooks._isActive(l.status)) continue;
             if (l.lender == user) lenderCount += 1;
             if (l.borrower == user) borrowerCount += 1;
         }

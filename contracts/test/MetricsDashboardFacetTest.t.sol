@@ -36,6 +36,19 @@ contract MetricsDashboardFacetTest is SetupTest {
         address l_,
         address b_
     ) internal {
+        _seedLoanStatus(loanId, l_, b_, LibVaipakam.LoanStatus.Active);
+    }
+
+    /// @dev #940 — seed a loan in an arbitrary status (e.g. FallbackPending) so
+    ///      the active-set dashboard views can be exercised across statuses. The
+    ///      per-user loan index is registered by `scaffoldActiveLoan` regardless
+    ///      of the stored status.
+    function _seedLoanStatus(
+        uint256 loanId,
+        address l_,
+        address b_,
+        LibVaipakam.LoanStatus st
+    ) internal {
         LibVaipakam.Loan memory l;
         l.id = loanId;
         l.lender = l_;
@@ -46,7 +59,7 @@ contract MetricsDashboardFacetTest is SetupTest {
         l.collateralAmount = 1500 ether;
         l.interestRateBps = 500;
         l.durationDays = 30;
-        l.status = LibVaipakam.LoanStatus.Active;
+        l.status = st;
         l.assetType = LibVaipakam.AssetType.ERC20;
         l.collateralAssetType = LibVaipakam.AssetType.ERC20;
         l.startTime = uint64(block.timestamp);
@@ -169,6 +182,31 @@ contract MetricsDashboardFacetTest is SetupTest {
 
     /// @dev User on both sides yields one merged page; the per-row
     ///      `borrowerSide` tag distinguishes which side they hold.
+    /// @dev #940 — a FallbackPending loan is still borrower-curable (until the
+    ///      lender claims), so it MUST appear in the active-set dashboard views
+    ///      and counts. The old `status != Active` filter silently dropped it,
+    ///      risking a borrower missing the cure window on the connected app.
+    function testLoans_includeFallbackPending_940() public {
+        _seedActiveLoan(1, lender, borrower);
+        _seedLoanStatus(2, lender, borrower2, LibVaipakam.LoanStatus.FallbackPending);
+        TestMutatorFacet(address(diamond)).setNextLoanId(3);
+
+        // Lender-side paginated view surfaces BOTH loans.
+        MetricsDashboardFacet.LoanWithRisk[] memory rows =
+            dash.getUserDashboardLoans(lender, /* borrowerSide */ false, 0, 50);
+        assertEq(rows.length, 2, "FallbackPending loan surfaces in dashboard loans");
+
+        // Unified both-sides view surfaces BOTH.
+        MetricsDashboardFacet.LoanWithRiskAndSide[] memory both =
+            dash.getUserDashboardLoansBothSides(lender, 0, 50);
+        assertEq(both.length, 2, "both-sides view surfaces FallbackPending");
+
+        // Headline snapshot counts include the FallbackPending loan.
+        MetricsDashboardFacet.DashboardScalars memory snap =
+            dash.getUserDashboardSnapshot(lender);
+        assertEq(snap.lenderLoanCount, 2, "lender count includes FallbackPending");
+    }
+
     function testLoansBothSides_unifiedMergedPage() public {
         // 1 lender-side loan + 2 borrower-side loans (where `lender` is
         // actually the borrower); 1 unrelated loan that shouldn't surface.
