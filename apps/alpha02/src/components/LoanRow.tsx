@@ -7,11 +7,24 @@ import { loanStateView } from '../lib/loanState';
 import { useTokenMeta } from '../contracts/erc20';
 import { AssetType } from '../lib/types';
 import type { PositionLoan } from '../data/hooks';
+import { healthView, useLoanRisk } from '../data/risk';
 
 export function LoanRow({ loan }: { loan: PositionLoan }) {
   const isRental = loan.assetType !== AssetType.ERC20;
   const principalMeta = useTokenMeta(isRental ? undefined : loan.lendingAsset);
   const view = loanStateView(loan);
+  // UX-003 — the time-based badge alone can show a reassuring green on
+  // a loan hovering at the liquidation line. For active priced loans,
+  // let a WORSE health state override the badge (never a better one —
+  // "past due" stays past due even at a healthy HF).
+  const watchHealth = loan.status === 'active' && !isRental;
+  const risk = useLoanRisk(watchHealth ? loan.loanId : undefined, watchHealth);
+  const health = risk.data?.priced ? healthView(risk.data) : null;
+  const badgeRank = { ok: 0, neutral: 0, warn: 1, danger: 2 } as const;
+  const healthOverrides =
+    health !== null &&
+    health.badge !== 'ok' &&
+    badgeRank[health.badge] > badgeRank[view.badge];
 
   const symbol = principalMeta.data?.symbol ?? '';
   const amount = principalMeta.data
@@ -33,7 +46,16 @@ export function LoanRow({ loan }: { loan: PositionLoan }) {
             : `Loan #${loan.loanId} · ${formatBpsAsPercent(loan.interestRateBps)} yearly interest`}
         </span>
       </span>
-      <span className={`badge badge-${view.badge}`}>{view.label}</span>
+      {healthOverrides && health ? (
+        <span
+          className={`badge badge-${health.badge}`}
+          title={`Health ${health.ratio} — 1.00 is the liquidation line`}
+        >
+          {health.label}
+        </span>
+      ) : (
+        <span className={`badge badge-${view.badge}`}>{view.label}</span>
+      )}
     </Link>
   );
 }

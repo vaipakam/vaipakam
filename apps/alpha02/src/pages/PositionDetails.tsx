@@ -24,6 +24,7 @@ import { isPositiveDecimal, captureTxError } from '../lib/errors';
 import { useLoan } from '../data/hooks';
 import { isRevert } from '../data/liveLoanRow';
 import { useLoanRisk, healthView } from '../data/risk';
+import { formatRemaining, useGraceSeconds } from '../data/grace';
 import { assertWalletNotSanctionedLive, useSanctionsCheck } from '../data/sanctions';
 import {
   assertErc20BalanceLive,
@@ -402,6 +403,22 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
       return null;
     }
   }, [partialInput, principalMeta.data]);
+  // UX-004 — the grace window, read for DISPLAY (previously read only
+  // inside submit handlers, so a past-due borrower could never see how
+  // long they had). Static protocol config per (chain, duration) —
+  // cached long in the hook. Rentals resolve their window elsewhere.
+  const grace = useGraceSeconds(
+    loan.data && loan.data.assetType === AssetType.ERC20
+      ? loan.data.durationDays
+      : undefined,
+  );
+  // Minute tick so a countdown left on screen stays honest.
+  const [nowSec, setNowSec] = useState(() => Math.floor(Date.now() / 1000));
+  useEffect(() => {
+    const t = setInterval(() => setNowSec(Math.floor(Date.now() / 1000)), 60_000);
+    return () => clearInterval(t);
+  }, []);
+
   const collateralOverBalance =
     collateralInputWei !== null &&
     collateralBalance.data !== undefined &&
@@ -475,6 +492,21 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
     row.status === 'internal_matched' ||
     row.status === 'defaulted' ||
     row.status === 'liquidated';
+
+  // UX-004 — past-due escalation. Once past due the only signal used
+  // to be a small "Past due" badge; now we show the concrete deadline:
+  // due date + grace window, counted down live.
+  const graceDeadline =
+    grace.data !== undefined
+      ? row.startTime + row.durationDays * 86400 + Number(grace.data)
+      : null;
+  const graceRemaining = graceDeadline !== null ? graceDeadline - nowSec : null;
+  const showGraceBanner =
+    view.state === 'overdue' && !loanOver && !isRental && graceRemaining !== null;
+  // Rendered-length string for the "if nothing happens" gloss on any
+  // live loan (not just overdue ones).
+  const graceLengthStr =
+    grace.data !== undefined ? formatRemaining(Number(grace.data)) : undefined;
 
   const action: Action = (() => {
     // Side-scoped: a claim on one side must not suppress the other.
@@ -1185,6 +1217,22 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
         </div>
       ) : null}
 
+      {showGraceBanner ? (
+        // UX-004 — the past-due countdown. role="alert": this is the
+        // one moment on the page where losing collateral is imminent.
+        <div className="banner banner-danger" role="alert">
+          <span className="banner-body">
+            {graceRemaining! > 0
+              ? role === 'lender'
+                ? copy.positions.graceCountdownLender(formatRemaining(graceRemaining!))
+                : copy.positions.graceCountdownBorrower(formatRemaining(graceRemaining!))
+              : role === 'lender'
+                ? copy.positions.graceOverLender
+                : copy.positions.graceOverBorrower}
+          </span>
+        </div>
+      ) : null}
+
       <section className="card">
         <dl className="receipt" style={{ margin: 0 }}>
           <div className="receipt-row">
@@ -1263,12 +1311,11 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
                       <>
                         {' '}
                         <span className="muted">
-                          (health factor {healthView(risk.data).ratio}, loan-to-value{' '}
-                          {healthView(risk.data).ltvPct}; liquidation below 1.00
-                          {healthView(risk.data).dropToLiquidationPct
-                            ? ` — roughly, liquidation begins if the collateral's value falls about ${healthView(risk.data).dropToLiquidationPct}`
-                            : ''}
-                          )
+                          {copy.risk.advancedDetail(
+                            healthView(risk.data).ratio,
+                            healthView(risk.data).ltvPct,
+                            healthView(risk.data).dropToLiquidationPct,
+                          )}
                         </span>
                       </>
                     ) : null}
@@ -1309,8 +1356,11 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
                     ? 'Your use rights end at the due date and the prepaid buffer goes to the owner — close on time to get it back.'
                     : 'The renter’s rights reset after the due date and grace period; your fees stay claimable here.'
                   : role === 'borrower'
-                    ? copy.positions.whatIfNothingBorrower(collateral?.symbol ?? 'locked')
-                    : copy.positions.whatIfNothingLender}
+                    ? copy.positions.whatIfNothingBorrower(
+                        collateral?.symbol ?? 'locked',
+                        graceLengthStr,
+                      )
+                    : copy.positions.whatIfNothingLender(graceLengthStr)}
             </dd>
           </div>
         </dl>
