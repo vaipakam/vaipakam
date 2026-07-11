@@ -123,7 +123,17 @@ export function addressOf(role) {
   return WALLETS[role].address;
 }
 
-export async function launch({ role, startChainId = 84532, headless = true }) {
+export async function launch({
+  role,
+  startChainId = 84532,
+  headless = true,
+  // readOnly: deny every signing/write RPC at the injected-wallet
+  // boundary. For evidence sweeps (live-ux-sweep) that advertise
+  // themselves as read-only: a page regression (or a compromised
+  // preview target) asking for a signature mid-visit gets a wallet
+  // error instead of an auto-approved signature (Codex #1154 P2).
+  readOnly = false,
+} = {}) {
   const account = privateKeyToAccount(WALLETS[role].privateKey);
   let chainId = startChainId;
 
@@ -145,8 +155,51 @@ export async function launch({ role, startChainId = 84532, headless = true }) {
   // page traffic is served from THIS process via undici (whose stack
   // the proxy accepts). WebSockets aren't covered — the SPA + JSON-RPC
   // don't need them.
+  // read-only HTTP guard (Codex #1154 r3 P2): the wallet-level guard
+  // stops SIGNING, but a page-initiated backend write (support ticket,
+  // alerts POST) or a raw-tx broadcast would still ride the route shim.
+  // Chain READS are JSON-RPC POSTs, so mutating methods can't be
+  // blanket-blocked; instead: a mutating request is allowed through
+  // only when its body is JSON-RPC whose every method avoids the
+  // broadcast/signing set — anything else is aborted AND logged so a
+  // sweep can fail loudly instead of silently mutating state.
+  const RPC_WRITE_METHODS = new Set([
+    'eth_sendRawTransaction',
+    'eth_sendTransaction',
+    'eth_signTransaction',
+    'eth_sign',
+    'personal_sign',
+    'eth_signTypedData_v4',
+  ]);
+  const blockedRequests = [];
+  function readOnlyViolation(req) {
+    if (!readOnly) return null;
+    const method = req.method().toUpperCase();
+    if (['GET', 'HEAD', 'OPTIONS'].includes(method)) return null;
+    const body = req.postData();
+    if (body) {
+      try {
+        const parsed = JSON.parse(body);
+        const calls = Array.isArray(parsed) ? parsed : [parsed];
+        if (calls.every((c) => c && typeof c.jsonrpc === 'string')) {
+          const bad = calls.find((c) => RPC_WRITE_METHODS.has(c.method));
+          return bad ? `json-rpc ${bad.method}` : null; // read-shaped RPC — allowed
+        }
+      } catch {
+        /* not JSON — fall through to block */
+      }
+    }
+    return `${method} (non-RPC mutating request)`;
+  }
+
   await ctx.route('**/*', async (route) => {
     const req = route.request();
+    const violation = readOnlyViolation(req);
+    if (violation) {
+      blockedRequests.push({ reason: violation, url: req.url().slice(0, 300) });
+      await route.abort('accessdenied').catch(() => {});
+      return;
+    }
     try {
       const resp = await ufetch(req.url(), {
         method: req.method(),
@@ -177,11 +230,31 @@ export async function launch({ role, startChainId = 84532, headless = true }) {
   });
 
   const rpcLog = [];
+  const WRITE_METHODS = new Set([
+    'personal_sign',
+    'eth_sign',
+    'eth_signTypedData',
+    'eth_signTypedData_v3',
+    'eth_signTypedData_v4',
+    'eth_sendTransaction',
+    'eth_signTransaction',
+    'eth_sendRawTransaction',
+  ]);
   async function handle({ method, params }) {
     const { chain, rpc } = CHAINS[chainId];
     const pub = createPublicClient({ chain, transport: http(rpc) });
     const wallet = createWalletClient({ chain, transport: http(rpc), account });
     rpcLog.push(method);
+    if (readOnly && WRITE_METHODS.has(method)) {
+      // Land wallet-level refusals in the SAME violations list as the
+      // HTTP guard: an app that catches the wallet error would
+      // otherwise leave a clean report while a write was attempted
+      // (Codex #1154 r4 P2).
+      blockedRequests.push({ reason: `wallet rpc ${method}`, url: '(injected wallet)' });
+      const err = new Error(`read-only driver session: ${method} disabled`);
+      err.code = 4200; // EIP-1193 unsupported method
+      throw err;
+    }
     switch (method) {
       case 'eth_requestAccounts':
       case 'eth_accounts':
@@ -310,6 +383,7 @@ export async function launch({ role, startChainId = 84532, headless = true }) {
     account,
     consoleErrors,
     rpcLog,
+    blockedRequests,
     setChain: (id) => {
       chainId = id;
     },
