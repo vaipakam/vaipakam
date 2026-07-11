@@ -94,15 +94,16 @@ So the spec-correct window reward is `(P/1e18) · Σ_d min(Δ_d, T)`, and **`Σ_
 is a GLOBAL per-day quantity** (entry-independent) that can be accumulated once, exactly
 like the existing `cumRpn18`.
 
-**Integer-`T` precision note (Codex r5 I5 — P3):** the stored `T` is a floored integer
-`floor(10^feedDec·capRatio·1e18/ethPrice)`, so on a fully-capped day the baked reward
-`P·T/1e18` is up to `⌈P/1e18⌉` wei **below** the direct per-entry cap
-`_capVpfiForInterestUsd = floor(P·10^feedDec·capRatio/ethPrice)` (which floors once, later).
-This is a bounded, protocol-favoring (never overpays) rounding difference of a few wei on
-capped days. The design **accepts** it (the cap is an approximate ceiling; a few wei is
-immaterial) rather than carrying extra numerator/denominator precision — but the tests must
-**not** assert byte-exact equality with the old per-entry cap formula on capped days (they
-assert `≤ ⌈P/1e18⌉·(#capped days)` wei under, protocol-favoring). My round-1 claim that "a single global capped-cumulative
+**Integer-`T` precision note (Codex r5 I5 + r6 J6 — P3):** the stored `T` is a floored
+integer `floor(10^feedDec·capRatio·1e18/ethPrice)`, and the claim floors **once** after
+summing `T·P` across the window. Versus a hypothetical *strict per-day-floored* cap, the
+difference is **two-directional** (bounded few wei): the `T` floor loses fractional cap on
+each capped day (pushes down), while the single window-floor can *recover* fractional dust
+across capped days (pushes up — e.g. two days each `floor(0.6)=0` per-day vs `floor(1.2)=1`
+windowed). Neither the spec nor the cap requires a *strict* per-day integer floor (the cap
+is an approximate anti-farming ceiling), so the design **accepts** a bounded ±dust and the
+tests assert `|Option B − strict-per-day-floored| ≤ (#capped days + 1) wei` rather than a
+one-sided or byte-exact bound. My round-1 claim that "a single global capped-cumulative
 can't work because T is per-entry" was **wrong** — it retracts here. `Δ_d =
 (halfPoolForDay(d)·1e18)/knownGlobal…[d]` still varies arbitrarily day-to-day, but that
 variation is captured by accumulating `min(Δ_d, T)` at finalization, not by a per-entry
@@ -183,9 +184,11 @@ claim yields `floor(1.2)=1` → the mirror's `safeTransfer` reverts (bricked cla
 remittance **ceils** each day: `budget += ceil(chainNumeraire_side · min(Δ_d,T_d) / 1e18)`.
 This guarantees `Σ_d ceil(chainNumeraire·m_d/1e18) ≥ Σ_users floor(P_u·Σ_d m_d/1e18)` for
 **any** window (since `Σ ceil ≥ Σ real ≥ Σ per-user real ≥ Σ per-user floor`), so the mirror
-is **never underfunded**; the only residual is a bounded **over**-fund (≤ ~1 wei per chain
-per day) — the safe direction. Test asserts `chainBudget(window) ≥ Σ claims` and the gap is
-`≤ (#days + #entries) wei`, for both single- and **multi-day** windows.
+is **never underfunded**; the only residual is a bounded **over**-fund — the safe direction.
+Because the ceil is applied to the lender and borrower slices **separately** (Codex r6 J5),
+the ceil dust is up to `2` wei per chain per day, so the test asserts `chainBudget(window) ≥
+Σ claims` and the gap is `≤ 2·(#days) + (#entries) wei`, for both single- and **multi-day**
+windows.
 
 Properties:
 - **O(1) claims** — no regression, no pagination.
@@ -215,12 +218,10 @@ Properties:
 
 ### Blast radius / ABI — Part 1 (Option B)
 
-**No external selector / struct / event change** → no ABI re-export, no consumer
-typecheck. **But (Codex r3 G5) the facet bytecode DOES change**, so deployment requires a
-**diamond-cut REPLACE** of every facet that inlines the changed library code
-(`InteractionRewardsFacet`, `RewardAggregatorFacet`, `RewardReporterFacet`,
-`RewardRemittanceFacet`, and any facet inlining `closeLoan` in Part 2) + a facet redeploy —
-"no selector-list bump" is **not** "no diamond cut". Touched surface:
+**Part 1 IS an ABI change** — it changes `onRewardBroadcastReceived`'s selector (Codex r5
+I3) AND the facet bytecode (Codex r3 G5). Deployment is a **full `DeployDiamond` redeploy**
+(pre-live), so every facet is rebuilt against the changed library — no stale-inliner risk
+(see Part-2 blast, Codex r6 J2/J3). Touched surface:
 - `LibInteractionRewards`: `advanceCum*` (write `cumMinRpn18`), `_processEntry` /
   `_previewEntryReward` (read `cumMinRpn18`, drop claim-time cap), `chainRewardBudgetForDay`
   (capped remittance).
@@ -251,8 +252,9 @@ finalize-time pricing, so no downstream over-payment risk.
 2. **All days under cap** — `cumMinRpn18 == cumRpn18` over the window → result equals the
    uncapped telescoped total exactly.
 3. **All days over cap** — every `min(Δ_d,T)=T` → result equals `(P/1e18)·(T·daysInWindow)`,
-   which is within `⌈P/1e18⌉·daysInWindow` wei **below** the old `perDayCap·daysInWindow`
-   (integer-`T` floor, protocol-favoring — Codex r5 I5); assert the bounded-under, not exact.
+   within a bounded **±**`(daysInWindow + 1)` wei of a strict per-day-floored
+   `perDayCap·daysInWindow` (integer-`T` down + window-floor up — Codex r5 I5 / r6 J6);
+   assert the two-sided bound, not exact.
 4. **Cap disabled at finalization** (`ethPriceRaw == 0` or `capRatio == max`) —
    `dayCapThreshold18[d] == max` ⇒ `cumMinRpn18` tracks `cumRpn18` → uncapped total exactly.
 5. **Feed-outage at finalize is a bounded, tested fail-open** — feed down for day `d` at
@@ -558,24 +560,30 @@ current lender-NFT holder**, borrower = incoming obligor `l.borrower`).
 - **`LibInteractionRewards.closeLoan` gains the centralized re-anchor** — this touches
   **every** close path (repay / default / HF-liquidation / preclose / offset + the 3 new
   ones), aligning their reward attribution to the live NFT holder. Behavior-affecting but
-  strictly a correctness alignment (funds already go to the live holder). Because the
-  bytecode of every facet inlining `closeLoan` changes, **all of them need a diamond-cut
-  REPLACE + redeploy** (Codex r3 G5), and their existing suites re-run — not just the new
-  ones.
+  strictly a correctness alignment (funds already go to the live holder).
 - **`repointRewardEntry` made O(1) (Codex r3 G3 + r4 H3):** append `rewardEntryUserIdx`
   mapping to `LibVaipakam.Storage` (pre-live, free) so `_removeUserEntry` is O(1), removing
   the close-path DoS. Maintained at **every** membership write: `_allocEntry` push,
   `_removeUserEntry` swap-pop, **and** `repointRewardEntry`'s `newUser` push.
-- **Every facet that allocates/repoints reward entries must be in the cut-replace set
-  (Codex r5 I6).** Because `_allocEntry` / `repointRewardEntry` are `internal` library fns
-  inlined into their callers, changing the membership bookkeeping changes the bytecode of
-  **all** of them — not just `closeLoan` callers. The redeploy + diamond-cut-replace set
-  must include `LoanFacet` (`registerLoan` → `_allocEntry`), `EarlyWithdrawalFacet`
-  (`transferLenderEntry` → `_allocEntry`), `ConsolidationFacet` (`repointRewardEntry`), and
-  the reward facets — else an entry created by a not-replaced facet lacks
-  `rewardEntryUserIdx` and a later O(1) repoint silently fails to remove the old
-  membership (the stale-holder-processes-others'-entry bug survives). Add a **deploy-sanity
-  assertion** that every facet inlining these library fns is in the cut set.
+- **Deploy is a FULL `DeployDiamond` redeploy — no stale-inliner risk (Codex r5 I6 + r6
+  J2/J3).** `closeLoan`, `_allocEntry`, and `repointRewardEntry` are `internal` library
+  functions inlined into a **wide** set of facets — `closeLoan` alone into 11+
+  (`RepayFacet`, `DefaultedFacet`, `RiskFacet`, `RiskSplitLiquidationFacet`,
+  `SwapToRepayFacet`, `AutoLifecycleFacet`, `RefinanceFacet`, `ClaimFacet`,
+  `InteractionRewardsFacet`, + via `LibSwapToRepayIntentSettlement`), and
+  `repointRewardEntry` reached by every host inlining `LibConsolidation.consolidateToHolder`
+  (`AddCollateralFacet`, `RepayFacet`, `SwapToRepayFacet`, `DefaultedFacet`,
+  `PartialWithdrawalFacet`, `SwapToRepayIntentFacet`, `EarlyWithdrawalFacet`, …). A
+  hand-maintained cut-replace list is therefore fragile: **any** omitted facet keeps the
+  old inlined body (no re-anchor / no `rewardEntryUserIdx`), reviving the stale-holder bug.
+  **Because the platform is pre-live** ([[project_platform_prelive]]), deployment is a full
+  `DeployDiamond` redeploy of *every* facet against the changed library — so there is no
+  stale-inliner risk at all; no incremental cut set to enumerate. *(Were this ever a LIVE
+  incremental upgrade, the correct guard would be a deploy-sanity assertion that
+  mechanically enumerates every facet inlining `closeLoan` / `_allocEntry` /
+  `repointRewardEntry` — directly or transitively via `LibConsolidation` /
+  `LibSwapToRepayIntentSettlement` — and asserts all are in the replace set. Not needed on
+  the pre-live full-redeploy path.)*
 - Tight facets each gain a private `_rewardHook` (no ABI surface).
 - **Events:** no new state-change events (the reward hooks are silent; the existing
   terminal events on each facet already carry the loan-close signal the indexer reads).
@@ -619,9 +627,14 @@ current lender-NFT holder**, borrower = incoming obligor `l.borrower`).
    entry closes to the **live** holder (matching where the funds went), proving the
    `closeLoan`-centralized re-anchor covers every path, not just the new hooks.
 9. **Burn-before-close pre-burn re-anchor (Codex r4 H2).** Drive `ClaimFacet`'s
-   fallback/default branch (which burns the lender NFT before `closeLoan`) after a passive
-   lender-NFT transfer; assert the reward entry was repointed to the verified claimant
+   ordinary fallback/default branch (which burns the lender NFT before `closeLoan`) after a
+   passive lender-NFT transfer; assert the reward entry was repointed to the resolved holder
    **before** the burn, so the reward and the principal claim both land on the live holder.
+9b. **Backstop absorb repoints to `nftOwner`, not the keeper (Codex r6 J4).** Drive
+   `claimAsLenderViaBackstop` (a **keeper**-role caller) after a passive lender-NFT transfer;
+   assert the lender reward entry is repointed to the resolved `nftOwner` (the cash
+   recipient), **not** `msg.sender` (the keeper) — this case would pass a naive
+   repoint-to-`msg.sender` regression that test 9 alone would not catch.
 10. **Successive repoints keep O(1) index consistent (Codex r4 H3).** Passive-transfer a
     position A→B→C with a re-anchor at each; assert `userRewardEntryIds` membership is
     exactly `{C}` (no duplicate, no stale B/A membership) and no other user can
@@ -631,15 +644,35 @@ current lender-NFT holder**, borrower = incoming obligor `l.borrower`).
 
 ## Sequencing & process
 
-1. **Part 1 (#1008) and Part 2 (#1067) ship as SEPARATE PRs** — #1008 (Option B) is a
-   library + storage change with no external ABI; #1067 is a multi-facet, selector-adding
-   wiring change plus the `closeLoan` re-anchor. Landing #1008 first de-risks the cap
-   accounting before the close-out lands on top. (Q6 for Codex: separate vs one — leaning
-   separate.)
+1. **Part 1 (#1008) and Part 2 (#1067) ship as SEPARATE PRs** — but **neither is
+   ABI-free** (Codex r6 J1): Part 1 (Option B) changes the `onRewardBroadcastReceived`
+   **selector** (adds `capThreshold18`) + the messenger encode/decode + `RewardRemittanceFacet`
+   + finalize snapshot + `cumMinRpn18` storage; Part 2 adds the `liquidationRewardClose` /
+   `terminalRewardClose` selectors + the `closeLoan` re-anchor + O(1) index. Each is a full
+   `DeployDiamond` redeploy (pre-live). Landing #1008 first de-risks the cap accounting +
+   the broadcast-shape change before the close-out lands on top. (Q6 for Codex: separate vs
+   one — leaning separate; the Part-1 broadcast selector change must ship Base↔mirror atomically.)
 2. Each PR: targeted `--match-path` tests + deploy-sanity suite (selectors change in
    Part 2 only) + release-note fragment + FunctionalSpec update in the same diff.
 3. High-risk (fund-adjacent forfeit logic) → independent adversarial self-review before
    Codex round 1; then the Codex convergence loop to merge.
+
+## Resolved after Codex rounds 1–6
+
+**Round 6 — cut-set completeness, test specificity, dust bounds (all refinements, no new
+approach flaws — the design has converged at the approach level):**
+- **J3 (P1) + J2 (P2 — cut-set)** — a hand-list of facets to replace is fragile (`closeLoan`
+  inlines into 11+ facets; `LibConsolidation`→`repointRewardEntry` into ~7 more). Resolved
+  by the **pre-live full `DeployDiamond` redeploy** framing: every facet is rebuilt against
+  the changed library, so no stale-inliner can survive; no incremental cut set to enumerate.
+- **J1 (sequencing)** — the sequencing note now states Part 1 is NOT ABI-free (broadcast
+  selector + messenger).
+- **J4 (backstop test)** — added a keeper-caller backstop-absorb test asserting repoint to
+  `nftOwner`, distinct from the ordinary-claimant burn-before-close test.
+- **J5 (P3 — per-side ceil dust)** — remittance dust bound widened to `≤ 2·(#days) + (#entries)`
+  (lender + borrower slices ceil separately).
+- **J6 (P3 — T rounding direction)** — the integer-`T` vs strict-per-day-floor difference is
+  two-directional; tests assert a `±` bound, not one-sided.
 
 ## Resolved after Codex rounds 1–5
 
