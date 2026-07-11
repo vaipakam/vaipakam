@@ -54,7 +54,7 @@ export function CopyAddress({
           href={`${explorerBase}/address/${address}`}
           target="_blank"
           rel="noreferrer"
-          aria-label="View address on the block explorer"
+          aria-label={`View ${shortAddress(address)} on the block explorer`}
         >
           <ExternalLink size={14} aria-hidden />
         </a>

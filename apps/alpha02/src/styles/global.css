@@ -853,10 +853,34 @@ a.item-row:hover {
   border-color: var(--brand);
 }
 
-/* UX-019 — beside-the-text CTAs crush list cards at phone widths
-   (titles wrap mid-token, meta shatters into fragments). Stack: text
-   full-width, then the action button full-width below — one shared
-   rule for every item-row surface (Offer Book, Claim Center, …). */
+/* UX-019 — beside-the-text CTAs crush list cards when the CARD is
+   narrow (titles wrap mid-token, meta shatters into fragments). Stack:
+   text full-width, then the action button full-width below.
+
+   Two triggers on purpose (Codex #1157 r1): the row-list container
+   query keys on the list's OWN width, so the 720–768px viewport band
+   — where the 220px sidebar appears and content drops to ~450px while
+   a viewport media query stops matching — stacks correctly too. The
+   viewport fallback covers item-rows outside a .row-list (e.g. the
+   Faucet's single-row cards) on true phones. */
+.row-list {
+  container-type: inline-size;
+}
+
+@container (max-width: 480px) {
+  .row-list .item-row {
+    flex-direction: column;
+    align-items: stretch;
+  }
+  .row-list .item-row .row-main {
+    min-width: 0;
+  }
+  .row-list .item-row .btn {
+    width: 100%;
+    text-align: center;
+  }
+}
+
 @media (max-width: 480px) {
   .item-row {
     flex-direction: column;
@@ -963,6 +987,12 @@ a.item-row:hover {
   .copy-address-link {
     min-height: 44px;
     padding: 8px 12px;
+  }
+  /* The icon-only explorer anchor needs WIDTH too — 14px icon + 24px
+     padding is ~38px, under the 44px target this block guarantees. */
+  .copy-address-link {
+    min-width: 44px;
+    justify-content: center;
   }
 }
 
