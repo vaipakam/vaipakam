@@ -244,6 +244,14 @@ The code faithfully implements the spec across a large surface, including:
 
 ## Recommended actions (status as of 2026-07-05 — decisions recorded, cards filed)
 
+> **SUPERSEDED — historical snapshot (2026-07-05).** This section captures the
+> state on the day the review was filed: every code-fix card still Open, #1018
+> unresolved, and L-a/L-i/L-j/L-o awaiting adjudication. All of that has since
+> landed — see **"Status update — 2026-07-11"** at the end of this document for
+> the current, authoritative state (every code fix merged, spec updates merged,
+> #1018 merged, the four adjudications decided). Read this block only as the
+> as-filed record, not as outstanding work.
+
 Every High/Medium finding has an owner decision recorded in
 `docs/FunctionalSpecs/_CodeVsDocsAudit.md`: the code-fix items sit under its
 **Open findings** table with their card refs (the fixes have NOT landed),
@@ -315,9 +323,13 @@ each recorded in `docs/FunctionalSpecs/_CodeVsDocsAudit.md` (Resolved findings)
 and its card closed:
 
 - **L-a → #1159 — KEEP CODE / update spec.** The `1%` LIF matcher share is paid
-  to the transaction submitter on *every* initiation path (relayer on
-  `matchOffers`; `msg.sender` on a direct accept / signed-offer fill), treasury
-  keeps the complementary `99%`. TokenomicsTechSpec §5a reworded.
+  to the **recorded match caller** (`msg.sender` at the match) on *every*
+  initiation path, treasury keeps the complementary `99%`. That caller is the
+  relayer on `matchOffers` and the EOA on a direct accept / signed-offer fill —
+  but on a **contract-routed** fill (e.g. a Role-A `backstopFill`, which runs
+  `matchIntent` as the backstop vault) it is the routing *contract*, so the share
+  accrues to the vault, not the triggering EOA. TokenomicsTechSpec §5a reworded
+  to this precise model with the backstop carve-out.
 - **L-i → #1158 — KEEP CODE / update spec.** A zero-registered-adapter
   deployment must fail loud (revert), not silently reach the in-kind fallback.
   ProjectDetailsREADME §7 clarified (≥1 registered adapter + non-empty enabled
