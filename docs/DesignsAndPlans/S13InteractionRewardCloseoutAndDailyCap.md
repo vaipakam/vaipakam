@@ -197,15 +197,22 @@ the ceil dust is up to `2` wei per chain per day, so the test asserts `chainBudg
 Σ claims` and the gap is `≤ 2·(#days) + (#entries) wei`, for both single- and **multi-day**
 windows.
 
-**Scope: this guarantee holds for `chainDailyIncluded` days only (Codex r8 L2).** On a
-grace/force-finalized day where a mirror missed its report, `chainRewardBudgetForDay`
-returns 0 (`chainDailyIncluded[day][chain] == false`) even though the global denominator is
-still broadcast to that mirror and its local entries can claim via `knownGlobalSet` — so on
-an *excluded* day, claims can exceed the (zero) remittance. This is a **pre-existing**
-property of the remittance/claim split (the uncapped pre-#1008 path had the identical
-excluded-day gap: remittance 0, claims possible), **unchanged** by #1008 — the cap only
-alters the *included*-day amounts. #1008 does not attempt to close the excluded-day gap;
-the never-underfunded proof + tests are explicitly scoped to included days.
+**Scope: this guarantee holds for `chainDailyIncluded` days whose local frontier has
+actually advanced through `dayId` (Codex r8 L2 + r9 M1).** Two pre-existing carve-outs, both
+**unchanged** by #1008 (the uncapped pre-#1008 path had the identical gaps — remittance 0/stale,
+claims still possible via `knownGlobalSet`):
+1. **Excluded days.** On a grace/force-finalized day where a mirror missed its report,
+   `chainRewardBudgetForDay` returns 0 (`chainDailyIncluded[day][chain] == false`) though the
+   global denominator is still broadcast and local entries can claim.
+2. **Included-but-not-frontier-advanced days.** `closeDay`/remittance snapshot only what
+   `advance*Through(dayId)` reached, and those helpers silently cap `through` at
+   `frontier + MAX_FRONTIER_ADVANCE_DAYS` (`RewardReporterFacet:135-139`,
+   `LibInteractionRewards:498-499`). A mirror >730 days behind can record
+   `chainDailyIncluded = true` with a **zero/stale numerator**, so the capped budget
+   understates claims for that day.
+#1008 does not attempt to close either pre-existing gap; the never-underfunded proof + tests
+are explicitly scoped to **included days whose frontier reached `dayId`** (the test asserts /
+reports the frontier ≥ `dayId` precondition before asserting `chainBudget ≥ Σ claims`).
 
 Properties:
 - **O(1) claims** — no regression, no pagination.
@@ -247,13 +254,22 @@ I3) AND the facet bytecode (Codex r3 G5). Deployment is a **full `DeployDiamond`
 - `RewardAggregatorFacet._finalizeAndWrite`: compute + store `dayCapThreshold18[d]` (Base).
 - **Cross-chain broadcast payload** gains `capThreshold18`. Adding the param to
   `RewardReporterFacet.onRewardBroadcastReceived` **changes its 4-byte selector (Codex r5
-  I3)**. **AND the separate UUPS `VaipakamRewardMessenger` proxies must be upgraded on Base
-  AND every mirror (Codex r8 L4)** — a full `DeployDiamond` redeploy does NOT touch those
-  proxies, which encode the broadcast payload + call `onRewardBroadcastReceived`; if the old
-  messenger keeps sending the 3-field/old-selector payload while the diamond expects
-  `capThreshold18`, broadcasts fail or omit the canonical threshold. The rollout checklist
-  lists the messenger upgrade explicitly. So Part 1 IS selector work: remove the old
-  `onRewardBroadcastReceived` selector +
+  I3)**. **AND the separate UUPS `VaipakamRewardMessenger` proxies need coordinated rollout
+  work on Base AND every mirror** — a full `DeployDiamond` redeploy does NOT touch those
+  proxies. Three messenger items (Codex r8 L4 + r9 M2/M3):
+    - **Upgrade the implementation** so it encodes the 5-word broadcast payload + the new
+      `onRewardBroadcastReceived` selector.
+    - **Split the payload-size constant (M2):** the messenger shares one
+      `EXPECTED_PAYLOAD_SIZE` for the mirror→Base **report** (4 words) AND the Base→mirror
+      **broadcast** (now 5). Bumping the shared constant breaks reports (`PayloadSizeMismatch`);
+      leaving it rejects broadcasts. Use **separate report/broadcast size constants**, with a
+      regression that `sendChainReport` payloads still decode after the broadcast grows.
+    - **Rebind to the new diamond (M3):** each proxy stores its own `diamond` (gates
+      `onlyDiamond`, and inbound CCIP forwards to that stored address). A redeploy changes the
+      diamond address, so the checklist must `setDiamond(newDiamond)` per chain (or
+      redeploy/reinitialize the proxies) — else the new diamond can't call
+      `broadcastGlobal`/`sendChainReport` and inbound reports/broadcasts go to the retired diamond.
+  So Part 1 IS selector work: remove the old `onRewardBroadcastReceived` selector +
   add the new one in `DeployDiamond` / `HelperTest` / `FacetSelectors.sol` +
   `SelectorCoverageTest`, re-export the ABI, and update the Base-side send + the
   `CcipMessenger`/messenger encode-decode + the idempotent-redelivery guard **together**
@@ -706,6 +722,18 @@ current lender-NFT holder**, borrower = incoming obligor `l.borrower`).
    + FunctionalSpec update in the same diff.
 3. High-risk (fund-adjacent forfeit logic) → independent adversarial self-review before
    Codex round 1; then the Codex convergence loop to merge.
+
+## Resolved after Codex rounds 1–9
+
+**Round 9 — cross-chain deploy/payload mechanics + proof scope (3×P2, no P1 — the design is
+converged; these are rollout-mechanics details flagged for the implementation PR):**
+- **M1** — the never-underfunded proof is scoped to included days whose **local frontier
+  reached `dayId`** (a >730-day-behind mirror can mark a day included with a stale numerator);
+  the frontier precondition is asserted/reported before the funding assertion.
+- **M2** — the `VaipakamRewardMessenger` must use **separate report vs broadcast payload-size
+  constants** (report stays 4 words, broadcast grows to 5), with a report-still-decodes regression.
+- **M3** — the rollout must **rebind each messenger proxy to the new diamond**
+  (`setDiamond` / reinit) since a full redeploy changes the diamond address the proxies store.
 
 ## Resolved after Codex rounds 1–8
 
