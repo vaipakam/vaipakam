@@ -97,13 +97,14 @@ like the existing `cumRpn18`.
 **Integer-`T` precision note (Codex r5 I5 + r6 J6 — P3):** the stored `T` is a floored
 integer `floor(10^feedDec·capRatio·1e18/ethPrice)`, and the claim floors **once** after
 summing `T·P` across the window. Versus a hypothetical *strict per-day-floored* cap, the
-difference is **two-directional** and **scales with `P` on the down side (Codex r7 K3)**: the `T` floor
-loses up to `⌈P/1e18⌉` wei per capped day (pushes down — a `1_000e18` daily numeraire can
-differ by ~1000 wei/day), while the single window-floor recovers `< 1` wei across capped
-days (pushes up — e.g. two days each `floor(0.6)=0` per-day vs `floor(1.2)=1` windowed).
-Neither the spec nor the cap requires a *strict* per-day integer floor (the cap is an
-approximate anti-farming ceiling), so the design **accepts** a bounded asymmetric dust and
-the tests assert `−⌈P/1e18⌉·(#capped days) ≤ (Option B − strict-per-day-floored) ≤ +1 wei`,
+difference is **two-directional** and **both sides scale with the window (Codex r7 K3 + r8 L1)**: the `T`
+floor loses up to `⌈P/1e18⌉` wei **per capped day** (pushes down — a `1_000e18` daily
+numeraire can differ by ~1000 wei/day), while the single window-floor recovers up to
+`#capped days − 1` wei (pushes up — e.g. ten days each contributing `0.9` after `P·T/1e18`
+give `floor(9)=9` vs strict per-day floors summing to `0`). Neither the spec nor the cap
+requires a *strict* per-day integer floor (the cap is an approximate anti-farming ceiling),
+so the design **accepts** a bounded asymmetric dust and the tests assert
+`−⌈P/1e18⌉·(#capped days) ≤ (Option B − strict-per-day-floored) ≤ +(#capped days) wei`,
 rather than a symmetric, one-sided, or byte-exact bound. My round-1 claim that "a single global capped-cumulative
 can't work because T is per-entry" was **wrong** — it retracts here. `Δ_d =
 (halfPoolForDay(d)·1e18)/knownGlobal…[d]` still varies arbitrarily day-to-day, but that
@@ -145,10 +146,15 @@ s.dayCapThreshold18[d] = T_d = (10^feedDec · capRatio · 1e18) / ethPriceRaw
   **not** compute its own). Base's remittance budget and every mirror's claim now use the
   identical `T_d`. The idempotent-redelivery guard (`:239-248`) extends to `capThreshold18`
   (a divergent re-delivery reverts).
-- **Feed unreadable / cap disabled at finalize** → store sentinel `type(uint256).max` =
-  "cap disabled for day d" (⇒ `min(Δ_d, T_d) = Δ_d`, that day uncapped). A **bounded,
-  tested** fail-open confined to the single deliberate finalize moment, broadcast like any
-  other `T_d` so Base and mirrors agree.
+- **Feed unreadable / cap disabled / MALFORMED at finalize** → store sentinel
+  `type(uint256).max` = "cap disabled for day d" (⇒ `min(Δ_d, T_d) = Δ_d`, that day
+  uncapped). Crucially this must also cover a feed that is *readable but returns a bad
+  `decimals()`* (Codex r8 L5): `10 ** feedDec` **overflows and reverts** for a large
+  `feedDec` **before** the sentinel can be stored, which would brick `finalizeDay` /
+  `forceFinalizeDay` entirely (`setNumeraire` only rejects a zero address). So the snapshot
+  **bounds `feedDec`** (e.g. `feedDec > 36` → treat as disabled → sentinel) rather than
+  letting the exponentiation revert — keeping the cap outage confined to that day. A
+  **bounded, tested** fail-open, broadcast like any other `T_d` so Base and mirrors agree.
 
 **The capped cumulative rides the EXISTING cursor — no separate cursor, no catch-up gap
 (Codex r3 G2).** Because `dayCapThreshold18[d]` is written atomically with
@@ -191,6 +197,16 @@ the ceil dust is up to `2` wei per chain per day, so the test asserts `chainBudg
 Σ claims` and the gap is `≤ 2·(#days) + (#entries) wei`, for both single- and **multi-day**
 windows.
 
+**Scope: this guarantee holds for `chainDailyIncluded` days only (Codex r8 L2).** On a
+grace/force-finalized day where a mirror missed its report, `chainRewardBudgetForDay`
+returns 0 (`chainDailyIncluded[day][chain] == false`) even though the global denominator is
+still broadcast to that mirror and its local entries can claim via `knownGlobalSet` — so on
+an *excluded* day, claims can exceed the (zero) remittance. This is a **pre-existing**
+property of the remittance/claim split (the uncapped pre-#1008 path had the identical
+excluded-day gap: remittance 0, claims possible), **unchanged** by #1008 — the cap only
+alters the *included*-day amounts. #1008 does not attempt to close the excluded-day gap;
+the never-underfunded proof + tests are explicitly scoped to included days.
+
 Properties:
 - **O(1) claims** — no regression, no pagination.
 - **Exact** cap — `min(Δ_k, T_k)` summed as integers, one final `/1e18` floor (matches the
@@ -231,7 +247,13 @@ I3) AND the facet bytecode (Codex r3 G5). Deployment is a **full `DeployDiamond`
 - `RewardAggregatorFacet._finalizeAndWrite`: compute + store `dayCapThreshold18[d]` (Base).
 - **Cross-chain broadcast payload** gains `capThreshold18`. Adding the param to
   `RewardReporterFacet.onRewardBroadcastReceived` **changes its 4-byte selector (Codex r5
-  I3)** — so Part 1 IS selector work: remove the old `onRewardBroadcastReceived` selector +
+  I3)**. **AND the separate UUPS `VaipakamRewardMessenger` proxies must be upgraded on Base
+  AND every mirror (Codex r8 L4)** — a full `DeployDiamond` redeploy does NOT touch those
+  proxies, which encode the broadcast payload + call `onRewardBroadcastReceived`; if the old
+  messenger keeps sending the 3-field/old-selector payload while the diamond expects
+  `capThreshold18`, broadcasts fail or omit the canonical threshold. The rollout checklist
+  lists the messenger upgrade explicitly. So Part 1 IS selector work: remove the old
+  `onRewardBroadcastReceived` selector +
   add the new one in `DeployDiamond` / `HelperTest` / `FacetSelectors.sol` +
   `SelectorCoverageTest`, re-export the ABI, and update the Base-side send + the
   `CcipMessenger`/messenger encode-decode + the idempotent-redelivery guard **together**
@@ -243,11 +265,15 @@ I3) AND the facet bytecode (Codex r3 G5). Deployment is a **full `DeployDiamond`
   (finalize-time) pricing semantic (Q7/G6).
 
 `claimInteractionRewards` / `previewInteractionRewards` signatures unchanged; the returned
-value is **≈** the pre-fix value — materially lower where the daily cap was netting away
-farming, but **not** a strict monotonic decrease (Codex r7 K5): the window-level floor can
-recover a few wei of dust across multiple small-cap days, so downstream checks must not
-assume `new ≤ old`. Over-payment risk is nil (the change only tightens the *economic* cap;
-the dust is sub-wei-scale).
+value is generally **lower** where the daily cap was netting away farming, but it is **NOT
+a monotonic decrease** (Codex r7 K5 + r8 L6) for two reasons: (a) the window-level floor
+recovers a few wei of dust across small-cap days; and (b) — materially — the pricing point
+moved from **claim time** to **finalization time**, so if a day finalizes while the cap is
+disabled or loose (feed down, or a high ETH price making `T_d` loose) and governance later
+**tightens** the cap before the user claims, the finalize-baked result can be **materially
+higher** than the old claim-time-cap result (not dust). Downstream checks must not assume
+`new ≤ old`; the release notes + FunctionalSpec call out the finalize-loose-then-tighten
+scenario explicitly. (This is the ratified finalize-time semantic, not a regression.)
 
 ### Test plan — Part 1 (`InteractionRewardsFacet` reward-cap suite; Option B)
 
@@ -258,9 +284,9 @@ the dust is sub-wei-scale).
 2. **All days under cap** — `cumMinRpn18 == cumRpn18` over the window → result equals the
    uncapped telescoped total exactly.
 3. **All days over cap** — every `min(Δ_d,T)=T` → result equals `(P/1e18)·(T·daysInWindow)`,
-   within `[−⌈P/1e18⌉·daysInWindow, +1]` wei of a strict per-day-floored
-   `perDayCap·daysInWindow` (integer-`T` down scaled by `⌈P/1e18⌉` + window-floor up ≤1 —
-   Codex r5 I5 / r6 J6 / r7 K3); assert the asymmetric two-sided bound, not exact.
+   within `[−⌈P/1e18⌉·daysInWindow, +daysInWindow]` wei of a strict per-day-floored
+   `perDayCap·daysInWindow` (integer-`T` down scaled by `⌈P/1e18⌉` + window-floor up scaled
+   by days — Codex r5 I5 / r6 J6 / r7 K3 / r8 L1); assert the asymmetric two-sided bound.
 4. **Cap disabled at finalization** (`ethPriceRaw == 0` or `capRatio == max`) —
    `dayCapThreshold18[d] == max` ⇒ `cumMinRpn18` tracks `cumRpn18` → uncapped total exactly.
 5. **Feed-outage at finalize is a bounded, tested fail-open** — feed down for day `d` at
@@ -269,12 +295,15 @@ the dust is sub-wei-scale).
 6. **Finalize-time pricing (Q7/G6)** — a day finalized at ETH price `p1` + cap-ratio `r1`
    caps at `T(p1,r1)` even if the claim (or a governance cap change) happens later at
    `p2`/`r2`; assert the stored `dayCapThreshold18[d]` is used, not the claim-time value.
-7. **Capped remittance CEILs per side, covers multi-day (G4 + r4 H4 + r5 I1 + r6 J5)** —
-   `chainRewardBudgetForDay` sums **`ceil(min(Δ_d,T_d)·chainNumeraire_side/1e18)` per side
-   per day**, **<** the uncapped `Δ_d·chainNumeraire/1e18`. Over a **multi-day** window
-   (incl. tiny fractional days that per-day floor to 0 but sum to ≥1), assert
-   `chainBudget ≥ Σ per-user cumMin claims` (never underfunded → no bricked claim) and
-   `chainBudget − Σ claims ≤ 2·(#days) + (#entries) wei` (per-side ceil + per-entry floor dust).
+7. **Capped remittance CEILs per side, covers multi-day (G4 + r4 H4 + r5 I1 + r6 J5 + r8
+   L7)** — `chainRewardBudgetForDay` sums **`ceil(min(Δ_d,T_d)·chainNumeraire_side/1e18)` per
+   side per day**. On a **heavily-capped** day it is materially below the uncapped budget,
+   but because capped **ceils** while uncapped **floors**, do **not** assert strict `<` — a
+   tiny capped share can ceil to 1 while the uncapped floors to 0/1 (Codex r8 L7); assert
+   `capped ≤ ceil(uncapped)`. Over a **multi-day, included** window (incl. tiny fractional
+   days that per-day floor to 0 but sum to ≥1), assert `chainBudget ≥ Σ per-user cumMin
+   claims` (never underfunded → no bricked claim) and `chainBudget − Σ claims ≤ 2·(#days) +
+   (#entries) wei` (per-side ceil + per-entry floor dust).
 8. **Canonical broadcast threshold (r4 H1)** — set Base's ETH feed / cap-ratio to differ
    from a mirror's, finalize + broadcast; assert the mirror claims with **Base's** broadcast
    `T_d` (not its local feed), so the mirror's `Σ claims` matches Base's remitted budget.
@@ -285,8 +314,14 @@ the dust is sub-wei-scale).
 9. **Default-unset cap ratio (r4 H5)** — with `interactionCapVpfiPerEth == 0` (default),
    the snapshot uses the effective `500` (not `0`), so rewards are capped at the default
    ratio, **not zeroed**.
-10. **Preview == claim** — `previewInteractionRewards` equals the subsequently-claimed
-    amount for cases 1–9.
+10. **Preview == claim, with the cursor advanced (Codex r8 L3)** — `previewInteractionRewards`
+    equals the subsequently-claimed amount for cases 1–9 **once the cum cursor has reached
+    `endDay−1`**. Preview is a `view` and cannot advance the cursor, so on a freshly-broadcast
+    day where the cursor is still behind, preview returns 0 while a claim advances-then-pays
+    (pre-existing `_previewEntryReward` behavior — it under-reports, never over-reports, so
+    it's not an over-payment risk). The parity test **pre-advances** the cursor (e.g. via a
+    prior claim/advance) before asserting equality; the spec documents this as
+    "preview ≤ claim; equal once finalized-and-advanced".
 11. **Single-day window** — `endDay − startDay == 1` reduces to `(P/1e18)·min(Δ_0, T)`.
 
 ---
@@ -671,6 +706,23 @@ current lender-NFT holder**, borrower = incoming obligor `l.borrower`).
    + FunctionalSpec update in the same diff.
 3. High-risk (fund-adjacent forfeit logic) → independent adversarial self-review before
    Codex round 1; then the Codex convergence loop to merge.
+
+## Resolved after Codex rounds 1–8
+
+**Round 8 — scope qualifications, deploy completeness, fail-open edge (7×P2, no P1):**
+- **L1** — window-floor dust up-side scales with `#capped days` (not `+1`).
+- **L2** — the never-underfunded remittance proof is scoped to `chainDailyIncluded` days;
+  the excluded-day (missed-report) gap is pre-existing and unchanged by #1008.
+- **L3** — preview-parity holds only once the cursor reaches `endDay−1` (preview is a view,
+  under-reports never over-reports); tests pre-advance the cursor.
+- **L4** — the separate UUPS `VaipakamRewardMessenger` proxies must be upgraded on Base +
+  mirrors (a diamond redeploy doesn't touch them); added to the rollout checklist.
+- **L5** — the finalize snapshot bounds `feedDec` so a malformed `decimals()` yields the
+  disabled sentinel instead of an overflow that bricks `finalizeDay`.
+- **L6** — the blast note describes the *material* (not just dust) increase possible when a
+  day finalizes cap-loose and governance later tightens (the ratified finalize-time semantic).
+- **L7** — capped-ceil vs uncapped-floor is not strictly `<`; test 7 asserts
+  `capped ≤ ceil(uncapped)`.
 
 ## Resolved after Codex rounds 1–7
 
