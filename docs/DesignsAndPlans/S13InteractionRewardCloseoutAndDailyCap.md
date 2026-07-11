@@ -108,20 +108,35 @@ source by baking the per-day cap into a global cumulative at day-finalization. *
 ratified Option B including its finalization-time pricing + cap-ratio semantics
 (2026-07-11).**
 
-**The pricing point is the day's finalization — NOT lazy claim time (Codex r3 G1).** Both
-finalize choke points that set `s.knownGlobalSet[d] = true` —
-`RewardAggregatorFacet._finalizeAndWrite` (`:353`, Base) and `RewardReporterFacet` (`:253`,
-mirror broadcast-receive) — additionally snapshot a per-day threshold:
+**The threshold is CANONICAL — computed once on Base, broadcast to mirrors (Codex r4 H1).**
+A per-chain threshold would break the remittance identity: Base computes a mirror's
+*budget* with Base's `T_d`, but the mirror computes *claims* with its own feed/config
+snapshot — if they differ, the mirror under- or over-funds. So `T_d` is computed **once,
+on Base, at `_finalizeAndWrite`** and travels in the **same broadcast** that finalizes the
+day on mirrors:
 
 ```
+// Base, at RewardAggregatorFacet._finalizeAndWrite (:353), alongside knownGlobalSet[d]=true:
 s.dayCapThreshold18[d] = T_d = (10^feedDec · capRatio · 1e18) / ethPriceRaw
 ```
 
-read from that chain's own `ethNumeraireFeed` + `interactionCapVpfiPerEth` **at finalize
-time**. If the feed is unreadable OR `capRatio == max` at finalize, store the sentinel
-`type(uint256).max` = "cap disabled for day d" (⇒ `min(Δ_d, T_d) = Δ_d`, that day
-uncapped). This is a **bounded, tested** fail-open confined to a genuine feed outage at
-the single deliberate finalize moment (a keeper action), not the whole claim window.
+- **Cap ratio = the EFFECTIVE value, not the raw slot (Codex r4 H5).** `capRatio` MUST be
+  `LibVaipakam.getInteractionCapVpfiPerEth()` (which maps a stored `0` — the normal
+  *unset/default* state — to the `500` default), **NOT** the raw
+  `s.interactionCapVpfiPerEth`. Reading the raw slot would make the default config
+  (`0`) produce `T_d = 0` and zero out **every** finalized day's rewards. Tested with a
+  default-unset snapshot case.
+- **ETH price = Base's `ethNumeraireFeed` at finalize.** ETH is a global asset; using
+  Base's reading as the canonical daily price for the whole protocol is consistent.
+- **Broadcast:** `RewardReporterFacet.onRewardBroadcastReceived` (`:229`) gains a
+  `capThreshold18` parameter; the mirror stores the **received** `T_d` at `:253` (it does
+  **not** compute its own). Base's remittance budget and every mirror's claim now use the
+  identical `T_d`. The idempotent-redelivery guard (`:239-248`) extends to `capThreshold18`
+  (a divergent re-delivery reverts).
+- **Feed unreadable / cap disabled at finalize** → store sentinel `type(uint256).max` =
+  "cap disabled for day d" (⇒ `min(Δ_d, T_d) = Δ_d`, that day uncapped). A **bounded,
+  tested** fail-open confined to the single deliberate finalize moment, broadcast like any
+  other `T_d` so Base and mirrors agree.
 
 **The capped cumulative rides the EXISTING cursor — no separate cursor, no catch-up gap
 (Codex r3 G2).** Because `dayCapThreshold18[d]` is written atomically with
@@ -140,16 +155,21 @@ no ETH-price read at claim):
 reward = (e.perDayNumeraire18 * (cumMinArr[e.endDay-1] - cumMinArr[e.startDay-1])) / 1e18
 ```
 
-**Cross-chain remittance is capped with the SAME threshold — exactly (Codex r3 G4).**
+**Cross-chain remittance is capped with the SAME canonical threshold (Codex r3 G4 + r4 H4).**
 Keeping remittance on the uncapped `cumRpn18` would ship VPFI to mirrors that per-user caps
 make unclaimable, stranding surplus against the 69M pool cap (`rewardBudgetRemittedGlobal`).
-The fix is exact because **`T_d` is entry-independent**: the capped per-chain daily budget
+The fix works because **`T_d` is entry-independent**: the capped per-chain daily budget
 is `Σ_users P_u·min(Δ_d,T_d)/1e18 = min(Δ_d,T_d)·(Σ_users P_u)/1e18 =
 min(Δ_d,T_d)·chainNumeraire_side/1e18` — the `min` factors straight out of the sum. So
 `chainRewardBudgetForDay` (`:144`) replaces the uncapped `half·chainInterest/globalInterest`
 (which equals `Δ_d·chainNumeraire/1e18`) with `min(Δ_d,T_d)·chainNumeraire/1e18` per side,
-using the same `dayCapThreshold18[d]`. Per-user claims (`cumMinRpn18`) and per-chain
-remittance now use one consistent capped quantity; no over-remit, no stranding.
+using the same broadcast `dayCapThreshold18[d]`. Per-user claims and per-chain remittance
+now use one consistent capped quantity — **no uncapped over-remit / stranding**. Residual
+**flooring dust (Codex r4 H4):** per-entry claims floor `P_u·min(Δ,T)/1e18` *per entry*
+while the aggregate remits floor once after `×chainNumeraire`, so the remitted budget can
+exceed the sum of realized claims by **≤ 1 wei per entry** (a tiny bounded *over*-fund, the
+safe direction — never underfunds). The invariant/tests assert
+`chainBudget ≥ Σ claims` and `chainBudget − Σ claims ≤ (#entries) wei`, not exact equality.
 
 Properties:
 - **O(1) claims** — no regression, no pagination.
@@ -188,8 +208,11 @@ typecheck. **But (Codex r3 G5) the facet bytecode DOES change**, so deployment r
 - `LibInteractionRewards`: `advanceCum*` (write `cumMinRpn18`), `_processEntry` /
   `_previewEntryReward` (read `cumMinRpn18`, drop claim-time cap), `chainRewardBudgetForDay`
   (capped remittance).
-- `RewardAggregatorFacet._finalizeAndWrite` + `RewardReporterFacet` receive: snapshot
-  `dayCapThreshold18[d]`.
+- `RewardAggregatorFacet._finalizeAndWrite`: compute + store `dayCapThreshold18[d]` (Base).
+- **Cross-chain broadcast payload** gains `capThreshold18`: the Base-side send +
+  `RewardReporterFacet.onRewardBroadcastReceived` signature + the `CcipMessenger`/messenger
+  encode-decode + the idempotent-redelivery guard. (This is the one cross-chain *message*
+  ABI change — coordinate the sender and receiver in the same PR.)
 - `LibVaipakam.Storage`: append `dayCapThreshold18`, `cumMinLenderRpn18`,
   `cumMinBorrowerRpn18` (pre-live, no migration; no new cursor — rides the existing one).
 - Setter natspec for `interactionCapVpfiPerEth` + FunctionalSpec: state the prospective
@@ -217,13 +240,19 @@ finalize-time pricing, so no downstream over-payment risk.
 6. **Finalize-time pricing (Q7/G6)** — a day finalized at ETH price `p1` + cap-ratio `r1`
    caps at `T(p1,r1)` even if the claim (or a governance cap change) happens later at
    `p2`/`r2`; assert the stored `dayCapThreshold18[d]` is used, not the claim-time value.
-7. **Capped remittance (G4)** — `chainRewardBudgetForDay` on a heavily-capped day equals
-   `min(Δ_d,T_d)·chainNumeraire/1e18` and is **<** the uncapped `Δ_d·chainNumeraire/1e18`;
-   assert the per-user `cumMinRpn18` claims for that chain's users sum to exactly the capped
-   chain budget (the entry-independence identity — no stranded surplus).
-8. **Preview == claim** — `previewInteractionRewards` equals the subsequently-claimed
-   amount for cases 1–7.
-9. **Single-day window** — `endDay − startDay == 1` reduces to `(P/1e18)·min(Δ_0, T)`.
+7. **Capped remittance vs claims, with dust (G4 + r4 H4)** — `chainRewardBudgetForDay` on a
+   heavily-capped day equals `min(Δ_d,T_d)·chainNumeraire/1e18`, **<** the uncapped
+   `Δ_d·chainNumeraire/1e18`; assert `chainBudget ≥ Σ per-user cumMin claims` and
+   `chainBudget − Σ claims ≤ (#entries) wei` (bounded flooring dust, over-fund direction).
+8. **Canonical broadcast threshold (r4 H1)** — set Base's ETH feed / cap-ratio to differ
+   from a mirror's, finalize + broadcast; assert the mirror claims with **Base's** broadcast
+   `T_d` (not its local feed), so the mirror's `Σ claims` matches Base's remitted budget.
+9. **Default-unset cap ratio (r4 H5)** — with `interactionCapVpfiPerEth == 0` (default),
+   the snapshot uses the effective `500` (not `0`), so rewards are capped at the default
+   ratio, **not zeroed**.
+10. **Preview == claim** — `previewInteractionRewards` equals the subsequently-claimed
+    amount for cases 1–9.
+11. **Single-day window** — `endDay − startDay == 1` reduces to `(P/1e18)·min(Δ_0, T)`.
 
 ---
 
@@ -309,9 +338,12 @@ function _reanchorOpenSide(
 `closeLoan` calls `_reanchorOpenSide` for the lender and borrower entries (reading their
 tokenIds from `s.loans[loanId]`) immediately before the existing `_closeEntry` calls.
 Properties:
-- **Uniform** — the invariant now holds for *every* close path, not just the 6 new ones,
-  closing the pre-existing stale-user gap on repay / default / HF-liquidation too (a
-  latent bug those paths shared). Flagged as a deliberate, correct behavior alignment.
+- **Near-uniform** — the invariant holds for every close path **where the position NFT
+  still exists at close** (repay / HF-liquidation / preclose / offset / the 3 new terminals),
+  closing the pre-existing stale-user gap those shared. The **one exception** is a path that
+  burns the NFT *before* `closeLoan` — `ClaimFacet`'s fallback/default branch — which gets a
+  targeted pre-burn re-anchor instead (Codex r4 H2, below). Flagged as a deliberate,
+  correct behavior alignment.
 - **Idempotent + safe** — `repointRewardEntry` no-ops when the entry is already on the
   live holder (so callers that already consolidated, e.g. `precloseDirect`'s
   `eagerConsolidateBothSides`, double-repoint harmlessly). The `closed` guard (F8) means
@@ -322,11 +354,27 @@ Properties:
   per-user scan on the fund-critical close path — a prolific original holder could make a
   transferred loan's close run out of gas (a DoS). **Prerequisite fix:** give the removal
   O(1) cost by tracking each entry's position in its user's array —
-  `mapping(uint256 id => uint256 idxPlus1) rewardEntryUserIdx` (1-based; 0 = absent),
-  maintained on every `userRewardEntryIds` push (`_allocEntry`) and swap-pop
-  (`_removeUserEntry`, which also rewrites the moved tail entry's index). Then
-  `_removeUserEntry` is O(1) and the close-path re-anchor is truly cheap. This also speeds
-  the existing consolidation repoint. (Pre-live ⇒ the index mapping is a free append.)
+  `mapping(uint256 id => uint256 idxPlus1) rewardEntryUserIdx` (1-based; 0 = absent). It
+  must be written at **every** membership mutation (Codex r4 H3): on `_allocEntry`'s push,
+  on `_removeUserEntry`'s swap-pop (rewriting the moved tail entry's index), **and on
+  `repointRewardEntry`'s own `userRewardEntryIds[newUser].push(id)`** — else a *second*
+  passive transfer can fail to remove `id` from the intermediate holder, leaving duplicate
+  membership, and because `claimForUserEntries` iterates arrays without re-checking
+  `e.user`, a stale holder could process/preview someone else's entry. Tested with
+  **successive** repoints (A→B→C) asserting single, correct membership at each step. This
+  also speeds the existing consolidation repoint. (Pre-live ⇒ the index mapping is a free
+  append.)
+- **Burn-before-close paths need a pre-burn re-anchor (Codex r4 H2).** The `closeLoan`
+  centralization only covers paths where the position NFT still exists at close. But
+  `ClaimFacet`'s FallbackPending absorb / default branch **burns the lender NFT at
+  `:670-698` BEFORE** its `closeLoan(:698)`, so the `ownerOf` re-anchor there catches the
+  burn and skips — a passively-transferred lender would get the principal claim while the
+  reward stays with the stale stored lender. Fix at that call site: **repoint to the
+  verified claimant BEFORE the burn** — `ClaimFacet` already gates the claim on the live
+  NFT owner (`requireLenderNftOwner`), so it repoints the reward entry to that same
+  verified holder (`msg.sender`) ahead of the burn. This is the one call-site ordering
+  exception the centralized `closeLoan` re-anchor cannot cover; enumerated + tested
+  explicitly. (Grep audit at implementation for any other burn-before-`closeLoan` site.)
 - Because it lives in the library `internal` `closeLoan`, it inlines into each facet and
   runs in the diamond context (`address(this)` = diamond → routes to `VaipakamNFTFacet`),
   exactly like the existing `OracleFacet(address(this))` call in `_perDayInterestNumeraire18`.
@@ -525,6 +573,14 @@ current lender-NFT holder**, borrower = incoming obligor `l.borrower`).
    periodic) **and** an existing direct one (repay / default) — and assert the still-open
    entry closes to the **live** holder (matching where the funds went), proving the
    `closeLoan`-centralized re-anchor covers every path, not just the new hooks.
+9. **Burn-before-close pre-burn re-anchor (Codex r4 H2).** Drive `ClaimFacet`'s
+   fallback/default branch (which burns the lender NFT before `closeLoan`) after a passive
+   lender-NFT transfer; assert the reward entry was repointed to the verified claimant
+   **before** the burn, so the reward and the principal claim both land on the live holder.
+10. **Successive repoints keep O(1) index consistent (Codex r4 H3).** Passive-transfer a
+    position A→B→C with a re-anchor at each; assert `userRewardEntryIds` membership is
+    exactly `{C}` (no duplicate, no stale B/A membership) and no other user can
+    preview/claim the entry.
 
 ---
 
@@ -539,6 +595,23 @@ current lender-NFT holder**, borrower = incoming obligor `l.borrower`).
    Part 2 only) + release-note fragment + FunctionalSpec update in the same diff.
 3. High-risk (fund-adjacent forfeit logic) → independent adversarial self-review before
    Codex round 1; then the Codex convergence loop to merge.
+
+## Resolved after Codex rounds 1–4
+
+**Round 4 — cross-chain + call-site ordering hardening:**
+- **H1 (P1 — canonical threshold)** — `T_d` is computed **once on Base** at finalize and
+  **broadcast** to mirrors (`onRewardBroadcastReceived` gains `capThreshold18`); mirrors
+  use the received value, never a local snapshot, so per-chain claims and Base's remitted
+  budget use one identical threshold.
+- **H5 (effective cap ratio)** — the snapshot uses `getInteractionCapVpfiPerEth()` (stored
+  `0` → `500` default), NOT the raw slot; a raw read would zero all rewards under default.
+- **H2 (burn-before-close)** — `ClaimFacet`'s fallback/default branch burns the lender NFT
+  before `closeLoan`, so it gets a targeted pre-burn repoint to the verified claimant; the
+  centralized `closeLoan` re-anchor covers all other paths.
+- **H3 (index on repoint push)** — `rewardEntryUserIdx` is maintained at `repointRewardEntry`'s
+  push too (not just alloc/remove); successive repoints tested.
+- **H4 (P3 — flooring dust)** — remittance-vs-claims relaxed from "exact" to a bounded
+  ≤1-wei/entry over-fund (the safe direction).
 
 ## Resolved after Codex rounds 1–3
 
