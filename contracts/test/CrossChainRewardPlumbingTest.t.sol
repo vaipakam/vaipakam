@@ -598,14 +598,14 @@ contract CrossChainRewardPlumbingTest is SetupTest, IVaipakamErrors {
         _configureMirror(CHAIN_ARB);
         vm.prank(alice);
         vm.expectRevert(NotAuthorizedRewardMessenger.selector);
-        _rep().onRewardBroadcastReceived(1, 10e18, 5e18);
+        _rep().onRewardBroadcastReceived(1, 10e18, 5e18, type(uint256).max);
     }
 
     function testBroadcastReceivedRevertsWhenMessengerUnset() public {
         _configureMirror(CHAIN_ARB);
         _rep().setRewardMessenger(address(0));
         vm.expectRevert(NotAuthorizedRewardMessenger.selector);
-        messenger.deliverBroadcast(1, 10e18, 5e18);
+        messenger.deliverBroadcast(1, 10e18, 5e18, type(uint256).max);
     }
 
     function testBroadcastReceivedSetsKnownGlobalAndEmits() public {
@@ -613,7 +613,7 @@ contract CrossChainRewardPlumbingTest is SetupTest, IVaipakamErrors {
 
         vm.expectEmit(true, false, false, true);
         emit RewardReporterFacet.KnownGlobalInterestSet(1, 10e18, 5e18);
-        messenger.deliverBroadcast(1, 10e18, 5e18);
+        messenger.deliverBroadcast(1, 10e18, 5e18, type(uint256).max);
 
         (uint256 gl, uint256 gb, bool isSet) = _rep()
             .getKnownGlobalInterestNumeraire18(1);
@@ -624,16 +624,26 @@ contract CrossChainRewardPlumbingTest is SetupTest, IVaipakamErrors {
 
     function testBroadcastReceivedIdempotentOnMatchingReplay() public {
         _configureMirror(CHAIN_ARB);
-        messenger.deliverBroadcast(1, 10e18, 5e18);
+        messenger.deliverBroadcast(1, 10e18, 5e18, type(uint256).max);
         // Identical values — must succeed silently (no revert).
-        messenger.deliverBroadcast(1, 10e18, 5e18);
+        messenger.deliverBroadcast(1, 10e18, 5e18, type(uint256).max);
     }
 
     function testBroadcastReceivedRevertsOnDivergentReplay() public {
         _configureMirror(CHAIN_ARB);
-        messenger.deliverBroadcast(1, 10e18, 5e18);
+        messenger.deliverBroadcast(1, 10e18, 5e18, type(uint256).max);
         vm.expectRevert(KnownGlobalAlreadySet.selector);
-        messenger.deliverBroadcast(1, 99e18, 5e18);
+        messenger.deliverBroadcast(1, 99e18, 5e18, type(uint256).max);
+    }
+
+    /// #1008 (S13, Codex #1147 r7 K6) — a replay with matching globals but a
+    /// DIVERGENT cap threshold must also revert (the threshold is part of the
+    /// broadcast consensus value).
+    function testBroadcastReceivedRevertsOnDivergentCapThreshold() public {
+        _configureMirror(CHAIN_ARB);
+        messenger.deliverBroadcast(1, 10e18, 5e18, 1_000e18);
+        vm.expectRevert(KnownGlobalAlreadySet.selector);
+        messenger.deliverBroadcast(1, 10e18, 5e18, 2_000e18);
     }
 
     // ════════════════════════════════════════════════════════════════════════
@@ -739,7 +749,7 @@ contract CrossChainRewardPlumbingTest is SetupTest, IVaipakamErrors {
     function testOnRewardBroadcastIngressNotPauseGated() public {
         _configureMirror(CHAIN_ARB);
         AdminFacet(address(diamond)).pause();
-        messenger.deliverBroadcast(1, 10e18, 5e18); // succeeds
+        messenger.deliverBroadcast(1, 10e18, 5e18, type(uint256).max); // succeeds
         (, , bool isSet) = _rep().getKnownGlobalInterestNumeraire18(1);
         assertTrue(isSet);
     }

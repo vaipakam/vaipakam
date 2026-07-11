@@ -659,6 +659,25 @@ contract TestMutatorFacet {
         s.userRewardEntryIds[user].push(id);
     }
 
+    /// @notice #1008 (S13) — mark a seeded reward entry claimable with a real
+    ///         accrual window `[startDay, endDay)`. Production sets `closed`
+    ///         via {LibInteractionRewards.closeLoan}; this is the test escape
+    ///         hatch so a cap test can seed an entry + close it in one step.
+    function closeRewardEntryRaw(uint256 id, uint32 endDay) external {
+        LibVaipakam.RewardEntry storage e = LibVaipakam.storageSlot().rewardEntries[id];
+        e.endDay = endDay;
+        e.closed = true;
+    }
+
+    /// @notice #1008 (S13) — seed the per-day §4 cap threshold `T_d` directly
+    ///         (production snapshots it at finalization from the ETH feed +
+    ///         effective cap ratio). `type(uint256).max` = cap disabled that
+    ///         day. Lets a cap test drive the entry-path per-day cap without a
+    ///         full finalize + broadcast round.
+    function setDayCapThreshold18(uint256 day, uint256 t) external {
+        LibVaipakam.storageSlot().dayCapThreshold18[day] = t;
+    }
+
     // ─── #953 test-only — sale-forfeit sweep-reachability scaffolding ───────
 
     /// @notice Set the per-loan active lender entry pointer so a test can then

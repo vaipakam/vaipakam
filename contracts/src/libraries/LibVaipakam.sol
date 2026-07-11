@@ -4840,6 +4840,32 @@ library LibVaipakam {
         // snapshot to store, clean up, or drift. Pre-live removal is layout-safe.
         // The #954 frozen-surplus fields above are appended after it. See
         // docs/DesignsAndPlans/LenderSaleVehicleRedesign.md.
+        // ─── #1008 (S13, Option B) — per-day interaction-reward cap ───────────
+        // APPENDED AT THE STRUCT TAIL (Codex #1152 r1 P1) — never insert mid-
+        // struct; that would shift every later field's slot.
+        /// @dev Per-day §4 daily-cap threshold in RPN units:
+        ///      `T_d = (10^feedDec · effectiveCapRatio · 1e18) / ethPrice`,
+        ///      snapshotted at day-finalization from Base's `ethNumeraireFeed` +
+        ///      the EFFECTIVE `getInteractionCapVpfiPerEth()` (so a stored 0 maps
+        ///      to the default cap, not a zero cap). `type(uint256).max` = cap
+        ///      DISABLED for that day (feed unavailable / malformed decimals /
+        ///      capRatio at max ⇒ `min(Δ_d, T_d) = Δ_d`, uncapped). The §4 cap
+        ///      threshold is ENTRY-INDEPENDENT (the per-entry numeraire cancels),
+        ///      so one global per-day value serves every entry AND the per-chain
+        ///      remittance. Broadcast canonically from Base so every mirror caps
+        ///      identically (never locally recomputed on a mirror).
+        mapping(uint256 => uint256) dayCapThreshold18;
+        /// @dev Capped cumulative RPN:
+        ///      `cumMinLenderRpn18[d] = Σ_{k≤d} min(Δ_k, dayCapThreshold18[k])`,
+        ///      written alongside {cumLenderRpn18} in {advanceCumLenderThrough}
+        ///      using the finalize-snapshotted threshold. Entry claims read this
+        ///      (not the uncapped {cumLenderRpn18}) so the §4 daily cap is applied
+        ///      per day while claims stay O(1). Rides the SAME cursor as
+        ///      {cumLenderRpn18} (the threshold is guaranteed present once
+        ///      `knownGlobalSet[d]`). Equals {cumLenderRpn18} on cap-disabled days.
+        mapping(uint256 => uint256) cumMinLenderRpn18;
+        /// @dev Mirror of {cumMinLenderRpn18} for the borrower side.
+        mapping(uint256 => uint256) cumMinBorrowerRpn18;
     }
 
     /// @notice #393 v1-b — the originating intent of a `matchIntent` loan,

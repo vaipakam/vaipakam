@@ -29,7 +29,8 @@ interface IRewardReporterIngress {
     function onRewardBroadcastReceived(
         uint256 dayId,
         uint256 globalLenderNumeraire18,
-        uint256 globalBorrowerNumeraire18
+        uint256 globalBorrowerNumeraire18,
+        uint256 capThreshold18
     ) external;
 }
 
@@ -107,11 +108,18 @@ contract VaipakamRewardMessenger is
     /// @notice T-087 Sub 2.B — Base → mirrors tier-table-version bump.
     uint8 internal constant MSG_TYPE_VERSION_BUMPED = 4;
 
-    /// @notice Canonical REPORT/BROADCAST payload size — `abi.encode(uint8,
-    ///         uint256, uint256, uint256)` is always four 32-byte words. A
-    ///         strict length pin on the inbound path rejects a padded
-    ///         packet (`abi.decode` would otherwise ignore trailing bytes).
-    uint256 internal constant EXPECTED_PAYLOAD_SIZE = 4 * 32;
+    /// @notice REPORT payload size — mirror→Base `abi.encode(uint8, uint256,
+    ///         uint256, uint256)` is four 32-byte words. A strict length pin on
+    ///         the inbound path rejects a padded packet (`abi.decode` would
+    ///         otherwise ignore trailing bytes).
+    uint256 internal constant REPORT_PAYLOAD_SIZE = 4 * 32;
+    /// @notice #1008 (S13) — BROADCAST payload size. Base→mirror broadcasts now
+    ///         carry the canonical §4 cap threshold, so `abi.encode(uint8, uint256
+    ///         dayId, uint256 lender, uint256 borrower, uint256 capThreshold18)`
+    ///         is FIVE words. Kept SEPARATE from {REPORT_PAYLOAD_SIZE} so growing
+    ///         the broadcast shape cannot start rejecting the still-4-word reports
+    ///         (Codex #1147 r9 M2).
+    uint256 internal constant BROADCAST_PAYLOAD_SIZE = 5 * 32;
     /// @notice T-087 Sub 2.B — `abi.encode(uint8 kind, address user,
     ///         uint8 effTier, uint16 effBps, uint40 computedAt, uint256
     ///         nonce, uint40 tierExpirySec, uint16 tierTableVersion)`
@@ -381,17 +389,20 @@ contract VaipakamRewardMessenger is
         uint256 dayId,
         uint256 globalLenderNumeraire18,
         uint256 globalBorrowerNumeraire18,
+        uint256 capThreshold18,
         address payable refundAddress
     ) external payable onlyDiamond whenNotPaused nonReentrant {
         if (messenger == address(0)) revert MessengerNotSet();
         uint256 n = broadcastDestinationChainIds.length;
         if (n == 0) revert NoBroadcastDestinations();
 
+        // #1008 (S13) — 5th word is the canonical §4 cap threshold `T_d`.
         bytes memory payload = abi.encode(
             MSG_TYPE_BROADCAST,
             dayId,
             globalLenderNumeraire18,
-            globalBorrowerNumeraire18
+            globalBorrowerNumeraire18,
+            capThreshold18
         );
 
         uint256 spent;
@@ -602,11 +613,15 @@ contract VaipakamRewardMessenger is
         uint256 globalBorrowerNumeraire18
     ) external view returns (uint256 nativeFee) {
         uint256 n = broadcastDestinationChainIds.length;
+        // #1008 (S13) — size-accurate 5-word payload (the 5th word is the cap
+        // threshold; a zero placeholder gives the same 32-byte width so the fee
+        // quote matches the real {broadcastGlobal} send).
         bytes memory payload = abi.encode(
             MSG_TYPE_BROADCAST,
             dayId,
             globalLenderNumeraire18,
-            globalBorrowerNumeraire18
+            globalBorrowerNumeraire18,
+            uint256(0)
         );
         for (uint256 i; i < n; ++i) {
             nativeFee += ICrossChainMessenger(messenger).quoteMessageFee(
@@ -640,11 +655,12 @@ contract VaipakamRewardMessenger is
         // packet and is rejected before decode.
         uint256 len = payload.length;
         if (
-            len != EXPECTED_PAYLOAD_SIZE
+            len != REPORT_PAYLOAD_SIZE
+            && len != BROADCAST_PAYLOAD_SIZE
             && len != TIER_UPDATED_PAYLOAD_SIZE
             && len != VERSION_BUMPED_PAYLOAD_SIZE
         ) {
-            revert PayloadSizeMismatch(len, EXPECTED_PAYLOAD_SIZE);
+            revert PayloadSizeMismatch(len, REPORT_PAYLOAD_SIZE);
         }
 
         // The first word is always the `uint8 kind` tag — the smallest
@@ -654,8 +670,8 @@ contract VaipakamRewardMessenger is
         uint8 msgType = abi.decode(payload[:32], (uint8));
 
         if (msgType == MSG_TYPE_REPORT) {
-            if (len != EXPECTED_PAYLOAD_SIZE) {
-                revert PayloadSizeMismatch(len, EXPECTED_PAYLOAD_SIZE);
+            if (len != REPORT_PAYLOAD_SIZE) {
+                revert PayloadSizeMismatch(len, REPORT_PAYLOAD_SIZE);
             }
             if (!isCanonical) revert ReportOnMirror();
             // The aggregator tags each report with a uint32 origin chain.
@@ -673,15 +689,18 @@ contract VaipakamRewardMessenger is
                 SafeCast.toUint32(sourceChainId), dayId, a, b
             );
         } else if (msgType == MSG_TYPE_BROADCAST) {
-            if (len != EXPECTED_PAYLOAD_SIZE) {
-                revert PayloadSizeMismatch(len, EXPECTED_PAYLOAD_SIZE);
+            if (len != BROADCAST_PAYLOAD_SIZE) {
+                revert PayloadSizeMismatch(len, BROADCAST_PAYLOAD_SIZE);
             }
             if (isCanonical) revert BroadcastOnCanonical();
-            (, uint256 dayId, uint256 a, uint256 b) =
-                abi.decode(payload, (uint8, uint256, uint256, uint256));
+            // #1008 (S13) — the 5th word is the canonical §4 cap threshold `T_d`,
+            // computed once on Base at finalization; the mirror stores it verbatim
+            // (never recomputes) so every chain caps identically.
+            (, uint256 dayId, uint256 a, uint256 b, uint256 capThreshold18) =
+                abi.decode(payload, (uint8, uint256, uint256, uint256, uint256));
             emit BroadcastReceived(sourceChainId, dayId, a, b);
             IRewardReporterIngress(diamond).onRewardBroadcastReceived(
-                dayId, a, b
+                dayId, a, b, capThreshold18
             );
         } else if (msgType == MSG_TYPE_TIER_UPDATED) {
             if (len != TIER_UPDATED_PAYLOAD_SIZE) {

@@ -2,6 +2,7 @@
 pragma solidity ^0.8.29;
 
 import {LibVaipakam} from "../libraries/LibVaipakam.sol";
+import {LibInteractionRewards} from "../libraries/LibInteractionRewards.sol";
 import {LibAccessControl, DiamondAccessControl} from "../libraries/LibAccessControl.sol";
 import {DiamondReentrancyGuard} from "../libraries/LibReentrancyGuard.sol";
 import {DiamondPausable} from "../libraries/LibPausable.sol";
@@ -352,6 +353,13 @@ contract RewardAggregatorFacet is
         s.knownGlobalBorrowerInterestNumeraire18[dayId] = globalBorrower;
         s.knownGlobalSet[dayId] = true;
 
+        // #1008 (S13, Option B) — snapshot the §4 daily-cap threshold at
+        // finalization from Base's ETH feed + the effective cap ratio. This is
+        // the CANONICAL threshold: `broadcastGlobal` ships it to every mirror
+        // (see {RewardReporterFacet.onRewardBroadcastReceived}) so Base and all
+        // mirrors cap identically and the per-chain remittance identity holds.
+        LibInteractionRewards.snapshotDayCapThreshold(dayId);
+
         emit DailyGlobalInterestFinalized(
             dayId,
             globalLender,
@@ -396,6 +404,9 @@ contract RewardAggregatorFacet is
             dayId,
             s.dailyGlobalLenderInterestNumeraire18[dayId],
             s.dailyGlobalBorrowerInterestNumeraire18[dayId],
+            // #1008 (S13) — ship the finalize-snapshotted canonical §4 cap
+            // threshold so every mirror caps identically.
+            s.dayCapThreshold18[dayId],
             payable(msg.sender)
         );
     }

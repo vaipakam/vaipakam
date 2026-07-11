@@ -79,12 +79,16 @@ interface IRewardMessenger {
      * @param dayId                     Day being broadcast.
      * @param globalLenderNumeraire18         Finalized global lender denominator.
      * @param globalBorrowerNumeraire18       Finalized global borrower denominator.
+     * @param capThreshold18            #1008 (S13) canonical §4 cap threshold `T_d`
+     *                                  snapshotted on Base at finalization, so
+     *                                  every mirror caps identically.
      * @param refundAddress             Address that receives leftover CCIP fee.
      */
     function broadcastGlobal(
         uint256 dayId,
         uint256 globalLenderNumeraire18,
         uint256 globalBorrowerNumeraire18,
+        uint256 capThreshold18,
         address payable refundAddress
     ) external payable;
 

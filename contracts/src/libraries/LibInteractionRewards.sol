@@ -151,19 +151,40 @@ library LibInteractionRewards {
         // #776 — only chains whose numerator was folded into `dayId`'s finalized
         // denominator get a slice; a reported-but-then-de-listed chain is out.
         if (!s.chainDailyIncluded[dayId][chainId]) return 0;
+        // #1008 (S13) — cap the per-chain remittance with the SAME finalize-
+        // snapshotted threshold the per-user claims use. Because the §4 threshold
+        // is ENTRY-INDEPENDENT, `min(Δ_d, T_d)` factors out of the per-user sum, so
+        // the capped chain budget per side is `min(Δ_d, T_d) · chainNumeraire / 1e18`
+        // — using the SAME floored `Δ_d = half·1e18/global` the claim's `cumMin`
+        // uses. CEIL (not floor) per side so `Σ_days ceil ≥` the once-floored claim
+        // over ANY window: a mirror is never underfunded (Codex #1147 r5 I1 / r6 J5).
+        // `t == max` (cap disabled that day) ⇒ `min == Δ_d` ⇒ uncapped.
+        uint256 t = s.dayCapThreshold18[dayId];
         uint256 gLender = s.dailyGlobalLenderInterestNumeraire18[dayId];
         if (gLender != 0) {
-            budget +=
-                (half * s.chainDailyLenderInterestNumeraire18[dayId][chainId]) /
-                gLender;
+            uint256 dL = (half * 1e18) / gLender; // Δ_d (lender)
+            uint256 mL = dL < t ? dL : t; // min(Δ_d, T_d)
+            budget += _ceilDiv(
+                mL * s.chainDailyLenderInterestNumeraire18[dayId][chainId],
+                1e18
+            );
         }
         uint256 gBorrower = s.dailyGlobalBorrowerInterestNumeraire18[dayId];
         if (gBorrower != 0) {
-            budget +=
-                (half *
-                    s.chainDailyBorrowerInterestNumeraire18[dayId][chainId]) /
-                gBorrower;
+            uint256 dB = (half * 1e18) / gBorrower; // Δ_d (borrower)
+            uint256 mB = dB < t ? dB : t;
+            budget += _ceilDiv(
+                mB * s.chainDailyBorrowerInterestNumeraire18[dayId][chainId],
+                1e18
+            );
         }
+    }
+
+    /// @dev Ceiling division `⌈a / b⌉` (b != 0). Used by the per-chain remittance
+    ///      so the per-day-floored budget can never fall below the once-floored
+    ///      multi-day claim (Codex #1147 r5 I1).
+    function _ceilDiv(uint256 a, uint256 b) private pure returns (uint256) {
+        return a == 0 ? 0 : (a - 1) / b + 1;
     }
 
     /// @notice Current day index (days since launch). Reverts when the
@@ -569,18 +590,26 @@ library LibInteractionRewards {
         if (through > cap) through = cap;
 
         uint256 prev = cursor == 0 ? 0 : s.cumLenderRpn18[cursor];
+        // #1008 (S13) — the capped cumulative rides the SAME cursor.
+        uint256 prevMin = cursor == 0 ? 0 : s.cumMinLenderRpn18[cursor];
         for (uint256 d = cursor + 1; d <= through; ) {
             if (!s.knownGlobalSet[d]) break;
             uint256 globalTotal = s.knownGlobalLenderInterestNumeraire18[d];
             uint256 half = halfPoolForDay(d);
-            uint256 next;
-            if (globalTotal == 0 || half == 0) {
-                next = prev; // no contribution on day d
-            } else {
-                next = prev + (half * 1e18) / globalTotal;
+            uint256 daily; // Δ_d in RPN units
+            if (globalTotal != 0 && half != 0) {
+                daily = (half * 1e18) / globalTotal;
             }
+            uint256 next = prev + daily;
             s.cumLenderRpn18[d] = next;
+            // #1008 (S13) — capped cumulative: Σ min(Δ_d, T_d) using the
+            // finalize-snapshotted threshold (broadcast-canonical). t == max
+            // (cap disabled that day) ⇒ min == daily ⇒ cumMin tracks cumRpn.
+            uint256 t = s.dayCapThreshold18[d];
+            uint256 nextMin = prevMin + (daily < t ? daily : t);
+            s.cumMinLenderRpn18[d] = nextMin;
             prev = next;
+            prevMin = nextMin;
             cursor = d;
             unchecked { ++d; }
         }
@@ -600,18 +629,22 @@ library LibInteractionRewards {
         if (through > cap) through = cap;
 
         uint256 prev = cursor == 0 ? 0 : s.cumBorrowerRpn18[cursor];
+        uint256 prevMin = cursor == 0 ? 0 : s.cumMinBorrowerRpn18[cursor];
         for (uint256 d = cursor + 1; d <= through; ) {
             if (!s.knownGlobalSet[d]) break;
             uint256 globalTotal = s.knownGlobalBorrowerInterestNumeraire18[d];
             uint256 half = halfPoolForDay(d);
-            uint256 next;
-            if (globalTotal == 0 || half == 0) {
-                next = prev;
-            } else {
-                next = prev + (half * 1e18) / globalTotal;
+            uint256 daily;
+            if (globalTotal != 0 && half != 0) {
+                daily = (half * 1e18) / globalTotal;
             }
+            uint256 next = prev + daily;
             s.cumBorrowerRpn18[d] = next;
+            uint256 t = s.dayCapThreshold18[d];
+            uint256 nextMin = prevMin + (daily < t ? daily : t);
+            s.cumMinBorrowerRpn18[d] = nextMin;
             prev = next;
+            prevMin = nextMin;
             cursor = d;
             unchecked { ++d; }
         }
@@ -640,17 +673,13 @@ library LibInteractionRewards {
         uint256[] storage ids = s.userRewardEntryIds[user];
         uint256 len = ids.length;
 
-        uint256 capRatio = LibVaipakam.getInteractionCapVpfiPerEth();
-        (uint256 ethPriceRaw, uint8 ethPriceDec) = _ethUsdPriceRawAndDec();
-
+        // #1008 (S13) — the §4 cap is baked into `cumMin*Rpn18` at finalization,
+        // so the claim no longer reads the ETH feed / cap ratio here.
         for (uint256 i = 0; i < len; ) {
             uint256 id = ids[i];
             (uint256 toUser, uint256 toTreasury) = _processEntry(
                 s,
                 id,
-                capRatio,
-                ethPriceRaw,
-                ethPriceDec,
                 /* mutate */ true
             );
             userTotal += toUser;
@@ -669,9 +698,6 @@ library LibInteractionRewards {
         uint256[] storage ids = s.userRewardEntryIds[user];
         uint256 len = ids.length;
 
-        uint256 capRatio = LibVaipakam.getInteractionCapVpfiPerEth();
-        (uint256 ethPriceRaw, uint8 ethPriceDec) = _ethUsdPriceRawAndDec();
-
         for (uint256 i = 0; i < len; ) {
             uint256 id = ids[i];
             LibVaipakam.RewardEntry storage e = s.rewardEntries[id];
@@ -684,14 +710,8 @@ library LibInteractionRewards {
                 && !_entryTerminalForfeit(s, e)
                 && _entryClaimable(s, e)
             ) {
-                uint256 reward = _previewEntryReward(
-                    s,
-                    e,
-                    capRatio,
-                    ethPriceRaw,
-                    ethPriceDec
-                );
-                userTotal += reward;
+                // #1008 (S13) — cap is baked into cumMin; no feed read here.
+                userTotal += _previewEntryReward(s, e);
             }
             unchecked { ++i; }
         }
@@ -711,8 +731,6 @@ library LibInteractionRewards {
         returns (uint256 treasuryTotal)
     {
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
-        uint256 capRatio = LibVaipakam.getInteractionCapVpfiPerEth();
-        (uint256 ethPriceRaw, uint8 ethPriceDec) = _ethUsdPriceRawAndDec();
 
         // #1061 P1 — the sweep DISCARDS `_processEntry`'s `toUser`, so it must
         // only ever process FORFEITED entries. Otherwise a payable entry made
@@ -722,12 +740,12 @@ library LibInteractionRewards {
         // derived) — a permissionless sweep can never touch a payable entry.
         uint256 lenderId = s.loanActiveLenderEntryId[loanId];
         if (lenderId != 0 && _isForfeited(s, s.rewardEntries[lenderId])) {
-            (, uint256 t) = _processEntry(s, lenderId, capRatio, ethPriceRaw, ethPriceDec, true);
+            (, uint256 t) = _processEntry(s, lenderId, true);
             treasuryTotal += t;
         }
         uint256 borrowerId = s.loanBorrowerEntryId[loanId];
         if (borrowerId != 0 && _isForfeited(s, s.rewardEntries[borrowerId])) {
-            (, uint256 t) = _processEntry(s, borrowerId, capRatio, ethPriceRaw, ethPriceDec, true);
+            (, uint256 t) = _processEntry(s, borrowerId, true);
             treasuryTotal += t;
         }
 
@@ -739,7 +757,7 @@ library LibInteractionRewards {
         uint256 olen = orphaned.length;
         for (uint256 i = 0; i < olen; ) {
             if (_isForfeited(s, s.rewardEntries[orphaned[i]])) {
-                (, uint256 t) = _processEntry(s, orphaned[i], capRatio, ethPriceRaw, ethPriceDec, true);
+                (, uint256 t) = _processEntry(s, orphaned[i], true);
                 treasuryTotal += t;
             }
             unchecked { ++i; }
@@ -940,9 +958,6 @@ library LibInteractionRewards {
     function _processEntry(
         LibVaipakam.Storage storage s,
         uint256 id,
-        uint256 capRatio,
-        uint256 ethPriceRaw,
-        uint8 ethPriceDec,
         bool mutate
     ) private returns (uint256 toUser, uint256 toTreasury) {
         LibVaipakam.RewardEntry storage e = s.rewardEntries[id];
@@ -976,14 +991,17 @@ library LibInteractionRewards {
             if (cursor < need) return (0, 0);
         }
 
+        // #1008 (S13, Option B) — read the CAPPED cumulative so the §4 daily
+        // cap is applied per day (baked at finalization) while the claim stays
+        // O(1). `cumMin*Rpn18` == `cum*Rpn18` on days the cap was disabled.
         uint256 cumEnd;
         uint256 cumStart;
         if (e.side == LibVaipakam.RewardSide.Lender) {
-            cumEnd = s.cumLenderRpn18[e.endDay - 1];
-            cumStart = e.startDay == 0 ? 0 : s.cumLenderRpn18[e.startDay - 1];
+            cumEnd = s.cumMinLenderRpn18[e.endDay - 1];
+            cumStart = e.startDay == 0 ? 0 : s.cumMinLenderRpn18[e.startDay - 1];
         } else {
-            cumEnd = s.cumBorrowerRpn18[e.endDay - 1];
-            cumStart = e.startDay == 0 ? 0 : s.cumBorrowerRpn18[e.startDay - 1];
+            cumEnd = s.cumMinBorrowerRpn18[e.endDay - 1];
+            cumStart = e.startDay == 0 ? 0 : s.cumMinBorrowerRpn18[e.startDay - 1];
         }
         if (cumEnd <= cumStart) {
             if (mutate) e.processed = true;
@@ -991,20 +1009,6 @@ library LibInteractionRewards {
         }
 
         uint256 reward = (e.perDayNumeraire18 * (cumEnd - cumStart)) / 1e18;
-
-        // Apply the §4 per-user daily cap, scaled to the entry window:
-        // cap = daysInWindow * capVPFIForPerDayNumeraire(perDayNumeraire18).
-        uint256 daysInWindow = e.endDay - e.startDay;
-        uint256 perDayCap = _capVpfiForInterestUsd(
-            e.perDayNumeraire18,
-            ethPriceRaw,
-            ethPriceDec,
-            capRatio
-        );
-        if (perDayCap != type(uint256).max) {
-            uint256 windowCap = perDayCap * daysInWindow;
-            if (reward > windowCap) reward = windowCap;
-        }
 
         if (mutate) e.processed = true;
         // #1061 P2 — route to treasury on an explicit forfeit OR a terminal
@@ -1019,12 +1023,13 @@ library LibInteractionRewards {
     }
 
     /// @dev View-only variant of the entry processing path (no advance).
+    ///      #1008 (S13) — reads the CAPPED cumulative (`cumMin*Rpn18`), so it is
+    ///      exactly the claim value once the cursor has reached `endDay-1`. As a
+    ///      view it cannot advance the cursor, so on a not-yet-advanced finalized
+    ///      day it returns 0 (under-reports, never over-reports — Codex #1147 r8 L3).
     function _previewEntryReward(
         LibVaipakam.Storage storage s,
-        LibVaipakam.RewardEntry storage e,
-        uint256 capRatio,
-        uint256 ethPriceRaw,
-        uint8 ethPriceDec
+        LibVaipakam.RewardEntry storage e
     ) private view returns (uint256 reward) {
         // #1002 (S4) — preview mirrors the claim gate: no reward until the loan
         // is actually over (matches {_processEntry} / {_entryClaimable}).
@@ -1035,27 +1040,15 @@ library LibInteractionRewards {
         uint256 cumStart;
         if (e.side == LibVaipakam.RewardSide.Lender) {
             if (s.cumLenderCursor < need) return 0;
-            cumEnd = s.cumLenderRpn18[e.endDay - 1];
-            cumStart = e.startDay == 0 ? 0 : s.cumLenderRpn18[e.startDay - 1];
+            cumEnd = s.cumMinLenderRpn18[e.endDay - 1];
+            cumStart = e.startDay == 0 ? 0 : s.cumMinLenderRpn18[e.startDay - 1];
         } else {
             if (s.cumBorrowerCursor < need) return 0;
-            cumEnd = s.cumBorrowerRpn18[e.endDay - 1];
-            cumStart = e.startDay == 0 ? 0 : s.cumBorrowerRpn18[e.startDay - 1];
+            cumEnd = s.cumMinBorrowerRpn18[e.endDay - 1];
+            cumStart = e.startDay == 0 ? 0 : s.cumMinBorrowerRpn18[e.startDay - 1];
         }
         if (cumEnd <= cumStart) return 0;
         reward = (e.perDayNumeraire18 * (cumEnd - cumStart)) / 1e18;
-
-        uint256 perDayCap = _capVpfiForInterestUsd(
-            e.perDayNumeraire18,
-            ethPriceRaw,
-            ethPriceDec,
-            capRatio
-        );
-        if (perDayCap != type(uint256).max) {
-            uint256 daysInWindow = e.endDay - e.startDay;
-            uint256 windowCap = perDayCap * daysInWindow;
-            if (reward > windowCap) reward = windowCap;
-        }
     }
 
     /// @dev Allocate a fresh RewardEntry and push it into the user's
@@ -1268,5 +1261,44 @@ library LibInteractionRewards {
             return type(uint256).max;
         }
         return (interestNumeraire18 * (10 ** feedDec) * capRatio) / ethPriceRaw;
+    }
+
+    // ─── #1008 (S13, Option B) — finalize-time §4 cap threshold ─────────────
+
+    /// @notice Snapshot + store the §4 daily-cap threshold for `dayId` at
+    ///         finalization (Base). The value is broadcast so every mirror caps
+    ///         identically — see {setBroadcastDayCapThreshold}. Because the §4
+    ///         threshold is ENTRY-INDEPENDENT, one per-day value serves every
+    ///         entry's claim AND the per-chain remittance.
+    /// @return t The stored threshold (`type(uint256).max` = cap disabled).
+    function snapshotDayCapThreshold(uint256 dayId) internal returns (uint256 t) {
+        t = _computeDayCapThreshold18();
+        LibVaipakam.storageSlot().dayCapThreshold18[dayId] = t;
+    }
+
+    /// @notice Store a broadcast-canonical threshold on a mirror (from Base's
+    ///         finalize snapshot). Mirrors NEVER recompute locally, so Base and
+    ///         every mirror cap identically and the per-chain remittance identity
+    ///         holds (Codex #1147 r4 H1).
+    function setBroadcastDayCapThreshold(uint256 dayId, uint256 t) internal {
+        LibVaipakam.storageSlot().dayCapThreshold18[dayId] = t;
+    }
+
+    /// @dev `T_d = (10^feedDec · effectiveCapRatio · 1e18) / ethPriceRaw`, the
+    ///      entry-independent §4 cap threshold in RPN units. Returns
+    ///      `type(uint256).max` (cap DISABLED for the day) when: the cap is off
+    ///      (`capRatio` == max sentinel), the ETH feed is unavailable, OR the
+    ///      feed reports an out-of-range `decimals()` — the last guards the
+    ///      `10**feedDec` overflow that would otherwise revert finalization
+    ///      (Codex #1147 r8 L5). Uses the EFFECTIVE
+    ///      `getInteractionCapVpfiPerEth()` so a stored `0` maps to the default
+    ///      ratio rather than a zero cap (Codex #1147 r4 H5).
+    function _computeDayCapThreshold18() private view returns (uint256) {
+        uint256 capRatio = LibVaipakam.getInteractionCapVpfiPerEth();
+        if (capRatio == type(uint256).max) return type(uint256).max;
+        (uint256 ethPriceRaw, uint8 feedDec) = _ethUsdPriceRawAndDec();
+        if (ethPriceRaw == 0) return type(uint256).max;
+        if (feedDec > 36) return type(uint256).max; // guard 10**feedDec overflow
+        return ((10 ** feedDec) * capRatio * 1e18) / ethPriceRaw;
     }
 }
