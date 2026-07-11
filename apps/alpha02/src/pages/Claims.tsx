@@ -178,10 +178,16 @@ function ClaimRow({ loan }: { loan: ClaimableLoan }) {
   if (isRental) {
     const nft = `NFT ${shortAddress(loan.lendingAsset)} #${loan.tokenId}`;
     if (loan.role === 'lender') {
-      what = `Rental fees + your ${nft} back`;
+      // getClaimable's amount is the fee payout (in the prepay asset)
+      // when fungible fees are due — show the number (Codex #1156 r2).
+      what = claimAmountStr
+        ? `${claimAmountStr} fees + your ${nft} back`
+        : `Rental fees + your ${nft} back`;
       why = 'The rental ended — collect your earned fees and reclaim the NFT.';
     } else {
-      what = 'Your prepaid buffer back';
+      what = claimAmountStr
+        ? `${claimAmountStr} buffer back`
+        : 'Your prepaid buffer back';
       why = 'The rental closed — the refundable buffer is released.';
     }
   } else if (loan.role === 'lender') {
