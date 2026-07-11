@@ -195,8 +195,15 @@ const COLLATERAL_TLIQ = '5';
 const BUCKET_PREFERENCE = [60, 90, 14, 180, 7, 30];
 // The indexer's ingest scan is alarm-driven round-robin (~3 min per
 // chain in steady state) — the post-cancel milestones (row leaving the
-// book, WS invalidate frame) poll generously past one full cycle.
-const SCAN_WAIT_MS = 330_000;
+// book, WS invalidate frame) poll generously past TWO full cycles.
+// Two, not one (2026-07-11 re-run): a cancel landing just after the
+// chain's tick waits ~3 min for the next visit, and one slow tick (or
+// residual catch-up after an ingest stall — the first post-#1149 run
+// timed out with the cursor 26 blocks short of the cancel) busts a
+// single-cycle window. The stall-vs-regression diagnosis branch keeps
+// the timeout honest either way; this just stops a healthy-but-slow
+// cadence from burning a full post+cancel gas cycle on a DEFERRED.
+const SCAN_WAIT_MS = 600_000;
 
 const [WETH_DECIMALS, TLIQ_DECIMALS] = await Promise.all([
   pub.readContract({ address: WETH, abi: ERC20_ABI, functionName: 'decimals' }),
