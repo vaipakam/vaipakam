@@ -18,6 +18,7 @@ import {DiamondPausable} from "../libraries/LibPausable.sol";
 import {IVaipakamErrors} from "../interfaces/IVaipakamErrors.sol";
 import {VaipakamNFTFacet} from "./VaipakamNFTFacet.sol";
 import {VaultFactoryFacet} from "./VaultFactoryFacet.sol";
+import {InteractionRewardsFacet} from "./InteractionRewardsFacet.sol";
 
 
 /**
@@ -322,6 +323,22 @@ contract RepayPeriodicFacet is DiamondReentrancyGuard, DiamondPausable, IVaipaka
                     LibVaipakam.LoanStatus.Repaid
                 ),
                 bytes4(0)
+            );
+
+            // #1067 — DURABLE terminal reward close: full daily-deduction
+            // repayment is a proper close, so shrink both reward entries'
+            // active windows to today and re-anchor each open side to the
+            // live NFT holder here. Stamping it at the terminal is the one
+            // item no status fallback can cover (a later ClaimFacet burn
+            // would drop the status-derived close). `borrowerClean = true`
+            // (proper close — borrower keeps its reward). Best-effort:
+            // reward bookkeeping is strictly subordinate to the repayment.
+            _rewardHook(
+                abi.encodeWithSelector(
+                    InteractionRewardsFacet.terminalRewardClose.selector,
+                    loanId,
+                    true
+                )
             );
         }
 
@@ -702,5 +719,19 @@ contract RepayPeriodicFacet is DiamondReentrancyGuard, DiamondPausable, IVaipaka
             ),
             bytes4(0)
         );
+    }
+
+    /// @dev #1067 — best-effort reward close-out hook. The reward window
+    ///      logic lives on {InteractionRewardsFacet}; this facet only needs
+    ///      to fire the self-call at its terminal. Reward bookkeeping is
+    ///      STRICTLY SUBORDINATE to the fund-critical repayment close, so a
+    ///      failed low-level call is intentionally not bubbled. Production
+    ///      always cuts InteractionRewardsFacet; a focused test harness that
+    ///      omits it simply skips reward bookkeeping.
+    function _rewardHook(bytes memory data) private {
+        (bool ok, ) = address(this).call(data);
+        if (!ok) {
+            // best-effort — the close proceeds regardless.
+        }
     }
 }

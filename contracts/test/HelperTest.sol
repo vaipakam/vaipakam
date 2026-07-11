@@ -82,7 +82,7 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](105);
+        selectors = new bytes4[](109);
         selectors[0] = TestMutatorFacet.setLoan.selector;
         selectors[1] = TestMutatorFacet.setOffer.selector;
         selectors[2] = TestMutatorFacet.setNextLoanId.selector;
@@ -276,6 +276,11 @@ contract HelperTest {
         // #1008 (S13) — entry-path per-day-cap test scaffolding.
         selectors[103] = TestMutatorFacet.closeRewardEntryRaw.selector;
         selectors[104] = TestMutatorFacet.setDayCapThreshold18.selector;
+        // #1067 (S13 Part 2) — terminal re-anchor + O(1) index test scaffolding.
+        selectors[105] = TestMutatorFacet.setLoanBorrowerEntryId.selector;
+        selectors[106] = TestMutatorFacet.callRepointRewardEntry.selector;
+        selectors[107] = TestMutatorFacet.getUserRewardEntryIds.selector;
+        selectors[108] = TestMutatorFacet.getRewardEntryUserIdx.selector;
         // #951 v2 (Codex #959 bind-to-live) — setSaleListingCollateralRaw removed
         // with the snapshot mapping; the accept binds `>=` live collateral.
         // #687-B: the former tail entries ([83]-[87]: setBackstopAbsorbCashRaw,
@@ -1706,7 +1711,7 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](20);
+        selectors = new bytes4[](23);
         selectors[0] = InteractionRewardsFacet.claimInteractionRewards.selector;
         selectors[1] = InteractionRewardsFacet.setInteractionLaunchTimestamp.selector;
         selectors[2] = InteractionRewardsFacet.getInteractionLaunchTimestamp.selector;
@@ -1728,6 +1733,11 @@ contract HelperTest {
         // #969 / S5 — diamond-internal reward-lifecycle hooks for PrecloseFacet.
         selectors[18] = InteractionRewardsFacet.precloseRewardClose.selector;
         selectors[19] = InteractionRewardsFacet.precloseRewardTransferObligation.selector;
+        // #1067 / S13 Part 2 — diamond-internal terminal reward-close hooks
+        // (self-only; fired best-effort by the terminal facets).
+        selectors[20] = InteractionRewardsFacet.liquidationRewardClose.selector;
+        selectors[21] = InteractionRewardsFacet.terminalRewardClose.selector;
+        selectors[22] = InteractionRewardsFacet.transferLenderRewardEntry.selector;
         return selectors;
     }
 

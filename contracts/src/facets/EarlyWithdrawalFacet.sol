@@ -15,7 +15,7 @@ import {LibFacet} from "../libraries/LibFacet.sol";
 import {LenderIntentFacet} from "./LenderIntentFacet.sol";
 import {LibERC721} from "../libraries/LibERC721.sol";
 import {LibMetricsHooks} from "../libraries/LibMetricsHooks.sol";
-import {LibInteractionRewards} from "../libraries/LibInteractionRewards.sol";
+import {InteractionRewardsFacet} from "./InteractionRewardsFacet.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import {DiamondReentrancyGuard} from "../libraries/LibReentrancyGuard.sol";
@@ -493,8 +493,18 @@ contract EarlyWithdrawalFacet is
         }
 
         // Old lender forfeits interaction rewards to treasury; new lender
-        // gets a fresh entry covering the residual loan window.
-        LibInteractionRewards.transferLenderEntry(loanId, buyOffer.creator);
+        // gets a fresh entry covering the residual loan window. #1067 — routed
+        // through the `transferLenderRewardEntry` self-hook (BUBBLING cross-facet
+        // call — the sale forfeit must not be silently dropped) so the O(1)
+        // transfer body lives on InteractionRewardsFacet, off this tight facet.
+        LibFacet.crossFacetCall(
+            abi.encodeWithSelector(
+                InteractionRewardsFacet.transferLenderRewardEntry.selector,
+                loanId,
+                buyOffer.creator
+            ),
+            bytes4(0)
+        );
 
         // Mark buyOffer accepted
         buyOffer.accepted = true;
@@ -1056,8 +1066,18 @@ contract EarlyWithdrawalFacet is
         }
 
         // Old lender forfeits interaction rewards to treasury; new lender
-        // gets a fresh entry covering the residual loan window.
-        LibInteractionRewards.transferLenderEntry(loanId, newLender);
+        // gets a fresh entry covering the residual loan window. #1067 — routed
+        // through the `transferLenderRewardEntry` self-hook (BUBBLING cross-facet
+        // call) so the O(1) transfer body lives on InteractionRewardsFacet, off
+        // this tight facet.
+        LibFacet.crossFacetCall(
+            abi.encodeWithSelector(
+                InteractionRewardsFacet.transferLenderRewardEntry.selector,
+                loanId,
+                newLender
+            ),
+            bytes4(0)
+        );
 
         // ── Clean up temporary loan created by acceptOffer ──────────────────
         LibVaipakam.Loan storage tempLoan = s.loans[tempLoanId];

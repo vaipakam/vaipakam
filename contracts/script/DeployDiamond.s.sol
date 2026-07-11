@@ -2007,7 +2007,7 @@ contract DeployDiamond is Script {
     // #687-B: _getStakingRewardsSelectors removed with the 5% VPFI staking yield.
 
     function _getInteractionRewardsSelectors() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](20);
+        s = new bytes4[](23);
         s[0] = InteractionRewardsFacet.claimInteractionRewards.selector;
         s[1] = InteractionRewardsFacet.setInteractionLaunchTimestamp.selector;
         s[2] = InteractionRewardsFacet.getInteractionLaunchTimestamp.selector;
@@ -2029,6 +2029,11 @@ contract DeployDiamond is Script {
         // #969 / S5 — diamond-internal reward-lifecycle hooks for PrecloseFacet.
         s[18] = InteractionRewardsFacet.precloseRewardClose.selector;
         s[19] = InteractionRewardsFacet.precloseRewardTransferObligation.selector;
+        // #1067 / S13 Part 2 — diamond-internal terminal reward-close hooks
+        // (self-only; fired best-effort by the terminal facets).
+        s[20] = InteractionRewardsFacet.liquidationRewardClose.selector;
+        s[21] = InteractionRewardsFacet.terminalRewardClose.selector;
+        s[22] = InteractionRewardsFacet.transferLenderRewardEntry.selector;
     }
 
     function _getRewardReporterSelectors() internal pure returns (bytes4[] memory s) {

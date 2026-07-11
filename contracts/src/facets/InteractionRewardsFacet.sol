@@ -670,6 +670,19 @@ contract InteractionRewardsFacet is
         LibInteractionRewards.closeLoan(loanId, borrowerClean, false);
     }
 
+    /// @notice #1067 — lender-position SALE reward transfer (early-withdrawal):
+    ///         forfeit the exiting lender's entry to treasury and open a fresh
+    ///         entry for `newLender` over the residual window. Diamond-internal.
+    ///         Hosted here (not inlined at the {EarlyWithdrawalFacet} call sites)
+    ///         so the O(1)-indexed transfer body lives once, off that
+    ///         EIP-170-tight facet. Called via a BUBBLING self cross-facet call
+    ///         (the sale forfeit must not be silently dropped), so the caller-self
+    ///         guard is the trust boundary.
+    function transferLenderRewardEntry(uint256 loanId, address newLender) external {
+        if (msg.sender != address(this)) revert RewardHookCallerNotSelf();
+        LibInteractionRewards.transferLenderEntry(loanId, newLender);
+    }
+
     /// @dev #1067 — current holder of `tokenId` (falls back to `fallbackAddr`
     ///      on a burned/absent token). Used only for the fresh continuing-loan
     ///      lender anchor in {precloseRewardTransferObligation}.
