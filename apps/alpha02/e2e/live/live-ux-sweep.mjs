@@ -197,8 +197,16 @@ let sink = null;
 // after the loop has moved to the next route, and attributing them by
 // arrival time corrupts per-route evidence (Codex #1154 r4 P2).
 const sinkByRequest = new WeakMap();
+// Requests that start while NO route sink is active (initial connect,
+// the detail-route harvest, the gap between routes) belong to no
+// route — charge them to a separate background bucket instead of
+// whichever route happens to be current when they complete (Codex
+// #1154 r5 P2). Surfaced in the report as backgroundNetwork.
+const backgroundSink = {
+  network: { responses: 0, bytes: 0, errors: [], failed: [], heavy: [] },
+};
 page.on('request', (req) => {
-  if (sink) sinkByRequest.set(req, sink);
+  sinkByRequest.set(req, sink ?? backgroundSink);
 });
 page.on('console', (msg) => {
   if (!sink) return;
@@ -209,7 +217,7 @@ page.on('pageerror', (err) => {
   sink?.pageErrors.push(String(err).slice(0, 500));
 });
 page.on('requestfailed', (req) => {
-  const s = sinkByRequest.get(req) ?? sink;
+  const s = sinkByRequest.get(req) ?? backgroundSink;
   const text = `${req.method()} ${req.url()} — ${req.failure()?.errorText}`;
   s?.network.failed.push({ entry: text.slice(0, 400), noise: classifyNoise(text) });
 });
@@ -217,7 +225,7 @@ page.on('response', async (res) => {
   // The route that STARTED this request owns its bytes — not whichever
   // route is current when the response (or the sizes() await below)
   // lands (Codex #1154 r3+r4 P2).
-  const s = sinkByRequest.get(res.request()) ?? sink;
+  const s = sinkByRequest.get(res.request()) ?? backgroundSink;
   if (!s) return;
   const url = res.url();
   const status = res.status();
@@ -292,12 +300,16 @@ for (const pass of PASSES) {
     let shot = null;
     let shotError = null;
     let devtools = null;
+    if (!PROBE_ONLY) {
+      // Remove any capture from an earlier run FIRST — even when this
+      // navigation failed — so the reused shots dir never carries
+      // stale visual evidence for a route the report marks null
+      // (Codex #1154 r5 P2).
+      fs.rmSync(path.join(OUT_DIR, `${pass.name}--${slug}.png`), { force: true });
+    }
     if (navError === null) {
       if (!PROBE_ONLY) {
         const shotPath = path.join(OUT_DIR, `${pass.name}--${slug}.png`);
-        // Never leave a stale capture from an earlier run answering
-        // for this one (the shots dir is reused across sweeps).
-        fs.rmSync(shotPath, { force: true });
         try {
           await page.screenshot({ path: shotPath, fullPage: true });
           shot = shotPath;
@@ -346,6 +358,7 @@ for (const pass of PASSES) {
 // write; a non-empty list means some surface tried to mutate state
 // during a read-only audit — surface it loudly in report + exit code.
 report.blockedWriteRequests = blockedRequests;
+report.backgroundNetwork = backgroundSink.network;
 
 const reportName = PROBE_ONLY ? 'report-devtools.json' : 'report.json';
 fs.writeFileSync(path.join(OUT_DIR, reportName), JSON.stringify(report, null, 2));
