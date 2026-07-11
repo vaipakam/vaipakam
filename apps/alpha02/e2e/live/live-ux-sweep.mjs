@@ -131,13 +131,23 @@ async function devtoolsProbe(page) {
 }
 
 /** Console/network noise that is environmental in the review sandbox —
- *  tagged so the report separates it from real defects. These match
- *  console MESSAGE TEXT (not URLs being authorized), but the host
- *  pattern is anchored to the scheme anyway so a hostile lookalike
- *  domain elsewhere in a message can't self-tag as noise (CodeQL
- *  js/regex/missing-regexp-anchor). */
+ *  tagged so the report separates it from real defects. The beacon
+ *  check extracts the first URL token from the message and compares
+ *  its PARSED ORIGIN (never a substring/regex host match, so a
+ *  lookalike domain can't self-tag as noise — same shape as the #1145
+ *  CodeQL fix; js/regex/missing-regexp-anchor rejects any un-anchored
+ *  hostname-looking pattern, and a mid-message URL can't be
+ *  ^-anchored). */
+const BEACON_ORIGIN = 'https://static.cloudflareinsights.com';
 function classifyNoise(text) {
-  if (/https:\/\/static\.cloudflareinsights\.com\//.test(text)) return 'csp-beacon';
+  const urlToken = text.match(/https?:\/\/[^\s'"]+/);
+  if (urlToken) {
+    try {
+      if (new URL(urlToken[0]).origin === BEACON_ORIGIN) return 'csp-beacon';
+    } catch {
+      /* not a parseable URL — fall through */
+    }
+  }
   if (/WebSocket connection.*ws\/chain.*failed/.test(text)) return 'sandbox-page-ws';
   return null;
 }
