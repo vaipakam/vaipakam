@@ -195,7 +195,13 @@ library LibMetricsHooks {
 
     // ───────────────────────── Internal helpers ───────────────────
 
-    function _isActive(LibVaipakam.LoanStatus st) private pure returns (bool) {
+    /// @dev #940 — the canonical "is this loan in the active set" predicate:
+    ///      Active OR FallbackPending (a FallbackPending loan is still curable by
+    ///      the borrower until the lender claims). `internal` so read views that
+    ///      enumerate the active set (e.g. {MetricsDashboardFacet}) share this one
+    ///      definition instead of re-deriving `status != Active` and silently
+    ///      dropping FallbackPending.
+    function _isActive(LibVaipakam.LoanStatus st) internal pure returns (bool) {
         return
             st == LibVaipakam.LoanStatus.Active ||
             st == LibVaipakam.LoanStatus.FallbackPending;
