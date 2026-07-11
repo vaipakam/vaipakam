@@ -310,18 +310,33 @@ threshold snapshotted at day finalisation and broadcast canonically).
 **Spec-update items** (S6, S14, S16–S19, L-f, L-l, L-m) were closed by the
 spec-reconciliation **PR #1011** and the whitepaper-v4 rewrite **PR #1015**.
 
-**The "still needs owner adjudication" set is now tracked on the board**
-(previously doc-only): **L-i → #1158**, **L-a → #1159**, **L-j → #1160**
-(largely resolved by #1008 — pending confirmation), **L-o → #1161**. Each is an
-`audit` + `question` card awaiting an owner decision to be recorded in
-`docs/FunctionalSpecs/_CodeVsDocsAudit.md`.
+**The "still needs owner adjudication" set is now DECIDED (owner, 2026-07-11)** —
+each recorded in `docs/FunctionalSpecs/_CodeVsDocsAudit.md` (Resolved findings)
+and its card closed:
+
+- **L-a → #1159 — KEEP CODE / update spec.** The `1%` LIF matcher share is paid
+  to the transaction submitter on *every* initiation path (relayer on
+  `matchOffers`; `msg.sender` on a direct accept / signed-offer fill), treasury
+  keeps the complementary `99%`. TokenomicsTechSpec §5a reworded.
+- **L-i → #1158 — KEEP CODE / update spec.** A zero-registered-adapter
+  deployment must fail loud (revert), not silently reach the in-kind fallback.
+  ProjectDetailsREADME §7 clarified (≥1 registered adapter + non-empty enabled
+  try-list required; fallback is per-loan, only after configured routes fail).
+- **L-j → #1160 — RESOLVED BY #1008.** The per-day cap now prices at day
+  finalisation (Option B), so no claim-time drift; no residual change.
+- **L-o → #1161 — KEEP CODE.** The standard 4-yr linear / 1-yr-cliff schedule
+  (25% at the cliff, inclusive) is intended; the specs (TokenomicsTechSpec
+  §3/§3a + ProjectDetailsREADME) already document it — no residual spec edit.
 
 **Documentation follow-up:** #1018 (CLAUDE.md staleness — the removed
 `VpfiBuyAdapter` surface described as live, the Phase-1 chain scope listing BNB
 instead of Polygon, the stale `"$1M volume"` liquidity criterion and
 `KYC_THRESHOLD_USD = 2000e18` constant, and the deployments omit-keys section's
-dead buy-surface keys) is addressed in the same change-set as this status
-update.
+dead buy-surface keys) was fixed and merged in **PR #1163**.
+
+With the four adjudications above recorded, the 2026-07-05 spec-vs-code
+conformance review is **fully closed out** — every finding has landed as a code
+fix, a spec update, or a recorded owner decision.
 
 **Related, not a #998 child:** #940 (dashboards omit `FallbackPending` loans —
 a contract-side `MetricsDashboardFacet` filter bug surfaced on the apps/defi
