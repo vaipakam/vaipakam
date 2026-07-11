@@ -1239,7 +1239,16 @@ function RentNftFlow() {
           {activeOffers.isLoading ? (
             <p className="muted">Loading rental listings…</p>
           ) : listings === null ? (
-            <p className="muted">{copy.rent.browseUnavailable}</p>
+            <>
+              <p className="muted">{copy.rent.browseUnavailable}</p>
+              <button
+                type="button"
+                className="btn btn-secondary"
+                onClick={() => void activeOffers.refetch()}
+              >
+                Try again
+              </button>
+            </>
           ) : (
             <>
               {/* Rendered for EMPTY and NON-EMPTY lists alike (it

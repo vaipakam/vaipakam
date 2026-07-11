@@ -956,7 +956,12 @@ a.item-row:hover {
    wide screens and near-full-width on phones. */
 .diag-fab {
   position: fixed;
-  right: var(--space-4);
+  /* Phones: bottom-LEFT. List-card CTAs (Claim / Use this offer) are
+     right-aligned, so a right-side FAB always covers whichever card's
+     button is scrolled into its zone and steals the tap (UX-007).
+     Nothing interactive lives bottom-left above the tab bar. Desktop
+     (min-width block below) returns it to the conventional right. */
+  left: var(--space-4);
   /* Clear the fixed tab bar on phones. */
   bottom: calc(72px + env(safe-area-inset-bottom) + var(--space-3));
   z-index: 40;
@@ -984,6 +989,8 @@ a.item-row:hover {
 
 @media (min-width: 720px) {
   .diag-fab {
+    left: auto;
+    right: var(--space-4);
     bottom: var(--space-4);
   }
 }

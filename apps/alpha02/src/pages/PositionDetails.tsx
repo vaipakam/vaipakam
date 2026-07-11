@@ -466,6 +466,15 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
   // a settled row gets no action.
   const properClose =
     row.status === 'repaid' || row.status === 'internal_matched';
+  // UX-001 — every terminal status: the receipt must stop presenting a
+  // live obligation ("Owed") or a live default warning once the loan
+  // is over. fallback_pending stays "live" (still being settled).
+  const loanOver =
+    row.status === 'repaid' ||
+    row.status === 'settled' ||
+    row.status === 'internal_matched' ||
+    row.status === 'defaulted' ||
+    row.status === 'liquidated';
 
   const action: Action = (() => {
     // Side-scoped: a claim on one side must not suppress the other.
@@ -1191,7 +1200,15 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
             <dd>
               {isRental
                 ? 'Nothing to repay — rental fees were prepaid (late fees only if closed past the due date).'
-                : `${principalStr} + up to ~${interestStr} interest`}
+                : loanOver
+                  ? row.status === 'repaid'
+                    ? copy.positions.owedRepaid(principalStr)
+                    : row.status === 'defaulted' || row.status === 'liquidated'
+                      ? hasCollateral
+                        ? copy.positions.owedDefaulted
+                        : copy.positions.owedDefaultedNoCollateral
+                      : copy.positions.owedClosed
+                  : `${principalStr} + up to ~${interestStr} interest`}
             </dd>
           </div>
           <div className="receipt-row">
@@ -1263,15 +1280,37 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
             </div>
           ) : null}
           <div className="receipt-row receipt-risk">
-            <dt>If nothing happens</dt>
+            <dt>{loanOver ? 'What happens next' : 'If nothing happens'}</dt>
             <dd>
-              {isRental
-                ? role === 'borrower'
-                  ? 'Your use rights end at the due date and the prepaid buffer goes to the owner — close on time to get it back.'
-                  : 'The renter’s rights reset after the due date and grace period; your fees stay claimable here.'
-                : role === 'borrower'
-                  ? copy.positions.whatIfNothingBorrower(collateral?.symbol ?? 'locked')
-                  : copy.positions.whatIfNothingLender}
+              {loanOver
+                ? isRental
+                  ? copy.positions.whatNextRentalEnded
+                  : row.status === 'repaid'
+                    ? role === 'borrower'
+                      ? copy.positions.whatNextRepaidBorrower
+                      : role === 'lender'
+                        ? copy.positions.whatNextRepaidLender
+                        : copy.positions.whatNextRepaidViewer
+                    : row.status === 'defaulted' || row.status === 'liquidated'
+                      ? role === 'borrower'
+                        ? copy.positions.whatNextDefaultedBorrower
+                        : role === 'lender'
+                          ? copy.positions.whatNextDefaultedLender
+                          : copy.positions.whatNextDefaultedViewer
+                      : row.status === 'internal_matched'
+                        ? role === 'borrower'
+                          ? copy.positions.whatNextInternalMatchBorrower
+                          : role === 'lender'
+                            ? copy.positions.whatNextInternalMatchLender
+                            : copy.positions.whatNextInternalMatchViewer
+                        : copy.positions.whatNextClosed
+                : isRental
+                  ? role === 'borrower'
+                    ? 'Your use rights end at the due date and the prepaid buffer goes to the owner — close on time to get it back.'
+                    : 'The renter’s rights reset after the due date and grace period; your fees stay claimable here.'
+                  : role === 'borrower'
+                    ? copy.positions.whatIfNothingBorrower(collateral?.symbol ?? 'locked')
+                    : copy.positions.whatIfNothingLender}
             </dd>
           </div>
         </dl>

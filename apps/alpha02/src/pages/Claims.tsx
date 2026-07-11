@@ -10,7 +10,7 @@ import { useModal } from 'connectkit';
 import { usePublicClient } from 'wagmi';
 import { useQueryClient } from '@tanstack/react-query';
 import { copy } from '../content/copy';
-import { useMyClaimables } from '../data/claimables';
+import { useMyClaimables, type ClaimableLoan } from '../data/claimables';
 import { useInteractionRewards } from '../data/rewards';
 import { assertWalletNotSanctionedLive, useSanctionsCheck } from '../data/sanctions';
 import { useActiveChain } from '../chain/useActiveChain';
@@ -20,7 +20,6 @@ import { useTokenMeta } from '../contracts/erc20';
 import { AssetType } from '../lib/types';
 import { formatTokenAmount, shortAddress } from '../lib/format';
 import { captureTxError } from '../lib/errors';
-import type { PositionLoan } from '../data/hooks';
 
 /** Interaction-reward VPFI, kept visually separate from loan claims
  *  so the source of funds is never confused (Journey C1). */
@@ -53,6 +52,14 @@ function RewardsCard() {
           We couldn’t check your rewards right now — please try again in a
           moment.
         </p>
+        <button
+          type="button"
+          className="btn btn-secondary"
+          style={{ marginTop: 12 }}
+          onClick={() => void rewards.refetch()}
+        >
+          Try again
+        </button>
       </section>
     );
   }
@@ -125,12 +132,34 @@ function RewardsCard() {
   );
 }
 
-function ClaimRow({ loan }: { loan: PositionLoan }) {
+function ClaimRow({ loan }: { loan: ClaimableLoan }) {
   // Rentals have an NFT principal leg and often no collateral — never
   // format them through the ERC-20 loan template.
   const isRental = loan.assetType !== AssetType.ERC20;
   const principalMeta = useTokenMeta(isRental ? undefined : loan.lendingAsset);
   const collateralMeta = useTokenMeta(loan.collateralAsset);
+  // UX-002 — getClaimable told us the exact asset + amount this claim
+  // pays out; show the NUMBER on the money-collection screen instead
+  // of "+ interest" or a description of a field. Two extra payout
+  // lanes ride the same claim transaction (Codex #1156 r1):
+  //   - lifRebate is always VPFI (18 dec) → shown numerically;
+  //   - heldForLender ACCUMULATES potentially mixed assets on-chain
+  //     (each park carries its own asset), so no single denomination
+  //     is honest → shown qualitatively, never as a number.
+  const claimAssetMeta = useTokenMeta(loan.claim.asset ?? undefined);
+  const baseAmountStr =
+    loan.claim.amount > 0n && claimAssetMeta.data
+      ? `${formatTokenAmount(loan.claim.amount, claimAssetMeta.data.decimals)} ${claimAssetMeta.data.symbol}`
+      : null;
+  const rebateStr =
+    loan.claim.lifRebate > 0n
+      ? `${formatTokenAmount(loan.claim.lifRebate, 18)} VPFI rebate`
+      : null;
+  const hasHeld = loan.role === 'lender' && loan.claim.heldForLender > 0n;
+  const heldSuffix = hasHeld ? ' + held proceeds' : '';
+  // Per-branch composition below (Codex #1156 r2): a blended string
+  // can't distinguish "this number IS the collateral leg" from "this
+  // is only a VPFI rebate", and a held-only lane must still surface.
   const defaulted = loan.status === 'defaulted' || loan.status === 'liquidated';
   // Claimable proper-close group: repaid or internal_matched. NOT
   // `settled` — ClaimFacet rejects Settled on both claim paths (claims
@@ -147,17 +176,27 @@ function ClaimRow({ loan }: { loan: PositionLoan }) {
   if (isRental) {
     const nft = `NFT ${shortAddress(loan.lendingAsset)} #${loan.tokenId}`;
     if (loan.role === 'lender') {
-      what = `Rental fees + your ${nft} back`;
+      // getClaimable's amount is the fee payout (in the prepay asset)
+      // when fungible fees are due — show the number (Codex #1156 r2).
+      what = baseAmountStr
+        ? `${baseAmountStr} fees + your ${nft} back`
+        : `Rental fees + your ${nft} back`;
       why = 'The rental ended — collect your earned fees and reclaim the NFT.';
     } else {
-      what = 'Your prepaid buffer back';
+      what = baseAmountStr
+        ? `${baseAmountStr} buffer back`
+        : 'Your prepaid buffer back';
       why = 'The rental closed — the refundable buffer is released.';
     }
   } else if (loan.role === 'lender') {
     if (properClose) {
-      what = principalMeta.data
-        ? `${formatTokenAmount(loan.principal, principalMeta.data.decimals)} ${principalMeta.data.symbol} + interest`
-        : 'Repaid funds';
+      what = baseAmountStr
+        ? `${baseAmountStr}${heldSuffix}`
+        : hasHeld
+          ? 'Held proceeds for this loan'
+          : principalMeta.data
+            ? `${formatTokenAmount(loan.principal, principalMeta.data.decimals)} ${principalMeta.data.symbol} + interest`
+            : 'Repaid funds';
       why =
         loan.status === 'repaid'
           ? 'The borrower repaid this loan.'
@@ -168,23 +207,35 @@ function ClaimRow({ loan }: { loan: PositionLoan }) {
         'An automatic liquidation didn’t complete — claiming finalizes the recovery yourself.';
     } else {
       // Liquid-collateral defaults settle by swap (proceeds in the
-      // loan asset); only in-kind paths hand over the collateral
-      // itself — promise neither specifically.
-      what = 'What this loan recovered (proceeds or collateral)';
+      // loan asset); in-kind paths hand over the collateral itself.
+      // getClaimable names the exact asset + amount, so show it; only
+      // when the read gave no fungible amount (pure in-kind transfer)
+      // fall back to a plain-language title.
+      what = baseAmountStr
+        ? `${baseAmountStr}${heldSuffix} recovered from the default`
+        : hasHeld
+          ? 'Held proceeds recovered from the default'
+          : `Default recovery — ${collateralStr}`;
       why = 'The loan defaulted — collect what the default settlement recovered for you.';
     }
   } else if (defaulted) {
     // After a liquidation only a residue (if any) is claimable — never
     // promise the full original collateral, and never say "you repaid".
-    what = 'Anything left after liquidation';
+    what = baseAmountStr
+      ? `${baseAmountStr}${rebateStr ? ` + ${rebateStr}` : ''}`
+      : (rebateStr ?? 'Anything left after liquidation');
     why = 'This loan defaulted. If the liquidation left a surplus, you can claim it.';
   } else if (loan.status === 'internal_matched') {
     // An internal match leaves the borrower a residual and/or VPFI
     // rebate at most — never promise the full collateral back.
-    what = 'Anything left after the internal match';
+    what = baseAmountStr
+      ? `${baseAmountStr}${rebateStr ? ` + ${rebateStr}` : ''}`
+      : (rebateStr ?? 'Anything left after the internal match');
     why = 'This loan closed by internal matching — collect any residual left for you.';
   } else {
-    what = `${collateralStr} collateral back`;
+    what = baseAmountStr
+      ? `${baseAmountStr} collateral back${rebateStr ? ` + ${rebateStr}` : ''}`
+      : (rebateStr ?? `${collateralStr} collateral back`);
     why = 'You repaid this loan, so your collateral is released.';
   }
 
@@ -213,7 +264,7 @@ export function Claims() {
   const claimables = useMyClaimables();
   const rowsLoading = claimables.isLoading || claimables.data === undefined;
   const rowsUnavailable = claimables.data === null;
-  const rows: PositionLoan[] =
+  const rows: ClaimableLoan[] =
     rowsLoading || rowsUnavailable ? [] : claimables.data!;
 
   return (
@@ -237,7 +288,7 @@ export function Claims() {
           {rowsLoading ? (
             <EmptyState icon={LoaderCircle} title="Checking for claims…" />
           ) : rowsUnavailable ? (
-            <UnavailableState body={copy.claims.unavailable} />
+            <UnavailableState body={copy.claims.unavailable} onRetry={() => void claimables.refetch()} />
           ) : rows.length === 0 ? (
             <EmptyState icon={Gift} title={copy.claims.empty} />
           ) : (

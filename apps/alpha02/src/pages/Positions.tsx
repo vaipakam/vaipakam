@@ -174,7 +174,13 @@ export function Positions() {
         // page can't honestly claim "you have nothing" — a user's
         // funds may be locked in exactly the rows we couldn't load
         // (audit F-20260702-001 class).
-        <UnavailableState body={copy.positions.unavailable} />
+        <UnavailableState
+          body={copy.positions.unavailable}
+          onRetry={() => {
+            void loans.refetch();
+            void offers.refetch();
+          }}
+        />
       ) : (
         <>
           {sourcesDegraded ? (
