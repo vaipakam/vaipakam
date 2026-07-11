@@ -3103,6 +3103,30 @@ library LibVaipakam {
         uint256 cumLenderCursor;
         /// @dev Mirror of {cumLenderCursor} for the borrower side.
         uint256 cumBorrowerCursor;
+        /// @dev #1008 (S13, Option B) — per-day §4 daily-cap threshold in RPN
+        ///      units: `T_d = (10^feedDec · effectiveCapRatio · 1e18) / ethPrice`,
+        ///      snapshotted at day-finalization from Base's `ethNumeraireFeed` +
+        ///      the EFFECTIVE `getInteractionCapVpfiPerEth()` (so a stored 0 maps
+        ///      to the 500 default, not a zero cap). `type(uint256).max` = cap
+        ///      DISABLED for that day (feed unavailable / malformed decimals /
+        ///      capRatio at max ⇒ `min(Δ_d, T_d) = Δ_d`, uncapped). Because the
+        ///      §4 cap threshold is ENTRY-INDEPENDENT (the per-entry numeraire
+        ///      factor cancels), one global per-day value serves every entry AND
+        ///      the per-chain remittance. Broadcast canonically from Base so every
+        ///      mirror caps identically (never locally recomputed on a mirror).
+        mapping(uint256 => uint256) dayCapThreshold18;
+        /// @dev #1008 (S13, Option B) — capped cumulative RPN:
+        ///      `cumMinLenderRpn18[d] = Σ_{k≤d} min(Δ_k, dayCapThreshold18[k])`,
+        ///      written alongside {cumLenderRpn18} in {advanceCumLenderThrough}
+        ///      using the finalize-snapshotted threshold. Entry claims read this
+        ///      (not the uncapped {cumLenderRpn18}) so the §4 daily cap is applied
+        ///      per day while claims stay O(1). Rides the SAME cursor as
+        ///      {cumLenderRpn18} (the threshold is guaranteed present once
+        ///      `knownGlobalSet[d]`). Equals {cumLenderRpn18} on days the cap is
+        ///      disabled.
+        mapping(uint256 => uint256) cumMinLenderRpn18;
+        /// @dev Mirror of {cumMinLenderRpn18} for the borrower side.
+        mapping(uint256 => uint256) cumMinBorrowerRpn18;
         /// @dev Admin-configurable protocol parameters (fees, VPFI tier
         ///      table, risk knobs). Zero fields fall back to their
         ///      `LibVaipakam` constant defaults — see {ProtocolConfig}

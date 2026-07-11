@@ -101,8 +101,14 @@ contract RewardRemittanceFacetTest is SetupTest {
     function test_Quote_ComputesRoleAwareSlice() public {
         _finalizeDay1();
         uint256 half = LibInteractionRewards.halfPoolForDay(1);
-        // global lender = 60e18, borrower = 30e18; ARB = 20/60 + 10/30.
-        uint256 expectedArb = (half * 20e18) / 60e18 + (half * 10e18) / 30e18;
+        // #1008 (S13) — the cap is disabled here (no ETH feed ⇒ threshold=max),
+        // so `min(Δ_d,T)=Δ_d`. The per-chain budget CEILs each side using the
+        // SAME floored `Δ_d = half·1e18/global` the claim's cumMin uses (Codex
+        // #1147 r5 I1 / r8 L7). global lender = 60e18, borrower = 30e18; ARB =
+        // 20/60 + 10/30.
+        uint256 dL = (half * 1e18) / 60e18;
+        uint256 dB = (half * 1e18) / 30e18;
+        uint256 expectedArb = _ceilDiv(dL * 20e18, 1e18) + _ceilDiv(dB * 10e18, 1e18);
         (uint256 total, uint256[] memory perDay) = remit.quoteRewardBudget(
             CHAIN_ARB,
             _days(1)
@@ -110,6 +116,11 @@ contract RewardRemittanceFacetTest is SetupTest {
         assertEq(total, expectedArb, "arb slice");
         assertEq(perDay[0], expectedArb, "perDay");
         assertGt(expectedArb, 0, "non-zero");
+    }
+
+    /// #1008 — ceiling division, mirrors `LibInteractionRewards._ceilDiv`.
+    function _ceilDiv(uint256 a, uint256 b) internal pure returns (uint256) {
+        return a == 0 ? 0 : (a - 1) / b + 1;
     }
 
     function test_Quote_DeduplicatesRepeatedDays() public {
@@ -185,12 +196,22 @@ contract RewardRemittanceFacetTest is SetupTest {
         (uint256 base, ) = remit.quoteRewardBudget(CHAIN_BASE, _days(1));
         (uint256 arb, ) = remit.quoteRewardBudget(CHAIN_ARB, _days(1));
         (uint256 op, ) = remit.quoteRewardBudget(CHAIN_OP, _days(1));
-        // Σ across chains == both halves == the full day's emission, minus the
-        // integer-division dust (6 floored divisions → ≤6 wei stays on Base).
-        // The load-bearing invariant is that remittances NEVER exceed emission.
         uint256 sum = base + arb + op;
-        assertLe(sum, 2 * half, "slices never exceed the day's emission");
-        assertApproxEqAbs(sum, 2 * half, 6, "slices partition the pool (+/- dust)");
+        // #1008 (S13) — Σ across chains ≈ both halves = the full day's emission,
+        // within a bounded, ASYMMETRIC dust:
+        //   - DOWN: the per-chain remittance uses the same floored `Δ_d =
+        //     half·1e18/global` the claim uses; that floor loses up to
+        //     `chainInterest/1e18` wei per side per chain, i.e. at most
+        //     `Σ_chain chainInterest / 1e18 = globalInterest/1e18` per side.
+        //   - UP: the per-side CEIL (I1 — never underfund a mirror) adds up to
+        //     `#chains` wei per side.
+        // globals: lender 60e18, borrower 30e18; 3 chains, 2 sides.
+        uint256 downDust = (60e18 + 30e18) / 1e18; // 90
+        uint256 upDust = 2 * 3; // per-side ceil × chains
+        assertLe(sum, 2 * half + upDust, "never exceeds emission beyond ceil dust");
+        assertApproxEqAbs(
+            sum, 2 * half, downDust + upDust, "slices partition the pool (+/- dust)"
+        );
     }
 
     // ─── happy path ─────────────────────────────────────────────────────────

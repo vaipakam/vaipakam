@@ -40,7 +40,8 @@ contract MockRewardDiamond {
     function onRewardBroadcastReceived(
         uint256 day,
         uint256 l,
-        uint256 b
+        uint256 b,
+        uint256 /* capThreshold18 */
     ) external {
         lastBcastDay = day;
         lastBcastLender = l;
@@ -226,7 +227,7 @@ contract VaipakamRewardFlowTest is Test {
     function test_Broadcast_BaseToMirror() public {
         vm.prank(address(diamondBase));
         rewardBase.broadcastGlobal{value: fee}(
-            42, 9_000 ether, 4_000 ether, payable(address(diamondBase))
+            42, 9_000 ether, 4_000 ether, type(uint256).max, payable(address(diamondBase))
         );
         assertEq(router.pendingCount(), 1, "broadcast captured");
 
@@ -249,7 +250,7 @@ contract VaipakamRewardFlowTest is Test {
     function test_BroadcastGlobal_RevertWhen_NotDiamond() public {
         vm.deal(address(this), 1 ether);
         vm.expectRevert(VaipakamRewardMessenger.OnlyDiamond.selector);
-        rewardBase.broadcastGlobal{value: fee}(1, 0, 0, payable(owner));
+        rewardBase.broadcastGlobal{value: fee}(1, 0, 0, type(uint256).max, payable(owner));
     }
 
     // ─── Inbound routing + integrity guards ─────────────────────────────────
@@ -286,7 +287,8 @@ contract VaipakamRewardFlowTest is Test {
         rewardBase.onCrossChainMessage(
             MIRROR,
             address(rewardMirror),
-            abi.encode(BROADCAST, uint256(1), uint256(0), uint256(0)),
+            // #1008 (S13) — broadcast payload is now 5 words (+ capThreshold18).
+            abi.encode(BROADCAST, uint256(1), uint256(0), uint256(0), uint256(0)),
             _empty()
         );
     }

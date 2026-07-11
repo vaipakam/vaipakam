@@ -229,7 +229,8 @@ contract RewardReporterFacet is
     function onRewardBroadcastReceived(
         uint256 dayId,
         uint256 globalLenderNumeraire18,
-        uint256 globalBorrowerNumeraire18
+        uint256 globalBorrowerNumeraire18,
+        uint256 capThreshold18
     ) external {
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         if (msg.sender != s.rewardMessenger || s.rewardMessenger == address(0)) {
@@ -239,9 +240,13 @@ contract RewardReporterFacet is
         if (s.knownGlobalSet[dayId]) {
             // Idempotent re-delivery is fine — CCIP retries can
             // duplicate a packet. Divergent values must never overwrite.
+            // #1008 (S13) — `capThreshold18` is part of the broadcast's
+            // consensus value, so a divergent-threshold replay reverts too
+            // (Codex #1147 r7 K6).
             if (
                 s.knownGlobalLenderInterestNumeraire18[dayId] != globalLenderNumeraire18 ||
-                s.knownGlobalBorrowerInterestNumeraire18[dayId] != globalBorrowerNumeraire18
+                s.knownGlobalBorrowerInterestNumeraire18[dayId] != globalBorrowerNumeraire18 ||
+                s.dayCapThreshold18[dayId] != capThreshold18
             ) {
                 revert KnownGlobalAlreadySet();
             }
@@ -250,6 +255,9 @@ contract RewardReporterFacet is
 
         s.knownGlobalLenderInterestNumeraire18[dayId] = globalLenderNumeraire18;
         s.knownGlobalBorrowerInterestNumeraire18[dayId] = globalBorrowerNumeraire18;
+        // #1008 (S13) — store the CANONICAL threshold from Base; mirrors never
+        // recompute locally, so Base + every mirror cap identically.
+        LibInteractionRewards.setBroadcastDayCapThreshold(dayId, capThreshold18);
         s.knownGlobalSet[dayId] = true;
 
         emit KnownGlobalInterestSet(

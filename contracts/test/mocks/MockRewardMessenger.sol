@@ -40,6 +40,7 @@ contract MockRewardMessenger is IRewardMessenger {
     uint256 public lastBroadcastDay;
     uint256 public lastBroadcastLenderNumeraire18;
     uint256 public lastBroadcastBorrowerNumeraire18;
+    uint256 public lastBroadcastCapThreshold18;
     address public lastBroadcastRefund;
     uint256 public lastBroadcastValue;
     uint256 public broadcastCount;
@@ -87,6 +88,7 @@ contract MockRewardMessenger is IRewardMessenger {
         uint256 dayId,
         uint256 globalLenderNumeraire18,
         uint256 globalBorrowerNumeraire18,
+        uint256 capThreshold18,
         address payable refundAddress
     ) external payable override {
         require(msg.sender == diamond, "MockMessenger: only diamond");
@@ -94,6 +96,7 @@ contract MockRewardMessenger is IRewardMessenger {
         lastBroadcastDay = dayId;
         lastBroadcastLenderNumeraire18 = globalLenderNumeraire18;
         lastBroadcastBorrowerNumeraire18 = globalBorrowerNumeraire18;
+        lastBroadcastCapThreshold18 = capThreshold18;
         lastBroadcastRefund = refundAddress;
         lastBroadcastValue = msg.value;
         broadcastCount += 1;
@@ -138,12 +141,14 @@ contract MockRewardMessenger is IRewardMessenger {
     function deliverBroadcast(
         uint256 dayId,
         uint256 globalLenderNumeraire18,
-        uint256 globalBorrowerNumeraire18
+        uint256 globalBorrowerNumeraire18,
+        uint256 capThreshold18
     ) external {
         RewardReporterFacet(diamond).onRewardBroadcastReceived(
             dayId,
             globalLenderNumeraire18,
-            globalBorrowerNumeraire18
+            globalBorrowerNumeraire18,
+            capThreshold18
         );
     }
 

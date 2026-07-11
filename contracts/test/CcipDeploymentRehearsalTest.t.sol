@@ -49,7 +49,7 @@ contract MockRehearsalDiamond {
         ++reportCount;
     }
 
-    function onRewardBroadcastReceived(uint256 day, uint256, uint256) external {
+    function onRewardBroadcastReceived(uint256 day, uint256, uint256, uint256) external {
         lastBcastDay = day;
         ++bcastCount;
     }
@@ -372,7 +372,7 @@ contract CcipDeploymentRehearsalTest is Test {
         // BROADCAST — Base → mirror.
         vm.prank(address(diamondBase));
         rewardBase.broadcastGlobal{value: fee}(
-            42, 9_000 ether, 4_000 ether, payable(address(diamondBase))
+            42, 9_000 ether, 4_000 ether, type(uint256).max, payable(address(diamondBase))
         );
         router.deliver(1, SEL_BASE);
         assertEq(diamondMirror.bcastCount(), 1, "mirror got the broadcast");
