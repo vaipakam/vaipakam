@@ -98,88 +98,106 @@ can't work because T is per-entry" was **wrong** — it retracts here. `Δ_d =
 variation is captured by accumulating `min(Δ_d, T)` at finalization, not by a per-entry
 claim-time loop.
 
-### Design options (F6 forced this reconsideration — Codex r2 flagged the claim-loop gas)
+### CHOSEN: Option B — capped-cumulative baked at finalization (owner-ratified 2026-07-11)
 
-Codex r2 correctly showed a naïve per-day loop at claim time is **not viable**:
+Codex r2 (F6) showed a naïve per-day loop at claim time is **not viable**:
 `claimInteractionRewards()` loops over *every* `userRewardEntryIds[user]` entry with no
 selector (`:640-646`), so a cap-enabled O(`durationDays`) loop per entry can exceed the
-block gas limit for a user with many long loans, with no subset-claim escape.
+block gas limit for a user with many long loans. Option B removes the gas problem at the
+source by baking the per-day cap into a global cumulative at day-finalization. **The owner
+ratified Option B including its finalization-time pricing + cap-ratio semantics
+(2026-07-11).**
 
-**Option B — global capped-cumulative at finalization (RECOMMENDED).** Add a second
-global cumulative per side, `cumMinLenderRpn18[d] = Σ_{k≤d} min(Δ_k, T_k)` (and the
-borrower mirror), maintained inside the existing per-day `advanceCumLenderThrough` /
-`advanceCumBorrowerThrough` finalization loop (`:561-620`) — those loops already iterate
-day-by-day and compute `Δ_d`, so this is O(1) extra work per already-finalized day, **no
-new loop anywhere**. The claim then stays **O(1) per entry**:
+**The pricing point is the day's finalization — NOT lazy claim time (Codex r3 G1).** Both
+finalize choke points that set `s.knownGlobalSet[d] = true` —
+`RewardAggregatorFacet._finalizeAndWrite` (`:353`, Base) and `RewardReporterFacet` (`:253`,
+mirror broadcast-receive) — additionally snapshot a per-day threshold:
+
+```
+s.dayCapThreshold18[d] = T_d = (10^feedDec · capRatio · 1e18) / ethPriceRaw
+```
+
+read from that chain's own `ethNumeraireFeed` + `interactionCapVpfiPerEth` **at finalize
+time**. If the feed is unreadable OR `capRatio == max` at finalize, store the sentinel
+`type(uint256).max` = "cap disabled for day d" (⇒ `min(Δ_d, T_d) = Δ_d`, that day
+uncapped). This is a **bounded, tested** fail-open confined to a genuine feed outage at
+the single deliberate finalize moment (a keeper action), not the whole claim window.
+
+**The capped cumulative rides the EXISTING cursor — no separate cursor, no catch-up gap
+(Codex r3 G2).** Because `dayCapThreshold18[d]` is written atomically with
+`knownGlobalSet[d]`, it is *always present* by the time `advanceCumLenderThrough` /
+`advanceCumBorrowerThrough` reach day `d` (they gate on `knownGlobalSet[d]`, `:573`). So
+those loops write `cumMinRpn18[d] = cumMinRpn18[d-1] + min(Δ_d, dayCapThreshold18[d])`
+in the *same* iteration that writes `cumRpn18[d]`, using the stored threshold (no live
+feed read during advance). One shared cursor; the r2 "feed-gated cumMin cursor" and its
+permanent-stall bug are **gone**.
+
+The claim then stays **O(1) per entry** — `_processEntry` / `_previewEntryReward` swap
+`cumRpn18` → `cumMinRpn18` and drop all claim-time cap logic (no `_capVpfiForInterestUsd`,
+no ETH-price read at claim):
 
 ```
 reward = (e.perDayNumeraire18 * (cumMinArr[e.endDay-1] - cumMinArr[e.startDay-1])) / 1e18
 ```
 
-`_processEntry` / `_previewEntryReward` swap `cumRpn18` → `cumMinRpn18` and **drop the
-claim-time cap logic entirely** (no `_capVpfiForInterestUsd` read, no ETH-price read at
-claim). Properties:
+**Cross-chain remittance is capped with the SAME threshold — exactly (Codex r3 G4).**
+Keeping remittance on the uncapped `cumRpn18` would ship VPFI to mirrors that per-user caps
+make unclaimable, stranding surplus against the 69M pool cap (`rewardBudgetRemittedGlobal`).
+The fix is exact because **`T_d` is entry-independent**: the capped per-chain daily budget
+is `Σ_users P_u·min(Δ_d,T_d)/1e18 = min(Δ_d,T_d)·(Σ_users P_u)/1e18 =
+min(Δ_d,T_d)·chainNumeraire_side/1e18` — the `min` factors straight out of the sum. So
+`chainRewardBudgetForDay` (`:144`) replaces the uncapped `half·chainInterest/globalInterest`
+(which equals `Δ_d·chainNumeraire/1e18`) with `min(Δ_d,T_d)·chainNumeraire/1e18` per side,
+using the same `dayCapThreshold18[d]`. Per-user claims (`cumMinRpn18`) and per-chain
+remittance now use one consistent capped quantity; no over-remit, no stranding.
 
-- **O(1) claims** — no regression vs today; no pagination needed; the F6 gas problem
-  disappears at the source.
-- **Exact** per-day cap (`min(Δ_k, T_k)` summed as integers; one final `/1e18` floor,
-  matching how the uncapped telescoped path already floors — no per-day flooring).
-- **Cap integrity preserved via a feed-gated cursor.** `T_k` needs the ETH price at
-  finalization. To avoid *baking a permanent cap-off* when the feed is down at
-  finalization (a fail-open regression — cf. #919), `cumMinRpn18` gets its **own cursor**
-  that advances a day only when the ETH feed is readable AND `capRatio` is set at that
-  moment; if the feed is unavailable the cumMin cursor stalls (retried later) while the
-  uncapped `cumRpn18` (needed for the pool/budget math) advances unconditionally as today.
-  A claim requires `cumMinCursor ≥ endDay-1` (same shape as the existing cumRpn gate), so
-  during a feed outage claims wait for cumMin to catch up rather than paying fail-open.
-- **Semantic shift (needs human sign-off):** the cap is priced at **each day's
-  finalization-time ETH price**, not the claim-time price the current (buggy) code uses.
-  This is arguably *more* faithful ("value the day's interest at that day's ETH price"),
-  but it is a deliberate change — flagged as **Q7** below.
-- **Cross-chain unaffected:** the pool/per-chain budget math uses the *uncapped* `cumRpn18`
-  (unchanged); `cumMinRpn18` is a pure per-user claim-side ceiling and never enters the
-  budget/remittance accounting.
-- Pre-live ⇒ the new storage mappings + cursors are a free append (no migration).
+Properties:
+- **O(1) claims** — no regression, no pagination.
+- **Exact** cap — `min(Δ_k, T_k)` summed as integers, one final `/1e18` floor (matches the
+  uncapped telescoped floor; no per-day flooring).
+- **Uncapped config** — when the cap is disabled at finalize, `dayCapThreshold18[d] = max`
+  ⇒ `cumMinRpn18 == cumRpn18`, claims reproduce the uncapped telescoped total exactly.
+- **Ratified semantics (Q7 + Codex r3 G6):** the cap is priced — **both** ETH price **and**
+  admin `interactionCapVpfiPerEth` — at each day's finalization, not at claim. Consequence:
+  a governance cap-tighten / emergency-disable applies **prospectively** (from the day it
+  lands) and does **not** retro-cap already-finalized days. Owner-ratified; the setter
+  natspec + FunctionalSpec are updated to state this.
+- **Pre-live** ⇒ the new per-day mapping `dayCapThreshold18` + the two `cumMinRpn18`
+  mappings are a free storage append (no migration).
 
-**Option A — per-day loop at claim + pagination (fallback).** Keep the cap at claim time
-(claim-time ETH price, matching current semantics), replace the window-cap with a per-day
-`Σ min(raw_d, perDayCap)` loop in `_processEntry`/`_previewEntryReward`, and add
-**entry-pagination** so a heavy user can always make progress: a persistent
-`userRewardClaimCursor[user]` advancing past the processed prefix + a per-call bound
-(`MAX_ENTRIES_PER_CLAIM`), and/or an explicit `claimInteractionRewardsRange(from,to)`
-escape hatch. Downsides vs B: O(`days`) per entry, a new claim selector + cursor state,
-per-day flooring, and pagination edge cases (out-of-order claimability stalling the
-cursor). Only chosen if the Q7 finalization-time-pricing shift is rejected.
-
-**Recommendation: Option B.** It removes the gas problem structurally, keeps claims O(1),
-is exact, and the only cost is the (defensible, more-correct) finalization-time pricing —
-which is a conscious decision to ratify, not a bug.
-
-**Decisions baked in (both options):**
+**Decisions baked in:**
 
 1. **`_processEntry` and `_previewEntryReward` stay identical** (preview parity is a
    standing invariant — a preview that over-reports vs the claim is itself a bug).
 2. **No legacy-window fallback (Codex r1 F1).** `claimForUserWindow` pays from the
-   pre-entry per-user daily maps the entry path never populates → would pay zero; it is
-   never a fallback for entry-path rewards under either option.
-3. **Uncapped config (Codex r1 F2).** Under Option B, when the feed/capRatio disable the
-   cap at finalization, `min(Δ_k, T_k) = Δ_k` so `cumMinRpn18 == cumRpn18` and the claim
-   reproduces the uncapped telescoped total exactly. (Under Option A, an explicit uncapped
-   telescoped fast path does the same.)
+   pre-entry per-user daily maps the entry path never populates → would pay zero; never a
+   fallback for entry-path rewards.
+3. **Legacy per-day window claim** (`claimForUserWindow`, `:767`) still applies the cap at
+   claim time — it is a separate, test-mutator-only path over the *old* per-user daily
+   maps and is left as-is (its per-day cap is already correct); only the entry path moves
+   to the finalize-baked `cumMinRpn18`.
 
 ### Blast radius / ABI — Part 1 (Option B)
 
-Internal-library + storage change; **no external selector / struct / event change** →
-no ABI re-export, no diamond cut, no consumer typecheck. Adds two per-day mappings
-(`cumMinLenderRpn18`, `cumMinBorrowerRpn18`) + two cursors to `LibVaipakam.Storage`
-(append-only — pre-live, no migration), and O(1)-per-day writes inside the two
-`advanceCum*` finalization loops. `claimInteractionRewards` / `previewInteractionRewards`
-signatures unchanged; their returned value is **≤** the pre-fix value (the cap only ever
-tightens) plus the Q7 pricing shift, so no downstream over-payment risk. The legacy
-window path (`claimForUserWindow`, already per-day-correct) is untouched.
+**No external selector / struct / event change** → no ABI re-export, no consumer
+typecheck. **But (Codex r3 G5) the facet bytecode DOES change**, so deployment requires a
+**diamond-cut REPLACE** of every facet that inlines the changed library code
+(`InteractionRewardsFacet`, `RewardAggregatorFacet`, `RewardReporterFacet`,
+`RewardRemittanceFacet`, and any facet inlining `closeLoan` in Part 2) + a facet redeploy —
+"no selector-list bump" is **not** "no diamond cut". Touched surface:
+- `LibInteractionRewards`: `advanceCum*` (write `cumMinRpn18`), `_processEntry` /
+  `_previewEntryReward` (read `cumMinRpn18`, drop claim-time cap), `chainRewardBudgetForDay`
+  (capped remittance).
+- `RewardAggregatorFacet._finalizeAndWrite` + `RewardReporterFacet` receive: snapshot
+  `dayCapThreshold18[d]`.
+- `LibVaipakam.Storage`: append `dayCapThreshold18`, `cumMinLenderRpn18`,
+  `cumMinBorrowerRpn18` (pre-live, no migration; no new cursor — rides the existing one).
+- Setter natspec for `interactionCapVpfiPerEth` + FunctionalSpec: state the prospective
+  (finalize-time) pricing semantic (Q7/G6).
 
-*(Option A instead would add a claim selector + `userRewardClaimCursor` state — a real
-ABI surface change — which is one more reason to prefer B.)*
+`claimInteractionRewards` / `previewInteractionRewards` signatures unchanged; returned
+value is **≤** the pre-fix value (the cap only ever tightens) plus the ratified
+finalize-time pricing, so no downstream over-payment risk.
 
 ### Test plan — Part 1 (`InteractionRewardsFacet` reward-cap suite; Option B)
 
@@ -192,15 +210,20 @@ ABI surface change — which is one more reason to prefer B.)*
 3. **All days over cap** — every `min(Δ_d,T)=T` → result equals `(P/1e18)·(T·daysInWindow)
    = perDayCap·daysInWindow` (matches the old window cap in this degenerate case).
 4. **Cap disabled at finalization** (`ethPriceRaw == 0` or `capRatio == max`) —
-   `cumMinRpn18` tracks `cumRpn18` → result equals the uncapped telescoped total exactly.
-5. **Feed-gated cursor** — with the feed down during finalization of some days, the cumMin
-   cursor stalls and a claim over those days pays nothing yet (waits), then pays correctly
-   once the feed recovers and cumMin catches up. Asserts **no fail-open** cap-off is baked.
-6. **Finalization-time pricing (Q7)** — a day finalized at ETH price `p1` caps at `T(p1)`
-   even if the claim later happens at a different price `p2`; assert the cap used `p1`.
-7. **Preview == claim** — `previewInteractionRewards` equals the subsequently-claimed
-   amount for cases 1–6.
-8. **Single-day window** — `endDay − startDay == 1` reduces to `(P/1e18)·min(Δ_0, T)`.
+   `dayCapThreshold18[d] == max` ⇒ `cumMinRpn18` tracks `cumRpn18` → uncapped total exactly.
+5. **Feed-outage at finalize is a bounded, tested fail-open** — feed down for day `d` at
+   finalize ⇒ `dayCapThreshold18[d] == max` (that day uncapped); adjacent finalized days
+   with a live feed stay capped. Assert the fail-open is confined to the outage day only.
+6. **Finalize-time pricing (Q7/G6)** — a day finalized at ETH price `p1` + cap-ratio `r1`
+   caps at `T(p1,r1)` even if the claim (or a governance cap change) happens later at
+   `p2`/`r2`; assert the stored `dayCapThreshold18[d]` is used, not the claim-time value.
+7. **Capped remittance (G4)** — `chainRewardBudgetForDay` on a heavily-capped day equals
+   `min(Δ_d,T_d)·chainNumeraire/1e18` and is **<** the uncapped `Δ_d·chainNumeraire/1e18`;
+   assert the per-user `cumMinRpn18` claims for that chain's users sum to exactly the capped
+   chain budget (the entry-independence identity — no stranded surplus).
+8. **Preview == claim** — `previewInteractionRewards` equals the subsequently-claimed
+   amount for cases 1–7.
+9. **Single-day window** — `endDay − startDay == 1` reduces to `(P/1e18)·min(Δ_0, T)`.
 
 ---
 
@@ -293,7 +316,17 @@ Properties:
   live holder (so callers that already consolidated, e.g. `precloseDirect`'s
   `eagerConsolidateBothSides`, double-repoint harmlessly). The `closed` guard (F8) means
   a re-close (e.g. the LenderIntent roll) never moves a frozen entry.
-- **Cheap** — two `ownerOf` reads on the close path; try/catch tolerates a burned token.
+- **Bounded — `repointRewardEntry` must be made O(1) first (Codex r3 G3).** As written,
+  `repointRewardEntry` → `_removeUserEntry` **linearly scans** `userRewardEntryIds[oldUser]`
+  (`:457-474`). Centralizing re-anchor into every `closeLoan` would put that unbounded
+  per-user scan on the fund-critical close path — a prolific original holder could make a
+  transferred loan's close run out of gas (a DoS). **Prerequisite fix:** give the removal
+  O(1) cost by tracking each entry's position in its user's array —
+  `mapping(uint256 id => uint256 idxPlus1) rewardEntryUserIdx` (1-based; 0 = absent),
+  maintained on every `userRewardEntryIds` push (`_allocEntry`) and swap-pop
+  (`_removeUserEntry`, which also rewrites the moved tail entry's index). Then
+  `_removeUserEntry` is O(1) and the close-path re-anchor is truly cheap. This also speeds
+  the existing consolidation repoint. (Pre-live ⇒ the index mapping is a free append.)
 - Because it lives in the library `internal` `closeLoan`, it inlines into each facet and
   runs in the diamond context (`address(this)` = diamond → routes to `VaipakamNFTFacet`),
   exactly like the existing `OracleFacet(address(this))` call in `_perDayInterestNumeraire18`.
@@ -420,10 +453,10 @@ current lender-NFT holder**, borrower = incoming obligor `l.borrower`).
 **Scope decisions for Codex (item 3):**
 - **Fresh LENDER entry anchors to the live lender-NFT holder (Codex r1 F4)**, not the
   stale `l.lender`. **Fresh BORROWER entry anchors to `l.borrower`** (the incoming
-  obligor) — the borrower position NFT is not reassigned in this flow (verified above),
-  the reward-earning going-forward party is the obligor who pays interest, and the
-  borrower NFT is re-minted to `l.borrower` right after the hook — so `l.borrower` matches
-  both the obligor and the post-tx NFT holder (Codex r2 F7). *(The broader "should the
+  obligor): the reward-earning going-forward party is the obligor who pays interest, and
+  `migrateBorrowerPosition` (`:1033`) re-mints the borrower NFT to `l.borrower` **right
+  after** this hook — so post-tx `l.borrower` holds the borrower NFT and there is **no
+  lasting NFT/obligor divergence** (Codex r2 F7 / r3 G7). *(The broader "should the
   borrower reward follow the NFT holder or the obligor when they diverge?" question is a
   pre-existing model choice, unchanged here — out of scope.)*
 - **Reuse `repointRewardEntry`** — the exact #1061-approved reward-only primitive; do
@@ -442,10 +475,14 @@ current lender-NFT holder**, borrower = incoming obligor `l.borrower`).
 - `precloseRewardTransferObligation` body change is internal-only (no signature change).
 - **`LibInteractionRewards.closeLoan` gains the centralized re-anchor** — this touches
   **every** close path (repay / default / HF-liquidation / preclose / offset + the 3 new
-  ones), adding two `ownerOf` reads per close and aligning their reward attribution to the
-  live NFT holder. Behavior-affecting but strictly a correctness alignment (funds already
-  go to the live holder). Needs the touched facets' existing suites re-run, not just the
-  new ones.
+  ones), aligning their reward attribution to the live NFT holder. Behavior-affecting but
+  strictly a correctness alignment (funds already go to the live holder). Because the
+  bytecode of every facet inlining `closeLoan` changes, **all of them need a diamond-cut
+  REPLACE + redeploy** (Codex r3 G5), and their existing suites re-run — not just the new
+  ones.
+- **`repointRewardEntry` made O(1) (Codex r3 G3):** append `rewardEntryUserIdx` mapping to
+  `LibVaipakam.Storage` (pre-live, free) so `_removeUserEntry` is O(1), removing the
+  close-path DoS. Maintained in `_allocEntry` (push) + `_removeUserEntry` (swap-pop).
 - Tight facets each gain a private `_rewardHook` (no ABI surface).
 - **Events:** no new state-change events (the reward hooks are silent; the existing
   terminal events on each facet already carry the loan-close signal the indexer reads).
@@ -503,6 +540,23 @@ current lender-NFT holder**, borrower = incoming obligor `l.borrower`).
 3. High-risk (fund-adjacent forfeit logic) → independent adversarial self-review before
    Codex round 1; then the Codex convergence loop to merge.
 
+## Resolved after Codex rounds 1–3
+
+**Round 3 — Option B hardened + owner-ratified (2026-07-11):**
+- **G1 (pricing point)** — `dayCapThreshold18[d]` is snapshotted at the finalize choke
+  points (`_finalizeAndWrite:353` + `RewardReporterFacet:253`), not lazily at first claim.
+- **G2 (stalled cursor)** — dissolved: the threshold is pre-stored at finalize, so cumMin
+  rides the existing cursor with no separate cursor / catch-up gap.
+- **G4 (mirror over-remit)** — capped remittance is **exact** because `T` is
+  entry-independent: `chainRewardBudgetForDay` uses `min(Δ_d,T_d)·chainNumeraire/1e18`.
+- **G6 (cap-ratio timing)** — the admin cap-ratio is snapshotted at finalize too; the
+  cap change is prospective. **Owner ratified** the full finalize-time pricing semantic.
+- **G3 (re-anchor DoS)** — `repointRewardEntry` made O(1) via a `rewardEntryUserIdx` index
+  before centralizing re-anchor into `closeLoan`.
+- **G5 (facet replace)** — Part 1 requires a diamond-cut REPLACE + redeploy of every facet
+  inlining the changed lib (not just "no selector bump").
+- **G7 (borrower-NFT contradiction)** — the stale "not reassigned" clause removed.
+
 ## Resolved after Codex rounds 1–2
 
 Round 1:
@@ -528,12 +582,8 @@ Round 2:
 
 ## Open questions still for reviewers
 
-- **Q7 (#1008 pricing — NEEDS HUMAN SIGN-OFF):** Option B prices the daily cap at each
-  day's **finalization-time** ETH price rather than the current code's **claim-time**
-  price. This is arguably more faithful (value the day's interest at that day's ETH price)
-  and is what enables O(1) claims — but it is a deliberate semantic change to a
-  security-relevant cap. Ratify Option B (recommended) vs fall back to Option A
-  (claim-time price + per-day loop + pagination)?
+- **Q7 — RESOLVED (owner-ratified 2026-07-11):** Option B with finalization-time pricing
+  (ETH price + cap-ratio snapshotted at day-finalize; cap changes are prospective).
 - **Q3 (#1067 hook naming):** keep `precloseRewardClose` distinct vs unify with
   `terminalRewardClose`? (Leaning: keep distinct.)
-- **Q6 (sequencing):** two PRs (proposed) or one?
+- **Q6 (sequencing):** two PRs (proposed) or one? (Leaning: two.)
