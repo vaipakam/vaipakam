@@ -4866,6 +4866,16 @@ library LibVaipakam {
         mapping(uint256 => uint256) cumMinLenderRpn18;
         /// @dev Mirror of {cumMinLenderRpn18} for the borrower side.
         mapping(uint256 => uint256) cumMinBorrowerRpn18;
+        // ─── #1067 (S13 Part 2) — O(1) reward-entry membership index ──────────
+        /// @dev 1-based position of reward entry `id` inside its user's
+        ///      `userRewardEntryIds[user]` array (`idxPlus1`; 0 = absent). Lets
+        ///      {LibInteractionRewards._removeUserEntry} swap-pop in O(1) instead
+        ///      of scanning, so the centralized {closeLoan} re-anchor cannot be
+        ///      griefed by a prolific holder's long entry list (Codex #1147 r3
+        ///      G3 / r4 H3). Maintained at EVERY membership mutation: alloc push,
+        ///      remove swap-pop (rewrites the moved tail entry's index), and the
+        ///      {repointRewardEntry} newUser push.
+        mapping(uint256 => uint256) rewardEntryUserIdx;
     }
 
     /// @notice #393 v1-b — the originating intent of a `matchIntent` loan,
