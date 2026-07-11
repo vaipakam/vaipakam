@@ -56,6 +56,7 @@ const STATIC_ROUTES = [
   '/activity',
   '/vpfi',
   '/nft',
+  '/nft/1', // verifier deep-link verdict card (Codex #1154 P3)
   '/settings',
   '/faucet',
   '/help',
@@ -187,7 +188,7 @@ const report = {
 };
 report.startedAt = new Date().toISOString();
 
-const { page, context, close } = await launch({ role: 'lender', headless: true });
+const { page, done } = await launch({ role: 'lender', headless: true, readOnly: true });
 
 // One console/request tap for the lifetime of the context.
 let sink = null;
@@ -208,11 +209,22 @@ page.on('response', async (res) => {
   const url = res.url();
   const status = res.status();
   sink.network.responses += 1;
+  // The driver's undici route shim strips upstream content-length;
+  // Playwright re-synthesizes it on fulfill, but don't depend on that:
+  // prefer the CDP-measured body size (Codex #1154 P2).
   let bytes = 0;
   try {
-    bytes = Number(res.headers()['content-length'] ?? 0);
+    const sizes = await res.request().sizes();
+    bytes = sizes.responseBodySize > 0 ? sizes.responseBodySize : 0;
   } catch {
-    /* streamed */
+    /* sizes unavailable for this request type */
+  }
+  if (!bytes) {
+    try {
+      bytes = Number(res.headers()['content-length'] ?? 0);
+    } catch {
+      /* streamed */
+    }
   }
   sink.network.bytes += bytes;
   if (status >= 400) sink.network.errors.push({ status, url: url.slice(0, 300) });
@@ -232,12 +244,14 @@ for (const pass of PASSES) {
   const passReport = { name: pass.name, routes: [] };
   report.passes.push(passReport);
   await page.setViewportSize(VIEWPORTS[pass.viewport]);
-  // Mode is a localStorage flag read by ModeProvider at mount — set it
-  // before the route navigation so the pass renders in the right mode.
-  await page.addInitScript(
-    (m) => localStorage.setItem('alpha02.mode', m),
-    pass.mode,
-  );
+  // Mode is a localStorage flag read by ModeProvider at mount.
+  // localStorage on a persistent profile survives navigations, so ONE
+  // evaluate before the pass is deterministic. Never addInitScript
+  // here: init scripts accumulate for the page's lifetime with no
+  // ordering guarantee across passes, so a stale 'basic' script could
+  // overwrite the advanced pass's flag on any later navigation (Codex
+  // #1154 P2). The per-route landmark probe records the EFFECTIVE mode
+  // so a mode mix-up is visible in the report, not silent.
   await page.evaluate((m) => localStorage.setItem('alpha02.mode', m), pass.mode);
 
   for (const route of routes) {
@@ -265,6 +279,7 @@ for (const pass of PASSES) {
     const devtools = await devtoolsProbe(page);
     const landmarks = await page
       .evaluate(() => ({
+        mode: localStorage.getItem('alpha02.mode'),
         title: document.title,
         h1: [...document.querySelectorAll('h1')].map((h) => h.textContent?.trim()).slice(0, 3),
         hasHorizontalOverflow:
@@ -296,12 +311,9 @@ for (const pass of PASSES) {
   }
 }
 
-fs.writeFileSync(
-  path.join(OUT_DIR, PROBE_ONLY ? 'report-devtools.json' : 'report.json'),
-  JSON.stringify(report, null, 2),
-);
+const reportName = PROBE_ONLY ? 'report-devtools.json' : 'report.json';
+fs.writeFileSync(path.join(OUT_DIR, reportName), JSON.stringify(report, null, 2));
 // eslint-disable-next-line no-console
-console.log(`\nSweep complete → ${path.relative(process.cwd(), OUT_DIR)}/report.json`);
-await close?.().catch(() => {});
-await context?.close?.().catch(() => {});
+console.log(`\nSweep complete → ${path.relative(process.cwd(), OUT_DIR)}/${reportName}`);
+await done().catch(() => {});
 process.exit(0);

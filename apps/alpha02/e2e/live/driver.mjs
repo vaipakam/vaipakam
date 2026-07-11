@@ -123,7 +123,17 @@ export function addressOf(role) {
   return WALLETS[role].address;
 }
 
-export async function launch({ role, startChainId = 84532, headless = true }) {
+export async function launch({
+  role,
+  startChainId = 84532,
+  headless = true,
+  // readOnly: deny every signing/write RPC at the injected-wallet
+  // boundary. For evidence sweeps (live-ux-sweep) that advertise
+  // themselves as read-only: a page regression (or a compromised
+  // preview target) asking for a signature mid-visit gets a wallet
+  // error instead of an auto-approved signature (Codex #1154 P2).
+  readOnly = false,
+} = {}) {
   const account = privateKeyToAccount(WALLETS[role].privateKey);
   let chainId = startChainId;
 
@@ -177,11 +187,26 @@ export async function launch({ role, startChainId = 84532, headless = true }) {
   });
 
   const rpcLog = [];
+  const WRITE_METHODS = new Set([
+    'personal_sign',
+    'eth_sign',
+    'eth_signTypedData',
+    'eth_signTypedData_v3',
+    'eth_signTypedData_v4',
+    'eth_sendTransaction',
+    'eth_signTransaction',
+    'eth_sendRawTransaction',
+  ]);
   async function handle({ method, params }) {
     const { chain, rpc } = CHAINS[chainId];
     const pub = createPublicClient({ chain, transport: http(rpc) });
     const wallet = createWalletClient({ chain, transport: http(rpc), account });
     rpcLog.push(method);
+    if (readOnly && WRITE_METHODS.has(method)) {
+      const err = new Error(`read-only driver session: ${method} disabled`);
+      err.code = 4200; // EIP-1193 unsupported method
+      throw err;
+    }
     switch (method) {
       case 'eth_requestAccounts':
       case 'eth_accounts':

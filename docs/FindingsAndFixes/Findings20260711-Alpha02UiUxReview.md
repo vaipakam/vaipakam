@@ -277,10 +277,13 @@ A trust tool for exactly the off-platform user, absent from all nav
 and Help. Add to secondary nav / Help ("Check a position NFT before
 you buy").
 
-### UX-033 · Wallet-SDK analytics phone home and fail noisily (S)
-The only real console errors site-wide are WalletConnect/Coinbase
-"Analytics SDK" fetch failures on restricted networks. Disable SDK
-analytics (privacy + clean console).
+### UX-033 · Wallet-SDK analytics phone home (S)
+Consistent with the zero-real-error baseline above: the WalletConnect/
+Coinbase "Analytics SDK" fetch failures observed during the sweep are
+classified as environmental noise (they fire only where egress is
+restricted, as in the review sandbox). The finding is that the SDKs
+phone home at all — disable their analytics for privacy, which also
+keeps consoles clean on locked-down networks.
 
 ---
 
