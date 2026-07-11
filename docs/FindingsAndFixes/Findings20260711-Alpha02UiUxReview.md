@@ -50,6 +50,7 @@ line when addressed. Unmarked findings are OPEN.
 | Batch | Findings | Status |
 | --- | --- | --- |
 | 1 — trust (2026-07-11) | UX-001, UX-002, UX-007, UX-020, UX-021, UX-022 | ✅ Fixed — state-aware loan receipts, exact claim amounts via `getClaimable`, FAB moved bottom-left on phones, header chip nowrap, Try-again on unavailable states, spinning loaders |
+| 2 — mobile (2026-07-11) | UX-006, UX-019, UX-039, UX-042 | ✅ Fixed — desk stacks single-column below 560px, item-row cards stack with full-width CTAs ≤480px, compact "Step N of M" wizard line on phones, tappable copy+explorer address chips (44px touch targets) |
 
 ---
 
@@ -112,6 +113,8 @@ vendor-chunk splitting.
 button overlaps the rate text, every ticket label wraps (screenshot
 `basic-mobile--desk.png`). Fix: single-column stack below ~560 px, or
 add Book|Ticket to the existing mobile toggle.
+
+**Status: ✅ FIXED (batch 2, 2026-07-11).** `.desk-main` stacks to one column below a 560px container width — full-width ladder above the ticket; the Book|Chart toggle is unchanged.
 
 ### UX-007 · Support FAB covers right-aligned Claim / "Use this offer" buttons (S)
 The fixed Support button sits exactly where list-card CTAs land on
@@ -212,6 +215,8 @@ outside Advanced.)
 Title wraps mid-string ("Lending offer ·" / "0.005 WETH"), meta breaks
 into 3–4 fragments beside the button (`basic-mobile--offers.png`).
 Stack: full-width text, then full-width CTA.
+
+**Status: ✅ FIXED (batch 2, 2026-07-11).** Shared `item-row` rule at ≤480px: text full-width, CTA full-width below — fixes Offer Book and Claim Center cards together.
 
 ### UX-020 · Header wallet chip wraps the address onto two lines (S)
 "0x1DAe… / 8282" on every mobile page — the orphaned "8282" reads like
@@ -323,11 +328,13 @@ keeps consoles clean on locked-down networks.
 - **UX-038** Σ column header — label it "Depth", tooltip the rest. (S)
 - **UX-039** Wizard stepper wraps on mobile, orphaning "Done";
   compact "Step 1 of 5" under ~400 px. (S)
+  **Status: ✅ FIXED (batch 2, 2026-07-11).**
 - **UX-040** Empty-matches state in the guided flows doesn't reuse
   `EmptyState`; visual inconsistency with sibling pages. (S)
 - **UX-041** Done screen offers no "Start another". (S)
 - **UX-042** Addresses (vault, faucet contracts) lack one-tap copy and
   use ~16 px link glyphs on mobile — sub-44 px targets. (S)
+  **Status: ✅ FIXED (batch 2, 2026-07-11).**
 - **UX-043** Telegram "Linked on another device? / Unlink here"
   centered link pair is an ambiguous small target. (S)
 - **UX-044** Raw ISO build timestamp in the Help footer — format as a

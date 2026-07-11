@@ -719,6 +719,23 @@ button.intent-card {
   font-weight: 600;
 }
 
+/* UX-039 — five step labels wrap awkwardly at phone widths, orphaning
+   the last one. Swap to a compact "Step N of M — Label" line. */
+.steps-nav .steps-compact {
+  display: none;
+}
+
+@media (max-width: 480px) {
+  .steps-nav .step-dot {
+    display: none;
+  }
+  .steps-nav .steps-compact {
+    display: inline;
+    color: var(--text-strong);
+    font-weight: 600;
+  }
+}
+
 .receipt {
   border: 1px solid var(--border);
   border-radius: var(--radius-md);
@@ -836,6 +853,48 @@ a.item-row:hover {
   border-color: var(--brand);
 }
 
+/* UX-019 — beside-the-text CTAs crush list cards when the CARD is
+   narrow (titles wrap mid-token, meta shatters into fragments). Stack:
+   text full-width, then the action button full-width below.
+
+   Two triggers on purpose (Codex #1157 r1): the row-list container
+   query keys on the list's OWN width, so the 720–768px viewport band
+   — where the 220px sidebar appears and content drops to ~450px while
+   a viewport media query stops matching — stacks correctly too. The
+   viewport fallback covers item-rows outside a .row-list (e.g. the
+   Faucet's single-row cards) on true phones. */
+.row-list {
+  container-type: inline-size;
+}
+
+@container (max-width: 480px) {
+  .row-list .item-row {
+    flex-direction: column;
+    align-items: stretch;
+  }
+  .row-list .item-row .row-main {
+    min-width: 0;
+  }
+  .row-list .item-row .btn {
+    width: 100%;
+    text-align: center;
+  }
+}
+
+@media (max-width: 480px) {
+  .item-row {
+    flex-direction: column;
+    align-items: stretch;
+  }
+  .item-row .row-main {
+    min-width: 0;
+  }
+  .item-row .btn {
+    width: 100%;
+    text-align: center;
+  }
+}
+
 .item-row .row-main {
   flex: 1;
   min-width: 180px;
@@ -891,6 +950,50 @@ a.item-row:hover {
 .page-lede {
   color: var(--text-muted);
   margin-bottom: var(--space-5);
+}
+
+/* UX-042 — copyable address chips: comfortable targets, 44px on
+   touch devices. */
+.copy-address {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+}
+
+.copy-address-chip,
+.copy-address-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 8px;
+  min-height: 28px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface-raised);
+  color: var(--text-muted);
+  font-size: 0.8rem;
+  cursor: pointer;
+}
+
+.copy-address-chip:hover,
+.copy-address-link:hover {
+  border-color: var(--brand);
+  color: var(--brand);
+  text-decoration: none;
+}
+
+@media (pointer: coarse) {
+  .copy-address-chip,
+  .copy-address-link {
+    min-height: 44px;
+    padding: 8px 12px;
+  }
+  /* The icon-only explorer anchor needs WIDTH too — 14px icon + 24px
+     padding is ~38px, under the 44px target this block guarantees. */
+  .copy-address-link {
+    min-width: 44px;
+    justify-content: center;
+  }
 }
 
 .visually-hidden {
@@ -1102,6 +1205,16 @@ a.item-row:hover {
   gap: var(--space-3);
   min-width: 0;
   grid-column: 1 / -1;
+}
+
+/* UX-006 — at phone widths the side-by-side ladder+ticket crushes
+   both columns to ~150px (wrapped headers, overlapping buttons).
+   Below 560px stack them full-width: ladder first (scan the market),
+   ticket below (act on it). The Book|Chart toggle is unaffected. */
+@container desk (max-width: 559.98px) {
+  .desk-main {
+    grid-template-columns: minmax(0, 1fr);
+  }
 }
 
 @container desk (max-width: 719.98px) {

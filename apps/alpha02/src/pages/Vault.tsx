@@ -10,6 +10,7 @@ import { useActiveChain } from '../chain/useActiveChain';
 import { useVaultAssets } from '../data/vault';
 import { EmptyState, UnavailableState } from '../components/EmptyState';
 import { formatTokenAmount, shortAddress } from '../lib/format';
+import { CopyAddress } from '../components/CopyAddress';
 
 export function Vault() {
   const { isConnected, readChain } = useActiveChain();
@@ -42,14 +43,10 @@ export function Vault() {
           <section className="card">
             <p className="muted" style={{ margin: 0 }}>
               Vault address:{' '}
-              <a
-                href={`${readChain.blockExplorer}/address/${vault.data.vaultAddress}`}
-                target="_blank"
-                rel="noreferrer"
-                className="mono"
-              >
-                {shortAddress(vault.data.vaultAddress)}
-              </a>{' '}
+              <CopyAddress
+                address={vault.data.vaultAddress}
+                explorerBase={readChain.blockExplorer}
+              />{' '}
               on {readChain.name}
             </p>
           </section>
