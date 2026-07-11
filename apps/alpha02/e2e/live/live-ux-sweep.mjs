@@ -40,8 +40,6 @@ import { launch, ensureConnected, addressOf, SITE } from './driver.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const OUT_DIR = path.join(HERE, 'shots', 'ux-sweep');
-const INDEXER = process.env.INDEXER_ORIGIN ?? 'https://indexer.vaipakam.com';
-const CHAIN_ID = 84532;
 
 /** Every real (non-redirect) route in App.tsx, in nav order. */
 const STATIC_ROUTES = [
@@ -133,9 +131,13 @@ async function devtoolsProbe(page) {
 }
 
 /** Console/network noise that is environmental in the review sandbox —
- *  tagged so the report separates it from real defects. */
+ *  tagged so the report separates it from real defects. These match
+ *  console MESSAGE TEXT (not URLs being authorized), but the host
+ *  pattern is anchored to the scheme anyway so a hostile lookalike
+ *  domain elsewhere in a message can't self-tag as noise (CodeQL
+ *  js/regex/missing-regexp-anchor). */
 function classifyNoise(text) {
-  if (/static\.cloudflareinsights\.com/.test(text)) return 'csp-beacon';
+  if (/https:\/\/static\.cloudflareinsights\.com\//.test(text)) return 'csp-beacon';
   if (/WebSocket connection.*ws\/chain.*failed/.test(text)) return 'sandbox-page-ws';
   return null;
 }
@@ -144,14 +146,19 @@ function slugOf(route) {
   return route === '/' ? 'home' : route.replace(/^\//, '').replace(/[/:]/g, '-');
 }
 
-async function resolveLoanDetailRoute() {
+/** Harvest a real loan-detail route from the RENDERED /positions page
+ *  instead of querying the indexer with a wallets-file-derived address
+ *  (CodeQL js/file-data-in-outbound-network-request — and honestly the
+ *  better source: the sweep reviews what the user can actually reach,
+ *  so the link should come from the page itself). */
+async function resolveLoanDetailRoute(page) {
   try {
-    const res = await fetch(
-      `${INDEXER}/loans/by-participant?chainId=${CHAIN_ID}&wallet=${addressOf('lender')}&limit=1`,
-    );
-    const body = await res.json();
-    const id = body?.loans?.[0]?.loanId ?? body?.loans?.[0]?.loan_id;
-    if (id !== undefined && id !== null) return `/positions/${id}`;
+    await page.goto(`${SITE}/positions`, { waitUntil: 'load', timeout: 45_000 });
+    await page.waitForLoadState('networkidle', { timeout: 12_000 }).catch(() => {});
+    const href = await page
+      .$$eval('a[href^="/positions/"]', (as) => as.map((a) => a.getAttribute('href'))[0] ?? null)
+      .catch(() => null);
+    if (href && /^\/positions\/\d+$/.test(href)) return href;
   } catch {
     /* fall through — detail page skipped, recorded in the report */
   }
@@ -171,12 +178,6 @@ const report = {
 report.startedAt = new Date().toISOString();
 
 const { page, context, close } = await launch({ role: 'lender', headless: true });
-
-if (!routesEnv) {
-  const detail = await resolveLoanDetailRoute();
-  if (detail) routes.splice(routes.indexOf('/claims'), 0, detail);
-  else report.loanDetailSkipped = 'no loan found via /loans/by-participant';
-}
 
 // One console/request tap for the lifetime of the context.
 let sink = null;
@@ -210,6 +211,12 @@ page.on('response', async (res) => {
 
 await page.goto(SITE, { waitUntil: 'domcontentloaded' });
 await ensureConnected(page);
+
+if (!routesEnv) {
+  const detail = await resolveLoanDetailRoute(page);
+  if (detail) routes.splice(routes.indexOf('/claims'), 0, detail);
+  else report.loanDetailSkipped = 'no /positions/:id link found on the rendered positions page';
+}
 
 for (const pass of PASSES) {
   const passReport = { name: pass.name, routes: [] };
