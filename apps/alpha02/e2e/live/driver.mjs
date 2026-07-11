@@ -246,6 +246,11 @@ export async function launch({
     const wallet = createWalletClient({ chain, transport: http(rpc), account });
     rpcLog.push(method);
     if (readOnly && WRITE_METHODS.has(method)) {
+      // Land wallet-level refusals in the SAME violations list as the
+      // HTTP guard: an app that catches the wallet error would
+      // otherwise leave a clean report while a write was attempted
+      // (Codex #1154 r4 P2).
+      blockedRequests.push({ reason: `wallet rpc ${method}`, url: '(injected wallet)' });
       const err = new Error(`read-only driver session: ${method} disabled`);
       err.code = 4200; // EIP-1193 unsupported method
       throw err;

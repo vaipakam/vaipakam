@@ -192,6 +192,14 @@ const { page, done, blockedRequests } = await launch({ role: 'lender', headless:
 
 // One console/request tap for the lifetime of the context.
 let sink = null;
+// Bind every network entry to the sink of the route that STARTED the
+// request: background refetches and slow indexer/RPC calls can resolve
+// after the loop has moved to the next route, and attributing them by
+// arrival time corrupts per-route evidence (Codex #1154 r4 P2).
+const sinkByRequest = new WeakMap();
+page.on('request', (req) => {
+  if (sink) sinkByRequest.set(req, sink);
+});
 page.on('console', (msg) => {
   if (!sink) return;
   const text = msg.text();
@@ -201,15 +209,15 @@ page.on('pageerror', (err) => {
   sink?.pageErrors.push(String(err).slice(0, 500));
 });
 page.on('requestfailed', (req) => {
+  const s = sinkByRequest.get(req) ?? sink;
   const text = `${req.method()} ${req.url()} — ${req.failure()?.errorText}`;
-  sink?.network.failed.push({ entry: text.slice(0, 400), noise: classifyNoise(text) });
+  s?.network.failed.push({ entry: text.slice(0, 400), noise: classifyNoise(text) });
 });
 page.on('response', async (res) => {
-  // Snapshot the CURRENT route's sink: the sizes() await below can
-  // resolve after the loop has moved on, and updating the live `sink`
-  // binding then would attribute bytes to the wrong route (or throw
-  // on null) — Codex #1154 r3 P2.
-  const s = sink;
+  // The route that STARTED this request owns its bytes — not whichever
+  // route is current when the response (or the sizes() await below)
+  // lands (Codex #1154 r3+r4 P2).
+  const s = sinkByRequest.get(res.request()) ?? sink;
   if (!s) return;
   const url = res.url();
   const status = res.status();
@@ -277,12 +285,29 @@ for (const pass of PASSES) {
       navError = String(e).slice(0, 300);
     }
     const loadMs = Date.now() - started;
-    const shot = path.join(OUT_DIR, `${pass.name}--${slug}.png`);
-    if (!PROBE_ONLY) {
-      await page.screenshot({ path: shot, fullPage: true }).catch(() => {});
+    // A failed navigation may never have committed — the previous
+    // route would still be loaded, so screenshot/landmarks/devtools
+    // would silently describe the WRONG page. Record the failure with
+    // null artifacts instead (Codex #1154 r4 P2).
+    let shot = null;
+    let shotError = null;
+    let devtools = null;
+    if (navError === null) {
+      if (!PROBE_ONLY) {
+        const shotPath = path.join(OUT_DIR, `${pass.name}--${slug}.png`);
+        // Never leave a stale capture from an earlier run answering
+        // for this one (the shots dir is reused across sweeps).
+        fs.rmSync(shotPath, { force: true });
+        try {
+          await page.screenshot({ path: shotPath, fullPage: true });
+          shot = shotPath;
+        } catch (e) {
+          shotError = String(e).slice(0, 200);
+        }
+      }
+      devtools = await devtoolsProbe(page);
     }
-    const devtools = await devtoolsProbe(page);
-    const landmarks = await page
+    const landmarks = navError !== null ? null : await page
       .evaluate(() => ({
         mode: localStorage.getItem('alpha02.mode'),
         title: document.title,
@@ -297,7 +322,8 @@ for (const pass of PASSES) {
       .catch(() => null);
     passReport.routes.push({
       route,
-      shot: PROBE_ONLY ? null : path.relative(HERE, shot),
+      shot: shot ? path.relative(HERE, shot) : null,
+      shotError,
       loadMs,
       navError,
       landmarks,
