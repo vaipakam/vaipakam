@@ -2,9 +2,10 @@
 
 Full-surface UI/UX review of **apps/alpha02** on the deployed testnet
 site (alpha02.vaipakam.com, Base Sepolia, build `1c90b73`), logged for
-later work per the review request. Nothing here has been fixed yet —
-each finding carries an ID (`UX-###`) so follow-up PRs and board cards
-can reference them individually.
+later work per the review request. Each finding carries an ID
+(`UX-###`) so follow-up PRs and board cards can reference it
+individually; the **Status ledger** below tracks which findings have
+since been fixed and in which batch — unmarked findings are OPEN.
 
 ## Method + evidence
 

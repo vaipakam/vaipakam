@@ -1286,12 +1286,22 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
                   : row.status === 'repaid'
                     ? role === 'borrower'
                       ? copy.positions.whatNextRepaidBorrower
-                      : copy.positions.whatNextRepaidLender
+                      : role === 'lender'
+                        ? copy.positions.whatNextRepaidLender
+                        : copy.positions.whatNextRepaidViewer
                     : row.status === 'defaulted' || row.status === 'liquidated'
                       ? role === 'borrower'
                         ? copy.positions.whatNextDefaultedBorrower
-                        : copy.positions.whatNextDefaultedLender
-                      : copy.positions.whatNextClosed
+                        : role === 'lender'
+                          ? copy.positions.whatNextDefaultedLender
+                          : copy.positions.whatNextDefaultedViewer
+                      : row.status === 'internal_matched'
+                        ? role === 'borrower'
+                          ? copy.positions.whatNextInternalMatchBorrower
+                          : role === 'lender'
+                            ? copy.positions.whatNextInternalMatchLender
+                            : copy.positions.whatNextInternalMatchViewer
+                        : copy.positions.whatNextClosed
                 : isRental
                   ? role === 'borrower'
                     ? 'Your use rights end at the due date and the prepaid buffer goes to the owner — close on time to get it back.'

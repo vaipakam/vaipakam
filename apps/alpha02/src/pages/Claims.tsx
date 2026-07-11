@@ -140,11 +140,27 @@ function ClaimRow({ loan }: { loan: ClaimableLoan }) {
   const collateralMeta = useTokenMeta(loan.collateralAsset);
   // UX-002 — getClaimable told us the exact asset + amount this claim
   // pays out; show the NUMBER on the money-collection screen instead
-  // of "+ interest" or a description of a field.
+  // of "+ interest" or a description of a field. Two extra payout
+  // lanes ride the same claim transaction (Codex #1156 r1):
+  //   - lifRebate is always VPFI (18 dec) → shown numerically;
+  //   - heldForLender ACCUMULATES potentially mixed assets on-chain
+  //     (each park carries its own asset), so no single denomination
+  //     is honest → shown qualitatively, never as a number.
   const claimAssetMeta = useTokenMeta(loan.claim.asset ?? undefined);
-  const claimAmountStr =
+  const baseAmountStr =
     loan.claim.amount > 0n && claimAssetMeta.data
       ? `${formatTokenAmount(loan.claim.amount, claimAssetMeta.data.decimals)} ${claimAssetMeta.data.symbol}`
+      : null;
+  const rebateStr =
+    loan.claim.lifRebate > 0n
+      ? `${formatTokenAmount(loan.claim.lifRebate, 18)} VPFI rebate`
+      : null;
+  const heldSuffix =
+    loan.role === 'lender' && loan.claim.heldForLender > 0n ? ' + held proceeds' : '';
+  const claimAmountStr = baseAmountStr
+    ? `${baseAmountStr}${rebateStr ? ` + ${rebateStr}` : ''}${heldSuffix}`
+    : rebateStr
+      ? rebateStr
       : null;
   const defaulted = loan.status === 'defaulted' || loan.status === 'liquidated';
   // Claimable proper-close group: repaid or internal_matched. NOT

@@ -812,12 +812,28 @@ export const copy = {
       'You repaid this loan. Nothing else can happen to it — claim your collateral back below if you haven’t yet.',
     whatNextRepaidLender:
       'The borrower repaid. Nothing else can happen to this loan — claim your funds below if you haven’t yet.',
+    // Viewer-neutral variants: a wallet that holds neither side (or a
+    // side whose claim already consumed its position NFT) must never
+    // be told to "claim your funds" when no action renders for it.
+    whatNextRepaidViewer:
+      'The borrower repaid. Nothing else can happen to this loan — any remaining claims belong to the position holders.',
     whatNextDefaultedBorrower:
       'This loan already ended in default. Any remainder after settlement is claimable (it may be zero).',
     whatNextDefaultedLender:
       'This loan already ended in default — what it recovered is claimable in the Claim Center.',
+    whatNextDefaultedViewer:
+      'This loan already ended in default — the settlement’s recovery belongs to the position holders.',
+    whatNextInternalMatchBorrower:
+      'This loan closed by internal matching. Collect any residual and VPFI rebate below (either may be zero).',
+    whatNextInternalMatchLender:
+      'This loan closed by internal matching — collect your funds below if you haven’t yet.',
+    whatNextInternalMatchViewer:
+      'This loan closed by internal matching — any residual claims belong to the position holders.',
+    // Reserved for `settled` ONLY: that status means the claims are
+    // already consumed, so "nothing left to do" is literally true.
     whatNextClosed: 'This loan is fully settled — there is nothing left to do.',
-    whatNextRentalEnded: 'This rental has ended — nothing further can change it.',
+    whatNextRentalEnded:
+      'This rental has ended. Any earned fees or refundable buffer can be claimed below by the position holders — nothing else can change it.',
     // OBS-2 (#988) — shown when the page's live on-chain read is ahead
     // of the position lists (stalled/lagging indexer).
     settledAhead:
