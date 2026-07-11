@@ -16,6 +16,16 @@
  * Options:
  *   SITE_URL=…            target a preview instead of production
  *   UX_SWEEP_ROUTES=/a,/b restrict the route list (comma-separated)
+ *   UX_SWEEP_PROBE_ONLY=1 skip screenshots + extra passes; one
+ *                         basic-desktop pass collecting only the
+ *                         devtools probe (storage/perf/SW) — for
+ *                         topping up an earlier full run
+ *
+ * Per-route devtools probe (the report's `devtools` key): local/
+ * session-storage keys with sizes, IndexedDB database names, cookie
+ * count, service-worker + Cache API state, navigation/paint timings,
+ * JS heap, and buffered long-task count — the tabs a human would open
+ * for troubleshooting, captured mechanically.
  *
  * Read-only by design: the sweep connects the wallet (so authed
  * surfaces render their real state) but never signs, posts, or sends
@@ -59,12 +69,68 @@ const VIEWPORTS = {
   mobile: { width: 390, height: 844 }, // iPhone 14-ish
 };
 
+const PROBE_ONLY = process.env.UX_SWEEP_PROBE_ONLY === '1';
+
 /** Passes: what the review actually needs, kept to a manageable set. */
-const PASSES = [
-  { name: 'basic-desktop', mode: 'basic', viewport: 'desktop' },
-  { name: 'basic-mobile', mode: 'basic', viewport: 'mobile' },
-  { name: 'advanced-desktop', mode: 'advanced', viewport: 'desktop' },
-];
+const PASSES = PROBE_ONLY
+  ? [{ name: 'basic-desktop', mode: 'basic', viewport: 'desktop' }]
+  : [
+      { name: 'basic-desktop', mode: 'basic', viewport: 'desktop' },
+      { name: 'basic-mobile', mode: 'basic', viewport: 'mobile' },
+      { name: 'advanced-desktop', mode: 'advanced', viewport: 'desktop' },
+    ];
+
+/** The DevTools-tabs-in-one-call probe. Runs in the page; every field
+ *  is fail-soft so one blocked API doesn't sink the rest. */
+async function devtoolsProbe(page) {
+  return page
+    .evaluate(async () => {
+      const out = {};
+      const kb = (s) => Math.round((s.length * 2) / 102.4) / 10; // UTF-16 → KB
+      try {
+        out.localStorage = Object.keys(localStorage).map((k) => ({
+          key: k,
+          kb: kb(localStorage.getItem(k) ?? ''),
+        }));
+      } catch (e) { out.localStorage = String(e); }
+      try {
+        out.sessionStorage = Object.keys(sessionStorage).map((k) => ({
+          key: k,
+          kb: kb(sessionStorage.getItem(k) ?? ''),
+        }));
+      } catch (e) { out.sessionStorage = String(e); }
+      try {
+        out.indexedDbNames = (await indexedDB.databases()).map((d) => d.name);
+      } catch (e) { out.indexedDbNames = String(e); }
+      try { out.cookieCount = document.cookie ? document.cookie.split(';').length : 0; }
+      catch (e) { out.cookieCount = String(e); }
+      try {
+        const regs = await navigator.serviceWorker?.getRegistrations?.();
+        out.serviceWorkers = (regs ?? []).map((r) => r.active?.scriptURL ?? r.scope);
+        out.cacheStorageKeys = (await caches?.keys?.()) ?? [];
+      } catch (e) { out.serviceWorkers = String(e); }
+      try {
+        const nav = performance.getEntriesByType('navigation')[0];
+        out.timing = nav && {
+          ttfbMs: Math.round(nav.responseStart - nav.requestStart),
+          domContentLoadedMs: Math.round(nav.domContentLoadedEventEnd - nav.startTime),
+          loadMs: Math.round(nav.loadEventEnd - nav.startTime),
+          transferKb: Math.round((nav.transferSize ?? 0) / 1024),
+        };
+        out.paints = Object.fromEntries(
+          performance.getEntriesByType('paint').map((p) => [p.name, Math.round(p.startTime)]),
+        );
+        out.longTasks = performance.getEntriesByType('longtask')?.length ?? null;
+      } catch (e) { out.timing = String(e); }
+      try {
+        // Chromium-only; fine — the sweep always runs Chromium.
+        const m = performance.memory;
+        if (m) out.jsHeapMb = Math.round(m.usedJSHeapSize / 1048576);
+      } catch { /* unavailable */ }
+      return out;
+    })
+    .catch((e) => ({ error: String(e).slice(0, 200) }));
+}
 
 /** Console/network noise that is environmental in the review sandbox —
  *  tagged so the report separates it from real defects. */
@@ -176,7 +242,10 @@ for (const pass of PASSES) {
     }
     const loadMs = Date.now() - started;
     const shot = path.join(OUT_DIR, `${pass.name}--${slug}.png`);
-    await page.screenshot({ path: shot, fullPage: true }).catch(() => {});
+    if (!PROBE_ONLY) {
+      await page.screenshot({ path: shot, fullPage: true }).catch(() => {});
+    }
+    const devtools = await devtoolsProbe(page);
     const landmarks = await page
       .evaluate(() => ({
         title: document.title,
@@ -191,10 +260,11 @@ for (const pass of PASSES) {
       .catch(() => null);
     passReport.routes.push({
       route,
-      shot: path.relative(HERE, shot),
+      shot: PROBE_ONLY ? null : path.relative(HERE, shot),
       loadMs,
       navError,
       landmarks,
+      devtools,
       console: sink.console,
       pageErrors: sink.pageErrors,
       network: sink.network,
@@ -209,7 +279,10 @@ for (const pass of PASSES) {
   }
 }
 
-fs.writeFileSync(path.join(OUT_DIR, 'report.json'), JSON.stringify(report, null, 2));
+fs.writeFileSync(
+  path.join(OUT_DIR, PROBE_ONLY ? 'report-devtools.json' : 'report.json'),
+  JSON.stringify(report, null, 2),
+);
 // eslint-disable-next-line no-console
 console.log(`\nSweep complete → ${path.relative(process.cwd(), OUT_DIR)}/report.json`);
 await close?.().catch(() => {});
