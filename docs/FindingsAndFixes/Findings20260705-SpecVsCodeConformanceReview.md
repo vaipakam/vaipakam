@@ -289,3 +289,43 @@ This spec-conformance pass complements the 2026-07-02/03 security audit and the
 economic model; together they cover the code's *exploitability*, its *economics*,
 and its *fidelity to intent*. It remains pre-audit hardening — a professional
 human audit + fuzzing/formal campaign is still warranted before mainnet.
+
+---
+
+## Status update — 2026-07-11 (all code fixes merged; umbrella #998 complete)
+
+Every code-fix card filed under umbrella **#998** is now **merged and closed**:
+
+- **High:** S1 #999, S2 #1000, S3 #1001, S4 #1002, S5 #969 — all closed.
+- **Medium:** S7 #1003, S8 #1004, S9 #1005, S10 #1006, S11 #1007, S12 #915,
+  S13 #1008, S15 #900 — all closed.
+- **Low:** L-g #1009, L-h #1010, L-c #1032 — all closed.
+
+The reward-accounting cluster (S4 #1002 / S5 #969 / S13 #1008) was completed by
+the **interaction-reward terminal close-out** (#1067, merged) — every loan
+terminal now closes reward entries durably and re-anchors each open entry to the
+live position-NFT holder, and the per-user cap is enforced per day (Option B:
+threshold snapshotted at day finalisation and broadcast canonically).
+
+**Spec-update items** (S6, S14, S16–S19, L-f, L-l, L-m) were closed by the
+spec-reconciliation **PR #1011** and the whitepaper-v4 rewrite **PR #1015**.
+
+**The "still needs owner adjudication" set is now tracked on the board**
+(previously doc-only): **L-i → #1158**, **L-a → #1159**, **L-j → #1160**
+(largely resolved by #1008 — pending confirmation), **L-o → #1161**. Each is an
+`audit` + `question` card awaiting an owner decision to be recorded in
+`docs/FunctionalSpecs/_CodeVsDocsAudit.md`.
+
+**Documentation follow-up:** #1018 (CLAUDE.md staleness — the removed
+`VpfiBuyAdapter` surface described as live, the Phase-1 chain scope listing BNB
+instead of Polygon, the stale `"$1M volume"` liquidity criterion and
+`KYC_THRESHOLD_USD = 2000e18` constant, and the deployments omit-keys section's
+dead buy-surface keys) is addressed in the same change-set as this status
+update.
+
+**Related, not a #998 child:** #940 (dashboards omit `FallbackPending` loans —
+a contract-side `MetricsDashboardFacet` filter bug surfaced on the apps/defi
+dashboard) remains open as a separate UX card.
+
+With that, umbrella **#998 is complete** — all conformance-review code fixes are
+on `main`. The pre-audit-hardening caveat above still stands.

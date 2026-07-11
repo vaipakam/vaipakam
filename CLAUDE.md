@@ -74,7 +74,7 @@ Placeholder facets (Phase 2): TreasuryFacet, PrecloseFacet, RefinanceFacet, Earl
 
 ### Liquid vs Illiquid Assets
 
-- **Liquid**: Has Chainlink feed + v3-style concentrated-liquidity AMM pool + $1M volume → LTV/HF checks apply, 0x swap on liquidation
+- **Liquid**: Has Chainlink feed + v3/v2-style concentrated-liquidity AMM pool that passes the **slippage-at-floor** liquidity probe (a $5k trade at ≤2% slippage — NOT a "$1M volume" test, which was retired with the dead `MIN_LIQUIDITY_PAD`) → LTV/HF checks apply, adapter swap (0x/1inch via `LibSwap`) on liquidation
 - **Illiquid**: NFTs or tokens without oracle → valued at $0, full collateral transfer on default, both parties must explicitly consent
 
 ### Two Liquidation Paths
@@ -86,7 +86,7 @@ Placeholder facets (Phase 2): TreasuryFacet, PrecloseFacet, RefinanceFacet, Earl
 
 - `MIN_HEALTH_FACTOR = 1.5e18` — minimum HF at loan initiation
 - `TREASURY_FEE_BPS = 100` — 1% treasury cut on interest
-- `KYC_THRESHOLD_USD = 2000e18` — KYC required above this
+- `KYC_TIER0_THRESHOLD_NUMERAIRE = 1_000e18` / `KYC_TIER1_THRESHOLD_NUMERAIRE = 10_000e18` — two-tier KYC thresholds ($1k / $10k, numeraire-denominated). Enforcement is **dormant on the retail deploy** (see "Retail-deploy policy" below); there is no single `KYC_THRESHOLD_USD = 2000e18` constant (that value is stale)
 - `RENTAL_BUFFER_BPS = 500` — 5% buffer on NFT rental prepayment
 - `VOLATILITY_LTV_THRESHOLD_BPS = 11000` — 110% LTV collapse threshold
 
@@ -376,20 +376,21 @@ Worker, pick the matching token based on **who reads the alert**,
 not on convenience.
 
 **Omit-keys policy for chain shape variance**: canonical-VPFI chains
-(Base / Base Sepolia) carry `vpfiOftAdapter` + `vpfiBuyReceiver`;
-mirror chains (Sepolia, Arb Sepolia, etc.) carry `vpfiMirror` +
-`vpfiBuyAdapter`. Each chain's stanza in the consolidated JSON
-only includes the keys that apply to it — there are NO
-`0x0000…0000` sentinels for "doesn't apply on this chain". Mixing
-zero-address sentinels into address slots is a real DeFi bug class
-(`address(0)` already means real things in Solidity: the ETH
-sentinel, default-treasury, burn). The TS `Deployment` type marks
-non-universal fields as optional and consumers narrow on the
-`isCanonicalVPFI` / `isCanonicalReward` booleans before reading
-scoped fields. Exception: `vpfiBuyPaymentToken` carries
-`0x0000…0000` to mean "pay in native gas" — that's a meaningful
-runtime sentinel, not a missing field, and the consumer maps zero
-→ null at the boundary.
+(Base / Base Sepolia) carry `vpfiOftAdapter` (the lock/release CCT
+TokenPool — legacy "Oft" name, CCIP CCT post-T-068); mirror chains
+(Sepolia, Arb Sepolia, etc.) carry `vpfiMirror` (burn/mint). Each
+chain's stanza in the consolidated JSON only includes the keys that
+apply to it — there are NO `0x0000…0000` sentinels for "doesn't apply
+on this chain". Mixing zero-address sentinels into address slots is a
+real DeFi bug class (`address(0)` already means real things in
+Solidity: the ETH sentinel, default-treasury, burn). The TS
+`Deployment` type marks non-universal fields as optional and consumers
+narrow on the `isCanonicalVPFI` / `isCanonicalReward` booleans before
+reading scoped fields. (The former `vpfiBuyReceiver` / `vpfiBuyAdapter`
+keys and the `vpfiBuyPaymentToken` native-gas `0x0000…0000` sentinel
+were **removed** with the #687-A fixed-rate-buy excision — they no
+longer appear in any chain stanza; see the "VpfiBuyAdapter — REMOVED"
+note below.)
 
 ## Cross-Chain Security Policy (CCIP)
 
@@ -408,9 +409,16 @@ The cross-chain code lives in `contracts/src/crosschain/`:
 - `CcipMessenger` — the single CCIP-aware adapter.
 - `VPFIMirrorToken` + the stock CCIP `LockReleaseTokenPool` /
   `BurnMintTokenPool` — VPFI as a Cross-Chain Token (CCT).
-- `VpfiBuyAdapter` / `VpfiBuyReceiver` — the cross-chain fixed-rate buy
-  flow (the two-step release is kept).
 - `VaipakamRewardMessenger` — cross-chain reward accounting.
+- `RewardRemittanceReceiver` / `BuybackRemittanceReceiver` — the
+  reward-budget and buyback remittance receive paths (the two
+  cross-chain receivers that actually ship in `crosschain/`).
+
+  > The `VpfiBuyAdapter` / `VpfiBuyReceiver` fixed-rate cross-chain buy
+  > flow was **removed** in the #687-A legal-surface excision — it is no
+  > longer in the tree. There is no protocol VPFI purchase surface. See
+  > [`docs/DesignsAndPlans/VPFISecuritiesFeatureExcision.md`](docs/DesignsAndPlans/VPFISecuritiesFeatureExcision.md)
+  > and TokenomicsTechSpec §8.
 
 **Mainnet-deploy gates** — before routing real value:
 
@@ -428,92 +436,32 @@ guardian-or-owner `pause()`, owner-only `unpause()`, on both the send and
 receive paths. A paused inbound reverts; CCIP records it as a failed
 message, manually re-executable once unpaused, so nothing is lost.
 
-**Chain scope (Phase 1)**: Ethereum, Base, Arbitrum, Optimism, BNB Chain.
-zk-rollup chains and Solana are out of scope.
+**Chain scope (Phase 1)**: Ethereum, Base, Polygon, Arbitrum, Optimism.
+BNB Chain is **testnet-tier only** (a cross-chain mirror / rehearsal
+network), NOT a Phase-1 mainnet target — the FunctionalSpecs
+(`ProjectDetailsREADME.md`, `TokenomicsTechSpec.md` §~227) are the source
+of truth for the mainnet set. zk-rollup chains and Solana are out of scope.
 
 Full detail in
 [`docs/DesignsAndPlans/LayerZeroToChainlinkCcipMigration.md`](docs/DesignsAndPlans/LayerZeroToChainlinkCcipMigration.md).
 
-## VpfiBuyAdapter — payment-token mode by chain
+## VpfiBuyAdapter — REMOVED (#687-A legal-surface excision)
 
-The cross-chain VPFI buy adapter pulls funds from the user on the
-source chain and forwards a BUY_REQUEST via Chainlink CCIP (post-
-T-068, 2026-05-18) to the canonical Base receiver, which mints +
-sends VPFI to the buyer.
-The receiver quotes a single global wei-per-VPFI rate denominated in
-**ETH-equivalent value** — not in the source chain's native gas. This
-makes the payment-token mode a load-bearing per-chain config:
+The cross-chain fixed-rate VPFI buy flow (`VpfiBuyAdapter` /
+`VpfiBuyReceiver`, the per-chain native-gas-vs-WETH payment-token modes,
+the `_assertPaymentTokenSane` deploy-time enforcement, and the
+`*_VPFI_BUY_PAYMENT_TOKEN` operator config) was **removed** in the #687-A
+legal-surface excision and is no longer in the tree. There is no protocol
+VPFI purchase surface. Do not reason about a "fixed-rate buy" — that is
+exactly the securities-shaped surface the excision removed for legal
+reasons.
 
-- **Native-gas mode** (`paymentToken == address(0)`): valid only on
-  chains where 1 unit of native gas == 1 ETH for rate purposes. That
-  set is Ethereum / Base / Arbitrum / Optimism / Polygon zkEVM and
-  their public testnets (Sepolia / Base Sepolia / Arb Sepolia / OP
-  Sepolia / Cardona). Buyer sends ETH as `msg.value`.
-- **WETH-pull mode** (`paymentToken == <bridged WETH9>`): required on
-  any chain where native gas isn't ETH-priced. That's **BNB Chain
-  mainnet (chainId 56)** and **Polygon PoS mainnet (chainId 137)**
-  if/when those land. Buyer must hold and approve a bridged-WETH
-  ERC20; the adapter `safeTransferFrom`s the ETH-denominated amount.
-  Native-gas mode on these chains would mean the user pays 1 BNB
-  where the receiver expects 1 ETH worth of value — every buy
-  mis-prices.
-- **Testnet exemption**: BNB Smart Chain Testnet (chainId 97) and
-  Polygon Amoy (chainId 80002) are intentionally NOT in the strict
-  WETH-pull list. Their gas tokens have no real value and the
-  testnet rate is symbolic, so native-gas mode is acceptable for
-  dev-loop convenience. Mainnet equivalents must use WETH-pull.
-
-**Deploy-time enforcement**:
-
-`VpfiBuyAdapter.initialize` (and `setPaymentToken` rotation) runs
-`_assertPaymentTokenSane(token)` before any state writes:
-  - Non-zero `token` must have bytecode (`token.code.length > 0`)
-    — catches an EOA address pasted into the env var.
-  - `IERC20Metadata(token).decimals()` must succeed AND return
-    exactly 18 — catches the most common honest-mistake misconfig
-    (USDC's 6-dec address pasted where a bridged-WETH belongs)
-    and the non-ERC20-contract case (`decimals()` reverts).
-
-`DeployCrosschain.s.sol` itself reads `VPFI_BUY_PAYMENT_TOKEN` from
-env (default `address(0)` = native gas) and forwards it to
-`VpfiBuyAdapter.initialize` — it does **NOT** currently pre-flight
-reject native-gas mode on the strict-WETH-pull chain set. The
-chain-mode choice is therefore an **operator responsibility**:
-operators must set `BNB_VPFI_BUY_PAYMENT_TOKEN` / `POLYGON_VPFI_BUY_PAYMENT_TOKEN`
-to the chain's canonical bridged WETH9 on BNB Chain mainnet and
-Polygon PoS mainnet, otherwise every buy on those chains misprices.
-Adding a deploy-script pre-flight that rejects the wrong mode is a
-small follow-up — tracked under the pre-audit-hardening card.
-
-**What's NOT validated on-chain**: there's no on-chain registry that
-says "this is the canonical bridged WETH9 on chain X". Confirming the
-configured address really is the chain's published WETH9 (and not an
-attacker-deployed mock that returns the right decimals) is an
-**operational check**: the deploy script logs `name()`/`symbol()` for
-human-eyeball confirmation, and the operator pastes the address from
-the chain's canonical contracts list. Reference addresses for the
-strict-WETH-pull chains:
-
-- BNB Chain mainnet (56): canonical bridged WETH on BNB —
-  `0x2170Ed0880ac9A755fd29B2688956BD959F933F8`. Confirm against
-  bscscan + the chain's canonical bridged-asset registry before
-  pasting into `BNB_VPFI_BUY_PAYMENT_TOKEN`.
-- Polygon PoS mainnet (137): canonical WETH9 on Polygon —
-  `0x7ceB23fD6bC0adD59E62ac25578270cFf1b9f619`. Confirm against
-  polygonscan + the Polygon bridge contracts list before pasting
-  into `POLYGON_VPFI_BUY_PAYMENT_TOKEN`.
-
-Test coverage: `contracts/test/VpfiBuyFlowTest.t.sol` covers the
-end-to-end buy flow (happy path, Diamond-rejects refund, forged-
-delivery park, replayed-delivery park, recover-stuck-VPFI,
-reclaim-timed-out-buy, per-request rate limit, pause-freezes-buy,
-fee-surplus refund, two-step receiver retry) and the
-`SetPaymentToken_RevertWhen_PendingBuysExist` pending-buy rotation
-guard. The init-time `_assertPaymentTokenSane` revert paths
-(`PaymentTokenNotContract`, decimals-mismatch, decimals-call-
-reverts) and the `setPaymentToken` happy-path rotation are NOT yet
-covered — adding those is tracked as a follow-up. When extending the
-validation surface, add the new revert path to that test file.
+- Design record: [`docs/DesignsAndPlans/VPFISecuritiesFeatureExcision.md`](docs/DesignsAndPlans/VPFISecuritiesFeatureExcision.md)
+- Spec: `docs/FunctionalSpecs/TokenomicsTechSpec.md` §8 (supersede banner)
+- What remains cross-chain: the CCIP messenger, the VPFI CCT mirror token
+  + `LockReleaseTokenPool`/`BurnMintTokenPool`, `VaipakamRewardMessenger`,
+  and the `RewardRemittanceReceiver` / `BuybackRemittanceReceiver`
+  remittance receivers (see the Cross-Chain Security Policy section above).
 
 ## VPFI Fee Discounts — Time-Weighted + Claim-Based (Phase 5)
 
