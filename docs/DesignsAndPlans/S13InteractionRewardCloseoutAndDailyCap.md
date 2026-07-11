@@ -97,13 +97,14 @@ like the existing `cumRpn18`.
 **Integer-`T` precision note (Codex r5 I5 + r6 J6 — P3):** the stored `T` is a floored
 integer `floor(10^feedDec·capRatio·1e18/ethPrice)`, and the claim floors **once** after
 summing `T·P` across the window. Versus a hypothetical *strict per-day-floored* cap, the
-difference is **two-directional** (bounded few wei): the `T` floor loses fractional cap on
-each capped day (pushes down), while the single window-floor can *recover* fractional dust
-across capped days (pushes up — e.g. two days each `floor(0.6)=0` per-day vs `floor(1.2)=1`
-windowed). Neither the spec nor the cap requires a *strict* per-day integer floor (the cap
-is an approximate anti-farming ceiling), so the design **accepts** a bounded ±dust and the
-tests assert `|Option B − strict-per-day-floored| ≤ (#capped days + 1) wei` rather than a
-one-sided or byte-exact bound. My round-1 claim that "a single global capped-cumulative
+difference is **two-directional** and **scales with `P` on the down side (Codex r7 K3)**: the `T` floor
+loses up to `⌈P/1e18⌉` wei per capped day (pushes down — a `1_000e18` daily numeraire can
+differ by ~1000 wei/day), while the single window-floor recovers `< 1` wei across capped
+days (pushes up — e.g. two days each `floor(0.6)=0` per-day vs `floor(1.2)=1` windowed).
+Neither the spec nor the cap requires a *strict* per-day integer floor (the cap is an
+approximate anti-farming ceiling), so the design **accepts** a bounded asymmetric dust and
+the tests assert `−⌈P/1e18⌉·(#capped days) ≤ (Option B − strict-per-day-floored) ≤ +1 wei`,
+rather than a symmetric, one-sided, or byte-exact bound. My round-1 claim that "a single global capped-cumulative
 can't work because T is per-entry" was **wrong** — it retracts here. `Δ_d =
 (halfPoolForDay(d)·1e18)/knownGlobal…[d]` still varies arbitrarily day-to-day, but that
 variation is captured by accumulating `min(Δ_d, T)` at finalization, not by a per-entry
@@ -196,11 +197,13 @@ Properties:
   uncapped telescoped floor; no per-day flooring).
 - **Uncapped config** — when the cap is disabled at finalize, `dayCapThreshold18[d] = max`
   ⇒ `cumMinRpn18 == cumRpn18`, claims reproduce the uncapped telescoped total exactly.
-- **Ratified semantics (Q7 + Codex r3 G6):** the cap is priced — **both** ETH price **and**
-  admin `interactionCapVpfiPerEth` — at each day's finalization, not at claim. Consequence:
-  a governance cap-tighten / emergency-disable applies **prospectively** (from the day it
-  lands) and does **not** retro-cap already-finalized days. Owner-ratified; the setter
-  natspec + FunctionalSpec are updated to state this.
+- **Ratified semantics (Q7 + Codex r3 G6 + r7 K4):** the cap is priced — **both** ETH price
+  **and** admin `interactionCapVpfiPerEth` — at each day's **finalization**, not at claim.
+  Prospectivity is defined by **finalization, not activity day**: a governance cap change
+  applies to every day **not yet finalized** at the moment it lands — so a change made after
+  day `D`'s activity but before `finalizeDay(D)` (incl. force-finalized / grace-delayed `D`)
+  **does** affect `D`; it does **not** retro-cap already-finalized days. Owner-ratified; the
+  setter natspec + FunctionalSpec state exactly this (not the looser "from the day it lands").
 - **Pre-live** ⇒ the new per-day mapping `dayCapThreshold18` + the two `cumMinRpn18`
   mappings are a free storage append (no migration).
 
@@ -239,9 +242,12 @@ I3) AND the facet bytecode (Codex r3 G5). Deployment is a **full `DeployDiamond`
 - Setter natspec for `interactionCapVpfiPerEth` + FunctionalSpec: state the prospective
   (finalize-time) pricing semantic (Q7/G6).
 
-`claimInteractionRewards` / `previewInteractionRewards` signatures unchanged; returned
-value is **≤** the pre-fix value (the cap only ever tightens) plus the ratified
-finalize-time pricing, so no downstream over-payment risk.
+`claimInteractionRewards` / `previewInteractionRewards` signatures unchanged; the returned
+value is **≈** the pre-fix value — materially lower where the daily cap was netting away
+farming, but **not** a strict monotonic decrease (Codex r7 K5): the window-level floor can
+recover a few wei of dust across multiple small-cap days, so downstream checks must not
+assume `new ≤ old`. Over-payment risk is nil (the change only tightens the *economic* cap;
+the dust is sub-wei-scale).
 
 ### Test plan — Part 1 (`InteractionRewardsFacet` reward-cap suite; Option B)
 
@@ -252,9 +258,9 @@ finalize-time pricing, so no downstream over-payment risk.
 2. **All days under cap** — `cumMinRpn18 == cumRpn18` over the window → result equals the
    uncapped telescoped total exactly.
 3. **All days over cap** — every `min(Δ_d,T)=T` → result equals `(P/1e18)·(T·daysInWindow)`,
-   within a bounded **±**`(daysInWindow + 1)` wei of a strict per-day-floored
-   `perDayCap·daysInWindow` (integer-`T` down + window-floor up — Codex r5 I5 / r6 J6);
-   assert the two-sided bound, not exact.
+   within `[−⌈P/1e18⌉·daysInWindow, +1]` wei of a strict per-day-floored
+   `perDayCap·daysInWindow` (integer-`T` down scaled by `⌈P/1e18⌉` + window-floor up ≤1 —
+   Codex r5 I5 / r6 J6 / r7 K3); assert the asymmetric two-sided bound, not exact.
 4. **Cap disabled at finalization** (`ethPriceRaw == 0` or `capRatio == max`) —
    `dayCapThreshold18[d] == max` ⇒ `cumMinRpn18` tracks `cumRpn18` → uncapped total exactly.
 5. **Feed-outage at finalize is a bounded, tested fail-open** — feed down for day `d` at
@@ -263,13 +269,19 @@ finalize-time pricing, so no downstream over-payment risk.
 6. **Finalize-time pricing (Q7/G6)** — a day finalized at ETH price `p1` + cap-ratio `r1`
    caps at `T(p1,r1)` even if the claim (or a governance cap change) happens later at
    `p2`/`r2`; assert the stored `dayCapThreshold18[d]` is used, not the claim-time value.
-7. **Capped remittance vs claims, with dust (G4 + r4 H4)** — `chainRewardBudgetForDay` on a
-   heavily-capped day equals `min(Δ_d,T_d)·chainNumeraire/1e18`, **<** the uncapped
-   `Δ_d·chainNumeraire/1e18`; assert `chainBudget ≥ Σ per-user cumMin claims` and
-   `chainBudget − Σ claims ≤ (#entries) wei` (bounded flooring dust, over-fund direction).
+7. **Capped remittance CEILs per side, covers multi-day (G4 + r4 H4 + r5 I1 + r6 J5)** —
+   `chainRewardBudgetForDay` sums **`ceil(min(Δ_d,T_d)·chainNumeraire_side/1e18)` per side
+   per day**, **<** the uncapped `Δ_d·chainNumeraire/1e18`. Over a **multi-day** window
+   (incl. tiny fractional days that per-day floor to 0 but sum to ≥1), assert
+   `chainBudget ≥ Σ per-user cumMin claims` (never underfunded → no bricked claim) and
+   `chainBudget − Σ claims ≤ 2·(#days) + (#entries) wei` (per-side ceil + per-entry floor dust).
 8. **Canonical broadcast threshold (r4 H1)** — set Base's ETH feed / cap-ratio to differ
    from a mirror's, finalize + broadcast; assert the mirror claims with **Base's** broadcast
    `T_d` (not its local feed), so the mirror's `Σ claims` matches Base's remitted budget.
+8b. **Divergent-threshold replay reverts (Codex r7 K6)** — a duplicate broadcast delivery
+   for an already-finalized day with the **same** global denominators but a **different**
+   `capThreshold18` must revert (like the divergent-denominator replay guard), not silently
+   accept a changed cap; an identical re-delivery is idempotent (no-op).
 9. **Default-unset cap ratio (r4 H5)** — with `interactionCapVpfiPerEth == 0` (default),
    the snapshot uses the effective `500` (not `0`), so rewards are capped at the default
    ratio, **not zeroed**.
@@ -652,10 +664,22 @@ current lender-NFT holder**, borrower = incoming obligor `l.borrower`).
    `DeployDiamond` redeploy (pre-live). Landing #1008 first de-risks the cap accounting +
    the broadcast-shape change before the close-out lands on top. (Q6 for Codex: separate vs
    one — leaning separate; the Part-1 broadcast selector change must ship Base↔mirror atomically.)
-2. Each PR: targeted `--match-path` tests + deploy-sanity suite (selectors change in
-   Part 2 only) + release-note fragment + FunctionalSpec update in the same diff.
+2. Each PR: targeted `--match-path` tests + deploy-sanity suite (**both** parts touch
+   selectors — Part 1 replaces `onRewardBroadcastReceived`, Part 2 adds
+   `liquidationRewardClose` / `terminalRewardClose` — so `SelectorCoverageTest` +
+   `FacetSelectors.sol` + ABI re-export are in **both**; Codex r7 K2) + release-note fragment
+   + FunctionalSpec update in the same diff.
 3. High-risk (fund-adjacent forfeit logic) → independent adversarial self-review before
    Codex round 1; then the Codex convergence loop to merge.
+
+## Resolved after Codex rounds 1–7
+
+**Round 7 — doc-internal consistency + bound precision (all refinements, no P1, no approach
+change):** K1 test 7 now asserts the per-side ceil + multi-day bound; K2 sequencing lists
+selector work in **both** parts; K3 the T-floor dust bound scales by `⌈P/1e18⌉`; K4
+prospectivity is defined by *finalization* (days not yet finalized), not activity day; K5
+the blast note no longer promises `new ≤ old` (window-floor can recover dust); K6 adds a
+divergent-`capThreshold18` replay-revert test.
 
 ## Resolved after Codex rounds 1–6
 
