@@ -800,6 +800,24 @@ export const copy = {
       `If you do nothing and the loan passes its due date and grace period, the lender can receive your ${collateral} collateral.`,
     whatIfNothingLender:
       'If the borrower does not repay by the due date plus grace period, you can claim their collateral.',
+    // UX-001 — a loan that is already over must never show a live
+    // obligation or a live default warning: contradictory state on a
+    // money page erodes trust in every other number.
+    owedRepaid: (principal: string) =>
+      `Nothing — ${principal} plus interest was repaid in full.`,
+    owedDefaulted:
+      'Nothing to repay anymore — this loan ended in default and the collateral covers it.',
+    owedClosed: 'Nothing — this loan is closed and settled.',
+    whatNextRepaidBorrower:
+      'You repaid this loan. Nothing else can happen to it — claim your collateral back below if you haven’t yet.',
+    whatNextRepaidLender:
+      'The borrower repaid. Nothing else can happen to this loan — claim your funds below if you haven’t yet.',
+    whatNextDefaultedBorrower:
+      'This loan already ended in default. Any remainder after settlement is claimable (it may be zero).',
+    whatNextDefaultedLender:
+      'This loan already ended in default — what it recovered is claimable in the Claim Center.',
+    whatNextClosed: 'This loan is fully settled — there is nothing left to do.',
+    whatNextRentalEnded: 'This rental has ended — nothing further can change it.',
     // OBS-2 (#988) — shown when the page's live on-chain read is ahead
     // of the position lists (stalled/lagging indexer).
     settledAhead:

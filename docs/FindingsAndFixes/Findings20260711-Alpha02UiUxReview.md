@@ -41,6 +41,15 @@ Severity: **P1** = misleads or blocks a core journey / trust damage;
 **P2** = real friction; **P3** = polish. Effort: S (<½ day), M (a
 day-ish), L (multi-day).
 
+## Status ledger
+
+Work lands in batches; each finding below also carries its own status
+line when addressed. Unmarked findings are OPEN.
+
+| Batch | Findings | Status |
+| --- | --- | --- |
+| 1 — trust (2026-07-11) | UX-001, UX-002, UX-007, UX-020, UX-021, UX-022 | ✅ Fixed — state-aware loan receipts, exact claim amounts via `getClaimable`, FAB moved bottom-left on phones, header chip nowrap, Try-again on unavailable states, spinning loaders |
+
 ---
 
 ## P1 — trust, correctness, core-journey blockers
@@ -55,6 +64,8 @@ rows and the "what happens next" cell state-aware — on Repaid, show
 "The borrower repaid — claim below; nothing else can happen to this
 loan."
 
+**Status: ✅ FIXED (batch 1, 2026-07-11).** `loanOver` gates the receipt: "Owed" answers per terminal status and the consequence row becomes "What happens next" with repaid/defaulted/closed-specific copy.
+
 ### UX-002 · Claim cards don't say what you'll receive (S/M)
 The defaulted-loan claim card is titled with what reads as a leaked
 field description — "What this loan recovered (proceeds or
@@ -63,6 +74,8 @@ collateral)" — instead of an amount, and every repaid-loan card says
 the detail page computes it. On the one screen whose job is "collect
 your money," the user can't see the number. Fix: resolve and show the
 concrete recovery/total per card.
+
+**Status: ✅ FIXED (batch 1, 2026-07-11).** `useMyClaimables` now carries `getClaimable`'s exact asset + amount onto each row; claim cards show the real number (repaid totals include interest; default recovery shows the settled proceeds, with a plain-language fallback only for pure in-kind transfers).
 
 ### UX-003 · Positions list shows green "on track" on loans near liquidation (M)
 `LoanRow`'s badge derives only from status + days remaining
@@ -105,6 +118,8 @@ mobile — in the Claims capture it visibly paints on top of Loan #8's
 **Claim** button, stealing the tap (`DiagnosticsDrawer.tsx:68-77`).
 Fix: dodge/offset the FAB above the tab bar, or make list CTAs
 full-width under the text on narrow viewports.
+
+**Status: ✅ FIXED (batch 1, 2026-07-11).** The Support FAB sits bottom-LEFT on phones (right-aligned card CTAs can no longer be covered); desktop keeps the conventional bottom-right.
 
 ### UX-008 · Activity feed is unusable for comprehension (M)
 Raw event names leak straight into the UI ("Nftminted"), each action
@@ -201,16 +216,22 @@ Stack: full-width text, then full-width CTA.
 "0x1DAe… / 8282" on every mobile page — the orphaned "8282" reads like
 a stray number. `white-space: nowrap` on the shortened address.
 
+**Status: ✅ FIXED (batch 1, 2026-07-11).** The connected-address chip renders as one non-wrapping token.
+
 ### UX-021 · Unavailable/error states tell users to retry but offer no button (S)
 `UnavailableState` has no action slot (`EmptyState.tsx:33-40`) yet its
 copy says "try again in a moment" (Positions, Claims, Rent browse,
 rewards check, loan-health row). Add a retry action that refetches the
 failing query.
 
+**Status: ✅ FIXED (batch 1, 2026-07-11).** `UnavailableState` gained an `onRetry` action, wired on Positions, Claims (list + rewards card), and the Rent browse branch.
+
 ### UX-022 · Loading icons don't animate (S)
 `EmptyState` renders `LoaderCircle` without the `spin` class
 (`EmptyState.tsx:22-24`) — "Loading your positions…" looks frozen on
 slow RPCs. One-line CSS fix.
+
+**Status: ✅ FIXED (batch 1, 2026-07-11).** `EmptyState` auto-spins `LoaderCircle` — every loading state animates with zero call-site changes.
 
 ### UX-023 · Empty states dead-end on Vault, Claims, Rent, and post-faucet (S/M)
 "No vault yet" and empty-assets have no CTA (`Vault.tsx:38-78`); empty

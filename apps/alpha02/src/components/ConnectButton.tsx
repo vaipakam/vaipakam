@@ -20,7 +20,12 @@ export function ConnectButton({ block = false }: { block?: boolean }) {
         >
           <Wallet aria-hidden size={18} />
           {isConnected && address ? (
-            <AddressName address={address} />
+            /* The shortened address is one token — never let the header
+               chip wrap it onto two lines ("0x1DAe…" / "8282" reads
+               like two unrelated values on phones — UX-020). */
+            <span style={{ whiteSpace: 'nowrap' }}>
+              <AddressName address={address} />
+            </span>
           ) : (
             copy.wallet.connect
           )}

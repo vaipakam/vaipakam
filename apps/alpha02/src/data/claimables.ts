@@ -49,16 +49,35 @@ const REFRESH_MS = 30_000;
 /** `getClaimable(loanId, isLender)` return — accept named-object OR
  *  positional shape defensively (older ABIs predate the named fields). */
 interface ClaimableTuple {
+  asset?: string;
   amount?: bigint;
   claimed?: boolean;
   assetType?: bigint;
   heldForLender?: bigint;
   hasRentalNftReturn?: boolean;
+  0?: string;
   1?: bigint;
   2?: boolean;
   3?: bigint;
   6?: bigint;
   7?: boolean;
+}
+
+/** What the wallet would actually receive on claim — carried onto the
+ *  row so the Claim Center can show the NUMBER instead of a vague
+ *  "+ interest" / "proceeds or collateral" description (UX-002). The
+ *  asset address comes from getClaimable itself, so formatting never
+ *  guesses a token. */
+export interface ClaimDetail {
+  asset: string | null;
+  amount: bigint;
+  heldForLender: bigint;
+  hasRentalNftReturn: boolean;
+  lifRebate: bigint;
+}
+
+export interface ClaimableLoan extends PositionLoan {
+  claim: ClaimDetail;
 }
 
 /** Claimable loans for the connected wallet, tagged with role.
@@ -80,7 +99,7 @@ export function useMyClaimables() {
     ],
     enabled: Boolean(address) && loans.data !== undefined,
     refetchInterval: idleAware(REFRESH_MS),
-    queryFn: async (): Promise<PositionLoan[] | null> => {
+    queryFn: async (): Promise<ClaimableLoan[] | null> => {
       if (!address) return [];
       if (!publicClient) return null;
       // Indexer down (`null`) is NOT fatal by itself: holding the
@@ -259,7 +278,7 @@ export function useMyClaimables() {
         );
 
       const confirmed = await Promise.all(
-        candidates.map(async (loan): Promise<PositionLoan | null> => {
+        candidates.map(async (loan): Promise<ClaimableLoan | null> => {
           const isLender = loan.role === 'lender';
           const tokenId = isLender ? loan.lenderTokenId : loan.borrowerTokenId;
 
@@ -288,6 +307,7 @@ export function useMyClaimables() {
               functionName: 'getClaimable',
               args: [BigInt(loan.loanId), isLender],
             })) as ClaimableTuple;
+            const claimAsset = res.asset ?? res[0] ?? null;
             const amount = res.amount ?? res[1] ?? 0n;
             const claimed = res.claimed ?? res[2] ?? false;
             const assetType = Number(res.assetType ?? res[3] ?? 0n);
@@ -320,7 +340,22 @@ export function useMyClaimables() {
               heldForLender > 0n ||
               hasRentalNftReturn ||
               lifRebate > 0n;
-            return !claimed && actionable ? loan : null;
+            return !claimed && actionable
+              ? ({
+                  ...loan,
+                  claim: {
+                    asset:
+                      typeof claimAsset === 'string' &&
+                      claimAsset !== '0x0000000000000000000000000000000000000000'
+                        ? claimAsset
+                        : null,
+                    amount,
+                    heldForLender,
+                    hasRentalNftReturn,
+                    lifRebate,
+                  },
+                } satisfies ClaimableLoan)
+              : null;
           } catch (e) {
             if (isRevert(e)) return null;
             transportFailed = true;
@@ -331,7 +366,7 @@ export function useMyClaimables() {
 
       // Any unconfirmable candidate ⇒ unavailable, not a short list.
       if (transportFailed) return null;
-      return confirmed.filter((l): l is PositionLoan => l !== null);
+      return confirmed.filter((l): l is ClaimableLoan => l !== null);
     },
   });
 }
