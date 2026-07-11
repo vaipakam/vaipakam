@@ -92,7 +92,17 @@ capped_d = min(P·Δ_d/1e18, perDayCap) = (P/1e18) · min(Δ_d, T)
 
 So the spec-correct window reward is `(P/1e18) · Σ_d min(Δ_d, T)`, and **`Σ_d min(Δ_d, T)`
 is a GLOBAL per-day quantity** (entry-independent) that can be accumulated once, exactly
-like the existing `cumRpn18`. My round-1 claim that "a single global capped-cumulative
+like the existing `cumRpn18`.
+
+**Integer-`T` precision note (Codex r5 I5 — P3):** the stored `T` is a floored integer
+`floor(10^feedDec·capRatio·1e18/ethPrice)`, so on a fully-capped day the baked reward
+`P·T/1e18` is up to `⌈P/1e18⌉` wei **below** the direct per-entry cap
+`_capVpfiForInterestUsd = floor(P·10^feedDec·capRatio/ethPrice)` (which floors once, later).
+This is a bounded, protocol-favoring (never overpays) rounding difference of a few wei on
+capped days. The design **accepts** it (the cap is an approximate ceiling; a few wei is
+immaterial) rather than carrying extra numerator/denominator precision — but the tests must
+**not** assert byte-exact equality with the old per-entry cap formula on capped days (they
+assert `≤ ⌈P/1e18⌉·(#capped days)` wei under, protocol-favoring). My round-1 claim that "a single global capped-cumulative
 can't work because T is per-entry" was **wrong** — it retracts here. `Δ_d =
 (halfPoolForDay(d)·1e18)/knownGlobal…[d]` still varies arbitrarily day-to-day, but that
 variation is captured by accumulating `min(Δ_d, T)` at finalization, not by a per-entry
@@ -162,14 +172,20 @@ The fix works because **`T_d` is entry-independent**: the capped per-chain daily
 is `Σ_users P_u·min(Δ_d,T_d)/1e18 = min(Δ_d,T_d)·(Σ_users P_u)/1e18 =
 min(Δ_d,T_d)·chainNumeraire_side/1e18` — the `min` factors straight out of the sum. So
 `chainRewardBudgetForDay` (`:144`) replaces the uncapped `half·chainInterest/globalInterest`
-(which equals `Δ_d·chainNumeraire/1e18`) with `min(Δ_d,T_d)·chainNumeraire/1e18` per side,
-using the same broadcast `dayCapThreshold18[d]`. Per-user claims and per-chain remittance
-now use one consistent capped quantity — **no uncapped over-remit / stranding**. Residual
-**flooring dust (Codex r4 H4):** per-entry claims floor `P_u·min(Δ,T)/1e18` *per entry*
-while the aggregate remits floor once after `×chainNumeraire`, so the remitted budget can
-exceed the sum of realized claims by **≤ 1 wei per entry** (a tiny bounded *over*-fund, the
-safe direction — never underfunds). The invariant/tests assert
-`chainBudget ≥ Σ claims` and `chainBudget − Σ claims ≤ (#entries) wei`, not exact equality.
+(which equals `Δ_d·chainNumeraire/1e18`) with the capped `min(Δ_d,T_d)·chainNumeraire/1e18`
+per side, using the same broadcast `dayCapThreshold18[d]`.
+
+**The remittance must CEIL per day, or a multi-day window can underfund the mirror (Codex
+r5 I1 — P1).** The claim floors **once** over the whole window
+(`floor(P_u·Σ_d min(Δ_d,T_d)/1e18)`), but `chainRewardBudgetForDay` remits **per day**. If
+remittance also floored per day, two days each worth `0.6 wei` would remit `0+0` while the
+claim yields `floor(1.2)=1` → the mirror's `safeTransfer` reverts (bricked claim). So
+remittance **ceils** each day: `budget += ceil(chainNumeraire_side · min(Δ_d,T_d) / 1e18)`.
+This guarantees `Σ_d ceil(chainNumeraire·m_d/1e18) ≥ Σ_users floor(P_u·Σ_d m_d/1e18)` for
+**any** window (since `Σ ceil ≥ Σ real ≥ Σ per-user real ≥ Σ per-user floor`), so the mirror
+is **never underfunded**; the only residual is a bounded **over**-fund (≤ ~1 wei per chain
+per day) — the safe direction. Test asserts `chainBudget(window) ≥ Σ claims` and the gap is
+`≤ (#days + #entries) wei`, for both single- and **multi-day** windows.
 
 Properties:
 - **O(1) claims** — no regression, no pagination.
@@ -209,10 +225,14 @@ typecheck. **But (Codex r3 G5) the facet bytecode DOES change**, so deployment r
   `_previewEntryReward` (read `cumMinRpn18`, drop claim-time cap), `chainRewardBudgetForDay`
   (capped remittance).
 - `RewardAggregatorFacet._finalizeAndWrite`: compute + store `dayCapThreshold18[d]` (Base).
-- **Cross-chain broadcast payload** gains `capThreshold18`: the Base-side send +
-  `RewardReporterFacet.onRewardBroadcastReceived` signature + the `CcipMessenger`/messenger
-  encode-decode + the idempotent-redelivery guard. (This is the one cross-chain *message*
-  ABI change — coordinate the sender and receiver in the same PR.)
+- **Cross-chain broadcast payload** gains `capThreshold18`. Adding the param to
+  `RewardReporterFacet.onRewardBroadcastReceived` **changes its 4-byte selector (Codex r5
+  I3)** — so Part 1 IS selector work: remove the old `onRewardBroadcastReceived` selector +
+  add the new one in `DeployDiamond` / `HelperTest` / `FacetSelectors.sol` +
+  `SelectorCoverageTest`, re-export the ABI, and update the Base-side send + the
+  `CcipMessenger`/messenger encode-decode + the idempotent-redelivery guard **together**
+  (else Base encodes a broadcast mirrors don't route). So Part 1 is **not** ABI-free after
+  all — it has this one selector replace on top of the facet-bytecode replace.
 - `LibVaipakam.Storage`: append `dayCapThreshold18`, `cumMinLenderRpn18`,
   `cumMinBorrowerRpn18` (pre-live, no migration; no new cursor — rides the existing one).
 - Setter natspec for `interactionCapVpfiPerEth` + FunctionalSpec: state the prospective
@@ -230,8 +250,9 @@ finalize-time pricing, so no downstream over-payment risk.
    and that it is `<` the old window-cap total.
 2. **All days under cap** — `cumMinRpn18 == cumRpn18` over the window → result equals the
    uncapped telescoped total exactly.
-3. **All days over cap** — every `min(Δ_d,T)=T` → result equals `(P/1e18)·(T·daysInWindow)
-   = perDayCap·daysInWindow` (matches the old window cap in this degenerate case).
+3. **All days over cap** — every `min(Δ_d,T)=T` → result equals `(P/1e18)·(T·daysInWindow)`,
+   which is within `⌈P/1e18⌉·daysInWindow` wei **below** the old `perDayCap·daysInWindow`
+   (integer-`T` floor, protocol-favoring — Codex r5 I5); assert the bounded-under, not exact.
 4. **Cap disabled at finalization** (`ethPriceRaw == 0` or `capRatio == max`) —
    `dayCapThreshold18[d] == max` ⇒ `cumMinRpn18` tracks `cumRpn18` → uncapped total exactly.
 5. **Feed-outage at finalize is a bounded, tested fail-open** — feed down for day `d` at
@@ -364,17 +385,26 @@ Properties:
   **successive** repoints (A→B→C) asserting single, correct membership at each step. This
   also speeds the existing consolidation repoint. (Pre-live ⇒ the index mapping is a free
   append.)
-- **Burn-before-close paths need a pre-burn re-anchor (Codex r4 H2).** The `closeLoan`
-  centralization only covers paths where the position NFT still exists at close. But
-  `ClaimFacet`'s FallbackPending absorb / default branch **burns the lender NFT at
-  `:670-698` BEFORE** its `closeLoan(:698)`, so the `ownerOf` re-anchor there catches the
-  burn and skips — a passively-transferred lender would get the principal claim while the
-  reward stays with the stale stored lender. Fix at that call site: **repoint to the
-  verified claimant BEFORE the burn** — `ClaimFacet` already gates the claim on the live
-  NFT owner (`requireLenderNftOwner`), so it repoints the reward entry to that same
-  verified holder (`msg.sender`) ahead of the burn. This is the one call-site ordering
-  exception the centralized `closeLoan` re-anchor cannot cover; enumerated + tested
-  explicitly. (Grep audit at implementation for any other burn-before-`closeLoan` site.)
+- **`ClaimFacet` burn-before-close branches need a pre-burn re-anchor to the RESOLVED
+  HOLDER (Codex r4 H2 + r5 I4).** The `closeLoan` centralization only covers paths where
+  the position NFT still exists at close. `ClaimFacet` has burn-before-`closeLoan`
+  branches where the `ownerOf` re-anchor would catch the burn and skip. Each gets a
+  **pre-burn repoint** — but to the **resolved lender-NFT owner / cash recipient**
+  (`nftOwner = ownerOf(loan.lenderTokenId)`, snapshotted before the burn), **NOT
+  `msg.sender`**: the backstop absorb (`claimAsLenderViaBackstop`, `:660-698`) is
+  `onlyRole(KEEPER_ROLE)`, so `msg.sender` is the *keeper* while the cash is paid to the
+  resolved `nftOwner` (`:627`) — repointing to `msg.sender` would hand the lender reward to
+  the keeper. Snapshot `nftOwner` before the burn and repoint the lender entry to it.
+  Enumerate + test every ClaimFacet terminalize+burn branch (grep audit at implementation):
+  the backstop absorb (`:660-698`, already `closeLoan`s but after the burn) and the
+  fallback-resolution force (I2, below).
+- **`ClaimFacet` FallbackPending→Defaulted lender-claim resolution has NO reward close
+  (Codex r5 I2).** `_claimAsLenderImpl` forces `FallbackPending → Defaulted` at `:868-882`
+  when no internal match fired, with **no `LibInteractionRewards.closeLoan`** — so those
+  defaulted loans over-accrue to the original `endDay` and misattribute to the stale
+  `RewardEntry.user`. Add a **default-forfeit close** `closeLoan(loanId, false, false)` on
+  that branch, placed with the same pre-burn re-anchor-to-`nftOwner` ordering as the
+  backstop branch.
 - Because it lives in the library `internal` `closeLoan`, it inlines into each facet and
   runs in the diamond context (`address(this)` = diamond → routes to `VaipakamNFTFacet`),
   exactly like the existing `OracleFacet(address(this))` call in `_perDayInterestNumeraire18`.
@@ -435,10 +465,14 @@ existing `EncumbranceMutateFacet.terminalize` cross-call that flips the status.
 | 3 | `RepayPeriodicFacet.autoDeductDaily` — `:317` | → Repaid | `terminalRewardClose(loanId, true)` | **Proper close**, natural full repayment → `borrowerClean = true`. Add a local `_rewardHook`. (`_autoLiquidatePeriodShortfall` at `:480` is **non-terminal** — loan stays Active; it already repoints via `eagerConsolidateBothSides` at `:507`; **no reward close there**.) |
 | 4 | `LenderIntentFacet.rollIntentLoan` — `:690` | Repaid → Settled | **OMIT** (Codex r2 F8) | `rollIntentLoan` requires `status == Repaid` (`:529`), so the entries were **already closed** at the prior Active→Repaid by `RepayFacet.closeLoan`. Wiring `terminalRewardClose` here would be worse than a no-op: with re-anchor now in `closeLoan`, the `!closed` guard **skips** re-anchoring (correct), and `_closeEntry` returns on `e.closed`, so nothing happens — but adding the hook is dead weight and risks future confusion. **Omit it** (Q4 resolved: omit). Verify at implementation that any rolled-forward capital re-registered as a fresh loan opens its own entry via the normal `registerLoan` path. |
 
-**Count:** 5 terminal transitions across 3 wired facets (RiskMatch ×3 branches = one
-logical close per loan; PrepayListing ×2; RepayPeriodic ×1). LenderIntent is **omitted**
-(already closed at the prior repay). `ConsolidationFacet` is **not** terminal — it's the
-repoint helper (below).
+**Count:** 5 terminal transitions across 3 wired facets via new hooks (RiskMatch ×3
+branches = one logical close per loan; PrepayListing ×2; RepayPeriodic ×1). LenderIntent is
+**omitted** (already closed at the prior repay). `ConsolidationFacet` is **not** terminal —
+it's the repoint helper (below). **Plus `ClaimFacet`** (Codex r5 I2): its
+`FallbackPending → Defaulted` lender-claim-resolution branch (`:868-882`) gains a
+default-forfeit `closeLoan(id,false,false)` it currently lacks, and both that branch and the
+existing backstop-absorb branch (`:660-698`) get the pre-burn re-anchor-to-`nftOwner`
+treatment (re-anchor section, I4) — these are direct `closeLoan` sites, not new hooks.
 
 ### Item 3 — reward-only holder re-anchor before obligation-transfer / offset
 
@@ -528,9 +562,20 @@ current lender-NFT holder**, borrower = incoming obligor `l.borrower`).
   bytecode of every facet inlining `closeLoan` changes, **all of them need a diamond-cut
   REPLACE + redeploy** (Codex r3 G5), and their existing suites re-run — not just the new
   ones.
-- **`repointRewardEntry` made O(1) (Codex r3 G3):** append `rewardEntryUserIdx` mapping to
-  `LibVaipakam.Storage` (pre-live, free) so `_removeUserEntry` is O(1), removing the
-  close-path DoS. Maintained in `_allocEntry` (push) + `_removeUserEntry` (swap-pop).
+- **`repointRewardEntry` made O(1) (Codex r3 G3 + r4 H3):** append `rewardEntryUserIdx`
+  mapping to `LibVaipakam.Storage` (pre-live, free) so `_removeUserEntry` is O(1), removing
+  the close-path DoS. Maintained at **every** membership write: `_allocEntry` push,
+  `_removeUserEntry` swap-pop, **and** `repointRewardEntry`'s `newUser` push.
+- **Every facet that allocates/repoints reward entries must be in the cut-replace set
+  (Codex r5 I6).** Because `_allocEntry` / `repointRewardEntry` are `internal` library fns
+  inlined into their callers, changing the membership bookkeeping changes the bytecode of
+  **all** of them — not just `closeLoan` callers. The redeploy + diamond-cut-replace set
+  must include `LoanFacet` (`registerLoan` → `_allocEntry`), `EarlyWithdrawalFacet`
+  (`transferLenderEntry` → `_allocEntry`), `ConsolidationFacet` (`repointRewardEntry`), and
+  the reward facets — else an entry created by a not-replaced facet lacks
+  `rewardEntryUserIdx` and a later O(1) repoint silently fails to remove the old
+  membership (the stale-holder-processes-others'-entry bug survives). Add a **deploy-sanity
+  assertion** that every facet inlining these library fns is in the cut set.
 - Tight facets each gain a private `_rewardHook` (no ABI surface).
 - **Events:** no new state-change events (the reward hooks are silent; the existing
   terminal events on each facet already carry the loan-close signal the indexer reads).
@@ -595,6 +640,24 @@ current lender-NFT holder**, borrower = incoming obligor `l.borrower`).
    Part 2 only) + release-note fragment + FunctionalSpec update in the same diff.
 3. High-risk (fund-adjacent forfeit logic) → independent adversarial self-review before
    Codex round 1; then the Codex convergence loop to merge.
+
+## Resolved after Codex rounds 1–5
+
+**Round 5 — remittance dust, ClaimFacet branches, deploy set:**
+- **I1 (P1 — cross-day underfund)** — remittance **ceils** per day
+  (`ceil(chainNumeraire·min(Δ_d,T_d)/1e18)`) so `Σ ceil ≥` the once-floored claim over any
+  multi-day window; the mirror is never underfunded (bounded over-fund instead).
+- **I4 (P1 — backstop repoint target)** — the pre-burn re-anchor targets the resolved
+  `nftOwner` (cash recipient), **not** `msg.sender` (the keeper on `claimAsLenderViaBackstop`).
+- **I2 (ClaimFacet fallback close)** — the `FallbackPending→Defaulted` lender-claim
+  resolution (`:868-882`) gains a default-forfeit `closeLoan` + pre-burn re-anchor.
+- **I3 (broadcast selector)** — adding `capThreshold18` changes `onRewardBroadcastReceived`'s
+  selector; Part 1 does the selector replace + ABI + messenger encode/decode together.
+- **I6 (deploy set)** — every facet inlining `_allocEntry`/`repointRewardEntry`
+  (`LoanFacet`, `EarlyWithdrawalFacet`, `ConsolidationFacet`, reward facets) is in the
+  cut-replace set, with a deploy-sanity assertion.
+- **I5 (P3 — integer-`T` precision)** — accepted the bounded ≤`⌈P/1e18⌉`-wei-per-capped-day
+  under-payment vs the direct cap formula; tests assert bounded-under, not exact.
 
 ## Resolved after Codex rounds 1–4
 
