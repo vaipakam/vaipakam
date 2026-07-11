@@ -195,8 +195,15 @@ const COLLATERAL_TLIQ = '5';
 const BUCKET_PREFERENCE = [60, 90, 14, 180, 7, 30];
 // The indexer's ingest scan is alarm-driven round-robin (~3 min per
 // chain in steady state) — the post-cancel milestones (row leaving the
-// book, WS invalidate frame) poll generously past one full cycle.
-const SCAN_WAIT_MS = 330_000;
+// book, WS invalidate frame) poll generously past TWO full cycles.
+// Two, not one (2026-07-11 re-run): a cancel landing just after the
+// chain's tick waits ~3 min for the next visit, and one slow tick (or
+// residual catch-up after an ingest stall — the first post-#1149 run
+// timed out with the cursor 26 blocks short of the cancel) busts a
+// single-cycle window. The stall-vs-regression diagnosis branch keeps
+// the timeout honest either way; this just stops a healthy-but-slow
+// cadence from burning a full post+cancel gas cycle on a DEFERRED.
+const SCAN_WAIT_MS = 600_000;
 
 const [WETH_DECIMALS, TLIQ_DECIMALS] = await Promise.all([
   pub.readContract({ address: WETH, abi: ERC20_ABI, functionName: 'decimals' }),
@@ -1180,8 +1187,19 @@ try {
   //     the cancel block" proof (the true crossing frame may have been
   //     lost in the gap) → AMBIGUOUS with the lifecycle printed;
   //   - a crossing frame that is the FIRST frame observed leaves the
-  //     crossing scan's START unknown (no-op scans broadcast nothing),
-  //     so its confound window is not sweepable → AMBIGUOUS (r4);
+  //     crossing scan's exact START unknown (no-op scans broadcast
+  //     nothing) — but the step-1b stats probe's cursor anchors a
+  //     conservative SUPERSET floor (its lastBlock is the scannedTo of
+  //     the last scan completed before this drive posted anything), so
+  //     the sweep runs over (step-1b lastBlock, crossing scannedTo]
+  //     instead: zero confounds in the superset ⇒ zero in the true
+  //     window ⇒ sound PASS; any hit downgrades to AMBIGUOUS exactly
+  //     as before. Only when BOTH anchors are missing (no prior frame
+  //     AND the step-1b probe failed) is the window unsweepable →
+  //     AMBIGUOUS (r4, amended 2026-07-11: the first post-#1149 run
+  //     landed the crossing frame as the first frame on a quiet book
+  //     and could not credit a rail that was provably clean — the
+  //     manual superset sweep found ONLY the drive's own cancel);
   //   - offer.changed is COARSE, so even a clean crossing frame is
   //     swept for same-window unrelated offer-mutation events
   //     (sweepOfferChangedConfounds) — any hit downgrades the PASS to
@@ -1270,35 +1288,50 @@ try {
             `the gap, so this frame (keys=[${crossingFrame.obj.keys.join(', ')}]; ` +
             `${provenance}) may be a LATER scan; attribution genuinely uncertain — ` +
             'caveat recorded instead of credit (or blame)';
-        } else if (hasKey && wireGoneAt !== null && priorMaxScannedTo === null) {
-          // Codex #1148 r4 (unknown scan-window start): the crossing
-          // frame was the FIRST frame this observer saw, so no earlier
-          // frame's scannedTo pins where the crossing scan STARTED —
-          // no-op scans broadcast nothing, so the scan may span
-          // arbitrarily many blocks before the cancel block. Sweeping
-          // from the cancel block could miss same-scan offer-mutation
-          // events in those unswept earlier blocks, so the confound
+        } else if (
+          hasKey &&
+          wireGoneAt !== null &&
+          priorMaxScannedTo === null &&
+          ingestCursor?.lastBlock == null
+        ) {
+          // Codex #1148 r4 (unknown scan-window start), narrowed
+          // 2026-07-11: this branch now fires only when BOTH window
+          // anchors are missing — no prior frame pinned the crossing
+          // scan's start AND the step-1b stats probe (whose lastBlock
+          // is the scannedTo of the last scan completed before this
+          // drive posted anything — a conservative superset floor)
+          // was unavailable. With neither anchor, no-op scans
+          // broadcasting nothing means the scan may span arbitrarily
+          // many unswept blocks before the cancel, so the confound
           // sweep cannot be trusted to clear the coarse key: downgrade
           // to AMBIGUOUS instead of pretending the sweep was
-          // exhaustive. Only a known priorMaxScannedTo yields a
-          // sweepable window and a possible clean PASS.
+          // exhaustive.
           wsVerdict = 'AMBIGUOUS';
           step7Obs.wsRail =
             `AMBIGUOUS — offer.changed rode the crossing frame (${provenance}) ` +
             'and the row left GET, but the crossing frame was the first frame ' +
-            'observed: the scan window start is unknown (no-op scans broadcast ' +
-            'nothing), so the crossing scan may include unswept earlier blocks ' +
-            'and concurrent offer activity there cannot be ruled out — caveat ' +
-            'recorded instead of credit';
+            'observed AND the step-1b cursor probe was unavailable: with no ' +
+            'anchor for the scan window start (no-op scans broadcast nothing), ' +
+            'concurrent offer activity in unswept earlier blocks cannot be ' +
+            'ruled out — caveat recorded instead of credit';
         } else if (hasKey && wireGoneAt !== null) {
           // Codex #1148 r3 (same-scan confounds): offer.changed is
           // coarse — before crediting, sweep the crossing scan's block
-          // window (priorMaxScannedTo + 1 .. crossingFrame.scannedTo;
-          // the first-frame case with no priorMaxScannedTo never
-          // reaches here — r4 downgrades it above) for any OTHER event
-          // that feeds the key. Zero hits ⇒ the signed update was the
-          // window's only offer.changed source.
-          const sweepFrom = BigInt(priorMaxScannedTo) + 1n;
+          // window for any OTHER event that feeds the key. Zero hits ⇒
+          // the signed update was the window's only offer.changed
+          // source. The window floor is the prior frame's scannedTo
+          // when one was observed; otherwise (first-frame case,
+          // 2026-07-11) the step-1b cursor's lastBlock — a SUPERSET
+          // floor (blocks at or below it were swept before this drive
+          // posted anything), so a clean superset sweep still proves a
+          // clean true window, and any hit stays a downgrade.
+          const sweepFloor =
+            priorMaxScannedTo ?? Number(ingestCursor.lastBlock);
+          const anchorNote =
+            priorMaxScannedTo !== null
+              ? 'window floor = prior frame scannedTo'
+              : 'window floor = step-1b cursor lastBlock (superset sweep)';
+          const sweepFrom = BigInt(sweepFloor) + 1n;
           const sweepTo = BigInt(crossingFrame.obj.scannedTo);
           let confounds = null;
           let sweepError = null;
@@ -1328,8 +1361,9 @@ try {
               `PASS — offer.changed rode the CROSSING frame ` +
               `+${((crossingFrame.at - cancelSubmittedAt) / 1000).toFixed(0)}s after cancel submission ` +
               `(${provenance}), the row left GET across the same scan, and the ` +
-              `confound sweep over blocks ${sweepFrom}..${sweepTo} found NO other ` +
-              'offer-mutation event — the key is attributable to THIS cancel alone';
+              `confound sweep over blocks ${sweepFrom}..${sweepTo} (${anchorNote}) ` +
+              'found NO other offer-mutation event — the key is attributable to ' +
+              'THIS cancel alone';
           }
         } else if (!hasKey && wireGoneAt !== null) {
           wsVerdict = 'FAIL';
