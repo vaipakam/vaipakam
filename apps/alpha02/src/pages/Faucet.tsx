@@ -23,7 +23,7 @@ import { copy } from '../content/copy';
 import { useActiveChain } from '../chain/useActiveChain';
 import { EmptyState } from '../components/EmptyState';
 import { captureTxError } from '../lib/errors';
-import { shortAddress } from '../lib/format';
+import { CopyAddress } from '../components/CopyAddress';
 import { resolveMintSymbol } from '../lib/mintSymbol';
 
 const ERC20_MINT_ABI = [
@@ -454,14 +454,7 @@ function FaucetRow({
           <br />
           <span className="row-sub">{blurb}</span>
           <br />
-          <a
-            href={`${explorer}/address/${address}`}
-            target="_blank"
-            rel="noreferrer"
-            className="mono row-sub"
-          >
-            {shortAddress(address)} <ExternalLink size={12} aria-hidden />
-          </a>
+          <CopyAddress address={address} explorerBase={explorer} />
         </span>
         <button
           type="button"

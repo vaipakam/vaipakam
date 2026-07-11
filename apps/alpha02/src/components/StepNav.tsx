@@ -8,6 +8,11 @@ export function StepNav({
 }) {
   return (
     <nav className="steps-nav" aria-label="Progress">
+      {/* Phones swap the dot row for this single line (UX-039) — same
+          information, no wrapped orphan labels. */}
+      <span className="steps-compact">
+        Step {current + 1} of {steps.length} — {steps[current]}
+      </span>
       {steps.map((step, i) => (
         <span
           key={step}
