@@ -5,25 +5,50 @@
  *   - everything else lands on the in-shell NotFound page, never a
  *     blank screen.
  */
+import { lazy } from 'react';
 import { Navigate, Route, Routes, useParams } from 'react-router-dom';
 import { AppShell } from './components/AppShell';
+// The two highest-frequency entry routes stay in the boot chunk so the
+// first paint after mount is instant; everything else is a lazy chunk
+// (UX-005) — advanced surfaces (desk/charts, offers, activity, vpfi,
+// verifier) and the once-per-session pages (faucet, settings, help)
+// don't belong in the code every first-time visitor downloads.
 import { Home } from './pages/Home';
 import { Borrow } from './pages/Borrow';
 import { Lend } from './pages/Lend';
-import { Rent } from './pages/Rent';
-import { Positions } from './pages/Positions';
-import { PositionDetails } from './pages/PositionDetails';
-import { Claims } from './pages/Claims';
-import { Offers } from './pages/Offers';
-import { Desk } from './pages/Desk';
-import { Vault } from './pages/Vault';
-import { Activity } from './pages/Activity';
-import { Vpfi } from './pages/Vpfi';
-import { Settings } from './pages/Settings';
-import { NftVerifier } from './pages/NftVerifier';
-import { Faucet } from './pages/Faucet';
-import { Help } from './pages/Help';
-import { NotFound } from './pages/NotFound';
+
+const Rent = lazy(() => import('./pages/Rent').then((m) => ({ default: m.Rent })));
+const Positions = lazy(() =>
+  import('./pages/Positions').then((m) => ({ default: m.Positions })),
+);
+const PositionDetails = lazy(() =>
+  import('./pages/PositionDetails').then((m) => ({ default: m.PositionDetails })),
+);
+const Claims = lazy(() =>
+  import('./pages/Claims').then((m) => ({ default: m.Claims })),
+);
+const Offers = lazy(() =>
+  import('./pages/Offers').then((m) => ({ default: m.Offers })),
+);
+const Desk = lazy(() => import('./pages/Desk').then((m) => ({ default: m.Desk })));
+const Vault = lazy(() => import('./pages/Vault').then((m) => ({ default: m.Vault })));
+const Activity = lazy(() =>
+  import('./pages/Activity').then((m) => ({ default: m.Activity })),
+);
+const Vpfi = lazy(() => import('./pages/Vpfi').then((m) => ({ default: m.Vpfi })));
+const Settings = lazy(() =>
+  import('./pages/Settings').then((m) => ({ default: m.Settings })),
+);
+const NftVerifier = lazy(() =>
+  import('./pages/NftVerifier').then((m) => ({ default: m.NftVerifier })),
+);
+const Faucet = lazy(() =>
+  import('./pages/Faucet').then((m) => ({ default: m.Faucet })),
+);
+const Help = lazy(() => import('./pages/Help').then((m) => ({ default: m.Help })));
+const NotFound = lazy(() =>
+  import('./pages/NotFound').then((m) => ({ default: m.NotFound })),
+);
 
 export function App() {
   return (

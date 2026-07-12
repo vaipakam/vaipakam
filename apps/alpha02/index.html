@@ -28,9 +28,88 @@
         }
       })();
     </script>
+    <style>
+      /* UX-005 — a boot splash that paints from the HTML itself, before
+         the JS bundle loads or executes. On a slow connection the app
+         used to show a pure white page for 12s+; now the brand mark +
+         a spinner appear instantly and are replaced the moment React
+         mounts into #root. Theme-aware via the data-theme set above. */
+      #boot-splash {
+        position: fixed;
+        inset: 0;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        gap: 20px;
+        background: #f7f8fa;
+        color: #1a1a1a;
+        font-family:
+          system-ui,
+          -apple-system,
+          'Segoe UI',
+          Roboto,
+          sans-serif;
+      }
+      :root[data-theme='dark'] #boot-splash {
+        background: #0f1115;
+        color: #e6e8eb;
+      }
+      #boot-splash .boot-mark {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        font-size: 1.25rem;
+        font-weight: 700;
+      }
+      #boot-splash .boot-badge {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        width: 34px;
+        height: 34px;
+        border-radius: 9px;
+        background: #4f46e5;
+        color: #fff;
+        font-weight: 800;
+      }
+      #boot-splash .boot-spinner {
+        width: 26px;
+        height: 26px;
+        border: 3px solid rgba(128, 128, 128, 0.3);
+        border-top-color: #4f46e5;
+        border-radius: 50%;
+        animation: boot-spin 0.8s linear infinite;
+      }
+      #boot-splash .boot-hint {
+        font-size: 0.85rem;
+        opacity: 0.7;
+      }
+      @keyframes boot-spin {
+        to {
+          transform: rotate(360deg);
+        }
+      }
+      @media (prefers-reduced-motion: reduce) {
+        #boot-splash .boot-spinner {
+          animation-duration: 2s;
+        }
+      }
+    </style>
   </head>
   <body>
-    <div id="root"></div>
+    <div id="root">
+      <!-- Removed by React on mount (it replaces #root's children). A
+           slow bundle fetch therefore shows this, never a blank page. -->
+      <div id="boot-splash">
+        <div class="boot-mark">
+          <span class="boot-badge">V</span>
+          Vaipakam
+        </div>
+        <div class="boot-spinner" role="status" aria-label="Loading"></div>
+        <div class="boot-hint">Starting up…</div>
+      </div>
+    </div>
     <script type="module" src="/src/main.tsx"></script>
   </body>
 </html>

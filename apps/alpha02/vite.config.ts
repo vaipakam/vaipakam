@@ -26,4 +26,38 @@ export default defineConfig({
   plugins: process.env.ALPHA02_E2E
     ? [react()]
     : [react(), cloudflare()],
+  build: {
+    rollupOptions: {
+      output: {
+        // UX-005 — split the big, rarely-changing dependency groups out
+        // of the entry chunk so the boot payload shrinks and vendor
+        // code stays cacheable across app deploys. The wallet/RPC stack
+        // (wagmi + viem + connectkit) is the heaviest cluster and isn't
+        // needed to paint the first screen; keeping it in its own chunk
+        // lets the shell + first route render while it streams.
+        // Authored as a function (not the object form) because the
+        // Cloudflare plugin narrows `output.manualChunks` to the
+        // function signature.
+        manualChunks(id: string) {
+          if (id.includes('node_modules')) {
+            if (
+              /[\\/]node_modules[\\/](wagmi|viem|connectkit|@tanstack[\\/]react-query|@wagmi)[\\/]/.test(
+                id,
+              )
+            ) {
+              return 'wallet-vendor';
+            }
+            if (
+              /[\\/]node_modules[\\/](react|react-dom|react-router|react-router-dom|scheduler)[\\/]/.test(
+                id,
+              )
+            ) {
+              return 'react-vendor';
+            }
+          }
+          return undefined;
+        },
+      },
+    },
+  },
 });

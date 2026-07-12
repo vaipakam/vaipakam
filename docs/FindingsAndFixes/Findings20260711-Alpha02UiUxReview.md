@@ -53,6 +53,7 @@ line when addressed. Unmarked findings are OPEN.
 | 2 — mobile (2026-07-11) | UX-006, UX-019, UX-039, UX-042 | ✅ Fixed — desk stacks single-column below 560px, item-row cards stack with full-width CTAs ≤480px, compact "Step N of M" wizard line on phones, tappable copy+explorer address chips (44px touch targets) |
 | 3 — risk visibility (2026-07-11) | UX-003, UX-004, UX-030 | ✅ Fixed — position-list badge escalates on poor health, past-due detail pages show a live grace countdown banner, grace/HF/LTV jargon carries one-clause inline glosses |
 | 4 — dead-ends/discovery (2026-07-12) | UX-010, UX-011, UX-023, UX-024, UX-026, UX-032 | ✅ Fixed — faucet link on failing balance checks, persistent mode switch + real phone More sheet, forward CTAs on Vault/Claims/Rent/faucet-success, Positions grouped with chain-confirmed "Claim waiting" chips, Basic-mode orientation banner on /offers + /desk, NFT verifier in the nav |
+| 5 — performance (2026-07-12) | UX-005 | ✅ Fixed — static HTML boot splash, React.lazy route chunks under a Suspense'd shell, wallet/React vendor-chunk splitting; entry chunk 2,407 kB → 118 kB |
 | standalone (2026-07-11) | UX-015 | ✅ Fixed by #1094 (plain-language contract errors) — name-keyed decoder across `CollateralPrecheck` / `SimulationPreview` / dry-run footer; #1112 adds the early under-collateral warning on the borrow step |
 
 ---
@@ -112,6 +113,8 @@ value: (1) static splash/skeleton in `index.html` so *something*
 paints instantly; (2) `React.lazy` route chunks (the desk, charts,
 GoPlus/analytics surfaces don't belong in the boot chunk); (3)
 vendor-chunk splitting.
+
+**Status: ✅ FIXED (batch 5, 2026-07-12).** All three fixes shipped. (1) A theme-aware boot splash (brand mark + spinner) renders from `index.html` inside `#root` before the bundle loads, replaced when React mounts — a slow connection never sees a blank page. (2) Every route except Home/Borrow/Lend is now `React.lazy`, with the AppShell's `<Outlet>` under Suspense (the charts were already lazy). (3) `manualChunks` splits the wallet stack (wagmi/viem/connectkit/react-query) and React into separate cacheable vendor chunks. Measured: the entry chunk dropped from **2,407 kB → 118 kB** (34 kB gzip); wallet-vendor (1.85 MB) and react-vendor (232 kB) stream as their own chunks while the shell + first route paint, and per-route chunks (RateChart 181 kB, PositionDetails 60 kB, Desk 54 kB, …) load on demand.
 
 ### UX-006 · Rate Desk is crushed side-by-side at phone widths (M)
 `.desk-main` is `1fr 1fr` at its base breakpoint and never stacks
