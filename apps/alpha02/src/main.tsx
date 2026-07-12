@@ -20,36 +20,33 @@ import './styles/global.css';
 // for exactly this — reload once to pick up the fresh index.html + chunk
 // graph. A session-scoped guard prevents a reload loop if the failure is
 // not a stale-chunk 404 (e.g. a truly offline network).
-let lastChunkReloadAt = 0;
+let chunkReloadedThisSession = false;
 window.addEventListener('vite:preloadError', (event) => {
   // preventDefault so Vite does NOT rethrow — otherwise the dynamic
   // import still rejects into React.lazy → the ErrorBoundary records a
   // display fault before our reload navigates, defeating the point
   // (Codex #1169 r2, per Vite's load-error-handling guide).
   event.preventDefault();
-  const KEY = 'alpha02.chunkReloadAt';
-  const now = Date.now();
-  // Read the last-attempt stamp from sessionStorage when available,
-  // else the in-memory fallback — so a blocked-storage tab still can't
-  // reload-loop on a non-stale-chunk failure (offline / asset outage)
-  // (Codex #1169 r2).
-  let last = lastChunkReloadAt;
+  const KEY = 'alpha02.chunkReloaded';
+  // Auto-reload AT MOST ONCE per session — a sticky flag, not a timed
+  // window (Codex #1169 r3): a stale-deploy chunk graph is fixed by a
+  // single reload, but if each failed fetch takes >10s (flaky net /
+  // CDN outage) a timestamp window would expire between attempts and
+  // reload-loop. After one attempt we fall through to React.lazy's
+  // rejection → the ErrorBoundary's manual "reload" affordance. The
+  // in-memory flag covers a tab with Web Storage blocked.
+  let already = chunkReloadedThisSession;
   try {
-    last = Math.max(last, Number(sessionStorage.getItem(KEY) || 0));
+    already = already || sessionStorage.getItem(KEY) === '1';
   } catch {
-    /* storage blocked — rely on the in-memory guard */
+    /* storage blocked — rely on the in-memory flag */
   }
-  if (now - last <= 10_000) {
-    // Already tried within 10s — stop, and let React.lazy's rejection
-    // surface the ErrorBoundary's manual "reload" affordance instead of
-    // looping.
-    return;
-  }
-  lastChunkReloadAt = now;
+  if (already) return;
+  chunkReloadedThisSession = true;
   try {
-    sessionStorage.setItem(KEY, String(now));
+    sessionStorage.setItem(KEY, '1');
   } catch {
-    /* storage blocked — the in-memory guard above still holds */
+    /* storage blocked — the in-memory flag above still holds */
   }
   window.location.reload();
 });
