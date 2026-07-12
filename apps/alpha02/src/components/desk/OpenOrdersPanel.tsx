@@ -89,6 +89,29 @@ function pctToBpsStrict(s: string): number | null {
   return bps;
 }
 
+/** UX-046 — an HONEST fill-percent label: integer division truncated
+ *  (99.6% → "99%", 0.4% → "0%" beside a visible bar). Round to a whole
+ *  percent, and guard both extremes so a partially-filled order never
+ *  reads as 0% or 100%: a non-zero fill that rounds to 0 shows "<1%",
+ *  and a not-yet-complete fill that rounds to 100 shows "99%+". */
+function fillPctLabel(filled: bigint, max: bigint): string {
+  if (max <= 0n) return '0%';
+  if (filled >= max) return '100%';
+  const pct = Number((filled * 10000n) / max) / 100; // 2-dp, floored
+  const rounded = Math.round(pct);
+  if (filled > 0n && rounded === 0) return '<1%';
+  if (rounded >= 100) return '99%+';
+  return `${rounded}%`;
+}
+
+/** Bar width as a real percentage (never rounded to 0/100), so the meter
+ *  matches the label's honesty — a nearly-full order shows a nearly-full
+ *  bar even when the label reads "99%+". */
+function fillBarPct(filled: bigint, max: bigint): number {
+  if (max <= 0n) return 0;
+  return Math.min(Number((filled * 10000n) / max) / 100, 100);
+}
+
 function AmendForm({
   offer,
   onDone,
@@ -572,7 +595,9 @@ function OrderRow({ offer }: { offer: IndexedOffer }) {
   const rateBps = isLending ? offer.interestRateBps : offer.interestRateBpsMax;
   const filled = BigInt(offer.amountFilled || '0');
   const max = BigInt(offer.amountMax || '0');
-  const filledPct = max > 0n ? Number((filled * 100n) / max) : 0;
+  const remaining = max > filled ? max - filled : 0n;
+  const fillLabel = fillPctLabel(filled, max);
+  const barPct = fillBarPct(filled, max);
 
   // Cancel-cooldown gate (Codex #1134 round-3) — mirrors
   // OfferCancelFacet's exact CancelCooldownActive condition:
@@ -661,17 +686,17 @@ function OrderRow({ offer }: { offer: IndexedOffer }) {
               ? `expires ${formatDate(offer.expiresAt)}`
               : 'no expiry'}
             {filled > 0n && meta.data
-              ? ` · filled ${formatTokenAmount(filled, meta.data.decimals)} (${filledPct}%)`
+              ? ` · filled ${formatTokenAmount(filled, meta.data.decimals)} (${fillLabel}) · ${formatTokenAmount(remaining, meta.data.decimals)} left`
               : ''}
           </span>
           {filled > 0n ? (
             <span
               className="desk-fill-bar"
-              title={`${filledPct}% filled`}
+              title={`${fillLabel} filled`}
               role="img"
-              aria-label={`${filledPct}% filled`}
+              aria-label={`${fillLabel} filled`}
             >
-              <span style={{ width: `${Math.min(filledPct, 100)}%` }} />
+              <span style={{ width: `${barPct}%` }} />
             </span>
           ) : null}
           {error ? (

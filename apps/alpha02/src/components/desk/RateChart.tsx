@@ -480,16 +480,24 @@ export default function RateChart({
         </>
       )}
 
-      {/* Apache-2.0 NOTICE for lightweight-charts (per the design doc). */}
-      <p className="desk-chart-attribution">
-        <a
-          href="https://www.tradingview.com/lightweight-charts/"
-          target="_blank"
-          rel="noreferrer"
-        >
-          {text.attribution}
-        </a>
-      </p>
+      {/* Apache-2.0 NOTICE for lightweight-charts (per the design doc) —
+          shown ONLY when a chart actually renders (UX-037): the credit
+          exists to attribute the drawn chart, so it has no place on the
+          pick-a-market / loading / unavailable / never-filled states
+          where no series is on screen. The library is only displayed in
+          the non-empty-buckets branch, so gating on that keeps the
+          NOTICE present exactly when the work it credits is visible. */}
+      {Array.isArray(buckets) && buckets.length > 0 ? (
+        <p className="desk-chart-attribution">
+          <a
+            href="https://www.tradingview.com/lightweight-charts/"
+            target="_blank"
+            rel="noreferrer"
+          >
+            {text.attribution}
+          </a>
+        </p>
+      ) : null}
     </div>
   );
 }

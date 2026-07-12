@@ -1090,7 +1090,10 @@ converge. Its intended behaviour (the test oracle for that surface):
   open offers can be repriced or resized in place in one transaction —
   only by their creator; a bought offer position is view-only — and an
   amend that increases the locked amount asks for the token approval
-  first. Recent fills for the market are listed honestly: a market with
+  first. A partly-filled open offer states its fill progress honestly —
+  a rounded percentage that never reads as fully empty or fully filled
+  when it is neither, alongside how much size remains. Recent fills for
+  the market are listed honestly: a market with
   no fills says so, and internal bookkeeping from a loan-sale never
   appears as a fill. Positions show under the book with their health
   status and lead to the existing manage flows. A rate-history chart
@@ -1142,7 +1145,8 @@ converge. Its intended behaviour (the test oracle for that surface):
   that cannot execute shows no band and no speculation. The band names
   the rate and amount that would match; anyone — not just the two
   makers — may execute the match and earn the protocol's matcher fee
-  share, and the resulting loan belongs to the two offer creators at
+  share (paying the network gas to execute it, which the band states),
+  and the resulting loan belongs to the two offer creators at
   the stated midpoint terms. If governance disables the matching
   machinery, the band does not appear. The ticket can also post an
   order gaslessly: instead of a transaction, the maker signs the

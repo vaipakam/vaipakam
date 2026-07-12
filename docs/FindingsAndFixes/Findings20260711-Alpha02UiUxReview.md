@@ -309,6 +309,8 @@ are tooltip/color-only, asks reuse the error red. Right-align with
 tabular-nums + fixed decimals, un-nest the interactive elements, give
 chips visible text/aria, neutral ask/bid palette.
 
+**Status: ✅ FIXED (batch 7b, 2026-07-12).** The ladder rate is now the interactive pick target — a real `<button>` — so the row is no longer a `role="button"` wrapping the Take/Fill controls (the nested-interactive a11y violation is gone; the actions are siblings of the rate button). Numeric columns (rate / size / depth) are right-aligned with `tabular-nums`, and rates render at a FIXED 2 decimals so the decimal points line up (`formatBpsAsPercent` trimmed trailing zeros, giving the "5%" over "12.25%" wobble). The ask/bid palette is now NEUTRAL (`--text-strong`) instead of the alarm error-red / success-green — the side is carried by the section labels + position, not an alarm colour. The own-order marker carries a visually-hidden "Your order at this rate" label for screen readers; the Signed chip already has visible text. (Spec 17's ladder-scoped rate assertions were updated to the padded 2-decimal form in the same diff.)
+
 ### UX-029 · VPFI page: the one switch that matters is a tiny checkbox, and status ignores wallet balance (S/M)
 The fee-discount opt-in is an 18 px checkbox below a secondary button
 (`Vpfi.tsx:478`), disabled silently on wrong networks; the status card
@@ -357,10 +359,21 @@ keeps consoles clean on locked-down networks.
   each in two tiers; sub-100 unaddressed). (S)
 - **UX-036** Desk term chips: selected 29d + bold 30d look
   double-selected; only the selection should carry weight. (S)
+  **Status: ✅ FIXED (batch 7b, 2026-07-12).** The has-liquidity cue is
+  now a small "live" dot + readable text, not a strong border — only the
+  `.active` chip carries selection weight.
 - **UX-037** Desk header stats show bare "—" and three empty-state
   voices in one region; unify + hide TradingView credit until a chart
   renders. (S)
+  **Status: ✅ FIXED (batch 7b, 2026-07-12).** The TradingView
+  attribution now renders ONLY when a chart actually draws (non-empty
+  buckets) — not on the pick-a-market / loading / unavailable /
+  never-filled states. The three header stats already share one "—"
+  empty treatment (`copy.desk.statUnknown`).
 - **UX-038** Σ column header — label it "Depth", tooltip the rest. (S)
+  **Status: ✅ FIXED (batch 7b, 2026-07-12).** `cumHeading` is now
+  "Depth"; the header cell keeps its "Cumulative depth from the top of
+  the side" tooltip.
 - **UX-039** Wizard stepper wraps on mobile, orphaning "Done";
   compact "Step 1 of 5" under ~400 px. (S)
   **Status: ✅ FIXED (batch 2, 2026-07-11).**
@@ -376,8 +389,15 @@ keeps consoles clean on locked-down networks.
   date, keep the full string in diagnostics. (S)
 - **UX-045** MatchBand "earn the matcher fee" doesn't state you pay
   gas up front. (S)
+  **Status: ✅ FIXED (batch 7b, 2026-07-12).** The band body now ends
+  "— you pay the network gas to execute it."
 - **UX-046** Open-orders fill % truncates (99.6 % → "99 %", <1 % →
   "0 %" with a visible bar); round and show remaining size. (S)
+  **Status: ✅ FIXED (batch 7b, 2026-07-12).** Fill % is now rounded
+  with honest extremes ("<1%" for a non-zero fill that rounds to 0,
+  "99%+" for a not-yet-complete fill that rounds to 100), the sub-line
+  adds "· N left" (remaining size), and the bar width uses the true
+  (unrounded) percentage so the meter matches the label.
 - **UX-047** Rent landing is two cards in a sea of whitespace — add a
   browse strip or honest empty section. (S/M)
 - **UX-048** Faucet card-in-card nesting + ragged mint-button
