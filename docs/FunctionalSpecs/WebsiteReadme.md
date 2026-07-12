@@ -617,6 +617,11 @@ Advanced-only or advanced-disclosure fields may include:
 
 ## Naive-User Connected App (alpha02 surface)
 
+The alpha02-specific source of truth now lives in
+docs/FunctionalSpecs/Alpha02ConnectedApp.md. The notes below remain the
+shared website-level requirements and historical integration context for that
+surface.
+
 A second connected-app surface exists for first-time and non-expert
 users, served separately from the primary connected app while the two
 converge. Its intended behaviour (the test oracle for that surface):

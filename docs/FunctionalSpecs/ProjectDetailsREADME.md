@@ -4,10 +4,48 @@
 
 Vaipakam is a decentralized peer-to-peer (P2P) lending and borrowing platform built for separate per-network deployments on Base, Polygon, Arbitrum, Optimism, and Ethereum mainnet. It facilitates lending and borrowing of ERC-20 tokens and rentable ERC-721/1155 NFTs, using any ERC-20 or NFT assets as collateral. The platform mints NFTs to represent offers and loans, ensuring transparency and traceability. This document outlines the technical architecture, smart contract interactions, and operational examples for Phase 1.
 
+## Current Functional Consolidation Through 2026-07-12
+
+The release-note decisions through 2026-07-12 set the current intended behaviour
+for the following platform areas:
+
+- A loan's agreed maturity and grace window are fixed at origination. Partial
+  repayment, partial liquidation, and swap-to-repay may update the remaining
+  interest-accrual basis, but they must not move the borrower's due date or the
+  lender's recovery deadline.
+- Fallback-pending loans remain curable until the lender finalizes the fallback
+  claim. Borrowers can cure by fully repaying or by restoring sufficient
+  collateral where that path is available.
+- Offset preclose settles the outgoing lender only when the replacement
+  completes. Posting a pending offset does not prepay principal, so cancellation
+  cannot strand a payoff or create a later double payment.
+- Refinance and other early-close paths respect the loan's selected interest
+  mode. Full-term loans preserve the lender's full-term economics; pro-rata
+  loans settle only the accrued amount, after crediting any interest already
+  settled.
+- Forced-close paths credit interest that has already been settled, so default,
+  liquidation, fallback, and related recovery flows do not charge the same
+  interest twice.
+- NFT-rental late fees scale with overdue rent and are bounded by the buffer
+  that the specific rental funded.
+- Lender position-sale listings settle against the live loan. A buyer acquires
+  the current lender side of an already-running loan; the borrower and the
+  original loan obligations do not change.
+- Offer collateral floors and lending ceilings apply consistently at offer
+  creation, offer modification, and match materialization.
+- Fee rates are snapshotted at loan origination. Later governance changes do
+  not rewrite the economics of an already-open loan.
+- Sanctioned proceeds are frozen, not seized. Must-complete close-outs continue
+  so clean counterparties can be made whole, but spendable value is not released
+  to a confirmed sanctioned holder until that holder is proven clean.
+- Fallback-pending loans are active for dashboard and operator purposes because
+  they can still be cured or rescued before final fallback claim.
+
 ## Table of Contents
 
 - [Vaipakam DeFi | Decentralized P2P Lending, Borrowing and NFT Rental Platform (Phase 1)](#vaipakam-defi--decentralized-p2p-lending-borrowing-and-nft-rental-platform-phase-1)
   - [Technical Project Details for Developers](#technical-project-details-for-developers)
+  - [Current Functional Consolidation Through 2026-07-12](#current-functional-consolidation-through-2026-07-12)
   - [Table of Contents](#table-of-contents)
   - [1. Supported Assets and Networks (Phase 1)](#1-supported-assets-and-networks-phase-1)
     - [Lending and Collateral Assets](#lending-and-collateral-assets)
@@ -2601,6 +2639,9 @@ Vaipakam is committed to operating in a compliant manner within the evolving reg
 - **Address-Level Sanctions Screening:** Where a supported on-chain sanctions oracle is configured for the active chain, the protocol should screen retail entry points as well as any future industrial deployment. Tier-1 actions that create fresh state for the caller, accept deposits, route new value, trigger protocol-funded broadcasts, or pay protocol incentives to the caller must revert for a flagged wallet. This includes vault creation, offer creation / acceptance, permissionless offer matching, VPFI deposit / withdraw flows, user-initiated tier-poke broadcasts, liquidation initiation, loan-sale / obligation-transfer / refinance entry points, collateral top-ups by a flagged payer, manual prepay collateral-sale listing posts or updates by a flagged holder, and claims by the flagged recipient. Where a function lets the caller choose a recipient or act for a position holder, the actual value recipient or current position holder must be screened too; screening only the transaction sender is insufficient.
 - **Sanctions Wind-Down Carve-Out:** Debt-closing and safety paths required to protect an unflagged counterparty should remain available even when a loan party is flagged after the loan is already live. Repayment, time-based default, HF-based liquidation, internal-match settlement, fallback-cure collateral restoration, in-kind default transfer, NFT-rental close-out, and committed loan-sale completion are wind-down / recovery paths. They must not hand spendable value to the flagged wallet, but they should allow the debt to clear and the unflagged counterparty to be made whole. A flagged caller may still trigger an objective internal match or other permissionless safety action when skipping it would worsen settlement, but any caller incentive that would have been paid to that flagged wallet must be denied and retained for the entitled clean parties.
 - **Sanctioned Proceeds and Position Freeze:** When a close-out owes value to a flagged recipient, the value should be parked in that recipient's own isolated Vaipakam Vault as locked proceeds rather than pushed to the wallet or commingled in protocol treasury. Those proceeds remain frozen until the sanctions flag clears; claim / withdraw paths must screen the live recipient before releasing value. Vaipakam position NFTs held by a flagged wallet must not transfer into or out of that wallet while the flag is active, so a flagged holder cannot move the claim right to escape the freeze. Protocol-internal mint, burn, and settlement actions needed to finish the loan may still occur so a flagged holder cannot brick an unflagged counterparty's recovery.
+- **Fail-Closed Frozen-Proceeds Release:** When the protocol has already confirmed a holder as sanctioned and frozen that holder's proceeds, release of those proceeds must be stricter than an ordinary claim. The recorded frozen claimant must be proven clean before funds move. If the sanctions oracle is unavailable, the frozen proceeds remain parked; an outage must not unlock value that was frozen because of a confirmed sanctions hit. Ordinary claims that were never frozen keep the liveness posture described for the retail deploy.
+- **Confirmed-Flagged Position Movement:** A wallet that has been confirmed flagged while the sanctions oracle was reachable must not be able to move a loan-position token during a later oracle outage. A later authoritative clean result may clear that restriction. A wallet that was never confirmed flagged is not frozen merely because the oracle is unavailable.
+- **Central Freeze Enforcement:** Terminal loan transitions and payout paths should apply the sanctioned-proceeds freeze through shared lifecycle and payout rules rather than relying on each close-out path to remember the same treatment separately. The functional invariant is that a genuinely sanctioned holder does not receive spendable value through deferred claims, inline servicing payments, collateral-sale settlement, swap-to-repay surplus, refinance payoff, internal-match settlement, or fallback distribution, while clean counterparties can still be made whole.
 - **Secondary-Market Protection:** A clean buyer who acquired a lender or borrower position before any later sanctions flag should keep the ordinary current-holder rights for that position. Sanctions handling should distinguish a stale original loan party from the live position-NFT holder: a later flag on the original party must not freeze or redirect proceeds owed to a clean current holder.
 - **Sanctions UX:** The frontend should surface sanctions messages only when the connected wallet or a relevant counterparty is flagged. Copy should clearly distinguish blocked actions, permitted close-out paths, and external recourse through the sanctions-data provider; clean wallets should not see general-purpose sanctions warnings on marketing or legal pages beyond the Terms prohibited-use clause.
 - **Sanctions Oracle Availability:** Sanctions oracle configuration is per chain and optional. Chains without a configured oracle should behave as no-op for this check. On chains where the oracle is configured, value-moving sanctions checks that cannot determine a clean result should fail safe rather than route value to a possibly flagged wallet.
