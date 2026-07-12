@@ -66,6 +66,14 @@ export const ACTIVITY_LABELS: Record<string, ActivityLabel> = {
   LoanExtended: { label: 'Loan extended', category: 'loan-modify', priority: 75 },
   LoanRefinanced: { label: 'Loan refinanced', category: 'loan-modify', priority: 85 },
   LoanPreclosedDirect: { label: 'Loan closed early', category: 'loan-close', priority: 85 },
+  // A claim is the user's OWN final action and must outrank the
+  // LoanSettled (85) the same tx emits (Codex #1171 r2): ClaimFacet
+  // fires LenderFundsClaimed/BorrowerFundsClaimed then LoanSettled in
+  // one transaction, and the indexer inserts every decoded log — so
+  // without a higher priority the feed would label the claim "Loan
+  // settled" and bury the real action in "+1 more".
+  LenderFundsClaimed: { label: 'Funds claimed', category: 'loan-close', priority: 92 },
+  BorrowerFundsClaimed: { label: 'Collateral claimed', category: 'loan-close', priority: 92 },
   OffsetCompleted: { label: 'Loan offset', category: 'loan-close', priority: 80 },
   OffsetOfferCreated: { label: 'Offset offer created', category: 'offer', priority: 50 },
   LoanSold: { label: 'Loan sold', category: 'loan-modify', priority: 80 },

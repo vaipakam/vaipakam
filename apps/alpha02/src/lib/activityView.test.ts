@@ -110,4 +110,24 @@ describe('coalesceByTx', () => {
     ]);
     expect(rows).toHaveLength(2);
   });
+
+  it('lets a claim outrank the LoanSettled in the same tx (Codex #1171 r2)', () => {
+    // ClaimFacet emits {Lender,Borrower}FundsClaimed THEN LoanSettled in
+    // one transaction; the indexer inserts both. The user's own claim,
+    // not the book-keeping settle, must be the representative row.
+    const lender = coalesceByTx([
+      ev({ kind: 'LoanSettled', logIndex: 1, loanId: 4 }),
+      ev({ kind: 'LenderFundsClaimed', logIndex: 0, loanId: 4 }),
+    ]);
+    expect(lender).toHaveLength(1);
+    expect(lender[0].label).toBe('Funds claimed');
+    expect(lender[0].hiddenCount).toBe(1);
+
+    const borrower = coalesceByTx([
+      ev({ kind: 'LoanSettled', logIndex: 1, loanId: 9 }),
+      ev({ kind: 'BorrowerFundsClaimed', logIndex: 0, loanId: 9 }),
+    ]);
+    expect(borrower).toHaveLength(1);
+    expect(borrower[0].label).toBe('Collateral claimed');
+  });
 });

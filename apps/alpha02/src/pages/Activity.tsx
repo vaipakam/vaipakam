@@ -3,7 +3,7 @@
  * Rows come from the indexer; kinds are shown as readable labels with
  * loan/offer links back into the app.
  */
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { ExternalLink, History, LoaderCircle } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
@@ -127,9 +127,14 @@ export function Activity() {
   const { isConnected, readChain, address } = useActiveChain();
   const { setOpen } = useModal();
   const loans = useMyLoansFull();
-  // Client-side reveal count (UX-008 pagination). Reset when the wallet
-  // or chain changes so a switch never shows a stale reveal depth.
+  // Client-side reveal count (UX-008 pagination).
   const [visible, setVisible] = useState(PAGE);
+  // Reset the reveal depth when the feed IDENTITY changes (Codex #1171
+  // r2): otherwise a wallet/chain switch keeps a previously-expanded
+  // count and the new account skips its intended 25-row first page.
+  useEffect(() => {
+    setVisible(PAGE);
+  }, [address, readChain.chainId]);
 
   // The worker's actor column is non-exhaustive (a keeper-triggered
   // LoanDefaulted has actor null; OfferAccepted stores only the
