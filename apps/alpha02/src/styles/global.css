@@ -1764,6 +1764,51 @@ a.item-row:hover {
   border-radius: 2px;
 }
 
+/* UX-027 — label row with a right-aligned "Max" affordance. */
+.field-label-row {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--space-2);
+}
+
+.input-max {
+  border: none;
+  background: none;
+  padding: 0;
+  cursor: pointer;
+  font: inherit;
+  font-size: 0.8rem;
+  font-weight: 600;
+  color: var(--brand);
+}
+
+.input-max:hover {
+  text-decoration: underline;
+}
+
+/* UX-027 — the order ticket's fee & commitment summary before consent. */
+.desk-fee-preview {
+  margin: 12px 0 4px;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface-sunken);
+  font-size: 0.85rem;
+}
+
+.desk-fee-preview p {
+  margin: 0;
+}
+
+.desk-fee-preview p + p {
+  margin-top: 4px;
+}
+
+.desk-fee-preview-title {
+  font-weight: 600;
+}
+
 /* Amend inline form */
 .desk-amend-grid {
   display: grid;
