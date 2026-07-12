@@ -3,8 +3,8 @@
  * Rows come from the indexer; kinds are shown as readable labels with
  * loan/offer links back into the app.
  */
-import { useMemo } from 'react';
-import { History, LoaderCircle } from 'lucide-react';
+import { useMemo, useState } from 'react';
+import { ExternalLink, History, LoaderCircle } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import { useModal } from 'connectkit';
@@ -14,40 +14,112 @@ import { useMyLoansFull } from '../data/hooks';
 import { fetchActivity, type IndexedActivityEvent } from '../data/indexer';
 import { EmptyState, UnavailableState } from '../components/EmptyState';
 import { MarketFreshnessNote } from '../components/MarketFreshnessNote';
-import { formatDate } from '../lib/format';
+import { formatTimeAgo, shortAddress } from '../lib/format';
+import { coalesceByTx, type ActivityRowView } from '../lib/activityView';
 import { idleAware } from '../lib/idle';
 
-/** camelCase / PascalCase event kind → spaced words
- *  ("LoanRepaid" → "Loan repaid"). */
-function kindLabel(kind: string): string {
-  const spaced = kind.replace(/([a-z])([A-Z])/g, '$1 $2');
-  return spaced.charAt(0).toUpperCase() + spaced.slice(1).toLowerCase();
-}
-
-function ActivityRow({ event }: { event: IndexedActivityEvent }) {
+/** UX-008 — one coalesced transaction as a readable row: plain-language
+ *  action, a single substance sub-line (loan/offer id · who acted · when
+ *  · how many sub-events it stood in for), and an explorer link. */
+function ActivityRow({ row, explorer }: { row: ActivityRowView; explorer: string }) {
+  const { event, label, hiddenCount } = row;
   const context = [
     event.loanId !== null ? `Loan #${event.loanId}` : null,
     event.offerId !== null ? `Offer #${event.offerId}` : null,
-  ]
-    .filter(Boolean)
-    .join(' · ');
+  ].filter(Boolean);
 
-  const body = (
-    <span className="row-main">
-      <span className="row-title">{kindLabel(event.kind)}</span>
-      <br />
-      <span className="row-sub">
-        {context || 'Protocol event'} · {formatDate(event.blockAt)}
-      </span>
+  const sub = (
+    <span className="row-sub">
+      {context.length ? `${context.join(' · ')} · ` : ''}
+      {formatTimeAgo(event.blockAt)}
+      {hiddenCount > 0 ? copy.activity.plusMore(hiddenCount) : ''}
     </span>
   );
 
-  return event.loanId !== null ? (
-    <Link to={`/positions/${event.loanId}`} className="item-row">
-      {body}
-    </Link>
-  ) : (
-    <div className="item-row">{body}</div>
+  const inner = (
+    <span className="row-main">
+      <span className="row-title">{label}</span>
+      <br />
+      {sub}
+    </span>
+  );
+
+  return (
+    <div className="item-row activity-row">
+      {event.loanId !== null ? (
+        <Link to={`/positions/${event.loanId}`} className="activity-row-link">
+          {inner}
+        </Link>
+      ) : (
+        inner
+      )}
+      {event.txHash ? (
+        <a
+          className="activity-tx"
+          href={`${explorer}/tx/${event.txHash}`}
+          target="_blank"
+          rel="noreferrer"
+          aria-label={`${copy.activity.viewTx} ${shortAddress(event.txHash)}`}
+          title={copy.activity.viewTx}
+        >
+          <ExternalLink size={14} aria-hidden />
+        </a>
+      ) : null}
+    </div>
+  );
+}
+
+/** Client-side reveal page size — caps the initial DOM (the old feed
+ *  rendered ~5,500px unpaginated). */
+const PAGE = 25;
+
+/** The non-empty feed: coalesce the raw events per transaction, then
+ *  reveal them in pages. Kept separate so the hooks (useMemo) don't sit
+ *  behind the page's conditional branches. */
+function ActivityFeed({
+  events,
+  truncated,
+  explorer,
+  visible,
+  onLoadMore,
+}: {
+  events: IndexedActivityEvent[];
+  truncated: boolean;
+  explorer: string;
+  visible: number;
+  onLoadMore: () => void;
+}) {
+  const rows = useMemo(() => coalesceByTx(events), [events]);
+  const shown = rows.slice(0, visible);
+  const hasMore = rows.length > visible;
+
+  return (
+    <>
+      {/* Activity stays INDEXER-fed (events have no chain view), so a
+          stalled ingest cursor means recent actions may be missing —
+          the self-gating freshness note says so. */}
+      <MarketFreshnessNote />
+      {truncated ? (
+        <div className="banner banner-info" role="status" style={{ marginBottom: 12 }}>
+          <span className="banner-body">{copy.activity.truncatedNote}</span>
+        </div>
+      ) : null}
+      <div className="row-list">
+        {shown.map((row) => (
+          <ActivityRow key={row.key} row={row} explorer={explorer} />
+        ))}
+      </div>
+      {hasMore ? (
+        <button
+          type="button"
+          className="btn btn-secondary"
+          style={{ marginTop: 12 }}
+          onClick={onLoadMore}
+        >
+          {copy.activity.loadMore}
+        </button>
+      ) : null}
+    </>
   );
 }
 
@@ -55,6 +127,9 @@ export function Activity() {
   const { isConnected, readChain, address } = useActiveChain();
   const { setOpen } = useModal();
   const loans = useMyLoansFull();
+  // Client-side reveal count (UX-008 pagination). Reset when the wallet
+  // or chain changes so a switch never shows a stale reveal depth.
+  const [visible, setVisible] = useState(PAGE);
 
   // The worker's actor column is non-exhaustive (a keeper-triggered
   // LoanDefaulted has actor null; OfferAccepted stores only the
@@ -152,11 +227,23 @@ export function Activity() {
         // Loan sources unavailable (or indexer leg missing) → the
         // participation filter can't run; an activity feed built
         // without it would be silently partial.
-        <UnavailableState body={copy.activity.unavailable} />
+        <>
+          <UnavailableState body={copy.activity.unavailable} />
+          <p className="muted" style={{ textAlign: 'center', marginTop: 12 }}>
+            {copy.activity.unavailableFallback}{' '}
+            <Link to="/positions">{copy.activity.positionsLink}</Link>.
+          </p>
+        </>
       ) : activity.isLoading || activity.data === undefined ? (
         <EmptyState icon={LoaderCircle} title="Loading your activity…" />
       ) : activity.data === null ? (
-        <UnavailableState body={copy.activity.unavailable} />
+        <>
+          <UnavailableState body={copy.activity.unavailable} />
+          <p className="muted" style={{ textAlign: 'center', marginTop: 12 }}>
+            {copy.activity.unavailableFallback}{' '}
+            <Link to="/positions">{copy.activity.positionsLink}</Link>.
+          </p>
+        </>
       ) : activity.data.events.length === 0 ? (
         <>
           {/* A STALLED indexer returning zero rows is exactly the
@@ -173,22 +260,13 @@ export function Activity() {
           />
         </>
       ) : (
-        <>
-          {/* Activity stays INDEXER-fed (events have no chain view), so
-              a stalled ingest cursor means recent actions may be
-              missing — the self-gating freshness note says so. */}
-          <MarketFreshnessNote />
-          {activity.data.truncated ? (
-            <div className="banner banner-info" role="status" style={{ marginBottom: 12 }}>
-              <span className="banner-body">{copy.activity.truncatedNote}</span>
-            </div>
-          ) : null}
-          <div className="row-list">
-            {activity.data.events.map((event) => (
-              <ActivityRow key={`${event.txHash}-${event.logIndex}`} event={event} />
-            ))}
-          </div>
-        </>
+        <ActivityFeed
+          events={activity.data.events}
+          truncated={activity.data.truncated}
+          explorer={readChain.blockExplorer}
+          visible={visible}
+          onLoadMore={() => setVisible((v) => v + PAGE)}
+        />
       )}
     </div>
   );

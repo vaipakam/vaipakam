@@ -823,6 +823,9 @@ export const copy = {
     groupActive: 'Active loans',
     groupEnded: 'Ended loans',
     claimWaiting: 'Claim waiting',
+    // UX-050 — surface the full history for Basic users, who don't see
+    // Activity in the nav.
+    seeActivity: 'See your full activity history →',
     // UX-004 — past-due escalation banner with the live countdown.
     graceCountdownBorrower: (remaining: string) =>
       `This loan is past due. Repay within about ${remaining} — after that the lender can take the collateral.`,
@@ -1405,6 +1408,16 @@ export const copy = {
       'Showing recent activity only — the protocol feed is busy and older events may not be listed.',
     truncatedEmpty:
       'Nothing of yours in recent protocol activity. Older events may exist that we couldn’t scan right now.',
+    // UX-008 — one substantive sub-line per row.
+    plusMore: (n: number) => ` · +${n} more in this transaction`,
+    viewTx: 'View transaction',
+    loadMore: 'Load older activity',
+    loadingMore: 'Loading…',
+    // UX-050 — when the indexer is degraded, the event feed can't
+    // render, but the user's positions are chain-authoritative — point
+    // there instead of dead-ending.
+    unavailableFallback: 'Your current loans and rentals are always available on',
+    positionsLink: 'My positions',
   },
 
   rewards: {

@@ -304,6 +304,32 @@ button.tabbar-item {
   display: none;
 }
 
+/* UX-008 — activity rows: the action + substance sub-line take the
+   row, with a compact explorer link pinned to the trailing edge. */
+.activity-row {
+  gap: var(--space-2);
+}
+.activity-row-link {
+  flex: 1;
+  min-width: 0;
+  color: inherit;
+}
+.activity-row-link:hover {
+  text-decoration: none;
+}
+.activity-tx {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: var(--taptarget);
+  min-height: var(--taptarget);
+  color: var(--text-muted);
+  flex-shrink: 0;
+}
+.activity-tx:hover {
+  color: var(--brand);
+}
+
 @media (min-width: 720px) {
   .shell-tabbar {
     display: none;

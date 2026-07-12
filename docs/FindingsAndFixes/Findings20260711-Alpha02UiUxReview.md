@@ -54,6 +54,7 @@ line when addressed. Unmarked findings are OPEN.
 | 3 — risk visibility (2026-07-11) | UX-003, UX-004, UX-030 | ✅ Fixed — position-list badge escalates on poor health, past-due detail pages show a live grace countdown banner, grace/HF/LTV jargon carries one-clause inline glosses |
 | 4 — dead-ends/discovery (2026-07-12) | UX-010, UX-011, UX-023, UX-024, UX-026, UX-032 | ✅ Fixed — faucet link on failing balance checks, persistent mode switch + real phone More sheet, forward CTAs on Vault/Claims/Rent/faucet-success, Positions grouped with chain-confirmed "Claim waiting" chips, Basic-mode orientation banner on /offers + /desk, NFT verifier in the nav |
 | 5 — performance (2026-07-12) | UX-005 | ✅ Fixed — static HTML boot splash, React.lazy route chunks under a Suspense'd shell, wallet/React vendor-chunk splitting; entry chunk 2,407 kB → 118 kB |
+| 6 — Activity rebuild (2026-07-12) | UX-008, UX-050 | ✅ Fixed — event label map + acronym-safe humanizer, per-transaction coalescing, substance sub-line + explorer link + relative time, load-more pagination; Basic-mode Activity link from Positions + chain-authoritative fallback when the indexer degrades |
 | standalone (2026-07-11) | UX-015 | ✅ Fixed by #1094 (plain-language contract errors) — name-keyed decoder across `CollateralPrecheck` / `SimulationPreview` / dry-run footer; #1112 adds the early under-collateral warning on the borrow step |
 
 ---
@@ -145,6 +146,8 @@ list is unpaginated (~5,500 px), and spelling drifts between
 beginner's trust. Fix: label map + coalesce per-transaction + one line
 of substance per row (amount, asset, offer/loan id, tx link) +
 timestamps + pagination.
+
+**Status: ✅ FIXED (batch 6, 2026-07-12).** New `lib/activityView.ts` (unit-tested): an explicit event-kind label map + an acronym-safe humanizer fallback (the "Nftminted" bug — `NFTMinted` → "NFT Minted", not "Nft minted") that also normalizes the cancelled/canceled spelling drift, plus `coalesceByTx` collapsing each transaction's many events into ONE representative row (highest-priority action, e.g. `LoanInitiated` over its `*Details`/`Transfer` companions) with a "+N more in this transaction" note. Each row now carries a substantive sub-line (loan/offer id · relative time · sub-event count), a per-row explorer transaction link, and the feed reveals in pages of 25 (load-more) instead of one ~5,500px list. Amounts-per-row remain a follow-up (they need per-asset decimals; the id link + explorer tx cover provenance today).
 
 ### UX-009 · Order ticket's "Post order" dead-disables with no reason (M)
 `canPost` ANDs ~15 gates (`OrderTicket.tsx:446-467`) and the only
@@ -378,6 +381,7 @@ keeps consoles clean on locked-down networks.
 - **UX-050** Activity page is advanced-only and all-or-nothing when
   the indexer degrades; link basic users to it from Positions and fall
   back to the on-chain loan list. (M)
+  **Status: ✅ FIXED (batch 6, 2026-07-12).** Positions carries a "See your full activity history →" link (both modes, since Basic doesn't get Activity in the nav); the Activity page's indexer-degraded unavailable state now points to the chain-authoritative Positions page instead of dead-ending.
 
 ---
 

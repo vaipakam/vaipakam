@@ -269,7 +269,13 @@ export function Positions() {
                 </Link>
               }
             />
-          ) : null}
+          ) : (
+            // UX-050 — surface the full activity history for Basic-mode
+            // users, who don't get Activity in the nav.
+            <p className="muted" style={{ marginTop: 8 }}>
+              <Link to="/activity">{copy.positions.seeActivity}</Link>
+            </p>
+          )}
         </>
       )}
     </div>
