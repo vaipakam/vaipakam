@@ -9,7 +9,7 @@
  * stay reachable by URL in both modes (they are deeper tools, not
  * disabled features).
  */
-import { Suspense, useEffect, useState } from 'react';
+import { Suspense, useEffect, useRef, useState } from 'react';
 import { NavLink, Outlet, useLocation } from 'react-router-dom';
 import {
   BadgeCheck,
@@ -121,12 +121,28 @@ function ModeSwitch() {
 
 export function AppShell() {
   const { isAdvanced } = useMode();
-  const { readChain } = useActiveChain();
+  const { readChain, isConnected, onSupportedChain, walletChain } =
+    useActiveChain();
   const { pathname, search } = useLocation();
   // Phone More sheet (UX-011) — closes on any navigation.
   const [moreOpen, setMoreOpen] = useState(false);
   useEffect(() => {
     setMoreOpen(false);
+  }, [pathname]);
+
+  // UX-031 — move focus to the main content region on route change so
+  // a keyboard / screen-reader user lands on the new page instead of
+  // staying on the clicked nav link (SPA navigation announces nothing
+  // on its own). Skipped on first render so an initial load doesn't
+  // steal focus from the top of the document.
+  const mainRef = useRef<HTMLElement>(null);
+  const firstRender = useRef(true);
+  useEffect(() => {
+    if (firstRender.current) {
+      firstRender.current = false;
+      return;
+    }
+    mainRef.current?.focus();
   }, [pathname]);
 
   // testnetOnly entries (the faucet) additionally require the chain's
@@ -158,6 +174,12 @@ export function AppShell() {
 
   return (
     <div className="shell">
+      {/* UX-031 — first focusable element: a keyboard user can jump the
+          nav and land on the page content. Visually hidden until
+          focused (see `.skip-link`). */}
+      <a className="skip-link" href="#main-content">
+        Skip to content
+      </a>
       {/* Block-driven live refresh of transaction caches (WS push when
           configured, HTTP block-poll otherwise). Renders nothing. */}
       <LiveChainSync />
@@ -171,6 +193,17 @@ export function AppShell() {
           <span className="brand-tag">alpha</span>
         </NavLink>
         <div className="shell-topbar-spacer" />
+        {/* UX-013 — a persistent network indicator when connected: the
+            book, vault, and faucet are all per-network, but the chain
+            name otherwise lives only inside the wallet modal. Shown only
+            on a supported chain; an unsupported one is handled by the
+            NetworkBanner in the main region. */}
+        {isConnected && onSupportedChain && walletChain ? (
+          <span className="net-chip" title={`Connected to ${walletChain.name}`}>
+            <span className="net-chip-dot" aria-hidden />
+            <span className="net-chip-name">{walletChain.name}</span>
+          </span>
+        ) : null}
         <ConnectButton />
       </header>
 
@@ -209,7 +242,7 @@ export function AppShell() {
           </div>
         </nav>
 
-        <main className="shell-main">
+        <main className="shell-main" id="main-content" tabIndex={-1} ref={mainRef}>
           <NetworkBanner />
           <SanctionsBanner />
           {/* Route-level crash containment: a page that throws during

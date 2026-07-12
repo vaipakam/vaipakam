@@ -136,6 +136,63 @@ button {
   flex: 1;
 }
 
+/* UX-031 — skip-to-content link: off-screen until keyboard-focused,
+ * then pinned top-left so the first Tab reveals it. */
+.skip-link {
+  position: absolute;
+  left: -9999px;
+  top: 0;
+  z-index: 100;
+  padding: 8px 14px;
+  background: var(--brand);
+  color: #fff;
+  border-radius: 0 0 var(--radius-sm) 0;
+  font-weight: 600;
+  text-decoration: none;
+}
+
+.skip-link:focus {
+  left: 0;
+}
+
+/* Programmatic focus of the main region on route change (UX-031) must
+ * not draw a persistent focus ring — keyboard focus of real controls
+ * still shows its own :focus-visible outline. */
+.shell-main:focus {
+  outline: none;
+}
+
+/* UX-013 — persistent network indicator beside the wallet chip. */
+.net-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 10px;
+  margin-right: var(--space-2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-full);
+  background: var(--surface-raised);
+  font-size: 0.8rem;
+  font-weight: 600;
+  color: var(--text-body);
+  white-space: nowrap;
+}
+
+.net-chip-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: var(--radius-full);
+  background: var(--ok);
+}
+
+/* The chain name is supporting context — hide it on the narrowest
+ * viewports where the wallet chip needs the room; the dot remains. */
+@media (max-width: 400px) {
+  .net-chip-name {
+    display: none;
+  }
+}
+
 .shell-body {
   display: flex;
   flex: 1;
@@ -966,6 +1023,13 @@ button.intent-card {
   height: 36px;
   color: var(--text-faint);
   margin-bottom: var(--space-3);
+}
+
+/* UX-031 — the title may be an h1 (full-page empty states, e.g. 404) or
+ * an h3 (inline). Normalize the visual size so the heading level is a
+ * semantics/a11y choice, not a styling one. */
+.empty-state-title {
+  font-size: 1.05rem;
 }
 
 .empty-state .btn {
