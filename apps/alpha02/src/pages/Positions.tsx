@@ -12,6 +12,7 @@ import { useModal } from 'connectkit';
 import { useQueryClient } from '@tanstack/react-query';
 import { copy } from '../content/copy';
 import { useMyLoansFull, useMyOffersFull } from '../data/hooks';
+import { useMyClaimables } from '../data/claimables';
 import { useActiveChain } from '../chain/useActiveChain';
 import { useDiamondWrite } from '../contracts/diamond';
 import { EmptyState, UnavailableState } from '../components/EmptyState';
@@ -140,6 +141,15 @@ export function Positions() {
   const { setOpen } = useModal();
   const loans = useMyLoansFull();
   const offers = useMyOffersFull();
+  // UX-024 — chain-confirmed unclaimed payouts (same query the Claim
+  // Center runs, shared via the query cache). Rows with one group
+  // under "Needs your attention" with an explicit chip. While this is
+  // loading/unavailable the list degrades to Active/Ended grouping —
+  // it never guesses a claim.
+  const claimables = useMyClaimables();
+  const claimKeys = new Set(
+    (claimables.data ?? []).map((c) => `${c.loanId}-${c.role}`),
+  );
   // Current positions come from the CHAIN (authoritative, fresh this
   // block) with the indexer as the redundancy leg. Either source
   // failing means the list is served single-sourced — say so, never
@@ -200,16 +210,53 @@ export function Positions() {
             </section>
           ) : null}
 
-          {loans.data.rows.length > 0 ? (
-            <section>
-              <h2>Loans</h2>
-              <div className="row-list">
-                {loans.data.rows.map((loan) => (
-                  <LoanRow key={`${loan.loanId}-${loan.role}`} loan={loan} />
-                ))}
-              </div>
-            </section>
-          ) : null}
+          {loans.data.rows.length > 0
+            ? (() => {
+                // UX-024 — group by what needs the user: confirmed
+                // claims first, then live loans, then history.
+                const rows = loans.data.rows;
+                const keyOf = (l: (typeof rows)[number]) =>
+                  `${l.loanId}-${l.role}`;
+                const attention = rows.filter((l) => claimKeys.has(keyOf(l)));
+                const live = rows.filter(
+                  (l) =>
+                    !claimKeys.has(keyOf(l)) &&
+                    (l.status === 'active' || l.status === 'fallback_pending'),
+                );
+                const ended = rows.filter(
+                  (l) =>
+                    !claimKeys.has(keyOf(l)) &&
+                    l.status !== 'active' &&
+                    l.status !== 'fallback_pending',
+                );
+                const group = (
+                  title: string,
+                  list: typeof rows,
+                  claimWaiting: boolean,
+                ) =>
+                  list.length > 0 ? (
+                    <section style={{ marginBottom: 24 }}>
+                      <h2>{title}</h2>
+                      <div className="row-list">
+                        {list.map((loan) => (
+                          <LoanRow
+                            key={keyOf(loan)}
+                            loan={loan}
+                            claimWaiting={claimWaiting}
+                          />
+                        ))}
+                      </div>
+                    </section>
+                  ) : null;
+                return (
+                  <>
+                    {group(copy.positions.groupAttention, attention, true)}
+                    {group(copy.positions.groupActive, live, false)}
+                    {group(copy.positions.groupEnded, ended, false)}
+                  </>
+                );
+              })()
+            : null}
 
           {loans.data.rows.length === 0 && offers.data.rows.length === 0 ? (
             <EmptyState

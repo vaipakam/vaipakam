@@ -198,9 +198,123 @@ button {
   text-decoration: none;
 }
 
+/* The More tab is a BUTTON (opens the sheet), not a link — strip the
+   default button chrome so it matches its NavLink siblings. */
+button.tabbar-item {
+  background: none;
+  border: none;
+  cursor: pointer;
+  font-family: inherit;
+}
+
+/* UX-011 — phone More sheet: every destination without a tab, one tap
+   away, plus the mode switch. Sits above the tab bar. */
+.more-sheet-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 31;
+  background: rgb(0 0 0 / 0.35);
+}
+
+.more-sheet {
+  position: fixed;
+  left: 0;
+  right: 0;
+  bottom: calc(56px + env(safe-area-inset-bottom));
+  z-index: 32;
+  display: flex;
+  flex-direction: column;
+  max-height: 70vh;
+  overflow-y: auto;
+  background: var(--surface-raised);
+  border-top: 1px solid var(--border);
+  border-radius: var(--radius-lg) var(--radius-lg) 0 0;
+  padding: var(--space-2);
+  box-shadow: var(--shadow-pop);
+}
+
+.more-sheet-item {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  min-height: var(--taptarget);
+  padding: var(--space-2) var(--space-3);
+  border-radius: var(--radius-sm);
+  color: var(--text-body);
+  font-weight: 500;
+}
+
+.more-sheet-item svg {
+  width: 18px;
+  height: 18px;
+  color: var(--text-muted);
+}
+
+.more-sheet-item.active {
+  background: var(--brand-soft);
+  color: var(--brand);
+}
+
+.more-sheet-item:hover {
+  background: var(--surface-hover);
+  text-decoration: none;
+}
+
+.more-sheet-mode {
+  border-top: 1px solid var(--border);
+  margin-top: var(--space-2);
+  padding: var(--space-3);
+}
+
+/* UX-011 — the persistent Basic/Advanced segmented switch. */
+.mode-switch {
+  display: flex;
+  gap: 4px;
+  padding: 4px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface-sunken);
+}
+
+.mode-switch button {
+  flex: 1;
+  min-height: 32px;
+  border: none;
+  border-radius: calc(var(--radius-sm) - 2px);
+  background: none;
+  color: var(--text-muted);
+  font-family: inherit;
+  font-size: 0.85rem;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.mode-switch button.active {
+  background: var(--surface-raised);
+  color: var(--brand);
+  box-shadow: var(--shadow-card);
+}
+
+/* Sidebar footer (mode switch) — desktop only; phones get it in the
+   More sheet instead. */
+.sidenav-footer {
+  display: none;
+}
+
 @media (min-width: 720px) {
   .shell-tabbar {
     display: none;
+  }
+
+  .more-sheet,
+  .more-sheet-backdrop {
+    display: none;
+  }
+
+  .sidenav-footer {
+    display: block;
+    margin-top: auto;
+    padding-top: var(--space-4);
   }
 
   .shell-main {

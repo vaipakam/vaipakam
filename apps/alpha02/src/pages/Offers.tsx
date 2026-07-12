@@ -21,6 +21,7 @@ import { useMemo, useState } from 'react';
 import { BookOpen, LoaderCircle } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import { copy } from '../content/copy';
+import { PowerSurfaceNote } from '../components/PowerSurfaceNote';
 import { AddressName } from '../components/AddressName';
 import { SelectMenu } from '../components/SelectMenu';
 import { useActiveOffers } from '../data/hooks';
@@ -271,6 +272,9 @@ export function Offers() {
     <div>
       <h1 className="page-title">{copy.offers.title}</h1>
       <p className="page-lede">{copy.offers.lede}</p>
+
+      {/* UX-026 — orient Basic-mode visitors landing here by URL. */}
+      <PowerSurfaceNote />
 
       <MarketFreshnessNote />
 
