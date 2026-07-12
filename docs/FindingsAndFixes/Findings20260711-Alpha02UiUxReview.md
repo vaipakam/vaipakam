@@ -158,6 +158,8 @@ button (`OfferFlow.tsx:2440-2444`) and the review checklist lives far
 above it. Fix: surface the first blocking reason directly under the
 button, and render a Connect button when no wallet.
 
+**Status: ✅ FIXED (batch 7a, 2026-07-12).** The desk order ticket now shows the FIRST unmet gate directly under the Post button (wrong network / pick a market / enter amount·rate·collateral / loading / accept the terms / gasless-service-down), and renders a Connect button — not a dead-disabled Post — when no wallet is connected. Gates that already carry their own inline message (self-collateral, expiry, duration cap, security) are left to those messages so the reason line never double-speaks. The guided flow's parallel is already served by its on-review-step "Before you sign" Checklist (which lists each unmet item) plus the named-prompt plan; the desk ticket was the surface with neither affordance.
+
 ### UX-010 · "Not enough balance" dead-ends without the faucet (S)
 The failing balance checklist item has no `fix` action
 (`useEligibility.tsx:106-127`) — on a seeded testnet whose Home
@@ -215,6 +217,8 @@ Both the guided review (`OfferFlow.tsx:787-1178` effects) and the desk
 ticket (`OrderTicket.tsx:209-214`, every field handler) clear consent
 without saying why — it reads as a bug. Show "Terms changed — please
 re-confirm" beside the cleared checkbox.
+
+**Status: ✅ FIXED (batch 7a, 2026-07-12).** The desk ticket now shows "Terms changed — please re-confirm" beside the checkbox whenever an edit auto-clears a consent the user had already given (tracked so it never fires when consent was never ticked, and clears the moment they re-tick or a post succeeds). The guided flow already re-collects consent explicitly through its late-disclosure / security-fingerprint re-review banners (a moved sale number or an arrived security warning shows a banner and voids consent against the changed review) — the desk ticket was the surface clearing it silently on every keystroke.
 
 ### UX-017 · Invalid inputs signal by color only; disabled CTAs give no hint (S)
 Bad pasted addresses get only a red border (`AssetPicker.tsx:180-188`);
@@ -294,6 +298,8 @@ balance-fill (`OrderTicket.tsx:850-917`; `exactAmountString` exists
 for exactly this); protocol fees load but are never shown — no
 escrowed-total or net-rate line before consent. Add Max chips + a live
 fee/total summary.
+
+**Status: ✅ FIXED (batch 7a, 2026-07-12).** The ticket now carries a **Max** chip on the escrowed-leg field (a lender's Amount fills from the lending-asset wallet balance; a borrower's Collateral fills from the collateral balance — each side's Max reads only the token it actually escrows), and a **Fees & commitment** summary before consent: the escrowed leg worded for on-chain escrow vs gasless "at fill", plus the side's protocol fee (lender ⇒ net yield after the yield-fee on interest; borrower ⇒ one-time loan-initiation fee on principal with the estimated token amount). The summary is derived from the SAME payload the write sends, so the numbers can't drift from the order, and reads the LIVE `getProtocolConfigBundle` fee values.
 
 ### UX-028 · Ladder scanability + a11y (M)
 Numbers left-aligned with inconsistent decimals ("5%" over "12.25%"),

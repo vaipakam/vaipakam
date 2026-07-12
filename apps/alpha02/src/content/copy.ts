@@ -1160,6 +1160,36 @@ export const copy = {
         `Posting is held: an independent security check flags the ${leg} (${reasons.join('; ')}).`,
       securityUnknown: (leg: string) =>
         `Posting is held until the independent security check for the ${leg} succeeds.`,
+      // UX-009 — the FIRST unmet gate, shown under the disabled Post
+      // button so the greyed state always says why (the ticket has no
+      // review checklist like the guided flow's).
+      blockNetwork: 'Switch to a supported network to post.',
+      blockNoMarket: 'Pick a market in the header first.',
+      blockAmount: 'Enter the amount above.',
+      blockRate: 'Enter a rate between 0 and 100%.',
+      blockCollateral: 'Enter the collateral amount above.',
+      blockLoading: 'Loading market details — one moment.',
+      blockConsent: 'Review and accept the risk terms above to post.',
+      blockGaslessService:
+        'Gasless posting needs the order-book service, which isn’t available right now — switch Posting to On-chain.',
+      // UX-016 — consent auto-clears whenever a term changes; say so
+      // beside the cleared box so the un-tick doesn't read as a bug.
+      consentRecheck: 'Terms changed — please re-confirm.',
+      // UX-027 — Max chip + a fee/commitment summary before consent.
+      max: 'Max',
+      feePreviewTitle: 'Fees & commitment',
+      escrowNow: (amount: string, symbol: string) =>
+        `You escrow now: ${amount} ${symbol}.`,
+      commitAtFill: (amount: string, symbol: string) =>
+        `You commit ${amount} ${symbol} — pulled from your vault only when a taker fills.`,
+      lockNow: (amount: string, symbol: string) =>
+        `You lock now: ${amount} ${symbol} as collateral.`,
+      lockAtFill: (amount: string, symbol: string) =>
+        `You commit ${amount} ${symbol} collateral — locked only when a taker fills.`,
+      netYield: (net: string, feePct: string) =>
+        `Net yield ≈ ${net}% APR after the ${feePct}% protocol fee on the interest you earn.`,
+      lifNote: (feePct: string, amount: string, symbol: string) =>
+        `Loan initiation fee: ${feePct}% of principal (≈ ${amount} ${symbol}), charged when the loan starts.`,
     },
     orders: {
       tab: 'Open orders',

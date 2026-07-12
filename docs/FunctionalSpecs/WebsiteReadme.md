@@ -1070,7 +1070,23 @@ converge. Its intended behaviour (the test oracle for that surface):
   the same screen posts a limit-rate offer with expiry presets (never /
   a chosen time) and fill modes (partial fills allowed, all-or-none,
   immediate-or-cancel), with the same consent, simulation precheck, and
-  under-collateral warning the guided flows enforce. The user's own
+  under-collateral warning the guided flows enforce. When the ticket
+  cannot post, it states the first reason plainly beneath the action —
+  no wallet connected (for which it offers a connect action rather than
+  only a disabled control), the wrong network, no market chosen, a
+  missing amount / rate / collateral, still-loading market details, or
+  the terms not yet accepted — so a greyed control is never unexplained.
+  Because any change to the terms clears the risk-and-terms consent (the
+  deal being consented to changed underneath it), the ticket says so
+  beside the box when it clears a consent already given, instead of
+  letting the un-tick read as a fault. The field the user actually
+  escrows — a lender's loan amount, a borrower's collateral — offers a
+  one-tap fill to their wallet balance, and before consent the ticket
+  summarizes what the order commits (worded for immediate escrow or, for
+  a gasless order, movement at fill) alongside the protocol fee that
+  applies to the user's side: a lender's yield after the fee on interest,
+  a borrower's one-time initiation fee on the principal, quoted from the
+  live deployed fee values. The user's own
   open offers can be repriced or resized in place in one transaction —
   only by their creator; a bought offer position is view-only — and an
   amend that increases the locked amount asks for the token approval
