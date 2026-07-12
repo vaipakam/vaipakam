@@ -903,7 +903,10 @@ export const copy = {
   // offer the mode switch. Dismissible; never shown in Advanced.
   powerSurface: {
     body: 'This is a power-user screen — raw offers and live rates with less hand-holding. The guided Borrow and Lend flows cover the same actions with step-by-step explanations.',
-    guided: 'Take me to the guided flows',
+    // Both guided flows offered (Codex #1168 r1) — a lender routed
+    // into /borrow is the wrong money direction.
+    guidedBorrow: 'Guided Borrow',
+    guidedLend: 'Guided Lend',
     enableAdvanced: 'I know what I’m doing — enable Advanced mode',
     dismiss: 'Dismiss',
   },
@@ -1306,6 +1309,9 @@ export const copy = {
     nextSteps: 'Next: put it to work —',
     nextBorrow: 'Borrow against it',
     nextLend: 'Lend it out',
+    // NFT mints route to the RENTAL flow, not the ERC-20 lend flow
+    // (Codex #1168 r1) — NFTs aren't loan principal here.
+    nextRent: 'List it for rent',
     footer:
       'Minted assets land in your wallet. Use “My vault” and the Borrow, Lend, and NFT Rental screens to put them to work.',
     mintedTokens: (units: number, symbol: string) =>

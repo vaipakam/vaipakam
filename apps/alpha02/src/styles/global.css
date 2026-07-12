@@ -212,7 +212,10 @@ button.tabbar-item {
 .more-sheet-backdrop {
   position: fixed;
   inset: 0;
-  z-index: 31;
+  /* Above the support FAB (z 40) — the FAB must not steal taps from
+     the open sheet (Codex #1168 r1). The diagnostics drawer can't be
+     open at the same time: its own overlay covers the tab bar. */
+  z-index: 43;
   background: rgb(0 0 0 / 0.35);
 }
 
@@ -221,7 +224,7 @@ button.tabbar-item {
   left: 0;
   right: 0;
   bottom: calc(56px + env(safe-area-inset-bottom));
-  z-index: 32;
+  z-index: 44;
   display: flex;
   flex-direction: column;
   max-height: 70vh;

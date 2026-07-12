@@ -42,7 +42,10 @@ export function PowerSurfaceNote() {
         {copy.powerSurface.body}{' '}
         <span className="cluster" style={{ marginTop: 8 }}>
           <Link to="/borrow" className="btn btn-secondary btn-sm">
-            {copy.powerSurface.guided}
+            {copy.powerSurface.guidedBorrow}
+          </Link>
+          <Link to="/lend" className="btn btn-secondary btn-sm">
+            {copy.powerSurface.guidedLend}
           </Link>
           <button
             type="button"
