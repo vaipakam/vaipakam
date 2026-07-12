@@ -815,8 +815,16 @@ export const copy = {
     // fallback-pending cure is exempt), so never suggest a repay race.
     graceOverBorrower:
       'The grace period has ended — the protocol no longer accepts repayment, and the lender can take the collateral at any moment. Once they claim it, the outcome will show here.',
+    // Codex #1166 r2 — alpha02 has no in-app markDefaulted action, so
+    // never promise the lender an immediate step on this page: the
+    // keeper records the default, then the claim appears.
     graceOverLender:
-      'The grace period has ended — you can mark this loan defaulted and claim the collateral now.',
+      'The grace period has ended — this loan can now be marked defaulted. That normally happens automatically shortly after; once the default is recorded, the collateral claim appears here.',
+    // Codex #1166 r2 — fallback_pending is the post-grace failed-
+    // default state: the cure (full repayment) is still accepted, but
+    // only until the lender finalizes the default.
+    fallbackCureBorrower:
+      'This loan is past its grace period and a default is being settled. You can still repay in full to cure it and get your collateral back — but only until the lender finalizes the default, which can happen at any moment.',
     // UX-001 — a loan that is already over must never show a live
     // obligation or a live default warning: contradictory state on a
     // money page erodes trust in every other number.

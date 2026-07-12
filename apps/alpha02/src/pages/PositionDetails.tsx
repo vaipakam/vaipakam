@@ -427,7 +427,21 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
     enabled: Boolean(readClient) && rowPastDueCandidate,
     staleTime: 30_000,
     refetchInterval: idleAware(60_000),
-    queryFn: () => readLoanLive(readClient!, readChain.diamondAddress, loan.data!.loanId),
+    // chainNow rides along (Codex #1166 r2): the contracts gate on
+    // block.timestamp, so the banner must not trust a skewed device
+    // clock. fetchedAtLocal lets the countdown advance between
+    // refetches without re-introducing the skew.
+    queryFn: async () => {
+      const [live, latestBlock] = await Promise.all([
+        readLoanLive(readClient!, readChain.diamondAddress, loan.data!.loanId),
+        readClient!.getBlock({ blockTag: 'latest' }),
+      ]);
+      return {
+        live,
+        chainNow: Number(latestBlock.timestamp),
+        fetchedAtLocal: Math.floor(Date.now() / 1000),
+      };
+    },
   });
   // UX-004 — the grace window, read for DISPLAY (previously read only
   // inside submit handlers, so a past-due borrower could never see how
@@ -438,7 +452,7 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
   const grace = useGraceSeconds(
     loan.data && loan.data.assetType === AssetType.ERC20
       ? bannerTerms.data
-        ? Number(bannerTerms.data.durationDays)
+        ? Number(bannerTerms.data.live.durationDays)
         : loan.data.durationDays
       : undefined,
   );
@@ -524,26 +538,45 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
   // read failure we fall back to the row rather than hide a warning —
   // the repay submit path re-checks live and is authoritative.
   const termsStartSec = bannerTerms.data
-    ? Number(bannerTerms.data.startTime)
+    ? Number(bannerTerms.data.live.startTime)
     : row.startTime;
   const termsDurationDays = bannerTerms.data
-    ? Number(bannerTerms.data.durationDays)
+    ? Number(bannerTerms.data.live.durationDays)
     : row.durationDays;
   const termsEndSec = termsStartSec + termsDurationDays * 86400;
+  // Anchor "now" to CHAIN time when the live read has it (Codex #1166
+  // r2): the repay/default gates run on block.timestamp, so a skewed
+  // device clock must not flip the banner to "no longer accepts
+  // repayment" early — or keep a countdown alive late. The local tick
+  // only advances the anchor between refetches.
+  const bannerNowSec = bannerTerms.data
+    ? bannerTerms.data.chainNow + (nowSec - bannerTerms.data.fetchedAtLocal)
+    : nowSec;
   const graceDeadline =
     grace.data !== undefined ? termsEndSec + Number(grace.data) : null;
-  const graceRemaining = graceDeadline !== null ? graceDeadline - nowSec : null;
+  const graceRemaining = graceDeadline !== null ? graceDeadline - bannerNowSec : null;
   const showGraceBanner =
     view.state === 'overdue' &&
     !loanOver &&
     !isRental &&
+    !closedThisSession &&
     graceRemaining !== null &&
     // Live terms say the loan is genuinely past due (a keeper extend
     // makes this false and the banner honestly disappears)…
-    termsEndSec < nowSec &&
+    termsEndSec < bannerNowSec &&
     // …and never render from row terms while the live read is still
     // in flight for a past-due candidate.
     !(rowPastDueCandidate && bannerTerms.isLoading);
+  // Codex #1166 r2 — fallback_pending is the OTHER post-grace danger
+  // state (a failed default settling), and its loanStateView is
+  // "Being settled", so the overdue banner above never fires. The
+  // borrower can still cure by full repayment until the lender
+  // finalizes — say so where the collateral is most at risk.
+  const showFallbackCureBanner =
+    row.status === 'fallback_pending' &&
+    !isRental &&
+    role === 'borrower' &&
+    !closedThisSession;
   // Rendered-length string for the "if nothing happens" gloss on any
   // live loan (not just overdue ones).
   const graceLengthStr =
@@ -1271,6 +1304,10 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
                 ? copy.positions.graceOverLender
                 : copy.positions.graceOverBorrower}
           </span>
+        </div>
+      ) : showFallbackCureBanner ? (
+        <div className="banner banner-danger" role="alert">
+          <span className="banner-body">{copy.positions.fallbackCureBorrower}</span>
         </div>
       ) : null}
 
