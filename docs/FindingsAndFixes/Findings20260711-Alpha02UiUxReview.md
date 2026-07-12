@@ -51,6 +51,7 @@ line when addressed. Unmarked findings are OPEN.
 | --- | --- | --- |
 | 1 — trust (2026-07-11) | UX-001, UX-002, UX-007, UX-020, UX-021, UX-022 | ✅ Fixed — state-aware loan receipts, exact claim amounts via `getClaimable`, FAB moved bottom-left on phones, header chip nowrap, Try-again on unavailable states, spinning loaders |
 | 2 — mobile (2026-07-11) | UX-006, UX-019, UX-039, UX-042 | ✅ Fixed — desk stacks single-column below 560px, item-row cards stack with full-width CTAs ≤480px, compact "Step N of M" wizard line on phones, tappable copy+explorer address chips (44px touch targets) |
+| standalone (2026-07-11) | UX-015 | ✅ Fixed by #1094 (plain-language contract errors) — name-keyed decoder across `CollateralPrecheck` / `SimulationPreview` / dry-run footer; #1112 adds the early under-collateral warning on the borrow step |
 
 ---
 
@@ -190,6 +191,8 @@ entering terms).
 strings verbatim (`CollateralPrecheck.tsx:24-27`) — selector-style
 jargon on the highest-stakes screen. Map known reverts to plain
 sentences; keep raw text behind a details expander.
+
+**Status: ✅ FIXED (#1094, 2026-07-11).** A shared name-keyed error decoder (`lib/errors.ts`) now maps the reverts a normal user can actually reach to plain sentences across `CollateralPrecheck`, `SimulationPreview`, and the pre-sign dry-run footer; any unmapped error humanizes from its NAME (stable across a signature-level change) instead of a hex blob. Complemented by the early under-collateral warning on the borrow terms step (#1112).
 
 ### UX-016 · Consent silently un-ticks on term changes / keystrokes (S)
 Both the guided review (`OfferFlow.tsx:787-1178` effects) and the desk
