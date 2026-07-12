@@ -183,12 +183,17 @@ function OfferRow({ offer, risk }: { offer: IndexedOffer; risk: RiskLevel | null
         <Link to={acceptHref} className="btn btn-primary btn-sm">
           {/* UX-018 — role-specific CTA: "Use this offer" hid the money
               direction. Taking a LENDER offer makes you the borrower;
-              taking a BORROW request makes you the lender. */}
+              taking a BORROW request makes you the lender. A sale
+              vehicle is a borrower-STYLE row (offerType 1) but accepting
+              it BUYS a running lender position, not funds a new borrow —
+              so it must not read "Fund this request" (Codex #1175 r1). */}
           {isRentalListing
             ? 'Rent this NFT'
-            : isLending
-              ? 'Borrow this'
-              : 'Fund this request'}
+            : offer.isSaleVehicle
+              ? 'Buy this loan position'
+              : isLending
+                ? 'Borrow this'
+                : 'Fund this request'}
         </Link>
       ) : (
         <span className={`badge ${isLending ? 'badge-info' : 'badge-neutral'}`}>
@@ -382,8 +387,11 @@ export function Offers() {
             ))}
           </div>
           <p className="muted" style={{ marginTop: 16 }}>
-            “Use this offer” takes you through the same review-and-sign steps
-            as the guided <Link to="/borrow">Borrow</Link> and{' '}
+            {/* Copy follows the role-specific card CTAs (Codex #1175 r2)
+                — the button no longer reads "Use this offer". */}
+            Taking an offer here — “Borrow this”, “Fund this request”, or “Buy
+            this loan position” — walks you through the same review-and-sign
+            steps as the guided <Link to="/borrow">Borrow</Link> and{' '}
             <Link to="/lend">Lend</Link> flows.
           </p>
         </>

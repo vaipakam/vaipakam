@@ -238,7 +238,7 @@ Role-specific CTAs: "Borrow this" / "Fund this request". (Offer rows
 also print "1000 bps" beside "10% yearly" — drop the bps duplication
 outside Advanced.)
 
-**Status: ✅ FIXED (batch 8b, 2026-07-12).** The Offer Book card CTA is now role-specific: **"Borrow this"** on a lender offer (taking it makes you the borrower) and **"Fund this request"** on a borrow request (taking it makes you the lender), replacing the direction-blind "Use this offer". The bps-beside-percent duplication was already Advanced-only (the `${bps} bps` string lives inside the `isAdvanced`-gated `advancedBits` block; Basic mode shows only the "…% yearly" line), so no change was needed there.
+**Status: ✅ FIXED (batch 8b, 2026-07-12).** The Offer Book card CTA is now role-specific: **"Borrow this"** on a lender offer (taking it makes you the borrower) and **"Fund this request"** on a borrow request (taking it makes you the lender), replacing the direction-blind "Use this offer". A **sale vehicle** (a borrower-STYLE row linked to a running loan, where accepting BUYS the lender position, not funds a new borrow) is special-cased to **"Buy this loan position"** so the role CTA never mislabels it (Codex #1175 r1/r2). The Offer Book helper paragraph was updated to name the role-specific actions instead of "Use this offer". The bps-beside-percent duplication was already Advanced-only (the `${bps} bps` string lives inside the `isAdvanced`-gated `advancedBits` block; Basic mode shows only the "…% yearly" line), so no change was needed there.
 
 ### UX-019 · Offer Book cards crushed two-column on mobile (S)
 Title wraps mid-string ("Lending offer ·" / "0.005 WETH"), meta breaks

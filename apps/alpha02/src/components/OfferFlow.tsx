@@ -2523,6 +2523,17 @@ export function OfferFlow({ side }: { side: Side }) {
                 type="button"
                 className="btn btn-secondary"
                 onClick={() => {
+                  // Clear a lingering `?offer=` deep link + its notice
+                  // FIRST (Codex #1175 r1/r2): a user who arrived via a
+                  // valid deep link, switched to "post my own instead",
+                  // then posts again would otherwise have the deep-link
+                  // effect re-select that stale offer on returning to
+                  // 'details' (selected cleared, offerParam still set) —
+                  // jumping to accept-review instead of the promised
+                  // clean form — and a stale deepLinkNotice could sit
+                  // above it.
+                  setSearchParams({}, { replace: true });
+                  setDeepLinkNotice(null);
                   setSelected(null);
                   setForm({ ...initialOfferForm, offerType: side });
                   setTxHash(null);
