@@ -264,12 +264,27 @@ export function Positions() {
               title={copy.positions.emptyTitle}
               body={copy.positions.emptyBody}
               action={
-                <Link to="/" className="btn btn-primary">
-                  Get started
-                </Link>
+                <div className="stack" style={{ alignItems: 'center', gap: 8 }}>
+                  <Link to="/" className="btn btn-primary">
+                    Get started
+                  </Link>
+                  {/* UX-050 (Codex #1171 r1) — a past user with no current
+                      positions but historical activity must still find
+                      the feed; the link belongs on the EMPTY state too,
+                      not only the non-empty branch. */}
+                  <Link to="/activity" className="muted">
+                    {copy.positions.seeActivity}
+                  </Link>
+                </div>
               }
             />
-          ) : null}
+          ) : (
+            // UX-050 — surface the full activity history for Basic-mode
+            // users, who don't get Activity in the nav.
+            <p className="muted" style={{ marginTop: 8 }}>
+              <Link to="/activity">{copy.positions.seeActivity}</Link>
+            </p>
+          )}
         </>
       )}
     </div>
