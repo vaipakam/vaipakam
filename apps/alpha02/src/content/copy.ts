@@ -810,6 +810,19 @@ export const copy = {
       `This loan is past due. Repay within about ${remaining} — after that the lender can take the collateral.`,
     graceCountdownLender: (remaining: string) =>
       `This loan is past due. If the borrower does not repay within about ${remaining}, you can claim their collateral.`,
+    graceCountdownViewer: (remaining: string) =>
+      `This loan is past due. If it isn’t repaid within about ${remaining}, the lender can claim the collateral.`,
+    graceOverViewer:
+      'The grace period has ended — the loan can now be marked defaulted, and the collateral goes to the lender.',
+    // Codex #1166 r3 — a failed grace-window read must not silence the
+    // warning at the exact moment collateral is at risk: fall back to
+    // an unknown-deadline alert instead of hiding the banner.
+    graceUnknownBorrower:
+      'This loan is past due and the grace window may be running out — we couldn’t read the exact deadline right now. Repay as soon as possible, before the lender can take the collateral.',
+    graceUnknownLender:
+      'This loan is past due — we couldn’t read the exact grace deadline right now. Once the grace window ends and the default is recorded, the collateral claim appears here.',
+    graceUnknownViewer:
+      'This loan is past due. Once its grace window ends, the lender can claim the collateral.',
     // Codex #1166 r1 — past graceEnd the contracts REJECT ordinary
     // repayment (RepayFacet RepaymentPastGracePeriod; only a
     // fallback-pending cure is exempt), so never suggest a repay race.

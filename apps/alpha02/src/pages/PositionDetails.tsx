@@ -416,11 +416,17 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
   // still valid. `loanLive` above is advanced-mode-only by design (RPC
   // diet), so this is a separate single read enabled exactly when the
   // ROW looks past due — the only state that renders the banner.
+  // The candidate gate fires an HOUR before the local-clock due
+  // boundary (Codex #1166 r3): the local clock only decides when to
+  // START the chain-time read — chain time then decides whether the
+  // banner shows. A device clock slow by less than the margin can no
+  // longer delay the warning; skews beyond an hour break TLS long
+  // before they break us.
   const rowPastDueCandidate = Boolean(
     loan.data &&
       (loan.data.status === 'active' || loan.data.status === 'fallback_pending') &&
       loan.data.assetType === AssetType.ERC20 &&
-      loan.data.startTime + loan.data.durationDays * 86400 < nowSec,
+      loan.data.startTime + loan.data.durationDays * 86400 < nowSec + 3600,
   );
   const bannerTerms = useQuery({
     queryKey: ['graceBannerTerms', readChain.chainId, loan.data?.loanId],
@@ -555,18 +561,32 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
   const graceDeadline =
     grace.data !== undefined ? termsEndSec + Number(grace.data) : null;
   const graceRemaining = graceDeadline !== null ? graceDeadline - bannerNowSec : null;
+  // Past-due is decided by CHAIN-anchored time against (preferably
+  // live) terms — not by view.state, whose daysRemaining derives from
+  // the device clock (Codex #1166 r3). A failed grace read keeps a
+  // generic warning instead of silencing the alert (also r3).
   const showGraceBanner =
-    view.state === 'overdue' &&
+    row.status === 'active' &&
     !loanOver &&
     !isRental &&
     !closedThisSession &&
-    graceRemaining !== null &&
+    (graceRemaining !== null || grace.isError) &&
     // Live terms say the loan is genuinely past due (a keeper extend
     // makes this false and the banner honestly disappears)…
     termsEndSec < bannerNowSec &&
     // …and never render from row terms while the live read is still
     // in flight for a past-due candidate.
     !(rowPastDueCandidate && bannerTerms.isLoading);
+  // Codex #1166 r3 — once grace is VERIFIABLY over (live-confirmed
+  // terms + a successful grace read), the contract rejects ordinary
+  // repay (RepaymentPastGracePeriod), so offering the Repay button
+  // would only manufacture a doomed submit. Boundary follows the
+  // contract's own `>` semantics (repay is still accepted AT
+  // graceEnd). fallback_pending cures stay exempt.
+  const graceVerifiablyOver =
+    bannerTerms.data !== undefined &&
+    graceRemaining !== null &&
+    graceRemaining < 0;
   // Codex #1166 r2 — fallback_pending is the OTHER post-grace danger
   // state (a failed default settling), and its loanStateView is
   // "Being settled", so the overdue banner above never fires. The
@@ -594,6 +614,10 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
       !closedThisSession &&
       (row.status === 'active' || row.status === 'fallback_pending')
     ) {
+      // Grace verifiably over on an ACTIVE loan → the contract rejects
+      // repay; the banner above explains. The fallback_pending cure is
+      // contract-exempt and must keep its action (Codex #1166 r3).
+      if (row.status === 'active' && graceVerifiablyOver) return null;
       return 'repay';
     }
     // Claimable proper-close terminals: repaid or internal_matched
@@ -1295,14 +1319,27 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
         // UX-004 — the past-due countdown. role="alert": this is the
         // one moment on the page where losing collateral is imminent.
         <div className="banner banner-danger" role="alert">
+          {/* Role-branched three ways (Codex #1166 r3): a viewer — no
+              wallet, neither position, or owner read still checking —
+              must never be told to repay a loan they can't repay. */}
           <span className="banner-body">
-            {graceRemaining! > 0
+            {graceRemaining === null
               ? role === 'lender'
-                ? copy.positions.graceCountdownLender(formatRemaining(graceRemaining!))
-                : copy.positions.graceCountdownBorrower(formatRemaining(graceRemaining!))
-              : role === 'lender'
-                ? copy.positions.graceOverLender
-                : copy.positions.graceOverBorrower}
+                ? copy.positions.graceUnknownLender
+                : role === 'borrower'
+                  ? copy.positions.graceUnknownBorrower
+                  : copy.positions.graceUnknownViewer
+              : graceRemaining >= 0
+                ? role === 'lender'
+                  ? copy.positions.graceCountdownLender(formatRemaining(graceRemaining))
+                  : role === 'borrower'
+                    ? copy.positions.graceCountdownBorrower(formatRemaining(graceRemaining))
+                    : copy.positions.graceCountdownViewer(formatRemaining(graceRemaining))
+                : role === 'lender'
+                  ? copy.positions.graceOverLender
+                  : role === 'borrower'
+                    ? copy.positions.graceOverBorrower
+                    : copy.positions.graceOverViewer}
           </span>
         </div>
       ) : showFallbackCureBanner ? (
