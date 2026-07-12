@@ -199,7 +199,14 @@ export function Activity() {
           truncated = false;
           break;
         }
-        if (mine.length >= 50) break; // plenty to show — still truncated
+        // Stop on DISTINCT-TRANSACTION count, not raw events (Codex
+        // #1171 r1): loan actions emit LoanInitiated/*Details/Transfer
+        // companions, so 50 raw events can collapse to far fewer than
+        // one reveal page — stopping on raw count would show the
+        // truncated banner yet offer no "load older" path. 50 distinct
+        // txs ⇒ ~50 coalesced rows ⇒ a real second reveal page.
+        const distinctTx = new Set(mine.map((e) => e.txHash || `${e.blockNumber}:${e.logIndex}`));
+        if (distinctTx.size >= 50) break; // plenty of rows — still truncated
         before = page.nextBefore;
       }
       return { events: mine, truncated };

@@ -73,6 +73,13 @@ export const ACTIVITY_LABELS: Record<string, ActivityLabel> = {
   LoanSaleOfferLinked: { label: 'Loan listed for sale', category: 'loan-modify', priority: 60 },
   LoanObligationTransferred: { label: 'Loan position transferred', category: 'loan-modify', priority: 70 },
   CollateralAdded: { label: 'Collateral added', category: 'collateral', priority: 75 },
+  InternalMatchExecuted: { label: 'Loan matched internally', category: 'loan-open', priority: 82 },
+  // Prepay collateral-sale listings (the borrower's parallel-sale exit).
+  PrepayListingPosted: { label: 'Collateral listed for sale', category: 'loan-modify', priority: 55 },
+  PrepayListingMatched: { label: 'Collateral sale matched', category: 'loan-modify', priority: 78 },
+  PrepayListingUpdated: { label: 'Collateral listing updated', category: 'loan-modify', priority: 50 },
+  PrepayListingCanceled: { label: 'Collateral listing cancelled', category: 'loan-modify', priority: 45 },
+  PrepayCollateralSaleSettled: { label: 'Collateral sale settled', category: 'loan-close', priority: 80 },
   // Swap-to-repay
   SwapToRepayExecuted: { label: 'Repaid via collateral swap', category: 'loan-repay', priority: 88 },
   SwapToRepayPartialExecuted: { label: 'Partial repay via swap', category: 'loan-repay', priority: 70 },

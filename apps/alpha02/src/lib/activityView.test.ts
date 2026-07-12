@@ -52,6 +52,20 @@ describe('labelForKind', () => {
   it('humanizes an unmapped kind', () => {
     expect(labelForKind('SomeNewEvent')).toBe('Some New Event');
   });
+  it('maps the internal-match + prepay-listing event family (Codex #1171 r1)', () => {
+    // Every kind the indexer's log.eventName handlers emit should have
+    // an explicit label, not a title-cased raw name.
+    for (const kind of [
+      'InternalMatchExecuted',
+      'PrepayListingPosted',
+      'PrepayListingMatched',
+      'PrepayListingUpdated',
+      'PrepayListingCanceled',
+      'PrepayCollateralSaleSettled',
+    ]) {
+      expect(ACTIVITY_LABELS[kind]).toBeDefined();
+    }
+  });
 });
 
 describe('coalesceByTx', () => {
