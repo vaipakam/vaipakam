@@ -259,6 +259,9 @@ export const copy = {
     balanceSufficient: (asset: string) => `Enough ${asset} in your wallet`,
     tokenValid: 'Asset recognised as a token',
     consent: 'Risk disclosures and terms accepted',
+    // UX-010 — the inline remedy on a failing balance check (testnets
+    // with deployed mocks only).
+    getTestAssets: 'Get test assets',
   },
 
   receipt: {
@@ -458,6 +461,11 @@ export const copy = {
       'The connected wallet doesn’t own this NFT — check the contract address and token id.',
     browseTitle: 'NFTs available to rent',
     browseEmpty: 'No rental listings right now.',
+    // UX-023 — the empty browse list points at the other side of the
+    // market instead of dead-ending (the path switch sits right above
+    // this flow).
+    browseEmptyCta:
+      'Own an NFT? Use the switch above to list it for rent instead — renters prepay the whole rental up front, so an empty market is an opportunity.',
     browseUnavailable:
       'We couldn’t load rental listings right now. Please try again in a moment.',
     notDebt:
@@ -805,6 +813,16 @@ export const copy = {
       `If you do nothing and the loan passes its due date and the ${grace ? `${grace} ` : ''}grace period (a short extra window to repay before the lender can take the collateral), the lender can receive your ${collateral} collateral.`,
     whatIfNothingLender: (grace?: string) =>
       `If the borrower does not repay by the due date plus the ${grace ? `${grace} ` : ''}grace period (a short extra repayment window), you can claim their collateral.`,
+    // #1166 live-review follow-up — a wallet holding neither position
+    // must not be addressed as a party ("you can claim…").
+    whatIfNothingViewer: (grace?: string) =>
+      `If the borrower does not repay by the due date plus the ${grace ? `${grace} ` : ''}grace period (a short extra repayment window), the lender can claim the collateral.`,
+    // UX-024 — the list groups by what needs the user, and rows with a
+    // pending claim say so instead of a bare status badge.
+    groupAttention: 'Needs your attention',
+    groupActive: 'Active loans',
+    groupEnded: 'Ended loans',
+    claimWaiting: 'Claim waiting',
     // UX-004 — past-due escalation banner with the live countdown.
     graceCountdownBorrower: (remaining: string) =>
       `This loan is past due. Repay within about ${remaining} — after that the lender can take the collateral.`,
@@ -880,10 +898,28 @@ export const copy = {
       'This position has already closed on-chain — the status here is live. Your lists may take a moment to catch up.',
   },
 
+  // UX-026 — orientation for a Basic-mode user landing on a power
+  // surface by URL: name what it is, offer the guided path back, and
+  // offer the mode switch. Dismissible; never shown in Advanced.
+  powerSurface: {
+    body: 'This is a power-user screen — raw offers and live rates with less hand-holding. The guided Borrow and Lend flows cover the same actions with step-by-step explanations.',
+    // Both guided flows offered (Codex #1168 r1) — a lender routed
+    // into /borrow is the wrong money direction.
+    guidedBorrow: 'Guided Borrow',
+    guidedLend: 'Guided Lend',
+    enableAdvanced: 'I know what I’m doing — enable Advanced mode',
+    dismiss: 'Dismiss',
+  },
+
   claims: {
     title: 'Claim Center',
     lede: 'Money and assets that are ready for you to collect.',
     empty: 'Nothing to claim right now.',
+    // UX-023 — an empty Claim Center points forward instead of
+    // dead-ending.
+    emptyBody:
+      'When a loan or rental you are part of ends, anything owed to you appears here automatically.',
+    emptyCta: 'See my positions',
     unavailable:
       'We couldn’t load your claims right now. Your funds are unaffected — please try again in a moment.',
     claim: 'Claim',
@@ -1268,6 +1304,14 @@ export const copy = {
       `Switch your wallet to ${chainName} to mint test assets.`,
     minting: 'Minting…',
     viewTx: 'View transaction',
+    // UX-023 — the mint-success banner carries the next hop so the
+    // guided faucet→first-offer path doesn't break after hop one.
+    nextSteps: 'Next: put it to work —',
+    nextBorrow: 'Borrow against it',
+    nextLend: 'Lend it out',
+    // NFT mints route to the RENTAL flow, not the ERC-20 lend flow
+    // (Codex #1168 r1) — NFTs aren't loan principal here.
+    nextRent: 'List it for rent',
     footer:
       'Minted assets land in your wallet. Use “My vault” and the Borrow, Lend, and NFT Rental screens to put them to work.',
     mintedTokens: (units: number, symbol: string) =>
@@ -1341,6 +1385,10 @@ export const copy = {
     lede: 'Your own on-chain account. Only your wallet controls it — Vaipakam never pools user funds.',
     noVaultYet:
       'Your vault is created automatically with your first offer, loan, or deposit. Nothing to set up.',
+    // UX-023 — both vault empty states point forward instead of
+    // dead-ending.
+    emptyCta: 'Get started',
+    emptyCtaFaucet: 'Get test assets',
     unavailable:
       'We couldn’t read your vault right now. Your funds are unaffected — please try again in a moment.',
     lockedHint:

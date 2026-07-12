@@ -9,8 +9,10 @@
  * stay reachable by URL in both modes (they are deeper tools, not
  * disabled features).
  */
+import { useEffect, useState } from 'react';
 import { NavLink, Outlet, useLocation } from 'react-router-dom';
 import {
+  BadgeCheck,
   CandlestickChart,
   CircleHelp,
   Coins,
@@ -21,6 +23,7 @@ import {
   Landmark,
   ListChecks,
   Gift,
+  Menu,
   Settings,
   BookOpen,
   Droplets,
@@ -62,23 +65,67 @@ const SECONDARY_NAV: NavItem[] = [
   { to: '/desk', label: 'Rate Desk', icon: CandlestickChart, advancedOnly: true },
   { to: '/vpfi', label: 'VPFI discounts', icon: Coins, advancedOnly: true },
   { to: '/activity', label: 'Activity', icon: History, advancedOnly: true },
+  // UX-032 — the trust tool for exactly the off-platform user must be
+  // reachable without a deep link.
+  { to: '/nft', label: 'NFT verifier', icon: BadgeCheck },
   { to: '/settings', label: 'Settings', icon: Settings },
   { to: '/help', label: 'Help', icon: CircleHelp },
 ];
 
-/** Phone tab bar keeps only the highest-frequency destinations. */
+/** Phone tab bar keeps only the highest-frequency destinations; the
+ *  fifth slot is a real "More" menu (UX-011), not a Settings alias. */
 const TABBAR: NavItem[] = [
   { to: '/', label: 'Home', icon: House },
   { to: '/borrow', label: 'Borrow', icon: HandCoins },
   { to: '/lend', label: 'Lend', icon: Coins },
   { to: '/positions', label: 'Positions', icon: ListChecks },
-  { to: '/settings', label: 'More', icon: Settings },
 ];
+
+/** The phone More sheet fronts every destination without a tab of its
+ *  own — the pages with tabs stay out so the sheet reads as "the rest
+ *  of the product", not a second copy of the tab bar. */
+const MORE_SHEET: NavItem[] = [
+  { to: '/rent', label: 'NFT Rental', icon: Images },
+  { to: '/claims', label: 'Claims', icon: Gift },
+  ...SECONDARY_NAV,
+];
+
+/** UX-011 — the Basic/Advanced switch, persistent in the sidebar
+ *  footer (desktop) and the More sheet (phones) instead of buried in
+ *  Settings. Switching never navigates (ModeContext rule). */
+function ModeSwitch() {
+  const { mode, setMode } = useMode();
+  return (
+    <div className="mode-switch" role="group" aria-label="Interface mode">
+      <button
+        type="button"
+        className={mode === 'basic' ? 'active' : ''}
+        aria-pressed={mode === 'basic'}
+        onClick={() => setMode('basic')}
+      >
+        Basic
+      </button>
+      <button
+        type="button"
+        className={mode === 'advanced' ? 'active' : ''}
+        aria-pressed={mode === 'advanced'}
+        onClick={() => setMode('advanced')}
+      >
+        Advanced
+      </button>
+    </div>
+  );
+}
 
 export function AppShell() {
   const { isAdvanced } = useMode();
   const { readChain } = useActiveChain();
   const { pathname, search } = useLocation();
+  // Phone More sheet (UX-011) — closes on any navigation.
+  const [moreOpen, setMoreOpen] = useState(false);
+  useEffect(() => {
+    setMoreOpen(false);
+  }, [pathname]);
 
   // testnetOnly entries (the faucet) additionally require the chain's
   // deployments bundle to actually carry `testnetMocks` — an unseeded
@@ -94,12 +141,16 @@ export function AppShell() {
   // On phones the "More" tab fronts every destination without a tab of
   // its own — highlight it on those pages so the user is never "nowhere".
   const moreIsActive = [
+    '/rent',
     '/claims',
     '/vault',
+    '/faucet',
     '/offers',
     '/desk',
     '/vpfi',
     '/activity',
+    '/nft',
+    '/settings',
     '/help',
   ].some((prefix) => pathname.startsWith(prefix));
 
@@ -149,6 +200,11 @@ export function AppShell() {
               {item.label}
             </NavLink>
           ))}
+          {/* UX-011 — the mode switch lives where the nav lives, so
+              discovering Advanced never requires finding Settings. */}
+          <div className="sidenav-footer">
+            <ModeSwitch />
+          </div>
         </nav>
 
         <main className="shell-main">
@@ -169,6 +225,34 @@ export function AppShell() {
           while it is open. */}
       <DiagnosticsDrawer />
 
+      {moreOpen ? (
+        <>
+          <div
+            className="more-sheet-backdrop"
+            onClick={() => setMoreOpen(false)}
+            aria-hidden
+          />
+          <nav className="more-sheet" aria-label="More destinations">
+            {MORE_SHEET.filter(visible).map((item) => (
+              <NavLink
+                key={item.to}
+                to={item.to}
+                className={({ isActive }) =>
+                  `more-sheet-item ${isActive ? 'active' : ''}`
+                }
+                onClick={() => setMoreOpen(false)}
+              >
+                <item.icon aria-hidden />
+                {item.label}
+              </NavLink>
+            ))}
+            <div className="more-sheet-mode">
+              <ModeSwitch />
+            </div>
+          </nav>
+        </>
+      ) : null}
+
       <nav className="shell-tabbar" aria-label="Quick navigation">
         {TABBAR.map((item) => (
           <NavLink
@@ -176,17 +260,25 @@ export function AppShell() {
             to={item.to}
             end={item.to === '/'}
             className={({ isActive }) =>
-              `tabbar-item ${
-                isActive || (item.to === '/settings' && moreIsActive)
-                  ? 'active'
-                  : ''
-              }`
+              `tabbar-item ${isActive ? 'active' : ''}`
             }
           >
             <item.icon aria-hidden />
             {item.label}
           </NavLink>
         ))}
+        {/* UX-011 — a real More menu, not a Settings alias: every
+            destination without a tab is one tap away. */}
+        <button
+          type="button"
+          className={`tabbar-item ${moreOpen || moreIsActive ? 'active' : ''}`}
+          aria-haspopup="true"
+          aria-expanded={moreOpen}
+          onClick={() => setMoreOpen((o) => !o)}
+        >
+          <Menu aria-hidden />
+          More
+        </button>
       </nav>
     </div>
   );

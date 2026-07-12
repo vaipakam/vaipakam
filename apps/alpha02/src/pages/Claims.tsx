@@ -290,7 +290,17 @@ export function Claims() {
           ) : rowsUnavailable ? (
             <UnavailableState body={copy.claims.unavailable} onRetry={() => void claimables.refetch()} />
           ) : rows.length === 0 ? (
-            <EmptyState icon={Gift} title={copy.claims.empty} />
+            // UX-023 — say where claims come from and point forward.
+            <EmptyState
+              icon={Gift}
+              title={copy.claims.empty}
+              body={copy.claims.emptyBody}
+              action={
+                <Link to="/positions" className="btn btn-secondary">
+                  {copy.claims.emptyCta}
+                </Link>
+              }
+            />
           ) : (
             <div className="row-list">
               {rows.map((loan) => (

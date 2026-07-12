@@ -9,7 +9,16 @@ import { AssetType } from '../lib/types';
 import type { PositionLoan } from '../data/hooks';
 import { healthView, useLoanRisk } from '../data/risk';
 
-export function LoanRow({ loan }: { loan: PositionLoan }) {
+export function LoanRow({
+  loan,
+  claimWaiting,
+}: {
+  loan: PositionLoan;
+  /** UX-024 — chain-confirmed unclaimed payout on this side (from
+   *  useMyClaimables); renders an explicit "Claim waiting" chip so a
+   *  defaulted/repaid row with money on the table says so. */
+  claimWaiting?: boolean;
+}) {
   const isRental = loan.assetType !== AssetType.ERC20;
   const principalMeta = useTokenMeta(isRental ? undefined : loan.lendingAsset);
   const view = loanStateView(loan);
@@ -51,6 +60,9 @@ export function LoanRow({ loan }: { loan: PositionLoan }) {
             : `Loan #${loan.loanId} · ${formatBpsAsPercent(loan.interestRateBps)} yearly interest`}
         </span>
       </span>
+      {claimWaiting ? (
+        <span className="badge badge-ok">{copy.positions.claimWaiting}</span>
+      ) : null}
       {healthOverrides && health ? (
         <span
           className={`badge badge-${health.badge}`}

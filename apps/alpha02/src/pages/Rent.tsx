@@ -1257,7 +1257,11 @@ function RentNftFlow() {
                   empty one — newer listings may be missing. */}
               <MarketFreshnessNote />
               {listings.length === 0 ? (
-                <p className="muted">{copy.rent.browseEmpty}</p>
+                // UX-023 — the empty browse list points at the other
+                // side of the market instead of dead-ending.
+                <p className="muted">
+                  {copy.rent.browseEmpty} {copy.rent.browseEmptyCta}
+                </p>
               ) : (
                 <div className="row-list">
                   {listings.map((o) => (

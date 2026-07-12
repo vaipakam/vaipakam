@@ -52,6 +52,7 @@ line when addressed. Unmarked findings are OPEN.
 | 1 — trust (2026-07-11) | UX-001, UX-002, UX-007, UX-020, UX-021, UX-022 | ✅ Fixed — state-aware loan receipts, exact claim amounts via `getClaimable`, FAB moved bottom-left on phones, header chip nowrap, Try-again on unavailable states, spinning loaders |
 | 2 — mobile (2026-07-11) | UX-006, UX-019, UX-039, UX-042 | ✅ Fixed — desk stacks single-column below 560px, item-row cards stack with full-width CTAs ≤480px, compact "Step N of M" wizard line on phones, tappable copy+explorer address chips (44px touch targets) |
 | 3 — risk visibility (2026-07-11) | UX-003, UX-004, UX-030 | ✅ Fixed — position-list badge escalates on poor health, past-due detail pages show a live grace countdown banner, grace/HF/LTV jargon carries one-clause inline glosses |
+| 4 — dead-ends/discovery (2026-07-12) | UX-010, UX-011, UX-023, UX-024, UX-026, UX-032 | ✅ Fixed — faucet link on failing balance checks, persistent mode switch + real phone More sheet, forward CTAs on Vault/Claims/Rent/faucet-success, Positions grouped with chain-confirmed "Claim waiting" chips, Basic-mode orientation banner on /offers + /desk, NFT verifier in the nav |
 | standalone (2026-07-11) | UX-015 | ✅ Fixed by #1094 (plain-language contract errors) — name-keyed decoder across `CollateralPrecheck` / `SimulationPreview` / dry-run footer; #1112 adds the early under-collateral warning on the borrow step |
 
 ---
@@ -159,6 +160,8 @@ with an empty wallet) stops at the final step with nowhere to go. Fix:
 link the failing item to `/faucet` on testnets (explainer link on
 mainnet).
 
+**Status: ✅ FIXED (batch 4, 2026-07-12).** The failing balance item carries a "Get test assets" link whenever the active chain is a testnet with deployed mocks (same availability predicate as the nav entry).
+
 ### UX-011 · Half the product is undiscoverable; mobile "More" strands users in Settings (M)
 The Basic/Advanced toggle exists only inside Settings
 (`Settings.tsx:63-93`); nothing persistent hints that Offer Book, Rate
@@ -167,6 +170,8 @@ fifth tab is a gear icon labeled "More" that routes to the full
 Settings page, with secondary destinations (Vault, Claims, Offer Book,
 Help) buried at its bottom. Fix: a persistent mode switch (top bar or
 sidebar footer) + a real "More" menu/sheet on mobile.
+
+**Status: ✅ FIXED (batch 4, 2026-07-12).** A Basic/Advanced segmented switch lives in the sidebar footer (desktop) and the new More sheet (phones); the fifth tab is now a real More menu — a bottom sheet listing every destination without a tab (NFT Rental, Claims, vault, faucet, power surfaces, verifier, Settings, Help) plus the mode switch. Settings keeps its explanatory toggle.
 
 ---
 
@@ -254,11 +259,15 @@ sentence; faucet success offers explorer links but no "now go borrow/
 lend" next step — the guided faucet→first-offer path breaks after hop
 one. Add forward CTAs to each.
 
+**Status: ✅ FIXED (batch 4, 2026-07-12).** Vault's "No vault yet" and empty-assets states link to the faucet (seeded testnets) or Home; the empty Claim Center explains where claims come from and links to Positions; the empty rental browse points at the list-your-NFT path switch; faucet mint success carries "Next: Borrow against it · Lend it out" links.
+
 ### UX-024 · Positions page promises "the one action each needs" but shows none (M)
 Cards render status badges only — the Defaulted loan with a claim
 waiting says nothing and links nowhere (visual: `basic-desktop--
 positions.png`). Add per-card actions ("Claim funds", "Repay") and
 group Needs-action / Active / Closed as history grows.
+
+**Status: ✅ FIXED (batch 4, 2026-07-12).** Loans group into "Needs your attention" / "Active loans" / "Ended loans"; the attention group is fed by the same chain-confirmed `getClaimable` query the Claim Center runs (shared cache) and its rows carry an explicit "Claim waiting" chip. While that read is loading or unavailable the list degrades to Active/Ended — it never guesses a claim.
 
 ### UX-025 · While role verification runs, the detail page's main action vanishes silently (S)
 `role === 'checking'` renders `null` in the action region
@@ -270,6 +279,8 @@ role…" state.
 Both are URL-reachable in Basic by design, but nothing says "this is a
 power surface" or routes back to the guided flows. Dismissible banner
 with links (and an "enable Advanced" action).
+
+**Status: ✅ FIXED (batch 4, 2026-07-12).** `PowerSurfaceNote` renders on /offers and /desk in Basic mode: names the surface, links to the guided flows, offers "enable Advanced mode", and remembers dismissal per browser. Never shown in Advanced.
 
 ### UX-027 · Desk ticket lacks Max buttons and any fee/total preview (M)
 Amount/collateral are free-typed 18-decimal fields with no
@@ -313,6 +324,8 @@ confirmed mechanically by the sweep's landmark probe.
 A trust tool for exactly the off-platform user, absent from all nav
 and Help. Add to secondary nav / Help ("Check a position NFT before
 you buy").
+
+**Status: ✅ FIXED (batch 4, 2026-07-12).** "NFT verifier" now sits in the secondary nav (desktop sidebar + phone More sheet). The Help-page mention lands with UX-049 (the Help content catch-up).
 
 ### UX-033 · Wallet-SDK analytics phone home (S)
 Consistent with the zero-real-error baseline above: the WalletConnect/
