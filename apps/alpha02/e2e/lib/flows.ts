@@ -128,7 +128,9 @@ async function signAcceptReview(page: Page): Promise<void> {
 }
 
 /** Borrower accepts a SPECIFIC offer via the offer-book deep link
- *  (?offer=<id>) — the Offer Book "Use this offer" journey. */
+ *  (?offer=<id>) — the Offer Book take-an-offer journey (the card CTA
+ *  reads "Borrow this" on a lender offer / "Fund this request" on a
+ *  borrow request, UX-018). */
 export async function acceptAsBorrower(
   page: Page,
   offerId: bigint,

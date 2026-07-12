@@ -113,6 +113,8 @@ import { AssetPicker } from './AssetPicker';
 import { MarketFreshnessNote } from './MarketFreshnessNote';
 import { Checklist, allChecksPass, type CheckItem } from './Checklist';
 import { ReviewReceipt, type ReceiptData } from './ReviewReceipt';
+import { EmptyState } from './EmptyState';
+import { ConnectButton } from './ConnectButton';
 import { StepNav } from './StepNav';
 import { useEligibility } from './useEligibility';
 import { idleAware } from '../lib/idle';
@@ -255,7 +257,7 @@ function MatchOfferRow({
 export function OfferFlow({ side }: { side: Side }) {
   const text = SIDE_COPY[side];
   const { isAdvanced } = useMode();
-  const { address, walletChain, readChain } = useActiveChain();
+  const { address, walletChain, readChain, isConnected } = useActiveChain();
   const { data: walletClient } = useWalletClient();
   const publicClient = usePublicClient({ chainId: walletChain?.chainId });
   const { write } = useDiamondWrite();
@@ -1993,6 +1995,22 @@ export function OfferFlow({ side }: { side: Side }) {
               </span>
             ) : null}
           </div>
+          {/* UX-014 — surface the wallet requirement on the FIRST step,
+              not only in the final review checklist: a disconnected user
+              shouldn't fill the whole flow before learning they can't
+              sign. Non-blocking — they can still browse matches. */}
+          {!isConnected ? (
+            <div
+              className="banner banner-info"
+              role="note"
+              style={{ marginBottom: 12, display: 'flex', flexWrap: 'wrap', gap: 8, alignItems: 'center' }}
+            >
+              <span className="banner-body" style={{ flex: 1, minWidth: 180 }}>
+                {copy.checks.connectEarly}
+              </span>
+              <ConnectButton />
+            </div>
+          ) : null}
           <button
             type="button"
             className="btn btn-primary btn-block"
@@ -2027,17 +2045,20 @@ export function OfferFlow({ side }: { side: Side }) {
                     stale empty one — better offers may be missing. */}
                 <MarketFreshnessNote />
                 {matches.length === 0 ? (
-                  <>
-                    <p className="muted">{text.matchEmpty}</p>
-                    {/* "No matches" while flagged ones were withheld
-                        would be a lie of omission — always say what
-                        the safety screen hid. */}
-                    {hiddenFlagged > 0 ? (
-                      <p className="muted">
-                        {copy.tokenSecurity.matchesHidden(hiddenFlagged)}
-                      </p>
-                    ) : null}
-                  </>
+                  // UX-040 — the shared EmptyState (icon + heading), not
+                  // bespoke muted paragraphs, so this matches every other
+                  // empty surface. The withheld-flagged note rides as the
+                  // body so "no matches" never omits what the safety
+                  // screen hid.
+                  <EmptyState
+                    icon={Search}
+                    title={text.matchEmpty}
+                    body={
+                      hiddenFlagged > 0
+                        ? copy.tokenSecurity.matchesHidden(hiddenFlagged)
+                        : undefined
+                    }
+                  />
                 ) : (
                   <>
                     <div className="row-list">
@@ -2486,9 +2507,34 @@ export function OfferFlow({ side }: { side: Side }) {
               </a>
             </p>
           ) : null}
-          <Link to="/positions" className="btn btn-primary">
-            View my positions
-          </Link>
+          <div
+            className="cluster"
+            style={{ justifyContent: 'center', marginTop: 4 }}
+          >
+            <Link to="/positions" className="btn btn-primary">
+              View my positions
+            </Link>
+            {/* UX-041 — a POST flow can go straight into another offer
+                without leaving for /positions and back. Resets the flow
+                to its first step with a clean form; accept flows are
+                per-offer, so they keep only the positions link. */}
+            {mode === 'post' ? (
+              <button
+                type="button"
+                className="btn btn-secondary"
+                onClick={() => {
+                  setSelected(null);
+                  setForm({ ...initialOfferForm, offerType: side });
+                  setTxHash(null);
+                  setDoneWasSaleBuy(null);
+                  setSubmitError(null);
+                  setStep('details');
+                }}
+              >
+                Post another
+              </button>
+            ) : null}
+          </div>
         </div>
       ) : null}
     </div>

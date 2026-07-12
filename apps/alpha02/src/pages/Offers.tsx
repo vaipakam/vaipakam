@@ -181,7 +181,14 @@ function OfferRow({ offer, risk }: { offer: IndexedOffer; risk: RiskLevel | null
       </span>
       {acceptable ? (
         <Link to={acceptHref} className="btn btn-primary btn-sm">
-          {isRentalListing ? 'Rent this NFT' : 'Use this offer'}
+          {/* UX-018 — role-specific CTA: "Use this offer" hid the money
+              direction. Taking a LENDER offer makes you the borrower;
+              taking a BORROW request makes you the lender. */}
+          {isRentalListing
+            ? 'Rent this NFT'
+            : isLending
+              ? 'Borrow this'
+              : 'Fund this request'}
         </Link>
       ) : (
         <span className={`badge ${isLending ? 'badge-info' : 'badge-neutral'}`}>

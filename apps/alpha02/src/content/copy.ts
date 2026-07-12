@@ -262,6 +262,10 @@ export const copy = {
     // UX-010 — the inline remedy on a failing balance check (testnets
     // with deployed mocks only).
     getTestAssets: 'Get test assets',
+    // UX-014 — surfaced on the first step so the wallet requirement
+    // isn't a surprise at the final review.
+    connectEarly:
+      'Connect your wallet to continue — you’ll need it to sign, so it’s easiest to connect now.',
   },
 
   receipt: {

@@ -206,6 +206,8 @@ revealing "Connect a wallet" in the review checklist
 (`useEligibility.tsx:45-58`). Prompt earlier (details step or on
 entering terms).
 
+**Status: ✅ FIXED (batch 8b, 2026-07-12).** The guided flow's FIRST step now shows a non-blocking "connect your wallet to continue" note with an inline Connect button whenever the wallet is disconnected, so the requirement is surfaced up front instead of only in the final review checklist (which still enforces it). The user can still browse matches while disconnected.
+
 ### UX-015 · Raw contract revert text shown to naive users (S)
 `CollateralPrecheck` and `SimulationPreview` render decoded revert
 strings verbatim (`CollateralPrecheck.tsx:24-27`) — selector-style
@@ -235,6 +237,8 @@ Both card types share the CTA; on a borrow request it makes you the
 Role-specific CTAs: "Borrow this" / "Fund this request". (Offer rows
 also print "1000 bps" beside "10% yearly" — drop the bps duplication
 outside Advanced.)
+
+**Status: ✅ FIXED (batch 8b, 2026-07-12).** The Offer Book card CTA is now role-specific: **"Borrow this"** on a lender offer (taking it makes you the borrower) and **"Fund this request"** on a borrow request (taking it makes you the lender), replacing the direction-blind "Use this offer". The bps-beside-percent duplication was already Advanced-only (the `${bps} bps` string lives inside the `isAdvanced`-gated `advancedBits` block; Basic mode shows only the "…% yearly" line), so no change was needed there.
 
 ### UX-019 · Offer Book cards crushed two-column on mobile (S)
 Title wraps mid-string ("Lending offer ·" / "0.005 WETH"), meta breaks
@@ -286,6 +290,8 @@ group Needs-action / Active / Closed as history grows.
 (`PositionDetails.tsx:1834-1849`) — a borrower mid-repay sees the
 receipt but no Repay button. Render a disabled "Confirming your
 role…" state.
+
+**Status: ✅ FIXED (batch 8b, 2026-07-12).** The action region now renders a disabled "Confirming your role…" button while the on-chain position-holder read is in flight, instead of nothing — so the user sees the action is coming rather than a receipt with no button beneath it.
 
 ### UX-026 · Basic user landing on /desk or /offers gets no orientation (S)
 Both are URL-reachable in Basic by design, but nothing says "this is a
@@ -383,7 +389,15 @@ keeps consoles clean on locked-down networks.
   **Status: ✅ FIXED (batch 2, 2026-07-11).**
 - **UX-040** Empty-matches state in the guided flows doesn't reuse
   `EmptyState`; visual inconsistency with sibling pages. (S)
+  **Status: ✅ FIXED (batch 8b, 2026-07-12).** The guided match step's
+  empty state now renders the shared `EmptyState` (Search icon +
+  heading), with the withheld-flagged note as its body, matching every
+  other empty surface.
 - **UX-041** Done screen offers no "Start another". (S)
+  **Status: ✅ FIXED (batch 8b, 2026-07-12).** The post-flow Done screen
+  now offers "Post another" beside "View my positions" — it resets the
+  flow to its first step with a clean form. Accept flows are per-offer,
+  so they keep only the positions link.
 - **UX-042** Addresses (vault, faucet contracts) lack one-tap copy and
   use ~16 px link glyphs on mobile — sub-44 px targets. (S)
   **Status: ✅ FIXED (batch 2, 2026-07-11).**
