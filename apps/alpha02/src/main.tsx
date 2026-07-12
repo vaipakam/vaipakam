@@ -11,6 +11,48 @@ import { App } from './App';
 import { ErrorBoundary } from './components/ErrorBoundary';
 import './styles/global.css';
 
+// UX-005 (Codex #1169 r1) — with route-level code splitting, a user who
+// keeps the app open across a production deploy holds a STALE entry that
+// references old hashed chunk names. Visiting a not-yet-cached lazy route
+// then requests a chunk the deploy has replaced; the Worker SPA fallback
+// answers with index.html (wrong MIME) and the dynamic import rejects,
+// dropping the user into the error card. Vite fires `vite:preloadError`
+// for exactly this — reload once to pick up the fresh index.html + chunk
+// graph. A session-scoped guard prevents a reload loop if the failure is
+// not a stale-chunk 404 (e.g. a truly offline network).
+let chunkReloadedThisSession = false;
+window.addEventListener('vite:preloadError', (event) => {
+  const KEY = 'alpha02.chunkReloaded';
+  // Auto-reload AT MOST ONCE per session — a sticky flag, not a timed
+  // window (Codex #1169 r3): a stale-deploy chunk graph is fixed by a
+  // single reload, but if each failed fetch takes >10s (flaky net /
+  // CDN outage) a timestamp window would expire between attempts and
+  // reload-loop. The in-memory flag covers a tab with Web Storage
+  // blocked.
+  let already = chunkReloadedThisSession;
+  try {
+    already = already || sessionStorage.getItem(KEY) === '1';
+  } catch {
+    /* storage blocked — rely on the in-memory flag */
+  }
+  // Second+ error this session: do NOT preventDefault — let Vite
+  // rethrow so React.lazy's rejection surfaces the ErrorBoundary's
+  // manual-reload affordance instead of silently swallowing it
+  // (Codex #1169 r4). preventDefault is scoped to the reload branch.
+  if (already) return;
+  // First error: suppress Vite's rethrow (else the dynamic import
+  // rejects into React.lazy and the ErrorBoundary records a display
+  // fault before our reload navigates — Codex #1169 r2), then reload.
+  event.preventDefault();
+  chunkReloadedThisSession = true;
+  try {
+    sessionStorage.setItem(KEY, '1');
+  } catch {
+    /* storage blocked — the in-memory flag above still holds */
+  }
+  window.location.reload();
+});
+
 const queryClient = new QueryClient({
   defaultOptions: {
     queries: {

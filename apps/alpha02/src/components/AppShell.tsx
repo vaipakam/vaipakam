@@ -9,7 +9,7 @@
  * stay reachable by URL in both modes (they are deeper tools, not
  * disabled features).
  */
-import { useEffect, useState } from 'react';
+import { Suspense, useEffect, useState } from 'react';
 import { NavLink, Outlet, useLocation } from 'react-router-dom';
 import {
   BadgeCheck,
@@ -22,6 +22,7 @@ import {
   Images,
   Landmark,
   ListChecks,
+  LoaderCircle,
   Gift,
   Menu,
   Settings,
@@ -36,6 +37,7 @@ import { useActiveChain } from '../chain/useActiveChain';
 import { LiveChainSync } from '../chain/LiveChainSync';
 import { IndexerPushSync } from '../chain/IndexerPushSync';
 import { ConnectButton } from './ConnectButton';
+import { EmptyState } from './EmptyState';
 import { DiagnosticsDrawer } from './DiagnosticsDrawer';
 import { NetworkBanner } from './NetworkBanner';
 import { SanctionsBanner } from './SanctionsBanner';
@@ -214,8 +216,14 @@ export function AppShell() {
               render becomes a recoverable card while the nav stays
               alive; navigating away — including to a different
               ?offer/?chain deep link on the same path — resets it. */}
+          {/* UX-005 — lazy route chunks download on first visit to a
+              route; the fallback reuses the spinning empty state so a
+              chunk fetch reads as "loading" inside the already-painted
+              shell, never a blank panel. */}
           <ErrorBoundary resetKey={pathname + search}>
-            <Outlet />
+            <Suspense fallback={<EmptyState icon={LoaderCircle} title="Loading…" />}>
+              <Outlet />
+            </Suspense>
           </ErrorBoundary>
         </main>
       </div>
