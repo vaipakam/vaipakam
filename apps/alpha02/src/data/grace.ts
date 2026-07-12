@@ -2,13 +2,17 @@
  * UX-004 — the loan's grace window, surfaced to the UI. The window was
  * previously read only at repay-submit time, so a past-due borrower
  * could never see how long they had before liquidation became
- * possible. Grace buckets are protocol config: effectively static per
- * (chain, duration), hence the long staleTime.
+ * possible. Grace buckets are governance config that rarely changes —
+ * but this value feeds the grace-expired ACTION gate (not just copy),
+ * so the cache is kept to minutes: a governance change during an
+ * incident must not gate a borrower on an hour-old bucket (Codex
+ * #1166 r4).
  */
 import { useQuery } from '@tanstack/react-query';
 import { usePublicClient } from 'wagmi';
 import { useActiveChain } from '../chain/useActiveChain';
 import { readGraceSecondsLive } from '../contracts/preflights';
+import { idleAware } from '../lib/idle';
 
 export function useGraceSeconds(durationDays: number | undefined) {
   const { readChain } = useActiveChain();
@@ -16,7 +20,8 @@ export function useGraceSeconds(durationDays: number | undefined) {
   return useQuery({
     queryKey: ['graceSeconds', readChain.chainId, durationDays],
     enabled: durationDays !== undefined && Boolean(publicClient),
-    staleTime: 60 * 60 * 1000,
+    staleTime: 5 * 60 * 1000,
+    refetchInterval: idleAware(10 * 60 * 1000),
     queryFn: () =>
       readGraceSecondsLive({
         publicClient: publicClient!,

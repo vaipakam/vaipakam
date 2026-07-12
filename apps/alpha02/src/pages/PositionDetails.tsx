@@ -561,12 +561,20 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
   const graceDeadline =
     grace.data !== undefined ? termsEndSec + Number(grace.data) : null;
   const graceRemaining = graceDeadline !== null ? graceDeadline - bannerNowSec : null;
+  // Codex #1166 r4 — the LIVE status can be ahead of both the row and
+  // the separate liveStatus query: a loan that already entered
+  // FallbackPending on-chain is still fully curable by repayment, so
+  // neither the "repayment no longer accepted" copy nor the repay
+  // suppression may fire for it — the cure banner takes over instead.
+  const liveSaysFallbackPending =
+    bannerTerms.data?.live.status === LoanStatus.FallbackPending;
   // Past-due is decided by CHAIN-anchored time against (preferably
   // live) terms — not by view.state, whose daysRemaining derives from
   // the device clock (Codex #1166 r3). A failed grace read keeps a
   // generic warning instead of silencing the alert (also r3).
   const showGraceBanner =
     row.status === 'active' &&
+    !liveSaysFallbackPending &&
     !loanOver &&
     !isRental &&
     !closedThisSession &&
@@ -582,18 +590,33 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
   // repay (RepaymentPastGracePeriod), so offering the Repay button
   // would only manufacture a doomed submit. Boundary follows the
   // contract's own `>` semantics (repay is still accepted AT
-  // graceEnd). fallback_pending cures stay exempt.
+  // graceEnd). fallback_pending cures stay exempt — including when
+  // only the LIVE read knows the loan is FallbackPending (r4).
   const graceVerifiablyOver =
     bannerTerms.data !== undefined &&
+    !liveSaysFallbackPending &&
     graceRemaining !== null &&
     graceRemaining < 0;
+  // Codex #1166 r4 — the definitive "no longer accepts repayment"
+  // wording is allowed ONLY with live-confirmed terms; from row-only
+  // terms an expired computation downgrades to the unknown-deadline
+  // warning (the exact stale-row case the live read exists to avoid).
+  const gracePhase: 'unknown' | 'countdown' | 'over' =
+    graceRemaining === null
+      ? 'unknown'
+      : graceRemaining >= 0
+        ? 'countdown'
+        : bannerTerms.data
+          ? 'over'
+          : 'unknown';
   // Codex #1166 r2 — fallback_pending is the OTHER post-grace danger
   // state (a failed default settling), and its loanStateView is
   // "Being settled", so the overdue banner above never fires. The
   // borrower can still cure by full repayment until the lender
   // finalizes — say so where the collateral is most at risk.
   const showFallbackCureBanner =
-    row.status === 'fallback_pending' &&
+    (row.status === 'fallback_pending' ||
+      (row.status === 'active' && liveSaysFallbackPending)) &&
     !isRental &&
     role === 'borrower' &&
     !closedThisSession;
@@ -1323,18 +1346,18 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
               wallet, neither position, or owner read still checking —
               must never be told to repay a loan they can't repay. */}
           <span className="banner-body">
-            {graceRemaining === null
+            {gracePhase === 'unknown'
               ? role === 'lender'
                 ? copy.positions.graceUnknownLender
                 : role === 'borrower'
                   ? copy.positions.graceUnknownBorrower
                   : copy.positions.graceUnknownViewer
-              : graceRemaining >= 0
+              : gracePhase === 'countdown'
                 ? role === 'lender'
-                  ? copy.positions.graceCountdownLender(formatRemaining(graceRemaining))
+                  ? copy.positions.graceCountdownLender(formatRemaining(graceRemaining!))
                   : role === 'borrower'
-                    ? copy.positions.graceCountdownBorrower(formatRemaining(graceRemaining))
-                    : copy.positions.graceCountdownViewer(formatRemaining(graceRemaining))
+                    ? copy.positions.graceCountdownBorrower(formatRemaining(graceRemaining!))
+                    : copy.positions.graceCountdownViewer(formatRemaining(graceRemaining!))
                 : role === 'lender'
                   ? copy.positions.graceOverLender
                   : role === 'borrower'
