@@ -22,26 +22,28 @@ import './styles/global.css';
 // not a stale-chunk 404 (e.g. a truly offline network).
 let chunkReloadedThisSession = false;
 window.addEventListener('vite:preloadError', (event) => {
-  // preventDefault so Vite does NOT rethrow — otherwise the dynamic
-  // import still rejects into React.lazy → the ErrorBoundary records a
-  // display fault before our reload navigates, defeating the point
-  // (Codex #1169 r2, per Vite's load-error-handling guide).
-  event.preventDefault();
   const KEY = 'alpha02.chunkReloaded';
   // Auto-reload AT MOST ONCE per session — a sticky flag, not a timed
   // window (Codex #1169 r3): a stale-deploy chunk graph is fixed by a
   // single reload, but if each failed fetch takes >10s (flaky net /
   // CDN outage) a timestamp window would expire between attempts and
-  // reload-loop. After one attempt we fall through to React.lazy's
-  // rejection → the ErrorBoundary's manual "reload" affordance. The
-  // in-memory flag covers a tab with Web Storage blocked.
+  // reload-loop. The in-memory flag covers a tab with Web Storage
+  // blocked.
   let already = chunkReloadedThisSession;
   try {
     already = already || sessionStorage.getItem(KEY) === '1';
   } catch {
     /* storage blocked — rely on the in-memory flag */
   }
+  // Second+ error this session: do NOT preventDefault — let Vite
+  // rethrow so React.lazy's rejection surfaces the ErrorBoundary's
+  // manual-reload affordance instead of silently swallowing it
+  // (Codex #1169 r4). preventDefault is scoped to the reload branch.
   if (already) return;
+  // First error: suppress Vite's rethrow (else the dynamic import
+  // rejects into React.lazy and the ErrorBoundary records a display
+  // fault before our reload navigates — Codex #1169 r2), then reload.
+  event.preventDefault();
   chunkReloadedThisSession = true;
   try {
     sessionStorage.setItem(KEY, '1');
