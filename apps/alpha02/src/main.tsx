@@ -20,20 +20,38 @@ import './styles/global.css';
 // for exactly this — reload once to pick up the fresh index.html + chunk
 // graph. A session-scoped guard prevents a reload loop if the failure is
 // not a stale-chunk 404 (e.g. a truly offline network).
-window.addEventListener('vite:preloadError', () => {
+let lastChunkReloadAt = 0;
+window.addEventListener('vite:preloadError', (event) => {
+  // preventDefault so Vite does NOT rethrow — otherwise the dynamic
+  // import still rejects into React.lazy → the ErrorBoundary records a
+  // display fault before our reload navigates, defeating the point
+  // (Codex #1169 r2, per Vite's load-error-handling guide).
+  event.preventDefault();
   const KEY = 'alpha02.chunkReloadAt';
+  const now = Date.now();
+  // Read the last-attempt stamp from sessionStorage when available,
+  // else the in-memory fallback — so a blocked-storage tab still can't
+  // reload-loop on a non-stale-chunk failure (offline / asset outage)
+  // (Codex #1169 r2).
+  let last = lastChunkReloadAt;
   try {
-    const last = Number(sessionStorage.getItem(KEY) || 0);
-    // Only auto-reload if we haven't already tried in the last 10s.
-    if (Date.now() - last > 10_000) {
-      sessionStorage.setItem(KEY, String(Date.now()));
-      window.location.reload();
-    }
-    // else: fall through — React.lazy's rejection hits the ErrorBoundary,
-    // whose "reload" affordance lets the user retry manually.
+    last = Math.max(last, Number(sessionStorage.getItem(KEY) || 0));
   } catch {
-    window.location.reload();
+    /* storage blocked — rely on the in-memory guard */
   }
+  if (now - last <= 10_000) {
+    // Already tried within 10s — stop, and let React.lazy's rejection
+    // surface the ErrorBoundary's manual "reload" affordance instead of
+    // looping.
+    return;
+  }
+  lastChunkReloadAt = now;
+  try {
+    sessionStorage.setItem(KEY, String(now));
+  } catch {
+    /* storage blocked — the in-memory guard above still holds */
+  }
+  window.location.reload();
 });
 
 const queryClient = new QueryClient({

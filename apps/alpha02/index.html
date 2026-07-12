@@ -91,8 +91,11 @@
         }
       }
       @media (prefers-reduced-motion: reduce) {
+        /* Match the app's .spin rule — reduced-motion means NO spin,
+           not a slower one (Codex #1169 r2). A static ring still reads
+           as "loading" alongside the "Starting up…" text. */
         #boot-splash .boot-spinner {
-          animation-duration: 2s;
+          animation: none;
         }
       }
     </style>
