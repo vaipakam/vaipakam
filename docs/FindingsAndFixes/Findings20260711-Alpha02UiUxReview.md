@@ -51,6 +51,7 @@ line when addressed. Unmarked findings are OPEN.
 | --- | --- | --- |
 | 1 — trust (2026-07-11) | UX-001, UX-002, UX-007, UX-020, UX-021, UX-022 | ✅ Fixed — state-aware loan receipts, exact claim amounts via `getClaimable`, FAB moved bottom-left on phones, header chip nowrap, Try-again on unavailable states, spinning loaders |
 | 2 — mobile (2026-07-11) | UX-006, UX-019, UX-039, UX-042 | ✅ Fixed — desk stacks single-column below 560px, item-row cards stack with full-width CTAs ≤480px, compact "Step N of M" wizard line on phones, tappable copy+explorer address chips (44px touch targets) |
+| 3 — risk visibility (2026-07-11) | UX-003, UX-004, UX-030 | ✅ Fixed — position-list badge escalates on poor health, past-due detail pages show a live grace countdown banner, grace/HF/LTV jargon carries one-clause inline glosses |
 | standalone (2026-07-11) | UX-015 | ✅ Fixed by #1094 (plain-language contract errors) — name-keyed decoder across `CollateralPrecheck` / `SimulationPreview` / dry-run footer; #1112 adds the early under-collateral warning on the borrow step |
 
 ---
@@ -88,12 +89,16 @@ a danger/warn health state override the time-based badge for active
 priced loans ("At risk — add collateral"), or add a health chip per
 row.
 
+**Status: ✅ FIXED (batch 3, 2026-07-11).** `LoanRow` reads health for active priced loans and lets a WORSE health badge override the time-based one (never a better one — "Past due" is never softened); the badge tooltip states the health number and the 1.00 liquidation line.
+
 ### UX-004 · Past-due loans never show the grace countdown (M)
 The grace window is read live only at submit time
 (`PositionDetails.tsx:561`) and never displayed; a past-due borrower
 can't tell if they have hours or days before collateral seizure, and
 nothing escalates visually beyond a small badge. Fix: countdown
 ("Liquidation possible in ~2d 4h") + a banner once inside the window.
+
+**Status: ✅ FIXED (batch 3, 2026-07-11).** New `useGraceSeconds` hook surfaces the grace window for display; a past-due loan detail page shows a danger banner with a live countdown ("Repay within about 2d 4h…"), switching to grace-expired wording once the window closes, with role-appropriate copy for borrower and lender. The "If nothing happens" row now states the concrete grace length too.
 
 ### UX-005 · Cold load is a blank white page — 2.4 MB unsplit bundle (M/L)
 One `index-*.js` of **2,407 KB** ships on every route; there is no
@@ -294,6 +299,8 @@ the status card.
 appear at the highest-stakes moments with no gloss (copy.ts:355-356,
 799-802); advanced-mode HF/LTV numbers get no tooltip. One-clause
 inline glosses + Help links.
+
+**Status: ✅ FIXED (batch 3, 2026-07-11).** "Grace period" is glossed inline where it appears ("a short extra window to repay before the lender can take the collateral"), with the concrete window length when the live read has it; the illiquid-asset consent warning now explains "not priced by the protocol" in consequences; the advanced HF/LTV parenthetical defines both numbers in one clause each.
 
 ### UX-031 · No skip link / focus management on route change (M)
 No skip-to-content anchor; focus stays on the clicked NavLink after

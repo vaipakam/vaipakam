@@ -352,8 +352,11 @@ export const copy = {
       `That link points to an offer on ${chainName}. Switch to that network (top of the page), then open the link again — offer numbers repeat across networks, so we won’t guess.`,
     termsChanged:
       'This offer’s terms changed since you reviewed it. Nothing was sent — please review the updated offer.',
+    // "Not priced" is broader than "no feed exists" — the protocol also
+    // treats an asset as unpriced when its feed is stale/unhealthy or
+    // its market is too thin to sell into (Codex #1166 r1).
     illiquidWarning:
-      'One side of this deal isn’t priced by the protocol. If it ends in default, the entire collateral transfers directly — there is no automatic price-based liquidation. Only proceed if you accept that.',
+      'One side of this deal isn’t priced by the protocol — it has no usable market price or deep-enough trading market right now. If it ends in default, the entire collateral transfers directly to the lender — nobody sells it for a fair market price first, and there is no automatic price-based liquidation. Only proceed if you accept that.',
     interestModeFullTerm:
       'Interest is full-term: the whole term’s interest applies even if the loan is repaid early.',
     interestModeProRata:
@@ -796,10 +799,45 @@ export const copy = {
       'One of this page\u2019s data sources is temporarily unavailable. Your current positions are shown from the remaining source and recently changed items may take a moment to appear.',
     roleBorrower: 'You borrowed',
     roleLender: 'You lent',
-    whatIfNothingBorrower: (collateral: string) =>
-      `If you do nothing and the loan passes its due date and grace period, the lender can receive your ${collateral} collateral.`,
-    whatIfNothingLender:
-      'If the borrower does not repay by the due date plus grace period, you can claim their collateral.',
+    // UX-030 — "grace period" glossed inline, with the concrete window
+    // length when the live read has it.
+    whatIfNothingBorrower: (collateral: string, grace?: string) =>
+      `If you do nothing and the loan passes its due date and the ${grace ? `${grace} ` : ''}grace period (a short extra window to repay before the lender can take the collateral), the lender can receive your ${collateral} collateral.`,
+    whatIfNothingLender: (grace?: string) =>
+      `If the borrower does not repay by the due date plus the ${grace ? `${grace} ` : ''}grace period (a short extra repayment window), you can claim their collateral.`,
+    // UX-004 — past-due escalation banner with the live countdown.
+    graceCountdownBorrower: (remaining: string) =>
+      `This loan is past due. Repay within about ${remaining} — after that the lender can take the collateral.`,
+    graceCountdownLender: (remaining: string) =>
+      `This loan is past due. If the borrower does not repay within about ${remaining}, you can claim their collateral.`,
+    graceCountdownViewer: (remaining: string) =>
+      `This loan is past due. If it isn’t repaid within about ${remaining}, the lender can claim the collateral.`,
+    graceOverViewer:
+      'The grace period has ended — the loan can now be marked defaulted, and the collateral goes to the lender.',
+    // Codex #1166 r3 — a failed grace-window read must not silence the
+    // warning at the exact moment collateral is at risk: fall back to
+    // an unknown-deadline alert instead of hiding the banner.
+    graceUnknownBorrower:
+      'This loan is past due and the grace window may be running out — we couldn’t read the exact deadline right now. Repay as soon as possible, before the lender can take the collateral.',
+    graceUnknownLender:
+      'This loan is past due — we couldn’t read the exact grace deadline right now. Once the grace window ends and the default is recorded, the collateral claim appears here.',
+    graceUnknownViewer:
+      'This loan is past due. Once its grace window ends, the lender can claim the collateral.',
+    // Codex #1166 r1 — past graceEnd the contracts REJECT ordinary
+    // repayment (RepayFacet RepaymentPastGracePeriod; only a
+    // fallback-pending cure is exempt), so never suggest a repay race.
+    graceOverBorrower:
+      'The grace period has ended — the protocol no longer accepts repayment, and the lender can take the collateral at any moment. Once they claim it, the outcome will show here.',
+    // Codex #1166 r2 — alpha02 has no in-app markDefaulted action, so
+    // never promise the lender an immediate step on this page: the
+    // keeper records the default, then the claim appears.
+    graceOverLender:
+      'The grace period has ended — this loan can now be marked defaulted. That normally happens automatically shortly after; once the default is recorded, the collateral claim appears here.',
+    // Codex #1166 r2 — fallback_pending is the post-grace failed-
+    // default state: the cure (full repayment) is still accepted, but
+    // only until the lender finalizes the default.
+    fallbackCureBorrower:
+      'This loan is past its grace period and a default is being settled. You can still repay in full to cure it and get your collateral back — but only until the lender finalizes the default, which can happen at any moment.',
     // UX-001 — a loan that is already over must never show a live
     // obligation or a live default warning: contradictory state on a
     // money page erodes trust in every other number.
@@ -1350,6 +1388,17 @@ export const copy = {
     liquidatable: 'Can be liquidated now',
     explain:
       'If the collateral’s value falls too far against the borrowed amount, the loan can be liquidated. Adding collateral makes it safer.',
+    // Codex #1166 r1 — while the list's health read is loading or
+    // errored, a green time badge would silently re-assert the
+    // false-safe state UX-003 removed; the badge goes neutral instead.
+    listChecking: 'checking health',
+    listCheckingTitle:
+      'This loan’s health hasn’t been read yet, so the badge stays neutral. Liquidation protection still applies on-chain.',
+    // UX-030 — the advanced numbers carry their own one-clause
+    // definitions; a bare "HF 1.42 / LTV 51%" is noise to anyone who
+    // hasn't already internalized the jargon.
+    advancedDetail: (ratio: string, ltvPct: string, drop: string | null) =>
+      `(Health factor ${ratio} — the collateral’s value measured against what’s owed; below 1.00 the loan can be liquidated. Loan-to-value ${ltvPct} — the borrowed amount as a share of the collateral’s value.${drop ? ` Roughly, liquidation begins if the collateral’s value falls about ${drop}.` : ''})`,
   },
 
   notFound: {

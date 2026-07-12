@@ -24,6 +24,7 @@ import { isPositiveDecimal, captureTxError } from '../lib/errors';
 import { useLoan } from '../data/hooks';
 import { isRevert } from '../data/liveLoanRow';
 import { useLoanRisk, healthView } from '../data/risk';
+import { formatRemaining, useGraceSeconds } from '../data/grace';
 import { assertWalletNotSanctionedLive, useSanctionsCheck } from '../data/sanctions';
 import {
   assertErc20BalanceLive,
@@ -402,6 +403,66 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
       return null;
     }
   }, [partialInput, principalMeta.data]);
+  // Minute tick so a countdown left on screen stays honest.
+  const [nowSec, setNowSec] = useState(() => Math.floor(Date.now() / 1000));
+  useEffect(() => {
+    const t = setInterval(() => setNowSec(Math.floor(Date.now() / 1000)), 60_000);
+    return () => clearInterval(t);
+  }, []);
+  // UX-004 (Codex #1166 r1) — term fields for any TIME GATE must come
+  // from the chain, not the indexer row: a keeper extend/transfer
+  // re-stamps startTime/durationDays on-chain while the row lags, and
+  // a stale row would tell a borrower grace expired while repayment is
+  // still valid. `loanLive` above is advanced-mode-only by design (RPC
+  // diet), so this is a separate single read enabled exactly when the
+  // ROW looks past due — the only state that renders the banner.
+  // The candidate gate fires an HOUR before the local-clock due
+  // boundary (Codex #1166 r3): the local clock only decides when to
+  // START the chain-time read — chain time then decides whether the
+  // banner shows. A device clock slow by less than the margin can no
+  // longer delay the warning; skews beyond an hour break TLS long
+  // before they break us.
+  const rowPastDueCandidate = Boolean(
+    loan.data &&
+      (loan.data.status === 'active' || loan.data.status === 'fallback_pending') &&
+      loan.data.assetType === AssetType.ERC20 &&
+      loan.data.startTime + loan.data.durationDays * 86400 < nowSec + 3600,
+  );
+  const bannerTerms = useQuery({
+    queryKey: ['graceBannerTerms', readChain.chainId, loan.data?.loanId],
+    enabled: Boolean(readClient) && rowPastDueCandidate,
+    staleTime: 30_000,
+    refetchInterval: idleAware(60_000),
+    // chainNow rides along (Codex #1166 r2): the contracts gate on
+    // block.timestamp, so the banner must not trust a skewed device
+    // clock. fetchedAtLocal lets the countdown advance between
+    // refetches without re-introducing the skew.
+    queryFn: async () => {
+      const [live, latestBlock] = await Promise.all([
+        readLoanLive(readClient!, readChain.diamondAddress, loan.data!.loanId),
+        readClient!.getBlock({ blockTag: 'latest' }),
+      ]);
+      return {
+        live,
+        chainNow: Number(latestBlock.timestamp),
+        fetchedAtLocal: Math.floor(Date.now() / 1000),
+      };
+    },
+  });
+  // UX-004 — the grace window, read for DISPLAY (previously read only
+  // inside submit handlers, so a past-due borrower could never see how
+  // long they had). Static protocol config per (chain, duration) —
+  // cached long in the hook. Rentals resolve their window elsewhere.
+  // Keyed on the LIVE duration when the past-due read has it (an
+  // extended duration can land in a different grace bucket).
+  const grace = useGraceSeconds(
+    loan.data && loan.data.assetType === AssetType.ERC20
+      ? bannerTerms.data
+        ? Number(bannerTerms.data.live.durationDays)
+        : loan.data.durationDays
+      : undefined,
+  );
+
   const collateralOverBalance =
     collateralInputWei !== null &&
     collateralBalance.data !== undefined &&
@@ -476,6 +537,94 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
     row.status === 'defaulted' ||
     row.status === 'liquidated';
 
+  // UX-004 — past-due escalation. Once past due the only signal used
+  // to be a small "Past due" badge; now we show the concrete deadline:
+  // due date + grace window, counted down live. Term fields prefer the
+  // LIVE read (a keeper extend re-stamps them while the row lags); on
+  // read failure we fall back to the row rather than hide a warning —
+  // the repay submit path re-checks live and is authoritative.
+  const termsStartSec = bannerTerms.data
+    ? Number(bannerTerms.data.live.startTime)
+    : row.startTime;
+  const termsDurationDays = bannerTerms.data
+    ? Number(bannerTerms.data.live.durationDays)
+    : row.durationDays;
+  const termsEndSec = termsStartSec + termsDurationDays * 86400;
+  // Anchor "now" to CHAIN time when the live read has it (Codex #1166
+  // r2): the repay/default gates run on block.timestamp, so a skewed
+  // device clock must not flip the banner to "no longer accepts
+  // repayment" early — or keep a countdown alive late. The local tick
+  // only advances the anchor between refetches.
+  const bannerNowSec = bannerTerms.data
+    ? bannerTerms.data.chainNow + (nowSec - bannerTerms.data.fetchedAtLocal)
+    : nowSec;
+  const graceDeadline =
+    grace.data !== undefined ? termsEndSec + Number(grace.data) : null;
+  const graceRemaining = graceDeadline !== null ? graceDeadline - bannerNowSec : null;
+  // Codex #1166 r4 — the LIVE status can be ahead of both the row and
+  // the separate liveStatus query: a loan that already entered
+  // FallbackPending on-chain is still fully curable by repayment, so
+  // neither the "repayment no longer accepted" copy nor the repay
+  // suppression may fire for it — the cure banner takes over instead.
+  const liveSaysFallbackPending =
+    bannerTerms.data?.live.status === LoanStatus.FallbackPending;
+  // Past-due is decided by CHAIN-anchored time against (preferably
+  // live) terms — not by view.state, whose daysRemaining derives from
+  // the device clock (Codex #1166 r3). A failed grace read keeps a
+  // generic warning instead of silencing the alert (also r3).
+  const showGraceBanner =
+    row.status === 'active' &&
+    !liveSaysFallbackPending &&
+    !loanOver &&
+    !isRental &&
+    !closedThisSession &&
+    (graceRemaining !== null || grace.isError) &&
+    // Live terms say the loan is genuinely past due (a keeper extend
+    // makes this false and the banner honestly disappears)…
+    termsEndSec < bannerNowSec &&
+    // …and never render from row terms while the live read is still
+    // in flight for a past-due candidate.
+    !(rowPastDueCandidate && bannerTerms.isLoading);
+  // Codex #1166 r3 — once grace is VERIFIABLY over (live-confirmed
+  // terms + a successful grace read), the contract rejects ordinary
+  // repay (RepaymentPastGracePeriod), so offering the Repay button
+  // would only manufacture a doomed submit. Boundary follows the
+  // contract's own `>` semantics (repay is still accepted AT
+  // graceEnd). fallback_pending cures stay exempt — including when
+  // only the LIVE read knows the loan is FallbackPending (r4).
+  const graceVerifiablyOver =
+    bannerTerms.data !== undefined &&
+    !liveSaysFallbackPending &&
+    graceRemaining !== null &&
+    graceRemaining < 0;
+  // Codex #1166 r4 — the definitive "no longer accepts repayment"
+  // wording is allowed ONLY with live-confirmed terms; from row-only
+  // terms an expired computation downgrades to the unknown-deadline
+  // warning (the exact stale-row case the live read exists to avoid).
+  const gracePhase: 'unknown' | 'countdown' | 'over' =
+    graceRemaining === null
+      ? 'unknown'
+      : graceRemaining >= 0
+        ? 'countdown'
+        : bannerTerms.data
+          ? 'over'
+          : 'unknown';
+  // Codex #1166 r2 — fallback_pending is the OTHER post-grace danger
+  // state (a failed default settling), and its loanStateView is
+  // "Being settled", so the overdue banner above never fires. The
+  // borrower can still cure by full repayment until the lender
+  // finalizes — say so where the collateral is most at risk.
+  const showFallbackCureBanner =
+    (row.status === 'fallback_pending' ||
+      (row.status === 'active' && liveSaysFallbackPending)) &&
+    !isRental &&
+    role === 'borrower' &&
+    !closedThisSession;
+  // Rendered-length string for the "if nothing happens" gloss on any
+  // live loan (not just overdue ones).
+  const graceLengthStr =
+    grace.data !== undefined ? formatRemaining(Number(grace.data)) : undefined;
+
   const action: Action = (() => {
     // Side-scoped: a claim on one side must not suppress the other.
     if (role === 'borrower' && claimed.borrower) return null;
@@ -488,6 +637,10 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
       !closedThisSession &&
       (row.status === 'active' || row.status === 'fallback_pending')
     ) {
+      // Grace verifiably over on an ACTIVE loan → the contract rejects
+      // repay; the banner above explains. The fallback_pending cure is
+      // contract-exempt and must keep its action (Codex #1166 r3).
+      if (row.status === 'active' && graceVerifiablyOver) return null;
       return 'repay';
     }
     // Claimable proper-close terminals: repaid or internal_matched
@@ -1185,6 +1338,39 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
         </div>
       ) : null}
 
+      {showGraceBanner ? (
+        // UX-004 — the past-due countdown. role="alert": this is the
+        // one moment on the page where losing collateral is imminent.
+        <div className="banner banner-danger" role="alert">
+          {/* Role-branched three ways (Codex #1166 r3): a viewer — no
+              wallet, neither position, or owner read still checking —
+              must never be told to repay a loan they can't repay. */}
+          <span className="banner-body">
+            {gracePhase === 'unknown'
+              ? role === 'lender'
+                ? copy.positions.graceUnknownLender
+                : role === 'borrower'
+                  ? copy.positions.graceUnknownBorrower
+                  : copy.positions.graceUnknownViewer
+              : gracePhase === 'countdown'
+                ? role === 'lender'
+                  ? copy.positions.graceCountdownLender(formatRemaining(graceRemaining!))
+                  : role === 'borrower'
+                    ? copy.positions.graceCountdownBorrower(formatRemaining(graceRemaining!))
+                    : copy.positions.graceCountdownViewer(formatRemaining(graceRemaining!))
+                : role === 'lender'
+                  ? copy.positions.graceOverLender
+                  : role === 'borrower'
+                    ? copy.positions.graceOverBorrower
+                    : copy.positions.graceOverViewer}
+          </span>
+        </div>
+      ) : showFallbackCureBanner ? (
+        <div className="banner banner-danger" role="alert">
+          <span className="banner-body">{copy.positions.fallbackCureBorrower}</span>
+        </div>
+      ) : null}
+
       <section className="card">
         <dl className="receipt" style={{ margin: 0 }}>
           <div className="receipt-row">
@@ -1263,12 +1449,11 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
                       <>
                         {' '}
                         <span className="muted">
-                          (health factor {healthView(risk.data).ratio}, loan-to-value{' '}
-                          {healthView(risk.data).ltvPct}; liquidation below 1.00
-                          {healthView(risk.data).dropToLiquidationPct
-                            ? ` — roughly, liquidation begins if the collateral's value falls about ${healthView(risk.data).dropToLiquidationPct}`
-                            : ''}
-                          )
+                          {copy.risk.advancedDetail(
+                            healthView(risk.data).ratio,
+                            healthView(risk.data).ltvPct,
+                            healthView(risk.data).dropToLiquidationPct,
+                          )}
                         </span>
                       </>
                     ) : null}
@@ -1309,8 +1494,11 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
                     ? 'Your use rights end at the due date and the prepaid buffer goes to the owner — close on time to get it back.'
                     : 'The renter’s rights reset after the due date and grace period; your fees stay claimable here.'
                   : role === 'borrower'
-                    ? copy.positions.whatIfNothingBorrower(collateral?.symbol ?? 'locked')
-                    : copy.positions.whatIfNothingLender}
+                    ? copy.positions.whatIfNothingBorrower(
+                        collateral?.symbol ?? 'locked',
+                        graceLengthStr,
+                      )
+                    : copy.positions.whatIfNothingLender(graceLengthStr)}
             </dd>
           </div>
         </dl>
