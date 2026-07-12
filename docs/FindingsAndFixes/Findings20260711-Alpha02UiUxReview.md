@@ -198,6 +198,8 @@ the current network shows nowhere outside the wallet modal. Offers,
 vault, and faucet are all per-network. Show the chain name next to the
 ConnectButton.
 
+**Status: ✅ FIXED (batch 8a, 2026-07-12).** A persistent network chip (a live dot + the chain name) sits beside the ConnectButton in the header whenever the wallet is connected on a supported chain; an unsupported chain keeps the existing `NetworkBanner`. The name hides below 400px so the wallet chip keeps its room (the dot stays).
+
 ### UX-014 · Wallet requirement surfaces only at the final review step (S/M)
 The guided flows let a disconnected user fill four screens before
 revealing "Connect a wallet" in the review checklist
@@ -334,6 +336,8 @@ Add the anchor + focus the page h1 on pathname change. Related: /offers
 and the 404 (and full-page EmptyStates generally) render no `h1` —
 confirmed mechanically by the sweep's landmark probe.
 
+**Status: ✅ FIXED (batch 8a, 2026-07-12).** The shell now has a "Skip to content" link (the first focusable element, off-screen until focused) targeting `<main id="main-content" tabIndex={-1}>`, and focus moves to that main region on every route change (skipping the initial mount so a first load doesn't steal focus) so a keyboard / screen-reader user lands on the new page instead of the clicked nav link. `EmptyState` gained a `titleAs` prop (default `h3`); the 404 page now passes `titleAs="h1"` so a full-page empty state carries a top-level heading (`.empty-state-title` normalizes the visual size across levels). `/offers` already rendered its `h1` unconditionally.
+
 ### UX-032 · NFT verifier is unreachable without a deep link (S)
 A trust tool for exactly the off-platform user, absent from all nav
 and Help. Add to secondary nav / Help ("Check a position NFT before
@@ -387,6 +391,10 @@ keeps consoles clean on locked-down networks.
   centered link pair is an ambiguous small target. (S)
 - **UX-044** Raw ISO build timestamp in the Help footer — format as a
   date, keep the full string in diagnostics. (S)
+  **Status: ✅ FIXED (batch 8a, 2026-07-12).** The Help footer now
+  renders the build stamp as a readable date (via `formatDate`, falling
+  back to the raw value if it doesn't parse); the full ISO string stays
+  available in the diagnostics drawer.
 - **UX-045** MatchBand "earn the matcher fee" doesn't state you pay
   gas up front. (S)
   **Status: ✅ FIXED (batch 7b, 2026-07-12).** The band body now ends
