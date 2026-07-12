@@ -336,11 +336,17 @@ This fee is automatically collected and directed to Treasury for protocol sustai
 
 ### 5a. Loan Initiation Fee Matcher Share
 
-For ERC-20 loans, the borrower-facing `Loan Initiation Fee` remains the normal fee source documented in the borrower VPFI path below. When a loan is initiated by a permissionless Range Orders matcher, a configurable share of the treasury-directed LIF flow is paid to the matcher / relayer that submitted the transaction.
+For ERC-20 loans, the borrower-facing `Loan Initiation Fee` remains the normal fee source documented in the borrower VPFI path below. On loan initiation, a configurable share of the treasury-directed LIF flow is paid to the **recorded `matcher`**, and the remainder flows to treasury. The share is paid on **every** initiation path, not only permissionless Range Orders matches. The recorded `matcher` is the **immediate caller of the match** (`msg.sender` at the match-execution step), which resolves as follows:
+
+- `matchOffers` — the relayer / bot that submitted the match transaction;
+- a direct `acceptOffer` or a signed-offer fill — the EOA caller (`msg.sender`) that submitted the fill;
+- a **contract-routed** fill — the routing contract itself, NOT the EOA that triggered it. In particular a Role-A `backstopFill` runs through `BackstopVaultImplementation.executeFill`, which calls `matchIntent` as the backstop vault, so the recorded `matcher` is the **backstop vault** and the share accrues to the vault (and thus, economically, to the backstop / treasury) rather than to the operator EOA that called `backstopFill`.
+
+This is deliberate — the share rewards whoever brings the fill on-chain (measured as the recorded match caller), and the treasury always receives the complementary majority (default `99%`). Bot / operator tooling that displays "expected matcher earnings" must read the recorded `matcher`, not assume it is the submitting EOA on contract-routed paths. (Owner decision 2026-07-11, spec-review item L-a: the code's "share to the recorded match caller on all paths" behaviour is the intended design.)
 
 Rules:
 
-- the default matcher share is `1%` of the LIF amount that would otherwise flow to treasury
+- the default matcher share is `1%` of the LIF amount that would otherwise flow to treasury; the complementary `99%` (default) always flows to treasury regardless of which path initiated the loan
 - governance may tune the matcher share through live protocol config (`ProtocolConfig.lifMatcherFeeBps` / `ConfigFacet.setLifMatcherFeeBps(uint16)`), with zero meaning "use the default"
 - the setter should enforce `MAX_FEE_BPS = 5000` (50%) so a bad governance or admin action cannot accidentally starve Treasury
 - the matcher share applies to both the lending-asset LIF path and the VPFI LIF custody path; for deferred VPFI settlements, the matched loan must retain the matcher address so the share can be paid on proper settlement or forfeiture
