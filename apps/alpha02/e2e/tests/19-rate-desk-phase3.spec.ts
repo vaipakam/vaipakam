@@ -260,7 +260,7 @@ test('contract-confirmed crossable band: previewMatch Ok renders the band, a thi
   await expect(band).toBeVisible({ timeout: 30_000 });
   await expect(band).toContainText('Matchable at 7.5%');
   await expect(band).toContainText(
-    'These top-of-book offers can cross. Anyone can execute this match and earn the matcher fee.',
+    'These top-of-book offers can cross. Anyone can execute this match and earn the matcher fee — you pay the network gas to execute it.',
   );
   // Amount line renders once the lending asset's decimals resolve.
   await expect(band).toContainText(/0\.002 \S* ?would match\./);
