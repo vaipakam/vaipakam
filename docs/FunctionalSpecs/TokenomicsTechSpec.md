@@ -150,6 +150,28 @@ Phase note:
 
 - this section is `Phase 1` scope
 
+Functional consolidation through 2026-07-12:
+
+- Interaction rewards are claimable only after the relevant loan side has
+  closed. Reaching the calendar maturity is not enough while the loan remains
+  open.
+- Every terminal loan outcome closes reward accounting durably. Any still-open
+  reward entry follows the current position holder at the time of close, while a
+  slice already closed for a prior holder stays with that prior holder.
+- Borrower rewards are forfeited on default and liquidation outcomes where the
+  rules require forfeiture. Clean repayment and proper close outcomes preserve
+  the reward.
+- The per-user reward cap is a daily cap. Each day's reward is capped on its
+  own, and unused headroom from quiet days cannot absorb an over-cap day.
+- The cap value for a day is fixed when that day is finalized, not when a user
+  later claims.
+- Mirror-chain reward claims are funded from the canonical chain by bounded,
+  retriable remittances. Funding is decoupled from daily finalization so a
+  cross-chain funding delay cannot block the accounting finalization itself.
+- Keeper automation may remit finalized mirror budgets when explicitly enabled,
+  but on-chain accounting remains the source of truth and manual remittance
+  remains possible.
+
 Pool size:
 
 - `30%` of total supply
