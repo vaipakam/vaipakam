@@ -969,7 +969,7 @@ export const copy = {
     bookTitle: 'Order book',
     rateHeading: 'Rate (APR %)',
     sizeHeading: 'Size',
-    cumHeading: 'Σ',
+    cumHeading: 'Depth',
     asksHeading: 'Lender offers (asks)',
     bidsHeading: 'Borrow requests (bids)',
     bookEmpty: 'No open offers for this market yet — yours can be the first.',
@@ -991,7 +991,7 @@ export const copy = {
     // fail) and the partial-fill master flag is on.
     match: {
       matchable: (rate: string) => `Matchable at ${rate}`,
-      body: 'These top-of-book offers can cross. Anyone can execute this match and earn the matcher fee.',
+      body: 'These top-of-book offers can cross. Anyone can execute this match and earn the matcher fee — you pay the network gas to execute it.',
       amount: (amount: string, symbol: string) =>
         `${amount} ${symbol} would match.`,
       execute: 'Execute match',

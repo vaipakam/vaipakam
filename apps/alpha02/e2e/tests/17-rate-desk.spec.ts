@@ -209,9 +209,12 @@ test('ticket posts a GTC/Partial lend order, amend reprices it in ONE modifyOffe
 
   // …and on the ladder as an OWN level (afterPost invalidates the
   // book query — no reload needed).
+  // The ladder renders rates at a FIXED 2 decimals (UX-028) — "8.00%",
+  // not "8%" — so the ladder-scoped filters below use the padded form.
+  // The Open orders panel (row(), below) keeps the trimmed form.
   const ownAsk = (pct: string) =>
     page.locator('.desk-ladder-row.desk-own').filter({ hasText: pct });
-  await expect(ownAsk('8%')).toBeVisible({ timeout: 30_000 });
+  await expect(ownAsk('8.00%')).toBeVisible({ timeout: 30_000 });
 
   // …and under Open orders (the default bottom tab), scoped to THIS
   // run's row by id — roles are reused across scenarios and retries.
@@ -242,8 +245,8 @@ test('ticket posts a GTC/Partial lend order, amend reprices it in ONE modifyOffe
   // Same offer id survived the amend — modify-in-place, not
   // cancel+repost.
   await expect(row()).toContainText('11%', { timeout: 30_000 });
-  await expect(ownAsk('11%')).toBeVisible({ timeout: 30_000 });
-  await expect(ownAsk('8%')).toHaveCount(0);
+  await expect(ownAsk('11.00%')).toBeVisible({ timeout: 30_000 });
+  await expect(ownAsk('8.00%')).toHaveCount(0);
 
   // ---- cancel: past the 300 s protocol cooldown (time travel — the
   // inside-the-window refusal is spec 05's job) ----
@@ -260,8 +263,8 @@ test('ticket posts a GTC/Partial lend order, amend reprices it in ONE modifyOffe
   await expect(
     page.locator('.row-list > div').filter({ has: page.getByText(`#${offerId} ·`) }),
   ).toHaveCount(0, { timeout: 30_000 });
-  await expect(ownAsk('11%')).toHaveCount(0, { timeout: 30_000 });
+  await expect(ownAsk('11.00%')).toHaveCount(0, { timeout: 30_000 });
   await expect(
-    page.locator('.desk-ladder .desk-ladder-row').filter({ hasText: '5%' }),
+    page.locator('.desk-ladder .desk-ladder-row').filter({ hasText: '5.00%' }),
   ).toHaveCount(1, { timeout: 30_000 });
 });
