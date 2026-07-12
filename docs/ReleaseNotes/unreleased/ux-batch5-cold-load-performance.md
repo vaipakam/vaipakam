@@ -15,12 +15,20 @@ pure white page for 12 seconds or more:
   loads on demand the first time it's visited, behind a "Loading…"
   state inside the already-painted navigation shell. The heavy Rate
   Desk chart was already on-demand.
-- **Shared libraries are cached across releases.** The wallet/RPC
-  stack and the React runtime are split into their own bundles, so
-  they stream while the first screen paints and stay cached when the
-  app itself updates.
+- **Shared libraries are cached across releases and download in
+  parallel.** The wallet/RPC stack and the React runtime are split
+  into their own bundles, so the browser fetches them alongside the
+  entry chunk (faster than one serial ~2.4 MB file) and keeps them
+  cached when the app itself updates. The wallet stack is still needed
+  before the first interactive screen, so it stays on the startup
+  path — the boot splash is what covers that download so the wait no
+  longer looks like a hang. (Deferring the wallet providers entirely
+  so the shell can paint before they load is tracked as a follow-up.)
+- **Stale chunks after a deploy self-heal.** If the app is left open
+  across a release and then navigates to a screen whose code changed,
+  it reloads once to pick up the new version instead of erroring.
 
 Together these cut the initial download from a single ~2.4 MB file to
-a ~118 KB entry bundle, with the large dependencies loaded alongside
-it rather than blocking the first paint. No behaviour changed — this
-is purely how fast the app starts.
+a ~118 KB entry bundle, with the large dependencies loaded in parallel
+and the boot splash covering the wait. No behaviour changed — this is
+purely how fast the app starts and how it recovers across deploys.

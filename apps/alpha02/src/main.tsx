@@ -11,6 +11,31 @@ import { App } from './App';
 import { ErrorBoundary } from './components/ErrorBoundary';
 import './styles/global.css';
 
+// UX-005 (Codex #1169 r1) — with route-level code splitting, a user who
+// keeps the app open across a production deploy holds a STALE entry that
+// references old hashed chunk names. Visiting a not-yet-cached lazy route
+// then requests a chunk the deploy has replaced; the Worker SPA fallback
+// answers with index.html (wrong MIME) and the dynamic import rejects,
+// dropping the user into the error card. Vite fires `vite:preloadError`
+// for exactly this — reload once to pick up the fresh index.html + chunk
+// graph. A session-scoped guard prevents a reload loop if the failure is
+// not a stale-chunk 404 (e.g. a truly offline network).
+window.addEventListener('vite:preloadError', () => {
+  const KEY = 'alpha02.chunkReloadAt';
+  try {
+    const last = Number(sessionStorage.getItem(KEY) || 0);
+    // Only auto-reload if we haven't already tried in the last 10s.
+    if (Date.now() - last > 10_000) {
+      sessionStorage.setItem(KEY, String(Date.now()));
+      window.location.reload();
+    }
+    // else: fall through — React.lazy's rejection hits the ErrorBoundary,
+    // whose "reload" affordance lets the user retry manually.
+  } catch {
+    window.location.reload();
+  }
+});
+
 const queryClient = new QueryClient({
   defaultOptions: {
     queries: {
