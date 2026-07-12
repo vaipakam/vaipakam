@@ -30,11 +30,14 @@ export default defineConfig({
     rollupOptions: {
       output: {
         // UX-005 — split the big, rarely-changing dependency groups out
-        // of the entry chunk so the boot payload shrinks and vendor
-        // code stays cacheable across app deploys. The wallet/RPC stack
-        // (wagmi + viem + connectkit) is the heaviest cluster and isn't
-        // needed to paint the first screen; keeping it in its own chunk
-        // lets the shell + first route render while it streams.
+        // of the entry chunk so the boot payload shrinks (2.4 MB → 118
+        // kB) and vendor code stays cacheable across app deploys and
+        // downloads in PARALLEL with the entry (faster than one serial
+        // file). Note: main.tsx statically imports the wallet providers,
+        // so wallet-vendor is still on the critical path to first
+        // interactive paint — the boot splash in index.html covers that
+        // download; deferring the providers so the shell paints first is
+        // the larger refactor tracked in #1170 (Codex #1169 r1).
         // Authored as a function (not the object form) because the
         // Cloudflare plugin narrows `output.manualChunks` to the
         // function signature.
