@@ -25,6 +25,11 @@ export function LoanRow({ loan }: { loan: PositionLoan }) {
     health !== null &&
     health.badge !== 'ok' &&
     badgeRank[health.badge] > badgeRank[view.badge];
+  // While the health read is loading or errored, a green time badge
+  // would re-assert exactly the false-safe state this override exists
+  // to remove — go neutral until health is actually known (Codex
+  // #1166 r1). Worse-than-ok time badges keep their own urgency.
+  const healthUnknown = watchHealth && risk.data === undefined;
 
   const symbol = principalMeta.data?.symbol ?? '';
   const amount = principalMeta.data
@@ -52,6 +57,10 @@ export function LoanRow({ loan }: { loan: PositionLoan }) {
           title={`Health ${health.ratio} — 1.00 is the liquidation line`}
         >
           {health.label}
+        </span>
+      ) : healthUnknown && view.badge === 'ok' ? (
+        <span className="badge badge-neutral" title={copy.risk.listCheckingTitle}>
+          {view.label} · {copy.risk.listChecking}
         </span>
       ) : (
         <span className={`badge badge-${view.badge}`}>{view.label}</span>

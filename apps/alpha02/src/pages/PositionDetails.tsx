@@ -403,21 +403,45 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
       return null;
     }
   }, [partialInput, principalMeta.data]);
-  // UX-004 — the grace window, read for DISPLAY (previously read only
-  // inside submit handlers, so a past-due borrower could never see how
-  // long they had). Static protocol config per (chain, duration) —
-  // cached long in the hook. Rentals resolve their window elsewhere.
-  const grace = useGraceSeconds(
-    loan.data && loan.data.assetType === AssetType.ERC20
-      ? loan.data.durationDays
-      : undefined,
-  );
   // Minute tick so a countdown left on screen stays honest.
   const [nowSec, setNowSec] = useState(() => Math.floor(Date.now() / 1000));
   useEffect(() => {
     const t = setInterval(() => setNowSec(Math.floor(Date.now() / 1000)), 60_000);
     return () => clearInterval(t);
   }, []);
+  // UX-004 (Codex #1166 r1) — term fields for any TIME GATE must come
+  // from the chain, not the indexer row: a keeper extend/transfer
+  // re-stamps startTime/durationDays on-chain while the row lags, and
+  // a stale row would tell a borrower grace expired while repayment is
+  // still valid. `loanLive` above is advanced-mode-only by design (RPC
+  // diet), so this is a separate single read enabled exactly when the
+  // ROW looks past due — the only state that renders the banner.
+  const rowPastDueCandidate = Boolean(
+    loan.data &&
+      (loan.data.status === 'active' || loan.data.status === 'fallback_pending') &&
+      loan.data.assetType === AssetType.ERC20 &&
+      loan.data.startTime + loan.data.durationDays * 86400 < nowSec,
+  );
+  const bannerTerms = useQuery({
+    queryKey: ['graceBannerTerms', readChain.chainId, loan.data?.loanId],
+    enabled: Boolean(readClient) && rowPastDueCandidate,
+    staleTime: 30_000,
+    refetchInterval: idleAware(60_000),
+    queryFn: () => readLoanLive(readClient!, readChain.diamondAddress, loan.data!.loanId),
+  });
+  // UX-004 — the grace window, read for DISPLAY (previously read only
+  // inside submit handlers, so a past-due borrower could never see how
+  // long they had). Static protocol config per (chain, duration) —
+  // cached long in the hook. Rentals resolve their window elsewhere.
+  // Keyed on the LIVE duration when the past-due read has it (an
+  // extended duration can land in a different grace bucket).
+  const grace = useGraceSeconds(
+    loan.data && loan.data.assetType === AssetType.ERC20
+      ? bannerTerms.data
+        ? Number(bannerTerms.data.durationDays)
+        : loan.data.durationDays
+      : undefined,
+  );
 
   const collateralOverBalance =
     collateralInputWei !== null &&
@@ -495,14 +519,31 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
 
   // UX-004 — past-due escalation. Once past due the only signal used
   // to be a small "Past due" badge; now we show the concrete deadline:
-  // due date + grace window, counted down live.
+  // due date + grace window, counted down live. Term fields prefer the
+  // LIVE read (a keeper extend re-stamps them while the row lags); on
+  // read failure we fall back to the row rather than hide a warning —
+  // the repay submit path re-checks live and is authoritative.
+  const termsStartSec = bannerTerms.data
+    ? Number(bannerTerms.data.startTime)
+    : row.startTime;
+  const termsDurationDays = bannerTerms.data
+    ? Number(bannerTerms.data.durationDays)
+    : row.durationDays;
+  const termsEndSec = termsStartSec + termsDurationDays * 86400;
   const graceDeadline =
-    grace.data !== undefined
-      ? row.startTime + row.durationDays * 86400 + Number(grace.data)
-      : null;
+    grace.data !== undefined ? termsEndSec + Number(grace.data) : null;
   const graceRemaining = graceDeadline !== null ? graceDeadline - nowSec : null;
   const showGraceBanner =
-    view.state === 'overdue' && !loanOver && !isRental && graceRemaining !== null;
+    view.state === 'overdue' &&
+    !loanOver &&
+    !isRental &&
+    graceRemaining !== null &&
+    // Live terms say the loan is genuinely past due (a keeper extend
+    // makes this false and the banner honestly disappears)…
+    termsEndSec < nowSec &&
+    // …and never render from row terms while the live read is still
+    // in flight for a past-due candidate.
+    !(rowPastDueCandidate && bannerTerms.isLoading);
   // Rendered-length string for the "if nothing happens" gloss on any
   // live loan (not just overdue ones).
   const graceLengthStr =
