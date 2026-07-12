@@ -154,14 +154,11 @@ test('a zero-fill market shows the honest empty chart; seeded fills render spars
   await expect(chartCard.locator('.desk-chart-lastfill')).toHaveText(
     'no fills yet',
   );
-  // The TradingView attribution (Apache-2.0 NOTICE) is unconditional —
-  // present even before any series exists.
-  const attribution = chartCard.locator('.desk-chart-attribution a');
-  await expect(attribution).toHaveText('Charts by TradingView');
-  await expect(attribution).toHaveAttribute(
-    'href',
-    'https://www.tradingview.com/lightweight-charts/',
-  );
+  // UX-037 — the TradingView attribution (Apache-2.0 NOTICE) shows ONLY
+  // when a chart actually draws. On this honest-empty state (no series)
+  // it is absent; it IS asserted present in the sparse-render branch
+  // below, once fills exist.
+  await expect(chartCard.locator('.desk-chart-attribution')).toHaveCount(0);
 
   // ---- seed 3 fills (< 10 = sparse, §5.3 rule 2), one day apart so
   // they land in three distinct 1d buckets. Distinctive rates so the
@@ -251,8 +248,12 @@ test('a zero-fill market shows the honest empty chart; seeded fills render spars
     /quoted mid — a resting quote, not an executed rate\./,
     { timeout: 30_000 },
   );
-  await expect(page.locator('.desk-chart-attribution a')).toHaveText(
-    'Charts by TradingView',
+  // UX-037 — now that a chart draws, the attribution IS present.
+  const attribution = page.locator('.desk-chart-attribution a');
+  await expect(attribution).toHaveText('Charts by TradingView');
+  await expect(attribution).toHaveAttribute(
+    'href',
+    'https://www.tradingview.com/lightweight-charts/',
   );
 });
 

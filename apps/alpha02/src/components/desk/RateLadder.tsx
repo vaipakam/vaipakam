@@ -47,6 +47,14 @@ import { SignedFillConfirm } from './SignedFillConfirm';
 
 const MAX_LEVELS = 12;
 
+/** UX-028 — a FIXED 2-decimal rate for the ladder rows so the decimal
+ *  points line up (`formatBpsAsPercent` trims trailing zeros, giving the
+ *  "5%" over "12.25%" wobble the finding calls out). Ladder-local: the
+ *  header/mid/stats keep the trimmed form. */
+function fixedPct(bps: number): string {
+  return `${(bps / 100).toFixed(2)}%`;
+}
+
 function LevelRow({
   level,
   side,
@@ -102,29 +110,31 @@ function LevelRow({
     level.offers.some(
       (o) => o.signed !== undefined && !signedOrderIsSingleValue(o.signed.order),
     );
+  // UX-028 — the interactive pick target is the RATE cell (a real
+  // button), NOT the whole row. That un-nests the Take / Fill controls,
+  // which used to sit inside a `role="button"` row (a nested-interactive
+  // a11y violation); they are now siblings of the rate button.
+  const rateTitle = `${level.rateBps} bps · ${level.offers.length} offer${
+    level.offers.length === 1 ? '' : 's'
+  }${level.own ? ` · ${copy.desk.yourOrderMark}` : ''} — tap to pre-fill this rate`;
   return (
     <div
       className={`desk-ladder-row${level.own ? ' desk-own' : ''}${
         flash ? ' desk-row-flash' : ''
       }`}
-      role="button"
-      tabIndex={0}
-      title={`${level.rateBps} bps · ${level.offers.length} offer${
-        level.offers.length === 1 ? '' : 's'
-      }${level.own ? ` · ${copy.desk.yourOrderMark}` : ''}`}
-      onClick={() => onPick(level.rateBps)}
-      onKeyDown={(e) => {
-        if (e.key === 'Enter' || e.key === ' ') {
-          e.preventDefault();
-          onPick(level.rateBps);
-        }
-      }}
     >
-      <span className={side === 'ask' ? 'desk-rate-ask' : 'desk-rate-bid'}>
-        {formatBpsAsPercent(level.rateBps)}
+      <button
+        type="button"
+        className={`desk-rate-btn ${side === 'ask' ? 'desk-rate-ask' : 'desk-rate-bid'}`}
+        title={rateTitle}
+        onClick={() => onPick(level.rateBps)}
+      >
+        {fixedPct(level.rateBps)}
+      </button>
+      <span className="desk-num">
+        {decimals !== undefined ? formatTokenAmount(level.size, decimals) : '…'}
       </span>
-      <span>{decimals !== undefined ? formatTokenAmount(level.size, decimals) : '…'}</span>
-      <span className="muted">
+      <span className="desk-num muted">
         {decimals !== undefined ? formatTokenAmount(level.cumulative, decimals) : '…'}
       </span>
       <span className="desk-ladder-action">
@@ -142,13 +152,14 @@ function LevelRow({
             {copy.desk.signed.badge}
           </span>
         ) : null}
-        {level.own ? <span className="desk-own-dot" aria-hidden /> : null}
+        {level.own ? (
+          <>
+            <span className="desk-own-dot" aria-hidden />
+            <span className="visually-hidden">{copy.desk.yourOrderMark}</span>
+          </>
+        ) : null}
         {takeHref ? (
-          <Link
-            to={takeHref}
-            className="btn btn-secondary btn-sm"
-            onClick={(e) => e.stopPropagation()}
-          >
+          <Link to={takeHref} className="btn btn-secondary btn-sm">
             {takeLabel}
           </Link>
         ) : null}
@@ -157,10 +168,7 @@ function LevelRow({
             type="button"
             className="btn btn-secondary btn-sm"
             title={copy.desk.signed.badgeTooltip}
-            onClick={(e) => {
-              e.stopPropagation();
-              onFillSigned(signedFill);
-            }}
+            onClick={() => onFillSigned(signedFill)}
           >
             {copy.desk.signed.fill}
           </button>

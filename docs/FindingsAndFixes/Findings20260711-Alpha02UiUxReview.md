@@ -52,6 +52,9 @@ line when addressed. Unmarked findings are OPEN.
 | 1 — trust (2026-07-11) | UX-001, UX-002, UX-007, UX-020, UX-021, UX-022 | ✅ Fixed — state-aware loan receipts, exact claim amounts via `getClaimable`, FAB moved bottom-left on phones, header chip nowrap, Try-again on unavailable states, spinning loaders |
 | 2 — mobile (2026-07-11) | UX-006, UX-019, UX-039, UX-042 | ✅ Fixed — desk stacks single-column below 560px, item-row cards stack with full-width CTAs ≤480px, compact "Step N of M" wizard line on phones, tappable copy+explorer address chips (44px touch targets) |
 | 3 — risk visibility (2026-07-11) | UX-003, UX-004, UX-030 | ✅ Fixed — position-list badge escalates on poor health, past-due detail pages show a live grace countdown banner, grace/HF/LTV jargon carries one-clause inline glosses |
+| 4 — dead-ends/discovery (2026-07-12) | UX-010, UX-011, UX-023, UX-024, UX-026, UX-032 | ✅ Fixed — faucet link on failing balance checks, persistent mode switch + real phone More sheet, forward CTAs on Vault/Claims/Rent/faucet-success, Positions grouped with chain-confirmed "Claim waiting" chips, Basic-mode orientation banner on /offers + /desk, NFT verifier in the nav |
+| 5 — performance (2026-07-12) | UX-005 | ✅ Fixed — static HTML boot splash, React.lazy route chunks under a Suspense'd shell, wallet/React vendor-chunk splitting; entry chunk 2,407 kB → 118 kB |
+| 6 — Activity rebuild (2026-07-12) | UX-008, UX-050 | ✅ Fixed — event label map + acronym-safe humanizer, per-transaction coalescing, substance sub-line + explorer link + relative time, load-more pagination; Basic-mode Activity link from Positions + chain-authoritative fallback when the indexer degrades |
 | standalone (2026-07-11) | UX-015 | ✅ Fixed by #1094 (plain-language contract errors) — name-keyed decoder across `CollateralPrecheck` / `SimulationPreview` / dry-run footer; #1112 adds the early under-collateral warning on the borrow step |
 
 ---
@@ -112,6 +115,8 @@ paints instantly; (2) `React.lazy` route chunks (the desk, charts,
 GoPlus/analytics surfaces don't belong in the boot chunk); (3)
 vendor-chunk splitting.
 
+**Status: ✅ FIXED (batch 5, 2026-07-12).** All three fixes shipped. (1) A theme-aware boot splash (brand mark + spinner) renders from `index.html` inside `#root` before the bundle loads, replaced when React mounts — a slow connection never sees a blank page. (2) Every route except Home/Borrow/Lend is now `React.lazy`, with the AppShell's `<Outlet>` under Suspense (the charts were already lazy). (3) `manualChunks` splits the wallet stack (wagmi/viem/connectkit/react-query) and React into separate cacheable vendor chunks. Measured: the entry chunk dropped from **2,407 kB → 118 kB** (34 kB gzip); wallet-vendor (1.85 MB) and react-vendor (232 kB) download in **parallel** with the entry chunk (faster than one serial 2.4 MB file) and stay cached across app deploys, and per-route chunks (RateChart 181 kB, PositionDetails 60 kB, Desk 54 kB, …) load on demand. **Honesty note (Codex #1169 r1):** the wallet stack is still statically imported by `main.tsx`, so it remains on the critical path to first *interactive* paint — the boot splash is what covers that download (no blank page); genuinely deferring the wallet providers so the shell paints before they load is a larger refactor tracked as a follow-up. A `vite:preloadError` reload handler self-heals stale chunk requests after a deploy.
+
 ### UX-006 · Rate Desk is crushed side-by-side at phone widths (M)
 `.desk-main` is `1fr 1fr` at its base breakpoint and never stacks
 (global.css ~1075/1100–1128), so at 390 px the ladder and ticket get
@@ -142,6 +147,8 @@ beginner's trust. Fix: label map + coalesce per-transaction + one line
 of substance per row (amount, asset, offer/loan id, tx link) +
 timestamps + pagination.
 
+**Status: ✅ FIXED (batch 6, 2026-07-12).** New `lib/activityView.ts` (unit-tested): an explicit event-kind label map + an acronym-safe humanizer fallback (the "Nftminted" bug — `NFTMinted` → "NFT Minted", not "Nft minted") that also normalizes the cancelled/canceled spelling drift, plus `coalesceByTx` collapsing each transaction's many events into ONE representative row (highest-priority action, e.g. `LoanInitiated` over its `*Details`/`Transfer` companions) with a "+N more in this transaction" note. Each row now carries a substantive sub-line (loan/offer id · relative time · sub-event count), a per-row explorer transaction link, and the feed reveals in pages of 25 (load-more) instead of one ~5,500px list. Amounts-per-row remain a follow-up (they need per-asset decimals; the id link + explorer tx cover provenance today).
+
 ### UX-009 · Order ticket's "Post order" dead-disables with no reason (M)
 `canPost` ANDs ~15 gates (`OrderTicket.tsx:446-467`) and the only
 feedback is a greyed button — no "connect your wallet" (there's no
@@ -151,6 +158,8 @@ button (`OfferFlow.tsx:2440-2444`) and the review checklist lives far
 above it. Fix: surface the first blocking reason directly under the
 button, and render a Connect button when no wallet.
 
+**Status: ✅ FIXED (batch 7a, 2026-07-12).** The desk order ticket now shows the FIRST unmet gate directly under the Post button (wrong network / pick a market / enter amount·rate·collateral / loading / accept the terms / gasless-service-down), and renders a Connect button — not a dead-disabled Post — when no wallet is connected. Gates that already carry their own inline message (self-collateral, expiry, duration cap, security) are left to those messages so the reason line never double-speaks. The guided flow's parallel is already served by its on-review-step "Before you sign" Checklist (which lists each unmet item) plus the named-prompt plan; the desk ticket was the surface with neither affordance.
+
 ### UX-010 · "Not enough balance" dead-ends without the faucet (S)
 The failing balance checklist item has no `fix` action
 (`useEligibility.tsx:106-127`) — on a seeded testnet whose Home
@@ -158,6 +167,8 @@ advertises free assets, the most common naive journey (try to lend
 with an empty wallet) stops at the final step with nowhere to go. Fix:
 link the failing item to `/faucet` on testnets (explainer link on
 mainnet).
+
+**Status: ✅ FIXED (batch 4, 2026-07-12).** The failing balance item carries a "Get test assets" link whenever the active chain is a testnet with deployed mocks (same availability predicate as the nav entry).
 
 ### UX-011 · Half the product is undiscoverable; mobile "More" strands users in Settings (M)
 The Basic/Advanced toggle exists only inside Settings
@@ -167,6 +178,8 @@ fifth tab is a gear icon labeled "More" that routes to the full
 Settings page, with secondary destinations (Vault, Claims, Offer Book,
 Help) buried at its bottom. Fix: a persistent mode switch (top bar or
 sidebar footer) + a real "More" menu/sheet on mobile.
+
+**Status: ✅ FIXED (batch 4, 2026-07-12).** A Basic/Advanced segmented switch lives in the sidebar footer (desktop) and the new More sheet (phones); the fifth tab is now a real More menu — a bottom sheet listing every destination without a tab (NFT Rental, Claims, vault, faucet, power surfaces, verifier, Settings, Help) plus the mode switch. Settings keeps its explanatory toggle.
 
 ---
 
@@ -184,6 +197,8 @@ linked state on its success.
 the current network shows nowhere outside the wallet modal. Offers,
 vault, and faucet are all per-network. Show the chain name next to the
 ConnectButton.
+
+**Status: ✅ FIXED (batch 8a, 2026-07-12).** A persistent network chip (a live dot + the chain name) sits beside the ConnectButton in the header whenever the wallet is connected on a supported chain; an unsupported chain keeps the existing `NetworkBanner`. The name hides below 400px so the wallet chip keeps its room (the dot stays).
 
 ### UX-014 · Wallet requirement surfaces only at the final review step (S/M)
 The guided flows let a disconnected user fill four screens before
@@ -204,6 +219,8 @@ Both the guided review (`OfferFlow.tsx:787-1178` effects) and the desk
 ticket (`OrderTicket.tsx:209-214`, every field handler) clear consent
 without saying why — it reads as a bug. Show "Terms changed — please
 re-confirm" beside the cleared checkbox.
+
+**Status: ✅ FIXED (batch 7a, 2026-07-12).** The desk ticket now shows "Terms changed — please re-confirm" beside the checkbox whenever an edit auto-clears a consent the user had already given (tracked so it never fires when consent was never ticked, and clears the moment they re-tick or a post succeeds). The guided flow already re-collects consent explicitly through its late-disclosure / security-fingerprint re-review banners (a moved sale number or an arrived security warning shows a banner and voids consent against the changed review) — the desk ticket was the surface clearing it silently on every keystroke.
 
 ### UX-017 · Invalid inputs signal by color only; disabled CTAs give no hint (S)
 Bad pasted addresses get only a red border (`AssetPicker.tsx:180-188`);
@@ -254,11 +271,15 @@ sentence; faucet success offers explorer links but no "now go borrow/
 lend" next step — the guided faucet→first-offer path breaks after hop
 one. Add forward CTAs to each.
 
+**Status: ✅ FIXED (batch 4, 2026-07-12).** Vault's "No vault yet" and empty-assets states link to the faucet (seeded testnets) or Home; the empty Claim Center explains where claims come from and links to Positions; the empty rental browse points at the list-your-NFT path switch; faucet mint success carries "Next: Borrow against it · Lend it out" links.
+
 ### UX-024 · Positions page promises "the one action each needs" but shows none (M)
 Cards render status badges only — the Defaulted loan with a claim
 waiting says nothing and links nowhere (visual: `basic-desktop--
 positions.png`). Add per-card actions ("Claim funds", "Repay") and
 group Needs-action / Active / Closed as history grows.
+
+**Status: ✅ FIXED (batch 4, 2026-07-12).** Loans group into "Needs your attention" / "Active loans" / "Ended loans"; the attention group is fed by the same chain-confirmed `getClaimable` query the Claim Center runs (shared cache) and its rows carry an explicit "Claim waiting" chip. While that read is loading or unavailable the list degrades to Active/Ended — it never guesses a claim.
 
 ### UX-025 · While role verification runs, the detail page's main action vanishes silently (S)
 `role === 'checking'` renders `null` in the action region
@@ -271,12 +292,16 @@ Both are URL-reachable in Basic by design, but nothing says "this is a
 power surface" or routes back to the guided flows. Dismissible banner
 with links (and an "enable Advanced" action).
 
+**Status: ✅ FIXED (batch 4, 2026-07-12).** `PowerSurfaceNote` renders on /offers and /desk in Basic mode: names the surface, links to the guided flows, offers "enable Advanced mode", and remembers dismissal per browser. Never shown in Advanced.
+
 ### UX-027 · Desk ticket lacks Max buttons and any fee/total preview (M)
 Amount/collateral are free-typed 18-decimal fields with no
 balance-fill (`OrderTicket.tsx:850-917`; `exactAmountString` exists
 for exactly this); protocol fees load but are never shown — no
 escrowed-total or net-rate line before consent. Add Max chips + a live
 fee/total summary.
+
+**Status: ✅ FIXED (batch 7a, 2026-07-12).** The ticket now carries a **Max** chip on the escrowed-leg field (a lender's Amount fills from the lending-asset wallet balance; a borrower's Collateral fills from the collateral balance — each side's Max reads only the token it actually escrows), and a **Fees & commitment** summary before consent: the escrowed leg worded for on-chain escrow vs gasless "at fill", plus the side's protocol fee (lender ⇒ net yield after the yield-fee on interest; borrower ⇒ one-time loan-initiation fee on principal with the estimated token amount). The summary is derived from the SAME payload the write sends, so the numbers can't drift from the order, and reads the LIVE `getProtocolConfigBundle` fee values.
 
 ### UX-028 · Ladder scanability + a11y (M)
 Numbers left-aligned with inconsistent decimals ("5%" over "12.25%"),
@@ -285,6 +310,8 @@ rows are `role="button"` wrapping nested Take/Fill controls
 are tooltip/color-only, asks reuse the error red. Right-align with
 tabular-nums + fixed decimals, un-nest the interactive elements, give
 chips visible text/aria, neutral ask/bid palette.
+
+**Status: ✅ FIXED (batch 7b, 2026-07-12).** The ladder rate is now the interactive pick target — a real `<button>` — so the row is no longer a `role="button"` wrapping the Take/Fill controls (the nested-interactive a11y violation is gone; the actions are siblings of the rate button). Numeric columns (rate / size / depth) are right-aligned with `tabular-nums`, and rates render at a FIXED 2 decimals so the decimal points line up (`formatBpsAsPercent` trimmed trailing zeros, giving the "5%" over "12.25%" wobble). The ask/bid palette is now NEUTRAL (`--text-strong`) instead of the alarm error-red / success-green — the side is carried by the section labels + position, not an alarm colour. The own-order marker carries a visually-hidden "Your order at this rate" label for screen readers; the Signed chip already has visible text. (Spec 17's ladder-scoped rate assertions were updated to the padded 2-decimal form in the same diff.)
 
 ### UX-029 · VPFI page: the one switch that matters is a tiny checkbox, and status ignores wallet balance (S/M)
 The fee-discount opt-in is an 18 px checkbox below a secondary button
@@ -309,10 +336,14 @@ Add the anchor + focus the page h1 on pathname change. Related: /offers
 and the 404 (and full-page EmptyStates generally) render no `h1` —
 confirmed mechanically by the sweep's landmark probe.
 
+**Status: ✅ FIXED (batch 8a, 2026-07-12).** The shell now has a "Skip to content" link (the first focusable element, off-screen until focused) targeting `<main id="main-content" tabIndex={-1}>`, and focus moves to that main region on every route change (skipping the initial mount so a first load doesn't steal focus) so a keyboard / screen-reader user lands on the new page instead of the clicked nav link. `EmptyState` gained a `titleAs` prop (default `h3`); the 404 page now passes `titleAs="h1"` so a full-page empty state carries a top-level heading (`.empty-state-title` normalizes the visual size across levels). `/offers` already rendered its `h1` unconditionally.
+
 ### UX-032 · NFT verifier is unreachable without a deep link (S)
 A trust tool for exactly the off-platform user, absent from all nav
 and Help. Add to secondary nav / Help ("Check a position NFT before
 you buy").
+
+**Status: ✅ FIXED (batch 4, 2026-07-12).** "NFT verifier" now sits in the secondary nav (desktop sidebar + phone More sheet). The Help-page mention lands with UX-049 (the Help content catch-up).
 
 ### UX-033 · Wallet-SDK analytics phone home (S)
 Consistent with the zero-real-error baseline above: the WalletConnect/
@@ -332,10 +363,21 @@ keeps consoles clean on locked-down networks.
   each in two tiers; sub-100 unaddressed). (S)
 - **UX-036** Desk term chips: selected 29d + bold 30d look
   double-selected; only the selection should carry weight. (S)
+  **Status: ✅ FIXED (batch 7b, 2026-07-12).** The has-liquidity cue is
+  now a small "live" dot + readable text, not a strong border — only the
+  `.active` chip carries selection weight.
 - **UX-037** Desk header stats show bare "—" and three empty-state
   voices in one region; unify + hide TradingView credit until a chart
   renders. (S)
+  **Status: ✅ FIXED (batch 7b, 2026-07-12).** The TradingView
+  attribution now renders ONLY when a chart actually draws (non-empty
+  buckets) — not on the pick-a-market / loading / unavailable /
+  never-filled states. The three header stats already share one "—"
+  empty treatment (`copy.desk.statUnknown`).
 - **UX-038** Σ column header — label it "Depth", tooltip the rest. (S)
+  **Status: ✅ FIXED (batch 7b, 2026-07-12).** `cumHeading` is now
+  "Depth"; the header cell keeps its "Cumulative depth from the top of
+  the side" tooltip.
 - **UX-039** Wizard stepper wraps on mobile, orphaning "Done";
   compact "Step 1 of 5" under ~400 px. (S)
   **Status: ✅ FIXED (batch 2, 2026-07-11).**
@@ -349,10 +391,21 @@ keeps consoles clean on locked-down networks.
   centered link pair is an ambiguous small target. (S)
 - **UX-044** Raw ISO build timestamp in the Help footer — format as a
   date, keep the full string in diagnostics. (S)
+  **Status: ✅ FIXED (batch 8a, 2026-07-12).** The Help footer now
+  renders the build stamp as a readable date (via `formatDate`, falling
+  back to the raw value if it doesn't parse); the full ISO string stays
+  available in the diagnostics drawer.
 - **UX-045** MatchBand "earn the matcher fee" doesn't state you pay
   gas up front. (S)
+  **Status: ✅ FIXED (batch 7b, 2026-07-12).** The band body now ends
+  "— you pay the network gas to execute it."
 - **UX-046** Open-orders fill % truncates (99.6 % → "99 %", <1 % →
   "0 %" with a visible bar); round and show remaining size. (S)
+  **Status: ✅ FIXED (batch 7b, 2026-07-12).** Fill % is now rounded
+  with honest extremes ("<1%" for a non-zero fill that rounds to 0,
+  "99%+" for a not-yet-complete fill that rounds to 100), the sub-line
+  adds "· N left" (remaining size), and the bar width uses the true
+  (unrounded) percentage so the meter matches the label.
 - **UX-047** Rent landing is two cards in a sea of whitespace — add a
   browse strip or honest empty section. (S/M)
 - **UX-048** Faucet card-in-card nesting + ragged mint-button
@@ -362,6 +415,7 @@ keeps consoles clean on locked-down networks.
 - **UX-050** Activity page is advanced-only and all-or-nothing when
   the indexer degrades; link basic users to it from Positions and fall
   back to the on-chain loan list. (M)
+  **Status: ✅ FIXED (batch 6, 2026-07-12).** Positions carries a "See your full activity history →" link (both modes, since Basic doesn't get Activity in the nav); the Activity page's indexer-degraded unavailable state now points to the chain-authoritative Positions page instead of dead-ending.
 
 ---
 

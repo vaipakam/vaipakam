@@ -26,4 +26,41 @@ export default defineConfig({
   plugins: process.env.ALPHA02_E2E
     ? [react()]
     : [react(), cloudflare()],
+  build: {
+    rollupOptions: {
+      output: {
+        // UX-005 — split the big, rarely-changing dependency groups out
+        // of the entry chunk so the boot payload shrinks (2.4 MB → 118
+        // kB) and vendor code stays cacheable across app deploys and
+        // downloads in PARALLEL with the entry (faster than one serial
+        // file). Note: main.tsx statically imports the wallet providers,
+        // so wallet-vendor is still on the critical path to first
+        // interactive paint — the boot splash in index.html covers that
+        // download; deferring the providers so the shell paints first is
+        // the larger refactor tracked in #1170 (Codex #1169 r1).
+        // Authored as a function (not the object form) because the
+        // Cloudflare plugin narrows `output.manualChunks` to the
+        // function signature.
+        manualChunks(id: string) {
+          if (id.includes('node_modules')) {
+            if (
+              /[\\/]node_modules[\\/](wagmi|viem|connectkit|@tanstack[\\/]react-query|@wagmi)[\\/]/.test(
+                id,
+              )
+            ) {
+              return 'wallet-vendor';
+            }
+            if (
+              /[\\/]node_modules[\\/](react|react-dom|react-router|react-router-dom|scheduler)[\\/]/.test(
+                id,
+              )
+            ) {
+              return 'react-vendor';
+            }
+          }
+          return undefined;
+        },
+      },
+    },
+  },
 });

@@ -5,6 +5,8 @@
  * read identically across borrow / lend / repay / claim.
  */
 import { useModal } from 'connectkit';
+import { Link } from 'react-router-dom';
+import { getDeployment } from '@vaipakam/contracts/deployments';
 import { useActiveChain } from '../chain/useActiveChain';
 import { useSanctionsCheck } from '../data/sanctions';
 import { copy } from '../content/copy';
@@ -35,10 +37,20 @@ export interface EligibilityInputs {
 }
 
 export function useEligibility(inputs: EligibilityInputs): CheckItem[] {
-  const { isConnected, onSupportedChain, switchToSupported, switchPending } =
-    useActiveChain();
+  const {
+    isConnected,
+    onSupportedChain,
+    switchToSupported,
+    switchPending,
+    readChain,
+  } = useActiveChain();
   const { setOpen } = useModal();
   const sanctions = useSanctionsCheck();
+  // UX-010 — on a seeded testnet, "not enough balance" must not
+  // dead-end: the faucet is one tap away. Same availability predicate
+  // as the nav entry (chain is a testnet AND its mocks are deployed).
+  const hasFaucet =
+    readChain.testnet && Boolean(getDeployment(readChain.chainId)?.testnetMocks);
 
   const items: CheckItem[] = [];
 
@@ -124,6 +136,11 @@ export function useEligibility(inputs: EligibilityInputs): CheckItem[] {
         : asset.balance! >= asset.required!
           ? 'pass'
           : 'fail',
+      fix: hasFaucet ? (
+        <Link to="/faucet" className="btn btn-secondary btn-sm">
+          {copy.checks.getTestAssets}
+        </Link>
+      ) : undefined,
     });
   }
 

@@ -12,6 +12,7 @@ export function NotFound() {
   return (
     <EmptyState
       icon={Compass}
+      titleAs="h1"
       title={copy.notFound.title}
       body={copy.notFound.body}
       action={

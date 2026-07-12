@@ -216,12 +216,21 @@ Current connected-app surface expectations:
 - the auto-lifecycle caps card should also make the keeper kill-switch visible at the point of configuration: because both auto-refinance and auto-extend execute against the BORROWER side, the relevant hard gates are the borrower holder's master keeper switch AND the global delegated-keeper pause — when the borrower's switch is off, OR keeper automation is globally paused by governance, the card should warn that any enabled cap is inert until keeper automation can run again, since those actions are keeper-executed, so an enabled cap is never mistaken for active protection. The two gates have different audiences: the borrower master-switch case warns only the borrower holder (their switch gates the borrower-side execution of both auto-refinance and auto-extend), but the global-pause case warns BOTH the borrower and the lender holder — a global pause blocks every keeper call, so a lender's own enabled auto-extend cap is equally inert. The warning should state the full fix path (master switch on, a keeper approved with the right permissions, AND that keeper enabled for this specific loan via the per-loan toggles; and note that a global pause resumes only when governance lifts it), should NOT treat the lender's keeper switch as a blocker (the lender's extend-caps are only their consent surface), and should NOT infer inertness from the approved-keeper count (a non-zero count doesn't prove a capable, loan-enabled keeper). The finer per-keeper action-permission detail is surfaced by the per-keeper toggles on the same page.
 - `Loan Details` should show a prominent pre-grace warning banner near the loan title when the connected wallet is the borrower, refinance caps are enabled, and the loan is within the final 24 hours before grace begins. The banner should state that auto-refinance is best-effort, show the time remaining until grace, explain that repayment is accepted until the grace period expires, and offer shortcuts to widen refinance caps and to repay when repayment is available. The caps card should also include an Alerts CTA for Telegram / Push delivery rails so borrowers can receive keeper-side pre-grace warnings even when they are not actively viewing the page.
 - `Activity` rows that reference a loan should use a clickable `Loan #X` pill linking to that loan's full details page
+- Activity must read as plain language, never raw protocol event names: each event is shown with a human label (acronyms like NFT preserved, spelling consistent), the many events of a single transaction collapse into one row labelled by the real outcome with a note of how many sub-events it represents, each row states what it concerns and when and links to its transaction on the block explorer, and the list paginates rather than rendering unbounded.
+- The full activity history must be reachable by users who don't see it in the navigation (a link from Positions), and when the activity data source is unavailable the page directs users to the chain-authoritative Positions view rather than dead-ending.
 - `Claim Center` is the home for loan claims and platform-interaction rewards; the former standalone in-app `Rewards` page should not be treated as a live route
 - Claim Center should show interaction-reward waiting states when finalization, broadcast, or mirror-chain funding has not reached the specific day window included in the user's pending claim. The UI should not treat a prior chain-level remittance as proof that later claim days are funded, and should not invite the user to submit a reward claim that is expected to fail only because the relevant mirror-day VPFI budget has not arrived.
 - Claim Center and Loan Details should treat internally matched loans as terminal claim-eligible loans. Borrowers should be able to claim any residual collateral left after a partial internal match, and timelines should distinguish internal matching from external swap liquidation.
 - A loan that has reached any terminal state must never present a live obligation or a live risk warning: the Loan Details receipt states what WAS owed as settled per outcome (repaid in full / covered by the default / closed), and the consequence row answers "what happens next" for that outcome instead of warning about a default that can no longer happen.
 - Claim Center cards state the concrete amount and asset each claim pays out, read from the protocol's own claim record — never an unquantified "+ interest" or a description of where the money might come from. Only a claim with no fungible amount (a pure in-kind NFT/collateral transfer) may fall back to a plain-language description of what transfers.
 - Position-list rows must not present a reassuring time-based state on a loan whose collateral health is poor: for active priced loans, a worse live health state overrides the time badge, and a healthy reading never softens a past-due or otherwise worse time state.
+- The positions list groups loans by what needs the user — confirmed unclaimed payouts first (marked explicitly, verified against the protocol's own claim record, never guessed), then live loans, then ended ones.
+- No empty or failing state may dead-end: an empty vault, claim list, rental market, or a failing balance check each offer the concrete next step (on test networks, that includes the faucet), and a successful faucet mint offers the next hop into borrowing or lending.
+- The Basic/Advanced mode switch is persistently available wherever the navigation is — never only inside Settings — and switching modes never navigates away. On phones, every destination without a tab of its own is reachable through a real "More" menu rather than an alias to Settings.
+- A Basic-mode user who lands on a power surface (offer book, rate desk) by URL is told what the surface is, offered the guided equivalent, and offered the mode switch — dismissibly, and never shown to Advanced users.
+- The connected app is keyboard- and screen-reader navigable: a "skip to content" affordance lets a keyboard user bypass the navigation to reach the page body, and moving between pages places focus on the newly loaded content rather than leaving it on the link that was clicked. Every full-page state — including a not-found page — carries a top-level heading.
+- Because the order book, vault, and faucet are all per-network, a connected wallet on a supported network shows the current network's name persistently in the app chrome (not only inside the wallet's own modal); an unsupported network is called out with the existing switch-network prompt.
+- The app must show signs of life immediately on a cold load, even on a slow connection: a lightweight branded loading state paints from the initial HTML before the application code runs, and is replaced once the app is ready — a blank white screen during startup is a defect. Screens beyond the common entry points may load on demand behind an in-shell loading state.
 - Once a loan is past due, Loan Details must show the concrete deadline the borrower is racing: a prominent warning with the remaining grace window counted down in plain time units, switching to grace-expired wording (collateral can be taken / can be claimed, per role) once the window closes. Protocol jargon shown at high-stakes moments — grace period, liquidation, unpriced assets, health factor, loan-to-value — carries a one-clause plain-language definition where it appears, including the loan's actual grace length when the protocol configuration is readable.
 - Claim Center and Loan Details should surface fallback-pending internal-match rescue when it is available. The user should see that a lender claim may first attempt a fresh safe route or a protocol-internal match before falling back to in-kind collateral, and any successful rescue should be reflected in the timeline and claim lanes.
 - For fallback-pending loans where the backstop Role-B cash exit is enabled, `Loan Details` should let the current lender-position holder opt into the backstop buyout only as an additional exit choice. The UI should show the ordinary in-kind claim remains available, the backstop first attempts market rescue, the buyout can execute only within treasury capacity and oracle-coverage constraints, and borrower top-up cases route to ordinary claim handling instead.
@@ -1068,11 +1077,30 @@ converge. Its intended behaviour (the test oracle for that surface):
   the same screen posts a limit-rate offer with expiry presets (never /
   a chosen time) and fill modes (partial fills allowed, all-or-none,
   immediate-or-cancel), with the same consent, simulation precheck, and
-  under-collateral warning the guided flows enforce. The user's own
+  under-collateral warning the guided flows enforce. When the ticket
+  cannot post, it states the first reason plainly beneath the action —
+  no wallet connected (for which it offers a connect action rather than
+  only a disabled control), the wrong network, no market chosen, a
+  missing amount / rate / collateral, still-loading market details, or
+  the terms not yet accepted — so a greyed control is never unexplained.
+  Because any change to the terms clears the risk-and-terms consent (the
+  deal being consented to changed underneath it), the ticket says so
+  beside the box when it clears a consent already given, instead of
+  letting the un-tick read as a fault. The field the user actually
+  escrows — a lender's loan amount, a borrower's collateral — offers a
+  one-tap fill to their wallet balance, and before consent the ticket
+  summarizes what the order commits (worded for immediate escrow or, for
+  a gasless order, movement at fill) alongside the protocol fee that
+  applies to the user's side: a lender's yield after the fee on interest,
+  a borrower's one-time initiation fee on the principal, quoted from the
+  live deployed fee values. The user's own
   open offers can be repriced or resized in place in one transaction —
   only by their creator; a bought offer position is view-only — and an
   amend that increases the locked amount asks for the token approval
-  first. Recent fills for the market are listed honestly: a market with
+  first. A partly-filled open offer states its fill progress honestly —
+  a rounded percentage that never reads as fully empty or fully filled
+  when it is neither, alongside how much size remains. Recent fills for
+  the market are listed honestly: a market with
   no fills says so, and internal bookkeeping from a loan-sale never
   appears as a fill. Positions show under the book with their health
   status and lead to the existing manage flows. A rate-history chart
@@ -1124,7 +1152,8 @@ converge. Its intended behaviour (the test oracle for that surface):
   that cannot execute shows no band and no speculation. The band names
   the rate and amount that would match; anyone — not just the two
   makers — may execute the match and earn the protocol's matcher fee
-  share, and the resulting loan belongs to the two offer creators at
+  share (paying the network gas to execute it, which the band states),
+  and the resulting loan belongs to the two offer creators at
   the stated midpoint terms. If governance disables the matching
   machinery, the band does not appear. The ticket can also post an
   order gaslessly: instead of a transaction, the maker signs the

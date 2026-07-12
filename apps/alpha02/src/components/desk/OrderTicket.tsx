@@ -14,8 +14,9 @@
  * Kill switch: the ticket is a position-OPENING flow → gated on
  * `flowDisabled('post-offer')`.
  */
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { CircleCheck } from 'lucide-react';
+import { useModal } from 'connectkit';
 import { usePublicClient, useWalletClient } from 'wagmi';
 import { useQueryClient } from '@tanstack/react-query';
 import { encodeFunctionData } from 'viem';
@@ -32,6 +33,7 @@ import { CollateralPrecheck } from '../CollateralPrecheck';
 import { ConsentLabel } from '../ConsentLabel';
 import {
   ensureAllowance,
+  useTokenBalance,
   useTokenMeta,
 } from '../../contracts/erc20';
 import {
@@ -56,6 +58,7 @@ import {
   useTokenSecurity,
 } from '../../data/tokenSecurity';
 import {
+  exactAmountString,
   formatDurationDays,
   formatTokenAmount,
   shortAddress,
@@ -168,6 +171,7 @@ export function OrderTicket({
   const { data: walletClient } = useWalletClient();
   const publicClient = usePublicClient({ chainId: walletChain?.chainId });
   const { write } = useDiamondWrite();
+  const { setOpen } = useModal();
   const permit2 = usePermit2Signing();
   const queryClient = useQueryClient();
   const fees = useProtocolFees();
@@ -183,6 +187,20 @@ export function OrderTicket({
   // order flow (and spec 17's asserts) run it unchanged.
   const [postMode, setPostMode] = useState<PostMode>('onchain');
   const [consent, setConsent] = useState(false);
+  // UX-016 — surface a "terms changed, re-confirm" note whenever an
+  // edit auto-clears a consent the user had already given (the ticket
+  // voids consent on every term/market/keystroke change). Tracked via a
+  // ref so the term-change effects can read the live consent value
+  // without adding it to their dependency lists.
+  const [consentClearedNote, setConsentClearedNote] = useState(false);
+  const consentRef = useRef(consent);
+  useEffect(() => {
+    consentRef.current = consent;
+  }, [consent]);
+  const clearConsentOnEdit = useCallback(() => {
+    if (consentRef.current) setConsentClearedNote(true);
+    setConsent(false);
+  }, []);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [postedHash, setPostedHash] = useState<string | null>(null);
@@ -198,20 +216,20 @@ export function OrderTicket({
   useEffect(() => {
     if (prefill === null) return;
     setRate(String(prefill.rateBps / 100));
-    setConsent(false);
+    clearConsentOnEdit();
     setPostedHash(null);
     setGaslessPosted(null);
-  }, [prefill]);
+  }, [prefill, clearConsentOnEdit]);
 
   // Any market change voids consent — the deal being consented to
   // changed underneath the ticket. Posting-mode changes void it too:
   // the consent line was read against a different escrow reality.
   useEffect(() => {
-    setConsent(false);
+    clearConsentOnEdit();
     setPostedHash(null);
     setGaslessPosted(null);
     setGaslessFundsWarn(null);
-  }, [pair?.lendingAsset, pair?.collateralAsset, days, side, postMode]);
+  }, [pair?.lendingAsset, pair?.collateralAsset, days, side, postMode, clearConsentOnEdit]);
 
   // The collateral ASSET is fixed to the selected market's — the ticket
   // posts into the (pair, tenor) market shown in the header, and a
@@ -222,6 +240,15 @@ export function OrderTicket({
 
   const lendingMeta = useTokenMeta(pair?.lendingAsset);
   const collateralMeta = useTokenMeta(pair?.collateralAsset);
+
+  // UX-027 — the Max chip fills the escrowed leg from the wallet
+  // balance: a lender escrows the LENDING asset (the amount field), a
+  // borrower locks the COLLATERAL asset. Each side's field is wallet-
+  // funded only on its own escrowed leg, so the counter-side amount
+  // (a lender's required collateral, a borrower's requested principal)
+  // gets no Max — it isn't drawn from this wallet.
+  const lendingBalance = useTokenBalance(pair?.lendingAsset);
+  const collateralBalance = useTokenBalance(pair?.collateralAsset);
 
   const killed = flowDisabled('post-offer');
 
@@ -625,6 +652,7 @@ export function OrderTicket({
   function afterPost(hash: string) {
     setPostedHash(hash);
     setConsent(false);
+    setConsentClearedNote(false);
     setAmount('');
     void queryClient.invalidateQueries({ queryKey: ['deskBook'] });
     void queryClient.invalidateQueries({ queryKey: ['deskMarkets'] });
@@ -804,6 +832,7 @@ export function OrderTicket({
       }
       setGaslessPosted(res.orderHash);
       setConsent(false);
+      setConsentClearedNote(false);
       setAmount('');
       void queryClient.invalidateQueries({ queryKey: ['deskSignedBook'] });
       // A signed post can CREATE a market — /offers/markets unions
@@ -820,6 +849,112 @@ export function OrderTicket({
   }
 
   const text = copy.desk.ticket;
+
+  // UX-009 — the FIRST unmet gate, in priority order, shown under the
+  // disabled Post button. Gates that already render their own inline
+  // message (self-collateral, expiry, duration cap, security) return
+  // null so the note never duplicates them; a missing wallet is served
+  // by the Connect button below instead of a reason line.
+  const blockReason: string | null = (() => {
+    if (!address || !walletClient || !publicClient) return null; // Connect button
+    if (!onSupportedChain) return text.blockNetwork;
+    if (killed) return null; // kill-switch banner already shown
+    if (!pair) return text.blockNoMarket;
+    if (selfCollateral) return null; // inline danger under the field
+    if (!isPositiveDecimal(amount)) return text.blockAmount;
+    if (!rateValid) return text.blockRate;
+    if (!isPositiveDecimal(collateralAmount)) return text.blockCollateral;
+    if (!expiryOk || iocNeedsExpiry || overDurationCap) return null; // inline hints
+    if (!decimalsReady || !fees.ready) return text.blockLoading;
+    if (securityBlocked.length > 0) return null; // security banner above
+    if (postMode === 'gasless' && !gaslessReady) return text.blockGaslessService;
+    if (!consent) return text.blockConsent;
+    return null;
+  })();
+
+  // UX-027 — an honest fee/commitment summary before consent: what the
+  // escrowed leg is (worded for on-chain escrow vs gasless "at fill"),
+  // plus the side's protocol fee (lender yield-fee net rate; borrower
+  // one-time LIF on principal). Derived from the same payload the write
+  // sends, so the numbers can't drift from the order.
+  const feePreview = useMemo((): { commit: string; fee: string } | null => {
+    if (!fieldsComplete || !decimalsReady || !fees.ready) return null;
+    const payload = buildPayload(false);
+    if (!payload) return null;
+    const lendDec = lendingMeta.data?.decimals ?? 18;
+    const collDec = collateralMeta.data?.decimals ?? 18;
+    const lendSym = lendingMeta.data?.symbol ?? '';
+    const collSym = collateralMeta.data?.symbol ?? '';
+    const gasless = postMode === 'gasless';
+    if (side === 'lender') {
+      const escrow = formatTokenAmount(payload.amountMax, lendDec);
+      const netRate = (
+        (Number(rate) * (10000 - fees.treasuryFeeBps)) /
+        10000
+      ).toFixed(2);
+      return {
+        commit: gasless
+          ? text.commitAtFill(escrow, lendSym)
+          : text.escrowNow(escrow, lendSym),
+        fee: text.netYield(netRate, String(fees.treasuryFeeBps / 100)),
+      };
+    }
+    const lock = formatTokenAmount(payload.collateralAmountMax, collDec);
+    const lifAmt = (payload.amountMax * BigInt(fees.loanInitiationFeeBps)) / 10000n;
+    return {
+      commit: gasless
+        ? text.lockAtFill(lock, collSym)
+        : text.lockNow(lock, collSym),
+      fee: text.lifNote(
+        String(fees.loanInitiationFeeBps / 100),
+        formatTokenAmount(lifAmt, lendDec),
+        lendSym,
+      ),
+    };
+    // buildPayload reads only state captured by these deps (same
+    // pattern as simTx above).
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [
+    fieldsComplete,
+    decimalsReady,
+    fees.ready,
+    fees.treasuryFeeBps,
+    fees.loanInitiationFeeBps,
+    side,
+    rate,
+    postMode,
+    form,
+    fillMode,
+    expiry,
+    customExpiry,
+    lendingMeta.data,
+    collateralMeta.data,
+    text,
+  ]);
+
+  // UX-027 — fill the escrowed-leg field from the wallet balance.
+  const fillAmountMax = () => {
+    if (lendingBalance.data === undefined || lendingMeta.data === undefined) return;
+    setAmount(exactAmountString(lendingBalance.data, lendingMeta.data.decimals));
+    clearConsentOnEdit();
+  };
+  const fillCollateralMax = () => {
+    if (collateralBalance.data === undefined || collateralMeta.data === undefined) {
+      return;
+    }
+    setCollateralAmount(
+      exactAmountString(collateralBalance.data, collateralMeta.data.decimals),
+    );
+    clearConsentOnEdit();
+  };
+  const showAmountMax =
+    side === 'lender' &&
+    lendingBalance.data !== undefined &&
+    lendingMeta.data !== undefined;
+  const showCollateralMax =
+    side === 'borrower' &&
+    collateralBalance.data !== undefined &&
+    collateralMeta.data !== undefined;
 
   return (
     <div className="card">
@@ -843,10 +978,22 @@ export function OrderTicket({
       </div>
 
       <div className="field">
-        <label htmlFor="desk-amount">
-          {side === 'lender' ? text.amountLend : text.amountBorrow}
-          {lendingMeta.data ? ` (${lendingMeta.data.symbol})` : ''}
-        </label>
+        <div className="field-label-row">
+          <label htmlFor="desk-amount">
+            {side === 'lender' ? text.amountLend : text.amountBorrow}
+            {lendingMeta.data ? ` (${lendingMeta.data.symbol})` : ''}
+          </label>
+          {showAmountMax ? (
+            <button
+              type="button"
+              className="input-max"
+              onClick={fillAmountMax}
+              title={`In your wallet: ${exactAmountString(lendingBalance.data!, lendingMeta.data!.decimals)} ${lendingMeta.data!.symbol}`}
+            >
+              {text.max}
+            </button>
+          ) : null}
+        </div>
         <input
           id="desk-amount"
           className="input"
@@ -855,7 +1002,7 @@ export function OrderTicket({
           value={amount}
           onChange={(e) => {
             setAmount(e.target.value.trim());
-            setConsent(false);
+            clearConsentOnEdit();
           }}
         />
       </div>
@@ -873,7 +1020,7 @@ export function OrderTicket({
           value={rate}
           onChange={(e) => {
             setRate(e.target.value.trim());
-            setConsent(false);
+            clearConsentOnEdit();
           }}
         />
       </div>
@@ -900,10 +1047,22 @@ export function OrderTicket({
       ) : null}
 
       <div className="field">
-        <label htmlFor="desk-collateral-amount">
-          Collateral amount
-          {collateralMeta.data ? ` (${collateralMeta.data.symbol})` : ''}
-        </label>
+        <div className="field-label-row">
+          <label htmlFor="desk-collateral-amount">
+            Collateral amount
+            {collateralMeta.data ? ` (${collateralMeta.data.symbol})` : ''}
+          </label>
+          {showCollateralMax ? (
+            <button
+              type="button"
+              className="input-max"
+              onClick={fillCollateralMax}
+              title={`In your wallet: ${exactAmountString(collateralBalance.data!, collateralMeta.data!.decimals)} ${collateralMeta.data!.symbol}`}
+            >
+              {text.max}
+            </button>
+          ) : null}
+        </div>
         <input
           id="desk-collateral-amount"
           className="input"
@@ -912,7 +1071,7 @@ export function OrderTicket({
           value={collateralAmount}
           onChange={(e) => {
             setCollateralAmount(e.target.value.trim());
-            setConsent(false);
+            clearConsentOnEdit();
           }}
         />
       </div>
@@ -939,7 +1098,7 @@ export function OrderTicket({
               }
               onClick={() => {
                 setExpiry(value);
-                setConsent(false);
+                clearConsentOnEdit();
               }}
             >
               {label}
@@ -954,7 +1113,7 @@ export function OrderTicket({
             value={customExpiry}
             onChange={(e) => {
               setCustomExpiry(e.target.value);
-              setConsent(false);
+              clearConsentOnEdit();
             }}
           />
         ) : null}
@@ -988,7 +1147,7 @@ export function OrderTicket({
                 disabled={unavailable}
                 onClick={() => {
                   setFillMode(value);
-                  setConsent(false);
+                  clearConsentOnEdit();
                 }}
               >
                 {label}
@@ -1063,6 +1222,15 @@ export function OrderTicket({
 
       <CollateralPrecheck tx={precheckTx} />
 
+      {/* UX-027 — fee & commitment summary before consent. */}
+      {feePreview ? (
+        <div className="desk-fee-preview" role="note">
+          <p className="desk-fee-preview-title">{text.feePreviewTitle}</p>
+          <p>{feePreview.commit}</p>
+          <p>{feePreview.fee}</p>
+        </div>
+      ) : null}
+
       <label
         className="cluster"
         style={{ alignItems: 'flex-start', gap: 8, margin: '8px 0' }}
@@ -1070,11 +1238,21 @@ export function OrderTicket({
         <input
           type="checkbox"
           checked={consent}
-          onChange={(e) => setConsent(e.target.checked)}
+          onChange={(e) => {
+            setConsent(e.target.checked);
+            // Re-ticking clears the "terms changed" note (UX-016).
+            if (e.target.checked) setConsentClearedNote(false);
+          }}
           style={{ marginTop: 3 }}
         />
         <ConsentLabel />
       </label>
+      {/* UX-016 — the auto-untick after a term edit, explained. */}
+      {consentClearedNote && !consent ? (
+        <p className="field-hint" style={{ color: 'var(--warn)', marginTop: -4 }}>
+          {text.consentRecheck}
+        </p>
+      ) : null}
 
       <SimulationPreview tx={simTx} result={preSign.result} />
 
@@ -1107,22 +1285,41 @@ export function OrderTicket({
         </div>
       ) : null}
 
-      <button
-        type="button"
-        className="btn btn-primary btn-block"
-        disabled={!canPost}
-        onClick={() =>
-          void (postMode === 'gasless' ? submitGasless() : submit())
-        }
-      >
-        {postMode === 'gasless'
-          ? busy
-            ? text.gaslessPosting
-            : text.gaslessPost
-          : busy
-            ? text.posting
-            : text.post}
-      </button>
+      {/* UX-009 — a disconnected wallet gets a Connect button here, not
+          a dead-disabled Post; the ticket has no wallet affordance
+          otherwise. */}
+      {!address ? (
+        <button
+          type="button"
+          className="btn btn-primary btn-block"
+          onClick={() => setOpen(true)}
+        >
+          {copy.wallet.connect}
+        </button>
+      ) : (
+        <button
+          type="button"
+          className="btn btn-primary btn-block"
+          disabled={!canPost}
+          onClick={() =>
+            void (postMode === 'gasless' ? submitGasless() : submit())
+          }
+        >
+          {postMode === 'gasless'
+            ? busy
+              ? text.gaslessPosting
+              : text.gaslessPost
+            : busy
+              ? text.posting
+              : text.post}
+        </button>
+      )}
+      {/* UX-009 — the first unmet gate, so the greyed button says why. */}
+      {blockReason ? (
+        <p className="field-hint" style={{ textAlign: 'center', marginTop: 6 }}>
+          {blockReason}
+        </p>
+      ) : null}
     </div>
   );
 }

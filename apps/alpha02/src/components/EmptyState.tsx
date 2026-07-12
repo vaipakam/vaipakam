@@ -12,18 +12,26 @@ export function EmptyState({
   title,
   body,
   action,
+  titleAs = 'h3',
 }: {
   icon: LucideIcon;
   title: string;
   body?: string;
   action?: ReactNode;
+  /** Heading level for the title. Defaults to h3 (inline use inside a
+   *  page that already has its own h1). A FULL-PAGE empty state — the
+   *  404, or any screen whose whole body is this component — passes
+   *  'h1' so the page isn't left with no top-level heading (UX-031).
+   *  `.empty-state-title` normalizes the visual size across levels. */
+  titleAs?: 'h1' | 'h3';
 }) {
+  const Title = titleAs;
   return (
     <div className="empty-state">
       {/* A loader that doesn't move reads as a hang on a slow RPC —
           spin it automatically so no call site can forget (UX-022). */}
       <Icon aria-hidden className={Icon === LoaderCircle ? 'spin' : undefined} />
-      <h3>{title}</h3>
+      <Title className="empty-state-title">{title}</Title>
       {body ? <p>{body}</p> : null}
       {action}
     </div>

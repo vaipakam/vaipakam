@@ -4,7 +4,9 @@
  * locked (backing open offers/loans/rentals), and free.
  */
 import { Landmark, LoaderCircle } from 'lucide-react';
+import { Link } from 'react-router-dom';
 import { useModal } from 'connectkit';
+import { getDeployment } from '@vaipakam/contracts/deployments';
 import { copy } from '../content/copy';
 import { useActiveChain } from '../chain/useActiveChain';
 import { useVaultAssets } from '../data/vault';
@@ -16,6 +18,19 @@ export function Vault() {
   const { isConnected, readChain } = useActiveChain();
   const { setOpen } = useModal();
   const vault = useVaultAssets();
+  // UX-023 — empty states point forward: on a seeded testnet the
+  // natural first hop is the faucet, otherwise the guided journeys.
+  const hasFaucet =
+    readChain.testnet && Boolean(getDeployment(readChain.chainId)?.testnetMocks);
+  const forwardCta = hasFaucet ? (
+    <Link to="/faucet" className="btn btn-primary">
+      {copy.vault.emptyCtaFaucet}
+    </Link>
+  ) : (
+    <Link to="/" className="btn btn-primary">
+      {copy.vault.emptyCta}
+    </Link>
+  );
 
   return (
     <div>
@@ -37,7 +52,12 @@ export function Vault() {
       ) : vault.depsUnavailable || vault.isError || !vault.data ? (
         <UnavailableState body={copy.vault.unavailable} />
       ) : vault.data.vaultAddress === null ? (
-        <EmptyState icon={Landmark} title="No vault yet" body={copy.vault.noVaultYet} />
+        <EmptyState
+          icon={Landmark}
+          title="No vault yet"
+          body={copy.vault.noVaultYet}
+          action={forwardCta}
+        />
       ) : (
         <div className="stack">
           <section className="card">
@@ -71,6 +91,7 @@ export function Vault() {
                 icon={Landmark}
                 title="Nothing in your vault yet"
                 body="Assets appear here when you post offers, open loans, or deposit VPFI."
+                action={forwardCta}
               />
             )
           ) : (

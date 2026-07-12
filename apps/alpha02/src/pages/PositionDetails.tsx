@@ -1492,13 +1492,19 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
                 : isRental
                   ? role === 'borrower'
                     ? 'Your use rights end at the due date and the prepaid buffer goes to the owner — close on time to get it back.'
-                    : 'The renter’s rights reset after the due date and grace period; your fees stay claimable here.'
+                    : role === 'lender'
+                      ? 'The renter’s rights reset after the due date and grace period; your fees stay claimable here.'
+                      : 'The renter’s use rights end at the due date; the owner’s fees and buffer settle per the rental terms.'
                   : role === 'borrower'
                     ? copy.positions.whatIfNothingBorrower(
                         collateral?.symbol ?? 'locked',
                         graceLengthStr,
                       )
-                    : copy.positions.whatIfNothingLender(graceLengthStr)}
+                    : role === 'lender'
+                      ? copy.positions.whatIfNothingLender(graceLengthStr)
+                      : // #1166 live-review follow-up — a wallet holding
+                        // neither position is never addressed as a party.
+                        copy.positions.whatIfNothingViewer(graceLengthStr)}
             </dd>
           </div>
         </dl>

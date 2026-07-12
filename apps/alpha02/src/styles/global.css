@@ -136,6 +136,63 @@ button {
   flex: 1;
 }
 
+/* UX-031 — skip-to-content link: off-screen until keyboard-focused,
+ * then pinned top-left so the first Tab reveals it. */
+.skip-link {
+  position: absolute;
+  left: -9999px;
+  top: 0;
+  z-index: 100;
+  padding: 8px 14px;
+  background: var(--brand);
+  color: #fff;
+  border-radius: 0 0 var(--radius-sm) 0;
+  font-weight: 600;
+  text-decoration: none;
+}
+
+.skip-link:focus {
+  left: 0;
+}
+
+/* Programmatic focus of the main region on route change (UX-031) must
+ * not draw a persistent focus ring — keyboard focus of real controls
+ * still shows its own :focus-visible outline. */
+.shell-main:focus {
+  outline: none;
+}
+
+/* UX-013 — persistent network indicator beside the wallet chip. */
+.net-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 10px;
+  margin-right: var(--space-2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-full);
+  background: var(--surface-raised);
+  font-size: 0.8rem;
+  font-weight: 600;
+  color: var(--text-body);
+  white-space: nowrap;
+}
+
+.net-chip-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: var(--radius-full);
+  background: var(--ok);
+}
+
+/* The chain name is supporting context — hide it on the narrowest
+ * viewports where the wallet chip needs the room; the dot remains. */
+@media (max-width: 400px) {
+  .net-chip-name {
+    display: none;
+  }
+}
+
 .shell-body {
   display: flex;
   flex: 1;
@@ -198,9 +255,152 @@ button {
   text-decoration: none;
 }
 
+/* The More tab is a BUTTON (opens the sheet), not a link — strip the
+   default button chrome so it matches its NavLink siblings. */
+button.tabbar-item {
+  background: none;
+  border: none;
+  cursor: pointer;
+  font-family: inherit;
+}
+
+/* UX-011 — phone More sheet: every destination without a tab, one tap
+   away, plus the mode switch. Sits above the tab bar. */
+.more-sheet-backdrop {
+  position: fixed;
+  inset: 0;
+  /* Above the support FAB (z 40) — the FAB must not steal taps from
+     the open sheet (Codex #1168 r1). The diagnostics drawer can't be
+     open at the same time: its own overlay covers the tab bar. */
+  z-index: 43;
+  background: rgb(0 0 0 / 0.35);
+}
+
+.more-sheet {
+  position: fixed;
+  left: 0;
+  right: 0;
+  bottom: calc(56px + env(safe-area-inset-bottom));
+  z-index: 44;
+  display: flex;
+  flex-direction: column;
+  max-height: 70vh;
+  overflow-y: auto;
+  background: var(--surface-raised);
+  border-top: 1px solid var(--border);
+  border-radius: var(--radius-lg) var(--radius-lg) 0 0;
+  padding: var(--space-2);
+  box-shadow: var(--shadow-pop);
+}
+
+.more-sheet-item {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  min-height: var(--taptarget);
+  padding: var(--space-2) var(--space-3);
+  border-radius: var(--radius-sm);
+  color: var(--text-body);
+  font-weight: 500;
+}
+
+.more-sheet-item svg {
+  width: 18px;
+  height: 18px;
+  color: var(--text-muted);
+}
+
+.more-sheet-item.active {
+  background: var(--brand-soft);
+  color: var(--brand);
+}
+
+.more-sheet-item:hover {
+  background: var(--surface-hover);
+  text-decoration: none;
+}
+
+.more-sheet-mode {
+  border-top: 1px solid var(--border);
+  margin-top: var(--space-2);
+  padding: var(--space-3);
+}
+
+/* UX-011 — the persistent Basic/Advanced segmented switch. */
+.mode-switch {
+  display: flex;
+  gap: 4px;
+  padding: 4px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface-sunken);
+}
+
+.mode-switch button {
+  flex: 1;
+  min-height: 32px;
+  border: none;
+  border-radius: calc(var(--radius-sm) - 2px);
+  background: none;
+  color: var(--text-muted);
+  font-family: inherit;
+  font-size: 0.85rem;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.mode-switch button.active {
+  background: var(--surface-raised);
+  color: var(--brand);
+  box-shadow: var(--shadow-card);
+}
+
+/* Sidebar footer (mode switch) — desktop only; phones get it in the
+   More sheet instead. */
+.sidenav-footer {
+  display: none;
+}
+
+/* UX-008 — activity rows: the action + substance sub-line take the
+   row, with a compact explorer link pinned to the trailing edge. */
+.activity-row {
+  gap: var(--space-2);
+}
+.activity-row-link {
+  flex: 1;
+  min-width: 0;
+  color: inherit;
+}
+.activity-row-link:hover {
+  text-decoration: none;
+}
+.activity-tx {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: var(--taptarget);
+  min-height: var(--taptarget);
+  color: var(--text-muted);
+  flex-shrink: 0;
+}
+.activity-tx:hover {
+  color: var(--brand);
+}
+
 @media (min-width: 720px) {
   .shell-tabbar {
     display: none;
+  }
+
+  .more-sheet,
+  .more-sheet-backdrop {
+    display: none;
+  }
+
+  .sidenav-footer {
+    display: block;
+    margin-top: auto;
+    padding-top: var(--space-4);
   }
 
   .shell-main {
@@ -825,6 +1025,13 @@ button.intent-card {
   margin-bottom: var(--space-3);
 }
 
+/* UX-031 — the title may be an h1 (full-page empty states, e.g. 404) or
+ * an h3 (inline). Normalize the visual size so the heading level is a
+ * semantics/a11y choice, not a styling one. */
+.empty-state-title {
+  font-size: 1.05rem;
+}
+
 .empty-state .btn {
   margin-top: var(--space-4);
 }
@@ -1406,16 +1613,35 @@ a.item-row:hover {
 }
 
 /* Tenors with live offers are emphasized; empty tenors stay muted
- * (honest — they are selectable but the book will say it's empty). */
+ * (honest — they are selectable but the book will say it's empty).
+ * UX-036 — the liquidity cue is a small "live" dot + readable text, NOT
+ * a strong border: a bordered non-selected chip read as a second
+ * selection beside the brand-filled active one. Only .active carries
+ * selection weight now. */
 .desk-chip.has-liquidity {
   color: var(--text-body);
-  border-color: var(--border-strong);
+}
+
+.desk-chip.has-liquidity::after {
+  content: '';
+  display: inline-block;
+  width: 5px;
+  height: 5px;
+  margin-left: 6px;
+  border-radius: var(--radius-full);
+  background: var(--ok);
+  vertical-align: middle;
 }
 
 .desk-chip.active {
   background: var(--brand-soft);
   color: var(--brand-soft-text);
   border-color: transparent;
+}
+
+/* Keep the liquidity dot legible on the selected (brand-filled) chip. */
+.desk-chip.active.has-liquidity::after {
+  background: currentColor;
 }
 
 /* The rate ladder */
@@ -1447,15 +1673,53 @@ a.item-row:hover {
   font-family: var(--font-sans);
 }
 
+/* UX-028 — the numeric columns (rate / size / depth) right-align so the
+ * decimal points line up down the ladder; the last (action) cell keeps
+ * its own flex alignment. */
+.desk-ladder-head > span {
+  text-align: right;
+}
+
 .desk-ladder-row {
   border-radius: var(--radius-sm);
+}
+
+/* Row hover is a scannability aid only — the row is no longer clickable
+ * (the rate cell is the button), so no pointer cursor here. */
+.desk-ladder-row:hover {
+  background: var(--surface-hover);
+}
+
+/* UX-028 — right-aligned, tabular-figure numeric cells. */
+.desk-num {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+/* UX-028 — the rate cell is the ladder's pick button: a real, focusable
+ * control that inherits the ladder's mono font, right-aligned with
+ * tabular figures like the other numeric columns. */
+.desk-rate-btn {
+  display: block;
+  width: 100%;
+  padding: 0;
+  border: none;
+  background: none;
+  font: inherit;
+  font-variant-numeric: tabular-nums;
+  font-weight: 600;
+  text-align: right;
   cursor: pointer;
 }
 
-.desk-ladder-row:hover,
-.desk-ladder-row:focus-visible {
-  background: var(--surface-hover);
-  outline: none;
+.desk-rate-btn:hover {
+  text-decoration: underline;
+}
+
+.desk-rate-btn:focus-visible {
+  outline: 2px solid var(--brand);
+  outline-offset: 2px;
+  border-radius: 2px;
 }
 
 .desk-ladder-row.desk-own {
@@ -1500,13 +1764,14 @@ a.item-row:hover {
   min-width: 12px;
 }
 
-.desk-rate-ask {
-  color: var(--danger);
-  font-weight: 600;
-}
-
+/* UX-028 — neutral ask/bid palette: asks used the alarm error-red (a
+ * resting lender offer is not an error), bids the success-green. The
+ * side is carried by the section labels ("Lender offers (asks)" /
+ * "Borrow requests (bids)") and the ladder position, not by an
+ * alarm colour. */
+.desk-rate-ask,
 .desk-rate-bid {
-  color: var(--ok);
+  color: var(--text-strong);
   font-weight: 600;
 }
 
@@ -1619,6 +1884,51 @@ a.item-row:hover {
   height: 100%;
   background: var(--brand);
   border-radius: 2px;
+}
+
+/* UX-027 — label row with a right-aligned "Max" affordance. */
+.field-label-row {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--space-2);
+}
+
+.input-max {
+  border: none;
+  background: none;
+  padding: 0;
+  cursor: pointer;
+  font: inherit;
+  font-size: 0.8rem;
+  font-weight: 600;
+  color: var(--brand);
+}
+
+.input-max:hover {
+  text-decoration: underline;
+}
+
+/* UX-027 — the order ticket's fee & commitment summary before consent. */
+.desk-fee-preview {
+  margin: 12px 0 4px;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface-sunken);
+  font-size: 0.85rem;
+}
+
+.desk-fee-preview p {
+  margin: 0;
+}
+
+.desk-fee-preview p + p {
+  margin-top: 4px;
+}
+
+.desk-fee-preview-title {
+  font-weight: 600;
 }
 
 /* Amend inline form */

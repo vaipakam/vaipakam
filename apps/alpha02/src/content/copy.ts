@@ -259,6 +259,9 @@ export const copy = {
     balanceSufficient: (asset: string) => `Enough ${asset} in your wallet`,
     tokenValid: 'Asset recognised as a token',
     consent: 'Risk disclosures and terms accepted',
+    // UX-010 — the inline remedy on a failing balance check (testnets
+    // with deployed mocks only).
+    getTestAssets: 'Get test assets',
   },
 
   receipt: {
@@ -458,6 +461,11 @@ export const copy = {
       'The connected wallet doesn’t own this NFT — check the contract address and token id.',
     browseTitle: 'NFTs available to rent',
     browseEmpty: 'No rental listings right now.',
+    // UX-023 — the empty browse list points at the other side of the
+    // market instead of dead-ending (the path switch sits right above
+    // this flow).
+    browseEmptyCta:
+      'Own an NFT? Use the switch above to list it for rent instead — renters prepay the whole rental up front, so an empty market is an opportunity.',
     browseUnavailable:
       'We couldn’t load rental listings right now. Please try again in a moment.',
     notDebt:
@@ -805,6 +813,19 @@ export const copy = {
       `If you do nothing and the loan passes its due date and the ${grace ? `${grace} ` : ''}grace period (a short extra window to repay before the lender can take the collateral), the lender can receive your ${collateral} collateral.`,
     whatIfNothingLender: (grace?: string) =>
       `If the borrower does not repay by the due date plus the ${grace ? `${grace} ` : ''}grace period (a short extra repayment window), you can claim their collateral.`,
+    // #1166 live-review follow-up — a wallet holding neither position
+    // must not be addressed as a party ("you can claim…").
+    whatIfNothingViewer: (grace?: string) =>
+      `If the borrower does not repay by the due date plus the ${grace ? `${grace} ` : ''}grace period (a short extra repayment window), the lender can claim the collateral.`,
+    // UX-024 — the list groups by what needs the user, and rows with a
+    // pending claim say so instead of a bare status badge.
+    groupAttention: 'Needs your attention',
+    groupActive: 'Active loans',
+    groupEnded: 'Ended loans',
+    claimWaiting: 'Claim waiting',
+    // UX-050 — surface the full history for Basic users, who don't see
+    // Activity in the nav.
+    seeActivity: 'See your full activity history →',
     // UX-004 — past-due escalation banner with the live countdown.
     graceCountdownBorrower: (remaining: string) =>
       `This loan is past due. Repay within about ${remaining} — after that the lender can take the collateral.`,
@@ -880,10 +901,28 @@ export const copy = {
       'This position has already closed on-chain — the status here is live. Your lists may take a moment to catch up.',
   },
 
+  // UX-026 — orientation for a Basic-mode user landing on a power
+  // surface by URL: name what it is, offer the guided path back, and
+  // offer the mode switch. Dismissible; never shown in Advanced.
+  powerSurface: {
+    body: 'This is a power-user screen — raw offers and live rates with less hand-holding. The guided Borrow and Lend flows cover the same actions with step-by-step explanations.',
+    // Both guided flows offered (Codex #1168 r1) — a lender routed
+    // into /borrow is the wrong money direction.
+    guidedBorrow: 'Guided Borrow',
+    guidedLend: 'Guided Lend',
+    enableAdvanced: 'I know what I’m doing — enable Advanced mode',
+    dismiss: 'Dismiss',
+  },
+
   claims: {
     title: 'Claim Center',
     lede: 'Money and assets that are ready for you to collect.',
     empty: 'Nothing to claim right now.',
+    // UX-023 — an empty Claim Center points forward instead of
+    // dead-ending.
+    emptyBody:
+      'When a loan or rental you are part of ends, anything owed to you appears here automatically.',
+    emptyCta: 'See my positions',
     unavailable:
       'We couldn’t load your claims right now. Your funds are unaffected — please try again in a moment.',
     claim: 'Claim',
@@ -930,7 +969,7 @@ export const copy = {
     bookTitle: 'Order book',
     rateHeading: 'Rate (APR %)',
     sizeHeading: 'Size',
-    cumHeading: 'Σ',
+    cumHeading: 'Depth',
     asksHeading: 'Lender offers (asks)',
     bidsHeading: 'Borrow requests (bids)',
     bookEmpty: 'No open offers for this market yet — yours can be the first.',
@@ -952,7 +991,7 @@ export const copy = {
     // fail) and the partial-fill master flag is on.
     match: {
       matchable: (rate: string) => `Matchable at ${rate}`,
-      body: 'These top-of-book offers can cross. Anyone can execute this match and earn the matcher fee.',
+      body: 'These top-of-book offers can cross. Anyone can execute this match and earn the matcher fee — you pay the network gas to execute it.',
       amount: (amount: string, symbol: string) =>
         `${amount} ${symbol} would match.`,
       execute: 'Execute match',
@@ -1121,6 +1160,36 @@ export const copy = {
         `Posting is held: an independent security check flags the ${leg} (${reasons.join('; ')}).`,
       securityUnknown: (leg: string) =>
         `Posting is held until the independent security check for the ${leg} succeeds.`,
+      // UX-009 — the FIRST unmet gate, shown under the disabled Post
+      // button so the greyed state always says why (the ticket has no
+      // review checklist like the guided flow's).
+      blockNetwork: 'Switch to a supported network to post.',
+      blockNoMarket: 'Pick a market in the header first.',
+      blockAmount: 'Enter the amount above.',
+      blockRate: 'Enter a rate between 0 and 100%.',
+      blockCollateral: 'Enter the collateral amount above.',
+      blockLoading: 'Loading market details — one moment.',
+      blockConsent: 'Review and accept the risk terms above to post.',
+      blockGaslessService:
+        'Gasless posting needs the order-book service, which isn’t available right now — switch Posting to On-chain.',
+      // UX-016 — consent auto-clears whenever a term changes; say so
+      // beside the cleared box so the un-tick doesn't read as a bug.
+      consentRecheck: 'Terms changed — please re-confirm.',
+      // UX-027 — Max chip + a fee/commitment summary before consent.
+      max: 'Max',
+      feePreviewTitle: 'Fees & commitment',
+      escrowNow: (amount: string, symbol: string) =>
+        `You escrow now: ${amount} ${symbol}.`,
+      commitAtFill: (amount: string, symbol: string) =>
+        `You commit ${amount} ${symbol} — pulled from your vault only when a taker fills.`,
+      lockNow: (amount: string, symbol: string) =>
+        `You lock now: ${amount} ${symbol} as collateral.`,
+      lockAtFill: (amount: string, symbol: string) =>
+        `You commit ${amount} ${symbol} collateral — locked only when a taker fills.`,
+      netYield: (net: string, feePct: string) =>
+        `Net yield ≈ ${net}% APR after the ${feePct}% protocol fee on the interest you earn.`,
+      lifNote: (feePct: string, amount: string, symbol: string) =>
+        `Loan initiation fee: ${feePct}% of principal (≈ ${amount} ${symbol}), charged when the loan starts.`,
     },
     orders: {
       tab: 'Open orders',
@@ -1268,6 +1337,14 @@ export const copy = {
       `Switch your wallet to ${chainName} to mint test assets.`,
     minting: 'Minting…',
     viewTx: 'View transaction',
+    // UX-023 — the mint-success banner carries the next hop so the
+    // guided faucet→first-offer path doesn't break after hop one.
+    nextSteps: 'Next: put it to work —',
+    nextBorrow: 'Borrow against it',
+    nextLend: 'Lend it out',
+    // NFT mints route to the RENTAL flow, not the ERC-20 lend flow
+    // (Codex #1168 r1) — NFTs aren't loan principal here.
+    nextRent: 'List it for rent',
     footer:
       'Minted assets land in your wallet. Use “My vault” and the Borrow, Lend, and NFT Rental screens to put them to work.',
     mintedTokens: (units: number, symbol: string) =>
@@ -1341,6 +1418,10 @@ export const copy = {
     lede: 'Your own on-chain account. Only your wallet controls it — Vaipakam never pools user funds.',
     noVaultYet:
       'Your vault is created automatically with your first offer, loan, or deposit. Nothing to set up.',
+    // UX-023 — both vault empty states point forward instead of
+    // dead-ending.
+    emptyCta: 'Get started',
+    emptyCtaFaucet: 'Get test assets',
     unavailable:
       'We couldn’t read your vault right now. Your funds are unaffected — please try again in a moment.',
     lockedHint:
@@ -1357,6 +1438,16 @@ export const copy = {
       'Showing recent activity only — the protocol feed is busy and older events may not be listed.',
     truncatedEmpty:
       'Nothing of yours in recent protocol activity. Older events may exist that we couldn’t scan right now.',
+    // UX-008 — one substantive sub-line per row.
+    plusMore: (n: number) => ` · +${n} more in this transaction`,
+    viewTx: 'View transaction',
+    loadMore: 'Load older activity',
+    loadingMore: 'Loading…',
+    // UX-050 — when the indexer is degraded, the event feed can't
+    // render, but the user's positions are chain-authoritative — point
+    // there instead of dead-ending.
+    unavailableFallback: 'Your current loans and rentals are always available on',
+    positionsLink: 'My positions',
   },
 
   rewards: {

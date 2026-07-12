@@ -29,6 +29,7 @@
  */
 import { Suspense, lazy, useEffect, useMemo, useRef, useState } from 'react';
 import { copy } from '../content/copy';
+import { PowerSurfaceNote } from '../components/PowerSurfaceNote';
 import { useActiveChain } from '../chain/useActiveChain';
 import { MarketFreshnessNote } from '../components/MarketFreshnessNote';
 import { DeskHeader } from '../components/desk/DeskHeader';
@@ -141,6 +142,9 @@ export function Desk() {
     <div className="desk-container">
       <h1 className="page-title">{copy.desk.title}</h1>
       <p className="page-lede">{copy.desk.lede}</p>
+
+      {/* UX-026 — orient Basic-mode visitors landing here by URL. */}
+      <PowerSurfaceNote />
 
       <MarketFreshnessNote />
 

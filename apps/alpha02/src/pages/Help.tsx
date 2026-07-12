@@ -8,6 +8,7 @@ import { useEffect } from 'react';
 import { copy } from '../content/copy';
 import { useProtocolFees, bpsToPercentText } from '../data/fees';
 import { supportMailto } from '../data/support';
+import { formatDate } from '../lib/format';
 
 const FAQ: Array<{ q: string; a: string }> = [
   {
@@ -35,6 +36,14 @@ const FAQ: Array<{ q: string; a: string }> = [
 export function Help() {
   const buildHash = import.meta.env.VITE_BUILD_HASH as string | undefined;
   const buildTime = import.meta.env.VITE_BUILD_TIME as string | undefined;
+  // UX-044 — the footer shows a readable date, not the raw ISO stamp;
+  // the full string stays available in the diagnostics drawer. Falls
+  // back to the raw value if it doesn't parse (never hides the build).
+  const buildDateText = (() => {
+    if (!buildTime) return null;
+    const ms = Date.parse(buildTime);
+    return Number.isFinite(ms) ? formatDate(Math.floor(ms / 1000)) : buildTime;
+  })();
   const fees = useProtocolFees();
 
   // The consent checkbox links here as /help#risks — the router
@@ -101,7 +110,7 @@ export function Help() {
 
       <p className="muted" style={{ marginTop: 24 }}>
         Build {buildHash ?? 'dev'}
-        {buildTime ? ` · ${buildTime}` : ''}
+        {buildDateText ? ` · ${buildDateText}` : ''}
       </p>
     </div>
   );

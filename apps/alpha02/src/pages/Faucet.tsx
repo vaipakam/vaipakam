@@ -407,6 +407,21 @@ export function Faucet() {
                 >
                   {copy.faucet.viewTx} <ExternalLink size={12} aria-hidden />
                 </a>
+                {/* UX-023 — the guided faucet→first-offer path used to
+                    break after hop one: carry the next hop here. NFT
+                    mints route to the rental flow (Codex #1168 r1). */}
+                <span style={{ display: 'block', marginTop: 8 }}>
+                  {copy.faucet.nextSteps}{' '}
+                  {done.tokenId ? (
+                    <Link to="/rent">{copy.faucet.nextRent}</Link>
+                  ) : (
+                    <>
+                      <Link to="/borrow">{copy.faucet.nextBorrow}</Link>
+                      {' · '}
+                      <Link to="/lend">{copy.faucet.nextLend}</Link>
+                    </>
+                  )}
+                </span>
               </span>
             </div>
           ) : null}

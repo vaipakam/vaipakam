@@ -568,9 +568,10 @@ try {
       : (await chartEmptyMarket.isVisible().catch(() => false))
         ? 'honest market-history empty copy ("…chart draws only executed rates.")'
         : 'honest range-scoped empty copy ("No fills in this range…")';
-  // Structural chrome renders in EVERY chart state (it sits outside
-  // the tri-state branch): the interval/range chip groups and the
-  // Apache-2.0 TradingView attribution link.
+  // The interval/range chip groups render in EVERY chart state (they
+  // sit outside the tri-state branch). The Apache-2.0 TradingView
+  // attribution link, by contrast, shows ONLY when a chart actually
+  // draws (UX-037) — asserted state-aware below.
   for (const [groupName, chips] of [
     ['Interval', ['1h', '4h', '1d']],
     ['Range', ['7d', '30d', '90d', 'all']],
@@ -584,16 +585,24 @@ try {
       }
     }
   }
+  // UX-037 — the credit exists to attribute a DRAWN chart, so it shows
+  // only when a series is on screen and is absent on the empty states.
   const attribution = chartCard.getByRole('link', { name: 'Charts by TradingView' });
-  if (!(await attribution.isVisible().catch(() => false))) {
-    throw new Error('TradingView attribution link missing from the chart card');
-  }
-  const attrHref = await attribution.getAttribute('href');
-  // Anchored to the URL start (CodeQL js/regex/missing-regexp-anchor):
-  // an unanchored host test would also match a hostile origin that
-  // embeds the TradingView path later in the URL.
-  if (!/^https:\/\/(www\.)?tradingview\.com\/lightweight-charts\/?/.test(attrHref ?? '')) {
-    throw new Error(`TradingView attribution href unexpected: "${attrHref}"`);
+  if ((await chartCanvas.count()) > 0) {
+    if (!(await attribution.isVisible().catch(() => false))) {
+      throw new Error('TradingView attribution link missing from a DRAWN chart card');
+    }
+    const attrHref = await attribution.getAttribute('href');
+    // Anchored to the URL start (CodeQL js/regex/missing-regexp-anchor):
+    // an unanchored host test would also match a hostile origin that
+    // embeds the TradingView path later in the URL.
+    if (!/^https:\/\/(www\.)?tradingview\.com\/lightweight-charts\/?/.test(attrHref ?? '')) {
+      throw new Error(`TradingView attribution href unexpected: "${attrHref}"`);
+    }
+  } else if ((await attribution.count()) > 0) {
+    throw new Error(
+      'TradingView attribution present on an EMPTY chart state — UX-037 regression',
+    );
   }
   // Wire probe — the exact worker route the chart reads, for the
   // driven market with the UI's default view params (1d × 30d): must
