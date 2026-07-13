@@ -393,13 +393,21 @@ export function Vpfi() {
     // connected user gets the one-click switch instead of a dead end.
     // Only on the positive not-registered verdict — a failed CHECK
     // must not claim another chain is the answer.
+    //
+    // Discriminate on `vpfiTokenImpl`, the populated canonical-only
+    // signal (the UUPS impl behind the canonical VPFIToken; mirror
+    // chains carry `vpfiMirror` instead). The `isCanonicalVPFI` boolean
+    // is documented as the discriminator but the deployments export does
+    // not currently emit it — narrowing on it silently resolved to
+    // undefined and the switch button never rendered (Codex #1199).
+    // Falls back to the flag if a future export does emit it.
     const canonicalChain = vpfi.isError
       ? undefined
-      : SUPPORTED_CHAINS.find(
-          (c) =>
-            c.chainId !== readChain.chainId &&
-            getDeployment(c.chainId)?.isCanonicalVPFI,
-        );
+      : SUPPORTED_CHAINS.find((c) => {
+          if (c.chainId === readChain.chainId) return false;
+          const dep = getDeployment(c.chainId);
+          return Boolean(dep?.isCanonicalVPFI || dep?.vpfiTokenImpl);
+        });
     return (
       <div className="stack">
         <div>
