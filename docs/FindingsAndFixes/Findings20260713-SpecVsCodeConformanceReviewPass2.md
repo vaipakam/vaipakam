@@ -28,6 +28,29 @@ against the spec and the recorded owner decision and verified correctly implemen
 Legend for the decision column: **[T]** = trivial, my recommended call shown (needs only
 owner confirmation); **[?]** = genuine owner decision required.
 
+## Recorded owner decisions (2026-07-13) + card map
+
+The project owner reviewed the decision sheet on 2026-07-13 and **ratified every
+recommended call** (both the trivial `[T]` calls and the recommended arm of each `[?]`
+question). Umbrella tracker: **#1196**. The decisions are mirrored into
+`docs/FunctionalSpecs/_CodeVsDocsAudit.md`.
+
+| Finding | Decision (owner 2026-07-13) | Card / action |
+|---|---|---|
+| **D1** (High) | Fix code, jointly with #893 (derive rental maturity from `lastDeductTime + durationDays`; feed `gracePeriod()` the original term) | **#1188** (+ #893) |
+| **A1/D5** (Med) | Fix code — late-fee-parity arm (charge late fee when overdue; block strictly post-grace) | **#1189** |
+| **A2** (Med) | Fix code — drop the `repayPartial` HF≥1.5 floor (or HF-monotonicity assert) | **#1190** |
+| **A3** (Med) | Fix code — credit + zero `interestSettled` at `repayPartial`/`swapToRepayPartial` (mirror #915); reconcile M1 | **#1191** |
+| **C1** (Med) | Fix code — restrict whole-collateral in-kind to LTV>110%/oracle-dead; HF<1-but-covered routes swap/split with the §790 ceiling + borrower residual | **#1192** |
+| **D3** (Med) | Fix code — snapshot the rental buffer on the offer at create; read the snapshot at cancel/modify/transfer | **#1193** |
+| **D4** (Med) | Fix code — arm (a): settle undeducted rent at transfer + rent-terms shortfall | **#1194** |
+| **B1, B2, B3, C4, E3, F4** (Low code) | Fix code, all six as recommended | **#1195** (grouped) |
+| **A4, B4, F1, F2, F3, F5** | Update spec (code is ratified) | pass-2 spec-doc PR |
+| **E2** | Update spec — carve out the pre-paid borrower LIF rebate from the consent-off ⇒ 0-discount rule | pass-2 spec-doc PR |
+| **C5** | Soften spec — treat FlashLoanLiquidator profit-headroom as off-chain keeper policy | pass-2 spec-doc PR |
+| **A5, C2, C3, D6, E1** | Fix code comments / NatSpec (E1 folds into #1018) | pass-2 spec-doc PR |
+| **D7** | Audit-log hygiene — move #951 Open → Resolved | this PR |
+
 ---
 
 ## High
