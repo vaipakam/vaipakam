@@ -192,6 +192,24 @@ for slug in $CHAINS; do
   else
     info "$slug -> \$$var ✓ (cast not found — chain-id verify skipped)"
   fi
+
+  # When the vault step will run, pre-flight VAULT_ADMIN_ROLE UP FRONT (Codex
+  # #1182). The orchestrator broadcasts Refresh (cuts) before the vault step, so
+  # a role divergence (rotation / revocation) would otherwise fail only AFTER
+  # the cuts already landed — a partial redeploy. Verifying here fails before
+  # any broadcast. Needs cast; skipped (with a warning) if absent.
+  if [ "$SKIP_VAULT" -eq 0 ] && command -v cast >/dev/null 2>&1; then
+    admin_addr="$(cast wallet address --private-key "$ADMIN_PRIVATE_KEY" 2>/dev/null)" \
+      || fail "could not derive admin address from ADMIN_PRIVATE_KEY"
+    role="$(cast keccak 'VAULT_ADMIN_ROLE')"
+    dfile="deployments/$slug/addresses.json"
+    diamond="$(grep -oE '"diamond"[[:space:]]*:[[:space:]]*"0x[0-9a-fA-F]{40}"' "$dfile" 2>/dev/null | grep -oE '0x[0-9a-fA-F]{40}')"
+    [ -n "$diamond" ] || fail "chain '$slug': no .diamond in $dfile (needed for the VAULT_ADMIN_ROLE pre-flight)"
+    has="$(cast call "$diamond" 'hasRole(bytes32,address)(bool)' "$role" "$admin_addr" --rpc-url "$val" 2>/dev/null || echo '')"
+    [ "$has" = "true" ] \
+      || fail "chain '$slug': admin $admin_addr lacks VAULT_ADMIN_ROLE on $diamond — the cuts would land but the vault step would revert (use --skip-vault or grant the role first)"
+    info "$slug: admin holds VAULT_ADMIN_ROLE ✓"
+  fi
 done
 if [ "$BROADCAST" -eq 1 ]; then
   info "MODE: --broadcast (steps 4-5 will send real txs with --slow)"

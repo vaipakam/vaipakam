@@ -119,7 +119,11 @@ contract UpgradeVaultImplementation is Script {
         // ── Deployer: fund admin gas (if low), deploy + genesis-init the impl ──
         vm.startBroadcast(deployerKey);
         if (admin.balance < 0.01 ether) {
-            payable(admin).transfer(0.01 ether);
+            // `.call` not `.transfer` (Codex #1182): the admin is the
+            // EIP-7702-delegated account this script targets, and a delegate's
+            // receive/fallback can exceed the 2300-gas `.transfer` stipend.
+            (bool topUpOk, ) = admin.call{value: 0.01 ether}("");
+            require(topUpOk, "UpgradeVaultImplementation: admin gas top-up failed");
             console.log("Topped up admin with 0.01 ETH");
         }
         VaipakamVaultImplementation impl = new VaipakamVaultImplementation();
