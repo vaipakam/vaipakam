@@ -38,6 +38,12 @@ interface ErrorBoundaryProps {
   children: ReactNode;
   /** When this value changes, the boundary resets (route navigation). */
   resetKey?: string;
+  /** Optional quiet fallback: when set, a caught error renders THIS
+   *  instead of the full recovery card. For ADVISORY, non-critical
+   *  children (e.g. a lazy-loaded banner whose chunk may fail to fetch)
+   *  where the right degradation is to render nothing, not to replace
+   *  the surrounding chrome with a crash card (Codex #1200 r2). */
+  fallback?: ReactNode;
 }
 
 interface ErrorBoundaryState {
@@ -131,6 +137,10 @@ export class ErrorBoundary extends Component<ErrorBoundaryProps, ErrorBoundarySt
   render(): ReactNode {
     const { hasError, error, componentStack } = this.state;
     if (!hasError) return this.props.children;
+
+    // Advisory children opt into a quiet fallback (render nothing / a
+    // small placeholder) instead of the full-page recovery card.
+    if (this.props.fallback !== undefined) return this.props.fallback;
 
     const message = error?.message || String(error);
     const gloss = reactErrorGloss(message);

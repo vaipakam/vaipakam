@@ -1363,6 +1363,15 @@ export const copy = {
     faqQuestion: 'What fees does Vaipakam charge?',
     faqAnswer: (lifPct: string, yieldPct: string) =>
       `Vaipakam charges a ${lifPct} loan initiation fee on the borrowed amount. Vaipakam keeps ${yieldPct} of the interest you earn. Late repayment adds 1% of the outstanding amount after day one, growing 0.5% per day, capped at 5%. Network gas is separate and goes to the blockchain, not to Vaipakam.`,
+    // Non-committal variant for the disconnected /help fallback — the
+    // exact loan-initiation and yield-fee percentages are live,
+    // governance-tunable config (a wallet-free RPC read pulls the ABI,
+    // which /help stays clear of on first paint, UX2-008). Quoting a
+    // hardcoded default here could publish a stale rate if governance
+    // has retuned it (Codex #1200 r2), so this states the fee STRUCTURE
+    // and directs the user to connect for the exact current numbers.
+    faqAnswerGeneric:
+      'Vaipakam charges a loan initiation fee on the amount borrowed and keeps a share of the interest a lender earns. Late repayment adds 1% of the outstanding amount after day one, growing 0.5% per day, capped at 5%. Network gas is separate and goes to the blockchain, not to Vaipakam. Connect your wallet to see the exact current rates.',
   },
 
   faucet: {

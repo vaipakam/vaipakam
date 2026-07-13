@@ -91,14 +91,17 @@ export function Help() {
     document.getElementById(id)?.scrollIntoView();
   }, []);
 
-  // The deploy-default fee values (mirrors data/fees.ts:
-  // LIF 10 bps = 0.1%, treasury 100 bps = 1%) — the Suspense fallback
-  // for the lazy fee card, shown until the live read hydrates. Kept as
-  // literals so this module stays ABI-free (UX2-008).
+  // The disconnected / loading fee card. The exact loan-initiation and
+  // yield percentages are live governance-tunable config, and reading
+  // them pulls the Diamond ABI (which /help stays clear of on first
+  // paint, UX2-008) — so a disconnected visitor sees the fee STRUCTURE
+  // in non-committal wording that directs them to connect for the exact
+  // current rates, rather than a hardcoded default that could be stale
+  // if governance has retuned it (Codex #1200 r2). Kept ABI-free.
   const feeFallback = (
     <section className="card">
       <h3>{copy.fees.faqQuestion}</h3>
-      <p style={{ margin: 0 }}>{copy.fees.faqAnswer('0.1%', '1%')}</p>
+      <p style={{ margin: 0 }}>{copy.fees.faqAnswerGeneric}</p>
     </section>
   );
 

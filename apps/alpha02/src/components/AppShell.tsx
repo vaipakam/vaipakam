@@ -266,9 +266,17 @@ export function AppShell() {
               reads anyway — loads it. The state-creating sanctions GATE
               still runs at the contract level regardless of this UI. */}
           {isConnected ? (
-            <Suspense fallback={null}>
-              <SanctionsBanner />
-            </Suspense>
+            // Advisory + lazy: a chunk-fetch failure must degrade to no
+            // banner, NOT bubble to the root boundary and replace the
+            // whole app chrome with a crash card (Codex #1200 r2). Its
+            // own quiet boundary (`fallback={null}`) contains that. The
+            // state-creating sanctions gate still runs at the contract
+            // level regardless of this UI.
+            <ErrorBoundary fallback={null}>
+              <Suspense fallback={null}>
+                <SanctionsBanner />
+              </Suspense>
+            </ErrorBoundary>
           ) : null}
           {/* Route-level crash containment: a page that throws during
               render becomes a recoverable card while the nav stays
