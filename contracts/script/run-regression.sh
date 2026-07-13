@@ -98,23 +98,41 @@ for sub in "${SUBDIRS[@]}"; do
   mapfile -t SUBFILES < <(find "test/$sub" -maxdepth 1 -name '*.t.sol' -printf '%f\n' | sed 's/\.t\.sol$//' | sort)
   (( ${#SUBFILES[@]} == 0 )) && continue
 
-  # `fork` subdir is FORK_URL-gated. Its tests self-skip without a fork RPC
-  # (`vm.envOr("FORK_URL_*", "")` → early return), so with no URL set they add
-  # zero coverage. On current main their heavy Seaport sources ALSO exceed the
-  # viaIR whole-unit stack ceiling in ANY bounded compile unit — even a single
-  # fork file trips "Variable size is N too deep" — so they compile only in a
-  # full build, never a `--match-path` chunk (#601/#603). Running them here
-  # without a URL would therefore fail to COMPILE for no runtime benefit. So we
-  # run the fork subdir only when a fork URL is configured; otherwise skip it
-  # (files stay "covered" by the exhaustiveness guard below). When a URL IS set,
-  # compiling the chunk still needs the src-level lean-DTO ceiling fix tracked
-  # separately — this gate does not pretend otherwise.
-  if [ "$sub" = "fork" ] && [ -z "${FORK_URL_MAINNET:-}" ] && [ -z "${FORK_URL_BASE_SEPOLIA:-}" ]; then
-    echo ""
-    echo "===== subdir (fork) : SKIPPED — no FORK_URL_MAINNET / FORK_URL_BASE_SEPOLIA set"
-    echo "      (fork tests self-skip without a fork RPC; their Seaport sources also"
-    echo "       exceed the viaIR bounded-compile ceiling — full build only. See #601/#603.)"
-    continue
+  # `fork` subdir: each file needs a SPECIFIC fork RPC and self-skips without it
+  # (`vm.envOr("FORK_URL_*", "")` → early return), so with no URL it adds zero
+  # coverage. Gate each file by the URL IT needs (Codex #1201) so setting only
+  # one URL never drags in — and tries to COMPILE — the other's files:
+  #   • *Seaport* sources need FORK_URL_BASE_SEPOLIA (Base-Sepolia fork). They
+  #     ALSO exceed the viaIR bounded-compile ceiling on current main (even a
+  #     single Seaport file trips "Variable size N too deep" — full build only,
+  #     #601/#603), so absent that URL they must not be compiled here at all.
+  #   • the mainnet-fork sources (Oracle / Permit2 / Liquidation) need
+  #     FORK_URL_MAINNET; they DO compile+skip cleanly in a bounded chunk.
+  # A file whose URL is unset is dropped (still "covered" by the exhaustiveness
+  # guard below). Both unset → the whole subdir is skipped, keeping the default
+  # no-URL pre-deploy gate green. NOTE: when FORK_URL_BASE_SEPOLIA IS set, the
+  # Seaport chunk still needs the src-level lean-DTO ceiling fix to compile —
+  # this gate does not pretend otherwise.
+  if [ "$sub" = "fork" ]; then
+    kept=()
+    for stem in "${SUBFILES[@]}"; do
+      case "$stem" in
+        *Seaport*)
+          if [ -n "${FORK_URL_BASE_SEPOLIA:-}" ]; then kept+=("$stem")
+          else echo "  fork: skip $stem (needs FORK_URL_BASE_SEPOLIA)"; fi ;;
+        *)
+          if [ -n "${FORK_URL_MAINNET:-}" ]; then kept+=("$stem")
+          else echo "  fork: skip $stem (needs FORK_URL_MAINNET)"; fi ;;
+      esac
+    done
+    if (( ${#kept[@]} == 0 )); then
+      echo ""
+      echo "===== subdir (fork) : SKIPPED — no matching FORK_URL_* set"
+      echo "      (each fork test self-skips without its RPC; Seaport also exceeds the"
+      echo "       viaIR bounded-compile ceiling — full build only. See #601/#603.)"
+      continue
+    fi
+    SUBFILES=("${kept[@]}")
   fi
   sn=0; schunk=(); sci=0
   sflush() {
