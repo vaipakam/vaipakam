@@ -38,7 +38,7 @@ import {ERC20} from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
  *
  *         Numbers use the SetupTest oracle convention ($1 per token, 18
  *         decimals on both legs). The signed offer is the LTV-safe
- *         1000-principal / 1500-collateral / 30-day / 5% shape, so the
+ *         1000-principal / 2000-collateral / 30-day / 5% shape, so the
  *         materialize → match → loan-init path clears the HF (>=1.5e18) /
  *         LTV gates `LibOfferMatch.previewMatch` enforces.
  *
@@ -54,8 +54,10 @@ contract SignedOfferMatcherTest is SetupTest {
     address internal keeper;
 
     // The LTV-safe shape (mirrors LoanFacetTest.testInitiateLoanSuccessful).
+    // COLLATERAL is 2.0x PRINCIPAL to clear the #998 S15 LibOfferBounds floor
+    // (collateral >= ~1.765x lending on liquid ERC-20 both-legs offers).
     uint256 internal constant PRINCIPAL = 1000 ether;
-    uint256 internal constant COLLATERAL = 1500 ether;
+    uint256 internal constant COLLATERAL = 2000 ether;
     uint256 internal constant DURATION = 30;
     uint256 internal constant RATE_BPS = 500;
 
@@ -80,7 +82,7 @@ contract SignedOfferMatcherTest is SetupTest {
     /// @dev A vault-backed ERC-20 **Lender** signed offer. `amount` is the
     ///      MIN / single-value, `amountMax` the range max. `fillMode` is
     ///      Partial by default. Collateral range mirrors the principal range
-    ///      pro-rata (1.5x), so every slice the matcher materializes clears
+    ///      pro-rata (2.0x), so every slice the matcher materializes clears
     ///      the LTV gate against an overlapping on-chain borrower offer.
     function _lenderSignedOffer(
         uint256 nonce,
@@ -95,8 +97,11 @@ contract SignedOfferMatcherTest is SetupTest {
         o.interestRateBps = RATE_BPS;
         o.interestRateBpsMax = RATE_BPS + 100; // [500, 600] band
         o.collateralAsset = mockCollateralERC20;
-        o.collateralAmount = (amount * 3) / 2; // 1.5x floor
-        o.collateralAmountMax = (amountMax * 3) / 2; // 1.5x ceiling
+        // #998 S15 LibOfferBounds floor: collateral >= ~1.765x lending (HF>=1.5
+        // at init over the ~85% liq threshold) on liquid ERC-20 both-legs
+        // offers. 2.0x clears the lender floor AND the borrower ceiling.
+        o.collateralAmount = amount * 2; // 2.0x floor
+        o.collateralAmountMax = amountMax * 2; // 2.0x ceiling
         o.durationDays = DURATION;
         o.assetType = uint8(LibVaipakam.AssetType.ERC20);
         o.collateralAssetType = uint8(LibVaipakam.AssetType.ERC20);
@@ -147,14 +152,14 @@ contract SignedOfferMatcherTest is SetupTest {
 
     /// @dev Post an on-chain BORROWER offer (single-value) that overlaps a
     ///      lender slice of `amount`: matching asset legs, [500,600] rate
-    ///      band, 30-day duration, 1.5x collateral. `creator` pre-funds the
+    ///      band, 30-day duration, 2.0x collateral. `creator` pre-funds the
     ///      collateral from their wallet (the offer-create chokepoint pulls
     ///      `collateralAmountMax` into the creator's vault).
     function _postBorrowerCounterparty(address creator, uint256 amount)
         internal
         returns (uint256 offerId)
     {
-        uint256 coll = (amount * 3) / 2;
+        uint256 coll = amount * 2; // #998 S15 floor: 2.0x (was 1.5x)
         vm.prank(creator);
         offerId = OfferCreateFacet(address(diamond)).createOffer(
             LibVaipakam.CreateOfferParams({
@@ -195,7 +200,12 @@ contract SignedOfferMatcherTest is SetupTest {
         internal
         returns (uint256 offerId)
     {
-        uint256 coll = (amount * 3) / 2;
+        // 1.8x — just above the #998 S15 floor (~1.765x) and deliberately BELOW
+        // the 2.0x borrower-signed floor, so the slice-floor tests still prove
+        // the loan locks the signer's HIGHER collateral, not this lower lender
+        // requirement. (A borrower-signed offer provides 2.0x >= this 1.8x, so
+        // the match's collateral-required check still passes.)
+        uint256 coll = (amount * 18) / 10; // 1.8x (was 1.5x pre-#998-S15)
         vm.prank(creator);
         offerId = OfferCreateFacet(address(diamond)).createOffer(
             LibVaipakam.CreateOfferParams({
@@ -513,7 +523,7 @@ contract SignedOfferMatcherTest is SetupTest {
         bytes memory sig = _sign(o);
         bytes32 orderHash = _orderHash(o);
 
-        // Signer's COLLATERAL sits free in their vault (1.5x principal).
+        // Signer's COLLATERAL sits free in their vault (2.0x principal).
         _fundActorVault(signer, mockCollateralERC20, COLLATERAL);
 
         // On-chain lender counterparty (the real lender) provides principal.
@@ -747,7 +757,7 @@ contract SignedOfferMatcherTest is SetupTest {
 
     /// @dev A vault-backed signed BORROWER offer at a fixed 2.0x collateral
     ///      ratio (constant: collMin:amount == collMax:amountMax). Over-
-    ///      collateralized vs the standard 1.5x lender counterparty, so the
+    ///      collateralized vs the standard 1.8x lender counterparty, so the
     ///      signed floor exceeds the lender's pro-rated requirement.
     function _borrowerSignedOffer2x(uint256 nonce, uint256 amount, uint256 amountMax)
         internal
@@ -763,8 +773,8 @@ contract SignedOfferMatcherTest is SetupTest {
 
     /// @notice A signed BORROWER slice locks the signer's pro-rata collateral,
     ///         not the matched lender's lower requirement. Constant 2.0x ratio
-    ///         vs a 1.5x lender counterparty: the loan must lock the borrower's
-    ///         2000 (the threaded floor), not the lender's 1500 — otherwise the
+    ///         vs a 1.8x lender counterparty: the loan must lock the borrower's
+    ///         2000 (the threaded floor), not the lender's 1800 — otherwise the
     ///         loan opens below the collateral the signer signed.
     function test_borrowerSlice_locksSignedCollateralFloor() public {
         LibSignedOffer.SignedOffer memory o =
@@ -773,7 +783,7 @@ contract SignedOfferMatcherTest is SetupTest {
         // Signer pledges 2000 (2.0x) for this min-slice fill.
         _fundActorVault(signer, mockCollateralERC20, 2 * PRINCIPAL);
 
-        // On-chain lender requires only 1.5x (1500) for 1000 principal.
+        // On-chain lender requires 1.8x (1800) for 1000 principal — below the 2.0x signed floor.
         uint256 lenderOfferId = _postLenderCounterparty(lender, PRINCIPAL);
 
         vm.prank(keeper);
@@ -784,7 +794,7 @@ contract SignedOfferMatcherTest is SetupTest {
         LibVaipakam.Loan memory loan =
             LoanFacet(address(diamond)).getLoanDetails(loanId);
         assertEq(loan.borrower, signer, "borrower = signer");
-        // The loan locks the signed 2000 floor, NOT the lender's 1500 req.
+        // The loan locks the signed 2000 floor, NOT the lender's 1800 req.
         assertEq(
             loan.collateralAmount,
             2 * PRINCIPAL,
@@ -850,19 +860,32 @@ contract SignedOfferMatcherTest is SetupTest {
         OfferMatchFacet(address(diamond)).matchSignedOffer(o, sig, lenderOfferId, dust);
     }
 
-    /// @notice The borrower floor is included in `previewMatch`'s HF/LTV gate,
-    ///         not applied after it. A lender counterparty requiring only 1.0x
-    ///         (HF-unsafe on its own) still matches a 2.0x signed borrower: the
-    ///         gate sees the floored 2000 collateral and admits the loan, rather
-    ///         than reverting `MatchHFTooLow` on the lender's bare 1000.
+    /// @notice The borrower's signed collateral floor is threaded into the
+    ///         match, so a loan against a LOWER (but still valid) lender
+    ///         requirement locks the borrower's higher floor. A 2.0x signed
+    ///         borrower matched with a 1.8x lender counterparty locks 2000, NOT
+    ///         the lender's 1800 — proving `previewMatch` uses the floored
+    ///         borrower collateral, not the lender's bare requirement (a
+    ///         post-preview clamp to 1800 would fail the assertion below).
+    ///
+    ///         Pre-#998-S15 this used a 1.0x HF-UNSAFE lender to make the
+    ///         threading observable via a `MatchHFTooLow` revert. #998 S15's
+    ///         create-time floor now rejects any sub-~1.765x lender offer at
+    ///         `createOffer` (== the HF=1.5 threshold), so an HF-unsafe lender
+    ///         offer can no longer EXIST — that scenario is unreachable by
+    ///         construction, and the threading is observed here via the
+    ///         locked-collateral assertion instead. Dedicated HF-gate coverage
+    ///         for the borrower floor (reachable only via interest-accrual
+    ///         mechanics post-floor) is tracked in a follow-up issue.
     function test_borrowerFloor_admitsLowLenderRequirement() public {
         LibSignedOffer.SignedOffer memory o =
             _borrowerSignedOffer2x(20, PRINCIPAL, 2 * PRINCIPAL);
         bytes memory sig = _sign(o);
         _fundActorVault(signer, mockCollateralERC20, 2 * PRINCIPAL);
 
-        // On-chain lender requiring only 1.0x (1000 collateral for 1000
-        // principal) — HF < 1.5 on its own, but safe at the borrower's 2.0x.
+        // On-chain lender requiring 1.8x (1800 collateral for 1000 principal)
+        // — just above the #998 S15 floor (~1.765x), still BELOW the borrower's
+        // 2.0x signed floor, so the loan must lock the borrower's higher figure.
         address lowLender = _newCounterparty("lowlender");
         vm.prank(lowLender);
         uint256 cp = OfferCreateFacet(address(diamond)).createOffer(
@@ -872,7 +895,7 @@ contract SignedOfferMatcherTest is SetupTest {
                 amount: PRINCIPAL,
                 interestRateBps: RATE_BPS,
                 collateralAsset: mockCollateralERC20,
-                collateralAmount: PRINCIPAL, // 1.0x requirement
+                collateralAmount: (PRINCIPAL * 18) / 10, // 1.8x (above #998 S15 floor)
                 durationDays: 30,
                 assetType: LibVaipakam.AssetType.ERC20,
                 tokenId: 0,
@@ -887,7 +910,7 @@ contract SignedOfferMatcherTest is SetupTest {
                 allowsParallelSale: false,
                 amountMax: PRINCIPAL,
                 interestRateBpsMax: RATE_BPS + 100,
-                collateralAmountMax: PRINCIPAL,
+                collateralAmountMax: (PRINCIPAL * 18) / 10,
                 periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None,
                 expiresAt: 0,
                 fillMode: LibVaipakam.FillMode.Partial,
@@ -904,44 +927,53 @@ contract SignedOfferMatcherTest is SetupTest {
         assertEq(
             LoanFacet(address(diamond)).getLoanDetails(loanId).collateralAmount,
             2 * PRINCIPAL,
-            "loan locks 2.0x floor (HF-safe), not lender's 1.0x"
+            "loan locks 2.0x signed floor, not lender's lower 1.8x"
         );
     }
 
     /// @notice Per-slice integer flooring must not drop the signed collateral
-    ///         total across unevenly-dividing fills. Constant 5/3 ratio
-    ///         (amount=3e18 / collMin=5e18, amountMax=9e18 / collMax=15e18),
-    ///         filled 4e18 + 5e18: cumulative-difference pricing locks
-    ///         6.666…e18 + 8.333…e18 = exactly 15e18 (collMax). Independent
-    ///         per-slice flooring would lose 1 wei (→ 14.999…e18), under-
-    ///         collateralizing what the signer signed.
+    ///         total across unevenly-dividing fills. Constant 7/3 ratio
+    ///         (amount=3000e18 / collMin=7000e18, amountMax=9000e18 /
+    ///         collMax=21000e18), filled 4000e18 + 5000e18: cumulative-
+    ///         difference pricing locks 9333.33…e18 + 11666.66…e18 = exactly
+    ///         21000e18 (collMax). Independent per-slice flooring would lose
+    ///         wei, under-collateralizing what the signer signed.
     function test_borrowerSlice_roundingPreservesSignedTotal() public {
-        uint256 amt = 3 ether;
-        uint256 amtMax = 9 ether;
+        // Scaled to 1000s of tokens (#998 S15): the create-time ceiling
+        // (`maxLendingForCollateral`) rounds DOWN, and at single-digit-wei-ether
+        // amounts that flooring is severe enough to fail an otherwise-in-bounds
+        // slice. At this scale the rounding is negligible so the 11/6 ratio's
+        // ceiling clears, while the fills still divide UNEVENLY.
+        uint256 amt = 3_000 ether;
+        uint256 amtMax = 9_000 ether;
         LibSignedOffer.SignedOffer memory o =
             _borrowerSignedOffer(21, amt, amtMax, LibVaipakam.FillMode.Partial);
-        // Constant 5/3 ratio (≈1.667x, HF-safe): 5e18*9e18 == 15e18*3e18.
-        o.collateralAmount = 5 ether;
-        o.collateralAmountMax = 15 ether;
+        // Constant 7/3 ratio (≈2.333x) — above BOTH the #998 S15 floor
+        // (~1.765x) AND the on-chain lender counterparties' standard 2.0x, so
+        // the loan locks the borrower's higher signed slice floor (the point of
+        // the test). Still UNEVENLY dividing (7000*9000 vs 21000*3000), so the
+        // matcher's remainder-preserving slice math is exercised.
+        o.collateralAmount = 7_000 ether;
+        o.collateralAmountMax = 21_000 ether;
         bytes memory sig = _sign(o);
-        _fundActorVault(signer, mockCollateralERC20, 15 ether);
+        _fundActorVault(signer, mockCollateralERC20, 21_000 ether);
 
-        // Two lender counterparties at the standard 1.5x (below the 5/3 floor),
-        // sized to the two fills so the loan locks the borrower's slice floor.
+        // Two lender counterparties at the standard 2.0x, sized to the two
+        // fills so the loan locks the borrower's higher signed slice floor.
         address l1 = _newCounterparty("rlcp1");
         address l2 = _newCounterparty("rlcp2");
-        uint256 cp1 = _postLenderCounterparty(l1, 4 ether);
-        uint256 cp2 = _postLenderCounterparty(l2, 5 ether);
+        uint256 cp1 = _postLenderCounterparty(l1, 4_000 ether);
+        uint256 cp2 = _postLenderCounterparty(l2, 5_000 ether);
 
         vm.prank(keeper);
-        uint256 loan1 = OfferMatchFacet(address(diamond)).matchSignedOffer(o, sig, cp1, 4 ether);
+        uint256 loan1 = OfferMatchFacet(address(diamond)).matchSignedOffer(o, sig, cp1, 4_000 ether);
         vm.prank(keeper);
-        uint256 loan2 = OfferMatchFacet(address(diamond)).matchSignedOffer(o, sig, cp2, 5 ether);
+        uint256 loan2 = OfferMatchFacet(address(diamond)).matchSignedOffer(o, sig, cp2, 5_000 ether);
 
         uint256 c1 = LoanFacet(address(diamond)).getLoanDetails(loan1).collateralAmount;
         uint256 c2 = LoanFacet(address(diamond)).getLoanDetails(loan2).collateralAmount;
         // The aggregate is the signed collateralAmountMax EXACTLY — no wei lost.
-        assertEq(c1 + c2, 15 ether, "rounding-exact: aggregate == signed collMax");
+        assertEq(c1 + c2, 21_000 ether, "rounding-exact: aggregate == signed collMax");
     }
 
     // ─── 11. Transient lender-slice NFT cleanup (Codex round-2 P2) ─────────

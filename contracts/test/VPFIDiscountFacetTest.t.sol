@@ -737,9 +737,10 @@ contract VPFIDiscountFacetTest is SetupTest {
         uint256 principal
     ) internal {
         // Borrower needs to post collateral equal to principal.
-        ERC20Mock(mockCollateralERC20).mint(borrower, principal);
+        // #998 S15 floor: the offer requires 2x principal collateral now.
+        ERC20Mock(mockCollateralERC20).mint(borrower, principal * 2);
         vm.prank(borrower);
-        IERC20(mockCollateralERC20).approve(address(diamond), principal);
+        IERC20(mockCollateralERC20).approve(address(diamond), principal * 2);
 
         _signAndAcceptOffer(borrower, borrowerPk, offerId);
     }
@@ -781,9 +782,10 @@ contract VPFIDiscountFacetTest is SetupTest {
         VaultFactoryFacet(address(diamond)).recordVaultDepositERC20(borrower, address(vpfiToken), vpfiRequired * 2);
 
         // Also fund borrower collateral for acceptOffer.
-        ERC20Mock(mockCollateralERC20).mint(borrower, principal);
+        // #998 S15 floor: the offer requires 2x principal collateral now.
+        ERC20Mock(mockCollateralERC20).mint(borrower, principal * 2);
         vm.prank(borrower);
-        IERC20(mockCollateralERC20).approve(address(diamond), principal);
+        IERC20(mockCollateralERC20).approve(address(diamond), principal * 2);
 
         uint256 loanId = _signAndAcceptOffer(borrower, borrowerPk, offerId);
 
@@ -874,9 +876,10 @@ contract VPFIDiscountFacetTest is SetupTest {
         vm.prank(address(diamond));
         VaultFactoryFacet(address(diamond)).recordVaultDepositERC20(borrower, address(vpfiToken), vpfiRequired * 2);
 
-        ERC20Mock(mockCollateralERC20).mint(borrower, principal);
+        // #998 S15 floor: the offer requires 2x principal collateral now.
+        ERC20Mock(mockCollateralERC20).mint(borrower, principal * 2);
         vm.prank(borrower);
-        IERC20(mockCollateralERC20).approve(address(diamond), principal);
+        IERC20(mockCollateralERC20).approve(address(diamond), principal * 2);
 
         uint256 loanId = _signAndAcceptOffer(borrower, borrowerPk, offerId);
 
@@ -937,9 +940,10 @@ contract VPFIDiscountFacetTest is SetupTest {
         vm.prank(address(diamond));
         VaultFactoryFacet(address(diamond)).recordVaultDepositERC20(borrower, address(vpfiToken), vpfiRequired * 2);
 
-        ERC20Mock(mockCollateralERC20).mint(borrower, principal);
+        // #998 S15 floor: the offer requires 2x principal collateral now.
+        ERC20Mock(mockCollateralERC20).mint(borrower, principal * 2);
         vm.prank(borrower);
-        IERC20(mockCollateralERC20).approve(address(diamond), principal);
+        IERC20(mockCollateralERC20).approve(address(diamond), principal * 2);
 
         uint256 loanId = _signAndAcceptOffer(borrower, borrowerPk, offerId);
 
@@ -990,7 +994,9 @@ contract VPFIDiscountFacetTest is SetupTest {
                     amount: amount,
                     interestRateBps: 500,
                     collateralAsset: mockCollateralERC20,
-                    collateralAmount: amount,
+                    // #998 S15 floor: collateral >= ~1.765x lending on liquid
+                    // ERC-20 both-legs offers. 2x clears it (was 1x amount).
+                    collateralAmount: amount * 2,
                     durationDays: 30,
                     assetType: LibVaipakam.AssetType.ERC20,
                     tokenId: 0,
@@ -1005,7 +1011,7 @@ contract VPFIDiscountFacetTest is SetupTest {
                     allowsParallelSale: false,
                     amountMax: amount,
                     interestRateBpsMax: 500,
-                    collateralAmountMax: amount,
+                    collateralAmountMax: amount * 2,
                     periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None,
                     expiresAt: 0,
                     fillMode: LibVaipakam.FillMode.Partial,

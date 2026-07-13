@@ -28,7 +28,9 @@ contract MetricsPositionPaginatedTest is SetupTest {
                 amount: amount,
                 interestRateBps: 500,
                 collateralAsset: mockCollateralERC20,
-                collateralAmount: 150 ether,
+                // #998 S15 floor: collateral >= ~1.765x lending (HF>=1.5 over
+                // an 85% liq threshold). 1.8x clears it for amount=100 ether.
+                collateralAmount: 180 ether,
                 durationDays: 30,
                 assetType: LibVaipakam.AssetType.ERC20,
                 tokenId: 0,
@@ -43,7 +45,7 @@ contract MetricsPositionPaginatedTest is SetupTest {
                 allowsParallelSale: false,
                 amountMax: amount,
                 interestRateBpsMax: 500,
-                collateralAmountMax: 150 ether,
+                collateralAmountMax: 180 ether,
                 periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None,
                 expiresAt: 0,
                 fillMode: LibVaipakam.FillMode.Partial,
@@ -119,7 +121,8 @@ contract MetricsPositionPaginatedTest is SetupTest {
 
     function test_PositionLoansPaginated_basicAndBounds() public {
         uint256 offerId = _lenderOffer(100 ether);
-        _fundActorVault(borrower, mockCollateralERC20, 150 ether);
+        // Fund the borrower to cover the offer's raised (#998 S15) collateral.
+        _fundActorVault(borrower, mockCollateralERC20, 180 ether);
         LibAcceptTestSigner.signAndAccept(
             address(diamond), borrower, borrowerPk, offerId
         );

@@ -106,7 +106,9 @@ contract WorkflowComplianceAndRejection is Test {
     uint256 activeLoanId;
     uint256 nftLoanId;
     uint256 constant PRINCIPAL = 1000 ether;
-    uint256 constant COLLATERAL = 1800 ether;
+    // #998 S15 LibOfferBounds floor: the mUSDC(1000)/mWETH collateral pair's
+    // create-time floor lands at 1875; 2000 clears it with margin (was 1800).
+    uint256 constant COLLATERAL = 2000 ether;
 
     function mockLiquidity(address asset, LibVaipakam.LiquidityStatus status) internal {
         vm.mockCall(
@@ -561,7 +563,7 @@ contract WorkflowComplianceAndRejection is Test {
                 amount: 100 ether,
                 interestRateBps: 500,
                 collateralAsset: address(mockWeth),
-                collateralAmount: 180 ether,
+                collateralAmount: 200 ether,
                 durationDays: 30,
                 assetType: LibVaipakam.AssetType.ERC20,
                 tokenId: 0,
@@ -576,7 +578,7 @@ contract WorkflowComplianceAndRejection is Test {
                 allowsParallelSale: false,
                 amountMax: 100 ether,
                 interestRateBpsMax: 500,
-                collateralAmountMax: 180 ether,
+                collateralAmountMax: 200 ether,
                 periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None,
                 expiresAt: 0,
                 fillMode: LibVaipakam.FillMode.Partial,
@@ -615,7 +617,7 @@ contract WorkflowComplianceAndRejection is Test {
                 amount: 10000 ether,
                 interestRateBps: 500,
                 collateralAsset: address(mockWeth),
-                collateralAmount: 18000 ether,
+                collateralAmount: 20000 ether,
                 durationDays: 30,
                 assetType: LibVaipakam.AssetType.ERC20,
                 tokenId: 0,
@@ -630,7 +632,7 @@ contract WorkflowComplianceAndRejection is Test {
                 allowsParallelSale: false,
                 amountMax: 10000 ether,
                 interestRateBpsMax: 500,
-                collateralAmountMax: 18000 ether,
+                collateralAmountMax: 20000 ether,
                 periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None,
                 expiresAt: 0,
                 fillMode: LibVaipakam.FillMode.Partial,

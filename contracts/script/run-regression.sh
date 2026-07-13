@@ -80,21 +80,72 @@ for stem in "${TOP[@]}"; do
 done
 ci=$((ci+1)); flush "$ci"
 
-# ── Subdirectory suites — one chunk PER subdir ───────────────────────────────
-# Running all subdirs in a single `test/{scenarios,deploy,fork,seaport,token}/
-# *.t.sol` glob compiles them as ONE unit, which trips the viaIR whole-unit
-# stack ceiling ("Variable size is N too deep") — the heavy fork + deploy +
-# seaport sources together exceed it (the #601/#603 ceiling), even though every
-# test passes. Per-subdir invocations keep each compile unit small AND are
-# future-proof: a newly-added subdir gets its own ceiling-safe chunk
-# automatically and can never recombine with the others to re-trip the limit.
-# Foundry caches src/ artifacts across invocations, so this is the same total
-# compile, just split into units that each stay under the ceiling. (Verified
-# 2026-07-01: the combined glob trips at "1 too deep"; the two halves
-# {scenarios,deploy,token} = 58 tests and {fork,seaport} = 59 tests both
-# compile + pass — per-subdir is strictly smaller still.)
+# ── Subdirectory suites — chunked PER subdir (like the top-level suites) ──────
+# One glob per subdir (`test/$sub/*.t.sol`) was ceiling-safe on 2026-07-01, but
+# ordinary growth pushed the `fork` subdir ALONE over the viaIR whole-unit stack
+# ceiling by 2026-07-13 ("Variable size is 1 too deep") — its 5 heavy sources
+# (2 Seaport-fork + 2 mainnet-fork + Permit2-fork, each pulling large src/ deps)
+# now exceed one compile unit. So subdirs are chunked the SAME way the top-level
+# suites are: each subdir's files are split into `SUBDIR_CHUNK_SIZE`-file brace
+# globs, keeping every compile unit small. Foundry caches src/ across
+# invocations, so this is the same total compile, just in ceiling-safe units.
+# Future-proof: a newly-added subdir file is picked up by `find` and chunked
+# automatically. Tune down via SUBDIR_CHUNK_SIZE=N if a chunk ever trips.
+# (fork tests self-skip when their FORK_URL_* envs are unset, so once a chunk
+# COMPILES the fork suite passes trivially — the ceiling was the only blocker.)
+SUBDIR_CHUNK_SIZE="${SUBDIR_CHUNK_SIZE:-3}"
 for sub in "${SUBDIRS[@]}"; do
-  run "subdir ($sub)" "test/$sub/*.t.sol"
+  mapfile -t SUBFILES < <(find "test/$sub" -maxdepth 1 -name '*.t.sol' -printf '%f\n' | sed 's/\.t\.sol$//' | sort)
+  (( ${#SUBFILES[@]} == 0 )) && continue
+
+  # `fork` subdir: each file needs a SPECIFIC fork RPC and self-skips without it
+  # (`vm.envOr("FORK_URL_*", "")` → early return), so with no URL it adds zero
+  # coverage. Gate each file by the URL IT needs (Codex #1201) so setting only
+  # one URL never drags in — and tries to COMPILE — the other's files:
+  #   • *Seaport* sources need FORK_URL_BASE_SEPOLIA (Base-Sepolia fork). They
+  #     ALSO exceed the viaIR bounded-compile ceiling on current main (even a
+  #     single Seaport file trips "Variable size N too deep" — full build only,
+  #     #601/#603), so absent that URL they must not be compiled here at all.
+  #   • the mainnet-fork sources (Oracle / Permit2 / Liquidation) need
+  #     FORK_URL_MAINNET; they DO compile+skip cleanly in a bounded chunk.
+  # A file whose URL is unset is dropped (still "covered" by the exhaustiveness
+  # guard below). Both unset → the whole subdir is skipped, keeping the default
+  # no-URL pre-deploy gate green. NOTE: when FORK_URL_BASE_SEPOLIA IS set, the
+  # Seaport chunk still needs the src-level lean-DTO ceiling fix to compile —
+  # this gate does not pretend otherwise.
+  if [ "$sub" = "fork" ]; then
+    kept=()
+    for stem in "${SUBFILES[@]}"; do
+      case "$stem" in
+        *Seaport*)
+          if [ -n "${FORK_URL_BASE_SEPOLIA:-}" ]; then kept+=("$stem")
+          else echo "  fork: skip $stem (needs FORK_URL_BASE_SEPOLIA)"; fi ;;
+        *)
+          if [ -n "${FORK_URL_MAINNET:-}" ]; then kept+=("$stem")
+          else echo "  fork: skip $stem (needs FORK_URL_MAINNET)"; fi ;;
+      esac
+    done
+    if (( ${#kept[@]} == 0 )); then
+      echo ""
+      echo "===== subdir (fork) : SKIPPED — no matching FORK_URL_* set"
+      echo "      (each fork test self-skips without its RPC; Seaport also exceeds the"
+      echo "       viaIR bounded-compile ceiling — full build only. See #601/#603.)"
+      continue
+    fi
+    SUBFILES=("${kept[@]}")
+  fi
+  sn=0; schunk=(); sci=0
+  sflush() {
+    (( ${#schunk[@]} == 0 )) && return
+    local joined; joined=$(IFS=,; echo "${schunk[*]}")
+    run "subdir ($sub #$1)" "test/$sub/{$joined}.t.sol"
+    schunk=()
+  }
+  for stem in "${SUBFILES[@]}"; do
+    schunk+=("$stem"); sn=$((sn+1))
+    if (( sn % SUBDIR_CHUNK_SIZE == 0 )); then sci=$((sci+1)); sflush "$sci"; fi
+  done
+  sci=$((sci+1)); sflush "$sci"
 done
 
 # ── Optional invariants pass ─────────────────────────────────────────────────
