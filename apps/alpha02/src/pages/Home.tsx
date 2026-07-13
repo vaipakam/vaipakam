@@ -9,6 +9,7 @@ import type { LucideIcon } from 'lucide-react';
 import { getDeployment } from '@vaipakam/contracts/deployments';
 import { copy } from '../content/copy';
 import { useActiveChain } from '../chain/useActiveChain';
+import { ErrorBoundary } from '../components/ErrorBoundary';
 
 // UX2-008 — Home's only contract-read (and thus its only Diamond-ABI)
 // dependency lives in this lazily-loaded nudge, so the eager Home chunk
@@ -63,9 +64,15 @@ export function Home() {
           positions to nudge about, so mounting it only when connected
           keeps a disconnected landing paint ABI-free. */}
       {isConnected ? (
-        <Suspense fallback={null}>
-          <ActivePositionsBanner />
-        </Suspense>
+        // Advisory + lazy: a chunk-fetch failure must degrade to no
+        // nudge, not bubble to the route boundary and replace the whole
+        // landing page with the crash card (Codex #1200 r3). Its own
+        // quiet boundary contains that, same as the sanctions banner.
+        <ErrorBoundary fallback={null}>
+          <Suspense fallback={null}>
+            <ActivePositionsBanner />
+          </Suspense>
+        </ErrorBoundary>
       ) : null}
 
       {/* Only advertise the faucet on a testnet whose bundle actually

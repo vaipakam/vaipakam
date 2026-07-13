@@ -13,15 +13,21 @@ import { copy } from '../../content/copy';
 
 export default function FeeFaqCard() {
   const fees = useProtocolFees();
+  // Until the on-chain read confirms (or if it fails), `useProtocolFees`
+  // returns the deploy DEFAULTS with `ready=false` — rendering those as
+  // the exact percentages would reintroduce the stale-rate copy this
+  // whole path avoids (Codex #1200 r3). Show the non-committal text
+  // until the live values are confirmed, then the exact percentages.
+  const answer = fees.ready
+    ? copy.fees.faqAnswer(
+        bpsToPercentText(fees.loanInitiationFeeBps),
+        bpsToPercentText(fees.treasuryFeeBps),
+      )
+    : copy.fees.faqAnswerGeneric;
   return (
     <section className="card">
       <h3>{copy.fees.faqQuestion}</h3>
-      <p style={{ margin: 0 }}>
-        {copy.fees.faqAnswer(
-          bpsToPercentText(fees.loanInitiationFeeBps),
-          bpsToPercentText(fees.treasuryFeeBps),
-        )}
-      </p>
+      <p style={{ margin: 0 }}>{answer}</p>
     </section>
   );
 }
