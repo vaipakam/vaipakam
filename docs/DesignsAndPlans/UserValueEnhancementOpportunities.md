@@ -269,7 +269,8 @@ Each item lands on the `@vaipakam-labs` board as its own Issue per the task
 tracking convention; items marked "spec edit" additionally follow the
 per-PR FunctionalSpecs discipline.
 
-**Promotion record (2026-07-13):** E-1→#1203, E-2→#1204, E-3→#1205,
+**Promotion record (2026-07-13):** umbrella/tracking card **#1221**
+(everything below is monitored from there). E-1→#1203, E-2→#1204, E-3→#1205,
 E-4→#1206, E-5→#1207, E-6→#1208, E-7→#1209, E-8→#1210, E-9→#1211,
 E-10→#1212, E-11→#1213, E-12→#1214, E-13→#1215, E-14→#1216, R-1→#1217,
 R-2→#1218, R-3/S-4→#1219, ethos-hardening sweep→#1220. Existing related
