@@ -204,8 +204,19 @@ tiny context/store the interval helper reads). It must NOT be derived from
 intervals are being stretched — never mount that component (Codex #1224 r2).
 If the socket cannot carry cursor fields (older worker), `IndexerPushSync`
 itself owns a low-frequency `/offers/stats` freshness probe as the fallback
-source. "Rail healthy" means **cursor advanced within the last ~90s** AND the
-socket is open.
+source. "Rail healthy" means **the cursor advanced within a
+cadence-derived staleness window** AND the socket is open. The window is
+NOT a hard-coded wall-clock constant (Codex #1224 r3): it derives from the
+ingest mode's actual per-chain service cadence. On the live DO path the
+cron pings **every** chain's DO each minute (`apps/indexer/src/index.ts` —
+"every chain is serviced each minute (not one per round-robin tick)"), so
+~90s (cadence × 1.5) is correct there; on the legacy inline round-robin
+fallback a chain is only scanned every `N_chains × 60s`, so the window
+scales with the configured chain count. The server tells the client which
+cadence applies (the DO includes its expected scan cadence alongside the
+cursor age in `hello`/periodic frames), so a healthy-but-quiet chain on a
+slower cadence is never misread as stale — misreading it would restore 30s
+polling during normal quiet periods and quietly undo the diet.
 
 - **Rail healthy:** chain-read hooks drop their 30s interval to a **180s
   safety net**.
@@ -243,20 +254,37 @@ being viewed.
   ("a stale indexed row must not remain actionable") is enforced at
   *claim-time* by the chain verify and pre-flight regardless of list-refresh
   latency.
-- **The list roots `myLoans`/`myOffers`.** Lists are navigational: no money
-  action fires from a list row without passing through the detail-page
-  action gates (tip-fresh, above) and the pre-sign re-checks (absolute). So
-  list refresh for *foreign* events rides push (safe-finality,
-  seconds-to-~40s) + focus + net — an accepted, documented latency trade-off
-  for that narrow class (foreign transfer/accept appearing in a list), in
-  exchange for removing the largest recurring cost. Own actions stay
-  within-a-block via the receipt rail (1.4). The spec's L351–356 outranking
-  rule is about *which source wins* when the app reads — and every read
-  still reads chain — not about mandating a block-cadence trigger.
+- **The list roots `myLoans`/`myOffers`.** *Mostly* navigational — but not
+  entirely: `Positions.tsx` and the desk `OpenOrdersPanel` render direct
+  `cancelOffer` (and desk amend) actions straight from `useMyOffersFull`
+  rows without a detail-page gate in between (Codex #1224 r3). So list
+  refresh for *foreign* events rides push (safe-finality,
+  seconds-to-~40s) + focus + net — an accepted, documented latency
+  trade-off — **with a row-action guard**: any money action fired directly
+  from a push-finality list row (cancel/amend) performs a **blocking
+  click-time preflight** (one live read / simulation of the exact call,
+  fail-closed) *before* the wallet prompt. A row consumed by a counterparty
+  during the push window then produces an inline "this offer was just
+  filled" outcome at click, never a doomed signature. This is the same
+  pre-sign posture the flows already carry, upgraded from advisory to
+  blocking for exactly this row-action class; cost is one read per click,
+  page- and action-bounded. Own actions stay within-a-block via the receipt
+  rail (1.4). The spec's L351–356 outranking rule is about *which source
+  wins* when the app reads — and every read still reads chain — not about
+  mandating a block-cadence trigger.
 
-Vault, approvals, keeper-config, token/rewards roots likewise ride push +
-receipt + net. When the rail is **down**, `LiveChainSync` reverts to
-invalidating the full set (today's behaviour) as the fallback rail.
+Vault, approvals, keeper-config, token/rewards roots: phase 1 carries them
+on **receipt + focus + net** honestly stated — the push contract today has
+no key class for VPFI deposit/withdraw or reward events (they surface only
+as `activity.appended`), so claiming "push" for these roots would be
+vacuous (Codex #1224 r3). Where an *existing* key already corresponds to a
+vault-balance change (loan settlement events moving escrow → `loan.updated`),
+phase 1's KEY_MAP maps it onto `vaultAssets` too. A dedicated scoped
+`vault.changed`/`rewards.changed` key (multi-device parity for VPFI and
+reward mutations) joins phase 2.2's frame-context work; until then the
+cross-device staleness bound for these self-owned roots is focus + 180s.
+When the rail is **down**, `LiveChainSync` reverts to invalidating the
+full set (today's behaviour) as the fallback rail.
 
   **1.2a Split the book ghost-strip into its own query.** The L357–361
   ghost-strip currently runs *inside* `useActiveOffers` after the indexed
@@ -264,9 +292,29 @@ invalidating the full set (today's behaviour) as the fallback rail.
   in place either forces `activeOffers` to keep invalidating every 12s
   (preserving the cost) or stops re-running the strip (violating shared-book
   honesty) (Codex #1224). Refactor the strip into a separate lightweight
-  `bookGhostStrip` query, block-driven and ≥12s-throttled, whose result the
-  render intersects with the indexer-served/push-refreshed `activeOffers`
-  list. **Scan bound unchanged:** the strip keeps `filterTerminalOffers`'
+  `bookGhostStrip` query, block-driven and ≥12s-throttled, whose result is
+  intersected with the indexer-served/push-refreshed `activeOffers` list.
+  Two composition rules from r3 (Codex #1224 r3, incl. the P1):
+
+  - **The intersection lives INSIDE the shared data hook, not at a render
+    surface.** `useActiveOffers` is consumed by more than the Offer Book —
+    `OfferFlow`, `Rent`, and `EarlyExitFlow` all select offers from it. The
+    hook composes the two queries and returns only the stripped rows, so
+    every consumer (present and future) gets the honest view; stripping at
+    one render site would leave the other flows steering users into
+    reverting accept/sale paths.
+  - **The strip scans from the same pre-walk cursor snapshot the indexed
+    walk used (P1).** Today `useActiveOffers` snapshots indexer freshness
+    *before* paging `/offers/active`, precisely so an ingest landing
+    mid-walk cannot advance the cursor past the terminal event of a stale
+    row already collected. An independent `bookGhostStrip` query reading
+    the cursor on its own re-opens that race — it could start from the
+    newer cursor and skip exactly the dead offer it exists to remove. The
+    hook therefore passes its pre-walk cursor snapshot into the strip query
+    (part of its query key) as the scan start; the strip never re-reads
+    cursor freshness independently.
+
+  **Scan bound unchanged:** the strip keeps `filterTerminalOffers`'
   existing window — indexer cursor → `latest − CONFIRMATION_BUFFER`
   (`latest − 2`), NOT the safe head (Codex #1224 r2, P1): the dead-offer
   window that matters is precisely the latest-tip lag *before* safe
@@ -333,12 +381,30 @@ push nudge, explicit focus (1.1), 180s net — **never the tip nudge** (1.2).
 One coupling must be cut for that to hold (Codex #1224 r2, P1):
 `useMyClaimables` currently keys its query on `loans.dataUpdatedAt`, so ANY
 `myLoans` refetch re-runs the whole verification even when nothing changed.
-Re-key it on a **content hash of the candidate set** (sorted loanIds +
-statuses): a `myLoans` refresh that returns the same candidates does not
-re-verify; a changed set does. A new claimable is *created* by a Vaipakam
-terminal event (repay/default/liquidation), which is exactly what
-`loan.updated` pushes — so claim discovery latency is push latency, and
-actionability at click-time is still chain-decided.
+Re-key it on a **content hash of the candidate set**, where each entry
+hashes `(loanId, status, role, entitlement-relevant amounts)` — not
+loanId+status alone (Codex #1224 r3, two findings):
+
+- **Role is part of candidate identity.** The probe is role-specific
+  (`getClaimable(loanId, isLender)` against the role's position token), so
+  a wallet whose side of the same terminal loan flips through position-NFT
+  transfers changes the candidate without changing loanId or status; a
+  role-blind hash would keep verifying the stale side and miss the new one
+  until an unrelated invalidation.
+- **Entitlement can change without a status transition.** Not every new
+  claimable is born from a terminal repay/default/liquidation: a partial
+  internal-match rescue of a `FallbackPending` loan parks `heldForLender`
+  while the status stays `fallback_pending`. Including the
+  entitlement-relevant amounts the row already carries in the hash makes
+  such a change re-verify; and the indexer must emit its push nudge
+  (`loan.updated`) for entitlement-mutating events too, not only for
+  status transitions — PR 0's push-completeness checklist verifies the
+  rescue-path events are in that set.
+
+A `myLoans` refresh that returns identical candidates does not re-verify; a
+changed set (id, status, role, or entitlement) does. Claim discovery
+latency is push latency, and actionability at click-time is still
+chain-decided.
 
 **1.6 Push-storm throttle — leading AND trailing.** Coarse keys mean a busy
 chain could nudge `myLoans` on every ingest scan. Add a per-root minimum
@@ -407,8 +473,15 @@ offers / a party address equals the wallet — that is what distinguishes
 "counterparty accepted MY offer" (new `loanId`, unknown, but causatively
 mine) from "foreign new loan". A bare `unknown id ⇒ refetch` rule would make
 every global create relevant to every tab and defeat the scoping goal
-entirely (Codex #1224 r2, both passes flagged this). Frames lacking context
-(older worker version) fall back to the throttled coarse behaviour of 1.6 —
+entirely (Codex #1224 r2, both passes flagged this). **Bounded means
+truncation-honest (Codex #1224 r3):** the id list is capped, so a busy
+scan touching more loans/offers than the cap could omit exactly the id an
+affected wallet needed — silently skipping its refetch until focus/180s.
+Every frame whose affected-id list is incomplete therefore carries a
+`truncated: true` marker, and clients treat a truncated frame as a coarse
+key (the throttled 1.6 behaviour): scoping only ever *narrows* work when
+the hint is complete, never suppresses a refetch when it is not. Frames
+lacking context entirely (older worker version) fall back the same way —
 degraded, never wrong.
 
 **2.3 Claimable-candidate hint — new route, ADDITIVE only, never an
@@ -423,7 +496,9 @@ and the spec requires the current holder's claim to stay discoverable from
 chain (L179–180). The route may **prioritize** verification order and
 **add** candidates. The actual probe reduction comes from **memoized
 verdicts**: cache each candidate's last verdict keyed on
-`(loanId, status, owner-relevant block)` and skip re-probing candidates
+`(loanId, status, role, entitlement-relevant amounts, owner-relevant
+block)` — the same identity fields as the 1.5 candidate hash — and skip
+re-probing candidates
 whose key is unchanged since the last verification; the chain-enumerated set
 is always probed on first load and re-probed whenever its key changes.
 Chain-decided actionability (L177–178) is untouched. Given the corrected
@@ -484,10 +559,18 @@ The requested pipeline improvements are mostly **hardening what shipped with
   (a) count RPC requests over a 10-minute idle-but-focused window before/after
   (DevTools network filter on the RPC host; expectation: a large drop, floored
   by the Claims verification surface if the Claims page is open), (b) from a
-  second wallet accept/cancel against the first, and confirm the first tab's
-  own-position roots refresh at **tip parity (~12s, via the 1.2 tip nudge)** —
-  NOT delayed to `safe`-finality — while a hidden→focused tab refreshes
-  immediately (1.1 explicit focus), (c) transfer a position NFT between the two
+  second wallet accept/cancel against the first, and verify **each root class
+  against its own contract** (Codex #1224 r3 — the earlier blanket "~12s"
+  wording contradicted 1.2's deliberate list-root exclusion): with the first
+  tab ON the affected position's detail page, the action-gate roots
+  (`loanLiveStatus`, `positionOwners`, accept gates) refresh at **tip parity
+  (~12s, via the 1.2 tip nudge)**; the `myLoans`/`myOffers` **list rows**
+  refresh via the **push path (seconds-to-~40s)** — asserting ~12s there
+  would pressure PR A to re-add the list roots to the tip nudge; and a
+  hidden→focused tab refreshes immediately (1.1 explicit focus). Also
+  confirm the 1.2 row-action guard: clicking Cancel on a just-consumed
+  offer row surfaces the inline preflight failure, not a wallet prompt,
+  (c) transfer a position NFT between the two
   wallets and confirm My positions updates **via the push frame itself** —
   run this check with the tip nudge disabled or on an HTTP-only rail, or
   assert an `ownership.changed` frame arrives and dirties the intended
@@ -512,16 +595,23 @@ The requested pipeline improvements are mostly **hardening what shipped with
 
 ## 9. Rollout
 
-1. **PR 0 (phase 0 — prerequisite, ships first):** the ownership-transfer
-   invalidation key (0.1) in the indexer + `KEY_MAP`, landed and observed on
-   the live WS rail *before* PR A removes the blanket that masks its absence.
-   (The cooldown-clock change 0.2 ships with PR A since it's app-side.)
-2. **PR A (phase 1):** rail-health helper (cursor-freshness gated) +
-   `LiveChainSync` demotion-with-tip-nudge + book-ghost-strip split +
-   OpenOrders local cooldown clock + centralized receipt invalidation with
-   next-block retry + leading/trailing throttle + explicit focus refetch.
-   One release behind a `VITE_FRESHNESS_TIMERS=legacy` escape hatch, removed
-   after the live review passes.
+1. **PR 0 (phase 0 — prerequisite, ships first):** push-completeness on the
+   indexer side — the ownership-transfer invalidation key (0.1) in the
+   indexer + `KEY_MAP`, plus the audit that `loan.updated` fires for
+   entitlement-mutating non-terminal events (the 1.5 rescue-path class) and
+   the `loan.updated → vaultAssets` mapping (1.2) — landed and observed on
+   the live WS rail *before* PR A removes the blanket that masks any
+   absence. (The cooldown-clock change 0.2 ships with PR A since it's
+   app-side.)
+2. **PR A (phase 1):** rail-health helper (cadence-derived cursor-freshness
+   gate) + `LiveChainSync` demotion-with-tip-nudge + book-ghost-strip split
+   (shared-hook intersection, pre-walk cursor snapshot) + row-action
+   blocking preflight for list-row cancel/amend + OpenOrders local cooldown
+   clock + centralized receipt invalidation with next-block retry +
+   leading/trailing throttle + explicit focus refetch + Claims content-hash
+   re-key (role + entitlement fields). One release behind a
+   `VITE_FRESHNESS_TIMERS=legacy` escape hatch, removed after the live
+   review passes.
 3. **PR B (2.1):** config table + endpoint + display-hook switch.
 4. **PR C (2.3):** `claim-candidates` route + Claims fan-out narrowing —
    promoted ahead of 2.2 because the corrected Claims floor is the dominant
