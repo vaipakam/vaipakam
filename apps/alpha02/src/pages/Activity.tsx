@@ -265,7 +265,21 @@ export function Activity() {
           <EmptyState
             icon={History}
             title={
-              activity.data.truncated
+              /* UX2-007 tail — the hedged "older events may exist" title
+                 fires whenever the protocol-wide scan doesn't reach the
+                 feed end, which is structurally true on a busy testnet
+                 (>500 total events) regardless of network speed. For a
+                 wallet with NO loans that reads as an unnecessary hedge:
+                 a wallet with any lifetime loan would carry it in
+                 `myLoanIds` (the set already unions the indexer leg, so
+                 it survives close/transfer within retention), so an
+                 empty loan set means the wallet is new and "no activity
+                 yet" is the honest read. Keep the hedged copy only when
+                 the wallet HAS loans but the recent window came back
+                 empty — that's the genuine truncation the hedge is for.
+                 (Deep offers-only history older than the scan window is
+                 the residual #1023 historical-participant case.) */
+              activity.data.truncated && myLoanIds.size > 0
                 ? copy.activity.truncatedEmpty
                 : copy.activity.empty
             }

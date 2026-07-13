@@ -103,6 +103,7 @@ Unmarked findings are OPEN.
 | --- | --- | --- |
 | A — P2s (2026-07-13) | UX2-001, UX2-002, UX2-006 | ✅ Fixed — structurally shrinkable header chip + phone-tier trims (badge/glyph) with a 390px fork-tier no-overflow spec; splash failure state (HTML-resident 20s timer → plain-words message + Reload); one-line Connect label rides the same header work |
 | B — P3 polish (2026-07-13) | UX2-003, UX2-004, UX2-005, UX2-007 | ✅ Fixed — Settings More cards renamed to the nav names; the discount consent is a real switch (track + sliding thumb, focus ring, reduced-motion); faucet + VPFI dead-ends gain one-click "Switch to <chain>" (mocks-bearing / canonical-VPFI chain resolved from the deployments bundle); Activity's empty feed hands over Borrow/Lend CTAs |
+| C — perf tail (2026-07-13) | UX2-007 (tail), UX2-008 | ✅ Fixed — the ~761 kB Diamond-ABI chunk is split out (`contract-abis`) AND lifted off first paint: Borrow/Lend made lazy + Home's contract-read banner + the shell's SanctionsBanner lazy-loaded, so a disconnected Home/Help paint pulls no ABI (verified: `contract-abis` no longer in the entry's modulepreload set). Activity's hedged "older events may exist" title now only shows when the wallet actually HAS loans — a zero-loan wallet reads the clean "no activity yet" |
 
 ---
 
@@ -209,17 +210,40 @@ fires and the check no-ops. Verified present in the built
   unnecessarily and offers no forward CTA (the UX-023 pattern:
   "make your first move → Borrow / Lend"). Worth revisiting alongside
   the indexer-timeout tuning for slow networks. (S)
-  **Status: ✅ FIXED (batch B, 2026-07-13) — CTA half.** The empty feed
-  (both the clean and the hedged/truncated variants) now offers
-  "Borrow something" / "Lend something" forward CTAs. The copy split
-  already existed (`empty` vs `truncatedEmpty` — the sweep simply hit
-  the degraded branch under relay latency); the indexer-timeout tuning
-  stays open as a perf follow-up alongside UX2-008.
+  **Status: ✅ FIXED (batch B CTA half + batch C tuning, 2026-07-13).**
+  The empty feed (both the clean and the hedged/truncated variants) now
+  offers "Borrow something" / "Lend something" forward CTAs (batch B).
+  Batch C then fixed the mis-diagnosed root cause: the hedged
+  "older events may exist" title wasn't a slow-network artefact but a
+  structural one — the protocol-wide 5×100 scan can't reach the feed
+  end whenever the testnet holds >500 total events, so `truncated`
+  stays true for ANY wallet, including a brand-new one with nothing.
+  The title is now gated on `myLoanIds.size > 0` (the wallet's loan set,
+  which unions the indexer leg so it survives close/transfer): a wallet
+  with no loans reads the clean "no activity yet", and only a wallet
+  that genuinely HAS loans older than the scan window keeps the hedge.
+  (Deep offers-only history remains the #1023 historical-participant
+  case.)
 - **UX2-008** The ABI bundle (`abis-*.js`, ~761 KB uncompressed) loads
   on every surface's critical path. It's one shared chunk today;
   splitting the rarely-read facet ABIs (or deferring until first
   contract read) would trim first-paint bytes on marketing-ish routes
   like Home/Help. Enhancement candidate, low urgency. (M)
+  **Status: ✅ FIXED (batch C, 2026-07-13).** Two moves. (1) The combined
+  Diamond ABI is now its own Rollup chunk (`contract-abis`, matched in
+  `vite.config.ts:manualChunks`) — lifted out of the every-deploy entry
+  chunk, downloaded in parallel, and long-cached (ABIs change only on a
+  contract deploy, so the hash survives ordinary app deploys and every
+  in-app navigation reuses it). (2) It is lifted off the FIRST-paint
+  critical path: the three eager consumers that dragged it there —
+  Borrow/Lend (each imports `OfferFlow` → contracts → ABI), Home's
+  active-positions banner, and the shell's `SanctionsBanner` (the
+  on-chain sanctions read) — are now lazy. A disconnected Home/Help
+  paint pulls no ABI at all (verified: `contract-abis` is absent from
+  the built entry's `modulepreload` set; the entry now preloads only the
+  react/wallet vendors). Connected users, who need the ABI for reads
+  anyway, load the chunk on demand. The always-on sanctions *gate* still
+  runs at the contract level; only its advisory banner is deferred.
 
 ## Environment artifacts (recorded, NOT product findings)
 

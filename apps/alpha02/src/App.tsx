@@ -8,14 +8,26 @@
 import { lazy } from 'react';
 import { Navigate, Route, Routes, useParams } from 'react-router-dom';
 import { AppShell } from './components/AppShell';
-// The two highest-frequency entry routes stay in the boot chunk so the
-// first paint after mount is instant; everything else is a lazy chunk
-// (UX-005) — advanced surfaces (desk/charts, offers, activity, vpfi,
-// verifier) and the once-per-session pages (faucet, settings, help)
-// don't belong in the code every first-time visitor downloads.
+// The landing route (Home) stays in the boot chunk so the first paint
+// after mount is instant; everything else is a lazy chunk (UX-005) —
+// advanced surfaces (desk/charts, offers, activity, vpfi, verifier) and
+// the once-per-session pages (faucet, settings, help) don't belong in
+// the code every first-time visitor downloads.
+//
+// UX2-008 — Borrow and Lend were kept eager too, but each imports
+// `OfferFlow` → the contracts layer → the combined Diamond ABI
+// (~761 kB), so their eager presence dragged that whole chunk onto the
+// FIRST-paint critical path of every route, including the marketing
+// landing (Home) and Help. Lazy-loading them (like every other route)
+// keeps the ABI chunk off a disconnected first paint entirely; the
+// trade is a brief in-shell "Loading…" the first time the user opens
+// /borrow or /lend — the same treatment the other action routes already
+// have, painted inside the already-live shell.
 import { Home } from './pages/Home';
-import { Borrow } from './pages/Borrow';
-import { Lend } from './pages/Lend';
+const Borrow = lazy(() =>
+  import('./pages/Borrow').then((m) => ({ default: m.Borrow })),
+);
+const Lend = lazy(() => import('./pages/Lend').then((m) => ({ default: m.Lend })));
 
 const Rent = lazy(() => import('./pages/Rent').then((m) => ({ default: m.Rent })));
 const Positions = lazy(() =>

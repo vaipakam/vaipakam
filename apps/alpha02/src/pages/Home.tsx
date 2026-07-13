@@ -2,13 +2,18 @@
  * First-run screen: four jobs, plain words, nothing competing with
  * them (BasicUserUXSimplification.md "First-Run App Shape").
  */
+import { lazy, Suspense } from 'react';
 import { Link } from 'react-router-dom';
 import { Coins, HandCoins, Images, ListChecks, Droplets } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
 import { getDeployment } from '@vaipakam/contracts/deployments';
 import { copy } from '../content/copy';
-import { useMyLoans } from '../data/hooks';
 import { useActiveChain } from '../chain/useActiveChain';
+
+// UX2-008 — Home's only contract-read (and thus its only Diamond-ABI)
+// dependency lives in this lazily-loaded nudge, so the eager Home chunk
+// (marketing hero + job grid) paints without pulling the ABI chunk.
+const ActivePositionsBanner = lazy(() => import('./home/ActivePositionsBanner'));
 
 const JOBS: Array<{
   to: string;
@@ -43,27 +48,16 @@ const JOBS: Array<{
 ];
 
 export function Home() {
-  const { isConnected, readChain } = useActiveChain();
-  const { data: loans } = useMyLoans();
-
-  const activeCount = Array.isArray(loans)
-    ? loans.filter((l) => l.status === 'active').length
-    : 0;
+  const { readChain } = useActiveChain();
 
   return (
     <div>
       <h1 className="page-title">{copy.home.title}</h1>
       <p className="page-lede">{copy.home.lede}</p>
 
-      {isConnected && activeCount > 0 ? (
-        <Link to="/positions" className="banner banner-info" style={{ display: 'flex' }}>
-          <ListChecks aria-hidden />
-          <span className="banner-body">
-            You have {activeCount} active {activeCount === 1 ? 'position' : 'positions'}.
-            View them under My positions.
-          </span>
-        </Link>
-      ) : null}
+      <Suspense fallback={null}>
+        <ActivePositionsBanner />
+      </Suspense>
 
       {/* Only advertise the faucet on a testnet whose bundle actually
           carries the mock assets — an unseeded testnet would land the
