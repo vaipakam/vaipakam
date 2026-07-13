@@ -6016,6 +6016,44 @@ library LibVaipakam {
         return block.timestamp >= loanEnd && block.timestamp < gracePeriodEnd;
     }
 
+    /// @notice Pass-2 D1 (#1188) — a rental loan's REMAINING prepaid days.
+    /// @dev    Rental amortisation (`autoDeductDaily`, rental `repayPartial`)
+    ///         keeps `durationDays` IMMUTABLE (the origination term, so
+    ///         `startTime + durationDays × 1 day` stays the fixed maturity every
+    ///         consumer already relies on — the #641 "term tuple is fixed"
+    ///         convention). Days consumed are tracked by `lastDeductTime`, which
+    ///         advances by one day per auto-deduction (and by `partialAmount`
+    ///         days per rental partial). Remaining = term − consumed. Non-rental
+    ///         loans never advance `lastDeductTime` past `startTime`, so this
+    ///         returns the full `durationDays` for them.
+    /// @notice Pass-2 D1 (#1188) — rental days ALREADY consumed, tracked by
+    ///         `lastDeductTime` advancing (auto-deduct: +1/day; rental partial:
+    ///         +partialAmount days).
+    /// @dev    Guarded: a loan whose `lastDeductTime` was never advanced past
+    ///         `startTime` (init sets it to `startTime`; a legacy/imported loan
+    ///         may have 0) has consumed nothing — `lastDeductTime <= startTime`
+    ///         ⇒ 0, rather than underflowing. This is the single guarded
+    ///         consumed-days derivation every caller should use.
+    function consumedRentalDays(Loan storage loan) internal view returns (uint256) {
+        uint256 ldt = uint256(loan.lastDeductTime);
+        uint256 st = uint256(loan.startTime);
+        return ldt > st ? (ldt - st) / 1 days : 0;
+    }
+
+    /// @notice Pass-2 D1 (#1188) — a rental loan's REMAINING prepaid days
+    ///         = immutable term − consumed. Non-rental loans never advance
+    ///         `lastDeductTime`, so this returns the full `durationDays`.
+    /// @dev    ASSUMES `durationDays` is the IMMUTABLE origination term (the
+    ///         D1 model). Loans created after the D1 upgrade satisfy this;
+    ///         mainnet rollouts are always fresh (no pre-upgrade rentals carry
+    ///         over — see RefreshAllFacetsInPlace policy), so the derivation is
+    ///         exact there.
+    function remainingRentalDays(Loan storage loan) internal view returns (uint256) {
+        uint256 consumed = consumedRentalDays(loan);
+        // Clamp so a view can never revert even if consumed overruns the term.
+        return consumed >= uint256(loan.durationDays) ? 0 : uint256(loan.durationDays) - consumed;
+    }
+
     /// @notice #641 — a loan's interest-accrual ORIGIN: the dedicated
     ///         `interestAccrualStart` clock (re-stamped by a partial WITHOUT
     ///         moving the term/maturity), falling back to the immutable
@@ -6197,7 +6235,10 @@ library LibVaipakam {
         uint256 feePercent = 100 + (daysLate * 50); // 1% + 0.5% per day
         if (feePercent > 500) feePercent = 500; // historical 5% penalty ceiling
 
-        fee = (loan.principal * loan.durationDays * feePercent) / 10000;
+        // Pass-2 D1 (#1188) — base the fee on the REMAINING owed rental days
+        // (`remainingRentalDays`), not the now-immutable `durationDays` term,
+        // so a partially-serviced rental isn't penalised on already-paid days.
+        fee = (loan.principal * remainingRentalDays(loan) * feePercent) / 10000;
 
         // Clamp to the loan's ACTUAL pre-funded buffer (per-loan snapshot, not
         // the mutable global config), so the buffer always covers the fee.

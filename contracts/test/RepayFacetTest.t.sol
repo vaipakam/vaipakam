@@ -520,7 +520,47 @@ contract RepayFacetTest is Test {
             2
         );
         assertEq(loan.prepayAmount, 290); // -10
-        assertEq(loan.durationDays, 29);
+        // Pass-2 D1 (#1188): durationDays is now IMMUTABLE (the fixed maturity);
+        // the day consumed shows as lastDeductTime advancing, not term shrink.
+        assertEq(loan.durationDays, 30, "durationDays immutable (#1188)");
+        assertEq(loan.lastDeductTime, loan.startTime + 1 days, "lastDeductTime advanced 1 day");
+    }
+
+    /// @dev Pass-2 D1 (#1188) regression — a mid-serviced 30-day rental must NOT
+    ///      be permissionlessly defaultable before its ORIGINAL maturity+grace,
+    ///      and the borrower must be able to close it in-term. Pre-fix, each
+    ///      auto-deduction shrank `durationDays`, pulling the computed maturity
+    ///      earlier: after ~20 daily deductions a 30-day rental was
+    ///      `triggerDefault`-able (durationDays→10 ⇒ endTime≈day10) and an
+    ///      in-term `repayLoan` reverted `RepaymentPastGracePeriod`. With
+    ///      `durationDays` immutable both are fixed.
+    function test_1188_rentalNotEarlyDefaultable_andRepayableInTerm() public {
+        helperOfferLoan(); // loanId 2: NFT rental, durationDays=30, daily fee=10, prepay=300
+        LibVaipakam.Loan memory loan = LoanFacet(address(diamond)).getLoanDetails(2);
+        uint256 start = loan.startTime;
+
+        // Service 20 of 30 days via the permissionless daily deduction.
+        for (uint256 d = 0; d < 20; d++) {
+            vm.warp(start + (d + 1) * 1 days);
+            RepayPeriodicFacet(address(diamond)).autoDeductDaily(2);
+        }
+
+        loan = LoanFacet(address(diamond)).getLoanDetails(2);
+        // Maturity is FIXED at origination (endTime = start + 30 days), not
+        // shrunk to ~day 10 by the 20 deductions. `DefaultedFacet`'s grace gate
+        // reads the same `startTime + durationDays` so it is likewise anchored
+        // at day 30 (its own past-grace tests cover the default path; this
+        // diamond doesn't cut DefaultedFacet).
+        assertEq(loan.durationDays, 30, "term immutable across amortisation");
+        assertEq(loan.lastDeductTime, start + 20 days, "20 days consumed via lastDeductTime");
+
+        // The borrower can CLOSE the fully-serviced rental IN-TERM (at day 20).
+        // Pre-fix the shrunk term put maturity ≈ day 10, so this reverted
+        // `RepaymentPastGracePeriod` — the repay-brick. It must now succeed.
+        vm.prank(borrower);
+        RepayFacet(address(diamond)).repayLoan(2);
+        loan = LoanFacet(address(diamond)).getLoanDetails(2);
+        assertEq(uint8(loan.status), uint8(LibVaipakam.LoanStatus.Repaid), "closed in-term");
     }
 
     /// @dev #654 — the permissionless daily rental deduction must pay the
@@ -855,7 +895,10 @@ contract RepayFacetTest is Test {
         RepayFacet(address(diamond)).repayPartial(2, 1);
 
         LibVaipakam.Loan memory loan = LoanFacet(address(diamond)).getLoanDetails(2);
-        assertEq(loan.durationDays, 29); // 30 - 1
+        // Pass-2 D1 (#1188): durationDays immutable; the 1-day rental partial
+        // advances lastDeductTime instead of shrinking the term.
+        assertEq(loan.durationDays, 30, "durationDays immutable after rental partial (#1188)");
+        assertEq(loan.lastDeductTime, loan.startTime + 1 days, "lastDeductTime advanced 1 day");
     }
 
     /// @dev Tests repayPartial reverts if partialAmount > durationDays for NFT.
@@ -1058,7 +1101,11 @@ contract RepayFacetTest is Test {
         RepayPeriodicFacet(address(diamond)).autoDeductDaily(2);
 
         loan = LoanFacet(address(diamond)).getLoanDetails(2);
-        assertEq(loan.durationDays, 0);
+        // Pass-2 D1 (#1188): durationDays stays at its immutable term (set to 1
+        // above); full consumption is signalled by remainingRentalDays reaching
+        // 0 (lastDeductTime advanced across the whole term), which drives the
+        // auto-finalise → Repaid transition asserted below.
+        assertEq(loan.durationDays, 1, "durationDays immutable (#1188)");
         assertEq(uint8(loan.status), uint8(LibVaipakam.LoanStatus.Repaid));
     }
 
@@ -1433,7 +1480,15 @@ contract RepayFacetTest is Test {
         RepayFacet(address(diamond)).repayPartial(2, 1);
 
         LibVaipakam.Loan memory loan = LoanFacet(address(diamond)).getLoanDetails(2);
-        assertEq(loan.durationDays, 29, "NFT rental day-reduction not blocked by the floor");
+        // Pass-2 D1 (#1188): durationDays immutable; the rental partial went
+        // through (not blocked by the min-partial floor) — proven by
+        // lastDeductTime advancing one day rather than by a term decrement.
+        assertEq(loan.durationDays, 30, "durationDays immutable (#1188)");
+        assertEq(
+            loan.lastDeductTime,
+            loan.startTime + 1 days,
+            "rental partial consumed 1 day (not blocked by the floor)"
+        );
     }
 
     /// @dev Tests repayPartial NFT "Treasury share failed" path.
