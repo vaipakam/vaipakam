@@ -23,16 +23,26 @@ Fair-value transfer pricing on both lender-sale paths (Option 1
 sell-to-lender-offer, Option 2 sale vehicle):
 
 ```
-unsettledAccrued = max(accruedInterestToDate − interestAlreadySettledToSeller, 0)
-salePrice        = outstandingPrincipal
-                 + unsettledAccrued × (10000 − yieldFeeBps_snapshot) / 10000
+unsettledGrossAccrued = max(accruedInterestToDate − GROSS_servicedInterest, 0)
+salePrice             = outstandingPrincipal
+                      + unsettledGrossAccrued × (10000 − yieldFeeBps_snapshot) / 10000
 ```
 
-(The subtraction **saturates at zero** — an over-settled periodic loan,
-e.g. after an auto-liquidation period with positive swap output, can
-have settled > accrued, and a plain 0.8 subtraction would revert the
-quote; same defensive pattern as `LibEntitlement.currentBorrowBalance`.
-Codex round-8.)
+Two precision rules (Codex rounds 8–9):
+
+- The subtraction **saturates at zero** — an over-settled periodic loan
+  (e.g. after an auto-liquidation period with positive swap output) can
+  have serviced > accrued, and a plain 0.8 subtraction would revert the
+  quote; same defensive pattern as `LibEntitlement.currentBorrowBalance`.
+- The subtracted term is the **GROSS interest of serviced slices**, not
+  the net amount the seller received: for a 100-gross slice at a 1% fee
+  the seller got 99, and subtracting the net (100 − 99 = 1) would leave
+  a fee-sized sliver that gets hair-cut again and charged to the buyer
+  for an already-settled slice. Because serviced slices differ in what
+  they actually paid (see the auto-liquidation note below), the
+  implementing PR must **track gross-serviced interest per loan
+  explicitly** rather than deriving it from the net counter by a
+  uniform gross-up.
 
 (`interestAlreadySettledToSeller` covers periodic-interest loans, where
 servicing has already forwarded some interest to the seller before the
@@ -49,12 +59,18 @@ buyer the unsettled remainder anyway; Codex round-7.)
   yield fee is collected exactly once per unit of interest. For plain
   loans that means once, at terminal settlement, from the then-holder
   (the buyer) — the same event and amount as if the position had never
-  traded. For periodic-interest loans, slices already serviced before
-  the sale had their fee taken at servicing (and their net paid to the
-  seller); **terminal settlement fees and pays only the unsettled
-  remainder** — a sold periodic loan must never fee-charge the buyer for
-  slices the seller already settled (Codex round-8; consistent with the
-  unsettled-accrued par formula above). The par formula nets the accrued slice by
+  traded. For periodic-interest loans, **terminal settlement fees and
+  pays only the unsettled remainder** — a sold periodic loan must never
+  fee-charge the buyer for slices the seller already settled (Codex
+  round-8). Caveat (Codex round-9): the terminal exemption applies only
+  to slices that **actually paid** the ordinary yield fee at servicing —
+  the current auto-liquidation servicing path routes proceeds through
+  settler bonus + liquidation handling and credits `interestSettled`
+  WITHOUT the ordinary yield-fee split. The implementing PR must either
+  add the ordinary fee to periodic auto-liquidation servicing, or track
+  fee-paid status per slice and collect the missed fee at terminal on
+  serviced-but-unfeed slices; the invariant either way is "every
+  interest slice pays the snapshot yield fee exactly once." The par formula nets the accrued slice by
   `(1 − yieldFeeBps)` precisely *because* the buyer will bear that fee at
   terminal; charging any fee at sale time as well would double-charge the
   accrued slice (Codex round-1 finding — earlier wording implying a
@@ -94,7 +110,9 @@ theirs.
 ## Owner decision asked
 
 1. Adopt fair-value pricing (treasury collects the ordinary yield fee
-   once, at terminal settlement, never at sale) — replaces
+   exactly once **per interest slice**: at terminal for plain loans; at
+   servicing for serviced periodic slices with terminal covering only
+   the unsettled remainder — never anything at sale time) — replaces
    accrued-interest forfeiture on both lender-sale paths.
 2. Drop the sale-path lender reward forfeiture in favor of the standard
    re-anchoring rule (recommended), or keep it (status quo).
@@ -103,9 +121,13 @@ theirs.
 
 Settlement splits to the wei on both paths; buyer's terminal claim equals
 a from-origination holder's; partial-repay-before-sale re-pricing; reward
-re-anchoring; treasury receives exactly one snapshot yield fee per loan
-(at terminal, never at sale) regardless of how many times the position
-traded.
+re-anchoring; treasury receives exactly one snapshot yield fee **per
+interest slice** regardless of how many times the position traded —
+plain loans: once at terminal, never at sale; periodic loans: per-slice
+at servicing plus the unsettled remainder at terminal, including the
+auto-liquidated-slice case (fee added at servicing or collected late at
+terminal, per the implementation decision above — the test proves no
+slice pays twice and no slice escapes).
 
 ## Spec edit
 

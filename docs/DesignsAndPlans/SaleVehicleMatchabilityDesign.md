@@ -81,6 +81,12 @@ dropped collateral below signed floor → buyer refused, must re-sign) gets:
 
 - an indexer flag on the listing row the moment a `LoanRepaid` /
   liquidation event touches the linked loan (event-driven, no polling),
+- the shared **loan mutation counter** (defined in
+  `PositionNftSecondaryOrderBookDesign.md`, Codex round-9): listings and
+  matched buyer offers embed the counter value at signing, and match
+  execution rejects on mismatch — extensions (rate/duration changes,
+  accrued cash-out), periodic settlements, and partial repayments all
+  advance it, covering the mutations the amount/HF floors can't see,
 - **an oracle-driven stale signal for liquid-collateral listings with a
   buyer HF floor** (Codex round-6): a pure price move breaches the HF
   floor without emitting any loan event, so the HF-watcher band
