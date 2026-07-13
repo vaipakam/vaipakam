@@ -24,13 +24,19 @@ plus a bid side:
 - **Bids:** a buyer posts a standing bid bound to a specific position
   (`positionTokenId`, max price, expiry, funded from vault working
   capital — the lender-intent lock mechanism reused) **plus buyer-signed
-  live floors**: minimum outstanding principal and minimum collateral
-  amount, checked live at acceptance exactly as listings check theirs
-  (Codex round-2: without floors, a partial repayment or collateral drop
-  between bid and acceptance would fill the buyer at a worse position
-  than priced). A floor breach marks the bid stale — same event-driven
-  staleness flag machinery as listings; the buyer re-signs or the bid
-  expires. Seller accepts → routes through the same sale-vehicle
+  live floors**: minimum outstanding principal, minimum collateral
+  amount, and — for liquid-collateral positions — a **minimum HF** (or
+  max LTV), all checked live at acceptance exactly as listings check
+  theirs (Codex rounds 2–3: amount floors alone miss oracle-price
+  deterioration — collateral count unchanged, value crashed; the HF
+  floor is evaluated against live oracle state at the acceptance
+  transaction, so it needs no event to fire). Illiquid-collateral
+  positions have no HF; for them amount floors are the whole check and
+  the bid UI states that valuation risk plainly. A floor breach
+  observed off-chain marks the bid stale in the book UI (same
+  event-driven flag machinery as listings, plus HF-band signals for the
+  oracle case); the binding enforcement is always the live
+  acceptance-time check. The buyer re-signs or the bid expires. Seller accepts → routes through the same sale-vehicle
   settlement. Collection-level or criteria bids (e.g. "any USDC position
   ≥8% APR, ≤90d left") are v2.
 - **Borrower positions:** NOT listed in v1. Borrower-side transfer is the

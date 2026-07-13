@@ -27,8 +27,11 @@ salePrice = outstandingPrincipal
           + accruedInterestToDate × (10000 − yieldFeeBps_snapshot) / 10000
 ```
 
-- Buyer pays `salePrice`; seller receives it in full; the position NFT
-  transfers. **Treasury collects nothing at sale time.**
+- Buyer pays `salePrice` (gross); on a **direct accept** the seller
+  receives the full gross, on a **matched E-8 fill** the seller receives
+  gross minus the seller-paid matcher carve (see the binding rule below);
+  the position NFT transfers. **Treasury collects nothing at sale time
+  in either case.**
 - **Single collection point:** the ordinary snapshot yield fee on the full
   interest is collected exactly once, at terminal settlement, from the
   then-holder (the buyer) — the same event and amount as if the position

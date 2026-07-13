@@ -46,6 +46,23 @@ own collateral through the governed swap-to-repay route. The keeper picks
 no asset, no route, and no price — every degree of freedom is fixed by
 the borrower's signed config or the protocol's governed adapter list.
 
+**Two distinct source models** (Codex round-3 — do not conflate):
+
+- **TOP_UP_COLLATERAL consumes FREE balance** — un-liened, un-locked
+  vault balance moves *into* the loan's lien. `sourceCap` /
+  `perActionCap` denominate free balance spent.
+- **PARTIAL_SWAP_REPAY consumes PLEDGED collateral** — that is what
+  swap-to-repay structurally does: it sells part of the loan's liened
+  collateral to reduce the debt. It never touches free balance or any
+  other asset. For this mode `sourceCap` / `perActionCap` denominate
+  pledged collateral sold, and the HF-restoration math accounts both
+  sides of the move (collateral down, debt down). The consent copy for
+  this mode must state plainly that it spends pledged collateral.
+
+The free-balance-only encumbrance guard below applies to TOP_UP; the
+swap mode's guard is instead "the loan's own pledged collateral only,
+within the signed caps".
+
 Guards:
 
 - Only liquid-collateral loans (HF exists only there; illiquid loans have
@@ -53,11 +70,12 @@ Guards:
 - Amount computed on-chain at execution: minimum needed to reach
   `hfTarget`, clamped by `perActionCap` and remaining `sourceCap` —
   the keeper supplies no discretionary numbers.
-- Encumbrance discipline: draws ONLY from free balance after liens, offer
-  locks, intent working-capital locks, and claim reservations
-  (`EncumbranceLifecycleMap.md` is the consult surface). Auto-protect
-  never creates a new lien class; it moves free balance into existing
-  structures.
+- Encumbrance discipline (TOP_UP mode): draws ONLY from free balance
+  after liens, offer locks, intent working-capital locks, and claim
+  reservations (`EncumbranceLifecycleMap.md` is the consult surface).
+  PARTIAL_SWAP_REPAY instead operates strictly within the loan's own
+  lien per the two-source-model rule above. Neither mode creates a new
+  lien class; both move value between existing structures.
 - Mutual exclusion: skips (no revert) while a preclose offset, sale
   listing, or refinance is live on the loan — those flows freeze position
   mutations.

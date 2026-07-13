@@ -41,19 +41,28 @@ claimBatch(ClaimRequest[] requests)   // bounded: MAX_BATCH (e.g. 20)
      executes through a thin `onlySelf` **external** self-call wrapped
      in `try/catch`: a transfer revert unwinds only that item's state
      (the claim stays unclaimed and individually retryable later) while
-     the batch continues. Guard layout: the reentrancy guard sits on
-     `claimBatch` only; the `onlySelf` item function is exempted from
-     the facet guard and relies on the batch-level guard (mind the #951
-     collision class).
+     the batch continues. **Claimant threading (Codex round-3):** the
+     self-call enters with `msg.sender == address(this)`, so the item
+     function takes the claimant explicitly —
+     `claimItemFor(address claimant, ClaimRequest r) onlySelf` — and
+     every refactored claim internal takes `claimant` as a parameter
+     instead of reading `msg.sender`. `claimBatch` passes its own
+     `msg.sender`; `claimBatchFor` passes `user`. NFT-holder and
+     reward-entitlement checks run against that threaded claimant.
+     Guard layout: the reentrancy guard sits on `claimBatch` /
+     `claimBatchFor` only; the `onlySelf` item function is exempted
+     from the facet guard and relies on the batch-level guard (mind
+     the #951 collision class).
   Either way a failing item records
   `BatchClaimItemSkipped(loanId, kind, reason)` and continues — one
   stale row must not revert 19 valid claims. (The frontend pre-filters
   against live claimability, but races happen.)
-- Reentrancy: the facet-level guard wraps the whole batch; internal claim
-  paths must be callable under the already-entered guard (same pattern as
-  other internal-call flows through the Diamond; verify against the #951
-  `nonReentrant` collision lesson — use internal functions, not external
-  self-calls).
+- Reentrancy: the facet-level guard wraps the batch entry points; the
+  ONE deliberate external self-call in this design is the `onlySelf`
+  item dispatch above (needed for `try/catch` isolation), which is
+  exempt from the facet guard and protected by the batch-level guard +
+  `onlySelf`. All other composition stays internal-function based per
+  the #951 `nonReentrant` collision lesson.
 - NFT gating unchanged: each item validates the caller holds the relevant
   position NFT at execution.
 - Sanctions: Tier-1 screen once per call (caller-scoped, same rule as the
@@ -84,8 +93,12 @@ claim nothing (or its own rewards) — the sweep needs a dedicated
 user-bound entry (Codex round-2): `claimBatchFor(user, requests)` that
 (a) requires the user's standing sweep grant to the calling keeper,
 (b) validates NFT holdership and reward entitlement against `user`, not
-the caller, and (c) locks the destination to the *user's* vault, with
-the keeper fee bounded in bps and skimmed from swept value. Off by
+the caller, (c) **Tier-1 sanctions-screens `user` — the beneficiary of
+the value transfer — not merely the keeper caller** (a sanctioned user
+must not receive swept proceeds through a keeper any more than through
+their own call; screening the caller too is fine but not sufficient),
+and (d) locks the destination to the *user's* vault, with the keeper
+fee bounded in bps and skimmed from swept value. Off by
 default; ships only after the base batch is proven. (Value lands in the
 vault, not the wallet — sweeping to wallets would be an automatic push,
 which the distribution model forbids.)

@@ -191,8 +191,9 @@ the bucket). The combined instruction is computed sequentially against
 the same availability:
 
 ```
-recycleConsume[c][D] = min(B[c][D],                    availRecycled[c])
-keeperAllocate[c][D] = min(bps × reportedInflow[c][D], availRecycled[c] − recycleConsume[c][D])
+recycleConsume[c][D] = min(B[c][D], availRecycled[c])
+keeperAllocate[c][D] = min(reportedInflow[c][D] × keeperBps / 10_000,
+                           availRecycled[c] − recycleConsume[c][D])
 ```
 
 so `recycleConsume + keeperAllocate ≤ availRecycled` by construction and
