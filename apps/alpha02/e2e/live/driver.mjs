@@ -20,6 +20,7 @@ if (process.env.LIVE_PROXY_SETUP) {
 // optional LIVE_PROXY_SETUP shim may swap the global dispatcher.
 const ufetch = globalThis.fetch;
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { chromium } from '@playwright/test';
@@ -143,12 +144,32 @@ export async function launch({
   // the 2026-07-13 second-pass sweep's "disconnected" session silently
   // rendered every route CONNECTED because of exactly that.
   preAuthorized = true,
+  // allowRequestAccounts: whether `eth_requestAccounts` may grant the
+  // approval at all. A session whose PURPOSE is to stay disconnected
+  // must pass false: otherwise an app regression (or wallet-library
+  // change) that requests accounts on page load would silently flip
+  // the session connected while the report still stamps it
+  // `connected:false` — recreating the false evidence preAuthorized
+  // exists to prevent (Codex #1181 P2). When false, the request gets
+  // an EIP-1193 4001 rejection — exactly what a real user dismissing
+  // the wallet popup produces — and is logged to blockedRequests so
+  // the sweep surfaces the attempt loudly.
+  allowRequestAccounts = true,
+  // freshProfile: run on a THROWAWAY browser profile (temp dir,
+  // removed on done()) instead of the persistent per-role profile.
+  // First-visit evidence needs it: the persistent profile carries
+  // localStorage/IndexedDB from earlier runs (dismissed banners, mode
+  // flags, connectkit state), so a later run would no longer
+  // represent a first visit (Codex #1181 P2).
+  freshProfile = false,
 } = {}) {
   const account = privateKeyToAccount(WALLETS[role].privateKey);
   let chainId = startChainId;
   let authorized = preAuthorized;
 
-  const profileDir = path.join(HERE, 'profiles', role);
+  const profileDir = freshProfile
+    ? fs.mkdtempSync(path.join(os.tmpdir(), `alpha02-fresh-${role}-`))
+    : path.join(HERE, 'profiles', role);
   fs.mkdirSync(profileDir, { recursive: true });
   const ctx = await chromium.launchPersistentContext(profileDir, {
     headless,
@@ -270,7 +291,23 @@ export async function launch({
       case 'eth_requestAccounts':
         // An explicit request is the user-approval moment — from here
         // on the session is authorized (matches a real wallet's
-        // approve-once-then-remember behaviour).
+        // approve-once-then-remember behaviour). A session launched
+        // with allowRequestAccounts:false refuses the approval like a
+        // user dismissing the popup (EIP-1193 4001) AND logs it: a
+        // page that auto-requests accounts during a stay-disconnected
+        // sweep must surface loudly, not silently flip the session
+        // connected (Codex #1181 P2).
+        if (!allowRequestAccounts) {
+          blockedRequests.push({
+            reason: 'wallet rpc eth_requestAccounts (disconnected session)',
+            url: '(injected wallet)',
+          });
+          const rejection = new Error(
+            'stay-disconnected driver session: account request rejected',
+          );
+          rejection.code = 4001; // EIP-1193 user rejected request
+          throw rejection;
+        }
         authorized = true;
         return [account.address];
       case 'eth_accounts':
@@ -414,6 +451,12 @@ export async function launch({
     },
     done: async () => {
       await ctx.close();
+      if (freshProfile) {
+        // Throwaway profile — remove it so first-visit evidence can
+        // never leak state into a later run (and temp space stays
+        // bounded across sweep nights).
+        fs.rmSync(profileDir, { recursive: true, force: true });
+      }
     },
   };
 }

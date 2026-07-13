@@ -42,9 +42,10 @@ specs.
 
 ## Site-wide health baseline (the good news)
 
-- **Zero real console errors and zero HTTP ≥400s** across all 96 route
-  visits in all six passes (the only tagged noise: the known
-  CSP-blocked Cloudflare beacon, and relay-induced aborts).
+- **Zero real console errors and zero HTTP ≥400s** across all 92 route
+  visits in all six passes (17×3 Base-connected + 17×2 disconnected +
+  7 Arb; the only tagged noise: the known CSP-blocked Cloudflare
+  beacon, and relay-induced aborts).
 - **Zero unlabeled buttons, zero alt-less images** on every route,
   every pass — including the two new sessions.
 - **Cold-load performance fixes hold on the deployed build**: entry

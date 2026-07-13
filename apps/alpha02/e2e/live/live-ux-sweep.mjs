@@ -132,8 +132,16 @@ const SESSIONS = [
     // as already-authorized and silently connects — the pass would
     // capture connected states while claiming to be the first-visit
     // evidence. preAuthorized:false makes eth_accounts return [] until
-    // an explicit eth_requestAccounts, like a real un-approved wallet.
+    // an explicit eth_requestAccounts, like a real un-approved wallet;
+    // allowRequestAccounts:false additionally REJECTS (4001 + logged)
+    // any account request the page fires on its own, so an app
+    // regression can't silently flip this session connected mid-pass;
+    // freshProfile runs on a throwaway browser profile so storage from
+    // earlier runs (dismissed banners, mode flags, connectkit state)
+    // can't taint the first-visit evidence (Codex #1181 P2 ×2).
     preAuthorized: false,
+    allowRequestAccounts: false,
+    freshProfile: true,
     harvestLoanDetail: false,
     passes: [
       { name: 'disconnected-desktop', mode: 'basic', viewport: 'desktop' },
@@ -155,7 +163,21 @@ const sessionsEnv = process.env.UX_SWEEP_SESSIONS;
 const sessionKeys = (sessionsEnv ?? (PROBE_ONLY ? 'main' : 'main,disconnected,arb'))
   .split(',')
   .map((s) => s.trim());
+// Fail FAST on a typo'd or stale session key: this selector controls
+// which evidence gets produced, and silently dropping `disconnect`
+// (say) would let a review report ship missing a whole coverage
+// dimension while exiting 0 (Codex #1181 P2).
+const knownKeys = new Set(SESSIONS.map((s) => s.key));
+const unknown = sessionKeys.filter((k) => !knownKeys.has(k));
+if (unknown.length > 0) {
+  throw new Error(
+    `UX_SWEEP_SESSIONS names unknown session(s): ${unknown.join(', ')} — known: ${[...knownKeys].join(', ')}`,
+  );
+}
 const activeSessions = SESSIONS.filter((s) => sessionKeys.includes(s.key));
+if (activeSessions.length === 0) {
+  throw new Error('UX_SWEEP_SESSIONS selected no sessions — nothing to sweep');
+}
 
 /** The DevTools-tabs-in-one-call probe. Runs in the page; every field
  *  is fail-soft so one blocked API doesn't sink the rest. */
@@ -287,6 +309,8 @@ const { page, done, blockedRequests } = await launch({
   headless: true,
   readOnly: true,
   preAuthorized: session.preAuthorized ?? true,
+  allowRequestAccounts: session.allowRequestAccounts ?? true,
+  freshProfile: session.freshProfile ?? false,
 });
 
 // One console/request tap for the lifetime of the context.
