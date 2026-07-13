@@ -43,8 +43,9 @@ claimBatch(ClaimRequest[] requests)   // bounded: MAX_BATCH (e.g. 20)
      (the claim stays unclaimed and individually retryable later) while
      the batch continues. **Claimant threading (Codex round-3):** the
      self-call enters with `msg.sender == address(this)`, so the item
-     function takes the claimant explicitly —
-     `claimItemFor(address claimant, ClaimRequest r) onlySelf` — and
+     function takes the claimant (and payout destination — see below)
+     explicitly —
+     `claimItemFor(address claimant, Destination d, ClaimRequest r) onlySelf` — and
      every refactored claim internal takes `claimant` as a parameter
      instead of reading `msg.sender`. `claimBatch` passes its own
      `msg.sender`; `claimBatchFor` passes `user`. NFT-holder and
@@ -63,10 +64,21 @@ claimBatch(ClaimRequest[] requests)   // bounded: MAX_BATCH (e.g. 20)
   exempt from the facet guard and protected by the batch-level guard +
   `onlySelf`. All other composition stays internal-function based per
   the #951 `nonReentrant` collision lesson.
-- NFT gating unchanged: each item validates the caller holds the relevant
-  position NFT at execution.
-- Sanctions: Tier-1 screen once per call (caller-scoped, same rule as the
-  individual claim paths).
+- NFT gating: each item validates that the **threaded claimant** holds
+  the relevant position NFT at execution — `claimBatch` is simply the
+  case where claimant == caller; `claimBatchFor` validates against
+  `user`, never the keeper caller (Codex round-4).
+- Sanctions: Tier-1 screen once per call against the **claimant /
+  beneficiary** of the value transfer (== caller for `claimBatch`;
+  == `user` for `claimBatchFor`), same rule as the individual claim
+  paths apply to their claimant.
+- Payout destination is threaded explicitly alongside the claimant
+  (Codex round-4): `claimItemFor(claimant, destination, request)` with
+  `destination ∈ {WALLET, VAULT}`. Self-service `claimBatch` defaults to
+  the claimant's wallet exactly like the individual claim paths;
+  `claimBatchFor` forces `VAULT` (the user's own vault) — without the
+  explicit destination the sweep would become an automatic wallet push,
+  which the distribution model forbids.
 
 Why not generic `multicall(bytes[])`: a public delegate-multicall on a
 Diamond is a footgun (msg.value semantics, selector-routing surprises,
@@ -97,8 +109,12 @@ the caller, (c) **Tier-1 sanctions-screens `user` — the beneficiary of
 the value transfer — not merely the keeper caller** (a sanctioned user
 must not receive swept proceeds through a keeper any more than through
 their own call; screening the caller too is fine but not sufficient),
-and (d) locks the destination to the *user's* vault, with the keeper
-fee bounded in bps and skimmed from swept value. Off by
+and (d) locks the destination to the *user's* vault (the threaded
+`destination = VAULT` mode above), with the keeper fee bounded in bps
+and **skimmed only from fungible swept amounts** — in-kind legs
+(ERC-721 / unique ERC-1155 collateral returns) cannot bear a bps carve
+without valuation or fractionalization, so they sweep fee-free (Codex
+round-4); the keeper's economics come from the fungible legs. Off by
 default; ships only after the base batch is proven. (Value lands in the
 vault, not the wallet — sweeping to wallets would be an automatic push,
 which the distribution model forbids.)

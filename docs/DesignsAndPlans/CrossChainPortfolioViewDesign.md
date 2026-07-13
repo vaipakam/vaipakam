@@ -27,8 +27,12 @@ Dashboard "All chains" toggle:
   the wallet network-switch prompt; the aggregated view itself is
   strictly read-only.
 - **Degradation:** a chain whose RPC fails shows a per-chain "unreachable"
-  banner and is excluded from totals with an explicit marker — never
-  silently omitted (silent omission reads as "no positions there").
+  banner, and **aggregate value totals become unavailable** ("totals
+  unavailable — <chain> unreachable") rather than showing a partial sum
+  that reads as the full portfolio (Codex round-4; consistent with the
+  every-chain-must-succeed rule above). Per-chain rows and per-chain
+  subtotals for reachable chains still render — never silently omitted
+  (silent omission reads as "no positions there").
 - **Rewards nuance:** interaction-reward pending amounts are per-chain
   claims (mirror funding model); the aggregate view labels them "claimable
   on <chain>" so nobody expects a unified claim.

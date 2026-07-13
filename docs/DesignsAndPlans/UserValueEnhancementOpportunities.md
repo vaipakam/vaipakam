@@ -216,7 +216,7 @@ the decision surface each one needs before code:
 
 | # | Item | What it is | Needs |
 | --- | --- | --- | --- |
-| E-4 | **Auto-protect** | Opt-in keeper action: when HF crosses a user-set band, top up collateral (or partial swap-to-repay) from the user's free vault balance. Composes existing keeper grants + swap-to-repay; converts the platform's worst outcome (liquidation) into a serviced event. | Design doc (encumbrance interaction), spec edit, then build |
+| E-4 | **Auto-protect** | Opt-in keeper action: when HF crosses a user-set band, top up collateral from the user's free vault balance, OR partially swap-to-repay from the loan's own pledged collateral (two distinct source models — see the design doc). Composes existing keeper grants + swap-to-repay; converts the platform's worst outcome (liquidation) into a serviced event. | Design doc (encumbrance interaction), spec edit, then build |
 | E-5 | **Borrower standing intents** | Symmetric counterpart to lender intents: "borrow up to X against this collateral at ≤ Y% for Z days," solver-fillable. | Design doc; reuses intent/solver infra |
 | E-6 | **Total-cost-of-loan simulator** | Accept-time view of best case / late case / liquidated case as one number each (LIF + yield fee + late fees + handling + incentives). | Frontend-only Issue |
 

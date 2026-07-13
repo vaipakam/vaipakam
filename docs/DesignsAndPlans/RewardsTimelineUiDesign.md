@@ -18,7 +18,7 @@ spec's placement rule), one row per reward day in the user's window:
 | Day (UTC) | derived |
 | Earned (pre-cap) | the §4 formula, same math as `claimInteractionRewards`: per side, `½ × dailyPool[D] × (userContribution / globalDenominator_side[D])` — user contribution from `getUserRewardEntries`, global denominator from the broadcast (division by the denominator, never multiplication) |
 | Cap trim | recompute `min(raw, cap)`; show "capped −X" chip when trimmed |
-| State | one of: `loan open` (close-gated) / `awaiting finalization` / `awaiting broadcast` (known-global-set flag unset) / `claimable` / `claimed` |
+| State | one of: `loan open` (close-gated) / `awaiting finalization` / `awaiting broadcast` (known-global-set flag unset) / `awaiting funding` (mirror chains only: broadcast landed but the day's VPFI budget remittance hasn't — §4a decouples them, and a claim against an unfunded mirror reverts on empty balance) / `claimable` / `claimed` |
 
 Header widgets:
 

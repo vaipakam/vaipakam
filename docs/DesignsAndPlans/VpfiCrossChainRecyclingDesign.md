@@ -141,9 +141,14 @@ When Base finalizes day `D` it already computes each chain's reward budget
 2. **Consumption instruction:** the existing finalized-denominator broadcast
    (Base → mirror) gains a field `recycleConsume[c][D] = min(B[c][D],
    availRecycled[c])`. On arrival the mirror moves exactly that amount from
-   its recycle bucket into its local claim budget. Consumption is **only**
-   ever Base-instructed — a mirror never self-consumes — so the global
-   ledger cannot double-count and the accounting identity below holds by
+   its recycle bucket into its local claim budget — **idempotently per
+   `dayId`**: the mirror stamps `recycleConsumeApplied[dayId]` on first
+   application and a redelivered or governance-replayed broadcast for the
+   same day is a no-op on the bucket (Codex round-4: broadcasts are
+   retriable by design, and a double-apply would debit the bucket twice
+   while Base counted one consumption). Consumption is **only** ever
+   Base-instructed — a mirror never self-consumes — so the global ledger
+   cannot double-count and the accounting identity below holds by
    construction.
 
 Netting applies **after** the per-day-cap trim (the trim defines what the
