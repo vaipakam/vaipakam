@@ -448,6 +448,8 @@ export const copy = {
     ownPathBlurb: 'Set a daily fee — renters prepay the whole rental up front.',
     wantPath: 'I want to rent an NFT',
     wantPathBlurb: 'Pay up front, use the NFT until the rental ends.',
+    // UX-047 — a direct browse action on the otherwise-sparse landing.
+    browseCta: 'Browse NFTs available to rent',
     custodyNote:
       'The NFT never leaves vault custody. The renter receives temporary use rights only — not ownership.',
     postListing: 'Post rental listing',
@@ -589,7 +591,7 @@ export const copy = {
   },
 
   nftVerifier: {
-    title: 'Position NFT verifier',
+    title: 'NFT verifier',
     lede:
       'Vaipakam position NFTs carry real claim rights — whoever holds one controls that side of its loan. Check any token id before trusting it.',
     placeholder: 'Position NFT token id',
@@ -919,7 +921,7 @@ export const copy = {
   },
 
   claims: {
-    title: 'Claim Center',
+    title: 'Claims',
     lede: 'Money and assets that are ready for you to collect.',
     empty: 'Nothing to claim right now.',
     // UX-023 — an empty Claim Center points forward instead of
@@ -1251,7 +1253,7 @@ export const copy = {
   },
 
   vpfi: {
-    title: 'VPFI fee discounts',
+    title: 'VPFI discounts',
     optional:
       'Optional: hold VPFI in your vault to reduce protocol fees on eligible loans. You never need VPFI to use Vaipakam.',
     noGasDiscount: 'Your VPFI discount does not reduce network gas.',
@@ -1421,7 +1423,7 @@ export const copy = {
   },
 
   vault: {
-    title: 'Your Vaipakam Vault',
+    title: 'My vault',
     lede: 'Your own on-chain account. Only your wallet controls it — Vaipakam never pools user funds.',
     noVaultYet:
       'Your vault is created automatically with your first offer, loan, or deposit. Nothing to set up.',

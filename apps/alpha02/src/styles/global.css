@@ -509,8 +509,16 @@ button.tabbar-item {
 }
 
 .btn:disabled {
-  opacity: 0.5;
+  opacity: 0.6;
   cursor: not-allowed;
+}
+
+/* UX-017 — a disabled PRIMARY button kept the brand (lavender) fill and
+ * only dropped opacity, so it read as "almost active". Desaturate it to
+ * a plainly-inactive surface so disabled is unmistakable. */
+.btn-primary:disabled {
+  background: var(--surface-sunken);
+  color: var(--text-faint);
 }
 
 .btn-primary {

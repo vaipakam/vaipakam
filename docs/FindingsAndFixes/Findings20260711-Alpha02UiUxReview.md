@@ -231,6 +231,8 @@ disabled lavender fill reads as almost-active (also flagged visually
 on Lend, VPFI, NFT verifier). Inline field hints + a clearly muted
 disabled style.
 
+**Status: ✅ FIXED (batch 8d, 2026-07-13).** A malformed/half-typed pasted address now shows an inline hint (“Enter a valid contract address — 0x followed by 40 hex characters.”) instead of a red border alone, and disabled PRIMARY buttons are desaturated to a plainly-inactive surface (they kept the brand lavender fill before, reading as almost-clickable).
+
 ### UX-018 · "Use this offer" is direction-ambiguous on borrow requests (S)
 Both card types share the CTA; on a borrow request it makes you the
 *lender* — the opposite money direction — with nothing signaling it.
@@ -367,6 +369,7 @@ keeps consoles clean on locked-down networks.
 
 - **UX-034** Nav labels vs page titles drift ("Claims"→"Claim Center",
   "My vault"→"Your Vaipakam Vault", …) — pick one name each. (S)
+  **Status: ✅ FIXED (batch 8d, 2026-07-13).** Page titles now match their nav labels: Claim Center→“Claims”, Your Vaipakam Vault→“My vault”, VPFI fee discounts→“VPFI discounts”, Position NFT verifier→“NFT verifier” (the descriptive detail stays in each page’s lede). No e2e asserts these titles.
 - **UX-035** VPFI tier table boundaries overlap (1,000/5,000/20,000
   each in two tiers; sub-100 unaddressed). (S)
   **Status: ✅ FIXED (batch 8c, 2026-07-13).** Tiers now use exclusive
@@ -430,6 +433,7 @@ keeps consoles clean on locked-down networks.
   (unrounded) percentage so the meter matches the label.
 - **UX-047** Rent landing is two cards in a sea of whitespace — add a
   browse strip or honest empty section. (S/M)
+  **Status: ✅ FIXED (batch 8d, 2026-07-13).** The landing gains a “Browse NFTs available to rent” action below the two intent cards, routing into the renter path’s live listings (or its own honest empty state) — so a visitor unsure which card fits still has an obvious way into the marketplace.
 - **UX-048** Faucet card-in-card nesting + ragged mint-button
   alignment; flatten and fix the button column. (S)
   **Status: ✅ FIXED (batch 8c, 2026-07-13).** Each faucet token was its
@@ -441,6 +445,7 @@ keeps consoles clean on locked-down networks.
   matches `/mint/i`).
 - **UX-049** Help page lags features: nothing on modes, alerts setup,
   Claims, wrong-network, or the NFT verifier. (S)
+  **Status: ✅ FIXED (batch 8d, 2026-07-13).** Five FAQ entries added — Basic/Advanced modes, alert setup (with the test-alert note), the Claim Center, the wrong-network switch, and the NFT verifier. The `#risks` disclosures section (spec-11-asserted) is untouched.
 - **UX-050** Activity page is advanced-only and all-or-nothing when
   the indexer degrades; link basic users to it from Positions and fall
   back to the on-chain loan list. (M)

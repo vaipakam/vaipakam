@@ -31,6 +31,29 @@ const FAQ: Array<{ q: string; a: string }> = [
     q: 'Do I need VPFI?',
     a: 'No. VPFI is optional — holding it in your vault can reduce protocol fees on eligible loans. It never reduces network gas, and you never need it to borrow, lend, or rent.',
   },
+  // UX-049 — the Help page lagged the shipped features; these cover
+  // Basic/Advanced modes, alert setup, Claims, wrong-network, and the
+  // NFT verifier.
+  {
+    q: 'What’s the difference between Basic and Advanced mode?',
+    a: 'Basic keeps the guided Borrow, Lend, and NFT-rental journeys front and centre. Advanced additionally reveals the power surfaces — the Offer Book, the Rate Desk order book, VPFI discounts, and your full activity history. Switch any time from the mode toggle in the navigation; it never moves your positions.',
+  },
+  {
+    q: 'How do I get alerts before a deadline or liquidation?',
+    a: 'On the alerts card you can link Telegram (and enable browser push) to be warned as a loan nears its due date or a position’s health drops. Linking is a one-time signature; sending yourself a test alert confirms the channel actually works before you rely on it.',
+  },
+  {
+    q: 'What is the Claim Center for?',
+    a: 'When a loan you’re part of settles — a repayment you’re owed, or collateral from a default — the funds wait for you to claim them. The Claims page lists exactly what’s claimable and for which position, verified against the protocol’s own record, so nothing is stranded.',
+  },
+  {
+    q: 'It says I’m on the wrong network — what do I do?',
+    a: 'Offers, your vault, and the faucet are all per-network. If your wallet is on a chain Vaipakam isn’t deployed to, a banner offers a one-click switch to a supported network; the app never acts on an unsupported chain.',
+  },
+  {
+    q: 'How do I check a position NFT before buying it off-platform?',
+    a: 'The NFT verifier (in the navigation) reads any Vaipakam position NFT straight from the chain and shows its real loan terms and status — so you can confirm what a listing actually represents before you trust a secondary-market sale.',
+  },
 ];
 
 export function Help() {
