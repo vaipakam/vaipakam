@@ -19,8 +19,10 @@ import { useModal } from 'connectkit';
 import { usePublicClient, useWalletClient } from 'wagmi';
 import { useQueryClient } from '@tanstack/react-query';
 import { encodeFunctionData, parseUnits } from 'viem';
+import { getDeployment } from '@vaipakam/contracts/deployments';
 import { copy } from '../content/copy';
 import { useActiveChain } from '../chain/useActiveChain';
+import { SUPPORTED_CHAINS } from '../chain/chains';
 import { assertWalletNotSanctionedLive, useSanctionsCheck } from '../data/sanctions';
 import { assertErc20BalanceLive } from '../contracts/preflights';
 import { readVpfiTokenLive, useVpfi, useVpfiTierTable, VPFI_DECIMALS, clearVpfiTokenCache } from '../data/vpfi';
@@ -41,8 +43,15 @@ import { ReviewReceipt, type ReceiptData } from '../components/ReviewReceipt';
 type VaultAction = 'deposit' | 'withdraw';
 
 export function Vpfi() {
-  const { readChain, address, isConnected, onSupportedChain, walletChain } =
-    useActiveChain();
+  const {
+    readChain,
+    address,
+    isConnected,
+    onSupportedChain,
+    walletChain,
+    switchToSupported,
+    switchPending,
+  } = useActiveChain();
   const { setOpen } = useModal();
   const vpfi = useVpfi();
   const { write } = useDiamondWrite();
@@ -379,6 +388,26 @@ export function Vpfi() {
     const body = vpfi.isError
       ? `We couldn’t check VPFI availability on ${readChain.name} right now. Please try again in a moment.`
       : copy.vpfi.notOnThisChain(readChain.name);
+    // UX2-005 — offer the remedy, not just the diagnosis: VPFI's home
+    // chain is statically known (the canonical-VPFI deployment), so a
+    // connected user gets the one-click switch instead of a dead end.
+    // Only on the positive not-registered verdict — a failed CHECK
+    // must not claim another chain is the answer.
+    //
+    // Discriminate on `vpfiTokenImpl`, the populated canonical-only
+    // signal (the UUPS impl behind the canonical VPFIToken; mirror
+    // chains carry `vpfiMirror` instead). The `isCanonicalVPFI` boolean
+    // is documented as the discriminator but the deployments export does
+    // not currently emit it — narrowing on it silently resolved to
+    // undefined and the switch button never rendered (Codex #1199).
+    // Falls back to the flag if a future export does emit it.
+    const canonicalChain = vpfi.isError
+      ? undefined
+      : SUPPORTED_CHAINS.find((c) => {
+          if (c.chainId === readChain.chainId) return false;
+          const dep = getDeployment(c.chainId);
+          return Boolean(dep?.isCanonicalVPFI || dep?.vpfiTokenImpl);
+        });
     return (
       <div className="stack">
         <div>
@@ -387,7 +416,22 @@ export function Vpfi() {
         </div>
         <div className="banner banner-info">
           <Coins aria-hidden />
-          <span className="banner-body">{body}</span>
+          <div className="banner-body">
+            {body}
+            {isConnected && canonicalChain ? (
+              <div>
+                <button
+                  type="button"
+                  className="btn btn-secondary btn-sm"
+                  style={{ marginTop: 8 }}
+                  disabled={switchPending}
+                  onClick={() => switchToSupported(canonicalChain.chainId)}
+                >
+                  {copy.wallet.switchToChain(canonicalChain.name)}
+                </button>
+              </div>
+            ) : null}
+          </div>
         </div>
         {education}
       </div>

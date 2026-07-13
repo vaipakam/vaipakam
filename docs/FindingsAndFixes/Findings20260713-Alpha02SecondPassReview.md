@@ -95,9 +95,14 @@ day-ish), L (multi-day).
 
 ## Status ledger
 
-All findings below are **OPEN** as of this review. As fix batches
-land, add a row per batch here (same convention as the 2026-07-11
-doc) and a status line under each finding.
+As fix batches land, a row per batch is added here (same convention
+as the 2026-07-11 doc) plus a status line under each finding.
+Unmarked findings are OPEN.
+
+| Batch | Findings | Status |
+| --- | --- | --- |
+| A — P2s (2026-07-13) | UX2-001, UX2-002, UX2-006 | ✅ Fixed — structurally shrinkable header chip + phone-tier trims (badge/glyph) with a 390px fork-tier no-overflow spec; splash failure state (HTML-resident 20s timer → plain-words message + Reload); one-line Connect label rides the same header work |
+| B — P3 polish (2026-07-13) | UX2-003, UX2-004, UX2-005, UX2-007 | ✅ Fixed — Settings More cards renamed to the nav names; the discount consent is a real switch (track + sliding thumb, focus ring, reduced-motion); faucet + VPFI dead-ends gain one-click "Switch to <chain>" (mocks-bearing / canonical-VPFI chain resolved from the deployments bundle); Activity's empty feed hands over Borrow/Lend CTAs |
 
 ---
 
@@ -120,6 +125,19 @@ and/or collapse the alpha badge; add a 390 px fork-tier assertion that
 `document.documentElement.scrollWidth === clientWidth` so the class of
 bug can't return silently.
 
+**Status: ✅ FIXED (batch A, 2026-07-13).** Two layers: (1) the header
+is now STRUCTURALLY unable to widen the page — the wallet chip is a
+shrinkable flex item (`min-width:0`) whose label ellipsizes; (2)
+phone-tier trims ≤430px hide the alpha badge + wallet glyph and
+tighten paddings, and the chain-name hide threshold moved 400→560px
+(the 400–560px band still overflowed with the name shown). Verified in
+a real browser against a production build at 390px connected:
+scrollWidth 461→390 on /, /desk, /vpfi with the address chip intact.
+Regression guard: `e2e/tests/20-mobile-header.spec.ts` asserts the
+whole-document no-sideways-scroll invariant connected AND disconnected
+(the fork fixture gained the live driver's `preAuthorized:false` so
+the disconnected state is testable at all).
+
 ### UX2-002 · Boot splash has no failure state — a dropped chunk strands users on "Starting up…" forever (P2 · S/M)
 
 One first-visit navigation in the sweep (basic-desktop `/settings`)
@@ -135,6 +153,15 @@ itself (independent of the bundle) that after ~15 s swaps in "This is
 taking longer than it should — check your connection and reload" with
 a reload button.
 
+**Status: ✅ FIXED (batch A, 2026-07-13).** A plain-JS timer now lives
+in `index.html` itself — independent of every asset that can fail.
+After 20 s (far beyond the measured 0.7–2 s FCP) with `#boot-splash`
+still mounted, it hides the spinner and swaps in "This is taking
+longer than it should — check your connection and reload" plus a
+Reload button. A normal boot removes the splash long before the timer
+fires and the check no-ops. Verified present in the built
+`dist/index.html`.
+
 ## P3 — polish
 
 - **UX2-003** Settings → "More" cards still carry the pre-rename
@@ -142,21 +169,39 @@ a reload button.
   discounts" — while the nav and page titles now say "Claims",
   "My vault", "VPFI discounts" (UX-034 missed these three card
   labels). (S)
+  **Status: ✅ FIXED (batch B, 2026-07-13).** All three More-card
+  titles now match the nav names; the descriptive sub-lines stay.
 - **UX2-004** The VPFI "Use my vaulted VPFI for fee discounts"
   consent renders as a bare native checkbox at the row's far edge;
   the batch-8c release note describes a labelled toggle. Either style
   it as an actual switch or keep the checkbox and align the wording —
   as shipped it reads slightly under-designed next to the rest of the
   card. (S)
+  **Status: ✅ FIXED (batch B, 2026-07-13).** `.toggle-input` is now a
+  real switch — 40×22 track with a sliding thumb, brand fill when
+  checked, :focus-visible ring, reduced-motion honoured — so the
+  control finally matches the toggle-row pattern (and the release-note
+  wording that promised it).
 - **UX2-005** The Arb Sepolia dead-ends name the remedy but don't
   offer it: the faucet empty state says "Try a different test
   network" and the VPFI banner says deposits aren't available here,
   yet neither offers the one-click "Switch to Base Sepolia" action the
   app already knows how to render (the unsupported-network banner has
   one, and Help promises it). (S)
+  **Status: ✅ FIXED (batch B, 2026-07-13).** Both dead-ends now offer
+  the switch when a wallet is connected: the faucet's unavailable
+  state targets the first supported testnet whose deployment carries
+  `testnetMocks`, and the VPFI banner targets the `isCanonicalVPFI`
+  chain (only on the positive not-registered verdict — a failed CHECK
+  doesn't claim another chain is the answer). Both resolve the target
+  from the deployments bundle, not a hardcoded chain id.
 - **UX2-006** The header "Connect wallet" button wraps to two lines
   at 390 px (mobile, disconnected) — cosmetic, but it's the first
   button a new phone visitor sees. (S)
+  **Status: ✅ FIXED (batch A, 2026-07-13).** The label is now a nowrap
+  single token (same `.connect-label` treatment as the address chip)
+  and the phone tier drops the wallet glyph; spec 20's disconnected
+  case asserts the one-line render.
 - **UX2-007** With a fresh wallet whose indexer lookups time out, the
   Activity page shows the degraded-scan copy ("Older events may exist
   that we couldn't scan right now") rather than a clean "no activity
@@ -164,6 +209,12 @@ a reload button.
   unnecessarily and offers no forward CTA (the UX-023 pattern:
   "make your first move → Borrow / Lend"). Worth revisiting alongside
   the indexer-timeout tuning for slow networks. (S)
+  **Status: ✅ FIXED (batch B, 2026-07-13) — CTA half.** The empty feed
+  (both the clean and the hedged/truncated variants) now offers
+  "Borrow something" / "Lend something" forward CTAs. The copy split
+  already existed (`empty` vs `truncatedEmpty` — the sweep simply hit
+  the degraded branch under relay latency); the indexer-timeout tuning
+  stays open as a perf follow-up alongside UX2-008.
 - **UX2-008** The ABI bundle (`abis-*.js`, ~761 KB uncompressed) loads
   on every surface's critical path. It's one shared chunk today;
   splitting the rarely-read facet ABIs (or deferring until first

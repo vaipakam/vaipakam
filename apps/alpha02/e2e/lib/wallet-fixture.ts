@@ -48,12 +48,21 @@ async function wireWallet(
   ctx: BrowserContext,
   account: PrivateKeyAccount,
   flags: WalletFlags,
+  preAuthorized = true,
 ): Promise<void> {
   const wallet = createWalletClient({
     chain: forkChain,
     transport: http(ANVIL_URL),
     account,
   });
+  // Mirrors the live driver's preAuthorized option (UX2 review): a
+  // real wallet reports NO accounts until the user approves, and the
+  // historical unconditional response makes wagmi treat the announced
+  // provider as already-connected — which forbids ever testing the
+  // DISCONNECTED first-visit surfaces in this tier. Connecting via
+  // `connectWallet()` still works: ConnectKit fires
+  // eth_requestAccounts, which grants the session below.
+  let authorized = preAuthorized;
 
   // Real injected wallets refuse to act for an account that isn't the
   // selected one — mirroring that catches from/signer wiring
@@ -76,8 +85,10 @@ async function wireWallet(
     const p = (params ?? []) as never[];
     switch (method) {
       case 'eth_requestAccounts':
-      case 'eth_accounts':
+        authorized = true; // the approval moment, like a real wallet
         return [account.address];
+      case 'eth_accounts':
+        return authorized ? [account.address] : [];
       case 'eth_chainId':
         return numberToHex(CHAIN_ID);
       case 'net_version':
@@ -92,7 +103,10 @@ async function wireWallet(
         return null;
       }
       case 'wallet_requestPermissions':
+        authorized = true; // granting eth_accounts IS an approval
+        return [{ parentCapability: 'eth_accounts' }];
       case 'wallet_revokePermissions':
+        authorized = false; // post-revoke eth_accounts reports []
         return [{ parentCapability: 'eth_accounts' }];
       case 'wallet_watchAsset':
         return true;
@@ -271,7 +285,10 @@ export async function connectWallet(page: Page): Promise<void> {
 }
 
 export const test = base.extend<{
-  launchWallet: (role: Role, opts?: { advanced?: boolean }) => Promise<WalletSession>;
+  launchWallet: (
+    role: Role,
+    opts?: { advanced?: boolean; preAuthorized?: boolean },
+  ) => Promise<WalletSession>;
 }>({
   launchWallet: async ({ browser, baseURL }, use) => {
     const sessions: WalletSession[] = [];
@@ -284,7 +301,7 @@ export const test = base.extend<{
         permit2SignatureRequests: 0,
         sentTransactions: 0,
       };
-      await wireWallet(ctx, account, flags);
+      await wireWallet(ctx, account, flags, opts.preAuthorized ?? true);
       if (opts.advanced) {
         await ctx.addInitScript(() => {
           localStorage.setItem('alpha02.mode', 'advanced');

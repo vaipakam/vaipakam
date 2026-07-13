@@ -15,30 +15,25 @@ export function ConnectButton({ block = false }: { block?: boolean }) {
       {({ isConnected, show, address }) => (
         <button
           type="button"
-          className={`btn ${isConnected ? 'btn-secondary' : 'btn-primary'} ${block ? 'btn-block' : ''}`}
+          className={`btn ${isConnected ? 'btn-secondary' : 'btn-primary'} ${block ? 'btn-block' : ''} connect-btn`}
           onClick={show}
         >
-          <Wallet aria-hidden size={18} />
+          <Wallet aria-hidden size={18} className="connect-btn-icon" />
           {isConnected && address ? (
             /* The shortened address is one token — never let the header
                chip wrap it onto two lines ("0x1DAe…" / "8282" reads
                like two unrelated values on phones — UX-020). Long ENS
                reverse names get ellipsized instead of forcing the chip
-               wider than a narrow viewport (Codex #1156 r2). */
-            <span
-              style={{
-                whiteSpace: 'nowrap',
-                maxWidth: '14ch',
-                overflow: 'hidden',
-                textOverflow: 'ellipsis',
-                display: 'inline-block',
-                verticalAlign: 'bottom',
-              }}
-            >
+               wider than a narrow viewport (Codex #1156 r2). Styling
+               lives on .connect-addr (not inline) so the phone-width
+               header rules can tighten it — UX2-001. */
+            <span className="connect-addr">
               <AddressName address={address} />
             </span>
           ) : (
-            copy.wallet.connect
+            /* One token too — the label used to wrap "Connect /
+               wallet" onto two lines at 390px (UX2-006). */
+            <span className="connect-label">{copy.wallet.connect}</span>
           )}
         </button>
       )}

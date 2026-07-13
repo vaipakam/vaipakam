@@ -106,7 +106,7 @@ export function Settings() {
           <Link to="/claims" className="item-row">
             <Gift aria-hidden size={18} />
             <span className="row-main">
-              <span className="row-title">Claim Center</span>
+              <span className="row-title">Claims</span>
               <br />
               <span className="row-sub">Collect repayments, collateral, and rewards</span>
             </span>
@@ -122,7 +122,7 @@ export function Settings() {
           <Link to="/vault" className="item-row">
             <Landmark aria-hidden size={18} />
             <span className="row-main">
-              <span className="row-title">Your Vaipakam Vault</span>
+              <span className="row-title">My vault</span>
               <br />
               <span className="row-sub">Where your assets sit — totals, locked, and free</span>
             </span>
@@ -130,7 +130,7 @@ export function Settings() {
           <Link to="/vpfi" className="item-row">
             <Coins aria-hidden size={18} />
             <span className="row-main">
-              <span className="row-title">VPFI fee discounts</span>
+              <span className="row-title">VPFI discounts</span>
               <br />
               <span className="row-sub">Optional — reduce protocol fees by holding VPFI</span>
             </span>

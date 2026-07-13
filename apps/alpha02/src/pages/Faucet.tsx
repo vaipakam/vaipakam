@@ -21,6 +21,7 @@ import { parseUnits } from 'viem';
 import { getDeployment } from '@vaipakam/contracts/deployments';
 import { copy } from '../content/copy';
 import { useActiveChain } from '../chain/useActiveChain';
+import { SUPPORTED_CHAINS } from '../chain/chains';
 import { EmptyState } from '../components/EmptyState';
 import { captureTxError } from '../lib/errors';
 import { CopyAddress } from '../components/CopyAddress';
@@ -85,8 +86,14 @@ interface MintOutcome {
 }
 
 export function Faucet() {
-  const { isConnected, onSupportedChain, readChain, address, switchToSupported } =
-    useActiveChain();
+  const {
+    isConnected,
+    onSupportedChain,
+    readChain,
+    address,
+    switchToSupported,
+    switchPending,
+  } = useActiveChain();
   const { setOpen } = useModal();
   const { data: walletClient } = useWalletClient();
   const publicClient = usePublicClient({ chainId: readChain.chainId });
@@ -122,6 +129,16 @@ export function Faucet() {
   // ── Gate 1: the page only DOES anything on a testnet slug that
   // actually carries mock addresses. Both conditions must hold. ──
   if (!readChain.testnet || !mocks) {
+    // UX2-005 — the empty state used to NAME the remedy ("try a
+    // different test network") without offering it. When another
+    // supported testnet carries the mocks, hand over the one-click
+    // switch instead of leaving the user to work the wallet menu.
+    const mocksChain = SUPPORTED_CHAINS.find(
+      (c) =>
+        c.testnet &&
+        c.chainId !== readChain.chainId &&
+        getDeployment(c.chainId)?.testnetMocks,
+    );
     return (
       <div>
         <h1 className="page-title">{copy.faucet.title}</h1>
@@ -135,9 +152,21 @@ export function Faucet() {
               : copy.faucet.notTestnetBody(readChain.name)
           }
           action={
-            <Link to="/" className="btn btn-secondary">
-              {copy.faucet.backHome}
-            </Link>
+            <div className="cluster" style={{ justifyContent: 'center' }}>
+              {isConnected && mocksChain ? (
+                <button
+                  type="button"
+                  className="btn btn-primary"
+                  disabled={switchPending}
+                  onClick={() => switchToSupported(mocksChain.chainId)}
+                >
+                  {copy.wallet.switchToChain(mocksChain.name)}
+                </button>
+              ) : null}
+              <Link to="/" className="btn btn-secondary">
+                {copy.faucet.backHome}
+              </Link>
+            </div>
           }
         />
       </div>
