@@ -249,12 +249,16 @@ To broadcast the in-place redeploy for [$CHAINS], re-run with --broadcast:
 single chain/step manually:
 
 EOF
+  # The manual fall-back commands carry the FOUNDRY_PROFILE=default prefix
+  # (Codex #1182): unlike the orchestrator entry point (which exports it), a raw
+  # `forge script` inherits the operator's shell profile, and a stray
+  # quick/cifast there would broadcast non-parity bytecode.
   for slug in $CHAINS; do
     var="$(rpc_var_for "$slug")"
     echo "  # $slug"
-    echo "  forge script script/RefreshAllFacetsInPlace.s.sol --sig \"refresh()\" --rpc-url \$$var --broadcast --slow"
+    echo "  FOUNDRY_PROFILE=default forge script script/RefreshAllFacetsInPlace.s.sol --sig \"refresh()\" --rpc-url \$$var --broadcast --slow"
     [ "$SKIP_VAULT" -eq 0 ] && \
-    echo "  forge script script/UpgradeVaultImplementation.s.sol --sig \"run()\" --rpc-url \$$var --broadcast --slow"
+    echo "  FOUNDRY_PROFILE=default forge script script/UpgradeVaultImplementation.s.sol --sig \"run()\" --rpc-url \$$var --broadcast --slow"
     echo
   done
   exit 0
