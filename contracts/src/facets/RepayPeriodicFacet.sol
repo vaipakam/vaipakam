@@ -210,13 +210,20 @@ contract RepayPeriodicFacet is DiamondReentrancyGuard, DiamondPausable, IVaipaka
         );
         LibFacet.recordTreasuryAccrual(loan.prepayAsset, treasuryShare);
 
+        // Pass-2 D1 (#1188) — do NOT decrement `durationDays`. The term tuple
+        // (`startTime + durationDays`) is the FIXED maturity every default/
+        // grace/preclose consumer relies on; shrinking it pulled maturity +
+        // grace earlier each day (mid-term permissionless default + repay-brick
+        // on a fully-serviced rental). Consumed days are tracked by
+        // `lastDeductTime` (advanced below); remaining = `remainingRentalDays`.
         unchecked {
             loan.prepayAmount -= dayFee;
-            loan.durationDays -= 1;
             loan.lastDeductTime += LibVaipakam.ONE_DAY;
         }
 
-        // Update renter expires
+        // Update renter expires. #893 join: with `durationDays` now immutable
+        // this is the FIXED origination maturity, so the renter holds the NFT
+        // for the full agreed term instead of an earlier-shrinking expiry.
         uint64 newExpires = uint64(
             loan.startTime + loan.durationDays * LibVaipakam.ONE_DAY
         );
@@ -232,8 +239,11 @@ contract RepayPeriodicFacet is DiamondReentrancyGuard, DiamondPausable, IVaipaka
             NFTRenterUpdateFailed.selector
         );
 
-        // If duration 0, close the rental properly with claims and NFT updates
-        if (loan.durationDays == 0) {
+        // Pass-2 D1 (#1188) — `durationDays` is now IMMUTABLE (the fixed term),
+        // so full consumption is signalled by `remainingRentalDays == 0` (which
+        // reaches 0 exactly when `lastDeductTime` has advanced across the whole
+        // term), not by the term counter hitting 0.
+        if (LibVaipakam.remainingRentalDays(loan) == 0) {
             // All rental fees have been deducted. Remaining prepay is just the buffer.
             // Lender gets the full rental (already deducted daily via this function).
             // The lender's claim for accumulated daily deductions is already in vault.

@@ -454,9 +454,12 @@ contract RepayFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErrors 
             uint256 alreadyDeductedDays = (loan.lastDeductTime - loan.startTime) /
                 LibVaipakam.ONE_DAY;
             if (loan.useFullTermInterest) {
-                // durationDays is already reduced by autoDeductDaily, so it
-                // represents the remaining (unpaid) full-term days.
-                interest = loan.principal * loan.durationDays;
+                // Pass-2 D1 (#1188) — `durationDays` is now the IMMUTABLE
+                // origination term; the REMAINING (unpaid) full-term days is
+                // `remainingRentalDays` (term − days already consumed via
+                // `lastDeductTime`). Using `durationDays` here would re-charge
+                // the already-deducted days.
+                interest = loan.principal * LibVaipakam.remainingRentalDays(loan);
             } else {
                 uint256 elapsedDays = (block.timestamp - loan.startTime) /
                     LibVaipakam.ONE_DAY;
@@ -924,7 +927,11 @@ contract RepayFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErrors 
             }
         } else {
             // NFT: Deduct for partialDays (partialAmount = days)
-            if (partialAmount > loan.durationDays)
+            // Pass-2 D1 (#1188) — bound by REMAINING days, not the (now
+            // immutable) `durationDays` term. `durationDays` is the fixed
+            // maturity; remaining = term − days already consumed (tracked by
+            // `lastDeductTime`).
+            if (partialAmount > LibVaipakam.remainingRentalDays(loan))
                 revert InsufficientPartialAmount();
 
             accrued = loan.principal * partialAmount; // Daily fee * days
@@ -978,12 +985,17 @@ contract RepayFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErrors 
             LibSanctionedLock.endMoveOut(LibVaipakam.storageSlot());
             LibFacet.recordTreasuryAccrual(loan.prepayAsset, treasuryShare);
 
+            // Pass-2 D1 (#1188) — keep `durationDays` immutable (fixed
+            // maturity); advance `lastDeductTime` by the days paid so
+            // `remainingRentalDays` and consumed-days derivations stay exact,
+            // mirroring `autoDeductDaily`'s per-day advance.
             unchecked {
                 loan.prepayAmount -= accrued;
-                loan.durationDays -= partialAmount;
+                loan.lastDeductTime += uint64(partialAmount * LibVaipakam.ONE_DAY);
             }
 
-            // Update renter expires if reduced
+            // Update renter expires. With `durationDays` immutable this is the
+            // FIXED origination maturity (no longer shrinks) — the #893 join.
             uint64 newExpires = uint64(
                 loan.startTime + loan.durationDays * LibVaipakam.ONE_DAY
             );
@@ -1073,7 +1085,10 @@ contract RepayFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErrors 
             uint256 alreadyDeductedDays = (loan.lastDeductTime - loan.startTime) /
                 LibVaipakam.ONE_DAY;
             if (loan.useFullTermInterest) {
-                interest = loan.principal * loan.durationDays;
+                // Pass-2 D1 (#1188) — remaining owed days, not the immutable
+                // `durationDays` term (mirrors the settler at repayLoan so the
+                // preview matches settlement).
+                interest = loan.principal * LibVaipakam.remainingRentalDays(loan);
             } else {
                 uint256 undeductedDays = elapsedDays > alreadyDeductedDays
                     ? elapsedDays - alreadyDeductedDays

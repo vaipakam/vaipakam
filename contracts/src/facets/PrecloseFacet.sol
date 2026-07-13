@@ -397,10 +397,13 @@ contract PrecloseFacet is
         } else {
             // ── NFT rental preclose ─────────────────────────────────────────
             // For NFT rentals, payments use loan.prepayAsset (ERC20), not principalAsset (NFT).
-            // Full-term rental = daily fee * durationDays. Borrower pre-paid (rental + buffer).
-            // Lender gets full-term rental fees minus treasury fee.
+            // Pass-2 D1 (#1188) — the preclose settles the REMAINING rental
+            // (`remainingRentalDays`), not the immutable full `durationDays`
+            // term: `autoDeductDaily` already paid the lender for the days
+            // consumed so far, so charging the full term here would double-pay.
+            // Lender gets remaining-rental fees minus treasury fee.
             // Borrower gets unused prepay + buffer refund.
-            uint256 fullRental = loan.principal * loan.durationDays; // principal = daily fee for NFTs
+            uint256 fullRental = loan.principal * LibVaipakam.remainingRentalDays(loan); // principal = daily fee for NFTs
             (uint256 treasuryFee, uint256 lenderShare) = LibEntitlement.splitTreasury(
                 loan,
                 fullRental
