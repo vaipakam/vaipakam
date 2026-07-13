@@ -252,9 +252,12 @@ fires and the check no-ops. Verified present in the built
   active-positions banner** and the shell's **SanctionsBanner** mount
   only when a wallet is connected (a disconnected visitor has no
   positions and no address to screen); **Help's fee FAQ** renders a
-  deploy-default fee card for disconnected visitors and mounts the
-  live-value card (its only ABI dependency) only when connected — the
-  receipt quotes live values at transaction time regardless. Verified at
+  NON-COMMITTAL fee card for disconnected visitors (the fee structure in
+  words + "connect for the exact current rates", never a specific
+  percentage it hasn't read live, so a governance re-tune can't strand a
+  stale number) and mounts the live-value card (its only ABI dependency,
+  itself gated on `fees.ready` so an in-flight read never shows a default
+  as an exact rate) only when connected. Verified at
   **runtime**: a disconnected `/` and `/help` paint fetch NO
   `contract-abis` request, while `/borrow` (a real action route) does;
   the entry `modulepreload` set is ABI-free (only react/wallet vendors).

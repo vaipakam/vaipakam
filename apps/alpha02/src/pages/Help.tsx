@@ -9,6 +9,7 @@ import { copy } from '../content/copy';
 import { supportMailto } from '../data/support';
 import { formatDate } from '../lib/format';
 import { useActiveChain } from '../chain/useActiveChain';
+import { ErrorBoundary } from '../components/ErrorBoundary';
 
 // UX2-008 — the live fee read (`useProtocolFees` → the Diamond ABI) is
 // Help's only ABI dependency; isolating it in a lazy chunk keeps a
@@ -139,9 +140,16 @@ export function Help() {
             time regardless), so the live card mounts only when a wallet
             is connected — keeping a disconnected /help paint ABI-free. */}
         {isConnected ? (
-          <Suspense fallback={feeFallback}>
-            <FeeFaqCard />
-          </Suspense>
+          // A lazy live-fee chunk failure must degrade to the same
+          // non-committal fee copy, not bubble to the route boundary and
+          // replace the whole Help page (Codex #1200 r4). Its own quiet
+          // boundary (fallback={feeFallback}) contains that; the Suspense
+          // fallback covers the in-flight load.
+          <ErrorBoundary fallback={feeFallback}>
+            <Suspense fallback={feeFallback}>
+              <FeeFaqCard />
+            </Suspense>
+          </ErrorBoundary>
         ) : (
           feeFallback
         )}

@@ -6,9 +6,11 @@
   paint now load only when they're actually needed: the Borrow and Lend
   pages load on navigation; Home's "you have N positions" nudge, the
   shell's sanctions banner, and Help's live-fee answer load only once a
-  wallet is connected (a disconnected help visitor sees the fee answer
-  with the standard published rates, and any live re-tuned value appears
-  on connect and in the receipt they sign). A visitor opening the home
+  wallet is connected (a disconnected help visitor sees the fee
+  structure described in words and is directed to connect for the exact
+  current rates — the platform never publishes a specific percentage it
+  hasn't read live, so a governance re-tuning can't leave a stale number
+  on the page). A visitor opening the home
   or help page before connecting downloads none of the ABI — confirmed
   by watching the network on a cold load. Because the ABI changes only
   when the contracts are redeployed, its file stays cached across
