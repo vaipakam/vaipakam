@@ -100,6 +100,7 @@ import {
   issueTelegramLinkCode,
   linkTelegram,
   OptOutStorageUnavailableError,
+  recordTestAlertSent,
   unlinkTelegram,
   upsertThresholds,
 } from './db';
@@ -523,6 +524,14 @@ async function handleUnlinkTelegram(
  *  chat. Returns 404 `not-linked` when no chat id is stored yet (the
  *  handshake never completed), which is exactly the fumbled-handshake
  *  case this round-trip exists to catch. */
+/** Minimum seconds between test-alert sends for one wallet. A signed
+ *  body is replay-valid for the full ±600s window, and each send is a
+ *  real Telegram message; this per-wallet cooldown bounds a copied body
+ *  or a buggy retry loop to one message per minute (Codex #1175). One
+ *  legitimate test proves the link, so a 60s floor never impedes the
+ *  real flow. */
+const TEST_ALERT_COOLDOWN_SECONDS = 60;
+
 async function handleTestTelegram(req: Request, env: Env): Promise<Response> {
   const corsOrigin = resolveAllowedOrigin(req, env);
   if (!env.TG_BOT_TOKEN) {
@@ -542,11 +551,8 @@ async function handleTestTelegram(req: Request, env: Env): Promise<Response> {
       corsOrigin,
     );
   }
-  const verified = await verifySignedLinkRequest(
-    parsed.req,
-    Math.floor(Date.now() / 1000),
-    'test-alert',
-  );
+  const now = Math.floor(Date.now() / 1000);
+  const verified = await verifySignedLinkRequest(parsed.req, now, 'test-alert');
   if (!verified.ok) {
     return json(
       { error: 'verification_failed', reason: verified.reason },
@@ -565,6 +571,13 @@ async function handleTestTelegram(req: Request, env: Env): Promise<Response> {
     // than pretend the test succeeded.
     return json({ error: 'not-linked' }, 404, corsOrigin);
   }
+  // Replay/loop protection: a valid signature stays usable for the whole
+  // 10-minute window, so gate on a per-wallet cooldown before spending a
+  // real Telegram send. The stamp is recorded only AFTER a successful
+  // send below, so a failed attempt doesn't lock the user out.
+  if (now - linked.lastTestAt < TEST_ALERT_COOLDOWN_SECONDS) {
+    return json({ error: 'rate-limited' }, 429, corsOrigin);
+  }
   // `sendMessage` returns whether Telegram accepted the send. A silent
   // failure here would let the frontend mark the wallet "verified" when
   // the message never arrived, so surface a hard failure as 502 and
@@ -577,6 +590,7 @@ async function handleTestTelegram(req: Request, env: Env): Promise<Response> {
   if (!ok) {
     return json({ error: 'send-failed' }, 502, corsOrigin);
   }
+  await recordTestAlertSent(env.DB, parsed.req.wallet, parsed.req.chain_id, now);
   return json({ ok: true }, 200, corsOrigin);
 }
 

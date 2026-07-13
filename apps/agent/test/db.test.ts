@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest';
 import {
   getTelegramChatId,
   OptOutStorageUnavailableError,
+  recordTestAlertSent,
   upsertThresholds,
 } from '../src/db';
 
@@ -31,12 +32,21 @@ class FakeStmt {
         'D1_ERROR: table user_thresholds has no column named notify_maturity_approaching: SQLITE_ERROR',
       );
     }
+    if (this.db.testAlertColumnMissing && this.sql.includes('last_test_alert_at')) {
+      throw new Error('D1_ERROR: no such column: last_test_alert_at: SQLITE_ERROR');
+    }
     this.db.executed.push({ sql: this.sql, args: this.args });
   }
   // For SELECTs (getTelegramChatId) — returns whatever the fake was
   // seeded with, recording the bound args so a test can assert the
-  // wallet was lower-cased.
+  // wallet was lower-cased. When `testAlertColumnMissing` is set, a
+  // SELECT/UPDATE referencing `last_test_alert_at` throws SQLite's
+  // missing-column error, so the pre-0034 rollout fallback can be
+  // exercised.
   async first<T>(): Promise<T | null> {
+    if (this.db.testAlertColumnMissing && this.sql.includes('last_test_alert_at')) {
+      throw new Error('D1_ERROR: no such column: last_test_alert_at: SQLITE_ERROR');
+    }
     this.db.executed.push({ sql: this.sql, args: this.args });
     return (this.db.firstResult as T) ?? null;
   }
@@ -46,6 +56,7 @@ class FakeD1 {
   migrated = true;
   failWith: string | null = null;
   firstResult: unknown = null;
+  testAlertColumnMissing = false;
   executed: Array<{ sql: string; args: unknown[] }> = [];
   prepare(sql: string) {
     return new FakeStmt(this, sql);
@@ -118,15 +129,15 @@ describe('upsertThresholds rollout-window fallback (#1056 round 8)', () => {
 });
 
 describe('getTelegramChatId (UX-012 test-alert lookup)', () => {
-  it('returns the chat id + locale when a link exists (wallet lower-cased)', async () => {
+  it('returns the chat id + locale + last test timestamp when a link exists (wallet lower-cased)', async () => {
     const db = new FakeD1();
-    db.firstResult = { tg_chat_id: '9876', locale: 'ta' };
+    db.firstResult = { tg_chat_id: '9876', locale: 'ta', last_test_alert_at: 1700 };
     const res = await getTelegramChatId(
       db as unknown as D1Database,
       BASE.wallet,
       BASE.chain_id,
     );
-    expect(res).toEqual({ chatId: '9876', locale: 'ta' });
+    expect(res).toEqual({ chatId: '9876', locale: 'ta', lastTestAt: 1700 });
     // The wallet is bound lower-cased so a checksummed spelling still
     // matches the stored row.
     expect(db.executed[0]!.args[0]).toBe(BASE.wallet.toLowerCase());
@@ -134,7 +145,7 @@ describe('getTelegramChatId (UX-012 test-alert lookup)', () => {
 
   it('returns null when the row exists but has no chat id (handshake unfinished)', async () => {
     const db = new FakeD1();
-    db.firstResult = { tg_chat_id: null, locale: 'en' };
+    db.firstResult = { tg_chat_id: null, locale: 'en', last_test_alert_at: 0 };
     const res = await getTelegramChatId(
       db as unknown as D1Database,
       BASE.wallet,
@@ -154,7 +165,7 @@ describe('getTelegramChatId (UX-012 test-alert lookup)', () => {
     expect(res).toBeNull();
   });
 
-  it('defaults the locale to en when the stored locale is null', async () => {
+  it('defaults locale to en and lastTestAt to 0 when those are null/absent', async () => {
     const db = new FakeD1();
     db.firstResult = { tg_chat_id: '42', locale: null };
     const res = await getTelegramChatId(
@@ -162,6 +173,44 @@ describe('getTelegramChatId (UX-012 test-alert lookup)', () => {
       BASE.wallet,
       BASE.chain_id,
     );
-    expect(res).toEqual({ chatId: '42', locale: 'en' });
+    expect(res).toEqual({ chatId: '42', locale: 'en', lastTestAt: 0 });
+  });
+
+  it('falls back to the pre-0034 column set (lastTestAt 0) when last_test_alert_at is missing', async () => {
+    const db = new FakeD1();
+    db.testAlertColumnMissing = true;
+    db.firstResult = { tg_chat_id: '55', locale: 'en' };
+    const res = await getTelegramChatId(
+      db as unknown as D1Database,
+      BASE.wallet,
+      BASE.chain_id,
+    );
+    // The first SELECT (with the column) threw; the fallback SELECT
+    // (without it) succeeded — so the feature still works pre-migration
+    // with no cooldown enforced.
+    expect(res).toEqual({ chatId: '55', locale: 'en', lastTestAt: 0 });
+    expect(db.executed[db.executed.length - 1]!.sql).not.toContain(
+      'last_test_alert_at',
+    );
+  });
+});
+
+describe('recordTestAlertSent (UX-012 cooldown stamp)', () => {
+  it('stamps last_test_alert_at with the timestamp + lower-cased wallet', async () => {
+    const db = new FakeD1();
+    await recordTestAlertSent(db as unknown as D1Database, BASE.wallet, BASE.chain_id, 1800);
+    expect(db.executed).toHaveLength(1);
+    expect(db.executed[0]!.sql).toContain('last_test_alert_at');
+    expect(db.executed[0]!.args).toEqual([1800, BASE.wallet.toLowerCase(), BASE.chain_id]);
+  });
+
+  it('no-ops (does not throw) when the column is missing pre-0034', async () => {
+    const db = new FakeD1();
+    db.testAlertColumnMissing = true;
+    await expect(
+      recordTestAlertSent(db as unknown as D1Database, BASE.wallet, BASE.chain_id, 1800),
+    ).resolves.toBeUndefined();
+    // The UPDATE threw missing-column and was swallowed — nothing recorded.
+    expect(db.executed).toHaveLength(0);
   });
 });

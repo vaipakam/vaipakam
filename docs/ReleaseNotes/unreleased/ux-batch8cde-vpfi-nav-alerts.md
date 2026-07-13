@@ -11,9 +11,13 @@
   reached the bot (no stored chat), it says so plainly and stays unlinked.
   The new `POST /telegram/test` endpoint is signature-gated with its own
   distinct message so a captured signature can't cross actions and a
-  spoofed-Origin caller can't spam a linked wallet's chat; the test message
-  is localized across all ten Worker locales. **Note:** the agent Worker must
-  be redeployed for the endpoint to exist live.
+  spoofed-Origin caller can't spam a linked wallet's chat, and it enforces a
+  60-second per-wallet cooldown (D1 migration `0034`, rollout-tolerant of the
+  column being absent) so a replayed body or a buggy retry loop can't loop
+  real sends within the 10-minute signature window. The test message is
+  localized across all ten Worker locales. **Note:** the agent Worker must be
+  redeployed and migration 0034 applied for the endpoint to enforce the
+  cooldown live.
 
 - **Clearer "unlink elsewhere" control (UX-043).** The ambiguous centered
   "Linked on another device? / Unlink here" link is now a labelled block —
@@ -34,10 +38,11 @@
 
 - **VPFI + faucet polish (UX-029 / UX-035 / UX-048).** The VPFI deposit
   toggle is a proper labelled switch with a wrong-network hint and an "in
-  your wallet" balance row; the fee-discount tier table uses exclusive upper
-  bounds so each threshold appears in exactly one row, with a note for the
-  sub-100 band that earns no discount; the faucet page collapses its
-  per-token cards into one card with a row list.
+  your wallet" balance row; the fee-discount tier table shows each band as a
+  half-open "min – <next" range so every threshold appears in exactly one row
+  and fractional holders just under a threshold still fall in their row, with
+  a below-minimum "no discount" note derived from the live first threshold;
+  the faucet page collapses its per-token cards into one card with a row list.
 
 - **Input-hint + FAQ + discovery polish (UX-017 / UX-047 / UX-049).** A
   malformed pasted token address now gets a plain-words hint (not just a red

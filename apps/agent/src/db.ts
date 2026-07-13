@@ -296,27 +296,90 @@ export async function consumeTelegramLinkCode(
   };
 }
 
-/** UX-012 — read the stored Telegram chat id (and locale) for a
- *  wallet/chain, so the test-alert endpoint can push a real message to
- *  the linked chat. Returns null when the wallet has no row or the row
- *  has no chat id (handshake never completed) — the caller turns that
- *  into an honest "we couldn't find your chat yet" instead of a silent
- *  success, which is the whole point of the round-trip. */
+/** True iff the D1 error is the missing-`last_test_alert_at`-column
+ *  condition (migration 0034 not applied yet). SQLite phrases it
+ *  differently for a SELECT expression vs an INSERT/UPDATE column list,
+ *  so both forms are matched — same rollout-tolerance pattern as the
+ *  notify_maturity_approaching column. */
+function isMissingTestAlertColumn(err: unknown): boolean {
+  return /no such column|has no column named/i.test(String(err));
+}
+
+/** UX-012 — read the stored Telegram chat id, locale, and last
+ *  test-alert timestamp for a wallet/chain, so the test-alert endpoint
+ *  can push a real message to the linked chat AND enforce a per-wallet
+ *  cooldown against replay. Returns null when the wallet has no row or
+ *  the row has no chat id (handshake never completed) — the caller
+ *  turns that into an honest "we couldn't find your chat yet" instead
+ *  of a silent success, which is the whole point of the round-trip.
+ *
+ *  `lastTestAt` is 0 when never sent OR when migration 0034 hasn't been
+ *  applied yet (the SELECT falls back to the pre-0034 column set), so a
+ *  rollout window degrades to today's no-cooldown behaviour rather than
+ *  breaking the feature. */
 export async function getTelegramChatId(
   db: D1Database,
   wallet: string,
   chainId: number,
-): Promise<{ chatId: string; locale: string } | null> {
-  const row = await db
-    .prepare(
-      `SELECT tg_chat_id, locale
-       FROM user_thresholds
-       WHERE wallet = ? AND chain_id = ?`,
-    )
-    .bind(wallet.toLowerCase(), chainId)
-    .first<{ tg_chat_id: string | null; locale: string | null }>();
+): Promise<{ chatId: string; locale: string; lastTestAt: number } | null> {
+  const w = wallet.toLowerCase();
+  let row:
+    | { tg_chat_id: string | null; locale: string | null; last_test_alert_at?: number | null }
+    | null;
+  try {
+    row = await db
+      .prepare(
+        `SELECT tg_chat_id, locale, last_test_alert_at
+         FROM user_thresholds
+         WHERE wallet = ? AND chain_id = ?`,
+      )
+      .bind(w, chainId)
+      .first();
+  } catch (err) {
+    if (!isMissingTestAlertColumn(err)) throw err;
+    // Pre-0034 rollout window — read without the cooldown column.
+    row = await db
+      .prepare(
+        `SELECT tg_chat_id, locale
+         FROM user_thresholds
+         WHERE wallet = ? AND chain_id = ?`,
+      )
+      .bind(w, chainId)
+      .first();
+  }
   if (!row || !row.tg_chat_id) return null;
-  return { chatId: row.tg_chat_id, locale: row.locale ?? 'en' };
+  return {
+    chatId: row.tg_chat_id,
+    locale: row.locale ?? 'en',
+    lastTestAt: row.last_test_alert_at ?? 0,
+  };
+}
+
+/** UX-012 — stamp the wallet's last successful test-alert send, so the
+ *  handler's cooldown can reject a replayed/looped request. No-ops (does
+ *  not throw) when migration 0034 hasn't landed yet: without the column
+ *  there is nothing to record, and the rollout window intentionally
+ *  falls back to no cooldown rather than failing the send. */
+export async function recordTestAlertSent(
+  db: D1Database,
+  wallet: string,
+  chainId: number,
+  now: number,
+): Promise<void> {
+  try {
+    await db
+      .prepare(
+        `UPDATE user_thresholds
+         SET last_test_alert_at = ?
+         WHERE wallet = ? AND chain_id = ?`,
+      )
+      .bind(now, wallet.toLowerCase(), chainId)
+      .run();
+  } catch (err) {
+    if (!isMissingTestAlertColumn(err)) throw err;
+    // Pre-0034 — nothing to stamp; the cooldown simply isn't enforced
+    // until the migration lands.
+  }
 }
 
 /** Store the Telegram chat id on the user's thresholds row. Called

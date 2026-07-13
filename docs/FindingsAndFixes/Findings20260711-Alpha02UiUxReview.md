@@ -376,12 +376,18 @@ keeps consoles clean on locked-down networks.
   **Status: ✅ FIXED (batch 8d, 2026-07-13).** Page titles now match their nav labels: Claim Center→“Claims”, Your Vaipakam Vault→“My vault”, VPFI fee discounts→“VPFI discounts”, Position NFT verifier→“NFT verifier” (the descriptive detail stays in each page’s lede). No e2e asserts these titles.
 - **UX-035** VPFI tier table boundaries overlap (1,000/5,000/20,000
   each in two tiers; sub-100 unaddressed). (S)
-  **Status: ✅ FIXED (batch 8c, 2026-07-13).** Tiers now use exclusive
-  upper bounds (100–999 / 1,000–4,999 / 5,000–19,999 / 20,000+) so each
-  threshold shows in one row only, matching the `held ≥ threshold` band
-  semantics — in both the default table and the live admin-tuned path
-  (next-threshold-minus-one-VPFI). A "holding under 100 VPFI earns no
-  discount" note addresses the sub-100 band.
+  **Status: ✅ FIXED (batch 8c, 2026-07-13; refined batch 8e per Codex
+  #1175).** Tiers are `held ≥ threshold` bands, i.e. half-open intervals
+  `[min, next)`. The upper bound is shown as **"< next"** (100 – <1,000 /
+  1,000 – <5,000 / 5,000 – <20,000 / 20,000+) so each threshold belongs
+  to exactly one row AND a fractional holding just under the next
+  threshold (e.g. 999.5 VPFI) still falls inside its row — the initial
+  "next-minus-one-whole-VPFI" form left such holders in no displayed
+  range (VPFI has 18 decimals; the contract compares wei). Applied to
+  both the default table and the live admin-tuned path. The "holding
+  under N VPFI earns no discount" note is derived from the LIVE first
+  threshold (not a hardcoded 100), so it can't contradict an
+  admin-retuned table.
 - **UX-036** Desk term chips: selected 29d + bold 30d look
   double-selected; only the selection should carry weight. (S)
   **Status: ✅ FIXED (batch 7b, 2026-07-12).** The has-liquidity cue is

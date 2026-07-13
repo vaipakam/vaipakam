@@ -51,7 +51,7 @@ export function Vpfi() {
   const publicClient = usePublicClient({ chainId: walletChain?.chainId });
   const queryClient = useQueryClient();
 
-  const tierRows = useVpfiTierTable();
+  const { rows: tierRows, floorLabel: tierFloorLabel } = useVpfiTierTable();
   // Deposits (and consent writes) revert for flagged wallets — block
   // BEFORE the approval tx, same gate as the offer flows. Held pending
   // while the check loads.
@@ -349,7 +349,7 @@ export function Vpfi() {
       {/* UX-035 — the below-first-threshold band was unaddressed; state
           it so a small holder isn't left guessing. */}
       <p className="field-hint" style={{ marginTop: 6 }}>
-        {copy.vpfi.belowMinNote}
+        {copy.vpfi.belowMinNote(tierFloorLabel)}
       </p>
       <p className="muted" style={{ marginTop: 12 }}>
         {copy.vpfi.noGasDiscount} {copy.vpfi.withdrawWarning} Vaipakam does not

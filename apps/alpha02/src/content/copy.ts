@@ -1275,8 +1275,11 @@ export const copy = {
     noGasDiscount: 'Your VPFI discount does not reduce network gas.',
     withdrawWarning: 'Withdrawing VPFI can lower future fee discounts.',
     // UX-035 — the below-first-threshold band, stated so a small holder
-    // isn't left guessing.
-    belowMinNote: 'Holding under 100 VPFI earns no fee discount.',
+    // isn't left guessing. The threshold is admin-tunable, so the note
+    // is derived from the LIVE first tier threshold (Codex #1175) rather
+    // than a hardcoded number that could contradict the table above.
+    belowMinNote: (floor: string) =>
+      `Holding under ${floor} VPFI earns no fee discount.`,
     notOnThisChain: (chain: string) =>
       `VPFI deposits aren’t available on ${chain} yet. Everything else on Vaipakam works without VPFI.`,
     tokenChanged:
