@@ -1,8 +1,12 @@
 # Pass-2 D1 — Decouple rental maturity/grace from the shrinking `durationDays`
 
 **Card:** #1188 (High) · **Umbrella:** #1196 · **Pairs with:** #893 (ERC-4907 expiry manifestation)
-**Owner-ratified approach (2026-07-13):** derive rental maturity from
-`lastDeductTime + durationDays`; feed `gracePeriod()` the original term.
+**Owner-ratified approach (2026-07-13):** the recommendation offered two arms —
+(a) derive maturity from `lastDeductTime + durationDays`, or (b) keep
+`durationDays` immutable and track a separate paid/remaining counter (the #641
+pattern). **This design/implementation takes arm (b)** — keep `durationDays`
+immutable so `startTime + durationDays` stays the fixed maturity for every
+consumer unchanged; see "Design" below for why the scout picked it.
 
 ## The bug
 

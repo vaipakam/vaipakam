@@ -451,8 +451,9 @@ contract RepayFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErrors 
             // gives the count of already-paid days.
             if (loan.prepayAmount == 0) revert InsufficientPrepay();
 
-            uint256 alreadyDeductedDays = (loan.lastDeductTime - loan.startTime) /
-                LibVaipakam.ONE_DAY;
+            // Pass-2 D1 (#1188) — guarded consumed-days derivation (safe even
+            // if a legacy/imported rental still has lastDeductTime == 0).
+            uint256 alreadyDeductedDays = LibVaipakam.consumedRentalDays(loan);
             if (loan.useFullTermInterest) {
                 // Pass-2 D1 (#1188) — `durationDays` is now the IMMUTABLE
                 // origination term; the REMAINING (unpaid) full-term days is
@@ -1014,7 +1015,16 @@ contract RepayFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErrors 
             // NFT-rental partial repay: the third slot reuses `newPrincipal`
             // to carry the remaining duration in days (no ERC-20 principal
             // exists here). accruedInterest is N/A for rentals — emitted as 0.
-            emit PartialRepaid(loanId, partialAmount, loan.durationDays, /* accruedInterest */ 0);
+            // Pass-2 D1 (#1188) — `durationDays` is now the immutable term, so
+            // report the DERIVED remaining rental days as the post-partial
+            // "newPrincipal" value (event consumers mirror this for remaining
+            // duration; the immutable term would mislead them).
+            emit PartialRepaid(
+                loanId,
+                partialAmount,
+                LibVaipakam.remainingRentalDays(loan),
+                /* accruedInterest */ 0
+            );
         }
 
         if (loan.collateralLiquidity == LibVaipakam.LiquidityStatus.Liquid &&
@@ -1082,8 +1092,9 @@ contract RepayFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErrors 
             totalDue = loan.principal + interest;
         } else {
             // NFT: Accrued rental (excluding already-deducted days)
-            uint256 alreadyDeductedDays = (loan.lastDeductTime - loan.startTime) /
-                LibVaipakam.ONE_DAY;
+            // Pass-2 D1 (#1188) — guarded consumed-days derivation (safe even
+            // if a legacy/imported rental still has lastDeductTime == 0).
+            uint256 alreadyDeductedDays = LibVaipakam.consumedRentalDays(loan);
             if (loan.useFullTermInterest) {
                 // Pass-2 D1 (#1188) — remaining owed days, not the immutable
                 // `durationDays` term (mirrors the settler at repayLoan so the

@@ -6026,14 +6026,30 @@ library LibVaipakam {
     ///         days per rental partial). Remaining = term − consumed. Non-rental
     ///         loans never advance `lastDeductTime` past `startTime`, so this
     ///         returns the full `durationDays` for them.
-    function remainingRentalDays(Loan storage loan) internal view returns (uint256) {
-        // Defensive: a loan whose `lastDeductTime` was never advanced past
-        // `startTime` (init sets it to `startTime`; a legacy/uninitialised loan
-        // may have 0) has consumed nothing — treat `lastDeductTime <= startTime`
-        // as 0 days consumed rather than underflowing (#641-style fallback).
+    /// @notice Pass-2 D1 (#1188) — rental days ALREADY consumed, tracked by
+    ///         `lastDeductTime` advancing (auto-deduct: +1/day; rental partial:
+    ///         +partialAmount days).
+    /// @dev    Guarded: a loan whose `lastDeductTime` was never advanced past
+    ///         `startTime` (init sets it to `startTime`; a legacy/imported loan
+    ///         may have 0) has consumed nothing — `lastDeductTime <= startTime`
+    ///         ⇒ 0, rather than underflowing. This is the single guarded
+    ///         consumed-days derivation every caller should use.
+    function consumedRentalDays(Loan storage loan) internal view returns (uint256) {
         uint256 ldt = uint256(loan.lastDeductTime);
         uint256 st = uint256(loan.startTime);
-        uint256 consumed = ldt > st ? (ldt - st) / 1 days : 0;
+        return ldt > st ? (ldt - st) / 1 days : 0;
+    }
+
+    /// @notice Pass-2 D1 (#1188) — a rental loan's REMAINING prepaid days
+    ///         = immutable term − consumed. Non-rental loans never advance
+    ///         `lastDeductTime`, so this returns the full `durationDays`.
+    /// @dev    ASSUMES `durationDays` is the IMMUTABLE origination term (the
+    ///         D1 model). Loans created after the D1 upgrade satisfy this;
+    ///         mainnet rollouts are always fresh (no pre-upgrade rentals carry
+    ///         over — see RefreshAllFacetsInPlace policy), so the derivation is
+    ///         exact there.
+    function remainingRentalDays(Loan storage loan) internal view returns (uint256) {
+        uint256 consumed = consumedRentalDays(loan);
         // Clamp so a view can never revert even if consumed overruns the term.
         return consumed >= uint256(loan.durationDays) ? 0 : uint256(loan.durationDays) - consumed;
     }
