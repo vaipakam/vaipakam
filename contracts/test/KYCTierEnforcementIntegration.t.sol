@@ -45,9 +45,14 @@ import {LibAcceptTestSigner} from "./helpers/LibAcceptTestSigner.sol";
  *         in three KYC-specific ways:
  *
  *           1) Re-mock `mockCollateralERC20`'s price to $2,000 so the
- *              0.05-ether collateral leg contributes a fixed ~$100 to
- *              valueNumeraire — the principal dominates the threshold
- *              math (see PRINCIPAL_* constants below).
+ *              collateral leg is priced in a known ratio to the $1 principal
+ *              leg. #998 S15 added a create-time admission floor (collateral
+ *              >= ~1.765x the lending VALUE on liquid ERC-20 both-legs
+ *              offers), so the collateral can no longer be $100 dust;
+ *              `_lenderOffer` sets it to 2x the principal's value and the
+ *              PRINCIPAL_* constants are chosen so valueNumeraire (principal +
+ *              collateral == 3x principal value) still lands in the intended
+ *              KYC band (see PRINCIPAL_* constants below).
  *           2) Downgrade `borrower` to Tier-0 so the threshold-blocked
  *              path is reachable; individual tests upgrade mid-flow.
  *              `lender` stays at Tier-2 so every revert below is
@@ -61,17 +66,22 @@ contract KYCTierEnforcementIntegration is SetupTest {
     uint256 constant RATE_BPS = 500;
 
     // valueNumeraire = principal + collateral (both in active numeraire,
-    // USD post-deploy default). Collateral is pinned at 0.05 ether ×
-    // $2,000 = $100; principal dominates band selection:
-    //   400   `mockERC20` principal → ~$500   (Tier-0 OK)
-    //   2,500 `mockERC20` principal → ~$2,600 (Tier-1 required)
-    //   15,000 `mockERC20` principal → ~$15,100 (Tier-2 required)
-    // HF stays oracle-mocked to 2.0 inside `setupHelper()` so the small
-    // collateral leg doesn't trip the HF-floor at acceptOffer.
-    uint256 constant PRINCIPAL_UNDER_TIER0 = 400 ether;
-    uint256 constant PRINCIPAL_BETWEEN_TIER0_AND_TIER1 = 2_500 ether;
-    uint256 constant PRINCIPAL_ABOVE_TIER1 = 15_000 ether;
-    uint256 constant COLLATERAL_ERC20 = 0.05 ether; // ~$100 @ $2k WETH
+    // USD post-deploy default). #998 S15 added a create-time admission floor
+    // (collateral >= ~1.765x the lending VALUE on liquid ERC-20 both-legs
+    // offers), so the collateral leg can no longer be a token-$100 dust.
+    // Collateral is priced at $2,000, principal at $1, and `_lenderOffer` sets
+    // collateral = principal / 1000 → collateral VALUE == 2x principal value
+    // (comfortably above the floor). valueNumeraire is therefore 3x the
+    // principal value; the PRINCIPAL_* constants are chosen so each still
+    // lands in its intended KYC band:
+    //   300   `mockERC20` principal → ~$900    (Tier-0 OK, below $1,000)
+    //   1,000 `mockERC20` principal → ~$3,000  (Tier-1 required)
+    //   5,000 `mockERC20` principal → ~$15,000 (Tier-2 required)
+    // HF stays oracle-mocked to 2.0 inside `setupHelper()` so the collateral
+    // leg doesn't trip the HF-floor at acceptOffer.
+    uint256 constant PRINCIPAL_UNDER_TIER0 = 300 ether;
+    uint256 constant PRINCIPAL_BETWEEN_TIER0_AND_TIER1 = 1_000 ether;
+    uint256 constant PRINCIPAL_ABOVE_TIER1 = 5_000 ether;
 
     function setUp() public {
         setupHelper();
@@ -193,6 +203,10 @@ contract KYCTierEnforcementIntegration is SetupTest {
     ///      pricing was set in setUp(); SetupTest pre-approves both actors
     ///      against the diamond and their per-user vaults for both tokens.
     function _lenderOffer(uint256 principal) internal returns (uint256 offerId) {
+        // #998 S15 floor: collateral value must be >= ~1.765x the lending
+        // value. Collateral is priced at $2,000 vs the $1 principal, so
+        // `principal / 1000` puts the collateral at 2x the principal's value.
+        uint256 collateral = principal / 1000;
         vm.prank(lender);
         offerId = OfferCreateFacet(address(diamond)).createOffer(
             LibVaipakam.CreateOfferParams({
@@ -201,7 +215,7 @@ contract KYCTierEnforcementIntegration is SetupTest {
                 amount: principal,
                 interestRateBps: RATE_BPS,
                 collateralAsset: mockCollateralERC20,
-                collateralAmount: COLLATERAL_ERC20,
+                collateralAmount: collateral,
                 durationDays: DURATION,
                 assetType: LibVaipakam.AssetType.ERC20,
                 tokenId: 0,
@@ -216,7 +230,7 @@ contract KYCTierEnforcementIntegration is SetupTest {
                 allowsParallelSale: false,
                 amountMax: principal,
                 interestRateBpsMax: RATE_BPS,
-                collateralAmountMax: COLLATERAL_ERC20,
+                collateralAmountMax: collateral,
                 periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None,
                 expiresAt: 0,
                 fillMode: LibVaipakam.FillMode.Partial,

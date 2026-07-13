@@ -168,9 +168,11 @@ contract Permit2IntegrationTest is SetupTest {
         );
 
         // Now accept via Permit2 — borrower signs a permit for their
-        // collateral amount and submits the signature with the accept.
+        // collateral amount and submits the signature with the accept. The
+        // offer's required collateral is 1.8x principal (#998 S15 floor).
+        uint256 requiredCollateral = (principal * 18) / 10;
         ISignatureTransfer.PermitTransferFrom memory permit =
-            _buildPermit(mockCollateralERC20, principal);
+            _buildPermit(mockCollateralERC20, requiredCollateral);
 
         address borrowerVault = VaultFactoryFacet(address(diamond))
             .getOrCreateUserVault(borrower);
@@ -197,7 +199,7 @@ contract Permit2IntegrationTest is SetupTest {
         assertEq(
             IERC20(mockCollateralERC20).balanceOf(borrowerVault) -
                 collateralBalBefore,
-            principal,
+            requiredCollateral,
             "collateral routed to borrower vault"
         );
         // Two Permit2 calls total would mean both collateral + prepay
@@ -324,7 +326,9 @@ contract Permit2IntegrationTest is SetupTest {
                 amount: principal,
                 interestRateBps: 500,
                 collateralAsset: mockCollateralERC20,
-                collateralAmount: principal,
+                // #998 S15 floor: collateral >= ~1.765x lending on liquid
+                // ERC-20 both-legs offers. 1.8x clears it (was 1x principal).
+                collateralAmount: (principal * 18) / 10,
                 durationDays: 30,
                 assetType: LibVaipakam.AssetType.ERC20,
                 tokenId: 0,
@@ -339,7 +343,7 @@ contract Permit2IntegrationTest is SetupTest {
                 allowsParallelSale: false,
                 amountMax: principal,
                 interestRateBpsMax: 500,
-                collateralAmountMax: principal,
+                collateralAmountMax: (principal * 18) / 10,
                 periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None,
                 expiresAt: 0,
                 fillMode: LibVaipakam.FillMode.Partial,

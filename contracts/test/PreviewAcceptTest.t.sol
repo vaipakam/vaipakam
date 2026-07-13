@@ -351,7 +351,9 @@ contract PreviewAcceptTest is SetupTest {
             amountMax: 10_000 ether,
             rateMin: 300,
             rateMax: 300,
-            collateralRequired: 1_000 ether
+            // #998 S15 floor: collateral >= ~1.765x lending on liquid ERC-20
+            // both-legs offers. 1.8x clears it (was 1_000 ether, sub-floor).
+            collateralRequired: 18_000 ether
         });
 
         OfferAcceptFacet.AcceptPreview memory p =
@@ -366,7 +368,7 @@ contract PreviewAcceptTest is SetupTest {
         // frontend can render the offer terms alongside the tier-up CTA.
         assertEq(p.effectivePrincipal, 10_000 ether, "principal still projected");
         assertEq(p.interestRateBps, 300, "rate still projected");
-        assertEq(p.collateralAmount, 1_000 ether);
+        assertEq(p.collateralAmount, 18_000 ether);
     }
 
     /// @notice Pausing either leg surfaces `AssetPaused`. Happy-path

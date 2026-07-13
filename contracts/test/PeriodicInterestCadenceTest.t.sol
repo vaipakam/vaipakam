@@ -51,6 +51,20 @@ contract PeriodicInterestCadenceTest is SetupTest {
         NumeraireConfigFacet(address(diamond)).setPeriodicInterestEnabled(true);
     }
 
+    /// @dev Price BOTH legs at $1000. Tests that push the principal above the
+    ///      finer-cadence threshold historically repriced only the lending leg
+    ///      ($1000) while the collateral stayed at $1, which now trips the
+    ///      #998 S15 admission floor (collateral >= ~1.765x lending value on
+    ///      liquid ERC-20 both-legs offers) — the base 10x collateral is only
+    ///      10x in *tokens*, i.e. ~0.01x in value at a 1000:1 price gap.
+    ///      Pricing the collateral equal to lending keeps the base 10x
+    ///      collateral comfortably above the floor while leaving the principal
+    ///      numeraire (the cadence-threshold input) unchanged.
+    function _priceBothLegs1000() internal {
+        mockOraclePrice(mockERC20, 1_000 * 1e8, 8);
+        mockOraclePrice(mockCollateralERC20, 1_000 * 1e8, 8);
+    }
+
     function _baseLenderParams(
         uint256 amount,
         uint256 duration,
@@ -197,7 +211,7 @@ contract PeriodicInterestCadenceTest is SetupTest {
         _enableFeature();
         // Need above-threshold to bypass Filter 2 row 2 — set principal
         // to something the oracle will price above $100k.
-        mockOraclePrice(mockERC20, 1_000 * 1e8, 8); // $1000 per token
+        _priceBothLegs1000(); // $1000 per token, both legs (#998 S15 floor)
         vm.expectPartialRevert(IVaipakamErrors.CadenceNotAllowed.selector);
         _create(_baseLenderParams(1000 ether, 365, ANNUAL));
     }
@@ -223,13 +237,13 @@ contract PeriodicInterestCadenceTest is SetupTest {
         _enableFeature();
         // Price 1 token = $1000. Principal 1000 tokens = $1M, well above
         // the $100k default threshold.
-        mockOraclePrice(mockERC20, 1_000 * 1e8, 8);
+        _priceBothLegs1000();
         _create(_baseLenderParams(1000 ether, 60, MONTHLY));
     }
 
     function testFilter2Row2_AboveThreshold_QuarterlyAllowedOn180d() public {
         _enableFeature();
-        mockOraclePrice(mockERC20, 1_000 * 1e8, 8);
+        _priceBothLegs1000();
         _create(_baseLenderParams(1000 ether, 180, QUARTERLY));
     }
 
@@ -267,7 +281,7 @@ contract PeriodicInterestCadenceTest is SetupTest {
         _enableFeature();
         vm.prank(owner);
         ConfigFacet(address(diamond)).setMaxOfferDurationDays(2 * 365);
-        mockOraclePrice(mockERC20, 1_000 * 1e8, 8);
+        _priceBothLegs1000();
         _create(_baseLenderParams(1000 ether, 730, MONTHLY));
     }
 
@@ -275,7 +289,7 @@ contract PeriodicInterestCadenceTest is SetupTest {
         _enableFeature();
         vm.prank(owner);
         ConfigFacet(address(diamond)).setMaxOfferDurationDays(2 * 365);
-        mockOraclePrice(mockERC20, 1_000 * 1e8, 8);
+        _priceBothLegs1000();
         _create(_baseLenderParams(1000 ether, 730, ANNUAL));
     }
 
@@ -283,7 +297,7 @@ contract PeriodicInterestCadenceTest is SetupTest {
 
     function testCadenceSnapshottedOntoLoan() public {
         _enableFeature();
-        mockOraclePrice(mockERC20, 1_000 * 1e8, 8);
+        _priceBothLegs1000();
         uint256 offerId = _create(_baseLenderParams(1000 ether, 60, MONTHLY));
         uint256 startTs = block.timestamp;
         _signAndAcceptOffer(borrower, borrowerPk, offerId);
