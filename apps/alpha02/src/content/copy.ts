@@ -1355,6 +1355,14 @@ export const copy = {
     // setter), so a static string is accurate here.
     lateFee:
       'Late repayment adds 1% of the outstanding amount after day one, growing 0.5% per day, capped at 5%.',
+    // Help's fee FAQ (question + full answer). Centralised so the lazy
+    // live-value card and Help's static-default fallback render the same
+    // wording (UX2-008 — the live fee read pulls the Diamond ABI, so it
+    // lives in a lazy chunk with a default-value fallback; these strings
+    // are ABI-free and shared by both).
+    faqQuestion: 'What fees does Vaipakam charge?',
+    faqAnswer: (lifPct: string, yieldPct: string) =>
+      `Vaipakam charges a ${lifPct} loan initiation fee on the borrowed amount. Vaipakam keeps ${yieldPct} of the interest you earn. Late repayment adds 1% of the outstanding amount after day one, growing 0.5% per day, capped at 5%. Network gas is separate and goes to the blockchain, not to Vaipakam.`,
   },
 
   faucet: {
@@ -1478,8 +1486,12 @@ export const copy = {
       'We couldn’t load your activity right now. Please try again in a moment.',
     truncatedNote:
       'Showing recent activity only — the protocol feed is busy and older events may not be listed.',
+    // UX2-007 tail — states the page's recent-only scope without
+    // asserting that older events DO exist (which read as an unnecessary
+    // hedge for genuinely-new wallets). True whether the wallet is new
+    // or has history older than the recent scan window (#1200).
     truncatedEmpty:
-      'Nothing of yours in recent protocol activity. Older events may exist that we couldn’t scan right now.',
+      'Nothing of yours in recent protocol activity. This page lists recent activity only, so anything older isn’t shown here.',
     // UX-008 — one substantive sub-line per row.
     plusMore: (n: number) => ` · +${n} more in this transaction`,
     viewTx: 'View transaction',

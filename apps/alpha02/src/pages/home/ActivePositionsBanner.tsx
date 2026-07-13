@@ -11,17 +11,18 @@
 import { Link } from 'react-router-dom';
 import { ListChecks } from 'lucide-react';
 import { useMyLoans } from '../../data/hooks';
-import { useActiveChain } from '../../chain/useActiveChain';
 
+// Mounted only when a wallet is connected (Home gates on `isConnected`
+// so this lazy chunk — and the Diamond ABI it pulls — never loads on a
+// disconnected paint), so it only needs to gate on the active count.
 export default function ActivePositionsBanner() {
-  const { isConnected } = useActiveChain();
   const { data: loans } = useMyLoans();
 
   const activeCount = Array.isArray(loans)
     ? loans.filter((l) => l.status === 'active').length
     : 0;
 
-  if (!isConnected || activeCount === 0) return null;
+  if (activeCount === 0) return null;
 
   return (
     <Link to="/positions" className="banner banner-info" style={{ display: 'flex' }}>

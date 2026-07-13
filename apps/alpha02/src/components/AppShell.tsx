@@ -254,9 +254,22 @@ export function AppShell() {
 
         <main className="shell-main" id="main-content" tabIndex={-1} ref={mainRef}>
           <NetworkBanner />
-          <Suspense fallback={null}>
-            <SanctionsBanner />
-          </Suspense>
+          {/* UX2-008 — gate on connection, not just lazy render:
+              `React.lazy` fetches the SanctionsBanner chunk (→ the ~761
+              kB Diamond ABI) the moment it MOUNTS, so an unconditional
+              render would pull the ABI right after paint on a
+              disconnected Home/Help visit (Codex #1200). The sanctions
+              read is itself connection-gated (no connected wallet → no
+              address to screen → the banner returns null), so mounting
+              it only when connected keeps a disconnected first paint
+              ABI-free while a connected user — who needs the ABI for
+              reads anyway — loads it. The state-creating sanctions GATE
+              still runs at the contract level regardless of this UI. */}
+          {isConnected ? (
+            <Suspense fallback={null}>
+              <SanctionsBanner />
+            </Suspense>
+          ) : null}
           {/* Route-level crash containment: a page that throws during
               render becomes a recoverable card while the nav stays
               alive; navigating away — including to a different

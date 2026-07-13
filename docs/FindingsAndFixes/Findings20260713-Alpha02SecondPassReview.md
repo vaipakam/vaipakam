@@ -213,37 +213,54 @@ fires and the check no-ops. Verified present in the built
   **Status: ✅ FIXED (batch B CTA half + batch C tuning, 2026-07-13).**
   The empty feed (both the clean and the hedged/truncated variants) now
   offers "Borrow something" / "Lend something" forward CTAs (batch B).
-  Batch C then fixed the mis-diagnosed root cause: the hedged
-  "older events may exist" title wasn't a slow-network artefact but a
-  structural one — the protocol-wide 5×100 scan can't reach the feed
-  end whenever the testnet holds >500 total events, so `truncated`
-  stays true for ANY wallet, including a brand-new one with nothing.
-  The title is now gated on `myLoanIds.size > 0` (the wallet's loan set,
-  which unions the indexer leg so it survives close/transfer): a wallet
-  with no loans reads the clean "no activity yet", and only a wallet
-  that genuinely HAS loans older than the scan window keeps the hedge.
-  (Deep offers-only history remains the #1023 historical-participant
-  case.)
+  Batch C then addressed the hedged-copy tail. The mis-diagnosis was
+  that the hedge was a slow-network artefact; it's structural — the
+  protocol-wide 5×100 scan can't reach the feed end whenever the testnet
+  holds >500 total events, so `truncated` stays true for ANY wallet,
+  including a brand-new one with nothing. An initial attempt gated the
+  clean title on `myLoanIds.size > 0`, but Codex #1200 correctly showed
+  that makes a FALSE "no activity yet" claim for a returning wallet whose
+  only loans are closed/transferred and older than the scan window
+  (those aren't in `myLoanIds` once they age out of the indexer leg). So
+  the hedge stays for every `truncated` case (it is never false), and
+  the fix is in the WORDING instead: the hedged copy no longer asserts
+  "older events may exist that we couldn't scan" (which read as an
+  unnecessary hedge implying hidden history for genuinely-new wallets)
+  — it now states the page's recent-only scope ("This page lists recent
+  activity only, so anything older isn't shown here"), which is true
+  whether or not the wallet has history. Both variants keep the batch-B
+  Borrow/Lend forward CTAs. A definitive clean "no activity yet" for a
+  PROVEN-new wallet still needs the participant-history route (#1023).
 - **UX2-008** The ABI bundle (`abis-*.js`, ~761 KB uncompressed) loads
   on every surface's critical path. It's one shared chunk today;
   splitting the rarely-read facet ABIs (or deferring until first
   contract read) would trim first-paint bytes on marketing-ish routes
   like Home/Help. Enhancement candidate, low urgency. (M)
-  **Status: ✅ FIXED (batch C, 2026-07-13).** Two moves. (1) The combined
-  Diamond ABI is now its own Rollup chunk (`contract-abis`, matched in
-  `vite.config.ts:manualChunks`) — lifted out of the every-deploy entry
-  chunk, downloaded in parallel, and long-cached (ABIs change only on a
-  contract deploy, so the hash survives ordinary app deploys and every
-  in-app navigation reuses it). (2) It is lifted off the FIRST-paint
-  critical path: the three eager consumers that dragged it there —
-  Borrow/Lend (each imports `OfferFlow` → contracts → ABI), Home's
-  active-positions banner, and the shell's `SanctionsBanner` (the
-  on-chain sanctions read) — are now lazy. A disconnected Home/Help
-  paint pulls no ABI at all (verified: `contract-abis` is absent from
-  the built entry's `modulepreload` set; the entry now preloads only the
-  react/wallet vendors). Connected users, who need the ABI for reads
-  anyway, load the chunk on demand. The always-on sanctions *gate* still
-  runs at the contract level; only its advisory banner is deferred.
+  **Status: ✅ FIXED (batch C, 2026-07-13; hardened after Codex #1200).**
+  Two moves. (1) The combined Diamond ABI is now its own Rollup chunk
+  (`contract-abis`, matched in `vite.config.ts:manualChunks`) — lifted
+  out of the every-deploy entry chunk, downloaded in parallel, and
+  long-cached (ABIs change only on a contract deploy, so the hash
+  survives ordinary app deploys and every in-app navigation reuses it).
+  (2) It is lifted off the FIRST-paint critical path. The subtlety Codex
+  #1200 caught: `React.lazy` fetches its chunk the moment the component
+  *mounts*, so merely making the ABI consumers lazy wasn't enough — an
+  unconditionally-rendered lazy child still pulls the ABI right after
+  paint. Each consumer is therefore gated so it only mounts when the ABI
+  is actually wanted: **Borrow/Lend** are lazy routes (loaded on
+  navigation, which is when their contract flow is needed); **Home's
+  active-positions banner** and the shell's **SanctionsBanner** mount
+  only when a wallet is connected (a disconnected visitor has no
+  positions and no address to screen); **Help's fee FAQ** renders a
+  deploy-default fee card for disconnected visitors and mounts the
+  live-value card (its only ABI dependency) only when connected — the
+  receipt quotes live values at transaction time regardless. Verified at
+  **runtime**: a disconnected `/` and `/help` paint fetch NO
+  `contract-abis` request, while `/borrow` (a real action route) does;
+  the entry `modulepreload` set is ABI-free (only react/wallet vendors).
+  Connected users, who need the ABI for reads anyway, load it on demand.
+  The always-on sanctions *gate* still runs at the contract level; only
+  its advisory banner is deferred.
 
 ## Environment artifacts (recorded, NOT product findings)
 

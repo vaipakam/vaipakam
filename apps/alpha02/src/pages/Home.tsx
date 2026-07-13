@@ -48,16 +48,25 @@ const JOBS: Array<{
 ];
 
 export function Home() {
-  const { readChain } = useActiveChain();
+  const { isConnected, readChain } = useActiveChain();
 
   return (
     <div>
       <h1 className="page-title">{copy.home.title}</h1>
       <p className="page-lede">{copy.home.lede}</p>
 
-      <Suspense fallback={null}>
-        <ActivePositionsBanner />
-      </Suspense>
+      {/* UX2-008 — gate the lazy import on connection, not just render.
+          `React.lazy` fetches its chunk the moment the element MOUNTS, so
+          rendering the banner unconditionally would pull the ABI chunk on
+          every Home visit before the banner could return null for a
+          disconnected visitor (Codex #1200). A disconnected wallet has no
+          positions to nudge about, so mounting it only when connected
+          keeps a disconnected landing paint ABI-free. */}
+      {isConnected ? (
+        <Suspense fallback={null}>
+          <ActivePositionsBanner />
+        </Suspense>
+      ) : null}
 
       {/* Only advertise the faucet on a testnet whose bundle actually
           carries the mock assets — an unseeded testnet would land the
