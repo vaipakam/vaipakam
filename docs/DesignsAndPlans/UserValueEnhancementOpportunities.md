@@ -368,6 +368,11 @@ recycled VPFI) as a second recirculation outlet. Neither leg touches the open
 market, promises a return, or redeems anything — the protocol only ever re-uses
 tokens it received as fees.
 
+> **Cross-chain design:** the full five-chain architecture for this loop
+> (recycle-at-source, net-remit, offset-at-canonical) is designed in
+> [`VpfiCrossChainRecyclingDesign.md`](VpfiCrossChainRecyclingDesign.md)
+> (2026-07-13).
+
 **Recommendation R-1:** make the §9 reward-emissions offset the centerpiece —
 implement the distributor read path so recycled VPFI displaces fresh emission
 one-for-one. This simultaneously creates absorption AND extends the 69M pool's
