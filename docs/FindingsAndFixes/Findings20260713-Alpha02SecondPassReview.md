@@ -16,11 +16,11 @@ The committed sweep driver (`apps/alpha02/e2e/live/live-ux-sweep.mjs`)
 was extended for this pass from a single connected session to
 **sessions × passes** (committed with this review):
 
-| Session | Wallet | Chain | Passes |
+| Session | Wallet / profile | Chain | Passes |
 | --- | --- | --- | --- |
-| `main` (connected) | fresh throwaway, connected via ConnectKit | Base Sepolia | basic-desktop 1440px · basic-mobile 390px · advanced-desktop |
-| `disconnected` | fresh throwaway, **never authorized** (new driver `preAuthorized:false` — a real wallet reports no accounts until approved) | Base Sepolia | disconnected-desktop · disconnected-mobile |
-| `arb` (connected) | fresh throwaway | **Arbitrum Sepolia** | arb-desktop over the chain-scoped routes (/, /offers, /desk, /vault, /vpfi, /settings, /faucet) |
+| `main` (connected) | throwaway KEYS, connected via ConnectKit; **persistent role profile** (`lender` — pristine in this run's fresh container, but not guaranteed clean on re-runs) | Base Sepolia | basic-desktop 1440px · basic-mobile 390px · advanced-desktop |
+| `disconnected` | throwaway keys, **never authorized** (driver `preAuthorized:false` + `allowRequestAccounts:false` — a real wallet reports no accounts and rejects unprompted requests until approved) on a **throwaway profile** (`freshProfile:true`) | Base Sepolia | disconnected-desktop · disconnected-mobile |
+| `arb` (connected) | throwaway keys; persistent role profile (`newBorrower`, pristine this run) | **Arbitrum Sepolia** | arb-desktop over the chain-scoped routes (/, /offers, /desk, /vault, /vpfi, /settings, /faucet) |
 
 92 full-page screenshots + per-route console stream, network
 failures/heavy assets, landmark probes (h1, horizontal overflow,

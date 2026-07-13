@@ -330,7 +330,28 @@ export async function launch({
         return null;
       }
       case 'wallet_requestPermissions':
+        // Granting the eth_accounts permission IS the approval moment
+        // — same gate as eth_requestAccounts, or a page connecting via
+        // the permissions path would slip past a stay-disconnected
+        // session without a trace (Codex #1181 r2 P2).
+        if (!allowRequestAccounts) {
+          blockedRequests.push({
+            reason: 'wallet rpc wallet_requestPermissions (disconnected session)',
+            url: '(injected wallet)',
+          });
+          const permRejection = new Error(
+            'stay-disconnected driver session: permission request rejected',
+          );
+          permRejection.code = 4001; // EIP-1193 user rejected request
+          throw permRejection;
+        }
+        authorized = true;
+        return [{ parentCapability: 'eth_accounts' }];
       case 'wallet_revokePermissions':
+        // A real wallet's revoke makes subsequent eth_accounts report
+        // nothing — mirror that instead of leaving the session
+        // authorized after the page explicitly disconnected.
+        authorized = false;
         return [{ parentCapability: 'eth_accounts' }];
       case 'personal_sign': {
         // params: [hexMessage, address] — reject a request for any
