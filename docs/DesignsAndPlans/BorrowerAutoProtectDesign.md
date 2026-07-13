@@ -1,0 +1,90 @@
+# Borrower auto-protect — HF-band keeper action (E-4)
+
+**Status:** design for review before build (contracts + keeper + UI).
+Card: #1206. Umbrella: #1221. Related: `KeeperAuthorityMatrix.md`,
+swap-to-repay (§6), add-collateral (Phase 1 additions).
+
+## Problem
+
+Liquidation avoidance is manual: advisory warnings, best-effort
+auto-refinance, and a spec that tells borrowers to monitor. The worst user
+outcome on the platform (liquidation with its stacked charges) is
+preventable with pieces that already exist.
+
+## Design
+
+Per-loan, opt-in, borrower-configured automation:
+
+```
+AutoProtectConfig {
+  hfTriggerBand;      // e.g. act when HF < 1.25 (bounded: [1.05, 1.45])
+  hfTarget;           // restore to, e.g. 1.35 (must be > band + margin)
+  action;             // TOP_UP_COLLATERAL | PARTIAL_SWAP_REPAY
+  sourceCap;          // max cumulative vault balance spendable (per loan)
+  perActionCap;       // max per execution
+  cooldown;           // min seconds between executions (anti-thrash)
+  enabled;
+}
+```
+
+Execution — a new narrow keeper grant `KEEPER_ACTION_AUTO_PROTECT`
+(per-action opt-in, consistent with the ≤5-address whitelist model):
+
+- **TOP_UP_COLLATERAL:** move collateral asset from the borrower's *free*
+  (un-liened, un-locked) vault balance into the loan's collateral via the
+  existing add-collateral path. Same-asset only (existing rule).
+- **PARTIAL_SWAP_REPAY:** bounded partial repayment via the existing
+  swap-to-repay adapter failover, subject to the dedicated tighter
+  slippage knob and the strictly-positive-remaining-principal rule.
+
+Guards:
+
+- Only liquid-collateral loans (HF exists only there; illiquid loans have
+  no trigger — UI must say so).
+- Amount computed on-chain at execution: minimum needed to reach
+  `hfTarget`, clamped by `perActionCap` and remaining `sourceCap` —
+  the keeper supplies no discretionary numbers.
+- Encumbrance discipline: draws ONLY from free balance after liens, offer
+  locks, intent working-capital locks, and claim reservations
+  (`EncumbranceLifecycleMap.md` is the consult surface). Auto-protect
+  never creates a new lien class; it moves free balance into existing
+  structures.
+- Mutual exclusion: skips (no revert) while a preclose offset, sale
+  listing, or refinance is live on the loan — those flows freeze position
+  mutations.
+- Failure = skip + event, never revert-the-sweep: insufficient free
+  balance, cooldown, oracle unavailable, slippage exceeded → emit
+  `AutoProtectSkipped(loanId, reason)` and continue.
+
+Events: `AutoProtectConfigured/Disabled`, `AutoProtectExecuted(loanId,
+action, amountIn, hfBefore, hfAfter)`, `AutoProtectSkipped`.
+
+## Keeper + UI
+
+- Keeper pass: scan configured loans below band (reuse HF-watcher band
+  machinery), execute bounded batch; permissionless-safe because all
+  economics are on-chain-computed and configs are borrower-signed.
+- UI: configure from Loan Details; Dashboard badge "protected"; history of
+  executions; explicit copy that this is best-effort convenience, not a
+  guarantee (consistent with auto-refinance framing).
+
+## Why not auto-pull from wallet
+
+Wallet-pull requires standing allowances vulnerable to drainer UX and
+weakens the vault encumbrance model; free-vault-balance-only is the
+conservative v1. Wallet-sourced top-up can be a later opt-in following the
+refinance wallet-pull precedent.
+
+## Tests
+
+Band trigger math incl. clamps; encumbrance non-violation (attempt to
+draw liened balance fails); cooldown; mutual-exclusion skips; swap
+slippage fallback; keeper-grant enforcement; config bounds; events.
+Scenario: price drop → top-up → HF restored → no liquidation; sourceCap
+exhausted → liquidation proceeds normally (auto-protect must not block
+liquidation paths).
+
+## Spec edit
+
+ProjectDetailsREADME: new subsection under borrower collateral management;
+FunctionalSpecs domain doc updated in the implementing PR.
