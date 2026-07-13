@@ -185,11 +185,56 @@ button {
   background: var(--ok);
 }
 
-/* The chain name is supporting context — hide it on the narrowest
- * viewports where the wallet chip needs the room; the dot remains. */
-@media (max-width: 400px) {
+/* UX2-001 — the connected header must be STRUCTURALLY unable to widen
+ * the page: every route at 390px scrolled ~71px sideways because the
+ * brand cluster + network dot + wallet chip's intrinsic widths summed
+ * past the viewport (flex items refuse to shrink below content size
+ * by default). Let the chip shrink and ellipsize its label instead. */
+.connect-btn {
+  min-width: 0;
+  flex-shrink: 1;
+}
+.connect-addr,
+.connect-label {
+  display: inline-block;
+  vertical-align: bottom;
+  /* Flex items inside the inline-flex .btn — min-width:0 lets the
+   * label actually give way when the header squeezes the button;
+   * without it the ellipsis rules below never engage. */
+  min-width: 0;
+  max-width: 14ch;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* The chain name is supporting context — hide it wherever the wallet
+ * chip needs the room; the dot remains. 560px (not the previous
+ * 400px): with the name shown the header's intrinsic width still
+ * exceeded viewports in the 400–560px band even after the phone-tier
+ * trims below, so the old threshold only moved the overflow. */
+@media (max-width: 560px) {
   .net-chip-name {
     display: none;
+  }
+}
+
+/* Phone-tier header trims (UX2-001/006): the alpha badge and the
+ * wallet glyph are decoration at this width — dropping them buys the
+ * address its room, and the "Connect wallet" label no longer wraps
+ * onto two lines. */
+@media (max-width: 430px) {
+  .shell-topbar {
+    gap: var(--space-2);
+  }
+  .shell-topbar .brand-tag {
+    display: none;
+  }
+  .shell-topbar .connect-btn-icon {
+    display: none;
+  }
+  .shell-topbar .connect-btn {
+    padding-inline: 10px;
   }
 }
 

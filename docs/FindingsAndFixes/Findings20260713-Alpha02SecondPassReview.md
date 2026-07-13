@@ -95,9 +95,13 @@ day-ish), L (multi-day).
 
 ## Status ledger
 
-All findings below are **OPEN** as of this review. As fix batches
-land, add a row per batch here (same convention as the 2026-07-11
-doc) and a status line under each finding.
+As fix batches land, a row per batch is added here (same convention
+as the 2026-07-11 doc) plus a status line under each finding.
+Unmarked findings are OPEN.
+
+| Batch | Findings | Status |
+| --- | --- | --- |
+| A — P2s (2026-07-13) | UX2-001, UX2-002, UX2-006 | ✅ Fixed — structurally shrinkable header chip + phone-tier trims (badge/glyph) with a 390px fork-tier no-overflow spec; splash failure state (HTML-resident 20s timer → plain-words message + Reload); one-line Connect label rides the same header work |
 
 ---
 
@@ -120,6 +124,19 @@ and/or collapse the alpha badge; add a 390 px fork-tier assertion that
 `document.documentElement.scrollWidth === clientWidth` so the class of
 bug can't return silently.
 
+**Status: ✅ FIXED (batch A, 2026-07-13).** Two layers: (1) the header
+is now STRUCTURALLY unable to widen the page — the wallet chip is a
+shrinkable flex item (`min-width:0`) whose label ellipsizes; (2)
+phone-tier trims ≤430px hide the alpha badge + wallet glyph and
+tighten paddings, and the chain-name hide threshold moved 400→560px
+(the 400–560px band still overflowed with the name shown). Verified in
+a real browser against a production build at 390px connected:
+scrollWidth 461→390 on /, /desk, /vpfi with the address chip intact.
+Regression guard: `e2e/tests/20-mobile-header.spec.ts` asserts the
+whole-document no-sideways-scroll invariant connected AND disconnected
+(the fork fixture gained the live driver's `preAuthorized:false` so
+the disconnected state is testable at all).
+
 ### UX2-002 · Boot splash has no failure state — a dropped chunk strands users on "Starting up…" forever (P2 · S/M)
 
 One first-visit navigation in the sweep (basic-desktop `/settings`)
@@ -134,6 +151,15 @@ rescue this case. Fix direction: a plain-JS timer in the splash HTML
 itself (independent of the bundle) that after ~15 s swaps in "This is
 taking longer than it should — check your connection and reload" with
 a reload button.
+
+**Status: ✅ FIXED (batch A, 2026-07-13).** A plain-JS timer now lives
+in `index.html` itself — independent of every asset that can fail.
+After 20 s (far beyond the measured 0.7–2 s FCP) with `#boot-splash`
+still mounted, it hides the spinner and swaps in "This is taking
+longer than it should — check your connection and reload" plus a
+Reload button. A normal boot removes the splash long before the timer
+fires and the check no-ops. Verified present in the built
+`dist/index.html`.
 
 ## P3 — polish
 
@@ -157,6 +183,10 @@ a reload button.
 - **UX2-006** The header "Connect wallet" button wraps to two lines
   at 390 px (mobile, disconnected) — cosmetic, but it's the first
   button a new phone visitor sees. (S)
+  **Status: ✅ FIXED (batch A, 2026-07-13).** The label is now a nowrap
+  single token (same `.connect-label` treatment as the address chip)
+  and the phone tier drops the wallet glyph; spec 20's disconnected
+  case asserts the one-line render.
 - **UX2-007** With a fresh wallet whose indexer lookups time out, the
   Activity page shows the degraded-scan copy ("Older events may exist
   that we couldn't scan right now") rather than a clean "no activity
