@@ -362,8 +362,10 @@ nudge.
 
 **1.4 Centralize own-receipt invalidation with a next-block retry — as an
 ADDITIVE floor.** Add a standard post-receipt invalidation set (own
-positions, claimables, vault, activity, book) to the shared `diamond.ts`
-write hook so no future flow can forget it. **Additive, not a replacement**
+positions, claimables, vault, **rewards/VPFI** — `claimInteractionRewards`
+and the VPFI vault actions are Diamond writes whose roots §1.2 moves off
+the block-driven set (Codex #1224 r5) — activity, book) to the shared
+`diamond.ts` write hook so no future flow can forget it. **Additive, not a replacement**
 (Codex #1224 r2): existing flows keep their surface-specific invalidations —
 e.g. the desk flows' tape/candles/history/markets refreshes after a
 match/fill — because collapsing to only the central set would leave those
@@ -397,7 +399,12 @@ r4, incl. the P1):
   invalidation set on a `BroadcastChannel` (falling back to a
   `localStorage` ping), so every open tab of the app applies the same
   invalidation the acting tab does — no extra RPC, and a submit/cancel
-  from a second tab still lands "within a block" in this one.
+  from a second tab still lands "within a block" in this one. The
+  broadcast payload is the **union** of the central floor and the flow's
+  surface-specific keys (Codex #1224 r5): a rewards claim or desk fill in
+  tab 1 must dirty the same roots in tab 2 that it dirtied locally, or a
+  second tab sitting on Claims/VPFI/desk keeps stale state until
+  focus/net.
 - **Same wallet, another device (or a wallet path outside the app):** no
   receipt is observable here by construction. The L55–56 contract is
   **per-surface** — the acting device's tab satisfies it locally via its
@@ -587,8 +594,9 @@ The requested pipeline improvements are mostly **hardening what shipped with
 
 | Read | Why it stays | Cadence after this design |
 | --- | --- | --- |
-| Write-path: preflights, allowances, simulation, `previewMatch`, deadline `getBlock` | Submit-time safety (L52); must reflect exact pre-sign state | One-shot per user action (unchanged) |
-| Claims actionability (`ownerOf` + `getClaimable`) | L176–183 + owner directive | Signal-gated (1.5) |
+| Write-path: preflights, allowances, pre-sign simulation, deadline `getBlock` (incl. the pre-sign `previewMatch` a submit runs) | Submit-time safety (L52); must reflect exact pre-sign state | One-shot per user action (unchanged) |
+| Desk crossable-band `previewMatch` (`deskPreviewMatch` root) | Crossability is action-gating — a stale band shows an executable match that isn't (§4.1.2) | Tip-nudged while the band renders (NOT one-shot — Codex #1224 r5) |
+| Claims actionability (`ownerOf` + `getClaimable` + `getBorrowerLifRebate` on borrower-side rows — the full §4.1.5 probe set; a rebate-only row is actionable purely through the rebate getter) | L176–183 + owner directive | Signal-gated (1.5) |
 | Own-positions enumeration + hydration (batch views) | L51, L55–56, L342–356 | Signal-gated (1.1/1.2) |
 | Offer/loan detail fresh-deep-link fallback | L59–60 | On indexed-row miss (unchanged) |
 | `bookCatchUp` ghost-strip `eth_getLogs` | L357–361 | Block-driven, composed inside the shared `useActiveOffers` hook so ALL its consumers (book, OfferFlow, Rent, EarlyExit) get the stripped view (§4.1.2a — not book-page-only) |
