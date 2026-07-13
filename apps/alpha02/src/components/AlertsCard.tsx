@@ -153,6 +153,16 @@ export function AlertsCard() {
     }
   }
 
+  // UX-012 / Codex #1175 — abandon the issued (possibly expired, 10-min
+  // TTL) code and return to the Link step, so a stale code isn't a dead
+  // end: "send the code above" can't succeed once it's expired, and the
+  // start-link button is hidden while `link` is set.
+  function startOver() {
+    setLink(null);
+    setError(null);
+    setNotice(null);
+  }
+
   async function doUnlink() {
     if (!address || !prefs) return;
     setBusy(true);
@@ -229,6 +239,17 @@ export function AlertsCard() {
                   {busy
                     ? copy.alerts.testAlertSending
                     : copy.alerts.testAlertButton}
+                </button>
+                {/* UX-012 — recover from an expired code (10-min TTL):
+                    abandon it and return to the Link step for a fresh
+                    one, instead of being stuck showing a dead code. */}
+                <button
+                  type="button"
+                  className="btn btn-ghost"
+                  onClick={startOver}
+                  disabled={busy}
+                >
+                  {copy.alerts.startOver}
                 </button>
               </div>
               <span className="muted">{copy.alerts.testAlertNote}</span>

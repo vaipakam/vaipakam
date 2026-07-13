@@ -100,7 +100,7 @@ import {
   issueTelegramLinkCode,
   linkTelegram,
   OptOutStorageUnavailableError,
-  recordTestAlertSent,
+  reserveTestAlert,
   unlinkTelegram,
   upsertThresholds,
 } from './db';
@@ -572,10 +572,20 @@ async function handleTestTelegram(req: Request, env: Env): Promise<Response> {
     return json({ error: 'not-linked' }, 404, corsOrigin);
   }
   // Replay/loop protection: a valid signature stays usable for the whole
-  // 10-minute window, so gate on a per-wallet cooldown before spending a
-  // real Telegram send. The stamp is recorded only AFTER a successful
-  // send below, so a failed attempt doesn't lock the user out.
-  if (now - linked.lastTestAt < TEST_ALERT_COOLDOWN_SECONDS) {
+  // 10-minute window. Reserve the per-wallet slot with an ATOMIC
+  // compare-and-set BEFORE sending, so parallel replays of one body
+  // can't each read the same old timestamp and all fire — only the one
+  // request that flips the stamp wins; the rest get 429. Reserving
+  // before the send means a failed send still holds the slot (the user
+  // waits out the cooldown), the race-free trade the guarantee needs.
+  const reserved = await reserveTestAlert(
+    env.DB,
+    parsed.req.wallet,
+    parsed.req.chain_id,
+    now,
+    TEST_ALERT_COOLDOWN_SECONDS,
+  );
+  if (!reserved) {
     return json({ error: 'rate-limited' }, 429, corsOrigin);
   }
   // `sendMessage` returns whether Telegram accepted the send. A silent
@@ -590,7 +600,6 @@ async function handleTestTelegram(req: Request, env: Env): Promise<Response> {
   if (!ok) {
     return json({ error: 'send-failed' }, 502, corsOrigin);
   }
-  await recordTestAlertSent(env.DB, parsed.req.wallet, parsed.req.chain_id, now);
   return json({ ok: true }, 200, corsOrigin);
 }
 

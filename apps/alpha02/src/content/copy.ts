@@ -154,10 +154,16 @@ export const copy = {
     testAlertSending: 'Sending your test alert…',
     testAlertSent:
       'Test alert sent — check Telegram. Your alerts for this wallet are now on.',
+    // UX-012 / Codex #1175 — the not-linked message points at BOTH the
+    // send-the-code path (if still valid) and the start-over path (codes
+    // expire after 10 minutes, so a stale code is otherwise a dead end).
     testAlertNotLinked:
-      'We couldn’t find your Telegram chat yet. Open the bot and send it the code above, then tap “Send a test alert” again.',
+      'We couldn’t find your Telegram chat yet. Open the bot and send it the code above, then tap “Send a test alert” again. If the code has expired, tap “Start over” for a fresh one.',
     testAlertError:
       'Couldn’t send the test alert just now. Please try again in a moment.',
+    // UX-012 — abandon the current (possibly expired) code and return to
+    // the Link step to request a new one.
+    startOver: 'Start over',
     linked: 'Telegram linked — alerts for this wallet go to your chat.',
     unlink: 'Unlink',
     // UX-043 — a clear labelled action, not an ambiguous centered link.

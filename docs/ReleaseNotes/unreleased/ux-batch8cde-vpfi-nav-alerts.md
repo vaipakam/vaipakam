@@ -12,9 +12,13 @@
   The new `POST /telegram/test` endpoint is signature-gated with its own
   distinct message so a captured signature can't cross actions and a
   spoofed-Origin caller can't spam a linked wallet's chat, and it enforces a
-  60-second per-wallet cooldown (D1 migration `0034`, rollout-tolerant of the
-  column being absent) so a replayed body or a buggy retry loop can't loop
-  real sends within the 10-minute signature window. The test message is
+  60-second per-wallet cooldown via an **atomic compare-and-set** (D1
+  migration `0034`, rollout-tolerant of the column being absent) reserved
+  before the send, so even parallel replays of one signed body can't each
+  fire — only one request wins the slot within the 10-minute signature
+  window. If the handshake code expires (10-min TTL) before the user
+  completes the bot step, the card offers a **"Start over"** action for a
+  fresh code instead of leaving a dead code on screen. The test message is
   localized across all ten Worker locales. **Note:** the agent Worker must be
   redeployed and migration 0034 applied for the endpoint to enforce the
   cooldown live.
