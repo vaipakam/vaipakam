@@ -17,7 +17,7 @@ spec's placement rule), one row per reward day in the user's window:
 | --- | --- |
 | Day (UTC) | derived |
 | Earned (pre-cap) | the §4 formula, same math as `claimInteractionRewards`: per side, `½ × dailyPool[D] × (userContribution / globalDenominator_side[D])` — user contribution from `getUserRewardEntries`, global denominator from the broadcast (division by the denominator, never multiplication) |
-| Cap trim | recompute `min(raw, cap)`; show "capped −X" chip when trimmed |
+| Cap trim | `min(raw, cap)` where `cap` is the **finalization-time threshold** (`dayCapThreshold18`), NOT a live-config recompute — the spec prices the cap when the day finalizes, so a later cap-ratio or ETH-price change must not re-trim history. Small contract prerequisite (Codex round-10): the stored per-day threshold isn't publicly readable today (`getKnownGlobalInterestNumeraire18` returns only denominators + isSet) — expose it via a getter or include it in the known-global broadcast event before this column ships |
 | State | one of: `loan open` (close-gated) / `awaiting finalization` / `awaiting broadcast` (known-global-set flag unset) / `awaiting funding` (mirror chains only: broadcast landed but the day's VPFI budget remittance hasn't — §4a decouples them, and a claim against an unfunded mirror reverts on empty balance) / `claimable` / `claimed` |
 
 Header widgets:

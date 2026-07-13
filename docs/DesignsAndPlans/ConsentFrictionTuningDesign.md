@@ -22,8 +22,10 @@ resets on PLUS exact identities (Codex round-6: type-level hashing would
 let a reputable ERC-20 pair and a honeypot pair with the same shape
 share one cached acknowledgement): interest mode, partial-repay flag,
 **exact lending / collateral / prepay asset addresses (and token IDs
-where relevant)**, amounts-band, risk tier, **terms version, and chain
-id**:
+where relevant)**, **exact amounts** (principal, collateral, and the
+derived fee/exposure figures the disclosure renders — a band would let
+one acknowledgement carry across offers whose displayed numbers changed;
+Codex round-10), risk tier, **terms version, and chain id**:
 
 - Same wallet, same session, identical disclosure hash → the checkbox
   pre-fills with a visible "acknowledged earlier this session — review"

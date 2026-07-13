@@ -21,10 +21,10 @@ discipline), populated from events already ingested by `chainIndexer.ts`:
 | --- | --- |
 | offer matched / partially filled | "Your offer #N matched (X of Y)" |
 | loan initiated | lender + borrower rows |
-| maturity approaching | derived time-based rows (T-7d, T-1d) computed by a cron pass over active loans — covers **illiquid loans too** (calendar events need no oracle) |
+| maturity approaching | derived time-based rows (T-7d, T-1d) computed by a cron pass over active loans — covers **illiquid loans too** (calendar events need no oracle). Recipients resolved to the **current position-NFT holders at materialization time** (`ownerOf`), never the original loan parties — positions are transferable, and original-party rows would miss secondary buyers and ping sellers who exited (Codex round-10; same ownership discipline as claim rows) |
 | grace entered / grace ending | both parties |
 | partial repay / periodic-interest settled | lender |
-| claim available (settlement, rewards day finalized) | claimant |
+| claim available (settlement; rewards — on mirror chains only once the day's VPFI budget remittance has actually landed, not at finalization: §4a decouples them and an unfunded mirror claim reverts, matching E-3's `awaiting funding` state) | claimant |
 | loan settled / defaulted / liquidated | both parties |
 | HF band change (liquid only) | borrower (reuses keeper band machinery's thresholds) |
 

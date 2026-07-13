@@ -162,8 +162,17 @@ The distributor (R-1, #1217) funds day `D`'s pool as:
 
 ```
 totalRecycledConsumed[D] = Base's own consumption + Σ_mirrors recycleConsume[c][D]
-freshMint[D]             = dailyPool[D] − totalRecycledConsumed[D]
+freshMint[D]             = dailyPool[D] − min(totalRecycledConsumed[D], dailyPool[D])
 ```
+
+**Rounding-dust cap (Codex round-10):** the per-chain budgets `B[c][D]`
+are deliberately rounded UP per chain/side
+(`LibInteractionRewards.chainRewardBudgetForDay`), so on a fully-recycled
+multi-chain day `Σ B[c]` can exceed the nominal `dailyPool[D]` by dust.
+The fresh-mint offset therefore caps at the pool (saturating at zero
+fresh mint) — the dust overfund is funded from recycled balance like the
+rest of the consumption and tracked as a separate `recycledDust`
+counter, and the invariant below is stated against the capped value.
 
 Invariants (test + transparency surface):
 
@@ -174,7 +183,10 @@ Invariants (test + transparency surface):
   decision that makes "recycling extends the runway" literally true, and it
   needs an explicit TokenomicsTechSpec §4/§9 statement.
 - per chain: `consumedCumulative ≤ reportedCumulative`.
-- per day: `freshMint[D] + totalRecycledConsumed[D] == dailyPool[D]`.
+- per day: `freshMint[D] + min(totalRecycledConsumed[D], dailyPool[D])
+  == dailyPool[D]` — with any excess of `totalRecycledConsumed` over the
+  pool equal to `recycledDust[D]` (the round-up overfund, bounded by
+  chains × sides × 1 wei-scale unit).
 - The R-2 (#1218) metric falls out directly:
   `netEmission[D] = freshMint[D]`.
 
