@@ -180,11 +180,25 @@ debit its recycle bucket unilaterally**, or §3.3's
 drifts and Base can broadcast a `recycleConsume` the mirror can no longer
 fund (Codex round-1 finding). So keeper allocation flows through the same
 single authority as claim funding: at finalization Base computes an
-optional `keeperAllocate[c][D]` (a governance-bounded bps of that chain's
-reported recycle inflow), carries it in the **same broadcast** as
+optional `keeperAllocate[c][D]`, carries it in the **same broadcast** as
 `recycleConsume`, and counts it into `consumedCumulative[c]`. The mirror
 debits its bucket only on arrival of that instruction. One authority, one
 message, no local-draw drift.
+
+**Claims fund first; keeper takes only the residual** (Codex round-2 P1:
+an uncapped bps-of-inflow allocation could instruct a total debit above
+the bucket). The combined instruction is computed sequentially against
+the same availability:
+
+```
+recycleConsume[c][D] = min(B[c][D],                    availRecycled[c])
+keeperAllocate[c][D] = min(bps × reportedInflow[c][D], availRecycled[c] − recycleConsume[c][D])
+```
+
+so `recycleConsume + keeperAllocate ≤ availRecycled` by construction and
+the `consumedCumulative ≤ reportedCumulative` invariant is preserved. A
+day whose claims exhaust the bucket simply funds no keeper allocation
+that day.
 
 ### 3.6 Surplus handling (the only place tokens still travel)
 
@@ -196,8 +210,13 @@ Disposition, in order of preference:
 2. **Batched repatriation to Base** — operator/keeper-triggered CCIP send
    from the mirror's recycle bucket to Base's reward-emissions budget,
    reusing the #776 remittance machinery in reverse (bounded, quoted,
-   retriable, lane-limit aware). Expected to be rare: only structurally
-   quiet chains or chain sunsets.
+   retriable, lane-limit aware). Like every other bucket debit, the
+   repatriation is **Base-authorized and Base-ledgered**: the operator
+   triggers it on Base, which records the amount into
+   `consumedCumulative[c]` *before* instructing the mirror send — so
+   `availRecycled` never overstates a bucket that has been drained by a
+   reverse remittance (Codex round-2 finding). Expected to be rare: only
+   structurally quiet chains or chain sunsets.
 3. Local keeper-budget credit (§3.5) where that budget is the binding need.
 
 Never: market operations, LP seeding from this bucket, or any automatic

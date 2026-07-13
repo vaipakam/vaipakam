@@ -64,7 +64,13 @@ The intent registration carries the full typed risk-and-terms
 acknowledgement (commit-reveal terms anchor, as progressive risk-access
 already does) so a solver fill does not need a fresh borrower signature.
 Any disclosure-driving parameter edit re-requires the ack (consistent with
-the platform consent rule).
+the platform consent rule). **The acknowledged terms version is part of
+intent validity** (Codex round-2): the intent stores the anchor/terms
+version it was signed under, and a fill is rejected whenever the live
+version differs — a governance terms bump suspends every open intent
+until its owner re-acknowledges (same re-lock semantics progressive
+risk-access applies to standing consents). Suspension never cancels the
+intent or releases its lock by itself; the owner re-acks or cancels.
 
 ## Out of scope (v1)
 

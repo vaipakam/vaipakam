@@ -44,10 +44,15 @@ seller-chosen (or offer-matched); the formula above defines the **par
 reference** the UI displays ("this position's fair value today"), and the
 minimum the protocol accounts correctly — it does not price-control.
 
-Actually binding rule: the protocol routes `salePrice` seller-ward in
-full (no treasury cut at sale) and tracks the buyer as the yield-entitled
-holder who bears the one terminal yield fee. Whether the parties transact
-above or below par is theirs.
+Actually binding rule: `salePrice` is **gross**. There is no treasury cut
+at sale. On a **matched** fill (E-8 sale vehicles), the seller-paid
+matcher share (`saleMatcherFeeBps` of sale price, per
+`SaleVehicleMatchabilityDesign.md`) is carved out of the seller's
+proceeds; on a **direct accept** there is no matcher and the seller
+receives the full gross. In both cases the buyer pays `salePrice`, the
+buyer is tracked as the yield-entitled holder, and the one yield fee is
+collected at terminal. Whether the parties transact above or below par is
+theirs.
 
 ## Interactions
 

@@ -20,8 +20,9 @@ AutoProtectConfig {
   hfTriggerBand;      // e.g. act when HF < 1.25 (bounded: [1.05, 1.45])
   hfTarget;           // restore to, e.g. 1.35 (must be > band + margin)
   action;             // TOP_UP_COLLATERAL | PARTIAL_SWAP_REPAY
-  sourceCap;          // max cumulative vault balance spendable (per loan)
-  perActionCap;       // max per execution
+  sourceCap;          // max cumulative amount spendable (per loan), denominated in the bound source asset
+  perActionCap;       // max per execution, same denomination
+  maxSlippageBps;     // PARTIAL_SWAP_REPAY only; bounded by the protocol swap-to-repay knob
   cooldown;           // min seconds between executions (anti-thrash)
   enabled;
 }
@@ -34,8 +35,16 @@ Execution — a new narrow keeper grant `KEEPER_ACTION_AUTO_PROTECT`
   (un-liened, un-locked) vault balance into the loan's collateral via the
   existing add-collateral path. Same-asset only (existing rule).
 - **PARTIAL_SWAP_REPAY:** bounded partial repayment via the existing
-  swap-to-repay adapter failover, subject to the dedicated tighter
-  slippage knob and the strictly-positive-remaining-principal rule.
+  swap-to-repay adapter failover, subject to the config's
+  `maxSlippageBps` (itself bounded by the dedicated protocol knob) and
+  the strictly-positive-remaining-principal rule.
+
+**The source asset is BOUND by the config + loan structure, never
+keeper-chosen** (Codex round-2): TOP_UP spends only the loan's collateral
+asset from free vault balance; PARTIAL_SWAP_REPAY swaps only the loan's
+own collateral through the governed swap-to-repay route. The keeper picks
+no asset, no route, and no price — every degree of freedom is fixed by
+the borrower's signed config or the protocol's governed adapter list.
 
 Guards:
 

@@ -27,17 +27,28 @@ claimBatch(ClaimRequest[] requests)   // bounded: MAX_BATCH (e.g. 20)
   entry points (`claimAsLender`, `claimAsBorrower`,
   `claimInteractionRewards` — the last at most once per batch, respecting
   its own bounded catch-up cursor).
-- **Per-item isolation requires no-revert internal variants** (Codex
-  round-1 finding: an internal Solidity revert can't be caught like an
-  external `try/catch` and would unwind the whole batch). Refactor each
-  claim path into `_tryClaimX(...) returns (bool ok, bytes32 reason)`
-  that checks every precondition **before** mutating state and returns
-  instead of reverting; the existing single entry points become
-  `require(_tryClaimX(...))`-style wrappers (identical behaviour,
-  selectors unchanged), and the batch consumes the try-variants directly:
-  a failing item records `BatchClaimItemSkipped(loanId, kind, reason)`
-  and continues — one stale row must not revert 19 valid claims. (The
-  frontend pre-filters against live claimability, but races happen.)
+- **Per-item isolation — two layers** (Codex rounds 1–2):
+  1. *Precondition failures:* refactor each claim path into
+     `_tryClaimX(...) returns (bool ok, bytes32 reason)` that checks
+     every precondition **before** mutating state and returns instead of
+     reverting; the existing single entry points become
+     `require(_tryClaimX(...))`-style wrappers (identical behaviour,
+     selectors unchanged).
+  2. *Post-precondition reverts* — a claim can pass every check and
+     still revert **inside the payout transfer** (blacklisted or paused
+     token; the weird-ERC20 matrix explicitly includes claims in that
+     class). Internal calls can't contain that, so each batch item
+     executes through a thin `onlySelf` **external** self-call wrapped
+     in `try/catch`: a transfer revert unwinds only that item's state
+     (the claim stays unclaimed and individually retryable later) while
+     the batch continues. Guard layout: the reentrancy guard sits on
+     `claimBatch` only; the `onlySelf` item function is exempted from
+     the facet guard and relies on the batch-level guard (mind the #951
+     collision class).
+  Either way a failing item records
+  `BatchClaimItemSkipped(loanId, kind, reason)` and continues — one
+  stale row must not revert 19 valid claims. (The frontend pre-filters
+  against live claimability, but races happen.)
 - Reentrancy: the facet-level guard wraps the whole batch; internal claim
   paths must be callable under the already-entered guard (same pattern as
   other internal-call flows through the Diamond; verify against the #951
@@ -66,12 +77,18 @@ about.
 
 ### Keeper-swept claims (optional follow-up, separate flip)
 
-Opt-in per-user flag + `KEEPER_ACTION_SWEEP_CLAIMS` grant: keeper executes
-`claimBatch` on the user's behalf, destination locked to the user's vault,
-fee bounded in bps and skimmed from swept value. Off by default; ships only
-after the base batch is proven. (Value lands in the vault, not the wallet —
-sweeping to wallets would be an automatic push, which the distribution
-model forbids.)
+Opt-in per-user flag + `KEEPER_ACTION_SWEEP_CLAIMS` grant. The base
+`claimBatch` validates the **caller** as NFT holder and
+`claimInteractionRewards` is caller-scoped, so a keeper calling it would
+claim nothing (or its own rewards) — the sweep needs a dedicated
+user-bound entry (Codex round-2): `claimBatchFor(user, requests)` that
+(a) requires the user's standing sweep grant to the calling keeper,
+(b) validates NFT holdership and reward entitlement against `user`, not
+the caller, and (c) locks the destination to the *user's* vault, with
+the keeper fee bounded in bps and skimmed from swept value. Off by
+default; ships only after the base batch is proven. (Value lands in the
+vault, not the wallet — sweeping to wallets would be an automatic push,
+which the distribution model forbids.)
 
 ## Tests
 

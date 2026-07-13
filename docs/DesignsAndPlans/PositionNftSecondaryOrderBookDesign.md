@@ -23,9 +23,16 @@ plus a bid side:
   rate, collateral asset + live HF, borrower payment history flags.
 - **Bids:** a buyer posts a standing bid bound to a specific position
   (`positionTokenId`, max price, expiry, funded from vault working
-  capital — the lender-intent lock mechanism reused). Seller accepts →
-  routes through the same sale-vehicle settlement. Collection-level or
-  criteria bids (e.g. "any USDC position ≥8% APR, ≤90d left") are v2.
+  capital — the lender-intent lock mechanism reused) **plus buyer-signed
+  live floors**: minimum outstanding principal and minimum collateral
+  amount, checked live at acceptance exactly as listings check theirs
+  (Codex round-2: without floors, a partial repayment or collateral drop
+  between bid and acceptance would fill the buyer at a worse position
+  than priced). A floor breach marks the bid stale — same event-driven
+  staleness flag machinery as listings; the buyer re-signs or the bid
+  expires. Seller accepts → routes through the same sale-vehicle
+  settlement. Collection-level or criteria bids (e.g. "any USDC position
+  ≥8% APR, ≤90d left") are v2.
 - **Borrower positions:** NOT listed in v1. Borrower-side transfer is the
   obligation-transfer flow (Preclose Option 2) with its lender-protection
   shortfall rules — a different machine; forcing it into a book UI

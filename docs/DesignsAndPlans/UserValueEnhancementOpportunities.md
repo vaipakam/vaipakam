@@ -48,7 +48,7 @@ free, and the owner has confirmed these stay:
 | --- | --- | --- |
 | Borrower | Standard early repayment (Preclose Option 1) | pays the **full original-term interest** — prepaying saves nothing on interest |
 | Borrower | Loan transfer / offset (Preclose Options 2–3) | pays accrued interest **plus a shortfall top-up** so the original lender is never worse off |
-| Lender | Sell position (Early-Withdrawal Option 1) | forfeits accrued interest |
+| Lender | Sell position (Early-Withdrawal Option 1) | forfeits accrued interest — *current spec rule; E-7 (#1209) proposes replacing it with fair-value transfer pricing (buyer pays for accrued yield, treasury fee once at terminal), owner decision pending* |
 | Lender | Sale-vehicle path (Option 2) | no fresh LIF, but all-or-nothing and lender bears pricing |
 
 An earlier draft of this review suggested softening the borrower's
@@ -79,7 +79,9 @@ mutation:
 **Recommendation A-1 (accepted direction):** improve exit *liquidity* only on
 the transfer paths — price accrued interest into the lender position sale
 (buyer compensates seller for accrued yield instead of the seller forfeiting it
-to treasury) and make sale-vehicle listings matchable/partial-fillable. Both
+to treasury) and make sale-vehicle listings matchable (all-or-nothing in v1 —
+true partial fills would fractionalize the position NFT and are deferred to an
+uncommitted fractionalization design; see `SaleVehicleMatchabilityDesign.md`). Both
 changes move value between the *exiting* and *entering* party; the committed
 counterparty's terms are untouched. This needs an owner economics decision
 (the accrued-interest-forfeiture rule is currently specified) and a
@@ -223,7 +225,7 @@ the decision surface each one needs before code:
 | # | Item | What it is | Needs |
 | --- | --- | --- | --- |
 | E-7 | **Accrued interest priced into lender position sale** | Buyer pays seller for accrued yield instead of the seller forfeiting it to treasury. Terms of the loan untouched. | Owner economics decision + spec edit |
-| E-8 | **Matchable / partial-fillable sale-vehicle listings** | Let lender-sale listings sit in the Range-Order book instead of direct-accept-only, all-or-nothing. | Design doc (interacts with `LenderSaleVehicleRedesign.md`) |
+| E-8 | **Matchable sale-vehicle listings (AON in v1)** | Let lender-sale listings sit in the Range-Order book instead of direct-accept-only; fills stay all-or-nothing in v1 (tranching deferred to a future fractionalization design). | Design doc (interacts with `LenderSaleVehicleRedesign.md`) |
 | E-9 | **Native secondary order book for position NFTs** | In-app listing/trading of position NFTs (Claim Center is already secondary-holder-aware) instead of relying on OpenSea. | Larger; scope after E-7/E-8 |
 
 ### 3.4 UX / surface polish
