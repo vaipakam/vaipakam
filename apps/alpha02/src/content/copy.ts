@@ -273,6 +273,10 @@ export const copy = {
     unsupportedNetwork: (chainNames: string) =>
       `This network isn’t supported. Vaipakam is available on ${chainNames}. Switch networks to continue.`,
     switchNetwork: 'Switch network',
+    // UX2-005 — named-target variant for surfaces that know exactly
+    // which chain has what the user came for (faucet mocks, VPFI
+    // deposits): offer the remedy, don't just describe it.
+    switchToChain: (chain: string) => `Switch to ${chain}`,
   },
 
   checks: {
@@ -1466,6 +1470,10 @@ export const copy = {
     title: 'Activity',
     lede: 'Everything your wallet has done on Vaipakam, newest first.',
     empty: 'No activity yet. It appears here as you use Vaipakam.',
+    // UX2-007 — the empty feed hands over the first move instead of
+    // pointing nowhere (the UX-023 forward-CTA pattern).
+    emptyCtaBorrow: 'Borrow something',
+    emptyCtaLend: 'Lend something',
     unavailable:
       'We couldn’t load your activity right now. Please try again in a moment.',
     truncatedNote:

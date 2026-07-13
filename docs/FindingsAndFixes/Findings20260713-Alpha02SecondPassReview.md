@@ -102,6 +102,7 @@ Unmarked findings are OPEN.
 | Batch | Findings | Status |
 | --- | --- | --- |
 | A — P2s (2026-07-13) | UX2-001, UX2-002, UX2-006 | ✅ Fixed — structurally shrinkable header chip + phone-tier trims (badge/glyph) with a 390px fork-tier no-overflow spec; splash failure state (HTML-resident 20s timer → plain-words message + Reload); one-line Connect label rides the same header work |
+| B — P3 polish (2026-07-13) | UX2-003, UX2-004, UX2-005, UX2-007 | ✅ Fixed — Settings More cards renamed to the nav names; the discount consent is a real switch (track + sliding thumb, focus ring, reduced-motion); faucet + VPFI dead-ends gain one-click "Switch to <chain>" (mocks-bearing / canonical-VPFI chain resolved from the deployments bundle); Activity's empty feed hands over Borrow/Lend CTAs |
 
 ---
 
@@ -168,18 +169,32 @@ fires and the check no-ops. Verified present in the built
   discounts" — while the nav and page titles now say "Claims",
   "My vault", "VPFI discounts" (UX-034 missed these three card
   labels). (S)
+  **Status: ✅ FIXED (batch B, 2026-07-13).** All three More-card
+  titles now match the nav names; the descriptive sub-lines stay.
 - **UX2-004** The VPFI "Use my vaulted VPFI for fee discounts"
   consent renders as a bare native checkbox at the row's far edge;
   the batch-8c release note describes a labelled toggle. Either style
   it as an actual switch or keep the checkbox and align the wording —
   as shipped it reads slightly under-designed next to the rest of the
   card. (S)
+  **Status: ✅ FIXED (batch B, 2026-07-13).** `.toggle-input` is now a
+  real switch — 40×22 track with a sliding thumb, brand fill when
+  checked, :focus-visible ring, reduced-motion honoured — so the
+  control finally matches the toggle-row pattern (and the release-note
+  wording that promised it).
 - **UX2-005** The Arb Sepolia dead-ends name the remedy but don't
   offer it: the faucet empty state says "Try a different test
   network" and the VPFI banner says deposits aren't available here,
   yet neither offers the one-click "Switch to Base Sepolia" action the
   app already knows how to render (the unsupported-network banner has
   one, and Help promises it). (S)
+  **Status: ✅ FIXED (batch B, 2026-07-13).** Both dead-ends now offer
+  the switch when a wallet is connected: the faucet's unavailable
+  state targets the first supported testnet whose deployment carries
+  `testnetMocks`, and the VPFI banner targets the `isCanonicalVPFI`
+  chain (only on the positive not-registered verdict — a failed CHECK
+  doesn't claim another chain is the answer). Both resolve the target
+  from the deployments bundle, not a hardcoded chain id.
 - **UX2-006** The header "Connect wallet" button wraps to two lines
   at 390 px (mobile, disconnected) — cosmetic, but it's the first
   button a new phone visitor sees. (S)
@@ -194,6 +209,12 @@ fires and the check no-ops. Verified present in the built
   unnecessarily and offers no forward CTA (the UX-023 pattern:
   "make your first move → Borrow / Lend"). Worth revisiting alongside
   the indexer-timeout tuning for slow networks. (S)
+  **Status: ✅ FIXED (batch B, 2026-07-13) — CTA half.** The empty feed
+  (both the clean and the hedged/truncated variants) now offers
+  "Borrow something" / "Lend something" forward CTAs. The copy split
+  already existed (`empty` vs `truncatedEmpty` — the sweep simply hit
+  the degraded branch under relay latency); the indexer-timeout tuning
+  stays open as a perf follow-up alongside UX2-008.
 - **UX2-008** The ABI bundle (`abis-*.js`, ~761 KB uncompressed) loads
   on every surface's critical path. It's one shared chunk today;
   splitting the rarely-read facet ABIs (or deferring until first

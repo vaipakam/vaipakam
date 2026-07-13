@@ -19,8 +19,10 @@ import { useModal } from 'connectkit';
 import { usePublicClient, useWalletClient } from 'wagmi';
 import { useQueryClient } from '@tanstack/react-query';
 import { encodeFunctionData, parseUnits } from 'viem';
+import { getDeployment } from '@vaipakam/contracts/deployments';
 import { copy } from '../content/copy';
 import { useActiveChain } from '../chain/useActiveChain';
+import { SUPPORTED_CHAINS } from '../chain/chains';
 import { assertWalletNotSanctionedLive, useSanctionsCheck } from '../data/sanctions';
 import { assertErc20BalanceLive } from '../contracts/preflights';
 import { readVpfiTokenLive, useVpfi, useVpfiTierTable, VPFI_DECIMALS, clearVpfiTokenCache } from '../data/vpfi';
@@ -41,8 +43,15 @@ import { ReviewReceipt, type ReceiptData } from '../components/ReviewReceipt';
 type VaultAction = 'deposit' | 'withdraw';
 
 export function Vpfi() {
-  const { readChain, address, isConnected, onSupportedChain, walletChain } =
-    useActiveChain();
+  const {
+    readChain,
+    address,
+    isConnected,
+    onSupportedChain,
+    walletChain,
+    switchToSupported,
+    switchPending,
+  } = useActiveChain();
   const { setOpen } = useModal();
   const vpfi = useVpfi();
   const { write } = useDiamondWrite();
@@ -379,6 +388,18 @@ export function Vpfi() {
     const body = vpfi.isError
       ? `We couldn’t check VPFI availability on ${readChain.name} right now. Please try again in a moment.`
       : copy.vpfi.notOnThisChain(readChain.name);
+    // UX2-005 — offer the remedy, not just the diagnosis: VPFI's home
+    // chain is statically known (the canonical-VPFI deployment), so a
+    // connected user gets the one-click switch instead of a dead end.
+    // Only on the positive not-registered verdict — a failed CHECK
+    // must not claim another chain is the answer.
+    const canonicalChain = vpfi.isError
+      ? undefined
+      : SUPPORTED_CHAINS.find(
+          (c) =>
+            c.chainId !== readChain.chainId &&
+            getDeployment(c.chainId)?.isCanonicalVPFI,
+        );
     return (
       <div className="stack">
         <div>
@@ -387,7 +408,22 @@ export function Vpfi() {
         </div>
         <div className="banner banner-info">
           <Coins aria-hidden />
-          <span className="banner-body">{body}</span>
+          <div className="banner-body">
+            {body}
+            {isConnected && canonicalChain ? (
+              <div>
+                <button
+                  type="button"
+                  className="btn btn-secondary btn-sm"
+                  style={{ marginTop: 8 }}
+                  disabled={switchPending}
+                  onClick={() => switchToSupported(canonicalChain.chainId)}
+                >
+                  {copy.wallet.switchToChain(canonicalChain.name)}
+                </button>
+              </div>
+            ) : null}
+          </div>
         </div>
         {education}
       </div>

@@ -269,6 +269,22 @@ export function Activity() {
                 ? copy.activity.truncatedEmpty
                 : copy.activity.empty
             }
+            action={
+              /* UX2-007 — a brand-new wallet's empty feed pointed
+                 nowhere; hand over the first move instead (the UX-023
+                 forward-CTA pattern). The degraded (truncated) state
+                 keeps its hedged title but gets the same forward path
+                 — either way, the answer to "no activity" is to do
+                 something. */
+              <div className="cluster" style={{ justifyContent: 'center' }}>
+                <Link to="/borrow" className="btn btn-secondary">
+                  {copy.activity.emptyCtaBorrow}
+                </Link>
+                <Link to="/lend" className="btn btn-secondary">
+                  {copy.activity.emptyCtaLend}
+                </Link>
+              </div>
+            }
           />
         </>
       ) : (
