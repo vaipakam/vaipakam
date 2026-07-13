@@ -860,11 +860,23 @@ contract SignedOfferMatcherTest is SetupTest {
         OfferMatchFacet(address(diamond)).matchSignedOffer(o, sig, lenderOfferId, dust);
     }
 
-    /// @notice The borrower floor is included in `previewMatch`'s HF/LTV gate,
-    ///         not applied after it. A lender counterparty requiring only 1.0x
-    ///         (HF-unsafe on its own) still matches a 2.0x signed borrower: the
-    ///         gate sees the floored 2000 collateral and admits the loan, rather
-    ///         than reverting `MatchHFTooLow` on the lender's bare 1000.
+    /// @notice The borrower's signed collateral floor is threaded into the
+    ///         match, so a loan against a LOWER (but still valid) lender
+    ///         requirement locks the borrower's higher floor. A 2.0x signed
+    ///         borrower matched with a 1.8x lender counterparty locks 2000, NOT
+    ///         the lender's 1800 — proving `previewMatch` uses the floored
+    ///         borrower collateral, not the lender's bare requirement (a
+    ///         post-preview clamp to 1800 would fail the assertion below).
+    ///
+    ///         Pre-#998-S15 this used a 1.0x HF-UNSAFE lender to make the
+    ///         threading observable via a `MatchHFTooLow` revert. #998 S15's
+    ///         create-time floor now rejects any sub-~1.765x lender offer at
+    ///         `createOffer` (== the HF=1.5 threshold), so an HF-unsafe lender
+    ///         offer can no longer EXIST — that scenario is unreachable by
+    ///         construction, and the threading is observed here via the
+    ///         locked-collateral assertion instead. Dedicated HF-gate coverage
+    ///         for the borrower floor (reachable only via interest-accrual
+    ///         mechanics post-floor) is tracked in a follow-up issue.
     function test_borrowerFloor_admitsLowLenderRequirement() public {
         LibSignedOffer.SignedOffer memory o =
             _borrowerSignedOffer2x(20, PRINCIPAL, 2 * PRINCIPAL);
