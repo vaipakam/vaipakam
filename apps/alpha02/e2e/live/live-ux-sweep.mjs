@@ -16,6 +16,12 @@
  * Options:
  *   SITE_URL=…            target a preview instead of production
  *   UX_SWEEP_ROUTES=/a,/b restrict the route list (comma-separated)
+ *   UX_SWEEP_SESSIONS=main,disconnected,arb
+ *                         restrict which sessions run (see SESSIONS):
+ *                         `main` = the three connected-Base passes,
+ *                         `disconnected` = first-visit desktop+mobile
+ *                         with NO wallet session, `arb` = connected on
+ *                         Arbitrum Sepolia over the chain-scoped routes
  *   UX_SWEEP_PROBE_ONLY=1 skip screenshots + extra passes; one
  *                         basic-desktop pass collecting only the
  *                         devtools probe (storage/perf/SW) — for
@@ -70,14 +76,86 @@ const VIEWPORTS = {
 
 const PROBE_ONLY = process.env.UX_SWEEP_PROBE_ONLY === '1';
 
-/** Passes: what the review actually needs, kept to a manageable set. */
-const PASSES = PROBE_ONLY
-  ? [{ name: 'basic-desktop', mode: 'basic', viewport: 'desktop' }]
-  : [
-      { name: 'basic-desktop', mode: 'basic', viewport: 'desktop' },
-      { name: 'basic-mobile', mode: 'basic', viewport: 'mobile' },
-      { name: 'advanced-desktop', mode: 'advanced', viewport: 'desktop' },
-    ];
+/** Chain-scoped surfaces — the subset worth re-sweeping on a second
+ *  network (VPFI availability, vault, faucet, book/desk market data,
+ *  settings alert rails). Route-agnostic chrome (help, 404, nft) reads
+ *  the same on every chain and stays on the main session only. */
+const CHAIN_SCOPED_ROUTES = [
+  '/',
+  '/offers',
+  '/desk',
+  '/vault',
+  '/vpfi',
+  '/settings',
+  '/faucet',
+];
+
+/**
+ * Sessions × passes (2026-07-13 second-pass review): a session is one
+ * launched browser profile (role, chain, connect-or-not); each runs
+ * its own passes. The original three connected-Base passes keep their
+ * names (and artifact filenames) unchanged; two dimensions the first
+ * review missed are now first-class:
+ *   - `disconnected` — the FIRST-VISIT experience (no wallet session),
+ *     desktop + mobile. Uses a fresh role profile so a remembered
+ *     ConnectKit session can't silently connect it.
+ *   - `arb` — connected on Arbitrum Sepolia, chain-scoped routes only:
+ *     the per-chain availability states (VPFI registration, faucet
+ *     mocks, market data) are exactly what differs by network.
+ * UX_SWEEP_SESSIONS=main,disconnected,arb (comma list) restricts which
+ * sessions run — e.g. topping up an earlier run without redoing the
+ * three main passes. PROBE_ONLY keeps its historical meaning: one
+ * basic-desktop probe pass on the main session.
+ */
+const SESSIONS = [
+  {
+    key: 'main',
+    role: 'lender',
+    chainId: 84532,
+    connect: true,
+    harvestLoanDetail: true,
+    passes: PROBE_ONLY
+      ? [{ name: 'basic-desktop', mode: 'basic', viewport: 'desktop' }]
+      : [
+          { name: 'basic-desktop', mode: 'basic', viewport: 'desktop' },
+          { name: 'basic-mobile', mode: 'basic', viewport: 'mobile' },
+          { name: 'advanced-desktop', mode: 'advanced', viewport: 'desktop' },
+        ],
+  },
+  {
+    key: 'disconnected',
+    role: 'newLender',
+    chainId: 84532,
+    connect: false,
+    // A fresh wallet must not LOOK fresh yet report accounts: with the
+    // driver's permissive default, wagmi treats the announced provider
+    // as already-authorized and silently connects — the pass would
+    // capture connected states while claiming to be the first-visit
+    // evidence. preAuthorized:false makes eth_accounts return [] until
+    // an explicit eth_requestAccounts, like a real un-approved wallet.
+    preAuthorized: false,
+    harvestLoanDetail: false,
+    passes: [
+      { name: 'disconnected-desktop', mode: 'basic', viewport: 'desktop' },
+      { name: 'disconnected-mobile', mode: 'basic', viewport: 'mobile' },
+    ],
+  },
+  {
+    key: 'arb',
+    role: 'newBorrower',
+    chainId: 421614,
+    connect: true,
+    harvestLoanDetail: false,
+    routes: CHAIN_SCOPED_ROUTES,
+    passes: [{ name: 'arb-desktop', mode: 'basic', viewport: 'desktop' }],
+  },
+];
+
+const sessionsEnv = process.env.UX_SWEEP_SESSIONS;
+const sessionKeys = (sessionsEnv ?? (PROBE_ONLY ? 'main' : 'main,disconnected,arb'))
+  .split(',')
+  .map((s) => s.trim());
+const activeSessions = SESSIONS.filter((s) => sessionKeys.includes(s.key));
 
 /** The DevTools-tabs-in-one-call probe. Runs in the page; every field
  *  is fail-soft so one blocked API doesn't sink the rest. */
@@ -177,18 +255,39 @@ async function resolveLoanDetailRoute(page) {
 }
 
 const routesEnv = process.env.UX_SWEEP_ROUTES;
-const routes = routesEnv ? routesEnv.split(',').map((s) => s.trim()) : [...STATIC_ROUTES];
 
 fs.mkdirSync(OUT_DIR, { recursive: true });
 const report = {
   site: SITE,
-  wallet: addressOf('lender'),
   startedAt: null, // stamped by the caller reading report.json mtime; Date.now is fine here (plain node, not a Workflow)
+  sessions: [],
   passes: [],
 };
 report.startedAt = new Date().toISOString();
+const allBlockedRequests = [];
+const backgroundNetworkBySession = {};
 
-const { page, done, blockedRequests } = await launch({ role: 'lender', headless: true, readOnly: true });
+for (const session of activeSessions) {
+  const routes = routesEnv
+    ? routesEnv.split(',').map((s) => s.trim())
+    : [...(session.routes ?? STATIC_ROUTES)];
+
+  report.sessions.push({
+    key: session.key,
+    role: session.role,
+    wallet: addressOf(session.role),
+    chainId: session.chainId,
+    connected: session.connect,
+    passes: session.passes.map((p) => p.name),
+  });
+
+const { page, done, blockedRequests } = await launch({
+  role: session.role,
+  startChainId: session.chainId,
+  headless: true,
+  readOnly: true,
+  preAuthorized: session.preAuthorized ?? true,
+});
 
 // One console/request tap for the lifetime of the context.
 let sink = null;
@@ -253,16 +352,24 @@ page.on('response', async (res) => {
 });
 
 await page.goto(SITE, { waitUntil: 'domcontentloaded' });
-await ensureConnected(page);
+if (session.connect) {
+  await ensureConnected(page);
+}
 
-if (!routesEnv) {
+if (!routesEnv && session.harvestLoanDetail) {
   const detail = await resolveLoanDetailRoute(page);
   if (detail) routes.splice(routes.indexOf('/claims'), 0, detail);
   else report.loanDetailSkipped = 'no /positions/:id link found on the rendered positions page';
 }
 
-for (const pass of PASSES) {
-  const passReport = { name: pass.name, routes: [] };
+for (const pass of session.passes) {
+  const passReport = {
+    name: pass.name,
+    session: session.key,
+    chainId: session.chainId,
+    connected: session.connect,
+    routes: [],
+  };
   report.passes.push(passReport);
   await page.setViewportSize(VIEWPORTS[pass.viewport]);
   // Mode is a localStorage flag read by ModeProvider at mount.
@@ -354,28 +461,34 @@ for (const pass of PASSES) {
   }
 }
 
+// Session close-out: aggregate this launch's read-only violations and
+// background bucket, reset the PERSISTENT profile's mode flag to the
+// app default so a later focused review doesn't silently start on the
+// wrong surface (Codex #1154 r3 P2), and release the context.
+allBlockedRequests.push(
+  ...blockedRequests.map((b) => ({ ...b, session: session.key })),
+);
+backgroundNetworkBySession[session.key] = backgroundSink.network;
+await page
+  .evaluate(() => localStorage.setItem('alpha02.mode', 'basic'))
+  .catch(() => {});
+await done().catch(() => {});
+} // end session loop
+
 // The read-only route guard aborts + logs any page-initiated backend
 // write; a non-empty list means some surface tried to mutate state
 // during a read-only audit — surface it loudly in report + exit code.
-report.blockedWriteRequests = blockedRequests;
-report.backgroundNetwork = backgroundSink.network;
+report.blockedWriteRequests = allBlockedRequests;
+report.backgroundNetwork = backgroundNetworkBySession;
 
 const reportName = PROBE_ONLY ? 'report-devtools.json' : 'report.json';
 fs.writeFileSync(path.join(OUT_DIR, reportName), JSON.stringify(report, null, 2));
 // eslint-disable-next-line no-console
 console.log(`\nSweep complete → ${path.relative(process.cwd(), OUT_DIR)}/${reportName}`);
-if (blockedRequests.length > 0) {
+if (allBlockedRequests.length > 0) {
   // eslint-disable-next-line no-console
   console.error(
-    `READ-ONLY VIOLATIONS: ${blockedRequests.length} page-initiated write(s) were blocked — see blockedWriteRequests in the report`,
+    `READ-ONLY VIOLATIONS: ${allBlockedRequests.length} page-initiated write(s) were blocked — see blockedWriteRequests in the report`,
   );
 }
-// The sweep's last pass leaves 'advanced' in the PERSISTENT lender
-// profile that every live driver reuses — reset to the app default so
-// a later focused review doesn't silently start on the wrong surface
-// (Codex #1154 r3 P2).
-await page
-  .evaluate(() => localStorage.setItem('alpha02.mode', 'basic'))
-  .catch(() => {});
-await done().catch(() => {});
-process.exit(blockedRequests.length > 0 ? 2 : 0);
+process.exit(allBlockedRequests.length > 0 ? 2 : 0);

@@ -133,9 +133,20 @@ export async function launch({
   // preview target) asking for a signature mid-visit gets a wallet
   // error instead of an auto-approved signature (Codex #1154 P2).
   readOnly = false,
+  // preAuthorized: whether `eth_accounts` reports the account BEFORE
+  // the page ever calls `eth_requestAccounts`. Default true mirrors a
+  // returning user whose wallet already authorized the site (the
+  // historical driver behaviour every connected scenario relies on).
+  // Pass false for FIRST-VISIT evidence: a real wallet returns [] to
+  // `eth_accounts` until the user approves, and with the permissive
+  // default wagmi treats the announced provider as already-connected —
+  // the 2026-07-13 second-pass sweep's "disconnected" session silently
+  // rendered every route CONNECTED because of exactly that.
+  preAuthorized = true,
 } = {}) {
   const account = privateKeyToAccount(WALLETS[role].privateKey);
   let chainId = startChainId;
+  let authorized = preAuthorized;
 
   const profileDir = path.join(HERE, 'profiles', role);
   fs.mkdirSync(profileDir, { recursive: true });
@@ -257,8 +268,16 @@ export async function launch({
     }
     switch (method) {
       case 'eth_requestAccounts':
-      case 'eth_accounts':
+        // An explicit request is the user-approval moment — from here
+        // on the session is authorized (matches a real wallet's
+        // approve-once-then-remember behaviour).
+        authorized = true;
         return [account.address];
+      case 'eth_accounts':
+        // Pre-approval, a real wallet reports NO accounts; only an
+        // already-authorized session exposes the address (see the
+        // preAuthorized launch option).
+        return authorized ? [account.address] : [];
       case 'eth_chainId':
         return numberToHex(chainId);
       case 'net_version':
