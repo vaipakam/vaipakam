@@ -44,8 +44,13 @@ day-ish), L (multi-day).
 
 ## Status ledger
 
+> **✅ COMPLETE (2026-07-13).** All 50 findings are fixed **and merged**
+> to `main`. The final batch (8c/8d/8e) landed in PR #1175
+> (squash `1dc607bd`). There are no open findings. The per-batch rows and
+> the per-finding status lines below record which PR each shipped in.
+
 Work lands in batches; each finding below also carries its own status
-line when addressed. Unmarked findings are OPEN.
+line when addressed.
 
 | Batch | Findings | Status |
 | --- | --- | --- |
@@ -54,8 +59,15 @@ line when addressed. Unmarked findings are OPEN.
 | 3 — risk visibility (2026-07-11) | UX-003, UX-004, UX-030 | ✅ Fixed — position-list badge escalates on poor health, past-due detail pages show a live grace countdown banner, grace/HF/LTV jargon carries one-clause inline glosses |
 | 4 — dead-ends/discovery (2026-07-12) | UX-010, UX-011, UX-023, UX-024, UX-026, UX-032 | ✅ Fixed — faucet link on failing balance checks, persistent mode switch + real phone More sheet, forward CTAs on Vault/Claims/Rent/faucet-success, Positions grouped with chain-confirmed "Claim waiting" chips, Basic-mode orientation banner on /offers + /desk, NFT verifier in the nav |
 | 5 — performance (2026-07-12) | UX-005 | ✅ Fixed — static HTML boot splash, React.lazy route chunks under a Suspense'd shell, wallet/React vendor-chunk splitting; entry chunk 2,407 kB → 118 kB |
-| 6 — Activity rebuild (2026-07-12) | UX-008, UX-050 | ✅ Fixed — event label map + acronym-safe humanizer, per-transaction coalescing, substance sub-line + explorer link + relative time, load-more pagination; Basic-mode Activity link from Positions + chain-authoritative fallback when the indexer degrades |
-| standalone (2026-07-11) | UX-015 | ✅ Fixed by #1094 (plain-language contract errors) — name-keyed decoder across `CollateralPrecheck` / `SimulationPreview` / dry-run footer; #1112 adds the early under-collateral warning on the borrow step |
+| 6 — Activity rebuild (2026-07-12) | UX-008, UX-050 | ✅ Fixed & merged #1171 — event label map + acronym-safe humanizer, per-transaction coalescing, substance sub-line + explorer link + relative time, load-more pagination; Basic-mode Activity link from Positions + chain-authoritative fallback when the indexer degrades |
+| 7a — order ticket (2026-07-12) | UX-009, UX-016, UX-027 | ✅ Fixed & merged #1172 — first-blocking-reason line + Connect when disconnected, "terms changed — re-confirm" note beside the auto-cleared consent box, Max chip + fees/commitment summary |
+| 7b — desk polish (2026-07-12) | UX-028, UX-036, UX-037, UX-038, UX-045, UX-046 | ✅ Fixed & merged #1173 — ladder rate as a real button + fixed-2dp right-aligned rates, live-dot tenor chips, "Depth" header, chart credit only when a chart draws, match-band gas note, honest open-order fill % |
+| 8a — a11y + chrome (2026-07-12) | UX-013, UX-031, UX-044 | ✅ Fixed & merged #1174 — persistent network chip when connected, "Skip to content" + focus-to-main on route change + 404 h1, readable Help build date |
+| 8b — guided-flow + offer clarity (2026-07-12) | UX-014, UX-018, UX-025, UX-040, UX-041 | ✅ Fixed & merged #1175 — early connect prompt, role-specific offer CTAs (+ sale-vehicle special-case), role-checking placeholder, shared EmptyState for empty matches, "Post another" |
+| 8c — VPFI + faucet polish (2026-07-13) | UX-029, UX-035, UX-048 | ✅ Fixed & merged #1175 — VPFI deposit toggle + wallet-balance row, half-open fractional-safe tier bands + live-threshold below-min note, faucet card flatten |
+| 8d — nav/title + FAQ + hints (2026-07-13) | UX-017, UX-034, UX-047, UX-049 | ✅ Fixed & merged #1175 — page-title↔nav alignment, malformed-address input hint + dimmed disabled primary, Rent browse CTA, +5 Help FAQ entries |
+| 8e — honest alerts + SDK-analytics-off (2026-07-13) | UX-012, UX-033, UX-043 | ✅ Fixed & merged #1175 — signed test-alert round-trip (atomic cooldown + start-over recovery), WalletConnect/Coinbase telemetry disabled, clearer "Unlink this wallet" control |
+| standalone (2026-07-11) | UX-015 | ✅ Fixed & merged #1094 (plain-language contract errors) — name-keyed decoder across `CollateralPrecheck` / `SimulationPreview` / dry-run footer; #1112 adds the early under-collateral warning on the borrow step |
 
 ---
 
