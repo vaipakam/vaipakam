@@ -16,7 +16,7 @@ spec's placement rule), one row per reward day in the user's window:
 | Column | Source |
 | --- | --- |
 | Day (UTC) | derived |
-| Earned (pre-cap) | `getUserRewardEntries` per-day contribution × broadcast denominator |
+| Earned (pre-cap) | the §4 formula, same math as `claimInteractionRewards`: per side, `½ × dailyPool[D] × (userContribution / globalDenominator_side[D])` — user contribution from `getUserRewardEntries`, global denominator from the broadcast (division by the denominator, never multiplication) |
 | Cap trim | recompute `min(raw, cap)`; show "capped −X" chip when trimmed |
 | State | one of: `loan open` (close-gated) / `awaiting finalization` / `awaiting broadcast` (known-global-set flag unset) / `claimable` / `claimed` |
 

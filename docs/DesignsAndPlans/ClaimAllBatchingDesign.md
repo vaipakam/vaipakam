@@ -27,10 +27,17 @@ claimBatch(ClaimRequest[] requests)   // bounded: MAX_BATCH (e.g. 20)
   entry points (`claimAsLender`, `claimAsBorrower`,
   `claimInteractionRewards` — the last at most once per batch, respecting
   its own bounded catch-up cursor).
-- **Per-item isolation:** a failing item records
-  `BatchClaimItemSkipped(loanId, kind, reason)` and continues — one stale
-  row must not revert 19 valid claims. (The frontend pre-filters against
-  live claimability, but races happen.)
+- **Per-item isolation requires no-revert internal variants** (Codex
+  round-1 finding: an internal Solidity revert can't be caught like an
+  external `try/catch` and would unwind the whole batch). Refactor each
+  claim path into `_tryClaimX(...) returns (bool ok, bytes32 reason)`
+  that checks every precondition **before** mutating state and returns
+  instead of reverting; the existing single entry points become
+  `require(_tryClaimX(...))`-style wrappers (identical behaviour,
+  selectors unchanged), and the batch consumes the try-variants directly:
+  a failing item records `BatchClaimItemSkipped(loanId, kind, reason)`
+  and continues — one stale row must not revert 19 valid claims. (The
+  frontend pre-filters against live claimability, but races happen.)
 - Reentrancy: the facet-level guard wraps the whole batch; internal claim
   paths must be callable under the already-entered guard (same pattern as
   other internal-call flows through the Diamond; verify against the #951

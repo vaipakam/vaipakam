@@ -22,7 +22,8 @@ deposit/withdraw, stuck-token recovery):
 
 | Behaviour | Required protocol answer |
 | --- | --- |
-| Fee-on-transfer | Received-balance delta measured at vault deposit is truth for principal/collateral/repay accounting; any path assuming `amount transferred == amount received` is a finding |
+| Fee-on-transfer (inbound) | Received-balance delta measured at vault deposit is truth for principal/collateral/repay accounting; any path assuming `amount transferred == amount received` is a finding |
+| Fee-on-transfer (outbound) | On claims/settlements/treasury routing, the **recipient bears the token's transfer tax**: the protocol debits its tracked amount, the recipient receives net-of-tax. Never gross up (a gross-up pays the tax from other users' tracked balances — an insolvency vector). Stated as an accepted listing risk in trust-tier copy; sweep tests assert internal accounting debits equal tracked amounts and no third party's balance moves |
 | Rebasing (up) | Protocol-tracked balance is authoritative (`min(actual, tracked)` clamp, generalized from the VPFI rule); positive drift accrues to the vault owner via the untracked-surplus path, never silently to counterparties |
 | Rebasing (down) | Tracked > actual must fail visibly at settlement (insufficient balance), never mis-pay a third party's funds; document as an accepted listing risk in the trust-tier copy |
 | Blacklistable (USDT/USDC-style) | Every terminal path must tolerate a reverting transfer to a frozen party: pull-claim containment — the OTHER party's settlement and the loan's terminal state must complete regardless (mirrors the sanctions Tier-2 close-out principle) |

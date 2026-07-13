@@ -19,7 +19,9 @@ the recycle loop.
    not a purchase.
 3. **Slashing is rule-bound and evidence-anchored**, never discretionary
    value capture: each slash condition is an objectively verifiable
-   on-chain fact.
+   on-chain fact — and the evidence must be **committed state, not a
+   revert** (a reverted transaction leaves nothing to adjudicate; see
+   "offence recording" below).
 4. Marketing describes bonds as "operational security deposits" —
    never staking, never earning.
 
@@ -31,9 +33,20 @@ ServiceBond { operator; role; amount; unbondRequestedAt; }
 
 | Role | What the bond unlocks | Slash conditions (objective) |
 | --- | --- | --- |
-| Solver / matcher | larger match-batch sizes; priority-window access (E-2 perk interplay: bond = capacity, spend = priority) | submitting fills that revert on protocol-verifiable precondition lies (e.g. repeated stale-listing spam past the flagged state); rate: per-offence fixed bps of bond |
-| Keeper (opt-in roles) | higher per-pass action counts for granted `KEEPER_ACTION_*` roles | executing outside grant scope (already reverts — slash covers repeated attempts); missing committed liveness windows IF the operator enrolled in a liveness commitment (optional tier) |
+| Solver / matcher | larger match-batch sizes; priority-window access (E-2 perk interplay: bond = capacity, spend = priority) | precondition lies recorded via the offence dispatcher below (e.g. repeated fills against listings already committed as stale on-chain); slash at counter threshold, per-offence fixed bps of bond |
+| Keeper (opt-in roles) | higher per-pass action counts for granted `KEEPER_ACTION_*` roles | repeated out-of-grant-scope attempts recorded via the offence dispatcher; missing committed liveness windows IF the operator enrolled in a liveness commitment (optional tier) |
 
+- **Offence recording (Codex round-1 finding):** a slashable failure must
+  not be a plain revert — a reverted tx leaves no state to slash against.
+  Bonded-operator entry points therefore run precondition checks in a
+  non-reverting outer dispatcher: on a precondition lie (e.g. submitting a
+  fill against a listing already committed as stale on-chain), the call
+  **succeeds as a no-op**, records `OffenceRecorded(operator, kind,
+  refId)` with a per-operator counter, and only the counter — committed
+  state — drives slashing at threshold. Honest failures that the operator
+  could not have known (state changed in the same block) are not offences;
+  the offence predicate must reference state committed *before* the
+  operator's submission.
 - Bond sizes + unlock tiers: governance-bounded config.
 - **Unbond delay** (e.g. 7 days) so an operator can't slash-and-run
   within one misbehaviour window.

@@ -26,8 +26,14 @@ upgradeVaultAndCall(bytes actionCalldata)
    user-authorized upgrade path — authority semantics unchanged: the
    *user* triggers their own vault's upgrade, exactly as today, just
    inside the same transaction.
-3. `address(this).call(actionCalldata)` — routes through the Diamond
-   fallback into the intended action (accept offer, repay, claim, ...).
+3. Dispatches the action **preserving the user as `msg.sender`**: resolve
+   the target facet via the loupe (`facetAddress(selector)`) and
+   `delegatecall` the facet directly — the same cut-through the Diamond
+   fallback performs, executed from within the entry point so the original
+   caller's authority is intact. An external `address(this).call` would
+   re-enter with `msg.sender == address(this)` and break every
+   ownership/sanctions/NFT check the action performs (Codex round-1
+   finding) — it must NOT be used here.
 
 Guards:
 

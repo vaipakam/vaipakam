@@ -380,7 +380,10 @@ one-for-one. This simultaneously creates absorption AND extends the 69M pool's
 lifetime, with zero new legal surface (it is already specified behaviour).
 
 **Recommendation R-2:** define and publish a **net-emission metric** on the
-transparency dashboard: `net emission = fresh mint − recycled`, per epoch.
+transparency dashboard: `net emission[D] = fresh mint[D]` — fresh mint
+already nets out recycled funding (`fresh = dailyPool − recycledConsumed`,
+per the cross-chain design §3.4), so subtracting recycled again would
+double-count. Shown per epoch alongside the recycled amount.
 The health of the circular flow becomes one observable number, and the
 community can see demand catching up to supply without the protocol ever
 making price-flavoured claims.

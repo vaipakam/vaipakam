@@ -24,9 +24,15 @@ offer class flag (`LINKED_LOAN_SALE`) so bots opt in knowingly:
   accept does today, moved into the match path.
 - The recorded matcher earns the configured share per the §5a
   recorded-matcher rule; sale vehicles charge **no fresh LIF** (existing
-  rule preserved), so the matcher share for this class is paid from the
-  sale proceeds' treasury cut — a new small config value
-  (`saleMatcherFeeBps`, bounded, default = `lifMatcherFeeBps`).
+  rule preserved), and under the paired E-7 design there is **no
+  sale-time treasury cut at all**, so the treasury cut cannot fund the
+  matcher (Codex round-1 finding). Instead the matcher share is a small
+  bounded bps **of the sale price, paid by the seller from sale
+  proceeds** — the seller is the party demanding liquidity and pays for
+  the fill service. New config `saleMatcherFeeBps` (bounded well below
+  `MAX_FEE_BPS`; suggested default 10 bps), deterministic and quotable in
+  the matcher preview so bots can rely on it; zero disables matcher
+  payment for this class without disabling matchability.
 
 ### Partial fills — the hard part, resolved by scoping
 

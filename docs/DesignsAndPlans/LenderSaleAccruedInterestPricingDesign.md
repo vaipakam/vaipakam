@@ -27,12 +27,16 @@ salePrice = outstandingPrincipal
           + accruedInterestToDate × (10000 − yieldFeeBps_snapshot) / 10000
 ```
 
-- Buyer pays `salePrice`; seller receives it; the position NFT transfers.
-- **Treasury takes only its ordinary snapshot yield fee** on the accrued
-  portion — the same cut it would have taken at maturity; no forfeiture.
-- From the buyer's perspective the accrued interest purchased is cost
-  basis; at settlement the buyer receives principal + full-term interest
-  minus the ordinary yield fee, exactly as any current holder would.
+- Buyer pays `salePrice`; seller receives it in full; the position NFT
+  transfers. **Treasury collects nothing at sale time.**
+- **Single collection point:** the ordinary snapshot yield fee on the full
+  interest is collected exactly once, at terminal settlement, from the
+  then-holder (the buyer) — the same event and amount as if the position
+  had never traded. The par formula nets the accrued slice by
+  `(1 − yieldFeeBps)` precisely *because* the buyer will bear that fee at
+  terminal; charging any fee at sale time as well would double-charge the
+  accrued slice (Codex round-1 finding — earlier wording implying a
+  sale-time treasury cut is superseded by this bullet).
 - Borrower: zero change — rate, maturity, grace, claims untouched.
 
 Discount/premium remains market-driven: the *listing* price is
@@ -40,10 +44,10 @@ seller-chosen (or offer-matched); the formula above defines the **par
 reference** the UI displays ("this position's fair value today"), and the
 minimum the protocol accounts correctly — it does not price-control.
 
-Actually binding rule: the protocol no longer routes accrued interest to
-treasury at sale settlement; it routes `salePrice` seller-ward and tracks
-the buyer as the yield-entitled holder. Whether the parties transact above
-or below par is theirs.
+Actually binding rule: the protocol routes `salePrice` seller-ward in
+full (no treasury cut at sale) and tracks the buyer as the yield-entitled
+holder who bears the one terminal yield fee. Whether the parties transact
+above or below par is theirs.
 
 ## Interactions
 
@@ -62,8 +66,9 @@ or below par is theirs.
 
 ## Owner decision asked
 
-1. Adopt fair-value pricing (treasury keeps ordinary yield fee only) —
-   replaces accrued-interest forfeiture on both lender-sale paths.
+1. Adopt fair-value pricing (treasury collects the ordinary yield fee
+   once, at terminal settlement, never at sale) — replaces
+   accrued-interest forfeiture on both lender-sale paths.
 2. Drop the sale-path lender reward forfeiture in favor of the standard
    re-anchoring rule (recommended), or keep it (status quo).
 
@@ -71,7 +76,9 @@ or below par is theirs.
 
 Settlement splits to the wei on both paths; buyer's terminal claim equals
 a from-origination holder's; partial-repay-before-sale re-pricing; reward
-re-anchoring; treasury receives exactly the snapshot yield fee.
+re-anchoring; treasury receives exactly one snapshot yield fee per loan
+(at terminal, never at sale) regardless of how many times the position
+traded.
 
 ## Spec edit
 

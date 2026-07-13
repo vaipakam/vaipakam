@@ -171,12 +171,20 @@ Invariants (test + transparency surface):
 - The R-2 (#1218) metric falls out directly:
   `netEmission[D] = freshMint[D]`.
 
-### 3.5 Keeper-reward budget — same principle, locally
+### 3.5 Keeper-reward budget — same principle, Base-authorized
 
-The keeper-reward budget is per-chain already. Its top-up draws from the
-local recycle bucket **before** any canonical funding, under a small
-governance-bounded allocation (e.g. "up to X% of local recycle inflow to
-keeper budget"). Deep chains fund their own housekeeping; no new messages.
+The keeper-reward budget is per-chain already, and deep chains should fund
+their own housekeeping from local receipts — but a mirror must **never
+debit its recycle bucket unilaterally**, or §3.3's
+`availRecycled = reportedCumulative − consumedCumulative` view on Base
+drifts and Base can broadcast a `recycleConsume` the mirror can no longer
+fund (Codex round-1 finding). So keeper allocation flows through the same
+single authority as claim funding: at finalization Base computes an
+optional `keeperAllocate[c][D]` (a governance-bounded bps of that chain's
+reported recycle inflow), carries it in the **same broadcast** as
+`recycleConsume`, and counts it into `consumedCumulative[c]`. The mirror
+debits its bucket only on arrival of that instruction. One authority, one
+message, no local-draw drift.
 
 ### 3.6 Surplus handling (the only place tokens still travel)
 

@@ -19,8 +19,10 @@ Dashboard "All chains" toggle:
   pattern). No new contract views needed.
 - **Aggregation:** unified tables (positions, offers, claimables, pending
   rewards) with a per-chain badge on every row; totals shown per-asset,
-  never summed across chains in USD unless every chain's oracle read
-  succeeded (partial sums mislead).
+  and value totals summed in the **active numeraire** (the PAD numeraire
+  is governance-rotatable and not hard-wired to USD — a USD figure is an
+  optional display conversion, never the accounting basis), and only when
+  every chain's oracle read succeeded (partial sums mislead).
 - **Actions:** rows deep-link into the chain-scoped surface and trigger
   the wallet network-switch prompt; the aggregated view itself is
   strictly read-only.
