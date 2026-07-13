@@ -18,6 +18,14 @@ platform, on the path lenders most need liquidity.
 Expose sale vehicles to `matchOffers` / solver preview with a distinct
 offer class flag (`LINKED_LOAN_SALE`) so bots opt in knowingly:
 
+- **Matched fills fund the GROSS sale price** (Codex round-6 P1): under
+  E-7 the buyer owes `salePrice` = principal + net accrued (+ any
+  seller premium), not the outstanding principal a standing lender
+  offer typically locks. The matcher preview quotes the gross price,
+  and match validity **rejects any buyer offer that has not explicitly
+  signed for and locked/available-funded that gross amount** — a match
+  must never pull an amount the buyer didn't authorize, nor settle the
+  seller short of the accrued slice.
 - Match validity re-checks the linked loan live at execution: outstanding
   principal ≥ signed floor, collateral ≥ signed floor, loan still Active,
   no competing offset/listing lock — the same live-verification the direct
@@ -73,6 +81,12 @@ dropped collateral below signed floor → buyer refused, must re-sign) gets:
 
 - an indexer flag on the listing row the moment a `LoanRepaid` /
   liquidation event touches the linked loan (event-driven, no polling),
+- **an oracle-driven stale signal for liquid-collateral listings with a
+  buyer HF floor** (Codex round-6): a pure price move breaches the HF
+  floor without emitting any loan event, so the HF-watcher band
+  machinery additionally marks such listings stale when the linked
+  loan's live HF crosses the listing's floor — otherwise bots keep
+  attempting fills that the live check will reject,
 - book UI shows "listing stale — awaiting seller re-sign",
 - matchers receive the stale flag in preview so they skip it without a
   wasted attempt.

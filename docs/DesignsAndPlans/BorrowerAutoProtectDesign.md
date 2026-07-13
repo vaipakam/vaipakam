@@ -29,11 +29,30 @@ AutoProtectConfig {
 ```
 
 Execution — a new narrow keeper grant `KEEPER_ACTION_AUTO_PROTECT`
-(per-action opt-in, consistent with the ≤5-address whitelist model):
+(per-action opt-in, consistent with the ≤5-address whitelist model).
+**Prerequisite — the keeper permission mask is FULL** (Codex round-6:
+`LibVaipakam` documents `KEEPER_ACTION_AUTO_ROLL` as the last free
+`uint8` bit, `KEEPER_ACTION_ALL = 0xFF`): this grant (and E-10's
+`KEEPER_ACTION_SWEEP_CLAIMS`) requires widening the mask (`uint8` →
+`uint16`, append-only storage change) as its own preparatory PR, with
+two hard rules: existing grants keep their exact bit meanings, and
+**existing `0xFF` "ALL" grants do NOT silently acquire the new bits** —
+new actions above bit 7 are granted only by an explicit fresh user
+signature (an old "all" consent cannot authorize actions that didn't
+exist when it was signed). `KeeperAuthorityMatrix.md` is updated in the
+same PR.
 
 - **TOP_UP_COLLATERAL:** move collateral asset from the borrower's *free*
-  (un-liened, un-locked) vault balance into the loan's collateral via the
-  existing add-collateral path. Same-asset only (existing rule).
+  (un-liened, un-locked) vault balance into the loan's collateral.
+  **This needs a dedicated primitive** (Codex round-6): the existing
+  `AddCollateralFacet.addCollateral` authorizes only the borrower-NFT
+  owner as `msg.sender` and deposits from the caller's *wallet*
+  (`vaultDepositERC20From`) — called by a keeper it would revert or
+  spend the keeper's own funds. Add an internal
+  `_autoProtectTopUp(loanId, amount)` that debits the current position
+  holder's unencumbered vault balance and increments the loan lien
+  directly, callable only from the auto-protect execution path under
+  the holder's signed config. Same-asset only (existing rule).
 - **PARTIAL_SWAP_REPAY:** bounded partial repayment via the existing
   swap-to-repay adapter failover, subject to the config's
   `maxSlippageBps` (itself bounded by the dedicated protocol knob) and

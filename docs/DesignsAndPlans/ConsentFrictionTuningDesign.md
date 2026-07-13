@@ -16,9 +16,14 @@ prior progressive-risk consents behind a full re-affirmation wall.
 
 ### 1. Session-scoped consent memory (frontend-only)
 
-Cache the user's acknowledgement **keyed by the disclosure-input hash**
-(the same field set #927 resets on: interest mode, partial-repay, asset
-types, amounts-band, risk tier), scoped to wallet + session:
+Cache the user's acknowledgement **keyed by the disclosure-input hash**,
+scoped to wallet + session. The hash covers the same field set #927
+resets on PLUS exact identities (Codex round-6: type-level hashing would
+let a reputable ERC-20 pair and a honeypot pair with the same shape
+share one cached acknowledgement): interest mode, partial-repay flag,
+**exact lending / collateral / prepay asset addresses (and token IDs
+where relevant)**, amounts-band, risk tier, **terms version, and chain
+id**:
 
 - Same wallet, same session, identical disclosure hash → the checkbox
   pre-fills with a visible "acknowledged earlier this session — review"

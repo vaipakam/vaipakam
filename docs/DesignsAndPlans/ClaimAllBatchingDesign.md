@@ -98,7 +98,11 @@ about.
 
 ### Keeper-swept claims (optional follow-up, separate flip)
 
-Opt-in per-user flag + `KEEPER_ACTION_SWEEP_CLAIMS` grant. The base
+Opt-in per-user flag + `KEEPER_ACTION_SWEEP_CLAIMS` grant — which
+requires the keeper permission-mask widening described in
+`BorrowerAutoProtectDesign.md` (the `uint8` mask is full; new bits need
+the uint16 widening PR, and existing `ALL` grants never silently gain
+new actions). The base
 `claimBatch` validates the **caller** as NFT holder and
 `claimInteractionRewards` is caller-scoped, so a keeper calling it would
 claim nothing (or its own rewards) — the sweep needs a dedicated
@@ -116,11 +120,16 @@ and **skimmed only from fungible swept amounts** — in-kind legs
 without valuation or fractionalization, so they sweep fee-free (Codex
 round-4); the keeper's economics come from the fungible legs. Because
 the fee makes the keeper a **direct value recipient**, the keeper fee
-recipient is Tier-1 sanctions-screened too: a flagged keeper has the
-fee **withheld** (routed to treasury) while the user's sweep itself
-still completes (Codex round-5) — mirroring the platform rule that a
-flagged party is refused payouts without holding the clean party's
-funds hostage. Off by
+recipient is sanctions-checked too — but as a **soft check on the fee
+leg only, never a hard caller gate** (Codex rounds 5–6): a flagged
+keeper has the fee **withheld** (routed to treasury) while the user's
+sweep itself still completes. `claimBatchFor` must NOT hard-screen the
+caller up front — that would revert the clean user's claims before the
+withhold branch is reached, exactly the funds-hostage outcome the
+platform's Tier-1/Tier-2 split avoids. (The earlier note that screening
+the caller "is fine but not sufficient" is superseded by this rule: the
+beneficiary screen is the hard gate; the caller/fee screen is the soft
+withhold.) Off by
 default; ships only after the base batch is proven. (Value lands in the
 vault, not the wallet — sweeping to wallets would be an automatic push,
 which the distribution model forbids.)
