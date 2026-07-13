@@ -8,9 +8,10 @@ FunctionalSpecs update behind an explicit owner decision).
 **Sources reviewed:** the full `docs/FunctionalSpecs/ProjectDetailsREADME.md`
 and `docs/FunctionalSpecs/TokenomicsTechSpec.md` as of 2026-07-13, plus owner
 clarifications of the same date (fixed-rate commitment; NFT floor-oracle
-reliability). All findings respect the standing constraints: the #687
-legal-surface excision (no staking yield, no fixed-rate sale, no insurance
-framing) and the retail permissionless posture.
+reliability) and owner direction of the same date on VPFI circular flow (§5)
+and the platform ethos (§6). All findings respect the standing constraints:
+the #687 legal-surface excision (no staking yield, no fixed-rate sale, no
+insurance framing) and the retail permissionless posture.
 
 ---
 
@@ -267,3 +268,173 @@ the decision surface each one needs before code:
 Each item lands on the `@vaipakam-labs` board as its own Issue per the task
 tracking convention; items marked "spec edit" additionally follow the
 per-PR FunctionalSpecs discipline.
+
+---
+
+## 5. VPFI circular flow — matching demand to distribution (owner direction 2026-07-13)
+
+### The problem statement
+
+The protocol *distributes* VPFI (interaction rewards, grants) but has thin
+*absorption*: without sinks, distributed VPFI stagnates in wallets or dumps on
+the secondary market, and the 69M reward pool is pure one-way inflation. The
+owner's direction: build a continuous **supply → demand → recirculation** loop,
+with **near-zero legal expenditure**.
+
+### The one shape to avoid
+
+"Absorb by **redeeming**" — the protocol paying treasury assets (ETH, stables)
+for VPFI on request — is precisely the surface #687 removed. A standing
+redemption right or price-supporting buyback makes VPFI look like a claim on
+the issuer (securities-shaped) and puts the protocol in a market-operations
+role. Every absorption mechanism below therefore takes the other two safe
+shapes: **usage sinks** (users spend VPFI *for* something) and **recirculation**
+(the protocol re-uses what it receives instead of minting fresh). Discretionary
+treasury buyback stays dormant exactly as the spec already says.
+
+Likewise "staking": the yield-bearing staking program is removed and stays
+removed. The legally-safe analog of staking demand already exists in the spec —
+**time-weighted vault holding for fee-discount tiers** ("hold to save fees,"
+never "hold to earn"). §5.1 items strengthen that hold-demand; nothing here
+reintroduces hold-to-earn.
+
+### 5.1 Demand side — usage sinks, ranked by legal surface (lowest first)
+
+| Sink | Mechanism | Absorption type | Notes |
+| --- | --- | --- | --- |
+| **S-1 Fee payment in VPFI** | The borrower VPFI-LIF custody path (spec §6b) already deducts full LIF in VPFI into Diamond custody; notification fees are already VPFI-billed. Extend the same "pay protocol services in VPFI" pattern to other service fees. | Temporal (custody) + permanent (treasury share / forfeiture) | Mostly already specified; activation is gated on the peg posture — E-1 (lender-discount decoupling) creates hold-demand even while the peg is unset |
+| **S-2 Consumable perks priced in VPFI** | E-2's perks (priority solver routing, higher auto-lifecycle limits, listing visibility boosts, reduced notification pricing) purchased by *spending* VPFI, not just by holding it. | Permanent (spent to treasury) | Pure fee-for-service; near-zero legal surface |
+| **S-3 Hold-for-tier demand** | Fee-discount tiers with time-weighted accumulator + min-history gates (existing spec §6/6a). | Temporal (vaulted) | Already built; E-1 makes it live day-one |
+| **S-4 Service bonds (work-token)** | Solvers / matchers / keepers post a VPFI **security deposit** to access higher rate limits, priority match windows, or larger intent batches; slashed on misbehaviour (slash → treasury or burn). | Temporal (escrow) + permanent (slash) | A performance bond, not an investment: no yield is ever paid on the bond. Legal-glance required but the shape is a deposit, not a return |
+| **S-5 Usage-driven burn** | Burn a governance-set slice (e.g. 20–50%, bounded) of the **VPFI the treasury receives from fees/forfeitures** — never bought from the market. | Permanent (supply reduction) | Unilateral destruction of protocol-received fees (EIP-1559-shaped), no promise to holders. Marketing must never frame it as price support; it is supply management. Legal-glance required |
+
+### 5.2 Recirculation — the flywheel the spec already contains
+
+TokenomicsTechSpec §9 already specifies the closing link, currently inert:
+**"reward-emissions budget credit is intended to offset fresh VPFI minting once
+the rewards distributor reads it."** Wiring that read path turns the whole
+system into a loop:
+
+```
+interaction rewards (emission)
+        │ distributed to users
+        ▼
+users SPEND (S-1/S-2), BOND (S-4), or HOLD (S-3)
+        │ treasury share / forfeitures / slashes
+        ▼
+treasury VPFI receipts ──► burn slice (S-5)
+        │ remainder
+        ▼
+reward-emissions budget credit (spec §9, inert today)
+        │ offsets fresh mint
+        ▼
+next day's interaction rewards paid partly from RECYCLED VPFI
+```
+
+Plus the already-specified **keeper-reward budget** (housekeeping paid in
+recycled VPFI) as a second recirculation outlet. Neither leg touches the open
+market, promises a return, or redeems anything — the protocol only ever re-uses
+tokens it received as fees.
+
+**Recommendation R-1:** make the §9 reward-emissions offset the centerpiece —
+implement the distributor read path so recycled VPFI displaces fresh emission
+one-for-one. This simultaneously creates absorption AND extends the 69M pool's
+lifetime, with zero new legal surface (it is already specified behaviour).
+
+**Recommendation R-2:** define and publish a **net-emission metric** on the
+transparency dashboard: `net emission = fresh mint − recycled − burned`, per
+epoch. The health of the circular flow becomes one observable number, and the
+community can see demand catching up to supply without the protocol ever
+making price-flavoured claims.
+
+**Recommendation R-3 (sequencing):** S-1/S-3 are activation work (E-1 + peg
+posture), S-2 rides E-2, R-1 is a contracts task on already-specified storage;
+S-4 and S-5 are new design surfaces — each gets its own short design note and
+a legal glance before build.
+
+---
+
+## 6. Platform ethos — permissionless fixed-rate lending across the whole token long tail
+
+### Owner statement (2026-07-13)
+
+> Fixed-term interest with an ungated list of tokens (ERC-20 or NFT): lend any
+> token, collateralised by any token — except NFT-for-NFT.
+
+### Assessment: the ethos is coherent, and the architecture is what makes it safe
+
+The combination is genuinely differentiated — no major venue offers all three
+of: **(a)** fixed-term fixed-rate, **(b)** permissionless asset listing across
+ERC-20 *and* NFTs, **(c)** P2P isolation:
+
+- Aave / Compound gate listings behind governance because a single bad asset
+  poisons the **shared pool** — losses socialize. Vaipakam has no shared pool:
+  every loan is a bilateral cell between two consenting parties, so the blast
+  radius of a worthless or malicious token is exactly one loan whose parties
+  chose it. **Isolation is the license for permissionlessness.** This is the
+  argument to lead with in positioning: "any token, because your loan is only
+  yours."
+- Morpho Blue is the closest spirit (permissionless market creation) but is
+  ERC-20-only, oracle-per-market, and pool-shaped per market. Vaipakam extends
+  the permissionless idea to NFTs and to oracle-less consent-based terms.
+- NFTfi / Arcade cover the NFT half but have no ERC-20 long-tail story.
+
+The fail-closed liquid/illiquid split already in the spec is the right risk
+spine for this ethos: assets that pass the slippage-at-floor probe get
+oracle-backed LTV/HF machinery; everything else is $0-valued and
+mutual-consent — the protocol never *trusts* a long-tail asset, it only
+*carries* it for two parties who priced it themselves.
+
+The **NFT-for-NFT exclusion is correct** and should stay: both legs would be
+protocol-unpriceable (double-$0), default settlement would be in-kind on both
+sides simultaneously, and rental mechanics structurally need a fungible
+prepayment leg. The rule generalizes cleanly as: *at least one leg of every
+position must be able to settle fungibly.*
+
+### Is there a better approach? Refinement, not replacement
+
+Keep the ethos; harden the edges. The principle: **ungated at the protocol,
+curated at the surface** — the contract layer never gates which tokens two
+parties may agree on, while the UI layer is opinionated about what it
+recommends and how loudly it warns.
+
+1. **Weird-ERC-20 robustness is the real cost of "any token"** — the long tail
+   is where non-standard behaviours live, and each needs a defined answer
+   rather than an implicit assumption:
+   - *fee-on-transfer tokens*: measure received-balance delta at vault deposit
+     and treat the received amount as truth everywhere (principal, collateral,
+     repayment);
+   - *rebasing tokens*: protocol-tracked balance and actual balance diverge
+     over time — generalize the clamp rule the spec already applies to VPFI
+     (`min(actual, tracked)`), and define who owns positive rebase drift;
+   - *blacklistable tokens* (USDT/USDC-style): a mid-loan blacklisting of a
+     party strands settlement — the existing claim-based (pull) model is the
+     right containment, since a failed push can't brick the loan; verify every
+     terminal path tolerates a reverting transfer;
+   - *reentrant-hook and pausable/honeypot tokens*: ReentrancyGuard covers the
+     former; for the latter, an advisory "can the vault actually transfer this
+     token out?" probe at offer-creation time (simulated self-transfer)
+     catches most honeypots before a lender funds one.
+   An audit-style sweep of the settlement paths against this token-behaviour
+   matrix should be its own Issue — it is the engineering bill for the ethos,
+   and it is one-time.
+2. **Curation as display tiers, not allowlists.** The progressive risk-access
+   tiers already in the spec (BlueChipOnly / BroadLiquid / IlliquidCustom) are
+   exactly the right mechanism — the *user* chooses their universe; the
+   protocol gates nothing. Add UI trust badges (verified metadata, probe-passed,
+   unknown) so the long tail is navigable without being censored.
+3. **Defend the probe, not the list.** With ungated listing, the
+   liquid/illiquid classifier becomes the attack surface (spoofed AMM depth to
+   get a junk token classified liquid → real LTV credit). The existing
+   `LiquiditySpoofingThreatModel.md` work is therefore not optional hardening —
+   it is the load-bearing defence of the ethos and should be prioritized
+   accordingly.
+4. **Say the quiet part in positioning.** "Lend any token" is only credible
+   with the isolation story attached. Marketing copy should pair them
+   explicitly: *permissionless listing + bilateral isolation + fixed terms* —
+   otherwise "ungated" reads as reckless rather than architecturally earned.
+
+**Verdict:** no better approach found that keeps the same market position —
+pooled designs would force gating, and gating forfeits the long-tail market
+that is Vaipakam's clearest open ground. The ethos stands; items 1–3 above are
+the hardening work that makes it durable.
