@@ -19,9 +19,11 @@ import {IVPFIToken} from "../interfaces/IVPFIToken.sol";
  *          `VPFIToken` (ERC20Capped + minter + pause), sibling to
  *          `VPFIMirrorToken` which bridges it via Chainlink CCIP CCT (Cross-Chain Token).
  *        - Mirror (Polygon / Arbitrum / Optimism / Ethereum mainnet +
- *          Sepolia testnet): the token is `VPFIMirror`, a pure OFT
- *          without a cap or a mint surface — supply arrives exclusively
- *          via the LZ peer mesh from the canonical adapter.
+ *          Sepolia testnet): the token is `VPFIMirrorToken`, paired with a
+ *          CCIP `BurnMintTokenPool` and carrying no local cap surface —
+ *          supply arrives exclusively via the CCIP CCT token-pool lane
+ *          from the canonical chain, whose `LockReleaseTokenPool` backing
+ *          enforces the global cap.
  *
  *      The facet's responsibilities are:
  *        1. Bind the Diamond to a specific VPFI proxy address
@@ -133,15 +135,16 @@ contract VPFITokenFacet is DiamondAccessControl, IVaipakamErrors {
         return LibVaipakam.storageSlot().vpfiToken;
     }
 
-    /// @notice Flag this Diamond as hosting the canonical VPFI + OFT adapter.
+    /// @notice Flag this Diamond as hosting the canonical VPFI + CCIP
+    ///         `LockReleaseTokenPool`.
     /// @dev ADMIN_ROLE-only. Flips `isCanonicalVpfiChain` in Diamond storage.
     ///      Must be set to TRUE exactly once across the whole mesh — on the
     ///      Base (mainnet) / Base Sepolia (testnet) deploy where VPFIToken
     ///      and VPFIMirrorToken live. Leaving this false on the other four
     ///      Diamond deploys (Polygon/Arbitrum/Optimism/Ethereum mainnet and
     ///      Sepolia testnet) is what prevents those Diamonds from minting
-    ///      VPFI locally — they can only receive bridged supply via the LZ
-    ///      peer mesh. Emits {CanonicalVPFIChainSet}.
+    ///      VPFI locally — they can only receive bridged supply via the
+    ///      CCIP CCT token-pool lane. Emits {CanonicalVPFIChainSet}.
     /// @param isCanonical New flag value.
     // forge-lint: disable-next-line(mixed-case-function)
     function setCanonicalVPFIChain(
@@ -173,10 +176,11 @@ contract VPFITokenFacet is DiamondAccessControl, IVaipakamErrors {
 
     /// @notice Hard cap on VPFI total supply (230M * 1e18).
     /// @dev Only meaningful on the canonical chain where `VPFIToken` is
-    ///      bound. On mirror chains the bound contract is `VPFIMirror`
-    ///      (pure OFT, no cap surface) and this returns zero — the cap
-    ///      is enforced globally by the canonical-side lock-set, not by
-    ///      any mirror. Also returns zero if no token is registered yet.
+    ///      bound. On mirror chains the bound contract is `VPFIMirrorToken`
+    ///      (no local cap surface) and this returns zero — the cap is
+    ///      enforced globally by the canonical-side `LockReleaseTokenPool`
+    ///      backing, not by any mirror. Also returns zero if no token is
+    ///      registered yet.
     /// @return The hard supply cap (230M * 1e18) on the canonical chain; zero elsewhere.
     // forge-lint: disable-next-line(mixed-case-function)
     function getVPFICap() external view returns (uint256) {
@@ -201,8 +205,9 @@ contract VPFITokenFacet is DiamondAccessControl, IVaipakamErrors {
 
     /// @notice The single address currently authorized to mint VPFI.
     /// @dev Only meaningful on the canonical chain. Mirror chains have no
-    ///      mint surface (supply bridges in via the LZ peer mesh), so
-    ///      this returns zero there and when no token is registered.
+    ///      mint surface (supply bridges in via the CCIP CCT token-pool
+    ///      lane), so this returns zero there and when no token is
+    ///      registered.
     /// @return The authorized minter address on the canonical chain; zero elsewhere.
     // forge-lint: disable-next-line(mixed-case-function)
     function getVPFIMinter() external view returns (address) {
