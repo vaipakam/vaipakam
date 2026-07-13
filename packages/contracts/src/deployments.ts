@@ -101,6 +101,8 @@ export interface DeploymentFacets {
   repayPeriodicFacet?: HexAddress;
   rewardRemittanceFacet?: HexAddress;
   riskAccessFacet?: HexAddress;
+  /** #1104 — RiskPreviewFacet split off RiskAccessFacet (preview cluster). */
+  riskPreviewFacet?: HexAddress;
   riskMatchLiquidationFacet?: HexAddress;
   riskSplitLiquidationFacet?: HexAddress;
   signedOfferFacet?: HexAddress;
