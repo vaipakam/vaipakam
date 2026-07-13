@@ -1256,6 +1256,9 @@ export const copy = {
       'Optional: hold VPFI in your vault to reduce protocol fees on eligible loans. You never need VPFI to use Vaipakam.',
     noGasDiscount: 'Your VPFI discount does not reduce network gas.',
     withdrawWarning: 'Withdrawing VPFI can lower future fee discounts.',
+    // UX-035 — the below-first-threshold band, stated so a small holder
+    // isn't left guessing.
+    belowMinNote: 'Holding under 100 VPFI earns no fee discount.',
     notOnThisChain: (chain: string) =>
       `VPFI deposits aren’t available on ${chain} yet. Everything else on Vaipakam works without VPFI.`,
     tokenChanged:

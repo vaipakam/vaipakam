@@ -262,6 +262,10 @@ export function Faucet() {
         />
       ) : (
         <div className="stack">
+          {/* UX-048 — all faucet rows in ONE card (a row-list), flat, so
+              the mint buttons form a single aligned column. */}
+          <section className="card">
+          <div className="row-list">
           <FaucetRow
             title={copy.faucet.liquid.title}
             blurb={copy.faucet.liquid.blurb}
@@ -348,6 +352,8 @@ export function Faucet() {
             disabled={!canWrite || busy !== null}
             onClick={() => mocks.rentalNft2 && void mintNft(mocks.rentalNft2)}
           />
+          </div>
+          </section>
 
           {done ? (
             <div className="banner banner-info" role="status">
@@ -462,31 +468,32 @@ function FaucetRow({
   // dead button.
   if (!address) return null;
   return (
-    <section className="card">
-      <div className="item-row">
-        <span className="row-main">
-          <span className="row-title">{title}</span>
-          <br />
-          <span className="row-sub">{blurb}</span>
-          <br />
-          <CopyAddress address={address} explorerBase={explorer} />
-        </span>
-        <button
-          type="button"
-          className="btn btn-primary"
-          disabled={disabled}
-          onClick={onClick}
-        >
-          {busy ? (
-            <>
-              <LoaderCircle className="spin" size={16} aria-hidden /> {copy.faucet.minting}
-            </>
-          ) : (
-            actionLabel
-          )}
-        </button>
-      </div>
-    </section>
+    // UX-048 — a plain row, not a card-per-row: the parent wraps all
+    // rows in ONE card, so the faucet reads as a single list instead of
+    // a stack of nested cards.
+    <div className="item-row">
+      <span className="row-main">
+        <span className="row-title">{title}</span>
+        <br />
+        <span className="row-sub">{blurb}</span>
+        <br />
+        <CopyAddress address={address} explorerBase={explorer} />
+      </span>
+      <button
+        type="button"
+        className="btn btn-primary faucet-mint-btn"
+        disabled={disabled}
+        onClick={onClick}
+      >
+        {busy ? (
+          <>
+            <LoaderCircle className="spin" size={16} aria-hidden /> {copy.faucet.minting}
+          </>
+        ) : (
+          actionLabel
+        )}
+      </button>
+    </div>
   );
 }
 

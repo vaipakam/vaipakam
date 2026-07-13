@@ -327,6 +327,8 @@ VPFI in the wallet. Promote to a full-width toggle row with inline
 wrong-network hint; add "In your wallet: X — deposit to activate" to
 the status card.
 
+**Status: ✅ FIXED (batch 8c, 2026-07-13).** The fee-discount opt-in is now a full-width toggle row (label + sub-line carry the weight, a 20px control at the end, the whole row is the target) with an inline "switch to a supported network to change this" hint when off-chain. The status card gained an **"In your wallet: X VPFI"** row — with "— deposit to activate" when the holder has wallet VPFI but nothing vaulted — so the card no longer reads "0 / no discount" while the wallet visibly holds VPFI.
+
 ### UX-030 · Jargon without inline definition on consent surfaces (S)
 "grace period", "liquidation", "default", "not priced by the protocol"
 appear at the highest-stakes moments with no gloss (copy.ts:355-356,
@@ -367,6 +369,12 @@ keeps consoles clean on locked-down networks.
   "My vault"→"Your Vaipakam Vault", …) — pick one name each. (S)
 - **UX-035** VPFI tier table boundaries overlap (1,000/5,000/20,000
   each in two tiers; sub-100 unaddressed). (S)
+  **Status: ✅ FIXED (batch 8c, 2026-07-13).** Tiers now use exclusive
+  upper bounds (100–999 / 1,000–4,999 / 5,000–19,999 / 20,000+) so each
+  threshold shows in one row only, matching the `held ≥ threshold` band
+  semantics — in both the default table and the live admin-tuned path
+  (next-threshold-minus-one-VPFI). A "holding under 100 VPFI earns no
+  discount" note addresses the sub-100 band.
 - **UX-036** Desk term chips: selected 29d + bold 30d look
   double-selected; only the selection should carry weight. (S)
   **Status: ✅ FIXED (batch 7b, 2026-07-12).** The has-liquidity cue is
@@ -424,6 +432,13 @@ keeps consoles clean on locked-down networks.
   browse strip or honest empty section. (S/M)
 - **UX-048** Faucet card-in-card nesting + ragged mint-button
   alignment; flatten and fix the button column. (S)
+  **Status: ✅ FIXED (batch 8c, 2026-07-13).** Each faucet token was its
+  own card; the rows are now plain `item-row`s inside ONE card (a
+  `row-list`), so the page reads as a single list instead of a stack of
+  nested cards, and the mint buttons carry a shared min-width so they
+  form an aligned column on desktop (the ≤480px rule still stacks the
+  CTA full-width). Mint-button labels are unchanged (spec 06 still
+  matches `/mint/i`).
 - **UX-049** Help page lags features: nothing on modes, alerts setup,
   Claims, wrong-network, or the NFT verifier. (S)
 - **UX-050** Activity page is advanced-only and all-or-nothing when

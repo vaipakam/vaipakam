@@ -58,11 +58,16 @@ export interface VpfiTierRow {
  *  (thresholds, VPFI wei) and 8 (discount bps) per apps/defi
  *  useProtocolConfig's BundleTuple. Falls back to the deploy defaults
  *  until the read lands. */
+// UX-035 — tiers are `held >= threshold` bands, so the boundary number
+// belongs to the HIGHER tier only. Exclusive upper bounds (999 / 4,999 /
+// 19,999) keep each threshold in exactly one row instead of showing e.g.
+// 5,000 as both the top of one band and the bottom of the next. Sub-100
+// holdings (no discount) are called out separately in the page.
 const DEFAULT_TIER_ROWS: VpfiTierRow[] = [
-  { held: '100 – 1,000 VPFI', discount: '10%' },
-  { held: '1,000 – 5,000 VPFI', discount: '15%' },
-  { held: '5,000 – 20,000 VPFI', discount: '20%' },
-  { held: 'Over 20,000 VPFI', discount: '24%' },
+  { held: '100 – 999 VPFI', discount: '10%' },
+  { held: '1,000 – 4,999 VPFI', discount: '15%' },
+  { held: '5,000 – 19,999 VPFI', discount: '20%' },
+  { held: '20,000+ VPFI', discount: '24%' },
 ];
 
 export function useVpfiTierTable(): VpfiTierRow[] {
@@ -86,11 +91,15 @@ export function useVpfiTierTable(): VpfiTierRow[] {
           maximumFractionDigits: 0,
         });
       const pct = (bps: bigint) => `${Number(bps) / 100}%`;
+      // UX-035 — exclusive upper bound (next threshold minus one whole
+      // VPFI) so a boundary value shows in one row only; matches the
+      // `held >= threshold` band semantics.
+      const oneVpfi = 10n ** BigInt(VPFI_DECIMALS);
       return thresholds.map((min, i) => ({
         held:
           i < 3
-            ? `${fmt(min)} – ${fmt(thresholds[(i + 1) as 1 | 2 | 3])} VPFI`
-            : `Over ${fmt(min)} VPFI`,
+            ? `${fmt(min)} – ${fmt(thresholds[(i + 1) as 1 | 2 | 3] - oneVpfi)} VPFI`
+            : `${fmt(min)}+ VPFI`,
         discount: pct(discounts[i as 0 | 1 | 2 | 3]),
       }));
     },

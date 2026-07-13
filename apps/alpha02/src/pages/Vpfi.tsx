@@ -346,6 +346,11 @@ export function Vpfi() {
           </div>
         ))}
       </dl>
+      {/* UX-035 — the below-first-threshold band was unaddressed; state
+          it so a small holder isn't left guessing. */}
+      <p className="field-hint" style={{ marginTop: 6 }}>
+        {copy.vpfi.belowMinNote}
+      </p>
       <p className="muted" style={{ marginTop: 12 }}>
         {copy.vpfi.noGasDiscount} {copy.vpfi.withdrawWarning} Vaipakam does not
         sell VPFI and pays no holding yield — you acquire it on the open
@@ -415,6 +420,20 @@ export function Vpfi() {
                 <dt>In your vault</dt>
                 <dd>{formatTokenAmount(snapshot.vaultBalance, VPFI_DECIMALS)} VPFI</dd>
               </div>
+              {/* UX-029 — surface the WALLET balance too: the fine print
+                  elsewhere showed VPFI in the wallet while this card read
+                  "0 / no discount", which looks contradictory. Only a
+                  VAULTED balance earns a discount, so nudge a wallet-only
+                  holder to deposit. */}
+              <div className="receipt-row">
+                <dt>In your wallet</dt>
+                <dd>
+                  {formatTokenAmount(snapshot.walletBalance, VPFI_DECIMALS)} VPFI
+                  {snapshot.walletBalance > 0n && snapshot.vaultBalance === 0n
+                    ? ' — deposit to activate'
+                    : ''}
+                </dd>
+              </div>
               <div className="receipt-row">
                 <dt>Active discount</dt>
                 <dd>
@@ -468,22 +487,31 @@ export function Vpfi() {
                 {watched ? copy.vpfi.addedToWallet : copy.vpfi.addToWallet}
               </button>
             ) : null}
-            <label
-              className="cluster"
-              style={{ marginTop: 16, fontSize: '0.9rem', alignItems: 'flex-start' }}
-            >
+            {/* UX-029 — the one switch that matters is a full-width
+                toggle row, not an 18px checkbox lost below a button. */}
+            <label className="toggle-row" style={{ marginTop: 16 }}>
+              <span className="toggle-row-main">
+                <span className="toggle-row-title">
+                  Use my vaulted VPFI for fee discounts
+                </span>
+                <span className="toggle-row-sub">
+                  Without this, holding VPFI gives no discount.
+                </span>
+              </span>
               <input
                 type="checkbox"
+                className="toggle-input"
                 checked={snapshot.consent}
                 disabled={busy || !onSupportedChain || !sanctionsClear}
                 onChange={() => void toggleConsent()}
-                style={{ marginTop: 3 }}
+                aria-label="Use my vaulted VPFI for fee discounts"
               />
-              <span style={{ flex: 1 }}>
-                Use my vaulted VPFI for fee discounts. Without this, holding
-                VPFI gives no discount.
-              </span>
             </label>
+            {!onSupportedChain ? (
+              <p className="field-hint" style={{ color: 'var(--warn)', marginTop: 6 }}>
+                Switch to a supported network to change this.
+              </p>
+            ) : null}
           </section>
 
           <section className="card">
