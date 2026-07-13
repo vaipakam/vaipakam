@@ -46,8 +46,16 @@ interface IOwnable2Step {
  *           - the VPFI CCIP `TokenPool` — Lock/Release on Base, Burn/Mint on mirrors
  *           - `VpfiPoolRateGovernor`    — UUPS proxy; the pool `rateLimitAdmin`
  *           - `VaipakamRewardMessenger` — UUPS proxy
+ *         Canonical (Base) only:
+ *           - `BuybackRemittanceReceiver` — UUPS proxy; Base-side buyback
+ *             remittance inbound handler
  *         Mirror only:
  *           - `VPFIMirrorToken`         — UUPS proxy (the mirror VPFI ERC20)
+ *           - `RewardRemittanceReceiver` — UUPS proxy; mirror-side reward-budget
+ *             inbound handler
+ *
+ *         (#687-A removed the cross-chain VPFI fixed-rate buy
+ *         (`VpfiBuyReceiver`/`VpfiBuyAdapter`) from this script.)
  *
  *         Required env:
  *           - DEPLOYER_PRIVATE_KEY  : the deploying EOA
@@ -56,10 +64,7 @@ interface IOwnable2Step {
  *           - CCIP_RMN_PROXY        : this chain's RMN proxy (token-pool ctor)
  *         Mirror chains also need:
  *           - BASE_CHAIN_ID         : EVM chain id of canonical Base
- *           - TREASURY_ADDRESS      : local treasury for the buy adapter
  *         Optional:
- *           - VPFI_BUY_PAYMENT_TOKEN  : 0 = native (default), else bridged WETH
- *           - VPFI_BUY_REFUND_TIMEOUT : seconds (default 900 = 15 min)
  *           - CCIP_DEST_GAS_LIMIT     : cross-chain callback gas (default 400000)
  *
  *         The Diamond + canonical `VPFIToken` are read from the per-chain

@@ -53,8 +53,9 @@ interface IRewardRemittanceConfig {
  *
  *         What it wires, EVERY chain:
  *           - `CcipMessenger` — chainId↔CCIP-selector, the remote
- *             messenger allowlist, the `vpfi-buy` + `vpfi-reward`
- *             channels (local handler + remote peers), the guardian.
+ *             messenger allowlist, the `vpfi-reward`, `vpfi-buyback`,
+ *             and `vpfi-reward-budget` channels (local handler + remote
+ *             peers), the guardian.
  *           - The VPFI CCIP `TokenPool` — accepts the pending ownership
  *             handover from the deployer, registers the governor as
  *             `rateLimitAdmin`, adds a lane per remote chain
@@ -69,8 +70,8 @@ interface IRewardRemittanceConfig {
  *           - `VPFIMirrorToken.setTokenPool` — points the mirror VPFI at
  *             its Burn/Mint pool (the only contract allowed to mint/burn).
  *
- *         Channel topology is hub-and-spoke: the `vpfi-buy` and
- *         `vpfi-reward` channels always pair a mirror with canonical Base,
+ *         Channel topology is hub-and-spoke: the reward / buyback /
+ *         reward-budget channels always pair a mirror with canonical Base,
  *         never mirror↔mirror. The TokenPool *lane* topology, by contrast,
  *         is whatever `CCIP_LANE_CHAIN_IDS` lists — pass Base-only on each
  *         mirror for a hub-spoke token graph, or the full chain set for a
@@ -90,10 +91,12 @@ interface IRewardRemittanceConfig {
  *             ids of every REMOTE chain to wire a TokenPool lane to.
  *         Mirror chains also need:
  *           - BASE_CHAIN_ID                  : EVM chain id of canonical
- *             Base — the hub the buy / reward channels peer with.
- *         Optional:
+ *             Base — the hub the reward / buyback channels peer with.
+ *         Required:
  *           - CCIP_GUARDIAN     : guardian address set on every
- *             `GuardianPausable` contract (default: unset → skipped).
+ *             `GuardianPausable` contract. Reverts up-front if unset or
+ *             zero (#857) so no chain is left with an un-guarded stack.
+ *         Optional:
  *           - CCIP_RATE_CAPACITY: per-lane token-bucket capacity
  *             (default 50,000 VPFI — design §10).
  *           - CCIP_RATE_REFILL  : per-lane refill rate, VPFI/s
@@ -235,11 +238,11 @@ contract ConfigureCcip is Script {
 
         require(c.laneChainIds.length > 0, "ConfigureCcip: no lanes given");
 
-        // On a mirror the buy + reward channels peer with canonical Base,
+        // On a mirror the reward / buyback channels peer with canonical Base,
         // so the messenger MUST get Base's chain-selector + remote-messenger
         // wired — and that only happens for chain ids listed in
         // CCIP_LANE_CHAIN_IDS. A lane list that omits Base still passes
-        // `ccip-wire` and `verify`, but then every outbound buy / reward
+        // `ccip-wire` and `verify`, but then every outbound reward / buyback
         // send reverts `UnconfiguredChain(baseChainId)`. Fail loud here.
         if (!c.canonical) {
             bool baseInLanes;
@@ -450,7 +453,7 @@ contract ConfigureCcip is Script {
             // gets the same incident-response fast-pause.
             GuardianPausable(c.localBuybackHandler).setGuardian(c.guardian);
             console.log(
-                "Guardian set on messenger / reward / buyReceiver / buybackReceiver:",
+                "Guardian set on messenger / reward / buybackReceiver:",
                 c.guardian
             );
         }
