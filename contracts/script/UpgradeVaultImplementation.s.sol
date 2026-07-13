@@ -142,6 +142,14 @@ contract UpgradeVaultImplementation is Script {
         require(routed == newImpl, "UpgradeVaultImplementation: template retarget verify failed");
         console.log("Verified: shared template now points at the fresh impl.");
 
+        // Persist the new template NOW — immediately after the retarget is
+        // verified on-chain, and BEFORE the optional eager per-user upgrades
+        // (Codex #1182). The retarget has already landed; a later revert in the
+        // eager loop (a bad owner in VAULT_UPGRADE_USERS) must not leave
+        // addresses.json stale vs the live diamond. The eager loop is a
+        // best-effort convenience, not part of recording the template bump.
+        Deployments.writeVaultImpl(newImpl);
+
         // ── Optional: eagerly upgrade the known dev-wallet vaults ──
         // `upgradeUserVault` is permissionless; the deployer signs. Each call
         // no-ops safely if the proxy already points at `newImpl`, but we only
@@ -156,8 +164,6 @@ contract UpgradeVaultImplementation is Script {
             vm.stopBroadcast();
         }
 
-        // Persist the new template so the deployments sync picks it up.
-        Deployments.writeVaultImpl(newImpl);
         console.log("");
         console.log("addresses.json .vaultImpl updated. Next:");
         console.log("  bash script/exportFrontendDeployments.sh");

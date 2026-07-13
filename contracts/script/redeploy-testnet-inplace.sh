@@ -81,6 +81,13 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 CONTRACTS_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 cd "$CONTRACTS_DIR"
 
+# Force the default Foundry profile for the WHOLE flow (Codex #1182). The forge
+# scripts we broadcast must compile with production-parity settings (viaIR +
+# optimizer=200); a stray FOUNDRY_PROFILE=quick/cifast in the caller's env would
+# otherwise deploy non-parity bytecode. run-regression.sh already forces this
+# internally, but the [1] build + the forge-script broadcasts inherit it here.
+export FOUNDRY_PROFILE=default
+
 # ── Defaults ──────────────────────────────────────────────────────────────────
 BROADCAST=0
 SKIP_REGRESSION=0
@@ -112,14 +119,26 @@ banner() { printf '\n\033[1;36m═══ %s ═══\033[0m\n' "$*"; }
 info()   { printf '  · %s\n' "$*"; }
 fail()   { printf '\n\033[1;31m✗ %s\033[0m\n' "$*" >&2; exit 1; }
 
-# ── Load .env (RPC URLs + keys) without clobbering already-exported vars ──────
+# ── Load .env (RPC URLs + keys) WITHOUT clobbering already-exported vars ──────
+# Explicit environment WINS (Codex #1182): a var the caller already exported is
+# kept; .env only fills the gaps. Split on the FIRST '=' so RPC URLs with query
+# params (…?key=…) survive; tolerate `export FOO=…`; strip surrounding quotes.
 for envf in ./.env ../.env; do
-  if [ -f "$envf" ]; then
-    info "sourcing $envf"
-    set -a; # shellcheck disable=SC1090
-    . "$envf"; set +a
-    break
-  fi
+  [ -f "$envf" ] || continue
+  info "loading $envf (only vars not already set)"
+  while IFS= read -r line || [ -n "$line" ]; do
+    case "$line" in ''|\#*) continue ;; esac
+    line="${line#export }"
+    key="${line%%=*}"
+    val="${line#*=}"
+    key="${key#"${key%%[![:space:]]*}"}"   # ltrim
+    key="${key%"${key##*[![:space:]]}"}"   # rtrim
+    case "$key" in ''|*[!A-Za-z0-9_]*) continue ;; esac  # valid var name only
+    [ -n "${!key:-}" ] && continue                        # already set -> keep
+    val="${val%\"}"; val="${val#\"}"; val="${val%\'}"; val="${val#\'}"
+    export "$key=$val"
+  done < "$envf"
+  break
 done
 
 # Map a chain slug -> its RPC-URL env-var NAME (mirrors Deployments.envPrefix()).
@@ -134,15 +153,45 @@ rpc_var_for() {
   esac
 }
 
-# ── Pre-flight: every requested chain must have an RPC URL + the two keys ─────
+# Map a chain slug -> its expected EVM chain-id (mirrors Deployments.chainSlug()).
+chainid_for() {
+  case "$1" in
+    base-sepolia) echo 84532 ;;
+    arb-sepolia)  echo 421614 ;;
+    sepolia)      echo 11155111 ;;
+    op-sepolia)   echo 11155420 ;;
+    bnb-testnet)  echo 97 ;;
+    *) return 1 ;;
+  esac
+}
+
+# ── Pre-flight: every requested chain must have an RPC URL + the right keys ───
 banner "Pre-flight: env + chain RPCs"
-: "${DEPLOYER_PRIVATE_KEY:?DEPLOYER_PRIVATE_KEY not set (needed by the forge scripts)}"
+# ADMIN signs the diamond-cut AND the vault retarget, so it is ALWAYS required.
 : "${ADMIN_PRIVATE_KEY:?ADMIN_PRIVATE_KEY not set (signs the diamond-cut + vault retarget)}"
+# DEPLOYER is only used by the vault-upgrade step (deploys the impl + funds admin
+# gas). RefreshAllFacetsInPlace signs everything with ADMIN, so a cuts-only
+# (--skip-vault) run does NOT need a deployer key (Codex #1182).
+if [ "$SKIP_VAULT" -eq 0 ]; then
+  : "${DEPLOYER_PRIVATE_KEY:?DEPLOYER_PRIVATE_KEY not set (needed by the vault-upgrade step; omit it only with --skip-vault)}"
+fi
 for slug in $CHAINS; do
   var="$(rpc_var_for "$slug")" || fail "unknown chain slug '$slug' (no RPC-var mapping)"
   val="${!var:-}"
   [ -n "$val" ] || fail "chain '$slug' selected but \$$var is empty — set it in .env"
-  info "$slug -> \$$var ✓"
+  # Verify the RPC actually serves the chain we think it does (Codex #1182): a
+  # BASE_SEPOLIA_RPC_URL secretly pointing at another chain would pass the
+  # forge script's testnet-only guard yet cut the WRONG diamond and read the
+  # wrong deployments/<slug>/addresses.json. Skip only if `cast` is absent.
+  want="$(chainid_for "$slug")"
+  if command -v cast >/dev/null 2>&1; then
+    got="$(cast chain-id --rpc-url "$val" 2>/dev/null || echo '')"
+    [ -n "$got" ] || fail "chain '$slug': RPC \$$var did not answer eth_chainId (bad URL / down?)"
+    [ "$got" = "$want" ] || fail "chain '$slug': RPC \$$var is chain-id $got, expected $want — wrong RPC URL"
+    info "$slug -> \$$var (chain-id $got ✓)"
+  else
+    info "$slug -> \$$var ✓ (cast not found — chain-id verify skipped)"
+  fi
 done
 if [ "$BROADCAST" -eq 1 ]; then
   info "MODE: --broadcast (steps 4-5 will send real txs with --slow)"
@@ -151,9 +200,13 @@ else
 fi
 
 # ── [1] Build ─────────────────────────────────────────────────────────────────
+# Sparse `--skip test` (Codex #1182): the broadcast forge scripts only need
+# src/ + script/, and this is a fast compile-fail signal. The test-inclusive
+# compile is done by predeploy-check ([2]) and the chunked regression ([3]),
+# so a bare `forge build` here would be redundant (and slower).
 if [ "$SKIP_BUILD" -eq 0 ]; then
-  banner "[1] forge build (src + script)"
-  "${NICE[@]}" forge build || fail "forge build failed"
+  banner "[1] forge build --skip test (src + script)"
+  "${NICE[@]}" forge build --skip test || fail "forge build failed"
 else
   info "[1] build skipped (--skip-build)"
 fi
@@ -179,12 +232,18 @@ banner "GATE PASSED"
 
 # ── Gate-only default: print the broadcast commands and stop ──────────────────
 if [ "$BROADCAST" -eq 0 ]; then
+  # Echo back the SAME scoping the rehearsal used (Codex #1182) so the copy-paste
+  # rerun broadcasts exactly what was just gated — not the full default set.
+  rerun="bash script/redeploy-testnet-inplace.sh --broadcast --skip-regression --skip-sanity"
+  [ "$SKIP_VAULT" -eq 1 ] && rerun="$rerun --skip-vault"
+  [ "$RUN_EXPORT" -eq 1 ] && rerun="$rerun --export"
+  [ "$CHAINS" != "base-sepolia arb-sepolia" ] && rerun="$rerun --chains \"$CHAINS\""
   cat <<EOF
 
 The pre-broadcast gate is green. Nothing was sent (gate-only default).
 To broadcast the in-place redeploy for [$CHAINS], re-run with --broadcast:
 
-  bash script/redeploy-testnet-inplace.sh --broadcast --skip-regression --skip-sanity
+  $rerun
 
 (the --skip-* flags avoid re-running the gate you just passed). Or broadcast a
 single chain/step manually:
