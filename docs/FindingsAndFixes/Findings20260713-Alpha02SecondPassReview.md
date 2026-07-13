@@ -103,6 +103,7 @@ Unmarked findings are OPEN.
 | --- | --- | --- |
 | A — P2s (2026-07-13) | UX2-001, UX2-002, UX2-006 | ✅ Fixed — structurally shrinkable header chip + phone-tier trims (badge/glyph) with a 390px fork-tier no-overflow spec; splash failure state (HTML-resident 20s timer → plain-words message + Reload); one-line Connect label rides the same header work |
 | B — P3 polish (2026-07-13) | UX2-003, UX2-004, UX2-005, UX2-007 | ✅ Fixed — Settings More cards renamed to the nav names; the discount consent is a real switch (track + sliding thumb, focus ring, reduced-motion); faucet + VPFI dead-ends gain one-click "Switch to <chain>" (mocks-bearing / canonical-VPFI chain resolved from the deployments bundle); Activity's empty feed hands over Borrow/Lend CTAs |
+| C — perf tail (2026-07-13; hardened after Codex #1200) | UX2-007 (tail), UX2-008 | ✅ Fixed — the ~761 kB Diamond-ABI chunk is split out (`contract-abis`) AND lifted off first paint. Because `React.lazy` fetches on MOUNT, each ABI consumer is gated to when the ABI is actually wanted: Borrow/Lend are lazy routes; Home's positions banner + the shell's SanctionsBanner mount only when connected (the banner behind its own quiet `ErrorBoundary` so a chunk-fetch failure degrades to no banner, not a shell crash); Help renders a non-committal fee card when disconnected and mounts the live-value card (its only ABI dep) only when connected — so a disconnected /help never publishes a possibly-stale hardcoded rate. Runtime-verified: a disconnected `/` and `/help` fetch NO `contract-abis`; `/borrow` does. Activity's hedged empty title stays for EVERY truncated case (a `myLoanIds`-gated clean title would falsely claim "no activity yet" for a returning wallet whose loans aged out of the indexer leg); the fix is the WORDING — it no longer implies older events exist, it states the page's recent-only scope |
 
 ---
 
@@ -209,17 +210,60 @@ fires and the check no-ops. Verified present in the built
   unnecessarily and offers no forward CTA (the UX-023 pattern:
   "make your first move → Borrow / Lend"). Worth revisiting alongside
   the indexer-timeout tuning for slow networks. (S)
-  **Status: ✅ FIXED (batch B, 2026-07-13) — CTA half.** The empty feed
-  (both the clean and the hedged/truncated variants) now offers
-  "Borrow something" / "Lend something" forward CTAs. The copy split
-  already existed (`empty` vs `truncatedEmpty` — the sweep simply hit
-  the degraded branch under relay latency); the indexer-timeout tuning
-  stays open as a perf follow-up alongside UX2-008.
+  **Status: ✅ FIXED (batch B CTA half + batch C tuning, 2026-07-13).**
+  The empty feed (both the clean and the hedged/truncated variants) now
+  offers "Borrow something" / "Lend something" forward CTAs (batch B).
+  Batch C then addressed the hedged-copy tail. The mis-diagnosis was
+  that the hedge was a slow-network artefact; it's structural — the
+  protocol-wide 5×100 scan can't reach the feed end whenever the testnet
+  holds >500 total events, so `truncated` stays true for ANY wallet,
+  including a brand-new one with nothing. An initial attempt gated the
+  clean title on `myLoanIds.size > 0`, but Codex #1200 correctly showed
+  that makes a FALSE "no activity yet" claim for a returning wallet whose
+  only loans are closed/transferred and older than the scan window
+  (those aren't in `myLoanIds` once they age out of the indexer leg). So
+  the hedge stays for every `truncated` case (it is never false), and
+  the fix is in the WORDING instead: the hedged copy no longer asserts
+  "older events may exist that we couldn't scan" (which read as an
+  unnecessary hedge implying hidden history for genuinely-new wallets)
+  — it now states the page's recent-only scope ("This page lists recent
+  activity only, so anything older isn't shown here"), which is true
+  whether or not the wallet has history. Both variants keep the batch-B
+  Borrow/Lend forward CTAs. A definitive clean "no activity yet" for a
+  PROVEN-new wallet still needs the participant-history route (#1023).
 - **UX2-008** The ABI bundle (`abis-*.js`, ~761 KB uncompressed) loads
   on every surface's critical path. It's one shared chunk today;
   splitting the rarely-read facet ABIs (or deferring until first
   contract read) would trim first-paint bytes on marketing-ish routes
   like Home/Help. Enhancement candidate, low urgency. (M)
+  **Status: ✅ FIXED (batch C, 2026-07-13; hardened after Codex #1200).**
+  Two moves. (1) The combined Diamond ABI is now its own Rollup chunk
+  (`contract-abis`, matched in `vite.config.ts:manualChunks`) — lifted
+  out of the every-deploy entry chunk, downloaded in parallel, and
+  long-cached (ABIs change only on a contract deploy, so the hash
+  survives ordinary app deploys and every in-app navigation reuses it).
+  (2) It is lifted off the FIRST-paint critical path. The subtlety Codex
+  #1200 caught: `React.lazy` fetches its chunk the moment the component
+  *mounts*, so merely making the ABI consumers lazy wasn't enough — an
+  unconditionally-rendered lazy child still pulls the ABI right after
+  paint. Each consumer is therefore gated so it only mounts when the ABI
+  is actually wanted: **Borrow/Lend** are lazy routes (loaded on
+  navigation, which is when their contract flow is needed); **Home's
+  active-positions banner** and the shell's **SanctionsBanner** mount
+  only when a wallet is connected (a disconnected visitor has no
+  positions and no address to screen); **Help's fee FAQ** renders a
+  NON-COMMITTAL fee card for disconnected visitors (the fee structure in
+  words + "connect for the exact current rates", never a specific
+  percentage it hasn't read live, so a governance re-tune can't strand a
+  stale number) and mounts the live-value card (its only ABI dependency,
+  itself gated on `fees.ready` so an in-flight read never shows a default
+  as an exact rate) only when connected. Verified at
+  **runtime**: a disconnected `/` and `/help` paint fetch NO
+  `contract-abis` request, while `/borrow` (a real action route) does;
+  the entry `modulepreload` set is ABI-free (only react/wallet vendors).
+  Connected users, who need the ABI for reads anyway, load it on demand.
+  The always-on sanctions *gate* still runs at the contract level; only
+  its advisory banner is deferred.
 
 ## Environment artifacts (recorded, NOT product findings)
 

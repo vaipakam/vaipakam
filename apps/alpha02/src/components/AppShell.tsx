@@ -9,7 +9,7 @@
  * stay reachable by URL in both modes (they are deeper tools, not
  * disabled features).
  */
-import { Suspense, useEffect, useRef, useState } from 'react';
+import { lazy, Suspense, useEffect, useRef, useState } from 'react';
 import { NavLink, Outlet, useLocation } from 'react-router-dom';
 import {
   BadgeCheck,
@@ -40,7 +40,17 @@ import { ConnectButton } from './ConnectButton';
 import { EmptyState } from './EmptyState';
 import { DiagnosticsDrawer } from './DiagnosticsDrawer';
 import { NetworkBanner } from './NetworkBanner';
-import { SanctionsBanner } from './SanctionsBanner';
+// UX2-008 — SanctionsBanner is the shell's ONLY eager Diamond-ABI
+// consumer (it reads the on-chain sanctions oracle). Loading it lazily
+// keeps the ~761 kB contract-ABI chunk off a DISCONNECTED first paint
+// entirely (marketing routes Home/Help): the banner returns null unless
+// a connected wallet is flagged, and the oracle read is itself
+// connection-gated, so a beat's delay before it can appear is
+// invisible — while a connected user (who needs the ABI for reads
+// anyway) pulls the chunk as before.
+const SanctionsBanner = lazy(() =>
+  import('./SanctionsBanner').then((m) => ({ default: m.SanctionsBanner })),
+);
 
 interface NavItem {
   to: string;
@@ -244,7 +254,30 @@ export function AppShell() {
 
         <main className="shell-main" id="main-content" tabIndex={-1} ref={mainRef}>
           <NetworkBanner />
-          <SanctionsBanner />
+          {/* UX2-008 — gate on connection, not just lazy render:
+              `React.lazy` fetches the SanctionsBanner chunk (→ the ~761
+              kB Diamond ABI) the moment it MOUNTS, so an unconditional
+              render would pull the ABI right after paint on a
+              disconnected Home/Help visit (Codex #1200). The sanctions
+              read is itself connection-gated (no connected wallet → no
+              address to screen → the banner returns null), so mounting
+              it only when connected keeps a disconnected first paint
+              ABI-free while a connected user — who needs the ABI for
+              reads anyway — loads it. The state-creating sanctions GATE
+              still runs at the contract level regardless of this UI. */}
+          {isConnected ? (
+            // Advisory + lazy: a chunk-fetch failure must degrade to no
+            // banner, NOT bubble to the root boundary and replace the
+            // whole app chrome with a crash card (Codex #1200 r2). Its
+            // own quiet boundary (`fallback={null}`) contains that. The
+            // state-creating sanctions gate still runs at the contract
+            // level regardless of this UI.
+            <ErrorBoundary fallback={null}>
+              <Suspense fallback={null}>
+                <SanctionsBanner />
+              </Suspense>
+            </ErrorBoundary>
+          ) : null}
           {/* Route-level crash containment: a page that throws during
               render becomes a recoverable card while the nav stays
               alive; navigating away — including to a different

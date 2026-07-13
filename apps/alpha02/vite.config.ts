@@ -42,6 +42,23 @@ export default defineConfig({
         // Cloudflare plugin narrows `output.manualChunks` to the
         // function signature.
         manualChunks(id: string) {
+          // UX2-008 — isolate the combined Diamond ABI (all 60+ facet
+          // JSONs spread into `DIAMOND_ABI_VIEM`, ~761 kB uncompressed)
+          // into its OWN chunk. It's imported by always-on shell code
+          // (sanctions screening, indexer sync) so it can't be deferred
+          // off first paint without lazy-loading security machinery, but
+          // splitting it out (a) shrinks the every-deploy entry chunk by
+          // the ABI's whole weight, (b) lets it download in PARALLEL with
+          // the entry instead of inflating it, and (c) makes it a stable,
+          // long-cached file — the ABIs only change on a contract deploy,
+          // so its hash survives ordinary app deploys and every in-app
+          // route navigation reuses it from cache. Same rationale as the
+          // vendor splits below (UX-005). Matched before the node_modules
+          // branch because the workspace package resolves via a symlink,
+          // not under node_modules.
+          if (/[\\/]packages[\\/]contracts[\\/]src[\\/]abis[\\/]/.test(id)) {
+            return 'contract-abis';
+          }
           if (id.includes('node_modules')) {
             if (
               /[\\/]node_modules[\\/](wagmi|viem|connectkit|@tanstack[\\/]react-query|@wagmi)[\\/]/.test(

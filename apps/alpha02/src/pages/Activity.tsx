@@ -265,6 +265,20 @@ export function Activity() {
           <EmptyState
             icon={History}
             title={
+              /* UX2-007 tail — `truncated` (the protocol-wide scan
+                 didn't reach the feed end) can't be narrowed to "this
+                 wallet is new" without the participant-history route
+                 (#1023): a returning wallet whose only loans are closed/
+                 transferred and older than the scan window is ALSO
+                 truncated-with-nothing, and telling it "no activity yet"
+                 would be a false claim (Codex #1200). So the hedge stays
+                 for every truncated case — but its WORDING no longer
+                 implies older events definitely exist (that was the
+                 unnecessary-hedge complaint for genuinely-new wallets);
+                 it now just states the page's recent-only scope, which
+                 is true whether or not the wallet has hidden history.
+                 The definitive clean empty for a proven-new wallet waits
+                 on #1023. */
               activity.data.truncated
                 ? copy.activity.truncatedEmpty
                 : copy.activity.empty

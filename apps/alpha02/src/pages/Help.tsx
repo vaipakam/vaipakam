@@ -4,11 +4,19 @@
  * checkbox links to (#1030) and build info for testers. Deep-dive
  * docs stay on the marketing site; this page is deliberately small.
  */
-import { useEffect } from 'react';
+import { lazy, Suspense, useEffect } from 'react';
 import { copy } from '../content/copy';
-import { useProtocolFees, bpsToPercentText } from '../data/fees';
 import { supportMailto } from '../data/support';
 import { formatDate } from '../lib/format';
+import { useActiveChain } from '../chain/useActiveChain';
+import { ErrorBoundary } from '../components/ErrorBoundary';
+
+// UX2-008 — the live fee read (`useProtocolFees` → the Diamond ABI) is
+// Help's only ABI dependency; isolating it in a lazy chunk keeps a
+// direct /help visit ABI-free. The Suspense fallback below shows the
+// same card with the deploy-default fee values so the answer never
+// blanks.
+const FeeFaqCard = lazy(() => import('./help/FeeFaqCard'));
 
 const FAQ: Array<{ q: string; a: string }> = [
   {
@@ -57,6 +65,7 @@ const FAQ: Array<{ q: string; a: string }> = [
 ];
 
 export function Help() {
+  const { isConnected } = useActiveChain();
   const buildHash = import.meta.env.VITE_BUILD_HASH as string | undefined;
   const buildTime = import.meta.env.VITE_BUILD_TIME as string | undefined;
   // UX-044 — the footer shows a readable date, not the raw ISO stamp;
@@ -67,8 +76,6 @@ export function Help() {
     const ms = Date.parse(buildTime);
     return Number.isFinite(ms) ? formatDate(Math.floor(ms / 1000)) : buildTime;
   })();
-  const fees = useProtocolFees();
-
   // The consent checkbox links here as /help#risks — the router
   // doesn't scroll to hashes on its own. getElementById, not
   // querySelector: the fragment is user-controlled and an invalid
@@ -85,13 +92,19 @@ export function Help() {
     document.getElementById(id)?.scrollIntoView();
   }, []);
 
-  // Fee numbers come from the live protocol config — governance can
-  // retune them and this answer must track the deployed values.
-  const feeFaq = {
-    q: 'What fees does Vaipakam charge?',
-    a: `${copy.fees.borrowerLIF(bpsToPercentText(fees.loanInitiationFeeBps))} ${copy.fees.lenderYieldFee(bpsToPercentText(fees.treasuryFeeBps))} ${copy.fees.lateFee} Network gas is separate and goes to the blockchain, not to Vaipakam.`,
-  };
-  const faq = [...FAQ, feeFaq];
+  // The disconnected / loading fee card. The exact loan-initiation and
+  // yield percentages are live governance-tunable config, and reading
+  // them pulls the Diamond ABI (which /help stays clear of on first
+  // paint, UX2-008) — so a disconnected visitor sees the fee STRUCTURE
+  // in non-committal wording that directs them to connect for the exact
+  // current rates, rather than a hardcoded default that could be stale
+  // if governance has retuned it (Codex #1200 r2). Kept ABI-free.
+  const feeFallback = (
+    <section className="card">
+      <h3>{copy.fees.faqQuestion}</h3>
+      <p style={{ margin: 0 }}>{copy.fees.faqAnswerGeneric}</p>
+    </section>
+  );
 
   return (
     <div>
@@ -112,12 +125,34 @@ export function Help() {
             ))}
           </ul>
         </section>
-        {faq.map((item) => (
+        {FAQ.map((item) => (
           <section key={item.q} className="card">
             <h3>{item.q}</h3>
             <p style={{ margin: 0 }}>{item.a}</p>
           </section>
         ))}
+        {/* UX2-008 — the fee answer's live values need the Diamond ABI.
+            `React.lazy` fetches its chunk the moment it MOUNTS, so
+            mounting the live card unconditionally would pull the ABI on
+            every /help visit (Codex #1200). A disconnected visitor sees
+            the deploy-default fee card (correct unless governance has
+            retuned, and the receipt quotes live values at transaction
+            time regardless), so the live card mounts only when a wallet
+            is connected — keeping a disconnected /help paint ABI-free. */}
+        {isConnected ? (
+          // A lazy live-fee chunk failure must degrade to the same
+          // non-committal fee copy, not bubble to the route boundary and
+          // replace the whole Help page (Codex #1200 r4). Its own quiet
+          // boundary (fallback={feeFallback}) contains that; the Suspense
+          // fallback covers the in-flight load.
+          <ErrorBoundary fallback={feeFallback}>
+            <Suspense fallback={feeFallback}>
+              <FeeFaqCard />
+            </Suspense>
+          </ErrorBoundary>
+        ) : (
+          feeFallback
+        )}
         {/* #1040 phase 1 — human escalation path. The in-app sender
             lives in the Support panel (it holds the health details a
             good report needs); this section points there and offers
