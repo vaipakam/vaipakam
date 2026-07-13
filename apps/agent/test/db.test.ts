@@ -1,5 +1,10 @@
 import { describe, it, expect } from 'vitest';
-import { OptOutStorageUnavailableError, upsertThresholds } from '../src/db';
+import {
+  getTelegramChatId,
+  OptOutStorageUnavailableError,
+  reserveTestAlert,
+  upsertThresholds,
+} from '../src/db';
 
 // ─── Minimal D1 fake for the thresholds upsert ─────────────────────
 //
@@ -17,7 +22,7 @@ class FakeStmt {
     this.args = a;
     return this;
   }
-  async run(): Promise<void> {
+  async run(): Promise<{ meta: { changes: number } }> {
     if (this.db.failWith) throw new Error(this.db.failWith);
     if (!this.db.migrated && this.sql.includes('notify_maturity_approaching')) {
       // The exact phrasing the real INSERT path produces (verified
@@ -27,13 +32,41 @@ class FakeStmt {
         'D1_ERROR: table user_thresholds has no column named notify_maturity_approaching: SQLITE_ERROR',
       );
     }
+    if (this.db.testAlertColumnMissing && this.sql.includes('last_test_alert_at')) {
+      throw new Error('D1_ERROR: no such column: last_test_alert_at: SQLITE_ERROR');
+    }
     this.db.executed.push({ sql: this.sql, args: this.args });
+    // Model the reserveTestAlert compare-and-set: the conditional UPDATE
+    // only flips the stamp when the stored value is <= (now - cooldown),
+    // returning changes=1 iff it won the slot. args = [now, wallet,
+    // chain, threshold]. This lets a test drive two sequential "parallel"
+    // reserves and see only the first win.
+    if (this.sql.includes('last_test_alert_at <=')) {
+      const now = this.args[0] as number;
+      const threshold = this.args[3] as number;
+      if (this.db.storedLastTestAt <= threshold) {
+        this.db.storedLastTestAt = now;
+        return { meta: { changes: 1 } };
+      }
+      return { meta: { changes: 0 } };
+    }
+    return { meta: { changes: 1 } };
+  }
+  // For SELECTs (getTelegramChatId) — returns whatever the fake was
+  // seeded with, recording the bound args so a test can assert the
+  // wallet was lower-cased.
+  async first<T>(): Promise<T | null> {
+    this.db.executed.push({ sql: this.sql, args: this.args });
+    return (this.db.firstResult as T) ?? null;
   }
 }
 
 class FakeD1 {
   migrated = true;
   failWith: string | null = null;
+  firstResult: unknown = null;
+  testAlertColumnMissing = false;
+  storedLastTestAt = 0;
   executed: Array<{ sql: string; args: unknown[] }> = [];
   prepare(sql: string) {
     return new FakeStmt(this, sql);
@@ -102,5 +135,128 @@ describe('upsertThresholds rollout-window fallback (#1056 round 8)', () => {
     await upsertThresholds(db as unknown as D1Database, { ...BASE });
     expect(db.executed).toHaveLength(1);
     expect(db.executed[0]!.sql).not.toContain('notify_maturity_approaching');
+  });
+});
+
+describe('getTelegramChatId (UX-012 test-alert lookup)', () => {
+  it('returns the chat id + locale when a link exists (wallet lower-cased)', async () => {
+    const db = new FakeD1();
+    db.firstResult = { tg_chat_id: '9876', locale: 'ta' };
+    const res = await getTelegramChatId(
+      db as unknown as D1Database,
+      BASE.wallet,
+      BASE.chain_id,
+    );
+    expect(res).toEqual({ chatId: '9876', locale: 'ta' });
+    // The wallet is bound lower-cased so a checksummed spelling still
+    // matches the stored row.
+    expect(db.executed[0]!.args[0]).toBe(BASE.wallet.toLowerCase());
+  });
+
+  it('returns null when the row exists but has no chat id (handshake unfinished)', async () => {
+    const db = new FakeD1();
+    db.firstResult = { tg_chat_id: null, locale: 'en' };
+    const res = await getTelegramChatId(
+      db as unknown as D1Database,
+      BASE.wallet,
+      BASE.chain_id,
+    );
+    expect(res).toBeNull();
+  });
+
+  it('returns null when no row exists at all', async () => {
+    const db = new FakeD1();
+    db.firstResult = null;
+    const res = await getTelegramChatId(
+      db as unknown as D1Database,
+      BASE.wallet,
+      BASE.chain_id,
+    );
+    expect(res).toBeNull();
+  });
+
+  it('defaults the locale to en when the stored locale is null', async () => {
+    const db = new FakeD1();
+    db.firstResult = { tg_chat_id: '42', locale: null };
+    const res = await getTelegramChatId(
+      db as unknown as D1Database,
+      BASE.wallet,
+      BASE.chain_id,
+    );
+    expect(res).toEqual({ chatId: '42', locale: 'en' });
+  });
+});
+
+describe('reserveTestAlert (UX-012 atomic cooldown CAS)', () => {
+  const COOLDOWN = 60;
+
+  it('wins the slot on a first reserve (stamp far in the past) and binds lower-cased wallet', async () => {
+    const db = new FakeD1(); // storedLastTestAt = 0
+    const won = await reserveTestAlert(
+      db as unknown as D1Database,
+      BASE.wallet,
+      BASE.chain_id,
+      1800,
+      COOLDOWN,
+    );
+    expect(won).toBe(true);
+    expect(db.executed[0]!.sql).toContain('last_test_alert_at <=');
+    expect(db.executed[0]!.args).toEqual([
+      1800,
+      BASE.wallet.toLowerCase(),
+      BASE.chain_id,
+      1800 - COOLDOWN,
+    ]);
+  });
+
+  it('serialises parallel replays: only the first of two within the window wins', async () => {
+    const db = new FakeD1();
+    // Two "parallel" reserves at the same instant — the fake models the
+    // conditional UPDATE, so the second sees the first's fresh stamp.
+    const first = await reserveTestAlert(
+      db as unknown as D1Database,
+      BASE.wallet,
+      BASE.chain_id,
+      1800,
+      COOLDOWN,
+    );
+    const second = await reserveTestAlert(
+      db as unknown as D1Database,
+      BASE.wallet,
+      BASE.chain_id,
+      1800,
+      COOLDOWN,
+    );
+    expect(first).toBe(true);
+    expect(second).toBe(false);
+  });
+
+  it('wins again once the cooldown has elapsed', async () => {
+    const db = new FakeD1();
+    await reserveTestAlert(db as unknown as D1Database, BASE.wallet, BASE.chain_id, 1800, COOLDOWN);
+    // A later attempt past the cooldown window wins.
+    const later = await reserveTestAlert(
+      db as unknown as D1Database,
+      BASE.wallet,
+      BASE.chain_id,
+      1800 + COOLDOWN + 1,
+      COOLDOWN,
+    );
+    expect(later).toBe(true);
+  });
+
+  it('fails open (returns true, no cooldown) when the column is missing pre-0034', async () => {
+    const db = new FakeD1();
+    db.testAlertColumnMissing = true;
+    const won = await reserveTestAlert(
+      db as unknown as D1Database,
+      BASE.wallet,
+      BASE.chain_id,
+      1800,
+      COOLDOWN,
+    );
+    expect(won).toBe(true);
+    // The UPDATE threw missing-column and was swallowed → allow the send.
+    expect(db.executed).toHaveLength(0);
   });
 });

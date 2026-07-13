@@ -116,7 +116,36 @@ export function buildDueDateOptOutMessage(
   ].join('\n');
 }
 
-export type AlertAuthAction = 'link' | 'unlink' | 'mute-duedate';
+/**
+ * The test-alert counterpart (UX-012) — signed before the Worker
+ * pushes a one-off "your alerts are working" message to the linked
+ * chat. Distinct headline / body from the other three so a captured
+ * signature can never cross actions. Sending a Telegram message to a
+ * wallet's chat is an outbound side-effect, so it gets the same
+ * ownership proof as link / unlink: without it a spoofed-Origin caller
+ * who knows a linked wallet's (public) address could spam that user's
+ * Telegram with test messages.
+ */
+export function buildTelegramTestMessage(
+  wallet: string,
+  chainId: number,
+  issuedAt: number,
+): string {
+  return [
+    'Vaipakam — Send a test alert',
+    '',
+    'I request one test alert be sent to the Telegram chat linked to',
+    'the wallet below, to confirm delivery works. Signing this message',
+    'proves ownership of the wallet. It is not a transaction and costs',
+    'no gas.',
+    '',
+    `Wallet: ${wallet.toLowerCase()}`,
+    `Chain id: ${chainId}`,
+    `Issued at (unix): ${issuedAt}`,
+  ].join('\n');
+}
+
+export type AlertAuthAction = 'link' | 'unlink' | 'mute-duedate' | 'test-alert';
 
 const MESSAGE_BUILDERS: Record<
   AlertAuthAction,
@@ -125,6 +154,7 @@ const MESSAGE_BUILDERS: Record<
   link: buildTelegramLinkMessage,
   unlink: buildTelegramUnlinkMessage,
   'mute-duedate': buildDueDateOptOutMessage,
+  'test-alert': buildTelegramTestMessage,
 };
 
 export interface SignedLinkRequest {

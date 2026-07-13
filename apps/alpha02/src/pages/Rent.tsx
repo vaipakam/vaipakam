@@ -1478,6 +1478,20 @@ export function Rent() {
               <p>{copy.rent.wantPathBlurb}</p>
             </span>
           </button>
+          {/* UX-047 — the landing was two cards in a sea of whitespace;
+              a direct "browse what's listed" action gives a visitor who
+              isn't sure which card fits an obvious way into the actual
+              rental marketplace (the renter path, which shows the live
+              listings or its own honest empty state). */}
+          <p style={{ gridColumn: '1 / -1', textAlign: 'center', margin: 0 }}>
+            <button
+              type="button"
+              className="btn btn-secondary"
+              onClick={() => setPath('want')}
+            >
+              {copy.rent.browseCta}
+            </button>
+          </p>
         </div>
       ) : (
         <>

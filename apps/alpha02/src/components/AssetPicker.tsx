@@ -187,6 +187,15 @@ export function AssetPicker({
           autoComplete="off"
         />
       ) : null}
+      {/* UX-017 — a bad/half-typed paste got only a red border and
+          silence; say WHAT's expected instead of signalling by colour
+          alone. */}
+      {showCustom && value !== '' && !isAddressLike(value) ? (
+        <span className="field-hint" style={{ color: 'var(--danger)' }}>
+          Enter a valid contract address — “0x” followed by 40 hex
+          characters.
+        </span>
+      ) : null}
       {showCustom && isAddressLike(value) && security.data ? (
         security.data.kind === 'block' ? (
           <span className="field-hint" style={{ color: 'var(--danger)' }}>

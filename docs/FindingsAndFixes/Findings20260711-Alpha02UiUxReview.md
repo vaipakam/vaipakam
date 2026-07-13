@@ -192,6 +192,8 @@ so a fumbled handshake silently drops the exact deadline/liquidation
 alerts the feature exists for. Add "Send test alert" and gate the
 linked state on its success.
 
+**Status: ✅ FIXED (batch 8e, 2026-07-13).** The self-attested "I've done it — the bot replied" button is gone. After issuing the link code the card now shows **"Send a test alert"**: the wallet signs a free `test-alert`-scoped ownership proof, the agent Worker (`POST /telegram/test`) looks up the stored chat id and pushes ONE real "your alerts are working" message, and the card records "linked" **only** on a confirmed send. A fumbled handshake (code never delivered to the bot → no stored chat) now returns a body-tagged `not-linked` and the card says "we couldn't find your Telegram chat yet — send the code to the bot, then try again", instead of silently marking linked and dropping every future alert. Signature-gated (distinct message from link/unlink/mute so a captured signature can't cross actions) so a spoofed-Origin caller can't spam a linked wallet's chat. A 60s per-wallet cooldown is enforced by an **atomic compare-and-set** (D1 migration `0034`, reserved before the send) so even parallel replays of one signed body can't each fire — only one wins the slot (Codex #1175). If the handshake code expires before the bot step completes, a **"Start over"** action issues a fresh one instead of leaving a dead code on screen. Localized test message across all 10 Worker locales.
+
 ### UX-013 · No persistent network indicator when connected (S)
 `NetworkBanner` renders only on unsupported chains; on a supported one
 the current network shows nowhere outside the wallet modal. Offers,
@@ -205,6 +207,8 @@ The guided flows let a disconnected user fill four screens before
 revealing "Connect a wallet" in the review checklist
 (`useEligibility.tsx:45-58`). Prompt earlier (details step or on
 entering terms).
+
+**Status: ✅ FIXED (batch 8b, 2026-07-12).** The guided flow's FIRST step now shows a non-blocking "connect your wallet to continue" note with an inline Connect button whenever the wallet is disconnected, so the requirement is surfaced up front instead of only in the final review checklist (which still enforces it). The user can still browse matches while disconnected.
 
 ### UX-015 · Raw contract revert text shown to naive users (S)
 `CollateralPrecheck` and `SimulationPreview` render decoded revert
@@ -229,12 +233,16 @@ disabled lavender fill reads as almost-active (also flagged visually
 on Lend, VPFI, NFT verifier). Inline field hints + a clearly muted
 disabled style.
 
+**Status: ✅ FIXED (batch 8d, 2026-07-13).** A malformed/half-typed pasted address now shows an inline hint (“Enter a valid contract address — 0x followed by 40 hex characters.”) instead of a red border alone, and disabled PRIMARY buttons are desaturated to a plainly-inactive surface (they kept the brand lavender fill before, reading as almost-clickable).
+
 ### UX-018 · "Use this offer" is direction-ambiguous on borrow requests (S)
 Both card types share the CTA; on a borrow request it makes you the
 *lender* — the opposite money direction — with nothing signaling it.
 Role-specific CTAs: "Borrow this" / "Fund this request". (Offer rows
 also print "1000 bps" beside "10% yearly" — drop the bps duplication
 outside Advanced.)
+
+**Status: ✅ FIXED (batch 8b, 2026-07-12).** The Offer Book card CTA is now role-specific: **"Borrow this"** on a lender offer (taking it makes you the borrower) and **"Fund this request"** on a borrow request (taking it makes you the lender), replacing the direction-blind "Use this offer". A **sale vehicle** (a borrower-STYLE row linked to a running loan, where accepting BUYS the lender position, not funds a new borrow) is special-cased to **"Buy this loan position"** so the role CTA never mislabels it (Codex #1175 r1/r2). The Offer Book helper paragraph was updated to name the role-specific actions instead of "Use this offer". The bps-beside-percent duplication was already Advanced-only (the `${bps} bps` string lives inside the `isAdvanced`-gated `advancedBits` block; Basic mode shows only the "…% yearly" line), so no change was needed there.
 
 ### UX-019 · Offer Book cards crushed two-column on mobile (S)
 Title wraps mid-string ("Lending offer ·" / "0.005 WETH"), meta breaks
@@ -287,6 +295,8 @@ group Needs-action / Active / Closed as history grows.
 receipt but no Repay button. Render a disabled "Confirming your
 role…" state.
 
+**Status: ✅ FIXED (batch 8b, 2026-07-12).** The action region now renders a disabled "Confirming your role…" button while the on-chain position-holder read is in flight, instead of nothing — so the user sees the action is coming rather than a receipt with no button beneath it.
+
 ### UX-026 · Basic user landing on /desk or /offers gets no orientation (S)
 Both are URL-reachable in Basic by design, but nothing says "this is a
 power surface" or routes back to the guided flows. Dismissible banner
@@ -321,6 +331,8 @@ VPFI in the wallet. Promote to a full-width toggle row with inline
 wrong-network hint; add "In your wallet: X — deposit to activate" to
 the status card.
 
+**Status: ✅ FIXED (batch 8c, 2026-07-13).** The fee-discount opt-in is now a full-width toggle row (label + sub-line carry the weight, a 20px control at the end, the whole row is the target) with an inline "switch to a supported network to change this" hint when off-chain. The status card gained an **"In your wallet: X VPFI"** row — with "— deposit to activate" when the holder has wallet VPFI but nothing vaulted — so the card no longer reads "0 / no discount" while the wallet visibly holds VPFI.
+
 ### UX-030 · Jargon without inline definition on consent surfaces (S)
 "grace period", "liquidation", "default", "not priced by the protocol"
 appear at the highest-stakes moments with no gloss (copy.ts:355-356,
@@ -353,14 +365,29 @@ restricted, as in the review sandbox). The finding is that the SDKs
 phone home at all — disable their analytics for privacy, which also
 keeps consoles clean on locked-down networks.
 
+**Status: ✅ FIXED (batch 8e, 2026-07-13).** Both connectors' own analytics beacons are now turned OFF via first-class, typed knobs (no monkey-patching): the Coinbase Wallet SDK connector gets `preference: { options: 'all', telemetry: false }` (`telemetry` gates its functional-metrics beacons; `options: 'all'` preserves the existing wallet-selection behaviour, so this is telemetry-only), and the WalletConnect connector gets `telemetryEnabled: false` (threads through EthereumProvider → SignClient → Core, stopping the `pulse.walletconnect.org` event beacons). Naive users never opted into third-party analytics, and the beacons no longer spam the console on locked-down networks. (The earlier "no clean opt-out knob" read was wrong — both flags exist in the installed SDK versions.)
+
 ---
 
 ## P3 — polish
 
 - **UX-034** Nav labels vs page titles drift ("Claims"→"Claim Center",
   "My vault"→"Your Vaipakam Vault", …) — pick one name each. (S)
+  **Status: ✅ FIXED (batch 8d, 2026-07-13).** Page titles now match their nav labels: Claim Center→“Claims”, Your Vaipakam Vault→“My vault”, VPFI fee discounts→“VPFI discounts”, Position NFT verifier→“NFT verifier” (the descriptive detail stays in each page’s lede). No e2e asserts these titles.
 - **UX-035** VPFI tier table boundaries overlap (1,000/5,000/20,000
   each in two tiers; sub-100 unaddressed). (S)
+  **Status: ✅ FIXED (batch 8c, 2026-07-13; refined batch 8e per Codex
+  #1175).** Tiers are `held ≥ threshold` bands, i.e. half-open intervals
+  `[min, next)`. The upper bound is shown as **"< next"** (100 – <1,000 /
+  1,000 – <5,000 / 5,000 – <20,000 / 20,000+) so each threshold belongs
+  to exactly one row AND a fractional holding just under the next
+  threshold (e.g. 999.5 VPFI) still falls inside its row — the initial
+  "next-minus-one-whole-VPFI" form left such holders in no displayed
+  range (VPFI has 18 decimals; the contract compares wei). Applied to
+  both the default table and the live admin-tuned path. The "holding
+  under N VPFI earns no discount" note is derived from the LIVE first
+  threshold (not a hardcoded 100), so it can't contradict an
+  admin-retuned table.
 - **UX-036** Desk term chips: selected 29d + bold 30d look
   double-selected; only the selection should carry weight. (S)
   **Status: ✅ FIXED (batch 7b, 2026-07-12).** The has-liquidity cue is
@@ -383,12 +410,27 @@ keeps consoles clean on locked-down networks.
   **Status: ✅ FIXED (batch 2, 2026-07-11).**
 - **UX-040** Empty-matches state in the guided flows doesn't reuse
   `EmptyState`; visual inconsistency with sibling pages. (S)
+  **Status: ✅ FIXED (batch 8b, 2026-07-12).** The guided match step's
+  empty state now renders the shared `EmptyState` (Search icon +
+  heading), with the withheld-flagged note as its body, matching every
+  other empty surface.
 - **UX-041** Done screen offers no "Start another". (S)
+  **Status: ✅ FIXED (batch 8b, 2026-07-12).** The post-flow Done screen
+  now offers "Post another" beside "View my positions" — it resets the
+  flow to its first step with a clean form. Accept flows are per-offer,
+  so they keep only the positions link.
 - **UX-042** Addresses (vault, faucet contracts) lack one-tap copy and
   use ~16 px link glyphs on mobile — sub-44 px targets. (S)
   **Status: ✅ FIXED (batch 2, 2026-07-11).**
 - **UX-043** Telegram "Linked on another device? / Unlink here"
   centered link pair is an ambiguous small target. (S)
+  **Status: ✅ FIXED (batch 8e, 2026-07-13).** The ambiguous inline
+  "Unlink here" link is replaced by a clearly-labelled block — a bold
+  "Linked this wallet on another device?" heading, a plain-words
+  explanation (the link lives on the server, not just this browser),
+  and a full-size **"Unlink this wallet"** secondary button — so the
+  privacy control is an obvious, comfortably-sized target instead of a
+  tiny centered link.
 - **UX-044** Raw ISO build timestamp in the Help footer — format as a
   date, keep the full string in diagnostics. (S)
   **Status: ✅ FIXED (batch 8a, 2026-07-12).** The Help footer now
@@ -408,10 +450,19 @@ keeps consoles clean on locked-down networks.
   (unrounded) percentage so the meter matches the label.
 - **UX-047** Rent landing is two cards in a sea of whitespace — add a
   browse strip or honest empty section. (S/M)
+  **Status: ✅ FIXED (batch 8d, 2026-07-13).** The landing gains a “Browse NFTs available to rent” action below the two intent cards, routing into the renter path’s live listings (or its own honest empty state) — so a visitor unsure which card fits still has an obvious way into the marketplace.
 - **UX-048** Faucet card-in-card nesting + ragged mint-button
   alignment; flatten and fix the button column. (S)
+  **Status: ✅ FIXED (batch 8c, 2026-07-13).** Each faucet token was its
+  own card; the rows are now plain `item-row`s inside ONE card (a
+  `row-list`), so the page reads as a single list instead of a stack of
+  nested cards, and the mint buttons carry a shared min-width so they
+  form an aligned column on desktop (the ≤480px rule still stacks the
+  CTA full-width). Mint-button labels are unchanged (spec 06 still
+  matches `/mint/i`).
 - **UX-049** Help page lags features: nothing on modes, alerts setup,
   Claims, wrong-network, or the NFT verifier. (S)
+  **Status: ✅ FIXED (batch 8d, 2026-07-13).** Five FAQ entries added — Basic/Advanced modes, alert setup (with the test-alert note), the Claim Center, the wrong-network switch, and the NFT verifier. The `#risks` disclosures section (spec-11-asserted) is untouched.
 - **UX-050** Activity page is advanced-only and all-or-nothing when
   the indexer degrades; link basic users to it from Positions and fall
   back to the on-chain loan list. (M)

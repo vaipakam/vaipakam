@@ -2079,6 +2079,14 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
             Connect the wallet that holds this loan’s position to act on it.
           </span>
         </div>
+      ) : role === 'checking' ? (
+        // UX-025 — while the on-chain role read is in flight, render a
+        // disabled placeholder instead of nothing, so a borrower
+        // mid-repay sees the action is coming rather than a receipt with
+        // no button beneath it.
+        <button type="button" className="btn btn-primary btn-block" disabled>
+          Confirming your role…
+        </button>
       ) : null}
 
       <p className="muted">

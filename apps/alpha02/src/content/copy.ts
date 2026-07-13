@@ -145,10 +145,32 @@ export const copy = {
     linkIssued:
       'Open our bot and press Start — or send it this code as a message. That connects this wallet to your Telegram.',
     openBot: 'Open Telegram',
-    linkConfirm: 'I’ve done it — the bot replied',
+    // UX-012 — replace the old self-attested "I’ve done it" (which set
+    // "linked" with no proof and silently dropped alerts on a fumbled
+    // handshake) with a real round-trip.
+    testAlertButton: 'Send a test alert',
+    testAlertNote:
+      'Once you’ve sent the code to the bot, tap this — we’ll push one message to your Telegram to prove it’s connected. Your wallet signs a short, free message first.',
+    testAlertSending: 'Sending your test alert…',
+    testAlertSent:
+      'Test alert sent — check Telegram. Your alerts for this wallet are now on.',
+    // UX-012 / Codex #1175 — the not-linked message points at BOTH the
+    // send-the-code path (if still valid) and the start-over path (codes
+    // expire after 10 minutes, so a stale code is otherwise a dead end).
+    testAlertNotLinked:
+      'We couldn’t find your Telegram chat yet. Open the bot and send it the code above, then tap “Send a test alert” again. If the code has expired, tap “Start over” for a fresh one.',
+    testAlertError:
+      'Couldn’t send the test alert just now. Please try again in a moment.',
+    // UX-012 — abandon the current (possibly expired) code and return to
+    // the Link step to request a new one.
+    startOver: 'Start over',
     linked: 'Telegram linked — alerts for this wallet go to your chat.',
     unlink: 'Unlink',
-    unlinkElsewhere: 'Linked on another device? Unlink here',
+    // UX-043 — a clear labelled action, not an ambiguous centered link.
+    unlinkElsewhereTitle: 'Linked this wallet on another device?',
+    unlinkElsewhereBody:
+      'Its Telegram link lives on our server, not just this browser. Disconnect it here — it stops messages everywhere.',
+    unlinkElsewhere: 'Unlink this wallet',
     unlinked: 'Unlinked. No more Telegram messages for this wallet.',
     toggleRepayDue: 'Message me before an interest payment comes due',
     toggleRisky: 'Message me if my loan gets risky',
@@ -262,6 +284,10 @@ export const copy = {
     // UX-010 — the inline remedy on a failing balance check (testnets
     // with deployed mocks only).
     getTestAssets: 'Get test assets',
+    // UX-014 — surfaced on the first step so the wallet requirement
+    // isn't a surprise at the final review.
+    connectEarly:
+      'Connect your wallet to continue — you’ll need it to sign, so it’s easiest to connect now.',
   },
 
   receipt: {
@@ -444,6 +470,8 @@ export const copy = {
     ownPathBlurb: 'Set a daily fee — renters prepay the whole rental up front.',
     wantPath: 'I want to rent an NFT',
     wantPathBlurb: 'Pay up front, use the NFT until the rental ends.',
+    // UX-047 — a direct browse action on the otherwise-sparse landing.
+    browseCta: 'Browse NFTs available to rent',
     custodyNote:
       'The NFT never leaves vault custody. The renter receives temporary use rights only — not ownership.',
     postListing: 'Post rental listing',
@@ -585,7 +613,7 @@ export const copy = {
   },
 
   nftVerifier: {
-    title: 'Position NFT verifier',
+    title: 'NFT verifier',
     lede:
       'Vaipakam position NFTs carry real claim rights — whoever holds one controls that side of its loan. Check any token id before trusting it.',
     placeholder: 'Position NFT token id',
@@ -915,7 +943,7 @@ export const copy = {
   },
 
   claims: {
-    title: 'Claim Center',
+    title: 'Claims',
     lede: 'Money and assets that are ready for you to collect.',
     empty: 'Nothing to claim right now.',
     // UX-023 — an empty Claim Center points forward instead of
@@ -1247,11 +1275,17 @@ export const copy = {
   },
 
   vpfi: {
-    title: 'VPFI fee discounts',
+    title: 'VPFI discounts',
     optional:
       'Optional: hold VPFI in your vault to reduce protocol fees on eligible loans. You never need VPFI to use Vaipakam.',
     noGasDiscount: 'Your VPFI discount does not reduce network gas.',
     withdrawWarning: 'Withdrawing VPFI can lower future fee discounts.',
+    // UX-035 — the below-first-threshold band, stated so a small holder
+    // isn't left guessing. The threshold is admin-tunable, so the note
+    // is derived from the LIVE first tier threshold (Codex #1175) rather
+    // than a hardcoded number that could contradict the table above.
+    belowMinNote: (floor: string) =>
+      `Holding under ${floor} VPFI earns no fee discount.`,
     notOnThisChain: (chain: string) =>
       `VPFI deposits aren’t available on ${chain} yet. Everything else on Vaipakam works without VPFI.`,
     tokenChanged:
@@ -1414,7 +1448,7 @@ export const copy = {
   },
 
   vault: {
-    title: 'Your Vaipakam Vault',
+    title: 'My vault',
     lede: 'Your own on-chain account. Only your wallet controls it — Vaipakam never pools user funds.',
     noVaultYet:
       'Your vault is created automatically with your first offer, loan, or deposit. Nothing to set up.',

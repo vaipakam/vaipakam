@@ -296,6 +296,80 @@ export async function consumeTelegramLinkCode(
   };
 }
 
+/** True iff the D1 error is the missing-`last_test_alert_at`-column
+ *  condition (migration 0034 not applied yet). SQLite phrases it
+ *  differently for a SELECT expression vs an INSERT/UPDATE column list,
+ *  so both forms are matched — same rollout-tolerance pattern as the
+ *  notify_maturity_approaching column. */
+function isMissingTestAlertColumn(err: unknown): boolean {
+  return /no such column|has no column named/i.test(String(err));
+}
+
+/** UX-012 — read the stored Telegram chat id + locale for a
+ *  wallet/chain, so the test-alert endpoint can push a real message to
+ *  the linked chat. Returns null when the wallet has no row or the row
+ *  has no chat id (handshake never completed) — the caller turns that
+ *  into an honest "we couldn't find your chat yet" instead of a silent
+ *  success, which is the whole point of the round-trip. The cooldown
+ *  gate lives in `reserveTestAlert` (an atomic CAS), not here. */
+export async function getTelegramChatId(
+  db: D1Database,
+  wallet: string,
+  chainId: number,
+): Promise<{ chatId: string; locale: string } | null> {
+  const row = await db
+    .prepare(
+      `SELECT tg_chat_id, locale
+       FROM user_thresholds
+       WHERE wallet = ? AND chain_id = ?`,
+    )
+    .bind(wallet.toLowerCase(), chainId)
+    .first<{ tg_chat_id: string | null; locale: string | null }>();
+  if (!row || !row.tg_chat_id) return null;
+  return { chatId: row.tg_chat_id, locale: row.locale ?? 'en' };
+}
+
+/** UX-012 / Codex #1175 — atomically reserve this wallet's test-alert
+ *  slot BEFORE sending, so parallel replays of one signed body can't all
+ *  pass a read-then-write check and each fire a message. The single
+ *  conditional UPDATE only flips `last_test_alert_at` when the prior
+ *  stamp is at least `cooldownSeconds` old; SQLite serialises writes, so
+ *  exactly one concurrent request sees the old value and wins (changes =
+ *  1) while the rest match zero rows. Returns whether THIS call won the
+ *  slot — the caller sends only on true and returns 429 on false.
+ *
+ *  Reserving before the send means a failed send still consumes the slot
+ *  (the user waits out the cooldown before retrying) — the deliberate,
+ *  race-free trade the atomic guarantee requires.
+ *
+ *  Pre-0034 rollout window (column absent): the UPDATE throws the
+ *  missing-column error, which we treat as "reserved" (return true) so
+ *  the feature keeps working with no cooldown until the migration
+ *  lands — same fail-open rollout policy as notify_maturity. */
+export async function reserveTestAlert(
+  db: D1Database,
+  wallet: string,
+  chainId: number,
+  now: number,
+  cooldownSeconds: number,
+): Promise<boolean> {
+  try {
+    const res = await db
+      .prepare(
+        `UPDATE user_thresholds
+         SET last_test_alert_at = ?
+         WHERE wallet = ? AND chain_id = ? AND last_test_alert_at <= ?`,
+      )
+      .bind(now, wallet.toLowerCase(), chainId, now - cooldownSeconds)
+      .run();
+    return (res.meta?.changes ?? 0) > 0;
+  } catch (err) {
+    if (!isMissingTestAlertColumn(err)) throw err;
+    // Pre-0034 — no cooldown column to gate on; allow the send.
+    return true;
+  }
+}
+
 /** Store the Telegram chat id on the user's thresholds row. Called
  *  after a successful handshake.
  *

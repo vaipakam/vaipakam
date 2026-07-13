@@ -509,8 +509,16 @@ button.tabbar-item {
 }
 
 .btn:disabled {
-  opacity: 0.5;
+  opacity: 0.6;
   cursor: not-allowed;
+}
+
+/* UX-017 — a disabled PRIMARY button kept the brand (lavender) fill and
+ * only dropped opacity, so it read as "almost active". Desaturate it to
+ * a plainly-inactive surface so disabled is unmistakable. */
+.btn-primary:disabled {
+  background: var(--surface-sunken);
+  color: var(--text-faint);
 }
 
 .btn-primary {
@@ -520,6 +528,57 @@ button.tabbar-item {
 
 .btn-primary:hover:not(:disabled) {
   background: var(--brand-strong);
+}
+
+/* UX-029 — a full-width toggle ROW for a load-bearing opt-in (VPFI fee
+ * discount): the label carries the weight, the control sits at the end,
+ * the whole row is the click target. */
+.toggle-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  padding: 12px 14px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface-raised);
+  cursor: pointer;
+}
+
+.toggle-row-main {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  flex: 1;
+  min-width: 0;
+}
+
+.toggle-row-title {
+  font-weight: 600;
+}
+
+.toggle-row-sub {
+  font-size: 0.85rem;
+  color: var(--text-muted);
+}
+
+.toggle-input {
+  width: 20px;
+  height: 20px;
+  flex-shrink: 0;
+  cursor: pointer;
+}
+
+.toggle-input:disabled {
+  cursor: not-allowed;
+}
+
+/* UX-048 — a common min-width so the faucet's mint buttons form an
+ * aligned column despite varying labels ("Mint 10,000 tLIQ" vs "Mint an
+ * NFT"). At ≤480px the shared item-row rule stacks the CTA full-width,
+ * so this only shapes the desktop column. */
+.faucet-mint-btn {
+  min-width: 150px;
+  justify-content: center;
 }
 
 .btn-secondary {

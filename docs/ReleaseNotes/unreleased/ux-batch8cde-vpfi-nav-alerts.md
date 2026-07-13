@@ -1,0 +1,60 @@
+### VPFI/faucet polish, nav alignment, and honest Telegram alerts — batch 8 remainder (UX-012 / UX-017 / UX-029 / UX-033 / UX-034 / UX-035 / UX-043 / UX-047 / UX-048 / UX-049)
+
+- **Test-alert round-trip for Telegram linking (UX-012).** Linking Telegram
+  alerts used to end on a self-attested "I've done it — the bot replied"
+  button that set the "linked" state with no verification, so a fumbled
+  handshake silently dropped every future deadline/liquidation alert. That
+  button is gone. After you get the link code, the card now offers **"Send a
+  test alert"**: your wallet signs a free ownership proof, the agent Worker
+  pushes one real "your alerts are working" message to the linked chat, and
+  the card records "linked" only when that send succeeds. If the code never
+  reached the bot (no stored chat), it says so plainly and stays unlinked.
+  The new `POST /telegram/test` endpoint is signature-gated with its own
+  distinct message so a captured signature can't cross actions and a
+  spoofed-Origin caller can't spam a linked wallet's chat, and it enforces a
+  60-second per-wallet cooldown via an **atomic compare-and-set** (D1
+  migration `0034`, rollout-tolerant of the column being absent) reserved
+  before the send, so even parallel replays of one signed body can't each
+  fire — only one request wins the slot within the 10-minute signature
+  window. If the handshake code expires (10-min TTL) before the user
+  completes the bot step, the card offers a **"Start over"** action for a
+  fresh code instead of leaving a dead code on screen. The test message is
+  localized across all ten Worker locales. **Note:** the agent Worker must be
+  redeployed and migration 0034 applied for the endpoint to enforce the
+  cooldown live.
+
+- **Clearer "unlink elsewhere" control (UX-043).** The ambiguous centered
+  "Linked on another device? / Unlink here" link is now a labelled block —
+  a heading, a plain-words explanation that the link lives on the server, and
+  a full-size "Unlink this wallet" button — so the privacy control is an
+  obvious, comfortably-sized target.
+
+- **Wallet-SDK analytics turned off (UX-033).** The Coinbase Wallet and
+  WalletConnect connectors no longer phone home their own analytics: the
+  Coinbase connector gets `telemetry: false` (wallet-selection behaviour
+  unchanged) and WalletConnect gets `telemetryEnabled: false`. Naive users
+  never opted into third-party analytics, and consoles stay clean on
+  locked-down networks.
+
+- **Nav/title alignment (UX-034).** Page titles now match their sidebar nav
+  labels — "Claims", "My vault", "VPFI discounts", "NFT verifier" — with the
+  descriptive detail moved into each page's lede.
+
+- **VPFI + faucet polish (UX-029 / UX-035 / UX-048).** The VPFI deposit
+  toggle is a proper labelled switch with a wrong-network hint and an "in
+  your wallet" balance row; the fee-discount tier table shows each band as a
+  half-open "min – <next" range so every threshold appears in exactly one row
+  and fractional holders just under a threshold still fall in their row, with
+  a below-minimum "no discount" note derived from the live first threshold;
+  the faucet page collapses its per-token cards into one card with a row list.
+
+- **Input-hint + FAQ + discovery polish (UX-017 / UX-047 / UX-049).** A
+  malformed pasted token address now gets a plain-words hint (not just a red
+  border), disabled primary buttons are visibly dimmed; the Rent landing
+  gains a "Browse NFTs available to rent" CTA; and the Help page gains five
+  FAQ entries (Basic/Advanced modes, alert setup, Claim Center, wrong-network
+  switch, NFT verifier).
+
+Closes the batch-8 remainder of the 2026-07-11 alpha02 UI/UX review
+(`docs/FindingsAndFixes/Findings20260711-Alpha02UiUxReview.md`), leaving no
+open findings in that document.

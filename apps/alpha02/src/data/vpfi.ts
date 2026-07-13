@@ -52,20 +52,41 @@ export interface VpfiTierRow {
   discount: string;
 }
 
+export interface VpfiTierTable {
+  rows: VpfiTierRow[];
+  /** Formatted first-threshold amount (e.g. "100") for the
+   *  below-minimum no-discount note. Admin-tunable like the rows, so
+   *  the note must be derived from it — never hardcoded (Codex #1175). */
+  floorLabel: string;
+}
+
+const fmtVpfi = (wei: bigint) =>
+  (Number(wei) / 10 ** VPFI_DECIMALS).toLocaleString('en-US', {
+    maximumFractionDigits: 0,
+  });
+
 /** LIVE tier table — thresholds and discount bps are admin-tunable
  *  (`setVpfiTierThresholds` / `setVpfiTierDiscountBps`), so the
  *  education table must never hardcode them. Bundle tuple indices 7
  *  (thresholds, VPFI wei) and 8 (discount bps) per apps/defi
  *  useProtocolConfig's BundleTuple. Falls back to the deploy defaults
  *  until the read lands. */
+// UX-035 — tiers are `held >= threshold` bands, i.e. half-open
+// intervals [min, next). The upper bound is shown as "< next" so the
+// boundary value belongs to the HIGHER tier only AND a fractional
+// holding just under the next threshold (e.g. 999.5 VPFI) still falls
+// inside its row — subtracting a whole VPFI (the pre-fix approach) left
+// that holder in no displayed range (Codex #1175). Sub-first-threshold
+// holdings (no discount) are called out separately in the page.
 const DEFAULT_TIER_ROWS: VpfiTierRow[] = [
-  { held: '100 – 1,000 VPFI', discount: '10%' },
-  { held: '1,000 – 5,000 VPFI', discount: '15%' },
-  { held: '5,000 – 20,000 VPFI', discount: '20%' },
-  { held: 'Over 20,000 VPFI', discount: '24%' },
+  { held: '100 – <1,000 VPFI', discount: '10%' },
+  { held: '1,000 – <5,000 VPFI', discount: '15%' },
+  { held: '5,000 – <20,000 VPFI', discount: '20%' },
+  { held: '20,000+ VPFI', discount: '24%' },
 ];
+const DEFAULT_FLOOR_LABEL = '100';
 
-export function useVpfiTierTable(): VpfiTierRow[] {
+export function useVpfiTierTable(): VpfiTierTable {
   const { readChain } = useActiveChain();
   const publicClient = usePublicClient({ chainId: readChain.chainId });
 
@@ -73,7 +94,7 @@ export function useVpfiTierTable(): VpfiTierRow[] {
     queryKey: ['vpfiTierTable', readChain.chainId],
     enabled: Boolean(publicClient),
     staleTime: 5 * 60_000,
-    queryFn: async (): Promise<VpfiTierRow[]> => {
+    queryFn: async (): Promise<VpfiTierTable> => {
       const bundle = (await publicClient!.readContract({
         address: readChain.diamondAddress,
         abi: DIAMOND_ABI_VIEM,
@@ -81,22 +102,19 @@ export function useVpfiTierTable(): VpfiTierRow[] {
       })) as readonly unknown[];
       const thresholds = bundle[7] as readonly [bigint, bigint, bigint, bigint];
       const discounts = bundle[8] as readonly [bigint, bigint, bigint, bigint];
-      const fmt = (wei: bigint) =>
-        (Number(wei) / 10 ** VPFI_DECIMALS).toLocaleString('en-US', {
-          maximumFractionDigits: 0,
-        });
       const pct = (bps: bigint) => `${Number(bps) / 100}%`;
-      return thresholds.map((min, i) => ({
+      const rows = thresholds.map((min, i) => ({
         held:
           i < 3
-            ? `${fmt(min)} – ${fmt(thresholds[(i + 1) as 1 | 2 | 3])} VPFI`
-            : `Over ${fmt(min)} VPFI`,
+            ? `${fmtVpfi(min)} – <${fmtVpfi(thresholds[(i + 1) as 1 | 2 | 3])} VPFI`
+            : `${fmtVpfi(min)}+ VPFI`,
         discount: pct(discounts[i as 0 | 1 | 2 | 3]),
       }));
+      return { rows, floorLabel: fmtVpfi(thresholds[0]) };
     },
   });
 
-  return data ?? DEFAULT_TIER_ROWS;
+  return data ?? { rows: DEFAULT_TIER_ROWS, floorLabel: DEFAULT_FLOOR_LABEL };
 }
 
 /** LIVE VPFI-token read for submit paths (fail closed with a retry

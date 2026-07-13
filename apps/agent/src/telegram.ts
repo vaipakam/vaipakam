@@ -6,30 +6,42 @@
 const TELEGRAM_API = 'https://api.telegram.org';
 
 /** Send a plain-text message to a chat. No formatting — keeps the
- *  alert body robust against Telegram Markdown / HTML parser quirks. */
+ *  alert body robust against Telegram Markdown / HTML parser quirks.
+ *
+ *  Never throws — swallows failures (logs them) so one bad chat id
+ *  doesn't halt the whole cron tick; the next tick retries on the next
+ *  band change. Returns whether Telegram accepted the send, so the
+ *  UX-012 test-alert round-trip can distinguish a real delivery from a
+ *  silent failure (the cron callers simply ignore the boolean). */
 export async function sendMessage(
   token: string,
   chatId: string,
   text: string,
-): Promise<void> {
-  const res = await fetch(`${TELEGRAM_API}/bot${token}/sendMessage`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      chat_id: chatId,
-      text,
-      disable_web_page_preview: true,
-    }),
-  });
+): Promise<boolean> {
+  let res: Response;
+  try {
+    res = await fetch(`${TELEGRAM_API}/bot${token}/sendMessage`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        chat_id: chatId,
+        text,
+        disable_web_page_preview: true,
+      }),
+    });
+  } catch (err) {
+    // Network-level failure (DNS, timeout) — same swallow policy.
+    console.error(`Telegram sendMessage threw: chat=${chatId} err=${err}`);
+    return false;
+  }
   if (!res.ok) {
-    // Don't throw — swallow failures so one bad chat id doesn't halt
-    // the whole cron tick. The next tick retries on the next band
-    // change (most band changes persist >1 tick).
     const body = await res.text().catch(() => '');
     console.error(
       `Telegram sendMessage failed: chat=${chatId} status=${res.status} body=${body.slice(0, 200)}`,
     );
+    return false;
   }
+  return true;
 }
 
 export interface TelegramUpdate {
