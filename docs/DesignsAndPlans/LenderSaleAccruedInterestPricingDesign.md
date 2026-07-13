@@ -23,10 +23,16 @@ Fair-value transfer pricing on both lender-sale paths (Option 1
 sell-to-lender-offer, Option 2 sale vehicle):
 
 ```
-unsettledAccrued = accruedInterestToDate − interestAlreadySettledToSeller
+unsettledAccrued = max(accruedInterestToDate − interestAlreadySettledToSeller, 0)
 salePrice        = outstandingPrincipal
                  + unsettledAccrued × (10000 − yieldFeeBps_snapshot) / 10000
 ```
+
+(The subtraction **saturates at zero** — an over-settled periodic loan,
+e.g. after an auto-liquidation period with positive swap output, can
+have settled > accrued, and a plain 0.8 subtraction would revert the
+quote; same defensive pattern as `LibEntitlement.currentBorrowBalance`.
+Codex round-8.)
 
 (`interestAlreadySettledToSeller` covers periodic-interest loans, where
 servicing has already forwarded some interest to the seller before the
@@ -39,10 +45,16 @@ buyer the unsettled remainder anyway; Codex round-7.)
   gross minus the seller-paid matcher carve (see the binding rule below);
   the position NFT transfers. **Treasury collects nothing at sale time
   in either case.**
-- **Single collection point:** the ordinary snapshot yield fee on the full
-  interest is collected exactly once, at terminal settlement, from the
-  then-holder (the buyer) — the same event and amount as if the position
-  had never traded. The par formula nets the accrued slice by
+- **Single collection point — per interest SLICE:** the ordinary snapshot
+  yield fee is collected exactly once per unit of interest. For plain
+  loans that means once, at terminal settlement, from the then-holder
+  (the buyer) — the same event and amount as if the position had never
+  traded. For periodic-interest loans, slices already serviced before
+  the sale had their fee taken at servicing (and their net paid to the
+  seller); **terminal settlement fees and pays only the unsettled
+  remainder** — a sold periodic loan must never fee-charge the buyer for
+  slices the seller already settled (Codex round-8; consistent with the
+  unsettled-accrued par formula above). The par formula nets the accrued slice by
   `(1 − yieldFeeBps)` precisely *because* the buyer will bear that fee at
   terminal; charging any fee at sale time as well would double-charge the
   accrued slice (Codex round-1 finding — earlier wording implying a

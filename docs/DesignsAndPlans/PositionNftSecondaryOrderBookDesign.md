@@ -36,7 +36,18 @@ plus a bid side:
   **maximum remaining duration** (Codex round-7): an auto-extended loan
   can become materially longer and less liquid than the buyer previewed
   with no amount floor breached, so acceptance checks remaining term ≤
-  the signed cap and a loan extension past it stales the bid. A floor
+  the signed cap. Beyond that cap, **ANY in-place extension or
+  periodic-interest settlement on the linked loan hard-stales every
+  standing bid on that position** (Codex round-8): `extendLoanInPlace`
+  replaces the loan's *rate* as well as its duration, and it settles the
+  old window's accrued interest to the current holder before resetting —
+  an extension can therefore lower the yield or cash out the accrued
+  value the buyer priced without breaching any
+  principal/collateral/HF/duration floor. Both events are on-chain and
+  indexed, so the stale is deterministic: acceptance compares the loan's
+  extension/settlement counter (or last-modified stamp) against the
+  value the bid was signed over, and a mismatch rejects the fill; the
+  buyer re-signs against the new terms or the bid expires. A floor
   breach observed off-chain marks the bid stale in the book UI (same
   event-driven flag machinery as listings, plus HF-band signals for the
   oracle case); the binding enforcement is always the live
