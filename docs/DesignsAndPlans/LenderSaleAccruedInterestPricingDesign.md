@@ -23,9 +23,16 @@ Fair-value transfer pricing on both lender-sale paths (Option 1
 sell-to-lender-offer, Option 2 sale vehicle):
 
 ```
-salePrice = outstandingPrincipal
-          + accruedInterestToDate × (10000 − yieldFeeBps_snapshot) / 10000
+unsettledAccrued = accruedInterestToDate − interestAlreadySettledToSeller
+salePrice        = outstandingPrincipal
+                 + unsettledAccrued × (10000 − yieldFeeBps_snapshot) / 10000
 ```
+
+(`interestAlreadySettledToSeller` covers periodic-interest loans, where
+servicing has already forwarded some interest to the seller before the
+sale — the buyer must not pay the seller a second time for periods the
+seller already collected, and terminal settlement will only pay the
+buyer the unsettled remainder anyway; Codex round-7.)
 
 - Buyer pays `salePrice` (gross); on a **direct accept** the seller
   receives the full gross, on a **matched E-8 fill** the seller receives

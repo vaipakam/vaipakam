@@ -32,12 +32,22 @@ plus a bid side:
   floor is evaluated against live oracle state at the acceptance
   transaction, so it needs no event to fire). Illiquid-collateral
   positions have no HF; for them amount floors are the whole check and
-  the bid UI states that valuation risk plainly. A floor breach
-  observed off-chain marks the bid stale in the book UI (same
+  the bid UI states that valuation risk plainly. Bids also sign a
+  **maximum remaining duration** (Codex round-7): an auto-extended loan
+  can become materially longer and less liquid than the buyer previewed
+  with no amount floor breached, so acceptance checks remaining term ≤
+  the signed cap and a loan extension past it stales the bid. A floor
+  breach observed off-chain marks the bid stale in the book UI (same
   event-driven flag machinery as listings, plus HF-band signals for the
   oracle case); the binding enforcement is always the live
-  acceptance-time check. The buyer re-signs or the bid expires. Seller accepts → routes through the same sale-vehicle
-  settlement. Collection-level or criteria bids (e.g. "any USDC position
+  acceptance-time check. The buyer re-signs or the bid expires. Seller
+  accepts → routes through the same sale-vehicle settlement, and
+  **settlement re-runs the full incoming-buyer gates against the bid
+  owner** (Codex round-7): progressive risk-access tier, per-pair
+  illiquid consents, and every check a direct sale accept applies to an
+  incoming buyer — pre-escrowed funds must not let an under-tiered
+  wallet acquire a position it could not accept directly.
+  Collection-level or criteria bids (e.g. "any USDC position
   ≥8% APR, ≤90d left") are v2.
 - **Borrower positions:** NOT listed in v1. Borrower-side transfer is the
   obligation-transfer flow (Preclose Option 2) with its lender-protection

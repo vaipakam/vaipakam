@@ -36,8 +36,17 @@ must guarantee collateral at an unknown future fill time. Options:
    `collateralCapAmount` in the vault as an intent working-capital lock —
    the exact mechanism lender intents already use, same encumbrance class,
    same withdraw-blocking. Partial fills consume the lock pro-rata.
-   Deterministic fills, no fill-time reverts. Cost: borrower capital
-   parked while unfilled (mitigated by easy cancel + GTT).
+   The pre-lock makes fills deterministic **with respect to funding** —
+   it cannot make the HF admission check deterministic, because HF is
+   inherently live (Codex round-7): a price move after registration can
+   make a fill fail admission even with the collateral fully locked.
+   So: solvers preview via a live `previewIntentFill` read before
+   submitting; an HF-failing fill rejects cleanly at the gate (never a
+   deep revert); and the HF-watcher band machinery marks intents whose
+   locked collateral no longer clears admission at current prices as
+   **stale-by-HF** in the intent book, same as HF-floored sale listings.
+   Cost: borrower capital parked while unfilled (mitigated by easy
+   cancel + GTT).
 2. Pull-authorization at fill (wallet allowance) — rejected for v1:
    fill-time revert risk makes solver work speculative, and standing
    wallet allowances are the drainer-UX shape we avoid elsewhere.

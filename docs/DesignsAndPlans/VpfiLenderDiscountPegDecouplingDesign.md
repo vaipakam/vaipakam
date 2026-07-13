@@ -45,8 +45,12 @@ the fee-application moment; tier-0 → no discount.
 ## Contract changes
 
 1. `quoteYieldFee` (and every lender-yield settlement site: repay,
-   preclose, refinance, sale settlement): if peg unconfigured → apply
-   `effectiveDiscountBps` as a direct bps reduction; else current path.
+   preclose, refinance, sale settlement, **and the periodic-interest /
+   auto-liquidation servicing sites** — the spec's rule is "any
+   lender-yield settlement moment", so interim periodic settlements get
+   the same dual-mode treatment, not just the terminal ones; Codex
+   round-7): if peg unconfigured → apply `effectiveDiscountBps` as a
+   direct bps reduction; else current path.
 2. Event: extend the yield-fee settlement event (or add one) with
    `discountMode` so analytics/indexer can distinguish modes.
 3. No storage migration: reads existing tier state + existing config.
