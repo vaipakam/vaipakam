@@ -54,5 +54,6 @@ Cross-chain actions, unified claiming, canonical-tier display changes
 ## Acceptance
 
 E2E on a 2-chain Anvil mesh: positions on both chains render with correct
-badges; one RPC blocked → banner + excluded totals; deep-link switches
-network. COVERAGE.md row per the verification directive.
+badges; one RPC blocked → banner + **aggregate totals unavailable** while
+the reachable chain's rows and per-chain subtotal still render; deep-link
+switches network. COVERAGE.md row per the verification directive.

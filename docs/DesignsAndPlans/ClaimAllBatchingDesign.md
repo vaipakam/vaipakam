@@ -114,7 +114,13 @@ and (d) locks the destination to the *user's* vault (the threaded
 and **skimmed only from fungible swept amounts** — in-kind legs
 (ERC-721 / unique ERC-1155 collateral returns) cannot bear a bps carve
 without valuation or fractionalization, so they sweep fee-free (Codex
-round-4); the keeper's economics come from the fungible legs. Off by
+round-4); the keeper's economics come from the fungible legs. Because
+the fee makes the keeper a **direct value recipient**, the keeper fee
+recipient is Tier-1 sanctions-screened too: a flagged keeper has the
+fee **withheld** (routed to treasury) while the user's sweep itself
+still completes (Codex round-5) — mirroring the platform rule that a
+flagged party is refused payouts without holding the clean party's
+funds hostage. Off by
 default; ships only after the base batch is proven. (Value lands in the
 vault, not the wallet — sweeping to wallets would be an automatic push,
 which the distribution model forbids.)

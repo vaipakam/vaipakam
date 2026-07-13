@@ -63,6 +63,18 @@ The free-balance-only encumbrance guard below applies to TOP_UP; the
 swap mode's guard is instead "the loan's own pledged collateral only,
 within the signed caps".
 
+**Position-transfer semantics (Codex round-5 P1):** the config is bound
+to the position holder who signed it, not to the loan. `AutoProtectConfig`
+stores the signer, and execution requires
+`ownerOf(borrowerPositionNFT) == config.signer` — a borrower-position
+transfer therefore **silently disables** the config (skip + event
+`AutoProtectSkipped(loanId, HOLDER_CHANGED)`); the new holder must sign
+their own config and keeper grant before any auto-protect action can run
+against their collateral or balances. This is the same staleness rule
+two-sided auto-extend applies to its caps on NFT transfer. Without it,
+the previous holder's signed caps could spend the new holder's pledged
+collateral (swap mode) or free balance (top-up mode).
+
 Guards:
 
 - Only liquid-collateral loans (HF exists only there; illiquid loans have

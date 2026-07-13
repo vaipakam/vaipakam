@@ -208,7 +208,7 @@ the decision surface each one needs before code:
 
 | # | Item | What it is | Needs |
 | --- | --- | --- | --- |
-| E-1 | **Decouple the lender yield-fee discount from the VPFI pricing peg** | The lender discount is "X% off a fee" and does not inherently need a VPFI/ETH price; today it is disabled whenever the peg is unset because `quoteYieldFee` shares the borrower path's conversion helper. Decoupling gives vault-held VPFI real day-one utility while the peg stays unconfigured (the documented Phase-1 posture). | Owner decision that the coupling is accidental, TokenomicsTechSpec §6b edit, contract change + tests |
+| E-1 | **Decouple the lender yield-fee discount from the VPFI pricing peg** | The discount *percentage* is "X% off a fee" and needs no VPFI/ETH price — but the current VPFI-payment *delivery mechanism* genuinely does, so the design is **dual-mode**: peg unset → direct bps reduction taken in the lending asset; peg set → the existing VPFI-payment path (see `VpfiLenderDiscountPegDecouplingDesign.md`). Gives vault-held VPFI real day-one utility under the documented Phase-1 peg-unset posture. | Owner decision to adopt the dual-mode delivery design (incl. its revenue trade-off), TokenomicsTechSpec §6b edit, contract change + tests |
 | E-2 | **Usage-earned VPFI perks** | Tiered protocol-feature unlocks by vaulted balance (reduced notification fees, priority solver routing, higher auto-lifecycle limits) and a referral mechanic funded from the 2% Ecosystem bucket. | Legal-surface glance (perks, not yield), then per-item Issues |
 | E-3 | **Rewards timeline UI** | Per-day earned / capped / pending-broadcast state for interaction rewards, so bounded claims and waiting days are legible instead of looking like missing money. | Frontend-only Issue |
 

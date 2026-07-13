@@ -21,7 +21,25 @@ offer class flag (`LINKED_LOAN_SALE`) so bots opt in knowingly:
 - Match validity re-checks the linked loan live at execution: outstanding
   principal ≥ signed floor, collateral ≥ signed floor, loan still Active,
   no competing offset/listing lock — the same live-verification the direct
-  accept does today, moved into the match path.
+  accept does today, moved into the match path — **plus a buyer-signed
+  minimum HF (or max LTV) for liquid-collateral positions** (Codex
+  round-5, mirroring the E-9 bid rule): a pure oracle-price drop changes
+  no counts and emits no loan event, so without an HF floor a standing
+  buyer offer could be bot-matched into a position far unhealthier than
+  previewed. Illiquid positions have no HF; amount floors are the whole
+  check there and the accept-review copy says so.
+- **Completion ordering (Codex round-5, the #951 D3 hazard):** with
+  `partialFillEnabled` on, `OfferAcceptFacet._acceptOffer` defers
+  `offer.accepted = true` for `matchOverride` borrower offers, while the
+  sale auto-complete (`completeLoanSaleInternal`) requires the sale offer
+  to be already accepted — so a naively-matched sale listing would revert
+  at completion every time. The implementation must either flip the sale
+  offer's accepted flag before the auto-complete step on the matched
+  path (safe here: sale vehicles are AON, so the partial-fill deferral
+  reason doesn't apply to this offer class), or route matched sales
+  through a dedicated matched-sale completion entry that doesn't consult
+  the deferred flag. This ordering decision is a hard prerequisite to
+  exposing the class to `matchOffers`.
 - The recorded matcher earns the configured share per the §5a
   recorded-matcher rule; sale vehicles charge **no fresh LIF** (existing
   rule preserved), and under the paired E-7 design there is **no

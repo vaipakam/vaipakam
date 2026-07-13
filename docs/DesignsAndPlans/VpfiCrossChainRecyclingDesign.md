@@ -142,11 +142,13 @@ When Base finalizes day `D` it already computes each chain's reward budget
    (Base → mirror) gains a field `recycleConsume[c][D] = min(B[c][D],
    availRecycled[c])`. On arrival the mirror moves exactly that amount from
    its recycle bucket into its local claim budget — **idempotently per
-   `dayId`**: the mirror stamps `recycleConsumeApplied[dayId]` on first
-   application and a redelivered or governance-replayed broadcast for the
-   same day is a no-op on the bucket (Codex round-4: broadcasts are
-   retriable by design, and a double-apply would debit the bucket twice
-   while Base counted one consumption). Consumption is **only** ever
+   `dayId`, with the stamp covering the WHOLE per-day broadcast**: the
+   mirror stamps `broadcastApplied[dayId]` on first application, and a
+   redelivered or governance-replayed broadcast for the same day is a
+   no-op on the bucket for **every** bucket-debiting field it carries —
+   `recycleConsume` AND the §3.5 `keeperAllocate` alike (Codex rounds
+   4–5: broadcasts are retriable by design, and a double-apply of either
+   field would debit the bucket twice while Base counted once). Consumption is **only** ever
    Base-instructed — a mirror never self-consumes — so the global ledger
    cannot double-count and the accounting identity below holds by
    construction.
