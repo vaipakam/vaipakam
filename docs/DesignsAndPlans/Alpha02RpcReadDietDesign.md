@@ -118,7 +118,9 @@ From `Alpha02ConnectedApp.md` — quoted because they are load-bearing:
 **The spec mandates outcomes, not timers.** Nothing in it requires a 30s
 interval or a per-block blanket refetch. "Within a block" for the wallet's
 own transaction is carried by the receipt-gated invalidation (the app watched
-that tx confirm), not by polling. That is the opening this design uses.
+that tx confirm), not by polling — broadcast across this origin's tabs, and
+scoped per-surface for transactions no tab of this app observed (§4.1.4).
+That is the opening this design uses.
 
 And the owner constraints: near-zero *recurring* chain reads; **no
 update-speed regression where speed is load-bearing** — own-tx and shared
@@ -214,9 +216,16 @@ cron pings **every** chain's DO each minute (`apps/indexer/src/index.ts` —
 fallback a chain is only scanned every `N_chains × 60s`, so the window
 scales with the configured chain count. The server tells the client which
 cadence applies (the DO includes its expected scan cadence alongside the
-cursor age in `hello`/periodic frames), so a healthy-but-quiet chain on a
+cursor age in `hello`/periodic frames, and `/offers/stats` gains the same
+two fields for the no-WS fallback probe), so a healthy-but-quiet chain on a
 slower cadence is never misread as stale — misreading it would restore 30s
 polling during normal quiet periods and quietly undo the diet.
+**Sequencing (Codex #1224 r4):** these are server-side fields, so they ship
+in **PR 0** (the indexer-side prerequisite PR), not PR A — otherwise the
+app-only PR A would have to hard-code a cadence guess and misclassify one
+of the two ingest modes. Until the fields are observed live, the
+rail-health helper treats missing cadence metadata as "unknown" and stays
+in the 30s fallback posture (never guesses healthy).
 
 - **Rail healthy:** chain-read hooks drop their 30s interval to a **180s
   safety net**.
@@ -337,11 +346,16 @@ that gates the Cancel button until `createdAt + CANCEL_COOLDOWN_SECONDS`. No
   button enables only after a **fail-closed one-shot chain-time confirm**
   (a single read, not a poll). Net cost: 1–2 reads per panel session instead
   of one per 5s.
-- **Preserve the expiry bypass.** `OfferCancelFacet.cancelOffer` waives the
-  cooldown once the offer is expired, and the panel mirrors that via
-  `rowExpiresAt` (Codex #1224 r2). The computed unlock time is
-  `min(createdAt + CANCEL_COOLDOWN_SECONDS, rowExpiresAt)` — an expired
-  short-lived offer stays immediately cancellable.
+- **Preserve BOTH contract bypasses.** `OfferCancelFacet.cancelOffer`
+  enforces the cooldown only while `amountFilled == 0` AND the offer is
+  unexpired — a partial-filled offer is immediately cancellable ("the
+  lender already committed value through prior matches"), and an expired
+  offer is too (Codex #1224 r2 + r4). The clock therefore mirrors both:
+  unlock is immediate when the row shows any fill (`amountFilled > 0`,
+  kept current by the `offer.changed` push that every partial match
+  emits), else `min(createdAt + CANCEL_COOLDOWN_SECONDS, rowExpiresAt)`.
+  Computing only the time bound would keep Cancel disabled on a
+  partially-filled young offer the chain would happily cancel.
 
 Actual fill/cancel state changes still arrive via the `offer.changed` push
 nudge.
@@ -369,13 +383,43 @@ re-invalidation**, with a per-transport block source (Codex #1224 r2):
   breaking the very contract this rail carries.
 
 This is the rail that carries the L55–56 "within a block" contract once
-timers are gone.
+timers are gone. Three scope rules keep that contract honest (Codex #1224
+r4, incl. the P1):
+
+- **It covers ALL write helpers, not only Diamond calls.** ERC20
+  approve/revoke (and Permit2 setup) go through the token helpers, not
+  `diamond.ts`; §1.2 removes `standingApprovals` from the block-driven set,
+  so those helpers join the same centralized receipt path and invalidate
+  the approval/funding-watch roots — otherwise an approval granted in this
+  very tab could stay stale until focus/net.
+- **Same wallet, another tab of this origin:** the receipt rail is
+  broadcast. The centralized handler publishes each confirmed-receipt
+  invalidation set on a `BroadcastChannel` (falling back to a
+  `localStorage` ping), so every open tab of the app applies the same
+  invalidation the acting tab does — no extra RPC, and a submit/cancel
+  from a second tab still lands "within a block" in this one.
+- **Same wallet, another device (or a wallet path outside the app):** no
+  receipt is observable here by construction. The L55–56 contract is
+  **per-surface** — the acting device's tab satisfies it locally via its
+  own receipt rail; a *watching* device sees the change at push latency
+  (seconds-to-~40s) or immediately on tab return (1.1 focus refetch),
+  which is the same bound the design documents for foreign events on list
+  roots. If the owner judges that window unacceptable for own-position
+  lists specifically, the documented fallback knob is re-adding the two
+  own-position list roots to the 1.2 tip subset (a measured, bounded cost
+  increase) — a decision for the PR A live review, not a silent default.
 
 **1.5 Claims cadence (chain reads stay) — decoupled from `myLoans` refresh
 identity.** Per the owner directive and L176–183, the #988 verification
-contract is untouched: candidates from the indexed+chain union,
-per-candidate `ownerOf` + `getClaimable` on chain, revert = not claimable,
-transport failure = unavailable (never a confident short list). What changes
+contract is untouched: candidates from the indexed+chain union, and the
+**full existing per-candidate probe set** on chain — `ownerOf` +
+`getClaimable` **+ `getBorrowerLifRebate` where the borrower side applies**
+(Codex #1224 r4: a borrower row whose only payout is the Phase-5 VPFI
+rebate is actionable purely through the rebate getter — `claimables.ts`
+already probes it, and a re-key/memoization implemented from a shorthand
+"ownerOf + getClaimable" description would silently drop rebate-only
+claims); revert = not claimable, transport failure = unavailable (never a
+confident short list). What changes
 is *when* it runs: own-receipt (1.4), `loan.updated`/`ownership.changed`
 push nudge, explicit focus (1.1), 180s net — **never the tip nudge** (1.2).
 One coupling must be cut for that to hold (Codex #1224 r2, P1):
@@ -417,7 +461,8 @@ the gap whenever ≥1 frame arrived during it, so the last event is always read.
 
 **Expected effect.** Recurring per-tab load drops sharply. The honest floor
 is set by the biggest *remaining* chain-read surface, **Claims**: ~10
-candidates × 3 reads ≈ 30 `eth_call`s per verification. With Claims OFF the
+candidates × 3–4 reads (the borrower rebate getter adds one where it
+applies) ≈ 30–40 `eth_call`s per verification. With Claims OFF the
 tip nudge and re-keyed on candidate-set identity (1.5), a quiet Claims tab
 runs the full verification only on the 180s net (~20/hr → ~600 calls/hr
 worst-case ceiling, far less when the set hash is unchanged and probes are
@@ -546,7 +591,7 @@ The requested pipeline improvements are mostly **hardening what shipped with
 | Claims actionability (`ownerOf` + `getClaimable`) | L176–183 + owner directive | Signal-gated (1.5) |
 | Own-positions enumeration + hydration (batch views) | L51, L55–56, L342–356 | Signal-gated (1.1/1.2) |
 | Offer/loan detail fresh-deep-link fallback | L59–60 | On indexed-row miss (unchanged) |
-| `bookCatchUp` ghost-strip `eth_getLogs` | L357–361 | Block-driven, book surface only (unchanged) |
+| `bookCatchUp` ghost-strip `eth_getLogs` | L357–361 | Block-driven, composed inside the shared `useActiveOffers` hook so ALL its consumers (book, OfferFlow, Rent, EarlyExit) get the stripped view (§4.1.2a — not book-page-only) |
 | Token metadata / ENS | Immutable, cached forever | Once per session (unchanged) |
 
 ## 7. Verification plan
@@ -595,21 +640,25 @@ The requested pipeline improvements are mostly **hardening what shipped with
 
 ## 9. Rollout
 
-1. **PR 0 (phase 0 — prerequisite, ships first):** push-completeness on the
-   indexer side — the ownership-transfer invalidation key (0.1) in the
-   indexer + `KEY_MAP`, plus the audit that `loan.updated` fires for
-   entitlement-mutating non-terminal events (the 1.5 rescue-path class) and
-   the `loan.updated → vaultAssets` mapping (1.2) — landed and observed on
-   the live WS rail *before* PR A removes the blanket that masks any
-   absence. (The cooldown-clock change 0.2 ships with PR A since it's
-   app-side.)
+1. **PR 0 (phase 0 — prerequisite, ships first):** the indexer-side
+   prerequisites — the ownership-transfer invalidation key (0.1) in the
+   indexer + `KEY_MAP`, the audit that `loan.updated` fires for
+   entitlement-mutating non-terminal events (the 1.5 rescue-path class),
+   the `loan.updated → vaultAssets` mapping (1.2), **and the cadence/
+   cursor-age metadata fields in the DO `hello`/periodic frames +
+   `/offers/stats`** (1.1 — server-side, so they cannot ship inside the
+   app-only PR A; Codex #1224 r4) — landed and observed on the live WS
+   rail *before* PR A removes the blanket that masks any absence. (The
+   cooldown-clock change 0.2 ships with PR A since it's app-side.)
 2. **PR A (phase 1):** rail-health helper (cadence-derived cursor-freshness
    gate) + `LiveChainSync` demotion-with-tip-nudge + book-ghost-strip split
    (shared-hook intersection, pre-walk cursor snapshot) + row-action
    blocking preflight for list-row cancel/amend + OpenOrders local cooldown
-   clock + centralized receipt invalidation with next-block retry +
+   clock + centralized receipt invalidation with next-block retry
+   (covering the token-approval helpers, broadcast cross-tab) +
    leading/trailing throttle + explicit focus refetch + Claims content-hash
-   re-key (role + entitlement fields). One release behind a
+   re-key (role + entitlement fields, full probe set incl. the borrower
+   rebate getter). One release behind a
    `VITE_FRESHNESS_TIMERS=legacy` escape hatch, removed after the live
    review passes.
 3. **PR B (2.1):** config table + endpoint + display-hook switch.
