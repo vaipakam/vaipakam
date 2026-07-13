@@ -305,8 +305,32 @@ reintroduces hold-to-earn.
 | **S-1 Fee payment in VPFI** | The borrower VPFI-LIF custody path (spec §6b) already deducts full LIF in VPFI into Diamond custody; notification fees are already VPFI-billed. Extend the same "pay protocol services in VPFI" pattern to other service fees. | Temporal (custody) + permanent (treasury share / forfeiture) | Mostly already specified; activation is gated on the peg posture — E-1 (lender-discount decoupling) creates hold-demand even while the peg is unset |
 | **S-2 Consumable perks priced in VPFI** | E-2's perks (priority solver routing, higher auto-lifecycle limits, listing visibility boosts, reduced notification pricing) purchased by *spending* VPFI, not just by holding it. | Permanent (spent to treasury) | Pure fee-for-service; near-zero legal surface |
 | **S-3 Hold-for-tier demand** | Fee-discount tiers with time-weighted accumulator + min-history gates (existing spec §6/6a). | Temporal (vaulted) | Already built; E-1 makes it live day-one |
-| **S-4 Service bonds (work-token)** | Solvers / matchers / keepers post a VPFI **security deposit** to access higher rate limits, priority match windows, or larger intent batches; slashed on misbehaviour (slash → treasury or burn). | Temporal (escrow) + permanent (slash) | A performance bond, not an investment: no yield is ever paid on the bond. Legal-glance required but the shape is a deposit, not a return |
-| **S-5 Usage-driven burn** | Burn a governance-set slice (e.g. 20–50%, bounded) of the **VPFI the treasury receives from fees/forfeitures** — never bought from the market. | Permanent (supply reduction) | Unilateral destruction of protocol-received fees (EIP-1559-shaped), no promise to holders. Marketing must never frame it as price support; it is supply management. Legal-glance required |
+| **S-4 Service bonds (work-token)** | Solvers / matchers / keepers post a VPFI **security deposit** to access higher rate limits, priority match windows, or larger intent batches; slashed on misbehaviour (slash → treasury, recycled like any other treasury VPFI receipt). | Temporal (escrow) + permanent (slash) | A performance bond, not an investment: no yield is ever paid on the bond. Legal-glance required but the shape is a deposit, not a return |
+| **S-5 Recycle-first rule (supersedes an earlier burn proposal — owner decision 2026-07-13)** | 100% of the VPFI the treasury receives from fees / forfeitures / slashes routes to the reward-emissions and keeper-reward budgets (§5.2). **No burn.** | Permanent absorption into the reward loop | See "Why recycle instead of burn" below |
+
+**Why recycle instead of burn (owner decision 2026-07-13).** An earlier draft
+proposed burning a slice of treasury VPFI receipts. The owner's challenge —
+"why burn, why not redistribute, given the 230M hard cap?" — is correct, and
+the burn is dropped:
+
+- **The hard cap already does the burn's job.** Deflationary burns matter for
+  uncapped tokens (ETH). With a hard 230M cap, unminted headroom is already
+  permanent scarcity — §3a even codifies "an unallocated pool is simply never
+  minted." Burning recycled fees would just shrink the working budget that
+  funds the platform's own incentive engine.
+- **Recycling is strictly more useful.** Every recycled VPFI displaces a fresh
+  mint one-for-one (§9's reward-emissions offset), which extends the 69M
+  interaction-reward runway — the incentive program literally lives longer the
+  more the platform is used. A burn buys nothing comparable.
+- **Recycling has the *lower* legal surface.** A visible burn program invites
+  a value-accrual / price-support narrative (the thing #687 removed shapes
+  of). Reusing received fees to fund already-specified reward budgets makes no
+  statement about token value at all.
+
+The only shape a burn could ever return in: a **governance escape hatch** for
+the far-future state where recycled inflow persistently exceeds what the
+reward budgets can absorb (the spec already prefers revert-over-credit for
+unspendable budget in the buyback section). Not designed now, not committed.
 
 ### 5.2 Recirculation — the flywheel the spec already contains
 
@@ -322,8 +346,8 @@ interaction rewards (emission)
 users SPEND (S-1/S-2), BOND (S-4), or HOLD (S-3)
         │ treasury share / forfeitures / slashes
         ▼
-treasury VPFI receipts ──► burn slice (S-5)
-        │ remainder
+treasury VPFI receipts (100% recycled — S-5 rule)
+        │
         ▼
 reward-emissions budget credit (spec §9, inert today)
         │ offsets fresh mint
@@ -342,15 +366,15 @@ one-for-one. This simultaneously creates absorption AND extends the 69M pool's
 lifetime, with zero new legal surface (it is already specified behaviour).
 
 **Recommendation R-2:** define and publish a **net-emission metric** on the
-transparency dashboard: `net emission = fresh mint − recycled − burned`, per
-epoch. The health of the circular flow becomes one observable number, and the
+transparency dashboard: `net emission = fresh mint − recycled`, per epoch.
+The health of the circular flow becomes one observable number, and the
 community can see demand catching up to supply without the protocol ever
 making price-flavoured claims.
 
 **Recommendation R-3 (sequencing):** S-1/S-3 are activation work (E-1 + peg
 posture), S-2 rides E-2, R-1 is a contracts task on already-specified storage;
-S-4 and S-5 are new design surfaces — each gets its own short design note and
-a legal glance before build.
+S-4 is the one new design surface — it gets its own short design note and a
+legal glance before build.
 
 ---
 
