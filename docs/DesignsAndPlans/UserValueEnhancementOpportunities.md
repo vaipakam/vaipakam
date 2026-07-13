@@ -269,6 +269,14 @@ Each item lands on the `@vaipakam-labs` board as its own Issue per the task
 tracking convention; items marked "spec edit" additionally follow the
 per-PR FunctionalSpecs discipline.
 
+**Promotion record (2026-07-13):** E-1→#1203, E-2→#1204, E-3→#1205,
+E-4→#1206, E-5→#1207, E-6→#1208, E-7→#1209, E-8→#1210, E-9→#1211,
+E-10→#1212, E-11→#1213, E-12→#1214, E-13→#1215, E-14→#1216, R-1→#1217,
+R-2→#1218, R-3/S-4→#1219, ethos-hardening sweep→#1220. Existing related
+cards cross-referenced rather than duplicated: #884 (peg posture), #694
+(post-#687 tokenomics redesign umbrella), #214 (Claim Center bulk-claim UI
+shape), #951/#974/#927 (sale-vehicle chain).
+
 ---
 
 ## 5. VPFI circular flow — matching demand to distribution (owner direction 2026-07-13)
