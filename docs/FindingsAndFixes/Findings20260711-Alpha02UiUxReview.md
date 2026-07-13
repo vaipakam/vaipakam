@@ -192,6 +192,8 @@ so a fumbled handshake silently drops the exact deadline/liquidation
 alerts the feature exists for. Add "Send test alert" and gate the
 linked state on its success.
 
+**Status: ✅ FIXED (batch 8e, 2026-07-13).** The self-attested "I've done it — the bot replied" button is gone. After issuing the link code the card now shows **"Send a test alert"**: the wallet signs a free `test-alert`-scoped ownership proof, the agent Worker (`POST /telegram/test`) looks up the stored chat id and pushes ONE real "your alerts are working" message, and the card records "linked" **only** on a confirmed send. A fumbled handshake (code never delivered to the bot → no stored chat) now returns a body-tagged `not-linked` and the card says "we couldn't find your Telegram chat yet — send the code to the bot, then try again", instead of silently marking linked and dropping every future alert. Signature-gated (distinct message from link/unlink/mute so a captured signature can't cross actions) so a spoofed-Origin caller can't spam a linked wallet's chat. Localized test message across all 10 Worker locales.
+
 ### UX-013 · No persistent network indicator when connected (S)
 `NetworkBanner` renders only on unsupported chains; on a supported one
 the current network shows nowhere outside the wallet modal. Offers,
@@ -363,6 +365,8 @@ restricted, as in the review sandbox). The finding is that the SDKs
 phone home at all — disable their analytics for privacy, which also
 keeps consoles clean on locked-down networks.
 
+**Status: ✅ FIXED (batch 8e, 2026-07-13).** Both connectors' own analytics beacons are now turned OFF via first-class, typed knobs (no monkey-patching): the Coinbase Wallet SDK connector gets `preference: { options: 'all', telemetry: false }` (`telemetry` gates its functional-metrics beacons; `options: 'all'` preserves the existing wallet-selection behaviour, so this is telemetry-only), and the WalletConnect connector gets `telemetryEnabled: false` (threads through EthereumProvider → SignClient → Core, stopping the `pulse.walletconnect.org` event beacons). Naive users never opted into third-party analytics, and the beacons no longer spam the console on locked-down networks. (The earlier "no clean opt-out knob" read was wrong — both flags exist in the installed SDK versions.)
+
 ---
 
 ## P3 — polish
@@ -414,6 +418,13 @@ keeps consoles clean on locked-down networks.
   **Status: ✅ FIXED (batch 2, 2026-07-11).**
 - **UX-043** Telegram "Linked on another device? / Unlink here"
   centered link pair is an ambiguous small target. (S)
+  **Status: ✅ FIXED (batch 8e, 2026-07-13).** The ambiguous inline
+  "Unlink here" link is replaced by a clearly-labelled block — a bold
+  "Linked this wallet on another device?" heading, a plain-words
+  explanation (the link lives on the server, not just this browser),
+  and a full-size **"Unlink this wallet"** secondary button — so the
+  privacy control is an obvious, comfortably-sized target instead of a
+  tiny centered link.
 - **UX-044** Raw ISO build timestamp in the Help footer — format as a
   date, keep the full string in diagnostics. (S)
   **Status: ✅ FIXED (batch 8a, 2026-07-12).** The Help footer now

@@ -296,6 +296,29 @@ export async function consumeTelegramLinkCode(
   };
 }
 
+/** UX-012 — read the stored Telegram chat id (and locale) for a
+ *  wallet/chain, so the test-alert endpoint can push a real message to
+ *  the linked chat. Returns null when the wallet has no row or the row
+ *  has no chat id (handshake never completed) — the caller turns that
+ *  into an honest "we couldn't find your chat yet" instead of a silent
+ *  success, which is the whole point of the round-trip. */
+export async function getTelegramChatId(
+  db: D1Database,
+  wallet: string,
+  chainId: number,
+): Promise<{ chatId: string; locale: string } | null> {
+  const row = await db
+    .prepare(
+      `SELECT tg_chat_id, locale
+       FROM user_thresholds
+       WHERE wallet = ? AND chain_id = ?`,
+    )
+    .bind(wallet.toLowerCase(), chainId)
+    .first<{ tg_chat_id: string | null; locale: string | null }>();
+  if (!row || !row.tg_chat_id) return null;
+  return { chatId: row.tg_chat_id, locale: row.locale ?? 'en' };
+}
+
 /** Store the Telegram chat id on the user's thresholds row. Called
  *  after a successful handshake.
  *

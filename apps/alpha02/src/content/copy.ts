@@ -145,10 +145,26 @@ export const copy = {
     linkIssued:
       'Open our bot and press Start — or send it this code as a message. That connects this wallet to your Telegram.',
     openBot: 'Open Telegram',
-    linkConfirm: 'I’ve done it — the bot replied',
+    // UX-012 — replace the old self-attested "I’ve done it" (which set
+    // "linked" with no proof and silently dropped alerts on a fumbled
+    // handshake) with a real round-trip.
+    testAlertButton: 'Send a test alert',
+    testAlertNote:
+      'Once you’ve sent the code to the bot, tap this — we’ll push one message to your Telegram to prove it’s connected. Your wallet signs a short, free message first.',
+    testAlertSending: 'Sending your test alert…',
+    testAlertSent:
+      'Test alert sent — check Telegram. Your alerts for this wallet are now on.',
+    testAlertNotLinked:
+      'We couldn’t find your Telegram chat yet. Open the bot and send it the code above, then tap “Send a test alert” again.',
+    testAlertError:
+      'Couldn’t send the test alert just now. Please try again in a moment.',
     linked: 'Telegram linked — alerts for this wallet go to your chat.',
     unlink: 'Unlink',
-    unlinkElsewhere: 'Linked on another device? Unlink here',
+    // UX-043 — a clear labelled action, not an ambiguous centered link.
+    unlinkElsewhereTitle: 'Linked this wallet on another device?',
+    unlinkElsewhereBody:
+      'Its Telegram link lives on our server, not just this browser. Disconnect it here — it stops messages everywhere.',
+    unlinkElsewhere: 'Unlink this wallet',
     unlinked: 'Unlinked. No more Telegram messages for this wallet.',
     toggleRepayDue: 'Message me before an interest payment comes due',
     toggleRisky: 'Message me if my loan gets risky',

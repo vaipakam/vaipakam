@@ -46,6 +46,9 @@ type Catalogue = {
   /** Telegram handshake responses. */
   handshakeExpired: string;
   handshakeLinked: (walletShort: string, chainId: number) => string;
+  /** UX-012 — the one-off "delivery works" message the Send-a-test-
+   *  alert button triggers. */
+  testAlert: string;
 };
 
 const CAT: Record<Locale, Catalogue> = {
@@ -61,6 +64,8 @@ const CAT: Record<Locale, Catalogue> = {
       'That code is expired or unrecognised. Head back to Vaipakam → Alerts and request a new one.',
     handshakeLinked: (walletShort, chainId) =>
       `Linked — HF alerts will arrive for wallet ${walletShort} on chain ${chainId}.`,
+    testAlert:
+      '✅ Vaipakam test alert — your Telegram alerts are working. This is the only message you asked for; real alerts arrive only when a loan needs your attention.',
   },
   es: {
     bandTagWarn: 'Aviso',
@@ -74,6 +79,8 @@ const CAT: Record<Locale, Catalogue> = {
       'Ese código ha caducado o no se reconoce. Vuelve a Vaipakam → Alertas y solicita uno nuevo.',
     handshakeLinked: (walletShort, chainId) =>
       `Vinculado — recibirás alertas HF para la billetera ${walletShort} en la cadena ${chainId}.`,
+    testAlert:
+      '✅ Alerta de prueba de Vaipakam — tus alertas de Telegram funcionan. Este es el único mensaje que solicitaste; las alertas reales llegan solo cuando un préstamo necesita tu atención.',
   },
   fr: {
     bandTagWarn: 'À noter',
@@ -87,6 +94,8 @@ const CAT: Record<Locale, Catalogue> = {
       "Ce code est expiré ou non reconnu. Retournez sur Vaipakam → Alertes et demandez-en un nouveau.",
     handshakeLinked: (walletShort, chainId) =>
       `Lié — les alertes HF arriveront pour le portefeuille ${walletShort} sur la chaîne ${chainId}.`,
+    testAlert:
+      '✅ Alerte de test Vaipakam — vos alertes Telegram fonctionnent. Ceci est le seul message demandé ; les vraies alertes n’arrivent que lorsqu’un prêt requiert votre attention.',
   },
   de: {
     bandTagWarn: 'Hinweis',
@@ -100,6 +109,8 @@ const CAT: Record<Locale, Catalogue> = {
       'Dieser Code ist abgelaufen oder unbekannt. Zurück zu Vaipakam → Alerts und einen neuen anfordern.',
     handshakeLinked: (walletShort, chainId) =>
       `Verknüpft — HF-Warnungen werden an Wallet ${walletShort} auf Chain ${chainId} gesendet.`,
+    testAlert:
+      '✅ Vaipakam-Testwarnung — deine Telegram-Warnungen funktionieren. Dies ist die einzige angeforderte Nachricht; echte Warnungen kommen nur, wenn ein Kredit deine Aufmerksamkeit braucht.',
   },
   ja: {
     bandTagWarn: 'お知らせ',
@@ -113,6 +124,8 @@ const CAT: Record<Locale, Catalogue> = {
       'そのコードは期限切れか認識できません。Vaipakam → アラートに戻り、新しいコードをリクエストしてください。',
     handshakeLinked: (walletShort, chainId) =>
       `リンク完了 — ウォレット ${walletShort}(チェーン ${chainId})宛にHFアラートを送信します。`,
+    testAlert:
+      '✅ Vaipakam テストアラート — Telegram アラートは正常に動作しています。これは依頼された唯一のメッセージです。実際のアラートはローンに対応が必要なときだけ届きます。',
   },
   zh: {
     bandTagWarn: '提示',
@@ -126,6 +139,8 @@ const CAT: Record<Locale, Catalogue> = {
       '该验证码已过期或无法识别。请返回 Vaipakam → 警报页面重新申请。',
     handshakeLinked: (walletShort, chainId) =>
       `已关联 — 钱包 ${walletShort}(链 ${chainId})将收到 HF 警报。`,
+    testAlert:
+      '✅ Vaipakam 测试警报 — 你的 Telegram 警报运行正常。这是你请求的唯一一条消息;只有当贷款需要你关注时才会收到真实警报。',
   },
   ko: {
     bandTagWarn: '안내',
@@ -139,6 +154,8 @@ const CAT: Record<Locale, Catalogue> = {
       '해당 코드는 만료되었거나 알 수 없는 코드입니다. Vaipakam → 알림 페이지로 돌아가 새 코드를 요청하세요.',
     handshakeLinked: (walletShort, chainId) =>
       `연결됨 — 지갑 ${walletShort}(체인 ${chainId})에 HF 알림이 발송됩니다.`,
+    testAlert:
+      '✅ Vaipakam 테스트 알림 — Telegram 알림이 정상 작동합니다. 요청하신 유일한 메시지이며, 실제 알림은 대출에 주의가 필요할 때만 도착합니다.',
   },
   hi: {
     bandTagWarn: 'सूचना',
@@ -152,6 +169,8 @@ const CAT: Record<Locale, Catalogue> = {
       'वह कोड समाप्त हो गया है या पहचाना नहीं गया। Vaipakam → अलर्ट पर वापस जाकर नया कोड अनुरोध करें।',
     handshakeLinked: (walletShort, chainId) =>
       `लिंक हो गया — वॉलेट ${walletShort} (चेन ${chainId}) पर HF अलर्ट प्राप्त होंगे।`,
+    testAlert:
+      '✅ Vaipakam परीक्षण अलर्ट — आपके Telegram अलर्ट काम कर रहे हैं। यह आपके द्वारा मांगा गया एकमात्र संदेश है; असली अलर्ट तभी आते हैं जब किसी लोन को आपके ध्यान की ज़रूरत हो।',
   },
   ta: {
     bandTagWarn: 'அறிவிப்பு',
@@ -165,6 +184,8 @@ const CAT: Record<Locale, Catalogue> = {
       'அந்த குறியீடு காலாவதியானது அல்லது அறியப்படாதது. Vaipakam → Alerts க்குத் திரும்பி புதிய ஒன்றை கோருங்கள்.',
     handshakeLinked: (walletShort, chainId) =>
       `இணைக்கப்பட்டது — வாலெட் ${walletShort} (சங்கிலி ${chainId}) க்கு HF எச்சரிக்கைகள் வரும்.`,
+    testAlert:
+      '✅ Vaipakam சோதனை எச்சரிக்கை — உங்கள் Telegram எச்சரிக்கைகள் வேலை செய்கின்றன. நீங்கள் கேட்ட ஒரே செய்தி இதுதான்; உண்மையான எச்சரிக்கைகள் ஒரு கடனுக்கு உங்கள் கவனம் தேவைப்படும்போது மட்டுமே வரும்.',
   },
   ar: {
     bandTagWarn: 'تنبيه',
@@ -178,6 +199,8 @@ const CAT: Record<Locale, Catalogue> = {
       'انتهت صلاحية هذا الرمز أو لم يتم التعرف عليه. عُد إلى Vaipakam ← التنبيهات واطلب رمزًا جديدًا.',
     handshakeLinked: (walletShort, chainId) =>
       `تم الربط — ستصل تنبيهات HF إلى المحفظة ${walletShort} على السلسلة ${chainId}.`,
+    testAlert:
+      '✅ تنبيه اختباري من Vaipakam — تنبيهات Telegram تعمل. هذه هي الرسالة الوحيدة التي طلبتها؛ التنبيهات الحقيقية تصل فقط عندما يحتاج قرض إلى انتباهك.',
   },
 };
 
@@ -221,4 +244,9 @@ export function handshakeLinked(
   chainId: number,
 ): string {
   return CAT[resolveLocale(locale)].handshakeLinked(walletShort, chainId);
+}
+
+/** UX-012 — the one-off "your alerts are working" test message. */
+export function testAlert(locale: string | null | undefined): string {
+  return CAT[resolveLocale(locale)].testAlert;
 }

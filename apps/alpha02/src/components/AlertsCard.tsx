@@ -30,6 +30,7 @@ import {
   loadAlertPrefs,
   pushChannelUrl,
   saveAlertPrefs,
+  sendTestTelegramAlert,
   storeAlertPrefs,
   unlinkTelegram,
   type AlertPrefs,
@@ -119,12 +120,37 @@ export function AlertsCard() {
     }
   }
 
-  function confirmLinked() {
+  // UX-012 — a REAL round-trip replaces the old self-attested "I've
+  // done it" button: the agent pushes a test message to the linked
+  // chat, and we only record "linked" once that send succeeds. A
+  // fumbled handshake (code never sent to the bot) now surfaces as an
+  // honest "we couldn't find your chat" instead of silently dropping
+  // every future alert.
+  async function sendTest() {
     if (!address || !prefs) return;
-    const next = { ...prefs, telegramLinked: true };
-    storeAlertPrefs(chainId, address, next);
-    setPrefs(next);
-    setLink(null);
+    setBusy(true);
+    setError(null);
+    setNotice(null);
+    try {
+      const result = await sendTestTelegramAlert(address, chainId, (message) =>
+        signMessageAsync({ message }),
+      );
+      if (result === 'sent') {
+        const next = { ...prefs, telegramLinked: true };
+        storeAlertPrefs(chainId, address, next);
+        setPrefs(next);
+        setLink(null);
+        setNotice(copy.alerts.testAlertSent);
+      } else if (result === 'not-linked') {
+        setError(copy.alerts.testAlertNotLinked);
+      } else {
+        setError(copy.alerts.testAlertError);
+      }
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusy(false);
+    }
   }
 
   async function doUnlink() {
@@ -192,41 +218,55 @@ export function AlertsCard() {
                     {copy.alerts.openBot}
                   </a>
                 ) : null}
+                {/* UX-012 — prove the link with a real message instead
+                    of the old self-attested confirm. */}
                 <button
                   type="button"
                   className="btn btn-secondary"
-                  onClick={confirmLinked}
+                  onClick={() => void sendTest()}
+                  disabled={busy}
                 >
-                  {copy.alerts.linkConfirm}
+                  {busy
+                    ? copy.alerts.testAlertSending
+                    : copy.alerts.testAlertButton}
                 </button>
               </div>
+              <span className="muted">{copy.alerts.testAlertNote}</span>
             </div>
           ) : (
-            <div className="cluster" style={{ alignItems: 'center' }}>
-              <button
-                type="button"
-                className="btn btn-primary"
-                onClick={() => void startLink()}
-                disabled={busy}
-                title={copy.alerts.linkSignNote}
-              >
-                {copy.alerts.linkButton}
-              </button>
-              {/* The linked flag is a LOCAL mirror — a wallet linked
-                  from another device (or after clearing storage)
-                  still deserves its privacy control, so unlink stays
-                  reachable here too (server-side it's idempotent). */}
-              <button
-                type="button"
-                className="btn btn-ghost"
-                onClick={() => void doUnlink()}
-                disabled={busy}
-              >
-                {copy.alerts.unlinkElsewhere}
-              </button>
-              <span className="muted" style={{ flexBasis: '100%' }}>
-                {copy.alerts.linkSignNote}
-              </span>
+            <div className="stack" style={{ gap: 12 }}>
+              <div className="cluster" style={{ alignItems: 'center' }}>
+                <button
+                  type="button"
+                  className="btn btn-primary"
+                  onClick={() => void startLink()}
+                  disabled={busy}
+                  title={copy.alerts.linkSignNote}
+                >
+                  {copy.alerts.linkButton}
+                </button>
+                <span className="muted" style={{ flexBasis: '100%' }}>
+                  {copy.alerts.linkSignNote}
+                </span>
+              </div>
+              {/* UX-043 — the linked flag is a LOCAL mirror, so a wallet
+                  linked from another device (or after clearing storage)
+                  still needs its privacy control. A clearly-labelled
+                  block with its own explanation, not an ambiguous
+                  centered link (server-side unlink is idempotent). */}
+              <div className="stack" style={{ gap: 4 }}>
+                <strong>{copy.alerts.unlinkElsewhereTitle}</strong>
+                <span className="muted">{copy.alerts.unlinkElsewhereBody}</span>
+                <button
+                  type="button"
+                  className="btn btn-secondary"
+                  onClick={() => void doUnlink()}
+                  disabled={busy}
+                  style={{ alignSelf: 'flex-start' }}
+                >
+                  {copy.alerts.unlinkElsewhere}
+                </button>
+              </div>
             </div>
           )}
 

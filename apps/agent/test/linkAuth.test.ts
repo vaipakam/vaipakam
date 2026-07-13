@@ -3,6 +3,7 @@ import { privateKeyToAccount, type PrivateKeyAccount } from 'viem/accounts';
 import {
   buildDueDateOptOutMessage,
   buildTelegramLinkMessage,
+  buildTelegramTestMessage,
   buildTelegramUnlinkMessage,
   parseSignedLinkRequest,
   verifySignedLinkRequest,
@@ -126,6 +127,21 @@ describe('verifySignedLinkRequest', () => {
     expect(v.ok).toBe(true);
   });
 
+  it('accepts the owner signature for the test-alert action', async () => {
+    const signature = await ACCOUNT_A.signMessage({
+      message: buildTelegramTestMessage(ACCOUNT_A.address, CHAIN_ID, NOW),
+    });
+    const parsed = parseSignedLinkRequest({
+      wallet: ACCOUNT_A.address,
+      chain_id: CHAIN_ID,
+      issuedAt: NOW,
+      signature,
+    });
+    if (!parsed.ok) throw new Error('parse failed');
+    const v = await verifySignedLinkRequest(parsed.req, NOW, 'test-alert');
+    expect(v.ok).toBe(true);
+  });
+
   it('rejects cross-action replay (each action signature used for the others)', async () => {
     // The messages differ on purpose: a captured signature for one
     // action must never authorise another.
@@ -138,11 +154,17 @@ describe('verifySignedLinkRequest', () => {
     const muteSig = await ACCOUNT_A.signMessage({
       message: buildDueDateOptOutMessage(ACCOUNT_A.address, CHAIN_ID, NOW),
     });
+    const testSig = await ACCOUNT_A.signMessage({
+      message: buildTelegramTestMessage(ACCOUNT_A.address, CHAIN_ID, NOW),
+    });
     for (const [signature, action] of [
       [linkSig, 'unlink'],
       [unlinkSig, 'link'],
       [linkSig, 'mute-duedate'],
       [muteSig, 'unlink'],
+      [testSig, 'link'],
+      [linkSig, 'test-alert'],
+      [testSig, 'unlink'],
     ] as const) {
       const parsed = parseSignedLinkRequest({
         wallet: ACCOUNT_A.address,

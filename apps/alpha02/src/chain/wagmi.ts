@@ -143,12 +143,27 @@ export const wagmiConfig = createConfig({
   ...defaultConfig,
   connectors: [
     injected({ target: 'metaMask' }),
-    coinbaseWallet({ appName: APP_NAME, appLogoUrl: APP_ICON }),
+    // UX-033 — turn OFF the SDK's own analytics phone-home. The
+    // Coinbase Wallet SDK's `preference.telemetry` flag gates its
+    // functional-metrics beacons; keeping `options: 'all'` preserves
+    // the current (default) wallet-selection behaviour so this is a
+    // telemetry-only change, not a smart-wallet-mode change. Naive
+    // users didn't opt into third-party analytics, and the beacons
+    // also spam the console on locked-down networks.
+    coinbaseWallet({
+      appName: APP_NAME,
+      appLogoUrl: APP_ICON,
+      preference: { options: 'all', telemetry: false },
+    }),
     ...(WC_PROJECT_ID
       ? [
           walletConnect({
             projectId: WC_PROJECT_ID,
             showQrModal: false,
+            // UX-033 — WalletConnect's Core `telemetryEnabled` threads
+            // through the EthereumProvider → SignClient → Core chain;
+            // false stops the pulse.walletconnect.org event beacons.
+            telemetryEnabled: false,
             metadata: {
               name: APP_NAME,
               description: APP_DESCRIPTION,

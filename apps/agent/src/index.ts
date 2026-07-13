@@ -45,6 +45,9 @@
  *   POST /unlink/telegram                   — frontend → clear the stored
  *                                             wallet ↔ tg_chat_id link (#1033;
  *                                             EIP-191 signature required too)
+ *   POST /telegram/test                     — frontend → send ONE test alert
+ *                                             to the linked chat (UX-012;
+ *                                             EIP-191 signature required too)
  *   POST /support/ticket                    — frontend → capture a support
  *                                             ticket into D1 + ops-Telegram
  *                                             notify (#1040 phase 1)
@@ -93,6 +96,7 @@ import {
 } from './frames';
 import {
   consumeTelegramLinkCode,
+  getTelegramChatId,
   issueTelegramLinkCode,
   linkTelegram,
   OptOutStorageUnavailableError,
@@ -100,7 +104,7 @@ import {
   upsertThresholds,
 } from './db';
 import { extractLinkCode, sendMessage, type TelegramUpdate } from './telegram';
-import { handshakeExpired, handshakeLinked } from './i18n';
+import { handshakeExpired, handshakeLinked, testAlert } from './i18n';
 import {
   parseSignedLinkRequest,
   verifySignedLinkRequest,
@@ -215,6 +219,12 @@ export default {
     }
     if (url.pathname === '/unlink/telegram' && req.method === 'POST') {
       return handleUnlinkTelegram(req, resolved);
+    }
+    // UX-012 — send ONE real test alert to the linked chat so the
+    // frontend can gate its "linked" state on a proven round-trip
+    // instead of the user's self-attestation.
+    if (url.pathname === '/telegram/test' && req.method === 'POST') {
+      return handleTestTelegram(req, resolved);
     }
     // #1040 phase 1 — support-ticket capture from the alpha02 support
     // widget (rate limit + validation inside the handler).
@@ -502,6 +512,71 @@ async function handleUnlinkTelegram(
   // link issue) but the clear is wallet-wide — see unlinkTelegram for
   // why.
   await unlinkTelegram(env.DB, parsed.req.wallet);
+  return json({ ok: true }, 200, corsOrigin);
+}
+
+/** UX-012 — push a single test alert to the wallet's linked Telegram
+ *  chat. Signature-gated over the `test-alert`-scoped message: sending
+ *  a Telegram message is an outbound side-effect, so it earns the same
+ *  ownership proof as link / unlink — otherwise a spoofed-Origin caller
+ *  who knows a linked wallet's public address could spam that user's
+ *  chat. Returns 404 `not-linked` when no chat id is stored yet (the
+ *  handshake never completed), which is exactly the fumbled-handshake
+ *  case this round-trip exists to catch. */
+async function handleTestTelegram(req: Request, env: Env): Promise<Response> {
+  const corsOrigin = resolveAllowedOrigin(req, env);
+  if (!env.TG_BOT_TOKEN) {
+    return json({ error: 'bot-not-configured' }, 503, corsOrigin);
+  }
+  let body: unknown;
+  try {
+    body = await req.json();
+  } catch {
+    return json({ error: 'invalid-json' }, 400, corsOrigin);
+  }
+  const parsed = parseSignedLinkRequest(body);
+  if (!parsed.ok) {
+    return json(
+      { error: 'invalid-payload', reason: parsed.reason },
+      400,
+      corsOrigin,
+    );
+  }
+  const verified = await verifySignedLinkRequest(
+    parsed.req,
+    Math.floor(Date.now() / 1000),
+    'test-alert',
+  );
+  if (!verified.ok) {
+    return json(
+      { error: 'verification_failed', reason: verified.reason },
+      verified.status,
+      corsOrigin,
+    );
+  }
+  const linked = await getTelegramChatId(
+    env.DB,
+    parsed.req.wallet,
+    parsed.req.chain_id,
+  );
+  if (!linked) {
+    // No chat stored — the bot handshake didn't complete. Distinct 404
+    // so the frontend can say "send the code to the bot first" rather
+    // than pretend the test succeeded.
+    return json({ error: 'not-linked' }, 404, corsOrigin);
+  }
+  // `sendMessage` returns whether Telegram accepted the send. A silent
+  // failure here would let the frontend mark the wallet "verified" when
+  // the message never arrived, so surface a hard failure as 502 and
+  // keep the round-trip honest.
+  const ok = await sendMessage(
+    env.TG_BOT_TOKEN,
+    linked.chatId,
+    testAlert(linked.locale),
+  );
+  if (!ok) {
+    return json({ error: 'send-failed' }, 502, corsOrigin);
+  }
   return json({ ok: true }, 200, corsOrigin);
 }
 

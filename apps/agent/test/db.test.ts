@@ -1,5 +1,9 @@
 import { describe, it, expect } from 'vitest';
-import { OptOutStorageUnavailableError, upsertThresholds } from '../src/db';
+import {
+  getTelegramChatId,
+  OptOutStorageUnavailableError,
+  upsertThresholds,
+} from '../src/db';
 
 // ─── Minimal D1 fake for the thresholds upsert ─────────────────────
 //
@@ -29,11 +33,19 @@ class FakeStmt {
     }
     this.db.executed.push({ sql: this.sql, args: this.args });
   }
+  // For SELECTs (getTelegramChatId) — returns whatever the fake was
+  // seeded with, recording the bound args so a test can assert the
+  // wallet was lower-cased.
+  async first<T>(): Promise<T | null> {
+    this.db.executed.push({ sql: this.sql, args: this.args });
+    return (this.db.firstResult as T) ?? null;
+  }
 }
 
 class FakeD1 {
   migrated = true;
   failWith: string | null = null;
+  firstResult: unknown = null;
   executed: Array<{ sql: string; args: unknown[] }> = [];
   prepare(sql: string) {
     return new FakeStmt(this, sql);
@@ -102,5 +114,54 @@ describe('upsertThresholds rollout-window fallback (#1056 round 8)', () => {
     await upsertThresholds(db as unknown as D1Database, { ...BASE });
     expect(db.executed).toHaveLength(1);
     expect(db.executed[0]!.sql).not.toContain('notify_maturity_approaching');
+  });
+});
+
+describe('getTelegramChatId (UX-012 test-alert lookup)', () => {
+  it('returns the chat id + locale when a link exists (wallet lower-cased)', async () => {
+    const db = new FakeD1();
+    db.firstResult = { tg_chat_id: '9876', locale: 'ta' };
+    const res = await getTelegramChatId(
+      db as unknown as D1Database,
+      BASE.wallet,
+      BASE.chain_id,
+    );
+    expect(res).toEqual({ chatId: '9876', locale: 'ta' });
+    // The wallet is bound lower-cased so a checksummed spelling still
+    // matches the stored row.
+    expect(db.executed[0]!.args[0]).toBe(BASE.wallet.toLowerCase());
+  });
+
+  it('returns null when the row exists but has no chat id (handshake unfinished)', async () => {
+    const db = new FakeD1();
+    db.firstResult = { tg_chat_id: null, locale: 'en' };
+    const res = await getTelegramChatId(
+      db as unknown as D1Database,
+      BASE.wallet,
+      BASE.chain_id,
+    );
+    expect(res).toBeNull();
+  });
+
+  it('returns null when no row exists at all', async () => {
+    const db = new FakeD1();
+    db.firstResult = null;
+    const res = await getTelegramChatId(
+      db as unknown as D1Database,
+      BASE.wallet,
+      BASE.chain_id,
+    );
+    expect(res).toBeNull();
+  });
+
+  it('defaults the locale to en when the stored locale is null', async () => {
+    const db = new FakeD1();
+    db.firstResult = { tg_chat_id: '42', locale: null };
+    const res = await getTelegramChatId(
+      db as unknown as D1Database,
+      BASE.wallet,
+      BASE.chain_id,
+    );
+    expect(res).toEqual({ chatId: '42', locale: 'en' });
   });
 });

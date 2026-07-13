@@ -331,6 +331,68 @@ export function buildTelegramUnlinkMessage(
   ].join('\n');
 }
 
+/**
+ * The test-alert counterpart (UX-012) — MUST stay byte-identical to
+ * `buildTelegramTestMessage` in `apps/agent/src/linkAuth.ts`. Distinct
+ * wording so one signature can never authorise another action.
+ */
+export function buildTelegramTestMessage(
+  wallet: string,
+  chainId: number,
+  issuedAt: number,
+): string {
+  return [
+    'Vaipakam — Send a test alert',
+    '',
+    'I request one test alert be sent to the Telegram chat linked to',
+    'the wallet below, to confirm delivery works. Signing this message',
+    'proves ownership of the wallet. It is not a transaction and costs',
+    'no gas.',
+    '',
+    `Wallet: ${wallet.toLowerCase()}`,
+    `Chain id: ${chainId}`,
+    `Issued at (unix): ${issuedAt}`,
+  ].join('\n');
+}
+
+/** Result of a test-alert round-trip (UX-012). `sent` proves delivery
+ *  (gate "linked" on it); `not-linked` means the bot handshake never
+ *  completed; `error` is a transient/backend failure. */
+export type TestAlertResult = 'sent' | 'not-linked' | 'error';
+
+/** Push ONE real test alert to the wallet's linked Telegram chat. Signs
+ *  a free ownership proof first, then asks the agent to send. The agent
+ *  looks up the stored chat id: a `404 not-linked` means the code was
+ *  never delivered to the bot — surfaced so the UI can say so instead of
+ *  the old self-attested "I've done it" that hid a fumbled handshake. */
+export async function sendTestTelegramAlert(
+  wallet: `0x${string}`,
+  chainId: number,
+  signMessage: (message: string) => Promise<string>,
+): Promise<TestAlertResult> {
+  const issuedAt = Math.floor(Date.now() / 1000);
+  const signature = await signMessage(
+    buildTelegramTestMessage(wallet, chainId, issuedAt),
+  );
+  const res = await post('/telegram/test', {
+    wallet,
+    chain_id: chainId,
+    issuedAt,
+    signature,
+  });
+  if (res.ok) return 'sent';
+  // Only a body-tagged `not-linked` is the fumbled-handshake case. A
+  // bare 404 (e.g. the endpoint not deployed yet) must NOT masquerade
+  // as "your chat isn't linked" — fall through to the generic error.
+  if (res.status === 404) {
+    const data = (await res.json().catch(() => null)) as {
+      error?: string;
+    } | null;
+    return data?.error === 'not-linked' ? 'not-linked' : 'error';
+  }
+  return 'error';
+}
+
 /** Clear the stored wallet ↔ Telegram link server-side. Signs the
  *  unlink ownership proof first (free, not a transaction). */
 export async function unlinkTelegram(
