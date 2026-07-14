@@ -134,6 +134,25 @@ export function shouldRefreshConfig(opts: {
   return opts.nowSec - opts.rowUpdatedAt > BACKSTOP_SECONDS;
 }
 
+/** Zero a row's freshness stamp so clients refuse it (their 24h
+ *  freshness check fails on 0) and the next scan's backstop math
+ *  retries immediately. Guarded on `source_block` so a LATE-finishing
+ *  older scan can never invalidate a row a newer scan already wrote:
+ *  a stored row pinned at or past `belowBlock` already reflects every
+ *  event this scan saw (Codex #1231 r2). */
+async function markStaleBelow(
+  env: Env,
+  chainId: number,
+  belowBlock: bigint,
+): Promise<void> {
+  await env.DB.prepare(
+    `UPDATE protocol_config SET updated_at = 0
+     WHERE chain_id = ? AND source_block < ?`,
+  )
+    .bind(chainId, Number(belowBlock))
+    .run();
+}
+
 /** JSON-serialize a tuple with bigints as decimal strings — via a
  *  REPLACER so NESTED arrays/structs (the uint256[4] VPFI tier slots)
  *  convert too; a top-level-only map left nested BigInts for
@@ -173,7 +192,15 @@ export async function maybeRefreshProtocolConfig(opts: {
   }
   try {
     // Catch-up scans read historic state — never stamp those fresh.
-    if (opts.headBlock - opts.blockNumber > NEAR_HEAD_BLOCKS) return;
+    // But a catch-up window can still CONTAIN a governance event, and
+    // dropping that signal would let the pre-change row keep serving
+    // as fresh through the whole backstop window once the cursor
+    // reaches head (Codex #1231 r2): stale-mark so clients refuse the
+    // row now and the first near-head scan refreshes promptly.
+    if (opts.headBlock - opts.blockNumber > NEAR_HEAD_BLOCKS) {
+      if (saw) await markStaleBelow(opts.env, opts.chainId, opts.blockNumber);
+      return;
+    }
     const row = await opts.env.DB.prepare(
       `SELECT updated_at FROM protocol_config WHERE chain_id = ?`,
     )
@@ -213,7 +240,8 @@ export async function maybeRefreshProtocolConfig(opts: {
          bundle_json = excluded.bundle_json,
          master_flags_json = excluded.master_flags_json,
          source_block = excluded.source_block,
-         updated_at = excluded.updated_at`,
+         updated_at = excluded.updated_at
+       WHERE excluded.source_block >= protocol_config.source_block`,
     )
       .bind(
         opts.chainId,
@@ -235,11 +263,7 @@ export async function maybeRefreshProtocolConfig(opts: {
     // chain, and (b) the next scan's backstop check retries promptly.
     if (saw) {
       try {
-        await opts.env.DB.prepare(
-          `UPDATE protocol_config SET updated_at = 0 WHERE chain_id = ?`,
-        )
-          .bind(opts.chainId)
-          .run();
+        await markStaleBelow(opts.env, opts.chainId, opts.blockNumber);
       } catch {
         /* stale-marking is best-effort */
       }
