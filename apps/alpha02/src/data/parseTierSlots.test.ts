@@ -22,5 +22,12 @@ describe('parseTierSlots', () => {
     expect(parseTierSlots('100', D)).toBeNull(); // not an array
     expect(parseTierSlots(['a', 'b', 'c', 'd'], D)).toBeNull(); // non-numeric
     expect(parseTierSlots(T, [null, '1', '2', '3'])).toBeNull(); // null entry
+    // Codex #1240 r1 — BigInt() would silently coerce these, but a
+    // JSON-number threshold has already lost precision and a boolean
+    // is a schema regression: strict decimal-string only.
+    expect(parseTierSlots([1e20, 1e21, 5e21, 2e22] as unknown[], D)).toBeNull();
+    expect(parseTierSlots(T, [true, '1', '2', '3'])).toBeNull();
+    expect(parseTierSlots(T, ['', '1', '2', '3'])).toBeNull();
+    expect(parseTierSlots(T, ['-1', '1', '2', '3'])).toBeNull();
   });
 });
