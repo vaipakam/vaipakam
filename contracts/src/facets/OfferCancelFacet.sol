@@ -411,8 +411,13 @@ contract OfferCancelFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamE
                 offer.assetType == LibVaipakam.AssetType.ERC1155
             ) {
                 // NFT rental borrower offer: ERC-20 prepayment was deposited.
+                // #1193 (Pass-2 D3) — refund the buffer the offer actually
+                // vaulted at create (its snapshot), NOT live `cfgRentalBufferBps()`.
+                // A governance raise between create and cancel would otherwise
+                // over-withdraw (bricking cancel on a vault shortfall); a cut
+                // would strand the difference in the vault.
                 uint256 prepayAmount = offer.amount * offer.durationDays;
-                uint256 buffer = (prepayAmount * LibVaipakam.cfgRentalBufferBps()) /
+                uint256 buffer = (prepayAmount * LibVaipakam.effectiveRentalBufferBps(offer)) /
                     LibVaipakam.BASIS_POINTS;
                 uint256 totalPrepay = prepayAmount + buffer;
                 LibFacet.crossFacetCall(

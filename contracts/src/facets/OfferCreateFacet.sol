@@ -1260,7 +1260,12 @@ contract OfferCreateFacet is
                 params.assetType == LibVaipakam.AssetType.ERC721 ||
                 params.assetType == LibVaipakam.AssetType.ERC1155
             ) {
-                uint256 totalPrepay = _nftRentalPrepayTotal(params.amount, params.durationDays);
+                // #1193 — at create-time the live config IS the value just
+                // snapshotted onto the offer (`rentalBufferBpsAtCreate`), so the
+                // deposit funds exactly what the snapshot records.
+                uint256 totalPrepay = _nftRentalPrepayTotal(
+                    params.amount, params.durationDays, LibVaipakam.cfgRentalBufferBps()
+                );
                 LibFacet.crossFacetCall(
                     abi.encodeWithSelector(
                         VaultFactoryFacet.vaultDepositERC20.selector,
@@ -1300,7 +1305,12 @@ contract OfferCreateFacet is
         }
         // NFT rental borrower offer — Permit2 pulls the prepay.
         LibVaipakam.Offer storage offer = LibVaipakam.storageSlot().offers[offerId];
-        return _nftRentalPrepayTotal(offer.amount, offer.durationDays);
+        // #1193 — fund the buffer from the offer's create-time snapshot.
+        return _nftRentalPrepayTotal(
+            offer.amount,
+            offer.durationDays,
+            LibVaipakam.effectiveRentalBufferBps(offer)
+        );
     }
 
     /// @dev Rental prepay total = amount × days + (amount × days ×
@@ -1313,11 +1323,11 @@ contract OfferCreateFacet is
     ///      the struct grew (16-field via `allowsPartialRepay`).
     function _nftRentalPrepayTotal(
         uint256 amount,
-        uint256 durationDays
-    ) private view returns (uint256) {
+        uint256 durationDays,
+        uint256 bufferBps
+    ) private pure returns (uint256) {
         uint256 prepayAmount = amount * durationDays;
-        uint256 buffer = (prepayAmount * LibVaipakam.cfgRentalBufferBps()) /
-            LibVaipakam.BASIS_POINTS;
+        uint256 buffer = (prepayAmount * bufferBps) / LibVaipakam.BASIS_POINTS;
         return prepayAmount + buffer;
     }
 
@@ -1533,6 +1543,15 @@ contract OfferCreateFacet is
         offer.tokenId = params.tokenId;
         offer.quantity = params.quantity;
         offer.prepayAsset = params.prepayAsset;
+        // #1193 (Pass-2 D3) — snapshot the live rental buffer BPS at create so
+        // every later economic site (accept pull, cancel refund, modify delta,
+        // loan-init `bufferAmount`, Option-2 transfer reset) funds/refunds the
+        // SAME buffer this offer vaulted, immune to a `cfgRentalBufferBps()`
+        // governance retune. Stamped for every offer (harmless for non-rental
+        // ones — only the rental paths read it via `effectiveRentalBufferBps`);
+        // `cfgRentalBufferBps()` is bounded ≤ MAX_RENTAL_BUFFER_BPS (2000), so
+        // the uint16 cast never truncates.
+        offer.rentalBufferBpsAtCreate = uint16(LibVaipakam.cfgRentalBufferBps());
         // ── Canonical Limit-Order Phase 2 (#183, see
         //    docs/DesignsAndPlans/CanonicalLimitOrderPhase2Design.md):
         //    the Phase 1 auto-collapse (`amountMax == 0 → amount`) is

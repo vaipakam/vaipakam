@@ -728,14 +728,18 @@ contract OfferMutateFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamE
             // `_pullCreatorAssetsClassic`); `amount` is what moves
             // the prepay. Re-derive both sides using the offer's
             // `durationDays` (immutable per #193's scope).
-            // Note: this uses the CURRENT bufferBps for both sides
-            // of the diff. A governance bufferBps change between
-            // create and modify will leave a tiny refund/pull
-            // mismatch versus the actually-vaulted amount; see
-            // docs/DesignsAndPlans/OfferModificationDesign.md.
+            // #1193 (Pass-2 D3) — both sides of the diff use the offer's
+            // create-time buffer snapshot (`rentalBufferBpsAtCreate`), not live
+            // config. The buffer RATE is fixed at create; modify only changes
+            // `amount`, so re-deriving `oldPrepay` at the snapshot reflects what
+            // was actually vaulted and `newPrepay` re-vaults at the same rate —
+            // keeping the vault total at `newAmount × durationDays × (1 +
+            // snapshotBps)` for a later cancel refund to match exactly. (This
+            // closes the governance-retune skew the prior comment flagged.)
             if (newAmount != oldAmount) {
-                uint256 oldPrepay = _nftRentalPrepayTotal(oldAmount, offer.durationDays);
-                uint256 newPrepay = _nftRentalPrepayTotal(newAmount, offer.durationDays);
+                uint256 bufBps = LibVaipakam.effectiveRentalBufferBps(offer);
+                uint256 oldPrepay = _nftRentalPrepayTotal(oldAmount, offer.durationDays, bufBps);
+                uint256 newPrepay = _nftRentalPrepayTotal(newAmount, offer.durationDays, bufBps);
                 _pullOrRefundErc20(offer.prepayAsset, oldPrepay, newPrepay);
             }
             return;
@@ -944,11 +948,11 @@ contract OfferMutateFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamE
     ///      share the formula.
     function _nftRentalPrepayTotal(
         uint256 amount,
-        uint256 durationDays
-    ) private view returns (uint256) {
+        uint256 durationDays,
+        uint256 bufferBps
+    ) private pure returns (uint256) {
         uint256 prepayAmount = amount * durationDays;
-        uint256 buffer = (prepayAmount * LibVaipakam.cfgRentalBufferBps()) /
-            LibVaipakam.BASIS_POINTS;
+        uint256 buffer = (prepayAmount * bufferBps) / LibVaipakam.BASIS_POINTS;
         return prepayAmount + buffer;
     }
 

@@ -521,7 +521,12 @@ contract LoanFacet is DiamondPausable, DiamondAccessControl, IVaipakamErrors {
         if (offer.assetType == LibVaipakam.AssetType.ERC20) return;
         LibVaipakam.Loan storage loan = s.loans[loanId];
         uint256 prepayAmount = offer.amount * offer.durationDays;
-        uint256 buffer = (prepayAmount * LibVaipakam.cfgRentalBufferBps()) /
+        // #1193 (Pass-2 D3) — record the ABSOLUTE buffer from the offer's
+        // create-time BPS snapshot so `loan.bufferAmount` equals what the accept
+        // pull actually vaulted, and the #1004 late-fee clamp
+        // (`calculateRentalLateFee` reads `loan.bufferAmount`) stays funded even
+        // after a `cfgRentalBufferBps()` retune.
+        uint256 buffer = (prepayAmount * LibVaipakam.effectiveRentalBufferBps(offer)) /
             LibVaipakam.BASIS_POINTS;
         loan.prepayAmount = prepayAmount;
         loan.bufferAmount = buffer;
