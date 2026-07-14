@@ -441,17 +441,58 @@ contract RefinanceFacetTest is Test {
 
     // ─── Pass-2 A1/D5 (#1189): refinance late-fee parity + post-grace block ───
 
-    /// @dev A refinance past the grace window is blocked (parity with
-    ///      `repayLoan` / `precloseDirect`) — the exiting lender's overdue loan
-    ///      resolves through DefaultedFacet, not an early-close door. The gate
-    ///      fires before offer resolution, so no accepted offer is needed.
+    /// @dev A FRESH post-grace refinance is blocked (parity with `repayLoan` /
+    ///      `precloseDirect`) — the exiting lender's overdue loan resolves
+    ///      through DefaultedFacet. The gate keys on the REPLACEMENT's
+    ///      acceptance time, so to hit it the replacement offer must be accepted
+    ///      AFTER the old loan is past grace (a genuinely new post-grace
+    ///      refinance), not merely completed late.
     function testRefinanceLoan_postGrace_reverts() public {
         LibVaipakam.Loan memory l = LoanFacet(address(diamond)).getLoanDetails(activeLoanId);
         uint256 endTime = uint256(l.startTime) + uint256(l.durationDays) * 1 days;
+        // Old loan crosses grace FIRST, then the replacement is accepted →
+        // newLoan.startTime is itself past grace.
         vm.warp(endTime + LibVaipakam.gracePeriod(l.durationDays) + 1);
+        _acceptBorrowerOffer(borrowerOfferId);
+        vm.mockCall(address(diamond), abi.encodeWithSelector(RiskFacet.calculateHealthFactor.selector), abi.encode(2e18));
+        vm.mockCall(address(diamond), abi.encodeWithSelector(RiskFacet.calculateLTV.selector), abi.encode(uint256(5000)));
         vm.prank(borrower);
         vm.expectRevert(RefinanceFacet.RepaymentPastGracePeriod.selector);
         RefinanceFacet(address(diamond)).refinanceLoan(activeLoanId, borrowerOfferId);
+        vm.clearMockedCalls();
+    }
+
+    /// @dev Pass-2 A1/D5 (#1189, Codex #1233 r2 P1) — a refinance whose
+    ///      replacement was ACCEPTED in-grace must still COMPLETE even if the old
+    ///      loan crosses its grace deadline before the second (completion) tx.
+    ///      The manual two-step flow already created + funded the replacement and
+    ///      paid the borrower at acceptance; blocking completion here would strand
+    ///      the borrower with BOTH loans active. Completion proceeds (the late fee
+    ///      still charges for the overdue days), keyed on newLoan.startTime.
+    function testRefinanceLoan_acceptedInGrace_completesPastGrace() public {
+        // Accept while the old loan is still within term (replacement committed).
+        _acceptBorrowerOffer(borrowerOfferId);
+
+        LibVaipakam.Loan memory l = LoanFacet(address(diamond)).getLoanDetails(activeLoanId);
+        uint256 endTime = uint256(l.startTime) + uint256(l.durationDays) * 1 days;
+        // Old loan now crosses its grace deadline before completion.
+        vm.warp(endTime + LibVaipakam.gracePeriod(l.durationDays) + 1);
+
+        vm.mockCall(address(diamond), abi.encodeWithSelector(RepayFacet.calculateRepaymentAmount.selector), abi.encode(PRINCIPAL + 10 ether));
+        vm.mockCall(address(diamond), abi.encodeWithSelector(VaultFactoryFacet.vaultWithdrawERC20.selector), abi.encode(true));
+        vm.mockCall(address(diamond), abi.encodeWithSelector(RiskFacet.calculateHealthFactor.selector), abi.encode(2e18));
+        vm.mockCall(address(diamond), abi.encodeWithSelector(RiskFacet.calculateLTV.selector), abi.encode(uint256(5000)));
+        vm.mockCall(address(diamond), abi.encodeWithSelector(VaipakamNFTFacet.updateNFTStatus.selector), "");
+
+        vm.prank(borrower);
+        RefinanceFacet(address(diamond)).refinanceLoan(activeLoanId, borrowerOfferId);
+
+        assertEq(
+            uint8(LoanFacet(address(diamond)).getLoanDetails(activeLoanId).status),
+            uint8(LibVaipakam.LoanStatus.Repaid),
+            "in-grace-accepted refinance completes past grace, not stranded (#1233 r2 P1)"
+        );
+        vm.clearMockedCalls();
     }
 
     /// @dev A refinance in the grace window completes and folds the late fee

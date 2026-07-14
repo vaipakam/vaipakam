@@ -862,6 +862,29 @@ contract OfferCreateFacet is
                 params.collateralTokenId,
                 params.collateralQuantity
             );
+            // Pass-2 A1/D5 (#1189, Codex #1233 r2 P2) — a refinance-tagged offer
+            // is moot once its target passes the grace deadline: `validate` /
+            // RefinanceFacet reject a post-grace refinance, so an offer that
+            // outlives that deadline just lingers unfillable and (for a
+            // non-carry-over pledge) locks the borrower's fresh collateral until
+            // a manual cancel, while wasting lender accept gas. CLAMP the offer's
+            // expiry to the target's grace deadline (stamping one when it was
+            // open-ended) so it auto-expires there instead. `validate` above has
+            // already rejected a past-grace target, so `graceEnd > block.timestamp`
+            // and the stamped expiry is a valid future deadline.
+            {
+                LibVaipakam.Loan storage tgt =
+                    s.loans[params.refinanceTargetLoanId];
+                uint256 tgtGraceEnd = uint256(tgt.startTime) +
+                    uint256(tgt.durationDays) * LibVaipakam.ONE_DAY +
+                    LibVaipakam.gracePeriod(tgt.durationDays);
+                if (
+                    offer.expiresAt == 0 ||
+                    uint256(offer.expiresAt) > tgtGraceEnd
+                ) {
+                    offer.expiresAt = uint64(tgtGraceEnd);
+                }
+            }
         }
 
         LibVaipakam.LiquidityStatus principalLiq = OracleFacet(address(this))
