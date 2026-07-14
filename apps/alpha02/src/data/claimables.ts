@@ -51,8 +51,12 @@ import { AssetType } from '../lib/types';
 import { fetchClaimCandidates, type IndexedLoanStatus } from './indexer';
 import { isRevert, readLoanRowLive } from './liveLoanRow';
 import { useMyLoans, type PositionLoan } from './hooks';
-import { signalAware } from '../chain/railHealth';
-import { claimVerdictGet, claimVerdictPut } from './claimVerdictCache';
+import { isRailHealthy, signalAware } from '../chain/railHealth';
+import {
+  claimVerdictEpoch,
+  claimVerdictGet,
+  claimVerdictPut,
+} from './claimVerdictCache';
 
 const REFRESH_MS = 30_000;
 
@@ -174,6 +178,17 @@ export function useMyClaimables() {
 
       const me = address.toLowerCase();
       let transportFailed = false;
+
+      // PR C memo posture for THIS pass, captured up front:
+      //  - reuse verdicts only while the push rail is healthy — rail
+      //    down means `ownership.changed` frames are NOT arriving, so
+      //    the fallback refetches must probe live ownership every time
+      //    (the pre-memo posture; Codex #1232 r1);
+      //  - stamp writes with the pass's epoch so a bump that lands
+      //    mid-verification discards our (possibly pre-bump) results
+      //    instead of re-seeding the cleared map (Codex #1232 r1).
+      const memoReadable = isRailHealthy();
+      const epochAtStart = claimVerdictEpoch();
 
       // PR C (§4.2.3) — fire the ADDITIVE indexer hint alongside the
       // chain enumeration. It may only ADD candidates (a terminal loan
@@ -357,7 +372,9 @@ export function useMyClaimables() {
           // sight of a candidate (fresh load, changed identity, or a
           // post-bump run) always probes.
           const memoKey = claimVerdictKey(readChain.chainId, me, loan);
-          const memo = claimVerdictGet(memoKey);
+          const memo = memoReadable
+            ? claimVerdictGet(memoKey)
+            : { hit: false as const, value: undefined };
           if (memo.hit) return memo.value as ClaimableLoan | null;
           // Only a CLEAN verdict is memoizable: a transport failure is
           // "couldn't confirm", never a cacheable "not claimable".
@@ -451,7 +468,7 @@ export function useMyClaimables() {
               return null;
             }
           })();
-          if (clean) claimVerdictPut(memoKey, verdict);
+          if (clean) claimVerdictPut(memoKey, verdict, epochAtStart);
           return verdict;
         }),
       );

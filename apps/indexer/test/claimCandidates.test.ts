@@ -78,6 +78,19 @@ describe('GET /claim-candidates/:address', () => {
     ]);
   });
 
+  it('includes internal_matched — terminal AND claimable in the app', async () => {
+    // Codex #1232 r1: the Claim Center's proper-close group is
+    // repaid OR internal_matched; omitting the latter would leave an
+    // internally matched holder unhinted in the fallback cases the
+    // route exists for.
+    const h = makeHarness();
+    h.seed(1, 'internal_matched', ME, OTHER, 100);
+    const { body } = await h.call();
+    expect(body.candidates).toEqual([
+      { loanId: 1, role: 'lender', status: 'internal_matched', updatedAt: 100 },
+    ]);
+  });
+
   it('rejects a malformed address and an unconfigured chain', async () => {
     const h = makeHarness();
     expect((await h.call('0xnope')).status).toBe(400);

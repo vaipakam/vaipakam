@@ -665,10 +665,16 @@ export async function handleClaimCandidates(
   try {
     const rows = (
       await env.DB.prepare(
+        // `internal_matched` is terminal AND claimable in the connected
+        // app (its proper-close group), so the hint must cover it
+        // (Codex #1232 r1). NOT copied from /claimables' narrower
+        // three-status filter — that route's parity gap is tracked
+        // separately.
         `SELECT loan_id, status, lender_current_owner, borrower_current_owner,
                 updated_at
          FROM loans
-         WHERE chain_id = ? AND status IN ('repaid', 'defaulted', 'liquidated')
+         WHERE chain_id = ?
+           AND status IN ('repaid', 'defaulted', 'liquidated', 'internal_matched')
            AND (lender_current_owner = ? OR borrower_current_owner = ?)
          ORDER BY updated_at DESC, loan_id DESC`,
       )

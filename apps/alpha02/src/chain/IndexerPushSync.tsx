@@ -428,6 +428,13 @@ export function IndexerPushSync() {
     // focus flush - a parked tab needs no urgent catch-up.)
     const unsubRail = subscribeRailHealth(() => {
       if (cancelled || isRailHealthy()) return;
+      // PR C (§4.2.3): a rail drop means ownership.changed frames may
+      // have been missed — every memoized claim verdict recorded
+      // before the drop is suspect, including for reuse AFTER a later
+      // recovery (Codex #1232 r1). The claimables consumer also stops
+      // READING the memo while the rail is down; this bump covers the
+      // across-the-outage window.
+      bumpClaimVerdictEpoch();
       const roots = STRETCHED_ROOTS.filter((r) => !PATCHED_ROOTS.has(r));
       if (typeof document !== 'undefined' && document.hidden) {
         for (const r of roots) hiddenDirty.add(r);
