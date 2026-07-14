@@ -623,6 +623,34 @@ export async function fetchProtocolConfig(
   };
 }
 
+/** RPC read-diet PR C (§4.2.3) — the additive claim-candidate hint
+ *  from GET /claim-candidates/:address. ADDITIVE by contract: callers
+ *  may union these into their own discovery but must never let the
+ *  hint SUPPRESS a chain-enumerated candidate (D1 can lag a fresh
+ *  position-NFT transfer). `null` = unconfigured/unreachable — callers
+ *  simply proceed without the hint. */
+export interface ClaimCandidateHint {
+  loanId: number;
+  role: 'lender' | 'borrower';
+  status: string;
+}
+
+export async function fetchClaimCandidates(
+  chainId: number,
+  address: string,
+): Promise<ClaimCandidateHint[] | null> {
+  if (!indexerConfigured()) return null;
+  const res = await getJson<{ candidates: ClaimCandidateHint[] }>(
+    `/claim-candidates/${address}?chainId=${chainId}`,
+  );
+  if (!res || !Array.isArray(res.candidates)) return null;
+  return res.candidates.filter(
+    (c) =>
+      typeof c?.loanId === 'number' &&
+      (c.role === 'lender' || c.role === 'borrower'),
+  );
+}
+
 export async function fetchIndexerFreshness(
   chainId: number,
 ): Promise<IndexerFreshness | null> {

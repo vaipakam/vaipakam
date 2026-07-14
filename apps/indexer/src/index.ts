@@ -28,6 +28,7 @@
  *       GET  /loans/by-lender/:address   GET /loans/by-borrower/:address
  *       GET  /loans/rate-candles  GET  /loans/by-participant
  *       GET  /activity            GET  /claimables/:address
+ *       GET  /claim-candidates/:address   GET /config/:chainId
  *
  * T-078 — both entry points call `resolveEnv()` first. `RPC_*` are
  * now Cloudflare Secrets Store bindings (read asynchronously);
@@ -112,6 +113,7 @@ import {
   handleLoansByCurrentHolder,
   handleActivity,
   handleClaimables,
+  handleClaimCandidates,
   handleLoansPreflight,
   handleLoanPrepayMatchSource,
 } from './loanRoutes';
@@ -373,6 +375,19 @@ export default {
     if (url.pathname === '/activity') {
       if (req.method === 'OPTIONS') return handleLoansPreflight();
       if (req.method === 'GET') return handleActivity(req, resolved);
+      return new Response('Not found', { status: 404 });
+    }
+
+    // ─── /claim-candidates/:address ─────────────────────────────
+    // RPC read-diet PR C — additive claim-candidate hint (§4.2.3).
+    if (url.pathname.startsWith('/claim-candidates/')) {
+      if (req.method === 'OPTIONS') return handleLoansPreflight();
+      if (req.method === 'GET') {
+        const m = url.pathname.match(
+          /^\/claim-candidates\/(0x[0-9a-fA-F]{40})$/,
+        );
+        if (m) return handleClaimCandidates(req, resolved, m[1]);
+      }
       return new Response('Not found', { status: 404 });
     }
 

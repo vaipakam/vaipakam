@@ -34,6 +34,7 @@ import {
   subscribeRailHealth,
 } from './railHealth';
 import { PATCHED_ROOTS } from './receiptSync';
+import { bumpClaimVerdictEpoch } from '../data/claimVerdictCache';
 
 /** Server→client frames (mirror of apps/indexer chainIngestDO PushFrame).
  *  The `cursor` heartbeat + the hello `cursor`/`scanCadenceSec` fields land
@@ -384,6 +385,15 @@ export function IndexerPushSync() {
             }
           }
         } else if (frame.t === 'invalidate') {
+          // RPC read-diet PR C (§4.2.3): a position NFT changed hands
+          // somewhere — any memoized claim verdict may now be wrong
+          // even though its identity fields are unchanged (the
+          // ownerOf probe is what this frame invalidates). Clear the
+          // memo BEFORE the nudge so the resulting claimables refetch
+          // re-probes instead of serving the stale verdicts back.
+          if (frame.keys.includes('ownership.changed')) {
+            bumpClaimVerdictEpoch();
+          }
           const roots = frame.keys.flatMap((k) => KEY_MAP[k] ?? []);
           if (roots.length > 0) scheduleNudge(roots);
         } else if (frame.t === 'cursor') {

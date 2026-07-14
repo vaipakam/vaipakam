@@ -629,6 +629,90 @@ export async function handleClaimables(
 }
 
 /**
+ * GET /claim-candidates/:addr?chainId=8453 — RPC read-diet PR C
+ * (Alpha02RpcReadDietDesign §4.2.3).
+ *
+ * A LEAN, prioritized claim-candidate HINT for the connected app —
+ * additive by contract: the client may use it to ADD candidates its
+ * own discovery missed and to order verification, but must never let
+ * it SUPPRESS a chain-enumerated candidate (a fresh position-NFT
+ * transfer can be absent from D1 until ingest safe-finalizes, and the
+ * spec keeps the current holder's claim discoverable from chain).
+ *
+ * Deliberately separate from GET /claimables/:addr — that shape is a
+ * typed apps/defi contract ({asLender, asBorrower} of full rows);
+ * this one returns a flat (loanId, role, status) list ordered by
+ * most-recently-touched first (verification priority). No
+ * already-claimed activity filter here: a claim burns the position
+ * NFT so `*_current_owner` flips to 0x0 and the side drops out; a
+ * rare false positive costs the client one probe that getClaimable
+ * (the actual authority) rejects.
+ */
+export async function handleClaimCandidates(
+  req: Request,
+  env: Env,
+  addrRaw: string,
+): Promise<Response> {
+  const url = new URL(req.url);
+  const chainId = parseChainId(url.searchParams.get('chainId')) ?? 8453;
+  const addr = addrRaw.toLowerCase();
+  if (!/^0x[0-9a-f]{40}$/.test(addr)) {
+    return jsonResponse({ error: 'bad-address' }, 400);
+  }
+  if (!chainConfigured(env, chainId)) {
+    return jsonResponse({ error: 'chain-not-configured' }, 503);
+  }
+  try {
+    const rows = (
+      await env.DB.prepare(
+        `SELECT loan_id, status, lender_current_owner, borrower_current_owner,
+                updated_at
+         FROM loans
+         WHERE chain_id = ? AND status IN ('repaid', 'defaulted', 'liquidated')
+           AND (lender_current_owner = ? OR borrower_current_owner = ?)
+         ORDER BY updated_at DESC, loan_id DESC`,
+      )
+        .bind(chainId, addr, addr)
+        .all<{
+          loan_id: number;
+          status: string;
+          lender_current_owner: string | null;
+          borrower_current_owner: string | null;
+          updated_at: number;
+        }>()
+    ).results ?? [];
+    const candidates: Array<{
+      loanId: number;
+      role: 'lender' | 'borrower';
+      status: string;
+      updatedAt: number;
+    }> = [];
+    for (const row of rows) {
+      if (row.lender_current_owner === addr) {
+        candidates.push({
+          loanId: row.loan_id,
+          role: 'lender',
+          status: row.status,
+          updatedAt: row.updated_at,
+        });
+      }
+      if (row.borrower_current_owner === addr) {
+        candidates.push({
+          loanId: row.loan_id,
+          role: 'borrower',
+          status: row.status,
+          updatedAt: row.updated_at,
+        });
+      }
+    }
+    return jsonResponse({ chainId, address: addr, candidates });
+  } catch (err) {
+    console.error('[loanRoutes] claim-candidates failed', err);
+    return jsonResponse({ error: 'claim-candidates-failed' }, 500);
+  }
+}
+
+/**
  * GET /loans/stats?chainId=8453
  *
  * Aggregate loan counters + USD-agnostic per-asset volume. Replaces

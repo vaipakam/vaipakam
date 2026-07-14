@@ -203,6 +203,17 @@ Thin-market honesty rules apply.
 - Claim rows show the amount or asset the user can receive when knowable.
 - A stale indexed row must not remain actionable after the chain says it is no
   longer claimable.
+- Once a candidate has been verified on chain, an IDENTICAL candidate (same
+  loan, side, status, position tokens, and entitlement-relevant amounts) may
+  reuse that verdict within the session instead of re-verifying — but any
+  signal that ownership may have changed (a position NFT changing hands
+  anywhere, or the user's own confirmed transaction) discards every reused
+  verdict, and a fresh session always verifies from scratch. Reuse may never
+  cause a claim to be shown or hidden differently than a fresh verification
+  would have decided at the moment the verdict was recorded.
+- The indexer may suggest additional claim candidates; suggestions can only
+  widen what gets verified, never narrow it — a candidate the chain
+  enumeration finds is verified whether or not the indexer suggested it.
 - Frozen sanctioned proceeds remain parked until the recorded frozen claimant is
   proven clean.
 

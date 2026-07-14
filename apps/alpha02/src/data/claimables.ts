@@ -33,16 +33,26 @@
  * the indexer are synthesized from a live `getLoanDetails` read for
  * BOTH sides; the ownerOf confirm below prunes the side the wallet
  * doesn't actually hold.
+ *
+ * RPC read-diet PR C (§4.2.3) adds two refinements on top, neither of
+ * which weakens the contract above: (1) the indexer's ADDITIVE
+ * `/claim-candidates` hint is unioned into discovery (it can only add
+ * candidates, never suppress one), and (2) each candidate's verdict is
+ * memoized per identity key (`claimVerdictKey`) so a re-run only
+ * re-probes candidates that actually changed — the memo is cleared on
+ * `ownership.changed` push frames and receipt invalidations, the
+ * signals that can flip a verdict without moving any identity field.
  */
 import { useQuery } from '@tanstack/react-query';
 import { usePublicClient } from 'wagmi';
 import { DIAMOND_ABI_VIEM } from '@vaipakam/contracts/abis';
 import { useActiveChain } from '../chain/useActiveChain';
 import { AssetType } from '../lib/types';
-import type { IndexedLoanStatus } from './indexer';
+import { fetchClaimCandidates, type IndexedLoanStatus } from './indexer';
 import { isRevert, readLoanRowLive } from './liveLoanRow';
 import { useMyLoans, type PositionLoan } from './hooks';
 import { signalAware } from '../chain/railHealth';
+import { claimVerdictGet, claimVerdictPut } from './claimVerdictCache';
 
 const REFRESH_MS = 30_000;
 
@@ -112,6 +122,22 @@ function candidateFingerprint(rows: PositionLoan[] | null | undefined): string {
   return `${rows.length}:${djb2(parts.join('|'))}`;
 }
 
+/** RPC read-diet PR C (§4.2.3) — the PER-CANDIDATE memo key: the same
+ *  identity fields as the set fingerprint above, plus chain + wallet.
+ *  A candidate whose key is unchanged since its last CLEAN
+ *  verification reuses that verdict instead of re-spending its
+ *  ~3-read probe; the memo is cleared wholesale on `ownership.changed`
+ *  push frames and receipt invalidations (see claimVerdictCache.ts),
+ *  because ownership can flip without any of these fields moving.
+ *  Exported for the unit test. */
+export function claimVerdictKey(
+  chainId: number,
+  wallet: string,
+  l: PositionLoan,
+): string {
+  return `${chainId}:${wallet}:${l.loanId}:${l.role}:${l.status}:${l.lenderTokenId}:${l.borrowerTokenId}:${l.principal}:${l.collateralAmount}`;
+}
+
 export function useMyClaimables() {
   const { readChain, address } = useActiveChain();
   const publicClient = usePublicClient({ chainId: readChain.chainId });
@@ -148,6 +174,16 @@ export function useMyClaimables() {
 
       const me = address.toLowerCase();
       let transportFailed = false;
+
+      // PR C (§4.2.3) — fire the ADDITIVE indexer hint alongside the
+      // chain enumeration. It may only ADD candidates (a terminal loan
+      // whose position NFT the indexer says we hold — e.g. when the
+      // enumeration view is absent on an old deploy); it never
+      // suppresses or substitutes for chain discovery, and a failed
+      // fetch (`null`) simply means "no hint".
+      const hintPromise = fetchClaimCandidates(readChain.chainId, me).catch(
+        () => null,
+      );
 
       // ── On-chain discovery (#988, closes the #958 parity gap) ──
       // Enumerate every loan whose position NFT the wallet CURRENTLY
@@ -210,7 +246,10 @@ export function useMyClaimables() {
         knownKeys.add(`${l.loanId}:${l.role}`);
         if (!byLoanId.has(l.loanId)) byLoanId.set(l.loanId, l);
       }
-      const chainIdList = [...new Set(chainIds.map((id) => Number(id)))];
+      const hintIds = ((await hintPromise) ?? []).map((h) => h.loanId);
+      const chainIdList = [
+        ...new Set([...chainIds.map((id) => Number(id)), ...hintIds]),
+      ];
       const flipped: PositionLoan[] = [];
       for (const id of chainIdList) {
         const row = byLoanId.get(id);
@@ -313,88 +352,107 @@ export function useMyClaimables() {
 
       const confirmed = await Promise.all(
         candidates.map(async (loan): Promise<ClaimableLoan | null> => {
-          const isLender = loan.role === 'lender';
-          const tokenId = isLender ? loan.lenderTokenId : loan.borrowerTokenId;
+          // PR C (§4.2.3): an identical candidate verified earlier this
+          // session reuses its memoized verdict — zero probes. First
+          // sight of a candidate (fresh load, changed identity, or a
+          // post-bump run) always probes.
+          const memoKey = claimVerdictKey(readChain.chainId, me, loan);
+          const memo = claimVerdictGet(memoKey);
+          if (memo.hit) return memo.value as ClaimableLoan | null;
+          // Only a CLEAN verdict is memoizable: a transport failure is
+          // "couldn't confirm", never a cacheable "not claimable".
+          let clean = true;
+          const verdict = await (async (): Promise<ClaimableLoan | null> => {
+            const isLender = loan.role === 'lender';
+            const tokenId = isLender ? loan.lenderTokenId : loan.borrowerTokenId;
 
-          // 1. Does the wallet still hold this side's position NFT? A
-          //    sold position isn't ours to claim; a burned one (revert)
-          //    means the loan fully settled — nothing to claim either.
-          try {
-            const owner = (await publicClient.readContract({
-              address: diamond,
-              abi: DIAMOND_ABI_VIEM,
-              functionName: 'ownerOf',
-              args: [BigInt(tokenId)],
-            })) as string;
-            if (owner.toLowerCase() !== me) return null;
-          } catch (e) {
-            if (isRevert(e)) return null;
-            transportFailed = true;
-            return null;
-          }
-
-          // 2. Authoritative claimable probe + Phase-5 borrower rebate.
-          try {
-            const res = (await publicClient.readContract({
-              address: diamond,
-              abi: DIAMOND_ABI_VIEM,
-              functionName: 'getClaimable',
-              args: [BigInt(loan.loanId), isLender],
-            })) as ClaimableTuple;
-            const claimAsset = res.asset ?? res[0] ?? null;
-            const amount = res.amount ?? res[1] ?? 0n;
-            const claimed = res.claimed ?? res[2] ?? false;
-            const assetType = Number(res.assetType ?? res[3] ?? 0n);
-            const heldForLender = res.heldForLender ?? res[6] ?? 0n;
-            const hasRentalNftReturn = res.hasRentalNftReturn ?? res[7] ?? false;
-
-            let lifRebate = 0n;
-            if (!isLender) {
-              try {
-                const rebate = (await publicClient.readContract({
-                  address: diamond,
-                  abi: DIAMOND_ABI_VIEM,
-                  functionName: 'getBorrowerLifRebate',
-                  args: [BigInt(loan.loanId)],
-                })) as readonly [bigint, bigint] | { rebateAmount?: bigint };
-                lifRebate = Array.isArray(rebate)
-                  ? (rebate[0] ?? 0n)
-                  : ((rebate as { rebateAmount?: bigint }).rebateAmount ?? 0n);
-              } catch (e) {
-                // Old ABI without the Phase-5 view reverts → treat as no
-                // rebate; a transport error is a real "couldn't confirm".
-                if (!isRevert(e)) transportFailed = true;
-              }
+            // 1. Does the wallet still hold this side's position NFT? A
+            //    sold position isn't ours to claim; a burned one (revert)
+            //    means the loan fully settled — nothing to claim either.
+            try {
+              const owner = (await publicClient.readContract({
+                address: diamond,
+                abi: DIAMOND_ABI_VIEM,
+                functionName: 'ownerOf',
+                args: [BigInt(tokenId)],
+              })) as string;
+              if (owner.toLowerCase() !== me) return null;
+            } catch (e) {
+              if (isRevert(e)) return null;
+              transportFailed = true;
+              clean = false;
+              return null;
             }
 
-            // Mirror ClaimFacet's actionability guard.
-            const actionable =
-              amount > 0n ||
-              assetType !== AssetType.ERC20 ||
-              heldForLender > 0n ||
-              hasRentalNftReturn ||
-              lifRebate > 0n;
-            return !claimed && actionable
-              ? ({
-                  ...loan,
-                  claim: {
-                    asset:
-                      typeof claimAsset === 'string' &&
-                      claimAsset !== '0x0000000000000000000000000000000000000000'
-                        ? claimAsset
-                        : null,
-                    amount,
-                    heldForLender,
-                    hasRentalNftReturn,
-                    lifRebate,
-                  },
-                } satisfies ClaimableLoan)
-              : null;
-          } catch (e) {
-            if (isRevert(e)) return null;
-            transportFailed = true;
-            return null;
-          }
+            // 2. Authoritative claimable probe + Phase-5 borrower rebate.
+            try {
+              const res = (await publicClient.readContract({
+                address: diamond,
+                abi: DIAMOND_ABI_VIEM,
+                functionName: 'getClaimable',
+                args: [BigInt(loan.loanId), isLender],
+              })) as ClaimableTuple;
+              const claimAsset = res.asset ?? res[0] ?? null;
+              const amount = res.amount ?? res[1] ?? 0n;
+              const claimed = res.claimed ?? res[2] ?? false;
+              const assetType = Number(res.assetType ?? res[3] ?? 0n);
+              const heldForLender = res.heldForLender ?? res[6] ?? 0n;
+              const hasRentalNftReturn = res.hasRentalNftReturn ?? res[7] ?? false;
+
+              let lifRebate = 0n;
+              if (!isLender) {
+                try {
+                  const rebate = (await publicClient.readContract({
+                    address: diamond,
+                    abi: DIAMOND_ABI_VIEM,
+                    functionName: 'getBorrowerLifRebate',
+                    args: [BigInt(loan.loanId)],
+                  })) as readonly [bigint, bigint] | { rebateAmount?: bigint };
+                  lifRebate = Array.isArray(rebate)
+                    ? (rebate[0] ?? 0n)
+                    : ((rebate as { rebateAmount?: bigint }).rebateAmount ?? 0n);
+                } catch (e) {
+                  // Old ABI without the Phase-5 view reverts → treat as no
+                  // rebate; a transport error is a real "couldn't confirm".
+                  if (!isRevert(e)) {
+                    transportFailed = true;
+                    clean = false;
+                  }
+                }
+              }
+
+              // Mirror ClaimFacet's actionability guard.
+              const actionable =
+                amount > 0n ||
+                assetType !== AssetType.ERC20 ||
+                heldForLender > 0n ||
+                hasRentalNftReturn ||
+                lifRebate > 0n;
+              return !claimed && actionable
+                ? ({
+                    ...loan,
+                    claim: {
+                      asset:
+                        typeof claimAsset === 'string' &&
+                        claimAsset !== '0x0000000000000000000000000000000000000000'
+                          ? claimAsset
+                          : null,
+                      amount,
+                      heldForLender,
+                      hasRentalNftReturn,
+                      lifRebate,
+                    },
+                  } satisfies ClaimableLoan)
+                : null;
+            } catch (e) {
+              if (isRevert(e)) return null;
+              transportFailed = true;
+              clean = false;
+              return null;
+            }
+          })();
+          if (clean) claimVerdictPut(memoKey, verdict);
+          return verdict;
         }),
       );
 
