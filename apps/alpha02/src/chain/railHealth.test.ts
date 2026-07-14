@@ -14,6 +14,7 @@ import {
   _railResetForTests,
   isRailHealthy,
   NET_REFRESH_MS,
+  railBlockSignal,
   railCursorSignal,
   railSocketLive,
   signalAware,
@@ -95,14 +96,33 @@ describe('railHealth', () => {
     expect(interval()).toBe(NET_REFRESH_MS);
   });
 
-  it('tipAware: stretches only when BOTH rails cover the root', () => {
+  it('tipAware: stretches only when BOTH rails cover the root AND blocks flow', () => {
     const withWs = tipAware(30_000, true);
     const noWs = tipAware(30_000, false);
     railSocketLive(true);
     railCursorSignal(1_000, CADENCE);
+    // Configured WS but no block ever delivered (broken endpoint,
+    // Codex #1228 r1): must NOT stretch — there is no per-block nudge
+    // behind the 180s net.
+    expect(withWs()).toBe(30_000);
+    railBlockSignal();
     expect(withWs()).toBe(NET_REFRESH_MS);
     // HTTP-only chain: no tip nudge exists, so the interval must stay
     // at today's cadence no matter how healthy the indexer rail is.
     expect(noWs()).toBe(30_000);
+    // Blocks stop flowing (subscription died) → the stretch decays.
+    vi.advanceTimersByTime(61_000);
+    railCursorSignal(1_100, CADENCE); // indexer rail still healthy
+    expect(withWs()).toBe(30_000);
+  });
+
+  it('a metadata-less frame clears a previously learned cadence (fail-safe)', () => {
+    railSocketLive(true);
+    railCursorSignal(1_000, CADENCE);
+    expect(isRailHealthy()).toBe(true);
+    // Partial worker rollback: frames keep coming without cadence —
+    // the CURRENT server never reported one, so healthy must drop.
+    railCursorSignal(1_060, null);
+    expect(isRailHealthy()).toBe(false);
   });
 });

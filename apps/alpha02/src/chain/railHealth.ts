@@ -118,19 +118,43 @@ export function subscribeRailHealth(listener: () => void): () => void {
 /** Writer: a frame carrying cursor metadata arrived (hello or the
  *  per-scan heartbeat). `updatedAt` is the PERSISTED cursor stamp the
  *  DO reports — advancement is judged by it moving, not by comparing
- *  it to this machine's clock. */
+ *  it to this machine's clock. A frame WITHOUT a cadence clears any
+ *  previously learned one (Codex #1228 r1): after a partial worker
+ *  rollback the CURRENT server didn't report a cadence, and keeping
+ *  the old value would let an advancing cursor read healthy right past
+ *  the documented unknown-metadata fail-safe. */
 export function railCursorSignal(
   updatedAt: number | null,
   cadenceSec: number | null,
 ): void {
   const now = Date.now();
   state.lastSignalAtMs = now;
-  if (cadenceSec != null) state.cadenceSec = cadenceSec;
+  state.cadenceSec = cadenceSec;
   if (updatedAt != null && updatedAt !== state.lastCursorUpdatedAt) {
     state.lastCursorUpdatedAt = updatedAt;
     state.lastAdvanceAtMs = now;
   }
   recompute();
+}
+
+/** Client-clock stamp of the last block the chain watcher delivered.
+ *  Module-scope beside the rail state: LiveChainSync writes it per
+ *  block, `tipAware` reads it. */
+let lastBlockAtMs = 0;
+
+/** How stale the block watch may go before tip roots stop trusting
+ *  it. Base/OP mine ~2s blocks; 60s tolerates a deep hiccup while
+ *  still catching a genuinely dead subscription well before the
+ *  180s net could hide it. */
+const TIP_BLOCK_STALE_MS = 60_000;
+
+/** Writer: LiveChainSync saw a block on the WS subscription. This is
+ *  what lets `tipAware` trust the tip rail as DELIVERING rather than
+ *  merely configured (Codex #1228 r1: a broken WS endpoint with a
+ *  healthy indexer rail must not leave action gates on the 180s net
+ *  with no per-block nudge behind them). */
+export function railBlockSignal(): void {
+  lastBlockAtMs = Date.now();
 }
 
 /** Writer: socket lifecycle. Opening seeds nothing (health waits for
@@ -173,7 +197,20 @@ export function signalAware(baseMs: number): () => number {
 export function tipAware(baseMs: number, wsAvailable: boolean): () => number {
   const idleFactor = 4;
   return () => {
-    if (wsAvailable && isRailHealthy()) return NET_REFRESH_MS;
+    // All three must hold: the indexer rail is healthy, the chain WS
+    // is configured, AND the block watcher actually DELIVERED a block
+    // recently — a configured-but-broken WS endpoint otherwise leaves
+    // action gates on the net with no per-block nudge behind them
+    // (Codex #1228 r1). A hidden tab stops the watcher; on return the
+    // first block (~2s) re-qualifies the stretch, and until then the
+    // base cadence is the honest posture.
+    if (
+      wsAvailable &&
+      isRailHealthy() &&
+      Date.now() - lastBlockAtMs < TIP_BLOCK_STALE_MS
+    ) {
+      return NET_REFRESH_MS;
+    }
     return isIdle() ? baseMs * idleFactor : baseMs;
   };
 }
@@ -188,4 +225,5 @@ export function _railResetForTests(): void {
     lastAdvanceAtMs: 0,
   };
   lastComputed = false;
+  lastBlockAtMs = 0;
 }

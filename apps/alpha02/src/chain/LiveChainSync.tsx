@@ -34,7 +34,7 @@ import { useCallback, useEffect, useRef, useSyncExternalStore } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import { useWatchBlockNumber } from 'wagmi';
 import { isIdle, onActivityResume } from '../lib/idle';
-import { isRailHealthy } from './railHealth';
+import { isRailHealthy, railBlockSignal } from './railHealth';
 import { useActiveChain } from './useActiveChain';
 
 /** queryKey[0] values that move when a transaction lands. Everything
@@ -101,6 +101,10 @@ const TIP_KEYS: ReadonlySet<string> = new Set([
   // Pending-card accept gates.
   'loanSalePending',
   'refinancePending',
+  // Past-due/grace banner terms (Codex #1228 r1 P3): tipAware-
+  // stretched on PositionDetails, so the tip nudge must cover a keeper
+  // extension restamping the terms.
+  'graceBannerTerms',
   // Desk crossable band — a stale band shows an executable match that
   // isn't (§4.1.2 / the r5 table split).
   'deskPreviewMatch',
@@ -193,6 +197,10 @@ export function LiveChainSync() {
   );
 
   const onBlockNumber = useCallback(() => {
+    // Tip-rail liveness for tipAware (Codex #1228 r1): stamp EVERY
+    // delivered block, before the idle/throttle gates - the signal is
+    // "the subscription works", not "we refetched".
+    railBlockSignal();
     // Idle sessions don't consume push freshness either — otherwise a
     // WS deploy would keep refetching the live set (indexer pages +
     // the catch-up's log scan) at the floor cadence for a parked tab,

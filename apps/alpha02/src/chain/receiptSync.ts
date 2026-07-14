@@ -49,6 +49,22 @@ export const RECEIPT_FLOOR_ROOTS: readonly string[] = [
   'loanLiveStatus',
   'loanRisk',
   'positionOwners',
+  // Codex #1228 r1 — desk views: the flows' surface-specific desk
+  // invalidations are LOCAL to the acting tab, so the cross-tab floor
+  // must carry them or a second tab on Rate Desk misses an own fill
+  // when the push rail is down. Cheap: indexer HTTP, active-only.
+  'deskBook',
+  'deskMarkets',
+  'deskTape',
+  'deskCandles',
+  'deskHistory',
+  'deskSignedBook',
+  'deskAmendSource',
+  // Codex #1228 r1 — the split ghost-strip no longer re-runs with each
+  // activeOffers refetch (it keys on the cursor snapshot), so an
+  // offer-ending own receipt must force the scan explicitly or the
+  // just-ended row outlives the receipt refresh on the book.
+  'bookGhostStrip',
 ];
 
 /** ~2× Base/OP block time. The second re-read exists for public RPCs

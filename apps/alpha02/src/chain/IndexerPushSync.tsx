@@ -31,6 +31,7 @@ import {
   isRailHealthy,
   railCursorSignal,
   railSocketLive,
+  subscribeRailHealth,
 } from './railHealth';
 
 /** Server→client frames (mirror of apps/indexer chainIngestDO PushFrame).
@@ -165,13 +166,13 @@ export const STRETCHED_ROOTS: readonly string[] = [
   'standingApprovals',
   'keeperConfig',
   'loanKeeperEnabled',
-  'deskMarkets',
-  'deskBook',
+  // deskMarkets/deskBook/deskSignedBook stay on today's cadence
+  // (time-based GTT expiry + gasless signed posts have no push
+  // source; Codex #1228 r1) and so are NOT stretched or listed here.
   'deskTape',
   'deskCandles',
   'deskHistory',
   'deskAmendSource',
-  'deskSignedBook',
   // tipAware roots (indexer rail + chain WS gated) — refetched here on
   // focus too; they mount only on their detail/desk surfaces, so the
   // `refetchType: 'active'` predicate keeps the cost page-bounded.
@@ -185,6 +186,7 @@ export const STRETCHED_ROOTS: readonly string[] = [
   'loanSalePending',
   'refinancePending',
   'deskPreviewMatch',
+  'graceBannerTerms',
 ];
 
 const NUDGE_DEBOUNCE_MS = 300;
@@ -382,9 +384,26 @@ export function IndexerPushSync() {
 
     connect();
     document.addEventListener('visibilitychange', onVisibility);
+    // RPC read-diet PR A (Codex #1228 r1 P1) — a query that already
+    // scheduled its 180s net keeps that timer until its NEXT fetch
+    // (TanStack re-evaluates function intervals post-fetch), so a rail
+    // drop alone would leave stretched roots stale for up to 3 min.
+    // On the healthy-to-down transition, run one catch-up pass over
+    // the stretched set: it refreshes the data AND reschedules every
+    // interval at the restored 30s cadence. (Hidden tabs defer to the
+    // focus flush - a parked tab needs no urgent catch-up.)
+    const unsubRail = subscribeRailHealth(() => {
+      if (cancelled || isRailHealthy()) return;
+      if (typeof document !== 'undefined' && document.hidden) {
+        for (const r of STRETCHED_ROOTS) hiddenDirty.add(r);
+        return;
+      }
+      queueNow([...STRETCHED_ROOTS]);
+    });
 
     return () => {
       cancelled = true;
+      unsubRail();
       document.removeEventListener('visibilitychange', onVisibility);
       if (reconnectTimer) clearTimeout(reconnectTimer);
       if (nudgeTimer) clearTimeout(nudgeTimer);
