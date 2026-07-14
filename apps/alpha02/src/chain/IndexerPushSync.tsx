@@ -33,6 +33,7 @@ import {
   railSocketLive,
   subscribeRailHealth,
 } from './railHealth';
+import { PATCHED_ROOTS } from './receiptSync';
 
 /** Server→client frames (mirror of apps/indexer chainIngestDO PushFrame).
  *  The `cursor` heartbeat + the hello `cursor`/`scanCadenceSec` fields land
@@ -318,7 +319,12 @@ export function IndexerPushSync() {
       //    bypassing the per-root gap (tab returns are user-paced and
       //    rare; staleness here is what the user actually sees).
       if (isRailHealthy()) {
-        queueNow([...STRETCHED_ROOTS]);
+        // Patched roots stay out of the focus pass (Codex #1228 r5):
+        // a wallet flow backgrounds the tab and returns right after
+        // the receipt, and a lagging RPC refetch here would overwrite
+        // the just-patched consent/keeper value. The idle-RESUME path
+        // still reconciles them after >=2 min without interaction.
+        queueNow(STRETCHED_ROOTS.filter((r) => !PATCHED_ROOTS.has(r)));
       }
     };
 
@@ -412,11 +418,12 @@ export function IndexerPushSync() {
     // focus flush - a parked tab needs no urgent catch-up.)
     const unsubRail = subscribeRailHealth(() => {
       if (cancelled || isRailHealthy()) return;
+      const roots = STRETCHED_ROOTS.filter((r) => !PATCHED_ROOTS.has(r));
       if (typeof document !== 'undefined' && document.hidden) {
-        for (const r of STRETCHED_ROOTS) hiddenDirty.add(r);
+        for (const r of roots) hiddenDirty.add(r);
         return;
       }
-      queueNow([...STRETCHED_ROOTS]);
+      queueNow(roots);
     });
 
     return () => {

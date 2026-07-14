@@ -35,6 +35,8 @@ import { useQueryClient } from '@tanstack/react-query';
 import { useWatchBlockNumber } from 'wagmi';
 import { isIdle, onActivityResume } from '../lib/idle';
 import {
+  blockDeliveryFresh,
+  blockEverDelivered,
   isRailHealthy,
   railBlockSignal,
   railBlockWatchReset,
@@ -250,6 +252,29 @@ export function LiveChainSync() {
   useEffect(() => {
     return () => railBlockWatchReset();
   }, [readChain.chainId, readChain.wsUrl, visible]);
+
+  // Block-stall watchdog (Codex #1228 r5): tipAware queries that
+  // already armed a 180s timer only re-evaluate after their next
+  // fetch, so a subscription that delivered and then silently died
+  // would leave action-gating roots with neither the per-block nudge
+  // nor the 30s fallback for up to the net window. When delivery ages
+  // past the trust window, run ONE catch-up invalidation — it
+  // refreshes the tip roots and reschedules their intervals at the
+  // restored cadence. Once per stall episode; a fresh block re-arms.
+  const stallFired = useRef(false);
+  useEffect(() => {
+    if (!readChain.wsUrl || !visible) return;
+    const timer = setInterval(() => {
+      if (blockDeliveryFresh()) {
+        stallFired.current = false;
+        return;
+      }
+      if (!blockEverDelivered() || stallFired.current) return;
+      stallFired.current = true;
+      invalidate();
+    }, 15_000);
+    return () => clearInterval(timer);
+  }, [readChain.wsUrl, visible, invalidate]);
 
   useWatchBlockNumber({
     chainId: readChain.chainId,

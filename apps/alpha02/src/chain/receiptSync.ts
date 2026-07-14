@@ -88,7 +88,10 @@ export const RECEIPT_FLOOR_ROOTS: readonly string[] = [
  *  the patch and bounces the checkbox (Codex #1228 r2). Other tabs
  *  hold no patch, so the broadcast still carries them — a receiving
  *  tab's 5s second re-read reconciles any RPC lag. */
-const PATCHED_ROOTS: ReadonlySet<string> = new Set(['vpfi', 'loanKeeperEnabled']);
+export const PATCHED_ROOTS: ReadonlySet<string> = new Set([
+  'vpfi',
+  'loanKeeperEnabled',
+]);
 
 /** ~2× Base/OP block time. The second re-read exists for public RPCs
  *  that serve the parent block for a few seconds after the receipt —

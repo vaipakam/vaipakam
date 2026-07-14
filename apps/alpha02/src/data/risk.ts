@@ -12,6 +12,7 @@ import { usePublicClient } from 'wagmi';
 import { BaseError, ContractFunctionRevertedError, ContractFunctionZeroDataError } from 'viem';
 import { DIAMOND_ABI_VIEM } from '@vaipakam/contracts/abis';
 import { useActiveChain } from '../chain/useActiveChain';
+import { tipAware } from '../chain/railHealth';
 import { copy } from '../content/copy';
 
 export interface LoanRisk {
@@ -29,9 +30,15 @@ export function useLoanRisk(loanId: number | undefined, enabled: boolean) {
     queryKey: ['loanRisk', readChain.chainId, loanId],
     enabled: enabled && loanId !== undefined && Boolean(publicClient),
     // Stop polling once a loan is known unpriceable — that
-    // classification doesn't change for an open loan.
+    // classification doesn't change for an open loan. Otherwise the
+    // cadence is tipAware (RPC read-diet PR A, Codex #1228 r5): the
+    // root is in the tip subset, so the per-block nudge carries HF/LTV
+    // freshness while both rails deliver and 60s stands as the
+    // fallback.
     refetchInterval: (query) =>
-      query.state.data?.priced === false ? false : 60_000,
+      query.state.data?.priced === false
+        ? false
+        : tipAware(60_000, Boolean(readChain.wsUrl))(),
     queryFn: async (): Promise<LoanRisk> => {
       try {
         const [healthFactor, ltv] = await Promise.all([

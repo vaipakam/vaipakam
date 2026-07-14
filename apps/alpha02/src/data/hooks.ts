@@ -124,6 +124,14 @@ export function useActiveOffers() {
     // interval carries it at today's cadence, same as the pre-split
     // behaviour where the strip re-ran with each 30s walk refetch.
     refetchInterval: tipAware(REFRESH_MS, Boolean(readChain.wsUrl)),
+    // A background walk refetch mints a NEW strip key (fresh cursor
+    // snapshot); carrying the previous scan as placeholder keeps the
+    // book rendered during the re-scan instead of blanking to loading
+    // (Codex #1228 r5) — same-view-during-fetch is exactly the
+    // pre-split behaviour. SAME-CHAIN only: offer ids are per-chain,
+    // and a cross-chain carry-over could wrongly strip a colliding id.
+    placeholderData: (prev, prevQuery) =>
+      prevQuery?.queryKey[1] === readChain.chainId ? prev : undefined,
     queryFn: () =>
       scanTerminalOfferIds({
         diamondAddress: readChain.diamondAddress,

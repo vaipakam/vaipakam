@@ -178,6 +178,19 @@ export function railBlockWatchReset(): void {
   lastBlockAtMs = 0;
 }
 
+/** True while the block watcher delivered within the trust window —
+ *  the same predicate tipAware uses, exported for LiveChainSync's
+ *  stall watchdog (Codex #1228 r5). `everDelivered` distinguishes a
+ *  live-then-stalled subscription (watchdog fires a catch-up) from
+ *  one that never delivered (tipAware never stretched, nothing to
+ *  catch up). */
+export function blockDeliveryFresh(): boolean {
+  return Date.now() - lastBlockAtMs < TIP_BLOCK_STALE_MS;
+}
+export function blockEverDelivered(): boolean {
+  return lastBlockAtMs > 0;
+}
+
 /** Writer: socket lifecycle. Opening seeds nothing (health waits for
  *  the first cursor-bearing frame); closing demotes immediately. */
 export function railSocketLive(live: boolean): void {
