@@ -23,8 +23,8 @@
  *
  * Renders nothing; mount once inside the app shell.
  */
-import { useEffect } from 'react';
-import { useQueryClient } from '@tanstack/react-query';
+import { useEffect, useRef } from 'react';
+import { useQueryClient, type QueryClient } from '@tanstack/react-query';
 import { useActiveChain } from './useActiveChain';
 import { indexerWsOrigin } from '../data/indexer';
 import {
@@ -35,6 +35,10 @@ import {
 } from './railHealth';
 import { PATCHED_ROOTS } from './receiptSync';
 import { bumpClaimVerdictEpoch } from '../data/claimVerdictCache';
+import {
+  scopeInvalidationRoots,
+  type FrameHints,
+} from './pushHintScope';
 
 /** Server→client frames (mirror of apps/indexer chainIngestDO PushFrame).
  *  The `cursor` heartbeat + the hello `cursor`/`scanCadenceSec` fields land
@@ -50,7 +54,15 @@ type ServerFrame =
       cursor?: { lastBlock: number; updatedAt: number } | null;
       scanCadenceSec?: number | null;
     }
-  | { t: 'invalidate'; chainId: number; keys: string[]; scannedTo: string }
+  | {
+      t: 'invalidate';
+      chainId: number;
+      keys: string[];
+      scannedTo: string;
+      /** RPC read-diet PR D — bounded affected-id hints; absent on
+       *  older workers. Absent-or-truncated ⇒ coarse (never narrow). */
+      hints?: FrameHints;
+    }
   | {
       t: 'cursor';
       chainId: number;
@@ -216,8 +228,49 @@ const RECONNECT_CAP_MS = 30_000;
 const GIVE_UP_AFTER = 6;
 const DORMANT_RETRY_MS = 300_000; // 5 min
 
+
+/** PR D — derive the wallet's own loan/offer id set from the react-query
+ *  cache, DEFENSIVELY: any surprise (no cached entry, unavailable rows,
+ *  non-array data, a non-numeric id) returns null, which the scoping
+ *  rule treats as "unknown ⇒ never narrow". The cache is the right
+ *  source: it is exactly what the user is currently shown, so a frame
+ *  touching an id NOT in it cannot make the visible lists staler than
+ *  they already are — and creations that ARE ours arrive with causative
+ *  links (offerId/party) that the rule checks independently. */
+function cachedIdSet(
+  queryClient: QueryClient,
+  root: 'myLoans' | 'myOffers',
+  chainId: number,
+  address: string | null | undefined,
+  idField: 'loanId' | 'offerId',
+): ReadonlySet<number> | null {
+  if (!address) return null;
+  const entries = queryClient.getQueriesData({
+    queryKey: [root, chainId, address.toLowerCase()],
+  });
+  if (entries.length === 0) return null;
+  const out = new Set<number>();
+  for (const [, data] of entries) {
+    if (!Array.isArray(data)) return null;
+    for (const row of data) {
+      const id = (row as Record<string, unknown> | null)?.[idField];
+      if (typeof id !== 'number') return null;
+      out.add(id);
+    }
+  }
+  return out;
+}
+
 export function IndexerPushSync() {
-  const { readChain } = useActiveChain();
+  const { readChain, address } = useActiveChain();
+  // PR D: the socket effect deliberately does NOT depend on `address`
+  // (an account switch must not tear the rail down), so the frame
+  // handler reads the CURRENT address through a ref — a closure-captured
+  // value would go stale after a switch and scope against the old
+  // wallet's identity/cache, wrongly suppressing the new wallet's
+  // refetches.
+  const addressRef = useRef<string | null>(null);
+  addressRef.current = address?.toLowerCase() ?? null;
   const chainId = readChain.chainId;
   const queryClient = useQueryClient();
   const wsOrigin = indexerWsOrigin();
@@ -394,7 +447,19 @@ export function IndexerPushSync() {
           if (frame.keys.includes('ownership.changed')) {
             bumpClaimVerdictEpoch();
           }
-          const roots = frame.keys.flatMap((k) => KEY_MAP[k] ?? []);
+          // PR D (§4.2.2): drop the OWN-position roots when the frame
+          // carries a COMPLETE hint that provably doesn't involve this
+          // wallet. Own-id sets come from the react-query cache; any
+          // doubt (no cache, malformed rows, truncated hint, older
+          // worker) keeps the full coarse set — narrowing only ever
+          // removes redundant work, never a needed refetch.
+          const roots = scopeInvalidationRoots({
+            roots: frame.keys.flatMap((k) => KEY_MAP[k] ?? []),
+            hints: frame.hints,
+            address: addressRef.current,
+            myLoanIds: cachedIdSet(queryClient, 'myLoans', chainId, addressRef.current, 'loanId'),
+            myOfferIds: cachedIdSet(queryClient, 'myOffers', chainId, addressRef.current, 'offerId'),
+          });
           if (roots.length > 0) scheduleNudge(roots);
         } else if (frame.t === 'cursor') {
           // RPC read-diet PR A — the per-scan heartbeat (PR 0). The

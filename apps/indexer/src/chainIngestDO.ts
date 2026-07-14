@@ -38,6 +38,7 @@
  */
 
 import { resolveEnv, getChainConfigs, type WorkerEnv } from './env';
+import type { PushHints } from './pushHints';
 import {
   runChainIndexerForChain,
   type ChainIndexerResult,
@@ -98,7 +99,17 @@ type PushFrame =
       /** Expected scan cadence (sec) when ingest is active; null = unknown. */
       scanCadenceSec: number | null;
     }
-  | { t: 'invalidate'; chainId: number; keys: InvalidationKey[]; scannedTo: string }
+  | {
+      t: 'invalidate';
+      chainId: number;
+      keys: InvalidationKey[];
+      scannedTo: string;
+      /** RPC read-diet PR D (design §4.2.2) — bounded affected-id hints
+       *  with causative linkage, truncation-honest (see pushHints.ts).
+       *  Absent on older workers and on the recovery fan-out; clients
+       *  MUST treat absent-or-truncated as the coarse key. */
+      hints?: PushHints;
+    }
   // RPC read-diet PR 0 — post-scan heartbeat, sent after EVERY scan
   // (including a no-change pass, which previously sent nothing). This is
   // the signal that lets a client distinguish "healthy but quiet chain"
@@ -452,6 +463,13 @@ export class ChainIngestDO {
         chainId,
         keys,
         scannedTo: result.scannedTo.toString(),
+        // PR D: hints ride ONLY the normally-derived key set. The
+        // recovery fan-out exists precisely because a prior pass LOST
+        // its counts — no id list minted now can claim completeness
+        // for it, so it stays coarse (hint-less).
+        ...(keys === RECOVERY_KEYS || !result.hints
+          ? {}
+          : { hints: result.hints }),
       });
     }
     // RPC read-diet PR 0 — follow every SUCCESSFUL scan with a cursor

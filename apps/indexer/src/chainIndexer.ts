@@ -53,6 +53,7 @@ import {
 import { ceilingOf } from './signedOfferEip712';
 import { indexerPublishPrepayListing } from './openseaPublish';
 import { maybeRefreshProtocolConfig } from './configSnapshot';
+import { collectPushHints, type PushHints } from './pushHints';
 
 /** Resolve a chain's deployBlock from the consolidated deployments
  *  JSON — the indexer's first-run fallback when no cursor exists. */
@@ -171,6 +172,11 @@ export interface ChainIndexerResult {
    *  push key so own-position / claimables views learn an ownership flip
    *  from the push rail instead of a block-driven refetch. */
   ownershipTransfers?: number;
+  /** RPC read-diet PR D (design §4.2.2) — bounded affected-id hints +
+   *  causative linkage for this scan's row mutations, truncation-honest
+   *  (see pushHints.ts). Optional so error/early-return paths stay
+   *  untouched; an absent value broadcasts a coarse (hint-less) frame. */
+  hints?: PushHints;
   skipped?: string;
 }
 
@@ -661,6 +667,10 @@ export async function runChainIndexerForChain(
     signedOfferUpdates,
     loanEntitlementUpdates: loanStats.entitlementUpdates,
     ownershipTransfers: loanStats.ownershipTransfers,
+    // RPC read-diet PR D — one central pass over the SAME decoded log
+    // set every handler consumed; a handler can't drift out of a list
+    // it doesn't maintain (unrecognised shapes force `truncated`).
+    hints: collectPushHints(allLogs),
   };
 }
 
