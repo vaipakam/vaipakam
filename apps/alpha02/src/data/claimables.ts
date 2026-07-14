@@ -238,7 +238,24 @@ export function useMyClaimables() {
           enumerationAvailable = false;
         }
       }
-      if (indexerDown && !enumerationAvailable) return null;
+      // PR C hint fetch happens BEFORE the unavailability collapse
+      // (Codex #1232 r4): the lean capped hint route can answer when
+      // the heavier by-lender/by-borrower reads behind useMyLoans did
+      // not, and it is the last remaining discovery source when the
+      // enumeration views are absent too. Fallback-only posture
+      // unchanged: with the enumeration working the hint is skipped.
+      const hintRes = enumerationAvailable
+        ? null
+        : await fetchClaimCandidates(readChain.chainId, me).catch(() => null);
+      const hints = hintRes?.candidates ?? [];
+      if (indexerDown && !enumerationAvailable) {
+        // Last-resort posture: a NON-empty, non-truncated hint yields
+        // rows the confirm fan-out below verifies live (ownerOf +
+        // getClaimable), so showing them beats "unavailable". An
+        // empty or truncated hint cannot support a confident "no
+        // claims" — that stays unavailable, never a short list.
+        if (hints.length === 0 || hintRes?.truncated) return null;
+      }
 
       // Candidates are keyed by (loanId, role) — NOT loanId alone. The
       // indexer may know one side of a loan while the chain enumeration
@@ -253,20 +270,6 @@ export function useMyClaimables() {
         knownKeys.add(`${l.loanId}:${l.role}`);
         if (!byLoanId.has(l.loanId)) byLoanId.set(l.loanId, l);
       }
-      // PR C (§4.2.3) — the ADDITIVE indexer hint, as FALLBACK
-      // discovery only (Codex #1232 r2): when the enumeration
-      // succeeded it is already authoritative for the wallet's
-      // current holdings — the hint could only add stale rows the
-      // ownerOf confirm must prune, while a slow indexer would hold
-      // the whole Claims result behind its fetch timeout. On an old
-      // deploy without the enumeration views it ADDS candidates the
-      // indexed rows may miss; it never suppresses or substitutes for
-      // chain discovery, and a failed fetch (`null`) means "no hint".
-      const hints = enumerationAvailable
-        ? []
-        : ((await fetchClaimCandidates(readChain.chainId, me).catch(
-            () => null,
-          )) ?? []);
       const chainIdList = [...new Set(chainIds.map((id) => Number(id)))];
       const flipped: PositionLoan[] = [];
       for (const id of chainIdList) {

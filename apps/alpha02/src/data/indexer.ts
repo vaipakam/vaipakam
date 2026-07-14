@@ -638,17 +638,23 @@ export interface ClaimCandidateHint {
 export async function fetchClaimCandidates(
   chainId: number,
   address: string,
-): Promise<ClaimCandidateHint[] | null> {
+): Promise<{ candidates: ClaimCandidateHint[]; truncated: boolean } | null> {
   if (!indexerConfigured()) return null;
-  const res = await getJson<{ candidates: ClaimCandidateHint[] }>(
-    `/claim-candidates/${address}?chainId=${chainId}`,
-  );
+  const res = await getJson<{
+    candidates: ClaimCandidateHint[];
+    truncated?: boolean;
+  }>(`/claim-candidates/${address}?chainId=${chainId}`);
   if (!res || !Array.isArray(res.candidates)) return null;
-  return res.candidates.filter(
-    (c) =>
-      typeof c?.loanId === 'number' &&
-      (c.role === 'lender' || c.role === 'borrower'),
-  );
+  return {
+    candidates: res.candidates.filter(
+      (c) =>
+        typeof c?.loanId === 'number' &&
+        (c.role === 'lender' || c.role === 'borrower'),
+    ),
+    // The server marks a capped response; treat absence (older
+    // worker) as complete — matches the pre-cap behaviour.
+    truncated: res.truncated === true,
+  };
 }
 
 export async function fetchIndexerFreshness(
