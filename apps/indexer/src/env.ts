@@ -132,6 +132,13 @@ export interface WorkerEnv {
 export interface Env {
   DB: D1Database;
 
+  // RPC read-diet PR 0 — pass the #757 rollout gate through to the resolved
+  // env so the public stats routes can report the ingest mode's expected
+  // scan cadence (DO path = every chain pinged each minute; legacy inline
+  // round-robin = unknown here → reported as null and clients fail safe to
+  // their polling posture).
+  CHAIN_INGEST_VIA_DO?: string;
+
   // Per-chain RPC URLs — chain-event scan + live-ownership multicalls.
   RPC_BASE?: string;
   RPC_ETH?: string;
@@ -241,6 +248,8 @@ export async function resolveEnv(raw: WorkerEnv): Promise<Env> {
   ]);
   return {
     DB: raw.DB,
+    // RPC read-diet PR 0 — see the Env field doc.
+    CHAIN_INGEST_VIA_DO: raw.CHAIN_INGEST_VIA_DO,
     CANCELLED_OFFER_RETENTION_DAYS: raw.CANCELLED_OFFER_RETENTION_DAYS,
     OPENSEA_API_KEY: openSea,
     // #335 — pass through the rate-limit binding from the raw

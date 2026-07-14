@@ -28,6 +28,7 @@
  */
 
 import { type Env, getChainConfigs } from './env';
+import { EXPECTED_SCAN_CADENCE_SEC } from './chainIngestDO';
 
 const DEFAULT_PAGE_LIMIT = 50;
 const MAX_PAGE_LIMIT = 200;
@@ -211,7 +212,19 @@ export async function handleOffersStats(req: Request, env: Env): Promise<Respons
         tally.expired +
         tally.consumed_by_sale,
       indexer: cursor
-        ? { lastBlock: cursor.last_block, updatedAt: cursor.updated_at }
+        ? {
+            lastBlock: cursor.last_block,
+            updatedAt: cursor.updated_at,
+            // RPC read-diet PR 0 — the ingest mode's expected per-chain scan
+            // cadence, so the no-WS fallback probe can size its rail-health
+            // staleness window (design §4.1.1) instead of hard-coding one.
+            // null = legacy inline scan / unknown → clients keep the polling
+            // posture (fail-safe).
+            scanCadenceSec:
+              env.CHAIN_INGEST_VIA_DO === 'true'
+                ? EXPECTED_SCAN_CADENCE_SEC
+                : null,
+          }
         : null,
     });
   } catch (err) {

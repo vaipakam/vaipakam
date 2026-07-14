@@ -14,6 +14,7 @@
  */
 
 import { type Env, getChainConfigs } from './env';
+import { EXPECTED_SCAN_CADENCE_SEC } from './chainIngestDO';
 import {
   CANDLE_INTERVALS,
   CANDLE_RANGES,
@@ -756,7 +757,17 @@ export async function handleLoansStats(req: Request, env: Env): Promise<Response
       loansByAsset,
       averageInterestRateBps,
       indexer: cursor
-        ? { lastBlock: cursor.last_block, updatedAt: cursor.updated_at }
+        ? {
+            lastBlock: cursor.last_block,
+            updatedAt: cursor.updated_at,
+            // RPC read-diet PR 0 — mirrors /offers/stats: the ingest mode's
+            // expected per-chain scan cadence (null = legacy/unknown →
+            // clients keep the polling posture).
+            scanCadenceSec:
+              env.CHAIN_INGEST_VIA_DO === 'true'
+                ? EXPECTED_SCAN_CADENCE_SEC
+                : null,
+          }
         : null,
     });
   } catch (err) {

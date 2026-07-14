@@ -56,6 +56,26 @@ describe('invalidationKeysFromResult', () => {
     expect(invalidationKeysFromResult(result({ activityEvents: 3 }))).toEqual([
       'activity.appended',
     ]);
+    // RPC read-diet PR 0 — a data-only entitlement mutation (partial
+    // repay/match, the FallbackPending partial-rescue class, collateral
+    // top-up, extension, periodic-interest advance) rides loan.updated:
+    // previously a scan with ONLY these events broadcast nothing beyond
+    // activity.appended, which is exactly the design §1.5 audit gap.
+    expect(
+      invalidationKeysFromResult(result({ loanEntitlementUpdates: 1 })),
+    ).toEqual(['loan.updated']);
+    // RPC read-diet PR 0 — a position-NFT ownership re-point gets its own
+    // key (holder-keyed views: own positions / claimables / detail owner).
+    expect(invalidationKeysFromResult(result({ ownershipTransfers: 1 }))).toEqual([
+      'ownership.changed',
+    ]);
+  });
+
+  it('treats absent optional counts as zero (older result shapes)', () => {
+    // The two PR 0 counts are optional on ChainIndexerResult so the early
+    // return paths stay untouched — absence must read as "no key", not a
+    // crash or a spurious push.
+    expect(invalidationKeysFromResult(result())).toEqual([]);
   });
 
   it('emits each key at most once for a busy scan', () => {
@@ -67,6 +87,8 @@ describe('invalidationKeysFromResult', () => {
         newLoans: 2,
         loanStatusUpdates: 1,
         loanDetailRefreshes: 3,
+        loanEntitlementUpdates: 2,
+        ownershipTransfers: 1,
         activityEvents: 9,
       }),
     );
@@ -75,6 +97,7 @@ describe('invalidationKeysFromResult', () => {
       'offer.changed',
       'loan.created',
       'loan.updated',
+      'ownership.changed',
       'activity.appended',
     ]);
     expect(new Set(keys).size).toBe(keys.length);

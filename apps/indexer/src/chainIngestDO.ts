@@ -66,13 +66,53 @@ export type InvalidationKey =
   | 'offer.created'
   | 'offer.changed' // cancel / accept / detail refresh (coarse — no per-id yet)
   | 'loan.created'
-  | 'loan.updated' // repay / default / liquidation / transfer
+  | 'loan.updated' // repay / default / liquidation / data-only entitlement change
+  // RPC read-diet PR 0 (Alpha02RpcReadDietDesign §4.0.1) — a position-NFT
+  // changed hands (secondary trade, claim-burn, borrower migration). Own-
+  // position / claimables views key on WHO holds the position, which no
+  // other key names; PR A's tip-nudge demotion relies on this arriving.
+  | 'ownership.changed'
   | 'activity.appended';
 
-/** Push frame the DO `ws.send`s. `t` discriminates the frame kind. */
+/** RPC read-diet PR 0 — the DO path's expected per-chain scan cadence. The
+ *  cron (`crons: ["* * * * *"]`, wrangler.jsonc) pings EVERY configured
+ *  chain's DO each minute, and webhook deliveries only make scans MORE
+ *  frequent — so 60s is the worst-case gap between cursor advances on a
+ *  healthy rail. Clients size their rail-health staleness window from this
+ *  reported value (design §4.1.1: cadence × ~1.5) instead of hard-coding a
+ *  guess; a missing value means "unknown" and clients stay in the polling
+ *  fallback posture. */
+export const EXPECTED_SCAN_CADENCE_SEC = 60;
+
+/** Push frame the DO `ws.send`s. `t` discriminates the frame kind. Clients
+ *  ignore unknown `t` values, so adding a frame kind is backward-compatible. */
 type PushFrame =
-  | { t: 'hello'; chainId: number | null; ingestActive: boolean }
-  | { t: 'invalidate'; chainId: number; keys: InvalidationKey[]; scannedTo: string };
+  | {
+      t: 'hello';
+      chainId: number | null;
+      ingestActive: boolean;
+      /** RPC read-diet PR 0 — cursor freshness at connect time (from
+       *  `indexer_cursor`; null when unknown / chain not scanned yet), so a
+       *  client can judge rail health before the first heartbeat. */
+      cursor: { lastBlock: number; updatedAt: number } | null;
+      /** Expected scan cadence (sec) when ingest is active; null = unknown. */
+      scanCadenceSec: number | null;
+    }
+  | { t: 'invalidate'; chainId: number; keys: InvalidationKey[]; scannedTo: string }
+  // RPC read-diet PR 0 — post-scan heartbeat, sent after EVERY scan
+  // (including a no-change pass, which previously sent nothing). This is
+  // the signal that lets a client distinguish "healthy but quiet chain"
+  // from "stalled ingest with a live socket" (design §4.1.1): the cursor
+  // advancing at the reported cadence = healthy; frames stopping while the
+  // socket stays open = treat the rail as down. Costs one tiny frame per
+  // scan per subscriber, and only while the DO is already awake scanning.
+  | {
+      t: 'cursor';
+      chainId: number;
+      lastBlock: string;
+      updatedAt: number;
+      scanCadenceSec: number;
+    };
 
 /** Map a completed scan's result counts → the coarse invalidation keys to push.
  *  Pure + exported so the shape is unit-reasoned and testable in isolation. */
@@ -98,9 +138,23 @@ export function invalidationKeysFromResult(
   // `loanStatusUpdates` = a status transition; `loanDetailRefreshes` = a stub
   // row healed to canonical metadata (P3 — a heal-only pass would otherwise
   // push nothing, leaving clients on incomplete loan data until a slow poll).
-  if (result.loanStatusUpdates > 0 || result.loanDetailRefreshes > 0) {
+  // `loanEntitlementUpdates` (RPC read-diet PR 0) = data-only row mutations
+  // with no status transition — partial repay/match, the FallbackPending
+  // partial-rescue class, collateral top-up, extension, periodic-interest
+  // advance. They change what a party is owed/holds, so they ride the same
+  // coarse key; previously a scan with ONLY these events broadcast nothing
+  // beyond `activity.appended`.
+  if (
+    result.loanStatusUpdates > 0 ||
+    result.loanDetailRefreshes > 0 ||
+    (result.loanEntitlementUpdates ?? 0) > 0
+  ) {
     keys.push('loan.updated');
   }
+  // RPC read-diet PR 0 — position-NFT ownership re-points get their own key:
+  // the affected views (own positions, claimables, detail-page owner) are
+  // holder-keyed, and no other key fires on a bare secondary transfer.
+  if ((result.ownershipTransfers ?? 0) > 0) keys.push('ownership.changed');
   if (result.activityEvents > 0) keys.push('activity.appended');
   return keys;
 }
@@ -111,6 +165,7 @@ export function invalidationKeysFromResult(
 const RECOVERY_KEYS: InvalidationKey[] = [
   'offer.changed',
   'loan.updated',
+  'ownership.changed',
   'activity.appended',
 ];
 
@@ -327,6 +382,26 @@ export class ChainIngestDO {
       }
     }
 
+    // RPC read-diet PR 0 — report cursor freshness + expected scan cadence in
+    // `hello`, so a connecting client can judge rail health immediately (a
+    // stale cursor with a live socket must read as "down", design §4.1.1).
+    // Best-effort: a failed read reports null, which clients treat as
+    // "unknown" → they stay in the polling fallback posture.
+    let cursor: { lastBlock: number; updatedAt: number } | null = null;
+    if (ingestActive && chainId !== null) {
+      try {
+        const row = await this.env.DB.prepare(
+          `SELECT last_block, updated_at FROM indexer_cursor
+           WHERE chain_id = ? AND kind = 'diamond'`,
+        )
+          .bind(chainId)
+          .first<{ last_block: number; updated_at: number }>();
+        if (row) cursor = { lastBlock: row.last_block, updatedAt: row.updated_at };
+      } catch {
+        cursor = null;
+      }
+    }
+
     const pair = new WebSocketPair();
     const client = pair[0];
     const server = pair[1];
@@ -336,6 +411,8 @@ export class ChainIngestDO {
       t: 'hello',
       chainId,
       ingestActive,
+      cursor,
+      scanCadenceSec: ingestActive ? EXPECTED_SCAN_CADENCE_SEC : null,
     };
     try {
       server.send(JSON.stringify(hello));
@@ -359,27 +436,51 @@ export class ChainIngestDO {
     result: ChainIndexerResult,
     recoverPending = false,
   ): void {
-    let keys = invalidationKeysFromResult(result);
-    if (keys.length === 0) {
-      // Nothing changed THIS pass. Only push if a prior post-write failure left
-      // a pending recovery — then fan out the coarse "refetch everything" set.
-      if (!recoverPending) return;
-      keys = RECOVERY_KEYS;
-    }
     const sockets = this.state.getWebSockets();
     if (sockets.length === 0) return;
-    const frame: PushFrame = {
-      t: 'invalidate',
-      chainId,
-      keys,
-      scannedTo: result.scannedTo.toString(),
-    };
-    const payload = JSON.stringify(frame);
-    for (const ws of sockets) {
-      try {
-        ws.send(payload);
-      } catch {
-        // Dead/closing socket — the runtime reaps it; skip and keep fanning out.
+
+    const frames: PushFrame[] = [];
+    let keys = invalidationKeysFromResult(result);
+    if (keys.length === 0 && recoverPending) {
+      // A prior post-write failure lost its counts — fan out the coarse
+      // "refetch everything" set so no change stays unannounced.
+      keys = RECOVERY_KEYS;
+    }
+    if (keys.length > 0) {
+      frames.push({
+        t: 'invalidate',
+        chainId,
+        keys,
+        scannedTo: result.scannedTo.toString(),
+      });
+    }
+    // RPC read-diet PR 0 — follow every SUCCESSFUL scan with a cursor
+    // heartbeat, including a no-change pass (which previously sent
+    // nothing). Rail health is judged by this cadence: heartbeats flowing
+    // = the ingest rail is alive even on a quiet chain; heartbeats
+    // stopping while the socket stays open = clients restore their polling
+    // posture. The DO is already awake post-scan, so this costs one tiny
+    // frame, never a wake. An `rpc-error` pass sends NO heartbeat — its
+    // cursor didn't advance, and a fresh `updatedAt` stamp would dress a
+    // broken rail up as healthy.
+    if (result.skipped !== 'rpc-error') {
+      frames.push({
+        t: 'cursor',
+        chainId,
+        lastBlock: result.scannedTo.toString(),
+        updatedAt: Math.floor(Date.now() / 1000),
+        scanCadenceSec: EXPECTED_SCAN_CADENCE_SEC,
+      });
+    }
+
+    for (const frame of frames) {
+      const payload = JSON.stringify(frame);
+      for (const ws of sockets) {
+        try {
+          ws.send(payload);
+        } catch {
+          // Dead/closing socket — the runtime reaps it; skip and keep fanning out.
+        }
       }
     }
   }
