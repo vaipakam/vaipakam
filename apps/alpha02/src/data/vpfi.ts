@@ -23,6 +23,7 @@ import type { PublicClient } from 'viem';
 import { DIAMOND_ABI_VIEM } from '@vaipakam/contracts/abis';
 import { useActiveChain } from '../chain/useActiveChain';
 import { signalAware } from '../chain/railHealth';
+import { fetchProtocolConfig, protocolConfigFresh } from './indexer';
 
 export const VPFI_DECIMALS = 18;
 const ZERO_ADDRESS = '0x0000000000000000000000000000000000000000';
@@ -86,6 +87,33 @@ const DEFAULT_TIER_ROWS: VpfiTierRow[] = [
 ];
 const DEFAULT_FLOOR_LABEL = '100';
 
+type TierSlots = {
+  thresholds: readonly [bigint, bigint, bigint, bigint];
+  discounts: readonly [bigint, bigint, bigint, bigint];
+};
+
+/** Parse the snapshot's two uint256[4] slots (decimal strings from the
+ *  indexer's JSON). Null on ANY shape surprise — wrong arity, missing
+ *  slot, non-numeric string — so the caller falls back to the live
+ *  chain read instead of rendering a garbled tier table. Exported for
+ *  the unit test. */
+export function parseTierSlots(t: unknown, d: unknown): TierSlots | null {
+  if (!Array.isArray(t) || t.length !== 4 || !Array.isArray(d) || d.length !== 4) {
+    return null;
+  }
+  // Entries must be the serializer's DECIMAL STRINGS — a bare BigInt()
+  // also coerces booleans and Numbers, and an 18-decimal threshold
+  // that arrived as a JSON number has already lost precision before
+  // BigInt() could run (Codex #1240 r1). Anything else → chain
+  // fallback, never a silently wrong tier table.
+  const isDecimalString = (v: unknown): v is string =>
+    typeof v === 'string' && /^\d+$/.test(v);
+  if (![...t, ...d].every(isDecimalString)) return null;
+  const toB4 = (a: string[]) =>
+    [BigInt(a[0]), BigInt(a[1]), BigInt(a[2]), BigInt(a[3])] as const;
+  return { thresholds: toB4(t as string[]), discounts: toB4(d as string[]) };
+}
+
 export function useVpfiTierTable(): VpfiTierTable {
   const { readChain } = useActiveChain();
   const publicClient = usePublicClient({ chainId: readChain.chainId });
@@ -95,13 +123,30 @@ export function useVpfiTierTable(): VpfiTierTable {
     enabled: Boolean(publicClient),
     staleTime: 5 * 60_000,
     queryFn: async (): Promise<VpfiTierTable> => {
-      const bundle = (await publicClient!.readContract({
-        address: readChain.diamondAddress,
-        abi: DIAMOND_ABI_VIEM,
-        functionName: 'getProtocolConfigBundle',
-      })) as readonly unknown[];
-      const thresholds = bundle[7] as readonly [bigint, bigint, bigint, bigint];
-      const discounts = bundle[8] as readonly [bigint, bigint, bigint, bigint];
+      // RPC read-diet PR B follow-up (#1238) — this is a pure DISPLAY
+      // surface (the /vpfi tier table), so it reads the
+      // indexer's config snapshot first like the fee/buffer/flag
+      // hooks, and falls back to the live chain read when the
+      // snapshot is absent or stale. Fee SETTLEMENT never reads this
+      // hook — the contract applies tiers on-chain.
+      const snap = await fetchProtocolConfig(readChain.chainId);
+      const fromSnap =
+        snap && protocolConfigFresh(snap.updatedAt)
+          ? parseTierSlots(snap.bundle[7], snap.bundle[8])
+          : null;
+      const { thresholds, discounts } =
+        fromSnap ??
+        (await (async () => {
+          const bundle = (await publicClient!.readContract({
+            address: readChain.diamondAddress,
+            abi: DIAMOND_ABI_VIEM,
+            functionName: 'getProtocolConfigBundle',
+          })) as readonly unknown[];
+          return {
+            thresholds: bundle[7] as readonly [bigint, bigint, bigint, bigint],
+            discounts: bundle[8] as readonly [bigint, bigint, bigint, bigint],
+          };
+        })());
       const pct = (bps: bigint) => `${Number(bps) / 100}%`;
       const rows = thresholds.map((min, i) => ({
         held:
