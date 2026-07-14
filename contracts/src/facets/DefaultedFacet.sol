@@ -42,9 +42,11 @@ import {LibPrepayCleanup} from "../libraries/LibPrepayCleanup.sol";
  *        - **Liquid ERC-20 collateral**: 0x swap (slippage ≤
  *          `MAX_LIQUIDATION_SLIPPAGE_BPS`); on swap failure falls back to
  *          {LibFallback.record} (claim-time retry in ClaimFacet).
- *          High-volatility check: if LTV > 110% or HF < 1, routes directly
- *          to the full-collateral-transfer fallback to avoid a guaranteed
- *          slippage breach.
+ *          High-volatility check (#1192): only a genuine LTV > 110% value
+ *          collapse routes directly to the full-collateral in-kind branch;
+ *          an HF < 1 loan whose collateral still covers the debt (LTV ≤ 110%)
+ *          goes through the swap/split waterfall so the lender is capped at
+ *          their entitlement and the borrower keeps the recoverable surplus.
  *        - **Illiquid ERC-20**: full collateral transfer to lender (both
  *          parties already consented at offer time).
  *        - **NFT rental**: remaining prepay to lender (minus treasury fee),
@@ -313,17 +315,32 @@ contract DefaultedFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErr
             LibVaipakam.LoanPositionStatus.LoanDefaulted;
 
         if (loan.assetType == LibVaipakam.AssetType.ERC20) {
-            // Only check collapse for liquid loans — illiquid loans have no oracle
-            // and calculateLTV/calculateHealthFactor revert with NonLiquidAsset
-            bool isCollateralValueCollapsed;
+            // #1192 (Pass-2 C1) — decide the liquid-collateral route on a
+            // genuine LTV>110% value collapse ONLY, not on plain HF<1.
+            // Previously this keyed on `isCollateralValueCollapsed`
+            // (ltv>110% || hf<1), which handed the lender the ENTIRE liquid
+            // collateral in-kind — zero swap attempts, no borrower residual —
+            // for any HF<1 loan, even one whose collateral still covers the
+            // lender ceiling. Spec §774/§790/§1373: an HF<1-but-covered loan
+            // (collateral between debt and debt/liqThreshold, LTV still ≤110%)
+            // must attempt the swap/split waterfall (Path A) so the lender is
+            // capped at their entitlement and the borrower keeps the
+            // recoverable surplus; a swap that can't execute safely then routes
+            // to the oracle-aware three-way fallback
+            // (`_fullCollateralTransferFallback`), which itself gives the lender
+            // the whole collateral only when the split can't be priced
+            // (oracle-dead) or the collateral is insufficient. Only query for
+            // liquid collateral — illiquid loans have no oracle and
+            // `calculateLTV` reverts IlliquidLoanNoRiskMath.
+            bool isLtvCollapsed;
             if (liquidity == LibVaipakam.LiquidityStatus.Liquid) {
-                isCollateralValueCollapsed = RiskFacet(address(this))
-                    .isCollateralValueCollapsed(loanId);
+                isLtvCollapsed = RiskFacet(address(this)).calculateLTV(loanId)
+                    > LibVaipakam.cfgVolatilityLtvThresholdBps();
             }
 
             if (
                 liquidity == LibVaipakam.LiquidityStatus.Liquid &&
-                !isCollateralValueCollapsed
+                !isLtvCollapsed
             ) {
                 // #1005 (S9) — a liquid time-based default must attempt at least
                 // one enabled swap route: `LibSwap.swapWithFailover` (below)
@@ -331,8 +348,9 @@ contract DefaultedFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErr
                 // entry is a governance-disabled venue, rolling back the
                 // collateral move-out, so a permissionless caller can't push an
                 // eligible loan into the full-collateral fallback with zero DEX
-                // attempts. (Illiquid / value-collapsed defaults legitimately need
-                // no swap list and fall through to the in-kind branch below.)
+                // attempts. (Illiquid / genuinely LTV-collapsed defaults
+                // legitimately need no swap list and fall through to the in-kind
+                // branch below.)
 
                 // Time-based default with liquid collateral: swap directly without HF check.
                 // RiskFacet.triggerLiquidation requires HF < 1 (for HF-based liquidation),
@@ -532,7 +550,7 @@ contract DefaultedFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErr
                 });
             } else if (
                 ((liquidity == LibVaipakam.LiquidityStatus.Liquid &&
-                    isCollateralValueCollapsed) ||
+                    isLtvCollapsed) ||
                     (liquidity == LibVaipakam.LiquidityStatus.Illiquid &&
                         loan.riskAndTermsConsentFromBoth))
             ) {
