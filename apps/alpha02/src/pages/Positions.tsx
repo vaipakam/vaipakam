@@ -10,6 +10,7 @@ import { ListChecks, LoaderCircle } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import { useModal } from 'connectkit';
 import { useQueryClient } from '@tanstack/react-query';
+import { usePublicClient } from 'wagmi';
 import { copy } from '../content/copy';
 import { useMyLoansFull, useMyOffersFull } from '../data/hooks';
 import { useMyClaimables } from '../data/claimables';
@@ -22,12 +23,14 @@ import { useTokenMeta } from '../contracts/erc20';
 import { AssetType } from '../lib/types';
 import { formatTokenAmount, shortAddress } from '../lib/format';
 import { captureTxError } from '../lib/errors';
+import { assertRowActionStillValid } from '../contracts/preflights';
 import type { IndexedOffer } from '../data/indexer';
 
 function OfferRow({ offer }: { offer: IndexedOffer }) {
   const isRental = offer.assetType !== AssetType.ERC20;
   const meta = useTokenMeta(isRental ? undefined : offer.lendingAsset);
-  const { onSupportedChain, address } = useActiveChain();
+  const { onSupportedChain, address, readChain } = useActiveChain();
+  const publicClient = usePublicClient({ chainId: readChain.chainId });
   // cancelOffer authorizes only the CREATOR until the offer expires —
   // a wallet merely holding a transferred offer NFT gets no cancel
   // button (it would revert NotCreatorOrNotExpired).
@@ -51,6 +54,19 @@ function OfferRow({ offer }: { offer: IndexedOffer }) {
     setBusy(true);
     setError(null);
     try {
+      // RPC read-diet PR A (§4.1.2) — blocking click-time preflight:
+      // this list row refreshes at push latency, so simulate the exact
+      // cancel before the wallet prompt (revert → inline reason,
+      // transport trouble → fail open, the chain still enforces).
+      if (publicClient && address) {
+        await assertRowActionStillValid({
+          publicClient,
+          diamond: readChain.diamondAddress,
+          account: address,
+          functionName: 'cancelOffer',
+          args: [BigInt(offer.offerId)],
+        });
+      }
       await write('cancelOffer', [BigInt(offer.offerId)]);
       void queryClient.invalidateQueries({ queryKey: ['myOffers'] });
       void queryClient.invalidateQueries({ queryKey: ['activeOffers'] });

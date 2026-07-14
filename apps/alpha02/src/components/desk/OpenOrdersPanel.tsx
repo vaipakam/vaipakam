@@ -30,6 +30,7 @@ import { ensureAllowance, useTokenMeta } from '../../contracts/erc20';
 import {
   assertAssetNotPausedLive,
   assertErc20BalanceLive,
+  assertRowActionStillValid,
 } from '../../contracts/preflights';
 import { assertWalletNotSanctionedLive } from '../../data/sanctions';
 import { CANCEL_COOLDOWN_SECONDS } from '../../contracts/loanLive';
@@ -416,6 +417,18 @@ function AmendForm({
           throw new Error(text.amendAllowanceLost);
         }
       }
+      // RPC read-diet PR A (§4.1.2) — same blocking row-action
+      // preflight as cancel: an amend against a just-consumed offer
+      // surfaces inline instead of as a doomed signature.
+      if (publicClient && address && walletChain) {
+        await assertRowActionStillValid({
+          publicClient,
+          diamond: walletChain.diamondAddress,
+          account: address,
+          functionName: 'modifyOffer',
+          args: [BigInt(offer.offerId), parsed],
+        });
+      }
       await write('modifyOffer', [BigInt(offer.offerId), parsed]);
       void queryClient.invalidateQueries({ queryKey: ['myOffers'] });
       void queryClient.invalidateQueries({ queryKey: ['activeOffers'] });
@@ -626,26 +639,42 @@ function OrderRow({ offer }: { offer: IndexedOffer }) {
   // only while this row might still be inside its window and stopped
   // the moment the anchor proves it elapsed — a parked desk tab must
   // not stream block reads (RPC-diet doctrine).
+  // RPC read-diet PR A (§4.1.3): the old shape polled this anchor
+  // every 5s — a block-timestamp CLOCK at ~720 reads/hr per parked
+  // desk tab. A clock only needs an offset: fetch the anchor ONCE
+  // while a row is inside its window, run the countdown on the
+  // offset-corrected local clock, then spend one confirm read at the
+  // boundary (below).
   const chainNowKey = ['deskChainNow', readChain.chainId];
   const cachedAnchor = queryClient.getQueryData<ChainNowAnchor>(chainNowKey);
   const chainNowQ = useQuery({
     queryKey: chainNowKey,
     enabled: Boolean(publicClient) && blockedGiven(anchorEffNow(cachedAnchor)),
-    refetchInterval: 5_000,
+    refetchInterval: false,
     queryFn: async (): Promise<ChainNowAnchor> => {
       const block = await publicClient!.getBlock({ blockTag: 'latest' });
       return { nowSec: Number(block.timestamp), atMs: Date.now() };
     },
   });
-  const effNow = anchorEffNow(chainNowQ.data ?? cachedAnchor);
-  const cancelBlocked = blockedGiven(effNow);
+  const anchor = chainNowQ.data ?? cachedAnchor;
+  const effNow = anchorEffNow(anchor);
+  // FAIL-CLOSED enable (§4.1.3): the button unlocks only on a RAW
+  // chain-read timestamp (`anchor.nowSec` is a lower bound of chain
+  // time — time only moves forward), never on the extrapolated clock
+  // alone. A device clock running ahead can therefore never enable
+  // Cancel early and hand the user a doomed CancelCooldownActive
+  // transaction; the extrapolated clock only drives the countdown
+  // display and decides WHEN to spend the confirm read.
+  const rawNow = anchor ? anchor.nowSec : null;
+  const cancelBlocked = blockedGiven(rawNow);
   const cooldownRemaining =
     effNow === null
       ? Number(CANCEL_COOLDOWN_SECONDS)
       : Math.max(1, cooldownDeadline - effNow);
 
-  // 1 s re-render tick while blocked, so the countdown title and the
-  // enable flip track the anchored clock between polls.
+  // 1 s re-render tick while blocked, so the countdown title tracks
+  // the anchored clock — and the confirm effect below sees the
+  // extrapolated clock cross the unlock boundary.
   const [, setTick] = useState(0);
   useEffect(() => {
     if (!cancelBlocked) return;
@@ -653,10 +682,36 @@ function OrderRow({ offer }: { offer: IndexedOffer }) {
     return () => clearInterval(timer);
   }, [cancelBlocked]);
 
+  // The one-shot chain-time confirm: when the corrected countdown says
+  // the window elapsed but the last RAW read hasn't proven it, spend
+  // exactly one refetch. Each confirm re-anchors the clock, so even a
+  // client clock running far ahead costs one read per real boundary
+  // crossing — never a poll. Actual fill/cancel state changes still
+  // arrive via the offer.changed push nudge.
+  useEffect(() => {
+    if (!cancelBlocked || chainNowQ.isFetching) return;
+    if (effNow !== null && !blockedGiven(effNow)) {
+      void chainNowQ.refetch();
+    }
+  });
+
   async function cancel() {
     setCancelling(true);
     setError(null);
     try {
+      // RPC read-diet PR A (§4.1.2) — this row refreshes at push
+      // latency, not tip parity, so a counterparty may have consumed
+      // the offer moments ago: simulate the exact call BEFORE the
+      // wallet prompt (revert → inline reason, transport → fail open).
+      if (publicClient && address) {
+        await assertRowActionStillValid({
+          publicClient,
+          diamond: readChain.diamondAddress,
+          account: address,
+          functionName: 'cancelOffer',
+          args: [BigInt(offer.offerId)],
+        });
+      }
       await write('cancelOffer', [BigInt(offer.offerId)]);
       void queryClient.invalidateQueries({ queryKey: ['myOffers'] });
       void queryClient.invalidateQueries({ queryKey: ['activeOffers'] });

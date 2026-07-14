@@ -526,3 +526,43 @@ async function liquidNumeraireValueLive(
     10n ** BigInt(tokenDecimals)
   );
 }
+
+/**
+ * RPC read-diet PR A (design §4.1.2) — BLOCKING click-time preflight
+ * for money actions fired straight from a push-finality list row
+ * (Positions / OpenOrders cancel and amend). Those rows refresh at
+ * push latency rather than tip parity, so a counterparty can consume
+ * the offer inside the window and the row stays armed; simulating the
+ * exact call first turns that into an inline "this offer just
+ * changed" outcome instead of a doomed wallet signature.
+ *
+ * Posture: a REVERT throws the friendly reason (fail closed — the
+ * action would burn gas); transport trouble RETURNS (fail open — the
+ * wallet + chain still enforce, and blocking a legitimate cancel on
+ * an RPC hiccup would strand the user's own funds behind an outage).
+ */
+export async function assertRowActionStillValid(opts: {
+  publicClient: PublicClient;
+  diamond: `0x${string}`;
+  account: `0x${string}`;
+  functionName: string;
+  args: readonly unknown[];
+}): Promise<void> {
+  try {
+    await opts.publicClient.simulateContract({
+      address: opts.diamond,
+      abi: DIAMOND_ABI_VIEM,
+      functionName: opts.functionName,
+      args: opts.args as unknown[],
+      account: opts.account,
+    });
+  } catch (err) {
+    // Same revert taxonomy the live-row readers use: only a genuine
+    // contract revert blocks; anything transport-shaped passes.
+    const revertLike =
+      err instanceof BaseError &&
+      (err.walk((e) => e instanceof ContractFunctionRevertedError) !== null ||
+        err.walk((e) => e instanceof ContractFunctionZeroDataError) !== null);
+    if (revertLike) throw err;
+  }
+}
