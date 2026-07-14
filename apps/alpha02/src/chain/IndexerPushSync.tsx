@@ -127,6 +127,14 @@ export const KEY_MAP: Record<string, string[]> = {
     // position with the History tab open would see it stale until
     // focus/net (Codex #1227 r1).
     'deskHistory',
+    // A one-sided claim (LenderFundsClaimed/BorrowerFundsClaimed) moves
+    // funds into the claimant's vault and BURNS that side's position NFT
+    // — the burn is what this key surfaces, while loan.updated only
+    // follows when the claim also closes the loan (LoanSettled). Without
+    // vaultAssets here, a second tab watching Vault keeps the pre-claim
+    // balance after a one-sided claim once the block blanket is removed
+    // (Codex #1227 r2).
+    'vaultAssets',
   ],
   'activity.appended': ['activity'],
   // NOT mapped on purpose: 'deskSymbols' (token metadata is immutable).

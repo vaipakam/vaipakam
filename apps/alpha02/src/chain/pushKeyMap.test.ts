@@ -67,7 +67,10 @@ describe('IndexerPushSync KEY_MAP (#1131 desk roots)', () => {
       // per-block nudge is negligible and deliberate.
       // deskHistory rides ownership too: a secondary transfer appends the
       // recipient to loan_participants, which useDeskHistory reads and no
-      // other rail refreshes (Codex #1227 r1).
+      // other rail refreshes (Codex #1227 r1). vaultAssets rides it as
+      // well: a one-sided claim burns the position NFT (this key) while
+      // moving funds into the claimant's vault, and loan.updated only
+      // follows when the claim also settles the loan (Codex #1227 r2).
       'ownership.changed': [
         'myLoans',
         'myOffers',
@@ -76,6 +79,7 @@ describe('IndexerPushSync KEY_MAP (#1131 desk roots)', () => {
         'loan',
         'offer',
         'deskHistory',
+        'vaultAssets',
       ],
       'activity.appended': ['activity'],
     });

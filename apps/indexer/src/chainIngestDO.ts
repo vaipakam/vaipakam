@@ -306,7 +306,7 @@ export class ChainIngestDO {
         // a recovery broadcast even when this pass's counts are empty.
         const pendingBroadcast =
           (await this.state.storage.get<boolean>('pendingBroadcast')) ?? false;
-        this.broadcast(chainId, result, pendingBroadcast);
+        await this.broadcast(chainId, result, pendingBroadcast);
         if (pendingBroadcast) {
           await this.state.storage.delete('pendingBroadcast');
         }
@@ -431,11 +431,11 @@ export class ChainIngestDO {
    * that changed nothing pushes nothing (no wake, no traffic). Per-socket `send`
    * is wrapped so one dead socket can't abort the fan-out.
    */
-  private broadcast(
+  private async broadcast(
     chainId: number,
     result: ChainIndexerResult,
     recoverPending = false,
-  ): void {
+  ): Promise<void> {
     const sockets = this.state.getWebSockets();
     if (sockets.length === 0) return;
 
@@ -457,20 +457,37 @@ export class ChainIngestDO {
     // RPC read-diet PR 0 — follow every SUCCESSFUL scan with a cursor
     // heartbeat, including a no-change pass (which previously sent
     // nothing). Rail health is judged by this cadence: heartbeats flowing
-    // = the ingest rail is alive even on a quiet chain; heartbeats
-    // stopping while the socket stays open = clients restore their polling
+    // WITH an advancing persisted timestamp = the ingest rail is alive
+    // even on a quiet chain; heartbeats stopping (or their timestamp
+    // aging) while the socket stays open = clients restore their polling
     // posture. The DO is already awake post-scan, so this costs one tiny
-    // frame, never a wake. An `rpc-error` pass sends NO heartbeat — its
-    // cursor didn't advance, and a fresh `updatedAt` stamp would dress a
-    // broken rail up as healthy.
+    // frame + one D1 read, never a wake. Honesty rules (Codex #1227 r2):
+    // the frame carries the PERSISTED `indexer_cursor` row, never a
+    // freshly minted wall-clock stamp — a `caught-up` pass doesn't write
+    // the cursor, so if the RPC's safe head wedges at/behind the cursor,
+    // the persisted `updated_at` stops advancing and the client sees the
+    // stall instead of a fake-fresh rail. An `rpc-error` pass (or a
+    // failed cursor read) sends no heartbeat at all.
     if (result.skipped !== 'rpc-error') {
-      frames.push({
-        t: 'cursor',
-        chainId,
-        lastBlock: result.scannedTo.toString(),
-        updatedAt: Math.floor(Date.now() / 1000),
-        scanCadenceSec: EXPECTED_SCAN_CADENCE_SEC,
-      });
+      try {
+        const row = await this.env.DB.prepare(
+          `SELECT last_block, updated_at FROM indexer_cursor
+           WHERE chain_id = ? AND kind = 'diamond'`,
+        )
+          .bind(chainId)
+          .first<{ last_block: number; updated_at: number }>();
+        if (row) {
+          frames.push({
+            t: 'cursor',
+            chainId,
+            lastBlock: String(row.last_block),
+            updatedAt: row.updated_at,
+            scanCadenceSec: EXPECTED_SCAN_CADENCE_SEC,
+          });
+        }
+      } catch {
+        // No heartbeat on a failed read — absence is the honest signal.
+      }
     }
 
     for (const frame of frames) {
