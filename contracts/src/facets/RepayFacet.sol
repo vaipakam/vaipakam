@@ -950,8 +950,17 @@ contract RepayFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErrors 
             // single-period interest amount.
             if (loan.periodicInterestCadence !=
                 LibVaipakam.PeriodicInterestCadence.None) {
+                // Pass-2 A3 (#1191, Codex #1229) — credit the FULL interest
+                // SATISFIED this partial (`grossAccrued`), not just the cash
+                // `accrued` netted after the settled credit. The excess-credit
+                // portion (`grossAccrued - accrued`) covered real interest for
+                // this period, so `settlePeriodicInterest` (which reads only
+                // `interestPaidSinceLastPeriod`) must see it, else it would
+                // under-count the period and auto-liquidate more collateral than
+                // owed. No-op when there is no pre-existing credit
+                // (grossAccrued == accrued).
                 uint256 newPaid = uint256(loan.interestPaidSinceLastPeriod) +
-                    accrued;
+                    grossAccrued;
                 if (newPaid > type(uint128).max) {
                     newPaid = type(uint128).max;
                 }

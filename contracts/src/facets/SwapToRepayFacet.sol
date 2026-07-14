@@ -847,7 +847,13 @@ contract SwapToRepayFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamE
         // ── T-034 §4.5 — periodic-interest checkpoint advance
         //    (mirror RepayFacet:679-706) ────────────────────────────
         if (loan.periodicInterestCadence != LibVaipakam.PeriodicInterestCadence.None) {
-            uint256 newPaid = uint256(loan.interestPaidSinceLastPeriod) + accrued;
+            // Pass-2 A3 (#1191, Codex #1229) — credit the FULL interest
+            // SATISFIED this partial (`grossAccrued`), not just the cash
+            // `accrued` netted after the settled credit; else the excess-credit
+            // portion is invisible to `settlePeriodicInterest` and it would
+            // auto-liquidate more collateral than owed. No-op when there is no
+            // pre-existing credit (grossAccrued == accrued). Mirrors RepayFacet.
+            uint256 newPaid = uint256(loan.interestPaidSinceLastPeriod) + grossAccrued;
             if (newPaid > type(uint128).max) newPaid = type(uint128).max;
             loan.interestPaidSinceLastPeriod = SafeCast.toUint128(newPaid);
             if (LibPeriodicInterest.canAdvanceCheckpointInline(loan)) {

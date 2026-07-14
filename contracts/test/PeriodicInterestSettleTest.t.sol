@@ -374,4 +374,46 @@ contract PeriodicInterestSettleTest is SetupTest {
         // Checkpoint NOT yet advanced (we're still within the period).
         assertEq(l.lastPeriodicInterestSettledAt, SafeCast.toUint64(startTs));
     }
+
+    /// @dev Pass-2 A3 (#1191, Codex #1229 round 2) — when a periodic auto-liq
+    ///      previously OVER-delivered, `interestSettled` carries an excess
+    ///      credit. A subsequent `repayPartial` nets that credit out of the
+    ///      cash it charges, but it must still record the FULL interest it
+    ///      SATISFIED (`grossAccrued`) into `interestPaidSinceLastPeriod` — not
+    ///      just the (netted-to-near-zero) cash. Otherwise the next
+    ///      `settlePeriodicInterest` under-counts the period and auto-liquidates
+    ///      collateral the borrower already paid for. We seed the settled credit
+    ///      well above the 10-day accrual so the cash charge nets to zero, then
+    ///      assert the period accumulator tracks the accrual regardless AND that
+    ///      exactly that much credit was consumed from the buffer.
+    function testRepayPartial_periodCreditsFullGrossAccrued_notNettedCash() public {
+        uint256 seededCredit = 100 ether; // >> 10-day accrual → cash nets to 0
+        LibVaipakam.Loan memory l0 = LoanFacet(address(diamond)).getLoanDetails(loanId);
+        l0.interestSettled = SafeCast.toUint128(seededCredit);
+        TestMutatorFacet(address(diamond)).setLoan(loanId, l0);
+
+        vm.warp(startTs + 10 days);
+        ERC20Mock(mockERC20).mint(borrower, 100 ether);
+        vm.prank(borrower);
+        ERC20Mock(mockERC20).approve(address(diamond), 100 ether);
+        vm.prank(borrower);
+        RepayFacet(address(diamond)).repayPartial(loanId, 50 ether);
+
+        LibVaipakam.Loan memory l = LoanFacet(address(diamond)).getLoanDetails(loanId);
+        // The FIX: period accumulator tracks the FULL accrual, even though the
+        // seeded credit netted the cash interest to ~zero. Pre-fix this was 0.
+        assertGt(
+            l.interestPaidSinceLastPeriod,
+            0,
+            "grossAccrued credited to period despite netted cash (#1229)"
+        );
+        // The credit consumed from the buffer equals what was credited to the
+        // period — the same grossAccrued, accounted in both places.
+        uint256 consumed = seededCredit - uint256(l.interestSettled);
+        assertEq(
+            uint256(l.interestPaidSinceLastPeriod),
+            consumed,
+            "period credit == settled-buffer consumption (both = grossAccrued)"
+        );
+    }
 }
