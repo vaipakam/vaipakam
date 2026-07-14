@@ -539,7 +539,12 @@ export async function handleActivity(req: Request, env: Env): Promise<Response> 
  *      with this wallet as claimant.
  *
  * 'settled' loans are skipped — that status means BOTH sides already
- * claimed (LoanSettled event flipped them).
+ * claimed (LoanSettled event flipped them). 'internal_matched' IS
+ * included (#1234): it is terminal AND claimable — apps/defi's
+ * ClaimCenter verifies it status-agnostically (live getLoanDetails +
+ * getClaimable) and labels it "Internally Matched"; omitting it here
+ * hid internally-matched claims from the defi claim surface's indexer
+ * candidate layer.
  */
 export async function handleClaimables(
   req: Request,
@@ -568,7 +573,8 @@ export async function handleClaimables(
     const rows = (
       await env.DB.prepare(
         `SELECT * FROM loans
-         WHERE chain_id = ? AND status IN ('repaid', 'defaulted', 'liquidated')
+         WHERE chain_id = ?
+           AND status IN ('repaid', 'defaulted', 'liquidated', 'internal_matched')
            AND (lender_current_owner = ? OR borrower_current_owner = ?)
          ORDER BY loan_id DESC`,
       )
