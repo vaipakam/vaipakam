@@ -878,11 +878,18 @@ contract OfferCreateFacet is
                 uint256 tgtGraceEnd = uint256(tgt.startTime) +
                     uint256(tgt.durationDays) * LibVaipakam.ONE_DAY +
                     LibVaipakam.gracePeriod(tgt.durationDays);
+                // Deadline is EXCLUSIVE: `LibVaipakam.isOfferExpired` treats
+                // `now >= expiresAt` as expired, while the grace boundary itself
+                // (`now == graceEnd`) is still fillable (validate rejects only
+                // `now > graceEnd`). Stamp `graceEnd + 1` so an offer created at
+                // the boundary stays fillable THROUGH graceEnd instead of being
+                // instantly expired (Codex #1233 r3 P3).
+                uint256 deadline = tgtGraceEnd + 1;
                 if (
                     offer.expiresAt == 0 ||
-                    uint256(offer.expiresAt) > tgtGraceEnd
+                    uint256(offer.expiresAt) > deadline
                 ) {
-                    offer.expiresAt = uint64(tgtGraceEnd);
+                    offer.expiresAt = uint64(deadline);
                 }
             }
         }

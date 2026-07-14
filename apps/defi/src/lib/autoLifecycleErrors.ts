@@ -48,6 +48,7 @@ const SELECTORS = [
   'RefinanceRateExceedsCap',
   'RefinanceExpiryExceedsCap',
   'RefinanceTargetIncompatible',
+  'RefinanceTargetPastGrace',
   // OfferCreateFacet refinance-tagged path
   'InvalidRefinanceTarget',
   // #625 WI-1 — auto-lend intent + keeper-delegation surface

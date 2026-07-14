@@ -393,8 +393,8 @@ contract T092AutoLifecycleIntegrationTest is SetupTest {
                     .getOfferDetails(offerId)
                     .expiresAt
             ),
-            graceEnd,
-            "open-ended tagged offer expiry clamped to target grace deadline (#1233 r2)"
+            graceEnd + 1,
+            "open-ended tagged offer expiry clamped to grace deadline + 1 (fillable through graceEnd, #1233 r2/r3)"
         );
     }
 

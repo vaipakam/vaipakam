@@ -112,10 +112,6 @@ contract RefinanceFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErr
     ///         ONLY way to reach the internal entry; an external EOA
     ///         cannot call it directly.
     error OnlyDiamondInternal();
-    /// @dev Pass-2 A1/D5 (#1189) — refinance blocks strictly past the grace
-    ///      window, matching {RepayFacet.repayLoan}; post-grace resolution goes
-    ///      through DefaultedFacet. Declared per-facet (not in IVaipakamErrors).
-    error RepaymentPastGracePeriod();
     /// @dev Extracted modifier body — same shape as VaultFactoryFacet's
     ///      `_checkDiamondInternal`. Keeps the modifier a thin wrapper
     ///      so each call site inlines one function call.
@@ -336,25 +332,23 @@ contract RefinanceFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErr
         LibVaipakam.Loan storage newLoan = s.loans[newLoanId];
         address newLender = newLoan.lender;
 
-        // Pass-2 A1/D5 (#1189, Codex #1233 r2 P1) — block a POST-GRACE refinance,
-        // but gate on the REPLACEMENT's acceptance time (`newLoan.startTime`),
-        // NOT `block.timestamp`. The manual two-step flow accepts alice's offer
-        // (creating + funding `newLoan` and paying her) in one tx and completes
-        // here in a LATER tx; gating on `now` would STRAND a refinance committed
-        // in-grace if the old loan crossed its grace deadline between the two
-        // steps — leaving alice with BOTH loans active and the old one no longer
-        // refinanceable. A refinance whose acceptance landed in-grace completes
-        // (the late fee below still charges for the overdue days); one whose
-        // acceptance is ITSELF past grace is a fresh post-grace refinance and is
-        // blocked. On the atomic accept-and-refinance path
-        // `newLoan.startTime == block.timestamp`, so a fresh post-grace refinance
-        // still reverts here (and the whole acceptOffer tx rolls back cleanly).
-        if (
-            uint256(newLoan.startTime) >
-            oldEndTime + LibVaipakam.gracePeriod(oldLoan.durationDays)
-        ) {
-            revert RepaymentPastGracePeriod();
-        }
+        // Pass-2 A1/D5 (#1189, Codex #1233 r2+r3) — NO execution-level post-grace
+        // revert here. By the time this runs the replacement loan ALWAYS exists
+        // (`acceptOffer` created + funded it and paid alice — the offer must be
+        // accepted, checked above), so any revert here would STRAND alice with
+        // BOTH loans active and the old one no longer refinanceable. Instead:
+        //   • a FRESH post-grace refinance is blocked at ADMISSION — the
+        //     refinance-tagged offer can't be created/accepted/matched against a
+        //     past-grace target (`LibAutoRefinanceCheck.validate` /
+        //     `matchAdmissible` revert `RefinanceTargetPastGrace`), which covers
+        //     the atomic accept-and-refinance path (always tagged);
+        //   • an already-committed MANUAL completion (incl. legacy UNTAGGED
+        //     offers, which admission can't see) proceeds and settles the old
+        //     lender IN FULL plus the grace late fee computed below — strictly
+        //     lender-favourable versus a default recovery, mirroring
+        //     `repayLoan`'s post-grace FallbackPending cure exemption.
+        // (`precloseDirect` keeps its strict post-grace block: it is a single
+        // atomic tx with nothing pre-created, so blocking it can't strand.)
 
         // ── Repay old lender ──────────────────────────────────────────────
         // alice already received new principal from Lender B (via acceptOffer).

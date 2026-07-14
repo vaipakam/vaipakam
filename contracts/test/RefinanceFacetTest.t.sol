@@ -441,42 +441,24 @@ contract RefinanceFacetTest is Test {
 
     // ─── Pass-2 A1/D5 (#1189): refinance late-fee parity + post-grace block ───
 
-    /// @dev A FRESH post-grace refinance is blocked (parity with `repayLoan` /
-    ///      `precloseDirect`) — the exiting lender's overdue loan resolves
-    ///      through DefaultedFacet. The gate keys on the REPLACEMENT's
-    ///      acceptance time, so to hit it the replacement offer must be accepted
-    ///      AFTER the old loan is past grace (a genuinely new post-grace
-    ///      refinance), not merely completed late.
-    function testRefinanceLoan_postGrace_reverts() public {
+    /// @dev Pass-2 A1/D5 (#1189, Codex #1233 r2/r3) — a MANUAL refinance always
+    ///      COMPLETES once its replacement offer has been accepted, even if the
+    ///      old loan is (or crosses) past grace before the completion tx. The
+    ///      replacement loan already exists + funded the borrower at acceptance,
+    ///      so any execution-level revert here would STRAND the borrower with
+    ///      BOTH loans active. Completion settles the old lender IN FULL plus the
+    ///      grace late fee (lender-favourable vs a default recovery), and a FRESH
+    ///      post-grace refinance is instead blocked at ADMISSION (tagged offers —
+    ///      see `T092..._RejectsPastGraceTarget`). This covers the legacy UNTAGGED
+    ///      case Codex flagged: acceptance itself past grace still completes, no
+    ///      strand.
+    function testRefinanceLoan_manualCompletesPastGrace_noStrand() public {
         LibVaipakam.Loan memory l = LoanFacet(address(diamond)).getLoanDetails(activeLoanId);
         uint256 endTime = uint256(l.startTime) + uint256(l.durationDays) * 1 days;
-        // Old loan crosses grace FIRST, then the replacement is accepted →
-        // newLoan.startTime is itself past grace.
+        // Old loan crosses grace FIRST, then the untagged replacement is accepted
+        // (newLoan.startTime itself past grace) — the hardest no-strand case.
         vm.warp(endTime + LibVaipakam.gracePeriod(l.durationDays) + 1);
         _acceptBorrowerOffer(borrowerOfferId);
-        vm.mockCall(address(diamond), abi.encodeWithSelector(RiskFacet.calculateHealthFactor.selector), abi.encode(2e18));
-        vm.mockCall(address(diamond), abi.encodeWithSelector(RiskFacet.calculateLTV.selector), abi.encode(uint256(5000)));
-        vm.prank(borrower);
-        vm.expectRevert(RefinanceFacet.RepaymentPastGracePeriod.selector);
-        RefinanceFacet(address(diamond)).refinanceLoan(activeLoanId, borrowerOfferId);
-        vm.clearMockedCalls();
-    }
-
-    /// @dev Pass-2 A1/D5 (#1189, Codex #1233 r2 P1) — a refinance whose
-    ///      replacement was ACCEPTED in-grace must still COMPLETE even if the old
-    ///      loan crosses its grace deadline before the second (completion) tx.
-    ///      The manual two-step flow already created + funded the replacement and
-    ///      paid the borrower at acceptance; blocking completion here would strand
-    ///      the borrower with BOTH loans active. Completion proceeds (the late fee
-    ///      still charges for the overdue days), keyed on newLoan.startTime.
-    function testRefinanceLoan_acceptedInGrace_completesPastGrace() public {
-        // Accept while the old loan is still within term (replacement committed).
-        _acceptBorrowerOffer(borrowerOfferId);
-
-        LibVaipakam.Loan memory l = LoanFacet(address(diamond)).getLoanDetails(activeLoanId);
-        uint256 endTime = uint256(l.startTime) + uint256(l.durationDays) * 1 days;
-        // Old loan now crosses its grace deadline before completion.
-        vm.warp(endTime + LibVaipakam.gracePeriod(l.durationDays) + 1);
 
         vm.mockCall(address(diamond), abi.encodeWithSelector(RepayFacet.calculateRepaymentAmount.selector), abi.encode(PRINCIPAL + 10 ether));
         vm.mockCall(address(diamond), abi.encodeWithSelector(VaultFactoryFacet.vaultWithdrawERC20.selector), abi.encode(true));
@@ -490,7 +472,7 @@ contract RefinanceFacetTest is Test {
         assertEq(
             uint8(LoanFacet(address(diamond)).getLoanDetails(activeLoanId).status),
             uint8(LibVaipakam.LoanStatus.Repaid),
-            "in-grace-accepted refinance completes past grace, not stranded (#1233 r2 P1)"
+            "manual refinance completes past grace, never stranded (#1233 r3 P2)"
         );
         vm.clearMockedCalls();
     }
