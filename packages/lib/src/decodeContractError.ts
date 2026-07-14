@@ -290,6 +290,10 @@ const FRIENDLY_ERROR_BY_NAME: Record<string, string> = {
     "You can't repay a loan where you are the lender — repaying your own loan isn't allowed.",
   PartialRepayNotAllowed:
     "This loan doesn't allow partial repayment — repay the full amount instead.",
+  PartialRepayWorsensHealthFactor:
+    'This partial repayment would lower the loan health factor instead of improving it. A partial repay must not worsen HF — adjust the amount and try again.',
+  PartialSwapWorsensHealthFactor:
+    'This collateral swap-to-repay would lower the loan health factor instead of improving it. Adjust the swap so it does not worsen HF.',
   RiskAndTermsConsentRequired:
     'Please accept the risk disclosures and terms before continuing.',
   FunctionDisabled:
@@ -519,6 +523,11 @@ export const KNOWN_ERROR_SELECTORS: Record<string, string> = {
   '0xf9ee54f0': 'InsufficientPartialAmount()',
   '0x1cd92a3c': 'NotDailyYet()',
   '0x426ad30d': 'NotNFTRental()',
+  // Pass-2 A2 (#1190/#1191) — a voluntary partial (repay or swap-to-repay) that
+  // would LOWER the health factor is rejected by the monotonicity gate. These
+  // are the two new reverts; RepayFacet + SwapToRepayFacet respectively.
+  '0x5a671452': 'PartialRepayWorsensHealthFactor(uint256,uint256)',
+  '0x4a8b8932': 'PartialSwapWorsensHealthFactor(uint256,uint256)',
 
   // ── Default (DefaultedFacet) ──────────────────────────────────────────
   '0xb79cb16c': 'NotDefaultedYet()',

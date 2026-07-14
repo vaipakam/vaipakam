@@ -374,4 +374,44 @@ contract PeriodicInterestSettleTest is SetupTest {
         // Checkpoint NOT yet advanced (we're still within the period).
         assertEq(l.lastPeriodicInterestSettledAt, SafeCast.toUint64(startTs));
     }
+
+    /// @dev Pass-2 A3 (#1191, Codex #1229 round 3, P1) — the period accumulator
+    ///      must receive the NETTED cash interest (`accrued`), never the gross.
+    ///      `grossAccrued` accrues from `interestAccrualStart`, which a periodic
+    ///      auto-liquidation does NOT reset when it advances a checkpoint — only
+    ///      `interestPaidSinceLastPeriod` is zeroed — so `grossAccrued` still
+    ///      spans the already-settled period(s). Crediting it here would let a
+    ///      post-auto-settle partial mark the NEW period paid with OLD interest,
+    ///      skip a required auto-liquidation, and underpay the lender. We model a
+    ///      prior over-settled period by seeding `interestSettled` well above the
+    ///      10-day accrual so the netted cash charge is zero, and assert the
+    ///      accumulator is NOT inflated by that already-settled span. (Exact
+    ///      current-period attribution — which would carry a prior over-delivery
+    ///      excess forward — is deferred to #1230.)
+    function testRepayPartial_periodAccumulatorExcludesPreSettledSpan() public {
+        uint256 seededCredit = 100 ether; // >> 10-day accrual → netted cash = 0
+        LibVaipakam.Loan memory l0 = LoanFacet(address(diamond)).getLoanDetails(loanId);
+        l0.interestSettled = SafeCast.toUint128(seededCredit);
+        TestMutatorFacet(address(diamond)).setLoan(loanId, l0);
+
+        vm.warp(startTs + 10 days);
+        ERC20Mock(mockERC20).mint(borrower, 100 ether);
+        vm.prank(borrower);
+        ERC20Mock(mockERC20).approve(address(diamond), 100 ether);
+        vm.prank(borrower);
+        RepayFacet(address(diamond)).repayPartial(loanId, 50 ether);
+
+        LibVaipakam.Loan memory l = LoanFacet(address(diamond)).getLoanDetails(loanId);
+        // The pre-settled span is NOT credited into the current period: the
+        // netted cash charge is zero, so the accumulator stays zero. Pre-revert
+        // (the reverted `+= grossAccrued`) this over-credited ~10 days of
+        // already-settled interest and could skip a required auto-liquidation.
+        assertEq(
+            l.interestPaidSinceLastPeriod,
+            0,
+            "already-settled span must not inflate the current-period accumulator (#1229 P1)"
+        );
+        // Checkpoint NOT advanced (nothing paid toward this period).
+        assertEq(l.lastPeriodicInterestSettledAt, SafeCast.toUint64(startTs));
+    }
 }

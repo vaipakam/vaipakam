@@ -831,6 +831,22 @@
   },
   {
     "type": "error",
+    "name": "PartialSwapWorsensHealthFactor",
+    "inputs": [
+      {
+        "name": "hfBefore",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "hfAfter",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
     "name": "PartialWouldRetireFullPrincipal",
     "inputs": []
   },
