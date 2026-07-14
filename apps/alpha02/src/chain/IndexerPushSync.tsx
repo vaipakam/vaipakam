@@ -28,10 +28,28 @@ import { useQueryClient } from '@tanstack/react-query';
 import { useActiveChain } from './useActiveChain';
 import { indexerWsOrigin } from '../data/indexer';
 
-/** Server→client frames (mirror of apps/indexer chainIngestDO PushFrame). */
+/** Server→client frames (mirror of apps/indexer chainIngestDO PushFrame).
+ *  The `cursor` heartbeat + the hello `cursor`/`scanCadenceSec` fields land
+ *  with RPC read-diet PR 0 (indexer-side); this client tolerates their
+ *  absence (older worker) and — until PR A's rail-health helper consumes
+ *  them — ignores the heartbeat. Unknown frame kinds are always ignored,
+ *  so the two sides can deploy independently. */
 type ServerFrame =
-  | { t: 'hello'; chainId: number | null; ingestActive: boolean }
-  | { t: 'invalidate'; chainId: number; keys: string[]; scannedTo: string };
+  | {
+      t: 'hello';
+      chainId: number | null;
+      ingestActive: boolean;
+      cursor?: { lastBlock: number; updatedAt: number } | null;
+      scanCadenceSec?: number | null;
+    }
+  | { t: 'invalidate'; chainId: number; keys: string[]; scannedTo: string }
+  | {
+      t: 'cursor';
+      chainId: number;
+      lastBlock: string;
+      updatedAt: number;
+      scanCadenceSec: number;
+    };
 
 /** Coarse DO invalidation key → the react-query key ROOTS it dirties.
  *  Only INDEXER-fed caches belong here — chain-read caches are
@@ -83,7 +101,41 @@ export const KEY_MAP: Record<string, string[]> = {
     'deskMarkets',
   ],
   // Loan status transitions (repaid / defaulted / …) restate history rows.
-  'loan.updated': ['myLoans', 'loan', 'claimables', 'deskHistory'],
+  // RPC read-diet PR 0: this key now ALSO fires on data-only entitlement
+  // changes (partial repay/match, the FallbackPending partial-rescue class,
+  // collateral top-up, extension, periodic-interest advance) — and it maps
+  // onto `vaultAssets`, because loan settlement/interest events are exactly
+  // the event class that moves escrow into a party's vault (design §4.1.2:
+  // the one existing key that corresponds to a vault-balance change).
+  'loan.updated': ['myLoans', 'loan', 'claimables', 'deskHistory', 'vaultAssets'],
+  // RPC read-diet PR 0 (design §4.0.1) — a position NFT changed hands
+  // (secondary trade, claim-burn, borrower migration). Own-position lists,
+  // claimables, and the detail-page owner/role gates are holder-keyed, so
+  // an ownership flip must dirty them from the push rail: PR A removes the
+  // per-block blanket that today masks this key's absence, and §7(c) of the
+  // design verifies this frame arrives live before that demotion ships.
+  'ownership.changed': [
+    'myLoans',
+    'myOffers',
+    'claimables',
+    'positionOwners',
+    'loan',
+    'offer',
+    // A secondary transfer also appends the recipient to
+    // loan_participants, which useDeskHistory reads — and LiveChainSync
+    // does not cover deskHistory, so without this a user acquiring a
+    // position with the History tab open would see it stale until
+    // focus/net (Codex #1227 r1).
+    'deskHistory',
+    // A one-sided claim (LenderFundsClaimed/BorrowerFundsClaimed) moves
+    // funds into the claimant's vault and BURNS that side's position NFT
+    // — the burn is what this key surfaces, while loan.updated only
+    // follows when the claim also closes the loan (LoanSettled). Without
+    // vaultAssets here, a second tab watching Vault keeps the pre-claim
+    // balance after a one-sided claim once the block blanket is removed
+    // (Codex #1227 r2).
+    'vaultAssets',
+  ],
   'activity.appended': ['activity'],
   // NOT mapped on purpose: 'deskSymbols' (token metadata is immutable).
 };

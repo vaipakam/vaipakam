@@ -153,6 +153,23 @@ export interface ChainIndexerResult {
    *  `offer.changed` key (the desk consumes the signed book + the
    *  signed-aware /offers/markets — see invalidationKeysFromResult). */
   signedOfferUpdates?: number;
+  /** RPC read-diet PR 0 (Alpha02RpcReadDietDesign §9) — loans-row mutations
+   *  that change row DATA without a status transition: partial repay,
+   *  partial match / partial FallbackPending rescue (the entitlement-
+   *  mutating class — e.g. a rescue parks `heldForLender` while status
+   *  stays `fallback_pending`), collateral top-up, extension, periodic-
+   *  interest advance, borrower-obligation migration. Folded into the
+   *  coarse `loan.updated` push key: previously a scan containing ONLY
+   *  such events pushed nothing but `activity.appended`, so WS clients
+   *  missed entitlement changes until a poll. Optional so the early-return
+   *  paths stay untouched (absent reads as 0). */
+  loanEntitlementUpdates?: number;
+  /** RPC read-diet PR 0 — position-NFT `Transfer` events that actually
+   *  re-pointed a tracked row's `*_current_owner` column (secondary trade,
+   *  claim-burn, borrower migration). Feeds the new `ownership.changed`
+   *  push key so own-position / claimables views learn an ownership flip
+   *  from the push rail instead of a block-driven refetch. */
+  ownershipTransfers?: number;
   skipped?: string;
 }
 
@@ -628,6 +645,8 @@ export async function runChainIndexerForChain(
     loanDetailRefreshes,
     activityEvents,
     signedOfferUpdates,
+    loanEntitlementUpdates: loanStats.entitlementUpdates,
+    ownershipTransfers: loanStats.ownershipTransfers,
   };
 }
 
@@ -1795,12 +1814,22 @@ async function processLoanLogs(
   blockTimestamps: Map<bigint, number>,
   client: PublicClient,
   diamond: Address,
-): Promise<{ newLoans: number; statusUpdates: number }> {
+): Promise<{
+  newLoans: number;
+  statusUpdates: number;
+  entitlementUpdates: number;
+  ownershipTransfers: number;
+}> {
   // Walk in scan order so a LoanInitiated and a LoanRepaid in the
   // same window (cron caught up after a stretch of downtime) write
   // the row first then flip status second.
   let newLoans = 0;
   let statusUpdates = 0;
+  // RPC read-diet PR 0 — see the ChainIndexerResult field docs. Data-only
+  // row mutations and current-owner re-points each get a counter so a scan
+  // containing ONLY such events still broadcasts a push key.
+  let entitlementUpdates = 0;
+  let ownershipTransfers = 0;
   const now = Math.floor(Date.now() / 1000);
 
   // Pre-index the `LoanInitiatedDetails` companions by loanId. Every
@@ -2296,7 +2325,7 @@ async function processLoanLogs(
       // executed fill's terms are immutable history the candle
       // endpoint reads (Codex #1139 round-5 P2; migration 0032 §2).
       const loanId = Number(a.loanId as bigint);
-      await env.DB.prepare(
+      const extended = await env.DB.prepare(
         `UPDATE loans
             SET interest_rate_bps = ?,
                 start_time = ?,
@@ -2313,6 +2342,9 @@ async function processLoanLogs(
           loanId,
         )
         .run();
+      // RPC read-diet PR 0 — data-only mutation must still broadcast
+      // `loan.updated` (no status transition counts it otherwise).
+      if ((extended.meta?.changes ?? 0) > 0) entitlementUpdates++;
       // Codex round-3 P2 — the contract calls
       // `LibPrepayCleanup.clearActiveListing` on extension, but that
       // helper does NOT emit `PrepayListingCanceled`, so this branch
@@ -2326,7 +2358,7 @@ async function processLoanLogs(
       // NEVER touch init_principal here — the executed fill's principal
       // is immutable history the candle endpoint reads (0032 §2).
       const loanId = Number(a.loanId as bigint);
-      await env.DB.prepare(
+      const partialRepaid = await env.DB.prepare(
         `UPDATE loans SET principal = ?, updated_at = ?
          WHERE chain_id = ? AND loan_id = ?`,
       )
@@ -2337,6 +2369,8 @@ async function processLoanLogs(
           loanId,
         )
         .run();
+      // RPC read-diet PR 0 — principal shrank without a status flip.
+      if ((partialRepaid.meta?.changes ?? 0) > 0) entitlementUpdates++;
       // T-086 step 12 — refresh `prepay_listings.grace_period_end`
       // if the loan has a live listing. Partial repayment can
       // reset `startTime` (ERC20 loans) or reduce `durationDays`
@@ -2401,7 +2435,7 @@ async function processLoanLogs(
         durationDays: bigint;
         startTime: bigint;
       };
-      await env.DB.prepare(
+      const swapPartial = await env.DB.prepare(
         `UPDATE loans
            SET principal = ?,
                collateral_amount = ?,
@@ -2418,6 +2452,10 @@ async function processLoanLogs(
           loanId,
         )
         .run();
+      // RPC read-diet PR 0 — same data-only entitlement class as
+      // PartialRepaid: principal/collateral/startTime moved with no
+      // status flip, so it must still broadcast `loan.updated`.
+      if ((swapPartial.meta?.changes ?? 0) > 0) entitlementUpdates++;
       // Mirror PartialRepaid's grace-end refresh — the contract resets
       // `loan.startTime` on partial swap-to-repay too (RepayFacet:663
       // pattern), which moves the grace boundary for any live listing.
@@ -2459,7 +2497,7 @@ async function processLoanLogs(
     } else if (log.eventName === 'CollateralAdded') {
       // Borrower topped up collateral — loan stays Active, but
       // `collateral_amount` grows. The event carries `newCollateralAmount`.
-      await env.DB.prepare(
+      const collateralAdded = await env.DB.prepare(
         `UPDATE loans SET collateral_amount = ?, updated_at = ?
          WHERE chain_id = ? AND loan_id = ?`,
       )
@@ -2470,6 +2508,8 @@ async function processLoanLogs(
           Number(a.loanId as bigint),
         )
         .run();
+      // RPC read-diet PR 0 — collateral grew without a status flip.
+      if ((collateralAdded.meta?.changes ?? 0) > 0) entitlementUpdates++;
     } else if (log.eventName === 'LoanObligationTransferred') {
       // Preclose Option 2 — the borrower obligation moves to a new borrower;
       // the loan stays Active. #749: this BURNS the old borrower position NFT
@@ -2480,7 +2520,7 @@ async function processLoanLogs(
       // current-owner together so the read routes attribute the loan to the new
       // borrower (and not the exited one). The mint Transfer for the new id is a
       // no-op until this write lands; this write is the authoritative one.
-      await env.DB.prepare(
+      const obligationMoved = await env.DB.prepare(
         `UPDATE loans
             SET borrower = ?, borrower_token_id = ?, borrower_current_owner = ?,
                 updated_at = ?
@@ -2495,6 +2535,10 @@ async function processLoanLogs(
           Number(a.loanId as bigint),
         )
         .run();
+      // RPC read-diet PR 0 — the borrower side changed hands (burn +
+      // fresh mint the plain Transfer handler can't attribute), so this
+      // write is also the ownership signal for the push rail.
+      if ((obligationMoved.meta?.changes ?? 0) > 0) ownershipTransfers++;
       // #1130 — the new obligor is a participant. The token-id migration
       // (burn + fresh mint) means the plain Transfer handler can't attribute
       // the mint (the row still carried the OLD id at that log), so this
@@ -2564,7 +2608,7 @@ async function processLoanLogs(
       // the read routes attribute the loan to the new lender. (Previously
       // allowlisted as "covered by the Transfer handler" — it was NOT, since the
       // token id migrates.)
-      await env.DB.prepare(
+      const lenderSold = await env.DB.prepare(
         `UPDATE loans
             SET lender = ?, lender_token_id = ?, lender_current_owner = ?,
                 updated_at = ?
@@ -2579,6 +2623,10 @@ async function processLoanLogs(
           Number(a.loanId as bigint),
         )
         .run();
+      // RPC read-diet PR 0 — the lender side changed hands via burn +
+      // fresh mint (the plain Transfer handler can't attribute it), so
+      // this write is the ownership signal for the push rail.
+      if ((lenderSold.meta?.changes ?? 0) > 0) ownershipTransfers++;
       // #1130 — the buying lender is a participant (token-id migration; see
       // the LoanObligationTransferred note).
       await recordLoanParticipant(
@@ -2620,7 +2668,7 @@ async function processLoanLogs(
         throw err;
       }
       const newLender = String(d.lender).toLowerCase();
-      await env.DB.prepare(
+      const saleCompleted = await env.DB.prepare(
         `UPDATE loans
             SET lender = ?, lender_token_id = ?, lender_current_owner = ?,
                 updated_at = ?
@@ -2635,6 +2683,9 @@ async function processLoanLogs(
           loanId,
         )
         .run();
+      // RPC read-diet PR 0 — same burn+remint lender migration as
+      // LoanSold: this write is the ownership signal for the push rail.
+      if ((saleCompleted.meta?.changes ?? 0) > 0) ownershipTransfers++;
       // #1130 — the sale-offer buyer is a participant (token-id migration;
       // see the LoanObligationTransferred note).
       await recordLoanParticipant(
@@ -2704,7 +2755,7 @@ async function processLoanLogs(
       // settle events carry it as the second arg (`periodEndAt`),
       // matching the inline-fold event's shape.
       const periodEndAt = Number(a.periodEndAt as bigint);
-      await env.DB.prepare(
+      const periodAdvanced = await env.DB.prepare(
         `UPDATE loans SET last_period_settled_at = ?, updated_at = ?
          WHERE chain_id = ? AND loan_id = ?`,
       )
@@ -2712,7 +2763,10 @@ async function processLoanLogs(
         .run();
       // PeriodicInterestSettled / AutoLiquidated do NOT flip terminal
       // status — the loan stays active across periodic checkpoints.
-      // No statusUpdates increment.
+      // No statusUpdates increment. RPC read-diet PR 0: the checkpoint
+      // still moved interest (lender vault balance + loan row data), so
+      // it must broadcast `loan.updated`.
+      if ((periodAdvanced.meta?.changes ?? 0) > 0) entitlementUpdates++;
     } else if (log.eventName === 'InternalMatchExecuted') {
       // PR3-PR5 of internal-match work (B.2). Two or three loans
       // partial-match across each other; each loan's principal is
@@ -2833,7 +2887,7 @@ async function processLoanLogs(
           // still `Active`, principal > 0) or a partial rescue of a
           // `fallback_pending` loan. Refresh the absolute principal/collateral
           // and DON'T touch status.
-          await env.DB.prepare(
+          const numbersOnly = await env.DB.prepare(
             `UPDATE loans SET principal = ?, collateral_amount = ?, updated_at = ? WHERE chain_id = ? AND loan_id = ?`,
           )
             .bind(
@@ -2844,6 +2898,11 @@ async function processLoanLogs(
               loanId,
             )
             .run();
+          // RPC read-diet PR 0 — THE rescue-path audit case (design §1.5):
+          // a partial rescue parks `heldForLender` while status stays
+          // `fallback_pending`, so this numbers-only refresh is exactly the
+          // entitlement-mutating class that must still push `loan.updated`.
+          if ((numbersOnly.meta?.changes ?? 0) > 0) entitlementUpdates++;
         }
       }
 
@@ -3299,7 +3358,7 @@ async function processLoanLogs(
       // were skipped, leaving the last live holder — they'd keep showing the
       // claimed position as still held.) The same tokenId sits on at most one
       // of the three rows; the others no-op.
-      await env.DB.batch([
+      const ownerWrites = await env.DB.batch([
         env.DB.prepare(
           `UPDATE loans SET lender_current_owner = ?, updated_at = ?
            WHERE chain_id = ? AND lender_token_id = ?`,
@@ -3313,6 +3372,16 @@ async function processLoanLogs(
            WHERE chain_id = ? AND position_token_id = ?`,
         ).bind(to, now, chainId, tokenId),
       ]);
+      // RPC read-diet PR 0 — count only Transfers that re-pointed a TRACKED
+      // row (mint-before-insert Transfers match nothing and are seeded by
+      // the LoanInitiated/OfferCreated handlers, whose own keys fire in the
+      // same scan). Trades AND claim-burns both count: each changes who the
+      // holder is, which is what claimables/own-position views key on.
+      const ownerRowsTouched = ownerWrites.reduce(
+        (n, r) => n + (r.meta?.changes ?? 0),
+        0,
+      );
+      if (ownerRowsTouched > 0) ownershipTransfers++;
       // #1130 — append-only participation history: the transfer RECIPIENT
       // becomes a participant of whichever loan side this tokenId sits on.
       // Burns (to = 0x0) append nothing — leaving the previous holder's row
@@ -3364,7 +3433,7 @@ async function processLoanLogs(
       .run();
   }
 
-  return { newLoans, statusUpdates };
+  return { newLoans, statusUpdates, entitlementUpdates, ownershipTransfers };
 }
 
 async function flipLoanStatus(

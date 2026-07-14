@@ -45,9 +45,59 @@ describe('IndexerPushSync KEY_MAP (#1131 desk roots)', () => {
         'deskHistory',
         'deskMarkets',
       ],
-      'loan.updated': ['myLoans', 'loan', 'claimables', 'deskHistory'],
+      // RPC read-diet PR 0 — 'vaultAssets' rides loan.updated (settlement /
+      // periodic-interest events are the event class that moves escrow into
+      // a party's vault; design §4.1.2), and loan.updated now also fires on
+      // data-only entitlement changes (partial repay/match/rescue,
+      // collateral top-up, extension).
+      'loan.updated': [
+        'myLoans',
+        'loan',
+        'claimables',
+        'deskHistory',
+        'vaultAssets',
+      ],
+      // RPC read-diet PR 0 (design §4.0.1) — a position NFT changed hands.
+      // Holder-keyed roots must learn ownership flips from the push rail:
+      // PR A removes the per-block blanket that currently masks this key's
+      // absence, and the design's §7(c) live check observes this frame
+      // before that demotion ships. positionOwners is nominally a
+      // chain-read cache (LiveChainSync territory), but ownership.changed
+      // fires only on actual transfers — rare — so the overlap with the
+      // per-block nudge is negligible and deliberate.
+      // deskHistory rides ownership too: a secondary transfer appends the
+      // recipient to loan_participants, which useDeskHistory reads and no
+      // other rail refreshes (Codex #1227 r1). vaultAssets rides it as
+      // well: a one-sided claim burns the position NFT (this key) while
+      // moving funds into the claimant's vault, and loan.updated only
+      // follows when the claim also settles the loan (Codex #1227 r2).
+      'ownership.changed': [
+        'myLoans',
+        'myOffers',
+        'claimables',
+        'positionOwners',
+        'loan',
+        'offer',
+        'deskHistory',
+        'vaultAssets',
+      ],
       'activity.appended': ['activity'],
     });
+  });
+
+  it('ownership flips dirty every holder-keyed root (RPC read-diet PR 0)', () => {
+    expect(KEY_MAP['ownership.changed']).toEqual(
+      expect.arrayContaining([
+        'myLoans',
+        'myOffers',
+        'claimables',
+        'positionOwners',
+      ]),
+    );
+  });
+
+  it('loan.updated carries vaultAssets (settlement escrow → vault; RPC read-diet PR 0)', () => {
+    expect(KEY_MAP['loan.updated']).toContain('vaultAssets');
   });
 
   it('offer frames carry the offer-fed desk views (book, markets, amend seed)', () => {

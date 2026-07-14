@@ -64,6 +64,13 @@ alpha02 uses chain reads and indexed reads for different jobs.
   disappear merely because ingestion is delayed.
 - Realtime push refreshes matching indexed views when available. Polling remains
   the fallback.
+- The push signal covers every class of change a holder-keyed view depends on —
+  including position-ownership transfers (a position NFT changing hands, a
+  claim burning one) and entitlement changes that alter what a party is owed
+  without changing the loan's status (for example a partial rescue of a
+  pending-fallback loan). The push rail also reports its own freshness (how
+  recently ingestion advanced, and how often it is expected to), so the app
+  can tell a healthy-but-quiet rail from a stalled one instead of guessing.
 
 ## Review Receipts and Consent
 
