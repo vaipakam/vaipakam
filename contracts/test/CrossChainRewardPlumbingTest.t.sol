@@ -365,6 +365,27 @@ contract CrossChainRewardPlumbingTest is SetupTest, IVaipakamErrors {
         messenger.deliverChainReport(CHAIN_ARB, 1, 1, 1);
     }
 
+    /// @dev #1195 E3 (Pass-2) — the BASE-path self-report (`closeDay`) now also
+    ///      rejects a report AFTER the day was finalized, matching the mirror
+    ///      ingress guard. Finalize day 1, advance past it, then `closeDay(1)`
+    ///      must revert `ReportAfterFinalization` (not store a poisoning late
+    ///      report).
+    function testCloseDayRevertsAfterFinalization() public {
+        _configureCanonical();
+        InteractionRewardsFacet(address(diamond)).setInteractionLaunchTimestamp(block.timestamp);
+        messenger.deliverChainReport(CHAIN_BASE, 1, 10e18, 5e18);
+        messenger.deliverChainReport(CHAIN_ARB, 1, 10e18, 5e18);
+        messenger.deliverChainReport(CHAIN_OP, 1, 10e18, 5e18);
+        _agg().finalizeDay(1);
+
+        // Advance past day 1 so `closeDay` clears RewardDayNotElapsed; the
+        // aggregator ingress didn't set the reporter's chainReportSentAt, so
+        // ChainDayAlreadyReported won't preempt — the finalized gate fires.
+        vm.warp(block.timestamp + 2 days + 1);
+        vm.expectRevert(ReportAfterFinalization.selector);
+        _rep().closeDay(1);
+    }
+
     function testOnChainReportStampsFirstReportAt() public {
         _configureCanonical();
         uint64 t0 = uint64(block.timestamp);
