@@ -184,6 +184,13 @@ contract RepayFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErrors 
     ///         is consent to the borrower's create-time request).
     ///         Default-false: every loan must opt in explicitly.
     error PartialRepayNotAllowed();
+    /// @notice Pass-2 A2 (#1190) — reverted when a partial repayment would
+    ///         LOWER the loan's health factor. A partial reduces principal and
+    ///         resets accrued interest with collateral still liened, so HF
+    ///         strictly improves in practice; this is a defensive monotonicity
+    ///         guard replacing the old (inverted) `HF >= 1.5 admission floor`
+    ///         gate, which blocked exactly the deleveraging the lender wants.
+    error PartialRepayWorsensHealthFactor(uint256 hfBefore, uint256 hfAfter);
 
     /**
      * @notice Repays an active loan in full.
@@ -767,10 +774,37 @@ contract RepayFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErrors 
         if (block.timestamp > graceEnd) revert RepaymentPastGracePeriod();
         address treasury = LibFacet.getTreasury();
 
+        // Pass-2 A2 (#1190) — capture the PRE-partial health factor for the
+        // monotonicity gate at the end. Only liquid-on-both-legs loans carry an
+        // HF (illiquid/NFT-rental legs have none), matching the post-repay gate.
+        bool hfGated = loan.collateralLiquidity == LibVaipakam.LiquidityStatus.Liquid &&
+            loan.principalLiquidity == LibVaipakam.LiquidityStatus.Liquid;
+        uint256 hfBefore;
+        if (hfGated) {
+            hfBefore = abi.decode(
+                LibFacet.crossFacetStaticCall(
+                    abi.encodeWithSelector(RiskFacet.calculateHealthFactor.selector, loanId),
+                    HealthFactorCalculationFailed.selector
+                ),
+                (uint256)
+            );
+        }
+
         uint256 accrued;
         if (loan.assetType == LibVaipakam.AssetType.ERC20) {
-            // ERC20: Accrued to now + partial principal
-            accrued = LibEntitlement.accruedInterestToTime(loan, block.timestamp);
+            // ERC20: Accrued to now + partial principal.
+            // Pass-2 A3 (#1191) — CREDIT any periodic-settled interest so the
+            // partial charges only the UNSETTLED accrual. On a periodic-cadence
+            // loan an auto-liquidated period credits `interestSettled` while the
+            // accrual clock keeps running from the segment start, so the raw
+            // `accruedInterestToTime` gross would RE-charge the already-settled
+            // days (the audit's M1). `creditSettledInterest` nets it out; the
+            // stale `interestSettled` is then zeroed at the clock reset below
+            // (mirrors PrecloseFacet / RiskFacet's #915 credit+zero).
+            accrued = LibEntitlement.creditSettledInterest(
+                loan,
+                LibEntitlement.accruedInterestToTime(loan, block.timestamp)
+            );
             (uint256 treasuryShare, uint256 lenderShare) = LibEntitlement.splitTreasury(
                 loan,
                 accrued
@@ -850,18 +884,23 @@ contract RepayFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErrors 
             // post-maturity partial reset the grace clock and roll the
             // lender's recovery deadline.)
             //
-            // Codex round-1 P1 (PR #559): DO NOT credit
+            // Codex round-1 P1 (PR #559): DO NOT ACCUMULATE into
             // `loan.interestSettled` here. The combined state reset
             // (`principal -=`, `interestRemainingDays -=`,
-            // `interestAccrualStart =`) already encodes the partial's effect
-            // on future settlements: at the next settlement, `gross =
-            // proRataInterest(remainingPrincipal, rate, remainingDays)` is the
-            // borrower's FUTURE-ONLY entitlement to the lender. Adding the
-            // partial's already-paid interest to the accumulator AND
-            // subtracting it from a future-only gross would double-count the
-            // partial's settlement, underpaying the lender. `interestSettled`
-            // is the right tool only when state ISN'T reset (periodic-settle
-            // auto-liq path).
+            // `interestAccrualStart =`) makes the next settlement FUTURE-ONLY:
+            // `gross = proRataInterest(remainingPrincipal, rate, remainingDays)`.
+            // Adding the partial's paid interest to the accumulator AND
+            // subtracting it from a future-only gross would double-count.
+            //
+            // Pass-2 A3 (#1191): but a PRE-EXISTING `interestSettled` (credited
+            // by a periodic auto-liquidation BEFORE this partial) is now stale
+            // — it was already netted from the partial's charge via
+            // `creditSettledInterest` above, and leaving it non-zero would let
+            // `settlementInterestNet`/`currentBorrowBalance` subtract it a
+            // SECOND time from the future-only window (understating HF, delaying
+            // liquidation, underpaying the lender at final settle). So ZERO it
+            // at the reset below — the #915 credit+zero pattern
+            // (PrecloseFacet:886 / RiskFacet).
             //
             // #641 — seed the interest clock from the term for any loan that
             // predates the fields, so the elapsed math below doesn't compute
@@ -883,6 +922,10 @@ contract RepayFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErrors 
             }
             // T-034 — interestAccrualStart downsized to uint64; explicit cast.
             loan.interestAccrualStart = uint64(block.timestamp); // Reset accrual start
+            // Pass-2 A3 (#1191) — clear the now-stale periodic-settled credit
+            // (see the reconciliation note above): it was netted from this
+            // partial's charge, so it must not be subtracted again downstream.
+            loan.interestSettled = 0;
 
             // §3.10 — accrual clock reset right above (loan.interestAccrualStart
             // = block.timestamp), so accruedInterest at emit is 0.
@@ -1027,21 +1070,26 @@ contract RepayFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErrors 
             );
         }
 
-        if (loan.collateralLiquidity == LibVaipakam.LiquidityStatus.Liquid &&
-            loan.principalLiquidity == LibVaipakam.LiquidityStatus.Liquid) {
-            // Post-repay HF check
-            bytes memory result = LibFacet.crossFacetStaticCall(
-                abi.encodeWithSelector(
-                    RiskFacet.calculateHealthFactor.selector,
-                    loanId
+        if (hfGated) {
+            // Pass-2 A2 (#1190) — MONOTONICITY gate, not an admission floor. The
+            // old check reverted unless post-repay HF >= the 1.5 ADMISSION floor,
+            // which was INVERTED: a partial reduces principal + resets accrued
+            // interest with collateral still liened, so HF strictly improves —
+            // the floor could only bind when the loan was already sub-1.5 and the
+            // partial didn't fully restore it, blocking exactly the deleveraging
+            // the lender most wants (HF 1.2 → a partial lifting it to 1.4 would
+            // revert). Spec §1161-1164 grants partial repayment with no
+            // post-payment HF condition; §1362's directional rule is "strictly
+            // improve HF", never re-admit at 1.5. So assert only that the partial
+            // does not WORSEN HF (defensive; it never should in practice).
+            uint256 hfAfter = abi.decode(
+                LibFacet.crossFacetStaticCall(
+                    abi.encodeWithSelector(RiskFacet.calculateHealthFactor.selector, loanId),
+                    HealthFactorCalculationFailed.selector
                 ),
-                HealthFactorCalculationFailed.selector
+                (uint256)
             );
-            uint256 hf = abi.decode(result, (uint256));
-            // #394 Lever A (Codex #647 P1) — this loan's snapshotted admission
-            // floor (immutable post-admission), not the live knob.
-            if (hf < LibVaipakam.effectiveLoanMinHealthFactor(loan.minHealthFactorAtInit))
-                revert HealthFactorTooLow();
+            if (hfAfter < hfBefore) revert PartialRepayWorsensHealthFactor(hfBefore, hfAfter);
         }
     }
 

@@ -1071,21 +1071,83 @@ contract RepayFacetTest is Test {
     }
 
     /// @dev Tests repayPartial for liquid loan with HF check - mock HF too low path.
-    function testRepayPartialLiquidHFTooLow() public {
+    /// @dev Pass-2 A2 (#1190) — a partial repayment on a loan whose HF sits
+    ///      BELOW the 1.5 admission floor now SUCCEEDS (it deleverages). The old
+    ///      gate reverted `HealthFactorTooLow` whenever post-repay HF < 1.5,
+    ///      which was inverted — it blocked exactly the deleveraging the lender
+    ///      wants. The fix asserts only that HF does not WORSEN (spec §1362).
+    ///      HF is mocked constant (1.0e18 < 1.5e18), so before == after
+    ///      (non-worsening) and the partial is admitted.
+    function testRepayPartial_subThresholdDeleverage_succeeds() public {
         helperOfferLoan();
-        // After partial repay, mock HF < MIN_HEALTH_FACTOR
+        uint256 principalBefore = LoanFacet(address(diamond)).getLoanDetails(1).principal;
         vm.mockCall(
             address(diamond),
             abi.encodeWithSelector(RiskFacet.calculateHealthFactor.selector),
-            abi.encode(1e18) // exactly at threshold but less than 1.5e18
+            abi.encode(1e18) // below the 1.5e18 admission floor, but non-worsening
         );
-        // Loan 1 is liquid (mockERC20). After partial repay, HF check fires.
-        // The loan is liquid (loan.liquidity == Liquid), so HF check runs.
-        // HF = 1e18 < MIN_HEALTH_FACTOR (1.5e18) → HealthFactorTooLow
         vm.prank(borrower);
-        vm.expectRevert(IVaipakamErrors.HealthFactorTooLow.selector);
+        RepayFacet(address(diamond)).repayPartial(1, 500); // no longer reverts
+        vm.clearMockedCalls();
+        assertEq(
+            LoanFacet(address(diamond)).getLoanDetails(1).principal,
+            principalBefore - 500,
+            "sub-1.5 deleveraging partial admitted; principal reduced"
+        );
+    }
+
+    /// @dev Pass-2 A2 (#1190) — the replacement gate is a MONOTONICITY assert:
+    ///      a partial that would LOWER HF reverts `PartialRepayWorsensHealthFactor`.
+    ///      (Never happens for a real partial — it reduces principal — but the
+    ///      guard is defensive.) HF is mocked to return 1.5e18 on the pre-partial
+    ///      read then 1.0e18 on the post-partial read, so hfAfter < hfBefore.
+    function testRepayPartial_worseningHF_reverts() public {
+        helperOfferLoan();
+        bytes[] memory hfs = new bytes[](2);
+        hfs[0] = abi.encode(uint256(1.5e18)); // hfBefore
+        hfs[1] = abi.encode(uint256(1.0e18)); // hfAfter (worse)
+        vm.mockCalls(
+            address(diamond),
+            abi.encodeWithSelector(RiskFacet.calculateHealthFactor.selector),
+            hfs
+        );
+        vm.prank(borrower);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                RepayFacet.PartialRepayWorsensHealthFactor.selector,
+                uint256(1.5e18),
+                uint256(1.0e18)
+            )
+        );
         RepayFacet(address(diamond)).repayPartial(1, 500);
         vm.clearMockedCalls();
+    }
+
+    /// @dev Pass-2 A3 (#1191) — a repayPartial on a loan carrying a periodic-
+    ///      settled `interestSettled` credit must ZERO it after the accrual
+    ///      clock reset (else `settlementInterestNet`/`currentBorrowBalance`
+    ///      would subtract the stale credit a second time from the future-only
+    ///      window — underpaying the lender / understating HF). HF is mocked
+    ///      constant so the A2 monotonicity gate is a no-op and this isolates
+    ///      the A3 zeroing.
+    function testRepayPartial_zerosStaleInterestSettled() public {
+        helperOfferLoan();
+        LibVaipakam.Loan memory loan = LoanFacet(address(diamond)).getLoanDetails(1);
+        loan.interestSettled = 50; // seed a periodic-settled credit
+        TestMutatorFacet(address(diamond)).setLoan(1, loan);
+        vm.mockCall(
+            address(diamond),
+            abi.encodeWithSelector(RiskFacet.calculateHealthFactor.selector),
+            abi.encode(uint256(2e18)) // healthy + constant (non-worsening)
+        );
+        vm.prank(borrower);
+        RepayFacet(address(diamond)).repayPartial(1, 100);
+        vm.clearMockedCalls();
+        assertEq(
+            LoanFacet(address(diamond)).getLoanDetails(1).interestSettled,
+            0,
+            "stale interestSettled zeroed at partial (#1191)"
+        );
     }
 
     /// @dev Tests that autoDeductDaily reduces durationDays to 0 and sets loan to Repaid.

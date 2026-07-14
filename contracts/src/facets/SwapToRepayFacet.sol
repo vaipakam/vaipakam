@@ -697,7 +697,15 @@ contract SwapToRepayFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamE
         }
 
         // ── Accrued-interest split + partial bound ───────────────────
-        uint256 accrued = LibEntitlement.accruedInterestToTime(loan, block.timestamp);
+        // Pass-2 A3 (#1191) — CREDIT any periodic-settled interest so the swap
+        // partial charges only the UNSETTLED accrual (else it re-charges the
+        // periodic auto-liquidation's already-settled days — the audit's M1 /
+        // its SwapToRepay twin). Netted here; the stale `interestSettled` is
+        // zeroed at the accrual-clock reset below (the #915 credit+zero pattern).
+        uint256 accrued = LibEntitlement.creditSettledInterest(
+            loan,
+            LibEntitlement.accruedInterestToTime(loan, block.timestamp)
+        );
         (uint256 treasuryShare, uint256 lenderShare) = LibEntitlement.splitTreasury(loan, accrued);
 
         // Must at least cover the accrued interest.
@@ -805,6 +813,12 @@ contract SwapToRepayFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamE
             }
         }
         loan.interestAccrualStart = uint64(block.timestamp); // reset accrual clock
+        // Pass-2 A3 (#1191) — clear the now-stale periodic-settled credit: it
+        // was netted from this partial's charge above, and the reset makes the
+        // next settlement future-only, so leaving it non-zero would let
+        // `settlementInterestNet` subtract it a SECOND time (underpaying the
+        // lender / understating HF). Mirrors PrecloseFacet:886 / RiskFacet.
+        loan.interestSettled = 0;
 
         // ── T-034 §4.5 — periodic-interest checkpoint advance
         //    (mirror RepayFacet:679-706) ────────────────────────────
