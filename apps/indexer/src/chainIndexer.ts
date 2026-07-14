@@ -52,6 +52,7 @@ import {
 } from './diamondAbi';
 import { ceilingOf } from './signedOfferEip712';
 import { indexerPublishPrepayListing } from './openseaPublish';
+import { maybeRefreshProtocolConfig } from './configSnapshot';
 
 /** Resolve a chain's deployBlock from the consolidated deployments
  *  JSON — the indexer's first-run fallback when no cursor exists. */
@@ -633,6 +634,18 @@ export async function runChainIndexerForChain(
   )
     .bind(chainId, CURSOR_KIND, Number(scanTo), now)
     .run();
+
+  // RPC read-diet PR B — keep the display config snapshot current
+  // (event-triggered + slow backstop; fail-open INSIDE, so a refresh
+  // hiccup can never fail a scan whose cursor already advanced).
+  await maybeRefreshProtocolConfig({
+    env,
+    chainId,
+    client,
+    diamond,
+    scannedEventNames: allLogs.map((l) => l.eventName),
+    blockNumber: scanTo,
+  });
 
   return {
     scannedFrom: scanFrom,
