@@ -1266,13 +1266,15 @@ contract DefaultedFacetTest is Test {
 
         vm.warp(block.timestamp + 33 days + 3);
 
-        // Mock isCollateralValueCollapsed to return true (collapsed collateral)
+        // #1192 (Pass-2 C1) — the liquid in-kind branch now keys on a genuine
+        // LTV>110% collapse (via `calculateLTV`), not `isCollateralValueCollapsed`.
+        // Mock LTV to 120% so the loan takes the value-collapsed in-kind path.
         vm.mockCall(
             address(diamond),
-            abi.encodeWithSelector(RiskFacet.isCollateralValueCollapsed.selector),
-            abi.encode(true)
+            abi.encodeWithSelector(RiskFacet.calculateLTV.selector),
+            abi.encode(uint256(12000))
         );
-        // collateral is liquid (mockERC20), consent=true, collapsed=true
+        // collateral is liquid (mockERC20), consent=true, LTV-collapsed=true
         // → should take the illiquid/collapsed path (else-if branch)
         vm.expectEmit(true, false, false, true);
         emit DefaultedFacet.LoanDefaulted(loanId, true, LibVaipakam.LoanStatus.Defaulted);
@@ -1647,6 +1649,57 @@ contract DefaultedFacetTest is Test {
         // Check borrower has a surplus claim
         (, uint256 borrowerAmt,) = ClaimFacet(address(diamond)).getClaimableAmount(loanId, false);
         assertGt(borrowerAmt, 0, "Borrower should have surplus");
+        vm.clearMockedCalls();
+    }
+
+    /// @dev #1192 (Pass-2 C1) — a liquid time-based default with HF<1 but LTV
+    ///      still at/below the 110% volatility cap ("covered" band) must route
+    ///      through the swap/split waterfall (Path A), NOT hand the lender the
+    ///      whole collateral in-kind. Previously the route keyed on
+    ///      `isCollateralValueCollapsed` (ltv>110% || hf<1), so ANY HF<1 loan
+    ///      collapsed to in-kind — zero swap, no borrower residual. The fix keys
+    ///      on LTV>110% only: an LTV=105% loan (HF<1 for any liqThreshold<100%)
+    ///      is swapped, the lender is capped at total debt (claim paid in the
+    ///      PRINCIPAL asset), and the borrower keeps the recoverable surplus.
+    ///      Spec §774/§790/§1373; covers the debt < collateral < debt/threshold band.
+    function testTriggerDefault_HfBelowOne_LtvUnderCap_RoutesToSwap() public {
+        uint256 loanId = createAndAcceptOffer(mockERC20, mockCollateralERC20, LibVaipakam.AssetType.ERC20,
+            1000 ether, 2000 ether, 30, 0, 0 // #998 S15: coll floor
+        );
+        vm.warp(block.timestamp + 33 days + 3);
+
+        // LTV 105% — under the 110% collapse cap but well into HF<1 territory.
+        // The old predicate would have collapsed this to whole-collateral-in-kind;
+        // the fix swaps it. ZeroExProxyMock default rate 11/10 → 2000 collateral
+        // swaps to 2200 proceeds, comfortably above the ~1005 total debt.
+        vm.mockCall(
+            address(diamond),
+            abi.encodeWithSelector(RiskFacet.calculateLTV.selector, loanId),
+            abi.encode(uint256(10500))
+        );
+        deal(mockERC20, address(diamond), 2000 ether);
+        deal(mockCollateralERC20, address(diamond), 2000 ether);
+        vm.mockCall(address(diamond), abi.encodeWithSelector(VaultFactoryFacet.vaultWithdrawERC20.selector), abi.encode(true));
+        vm.mockCall(address(diamond), abi.encodeWithSelector(VaipakamNFTFacet.updateNFTStatus.selector), "");
+
+        DefaultedFacet(address(diamond)).triggerDefault(loanId, defaultAdapterCalls());
+
+        LibVaipakam.Loan memory loan = LoanFacet(address(diamond)).getLoanDetails(loanId);
+        assertEq(uint8(loan.status), uint8(LibVaipakam.LoanStatus.Defaulted));
+
+        // Lender claim is paid in the PRINCIPAL asset → proves the swap ran
+        // (Path A), NOT the collateral asset the in-kind branch would record.
+        (address lenderAsset, uint256 lenderAmt,) =
+            ClaimFacet(address(diamond)).getClaimableAmount(loanId, true);
+        assertEq(lenderAsset, mockERC20, "lender claim must be principal asset (swapped), not collateral");
+        assertGt(lenderAmt, 0, "lender recovers from swap proceeds");
+
+        // Borrower keeps the recoverable surplus — the §790/§774 entitlement the
+        // old whole-collateral-in-kind branch destroyed.
+        (address borrowerAsset, uint256 borrowerAmt,) =
+            ClaimFacet(address(diamond)).getClaimableAmount(loanId, false);
+        assertEq(borrowerAsset, mockERC20, "borrower surplus in principal asset");
+        assertGt(borrowerAmt, 0, "borrower must retain recoverable surplus (C1 fix)");
         vm.clearMockedCalls();
     }
 
@@ -2285,11 +2338,11 @@ contract DefaultedFacetTest is Test {
         );
         vm.warp(block.timestamp + 33 days + 3);
 
-        // Mock isCollateralValueCollapsed to return true
+        // #1192 (Pass-2 C1) — mock a genuine LTV>110% collapse via `calculateLTV`.
         vm.mockCall(
             address(diamond),
-            abi.encodeWithSelector(RiskFacet.isCollateralValueCollapsed.selector, loanId),
-            abi.encode(true)
+            abi.encodeWithSelector(RiskFacet.calculateLTV.selector, loanId),
+            abi.encode(uint256(12000))
         );
 
         deal(mockERC20, address(diamond), 2000 ether);
@@ -2442,11 +2495,11 @@ contract DefaultedFacetTest is Test {
         );
         vm.warp(block.timestamp + 33 days + 3);
 
-        // Mock isCollateralValueCollapsed to return true
+        // #1192 (Pass-2 C1) — mock a genuine LTV>110% collapse via `calculateLTV`.
         vm.mockCall(
             address(diamond),
-            abi.encodeWithSelector(RiskFacet.isCollateralValueCollapsed.selector, loanId),
-            abi.encode(true)
+            abi.encodeWithSelector(RiskFacet.calculateLTV.selector, loanId),
+            abi.encode(uint256(12000))
         );
 
         deal(mockERC20, address(diamond), 2000 ether);
