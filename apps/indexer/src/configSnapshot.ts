@@ -12,12 +12,11 @@
  *
  * Refresh triggers, both fail-open (a refresh failure never blocks or
  * aborts ingest — the apps fall back to their chain read):
- *   - a scanned log whose event name matches the config-setter shape
- *     (every ConfigFacet/AdminFacet governance event ends in
- *     `...Set` / `...Updated` / `...Bumped`; a false positive costs one
- *     redundant eth_call, a miss costs only the backstop delay);
+ *   - a scanned log whose event name is on the explicit governance
+ *     allowlist below (a false positive costs one redundant eth_call,
+ *     a miss costs only the backstop delay);
  *   - a time backstop, so a chain whose config predates this table (or
- *     an event class the suffix rule somehow misses) still converges.
+ *     a future setter missing from the allowlist) still converges.
  */
 
 import type { Address, PublicClient } from 'viem';
@@ -25,17 +24,103 @@ import { DIAMOND_ABI_VIEM } from '@vaipakam/contracts/abis';
 import type { Env } from './env';
 import { jsonResponse } from './offerRoutes';
 
-/** Suffixes every governance setter event carries (verified against the
- *  full ConfigFacet/AdminFacet event list at authoring time — see the
- *  unit test pinning representative names). */
-const CONFIG_EVENT_SUFFIX = /(Set|Updated|Bumped)$/;
+/** Explicit allowlist of GLOBAL governance config events (Codex #1231
+ *  r1: a suffix rule also matched per-loan lifecycle names like
+ *  `NFTStatusUpdated` and `PrepayListingUpdated`, spending the two
+ *  refresh eth_calls on ordinary market activity). Source of truth:
+ *  the ConfigFacet event list + AdminFacet's protocol-global setters.
+ *  Deliberately EXCLUDED: per-user/per-asset events (KYCTierUpdated,
+ *  KeeperAccessUpdated, TradeAllowanceSet, AssetPauseEnabled, ...) —
+ *  they never change the served bundle/flags. Over-inclusion of a
+ *  rare global setter is harmless (one redundant refresh); the 6h
+ *  backstop covers any future setter missing from this list. */
+const CONFIG_EVENT_NAMES: ReadonlySet<string> = new Set([
+  // ConfigFacet
+  'FeesConfigSet',
+  'LiquidationConfigSet',
+  'MaxSwapToRepaySlippageBpsSet',
+  'RiskConfigSet',
+  'VpfiTierThresholdsSet',
+  'VpfiTierDiscountsSet',
+  'FallbackSplitSet',
+  'RangeAmountEnabledSet',
+  'RangeRateEnabledSet',
+  'PartialFillEnabledSet',
+  'RangeCollateralEnabledSet',
+  'GraceBucketsUpdated',
+  'AssetMinPartialBpsUpdated',
+  'LifMatcherFeeBpsSet',
+  'PrepayListingBufferBpsSet',
+  'PrepayListingEnabledSet',
+  'PrepayListingDutchGraceMarginSecSet',
+  'PrepayListingAutoListConduitKeySet',
+  'TreasuryConvertTargetsSet',
+  'TreasuryConvertThresholdsSet',
+  'MaxPartialLiquidationCloseFactorBpsSet',
+  'TierLtvParamsSet',
+  'AutoPauseDurationSet',
+  'MaxOfferDurationDaysSet',
+  'NotificationFeeSet',
+  'DepthTieredLtvEnabledSet',
+  'LiquiditySlippageBpsSet',
+  'TwapGuardSet',
+  'LiquidityTierSizesSet',
+  'TierMaxInitLtvBpsSet',
+  'PaaAssetsSet',
+  'KeeperTierSet',
+  'RiskAccessGateEnabledSet',
+  'DiscountPathEnabledSet',
+  'TierLiqDiscountBpsSet',
+  'TierLiquidationLtvBpsSet',
+  'InternalMatchEnabledSet',
+  'InternalMatchConfigSet',
+  'TierTableVersionBumped',
+  'TwaRecentDaysSet',
+  'TwaWindowDaysSet',
+  'TwaRecentWeightSet',
+  'TwaMinStakedDaysSet',
+  'MirrorTierMaxAgeSecSet',
+  // AdminFacet / ProfileFacet protocol-globals
+  'AutoExtendEnabledSet',
+  'AutoLendEnabledSet',
+  'AutoRefinanceEnabledSet',
+  'KYCEnforcementSet',
+  'KYCThresholdsUpdated',
+  'KeepersPausedSet',
+  'AggregatorAdaptersPausedSet',
+  'PeerLtvReadsPausedSet',
+  'RateModelSet',
+  'RateModelMaxDeviationBpsSet',
+  'PartialLiquidationSizingSet',
+  'SwapAdapterAdded',
+  'SwapAdapterRemoved',
+  'SwapAdapterDisabledSet',
+  'SwapAdaptersReordered',
+  'UniswapV2FactorySet',
+  'SushiswapV2FactorySet',
+  'SushiswapV3FactorySet',
+  'PancakeswapV2FactorySet',
+  'PancakeswapV3FactorySet',
+  'TreasurySet',
+  'ZeroExProxySet',
+  'AllowanceTargetSet',
+  'SanctionsOracleSet',
+]);
 
 /** Backstop refresh age: config flips are event-driven within one scan
- *  (~60s); the backstop only covers bootstrap + suffix-rule misses. */
+ *  (~60s); the backstop covers bootstrap + any setter missing from the
+ *  allowlist. */
 const BACKSTOP_SECONDS = 6 * 3600;
 
+/** Only refresh when the scan reached (near) the live head: during a
+ *  cold backfill / stalled-cursor catch-up the scan's upper bound is
+ *  historic, and stamping a fresh `updated_at` on an OLD-block read
+ *  would let clients trust values that miss later governance changes
+ *  (Codex #1231 r1). ~2 minutes of Base blocks. */
+const NEAR_HEAD_BLOCKS = 60n;
+
 export function isConfigEventName(name: string): boolean {
-  return CONFIG_EVENT_SUFFIX.test(name);
+  return CONFIG_EVENT_NAMES.has(name);
 }
 
 /** Decide whether this scan needs a snapshot refresh. Pure, for tests. */
@@ -49,10 +134,14 @@ export function shouldRefreshConfig(opts: {
   return opts.nowSec - opts.rowUpdatedAt > BACKSTOP_SECONDS;
 }
 
-/** JSON-serialize a tuple with bigints as decimal strings. */
-function serializeTuple(values: readonly unknown[]): string {
-  return JSON.stringify(
-    values.map((v) => (typeof v === 'bigint' ? v.toString() : v)),
+/** JSON-serialize a tuple with bigints as decimal strings — via a
+ *  REPLACER so NESTED arrays/structs (the uint256[4] VPFI tier slots)
+ *  convert too; a top-level-only map left nested BigInts for
+ *  JSON.stringify to throw on, which fail-opened every refresh
+ *  (Codex #1231 r1). */
+export function serializeTuple(values: readonly unknown[]): string {
+  return JSON.stringify(values, (_k, v: unknown) =>
+    typeof v === 'bigint' ? v.toString() : v,
   );
 }
 
@@ -71,15 +160,20 @@ export async function maybeRefreshProtocolConfig(opts: {
   /** Block to pin the reads to — the scan's upper bound, so the row
    *  can never be AHEAD of what the ingest pass processed. */
   blockNumber: bigint;
+  /** The chain head the scan was bounded by — refreshes are skipped
+   *  while the cursor is still far behind it (see NEAR_HEAD_BLOCKS). */
+  headBlock: bigint;
 }): Promise<void> {
-  try {
-    let saw = false;
-    for (const n of opts.scannedEventNames) {
-      if (isConfigEventName(n)) {
-        saw = true;
-        break;
-      }
+  let saw = false;
+  for (const n of opts.scannedEventNames) {
+    if (isConfigEventName(n)) {
+      saw = true;
+      break;
     }
+  }
+  try {
+    // Catch-up scans read historic state — never stamp those fresh.
+    if (opts.headBlock - opts.blockNumber > NEAR_HEAD_BLOCKS) return;
     const row = await opts.env.DB.prepare(
       `SELECT updated_at FROM protocol_config WHERE chain_id = ?`,
     )
@@ -135,6 +229,21 @@ export async function maybeRefreshProtocolConfig(opts: {
       `[configSnapshot] refresh failed for chain ${opts.chainId} (fail-open)`,
       err,
     );
+    // A refresh that failed ON a config event must not leave the old
+    // row looking fresh for the whole backstop window (Codex #1231
+    // r1): zero its stamp so (a) clients refuse it and fall back to
+    // chain, and (b) the next scan's backstop check retries promptly.
+    if (saw) {
+      try {
+        await opts.env.DB.prepare(
+          `UPDATE protocol_config SET updated_at = 0 WHERE chain_id = ?`,
+        )
+          .bind(opts.chainId)
+          .run();
+      } catch {
+        /* stale-marking is best-effort */
+      }
+    }
   }
 }
 

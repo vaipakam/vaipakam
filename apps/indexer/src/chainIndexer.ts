@@ -645,6 +645,7 @@ export async function runChainIndexerForChain(
     diamond,
     scannedEventNames: allLogs.map((l) => l.eventName),
     blockNumber: scanTo,
+    headBlock: head,
   });
 
   return {
