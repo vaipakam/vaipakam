@@ -31,12 +31,16 @@ genuinely unused prepay and buffer — remains theirs to withdraw. The incoming
 borrower's own prepayment and buffer take over the loan from the transfer
 forward.
 
-Two edge cases are handled explicitly: the settlement runs only for true
-zero-rate rentals, so a (mis-configured) rental carrying an interest rate is
-left to the interest path and never billed twice for the same window; and a
-rental whose deduction clock has been pushed into the future by an earlier
-prepayment can still be transferred without the elapsed-rent calculation
-underflowing.
+The rent settlement is chosen by asset type (rental vs interest loan), not by
+the stored rate, and the interest calculation is switched off for rentals — so
+the two never overlap and a rental that happens to carry an interest rate (which
+can occur after a prior transfer) is still settled as rent, never billed twice.
+Several clock edge cases are handled explicitly: the shortfall counts only the
+rental days that remain unpaid after the catch-up, so days already paid ahead by
+an earlier prepayment aren't charged again; a deduction clock pushed into the
+future by such a prepayment doesn't break the elapsed-rent calculation; and a
+legacy loan whose deduction clock was never set starts counting from the loan's
+start date rather than treating its whole term as already elapsed.
 
 The result: the original lender is no longer economically disadvantaged by an
 obligation transfer on a rental, matching the protection the platform already

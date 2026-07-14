@@ -763,13 +763,21 @@ contract PrecloseFacet is
         // new-expected to keep rounding symmetric (README §8/§9).
         // #641 — the accrued/remaining split reads the interest clock (post-
         // partial origin + remaining term), not the immutable term tuple.
+        // #1194 (Codex #1249 r2 P2) — APR interest applies to ERC-20 loans ONLY.
+        // Rentals are settled by the rent block below (keyed off asset type, not
+        // the stored rate), so zero the APR legs here for any non-ERC-20 loan —
+        // otherwise a rental carrying a non-zero rate (a rental offer is not
+        // rejected for a non-zero rate at create, and a prior takeover copies
+        // the incoming rate onto the loan) would be billed BOTH APR interest AND
+        // per-day rent for the same window.
+        bool isErc20 = loan.assetType == LibVaipakam.AssetType.ERC20;
         uint256 elapsed = block.timestamp - LibVaipakam.interestAccrualStartOf(loan);
         uint256 totalSecs = LibVaipakam.interestRemainingDaysOf(loan) * 1 days;
         uint256 remainingSecs = totalSecs > elapsed ? totalSecs - elapsed : 0;
         uint256 newSecs = offer.durationDays * 1 days;
-        uint256 accruedInterest = LibEntitlement.proRataInterestSeconds(
-            loan.principal, loan.interestRateBps, elapsed
-        );
+        uint256 accruedInterest = isErc20
+            ? LibEntitlement.proRataInterestSeconds(loan.principal, loan.interestRateBps, elapsed)
+            : 0;
         // #915 (M7) — credit interest already forwarded to the lender via
         // periodic auto-liquidation (`loan.interestSettled`, saturating at 0)
         // so the exiting borrower is not billed a second time for it. Mirrors
@@ -778,15 +786,20 @@ contract PrecloseFacet is
         // by periodic settlement, so the raw accrual still spans those periods.
         accruedInterest = LibEntitlement.creditSettledInterest(loan, accruedInterest);
 
-        uint256 originalExpectedRemaining = LibEntitlement.proRataInterestSeconds(
-            loan.principal, loan.interestRateBps, remainingSecs
-        );
-        uint256 newExpectedRemaining = LibEntitlement.proRataInterestSeconds(
-            loan.principal, offer.interestRateBps, newSecs
-        );
-        uint256 shortfall = originalExpectedRemaining > newExpectedRemaining
-            ? originalExpectedRemaining - newExpectedRemaining
-            : 0;
+        // ERC-20 APR shortfall only; rentals get their rent-terms shortfall in
+        // the rent block below (Codex #1249 r2 P2).
+        uint256 shortfall;
+        if (isErc20) {
+            uint256 originalExpectedRemaining = LibEntitlement.proRataInterestSeconds(
+                loan.principal, loan.interestRateBps, remainingSecs
+            );
+            uint256 newExpectedRemaining = LibEntitlement.proRataInterestSeconds(
+                loan.principal, offer.interestRateBps, newSecs
+            );
+            shortfall = originalExpectedRemaining > newExpectedRemaining
+                ? originalExpectedRemaining - newExpectedRemaining
+                : 0;
+        }
 
         // ── 2. alice pays accrued + shortfall ───────────────────────────────
         (uint256 treasuryFee, ) = LibEntitlement.splitTreasury(loan, accruedInterest);
@@ -857,40 +870,46 @@ contract PrecloseFacet is
         // borrower's un-liened vault, leaving the old lender short of the rent
         // they earned up to the transfer (README §1512 "pay all rent accrued up
         // to the transfer" / §1420 "don't leave the original lender worse off").
-        // Rentals only, and only TRUE zero-APR rentals: the APR path above
-        // already charges a (mis-configured) non-zero-rate non-ERC-20 loan its
-        // `accruedInterest`, so gating on `interestRateBps == 0` here avoids
-        // double-billing the same elapsed window (Codex #1249 r1 P2).
-        if (loan.assetType != LibVaipakam.AssetType.ERC20 && loan.interestRateBps == 0) {
+        // Rentals — keyed off ASSET TYPE, not the stored rate: a rental can
+        // legitimately carry a non-zero `interestRateBps` (offers aren't
+        // rejected for it at create, and a prior takeover copies the incoming
+        // rate onto the loan), so a rate-based gate would silently drop rent on
+        // a follow-on transfer. The APR path above is neutralized for rentals
+        // (`isErc20 == false`), so there is no double-bill (Codex #1249 r2 P2).
+        if (!isErc20) {
             // (a) Rent accrued since the last daily deduction (in-term only).
-            //     `lastDeductTime` can legitimately sit in the FUTURE when the
-            //     borrower prepaid days via `repayPartial`, so guard the
-            //     subtraction — treat "clock ahead of now" as zero catch-up
-            //     rather than underflowing and bricking the transfer
-            //     (Codex #1249 r1 P2).
-            uint256 catchUpDays = block.timestamp > uint256(loan.lastDeductTime)
-                ? (block.timestamp - uint256(loan.lastDeductTime)) / LibVaipakam.ONE_DAY
+            //     Start the clock at `max(lastDeductTime, startTime)`: a legacy/
+            //     imported rental can have `lastDeductTime == 0` while `startTime`
+            //     is set, and `remainingRentalDays` already treats
+            //     `lastDeductTime <= startTime` as zero consumed — anchoring to
+            //     `startTime` keeps the two in agreement instead of treating the
+            //     whole term as elapsed (Codex #1249 r2 P2). The `> now` guard
+            //     also covers a FUTURE clock (days prepaid via `repayPartial`):
+            //     treat that as zero catch-up rather than underflowing and
+            //     bricking the transfer (Codex #1249 r1 P2).
+            uint256 clockStart = uint256(loan.lastDeductTime) > uint256(loan.startTime)
+                ? uint256(loan.lastDeductTime)
+                : uint256(loan.startTime);
+            uint256 catchUpDays = block.timestamp > clockStart
+                ? (block.timestamp - clockStart) / LibVaipakam.ONE_DAY
                 : 0;
             uint256 remainingDays = LibVaipakam.remainingRentalDays(loan);
             // Never bill past the agreed term — overdue rent is a late-fee
             // concern (out of scope here); this settles only in-term rent.
             if (catchUpDays > remainingDays) catchUpDays = remainingDays;
 
-            // (b) Term shortfall — the rental days between the incoming offer's
-            //     term and the original maturity that the NEW borrower will not
-            //     cover. The exiting borrower pre-paid the full term, so those
-            //     days are owed to the OLD lender (README §1420, "don't leave
-            //     the original lender worse off"), mirroring the ERC-20 path's
-            //     `shortfall` leg (Codex #1249 r1 P2). The maturity gate above
-            //     guarantees `offer.durationDays <= remainingFromNow`, so this
-            //     is non-negative.
-            uint256 maturity =
-                uint256(loan.startTime) + loan.durationDays * LibVaipakam.ONE_DAY;
-            uint256 remainingFromNow = maturity > block.timestamp
-                ? (maturity - block.timestamp) / LibVaipakam.ONE_DAY
-                : 0;
-            uint256 shortfallDays = remainingFromNow > offer.durationDays
-                ? remainingFromNow - offer.durationDays
+            // (b) Term shortfall — the UNPAID rental days after this catch-up
+            //     (`remainingRentalDays - catchUpDays`, the days from the
+            //     deduction clock to maturity that aren't settled here) that the
+            //     NEW borrower's shorter term won't cover. The exiting borrower
+            //     pre-paid the full term, so those days are owed to the OLD
+            //     lender (README §1420), mirroring the ERC-20 path's `shortfall`.
+            //     Basing this on UNPAID days (not wall-clock time to maturity)
+            //     avoids double-charging days already prepaid via `repayPartial`
+            //     (Codex #1249 r2 P2).
+            uint256 unpaidAfterCatchUp = remainingDays - catchUpDays;
+            uint256 shortfallDays = unpaidAfterCatchUp > offer.durationDays
+                ? unpaidAfterCatchUp - offer.durationDays
                 : 0;
 
             uint256 accruedRent = loan.principal * catchUpDays;
