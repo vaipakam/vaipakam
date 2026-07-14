@@ -188,8 +188,8 @@ export function LiveChainSync() {
       // verifiably delivering, the per-block invalidation narrows to
       // the action-gating TIP_KEYS — the lists/vault/activity blanket
       // was the dominant recurring RPC cost, and push + receipt +
-      // focus + the 180s net now carry those roots. Rail down (or the
-      // VITE_FRESHNESS_TIMERS=legacy hatch) ⇒ the full LIVE_KEYS
+      // focus + the 180s net now carry those roots. Rail down ⇒ the
+      // full LIVE_KEYS
       // blanket, byte-for-byte today's behaviour. Evaluated PER
       // invalidation, so a rail transition takes effect on the next
       // block, not the next mount. `full` forces the blanket — the

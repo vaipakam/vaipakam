@@ -25,9 +25,11 @@
  *     MOVES. Both timestamps are client-clock, so server/client skew
  *     never enters the comparison.
  *
- * `VITE_FRESHNESS_TIMERS=legacy` pins the store unhealthy forever —
- * the escape hatch that makes PR A byte-for-byte revertible to the
- * timer behaviour without a redeploy of the worker side.
+ * (The `VITE_FRESHNESS_TIMERS=legacy` rollout hatch was removed after
+ * the design's §7 live review signed off the healthy-rail path on the
+ * deployed testnet — the rail-down fallback below IS the legacy timer
+ * posture, reachable at any time by the rail simply not proving
+ * itself, so no build-time pin is needed to get it back.)
  */
 
 import { isIdle } from '../lib/idle';
@@ -59,9 +61,6 @@ interface RailState {
   lastAdvanceAtMs: number;
 }
 
-const legacyPinned =
-  (import.meta.env?.VITE_FRESHNESS_TIMERS as string | undefined) === 'legacy';
-
 let state: RailState = {
   socketLive: false,
   cadenceSec: null,
@@ -74,7 +73,6 @@ let lastComputed = false;
 const listeners = new Set<() => void>();
 
 function compute(): boolean {
-  if (legacyPinned) return false;
   if (!state.socketLive) return false;
   if (state.cadenceSec == null || state.cadenceSec <= 0) return false;
   const windowMs = state.cadenceSec * 1000 * STALE_FACTOR;
@@ -95,7 +93,7 @@ function recompute(): void {
 
 // Health can silently degrade between frames — tick it. (Module-level
 // like idle.ts's listeners; one interval per tab is the point.)
-if (typeof window !== 'undefined' && !legacyPinned) {
+if (typeof window !== 'undefined') {
   setInterval(recompute, EVAL_TICK_MS);
 }
 
