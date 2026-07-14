@@ -274,7 +274,15 @@ export function IndexerPushSync() {
             r,
             setTimeout(() => {
               rootTrailing.delete(r);
-              if (!cancelled) queueNow([r]);
+              if (cancelled) return;
+              // The tab may have gone hidden while the trailing timer
+              // was armed — defer to the focus flush like any other
+              // hidden-tab frame (Codex #1228 r2 P3).
+              if (typeof document !== 'undefined' && document.hidden) {
+                hiddenDirty.add(r);
+                return;
+              }
+              queueNow([r]);
             }, ROOT_MIN_GAP_MS - since),
           );
         }

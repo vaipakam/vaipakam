@@ -18,7 +18,7 @@
  * allowance, and there is NO `modifyOfferWithPermit` — so grows get
  * an allowance precheck + a classic "Approve first" button.
  */
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { Inbox, LoaderCircle, Pencil } from 'lucide-react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { usePublicClient, useWalletClient } from 'wagmi';
@@ -640,17 +640,21 @@ function OrderRow({ offer }: { offer: IndexedOffer }) {
   // the moment the anchor proves it elapsed — a parked desk tab must
   // not stream block reads (RPC-diet doctrine).
   // RPC read-diet PR A (§4.1.3): the old shape polled this anchor
-  // every 5s — a block-timestamp CLOCK at ~720 reads/hr per parked
-  // desk tab. A clock only needs an offset: fetch the anchor ONCE
-  // while a row is inside its window, run the countdown on the
-  // offset-corrected local clock, then spend one confirm read at the
-  // boundary (below).
+  // every 5s. A clock mostly needs an offset: the countdown runs on
+  // the offset-corrected local clock between reads, with a SLOW 15s
+  // re-check while (and only while) a row is actually inside its
+  // ≤5-minute window — chain time can JUMP relative to wall time
+  // (anvil time travel in the fork harness; sequencer drift), and a
+  // pure one-shot anchor would then hold Cancel disabled long after
+  // the chain unlocked it (the fork-tier spec 17 run proved exactly
+  // that). Bounded: at most ~20 reads per posted offer vs ~60 before,
+  // and ZERO once no own row is inside a cooldown window.
   const chainNowKey = ['deskChainNow', readChain.chainId];
   const cachedAnchor = queryClient.getQueryData<ChainNowAnchor>(chainNowKey);
   const chainNowQ = useQuery({
     queryKey: chainNowKey,
     enabled: Boolean(publicClient) && blockedGiven(anchorEffNow(cachedAnchor)),
-    refetchInterval: false,
+    refetchInterval: 15_000,
     queryFn: async (): Promise<ChainNowAnchor> => {
       const block = await publicClient!.getBlock({ blockTag: 'latest' });
       return { nowSec: Number(block.timestamp), atMs: Date.now() };
@@ -682,17 +686,21 @@ function OrderRow({ offer }: { offer: IndexedOffer }) {
     return () => clearInterval(timer);
   }, [cancelBlocked]);
 
-  // The one-shot chain-time confirm: when the corrected countdown says
-  // the window elapsed but the last RAW read hasn't proven it, spend
-  // exactly one refetch. Each confirm re-anchors the clock, so even a
-  // client clock running far ahead costs one read per real boundary
-  // crossing — never a poll. Actual fill/cancel state changes still
-  // arrive via the offer.changed push nudge.
+  // The boundary confirm: when the corrected countdown says the
+  // window elapsed but the last RAW read hasn't proven it, spend one
+  // refetch so the unlock lands within ~a second of the real boundary
+  // instead of at the next 15s re-check. Throttled to one attempt per
+  // 10s: a failed or still-early confirm must not turn each 1s tick
+  // render into another refetch (Codex #1228 r2). Actual fill/cancel
+  // state changes still arrive via the offer.changed push nudge.
+  const confirmTriedAtRef = useRef(0);
   useEffect(() => {
     if (!cancelBlocked || chainNowQ.isFetching) return;
-    if (effNow !== null && !blockedGiven(effNow)) {
-      void chainNowQ.refetch();
-    }
+    if (effNow === null || blockedGiven(effNow)) return;
+    const now = Date.now();
+    if (now - confirmTriedAtRef.current < 10_000) return;
+    confirmTriedAtRef.current = now;
+    void chainNowQ.refetch();
   });
 
   async function cancel() {

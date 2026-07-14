@@ -101,9 +101,12 @@ if (typeof window !== 'undefined' && !legacyPinned) {
 
 /** True while the push rail is verifiably delivering (see header). */
 export function isRailHealthy(): boolean {
-  // Recompute inline so reads between ticks never act on a stale
-  // verdict (the tick only exists to NOTIFY subscribers of decay).
-  lastComputed = compute();
+  // Full recompute — INCLUDING the listener notify — so a reader being
+  // the first to observe decay still triggers the healthy-to-down
+  // catch-up subscription (Codex #1228 r2 P1: assigning lastComputed
+  // without notifying swallowed the transition, and the next 15s tick
+  // then saw no change).
+  recompute();
   return lastComputed;
 }
 
@@ -155,6 +158,14 @@ const TIP_BLOCK_STALE_MS = 60_000;
  *  with no per-block nudge behind them). */
 export function railBlockSignal(): void {
   lastBlockAtMs = Date.now();
+}
+
+/** Writer: the block watcher stopped or changed target (hidden tab,
+ *  chain switch, unmount). The delivery stamp must not carry over —
+ *  a stale stamp would let tipAware trust a NEW subscription that has
+ *  not delivered anything yet (Codex #1228 r2). */
+export function railBlockWatchReset(): void {
+  lastBlockAtMs = 0;
 }
 
 /** Writer: socket lifecycle. Opening seeds nothing (health waits for

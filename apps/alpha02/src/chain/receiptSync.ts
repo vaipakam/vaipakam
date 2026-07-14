@@ -65,7 +65,21 @@ export const RECEIPT_FLOOR_ROOTS: readonly string[] = [
   // offer-ending own receipt must force the scan explicitly or the
   // just-ended row outlives the receipt refresh on the book.
   'bookGhostStrip',
+  // Codex #1228 r2 — keeper permissions moved to signalAware, and the
+  // settings/loan cards only invalidate the acting tab; the floor
+  // carries them so a second Settings tab sees a confirmed toggle.
+  'keeperConfig',
+  'loanKeeperEnabled',
 ];
+
+/** Roots whose writes PATCH the cache with the mined value instead of
+ *  refetching (public RPCs serve pre-tx state for seconds — the
+ *  LiveChainSync exclusion doctrine). The ACTING tab must not
+ *  invalidate these right after its own receipt or the refetch races
+ *  the patch and bounces the checkbox (Codex #1228 r2). Other tabs
+ *  hold no patch, so the broadcast still carries them — a receiving
+ *  tab's 5s second re-read reconciles any RPC lag. */
+const PATCHED_ROOTS: ReadonlySet<string> = new Set(['vpfi', 'loanKeeperEnabled']);
 
 /** ~2× Base/OP block time. The second re-read exists for public RPCs
  *  that serve the parent block for a few seconds after the receipt —
@@ -108,18 +122,30 @@ export function publishReceiptInvalidation(
   extraRoots: readonly string[] = [],
 ): void {
   const roots = [...new Set([...RECEIPT_FLOOR_ROOTS, ...extraRoots])];
-  invalidateRoots(queryClient, roots);
-  setTimeout(() => invalidateRoots(queryClient, roots), SECOND_READ_DELAY_MS);
+  // Acting tab: skip the patched roots — their flows just wrote the
+  // mined value into the cache, and an immediate refetch from a
+  // lagging RPC would overwrite it (Codex #1228 r2).
+  const localRoots = roots.filter((r) => !PATCHED_ROOTS.has(r));
+  invalidateRoots(queryClient, localRoots);
+  setTimeout(
+    () => invalidateRoots(queryClient, localRoots),
+    SECOND_READ_DELAY_MS,
+  );
 
   const frame: ReceiptFrame = { roots };
   const ch = getChannel();
   if (ch) {
     try {
       ch.postMessage(frame);
+      return; // delivered — the storage ping would double-deliver
     } catch {
-      /* channel closed — the storage ping below still lands */
+      /* channel closed — fall through to the storage ping */
     }
   }
+  // Fallback ONLY when BroadcastChannel is unavailable/failed: tabs of
+  // the same browser share BC support, so writing both would hand
+  // every receiver two immediate invalidations + two delayed re-reads
+  // per receipt (Codex #1228 r2).
   try {
     // Storage events fire only in OTHER tabs; the value must change
     // each time or repeat writes are swallowed.
@@ -128,7 +154,7 @@ export function publishReceiptInvalidation(
       JSON.stringify({ ...frame, at: Date.now() }),
     );
   } catch {
-    /* storage unavailable (private mode) — broadcast channel covered it */
+    /* storage unavailable (private mode) — nothing else to try */
   }
 }
 

@@ -34,7 +34,11 @@ import { useCallback, useEffect, useRef, useSyncExternalStore } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import { useWatchBlockNumber } from 'wagmi';
 import { isIdle, onActivityResume } from '../lib/idle';
-import { isRailHealthy, railBlockSignal } from './railHealth';
+import {
+  isRailHealthy,
+  railBlockSignal,
+  railBlockWatchReset,
+} from './railHealth';
 import { useActiveChain } from './useActiveChain';
 
 /** queryKey[0] values that move when a transaction lands. Everything
@@ -67,6 +71,11 @@ const LIVE_KEYS: ReadonlySet<string> = new Set([
   // refresh it per block here; HTTP-only deploys keep the 30s interval,
   // and the band's execute() re-reads live before the write either way.
   'deskPreviewMatch',
+  // RPC read-diet PR A (Codex #1228 r2 P1) — the split ghost-strip
+  // must stay block-driven in the FALLBACK blanket too: with the rail
+  // down (or legacy pinned) the strip would otherwise only re-run on
+  // its interval, losing the old inline catch-up's block cadence.
+  'bookGhostStrip',
   // 'loanKeeperEnabled' and 'vpfi' are DELIBERATELY absent: their
   // toggle writes PATCH the cache with the mined value (read-after-
   // write honesty — public testnet RPCs serve pre-tx state for
@@ -229,6 +238,13 @@ export function LiveChainSync() {
       }),
     [invalidate],
   );
+
+  // Reset the tip-delivery stamp whenever the watcher's target or
+  // gate changes (chain switch, hidden tab, WS config change) — a new
+  // subscription must prove delivery itself (Codex #1228 r2).
+  useEffect(() => {
+    return () => railBlockWatchReset();
+  }, [readChain.chainId, readChain.wsUrl, visible]);
 
   useWatchBlockNumber({
     chainId: readChain.chainId,

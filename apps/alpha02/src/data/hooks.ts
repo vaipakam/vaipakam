@@ -152,7 +152,14 @@ export function useActiveOffers() {
     return walkData.offers.filter((o) => !terminal.has(o.offerId));
   })();
 
-  return { ...walk, data };
+  // Loading must PROPAGATE while the first strip is in flight (Codex
+  // #1228 r2): the walk has data, so walk.isLoading is already false,
+  // but this hook's contract says `data === undefined` = loading —
+  // consumers branch on isLoading before interpreting data, and
+  // without the override they'd render unavailable/empty-market for
+  // the strip's first pass.
+  const isLoading = walk.isLoading || (data === undefined && !walk.isLoading);
+  return { ...walk, data, isLoading, isPending: isLoading };
 }
 
 export interface PositionLoan extends IndexedLoan {
