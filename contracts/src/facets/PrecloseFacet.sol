@@ -1029,8 +1029,14 @@ contract PrecloseFacet is
         // ── 5b. NFT rental: reset prepay accounting and reassign user rights ─
         if (loan.assetType != LibVaipakam.AssetType.ERC20) {
             // Reset prepay accounting to ben's offer terms (initialized like LoanFacet.initiateLoan)
+            // #1193 (Pass-2 D3) — read the incoming borrower offer's create-time
+            // buffer snapshot, NOT live `cfgRentalBufferBps()`. A retune between
+            // that offer's create and this transfer would otherwise set
+            // `loan.bufferAmount` above what the offer funded, defeating the
+            // #1004 `fee ≤ bufferAmount` guarantee (the #1096 `InsufficientPrepay`
+            // brick on close-out).
             uint256 newPrepay = offer.amount * offer.durationDays;
-            uint256 newBuffer = (newPrepay * LibVaipakam.cfgRentalBufferBps()) /
+            uint256 newBuffer = (newPrepay * LibVaipakam.effectiveRentalBufferBps(offer)) /
                 LibVaipakam.BASIS_POINTS;
             loan.prepayAmount = newPrepay;
             loan.bufferAmount = newBuffer;

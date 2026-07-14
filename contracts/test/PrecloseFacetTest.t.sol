@@ -1866,6 +1866,74 @@ contract PrecloseFacetTest is Test {
         vm.clearMockedCalls();
     }
 
+    /// @dev #1193 (Pass-2 D3) — an Option-2 obligation transfer must reset
+    ///      `loan.bufferAmount` from the INCOMING borrower offer's create-time
+    ///      buffer snapshot, not live `cfgRentalBufferBps()`. Here the incoming
+    ///      offer is created at the default 5% buffer, then governance raises the
+    ///      live config to 10% before the transfer; the reset buffer must stay at
+    ///      5% of the new prepay so it can't exceed what the offer funded and
+    ///      defeat the #1004 `fee ≤ bufferAmount` guarantee (#1096 brick).
+    function testTransferObligationNFTRentalBufferUsesOfferSnapshot() public {
+        uint256 fullRental = PRINCIPAL * 30;
+        _setLoanAsNftRental(activeLoanId, fullRental, (fullRental * 500) / 10000);
+
+        // Incoming borrower offer created at the default 5% buffer snapshot.
+        vm.prank(newBorrower);
+        uint256 validOffer = OfferCreateFacet(address(diamond)).createOffer(
+            LibVaipakam.CreateOfferParams({
+                offerType: LibVaipakam.OfferType.Borrower,
+                lendingAsset: mockERC20,
+                amount: PRINCIPAL,
+                interestRateBps: 500,
+                collateralAsset: mockCollateralERC20,
+                collateralAmount: COLLATERAL,
+                durationDays: 30,
+                assetType: LibVaipakam.AssetType.ERC20,
+                tokenId: 0,
+                quantity: 0,
+                creatorRiskAndTermsConsent: true,
+                prepayAsset: mockERC20,
+                collateralAssetType: LibVaipakam.AssetType.ERC20,
+                collateralTokenId: 0,
+                collateralQuantity: 0,
+                allowsPartialRepay: false,
+                allowsPrepayListing: false,
+                allowsParallelSale: false,
+                amountMax: PRINCIPAL,
+                interestRateBpsMax: 500,
+                collateralAmountMax: COLLATERAL,
+                periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None,
+                expiresAt: 0,
+                fillMode: LibVaipakam.FillMode.Partial,
+                refinanceTargetLoanId: 0,
+                useFullTermInterest: false
+            })
+        );
+
+        // Governance RAISES the live buffer to 10% after the offer is posted.
+        TestMutatorFacet(address(diamond)).setRentalBufferBpsRaw(1000);
+
+        vm.mockCall(address(diamond), abi.encodeWithSelector(VaultFactoryFacet.vaultWithdrawERC20.selector), abi.encode(true));
+        vm.mockCall(address(diamond), abi.encodeWithSelector(VaultFactoryFacet.vaultSetNFTUser.selector), abi.encode(true));
+        vm.mockCall(address(diamond), abi.encodeWithSelector(VaipakamNFTFacet.burnNFT.selector), "");
+        vm.mockCall(address(diamond), abi.encodeWithSelector(VaipakamNFTFacet.mintNFT.selector), "");
+        vm.mockCall(address(diamond), abi.encodeWithSelector(VaipakamNFTFacet.updateNFTStatus.selector), "");
+        vm.mockCall(address(diamond), abi.encodeWithSelector(RiskFacet.calculateHealthFactor.selector), abi.encode(2e18));
+
+        vm.prank(borrower);
+        PrecloseFacet(address(diamond)).transferObligationViaOffer(activeLoanId, validOffer);
+
+        LibVaipakam.Loan memory loan = LoanFacet(address(diamond)).getLoanDetails(activeLoanId);
+        // newPrepay = PRINCIPAL * 30; buffer must be 5% of it (the offer snapshot),
+        // NOT 10% (live config at transfer time).
+        assertEq(
+            loan.bufferAmount,
+            (PRINCIPAL * 30 * 500) / 10000,
+            "transfer must reset buffer from the incoming offer's snapshot, not live config"
+        );
+        vm.clearMockedCalls();
+    }
+
     // ─── Test E: completeOffset NFT rental path ─────────────────────────────
 
     /// @dev Covers the _resetNftRenter call inside completeOffset when assetType=ERC721.

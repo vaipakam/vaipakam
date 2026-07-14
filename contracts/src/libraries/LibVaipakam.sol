@@ -1690,6 +1690,21 @@ library LibVaipakam {
         // sub-structing — viaIR stack). See
         // `docs/DesignsAndPlans/BackstopVaultV0Design.md` §4.1.
         uint64 backstopEligibleAfter;
+        // Slot 23 (packed alongside refinanceCarryOver + backstopEligibleAfter)
+        // — #1193 (Pass-2 D3) NFT-rental buffer BPS snapshotted at create.
+        // The prepay a rental offer vaults is `amount × durationDays × (1 +
+        // bufferBps/10000)`; every later economic site (accept pull, cancel
+        // refund, modify delta, loan-init `loan.bufferAmount`, Option-2 transfer
+        // reset) must use the SAME bufferBps that was funded, not the live
+        // governance config — else a `cfgRentalBufferBps()` retune between create
+        // and a later site desyncs the refund/reset from the actually-vaulted
+        // amount (a raise bricks cancel / over-funds the loan buffer; a cut
+        // strands prepay). `0` ⇒ legacy offer created before this snapshot
+        // existed → resolver `effectiveRentalBufferBps` falls back to live
+        // `cfgRentalBufferBps()`. Append-only; flat (viaIR stack). Only the
+        // Offer carries the BPS — the Loan already snapshots the ABSOLUTE buffer
+        // (`bufferAmount`), which `calculateRentalLateFee` reads.
+        uint16 rentalBufferBpsAtCreate;
     }
 
     /**
@@ -5368,6 +5383,17 @@ library LibVaipakam {
     function cfgRentalBufferBps() internal view returns (uint256) {
         uint16 v = storageSlot().protocolCfg.rentalBufferBps;
         return v == 0 ? RENTAL_BUFFER_BPS : uint256(v);
+    }
+
+    /// @dev #1193 (Pass-2 D3) — the rental buffer BPS an offer FUNDED, read from
+    ///      the create-time snapshot so a later `cfgRentalBufferBps()` governance
+    ///      retune can't desync a cancel refund / Option-2 buffer reset from the
+    ///      amount actually vaulted at create. `0` ⇒ legacy offer (snapshot did
+    ///      not exist yet) → fall back to the live config, matching the
+    ///      pre-#1193 behaviour for offers created before this field.
+    function effectiveRentalBufferBps(Offer storage offer) internal view returns (uint256) {
+        uint16 v = offer.rentalBufferBpsAtCreate;
+        return v == 0 ? cfgRentalBufferBps() : uint256(v);
     }
 
     /// @dev Fallback-path split, with zero-is-default fall-through to the

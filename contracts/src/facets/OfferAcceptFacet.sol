@@ -708,7 +708,10 @@ contract OfferAcceptFacet is
         bytes memory signature
     ) private {
         uint256 prepayAmount = offer.amount * offer.durationDays;
-        uint256 buffer = (prepayAmount * LibVaipakam.cfgRentalBufferBps())
+        // #1193 (Pass-2 D3) — pull the buffer the offer FUNDED (its create-time
+        // snapshot), not live config, so the accept pull matches what
+        // loan-init records as `loan.bufferAmount` even across a governance retune.
+        uint256 buffer = (prepayAmount * LibVaipakam.effectiveRentalBufferBps(offer))
             / LibVaipakam.BASIS_POINTS;
         uint256 totalPrepay = prepayAmount + buffer;
         if (usePermit) {
