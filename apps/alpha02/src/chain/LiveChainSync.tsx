@@ -142,6 +142,11 @@ const RESUME_EXTRA_KEYS: ReadonlySet<string> = new Set([
   'tokenBalance',
   'vpfi',
   'loanKeeperEnabled',
+  // tipAware-stretched but outside LIVE_KEYS (Codex #1228 r3): a
+  // keeper extension restamping terms during an idle stretch must
+  // reach the past-due/grace banner on the first interaction —
+  // HTTP-only chains have no block nudge to carry it.
+  'graceBannerTerms',
 ]);
 
 /** Floor between block-driven invalidations. Base Sepolia mines ~every

@@ -187,6 +187,11 @@ export const STRETCHED_ROOTS: readonly string[] = [
   'refinancePending',
   'deskPreviewMatch',
   'graceBannerTerms',
+  // The strip query re-runs on invalidation even when its cursor-
+  // snapshot key is unchanged — a hidden tab missed its block nudges,
+  // so the return path must force one scan or a ghost row can outlive
+  // the focus refetch of activeOffers (Codex #1228 r3).
+  'bookGhostStrip',
 ];
 
 const NUDGE_DEBOUNCE_MS = 300;

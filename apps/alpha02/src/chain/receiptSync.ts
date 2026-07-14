@@ -70,6 +70,15 @@ export const RECEIPT_FLOOR_ROOTS: readonly string[] = [
   // carries them so a second Settings tab sees a confirmed toggle.
   'keeperConfig',
   'loanKeeperEnabled',
+  // Codex #1228 r3 — the crossable band's post-write invalidation in
+  // MatchBand is local to the acting tab; an own fill must refresh the
+  // action gate in a second tab together with the book.
+  'deskPreviewMatch',
+  // Codex #1228 r3 — the pending-card funding watches read the live
+  // allowance/balance; a re-approve/revoke in one tab must refresh the
+  // green/red funding verdict a second tab is showing.
+  'loanSalePending',
+  'refinancePending',
 ];
 
 /** Roots whose writes PATCH the cache with the mined value instead of
@@ -122,15 +131,17 @@ export function publishReceiptInvalidation(
   extraRoots: readonly string[] = [],
 ): void {
   const roots = [...new Set([...RECEIPT_FLOOR_ROOTS, ...extraRoots])];
-  // Acting tab: skip the patched roots — their flows just wrote the
-  // mined value into the cache, and an immediate refetch from a
-  // lagging RPC would overwrite it (Codex #1228 r2).
-  const localRoots = roots.filter((r) => !PATCHED_ROOTS.has(r));
-  invalidateRoots(queryClient, localRoots);
-  setTimeout(
-    () => invalidateRoots(queryClient, localRoots),
-    SECOND_READ_DELAY_MS,
-  );
+  // Acting tab, IMMEDIATE pass: skip the patched roots — their flows
+  // may have just written the mined value into the cache, and an
+  // immediate refetch from a lagging RPC would overwrite it (Codex
+  // #1228 r2). The DELAYED pass includes them (Codex #1228 r3): not
+  // every write to these roots patches (VPFI vault deposit/withdraw
+  // only invalidates), and by ~2 block times the read layer serves
+  // post-tx state — so the re-read reconciles the unpatched flows
+  // without racing a fresh patch.
+  const immediateRoots = roots.filter((r) => !PATCHED_ROOTS.has(r));
+  invalidateRoots(queryClient, immediateRoots);
+  setTimeout(() => invalidateRoots(queryClient, roots), SECOND_READ_DELAY_MS);
 
   const frame: ReceiptFrame = { roots };
   const ch = getChannel();
