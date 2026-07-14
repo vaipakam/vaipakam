@@ -112,6 +112,10 @@ contract RefinanceFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErr
     ///         ONLY way to reach the internal entry; an external EOA
     ///         cannot call it directly.
     error OnlyDiamondInternal();
+    /// @dev Pass-2 A1/D5 (#1189) — refinance blocks strictly past the grace
+    ///      window, matching {RepayFacet.repayLoan}; post-grace resolution goes
+    ///      through DefaultedFacet. Declared per-facet (not in IVaipakamErrors).
+    error RepaymentPastGracePeriod();
     /// @dev Extracted modifier body — same shape as VaultFactoryFacet's
     ///      `_checkDiamondInternal`. Keeps the modifier a thin wrapper
     ///      so each call site inlines one function call.
@@ -178,6 +182,15 @@ contract RefinanceFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErr
         );
         if (oldLoan.status != LibVaipakam.LoanStatus.Active)
             revert LoanNotActive();
+        // Pass-2 A1/D5 (#1189) — block a strictly-post-grace refinance (parity
+        // with repayLoan; post-grace resolution goes through DefaultedFacet) and
+        // capture the fixed maturity for the exiting lender's late fee below, so
+        // a late borrower can't route around the penalty via a refinance door.
+        uint256 oldEndTime = uint256(oldLoan.startTime) +
+            uint256(oldLoan.durationDays) * LibVaipakam.ONE_DAY;
+        if (block.timestamp > oldEndTime + LibVaipakam.gracePeriod(oldLoan.durationDays)) {
+            revert RepaymentPastGracePeriod();
+        }
         // T-092 Phase 2a (#505) — resolve the current borrower-NFT
         // owner once at the top + Tier-1 sanctions check it. A
         // keeper-driven path admitted by requireKeeperFor uses
@@ -383,7 +396,13 @@ contract RefinanceFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErr
         // lending asset. tryApplyYieldFee silently falls back on any
         // precondition failure.
         uint256 shortfall = 0; // #411 fix — see comment above.
-        uint256 interestPortion = oldInterest;
+        // Pass-2 A1/D5 (#1189) — a refinance that lands in the grace window
+        // charges the same late fee `repayLoan` does (0 within term), split
+        // treasury/lender like the interest. The yield-fee branch below keeps the
+        // whole `interest + lateFee` for the lender (mirrors RepayFacet), so the
+        // penalty is never silently dropped on the discounted path.
+        uint256 lateFee = LibVaipakam.calculateLateFee(oldLoanId, oldEndTime);
+        uint256 interestPortion = oldInterest + lateFee;
         (uint256 treasuryFee, uint256 lenderInterest) = LibEntitlement.splitTreasury(
             oldLoan,
             interestPortion

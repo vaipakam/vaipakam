@@ -902,6 +902,11 @@
   },
   {
     "type": "error",
+    "name": "RepaymentPastGracePeriod",
+    "inputs": []
+  },
+  {
+    "type": "error",
     "name": "ReportAfterFinalization",
     "inputs": []
   },

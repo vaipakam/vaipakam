@@ -130,21 +130,22 @@ contract RewardLifecycleCloseTest is SetupTest {
         assertFalse(_entries(borrower)[0].forfeited, "borrower not forfeited (in grace)");
     }
 
-    /// @dev Codex #1061 P2 — a LATE preclose (past grace, before default is
-    ///      triggered) is a non-clean close: the borrower reward forfeits to
-    ///      treasury while the (repaid) lender keeps its reward.
-    function testLatePrecloseForfeitsBorrower() public {
+    /// @dev Pass-2 A1/D5 (#1189) — a preclose PAST the grace window is now
+    ///      BLOCKED (parity with `repayLoan`), superseding the earlier "late
+    ///      preclose forfeits borrower" behaviour (Codex #1061 P2) that relied on
+    ///      the now-closed post-grace preclose door. The late borrower must
+    ///      resolve through the default path (DefaultedFacet), which is where the
+    ///      reward forfeit now happens (covered by the default-terminal reward
+    ///      tests). Here we assert the door is shut.
+    function testLatePreclose_blockedPostGrace() public {
         uint256 loanId = _createLoan();
         // 30-day loan, ~2-week grace → warp well past graceEnd but keep Active.
         vm.warp(block.timestamp + 30 days + 20 days);
         vm.startPrank(borrower);
         IERC20Mint(mockERC20).approve(address(diamond), type(uint256).max);
+        vm.expectRevert(PrecloseFacet.RepaymentPastGracePeriod.selector);
         PrecloseFacet(address(diamond)).precloseDirect(loanId);
         vm.stopPrank();
-
-        assertTrue(_entries(borrower)[0].closed, "borrower entry closed");
-        assertTrue(_entries(borrower)[0].forfeited, "LATE preclose forfeits borrower reward");
-        assertFalse(_entries(lender)[0].forfeited, "lender still keeps its reward");
     }
 }
 

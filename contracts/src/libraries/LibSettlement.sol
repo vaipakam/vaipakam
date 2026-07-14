@@ -69,35 +69,42 @@ library LibSettlement {
      * @notice Builds the settlement plan for an ERC-20 loan being preclosed
      *         (borrower pays per the floor model, with `interestSettled`
      *         credited so partial / periodic payments aren't re-charged).
-     * @dev No late fee in the preclose path — preclose is strictly
-     *      pre-maturity. Pre-#408 this routed through
-     *      `LibEntitlement.fullTermInterest` directly, which over-
-     *      charged borrowers who'd already paid interest via partial-
-     *      repay or periodic settlement (#413). Now routes through
-     *      the unified `settlementInterestNet` so the same floor +
-     *      credit semantics apply across every borrower-initiated
-     *      settlement entry point — removes the #413 divergence by
-     *      construction.
+     * @dev Pre-#408 this routed through `LibEntitlement.fullTermInterest`
+     *      directly, which over-charged borrowers who'd already paid interest
+     *      via partial-repay or periodic settlement (#413). Now routes through
+     *      the unified `settlementInterestNet` so the same floor + credit
+     *      semantics apply across every borrower-initiated settlement entry
+     *      point — removes the #413 divergence by construction.
+     *
+     *      Pass-2 A1/D5 (#1189) — takes a `lateFee` param (0 within term) so a
+     *      preclose that lands in the grace window charges the same late-fee
+     *      penalty `repayLoan` does, closing the fee-leak where a late borrower
+     *      routed around the penalty via `precloseDirect`. The caller
+     *      (`PrecloseFacet.precloseDirect`) also blocks strictly post-grace, so
+     *      this splits `interest + lateFee` exactly like {computeRepayment}.
+     * @param lateFee Late fee in principal-asset units (0 if within term).
      */
     function computePreclose(
-        LibVaipakam.Loan storage loan
+        LibVaipakam.Loan storage loan,
+        uint256 lateFee
     ) internal view returns (ERC20Settlement memory plan) {
         uint256 principal = loan.principal;
-        // Preclose is pre-maturity so `elapsed < duration` → effective
+        // Preclose within term has `elapsed < duration` → effective
         // = `floorDays = useFullTermInterest ? durationDays : 0`. For
         // the `true` branch (the typical preclose path), this equals
         // the pre-#408 `fullTermInterest(...)` result — minus
         // `interestSettled`. For the opt-out branch, falls back to
-        // pure accrued.
+        // pure accrued. A grace-window preclose accrues past the term
+        // via the shared elapsed/floor model and adds `lateFee` on top.
         uint256 interest = LibEntitlement.settlementInterestNet(
             loan,
             block.timestamp
         );
-        (uint256 treasuryShare, uint256 lenderShare) = LibEntitlement.splitTreasury(loan, interest);
+        (uint256 treasuryShare, uint256 lenderShare) = LibEntitlement.splitTreasury(loan, interest + lateFee);
         plan = ERC20Settlement({
             principal: principal,
             interest: interest,
-            lateFee: 0,
+            lateFee: lateFee,
             treasuryShare: treasuryShare,
             lenderShare: lenderShare,
             lenderDue: principal + lenderShare

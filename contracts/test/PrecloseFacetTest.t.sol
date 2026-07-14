@@ -3,6 +3,7 @@
 pragma solidity ^0.8.29;
 
 import {Test} from "forge-std/Test.sol";
+import {Vm} from "forge-std/Vm.sol";
 import {VaipakamDiamond} from "../src/VaipakamDiamond.sol";
 import {IDiamondCut} from "@diamond-3/interfaces/IDiamondCut.sol";
 import {PrecloseFacet} from "../src/facets/PrecloseFacet.sol";
@@ -387,6 +388,55 @@ contract PrecloseFacetTest is Test {
         assertEq(uint8(loan.status), uint8(LibVaipakam.LoanStatus.Repaid));
     }
 
+    // ─── Pass-2 A1/D5 (#1189): early-close late-fee parity + post-grace block ──
+
+    /// @dev A `precloseDirect` past the grace window is blocked (parity with
+    ///      `repayLoan`) — post-grace resolution goes through DefaultedFacet.
+    function testPreclosedDirect_postGrace_reverts() public {
+        LibVaipakam.Loan memory l = LoanFacet(address(diamond)).getLoanDetails(activeLoanId);
+        uint256 endTime = uint256(l.startTime) + uint256(l.durationDays) * 1 days;
+        uint256 graceEnd = endTime + LibVaipakam.gracePeriod(l.durationDays);
+        vm.warp(graceEnd + 1);
+        vm.prank(borrower);
+        vm.expectRevert(PrecloseFacet.RepaymentPastGracePeriod.selector);
+        PrecloseFacet(address(diamond)).precloseDirect(activeLoanId);
+    }
+
+    /// @dev A `precloseDirect` that lands in the grace window charges the same
+    ///      late-fee penalty `repayLoan` does (previously it charged zero — the
+    ///      A1/D5 fee leak). 3 days late → 1% + 3×0.5% = 2.5% of principal.
+    function testPreclosedDirect_graceWindow_chargesLateFee() public {
+        vm.mockCall(address(diamond), abi.encodeWithSelector(VaultFactoryFacet.vaultWithdrawERC20.selector), abi.encode(true));
+        vm.mockCall(address(diamond), abi.encodeWithSelector(VaipakamNFTFacet.burnNFT.selector), "");
+        vm.mockCall(address(diamond), abi.encodeWithSelector(VaipakamNFTFacet.updateNFTStatus.selector), "");
+
+        LibVaipakam.Loan memory l = LoanFacet(address(diamond)).getLoanDetails(activeLoanId);
+        uint256 endTime = uint256(l.startTime) + uint256(l.durationDays) * 1 days;
+        vm.warp(endTime + 3 days); // 3 days into grace
+        uint256 expectedLateFee = (PRINCIPAL * (100 + 3 * 50)) / 10000; // 2.5%
+
+        vm.recordLogs();
+        vm.prank(borrower);
+        PrecloseFacet(address(diamond)).precloseDirect(activeLoanId);
+
+        Vm.Log[] memory logs = vm.getRecordedLogs();
+        bytes32 sig = keccak256(
+            "LoanSettlementBreakdown(uint256,uint256,uint256,uint256,uint256,uint256)"
+        );
+        uint256 seenLateFee = type(uint256).max;
+        for (uint256 i; i < logs.length; i++) {
+            if (logs[i].topics[0] == sig) {
+                (, , uint256 lateFee, , ) = abi.decode(
+                    logs[i].data,
+                    (uint256, uint256, uint256, uint256, uint256)
+                );
+                seenLateFee = lateFee;
+            }
+        }
+        assertGt(expectedLateFee, 0, "3-days-late fee is positive");
+        assertEq(seenLateFee, expectedLateFee, "grace-window preclose charges the late fee (#1189)");
+        vm.clearMockedCalls();
+    }
 
     /// @dev Covers CrossFacetCallFailed("Create offset offer failed") in offsetWithNewOffer.
     function testOffsetWithNewOfferCreateOfferFails2() public {
@@ -1379,6 +1429,45 @@ contract PrecloseFacetTest is Test {
 
         LibVaipakam.Loan memory loan = LoanFacet(address(diamond)).getLoanDetails(activeLoanId);
         assertEq(uint8(loan.status), uint8(LibVaipakam.LoanStatus.Repaid));
+        vm.clearMockedCalls();
+    }
+
+    /// @dev Pass-2 A1/D5 (#1189) — an NFT-rental preclose past grace is blocked.
+    function testPrecloseDirectNFTRental_postGrace_reverts() public {
+        uint256 fullRental = PRINCIPAL * 30;
+        _setLoanAsNftRental(activeLoanId, fullRental, (fullRental * 500) / 10000);
+        LibVaipakam.Loan memory l = LoanFacet(address(diamond)).getLoanDetails(activeLoanId);
+        uint256 endTime = uint256(l.startTime) + uint256(l.durationDays) * 1 days;
+        vm.warp(endTime + LibVaipakam.gracePeriod(l.durationDays) + 1);
+        vm.prank(borrower);
+        vm.expectRevert(PrecloseFacet.RepaymentPastGracePeriod.selector);
+        PrecloseFacet(address(diamond)).precloseDirect(activeLoanId);
+    }
+
+    /// @dev Pass-2 A1/D5 (#1189) — an NFT-rental preclose in the grace window
+    ///      completes and routes the rental late fee (funded from the pre-funded
+    ///      buffer) through the split, mirroring the ERC20 path. Exact rental
+    ///      late-fee math is covered by the RepayFacet rental suite; here we
+    ///      prove the preclose wiring accepts a grace-window close.
+    function testPrecloseDirectNFTRental_graceWindow_closes() public {
+        uint256 fullRental = PRINCIPAL * 30;
+        _setLoanAsNftRental(activeLoanId, fullRental, (fullRental * 500) / 10000);
+        vm.mockCall(address(diamond), abi.encodeWithSelector(VaultFactoryFacet.vaultWithdrawERC20.selector), abi.encode(true));
+        vm.mockCall(address(diamond), abi.encodeWithSelector(VaultFactoryFacet.vaultSetNFTUser.selector), abi.encode(true));
+        vm.mockCall(address(diamond), abi.encodeWithSelector(VaipakamNFTFacet.updateNFTStatus.selector), "");
+
+        LibVaipakam.Loan memory l = LoanFacet(address(diamond)).getLoanDetails(activeLoanId);
+        uint256 endTime = uint256(l.startTime) + uint256(l.durationDays) * 1 days;
+        vm.warp(endTime + 3 days); // 3 days into grace → positive rental late fee
+
+        vm.prank(borrower);
+        PrecloseFacet(address(diamond)).precloseDirect(activeLoanId);
+
+        assertEq(
+            uint8(LoanFacet(address(diamond)).getLoanDetails(activeLoanId).status),
+            uint8(LibVaipakam.LoanStatus.Repaid),
+            "grace-window rental preclose completes with the late fee applied (#1189)"
+        );
         vm.clearMockedCalls();
     }
 
