@@ -7,6 +7,7 @@ import { usePublicClient } from 'wagmi';
 import type { PublicClient } from 'viem';
 import { DIAMOND_ABI_VIEM } from '@vaipakam/contracts/abis';
 import { useActiveChain } from '../chain/useActiveChain';
+import { fetchProtocolConfig, protocolConfigFresh } from './indexer';
 import { readGraceSecondsLive } from '../contracts/preflights';
 import { defaultGraceSeconds, formatGraceSeconds } from '../lib/grace';
 
@@ -42,7 +43,16 @@ export function useRentalBufferBps(): { bps: number; ready: boolean } {
     queryKey: ['rentalBufferBps', readChain.chainId],
     enabled: Boolean(publicClient),
     staleTime: 5 * 60_000,
-    queryFn: () => readRentalBufferBps(publicClient!, readChain.diamondAddress),
+    // RPC read-diet PR B — display from the indexer snapshot (bundle
+    // index 6), chain fallback; submit paths use readRentalBufferBps
+    // directly and never come here.
+    queryFn: async () => {
+      const snap = await fetchProtocolConfig(readChain.chainId);
+      if (snap && protocolConfigFresh(snap.updatedAt)) {
+        return Number(snap.bundle[6]);
+      }
+      return readRentalBufferBps(publicClient!, readChain.diamondAddress);
+    },
   });
 
   return { bps: data ?? RENTAL_BUFFER_BPS_DEFAULT, ready: data !== undefined };
@@ -109,7 +119,25 @@ export function useMasterFlags(): { data: MasterFlags | undefined } {
     // just-flipped switch keeps the band visible (the Execute write
     // would revert harmlessly inside it).
     staleTime: 10 * 60_000,
+    // RPC read-diet PR B — snapshot-first: a governance flip emits a
+    // config event, so the snapshot updates within ~one ingest scan —
+    // typically FRESHER than this hook's own 10-min staleTime window.
+    // The crossable band's execute path still live-checks before the
+    // write, so the advisory surface never turns a stale flag into a
+    // doomed transaction.
     queryFn: async (): Promise<MasterFlags> => {
+      const snap = await fetchProtocolConfig(readChain.chainId);
+      if (
+        snap &&
+        protocolConfigFresh(snap.updatedAt) &&
+        snap.masterFlags.length >= 3
+      ) {
+        return {
+          rangeAmount: Boolean(snap.masterFlags[0]),
+          rangeRate: Boolean(snap.masterFlags[1]),
+          partialFill: Boolean(snap.masterFlags[2]),
+        };
+      }
       const [rangeAmount, rangeRate, partialFill] =
         (await publicClient!.readContract({
           address: readChain.diamondAddress,

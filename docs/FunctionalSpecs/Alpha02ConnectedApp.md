@@ -71,6 +71,11 @@ alpha02 uses chain reads and indexed reads for different jobs.
   pending-fallback loan). The push rail also reports its own freshness (how
   recently ingestion advanced, and how often it is expected to), so the app
   can tell a healthy-but-quiet rail from a stalled one instead of guessing.
+- Governance-tunable display configuration (fees, buffers, feature flags)
+  may be served from the indexer's config snapshot, which follows
+  governance changes within moments; the chain remains the fallback when
+  the snapshot is absent or stale. Anything the user signs against is
+  always read live from the chain at submit time.
 - Refresh is signal-driven with polling as the degraded fallback: while the
   push rail is verifiably delivering, background polling relaxes to a safety
   net and freshness rides the push signal, per-block refresh narrows to the

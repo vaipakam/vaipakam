@@ -583,6 +583,46 @@ export interface IndexerFreshness {
   updatedAt: number;
 }
 
+/** RPC read-diet PR B — the display protocol-config snapshot
+ *  (GET /config/:chainId). null = indexer unconfigured/unreachable or
+ *  no row yet → callers fall back to their live chain read. The
+ *  `updatedAt` stamp travels with the payload so callers can refuse a
+ *  snapshot that has gone stale (indexer wedged for hours). */
+export interface IndexerProtocolConfig {
+  bundle: (string | boolean | number)[];
+  masterFlags: boolean[];
+  sourceBlock: number;
+  updatedAt: number;
+}
+
+/** Snapshot freshness guard: config flips reach the snapshot within
+ *  ~one ingest scan (event-triggered), so a row older than a day means
+ *  the refresh rail is wedged — refuse it and let the chain fallback
+ *  serve display. */
+export function protocolConfigFresh(updatedAt: number): boolean {
+  return Date.now() / 1000 - updatedAt < 24 * 3600;
+}
+
+export async function fetchProtocolConfig(
+  chainId: number,
+): Promise<IndexerProtocolConfig | null> {
+  if (!indexerConfigured()) return null;
+  const res = await getJson<
+    | { available: false }
+    | ({ available: true } & IndexerProtocolConfig)
+  >(`/config/${chainId}`);
+  if (!res || !('available' in res) || res.available !== true) return null;
+  if (!Array.isArray(res.bundle) || !Array.isArray(res.masterFlags)) {
+    return null;
+  }
+  return {
+    bundle: res.bundle,
+    masterFlags: res.masterFlags,
+    sourceBlock: res.sourceBlock,
+    updatedAt: res.updatedAt,
+  };
+}
+
 export async function fetchIndexerFreshness(
   chainId: number,
 ): Promise<IndexerFreshness | null> {

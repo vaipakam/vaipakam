@@ -49,6 +49,7 @@
  * state writes). The rest of the surface stays public-read.
  */
 
+import { handleConfigSnapshot } from './configSnapshot';
 import {
   resolveEnv,
   readSecret,
@@ -243,6 +244,17 @@ export default {
     // T-078 — resolve the Secrets Store RPC bindings once, at the
     // boundary; every route handler receives the plain resolved env.
     const resolved = await resolveEnv(env);
+
+    // ─── /config/:chainId ───────────────────────────────────────
+    // RPC read-diet PR B — display protocol-config snapshot (public,
+    // open CORS like /offers: the bundle is re-derivable from chain).
+    {
+      const m = url.pathname.match(/^\/config\/(\d+)$/);
+      if (m && req.method === 'GET') {
+        return handleConfigSnapshot(Number(m[1]), resolved);
+      }
+      if (m && req.method === 'OPTIONS') return handleOffersPreflight();
+    }
 
     // ─── /offers/* ──────────────────────────────────────────────
     if (url.pathname.startsWith('/offers')) {
