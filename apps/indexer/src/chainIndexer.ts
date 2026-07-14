@@ -2435,7 +2435,7 @@ async function processLoanLogs(
         durationDays: bigint;
         startTime: bigint;
       };
-      await env.DB.prepare(
+      const swapPartial = await env.DB.prepare(
         `UPDATE loans
            SET principal = ?,
                collateral_amount = ?,
@@ -2452,6 +2452,10 @@ async function processLoanLogs(
           loanId,
         )
         .run();
+      // RPC read-diet PR 0 — same data-only entitlement class as
+      // PartialRepaid: principal/collateral/startTime moved with no
+      // status flip, so it must still broadcast `loan.updated`.
+      if ((swapPartial.meta?.changes ?? 0) > 0) entitlementUpdates++;
       // Mirror PartialRepaid's grace-end refresh — the contract resets
       // `loan.startTime` on partial swap-to-repay too (RepayFacet:663
       // pattern), which moves the grace boundary for any live listing.
@@ -2604,7 +2608,7 @@ async function processLoanLogs(
       // the read routes attribute the loan to the new lender. (Previously
       // allowlisted as "covered by the Transfer handler" — it was NOT, since the
       // token id migrates.)
-      await env.DB.prepare(
+      const lenderSold = await env.DB.prepare(
         `UPDATE loans
             SET lender = ?, lender_token_id = ?, lender_current_owner = ?,
                 updated_at = ?
@@ -2619,6 +2623,10 @@ async function processLoanLogs(
           Number(a.loanId as bigint),
         )
         .run();
+      // RPC read-diet PR 0 — the lender side changed hands via burn +
+      // fresh mint (the plain Transfer handler can't attribute it), so
+      // this write is the ownership signal for the push rail.
+      if ((lenderSold.meta?.changes ?? 0) > 0) ownershipTransfers++;
       // #1130 — the buying lender is a participant (token-id migration; see
       // the LoanObligationTransferred note).
       await recordLoanParticipant(
@@ -2660,7 +2668,7 @@ async function processLoanLogs(
         throw err;
       }
       const newLender = String(d.lender).toLowerCase();
-      await env.DB.prepare(
+      const saleCompleted = await env.DB.prepare(
         `UPDATE loans
             SET lender = ?, lender_token_id = ?, lender_current_owner = ?,
                 updated_at = ?
@@ -2675,6 +2683,9 @@ async function processLoanLogs(
           loanId,
         )
         .run();
+      // RPC read-diet PR 0 — same burn+remint lender migration as
+      // LoanSold: this write is the ownership signal for the push rail.
+      if ((saleCompleted.meta?.changes ?? 0) > 0) ownershipTransfers++;
       // #1130 — the sale-offer buyer is a participant (token-id migration;
       // see the LoanObligationTransferred note).
       await recordLoanParticipant(

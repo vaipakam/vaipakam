@@ -65,6 +65,9 @@ describe('IndexerPushSync KEY_MAP (#1131 desk roots)', () => {
       // chain-read cache (LiveChainSync territory), but ownership.changed
       // fires only on actual transfers — rare — so the overlap with the
       // per-block nudge is negligible and deliberate.
+      // deskHistory rides ownership too: a secondary transfer appends the
+      // recipient to loan_participants, which useDeskHistory reads and no
+      // other rail refreshes (Codex #1227 r1).
       'ownership.changed': [
         'myLoans',
         'myOffers',
@@ -72,6 +75,7 @@ describe('IndexerPushSync KEY_MAP (#1131 desk roots)', () => {
         'positionOwners',
         'loan',
         'offer',
+        'deskHistory',
       ],
       'activity.appended': ['activity'],
     });

@@ -121,6 +121,12 @@ export const KEY_MAP: Record<string, string[]> = {
     'positionOwners',
     'loan',
     'offer',
+    // A secondary transfer also appends the recipient to
+    // loan_participants, which useDeskHistory reads — and LiveChainSync
+    // does not cover deskHistory, so without this a user acquiring a
+    // position with the History tab open would see it stale until
+    // focus/net (Codex #1227 r1).
+    'deskHistory',
   ],
   'activity.appended': ['activity'],
   // NOT mapped on purpose: 'deskSymbols' (token metadata is immutable).
