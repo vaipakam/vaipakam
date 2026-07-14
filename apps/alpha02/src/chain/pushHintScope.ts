@@ -65,11 +65,16 @@ export function scopeInvalidationRoots(opts: {
     offerIds.some((id) => myOfferIds.has(id)) ||
     links.some((l) => {
       if (typeof l !== 'object' || l === null) return true; // malformed ⇒ relevant
-      const link = l as { offerId?: unknown; lender?: unknown; borrower?: unknown };
-      return (
-        (typeof link.offerId === 'number' && myOfferIds.has(link.offerId)) ||
-        (typeof link.lender === 'string' && link.lender.toLowerCase() === address) ||
-        (typeof link.borrower === 'string' && link.borrower.toLowerCase() === address)
+      const link = l as Record<string, unknown>;
+      if (typeof link.offerId === 'number' && myOfferIds.has(link.offerId)) {
+        return true;
+      }
+      // ANY named party matching the wallet makes the frame ours —
+      // covers creator (own offer created elsewhere) and newLender/
+      // newBorrower (a position just acquired), whose ids can't be in
+      // this tab's cache yet (Codex #1244 r1).
+      return Object.values(link).some(
+        (v) => typeof v === 'string' && v.toLowerCase() === address,
       );
     });
   if (relevant) return roots;

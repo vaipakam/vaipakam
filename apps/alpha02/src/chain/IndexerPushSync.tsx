@@ -251,8 +251,16 @@ function cachedIdSet(
   if (entries.length === 0) return null;
   const out = new Set<number>();
   for (const [, data] of entries) {
-    if (!Array.isArray(data)) return null;
-    for (const row of data) {
+    // The full hooks cache a MyRows envelope ({ rows, ... }); accept a
+    // bare array too so a cache-shape change degrades to coarse rather
+    // than silently never narrowing (Codex #1244 r1).
+    const rows = Array.isArray(data)
+      ? data
+      : Array.isArray((data as { rows?: unknown } | null)?.rows)
+        ? (data as { rows: unknown[] }).rows
+        : null;
+    if (!rows) return null;
+    for (const row of rows) {
       const id = (row as Record<string, unknown> | null)?.[idField];
       if (typeof id !== 'number') return null;
       out.add(id);

@@ -45,6 +45,32 @@ describe('collectPushHints', () => {
     }
   });
 
+  it('links creations/acquisitions to the party that cannot know the id yet', () => {
+    const h = collectPushHints([
+      log('OfferCreated', { offerId: 3n, creator: '0x00000000000000000000000000000000000000Cc' }),
+      log('LoanSaleCompleted', {
+        loanId: 8n,
+        originalLender: '0x00000000000000000000000000000000000000aa',
+        newLender: '0x00000000000000000000000000000000000000dd',
+      }),
+    ]);
+    expect(h.links[0].creator).toBe('0x00000000000000000000000000000000000000cc');
+    expect(h.links[1].newLender).toBe('0x00000000000000000000000000000000000000dd');
+    expect(h.truncated).toBe(false);
+  });
+
+  it('extracts OfferMatched ids under their real arg names', () => {
+    const h = collectPushHints([
+      log('OfferMatched', { lenderOfferId: 4n, borrowerOfferId: 5n }),
+    ]);
+    expect(h.offerIds.sort()).toEqual([4, 5]);
+    expect(h.truncated).toBe(false);
+  });
+
+  it('forces truncated on a link event with no readable party', () => {
+    expect(collectPushHints([log('LoanSold', { loanId: 8n })]).truncated).toBe(true);
+  });
+
   it('forces truncated when a handled event carries no recognised id', () => {
     const h = collectPushHints([log('SomeFutureEvent', { widget: 1n })]);
     expect(h.truncated).toBe(true);

@@ -670,7 +670,13 @@ export async function runChainIndexerForChain(
     // RPC read-diet PR D — one central pass over the SAME decoded log
     // set every handler consumed; a handler can't drift out of a list
     // it doesn't maintain (unrecognised shapes force `truncated`).
-    hints: collectPushHints(allLogs),
+    // Stub HEALS mutate rows without a corresponding log in THIS scan
+    // (refreshStubOffers/refreshStubLoans), so a heal-carrying result
+    // can't claim its id list is complete (Codex #1244 r1).
+    hints:
+      detailRefreshes > 0 || loanDetailRefreshes > 0
+        ? { ...collectPushHints(allLogs), truncated: true }
+        : collectPushHints(allLogs),
   };
 }
 

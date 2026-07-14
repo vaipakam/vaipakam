@@ -22,7 +22,7 @@
  * maintain; a new event either carries a recognised id arg (extracted)
  * or it doesn't (forces truncated — safe by default).
  *
- * HINT_CAP is a deliberately conservative launch value; #12XX tracks
+ * HINT_CAP is a deliberately conservative launch value; #1245 tracks
  * re-tuning it from real per-scan touched-id volume once rehearsal
  * load exists.
  */
@@ -30,10 +30,15 @@
 export const HINT_CAP = 32;
 
 export interface PushHintLink {
-  loanId: number;
+  loanId?: number;
   offerId?: number;
+  /** Any party address the event names — original or NEW holder,
+   *  creator. The client treats a match on ANY of these as "mine". */
   lender?: string;
   borrower?: string;
+  creator?: string;
+  newLender?: string;
+  newBorrower?: string;
 }
 
 export interface PushHints {
@@ -47,7 +52,7 @@ export interface PushHints {
 }
 
 const LOAN_ID_ARGS = ['loanId', 'loanIdA', 'loanIdB', 'loanIdC'] as const;
-const OFFER_ID_ARGS = ['offerId', 'lendOfferId', 'borrowOfferId', 'buyOfferId'] as const;
+const OFFER_ID_ARGS = ['offerId', 'lenderOfferId', 'borrowerOfferId', 'buyOfferId'] as const;
 
 /** Events whose row impact is keyed by something we cannot map to a
  *  loan/offer id without DB reads (tokenId / orderHash). Their presence
@@ -61,7 +66,18 @@ const UNMAPPABLE_ROW_EVENTS = new Set([
 ]);
 
 /** Creation-shaped events that carry the causative linkage. */
-const LINK_EVENTS = new Set(['LoanInitiated', 'LoanInitiatedDetails', 'LoanSaleCompleted']);
+const LINK_EVENTS = new Set([
+  'LoanInitiated',
+  'LoanInitiatedDetails',
+  // Creation/acquisition events whose RELEVANT wallet cannot yet hold
+  // the id in its cache: the creator of a fresh offer, the NEW holder
+  // of a sold/migrated position (Codex #1244 r1 — LoanSaleCompleted
+  // names originalLender/newLender, not lender).
+  'OfferCreated',
+  'LoanSold',
+  'LoanSaleCompleted',
+  'LoanObligationTransferred',
+]);
 
 const toNum = (v: unknown): number | null => {
   if (typeof v === 'bigint') return Number(v);
@@ -108,15 +124,23 @@ export function collectPushHints(
     if (!sawId) truncated = true;
 
     if (LINK_EVENTS.has(log.eventName)) {
-      const loanId = toNum(log.args.loanId);
-      if (loanId != null && links.length < HINT_CAP) {
-        links.push({
-          loanId,
-          offerId: toNum(log.args.offerId) ?? undefined,
-          lender: toAddr(log.args.lender),
-          borrower: toAddr(log.args.borrower),
-        });
-      } else if (loanId != null) {
+      const link: PushHintLink = {
+        loanId: toNum(log.args.loanId) ?? undefined,
+        offerId: toNum(log.args.offerId) ?? undefined,
+        lender: toAddr(log.args.lender),
+        borrower: toAddr(log.args.borrower),
+        creator: toAddr(log.args.creator),
+        newLender: toAddr(log.args.newLender),
+        newBorrower: toAddr(log.args.newBorrower),
+      };
+      const hasParty =
+        link.lender || link.borrower || link.creator || link.newLender || link.newBorrower;
+      if (links.length < HINT_CAP) {
+        links.push(link);
+        // A link event whose party fields we couldn't read can't tell
+        // the acquiring wallet "this is yours" — no completeness claim.
+        if (!hasParty) truncated = true;
+      } else {
         truncated = true;
       }
     }
