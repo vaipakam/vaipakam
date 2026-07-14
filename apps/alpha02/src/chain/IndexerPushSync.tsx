@@ -34,6 +34,7 @@ import {
   subscribeRailHealth,
 } from './railHealth';
 import { PATCHED_ROOTS } from './receiptSync';
+import { bumpClaimVerdictEpoch } from '../data/claimVerdictCache';
 
 /** Server→client frames (mirror of apps/indexer chainIngestDO PushFrame).
  *  The `cursor` heartbeat + the hello `cursor`/`scanCadenceSec` fields land
@@ -384,6 +385,15 @@ export function IndexerPushSync() {
             }
           }
         } else if (frame.t === 'invalidate') {
+          // RPC read-diet PR C (§4.2.3): a position NFT changed hands
+          // somewhere — any memoized claim verdict may now be wrong
+          // even though its identity fields are unchanged (the
+          // ownerOf probe is what this frame invalidates). Clear the
+          // memo BEFORE the nudge so the resulting claimables refetch
+          // re-probes instead of serving the stale verdicts back.
+          if (frame.keys.includes('ownership.changed')) {
+            bumpClaimVerdictEpoch();
+          }
           const roots = frame.keys.flatMap((k) => KEY_MAP[k] ?? []);
           if (roots.length > 0) scheduleNudge(roots);
         } else if (frame.t === 'cursor') {
@@ -418,6 +428,13 @@ export function IndexerPushSync() {
     // focus flush - a parked tab needs no urgent catch-up.)
     const unsubRail = subscribeRailHealth(() => {
       if (cancelled || isRailHealthy()) return;
+      // PR C (§4.2.3): a rail drop means ownership.changed frames may
+      // have been missed — every memoized claim verdict recorded
+      // before the drop is suspect, including for reuse AFTER a later
+      // recovery (Codex #1232 r1). The claimables consumer also stops
+      // READING the memo while the rail is down; this bump covers the
+      // across-the-outage window.
+      bumpClaimVerdictEpoch();
       const roots = STRETCHED_ROOTS.filter((r) => !PATCHED_ROOTS.has(r));
       if (typeof document !== 'undefined' && document.hidden) {
         for (const r of roots) hiddenDirty.add(r);
@@ -434,6 +451,13 @@ export function IndexerPushSync() {
       if (nudgeTimer) clearTimeout(nudgeTimer);
       for (const t of rootTrailing.values()) clearTimeout(t);
       rootTrailing.clear();
+      // Deliberate teardown (chain switch / remount) drops the rail
+      // AFTER unsubRail above, so the health subscriber's drop-bump
+      // never sees this transition — bump explicitly, or verdicts
+      // recorded before the switch stay readable when the user
+      // returns within the TTL, missing every ownership.changed frame
+      // from the away window (Codex #1232 r3).
+      bumpClaimVerdictEpoch();
       railSocketLive(false); // chain switch / unmount — re-prove health
       if (ws) {
         ws.onmessage = null;

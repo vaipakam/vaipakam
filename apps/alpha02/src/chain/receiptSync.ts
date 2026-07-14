@@ -28,6 +28,7 @@
  *     shot, never a poll.
  */
 import type { QueryClient } from '@tanstack/react-query';
+import { bumpClaimVerdictEpoch } from '../data/claimVerdictCache';
 
 /** Every root a confirmed own-write may have moved. Kept coarse on
  *  purpose: these refetch `refetchType: 'active'` only, so the cost is
@@ -134,6 +135,10 @@ export function publishReceiptInvalidation(
   extraRoots: readonly string[] = [],
 ): void {
   const roots = [...new Set([...RECEIPT_FLOOR_ROOTS, ...extraRoots])];
+  // RPC read-diet PR C (§4.2.3): an own write may have claimed/burned/
+  // moved a position NFT — every memoized claim verdict is suspect, so
+  // clear the memo before the claimables refetch this floor triggers.
+  bumpClaimVerdictEpoch();
   // Acting tab, IMMEDIATE pass: skip the patched roots — their flows
   // may have just written the mined value into the cache, and an
   // immediate refetch from a lagging RPC would overwrite it (Codex
@@ -203,6 +208,9 @@ export function listenForReceiptInvalidations(
     if (!frame || !Array.isArray(frame.roots)) return;
     const roots = frame.roots.filter((r): r is string => typeof r === 'string');
     if (roots.length === 0) return;
+    // Same PR C memo clear as the acting tab: the broadcast means an
+    // own write confirmed somewhere on this origin.
+    bumpClaimVerdictEpoch();
     invalidateRoots(queryClient, roots);
     setTimeout(() => invalidateRoots(queryClient, roots), SECOND_READ_DELAY_MS);
   };

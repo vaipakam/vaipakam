@@ -33,16 +33,32 @@
  * the indexer are synthesized from a live `getLoanDetails` read for
  * BOTH sides; the ownerOf confirm below prunes the side the wallet
  * doesn't actually hold.
+ *
+ * RPC read-diet PR C (§4.2.3) adds two refinements on top, neither of
+ * which weakens the contract above: (1) the indexer's ADDITIVE
+ * `/claim-candidates` hint widens discovery when the chain enumeration
+ * is unavailable (old deploy) — it can only add candidates, never
+ * suppress one, and is skipped entirely while the authoritative
+ * enumeration works; and (2) each candidate's verdict is
+ * memoized per identity key (`claimVerdictKey`) so a re-run only
+ * re-probes candidates that actually changed — the memo is cleared on
+ * `ownership.changed` push frames and receipt invalidations, the
+ * signals that can flip a verdict without moving any identity field.
  */
 import { useQuery } from '@tanstack/react-query';
 import { usePublicClient } from 'wagmi';
 import { DIAMOND_ABI_VIEM } from '@vaipakam/contracts/abis';
 import { useActiveChain } from '../chain/useActiveChain';
 import { AssetType } from '../lib/types';
-import type { IndexedLoanStatus } from './indexer';
+import { fetchClaimCandidates, type IndexedLoanStatus } from './indexer';
 import { isRevert, readLoanRowLive } from './liveLoanRow';
 import { useMyLoans, type PositionLoan } from './hooks';
-import { signalAware } from '../chain/railHealth';
+import { isRailHealthy, signalAware } from '../chain/railHealth';
+import {
+  claimVerdictEpoch,
+  claimVerdictGet,
+  claimVerdictPut,
+} from './claimVerdictCache';
 
 const REFRESH_MS = 30_000;
 
@@ -112,6 +128,22 @@ function candidateFingerprint(rows: PositionLoan[] | null | undefined): string {
   return `${rows.length}:${djb2(parts.join('|'))}`;
 }
 
+/** RPC read-diet PR C (§4.2.3) — the PER-CANDIDATE memo key: the same
+ *  identity fields as the set fingerprint above, plus chain + wallet.
+ *  A candidate whose key is unchanged since its last CLEAN
+ *  verification reuses that verdict instead of re-spending its
+ *  ~3-read probe; the memo is cleared wholesale on `ownership.changed`
+ *  push frames and receipt invalidations (see claimVerdictCache.ts),
+ *  because ownership can flip without any of these fields moving.
+ *  Exported for the unit test. */
+export function claimVerdictKey(
+  chainId: number,
+  wallet: string,
+  l: PositionLoan,
+): string {
+  return `${chainId}:${wallet}:${l.loanId}:${l.role}:${l.status}:${l.lenderTokenId}:${l.borrowerTokenId}:${l.principal}:${l.collateralAmount}`;
+}
+
 export function useMyClaimables() {
   const { readChain, address } = useActiveChain();
   const publicClient = usePublicClient({ chainId: readChain.chainId });
@@ -148,6 +180,17 @@ export function useMyClaimables() {
 
       const me = address.toLowerCase();
       let transportFailed = false;
+
+      // PR C memo posture for THIS pass, captured up front:
+      //  - reuse verdicts only while the push rail is healthy — rail
+      //    down means `ownership.changed` frames are NOT arriving, so
+      //    the fallback refetches must probe live ownership every time
+      //    (the pre-memo posture; Codex #1232 r1);
+      //  - stamp writes with the pass's epoch so a bump that lands
+      //    mid-verification discards our (possibly pre-bump) results
+      //    instead of re-seeding the cleared map (Codex #1232 r1).
+      const memoReadable = isRailHealthy();
+      const epochAtStart = claimVerdictEpoch();
 
       // ── On-chain discovery (#988, closes the #958 parity gap) ──
       // Enumerate every loan whose position NFT the wallet CURRENTLY
@@ -195,7 +238,24 @@ export function useMyClaimables() {
           enumerationAvailable = false;
         }
       }
-      if (indexerDown && !enumerationAvailable) return null;
+      // PR C hint fetch happens BEFORE the unavailability collapse
+      // (Codex #1232 r4): the lean capped hint route can answer when
+      // the heavier by-lender/by-borrower reads behind useMyLoans did
+      // not, and it is the last remaining discovery source when the
+      // enumeration views are absent too. Fallback-only posture
+      // unchanged: with the enumeration working the hint is skipped.
+      const hintRes = enumerationAvailable
+        ? null
+        : await fetchClaimCandidates(readChain.chainId, me).catch(() => null);
+      const hints = hintRes?.candidates ?? [];
+      if (indexerDown && !enumerationAvailable) {
+        // Last-resort posture: a NON-empty, non-truncated hint yields
+        // rows the confirm fan-out below verifies live (ownerOf +
+        // getClaimable), so showing them beats "unavailable". An
+        // empty or truncated hint cannot support a confident "no
+        // claims" — that stays unavailable, never a short list.
+        if (hints.length === 0 || hintRes?.truncated) return null;
+      }
 
       // Candidates are keyed by (loanId, role) — NOT loanId alone. The
       // indexer may know one side of a loan while the chain enumeration
@@ -216,15 +276,49 @@ export function useMyClaimables() {
         const row = byLoanId.get(id);
         if (!row) continue;
         const other = row.role === 'lender' ? ('borrower' as const) : ('lender' as const);
-        if (!knownKeys.has(`${id}:${other}`)) flipped.push({ ...row, role: other });
+        if (!knownKeys.has(`${id}:${other}`)) {
+          knownKeys.add(`${id}:${other}`);
+          flipped.push({ ...row, role: other });
+        }
+      }
+      // Hints carry a SPECIFIC (loanId, role) — honour it (Codex #1232
+      // r3): a role-less union would add the OPPOSITE side of every
+      // one-sided indexed row too, growing the very fan-out the hint
+      // exists to narrow. Only the hinted side is probed; roles the
+      // hint didn't name are covered by the indexed rows themselves.
+      const hintOnlyRoles = new Map<number, Set<'lender' | 'borrower'>>();
+      for (const h of hints) {
+        const key = `${h.loanId}:${h.role}`;
+        if (knownKeys.has(key)) continue;
+        knownKeys.add(key);
+        const row = byLoanId.get(h.loanId);
+        if (row) {
+          flipped.push({ ...row, role: h.role });
+        } else {
+          let roles = hintOnlyRoles.get(h.loanId);
+          if (!roles) {
+            roles = new Set();
+            hintOnlyRoles.set(h.loanId, roles);
+          }
+          roles.add(h.role);
+        }
       }
 
-      // Chain-discovered loans the indexer rows don't carry at all:
-      // synthesize a row from the live loan struct, for BOTH sides.
+      // Loans the indexer rows don't carry at all: synthesize a row
+      // from the live loan struct — BOTH sides for chain-enumerated
+      // ids (the enumeration proves holding but not which side), only
+      // the hinted side(s) for hint-only ids.
       const extraIds = chainIdList.filter((id) => !byLoanId.has(id));
+      const synthTargets: Array<{
+        id: number;
+        roles: readonly ('lender' | 'borrower')[];
+      }> = extraIds.map((id) => ({ id, roles: ['lender', 'borrower'] }));
+      for (const [id, roles] of hintOnlyRoles) {
+        if (!extraIds.includes(id)) synthTargets.push({ id, roles: [...roles] });
+      }
       const synthesized = (
         await Promise.all(
-          extraIds.map(async (id): Promise<PositionLoan[]> => {
+          synthTargets.map(async ({ id, roles }): Promise<PositionLoan[]> => {
             try {
               const base = await readLoanRowLive(
                 publicClient,
@@ -233,10 +327,7 @@ export function useMyClaimables() {
                 id,
               );
               if (!base) return [];
-              return [
-                { ...base, role: 'lender' as const },
-                { ...base, role: 'borrower' as const },
-              ];
+              return roles.map((role) => ({ ...base, role }));
             } catch (e) {
               // Revert = no such loan (stale/forged id) — skip; a
               // transport failure is "couldn't confirm".
@@ -313,88 +404,116 @@ export function useMyClaimables() {
 
       const confirmed = await Promise.all(
         candidates.map(async (loan): Promise<ClaimableLoan | null> => {
-          const isLender = loan.role === 'lender';
-          const tokenId = isLender ? loan.lenderTokenId : loan.borrowerTokenId;
+          // PR C (§4.2.3): an identical candidate verified earlier this
+          // session reuses its memoized verdict — zero probes. First
+          // sight of a candidate (fresh load, changed identity, or a
+          // post-bump run) always probes.
+          const memoKey = claimVerdictKey(readChain.chainId, me, loan);
+          const memo = memoReadable
+            ? claimVerdictGet(memoKey)
+            : { hit: false as const, value: undefined };
+          if (memo.hit) return memo.value as ClaimableLoan | null;
+          // Only a CLEAN verdict is memoizable: a transport failure is
+          // "couldn't confirm", never a cacheable "not claimable".
+          let clean = true;
+          const verdict = await (async (): Promise<ClaimableLoan | null> => {
+            const isLender = loan.role === 'lender';
+            const tokenId = isLender ? loan.lenderTokenId : loan.borrowerTokenId;
 
-          // 1. Does the wallet still hold this side's position NFT? A
-          //    sold position isn't ours to claim; a burned one (revert)
-          //    means the loan fully settled — nothing to claim either.
-          try {
-            const owner = (await publicClient.readContract({
-              address: diamond,
-              abi: DIAMOND_ABI_VIEM,
-              functionName: 'ownerOf',
-              args: [BigInt(tokenId)],
-            })) as string;
-            if (owner.toLowerCase() !== me) return null;
-          } catch (e) {
-            if (isRevert(e)) return null;
-            transportFailed = true;
-            return null;
-          }
-
-          // 2. Authoritative claimable probe + Phase-5 borrower rebate.
-          try {
-            const res = (await publicClient.readContract({
-              address: diamond,
-              abi: DIAMOND_ABI_VIEM,
-              functionName: 'getClaimable',
-              args: [BigInt(loan.loanId), isLender],
-            })) as ClaimableTuple;
-            const claimAsset = res.asset ?? res[0] ?? null;
-            const amount = res.amount ?? res[1] ?? 0n;
-            const claimed = res.claimed ?? res[2] ?? false;
-            const assetType = Number(res.assetType ?? res[3] ?? 0n);
-            const heldForLender = res.heldForLender ?? res[6] ?? 0n;
-            const hasRentalNftReturn = res.hasRentalNftReturn ?? res[7] ?? false;
-
-            let lifRebate = 0n;
-            if (!isLender) {
-              try {
-                const rebate = (await publicClient.readContract({
-                  address: diamond,
-                  abi: DIAMOND_ABI_VIEM,
-                  functionName: 'getBorrowerLifRebate',
-                  args: [BigInt(loan.loanId)],
-                })) as readonly [bigint, bigint] | { rebateAmount?: bigint };
-                lifRebate = Array.isArray(rebate)
-                  ? (rebate[0] ?? 0n)
-                  : ((rebate as { rebateAmount?: bigint }).rebateAmount ?? 0n);
-              } catch (e) {
-                // Old ABI without the Phase-5 view reverts → treat as no
-                // rebate; a transport error is a real "couldn't confirm".
-                if (!isRevert(e)) transportFailed = true;
-              }
+            // 1. Does the wallet still hold this side's position NFT? A
+            //    sold position isn't ours to claim; a burned one (revert)
+            //    means the loan fully settled — nothing to claim either.
+            try {
+              const owner = (await publicClient.readContract({
+                address: diamond,
+                abi: DIAMOND_ABI_VIEM,
+                functionName: 'ownerOf',
+                args: [BigInt(tokenId)],
+              })) as string;
+              if (owner.toLowerCase() !== me) return null;
+            } catch (e) {
+              if (isRevert(e)) return null;
+              transportFailed = true;
+              clean = false;
+              return null;
             }
 
-            // Mirror ClaimFacet's actionability guard.
-            const actionable =
-              amount > 0n ||
-              assetType !== AssetType.ERC20 ||
-              heldForLender > 0n ||
-              hasRentalNftReturn ||
-              lifRebate > 0n;
-            return !claimed && actionable
-              ? ({
-                  ...loan,
-                  claim: {
-                    asset:
-                      typeof claimAsset === 'string' &&
-                      claimAsset !== '0x0000000000000000000000000000000000000000'
-                        ? claimAsset
-                        : null,
-                    amount,
-                    heldForLender,
-                    hasRentalNftReturn,
-                    lifRebate,
-                  },
-                } satisfies ClaimableLoan)
-              : null;
-          } catch (e) {
-            if (isRevert(e)) return null;
-            transportFailed = true;
-            return null;
+            // 2. Authoritative claimable probe + Phase-5 borrower rebate.
+            try {
+              const res = (await publicClient.readContract({
+                address: diamond,
+                abi: DIAMOND_ABI_VIEM,
+                functionName: 'getClaimable',
+                args: [BigInt(loan.loanId), isLender],
+              })) as ClaimableTuple;
+              const claimAsset = res.asset ?? res[0] ?? null;
+              const amount = res.amount ?? res[1] ?? 0n;
+              const claimed = res.claimed ?? res[2] ?? false;
+              const assetType = Number(res.assetType ?? res[3] ?? 0n);
+              const heldForLender = res.heldForLender ?? res[6] ?? 0n;
+              const hasRentalNftReturn = res.hasRentalNftReturn ?? res[7] ?? false;
+
+              let lifRebate = 0n;
+              if (!isLender) {
+                try {
+                  const rebate = (await publicClient.readContract({
+                    address: diamond,
+                    abi: DIAMOND_ABI_VIEM,
+                    functionName: 'getBorrowerLifRebate',
+                    args: [BigInt(loan.loanId)],
+                  })) as readonly [bigint, bigint] | { rebateAmount?: bigint };
+                  lifRebate = Array.isArray(rebate)
+                    ? (rebate[0] ?? 0n)
+                    : ((rebate as { rebateAmount?: bigint }).rebateAmount ?? 0n);
+                } catch (e) {
+                  // Old ABI without the Phase-5 view reverts → treat as no
+                  // rebate; a transport error is a real "couldn't confirm".
+                  if (!isRevert(e)) {
+                    transportFailed = true;
+                    clean = false;
+                  }
+                }
+              }
+
+              // Mirror ClaimFacet's actionability guard.
+              const actionable =
+                amount > 0n ||
+                assetType !== AssetType.ERC20 ||
+                heldForLender > 0n ||
+                hasRentalNftReturn ||
+                lifRebate > 0n;
+              return !claimed && actionable
+                ? ({
+                    ...loan,
+                    claim: {
+                      asset:
+                        typeof claimAsset === 'string' &&
+                        claimAsset !== '0x0000000000000000000000000000000000000000'
+                          ? claimAsset
+                          : null,
+                      amount,
+                      heldForLender,
+                      hasRentalNftReturn,
+                      lifRebate,
+                    },
+                  } satisfies ClaimableLoan)
+                : null;
+            } catch (e) {
+              if (isRevert(e)) return null;
+              transportFailed = true;
+              clean = false;
+              return null;
+            }
+          })();
+          // Cache only when the pass was CLEAN and the rail was
+          // healthy when it started: a verdict captured while
+          // invalidation signals were absent must not become readable
+          // after a later recovery (Codex #1232 r2) — the drop-bump
+          // only covers entries from BEFORE an outage, not during it.
+          if (clean && memoReadable) {
+            claimVerdictPut(memoKey, verdict, epochAtStart);
           }
+          return verdict;
         }),
       );
 
