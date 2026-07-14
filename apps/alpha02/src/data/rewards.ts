@@ -13,7 +13,7 @@ import {
 } from 'viem';
 import { DIAMOND_ABI_VIEM } from '@vaipakam/contracts/abis';
 import { useActiveChain } from '../chain/useActiveChain';
-import { idleAware } from '../lib/idle';
+import { signalAware } from '../chain/railHealth';
 
 export interface RewardsSnapshot {
   /** Claimable VPFI (18-dec) right now. */
@@ -29,7 +29,8 @@ export function useInteractionRewards() {
   return useQuery({
     queryKey: ['interactionRewards', readChain.chainId, address?.toLowerCase()],
     enabled: Boolean(address) && Boolean(publicClient),
-    refetchInterval: idleAware(60_000),
+    // RPC read-diet PR A — receipt + focus + push + 180s net (§4.1.2).
+    refetchInterval: signalAware(60_000),
     queryFn: async (): Promise<RewardsSnapshot> => {
       try {
         const [preview, claimability] = await Promise.all([

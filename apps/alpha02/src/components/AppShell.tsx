@@ -36,6 +36,7 @@ import { ErrorBoundary } from './ErrorBoundary';
 import { useActiveChain } from '../chain/useActiveChain';
 import { LiveChainSync } from '../chain/LiveChainSync';
 import { IndexerPushSync } from '../chain/IndexerPushSync';
+import { ReceiptSyncListener } from '../chain/ReceiptSyncListener';
 import { ConnectButton } from './ConnectButton';
 import { EmptyState } from './EmptyState';
 import { DiagnosticsDrawer } from './DiagnosticsDrawer';
@@ -194,6 +195,7 @@ export function AppShell() {
           configured, HTTP block-poll otherwise). Renders nothing. */}
       <LiveChainSync />
       <IndexerPushSync />
+      <ReceiptSyncListener />
       <header className="shell-topbar">
         <NavLink to="/" className="shell-brand" style={{ textDecoration: 'none' }}>
           <span className="brand-mark" aria-hidden>

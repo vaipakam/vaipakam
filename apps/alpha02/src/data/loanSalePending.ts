@@ -39,7 +39,7 @@ import {
 import { fetchOffersByCreator } from './indexer';
 import { makePendingMarkerStore } from '../lib/pendingMarker';
 import { useActiveChain } from '../chain/useActiveChain';
-import { idleAware } from '../lib/idle';
+import { tipAware } from '../chain/railHealth';
 
 /** LibERC721.LockReason.EarlyWithdrawalSale. */
 export const LOCK_EARLY_WITHDRAWAL_SALE = 2;
@@ -156,7 +156,9 @@ export function useLoanSalePending(
       Boolean(lenderTokenId) &&
       Boolean(principalAsset) &&
       /^[1-9]\d*$/.test(lenderTokenId ?? ''),
-    refetchInterval: idleAware(30_000),
+    // RPC read-diet PR A — pending-card accept gate: tip-nudged per
+    // block on WS deploys (§4.1.2), so the interval is only the net.
+    refetchInterval: tipAware(30_000, Boolean(readChain.wsUrl)),
     queryFn: async (): Promise<LoanSalePendingState> => {
       const diamond = readChain.diamondAddress;
       const [lock, live, latestBlock, allowance, balance, holder] =

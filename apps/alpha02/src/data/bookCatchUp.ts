@@ -192,16 +192,22 @@ export interface CatchUpTarget {
   freshness: IndexerFreshness | null;
 }
 
-/** The merge: strip offers the chain says are already terminal from
- *  the indexed rows. Every failure path returns `rows` unchanged. */
-export async function filterTerminalOffers(
-  rows: IndexedOffer[],
+/** The scan half of the strip, extracted so the RPC read-diet split
+ *  (design §4.1.2a) can run it as its own block-driven query
+ *  (`bookGhostStrip` root) while the indexed page walk refreshes on
+ *  push. Returns the offer ids the chain says are already terminal in
+ *  the un-ingested tail; EVERY failure/skip path returns an empty set
+ *  (fail-open — an empty set strips nothing, exactly the old
+ *  behaviour's "return rows unchanged"). The caller passes the
+ *  freshness cursor SNAPSHOTTED before its page walk (see
+ *  CatchUpTarget.freshness) — this function never reads the cursor
+ *  itself, which is what closes the mid-walk ingest race. */
+export async function scanTerminalOfferIds(
   target: CatchUpTarget,
-): Promise<IndexedOffer[]> {
+): Promise<Set<number>> {
+  const none = new Set<number>();
   try {
-    if (!target.publicClient || rows.length === 0 || !target.freshness) {
-      return rows;
-    }
+    if (!target.publicClient || !target.freshness) return none;
     const fromBlock = BigInt(
       Math.max(target.freshness.lastBlock + 1, target.deployBlock),
     );
@@ -209,18 +215,29 @@ export async function filterTerminalOffers(
     // not the safe tag.
     const latest = await target.publicClient.getBlockNumber();
     const toBlock = latest - CONFIRMATION_BUFFER;
-    if (toBlock < fromBlock) return rows;
-    if (toBlock - fromBlock + 1n > MAX_CATCHUP_BLOCKS) return rows;
+    if (toBlock < fromBlock) return none;
+    if (toBlock - fromBlock + 1n > MAX_CATCHUP_BLOCKS) return none;
     const logs = await chunkedGetLogs(target.publicClient, {
       address: target.diamondAddress,
       fromBlock,
       toBlock,
       topics: offerTerminalTopics(),
     });
-    if (logs.length === 0) return rows;
-    const terminal = decodeTerminalOfferIds(logs);
-    return rows.filter((o) => !terminal.has(o.offerId));
+    if (logs.length === 0) return none;
+    return decodeTerminalOfferIds(logs);
   } catch {
-    return rows;
+    return none;
   }
+}
+
+/** The merge: strip offers the chain says are already terminal from
+ *  the indexed rows. Every failure path returns `rows` unchanged. */
+export async function filterTerminalOffers(
+  rows: IndexedOffer[],
+  target: CatchUpTarget,
+): Promise<IndexedOffer[]> {
+  if (rows.length === 0) return rows;
+  const terminal = await scanTerminalOfferIds(target);
+  if (terminal.size === 0) return rows;
+  return rows.filter((o) => !terminal.has(o.offerId));
 }

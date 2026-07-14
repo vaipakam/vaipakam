@@ -30,6 +30,7 @@ import { erc20Abi, type PublicClient } from 'viem';
 import { DIAMOND_ABI_VIEM } from '@vaipakam/contracts/abis';
 import { useActiveChain } from '../chain/useActiveChain';
 import { idleAware } from '../lib/idle';
+import { signalAware, tipAware } from '../chain/railHealth';
 import { AssetType } from '../lib/types';
 import {
   fetchActiveOffers,
@@ -81,6 +82,8 @@ export function useDeskMarkets() {
   const { readChain } = useActiveChain();
   return useQuery({
     queryKey: ['deskMarkets', readChain.chainId],
+    // RPC read-diet PR A (Codex #1228 r1) — markets can exist purely from
+    // gasless signed depth, which never pushes; keep today's cadence.
     refetchInterval: idleAware(REFRESH_MS),
     queryFn: async (): Promise<MarketSummary[] | null> => {
       if (!indexerConfigured()) return null;
@@ -151,6 +154,9 @@ export function useDeskBook(pair: DeskPair | null, durationDays: number) {
       durationDays,
     ],
     enabled: pair !== null,
+    // RPC read-diet PR A (Codex #1228 r1) — GTT expiry is TIME-based (no
+    // push frame fires when expiresAt passes); the 30s interval is the
+    // bound on how long an expired row can stay in the ladder.
     refetchInterval: idleAware(REFRESH_MS),
     queryFn: async (): Promise<DeskBook | null> => {
       // Chain leg — authoritative and fresh this block.
@@ -280,6 +286,9 @@ export function useDeskSignedBook(pair: DeskPair | null, durationDays: number) {
     ],
     enabled: pair !== null,
     staleTime: SIGNED_BOOK_STALE_MS,
+    // RPC read-diet PR A (Codex #1228 r1) — gasless signed POSTS never
+    // touch the chain, so no push frame announces new signed depth;
+    // polling is its only discovery. Keep today's cadence.
     refetchInterval: idleAware(REFRESH_MS),
     queryFn: async (): Promise<IndexedSignedOffer[] | null> => {
       if (!indexerConfigured()) return null;
@@ -307,7 +316,7 @@ export function useDeskTape(pair: DeskPair | null, durationDays: number) {
       durationDays,
     ],
     enabled: pair !== null,
-    refetchInterval: idleAware(REFRESH_MS),
+    refetchInterval: signalAware(REFRESH_MS),
     queryFn: async (): Promise<IndexedLoan[] | null> => {
       if (!indexerConfigured()) return null;
       // Belt-and-suspenders client-side verification, mirroring the
@@ -389,7 +398,7 @@ export function useDeskCandles(
     ],
     enabled: pair !== null,
     staleTime: 60_000,
-    refetchInterval: idleAware(60_000),
+    refetchInterval: signalAware(60_000),
     queryFn: async (): Promise<RateCandleBucket[] | null> => {
       if (!indexerConfigured()) return null;
       const res = await fetchRateCandles(
@@ -804,7 +813,10 @@ export function usePreviewMatch(
       pair?.borrowerOfferId ?? null,
     ],
     enabled: pair !== null && Boolean(publicClient),
-    refetchInterval: idleAware(REFRESH_MS),
+    // RPC read-diet PR A (Codex #1228 r1) — crossability is an ACTION
+    // gate: stretch only when the chain WS tip nudge actually covers it
+    // (LiveChainSync never mounts on HTTP-only chains).
+    refetchInterval: tipAware(REFRESH_MS, Boolean(readChain.wsUrl)),
     queryFn: () =>
       readMatchPreviewLive(publicClient!, readChain.diamondAddress, pair!),
   });
@@ -830,7 +842,10 @@ export function usePreviewMatchRiskBlock(
       'riskBlock',
     ],
     enabled: pair !== null && Boolean(publicClient),
-    refetchInterval: idleAware(REFRESH_MS),
+    // RPC read-diet PR A (Codex #1228 r1) — crossability is an ACTION
+    // gate: stretch only when the chain WS tip nudge actually covers it
+    // (LiveChainSync never mounts on HTTP-only chains).
+    refetchInterval: tipAware(REFRESH_MS, Boolean(readChain.wsUrl)),
     queryFn: () =>
       readMatchRiskBlockLive(publicClient!, readChain.diamondAddress, pair!),
   });

@@ -71,6 +71,16 @@ alpha02 uses chain reads and indexed reads for different jobs.
   pending-fallback loan). The push rail also reports its own freshness (how
   recently ingestion advanced, and how often it is expected to), so the app
   can tell a healthy-but-quiet rail from a stalled one instead of guessing.
+- Refresh is signal-driven with polling as the degraded fallback: while the
+  push rail is verifiably delivering, background polling relaxes to a safety
+  net and freshness rides the push signal, per-block refresh narrows to the
+  reads that gate imminent money decisions, and the user's own confirmed
+  actions refresh their views immediately — in every open tab of the app. The
+  moment the rail cannot prove it is delivering, the app returns to its
+  polling cadence on its own. A money action fired directly from a list row
+  is re-checked against the chain at the moment of the click, so a row made
+  stale by someone else's action produces a plain explanation, never a doomed
+  signature.
 
 ## Review Receipts and Consent
 

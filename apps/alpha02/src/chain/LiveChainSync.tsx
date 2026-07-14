@@ -34,6 +34,13 @@ import { useCallback, useEffect, useRef, useSyncExternalStore } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import { useWatchBlockNumber } from 'wagmi';
 import { isIdle, onActivityResume } from '../lib/idle';
+import {
+  blockDeliveryFresh,
+  blockEverDelivered,
+  isRailHealthy,
+  railBlockSignal,
+  railBlockWatchReset,
+} from './railHealth';
 import { useActiveChain } from './useActiveChain';
 
 /** queryKey[0] values that move when a transaction lands. Everything
@@ -66,6 +73,11 @@ const LIVE_KEYS: ReadonlySet<string> = new Set([
   // refresh it per block here; HTTP-only deploys keep the 30s interval,
   // and the band's execute() re-reads live before the write either way.
   'deskPreviewMatch',
+  // RPC read-diet PR A (Codex #1228 r2 P1) — the split ghost-strip
+  // must stay block-driven in the FALLBACK blanket too: with the rail
+  // down (or legacy pinned) the strip would otherwise only re-run on
+  // its interval, losing the old inline catch-up's block cadence.
+  'bookGhostStrip',
   // 'loanKeeperEnabled' and 'vpfi' are DELIBERATELY absent: their
   // toggle writes PATCH the cache with the mined value (read-after-
   // write honesty — public testnet RPCs serve pre-tx state for
@@ -75,6 +87,42 @@ const LIVE_KEYS: ReadonlySet<string> = new Set([
   // 30s/60s interval refetch reconciles once the RPC caught up. (The
   // idle-RESUME refresh below DOES cover them — after 2 min without
   // interaction no own-write patch can still be in that window.)
+]);
+
+/** RPC read-diet PR A (design §4.1.2) — the ACTION-GATING subset that
+ *  keeps per-block tip freshness while the indexer push rail is
+ *  healthy: roots that gate money-moving actions or render
+ *  action-decisive detail state, where foreign-block staleness could
+ *  mislead an imminent decision. Everything else in LIVE_KEYS
+ *  (lists, activity, vault, approvals, config) rides push + receipt +
+ *  focus + the 180s net instead — that blanket was the dominant
+ *  recurring RPC cost. Each of these roots mounts only on its
+ *  specific surface, so the tip-driven cost is bounded to the page
+ *  actually being viewed. When the rail is DOWN, the full LIVE_KEYS
+ *  blanket returns (today's behaviour, the honest fallback). */
+const TIP_KEYS: ReadonlySet<string> = new Set([
+  // Detail-page cluster — owner/role/status gates on PositionDetails.
+  'loanLive',
+  'loanLiveStatus',
+  'loanRisk',
+  'positionOwners',
+  'offer',
+  'loan',
+  'offerLinkedLoan',
+  // Pending-card accept gates.
+  'loanSalePending',
+  'refinancePending',
+  // Past-due/grace banner terms (Codex #1228 r1 P3): tipAware-
+  // stretched on PositionDetails, so the tip nudge must cover a keeper
+  // extension restamping the terms.
+  'graceBannerTerms',
+  // Desk crossable band — a stale band shows an executable match that
+  // isn't (§4.1.2 / the r5 table split).
+  'deskPreviewMatch',
+  // Shared-book ghost-strip (§4.1.2a) — its own query root after the
+  // split out of useActiveOffers; block-driven so a just-ended offer
+  // never outlives the throttle window on the book.
+  'bookGhostStrip',
 ]);
 
 /** Extra roots the idle-RESUME refresh covers beyond LIVE_KEYS:
@@ -96,6 +144,11 @@ const RESUME_EXTRA_KEYS: ReadonlySet<string> = new Set([
   'tokenBalance',
   'vpfi',
   'loanKeeperEnabled',
+  // tipAware-stretched but outside LIVE_KEYS (Codex #1228 r3): a
+  // keeper extension restamping terms during an idle stretch must
+  // reach the past-due/grace banner on the first interaction —
+  // HTTP-only chains have no block nudge to carry it.
+  'graceBannerTerms',
 ]);
 
 /** Floor between block-driven invalidations. Base Sepolia mines ~every
@@ -130,7 +183,19 @@ export function LiveChainSync() {
   const visible = usePageVisible();
 
   const invalidate = useCallback(
-    (extra?: ReadonlySet<string>) => {
+    (extra?: ReadonlySet<string>, full = false) => {
+      // RPC read-diet PR A (§4.1.2): while the indexer push rail is
+      // verifiably delivering, the per-block invalidation narrows to
+      // the action-gating TIP_KEYS — the lists/vault/activity blanket
+      // was the dominant recurring RPC cost, and push + receipt +
+      // focus + the 180s net now carry those roots. Rail down (or the
+      // VITE_FRESHNESS_TIMERS=legacy hatch) ⇒ the full LIVE_KEYS
+      // blanket, byte-for-byte today's behaviour. Evaluated PER
+      // invalidation, so a rail transition takes effect on the next
+      // block, not the next mount. `full` forces the blanket — the
+      // idle-RESUME catch-up is a one-shot "make everything fresh
+      // now" for a returning user, not a per-block cost.
+      const keys = full || !isRailHealthy() ? LIVE_KEYS : TIP_KEYS;
       void queryClient.invalidateQueries({
         // Only refetch mounted queries; unmounted ones are just marked
         // stale and refetch when their screen next opens.
@@ -139,7 +204,7 @@ export function LiveChainSync() {
           const root = query.queryKey[0];
           return (
             typeof root === 'string' &&
-            (LIVE_KEYS.has(root) || (extra?.has(root) ?? false))
+            (keys.has(root) || (extra?.has(root) ?? false))
           );
         },
       });
@@ -148,6 +213,10 @@ export function LiveChainSync() {
   );
 
   const onBlockNumber = useCallback(() => {
+    // Tip-rail liveness for tipAware (Codex #1228 r1): stamp EVERY
+    // delivered block, before the idle/throttle gates - the signal is
+    // "the subscription works", not "we refetched".
+    railBlockSignal();
     // Idle sessions don't consume push freshness either — otherwise a
     // WS deploy would keep refetching the live set (indexer pages +
     // the catch-up's log scan) at the floor cadence for a parked tab,
@@ -172,10 +241,40 @@ export function LiveChainSync() {
     () =>
       onActivityResume(() => {
         lastAt.current = Date.now();
-        invalidate(RESUME_EXTRA_KEYS);
+        invalidate(RESUME_EXTRA_KEYS, /* full */ true);
       }),
     [invalidate],
   );
+
+  // Reset the tip-delivery stamp whenever the watcher's target or
+  // gate changes (chain switch, hidden tab, WS config change) — a new
+  // subscription must prove delivery itself (Codex #1228 r2).
+  useEffect(() => {
+    return () => railBlockWatchReset();
+  }, [readChain.chainId, readChain.wsUrl, visible]);
+
+  // Block-stall watchdog (Codex #1228 r5): tipAware queries that
+  // already armed a 180s timer only re-evaluate after their next
+  // fetch, so a subscription that delivered and then silently died
+  // would leave action-gating roots with neither the per-block nudge
+  // nor the 30s fallback for up to the net window. When delivery ages
+  // past the trust window, run ONE catch-up invalidation — it
+  // refreshes the tip roots and reschedules their intervals at the
+  // restored cadence. Once per stall episode; a fresh block re-arms.
+  const stallFired = useRef(false);
+  useEffect(() => {
+    if (!readChain.wsUrl || !visible) return;
+    const timer = setInterval(() => {
+      if (blockDeliveryFresh()) {
+        stallFired.current = false;
+        return;
+      }
+      if (!blockEverDelivered() || stallFired.current) return;
+      stallFired.current = true;
+      invalidate();
+    }, 15_000);
+    return () => clearInterval(timer);
+  }, [readChain.wsUrl, visible, invalidate]);
 
   useWatchBlockNumber({
     chainId: readChain.chainId,

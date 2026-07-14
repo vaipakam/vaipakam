@@ -31,7 +31,7 @@ import { fetchOffersByCreator, type IndexedOffer } from '../data/indexer';
 import { ZERO_ADDRESS } from '../lib/offerSchema';
 import { AssetType } from '../lib/types';
 import { formatTokenAmount, shortAddress } from '../lib/format';
-import { idleAware } from '../lib/idle';
+import { signalAware } from '../chain/railHealth';
 
 interface ApprovalRow {
   token: `0x${string}`;
@@ -91,7 +91,9 @@ export function ApprovalsCard() {
     // is exactly the profile most likely to hold pure historical
     // residue (the history legs below still apply).
     enabled: Boolean(publicClient) && Boolean(address) && complete,
-    refetchInterval: idleAware(60_000),
+    // RPC read-diet PR A — approvals ride receipt + focus + net; the
+    // approval write helpers feed the central receipt floor (§4.1.4).
+    refetchInterval: signalAware(60_000),
     queryFn: async (): Promise<ApprovalRow[]> => {
       // The rental-prepay approval (the Rent flow's money leg) only
       // appears on OFFERS, and useMyOffers filters to active — pull

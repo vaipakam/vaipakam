@@ -9,10 +9,12 @@
  * user app actually makes.
  */
 import { useCallback } from 'react';
+import { useQueryClient } from '@tanstack/react-query';
 import { usePublicClient, useWalletClient } from 'wagmi';
 import type { TransactionReceipt } from 'viem';
 import { DIAMOND_ABI_VIEM } from '@vaipakam/contracts/abis';
 import { useActiveChain } from '../chain/useActiveChain';
+import { publishReceiptInvalidation } from '../chain/receiptSync';
 
 export { DIAMOND_ABI_VIEM };
 
@@ -33,6 +35,7 @@ export function useDiamondWrite() {
   const { walletChain, onSupportedChain, address } = useActiveChain();
   const { data: walletClient } = useWalletClient();
   const publicClient = usePublicClient({ chainId: walletChain?.chainId });
+  const queryClient = useQueryClient();
 
   const write = useCallback(
     async (
@@ -55,9 +58,23 @@ export function useDiamondWrite() {
       if (receipt.status !== 'success') {
         throw new Error(`Transaction reverted (${hash})`);
       }
+      // RPC read-diet PR A (§4.1.4) — the centralized post-receipt
+      // floor: every confirmed Diamond write dirties the standard
+      // own-state set (here, in every other tab via broadcast, and
+      // once more after ~2 block times for lagging public RPCs).
+      // ADDITIVE: flows keep their surface-specific invalidations on
+      // top of this — the floor is what no future flow can forget.
+      publishReceiptInvalidation(queryClient);
       return { hash, receipt };
     },
-    [onSupportedChain, walletChain, walletClient, publicClient, address],
+    [
+      onSupportedChain,
+      walletChain,
+      walletClient,
+      publicClient,
+      address,
+      queryClient,
+    ],
   );
 
   return { write, ready: onSupportedChain && Boolean(walletClient) };

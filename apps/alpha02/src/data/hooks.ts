@@ -25,15 +25,16 @@ import {
   indexerConfigured,
   type IndexedLoan,
   type IndexedOffer,
+  type IndexerFreshness,
 } from './indexer';
 import { readLoanRowLive } from './liveLoanRow';
-import { filterTerminalOffers } from './bookCatchUp';
+import { scanTerminalOfferIds } from './bookCatchUp';
 import {
   readOfferRowLive,
   readOwnLoanRowsLive,
   readOwnOfferRowsLive,
 } from './chainPositions';
-import { idleAware } from '../lib/idle';
+import { signalAware, tipAware } from '../chain/railHealth';
 
 const REFRESH_MS = 30_000;
 
@@ -45,13 +46,26 @@ const REFRESH_MS = 30_000;
 const ACTIVE_OFFERS_PAGE = 100;
 const ACTIVE_OFFERS_MAX_PAGES = 5;
 
+/** The indexed walk's result — offers PLUS the freshness cursor that
+ *  was snapshotted before the pages were fetched, so the ghost-strip
+ *  query can scan from the exact same lower bound (§4.1.2a: an
+ *  independent cursor read would re-open the mid-walk ingest race the
+ *  snapshot exists to close). */
+interface ActiveOffersWalk {
+  offers: IndexedOffer[];
+  freshness: IndexerFreshness | null;
+}
+
 export function useActiveOffers() {
   const { readChain } = useActiveChain();
   const publicClient = usePublicClient({ chainId: readChain.chainId });
-  return useQuery({
+
+  const walk = useQuery({
     queryKey: ['activeOffers', readChain.chainId],
-    refetchInterval: idleAware(REFRESH_MS),
-    queryFn: async (): Promise<IndexedOffer[] | null> => {
+    // RPC read-diet PR A — push-covered root: 180s net while the
+    // rail is healthy, today's idle-aware 30s otherwise (§4.1.1).
+    refetchInterval: signalAware(REFRESH_MS),
+    queryFn: async (): Promise<ActiveOffersWalk | null> => {
       // Freshness cursor snapshotted BEFORE the page walk: an ingest
       // landing mid-walk could advance the cursor past a terminal
       // block whose stale row is already collected, and the catch-up
@@ -78,20 +92,82 @@ export function useActiveOffers() {
           return null; // cap reached with more pages remaining → truncated
         }
       }
-      // On-chain catch-up (#1029): strip offers the chain already
-      // marked terminal in the tail the indexer hasn't ingested yet,
-      // so an ingest lag can't show a just-filled/cancelled offer a
-      // user would then doom a transaction on. Fail-open: any scan
-      // trouble returns the rows unfiltered — the catch-up layer can
-      // make the book more honest, never make it unavailable.
-      return filterTerminalOffers(all, {
+      return { offers: all, freshness };
+    },
+  });
+
+  // On-chain catch-up (#1029), split into its own block-driven query
+  // (RPC read-diet PR A, §4.1.2a): the ghost-strip is the shared-book
+  // honesty check (strip offers the chain already marked terminal in
+  // the tail the indexer hasn't ingested yet), and it must keep tip
+  // cadence even while the indexed walk above idles at the 180s net —
+  // LiveChainSync tip-nudges the 'bookGhostStrip' root per block on WS
+  // deploys. The scan's lower bound is the walk's SNAPSHOTTED cursor
+  // (part of this key), never a fresh cursor read. Composed here, in
+  // the shared hook, so every consumer (book, OfferFlow, Rent,
+  // EarlyExit) gets only stripped rows. Fail-open: scan trouble yields
+  // an empty set — the strip can make the book more honest, never
+  // unavailable.
+  const walkData = walk.data;
+  const strip = useQuery({
+    queryKey: [
+      'bookGhostStrip',
+      readChain.chainId,
+      walkData?.freshness?.lastBlock ?? null,
+    ],
+    enabled:
+      walkData != null &&
+      walkData.freshness != null &&
+      walkData.offers.length > 0 &&
+      Boolean(publicClient),
+    // Block-driven on WS deploys (tip nudge); on HTTP-only chains the
+    // interval carries it at today's cadence, same as the pre-split
+    // behaviour where the strip re-ran with each 30s walk refetch.
+    refetchInterval: tipAware(REFRESH_MS, Boolean(readChain.wsUrl)),
+    // A background walk refetch mints a NEW strip key (fresh cursor
+    // snapshot); carrying the previous scan as placeholder keeps the
+    // book rendered during the re-scan instead of blanking to loading
+    // (Codex #1228 r5) — same-view-during-fetch is exactly the
+    // pre-split behaviour. SAME-CHAIN only: offer ids are per-chain,
+    // and a cross-chain carry-over could wrongly strip a colliding id.
+    placeholderData: (prev, prevQuery) =>
+      prevQuery?.queryKey[1] === readChain.chainId ? prev : undefined,
+    queryFn: () =>
+      scanTerminalOfferIds({
         diamondAddress: readChain.diamondAddress,
         deployBlock: readChain.deployBlock,
         publicClient,
-        freshness,
-      });
-    },
+        freshness: walkData?.freshness ?? null,
+      }).then((ids) => [...ids]),
   });
+
+  // Compose. Contract preserved from the pre-split hook:
+  //   undefined → loading (includes "walk done, FIRST strip for this
+  //   snapshot still in flight" — the old code awaited the strip
+  //   before publishing, and publishing unstripped rows here would
+  //   flash exactly the ghost row the strip exists to remove);
+  //   null → indexer unavailable; array → stripped rows.
+  // A strip REFETCH keeps its previous data while in flight, so
+  // block-driven re-runs never blank the book.
+  const data = ((): IndexedOffer[] | null | undefined => {
+    if (walkData === undefined) return undefined;
+    if (walkData === null) return null;
+    if (walkData.freshness == null || walkData.offers.length === 0) {
+      return walkData.offers; // unknown cursor → unfiltered (unchanged)
+    }
+    if (strip.data === undefined) return undefined; // first scan in flight
+    const terminal = new Set(strip.data);
+    return walkData.offers.filter((o) => !terminal.has(o.offerId));
+  })();
+
+  // Loading must PROPAGATE while the first strip is in flight (Codex
+  // #1228 r2): the walk has data, so walk.isLoading is already false,
+  // but this hook's contract says `data === undefined` = loading —
+  // consumers branch on isLoading before interpreting data, and
+  // without the override they'd render unavailable/empty-market for
+  // the strip's first pass.
+  const isLoading = walk.isLoading || (data === undefined && !walk.isLoading);
+  return { ...walk, data, isLoading, isPending: isLoading };
 }
 
 export interface PositionLoan extends IndexedLoan {
@@ -196,7 +272,9 @@ export function useMyLoansFull() {
   return useQuery({
     queryKey: ['myLoans', readChain.chainId, address?.toLowerCase()],
     enabled: Boolean(address),
-    refetchInterval: idleAware(REFRESH_MS),
+    // RPC read-diet PR A — list root, deliberately NOT tip-nudged
+    // (§4.1.2): push + receipt + focus + 180s net carry it.
+    refetchInterval: signalAware(REFRESH_MS),
     queryFn: async (): Promise<MyLoanRows | null> => {
       if (!address)
         return { rows: [], chainOk: true, indexerOk: true, indexedLoanIds: [] };
@@ -254,7 +332,10 @@ export function useOffer(offerId: number | undefined) {
   return useQuery({
     queryKey: ['offer', readChain.chainId, offerId],
     enabled: offerId !== undefined && Number.isFinite(offerId),
-    refetchInterval: idleAware(REFRESH_MS),
+    // RPC read-diet PR A — detail-page action root: stretches only
+    // when BOTH rails cover it (indexer push healthy + chain WS tip
+    // nudge); on an HTTP-only chain deploy it keeps todays 30s.
+    refetchInterval: tipAware(REFRESH_MS, Boolean(readChain.wsUrl)),
     queryFn: async (): Promise<IndexedOffer | null> => {
       const row = await fetchOfferById(readChain.chainId, offerId!);
       if (row) return row;
@@ -287,7 +368,8 @@ export function useLoan(loanId: number | undefined) {
   return useQuery({
     queryKey: ['loan', readChain.chainId, loanId],
     enabled: loanId !== undefined && Number.isFinite(loanId),
-    refetchInterval: idleAware(REFRESH_MS),
+    // RPC read-diet PR A — detail-page action root (see useOffer).
+    refetchInterval: tipAware(REFRESH_MS, Boolean(readChain.wsUrl)),
     queryFn: async (): Promise<IndexedLoan | null> => {
       const row = await fetchLoanById(readChain.chainId, loanId!);
       if (row) return row;
@@ -330,7 +412,10 @@ export function useMyOffersFull() {
   return useQuery({
     queryKey: ['myOffers', readChain.chainId, address?.toLowerCase()],
     enabled: Boolean(address),
-    refetchInterval: idleAware(REFRESH_MS),
+    // RPC read-diet PR A — list root (see useMyLoansFull). The
+    // cancel/amend rows rendered straight from this list get a
+    // blocking click-time preflight instead of tip freshness (§4.1.2).
+    refetchInterval: signalAware(REFRESH_MS),
     queryFn: async (): Promise<MyRows<IndexedOffer> | null> => {
       if (!address) return { rows: [], chainOk: true, indexerOk: true };
       const [chainLive, created, held] = await Promise.all([
