@@ -380,12 +380,14 @@ export default {
 
     // ─── /claim-candidates/:address ─────────────────────────────
     // RPC read-diet PR C — additive claim-candidate hint (§4.2.3).
+    // Capture ANY single path segment and let the handler validate:
+    // an address-shaped regex here would 404 malformed addresses
+    // before the handler's documented 400 {error:'bad-address'} could
+    // ever run (Codex #1232 r3).
     if (url.pathname.startsWith('/claim-candidates/')) {
       if (req.method === 'OPTIONS') return handleLoansPreflight();
       if (req.method === 'GET') {
-        const m = url.pathname.match(
-          /^\/claim-candidates\/(0x[0-9a-fA-F]{40})$/,
-        );
+        const m = url.pathname.match(/^\/claim-candidates\/([^/]+)$/);
         if (m) return handleClaimCandidates(req, resolved, m[1]);
       }
       return new Response('Not found', { status: 404 });

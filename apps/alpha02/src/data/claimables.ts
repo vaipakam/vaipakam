@@ -262,30 +262,60 @@ export function useMyClaimables() {
       // deploy without the enumeration views it ADDS candidates the
       // indexed rows may miss; it never suppresses or substitutes for
       // chain discovery, and a failed fetch (`null`) means "no hint".
-      const hintIds = enumerationAvailable
+      const hints = enumerationAvailable
         ? []
-        : (
-            (await fetchClaimCandidates(readChain.chainId, me).catch(
-              () => null,
-            )) ?? []
-          ).map((h) => h.loanId);
-      const chainIdList = [
-        ...new Set([...chainIds.map((id) => Number(id)), ...hintIds]),
-      ];
+        : ((await fetchClaimCandidates(readChain.chainId, me).catch(
+            () => null,
+          )) ?? []);
+      const chainIdList = [...new Set(chainIds.map((id) => Number(id)))];
       const flipped: PositionLoan[] = [];
       for (const id of chainIdList) {
         const row = byLoanId.get(id);
         if (!row) continue;
         const other = row.role === 'lender' ? ('borrower' as const) : ('lender' as const);
-        if (!knownKeys.has(`${id}:${other}`)) flipped.push({ ...row, role: other });
+        if (!knownKeys.has(`${id}:${other}`)) {
+          knownKeys.add(`${id}:${other}`);
+          flipped.push({ ...row, role: other });
+        }
+      }
+      // Hints carry a SPECIFIC (loanId, role) — honour it (Codex #1232
+      // r3): a role-less union would add the OPPOSITE side of every
+      // one-sided indexed row too, growing the very fan-out the hint
+      // exists to narrow. Only the hinted side is probed; roles the
+      // hint didn't name are covered by the indexed rows themselves.
+      const hintOnlyRoles = new Map<number, Set<'lender' | 'borrower'>>();
+      for (const h of hints) {
+        const key = `${h.loanId}:${h.role}`;
+        if (knownKeys.has(key)) continue;
+        knownKeys.add(key);
+        const row = byLoanId.get(h.loanId);
+        if (row) {
+          flipped.push({ ...row, role: h.role });
+        } else {
+          let roles = hintOnlyRoles.get(h.loanId);
+          if (!roles) {
+            roles = new Set();
+            hintOnlyRoles.set(h.loanId, roles);
+          }
+          roles.add(h.role);
+        }
       }
 
-      // Chain-discovered loans the indexer rows don't carry at all:
-      // synthesize a row from the live loan struct, for BOTH sides.
+      // Loans the indexer rows don't carry at all: synthesize a row
+      // from the live loan struct — BOTH sides for chain-enumerated
+      // ids (the enumeration proves holding but not which side), only
+      // the hinted side(s) for hint-only ids.
       const extraIds = chainIdList.filter((id) => !byLoanId.has(id));
+      const synthTargets: Array<{
+        id: number;
+        roles: readonly ('lender' | 'borrower')[];
+      }> = extraIds.map((id) => ({ id, roles: ['lender', 'borrower'] }));
+      for (const [id, roles] of hintOnlyRoles) {
+        if (!extraIds.includes(id)) synthTargets.push({ id, roles: [...roles] });
+      }
       const synthesized = (
         await Promise.all(
-          extraIds.map(async (id): Promise<PositionLoan[]> => {
+          synthTargets.map(async ({ id, roles }): Promise<PositionLoan[]> => {
             try {
               const base = await readLoanRowLive(
                 publicClient,
@@ -294,10 +324,7 @@ export function useMyClaimables() {
                 id,
               );
               if (!base) return [];
-              return [
-                { ...base, role: 'lender' as const },
-                { ...base, role: 'borrower' as const },
-              ];
+              return roles.map((role) => ({ ...base, role }));
             } catch (e) {
               // Revert = no such loan (stale/forged id) — skip; a
               // transport failure is "couldn't confirm".

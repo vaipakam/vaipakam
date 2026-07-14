@@ -451,6 +451,13 @@ export function IndexerPushSync() {
       if (nudgeTimer) clearTimeout(nudgeTimer);
       for (const t of rootTrailing.values()) clearTimeout(t);
       rootTrailing.clear();
+      // Deliberate teardown (chain switch / remount) drops the rail
+      // AFTER unsubRail above, so the health subscriber's drop-bump
+      // never sees this transition — bump explicitly, or verdicts
+      // recorded before the switch stay readable when the user
+      // returns within the TTL, missing every ownership.changed frame
+      // from the away window (Codex #1232 r3).
+      bumpClaimVerdictEpoch();
       railSocketLive(false); // chain switch / unmount — re-prove health
       if (ws) {
         ws.onmessage = null;
