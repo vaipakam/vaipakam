@@ -1,4 +1,4 @@
-import { defineConfig } from 'vitest/config'
+import { defineConfig, loadEnv } from 'vitest/config'
 import react from '@vitejs/plugin-react'
 import { execSync } from 'node:child_process'
 
@@ -22,7 +22,26 @@ process.env.VITE_BUILD_HASH = (() => {
 })();
 process.env.VITE_BUILD_TIME = new Date().toISOString();
 
-export default defineConfig({
+
+// Deploy-env guard — same as apps/alpha02 (live-review incident
+// 2026-07-14): warn on a bare build without VITE_INDEXER_ORIGIN, fail
+// when the deploy script sets REQUIRE_INDEXER_ORIGIN=1.
+function checkIndexerOrigin(mode: string, command: string): void {
+  if (command !== 'build') return;
+  const env = loadEnv(mode, process.cwd(), 'VITE_');
+  if (env.VITE_INDEXER_ORIGIN || process.env.VITE_INDEXER_ORIGIN) return;
+  const msg =
+    'VITE_INDEXER_ORIGIN is not set — this build will run WITHOUT the ' +
+    'indexer. Create apps/defi/.env.local before building for deploy.';
+  if (process.env.REQUIRE_INDEXER_ORIGIN) {
+    throw new Error(`[deploy-env guard] ${msg}`);
+  }
+  console.warn(`\n[deploy-env guard] WARNING: ${msg}\n`);
+}
+
+export default defineConfig(({ mode, command }) => {
+  checkIndexerOrigin(mode, command);
+  return {
   plugins: [react(), cloudflare()],
   // The /help routes import the canonical user-guide Markdown files
   // from `../docs/` via `?raw`. Vite's dev server defaults to
@@ -79,4 +98,5 @@ export default defineConfig({
       },
     },
   },
-})
+};
+});

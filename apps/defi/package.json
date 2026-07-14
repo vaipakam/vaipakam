@@ -15,7 +15,7 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "test:coverage": "vitest run --coverage",
-    "deploy": "npm run build && wrangler deploy",
+    "deploy": "REQUIRE_INDEXER_ORIGIN=1 npm run build && wrangler deploy",
     "translate": "tsx scripts/translate-i18n.ts"
   },
   "dependencies": {

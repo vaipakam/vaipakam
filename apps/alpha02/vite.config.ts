@@ -1,4 +1,4 @@
-import { defineConfig } from 'vite';
+import { defineConfig, loadEnv } from 'vite';
 import react from '@vitejs/plugin-react';
 import { cloudflare } from '@cloudflare/vite-plugin';
 import { execSync } from 'node:child_process';
@@ -22,7 +22,32 @@ process.env.VITE_BUILD_TIME = new Date().toISOString();
 // unnecessary for the fork-tier e2e (plain SPA serving is enough) and
 // slow/fragile on CI runners. The e2e webServer sets ALPHA02_E2E=1 to
 // serve without it; every normal dev/build/deploy path is unchanged.
-export default defineConfig({
+
+// Deploy-env guard (live-review incident 2026-07-14): a production
+// build WITHOUT `VITE_INDEXER_ORIGIN` compiles and deploys cleanly but
+// silently ships the app in its all-chain fallback posture — no
+// indexer book, no push rail, no config snapshot. CI/preview builds
+// legitimately lack operator env, so a bare `vite build` only WARNS;
+// the `deploy` script sets REQUIRE_INDEXER_ORIGIN=1 so the operator
+// path hard-fails instead. (`loadEnv`, not `process.env`: Vite reads
+// .env.local itself and does not populate process.env at config time.)
+function checkIndexerOrigin(mode: string, command: string): void {
+  if (command !== 'build') return;
+  const env = loadEnv(mode, process.cwd(), 'VITE_');
+  if (env.VITE_INDEXER_ORIGIN || process.env.VITE_INDEXER_ORIGIN) return;
+  const msg =
+    'VITE_INDEXER_ORIGIN is not set — this build will run WITHOUT the ' +
+    'indexer (no offer book feed, no push rail, no config snapshot). ' +
+    'Create apps/alpha02/.env.local before building for deploy.';
+  if (process.env.REQUIRE_INDEXER_ORIGIN) {
+    throw new Error(`[deploy-env guard] ${msg}`);
+  }
+  console.warn(`\n[deploy-env guard] WARNING: ${msg}\n`);
+}
+
+export default defineConfig(({ mode, command }) => {
+  checkIndexerOrigin(mode, command);
+  return {
   plugins: process.env.ALPHA02_E2E
     ? [react()]
     : [react(), cloudflare()],
@@ -80,4 +105,5 @@ export default defineConfig({
       },
     },
   },
+};
 });
