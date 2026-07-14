@@ -27,6 +27,14 @@ library LibAutoRefinanceCheck {
     ///         repaid/defaulted/settled). A refinance-tagged offer
     ///         must point at a live loan or it has nothing to refinance.
     error RefinanceTargetNotActive();
+    /// @notice Pass-2 A1/D5 (#1189) — the targeted loan is still Active but
+    ///         PAST its grace window. `RefinanceFacet` blocks a post-grace
+    ///         refinance (resolution belongs to DefaultedFacet), so admit this
+    ///         mirror at create/accept/match time — otherwise a post-grace
+    ///         refinance-tagged offer stays creatable / preview-matchable but
+    ///         unfillable (and a direct accept does replacement-loan work before
+    ///         the execution gate rolls it back).
+    error RefinanceTargetPastGrace();
     /// @notice The offer creator is not the current borrower-NFT
     ///         owner of the targeted loan. Catches both
     ///         (a) malicious offer-create attempts by non-borrowers, and
@@ -162,6 +170,15 @@ library LibAutoRefinanceCheck {
 
         LibVaipakam.Loan storage oldLoan = s.loans[oldLoanId];
         if (oldLoan.status != LibVaipakam.LoanStatus.Active) return false;
+        // Pass-2 A1/D5 (#1189) — mirror RefinanceFacet's post-grace block: an
+        // overdue (Active-but-past-grace) target is unfillable, so drop it from
+        // the match-admissible set instead of previewing an unfillable match.
+        if (
+            block.timestamp >
+            uint256(oldLoan.startTime) +
+                uint256(oldLoan.durationDays) * 1 days +
+                LibVaipakam.gracePeriod(oldLoan.durationDays)
+        ) return false;
         // No live swap-to-repay intent commit on the target (mirror
         // `LibVaipakam.assertNoLiveIntentCommit`).
         if (s.intentCommits[oldLoanId].orderHash != bytes32(0)) return false;
@@ -298,6 +315,18 @@ library LibAutoRefinanceCheck {
         LibVaipakam.Loan storage loan = s.loans[loanId];
         if (loan.status != LibVaipakam.LoanStatus.Active) {
             revert RefinanceTargetNotActive();
+        }
+        // Pass-2 A1/D5 (#1189) — mirror RefinanceFacet's post-grace block here so
+        // a refinance-tagged offer against an overdue (Active-but-past-grace)
+        // target fails fast at create/accept instead of being admitted and then
+        // reverted after the replacement-loan work.
+        if (
+            block.timestamp >
+            uint256(loan.startTime) +
+                uint256(loan.durationDays) * 1 days +
+                LibVaipakam.gracePeriod(loan.durationDays)
+        ) {
+            revert RefinanceTargetPastGrace();
         }
         // Bind identity to the CURRENT NFT owner — not `loan.borrower`
         // (the original at init). Matches the staleness fence pattern

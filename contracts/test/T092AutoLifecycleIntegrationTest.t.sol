@@ -170,6 +170,10 @@ contract T092AutoLifecycleIntegrationTest is SetupTest {
             LibAutoRefinanceCheck.RefinanceTargetIncompatible.selector !=
                 bytes4(0)
         );
+        // Pass-2 A1/D5 (#1189) — post-grace target fail-fast selector.
+        assertTrue(
+            LibAutoRefinanceCheck.RefinanceTargetPastGrace.selector != bytes4(0)
+        );
     }
 
     // ─── RefinanceFacet new-error guardrails ─────────────────────────
@@ -320,6 +324,36 @@ contract T092AutoLifecycleIntegrationTest is SetupTest {
         );
         vm.expectRevert(
             LibAutoRefinanceCheck.RefinanceRateExceedsCap.selector
+        );
+        vm.prank(borrower);
+        OfferCreateFacet(address(diamond)).createOffer(
+            _refinanceTaggedOfferParams(loanId, 400)
+        );
+    }
+
+    /// @dev Pass-2 A1/D5 (#1189) — a refinance-tagged offer against a target
+    ///      loan that is Active but PAST its grace window fails fast at create
+    ///      (`RefinanceTargetPastGrace`), mirroring RefinanceFacet's execution
+    ///      gate — so a post-grace target can't attract a lender to an offer the
+    ///      refinance path would then reject.
+    function test_RefinanceTaggedOffer_RejectsPastGraceTarget() public {
+        uint256 loanId = _buildActiveLoan();
+        vm.prank(borrower);
+        _f().setAutoRefinanceCaps(
+            loanId,
+            true,
+            600,
+            uint64(block.timestamp + 365 days)
+        );
+
+        // Warp the target strictly past its grace window.
+        LibVaipakam.Loan memory l =
+            LoanFacet(address(diamond)).getLoanDetails(loanId);
+        uint256 endTime = uint256(l.startTime) + uint256(l.durationDays) * 1 days;
+        vm.warp(endTime + LibVaipakam.gracePeriod(l.durationDays) + 1);
+
+        vm.expectRevert(
+            LibAutoRefinanceCheck.RefinanceTargetPastGrace.selector
         );
         vm.prank(borrower);
         OfferCreateFacet(address(diamond)).createOffer(
