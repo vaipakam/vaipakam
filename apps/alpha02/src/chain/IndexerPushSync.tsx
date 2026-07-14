@@ -105,6 +105,11 @@ export const KEY_MAP: Record<string, string[]> = {
     'deskCandles',
     'deskHistory',
     'deskMarkets',
+    // A fill moves the maker's vault free/locked balances, and on a
+    // signed-offer fill the TAKER executes — the maker's tabs see no
+    // own receipt, so without this the maker's Vault page waits out
+    // the 180s net (Codex #1228 r4).
+    'vaultAssets',
   ],
   // Loan status transitions (repaid / defaulted / …) restate history rows.
   // RPC read-diet PR 0: this key now ALSO fires on data-only entitlement

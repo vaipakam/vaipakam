@@ -37,6 +37,9 @@ describe('IndexerPushSync KEY_MAP (#1131 desk roots)', () => {
         'deskAmendSource',
         'deskSignedBook',
       ],
+      // vaultAssets rides loan.created too: a fill moves the maker's
+      // vault legs, and a signed-offer fill is taker-executed — the
+      // maker has no own receipt (Codex #1228 r4).
       'loan.created': [
         'myLoans',
         'loan',
@@ -44,6 +47,7 @@ describe('IndexerPushSync KEY_MAP (#1131 desk roots)', () => {
         'deskCandles',
         'deskHistory',
         'deskMarkets',
+        'vaultAssets',
       ],
       // RPC read-diet PR 0 — 'vaultAssets' rides loan.updated (settlement /
       // periodic-interest events are the event class that moves escrow into

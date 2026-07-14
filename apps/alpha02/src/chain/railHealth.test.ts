@@ -35,21 +35,35 @@ describe('railHealth', () => {
   it('is unhealthy by default and after socket close', () => {
     expect(isRailHealthy()).toBe(false);
     railSocketLive(true);
-    railCursorSignal(1_000, CADENCE);
+    railCursorSignal(1_000, CADENCE); // baseline
+    railCursorSignal(1_060, CADENCE); // proven advance
     expect(isRailHealthy()).toBe(true);
     railSocketLive(false);
     expect(isRailHealthy()).toBe(false);
   });
 
+  it('the FIRST cursor observation is a baseline, never an advance', () => {
+    // A tab opening against an already-stuck cursor must not read
+    // healthy for a free window (Codex #1228 r4).
+    railSocketLive(true);
+    railCursorSignal(1_000, CADENCE);
+    expect(isRailHealthy()).toBe(false);
+    railCursorSignal(1_000, CADENCE); // still stuck
+    expect(isRailHealthy()).toBe(false);
+    railCursorSignal(1_060, CADENCE); // genuine advance
+    expect(isRailHealthy()).toBe(true);
+  });
+
   it('never reads healthy without a reported cadence (fail-safe)', () => {
     railSocketLive(true);
     railCursorSignal(1_000, null); // older worker: no metadata
+    railCursorSignal(1_060, null); // even an advancing cursor
     expect(isRailHealthy()).toBe(false);
   });
 
   it('stays healthy while heartbeats advance the persisted stamp', () => {
     railSocketLive(true);
-    railCursorSignal(1_000, CADENCE);
+    railCursorSignal(1_000, CADENCE); // baseline
     for (let i = 1; i <= 5; i++) {
       vi.advanceTimersByTime(60_000);
       railCursorSignal(1_000 + i * 60, CADENCE);
@@ -60,6 +74,7 @@ describe('railHealth', () => {
   it('decays to unhealthy when heartbeats STOP (scans dead, socket open)', () => {
     railSocketLive(true);
     railCursorSignal(1_000, CADENCE);
+    railCursorSignal(1_060, CADENCE);
     expect(isRailHealthy()).toBe(true);
     vi.advanceTimersByTime(CADENCE * 1000 * 1.5 + 1_000);
     expect(isRailHealthy()).toBe(false);
@@ -67,7 +82,8 @@ describe('railHealth', () => {
 
   it('decays to unhealthy when heartbeats flow but the persisted stamp freezes (wedged safe head)', () => {
     railSocketLive(true);
-    railCursorSignal(1_000, CADENCE);
+    railCursorSignal(940, CADENCE);
+    railCursorSignal(1_000, CADENCE); // proven live, then it wedges
     // Heartbeats keep arriving each minute but updatedAt never moves —
     // the PR 0 DO reports the PERSISTED row precisely so this case is
     // detectable.
@@ -81,10 +97,13 @@ describe('railHealth', () => {
   it('a reconnect must re-prove freshness (no inherited stamps)', () => {
     railSocketLive(true);
     railCursorSignal(1_000, CADENCE);
+    railCursorSignal(1_060, CADENCE);
     railSocketLive(false);
     railSocketLive(true); // reconnected, no frame yet
     expect(isRailHealthy()).toBe(false);
-    railCursorSignal(2_000, CADENCE);
+    railCursorSignal(2_000, CADENCE); // baseline again — must re-prove
+    expect(isRailHealthy()).toBe(false);
+    railCursorSignal(2_060, CADENCE);
     expect(isRailHealthy()).toBe(true);
   });
 
@@ -93,6 +112,7 @@ describe('railHealth', () => {
     expect(interval()).toBe(30_000); // unhealthy, active session
     railSocketLive(true);
     railCursorSignal(1_000, CADENCE);
+    railCursorSignal(1_060, CADENCE);
     expect(interval()).toBe(NET_REFRESH_MS);
   });
 
@@ -101,6 +121,7 @@ describe('railHealth', () => {
     const noWs = tipAware(30_000, false);
     railSocketLive(true);
     railCursorSignal(1_000, CADENCE);
+    railCursorSignal(1_060, CADENCE);
     // Configured WS but no block ever delivered (broken endpoint,
     // Codex #1228 r1): must NOT stretch — there is no per-block nudge
     // behind the 180s net.
@@ -119,10 +140,11 @@ describe('railHealth', () => {
   it('a metadata-less frame clears a previously learned cadence (fail-safe)', () => {
     railSocketLive(true);
     railCursorSignal(1_000, CADENCE);
+    railCursorSignal(1_060, CADENCE);
     expect(isRailHealthy()).toBe(true);
     // Partial worker rollback: frames keep coming without cadence —
     // the CURRENT server never reported one, so healthy must drop.
-    railCursorSignal(1_060, null);
+    railCursorSignal(1_120, null);
     expect(isRailHealthy()).toBe(false);
   });
 });

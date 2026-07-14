@@ -133,9 +133,19 @@ export function railCursorSignal(
   const now = Date.now();
   state.lastSignalAtMs = now;
   state.cadenceSec = cadenceSec;
-  if (updatedAt != null && updatedAt !== state.lastCursorUpdatedAt) {
-    state.lastCursorUpdatedAt = updatedAt;
-    state.lastAdvanceAtMs = now;
+  if (updatedAt != null) {
+    if (state.lastCursorUpdatedAt === null) {
+      // FIRST observation is a BASELINE, never an advance (Codex #1228
+      // r4): a tab opening against an already-stuck cursor would
+      // otherwise read healthy for one full window and stand the
+      // pollers down on unproven freshness. Health now requires a
+      // second, LATER distinct value — at most one cadence away on a
+      // genuinely live rail.
+      state.lastCursorUpdatedAt = updatedAt;
+    } else if (updatedAt !== state.lastCursorUpdatedAt) {
+      state.lastCursorUpdatedAt = updatedAt;
+      state.lastAdvanceAtMs = now;
+    }
   }
   recompute();
 }
