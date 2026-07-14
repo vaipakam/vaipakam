@@ -36,8 +36,10 @@
  *
  * RPC read-diet PR C (§4.2.3) adds two refinements on top, neither of
  * which weakens the contract above: (1) the indexer's ADDITIVE
- * `/claim-candidates` hint is unioned into discovery (it can only add
- * candidates, never suppress one), and (2) each candidate's verdict is
+ * `/claim-candidates` hint widens discovery when the chain enumeration
+ * is unavailable (old deploy) — it can only add candidates, never
+ * suppress one, and is skipped entirely while the authoritative
+ * enumeration works; and (2) each candidate's verdict is
  * memoized per identity key (`claimVerdictKey`) so a re-run only
  * re-probes candidates that actually changed — the memo is cleared on
  * `ownership.changed` push frames and receipt invalidations, the
@@ -190,16 +192,6 @@ export function useMyClaimables() {
       const memoReadable = isRailHealthy();
       const epochAtStart = claimVerdictEpoch();
 
-      // PR C (§4.2.3) — fire the ADDITIVE indexer hint alongside the
-      // chain enumeration. It may only ADD candidates (a terminal loan
-      // whose position NFT the indexer says we hold — e.g. when the
-      // enumeration view is absent on an old deploy); it never
-      // suppresses or substitutes for chain discovery, and a failed
-      // fetch (`null`) simply means "no hint".
-      const hintPromise = fetchClaimCandidates(readChain.chainId, me).catch(
-        () => null,
-      );
-
       // ── On-chain discovery (#988, closes the #958 parity gap) ──
       // Enumerate every loan whose position NFT the wallet CURRENTLY
       // holds — the source the indexer rows can't cover for a pure
@@ -261,7 +253,22 @@ export function useMyClaimables() {
         knownKeys.add(`${l.loanId}:${l.role}`);
         if (!byLoanId.has(l.loanId)) byLoanId.set(l.loanId, l);
       }
-      const hintIds = ((await hintPromise) ?? []).map((h) => h.loanId);
+      // PR C (§4.2.3) — the ADDITIVE indexer hint, as FALLBACK
+      // discovery only (Codex #1232 r2): when the enumeration
+      // succeeded it is already authoritative for the wallet's
+      // current holdings — the hint could only add stale rows the
+      // ownerOf confirm must prune, while a slow indexer would hold
+      // the whole Claims result behind its fetch timeout. On an old
+      // deploy without the enumeration views it ADDS candidates the
+      // indexed rows may miss; it never suppresses or substitutes for
+      // chain discovery, and a failed fetch (`null`) means "no hint".
+      const hintIds = enumerationAvailable
+        ? []
+        : (
+            (await fetchClaimCandidates(readChain.chainId, me).catch(
+              () => null,
+            )) ?? []
+          ).map((h) => h.loanId);
       const chainIdList = [
         ...new Set([...chainIds.map((id) => Number(id)), ...hintIds]),
       ];
@@ -468,7 +475,14 @@ export function useMyClaimables() {
               return null;
             }
           })();
-          if (clean) claimVerdictPut(memoKey, verdict, epochAtStart);
+          // Cache only when the pass was CLEAN and the rail was
+          // healthy when it started: a verdict captured while
+          // invalidation signals were absent must not become readable
+          // after a later recovery (Codex #1232 r2) — the drop-bump
+          // only covers entries from BEFORE an outage, not during it.
+          if (clean && memoReadable) {
+            claimVerdictPut(memoKey, verdict, epochAtStart);
+          }
           return verdict;
         }),
       );

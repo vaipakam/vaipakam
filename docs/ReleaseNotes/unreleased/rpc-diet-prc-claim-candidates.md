@@ -10,9 +10,11 @@ Two changes, neither of which moves the authority off chain:
 
 The indexer gains a lean claim-candidate endpoint that lists the
 terminal loans whose position NFTs a wallet currently holds, most
-recently touched first. It is additive by contract: the connected app
-unions these hints into its own discovery and never lets them suppress
-a candidate the chain enumeration found. The existing claimables
+recently touched first, capped at the two hundred most recent with an
+honest truncation marker. It is additive by contract: the connected
+app consults it only as fallback discovery when the authoritative
+on-chain enumeration is unavailable (an older deployment), and never
+lets it suppress a candidate the chain found. The existing claimables
 endpoint that another app consumes is untouched.
 
 The connected app now remembers each candidate's verification verdict

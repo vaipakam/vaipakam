@@ -103,5 +103,22 @@ describe('GET /claim-candidates/:address', () => {
     const { status, body } = await h.call();
     expect(status).toBe(200);
     expect(body.candidates).toEqual([]);
+    expect(body.truncated).toBe(false);
+  });
+
+  it('caps the response at 200 loans, truncation-honest', async () => {
+    // Codex #1232 r2: a wallet holding a pathological number of
+    // terminal positions must not turn one public GET into an
+    // unbounded D1 read + client probe fan-out. Most-recent rows win;
+    // an omitted tail id is simply unhinted (additive contract).
+    const h = makeHarness();
+    for (let i = 1; i <= 201; i++) h.seed(i, 'repaid', ME, OTHER, i);
+    const { body } = await h.call();
+    expect(body.truncated).toBe(true);
+    expect(body.candidates).toHaveLength(200);
+    expect(body.candidates[0].loanId).toBe(201); // newest kept…
+    expect(
+      body.candidates.some((c: { loanId: number }) => c.loanId === 1),
+    ).toBe(false); // …oldest dropped
   });
 });

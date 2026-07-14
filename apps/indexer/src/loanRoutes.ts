@@ -647,7 +647,17 @@ export async function handleClaimables(
  * NFT so `*_current_owner` flips to 0x0 and the side drops out; a
  * rare false positive costs the client one probe that getClaimable
  * (the actual authority) rejects.
+ *
+ * Bounded (Codex #1232 r2): a wallet holding a pathological number of
+ * terminal position NFTs would otherwise turn one public GET into an
+ * unbounded D1 read AND an unbounded client-side probe fan-out. The
+ * response carries the most-recently-touched CLAIM_CANDIDATES_CAP
+ * loan rows and is truncation-honest (`truncated: true`) — an omitted
+ * tail id is simply unhinted, which the additive contract already
+ * tolerates.
  */
+const CLAIM_CANDIDATES_CAP = 200;
+
 export async function handleClaimCandidates(
   req: Request,
   env: Env,
@@ -676,9 +686,10 @@ export async function handleClaimCandidates(
          WHERE chain_id = ?
            AND status IN ('repaid', 'defaulted', 'liquidated', 'internal_matched')
            AND (lender_current_owner = ? OR borrower_current_owner = ?)
-         ORDER BY updated_at DESC, loan_id DESC`,
+         ORDER BY updated_at DESC, loan_id DESC
+         LIMIT ?`,
       )
-        .bind(chainId, addr, addr)
+        .bind(chainId, addr, addr, CLAIM_CANDIDATES_CAP + 1)
         .all<{
           loan_id: number;
           status: string;
@@ -687,13 +698,15 @@ export async function handleClaimCandidates(
           updated_at: number;
         }>()
     ).results ?? [];
+    const truncated = rows.length > CLAIM_CANDIDATES_CAP;
+    const kept = truncated ? rows.slice(0, CLAIM_CANDIDATES_CAP) : rows;
     const candidates: Array<{
       loanId: number;
       role: 'lender' | 'borrower';
       status: string;
       updatedAt: number;
     }> = [];
-    for (const row of rows) {
+    for (const row of kept) {
       if (row.lender_current_owner === addr) {
         candidates.push({
           loanId: row.loan_id,
@@ -711,7 +724,7 @@ export async function handleClaimCandidates(
         });
       }
     }
-    return jsonResponse({ chainId, address: addr, candidates });
+    return jsonResponse({ chainId, address: addr, candidates, truncated });
   } catch (err) {
     console.error('[loanRoutes] claim-candidates failed', err);
     return jsonResponse({ error: 'claim-candidates-failed' }, 500);
