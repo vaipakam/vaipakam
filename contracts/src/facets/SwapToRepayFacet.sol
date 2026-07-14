@@ -167,6 +167,14 @@ contract SwapToRepayFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamE
     ///         minPartialBps / BASIS_POINTS`). Mirrored from `RepayFacet`.
     error InsufficientPartialAmount();
 
+    /// @notice Pass-2 A2 (#1190, Codex #1229) — reverted when a swap-to-repay
+    ///         partial would LOWER the loan's health factor. Unlike a direct
+    ///         partial (collateral untouched → HF always improves), a swap sells
+    ///         collateral AND repays principal, so a bad swap CAN worsen HF —
+    ///         this monotonicity guard (replacing the old inverted 1.5 admission
+    ///         floor) is the meaningful protection here, alongside the LTV cap.
+    error PartialSwapWorsensHealthFactor(uint256 hfBefore, uint256 hfAfter);
+
     /// @notice Full swap-to-repay: swap the borrower's collateral asset
     ///         for the loan's principal asset and close the loan in
     ///         one transaction.
@@ -621,6 +629,19 @@ contract SwapToRepayFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamE
         uint256 graceEnd = endTime + LibVaipakam.gracePeriod(loan.durationDays);
         if (block.timestamp > graceEnd) revert RepaymentPastGracePeriod();
 
+        // Pass-2 A2 (#1190, Codex #1229) — capture PRE-swap HF for the
+        // monotonicity gate. This loan is ERC-20-on-both-legs + liquid (asserted
+        // above), so it always carries an HF. Unlike a direct partial, a swap
+        // sells collateral AND repays principal, so HF is not guaranteed to
+        // improve — the gate below asserts the swap does not worsen it.
+        uint256 hfBefore = abi.decode(
+            LibFacet.crossFacetStaticCall(
+                abi.encodeWithSelector(RiskFacet.calculateHealthFactor.selector, loanId),
+                HealthFactorCalculationFailed.selector
+            ),
+            (uint256)
+        );
+
         // ── Slippage floor pre-flight ────────────────────────────────
         uint256 expectedProceeds = LibFallback.expectedSwapOutput(
             address(this),
@@ -702,10 +723,9 @@ contract SwapToRepayFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamE
         // periodic auto-liquidation's already-settled days — the audit's M1 /
         // its SwapToRepay twin). Netted here; the stale `interestSettled` is
         // zeroed at the accrual-clock reset below (the #915 credit+zero pattern).
-        uint256 accrued = LibEntitlement.creditSettledInterest(
-            loan,
-            LibEntitlement.accruedInterestToTime(loan, block.timestamp)
-        );
+        uint256 grossAccrued = LibEntitlement.accruedInterestToTime(loan, block.timestamp);
+        uint256 priorSettled = uint256(loan.interestSettled);
+        uint256 accrued = LibEntitlement.creditSettledInterest(loan, grossAccrued);
         (uint256 treasuryShare, uint256 lenderShare) = LibEntitlement.splitTreasury(loan, accrued);
 
         // Must at least cover the accrued interest.
@@ -813,12 +833,16 @@ contract SwapToRepayFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamE
             }
         }
         loan.interestAccrualStart = uint64(block.timestamp); // reset accrual clock
-        // Pass-2 A3 (#1191) — clear the now-stale periodic-settled credit: it
-        // was netted from this partial's charge above, and the reset makes the
-        // next settlement future-only, so leaving it non-zero would let
-        // `settlementInterestNet` subtract it a SECOND time (underpaying the
-        // lender / understating HF). Mirrors PrecloseFacet:886 / RiskFacet.
-        loan.interestSettled = 0;
+        // Pass-2 A3 (#1191) — consume ONLY the settled portion this partial's
+        // charge just netted (`grossAccrued`) and PRESERVE any excess: a periodic
+        // auto-liquidation can OVERDELIVER (credits slippage-buffered proceeds >
+        // interest accrued so far), so zeroing all of it would forfeit the
+        // borrower's already-paid excess and later overstate the debt (Codex
+        // #1229). The clock is reset above, so the surviving
+        // `interestSettled - grossAccrued` credits future accrual.
+        loan.interestSettled = priorSettled > grossAccrued
+            ? priorSettled - grossAccrued
+            : 0;
 
         // ── T-034 §4.5 — periodic-interest checkpoint advance
         //    (mirror RepayFacet:679-706) ────────────────────────────
@@ -847,15 +871,20 @@ contract SwapToRepayFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamE
         }
 
         // ── Post-repay HF guard ──────────────────────────────────────
-        bytes memory hfResult = LibFacet.crossFacetStaticCall(
-            abi.encodeWithSelector(RiskFacet.calculateHealthFactor.selector, loanId),
-            HealthFactorCalculationFailed.selector
+        // Pass-2 A2 (#1190, Codex #1229) — MONOTONICITY, not the old inverted
+        // 1.5 admission floor (which blocked a sub-floor borrower from
+        // deleveraging via a swap that improves HF but doesn't fully restore
+        // 1.5 — the same bug A2 fixes on `repayPartial`). Assert the swap does
+        // not WORSEN HF; the tier-LTV cap below is the separate over-consumption
+        // guard (#394).
+        uint256 hfAfter = abi.decode(
+            LibFacet.crossFacetStaticCall(
+                abi.encodeWithSelector(RiskFacet.calculateHealthFactor.selector, loanId),
+                HealthFactorCalculationFailed.selector
+            ),
+            (uint256)
         );
-        uint256 hf = abi.decode(hfResult, (uint256));
-        // #394 Lever A (Codex #647 P1) — this loan's snapshotted admission
-        // floor (immutable post-admission), not the live knob.
-        if (hf < LibVaipakam.effectiveLoanMinHealthFactor(loan.minHealthFactorAtInit))
-            revert HealthFactorTooLow();
+        if (hfAfter < hfBefore) revert PartialSwapWorsensHealthFactor(hfBefore, hfAfter);
 
         // #394 Lever A (Codex #647 round-6) — also re-check post-swap LTV against
         // THIS loan's snapshotted admission init-LTV cap. For a depth-tiered

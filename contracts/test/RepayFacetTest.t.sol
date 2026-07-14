@@ -1123,17 +1123,19 @@ contract RepayFacetTest is Test {
         vm.clearMockedCalls();
     }
 
-    /// @dev Pass-2 A3 (#1191) — a repayPartial on a loan carrying a periodic-
-    ///      settled `interestSettled` credit must ZERO it after the accrual
-    ///      clock reset (else `settlementInterestNet`/`currentBorrowBalance`
-    ///      would subtract the stale credit a second time from the future-only
-    ///      window — underpaying the lender / understating HF). HF is mocked
-    ///      constant so the A2 monotonicity gate is a no-op and this isolates
-    ///      the A3 zeroing.
-    function testRepayPartial_zerosStaleInterestSettled() public {
+    /// @dev Pass-2 A3 (#1191, Codex #1229) — a repayPartial CONSUMES only the
+    ///      portion of the periodic-settled credit that its charge netted
+    ///      (`grossAccrued`) and PRESERVES the excess. A periodic auto-liq can
+    ///      OVERDELIVER, so `interestSettled` may exceed the accrued interest by
+    ///      the time a partial runs; zeroing ALL of it (the earlier fix) would
+    ///      forfeit the borrower's already-paid excess and later overstate the
+    ///      debt. Here no time elapses (grossAccrued == 0), so the FULL seeded
+    ///      credit must survive. HF mocked constant to isolate this from the A2
+    ///      monotonicity gate.
+    function testRepayPartial_preservesUnusedSettledCredit() public {
         helperOfferLoan();
         LibVaipakam.Loan memory loan = LoanFacet(address(diamond)).getLoanDetails(1);
-        loan.interestSettled = 50; // seed a periodic-settled credit
+        loan.interestSettled = 50; // over-delivered periodic credit
         TestMutatorFacet(address(diamond)).setLoan(1, loan);
         vm.mockCall(
             address(diamond),
@@ -1141,12 +1143,12 @@ contract RepayFacetTest is Test {
             abi.encode(uint256(2e18)) // healthy + constant (non-worsening)
         );
         vm.prank(borrower);
-        RepayFacet(address(diamond)).repayPartial(1, 100);
+        RepayFacet(address(diamond)).repayPartial(1, 100); // grossAccrued == 0
         vm.clearMockedCalls();
         assertEq(
             LoanFacet(address(diamond)).getLoanDetails(1).interestSettled,
-            0,
-            "stale interestSettled zeroed at partial (#1191)"
+            50,
+            "unused settled credit preserved, not zeroed (#1229)"
         );
     }
 

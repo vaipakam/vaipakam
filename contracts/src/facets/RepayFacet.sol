@@ -801,10 +801,9 @@ contract RepayFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErrors 
             // days (the audit's M1). `creditSettledInterest` nets it out; the
             // stale `interestSettled` is then zeroed at the clock reset below
             // (mirrors PrecloseFacet / RiskFacet's #915 credit+zero).
-            accrued = LibEntitlement.creditSettledInterest(
-                loan,
-                LibEntitlement.accruedInterestToTime(loan, block.timestamp)
-            );
+            uint256 grossAccrued = LibEntitlement.accruedInterestToTime(loan, block.timestamp);
+            uint256 priorSettled = uint256(loan.interestSettled);
+            accrued = LibEntitlement.creditSettledInterest(loan, grossAccrued);
             (uint256 treasuryShare, uint256 lenderShare) = LibEntitlement.splitTreasury(
                 loan,
                 accrued
@@ -922,10 +921,18 @@ contract RepayFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErrors 
             }
             // T-034 — interestAccrualStart downsized to uint64; explicit cast.
             loan.interestAccrualStart = uint64(block.timestamp); // Reset accrual start
-            // Pass-2 A3 (#1191) — clear the now-stale periodic-settled credit
-            // (see the reconciliation note above): it was netted from this
-            // partial's charge, so it must not be subtracted again downstream.
-            loan.interestSettled = 0;
+            // Pass-2 A3 (#1191) — consume ONLY the portion of the settled credit
+            // that this partial's charge just netted (`grossAccrued`), and
+            // PRESERVE any excess. A periodic auto-liquidation can OVERDELIVER
+            // (it credits actual slippage-buffered `lenderProceeds`, which may
+            // exceed the interest accrued by the time this partial runs), so a
+            // partial before enough future interest accrues would otherwise
+            // forfeit the borrower's already-paid excess and later OVERSTATE the
+            // debt (Codex #1229). The clock is reset above, so the surviving
+            // `interestSettled - grossAccrued` correctly credits future accrual.
+            loan.interestSettled = priorSettled > grossAccrued
+                ? priorSettled - grossAccrued
+                : 0;
 
             // §3.10 — accrual clock reset right above (loan.interestAccrualStart
             // = block.timestamp), so accruedInterest at emit is 0.
