@@ -49,6 +49,21 @@ contract DeployTimelock is Script {
 
         require(proposer != address(0), "DeployTimelock: proposer required");
         require(minDelay >= 1 hours, "DeployTimelock: min delay < 1h");
+        // #1195 F4 (Pass-2 hardening) — on a Phase-1 MAINNET the Timelock must
+        // enforce the ratified 48h minimum delay; the `TIMELOCK_MIN_DELAY` env
+        // must not be able to floor governance to the 1h dev minimum with no
+        // gate. Testnets keep the 1h floor for iteration speed. Phase-1 mainnet
+        // set per ProjectDetailsREADME / TokenomicsTechSpec: Ethereum, Base,
+        // Polygon, Arbitrum, Optimism.
+        if (
+            block.chainid == 1 ||      // Ethereum
+            block.chainid == 8453 ||   // Base
+            block.chainid == 137 ||    // Polygon
+            block.chainid == 42161 ||  // Arbitrum One
+            block.chainid == 10        // Optimism
+        ) {
+            require(minDelay >= 48 hours, "DeployTimelock: mainnet min delay < 48h");
+        }
 
         address[] memory proposers = new address[](1);
         proposers[0] = proposer;

@@ -603,7 +603,11 @@ contract OfferMatchFacet is DiamondReentrancyGuard, DiamondPausable {
         if (o.deadline != 0 && block.timestamp > o.deadline) {
             revert SignedOfferSigExpired(o.deadline);
         }
-        if (o.expiresAt != 0 && block.timestamp > o.expiresAt) {
+        // #1195 B3 (Pass-2, §1075) — the GTT rule is "expired AT and after the
+        // deadline", so use `>=` (matching `LibVaipakam.isOfferExpired` /
+        // `LibOfferMatch`), not `>` which left the exact `expiresAt` second
+        // fillable.
+        if (o.expiresAt != 0 && block.timestamp >= o.expiresAt) {
             revert SignedOfferGttExpired(o.expiresAt);
         }
         orderHash = LibSignedOffer.hashStruct(o);

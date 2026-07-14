@@ -273,7 +273,14 @@ library LibSignedOffer {
         p.collateralTokenId = o.collateralTokenId;
         p.collateralQuantity = o.collateralQuantity;
         p.allowsPartialRepay = o.allowsPartialRepay;
-        p.amountMax = o.amountMax;
+        // #1195 B1 (Pass-2, §1083) — honor the `amountMax == 0 ⇒ amount`
+        // sentinel on the DIRECT fill path too, matching the matcher path
+        // (OfferMatchFacet) and this offer's own `_ceiling` consume-ledger
+        // helper. Without this, a signed offer authored with `amountMax == 0`
+        // (single-value shorthand) reverts `AmountMaxMustBePositive` at
+        // create-time on a direct fill while filling fine via the matcher —
+        // a fail-loud path inconsistency.
+        p.amountMax = o.amountMax == 0 ? o.amount : o.amountMax;
         p.interestRateBpsMax = o.interestRateBpsMax;
         p.collateralAmountMax = o.collateralAmountMax;
         p.periodicInterestCadence =

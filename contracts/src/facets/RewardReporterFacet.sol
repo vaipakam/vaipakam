@@ -127,6 +127,12 @@ contract RewardReporterFacet is
         // day is still accruing, reporting it would be lossy.
         if (!active || dayId >= today) revert RewardDayNotElapsed();
         if (s.chainReportSentAt[dayId] != 0) revert ChainDayAlreadyReported();
+        // #1195 E3 (Pass-2) — reject a late self-report AFTER the day has been
+        // finalized, matching the mirror ingress guard in `RewardAggregatorFacet`
+        // (`onChainReportReceived`). Storing a post-finalization report is
+        // payout-benign but poisons the `backfillDayInclusion` predicate and the
+        // audit trail; the Base path must fail-loud like the mirror path.
+        if (s.dailyGlobalFinalized[dayId]) revert ReportAfterFinalization();
 
         // Fold entry-driven deltas into `totalLenderInterestNumeraire18[dayId]` /
         // `totalBorrowerInterestNumeraire18[dayId]` before snapshotting so the
