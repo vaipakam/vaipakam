@@ -375,19 +375,21 @@ contract PeriodicInterestSettleTest is SetupTest {
         assertEq(l.lastPeriodicInterestSettledAt, SafeCast.toUint64(startTs));
     }
 
-    /// @dev Pass-2 A3 (#1191, Codex #1229 round 2) — when a periodic auto-liq
-    ///      previously OVER-delivered, `interestSettled` carries an excess
-    ///      credit. A subsequent `repayPartial` nets that credit out of the
-    ///      cash it charges, but it must still record the FULL interest it
-    ///      SATISFIED (`grossAccrued`) into `interestPaidSinceLastPeriod` — not
-    ///      just the (netted-to-near-zero) cash. Otherwise the next
-    ///      `settlePeriodicInterest` under-counts the period and auto-liquidates
-    ///      collateral the borrower already paid for. We seed the settled credit
-    ///      well above the 10-day accrual so the cash charge nets to zero, then
-    ///      assert the period accumulator tracks the accrual regardless AND that
-    ///      exactly that much credit was consumed from the buffer.
-    function testRepayPartial_periodCreditsFullGrossAccrued_notNettedCash() public {
-        uint256 seededCredit = 100 ether; // >> 10-day accrual → cash nets to 0
+    /// @dev Pass-2 A3 (#1191, Codex #1229 round 3, P1) — the period accumulator
+    ///      must receive the NETTED cash interest (`accrued`), never the gross.
+    ///      `grossAccrued` accrues from `interestAccrualStart`, which a periodic
+    ///      auto-liquidation does NOT reset when it advances a checkpoint — only
+    ///      `interestPaidSinceLastPeriod` is zeroed — so `grossAccrued` still
+    ///      spans the already-settled period(s). Crediting it here would let a
+    ///      post-auto-settle partial mark the NEW period paid with OLD interest,
+    ///      skip a required auto-liquidation, and underpay the lender. We model a
+    ///      prior over-settled period by seeding `interestSettled` well above the
+    ///      10-day accrual so the netted cash charge is zero, and assert the
+    ///      accumulator is NOT inflated by that already-settled span. (Exact
+    ///      current-period attribution — which would carry a prior over-delivery
+    ///      excess forward — is deferred to #1230.)
+    function testRepayPartial_periodAccumulatorExcludesPreSettledSpan() public {
+        uint256 seededCredit = 100 ether; // >> 10-day accrual → netted cash = 0
         LibVaipakam.Loan memory l0 = LoanFacet(address(diamond)).getLoanDetails(loanId);
         l0.interestSettled = SafeCast.toUint128(seededCredit);
         TestMutatorFacet(address(diamond)).setLoan(loanId, l0);
@@ -400,20 +402,16 @@ contract PeriodicInterestSettleTest is SetupTest {
         RepayFacet(address(diamond)).repayPartial(loanId, 50 ether);
 
         LibVaipakam.Loan memory l = LoanFacet(address(diamond)).getLoanDetails(loanId);
-        // The FIX: period accumulator tracks the FULL accrual, even though the
-        // seeded credit netted the cash interest to ~zero. Pre-fix this was 0.
-        assertGt(
+        // The pre-settled span is NOT credited into the current period: the
+        // netted cash charge is zero, so the accumulator stays zero. Pre-revert
+        // (the reverted `+= grossAccrued`) this over-credited ~10 days of
+        // already-settled interest and could skip a required auto-liquidation.
+        assertEq(
             l.interestPaidSinceLastPeriod,
             0,
-            "grossAccrued credited to period despite netted cash (#1229)"
+            "already-settled span must not inflate the current-period accumulator (#1229 P1)"
         );
-        // The credit consumed from the buffer equals what was credited to the
-        // period — the same grossAccrued, accounted in both places.
-        uint256 consumed = seededCredit - uint256(l.interestSettled);
-        assertEq(
-            uint256(l.interestPaidSinceLastPeriod),
-            consumed,
-            "period credit == settled-buffer consumption (both = grossAccrued)"
-        );
+        // Checkpoint NOT advanced (nothing paid toward this period).
+        assertEq(l.lastPeriodicInterestSettledAt, SafeCast.toUint64(startTs));
     }
 }

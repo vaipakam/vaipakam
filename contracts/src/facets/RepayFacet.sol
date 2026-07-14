@@ -950,17 +950,22 @@ contract RepayFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErrors 
             // single-period interest amount.
             if (loan.periodicInterestCadence !=
                 LibVaipakam.PeriodicInterestCadence.None) {
-                // Pass-2 A3 (#1191, Codex #1229) — credit the FULL interest
-                // SATISFIED this partial (`grossAccrued`), not just the cash
-                // `accrued` netted after the settled credit. The excess-credit
-                // portion (`grossAccrued - accrued`) covered real interest for
-                // this period, so `settlePeriodicInterest` (which reads only
-                // `interestPaidSinceLastPeriod`) must see it, else it would
-                // under-count the period and auto-liquidate more collateral than
-                // owed. No-op when there is no pre-existing credit
-                // (grossAccrued == accrued).
+                // Pass-2 A3 (#1191, Codex #1229) — credit the NETTED `accrued`
+                // (interest CHARGED in cash this partial), NOT the gross.
+                // `grossAccrued` accrues from `interestAccrualStart`, which the
+                // periodic auto-liquidation does NOT reset when it advances a
+                // checkpoint (only `interestPaidSinceLastPeriod` is zeroed), so
+                // `grossAccrued` still spans the already-settled period(s). Adding
+                // it here would let a post-auto-settle partial credit old interest
+                // into the NEW period, mark it paid without a current-period
+                // payment, and skip a required auto-liquidation — underpaying the
+                // lender (Codex #1229 round 3, P1). The netted `accrued` never
+                // over-credits. The exact CURRENT-period attribution (which would
+                // also carry a prior over-delivery's excess forward, Codex #1229
+                // round 2) needs the accrual clock reconciled against
+                // `lastPeriodicInterestSettledAt` — deferred to #1230.
                 uint256 newPaid = uint256(loan.interestPaidSinceLastPeriod) +
-                    grossAccrued;
+                    accrued;
                 if (newPaid > type(uint128).max) {
                     newPaid = type(uint128).max;
                 }
