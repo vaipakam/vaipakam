@@ -857,30 +857,66 @@ contract PrecloseFacet is
         // borrower's un-liened vault, leaving the old lender short of the rent
         // they earned up to the transfer (README §1512 "pay all rent accrued up
         // to the transfer" / §1420 "don't leave the original lender worse off").
-        if (loan.assetType != LibVaipakam.AssetType.ERC20) {
-            uint256 catchUpDays =
-                (block.timestamp - uint256(loan.lastDeductTime)) / LibVaipakam.ONE_DAY;
+        // Rentals only, and only TRUE zero-APR rentals: the APR path above
+        // already charges a (mis-configured) non-zero-rate non-ERC-20 loan its
+        // `accruedInterest`, so gating on `interestRateBps == 0` here avoids
+        // double-billing the same elapsed window (Codex #1249 r1 P2).
+        if (loan.assetType != LibVaipakam.AssetType.ERC20 && loan.interestRateBps == 0) {
+            // (a) Rent accrued since the last daily deduction (in-term only).
+            //     `lastDeductTime` can legitimately sit in the FUTURE when the
+            //     borrower prepaid days via `repayPartial`, so guard the
+            //     subtraction — treat "clock ahead of now" as zero catch-up
+            //     rather than underflowing and bricking the transfer
+            //     (Codex #1249 r1 P2).
+            uint256 catchUpDays = block.timestamp > uint256(loan.lastDeductTime)
+                ? (block.timestamp - uint256(loan.lastDeductTime)) / LibVaipakam.ONE_DAY
+                : 0;
             uint256 remainingDays = LibVaipakam.remainingRentalDays(loan);
             // Never bill past the agreed term — overdue rent is a late-fee
             // concern (out of scope here); this settles only in-term rent.
             if (catchUpDays > remainingDays) catchUpDays = remainingDays;
-            uint256 catchUpRent = loan.principal * catchUpDays;
+
+            // (b) Term shortfall — the rental days between the incoming offer's
+            //     term and the original maturity that the NEW borrower will not
+            //     cover. The exiting borrower pre-paid the full term, so those
+            //     days are owed to the OLD lender (README §1420, "don't leave
+            //     the original lender worse off"), mirroring the ERC-20 path's
+            //     `shortfall` leg (Codex #1249 r1 P2). The maturity gate above
+            //     guarantees `offer.durationDays <= remainingFromNow`, so this
+            //     is non-negative.
+            uint256 maturity =
+                uint256(loan.startTime) + loan.durationDays * LibVaipakam.ONE_DAY;
+            uint256 remainingFromNow = maturity > block.timestamp
+                ? (maturity - block.timestamp) / LibVaipakam.ONE_DAY
+                : 0;
+            uint256 shortfallDays = remainingFromNow > offer.durationDays
+                ? remainingFromNow - offer.durationDays
+                : 0;
+
+            uint256 accruedRent = loan.principal * catchUpDays;
+            uint256 rentDue = accruedRent + loan.principal * shortfallDays;
             // Defensive clamp to the funded prepay (a fully-serviced rental
             // always has enough; this prevents an over-withdraw if it doesn't).
-            if (catchUpRent > loan.prepayAmount) catchUpRent = loan.prepayAmount;
-            if (catchUpRent > 0) {
-                (uint256 rentTreasury, uint256 rentLender) =
-                    LibEntitlement.splitTreasury(loan, catchUpRent);
-                // Lender share → current lender-position holder from the prepay
-                // vault (fail-closed park if the holder is flagged), mirroring
-                // the daily deduction path.
+            if (rentDue > loan.prepayAmount) {
+                rentDue = loan.prepayAmount;
+                if (accruedRent > rentDue) accruedRent = rentDue;
+            }
+            if (rentDue > 0) {
+                // Treasury takes its cut only on the accrued (elapsed) rent,
+                // matching the ERC-20 path (the shortfall goes fully to the
+                // lender). Lender share → current lender-position holder from the
+                // prepay vault (fail-closed park if the holder is flagged),
+                // mirroring the daily deduction path.
+                (uint256 rentTreasury, uint256 rentLenderOnAccrued) =
+                    LibEntitlement.splitTreasury(loan, accruedRent);
+                uint256 lenderTotal = (rentDue - accruedRent) + rentLenderOnAccrued;
                 LibFacet.crossFacetCall(
                     abi.encodeWithSelector(
                         EncumbranceMutateFacet.freezeOrPayActiveLenderFromVault.selector,
                         loanId,
                         loan.borrower,
                         loan.prepayAsset,
-                        rentLender
+                        lenderTotal
                     ),
                     bytes4(0)
                 );
@@ -901,7 +937,7 @@ contract PrecloseFacet is
                 // installs the incoming offer's prepay/buffer; the exiting
                 // borrower's remaining prepay stays in their (un-liened) vault to
                 // withdraw, now correctly net of the rent just paid to the lender.
-                unchecked { loan.prepayAmount -= catchUpRent; }
+                unchecked { loan.prepayAmount -= rentDue; }
             }
         }
 

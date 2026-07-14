@@ -1968,7 +1968,9 @@ contract PrecloseFacetTest is Test {
 
         // Incoming offer: amount must equal the loan's per-day principal, and
         // its term must fit the loan's REMAINING maturity (line-697 check).
-        // After the 7-day warp below, 23 days remain, so 20 days fits.
+        // After the 7-day warp below, 23 days remain; a 23-day offer covers the
+        // full remaining term so there is NO term shortfall — this test isolates
+        // the elapsed-rent catch-up. (The shortfall is covered separately below.)
         vm.prank(newBorrower);
         uint256 validOffer = OfferCreateFacet(address(diamond)).createOffer(
             LibVaipakam.CreateOfferParams({
@@ -1978,7 +1980,7 @@ contract PrecloseFacetTest is Test {
                 interestRateBps: 500,
                 collateralAsset: mockCollateralERC20,
                 collateralAmount: COLLATERAL,
-                durationDays: 20,
+                durationDays: 23,
                 assetType: LibVaipakam.AssetType.ERC20,
                 tokenId: 0,
                 quantity: 0,
@@ -2031,6 +2033,142 @@ contract PrecloseFacetTest is Test {
         vm.prank(borrower);
         PrecloseFacet(address(diamond)).transferObligationViaOffer(activeLoanId, validOffer);
         vm.clearMockedCalls();
+    }
+
+    /// @dev #1194 (Pass-2 D4, Codex #1249 r1 P2) — when the incoming borrower's
+    ///      term is SHORTER than the exiting borrower's remaining term, the
+    ///      transfer must also charge the rent shortfall (the pre-paid days the
+    ///      new borrower won't cover) to the OLD lender, mirroring the ERC-20
+    ///      path's shortfall leg. 7 days elapsed (23 remain); the incoming offer
+    ///      runs only 20 days, so 3 shortfall days are owed on top of the 7
+    ///      elapsed days. Elapsed rent is treasury-split (1%); the shortfall goes
+    ///      fully to the lender: lenderTotal = (700−7) + 300 = 993e.
+    function testTransferObligationNFTRental_ChargesTermShortfall() public {
+        uint256 perDay = 100 ether;
+        uint256 fullPrepay = perDay * 30;
+        _setupActiveLoanAsPricedRental(perDay, fullPrepay);
+
+        vm.prank(newBorrower);
+        uint256 validOffer = OfferCreateFacet(address(diamond)).createOffer(
+            _borrowerErc20Offer(perDay, 20)
+        );
+
+        vm.warp(block.timestamp + 7 days);
+        // accrued 7d = 700e (−1% treasury = 693e lender); shortfall 3d = 300e (full lender).
+        uint256 expLender = 693 ether + 300 ether;
+
+        _mockRentalTransferCalls();
+        vm.expectCall(
+            address(diamond),
+            abi.encodeWithSelector(
+                EncumbranceMutateFacet.freezeOrPayActiveLenderFromVault.selector,
+                activeLoanId,
+                borrower,
+                mockERC20,
+                expLender
+            )
+        );
+
+        vm.prank(borrower);
+        PrecloseFacet(address(diamond)).transferObligationViaOffer(activeLoanId, validOffer);
+        vm.clearMockedCalls();
+    }
+
+    /// @dev #1194 (Pass-2 D4, Codex #1249 r1 P2) — a rental whose `lastDeductTime`
+    ///      sits in the FUTURE (the borrower prepaid days via `repayPartial`) must
+    ///      not underflow the elapsed-rent subtraction and brick the transfer.
+    ///      Here the clock is 5 days ahead and the incoming term covers the full
+    ///      remaining term (no shortfall), so no rent is due and the transfer
+    ///      completes cleanly.
+    function testTransferObligationNFTRental_PrepaidClockDoesNotBrick() public {
+        uint256 perDay = 100 ether;
+        LibVaipakam.Loan memory ld = LoanFacet(address(diamond)).getLoanDetails(activeLoanId);
+        ld.assetType = LibVaipakam.AssetType.ERC721;
+        ld.prepayAsset = mockERC20;
+        ld.principal = perDay;
+        ld.interestRateBps = 0;
+        ld.durationDays = 30;
+        ld.startTime = uint64(block.timestamp);
+        ld.lastDeductTime = block.timestamp + 5 days; // prepaid ahead of now
+        ld.prepayAmount = perDay * 30;
+        ld.bufferAmount = (perDay * 30 * 500) / 10000;
+        ld.treasuryFeeBpsAtInit = 100;
+        TestMutatorFacet(address(diamond)).setLoan(activeLoanId, ld);
+
+        // Full-remaining-term offer → no shortfall, no rent due.
+        vm.prank(newBorrower);
+        uint256 validOffer = OfferCreateFacet(address(diamond)).createOffer(
+            _borrowerErc20Offer(perDay, 30)
+        );
+
+        _mockRentalTransferCalls();
+        vm.prank(borrower);
+        PrecloseFacet(address(diamond)).transferObligationViaOffer(activeLoanId, validOffer);
+        LibVaipakam.Loan memory after_ = LoanFacet(address(diamond)).getLoanDetails(activeLoanId);
+        assertEq(after_.borrower, newBorrower, "transfer must complete (no underflow) for a prepaid rental");
+        vm.clearMockedCalls();
+    }
+
+    // ─── D4 rental-transfer test helpers ────────────────────────────────────
+
+    function _setupActiveLoanAsPricedRental(uint256 perDay, uint256 fullPrepay) internal {
+        LibVaipakam.Loan memory ld = LoanFacet(address(diamond)).getLoanDetails(activeLoanId);
+        ld.assetType = LibVaipakam.AssetType.ERC721;
+        ld.prepayAsset = mockERC20;
+        ld.principal = perDay;
+        ld.interestRateBps = 0;
+        ld.durationDays = 30;
+        ld.startTime = uint64(block.timestamp);
+        ld.lastDeductTime = block.timestamp;
+        ld.prepayAmount = fullPrepay;
+        ld.bufferAmount = (fullPrepay * 500) / 10000;
+        ld.treasuryFeeBpsAtInit = 100;
+        TestMutatorFacet(address(diamond)).setLoan(activeLoanId, ld);
+    }
+
+    function _borrowerErc20Offer(uint256 amount, uint256 durationDays)
+        internal
+        view
+        returns (LibVaipakam.CreateOfferParams memory)
+    {
+        return LibVaipakam.CreateOfferParams({
+            offerType: LibVaipakam.OfferType.Borrower,
+            lendingAsset: mockERC20,
+            amount: amount,
+            interestRateBps: 500,
+            collateralAsset: mockCollateralERC20,
+            collateralAmount: COLLATERAL,
+            durationDays: durationDays,
+            assetType: LibVaipakam.AssetType.ERC20,
+            tokenId: 0,
+            quantity: 0,
+            creatorRiskAndTermsConsent: true,
+            prepayAsset: mockERC20,
+            collateralAssetType: LibVaipakam.AssetType.ERC20,
+            collateralTokenId: 0,
+            collateralQuantity: 0,
+            allowsPartialRepay: false,
+            allowsPrepayListing: false,
+            allowsParallelSale: false,
+            amountMax: amount,
+            interestRateBpsMax: 500,
+            collateralAmountMax: COLLATERAL,
+            periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None,
+            expiresAt: 0,
+            fillMode: LibVaipakam.FillMode.Partial,
+            refinanceTargetLoanId: 0,
+            useFullTermInterest: false
+        });
+    }
+
+    function _mockRentalTransferCalls() internal {
+        vm.mockCall(address(diamond), abi.encodeWithSelector(VaultFactoryFacet.vaultWithdrawERC20.selector), abi.encode(true));
+        vm.mockCall(address(diamond), abi.encodeWithSelector(EncumbranceMutateFacet.freezeOrPayActiveLenderFromVault.selector), "");
+        vm.mockCall(address(diamond), abi.encodeWithSelector(VaultFactoryFacet.vaultSetNFTUser.selector), abi.encode(true));
+        vm.mockCall(address(diamond), abi.encodeWithSelector(VaipakamNFTFacet.burnNFT.selector), "");
+        vm.mockCall(address(diamond), abi.encodeWithSelector(VaipakamNFTFacet.mintNFT.selector), "");
+        vm.mockCall(address(diamond), abi.encodeWithSelector(VaipakamNFTFacet.updateNFTStatus.selector), "");
+        vm.mockCall(address(diamond), abi.encodeWithSelector(RiskFacet.calculateHealthFactor.selector), abi.encode(2e18));
     }
 
     // ─── Test E: completeOffset NFT rental path ─────────────────────────────
