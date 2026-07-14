@@ -34,6 +34,7 @@ import { useCallback, useEffect, useRef, useSyncExternalStore } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import { useWatchBlockNumber } from 'wagmi';
 import { isIdle, onActivityResume } from '../lib/idle';
+import { isRailHealthy } from './railHealth';
 import { useActiveChain } from './useActiveChain';
 
 /** queryKey[0] values that move when a transaction lands. Everything
@@ -75,6 +76,38 @@ const LIVE_KEYS: ReadonlySet<string> = new Set([
   // 30s/60s interval refetch reconciles once the RPC caught up. (The
   // idle-RESUME refresh below DOES cover them — after 2 min without
   // interaction no own-write patch can still be in that window.)
+]);
+
+/** RPC read-diet PR A (design §4.1.2) — the ACTION-GATING subset that
+ *  keeps per-block tip freshness while the indexer push rail is
+ *  healthy: roots that gate money-moving actions or render
+ *  action-decisive detail state, where foreign-block staleness could
+ *  mislead an imminent decision. Everything else in LIVE_KEYS
+ *  (lists, activity, vault, approvals, config) rides push + receipt +
+ *  focus + the 180s net instead — that blanket was the dominant
+ *  recurring RPC cost. Each of these roots mounts only on its
+ *  specific surface, so the tip-driven cost is bounded to the page
+ *  actually being viewed. When the rail is DOWN, the full LIVE_KEYS
+ *  blanket returns (today's behaviour, the honest fallback). */
+const TIP_KEYS: ReadonlySet<string> = new Set([
+  // Detail-page cluster — owner/role/status gates on PositionDetails.
+  'loanLive',
+  'loanLiveStatus',
+  'loanRisk',
+  'positionOwners',
+  'offer',
+  'loan',
+  'offerLinkedLoan',
+  // Pending-card accept gates.
+  'loanSalePending',
+  'refinancePending',
+  // Desk crossable band — a stale band shows an executable match that
+  // isn't (§4.1.2 / the r5 table split).
+  'deskPreviewMatch',
+  // Shared-book ghost-strip (§4.1.2a) — its own query root after the
+  // split out of useActiveOffers; block-driven so a just-ended offer
+  // never outlives the throttle window on the book.
+  'bookGhostStrip',
 ]);
 
 /** Extra roots the idle-RESUME refresh covers beyond LIVE_KEYS:
@@ -130,7 +163,19 @@ export function LiveChainSync() {
   const visible = usePageVisible();
 
   const invalidate = useCallback(
-    (extra?: ReadonlySet<string>) => {
+    (extra?: ReadonlySet<string>, full = false) => {
+      // RPC read-diet PR A (§4.1.2): while the indexer push rail is
+      // verifiably delivering, the per-block invalidation narrows to
+      // the action-gating TIP_KEYS — the lists/vault/activity blanket
+      // was the dominant recurring RPC cost, and push + receipt +
+      // focus + the 180s net now carry those roots. Rail down (or the
+      // VITE_FRESHNESS_TIMERS=legacy hatch) ⇒ the full LIVE_KEYS
+      // blanket, byte-for-byte today's behaviour. Evaluated PER
+      // invalidation, so a rail transition takes effect on the next
+      // block, not the next mount. `full` forces the blanket — the
+      // idle-RESUME catch-up is a one-shot "make everything fresh
+      // now" for a returning user, not a per-block cost.
+      const keys = full || !isRailHealthy() ? LIVE_KEYS : TIP_KEYS;
       void queryClient.invalidateQueries({
         // Only refetch mounted queries; unmounted ones are just marked
         // stale and refetch when their screen next opens.
@@ -139,7 +184,7 @@ export function LiveChainSync() {
           const root = query.queryKey[0];
           return (
             typeof root === 'string' &&
-            (LIVE_KEYS.has(root) || (extra?.has(root) ?? false))
+            (keys.has(root) || (extra?.has(root) ?? false))
           );
         },
       });
@@ -172,7 +217,7 @@ export function LiveChainSync() {
     () =>
       onActivityResume(() => {
         lastAt.current = Date.now();
-        invalidate(RESUME_EXTRA_KEYS);
+        invalidate(RESUME_EXTRA_KEYS, /* full */ true);
       }),
     [invalidate],
   );

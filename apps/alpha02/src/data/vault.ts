@@ -21,7 +21,7 @@ import { getCanonicalAssetsForChain } from '@vaipakam/lib';
 import { useActiveChain } from '../chain/useActiveChain';
 import { AssetType } from '../lib/types';
 import { useMyLoans, useMyOffers } from './hooks';
-import { idleAware } from '../lib/idle';
+import { signalAware } from '../chain/railHealth';
 
 const ZERO_ADDRESS = '0x0000000000000000000000000000000000000000';
 
@@ -85,7 +85,8 @@ export function useVaultAssets() {
       Boolean(publicClient) &&
       !depsUnavailable &&
       !depsLoading,
-    refetchInterval: idleAware(30_000),
+    // RPC read-diet PR A — receipt + focus + push + 180s net (§4.1.2).
+    refetchInterval: signalAware(30_000),
     queryFn: async (): Promise<VaultSnapshot> => {
       const vault = (await publicClient!.readContract({
         address: readChain.diamondAddress,

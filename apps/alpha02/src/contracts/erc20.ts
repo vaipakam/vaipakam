@@ -10,6 +10,7 @@ import { erc20Abi } from 'viem';
 import type { PublicClient, WalletClient } from 'viem';
 import { usePublicClient } from 'wagmi';
 import { useActiveChain } from '../chain/useActiveChain';
+import { publishReceiptInvalidationGlobal } from '../chain/receiptSync';
 import { idleAware } from '../lib/idle';
 
 export interface TokenMeta {
@@ -117,6 +118,11 @@ export async function ensureAllowance(opts: {
     if (receipt.status !== 'success') {
       throw new Error(`Token approval failed (${hash})`);
     }
+    // RPC read-diet PR A (§4.1.4) — approvals go through this helper,
+    // not diamond.ts, so they feed the same centralized receipt floor
+    // (standingApprovals / funding-watch roots ride push+focus+net
+    // otherwise and would stay stale until the 180s net).
+    publishReceiptInvalidationGlobal();
     return hash;
   };
 
@@ -159,5 +165,7 @@ export async function revokeAllowance(opts: {
   if (receipt.status !== 'success') {
     throw new Error(`Approval revoke failed (${hash})`);
   }
+  // RPC read-diet PR A (§4.1.4) — same centralized floor as ensureAllowance.
+  publishReceiptInvalidationGlobal();
   return hash;
 }

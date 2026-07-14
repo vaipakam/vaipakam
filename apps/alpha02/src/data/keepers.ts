@@ -17,7 +17,7 @@ import { usePublicClient } from 'wagmi';
 import { DIAMOND_ABI_VIEM } from '../contracts/diamond';
 import { useActiveChain } from '../chain/useActiveChain';
 import { copy } from '../content/copy';
-import { idleAware } from '../lib/idle';
+import { signalAware } from '../chain/railHealth';
 
 export interface KeeperActionDef {
   bit: number;
@@ -68,7 +68,9 @@ export function useKeeperConfig() {
   return useQuery({
     queryKey: ['keeperConfig', readChain.chainId, address?.toLowerCase()],
     enabled: Boolean(readClient) && Boolean(address),
-    refetchInterval: idleAware(60_000),
+    // RPC read-diet PR A — receipt-patched own-wallet state; the
+    // stretched net only delays the (harmless) reconcile (§4.1.2).
+    refetchInterval: signalAware(60_000),
     queryFn: async (): Promise<KeeperConfig> => {
       const diamond = readChain.diamondAddress;
       const [enabled, list] = await Promise.all([
@@ -124,7 +126,9 @@ export function useLoanKeeperEnables(
       [...keepers].sort().join(','),
     ],
     enabled: enabled && Boolean(readClient) && keepers.length > 0,
-    refetchInterval: idleAware(60_000),
+    // RPC read-diet PR A — receipt-patched own-wallet state; the
+    // stretched net only delays the (harmless) reconcile (§4.1.2).
+    refetchInterval: signalAware(60_000),
     queryFn: async (): Promise<Record<string, boolean>> => {
       const diamond = readChain.diamondAddress;
       const entries = await Promise.all(

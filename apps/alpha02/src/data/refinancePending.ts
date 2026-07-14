@@ -32,7 +32,7 @@ import { readLiveProtocolFees } from './fees';
 import { ZERO_ADDRESS } from '../lib/offerSchema';
 import { makePendingMarkerStore } from '../lib/pendingMarker';
 import { useActiveChain } from '../chain/useActiveChain';
-import { idleAware } from '../lib/idle';
+import { tipAware } from '../chain/railHealth';
 
 const marker = makePendingMarkerStore('alpha02.refinanceOffer');
 
@@ -93,7 +93,9 @@ export function useRefinancePending(
       address?.toLowerCase(),
     ],
     enabled: Boolean(readClient) && offerId !== null && Boolean(principalAsset),
-    refetchInterval: idleAware(30_000),
+    // RPC read-diet PR A — pending-card accept gate: tip-nudged per
+    // block on WS deploys (§4.1.2), so the interval is only the net.
+    refetchInterval: tipAware(30_000, Boolean(readChain.wsUrl)),
     queryFn: async (): Promise<RefinancePendingState | 'gone'> => {
       const diamond = readChain.diamondAddress;
       const [offer, live, fees, latestBlock, allowance, balance] =

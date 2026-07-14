@@ -29,7 +29,7 @@ import { usePublicClient } from 'wagmi';
 import { erc20Abi, type PublicClient } from 'viem';
 import { DIAMOND_ABI_VIEM } from '@vaipakam/contracts/abis';
 import { useActiveChain } from '../chain/useActiveChain';
-import { idleAware } from '../lib/idle';
+import { signalAware } from '../chain/railHealth';
 import { AssetType } from '../lib/types';
 import {
   fetchActiveOffers,
@@ -81,7 +81,7 @@ export function useDeskMarkets() {
   const { readChain } = useActiveChain();
   return useQuery({
     queryKey: ['deskMarkets', readChain.chainId],
-    refetchInterval: idleAware(REFRESH_MS),
+    refetchInterval: signalAware(REFRESH_MS),
     queryFn: async (): Promise<MarketSummary[] | null> => {
       if (!indexerConfigured()) return null;
       const res = await fetchOffersMarkets(readChain.chainId);
@@ -151,7 +151,7 @@ export function useDeskBook(pair: DeskPair | null, durationDays: number) {
       durationDays,
     ],
     enabled: pair !== null,
-    refetchInterval: idleAware(REFRESH_MS),
+    refetchInterval: signalAware(REFRESH_MS),
     queryFn: async (): Promise<DeskBook | null> => {
       // Chain leg — authoritative and fresh this block.
       if (publicClient) {
@@ -280,7 +280,7 @@ export function useDeskSignedBook(pair: DeskPair | null, durationDays: number) {
     ],
     enabled: pair !== null,
     staleTime: SIGNED_BOOK_STALE_MS,
-    refetchInterval: idleAware(REFRESH_MS),
+    refetchInterval: signalAware(REFRESH_MS),
     queryFn: async (): Promise<IndexedSignedOffer[] | null> => {
       if (!indexerConfigured()) return null;
       const res = await fetchSignedOffers(readChain.chainId, {
@@ -307,7 +307,7 @@ export function useDeskTape(pair: DeskPair | null, durationDays: number) {
       durationDays,
     ],
     enabled: pair !== null,
-    refetchInterval: idleAware(REFRESH_MS),
+    refetchInterval: signalAware(REFRESH_MS),
     queryFn: async (): Promise<IndexedLoan[] | null> => {
       if (!indexerConfigured()) return null;
       // Belt-and-suspenders client-side verification, mirroring the
@@ -389,7 +389,7 @@ export function useDeskCandles(
     ],
     enabled: pair !== null,
     staleTime: 60_000,
-    refetchInterval: idleAware(60_000),
+    refetchInterval: signalAware(60_000),
     queryFn: async (): Promise<RateCandleBucket[] | null> => {
       if (!indexerConfigured()) return null;
       const res = await fetchRateCandles(
@@ -804,7 +804,7 @@ export function usePreviewMatch(
       pair?.borrowerOfferId ?? null,
     ],
     enabled: pair !== null && Boolean(publicClient),
-    refetchInterval: idleAware(REFRESH_MS),
+    refetchInterval: signalAware(REFRESH_MS),
     queryFn: () =>
       readMatchPreviewLive(publicClient!, readChain.diamondAddress, pair!),
   });
@@ -830,7 +830,7 @@ export function usePreviewMatchRiskBlock(
       'riskBlock',
     ],
     enabled: pair !== null && Boolean(publicClient),
-    refetchInterval: idleAware(REFRESH_MS),
+    refetchInterval: signalAware(REFRESH_MS),
     queryFn: () =>
       readMatchRiskBlockLive(publicClient!, readChain.diamondAddress, pair!),
   });

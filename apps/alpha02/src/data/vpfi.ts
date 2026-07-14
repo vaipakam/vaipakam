@@ -22,7 +22,7 @@ import { usePublicClient } from 'wagmi';
 import type { PublicClient } from 'viem';
 import { DIAMOND_ABI_VIEM } from '@vaipakam/contracts/abis';
 import { useActiveChain } from '../chain/useActiveChain';
-import { idleAware } from '../lib/idle';
+import { signalAware } from '../chain/railHealth';
 
 export const VPFI_DECIMALS = 18;
 const ZERO_ADDRESS = '0x0000000000000000000000000000000000000000';
@@ -164,7 +164,8 @@ export function useVpfi() {
   return useQuery({
     queryKey: ['vpfi', readChain.chainId, address?.toLowerCase()],
     enabled: Boolean(publicClient),
-    refetchInterval: idleAware(30_000),
+    // RPC read-diet PR A — receipt + focus + push + 180s net (§4.1.2).
+    refetchInterval: signalAware(30_000),
     queryFn: async (): Promise<VpfiSnapshot> => {
       if (!publicClient) throw new Error('unreachable');
       const diamond = readChain.diamondAddress;

@@ -27,6 +27,11 @@ import { useEffect } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import { useActiveChain } from './useActiveChain';
 import { indexerWsOrigin } from '../data/indexer';
+import {
+  isRailHealthy,
+  railCursorSignal,
+  railSocketLive,
+} from './railHealth';
 
 /** Server→client frames (mirror of apps/indexer chainIngestDO PushFrame).
  *  The `cursor` heartbeat + the hello `cursor`/`scanCadenceSec` fields land
@@ -140,7 +145,56 @@ export const KEY_MAP: Record<string, string[]> = {
   // NOT mapped on purpose: 'deskSymbols' (token metadata is immutable).
 };
 
+/** RPC read-diet PR A (design §4.1.1) — every root whose interval
+ *  `signalAware()` stretches to the 180s net while the push rail is
+ *  healthy. The explicit focus refetch below re-reads exactly this set
+ *  when a hidden tab returns: `refetchOnWindowFocus` is globally off
+ *  and `idleAware` alone never refetches on return, so without this a
+ *  user coming back after a missed/lost frame would wait out the net.
+ *  Exported for the unit test alongside KEY_MAP. */
+export const STRETCHED_ROOTS: readonly string[] = [
+  // signalAware roots (indexer-rail gated).
+  'activeOffers',
+  'myOffers',
+  'myLoans',
+  'claimables',
+  'activity',
+  'vaultAssets',
+  'vpfi',
+  'interactionRewards',
+  'standingApprovals',
+  'keeperConfig',
+  'loanKeeperEnabled',
+  'deskMarkets',
+  'deskBook',
+  'deskTape',
+  'deskCandles',
+  'deskHistory',
+  'deskAmendSource',
+  'deskSignedBook',
+  // tipAware roots (indexer rail + chain WS gated) — refetched here on
+  // focus too; they mount only on their detail/desk surfaces, so the
+  // `refetchType: 'active'` predicate keeps the cost page-bounded.
+  'offer',
+  'loan',
+  'loanLive',
+  'loanLiveStatus',
+  'loanRisk',
+  'positionOwners',
+  'offerLinkedLoan',
+  'loanSalePending',
+  'refinancePending',
+  'deskPreviewMatch',
+];
+
 const NUDGE_DEBOUNCE_MS = 300;
+/** RPC read-diet PR A (design §4.1.6) — per-root minimum gap between
+ *  push-driven refetches, leading AND trailing: the first frame in a
+ *  burst fires immediately; frames landing inside the gap coalesce
+ *  into ONE trailing refetch at the gap's end so the last event is
+ *  always read (a leading-only gap would fetch the first frame's D1
+ *  state and silently drop the rest of the burst). */
+const ROOT_MIN_GAP_MS = 15_000;
 const RECONNECT_BASE_MS = 1_000;
 const RECONNECT_CAP_MS = 30_000;
 /** After this many connects that never went live, treat the channel
@@ -169,12 +223,19 @@ export function IndexerPushSync() {
      *  focus so a parked tab never drives refetch traffic. */
     let hiddenDirty = new Set<string>();
     let pendingRoots = new Set<string>();
+    /** Per-root leading+trailing throttle state (§4.1.6): when the
+     *  root last actually refetched, and whether frames landed inside
+     *  the gap (→ one trailing refetch at the gap's end). */
+    const rootLastAt = new Map<string, number>();
+    const rootTrailing = new Map<string, ReturnType<typeof setTimeout>>();
 
     const flush = () => {
       nudgeTimer = null;
       const roots = [...pendingRoots];
       pendingRoots = new Set();
+      const now = Date.now();
       for (const root of roots) {
+        rootLastAt.set(root, now);
         void queryClient.invalidateQueries({
           predicate: (q) => q.queryKey[0] === root,
           refetchType: 'active',
@@ -182,23 +243,63 @@ export function IndexerPushSync() {
       }
     };
 
-    const scheduleNudge = (roots: string[]) => {
-      if (typeof document !== 'undefined' && document.hidden) {
-        for (const r of roots) hiddenDirty.add(r);
-        return;
-      }
+    /** Queue a root for the debounced flush NOW (no per-root gap check
+     *  — callers decide). */
+    const queueNow = (roots: string[]) => {
       for (const r of roots) pendingRoots.add(r);
-      if (nudgeTimer) return; // coalesce the burst
+      if (nudgeTimer || pendingRoots.size === 0) return;
       nudgeTimer = setTimeout(() => {
         if (!cancelled) flush();
       }, NUDGE_DEBOUNCE_MS);
     };
 
+    const scheduleNudge = (roots: string[]) => {
+      if (typeof document !== 'undefined' && document.hidden) {
+        for (const r of roots) hiddenDirty.add(r);
+        return;
+      }
+      const now = Date.now();
+      const ready: string[] = [];
+      for (const r of roots) {
+        const since = now - (rootLastAt.get(r) ?? 0);
+        if (since >= ROOT_MIN_GAP_MS) {
+          ready.push(r); // leading edge — fire on the debounce tick
+        } else if (!rootTrailing.has(r)) {
+          // Inside the gap: exactly one trailing refetch at gap end so
+          // the burst's LAST event is always read (leading-only would
+          // drop it until focus/net — Codex #1224).
+          rootTrailing.set(
+            r,
+            setTimeout(() => {
+              rootTrailing.delete(r);
+              if (!cancelled) queueNow([r]);
+            }, ROOT_MIN_GAP_MS - since),
+          );
+        }
+        // else: a trailing refetch is already queued — coalesce.
+      }
+      if (ready.length > 0) queueNow(ready);
+    };
+
     const onVisibility = () => {
-      if (cancelled || document.hidden || hiddenDirty.size === 0) return;
-      const roots = [...hiddenDirty];
-      hiddenDirty = new Set();
-      scheduleNudge(roots);
+      if (cancelled || document.hidden) return;
+      // 1. Flush frames that arrived while hidden (through the
+      //    throttle — a parked tab's backlog is not urgent).
+      if (hiddenDirty.size > 0) {
+        const roots = [...hiddenDirty];
+        hiddenDirty = new Set();
+        scheduleNudge(roots);
+      }
+      // 2. RPC read-diet PR A (§4.1.1) — the explicit focus refetch.
+      //    While the rail is healthy the stretched roots poll at the
+      //    180s net, refetchOnWindowFocus is globally off, and a frame
+      //    lost while hidden left no hiddenDirty entry — so a
+      //    returning tab re-reads the stretched set immediately,
+      //    bypassing the per-root gap (tab returns are user-paced and
+      //    rare; staleness here is what the user actually sees).
+      if (isRailHealthy()) {
+        queueNow([...STRETCHED_ROOTS]);
+      }
     };
 
     const scheduleReconnect = () => {
@@ -237,6 +338,15 @@ export function IndexerPushSync() {
         if (frame.t === 'hello') {
           if (frame.ingestActive) {
             attempt = 0; // healthy channel — reset backoff
+            // RPC read-diet PR A — seed rail health from the hello's
+            // cursor metadata (PR 0). Missing fields (older worker)
+            // feed nulls, which the store treats as "unknown" → the
+            // polling posture stands (fail-safe by design).
+            railSocketLive(true);
+            railCursorSignal(
+              frame.cursor?.updatedAt ?? null,
+              frame.scanCadenceSec ?? null,
+            );
           } else {
             // Reachable but ingest is off — no pushes will come; close
             // and retry dormantly (the operator may enable it later).
@@ -250,12 +360,19 @@ export function IndexerPushSync() {
         } else if (frame.t === 'invalidate') {
           const roots = frame.keys.flatMap((k) => KEY_MAP[k] ?? []);
           if (roots.length > 0) scheduleNudge(roots);
+        } else if (frame.t === 'cursor') {
+          // RPC read-diet PR A — the per-scan heartbeat (PR 0). The
+          // store judges advancement by the PERSISTED updatedAt moving
+          // across frames, so a wedged safe head (heartbeats flowing,
+          // stamp frozen) demotes to polling on its own.
+          railCursorSignal(frame.updatedAt, frame.scanCadenceSec);
         }
       };
 
       socket.onclose = () => {
         if (cancelled) return;
         ws = null;
+        railSocketLive(false); // stretched intervals fall back to 30s
         scheduleReconnect();
       };
       socket.onerror = () => {
@@ -271,6 +388,9 @@ export function IndexerPushSync() {
       document.removeEventListener('visibilitychange', onVisibility);
       if (reconnectTimer) clearTimeout(reconnectTimer);
       if (nudgeTimer) clearTimeout(nudgeTimer);
+      for (const t of rootTrailing.values()) clearTimeout(t);
+      rootTrailing.clear();
+      railSocketLive(false); // chain switch / unmount — re-prove health
       if (ws) {
         ws.onmessage = null;
         ws.onclose = null;

@@ -42,7 +42,7 @@ import { AssetType } from '../lib/types';
 import type { IndexedLoanStatus } from './indexer';
 import { isRevert, readLoanRowLive } from './liveLoanRow';
 import { useMyLoans, type PositionLoan } from './hooks';
-import { idleAware } from '../lib/idle';
+import { signalAware } from '../chain/railHealth';
 
 const REFRESH_MS = 30_000;
 
@@ -82,6 +82,36 @@ export interface ClaimableLoan extends PositionLoan {
 
 /** Claimable loans for the connected wallet, tagged with role.
  *  `undefined` = loading, `null` = unavailable (never a partial list). */
+/** Tiny stable hash (djb2) — the candidate fingerprint below can span
+ *  hundreds of rows and a queryKey should stay small. */
+function djb2(s: string): number {
+  let h = 5381;
+  for (let i = 0; i < s.length; i++) h = ((h << 5) + h + s.charCodeAt(i)) | 0;
+  return h;
+}
+
+/** RPC read-diet PR A (§4.1.5) — the candidate-set CONTENT fingerprint
+ *  the query keys on, replacing `loans.dataUpdatedAt`: keying on the
+ *  refresh timestamp re-ran the whole ~3–4-reads-per-candidate
+ *  verification on EVERY myLoans refetch even when nothing changed.
+ *  Identity per candidate is (loanId, role, status, position-token
+ *  ids, entitlement-relevant amounts): role because the probe is
+ *  role-specific (a side flip via NFT transfer changes the candidate
+ *  without changing loanId/status), amounts because entitlement can
+ *  change without a status transition (the FallbackPending partial
+ *  rescue parks funds while status holds). Order-independent (sorted)
+ *  so a re-ordered fetch of identical rows never re-verifies. */
+function candidateFingerprint(rows: PositionLoan[] | null | undefined): string {
+  if (rows == null) return String(rows); // 'null' | 'undefined'
+  const parts = rows
+    .map(
+      (l) =>
+        `${l.loanId}:${l.role}:${l.status}:${l.lenderTokenId}:${l.borrowerTokenId}:${l.principal}:${l.collateralAmount}`,
+    )
+    .sort();
+  return `${rows.length}:${djb2(parts.join('|'))}`;
+}
+
 export function useMyClaimables() {
   const { readChain, address } = useActiveChain();
   const publicClient = usePublicClient({ chainId: readChain.chainId });
@@ -89,16 +119,20 @@ export function useMyClaimables() {
   const diamond = readChain.diamondAddress;
 
   return useQuery({
-    // Re-derive whenever the candidate loan set refreshes so a newly
-    // terminal loan is confirmed on the next tick.
+    // Re-derive when the candidate set's CONTENT changes (see
+    // candidateFingerprint) — a myLoans refresh returning identical
+    // candidates no longer re-runs the whole chain verification.
     queryKey: [
       'claimables',
       readChain.chainId,
       address?.toLowerCase(),
-      loans.dataUpdatedAt,
+      candidateFingerprint(loans.data),
     ],
     enabled: Boolean(address) && loans.data !== undefined,
-    refetchInterval: idleAware(REFRESH_MS),
+    // RPC read-diet PR A — Claims cadence is events + focus + the
+    // 180s net, never the tip nudge (§4.1.5): the fan-out below is the
+    // single most expensive recurring read surface in the app.
+    refetchInterval: signalAware(REFRESH_MS),
     queryFn: async (): Promise<ClaimableLoan[] | null> => {
       if (!address) return [];
       if (!publicClient) return null;

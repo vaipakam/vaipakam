@@ -16,7 +16,7 @@ import { EmptyState, UnavailableState } from '../components/EmptyState';
 import { MarketFreshnessNote } from '../components/MarketFreshnessNote';
 import { formatTimeAgo, shortAddress } from '../lib/format';
 import { coalesceByTx, type ActivityRowView } from '../lib/activityView';
-import { idleAware } from '../lib/idle';
+import { signalAware } from '../chain/railHealth';
 
 /** UX-008 — one coalesced transaction as a readable row: plain-language
  *  action, a single substance sub-line (loan/offer id · who acted · when
@@ -173,7 +173,8 @@ export function Activity() {
     // loanId would be silently dropped and the feed would render
     // confidently incomplete. Wait for a usable loan list.
     enabled: Boolean(address) && loansUsable,
-    refetchInterval: idleAware(60_000),
+    // RPC read-diet PR A — activity.appended push covers the feed.
+    refetchInterval: signalAware(60_000),
     queryFn: async (): Promise<{
       events: IndexedActivityEvent[];
       truncated: boolean;
