@@ -76,6 +76,13 @@ alpha02 uses chain reads and indexed reads for different jobs.
   governance changes within moments; the chain remains the fallback when
   the snapshot is absent or stale. Anything the user signs against is
   always read live from the chain at submit time.
+- Live-update signals may name exactly which loans and offers an update
+  touched, and who caused it. A tab may skip refreshing its own-position
+  surfaces for an update that provably does not involve its wallet — but
+  only when the signal declares itself complete; any incomplete, older,
+  or unreadable signal is treated as if it named everything. Narrowing
+  may only ever remove redundant refreshes, never delay an update the
+  wallet needed.
 - Refresh is signal-driven with polling as the degraded fallback: while the
   push rail is verifiably delivering, background polling relaxes to a safety
   net and freshness rides the push signal, per-block refresh narrows to the
