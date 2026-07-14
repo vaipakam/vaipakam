@@ -1,4 +1,5 @@
-import { defineConfig, loadEnv } from 'vitest/config'
+import { defineConfig } from 'vitest/config'
+import { loadEnv } from 'vite'
 import react from '@vitejs/plugin-react'
 import { execSync } from 'node:child_process'
 
