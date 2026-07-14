@@ -170,6 +170,10 @@ contract T092AutoLifecycleIntegrationTest is SetupTest {
             LibAutoRefinanceCheck.RefinanceTargetIncompatible.selector !=
                 bytes4(0)
         );
+        // Pass-2 A1/D5 (#1189) — post-grace target fail-fast selector.
+        assertTrue(
+            LibAutoRefinanceCheck.RefinanceTargetPastGrace.selector != bytes4(0)
+        );
     }
 
     // ─── RefinanceFacet new-error guardrails ─────────────────────────
@@ -324,6 +328,73 @@ contract T092AutoLifecycleIntegrationTest is SetupTest {
         vm.prank(borrower);
         OfferCreateFacet(address(diamond)).createOffer(
             _refinanceTaggedOfferParams(loanId, 400)
+        );
+    }
+
+    /// @dev Pass-2 A1/D5 (#1189) — a refinance-tagged offer against a target
+    ///      loan that is Active but PAST its grace window fails fast at create
+    ///      (`RefinanceTargetPastGrace`), mirroring RefinanceFacet's execution
+    ///      gate — so a post-grace target can't attract a lender to an offer the
+    ///      refinance path would then reject.
+    function test_RefinanceTaggedOffer_RejectsPastGraceTarget() public {
+        uint256 loanId = _buildActiveLoan();
+        vm.prank(borrower);
+        _f().setAutoRefinanceCaps(
+            loanId,
+            true,
+            600,
+            uint64(block.timestamp + 365 days)
+        );
+
+        // Warp the target strictly past its grace window.
+        LibVaipakam.Loan memory l =
+            LoanFacet(address(diamond)).getLoanDetails(loanId);
+        uint256 endTime = uint256(l.startTime) + uint256(l.durationDays) * 1 days;
+        vm.warp(endTime + LibVaipakam.gracePeriod(l.durationDays) + 1);
+
+        vm.expectRevert(
+            LibAutoRefinanceCheck.RefinanceTargetPastGrace.selector
+        );
+        vm.prank(borrower);
+        OfferCreateFacet(address(diamond)).createOffer(
+            _refinanceTaggedOfferParams(loanId, 400)
+        );
+    }
+
+    /// @dev Pass-2 A1/D5 (#1189, Codex #1233 r2 P2) — a refinance-tagged offer's
+    ///      expiry is clamped to the target loan's grace deadline at create, so
+    ///      it can't linger unfillable (and lock a non-carry-over pledge) once
+    ///      the target passes grace. `_refinanceTaggedOfferParams` uses an
+    ///      open-ended `expiresAt: 0`, which is stamped to the grace deadline.
+    function test_RefinanceTaggedOffer_ExpiryClampedToGraceDeadline() public {
+        uint256 loanId = _buildActiveLoan();
+        vm.prank(borrower);
+        _f().setAutoRefinanceCaps(
+            loanId,
+            true,
+            600,
+            uint64(block.timestamp + 365 days)
+        );
+
+        LibVaipakam.Loan memory l =
+            LoanFacet(address(diamond)).getLoanDetails(loanId);
+        uint256 graceEnd = uint256(l.startTime) +
+            uint256(l.durationDays) * 1 days +
+            LibVaipakam.gracePeriod(l.durationDays);
+
+        vm.prank(borrower);
+        uint256 offerId = OfferCreateFacet(address(diamond)).createOffer(
+            _refinanceTaggedOfferParams(loanId, 400)
+        );
+
+        assertEq(
+            uint256(
+                OfferCancelFacet(address(diamond))
+                    .getOfferDetails(offerId)
+                    .expiresAt
+            ),
+            graceEnd + 1,
+            "open-ended tagged offer expiry clamped to grace deadline + 1 (fillable through graceEnd, #1233 r2/r3)"
         );
     }
 

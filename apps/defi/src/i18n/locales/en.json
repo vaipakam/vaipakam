@@ -614,6 +614,7 @@
       "RefinanceRateExceedsCap": "This refinance rate exceeds your pre-approved ceiling.",
       "RefinanceExpiryExceedsCap": "This refinance length exceeds your pre-approved cap.",
       "RefinanceTargetIncompatible": "The loan being refinanced is incompatible with this offer's terms.",
+      "RefinanceTargetPastGrace": "The loan you targeted is past its grace period and can no longer be refinanced. It must be repaid or resolved through default.",
       "InvalidRefinanceTarget": "Refinance-tagged offers must be Borrower offers with AON fill mode.",
       "BothSideAutoExtendRequired": "Auto-extend requires both you and the counterparty to set caps.",
       "AutoExtendRateOutOfBand": "The proposed rate falls outside the agreed range.",

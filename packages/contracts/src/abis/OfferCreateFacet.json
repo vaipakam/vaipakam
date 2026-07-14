@@ -1914,6 +1914,11 @@
   },
   {
     "type": "error",
+    "name": "RefinanceTargetPastGrace",
+    "inputs": []
+  },
+  {
+    "type": "error",
     "name": "ReportAfterFinalization",
     "inputs": []
   },

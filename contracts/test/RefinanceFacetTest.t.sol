@@ -439,6 +439,75 @@ contract RefinanceFacetTest is Test {
         assertEq(uint8(loan.status), uint8(LibVaipakam.LoanStatus.Repaid));
     }
 
+    // ─── Pass-2 A1/D5 (#1189): refinance late-fee parity + post-grace block ───
+
+    /// @dev Pass-2 A1/D5 (#1189, Codex #1233 r2/r3) — a MANUAL refinance always
+    ///      COMPLETES once its replacement offer has been accepted, even if the
+    ///      old loan is (or crosses) past grace before the completion tx. The
+    ///      replacement loan already exists + funded the borrower at acceptance,
+    ///      so any execution-level revert here would STRAND the borrower with
+    ///      BOTH loans active. Completion settles the old lender IN FULL plus the
+    ///      grace late fee (lender-favourable vs a default recovery), and a FRESH
+    ///      post-grace refinance is instead blocked at ADMISSION (tagged offers —
+    ///      see `T092..._RejectsPastGraceTarget`). This covers the legacy UNTAGGED
+    ///      case Codex flagged: acceptance itself past grace still completes, no
+    ///      strand.
+    function testRefinanceLoan_manualCompletesPastGrace_noStrand() public {
+        LibVaipakam.Loan memory l = LoanFacet(address(diamond)).getLoanDetails(activeLoanId);
+        uint256 endTime = uint256(l.startTime) + uint256(l.durationDays) * 1 days;
+        // Old loan crosses grace FIRST, then the untagged replacement is accepted
+        // (newLoan.startTime itself past grace) — the hardest no-strand case.
+        vm.warp(endTime + LibVaipakam.gracePeriod(l.durationDays) + 1);
+        _acceptBorrowerOffer(borrowerOfferId);
+
+        vm.mockCall(address(diamond), abi.encodeWithSelector(RepayFacet.calculateRepaymentAmount.selector), abi.encode(PRINCIPAL + 10 ether));
+        vm.mockCall(address(diamond), abi.encodeWithSelector(VaultFactoryFacet.vaultWithdrawERC20.selector), abi.encode(true));
+        vm.mockCall(address(diamond), abi.encodeWithSelector(RiskFacet.calculateHealthFactor.selector), abi.encode(2e18));
+        vm.mockCall(address(diamond), abi.encodeWithSelector(RiskFacet.calculateLTV.selector), abi.encode(uint256(5000)));
+        vm.mockCall(address(diamond), abi.encodeWithSelector(VaipakamNFTFacet.updateNFTStatus.selector), "");
+
+        vm.prank(borrower);
+        RefinanceFacet(address(diamond)).refinanceLoan(activeLoanId, borrowerOfferId);
+
+        assertEq(
+            uint8(LoanFacet(address(diamond)).getLoanDetails(activeLoanId).status),
+            uint8(LibVaipakam.LoanStatus.Repaid),
+            "manual refinance completes past grace, never stranded (#1233 r3 P2)"
+        );
+        vm.clearMockedCalls();
+    }
+
+    /// @dev A refinance in the grace window completes and folds the late fee
+    ///      (0 within term) into the exiting lender's interest split — the same
+    ///      `calculateLateFee` + `splitTreasury` fold the preclose path uses,
+    ///      whose exact amount is asserted in
+    ///      `PrecloseFacetTest.testPreclosedDirect_graceWindow_chargesLateFee`.
+    ///      Here we prove the gate ADMITS an in-grace refinance (previously it
+    ///      also admitted post-grace with zero fee — the A1/D5 leak).
+    function testRefinanceLoan_graceWindow_succeeds() public {
+        _acceptBorrowerOffer(borrowerOfferId);
+
+        LibVaipakam.Loan memory l = LoanFacet(address(diamond)).getLoanDetails(activeLoanId);
+        uint256 endTime = uint256(l.startTime) + uint256(l.durationDays) * 1 days;
+        vm.warp(endTime + 3 days); // 3 days into grace
+
+        vm.mockCall(address(diamond), abi.encodeWithSelector(RepayFacet.calculateRepaymentAmount.selector), abi.encode(PRINCIPAL + 10 ether));
+        vm.mockCall(address(diamond), abi.encodeWithSelector(VaultFactoryFacet.vaultWithdrawERC20.selector), abi.encode(true));
+        vm.mockCall(address(diamond), abi.encodeWithSelector(RiskFacet.calculateHealthFactor.selector), abi.encode(2e18));
+        vm.mockCall(address(diamond), abi.encodeWithSelector(RiskFacet.calculateLTV.selector), abi.encode(uint256(5000)));
+        vm.mockCall(address(diamond), abi.encodeWithSelector(VaipakamNFTFacet.updateNFTStatus.selector), "");
+
+        vm.prank(borrower);
+        RefinanceFacet(address(diamond)).refinanceLoan(activeLoanId, borrowerOfferId);
+
+        assertEq(
+            uint8(LoanFacet(address(diamond)).getLoanDetails(activeLoanId).status),
+            uint8(LibVaipakam.LoanStatus.Repaid),
+            "grace-window refinance completes with the late fee applied (#1189)"
+        );
+        vm.clearMockedCalls();
+    }
+
     /// @dev After refinance, the borrower's vault must hold exactly newCol of
     ///      collateral (not oldCol + newCol). The old deposit is refunded to
     ///      the borrower's wallet — otherwise it would be permanently stranded

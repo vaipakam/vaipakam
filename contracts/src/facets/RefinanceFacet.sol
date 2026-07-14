@@ -178,6 +178,13 @@ contract RefinanceFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErr
         );
         if (oldLoan.status != LibVaipakam.LoanStatus.Active)
             revert LoanNotActive();
+        // Pass-2 A1/D5 (#1189) — capture the OLD loan's fixed maturity for the
+        // exiting lender's late fee below (charged when the close lands in the
+        // grace window). The strictly-post-grace BLOCK is enforced further down
+        // against the REPLACEMENT's acceptance time, not `block.timestamp` — see
+        // the gate after `newLoan` is resolved (Codex #1233 r2 P1).
+        uint256 oldEndTime = uint256(oldLoan.startTime) +
+            uint256(oldLoan.durationDays) * LibVaipakam.ONE_DAY;
         // T-092 Phase 2a (#505) — resolve the current borrower-NFT
         // owner once at the top + Tier-1 sanctions check it. A
         // keeper-driven path admitted by requireKeeperFor uses
@@ -325,6 +332,24 @@ contract RefinanceFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErr
         LibVaipakam.Loan storage newLoan = s.loans[newLoanId];
         address newLender = newLoan.lender;
 
+        // Pass-2 A1/D5 (#1189, Codex #1233 r2+r3) — NO execution-level post-grace
+        // revert here. By the time this runs the replacement loan ALWAYS exists
+        // (`acceptOffer` created + funded it and paid alice — the offer must be
+        // accepted, checked above), so any revert here would STRAND alice with
+        // BOTH loans active and the old one no longer refinanceable. Instead:
+        //   • a FRESH post-grace refinance is blocked at ADMISSION — the
+        //     refinance-tagged offer can't be created/accepted/matched against a
+        //     past-grace target (`LibAutoRefinanceCheck.validate` /
+        //     `matchAdmissible` revert `RefinanceTargetPastGrace`), which covers
+        //     the atomic accept-and-refinance path (always tagged);
+        //   • an already-committed MANUAL completion (incl. legacy UNTAGGED
+        //     offers, which admission can't see) proceeds and settles the old
+        //     lender IN FULL plus the grace late fee computed below — strictly
+        //     lender-favourable versus a default recovery, mirroring
+        //     `repayLoan`'s post-grace FallbackPending cure exemption.
+        // (`precloseDirect` keeps its strict post-grace block: it is a single
+        // atomic tx with nothing pre-created, so blocking it can't strand.)
+
         // ── Repay old lender ──────────────────────────────────────────────
         // alice already received new principal from Lender B (via acceptOffer).
         // #1003 (S7) — settle the exiting lender's interest MODE-AWARE, through
@@ -383,7 +408,13 @@ contract RefinanceFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErr
         // lending asset. tryApplyYieldFee silently falls back on any
         // precondition failure.
         uint256 shortfall = 0; // #411 fix — see comment above.
-        uint256 interestPortion = oldInterest;
+        // Pass-2 A1/D5 (#1189) — a refinance that lands in the grace window
+        // charges the same late fee `repayLoan` does (0 within term), split
+        // treasury/lender like the interest. The yield-fee branch below keeps the
+        // whole `interest + lateFee` for the lender (mirrors RepayFacet), so the
+        // penalty is never silently dropped on the discounted path.
+        uint256 lateFee = LibVaipakam.calculateLateFee(oldLoanId, oldEndTime);
+        uint256 interestPortion = oldInterest + lateFee;
         (uint256 treasuryFee, uint256 lenderInterest) = LibEntitlement.splitTreasury(
             oldLoan,
             interestPortion

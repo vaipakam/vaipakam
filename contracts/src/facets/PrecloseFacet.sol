@@ -150,6 +150,11 @@ contract PrecloseFacet is
     error InsufficientCollateral();
     error OffsetNotLinked();
     error OffsetOfferNotAccepted();
+    /// @dev Pass-2 A1/D5 (#1189) — early-close paths block strictly past the
+    ///      grace window, matching {RepayFacet.repayLoan}; post-grace resolution
+    ///      goes through DefaultedFacet. Declared per-facet (not in
+    ///      IVaipakamErrors), mirroring RepayFacet/SwapToRepayFacet.
+    error RepaymentPastGracePeriod();
     /// #1001 (S3) — a loan may have at most ONE live offset offer at a time.
     /// A second `offsetWithNewOffer` while `loanToOffsetOfferId[loanId] != 0`
     /// would prepay the old lender a SECOND `heldForLender` slice (monotone
@@ -162,7 +167,24 @@ contract PrecloseFacet is
     /// `EarlyWithdrawalFacet.OffsetActiveOnLoan`.
     error SaleListingActiveOnLoan();
 
-    // ─── Option 1: Direct Preclose ────────────────────────────────��─────────
+    /// @dev Pass-2 A1/D5 (#1189) — shared maturity/grace gate for the early-close
+    ///      paths (`precloseDirect`, offset completion), matching
+    ///      {RepayFacet.repayLoan}. Reverts strictly past the grace window so a
+    ///      late borrower can't route around the late-fee penalty (and the
+    ///      DefaultedFacet resolution) via an early-close door; returns `endTime`
+    ///      (the fixed origination maturity) so the caller computes the late fee
+    ///      off the SAME reference. `private` so the gate is one JUMP target, not
+    ///      inlined at each call site — this facet is EIP-170-maxed (#1124).
+    function _assertWithinGrace(
+        LibVaipakam.Loan storage loan
+    ) private view returns (uint256 endTime) {
+        endTime = uint256(loan.startTime) + uint256(loan.durationDays) * LibVaipakam.ONE_DAY;
+        if (block.timestamp > endTime + LibVaipakam.gracePeriod(loan.durationDays)) {
+            revert RepaymentPastGracePeriod();
+        }
+    }
+
+    // ─── Option 1: Direct Preclose────────────────────────────────��─────────
 
     /**
      * @notice Directly precloses an active loan (Option 1).
@@ -192,6 +214,12 @@ contract PrecloseFacet is
         );
         if (loan.status != LibVaipakam.LoanStatus.Active)
             revert LoanNotActive();
+
+        // Pass-2 A1/D5 (#1189) — block a strictly-post-grace preclose (parity
+        // with repayLoan; post-grace resolution goes through DefaultedFacet) and
+        // capture the fixed maturity so each asset branch below charges the same
+        // late-fee penalty when the close lands in the grace window.
+        uint256 endTime = _assertWithinGrace(loan);
 
         // #998 S10 (#1006, Codex r1 P1) — record the fail-closed frozen-claimant
         // markers for BOTH sides up front (branch-independent): precloseDirect is
@@ -252,7 +280,12 @@ contract PrecloseFacet is
             // Build immutable plan first (phase 1), then execute transfers &
             // claim writes off the same numbers (phase 2). Per README §8
             // Option 1: borrower owes full-term interest on preclose.
-            LibSettlement.ERC20Settlement memory plan = LibSettlement.computePreclose(loan);
+            // Pass-2 A1/D5 (#1189) — plus a late fee when the preclose lands in
+            // the grace window (0 within term), so a late borrower pays the same
+            // penalty repayLoan charges. `computePreclose` splits `interest +
+            // lateFee` and folds it into `treasuryShare`/`lenderShare`/`lenderDue`.
+            uint256 lateFee = LibVaipakam.calculateLateFee(loanId, endTime);
+            LibSettlement.ERC20Settlement memory plan = LibSettlement.computePreclose(loan, lateFee);
 
             // Lender Yield Fee discount (Tokenomics §6): when the lender has
             // platform-level VPFI-discount consent AND holds >= the required
@@ -262,13 +295,18 @@ contract PrecloseFacet is
             uint256 yieldVpfiDeducted;
             if (s.vpfiDiscountConsent[loan.lender] && plan.treasuryShare > 0) {
                 bool yieldApplied;
+                // Pass-2 A1/D5 (#1189) — base the VPFI treasury-cut equivalent on
+                // `interest + lateFee` and let the lender keep the whole
+                // `interest + lateFee` in the lending asset, mirroring
+                // {RepayFacet.repayLoan}. Otherwise a yield-discounted grace-window
+                // preclose would silently drop the late fee from the lender's due.
                 (yieldApplied, yieldVpfiDeducted) = LibVPFIDiscount
                     .tryApplyYieldFee(
                         loan,
-                        plan.interest
+                        plan.interest + plan.lateFee
                     );
                 if (yieldApplied) {
-                    plan.lenderShare = plan.interest;
+                    plan.lenderShare = plan.interest + plan.lateFee;
                     plan.lenderDue = plan.principal + plan.lenderShare;
                     plan.treasuryShare = 0;
                 }
@@ -404,9 +442,16 @@ contract PrecloseFacet is
             // Lender gets remaining-rental fees minus treasury fee.
             // Borrower gets unused prepay + buffer refund.
             uint256 fullRental = loan.principal * LibVaipakam.remainingRentalDays(loan); // principal = daily fee for NFTs
+            // Pass-2 A1/D5 (#1189) — add the rental late fee when the preclose
+            // lands in the grace window (0 within term; slope-capped AND clamped
+            // to the loan's pre-funded `bufferAmount`), funded from the buffer
+            // exactly like {RepayFacet.repayLoan}'s rental leg. Split base =
+            // remaining rental + late fee, so the lender receives the penalty.
+            uint256 rentalLateFee = LibVaipakam.calculateRentalLateFee(loanId, endTime);
+            uint256 totalDue = fullRental + rentalLateFee;
             (uint256 treasuryFee, uint256 lenderShare) = LibEntitlement.splitTreasury(
                 loan,
-                fullRental
+                totalDue
             );
 
             // Deduct from the borrower's prepay vault: treasury fee.
@@ -471,8 +516,12 @@ contract PrecloseFacet is
                 claimed: false
             });
 
-            // Refund unused prepay + buffer to borrower (stays in borrower's vault)
-            uint256 refund = loan.prepayAmount - fullRental + loan.bufferAmount;
+            // Refund unused prepay + buffer to borrower (stays in borrower's vault).
+            // Pass-2 A1/D5 (#1189) — order as (prepay + buffer) − totalDue so the
+            // late fee drawing on the buffer can't underflow: `rentalLateFee` is
+            // clamped ≤ `bufferAmount` and `prepayAmount ≥ fullRental` holds by
+            // construction (mirrors the RepayFacet #558 ordering).
+            uint256 refund = (loan.prepayAmount + loan.bufferAmount) - totalDue;
             s.borrowerClaims[loanId] = LibVaipakam.ClaimInfo({
                 asset: loan.prepayAsset,
                 amount: refund,
@@ -1294,7 +1343,8 @@ contract PrecloseFacet is
     function _computeOffsetSettlement(
         LibVaipakam.Loan storage loan,
         uint256 interestRateBps,
-        uint256 durationDays
+        uint256 durationDays,
+        uint256 lateFee
     )
         private
         view
@@ -1326,8 +1376,14 @@ contract PrecloseFacet is
             ? originalExpectedRemaining - newExpectedEarning
             : 0;
 
-        (treasuryFee, ) = LibEntitlement.splitTreasury(loan, accruedInterest);
-        lenderTotal = loan.principal + (accruedInterest - treasuryFee) + shortfall;
+        // Pass-2 A1/D5 (#1189) — fold the late fee (0 within term) into the
+        // treasury split base and the lender's total so an overdue offset
+        // completion carries the same penalty as the other early-close paths.
+        // Defensive parity: the #1032 anti-drift guard in `_completeOffsetImpl`
+        // already blocks any at/post-maturity completion, so `lateFee` is 0 in
+        // practice today; this keeps the term correct should that guard relax.
+        (treasuryFee, ) = LibEntitlement.splitTreasury(loan, accruedInterest + lateFee);
+        lenderTotal = loan.principal + (accruedInterest + lateFee - treasuryFee) + shortfall;
     }
 
     /// @dev #1001 (S3, Codex #1070 redesign) — settle the old lender AT
@@ -1346,8 +1402,14 @@ contract PrecloseFacet is
         LibVaipakam.Offer storage offer
     ) private {
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        // Pass-2 A1/D5 (#1189) — late fee off the original loan's fixed maturity
+        // (0 within term). Defensive parity with the other early-close paths.
+        uint256 lateFee = LibVaipakam.calculateLateFee(
+            loanId,
+            uint256(loan.startTime) + uint256(loan.durationDays) * LibVaipakam.ONE_DAY
+        );
         (uint256 treasuryFee, uint256 lenderTotal) = _computeOffsetSettlement(
-            loan, offer.interestRateBps, offer.durationDays
+            loan, offer.interestRateBps, offer.durationDays, lateFee
         );
         address payAssetOffset = _paymentAsset(loan);
         if (treasuryFee > 0) {
@@ -1583,6 +1645,13 @@ contract PrecloseFacet is
         LibVaipakam.Loan storage loan = s.loans[originalLoanId];
         if (loan.status != LibVaipakam.LoanStatus.Active)
             revert LoanNotActive();
+
+        // Pass-2 A1/D5 (#1189) — defensive parity: block a strictly-post-grace
+        // offset completion, matching the other early-close paths. The #1032
+        // anti-drift guard below already rejects any at/post-maturity completion
+        // (the replacement can't mature after the original), so this is
+        // belt-and-suspenders should that guard ever relax.
+        _assertWithinGrace(loan);
 
         // Find the linked offset offer via the dedicated offset mapping
         uint256 newOfferId = s.loanToOffsetOfferId[originalLoanId];
