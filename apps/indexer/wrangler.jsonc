@@ -176,6 +176,13 @@
     ],
   },
 
+  "version_metadata": {
+    // Deploy provenance at runtime (id + timestamp per deployed
+    // version, auto and manual deploys alike) — surfaced on the
+    // /offers/stats + /loans/stats routes so "what's deployed?" is a
+    // one-curl question.
+    "binding": "CF_VERSION_METADATA"
+  },
   "observability": {
     "enabled": true,
   },

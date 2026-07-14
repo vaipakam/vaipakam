@@ -122,6 +122,11 @@ export interface WorkerEnv {
   // itself. Plain `var`, read from the raw env (the route runs before
   // `resolveEnv`).
   CHAIN_INGEST_VIA_DO?: string;
+
+  /** Cloudflare version-metadata binding — makes "what's actually
+   *  deployed?" a one-curl question (surfaced on the stats routes).
+   *  Absent in local dev / tests. */
+  CF_VERSION_METADATA?: { id: string; tag?: string; timestamp?: string };
 }
 
 /**
@@ -138,6 +143,11 @@ export interface Env {
   // round-robin = unknown here → reported as null and clients fail safe to
   // their polling posture).
   CHAIN_INGEST_VIA_DO?: string;
+
+  /** Cloudflare version-metadata binding — makes "what's actually
+   *  deployed?" a one-curl question (surfaced on the stats routes).
+   *  Absent in local dev / tests. */
+  CF_VERSION_METADATA?: { id: string; tag?: string; timestamp?: string };
 
   // Per-chain RPC URLs — chain-event scan + live-ownership multicalls.
   RPC_BASE?: string;
@@ -250,6 +260,7 @@ export async function resolveEnv(raw: WorkerEnv): Promise<Env> {
     DB: raw.DB,
     // RPC read-diet PR 0 — see the Env field doc.
     CHAIN_INGEST_VIA_DO: raw.CHAIN_INGEST_VIA_DO,
+    CF_VERSION_METADATA: raw.CF_VERSION_METADATA,
     CANCELLED_OFFER_RETENTION_DAYS: raw.CANCELLED_OFFER_RETENTION_DAYS,
     OPENSEA_API_KEY: openSea,
     // #335 — pass through the rate-limit binding from the raw
