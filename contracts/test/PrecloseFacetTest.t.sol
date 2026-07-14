@@ -113,6 +113,11 @@ contract PrecloseFacetTest is Test {
         ld.prepayAsset = mockERC20;
         ld.prepayAmount = prepayAmt;
         ld.bufferAmount = bufferAmt;
+        // #1194 (Pass-2 D4) — anchor the deduction clock at "now" so the rental
+        // has no undeducted rent by default; the transfer rent catch-up is a
+        // no-op here and these mechanics tests stay unaffected. The D4 test
+        // below sets an explicit accrued-rent window instead.
+        ld.lastDeductTime = uint64(block.timestamp);
         TestMutatorFacet(address(diamond)).setLoan(loanId, ld);
     }
 
@@ -1931,6 +1936,100 @@ contract PrecloseFacetTest is Test {
             (PRINCIPAL * 30 * 500) / 10000,
             "transfer must reset buffer from the incoming offer's snapshot, not live config"
         );
+        vm.clearMockedCalls();
+    }
+
+    /// @dev #1194 (Pass-2 D4) — an Option-2 rental transfer must settle the rent
+    ///      that accrued between `lastDeductTime` and the transfer to the OLD
+    ///      lender before the loan is handed to the new borrower. Previously the
+    ///      exiting-borrower obligation used APR math (`proRataInterest`), which
+    ///      is 0 for a rental (rate 0), so that undeducted rent was silently
+    ///      dropped and stayed withdrawable in the exiting borrower's un-liened
+    ///      vault. Here 7 days of rent accrue; the transfer must forward the
+    ///      lender share (rent minus the 1% treasury cut) to the current
+    ///      lender-position holder from the prepay vault, exactly as the daily
+    ///      deduction (`autoDeductDaily`) does.
+    function testTransferObligationNFTRental_SettlesUndeductedRentToLender() public {
+        uint256 perDay = 100 ether;
+        uint256 fullPrepay = perDay * 30;
+
+        LibVaipakam.Loan memory ld = LoanFacet(address(diamond)).getLoanDetails(activeLoanId);
+        ld.assetType = LibVaipakam.AssetType.ERC721;
+        ld.prepayAsset = mockERC20;
+        ld.principal = perDay;                 // per-day rental fee
+        ld.interestRateBps = 0;                // rentals carry no APR
+        ld.durationDays = 30;
+        ld.startTime = uint64(block.timestamp);
+        ld.lastDeductTime = block.timestamp;   // nothing deducted yet
+        ld.prepayAmount = fullPrepay;
+        ld.bufferAmount = (fullPrepay * 500) / 10000;
+        ld.treasuryFeeBpsAtInit = 100;         // 1% treasury cut (deterministic split)
+        TestMutatorFacet(address(diamond)).setLoan(activeLoanId, ld);
+
+        // Incoming offer: amount must equal the loan's per-day principal, and
+        // its term must fit the loan's REMAINING maturity (line-697 check).
+        // After the 7-day warp below, 23 days remain, so 20 days fits.
+        vm.prank(newBorrower);
+        uint256 validOffer = OfferCreateFacet(address(diamond)).createOffer(
+            LibVaipakam.CreateOfferParams({
+                offerType: LibVaipakam.OfferType.Borrower,
+                lendingAsset: mockERC20,
+                amount: perDay,
+                interestRateBps: 500,
+                collateralAsset: mockCollateralERC20,
+                collateralAmount: COLLATERAL,
+                durationDays: 20,
+                assetType: LibVaipakam.AssetType.ERC20,
+                tokenId: 0,
+                quantity: 0,
+                creatorRiskAndTermsConsent: true,
+                prepayAsset: mockERC20,
+                collateralAssetType: LibVaipakam.AssetType.ERC20,
+                collateralTokenId: 0,
+                collateralQuantity: 0,
+                allowsPartialRepay: false,
+                allowsPrepayListing: false,
+                allowsParallelSale: false,
+                amountMax: perDay,
+                interestRateBpsMax: 500,
+                collateralAmountMax: COLLATERAL,
+                periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None,
+                expiresAt: 0,
+                fillMode: LibVaipakam.FillMode.Partial,
+                refinanceTargetLoanId: 0,
+                useFullTermInterest: false
+            })
+        );
+
+        // 7 days of rent accrue with no deduction.
+        vm.warp(block.timestamp + 7 days);
+        uint256 catchUpRent = perDay * 7;                    // 700e
+        uint256 expTreasury = (catchUpRent * 100) / 10000;   // 7e
+        uint256 expLender = catchUpRent - expTreasury;       // 693e
+
+        vm.mockCall(address(diamond), abi.encodeWithSelector(VaultFactoryFacet.vaultWithdrawERC20.selector), abi.encode(true));
+        vm.mockCall(address(diamond), abi.encodeWithSelector(EncumbranceMutateFacet.freezeOrPayActiveLenderFromVault.selector), "");
+        vm.mockCall(address(diamond), abi.encodeWithSelector(VaultFactoryFacet.vaultSetNFTUser.selector), abi.encode(true));
+        vm.mockCall(address(diamond), abi.encodeWithSelector(VaipakamNFTFacet.burnNFT.selector), "");
+        vm.mockCall(address(diamond), abi.encodeWithSelector(VaipakamNFTFacet.mintNFT.selector), "");
+        vm.mockCall(address(diamond), abi.encodeWithSelector(VaipakamNFTFacet.updateNFTStatus.selector), "");
+        vm.mockCall(address(diamond), abi.encodeWithSelector(RiskFacet.calculateHealthFactor.selector), abi.encode(2e18));
+
+        // The catch-up must forward the exact lender rent share to the current
+        // lender-position holder, funded from the exiting borrower's prepay vault.
+        vm.expectCall(
+            address(diamond),
+            abi.encodeWithSelector(
+                EncumbranceMutateFacet.freezeOrPayActiveLenderFromVault.selector,
+                activeLoanId,
+                borrower,
+                mockERC20,
+                expLender
+            )
+        );
+
+        vm.prank(borrower);
+        PrecloseFacet(address(diamond)).transferObligationViaOffer(activeLoanId, validOffer);
         vm.clearMockedCalls();
     }
 

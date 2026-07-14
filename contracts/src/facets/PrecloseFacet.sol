@@ -844,6 +844,67 @@ contract PrecloseFacet is
             }
         }
 
+        // ── 1b. NFT rental: settle rent accrued since the last deduction ─────
+        // #1194 (Pass-2 D4) — a rental's economic payment is `principal (the
+        // per-day fee) × days`, NOT APR, so the accrued-interest math above is 0
+        // for rentals (`interestRateBps == 0`). Before the loan is rewritten to
+        // the new borrower and section 5b resets `lastDeductTime`, forward the
+        // rent that accrued between `lastDeductTime` and now to the CURRENT
+        // lender-position holder (minus treasury), funded from the exiting
+        // borrower's prepay vault — exactly as `RepayPeriodicFacet.autoDeductDaily`
+        // does each day. Without this the undeducted rent would be silently
+        // dropped by the 5b reset and stay freely withdrawable in the exiting
+        // borrower's un-liened vault, leaving the old lender short of the rent
+        // they earned up to the transfer (README §1512 "pay all rent accrued up
+        // to the transfer" / §1420 "don't leave the original lender worse off").
+        if (loan.assetType != LibVaipakam.AssetType.ERC20) {
+            uint256 catchUpDays =
+                (block.timestamp - uint256(loan.lastDeductTime)) / LibVaipakam.ONE_DAY;
+            uint256 remainingDays = LibVaipakam.remainingRentalDays(loan);
+            // Never bill past the agreed term — overdue rent is a late-fee
+            // concern (out of scope here); this settles only in-term rent.
+            if (catchUpDays > remainingDays) catchUpDays = remainingDays;
+            uint256 catchUpRent = loan.principal * catchUpDays;
+            // Defensive clamp to the funded prepay (a fully-serviced rental
+            // always has enough; this prevents an over-withdraw if it doesn't).
+            if (catchUpRent > loan.prepayAmount) catchUpRent = loan.prepayAmount;
+            if (catchUpRent > 0) {
+                (uint256 rentTreasury, uint256 rentLender) =
+                    LibEntitlement.splitTreasury(loan, catchUpRent);
+                // Lender share → current lender-position holder from the prepay
+                // vault (fail-closed park if the holder is flagged), mirroring
+                // the daily deduction path.
+                LibFacet.crossFacetCall(
+                    abi.encodeWithSelector(
+                        EncumbranceMutateFacet.freezeOrPayActiveLenderFromVault.selector,
+                        loanId,
+                        loan.borrower,
+                        loan.prepayAsset,
+                        rentLender
+                    ),
+                    bytes4(0)
+                );
+                if (rentTreasury > 0) {
+                    LibFacet.crossFacetCall(
+                        abi.encodeWithSelector(
+                            VaultFactoryFacet.vaultWithdrawERC20.selector,
+                            loan.borrower,
+                            loan.prepayAsset,
+                            LibFacet.getTreasury(),
+                            rentTreasury
+                        ),
+                        bytes4(0)
+                    );
+                    LibFacet.recordTreasuryAccrual(loan.prepayAsset, rentTreasury);
+                }
+                // Reduce the tracked prepay by the settled rent. Section 5b then
+                // installs the incoming offer's prepay/buffer; the exiting
+                // borrower's remaining prepay stays in their (un-liened) vault to
+                // withdraw, now correctly net of the rent just paid to the lender.
+                unchecked { loan.prepayAmount -= catchUpRent; }
+            }
+        }
+
         // ── 3. Release alice's collateral ───────────────────────────────────
         // #569 §4.4 (2026-06-13) — rekey, release-leg. Drop the exiting
         // borrower's collateral lien BEFORE returning their collateral,
