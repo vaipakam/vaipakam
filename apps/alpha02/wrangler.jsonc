@@ -13,6 +13,11 @@
     "enabled": true
   },
   "assets": {
+    // REQUIRED by wrangler v4 — without it `wrangler deploy` errors
+    // ("missing the required `directory` property") on any clean
+    // checkout. Vite's default outDir; run `pnpm run deploy` (build
+    // first) so the directory exists.
+    "directory": "./dist",
     "not_found_handling": "single-page-application"
   },
   "compatibility_flags": [

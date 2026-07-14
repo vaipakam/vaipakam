@@ -18,6 +18,9 @@
     "enabled": true
   },
   "assets": {
+    // REQUIRED by wrangler v4 — same fix as apps/alpha02: a clean
+    // checkout's `wrangler deploy` errors without it.
+    "directory": "./dist",
     "not_found_handling": "single-page-application"
   },
   "compatibility_flags": [
