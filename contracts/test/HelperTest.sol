@@ -1508,7 +1508,7 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](75);
+        selectors = new bytes4[](78);
         selectors[0] = ConfigFacet.setFeesConfig.selector;
         selectors[1] = ConfigFacet.setLiquidationConfig.selector;
         selectors[2] = ConfigFacet.setRiskConfig.selector;
@@ -1638,6 +1638,10 @@ contract HelperTest {
         // #956 (#921 item 5) — per-asset min-partial floor setter + RiskParams view.
         selectors[73] = ConfigFacet.setAssetMinPartialBps.selector;
         selectors[74] = ConfigFacet.getAssetRiskParams.selector;
+        // #1222 (Phase A1a) — VPFI recycling governor knobs.
+        selectors[75] = ConfigFacet.setRecycleMarginBps.selector;
+        selectors[76] = ConfigFacet.setRecycleTariffKPer1e18EthDay.selector;
+        selectors[77] = ConfigFacet.getRecycleConfig.selector;
         return selectors;
     }
 

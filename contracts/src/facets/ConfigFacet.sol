@@ -798,6 +798,84 @@ contract ConfigFacet is DiamondAccessControl {
         emit NotificationFeeSet(newFeeNumeraire1e18);
     }
 
+    /// @notice Emitted when the recycling governor's platform margin changes.
+    event RecycleMarginBpsSet(uint16 newMarginBps);
+    /// @notice Emitted when the peg-free discount-entitlement tariff changes.
+    event RecycleTariffKSet(uint256 newKPer1e18EthDay);
+
+    error InvalidRecycleMarginBps(uint256 bps, uint256 maxAllowed);
+    error InvalidRecycleTariffK(uint256 k, uint256 minAllowed, uint256 maxAllowed);
+
+    /**
+     * @notice Set the platform-retained recycling margin (bps) — the slight
+     *         edge the VPFI recycling governor keeps from absorption before
+     *         sizing the coupled reward budget (design
+     *         `VpfiRecyclingBalanceGovernorDesign.md` §3.2).
+     * @dev ADMIN_ROLE-only (behind the 48h timelock like every bounded knob).
+     *      Bounded `[1, RECYCLE_MARGIN_MAX_BPS]` (0.01% – 25%). Pass exactly
+     *      `0` to reset to `RECYCLE_MARGIN_DEFAULT_BPS` (5%) — `0` is the
+     *      reset sentinel, so a literal 0% margin is expressed as `1` bp.
+     * @param newMarginBps New margin in bps; `0` resets to default.
+     */
+    function setRecycleMarginBps(uint16 newMarginBps)
+        external
+        onlyRole(LibAccessControl.ADMIN_ROLE)
+    {
+        if (newMarginBps > LibVaipakam.RECYCLE_MARGIN_MAX_BPS) {
+            revert InvalidRecycleMarginBps(
+                newMarginBps,
+                LibVaipakam.RECYCLE_MARGIN_MAX_BPS
+            );
+        }
+        LibVaipakam.storageSlot().recycleMarginBps = newMarginBps;
+        emit RecycleMarginBpsSet(newMarginBps);
+    }
+
+    /**
+     * @notice Set the tariff `k` for peg-free discount entitlements — VPFI
+     *         (1e18) charged per 1 ETH (1e18) of loan volume per day (design
+     *         §4.2). A pure quantity schedule; never a fee-value conversion.
+     * @dev ADMIN_ROLE-only. Bounded
+     *      `[RECYCLE_TARIFF_K_MIN, RECYCLE_TARIFF_K_MAX]` (0.001 – 1.0 VPFI
+     *      per ETH·day). Pass exactly `0` to reset to
+     *      `RECYCLE_TARIFF_K_DEFAULT` (0.05).
+     * @param newKPer1e18EthDay New tariff `k`; `0` resets to default.
+     */
+    function setRecycleTariffKPer1e18EthDay(uint256 newKPer1e18EthDay)
+        external
+        onlyRole(LibAccessControl.ADMIN_ROLE)
+    {
+        if (
+            newKPer1e18EthDay != 0 &&
+            (
+                newKPer1e18EthDay < LibVaipakam.RECYCLE_TARIFF_K_MIN ||
+                newKPer1e18EthDay > LibVaipakam.RECYCLE_TARIFF_K_MAX
+            )
+        ) {
+            revert InvalidRecycleTariffK(
+                newKPer1e18EthDay,
+                LibVaipakam.RECYCLE_TARIFF_K_MIN,
+                LibVaipakam.RECYCLE_TARIFF_K_MAX
+            );
+        }
+        LibVaipakam.storageSlot().recycleTariffKPer1e18EthDay = newKPer1e18EthDay;
+        emit RecycleTariffKSet(newKPer1e18EthDay);
+    }
+
+    /// @notice Read the effective recycling governor knobs in one RPC.
+    /// @return marginBps Effective platform margin (bps).
+    /// @return tariffK   Effective tariff `k` (VPFI-1e18 per ETH·day).
+    function getRecycleConfig()
+        external
+        view
+        returns (uint256 marginBps, uint256 tariffK)
+    {
+        return (
+            LibVaipakam.cfgRecycleMarginBps(),
+            LibVaipakam.cfgRecycleTariffKPer1e18EthDay()
+        );
+    }
+
     /**
      * @notice T-032 / Numeraire generalization (Phase 1) — read the live notification-
      *         fee config in one RPC. Frontend reads this to render the
