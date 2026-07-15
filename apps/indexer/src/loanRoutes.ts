@@ -1392,6 +1392,16 @@ export async function handleLoansByHistoricalParticipant(
   if (!/^0x[0-9a-f]{40}$/.test(wallet)) {
     return jsonResponse({ error: 'bad-address' }, 400);
   }
+  // #1023 — `scope=all` serves the ALL-history consumer the table was
+  // built for (Activity's participation filter needs every loan the
+  // wallet ever touched, any asset shape, sale vehicles included —
+  // their actor-null events belong in the wallet's feed too). The
+  // default stays the desk-scoped view the History tab renders.
+  const scopeRaw = url.searchParams.get('scope');
+  if (scopeRaw !== null && scopeRaw !== 'desk' && scopeRaw !== 'all') {
+    return jsonResponse({ error: 'bad-scope' }, 400);
+  }
+  const scope = scopeRaw ?? 'desk';
   // Fail closed when this chain isn't indexed here, so the frontend's
   // indexer-first → on-chain-fallback wrapper actually falls back (#749) —
   // same posture as the sibling wallet routes.
@@ -1418,16 +1428,21 @@ export async function handleLoansByHistoricalParticipant(
     // companion-event insert path can land `is_stub = 1` with fully
     // real market fields while only its position-token ids await the
     // heal, and hiding those rows would drop genuine desk history.
-    const conds = [
-      'p.chain_id = ?',
-      'p.wallet = ?',
-      'l.asset_type = 0',
-      'l.collateral_asset_type = 0',
-      'l.is_sale_vehicle = 0',
-      "l.lending_asset LIKE '0x%' AND length(l.lending_asset) = 42",
-      "l.collateral_asset LIKE '0x%' AND length(l.collateral_asset) = 42",
-      'l.duration_days >= 1',
-    ];
+    const conds = ['p.chain_id = ?', 'p.wallet = ?'];
+    if (scope === 'desk') {
+      conds.push(
+        'l.asset_type = 0',
+        'l.collateral_asset_type = 0',
+        'l.is_sale_vehicle = 0',
+        "l.lending_asset LIKE '0x%' AND length(l.lending_asset) = 42",
+        "l.collateral_asset LIKE '0x%' AND length(l.collateral_asset) = 42",
+        'l.duration_days >= 1',
+      );
+    }
+    // scope=all keeps NO market-shape predicates — including the
+    // stub-shape guard: a stub row's loan_id is real, and the
+    // all-history consumer (the Activity loan-id filter) only reads
+    // ids, so hiding a not-yet-healed row would drop real feed events.
     const binds: (number | string)[] = [chainId, wallet];
     // The composite cursor compares against the per-loan MAX(from_at)
     // aggregate, so it must live in HAVING, not WHERE — OR-expanded

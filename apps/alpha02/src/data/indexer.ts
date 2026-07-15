@@ -440,7 +440,7 @@ export interface ParticipantLoansHistoryPage {
 export function fetchLoansByParticipant(
   chainId: number,
   wallet: string,
-  opts: { limit?: number; before?: string } = {},
+  opts: { limit?: number; before?: string; scope?: 'desk' | 'all' } = {},
 ): Promise<ParticipantLoansHistoryPage | null> {
   const params = new URLSearchParams({
     chainId: String(chainId),
@@ -448,6 +448,11 @@ export function fetchLoansByParticipant(
   });
   if (opts.limit) params.set('limit', String(opts.limit));
   if (opts.before) params.set('before', opts.before);
+  // #1023 — 'all' drops the route's desk market-shape scoping (ERC-20
+  // both legs, non-sale-vehicle): Activity's participation filter
+  // needs EVERY loan the wallet ever touched. Default stays the desk
+  // History view.
+  if (opts.scope) params.set('scope', opts.scope);
   return getJson<ParticipantLoansHistoryPage>(
     `/loans/by-participant?${params}`,
   );

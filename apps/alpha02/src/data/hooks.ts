@@ -230,7 +230,8 @@ export interface MyRows<T> {
  *  still belong in the wallet's feed. SCOPE: the indexed by-* routes
  *  are themselves current-owner filtered, so these ids cover the
  *  ingest-LAG window after a burn/transfer, not permanent history —
- *  a true historical-participant route is tracked as #1023. */
+ *  Activity unions the /loans/by-participant leg on top for that
+ *  (#1023, wired in Activity.tsx's participantLeg query). */
 export interface MyLoanRows extends MyRows<PositionLoan> {
   indexedLoanIds: number[];
 }

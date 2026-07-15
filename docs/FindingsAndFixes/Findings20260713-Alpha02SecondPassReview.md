@@ -231,6 +231,11 @@ fires and the check no-ops. Verified present in the built
   whether or not the wallet has history. Both variants keep the batch-B
   Borrow/Lend forward CTAs. A definitive clean "no activity yet" for a
   PROVEN-new wallet still needs the participant-history route (#1023).
+  *(2026-07-15 update: #1023 shipped — Activity now unions the
+  `/loans/by-participant?scope=all` ids into its filter, so LOAN events
+  beyond the held-position window are caught. The recent-only hedge
+  stays for truncated feeds regardless: offer-only history older than
+  the scan window is still outside any loan-id set.)*
 - **UX2-008** The ABI bundle (`abis-*.js`, ~761 KB uncompressed) loads
   on every surface's critical path. It's one shared chunk today;
   splitting the rarely-read facet ABIs (or deferring until first

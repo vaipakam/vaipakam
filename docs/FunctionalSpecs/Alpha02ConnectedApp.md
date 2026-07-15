@@ -81,6 +81,14 @@ alpha02 uses chain reads and indexed reads for different jobs.
   data-source warning rather than a confident empty list.
 - Activity history may depend on indexed history, but current positions must not
   disappear merely because ingestion is delayed.
+- The Activity feed's "is this event mine" filter covers the wallet's WHOLE
+  loan history, not just currently-held positions: a settlement or
+  keeper-triggered default on a loan whose position NFT was since claimed
+  (burned) or transferred away still appears in the wallet's feed. If the
+  participation history can't be read, the feed reports unavailable rather
+  than silently narrowing to held positions only; a wallet with more
+  participation history than one read returns folds into the page's
+  recent-activity-only disclosure.
 - Realtime push refreshes matching indexed views when available. Polling remains
   the fallback.
 - The push signal covers every class of change a holder-keyed view depends on —
