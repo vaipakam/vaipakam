@@ -835,6 +835,57 @@ library LibVPFIDiscount {
         return (true, vpfiRequired);
     }
 
+    /**
+     * @notice E-1 (#1203) — direct-reduction delivery of the lender yield-fee
+     *         discount when no VPFI price source is configured.
+     *
+     * @dev The hold-tier discount (`effectiveTierAndBps` of `loan.lender`) is
+     *      delivered as a REDUCTION of the lending-asset treasury fee instead
+     *      of a VPFI vault payment, so vaulted VPFI carries day-one fee utility
+     *      without the price peg being set. No token moves — the caller simply
+     *      keeps `reduction` on the lender side and hands treasury the smaller
+     *      remainder (`lenderShare += reduction; treasuryShare -= reduction`).
+     *
+     *      Returns the lending-asset amount to move from treasury to the
+     *      lender: `treasuryShareFull × effBps / BASIS_POINTS`. Returns `0`
+     *      when:
+     *        - a VPFI price source IS configured — VPFI-payment mode
+     *          ({tryApplyYieldFee}) is authoritative there, so this fallback
+     *          stays inert;
+     *        - the lender's effective discount is tier-0 / zero; or
+     *        - the fee is zero.
+     *
+     *      Consent is NOT re-checked here — the caller must have verified
+     *      `s.vpfiDiscountConsent[loan.lender]` (identical contract to
+     *      {tryApplyYieldFee}), which every call site already does before the
+     *      VPFI-mode attempt this is the else-branch of.
+     *
+     * @param loan             Live loan the yield fee settles against.
+     * @param treasuryShareFull The full (undiscounted) lending-asset treasury
+     *                          share for this settlement.
+     * @return reduction        Lending-asset amount to shift treasury → lender.
+     */
+    function directReductionYieldFee(
+        LibVaipakam.Loan storage loan,
+        uint256 treasuryShareFull
+    ) internal view returns (uint256 reduction) {
+        if (treasuryShareFull == 0) return 0;
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        // Price source configured ⇒ VPFI-payment mode is authoritative; this
+        // direct-reduction fallback is the peg-unset launch posture only. Keyed
+        // on the config fields directly (not `canQuote`, which is also false on
+        // a transient oracle gap even when the peg IS set).
+        if (
+            s.vpfiDiscountWeiPerVpfi != 0 &&
+            s.vpfiDiscountEthPriceAsset != address(0)
+        ) {
+            return 0;
+        }
+        uint256 effBps = lenderTimeWeightedDiscountBps(loan);
+        if (effBps == 0) return 0;
+        reduction = (treasuryShareFull * effBps) / LibVaipakam.BASIS_POINTS;
+    }
+
     // ─── Internals ───────────────────────────────────────────────────────────
 
     /// @dev Shared conversion: fee expressed in `feeAsset` wei → VPFI (18 dec)

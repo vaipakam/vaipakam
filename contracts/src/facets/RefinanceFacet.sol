@@ -429,6 +429,17 @@ contract RefinanceFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErr
             if (yieldApplied) {
                 lenderInterest = interestPortion;
                 treasuryFee = 0;
+            } else {
+                // E-1 (#1203) — no VPFI price source: direct lending-asset fee
+                // reduction (mirrors {RepayFacet.repayLoan}).
+                uint256 r = LibVPFIDiscount.directReductionYieldFee(
+                    oldLoan,
+                    treasuryFee
+                );
+                if (r > 0) {
+                    lenderInterest += r;
+                    treasuryFee -= r;
+                }
             }
         }
         uint256 lenderDue = oldLoan.principal + lenderInterest;
