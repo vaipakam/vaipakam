@@ -91,15 +91,56 @@ At Base day-finalization (`RewardAggregatorFacet._finalizeAndWrite`, where the
 per-day #1008 cap threshold is already snapshotted):
 
 ```
-elapsed           = min(W, D − launchDay + 1)          // warm-up: divide by days
-                                                       // that actually exist
-Ā[D]              = (recycledCreditedCum[D] − recycledCreditedCum[max(D−W, launchDay−1)])
-                    / elapsed                          // zero when elapsed == 0
-scheduleFloor[D]  = min( schedule[D] , freshRemaining )  // schedule = existing
-                                                         // halfPoolForDay × 2
-recycledBudget[D] = min( fundable[D] ,  Ā[D] × (10000 − marginBps) / 10000 )
+Ā[D]              = (recycledCreditedCum[D] − recycledCreditedCum[max(D−W, launchDay−1)]) / W
+                    // ALWAYS divide by W, zero-padding the pre-launch prefix.
+                    // (Dividing by elapsed days would count a launch-day spike
+                    // 1/1 + 1/2 + … + 1/7 ≈ 2.6× — violating the ≤1× lifetime
+                    // contribution bound and making launch-week wash cycles
+                    // profitable. Codex r2.) Warm-up therefore just means a
+                    // smaller, conservative Ā in week one.
+scheduleFloor[D]  = min( schedule[D] , freshAvailable[D] )
+                    // schedule = existing halfPoolForDay × 2; zero on
+                    // non-emitting days — day 0 / the first 24h stay excluded,
+                    // and the coupled term is gated off with it (Codex r2:
+                    // recycling must not make day-0 activity rewardable).
+recycledBudget[D] = schedule[D] == 0 ? 0
+                    : min( fundable[D] , Ā[D] × (10000 − marginBps) / 10000 )
 dailyPool[D]      = scheduleFloor[D] + recycledBudget[D]
 ```
+
+**Commitment accounting (Codex r2 P1 — availability must be reserved at
+finalize, not merely debited at claim).** Rewards are claimable long after
+their day finalizes, so availability read at finalize would be re-usable by
+every later day (two days near exhaustion could both size against the same
+10k). The governor therefore *commits* at finalization and *consumes* at
+claim/remit:
+
+```
+commit_fresh[D]    = Σ_c chainCappedBudget_fresh[c][D]     // the per-chain
+commit_recycled[D] = Σ_c chainCappedBudget_recycled[c][D]  // ceil-div capped
+                                                           // budgets, NOT the
+                                                           // raw pool — the
+                                                           // #1008-capped sum
+                                                           // is the true max
+                                                           // claimable, finite
+freshAvailable[D]  = 69M − paidOutFresh − Σ_{d<D} outstandingCommit_fresh[d]
+fundable[D]        = bucketBalance − Σ_{d<D} outstandingCommit_recycled[d]
+                     (Phase-split per §6)
+```
+
+Claims/remits consume from their day's commitment (`paidOutFresh` /
+`paidOutRecycled` counters, source-split per the dual accumulator below); a
+commitment is released back to availability only by forfeit (§4) — never by
+time, so no user's claimable reward is ever silently defunded.
+
+**Dual accumulator (Codex r2 P1 — a single cumulative RPN cannot recover a
+per-user fresh/recycled split).** Each finalized day contributes to **two**
+parallel reward-per-numerator accumulators — `freshRpn` (from
+`scheduleFloor[D]`) and `recycledRpn` (from `recycledBudget[D]`) — per side,
+per chain. A claim spanning many days computes its fresh and recycled
+components exactly from the two accumulators; `paidOutFresh` /
+`paidOutRecycled` and the bucket debit follow without drift. Cost: one extra
+uint256 pair per finalized day per side — accepted for exact accounting.
 
 Two hard caps make the formula self-consistent (Codex #1257 r1):
 
@@ -216,15 +257,65 @@ Two consequences the design owns explicitly:
   scheduleFloor`, i.e. exactly today's behaviour. The day the peg is
   configured, the LIF/yield-fee families start feeding the bucket and the
   coupled term ramps with zero code or governance action.
-- **Forfeit circularity:** a forfeited interaction reward is pool money coming
-  *back*. Crediting it to the bucket and re-distributing it must not
-  double-count against the 69M counter. Accounting rule: the counter tracks
-  **fresh drawdown only** — split the existing counter into
-  `paidOutFresh` (counts) and `paidOutRecycled` (doesn't), and a forfeit
-  credit reduces neither (the tokens simply move ledger-wise from
-  "user-owed reward" to "recycle bucket"). Net effect:
-  `Σ paidOutFresh + rewardBudgetRemittedGlobalFresh ≤ 69M` is the (P4)
-  invariant, and a forfeit genuinely extends the runway instead of leaking.
+- **Forfeit circularity — source-split rule (Codex r2 P1):** a forfeited
+  interaction reward is an *unclaimed commitment* being released, and its
+  handling must decompose by funding source (known exactly via the dual
+  accumulator, §3.1):
+  - the **fresh-funded share** genuinely left the fresh budget and lands in
+    protocol custody → it **credits the recycle bucket** (real absorption)
+    and stays counted in `paidOutFresh` — counted once, absorbed once;
+  - the **recycled-funded share** never physically left the bucket (its
+    budget was a commitment) → forfeiting it is a **pure commitment release**
+    (`outstandingCommit_recycled` shrinks, bucket availability restores) with
+    **zero new credit** — crediting it would mint a phantom absorption event
+    for tokens that never moved, inflating future `Ā` and budgets.
+  Net effect: `Σ paidOutFresh + fresh remit reservations ≤ 69M` stays the
+  (P4) invariant, forfeits extend the runway, and no token is ever counted
+  as absorbed twice.
+
+### 4.1 The absorption plan, layered (owner question, 2026-07-15)
+
+Distribution is the easy half (usage rewards + fee discounts). Absorption —
+how VPFI flows *back* — is planned in three layers, ordered by what they cost
+legally (P6):
+
+**Layer 0 — live at launch, zero legal surface:**
+- **Notification tariff** — the paid-push fee, billed in VPFI (pre-existing).
+- **Reward forfeits** — lender-entry transfers and non-clean closes forfeit
+  the fresh-funded share into the bucket (§4 rule above).
+- *(Velocity sink, not absorption:)* the discount tiers require **vaulted
+  VPFI holdings**, structurally locking supply while utility exists.
+
+**Layer 1 — buildable now, peg-free, zero legal surface (recommended):
+native-VPFI service tariffs.** The generalisable principle behind the
+notification fee: **denominate optional platform services directly in VPFI
+units — a tariff, not a conversion.** "This service costs N VPFI" publishes
+no exchange rate, converts nothing, and promises nothing — it is a price
+schedule in the platform's own unit, the same legal shape as the E-1 fee
+discount. Concrete candidates already on the roadmap:
+- **E-4 borrower auto-protect** (#1206) — the keeper-automation service fee,
+  billed per protective action or per subscription period, in VPFI.
+- **E-5 standing intents** (#1207) — standing-order keeper execution fees,
+  in VPFI.
+- **#1219 service bonds (R-3/S-4)** — keepers/operators post VPFI bonds
+  sized natively in VPFI units to register; misbehaviour slashes into the
+  bucket (absorption), honest operation keeps supply locked (sink). No
+  conversion anywhere in the lifecycle.
+Boundary rule: tariffs apply **only to optional conveniences** — never to
+protocol-safety functions (permissionless liquidation, default triggering,
+close-outs stay free), preserving the liveness/ethos posture.
+
+**Layer 2 — deferred behind the single §13/§14 legal gate:** `FixedRate`
+activation wakes the conversion-based classes — borrower LIF paid in VPFI
+(treasury share at proper close, full custody on default), lender yield-fee
+in VPFI, matcher-share remainders — the highest-volume absorption family,
+switched on by one config ceremony when the owner elects to spend the one
+bounded legal review.
+
+The governor then closes the loop by construction: whatever these layers
+absorb becomes `Ā`, and distribution's coupled term is `(1 − m) × Ā` — so
+the two sides *cannot* drift apart by more than the margin plus the decaying
+schedule floor, at every stage of the rollout.
 
 ## 5. Custody & the bucket ledger (unchanged substrate, one sharpening)
 
@@ -248,12 +339,27 @@ totals (`recycledCreditedByDay[dayId]`) are recorded at credit time to feed
 The mesh is unchanged from the prior design — it composes because the governor
 sits at the single canonical point (Base finalization):
 
-- Mirrors report cumulative `chainRecycledVpfi18` on the existing day-close
-  report (§3.2) → Base computes **global** `Ā[D]` across all chains — but the
-  day's recycled budget is bounded by `fundable[D]` (§3.1): each mirror's
-  bucket funds only *its own* chain's slice, Base's bucket funds the rest, and
-  un-repatriated quiet-chain surplus never sizes another chain's budget
-  (Codex #1257 r1 P1).
+- Mirrors report **both** the cumulative `chainRecycledVpfi18` (availability
+  accounting, self-healing across missed reports) **and the day-bucketed
+  credit total for the closing day** (Codex r2: the trailing mean needs
+  per-day attribution — a cumulative delta spanning a missed day cannot be
+  split between D and D+1, letting report *timing*, not receipt timing,
+  shift budgets). A missed day zero-fills in `Ā` — a conservative
+  under-count, never an over-count — while the cumulative still self-heals
+  availability. Base computes **global** `Ā[D]`, but the day's recycled
+  budget is bounded by `fundable[D]` (§3.1): each mirror's bucket funds only
+  *its own* chain's slice, Base's bucket funds the rest, and un-repatriated
+  quiet-chain surplus never sizes another chain's budget (Codex #1257 r1 P1).
+- **`fundable[D]` is computed one-pass against the *target* pool** (Codex r2
+  P1 — the naive definition was circular: fundable ← chain demand ←
+  dailyPool ← recycledBudget ← fundable). Per-chain demand is evaluated
+  against `targetPool[D] = scheduleFloor[D] + Ā[D] × (1 − m)` (the coupled
+  term *before* the funding cap); then `fundable = Base bucketAvailable +
+  Σ_c min(mirrorBucketAvailable[c], targetDemand_c)` and
+  `recycledBudget[D] = min(target, fundable)`. Slightly conservative when
+  the cap binds — deterministic, single-pass, and after fresh-floor
+  exhaustion the target keeps demand non-zero, so a funded bucket can never
+  deadlock the program against a zero floor.
 - The finalized-denominator broadcast carries `recycleConsume[c][D]`
   (Base-instructed mirror bucket consumption) **and stamps the finalized
   day's pool composition — `scheduleFloorHalf[D]` + `recycledHalf[D]` (or
@@ -271,8 +377,10 @@ sits at the single canonical point (Base finalization):
 1. `Σ paidOutFresh (+ fresh remit reservations) ≤ 69,000,000e18` — cap bounds
    fresh drawdown only (restates the prior "fresh-mint-only" decision in
    drawdown terms).
-2. `recycleBucket ≥ 0` always; `recycledBudget[D] ≤ bucketAvailable` at
-   finalize (no overdraft; trailing average is a target, not a claim).
+2. `recycleBucket ≥ 0` always; commitment discipline (Codex r2): at every
+   finalize, `Σ outstandingCommit_recycled ≤ bucketBalance` and
+   `Σ outstandingCommit_fresh + paidOutFresh ≤ 69M` — a day can never size
+   against availability another unclaimed day already committed.
 3. Bucket separation: `diamondVpfiBalance ≥ userLifCustody +
    unclaimedRewardBudget + recycleBucket` on every chain, every day.
 4. Per-day identity: `dailyPool[D] == scheduleFloor[D] + recycledBudget[D]`,
@@ -299,13 +407,21 @@ sits at the single canonical point (Base finalization):
 
 ## 8. Phasing (re-cut)
 
-- **Phase A′ — Base-only, the new #1217 scope.** Bucket ledger + credits at
-  every live receipt site + `VpfiRecycled` events + bucket-separation
-  invariant + **the governor in `_finalizeAndWrite`** + `recycleMarginBps`
-  knob + fresh/recycled counter split in `claimInteractionRewards` + the
-  #1218 metrics (below). Delivers the owner's balance property single-chain
-  immediately; mirrors keep their current behaviour (schedule-only budgets)
-  until Phase B′.
+- **Phase A′ — Base-custody recycling, the new #1217 scope.** Bucket ledger +
+  credits at every live receipt site + `VpfiRecycled` events +
+  bucket-separation invariant + **the governor in `_finalizeAndWrite`** +
+  `recycleMarginBps` knob + commitment accounting + the dual
+  fresh/recycled accumulators + the #1218 metrics (below). **The
+  pool-composition broadcast field ships in A′, not B′** (Codex r2 P2): the
+  finalized denominators already include mirror activity, so if mirrors kept
+  re-deriving a schedule-only pool while Base finalized floor+recycled, the
+  same reward day would pay inconsistently by chain. Broadcasting the
+  finalized composition (the plumbing already carries `dayCapThreshold18`;
+  this adds a field) keeps every chain pricing the identical `dailyPool[D]`
+  from day one, while all recycle *custody* stays on Base and mirror claims
+  keep funding through the existing #776 remittance (source-split on Base's
+  ledger). Mirror-local buckets, day-bucketed reporting, consumption and
+  netting remain Phase B′.
 - **Phase B′ — mesh netting (the #1222 body, unchanged list).** The two
   message fields, mirror bucket consumption, netted remittance, global `Ā`,
   3-chain e2e + self-heal/idempotency tests, watcher bucket-balance checks.
@@ -414,12 +530,16 @@ LibVpfiPrice.weiPerVpfi() → the single canonical rate every consumer reads
 
 - **`FixedRate` (built now, activation deferred):** `1e15` wei/VPFI — the
   owner's proposed 1 VPFI = 0.001 ETH — as a bounded governed knob (event,
-  timelock, zero-sentinel = `Unset`), replacing BOTH the hard-wired
-  notification constant and the discount-peg pair. Every consumer —
-  notification fees, borrower LIF, lender yield-fee (E-1 VPFI-payment mode),
-  and any future VPFI-denominated fee — reads the same rate. No more
-  per-feature price forks. Activation is a config ceremony gated on the §14
-  legal glance, not a redeploy.
+  timelock, zero-sentinel = `Unset`), replacing the discount-peg pair.
+  Every *conversion* consumer — borrower LIF, lender yield-fee (E-1
+  VPFI-payment mode), and any future VPFI-denominated fee — reads the same
+  rate. Activation is a config ceremony gated on the §14 legal glance, not a
+  redeploy. **Notification-fee scoping (Codex r2):** the notification bill
+  MUST keep computing at launch, so its existing fixed constant is **not**
+  removed while the source is `Unset` — it remains that path's dedicated
+  billing tariff (a pre-existing, already-shipped surface) and folds into
+  the unified source only at `FixedRate` activation, when the two are by
+  construction the same number.
 - **`MarketFeed` (the succession, Phase 2):** activatable **only** when the
   organic market passes the platform's own liquidity-depth machinery (the
   slippage-at-floor probe), and priced by **TWAP, never spot** — a
