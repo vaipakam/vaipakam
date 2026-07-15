@@ -487,6 +487,24 @@ jobs:
       - name: Run positive-flow scenarios
         run: forge test --match-path "test/scenarios/*.t.sol"
 
+      # #1221 — publish the cifast-compiled out/+cache as a workflow
+      # ARTIFACT so build-docs can run `forge doc --build` WARM instead of
+      # paying its own ~30 min cold src compile. Workflow artifacts are
+      # reliable across jobs within a run (the actions/cache cross-job
+      # restore build-docs used before MISSED on any .sol change, leaving
+      # forge doc to cold-compile and OOM-reclaim the runner at exit 143).
+      # retention-days:1 keeps storage minimal — it is only consumed by the
+      # same run's build-docs job.
+      - name: Upload forge artifacts (for build-docs warm doc build)
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: forge-out-${{ github.sha }}
+          path: |
+            contracts/out
+            contracts/cache
+          retention-days: 1
+          include-hidden-files: true
+
   # ── slither ────────────────────────────────────────────────────────────
   # Folded into ci.yml so it shares the SAME foundry build that
   # contracts-fast warmed — previously this ran via the
@@ -653,27 +671,27 @@ jobs:
       - name: Snapshot submodule SHAs (for content-based cache key)
         run: git submodule status --recursive > .submodule-state
 
-      # Same cache key shape as contracts-fast (and the slither job).
-      # contracts-fast saved this at its job end; this job restores
-      # it, so the `forge doc --build` step below hits warm artifacts
-      # and skips re-compilation entirely (only the NatSpec → mdbook
-      # rendering runs).
-      - name: Restore forge artifacts (warm from contracts-fast)
-        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+      # #1221 — download contracts-fast's cifast-compiled out/+cache from a
+      # workflow ARTIFACT (reliable within a run, unlike the actions/cache
+      # cross-job restore this replaces — that MISSED on any .sol change and
+      # left `forge doc --build` to cold-compile the full unit, OOM-
+      # reclaiming the runner at exit 143). With warm artifacts present the
+      # in-job warm compile below is an instant no-op and forge doc only
+      # renders NatSpec -> mdbook. `continue-on-error` keeps the deterministic
+      # warm-compile fallback authoritative if the download ever glitches.
+      - name: Download forge artifacts (warm from contracts-fast)
+        continue-on-error: true
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
-          path: |
-            contracts/out
-            contracts/cache
-          key: forge-${{ runner.os }}-${{ hashFiles('contracts/foundry.toml', 'contracts/remappings.txt', 'contracts/.submodule-state') }}-${{ hashFiles('contracts/src/**/*.sol', 'contracts/script/**/*.sol', 'contracts/test/**/*.sol') }}
-          restore-keys: |
-            forge-${{ runner.os }}-${{ hashFiles('contracts/foundry.toml', 'contracts/remappings.txt', 'contracts/.submodule-state') }}-
+          name: forge-out-${{ github.sha }}
+          path: contracts
 
-      - name: Warm compile (in-job, memory-safe)
-        # The cross-job `actions/cache` restore above is best-effort — when
-        # `src/` changed it can MISS (observed on #1122: a 3 s restore = no
-        # warm `out/`), which left `forge doc --build` to drive its OWN cold
-        # compile that overran the 30 min cap. Do a deterministic, in-job warm
-        # compile FIRST so the doc step never depends on a cross-job cache hit.
+      - name: Warm compile (in-job, fallback safety net)
+        # With the download-artifact step above providing contracts-fast's
+        # warm out/+cache, this is a near-instant no-op (nothing to compile).
+        # It stays as a deterministic FALLBACK: if the artifact download ever
+        # glitches (continue-on-error above), this cold-compiles src+script so
+        # `forge doc --build` still never depends on a shared-state hit.
         # `--skip test` compiles `src/` + `script/` only (the exact graph
         # `forge doc` reads — it never needs `test/`), which is also the
         # memory-safe scope: the test-inclusive whole unit peaks ~17.7 GB RSS
