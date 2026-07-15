@@ -86,22 +86,50 @@ At Base day-finalization (`RewardAggregatorFacet._finalizeAndWrite`, where the
 per-day #1008 cap threshold is already snapshotted):
 
 ```
-Ā[D]              = trailing-W-day mean of global recycle-bucket credits
-                    = (recycledCreditedCum[D] − recycledCreditedCum[D−W]) / W
-recycledBudget[D] = min( bucketAvailable ,  Ā[D] × (10000 − marginBps) / 10000 )
+elapsed           = min(W, D − launchDay + 1)          // warm-up: divide by days
+                                                       // that actually exist
+Ā[D]              = (recycledCreditedCum[D] − recycledCreditedCum[max(D−W, launchDay−1)])
+                    / elapsed                          // zero when elapsed == 0
+scheduleFloor[D]  = min( schedule[D] , freshRemaining )  // schedule = existing
+                                                         // halfPoolForDay × 2
+recycledBudget[D] = min( fundable[D] ,  Ā[D] × (10000 − marginBps) / 10000 )
 dailyPool[D]      = scheduleFloor[D] + recycledBudget[D]
 ```
 
-- `scheduleFloor[D]` **is the existing emission schedule, unchanged**
-  (`halfPoolForDay × 2`). It is re-labelled from "the pool" to "the floor":
-  the guaranteed minimum that decays on the existing seven-tier curve. Funded
-  from the pre-funded pool and counted against the 69M counter, exactly as
-  today.
-- `recycledBudget[D]` is the absorption-coupled add-on. Funded exclusively
-  from the recycle bucket (ledger transfer, no token movement — §5) and **not**
-  counted against the 69M counter (P4).
-- `bucketAvailable` is the hard constraint: the governor never schedules more
-  recycled budget than the bucket actually holds, so the trailing average is a
+Two hard caps make the formula self-consistent (Codex #1257 r1):
+
+- **`freshRemaining` caps the floor.** The existing schedule has an indefinite
+  5% tail, so `Σ schedule` is unbounded — the 69M cap is enforced by the
+  payout counters, not the schedule. The floor is therefore explicitly capped
+  by the remaining fresh budget (`freshRemaining = 69M − paidOutFresh − fresh
+  remit reservations`) and **goes to zero at exhaustion** — at which point the
+  pool is the recycled term alone, which is exactly the promised steady state.
+- **`fundable[D]`, not raw bucket balance.** Phase A′ (Base-only):
+  `fundable = Base bucketAvailable`. Phase B′ (mesh): `fundable = Base
+  bucketAvailable + Σ_c min(mirrorBucketAvailable[c], that chain's own day-D
+  claim demand)` — a mirror's bucket funds **its own** chain's slice
+  (Base-instructed `recycleConsume[c][D]`, §6), and Base's bucket funds the
+  rest via the netted remit. Un-repatriated surplus sitting on a *quiet*
+  chain is **not** fundable for other chains' budgets until Phase C′
+  repatriation moves it — global `Ā` sizes the *target*, `fundable` bounds
+  the *reality*, so a credit-rich-but-idle chain can never cause an
+  underfunded pool elsewhere or a silent draw on the fresh 69M.
+
+- `scheduleFloor[D]` is the existing emission schedule (`halfPoolForDay × 2`),
+  re-labelled from "the pool" to "the floor": the guaranteed minimum that
+  decays on the existing seven-tier curve, capped by `freshRemaining` (above).
+  Funded from the pre-funded pool and counted against the 69M counter, exactly
+  as today.
+- `recycledBudget[D]` is the absorption-coupled add-on, **not** counted
+  against the 69M counter (P4). It is a **sizing reservation, not a
+  finalize-time transfer**: the bucket is debited pro-rata **at claim /
+  remittance time** (the `paidOutRecycled` counter), so when per-user #1008
+  caps or zero denominators leave part of the day's pool unclaimed, the
+  unclaimed recycled slice simply never leaves the bucket — nothing strands in
+  the reward allocation and the retained-margin accounting stays exact
+  (Codex #1257 r1).
+- `fundable[D]` is the hard constraint: the governor never sizes more recycled
+  budget than is actually consumable that day, so the trailing average is a
   smoothing *target*, never an overdraft. The bucket cannot go negative.
 - The split and caps downstream are untouched: `dailyPool[D]` still divides
   50/50 lender/borrower, pro-rata to eligible interest, under the per-user
@@ -114,8 +142,11 @@ dailyPool[D]      = scheduleFloor[D] + recycledBudget[D]
 which may take a long time and reads as "recycling does nothing." With the
 additive form every absorbed token visibly raises the next budgets by
 `(1 − m)`, from day one; the platform edge (P2) applies to *all* absorption;
-and the cap invariant is trivial (`freshDrawdown[D] ≤ scheduleFloor[D]` ⇒
-`Σ freshDrawdown ≤ Σ schedule ≤ 69M`). The floor's built-in decay does the
+and the cap invariant is enforced by construction (`freshDrawdown[D] ≤
+scheduleFloor[D] ≤ freshRemaining`, so the counter can never overrun 69M —
+note the raw schedule alone would NOT guarantee this, its 5% tail is
+unbounded; the `freshRemaining` cap is what closes it). The floor's built-in
+decay does the
 hand-over automatically: early life is schedule-dominated, mature life is
 absorption-dominated, and after the 69M pre-fund exhausts the program
 continues indefinitely at `(1 − m) × Ā` — **rewards stop hard-stopping**.
@@ -213,12 +244,20 @@ The mesh is unchanged from the prior design — it composes because the governor
 sits at the single canonical point (Base finalization):
 
 - Mirrors report cumulative `chainRecycledVpfi18` on the existing day-close
-  report (§3.2) → Base computes **global** `Ā[D]` across all chains.
+  report (§3.2) → Base computes **global** `Ā[D]` across all chains — but the
+  day's recycled budget is bounded by `fundable[D]` (§3.1): each mirror's
+  bucket funds only *its own* chain's slice, Base's bucket funds the rest, and
+  un-repatriated quiet-chain surplus never sizes another chain's budget
+  (Codex #1257 r1 P1).
 - The finalized-denominator broadcast carries `recycleConsume[c][D]`
-  (Base-instructed mirror bucket consumption) and the netted CCIP remittance
-  sends only `max(0, budget − availRecycled)` (§3.3). Claims-first, keeper
-  residual (§3.5). Cumulative counters self-heal missed reports; whole-day
-  idempotency stamps prevent double-apply.
+  (Base-instructed mirror bucket consumption) **and stamps the finalized
+  day's pool composition — `scheduleFloorHalf[D]` + `recycledHalf[D]` (or
+  equivalently the finalized `dailyPool[D]`)** — so a mirror computes claims
+  against the true governor-sized pool instead of locally re-deriving the
+  schedule floor and silently dropping the recycled add-on (Codex #1257 r1
+  P1). The netted CCIP remittance sends only `max(0, budget − availRecycled)`
+  (§3.3). Claims-first, keeper residual (§3.5). Cumulative counters self-heal
+  missed reports; whole-day idempotency stamps prevent double-apply.
 - Numbers travel daily; tokens travel only on genuine net shortfall — the
   property that made Option B the right substrate is exactly preserved.
 
@@ -232,17 +271,26 @@ sits at the single canonical point (Base finalization):
 3. Bucket separation: `diamondVpfiBalance ≥ userLifCustody +
    unclaimedRewardBudget + recycleBucket` on every chain, every day.
 4. Per-day identity: `dailyPool[D] == scheduleFloor[D] + recycledBudget[D]`,
-   and `recycledBudget[D] == (1 − m̂) × Ā[D]` when the bucket suffices
+   and `recycledBudget[D] == (1 − m̂) × Ā[D]` when `fundable[D]` suffices
    (`m̂` = the stamped `recycleMarginBpsAtFinalize`).
-5. Platform-edge monotone: cumulative bucket retention ≥
-   `m̂ × Σ recycledBudget/(1−m̂)`-consistent lower bound — i.e. the bucket
-   never distributes more than `(1 − m̂)` of what it absorbed over any window.
+5. Platform-edge monotone — **all-time cumulative, not per-window** (the
+   trailing mean deliberately redistributes a spike across later days, so a
+   window test would fail a correct implementation — Codex #1257 r1):
+   `Σ_{d ≤ D} paidOutRecycled[d] ≤ (1 − m̂_min) × Σ_{d ≤ D} absorbed[d]` for
+   every D, where `m̂_min` is the smallest margin stamped over the horizon.
+   Holds by construction: each absorbed unit contributes at most `1/W` to each
+   of the W following days' `Ā`, so its lifetime contribution to recycled
+   budgets is at most `(1 − m)` of itself.
 6. Per-chain `consumedCumulative ≤ reportedCumulative`; duplicate broadcast is
    a no-op; missed report self-heals (all carried over from the prior design).
-7. Anti-gaming economic check (property test): a closed self-dealing loop
-   (pay VPFI fee → raise Ā → claim) strictly loses ≥ `m` per cycle before per
-   user caps and pro-rata dilution — the margin makes wash-cycling
-   value-destructive by construction.
+7. Anti-gaming economic check (property test), **scoped to the coupled term**
+   (Codex #1257 r1): the *marginal* recycled budget attributable to a wash
+   cycle's own absorption returns at most `(1 − m)` of what was absorbed —
+   before pro-rata dilution and per-user caps shrink it further — so the
+   recycling mechanism itself is strictly value-destructive to game. The
+   `scheduleFloor` is capturable by whoever has eligible activity regardless
+   of recycling; that is a pre-existing property of the reward program that
+   this design neither creates nor changes.
 
 ## 8. Phasing (re-cut)
 
@@ -318,3 +366,73 @@ B′), §9 (recycle bucket, margin, surplus posture; replaces the "budget may
 accumulate without affecting mint flow" stub), plus the #1218 metric
 definitions. Release-note fragments and `_CodeVsDocsAudit` rows per house
 convention.
+
+## 13. VPFI price source — peg activation (owner question, 2026-07-15)
+
+**Owner proposal:** set the peg at **1 VPFI = 0.001 ETH** until organic
+secondary markets exist, then use the market rate.
+
+**Recommendation: YES — and unify it into one canonical price source while
+doing so** (PROPOSED, pending owner ratification). Today the codebase carries
+*three* disconnected VPFI-price notions:
+
+1. `VPFI_PER_ETH_FIXED_PHASE1 = 1e15` — a compile-time constant (exactly
+   1 VPFI = 0.001 ETH) hard-wired into the notification-fee path, whose own
+   comment anticipates this moment: *"When VPFI lists on an exchange
+   (Phase 2), governance can replace this fixed rate with a live
+   VPFI/numeraire feed."*
+2. `s.vpfiDiscountWeiPerVpfi` + `s.vpfiDiscountEthPriceAsset` — the
+   admin-settable discount peg (`VPFIDiscountFacet.setVPFIDiscountRate` /
+   `setVPFIDiscountETHPriceAsset`), left unset at launch, which is the only
+   thing keeping the yield-fee/LIF VPFI paths dormant.
+3. The E-1 dual-mode predicate, which must key on (2).
+
+The owner's proposed rate is **identical to the constant already embedded in
+(1)** — the platform has effectively been running this peg for notification
+fees all along. Ratifying it merely makes the price story coherent.
+
+**The clean architecture — one resolver, three modes:**
+
+```
+LibVpfiPrice.source() → { Unset | FixedRate | MarketFeed }
+LibVpfiPrice.weiPerVpfi() → the single canonical rate every consumer reads
+```
+
+- **`FixedRate` (activate now):** `1e15` wei/VPFI, a bounded governed knob
+  (event, timelock, zero-sentinel = `Unset`), replacing BOTH the hard-wired
+  notification constant and the discount-peg pair. Every consumer —
+  notification fees, borrower LIF, lender yield-fee (E-1 VPFI-payment mode),
+  and any future VPFI-denominated fee — reads the same rate. No more
+  per-feature price forks.
+- **`MarketFeed` (the succession, Phase 2):** activatable **only** when the
+  organic market passes the platform's own liquidity-depth machinery (the
+  slippage-at-floor probe), and priced by **TWAP, never spot** — a
+  thin-market spot rate feeding every fee conversion is a textbook
+  manipulation vector. Until the probe passes, the switch refuses.
+- Mode is derived from config state (feed set + probe pass ⇒ `MarketFeed`;
+  rate set ⇒ `FixedRate`; neither ⇒ `Unset`), so activation and succession
+  are config ceremonies, not redeploys.
+
+**Consequences (all positive, one flagged):**
+
+- The dormant VPFI absorption classes (borrower LIF, yield-fee-in-VPFI,
+  matcher remainders) go **live at launch** → the governor's coupled term
+  activates from real absorption instead of waiting for a market — the
+  recycling flywheel starts on day one.
+- E-1's role shifts from "day-one utility unlock" to **resilience fallback**:
+  with the peg set, VPFI-payment mode is primary; direct-reduction mode
+  covers `Unset` windows, oracle outages, and any chain where the price
+  source isn't configured (see the E-1 delivery-chain recommendation on
+  #1203). Both remain worth building.
+- **Flag:** the peg-unset posture was the documented conservative legal
+  choice (#884). Activating a platform-published price is a posture change —
+  materially blunted by the fact that **no purchase surface exists**
+  (#687-A): nobody can *buy* VPFI at this rate; it is a fee-payment
+  conversion for tokens users already earned. Recommend the same
+  legal-glance gate as #1219 before the **mainnet** flip; testnets can
+  activate immediately.
+- Arbitrage honesty: once a real market exists, a fixed rate becomes arbable
+  (market < peg ⇒ buying cheap VPFI to extinguish fees drains real fee
+  revenue). That is precisely why the succession rule above is part of the
+  same decision: prompt, depth-gated, TWAP-based switch — with the fixed
+  rate retained as the break-glass fallback if the feed degrades.
