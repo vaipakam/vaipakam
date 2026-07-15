@@ -663,7 +663,17 @@ export async function runChainIndexerForChain(
     )
       .bind(chainId, MARKET_SWEEP_CURSOR_KIND)
       .first<{ last_block: number }>();
-    const since = Math.max(0, (sweepRow?.last_block ?? 0) - 60);
+    // First pass after deploy (Codex #1288 r2): no watermark yet. The
+    // 0037 migration's backfill already populated the table at apply
+    // time, so sweeping from 0 would re-touch every historical row —
+    // an unbounded first sweep that, if it fails open, retries
+    // unbounded forever. Instead seed the window to the last hour,
+    // which covers writes landed by the OLD worker between the
+    // migration apply and this first new-worker scan.
+    const since =
+      sweepRow === null
+        ? now - 3_600
+        : Math.max(0, sweepRow.last_block - 60);
     await refreshMarketSummaries(env.DB, chainId, since, now);
     await env.DB.prepare(
       `INSERT INTO indexer_cursor (chain_id, kind, last_block, updated_at)

@@ -35,15 +35,33 @@ CREATE TABLE IF NOT EXISTS market_summary (
   PRIMARY KEY (chain_id, lending_asset, collateral_asset, duration_days)
 );
 
--- The route's whole read: top-N by depth within a chain.
+-- The route's whole read: top-N by depth within a chain. The
+-- deterministic tiebreak columns are IN the index (Codex #1288 r2 P1):
+-- without them, a large equal-depth bucket (dust markets all at
+-- total=1) forces a temp-sort of the whole bucket per request —
+-- re-opening the very resource path this table closes. With them the
+-- ORDER BY is fully index-served and LIMIT stops the scan at top-N.
 CREATE INDEX IF NOT EXISTS idx_market_summary_depth
-  ON market_summary (chain_id, total DESC);
+  ON market_summary (chain_id, total DESC,
+                     lending_asset, collateral_asset, duration_days);
 
 -- The scan-tail touched-set queries filter on (chain_id, updated_at).
 CREATE INDEX IF NOT EXISTS idx_offers_chain_updated
   ON offers (chain_id, updated_at);
 CREATE INDEX IF NOT EXISTS idx_signed_offers_chain_updated
   ON signed_offers (chain_id, updated_at);
+
+-- Expiry-window legs (Codex #1288 r2) — the "no event, market changed
+-- anyway" sweep legs range-scan on the expiry columns; without these,
+-- every ingest pass scans the whole active set even when nothing
+-- expired. Partial on status='active' (the only rows the legs read —
+-- and the only rows whose expiry ever matters).
+CREATE INDEX IF NOT EXISTS idx_offers_chain_expires
+  ON offers (chain_id, expires_at) WHERE status = 'active';
+CREATE INDEX IF NOT EXISTS idx_signed_offers_chain_expires
+  ON signed_offers (chain_id, expires_at) WHERE status = 'active';
+CREATE INDEX IF NOT EXISTS idx_signed_offers_chain_deadline
+  ON signed_offers (chain_id, deadline) WHERE status = 'active';
 
 -- One-time backfill so a deploy over live data serves discovery
 -- immediately — the SAME union aggregate the route ran per-request

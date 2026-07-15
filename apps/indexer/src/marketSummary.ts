@@ -78,8 +78,12 @@ const TOUCHED_MARKETS = `
     SELECT lending_asset, collateral_asset, duration_days
       FROM signed_offers
      WHERE chain_id = ?1 AND status = 'active'
-       AND ((expires_at > ?2 AND expires_at <= ?3)
-         OR (deadline > ?2 AND deadline <= ?3))
+       AND expires_at > ?2 AND expires_at <= ?3
+    UNION ALL
+    SELECT lending_asset, collateral_asset, duration_days
+      FROM signed_offers
+     WHERE chain_id = ?1 AND status = 'active'
+       AND deadline > ?2 AND deadline <= ?3
   )`;
 
 /** The exact discovery aggregate over a scoped market set. `SCOPE` is
