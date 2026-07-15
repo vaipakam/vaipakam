@@ -22,10 +22,12 @@ import { useActiveChain } from '../chain/useActiveChain';
 import { DIAMOND_ABI_VIEM, useDiamondWrite } from '../contracts/diamond';
 import { ensureAllowance, revokeAllowance, type TokenMeta } from '../contracts/erc20';
 import {
+  loanEndTimeOf,
   LOAN_STATUS_ACTIVE,
   readLoanLive,
-  refinancePayoffOf,
+  refinanceApprovalOf,
 } from '../contracts/loanLive';
+import { readGraceSecondsLive } from '../contracts/preflights';
 import type { RefinancePendingState } from '../data/refinancePending';
 import { ZERO_ADDRESS } from '../lib/offerSchema';
 import { formatDate, formatTokenAmount } from '../lib/format';
@@ -129,12 +131,21 @@ export function RefinancePendingCard({
         readLoanLive(publicClient, walletChain.diamondAddress, loanId),
         publicClient.getBlock({ blockTag: 'latest' }),
       ]);
+      // Grace bucket read live too: a request whose loan is strictly
+      // past its grace window is as unacceptable on-chain as an
+      // expired one (#1189 admission gate) — same abort.
+      const graceSec = await readGraceSecondsLive({
+        publicClient,
+        diamondAddress: walletChain.diamondAddress,
+        durationDays: Number(liveLoan.durationDays),
+      });
       if (
         offer.creator === ZERO_ADDRESS ||
         offer.accepted ||
         // An expired request is unacceptable on-chain — re-granting a
         // payoff-sized approval for it is a pure dangling authorization.
         (offer.expiresAt !== 0n && latestBlock.timestamp >= offer.expiresAt) ||
+        latestBlock.timestamp > loanEndTimeOf(liveLoan) + graceSec ||
         liveLoan.status !== LOAN_STATUS_ACTIVE
       ) {
         setError(copy.refinance.reapproveAborted);
@@ -147,7 +158,13 @@ export function RefinancePendingCard({
         token: liveLoan.principalAsset,
         owner: address,
         spender: walletChain.diamondAddress,
-        amount: refinancePayoffOf(liveLoan),
+        // The payoff at the request's LAST fillable moment — a later
+        // grace-window accept pulls the late fee too (#1236), and the
+        // restored approval must cover it, not just today's figure.
+        amount: refinanceApprovalOf(liveLoan, {
+          expiresAt: offer.expiresAt,
+          graceSeconds: graceSec,
+        }),
       });
       setDone(copy.refinance.reapproved);
       void queryClient.invalidateQueries({ queryKey: ['refinancePending'] });
@@ -174,7 +191,13 @@ export function RefinancePendingCard({
                 ? copy.refinance.pendingExpired(
                     formatDate(Number(state.expiresAt)),
                   )
-                : (
+                : state.pastGrace && state.loanActive
+                  ? // #1189 — strictly past the loan's grace window the
+                    // admission gate rejects any accept: the request is
+                    // as dead as an expired one, so say that instead of
+                    // implying a lender could still take it.
+                    copy.refinance.pendingPastGrace
+                  : (
                 <>
                   {copy.refinance.pending(offerId)}{' '}
                   {copy.refinance.pendingExpires(

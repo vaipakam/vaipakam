@@ -529,6 +529,14 @@ export const copy = {
     checking: 'Checking whether this loan can close early…',
     checkFailed:
       'We couldn’t read this loan’s close-early cost right now — retrying. Repaying normally stays available below.',
+    // #1235 — closing stays open through the grace window (the
+    // contract charges the same late fee repaying does there), so the
+    // in-grace card must say the quote already includes that fee and
+    // that the door closes when grace ends.
+    graceNote:
+      'This loan is past its due date. The amount below already includes the late fee for being late (it grows a little each day), and closing this way stays possible only until the grace window ends.',
+    graceFeeReceiptNote:
+      'The late fee for being past due is included in this amount — the same fee a normal repayment would charge.',
   },
 
   refinance: {
@@ -583,6 +591,17 @@ export const copy = {
       'This request is no longer completable (accepted, cancelled, or the loan closed) — nothing was approved. Refresh to see the latest state.',
     guardrailNote:
       'Your request carries its own expiry and on-chain guardrails: it can only complete at or below the rate you set here, and never after the expiry you see in this review.',
+    // #1236 — a refinance can complete inside the grace window, and
+    // the accept-time payoff then includes the same late fee repaying
+    // charges. The disclosure and the past-due banner keep the quoted
+    // figures honest; the approval covers the fee so a grace-window
+    // acceptance can't fail on a short allowance.
+    graceNote:
+      'This loan is past its due date. A lender can still accept this request until the grace window ends, and the payoff already includes the late fee for being late (it grows a little each day).',
+    lateFeeDisclosure: (maxFee: string) =>
+      `If a lender accepts after the loan’s due date, the payoff also includes a late fee for being late — up to ~${maxFee} for this request. The approval you grant covers that too, so a late acceptance can’t fail on it.`,
+    pendingPastGrace:
+      'This loan has passed its due date and grace window, so no lender can accept this request any more — it no longer holds up your other actions here. Cancel it below to also remove its standing payoff approval.',
     cadenceChangeNote:
       'Your current loan pays interest on a schedule. The replacement loan will NOT — its interest settles when it closes. Make sure that cash-flow change is what you want.',
     multiStepNote:
@@ -1333,10 +1352,12 @@ export const copy = {
       'This loan looks already settled on-chain — nothing was sent. Refresh in a moment to see its final state.',
     nothingToClaim:
       'There’s nothing for this side to claim on-chain right now — the payout may be zero or already collected. Nothing was sent.',
-    precloseMatured:
-      'This loan is past its due date, so closing early no longer applies — nothing was sent. Use Repay instead; it settles the loan including any late fees.',
-    refinanceMatured:
-      'This loan is past its due date, so it can no longer be refinanced — nothing was sent. Use Repay to settle it, including any late fees.',
+    preclosePastGrace:
+      'This loan is past its due date and grace window, so closing early is no longer possible — nothing was sent. The default process applies now.',
+    refinancePastGrace:
+      'This loan is past its due date and grace window, so it can no longer be refinanced — nothing was sent. The default process applies now.',
+    saleListingMatured:
+      'This loan is past its due date, so the position can no longer be listed for sale — nothing was sent.',
     refinanceNotOriginalBorrower:
       'This position changed hands since the loan began, so its collateral can’t carry over into a refinance — nothing was sent. Repaying or closing early stays available.',
     lenderBlockedPartial:

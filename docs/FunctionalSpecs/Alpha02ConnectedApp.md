@@ -495,13 +495,21 @@ Its intended behaviour, as the test oracle for this surface:
   acknowledgement can be signed against it, and a failed schedule
   read shows a visible retry rather than silently passing.
 - Advanced mode offers close-early (direct preclose) to the borrower
-  of an active, not-yet-matured ERC-20 loan from the loan detail
-  page. Maturity is judged by chain time, never the device clock. The
-  review quotes the settlement figure from the protocol's own
-  settlement math — honouring the loan's interest mode and any
-  interest already settled by partial repayments — never a locally
-  derived estimate, and states the interest-mode implication before
-  signing. After a successful close or full repayment the page must
+  of an active ERC-20 loan from the loan detail page, up to and
+  including the end of the loan's grace window — the protocol keeps
+  the early-close door open through grace, charging the same late fee
+  a late repayment does, and rejects it only strictly past grace. The
+  window is judged by chain time against the live term and grace
+  schedule, never the device clock. While the loan is past due but
+  inside grace, the surface must say the loan is past due, that the
+  quoted amount already includes the growing late fee, and that the
+  option ends with the grace window; strictly past grace the surface
+  disappears and any attempt stops before a wallet prompt with a
+  plain message that the default process applies. The review quotes
+  the settlement figure from the protocol's own settlement math —
+  honouring the loan's interest mode, any interest already settled by
+  partial repayments, and any late fee — never a locally derived
+  estimate, and states the interest-mode implication before signing. After a successful close or full repayment the page must
   not re-offer close-early, repay, partial repayment, or collateral
   top-up while off-chain data still shows the loan active. While the
   close-early eligibility reads are in flight or failing, the page
@@ -509,25 +517,35 @@ Its intended behaviour, as the test oracle for this surface:
   omitting the feature. A compliance-flagged wallet is not shown
   close-early at all; its open path remains the wind-down repayment.
   Only one pending-action review can be open on the page at a time.
-- Advanced mode offers refinancing on an active, not-yet-matured
-  ERC-20 loan — and only while the position still belongs to the
-  wallet that originally took the loan (collateral carry-over binds
-  to the original borrower; a transferred position is not offered
-  refinancing). The borrower posts a refinance request for exactly
-  the loan's outstanding amount at a chosen rate ceiling and
-  duration, and a lender's acceptance completes everything in one
-  transaction — new loan opened, old lender paid off from the
-  borrower's wallet, old loan closed, collateral moved across without
-  unlocking. Before posting, the review must state: the payoff is
-  always principal plus the full remaining term's interest (never
-  pro-rata, regardless of the loan's interest mode) plus the
-  protocol's cut inside it; the spare wallet balance to keep while
-  the request is open (payoff interest plus the new loan's initiation
-  fee — the new principal arrives in the same transaction); that a
-  short balance only makes the acceptance fail, taking nothing; that
-  posting takes multiple wallet confirmations; and, for a loan on a
-  periodic interest schedule, that the replacement loan will not
-  carry a payment schedule. If the posting sequence is abandoned
+- Advanced mode offers refinancing on an active ERC-20 loan up to and
+  including the end of its grace window (a request can be posted and
+  accepted through grace; strictly past grace both are rejected and
+  the surface says the default process applies) — and only while the
+  position still belongs to the wallet that originally took the loan
+  (collateral carry-over binds to the original borrower; a
+  transferred position is not offered refinancing). The borrower
+  posts a refinance request for exactly the loan's outstanding amount
+  at a chosen rate ceiling and duration, and a lender's acceptance
+  completes everything in one transaction — new loan opened, old
+  lender paid off from the borrower's wallet, old loan closed,
+  collateral moved across without unlocking. When the acceptance
+  lands after the loan's due date, the payoff also includes the same
+  late fee a late repayment charges. Before posting, the review must
+  state: the payoff is always principal plus the full remaining
+  term's interest (never pro-rata, regardless of the loan's interest
+  mode) plus the protocol's cut inside it; that a late acceptance
+  adds the late fee, with the largest fee this request could ever
+  carry disclosed and covered by the approval being granted (so a
+  grace-window acceptance cannot fail on a short allowance); the
+  spare wallet balance to keep while the request is open (payoff
+  interest plus the new loan's initiation fee — the new principal
+  arrives in the same transaction); that a short balance only makes
+  the acceptance fail, taking nothing; that posting takes multiple
+  wallet confirmations; and, for a loan on a periodic interest
+  schedule, that the replacement loan will not carry a payment
+  schedule. A loan already past due but inside grace shows a plain
+  past-due notice on the form, and the quoted figures include the fee
+  as of now. If the posting sequence is abandoned
   after the payoff approval was granted but before the request was
   posted, the approval is unwound automatically (best effort). The
   request carries its own on-chain expiry matching the reviewed
@@ -539,12 +557,17 @@ Its intended behaviour, as the test oracle for this surface:
   errors, unresolved compliance checks, mode switches, the loan
   crossing maturity, and the loan settling some other way (where it
   states the request can no longer complete and offers cancel as the
-  cleanup). The page verifies the request against the chain (a
-  cancelled or replaced request clears itself) and warns distinctly
-  when the standing payoff approval no longer covers completion
-  (with a restore action, which first re-verifies the request is
-  still completable) or when the wallet balance is short (top up or
-  cancel — no false remedy). Cancellation is offered from that view
+  cleanup). Once the loan is strictly past its grace window the view
+  likewise states that no lender can accept the request any more,
+  stops the funding warnings (there is nothing left to fund), and
+  keeps cancel as the unwind. The page verifies the request against
+  the chain (a cancelled or replaced request clears itself) and warns
+  distinctly when the standing payoff approval no longer covers
+  completion (with a restore action, which first re-verifies the
+  request is still completable — including that the loan is not past
+  grace — and restores cover for the largest fee a remaining
+  acceptance could carry) or when the wallet balance is short (top up
+  or cancel — no false remedy). Cancellation is offered from that view
   (it becomes available a few minutes after posting, per the
   protocol's cancel cooldown, judged by chain time) and also removes
   the standing payoff approval. While a request is live, partial
