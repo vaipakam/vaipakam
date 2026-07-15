@@ -436,6 +436,30 @@ describe('refreshMarketSummaries — windowed sweep (#1270)', () => {
     expect(summary).toEqual([{ lending_asset: L1, total: 1 }]);
   });
 
+  it('a pure-clock expiry is swept even with NO source-row write in the window (Codex #1288 r4)', async () => {
+    // The caught-up-chain case: a signed order expires by time with no
+    // event, no updated_at bump. A window whose ONLY touch is the
+    // expiry leg must still delete the emptied market — the reason the
+    // sweep runs on the no-new-blocks path too.
+    const h = freshDb();
+    insertSigned(h, {
+      orderHash: 'gtt-x',
+      offerType: 0,
+      lendingAsset: L1,
+      durationDays: 7,
+      rateBps: 450,
+      expiresAt: 2_000,
+      // created_at/updated_at default to insertSigned's fixed seed
+      // (1000), well before the post-expiry window below.
+    });
+    await refreshMarketSummaries(h.d1 as D1Database, CHAIN_ID, 0, 1_500);
+    expect(summaryRows(h)).toEqual([{ lending_asset: L1, total: 1 }]);
+    // Window (1_990, 2_010] — no updated_at touch (row's is 1000), only
+    // the expiry falls inside it.
+    await refreshMarketSummaries(h.d1 as D1Database, CHAIN_ID, 1_990, 2_010);
+    expect(summaryRows(h)).toEqual([]);
+  });
+
   it('a window that touches nothing leaves other markets untouched (no global recompute)', async () => {
     const h = freshDb();
     insertOffer(h, { offerType: 0, lendingAsset: L1, durationDays: 30, rateBps: 500 });

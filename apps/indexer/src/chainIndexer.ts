@@ -419,6 +419,55 @@ export async function sweepUnpublishedListings(env: Env): Promise<void> {
   }
 }
 
+/**
+ * #1270 — market_summary sweep (extracted so BOTH the normal scan tail
+ * AND the caught-up early-return can call it; Codex #1288 r4).
+ * Recompute discovery rows for every market this window's writes or
+ * time-expiries touched — one atomic set-based batch, constant D1
+ * cost. Fail-open: summary rows are derived data; a hiccup must never
+ * fail a scan. The window watermark lives in indexer_cursor under
+ * MARKET_SWEEP_CURSOR_KIND (`last_block` reused as unix seconds; 60s
+ * overlap margin absorbs clock skew and the gap between a handler's
+ * `now` stamp and the sweep's read) and advances ONLY after a
+ * successful sweep, so a failed window is re-covered next scan.
+ */
+async function sweepMarketSummaries(
+  env: Env,
+  chainId: number,
+  nowSec: number,
+): Promise<void> {
+  try {
+    const sweepRow = await env.DB.prepare(
+      `SELECT last_block FROM indexer_cursor WHERE chain_id = ? AND kind = ?`,
+    )
+      .bind(chainId, MARKET_SWEEP_CURSOR_KIND)
+      .first<{ last_block: number }>();
+    // Missing watermark (Codex #1288 r2/r3): migration 0037 SEEDS this
+    // cursor at backfill time for every chain that had rows at apply,
+    // so an existing chain reads that persisted, deterministic bound —
+    // covering the migration→first-scan gap however late the first
+    // scan runs, and surviving a failed-and-retried first sweep. A
+    // truly absent cursor therefore means a chain added to the deploy
+    // AFTER the migration, which has no rows predating its own
+    // indexing — so the last-hour fallback is safe (its just-inserted
+    // offers carry updated_at = now, caught by the updated_at leg).
+    const since =
+      sweepRow === null ? nowSec - 3_600 : Math.max(0, sweepRow.last_block - 60);
+    await refreshMarketSummaries(env.DB, chainId, since, nowSec);
+    await env.DB.prepare(
+      `INSERT INTO indexer_cursor (chain_id, kind, last_block, updated_at)
+       VALUES (?, ?, ?, ?)
+       ON CONFLICT (chain_id, kind) DO UPDATE SET
+         last_block = excluded.last_block,
+         updated_at = excluded.updated_at`,
+    )
+      .bind(chainId, MARKET_SWEEP_CURSOR_KIND, nowSec, nowSec)
+      .run();
+  } catch (err) {
+    console.error('[chainIndexer] market_summary sweep failed', err);
+  }
+}
+
 // #757 — exported so the per-chain ingest Durable Object can drive a scan
 // directly (the DO is the single serialized writer; the cron and the webhook
 // both route through it). Unchanged behaviour: one cursor-derived,
@@ -467,6 +516,13 @@ export async function runChainIndexerForChain(
   const lastBlock = cursorRow ? BigInt(cursorRow.last_block) : deployBlock - 1n;
   const scanFrom = lastBlock + 1n;
   if (scanFrom > head) {
+    // Caught up — no new blocks. Still sweep market_summary (Codex
+    // #1288 r4): a market whose only order expired purely BY CLOCK has
+    // no on-chain event and no new block, so gating its removal on new
+    // blocks would strand it on a quiet chain (or during a safe-head
+    // stall) until the next real block. The expiry-window legs make
+    // this a bounded index scan even when nothing expired.
+    await sweepMarketSummaries(env, chainId, Math.floor(Date.now() / 1000));
     return {
       scannedFrom: scanFrom,
       scannedTo: scanFrom - 1n,
@@ -652,44 +708,8 @@ export async function runChainIndexerForChain(
   // regardless of touched-set size). Runs AFTER the cursor advance and
   // fail-open — summary rows are derived data; a hiccup here must
   // never fail a scan. The window watermark lives in indexer_cursor
-  // under its own kind (`last_block` reused as unix seconds; 60s
-  // overlap margin absorbs clock skew and the gap between a handler's
-  // `now` stamp and the sweep's read) and only advances AFTER a
-  // successful sweep, so a failed window is re-covered next scan and
-  // no touched market can be skipped past (Codex #1288 r1).
-  try {
-    const sweepRow = await env.DB.prepare(
-      `SELECT last_block FROM indexer_cursor WHERE chain_id = ? AND kind = ?`,
-    )
-      .bind(chainId, MARKET_SWEEP_CURSOR_KIND)
-      .first<{ last_block: number }>();
-    // Missing watermark (Codex #1288 r2/r3): migration 0037 SEEDS this
-    // cursor at backfill time for every chain that had rows at apply,
-    // so an existing chain reads that persisted, deterministic bound
-    // here — covering the migration→first-scan gap however late the
-    // first scan runs, and surviving a failed-and-retried first sweep
-    // (the worker advances the cursor only on success). A truly absent
-    // cursor therefore means a chain added to the deploy AFTER the
-    // migration, which has no rows predating its own indexing — so the
-    // last-hour fallback is safe (its just-inserted offers carry
-    // updated_at = now and are caught by the updated_at leg regardless).
-    const since =
-      sweepRow === null
-        ? now - 3_600
-        : Math.max(0, sweepRow.last_block - 60);
-    await refreshMarketSummaries(env.DB, chainId, since, now);
-    await env.DB.prepare(
-      `INSERT INTO indexer_cursor (chain_id, kind, last_block, updated_at)
-       VALUES (?, ?, ?, ?)
-       ON CONFLICT (chain_id, kind) DO UPDATE SET
-         last_block = excluded.last_block,
-         updated_at = excluded.updated_at`,
-    )
-      .bind(chainId, MARKET_SWEEP_CURSOR_KIND, now, now)
-      .run();
-  } catch (err) {
-    console.error('[chainIndexer] market_summary sweep failed', err);
-  }
+  // under its own kind (see sweepMarketSummaries).
+  await sweepMarketSummaries(env, chainId, now);
 
   // RPC read-diet PR B — keep the display config snapshot current
   // (event-triggered + slow backstop; fail-open INSIDE, so a refresh
