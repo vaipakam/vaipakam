@@ -496,6 +496,12 @@ jobs:
       # retention-days:1 keeps storage minimal — it is only consumed by the
       # same run's build-docs job.
       - name: Upload forge artifacts (for build-docs warm doc build)
+        # #1267 (Codex P2) — non-blocking: this is a warm-cache optimization
+        # only (build-docs downloads it continue-on-error and still has the
+        # deterministic forge-build fallback). A transient artifact-service /
+        # size / network glitch on the upload must NOT fail the required
+        # contracts-fast job and block an otherwise-valid contracts PR.
+        continue-on-error: true
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: forge-out-${{ github.sha }}
