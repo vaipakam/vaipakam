@@ -633,6 +633,30 @@ library LibVaipakam {
     // zero falls back to this constant (see {getInteractionCapVpfiPerEth}).
     uint256 constant INTERACTION_CAP_DEFAULT_VPFI_PER_ETH = 500;
 
+    // ─── VPFI recycling balance governor (#1222, design
+    //     VpfiRecyclingBalanceGovernorDesign.md) ──────────────────────────
+    /// @dev Platform-favouring margin the recycling governor retains from
+    ///      absorption before sizing the coupled reward budget
+    ///      (`recycledBudget = (10000 − marginBps)/10000 × Ā`). Default 5%.
+    ///      Stored `0` ⇒ this default (see {cfgRecycleMarginBps}); a literal
+    ///      0% is expressed as `1` bp — `0` is the reset-to-default sentinel.
+    uint16 constant RECYCLE_MARGIN_DEFAULT_BPS = 500; // 5%
+    /// @dev Hard ceiling on the retained margin (25%). The setter range is
+    ///      `[1, RECYCLE_MARGIN_MAX_BPS]`; `0` resets to the default.
+    uint16 constant RECYCLE_MARGIN_MAX_BPS = 2_500; // 25%
+
+    /// @dev Tariff `k` for peg-free discount entitlements (design §4.2): VPFI
+    ///      (1e18) charged per 1 ETH (1e18) of loan volume per day, so a
+    ///      loan's tariff = `k × ethVolume18 × durationDays / 1e18`. A pure
+    ///      QUANTITY schedule — never a fee-value conversion (that would
+    ///      re-enter the price-peg surface). Stored `0` ⇒ this default (see
+    ///      {cfgRecycleTariffKPer1e18EthDay}). Initial value; governance tunes
+    ///      it in the same family as the interaction-reward ratio so the loop
+    ///      stays net-absorbing after rewards at the governor margin.
+    uint256 constant RECYCLE_TARIFF_K_DEFAULT = 5e16; // 0.05 VPFI / ETH·day
+    uint256 constant RECYCLE_TARIFF_K_MIN = 1e15; // 0.001 VPFI / ETH·day
+    uint256 constant RECYCLE_TARIFF_K_MAX = 1e18; // 1.0 VPFI / ETH·day
+
     /// @custom:event-category informational/config
     event TreasurySet(address indexed newTreasury);
 
@@ -4891,6 +4915,21 @@ library LibVaipakam {
         ///      remove swap-pop (rewrites the moved tail entry's index), and the
         ///      {repointRewardEntry} newUser push.
         mapping(uint256 => uint256) rewardEntryUserIdx;
+        // ─── VPFI recycling balance governor (#1222) — knobs ──────────────
+        /// @dev Platform-retained margin (bps) the recycling governor keeps
+        ///      from absorption before sizing the coupled reward budget.
+        ///      `0` ⇒ {RECYCLE_MARGIN_DEFAULT_BPS} (see {cfgRecycleMarginBps}).
+        ///      Set via {ConfigFacet.setRecycleMarginBps} (ADMIN_ROLE, bounded
+        ///      `[1, RECYCLE_MARGIN_MAX_BPS]`). Appended at struct end — no
+        ///      layout shift for an in-place facet refresh.
+        uint16 recycleMarginBps;
+        /// @dev Tariff `k` (VPFI-1e18 per ETH-1e18 of loan volume per day) for
+        ///      peg-free discount entitlements (design §4.2). `0` ⇒
+        ///      {RECYCLE_TARIFF_K_DEFAULT} (see
+        ///      {cfgRecycleTariffKPer1e18EthDay}). Set via
+        ///      {ConfigFacet.setRecycleTariffKPer1e18EthDay} (ADMIN_ROLE,
+        ///      bounded `[RECYCLE_TARIFF_K_MIN, RECYCLE_TARIFF_K_MAX]`).
+        uint256 recycleTariffKPer1e18EthDay;
     }
 
     /// @notice #393 v1-b — the originating intent of a `matchIntent` loan,
@@ -5383,6 +5422,22 @@ library LibVaipakam {
     function cfgRentalBufferBps() internal view returns (uint256) {
         uint16 v = storageSlot().protocolCfg.rentalBufferBps;
         return v == 0 ? RENTAL_BUFFER_BPS : uint256(v);
+    }
+
+    /// @dev Effective platform-retained recycling margin (bps). `0` ⇒
+    ///      {RECYCLE_MARGIN_DEFAULT_BPS}. The governor reads this once per
+    ///      finalized day and stamps it, so a mid-day retune never rewrites
+    ///      an already-finalized day (design §3.2).
+    function cfgRecycleMarginBps() internal view returns (uint256) {
+        uint16 v = storageSlot().recycleMarginBps;
+        return v == 0 ? uint256(RECYCLE_MARGIN_DEFAULT_BPS) : uint256(v);
+    }
+
+    /// @dev Effective tariff `k` (VPFI-1e18 per ETH-1e18 of loan volume per
+    ///      day). `0` ⇒ {RECYCLE_TARIFF_K_DEFAULT}.
+    function cfgRecycleTariffKPer1e18EthDay() internal view returns (uint256) {
+        uint256 v = storageSlot().recycleTariffKPer1e18EthDay;
+        return v == 0 ? RECYCLE_TARIFF_K_DEFAULT : v;
     }
 
     /// @dev #1193 (Pass-2 D3) — the rental buffer BPS an offer FUNDED, read from
