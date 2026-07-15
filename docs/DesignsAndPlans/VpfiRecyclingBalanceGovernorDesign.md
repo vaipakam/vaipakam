@@ -146,8 +146,13 @@ parallel reward-per-numerator accumulators — `freshRpn` (from
 `scheduleFloor[D]`) and `recycledRpn` (from `recycledBudget[D]`) — per side,
 per chain. A claim spanning many days computes its fresh and recycled
 components exactly from the two accumulators; `paidOutFresh` /
-`paidOutRecycled` and the bucket debit follow without drift. Cost: one extra
-uint256 pair per finalized day per side — accepted for exact accounting.
+`paidOutRecycled` and the bucket debit follow without drift. On a Phase-B′
+mirror the local-vs-remitted split within the recycled component needs no
+third accumulator (Codex r5): it was **fixed at broadcast** — the mirror
+debits its local bucket pro-rata as recycled claims pay, capped at the
+day's Base-instructed `recycleConsume[c][D]`; recycled claims beyond that
+cap draw from remitted tokens with no local debit. Cost: one extra uint256
+pair per finalized day per side — accepted for exact accounting.
 
 Two hard caps make the formula self-consistent (Codex #1257 r1, unified with
 the commitment model in r3 — the ONLY availability terms are the
@@ -164,7 +169,10 @@ commitment-netted ones above; there is no separate "freshRemaining"):
   wei). Availability checks run against the **commit sums**; if the last
   chain's ceil would breach availability, its slice is trimmed by the dust
   and the trim logged (`commitDust[D]`) — reservations can therefore never
-  exceed what exists.
+  exceed what exists. **The trim propagates** (Codex r5): the trimmed
+  chain's *per-chain* broadcast figures (its budget slice /
+  `recycleConsume`) carry the trimmed amounts, so that chain's users accrue
+  against the trimmed slice — never against the untrimmed global halves.
 - **`fundable[D]`, conservatively two-pass (Codex r3 — one pass over-counts
   when the cap binds).** Phase A′ (Base custody): `fundable = Base
   bucketAvailable` (commitment-netted). Phase B′ (mesh), pass 1: per-chain
@@ -172,11 +180,14 @@ commitment-netted ones above; there is no separate "freshRemaining"):
   at target — never the fresh floor share, which mirror buckets cannot fund
   per §6's source-scoping; Codex r4) → `fundable₁ = BaseAvail + Σ_c
   min(mirrorAvail[c], recycledDemand_c)`; `r₁ = min(target, fundable₁)`.
-  Pass 2: recompute per-chain demand at `r₁`, re-derive `fundable₂`, and
-  take `recycledBudget = min(r₁, fundable₂)`. Deterministic, monotone-
-  conservative (never above the true fixed point), and a small-demand
-  mirror's bucket can no longer inflate the fundable total beyond what its
-  capped slice will actually consume. A mirror's bucket funds **its own**
+  Then ITERATE — recompute per-chain recycled demand at `rᵢ`, re-derive
+  `fundableᵢ₊₁`, `rᵢ₊₁ = min(rᵢ, fundableᵢ₊₁)` — **until unchanged** (Codex
+  r5: two fixed passes can still overcommit when BaseAvail = 0 and one
+  mirror holds the only funds). The sequence is monotone non-increasing and
+  each strict step removes at least one binding chain, so it converges in
+  ≤ chains + 1 iterations (implementations may use the closed-form
+  water-filling equivalent). A small-demand mirror's bucket can no longer
+  inflate the fundable total beyond what its capped slice will consume. A mirror's bucket funds **its own**
   chain's slice only (Base-instructed `recycleConsume[c][D]`, §6); Base's
   bucket funds the rest via the netted remit; un-repatriated quiet-chain
   surplus is **not** fundable for other chains until Phase C′ repatriation —
@@ -357,17 +368,26 @@ timelock → governance; default + bounds set with the implementation card,
 tuned so the loop stays net-absorbing after rewards at the governor margin).
 
 Mechanics:
-- **Absorb at initiation:** tariff VPFI → Diamond custody, reusing the
-  existing borrower-LIF custody machinery (`vpfiHeld` → settle at proper
-  close, forfeit on default), extended to the lender yield-fee side. Credits
-  the recycle bucket per the §4 classes on settle/forfeit.
+- **Absorb at initiation — non-refundable (Codex r5):** the tariff buys the
+  entitlement outright: VPFI moves user-vault → Diamond and **credits the
+  recycle bucket immediately at initiation**. It is deliberately NOT
+  `vpfiHeld`-style user custody (that flow stays user-owned during the loan
+  and rebates at proper close — crediting it at init would double-count);
+  only the vault-pull plumbing is reused. No rebate on any outcome — the
+  discounted fee schedule for that loan is what was purchased.
 - **Distribute at close:** unchanged — the existing interaction-reward
   system already sizes by time × ETH volume (eligible interest, #1008
   ETH-capped) and closes at terminal. The pair is symmetric by construction
   and the governor's `Ā`/margin binds the two sides.
-- **Duration-locked custody:** tariff VPFI sits in custody for the loan's
-  life — a supply sink proportional to ETH·day, and wash-cycling loses the
-  margin AND locks capital for the term.
+- **Immediate sink:** the tariff is absorbed at initiation, so the sink is
+  instant and proportional to ETH·day; a wash-cycle forfeits the whole
+  tariff up-front against at most `(1 − m)` of it returning via the coupled
+  term days later — strictly value-destructive.
+- **Position transfers (Codex r5):** the entitlement is **loan-bound** — it
+  travels with the position NFT exactly like the loan's other economics
+  (the E-7 fair-value sale prices it in); the seller gets no refund and the
+  buyer inherits the discounted schedule for the remaining term, mirroring
+  how reward entries re-anchor to the buyer.
 - **Illiquid loans excluded** (no oracle → no ETH volume): no tariff, no
   discount entitlement, no rewards — symmetric with the reward side's
   existing treatment.
@@ -494,8 +514,11 @@ sits at the single canonical point (Base finalization):
   this adds a field) keeps every chain pricing the identical `dailyPool[D]`
   from day one, while all recycle *custody* stays on Base and mirror claims
   keep funding through the existing #776 remittance (source-split on Base's
-  ledger). Mirror-local buckets, day-bucketed reporting, consumption and
-  netting remain Phase B′.
+  ledger) — **with its sizing updated in A′ to the broadcast pool
+  composition** (Codex r5: `chainRewardBudgetForDay` reads the schedule-only
+  `halfPoolForDay` today and would underfund the recycled add-on). Mirror-
+  local buckets, day-bucketed reporting, consumption and netting remain
+  Phase B′.
 - **Phase B′ — mesh netting (the #1222 body, unchanged list).** The two
   message fields, mirror bucket consumption, netted remittance, global `Ā`,
   3-chain e2e + self-heal/idempotency tests, watcher bucket-balance checks.
@@ -605,18 +628,23 @@ LibVpfiPrice.source() → { Unset | FixedRate | MarketFeed }
 LibVpfiPrice.weiPerVpfi() → the single canonical rate every consumer reads
 ```
 
-- **`FixedRate` (built now, activation deferred):** `1e15` wei/VPFI — the
-  owner's proposed 1 VPFI = 0.001 ETH — as a bounded governed knob (event,
-  timelock, zero-sentinel = `Unset`), replacing the discount-peg pair.
-  Every *conversion* consumer — borrower LIF, lender yield-fee (E-1
-  VPFI-payment mode), and any future VPFI-denominated fee — reads the same
-  rate. Activation is a config ceremony gated on the §14 legal glance, not a
-  redeploy. **Notification-fee scoping (Codex r2):** the notification bill
-  MUST keep computing at launch, so its existing fixed constant is **not**
-  removed while the source is `Unset` — it remains that path's dedicated
-  billing tariff (a pre-existing, already-shipped surface) and folds into
-  the unified source only at `FixedRate` activation, when the two are by
-  construction the same number.
+- **`FixedRate` — BUILD DEFERRED ENTIRELY (owner decision 2026-07-15, the
+  tariff unification):** with tariff-priced entitlements adopted as Layer 2,
+  no conversion consumer remains on the launch path, so `LibVpfiPrice` is
+  not built now at all. The dormant discount-peg config pair is retired;
+  the resolver becomes a market-era work item. When built, its consumers
+  are **conversion-based fees ONLY** — native tariffs (Layer 1/2, E-4/E-5
+  service fees, #1219 bonds) must NEVER read it (Codex r5: routing "any
+  future VPFI-denominated fee" through the resolver would silently convert
+  tariffs into price representations). The owner's 1 VPFI = 0.001 ETH rate
+  is recorded here as the pre-staged `FixedRate` value for that future
+  ceremony, gated on the §14 legal glance.
+  **Notification fee (Codex r5 — the last conversion):** the current bill
+  converts an ETH-denominated fee value via the fixed 1e15 constant — a
+  platform-defined VPFI/ETH conversion, however small. Recommendation:
+  re-denominate it as a **flat native VPFI tariff** (default 2 VPFI — the
+  same number today's default computes to), removing the final conversion
+  from the launch surface and making §14.2 unconditionally true.
 - **`MarketFeed` (the succession, Phase 2):** activatable **only** when the
   organic market passes the platform's own liquidity-depth machinery (the
   slippage-at-floor probe), and priced by **TWAP, never spot** — a
@@ -662,11 +690,12 @@ preserved through implementation and every spec/marketing edit:
    VPFI for acquisition (#687-A stands). The §10 rejection of buyback-style
    balancing is re-affirmed *on this ground*, independent of its mechanical
    flaws: no market operations, ever, in the recycling loop.
-2. **No published token price at launch.** Price source ships `Unset` (§13).
-   The lender discount is delivered as a fee schedule — "hold VPFI → pay
-   lower fees" — with no conversion, no token movement, no rate
-   representation. The pre-existing notification-fee constant is absorbed
-   into the unified source without changing its behaviour.
+2. **No published token price at launch — and no price code at all.** The
+   price source's build is deferred entirely (§13); the discount-peg config
+   is retired. Discounts are fee schedules (hold-tier → direct reduction;
+   tariff → deeper schedule), and the notification fee is re-denominated as
+   a flat native VPFI tariff — zero conversions anywhere on the launch
+   surface.
 3. **Rewards are usage rebates, never yield.** The interaction-reward program
    pays users for their *own* platform activity, sized by a deterministic
    formula over their own eligible interest, per-user capped. The governor
