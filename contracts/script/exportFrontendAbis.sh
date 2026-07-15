@@ -117,6 +117,9 @@ FACETS=(
   # asserts, split off RiskAccessFacet. The frontend reads the preview views
   # from THIS facet after the split.
   "RiskPreviewFacet"
+  # #1212 (E-10 Claim-All) — generic best-effort delegatecall batcher. The
+  # frontend reads this ABI to encode the Call[] for the one-click Claim All.
+  "MulticallFacet"
   "OfferAcceptFacet"
   "OfferPreviewFacet"
   "OfferMatchFacet"

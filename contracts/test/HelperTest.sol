@@ -36,6 +36,7 @@ import {SignedOfferFacet} from "../src/facets/SignedOfferFacet.sol";
 import {LenderIntentFacet} from "../src/facets/LenderIntentFacet.sol";
 import {RiskAccessFacet} from "../src/facets/RiskAccessFacet.sol";
 import {RiskPreviewFacet} from "../src/facets/RiskPreviewFacet.sol";
+import {MulticallFacet} from "../src/facets/MulticallFacet.sol";
 import {AggregatorAdapterFactoryFacet} from "../src/facets/AggregatorAdapterFactoryFacet.sol";
 import {BackstopFacet} from "../src/facets/BackstopFacet.sol";
 import {ReceiverFacet} from "../src/facets/ReceiverFacet.sol";
@@ -911,6 +912,16 @@ contract HelperTest {
         selectors[4] = RiskPreviewFacet.acceptMidTierAckPair.selector; // #735 item 3
         selectors[5] = RiskPreviewFacet.previewCreatorBlock.selector; // #735 item 3
         selectors[6] = RiskPreviewFacet.previewIntent.selector; // #625 WI-2b
+    }
+
+    /// @dev #1212 (E-10 Claim-All) — the single generic batching entry point.
+    function getMulticallFacetSelectors()
+        public
+        pure
+        returns (bytes4[] memory selectors)
+    {
+        selectors = new bytes4[](1);
+        selectors[0] = MulticallFacet.multicall.selector;
     }
 
     function getAggregatorAdapterFactoryFacetSelectors()

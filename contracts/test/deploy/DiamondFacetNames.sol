@@ -49,7 +49,7 @@ abstract contract DiamondFacetNames {
     ///      60 → 61 in #1104 with `RiskPreviewFacet` (the read-only preview
     ///      cluster + the two cross-facet gate asserts split off
     ///      `RiskAccessFacet` for EIP-170 header room).)
-    function cutFacetNames() internal pure returns (string[64] memory) {
+    function cutFacetNames() internal pure returns (string[65] memory) {
         return [
             "AccessControlFacet",
             "AddCollateralFacet",
@@ -213,7 +213,14 @@ abstract contract DiamondFacetNames {
             // cross-facet gate asserts (assertMatchAllowed /
             // assertObligationTransferAllowed), split off RiskAccessFacet so
             // both facets keep EIP-170 header room.
-            "RiskPreviewFacet"
+            "RiskPreviewFacet",
+            // #1212 (E-10 Claim-All) — generic best-effort delegatecall
+            // batcher. `multicall(Call[])` runs each item via
+            // `address(this).delegatecall` so msg.sender (and thus every
+            // batched claim's auth) is preserved, and each item enters+exits
+            // the shared reentrancy guard in its own frame. Stateless facet;
+            // the on-chain substance behind the one-click Claim All flow.
+            "MulticallFacet"
         ];
     }
 }

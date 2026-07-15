@@ -95,6 +95,7 @@ import {ReceiverFacet} from "../src/facets/ReceiverFacet.sol";
 import {ConsolidationFacet} from "../src/facets/ConsolidationFacet.sol";
 import {RiskAccessFacet} from "../src/facets/RiskAccessFacet.sol";
 import {RiskPreviewFacet} from "../src/facets/RiskPreviewFacet.sol";
+import {MulticallFacet} from "../src/facets/MulticallFacet.sol";
 import {IntentConfigFacet} from "../src/facets/IntentConfigFacet.sol";
 import {AdminFacet} from "../src/facets/AdminFacet.sol";
 import {ClaimFacet} from "../src/facets/ClaimFacet.sol";
@@ -267,6 +268,8 @@ contract SetupTest is Test {
     // #671 — self-sovereign progressive risk-access facet.
     RiskAccessFacet riskAccessFacet;
     RiskPreviewFacet riskPreviewFacet;
+    // #1212 (E-10 Claim-All) — generic delegatecall batcher.
+    MulticallFacet multicallFacet;
     IntentConfigFacet intentConfigFacet;
     AdminFacet adminFacet;
     ClaimFacet claimFacet;
@@ -374,6 +377,7 @@ contract SetupTest is Test {
         consolidationFacet = new ConsolidationFacet();
         riskAccessFacet = new RiskAccessFacet();
         riskPreviewFacet = new RiskPreviewFacet();
+        multicallFacet = new MulticallFacet();
         intentConfigFacet = new IntentConfigFacet();
         adminFacet = new AdminFacet();
         claimFacet = new ClaimFacet();
@@ -438,7 +442,7 @@ contract SetupTest is Test {
         // Preclose / Refinance / EarlyWithdrawal / PartialWithdrawal
         // quartet at slots 24-27 to unblock the PauseGating fold —
         // those slots stay where they are.
-        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](65);
+        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](66);
         cuts[0] = IDiamondCut.FacetCut({
             facetAddress: address(offerCreateFacet),
             action: IDiamondCut.FacetCutAction.Add,
@@ -461,6 +465,12 @@ contract SetupTest is Test {
             facetAddress: address(riskPreviewFacet),
             action: IDiamondCut.FacetCutAction.Add,
             functionSelectors: helperTest.getRiskPreviewFacetSelectors()
+        });
+        // #1212 (E-10 Claim-All) — generic best-effort delegatecall batcher.
+        cuts[65] = IDiamondCut.FacetCut({
+            facetAddress: address(multicallFacet),
+            action: IDiamondCut.FacetCutAction.Add,
+            functionSelectors: helperTest.getMulticallFacetSelectors()
         });
         cuts[1] = IDiamondCut.FacetCut({
             facetAddress: address(profileFacet),
