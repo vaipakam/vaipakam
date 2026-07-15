@@ -50,10 +50,13 @@ import {
   assertAssetNotPausedLive,
   assertErc20BalanceLive,
   assertPositionNftHeldLive,
+  readGraceSecondsLive,
 } from '../contracts/preflights';
 import {
+  loanEndTimeOf,
   LOAN_STATUS_ACTIVE,
   readLoanLive,
+  refinanceApprovalOf,
   refinancePayoffOf,
   type LoanLive,
 } from '../contracts/loanLive';
@@ -67,6 +70,7 @@ import {
 } from '../lib/offerSchema';
 import {
   formatBpsAsPercent,
+  formatDate,
   formatTokenAmount,
 } from '../lib/format';
 import { ConfirmReceipt } from './ConfirmReceipt';
@@ -83,6 +87,7 @@ export function RefinanceFlow({
   row,
   live,
   chainNow,
+  graceSeconds,
   principalMeta,
   confirmOpen,
   onOpenConfirm,
@@ -96,6 +101,10 @@ export function RefinanceFlow({
   /** Chain time from the parent's live query — maturity gates never
    *  trust the device clock. */
   chainNow: bigint;
+  /** The loan's grace window (parent's cached bucket read). Undefined
+   *  while loading — the render gate then degrades to the pre-grace
+   *  boundary (conservative; submit re-reads the bucket live). */
+  graceSeconds: bigint | undefined;
   principalMeta: TokenMeta;
   /** Page-wide single-confirm-surface slot (see PositionDetails). */
   confirmOpen: boolean;
@@ -137,12 +146,41 @@ export function RefinanceFlow({
   }
 
   // ---- Derived figures (display; submit re-reads live) -------------
-  const payoff = refinancePayoffOf(live);
+  // #1189/#1236 — the payoff is time-aware: past maturity it carries
+  // the grace-window late fee the accept-time pull now includes.
+  const payoff = refinancePayoffOf(live, chainNow);
   const payoffInterest = payoff - live.principal;
   const lifWei = (live.principal * BigInt(fees.loanInitiationFeeBps)) / 10_000n;
   // What the wallet must hold SPARE at accept: the payoff is pulled,
   // but the new principal minus LIF arrives in the same tx.
   const walletTopUp = payoffInterest + lifWei;
+  // The approval bound: the payoff at the LAST moment this request
+  // could be accepted (its own 30-day expiry or the grace end,
+  // whichever first) — what the standing approval is sized to, and
+  // what the review disclosure is derived from whenever the request's
+  // window can cross the due date. While the grace bucket is still
+  // unknown the review CANNOT open (Codex #1256 r1): a zero-grace
+  // fallback would quote no headroom while submit approves the larger
+  // last-fillable bound — an undisclosed figure must never be
+  // signable.
+  const graceReady = graceSeconds !== undefined;
+  const graceSec = graceSeconds ?? 0n;
+  const approvalBound = refinanceApprovalOf(live, {
+    expiresAt: chainNow + REQUEST_WINDOW_DAYS * 86_400n,
+    graceSeconds: graceSec,
+  });
+  // Disclosed as TOTAL payoff growth, not "late fee" (Codex #1256 r3
+  // P3): past maturity the pull grows by the late fee AND the
+  // interest that keeps accruing, and the receipt must not label the
+  // interest share as a fee.
+  const payoffHeadroom = approvalBound - payoff;
+  // OfferCreateFacet clamps a refinance request's on-chain expiry to
+  // the grace boundary (graceEnd + 1) — when that clamp binds, the
+  // honest reviewed lifetime is the grace end, not "30 days after
+  // posting" (Codex #1256 r3).
+  const graceEndTs = loanEndTimeOf(live) + graceSec;
+  const expiryGraceClamped =
+    graceReady && graceEndTs + 1n < chainNow + REQUEST_WINDOW_DAYS * 86_400n;
 
   const rateBps = isPositiveDecimal(rateInput) ? percentToBps(rateInput) : null;
   const durationDays = /^\d+$/.test(durationInput)
@@ -158,17 +196,30 @@ export function RefinanceFlow({
   const dec = principalMeta.decimals;
   const payoffStr = `${formatTokenAmount(payoff, dec)} ${sym}`;
   const topUpStr = `${formatTokenAmount(walletTopUp, dec)} ${sym}`;
+  const headroomStr = `${formatTokenAmount(payoffHeadroom, dec)} ${sym}`;
 
-  // The consent rule covers the FIGURES too: the live-loan prop and
-  // the fee config refresh in the background, so a payoff/fee quote
-  // can change inside an open review — a tick given against the old
-  // numbers must not survive.
+  // The consent rule covers the FIGURES too: the live-loan prop, the
+  // fee config, and the grace bucket refresh in the background, so a
+  // payoff/fee quote can change inside an open review — a tick given
+  // against the old numbers must not survive.
   useEffect(() => {
     setConsent(false);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [payoffStr, topUpStr, fees.loanInitiationFeeBps, fees.treasuryFeeBps]);
+  }, [
+    payoffStr,
+    topUpStr,
+    headroomStr,
+    fees.loanInitiationFeeBps,
+    fees.treasuryFeeBps,
+  ]);
 
-  const matured = chainNow >= live.startTime + live.durationDays * 86_400n;
+  // #1189/#1236 — refinance stays valid THROUGH the grace window
+  // (the accept charges the late fee there) and is blocked only
+  // strictly past it. While the grace bucket is still loading,
+  // degrade to the pre-grace boundary (conservative — the form
+  // appears once the bucket lands; submit re-reads it live).
+  const pastDue = chainNow > loanEndTimeOf(live);
+  const pastGrace = chainNow > loanEndTimeOf(live) + graceSec;
 
   async function submit() {
     // #1028 — a refinance request IS a createOffer: it must respect
@@ -239,9 +290,18 @@ export function RefinanceFlow({
         setError(copy.errors.refinanceNotOriginalBorrower);
         return;
       }
+      // #1189/#1236 — the admission gate blocks only STRICTLY past
+      // the grace window (a fresh in-grace request is valid; its
+      // accept charges the late fee). Judged on the LIVE term fields
+      // and the LIVE grace bucket, mirroring LibAutoRefinanceCheck.
+      const graceSecLive = await readGraceSecondsLive({
+        publicClient,
+        diamondAddress: walletChain.diamondAddress,
+        durationDays: Number(liveLoan.durationDays),
+      });
       const endTime = liveLoan.startTime + liveLoan.durationDays * 86_400n;
-      if (latestBlock.timestamp >= endTime) {
-        setError(copy.errors.refinanceMatured);
+      if (latestBlock.timestamp > endTime + graceSecLive) {
+        setError(copy.errors.refinancePastGrace);
         return;
       }
       // The receipt quoted the CACHED fee config — a governance retune
@@ -276,16 +336,37 @@ export function RefinanceFlow({
         ]);
       }
       // Standing approval for the accept-time payoff pull — computed
-      // from the LIVE loan. Exact, no pad: the pull is principal +
-      // full-term interest on the REMAINING committed term, and both
-      // components only shrink (partials reduce principal and settle
-      // interest; time never grows the figure).
-      const livePayoff = refinancePayoffOf(liveLoan);
+      // from the LIVE loan at the request's LAST fillable moment
+      // (its own expiry or the grace end, whichever first). Since
+      // #1189 the pull GROWS past maturity by the grace-window late
+      // fee, so an approval of today's figure would strand an
+      // otherwise-valid request the moment the loan crosses its due
+      // date (#1236); this bound is still exact against the maximum
+      // the contract can ever pull for THIS request.
+      const requestExpiry =
+        latestBlock.timestamp + REQUEST_WINDOW_DAYS * 86_400n;
+      const livePayoff = refinancePayoffOf(liveLoan, latestBlock.timestamp);
+      const liveApproval = refinanceApprovalOf(liveLoan, {
+        expiresAt: requestExpiry,
+        graceSeconds: graceSecLive,
+      });
+      // The receipt disclosed the approval bound from the RENDER-time
+      // chain clock — a backgrounded tab freezes it, and submit
+      // recomputes from the live block. If the bound GREW (the loan
+      // slid toward or past maturity while the receipt sat open),
+      // force a re-review instead of signing headroom the reviewed
+      // figures never showed (Codex #1256 r3). Shrinkage (a partial
+      // settled) is fine — the pull only gets smaller.
+      if (liveApproval > approvalBound) {
+        void queryClient.invalidateQueries({ queryKey: ['loanLive'] });
+        throw new Error(copy.match.termsChanged);
+      }
       // The approval itself needs no balance, but a wallet that can't
       // even cover the INTEREST portion today should hear it now, not
       // via a failed accept later. (The principal arrives in the
       // accept tx itself, so only the top-up is checked — with the
-      // LIVE fee config.)
+      // LIVE fee config, at TODAY's payoff; the pending card's
+      // balance watch tracks the figure as any late fee accrues.)
       await assertErc20BalanceLive({
         publicClient,
         token: liveLoan.principalAsset,
@@ -306,7 +387,7 @@ export function RefinanceFlow({
         token: liveLoan.principalAsset,
         owner: address,
         spender: walletChain.diamondAddress,
-        amount: livePayoff,
+        amount: liveApproval,
       });
       approvalGranted = approvalTx !== null;
       approvalToken = liveLoan.principalAsset;
@@ -315,8 +396,9 @@ export function RefinanceFlow({
         durationDays,
         consent,
         // The request's own hard expiry — this is what makes the
-        // reviewed lifetime true even when looser caps pre-exist.
-        expiresAt: latestBlock.timestamp + REQUEST_WINDOW_DAYS * 86_400n,
+        // reviewed lifetime true even when looser caps pre-exist
+        // (and the bound the approval above was computed against).
+        expiresAt: requestExpiry,
       });
       const { receipt } = await write('createOffer', [payload]);
       const created = parseEventLogs({
@@ -359,11 +441,11 @@ export function RefinanceFlow({
   const walletReady =
     onSupportedChain && Boolean(walletClient) && Boolean(publicClient);
 
-  // Matured (by live chain time + live term): refinance no longer
-  // applies — the plain Repay path settles a matured loan. (A pending
-  // request's surface lives in RefinancePendingCard, which the page
-  // keeps mounted regardless.)
-  if (matured) return null;
+  // Strictly past the grace window (by live chain time + live term):
+  // refinance no longer applies — resolution belongs to the default
+  // process. (A pending request's surface lives in
+  // RefinancePendingCard, which the page keeps mounted regardless.)
+  if (pastGrace) return null;
 
   return (
     <section className="card">
@@ -371,6 +453,14 @@ export function RefinanceFlow({
       <p className="muted">{copy.refinance.blurb}</p>
 
       <div>
+        {pastDue ? (
+          // #1236 — in the grace window the request stays postable,
+          // but the payoff figures below now carry the growing late
+          // fee. Say so before the review opens.
+          <div className="banner banner-warn" role="alert" style={{ marginBottom: 12 }}>
+            <span className="banner-body">{copy.refinance.graceNote}</span>
+          </div>
+        ) : null}
         {live.periodicInterestCadence !== 0 ? (
           <div className="banner banner-warn" role="alert" style={{ marginBottom: 12 }}>
             <span className="banner-body">{copy.refinance.periodicWarning}</span>
@@ -422,6 +512,7 @@ export function RefinanceFlow({
               !rateValid ||
               !durationValid ||
               !fees.ready ||
+              !graceReady ||
               flowDisabled('post-offer')
             }
             onClick={onOpenConfirm}
@@ -447,16 +538,33 @@ export function RefinanceFlow({
               confirmLabel={copy.refinance.confirm}
               onBack={onCloseConfirm}
               onConfirm={() => void submit()}
-              disabled={!walletReady || !consent || flowDisabled('post-offer')}
+              // graceReady here too: the bucket query can refresh to
+              // undefined (chain hop) while this receipt is open.
+              disabled={
+                !walletReady ||
+                !consent ||
+                !graceReady ||
+                flowDisabled('post-offer')
+              }
               data={{
                 youReceive:
                   'A new loan at your chosen terms the moment a lender accepts — your collateral moves to it automatically and this loan closes in the same transaction.',
                 youLock:
                   'Nothing new — your existing collateral carries over to the new loan without ever unlocking.',
-                youMayOwe: `~${payoffStr} to pay off this loan, pulled automatically when a lender accepts. ${copy.refinance.payoffNote} ${copy.refinance.walletNote(topUpStr)}`,
+                youMayOwe: `~${payoffStr} to pay off this loan, pulled automatically when a lender accepts. ${copy.refinance.payoffNote} ${
+                  payoffHeadroom > 0n
+                    ? `${copy.refinance.lateFeeDisclosure(headroomStr)} `
+                    : ''
+                }${copy.refinance.walletNote(topUpStr)}`,
                 youCanLose: copy.refinance.shortIsSafe,
                 fees: `${copy.fees.borrowerLIF(formatBpsAsPercent(fees.loanInitiationFeeBps))} The protocol's ${formatBpsAsPercent(fees.treasuryFeeBps)} cut of the payoff interest settles inside the payoff.`,
-                whenThisEnds: `When a lender accepts your request, when you cancel it, or when it expires ${Number(REQUEST_WINDOW_DAYS)} days after posting. ${copy.refinance.guardrailNote}`,
+                whenThisEnds: `When a lender accepts your request, when you cancel it, or ${
+                  expiryGraceClamped
+                    ? copy.refinance.expiresAtGraceEnd(
+                        formatDate(Number(graceEndTs)),
+                      )
+                    : `when it expires ${Number(REQUEST_WINDOW_DAYS)} days after posting`
+                }. ${copy.refinance.guardrailNote}`,
               }}
             >
               {live.periodicInterestCadence !== 0 ? (

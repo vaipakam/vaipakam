@@ -296,9 +296,14 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
   // The partial/preclose interlocks exist to protect an ACCEPTABLE
   // request from being stranded by a changed principal or a settled
   // loan. An EXPIRED request can't be accepted by anyone, so it stops
-  // blocking (while verification is still loading, keep blocking —
-  // the conservative side).
-  const refinanceBlocking = refinancePending && refi.state?.expired !== true;
+  // blocking — and neither can one whose loan is strictly past its
+  // grace window (the #1189 admission gate rejects the accept).
+  // While verification is still loading, keep blocking — the
+  // conservative side.
+  const refinanceBlocking =
+    refinancePending &&
+    refi.state?.expired !== true &&
+    refi.state?.pastGrace !== true;
 
   // Lender-side sibling: a live Option-2 sale listing. Existence is
   // the CHAIN's say-so (positionLock on the lender NFT), so a listing
@@ -453,13 +458,19 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
   // inside submit handlers, so a past-due borrower could never see how
   // long they had). Static protocol config per (chain, duration) —
   // cached long in the hook. Rentals resolve their window elsewhere.
-  // Keyed on the LIVE duration when the past-due read has it (an
-  // extended duration can land in a different grace bucket).
+  // Keyed on the LIVE duration whenever ANY live read has it (a keeper
+  // extend can land the loan in a different grace bucket): loanLive is
+  // the advanced-mode strategy read and refreshes fastest, bannerTerms
+  // is the any-mode past-due read; the indexer row is the last resort
+  // (Codex #1256 r3 — the #1235 gates combine live term fields with
+  // this bucket, so a row-bucketed grace could mis-gate them).
   const grace = useGraceSeconds(
     loan.data && loan.data.assetType === AssetType.ERC20
-      ? bannerTerms.data
-        ? Number(bannerTerms.data.live.durationDays)
-        : loan.data.durationDays
+      ? loanLive.data
+        ? Number(loanLive.data.live.durationDays)
+        : bannerTerms.data
+          ? Number(bannerTerms.data.live.durationDays)
+          : loan.data.durationDays
       : undefined,
   );
 
@@ -769,15 +780,18 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
         }
         if (row.assetType === AssetType.ERC20 && totalDue > 0n) {
           // The owed amount STEPS UP at each elapsed-day boundary
-          // (whole-day interest flooring) and by 0.5%/day late fee —
-          // an exact-amount approval can be short by the time repayLoan
-          // executes. Pad by ~2 days of interest + one late-fee step;
-          // repayLoan only pulls the recomputed amount, so the pad is
-          // never spent.
+          // (whole-day interest flooring) and by the late fee — an
+          // exact-amount approval can be short by the time repayLoan
+          // executes. Pad by ~2 days of interest + the worst single
+          // late-fee jump (the 1% base landing when a repay signed
+          // just before maturity mines just after it, plus a 0.5%
+          // day-step — same bound as the preclose pad, Codex #1256
+          // r1); repayLoan only pulls the recomputed amount, so the
+          // pad is never spent.
           const principal = BigInt(row.principal);
           const pad =
             fullTermInterest(principal, row.interestRateBps, 2) +
-            (principal * 50n) / 10_000n;
+            (principal * 150n) / 10_000n;
           // approve() succeeds no matter the balance — check the wallet
           // holds the PADDED amount before asking for an approval
           // signature: a wallet holding exactly totalDue can still be
@@ -1137,17 +1151,23 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
         readRepaymentDueLive(publicClient, walletChain.diamondAddress, row.loanId),
         publicClient.getBlock({ blockTag: 'latest' }),
       ]);
-      // The card's pre-maturity gate ran on a CACHED chain clock (a
-      // backgrounded tab stops refetching) — re-judge maturity live
-      // against the LIVE term fields. precloseDirect itself has NO
-      // maturity revert: past maturity it would settle WITHOUT the
-      // late fee the repay path charges, and the quoted calcDue
-      // (which includes late fees) would no longer match the pull.
+      // The card's grace gate ran on a CACHED chain clock (a
+      // backgrounded tab stops refetching) — re-judge live against
+      // the LIVE term fields and the LIVE grace bucket. Since #1189,
+      // precloseDirect stays valid THROUGH the grace window (charging
+      // the same late fee repayLoan does — calcDue already includes
+      // it) and reverts strictly past it, so mirror exactly that
+      // boundary (#1235).
+      const graceSec = await readGraceSecondsLive({
+        publicClient,
+        diamondAddress: walletChain.diamondAddress,
+        durationDays: Number(live.durationDays),
+      });
       if (
-        latestBlock.timestamp >=
-        live.startTime + live.durationDays * 86_400n
+        latestBlock.timestamp >
+        live.startTime + live.durationDays * 86_400n + graceSec
       ) {
-        setError(copy.errors.precloseMatured);
+        setError(copy.errors.preclosePastGrace);
         return;
       }
       // `calculateRepaymentAmount` IS the preclose figure — it and
@@ -1164,11 +1184,16 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
         return;
       }
       // The owed amount steps up at each elapsed-day boundary while
-      // the tx is pending — pad by ~2 days of interest; precloseDirect
+      // the tx is pending — pad by ~2 days of interest plus the
+      // worst single late-fee jump: a close signed just before
+      // maturity that mines just after it picks up the 1% base fee
+      // at once, and an in-grace close crossing a day boundary steps
+      // 0.5% (Codex #1256 r1 — 1% + 0.5% covers both). precloseDirect
       // pulls only what it recomputes, so the pad is never spent.
       const due =
         calcDue +
-        (live.principal * live.interestRateBps * 2n) / (365n * 10_000n);
+        (live.principal * live.interestRateBps * 2n) / (365n * 10_000n) +
+        (live.principal * 150n) / 10_000n;
       await assertErc20BalanceLive({
         publicClient,
         token: row.lendingAsset as `0x${string}`,
@@ -1217,6 +1242,21 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
         : '…';
   const nftStr = `NFT ${shortAddress(row.lendingAsset)} #${row.tokenId}`;
   const dueDate = formatDate(row.startTime + row.durationDays * 86_400);
+  // #1235/#1236 — the borrower's early-close and refinance windows
+  // extend THROUGH the grace period since contract #1189 (both charge
+  // the repay-parity late fee there; strictly past grace they revert).
+  // Judged by chain time against the LIVE term fields. While the
+  // grace bucket is still loading, degrade to the pre-grace boundary
+  // (conservative: the surface appears once the bucket lands — it
+  // never lingers past the real window).
+  const liveEndTime = loanLive.data
+    ? loanLive.data.live.startTime + loanLive.data.live.durationDays * 86_400n
+    : null;
+  const livePastDue =
+    liveEndTime !== null && loanLive.data!.chainNow > liveEndTime;
+  const liveWithinGraceWindow =
+    liveEndTime !== null &&
+    loanLive.data!.chainNow <= liveEndTime + (grace.data ?? 0n);
 
   const actionLabel =
     action === 'repay'
@@ -1731,7 +1771,7 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
           while the live reads are in flight (never a silently absent
           feature), and the full card only once the live loan has
           landed: the quoted figure and mode note come from it, and
-          the pre-maturity gate is judged by CHAIN time against the
+          the grace-window gate is judged by CHAIN time against the
           LIVE term fields (a wrong device clock or a stale indexer
           row must not decide it). */}
       {isAdvanced &&
@@ -1752,9 +1792,7 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
           </section>
         ) : (
         <>
-        {loanLive.data.chainNow <
-        loanLive.data.live.startTime +
-          loanLive.data.live.durationDays * 86_400n ? (
+        {liveWithinGraceWindow ? (
         <section className="card">
           <h3>{copy.preclose.title}</h3>
           <p className="muted">
@@ -1763,6 +1801,15 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
               ? copy.preclose.fullTermNote
               : copy.preclose.proRataNote}
           </p>
+          {livePastDue ? (
+            // #1235 — in the grace window the close stays open but the
+            // quoted figure now carries the repay-parity late fee, and
+            // the door shuts when grace ends. Say both before the
+            // confirm surface opens.
+            <div className="banner banner-warn" role="alert">
+              <span className="banner-body">{copy.preclose.graceNote}</span>
+            </div>
+          ) : null}
           {refinanceBlocking ? (
             // A live refinance request is frozen against THIS loan —
             // settling it early would strand the request forever.
@@ -1803,6 +1850,8 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
                     loanLive.data.live.useFullTermInterest
                       ? copy.preclose.fullTermNote
                       : copy.preclose.proRataNote
+                  }${
+                    livePastDue ? ` ${copy.preclose.graceFeeReceiptNote}` : ''
                   } The exact amount is read live when you confirm; the approval carries small headroom that is never spent.`,
                   youCanLose: 'Nothing beyond what you pay.',
                   fees: 'No extra Vaipakam fee to close early — the protocol’s cut comes out of the lender’s interest.',
@@ -1812,9 +1861,10 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
             </div>
           )}
         </section>
-        ) : // Matured (by live chain time + live term): close-early no
-          // longer applies — the plain Repay path below is the one
-          // that settles a matured loan, late fees included.
+        ) : // Strictly past the grace window (by live chain time + live
+          // term + live grace bucket): every borrower door is shut —
+          // preclose and repay both revert past grace; resolution
+          // belongs to the default process now (#1189/#1235).
           null}
         {/* Refinance FORM — shares the strategy gates with
             close-early (advanced borrower, live-verified Active,
@@ -1833,6 +1883,7 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
             row={row}
             live={loanLive.data.live}
             chainNow={loanLive.data.chainNow}
+            graceSeconds={grace.data}
             principalMeta={principal}
             confirmOpen={confirmingSurface === 'refinance'}
             onOpenConfirm={() => setConfirmingSurface('refinance')}

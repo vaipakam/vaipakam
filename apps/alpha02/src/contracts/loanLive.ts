@@ -70,17 +70,71 @@ export function interestAccrualStartOf(live: LoanLive): bigint {
     : live.startTime;
 }
 
-/** The refinance old-lender payoff — principal + FULL-TERM interest
- *  on the remaining committed term (RefinanceFacet pays the exiting
- *  lender their maximum entitlement; no late fee, no shortfall). ONE
- *  definition — the review quote, the submit approval, the pending
- *  watch, and the restore action must never drift apart. */
-export function refinancePayoffOf(live: LoanLive): bigint {
-  const days = interestRemainingDaysOf(live);
+/** The loan's fixed origination maturity — the reference every
+ *  late-fee and grace computation keys on (LibVaipakam.ONE_DAY days). */
+export function loanEndTimeOf(live: LoanLive): bigint {
+  return live.startTime + live.durationDays * 86_400n;
+}
+
+/** Mirrors LibVaipakam.calculateLateFee for ERC-20 loans: 0 at or
+ *  before maturity, then 1% of principal + 0.5% per WHOLE day late,
+ *  capped at 5%. Both the repay and the #1189 preclose/refinance
+ *  grace-window paths charge exactly this. */
+export function lateFeeAt(live: LoanLive, ts: bigint): bigint {
+  const endTime = loanEndTimeOf(live);
+  if (ts <= endTime) return 0n;
+  const daysLate = (ts - endTime) / 86_400n;
+  let feeBps = 100n + daysLate * 50n;
+  if (feeBps > 500n) feeBps = 500n;
+  return (live.principal * feeBps) / 10_000n;
+}
+
+/** The refinance old-lender payoff AS OF `asOf` (chain time). The
+ *  facet pays `settlementInterestNet(oldLoan, now)` + the #1189
+ *  grace-window late fee, and that settlement interest is
+ *  `max(whole days elapsed since the interest clock, remaining
+ *  committed term)` — i.e. the full-term floor in term, but PAST
+ *  maturity it keeps accruing with elapsed time (Codex #1256 r1).
+ *  This mirror applies the remaining-term floor in BOTH interest
+ *  modes (exact for full-term loans; over-covers a pro-rata loan —
+ *  the pull only shrinks) and stays gross of `interestSettled`
+ *  (again over-covers only). ONE definition — the review quote, the
+ *  pending watch, and the funding checks must never drift apart. */
+export function refinancePayoffOf(live: LoanLive, asOf: bigint): bigint {
+  const start = interestAccrualStartOf(live);
+  const elapsedDays = asOf > start ? (asOf - start) / 86_400n : 0n;
+  const floorDays = interestRemainingDaysOf(live);
+  const days = elapsedDays > floorDays ? elapsedDays : floorDays;
   return (
     live.principal +
-    (live.principal * live.interestRateBps * days) / (365n * 10_000n)
+    (live.principal * live.interestRateBps * days) / (365n * 10_000n) +
+    lateFeeAt(live, asOf)
   );
+}
+
+/** The standing-approval target for a refinance request: the payoff
+ *  at the LAST moment the request is still fillable — the earlier of
+ *  its own expiry and the end of the loan's grace window (a lender
+ *  can accept any time up to then, and the accept-time pull includes
+ *  the late fee AND the still-accruing grace interest AT THAT TIME,
+ *  #1189/#1236). Approving only today's
+ *  figure would strand an otherwise-valid request the moment the
+ *  loan crosses maturity; approving this bound keeps the approval
+ *  exact against the maximum the contract can ever pull for THIS
+ *  request. `expiresAt === 0` means no offer-level expiry — the
+ *  grace end alone bounds it. */
+export function refinanceApprovalOf(
+  live: LoanLive,
+  opts: { expiresAt: bigint; graceSeconds: bigint },
+): bigint {
+  const graceEnd = loanEndTimeOf(live) + opts.graceSeconds;
+  // acceptOffer rejects at ts >= expiresAt, so the last fillable
+  // moment under the offer's own clock is expiresAt - 1.
+  const lastFillable =
+    opts.expiresAt > 0n && opts.expiresAt - 1n < graceEnd
+      ? opts.expiresAt - 1n
+      : graceEnd;
+  return refinancePayoffOf(live, lastFillable);
 }
 
 /** Mirror LibVaipakam.SECONDS_PER_YEAR / BASIS_POINTS. */

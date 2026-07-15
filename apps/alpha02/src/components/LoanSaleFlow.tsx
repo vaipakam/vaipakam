@@ -205,7 +205,7 @@ export function LoanSaleFlow({
         latestBlock.timestamp >=
         liveLoan.startTime + liveLoan.durationDays * 86_400n
       ) {
-        setError(copy.errors.refinanceMatured);
+        setError(copy.errors.saleListingMatured);
         return;
       }
       // The standing settlement approval — full interest-window
