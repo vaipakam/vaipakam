@@ -202,6 +202,15 @@ export function useMyClaimables() {
       // candidate set unknowable → unavailable, per the contract above.
       const chainIds: bigint[] = [];
       let enumerationAvailable = true;
+      // #1247 PAG-003 — the same fail-loud walk ceiling
+      // chainPositions.ts uses, applied to BOTH enumeration paths
+      // (the paginated walk AND the legacy unpaginated fallback,
+      // Codex #1265 r2). Past it the candidate set is
+      // unknowable-in-practice (thousands of position NFTs), and an
+      // unbounded walk + per-candidate probing is exactly the RPC
+      // fan-out this page must never do; unavailable beats a scan
+      // that never ends.
+      const WALK_CAP = 2000n;
       try {
         // Paginated so a wallet griefed with a huge position-NFT
         // inventory can't make one unbounded eth_call revert and hide a
@@ -218,6 +227,7 @@ export function useMyClaimables() {
           chainIds.push(...ids);
           offset += PAGE;
           if (offset >= total) break;
+          if (offset >= WALK_CAP) return null;
         }
       } catch (e) {
         if (!isRevert(e)) return null;
@@ -228,6 +238,10 @@ export function useMyClaimables() {
             functionName: 'getUserPositionLoans',
             args: [address],
           })) as readonly [readonly bigint[], readonly bigint[]];
+          // #1247 PAG-003 (Codex #1265 r2) — the legacy view is
+          // unbounded; the per-candidate probing that follows must
+          // respect the same fail-loud ceiling as the paginated walk.
+          if (legacy[0].length > Number(WALK_CAP)) return null;
           chainIds.push(...legacy[0]);
         } catch (e2) {
           if (!isRevert(e2)) return null;

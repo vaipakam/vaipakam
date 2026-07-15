@@ -625,6 +625,12 @@ export const copy = {
     scopeNote:
       'This list covers tokens seen in your Vaipakam loans and offers on this network. Approvals granted to other apps or for other tokens aren’t shown — your wallet’s own token-approvals view remains the complete picture.',
     none: 'No standing approvals to Vaipakam found for your known tokens.',
+    // #1247 PAG-006 — the checked-token window's widen affordance.
+    // Same one-click honesty as lists.showMore.
+    checkMore: (next: number, total: number) =>
+      total > next
+        ? `Check ${next} more tokens (${total} unchecked)`
+        : `Check ${next} more token${next === 1 ? '' : 's'}`,
     loading: 'Reading your standing approvals…',
     unavailable:
       'We couldn’t read your approvals right now — please try again in a moment.',
@@ -1319,6 +1325,17 @@ export const copy = {
       'We couldn’t confirm the VPFI token just now — nothing was approved. Please try again in a moment.',
     addToWallet: 'Add VPFI to MetaMask',
     addedToWallet: 'Asked your wallet to track VPFI.',
+  },
+
+  // #1247 (PAG-001…008) — the shared list-window affordance. Every
+  // chain/indexer-fed list renders a bounded window with this button;
+  // the count keeps it honest about what is still unrendered.
+  lists: {
+    // The label promises what ONE click reveals; when more is still
+    // hidden beyond that page, say so (Codex #1265 r1 — "Show 475
+    // more" revealing 25 would mislead on exactly the big-list path).
+    showMore: (next: number, total: number) =>
+      total > next ? `Show ${next} more (${total} hidden)` : `Show ${next} more`,
   },
 
   errors: {

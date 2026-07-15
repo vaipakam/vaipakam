@@ -205,11 +205,13 @@ the cap.
 Two follow-up PRs:
 
 1. **alpha02 UI/data batch** — the shared window pattern
-   (`slice(0, visible)` + Load more, 25-row page, mirroring Activity)
-   for PAG-001 (Positions + Vault rider), PAG-002 (with
+   (`slice(0, visible)` + Show more, 25-row page, mirroring Activity)
+   for PAG-001 (Positions + the Vault asset-list rider), PAG-002 (with
    window-scoped screening), PAG-003 (plus the claimables `WALK_CAP`),
    PAG-004, PAG-005, PAG-008; PAG-006's read-set windowing; PAG-012's
-   hydration cap.
+   hydration cap. **SHIPPED** — `lib/visibleWindow.tsx`
+   (`useVisibleWindow` / `WindowedRowList`) + the release fragment
+   `1247-alpha02-list-windows.md`.
 2. **indexer batch** — PAG-007 (`/claimables` 200-cap + `truncated`;
    coordinate the defi consumer), PAG-009 (candles `all`-range clamp),
    PAG-010 (markets top-N + `truncated`), PAG-011 (signed-book

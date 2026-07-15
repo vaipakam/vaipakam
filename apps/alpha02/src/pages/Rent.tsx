@@ -85,6 +85,7 @@ import {
 import { AssetType } from '../lib/types';
 import { formatDurationDays, formatTokenAmount, shortAddress } from '../lib/format';
 import { captureTxError } from '../lib/errors';
+import { WindowedRowList } from '../lib/visibleWindow';
 import { AssetPicker } from '../components/AssetPicker';
 import { MarketFreshnessNote } from '../components/MarketFreshnessNote';
 import { Checklist, allChecksPass, type CheckItem } from '../components/Checklist';
@@ -1263,8 +1264,15 @@ function RentNftFlow() {
                   {copy.rent.browseEmpty} {copy.rent.browseEmptyCta}
                 </p>
               ) : (
-                <div className="row-list">
-                  {listings.map((o) => (
+                // #1247 PAG-004 — windowed: the source cap allows up
+                // to 500 listings.
+                <WindowedRowList
+                  rows={listings}
+                  // Wallet identity too (Codex #1265 r2): the list
+                  // filters out the CONNECTED wallet's own listings,
+                  // so a wallet switch changes the rows.
+                  resetKey={`${readChain.chainId}|${address?.toLowerCase() ?? ''}`}
+                  render={(o) => (
                     <RentalListingRow
                       key={o.offerId}
                       offer={o}
@@ -1276,8 +1284,8 @@ function RentNftFlow() {
                         setStep('review');
                       }}
                     />
-                  ))}
-                </div>
+                  )}
+                />
               )}
             </>
           )}

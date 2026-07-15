@@ -23,6 +23,7 @@ import { useTokenMeta } from '../contracts/erc20';
 import { AssetType } from '../lib/types';
 import { formatTokenAmount, shortAddress } from '../lib/format';
 import { captureTxError } from '../lib/errors';
+import { WindowedRowList } from '../lib/visibleWindow';
 import { assertRowActionStillValid } from '../contracts/preflights';
 import type { IndexedOffer } from '../data/indexer';
 
@@ -153,7 +154,10 @@ function OfferRow({ offer }: { offer: IndexedOffer }) {
 }
 
 export function Positions() {
-  const { isConnected } = useActiveChain();
+  const { isConnected, address, readChain } = useActiveChain();
+  // #1247 — window identity: a wallet/chain switch on this mounted
+  // page must collapse every expanded window (Codex #1265 r1).
+  const listKey = `${readChain.chainId}|${address?.toLowerCase() ?? ''}`;
   const { setOpen } = useModal();
   const loans = useMyLoansFull();
   const offers = useMyOffersFull();
@@ -218,11 +222,14 @@ export function Positions() {
           {offers.data.rows.length > 0 ? (
             <section style={{ marginBottom: 24 }}>
               <h2>Open offers</h2>
-              <div className="row-list">
-                {offers.data.rows.map((o) => (
-                  <OfferRow key={o.offerId} offer={o} />
-                ))}
-              </div>
+              {/* #1247 PAG-001 — windowed: the data caps allow up to
+                  500–2000 rows; render (and each row's token-meta
+                  reads) must scale with what the user asks to see. */}
+              <WindowedRowList
+                rows={offers.data.rows}
+                resetKey={listKey}
+                render={(o) => <OfferRow key={o.offerId} offer={o} />}
+              />
             </section>
           ) : null}
 
@@ -245,30 +252,55 @@ export function Positions() {
                     l.status !== 'active' &&
                     l.status !== 'fallback_pending',
                 );
+                // #1247 PAG-001 — live/ended groups are windowed; the
+                // attention group stays unwindowed on purpose (it is
+                // the actionable set, naturally small, and a hidden
+                // claim row would be a hidden payout).
                 const group = (
                   title: string,
                   list: typeof rows,
                   claimWaiting: boolean,
+                  windowed: boolean,
                 ) =>
                   list.length > 0 ? (
-                    <section style={{ marginBottom: 24 }}>
+                    // key + group-scoped resetKey (Codex #1265 r3):
+                    // when a whole group empties (all Active loans
+                    // end), React would otherwise reuse this unkeyed
+                    // sibling's window instance for the SHIFTED group
+                    // — same listKey, no reset, previous expanded
+                    // count inherited.
+                    <section key={title} style={{ marginBottom: 24 }}>
                       <h2>{title}</h2>
-                      <div className="row-list">
-                        {list.map((loan) => (
-                          <LoanRow
-                            key={keyOf(loan)}
-                            loan={loan}
-                            claimWaiting={claimWaiting}
-                          />
-                        ))}
-                      </div>
+                      {windowed ? (
+                        <WindowedRowList
+                          rows={list}
+                          resetKey={`${listKey}|${title}`}
+                          render={(loan) => (
+                            <LoanRow
+                              key={keyOf(loan)}
+                              loan={loan}
+                              claimWaiting={claimWaiting}
+                            />
+                          )}
+                        />
+                      ) : (
+                        <div className="row-list">
+                          {list.map((loan) => (
+                            <LoanRow
+                              key={keyOf(loan)}
+                              loan={loan}
+                              claimWaiting={claimWaiting}
+                            />
+                          ))}
+                        </div>
+                      )}
                     </section>
                   ) : null;
                 return (
                   <>
-                    {group(copy.positions.groupAttention, attention, true)}
-                    {group(copy.positions.groupActive, live, false)}
-                    {group(copy.positions.groupEnded, ended, false)}
+                    {group(copy.positions.groupAttention, attention, true, false)}
+                    {group(copy.positions.groupActive, live, false, true)}
+                    {group(copy.positions.groupEnded, ended, false, true)}
                   </>
                 );
               })()
