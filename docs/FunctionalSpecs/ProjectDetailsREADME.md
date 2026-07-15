@@ -2142,7 +2142,7 @@ A comprehensive user dashboard is essential for managing activities on Vaipakam.
     - `setRewardGraceSeconds`: 5 minutes to 30 days.
     - `setInteractionCapVpfiPerEth`: 1 to 1,000,000, while preserving documented sentinel values for reset / emergency-disable behavior.
     - `updateRiskParams.maxLtvBps`: 10% to 100%.
-    - `setTierLiquidationLtvBps(t1, t2, t3)`: per-tier liquidation thresholds, set atomically across all three tiers, each within its bounded box and preserving the cross-tier invariant `T1 ≤ T2 ≤ T3` (Tier 1 the most conservative). Defaults 80% / 85% / 90%. (Replaces the retired single `updateRiskParams.liqThresholdBps` knob per #999.)
+    - `setTierLiquidationLtvBps(t1, t2, t3)`: per-tier liquidation thresholds, set atomically across all three tiers. Each tier value must be within `[MIN_TIER_LIQUIDATION_LTV_BPS, MAX_TIER_LIQUIDATION_LTV_BPS]` (50% to 95%) and preserve the cross-tier invariant `T1 ≤ T2 ≤ T3` (Tier 1 the most conservative). Defaults 80% / 85% / 90%. (Replaces the retired single `updateRiskParams.liqThresholdBps` knob per #999.)
     - `updateRiskParams.reserveFactorBps`: no more than 50%.
     - `updateKYCThresholds`: each threshold 100 to 1,000,000 in the active numeraire, with tier ordering still enforced.
     - `setMinPrincipalForFinerCadence`: active-numeraire principal threshold from 1,000 to 10,000,000, default 100,000.
