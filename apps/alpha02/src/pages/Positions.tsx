@@ -23,6 +23,7 @@ import { useTokenMeta } from '../contracts/erc20';
 import { AssetType } from '../lib/types';
 import { formatTokenAmount, shortAddress } from '../lib/format';
 import { captureTxError } from '../lib/errors';
+import { WindowedRowList } from '../lib/visibleWindow';
 import { assertRowActionStillValid } from '../contracts/preflights';
 import type { IndexedOffer } from '../data/indexer';
 
@@ -218,11 +219,13 @@ export function Positions() {
           {offers.data.rows.length > 0 ? (
             <section style={{ marginBottom: 24 }}>
               <h2>Open offers</h2>
-              <div className="row-list">
-                {offers.data.rows.map((o) => (
-                  <OfferRow key={o.offerId} offer={o} />
-                ))}
-              </div>
+              {/* #1247 PAG-001 — windowed: the data caps allow up to
+                  500–2000 rows; render (and each row's token-meta
+                  reads) must scale with what the user asks to see. */}
+              <WindowedRowList
+                rows={offers.data.rows}
+                render={(o) => <OfferRow key={o.offerId} offer={o} />}
+              />
             </section>
           ) : null}
 
@@ -245,30 +248,48 @@ export function Positions() {
                     l.status !== 'active' &&
                     l.status !== 'fallback_pending',
                 );
+                // #1247 PAG-001 — live/ended groups are windowed; the
+                // attention group stays unwindowed on purpose (it is
+                // the actionable set, naturally small, and a hidden
+                // claim row would be a hidden payout).
                 const group = (
                   title: string,
                   list: typeof rows,
                   claimWaiting: boolean,
+                  windowed: boolean,
                 ) =>
                   list.length > 0 ? (
                     <section style={{ marginBottom: 24 }}>
                       <h2>{title}</h2>
-                      <div className="row-list">
-                        {list.map((loan) => (
-                          <LoanRow
-                            key={keyOf(loan)}
-                            loan={loan}
-                            claimWaiting={claimWaiting}
-                          />
-                        ))}
-                      </div>
+                      {windowed ? (
+                        <WindowedRowList
+                          rows={list}
+                          render={(loan) => (
+                            <LoanRow
+                              key={keyOf(loan)}
+                              loan={loan}
+                              claimWaiting={claimWaiting}
+                            />
+                          )}
+                        />
+                      ) : (
+                        <div className="row-list">
+                          {list.map((loan) => (
+                            <LoanRow
+                              key={keyOf(loan)}
+                              loan={loan}
+                              claimWaiting={claimWaiting}
+                            />
+                          ))}
+                        </div>
+                      )}
                     </section>
                   ) : null;
                 return (
                   <>
-                    {group(copy.positions.groupAttention, attention, true)}
-                    {group(copy.positions.groupActive, live, false)}
-                    {group(copy.positions.groupEnded, ended, false)}
+                    {group(copy.positions.groupAttention, attention, true, false)}
+                    {group(copy.positions.groupActive, live, false, true)}
+                    {group(copy.positions.groupEnded, ended, false, true)}
                   </>
                 );
               })()

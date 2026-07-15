@@ -625,6 +625,8 @@ export const copy = {
     scopeNote:
       'This list covers tokens seen in your Vaipakam loans and offers on this network. Approvals granted to other apps or for other tokens aren’t shown — your wallet’s own token-approvals view remains the complete picture.',
     none: 'No standing approvals to Vaipakam found for your known tokens.',
+    // #1247 PAG-006 — the checked-token window's widen affordance.
+    checkMore: (n: number) => `Check ${n} more token${n === 1 ? '' : 's'}`,
     loading: 'Reading your standing approvals…',
     unavailable:
       'We couldn’t read your approvals right now — please try again in a moment.',
@@ -1319,6 +1321,13 @@ export const copy = {
       'We couldn’t confirm the VPFI token just now — nothing was approved. Please try again in a moment.',
     addToWallet: 'Add VPFI to MetaMask',
     addedToWallet: 'Asked your wallet to track VPFI.',
+  },
+
+  // #1247 (PAG-001…008) — the shared list-window affordance. Every
+  // chain/indexer-fed list renders a bounded window with this button;
+  // the count keeps it honest about what is still unrendered.
+  lists: {
+    showMore: (n: number) => `Show ${n} more`,
   },
 
   errors: {

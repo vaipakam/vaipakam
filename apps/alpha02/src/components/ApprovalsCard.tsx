@@ -31,6 +31,7 @@ import { fetchOffersByCreator, type IndexedOffer } from '../data/indexer';
 import { ZERO_ADDRESS } from '../lib/offerSchema';
 import { AssetType } from '../lib/types';
 import { formatTokenAmount, shortAddress } from '../lib/format';
+import { LIST_WINDOW_PAGE } from '../lib/visibleWindow';
 import { signalAware } from '../chain/railHealth';
 
 interface ApprovalRow {
@@ -54,6 +55,10 @@ export function ApprovalsCard() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [done, setDone] = useState<string | null>(null);
+  // #1247 PAG-006 — the queried token window: the per-token
+  // allowance/metadata reads fan out inside the query, so the window
+  // bounds the READ set (part of the queryKey; "Check more" widens it).
+  const [tokenWindow, setTokenWindow] = useState(LIST_WINDOW_PAGE);
 
   // Candidate tokens: every ERC-20 leg of every loan/offer this
   // wallet touches. Data-source unavailability means the list may be
@@ -86,6 +91,7 @@ export function ApprovalsCard() {
       readChain.chainId,
       address?.toLowerCase(),
       tokens.join(','),
+      tokenWindow,
     ],
     // NOT gated on tokens.length: a wallet with zero ACTIVE positions
     // is exactly the profile most likely to hold pure historical
@@ -94,7 +100,7 @@ export function ApprovalsCard() {
     // RPC read-diet PR A — approvals ride receipt + focus + net; the
     // approval write helpers feed the central receipt floor (§4.1.4).
     refetchInterval: signalAware(60_000),
-    queryFn: async (): Promise<ApprovalRow[]> => {
+    queryFn: async (): Promise<{ rows: ApprovalRow[]; moreTokens: number }> => {
       // The rental-prepay approval (the Rent flow's money leg) only
       // appears on OFFERS, and useMyOffers filters to active — pull
       // the creator's FULL offer history (cursor-followed, null on
@@ -124,8 +130,15 @@ export function ApprovalsCard() {
           if (c && c !== ZERO_ADDRESS) historyTokens.add(c);
         }
       }
+      // #1247 PAG-006 — window the READ set, not just the DOM: the
+      // per-token allowance/metadata reads fan out right here inside
+      // the query, so the window must bound this list. "Check more"
+      // widens the window (queryKey includes it → refetch covers the
+      // wider set).
+      const allTokens = [...historyTokens].sort();
+      const scanned = allTokens.slice(0, tokenWindow);
       const rows = await Promise.all(
-        [...historyTokens].sort().map(async (t): Promise<ApprovalRow | null> => {
+        scanned.map(async (t): Promise<ApprovalRow | null> => {
           const token = t as `0x${string}`;
           // The ALLOWANCE read failing is NOT knowledge — it must
           // fail the round loudly (isError), never render as "no
@@ -153,7 +166,10 @@ export function ApprovalsCard() {
           return { token, symbol, decimals: Number(decimals), allowance };
         }),
       );
-      return rows.filter((r): r is ApprovalRow => r !== null);
+      return {
+        rows: rows.filter((r): r is ApprovalRow => r !== null),
+        moreTokens: allTokens.length - scanned.length,
+      };
     },
   });
 
@@ -202,7 +218,7 @@ export function ApprovalsCard() {
         <p className="muted">{copy.approvals.unavailable}</p>
       ) : !approvals.data ? (
         <p className="muted">{copy.approvals.loading}</p>
-      ) : approvals.data.length === 0 ? (
+      ) : approvals.data.rows.length === 0 && approvals.data.moreTokens === 0 ? (
         <p className="muted">{copy.approvals.none}</p>
       ) : (
         <div className="stack" style={{ gap: 8 }}>
@@ -211,7 +227,7 @@ export function ApprovalsCard() {
             // must stay reachable; flag staleness instead of hiding.
             <p className="muted">{copy.approvals.staleNote}</p>
           ) : null}
-          {approvals.data.map((row) => (
+          {approvals.data.rows.map((row) => (
             <div key={row.token} className="spread">
               <span>
                 {formatTokenAmount(row.allowance, row.decimals)} {row.symbol}{' '}
@@ -227,6 +243,15 @@ export function ApprovalsCard() {
               </button>
             </div>
           ))}
+          {approvals.data.moreTokens > 0 ? (
+            <button
+              type="button"
+              className="btn btn-secondary"
+              onClick={() => setTokenWindow((w) => w + LIST_WINDOW_PAGE)}
+            >
+              {copy.approvals.checkMore(approvals.data.moreTokens)}
+            </button>
+          ) : null}
           <p className="muted">{copy.approvals.scopeNote}</p>
         </div>
       )}

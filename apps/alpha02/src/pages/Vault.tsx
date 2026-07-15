@@ -12,6 +12,7 @@ import { useActiveChain } from '../chain/useActiveChain';
 import { useVaultAssets } from '../data/vault';
 import { EmptyState, UnavailableState } from '../components/EmptyState';
 import { formatTokenAmount, shortAddress } from '../lib/format';
+import { WindowedRowList } from '../lib/visibleWindow';
 import { CopyAddress } from '../components/CopyAddress';
 
 export function Vault() {
@@ -96,8 +97,12 @@ export function Vault() {
             )
           ) : (
             <section className="card">
-              <div className="row-list">
-                {vault.data.assets.map((asset) => (
+              {/* #1247 PAG-001 rider — the distinct-asset set grows
+                  with the same 500/2000 source caps; window it like
+                  every other data-fed list. */}
+              <WindowedRowList
+                rows={vault.data.assets}
+                render={(asset) => (
                   <div key={asset.token} className="item-row">
                     <span className="row-main">
                       <span className="row-title">
@@ -115,8 +120,8 @@ export function Vault() {
                       {asset.locked > 0n ? 'Partly locked' : 'Free'}
                     </span>
                   </div>
-                ))}
-              </div>
+                )}
+              />
               <p className="muted" style={{ marginTop: 12 }}>
                 {copy.vault.lockedHint}
               </p>

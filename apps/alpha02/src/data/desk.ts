@@ -171,6 +171,19 @@ export function useDeskBook(pair: DeskPair | null, durationDays: number) {
               pair!.collateralAsset as `0x${string}`,
             ],
           })) as readonly [readonly { id: bigint }[], bigint];
+          // #1247 PAG-012 — the contract view returns the WHOLE
+          // active pair bucket (no offset/limit args), so a spammed
+          // pair could make this "chain-first" path hydrate thousands
+          // of rows. Past the cap, fail over to the indexer fallback,
+          // which is market-scoped, server-filtered, and hard-capped
+          // at 500 — degraded-honest beats an unbounded hydrate. (The
+          // ranked view is best-first, but the ladder aggregates by
+          // rate, so a truncated hydrate could misstate level depth —
+          // don't render a silently-partial chain book.)
+          const HYDRATE_CAP = 600;
+          if (rankings.length > HYDRATE_CAP) {
+            throw new Error('pair bucket past hydrate cap');
+          }
           const ids = rankings.map((r) => Number(r.id));
           // Hydration is chunked at MAX_BATCH_IDS (250) inside the
           // helper; it also maps the canonical OfferState and applies

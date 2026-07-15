@@ -207,6 +207,13 @@ export function useMyClaimables() {
         // inventory can't make one unbounded eth_call revert and hide a
         // real claimable (mirrors apps/defi #769).
         const PAGE = 200n;
+        // #1247 PAG-003 — the same fail-loud walk ceiling
+        // chainPositions.ts uses. Past it the candidate set is
+        // unknowable-in-practice (thousands of position NFTs), and an
+        // unbounded walk + per-candidate probing is exactly the RPC
+        // fan-out this page must never do; unavailable beats a scan
+        // that never ends.
+        const WALK_CAP = 2000n;
         let offset = 0n;
         for (;;) {
           const [ids, , total] = (await publicClient.readContract({
@@ -218,6 +225,7 @@ export function useMyClaimables() {
           chainIds.push(...ids);
           offset += PAGE;
           if (offset >= total) break;
+          if (offset >= WALK_CAP) return null;
         }
       } catch (e) {
         if (!isRevert(e)) return null;

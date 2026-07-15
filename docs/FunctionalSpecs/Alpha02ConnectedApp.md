@@ -58,6 +58,15 @@ alpha02 uses chain reads and indexed reads for different jobs.
   that it was accepted, cancelled, matched, or consumed by a sale.
 - A fresh offer deep link should resolve from the chain when the indexed row has
   not caught up yet.
+- Every list built from chain or indexed data is bounded at BOTH layers: the
+  fetch is capped and fails loud past its cap (never a silent truncation), and
+  the page renders a bounded window of rows with a "show more" affordance that
+  states how many rows remain unrendered — the screen and any per-row reads
+  grow with what the user asks to see, not with the size of the wallet's
+  history or the market. Where per-row lookups happen inside the fetch itself
+  (the standing-approvals scan), the window bounds the lookup set too, and
+  widening it is the same explicit user action. Lists whose size is fixed by
+  nature (static tables, contract-capped sets, single cards) render whole.
 - If the indexer is stalled or unavailable, the app should show a degraded
   data-source warning rather than a confident empty list.
 - Activity history may depend on indexed history, but current positions must not

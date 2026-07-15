@@ -20,6 +20,7 @@ import { useTokenMeta } from '../contracts/erc20';
 import { AssetType } from '../lib/types';
 import { formatTokenAmount, shortAddress } from '../lib/format';
 import { captureTxError } from '../lib/errors';
+import { WindowedRowList } from '../lib/visibleWindow';
 
 /** Interaction-reward VPFI, kept visually separate from loan claims
  *  so the source of funds is never confused (Journey C1). */
@@ -302,11 +303,14 @@ export function Claims() {
               }
             />
           ) : (
-            <div className="row-list">
-              {rows.map((loan) => (
+            // #1247 PAG-003 — a long-lived wallet's terminal history
+            // only ever grows; render it a page at a time.
+            <WindowedRowList
+              rows={rows}
+              render={(loan) => (
                 <ClaimRow key={`${loan.loanId}-${loan.role}`} loan={loan} />
-              ))}
-            </div>
+              )}
+            />
           )}
         </>
       )}
