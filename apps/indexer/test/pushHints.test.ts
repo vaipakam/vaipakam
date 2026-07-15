@@ -133,4 +133,28 @@ describe('pushHintStats (#1245 measurement rail)', () => {
     expect(s.causes.linkNoParty).toBe(true);
     expect(s.truncated).toBe(true);
   });
+
+  it('an UNMAPPABLE-only scan has zero counts but truncated=true (the frames the emit guard must not drop — Codex #1289 r1)', () => {
+    const s = pushHintStats([
+      log('Transfer', { tokenId: 5n }),
+      log('SignedOfferCancelled', { orderHash: '0xabc' }),
+    ]);
+    expect(s).toMatchObject({ loanIdCount: 0, offerIdCount: 0, linkCount: 0 });
+    expect(s.truncated).toBe(true); // scan tail must still log this
+    expect(s.causes.unmappableEvent).toBe(true);
+  });
+
+  it('counts links past the cap as linkCapExceeded (2 links per created loan)', () => {
+    // Loan creation emits LoanInitiated + LoanInitiatedDetails — both
+    // LINK_EVENTS — so HINT_CAP+1 creations overflow the link cap even
+    // though the id counts are far lower.
+    const logs = Array.from({ length: HINT_CAP + 1 }, (_, i) => [
+      log('LoanInitiated', { loanId: BigInt(i), lender: '0x00000000000000000000000000000000000000aa' }),
+      log('LoanInitiatedDetails', { loanId: BigInt(i), borrower: '0x00000000000000000000000000000000000000bb' }),
+    ]).flat();
+    const s = pushHintStats(logs);
+    expect(s.linkCount).toBe((HINT_CAP + 1) * 2);
+    expect(s.causes.linkCapExceeded).toBe(true);
+    expect(s.truncated).toBe(true);
+  });
 });

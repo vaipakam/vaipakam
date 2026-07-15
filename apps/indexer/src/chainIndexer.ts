@@ -740,7 +740,15 @@ export async function runChainIndexerForChain(
   // a truncation cause independent of the cap, reported separately.
   const hintStats = pushHintStats(allLogs);
   const stubHealForcedTruncation = detailRefreshes > 0 || loanDetailRefreshes > 0;
-  if (hintStats.loanIdCount + hintStats.offerIdCount + hintStats.linkCount > 0) {
+  // Emit when the scan touched ids OR truncated for ANY reason (Codex
+  // #1289 r1): a scan of only unmappable events (Transfer /
+  // SignedOffer* lifecycle) or a stub-heal-only truncation carries
+  // ZERO id counts but IS a non-cap truncation — the exact cause mix
+  // sub-task 2 must quantify, so a counts-only guard would bias the
+  // sample toward size-driven frames.
+  const touched =
+    hintStats.loanIdCount + hintStats.offerIdCount + hintStats.linkCount > 0;
+  if (touched || hintStats.truncated || stubHealForcedTruncation) {
     console.log(
       `[hint-telemetry] ${JSON.stringify({
         chainId,

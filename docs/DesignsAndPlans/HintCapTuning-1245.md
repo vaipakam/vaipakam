@@ -47,14 +47,25 @@ choice needs.
 
 1. Start a rehearsal-load run (many concurrent offers / accepts / fills
    / cancels on the testnet Diamond).
-2. Capture the telemetry stream over the window:
+2. Capture the telemetry stream over the window, EXTRACTING the JSON
+   payload (Codex #1289 r1): `wrangler tail` does not emit the raw
+   `console.log` text at top level — `--format json` nests it under
+   `logs[].message`, and `--format pretty` wraps it in a human line —
+   so grep-then-jq on the tail output directly would parse the
+   envelope, not our object. Pull just the `[hint-telemetry] {…}`
+   payload out first:
    ```bash
    cd apps/indexer
-   wrangler tail --format json \
-     | grep --line-buffered hint-telemetry \
+   wrangler tail --format pretty 2>/dev/null \
+     | grep --line-buffered -o '\[hint-telemetry\] {.*}' \
+     | sed -u 's/^\[hint-telemetry\] //' \
      > /tmp/hint-telemetry.ndjson
    ```
-   (Or configure Logpush to a bucket for a longer window — same lines.)
+   Now every line of `/tmp/hint-telemetry.ndjson` is one telemetry
+   object with top-level `.loanIdCount` / `.causes` (what the jq
+   recipes below assume). If you prefer Logpush for a longer window,
+   apply the same `grep -o … | sed` extraction to the delivered log
+   text before running jq.
 3. Let it run long enough to include the busiest expected frames
    (a spammed pair, a batch nonce burn, a mass-expiry tick).
 
@@ -62,19 +73,30 @@ choice needs.
 
 From the captured lines:
 
+`HINT_CAP` bounds ALL THREE of the loan-id, offer-id, AND link lists
+(the wire collector caps `links` with the same constant — Codex #1289
+r1). And loan creation emits BOTH `LoanInitiated` and
+`LoanInitiatedDetails`, both in `LINK_EVENTS`, so a creation-heavy
+frame has ~2 links per new loan: a 17-loan creation burst is 34 links
+and trips `linkCapExceeded` at cap 32 even though its id counts are
+only 17. So the cap-selection statistic must be the max of all three
+counts, not just the ids:
+
 ```bash
-# The pre-cap id-count distribution (max of loan/offer per frame):
-jq -r '[.loanIdCount,.offerIdCount]|max' /tmp/hint-telemetry.ndjson \
+# The pre-cap per-frame magnitude (max of loan-ids / offer-ids / links):
+jq -r '[.loanIdCount,.offerIdCount,.linkCount]|max' /tmp/hint-telemetry.ndjson \
   | sort -n | uniq -c
 # The 95th percentile — a cap at/above this keeps ≥95% of frames
-# un-truncated by the CAP cause (other causes are separate):
-jq -s 'map([.loanIdCount,.offerIdCount]|max)|sort|.[(length*0.95|floor)]' \
+# un-truncated by the CAP causes (loanCapExceeded / offerCapExceeded /
+# linkCapExceeded); the non-cap causes below are separate:
+jq -s 'map([.loanIdCount,.offerIdCount,.linkCount]|max)|sort|.[(length*0.95|floor)]' \
   /tmp/hint-telemetry.ndjson
 ```
 
 Pick `HINT_CAP` at or just above that P95. If the distribution has a
-long thin tail (a few frames with hundreds of ids), do NOT chase it —
-those frames SHOULD truncate; the coarse fallback is correct for them.
+long thin tail (a few frames with hundreds of ids/links), do NOT chase
+it — those frames SHOULD truncate; the coarse fallback is correct for
+them.
 
 ## Reading the truncation-cause mix (sub-task 2)
 
