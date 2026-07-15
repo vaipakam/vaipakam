@@ -428,6 +428,7 @@ interface SeedRow {
   expiresAt?: number;
   deadline?: number;
   status?: string;
+  signer?: string;
 }
 
 function seedBook(rows: SeedRow[]): Env {
@@ -448,7 +449,7 @@ function seedBook(rows: SeedRow[]): Env {
     insert.run(
       CHAIN_ID,
       r.orderHash,
-      SIGNER.address.toLowerCase(),
+      r.signer ?? SIGNER.address.toLowerCase(),
       r.offerType,
       LEND,
       COLL,
@@ -468,15 +469,25 @@ function seedBook(rows: SeedRow[]): Env {
   } as unknown as Env;
 }
 
-async function getBook(env: Env): Promise<{ orderHash: string }[]> {
+async function getBookBody(
+  env: Env,
+  extraParams = '',
+): Promise<{ offers: { orderHash: string; signer: string }[]; truncated: boolean }> {
   const req = new Request(
     `http://indexer.test/signed-offers?chainId=${CHAIN_ID}` +
-      `&lendingAsset=${LEND}&collateralAsset=${COLL}&durationDays=${DAYS}`,
+      `&lendingAsset=${LEND}&collateralAsset=${COLL}&durationDays=${DAYS}` +
+      extraParams,
   );
   const res = await handleSignedOffersGet(req, env);
   expect(res.status).toBe(200);
-  const body = (await res.json()) as { offers: { orderHash: string }[] };
-  return body.offers;
+  return (await res.json()) as {
+    offers: { orderHash: string; signer: string }[];
+    truncated: boolean;
+  };
+}
+
+async function getBook(env: Env): Promise<{ orderHash: string }[]> {
+  return (await getBookBody(env)).offers;
 }
 
 describe('GET /signed-offers — per-side price-relevant caps (Codex #1145 r4)', () => {
@@ -556,6 +567,98 @@ describe('GET /signed-offers — per-side price-relevant caps (Codex #1145 r4)',
       ]),
     );
     expect(offers.map((o) => o.orderHash)).toEqual(['ask-live']);
+  });
+});
+
+// ── GET /signed-offers — truncation flag + signer scope (#1247 PAG-011) ──
+
+const MAKER = '0x00000000000000000000000000000000000000fe';
+
+describe('GET /signed-offers — truncation flag + signer scope (#1247 PAG-011)', () => {
+  function spamAsks(n: number, rateBps: number): SeedRow[] {
+    return Array.from({ length: n }, (_, i) => ({
+      orderHash: `spam-${String(i).padStart(3, '0')}`,
+      offerType: 0 as const,
+      rateBps,
+      rateBpsMax: rateBps,
+      createdAt: 2_000 + i,
+    }));
+  }
+
+  it('flags truncation when a side overflows the per-side cap', async () => {
+    const body = await getBookBody(seedBook(spamAsks(101, 500)));
+    expect(body.offers).toHaveLength(100);
+    expect(body.truncated).toBe(true);
+  });
+
+  it('reports truncated: false when both sides fit', async () => {
+    const body = await getBookBody(
+      seedBook([
+        { orderHash: 'ask-1', offerType: 0, rateBps: 500, rateBpsMax: 500, createdAt: 1_000 },
+        { orderHash: 'bid-1', offerType: 1, rateBps: 0, rateBpsMax: 300, createdAt: 1_000 },
+      ]),
+    );
+    expect(body.offers).toHaveLength(2);
+    expect(body.truncated).toBe(false);
+  });
+
+  it('a signer scope surfaces a maker order the price cap would hide', async () => {
+    // The PAG-011 scenario: 100 better-priced asks from other makers
+    // fill the side cap, so the maker's off-market ask is invisible in
+    // the unscoped ladder — but it is still their live, cancellable
+    // order, so the signer-scoped read must return it.
+    const env = seedBook([
+      ...spamAsks(100, 100),
+      { orderHash: 'maker-ask', offerType: 0, rateBps: 900, rateBpsMax: 900, createdAt: 9_000, signer: MAKER },
+    ]);
+    const unscoped = await getBookBody(env);
+    expect(unscoped.truncated).toBe(true);
+    expect(unscoped.offers.map((o) => o.orderHash)).not.toContain('maker-ask');
+
+    const scoped = await getBookBody(env, `&signer=${MAKER}`);
+    expect(scoped.offers.map((o) => o.orderHash)).toEqual(['maker-ask']);
+    expect(scoped.truncated).toBe(false);
+  });
+
+  it('a signer-scoped read carries a raised cap so a maker can reach every own order (Codex r3)', async () => {
+    // 120 own asks: the PUBLIC read clips at 100/side (cancel targets
+    // hidden), but the scoped read serves the caller's own rows up to
+    // 500/side — all 120 come back, honestly un-truncated.
+    const rows: SeedRow[] = Array.from({ length: 120 }, (_, i) => ({
+      orderHash: `own-${String(i).padStart(3, '0')}`,
+      offerType: 0 as const,
+      rateBps: 300 + i,
+      rateBpsMax: 300 + i,
+      createdAt: 1_000 + i,
+      signer: MAKER,
+    }));
+    const env = seedBook(rows);
+    const unscoped = await getBookBody(env);
+    expect(unscoped.offers).toHaveLength(100);
+    expect(unscoped.truncated).toBe(true);
+    const scoped = await getBookBody(env, `&signer=${MAKER}`);
+    expect(scoped.offers).toHaveLength(120);
+    expect(scoped.truncated).toBe(false);
+  });
+
+  it('normalizes a checksummed signer param to the stored lowercase form', async () => {
+    const env = seedBook([
+      { orderHash: 'maker-ask', offerType: 0, rateBps: 500, rateBpsMax: 500, createdAt: 1_000, signer: MAKER },
+    ]);
+    const scoped = await getBookBody(env, `&signer=${MAKER.toUpperCase().replace('0X', '0x')}`);
+    expect(scoped.offers.map((o) => o.orderHash)).toEqual(['maker-ask']);
+  });
+
+  it('rejects a malformed signer param with 400 bad-signer', async () => {
+    const env = seedBook([]);
+    const req = new Request(
+      `http://indexer.test/signed-offers?chainId=${CHAIN_ID}` +
+        `&lendingAsset=${LEND}&collateralAsset=${COLL}&durationDays=${DAYS}` +
+        `&signer=not-an-address`,
+    );
+    const res = await handleSignedOffersGet(req, env);
+    expect(res.status).toBe(400);
+    expect(await res.json()).toEqual({ error: 'bad-signer' });
   });
 });
 

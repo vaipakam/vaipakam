@@ -32,19 +32,19 @@ paths call. Each surface gets a two-layer verdict:
 | Layer | Bound | Where |
 | --- | --- | --- |
 | Indexer offer/loan/activity row routes | `DEFAULT_PAGE_LIMIT 50`, `MAX_PAGE_LIMIT 200` (clamped server-side) | `apps/indexer/src/offerRoutes.ts`, `loanRoutes.ts` |
-| Indexer signed-offer book | ≤100 best-priced rows/side — **hard slice, NO `truncated` flag or cursor** (see PAG-011) | `apps/indexer/src/signedOfferRoutes.ts` |
+| Indexer signed-offer book | ≤100 best-priced rows/side + `truncated` flag + optional `signer` scope (PAG-011, fixed) | `apps/indexer/src/signedOfferRoutes.ts` |
 | `/claim-candidates` | 200-row cap + `truncated` flag | `loanRoutes.ts` (PR C, #1232) |
-| `/claimables` | **no server LIMIT** | `loanRoutes.ts` — PAG-007 |
-| `/offers/markets` | **no LIMIT** (one row per distinct pair/tenor — spammable) | `offerRoutes.ts` — PAG-010 |
-| `/loans/rate-candles` | range-bounded EXCEPT `range=all` (no start bound, **no LIMIT**) | `loanRoutes.ts` — PAG-009 |
+| `/claimables` | 200 newest terminal loans + `truncated` (PAG-007, fixed) | `loanRoutes.ts` |
+| `/offers/markets` | 200 deepest markets + `truncated` (PAG-010, fixed) | `offerRoutes.ts` |
+| `/loans/rate-candles` | newest 10,000 fills scanned + `truncated` (PAG-009, fixed) | `loanRoutes.ts` |
 | Client indexer walks | `limit 100` × ≤5 pages = 500/leg, `null` (fail-loud) past cap | `data/hooks.ts` (`fetchAllPages`), `data/desk.ts` |
 | Chain enumeration (positions/offers) | page 200, `WALK_CAP 2000`, `null` past cap | `chain/chainPositions.ts` |
 | Chain enumeration (Claims discovery) | page-walks `getUserPositionLoansPaginated` **until `offset >= total` — no WALK_CAP** | `data/claimables.ts` — PAG-003 |
 | Chain ladder read | `getActiveOffersByAssetPairRanked(pair)` returns the **whole active pair bucket** (no offset/limit args) | `contracts/src/facets/MetricsFacet.sol` — PAG-012 |
 
 Most caps are honest (overflow degrades to the explicit unavailable
-state); the signed-book slice is the exception — it silently drops
-lower-priority depth (PAG-011). The recurring UI gap is rendering
+state); the signed-book slice was the exception — it silently dropped
+lower-priority depth until the PAG-011 fix added the `truncated` flag. The recurring UI gap is rendering
 everything the capped fetch returned: DOM size and per-row RPC (token
 meta, claimable probes, security screens) scale linearly up to
 500–2000 rows.
@@ -215,4 +215,12 @@ Two follow-up PRs:
 2. **indexer batch** — PAG-007 (`/claimables` 200-cap + `truncated`;
    coordinate the defi consumer), PAG-009 (candles `all`-range clamp),
    PAG-010 (markets top-N + `truncated`), PAG-011 (signed-book
-   `truncated` flag + signer-scoped own-orders read).
+   `truncated` flag + signer-scoped own-orders read). **SHIPPED** —
+   `/claimables` caps at the 200 newest terminal loans; candles scan
+   the newest 10,000 fills; `/offers/markets` serves the 200 deepest
+   markets; the signed book reports `truncated` and takes an optional
+   validated `signer` param, which the desk's own-orders block passes
+   so a maker's off-market orders are never hidden behind other
+   makers' depth. All four responses carry `truncated` (additive —
+   the defi `/claimables` consumer ignores it and keeps its on-chain
+   verify). Release fragment `1247-indexer-caps.md`.

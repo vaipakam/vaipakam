@@ -77,7 +77,10 @@ export function pairKey(pair: DeskPair): string {
 
 /** Markets summary for the read chain. `null` = indexer unavailable
  *  (the header shows an honest "markets list unavailable" state and
- *  falls back to the selected pair's book for tenor emphasis). */
+ *  falls back to the selected pair's book for tenor emphasis).
+ *  `truncated` mirrors the route's deepest-markets cap (#1247
+ *  PAG-010, Codex #1269 r4) so the picker can say the list is
+ *  incomplete instead of making clipped markets look nonexistent. */
 export function useDeskMarkets() {
   const { readChain } = useActiveChain();
   return useQuery({
@@ -85,10 +88,14 @@ export function useDeskMarkets() {
     // RPC read-diet PR A (Codex #1228 r1) — markets can exist purely from
     // gasless signed depth, which never pushes; keep today's cadence.
     refetchInterval: idleAware(REFRESH_MS),
-    queryFn: async (): Promise<MarketSummary[] | null> => {
+    queryFn: async (): Promise<{
+      markets: MarketSummary[];
+      truncated: boolean;
+    } | null> => {
       if (!indexerConfigured()) return null;
       const res = await fetchOffersMarkets(readChain.chainId);
-      return res === null ? null : res.markets;
+      if (res === null) return null;
+      return { markets: res.markets, truncated: res.truncated === true };
     },
   });
 }
@@ -299,10 +306,20 @@ const SIGNED_BOOK_STALE_MS = 15_000;
  *  ladder's signed-row badge carries that source honesty per row.
  *  Tri-state per the app contract: `undefined` loading, `null`
  *  unavailable (fetch failed / wrong-chain response / no indexer
- *  origin), `[]` honestly empty. The desk merges these ADDITIVELY into
- *  the ladder — an unavailable signed book degrades to a chain-only
- *  ladder rather than blanking the whole market. */
-export function useDeskSignedBook(pair: DeskPair | null, durationDays: number) {
+ *  origin), `{ offers: [], … }` honestly empty; `truncated` mirrors
+ *  the route's per-side cap flag (#1247 PAG-011). The desk merges the
+ *  offers ADDITIVELY into the ladder — an unavailable signed book
+ *  degrades to a chain-only ladder rather than blanking the whole
+ *  market. */
+export function useDeskSignedBook(
+  pair: DeskPair | null,
+  durationDays: number,
+  /** #1247 PAG-011 — pass the wallet to read ITS orders regardless of
+   *  book position (the ladder's unscoped read keeps only the 100
+   *  best-priced rows per side, which can hide a maker's own
+   *  cancellable orders behind other makers' depth). */
+  signer?: string,
+) {
   const { readChain } = useActiveChain();
   return useQuery({
     queryKey: [
@@ -310,6 +327,7 @@ export function useDeskSignedBook(pair: DeskPair | null, durationDays: number) {
       readChain.chainId,
       pair ? pairKey(pair) : null,
       durationDays,
+      signer?.toLowerCase() ?? null,
     ],
     enabled: pair !== null,
     staleTime: SIGNED_BOOK_STALE_MS,
@@ -317,17 +335,28 @@ export function useDeskSignedBook(pair: DeskPair | null, durationDays: number) {
     // touch the chain, so no push frame announces new signed depth;
     // polling is its only discovery. Keep today's cadence.
     refetchInterval: idleAware(REFRESH_MS),
-    queryFn: async (): Promise<IndexedSignedOffer[] | null> => {
+    queryFn: async (): Promise<{
+      offers: IndexedSignedOffer[];
+      truncated: boolean;
+    } | null> => {
       if (!indexerConfigured()) return null;
-      const res = await fetchSignedOffers(readChain.chainId, {
-        lendingAsset: pair!.lendingAsset,
-        collateralAsset: pair!.collateralAsset,
-        durationDays,
-      });
+      const res = await fetchSignedOffers(
+        readChain.chainId,
+        {
+          lendingAsset: pair!.lendingAsset,
+          collateralAsset: pair!.collateralAsset,
+          durationDays,
+        },
+        signer,
+      );
       if (res === null) return null;
       // A response for another chain is not this market's book.
       if (res.chainId !== readChain.chainId) return null;
-      return Array.isArray(res.offers) ? res.offers : null;
+      if (!Array.isArray(res.offers)) return null;
+      // Codex #1269 r2 — carry the per-side truncation flag so the
+      // own-orders view can say when a maker's set was clipped instead
+      // of rendering a partial page as "all your orders".
+      return { offers: res.offers, truncated: res.truncated === true };
     },
   });
 }
@@ -403,10 +432,12 @@ export function useDeskTape(pair: DeskPair | null, durationDays: number) {
 /** Executed-rate candle buckets for the (pair, tenor) market (#1130).
  *  Tri-state per the app contract: `undefined` loading, `null`
  *  unavailable (fetch failed / wrong-chain response / no indexer
- *  origin), `[]` honestly empty (a market with zero fills in the
- *  range). 60 s staleTime mirrors the worker's `Cache-Control:
- *  max-age=60` — refetching harder would only re-download the same
- *  cached body. */
+ *  origin), `{ buckets: [], … }` honestly empty (a market with zero
+ *  fills in the range). `truncated` (#1247 PAG-009) mirrors the
+ *  server's scan-cap flag so the chart can say the oldest candles are
+ *  missing instead of rendering a clipped `all` range as complete.
+ *  60 s staleTime mirrors the worker's `Cache-Control: max-age=60` —
+ *  refetching harder would only re-download the same cached body. */
 export function useDeskCandles(
   pair: DeskPair | null,
   durationDays: number,
@@ -426,7 +457,10 @@ export function useDeskCandles(
     enabled: pair !== null,
     staleTime: 60_000,
     refetchInterval: signalAware(60_000),
-    queryFn: async (): Promise<RateCandleBucket[] | null> => {
+    queryFn: async (): Promise<{
+      buckets: RateCandleBucket[];
+      truncated: boolean;
+    } | null> => {
       if (!indexerConfigured()) return null;
       const res = await fetchRateCandles(
         readChain.chainId,
@@ -442,7 +476,8 @@ export function useDeskCandles(
       // A response for another chain is not this market's history —
       // treat it as unavailable, never render it.
       if (res.chainId !== readChain.chainId) return null;
-      return Array.isArray(res.buckets) ? res.buckets : null;
+      if (!Array.isArray(res.buckets)) return null;
+      return { buckets: res.buckets, truncated: res.truncated === true };
     },
   });
 }

@@ -67,10 +67,16 @@ alpha02 uses chain reads and indexed reads for different jobs.
   standing-approvals and vault-asset scans), the window bounds the lookup set
   too, and widening it is the same explicit user action. Lists whose size is
   fixed by nature (static tables, contract-capped sets, single cards) render
-  whole. Known exceptions, tracked in the 2026-07-15 pagination audit and
-  closed by its indexer batch: the market-picker aggregate, the all-range
-  executed-rate history, the signed-book response's missing truncation
-  signal, and the legacy claimables route are not yet server-capped.
+  whole. Server-side reads are capped too: market discovery serves the
+  deepest markets, executed-rate history scans the newest fills, and the
+  claim-candidate routes serve the newest terminal loans — each response
+  says when depth was dropped, so a spammed market or an unusually long
+  history degrades honestly instead of scanning without bound.
+- A market maker's own resting signed orders are always visible and
+  cancellable from the desk, even when better-priced depth from other
+  makers fills the public book's per-side window — the desk reads the
+  maker's own orders scoped to their wallet, not from the top-of-book
+  slice.
 - If the indexer is stalled or unavailable, the app should show a degraded
   data-source warning rather than a confident empty list.
 - Activity history may depend on indexed history, but current positions must not

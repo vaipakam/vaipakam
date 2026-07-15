@@ -833,7 +833,9 @@ function SignedOrdersBlock({
   days: number;
 }) {
   const { address, onSupportedChain, readChain: signedReadChain } = useActiveChain();
-  const signedBook = useDeskSignedBook(pair, days);
+  // #1247 PAG-011 — signer-scoped: own orders must never be clipped
+  // out of the capped shared book by other makers' depth.
+  const signedBook = useDeskSignedBook(pair, days, address ?? undefined);
   const queryClient = useQueryClient();
   const { write } = useDiamondWrite();
   const [busyHash, setBusyHash] = useState<string | null>(null);
@@ -850,11 +852,15 @@ function SignedOrdersBlock({
   const me = address?.toLowerCase();
   const own = useMemo(
     () =>
-      (Array.isArray(signedBook.data) ? signedBook.data : []).filter(
+      (signedBook.data?.offers ?? []).filter(
         (r) => me !== undefined && r.signer.toLowerCase() === me,
       ),
     [signedBook.data, me],
   );
+  // Codex #1269 r2 — the signer-scoped read is still per-side capped;
+  // a maker with >100 own orders on one side gets a clipped page and
+  // must not read it as "all your signed orders".
+  const ownTruncated = signedBook.data?.truncated === true;
 
   const lendingMeta = useTokenMeta(pair?.lendingAsset);
 
@@ -890,6 +896,13 @@ function SignedOrdersBlock({
       <p className="muted" style={{ margin: '0 0 8px', fontSize: '0.8rem' }}>
         {text.signedNote} {text.signedCancelNote}
       </p>
+      {ownTruncated ? (
+        // Codex #1269 r2 — the signer-scoped read is per-side capped at
+        // 100; a clipped page must never read as "all your orders".
+        <p className="muted" style={{ margin: '0 0 8px', fontSize: '0.8rem' }}>
+          {text.signedTruncated}
+        </p>
+      ) : null}
       {/* #1247 PAG-005 — same window as the on-chain block (the
           server slice bounds this at 100/side, but the pattern stays
           uniform and the DOM stays a page at a time). */}

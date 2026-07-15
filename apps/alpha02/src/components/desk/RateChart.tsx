@@ -144,7 +144,11 @@ export default function RateChart({
   const candles = useDeskCandles(pair, days, interval, range);
   const text = copy.desk.chart;
 
-  const buckets = candles.data;
+  // Unwrap the hook's { buckets, truncated } while preserving the
+  // tri-state the render branches key on (undefined loading, null
+  // unavailable, [] empty).
+  const buckets = candles.data == null ? candles.data : candles.data.buckets;
+  const candlesTruncated = candles.data?.truncated === true;
   const sparse = useMemo(
     () => (Array.isArray(buckets) ? isSparseTape(buckets) : false),
     [buckets],
@@ -468,6 +472,14 @@ export default function RateChart({
           {sparse ? (
             <p className="muted desk-chart-sparse-note">
               {text.sparseNote(totalFills(buckets))}
+            </p>
+          ) : null}
+          {candlesTruncated ? (
+            // #1247 PAG-009 (Codex #1269 r1) — the server scanned only
+            // the newest fills; never let a clipped range read as the
+            // market's complete history.
+            <p className="muted desk-chart-sparse-note">
+              {text.truncatedNote}
             </p>
           ) : null}
           <div className="desk-chart-plot">

@@ -1019,6 +1019,9 @@ export const copy = {
       'The markets list couldn’t load right now, so pair discovery is limited — enter a pair manually and the book itself can still load.',
     marketsEmpty:
       'No live markets right now. Pick a pair and post the first offer with the ticket.',
+    // #1247 PAG-010 — discovery serves the deepest markets only.
+    marketsTruncated:
+      'Showing the most active markets — smaller markets aren’t listed here, but you can load any pair with “Custom pair…”.',
     pickPair: 'Pick a market to load its book.',
     lastFill: 'Last fill',
     quotedMid: 'Quoted mid',
@@ -1128,6 +1131,11 @@ export const copy = {
         'Dashed line = the book’s current quoted mid — a resting quote, not an executed rate.',
       sparseNote: (n: number) =>
         `Sparse market — ${n} fill${n === 1 ? '' : 's'} in this range, drawn individually. Candles appear once there’s enough tape to mean something.`,
+      // #1247 PAG-009 — the server scans the newest 10,000 fills; a
+      // busy market's oldest history falls off. Say so instead of
+      // letting an "all" chart read as complete.
+      truncatedNote:
+        'Long history — showing the most recent fills only. The oldest candles are not drawn.',
       intervalLabel: 'Interval',
       rangeLabel: 'Range',
       attribution: 'Charts by TradingView',
@@ -1293,6 +1301,10 @@ export const copy = {
       signedCancelNote:
         'Posting was free, but cancelling costs gas: the only way to revoke a signature the book already holds is an on-chain transaction.',
       signedCancelled: 'Signed order cancelled on-chain.',
+      // #1247 PAG-011 — the wallet-scoped book read is still capped
+      // per side; never let a clipped page read as the full set.
+      signedTruncated:
+        'You have more signed orders in this market than we can list at once — this is not the complete set.',
     },
     positions: {
       tab: 'Positions',

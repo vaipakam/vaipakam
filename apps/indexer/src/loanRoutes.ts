@@ -570,40 +570,109 @@ export async function handleClaimables(
     // claimed side automatically drops out (the already-claimed activity filter
     // below is then belt-and-suspenders). Zero operator RPC; the FRONTEND layers
     // the on-chain `getUserPositionLoans` verify via the user's own RPC.
-    const rows = (
-      await env.DB.prepare(
+    // #1247 PAG-011-adjacent (PAG-007) — the one row route that had no
+    // LIMIT: cap at the CLAIM_CANDIDATES_CAP most-recently-TERMINAL
+    // loans and say so (`truncated`), matching /claim-candidates.
+    // Recency is `terminal_at` (Codex #1269 r3: `updated_at` also
+    // moves on later position-NFT transfers and counterparty claim
+    // burns, which would let stale loans jump the window), COALESCEd
+    // to `updated_at` only for legacy rows; loan_id tie-breaks. The
+    // OR-of-owners predicate is split into one query PER SIDE so each
+    // rides its `idx_loans_*_current_owner` index — the r2 single
+    // query planned as an idx_loans_chain_status walk of EVERY
+    // terminal loan on the chain (Codex r3 EQP); split, the work is
+    // bounded by the wallet's own rows. Each side fetches CAP+1 and
+    // the union's true top-CAP is re-derived in JS (any row in the
+    // union's top-CAP is necessarily in its own side's top-CAP, so
+    // the merge loses nothing). `truncated` is additive — the typed
+    // apps/defi consumer ignores it, and its Claim Center layers an
+    // on-chain verify over this discovery anyway.
+    // Each side also excludes rows whose claim ALREADY fired (r4): a
+    // claim burns the position NFT so the owner projection normally
+    // evicts the row, but if that projection lags, claimed rows would
+    // consume window slots and push older UNclaimed candidates out of
+    // the clipped view. The exclusion must happen before LIMIT — the
+    // JS claimed-set filter below stays as belt-and-suspenders and for
+    // the cross-side split (a both-sides holder's row can be claimed
+    // on one side only). The NOT EXISTS probes idx_activity_chain_loan
+    // per examined row, all of which are the wallet's own.
+    const sideRows = (
+      col: 'lender_current_owner' | 'borrower_current_owner',
+      claimKind: 'LenderFundsClaimed' | 'BorrowerFundsClaimed',
+    ) =>
+      env.DB.prepare(
         `SELECT * FROM loans
-         WHERE chain_id = ?
+         WHERE chain_id = ? AND ${col} = ?
            AND status IN ('repaid', 'defaulted', 'liquidated', 'internal_matched')
-           AND (lender_current_owner = ? OR borrower_current_owner = ?)
-         ORDER BY loan_id DESC`,
+           AND NOT EXISTS (
+             SELECT 1 FROM activity_events e
+              WHERE e.chain_id = loans.chain_id AND e.loan_id = loans.loan_id
+                AND e.kind = '${claimKind}' AND e.actor = ?
+           )
+         ORDER BY COALESCE(terminal_at, updated_at) DESC, loan_id DESC
+         LIMIT ?`,
       )
-        .bind(chainId, addr, addr)
-        .all<LoanRow>()
-    ).results ?? [];
+        .bind(chainId, addr, addr, CLAIM_CANDIDATES_CAP + 1)
+        .all<LoanRow>();
+    const [lenderSide, borrowerSide] = await Promise.all([
+      sideRows('lender_current_owner', 'LenderFundsClaimed'),
+      sideRows('borrower_current_owner', 'BorrowerFundsClaimed'),
+    ]);
+    // Dedup (one wallet can hold BOTH position NFTs of a loan), then
+    // re-sort the union by the same recency key and clip.
+    const byId = new Map<number, LoanRow>();
+    for (const r of [
+      ...(lenderSide.results ?? []),
+      ...(borrowerSide.results ?? []),
+    ]) {
+      byId.set(r.loan_id, r);
+    }
+    const merged = [...byId.values()].sort((a, b) => {
+      const ra = a.terminal_at ?? a.updated_at;
+      const rb = b.terminal_at ?? b.updated_at;
+      return rb - ra || b.loan_id - a.loan_id;
+    });
+    const truncated = merged.length > CLAIM_CANDIDATES_CAP;
+    const rows = truncated ? merged.slice(0, CLAIM_CANDIDATES_CAP) : merged;
     if (rows.length === 0) {
-      return jsonResponse({ chainId, address: addr, asLender: [], asBorrower: [] });
+      return jsonResponse({
+        chainId,
+        address: addr,
+        asLender: [],
+        asBorrower: [],
+        truncated,
+      });
     }
     // Pre-fetch already-claimed loan IDs so we can dedup in memory
     // without N round trips. One query per side. (Belt-and-suspenders: a claimed
     // position NFT is burned, so its `*_current_owner` is already `0x0`.)
+    // #1247 PAG-007 (Codex #1269 r1+r2) — the claimed sets are only
+    // ever consulted for the ≤CAP kept rows, so the lookups are EXACT:
+    // scoped to the kept loan ids via `json_each` over ONE bound JSON
+    // array (a flat IN(id, id, …) of up to 200 ids would exceed D1's
+    // 100-bound-parameter cap, and an id-floor predicate is porous
+    // when the kept window is sparse — an old kept id would re-open
+    // the wallet's whole later claim history).
+    const keptIdsJson = JSON.stringify(rows.map((r) => r.loan_id));
     const claimedLender = new Set<number>();
     const claimedBorrower = new Set<number>();
     const lenderClaims = (
       await env.DB.prepare(
         `SELECT DISTINCT loan_id FROM activity_events
-         WHERE chain_id = ? AND kind = 'LenderFundsClaimed' AND actor = ?`,
+         WHERE chain_id = ? AND kind = 'LenderFundsClaimed' AND actor = ?
+           AND loan_id IN (SELECT value FROM json_each(?))`,
       )
-        .bind(chainId, addr)
+        .bind(chainId, addr, keptIdsJson)
         .all<{ loan_id: number }>()
     ).results ?? [];
     for (const r of lenderClaims) claimedLender.add(r.loan_id);
     const borrowerClaims = (
       await env.DB.prepare(
         `SELECT DISTINCT loan_id FROM activity_events
-         WHERE chain_id = ? AND kind = 'BorrowerFundsClaimed' AND actor = ?`,
+         WHERE chain_id = ? AND kind = 'BorrowerFundsClaimed' AND actor = ?
+           AND loan_id IN (SELECT value FROM json_each(?))`,
       )
-        .bind(chainId, addr)
+        .bind(chainId, addr, keptIdsJson)
         .all<{ loan_id: number }>()
     ).results ?? [];
     for (const r of borrowerClaims) claimedBorrower.add(r.loan_id);
@@ -627,6 +696,7 @@ export async function handleClaimables(
       address: addr,
       asLender: asLender.map(loanToJson),
       asBorrower: asBorrower.map(loanToJson),
+      truncated,
     });
   } catch (err) {
     console.error('[loanRoutes] claimables failed', err);
@@ -663,6 +733,11 @@ export async function handleClaimables(
  * tolerates.
  */
 const CLAIM_CANDIDATES_CAP = 200;
+
+/** #1247 PAG-009 — the executed-rate candle route's per-request scan
+ *  ceiling (newest fills first; the fold drops the oldest candles
+ *  when hit and the response says `truncated`). */
+const CANDLE_SCAN_CAP = 10_000;
 
 export async function handleClaimCandidates(
   req: Request,
@@ -1231,18 +1306,40 @@ export async function handleLoansRateCandles(
     }
     // Aliased so CandleFillRow / foldRateCandles stay shape-agnostic: the
     // fill's terms are the INIT snapshot, never the mutated live values.
+    // #1247 PAG-009 — bounded scan: `range=all` has no start bound, so
+    // a long-lived busy market would otherwise make this an unbounded
+    // D1 read per request. Scan the NEWEST CANDLE_SCAN_CAP fills
+    // (DESC + reverse for the fold's ascending order) and say so —
+    // a truncated series drops the OLDEST candles, never recent ones.
     const rows = await env.DB.prepare(
       `SELECT loan_id, start_at,
               COALESCE(init_rate_bps, interest_rate_bps) AS interest_rate_bps,
               COALESCE(init_principal, principal) AS principal
        FROM loans
        WHERE ${conds.join(' AND ')}
-       ORDER BY start_at ASC, loan_id ASC`,
+       ORDER BY start_at DESC, loan_id DESC
+       LIMIT ?`,
     )
-      .bind(...binds)
+      .bind(...binds, CANDLE_SCAN_CAP + 1)
       .all<CandleFillRow>();
-    const buckets = foldRateCandles(rows.results ?? [], intervalSec);
-    return jsonResponse({ chainId, buckets }, 200, {
+    const fills = rows.results ?? [];
+    const truncated = fills.length > CANDLE_SCAN_CAP;
+    const scanned = (truncated ? fills.slice(0, CANDLE_SCAN_CAP) : fills)
+      .slice()
+      .reverse();
+    const folded = foldRateCandles(scanned, intervalSec);
+    // Codex #1269 r3 (P3) — the scan slice can cut MID-bucket, so the
+    // oldest retained bucket may hold only part of its fills; a candle
+    // with a wrong open/fills/principal is worse than no candle. Drop
+    // the boundary bucket whenever the scan clipped — "the oldest
+    // candles are not drawn" then covers it exactly. EXCEPT when it is
+    // the ONLY bucket (r4: 10k+ fills inside one interval): an empty
+    // series would render as "no fills in range", an active lie about
+    // the market's busiest hour — keep the partial candle, and the
+    // `truncated` disclosure covers its approximation.
+    const buckets =
+      truncated && folded.length > 1 ? folded.slice(1) : folded;
+    return jsonResponse({ chainId, buckets, truncated }, 200, {
       'Cache-Control': 'public, max-age=60',
     });
   } catch (err) {

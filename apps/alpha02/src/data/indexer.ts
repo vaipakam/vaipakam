@@ -175,12 +175,19 @@ export interface MarketSummary {
   bestBidBps: number | null;
 }
 
+export interface OffersMarketsResponse {
+  chainId: number;
+  markets: MarketSummary[];
+  /** #1247 PAG-010 — true when the server clipped discovery at its
+   *  deepest-markets cap. Optional so a not-yet-redeployed Worker
+   *  still parses. */
+  truncated?: boolean;
+}
+
 export function fetchOffersMarkets(
   chainId: number,
-): Promise<{ chainId: number; markets: MarketSummary[] } | null> {
-  return getJson<{ chainId: number; markets: MarketSummary[] }>(
-    `/offers/markets?chainId=${chainId}`,
-  );
+): Promise<OffersMarketsResponse | null> {
+  return getJson<OffersMarketsResponse>(`/offers/markets?chainId=${chainId}`);
 }
 
 export interface CreatorOffersPage {
@@ -371,6 +378,10 @@ export interface RateCandleBucket {
 export interface RateCandlesResponse {
   chainId: number;
   buckets: RateCandleBucket[];
+  /** #1247 PAG-009 — true when the server's newest-10,000-fill scan
+   *  dropped older fills (the OLDEST candles are missing, never recent
+   *  ones). Optional so a not-yet-redeployed Worker parses fine. */
+  truncated?: boolean;
 }
 
 /** Executed-rate candles for one (pair, tenor) market — the Rate Desk
@@ -504,6 +515,10 @@ export interface IndexedSignedOffer {
 export interface SignedOffersBook {
   chainId: number;
   offers: IndexedSignedOffer[];
+  /** #1247 PAG-011 — true when a side overflowed the per-side cap and
+   *  depth was dropped. Optional so a not-yet-redeployed Worker still
+   *  parses. */
+  truncated?: boolean;
 }
 
 /** The ACTIVE, unexpired signed book for one (pair, tenor) market. All
@@ -517,6 +532,11 @@ export function fetchSignedOffers(
     collateralAsset: string;
     durationDays: number;
   },
+  /** #1247 PAG-011 — signer-scoped read: the per-side book cap keeps
+   *  only the best-priced 100 rows, so an own-orders view must scope
+   *  by signer or a maker's cancellable orders can hide behind other
+   *  makers' depth. */
+  signer?: string,
 ): Promise<SignedOffersBook | null> {
   const params = new URLSearchParams({
     chainId: String(chainId),
@@ -524,6 +544,7 @@ export function fetchSignedOffers(
     collateralAsset: market.collateralAsset.toLowerCase(),
     durationDays: String(market.durationDays),
   });
+  if (signer) params.set('signer', signer.toLowerCase());
   return getJson<SignedOffersBook>(`/signed-offers?${params}`);
 }
 
