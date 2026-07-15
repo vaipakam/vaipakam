@@ -110,7 +110,6 @@ export function useVaultAssets(scanWindow: number) {
       // not just the rendered rows. VPFI is appended AFTER the slice
       // — it must never fall out of the window.
       const scanTokens = tokenList.slice(0, scanWindow);
-      const moreTokens = Math.max(0, tokenList.length - scanTokens.length);
       try {
         const vpfiToken = (await publicClient!.readContract({
           address: readChain.diamondAddress,
@@ -134,6 +133,11 @@ export function useVaultAssets(scanWindow: number) {
             err.walk((e) => e instanceof ContractFunctionZeroDataError) !== null);
         if (!isRevert) throw err;
       }
+      // Counted AFTER the VPFI append (Codex #1265 r3): a VPFI token
+      // that sat past the slice but was appended above IS scanned —
+      // it must not leave a phantom "Check 1 more token" button.
+      const scannedSet = new Set(scanTokens);
+      const moreTokens = tokenList.filter((t) => !scannedSet.has(t)).length;
 
       const unreadable: `0x${string}`[] = [];
       const rows = await Promise.all(

@@ -263,12 +263,18 @@ export function Positions() {
                   windowed: boolean,
                 ) =>
                   list.length > 0 ? (
-                    <section style={{ marginBottom: 24 }}>
+                    // key + group-scoped resetKey (Codex #1265 r3):
+                    // when a whole group empties (all Active loans
+                    // end), React would otherwise reuse this unkeyed
+                    // sibling's window instance for the SHIFTED group
+                    // — same listKey, no reset, previous expanded
+                    // count inherited.
+                    <section key={title} style={{ marginBottom: 24 }}>
                       <h2>{title}</h2>
                       {windowed ? (
                         <WindowedRowList
                           rows={list}
-                          resetKey={listKey}
+                          resetKey={`${listKey}|${title}`}
                           render={(loan) => (
                             <LoanRow
                               key={keyOf(loan)}

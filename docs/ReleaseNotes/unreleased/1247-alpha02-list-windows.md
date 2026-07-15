@@ -1,10 +1,12 @@
 ## Thread — alpha02 list windows: every big list renders a page at a time (PR #TBD)
 
-The #1247 pagination audit found no unbounded fetches, but six
-surfaces rendered every row their capped fetch returned — up to
-500–2,000 row components on one navigation for a busy wallet or
+The #1247 pagination audit found two kinds of gap on the app side:
+several surfaces rendered every row their capped fetch returned — up
+to 500–2,000 row components on one navigation for a busy wallet or
 market, each mounting its own token-metadata (and sometimes health or
-claimability) reads. This change applies the Activity feed's proven
+claimability) reads — and two client reads had no data-layer ceiling
+at all (the Claims position walk and the Rate Desk pair-book
+hydration). This change applies the Activity feed's proven
 window pattern everywhere: render the first twenty-five rows and a
 "Show N more" button that grows the window a page at a time, so the
 screen and the per-row reads scale with what the user asks to see.
