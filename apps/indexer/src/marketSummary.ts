@@ -8,27 +8,42 @@
  * where writes happen:
  *
  *   - `refreshMarketSummaries(db, chainId, sinceSec, nowSec)` — the
- *     ingest scan tail: finds every market a scan touched (offers /
- *     signed_offers rows stamped `updated_at >= sinceSec`, plus rows
- *     whose `expires_at`/`deadline` LAPSED inside (sinceSec, nowSec] —
- *     time-expiry mutates a market's active set with no write at all),
- *     and recomputes each exactly.
+ *     ingest scan tail: refreshes every market a window touched
+ *     (offers / signed_offers rows stamped `updated_at >= sinceSec`,
+ *     plus rows whose `expires_at`/`deadline` LAPSED inside
+ *     (sinceSec, nowSec] — time-expiry mutates a market's active set
+ *     with no write at all).
  *   - `refreshOneMarketSummary(db, chainId, market, nowSec)` — the
  *     signed-offer POST path (gasless posts never cross the chain
  *     scan, so the POST must maintain its own market synchronously).
  *
- * Every recompute is ONE market scoped through the same union
- * aggregate the route ran globally pre-#1270 (offers leg: active,
- * ERC-20 both legs, healed, non-vehicle, unexpired; signed leg: GET
- * /signed-offers' freshness predicate) — upsert when the market has
- * depth, DELETE when it emptied. Exactness therefore never depends on
- * incremental counter arithmetic; a missed refresh is self-healing on
- * the market's next touch.
+ * Both are SET-BASED and ATOMIC (Codex #1288 r1): each refresh is one
+ * `db.batch([DELETE touched, INSERT..SELECT recompute])` — D1 runs a
+ * batch as a single transaction, and the INSERT's SELECT reads the
+ * source tables at execution time, so
+ *   - there is no per-market loop, no sweep cap, and no skipped-market
+ *     watermark hazard — the caller may safely advance its window
+ *     cursor after ANY successful sweep (P1);
+ *   - a concurrent POST refresh and scan sweep can interleave in any
+ *     order and the LAST writer always writes CURRENT source data —
+ *     no stale read-then-write snapshot can clobber a fresher row (P2);
+ *   - a whole sweep costs a constant number of D1 subrequests
+ *     (2 statements + the caller's cursor read/write), independent of
+ *     how many markets the window touched (P3).
+ *
+ * The recompute is the same union aggregate the route ran globally
+ * pre-#1270 (offers leg: active, ERC-20 both legs, healed,
+ * non-vehicle, unexpired; signed leg: GET /signed-offers' freshness
+ * predicate), scoped to the touched set. Markets that recompute to
+ * zero simply stay deleted. Exactness never depends on incremental
+ * counter arithmetic; a missed refresh is self-healing on the
+ * market's next touch.
  *
  * Failure posture: callers treat refreshes as fail-open derived-data
  * maintenance (a summary hiccup must never fail a scan whose cursor
  * already advanced, nor a signed POST that already persisted) — the
- * next scan's window re-covers the gap via the caller's sweep cursor.
+ * caller's window cursor is only advanced after a successful sweep,
+ * so a failed window is re-covered next scan.
  */
 
 export interface MarketTriple {
@@ -37,170 +52,125 @@ export interface MarketTriple {
   durationDays: number;
 }
 
-/** Ceiling on markets recomputed per sweep — a chain scan's touched
- *  set is gas-bounded and signed POSTs self-refresh, so this is a
- *  runaway backstop, not an expected limit. Overflow is logged by the
- *  caller and self-heals: un-refreshed markets stay stale only until
- *  their next touch or expiry-window pass. */
-export const MARKET_SWEEP_CAP = 500;
+/** Every market a window's writes OR time-expiries touched — the
+ *  shared subquery both batch statements scope on. Binds: ?1 chainId,
+ *  ?2 sinceSec, ?3 nowSec. The `updated_at` legs ride
+ *  idx_*_chain_updated (handlers stamp wall-clock scan time, so
+ *  catch-up scans over old blocks are still caught); the expiry legs
+ *  catch rows whose expires_at/deadline LAPSED in the window. The
+ *  offers expiry leg keeps quotable-shape predicates (an expiring
+ *  stub/vehicle never contributed a summary row). */
+const TOUCHED_MARKETS = `
+  SELECT DISTINCT lending_asset, collateral_asset, duration_days FROM (
+    SELECT lending_asset, collateral_asset, duration_days
+      FROM offers WHERE chain_id = ?1 AND updated_at >= ?2
+    UNION ALL
+    SELECT lending_asset, collateral_asset, duration_days
+      FROM signed_offers WHERE chain_id = ?1 AND updated_at >= ?2
+    UNION ALL
+    SELECT lending_asset, collateral_asset, duration_days
+      FROM offers
+     WHERE chain_id = ?1 AND status = 'active'
+       AND asset_type = 0 AND collateral_asset_type = 0
+       AND is_stub = 0 AND is_sale_vehicle = 0 AND is_offset_vehicle = 0
+       AND expires_at > ?2 AND expires_at <= ?3
+    UNION ALL
+    SELECT lending_asset, collateral_asset, duration_days
+      FROM signed_offers
+     WHERE chain_id = ?1 AND status = 'active'
+       AND ((expires_at > ?2 AND expires_at <= ?3)
+         OR (deadline > ?2 AND deadline <= ?3))
+  )`;
 
-/** One market's exact discovery aggregate — the pre-#1270 global
- *  query scoped to a single (pair, tenor). */
-const ONE_MARKET_AGG = `
-  SELECT SUM(lender_offers) AS lender_offers,
-         SUM(borrower_offers) AS borrower_offers,
-         MIN(best_ask_bps) AS best_ask_bps,
-         MAX(best_bid_bps) AS best_bid_bps
+/** The exact discovery aggregate over a scoped market set. `SCOPE` is
+ *  interpolated as a row-value IN predicate body (a trusted SQL
+ *  literal from this module, never caller input). Binds: ?1 chainId,
+ *  ?3 nowSec (?2 stays sinceSec for the sweep's scope; the one-market
+ *  variant re-purposes ?2/?4 for the triple). */
+function recomputeSql(scope: string): string {
+  return `
+  INSERT INTO market_summary (chain_id, lending_asset, collateral_asset,
+    duration_days, lender_offers, borrower_offers, best_ask_bps,
+    best_bid_bps, total, updated_at)
+  SELECT ?1, lending_asset, collateral_asset, duration_days,
+         SUM(lender_offers), SUM(borrower_offers),
+         MIN(best_ask_bps), MAX(best_bid_bps),
+         SUM(lender_offers) + SUM(borrower_offers), ?3
     FROM (
-      SELECT SUM(CASE WHEN offer_type = 0 THEN 1 ELSE 0 END) AS lender_offers,
+      SELECT lending_asset, collateral_asset, duration_days,
+             SUM(CASE WHEN offer_type = 0 THEN 1 ELSE 0 END) AS lender_offers,
              SUM(CASE WHEN offer_type = 1 THEN 1 ELSE 0 END) AS borrower_offers,
              MIN(CASE WHEN offer_type = 0 THEN interest_rate_bps END) AS best_ask_bps,
              MAX(CASE WHEN offer_type = 1 THEN interest_rate_bps_max END) AS best_bid_bps
         FROM offers
-       WHERE chain_id = ?1 AND lending_asset = ?2 AND collateral_asset = ?3
-         AND duration_days = ?4
-         AND status = 'active'
+       WHERE chain_id = ?1 AND status = 'active'
          AND asset_type = 0 AND collateral_asset_type = 0
          AND is_stub = 0 AND is_sale_vehicle = 0 AND is_offset_vehicle = 0
-         AND (expires_at = 0 OR expires_at > ?5)
+         AND (expires_at = 0 OR expires_at > ?3)
+         AND (lending_asset, collateral_asset, duration_days) IN (${scope})
+       GROUP BY lending_asset, collateral_asset, duration_days
       UNION ALL
-      SELECT SUM(CASE WHEN offer_type = 0 THEN 1 ELSE 0 END),
+      SELECT lending_asset, collateral_asset, duration_days,
+             SUM(CASE WHEN offer_type = 0 THEN 1 ELSE 0 END),
              SUM(CASE WHEN offer_type = 1 THEN 1 ELSE 0 END),
              MIN(CASE WHEN offer_type = 0 THEN interest_rate_bps END),
              MAX(CASE WHEN offer_type = 1 THEN interest_rate_bps_max END)
         FROM signed_offers
-       WHERE chain_id = ?1 AND lending_asset = ?2 AND collateral_asset = ?3
-         AND duration_days = ?4
-         AND status = 'active'
+       WHERE chain_id = ?1 AND status = 'active'
          AND asset_type = 0 AND collateral_asset_type = 0
-         AND (expires_at = 0 OR expires_at > ?5)
-         AND (deadline = 0 OR deadline > ?5)
-    )`;
+         AND (expires_at = 0 OR expires_at > ?3)
+         AND (deadline = 0 OR deadline > ?3)
+         AND (lending_asset, collateral_asset, duration_days) IN (${scope})
+       GROUP BY lending_asset, collateral_asset, duration_days
+    )
+   GROUP BY lending_asset, collateral_asset, duration_days
+  HAVING SUM(lender_offers) + SUM(borrower_offers) > 0`;
+}
 
-/** Recompute ONE market's summary row exactly: upsert when it has
- *  depth, delete when it emptied. */
+function deleteSql(scope: string): string {
+  return `
+  DELETE FROM market_summary
+   WHERE chain_id = ?1
+     AND (lending_asset, collateral_asset, duration_days) IN (${scope})`;
+}
+
+/** Sweep every market touched in (sinceSec, nowSec] and recompute the
+ *  whole set atomically. Constant D1 cost regardless of touched-set
+ *  size; safe to advance the caller's window cursor on success. */
+export async function refreshMarketSummaries(
+  db: D1Database,
+  chainId: number,
+  sinceSec: number,
+  nowSec: number,
+): Promise<void> {
+  await db.batch([
+    db.prepare(deleteSql(TOUCHED_MARKETS)).bind(chainId, sinceSec, nowSec),
+    db.prepare(recomputeSql(TOUCHED_MARKETS)).bind(chainId, sinceSec, nowSec),
+  ]);
+}
+
+/** Single-market scope for the signed-POST path. Binds: ?2 lending,
+ *  ?4 collateral, ?5 durationDays (?1/?3 stay chainId/now to match
+ *  the shared recompute SQL's placeholders). */
+const ONE_MARKET = `SELECT ?2, ?4, ?5`;
+
+/** Recompute ONE market's summary row exactly (atomic, set-based —
+ *  same properties as the sweep). */
 export async function refreshOneMarketSummary(
   db: D1Database,
   chainId: number,
   market: MarketTriple,
   nowSec: number,
 ): Promise<void> {
-  const lendingAsset = market.lendingAsset.toLowerCase();
-  const collateralAsset = market.collateralAsset.toLowerCase();
-  const row = await db
-    .prepare(ONE_MARKET_AGG)
-    .bind(chainId, lendingAsset, collateralAsset, market.durationDays, nowSec)
-    .first<{
-      lender_offers: number | null;
-      borrower_offers: number | null;
-      best_ask_bps: number | null;
-      best_bid_bps: number | null;
-    }>();
-  const lender = row?.lender_offers ?? 0;
-  const borrower = row?.borrower_offers ?? 0;
-  if (lender + borrower <= 0) {
-    await db
-      .prepare(
-        `DELETE FROM market_summary
-         WHERE chain_id = ? AND lending_asset = ? AND collateral_asset = ?
-           AND duration_days = ?`,
-      )
-      .bind(chainId, lendingAsset, collateralAsset, market.durationDays)
-      .run();
-    return;
-  }
-  await db
-    .prepare(
-      `INSERT INTO market_summary (chain_id, lending_asset, collateral_asset,
-         duration_days, lender_offers, borrower_offers, best_ask_bps,
-         best_bid_bps, total, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-       ON CONFLICT (chain_id, lending_asset, collateral_asset, duration_days)
-       DO UPDATE SET lender_offers = excluded.lender_offers,
-                     borrower_offers = excluded.borrower_offers,
-                     best_ask_bps = excluded.best_ask_bps,
-                     best_bid_bps = excluded.best_bid_bps,
-                     total = excluded.total,
-                     updated_at = excluded.updated_at`,
-    )
-    .bind(
-      chainId,
-      lendingAsset,
-      collateralAsset,
-      market.durationDays,
-      lender,
-      borrower,
-      row?.best_ask_bps ?? null,
-      row?.best_bid_bps ?? null,
-      lender + borrower,
-      nowSec,
-    )
-    .run();
-}
-
-/** Every market a window's writes OR time-expiries touched. The three
- *  UNIONed touched-set legs are each index-served and bounded by the
- *  window: `updated_at` legs ride idx_*_chain_updated (handlers stamp
- *  wall-clock scan time, so catch-up scans over old blocks are still
- *  caught); the expiry legs catch rows whose expires_at/deadline
- *  LAPSED in the window — the "no event, market changed anyway" case.
- *  The offers expiry leg deliberately keeps quotable-shape predicates
- *  (an expiring stub/vehicle never contributed to a summary row);
- *  the signed legs match the book's own scoping. */
-async function touchedMarkets(
-  db: D1Database,
-  chainId: number,
-  sinceSec: number,
-  nowSec: number,
-): Promise<MarketTriple[]> {
-  const rows = await db
-    .prepare(
-      `SELECT DISTINCT lending_asset, collateral_asset, duration_days FROM (
-         SELECT lending_asset, collateral_asset, duration_days
-           FROM offers WHERE chain_id = ?1 AND updated_at >= ?2
-         UNION ALL
-         SELECT lending_asset, collateral_asset, duration_days
-           FROM signed_offers WHERE chain_id = ?1 AND updated_at >= ?2
-         UNION ALL
-         SELECT lending_asset, collateral_asset, duration_days
-           FROM offers
-          WHERE chain_id = ?1 AND status = 'active'
-            AND asset_type = 0 AND collateral_asset_type = 0
-            AND is_stub = 0 AND is_sale_vehicle = 0 AND is_offset_vehicle = 0
-            AND expires_at > ?2 AND expires_at <= ?3
-         UNION ALL
-         SELECT lending_asset, collateral_asset, duration_days
-           FROM signed_offers
-          WHERE chain_id = ?1 AND status = 'active'
-            AND ((expires_at > ?2 AND expires_at <= ?3)
-              OR (deadline > ?2 AND deadline <= ?3))
-       )
-       LIMIT ?4`,
-    )
-    .bind(chainId, sinceSec, nowSec, MARKET_SWEEP_CAP + 1)
-    .all<{ lending_asset: string; collateral_asset: string; duration_days: number }>();
-  return (rows.results ?? []).map((r) => ({
-    lendingAsset: r.lending_asset,
-    collateralAsset: r.collateral_asset,
-    durationDays: r.duration_days,
-  }));
-}
-
-/** Sweep every market touched in (sinceSec, nowSec] and recompute
- *  each exactly. Returns the number refreshed plus whether the sweep
- *  hit its backstop cap (caller logs; the overflow self-heals on the
- *  markets' next touch). */
-export async function refreshMarketSummaries(
-  db: D1Database,
-  chainId: number,
-  sinceSec: number,
-  nowSec: number,
-): Promise<{ refreshed: number; capped: boolean }> {
-  const touched = await touchedMarkets(db, chainId, sinceSec, nowSec);
-  const capped = touched.length > MARKET_SWEEP_CAP;
-  const work = capped ? touched.slice(0, MARKET_SWEEP_CAP) : touched;
-  for (const market of work) {
-    await refreshOneMarketSummary(db, chainId, market, nowSec);
-  }
-  return { refreshed: work.length, capped };
+  const binds = [
+    chainId,
+    market.lendingAsset.toLowerCase(),
+    nowSec,
+    market.collateralAsset.toLowerCase(),
+    market.durationDays,
+  ] as const;
+  await db.batch([
+    db.prepare(deleteSql(ONE_MARKET)).bind(...binds),
+    db.prepare(recomputeSql(ONE_MARKET)).bind(...binds),
+  ]);
 }

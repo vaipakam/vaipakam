@@ -8,9 +8,12 @@
  * query engine; only the tiny prepare/bind/first/all/run surface the
  * routes use is adapted.
  *
- * Kept deliberately narrow: no batch(), no exec-through-D1, no named
- * params — the routes under test use none of them. Tests seed rows
- * through the raw `db` handle.
+ * Kept deliberately narrow: no exec-through-D1, no named params — the
+ * routes under test use none of them. `batch()` exists because the
+ * #1270 market_summary refresh runs its DELETE + INSERT..SELECT as one
+ * transactional batch; the adapter mirrors D1's semantics (all-or-
+ * nothing) with BEGIN/COMMIT/ROLLBACK. Tests seed rows through the raw
+ * `db` handle.
  */
 import { DatabaseSync } from 'node:sqlite';
 
@@ -26,17 +29,33 @@ export interface SqliteD1 {
 export function createSqliteD1(ddl: string[]): SqliteD1 {
   const db = new DatabaseSync(':memory:');
   for (const sql of ddl) db.exec(sql);
+  const makeStatement = (sql: string, args: SqlValue[]) => ({
+    first: async () => db.prepare(sql).get(...args) ?? null,
+    all: async () => ({ results: db.prepare(sql).all(...args) }),
+    run: async () => {
+      const info = db.prepare(sql).run(...args);
+      return { meta: { changes: Number(info.changes) } };
+    },
+    /** Consumed by the adapter's batch() below. */
+    __exec: () => db.prepare(sql).run(...args),
+  });
   const d1 = {
     prepare(sql: string) {
-      const bound = (args: SqlValue[]) => ({
-        first: async () => db.prepare(sql).get(...args) ?? null,
-        all: async () => ({ results: db.prepare(sql).all(...args) }),
-        run: async () => {
-          const info = db.prepare(sql).run(...args);
-          return { meta: { changes: Number(info.changes) } };
-        },
-      });
-      return { bind: (...args: SqlValue[]) => bound(args), ...bound([]) };
+      return {
+        bind: (...args: SqlValue[]) => makeStatement(sql, args),
+        ...makeStatement(sql, []),
+      };
+    },
+    async batch(statements: Array<{ __exec: () => unknown }>) {
+      db.exec('BEGIN');
+      try {
+        const results = statements.map((s) => s.__exec());
+        db.exec('COMMIT');
+        return results.map(() => ({ meta: {} }));
+      } catch (err) {
+        db.exec('ROLLBACK');
+        throw err;
+      }
     },
   };
   return { db, d1 };

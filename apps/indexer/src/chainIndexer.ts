@@ -648,13 +648,15 @@ export async function runChainIndexerForChain(
 
   // #1270 — market_summary sweep: recompute discovery rows for every
   // market this window's writes or time-expiries touched (see
-  // marketSummary.ts). Runs AFTER the cursor advance and fail-open —
-  // summary rows are derived data; a hiccup here must never fail a
-  // scan, and the sweep window is cursor-tracked so a failed sweep is
-  // simply re-covered next scan. The window cursor lives in
-  // indexer_cursor under its own kind, with `last_block` reused as a
-  // unix-seconds watermark (60s overlap margin absorbs clock skew and
-  // the gap between a handler's `now` stamp and the sweep's read).
+  // marketSummary.ts — one atomic set-based batch, constant D1 cost
+  // regardless of touched-set size). Runs AFTER the cursor advance and
+  // fail-open — summary rows are derived data; a hiccup here must
+  // never fail a scan. The window watermark lives in indexer_cursor
+  // under its own kind (`last_block` reused as unix seconds; 60s
+  // overlap margin absorbs clock skew and the gap between a handler's
+  // `now` stamp and the sweep's read) and only advances AFTER a
+  // successful sweep, so a failed window is re-covered next scan and
+  // no touched market can be skipped past (Codex #1288 r1).
   try {
     const sweepRow = await env.DB.prepare(
       `SELECT last_block FROM indexer_cursor WHERE chain_id = ? AND kind = ?`,
@@ -662,12 +664,7 @@ export async function runChainIndexerForChain(
       .bind(chainId, MARKET_SWEEP_CURSOR_KIND)
       .first<{ last_block: number }>();
     const since = Math.max(0, (sweepRow?.last_block ?? 0) - 60);
-    const sweep = await refreshMarketSummaries(env.DB, chainId, since, now);
-    if (sweep.capped) {
-      console.warn(
-        `[chainIndexer] market_summary sweep hit its cap (chain ${chainId}, refreshed ${sweep.refreshed}) — overflow self-heals on next touch`,
-      );
-    }
+    await refreshMarketSummaries(env.DB, chainId, since, now);
     await env.DB.prepare(
       `INSERT INTO indexer_cursor (chain_id, kind, last_block, updated_at)
        VALUES (?, ?, ?, ?)

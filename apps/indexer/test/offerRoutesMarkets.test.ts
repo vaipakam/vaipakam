@@ -18,7 +18,10 @@
 import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import { handleOffersMarkets } from '../src/offerRoutes';
-import { refreshMarketSummaries } from '../src/marketSummary';
+import {
+  refreshMarketSummaries,
+  refreshOneMarketSummary,
+} from '../src/marketSummary';
 import type { Env } from '../src/env';
 import { createSqliteD1, type SqliteD1 } from './helpers/sqliteD1';
 
@@ -354,6 +357,29 @@ describe('refreshMarketSummaries — windowed sweep (#1270)', () => {
     await refreshMarketSummaries(h.d1 as D1Database, CHAIN_ID, 0, 1_500);
     expect(summaryRows(h)).toEqual([{ lending_asset: L1, total: 1 }]);
     await refreshMarketSummaries(h.d1 as D1Database, CHAIN_ID, 1_500, 2_500);
+    expect(summaryRows(h)).toEqual([]);
+  });
+
+  it('refreshOneMarketSummary (the signed-POST path) maintains exactly its own market', async () => {
+    const h = freshDb();
+    insertSigned(h, { orderHash: 's-1', offerType: 0, lendingAsset: L1, durationDays: 7, rateBps: 450 });
+    insertOffer(h, { offerType: 0, lendingAsset: L2, durationDays: 30, rateBps: 500 });
+    // Only L1's market is refreshed — L2 stays absent until ITS touch.
+    await refreshOneMarketSummary(
+      h.d1 as D1Database,
+      CHAIN_ID,
+      { lendingAsset: L1, collateralAsset: C1, durationDays: 7 },
+      2_000,
+    );
+    expect(summaryRows(h)).toEqual([{ lending_asset: L1, total: 1 }]);
+    // Re-running after the row is gone deletes the summary row too.
+    h.db.prepare(`UPDATE signed_offers SET status = 'cancelled'`).run();
+    await refreshOneMarketSummary(
+      h.d1 as D1Database,
+      CHAIN_ID,
+      { lendingAsset: L1, collateralAsset: C1, durationDays: 7 },
+      3_000,
+    );
     expect(summaryRows(h)).toEqual([]);
   });
 
