@@ -52,6 +52,40 @@ contract RedeploySelectorParityTest is Test {
         _assertParityExcept("VaipakamNFTFacet", FacetSelectors.vaipakamNFT(), loupeOwned);
     }
 
+    /// @dev #1221 — the keeper action bitmask widened uint8→uint16, changing the
+    ///      selectors of `approveKeeper`/`setKeeperActions`. `RedeployFacets`
+    ///      Removes the OLD uint8 selectors from a pre-widen diamond. Pin the
+    ///      widen's completeness: the legacy uint8 selectors must be GONE from
+    ///      the facet's compiled surface (so the Remove targets genuinely-retired
+    ///      entries, and no dual entry point survives a fresh deploy) while the
+    ///      new uint16 selectors are present. If a future change reintroduced a
+    ///      uint8 keeper signature, this fails before it could re-split routing.
+    function test_LegacyKeeperUint8Selectors_Retired() public view {
+        bytes4[] memory abiSels = _abiSelectorsExcept("ProfileFacet", bytes4(0));
+
+        bytes4 oldApprove = bytes4(keccak256("approveKeeper(address,uint8)"));
+        bytes4 oldSet = bytes4(keccak256("setKeeperActions(address,uint8)"));
+        assertFalse(
+            _contains(abiSels, oldApprove),
+            "legacy approveKeeper(address,uint8) still on ProfileFacet - widen incomplete"
+        );
+        assertFalse(
+            _contains(abiSels, oldSet),
+            "legacy setKeeperActions(address,uint8) still on ProfileFacet - widen incomplete"
+        );
+
+        bytes4 newApprove = bytes4(keccak256("approveKeeper(address,uint16)"));
+        bytes4 newSet = bytes4(keccak256("setKeeperActions(address,uint16)"));
+        assertTrue(
+            _contains(abiSels, newApprove),
+            "widened approveKeeper(address,uint16) missing from ProfileFacet"
+        );
+        assertTrue(
+            _contains(abiSels, newSet),
+            "widened setKeeperActions(address,uint16) missing from ProfileFacet"
+        );
+    }
+
     /// @dev Assert `libSelectors` equals the facet's compiled-ABI selector set.
     function _assertParity(string memory facet, bytes4[] memory libSelectors)
         private

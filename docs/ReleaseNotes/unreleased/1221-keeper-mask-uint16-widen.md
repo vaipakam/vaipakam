@@ -11,7 +11,15 @@ have forced a storage-layout and interface change. Widening the container now
 means each future keeper action — the auto-protect and keeper-sweep actions
 planned for later user-value work — is a pure additive change: define the new
 bit, add it to the "grant everything" set, and add the executor's authorization
-check, with no storage migration and no re-approval by existing users.
+check, with no storage migration.
+
+Note this does not silently extend any keeper's authority. Authorization is
+still an exact per-action bit check, so a user who previously granted "everything"
+under the 8-action regime does **not** automatically authorize a future ninth
+action — they must deliberately re-grant to include the new bit. That is the
+desired safety property: the container growing can never widen what an existing
+keeper is allowed to do; a newly-defined action reaches a keeper only by the
+user's explicit new grant.
 
 There is no behaviour change in this release. The same eight actions are the
 only ones that exist, the same "grant everything" convenience value is
