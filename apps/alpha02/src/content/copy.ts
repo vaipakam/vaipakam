@@ -998,6 +998,10 @@ export const copy = {
       'Withdrawing parked VPFI lowers your fee-discount tier — off by default.',
     allResidualNote:
       'Anything that wasn’t ready is still listed below to claim on its own.',
+    allRewardsUnavailable:
+      'We couldn’t check your rewards, so they’re not in this batch — claim them separately.',
+    allVpfiUnavailable:
+      'We couldn’t check your vault VPFI, so it’s not in this batch.',
     allWorking: 'Waiting for wallet…',
   },
 

@@ -10,7 +10,9 @@ import { DIAMOND_ABI_VIEM } from '@vaipakam/contracts/abis';
 import { AssetType } from '../lib/types';
 import {
   buildClaimAllItems,
+  defaultSelectedKeys,
   encodeClaimAllCalls,
+  isLoanItem,
   MAX_CLAIM_ALL,
 } from './claimAll';
 import type { ClaimableLoan } from './claimables';
@@ -118,6 +120,46 @@ describe('buildClaimAllItems', () => {
     });
     const keys = items.map((i) => i.key);
     expect(new Set(keys).size).toBe(keys.length);
+  });
+});
+
+describe('defaultSelectedKeys', () => {
+  it('checks every default-on item under the cap', () => {
+    const items = buildClaimAllItems({
+      loans: [loan(1, 'lender'), loan(2, 'borrower')],
+      rewardsPending: 1n,
+      vpfiFree: 1n,
+    });
+    const keys = defaultSelectedKeys(items);
+    // Both loans + rewards on; vault VPFI off.
+    expect(keys.has('loan-lender-1')).toBe(true);
+    expect(keys.has('loan-borrower-2')).toBe(true);
+    expect(keys.has('rewards')).toBe(true);
+    expect(keys.has('vpfi-vault')).toBe(false);
+  });
+
+  it('never pre-checks more than the cap (whale lands submittable)', () => {
+    const loans = Array.from({ length: 90 }, (_, i) => loan(i + 1, 'lender'));
+    const items = buildClaimAllItems({ loans, rewardsPending: 0n, vpfiFree: 0n });
+    const keys = defaultSelectedKeys(items);
+    expect(keys.size).toBe(MAX_CLAIM_ALL);
+    // The cap slices the FIRST N default-on items — a deterministic,
+    // submittable starting selection, not 90 checked boxes.
+    expect(keys.has('loan-lender-1')).toBe(true);
+    expect(keys.has('loan-lender-90')).toBe(false);
+  });
+});
+
+describe('isLoanItem', () => {
+  it('separates loan legs from rewards / vault legs', () => {
+    const items = buildClaimAllItems({
+      loans: [loan(1, 'lender')],
+      rewardsPending: 1n,
+      vpfiFree: 1n,
+    });
+    expect(items.filter(isLoanItem).map((i) => i.kind)).toEqual([
+      'loan-lender',
+    ]);
   });
 });
 

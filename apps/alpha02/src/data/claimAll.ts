@@ -132,6 +132,32 @@ export function buildClaimAllItems({
   return items;
 }
 
+/** The kinds that come from a loan/rental position (vs the standalone
+ *  rewards / vault-VPFI legs). */
+export function isLoanItem(item: ClaimAllItem): boolean {
+  return item.kind === 'loan-lender' || item.kind === 'loan-borrower';
+}
+
+/**
+ * The default-checked key set for a fresh item list: every
+ * `defaultSelected` item, but never more than `cap` — so the initial
+ * selection is always submittable without the user having to uncheck
+ * down to the on-chain batch bound. A whale with 90 claimable loans
+ * lands with the first {MAX_CLAIM_ALL} pre-checked and the rest off,
+ * instead of 90 checked and a forced unchecking chore.
+ */
+export function defaultSelectedKeys(
+  items: ClaimAllItem[],
+  cap: number = MAX_CLAIM_ALL,
+): Set<string> {
+  return new Set(
+    items
+      .filter((i) => i.defaultSelected)
+      .slice(0, cap)
+      .map((i) => i.key),
+  );
+}
+
 /** One encoded `MulticallFacet.Call` — index-aligned with its item. */
 export interface EncodedClaimCall {
   callData: `0x${string}`;

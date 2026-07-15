@@ -274,6 +274,11 @@ Thin-market honesty rules apply.
 - The same sanctions posture as any individual claim applies to the batch: a
   flagged wallet, or an oracle that cannot be read, blocks the batch before it
   is signed.
+- The batch is only offered once every ready amount it would include is known; a
+  still-loading balance is never silently omitted, and if a balance genuinely
+  cannot be read, the user is told it is excluded rather than the batch
+  pretending to be complete. A batch that would pre-select more payouts than the
+  bound allows starts within the bound instead of forcing the user to unselect.
 
 ## NFT Rentals
 

@@ -18,8 +18,12 @@
  *   - The batch may include `claimInteractionRewards`; a live,
  *     fail-closed sanctions re-read gates submission (matching the
  *     standalone rewards button).
+ *   - The card renders only once the rewards + vault-VPFI reads have
+ *     SETTLED, so a still-loading read never silently drops a leg; if
+ *     either read failed, the card says so instead of pretending the
+ *     batch is complete.
  */
-import { useEffect, useMemo, useState } from 'react';
+import { useState } from 'react';
 import { CheckCircle2, LoaderCircle } from 'lucide-react';
 import { usePublicClient } from 'wagmi';
 import { useQueryClient } from '@tanstack/react-query';
@@ -30,12 +34,15 @@ import { useVpfi } from '../data/vpfi';
 import { assertWalletNotSanctionedLive, useSanctionsCheck } from '../data/sanctions';
 import {
   buildClaimAllItems,
+  defaultSelectedKeys,
   encodeClaimAllCalls,
+  isLoanItem,
   MAX_CLAIM_ALL,
 } from '../data/claimAll';
 import { useActiveChain } from '../chain/useActiveChain';
 import { useDiamondWrite } from '../contracts/diamond';
 import { captureTxError } from '../lib/errors';
+import { useVisibleWindow, ShowMoreButton } from '../lib/visibleWindow';
 
 export function ClaimAllCard({ loans }: { loans: ClaimableLoan[] }) {
   const { address, walletChain, onSupportedChain } = useActiveChain();
@@ -52,50 +59,48 @@ export function ClaimAllCard({ loans }: { loans: ClaimableLoan[] }) {
 
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // User's EXPLICIT checkbox choices, keyed by item key. Anything not
+  // here follows the item's default — so a manual uncheck survives a
+  // background balance/candidate refresh (the reset-to-defaults shape
+  // would silently re-check it), while a claimed item simply leaves the
+  // map behind harmlessly.
+  const [overrides, setOverrides] = useState<Record<string, boolean>>({});
 
-  const items = useMemo(
-    () =>
-      buildClaimAllItems({
-        loans,
-        rewardsPending: rewards.data?.pending ?? 0n,
-        vpfiFree: vpfi.data?.freeBalance ?? 0n,
-      }),
-    [loans, rewards.data?.pending, vpfi.data?.freeBalance],
-  );
+  // Wait for rewards + vault VPFI to SETTLE before offering the batch:
+  // a still-loading read defaults its amount to 0n, which would silently
+  // drop that leg from a batch the user thinks is complete.
+  if (rewards.isPending || vpfi.isPending) return null;
 
-  // Reset the selection to the item defaults only when the item SET
-  // changes (keys), not when an amount refreshes — so a user's manual
-  // toggle survives a background balance re-read, but a claimed item
-  // leaving the batch re-seeds cleanly.
-  const itemsKey = items.map((i) => i.key).join('|');
-  const [selected, setSelected] = useState<Set<string>>(new Set());
-  useEffect(() => {
-    setSelected(
-      new Set(items.filter((i) => i.defaultSelected).map((i) => i.key)),
-    );
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [itemsKey]);
+  const items = buildClaimAllItems({
+    loans,
+    rewardsPending: rewards.data?.pending ?? 0n,
+    vpfiFree: vpfi.data?.freeBalance ?? 0n,
+  });
 
-  // The batch only makes sense for two or more payouts — a single claim
-  // already has its own button/row.
-  if (items.length < 2) return null;
+  // The batch is framed around loan proceeds; a pure rewards/vault
+  // batch would just duplicate the Rewards card and collide with the
+  // "no claims yet" empty state. Require at least one loan leg, and at
+  // least two payouts total (a single claim already has its own button).
+  const loanCount = items.filter(isLoanItem).length;
+  if (loanCount < 1 || items.length < 2) return null;
+
+  const defaultOn = defaultSelectedKeys(items);
+  const isSelected = (key: string) => overrides[key] ?? defaultOn.has(key);
+  const selectedKeys = items.filter((i) => isSelected(i.key)).map((i) => i.key);
+  const selectedCount = selectedKeys.length;
 
   const hasVpfiVault = items.some((i) => i.kind === 'vpfi-vault');
-  const tooMany = selected.size > MAX_CLAIM_ALL;
+  const tooMany = selectedCount > MAX_CLAIM_ALL;
   const canSubmit =
     !busy &&
     onSupportedChain &&
     sanctionsClear &&
-    selected.size > 0 &&
+    selectedCount > 0 &&
     !tooMany;
 
   function toggle(key: string) {
-    setSelected((prev) => {
-      const next = new Set(prev);
-      if (next.has(key)) next.delete(key);
-      else next.add(key);
-      return next;
-    });
+    const now = isSelected(key);
+    setOverrides((prev) => ({ ...prev, [key]: !now }));
   }
 
   async function submit() {
@@ -115,7 +120,7 @@ export function ClaimAllCard({ loans }: { loans: ClaimableLoan[] }) {
         address,
         { failClosed: true },
       );
-      const chosen = items.filter((i) => selected.has(i.key));
+      const chosen = items.filter((i) => isSelected(i.key));
       if (chosen.length === 0) return;
       const calls = encodeClaimAllCalls(chosen);
       await write('multicall', [calls]);
@@ -141,41 +146,26 @@ export function ClaimAllCard({ loans }: { loans: ClaimableLoan[] }) {
         {copy.claims.allBlurb}
       </p>
 
-      <ul
-        style={{
-          listStyle: 'none',
-          padding: 0,
-          margin: '0 0 12px',
-          display: 'flex',
-          flexDirection: 'column',
-          gap: 8,
-        }}
-      >
-        {items.map((item) => (
-          <li key={item.key}>
-            <label
-              style={{
-                display: 'flex',
-                alignItems: 'center',
-                gap: 10,
-                cursor: 'pointer',
-              }}
-            >
-              <input
-                type="checkbox"
-                checked={selected.has(item.key)}
-                onChange={() => toggle(item.key)}
-                disabled={busy}
-              />
-              <span>{item.label}</span>
-            </label>
-          </li>
-        ))}
-      </ul>
+      <ClaimAllChecklist
+        items={items}
+        isSelected={isSelected}
+        onToggle={toggle}
+        disabled={busy}
+      />
 
       {hasVpfiVault ? (
         <p className="muted" style={{ marginTop: 0, fontSize: 13 }}>
           {copy.claims.allVpfiNote}
+        </p>
+      ) : null}
+      {rewards.isError ? (
+        <p className="muted" style={{ marginTop: 0, fontSize: 13 }}>
+          {copy.claims.allRewardsUnavailable}
+        </p>
+      ) : null}
+      {vpfi.isError ? (
+        <p className="muted" style={{ marginTop: 0, fontSize: 13 }}>
+          {copy.claims.allVpfiUnavailable}
         </p>
       ) : null}
       <p className="muted" style={{ marginTop: 0, fontSize: 13 }}>
@@ -204,10 +194,74 @@ export function ClaimAllCard({ loans }: { loans: ClaimableLoan[] }) {
         {busy ? <LoaderCircle className="spin" aria-hidden size={18} /> : null}
         {busy
           ? copy.claims.allWorking
-          : selected.size === 0
+          : selectedCount === 0
             ? copy.claims.allEmpty
-            : copy.claims.allButton(selected.size)}
+            : copy.claims.allButton(selectedCount)}
       </button>
     </section>
+  );
+}
+
+/** The windowed include/exclude checklist — a whale with dozens of
+ *  claimable loans renders a page at a time, not every checkbox at
+ *  once (matches the Claims row list's PAG-003 windowing). */
+function ClaimAllChecklist({
+  items,
+  isSelected,
+  onToggle,
+  disabled,
+}: {
+  items: ReturnType<typeof buildClaimAllItems>;
+  isSelected: (key: string) => boolean;
+  onToggle: (key: string) => void;
+  disabled: boolean;
+}) {
+  const resetKey = items.map((i) => i.key).join('|');
+  const { shown, hasMore, hiddenCount, nextCount, loadMore } = useVisibleWindow(
+    items,
+    resetKey,
+  );
+  return (
+    <>
+      <ul
+        style={{
+          listStyle: 'none',
+          padding: 0,
+          margin: '0 0 12px',
+          display: 'flex',
+          flexDirection: 'column',
+          gap: 8,
+        }}
+      >
+        {shown.map((item) => (
+          <li key={item.key}>
+            <label
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                gap: 10,
+                cursor: 'pointer',
+              }}
+            >
+              <input
+                type="checkbox"
+                checked={isSelected(item.key)}
+                onChange={() => onToggle(item.key)}
+                disabled={disabled}
+              />
+              <span>{item.label}</span>
+            </label>
+          </li>
+        ))}
+      </ul>
+      <div style={{ marginBottom: 12 }}>
+        <ShowMoreButton
+          hasMore={hasMore}
+          hiddenCount={hiddenCount}
+          nextCount={nextCount}
+          onClick={loadMore}
+        />
+      </div>
+    </>
   );
 }
