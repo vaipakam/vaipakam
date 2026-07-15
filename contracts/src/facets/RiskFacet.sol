@@ -624,7 +624,8 @@ contract RiskFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessCont
         // AMM pools may be stale under those conditions, so a swap here
         // would execute against mispriced state and either cross heavy
         // slippage or unfairly punish the borrower. Time-based defaults
-        // (DefaultedFacet) fall back to full collateral transfer instead.
+        // (DefaultedFacet) also revert while the sequencer is unhealthy
+        // (its own sequencer-health gate) rather than transferring collateral.
         if (!OracleFacet(address(this)).sequencerHealthy()) {
             revert SequencerUnhealthy();
         }
@@ -976,11 +977,12 @@ contract RiskFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessCont
      *         HF didn't improve, principal fully repaid) the entire tx
      *         reverts and the slice stays in the borrower's vault.
      *
-     *         Maturity preservation: the loan's `endTime` is unchanged.
-     *         Implementation rewires `startTime = block.timestamp` AND
-     *         shortens `durationDays` so `startTime + durationDays * 1 days`
-     *         is invariant. From now on, interest accrues on the reduced
-     *         principal for the remaining duration only.
+     *         Maturity preservation: the loan's `endTime`, `startTime`, and
+     *         `durationDays` are all UNCHANGED (the #641 pattern — ~20+
+     *         maturity/grace consumers treat `startTime + durationDays` as the
+     *         fixed maturity). Implementation re-stamps ONLY the interest-accrual
+     *         clock (`interestAccrualStart`/`interestRemainingDays`); from now on
+     *         interest accrues on the reduced principal for the remaining term.
      *
      *         Repeated partials: a loan may be partial-liquidated multiple
      *         times. Each call further reduces collateral + principal,

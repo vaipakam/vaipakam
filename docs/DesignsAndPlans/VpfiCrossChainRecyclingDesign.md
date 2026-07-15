@@ -6,6 +6,20 @@
 from a single-chain idea to the full five-chain deployment. Implements the
 "how" behind #1217 (R-1) and feeds #1218 (R-2). Legal frame per #694.
 
+> **PARTIALLY SUPERSEDED (2026-07-15, owner-directed redesign for #1222):**
+> §3.4's "fresh-mint offset" distributor formula is replaced by the
+> **absorption-coupled balance governor** in
+> [`VpfiRecyclingBalanceGovernorDesign.md`](VpfiRecyclingBalanceGovernorDesign.md)
+> — distribution now *tracks* absorption with a bounded platform-margin knob,
+> instead of running the schedule regardless of absorption. The substrate here
+> (bucket ledger §3.1, cumulative reporting §3.2, Option-B netting §3.3,
+> keeper rider §3.5, Phase-C surplus tooling) is **kept as substrate**, with
+> one timing override: §3.3's broadcast-time full-`recycleConsume` bucket
+> debit is replaced by the governor's commitment model — the broadcast
+> *commits* the amount; the bucket is *debited pro-rata at claim/remit*
+> (governor doc §3.1), so unclaimed slices never strand outside the bucket. Read the governor doc first; return here for the
+> mesh mechanics.
+
 **Design goal:** every VPFI the protocol receives as fees — on any chain —
 re-funds the interaction-reward and keeper-reward programs instead of
 stagnating, with **near-zero legal surface** and minimal new cross-chain
@@ -157,6 +171,13 @@ Netting applies **after** the per-day-cap trim (the trim defines what the
 chain actually needs; recycling changes the *source*, never the amount).
 
 ### 3.4 Offset at the canonical mint
+
+> **SUPERSEDED** by the balance governor
+> ([`VpfiRecyclingBalanceGovernorDesign.md`](VpfiRecyclingBalanceGovernorDesign.md) §3):
+> rewards are drawn from a pre-funded pool, not minted per-day, so this
+> offset formula has no mint to offset; and the schedule-blind pool size is
+> replaced by `dailyPool[D] = scheduleFloor[D] + (1 − marginBps) × Ā[D]`.
+> Retained below for the record.
 
 The distributor (R-1, #1217) funds day `D`'s pool as:
 
