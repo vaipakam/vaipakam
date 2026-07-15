@@ -394,8 +394,8 @@ jobs:
     # "cancelled") and burning a full 15 min per attempt. 25 min restores
     # headroom for continued growth AND is cheaper than the timeout-then-
     # rerun cycle. RSS is unchanged (this is a wall-clock bound, not memory),
-    # so still well under the OOM ceiling. Revisit if it approaches 25.
-    timeout-minutes: 25
+    # so still well under the OOM ceiling. Revisit if it approaches 75 (bumped 25 -> 75 for cold-runner + reclaim headroom, 2026-07-15).
+    timeout-minutes: 75
     # #290 — every forge invocation in this job runs under the
     # narrow-scope `cifast` profile defined in `contracts/foundry.toml`.
     # This is what reduces peak RSS from ~17.7 GB → ~3.2 GB and keeps
@@ -632,7 +632,7 @@ jobs:
     # cold src compile per PR on a slow runner. (History: 15 → 30 for #640's
     # cold-cache overrun; the in-job warm step is the real fix so a cache
     # miss can't cancel the job again.)
-    timeout-minutes: 40
+    timeout-minutes: 75
     env:
       FOUNDRY_PROFILE: cifast
     defaults:

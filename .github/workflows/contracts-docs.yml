@@ -50,7 +50,7 @@ jobs:
     # of NatSpec) takes 12-20 min cold; the original 15-min cap clipped
     # the very first PR run. Bumped to 30; foundry cache below makes
     # subsequent runs much faster.
-    timeout-minutes: 30
+    timeout-minutes: 75
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
         with:
