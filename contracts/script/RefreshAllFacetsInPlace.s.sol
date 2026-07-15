@@ -71,6 +71,7 @@ import {NumeraireConfigFacet} from "../src/facets/NumeraireConfigFacet.sol";
 import {ReceiverFacet} from "../src/facets/ReceiverFacet.sol";
 import {RiskAccessFacet} from "../src/facets/RiskAccessFacet.sol";
 import {RiskPreviewFacet} from "../src/facets/RiskPreviewFacet.sol";
+import {MulticallFacet} from "../src/facets/MulticallFacet.sol";
 import {RewardRemittanceFacet} from "../src/facets/RewardRemittanceFacet.sol";
 import {OfferPreviewFacet} from "../src/facets/OfferPreviewFacet.sol";
 
@@ -145,7 +146,7 @@ contract RefreshAllFacetsInPlace is DeployDiamond {
 
     // Must equal DeployDiamond's `cuts` array length (currently cuts[0..63]).
     // A mismatch means a facet was added to DeployDiamond but not mirrored here.
-    uint256 internal constant EXPECTED_FACETS = 64;
+    uint256 internal constant EXPECTED_FACETS = 65;
 
     function refresh() external {
         uint256 cid = block.chainid;
@@ -411,6 +412,11 @@ contract RefreshAllFacetsInPlace is DeployDiamond {
         items[62] = Item("offerPreviewFacet", address(new OfferPreviewFacet()), _getOfferPreviewSelectors());
         // #1104 — RiskPreviewFacet split off RiskAccessFacet (items[60]).
         items[63] = Item("riskPreviewFacet", address(new RiskPreviewFacet()), _getRiskPreviewFacetSelectors());
+        // #1212 (E-10 Claim-All) — generic best-effort delegatecall batcher.
+        // NEW facet: `_split` routes its selector to Add on an existing diamond
+        // (unrouted), so an in-place refresh installs Claim All instead of
+        // leaving multicall(Call[]) unrouted while the ABI advertises it.
+        items[64] = Item("multicallFacet", address(new MulticallFacet()), _getMulticallFacetSelectors());
         // #1132 (S10 central enforcement) — terminal-transition register host.
     }
 

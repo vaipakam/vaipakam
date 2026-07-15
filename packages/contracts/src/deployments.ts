@@ -103,6 +103,8 @@ export interface DeploymentFacets {
   riskAccessFacet?: HexAddress;
   /** #1104 — RiskPreviewFacet split off RiskAccessFacet (preview cluster). */
   riskPreviewFacet?: HexAddress;
+  /** #1212 — MulticallFacet: generic best-effort delegatecall batcher (Claim All). */
+  multicallFacet?: HexAddress;
   riskMatchLiquidationFacet?: HexAddress;
   riskSplitLiquidationFacet?: HexAddress;
   signedOfferFacet?: HexAddress;
