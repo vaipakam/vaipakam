@@ -774,15 +774,18 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
         }
         if (row.assetType === AssetType.ERC20 && totalDue > 0n) {
           // The owed amount STEPS UP at each elapsed-day boundary
-          // (whole-day interest flooring) and by 0.5%/day late fee —
-          // an exact-amount approval can be short by the time repayLoan
-          // executes. Pad by ~2 days of interest + one late-fee step;
-          // repayLoan only pulls the recomputed amount, so the pad is
-          // never spent.
+          // (whole-day interest flooring) and by the late fee — an
+          // exact-amount approval can be short by the time repayLoan
+          // executes. Pad by ~2 days of interest + the worst single
+          // late-fee jump (the 1% base landing when a repay signed
+          // just before maturity mines just after it, plus a 0.5%
+          // day-step — same bound as the preclose pad, Codex #1256
+          // r1); repayLoan only pulls the recomputed amount, so the
+          // pad is never spent.
           const principal = BigInt(row.principal);
           const pad =
             fullTermInterest(principal, row.interestRateBps, 2) +
-            (principal * 50n) / 10_000n;
+            (principal * 150n) / 10_000n;
           // approve() succeeds no matter the balance — check the wallet
           // holds the PADDED amount before asking for an approval
           // signature: a wallet holding exactly totalDue can still be
@@ -1175,15 +1178,16 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
         return;
       }
       // The owed amount steps up at each elapsed-day boundary while
-      // the tx is pending — pad by ~2 days of interest plus one
-      // 0.5%/day late-fee step (an in-grace close crossing a day
-      // boundary steps the fee too, mirroring the repay pad);
-      // precloseDirect pulls only what it recomputes, so the pad is
-      // never spent.
+      // the tx is pending — pad by ~2 days of interest plus the
+      // worst single late-fee jump: a close signed just before
+      // maturity that mines just after it picks up the 1% base fee
+      // at once, and an in-grace close crossing a day boundary steps
+      // 0.5% (Codex #1256 r1 — 1% + 0.5% covers both). precloseDirect
+      // pulls only what it recomputes, so the pad is never spent.
       const due =
         calcDue +
         (live.principal * live.interestRateBps * 2n) / (365n * 10_000n) +
-        (live.principal * 50n) / 10_000n;
+        (live.principal * 150n) / 10_000n;
       await assertErc20BalanceLive({
         publicClient,
         token: row.lendingAsset as `0x${string}`,

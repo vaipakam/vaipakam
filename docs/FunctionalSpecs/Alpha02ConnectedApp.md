@@ -530,13 +530,15 @@ Its intended behaviour, as the test oracle for this surface:
   lender paid off from the borrower's wallet, old loan closed,
   collateral moved across without unlocking. When the acceptance
   lands after the loan's due date, the payoff also includes the same
-  late fee a late repayment charges. Before posting, the review must
+  late fee a late repayment charges plus the interest that keeps
+  accruing past the due date. Before posting, the review must
   state: the payoff is always principal plus the full remaining
   term's interest (never pro-rata, regardless of the loan's interest
   mode) plus the protocol's cut inside it; that a late acceptance
   adds the late fee, with the largest fee this request could ever
-  carry disclosed and covered by the approval being granted (so a
-  grace-window acceptance cannot fail on a short allowance); the
+  carry disclosed and the granted approval sized to the largest
+  total pull any remaining acceptance could make (so a grace-window
+  acceptance cannot fail on a short allowance); the
   spare wallet balance to keep while the request is open (payoff
   interest plus the new loan's initiation fee — the new principal
   arrives in the same transaction); that a short balance only makes

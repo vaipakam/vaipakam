@@ -157,7 +157,12 @@ export function RefinanceFlow({
   // The late fee at the LAST moment this request could be accepted
   // (its own 30-day expiry or the grace end, whichever first) — the
   // approval covers it, and the review discloses it whenever the
-  // request's window can cross the due date.
+  // request's window can cross the due date. While the grace bucket
+  // is still unknown the review CANNOT open (Codex #1256 r1): a
+  // zero-grace fallback would quote no late-fee headroom while
+  // submit approves the larger last-fillable bound — an undisclosed
+  // figure must never be signable.
+  const graceReady = graceSeconds !== undefined;
   const graceSec = graceSeconds ?? 0n;
   const maxLateFee =
     refinanceApprovalOf(live, {
@@ -485,6 +490,7 @@ export function RefinanceFlow({
               !rateValid ||
               !durationValid ||
               !fees.ready ||
+              !graceReady ||
               flowDisabled('post-offer')
             }
             onClick={onOpenConfirm}
@@ -510,7 +516,14 @@ export function RefinanceFlow({
               confirmLabel={copy.refinance.confirm}
               onBack={onCloseConfirm}
               onConfirm={() => void submit()}
-              disabled={!walletReady || !consent || flowDisabled('post-offer')}
+              // graceReady here too: the bucket query can refresh to
+              // undefined (chain hop) while this receipt is open.
+              disabled={
+                !walletReady ||
+                !consent ||
+                !graceReady ||
+                flowDisabled('post-offer')
+              }
               data={{
                 youReceive:
                   'A new loan at your chosen terms the moment a lender accepts — your collateral moves to it automatically and this loan closes in the same transaction.',

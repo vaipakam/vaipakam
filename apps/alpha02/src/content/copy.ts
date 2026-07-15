@@ -582,7 +582,7 @@ export const copy = {
     cancelledRevokeFailed:
       'Refinance request cancelled — this loan continues unchanged. The standing payoff approval couldn’t be removed automatically; you can revoke it from your wallet’s token-approvals view.',
     allowanceShort:
-      'The payoff approval no longer covers this request — a lender’s acceptance would fail right now. Restore it below or cancel the request.',
+      'The payoff approval no longer covers everything this request could pull — a lender’s acceptance could fail (an acceptance after the due date also pulls the late fee and extra interest). Restore it below or cancel the request.',
     balanceShort: (topUp: string) =>
       `Your wallet holds less than the ~${topUp} spare this request needs — a lender’s acceptance would fail right now. Top up your wallet or cancel the request.`,
     reapprove: 'Restore the payoff approval',

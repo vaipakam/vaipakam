@@ -57,7 +57,9 @@ export interface RefinancePendingState {
   pastGrace: boolean;
   /** Chain time says the cancel cooldown has elapsed. */
   cancelUnlocked: boolean;
-  /** Standing approval no longer covers the live payoff. */
+  /** Standing approval no longer covers the request's approval
+   *  target (the pull at its LAST fillable moment — an allowance
+   *  covering only today's payoff still strands an in-grace accept). */
   allowanceShort: boolean;
   /** Wallet balance no longer covers the live top-up figure. */
   balanceShort: boolean;
@@ -156,9 +158,13 @@ export function useRefinancePending(
       }
       // The grace bucket — via the app-shared query cache (same key
       // as useGraceSeconds), so the 30s poll doesn't re-read what a
-      // 5-minute-fresh config read already answered. Bucketed on the
+      // 5-minute-fresh config read already answered. fetchQuery, NOT
+      // ensureQueryData: ensure returns a cached entry regardless of
+      // age, which would freeze a governance grace change out of the
+      // pastGrace/approvalTarget math indefinitely (Codex #1256 r1);
+      // fetchQuery enforces the staleTime bound. Bucketed on the
       // LIVE duration (a keeper extend can move the bucket).
-      const graceSec = await queryClient.ensureQueryData({
+      const graceSec = await queryClient.fetchQuery({
         queryKey: ['graceSeconds', readChain.chainId, Number(live.durationDays)],
         queryFn: () =>
           readGraceSecondsLive({
@@ -178,6 +184,14 @@ export function useRefinancePending(
       // Strictly past grace the contract's admission gate rejects any
       // accept — the request behaves like an expired one from here.
       const pastGrace = latestBlock.timestamp > loanEndTimeOf(live) + graceSec;
+      // What the contract could pull at the request's LAST fillable
+      // moment — the allowance threshold (Codex #1256 r1): an
+      // allowance covering only today's payoff still strands a
+      // later in-grace accept, so warn (and restore) against this.
+      const approvalTarget = refinanceApprovalOf(live, {
+        expiresAt: offer.expiresAt,
+        graceSeconds: graceSec,
+      });
       // Disconnected wallet (address undefined) must not paint the
       // funding warnings red off zero placeholders.
       const fundingKnown = Boolean(address);
@@ -201,7 +215,7 @@ export function useRefinancePending(
           !offer.accepted &&
           !expired &&
           !pastGrace &&
-          allowance < payoff,
+          allowance < approvalTarget,
         balanceShort:
           fundingKnown &&
           !offer.accepted &&
@@ -210,10 +224,7 @@ export function useRefinancePending(
           balance < topUp,
         payoff,
         topUp,
-        approvalTarget: refinanceApprovalOf(live, {
-          expiresAt: offer.expiresAt,
-          graceSeconds: graceSec,
-        }),
+        approvalTarget,
       };
     },
   });

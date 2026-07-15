@@ -18,11 +18,12 @@ past grace, both disappear and any attempt is stopped before a wallet
 prompt with an honest "the default process applies now" message.
 
 The refinance money-math is now time-aware end to end: the payoff
-quote and the pending request's funding watch include the late fee as
-of now, and the standing payoff approval (both at posting and from
-the restore action) covers the fee at the last moment the request
-could still be accepted — its own expiry or the end of the grace
-window, whichever comes first. Previously the approval was sized to
+quote and the pending request's funding watch include the late fee
+and the interest that keeps accruing past the due date as of now, and
+the standing payoff approval (both at posting and from the restore
+action) covers the full pull at the last moment the request could
+still be accepted — its own expiry or the end of the grace window,
+whichever comes first. Previously the approval was sized to
 the fee-free payoff, so a request accepted inside the grace window
 would pull more than the allowance and fail; the borrower had to
 over-approve by hand. A pending request whose loan has gone strictly

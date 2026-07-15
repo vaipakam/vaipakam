@@ -89,15 +89,22 @@ export function lateFeeAt(live: LoanLive, ts: bigint): bigint {
   return (live.principal * feeBps) / 10_000n;
 }
 
-/** The refinance old-lender payoff AS OF `asOf` (chain time) —
- *  principal + FULL-TERM interest on the remaining committed term,
- *  plus, when `asOf` is past maturity, the #1189 grace-window late
- *  fee (RefinanceFacet folds `calculateLateFee` into the exiting
- *  lender's pull; a quote without it under-states a grace-window
- *  accept). ONE definition — the review quote, the pending watch,
- *  and the funding checks must never drift apart. */
+/** The refinance old-lender payoff AS OF `asOf` (chain time). The
+ *  facet pays `settlementInterestNet(oldLoan, now)` + the #1189
+ *  grace-window late fee, and that settlement interest is
+ *  `max(whole days elapsed since the interest clock, remaining
+ *  committed term)` — i.e. the full-term floor in term, but PAST
+ *  maturity it keeps accruing with elapsed time (Codex #1256 r1).
+ *  This mirror applies the remaining-term floor in BOTH interest
+ *  modes (exact for full-term loans; over-covers a pro-rata loan —
+ *  the pull only shrinks) and stays gross of `interestSettled`
+ *  (again over-covers only). ONE definition — the review quote, the
+ *  pending watch, and the funding checks must never drift apart. */
 export function refinancePayoffOf(live: LoanLive, asOf: bigint): bigint {
-  const days = interestRemainingDaysOf(live);
+  const start = interestAccrualStartOf(live);
+  const elapsedDays = asOf > start ? (asOf - start) / 86_400n : 0n;
+  const floorDays = interestRemainingDaysOf(live);
+  const days = elapsedDays > floorDays ? elapsedDays : floorDays;
   return (
     live.principal +
     (live.principal * live.interestRateBps * days) / (365n * 10_000n) +
@@ -109,7 +116,8 @@ export function refinancePayoffOf(live: LoanLive, asOf: bigint): bigint {
  *  at the LAST moment the request is still fillable — the earlier of
  *  its own expiry and the end of the loan's grace window (a lender
  *  can accept any time up to then, and the accept-time pull includes
- *  the late fee AT THAT TIME, #1189/#1236). Approving only today's
+ *  the late fee AND the still-accruing grace interest AT THAT TIME,
+ *  #1189/#1236). Approving only today's
  *  figure would strand an otherwise-valid request the moment the
  *  loan crosses maturity; approving this bound keeps the approval
  *  exact against the maximum the contract can ever pull for THIS
