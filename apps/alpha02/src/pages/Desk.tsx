@@ -118,7 +118,7 @@ export function Desk() {
     // same rate levels. An unavailable/loading signed book merges
     // nothing — the ladder degrades to chain-only rather than blanking;
     // the per-row "Signed" badge carries the indexer-sourced honesty.
-    const signedRows = (Array.isArray(signedBook.data) ? signedBook.data : [])
+    const signedRows = (signedBook.data?.offers ?? [])
       .map((r) => signedRowToDeskRow(r, readChain.chainId, nowSec))
       .filter((r): r is DeskBookRow => r !== null);
     return buildLadder(

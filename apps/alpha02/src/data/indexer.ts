@@ -508,6 +508,10 @@ export interface IndexedSignedOffer {
 export interface SignedOffersBook {
   chainId: number;
   offers: IndexedSignedOffer[];
+  /** #1247 PAG-011 — true when a side overflowed the per-side cap and
+   *  depth was dropped. Optional so a not-yet-redeployed Worker still
+   *  parses. */
+  truncated?: boolean;
 }
 
 /** The ACTIVE, unexpired signed book for one (pair, tenor) market. All

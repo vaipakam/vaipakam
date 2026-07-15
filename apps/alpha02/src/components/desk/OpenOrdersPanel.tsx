@@ -852,11 +852,15 @@ function SignedOrdersBlock({
   const me = address?.toLowerCase();
   const own = useMemo(
     () =>
-      (Array.isArray(signedBook.data) ? signedBook.data : []).filter(
+      (signedBook.data?.offers ?? []).filter(
         (r) => me !== undefined && r.signer.toLowerCase() === me,
       ),
     [signedBook.data, me],
   );
+  // Codex #1269 r2 — the signer-scoped read is still per-side capped;
+  // a maker with >100 own orders on one side gets a clipped page and
+  // must not read it as "all your signed orders".
+  const ownTruncated = signedBook.data?.truncated === true;
 
   const lendingMeta = useTokenMeta(pair?.lendingAsset);
 
@@ -892,6 +896,13 @@ function SignedOrdersBlock({
       <p className="muted" style={{ margin: '0 0 8px', fontSize: '0.8rem' }}>
         {text.signedNote} {text.signedCancelNote}
       </p>
+      {ownTruncated ? (
+        // Codex #1269 r2 — the signer-scoped read is per-side capped at
+        // 100; a clipped page must never read as "all your orders".
+        <p className="muted" style={{ margin: '0 0 8px', fontSize: '0.8rem' }}>
+          {text.signedTruncated}
+        </p>
+      ) : null}
       {/* #1247 PAG-005 — same window as the on-chain block (the
           server slice bounds this at 100/side, but the pattern stays
           uniform and the DOM stays a page at a time). */}

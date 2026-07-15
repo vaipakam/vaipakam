@@ -571,17 +571,21 @@ export async function handleClaimables(
     // below is then belt-and-suspenders). Zero operator RPC; the FRONTEND layers
     // the on-chain `getUserPositionLoans` verify via the user's own RPC.
     // #1247 PAG-011-adjacent (PAG-007) — the one row route that had no
-    // LIMIT: cap at the CLAIM_CANDIDATES_CAP newest terminal loans and
-    // say so (`truncated`), matching /claim-candidates. Additive field
-    // — the typed apps/defi consumer ignores it, and its Claim Center
-    // layers an on-chain verify over this discovery anyway.
+    // LIMIT: cap at the CLAIM_CANDIDATES_CAP most-recently-TERMINAL
+    // loans and say so (`truncated`), matching /claim-candidates.
+    // Recency is `updated_at` (stamped by the terminal transition),
+    // NOT loan_id — ids are assigned at initiation, so an old loan
+    // repaid today is the NEWEST claimable and must survive the cut
+    // (Codex #1269 r2); loan_id only tie-breaks. Additive field — the
+    // typed apps/defi consumer ignores it, and its Claim Center layers
+    // an on-chain verify over this discovery anyway.
     const rawRows = (
       await env.DB.prepare(
         `SELECT * FROM loans
          WHERE chain_id = ?
            AND status IN ('repaid', 'defaulted', 'liquidated', 'internal_matched')
            AND (lender_current_owner = ? OR borrower_current_owner = ?)
-         ORDER BY loan_id DESC
+         ORDER BY updated_at DESC, loan_id DESC
          LIMIT ?`,
       )
         .bind(chainId, addr, addr, CLAIM_CANDIDATES_CAP + 1)
@@ -601,23 +605,23 @@ export async function handleClaimables(
     // Pre-fetch already-claimed loan IDs so we can dedup in memory
     // without N round trips. One query per side. (Belt-and-suspenders: a claimed
     // position NFT is burned, so its `*_current_owner` is already `0x0`.)
-    // #1247 PAG-007 (Codex #1269 r1) — the claimed sets are only ever
-    // consulted for the ≤CAP kept rows, all of which have
-    // loan_id >= the window floor (rows are newest-first), so bound the
-    // event scans to the same window instead of the wallet's whole
-    // claim history. An IN(list) would be exact but D1 caps bound
-    // params at 100; the floor predicate is a superset that stays
-    // correct (extra ids in the Sets are simply never looked up).
-    const minKeptLoanId = rows[rows.length - 1].loan_id;
+    // #1247 PAG-007 (Codex #1269 r1+r2) — the claimed sets are only
+    // ever consulted for the ≤CAP kept rows, so the lookups are EXACT:
+    // scoped to the kept loan ids via `json_each` over ONE bound JSON
+    // array (a flat IN(id, id, …) of up to 200 ids would exceed D1's
+    // 100-bound-parameter cap, and an id-floor predicate is porous
+    // when the kept window is sparse — an old kept id would re-open
+    // the wallet's whole later claim history).
+    const keptIdsJson = JSON.stringify(rows.map((r) => r.loan_id));
     const claimedLender = new Set<number>();
     const claimedBorrower = new Set<number>();
     const lenderClaims = (
       await env.DB.prepare(
         `SELECT DISTINCT loan_id FROM activity_events
          WHERE chain_id = ? AND kind = 'LenderFundsClaimed' AND actor = ?
-           AND loan_id >= ?`,
+           AND loan_id IN (SELECT value FROM json_each(?))`,
       )
-        .bind(chainId, addr, minKeptLoanId)
+        .bind(chainId, addr, keptIdsJson)
         .all<{ loan_id: number }>()
     ).results ?? [];
     for (const r of lenderClaims) claimedLender.add(r.loan_id);
@@ -625,9 +629,9 @@ export async function handleClaimables(
       await env.DB.prepare(
         `SELECT DISTINCT loan_id FROM activity_events
          WHERE chain_id = ? AND kind = 'BorrowerFundsClaimed' AND actor = ?
-           AND loan_id >= ?`,
+           AND loan_id IN (SELECT value FROM json_each(?))`,
       )
-        .bind(chainId, addr, minKeptLoanId)
+        .bind(chainId, addr, keptIdsJson)
         .all<{ loan_id: number }>()
     ).results ?? [];
     for (const r of borrowerClaims) claimedBorrower.add(r.loan_id);

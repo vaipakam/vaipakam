@@ -22,7 +22,13 @@ const OTHER = '0x00000000000000000000000000000000000000bb';
 function makeHarness() {
   const h: SqliteD1 = createSqliteD1(ALL_MIGRATIONS);
   const env = { DB: h.d1, RPC_BASE_SEPOLIA: 'http://127.0.0.1:9' } as unknown as Env;
-  const seed = (loanId: number, status: string, lenderOwner: string, borrowerOwner: string) =>
+  const seed = (
+    loanId: number,
+    status: string,
+    lenderOwner: string,
+    borrowerOwner: string,
+    updatedAt = 0,
+  ) =>
     h.db
       .prepare(
         `INSERT INTO loans (chain_id, loan_id, offer_id, status, lender, borrower,
@@ -32,9 +38,9 @@ function makeHarness() {
            lender_current_owner, borrower_current_owner, interest_rate_bps,
            start_time, start_block, start_at, updated_at)
          VALUES (84532, ?, 1, ?, ?, ?, '100', '200', 0, 0, '0xlend', '0xcoll',
-           30, '0', '0', '1', '2', ?, ?, 500, 0, 0, 0, 0)`,
+           30, '0', '0', '1', '2', ?, ?, 500, 0, 0, 0, ?)`,
       )
-      .run(loanId, status, lenderOwner, borrowerOwner, lenderOwner, borrowerOwner);
+      .run(loanId, status, lenderOwner, borrowerOwner, lenderOwner, borrowerOwner, updatedAt);
   const call = async () => {
     const res = await handleClaimables(
       new Request(`https://idx/claimables/${ME}?chainId=84532`),
@@ -87,10 +93,11 @@ describe('GET /claimables/:address', () => {
     expect(body.asBorrower.map((l) => l.loanId)).toEqual([1]); // other side stays
   });
 
-  // #1247 PAG-007 — the candidate scan is capped at the 200 NEWEST
-  // terminal loans (loan_id DESC), with `truncated` saying depth was
-  // dropped. A wallet with more terminal history than the cap must see
-  // its newest candidates, never a silent full-table scan.
+  // #1247 PAG-007 — the candidate scan is capped at the 200
+  // most-recently-terminal loans (updated_at DESC, loan_id tiebreak),
+  // with `truncated` saying depth was dropped. A wallet with more
+  // terminal history than the cap must see its newest candidates,
+  // never a silent full-table scan.
   it('caps candidates at the 200 newest terminal loans and flags truncation', async () => {
     const h = makeHarness();
     h.db.exec('BEGIN');
@@ -99,10 +106,28 @@ describe('GET /claimables/:address', () => {
     const body = await h.call();
     expect(body.truncated).toBe(true);
     expect(body.asLender).toHaveLength(200);
-    // Newest kept (201 down to 2); the single OLDEST loan falls off.
+    // All updated_at tie at 0 → loan_id DESC decides: newest ids kept
+    // (201 down to 2), the single oldest falls off.
     expect(body.asLender[0].loanId).toBe(201);
     expect(body.asLender[199].loanId).toBe(2);
     expect(body.asLender.map((l) => l.loanId)).not.toContain(1);
+  });
+
+  it('an OLD loan that just went terminal survives the cut (recency = updated_at, not loan_id)', async () => {
+    // Codex #1269 r2 — ids are assigned at initiation; loan 1 repaid
+    // TODAY is the newest terminal event even though its id is lowest.
+    const h = makeHarness();
+    h.db.exec('BEGIN');
+    h.seed(1, 'repaid', ME, OTHER, 9_999); // freshly terminal
+    for (let i = 2; i <= 202; i++) h.seed(i, 'repaid', ME, OTHER);
+    h.db.exec('COMMIT');
+    const body = await h.call();
+    expect(body.truncated).toBe(true);
+    expect(body.asLender).toHaveLength(200);
+    expect(body.asLender[0].loanId).toBe(1); // most recent terminal first
+    // The tie-broken tail drops the two lowest ids among updated_at=0.
+    expect(body.asLender.map((l) => l.loanId)).not.toContain(2);
+    expect(body.asLender.map((l) => l.loanId)).not.toContain(3);
   });
 
   it('reports truncated: false when the candidate set fits the cap', async () => {

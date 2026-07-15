@@ -1298,6 +1298,10 @@ export const copy = {
       signedCancelNote:
         'Posting was free, but cancelling costs gas: the only way to revoke a signature the book already holds is an on-chain transaction.',
       signedCancelled: 'Signed order cancelled on-chain.',
+      // #1247 PAG-011 — the wallet-scoped book read is still capped
+      // per side; never let a clipped page read as the full set.
+      signedTruncated:
+        'You have more signed orders in this market than we can list at once — this is not the complete set.',
     },
     positions: {
       tab: 'Positions',

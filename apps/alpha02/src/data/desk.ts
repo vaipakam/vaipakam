@@ -299,9 +299,11 @@ const SIGNED_BOOK_STALE_MS = 15_000;
  *  ladder's signed-row badge carries that source honesty per row.
  *  Tri-state per the app contract: `undefined` loading, `null`
  *  unavailable (fetch failed / wrong-chain response / no indexer
- *  origin), `[]` honestly empty. The desk merges these ADDITIVELY into
- *  the ladder — an unavailable signed book degrades to a chain-only
- *  ladder rather than blanking the whole market. */
+ *  origin), `{ offers: [], … }` honestly empty; `truncated` mirrors
+ *  the route's per-side cap flag (#1247 PAG-011). The desk merges the
+ *  offers ADDITIVELY into the ladder — an unavailable signed book
+ *  degrades to a chain-only ladder rather than blanking the whole
+ *  market. */
 export function useDeskSignedBook(
   pair: DeskPair | null,
   durationDays: number,
@@ -326,7 +328,10 @@ export function useDeskSignedBook(
     // touch the chain, so no push frame announces new signed depth;
     // polling is its only discovery. Keep today's cadence.
     refetchInterval: idleAware(REFRESH_MS),
-    queryFn: async (): Promise<IndexedSignedOffer[] | null> => {
+    queryFn: async (): Promise<{
+      offers: IndexedSignedOffer[];
+      truncated: boolean;
+    } | null> => {
       if (!indexerConfigured()) return null;
       const res = await fetchSignedOffers(
         readChain.chainId,
@@ -340,7 +345,11 @@ export function useDeskSignedBook(
       if (res === null) return null;
       // A response for another chain is not this market's book.
       if (res.chainId !== readChain.chainId) return null;
-      return Array.isArray(res.offers) ? res.offers : null;
+      if (!Array.isArray(res.offers)) return null;
+      // Codex #1269 r2 — carry the per-side truncation flag so the
+      // own-orders view can say when a maker's set was clipped instead
+      // of rendering a partial page as "all your orders".
+      return { offers: res.offers, truncated: res.truncated === true };
     },
   });
 }
