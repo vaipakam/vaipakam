@@ -332,12 +332,51 @@ Boundary rule: tariffs apply **only to optional conveniences** — never to
 protocol-safety functions (permissionless liquidation, default triggering,
 close-outs stay free), preserving the liveness/ethos posture.
 
-**Layer 2 — deferred behind the single §13/§14 legal gate:** `FixedRate`
-activation wakes the conversion-based classes — borrower LIF paid in VPFI
-(treasury share at proper close, full custody on default), lender yield-fee
-in VPFI, matcher-share remainders — the highest-volume absorption family,
-switched on by one config ceremony when the owner elects to spend the one
-bounded legal review.
+**Layer 2 — tariff-priced discount entitlements (owner-proposed, ADOPTED
+2026-07-15 — peg-free, zero legal surface; see §4.2):** at loan initiation a
+borrower/lender may pay a **tariff-sized VPFI amount** —
+`k × loanVolumeETH × durationDays` — to buy that loan's LIF + yield-fee
+discount entitlement. This replaces the peg-gated conversion family as the
+highest-volume absorption path and makes the ENTIRE absorption plan
+launchable with zero legal spend.
+
+**Layer 3 — optional, market-era only:** `FixedRate`/`MarketFeed` activation
+(§13) wakes the conversion-based classes (fee *equivalents* paid in VPFI).
+No longer load-bearing for absorption — purely a UX/pricing refinement once
+an organic market exists, behind the one bounded legal glance.
+
+### 4.2 Tariff-priced discount entitlements (Layer 2, adopted)
+
+**The load-bearing rule — tariff, not conversion:** the VPFI amount is a
+QUANTITY schedule sized by the loan's characteristics (`k` VPFI per
+ETH-of-volume × day), governed like the #1008 reward ratio. It must NEVER be
+derived by converting the fee's value at a VPFI price — that would be a
+price representation and re-enter §13/§14 territory. `k` is an independent
+bounded knob (`recycleTariffKPer1e18EthDay`, zero-sentinel default, ADMIN →
+timelock → governance; default + bounds set with the implementation card,
+tuned so the loop stays net-absorbing after rewards at the governor margin).
+
+Mechanics:
+- **Absorb at initiation:** tariff VPFI → Diamond custody, reusing the
+  existing borrower-LIF custody machinery (`vpfiHeld` → settle at proper
+  close, forfeit on default), extended to the lender yield-fee side. Credits
+  the recycle bucket per the §4 classes on settle/forfeit.
+- **Distribute at close:** unchanged — the existing interaction-reward
+  system already sizes by time × ETH volume (eligible interest, #1008
+  ETH-capped) and closes at terminal. The pair is symmetric by construction
+  and the governor's `Ā`/margin binds the two sides.
+- **Duration-locked custody:** tariff VPFI sits in custody for the loan's
+  life — a supply sink proportional to ETH·day, and wash-cycling loses the
+  margin AND locks capital for the term.
+- **Illiquid loans excluded** (no oracle → no ETH volume): no tariff, no
+  discount entitlement, no rewards — symmetric with the reward side's
+  existing treatment.
+- **Coexistence (recommended):** the hold-based tier discount (E-1) remains
+  as-is — holdings park supply and keep day-one utility; the tariff route
+  offers the DEEPER discount (it absorbs; holding only parks). Exact
+  discount schedule split is an implementation-card decision.
+- **Fairness boundary:** the tariff buys fee discounts only — never
+  priority, safety-function access, or matching preference.
 
 The governor then closes the loop by construction: whatever these layers
 absorb becomes `Ā`, and distribution's coupled term is `(1 − m) × Ā` — so
