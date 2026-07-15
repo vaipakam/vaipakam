@@ -2592,14 +2592,16 @@ library LibVaipakam {
         // first lender/borrower claim.
         mapping(uint256 => FallbackSnapshot) fallbackSnapshot;
         // Phase 6: per-user whitelist of approved keepers + their per-action
-        // authorization bitmask. The bitmask uses the KEEPER_ACTION_* constants
-        // below. A zero value means the keeper is not approved (equivalent to
+        // authorization bitmask. The uint16 bitmask uses the KEEPER_ACTION_*
+        // constants below (#1221 widened it from uint8 — a value written as
+        // uint8 reads back identically since mapping values are one-per-slot,
+        // right-aligned). A zero value means the keeper is not approved (equivalent to
         // not-on-the-list); a non-zero value authorizes the keeper for the set
         // bits' actions. Capped at MAX_APPROVED_KEEPERS per user. Per-side
         // authority is automatic: a lender-entitled action for a loan checks
         // the lender-NFT holder's bitmask, a borrower-entitled action checks
         // the borrower-NFT holder's — the two bitmasks are independent.
-        mapping(address => mapping(address => uint8)) approvedKeeperActions;
+        mapping(address => mapping(address => uint16)) approvedKeeperActions;
         mapping(address => address[]) approvedKeepersList;
         // Phase 6: per-loan and per-offer keeper enable flags. A keeper may
         // drive an action on a loan iff they are both enabled for the loan
@@ -5278,45 +5280,57 @@ library LibVaipakam {
     uint256 internal constant MAX_APPROVED_KEEPERS = 5;
 
     // ─── Phase 6: Keeper action bitmask constants ────────────────────────────
-    // Each keeper carries a `uint8` bitmask of actions they're authorised to
-    // drive for a given NFT holder. Bits are OR'd together; up to 8 actions
-    // (5 used today, 3 spare). The constants are `uint8` to match the
-    // `approvedKeeperActions[user][keeper]` storage type and to keep mask
-    // operations on the stack small.
-    uint8 internal constant KEEPER_ACTION_COMPLETE_LOAN_SALE = 1 << 0; // 0x01
-    uint8 internal constant KEEPER_ACTION_COMPLETE_OFFSET = 1 << 1; // 0x02
-    uint8 internal constant KEEPER_ACTION_INIT_EARLY_WITHDRAW = 1 << 2; // 0x04
-    uint8 internal constant KEEPER_ACTION_INIT_PRECLOSE = 1 << 3; // 0x08
-    uint8 internal constant KEEPER_ACTION_REFINANCE = 1 << 4; // 0x10
+    // Each keeper carries a `uint16` bitmask of actions they're authorised to
+    // drive for a given NFT holder. Bits are OR'd together; up to 16 actions
+    // (8 defined today, bits 8–15 spare). The constants are `uint16` to match
+    // the `approvedKeeperActions[user][keeper]` storage type. The container was
+    // widened from `uint8` in #1221 (E-4/E-10 prereq): the original 8 bits
+    // filled the byte, so adding a 9th action would otherwise force a storage +
+    // ABI break. With the container already `uint16`, a new action is a pure
+    // logic change — define its `1 << N` constant, OR it into
+    // `KEEPER_ACTION_ALL`, and add the executor's `requireKeeperFor` check. No
+    // storage migration (mapping values are one-per-slot, right-aligned, so a
+    // value written as `uint8` reads back identically as `uint16`).
+    uint16 internal constant KEEPER_ACTION_COMPLETE_LOAN_SALE = 1 << 0; // 0x01
+    uint16 internal constant KEEPER_ACTION_COMPLETE_OFFSET = 1 << 1; // 0x02
+    uint16 internal constant KEEPER_ACTION_INIT_EARLY_WITHDRAW = 1 << 2; // 0x04
+    uint16 internal constant KEEPER_ACTION_INIT_PRECLOSE = 1 << 3; // 0x08
+    uint16 internal constant KEEPER_ACTION_REFINANCE = 1 << 4; // 0x10
     /// @dev T-092 — auto in-place loan extension (no NFT churn).
     ///      Gated by BOTH the borrower's and lender's per-loan
     ///      `autoExtendConsent` caps in `AutoLifecycleFacet`. The
     ///      executor (`extendLoanInPlace`) lands in T-092 Phase 3;
     ///      the bit is reserved here so the consent-cap setters
     ///      shipped in Phase 1 stay forward-compatible.
-    uint8 internal constant KEEPER_ACTION_EXTEND = 1 << 5; // 0x20
+    uint16 internal constant KEEPER_ACTION_EXTEND = 1 << 5; // 0x20
     /// @dev #393 v1-c — authorize a solver to fill the principal owner's
     ///      standing lending INTENT (`OfferMatchFacet.matchIntent`) when that
     ///      intent is set `requiresKeeperAuth`. PRE-loan / principal-keyed (the
     ///      loan doesn't exist at fill time), so it is checked via
     ///      `LibAuth.requireKeeperForPrincipal`, not the loan-keyed
     ///      `requireKeeperFor`. An un-opted intent stays openly fillable.
-    uint8 internal constant KEEPER_ACTION_SIGNED_FILL = 1 << 6; // 0x40
+    uint16 internal constant KEEPER_ACTION_SIGNED_FILL = 1 << 6; // 0x40
     /// @dev #393 v1-d.2 — authorize a keeper to AUTO-ROLL the principal owner's
     ///      repaid standing-intent loans (`LenderIntentFacet.rollIntentLoan`):
     ///      re-lien the repaid principal + interest back into the intent's
     ///      capital pool for zero-gap redeployment, instead of paying it to the
     ///      lender's wallet. PRE-/cross-loan and principal-keyed (authority is
     ///      "act for this lender"), so checked via `requireKeeperForPrincipal`.
-    ///      This is the LAST free bit of the uint8 keeper bitmask; a 9th action
-    ///      requires widening `approvedKeeperActions` to uint16.
-    uint8 internal constant KEEPER_ACTION_AUTO_ROLL = 1 << 7; // 0x80
-    /// @dev All actions — convenience for "grant everything" UX
-    ///      flows. T-092 Phase 3 (#503) widened this from 0x1F to
-    ///      0x3F at the same time the `extendLoanInPlace` executor
-    ///      landed; #393 v1-c widened it 0x3F → 0x7F with SIGNED_FILL;
-    ///      #393 v1-d.2 widened it 0x7F → 0xFF with AUTO_ROLL (bitmask full).
-    uint8 internal constant KEEPER_ACTION_ALL = 0xFF;
+    ///      This filled the last bit of the original uint8 keeper bitmask;
+    ///      #1221 widened `approvedKeeperActions` to uint16 so bits 8–15 are
+    ///      now available for future actions (E-4 auto-protect, E-10
+    ///      keeper-sweep) without a further storage/ABI break.
+    uint16 internal constant KEEPER_ACTION_AUTO_ROLL = 1 << 7; // 0x80
+    /// @dev All DEFINED actions — convenience for "grant everything" UX
+    ///      flows, and the validation bound in
+    ///      `ProfileFacet._requireValidKeeperActions`. T-092 Phase 3 (#503)
+    ///      widened this from 0x1F to 0x3F at the same time the
+    ///      `extendLoanInPlace` executor landed; #393 v1-c widened it 0x3F →
+    ///      0x7F with SIGNED_FILL; #393 v1-d.2 widened it 0x7F → 0xFF with
+    ///      AUTO_ROLL. The container is now uint16 (#1221); this value stays
+    ///      0xFF until a bit 8–15 action is defined, at which point the new
+    ///      bit is OR'd in here.
+    uint16 internal constant KEEPER_ACTION_ALL = 0xFF;
 
     /**
      * @notice Retrieves the Vaipakam storage slot.

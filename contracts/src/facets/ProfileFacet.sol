@@ -438,7 +438,7 @@ contract ProfileFacet is DiamondPausable, DiamondAccessControl, IVaipakamErrors 
     event KeeperActionsUpdated(
         address indexed user,
         address indexed keeper,
-        uint8 actions
+        uint16 actions
     );
 
     /// @notice Emitted when `user` removes `keeper` from their whitelist.
@@ -466,7 +466,7 @@ contract ProfileFacet is DiamondPausable, DiamondAccessControl, IVaipakamErrors 
      * @param keeper  Keeper address to whitelist (non-zero).
      * @param actions Bitmask of `LibVaipakam.KEEPER_ACTION_*` bits.
      */
-    function approveKeeper(address keeper, uint8 actions) external whenNotPaused {
+    function approveKeeper(address keeper, uint16 actions) external whenNotPaused {
         if (keeper == address(0)) revert InvalidAddress();
         _requireValidKeeperActions(actions);
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
@@ -491,7 +491,7 @@ contract ProfileFacet is DiamondPausable, DiamondAccessControl, IVaipakamErrors 
      * @param keeper  Keeper to update.
      * @param actions New action bitmask.
      */
-    function setKeeperActions(address keeper, uint8 actions) external whenNotPaused {
+    function setKeeperActions(address keeper, uint16 actions) external whenNotPaused {
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         if (s.approvedKeeperActions[msg.sender][keeper] == 0)
             revert KeeperNotApproved();
@@ -540,7 +540,7 @@ contract ProfileFacet is DiamondPausable, DiamondAccessControl, IVaipakamErrors 
     function getKeeperActions(address user, address keeper)
         external
         view
-        returns (uint8 actions)
+        returns (uint16 actions)
     {
         return LibVaipakam.storageSlot().approvedKeeperActions[user][keeper];
     }
@@ -600,7 +600,7 @@ contract ProfileFacet is DiamondPausable, DiamondAccessControl, IVaipakamErrors 
 
     /// @dev Require `actions` is non-zero and only sets bits within the
     ///      configured action space. Reverts {InvalidKeeperActions}.
-    function _requireValidKeeperActions(uint8 actions) private pure {
+    function _requireValidKeeperActions(uint16 actions) private pure {
         if (actions == 0 || (actions & ~LibVaipakam.KEEPER_ACTION_ALL) != 0)
             revert InvalidKeeperActions();
     }
