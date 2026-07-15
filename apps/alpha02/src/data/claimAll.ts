@@ -91,14 +91,27 @@ export function buildClaimAllItems({
         defaultSelected: true,
       });
     } else {
+      // Status-aware, mirroring the detailed Claim Center row copy: a
+      // defaulted/liquidated or internally-matched borrower gets at most
+      // a surplus residual (+ VPFI rebate), NOT their collateral back —
+      // labelling every borrower ERC-20 claim "collateral back" would
+      // overstate what the batch returns (Codex #1291 r1).
+      let borrowerWhat: string;
+      if (isRental) {
+        borrowerWhat = 'your buffer back';
+      } else if (loan.status === 'defaulted' || loan.status === 'liquidated') {
+        borrowerWhat = 'surplus after liquidation, if any';
+      } else if (loan.status === 'internal_matched') {
+        borrowerWhat = 'residual after the internal match';
+      } else {
+        borrowerWhat = 'collateral back';
+      }
       items.push({
         key: `loan-borrower-${loan.loanId}`,
         kind: 'loan-borrower',
         functionName: 'claimAsBorrower',
         args: [BigInt(loan.loanId)],
-        label: isRental
-          ? `${noun} #${loan.loanId} — your buffer back`
-          : `${noun} #${loan.loanId} — collateral back`,
+        label: `${noun} #${loan.loanId} — ${borrowerWhat}`,
         defaultSelected: true,
       });
     }

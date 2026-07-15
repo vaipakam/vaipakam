@@ -36,16 +36,19 @@ import {
   buildClaimAllItems,
   defaultSelectedKeys,
   encodeClaimAllCalls,
-  isLoanItem,
   MAX_CLAIM_ALL,
 } from '../data/claimAll';
 import { useActiveChain } from '../chain/useActiveChain';
 import { useDiamondWrite } from '../contracts/diamond';
 import { captureTxError } from '../lib/errors';
-import { useVisibleWindow, ShowMoreButton } from '../lib/visibleWindow';
+import {
+  useVisibleWindow,
+  ShowMoreButton,
+  LIST_WINDOW_PAGE,
+} from '../lib/visibleWindow';
 
 export function ClaimAllCard({ loans }: { loans: ClaimableLoan[] }) {
-  const { address, walletChain, onSupportedChain } = useActiveChain();
+  const { address, walletChain, onSupportedChain, readChain } = useActiveChain();
   const publicClient = usePublicClient({ chainId: walletChain?.chainId });
   const queryClient = useQueryClient();
   const { write } = useDiamondWrite();
@@ -66,6 +69,18 @@ export function ClaimAllCard({ loans }: { loans: ClaimableLoan[] }) {
   // map behind harmlessly.
   const [overrides, setOverrides] = useState<Record<string, boolean>>({});
 
+  // Per-wallet/chain opt-ins must NOT leak: `rewards` / `vpfi-vault`
+  // keys are wallet-agnostic, so a prior opt-in to the vault withdrawal
+  // would start CHECKED for the next cached account without an unmount.
+  // Reset the override map when the acting identity changes (Codex #1291
+  // r1) — render-phase, the useVisibleWindow pattern.
+  const identity = `${readChain.chainId}|${address?.toLowerCase() ?? ''}`;
+  const [prevIdentity, setPrevIdentity] = useState(identity);
+  if (prevIdentity !== identity) {
+    setPrevIdentity(identity);
+    setOverrides({});
+  }
+
   // Wait for rewards + vault VPFI to SETTLE before offering the batch:
   // a still-loading read defaults its amount to 0n, which would silently
   // drop that leg from a batch the user thinks is complete.
@@ -77,14 +92,21 @@ export function ClaimAllCard({ loans }: { loans: ClaimableLoan[] }) {
     vpfiFree: vpfi.data?.freeBalance ?? 0n,
   });
 
-  // The batch is framed around loan proceeds; a pure rewards/vault
-  // batch would just duplicate the Rewards card and collide with the
-  // "no claims yet" empty state. Require at least one loan leg, and at
-  // least two payouts total (a single claim already has its own button).
-  const loanCount = items.filter(isLoanItem).length;
-  if (loanCount < 1 || items.length < 2) return null;
+  // The batch only makes sense for two or more payouts — a single claim
+  // already has its own button/row. (Claims.tsx suppresses the "no
+  // claims yet" empty state when there ARE non-loan payouts, so a pure
+  // rewards+vault batch no longer contradicts it — Codex #1291 r1.)
+  if (items.length < 2) return null;
 
-  const defaultOn = defaultSelectedKeys(items);
+  // Pre-check defaults only up to the FIRST window page: seeding up to
+  // MAX_CLAIM_ALL (30) while the checklist initially renders one page
+  // (25) would pre-select items hidden below the fold, breaking the
+  // per-item preview promise (Codex #1291 r1). Never exceed the batch
+  // bound either.
+  const defaultOn = defaultSelectedKeys(
+    items,
+    Math.min(LIST_WINDOW_PAGE, MAX_CLAIM_ALL),
+  );
   const isSelected = (key: string) => overrides[key] ?? defaultOn.has(key);
   const selectedKeys = items.filter((i) => isSelected(i.key)).map((i) => i.key);
   const selectedCount = selectedKeys.length;

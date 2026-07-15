@@ -23,12 +23,13 @@ function loan(
   loanId: number,
   role: 'lender' | 'borrower',
   assetType: number = AssetType.ERC20,
+  status: string = 'repaid',
 ): ClaimableLoan {
   return {
     loanId,
     role,
     assetType,
-    status: 'repaid',
+    status,
     lendingAsset: '0x0000000000000000000000000000000000000001',
     collateralAsset: '0x0000000000000000000000000000000000000002',
     tokenId: 0,
@@ -101,6 +102,31 @@ describe('buildClaimAllItems', () => {
     });
     expect(items).toHaveLength(1);
     expect(items[0].kind).toBe('loan-lender');
+  });
+
+  it('does not label a defaulted/matched borrower residual as collateral back', () => {
+    const [repaid] = buildClaimAllItems({
+      loans: [loan(1, 'borrower', AssetType.ERC20, 'repaid')],
+      rewardsPending: 0n,
+      vpfiFree: 0n,
+    });
+    expect(repaid.label).toContain('collateral back');
+
+    const [defaulted] = buildClaimAllItems({
+      loans: [loan(2, 'borrower', AssetType.ERC20, 'defaulted')],
+      rewardsPending: 0n,
+      vpfiFree: 0n,
+    });
+    expect(defaulted.label).not.toContain('collateral back');
+    expect(defaulted.label.toLowerCase()).toContain('surplus');
+
+    const [matched] = buildClaimAllItems({
+      loans: [loan(3, 'borrower', AssetType.ERC20, 'internal_matched')],
+      rewardsPending: 0n,
+      vpfiFree: 0n,
+    });
+    expect(matched.label).not.toContain('collateral back');
+    expect(matched.label.toLowerCase()).toContain('residual');
   });
 
   it('labels a rental lender leg with the NFT return, not a fee number', () => {
