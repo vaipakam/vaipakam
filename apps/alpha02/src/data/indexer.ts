@@ -517,6 +517,11 @@ export function fetchSignedOffers(
     collateralAsset: string;
     durationDays: number;
   },
+  /** #1247 PAG-011 — signer-scoped read: the per-side book cap keeps
+   *  only the best-priced 100 rows, so an own-orders view must scope
+   *  by signer or a maker's cancellable orders can hide behind other
+   *  makers' depth. */
+  signer?: string,
 ): Promise<SignedOffersBook | null> {
   const params = new URLSearchParams({
     chainId: String(chainId),
@@ -524,6 +529,7 @@ export function fetchSignedOffers(
     collateralAsset: market.collateralAsset.toLowerCase(),
     durationDays: String(market.durationDays),
   });
+  if (signer) params.set('signer', signer.toLowerCase());
   return getJson<SignedOffersBook>(`/signed-offers?${params}`);
 }
 

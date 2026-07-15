@@ -857,6 +857,19 @@ export async function handleSignedOffersGet(
   if (!Number.isInteger(durationDays) || durationDays < 1 || durationDays > 4385) {
     return jsonResponse({ error: 'bad-duration-days' }, 400);
   }
+  // #1247 PAG-011 — optional signer scope: the price-ordered per-side
+  // cap silently drops lower-priority depth, which is fine for a
+  // top-of-book ladder but must never hide a maker's OWN cancellable
+  // orders behind other makers' depth. A signer-scoped read returns
+  // that wallet's rows regardless of book position.
+  const signerRaw = url.searchParams.get('signer');
+  const signer =
+    signerRaw !== null && /^0x[0-9a-fA-F]{40}$/.test(signerRaw)
+      ? signerRaw.toLowerCase()
+      : null;
+  if (signerRaw !== null && signer === null) {
+    return jsonResponse({ error: 'bad-signer' }, 400);
+  }
 
   try {
     const now = Math.floor(Date.now() / 1000);
@@ -871,20 +884,27 @@ export async function handleSignedOffersGet(
           WHERE chain_id = ? AND status = 'active'
             AND lending_asset = ? AND collateral_asset = ? AND duration_days = ?
             AND offer_type = ?
+            ${signer !== null ? 'AND signer = ?' : ''}
             AND (expires_at = 0 OR expires_at > ?)
             AND (deadline = 0 OR deadline > ?)
           ORDER BY ${orderBy}, created_at ASC, order_hash
           LIMIT ?`,
       )
         .bind(
-          chainId,
-          lendingAsset,
-          collateralAsset,
-          durationDays,
-          offerType,
-          now,
-          now,
-          MAX_BOOK_ROWS_PER_SIDE,
+          ...[
+            chainId,
+            lendingAsset,
+            collateralAsset,
+            durationDays,
+            offerType,
+            ...(signer !== null ? [signer] : []),
+            now,
+            now,
+            // One past the cap so truncation is DETECTED, not guessed
+            // (#1247 PAG-011 — the slice below keeps the cap; the flag
+            // tells clients depth was dropped).
+            MAX_BOOK_ROWS_PER_SIDE + 1,
+          ],
         )
         .all<SignedOfferRow>();
     const [asks, bids] = await Promise.all([
@@ -893,9 +913,14 @@ export async function handleSignedOffersGet(
       // Borrower side — BID at interest_rate_bps_max: highest first.
       sideQuery(1, 'interest_rate_bps_max DESC'),
     ]);
+    const askRows = asks.results ?? [];
+    const bidRows = bids.results ?? [];
+    const truncated =
+      askRows.length > MAX_BOOK_ROWS_PER_SIDE ||
+      bidRows.length > MAX_BOOK_ROWS_PER_SIDE;
     const offers = [
-      ...(asks.results ?? []),
-      ...(bids.results ?? []),
+      ...askRows.slice(0, MAX_BOOK_ROWS_PER_SIDE),
+      ...bidRows.slice(0, MAX_BOOK_ROWS_PER_SIDE),
     ].map((r) => ({
       orderHash: r.order_hash,
       signer: r.signer,
@@ -906,7 +931,7 @@ export async function handleSignedOffersGet(
       expiresAt: r.expires_at,
       deadline: r.deadline,
     }));
-    return jsonResponse({ chainId, offers });
+    return jsonResponse({ chainId, offers, truncated });
   } catch (err) {
     console.error('[signedOfferRoutes] book read failed', err);
     return jsonResponse({ error: 'book-failed' }, 500);

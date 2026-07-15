@@ -32,6 +32,10 @@ import { EXPECTED_SCAN_CADENCE_SEC } from './chainIngestDO';
 
 const DEFAULT_PAGE_LIMIT = 50;
 const MAX_PAGE_LIMIT = 200;
+/** #1247 PAG-010 — /offers/markets serves at most this many DISTINCT
+ *  markets, deepest first (`truncated` past it): the pair/tenor space
+ *  is maker-spammable, so "one row per market" is not a bound. */
+const MARKETS_CAP = 200;
 
 /** Open CORS for offer reads — see module-level comment. */
 function corsHeaders(): HeadersInit {
@@ -346,9 +350,10 @@ export async function handleOffersMarkets(req: Request, env: Env): Promise<Respo
              GROUP BY lending_asset, collateral_asset, duration_days
          )
         GROUP BY lending_asset, collateral_asset, duration_days
-        ORDER BY (lender_offers + borrower_offers) DESC`,
+        ORDER BY (lender_offers + borrower_offers) DESC
+        LIMIT ?`,
     )
-      .bind(chainId, now, chainId, now, now)
+      .bind(chainId, now, chainId, now, now, MARKETS_CAP + 1)
       .all<{
         lending_asset: string;
         collateral_asset: string;
@@ -358,7 +363,15 @@ export async function handleOffersMarkets(req: Request, env: Env): Promise<Respo
         best_ask_bps: number | null;
         best_bid_bps: number | null;
       }>();
-    const markets = (rows.results ?? []).map((r) => ({
+    // #1247 PAG-010 — distinct markets are maker-spammable (1-wei
+    // offers across fabricated pairs), so the aggregate is capped at
+    // the MARKETS_CAP deepest markets (the ORDER BY above) with a
+    // truncated flag; real markets stay reachable, spam falls off the
+    // tail.
+    const allRows = rows.results ?? [];
+    const truncated = allRows.length > MARKETS_CAP;
+    const kept = truncated ? allRows.slice(0, MARKETS_CAP) : allRows;
+    const markets = kept.map((r) => ({
       lendingAsset: r.lending_asset,
       collateralAsset: r.collateral_asset,
       durationDays: r.duration_days,
@@ -367,7 +380,7 @@ export async function handleOffersMarkets(req: Request, env: Env): Promise<Respo
       bestAskBps: r.best_ask_bps,
       bestBidBps: r.best_bid_bps,
     }));
-    return jsonResponse({ chainId, markets });
+    return jsonResponse({ chainId, markets, truncated });
   } catch (err) {
     console.error('[offerRoutes] markets failed', err);
     return jsonResponse({ error: 'markets-failed' }, 500);

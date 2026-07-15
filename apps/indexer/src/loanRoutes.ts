@@ -570,19 +570,33 @@ export async function handleClaimables(
     // claimed side automatically drops out (the already-claimed activity filter
     // below is then belt-and-suspenders). Zero operator RPC; the FRONTEND layers
     // the on-chain `getUserPositionLoans` verify via the user's own RPC.
-    const rows = (
+    // #1247 PAG-011-adjacent (PAG-007) — the one row route that had no
+    // LIMIT: cap at the CLAIM_CANDIDATES_CAP newest terminal loans and
+    // say so (`truncated`), matching /claim-candidates. Additive field
+    // — the typed apps/defi consumer ignores it, and its Claim Center
+    // layers an on-chain verify over this discovery anyway.
+    const rawRows = (
       await env.DB.prepare(
         `SELECT * FROM loans
          WHERE chain_id = ?
            AND status IN ('repaid', 'defaulted', 'liquidated', 'internal_matched')
            AND (lender_current_owner = ? OR borrower_current_owner = ?)
-         ORDER BY loan_id DESC`,
+         ORDER BY loan_id DESC
+         LIMIT ?`,
       )
-        .bind(chainId, addr, addr)
+        .bind(chainId, addr, addr, CLAIM_CANDIDATES_CAP + 1)
         .all<LoanRow>()
     ).results ?? [];
+    const truncated = rawRows.length > CLAIM_CANDIDATES_CAP;
+    const rows = truncated ? rawRows.slice(0, CLAIM_CANDIDATES_CAP) : rawRows;
     if (rows.length === 0) {
-      return jsonResponse({ chainId, address: addr, asLender: [], asBorrower: [] });
+      return jsonResponse({
+        chainId,
+        address: addr,
+        asLender: [],
+        asBorrower: [],
+        truncated,
+      });
     }
     // Pre-fetch already-claimed loan IDs so we can dedup in memory
     // without N round trips. One query per side. (Belt-and-suspenders: a claimed
@@ -627,6 +641,7 @@ export async function handleClaimables(
       address: addr,
       asLender: asLender.map(loanToJson),
       asBorrower: asBorrower.map(loanToJson),
+      truncated,
     });
   } catch (err) {
     console.error('[loanRoutes] claimables failed', err);
@@ -663,6 +678,11 @@ export async function handleClaimables(
  * tolerates.
  */
 const CLAIM_CANDIDATES_CAP = 200;
+
+/** #1247 PAG-009 — the executed-rate candle route's per-request scan
+ *  ceiling (newest fills first; the fold drops the oldest candles
+ *  when hit and the response says `truncated`). */
+const CANDLE_SCAN_CAP = 10_000;
 
 export async function handleClaimCandidates(
   req: Request,
@@ -1231,18 +1251,29 @@ export async function handleLoansRateCandles(
     }
     // Aliased so CandleFillRow / foldRateCandles stay shape-agnostic: the
     // fill's terms are the INIT snapshot, never the mutated live values.
+    // #1247 PAG-009 — bounded scan: `range=all` has no start bound, so
+    // a long-lived busy market would otherwise make this an unbounded
+    // D1 read per request. Scan the NEWEST CANDLE_SCAN_CAP fills
+    // (DESC + reverse for the fold's ascending order) and say so —
+    // a truncated series drops the OLDEST candles, never recent ones.
     const rows = await env.DB.prepare(
       `SELECT loan_id, start_at,
               COALESCE(init_rate_bps, interest_rate_bps) AS interest_rate_bps,
               COALESCE(init_principal, principal) AS principal
        FROM loans
        WHERE ${conds.join(' AND ')}
-       ORDER BY start_at ASC, loan_id ASC`,
+       ORDER BY start_at DESC, loan_id DESC
+       LIMIT ?`,
     )
-      .bind(...binds)
+      .bind(...binds, CANDLE_SCAN_CAP + 1)
       .all<CandleFillRow>();
-    const buckets = foldRateCandles(rows.results ?? [], intervalSec);
-    return jsonResponse({ chainId, buckets }, 200, {
+    const fills = rows.results ?? [];
+    const truncated = fills.length > CANDLE_SCAN_CAP;
+    const scanned = (truncated ? fills.slice(0, CANDLE_SCAN_CAP) : fills)
+      .slice()
+      .reverse();
+    const buckets = foldRateCandles(scanned, intervalSec);
+    return jsonResponse({ chainId, buckets, truncated }, 200, {
       'Cache-Control': 'public, max-age=60',
     });
   } catch (err) {

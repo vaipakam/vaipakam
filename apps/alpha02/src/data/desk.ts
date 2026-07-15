@@ -302,7 +302,15 @@ const SIGNED_BOOK_STALE_MS = 15_000;
  *  origin), `[]` honestly empty. The desk merges these ADDITIVELY into
  *  the ladder — an unavailable signed book degrades to a chain-only
  *  ladder rather than blanking the whole market. */
-export function useDeskSignedBook(pair: DeskPair | null, durationDays: number) {
+export function useDeskSignedBook(
+  pair: DeskPair | null,
+  durationDays: number,
+  /** #1247 PAG-011 — pass the wallet to read ITS orders regardless of
+   *  book position (the ladder's unscoped read keeps only the 100
+   *  best-priced rows per side, which can hide a maker's own
+   *  cancellable orders behind other makers' depth). */
+  signer?: string,
+) {
   const { readChain } = useActiveChain();
   return useQuery({
     queryKey: [
@@ -310,6 +318,7 @@ export function useDeskSignedBook(pair: DeskPair | null, durationDays: number) {
       readChain.chainId,
       pair ? pairKey(pair) : null,
       durationDays,
+      signer?.toLowerCase() ?? null,
     ],
     enabled: pair !== null,
     staleTime: SIGNED_BOOK_STALE_MS,
@@ -319,11 +328,15 @@ export function useDeskSignedBook(pair: DeskPair | null, durationDays: number) {
     refetchInterval: idleAware(REFRESH_MS),
     queryFn: async (): Promise<IndexedSignedOffer[] | null> => {
       if (!indexerConfigured()) return null;
-      const res = await fetchSignedOffers(readChain.chainId, {
-        lendingAsset: pair!.lendingAsset,
-        collateralAsset: pair!.collateralAsset,
-        durationDays,
-      });
+      const res = await fetchSignedOffers(
+        readChain.chainId,
+        {
+          lendingAsset: pair!.lendingAsset,
+          collateralAsset: pair!.collateralAsset,
+          durationDays,
+        },
+        signer,
+      );
       if (res === null) return null;
       // A response for another chain is not this market's book.
       if (res.chainId !== readChain.chainId) return null;

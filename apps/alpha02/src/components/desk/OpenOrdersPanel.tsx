@@ -833,7 +833,9 @@ function SignedOrdersBlock({
   days: number;
 }) {
   const { address, onSupportedChain, readChain: signedReadChain } = useActiveChain();
-  const signedBook = useDeskSignedBook(pair, days);
+  // #1247 PAG-011 — signer-scoped: own orders must never be clipped
+  // out of the capped shared book by other makers' depth.
+  const signedBook = useDeskSignedBook(pair, days, address ?? undefined);
   const queryClient = useQueryClient();
   const { write } = useDiamondWrite();
   const [busyHash, setBusyHash] = useState<string | null>(null);

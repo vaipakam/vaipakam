@@ -44,6 +44,7 @@ function makeHarness() {
     return (await res.json()) as {
       asLender: Array<{ loanId: number; status: string }>;
       asBorrower: Array<{ loanId: number; status: string }>;
+      truncated: boolean;
     };
   };
   return { ...h, seed, call };
@@ -84,5 +85,37 @@ describe('GET /claimables/:address', () => {
     const body = await h.call();
     expect(body.asLender).toEqual([]); // claimed side dropped
     expect(body.asBorrower.map((l) => l.loanId)).toEqual([1]); // other side stays
+  });
+
+  // #1247 PAG-007 — the candidate scan is capped at the 200 NEWEST
+  // terminal loans (loan_id DESC), with `truncated` saying depth was
+  // dropped. A wallet with more terminal history than the cap must see
+  // its newest candidates, never a silent full-table scan.
+  it('caps candidates at the 200 newest terminal loans and flags truncation', async () => {
+    const h = makeHarness();
+    h.db.exec('BEGIN');
+    for (let i = 1; i <= 201; i++) h.seed(i, 'repaid', ME, OTHER);
+    h.db.exec('COMMIT');
+    const body = await h.call();
+    expect(body.truncated).toBe(true);
+    expect(body.asLender).toHaveLength(200);
+    // Newest kept (201 down to 2); the single OLDEST loan falls off.
+    expect(body.asLender[0].loanId).toBe(201);
+    expect(body.asLender[199].loanId).toBe(2);
+    expect(body.asLender.map((l) => l.loanId)).not.toContain(1);
+  });
+
+  it('reports truncated: false when the candidate set fits the cap', async () => {
+    const h = makeHarness();
+    h.seed(1, 'repaid', ME, OTHER);
+    const body = await h.call();
+    expect(body.truncated).toBe(false);
+    expect(body.asLender.map((l) => l.loanId)).toEqual([1]);
+  });
+
+  it('reports truncated: false on the empty-result short-circuit too', async () => {
+    const h = makeHarness();
+    const body = await h.call();
+    expect(body).toMatchObject({ asLender: [], asBorrower: [], truncated: false });
   });
 });

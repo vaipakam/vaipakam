@@ -138,15 +138,20 @@ interface MarketJson {
   bestBidBps: number | null;
 }
 
-async function getMarkets(h: SqliteD1): Promise<MarketJson[]> {
+async function getMarketsBody(
+  h: SqliteD1,
+): Promise<{ markets: MarketJson[]; truncated: boolean }> {
   const env = { DB: h.d1 } as unknown as Env;
   const res = await handleOffersMarkets(
     new Request(`http://indexer.test/offers/markets?chainId=${CHAIN_ID}`),
     env,
   );
   expect(res.status).toBe(200);
-  const body = (await res.json()) as { markets: MarketJson[] };
-  return body.markets;
+  return (await res.json()) as { markets: MarketJson[]; truncated: boolean };
+}
+
+async function getMarkets(h: SqliteD1): Promise<MarketJson[]> {
+  return (await getMarketsBody(h)).markets;
 }
 
 function freshDb(): SqliteD1 {
@@ -232,6 +237,38 @@ describe('GET /offers/markets — signed-book union (Codex #1145 r4)', () => {
     const markets = await getMarkets(h);
     expect(markets.map((m) => m.lendingAsset)).toEqual([L2, L1]);
     expect(markets[0]).toMatchObject({ lenderOffers: 2, borrowerOffers: 1 });
+  });
+
+  // #1247 PAG-010 — the distinct-market space is maker-spammable, so
+  // discovery serves at most MARKETS_CAP (200) markets, DEEPEST first,
+  // with `truncated` saying the tail was dropped.
+  it('caps discovery at the 200 deepest markets and flags truncation', async () => {
+    const h = freshDb();
+    // 201 one-offer markets (distinct tenors) + one two-offer market
+    // that MUST survive the cut regardless of how ties fall.
+    for (let d = 1; d <= 201; d++) {
+      insertOffer(h, { offerType: 0, lendingAsset: L1, durationDays: d, rateBps: 500 });
+    }
+    insertOffer(h, { offerType: 0, lendingAsset: L2, durationDays: 7, rateBps: 400 });
+    insertOffer(h, { offerType: 1, lendingAsset: L2, durationDays: 7, rateBps: 0, rateBpsMax: 300 });
+    const body = await getMarketsBody(h);
+    expect(body.truncated).toBe(true);
+    expect(body.markets).toHaveLength(200);
+    // Deepest-first: the two-offer market heads the list.
+    expect(body.markets[0]).toMatchObject({
+      lendingAsset: L2,
+      durationDays: 7,
+      lenderOffers: 1,
+      borrowerOffers: 1,
+    });
+  });
+
+  it('reports truncated: false when discovery fits the cap', async () => {
+    const h = freshDb();
+    insertOffer(h, { offerType: 0, lendingAsset: L1, durationDays: 30, rateBps: 500 });
+    const body = await getMarketsBody(h);
+    expect(body.truncated).toBe(false);
+    expect(body.markets).toHaveLength(1);
   });
 
   it('an on-chain-only market is untouched by the union (pre-#1145 shape preserved)', async () => {
