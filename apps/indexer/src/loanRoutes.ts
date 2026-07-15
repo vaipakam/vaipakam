@@ -573,26 +573,50 @@ export async function handleClaimables(
     // #1247 PAG-011-adjacent (PAG-007) — the one row route that had no
     // LIMIT: cap at the CLAIM_CANDIDATES_CAP most-recently-TERMINAL
     // loans and say so (`truncated`), matching /claim-candidates.
-    // Recency is `updated_at` (stamped by the terminal transition),
-    // NOT loan_id — ids are assigned at initiation, so an old loan
-    // repaid today is the NEWEST claimable and must survive the cut
-    // (Codex #1269 r2); loan_id only tie-breaks. Additive field — the
-    // typed apps/defi consumer ignores it, and its Claim Center layers
-    // an on-chain verify over this discovery anyway.
-    const rawRows = (
-      await env.DB.prepare(
+    // Recency is `terminal_at` (Codex #1269 r3: `updated_at` also
+    // moves on later position-NFT transfers and counterparty claim
+    // burns, which would let stale loans jump the window), COALESCEd
+    // to `updated_at` only for legacy rows; loan_id tie-breaks. The
+    // OR-of-owners predicate is split into one query PER SIDE so each
+    // rides its `idx_loans_*_current_owner` index — the r2 single
+    // query planned as an idx_loans_chain_status walk of EVERY
+    // terminal loan on the chain (Codex r3 EQP); split, the work is
+    // bounded by the wallet's own rows. Each side fetches CAP+1 and
+    // the union's true top-CAP is re-derived in JS (any row in the
+    // union's top-CAP is necessarily in its own side's top-CAP, so
+    // the merge loses nothing). `truncated` is additive — the typed
+    // apps/defi consumer ignores it, and its Claim Center layers an
+    // on-chain verify over this discovery anyway.
+    const sideRows = (col: 'lender_current_owner' | 'borrower_current_owner') =>
+      env.DB.prepare(
         `SELECT * FROM loans
-         WHERE chain_id = ?
+         WHERE chain_id = ? AND ${col} = ?
            AND status IN ('repaid', 'defaulted', 'liquidated', 'internal_matched')
-           AND (lender_current_owner = ? OR borrower_current_owner = ?)
-         ORDER BY updated_at DESC, loan_id DESC
+         ORDER BY COALESCE(terminal_at, updated_at) DESC, loan_id DESC
          LIMIT ?`,
       )
-        .bind(chainId, addr, addr, CLAIM_CANDIDATES_CAP + 1)
-        .all<LoanRow>()
-    ).results ?? [];
-    const truncated = rawRows.length > CLAIM_CANDIDATES_CAP;
-    const rows = truncated ? rawRows.slice(0, CLAIM_CANDIDATES_CAP) : rawRows;
+        .bind(chainId, addr, CLAIM_CANDIDATES_CAP + 1)
+        .all<LoanRow>();
+    const [lenderSide, borrowerSide] = await Promise.all([
+      sideRows('lender_current_owner'),
+      sideRows('borrower_current_owner'),
+    ]);
+    // Dedup (one wallet can hold BOTH position NFTs of a loan), then
+    // re-sort the union by the same recency key and clip.
+    const byId = new Map<number, LoanRow>();
+    for (const r of [
+      ...(lenderSide.results ?? []),
+      ...(borrowerSide.results ?? []),
+    ]) {
+      byId.set(r.loan_id, r);
+    }
+    const merged = [...byId.values()].sort((a, b) => {
+      const ra = a.terminal_at ?? a.updated_at;
+      const rb = b.terminal_at ?? b.updated_at;
+      return rb - ra || b.loan_id - a.loan_id;
+    });
+    const truncated = merged.length > CLAIM_CANDIDATES_CAP;
+    const rows = truncated ? merged.slice(0, CLAIM_CANDIDATES_CAP) : merged;
     if (rows.length === 0) {
       return jsonResponse({
         chainId,
@@ -1286,7 +1310,13 @@ export async function handleLoansRateCandles(
     const scanned = (truncated ? fills.slice(0, CANDLE_SCAN_CAP) : fills)
       .slice()
       .reverse();
-    const buckets = foldRateCandles(scanned, intervalSec);
+    const folded = foldRateCandles(scanned, intervalSec);
+    // Codex #1269 r3 (P3) — the scan slice can cut MID-bucket, so the
+    // oldest retained bucket may hold only part of its fills; a candle
+    // with a wrong open/fills/principal is worse than no candle. Drop
+    // the boundary bucket whenever the scan clipped — "the oldest
+    // candles are not drawn" then covers it exactly.
+    const buckets = truncated ? folded.slice(1) : folded;
     return jsonResponse({ chainId, buckets, truncated }, 200, {
       'Cache-Control': 'public, max-age=60',
     });

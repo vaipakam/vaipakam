@@ -28,12 +28,19 @@ desk while remaining live and fillable.
 
 Review hardening from the same change: the Rate Desk chart now shows
 a "showing the most recent fills only" note when the server clipped a
-long history, instead of rendering the chart as complete; the
-wallet-scoped book read is served by a dedicated database index so it
-never has to walk other makers' depth to find the caller's orders;
-and the claimables route's already-claimed lookups are bounded to the
-same 200-loan window as the candidates they de-duplicate. Bounding
-the market-discovery aggregation itself (not just its response) is
-tracked separately.
+long history, instead of rendering the chart as complete — and a
+clipped series never draws a half-counted oldest candle (the boundary
+candle the cut passed through is dropped, not shown with wrong
+numbers). The claimables window ranks by when a loan actually went
+terminal (a later ownership transfer can't shuffle it), its database
+work is bounded to the requesting wallet's own rows, and the
+already-claimed lookups are exact over the kept window. The
+wallet-scoped book read is served by dedicated database indexes so it
+never walks other makers' depth, and it carries a higher ceiling than
+the public ladder (five hundred per side versus one hundred) so a
+maker can always reach their own orders to cancel them — with the
+clipped-set disclosure still shown in the rare case beyond that.
+Bounding the market-discovery aggregation itself (not just its
+response) is tracked separately.
 
 Refs #1247.

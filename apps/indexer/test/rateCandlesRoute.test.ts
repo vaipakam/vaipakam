@@ -66,24 +66,24 @@ function makeHarness() {
 }
 
 describe('GET /loans/rate-candles — scan cap (#1247 PAG-009)', () => {
-  it('keeps the newest 10,000 fills, drops the oldest, and flags truncation', async () => {
+  it('keeps the newest fills, drops the partial boundary bucket, and flags truncation', async () => {
     const h = makeHarness();
-    // CAP + 1 fills, one second apart, all inside a few 1h buckets.
-    // Loan 1 (the chronologically OLDEST) carries a distinctive rate:
-    // if the cap kept it, the first bucket's `open` would be 111.
+    // CAP + 1 fills: loans 1–2 sit in the FIRST 1h bucket, the rest in
+    // later buckets. The scan keeps the newest CAP rows, dropping only
+    // loan 1 — which cuts MID-bucket: the oldest retained bucket holds
+    // loan 2 but not loan 1, so its open/fills would lie. The route
+    // must drop that boundary bucket entirely (Codex #1269 r3 P3).
     h.db.exec('BEGIN');
     h.seed(1, 1_000, 111);
     h.seed(2, 1_001, 222);
-    for (let i = 3; i <= CAP + 1; i++) h.seed(i, 1_000 + i, 500);
+    for (let i = 3; i <= CAP + 1; i++) h.seed(i, 3_600 + i, 500);
     h.db.exec('COMMIT');
     const body = await h.call();
     expect(body.truncated).toBe(true);
+    // Bucket t=0 (the cut-through boundary) is GONE, not partial.
+    expect(body.buckets[0].t).toBe(3_600);
     const totalFills = body.buckets.reduce((n, b) => n + b.fills, 0);
-    expect(totalFills).toBe(CAP); // exactly the cap, one fill dropped
-    // The dropped fill is the OLDEST: the earliest bucket now opens at
-    // loan 2's rate, proving the DESC-scan + reverse kept recency and
-    // restored ascending order for the fold.
-    expect(body.buckets[0].open).toBe(222);
+    expect(totalFills).toBe(CAP - 1); // CAP kept minus the boundary bucket's lone fill
     // Buckets stay ascending by t (the fold's output contract).
     const ts = body.buckets.map((b) => b.t);
     expect(ts).toEqual([...ts].sort((a, b) => a - b));

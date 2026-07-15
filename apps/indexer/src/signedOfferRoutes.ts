@@ -808,6 +808,15 @@ interface SignedOfferRow {
  *  depth; cursor pagination can follow if production signal wants it. */
 const MAX_BOOK_ROWS_PER_SIDE = 100;
 
+/** Per-side cap for SIGNER-SCOPED reads (Codex #1269 r3) — the public
+ *  100 exists to keep spam from drowning the ladder, but a scoped read
+ *  returns only the caller-named maker's own rows (spam can't inflate
+ *  it), and the desk's cancel UI is sourced solely from this response:
+ *  a clipped own-orders page leaves live fillable signatures the maker
+ *  cannot reach to revoke. 500/side covers any realistic single-market
+ *  maker; the `truncated` flag still reports honestly beyond it. */
+const SIGNER_BOOK_ROWS_PER_SIDE = 500;
+
 /**
  * GET /signed-offers?chainId=8453&lendingAsset=0x..&collateralAsset=0x..&durationDays=30
  *
@@ -876,6 +885,8 @@ export async function handleSignedOffersGet(
     // One query per side so each cap is applied within a PRICE-ordered
     // slice (see MAX_BOOK_ROWS_PER_SIDE). `orderBy` is a whitelisted
     // literal chosen here, never caller input.
+    const perSideCap =
+      signer !== null ? SIGNER_BOOK_ROWS_PER_SIDE : MAX_BOOK_ROWS_PER_SIDE;
     const sideQuery = (offerType: 0 | 1, orderBy: string) =>
       env.DB.prepare(
         `SELECT order_hash, signer, order_json, signature, status,
@@ -903,7 +914,7 @@ export async function handleSignedOffersGet(
             // One past the cap so truncation is DETECTED, not guessed
             // (#1247 PAG-011 — the slice below keeps the cap; the flag
             // tells clients depth was dropped).
-            MAX_BOOK_ROWS_PER_SIDE + 1,
+            perSideCap + 1,
           ],
         )
         .all<SignedOfferRow>();
@@ -916,11 +927,10 @@ export async function handleSignedOffersGet(
     const askRows = asks.results ?? [];
     const bidRows = bids.results ?? [];
     const truncated =
-      askRows.length > MAX_BOOK_ROWS_PER_SIDE ||
-      bidRows.length > MAX_BOOK_ROWS_PER_SIDE;
+      askRows.length > perSideCap || bidRows.length > perSideCap;
     const offers = [
-      ...askRows.slice(0, MAX_BOOK_ROWS_PER_SIDE),
-      ...bidRows.slice(0, MAX_BOOK_ROWS_PER_SIDE),
+      ...askRows.slice(0, perSideCap),
+      ...bidRows.slice(0, perSideCap),
     ].map((r) => ({
       orderHash: r.order_hash,
       signer: r.signer,

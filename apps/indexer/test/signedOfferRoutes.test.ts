@@ -620,6 +620,27 @@ describe('GET /signed-offers — truncation flag + signer scope (#1247 PAG-011)'
     expect(scoped.truncated).toBe(false);
   });
 
+  it('a signer-scoped read carries a raised cap so a maker can reach every own order (Codex r3)', async () => {
+    // 120 own asks: the PUBLIC read clips at 100/side (cancel targets
+    // hidden), but the scoped read serves the caller's own rows up to
+    // 500/side — all 120 come back, honestly un-truncated.
+    const rows: SeedRow[] = Array.from({ length: 120 }, (_, i) => ({
+      orderHash: `own-${String(i).padStart(3, '0')}`,
+      offerType: 0 as const,
+      rateBps: 300 + i,
+      rateBpsMax: 300 + i,
+      createdAt: 1_000 + i,
+      signer: MAKER,
+    }));
+    const env = seedBook(rows);
+    const unscoped = await getBookBody(env);
+    expect(unscoped.offers).toHaveLength(100);
+    expect(unscoped.truncated).toBe(true);
+    const scoped = await getBookBody(env, `&signer=${MAKER}`);
+    expect(scoped.offers).toHaveLength(120);
+    expect(scoped.truncated).toBe(false);
+  });
+
   it('normalizes a checksummed signer param to the stored lowercase form', async () => {
     const env = seedBook([
       { orderHash: 'maker-ask', offerType: 0, rateBps: 500, rateBpsMax: 500, createdAt: 1_000, signer: MAKER },
