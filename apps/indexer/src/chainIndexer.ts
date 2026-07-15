@@ -441,17 +441,20 @@ async function sweepMarketSummaries(
     )
       .bind(chainId, MARKET_SWEEP_CURSOR_KIND)
       .first<{ last_block: number }>();
-    // Missing watermark (Codex #1288 r2/r3): migration 0037 SEEDS this
-    // cursor at backfill time for every chain that had rows at apply,
-    // so an existing chain reads that persisted, deterministic bound —
-    // covering the migration→first-scan gap however late the first
-    // scan runs, and surviving a failed-and-retried first sweep. A
-    // truly absent cursor therefore means a chain added to the deploy
-    // AFTER the migration, which has no rows predating its own
-    // indexing — so the last-hour fallback is safe (its just-inserted
-    // offers carry updated_at = now, caught by the updated_at leg).
-    const since =
-      sweepRow === null ? nowSec - 3_600 : Math.max(0, sweepRow.last_block - 60);
+    // Missing watermark → sweep from 0 (Codex #1288 r6). This is the
+    // CORRECTNESS backstop: a `since = 0` window's touched-set covers
+    // EVERY market with any row regardless of age, so no matter how
+    // the watermark came to be absent — chain empty at migration, or a
+    // best-effort seed that failed open — the first sweep provably
+    // reflects reality and then persists the watermark. It is bounded
+    // because the sweep is ONE atomic set-based batch (2 statements,
+    // constant D1 cost) whatever the touched-set size (Codex #1288 r1);
+    // the SQL compute is the same one-time recompute the 0037 backfill
+    // already does. The migration seed (existing chains) and the
+    // signed-POST seed (fresh signed-only chains) are OPTIMIZATIONS
+    // that skip this one-time full recompute in the common case — a
+    // failed seed is harmless because this fallback still corrects it.
+    const since = sweepRow === null ? 0 : Math.max(0, sweepRow.last_block - 60);
     await refreshMarketSummaries(env.DB, chainId, since, nowSec);
     await env.DB.prepare(
       `INSERT INTO indexer_cursor (chain_id, kind, last_block, updated_at)

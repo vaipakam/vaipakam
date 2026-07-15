@@ -797,11 +797,14 @@ export async function handleSignedOfferPost(
         },
         now,
       );
-      // #1270 (Codex #1288 r5) — on a chain empty at migration, this
-      // POST is the first market write and no sweep watermark exists;
-      // seed it now so the first ingest sweep's window reaches back to
-      // this row (and its future expiry) instead of a moving now-1h
-      // that could start past both.
+      // #1270 (Codex #1288 r5) — best-effort OPTIMIZATION: on a chain
+      // empty at migration this POST is the first market write, so seed
+      // the sweep watermark now to spare the first ingest sweep a
+      // one-time `since = 0` full recompute. Not correctness-critical:
+      // if this seed fails (or is skipped), the sweep's absent-cursor
+      // fallback is `since = 0`, which still reflects this row exactly
+      // (Codex #1288 r6) — which is why it stays inside the same
+      // fail-open block as the refresh.
       await seedMarketSweepCursorIfAbsent(env.DB, chainId, now);
     } catch (err) {
       console.error('[signedOfferRoutes] market_summary refresh failed', err);
