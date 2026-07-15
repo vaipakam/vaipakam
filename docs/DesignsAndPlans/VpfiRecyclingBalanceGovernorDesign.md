@@ -151,8 +151,11 @@ per-user fresh/recycled split).** Each finalized day contributes to **two**
 parallel reward-per-numerator accumulators — `freshRpn` (from
 `scheduleFloor[D]`) and `recycledRpn` (from `recycledBudget[D]`) — per side,
 per chain. A claim spanning many days computes its fresh and recycled
-components exactly from the two accumulators; `paidOutFresh` /
-`paidOutRecycled` and the bucket debit follow without drift. On a Phase-B′
+components exactly from the two accumulators. The per-user #1008 daily cap
+applies to the COMBINED reward (`min` over `freshRpn + recycledRpn` deltas)
+FIRST, and any cap trim is then apportioned pro-rata across the two sources
+(Codex r7 — capping per-source would change the user's total). `paidOutFresh`
+/ `paidOutRecycled` and the bucket debit follow without drift. On a Phase-B′
 mirror the local-vs-remitted split within the recycled component needs no
 third accumulator (Codex r5): it was **fixed at broadcast** — the mirror
 debits its local bucket pro-rata as recycled claims pay, capped at the
@@ -309,9 +312,15 @@ Two consequences the design owns explicitly:
     (`outstandingCommit_recycled` shrinks, bucket availability restores) with
     **zero new credit** — crediting it would mint a phantom absorption event
     for tokens that never moved, inflating future `Ā` and budgets.
-  Net effect: `Σ paidOutFresh + fresh remit reservations ≤ 69M` stays the
-  (P4) invariant, forfeits extend the runway, and no token is ever counted
-  as absorbed twice.
+  - one Phase-B′ addition (Codex r7): the **remitted-recycled share** of a
+    mirror forfeit — tokens that physically left Base as a recycled top-up —
+    is a genuine LOCAL credit to the mirror's own bucket (the tokens are
+    protocol-owned and physically there), reported through the day-bucketed
+    credit field like any other receipt; only the *locally-committed*
+    recycled share is the pure commitment release.
+  Net effect: invariant 1 (all fresh liability classes ≤ 69M) holds,
+  forfeits extend the runway, and no token is ever counted as absorbed
+  twice.
 
 ### 4.1 The absorption plan, layered (owner question, 2026-07-15)
 
@@ -326,7 +335,11 @@ legally (P6):
   destination into Diamond custody with a bucket credit (per §5's
   Diamond-custody rule for recyclable VPFI classes) — without that one-line
   re-route, an external-treasury deployment would leak this class out of the
-  loop and the "live at launch" claim would not hold.
+  loop and the "live at launch" claim would not hold. **The same launch card
+  also re-denominates the bill as a flat native VPFI tariff (§13 — Codex
+  r7): the current path converts an ETH/numeraire fee value through the
+  fixed constant, which is exactly the conversion class §14.2 forbids at
+  launch.**
 - **Reward forfeits** — lender-entry transfers and non-clean closes forfeit
   the fresh-funded share into the bucket (§4 rule above).
 - *(Velocity sink, not absorption:)* the discount tiers require **vaulted
@@ -476,15 +489,21 @@ sits at the single canonical point (Base finalization):
 
 ## 7. Invariants (test targets)
 
-1. `Σ paidOutFresh (+ fresh remit reservations) ≤ 69,000,000e18` — cap bounds
-   fresh drawdown only (restates the prior "fresh-mint-only" decision in
-   drawdown terms).
+1. `paidOutFresh + freshRemitReserved + Σ outstandingCommit_fresh ≤
+   69,000,000e18` — ALL three fresh liability classes summed (Codex r7: a
+   60M/9M/9M split must fail this, and would pass any pairwise form). Cap
+   bounds fresh drawdown only (restates the prior "fresh-mint-only" decision
+   in drawdown terms).
 2. `recycleBucket ≥ 0` always; commitment discipline (Codex r2): at every
    finalize, `Σ outstandingCommit_recycled ≤ bucketBalance` and
    `Σ outstandingCommit_fresh + paidOutFresh ≤ 69M` — a day can never size
    against availability another unclaimed day already committed.
-3. Bucket separation: `diamondVpfiBalance ≥ userLifCustody +
-   unclaimedRewardBudget + recycleBucket` on every chain, every day.
+3. Bucket separation, commitment-aware (Codex r7 — recycled commitments
+   must not be counted twice): `diamondVpfiBalance ≥ userLifCustody +
+   unclaimedRewardBudget_fresh + recycleBucket`, where recycled reward
+   commitments are NOT added to the user-owed term — until their claim-time
+   debit they remain (deliberately) inside `recycleBucket`, ring-fenced by
+   invariant 2's `Σ outstandingCommit_recycled ≤ bucketBalance`.
 4. Per-day identity: `dailyPool[D] == scheduleFloor[D] + recycledBudget[D]`,
    and `recycledBudget[D] == (1 − m̂) × Ā[D]` when `fundable[D]` suffices
    (`m̂` = the stamped `recycleMarginBpsAtFinalize`).
