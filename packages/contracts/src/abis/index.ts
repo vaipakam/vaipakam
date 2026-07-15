@@ -15,6 +15,8 @@ import RiskAccessFacetABI from './RiskAccessFacet.json';
 // #1104 — read-only risk preview cluster + cross-facet gate asserts, split
 // off RiskAccessFacet for EIP-170 headroom.
 import RiskPreviewFacetABI from './RiskPreviewFacet.json';
+// #1212 (E-10 Claim-All) — generic best-effort delegatecall batcher.
+import MulticallFacetABI from './MulticallFacet.json';
 import BackstopVaultImplementationABI from './BackstopVaultImplementation.json';
 import OfferAcceptFacetABI from './OfferAcceptFacet.json';
 import OfferPreviewFacetABI from './OfferPreviewFacet.json';
@@ -119,6 +121,7 @@ export {
   ConsolidationFacetABI,
   RiskAccessFacetABI,
   RiskPreviewFacetABI,
+  MulticallFacetABI,
   OfferAcceptFacetABI,
   OfferPreviewFacetABI,
   OfferCancelFacetABI,
@@ -202,6 +205,8 @@ export const DIAMOND_ABI = [
   ...RiskAccessFacetABI,
   // #1104 — RiskPreviewFacet IS a Diamond facet -> spread.
   ...RiskPreviewFacetABI,
+  // #1212 — MulticallFacet IS a Diamond facet -> spread.
+  ...MulticallFacetABI,
   ...OfferAcceptFacetABI,
   ...OfferPreviewFacetABI,
   ...OfferCancelFacetABI,

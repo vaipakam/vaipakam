@@ -39,6 +39,7 @@ import {ReceiverFacet} from "../src/facets/ReceiverFacet.sol";
 import {ConsolidationFacet} from "../src/facets/ConsolidationFacet.sol";
 import {RiskAccessFacet} from "../src/facets/RiskAccessFacet.sol";
 import {RiskPreviewFacet} from "../src/facets/RiskPreviewFacet.sol";
+import {MulticallFacet} from "../src/facets/MulticallFacet.sol";
 import {IntentConfigFacet} from "../src/facets/IntentConfigFacet.sol";
 import {DefaultedFacet} from "../src/facets/DefaultedFacet.sol";
 import {RiskFacet} from "../src/facets/RiskFacet.sol";
@@ -192,6 +193,8 @@ contract DeployDiamond is Script {
         // #1104 — read-only risk preview cluster + cross-facet gate asserts,
         // split off RiskAccessFacet for EIP-170 headroom.
         RiskPreviewFacet riskPreviewFacet = new RiskPreviewFacet();
+        // #1212 (E-10 Claim-All) — generic best-effort delegatecall batcher.
+        MulticallFacet multicallFacet = new MulticallFacet();
         // T-090 v1.1 (#389) — intent-based swap-to-repay config knobs.
         // Carved off `ConfigFacet` after the round-2 PR #420 CI block
         // pushed it past EIP-170.
@@ -261,7 +264,7 @@ contract DeployDiamond is Script {
 
         // ── Step 3: Build facet cuts ────────────────────────────────────
         // 37 facets (DiamondCutFacet already added by constructor)
-        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](64);
+        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](65);
 
         cuts[0] = _buildCut(address(loupeFacet), _getLoupeSelectors());
         cuts[1] = _buildCut(address(ownershipFacet), _getOwnershipSelectors());
@@ -496,6 +499,13 @@ contract DeployDiamond is Script {
         cuts[63] = _buildCut(
             address(riskPreviewFacet),
             _getRiskPreviewFacetSelectors()
+        );
+        // #1212 (E-10 Claim-All) — generic best-effort delegatecall batcher
+        // (`multicall(Call[])`). Stateless; preserves msg.sender so each
+        // batched claim self-authorizes. See `MulticallFacet.sol` natspec.
+        cuts[64] = _buildCut(
+            address(multicallFacet),
+            _getMulticallFacetSelectors()
         );
         // #594 — standalone holder-only consolidation entry points are cut at
         // slot 24 (see the #687-B note above).
@@ -821,6 +831,7 @@ contract DeployDiamond is Script {
         // #671 — progressive risk-access facet (per-vault tiers + consent).
         Deployments.writeFacet("riskAccessFacet",         address(riskAccessFacet));
         Deployments.writeFacet("riskPreviewFacet",        address(riskPreviewFacet));
+        Deployments.writeFacet("multicallFacet",          address(multicallFacet));
 
         console.log(
             "Wrote addresses to deployments/",
@@ -1575,6 +1586,12 @@ contract DeployDiamond is Script {
         s[4] = RiskPreviewFacet.acceptMidTierAckPair.selector; // #735 item 3 sale-aware ack pair
         s[5] = RiskPreviewFacet.previewCreatorBlock.selector; // #735 item 3 creator-side gate
         s[6] = RiskPreviewFacet.previewIntent.selector; // #625 WI-2b intent-fill preview
+    }
+
+    /// @dev #1212 (E-10 Claim-All) — the single generic batching entry point.
+    function _getMulticallFacetSelectors() internal pure returns (bytes4[] memory s) {
+        s = new bytes4[](1);
+        s[0] = MulticallFacet.multicall.selector;
     }
 
     function _getAggregatorAdapterFactorySelectors()
