@@ -130,7 +130,13 @@ commit_recycled[D] = Σ_c chainCappedBudget_recycled[c][D]  // ceil-div capped
                                                            // #1008-capped sum
                                                            // is the true max
                                                            // claimable, finite
-freshAvailable[D]  = 69M − paidOutFresh − Σ_{d<D} outstandingCommit_fresh[d]
+freshAvailable[D]  = 69M − paidOutFresh − freshRemitReserved
+                     − Σ_{d<D} outstandingCommit_fresh[d]   // remitted-to-mirror
+                                                            // fresh is gone too
+                                                            // (Codex r6; mirrors
+                                                            // the existing
+                                                            // rewardBudgetRemittedGlobal
+                                                            // subtraction)
 fundable[D]        = bucketBalance − Σ_{d<D} outstandingCommit_recycled[d]
                      (Phase-split per §6)
 ```
@@ -173,25 +179,27 @@ commitment-netted ones above; there is no separate "freshRemaining"):
   chain's *per-chain* broadcast figures (its budget slice /
   `recycleConsume`) carry the trimmed amounts, so that chain's users accrue
   against the trimmed slice — never against the untrimmed global halves.
-- **`fundable[D]`, conservatively two-pass (Codex r3 — one pass over-counts
-  when the cap binds).** Phase A′ (Base custody): `fundable = Base
-  bucketAvailable` (commitment-netted). Phase B′ (mesh), pass 1: per-chain
-  **recycled-component** demand at the *target* pool (`chainRecycledBudget_c`
-  at target — never the fresh floor share, which mirror buckets cannot fund
-  per §6's source-scoping; Codex r4) → `fundable₁ = BaseAvail + Σ_c
-  min(mirrorAvail[c], recycledDemand_c)`; `r₁ = min(target, fundable₁)`.
-  Then ITERATE — recompute per-chain recycled demand at `rᵢ`, re-derive
-  `fundableᵢ₊₁`, `rᵢ₊₁ = min(rᵢ, fundableᵢ₊₁)` — **until unchanged** (Codex
-  r5: two fixed passes can still overcommit when BaseAvail = 0 and one
-  mirror holds the only funds). The sequence is monotone non-increasing and
-  each strict step removes at least one binding chain, so it converges in
-  ≤ chains + 1 iterations (implementations may use the closed-form
-  water-filling equivalent). A small-demand mirror's bucket can no longer
-  inflate the fundable total beyond what its capped slice will consume. A mirror's bucket funds **its own**
-  chain's slice only (Base-instructed `recycleConsume[c][D]`, §6); Base's
-  bucket funds the rest via the netted remit; un-repatriated quiet-chain
-  surplus is **not** fundable for other chains until Phase C′ repatriation —
-  global `Ā` sizes the *target*, `fundable` bounds the *reality*.
+- **`fundable` is resolved PER-CHAIN — no global fixed point (Codex r5→r6:
+  any uniform global add-on with chain-local funding either overcommits or
+  decays geometrically; the source-scoped funding model already implies
+  per-chain resolution).** Phase A′ (Base custody): a single pool,
+  `recycledBudget = min(target, BaseAvail)`. Phase B′ (mesh), one pass,
+  exact:
+  1. `targetRecycled_c = p_c × target` — chain c's share of the coupled
+     target at its demand weight `p_c` (from the finalized denominators).
+  2. `localFunded_c = min(targetRecycled_c, mirrorAvail_c)` (Base's own
+     slice funds from `BaseAvail` first).
+  3. Base allocates its remaining bucket across the still-unfunded
+     portions pro-rata (claims-first, keeper residual): `baseTopUp_c`.
+  4. `recycledBudget_c = localFunded_c + baseTopUp_c`;
+     `recycledBudget[D] = Σ_c recycledBudget_c` (the global metric).
+  Each chain's broadcast carries ITS OWN `recycledHalf_c` (consistent with
+  the per-chain trim rule above), so a chain whose slice is unfunded simply
+  gets a smaller recycled add-on — never a claim against funds that sit
+  unreachable on another mirror. Un-repatriated quiet-chain surplus beyond
+  its own demand stays parked until Phase C′ repatriation; a mirror's
+  bucket funds only its own chain's slice; Base's bucket tops up the rest —
+  global `Ā` sizes the *target*, per-chain funding bounds the *reality*.
 
 - `scheduleFloor[D]` is the existing emission schedule (`halfPoolForDay × 2`),
   re-labelled from "the pool" to "the floor": the guaranteed minimum that
@@ -593,12 +601,12 @@ convention.
 **Owner proposal:** set the peg at **1 VPFI = 0.001 ETH** until organic
 secondary markets exist, then use the market rate.
 
-**Recommendation (REVISED per the owner's near-zero-legal-expenditure
-directive, 2026-07-15): build the unified price source now, launch with it
-`Unset`, activate `FixedRate` only when/if the flywheel benefit justifies one
-bounded legal glance.** Building the architecture costs no legal review;
-*activating* a platform-published rate is the one item in this whole design
-that would (§14). At launch, E-1's direct-reduction mode delivers the
+**Recommendation (FINAL, superseding the earlier build-now/launch-Unset
+form — owner tariff unification, 2026-07-15): do not build the price source
+at all now.** With tariff-priced entitlements as Layer 2, no launch-path
+consumer needs a price; `LibVpfiPrice` is a market-era work item, and even
+its future *activation* remains the one item in this design that would need
+a legal glance (§14). At launch, E-1's direct-reduction mode delivers the
 user-facing utility ("hold VPFI → pay lower fees") with **no conversion, no
 token movement, and no published price** — so nothing user-visible is lost by
 deferring activation, only the absorption ramp is slower (the governor's
@@ -642,9 +650,11 @@ LibVpfiPrice.weiPerVpfi() → the single canonical rate every consumer reads
   **Notification fee (Codex r5 — the last conversion):** the current bill
   converts an ETH-denominated fee value via the fixed 1e15 constant — a
   platform-defined VPFI/ETH conversion, however small. Recommendation:
-  re-denominate it as a **flat native VPFI tariff** (default 2 VPFI — the
-  same number today's default computes to), removing the final conversion
-  from the launch surface and making §14.2 unconditionally true.
+  re-denominate it as a **flat native VPFI tariff**, with the default chosen
+  at the implementation card to preserve today's typical bill (the current
+  formula yields ≈0.5 VPFI on the default USD-numeraire deployment — Codex
+  r6; NOT 2 VPFI), removing the final conversion from the launch surface
+  and making §14.2 unconditionally true.
 - **`MarketFeed` (the succession, Phase 2):** activatable **only** when the
   organic market passes the platform's own liquidity-depth machinery (the
   slippage-at-floor probe), and priced by **TWAP, never spot** — a
@@ -656,12 +666,13 @@ LibVpfiPrice.weiPerVpfi() → the single canonical rate every consumer reads
 
 **Consequences of the deferred-activation posture:**
 
-- **At launch (`Unset`):** E-1 direct-reduction is the *primary* discount
-  delivery (no conversion, no published price — the legally quietest shape).
-  VPFI absorption comes from the peg-independent classes (notification fees,
-  reward forfeits), so the governor's coupled term ramps slowly and the
-  schedule floor carries the program — exactly the P3 bootstrap the formula
-  was built for. Nothing user-visible is lost.
+- **At launch (no price source):** discounts flow through the two peg-free
+  routes (hold-tier → direct reduction; tariff → deeper schedule). VPFI
+  absorption comes from the **tariff entitlements (§4.2 — the high-volume
+  path)**, the notification tariff, and reward forfeits (Codex r6: the
+  earlier notification+forfeits-only wording predated the tariff adoption
+  and would under-scope the implementation cards). The schedule floor still
+  covers any slow-ramp phase per P3. Nothing user-visible is lost.
 - **When activated (`FixedRate`, later):** the dormant absorption classes
   (borrower LIF, yield-fee-in-VPFI, matcher remainders) go live, the
   flywheel accelerates, and E-1's role shifts to resilience fallback
