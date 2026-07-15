@@ -16,6 +16,7 @@ import { assertWalletNotSanctionedLive, useSanctionsCheck } from '../data/sancti
 import { useActiveChain } from '../chain/useActiveChain';
 import { useDiamondWrite } from '../contracts/diamond';
 import { EmptyState, UnavailableState } from '../components/EmptyState';
+import { ClaimAllCard } from '../components/ClaimAllCard';
 import { useTokenMeta } from '../contracts/erc20';
 import { AssetType } from '../lib/types';
 import { formatTokenAmount, shortAddress } from '../lib/format';
@@ -286,6 +287,13 @@ export function Claims() {
       ) : (
         <>
           <RewardsCard />
+          {/* #1268 / E-10 — one-signature Claim-All over the settled,
+              confirmed claimables (+ rewards + free vault VPFI). Only
+              once the claimables list is settled, so the batch never
+              advertises a partial loan set that's still loading. */}
+          {!rowsLoading && !rowsUnavailable ? (
+            <ClaimAllCard loans={rows} />
+          ) : null}
           {rowsLoading ? (
             <EmptyState icon={LoaderCircle} title="Checking for claims…" />
           ) : rowsUnavailable ? (
