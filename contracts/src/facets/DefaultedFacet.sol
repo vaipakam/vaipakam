@@ -491,11 +491,15 @@ contract DefaultedFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErr
                 }
 
                 // Send treasury (subordinated) handling fee + interest fee.
-                // NOTE: unlike the HF paths this branch does not record a
-                // treasury accrual (pre-existing behaviour, unchanged here).
+                // #1195 C4 (Pass-2) — record the accrual so the treasury/revenue
+                // analytics ring buffer counts this liquid time-default's take,
+                // matching the HF paths (`RiskFacet`). Both legs (the handling
+                // fee AND the interest fee) are treasury-destined here, so the
+                // recorded amount is the full `toTreasury` actually transferred.
                 uint256 toTreasury = handlingFee + treasuryInterestFee;
                 if (toTreasury > 0) {
                     IERC20(loan.principalAsset).safeTransfer(treasury, toTreasury);
+                    LibFacet.recordTreasuryAccrual(loan.principalAsset, toTreasury);
                 }
 
                 // Deposit lender proceeds into lender's vault for claim. #821 —

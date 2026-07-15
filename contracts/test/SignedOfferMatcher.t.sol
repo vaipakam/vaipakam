@@ -594,6 +594,25 @@ contract SignedOfferMatcherTest is SetupTest {
         );
     }
 
+    /// @dev #1195 B3 (Pass-2, §1075) — the GTT vet now uses `>=`, so a signed
+    ///      offer is expired AT its `expiresAt` second (not only strictly after).
+    function test_gtt_boundary_atExpiresAt_reverts() public {
+        uint64 expiresAt = uint64(block.timestamp + 100);
+        LibSignedOffer.SignedOffer memory o =
+            _lenderSignedOffer(77, PRINCIPAL, PRINCIPAL, LibVaipakam.FillMode.Partial);
+        o.expiresAt = expiresAt;
+        bytes memory sig = _sign(o);
+        _fundActorVault(signer, mockERC20, PRINCIPAL);
+        uint256 borrowerOfferId = _postBorrowerCounterparty(borrower, PRINCIPAL);
+
+        vm.warp(uint256(expiresAt)); // block.timestamp == expiresAt exactly
+        vm.prank(keeper);
+        vm.expectRevert(
+            abi.encodeWithSelector(OfferMatchFacet.SignedOfferGttExpired.selector, expiresAt)
+        );
+        OfferMatchFacet(address(diamond)).matchSignedOffer(o, sig, borrowerOfferId, PRINCIPAL);
+    }
+
     function test_nonceBurned_reverts() public {
         LibSignedOffer.SignedOffer memory o =
             _lenderSignedOffer(10, PRINCIPAL, PRINCIPAL, LibVaipakam.FillMode.Partial);

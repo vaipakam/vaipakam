@@ -272,6 +272,34 @@ contract SignedOfferBookTest is SetupTest {
         );
     }
 
+    /// @dev #1195 B1 (Pass-2, §1083) — a signed offer authored with the
+    ///      `amountMax == 0` single-value shorthand fills on the DIRECT path
+    ///      (`acceptSignedOffer`) without reverting `AmountMaxMustBePositive`.
+    ///      `LibSignedOffer.toCreateOfferParams` now honors the same
+    ///      `amountMax==0 ⇒ amount` sentinel the matcher path already applies.
+    function testAcceptSignedOffer_amountMaxZeroSentinel() public {
+        LibSignedOffer.SignedOffer memory o = _lenderSignedOffer(77, 0);
+        o.amountMax = 0; // single-value shorthand
+        bytes memory sig = _sign(o);
+        _fundActorVault(signer, mockERC20, PRINCIPAL);
+
+        // The materialized offer resolves amountMax→amount, so bind the
+        // acceptor's amount to the resolved endpoint (PRINCIPAL), not the raw 0.
+        LibAcceptTerms.AcceptTerms memory terms = _buildAcceptTerms(o, borrower, true);
+        terms.amount = o.amount;
+        bytes memory acceptSig = _signAcceptTerms(terms, borrowerPk);
+
+        vm.prank(borrower);
+        uint256 loanId =
+            SignedOfferFacet(address(diamond)).acceptSignedOffer(o, sig, terms, acceptSig);
+        assertGt(loanId, 0, "direct fill with amountMax==0 must not revert AmountMaxMustBePositive");
+        assertEq(
+            LoanFacet(address(diamond)).getLoanDetails(loanId).principal,
+            PRINCIPAL,
+            "principal = sentinel-resolved amount"
+        );
+    }
+
     // ─── 2. Bad signature ─────────────────────────────────────────────────
 
     function testBadSignatureReverts() public {

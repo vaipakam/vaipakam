@@ -29,7 +29,11 @@ library LibMetricsTypes {
     ///         Enum is `uint8` at the ABI boundary, so hoisting the type is
     ///         wire-compatible; only the exported `internalType` string moves
     ///         from `MetricsFacet.OfferState` to `LibMetricsTypes.OfferState`.
-    enum OfferState { Open, Accepted, Cancelled, ConsumedBySale }
+    // #1195 B2 (Pass-2, §1075) — `Expired` appended at the END so existing
+    // ordinals (Open=0 … ConsumedBySale=3) are unchanged and the `uint8` wire
+    // encoding stays compatible; a lapsed GTT offer now reads `Expired` instead
+    // of masquerading as `Open`.
+    enum OfferState { Open, Accepted, Cancelled, ConsumedBySale, Expired }
     struct OfferSummary {
         uint256 id;
         LibVaipakam.OfferType offerType;
@@ -235,6 +239,13 @@ library LibMetricsTypes {
         if (s.offerCancelled[offerId]) return OfferState.Cancelled;
         if (o.id == 0) return OfferState.Cancelled; // never-existed OR cancel-deleted
         if (s.offerConsumedBySale[offerId]) return OfferState.ConsumedBySale;
+        // #1195 B2 (Pass-2, §1075) — a lapsed GTT offer is distinguished as
+        // `Expired` (fills already refuse it via `expiresAt`); sits just above
+        // `Open` so the terminal states (Accepted/Cancelled/ConsumedBySale) keep
+        // precedence. `deriveOfferState` is already `view`; this only widens the
+        // returned domain (a previously-`Open` id can now read `Expired` once
+        // `block.timestamp >= expiresAt`), with no state write.
+        if (LibVaipakam.isOfferExpired(o)) return OfferState.Expired;
         return OfferState.Open;
     }
 

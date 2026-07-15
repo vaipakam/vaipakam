@@ -264,6 +264,27 @@ contract EnumerationTest is SetupTest {
         );
     }
 
+    /// @dev #1195 B2 (Pass-2, §1075) — `deriveOfferState` distinguishes a lapsed
+    ///      GTT offer as `Expired` (was masquerading as `Open`). Time-dependent:
+    ///      the same offer id reads `Open` before `expiresAt` and `Expired` at/after.
+    function testGetOfferState_expiredGtt() public {
+        LibVaipakam.Offer memory o;
+        o.id = 1;
+        o.creator = u1;
+        o.lendingAsset = mockERC20;
+        o.amount = 100 ether;
+        o.offerType = LibVaipakam.OfferType.Lender;
+        o.assetType = LibVaipakam.AssetType.ERC20;
+        o.collateralAssetType = LibVaipakam.AssetType.ERC20;
+        o.expiresAt = uint64(block.timestamp + 100);
+        TestMutatorFacet(address(diamond)).setOffer(1, o);
+
+        MetricsFacet m = MetricsFacet(address(diamond));
+        assertEq(uint8(m.getOfferState(1)), uint8(LibMetricsTypes.OfferState.Open), "open before expiry");
+        vm.warp(uint256(o.expiresAt)); // == expiresAt → the >= rule expires it
+        assertEq(uint8(m.getOfferState(1)), uint8(LibMetricsTypes.OfferState.Expired), "expired at/after deadline");
+    }
+
     // ─── getAllLoansPaginated / getAllOffersPaginated ───────────────────────
 
     function testAllLoansPaginatedSkipsEmptySlots() public {
