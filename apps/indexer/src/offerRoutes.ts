@@ -211,6 +211,21 @@ export async function handleOffersStats(req: Request, env: Env): Promise<Respons
         tally.cancelled +
         tally.expired +
         tally.consumed_by_sale,
+      // Deploy provenance (version-metadata binding): every deploy —
+      // Workers Builds auto-deploys and manual wrangler alike — mints a
+      // new version id, so "is the merged code live?" is answerable
+      // from this route alone. null in local dev (binding absent).
+      // `versionCreatedAt` is when the VERSION was created (Cloudflare's
+      // documented semantics) — a rollback re-points to an existing
+      // version, so this is NOT necessarily when it reached production
+      // (Codex #1252 r1).
+      deploy: env.CF_VERSION_METADATA
+        ? {
+            versionId: env.CF_VERSION_METADATA.id,
+            versionTag: env.CF_VERSION_METADATA.tag ?? null,
+            versionCreatedAt: env.CF_VERSION_METADATA.timestamp ?? null,
+          }
+        : null,
       indexer: cursor
         ? {
             lastBlock: cursor.last_block,
