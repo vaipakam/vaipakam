@@ -1,6 +1,8 @@
 # VPFI Recycling Balance Governor — absorption-coupled distribution (redesign, #1222)
 
-**Status:** PROPOSED (owner-directed redesign, 2026-07-15) — supersedes §3.4 of
+**Status:** RATIFIED (owner, 2026-07-15 — all three §11 decisions accepted as
+recommended: margin default 500 bps, additive floor, fixed 7-day window) —
+supersedes §3.4 of
 [`VpfiCrossChainRecyclingDesign.md`](VpfiCrossChainRecyclingDesign.md) (the
 "fresh-mint offset" distributor formula) and re-cuts the #1217 / #1222 phasing.
 Everything else in that document — the recycle-bucket ledger (§3.1), the
@@ -298,13 +300,15 @@ Folded in (this design, if adopted, settles them):
 - ~~69M cap bounds fresh mint only~~ → **restated as fresh-drawdown-only**
   (§7.1), same intent, correct mechanics.
 
-Newly required (bounded, defaulted, changeable later by governance):
+Newly required — **all three RATIFIED by the owner, 2026-07-15**:
 
-1. **`RECYCLE_MARGIN_DEFAULT_BPS = 500` (5%)** — is that the right "slight
-   benefit"? (Any value in [1..2500] bps; the knob is live from day one.)
-2. **Additive floor semantics** (§3.1) — ratify `floor + coupled` over
+1. **`RECYCLE_MARGIN_DEFAULT_BPS = 500` (5%)** — ratified as the "slight
+   benefit" default. (Any value in [1..2500] bps remains tunable via the knob
+   from day one.)
+2. **Additive floor semantics** (§3.1) — `floor + coupled` ratified over
    `max(floor, coupled)`.
-3. **`W = 7 days` fixed** in v1 (constant, not a knob) — ratify.
+3. **`W = 7 days` fixed** in v1 (compile-time constant, not a knob) —
+   ratified.
 
 ## 12. Spec edits shipped with the implementation PRs
 
