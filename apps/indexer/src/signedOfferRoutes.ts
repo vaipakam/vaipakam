@@ -31,6 +31,7 @@ import { type Address, type Hex } from 'viem';
 import { createPublicClient, http } from 'viem';
 import { type Env, getChainConfigs, type ChainConfig } from './env';
 import { DIAMOND_SIGNED_OFFER_ABI } from './diamondAbi';
+import { refreshOneMarketSummary } from './marketSummary';
 import {
   SIGNED_OFFER_FIELD_NAMES,
   orderHashOf,
@@ -775,6 +776,27 @@ export async function handleSignedOfferPost(
         now,
       )
       .run();
+    // #1270 — gasless posts never cross the chain scan, so the POST
+    // maintains its own market's discovery row synchronously (the
+    // scan-tail sweep would also catch it via updated_at, but only at
+    // scan cadence — a fresh signed-only market should be discoverable
+    // immediately). Fail-open: the row is persisted and served by
+    // GET /signed-offers regardless; a summary hiccup self-heals on
+    // the next sweep.
+    try {
+      await refreshOneMarketSummary(
+        env.DB,
+        chainId,
+        {
+          lendingAsset: order.lendingAsset,
+          collateralAsset: order.collateralAsset,
+          durationDays: Number(order.durationDays),
+        },
+        now,
+      );
+    } catch (err) {
+      console.error('[signedOfferRoutes] market_summary refresh failed', err);
+    }
     return jsonResponse({ chainId, orderHash }, 201);
   } catch (err) {
     console.error('[signedOfferRoutes] insert failed', err);
