@@ -730,6 +730,166 @@ contract VPFIDiscountFacetTest is SetupTest {
         );
     }
 
+    // ─── E-1 (#1203) — direct-reduction delivery when no VPFI price source ────
+
+    /// @notice Full loan setup with a consenting, tiered lender BUT no VPFI
+    ///         price source configured: the hold-tier discount is delivered as
+    ///         a direct reduction of the lending-asset treasury fee — treasury
+    ///         gets `fullFee × (1 − effBps)`, the lender keeps the difference,
+    ///         and NO VPFI moves.
+    function testRepayDirectReductionWhenNoPriceSource() public {
+        // Unset the price source seeded in setUp → direct-reduction regime.
+        _facet().setVPFIDiscountRate(0);
+
+        uint256 principal = 10_000 ether;
+
+        // Lender funds vault via the sanctioned deposit (wires the rollup) +
+        // consents, then elapses the min-history gate so the tier releases.
+        vpfiToken.transfer(lender, 5_000 ether);
+        vm.startPrank(lender);
+        vpfiToken.approve(address(diamond), 5_000 ether);
+        _facet().depositVPFIToVault(5_000 ether);
+        _facet().setVPFIDiscountConsent(true);
+        vm.stopPrank();
+        vm.warp(block.timestamp + 4 days);
+
+        uint256 offerId = _createLenderErc20Offer(principal);
+        _approveAndAcceptForLoan(offerId, principal);
+        uint256 loanId = 1;
+
+        // The lender holds 5,000 VPFI steadily from before the loan through
+        // settlement (no VPFI moves on the direct path), past the min-history
+        // gate, so the effective settlement discount equals the raw tier bps.
+        (, , uint256 effBps) = _facet().getVPFIDiscountTier(lender);
+        assertGt(effBps, 0, "lender should hold a non-zero tier");
+
+        address lenderVault = VaultFactoryFacet(address(diamond))
+            .getOrCreateUserVault(lender);
+
+        vm.warp(block.timestamp + 30 days);
+        uint256 approvalPad = principal + (principal / 10);
+        ERC20Mock(mockERC20).mint(borrower, approvalPad);
+        vm.prank(borrower);
+        IERC20(mockERC20).approve(address(diamond), approvalPad);
+
+        uint256 treasuryErc20Before = IERC20(mockERC20).balanceOf(treasuryRecipient);
+        uint256 treasuryVpfiBefore = vpfiToken.balanceOf(treasuryRecipient);
+        uint256 lenderVpfiBefore = vpfiToken.balanceOf(lenderVault);
+        uint256 borrowerBefore = IERC20(mockERC20).balanceOf(borrower);
+
+        vm.prank(borrower);
+        RepayFacet(address(diamond)).repayLoan(loanId);
+
+        // Fee base = interest (+ any late fee) = what the borrower paid over
+        // principal; the discount is a treasury→lender reallocation, so the
+        // borrower's total is unchanged by it.
+        uint256 feeBase = (borrowerBefore -
+            IERC20(mockERC20).balanceOf(borrower)) - principal;
+        uint256 fullFee = (feeBase * 100) / 10000; // TREASURY_FEE_BPS = 100
+        // Mirror the contract's rounding EXACTLY: it computes the reduction as
+        // `floor(fullFee × effBps / 10000)` then subtracts it, rather than
+        // `floor(fullFee × (10000 − effBps) / 10000)` (which can differ by 1 wei).
+        uint256 reduction = (fullFee * effBps) / 10000;
+        uint256 expectedTreasury = fullFee - reduction;
+
+        // Treasury received the REDUCED lending-asset fee (exact).
+        assertEq(
+            IERC20(mockERC20).balanceOf(treasuryRecipient) - treasuryErc20Before,
+            expectedTreasury,
+            "treasury got the tier-reduced lending-asset fee"
+        );
+        // And strictly less than the undiscounted fee, but non-zero.
+        assertLt(expectedTreasury, fullFee, "fee is reduced");
+        assertGt(expectedTreasury, 0, "fee not fully waived (partial reduction)");
+        // NO VPFI moved on either side — this is a fee schedule, not a payment.
+        assertEq(
+            vpfiToken.balanceOf(treasuryRecipient),
+            treasuryVpfiBefore,
+            "no VPFI to treasury"
+        );
+        assertEq(
+            vpfiToken.balanceOf(lenderVault),
+            lenderVpfiBefore,
+            "no VPFI debited from lender vault"
+        );
+    }
+
+    /// @notice No price source + lender has NOT consented → the full
+    ///         lending-asset treasury fee is charged (direct-reduction inert).
+    function testRepayFullFeeWhenConsentOffNoPriceSource() public {
+        _facet().setVPFIDiscountRate(0);
+
+        uint256 principal = 10_000 ether;
+        // Lender holds a tier but never consents.
+        vpfiToken.transfer(lender, 5_000 ether);
+        vm.startPrank(lender);
+        vpfiToken.approve(address(diamond), 5_000 ether);
+        _facet().depositVPFIToVault(5_000 ether);
+        vm.stopPrank();
+        vm.warp(block.timestamp + 4 days);
+
+        uint256 offerId = _createLenderErc20Offer(principal);
+        _approveAndAcceptForLoan(offerId, principal);
+        uint256 loanId = 1;
+
+        vm.warp(block.timestamp + 30 days);
+        uint256 approvalPad = principal + (principal / 10);
+        ERC20Mock(mockERC20).mint(borrower, approvalPad);
+        vm.prank(borrower);
+        IERC20(mockERC20).approve(address(diamond), approvalPad);
+
+        uint256 treasuryErc20Before = IERC20(mockERC20).balanceOf(treasuryRecipient);
+        uint256 borrowerBefore = IERC20(mockERC20).balanceOf(borrower);
+
+        vm.prank(borrower);
+        RepayFacet(address(diamond)).repayLoan(loanId);
+
+        uint256 feeBase = (borrowerBefore -
+            IERC20(mockERC20).balanceOf(borrower)) - principal;
+        uint256 fullFee = (feeBase * 100) / 10000;
+        assertEq(
+            IERC20(mockERC20).balanceOf(treasuryRecipient) - treasuryErc20Before,
+            fullFee,
+            "full fee charged when consent off"
+        );
+    }
+
+    /// @notice No price source + consent but ZERO vaulted VPFI (tier 0) → the
+    ///         full fee is charged (direct-reduction returns 0 on tier 0).
+    function testRepayFullFeeWhenTierZeroNoPriceSource() public {
+        _facet().setVPFIDiscountRate(0);
+
+        uint256 principal = 10_000 ether;
+        uint256 offerId = _createLenderErc20Offer(principal);
+        _approveAndAcceptForLoan(offerId, principal);
+        uint256 loanId = 1;
+
+        // Consent but no VPFI in vault → tier 0 → no discount.
+        vm.prank(lender);
+        _facet().setVPFIDiscountConsent(true);
+
+        vm.warp(block.timestamp + 30 days);
+        uint256 approvalPad = principal + (principal / 10);
+        ERC20Mock(mockERC20).mint(borrower, approvalPad);
+        vm.prank(borrower);
+        IERC20(mockERC20).approve(address(diamond), approvalPad);
+
+        uint256 treasuryErc20Before = IERC20(mockERC20).balanceOf(treasuryRecipient);
+        uint256 borrowerBefore = IERC20(mockERC20).balanceOf(borrower);
+
+        vm.prank(borrower);
+        RepayFacet(address(diamond)).repayLoan(loanId);
+
+        uint256 feeBase = (borrowerBefore -
+            IERC20(mockERC20).balanceOf(borrower)) - principal;
+        uint256 fullFee = (feeBase * 100) / 10000;
+        assertEq(
+            IERC20(mockERC20).balanceOf(treasuryRecipient) - treasuryErc20Before,
+            fullFee,
+            "full fee charged when tier 0"
+        );
+    }
+
     /// @notice Helper: borrower accepts a lender ERC-20 offer and the loan
     ///         lands in `Active` status. No VPFI-discount consent is set.
     function _approveAndAcceptForLoan(

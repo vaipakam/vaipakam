@@ -689,6 +689,19 @@ contract AutoLifecycleFacet is DiamondReentrancyGuard, DiamondPausable {
                 if (yieldApplied) {
                     lenderShare = totalInterestLike;
                     treasuryShare = 0;
+                } else {
+                    // E-1 (#1203) — no VPFI price source: direct lending-asset
+                    // fee reduction. Stays inside the `lenderNftOwner ==
+                    // loan.lender` guard so the discount tracks the position's
+                    // actual holder, mirroring the VPFI-mode branch.
+                    uint256 r = LibVPFIDiscount.directReductionYieldFee(
+                        loan,
+                        treasuryShare
+                    );
+                    if (r > 0) {
+                        lenderShare += r;
+                        treasuryShare -= r;
+                    }
                 }
             }
             _routeInterest(

@@ -309,6 +309,18 @@ contract PrecloseFacet is
                     plan.lenderShare = plan.interest + plan.lateFee;
                     plan.lenderDue = plan.principal + plan.lenderShare;
                     plan.treasuryShare = 0;
+                } else {
+                    // E-1 (#1203) — no VPFI price source: direct lending-asset
+                    // fee reduction (mirrors {RepayFacet.repayLoan}).
+                    uint256 r = LibVPFIDiscount.directReductionYieldFee(
+                        loan,
+                        plan.treasuryShare
+                    );
+                    if (r > 0) {
+                        plan.lenderShare += r;
+                        plan.lenderDue = plan.principal + plan.lenderShare;
+                        plan.treasuryShare -= r;
+                    }
                 }
             }
 

@@ -333,6 +333,19 @@ contract RepayFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErrors 
                     plan.lenderShare = plan.interest + plan.lateFee;
                     plan.lenderDue = plan.principal + plan.lenderShare;
                     plan.treasuryShare = 0;
+                } else {
+                    // E-1 (#1203) — no VPFI price source: deliver the hold-tier
+                    // discount as a direct reduction of the lending-asset
+                    // treasury fee (lender keeps the difference).
+                    uint256 r = LibVPFIDiscount.directReductionYieldFee(
+                        loan,
+                        plan.treasuryShare
+                    );
+                    if (r > 0) {
+                        plan.lenderShare += r;
+                        plan.lenderDue = plan.principal + plan.lenderShare;
+                        plan.treasuryShare -= r;
+                    }
                 }
             }
 
