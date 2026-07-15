@@ -74,8 +74,9 @@ alpha02 uses chain reads and indexed reads for different jobs.
   history degrades honestly instead of scanning without bound. Market
   discovery is additionally pre-computed as data changes (not aggregated
   per request), so serving it costs the same however many markets exist;
-  a market whose only order expires purely by clock leaves the list
-  within seconds (the next ingest pass) rather than instantly.
+  a market whose only order expires purely by clock leaves the list on the
+  next ingest cycle for its chain (a few minutes on the current multi-chain
+  round-robin cron) rather than instantly.
 - A market maker's own resting signed orders are always visible and
   cancellable from the desk, even when better-priced depth from other
   makers fills the public book's per-side window — the desk reads the

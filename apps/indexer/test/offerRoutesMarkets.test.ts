@@ -59,6 +59,18 @@ CREATE TABLE offers (
   PRIMARY KEY (chain_id, offer_id)
 );`;
 
+/** Minimal `indexer_cursor` (migration 0004) — 0037's watermark-seed
+ *  INSERT references it; the markets tests never seed a diamond
+ *  cursor, so the seed's UNION leg over it is simply empty here. */
+const INDEXER_CURSOR_DDL = `
+CREATE TABLE indexer_cursor (
+  chain_id   INTEGER NOT NULL,
+  kind       TEXT    NOT NULL,
+  last_block INTEGER NOT NULL,
+  updated_at INTEGER NOT NULL,
+  PRIMARY KEY (chain_id, kind)
+);`;
+
 const CHAIN_ID = 84532;
 const L1 = '0x1111111111111111111111111111111111111111';
 const L2 = '0x2222222222222222222222222222222222222222';
@@ -176,7 +188,12 @@ async function getMarkets(h: SqliteD1): Promise<MarketJson[]> {
 }
 
 function freshDb(): SqliteD1 {
-  return createSqliteD1([OFFERS_DDL, MIGRATION_0033, MIGRATION_0037]);
+  return createSqliteD1([
+    OFFERS_DDL,
+    INDEXER_CURSOR_DDL,
+    MIGRATION_0033,
+    MIGRATION_0037,
+  ]);
 }
 
 describe('GET /offers/markets — signed-book union (Codex #1145 r4)', () => {
@@ -381,6 +398,42 @@ describe('refreshMarketSummaries — windowed sweep (#1270)', () => {
       3_000,
     );
     expect(summaryRows(h)).toEqual([]);
+  });
+
+  it('migration 0037 seeds the sweep watermark for chains with existing rows (Codex #1288 r3)', () => {
+    // Apply the pre-0037 schema, seed a live offer + a diamond cursor
+    // as an over-live-data deploy would have, THEN run 0037 — its
+    // backfill + watermark seed must fire for that chain.
+    const h = createSqliteD1([OFFERS_DDL, INDEXER_CURSOR_DDL, MIGRATION_0033]);
+    h.db
+      .prepare(
+        `INSERT INTO offers (chain_id, offer_id, status, offer_type,
+           lending_asset, collateral_asset, duration_days, interest_rate_bps,
+           interest_rate_bps_max, updated_at)
+         VALUES (?, 1, 'active', 0, ?, ?, 30, 500, 500, 111)`,
+      )
+      .run(CHAIN_ID, L1, C1);
+    h.db
+      .prepare(
+        `INSERT INTO indexer_cursor (chain_id, kind, last_block, updated_at)
+         VALUES (?, 'diamond', 9, 100)`,
+      )
+      .run(CHAIN_ID);
+    h.db.exec(MIGRATION_0037);
+    const seeded = h.db
+      .prepare(
+        `SELECT chain_id, last_block FROM indexer_cursor
+         WHERE kind = 'market_summary_sweep'`,
+      )
+      .all() as Array<{ chain_id: number; last_block: number }>;
+    expect(seeded).toHaveLength(1);
+    expect(seeded[0].chain_id).toBe(CHAIN_ID);
+    expect(seeded[0].last_block).toBeGreaterThan(0); // a real unixepoch()
+    // And the backfill populated the market from the existing offer.
+    const summary = h.db
+      .prepare(`SELECT lending_asset, total FROM market_summary`)
+      .all();
+    expect(summary).toEqual([{ lending_asset: L1, total: 1 }]);
   });
 
   it('a window that touches nothing leaves other markets untouched (no global recompute)', async () => {

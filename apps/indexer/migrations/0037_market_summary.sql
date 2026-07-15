@@ -102,3 +102,25 @@ SELECT chain_id, lending_asset, collateral_asset, duration_days,
      GROUP BY chain_id, lending_asset, collateral_asset, duration_days
   )
  GROUP BY chain_id, lending_asset, collateral_asset, duration_days;
+
+-- Seed the sweep watermark at backfill time (Codex #1288 r3) — a
+-- PERSISTED lower bound, not the worker's moving `now - 1h` fallback.
+-- The backfill above reflects state as of `unixepoch()`; the first
+-- new-worker sweep must cover only what the OLD worker wrote AFTER
+-- that point. Seeding the cursor here makes that boundary fixed and
+-- deterministic: it holds whether the first new scan runs a minute or
+-- a day after apply, and — because the worker only advances the
+-- cursor on a SUCCESSFUL sweep — a failed first sweep retries from
+-- this same seed, never losing the migration-gap window. Seeded for
+-- every chain that has discoverable rows or an existing diamond
+-- cursor; a chain added to the deploy LATER has no rows predating its
+-- own indexing, so the worker's fallback covers it safely.
+INSERT OR IGNORE INTO indexer_cursor (chain_id, kind, last_block, updated_at)
+SELECT DISTINCT chain_id, 'market_summary_sweep', unixepoch(), unixepoch()
+  FROM (
+    SELECT chain_id FROM offers
+    UNION
+    SELECT chain_id FROM signed_offers
+    UNION
+    SELECT chain_id FROM indexer_cursor WHERE kind = 'diamond'
+  );

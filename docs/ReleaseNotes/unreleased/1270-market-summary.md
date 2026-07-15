@@ -22,8 +22,10 @@ drift from reality through counting mistakes.
 
 One freshness nuance: a market whose only order quietly expires by
 clock (with no other activity anywhere) leaves the list on the next
-ingest pass rather than the very next request — a lag of seconds, the
-same order of freshness the desk's own polling already works at.
+ingest cycle for its chain rather than the very next request. The
+indexer round-robins one chain per minute, so that lag is a few
+minutes on today's multi-chain deploy — the same order of freshness
+the desk's own polling already works at.
 
 The deploy includes a one-time backfill so the list is fully
 populated the moment the new code serves it.

@@ -663,13 +663,16 @@ export async function runChainIndexerForChain(
     )
       .bind(chainId, MARKET_SWEEP_CURSOR_KIND)
       .first<{ last_block: number }>();
-    // First pass after deploy (Codex #1288 r2): no watermark yet. The
-    // 0037 migration's backfill already populated the table at apply
-    // time, so sweeping from 0 would re-touch every historical row —
-    // an unbounded first sweep that, if it fails open, retries
-    // unbounded forever. Instead seed the window to the last hour,
-    // which covers writes landed by the OLD worker between the
-    // migration apply and this first new-worker scan.
+    // Missing watermark (Codex #1288 r2/r3): migration 0037 SEEDS this
+    // cursor at backfill time for every chain that had rows at apply,
+    // so an existing chain reads that persisted, deterministic bound
+    // here — covering the migration→first-scan gap however late the
+    // first scan runs, and surviving a failed-and-retried first sweep
+    // (the worker advances the cursor only on success). A truly absent
+    // cursor therefore means a chain added to the deploy AFTER the
+    // migration, which has no rows predating its own indexing — so the
+    // last-hour fallback is safe (its just-inserted offers carry
+    // updated_at = now and are caught by the updated_at leg regardless).
     const since =
       sweepRow === null
         ? now - 3_600
