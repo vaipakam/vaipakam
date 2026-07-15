@@ -799,8 +799,10 @@ contract ConfigFacet is DiamondAccessControl {
     }
 
     /// @notice Emitted when the recycling governor's platform margin changes.
+    /// @custom:event-category informational/config
     event RecycleMarginBpsSet(uint16 newMarginBps);
     /// @notice Emitted when the peg-free discount-entitlement tariff changes.
+    /// @custom:event-category informational/config
     event RecycleTariffKSet(uint256 newKPer1e18EthDay);
 
     error InvalidRecycleMarginBps(uint256 bps, uint256 maxAllowed);
