@@ -5703,7 +5703,7 @@ library LibVaipakam {
         );
     }
 
-    /// @dev Tier-1 LIQUIDATION threshold (bps). `0 ⇒ DEFAULT_TIER1_LIQUIDATION_LTV_BPS` (9000 = 90%).
+    /// @dev Tier-1 LIQUIDATION threshold (bps). `0 ⇒ DEFAULT_TIER1_LIQUIDATION_LTV_BPS` (8000 = 80%).
     function cfgTier1LiquidationLtvBps() internal view returns (uint256) {
         uint16 v = storageSlot().protocolCfg.tier1LiquidationLtvBps;
         return v == 0 ? uint256(DEFAULT_TIER1_LIQUIDATION_LTV_BPS) : uint256(v);
@@ -5715,7 +5715,7 @@ library LibVaipakam {
         return v == 0 ? uint256(DEFAULT_TIER2_LIQUIDATION_LTV_BPS) : uint256(v);
     }
 
-    /// @dev Tier-3 LIQUIDATION threshold (bps). `0 ⇒ DEFAULT_TIER3_LIQUIDATION_LTV_BPS` (8000 = 80%).
+    /// @dev Tier-3 LIQUIDATION threshold (bps). `0 ⇒ DEFAULT_TIER3_LIQUIDATION_LTV_BPS` (9000 = 90%).
     function cfgTier3LiquidationLtvBps() internal view returns (uint256) {
         uint16 v = storageSlot().protocolCfg.tier3LiquidationLtvBps;
         return v == 0 ? uint256(DEFAULT_TIER3_LIQUIDATION_LTV_BPS) : uint256(v);
@@ -5724,8 +5724,8 @@ library LibVaipakam {
     /// @dev Per-tier liquidation threshold (bps) by liquidity tier. Tier 0
     ///      (illiquid) is meaningless — illiquid loans never enter the HF
     ///      path (they revert `IlliquidLoanNoRiskMath` in `RiskFacet`),
-    ///      so we return Tier-3 (most conservative) as a fail-safe; the
-    ///      gating site should already have rejected the loan.
+    ///      so we return Tier-1 (most conservative, 80% — post-#999 flip) as a
+    ///      fail-safe; the gating site should already have rejected the loan.
     function cfgTierLiquidationLtvBps(uint8 tier) internal view returns (uint256) {
         // #999 (S1) — tier 0 is the "untierable" / thinnest bucket (an asset that
         // can't clear the $5k floor, or post-#1007 the $50k tier-1 probe). It must

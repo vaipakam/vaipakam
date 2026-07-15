@@ -581,8 +581,10 @@ contract RepayFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErrors 
                 ),
                 NFTRenterUpdateFailed.selector
             );
-            // Note: ERC721 stays in lender's wallet; ERC1155 stays in lender's vault.
-            // No NFT movement needed at repay time.
+            // Note: the rented NFT (ERC-721 or ERC-1155) was vault-escrowed in
+            // the lender's vault at rental creation (the vault-custody model —
+            // NOT left in the lender's wallet). At repay only the ERC-4907
+            // `user` is reset to address(0); the NFT itself needs no movement.
 
             // Phase-2 reward accrual close (docs/TokenomicsTechSpec.md §4).
             // NFT rentals have no fallback/cure path; reaching repayLoan

@@ -459,7 +459,7 @@ Discount application:
 
 - Lender yield-fee discounts and borrower LIF rebates both read the current effective discount bps at the settlement moment.
 - On Base, settlement reads the canonical effective tier. On mirrors, settlement reads the mirror cache.
-- If the user's shared fee-discount consent is disabled, the effective discount is `0` even if the user has sufficient vaulted VPFI balance.
+- If the user's shared fee-discount consent is disabled, the effective discount is `0` even if the user has sufficient vaulted VPFI balance. This consent-off ⇒ 0-discount rule governs the **lender-side yield-fee discount** applied at settlement. It does **not** claw back a borrower's **already-prepaid LIF rebate**: a borrower who prepaid the Loan Initiation Fee in VPFI is settled at the effective tier that applied when the LIF was taken, because disabling consent later must not confiscate value already in Diamond custody — it only stops **new** discounts from being granted.
 - The dapp should distinguish "balance qualifies for a raw tier" from "effective tier is active now." During the min-history window, a user may see that their vaulted balance qualifies for a tier while the fee path still applies tier `0`.
 
 Governance effects:
