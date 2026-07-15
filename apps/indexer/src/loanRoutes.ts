@@ -587,19 +587,36 @@ export async function handleClaimables(
     // the merge loses nothing). `truncated` is additive — the typed
     // apps/defi consumer ignores it, and its Claim Center layers an
     // on-chain verify over this discovery anyway.
-    const sideRows = (col: 'lender_current_owner' | 'borrower_current_owner') =>
+    // Each side also excludes rows whose claim ALREADY fired (r4): a
+    // claim burns the position NFT so the owner projection normally
+    // evicts the row, but if that projection lags, claimed rows would
+    // consume window slots and push older UNclaimed candidates out of
+    // the clipped view. The exclusion must happen before LIMIT — the
+    // JS claimed-set filter below stays as belt-and-suspenders and for
+    // the cross-side split (a both-sides holder's row can be claimed
+    // on one side only). The NOT EXISTS probes idx_activity_chain_loan
+    // per examined row, all of which are the wallet's own.
+    const sideRows = (
+      col: 'lender_current_owner' | 'borrower_current_owner',
+      claimKind: 'LenderFundsClaimed' | 'BorrowerFundsClaimed',
+    ) =>
       env.DB.prepare(
         `SELECT * FROM loans
          WHERE chain_id = ? AND ${col} = ?
            AND status IN ('repaid', 'defaulted', 'liquidated', 'internal_matched')
+           AND NOT EXISTS (
+             SELECT 1 FROM activity_events e
+              WHERE e.chain_id = loans.chain_id AND e.loan_id = loans.loan_id
+                AND e.kind = '${claimKind}' AND e.actor = ?
+           )
          ORDER BY COALESCE(terminal_at, updated_at) DESC, loan_id DESC
          LIMIT ?`,
       )
-        .bind(chainId, addr, CLAIM_CANDIDATES_CAP + 1)
+        .bind(chainId, addr, addr, CLAIM_CANDIDATES_CAP + 1)
         .all<LoanRow>();
     const [lenderSide, borrowerSide] = await Promise.all([
-      sideRows('lender_current_owner'),
-      sideRows('borrower_current_owner'),
+      sideRows('lender_current_owner', 'LenderFundsClaimed'),
+      sideRows('borrower_current_owner', 'BorrowerFundsClaimed'),
     ]);
     // Dedup (one wallet can hold BOTH position NFTs of a loan), then
     // re-sort the union by the same recency key and clip.
@@ -1315,8 +1332,13 @@ export async function handleLoansRateCandles(
     // oldest retained bucket may hold only part of its fills; a candle
     // with a wrong open/fills/principal is worse than no candle. Drop
     // the boundary bucket whenever the scan clipped — "the oldest
-    // candles are not drawn" then covers it exactly.
-    const buckets = truncated ? folded.slice(1) : folded;
+    // candles are not drawn" then covers it exactly. EXCEPT when it is
+    // the ONLY bucket (r4: 10k+ fills inside one interval): an empty
+    // series would render as "no fills in range", an active lie about
+    // the market's busiest hour — keep the partial candle, and the
+    // `truncated` disclosure covers its approximation.
+    const buckets =
+      truncated && folded.length > 1 ? folded.slice(1) : folded;
     return jsonResponse({ chainId, buckets, truncated }, 200, {
       'Cache-Control': 'public, max-age=60',
     });

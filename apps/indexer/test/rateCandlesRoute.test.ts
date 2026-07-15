@@ -89,6 +89,21 @@ describe('GET /loans/rate-candles — scan cap (#1247 PAG-009)', () => {
     expect(ts).toEqual([...ts].sort((a, b) => a - b));
   });
 
+  it('a single-bucket truncated series keeps its (partial) candle instead of blanking (Codex r4)', async () => {
+    // CAP+1 fills inside ONE 1h bucket: dropping the boundary bucket
+    // here would return `buckets: []` and the chart would claim "no
+    // fills in range" about the market's busiest hour. The partial
+    // candle stays, disclosed by `truncated`.
+    const h = makeHarness();
+    h.db.exec('BEGIN');
+    for (let i = 1; i <= CAP + 1; i++) h.seed(i, 1_000 + (i % 2_000), 500);
+    h.db.exec('COMMIT');
+    const body = await h.call();
+    expect(body.truncated).toBe(true);
+    expect(body.buckets).toHaveLength(1);
+    expect(body.buckets[0].fills).toBe(CAP); // newest CAP kept, one dropped
+  });
+
   it('reports truncated: false and untouched ascending buckets under the cap', async () => {
     const h = makeHarness();
     h.seed(1, 0, 400);

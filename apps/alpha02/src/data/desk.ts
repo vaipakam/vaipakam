@@ -77,7 +77,10 @@ export function pairKey(pair: DeskPair): string {
 
 /** Markets summary for the read chain. `null` = indexer unavailable
  *  (the header shows an honest "markets list unavailable" state and
- *  falls back to the selected pair's book for tenor emphasis). */
+ *  falls back to the selected pair's book for tenor emphasis).
+ *  `truncated` mirrors the route's deepest-markets cap (#1247
+ *  PAG-010, Codex #1269 r4) so the picker can say the list is
+ *  incomplete instead of making clipped markets look nonexistent. */
 export function useDeskMarkets() {
   const { readChain } = useActiveChain();
   return useQuery({
@@ -85,10 +88,14 @@ export function useDeskMarkets() {
     // RPC read-diet PR A (Codex #1228 r1) — markets can exist purely from
     // gasless signed depth, which never pushes; keep today's cadence.
     refetchInterval: idleAware(REFRESH_MS),
-    queryFn: async (): Promise<MarketSummary[] | null> => {
+    queryFn: async (): Promise<{
+      markets: MarketSummary[];
+      truncated: boolean;
+    } | null> => {
       if (!indexerConfigured()) return null;
       const res = await fetchOffersMarkets(readChain.chainId);
-      return res === null ? null : res.markets;
+      if (res === null) return null;
+      return { markets: res.markets, truncated: res.truncated === true };
     },
   });
 }

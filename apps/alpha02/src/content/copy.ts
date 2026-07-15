@@ -1019,6 +1019,9 @@ export const copy = {
       'The markets list couldn’t load right now, so pair discovery is limited — enter a pair manually and the book itself can still load.',
     marketsEmpty:
       'No live markets right now. Pick a pair and post the first offer with the ticket.',
+    // #1247 PAG-010 — discovery serves the deepest markets only.
+    marketsTruncated:
+      'Showing the most active markets — smaller markets aren’t listed here, but you can load any pair with “Custom pair…”.',
     pickPair: 'Pick a market to load its book.',
     lastFill: 'Last fill',
     quotedMid: 'Quoted mid',

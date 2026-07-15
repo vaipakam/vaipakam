@@ -36,6 +36,7 @@ const CUSTOM = '__custom__';
 export function DeskHeader({
   markets,
   marketsUnavailable,
+  marketsTruncated,
   pair,
   onPair,
   days,
@@ -47,6 +48,10 @@ export function DeskHeader({
   /** undefined = loading, null = unavailable, [] = truly none. */
   markets: MarketSummary[] | null | undefined;
   marketsUnavailable: boolean;
+  /** #1247 PAG-010 — the server clipped discovery at its deepest-
+   *  markets cap; the picker must say the list is incomplete rather
+   *  than make clipped markets look nonexistent. */
+  marketsTruncated: boolean;
   pair: DeskPair | null;
   onPair: (pair: DeskPair) => void;
   days: number;
@@ -251,6 +256,13 @@ export function DeskHeader({
       ) : markets !== undefined && markets !== null && markets.length === 0 ? (
         <p className="muted" style={{ marginTop: 8 }}>
           {copy.desk.marketsEmpty}
+        </p>
+      ) : marketsTruncated ? (
+        // #1247 PAG-010 (Codex #1269 r4) — discovery is clipped to the
+        // deepest markets; a market missing from the picker still
+        // exists and loads via the custom-pair entry.
+        <p className="muted" style={{ marginTop: 8 }}>
+          {copy.desk.marketsTruncated}
         </p>
       ) : null}
 

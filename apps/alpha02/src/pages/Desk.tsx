@@ -77,7 +77,7 @@ export function Desk() {
   // empty book whenever the most active market trades another tenor.
   useEffect(() => {
     if (pair !== null) return;
-    const first = markets.data?.[0];
+    const first = markets.data?.markets[0];
     if (first) {
       setPair({
         lendingAsset: first.lendingAsset,
@@ -149,8 +149,9 @@ export function Desk() {
       <MarketFreshnessNote />
 
       <DeskHeader
-        markets={markets.data}
+        markets={markets.data == null ? markets.data : markets.data.markets}
         marketsUnavailable={!markets.isLoading && markets.data === null}
+        marketsTruncated={markets.data?.truncated === true}
         pair={pair}
         onPair={(p) => {
           setPair(p);

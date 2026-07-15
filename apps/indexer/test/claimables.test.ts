@@ -153,6 +153,30 @@ describe('GET /claimables/:address', () => {
     expect(body.asLender.map((l) => l.loanId)).toEqual([2, 1]);
   });
 
+  it('a stale-projection CLAIMED row cannot consume a window slot (Codex r4)', async () => {
+    // 201 lender-side terminal loans; the NEWEST one's claim already
+    // fired but the owner projection is stale (owner still ME). The
+    // SQL-side exclusion must evict it BEFORE the cap so the OLDEST
+    // unclaimed loan stays reachable — the r3 shape clipped first and
+    // filtered after, silently dropping loan 1.
+    const h = makeHarness();
+    h.db.exec('BEGIN');
+    for (let i = 1; i <= 201; i++) h.seed(i, 'repaid', ME, OTHER);
+    h.db.exec('COMMIT');
+    h.db
+      .prepare(
+        `INSERT INTO activity_events (chain_id, block_number, log_index,
+           tx_hash, kind, loan_id, actor, args_json, block_at)
+         VALUES (84532, 1, 0, '0xabc', 'LenderFundsClaimed', 201, ?, '{}', 0)`,
+      )
+      .run(ME);
+    const body = await h.call();
+    expect(body.truncated).toBe(false); // 200 unclaimed exactly fill the window
+    expect(body.asLender).toHaveLength(200);
+    expect(body.asLender.map((l) => l.loanId)).toContain(1);
+    expect(body.asLender.map((l) => l.loanId)).not.toContain(201);
+  });
+
   it('a wallet holding BOTH sides of one loan is deduped across the per-side scans', async () => {
     // The r3 per-side query split must not double-count a both-sides
     // loan in the merged window (or its truncation math).

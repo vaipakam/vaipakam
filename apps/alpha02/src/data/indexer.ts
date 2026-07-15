@@ -175,12 +175,19 @@ export interface MarketSummary {
   bestBidBps: number | null;
 }
 
+export interface OffersMarketsResponse {
+  chainId: number;
+  markets: MarketSummary[];
+  /** #1247 PAG-010 — true when the server clipped discovery at its
+   *  deepest-markets cap. Optional so a not-yet-redeployed Worker
+   *  still parses. */
+  truncated?: boolean;
+}
+
 export function fetchOffersMarkets(
   chainId: number,
-): Promise<{ chainId: number; markets: MarketSummary[] } | null> {
-  return getJson<{ chainId: number; markets: MarketSummary[] }>(
-    `/offers/markets?chainId=${chainId}`,
-  );
+): Promise<OffersMarketsResponse | null> {
+  return getJson<OffersMarketsResponse>(`/offers/markets?chainId=${chainId}`);
 }
 
 export interface CreatorOffersPage {
