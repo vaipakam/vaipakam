@@ -440,7 +440,7 @@ export interface ParticipantLoansHistoryPage {
 export function fetchLoansByParticipant(
   chainId: number,
   wallet: string,
-  opts: { limit?: number; before?: string } = {},
+  opts: { limit?: number; before?: string; scope?: 'desk' | 'all' } = {},
 ): Promise<ParticipantLoansHistoryPage | null> {
   const params = new URLSearchParams({
     chainId: String(chainId),
@@ -448,9 +448,44 @@ export function fetchLoansByParticipant(
   });
   if (opts.limit) params.set('limit', String(opts.limit));
   if (opts.before) params.set('before', opts.before);
+  // #1023 — 'all' drops the route's desk market-shape scoping (ERC-20
+  // both legs, non-sale-vehicle): Activity's participation filter
+  // needs EVERY loan the wallet ever touched. Default stays the desk
+  // History view.
+  if (opts.scope) params.set('scope', opts.scope);
   return getJson<ParticipantLoansHistoryPage>(
     `/loans/by-participant?${params}`,
   );
+}
+
+/** #1023 — the wallet's raw participation loan-id set in ONE bounded
+ *  response (`fields=ids`, all-history scope; server cap 5,000 ids +
+ *  `truncated`). The `loanIds` array is REQUIRED in the response: an
+ *  older deployed Worker ignores the params and answers the loans
+ *  shape, and treating that desk-scoped page as all-history would
+ *  silently reopen the filter gap — so a missing array fails closed
+ *  to `null` (unavailable). */
+export async function fetchParticipantLoanIds(
+  chainId: number,
+  wallet: string,
+): Promise<{ ids: number[]; truncated: boolean } | null> {
+  const params = new URLSearchParams({
+    chainId: String(chainId),
+    wallet: wallet.toLowerCase(),
+    scope: 'all',
+    fields: 'ids',
+  });
+  const res = await getJson<{
+    chainId: number;
+    loanIds?: unknown;
+    truncated?: boolean;
+  }>(`/loans/by-participant?${params}`);
+  if (res === null || res.chainId !== chainId) return null;
+  if (!Array.isArray(res.loanIds)) return null; // pre-#1023 worker → fail closed
+  return {
+    ids: res.loanIds.filter((v): v is number => typeof v === 'number'),
+    truncated: res.truncated === true,
+  };
 }
 
 /** Activity event row — mirrors the worker's shape (see apps/defi

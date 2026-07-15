@@ -11,7 +11,11 @@ import { useModal } from 'connectkit';
 import { copy } from '../content/copy';
 import { useActiveChain } from '../chain/useActiveChain';
 import { useMyLoansFull } from '../data/hooks';
-import { fetchActivity, type IndexedActivityEvent } from '../data/indexer';
+import {
+  fetchActivity,
+  fetchParticipantLoanIds,
+  type IndexedActivityEvent,
+} from '../data/indexer';
 import { EmptyState, UnavailableState } from '../components/EmptyState';
 import { MarketFreshnessNote } from '../components/MarketFreshnessNote';
 import { formatTimeAgo, shortAddress } from '../lib/format';
@@ -148,17 +152,49 @@ export function Activity() {
   // "both loan sources answered", not merely "some rows exist".
   // The set is the UNION of rendered rows (chain-sole-source when the
   // chain answers — freshest, includes a just-initiated loan the
-  // indexer hasn't ingested) and the indexed leg's own ids (which
-  // keep a just-burned/transferred loan through the ingest-lag
-  // window; permanent history for long-closed positions needs the
-  // historical-participant route tracked as #1023).
-  const loansUsable = loans.data != null && loans.data.indexerOk;
+  // indexer hasn't ingested), the indexed leg's own ids (which keep a
+  // just-burned/transferred loan through the ingest-lag window), and
+  // the PERMANENT historical-participant ids below (#1023) — every
+  // loan the wallet ever touched, so actor-null events for
+  // long-closed/transferred positions stop being silently dropped.
+  //
+  // #1023 — the wallet's permanent loan-participation ids via
+  // /loans/by-participant?scope=all&fields=ids: ONE bounded response
+  // (server cap 5,000 ids + `truncated`), no cursor walk, and the
+  // ids-shape response doubles as the deploy-skew guard (a pre-#1023
+  // worker answers the loans shape → fail closed to unavailable, per
+  // Codex #1287 r1 — never a silently desk-scoped filter). `null` =
+  // unavailable — the feed must NOT run without this leg, or the
+  // exact gap this closes would silently reopen.
+  const participantLeg = useQuery({
+    queryKey: [
+      'activityParticipantIds',
+      readChain.chainId,
+      address?.toLowerCase(),
+    ],
+    enabled: Boolean(address),
+    // Participation grows on loan.created / ownership.changed pushes
+    // (KEY_MAP maps both onto this root) and own receipts (the
+    // receipt floor carries it); the interval is the poll fallback
+    // (RPC read-diet PR A posture).
+    refetchInterval: signalAware(60_000),
+    queryFn: () => fetchParticipantLoanIds(readChain.chainId, address!),
+  });
+  const loansUsable =
+    loans.data != null && loans.data.indexerOk && participantLeg.data != null;
   const myLoanIds = useMemo(() => {
     if (!loansUsable) return new Set<number>();
     const ids = new Set(loans.data!.rows.map((l) => l.loanId));
     for (const id of loans.data!.indexedLoanIds) ids.add(id);
+    for (const id of participantLeg.data!.ids) ids.add(id);
     return ids;
-  }, [loansUsable, loans.data]);
+  }, [loansUsable, loans.data, participantLeg.data]);
+  // A >5,000-participation wallet's oldest loan ids are missing from
+  // the filter — even a RECENT actor-null event on one of those old
+  // loans can be dropped, so the disclosure below states "may be
+  // missing some events", not merely "older history not shown"
+  // (Codex #1287 r1).
+  const participantTruncated = participantLeg.data?.truncated === true;
 
   const activity = useQuery({
     queryKey: [
@@ -234,12 +270,17 @@ export function Activity() {
             </button>
           }
         />
-      ) : loans.isLoading || loans.data === undefined ? (
+      ) : loans.isLoading ||
+        loans.data === undefined ||
+        participantLeg.data === undefined ? (
         <EmptyState icon={LoaderCircle} title="Loading your activity…" />
-      ) : loans.data === null || !loans.data.indexerOk ? (
-        // Loan sources unavailable (or indexer leg missing) → the
-        // participation filter can't run; an activity feed built
-        // without it would be silently partial.
+      ) : loans.data === null ||
+        !loans.data.indexerOk ||
+        participantLeg.data === null ? (
+        // Loan sources unavailable (indexer leg missing, or the #1023
+        // participant-history leg failed) → the participation filter
+        // can't run; an activity feed built without it would be
+        // silently partial.
         <>
           <UnavailableState body={copy.activity.unavailable} />
           <p className="muted" style={{ textAlign: 'center', marginTop: 12 }}>
@@ -263,24 +304,24 @@ export function Activity() {
               misleading empty feed — the self-gating note must cover
               this branch too, not only the non-empty one. */}
           <MarketFreshnessNote />
+          {participantTruncated ? (
+            <p className="muted" role="status">
+              {copy.activity.participantTruncatedNote}
+            </p>
+          ) : null}
           <EmptyState
             icon={History}
             title={
-              /* UX2-007 tail — `truncated` (the protocol-wide scan
-                 didn't reach the feed end) can't be narrowed to "this
-                 wallet is new" without the participant-history route
-                 (#1023): a returning wallet whose only loans are closed/
-                 transferred and older than the scan window is ALSO
-                 truncated-with-nothing, and telling it "no activity yet"
-                 would be a false claim (Codex #1200). So the hedge stays
-                 for every truncated case — but its WORDING no longer
-                 implies older events definitely exist (that was the
-                 unnecessary-hedge complaint for genuinely-new wallets);
-                 it now just states the page's recent-only scope, which
-                 is true whether or not the wallet has hidden history.
-                 The definitive clean empty for a proven-new wallet waits
-                 on #1023. */
-              activity.data.truncated
+              /* UX2-007 tail — the recent-only hedge stays for every
+                 truncated case (its wording states the page's scope
+                 without implying hidden history exists — Codex #1200).
+                 #1023 shipped the participant-history leg, which now
+                 catches a returning wallet's LOAN events beyond the
+                 scan window — but OFFER-only history (a posted-and-
+                 cancelled offer older than the scan) is still outside
+                 any loan-id set, so a truncated-with-nothing feed
+                 still can't claim "no activity ever" definitively. */
+              activity.data.truncated || participantTruncated
                 ? copy.activity.truncatedEmpty
                 : copy.activity.empty
             }
@@ -303,13 +344,20 @@ export function Activity() {
           />
         </>
       ) : (
-        <ActivityFeed
-          events={activity.data.events}
-          truncated={activity.data.truncated}
-          explorer={readChain.blockExplorer}
-          visible={visible}
-          onLoadMore={() => setVisible((v) => v + PAGE)}
-        />
+        <>
+          {participantTruncated ? (
+            <p className="muted" role="status">
+              {copy.activity.participantTruncatedNote}
+            </p>
+          ) : null}
+          <ActivityFeed
+            events={activity.data.events}
+            truncated={activity.data.truncated}
+            explorer={readChain.blockExplorer}
+            visible={visible}
+            onLoadMore={() => setVisible((v) => v + PAGE)}
+          />
+        </>
       )}
     </div>
   );

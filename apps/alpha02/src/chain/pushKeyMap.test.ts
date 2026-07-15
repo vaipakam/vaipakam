@@ -46,6 +46,9 @@ describe('IndexerPushSync KEY_MAP (#1131 desk roots)', () => {
         'deskTape',
         'deskCandles',
         'deskHistory',
+        // #1023 — a new loan seeds loan_participants; Activity's
+        // participation filter reads that set.
+        'activityParticipantIds',
         'deskMarkets',
         'vaultAssets',
       ],
@@ -83,6 +86,10 @@ describe('IndexerPushSync KEY_MAP (#1131 desk roots)', () => {
         'loan',
         'offer',
         'deskHistory',
+        // #1023 — a transfer appends the recipient to
+        // loan_participants; the transferee's Activity filter must
+        // learn the id.
+        'activityParticipantIds',
         'vaultAssets',
       ],
       'activity.appended': ['activity'],

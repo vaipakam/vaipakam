@@ -118,6 +118,11 @@ export const KEY_MAP: Record<string, string[]> = {
     'deskTape',
     'deskCandles',
     'deskHistory',
+    // A new loan seeds loan_participants — Activity's participation
+    // filter (#1023) reads that set, and its poll is signal-stretched,
+    // so the push rail must dirty it or the feed filters with a stale
+    // id set until net/focus (Codex #1287 r1).
+    'activityParticipantIds',
     'deskMarkets',
     // A fill moves the maker's vault free/locked balances, and on a
     // signed-offer fill the TAKER executes — the maker's tabs see no
@@ -152,6 +157,11 @@ export const KEY_MAP: Record<string, string[]> = {
     // position with the History tab open would see it stale until
     // focus/net (Codex #1227 r1).
     'deskHistory',
+    // The same append feeds Activity's participation filter (#1023) —
+    // a transferee whose Activity tab is open must learn the new loan
+    // id or later actor-null events on it are filtered out
+    // (Codex #1287 r1).
+    'activityParticipantIds',
     // A one-sided claim (LenderFundsClaimed/BorrowerFundsClaimed) moves
     // funds into the claimant's vault and BURNS that side's position NFT
     // — the burn is what this key surfaces, while loan.updated only
@@ -179,6 +189,10 @@ export const STRETCHED_ROOTS: readonly string[] = [
   'myLoans',
   'claimables',
   'activity',
+  // Activity's participation-id leg (#1023) — signalAware like the
+  // feed itself; the focus refetch must re-read it with the feed or a
+  // returning tab filters fresh events against a stale id set.
+  'activityParticipantIds',
   'vaultAssets',
   'vpfi',
   'interactionRewards',
