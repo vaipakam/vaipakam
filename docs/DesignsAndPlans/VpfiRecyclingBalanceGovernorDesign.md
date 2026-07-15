@@ -91,8 +91,15 @@ At Base day-finalization (`RewardAggregatorFacet._finalizeAndWrite`, where the
 per-day #1008 cap threshold is already snapshotted):
 
 ```
-Ā[D]              = (recycledCreditedCum[D] − recycledCreditedCum[max(D−W, launchDay−1)]) / W
-                    // ALWAYS divide by W, zero-padding the pre-launch prefix.
+Ā[D]              = Σ_{d ∈ (D−W .. D]} credited[d]  /  W
+                    // credited[d] = the DAY-BUCKETED credit record for day d
+                    // (local `recycledCreditedByDay` + mirrors' per-day report
+                    // figures, §6) — NEVER a cumulative difference: a mirror
+                    // self-healing a missed day via the cumulative must not
+                    // shift old receipts into a later window (missed day ⇒
+                    // credited[d] = 0 for Ā; the cumulative heals availability
+                    // only). ALWAYS divide by W, zero-padding the pre-launch
+                    // prefix.
                     // (Dividing by elapsed days would count a launch-day spike
                     // 1/1 + 1/2 + … + 1/7 ≈ 2.6× — violating the ≤1× lifetime
                     // contribution bound and making launch-week wash cycles
@@ -142,28 +149,40 @@ components exactly from the two accumulators; `paidOutFresh` /
 `paidOutRecycled` and the bucket debit follow without drift. Cost: one extra
 uint256 pair per finalized day per side — accepted for exact accounting.
 
-Two hard caps make the formula self-consistent (Codex #1257 r1):
+Two hard caps make the formula self-consistent (Codex #1257 r1, unified with
+the commitment model in r3 — the ONLY availability terms are the
+commitment-netted ones above; there is no separate "freshRemaining"):
 
-- **`freshRemaining` caps the floor.** The existing schedule has an indefinite
-  5% tail, so `Σ schedule` is unbounded — the 69M cap is enforced by the
-  payout counters, not the schedule. The floor is therefore explicitly capped
-  by the remaining fresh budget (`freshRemaining = 69M − paidOutFresh − fresh
-  remit reservations`) and **goes to zero at exhaustion** — at which point the
-  pool is the recycled term alone, which is exactly the promised steady state.
-- **`fundable[D]`, not raw bucket balance.** Phase A′ (Base-only):
-  `fundable = Base bucketAvailable`. Phase B′ (mesh): `fundable = Base
-  bucketAvailable + Σ_c min(mirrorBucketAvailable[c], that chain's own day-D
-  claim demand)` — a mirror's bucket funds **its own** chain's slice
-  (Base-instructed `recycleConsume[c][D]`, §6), and Base's bucket funds the
-  rest via the netted remit. Un-repatriated surplus sitting on a *quiet*
-  chain is **not** fundable for other chains' budgets until Phase C′
-  repatriation moves it — global `Ā` sizes the *target*, `fundable` bounds
-  the *reality*, so a credit-rich-but-idle chain can never cause an
-  underfunded pool elsewhere or a silent draw on the fresh 69M.
+- **`freshAvailable` caps the floor** (`= 69M − paidOutFresh − fresh remit
+  reservations − Σ outstandingCommit_fresh`). The existing schedule has an
+  indefinite 5% tail, so `Σ schedule` is unbounded — the cap is enforced by
+  the counters, never the schedule — and the floor **goes to zero at
+  exhaustion**, leaving the recycled term alone: the promised steady state.
+  **Ceil-dust rule (Codex r3):** what is *reserved* is `commit_fresh[D]` /
+  `commit_recycled[D]` — the ceil-div per-chain sums, which can exceed the
+  raw `scheduleFloor`/`recycledBudget` by bounded dust (≤ chains × sides
+  wei). Availability checks run against the **commit sums**; if the last
+  chain's ceil would breach availability, its slice is trimmed by the dust
+  and the trim logged (`commitDust[D]`) — reservations can therefore never
+  exceed what exists.
+- **`fundable[D]`, conservatively two-pass (Codex r3 — one pass over-counts
+  when the cap binds).** Phase A′ (Base custody): `fundable = Base
+  bucketAvailable` (commitment-netted). Phase B′ (mesh), pass 1: per-chain
+  demand at the *target* pool → `fundable₁ = BaseAvail + Σ_c
+  min(mirrorAvail[c], targetDemand_c)`; `r₁ = min(target, fundable₁)`.
+  Pass 2: recompute per-chain demand at `r₁`, re-derive `fundable₂`, and
+  take `recycledBudget = min(r₁, fundable₂)`. Deterministic, monotone-
+  conservative (never above the true fixed point), and a small-demand
+  mirror's bucket can no longer inflate the fundable total beyond what its
+  capped slice will actually consume. A mirror's bucket funds **its own**
+  chain's slice only (Base-instructed `recycleConsume[c][D]`, §6); Base's
+  bucket funds the rest via the netted remit; un-repatriated quiet-chain
+  surplus is **not** fundable for other chains until Phase C′ repatriation —
+  global `Ā` sizes the *target*, `fundable` bounds the *reality*.
 
 - `scheduleFloor[D]` is the existing emission schedule (`halfPoolForDay × 2`),
   re-labelled from "the pool" to "the floor": the guaranteed minimum that
-  decays on the existing seven-tier curve, capped by `freshRemaining` (above).
+  decays on the existing seven-tier curve, capped by `freshAvailable` (above).
   Funded from the pre-funded pool and counted against the 69M counter, exactly
   as today.
 - `recycledBudget[D]` is the absorption-coupled add-on, **not** counted
@@ -280,7 +299,13 @@ how VPFI flows *back* — is planned in three layers, ordered by what they cost
 legally (P6):
 
 **Layer 0 — live at launch, zero legal surface:**
-- **Notification tariff** — the paid-push fee, billed in VPFI (pre-existing).
+- **Notification tariff** — the paid-push fee, billed in VPFI
+  (pre-existing). **Custody re-route required (Codex r3):** the current bill
+  withdraws user-vault → treasury directly; Phase A′ redirects the
+  destination into Diamond custody with a bucket credit (per §5's
+  Diamond-custody rule for recyclable VPFI classes) — without that one-line
+  re-route, an external-treasury deployment would leak this class out of the
+  loop and the "live at launch" claim would not hold.
 - **Reward forfeits** — lender-entry transfers and non-clean closes forfeit
   the fresh-funded share into the bucket (§4 rule above).
 - *(Velocity sink, not absorption:)* the discount tiers require **vaulted
@@ -362,12 +387,19 @@ sits at the single canonical point (Base finalization):
   deadlock the program against a zero floor.
 - The finalized-denominator broadcast carries `recycleConsume[c][D]`
   (Base-instructed mirror bucket consumption) **and stamps the finalized
-  day's pool composition — `scheduleFloorHalf[D]` + `recycledHalf[D]` (or
-  equivalently the finalized `dailyPool[D]`)** — so a mirror computes claims
-  against the true governor-sized pool instead of locally re-deriving the
-  schedule floor and silently dropping the recycled add-on (Codex #1257 r1
-  P1). The netted CCIP remittance sends only `max(0, budget − availRecycled)`
-  (§3.3). Claims-first, keeper residual (§3.5). Cumulative counters self-heal
+  day's pool composition — `scheduleFloorHalf[D]` **and** `recycledHalf[D]`
+  as SEPARATE fields (the aggregate `dailyPool` is NOT sufficient — Codex r3:
+  a mirror needs the split to maintain its own `paidOutFresh` /
+  `paidOutRecycled` counters, feed the dual accumulators, and source-split
+  forfeits)** — so a mirror computes claims against the true governor-sized
+  pool instead of locally re-deriving the schedule floor and silently
+  dropping the recycled add-on (Codex #1257 r1 P1). The netted CCIP remittance is **source-scoped** (Codex r3): netting
+  applies only to the RECYCLED component of a chain's budget —
+  `remit_recycled[c] = max(0, chainRecycledBudget[c] − availRecycled[c])` —
+  while the fresh-floor component always remits from the fresh pool
+  (`remit_fresh[c] = chainFreshBudget[c]`). A mirror's bucket can therefore
+  never be spent on the fresh floor while the accumulators book those
+  payouts as fresh (the drift the old whole-budget netting allowed). Claims-first, keeper residual (§3.5). Cumulative counters self-heal
   missed reports; whole-day idempotency stamps prevent double-apply.
 - Numbers travel daily; tokens travel only on genuine net shortfall — the
   property that made Option B the right substrate is exactly preserved.
@@ -438,8 +470,11 @@ sits at the single canonical point (Base finalization):
 Per day, on the transparency dashboard: `absorbed[D]` (global credit total),
 `recycledBudget[D]`, `scheduleFloor[D]`, `freshDrawdown[D]`,
 `selfFundingRatio[D] = recycledBudget/dailyPool`, cumulative
-`platformRetained` (bucket growth), and `runwayExtensionDays` (cumulative
-recycled ÷ current daily floor). `netEmission[D]` from the prior design maps
+`platformRetained = bucketBalance − Σ outstandingCommit_recycled` (raw bucket
+growth would overstate the reserve by counting committed-but-unclaimed user
+liabilities — Codex r3), and `runwayExtensionDays` (cumulative recycled ÷
+trailing-W mean of `dailyPool`, reported as `∞ / self-funded` once the fresh
+floor is zero — never a division by the zeroed floor — Codex r3). `netEmission[D]` from the prior design maps
 to `freshDrawdown[D]`.
 
 ## 10. Alternatives considered (and why not)
