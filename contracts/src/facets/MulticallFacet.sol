@@ -86,14 +86,11 @@ contract MulticallFacet {
     ///      block gas limit; UIs should chunk beyond it.
     uint256 internal constant MAX_MULTICALL_CALLS = 30;
 
-    /// @notice Emitted once per batch with the item count and how many were
-    ///         skipped failures (0 when every item succeeded).
-    /// @param caller   The batching user (`msg.sender`, preserved via delegatecall).
-    /// @param count    Number of items in the batch.
-    /// @param failures Number of items that reverted (only possible when their
-    ///                 `allowFailure` was true — otherwise the batch aborts).
-    /// @custom:event-category informational/aggregation
-    event MulticallExecuted(address indexed caller, uint256 count, uint256 failures);
+    // No batch-level event is emitted: each batched call emits its OWN
+    // lifecycle event (LoanRepaid, RewardsClaimed, …) inside its delegatecall
+    // frame, which is what indexers consume. A wrapper event would add nothing
+    // an indexer needs and would require a taxonomy leaf the closed
+    // event-category allow-list does not define for generic aggregation.
 
     /// @notice Thrown when the batch is empty.
     error MulticallEmpty();
@@ -102,6 +99,12 @@ contract MulticallFacet {
     /// @notice Thrown when an item tries to re-invoke {multicall} (nesting is
     ///         disallowed to bound gas/stack griefing).
     error MulticallSelfRecursion();
+    /// @notice Thrown when an item's `callData` is shorter than a 4-byte
+    ///         selector — such an item would route to the Diamond's
+    ///         `receive()`/empty fallback and report success without executing
+    ///         any call, so it is rejected as a malformed batch.
+    /// @param index The offending item's position in the batch.
+    error MulticallItemMissingSelector(uint256 index);
 
     /**
      * @notice Execute a batch of Diamond calls in one transaction, preserving
@@ -125,27 +128,26 @@ contract MulticallFacet {
         }
 
         results = new Result[](len);
-        uint256 failures;
         bytes4 selfSelector = this.multicall.selector;
 
         for (uint256 i; i < len; ) {
             bytes calldata cd = calls[i].callData;
+            // Every item MUST carry at least a 4-byte selector. Empty/short
+            // calldata would route to the Diamond's `receive()`/empty fallback
+            // and return success WITHOUT executing any call, so a malformed
+            // item would masquerade as a successful claim. Reject it
+            // unconditionally — a structurally-invalid batch is a caller bug,
+            // not a tolerable runtime failure that `allowFailure` should absorb.
+            if (cd.length < 4) revert MulticallItemMissingSelector(i);
             // Reject direct multicall recursion — bounds nesting/gas griefing.
-            if (cd.length >= 4 && bytes4(cd[:4]) == selfSelector) {
-                revert MulticallSelfRecursion();
-            }
+            if (bytes4(cd[:4]) == selfSelector) revert MulticallSelfRecursion();
 
             // delegatecall preserves msg.sender; each item enters+exits the
             // shared reentrancy guard within its own frame.
             (bool ok, bytes memory ret) = address(this).delegatecall(cd);
-            if (!ok) {
-                if (!calls[i].allowFailure) {
-                    // Re-raise the inner revert verbatim; abort the batch.
-                    LibRevert.bubbleOnFailure(ok, ret, "multicall: item reverted");
-                }
-                unchecked {
-                    ++failures;
-                }
+            if (!ok && !calls[i].allowFailure) {
+                // Re-raise the inner revert verbatim; abort the batch.
+                LibRevert.bubbleOnFailure(ok, ret, "multicall: item reverted");
             }
             results[i] = Result({success: ok, returnData: ret});
 
@@ -153,7 +155,5 @@ contract MulticallFacet {
                 ++i;
             }
         }
-
-        emit MulticallExecuted(msg.sender, len, failures);
     }
 }

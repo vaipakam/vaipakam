@@ -212,6 +212,32 @@ contract MulticallFacetTest is SetupTest, IVaipakamErrors {
         MulticallFacet(address(diamond)).multicall(calls);
     }
 
+    function testEmptyItemCallDataReverts() public {
+        // An item with < 4 bytes of calldata would hit the Diamond's receive()
+        // and report success without executing anything — reject it so a
+        // malformed item can never masquerade as a claimed payout.
+        MulticallFacet.Call[] memory calls = new MulticallFacet.Call[](2);
+        calls[0] = _claimCall(1, true);
+        calls[1] = MulticallFacet.Call({callData: "", allowFailure: true});
+        vm.prank(lender);
+        vm.expectRevert(
+            abi.encodeWithSelector(MulticallFacet.MulticallItemMissingSelector.selector, 1)
+        );
+        MulticallFacet(address(diamond)).multicall(calls);
+    }
+
+    function testShortItemCallDataReverts() public {
+        // 3 bytes (< selector) also rejected — even with allowFailure it is a
+        // structural batch error, not a tolerable runtime failure.
+        MulticallFacet.Call[] memory calls = new MulticallFacet.Call[](1);
+        calls[0] = MulticallFacet.Call({callData: hex"aabbcc", allowFailure: true});
+        vm.prank(lender);
+        vm.expectRevert(
+            abi.encodeWithSelector(MulticallFacet.MulticallItemMissingSelector.selector, 0)
+        );
+        MulticallFacet(address(diamond)).multicall(calls);
+    }
+
     function testSelfRecursionReverts() public {
         // An item whose callData targets multicall itself must be rejected.
         MulticallFacet.Call[] memory inner = new MulticallFacet.Call[](1);

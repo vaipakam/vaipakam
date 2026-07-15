@@ -43,31 +43,6 @@
     "stateMutability": "nonpayable"
   },
   {
-    "type": "event",
-    "name": "MulticallExecuted",
-    "inputs": [
-      {
-        "name": "caller",
-        "type": "address",
-        "indexed": true,
-        "internalType": "address"
-      },
-      {
-        "name": "count",
-        "type": "uint256",
-        "indexed": false,
-        "internalType": "uint256"
-      },
-      {
-        "name": "failures",
-        "type": "uint256",
-        "indexed": false,
-        "internalType": "uint256"
-      }
-    ],
-    "anonymous": false
-  },
-  {
     "type": "error",
     "name": "CrossFacetCallFailed",
     "inputs": [
@@ -82,6 +57,17 @@
     "type": "error",
     "name": "MulticallEmpty",
     "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "MulticallItemMissingSelector",
+    "inputs": [
+      {
+        "name": "index",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
   },
   {
     "type": "error",
