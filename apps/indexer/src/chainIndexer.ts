@@ -53,7 +53,12 @@ import {
 import { ceilingOf } from './signedOfferEip712';
 import { indexerPublishPrepayListing } from './openseaPublish';
 import { maybeRefreshProtocolConfig } from './configSnapshot';
-import { collectPushHints, type PushHints } from './pushHints';
+import {
+  collectPushHints,
+  pushHintStats,
+  HINT_CAP,
+  type PushHints,
+} from './pushHints';
 import {
   refreshMarketSummaries,
   MARKET_SWEEP_CURSOR_KIND,
@@ -725,6 +730,38 @@ export async function runChainIndexerForChain(
     blockNumber: scanTo,
     headBlock: head,
   });
+
+  // #1245 measurement rail — one structured line per scan that touched
+  // anything, so `wrangler tail | grep hint-telemetry` yields the
+  // per-scan touched-id distribution + truncation-cause breakdown a
+  // HINT_CAP retune reads (the retune itself waits on rehearsal load —
+  // this is the collection surface). Emitted only for non-trivial
+  // scans to keep an idle chain's log quiet; the stub-heal override is
+  // a truncation cause independent of the cap, reported separately.
+  const hintStats = pushHintStats(allLogs);
+  const stubHealForcedTruncation = detailRefreshes > 0 || loanDetailRefreshes > 0;
+  // Emit when the scan touched ids OR truncated for ANY reason (Codex
+  // #1289 r1): a scan of only unmappable events (Transfer /
+  // SignedOffer* lifecycle) or a stub-heal-only truncation carries
+  // ZERO id counts but IS a non-cap truncation — the exact cause mix
+  // sub-task 2 must quantify, so a counts-only guard would bias the
+  // sample toward size-driven frames.
+  const touched =
+    hintStats.loanIdCount + hintStats.offerIdCount + hintStats.linkCount > 0;
+  if (touched || hintStats.truncated || stubHealForcedTruncation) {
+    console.log(
+      `[hint-telemetry] ${JSON.stringify({
+        chainId,
+        blocks: [Number(scanFrom), Number(scanTo)],
+        loanIdCount: hintStats.loanIdCount,
+        offerIdCount: hintStats.offerIdCount,
+        linkCount: hintStats.linkCount,
+        cap: HINT_CAP,
+        truncated: hintStats.truncated || stubHealForcedTruncation,
+        causes: { ...hintStats.causes, stubHeal: stubHealForcedTruncation },
+      })}`,
+    );
+  }
 
   return {
     scannedFrom: scanFrom,

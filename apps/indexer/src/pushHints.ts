@@ -24,7 +24,11 @@
  *
  * HINT_CAP is a deliberately conservative launch value; #1245 tracks
  * re-tuning it from real per-scan touched-id volume once rehearsal
- * load exists.
+ * load exists. `pushHintStats` (below) is the measurement rail for
+ * that retune: it reports the PRE-cap sizes and the truncation-cause
+ * breakdown per scan, which the scan tail logs as structured
+ * telemetry so `wrangler tail | grep hint-telemetry` yields the
+ * distribution during a rehearsal-load window.
  */
 
 export const HINT_CAP = 32;
@@ -152,5 +156,105 @@ export function collectPushHints(
     offerIds: [...offerIds].slice(0, HINT_CAP),
     links,
     truncated,
+  };
+}
+
+/** #1245 measurement rail — the PRE-cap sizes + the truncation-cause
+ *  breakdown for one scan's logs, for HINT_CAP retuning telemetry.
+ *  Separate from `collectPushHints` on purpose: this is indexer-
+ *  internal diagnostics, never part of the client wire shape. Shares
+ *  the same classification constants so the WHAT-counts logic can't
+ *  drift; only the counting is independent. */
+export interface HintStats {
+  /** Distinct loan ids the scan would hint, BEFORE the HINT_CAP slice
+   *  — the distribution a retune reads to pick a cap that keeps ≥95%
+   *  of frames un-truncated (sub-task 1). */
+  loanIdCount: number;
+  /** Distinct offer ids, pre-cap (sub-task 1). */
+  offerIdCount: number;
+  /** Link (creation-shaped) events seen, pre-cap. */
+  linkCount: number;
+  /** Whether `collectPushHints` would flag this scan truncated. */
+  truncated: boolean;
+  /** Why — a frame can trip more than one (sub-task 2: is signed-desk
+   *  `unmappableEvent` traffic the dominant truncation cause?). */
+  causes: {
+    loanCapExceeded: boolean;
+    offerCapExceeded: boolean;
+    unmappableEvent: boolean;
+    handledNoId: boolean;
+    linkCapExceeded: boolean;
+    linkNoParty: boolean;
+  };
+}
+
+export function pushHintStats(
+  logs: ReadonlyArray<{ eventName: string; args: Record<string, unknown> }>,
+): HintStats {
+  const loanIds = new Set<number>();
+  const offerIds = new Set<number>();
+  let linkCount = 0;
+  const causes = {
+    loanCapExceeded: false,
+    offerCapExceeded: false,
+    unmappableEvent: false,
+    handledNoId: false,
+    linkCapExceeded: false,
+    linkNoParty: false,
+  };
+
+  for (const log of logs) {
+    if (UNMAPPABLE_ROW_EVENTS.has(log.eventName)) {
+      causes.unmappableEvent = true;
+      continue;
+    }
+    let sawId = false;
+    for (const k of LOAN_ID_ARGS) {
+      const n = toNum(log.args[k]);
+      if (n != null) {
+        loanIds.add(n);
+        sawId = true;
+      }
+    }
+    for (const k of OFFER_ID_ARGS) {
+      const n = toNum(log.args[k]);
+      if (n != null) {
+        offerIds.add(n);
+        sawId = true;
+      }
+    }
+    if (!sawId) causes.handledNoId = true;
+    if (LINK_EVENTS.has(log.eventName)) {
+      const hasParty =
+        toAddr(log.args.lender) ||
+        toAddr(log.args.borrower) ||
+        toAddr(log.args.creator) ||
+        toAddr(log.args.newLender) ||
+        toAddr(log.args.newBorrower);
+      if (linkCount < HINT_CAP) {
+        if (!hasParty) causes.linkNoParty = true;
+      } else {
+        causes.linkCapExceeded = true;
+      }
+      linkCount += 1;
+    }
+  }
+
+  causes.loanCapExceeded = loanIds.size > HINT_CAP;
+  causes.offerCapExceeded = offerIds.size > HINT_CAP;
+  const truncated =
+    causes.loanCapExceeded ||
+    causes.offerCapExceeded ||
+    causes.unmappableEvent ||
+    causes.handledNoId ||
+    causes.linkCapExceeded ||
+    causes.linkNoParty;
+
+  return {
+    loanIdCount: loanIds.size,
+    offerIdCount: offerIds.size,
+    linkCount,
+    truncated,
+    causes,
   };
 }
