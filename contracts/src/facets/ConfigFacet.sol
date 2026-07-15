@@ -1451,7 +1451,8 @@ contract ConfigFacet is DiamondAccessControl {
     ///         for all three liquidity tiers. PR2 of the internal-match
     ///         work — replaces the retired per-asset
     ///         `RiskParams.liqThresholdBps`. Each `0` ⇒ library default
-    ///         (9000 / 8500 / 8000 = 90% / 85% / 80%).
+    ///         (8000 / 8500 / 9000 = 80% / 85% / 90%; Tier 1 the most
+    ///         conservative — post-#999 gradient flip).
     /// @dev    ADMIN_ROLE-only (TimelockController post-handover).
     ///         Validation:
     ///           - Each tier value (after default-resolution) lies in

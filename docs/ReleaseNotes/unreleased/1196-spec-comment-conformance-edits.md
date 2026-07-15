@@ -14,9 +14,11 @@ transfer-lock exception for a live prepay-sale listing is acknowledged; the
 oracle-unavailable sanctions posture is corrected to note that never-flagged
 wallets keep the liveness (fail-open) behaviour; the flash-loan liquidator's
 profit-headroom is clarified as off-chain keeper policy rather than an on-chain
-revert condition; and the fee-discount consent rule carves out an already-prepaid
-borrower rebate (disabling consent later does not claw back value already in
-custody).
+revert condition. (The proposed fee-discount-consent carve-out for an
+already-prepaid borrower rebate was NOT made: review found the ratified code
+does not preserve it — a consent-off settlement zeros the rebate and forfeits
+the prepaid VPFI to treasury — so it was re-opened as a code-vs-spec decision
+rather than a spec edit.)
 
 Code-comment corrections: a partial-liquidation docstring now describes the
 current interest-clock-only re-stamp (maturity is immutable); the tier
