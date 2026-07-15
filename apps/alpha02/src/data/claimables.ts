@@ -202,18 +202,20 @@ export function useMyClaimables() {
       // candidate set unknowable → unavailable, per the contract above.
       const chainIds: bigint[] = [];
       let enumerationAvailable = true;
+      // #1247 PAG-003 — the same fail-loud walk ceiling
+      // chainPositions.ts uses, applied to BOTH enumeration paths
+      // (the paginated walk AND the legacy unpaginated fallback,
+      // Codex #1265 r2). Past it the candidate set is
+      // unknowable-in-practice (thousands of position NFTs), and an
+      // unbounded walk + per-candidate probing is exactly the RPC
+      // fan-out this page must never do; unavailable beats a scan
+      // that never ends.
+      const WALK_CAP = 2000n;
       try {
         // Paginated so a wallet griefed with a huge position-NFT
         // inventory can't make one unbounded eth_call revert and hide a
         // real claimable (mirrors apps/defi #769).
         const PAGE = 200n;
-        // #1247 PAG-003 — the same fail-loud walk ceiling
-        // chainPositions.ts uses. Past it the candidate set is
-        // unknowable-in-practice (thousands of position NFTs), and an
-        // unbounded walk + per-candidate probing is exactly the RPC
-        // fan-out this page must never do; unavailable beats a scan
-        // that never ends.
-        const WALK_CAP = 2000n;
         let offset = 0n;
         for (;;) {
           const [ids, , total] = (await publicClient.readContract({
