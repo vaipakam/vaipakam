@@ -168,8 +168,10 @@ commitment-netted ones above; there is no separate "freshRemaining"):
 - **`fundable[D]`, conservatively two-pass (Codex r3 — one pass over-counts
   when the cap binds).** Phase A′ (Base custody): `fundable = Base
   bucketAvailable` (commitment-netted). Phase B′ (mesh), pass 1: per-chain
-  demand at the *target* pool → `fundable₁ = BaseAvail + Σ_c
-  min(mirrorAvail[c], targetDemand_c)`; `r₁ = min(target, fundable₁)`.
+  **recycled-component** demand at the *target* pool (`chainRecycledBudget_c`
+  at target — never the fresh floor share, which mirror buckets cannot fund
+  per §6's source-scoping; Codex r4) → `fundable₁ = BaseAvail + Σ_c
+  min(mirrorAvail[c], recycledDemand_c)`; `r₁ = min(target, fundable₁)`.
   Pass 2: recompute per-chain demand at `r₁`, re-derive `fundable₂`, and
   take `recycledBudget = min(r₁, fundable₂)`. Deterministic, monotone-
   conservative (never above the true fixed point), and a small-demand
@@ -375,16 +377,13 @@ sits at the single canonical point (Base finalization):
   budget is bounded by `fundable[D]` (§3.1): each mirror's bucket funds only
   *its own* chain's slice, Base's bucket funds the rest, and un-repatriated
   quiet-chain surplus never sizes another chain's budget (Codex #1257 r1 P1).
-- **`fundable[D]` is computed one-pass against the *target* pool** (Codex r2
-  P1 — the naive definition was circular: fundable ← chain demand ←
-  dailyPool ← recycledBudget ← fundable). Per-chain demand is evaluated
-  against `targetPool[D] = scheduleFloor[D] + Ā[D] × (1 − m)` (the coupled
-  term *before* the funding cap); then `fundable = Base bucketAvailable +
-  Σ_c min(mirrorBucketAvailable[c], targetDemand_c)` and
-  `recycledBudget[D] = min(target, fundable)`. Slightly conservative when
-  the cap binds — deterministic, single-pass, and after fresh-floor
-  exhaustion the target keeps demand non-zero, so a funded bucket can never
-  deadlock the program against a zero floor.
+- **`fundable[D]` is computed by the §3.1 two-pass algorithm** (defined
+  once there — Codex r4: this section previously restated a stale one-pass
+  form; §3.1 is authoritative). The demand a mirror's bucket can fund is its
+  **recycled-component demand only** (`chainRecycledBudget_c`, never the
+  fresh floor share — consistent with the source-scoped netting below), and
+  after fresh-floor exhaustion the target keeps that demand non-zero, so a
+  funded bucket can never deadlock the program against a zero floor.
 - The finalized-denominator broadcast carries `recycleConsume[c][D]`
   (Base-instructed mirror bucket consumption) **and stamps the finalized
   day's pool composition — `scheduleFloorHalf[D]` **and** `recycledHalf[D]`
@@ -395,7 +394,11 @@ sits at the single canonical point (Base finalization):
   pool instead of locally re-deriving the schedule floor and silently
   dropping the recycled add-on (Codex #1257 r1 P1). The netted CCIP remittance is **source-scoped** (Codex r3): netting
   applies only to the RECYCLED component of a chain's budget —
-  `remit_recycled[c] = max(0, chainRecycledBudget[c] − availRecycled[c])` —
+  `remit_recycled[c] = max(0, chainRecycledBudget[c] − availRecycled[c])`,
+  where `availRecycled[c]` is **commitment-netted** (reported cumulative −
+  consumed cumulative − that chain's outstanding recycled commitments —
+  Codex r4: the old reported-minus-consumed form would let one bucket
+  balance back two days' netting) —
   while the fresh-floor component always remits from the fresh pool
   (`remit_fresh[c] = chainFreshBudget[c]`). A mirror's bucket can therefore
   never be spent on the fresh floor while the accumulators book those

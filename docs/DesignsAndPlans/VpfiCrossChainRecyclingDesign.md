@@ -13,8 +13,11 @@ from a single-chain idea to the full five-chain deployment. Implements the
 > — distribution now *tracks* absorption with a bounded platform-margin knob,
 > instead of running the schedule regardless of absorption. The substrate here
 > (bucket ledger §3.1, cumulative reporting §3.2, Option-B netting §3.3,
-> keeper rider §3.5, Phase-C surplus tooling) is **kept verbatim** and the
-> governor doc builds on it. Read the governor doc first; return here for the
+> keeper rider §3.5, Phase-C surplus tooling) is **kept as substrate**, with
+> one timing override: §3.3's broadcast-time full-`recycleConsume` bucket
+> debit is replaced by the governor's commitment model — the broadcast
+> *commits* the amount; the bucket is *debited pro-rata at claim/remit*
+> (governor doc §3.1), so unclaimed slices never strand outside the bucket. Read the governor doc first; return here for the
 > mesh mechanics.
 
 **Design goal:** every VPFI the protocol receives as fees — on any chain —
