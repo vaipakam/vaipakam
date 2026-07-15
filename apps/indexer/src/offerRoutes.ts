@@ -304,56 +304,31 @@ export async function handleOffersMarkets(req: Request, env: Env): Promise<Respo
   const url = new URL(req.url);
   const chainId = parseChainId(url.searchParams.get('chainId')) ?? 8453;
   try {
-    const now = Math.floor(Date.now() / 1000);
-    // Two per-source aggregates UNION ALL'd, then re-aggregated: SUM
-    // merges the counts and MIN/MAX merge the headline rates (SQLite
-    // aggregates ignore NULLs, so a side present in only one source
-    // keeps that source's rate). The signed leg reuses GET
-    // /signed-offers' exact freshness predicate — status='active', GTC
-    // or live expires_at, no-deadline or live deadline — so discovery
-    // can never advertise a market whose only signed rows are already
-    // unservable. asset_type predicates on the signed leg are
-    // ingest-guaranteed today (the POST route rejects non-ERC-20 legs,
-    // v0.5 shape) but stated anyway for parity with the offers leg if a
-    // later book version lifts that gate.
+    // #1270 — a pure indexed read over the ingest-maintained
+    // market_summary table (migration 0037): the union aggregate that
+    // used to run here globally per request now runs only where
+    // writes happen (the scan tail's touched-market sweep + the
+    // signed-POST path — see marketSummary.ts), so per-request work
+    // is O(top-N), not O(every distinct market a spammer fabricates).
+    // Numbers are exact for every write-driven change; pure time
+    // expiry (a GTT signed order lapsing with no other event) lags at
+    // most one ingest-scan cadence — the same order of staleness the
+    // desk's polling already tolerates.
+    //
+    // #1247 PAG-010 — discovery is still capped at the MARKETS_CAP
+    // deepest markets with a `truncated` flag; real markets stay
+    // reachable, spam falls off the tail. Deterministic tiebreak on
+    // the market triple so equal-depth markets don't shuffle between
+    // polls.
     const rows = await env.DB.prepare(
       `SELECT lending_asset, collateral_asset, duration_days,
-              SUM(lender_offers) AS lender_offers,
-              SUM(borrower_offers) AS borrower_offers,
-              MIN(best_ask_bps) AS best_ask_bps,
-              MAX(best_bid_bps) AS best_bid_bps
-         FROM (
-           SELECT lending_asset, collateral_asset, duration_days,
-                  SUM(CASE WHEN offer_type = 0 THEN 1 ELSE 0 END) AS lender_offers,
-                  SUM(CASE WHEN offer_type = 1 THEN 1 ELSE 0 END) AS borrower_offers,
-                  MIN(CASE WHEN offer_type = 0 THEN interest_rate_bps END) AS best_ask_bps,
-                  MAX(CASE WHEN offer_type = 1 THEN interest_rate_bps_max END) AS best_bid_bps
-              FROM offers
-             WHERE chain_id = ? AND status = 'active'
-               AND asset_type = 0 AND collateral_asset_type = 0
-               AND is_stub = 0
-               AND is_sale_vehicle = 0
-               AND is_offset_vehicle = 0
-               AND (expires_at = 0 OR expires_at > ?)
-             GROUP BY lending_asset, collateral_asset, duration_days
-           UNION ALL
-           SELECT lending_asset, collateral_asset, duration_days,
-                  SUM(CASE WHEN offer_type = 0 THEN 1 ELSE 0 END) AS lender_offers,
-                  SUM(CASE WHEN offer_type = 1 THEN 1 ELSE 0 END) AS borrower_offers,
-                  MIN(CASE WHEN offer_type = 0 THEN interest_rate_bps END) AS best_ask_bps,
-                  MAX(CASE WHEN offer_type = 1 THEN interest_rate_bps_max END) AS best_bid_bps
-              FROM signed_offers
-             WHERE chain_id = ? AND status = 'active'
-               AND asset_type = 0 AND collateral_asset_type = 0
-               AND (expires_at = 0 OR expires_at > ?)
-               AND (deadline = 0 OR deadline > ?)
-             GROUP BY lending_asset, collateral_asset, duration_days
-         )
-        GROUP BY lending_asset, collateral_asset, duration_days
-        ORDER BY (lender_offers + borrower_offers) DESC
+              lender_offers, borrower_offers, best_ask_bps, best_bid_bps
+         FROM market_summary
+        WHERE chain_id = ?
+        ORDER BY total DESC, lending_asset, collateral_asset, duration_days
         LIMIT ?`,
     )
-      .bind(chainId, now, chainId, now, now, MARKETS_CAP + 1)
+      .bind(chainId, MARKETS_CAP + 1)
       .all<{
         lending_asset: string;
         collateral_asset: string;
@@ -363,11 +338,6 @@ export async function handleOffersMarkets(req: Request, env: Env): Promise<Respo
         best_ask_bps: number | null;
         best_bid_bps: number | null;
       }>();
-    // #1247 PAG-010 — distinct markets are maker-spammable (1-wei
-    // offers across fabricated pairs), so the aggregate is capped at
-    // the MARKETS_CAP deepest markets (the ORDER BY above) with a
-    // truncated flag; real markets stay reachable, spam falls off the
-    // tail.
     const allRows = rows.results ?? [];
     const truncated = allRows.length > MARKETS_CAP;
     const kept = truncated ? allRows.slice(0, MARKETS_CAP) : allRows;

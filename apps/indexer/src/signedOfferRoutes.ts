@@ -32,6 +32,10 @@ import { createPublicClient, http } from 'viem';
 import { type Env, getChainConfigs, type ChainConfig } from './env';
 import { DIAMOND_SIGNED_OFFER_ABI } from './diamondAbi';
 import {
+  refreshOneMarketSummary,
+  seedMarketSweepCursorIfAbsent,
+} from './marketSummary';
+import {
   SIGNED_OFFER_FIELD_NAMES,
   orderHashOf,
   verifySignedOfferSignature,
@@ -775,6 +779,36 @@ export async function handleSignedOfferPost(
         now,
       )
       .run();
+    // #1270 — gasless posts never cross the chain scan, so the POST
+    // maintains its own market's discovery row synchronously (the
+    // scan-tail sweep would also catch it via updated_at, but only at
+    // scan cadence — a fresh signed-only market should be discoverable
+    // immediately). Fail-open: the row is persisted and served by
+    // GET /signed-offers regardless; a summary hiccup self-heals on
+    // the next sweep.
+    try {
+      await refreshOneMarketSummary(
+        env.DB,
+        chainId,
+        {
+          lendingAsset: order.lendingAsset,
+          collateralAsset: order.collateralAsset,
+          durationDays: Number(order.durationDays),
+        },
+        now,
+      );
+      // #1270 (Codex #1288 r5) — best-effort OPTIMIZATION: on a chain
+      // empty at migration this POST is the first market write, so seed
+      // the sweep watermark now to spare the first ingest sweep a
+      // one-time `since = 0` full recompute. Not correctness-critical:
+      // if this seed fails (or is skipped), the sweep's absent-cursor
+      // fallback is `since = 0`, which still reflects this row exactly
+      // (Codex #1288 r6) — which is why it stays inside the same
+      // fail-open block as the refresh.
+      await seedMarketSweepCursorIfAbsent(env.DB, chainId, now);
+    } catch (err) {
+      console.error('[signedOfferRoutes] market_summary refresh failed', err);
+    }
     return jsonResponse({ chainId, orderHash }, 201);
   } catch (err) {
     console.error('[signedOfferRoutes] insert failed', err);

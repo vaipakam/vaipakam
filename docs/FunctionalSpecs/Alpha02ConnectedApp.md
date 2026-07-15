@@ -71,7 +71,12 @@ alpha02 uses chain reads and indexed reads for different jobs.
   deepest markets, executed-rate history scans the newest fills, and the
   claim-candidate routes serve the newest terminal loans — each response
   says when depth was dropped, so a spammed market or an unusually long
-  history degrades honestly instead of scanning without bound.
+  history degrades honestly instead of scanning without bound. Market
+  discovery is additionally pre-computed as data changes (not aggregated
+  per request), so serving it costs the same however many markets exist;
+  a market whose only order expires purely by clock leaves the list on the
+  next ingest cycle for its chain (a few minutes on the current multi-chain
+  round-robin cron) rather than instantly.
 - A market maker's own resting signed orders are always visible and
   cancellable from the desk, even when better-priced depth from other
   makers fills the public book's per-side window — the desk reads the

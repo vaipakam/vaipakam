@@ -18,6 +18,12 @@
 import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import { handleOffersMarkets } from '../src/offerRoutes';
+import {
+  refreshMarketSummaries,
+  refreshOneMarketSummary,
+  seedMarketSweepCursorIfAbsent,
+  MARKET_SWEEP_CURSOR_KIND,
+} from '../src/marketSummary';
 import type { Env } from '../src/env';
 import { createSqliteD1, type SqliteD1 } from './helpers/sqliteD1';
 
@@ -25,9 +31,15 @@ const MIGRATION_0033 = readFileSync(
   new URL('../migrations/0033_signed_offer_book.sql', import.meta.url),
   'utf8',
 );
+// #1270 — the market_summary table + backfill the route now reads.
+const MIGRATION_0037 = readFileSync(
+  new URL('../migrations/0037_market_summary.sql', import.meta.url),
+  'utf8',
+);
 
-/** Minimal `offers` projection — exactly the columns handleOffersMarkets
- *  reads (scoping predicates + per-side count/rate aggregates). */
+/** Minimal `offers` projection — exactly the columns the market
+ *  aggregate reads (scoping predicates + per-side count/rate
+ *  aggregates), plus `updated_at` for the #1270 touched-set sweep. */
 const OFFERS_DDL = `
 CREATE TABLE offers (
   chain_id              INTEGER NOT NULL,
@@ -45,7 +57,20 @@ CREATE TABLE offers (
   is_stub               INTEGER NOT NULL DEFAULT 0,
   is_sale_vehicle       INTEGER NOT NULL DEFAULT 0,
   is_offset_vehicle     INTEGER NOT NULL DEFAULT 0,
+  updated_at            INTEGER NOT NULL DEFAULT 0,
   PRIMARY KEY (chain_id, offer_id)
+);`;
+
+/** Minimal `indexer_cursor` (migration 0004) — 0037's watermark-seed
+ *  INSERT references it; the markets tests never seed a diamond
+ *  cursor, so the seed's UNION leg over it is simply empty here. */
+const INDEXER_CURSOR_DDL = `
+CREATE TABLE indexer_cursor (
+  chain_id   INTEGER NOT NULL,
+  kind       TEXT    NOT NULL,
+  last_block INTEGER NOT NULL,
+  updated_at INTEGER NOT NULL,
+  PRIMARY KEY (chain_id, kind)
 );`;
 
 const CHAIN_ID = 84532;
@@ -141,6 +166,16 @@ interface MarketJson {
 async function getMarketsBody(
   h: SqliteD1,
 ): Promise<{ markets: MarketJson[]; truncated: boolean }> {
+  // #1270 — the route reads market_summary; run the scan-tail sweep
+  // over everything seeded so far (since=0 catches every write) so
+  // each test exercises the REAL maintenance path, not a hand-built
+  // summary row.
+  await refreshMarketSummaries(
+    h.d1 as D1Database,
+    CHAIN_ID,
+    0,
+    Math.floor(Date.now() / 1000),
+  );
   const env = { DB: h.d1 } as unknown as Env;
   const res = await handleOffersMarkets(
     new Request(`http://indexer.test/offers/markets?chainId=${CHAIN_ID}`),
@@ -155,7 +190,12 @@ async function getMarkets(h: SqliteD1): Promise<MarketJson[]> {
 }
 
 function freshDb(): SqliteD1 {
-  return createSqliteD1([OFFERS_DDL, MIGRATION_0033]);
+  return createSqliteD1([
+    OFFERS_DDL,
+    INDEXER_CURSOR_DDL,
+    MIGRATION_0033,
+    MIGRATION_0037,
+  ]);
 }
 
 describe('GET /offers/markets — signed-book union (Codex #1145 r4)', () => {
@@ -287,5 +327,172 @@ describe('GET /offers/markets — signed-book union (Codex #1145 r4)', () => {
         bestBidBps: 320,
       },
     ]);
+  });
+});
+
+// ── market_summary sweep semantics (#1270) ──
+//
+// The route above is a pure summary read; these pin the WRITE side:
+// windowed touched-set detection (updated_at legs + the no-event
+// time-expiry legs) and the emptied-market delete.
+
+describe('refreshMarketSummaries — windowed sweep (#1270)', () => {
+  const summaryRows = (h: SqliteD1) =>
+    h.db
+      .prepare(
+        `SELECT lending_asset, total FROM market_summary
+         WHERE chain_id = ${CHAIN_ID} ORDER BY lending_asset`,
+      )
+      .all() as Array<{ lending_asset: string; total: number }>;
+
+  it('a market whose rows all cancelled is DELETED on its next touch', async () => {
+    const h = freshDb();
+    insertOffer(h, { offerType: 0, lendingAsset: L1, durationDays: 30, rateBps: 500 });
+    await refreshMarketSummaries(h.d1 as D1Database, CHAIN_ID, 0, 1_000);
+    expect(summaryRows(h)).toEqual([{ lending_asset: L1, total: 1 }]);
+    // Cancel stamps updated_at inside the NEXT sweep window; the
+    // sweep must see the touch and remove the emptied row.
+    h.db
+      .prepare(`UPDATE offers SET status = 'cancelled', updated_at = 2000`)
+      .run();
+    await refreshMarketSummaries(h.d1 as D1Database, CHAIN_ID, 1_500, 2_500);
+    expect(summaryRows(h)).toEqual([]);
+  });
+
+  it('a pure TIME expiry (no write at all) is caught by the expiry-window leg', async () => {
+    const h = freshDb();
+    // Signed row created at 1_000, expiring at 2_000 — never written
+    // again. The first sweep (pre-expiry) creates the market; the
+    // second sweep's window starts AFTER the row's updated_at, so
+    // only the expiry leg can catch it.
+    insertSigned(h, {
+      orderHash: 'gtt-1',
+      offerType: 0,
+      lendingAsset: L1,
+      durationDays: 7,
+      rateBps: 450,
+      expiresAt: 2_000,
+    });
+    await refreshMarketSummaries(h.d1 as D1Database, CHAIN_ID, 0, 1_500);
+    expect(summaryRows(h)).toEqual([{ lending_asset: L1, total: 1 }]);
+    await refreshMarketSummaries(h.d1 as D1Database, CHAIN_ID, 1_500, 2_500);
+    expect(summaryRows(h)).toEqual([]);
+  });
+
+  it('refreshOneMarketSummary (the signed-POST path) maintains exactly its own market', async () => {
+    const h = freshDb();
+    insertSigned(h, { orderHash: 's-1', offerType: 0, lendingAsset: L1, durationDays: 7, rateBps: 450 });
+    insertOffer(h, { offerType: 0, lendingAsset: L2, durationDays: 30, rateBps: 500 });
+    // Only L1's market is refreshed — L2 stays absent until ITS touch.
+    await refreshOneMarketSummary(
+      h.d1 as D1Database,
+      CHAIN_ID,
+      { lendingAsset: L1, collateralAsset: C1, durationDays: 7 },
+      2_000,
+    );
+    expect(summaryRows(h)).toEqual([{ lending_asset: L1, total: 1 }]);
+    // Re-running after the row is gone deletes the summary row too.
+    h.db.prepare(`UPDATE signed_offers SET status = 'cancelled'`).run();
+    await refreshOneMarketSummary(
+      h.d1 as D1Database,
+      CHAIN_ID,
+      { lendingAsset: L1, collateralAsset: C1, durationDays: 7 },
+      3_000,
+    );
+    expect(summaryRows(h)).toEqual([]);
+  });
+
+  it('migration 0037 seeds the sweep watermark for chains with existing rows (Codex #1288 r3)', () => {
+    // Apply the pre-0037 schema, seed a live offer + a diamond cursor
+    // as an over-live-data deploy would have, THEN run 0037 — its
+    // backfill + watermark seed must fire for that chain.
+    const h = createSqliteD1([OFFERS_DDL, INDEXER_CURSOR_DDL, MIGRATION_0033]);
+    h.db
+      .prepare(
+        `INSERT INTO offers (chain_id, offer_id, status, offer_type,
+           lending_asset, collateral_asset, duration_days, interest_rate_bps,
+           interest_rate_bps_max, updated_at)
+         VALUES (?, 1, 'active', 0, ?, ?, 30, 500, 500, 111)`,
+      )
+      .run(CHAIN_ID, L1, C1);
+    h.db
+      .prepare(
+        `INSERT INTO indexer_cursor (chain_id, kind, last_block, updated_at)
+         VALUES (?, 'diamond', 9, 100)`,
+      )
+      .run(CHAIN_ID);
+    h.db.exec(MIGRATION_0037);
+    const seeded = h.db
+      .prepare(
+        `SELECT chain_id, last_block FROM indexer_cursor
+         WHERE kind = 'market_summary_sweep'`,
+      )
+      .all() as Array<{ chain_id: number; last_block: number }>;
+    expect(seeded).toHaveLength(1);
+    expect(seeded[0].chain_id).toBe(CHAIN_ID);
+    expect(seeded[0].last_block).toBeGreaterThan(0); // a real unixepoch()
+    // And the backfill populated the market from the existing offer.
+    const summary = h.db
+      .prepare(`SELECT lending_asset, total FROM market_summary`)
+      .all();
+    expect(summary).toEqual([{ lending_asset: L1, total: 1 }]);
+  });
+
+  it('a pure-clock expiry is swept even with NO source-row write in the window (Codex #1288 r4)', async () => {
+    // The caught-up-chain case: a signed order expires by time with no
+    // event, no updated_at bump. A window whose ONLY touch is the
+    // expiry leg must still delete the emptied market — the reason the
+    // sweep runs on the no-new-blocks path too.
+    const h = freshDb();
+    insertSigned(h, {
+      orderHash: 'gtt-x',
+      offerType: 0,
+      lendingAsset: L1,
+      durationDays: 7,
+      rateBps: 450,
+      expiresAt: 2_000,
+      // created_at/updated_at default to insertSigned's fixed seed
+      // (1000), well before the post-expiry window below.
+    });
+    await refreshMarketSummaries(h.d1 as D1Database, CHAIN_ID, 0, 1_500);
+    expect(summaryRows(h)).toEqual([{ lending_asset: L1, total: 1 }]);
+    // Window (1_990, 2_010] — no updated_at touch (row's is 1000), only
+    // the expiry falls inside it.
+    await refreshMarketSummaries(h.d1 as D1Database, CHAIN_ID, 1_990, 2_010);
+    expect(summaryRows(h)).toEqual([]);
+  });
+
+  it('seedMarketSweepCursorIfAbsent persists the FIRST write time and never advances (Codex #1288 r5)', async () => {
+    // A chain empty at migration has no sweep cursor; the first
+    // signed-POST must seed a persisted lower bound so a delayed first
+    // sweep still reaches back to this row.
+    const h = freshDb();
+    const cursorAt = () =>
+      (
+        h.db
+          .prepare(
+            `SELECT last_block FROM indexer_cursor WHERE kind = ?`,
+          )
+          .get(MARKET_SWEEP_CURSOR_KIND) as { last_block: number } | undefined
+      )?.last_block;
+    expect(cursorAt()).toBeUndefined();
+    await seedMarketSweepCursorIfAbsent(h.d1 as D1Database, CHAIN_ID, 1_000);
+    expect(cursorAt()).toBe(1_000);
+    // A later POST must NOT push the bound forward (that would shrink
+    // the covering window and could skip the earlier row's expiry).
+    await seedMarketSweepCursorIfAbsent(h.d1 as D1Database, CHAIN_ID, 5_000);
+    expect(cursorAt()).toBe(1_000);
+  });
+
+  it('a window that touches nothing leaves other markets untouched (no global recompute)', async () => {
+    const h = freshDb();
+    insertOffer(h, { offerType: 0, lendingAsset: L1, durationDays: 30, rateBps: 500 });
+    await refreshMarketSummaries(h.d1 as D1Database, CHAIN_ID, 0, 1_000);
+    // Corrupt the summary row deliberately: an untouched-window sweep
+    // must NOT repair it — proving the sweep recomputes only touched
+    // markets, which is the whole point of the bounded design.
+    h.db.prepare(`UPDATE market_summary SET total = 99`).run();
+    await refreshMarketSummaries(h.d1 as D1Database, CHAIN_ID, 5_000, 6_000);
+    expect(summaryRows(h)).toEqual([{ lending_asset: L1, total: 99 }]);
   });
 });
