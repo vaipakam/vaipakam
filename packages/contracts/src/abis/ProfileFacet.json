@@ -10,8 +10,8 @@
       },
       {
         "name": "actions",
-        "type": "uint8",
-        "internalType": "uint8"
+        "type": "uint16",
+        "internalType": "uint16"
       }
     ],
     "outputs": [],
@@ -146,8 +146,8 @@
     "outputs": [
       {
         "name": "actions",
-        "type": "uint8",
-        "internalType": "uint8"
+        "type": "uint16",
+        "internalType": "uint16"
       }
     ],
     "stateMutability": "view"
@@ -406,8 +406,8 @@
       },
       {
         "name": "actions",
-        "type": "uint8",
-        "internalType": "uint8"
+        "type": "uint16",
+        "internalType": "uint16"
       }
     ],
     "outputs": [],
@@ -656,9 +656,9 @@
       },
       {
         "name": "actions",
-        "type": "uint8",
+        "type": "uint16",
         "indexed": false,
-        "internalType": "uint8"
+        "internalType": "uint16"
       }
     ],
     "anonymous": false

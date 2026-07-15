@@ -401,12 +401,15 @@ contract ProfileFacetTest is Test {
     }
 
     function testApproveKeeperRevertsOnOutOfRangeActions() public {
-        // #393 v1-d.2 widened KEEPER_ACTION_ALL 0x7F → 0xFF with
-        // KEEPER_ACTION_AUTO_ROLL (0x80) — the LAST free bit, so the uint8
-        // keeper bitmask is now FULL. Bit 7 (0x80) is therefore VALID, and the
-        // only out-of-range value left is the empty action set (0x00).
+        // #393 v1-d.2 filled the original uint8 bitmask (KEEPER_ACTION_ALL =
+        // 0xFF, AUTO_ROLL = 0x80 the last bit). #1221 widened the container to
+        // uint16 so bits 8–15 are physically available for future actions, but
+        // KEEPER_ACTION_ALL is still 0xFF until a bit-8+ action is DEFINED —
+        // so the validator (`_requireValidKeeperActions`) must still reject any
+        // undefined high bit. This is the regression guard for the widening:
+        // an undefined action can never be granted just because the type grew.
         address k = makeAddr("keeperA");
-        // 0x80 (AUTO_ROLL) is now accepted.
+        // 0x80 (AUTO_ROLL) — a defined bit — is accepted.
         vm.prank(user1);
         ProfileFacet(address(diamond)).approveKeeper(k, 0x80);
         assertEq(
@@ -419,6 +422,23 @@ contract ProfileFacetTest is Test {
         vm.prank(user1);
         vm.expectRevert(IVaipakamErrors.InvalidKeeperActions.selector);
         ProfileFacet(address(diamond)).approveKeeper(k2, 0x00);
+        // Bit 8 (0x100) — now EXPRESSIBLE in the uint16 param but NOT in
+        // KEEPER_ACTION_ALL — must be rejected as an undefined action. Before
+        // the widening this value couldn't even be passed (uint8 capped at
+        // 0xFF); the validator's `~KEEPER_ACTION_ALL` mask now catches it.
+        address k3 = makeAddr("keeperC");
+        vm.prank(user1);
+        vm.expectRevert(IVaipakamErrors.InvalidKeeperActions.selector);
+        ProfileFacet(address(diamond)).approveKeeper(k3, 0x100);
+        // A mix of a defined low bit and an undefined high bit is also rejected
+        // (partial-validity must not slip through).
+        address k4 = makeAddr("keeperD");
+        vm.prank(user1);
+        vm.expectRevert(IVaipakamErrors.InvalidKeeperActions.selector);
+        ProfileFacet(address(diamond)).approveKeeper(
+            k4,
+            LibVaipakam.KEEPER_ACTION_REFINANCE | 0x200
+        );
     }
 
     function testApproveKeeperRecordsBitmask() public {
@@ -429,7 +449,7 @@ contract ProfileFacetTest is Test {
             LibVaipakam.KEEPER_ACTION_COMPLETE_LOAN_SALE |
                 LibVaipakam.KEEPER_ACTION_REFINANCE
         );
-        uint8 actions = ProfileFacet(address(diamond)).getKeeperActions(user1, k);
+        uint16 actions = ProfileFacet(address(diamond)).getKeeperActions(user1, k);
         assertEq(
             actions,
             LibVaipakam.KEEPER_ACTION_COMPLETE_LOAN_SALE |

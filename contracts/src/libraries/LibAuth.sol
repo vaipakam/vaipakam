@@ -92,7 +92,7 @@ library LibAuth {
     /// @param lenderSide True to authorise against the lender NFT, false for
     ///                   the borrower NFT.
     function requireKeeperFor(
-        uint8 action,
+        uint16 action,
         LibVaipakam.Loan storage loan,
         bool lenderSide
     ) internal view {
@@ -125,7 +125,7 @@ library LibAuth {
     ///         AND the `action` bit set in `approvedKeeperActions[principal][caller]`).
     /// @param action    One of `LibVaipakam.KEEPER_ACTION_*` (bitmask).
     /// @param principal The party whose authorization is required (the lender).
-    function requireKeeperForPrincipal(uint8 action, address principal)
+    function requireKeeperForPrincipal(uint16 action, address principal)
         internal
         view
     {
@@ -146,7 +146,7 @@ library LibAuth {
     ///         execution can't diverge on authorization.
     function isKeeperForPrincipal(
         address solver,
-        uint8 action,
+        uint16 action,
         address principal
     ) internal view returns (bool) {
         if (solver == address(this)) return true; // diamond-internal

@@ -37,6 +37,7 @@ import {
   type OfferRiskLevel as RiskLevel,
 } from '../components/TokenRiskBadge';
 import { useBookTokenSecurity } from '../data/tokenSecurity';
+import { ShowMoreButton, useVisibleWindow } from '../lib/visibleWindow';
 import { AssetType } from '../lib/types';
 import {
   formatBpsAsPercent,
@@ -207,6 +208,7 @@ function OfferRow({ offer, risk }: { offer: IndexedOffer; risk: RiskLevel | null
 export function Offers() {
   const offers = useActiveOffers();
   const { isAdvanced } = useMode();
+  const { readChain } = useActiveChain();
 
   const [side, setSide] = useState<SideFilter>('all');
   const [sort, setSort] = useState<SortKey>('newest');
@@ -262,14 +264,27 @@ export function Offers() {
     return rows;
   }, [offers.data, activeSide, activeSort, activeAssetFilter]);
 
+  // #1247 PAG-002 — the render window. The filtered/sorted array can
+  // hold up to the 500-row data cap; rows (and their per-row reads)
+  // render a page at a time. The window collapses when any
+  // row-removing/reordering control changes — a deep window over a
+  // DIFFERENT list must not persist.
+  const bookWindow = useVisibleWindow(
+    Array.isArray(visible) ? visible : [],
+    // Chain identity too (Codex #1265 r2): a network switch with the
+    // same filters must collapse the window over the NEW book.
+    `${readChain.chainId}|${activeSide}|${activeSort}|${activeAssetFilter}`,
+  );
+
   // #1036 badges: one batched screen for every distinct non-curated
-  // leg on the visible page (rows keep their own chainId). Browse
-  // tier is early-warning only — rows are never hidden here, the
-  // book must not lie about what the market holds; the accept gate
-  // downstream is the enforcement point.
+  // leg on the visible WINDOW (rows keep their own chainId) — the
+  // screen set grows with Show-more, in step with the rows it badges
+  // (#1247 PAG-002). Browse tier is early-warning only — rows are
+  // never hidden here, the book must not lie about what the market
+  // holds; the accept gate downstream is the enforcement point.
   const screenLegs = useMemo(
-    () => (Array.isArray(visible) ? visible.flatMap(offerScreenableLegs) : []),
-    [visible],
+    () => bookWindow.shown.flatMap(offerScreenableLegs),
+    [bookWindow.shown],
   );
   const verdicts = useBookTokenSecurity(screenLegs);
 
@@ -378,7 +393,7 @@ export function Offers() {
       ) : (
         <>
           <div className="row-list">
-            {visible.map((o) => (
+            {bookWindow.shown.map((o) => (
               <OfferRow
                 key={o.offerId}
                 offer={o}
@@ -386,6 +401,12 @@ export function Offers() {
               />
             ))}
           </div>
+          <ShowMoreButton
+            hasMore={bookWindow.hasMore}
+            hiddenCount={bookWindow.hiddenCount}
+            nextCount={bookWindow.nextCount}
+            onClick={bookWindow.loadMore}
+          />
           <p className="muted" style={{ marginTop: 16 }}>
             {/* Copy follows the role-specific card CTAs (Codex #1175 r2)
                 — the button no longer reads "Use this offer". */}

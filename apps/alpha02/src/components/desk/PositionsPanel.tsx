@@ -19,6 +19,7 @@ import { useMyLoansFull, type PositionLoan } from '../../data/hooks';
 import { healthView, useLoanRisk } from '../../data/risk';
 import { useTokenMeta } from '../../contracts/erc20';
 import { EmptyState, UnavailableState } from '../EmptyState';
+import { WindowedRowList } from '../../lib/visibleWindow';
 import { AssetType } from '../../lib/types';
 import {
   daysRemaining,
@@ -90,7 +91,7 @@ function PositionRow({ loan }: { loan: PositionLoan }) {
 
 export function PositionsPanel() {
   const loans = useMyLoansFull();
-  const { isConnected } = useActiveChain();
+  const { isConnected, address, readChain } = useActiveChain();
 
   // Desk scope: live ERC-20 loans (rentals and settled history stay
   // on My positions, linked below).
@@ -116,11 +117,14 @@ export function PositionsPanel() {
       {rows.length === 0 ? (
         <EmptyState icon={ListChecks} title={text.empty} />
       ) : (
-        <div className="row-list">
-          {rows.map((l) => (
-            <PositionRow key={`${l.loanId}-${l.role}`} loan={l} />
-          ))}
-        </div>
+        // #1247 PAG-008 — windowed: each row mounts token meta AND a
+        // per-loan HF read (useLoanRisk); the reads must scale with
+        // the page the user asked for, not the 500–2000 data caps.
+        <WindowedRowList
+          rows={rows}
+          resetKey={`${readChain.chainId}|${address?.toLowerCase() ?? ''}`}
+          render={(l) => <PositionRow key={`${l.loanId}-${l.role}`} loan={l} />}
+        />
       )}
       <p style={{ marginTop: 8 }}>
         <Link to="/positions" className="muted">

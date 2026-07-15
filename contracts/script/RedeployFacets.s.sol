@@ -157,6 +157,18 @@ contract RedeployFacets is Script {
         // existing facet).
         (bytes4[] memory profToAdd, bytes4[] memory profToReplace) =
             _partitionByRouting(diamond, _profileSelectors());
+        // #1221 — the keeper action bitmask widened uint8→uint16, which CHANGED
+        // the 4-byte selectors of approveKeeper/setKeeperActions. The NEW uint16
+        // selectors are Add'ed/Replace'd via `_profileSelectors()` above, but on
+        // a diamond cut BEFORE this PR the OLD uint8 selectors stay routed to the
+        // stale ProfileFacet bytecode unless explicitly REMOVED — leaving a
+        // duplicate, obsolete entry point live alongside the new ABI. Partition
+        // the legacy selectors by routing and Remove only those still present
+        // (the `toReplace` slot = the currently-routed subset); on a fresh or
+        // already-migrated diamond the subset is empty and no Remove is cut, so
+        // the step is idempotent.
+        (, bytes4[] memory profToRemove) =
+            _partitionByRouting(diamond, _legacyProfileRemovedSelectors());
         // #1123 — VaipakamNFTFacet (inline transfer gate) + VaultFactoryFacet
         // (recovery-ban register) partitioned by routing. On a current-version
         // diamond every selector is already routed (all Replace); the split just
@@ -172,7 +184,8 @@ contract RedeployFacets is Script {
             (claimToAdd.length > 0 ? 1 : 0) + (claimToReplace.length > 0 ? 1 : 0) +
             (profToAdd.length > 0 ? 1 : 0) + (profToReplace.length > 0 ? 1 : 0) +
             (nftToAdd.length > 0 ? 1 : 0) + (nftToReplace.length > 0 ? 1 : 0) +
-            (vfToAdd.length > 0 ? 1 : 0) + (vfToReplace.length > 0 ? 1 : 0);
+            (vfToAdd.length > 0 ? 1 : 0) + (vfToReplace.length > 0 ? 1 : 0) +
+            (profToRemove.length > 0 ? 1 : 0);
         IDiamondCut.FacetCut[] memory cuts =
             new IDiamondCut.FacetCut[](8 + nExtra);
         cuts[0] = _replace(address(riskFacet), _riskSelectors());
@@ -224,6 +237,11 @@ contract RedeployFacets is Script {
         if (profToAdd.length > 0) {
             cuts[idx++] = _add(address(profileFacet), profToAdd);
         }
+        // #1221 — Remove the stale uint8 keeper selectors still routed from a
+        // pre-#1221 diamond (empty, so skipped, on a fresh/already-migrated one).
+        if (profToRemove.length > 0) {
+            cuts[idx++] = _remove(profToRemove);
+        }
         // #1123 — VaipakamNFTFacet (inline transfer gate) + VaultFactoryFacet
         // (recovery-ban register) repoint to the refreshed bytecode.
         if (nftToReplace.length > 0) {
@@ -250,6 +268,7 @@ contract RedeployFacets is Script {
         console.log("  Cons selectors repl.: ", consToReplace.length);
         console.log("  Claim selectors added:", claimToAdd.length);
         console.log("  Claim selectors repl.:", claimToReplace.length);
+        console.log("  Legacy uint8 keeper selectors removed:", profToRemove.length);
     }
 
     function _replace(address facet, bytes4[] memory selectors)
@@ -276,6 +295,36 @@ contract RedeployFacets is Script {
             action: IDiamondCut.FacetCutAction.Add,
             functionSelectors: selectors
         });
+    }
+
+    /// @dev #1221 — Remove cut for selectors that must be UN-routed (facet must
+    ///      be `address(0)` per the diamond library's `removeFunctions`). Used
+    ///      to retire the legacy uint8 keeper selectors after the uint16 widen.
+    function _remove(bytes4[] memory selectors)
+        internal
+        pure
+        returns (IDiamondCut.FacetCut memory)
+    {
+        return IDiamondCut.FacetCut({
+            facetAddress: address(0),
+            action: IDiamondCut.FacetCutAction.Remove,
+            functionSelectors: selectors
+        });
+    }
+
+    /// @dev #1221 — the OLD (pre-widen) keeper selectors whose signatures carried
+    ///      a `uint8` action arg. Widening to uint16 changed their 4-byte
+    ///      selectors, so these must be Removed from a diamond that still routes
+    ///      them (see the cut assembly). `getKeeperActions(address,address)` is
+    ///      unchanged — its signature carries no action arg — and is not listed.
+    function _legacyProfileRemovedSelectors()
+        internal
+        pure
+        returns (bytes4[] memory s)
+    {
+        s = new bytes4[](2);
+        s[0] = bytes4(keccak256("approveKeeper(address,uint8)"));
+        s[1] = bytes4(keccak256("setKeeperActions(address,uint8)"));
     }
 
     /// @dev #394 (Codex #647 round-7) — split `selectors` into those NOT yet

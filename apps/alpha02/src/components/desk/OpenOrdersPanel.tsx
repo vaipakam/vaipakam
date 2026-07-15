@@ -51,6 +51,7 @@ import { readAllowance, useAllowanceForPlan } from '../../lib/submitProgress';
 import { EmptyState, UnavailableState } from '../EmptyState';
 import { AssetType } from '../../lib/types';
 import { captureTxError, isPlainDecimal } from '../../lib/errors';
+import { WindowedRowList } from '../../lib/visibleWindow';
 import { percentToBps, MAX_INTEREST_BPS } from '../../lib/offerSchema';
 import {
   exactAmountString,
@@ -831,7 +832,7 @@ function SignedOrdersBlock({
   pair: DeskPair | null;
   days: number;
 }) {
-  const { address, onSupportedChain } = useActiveChain();
+  const { address, onSupportedChain, readChain: signedReadChain } = useActiveChain();
   const signedBook = useDeskSignedBook(pair, days);
   const queryClient = useQueryClient();
   const { write } = useDiamondWrite();
@@ -889,8 +890,13 @@ function SignedOrdersBlock({
       <p className="muted" style={{ margin: '0 0 8px', fontSize: '0.8rem' }}>
         {text.signedNote} {text.signedCancelNote}
       </p>
-      <div className="row-list">
-        {own.map((row) => {
+      {/* #1247 PAG-005 — same window as the on-chain block (the
+          server slice bounds this at 100/side, but the pattern stays
+          uniform and the DOM stays a page at a time). */}
+      <WindowedRowList
+        rows={own}
+        resetKey={`${signedReadChain.chainId}|${address?.toLowerCase() ?? ''}|${pair ? `${pair.lendingAsset}-${pair.collateralAsset}` : ''}|${days}`}
+        render={(row) => {
           const remaining = signedOfferRemaining(row.order, row.filledAmount);
           return (
             <div className="item-row" key={row.orderHash}>
@@ -964,8 +970,8 @@ function SignedOrdersBlock({
               )}
             </div>
           );
-        })}
-      </div>
+        }}
+      />
     </div>
   );
 }
@@ -980,7 +986,7 @@ export function OpenOrdersPanel({
   days: number;
 }) {
   const offers = useMyOffersFull();
-  const { isConnected, readChain } = useActiveChain();
+  const { isConnected, address, readChain } = useActiveChain();
   const publicClient = usePublicClient({ chainId: readChain.chainId });
 
   // Desk scope: ERC-20/ERC-20 rate offers only — NFT/rental listings
@@ -1056,11 +1062,14 @@ export function OpenOrdersPanel({
   }
   return (
     <>
-      <div className="row-list">
-        {rows.map((o) => (
-          <OrderRow key={o.offerId} offer={o} />
-        ))}
-      </div>
+      {/* #1247 PAG-005 — a market-maker wallet can hold hundreds of
+          open orders (data caps allow 500–2000); render a page at a
+          time. */}
+      <WindowedRowList
+        rows={rows}
+        resetKey={`${readChain.chainId}|${address?.toLowerCase() ?? ''}|${pair ? `${pair.lendingAsset}-${pair.collateralAsset}` : ''}|${days}`}
+        render={(o) => <OrderRow key={o.offerId} offer={o} />}
+      />
       <SignedOrdersBlock pair={pair} days={days} />
     </>
   );
