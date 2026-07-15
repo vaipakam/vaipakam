@@ -1128,6 +1128,11 @@ export const copy = {
         'Dashed line = the book’s current quoted mid — a resting quote, not an executed rate.',
       sparseNote: (n: number) =>
         `Sparse market — ${n} fill${n === 1 ? '' : 's'} in this range, drawn individually. Candles appear once there’s enough tape to mean something.`,
+      // #1247 PAG-009 — the server scans the newest 10,000 fills; a
+      // busy market's oldest history falls off. Say so instead of
+      // letting an "all" chart read as complete.
+      truncatedNote:
+        'Long history — showing the most recent fills only. The oldest candles are not drawn.',
       intervalLabel: 'Interval',
       rangeLabel: 'Range',
       attribution: 'Charts by TradingView',

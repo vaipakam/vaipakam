@@ -371,6 +371,10 @@ export interface RateCandleBucket {
 export interface RateCandlesResponse {
   chainId: number;
   buckets: RateCandleBucket[];
+  /** #1247 PAG-009 — true when the server's newest-10,000-fill scan
+   *  dropped older fills (the OLDEST candles are missing, never recent
+   *  ones). Optional so a not-yet-redeployed Worker parses fine. */
+  truncated?: boolean;
 }
 
 /** Executed-rate candles for one (pair, tenor) market — the Rate Desk

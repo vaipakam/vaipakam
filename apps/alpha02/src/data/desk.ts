@@ -416,10 +416,12 @@ export function useDeskTape(pair: DeskPair | null, durationDays: number) {
 /** Executed-rate candle buckets for the (pair, tenor) market (#1130).
  *  Tri-state per the app contract: `undefined` loading, `null`
  *  unavailable (fetch failed / wrong-chain response / no indexer
- *  origin), `[]` honestly empty (a market with zero fills in the
- *  range). 60 s staleTime mirrors the worker's `Cache-Control:
- *  max-age=60` — refetching harder would only re-download the same
- *  cached body. */
+ *  origin), `{ buckets: [], … }` honestly empty (a market with zero
+ *  fills in the range). `truncated` (#1247 PAG-009) mirrors the
+ *  server's scan-cap flag so the chart can say the oldest candles are
+ *  missing instead of rendering a clipped `all` range as complete.
+ *  60 s staleTime mirrors the worker's `Cache-Control: max-age=60` —
+ *  refetching harder would only re-download the same cached body. */
 export function useDeskCandles(
   pair: DeskPair | null,
   durationDays: number,
@@ -439,7 +441,10 @@ export function useDeskCandles(
     enabled: pair !== null,
     staleTime: 60_000,
     refetchInterval: signalAware(60_000),
-    queryFn: async (): Promise<RateCandleBucket[] | null> => {
+    queryFn: async (): Promise<{
+      buckets: RateCandleBucket[];
+      truncated: boolean;
+    } | null> => {
       if (!indexerConfigured()) return null;
       const res = await fetchRateCandles(
         readChain.chainId,
@@ -455,7 +460,8 @@ export function useDeskCandles(
       // A response for another chain is not this market's history —
       // treat it as unavailable, never render it.
       if (res.chainId !== readChain.chainId) return null;
-      return Array.isArray(res.buckets) ? res.buckets : null;
+      if (!Array.isArray(res.buckets)) return null;
+      return { buckets: res.buckets, truncated: res.truncated === true };
     },
   });
 }

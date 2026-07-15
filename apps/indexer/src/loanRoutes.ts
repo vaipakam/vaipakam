@@ -601,23 +601,33 @@ export async function handleClaimables(
     // Pre-fetch already-claimed loan IDs so we can dedup in memory
     // without N round trips. One query per side. (Belt-and-suspenders: a claimed
     // position NFT is burned, so its `*_current_owner` is already `0x0`.)
+    // #1247 PAG-007 (Codex #1269 r1) — the claimed sets are only ever
+    // consulted for the ≤CAP kept rows, all of which have
+    // loan_id >= the window floor (rows are newest-first), so bound the
+    // event scans to the same window instead of the wallet's whole
+    // claim history. An IN(list) would be exact but D1 caps bound
+    // params at 100; the floor predicate is a superset that stays
+    // correct (extra ids in the Sets are simply never looked up).
+    const minKeptLoanId = rows[rows.length - 1].loan_id;
     const claimedLender = new Set<number>();
     const claimedBorrower = new Set<number>();
     const lenderClaims = (
       await env.DB.prepare(
         `SELECT DISTINCT loan_id FROM activity_events
-         WHERE chain_id = ? AND kind = 'LenderFundsClaimed' AND actor = ?`,
+         WHERE chain_id = ? AND kind = 'LenderFundsClaimed' AND actor = ?
+           AND loan_id >= ?`,
       )
-        .bind(chainId, addr)
+        .bind(chainId, addr, minKeptLoanId)
         .all<{ loan_id: number }>()
     ).results ?? [];
     for (const r of lenderClaims) claimedLender.add(r.loan_id);
     const borrowerClaims = (
       await env.DB.prepare(
         `SELECT DISTINCT loan_id FROM activity_events
-         WHERE chain_id = ? AND kind = 'BorrowerFundsClaimed' AND actor = ?`,
+         WHERE chain_id = ? AND kind = 'BorrowerFundsClaimed' AND actor = ?
+           AND loan_id >= ?`,
       )
-        .bind(chainId, addr)
+        .bind(chainId, addr, minKeptLoanId)
         .all<{ loan_id: number }>()
     ).results ?? [];
     for (const r of borrowerClaims) claimedBorrower.add(r.loan_id);

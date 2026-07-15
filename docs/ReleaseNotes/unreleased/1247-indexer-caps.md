@@ -26,4 +26,14 @@ priced depth pushed out of the public window is still visible and
 cancellable by its owner — previously it simply vanished from the
 desk while remaining live and fillable.
 
+Review hardening from the same change: the Rate Desk chart now shows
+a "showing the most recent fills only" note when the server clipped a
+long history, instead of rendering the chart as complete; the
+wallet-scoped book read is served by a dedicated database index so it
+never has to walk other makers' depth to find the caller's orders;
+and the claimables route's already-claimed lookups are bounded to the
+same 200-loan window as the candidates they de-duplicate. Bounding
+the market-discovery aggregation itself (not just its response) is
+tracked separately.
+
 Refs #1247.
