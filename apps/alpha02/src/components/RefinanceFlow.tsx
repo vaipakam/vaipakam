@@ -53,7 +53,6 @@ import {
   readGraceSecondsLive,
 } from '../contracts/preflights';
 import {
-  lateFeeAt,
   loanEndTimeOf,
   LOAN_STATUS_ACTIVE,
   readLoanLive,
@@ -71,6 +70,7 @@ import {
 } from '../lib/offerSchema';
 import {
   formatBpsAsPercent,
+  formatDate,
   formatTokenAmount,
 } from '../lib/format';
 import { ConfirmReceipt } from './ConfirmReceipt';
@@ -154,22 +154,33 @@ export function RefinanceFlow({
   // What the wallet must hold SPARE at accept: the payoff is pulled,
   // but the new principal minus LIF arrives in the same tx.
   const walletTopUp = payoffInterest + lifWei;
-  // The late fee at the LAST moment this request could be accepted
-  // (its own 30-day expiry or the grace end, whichever first) — the
-  // approval covers it, and the review discloses it whenever the
-  // request's window can cross the due date. While the grace bucket
-  // is still unknown the review CANNOT open (Codex #1256 r1): a
-  // zero-grace fallback would quote no late-fee headroom while
-  // submit approves the larger last-fillable bound — an undisclosed
-  // figure must never be signable.
+  // The approval bound: the payoff at the LAST moment this request
+  // could be accepted (its own 30-day expiry or the grace end,
+  // whichever first) — what the standing approval is sized to, and
+  // what the review disclosure is derived from whenever the request's
+  // window can cross the due date. While the grace bucket is still
+  // unknown the review CANNOT open (Codex #1256 r1): a zero-grace
+  // fallback would quote no headroom while submit approves the larger
+  // last-fillable bound — an undisclosed figure must never be
+  // signable.
   const graceReady = graceSeconds !== undefined;
   const graceSec = graceSeconds ?? 0n;
-  const maxLateFee =
-    refinanceApprovalOf(live, {
-      expiresAt: chainNow + REQUEST_WINDOW_DAYS * 86_400n,
-      graceSeconds: graceSec,
-    }) -
-    (payoff - lateFeeAt(live, chainNow));
+  const approvalBound = refinanceApprovalOf(live, {
+    expiresAt: chainNow + REQUEST_WINDOW_DAYS * 86_400n,
+    graceSeconds: graceSec,
+  });
+  // Disclosed as TOTAL payoff growth, not "late fee" (Codex #1256 r3
+  // P3): past maturity the pull grows by the late fee AND the
+  // interest that keeps accruing, and the receipt must not label the
+  // interest share as a fee.
+  const payoffHeadroom = approvalBound - payoff;
+  // OfferCreateFacet clamps a refinance request's on-chain expiry to
+  // the grace boundary (graceEnd + 1) — when that clamp binds, the
+  // honest reviewed lifetime is the grace end, not "30 days after
+  // posting" (Codex #1256 r3).
+  const graceEndTs = loanEndTimeOf(live) + graceSec;
+  const expiryGraceClamped =
+    graceReady && graceEndTs + 1n < chainNow + REQUEST_WINDOW_DAYS * 86_400n;
 
   const rateBps = isPositiveDecimal(rateInput) ? percentToBps(rateInput) : null;
   const durationDays = /^\d+$/.test(durationInput)
@@ -185,7 +196,7 @@ export function RefinanceFlow({
   const dec = principalMeta.decimals;
   const payoffStr = `${formatTokenAmount(payoff, dec)} ${sym}`;
   const topUpStr = `${formatTokenAmount(walletTopUp, dec)} ${sym}`;
-  const maxLateFeeStr = `${formatTokenAmount(maxLateFee, dec)} ${sym}`;
+  const headroomStr = `${formatTokenAmount(payoffHeadroom, dec)} ${sym}`;
 
   // The consent rule covers the FIGURES too: the live-loan prop, the
   // fee config, and the grace bucket refresh in the background, so a
@@ -197,7 +208,7 @@ export function RefinanceFlow({
   }, [
     payoffStr,
     topUpStr,
-    maxLateFeeStr,
+    headroomStr,
     fees.loanInitiationFeeBps,
     fees.treasuryFeeBps,
   ]);
@@ -339,6 +350,17 @@ export function RefinanceFlow({
         expiresAt: requestExpiry,
         graceSeconds: graceSecLive,
       });
+      // The receipt disclosed the approval bound from the RENDER-time
+      // chain clock — a backgrounded tab freezes it, and submit
+      // recomputes from the live block. If the bound GREW (the loan
+      // slid toward or past maturity while the receipt sat open),
+      // force a re-review instead of signing headroom the reviewed
+      // figures never showed (Codex #1256 r3). Shrinkage (a partial
+      // settled) is fine — the pull only gets smaller.
+      if (liveApproval > approvalBound) {
+        void queryClient.invalidateQueries({ queryKey: ['loanLive'] });
+        throw new Error(copy.match.termsChanged);
+      }
       // The approval itself needs no balance, but a wallet that can't
       // even cover the INTEREST portion today should hear it now, not
       // via a failed accept later. (The principal arrives in the
@@ -530,13 +552,19 @@ export function RefinanceFlow({
                 youLock:
                   'Nothing new — your existing collateral carries over to the new loan without ever unlocking.',
                 youMayOwe: `~${payoffStr} to pay off this loan, pulled automatically when a lender accepts. ${copy.refinance.payoffNote} ${
-                  maxLateFee > 0n
-                    ? `${copy.refinance.lateFeeDisclosure(maxLateFeeStr)} `
+                  payoffHeadroom > 0n
+                    ? `${copy.refinance.lateFeeDisclosure(headroomStr)} `
                     : ''
                 }${copy.refinance.walletNote(topUpStr)}`,
                 youCanLose: copy.refinance.shortIsSafe,
                 fees: `${copy.fees.borrowerLIF(formatBpsAsPercent(fees.loanInitiationFeeBps))} The protocol's ${formatBpsAsPercent(fees.treasuryFeeBps)} cut of the payoff interest settles inside the payoff.`,
-                whenThisEnds: `When a lender accepts your request, when you cancel it, or when it expires ${Number(REQUEST_WINDOW_DAYS)} days after posting. ${copy.refinance.guardrailNote}`,
+                whenThisEnds: `When a lender accepts your request, when you cancel it, or ${
+                  expiryGraceClamped
+                    ? copy.refinance.expiresAtGraceEnd(
+                        formatDate(Number(graceEndTs)),
+                      )
+                    : `when it expires ${Number(REQUEST_WINDOW_DAYS)} days after posting`
+                }. ${copy.refinance.guardrailNote}`,
               }}
             >
               {live.periodicInterestCadence !== 0 ? (

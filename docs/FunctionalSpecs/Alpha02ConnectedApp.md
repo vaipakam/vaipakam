@@ -535,10 +535,13 @@ Its intended behaviour, as the test oracle for this surface:
   state: the payoff is always principal plus the full remaining
   term's interest (never pro-rata, regardless of the loan's interest
   mode) plus the protocol's cut inside it; that a late acceptance
-  adds the late fee, with the largest fee this request could ever
-  carry disclosed and the granted approval sized to the largest
-  total pull any remaining acceptance could make (so a grace-window
-  acceptance cannot fail on a short allowance); the
+  adds the late fee, with the largest amount the payoff could grow
+  by (late fee plus continued interest) disclosed and the granted
+  approval sized to the largest total pull any remaining acceptance
+  could make (so a grace-window acceptance cannot fail on a short
+  allowance) — and if that bound has grown by signing time (a review
+  left open while the loan slid toward maturity), the submission
+  stops for a re-review rather than signing undisclosed headroom; the
   spare wallet balance to keep while the request is open (payoff
   interest plus the new loan's initiation fee — the new principal
   arrives in the same transaction); that a short balance only makes
@@ -553,7 +556,10 @@ Its intended behaviour, as the test oracle for this surface:
   request carries its own on-chain expiry matching the reviewed
   lifetime — acceptance past it fails safely regardless of any wider
   pre-existing guardrails — plus guardrails bounding completion to
-  the reviewed rate ceiling. The pending request's view — its state,
+  the reviewed rate ceiling. A request whose standard lifetime would
+  outlive the loan's grace window is capped on-chain at the grace
+  boundary, and the review states that shorter effective expiry
+  rather than the standard lifetime. The pending request's view — its state,
   expiry, funding warnings, and cancel action — must outlive every
   gate on the posting form: it stays present through data-source
   errors, unresolved compliance checks, mode switches, the loan
@@ -567,7 +573,7 @@ Its intended behaviour, as the test oracle for this surface:
   distinctly when the standing payoff approval no longer covers
   completion (with a restore action, which first re-verifies the
   request is still completable — including that the loan is not past
-  grace — and restores cover for the largest fee a remaining
+  grace — and restores cover for the largest pull a remaining
   acceptance could carry) or when the wallet balance is short (top up
   or cancel — no false remedy). Cancellation is offered from that view
   (it becomes available a few minutes after posting, per the

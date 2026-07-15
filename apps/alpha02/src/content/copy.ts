@@ -598,8 +598,10 @@ export const copy = {
     // acceptance can't fail on a short allowance.
     graceNote:
       'This loan is past its due date. A lender can still accept this request until the grace window ends, and the payoff already includes the late fee for being late (it grows a little each day).',
-    lateFeeDisclosure: (maxFee: string) =>
-      `If a lender accepts after the loan’s due date, the payoff also includes a late fee for being late — up to ~${maxFee} for this request. The approval you grant covers that too, so a late acceptance can’t fail on it.`,
+    lateFeeDisclosure: (maxGrowth: string) =>
+      `If a lender accepts after the loan’s due date, the payoff grows — the late fee for being late plus interest that keeps accruing — by up to ~${maxGrowth} more for this request. The approval you grant covers that too, so a late acceptance can’t fail on it.`,
+    expiresAtGraceEnd: (date: string) =>
+      `when it expires with this loan’s grace window (${date}) — a refinance request can’t outlive the loan it replaces`,
     pendingPastGrace:
       'This loan has passed its due date and grace window, so no lender can accept this request any more — it no longer holds up your other actions here. Cancel it below to also remove its standing payoff approval.',
     cadenceChangeNote:

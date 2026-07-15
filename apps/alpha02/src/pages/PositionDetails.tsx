@@ -458,13 +458,19 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
   // inside submit handlers, so a past-due borrower could never see how
   // long they had). Static protocol config per (chain, duration) —
   // cached long in the hook. Rentals resolve their window elsewhere.
-  // Keyed on the LIVE duration when the past-due read has it (an
-  // extended duration can land in a different grace bucket).
+  // Keyed on the LIVE duration whenever ANY live read has it (a keeper
+  // extend can land the loan in a different grace bucket): loanLive is
+  // the advanced-mode strategy read and refreshes fastest, bannerTerms
+  // is the any-mode past-due read; the indexer row is the last resort
+  // (Codex #1256 r3 — the #1235 gates combine live term fields with
+  // this bucket, so a row-bucketed grace could mis-gate them).
   const grace = useGraceSeconds(
     loan.data && loan.data.assetType === AssetType.ERC20
-      ? bannerTerms.data
-        ? Number(bannerTerms.data.live.durationDays)
-        : loan.data.durationDays
+      ? loanLive.data
+        ? Number(loanLive.data.live.durationDays)
+        : bannerTerms.data
+          ? Number(bannerTerms.data.live.durationDays)
+          : loan.data.durationDays
       : undefined,
   );
 
