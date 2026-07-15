@@ -33,4 +33,13 @@ The lender sale-listing flow keeps its at-maturity block (the
 contract genuinely rejects listing a matured position) and got its
 own accurately-worded error instead of borrowing the refinance one.
 
+The new grace e2e scenario also exposed a latent Permit2 bug: the
+signature deadline was computed from the device clock while the chain
+judges it against block time, so a clock sitting more than thirty
+minutes behind chain time (or a time-warped test fork) produced
+already-expired permits. The deadline now comes from the chain's own
+clock, matching how the accept-terms signature already works. The
+same fix is tracked separately for the defi app, which shares the
+ported signer.
+
 Closes #1235. Closes #1236.

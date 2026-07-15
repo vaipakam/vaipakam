@@ -24,7 +24,7 @@
  * fresh approval for nothing. A manual retry re-evaluates every gate.
  */
 import { useCallback } from 'react';
-import { useWalletClient } from 'wagmi';
+import { usePublicClient, useWalletClient } from 'wagmi';
 import type { Address, Hex } from 'viem';
 import { useActiveChain } from '../chain/useActiveChain';
 
@@ -89,14 +89,23 @@ export interface Permit2SignInput {
 export function usePermit2Signing() {
   const { address, walletChain } = useActiveChain();
   const { data: walletClient } = useWalletClient();
+  const publicClient = usePublicClient({ chainId: walletChain?.chainId });
 
   const sign = useCallback(
     async (input: Permit2SignInput): Promise<Permit2Payload> => {
       if (!address || !walletChain) throw new Error('Wallet not connected');
       if (!walletClient) throw new Error('Wallet client not available');
+      if (!publicClient) throw new Error('Public client not available');
 
+      // Deadline judged by CHAIN time, matching useAcceptTerms —
+      // Permit2 compares it to block.timestamp, so a device clock
+      // adrift from the chain (or a time-warped fork in the e2e
+      // tier) must not produce an already-expired signature. A
+      // Date.now()-based deadline did exactly that whenever the
+      // clock sat >30 min behind chain time.
+      const latestBlock = await publicClient.getBlock({ blockTag: 'latest' });
       const deadline =
-        BigInt(Math.floor(Date.now() / 1000)) + BigInt(PERMIT_DEADLINE_SECONDS);
+        latestBlock.timestamp + BigInt(PERMIT_DEADLINE_SECONDS);
       // Random 256-bit nonce: Permit2's unordered-nonce model lets any
       // unused bit be picked, and a random large number can't collide
       // with other Permit2 consumers burning the same wallet's nonces.
@@ -127,7 +136,7 @@ export function usePermit2Signing() {
 
       return { permit, signature };
     },
-    [address, walletChain, walletClient],
+    [address, walletChain, walletClient, publicClient],
   );
 
   /** Capability probe — connected wallets generally support EIP-712
