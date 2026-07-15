@@ -21,6 +21,8 @@ import { handleOffersMarkets } from '../src/offerRoutes';
 import {
   refreshMarketSummaries,
   refreshOneMarketSummary,
+  seedMarketSweepCursorIfAbsent,
+  MARKET_SWEEP_CURSOR_KIND,
 } from '../src/marketSummary';
 import type { Env } from '../src/env';
 import { createSqliteD1, type SqliteD1 } from './helpers/sqliteD1';
@@ -458,6 +460,28 @@ describe('refreshMarketSummaries — windowed sweep (#1270)', () => {
     // the expiry falls inside it.
     await refreshMarketSummaries(h.d1 as D1Database, CHAIN_ID, 1_990, 2_010);
     expect(summaryRows(h)).toEqual([]);
+  });
+
+  it('seedMarketSweepCursorIfAbsent persists the FIRST write time and never advances (Codex #1288 r5)', async () => {
+    // A chain empty at migration has no sweep cursor; the first
+    // signed-POST must seed a persisted lower bound so a delayed first
+    // sweep still reaches back to this row.
+    const h = freshDb();
+    const cursorAt = () =>
+      (
+        h.db
+          .prepare(
+            `SELECT last_block FROM indexer_cursor WHERE kind = ?`,
+          )
+          .get(MARKET_SWEEP_CURSOR_KIND) as { last_block: number } | undefined
+      )?.last_block;
+    expect(cursorAt()).toBeUndefined();
+    await seedMarketSweepCursorIfAbsent(h.d1 as D1Database, CHAIN_ID, 1_000);
+    expect(cursorAt()).toBe(1_000);
+    // A later POST must NOT push the bound forward (that would shrink
+    // the covering window and could skip the earlier row's expiry).
+    await seedMarketSweepCursorIfAbsent(h.d1 as D1Database, CHAIN_ID, 5_000);
+    expect(cursorAt()).toBe(1_000);
   });
 
   it('a window that touches nothing leaves other markets untouched (no global recompute)', async () => {

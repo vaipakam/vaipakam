@@ -31,7 +31,10 @@ import { type Address, type Hex } from 'viem';
 import { createPublicClient, http } from 'viem';
 import { type Env, getChainConfigs, type ChainConfig } from './env';
 import { DIAMOND_SIGNED_OFFER_ABI } from './diamondAbi';
-import { refreshOneMarketSummary } from './marketSummary';
+import {
+  refreshOneMarketSummary,
+  seedMarketSweepCursorIfAbsent,
+} from './marketSummary';
 import {
   SIGNED_OFFER_FIELD_NAMES,
   orderHashOf,
@@ -794,6 +797,12 @@ export async function handleSignedOfferPost(
         },
         now,
       );
+      // #1270 (Codex #1288 r5) — on a chain empty at migration, this
+      // POST is the first market write and no sweep watermark exists;
+      // seed it now so the first ingest sweep's window reaches back to
+      // this row (and its future expiry) instead of a moving now-1h
+      // that could start past both.
+      await seedMarketSweepCursorIfAbsent(env.DB, chainId, now);
     } catch (err) {
       console.error('[signedOfferRoutes] market_summary refresh failed', err);
     }

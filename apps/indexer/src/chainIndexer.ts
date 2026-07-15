@@ -54,7 +54,10 @@ import { ceilingOf } from './signedOfferEip712';
 import { indexerPublishPrepayListing } from './openseaPublish';
 import { maybeRefreshProtocolConfig } from './configSnapshot';
 import { collectPushHints, type PushHints } from './pushHints';
-import { refreshMarketSummaries } from './marketSummary';
+import {
+  refreshMarketSummaries,
+  MARKET_SWEEP_CURSOR_KIND,
+} from './marketSummary';
 
 /** Resolve a chain's deployBlock from the consolidated deployments
  *  JSON — the indexer's first-run fallback when no cursor exists. */
@@ -112,10 +115,6 @@ const DETAILS_REFRESH_BATCH = 50;
  *  domain in Phase B+ does NOT add a new cursor row — every handler
  *  consumes the same scan window. */
 const CURSOR_KIND = 'diamond';
-/** #1270 — market_summary sweep watermark (unix seconds stored in
- *  `last_block`; the cursor table's column name is block-shaped but
- *  the monotonic-watermark semantics are identical). */
-const MARKET_SWEEP_CURSOR_KIND = 'market_summary_sweep';
 
 /** `LibVaipakam.LoanStatus` (uint8) → the indexer's TERMINAL status string, for
  *  the subset that are terminal end-of-block states an `InternalMatchExecuted`

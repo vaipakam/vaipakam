@@ -52,6 +52,35 @@ export interface MarketTriple {
   durationDays: number;
 }
 
+/** #1270 — the sweep watermark's `indexer_cursor.kind`. Unix seconds
+ *  stored in `last_block` (the column name is block-shaped but the
+ *  monotonic-watermark semantics are identical). Owned here so both
+ *  the scan-tail sweep and the signed-POST seed reference one name. */
+export const MARKET_SWEEP_CURSOR_KIND = 'market_summary_sweep';
+
+/** Seed the sweep watermark at `nowSec` iff it is ABSENT (Codex #1288
+ *  r5). A chain empty at migration 0037 gets no seed there; if a
+ *  `POST /signed-offers` then creates the chain's first market before
+ *  any ingest sweep, the absent-cursor `now - 1h` fallback could start
+ *  AFTER this row (and after an already-passed expiry) if the first
+ *  sweep is delayed. Seeding here persists a lower bound from the
+ *  first write, so the first sweep's window reaches back to it. `OR
+ *  IGNORE` keeps the EARLIEST seed — a later POST must not advance the
+ *  bound forward and shrink the covering window. */
+export async function seedMarketSweepCursorIfAbsent(
+  db: D1Database,
+  chainId: number,
+  nowSec: number,
+): Promise<void> {
+  await db
+    .prepare(
+      `INSERT OR IGNORE INTO indexer_cursor (chain_id, kind, last_block, updated_at)
+       VALUES (?, ?, ?, ?)`,
+    )
+    .bind(chainId, MARKET_SWEEP_CURSOR_KIND, nowSec, nowSec)
+    .run();
+}
+
 /** Every market a window's writes OR time-expiries touched — the
  *  shared subquery both batch statements scope on. Binds: ?1 chainId,
  *  ?2 sinceSec, ?3 nowSec. The `updated_at` legs ride
