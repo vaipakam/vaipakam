@@ -77,6 +77,11 @@ Required properties:
   the 48h timelock, later transferable to governance — the house
   `setInteractionCapVpfiPerEth` pattern (compile-time bounds, zero-sentinel
   default, raw + effective getters, event).
+- **(P6) Near-zero legal expenditure (owner directive, 2026-07-15):**
+  launching the recycling system must require no legal review; any feature
+  that would (a published token price, market operations, holder
+  distributions) is either excluded outright or isolated behind a deferred,
+  optional activation gate. §14 is the binding posture contract.
 
 ## 3. The governor
 
@@ -372,9 +377,18 @@ convention.
 **Owner proposal:** set the peg at **1 VPFI = 0.001 ETH** until organic
 secondary markets exist, then use the market rate.
 
-**Recommendation: YES — and unify it into one canonical price source while
-doing so** (PROPOSED, pending owner ratification). Today the codebase carries
-*three* disconnected VPFI-price notions:
+**Recommendation (REVISED per the owner's near-zero-legal-expenditure
+directive, 2026-07-15): build the unified price source now, launch with it
+`Unset`, activate `FixedRate` only when/if the flywheel benefit justifies one
+bounded legal glance.** Building the architecture costs no legal review;
+*activating* a platform-published rate is the one item in this whole design
+that would (§14). At launch, E-1's direct-reduction mode delivers the
+user-facing utility ("hold VPFI → pay lower fees") with **no conversion, no
+token movement, and no published price** — so nothing user-visible is lost by
+deferring activation, only the absorption ramp is slower (the governor's
+schedule floor covers exactly that phase by design, §3.1/P3).
+
+Today the codebase carries *three* disconnected VPFI-price notions:
 
 1. `VPFI_PER_ETH_FIXED_PHASE1 = 1e15` — a compile-time constant (exactly
    1 VPFI = 0.001 ETH) hard-wired into the notification-fee path, whose own
@@ -398,12 +412,14 @@ LibVpfiPrice.source() → { Unset | FixedRate | MarketFeed }
 LibVpfiPrice.weiPerVpfi() → the single canonical rate every consumer reads
 ```
 
-- **`FixedRate` (activate now):** `1e15` wei/VPFI, a bounded governed knob
-  (event, timelock, zero-sentinel = `Unset`), replacing BOTH the hard-wired
+- **`FixedRate` (built now, activation deferred):** `1e15` wei/VPFI — the
+  owner's proposed 1 VPFI = 0.001 ETH — as a bounded governed knob (event,
+  timelock, zero-sentinel = `Unset`), replacing BOTH the hard-wired
   notification constant and the discount-peg pair. Every consumer —
   notification fees, borrower LIF, lender yield-fee (E-1 VPFI-payment mode),
   and any future VPFI-denominated fee — reads the same rate. No more
-  per-feature price forks.
+  per-feature price forks. Activation is a config ceremony gated on the §14
+  legal glance, not a redeploy.
 - **`MarketFeed` (the succession, Phase 2):** activatable **only** when the
   organic market passes the platform's own liquidity-depth machinery (the
   slippage-at-floor probe), and priced by **TWAP, never spot** — a
@@ -413,26 +429,70 @@ LibVpfiPrice.weiPerVpfi() → the single canonical rate every consumer reads
   rate set ⇒ `FixedRate`; neither ⇒ `Unset`), so activation and succession
   are config ceremonies, not redeploys.
 
-**Consequences (all positive, one flagged):**
+**Consequences of the deferred-activation posture:**
 
-- The dormant VPFI absorption classes (borrower LIF, yield-fee-in-VPFI,
-  matcher remainders) go **live at launch** → the governor's coupled term
-  activates from real absorption instead of waiting for a market — the
-  recycling flywheel starts on day one.
-- E-1's role shifts from "day-one utility unlock" to **resilience fallback**:
-  with the peg set, VPFI-payment mode is primary; direct-reduction mode
-  covers `Unset` windows, oracle outages, and any chain where the price
-  source isn't configured (see the E-1 delivery-chain recommendation on
-  #1203). Both remain worth building.
-- **Flag:** the peg-unset posture was the documented conservative legal
-  choice (#884). Activating a platform-published price is a posture change —
-  materially blunted by the fact that **no purchase surface exists**
-  (#687-A): nobody can *buy* VPFI at this rate; it is a fee-payment
-  conversion for tokens users already earned. Recommend the same
-  legal-glance gate as #1219 before the **mainnet** flip; testnets can
-  activate immediately.
+- **At launch (`Unset`):** E-1 direct-reduction is the *primary* discount
+  delivery (no conversion, no published price — the legally quietest shape).
+  VPFI absorption comes from the peg-independent classes (notification fees,
+  reward forfeits), so the governor's coupled term ramps slowly and the
+  schedule floor carries the program — exactly the P3 bootstrap the formula
+  was built for. Nothing user-visible is lost.
+- **When activated (`FixedRate`, later):** the dormant absorption classes
+  (borrower LIF, yield-fee-in-VPFI, matcher remainders) go live, the
+  flywheel accelerates, and E-1's role shifts to resilience fallback
+  (covering `Unset` windows, oracle outages, unconfigured chains — see the
+  delivery-chain plan on #1203). Activation is gated on the §14 legal
+  glance; testnets can activate any time for rehearsal.
+- The peg-unset posture stays the documented conservative legal choice
+  (#884) until the owner deliberately spends that one bounded review. The
+  eventual surface is materially blunted by the fact that **no purchase
+  surface exists** (#687-A): nobody can *buy* VPFI at this rate — it is a
+  fee-payment conversion for tokens users already earned.
 - Arbitrage honesty: once a real market exists, a fixed rate becomes arbable
   (market < peg ⇒ buying cheap VPFI to extinguish fees drains real fee
-  revenue). That is precisely why the succession rule above is part of the
-  same decision: prompt, depth-gated, TWAP-based switch — with the fixed
-  rate retained as the break-glass fallback if the feed degrades.
+  revenue). That is precisely why the `MarketFeed` succession rule above is
+  part of the same decision: prompt, depth-gated, TWAP-based switch — with
+  the fixed rate retained as the break-glass fallback if the feed degrades.
+
+## 14. Legal-surface posture — near-zero legal expenditure (owner directive, 2026-07-15)
+
+The recycling design is deliberately shaped so that **launching it requires no
+legal spend at all**, and only one future, optional, isolated decision ever
+would. The properties that make that true — each of them load-bearing, to be
+preserved through implementation and every spec/marketing edit:
+
+1. **No purchase or sale surface.** The protocol never sells, buys, or quotes
+   VPFI for acquisition (#687-A stands). The §10 rejection of buyback-style
+   balancing is re-affirmed *on this ground*, independent of its mechanical
+   flaws: no market operations, ever, in the recycling loop.
+2. **No published token price at launch.** Price source ships `Unset` (§13).
+   The lender discount is delivered as a fee schedule — "hold VPFI → pay
+   lower fees" — with no conversion, no token movement, no rate
+   representation. The pre-existing notification-fee constant is absorbed
+   into the unified source without changing its behaviour.
+3. **Rewards are usage rebates, never yield.** The interaction-reward program
+   pays users for their *own* platform activity, sized by a deterministic
+   formula over their own eligible interest, per-user capped. The governor
+   changes the pool's *funding arithmetic*, not its character: fees the
+   protocol received come back as usage rebates. Nothing accrues to passive
+   holding; no APY, no distribution to holders, no profit-sharing mechanics.
+4. **The margin is a retained protocol reserve, not a distribution.** The
+   platform edge (`recycleMarginBps`) is value that *stays* in protocol
+   custody as a sustainability buffer. It is never paid out to token holders;
+   Phase-C tooling moves it only between the protocol's own pockets
+   (repatriation, keeper budget). Spec and UI language must describe it as
+   reserve retention — never "platform profit share."
+5. **Tokens cross chains only as internal netting.** Cross-chain movement is
+   the protocol rebalancing its own custody (shortfall-only remittance of
+   already-owned tokens over CCIP). No user-facing cross-chain financial
+   product is created.
+6. **Everything is internal accounting of fee receipts.** The bucket, the
+   governor, the counters — all bookkeeping over tokens the protocol already
+   holds. No new instrument, no external counterparty, no custody of user
+   assets beyond the existing (already-reviewed) vault model.
+
+**The single deferred legal item:** activating `FixedRate` (§13) — a bounded,
+optional, future decision, isolated so that everything else in this design
+ships without it. `MarketFeed` succession inherits the same gate. Nothing
+else in Phases A′/B′/C′ introduces a surface that the platform's existing
+posture hasn't already carried.
