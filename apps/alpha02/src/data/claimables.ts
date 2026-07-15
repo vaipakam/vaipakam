@@ -236,6 +236,10 @@ export function useMyClaimables() {
             functionName: 'getUserPositionLoans',
             args: [address],
           })) as readonly [readonly bigint[], readonly bigint[]];
+          // #1247 PAG-003 (Codex #1265 r2) — the legacy view is
+          // unbounded; the per-candidate probing that follows must
+          // respect the same fail-loud ceiling as the paginated walk.
+          if (legacy[0].length > Number(WALK_CAP)) return null;
           chainIds.push(...legacy[0]);
         } catch (e2) {
           if (!isRevert(e2)) return null;

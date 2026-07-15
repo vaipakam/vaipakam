@@ -95,7 +95,7 @@ export function Vault() {
               </span>
             </div>
           ) : null}
-          {vault.data.assets.length === 0 ? (
+          {vault.data.assets.length === 0 && vault.data.moreTokens === 0 ? (
             vault.data.unreadable.length > 0 ? (
               <UnavailableState body={copy.vault.unavailable} />
             ) : (
@@ -110,7 +110,16 @@ export function Vault() {
             <section className="card">
               {/* #1247 PAG-001 rider — the distinct-asset set grows
                   with the same 500/2000 source caps; window it like
-                  every other data-fed list. */}
+                  every other data-fed list. An empty FIRST window with
+                  candidates still unscanned must not read as "nothing
+                  in your vault" (Codex #1265 r2) — the widen control
+                  below stays reachable. */}
+              {vault.data.assets.length === 0 ? (
+                <p className="muted" style={{ marginBottom: 8 }}>
+                  No balances among the first {scanWindow} tokens checked —
+                  widen the scan below to keep looking.
+                </p>
+              ) : null}
               <WindowedRowList
                 rows={vault.data.assets}
                 resetKey={`${readChain.chainId}|${address?.toLowerCase() ?? ''}`}

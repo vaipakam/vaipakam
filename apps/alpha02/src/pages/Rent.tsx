@@ -1268,7 +1268,10 @@ function RentNftFlow() {
                 // to 500 listings.
                 <WindowedRowList
                   rows={listings}
-                  resetKey={readChain.chainId}
+                  // Wallet identity too (Codex #1265 r2): the list
+                  // filters out the CONNECTED wallet's own listings,
+                  // so a wallet switch changes the rows.
+                  resetKey={`${readChain.chainId}|${address?.toLowerCase() ?? ''}`}
                   render={(o) => (
                     <RentalListingRow
                       key={o.offerId}

@@ -208,6 +208,7 @@ function OfferRow({ offer, risk }: { offer: IndexedOffer; risk: RiskLevel | null
 export function Offers() {
   const offers = useActiveOffers();
   const { isAdvanced } = useMode();
+  const { readChain } = useActiveChain();
 
   const [side, setSide] = useState<SideFilter>('all');
   const [sort, setSort] = useState<SortKey>('newest');
@@ -270,7 +271,9 @@ export function Offers() {
   // DIFFERENT list must not persist.
   const bookWindow = useVisibleWindow(
     Array.isArray(visible) ? visible : [],
-    `${activeSide}|${activeSort}|${activeAssetFilter}`,
+    // Chain identity too (Codex #1265 r2): a network switch with the
+    // same filters must collapse the window over the NEW book.
+    `${readChain.chainId}|${activeSide}|${activeSort}|${activeAssetFilter}`,
   );
 
   // #1036 badges: one batched screen for every distinct non-curated
