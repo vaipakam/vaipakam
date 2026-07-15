@@ -13,7 +13,7 @@ import { useActiveChain } from '../chain/useActiveChain';
 import { useMyLoansFull } from '../data/hooks';
 import {
   fetchActivity,
-  fetchLoansByParticipant,
+  fetchParticipantLoanIds,
   type IndexedActivityEvent,
 } from '../data/indexer';
 import { EmptyState, UnavailableState } from '../components/EmptyState';
@@ -159,11 +159,12 @@ export function Activity() {
   // long-closed/transferred positions stop being silently dropped.
   //
   // #1023 — the wallet's permanent loan-participation ids via
-  // /loans/by-participant (the desk History route). Bounded walk:
-  // 5 pages × 100 = the 500 most recent participations, mirroring the
-  // house fetchAllPages cap; a wallet deeper than that reports
-  // `truncated` and the feed's clipped-history note covers it. `null`
-  // = unavailable — the feed must NOT run without this leg, or the
+  // /loans/by-participant?scope=all&fields=ids: ONE bounded response
+  // (server cap 5,000 ids + `truncated`), no cursor walk, and the
+  // ids-shape response doubles as the deploy-skew guard (a pre-#1023
+  // worker answers the loans shape → fail closed to unavailable, per
+  // Codex #1287 r1 — never a silently desk-scoped filter). `null` =
+  // unavailable — the feed must NOT run without this leg, or the
   // exact gap this closes would silently reopen.
   const participantLeg = useQuery({
     queryKey: [
@@ -172,29 +173,12 @@ export function Activity() {
       address?.toLowerCase(),
     ],
     enabled: Boolean(address),
-    // Participation only grows on loan events; push covers freshness
-    // like the feed itself (RPC read-diet PR A posture).
+    // Participation grows on loan.created / ownership.changed pushes
+    // (KEY_MAP maps both onto this root) and own receipts (the
+    // receipt floor carries it); the interval is the poll fallback
+    // (RPC read-diet PR A posture).
     refetchInterval: signalAware(60_000),
-    queryFn: async (): Promise<{ ids: number[]; truncated: boolean } | null> => {
-      const ids: number[] = [];
-      let before: string | undefined;
-      for (let i = 0; i < 5; i++) {
-        const page = await fetchLoansByParticipant(readChain.chainId, address!, {
-          limit: 100,
-          before,
-          // 'all' — the feed filter needs NFT-leg and sale-vehicle
-          // participations too; the desk-scoped default would leave
-          // exactly those loans' actor-null events droppable.
-          scope: 'all',
-        });
-        // Failed or wrong-chain page → the whole leg is unusable.
-        if (page === null || page.chainId !== readChain.chainId) return null;
-        for (const l of page.loans) ids.push(l.loanId);
-        if (page.nextBefore === null) return { ids, truncated: false };
-        before = page.nextBefore;
-      }
-      return { ids, truncated: true };
-    },
+    queryFn: () => fetchParticipantLoanIds(readChain.chainId, address!),
   });
   const loansUsable =
     loans.data != null && loans.data.indexerOk && participantLeg.data != null;
@@ -205,9 +189,11 @@ export function Activity() {
     for (const id of participantLeg.data!.ids) ids.add(id);
     return ids;
   }, [loansUsable, loans.data, participantLeg.data]);
-  // A >500-participation wallet's oldest loan ids are missing from the
-  // filter — surface that through the same clipped-history note the
-  // feed's own bounded scan uses.
+  // A >5,000-participation wallet's oldest loan ids are missing from
+  // the filter — even a RECENT actor-null event on one of those old
+  // loans can be dropped, so the disclosure below states "may be
+  // missing some events", not merely "older history not shown"
+  // (Codex #1287 r1).
   const participantTruncated = participantLeg.data?.truncated === true;
 
   const activity = useQuery({
@@ -318,6 +304,11 @@ export function Activity() {
               misleading empty feed — the self-gating note must cover
               this branch too, not only the non-empty one. */}
           <MarketFreshnessNote />
+          {participantTruncated ? (
+            <p className="muted" role="status">
+              {copy.activity.participantTruncatedNote}
+            </p>
+          ) : null}
           <EmptyState
             icon={History}
             title={
@@ -353,13 +344,20 @@ export function Activity() {
           />
         </>
       ) : (
-        <ActivityFeed
-          events={activity.data.events}
-          truncated={activity.data.truncated || participantTruncated}
-          explorer={readChain.blockExplorer}
-          visible={visible}
-          onLoadMore={() => setVisible((v) => v + PAGE)}
-        />
+        <>
+          {participantTruncated ? (
+            <p className="muted" role="status">
+              {copy.activity.participantTruncatedNote}
+            </p>
+          ) : null}
+          <ActivityFeed
+            events={activity.data.events}
+            truncated={activity.data.truncated}
+            explorer={readChain.blockExplorer}
+            visible={visible}
+            onLoadMore={() => setVisible((v) => v + PAGE)}
+          />
+        </>
       )}
     </div>
   );

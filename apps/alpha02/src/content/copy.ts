@@ -1547,6 +1547,12 @@ export const copy = {
       'We couldn’t load your activity right now. Please try again in a moment.',
     truncatedNote:
       'Showing recent activity only — the protocol feed is busy and older events may not be listed.',
+    // #1023 (Codex #1287 r1) — a wallet with more loan history than
+    // one participation read returns filters against a partial id
+    // set, which can drop even RECENT events tied to its oldest
+    // loans; say "may be missing", not merely "older not shown".
+    participantTruncatedNote:
+      'This wallet has more loan history than we can check at once — some events tied to its oldest loans may be missing here.',
     // UX2-007 tail — states the page's recent-only scope without
     // asserting that older events DO exist (which read as an unnecessary
     // hedge for genuinely-new wallets). True whether the wallet is new

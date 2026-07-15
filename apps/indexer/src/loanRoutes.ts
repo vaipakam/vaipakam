@@ -739,6 +739,12 @@ const CLAIM_CANDIDATES_CAP = 200;
  *  when hit and the response says `truncated`). */
 const CANDLE_SCAN_CAP = 10_000;
 
+/** #1023 — /loans/by-participant `fields=ids` response ceiling. Ids
+ *  are ~8 bytes each so 5,000 is a small payload, and a wallet with
+ *  more DISTINCT loan participations than this is far outside any
+ *  realistic feed consumer; `truncated` reports honestly beyond it. */
+const PARTICIPANT_IDS_CAP = 5_000;
+
 export async function handleClaimCandidates(
   req: Request,
   env: Env,
@@ -1402,6 +1408,24 @@ export async function handleLoansByHistoricalParticipant(
     return jsonResponse({ error: 'bad-scope' }, 400);
   }
   const scope = scopeRaw ?? 'desk';
+  // #1023 (Codex #1287 r1) — `fields=ids` returns the wallet's raw
+  // participation loan-id set in ONE bounded response, no loans join,
+  // no hydration, no cursor walk: `{ chainId, wallet, loanIds,
+  // truncated }`. Built for Activity's participation filter, which
+  // only consumes ids — and the NEW response shape doubles as the
+  // deploy-skew guard: an older worker ignores the param and answers
+  // the loans shape, which the client rejects (no `loanIds` array)
+  // instead of silently treating a desk-scoped page as all-history.
+  const fieldsRaw = url.searchParams.get('fields');
+  if (fieldsRaw !== null && fieldsRaw !== 'ids') {
+    return jsonResponse({ error: 'bad-fields' }, 400);
+  }
+  if (fieldsRaw === 'ids' && scope !== 'all') {
+    // ids mode exists for the all-history consumer; a desk-scoped ids
+    // read would need the loans join anyway — refuse rather than
+    // silently serve a different scope than requested.
+    return jsonResponse({ error: 'ids-requires-scope-all' }, 400);
+  }
   // Fail closed when this chain isn't indexed here, so the frontend's
   // indexer-first → on-chain-fallback wrapper actually falls back (#749) —
   // same posture as the sibling wallet routes.
@@ -1409,6 +1433,26 @@ export async function handleLoansByHistoricalParticipant(
     return jsonResponse({ error: 'chain-not-configured' }, 503);
   }
   try {
+    if (fieldsRaw === 'ids') {
+      // Ids-only mode — index-served DISTINCT over the wallet's own
+      // participation rows, deterministic newest-id-first, bounded at
+      // PARTICIPANT_IDS_CAP with the standard cap+1 truncation probe.
+      const idRows = (
+        await env.DB.prepare(
+          `SELECT DISTINCT loan_id FROM loan_participants
+           WHERE chain_id = ? AND wallet = ?
+           ORDER BY loan_id DESC
+           LIMIT ?`,
+        )
+          .bind(chainId, wallet, PARTICIPANT_IDS_CAP + 1)
+          .all<{ loan_id: number }>()
+      ).results ?? [];
+      const idsTruncated = idRows.length > PARTICIPANT_IDS_CAP;
+      const loanIds = (
+        idsTruncated ? idRows.slice(0, PARTICIPANT_IDS_CAP) : idRows
+      ).map((r) => r.loan_id);
+      return jsonResponse({ chainId, wallet, loanIds, truncated: idsTruncated });
+    }
     // Desk scoping lives in the ROUTE, not the table (Codex #1139 round-3):
     // `loan_participants` deliberately stays append-EVERYTHING — every
     // LoanInitiated / position transfer, any asset shape — so a future

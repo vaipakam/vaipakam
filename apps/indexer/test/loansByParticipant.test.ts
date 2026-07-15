@@ -56,15 +56,22 @@ function makeHarness() {
          VALUES (84532, ?, ?, 'lender', ?)`,
       )
       .run(loanId, ME, fromAt);
-  const call = async (scope?: string) => {
+  const call = async (query = '') => {
     const res = await handleLoansByHistoricalParticipant(
       new Request(
-        `https://idx/loans/by-participant?chainId=84532&wallet=${ME}` +
-          (scope !== undefined ? `&scope=${scope}` : ''),
+        `https://idx/loans/by-participant?chainId=84532&wallet=${ME}${query}`,
       ),
       env,
     );
-    return { status: res.status, body: (await res.json()) as { loans?: Array<{ loanId: number }>; error?: string } };
+    return {
+      status: res.status,
+      body: (await res.json()) as {
+        loans?: Array<{ loanId: number }>;
+        loanIds?: number[];
+        truncated?: boolean;
+        error?: string;
+      },
+    };
   };
   return { ...h, seedLoan, seedParticipation, call };
 }
@@ -82,7 +89,7 @@ describe('GET /loans/by-participant — scope param (#1023)', () => {
     expect(desk.status).toBe(200);
     expect(desk.body.loans!.map((l) => l.loanId)).toEqual([1]);
 
-    const all = await h.call('all');
+    const all = await h.call('&scope=all');
     expect(all.status).toBe(200);
     expect(all.body.loans!.map((l) => l.loanId)).toEqual([4, 3, 2, 1]); // newest participation first
   });
@@ -91,15 +98,63 @@ describe('GET /loans/by-participant — scope param (#1023)', () => {
     const h = makeHarness();
     h.seedLoan(1);
     h.seedParticipation(1, 100);
-    const explicit = await h.call('desk');
+    const explicit = await h.call('&scope=desk');
     expect(explicit.status).toBe(200);
     expect(explicit.body.loans!.map((l) => l.loanId)).toEqual([1]);
   });
 
   it('rejects an unknown scope with 400 bad-scope', async () => {
     const h = makeHarness();
-    const res = await h.call('everything');
+    const res = await h.call('&scope=everything');
     expect(res.status).toBe(400);
     expect(res.body).toEqual({ error: 'bad-scope' });
+  });
+});
+
+describe('GET /loans/by-participant — fields=ids (#1023, Codex #1287 r1)', () => {
+  it('returns the raw all-scope id set in one response, deduped, newest id first', async () => {
+    const h = makeHarness();
+    h.seedLoan(1);
+    h.seedLoan(2, { assetType: 1 }); // NFT-leg included in ids mode
+    h.seedParticipation(1, 100);
+    h.seedParticipation(1, 900); // second acquisition — must not duplicate
+    h.seedParticipation(2, 200);
+    const res = await h.call('&scope=all&fields=ids');
+    expect(res.status).toBe(200);
+    expect(res.body).toEqual({
+      chainId: 84532,
+      wallet: ME,
+      loanIds: [2, 1],
+      truncated: false,
+    });
+  });
+
+  it('caps at 5,000 ids with the truncation flag (oldest ids dropped)', async () => {
+    const h = makeHarness();
+    // Participation rows alone drive ids mode — no loans join, so
+    // seeding loans is unnecessary for this cap check.
+    h.db.exec('BEGIN');
+    for (let i = 1; i <= 5_001; i++) h.seedParticipation(i, i);
+    h.db.exec('COMMIT');
+    const res = await h.call('&scope=all&fields=ids');
+    expect(res.status).toBe(200);
+    expect(res.body.truncated).toBe(true);
+    expect(res.body.loanIds).toHaveLength(5_000);
+    expect(res.body.loanIds![0]).toBe(5_001); // newest kept
+    expect(res.body.loanIds).not.toContain(1); // oldest dropped
+  });
+
+  it('rejects fields=ids without scope=all (the desk view needs the loans join)', async () => {
+    const h = makeHarness();
+    const res = await h.call('&fields=ids');
+    expect(res.status).toBe(400);
+    expect(res.body).toEqual({ error: 'ids-requires-scope-all' });
+  });
+
+  it('rejects an unknown fields value with 400 bad-fields', async () => {
+    const h = makeHarness();
+    const res = await h.call('&scope=all&fields=everything');
+    expect(res.status).toBe(400);
+    expect(res.body).toEqual({ error: 'bad-fields' });
   });
 });

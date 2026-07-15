@@ -44,6 +44,11 @@ export const RECEIPT_FLOOR_ROOTS: readonly string[] = [
   'vpfi',
   'interactionRewards',
   'activity',
+  // Activity's participation-id leg (#1023): an own accept/initiate
+  // seeds loan_participants, and the feed the receipt refreshes
+  // filters against this set — refreshing one without the other lets
+  // the new loan's actor-null companions slip the filter.
+  'activityParticipantIds',
   'loan',
   'offer',
   'loanLive',

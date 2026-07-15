@@ -458,6 +458,36 @@ export function fetchLoansByParticipant(
   );
 }
 
+/** #1023 — the wallet's raw participation loan-id set in ONE bounded
+ *  response (`fields=ids`, all-history scope; server cap 5,000 ids +
+ *  `truncated`). The `loanIds` array is REQUIRED in the response: an
+ *  older deployed Worker ignores the params and answers the loans
+ *  shape, and treating that desk-scoped page as all-history would
+ *  silently reopen the filter gap — so a missing array fails closed
+ *  to `null` (unavailable). */
+export async function fetchParticipantLoanIds(
+  chainId: number,
+  wallet: string,
+): Promise<{ ids: number[]; truncated: boolean } | null> {
+  const params = new URLSearchParams({
+    chainId: String(chainId),
+    wallet: wallet.toLowerCase(),
+    scope: 'all',
+    fields: 'ids',
+  });
+  const res = await getJson<{
+    chainId: number;
+    loanIds?: unknown;
+    truncated?: boolean;
+  }>(`/loans/by-participant?${params}`);
+  if (res === null || res.chainId !== chainId) return null;
+  if (!Array.isArray(res.loanIds)) return null; // pre-#1023 worker → fail closed
+  return {
+    ids: res.loanIds.filter((v): v is number => typeof v === 'number'),
+    truncated: res.truncated === true,
+  };
+}
+
 /** Activity event row — mirrors the worker's shape (see apps/defi
  *  indexerClient IndexedActivityEvent). */
 export interface IndexedActivityEvent {

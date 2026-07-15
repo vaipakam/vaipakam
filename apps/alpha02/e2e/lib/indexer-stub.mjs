@@ -1067,6 +1067,20 @@ async function handler(req, res) {
       if (!/^0x[0-9a-f]{40}$/.test(wallet)) {
         return json(400, { error: 'bad-address' });
       }
+      // #1023 — `fields=ids` (Activity's participation leg): the raw
+      // all-scope loan-id set in one response. The fork tier has no
+      // transfer history, so the chain's own userLoanIds index IS the
+      // participation set; never truncated at fixture scale. The
+      // `loanIds` shape matters — the client fails closed without it.
+      if (url.searchParams.get('fields') === 'ids') {
+        const allIds = await userAllLoanIds(wallet);
+        return json(200, {
+          chainId: CHAIN_ID,
+          wallet,
+          loanIds: allIds.map((id) => Number(id)).sort((a, b) => b - a),
+          truncated: false,
+        });
+      }
       const limitRaw = Number(url.searchParams.get('limit'));
       const limit =
         Number.isFinite(limitRaw) && limitRaw > 0 ? Math.min(limitRaw, 200) : 50;
