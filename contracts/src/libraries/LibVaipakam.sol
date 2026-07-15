@@ -5722,10 +5722,14 @@ library LibVaipakam {
     }
 
     /// @dev Per-tier liquidation threshold (bps) by liquidity tier. Tier 0
-    ///      (illiquid) is meaningless — illiquid loans never enter the HF
-    ///      path (they revert `IlliquidLoanNoRiskMath` in `RiskFacet`),
-    ///      so we return Tier-1 (most conservative, 80% — post-#999 flip) as a
-    ///      fail-safe; the gating site should already have rejected the loan.
+    ///      covers two distinct cases: (1) a genuinely ILLIQUID loan never
+    ///      enters the HF path (it reverts `IlliquidLoanNoRiskMath` in
+    ///      `RiskFacet`), so tier 0 there is a never-reached fail-safe the
+    ///      gating site should already have rejected; and (2) a LIQUID-but-thin
+    ///      asset (post-#1007: clears the $5k floor but not the $50k Tier-1
+    ///      probe) legitimately sits at tier 0 and `LibRiskMath` uses this
+    ///      threshold as its REAL HF bound. Either way tier 0 returns Tier-1
+    ///      (the most conservative, 80% — post-#999 flip).
     function cfgTierLiquidationLtvBps(uint8 tier) internal view returns (uint256) {
         // #999 (S1) — tier 0 is the "untierable" / thinnest bucket (an asset that
         // can't clear the $5k floor, or post-#1007 the $50k tier-1 probe). It must
