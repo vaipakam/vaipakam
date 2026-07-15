@@ -41,9 +41,12 @@ export interface VaultSnapshot {
    *  errors). Non-empty means the list may be missing real balances —
    *  the page must say so instead of looking complete. */
   unreadable: `0x${string}`[];
+  /** Candidate tokens beyond the scanned window (#1247 PAG-001 rider)
+   *  — the page offers "check more" to widen the scan. */
+  moreTokens: number;
 }
 
-export function useVaultAssets() {
+export function useVaultAssets(scanWindow: number) {
   const { readChain, address } = useActiveChain();
   const publicClient = usePublicClient({ chainId: readChain.chainId });
   const loans = useMyLoans();
@@ -79,7 +82,7 @@ export function useVaultAssets() {
   const tokenList = [...candidates].sort();
 
   const query = useQuery({
-    queryKey: ['vaultAssets', readChain.chainId, address?.toLowerCase(), tokenList.join(',')],
+    queryKey: ['vaultAssets', readChain.chainId, address?.toLowerCase(), tokenList.join(','), scanWindow],
     enabled:
       Boolean(address) &&
       Boolean(publicClient) &&
@@ -95,13 +98,19 @@ export function useVaultAssets() {
         args: [address!],
       })) as `0x${string}`;
       if (vault.toLowerCase() === ZERO_ADDRESS) {
-        return { vaultAddress: null, assets: [], unreadable: [] };
+        return { vaultAddress: null, assets: [], unreadable: [], moreTokens: 0 };
       }
 
       // VPFI deposits arrive via the VPFI page, not via any loan or
       // offer, and VPFI isn't a canonical asset — without this the
       // vault of a VPFI-only depositor reads "empty".
-      const scanTokens = [...tokenList];
+      // #1247 PAG-001 rider (Codex #1265 r1) — window the SCANNED
+      // candidate set: the five per-token reads fan out right here
+      // inside the query, so the window must bound the scan itself,
+      // not just the rendered rows. VPFI is appended AFTER the slice
+      // — it must never fall out of the window.
+      const scanTokens = tokenList.slice(0, scanWindow);
+      const moreTokens = Math.max(0, tokenList.length - scanTokens.length);
       try {
         const vpfiToken = (await publicClient!.readContract({
           address: readChain.diamondAddress,
@@ -179,7 +188,7 @@ export function useVaultAssets() {
       const assets = rows
         .filter((r): r is VaultAssetRow => r !== null)
         .sort((a, b) => (b.total > a.total ? 1 : b.total < a.total ? -1 : 0));
-      return { vaultAddress: vault, assets, unreadable };
+      return { vaultAddress: vault, assets, unreadable, moreTokens };
     },
   });
 

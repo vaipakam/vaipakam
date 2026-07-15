@@ -91,7 +91,7 @@ function PositionRow({ loan }: { loan: PositionLoan }) {
 
 export function PositionsPanel() {
   const loans = useMyLoansFull();
-  const { isConnected } = useActiveChain();
+  const { isConnected, address, readChain } = useActiveChain();
 
   // Desk scope: live ERC-20 loans (rentals and settled history stay
   // on My positions, linked below).
@@ -122,6 +122,7 @@ export function PositionsPanel() {
         // the page the user asked for, not the 500–2000 data caps.
         <WindowedRowList
           rows={rows}
+          resetKey={`${readChain.chainId}|${address?.toLowerCase() ?? ''}`}
           render={(l) => <PositionRow key={`${l.loanId}-${l.role}`} loan={l} />}
         />
       )}

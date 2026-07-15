@@ -3,6 +3,7 @@
  * actually sit. Per asset: total (clamped to protocol-tracked),
  * locked (backing open offers/loans/rentals), and free.
  */
+import { useState } from 'react';
 import { Landmark, LoaderCircle } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import { useModal } from 'connectkit';
@@ -12,13 +13,23 @@ import { useActiveChain } from '../chain/useActiveChain';
 import { useVaultAssets } from '../data/vault';
 import { EmptyState, UnavailableState } from '../components/EmptyState';
 import { formatTokenAmount, shortAddress } from '../lib/format';
-import { WindowedRowList } from '../lib/visibleWindow';
+import { LIST_WINDOW_PAGE, WindowedRowList } from '../lib/visibleWindow';
 import { CopyAddress } from '../components/CopyAddress';
 
 export function Vault() {
-  const { isConnected, readChain } = useActiveChain();
+  const { isConnected, address, readChain } = useActiveChain();
   const { setOpen } = useModal();
-  const vault = useVaultAssets();
+  // #1247 PAG-001 rider — the scanned-candidate window (the per-token
+  // reads fan out inside the vault query). Render-phase reset on the
+  // wallet/chain identity, like the approvals card.
+  const [scanWindow, setScanWindow] = useState(LIST_WINDOW_PAGE);
+  const scanKey = `${readChain.chainId}|${address?.toLowerCase() ?? ''}`;
+  const [prevScanKey, setPrevScanKey] = useState(scanKey);
+  if (prevScanKey !== scanKey) {
+    setPrevScanKey(scanKey);
+    setScanWindow(LIST_WINDOW_PAGE);
+  }
+  const vault = useVaultAssets(scanWindow);
   // UX-023 — empty states point forward: on a seeded testnet the
   // natural first hop is the faucet, otherwise the guided journeys.
   const hasFaucet =
@@ -102,6 +113,7 @@ export function Vault() {
                   every other data-fed list. */}
               <WindowedRowList
                 rows={vault.data.assets}
+                resetKey={`${readChain.chainId}|${address?.toLowerCase() ?? ''}`}
                 render={(asset) => (
                   <div key={asset.token} className="item-row">
                     <span className="row-main">
@@ -122,6 +134,19 @@ export function Vault() {
                   </div>
                 )}
               />
+              {vault.data.moreTokens > 0 ? (
+                <button
+                  type="button"
+                  className="btn btn-secondary"
+                  style={{ marginTop: 12 }}
+                  onClick={() => setScanWindow((w) => w + LIST_WINDOW_PAGE)}
+                >
+                  {copy.approvals.checkMore(
+                    Math.min(LIST_WINDOW_PAGE, vault.data.moreTokens),
+                    vault.data.moreTokens,
+                  )}
+                </button>
+              ) : null}
               <p className="muted" style={{ marginTop: 12 }}>
                 {copy.vault.lockedHint}
               </p>

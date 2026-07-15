@@ -255,7 +255,7 @@ function ClaimRow({ loan }: { loan: ClaimableLoan }) {
 }
 
 export function Claims() {
-  const { isConnected } = useActiveChain();
+  const { isConnected, address, readChain } = useActiveChain();
   const { setOpen } = useModal();
   // On-chain-authoritative (issue #921 item 7 / #958): the hook confirms
   // each candidate loan via `getClaimable`, so a lender's
@@ -307,6 +307,7 @@ export function Claims() {
             // only ever grows; render it a page at a time.
             <WindowedRowList
               rows={rows}
+              resetKey={`${readChain.chainId}|${address?.toLowerCase() ?? ''}`}
               render={(loan) => (
                 <ClaimRow key={`${loan.loanId}-${loan.role}`} loan={loan} />
               )}

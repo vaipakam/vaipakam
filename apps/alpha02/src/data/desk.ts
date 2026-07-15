@@ -162,6 +162,33 @@ export function useDeskBook(pair: DeskPair | null, durationDays: number) {
       // Chain leg — authoritative and fresh this block.
       if (publicClient) {
         try {
+          // #1247 PAG-012 — the ranked view returns the WHOLE active
+          // pair bucket (no offset/limit args), so probe the bucket
+          // SIZE first with the paged view's cheap `total` (a
+          // one-row page) and skip the ranked call entirely when the
+          // bucket is past the cap (Codex #1265 r1 — a post-hoc cap
+          // would still transfer/allocate the oversized response).
+          // Past the cap, fail over to the indexer fallback: market-
+          // scoped, server-filtered, hard-capped at 500 —
+          // degraded-honest beats an unbounded hydrate. (The ranked
+          // view is best-first, but the ladder aggregates by rate, so
+          // a truncated hydrate could misstate level depth — don't
+          // render a silently-partial chain book.)
+          const HYDRATE_CAP = 600n;
+          const [, pairTotal] = (await publicClient.readContract({
+            address: readChain.diamondAddress,
+            abi: DIAMOND_ABI_VIEM,
+            functionName: 'getActiveOffersByAssetPair',
+            args: [
+              pair!.lendingAsset as `0x${string}`,
+              pair!.collateralAsset as `0x${string}`,
+              0n,
+              1n,
+            ],
+          })) as readonly [readonly bigint[], bigint];
+          if (pairTotal > HYDRATE_CAP) {
+            throw new Error('pair bucket past hydrate cap');
+          }
           const [rankings] = (await publicClient.readContract({
             address: readChain.diamondAddress,
             abi: DIAMOND_ABI_VIEM,
@@ -171,19 +198,6 @@ export function useDeskBook(pair: DeskPair | null, durationDays: number) {
               pair!.collateralAsset as `0x${string}`,
             ],
           })) as readonly [readonly { id: bigint }[], bigint];
-          // #1247 PAG-012 — the contract view returns the WHOLE
-          // active pair bucket (no offset/limit args), so a spammed
-          // pair could make this "chain-first" path hydrate thousands
-          // of rows. Past the cap, fail over to the indexer fallback,
-          // which is market-scoped, server-filtered, and hard-capped
-          // at 500 — degraded-honest beats an unbounded hydrate. (The
-          // ranked view is best-first, but the ladder aggregates by
-          // rate, so a truncated hydrate could misstate level depth —
-          // don't render a silently-partial chain book.)
-          const HYDRATE_CAP = 600;
-          if (rankings.length > HYDRATE_CAP) {
-            throw new Error('pair bucket past hydrate cap');
-          }
           const ids = rankings.map((r) => Number(r.id));
           // Hydration is chunked at MAX_BATCH_IDS (250) inside the
           // helper; it also maps the canonical OfferState and applies

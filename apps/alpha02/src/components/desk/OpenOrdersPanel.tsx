@@ -832,7 +832,7 @@ function SignedOrdersBlock({
   pair: DeskPair | null;
   days: number;
 }) {
-  const { address, onSupportedChain } = useActiveChain();
+  const { address, onSupportedChain, readChain: signedReadChain } = useActiveChain();
   const signedBook = useDeskSignedBook(pair, days);
   const queryClient = useQueryClient();
   const { write } = useDiamondWrite();
@@ -895,6 +895,7 @@ function SignedOrdersBlock({
           uniform and the DOM stays a page at a time). */}
       <WindowedRowList
         rows={own}
+        resetKey={`${signedReadChain.chainId}|${address?.toLowerCase() ?? ''}|${pair ? `${pair.lendingAsset}-${pair.collateralAsset}` : ''}|${days}`}
         render={(row) => {
           const remaining = signedOfferRemaining(row.order, row.filledAmount);
           return (
@@ -985,7 +986,7 @@ export function OpenOrdersPanel({
   days: number;
 }) {
   const offers = useMyOffersFull();
-  const { isConnected, readChain } = useActiveChain();
+  const { isConnected, address, readChain } = useActiveChain();
   const publicClient = usePublicClient({ chainId: readChain.chainId });
 
   // Desk scope: ERC-20/ERC-20 rate offers only — NFT/rental listings
@@ -1066,6 +1067,7 @@ export function OpenOrdersPanel({
           time. */}
       <WindowedRowList
         rows={rows}
+        resetKey={`${readChain.chainId}|${address?.toLowerCase() ?? ''}|${pair ? `${pair.lendingAsset}-${pair.collateralAsset}` : ''}|${days}`}
         render={(o) => <OrderRow key={o.offerId} offer={o} />}
       />
       <SignedOrdersBlock pair={pair} days={days} />

@@ -401,6 +401,7 @@ export function Offers() {
           <ShowMoreButton
             hasMore={bookWindow.hasMore}
             hiddenCount={bookWindow.hiddenCount}
+            nextCount={bookWindow.nextCount}
             onClick={bookWindow.loadMore}
           />
           <p className="muted" style={{ marginTop: 16 }}>

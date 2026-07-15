@@ -58,7 +58,16 @@ export function ApprovalsCard() {
   // #1247 PAG-006 — the queried token window: the per-token
   // allowance/metadata reads fan out inside the query, so the window
   // bounds the READ set (part of the queryKey; "Check more" widens it).
+  // Render-phase reset on the wallet/chain identity (Codex #1265 r1):
+  // an expanded scan for one wallet must not seed the next wallet's
+  // first query with a hundreds-wide read fan-out.
   const [tokenWindow, setTokenWindow] = useState(LIST_WINDOW_PAGE);
+  const scanKey = `${readChain.chainId}|${address?.toLowerCase() ?? ''}`;
+  const [prevScanKey, setPrevScanKey] = useState(scanKey);
+  if (prevScanKey !== scanKey) {
+    setPrevScanKey(scanKey);
+    setTokenWindow(LIST_WINDOW_PAGE);
+  }
 
   // Candidate tokens: every ERC-20 leg of every loan/offer this
   // wallet touches. Data-source unavailability means the list may be
@@ -249,7 +258,10 @@ export function ApprovalsCard() {
               className="btn btn-secondary"
               onClick={() => setTokenWindow((w) => w + LIST_WINDOW_PAGE)}
             >
-              {copy.approvals.checkMore(approvals.data.moreTokens)}
+              {copy.approvals.checkMore(
+                Math.min(LIST_WINDOW_PAGE, approvals.data.moreTokens),
+                approvals.data.moreTokens,
+              )}
             </button>
           ) : null}
           <p className="muted">{copy.approvals.scopeNote}</p>

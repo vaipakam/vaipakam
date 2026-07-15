@@ -1268,6 +1268,7 @@ function RentNftFlow() {
                 // to 500 listings.
                 <WindowedRowList
                   rows={listings}
+                  resetKey={readChain.chainId}
                   render={(o) => (
                     <RentalListingRow
                       key={o.offerId}

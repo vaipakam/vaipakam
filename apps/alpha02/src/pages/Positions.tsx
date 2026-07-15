@@ -154,7 +154,10 @@ function OfferRow({ offer }: { offer: IndexedOffer }) {
 }
 
 export function Positions() {
-  const { isConnected } = useActiveChain();
+  const { isConnected, address, readChain } = useActiveChain();
+  // #1247 — window identity: a wallet/chain switch on this mounted
+  // page must collapse every expanded window (Codex #1265 r1).
+  const listKey = `${readChain.chainId}|${address?.toLowerCase() ?? ''}`;
   const { setOpen } = useModal();
   const loans = useMyLoansFull();
   const offers = useMyOffersFull();
@@ -224,6 +227,7 @@ export function Positions() {
                   reads) must scale with what the user asks to see. */}
               <WindowedRowList
                 rows={offers.data.rows}
+                resetKey={listKey}
                 render={(o) => <OfferRow key={o.offerId} offer={o} />}
               />
             </section>
@@ -264,6 +268,7 @@ export function Positions() {
                       {windowed ? (
                         <WindowedRowList
                           rows={list}
+                          resetKey={listKey}
                           render={(loan) => (
                             <LoanRow
                               key={keyOf(loan)}
