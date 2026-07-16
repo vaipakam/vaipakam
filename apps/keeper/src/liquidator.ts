@@ -64,18 +64,38 @@ export async function runLiquidator(env: Env): Promise<void> {
   // be retried this tick. Lived in `runWatcher` pre-split; lives here
   // now because this pass owns the liquidation surface.
   resetKeeperDedupe();
+  // Two phases (Codex #1300 r1+r2): EVERY chain's scan + liquidation
+  // submits complete first; the derived HF-band inbox writes (#1213 PR
+  // 2b) run only after the whole liquidation sweep. The chain loop is
+  // serial, so a D1 stall inside an earlier chain's band pass would
+  // otherwise delay LATER chains' scans and submits — notification
+  // storage must never sit anywhere on the liquidation critical path.
+  const bandQueue: { chain: ChainConfig; readings: HfReading[] }[] = [];
   for (const chain of getChainConfigs(env)) {
     try {
-      await liquidatePassForChain(env, chain);
+      const readings = await liquidatePassForChain(env, chain);
+      bandQueue.push({ chain, readings });
     } catch (err) {
       console.error(
         `[keeper] runLiquidator chain=${chain.name} err=${String(err).slice(0, 250)}`,
       );
     }
   }
+  for (const { chain, readings } of bandQueue) {
+    await hfBandPass(env, chain, readings);
+  }
 }
 
-async function liquidatePassForChain(env: Env, chain: ChainConfig): Promise<void> {
+/** Scan + submit for one chain. Returns EVERY successful HF reading
+ *  (empty on the early-exit paths) so `runLiquidator`'s second phase
+ *  can run the HF-band inbox pass after ALL chains' submits — a
+ *  zero-readings return still gets a prune-only band pass (Codex
+ *  #1300 r1: the last at-risk loan closing is exactly when the active
+ *  set goes empty). */
+async function liquidatePassForChain(
+  env: Env,
+  chain: ChainConfig,
+): Promise<HfReading[]> {
   const client = createPublicClient({ transport: http(chain.rpc) });
   const diamond = chain.diamond as Address;
 
@@ -90,15 +110,9 @@ async function liquidatePassForChain(env: Env, chain: ChainConfig): Promise<void
     console.error(
       `[keeper] liquidator chain=${chain.name} getActiveLoansCount failed: ${String(err).slice(0, 200)}`,
     );
-    return;
+    return [];
   }
-  if (total === 0n) {
-    // Still run the band pass with zero readings — it prunes stale
-    // hf_band_state rows (Codex #1300 r1: the last at-risk loan closing
-    // is exactly when the active set goes empty).
-    await hfBandPass(env, chain, []);
-    return;
-  }
+  if (total === 0n) return [];
 
   // Page the loan-id list.
   const ids: bigint[] = [];
@@ -120,10 +134,7 @@ async function liquidatePassForChain(env: Env, chain: ChainConfig): Promise<void
     if (page.length === 0) break;
     ids.push(...page);
   }
-  if (ids.length === 0) {
-    await hfBandPass(env, chain, []); // prune-only pass (see above)
-    return;
-  }
+  if (ids.length === 0) return [];
 
   // Batch-read HF via Multicall3 (deployed at the canonical address on
   // every viem-known chain). Falls back to a serial read if multicall
@@ -175,11 +186,7 @@ async function liquidatePassForChain(env: Env, chain: ChainConfig): Promise<void
   }
 
   const atRisk = readings.filter((r) => r.hf < HF_LIQUIDATION_THRESHOLD);
-  if (atRisk.length === 0) {
-    // Nothing to submit — the band pass is all that's left this tick.
-    await hfBandPass(env, chain, readings);
-    return;
-  }
+  if (atRisk.length === 0) return readings;
   // Lowest HF first — the keeper's gas budget goes to the most-at-risk
   // loans first when the submit cap is hit.
   atRisk.sort((a, b) => (a.hf < b.hf ? -1 : 1));
@@ -195,12 +202,7 @@ async function liquidatePassForChain(env: Env, chain: ChainConfig): Promise<void
     const submitted = await maybeAutonomousLiquidate(env, chain, r.id, r.hf, client);
     if (submitted) submits += 1;
   }
-
-  // #1213 PR 2b — free in-app HF-band rows from the same scan. Runs
-  // AFTER the liquidation submits on purpose (Codex #1300 r1 P1): the
-  // pass awaits D1, and derived inbox rows must never sit between an
-  // underwater loan and its `triggerLiquidation`.
-  await hfBandPass(env, chain, readings);
+  return readings;
 }
 
 /** Fail-open wrapper around the band pass — belt-and-braces on top of

@@ -20,12 +20,18 @@
 -- that left the active set are pruned each pass, so the table stays
 -- proportional to the currently-at-risk book, not loan history.
 CREATE TABLE IF NOT EXISTS hf_band_state (
-  chain_id      INTEGER NOT NULL,
-  loan_id       INTEGER NOT NULL,
+  chain_id       INTEGER NOT NULL,
+  loan_id        INTEGER NOT NULL,
   -- 'warn' | 'alert' | 'critical' (never 'healthy' — see above).
-  last_band     TEXT    NOT NULL,
+  last_band      TEXT    NOT NULL,
   -- HF in milli-units (1e18-scaled HF / 1e15) at the last band change.
-  last_hf_milli INTEGER NOT NULL,
-  updated_at    INTEGER NOT NULL,
+  last_hf_milli  INTEGER NOT NULL,
+  -- The lowercased borrower-position holder the last row went to. Part
+  -- of the edge detection (Codex #1300 r2): a borrower transfer while
+  -- the loan stays inside the SAME band must still notify the NEW
+  -- holder — the claim follows the NFT, and a band keyed on loan id
+  -- alone would stay "unchanged" and never reach them.
+  last_recipient TEXT    NOT NULL,
+  updated_at     INTEGER NOT NULL,
   PRIMARY KEY (chain_id, loan_id)
 );

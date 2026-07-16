@@ -149,13 +149,15 @@ export async function recordHfBandNotifications(
     // rows and swallow them under the client's read cursor. No
     // watermark row means the indexer has never completed a caught-up
     // pass on this chain — nothing to resolve against; skip.
-    const watermark = await db
+    const cursors = await db
       .prepare(
-        `SELECT last_block, updated_at FROM indexer_cursor
-          WHERE chain_id = ? AND kind = 'notified'`,
+        `SELECT kind, last_block, updated_at FROM indexer_cursor
+          WHERE chain_id = ? AND kind IN ('notified', 'diamond')`,
       )
       .bind(chainId)
-      .first<{ last_block: number; updated_at: number }>();
+      .all<{ kind: string; last_block: number; updated_at: number }>();
+    const watermark = (cursors.results ?? []).find((c) => c.kind === 'notified');
+    const diamondTip = (cursors.results ?? []).find((c) => c.kind === 'diamond');
     if (!watermark) return empty;
     const headBlock = watermark.last_block;
 
@@ -200,40 +202,51 @@ export async function recordHfBandNotifications(
       );
       return empty;
     }
+    // TIP GATE (Codex #1300 r2): age alone still admits the window
+    // where a scan is IN FLIGHT — the `diamond` cursor has advanced
+    // past a still-fresh watermark (or the fail-open stamp was
+    // missed), and event/calendar rows at blocks > watermark may
+    // already be visible. An HF row stamped at the OLDER watermark
+    // block would sort behind them, so a wallet that just opened the
+    // inbox could advance its read cursor past the HF row before it
+    // exists. Mint only when the watermark has caught the indexed tip;
+    // a mid-scan tick simply defers (the next tick re-detects).
+    if (diamondTip && watermark.last_block < diamondTip.last_block) {
+      return empty;
+    }
 
     const observed = readings.map((r) => {
       const milli = hfToMilli(r.hf);
       return { loanId: Number(r.id), milli, band: classifyBand(milli) };
     });
 
-    // Stored band per loan (absence = healthy; healthy loans carry no
-    // row — see migration 0041).
-    const prevBand = new Map<number, HfBand>();
+    // Stored (band, recipient) per loan — absence = healthy; healthy
+    // loans carry no row (migration 0041). The recipient is part of
+    // the edge (Codex #1300 r2): a borrower transfer inside the SAME
+    // band must still notify the new holder.
+    const prev = new Map<number, { band: HfBand; recipient: string }>();
     for (let i = 0; i < observed.length; i += IN_CHUNK) {
       const chunk = observed.slice(i, i + IN_CHUNK);
       const res = await db
         .prepare(
-          `SELECT loan_id, last_band FROM hf_band_state
+          `SELECT loan_id, last_band, last_recipient FROM hf_band_state
             WHERE chain_id = ? AND loan_id IN (${chunk.map(() => '?').join(',')})`,
         )
         .bind(chainId, ...chunk.map((o) => o.loanId))
-        .all<{ loan_id: number; last_band: HfBand }>();
-      for (const row of res.results ?? []) prevBand.set(row.loan_id, row.last_band);
+        .all<{ loan_id: number; last_band: HfBand; last_recipient: string }>();
+      for (const row of res.results ?? []) {
+        prev.set(row.loan_id, { band: row.last_band, recipient: row.last_recipient });
+      }
     }
 
-    const changed = observed.filter(
-      (o) => o.band !== (prevBand.get(o.loanId) ?? 'healthy'),
-    );
-    if (changed.length === 0) return empty;
-    const downgraded = changed.filter(
-      (o) => BAND_RANK[o.band] > BAND_RANK[prevBand.get(o.loanId) ?? 'healthy'],
-    );
-
-    // Borrower recipients for the downgrades — the CURRENT position
-    // holder from the shared loans table.
+    // Borrower recipients — the CURRENT position holder from the shared
+    // loans table — for every loan currently INSIDE a band (needed for
+    // both the mint decision and the state commit; healthy loans only
+    // ever DELETE state, which needs no recipient).
+    const inBand = observed.filter((o) => o.band !== 'healthy');
     const recipientByLoan = new Map<number, string>();
-    for (let i = 0; i < downgraded.length; i += IN_CHUNK) {
-      const chunk = downgraded.slice(i, i + IN_CHUNK);
+    for (let i = 0; i < inBand.length; i += IN_CHUNK) {
+      const chunk = inBand.slice(i, i + IN_CHUNK);
       const res = await db
         .prepare(
           `SELECT loan_id, borrower, borrower_current_owner FROM loans
@@ -251,10 +264,15 @@ export async function recordHfBandNotifications(
       }
     }
 
-    // Mint the downgrade rows. A downgrade whose recipient can't be
-    // resolved yet (indexer lag — the loan row hasn't landed) is
-    // DEFERRED: no row AND no state write, so the next tick retries
-    // the same crossing instead of silently swallowing it.
+    // The edge decision per loan:
+    //   - band WORSENED (incl. first observation inside a band) → mint;
+    //   - band unchanged/improved but still in-band AND the borrower
+    //     position moved to a NEW holder → mint (the claim follows the
+    //     NFT; the previous holder's row can't warn the new one);
+    //   - recovery to healthy → delete state silently.
+    // A loan inside a band whose recipient can't be resolved yet
+    // (indexer lag) is DEFERRED: no row AND no state write, so the next
+    // tick retries the same edge instead of silently swallowing it.
     const dayBucket = Math.floor(nowSec / 86_400);
     interface Row {
       loanId: number;
@@ -263,23 +281,40 @@ export async function recordHfBandNotifications(
       dedupKey: string;
     }
     const rows: Row[] = [];
-    const deferred = new Set<number>();
-    for (const o of downgraded) {
-      const recipient = recipientByLoan.get(o.loanId);
-      if (!recipient) {
-        deferred.add(o.loanId);
+    interface Commit {
+      loanId: number;
+      band: HfBand;
+      milli: number;
+      recipient: string | null; // null only for healthy (DELETE)
+    }
+    const commits: Commit[] = [];
+    for (const o of observed) {
+      const p = prev.get(o.loanId);
+      const prevBand: HfBand = p?.band ?? 'healthy';
+      if (o.band === 'healthy') {
+        if (p) commits.push({ loanId: o.loanId, band: 'healthy', milli: o.milli, recipient: null });
         continue;
       }
-      const kind = BAND_KIND[o.band as Exclude<HfBand, 'healthy'>];
-      rows.push({
-        loanId: o.loanId,
-        recipient,
-        kind,
-        // Same segment order as the indexer's producers
-        // (`chain:recipient:kind:loan:<discriminator>`); the day bucket
-        // bounds a flapping HF to one row per band per UTC day.
-        dedupKey: `${chainId}:${recipient}:${kind}:${o.loanId}:${dayBucket}`,
-      });
+      const recipient = recipientByLoan.get(o.loanId);
+      if (!recipient) continue; // deferred — retry next tick
+      const worsened = BAND_RANK[o.band] > BAND_RANK[prevBand];
+      const holderChanged = p !== undefined && recipient !== p.recipient;
+      if (worsened || holderChanged) {
+        const kind = BAND_KIND[o.band as Exclude<HfBand, 'healthy'>];
+        rows.push({
+          loanId: o.loanId,
+          recipient,
+          kind,
+          // Same segment order as the indexer's producers
+          // (`chain:recipient:kind:loan:<discriminator>`); the day
+          // bucket bounds a flapping HF to one row per band per UTC
+          // day PER RECIPIENT (a new holder's key always differs).
+          dedupKey: `${chainId}:${recipient}:${kind}:${o.loanId}:${dayBucket}`,
+        });
+      }
+      if (o.band !== prevBand || holderChanged) {
+        commits.push({ loanId: o.loanId, band: o.band, milli: o.milli, recipient });
+      }
     }
 
     let inserted = 0;
@@ -309,12 +344,11 @@ export async function recordHfBandNotifications(
       }
     }
 
-    // Commit the observed band for every change EXCEPT deferred
-    // downgrades (those retry next tick). Recoveries to healthy DELETE
-    // the row — absence means healthy, keeping the table proportional
-    // to the at-risk book.
+    // Commit the observed (band, recipient) for every edge; deferred
+    // loans never reached `commits`, so they retry next tick.
+    // Recoveries to healthy DELETE the row — absence means healthy,
+    // keeping the table proportional to the at-risk book.
     let stateWrites = 0;
-    const commits = changed.filter((o) => !deferred.has(o.loanId));
     for (let i = 0; i < commits.length; i += INSERT_CHUNK) {
       const batch = commits.slice(i, i + INSERT_CHUNK).map((o) =>
         o.band === 'healthy'
@@ -326,14 +360,15 @@ export async function recordHfBandNotifications(
           : db
               .prepare(
                 `INSERT INTO hf_band_state
-                   (chain_id, loan_id, last_band, last_hf_milli, updated_at)
-                 VALUES (?, ?, ?, ?, ?)
+                   (chain_id, loan_id, last_band, last_hf_milli, last_recipient, updated_at)
+                 VALUES (?, ?, ?, ?, ?, ?)
                  ON CONFLICT (chain_id, loan_id) DO UPDATE SET
                    last_band = excluded.last_band,
                    last_hf_milli = excluded.last_hf_milli,
+                   last_recipient = excluded.last_recipient,
                    updated_at = excluded.updated_at`,
               )
-              .bind(chainId, o.loanId, o.band, o.milli, nowSec),
+              .bind(chainId, o.loanId, o.band, o.milli, o.recipient, nowSec),
       );
       await db.batch(batch);
       stateWrites += batch.length;

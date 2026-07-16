@@ -71,7 +71,13 @@ Claim Center and re-verify there (indexed-hints-only discipline).
 > grace/terminal rows), DOWNGRADE-only with absence-of-state = healthy
 > (first observation inside a band notifies once; recoveries update state
 > silently; state rows live in `hf_band_state`, migration 0041, pruned
-> when a loan leaves the active set). Day-bucketed dedup keys bound a
+> when a loan leaves the active set). The stored edge is
+> (band, recipient), not band alone (Codex #1300 r2): a borrower
+> position that transfers while STILL inside a band re-alerts the new
+> holder — the claim follows the NFT. The band writes run in a second
+> phase after EVERY chain's liquidation submits (the chain loop is
+> serial, so a D1 stall on one chain's inbox writes must not delay a
+> later chain's `triggerLiquidation`). Day-bucketed dedup keys bound a
 > flapping HF to one row per band per UTC day. Rows stamp the indexer's
 > `notified` WATERMARK block (a cursor kind advanced only after a
 > caught-up scan finishes materializing notifications — the main
@@ -80,8 +86,10 @@ Claim Center and re-verify there (indexed-hints-only discipline).
 > client's read cursor) + the cron log-index sentinel, so the
 > chain-ordered feed sorts them as current; the pass DEFERS whenever
 > that watermark is stale (indexer behind → D1 ownership could lag the
-> live HF reads) or a crossing's loan row hasn't landed yet — a
-> crossing is never silently swallowed. Illiquid
+> live HF reads), whenever the `diamond` cursor is AHEAD of it (a scan
+> in flight — its event rows may already be visible at newer blocks),
+> or when a crossing's loan row hasn't landed yet — a crossing is
+> never silently swallowed. Illiquid
 > loans revert `IlliquidLoanNoRiskMath` inside the same multicall and are
 > inherently excluded — the calendar rows are their risk lane. Two
 > documented trade-offs: the rows only mint while the autonomous keeper

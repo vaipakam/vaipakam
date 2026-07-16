@@ -216,6 +216,49 @@ describe('recordHfBandNotifications (over the migrated shared schema)', () => {
     expect(notifRows(h)).toHaveLength(0);
   });
 
+  it('defers while the diamond tip is ahead of the notified watermark (scan in flight, Codex #1300 r2)', async () => {
+    const h = harness(); // fresh notified watermark at HEAD
+    h.db
+      .prepare(
+        `INSERT INTO indexer_cursor (chain_id, kind, last_block, updated_at) VALUES (?, 'diamond', ?, ?)`,
+      )
+      .run(CHAIN, HEAD + 10, NOW); // event rows for HEAD+1..HEAD+10 may be pending
+    seedLoan(h, 12);
+    await recordHfBandNotifications(h.d1 as never, CHAIN, [{ id: 12n, hf: hf(1_000) }], NOW);
+    expect(notifRows(h)).toHaveLength(0);
+    expect(stateRows(h)).toHaveLength(0);
+    // Watermark catches the tip → the crossing re-detects.
+    h.db
+      .prepare(`UPDATE indexer_cursor SET last_block = ? WHERE kind = 'notified'`)
+      .run(HEAD + 10);
+    await recordHfBandNotifications(h.d1 as never, CHAIN, [{ id: 12n, hf: hf(1_000) }], NOW + 60);
+    expect(notifRows(h).map((r) => [r.kind, r.block_number])).toEqual([
+      ['hf_critical', HEAD + 10],
+    ]);
+  });
+
+  it('re-alerts the NEW borrower-position holder on a same-band transfer (Codex #1300 r2)', async () => {
+    const h = harness();
+    seedLoan(h, 13);
+    await recordHfBandNotifications(h.d1 as never, CHAIN, [{ id: 13n, hf: hf(1_400) }], NOW);
+    expect(notifRows(h)).toHaveLength(1);
+    // Same band next tick — silent.
+    await recordHfBandNotifications(h.d1 as never, CHAIN, [{ id: 13n, hf: hf(1_390) }], NOW + 60);
+    expect(notifRows(h)).toHaveLength(1);
+    // The borrower position migrates while STILL in warn — the new
+    // holder must learn the loan they now hold is inside a band.
+    h.db
+      .prepare(`UPDATE loans SET borrower_current_owner = ? WHERE loan_id = 13`)
+      .run(NEW_BORROWER);
+    await recordHfBandNotifications(h.d1 as never, CHAIN, [{ id: 13n, hf: hf(1_390) }], NOW + 120);
+    const rows = notifRows(h);
+    expect(rows).toHaveLength(2);
+    expect(rows[1]).toMatchObject({ recipient: NEW_BORROWER, kind: 'hf_warn', loan_id: 13 });
+    // And the new holder is now the stored edge — no re-alert next tick.
+    await recordHfBandNotifications(h.d1 as never, CHAIN, [{ id: 13n, hf: hf(1_390) }], NOW + 180);
+    expect(notifRows(h)).toHaveLength(2);
+  });
+
   it('defers minting on a stale watermark (indexer behind — D1 ownership may lag live HF)', async () => {
     const h = harness(NOW - 3_600); // watermark an hour old
     seedLoan(h, 10);
