@@ -73,6 +73,12 @@ export type InvalidationKey =
   // position / claimables views key on WHO holds the position, which no
   // other key names; PR A's tip-nudge demotion relies on this arriving.
   | 'ownership.changed'
+  // #1213 PR 2 (Codex #1298 r3) — a calendar reminder row minted by the
+  // TIME-driven sweep. These rows have NO on-chain log, so every
+  // event-derived count is zero on the tick that mints them (the quiet
+  // caught-up path especially) — without a dedicated key the bell would
+  // wait out the 180 s poll. Clients map it to the notifications feed.
+  | 'notification.created'
   | 'activity.appended';
 
 /** RPC read-diet PR 0 — the DO path's expected per-chain scan cadence. The
@@ -166,6 +172,10 @@ export function invalidationKeysFromResult(
   // the affected views (own positions, claimables, detail-page owner) are
   // holder-keyed, and no other key fires on a bare secondary transfer.
   if ((result.ownershipTransfers ?? 0) > 0) keys.push('ownership.changed');
+  // #1213 PR 2 (Codex #1298 r3) — calendar reminder rows are pure D1
+  // inserts with no backing log; their count is the only signal a
+  // reminder minted this tick.
+  if ((result.calendarNotifications ?? 0) > 0) keys.push('notification.created');
   if (result.activityEvents > 0) keys.push('activity.appended');
   return keys;
 }

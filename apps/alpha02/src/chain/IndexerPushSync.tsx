@@ -186,6 +186,14 @@ export const KEY_MAP: Record<string, string[]> = {
     // (Codex #1227 r2).
     'vaultAssets',
   ],
+  // #1213 PR 2 (Codex #1298 r3) — a calendar reminder row (maturity
+  // T-7d / T-1d, grace entered) minted by the indexer's TIME-driven
+  // sweep. It has no on-chain log, so NO other key fires on the tick
+  // that mints it (especially the quiet caught-up path) — without this
+  // mapping the bell waits out the 180 s poll. The reminded loan ids
+  // ride the frame's hints, so own-scoped relevance dropping still
+  // applies (notifications is in OWN_SCOPED_ROOTS).
+  'notification.created': ['notifications'],
   'activity.appended': ['activity'],
   // NOT mapped on purpose: 'deskSymbols' (token metadata is immutable).
 };

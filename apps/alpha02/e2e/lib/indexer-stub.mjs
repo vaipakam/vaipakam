@@ -1144,6 +1144,19 @@ async function handler(req, res) {
       const notifications = before
         ? []
         : [
+            // A CRON calendar row (#1213 PR 2): event-less (eventKind null)
+            // but block-stamped at the sweep's head so it sorts as current.
+            {
+              id: 3,
+              kind: 'maturity_7d',
+              loanId: 3,
+              offerId: null,
+              eventKind: null,
+              data: null,
+              createdAt: 1_700_000_300,
+              blockNumber: 300,
+              logIndex: 1_000_000, // cron sentinel — above real logs
+            },
             {
               id: 2,
               kind: 'loan_repaid',

@@ -1,0 +1,21 @@
+-- 0039_protocol_config_grace_buckets.sql — snapshot governance grace
+-- buckets (#1213 PR 2, Codex #1298 r1).
+--
+-- The calendar notification sweep derives each loan's grace window
+-- (grace_entered creation bound). LibVaipakam.gracePeriod is TIERED:
+-- a compile-time default schedule when no governance buckets are set,
+-- else the storage-driven `graceBuckets` array (ConfigFacet
+-- setGraceBuckets / getGraceBuckets). The sweep is pure D1 — it must
+-- not RPC per tick — so the effective bucket array rides the existing
+-- protocol_config snapshot row, which already refreshes on the
+-- `GraceBucketsUpdated` config event (configSnapshot.ts allowlist) and
+-- on the 6h backstop.
+--
+-- NULL = the snapshot predates this column / the read hasn't landed
+-- yet → consumers fall back to the compile-time default schedule
+-- (exactly what an unset bucket array means on-chain, and the only
+-- state the retail deploy uses today). JSON shape:
+--   [{"maxDurationDays":"30","graceSeconds":"86400"}, ...]
+-- (decimal strings — same bigint-safe serialization as bundle_json).
+
+ALTER TABLE protocol_config ADD COLUMN grace_buckets_json TEXT;

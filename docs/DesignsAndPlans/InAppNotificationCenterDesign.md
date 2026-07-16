@@ -40,6 +40,29 @@ Claim Center and re-verify there (indexed-hints-only discipline).
 > route; the feed is served `no-store`. A future SIWE-session-gated
 > server-side read-state (for cross-device sync) can add the column back.
 
+> **Implementation status (PR 2):** the calendar rows shipped as a pure-D1
+> sweep on the ingest tick (`calendarNotifications.ts`): `maturity_7d` /
+> `maturity_1d` to the borrower, `grace_entered` to both parties while the
+> grace window runs (suppressed once grace has closed — stale advice is
+> never shown). Recipients resolve via the same current-owner columns the
+> event rows use (the indexer's projection of `ownerOf`, kept authoritative
+> by the Transfer handlers) rather than a per-row live `ownerOf` read.
+> Dedup keys embed the maturity timestamp, so `LoanExtended` (which rewrites
+> `start_time` + `duration_days`) re-arms the milestones for the new date.
+> Grace follows `LibVaipakam.gracePeriod` exactly: the effective
+> governance buckets ride the `protocol_config` snapshot
+> (`grace_buckets_json`, migration 0039, refreshed on
+> `GraceBucketsUpdated` + the 6h backstop); an empty/absent array means
+> the compile-time default (Codex #1298 r1). The sweep runs only when the
+> indexer is CONSISTENT — every caught-up quiet tick, and scanned ticks
+> within 60 blocks of head — never mid-catch-up, where wall-clock windows
+> against stale rows would mint never-retracted reminders (Codex #1298
+> r1). Under a saturated window the sweep serves soonest-due first, so
+> only the far-out T-7d tail can defer. Rows are stamped at the sweep's head block
+> so the chain-ordered feed sorts them as current. The liquid-only HF-band
+> rows remain a follow-up (they need per-loan HF reads — a different cost
+> profile than pure calendar math).
+
 > **Implementation refinement (PR 1, Codex #1292 r7):** a notification
 > whose *kind* asserts a loan has CLOSED (`loan_repaid` / `loan_defaulted`
 > / `internal_matched` — the rows that deep-link to the Claim Center) is

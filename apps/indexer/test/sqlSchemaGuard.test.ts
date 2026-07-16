@@ -100,7 +100,11 @@ describe('SQL-vs-schema guard (#1149)', () => {
     // the shape is covered by test/notificationRoutes.test.ts against the
     // real migrated schema. (Read-state is client-side, so there is no
     // mark-read UPDATE.)
-    expect(skipped.length).toBeLessThanOrEqual(11);
+    // Raised 11 → 12 for #1213 PR 2: the calendar sweep's SELECT embeds
+    // its compile-time `LIMIT ${SWEEP_LIMIT}` constant; the statement's
+    // shape runs against the real migrated schema in
+    // test/calendarNotifications.test.ts.
+    expect(skipped.length).toBeLessThanOrEqual(12);
   });
 
   it('every static SQL statement prepares against the migrated schema', () => {

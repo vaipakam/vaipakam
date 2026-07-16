@@ -144,9 +144,21 @@ async function markStaleBelow(
   env: Env,
   chainId: number,
   belowBlock: bigint,
+  opts?: {
+    /** Codex #1298 r6 — the stale-marked scan saw `GraceBucketsUpdated`,
+     *  so the stored bucket JSON is known-obsolete. Clearing it to NULL
+     *  here (not just zeroing the stamp) matters because the later
+     *  near-head retry no longer carries the event: if ITS grace read
+     *  fails transiently, the upsert's COALESCE would resurrect the
+     *  pre-change schedule as current — while NULL keeps the sweep
+     *  deferred and the unpopulated-column force retrying. */
+    clearGrace?: boolean;
+  },
 ): Promise<void> {
   await env.DB.prepare(
-    `UPDATE protocol_config SET updated_at = 0
+    `UPDATE protocol_config SET updated_at = 0${
+      opts?.clearGrace ? ', grace_buckets_json = NULL' : ''
+    }
      WHERE chain_id = ? AND source_block < ?`,
   )
     .bind(chainId, Number(belowBlock))
@@ -184,11 +196,13 @@ export async function maybeRefreshProtocolConfig(opts: {
   headBlock: bigint;
 }): Promise<void> {
   let saw = false;
+  // Tracked separately (Codex #1298 r5): when THIS scan carries
+  // `GraceBucketsUpdated`, any previously-snapshotted bucket set is
+  // known-obsolete — a failed grace read must not preserve it.
+  let sawGraceEvent = false;
   for (const n of opts.scannedEventNames) {
-    if (isConfigEventName(n)) {
-      saw = true;
-      break;
-    }
+    if (n === 'GraceBucketsUpdated') sawGraceEvent = true;
+    if (isConfigEventName(n)) saw = true;
   }
   try {
     // Catch-up scans read historic state — never stamp those fresh.
@@ -198,16 +212,29 @@ export async function maybeRefreshProtocolConfig(opts: {
     // reaches head (Codex #1231 r2): stale-mark so clients refuse the
     // row now and the first near-head scan refreshes promptly.
     if (opts.headBlock - opts.blockNumber > NEAR_HEAD_BLOCKS) {
-      if (saw) await markStaleBelow(opts.env, opts.chainId, opts.blockNumber);
+      if (saw) {
+        await markStaleBelow(opts.env, opts.chainId, opts.blockNumber, {
+          clearGrace: sawGraceEvent,
+        });
+      }
       return;
     }
     const row = await opts.env.DB.prepare(
-      `SELECT updated_at FROM protocol_config WHERE chain_id = ?`,
+      `SELECT updated_at, grace_buckets_json FROM protocol_config WHERE chain_id = ?`,
     )
       .bind(opts.chainId)
-      .first<{ updated_at: number }>();
+      .first<{ updated_at: number; grace_buckets_json: string | null }>();
     const now = Math.floor(Date.now() / 1000);
+    // #1213 PR 2 (Codex #1298 r3) — a fresh pre-0039 row has
+    // `grace_buckets_json IS NULL`, and the calendar sweep would fall
+    // back to the DEFAULT schedule until the 6h backstop — wrong on a
+    // chain where governance buckets are set. Force the read once so
+    // the column is populated on the first near-head tick after the
+    // migration lands (after which it is always non-null: the read
+    // stores '[]' for the no-buckets state).
+    const graceColumnUnpopulated = row !== null && row.grace_buckets_json === null;
     if (
+      !graceColumnUnpopulated &&
       !shouldRefreshConfig({
         sawConfigEvent: saw,
         rowUpdatedAt: row?.updated_at ?? null,
@@ -217,7 +244,7 @@ export async function maybeRefreshProtocolConfig(opts: {
       return;
     }
 
-    const [bundle, flags] = await Promise.all([
+    const [bundle, flags, graceBuckets] = await Promise.all([
       opts.client.readContract({
         address: opts.diamond,
         abi: DIAMOND_ABI_VIEM,
@@ -230,15 +257,74 @@ export async function maybeRefreshProtocolConfig(opts: {
         functionName: 'getMasterFlags',
         blockNumber: opts.blockNumber,
       }) as Promise<readonly [boolean, boolean, boolean]>,
+      // #1213 PR 2 (Codex #1298 r1) — the effective governance grace
+      // buckets. Not part of the bundle tuple; the calendar sweep derives
+      // grace windows from this snapshot column (empty array = the
+      // compile-time default schedule, the retail deploy's state). The
+      // refresh already triggers on `GraceBucketsUpdated`.
+      //
+      // Isolated failure handling (Codex #1298 r3): this one read must
+      // never sink the bundle/flags refresh.
+      //   - MISSING SELECTOR (a deployed diamond that predates the
+      //     getter): the getter and setter ship in the same ConfigFacet
+      //     cut, so no getter ⇒ no setter ⇒ buckets cannot be set ⇒ the
+      //     empty array is DEFINITIVE, not a guess.
+      //   - any other (transient) failure: `null` → the upsert PRESERVES
+      //     the existing column (COALESCE below) rather than clobbering
+      //     real buckets with '[]'; if the column was never populated it
+      //     stays NULL and the unpopulated-column force-refresh retries
+      //     next tick.
+      (
+        opts.client.readContract({
+          address: opts.diamond,
+          abi: DIAMOND_ABI_VIEM,
+          functionName: 'getGraceBuckets',
+          blockNumber: opts.blockNumber,
+        }) as Promise<readonly { maxDurationDays: bigint; graceSeconds: bigint }[]>
+      ).catch((err: unknown) => {
+        // The Diamond's fallback reverts `FunctionDoesNotExist()`
+        // (selector 0xa9ad62f8) for an uncut selector — match the
+        // decoded name AND the raw selector, exactly like alpha02's
+        // shared `isMissingSelectorError` does, plus viem's generic
+        // wordings (Codex #1298 r4: the spaced-string-only matcher
+        // missed the repo's own error, so a pre-getter diamond fell
+        // into the transient branch and re-forced the three config
+        // reads on every near-head scan forever).
+        const raw = (err as { data?: unknown })?.data;
+        const msg = `${typeof raw === 'string' ? raw : ''} ${String(err)}`;
+        if (
+          /function.*(does not exist|not found)|FunctionNotFound|FunctionDoesNotExist|0xa9ad62f8/i.test(
+            msg,
+          )
+        ) {
+          return [] as const; // pre-getter diamond — definitively no buckets
+        }
+        // eslint-disable-next-line no-console
+        console.error(
+          `[configSnapshot] getGraceBuckets read failed for chain ${opts.chainId} (keeping previous value)`,
+          err,
+        );
+        return null;
+      }),
     ]);
 
+    // A transient grace-read failure normally PRESERVES the existing
+    // column (COALESCE) — the stored schedule is still current. But when
+    // this scan SAW `GraceBucketsUpdated`, the stored schedule is
+    // known-obsolete (Codex #1298 r5): force the column back to NULL —
+    // the calendar sweep treats NULL as "unknown, skip" and the
+    // unpopulated-column force-refresh retries next tick, so one RPC
+    // hiccup can never let reminders mint off the pre-change buckets.
+    const invalidateGrace = graceBuckets === null && sawGraceEvent;
     await opts.env.DB.prepare(
       `INSERT INTO protocol_config
-         (chain_id, bundle_json, master_flags_json, source_block, updated_at)
-       VALUES (?, ?, ?, ?, ?)
+         (chain_id, bundle_json, master_flags_json, grace_buckets_json, source_block, updated_at)
+       VALUES (?1, ?2, ?3, ?4, ?5, ?6)
        ON CONFLICT (chain_id) DO UPDATE SET
          bundle_json = excluded.bundle_json,
          master_flags_json = excluded.master_flags_json,
+         grace_buckets_json = CASE WHEN ?7 = 1 THEN NULL
+           ELSE COALESCE(excluded.grace_buckets_json, protocol_config.grace_buckets_json) END,
          source_block = excluded.source_block,
          updated_at = excluded.updated_at
        WHERE excluded.source_block >= protocol_config.source_block`,
@@ -247,8 +333,10 @@ export async function maybeRefreshProtocolConfig(opts: {
         opts.chainId,
         serializeTuple(bundle),
         JSON.stringify([flags[0], flags[1], flags[2]]),
+        graceBuckets === null ? null : serializeTuple(graceBuckets),
         Number(opts.blockNumber),
         now,
+        invalidateGrace ? 1 : 0,
       )
       .run();
   } catch (err) {
@@ -263,7 +351,11 @@ export async function maybeRefreshProtocolConfig(opts: {
     // chain, and (b) the next scan's backstop check retries promptly.
     if (saw) {
       try {
-        await markStaleBelow(opts.env, opts.chainId, opts.blockNumber);
+        // Same r6 rationale as the catch-up path: a refresh that failed
+        // ON a grace-change scan leaves known-obsolete buckets behind.
+        await markStaleBelow(opts.env, opts.chainId, opts.blockNumber, {
+          clearGrace: sawGraceEvent,
+        });
       } catch {
         /* stale-marking is best-effort */
       }

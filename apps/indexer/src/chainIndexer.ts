@@ -56,6 +56,8 @@ import { maybeRefreshProtocolConfig } from './configSnapshot';
 import {
   collectPushHints,
   pushHintStats,
+  mergeHintLoanIds,
+  emptyHints,
   HINT_CAP,
   type PushHints,
 } from './pushHints';
@@ -64,6 +66,10 @@ import {
   MARKET_SWEEP_CURSOR_KIND,
 } from './marketSummary';
 import { materializeNotifications } from './notifications';
+import {
+  sweepCalendarNotifications,
+  EMPTY_SWEEP,
+} from './calendarNotifications';
 
 /** Resolve a chain's deployBlock from the consolidated deployments
  *  JSON — the indexer's first-run fallback when no cursor exists. */
@@ -182,6 +188,14 @@ export interface ChainIndexerResult {
    *  push key so own-position / claimables views learn an ownership flip
    *  from the push rail instead of a block-driven refetch. */
   ownershipTransfers?: number;
+  /** #1213 PR 2 (Codex #1298 r3) — calendar reminder rows minted this
+   *  tick by the TIME-driven sweep (maturity T-7d / T-1d, grace
+   *  entered). These rows have no on-chain log, so no event-derived
+   *  count covers them; this field feeds the `notification.created`
+   *  push key so the bell learns of a reminder from the push rail
+   *  instead of the 180 s poll. Optional so error/early-return paths
+   *  stay untouched (absent reads as 0). */
+  calendarNotifications?: number;
   /** RPC read-diet PR D (design §4.2.2) — bounded affected-id hints +
    *  causative linkage for this scan's row mutations, truncation-honest
    *  (see pushHints.ts). Optional so error/early-return paths stay
@@ -531,6 +545,36 @@ export async function runChainIndexerForChain(
     // stall) until the next real block. The expiry-window legs make
     // this a bounded index scan even when nothing expired.
     await sweepMarketSummaries(env, chainId, Math.floor(Date.now() / 1000));
+    // #1213 PR 2 (Codex #1298 r4) — keep the config snapshot current on
+    // quiet ticks too, BEFORE the calendar sweep derives grace windows
+    // from it. A deploy landing on an already-caught-up chain sees no
+    // scanned tick, so without this the pre-0039 NULL grace column (or
+    // a 6h-stale row) would never heal until a new block arrives — and
+    // the sweep would mint non-retractable grace reminders off the
+    // default schedule on a chain whose governance buckets differ.
+    // Internally gated (event/backstop/unpopulated-column checks), so a
+    // quiet tick with a fresh row costs one D1 row read and no RPC.
+    await maybeRefreshProtocolConfig({
+      env,
+      chainId,
+      client,
+      diamond,
+      scannedEventNames: [],
+      blockNumber: lastBlock,
+      headBlock: head,
+    });
+    // #1213 PR 2 (Codex #1298 r1) — the calendar sweep is TIME-driven
+    // for the same reason: a loan enters its T-7d/T-1d/grace window by
+    // clock alone, with no new block or log. This caught-up path is
+    // also the CONSISTENT one (D1 reflects everything up to the safe
+    // head), so the sweep always runs here; rows stamp the cursor's
+    // caught-up position.
+    const quietCal = await sweepCalendarNotifications(
+      env.DB,
+      chainId,
+      Math.floor(Date.now() / 1000),
+      Number(lastBlock),
+    );
     return {
       scannedFrom: scanFrom,
       scannedTo: scanFrom - 1n,
@@ -541,6 +585,16 @@ export async function runChainIndexerForChain(
       loanStatusUpdates: 0,
       loanDetailRefreshes: 0,
       activityEvents: 0,
+      // #1213 PR 2 (Codex #1298 r3) — a reminder minted on this quiet
+      // tick must still reach the bell promptly: the count maps to the
+      // `notification.created` push key, and the reminded loan ids ride
+      // the hints so client relevance scoping keeps the refetch on the
+      // wallets that hold those loans.
+      calendarNotifications: quietCal.inserted,
+      hints:
+        quietCal.inserted > 0
+          ? mergeHintLoanIds(emptyHints(), quietCal.loanIds)
+          : undefined,
       skipped: 'caught-up',
     };
   }
@@ -729,6 +783,12 @@ export async function runChainIndexerForChain(
   // RPC read-diet PR B — keep the display config snapshot current
   // (event-triggered + slow backstop; fail-open INSIDE, so a refresh
   // hiccup can never fail a scan whose cursor already advanced).
+  // Runs BEFORE the calendar sweep (Codex #1298 r2): the sweep derives
+  // grace windows from the snapshot's `grace_buckets_json`, so a scan
+  // that carries `GraceBucketsUpdated` (or the first near-head scan
+  // after a catch-up stale-mark) must land the refreshed schedule
+  // first, or one tick of non-retractable grace reminders would use
+  // the obsolete buckets.
   await maybeRefreshProtocolConfig({
     env,
     chainId,
@@ -738,6 +798,26 @@ export async function runChainIndexerForChain(
     blockNumber: scanTo,
     headBlock: head,
   });
+
+  // #1213 PR 2 — the TIME-derived calendar rows (maturity T-7d / T-1d,
+  // grace entered): no event fires when a due date approaches, so a
+  // cron sweep over the maturity window derives them from D1 alone
+  // (covers illiquid loans too — no oracle involved). Fail-open INSIDE;
+  // rows are stamped with this scan's head so they sort as current in
+  // the chain-ordered feed.
+  //
+  // FULL-CATCH-UP GATE (Codex #1298 r1 P1, tightened r2): the sweep
+  // compares wall-clock windows against D1 state, so it runs ONLY when
+  // this scan reached the safe head (`scanTo === head`) — even a few
+  // unscanned blocks could hold the repay/extension that makes a
+  // reminder wrong, and calendar rows are never retracted. A
+  // chunk-capped busy scan just defers to the tick that catches up; the
+  // caught-up quiet path above sweeps every tick thereafter (reminders
+  // have hours-to-days of window, so a deferred tick costs nothing).
+  const cal =
+    scanTo === head
+      ? await sweepCalendarNotifications(env.DB, chainId, now, Number(scanTo))
+      : EMPTY_SWEEP;
 
   // #1245 measurement rail — one structured line per scan that touched
   // anything, so `wrangler tail | grep hint-telemetry` yields the
@@ -784,16 +864,22 @@ export async function runChainIndexerForChain(
     signedOfferUpdates,
     loanEntitlementUpdates: loanStats.entitlementUpdates,
     ownershipTransfers: loanStats.ownershipTransfers,
+    // #1213 PR 2 (Codex #1298 r3) — calendar rows minted at this scan's
+    // tail feed the `notification.created` push key; their loan ids join
+    // the hints below so client relevance scoping still applies.
+    calendarNotifications: cal.inserted,
     // RPC read-diet PR D — one central pass over the SAME decoded log
     // set every handler consumed; a handler can't drift out of a list
     // it doesn't maintain (unrecognised shapes force `truncated`).
     // Stub HEALS mutate rows without a corresponding log in THIS scan
     // (refreshStubOffers/refreshStubLoans), so a heal-carrying result
     // can't claim its id list is complete (Codex #1244 r1).
-    hints:
+    hints: mergeHintLoanIds(
       detailRefreshes > 0 || loanDetailRefreshes > 0
         ? { ...collectPushHints(allLogs), truncated: true }
         : collectPushHints(allLogs),
+      cal.loanIds,
+    ),
   };
 }
 
