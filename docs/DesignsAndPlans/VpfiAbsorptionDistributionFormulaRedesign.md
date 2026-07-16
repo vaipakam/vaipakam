@@ -873,13 +873,17 @@ function claimForUserEntries(user) -> (userTotal, treasuryTotal):
       // readyToTransfer = claimable (clean or forfeited) under existing gates
       // CRITICAL: never process a proper subset when multiple entries share d
       // in E with nextDay==d — transferSet is the full joint set.
-      (u, t) = processUserSideDay(user, side, d, transferSet)
+      // poolRemaining is outer-loop mutable (rev 12/13) — pass into helper
+      (u, t) = processUserSideDay(user, side, d, transferSet, poolRemaining)
       userTotal += u
       treasuryTotal += t
+      poolRemaining -= (u + t)   // REQUIRED debit before next day
+      // assert poolRemaining does not underflow (helper already min'd)
 
       daysUsed += 1
 
   // Transfer userTotal / treasuryTotal at facet layer (existing pattern)
+  // Facet must also enforce final transfer ≤ initial poolAvail (belt-and-braces)
   return (userTotal, treasuryTotal)
 ```
 
@@ -1046,10 +1050,13 @@ function sweepForfeitedByLoanId(loanId) -> (treasuryTotal, moreRemaining):
   for each (user, side) group G:
     // Walk days needed by G with same MAX_INTERACTION_CLAIM_DAYS budget
     // Same cum-ready gate + dayCapMode fail-closed as claim
-    // For ShareOfPool days: processUserSideDay(user, side, d, transferSet=G∩ready)
-    //   — G is forfeit-only transfer set for *routing*; remaining budget still
-    //     reads userSideDayPaid reduced by prior user claims on clean siblings
-    // For Legacy days: _processEntry per entry (today’s O(1) product)
+    // Day-branch MUST match claim (rev 13) — do NOT call whole-entry _processEntry
+    // on mixed windows (start < D* ≤ end): that would settle the entire remainder
+    // under legacy cumMin and skip ShareOfPool + loan-side/user-day paid maps.
+    // For each day d in chunk:
+    //   if postCutover(d): processUserSideDay(..., forfeit-only transferSet)
+    //   else if entry wholly pre-cutover OR d not postCutover: applyLegacyDay
+    //     (per-day legacy product only — never jump entire entry across D*)
     // Persist claimNextDay / paid map every walked day (same as claim)
   // Never transfer clean non-forfeited entries
   // moreRemaining = any forfeited entry in set still !processed after this call
@@ -1069,6 +1076,7 @@ function sweepForfeitedByLoanId(loanId) -> (treasuryTotal, moreRemaining):
 - **Post-cutover fail-closed (rev 6/11):** for `postCutover(d)`, claim / finalize / sweep **require** `dayCapMode[d] == ShareOfPool`. Unset (`0`) or wrong mode → **`DayCapModeUnsetPostCutover(d)`**. Preview **breaks** on the same condition.  
 - When **not** `postCutover(d)`: unset (`0`) still means Legacy product (migration window / unarmed).  
 - Entries **may** span cutover (`startDay < D* ≤ endDay`); no force-split tooling required for PR-2.  
+- **Mixed-window rule (rev 13):** claim **and** forfeit sweep must day-slice across `D*` — **forbidden** for sweep to call whole-entry legacy `_processEntry` when any unpaid day is `postCutover`.  
 - Quiet period / force-split are **optional ops hygiene**, not alternative specs.
 
 Deploy checklist still requires: all mirrors decode v2; Base sends only kind 5+ for `postCutover` days; **Base local finalize always writes `dayCapMode=ShareOfPool` for postCutover days** (Test 5/10); fail-closed is the backstop if that write is forgotten. Tests must cover **`shareOfPoolCutoverDay == 0`** (no fail-closed) vs armed.
@@ -1161,11 +1169,12 @@ Live path is **Base-orchestrated**: `RewardRemittanceFacet.remitRewardBudget` on
 
 | Option | Status | Rule |
 | --- | --- | --- |
-| **B (required)** | **Adopt** | Extend mirror→Base report (new kind or extra words) with aggregate `loanSideHeadroomLender` + `loanSideHeadroomBorrower` for day D (or per-loan commitments if needed later). Reporter auth unchanged. Base `chainRewardBudgetForDay` uses `min(uncappedSlice, reportedHeadroom)`. |
+| **B (required)** | **Adopt** | Mirror→Base report carries **per-loan (or per-entry) headroom commitments** for day D on each side — not only aggregates. Base `chainRewardBudgetForDay` uses `min(uncappedSlice, Σ commitments)`. After remit, Base (or mirror via ack) increments **`loanSideRewardRemitted[loanId][side]`** by the **attributed** amount. |
+| **B-attribution** | **Required with B** | If day budget is truncated (uncappedSlice or global cap < Σ commitments), attribute pro-rata by commitment weight (or deterministic loanId order) so each `remitted_L` is unambiguous. **Forbidden:** aggregate-only headroom with no attribution rule. |
 | **A** | **Rejected** Phase-1 | Mirror pull of Base pool without new message + Base debit handler. |
-| **Forbidden** | — | Invent headroom from numeraire-only v1 reports. |
+| **Forbidden** | — | Invent headroom from numeraire-only v1 reports; aggregate headroom without remitted_L attribution. |
 
-PR-2/PR-5c must ship report extension **B** before joint cutover uses loan-side remittance bounds on mirrors.
+PR-2/PR-5c must ship report extension **B + attribution** before joint cutover uses loan-side remittance bounds on mirrors.
 
 #### Migration from ETH cap / dual pipe / storage
 
@@ -1202,7 +1211,7 @@ Absolute share caps are **hostile on thin books**: with 1–5 participants, ever
 10. Cap snapshot immutability after finalize; zero global interest → raw 0.  
 11. **Dual pipe + preview parity (incl. staggered forfeit):** post-cutover, non-zero legacy window counters do not add window payout on ShareOfPool days. Entry **preview** equals claim **user** total for the same first-chunk window: multi-entry joint day (combined raw > C), partial `userSideDayPaidVpfi` already consumed, **and** forfeit-before-clean staggered cursors (forfeit `nextDay=5`, clean `nextDay=10`, `C` binds) — preview worklist must include forfeit so day walk matches claim; forfeit slices omitted only from `userTotal` (must not overstate).  
 12. **Messenger:** kind 5 size 6 words accepted; kind 2 still decodes as legacy; wrong size reverts; ShareOfPool sets `dayCapThreshold18=max`.  
-13. **Pro-rata dust:** `Σ slices == budget` with dust-to-largest; fuzz `paid ≤ C`.  
+13. **Pro-rata dust (rev 12/13):** `Σ slices ≤ budget` and `∀e slices[e] ≤ cEff[e]`; capacity-bounded dust may leave unallocated remainder; fuzz `paid ≤ C`.  
 14. **Budget exhaustion progress:** after `paid == C`, further entries covering that day advance `claimNextDay` with 0 slice and eventually `processed`.  
 15. **Cum-ready gate:** day `d` finalized (`knownGlobalSet[d]`) but `cumCursor < d` (e.g. cursor artificially held back / mid-`MAX_CUM_ADVANCE` catch-up) → claim pays 0 for that day, **`claimNextDay` unchanged**, entry not `processed`; after `advanceCum*Through` catches up, day is still fully claimable (no permanent skip, no underflow).  
 16. **Preview chunk bound:** on-chain `previewForUserEntries` walks ≤ `MAX_INTERACTION_CLAIM_DAYS` unpaid days/side; UI may show “more pending” when unpaid window is longer (same as multi-call claim).  
@@ -1414,10 +1423,11 @@ Borrower T4 Full, lender HoldOnly T4: LIF **13.20**, yield fee **~1.25**, absorb
 | A0 | Direct-reduction only | Keep as hold rail |
 | A1 | Hybrid asset fees | Adopt |
 | A2 | Market TWAP conversion | Market-era only |
-| A3 | VPFI utility schedule (ETH·day) | Adopt primary absorption |
-| A3′ | **Numeraire-only fee-band tariff** (no ETH volume) | Viable alternative; reduces ETH-unit optics further; deferred if volume×duration preferred for symmetry with interest·time rewards |
+| A3 (legacy ETH·day) | VPFI utility schedule `k × ETH·day` | **Retired for new Full (rev 8+)** — do not wire `setRecycleTariffKPer1e18EthDay` for Phase-1 absorption |
+| A3 (rev 8 freeze) | **LIF·year tariff** `C* = baseLifListNumeraire × tYears × K` | **Adopt primary absorption** |
+| A3′ | Other numeraire-band variants | Superseded by LIF·year K for v1 |
 | A4 | Custody+rebate new loans | Retire Phase-1 new loans |
-| A1+A3 | Hybrid + tariff | **Recommended** |
+| A1+A3 (LIF·year) | Hybrid + LIF·year tariff | **Recommended** |
 | **A1-only launch slice** | Hold hybrid LIF + E-1; **no Full tariff** | **Rejected as launch plan** (owner C3, 2026-07-16) — ship Full package with HoldOnly (PR-4→PR-5). Weaker absorption if used; not Phase-1.0 |
 | D0 | 500 VPFI/ETH cap | Replace |
 | D0′ | Keep ETH cap but set disabled | Worse legally; reject |
@@ -1545,9 +1555,15 @@ See Parameter Table storage layout. Migration: existing loans `mode=None` or inf
 
 **Accepted launch debt:** tariff credits bucket while `dailyPool = scheduleFloor` only — absorption without distribution coupling until PR-3 stack. Document in release notes.
 
-**Feature flags:** `feeEntitlementEnabled` gates Full only; hybrid HoldOnly always on when this design ships. **Mainnet default: Enabled** (owner 2026-07-16, C1) — runtime disable remains available as a kill switch.
+**Feature flags (rev 13):**
 
-**Package ship order (owner 2026-07-16, C3):** ship **Full package together** — HoldOnly hybrid (PR-4) then Full tariff (PR-5 stack). **Not** A1-only Phase-1.0; the risk-reduced HoldOnly-only slice is rejected as the launch plan.
+| Flag | Rule |
+| --- | --- |
+| `feeEntitlementEnabled` | Gates **Full** tariff path. Owner C1 wants Enabled on mainnet — **but only when PR-5c loan-side caps are live** (or rewards are dark). |
+| **Full enablement gate** | **Forbidden** to set `feeEntitlementEnabled=true` in production while rewards use legacy #1008 without loan-side `½×C*×0.98`. Worked wash case: legacy rewards can exceed absorbed VPFI. Order: PR-5c (or rewards-dark) **before** Full default-on. |
+| HoldOnly hybrid | Always on when hybrid LIF ships (PR-4); independent of Full flag. |
+
+Runtime disable remains a kill switch. **Package ship order (C3):** HoldOnly (PR-4) then Full (PR-5b) **with** loan-side cap (PR-5c) before Full is user-visible/Enabled.
 
 ---
 
@@ -1769,6 +1785,16 @@ PR plan assumes interaction rewards remain enabled only if: claim-on-close paths
 
 ---
 
+### Rev 13 changelog (Codex r5 design-doc findings)
+
+- **Canonical claim SM** debits `poolRemaining` after each `processUserSideDay`.  
+- **Remittance B requires per-loan commitments + attribution** of `remitted_L`.  
+- **Test 13 dust** asserts `Σ ≤ budget` (not `==`).  
+- **Stale F4 feed-failure comment** aligned with rev-12 cStar rules.  
+- **Alternatives A3 row:** ETH·day retired; LIF·year is adopted A3.  
+- **Sweep mixed windows:** day-branch only — no whole-entry legacy `_processEntry` across `D*`.  
+- **Full enablement gated on PR-5c** (or rewards-dark) before `feeEntitlementEnabled=true`.
+
 ### Rev 12 changelog (Codex r4 design-doc findings)
 
 - **Outer multi-day loop debits `poolRemaining`** after each day.  
@@ -1871,4 +1897,4 @@ PR plan assumes interaction rewards remain enabled only if: claim-on-close paths
 
 ---
 
-*End of design document (rev 12).*
+*End of design document (rev 13).*
