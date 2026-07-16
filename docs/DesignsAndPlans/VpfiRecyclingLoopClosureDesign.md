@@ -100,11 +100,20 @@ they are citable from specs and any future bounded counsel review:
    any legal conclusion."* The precedent is therefore: a rewards program
    with exactly this consumptive/rebate fact pattern, described to the
    staff in exactly these terms, drew no-action relief. That fact pattern
-   is, almost verbatim, the Vaipakam shape: interaction rewards earned by
-   own activity, whose in-platform utility is fee-discount standing. It is
-   the single closest precedent for the recycling loop and should be cited
-   alongside 33-11412 in any legal-posture section — with this
-   counsel-letter-vs-staff-response distinction preserved wherever quoted.
+   **partially maps** to the Vaipakam shape — rewards earned by own
+   activity whose in-platform utility is fee-discount standing — and the
+   material differences must travel with the citation: Fuse's rewards were
+   for energy/grid-support behaviours, not financial/lending activity, and
+   Fuse represented that it does not pass utility payments through to
+   consumers, while this repo's own research (#694) continues to treat
+   foreseeable activity rewards on a lending platform as a
+   counsel-relevant residual. Fuse therefore supports the
+   **consumptive-rebate characterization** of rewards-redeemable-for-fee-
+   discounts — it is a partial analogy, never clearance for a lending
+   rewards surface. It remains the closest external precedent and should
+   be cited alongside 33-11412 in any legal-posture section — with both
+   the counsel-letter-vs-staff-response distinction and this
+   partial-analogy scope preserved wherever quoted.
 2. **SEC Corp Fin statement on protocol staking (2025-05-29)** — protocol
    staking is non-securities where the activity is "administrative or
    ministerial," not entrepreneurial. Not directly applicable (VPFI is not
@@ -202,15 +211,25 @@ auto-staking or compounding.
   raw/wallet delivery (updated in the same PR), and the delivery selector
   defaults conservatively so any other contract caller integrating today
   keeps its observed raw-balance behaviour. Tests cover both wrappers.
-- Claimants necessarily have vaults (rewards require loans, loans require
-  vaults); if a vault is somehow absent, fall back to wallet delivery
-  rather than creating one inside the claim path.
+- **Delivery must never reduce claim availability.** The claim path
+  resolves the claimant's vault **read-only** (the existing vault mapping)
+  — it never routes through `getOrCreateUserVault`, which both creates
+  vaults and reverts `VaultUpgradeRequired` for vaults below
+  `mandatoryVaultVersion`. If the vault is absent **or** gated by a
+  mandatory upgrade, delivery falls back to wallet/raw transfer (exactly
+  today's behaviour) instead of blocking the claim; a test covers the
+  below-mandatory-version claimant.
 - Sanctions posture unchanged: the claim entry point keeps its existing
   tier gating; delivery venue does not alter it.
 - Forfeit routing (`toTreasury`) is untouched.
 - Mirror chains: identical change; the vault system is per-chain already.
-- Emit `RewardDeliveredToVault(user, amount, dayId)` per vault-delivered
-  claim — the attribution anchor RL-2 needs.
+- Emit `RewardDeliveredToVault(user, amount, claimDayId)` per
+  vault-delivered claim, stamped with the **claim day** — the day the
+  tokens actually leave protocol custody — never one of the underlying
+  finalized reward days. A claim spanning many reward days emits one
+  aggregate event on its claim day; no per-reward-day split is emitted or
+  needed, because RL-2 defines **both** sides of its ratio on the same
+  claim-day basis (see RL-2's day-basis rule).
 
 **Tests:** claim credits tracked vault balance + tier rollup stamped at
 post-mutation balance; wallet opt-out honored; dust-clamp not triggered;
@@ -228,22 +247,38 @@ Add to the transparency dashboard, per day and cumulative:
 loopClosureRatio[D] = (vaultRetainedRewards[D] + absorbed[D]) / distributed[D]
 ```
 
+**Day basis (pinned):** both sides of the ratio are **claim-day based** —
+`distributed[D]` is the VPFI actually paid out by claims on day `D` (the
+day tokens leave protocol custody), and vault deliveries are attributed to
+the same claim day via RL-1's `RewardDeliveredToVault(user, amount,
+claimDayId)` event. A claim spanning many finalized reward days therefore
+lands entirely on its claim day on both sides; the underlying reward days
+are deliberately not re-split. This makes the dashboard deterministic —
+every indexer reading the same events reports the same number.
+
 **Attribution rule (pinned — reward VPFI is fungible inside a vault, so
 "still vaulted" is not observable from balances alone).** The indexer
-derives retention from the RL-1 `RewardDeliveredToVault` events plus vault
-balance, under one documented convention:
+maintains a per-user **reward-retention ledger**, driven by events:
 
 ```
-vaultRetained[u] = min(trackedVaultVpfi[u], cumRewardsDeliveredToVault[u])
-vaultRetainedRewards[D] = Σ_u vaultRetained[u] at day-D close
+on RewardDeliveredToVault(u, amount):    rewardRetained[u] += amount
+on ANY vault VPFI debit for u            rewardRetained[u] -=
+   (withdrawal, tariff, fee, perk spend):    min(debit, rewardRetained[u])
+on non-reward vault VPFI deposits:       no change (never increases it)
+
+vaultRetainedRewards[D] = Σ_u rewardRetained[u] at day-D close
 ```
 
-i.e. withdrawals are deemed to spend reward-delivered VPFI **first**, so the
-metric is a conservative lower bound and can never overstate loop closure;
-every indexer computing from the same events and balances reports the same
-number. Per-day values are point-in-time snapshots at day close (never
-summed across days — cumulative views recompute from the same rule, which
-also prevents double-counting a balance that persists across day closes).
+Debits spend reward-delivered VPFI **first**, and later personal deposits
+can never re-inflate the ledger — so a user who withdraws their rewards and
+later re-funds the vault with non-reward VPFI shows zero retained rewards
+(a naive `min(balance, cumDelivered)` clamp would falsely report full
+retention in that case). `rewardRetained[u] ≤ trackedVaultVpfi[u]` holds by
+construction, the metric is a conservative lower bound, and it can never
+overstate loop closure. Per-day values are point-in-time snapshots at day
+close (never summed across days — cumulative views recompute from the same
+ledger, which also prevents double-counting a balance that persists across
+day closes).
 
 **Zero-distribution convention:** on days with `distributed[D] == 0` (day 0
 / non-emitting days, zero-demand days), the per-day ratio is reported as
@@ -274,9 +309,13 @@ bucket credit; recycled-funded share = commitment release).
   deliberately chose "released only by forfeit — never by time."
 - **If adopted:** prominent UX (claim-center countdown, notification
   pre-expiry via the existing paid-push channel), spec edit to the
-  governor's commitment rules, and the horizon starts only at loan
-  terminal + full claimability (never while a claim is blocked by
-  missing finalization/broadcast).
+  governor's commitment rules, and the horizon runs **per reward entry
+  from that entry's first full claimability** — for most entries that is
+  the loan's terminal event, but an entry that becomes claimable earlier
+  (e.g. a lender entry closed/re-anchored by a position transfer) starts
+  its horizon at that earlier moment, so the liability tail is genuinely
+  bounded from first claimability. The clock never runs while a claim is
+  blocked by missing finalization/broadcast.
 
 *(Historical note: this delta was drafted as an owner decision — rather
 than folded in — because it amends a ratified sentence in the governor doc.
@@ -393,7 +432,7 @@ Mapped onto #1294's PR plan (which this design does not renumber):
 | --- | --- | --- | --- |
 | **RL-1 PR** | Claim-to-vault delivery + opt-out + tests | None (independent of D1/governor; touches `InteractionRewardsFacet` claim tail only) | Can ship **first** — immediate loop value even before the governor exists, since it feeds the live tier system |
 | **RL-2** | Indexer/dashboard metric | #1218 metrics card | Rides the same events |
-| **RL-3** | Claim-horizon sweep (if ratified) | Governor PR-3 stack (commitment model) | Owner decision first; spec edit to governor §3.1 |
+| **RL-3** | Claim-horizon sweep (**RATIFIED**, §10.2) | Governor PR-3 stack (commitment model) | Ships the 365-day per-entry sweep + the governor §3.1 superseding note |
 | **RL-4** | Allocation register (dormant defaults) | Governor PR-3b | Config plumbing in the #1217 knob pattern |
 | **RL-5** | Sequencing: pull PR-7 forward; E-2 spend-gated perks alongside PR-5b; schedule #1219 legal glance | — | Project-board sequencing, not new code design |
 | **RL-6** | Evidence pack + copy checklist | None | Docs-only, immediate |
@@ -411,8 +450,8 @@ ratified), §9 (allocation register; loop-closure metric), plus
 2. **RL-3 claim horizon** — **RATIFIED: adopt** the 365-day post-terminal
    horizon with sweep-to-bucket, amending the governor's "commitments never
    expire by time" sentence, with the UX safeguards listed in §6 (claim-center
-   countdown, pre-expiry notification, horizon starts only at loan terminal +
-   full claimability). The governor doc §3.1 gains a superseding note in the
+   countdown, pre-expiry notification, horizon per entry from first full
+   claimability). The governor doc §3.1 gains a superseding note in the
    RL-3 implementation PR.
 3. **RL-4 allocation register** — **RATIFIED: adopt** at Phase C′ with
    dormant defaults (claims-first structural; residual split
