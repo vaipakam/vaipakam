@@ -63,11 +63,21 @@ export function NotificationBell() {
   const { data } = useNotifications();
   const [open, setOpen] = useState(false);
 
+  // A session snapshot of the cursor as it was when the panel opened, so
+  // the "new" dots stay visible after opening advances the real cursor.
+  const seenAtOpen = useRef<SeenCursor | null>(null);
+
   // The persisted last-seen cursor, re-derived whenever the wallet/chain
   // identity changes (a switch must not leak another wallet's read-state).
+  // The switch also CLOSES the panel and drops the open-time snapshot
+  // (Codex #1295 r2): otherwise the mark-read effect below would treat the
+  // new wallet's feed as an already-open panel and clear its badge without
+  // the user ever opening that inbox.
   const [lastSeen, setLastSeen] = useState<SeenCursor | null>(null);
   useEffect(() => {
     setLastSeen(address ? loadLastSeen(readChain.chainId, address) : null);
+    setOpen(false);
+    seenAtOpen.current = null;
   }, [readChain.chainId, address]);
 
   const rows = data?.notifications ?? [];
@@ -77,10 +87,6 @@ export function NotificationBell() {
     () => rows.filter((r) => isUnread(r, lastSeen)).length,
     [rows, lastSeen],
   );
-
-  // A session snapshot of the cursor as it was when the panel opened, so
-  // the "new" dots stay visible after opening advances the real cursor.
-  const seenAtOpen = useRef<SeenCursor | null>(null);
 
   const markAllRead = useCallback(() => {
     if (!address) return;
@@ -207,10 +213,10 @@ function NotificationRow({
 }) {
   const Icon = KIND_ICON[row.kind] ?? Bell;
   const title = copy.notifications.line[row.kind] ?? copy.notifications.line.generic;
-  const sub =
-    row.loanId != null
-      ? copy.notifications.loanRef(row.loanId)
-      : copy.notifications.noLoanRef;
+  // Only a loan-linked row is tappable, so only IT gets the "tap to view"
+  // secondary line; a static (no-loanId) row shows no sub rather than a
+  // misleading tap prompt with nothing to open (Codex #1295 r2).
+  const sub = row.loanId != null ? copy.notifications.loanRef(row.loanId) : null;
 
   const body = (
     <>
@@ -219,7 +225,7 @@ function NotificationRow({
       </span>
       <span className="notif-row-text">
         <span className="notif-row-title">{title}</span>
-        <span className="notif-row-sub">{sub}</span>
+        {sub ? <span className="notif-row-sub">{sub}</span> : null}
       </span>
       {unread ? <span className="notif-row-dot" aria-hidden /> : null}
     </>

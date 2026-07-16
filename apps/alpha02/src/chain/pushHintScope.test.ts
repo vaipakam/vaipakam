@@ -23,6 +23,18 @@ describe('scopeInvalidationRoots', () => {
     expect(out.every((r) => !OWN_SCOPED_ROOTS.has(r))).toBe(true);
   });
 
+  it('scopes the notification feed out of an irrelevant frame but keeps it when relevant (#1213)', () => {
+    // The bell's `notifications` root is per-wallet; a foreign loan frame
+    // never adds a row for this wallet, so it must be dropped when
+    // irrelevant and refetched when the wallet is a party (Codex #1295 r2).
+    expect(OWN_SCOPED_ROOTS.has('notifications')).toBe(true);
+    const roots = ['myLoans', 'notifications', 'deskTape'];
+    expect(scopeInvalidationRoots({ roots, hints: clean, ...CTX })).toEqual(['deskTape']);
+    expect(
+      scopeInvalidationRoots({ roots, hints: { ...clean, loanIds: [16] }, ...CTX }),
+    ).toEqual(roots);
+  });
+
   it('keeps everything when the frame is relevant (id / causative offer / party)', () => {
     for (const hints of [
       { ...clean, loanIds: [16] },

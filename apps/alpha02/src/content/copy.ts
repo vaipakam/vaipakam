@@ -214,9 +214,8 @@ export const copy = {
       // Fallback for any future kind the client doesn't know yet.
       generic: 'There’s an update on your loan.',
     } as Record<string, string>,
-    // Secondary line — which loan, and a nudge to open it.
+    // Secondary line — shown only for a loan-linked (tappable) row.
     loanRef: (loanId: number) => `Loan #${loanId} · tap to view`,
-    noLoanRef: 'Tap to view',
     unreadBadgeTitle: (n: number) =>
       n === 1 ? '1 unread notification' : `${n} unread notifications`,
   },

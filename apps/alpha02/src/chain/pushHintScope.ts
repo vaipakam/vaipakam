@@ -29,6 +29,12 @@ export const OWN_SCOPED_ROOTS: ReadonlySet<string> = new Set([
   'myOffers',
   'claimables',
   'vaultAssets',
+  // The in-app notification feed is `GET /notifications/:addr` — strictly
+  // this wallet's rows — so a loan frame that doesn't involve the wallet
+  // never adds one and must not refetch it (#1213, Codex #1295 r2). The
+  // relevance rule keeps it refetching when the wallet IS a party (own
+  // loan id, or a causative link naming the wallet on a fresh loan).
+  'notifications',
 ]);
 
 export interface FrameHints {
