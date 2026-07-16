@@ -38,6 +38,7 @@ import { LiveChainSync } from '../chain/LiveChainSync';
 import { IndexerPushSync } from '../chain/IndexerPushSync';
 import { ReceiptSyncListener } from '../chain/ReceiptSyncListener';
 import { ConnectButton } from './ConnectButton';
+import { NotificationBell } from './NotificationBell';
 import { EmptyState } from './EmptyState';
 import { DiagnosticsDrawer } from './DiagnosticsDrawer';
 import { NetworkBanner } from './NetworkBanner';
@@ -216,6 +217,10 @@ export function AppShell() {
             <span className="net-chip-name">{walletChain.name}</span>
           </span>
         ) : null}
+        {/* In-app inbox (#1213) — the bell renders only for a connected
+            wallet (it has no per-wallet feed otherwise), sitting just
+            left of the wallet control. */}
+        <NotificationBell />
         <ConnectButton />
       </header>
 

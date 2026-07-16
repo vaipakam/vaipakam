@@ -524,6 +524,62 @@ export function fetchActivity(
   return getJson<ActivityPage>(`/activity?${params}`);
 }
 
+// ---------------------------------------------------------------------------
+// In-app notification center (#1213 / E-11) — GET /notifications/:addr
+// ---------------------------------------------------------------------------
+
+/** The notification taxonomy the worker materializes (see
+ *  apps/indexer/src/notifications.ts `NOTIF_KINDS`). The client renders
+ *  copy + icon from `kind`; an unknown future kind renders a generic row. */
+export type NotifKind =
+  | 'loan_matched'
+  | 'partial_repay'
+  | 'loan_repaid'
+  | 'loan_defaulted'
+  | 'internal_matched';
+
+/** One inbox row as `GET /notifications/:addr` serves it. The chain-order
+ *  key `(blockNumber, logIndex)` is what the feed sorts + paginates by AND
+ *  what the client's per-wallet last-seen cursor compares against — NOT
+ *  `createdAt`, which is a best-effort display timestamp (wall-clock
+ *  fallback on a mid-catch-up read failure; see the worker's r5 note). */
+export interface IndexedNotification {
+  id: number;
+  kind: string;
+  loanId: number | null;
+  offerId: number | null;
+  eventKind: string | null;
+  data: Record<string, unknown> | null;
+  createdAt: number;
+  blockNumber: number | null;
+  logIndex: number | null;
+}
+
+export interface NotificationsPage {
+  chainId: number;
+  address: string;
+  notifications: IndexedNotification[];
+  nextBefore: string | null;
+}
+
+/** Fetch a wallet's inbox page, newest-first by chain order. `before` is
+ *  the opaque `block:logIndex:id` keyset cursor the previous page returned
+ *  as `nextBefore`. Returns `null` on any error/timeout/unset origin (the
+ *  indexer-is-a-cache contract) — the bell degrades to a quiet, honest
+ *  "no unread" affordance rather than a fake state. */
+export function fetchNotifications(
+  chainId: number,
+  addr: string,
+  opts: { limit?: number; before?: string } = {},
+): Promise<NotificationsPage | null> {
+  const params = new URLSearchParams({ chainId: String(chainId) });
+  if (opts.limit) params.set('limit', String(opts.limit));
+  if (opts.before) params.set('before', opts.before);
+  return getJson<NotificationsPage>(
+    `/notifications/${addr.toLowerCase()}?${params}`,
+  );
+}
+
 // (The /claimables endpoint client was removed with #988: claimables
 // are on-chain-authoritative now — see data/claimables.ts.)
 

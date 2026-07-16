@@ -189,6 +189,36 @@ export const copy = {
     pushButton: 'Open the Push channel',
     loanNudge: 'Want a Telegram warning if this loan gets risky? Set up alerts in Settings.',
   },
+  notifications: {
+    // The in-app inbox (#1213). Free, wallet-native — the same events the
+    // paid Telegram/Push channels deliver, shown right here without any
+    // setup. Naive-user wording: outcomes, not event names.
+    bellLabel: 'Notifications',
+    title: 'Notifications',
+    // Shown while the first page is still loading.
+    loading: 'Loading your notifications…',
+    // Shown when a wallet is connected but the inbox is empty.
+    empty: 'Nothing yet. Updates about your loans show up here.',
+    // Indexer unavailable — honest, matches the app-wide "cache not oracle"
+    // posture (never a fake empty).
+    unavailable: 'Couldn’t load your notifications just now. They’ll be here when the connection is back.',
+    connectFirst: 'Connect your wallet to see updates about your loans.',
+    // The row's headline, by outcome kind. Each row deep-links to the
+    // position, which re-verifies the exact state on chain.
+    line: {
+      loan_matched: 'Your loan is now active.',
+      partial_repay: 'A repayment came in on your loan.',
+      loan_repaid: 'A loan was fully repaid — see what you can claim.',
+      loan_defaulted: 'A loan defaulted — see what you can claim.',
+      internal_matched: 'A loan of yours closed by matching — see what you can claim.',
+      // Fallback for any future kind the client doesn't know yet.
+      generic: 'There’s an update on your loan.',
+    } as Record<string, string>,
+    // Secondary line — shown only for a loan-linked (tappable) row.
+    loanRef: (loanId: number) => `Loan #${loanId} · tap to view`,
+    unreadBadgeTitle: (n: number) =>
+      n === 1 ? '1 unread notification' : `${n} unread notifications`,
+  },
   errorBoundary: {
     title: 'Something went wrong on this page',
     body:

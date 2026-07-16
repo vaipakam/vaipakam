@@ -129,6 +129,11 @@ export const KEY_MAP: Record<string, string[]> = {
     // own receipt, so without this the maker's Vault page waits out
     // the 180s net (Codex #1228 r4).
     'vaultAssets',
+    // A LoanInitiated materializes a `loan_matched` inbox row for both
+    // parties (#1213); the bell's feed is signal-stretched, so the push
+    // rail must dirty it or the unread badge lags to the 180s net
+    // (Codex #1295 r1).
+    'notifications',
   ],
   // Loan status transitions (repaid / defaulted / …) restate history rows.
   // RPC read-diet PR 0: this key now ALSO fires on data-only entitlement
@@ -137,7 +142,17 @@ export const KEY_MAP: Record<string, string[]> = {
   // onto `vaultAssets`, because loan settlement/interest events are exactly
   // the event class that moves escrow into a party's vault (design §4.1.2:
   // the one existing key that corresponds to a vault-balance change).
-  'loan.updated': ['myLoans', 'loan', 'claimables', 'deskHistory', 'vaultAssets'],
+  // 'notifications' (#1213): repaid / defaulted / partial / swap-to-repay /
+  // preclose / offset / refinance / internal-match all materialize inbox
+  // rows and land as loan.updated — the bell must refetch or its badge lags.
+  'loan.updated': [
+    'myLoans',
+    'loan',
+    'claimables',
+    'deskHistory',
+    'vaultAssets',
+    'notifications',
+  ],
   // RPC read-diet PR 0 (design §4.0.1) — a position NFT changed hands
   // (secondary trade, claim-burn, borrower migration). Own-position lists,
   // claimables, and the detail-page owner/role gates are holder-keyed, so
@@ -194,6 +209,10 @@ export const STRETCHED_ROOTS: readonly string[] = [
   // returning tab filters fresh events against a stale id set.
   'activityParticipantIds',
   'vaultAssets',
+  // The in-app notification feed (#1213) — signalAware like the lists
+  // above; a returning tab's focus refetch must re-read it or the unread
+  // badge lags a frame missed while hidden.
+  'notifications',
   'vpfi',
   'interactionRewards',
   'standingApprovals',

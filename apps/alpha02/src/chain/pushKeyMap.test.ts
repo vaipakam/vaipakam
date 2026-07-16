@@ -51,6 +51,8 @@ describe('IndexerPushSync KEY_MAP (#1131 desk roots)', () => {
         'activityParticipantIds',
         'deskMarkets',
         'vaultAssets',
+        // #1213 — a LoanInitiated materializes a loan_matched inbox row.
+        'notifications',
       ],
       // RPC read-diet PR 0 — 'vaultAssets' rides loan.updated (settlement /
       // periodic-interest events are the event class that moves escrow into
@@ -63,6 +65,8 @@ describe('IndexerPushSync KEY_MAP (#1131 desk roots)', () => {
         'claimables',
         'deskHistory',
         'vaultAssets',
+        // #1213 — terminal / partial loan events materialize inbox rows.
+        'notifications',
       ],
       // RPC read-diet PR 0 (design §4.0.1) — a position NFT changed hands.
       // Holder-keyed roots must learn ownership flips from the push rail:
