@@ -249,7 +249,18 @@ export function loanIdsOf(
       .map(toLoanId)
       .filter((n): n is number => n != null && n > 0);
   }
-  const single = toLoanId(args.loanId);
+  // A few close-out events name the closed loan id differently than the
+  // usual `loanId` (Codex #1292 r6): `OffsetCompleted(originalLoanId, …)`
+  // and `LoanRefinanced(oldLoanId, newLoanId, …)` — the OLD loan is the
+  // one that closed (the new refinanced loan gets its own LoanInitiated →
+  // loan_matched row). Reading only `args.loanId` would drop both.
+  const raw =
+    eventName === 'OffsetCompleted'
+      ? args.originalLoanId
+      : eventName === 'LoanRefinanced'
+        ? args.oldLoanId
+        : args.loanId;
+  const single = toLoanId(raw);
   return single != null ? [single] : [];
 }
 

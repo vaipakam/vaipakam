@@ -1864,11 +1864,14 @@ function notificationToJson(row: NotificationRow) {
  * per-wallet surface whose freshness (a just-materialized row) drives
  * the bell badge, so a shared/edge cache must never replay a stale page.
  *
- * Ordered newest-first by CHAIN ORDER (block, log_index), NOT by
+ * Ordered newest-first by CHAIN ORDER (block, log_index, id), NOT by
  * `created_at` — that column is the block timestamp but falls back to
  * wall-clock on a mid-catch-up read failure, which would sort a
- * historical row as newest (Codex #1292 r4). Cursor `before` =
- * `"<blockNumber>:<logIndex>"`.
+ * historical row as newest (Codex #1292 r4). `id` is the unique
+ * tiebreaker: a single log can fan out multiple rows for one recipient
+ * (an `InternalMatchExecuted` leg fan-out shares block+log_index), so a
+ * `block:log`-only cursor could skip the rest of that group (Codex #1292
+ * r6). Cursor `before` = `"<blockNumber>:<logIndex>:<id>"`.
  */
 export async function handleNotifications(
   req: Request,
@@ -1890,13 +1893,16 @@ export async function handleNotifications(
   const where: string[] = ['chain_id = ?', 'recipient = ?'];
   const binds: (string | number)[] = [chainId, addr];
   if (beforeRaw) {
-    const m = beforeRaw.match(/^(\d+):(\d+)$/);
+    const m = beforeRaw.match(/^(\d+):(\d+):(\d+)$/);
     if (!m) return jsonResponse({ error: 'bad-before' }, 400);
-    // (block_number, log_index) < (?, ?) — the chain-order keyset the
-    // feed index (chain_id, recipient, block_number, log_index) serves.
-    where.push('(block_number < ? OR (block_number = ? AND log_index < ?))');
+    // (block_number, log_index, id) < (?, ?, ?) — the UNIQUE chain-order
+    // keyset (id tiebreaks a same-log fan-out so no row is skipped).
+    where.push(
+      '(block_number < ? OR (block_number = ? AND (log_index < ? OR (log_index = ? AND id < ?))))',
+    );
     const blk = Number.parseInt(m[1], 10);
-    binds.push(blk, blk, Number.parseInt(m[2], 10));
+    const li = Number.parseInt(m[2], 10);
+    binds.push(blk, blk, li, li, Number.parseInt(m[3], 10));
   }
   try {
     const rows = await env.DB.prepare(
@@ -1904,7 +1910,7 @@ export async function handleNotifications(
               created_at, block_number, log_index
          FROM notifications
         WHERE ${where.join(' AND ')}
-        ORDER BY block_number DESC, log_index DESC
+        ORDER BY block_number DESC, log_index DESC, id DESC
         LIMIT ?`,
     )
       .bind(...binds, limit)
@@ -1912,7 +1918,9 @@ export async function handleNotifications(
     const results = rows.results ?? [];
     const notifications = results.map(notificationToJson);
     const last = results.length === limit ? results[results.length - 1] : null;
-    const nextBefore = last ? `${last.block_number}:${last.log_index}` : null;
+    const nextBefore = last
+      ? `${last.block_number}:${last.log_index}:${last.id}`
+      : null;
     return jsonResponse(
       { chainId, address: addr, notifications, nextBefore },
       200,

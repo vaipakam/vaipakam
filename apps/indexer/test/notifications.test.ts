@@ -119,6 +119,31 @@ describe('planNotifications', () => {
     expect(rows).toHaveLength(1);
   });
 
+  it('reads the alt loan-id arg for offset / refinance close-outs (Codex #1292 r6)', () => {
+    // OffsetCompleted(originalLoanId, …) and LoanRefinanced(oldLoanId, …)
+    // name the closed loan differently than `loanId`.
+    const offset = planNotifications(
+      84532,
+      [{ eventName: 'OffsetCompleted', args: { originalLoanId: 7n }, blockNumber: 1n, logIndex: 0 }],
+      new Map([[7, parties(LENDER, BORROWER)]]),
+      new Map(),
+      1,
+    );
+    expect(offset.map((r) => r.loanId)).toEqual([7, 7]);
+    expect(offset.every((r) => r.kind === 'loan_repaid')).toBe(true);
+
+    const refi = planNotifications(
+      84532,
+      [{ eventName: 'LoanRefinanced', args: { oldLoanId: 9n, newLoanId: 10n }, blockNumber: 1n, logIndex: 0 }],
+      new Map([[9, parties(LENDER, BORROWER)]]),
+      new Map(),
+      1,
+    );
+    // The OLD (closed) loan gets the row; the new loan gets its own
+    // LoanInitiated → loan_matched.
+    expect(refi.map((r) => r.loanId)).toEqual([9, 9]);
+  });
+
   it('fans an internal-match close out to every leg (multi-loan event)', () => {
     // InternalMatchExecuted carries loanIdA/B/C; a two-way match sets C=0.
     const rows = planNotifications(

@@ -77,28 +77,30 @@ describe('GET /notifications/:addr', () => {
     expect(cacheControl).toBe('no-store');
   });
 
-  it('paginates with the (block:logIndex) cursor', async () => {
+  it('paginates with the (block:logIndex:id) cursor', async () => {
     const h = makeHarness();
     for (let i = 1; i <= 3; i++) h.seed(ME, 'loan_matched', i, i * 100);
     const page1 = await h.getFeed('&limit=2');
     expect(page1.body.notifications.map((n) => n.loanId)).toEqual([3, 2]);
-    expect(page1.body.nextBefore).toBe('200:0');
+    expect(page1.body.nextBefore).toMatch(/^200:0:\d+$/);
     const page2 = await h.getFeed(`&limit=2&before=${page1.body.nextBefore}`);
     expect(page2.body.notifications.map((n) => n.loanId)).toEqual([1]);
     expect(page2.body.nextBefore).toBeNull();
   });
 
-  it('breaks a same-block tie by log_index (keyset cursor, no repeats/skips)', async () => {
+  it('pages a SAME-(block,logIndex) fan-out without skipping (id tiebreak — Codex #1292 r6)', async () => {
     const h = makeHarness();
-    // Three rows in the SAME block — the cursor must page by log_index.
-    h.seed(ME, 'loan_matched', 1, 500, 0);
-    h.seed(ME, 'loan_matched', 2, 500, 1);
-    h.seed(ME, 'loan_matched', 3, 500, 2);
+    // Three rows sharing the SAME (block, log_index) — e.g. an
+    // InternalMatchExecuted leg fan-out. A block:log-only cursor would
+    // skip the rest of the group; the id tiebreak must page all three.
+    h.seed(ME, 'internal_matched', 1, 500, 7);
+    h.seed(ME, 'internal_matched', 2, 500, 7);
+    h.seed(ME, 'internal_matched', 3, 500, 7);
     const p1 = await h.getFeed('&limit=2');
-    expect(p1.body.notifications.map((n) => n.loanId)).toEqual([3, 2]); // logIdx desc
+    expect(p1.body.notifications).toHaveLength(2);
     const p2 = await h.getFeed(`&limit=2&before=${p1.body.nextBefore}`);
     const seen = [...p1.body.notifications, ...p2.body.notifications].map((n) => n.id);
-    expect(new Set(seen).size).toBe(3); // all three, once each
+    expect(new Set(seen).size).toBe(3); // all three, once each — none skipped
   });
 
   it('rejects a bad address and a malformed cursor', async () => {

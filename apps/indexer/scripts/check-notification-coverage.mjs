@@ -179,9 +179,17 @@ if (missing.length) {
   );
 }
 if (deadAllowlist.length) {
-  console.warn('⚠ NOTIF_DELIBERATELY_NOT_HANDLED has stale entries:\n');
-  for (const e of deadAllowlist) console.warn(`    ${e}`);
-  console.warn('');
+  // Hard failure (Codex #1292 r6): a stale allowlist entry — a typo /
+  // removed event, or an event that is BOTH mapped and allowlisted —
+  // makes the skip list contradictory, silently undermining the
+  // guardrail. Fail so the decision stays explicit and honest.
+  failed = true;
+  console.error('✗ NOTIF_DELIBERATELY_NOT_HANDLED has stale entries:\n');
+  for (const e of deadAllowlist) console.error(`    ${e}`);
+  console.error(
+    '\n  Remove the stale entry (or, if it was mapped, drop it from the\n' +
+      '  allowlist) so the coverage decision is unambiguous.\n',
+  );
 }
 if (!failed) {
   const mappedCount = [...stateChangeEvents].filter(([n]) => mapped.has(n)).length;
