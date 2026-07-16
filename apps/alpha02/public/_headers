@@ -52,3 +52,26 @@
 
 /assets/*
   Cache-Control: public, max-age=31536000, immutable
+
+# Wallet-gated, per-user surfaces — never index. Header-level noindex
+# so even a crawler that doesn't execute JS sees the policy (the SPA
+# fallback serves index.html for these paths; SeoMeta's
+# <meta name="robots"> only exists after hydration). Deliberately NOT
+# robots.txt-Disallowed: a Disallow blocks crawling but not reference-
+# only indexing of the URL — noindex requires the fetch to be seen.
+# Keep this list in sync with SeoMeta.tsx + generate-seo.mjs.
+
+/positions
+  X-Robots-Tag: noindex
+/positions/*
+  X-Robots-Tag: noindex
+/claims
+  X-Robots-Tag: noindex
+/vault
+  X-Robots-Tag: noindex
+/activity
+  X-Robots-Tag: noindex
+/settings
+  X-Robots-Tag: noindex
+/faucet
+  X-Robots-Tag: noindex

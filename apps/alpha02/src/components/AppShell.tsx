@@ -43,6 +43,7 @@ import { NotificationBell } from './NotificationBell';
 import { EmptyState } from './EmptyState';
 import { DiagnosticsDrawer } from './DiagnosticsDrawer';
 import { NetworkBanner } from './NetworkBanner';
+import { SeoMeta } from './SeoMeta';
 // UX2-008 — SanctionsBanner is the shell's ONLY eager Diamond-ABI
 // consumer (it reads the on-chain sanctions oracle). Loading it lazily
 // keeps the ~761 kB contract-ABI chunk off a DISCONNECTED first paint
@@ -193,6 +194,9 @@ export function AppShell() {
 
   return (
     <div className="shell">
+      {/* Head-tag maintenance: per-route title / description /
+          canonical / robots policy. Renders nothing. */}
+      <SeoMeta />
       {/* UX-031 — first focusable element: a keyboard user can jump the
           nav and land on the page content. Visually hidden until
           focused (see `.skip-link`). */}

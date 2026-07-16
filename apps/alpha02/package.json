@@ -10,6 +10,7 @@
   "scripts": {
     "dev": "vite",
     "typecheck": "tsc -b --noEmit",
+    "prebuild": "node scripts/generate-seo.mjs",
     "build": "tsc -b tsconfig.build.json && vite build",
     "preview": "vite preview",
     "deploy": "REQUIRE_INDEXER_ORIGIN=1 pnpm run build && wrangler deploy",
