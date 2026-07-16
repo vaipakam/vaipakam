@@ -351,6 +351,25 @@ Thin-market honesty rules apply.
 - If no alert backend is configured, the app states that alerts are unavailable
   and sends nothing.
 
+## Notifications
+
+- A connected wallet sees an in-app inbox: a header bell with an unread count
+  and a panel listing that wallet's newest loan updates. It is free and needs
+  no setup — the same lifecycle outcomes the optional external channels
+  deliver.
+- Each notification is phrased as an outcome (a loan matched, a repayment came
+  in, a loan was repaid or defaulted, a loan closed by matching) and links to
+  the affected position, where the exact state is re-confirmed on chain. The
+  inbox is a convenience view, never the authority for an action.
+- Whether a notification is read is tracked on the user's own device, per
+  wallet. Opening the inbox marks the shown updates as read; that state is not
+  stored on any server, so no one else can clear another wallet's unread
+  updates, and it persists across reloads.
+- The unread count is shown compactly and never regresses to re-surface updates
+  the user has already seen.
+- If the notification feed is briefly unavailable, the panel says so rather than
+  showing an empty inbox as if there were nothing to report.
+
 ## Support and Diagnostics
 
 - The support drawer shows network, chain connection health, market-data

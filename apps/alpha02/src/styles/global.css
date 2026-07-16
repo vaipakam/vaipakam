@@ -185,6 +185,174 @@ button {
   background: var(--ok);
 }
 
+/* In-app notification bell (#1213) — a topbar dropdown inbox. */
+.notif {
+  position: relative;
+  display: inline-flex;
+  flex-shrink: 0;
+}
+
+.notif-bell {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 38px;
+  height: 38px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-full);
+  background: var(--surface-raised);
+  color: var(--text-body);
+  cursor: pointer;
+}
+.notif-bell:hover {
+  background: var(--surface-hover);
+}
+.notif-bell svg {
+  width: 18px;
+  height: 18px;
+}
+
+/* Unread-count pill anchored to the bell's top-right. */
+.notif-badge {
+  position: absolute;
+  top: -4px;
+  right: -4px;
+  min-width: 17px;
+  height: 17px;
+  padding: 0 4px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: var(--radius-full);
+  background: var(--danger);
+  color: #fff;
+  font-size: 0.68rem;
+  font-weight: 700;
+  line-height: 1;
+}
+
+/* Full-viewport catcher so an outside click / tap light-dismisses. */
+.notif-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 45;
+  background: transparent;
+}
+
+.notif-panel {
+  position: absolute;
+  top: calc(100% + 8px);
+  right: 0;
+  z-index: 46;
+  width: min(360px, calc(100vw - 2 * var(--space-3)));
+  max-height: min(70vh, 520px);
+  display: flex;
+  flex-direction: column;
+  background: var(--surface-raised);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-pop);
+  overflow: hidden;
+}
+
+.notif-panel-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+  padding: var(--space-3);
+  border-bottom: 1px solid var(--border);
+}
+.notif-panel-title {
+  font-weight: 700;
+  color: var(--text-strong);
+}
+.notif-markread {
+  border: none;
+  background: none;
+  padding: 0;
+  color: var(--brand);
+  font-size: 0.8rem;
+  font-weight: 600;
+  cursor: pointer;
+}
+.notif-markread:hover {
+  text-decoration: underline;
+}
+
+.notif-list {
+  overflow-y: auto;
+}
+
+.notif-empty {
+  margin: 0;
+  padding: var(--space-4) var(--space-3);
+  color: var(--text-muted);
+  font-size: 0.9rem;
+  text-align: center;
+}
+
+.notif-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-3);
+  border-bottom: 1px solid var(--border);
+  color: var(--text-body);
+  text-decoration: none;
+}
+.notif-row:last-child {
+  border-bottom: none;
+}
+a.notif-row:hover {
+  background: var(--surface-hover);
+}
+.notif-row-static {
+  cursor: default;
+}
+.notif-row-unread {
+  background: var(--brand-soft);
+}
+a.notif-row-unread:hover {
+  background: var(--brand-soft);
+}
+
+.notif-row-icon {
+  display: inline-flex;
+  flex-shrink: 0;
+  color: var(--text-muted);
+}
+.notif-row-icon svg {
+  width: 18px;
+  height: 18px;
+}
+
+.notif-row-text {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+  flex: 1;
+}
+.notif-row-title {
+  font-size: 0.88rem;
+  font-weight: 600;
+  color: var(--text-strong);
+}
+.notif-row-sub {
+  font-size: 0.78rem;
+  color: var(--text-muted);
+}
+
+.notif-row-dot {
+  flex-shrink: 0;
+  width: 8px;
+  height: 8px;
+  border-radius: var(--radius-full);
+  background: var(--brand);
+}
+
 /* UX2-001 — the connected header must be STRUCTURALLY unable to widen
  * the page: every route at 390px scrolled ~71px sideways because the
  * brand cluster + network dot + wallet chip's intrinsic widths summed

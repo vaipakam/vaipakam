@@ -1129,6 +1129,47 @@ async function handler(req, res) {
       return loan ? json(200, loan) : json(404, { error: 'not found' });
     }
 
+    // GET /notifications/:addr — the in-app inbox feed (#1213). A small
+    // deterministic synthetic feed is enough for the frontend spec:
+    // read/unread is CLIENT-side, so the spec drives the whole flow
+    // (badge count → open → mark-read → deep-link) off these rows without
+    // any server read-state. Newest-first by chain order; a `before`
+    // cursor returns the empty second page (single-page fixture).
+    if (parts[0] === 'notifications' && parts[1]) {
+      const addr = parts[1].toLowerCase();
+      if (!/^0x[0-9a-f]{40}$/.test(addr)) {
+        return json(400, { error: 'bad-address' });
+      }
+      const before = url.searchParams.get('before');
+      const notifications = before
+        ? []
+        : [
+            {
+              id: 2,
+              kind: 'loan_repaid',
+              loanId: 2,
+              offerId: null,
+              eventKind: 'LoanRepaid',
+              data: null,
+              createdAt: 1_700_000_200,
+              blockNumber: 200,
+              logIndex: 1,
+            },
+            {
+              id: 1,
+              kind: 'loan_matched',
+              loanId: 1,
+              offerId: null,
+              eventKind: 'LoanInitiated',
+              data: null,
+              createdAt: 1_700_000_100,
+              blockNumber: 100,
+              logIndex: 0,
+            },
+          ];
+      return json(200, { chainId: CHAIN_ID, address: addr, notifications, nextBefore: null });
+    }
+
     // GET /activity — the Home feed degrades honestly on empty.
     if (parts[0] === 'activity') {
       return json(200, { chainId: CHAIN_ID, events: [], nextBefore: null });
