@@ -294,6 +294,32 @@ describe('configSnapshot', () => {
     expect(h.row()).toMatchObject({ sb: 100, gb: null });
   });
 
+  it('clears stored buckets when a CATCH-UP scan carries GraceBucketsUpdated (Codex #1298 r6)', async () => {
+    // The stale-mark path only zeroed updated_at; the later near-head
+    // retry no longer carries the event, so a transient grace failure
+    // there would COALESCE-resurrect the pre-change schedule as fresh.
+    // Clearing to NULL here keeps the sweep deferred until a successful
+    // read lands.
+    const h = refreshHarness();
+    h.db
+      .prepare(
+        `INSERT INTO protocol_config (chain_id, bundle_json, master_flags_json, grace_buckets_json, source_block, updated_at)
+         VALUES (84532, '[]', '[]', '[{"maxDurationDays":"0","graceSeconds":"3888000"}]', 50, ?)`,
+      )
+      .run(Math.floor(Date.now() / 1000));
+    await maybeRefreshProtocolConfig({
+      env: h.env,
+      chainId: 84532,
+      client: h.client,
+      diamond: DIAMOND,
+      scannedEventNames: ['GraceBucketsUpdated'],
+      blockNumber: 100n, // far behind…
+      headBlock: 1_000n, // …the head → stale-mark, no reads
+    });
+    expect(h.reads).toEqual([]);
+    expect(h.row()).toMatchObject({ ua: 0, gb: null });
+  });
+
   it('force-refreshes a populated row whose grace column is still NULL (Codex #1298 r3)', async () => {
     const h = refreshHarness();
     // Fresh pre-0039 row: updated_at is current, so the event/backstop

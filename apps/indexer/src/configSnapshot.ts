@@ -144,9 +144,21 @@ async function markStaleBelow(
   env: Env,
   chainId: number,
   belowBlock: bigint,
+  opts?: {
+    /** Codex #1298 r6 — the stale-marked scan saw `GraceBucketsUpdated`,
+     *  so the stored bucket JSON is known-obsolete. Clearing it to NULL
+     *  here (not just zeroing the stamp) matters because the later
+     *  near-head retry no longer carries the event: if ITS grace read
+     *  fails transiently, the upsert's COALESCE would resurrect the
+     *  pre-change schedule as current — while NULL keeps the sweep
+     *  deferred and the unpopulated-column force retrying. */
+    clearGrace?: boolean;
+  },
 ): Promise<void> {
   await env.DB.prepare(
-    `UPDATE protocol_config SET updated_at = 0
+    `UPDATE protocol_config SET updated_at = 0${
+      opts?.clearGrace ? ', grace_buckets_json = NULL' : ''
+    }
      WHERE chain_id = ? AND source_block < ?`,
   )
     .bind(chainId, Number(belowBlock))
@@ -200,7 +212,11 @@ export async function maybeRefreshProtocolConfig(opts: {
     // reaches head (Codex #1231 r2): stale-mark so clients refuse the
     // row now and the first near-head scan refreshes promptly.
     if (opts.headBlock - opts.blockNumber > NEAR_HEAD_BLOCKS) {
-      if (saw) await markStaleBelow(opts.env, opts.chainId, opts.blockNumber);
+      if (saw) {
+        await markStaleBelow(opts.env, opts.chainId, opts.blockNumber, {
+          clearGrace: sawGraceEvent,
+        });
+      }
       return;
     }
     const row = await opts.env.DB.prepare(
@@ -335,7 +351,11 @@ export async function maybeRefreshProtocolConfig(opts: {
     // chain, and (b) the next scan's backstop check retries promptly.
     if (saw) {
       try {
-        await markStaleBelow(opts.env, opts.chainId, opts.blockNumber);
+        // Same r6 rationale as the catch-up path: a refresh that failed
+        // ON a grace-change scan leaves known-obsolete buckets behind.
+        await markStaleBelow(opts.env, opts.chainId, opts.blockNumber, {
+          clearGrace: sawGraceEvent,
+        });
       } catch {
         /* stale-marking is best-effort */
       }

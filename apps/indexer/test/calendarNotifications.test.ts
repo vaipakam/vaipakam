@@ -400,13 +400,53 @@ describe('sweepCalendarNotifications (over the migrated schema)', () => {
     expect(straggler.map((r) => r.kind)).toEqual(['grace_entered', 'grace_entered']); // tick 2: served
   });
 
-  it('range-scans idx_loans_calendar_maturity — no full-set temp B-tree (Codex #1298 r4)', () => {
+  it('never suppresses a DIFFERENT loan sharing recipient + maturity (Codex #1298 r6 qualification bug)', async () => {
+    // Pre-r6 the probe's unqualified chain_id/loan_id resolved to
+    // notifications' OWN columns, so any stored row whose
+    // recipient/kind/maturity matched suppressed EVERY such loan.
+    const h = createSqliteD1(ALL_MIGRATIONS);
+    seedGraceConfig(h);
+    seedLoan(h, 1, NOW - 1 * DAY - 30 * DAY, 30); // in grace
+    seedLoan(h, 2, NOW - 1 * DAY - 30 * DAY, 30); // same parties, SAME maturity
+    await sweepCalendarNotifications(h.d1 as never, CHAIN, NOW, HEAD);
+    const byLoan = (id: number) => rowsInDb(h).filter((r) => r.loan_id === id);
+    expect(byLoan(1).map((r) => r.kind)).toEqual(['grace_entered', 'grace_entered']);
+    expect(byLoan(2).map((r) => r.kind)).toEqual(['grace_entered', 'grace_entered']);
+  });
+
+  it('re-selects a grace-stage loan for a NEW lender-position holder (Codex #1298 r6)', async () => {
+    const h = createSqliteD1(ALL_MIGRATIONS);
+    seedGraceConfig(h);
+    seedLoan(h, 11, NOW - 1 * DAY - 30 * DAY, 30); // in grace
+    await sweepCalendarNotifications(h.d1 as never, CHAIN, NOW, HEAD);
+    expect(rowsInDb(h)).toHaveLength(2); // both parties
+    // The lender position sells mid-grace — the claim follows the NFT,
+    // so the NEW holder must still learn a default may be near.
+    const NEW_LENDER = '0x00000000000000000000000000000000000000cc';
+    h.db
+      .prepare(`UPDATE loans SET lender_current_owner = ? WHERE loan_id = 11`)
+      .run(NEW_LENDER);
+    await sweepCalendarNotifications(h.d1 as never, CHAIN, NOW + 60, HEAD + 5);
+    const rows = rowsInDb(h);
+    expect(rows).toHaveLength(3);
+    expect(rows.filter((r) => r.recipient === NEW_LENDER).map((r) => r.kind)).toEqual([
+      'grace_entered',
+    ]);
+    // And once the new holder's key exists, the loan suppresses again.
+    await sweepCalendarNotifications(h.d1 as never, CHAIN, NOW + 120, HEAD + 10);
+    expect(rowsInDb(h)).toHaveLength(3);
+  });
+
+  it('range-scans idx_loans_calendar_maturity; dedup probes stay indexed lookups (Codex #1298 r4/r6)', () => {
     const h = createSqliteD1(ALL_MIGRATIONS);
     // EXPLAIN QUERY PLAN over the EXACT production SQL (default and
     // governance-bucket grace CASEs): migration 0040's partial
     // expression index must serve both the window filter and the
     // ORDER BY, or the every-tick sweep scales with the chain's whole
-    // active loan set instead of the due/grace window.
+    // active loan set instead of the due/grace window. The correlated
+    // suppression probes must SEARCH the unique dedup index — an
+    // unqualified outer column makes their RHS vary per `n` row and
+    // degrades them to full history scans (r6).
     for (const graceCase of [
       graceCaseSql(null),
       graceCaseSql([
@@ -416,11 +456,13 @@ describe('sweepCalendarNotifications (over the migrated schema)', () => {
     ]) {
       const plan = h.db
         .prepare(`EXPLAIN QUERY PLAN ${calendarWindowSql(graceCase)}`)
-        .all(CHAIN, NOW - 45 * DAY, NOW + 7 * DAY, NOW, NOW, NOW)
+        .all(CHAIN, NOW - 45 * DAY, NOW + 7 * DAY, NOW, NOW, NOW, NOW)
         .map((r) => String((r as { detail: string }).detail))
         .join(' | ');
       expect(plan).toContain('idx_loans_calendar_maturity');
       expect(plan).not.toContain('TEMP B-TREE');
+      expect(plan).toContain('idx_notifications_dedup');
+      expect(plan).not.toMatch(/SCAN n2?(\s|$|\|)/);
     }
   });
 });

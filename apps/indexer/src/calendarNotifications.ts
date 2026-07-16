@@ -290,36 +290,62 @@ export const EMPTY_SWEEP: CalendarSweepResult = { inserted: 0, loanIds: [] };
  * structurally.
  */
 export function calendarWindowSql(graceCase: string): string {
-  // The NOT EXISTS leg (Codex #1298 r5) drops loans whose CURRENT-stage
-  // milestone row already exists, so a saturated window can't spend the
-  // LIMIT on INSERT OR IGNORE no-ops tick after tick and starve the
-  // un-notified tail. The probe reconstructs the borrower-side dedup
-  // key (`chain:recipient:kind:loan:maturity` — the borrower row exists
-  // for EVERY milestone kind, and a milestone's rows insert in one
-  // transactional batch, so it is a faithful representative) for the
-  // most advanced kind due NOW: past maturity → grace_entered, within
-  // a day → maturity_1d, else maturity_7d. A stage crossing (T-1d,
-  // grace) changes the computed kind, so the loan re-enters the window
-  // exactly when it has something new to emit.
+  // The already-notified suppression legs (Codex #1298 r5, reworked r6)
+  // drop loans whose CURRENT-stage rows all exist, so a saturated window
+  // can't spend the LIMIT on INSERT OR IGNORE no-ops tick after tick and
+  // starve the un-notified tail. Each probe reconstructs a dedup key
+  // (`chain:recipient:kind:loan:maturity`) for the most advanced kind
+  // due NOW (past maturity → grace_entered, within a day → maturity_1d,
+  // else maturity_7d); a stage crossing changes the computed kind, so a
+  // loan re-enters the window exactly when it has something new to emit.
+  //
+  // Every outer-column reference inside the correlated subqueries MUST
+  // be `loans.`-qualified (Codex #1298 r6): notifications has its own
+  // `chain_id`/`loan_id` columns, and an unqualified name resolves to
+  // the INNER table — which both self-matches (any row's key trivially
+  // contains its own chain/loan segments, suppressing across loans that
+  // share recipient+maturity) and makes the RHS vary per `n` row,
+  // turning the unique dedup-index lookup into a full history scan.
+  //
+  // Two probes because the borrower key alone is not faithful for the
+  // grace stage (r6): the lender-position holder gets a grace row too,
+  // and a mid-grace lender transfer mints a NEW recipient key — so a
+  // grace-stage loan stays selectable until the CURRENT holder's key
+  // exists (the zero/absent-lender guard keeps burned sides, which can
+  // never be notified, from re-selecting the loan forever). Maturity
+  // stages are borrower-only, so the borrower key suffices there.
+  const maturity = `(loans.start_time + loans.duration_days * 86400)`;
+  const stageKind = `(CASE WHEN ${maturity} <= ? THEN 'grace_entered'
+                      WHEN ${maturity} - ? <= 86400 THEN 'maturity_1d'
+                      ELSE 'maturity_7d' END)`;
+  const borrowerRcpt = `LOWER(COALESCE(loans.borrower_current_owner, loans.borrower))`;
+  const lenderRcpt = `LOWER(COALESCE(loans.lender_current_owner, loans.lender))`;
   return `SELECT loan_id, lender, borrower, lender_current_owner,
                 borrower_current_owner, start_time, duration_days
            FROM loans
-          WHERE chain_id = ?
+          WHERE loans.chain_id = ?
             AND status = 'active'
             AND is_stub = 0 AND is_sale_vehicle = 0
             AND start_time > 0
-            AND (start_time + duration_days * 86400) BETWEEN ? AND ?
-            AND (start_time + duration_days * 86400 + ${graceCase}) > ?
-            AND NOT EXISTS (
-              SELECT 1 FROM notifications n
-              WHERE n.dedup_key = chain_id || ':' ||
-                LOWER(COALESCE(borrower_current_owner, borrower)) || ':' ||
-                (CASE WHEN (start_time + duration_days * 86400) <= ? THEN 'grace_entered'
-                      WHEN (start_time + duration_days * 86400) - ? <= 86400 THEN 'maturity_1d'
-                      ELSE 'maturity_7d' END) || ':' ||
-                loan_id || ':' || (start_time + duration_days * 86400)
+            AND ${maturity} BETWEEN ? AND ?
+            AND (${maturity} + ${graceCase}) > ?
+            AND (
+              NOT EXISTS (
+                SELECT 1 FROM notifications n
+                WHERE n.dedup_key = loans.chain_id || ':' || ${borrowerRcpt} || ':' ||
+                  ${stageKind} || ':' || loans.loan_id || ':' || ${maturity}
+              )
+              OR (
+                ${maturity} <= ?
+                AND ${lenderRcpt} <> '0x0000000000000000000000000000000000000000'
+                AND NOT EXISTS (
+                  SELECT 1 FROM notifications n2
+                  WHERE n2.dedup_key = loans.chain_id || ':' || ${lenderRcpt} ||
+                    ':grace_entered:' || loans.loan_id || ':' || ${maturity}
+                )
+              )
             )
-          ORDER BY (start_time + duration_days * 86400) ASC
+          ORDER BY ${maturity} ASC
           LIMIT ${SWEEP_LIMIT}`;
 }
 
@@ -400,11 +426,13 @@ export async function sweepCalendarNotifications(
         nowSec - maxGraceSeconds(graceBuckets),
         nowSec + 7 * DAY,
         nowSec,
-        // NOT EXISTS dedup-probe binds (r5): the two `now` comparisons
-        // that pick the current-stage kind. The key's chain/loan/maturity
+        // Suppression-probe binds (r5/r6): the two `now` comparisons
+        // that pick the current-stage kind, then the grace-stage check
+        // guarding the lender-key leg. The keys' chain/loan/maturity
         // segments concat the row's own INTEGER columns — a BOUND number
         // can arrive as REAL (driver-dependent) and render '84532.0',
         // silently missing every stored key.
+        nowSec,
         nowSec,
         nowSec,
       )
