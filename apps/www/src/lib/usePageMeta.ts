@@ -54,6 +54,10 @@ import { useTranslation } from 'react-i18next';
  *  builds (otherwise staging URLs leak into Google's index). */
 const CANONICAL_ORIGIN = 'https://vaipakam.com';
 
+/** Social-share image served from public/ — absolute URL because
+ *  scrapers don't resolve relative og:image paths reliably. */
+const OG_IMAGE = `${CANONICAL_ORIGIN}/banner.png`;
+
 interface UsePageMetaInput {
   /** i18n key for the page title. Resolved via `t()` so each locale
    *  renders its own translated string. */
@@ -61,6 +65,30 @@ interface UsePageMetaInput {
   /** i18n key for the page description. Same resolution. */
   descriptionKey: string;
 }
+
+/** Open Graph + Twitter Card tags maintained alongside the basics.
+ *  Derived from the SAME title/description/canonical, so pages never
+ *  drift between what Google shows and what a Discord/X/Telegram
+ *  unfurl shows. `property` vs `name` matters: OG readers look up
+ *  `meta[property=...]`, Twitter looks up `meta[name=...]`. */
+const OG_TAGS = (
+  title: string,
+  description: string,
+  url: string,
+  locale: string,
+): Array<{ attr: 'property' | 'name'; key: string; content: string }> => [
+  { attr: 'property', key: 'og:type', content: 'website' },
+  { attr: 'property', key: 'og:site_name', content: 'Vaipakam' },
+  { attr: 'property', key: 'og:title', content: title },
+  { attr: 'property', key: 'og:description', content: description },
+  { attr: 'property', key: 'og:url', content: url },
+  { attr: 'property', key: 'og:image', content: OG_IMAGE },
+  { attr: 'property', key: 'og:locale', content: locale },
+  { attr: 'name', key: 'twitter:card', content: 'summary_large_image' },
+  { attr: 'name', key: 'twitter:title', content: title },
+  { attr: 'name', key: 'twitter:description', content: description },
+  { attr: 'name', key: 'twitter:image', content: OG_IMAGE },
+];
 
 export function usePageMeta({ titleKey, descriptionKey }: UsePageMetaInput) {
   const { t, i18n } = useTranslation();
@@ -112,6 +140,21 @@ export function usePageMeta({ titleKey, descriptionKey }: UsePageMetaInput) {
       document.head.appendChild(canonicalTag);
     }
     canonicalTag.href = canonicalHref;
+
+    // OG + Twitter tags — one upsert per tag, keyed by property/name.
+    // BCP-47-ish og:locale from the active language (coarse two-letter
+    // codes are accepted by every major scraper).
+    for (const tag of OG_TAGS(title, description, canonicalHref, i18n.language)) {
+      let el = document.querySelector(
+        `meta[${tag.attr}="${tag.key}"]`,
+      ) as HTMLMetaElement | null;
+      if (!el) {
+        el = document.createElement('meta');
+        el.setAttribute(tag.attr, tag.key);
+        document.head.appendChild(el);
+      }
+      el.content = tag.content;
+    }
 
     return () => {
       // Tear down ONLY the canonical on unmount — leaving the title

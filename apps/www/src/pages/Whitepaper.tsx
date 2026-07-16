@@ -30,6 +30,7 @@ import {
   markdownComponents,
 } from '../lib/markdownToc';
 import { usePageMeta } from '../lib/usePageMeta';
+import { useArticleJsonLd } from '../lib/useArticleJsonLd';
 import './UserGuide.css';
 
 const WHITEPAPER_FILES = import.meta.glob('../content/whitepaper/*.md', {
@@ -46,6 +47,10 @@ export default function Whitepaper() {
   const { i18n } = useTranslation();
   const location = useLocation();
   usePageMeta({
+    titleKey: 'pageMeta.whitepaper.title',
+    descriptionKey: 'pageMeta.whitepaper.description',
+  });
+  useArticleJsonLd({
     titleKey: 'pageMeta.whitepaper.title',
     descriptionKey: 'pageMeta.whitepaper.description',
   });

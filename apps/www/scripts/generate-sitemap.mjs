@@ -51,6 +51,10 @@
 import { writeFileSync, mkdirSync } from 'node:fs';
 import { resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
+// Route × locale registry — shared with prerender.mjs so the sitemap
+// and the prerendered page set can't drift apart. See seo-routes.mjs
+// for the sync contracts (TRANSLATED_LOCALES / App.tsx).
+import { LOCALES, ROUTES, localizedPath } from './seo-routes.mjs';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -58,50 +62,6 @@ const __dirname = dirname(__filename);
 const ORIGIN = (
   process.env.VITE_WWW_PUBLIC_ORIGIN ?? 'https://vaipakam.com'
 ).replace(/\/+$/, '');
-
-// Locales with shipping translation bundles — mirrors
-// `TRANSLATED_LOCALES` in apps/labs/src/i18n/glossary.ts.
-const LOCALES = [
-  'en',
-  'es',
-  'fr',
-  'de',
-  'ja',
-  'zh',
-  'hi',
-  'ar',
-  'ta',
-  'ko',
-];
-
-// Marketing routes — mirrors apps/labs/src/App.tsx. Sitemap order
-// matches likely-importance for the crawler's first-pass scan
-// (landing → buy-vpfi → docs → legal). Search-engine sitemaps don't
-// formally rank by file order, but the loose convention helps when
-// a crawler imposes a soft URL budget on huge sitemaps.
-const ROUTES = [
-  '/',
-  '/vpfi',
-  '/help/overview',
-  '/help/basic',
-  '/help/advanced',
-  '/help/technical',
-  '/help/search',
-  '/discord',
-  '/terms',
-  '/privacy',
-  '/data-rights',
-];
-
-/** Compose a localised URL — English at the unprefixed root, every
- *  other locale gets a `/<locale>/` prefix. Mirrors the
- *  `withLocalePrefix` helper in apps/labs/src/components/LocaleResolver.tsx;
- *  duplicated here for the same Node-can't-import-TS reason. */
-function localizedPath(route, locale) {
-  if (locale === 'en') return route;
-  if (route === '/') return `/${locale}`;
-  return `/${locale}${route}`;
-}
 
 function escapeXml(s) {
   return s

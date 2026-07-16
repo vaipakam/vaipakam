@@ -31,6 +31,7 @@ import {
   markdownComponents,
 } from '../lib/markdownToc';
 import { usePageMeta } from '../lib/usePageMeta';
+import { useArticleJsonLd } from '../lib/useArticleJsonLd';
 import './UserGuide.css';
 
 const OVERVIEW_FILES = import.meta.glob('../content/overview/*.md', {
@@ -57,6 +58,10 @@ function resolveOverview(locale: string): {
 export default function Overview() {
   const { i18n } = useTranslation();
   usePageMeta({
+    titleKey: 'pageMeta.overview.title',
+    descriptionKey: 'pageMeta.overview.description',
+  });
+  useArticleJsonLd({
     titleKey: 'pageMeta.overview.title',
     descriptionKey: 'pageMeta.overview.description',
   });

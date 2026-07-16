@@ -75,6 +75,7 @@ import { HelpTabs } from '../components/HelpTabs';
 import { isSupportedLocale, withLocalePrefix } from '../components/LocaleResolver';
 import type { SupportedLocale } from '../i18n/glossary';
 import { usePageMeta } from '../lib/usePageMeta';
+import { useArticleJsonLd } from '../lib/useArticleJsonLd';
 import './UserGuide.css';
 
 /**
@@ -504,6 +505,14 @@ export default function UserGuide({ variant }: UserGuideProps) {
   // the component but need distinct titles + descriptions for the
   // crawler to index them as separate pages.
   usePageMeta({
+    titleKey: variant === 'basic'
+      ? 'pageMeta.userGuideBasic.title'
+      : 'pageMeta.userGuideAdvanced.title',
+    descriptionKey: variant === 'basic'
+      ? 'pageMeta.userGuideBasic.description'
+      : 'pageMeta.userGuideAdvanced.description',
+  });
+  useArticleJsonLd({
     titleKey: variant === 'basic'
       ? 'pageMeta.userGuideBasic.title'
       : 'pageMeta.userGuideAdvanced.title',
