@@ -46,6 +46,13 @@ export const NOTIF_KINDS = [
   'maturity_7d',
   'maturity_1d',
   'grace_entered',
+  // HF-band crossings (#1213 PR 2b) — produced by apps/keeper's
+  // liquidator piggyback (hfBandNotifications.ts), NOT by this Worker;
+  // listed here because this array is the taxonomy's source of truth
+  // for the shared table's `kind` column.
+  'hf_warn',
+  'hf_alert',
+  'hf_critical',
 ] as const;
 export type NotifKind = (typeof NOTIF_KINDS)[number];
 

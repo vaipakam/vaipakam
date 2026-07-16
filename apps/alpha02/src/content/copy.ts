@@ -221,6 +221,13 @@ export const copy = {
       maturity_7d: 'A loan was a week from its due date — open it to see where it stands.',
       maturity_1d: 'A loan was a day from its due date — open it to see where it stands.',
       grace_entered: 'A loan went past its due date — open it to see where it stands.',
+      // HF-band rows (#1213 PR 2b) — the keeper's loan-health crossings.
+      // Same durable-history rule: each states the dip AS OF the notice
+      // ("dipped") and defers the live number to the position page.
+      hf_warn: 'A loan’s health dipped below 1.5 — open it to see where it stands.',
+      hf_alert: 'A loan’s health dipped below 1.2 — open it to see where it stands.',
+      hf_critical:
+        'A loan’s health dipped below 1.05, close to the 1.0 liquidation line — open it to act.',
       // Fallback for any future kind the client doesn't know yet.
       generic: 'There’s an update on your loan.',
     } as Record<string, string>,

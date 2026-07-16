@@ -1,0 +1,384 @@
+/**
+ * #1213 PR 2b — HF-band inbox rows, piggybacked on the liquidator scan.
+ *
+ * The liquidator pass already multicalls `calculateHealthFactor` for
+ * EVERY active loan on every tick (liquidator.ts); this module reuses
+ * those readings to materialize free in-app inbox rows when a loan's
+ * health CROSSES DOWN into a protocol-level band:
+ *
+ *   - `hf_warn`     — HF dipped below 1.5 (the initiation floor)
+ *   - `hf_alert`    — HF dipped below 1.2
+ *   - `hf_critical` — HF dipped below 1.05 (liquidatable at 1.0)
+ *
+ * Distinct from the SUBSCRIBER alert rail (watcher.ts / notify_state):
+ * that path sends Telegram/Push against each wallet's OWN configured
+ * thresholds and only for wallets that set them up. This path is
+ * unconditional protocol-band bookkeeping — one fixed schedule, every
+ * borrower, zero setup — feeding the same `notifications` table the
+ * indexer's event/calendar rows land in (the bell reads one feed).
+ *
+ * Semantics:
+ *   - DOWNGRADE-ONLY: a row mints when the observed band is WORSE than
+ *     the stored one (absence = healthy, so a loan FIRST OBSERVED
+ *     already inside a band notifies once). Recoveries update state
+ *     silently — "your loan got safer" is not an alert.
+ *   - Day-bucketed dedup: the dedup key embeds the UTC day, so an HF
+ *     oscillating around a threshold re-alerts at most once per band
+ *     per day (state updates keep the crossing edge-triggered within
+ *     the day; the bucket only bounds pathological flapping).
+ *   - Borrower-only recipient: HF is the BORROWER's actionable number
+ *     (top up / repay). The lender-side risk surface is the grace and
+ *     terminal rows. Recipient resolves to the CURRENT borrower-
+ *     position holder via the shared D1 `loans` table.
+ *   - LIQUID LOANS ONLY, inherently: illiquid loans revert
+ *     `IlliquidLoanNoRiskMath` in the multicall and never reach this
+ *     module — exactly the design split (#1213): calendar rows cover
+ *     every loan; HF rows cover the loans HF math exists for.
+ *   - Fail-open: this is derived convenience data. Any failure logs
+ *     and returns — the liquidation pass it rides on must never wedge.
+ *
+ * Gating note (documented, deliberate): the liquidator pass — and so
+ * this piggyback — runs only when the autonomous keeper is enabled
+ * (`isKeeperEnabled`). Without a keeper key there is no per-tick HF
+ * scan to reuse, so HF-band inbox rows are a keeper-enabled feature;
+ * the calendar/event rows (indexer-side) are unconditional.
+ *
+ * Delivery note: rows written here reach the bell on its polling
+ * cadence (the signal-stretched net). The keeper cannot push the
+ * indexer DO's `notification.created` invalidation — an acceptable
+ * lag for a band alert whose Telegram/Push twin (for subscribers) is
+ * immediate.
+ */
+
+export type HfBand = 'healthy' | 'warn' | 'alert' | 'critical';
+
+/** Protocol-level band thresholds in milli-HF (1e18-scaled HF / 1e15).
+ *  Fixed on purpose — the subscriber rail (watcher.ts) is where users
+ *  tune personal thresholds; the inbox uses one protocol schedule
+ *  anchored on MIN_HEALTH_FACTOR (1.5, the initiation floor). */
+export const HF_WARN_MILLI = 1_500;
+export const HF_ALERT_MILLI = 1_200;
+export const HF_CRITICAL_MILLI = 1_050;
+
+/** Milli-HF ceiling stored for effectively-infinite readings (a
+ *  zero-borrow loan's `calculateHealthFactor` returns uint256.max). */
+const HEALTHY_MILLI_CAP = 1_000_000;
+
+/** Mirrors the indexer's calendar-row sentinel (calendarNotifications
+ *  .ts CRON_LOG_INDEX — duplicated because Workers are separate
+ *  packages): keeps a head-stamped cron row strictly newer than any
+ *  real log in the same block for the feed's (block, logIndex, id)
+ *  order and the client read cursor. */
+export const CRON_LOG_INDEX = 1_000_000;
+
+const BAND_RANK: Record<HfBand, number> = {
+  healthy: 0,
+  warn: 1,
+  alert: 2,
+  critical: 3,
+};
+
+const BAND_KIND: Record<Exclude<HfBand, 'healthy'>, string> = {
+  warn: 'hf_warn',
+  alert: 'hf_alert',
+  critical: 'hf_critical',
+};
+
+/** 1e18-scaled HF → milli-HF, clamped. uint256.max (zero borrow) and
+ *  any absurdly large reading collapse to the healthy cap. */
+export function hfToMilli(hf: bigint): number {
+  if (hf >= BigInt(HEALTHY_MILLI_CAP) * 10n ** 15n) return HEALTHY_MILLI_CAP;
+  return Number(hf / 10n ** 15n);
+}
+
+export function classifyBand(hfMilli: number): HfBand {
+  if (hfMilli < HF_CRITICAL_MILLI) return 'critical';
+  if (hfMilli < HF_ALERT_MILLI) return 'alert';
+  if (hfMilli < HF_WARN_MILLI) return 'warn';
+  return 'healthy';
+}
+
+/** IN()-list width — keeps every chunked statement's bind count far
+ *  under D1/SQLite variable limits. */
+const IN_CHUNK = 90;
+/** Notification INSERT chunk — 9 binds per row, 500 × 9 = 4500 stays
+ *  under D1's ~5000-binding invocation cap (same bound the indexer's
+ *  insertNotificationRows uses). */
+const INSERT_CHUNK = 500;
+
+export interface HfReading {
+  id: bigint;
+  hf: bigint;
+}
+
+export interface HfBandResult {
+  inserted: number;
+  stateWrites: number;
+}
+
+const ZERO_ADDR = '0x0000000000000000000000000000000000000000';
+
+/** Max age of the indexer's `notified` watermark before the pass
+ *  defers (Codex #1300 r1). The watermark is stamped only when a scan
+ *  BOTH reached the safe head AND finished materializing notifications
+ *  — so a fresh stamp means D1's ownership and notification rows are
+ *  current. The indexer's round-robin gives each chain a scan roughly
+ *  every `len(chains) × 1min`; 6 minutes tolerates a busy rotation
+ *  while still bounding how stale a resolved recipient can be. */
+const WATERMARK_MAX_AGE_SEC = 360;
+
+/**
+ * Record band crossings for one chain's full active-book HF readings.
+ * Called from the liquidator pass (AFTER its liquidation submits) with
+ * EVERY successful reading — including an empty set, so the terminal
+ * prune still runs on a quiet book. Fail-open: returns zeros on any
+ * error.
+ */
+export async function recordHfBandNotifications(
+  db: D1Database,
+  chainId: number,
+  readings: HfReading[],
+  nowSec: number,
+): Promise<HfBandResult> {
+  const empty: HfBandResult = { inserted: 0, stateWrites: 0 };
+  try {
+    // The indexer's "notifications complete through last_block"
+    // watermark (Codex #1300 r1) — NOT the main `diamond` cursor, which
+    // advances BEFORE materializeNotifications: stamping a cron-sentinel
+    // row against it could out-sort that block's still-pending event
+    // rows and swallow them under the client's read cursor. No
+    // watermark row means the indexer has never completed a caught-up
+    // pass on this chain — nothing to resolve against; skip.
+    const cursors = await db
+      .prepare(
+        `SELECT kind, last_block, updated_at FROM indexer_cursor
+          WHERE chain_id = ? AND kind IN ('notified', 'diamond')`,
+      )
+      .bind(chainId)
+      .all<{ kind: string; last_block: number; updated_at: number }>();
+    const watermark = (cursors.results ?? []).find((c) => c.kind === 'notified');
+    const diamondTip = (cursors.results ?? []).find((c) => c.kind === 'diamond');
+    if (!watermark) return empty;
+    const headBlock = watermark.last_block;
+
+    // Prune state for loans that left the active set (repaid/defaulted/
+    // liquidated) — their terminal inbox rows come from the indexer's
+    // event materializer; keeping band state would only re-alert a
+    // re-observed id. Runs every pass, BEFORE the staleness/empty
+    // returns (Codex #1300 r1: a chain whose last at-risk loan just
+    // closed has zero readings but still needs its rows pruned), and
+    // is safe against a lagging index: a terminal D1 status is
+    // definitive, it can only arrive late — never wrongly. Bounded:
+    // hf_band_state holds only at-risk loans.
+    await db
+      .prepare(
+        `DELETE FROM hf_band_state
+          WHERE chain_id = ?1
+            AND EXISTS (
+              SELECT 1 FROM loans l
+               WHERE l.chain_id = ?1 AND l.loan_id = hf_band_state.loan_id
+                 AND l.status <> 'active'
+            )`,
+      )
+      .bind(chainId)
+      .run();
+
+    if (readings.length === 0) return empty;
+
+    // STALENESS GATE (Codex #1300 r1): the HF readings are LIVE RPC
+    // state, but recipients and band-state commits resolve against D1.
+    // If the indexer hasn't completed a caught-up pass recently, a
+    // just-transferred borrower position could still show its previous
+    // holder — the row would go to the wrong wallet and the committed
+    // state would swallow the crossing for the real holder. Defer the
+    // tick instead; the crossing re-detects as soon as the watermark
+    // freshens. (Residual window: a transfer inside the last watermark
+    // interval — minutes — can still resolve to the just-previous
+    // holder; the position page and the subscriber alert rail remain
+    // the authoritative/immediate surfaces.)
+    if (nowSec - watermark.updated_at > WATERMARK_MAX_AGE_SEC) {
+      console.warn(
+        `[keeper] hfBandNotifications chain=${chainId} deferred — notified watermark is ${nowSec - watermark.updated_at}s old`,
+      );
+      return empty;
+    }
+    // TIP GATE (Codex #1300 r2): age alone still admits the window
+    // where a scan is IN FLIGHT — the `diamond` cursor has advanced
+    // past a still-fresh watermark (or the fail-open stamp was
+    // missed), and event/calendar rows at blocks > watermark may
+    // already be visible. An HF row stamped at the OLDER watermark
+    // block would sort behind them, so a wallet that just opened the
+    // inbox could advance its read cursor past the HF row before it
+    // exists. Mint only when the watermark has caught the indexed tip;
+    // a mid-scan tick simply defers (the next tick re-detects).
+    if (diamondTip && watermark.last_block < diamondTip.last_block) {
+      return empty;
+    }
+
+    const observed = readings.map((r) => {
+      const milli = hfToMilli(r.hf);
+      return { loanId: Number(r.id), milli, band: classifyBand(milli) };
+    });
+
+    // Stored (band, recipient) per loan — absence = healthy; healthy
+    // loans carry no row (migration 0041). The recipient is part of
+    // the edge (Codex #1300 r2): a borrower transfer inside the SAME
+    // band must still notify the new holder.
+    const prev = new Map<number, { band: HfBand; recipient: string }>();
+    for (let i = 0; i < observed.length; i += IN_CHUNK) {
+      const chunk = observed.slice(i, i + IN_CHUNK);
+      const res = await db
+        .prepare(
+          `SELECT loan_id, last_band, last_recipient FROM hf_band_state
+            WHERE chain_id = ? AND loan_id IN (${chunk.map(() => '?').join(',')})`,
+        )
+        .bind(chainId, ...chunk.map((o) => o.loanId))
+        .all<{ loan_id: number; last_band: HfBand; last_recipient: string }>();
+      for (const row of res.results ?? []) {
+        prev.set(row.loan_id, { band: row.last_band, recipient: row.last_recipient });
+      }
+    }
+
+    // Borrower recipients — the CURRENT position holder from the shared
+    // loans table — for every loan currently INSIDE a band (needed for
+    // both the mint decision and the state commit; healthy loans only
+    // ever DELETE state, which needs no recipient).
+    const inBand = observed.filter((o) => o.band !== 'healthy');
+    const recipientByLoan = new Map<number, string>();
+    for (let i = 0; i < inBand.length; i += IN_CHUNK) {
+      const chunk = inBand.slice(i, i + IN_CHUNK);
+      const res = await db
+        .prepare(
+          `SELECT loan_id, borrower, borrower_current_owner FROM loans
+            WHERE chain_id = ? AND loan_id IN (${chunk.map(() => '?').join(',')})`,
+        )
+        .bind(chainId, ...chunk.map((o) => o.loanId))
+        .all<{
+          loan_id: number;
+          borrower: string | null;
+          borrower_current_owner: string | null;
+        }>();
+      for (const row of res.results ?? []) {
+        const who = (row.borrower_current_owner ?? row.borrower ?? '').toLowerCase();
+        if (who && who !== ZERO_ADDR) recipientByLoan.set(row.loan_id, who);
+      }
+    }
+
+    // The edge decision per loan:
+    //   - band WORSENED (incl. first observation inside a band) → mint;
+    //   - band unchanged/improved but still in-band AND the borrower
+    //     position moved to a NEW holder → mint (the claim follows the
+    //     NFT; the previous holder's row can't warn the new one);
+    //   - recovery to healthy → delete state silently.
+    // A loan inside a band whose recipient can't be resolved yet
+    // (indexer lag) is DEFERRED: no row AND no state write, so the next
+    // tick retries the same edge instead of silently swallowing it.
+    const dayBucket = Math.floor(nowSec / 86_400);
+    interface Row {
+      loanId: number;
+      recipient: string;
+      kind: string;
+      dedupKey: string;
+    }
+    const rows: Row[] = [];
+    interface Commit {
+      loanId: number;
+      band: HfBand;
+      milli: number;
+      recipient: string | null; // null only for healthy (DELETE)
+    }
+    const commits: Commit[] = [];
+    for (const o of observed) {
+      const p = prev.get(o.loanId);
+      const prevBand: HfBand = p?.band ?? 'healthy';
+      if (o.band === 'healthy') {
+        if (p) commits.push({ loanId: o.loanId, band: 'healthy', milli: o.milli, recipient: null });
+        continue;
+      }
+      const recipient = recipientByLoan.get(o.loanId);
+      if (!recipient) continue; // deferred — retry next tick
+      const worsened = BAND_RANK[o.band] > BAND_RANK[prevBand];
+      const holderChanged = p !== undefined && recipient !== p.recipient;
+      if (worsened || holderChanged) {
+        const kind = BAND_KIND[o.band as Exclude<HfBand, 'healthy'>];
+        rows.push({
+          loanId: o.loanId,
+          recipient,
+          kind,
+          // Same segment order as the indexer's producers
+          // (`chain:recipient:kind:loan:<discriminator>`); the day
+          // bucket bounds a flapping HF to one row per band per UTC
+          // day PER RECIPIENT (a new holder's key always differs).
+          dedupKey: `${chainId}:${recipient}:${kind}:${o.loanId}:${dayBucket}`,
+        });
+      }
+      if (o.band !== prevBand || holderChanged) {
+        commits.push({ loanId: o.loanId, band: o.band, milli: o.milli, recipient });
+      }
+    }
+
+    let inserted = 0;
+    for (let i = 0; i < rows.length; i += INSERT_CHUNK) {
+      const batch = rows.slice(i, i + INSERT_CHUNK).map((r) =>
+        db
+          .prepare(
+            `INSERT OR IGNORE INTO notifications
+               (chain_id, recipient, kind, loan_id, event_kind,
+                block_number, log_index, created_at, dedup_key)
+             VALUES (?, ?, ?, ?, NULL, ?, ?, ?, ?)`,
+          )
+          .bind(
+            chainId,
+            r.recipient,
+            r.kind,
+            r.loanId,
+            headBlock,
+            CRON_LOG_INDEX,
+            nowSec,
+            r.dedupKey,
+          ),
+      );
+      const results = await db.batch(batch);
+      for (const res of results) {
+        inserted += (res as { meta?: { changes?: number } }).meta?.changes ?? 0;
+      }
+    }
+
+    // Commit the observed (band, recipient) for every edge; deferred
+    // loans never reached `commits`, so they retry next tick.
+    // Recoveries to healthy DELETE the row — absence means healthy,
+    // keeping the table proportional to the at-risk book.
+    let stateWrites = 0;
+    for (let i = 0; i < commits.length; i += INSERT_CHUNK) {
+      const batch = commits.slice(i, i + INSERT_CHUNK).map((o) =>
+        o.band === 'healthy'
+          ? db
+              .prepare(
+                `DELETE FROM hf_band_state WHERE chain_id = ? AND loan_id = ?`,
+              )
+              .bind(chainId, o.loanId)
+          : db
+              .prepare(
+                `INSERT INTO hf_band_state
+                   (chain_id, loan_id, last_band, last_hf_milli, last_recipient, updated_at)
+                 VALUES (?, ?, ?, ?, ?, ?)
+                 ON CONFLICT (chain_id, loan_id) DO UPDATE SET
+                   last_band = excluded.last_band,
+                   last_hf_milli = excluded.last_hf_milli,
+                   last_recipient = excluded.last_recipient,
+                   updated_at = excluded.updated_at`,
+              )
+              .bind(chainId, o.loanId, o.band, o.milli, o.recipient, nowSec),
+      );
+      await db.batch(batch);
+      stateWrites += batch.length;
+    }
+
+    return { inserted, stateWrites };
+  } catch (err) {
+    console.error(
+      `[keeper] hfBandNotifications chain=${chainId} failed (fail-open): ${String(err).slice(0, 250)}`,
+    );
+    return empty;
+  }
+}

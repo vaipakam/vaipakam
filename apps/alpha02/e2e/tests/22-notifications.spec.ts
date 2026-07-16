@@ -2,9 +2,10 @@
  * In-app notification center (#1213 / E-11), frontend — the bell + unread
  * badge + dropdown panel, with CLIENT-side read-state.
  *
- * The e2e indexer stub serves a deterministic 3-row feed for any wallet
- * (see indexer-stub.mjs) — two event rows plus one CRON calendar row
- * (maturity_7d, #1213 PR 2). Read/unread is a per-wallet last-seen cursor
+ * The e2e indexer stub serves a deterministic 4-row feed for any wallet
+ * (see indexer-stub.mjs) — two event rows, one CRON calendar row
+ * (maturity_7d, #1213 PR 2), and one keeper HF-band row (hf_alert,
+ * #1213 PR 2b). Read/unread is a per-wallet last-seen cursor
  * in localStorage, so this drives the whole flow with no server state:
  *   - connect → badge shows the unread count
  *   - open the panel → the rows render (incl. the calendar reminder's
@@ -25,22 +26,24 @@ test('bell shows unread count, panel lists rows, and a row deep-links to the pos
   const bell = page.getByTestId('notif-bell');
   await expect(bell).toBeVisible({ timeout: 15_000 });
 
-  // Three unread rows in the fixture, never seen → badge reads "3".
+  // Four unread rows in the fixture, never seen → badge reads "4".
   const badge = page.getByTestId('notif-badge');
-  await expect(badge).toHaveText('3');
+  await expect(badge).toHaveText('4');
 
-  // Open the panel → all rows render, incl. the calendar reminder with
-  // its outcome-worded copy (#1213 PR 2).
+  // Open the panel → all rows render: newest is the keeper HF-band row
+  // (#1213 PR 2b), then the calendar reminder with its outcome-worded
+  // copy (#1213 PR 2).
   await bell.click();
   const rows = page.getByTestId('notif-row');
-  await expect(rows).toHaveCount(3);
-  await expect(rows.first()).toContainText('week from its due date');
+  await expect(rows).toHaveCount(4);
+  await expect(rows.first()).toContainText('health dipped below 1.2');
+  await expect(rows.nth(1)).toContainText('week from its due date');
 
   // Opening marks everything loaded as read → the badge clears.
   await expect(badge).toHaveCount(0);
 
   // Clicking a row deep-links to the position and closes the panel
-  // (the newest row is the calendar reminder for loan 3).
+  // (the newest row is the HF alert for loan 3).
   await rows.first().click();
   await expect(page).toHaveURL(/\/positions\/3$/);
   await expect(page.getByTestId('notif-row')).toHaveCount(0);
@@ -56,7 +59,7 @@ test('the read state persists across a reload (per-wallet last-seen cursor)', as
   const bell = page.getByTestId('notif-bell');
   await expect(bell).toBeVisible({ timeout: 15_000 });
   // Mark read by opening the panel once.
-  await expect(page.getByTestId('notif-badge')).toHaveText('3');
+  await expect(page.getByTestId('notif-badge')).toHaveText('4');
   await bell.click();
   await expect(page.getByTestId('notif-badge')).toHaveCount(0);
   // Close the panel.

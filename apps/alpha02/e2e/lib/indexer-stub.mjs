@@ -1144,6 +1144,20 @@ async function handler(req, res) {
       const notifications = before
         ? []
         : [
+            // A keeper HF-band row (#1213 PR 2b): cron-shaped (eventKind
+            // null, sentinel logIndex) like the calendar rows, written by
+            // apps/keeper's liquidator piggyback.
+            {
+              id: 4,
+              kind: 'hf_alert',
+              loanId: 3,
+              offerId: null,
+              eventKind: null,
+              data: null,
+              createdAt: 1_700_000_400,
+              blockNumber: 400,
+              logIndex: 1_000_000,
+            },
             // A CRON calendar row (#1213 PR 2): event-less (eventKind null)
             // but block-stamped at the sweep's head so it sorts as current.
             {

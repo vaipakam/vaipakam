@@ -59,9 +59,44 @@ Claim Center and re-verify there (indexed-hints-only discipline).
 > against stale rows would mint never-retracted reminders (Codex #1298
 > r1). Under a saturated window the sweep serves soonest-due first, so
 > only the far-out T-7d tail can defer. Rows are stamped at the sweep's head block
-> so the chain-ordered feed sorts them as current. The liquid-only HF-band
-> rows remain a follow-up (they need per-loan HF reads — a different cost
-> profile than pure calendar math).
+> so the chain-ordered feed sorts them as current.
+
+> **Implementation status (PR 2b):** the liquid-only HF-band rows shipped
+> as a piggyback on the KEEPER's liquidator pass
+> (`apps/keeper/src/hfBandNotifications.ts`) — that pass already
+> multicalls `calculateHealthFactor` for every active loan each tick, so
+> band classification adds zero RPC. Fixed protocol thresholds (`hf_warn`
+> < 1.5, `hf_alert` < 1.2, `hf_critical` < 1.05, milli-HF), borrower-only
+> (HF is the borrower's actionable number; the lender's risk lane is
+> grace/terminal rows), DOWNGRADE-only with absence-of-state = healthy
+> (first observation inside a band notifies once; recoveries update state
+> silently; state rows live in `hf_band_state`, migration 0041, pruned
+> when a loan leaves the active set). The stored edge is
+> (band, recipient), not band alone (Codex #1300 r2): a borrower
+> position that transfers while STILL inside a band re-alerts the new
+> holder — the claim follows the NFT. The band writes run in a second
+> phase after EVERY chain's liquidation submits (the chain loop is
+> serial, so a D1 stall on one chain's inbox writes must not delay a
+> later chain's `triggerLiquidation`). Day-bucketed dedup keys bound a
+> flapping HF to one row per band per UTC day. Rows stamp the indexer's
+> `notified` WATERMARK block (a cursor kind advanced only after a
+> caught-up scan finishes materializing notifications — the main
+> `diamond` cursor advances before materialization, so stamping against
+> it could out-sort a block's still-pending event rows under the
+> client's read cursor) + the cron log-index sentinel, so the
+> chain-ordered feed sorts them as current; the pass DEFERS whenever
+> that watermark is stale (indexer behind → D1 ownership could lag the
+> live HF reads), whenever the `diamond` cursor is AHEAD of it (a scan
+> in flight — its event rows may already be visible at newer blocks),
+> or when a crossing's loan row hasn't landed yet — a crossing is
+> never silently swallowed. Illiquid
+> loans revert `IlliquidLoanNoRiskMath` inside the same multicall and are
+> inherently excluded — the calendar rows are their risk lane. Two
+> documented trade-offs: the rows only mint while the autonomous keeper
+> is enabled (no keeper → no per-tick HF scan to reuse), and they reach
+> the bell on its polling cadence (the keeper cannot push the indexer
+> DO's `notification.created` invalidation) — the subscriber
+> Telegram/Push rail remains the immediate channel.
 
 > **Implementation refinement (PR 1, Codex #1292 r7):** a notification
 > whose *kind* asserts a loan has CLOSED (`loan_repaid` / `loan_defaulted`
