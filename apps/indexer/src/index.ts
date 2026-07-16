@@ -50,6 +50,7 @@
  * state writes). The rest of the surface stays public-read.
  */
 
+import { handleApiIndex } from './apiIndex';
 import { handleConfigSnapshot } from './configSnapshot';
 import {
   resolveEnv,
@@ -415,6 +416,17 @@ export default {
       );
       if (feedMatch && req.method === 'GET') {
         return handleNotifications(req, resolved, feedMatch[1]);
+      }
+      return new Response('Not found', { status: 404 });
+    }
+
+    // ─── / — public API index ───────────────────────────────────
+    // Self-describing catalog of the keyless GET surface, for AI
+    // agents / integrators arriving via vaipakam.com/llms.txt.
+    // Static JSON, no D1/RPC reads — see apiIndex.ts.
+    if (url.pathname === '/') {
+      if (req.method === 'GET' || req.method === 'OPTIONS') {
+        return handleApiIndex(req);
       }
       return new Response('Not found', { status: 404 });
     }
