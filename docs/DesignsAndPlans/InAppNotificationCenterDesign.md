@@ -52,12 +52,13 @@ Claim Center and re-verify there (indexed-hints-only discipline).
 > - suppresses a lender-sale **vehicle**'s temporary bookkeeping loan
 >   (`is_sale_vehicle = 1`) from a `loan_matched` row — the real
 >   secondary-market sale surfaces via the sale-terminal rows (PR2);
-> - **defers** HF-liquidation rows (`HFLiquidationTriggered` /
->   `LiquidationDiscounted`): the indexer does not yet project their
->   terminal status onto `loans.status` (a pre-existing gap — issue
->   #1293), so the loan stays `active` and the gate holds the row until
->   that projection lands, at which point it activates with no
->   notification-code change.
+> - **HF-liquidation rows** (`HFLiquidationTriggered` /
+>   `LiquidationDiscounted`) were initially deferred because the indexer
+>   did not project their terminal status onto `loans.status` (issue
+>   #1293) — the gate held the row while the loan still read `active`.
+>   #1293 added the indexer projection (the loan now flips to `defaulted`
+>   on the liquidation event), so the gate passes and these rows fire on a
+>   real HF liquidation, with no notification-code change.
 
 ### Surface
 
