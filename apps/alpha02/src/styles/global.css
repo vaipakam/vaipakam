@@ -268,18 +268,6 @@ button {
   font-weight: 700;
   color: var(--text-strong);
 }
-.notif-markread {
-  border: none;
-  background: none;
-  padding: 0;
-  color: var(--brand);
-  font-size: 0.8rem;
-  font-weight: 600;
-  cursor: pointer;
-}
-.notif-markread:hover {
-  text-decoration: underline;
-}
 
 .notif-list {
   overflow-y: auto;
@@ -351,6 +339,23 @@ a.notif-row-unread:hover {
   height: 8px;
   border-radius: var(--radius-full);
   background: var(--brand);
+}
+
+/* On a narrow header the bell sits LEFT of the wallet chip, so a
+ * bell-anchored `right: 0` panel that is nearly viewport-wide would
+ * hang off the left edge and clip (Codex #1295 r1). Anchor it to the
+ * VIEWPORT instead — fixed, inset from both sides, just under the
+ * header — so it's fully readable regardless of the bell's position. */
+@media (max-width: 560px) {
+  .notif-panel {
+    position: fixed;
+    /* header height: space-3 top+bottom (12+12) + the 38px bell control,
+     * plus the safe-area the topbar's padding-top also carries. */
+    top: calc(var(--space-3) * 2 + 38px + env(safe-area-inset-top));
+    left: var(--space-3);
+    right: var(--space-3);
+    width: auto;
+  }
 }
 
 /* UX2-001 — the connected header must be STRUCTURALLY unable to widen

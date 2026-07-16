@@ -27,6 +27,7 @@ import { useActiveChain } from '../chain/useActiveChain';
 import { useNotifications } from '../data/notifications';
 import { indexerConfigured, type IndexedNotification } from '../data/indexer';
 import {
+  isNewer,
   isUnread,
   loadLastSeen,
   storeLastSeen,
@@ -46,11 +47,12 @@ const KIND_ICON: Record<string, LucideIcon> = {
 };
 
 /** The newest chain-order cursor among loaded rows (feed is newest-first,
- *  but scan defensively for the first row that actually carries a key). */
+ *  but scan defensively for the first row that actually carries a key).
+ *  Carries `id` — the feed's same-log tiebreaker (Codex #1295 r1). */
 function newestCursorOf(rows: IndexedNotification[]): SeenCursor | null {
   for (const r of rows) {
     if (r.blockNumber != null && r.logIndex != null) {
-      return { block: r.blockNumber, logIndex: r.logIndex };
+      return { block: r.blockNumber, logIndex: r.logIndex, id: r.id };
     }
   }
   return null;
@@ -85,22 +87,30 @@ export function NotificationBell() {
     const newest = newestCursorOf(rows);
     if (!newest) return;
     storeLastSeen(readChain.chainId, address, newest);
-    setLastSeen(newest);
+    // Only advance (never a needless re-render / regression) — same
+    // guard the store applies.
+    setLastSeen((prev) => (prev && !isNewer(newest, prev) ? prev : newest));
   }, [address, readChain.chainId, rows]);
 
-  // Opening the panel: snapshot the pre-open cursor (for the dots), then
-  // mark everything currently loaded as read (clears the badge). Side
-  // effects live here, not inside a setState updater (which React can run
-  // twice under StrictMode).
+  // Opening the panel: snapshot the pre-open cursor (for the "new" dots).
+  // Marking read is handled by the effect below — NOT here — so a panel
+  // opened while the first page is still loading still clears the badge
+  // once the rows resolve (Codex #1295 r1).
   const toggleOpen = useCallback(() => {
     if (!open) {
       seenAtOpen.current = lastSeen;
-      markAllRead();
       setOpen(true);
     } else {
       setOpen(false);
     }
-  }, [open, lastSeen, markAllRead]);
+  }, [open, lastSeen]);
+
+  // While the panel is open, mark everything currently loaded as read —
+  // re-running when the rows resolve or a later page/refetch brings more,
+  // so the badge stays cleared even if the feed arrived after the open.
+  useEffect(() => {
+    if (open) markAllRead();
+  }, [open, markAllRead]);
 
   // Escape closes the panel (matches the app's other light-dismiss menus).
   useEffect(() => {
@@ -159,15 +169,6 @@ export function NotificationBell() {
           <div className="notif-panel" role="dialog" aria-label={copy.notifications.title}>
             <div className="notif-panel-head">
               <span className="notif-panel-title">{copy.notifications.title}</span>
-              {rows.length > 0 ? (
-                <button
-                  type="button"
-                  className="notif-markread"
-                  onClick={markAllRead}
-                >
-                  {copy.notifications.markAllRead}
-                </button>
-              ) : null}
             </div>
 
             <div className="notif-list">

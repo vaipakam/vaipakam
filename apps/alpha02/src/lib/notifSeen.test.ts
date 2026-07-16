@@ -15,27 +15,38 @@ import {
  */
 
 describe('isNewer / isUnread (chain-order comparison)', () => {
-  it('orders by block first, then logIndex', () => {
-    expect(isNewer({ block: 200, logIndex: 0 }, { block: 100, logIndex: 9 })).toBe(true);
-    expect(isNewer({ block: 100, logIndex: 2 }, { block: 100, logIndex: 1 })).toBe(true);
-    expect(isNewer({ block: 100, logIndex: 1 }, { block: 100, logIndex: 1 })).toBe(false);
-    expect(isNewer({ block: 100, logIndex: 1 }, { block: 100, logIndex: 2 })).toBe(false);
+  it('orders by block, then logIndex, then id', () => {
+    expect(isNewer({ block: 200, logIndex: 0, id: 1 }, { block: 100, logIndex: 9, id: 9 })).toBe(true);
+    expect(isNewer({ block: 100, logIndex: 2, id: 1 }, { block: 100, logIndex: 1, id: 9 })).toBe(true);
+    // Same (block, logIndex) — the id breaks the tie (Codex #1295 r1).
+    expect(isNewer({ block: 100, logIndex: 1, id: 5 }, { block: 100, logIndex: 1, id: 4 })).toBe(true);
+    expect(isNewer({ block: 100, logIndex: 1, id: 4 }, { block: 100, logIndex: 1, id: 4 })).toBe(false);
+    expect(isNewer({ block: 100, logIndex: 1, id: 3 }, { block: 100, logIndex: 1, id: 4 })).toBe(false);
   });
 
   it('treats every row as unread when there is no cursor yet', () => {
-    expect(isUnread({ blockNumber: 1, logIndex: 0 }, null)).toBe(true);
+    expect(isUnread({ blockNumber: 1, logIndex: 0, id: 1 }, null)).toBe(true);
   });
 
   it('marks a row unread only when strictly newer than the cursor', () => {
-    const seen: SeenCursor = { block: 100, logIndex: 1 };
-    expect(isUnread({ blockNumber: 100, logIndex: 2 }, seen)).toBe(true); // newer
-    expect(isUnread({ blockNumber: 100, logIndex: 1 }, seen)).toBe(false); // equal → read
-    expect(isUnread({ blockNumber: 99, logIndex: 9 }, seen)).toBe(false); // older
+    const seen: SeenCursor = { block: 100, logIndex: 1, id: 4 };
+    expect(isUnread({ blockNumber: 100, logIndex: 2, id: 1 }, seen)).toBe(true); // newer log
+    expect(isUnread({ blockNumber: 100, logIndex: 1, id: 4 }, seen)).toBe(false); // equal → read
+    expect(isUnread({ blockNumber: 99, logIndex: 9, id: 9 }, seen)).toBe(false); // older block
+  });
+
+  it('pages a same-log fan-out by id (an InternalMatchExecuted leg group)', () => {
+    // Cursor sits on leg id=5 at (500,7); a sibling leg id=6 at the SAME
+    // (block, logIndex) must still read as unread — the whole point of the
+    // id tiebreak, matching the indexer feed's keyset.
+    const seen: SeenCursor = { block: 500, logIndex: 7, id: 5 };
+    expect(isUnread({ blockNumber: 500, logIndex: 7, id: 6 }, seen)).toBe(true);
+    expect(isUnread({ blockNumber: 500, logIndex: 7, id: 4 }, seen)).toBe(false);
   });
 
   it('treats a row with no chain-order key as read (cannot inflate the badge)', () => {
-    expect(isUnread({ blockNumber: null, logIndex: 5 }, null)).toBe(false);
-    expect(isUnread({ blockNumber: 5, logIndex: null }, null)).toBe(false);
+    expect(isUnread({ blockNumber: null, logIndex: 5, id: 1 }, null)).toBe(false);
+    expect(isUnread({ blockNumber: 5, logIndex: null, id: 1 }, null)).toBe(false);
   });
 });
 
@@ -60,25 +71,32 @@ describe('storeLastSeen / loadLastSeen (per-wallet cursor)', () => {
 
   it('round-trips a cursor scoped to (chain, wallet-lowercased)', () => {
     expect(loadLastSeen(CHAIN, WALLET)).toBeNull();
-    storeLastSeen(CHAIN, WALLET, { block: 200, logIndex: 1 });
-    expect(loadLastSeen(CHAIN, WALLET)).toEqual({ block: 200, logIndex: 1 });
+    storeLastSeen(CHAIN, WALLET, { block: 200, logIndex: 1, id: 42 });
+    expect(loadLastSeen(CHAIN, WALLET)).toEqual({ block: 200, logIndex: 1, id: 42 });
     // Case-insensitive on the wallet — a checksummed vs lowercased address
     // must resolve to the same cursor.
-    expect(loadLastSeen(CHAIN, WALLET.toLowerCase())).toEqual({ block: 200, logIndex: 1 });
+    expect(loadLastSeen(CHAIN, WALLET.toLowerCase())).toEqual({ block: 200, logIndex: 1, id: 42 });
     // Scoped per chain — another chain is independent.
     expect(loadLastSeen(1, WALLET)).toBeNull();
   });
 
-  it('never regresses the cursor to an older position', () => {
-    storeLastSeen(CHAIN, WALLET, { block: 200, logIndex: 1 });
-    storeLastSeen(CHAIN, WALLET, { block: 100, logIndex: 0 }); // older → ignored
-    expect(loadLastSeen(CHAIN, WALLET)).toEqual({ block: 200, logIndex: 1 });
-    storeLastSeen(CHAIN, WALLET, { block: 201, logIndex: 0 }); // newer → advances
-    expect(loadLastSeen(CHAIN, WALLET)).toEqual({ block: 201, logIndex: 0 });
+  it('never regresses the cursor to an older position (incl. same-log id)', () => {
+    storeLastSeen(CHAIN, WALLET, { block: 200, logIndex: 1, id: 10 });
+    storeLastSeen(CHAIN, WALLET, { block: 100, logIndex: 0, id: 99 }); // older block → ignored
+    expect(loadLastSeen(CHAIN, WALLET)).toEqual({ block: 200, logIndex: 1, id: 10 });
+    storeLastSeen(CHAIN, WALLET, { block: 200, logIndex: 1, id: 9 }); // same log, lower id → ignored
+    expect(loadLastSeen(CHAIN, WALLET)).toEqual({ block: 200, logIndex: 1, id: 10 });
+    storeLastSeen(CHAIN, WALLET, { block: 200, logIndex: 1, id: 11 }); // same log, higher id → advances
+    expect(loadLastSeen(CHAIN, WALLET)).toEqual({ block: 200, logIndex: 1, id: 11 });
   });
 
-  it('ignores a malformed stored value', () => {
-    store.set(`alpha02.notif.lastseen.${CHAIN}.${WALLET.toLowerCase()}`, 'not-json');
+  it('ignores a malformed or id-less stored value', () => {
+    const key = `alpha02.notif.lastseen.${CHAIN}.${WALLET.toLowerCase()}`;
+    store.set(key, 'not-json');
+    expect(loadLastSeen(CHAIN, WALLET)).toBeNull();
+    // A pre-id-tiebreak cursor (no `id`) is rejected — it can't order a
+    // same-log group, so treat it as "never seen" rather than trust it.
+    store.set(key, JSON.stringify({ block: 1, logIndex: 0 }));
     expect(loadLastSeen(CHAIN, WALLET)).toBeNull();
   });
 });

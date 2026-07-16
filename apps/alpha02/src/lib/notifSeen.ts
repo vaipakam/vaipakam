@@ -7,22 +7,28 @@
  * lives here as a per-wallet "last-seen" cursor in localStorage (see the
  * PR-1 indexer fragment + design doc).
  *
- * The cursor is the SAME chain-order key `(block, logIndex)` the feed
+ * The cursor is the SAME chain-order key `(block, logIndex, id)` the feed
  * orders + paginates by — NOT `createdAt`, which is only a best-effort
  * display timestamp (wall-clock fallback on a mid-catch-up read failure).
- * A row is UNREAD when its chain-order key is strictly newer than the
- * stored cursor; opening the panel advances the cursor to the newest row,
- * clearing the badge. No cursor yet → every fetched row is unread (an
- * honest first-connect state that the first panel-open clears).
+ * The `id` tiebreak is load-bearing: one event can fan out several rows
+ * for the same wallet at the SAME `(block, logIndex)` (an
+ * `InternalMatchExecuted` leg group), and the feed distinguishes them by
+ * `id` — without it, seeing one row of a same-log group would mark every
+ * sibling read (Codex #1295 r1). A row is UNREAD when its chain-order key
+ * is strictly newer than the stored cursor; opening the panel advances
+ * the cursor to the newest row, clearing the badge. No cursor yet → every
+ * fetched row is unread (an honest first-connect state the first
+ * panel-open clears).
  *
  * localStorage failures are swallowed on purpose: losing the cursor only
  * re-shows an "unread" affordance, never funds.
  */
 
-/** A chain-order position — the feed's `(blockNumber, logIndex)` key. */
+/** A chain-order position — the feed's `(blockNumber, logIndex, id)` key. */
 export interface SeenCursor {
   block: number;
   logIndex: number;
+  id: number;
 }
 
 const PREFIX = 'alpha02.notif.lastseen';
@@ -41,9 +47,11 @@ export function loadLastSeen(chainId: number, wallet: string): SeenCursor | null
       typeof parsed.block === 'number' &&
       Number.isFinite(parsed.block) &&
       typeof parsed.logIndex === 'number' &&
-      Number.isFinite(parsed.logIndex)
+      Number.isFinite(parsed.logIndex) &&
+      typeof parsed.id === 'number' &&
+      Number.isFinite(parsed.id)
     ) {
-      return { block: parsed.block, logIndex: parsed.logIndex };
+      return { block: parsed.block, logIndex: parsed.logIndex, id: parsed.id };
     }
     return null;
   } catch {
@@ -68,10 +76,12 @@ export function storeLastSeen(
   }
 }
 
-/** Strict chain-order "is `a` newer than `b`" — (block, logIndex) desc. */
+/** Strict chain-order "is `a` newer than `b`" — (block, logIndex, id) desc,
+ *  matching the feed's keyset exactly (the `id` breaks a same-log tie). */
 export function isNewer(a: SeenCursor, b: SeenCursor): boolean {
   if (a.block !== b.block) return a.block > b.block;
-  return a.logIndex > b.logIndex;
+  if (a.logIndex !== b.logIndex) return a.logIndex > b.logIndex;
+  return a.id > b.id;
 }
 
 /** A row is unread when its chain-order key is strictly newer than the
@@ -80,11 +90,11 @@ export function isNewer(a: SeenCursor, b: SeenCursor): boolean {
  *  is treated as read here — it can't be ordered against the cursor, so it
  *  must not inflate the badge. */
 export function isUnread(
-  row: { blockNumber: number | null; logIndex: number | null },
+  row: { blockNumber: number | null; logIndex: number | null; id: number },
   lastSeen: SeenCursor | null,
 ): boolean {
   if (row.blockNumber == null || row.logIndex == null) return false;
-  const at: SeenCursor = { block: row.blockNumber, logIndex: row.logIndex };
+  const at: SeenCursor = { block: row.blockNumber, logIndex: row.logIndex, id: row.id };
   if (!lastSeen) return true;
   return isNewer(at, lastSeen);
 }

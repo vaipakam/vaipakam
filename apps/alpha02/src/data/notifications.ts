@@ -52,6 +52,17 @@ export function useNotifications() {
         limit: NOTIF_PAGE,
       });
       if (page === null) return null;
+      // Fail closed on a wrong-target page (a misconfigured indexer /
+      // proxy answering for a different chain or wallet): rendering it
+      // would show unrelated loan updates, deep-link to unrelated loan
+      // ids, and store the read cursor under the wrong (chain, wallet)
+      // key. Same guard the other indexer-backed hooks apply.
+      if (
+        page.chainId !== readChain.chainId ||
+        page.address?.toLowerCase() !== address.toLowerCase()
+      ) {
+        return null;
+      }
       return {
         notifications: page.notifications,
         hasMore: page.nextBefore !== null,

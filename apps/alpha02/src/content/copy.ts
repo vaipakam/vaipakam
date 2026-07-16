@@ -203,7 +203,6 @@ export const copy = {
     // posture (never a fake empty).
     unavailable: 'Couldn’t load your notifications just now. They’ll be here when the connection is back.',
     connectFirst: 'Connect your wallet to see updates about your loans.',
-    markAllRead: 'Mark all as read',
     // The row's headline, by outcome kind. Each row deep-links to the
     // position, which re-verifies the exact state on chain.
     line: {
