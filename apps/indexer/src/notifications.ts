@@ -71,6 +71,17 @@ export const EVENT_NOTIF_MAP: Readonly<Record<string, NotifMapping>> = {
   // lender NFT is burned in this path, so `recipientFor` skips that
   // side; the borrower (with the residual collateral claim) is notified.
   BackstopAbsorbedLoan: { kind: 'loan_defaulted', recipients: 'both' },
+  // HF-based liquidation is a DISTINCT terminal path from a time-based
+  // default: the full-close (RiskFacet.sol:930) and split-terminal
+  // (RiskSplitLiquidationFacet.sol:368) both `terminalize`→Defaulted and
+  // emit ONLY `HFLiquidationTriggered`; the flash-loan discount close
+  // (RiskFacet.sol:1665) emits ONLY `LiquidationDiscounted`. Neither
+  // emits a `LoanDefaulted` companion, so without these mappings a real
+  // HF liquidation gives both holders no terminal row (Codex #1292 r4).
+  // (The PARTIAL HF liquidation is a separate event, `LoanPartiallyLiquidated`,
+  // allowlisted below — the loan stays active there.)
+  HFLiquidationTriggered: { kind: 'loan_defaulted', recipients: 'both' },
+  LiquidationDiscounted: { kind: 'loan_defaulted', recipients: 'both' },
 };
 
 /**
@@ -115,10 +126,8 @@ export const NOTIF_DELIBERATELY_NOT_HANDLED: Readonly<Record<string, string>> = 
   InternalMatchExecuted: 'matcher-path bookkeeping — parties see loan_matched via LoanInitiated',
   LoanFallbackPending: 'transient — status stays active through the fallback episode',
   LoanCuredFromFallback: 'transient — pairs with LoanFallbackPending',
-  LoanLiquidated: 'declared but never `emit`ted (DefaultedFacet.sol) — the liquidation close-out sets the NFT LoanLiquidated status and emits LoanDefaulted (mapped), so a liquidation already produces a loan_defaulted row (Codex #1292 r3)',
-  HFLiquidationTriggered: 'liquidation-attempt marker — terminal row arrives via the LoanDefaulted the close-out emits (mapped)',
-  LoanPartiallyLiquidated: 'partial-liquidation companion — loan stays active with reduced size',
-  LiquidationDiscounted: 'discount-path companion — terminal flip via LoanDefaulted',
+  LoanLiquidated: 'declared but never `emit`ted (DefaultedFacet.sol) — the time-based liquidation close-out sets the NFT LoanLiquidated status and emits LoanDefaulted (mapped), so a liquidation already produces a loan_defaulted row (Codex #1292 r3)',
+  LoanPartiallyLiquidated: 'partial-liquidation companion — loan stays ACTIVE with reduced size (NOT terminal), unlike the mapped terminal HFLiquidationTriggered',
   AutoDailyDeducted: 'NFT-rental daily-fee deduction — high-frequency, not per-event notified',
   AutoListOptOutCleared: 'UI-facing auto-list signal — no loan-state notification',
   PartialCollateralWithdrawn: 'own action — the borrower withdrew their own excess collateral',
@@ -343,21 +352,29 @@ export async function materializeNotifications(
           block_number, log_index, created_at, dedup_key)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     );
-    const batch = rows.map((r) =>
-      stmt.bind(
-        r.chainId,
-        r.recipient,
-        r.kind,
-        r.loanId,
-        r.eventKind,
-        r.blockNumber,
-        r.logIndex,
-        r.createdAt,
-        r.dedupKey,
-      ),
-    );
-    const results = await db.batch(batch);
-    for (const res of results) inserted += res.meta?.changes ?? 0;
+    // Chunk the batch: each row binds 9 params and D1 caps a Worker
+    // invocation at ~5000 bindings, so a busy catch-up scan with hundreds
+    // of recipient rows would blow the limit, throw, and (fail-open) skip
+    // that scan's rows forever. 500 rows × 9 = 4500 binds stays under
+    // (Codex #1292 r4).
+    const INSERT_CHUNK = 500;
+    for (let i = 0; i < rows.length; i += INSERT_CHUNK) {
+      const batch = rows.slice(i, i + INSERT_CHUNK).map((r) =>
+        stmt.bind(
+          r.chainId,
+          r.recipient,
+          r.kind,
+          r.loanId,
+          r.eventKind,
+          r.blockNumber,
+          r.logIndex,
+          r.createdAt,
+          r.dedupKey,
+        ),
+      );
+      const results = await db.batch(batch);
+      for (const res of results) inserted += res.meta?.changes ?? 0;
+    }
   } catch (err) {
     console.error('[notifications] insert failed', err);
     return 0;

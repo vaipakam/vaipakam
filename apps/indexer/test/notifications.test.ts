@@ -150,6 +150,17 @@ describe('planNotifications', () => {
       kind: 'loan_defaulted',
       recipients: 'both',
     });
+    // Terminal HF liquidations emit only HFLiquidationTriggered /
+    // LiquidationDiscounted (no LoanDefaulted companion) — mapped so a
+    // real HF liquidation still produces a terminal row (Codex #1292 r4).
+    expect(EVENT_NOTIF_MAP.HFLiquidationTriggered).toEqual({
+      kind: 'loan_defaulted',
+      recipients: 'both',
+    });
+    expect(EVENT_NOTIF_MAP.LiquidationDiscounted).toEqual({
+      kind: 'loan_defaulted',
+      recipients: 'both',
+    });
 
     const rows = planNotifications(
       84532,

@@ -1817,6 +1817,8 @@ interface NotificationRow {
   event_kind: string | null;
   data_json: string | null;
   created_at: number;
+  block_number: number | null;
+  log_index: number | null;
 }
 
 function notificationToJson(row: NotificationRow) {
@@ -1856,8 +1858,11 @@ function notificationToJson(row: NotificationRow) {
  * per-wallet surface whose freshness (a just-materialized row) drives
  * the bell badge, so a shared/edge cache must never replay a stale page.
  *
- * Cursor `before` = `"<createdAt>:<id>"` matching the
- * (created_at DESC, id DESC) order.
+ * Ordered newest-first by CHAIN ORDER (block, log_index), NOT by
+ * `created_at` — that column is the block timestamp but falls back to
+ * wall-clock on a mid-catch-up read failure, which would sort a
+ * historical row as newest (Codex #1292 r4). Cursor `before` =
+ * `"<blockNumber>:<logIndex>"`.
  */
 export async function handleNotifications(
   req: Request,
@@ -1881,18 +1886,19 @@ export async function handleNotifications(
   if (beforeRaw) {
     const m = beforeRaw.match(/^(\d+):(\d+)$/);
     if (!m) return jsonResponse({ error: 'bad-before' }, 400);
-    // (created_at, id) < (?, ?) — the composite keyset the feed index
-    // (chain_id, recipient, created_at, id) serves.
-    where.push('(created_at < ? OR (created_at = ? AND id < ?))');
-    const at = Number.parseInt(m[1], 10);
-    binds.push(at, at, Number.parseInt(m[2], 10));
+    // (block_number, log_index) < (?, ?) — the chain-order keyset the
+    // feed index (chain_id, recipient, block_number, log_index) serves.
+    where.push('(block_number < ? OR (block_number = ? AND log_index < ?))');
+    const blk = Number.parseInt(m[1], 10);
+    binds.push(blk, blk, Number.parseInt(m[2], 10));
   }
   try {
     const rows = await env.DB.prepare(
-      `SELECT id, kind, loan_id, offer_id, event_kind, data_json, created_at
+      `SELECT id, kind, loan_id, offer_id, event_kind, data_json,
+              created_at, block_number, log_index
          FROM notifications
         WHERE ${where.join(' AND ')}
-        ORDER BY created_at DESC, id DESC
+        ORDER BY block_number DESC, log_index DESC
         LIMIT ?`,
     )
       .bind(...binds, limit)
@@ -1900,7 +1906,7 @@ export async function handleNotifications(
     const results = rows.results ?? [];
     const notifications = results.map(notificationToJson);
     const last = results.length === limit ? results[results.length - 1] : null;
-    const nextBefore = last ? `${last.created_at}:${last.id}` : null;
+    const nextBefore = last ? `${last.block_number}:${last.log_index}` : null;
     return jsonResponse(
       { chainId, address: addr, notifications, nextBefore },
       200,

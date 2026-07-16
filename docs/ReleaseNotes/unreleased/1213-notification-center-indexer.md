@@ -12,8 +12,10 @@ A new `notifications` table (migration 0038) holds one row per
 (recipient wallet, notification). On every ingest scan the indexer
 derives inbox rows for the loan-lifecycle events that concern a wallet —
 loan matched, partial repayment, repaid (including the swap-to-repay
-path), and defaulted (including backstop absorption, and the liquidation
-close-out, which the contracts emit as a default). The recipient resolves
+path), and defaulted (including backstop absorption, time-based
+liquidation, and HF-based liquidation — each of which the contracts emit
+under its own terminal event rather than a generic default). The
+recipient resolves
 to the CURRENT position-NFT holder at materialization time (the design's
 ownership discipline): a secondary-market buyer who now holds the claim
 is notified, while an exited seller and a burned/cash-satisfied side
@@ -25,8 +27,11 @@ large catch-up scan can't exceed the database's bind-parameter limit; and
 a hiccup here never fails a scan (the rows are derived convenience data
 on top of the authoritative event ledger).
 
-A single route serves the inbox: a newest-first feed with a keyset
-cursor, served no-store as a per-wallet surface. Read/unread state is
+A single route serves the inbox: a feed ordered newest-first by chain
+order (block, log index) rather than a block timestamp — the timestamp
+can fall back to wall-clock on a mid-catch-up read failure and mis-sort a
+historical row — with a keyset cursor, served no-store as a per-wallet
+surface. Read/unread state is
 tracked CLIENT-side (a per-wallet last-seen cursor in the frontend)
 rather than as a server column — an unauthenticated server mark-read
 mutation would be griefable (anyone could clear a victim's badge) and a

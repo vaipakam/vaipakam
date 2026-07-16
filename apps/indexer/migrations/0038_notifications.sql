@@ -57,6 +57,11 @@ CREATE TABLE IF NOT EXISTS notifications (
 CREATE UNIQUE INDEX IF NOT EXISTS idx_notifications_dedup
   ON notifications(dedup_key);
 
--- The per-wallet feed: newest-first, cursor on (created_at, id).
+-- The per-wallet feed: newest-first by CHAIN ORDER (block, log_index),
+-- NOT by `created_at`. `created_at` is the block timestamp but falls back
+-- to wall-clock when a block-timestamp read fails mid-catch-up, which
+-- would sort a historical row as if it were newest (Codex #1292 r4).
+-- Chain order is monotonic and deterministic. (A future cron row with no
+-- block must stamp the head block to sort correctly.)
 CREATE INDEX IF NOT EXISTS idx_notifications_feed
-  ON notifications(chain_id, recipient, created_at, id);
+  ON notifications(chain_id, recipient, block_number, log_index);
