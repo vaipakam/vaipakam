@@ -89,14 +89,22 @@ they are citable from specs and any future bounded counsel review:
 
 1. **Fuse no-action letter (SEC Corp Fin, 2025-11-24)** — first no-action
    relief for a rewards token: a token earned through user activity and
-   redeemable **only for discounts/rebates on platform costs**, with staff
-   reasoning that *"cost reduction or redemption capability are not
-   'profits' to the consumer but rather a type of rebate to encourage
-   certain consumptive behaviors."* This is, almost verbatim, the
-   Vaipakam shape: interaction rewards earned by own activity, whose
-   in-platform utility is fee-discount standing. It is the single closest
-   precedent for the entire recycling loop and should be cited alongside
-   33-11412 in any legal-posture section.
+   redeemable **only for discounts/rebates on platform costs**. Attribution
+   stated precisely (this section is meant to be citable): the argument
+   that *"cost reduction or redemption capability are not 'profits' to the
+   consumer but rather a type of rebate to encourage certain consumptive
+   behaviors"* is from **Fuse's incoming counsel letter** — the
+   representations on which relief was requested. The **staff response
+   itself** says only that the Division will not recommend enforcement
+   action based on those representations, and expressly *"does not express
+   any legal conclusion."* The precedent is therefore: a rewards program
+   with exactly this consumptive/rebate fact pattern, described to the
+   staff in exactly these terms, drew no-action relief. That fact pattern
+   is, almost verbatim, the Vaipakam shape: interaction rewards earned by
+   own activity, whose in-platform utility is fee-discount standing. It is
+   the single closest precedent for the recycling loop and should be cited
+   alongside 33-11412 in any legal-posture section — with this
+   counsel-letter-vs-staff-response distinction preserved wherever quoted.
 2. **SEC Corp Fin statement on protocol staking (2025-05-29)** — protocol
    staking is non-securities where the activity is "administrative or
    ministerial," not entrepreneurial. Not directly applicable (VPFI is not
@@ -137,20 +145,33 @@ sequencing, and evidence.
 ### RL-1 — Claim-to-vault delivery (the loop closer) — RECOMMENDED, ADOPT
 
 **Change:** `claimInteractionRewards()` delivers the claimed VPFI into the
-claimant's **per-user vault** by default, through the standard
-`VaultFactoryFacet.vaultDepositERC20` chokepoint (the same path
-`VPFIDiscountFacet` deposits use), instead of `safeTransfer` to the wallet.
-An explicit `claimToWallet` flag (or a one-time user preference) preserves
-wallet delivery for anyone who wants it.
+claimant's **per-user vault** by default, instead of `safeTransfer` to the
+wallet. An explicit `claimToWallet` flag (or a one-time user preference)
+preserves wallet delivery for anyone who wants it.
+
+**Delivery primitive — Diamond-funded vault credit (load-bearing).** The
+existing `VaultFactoryFacet.vaultDepositERC20` chokepoint is **not usable
+as-is**: it is user-funded (`safeTransferFrom(user, proxy, amount)` against
+the claimant's wallet allowance), while rewards are paid from the
+**Diamond's** pre-funded VPFI balance — routing a claim through it would
+revert for claimants without a matching wallet balance/allowance, or
+silently move the user's own VPFI instead of the reward. RL-1 therefore
+specifies a **Diamond→vault credit primitive**: the Diamond transfers the
+reward VPFI directly to the claimant's vault proxy and then runs the same
+*recording* tail the deposit chokepoint runs — increment the
+protocol-tracked vault balance (`protocolTrackedVaultBalance`) and stamp
+the post-mutation tier rollup (`rollupUserDiscount`) — so the credit counts
+toward tier standing instead of being clamped out as unsolicited dust. Only
+the recording logic is reused; the user-funded pull is not.
 
 **Why this is the highest-leverage delta:**
 
 - Every rewarded VPFI lands **inside the sink system** on arrival: it
   increments the protocol-tracked vault balance, stamps the post-mutation
-  tier rollup (`rollupUserDiscount` fires at the deposit chokepoint), and
-  immediately counts toward fee-discount standing and future Full-tariff
-  spending power. The distribution end of the loop stops leaking by
-  default and starts feeding both demand sinks (S-1/S-3) mechanically.
+  tier rollup, and immediately counts toward fee-discount standing and
+  future Full-tariff spending power. The distribution end of the loop
+  stops leaking by default and starts feeding both demand sinks (S-1/S-3)
+  mechanically.
 - It directly attacks G2 as well: Full-tariff attach requires users to
   *have* vault VPFI. Claim-to-vault is the bootstrap that fills vaults
   without any purchase surface.
@@ -167,9 +188,20 @@ auto-staking or compounding.
 
 **Mechanics and edge rules:**
 
-- Route through the deposit chokepoint, never a bare transfer to the vault
-  address — a direct transfer would be clamped out by the anti-dust
-  tracked-balance rule and earn no tier standing.
+- Use the Diamond-funded vault credit primitive above, never a bare
+  transfer to the vault address — a bare transfer would be clamped out by
+  the anti-dust tracked-balance rule and earn no tier standing — and never
+  the user-funded deposit chokepoint (see the load-bearing note above).
+- **Contract-routed claimants keep raw-balance delivery.** Two live
+  wrappers depend on the claim paying a raw balance to the calling
+  contract: `AggregatorAdapterImplementation.claimInteractionRewards`
+  (adapter must hold the VPFI for `sweepToPrincipal`) and
+  `BackstopVaultImplementation.claimInteractionRewardsToDiamond` (forwards
+  the raw balance to treasury). Vault delivery is the default **only for
+  direct user claims**; the contract wrappers explicitly request
+  raw/wallet delivery (updated in the same PR), and the delivery selector
+  defaults conservatively so any other contract caller integrating today
+  keeps its observed raw-balance behaviour. Tests cover both wrappers.
 - Claimants necessarily have vaults (rewards require loans, loans require
   vaults); if a vault is somehow absent, fall back to wallet delivery
   rather than creating one inside the claim path.
@@ -177,12 +209,16 @@ auto-staking or compounding.
   tier gating; delivery venue does not alter it.
 - Forfeit routing (`toTreasury`) is untouched.
 - Mirror chains: identical change; the vault system is per-chain already.
+- Emit `RewardDeliveredToVault(user, amount, dayId)` per vault-delivered
+  claim — the attribution anchor RL-2 needs.
 
 **Tests:** claim credits tracked vault balance + tier rollup stamped at
 post-mutation balance; wallet opt-out honored; dust-clamp not triggered;
-forfeit split unchanged; invariant `diamondVpfiBalance ≥ userLifCustody +
-unclaimedRewardBudget + recycleBucket` unaffected (payout leaves the diamond
-either way).
+Diamond-funded credit works with zero wallet balance/allowance (the P1
+failure case); adapter `sweepToPrincipal` and backstop treasury-forward
+flows unchanged; forfeit split unchanged; invariant `diamondVpfiBalance ≥
+userLifCustody + unclaimedRewardBudget + recycleBucket` unaffected (payout
+leaves the diamond either way).
 
 ### RL-2 — Loop-closure metric (extends #1218) — ADOPT
 
@@ -192,11 +228,33 @@ Add to the transparency dashboard, per day and cumulative:
 loopClosureRatio[D] = (vaultRetainedRewards[D] + absorbed[D]) / distributed[D]
 ```
 
-where `vaultRetainedRewards` = rewards delivered to vaults and still vaulted
-at day close. Together with `selfFundingRatio` (#1218) this makes the loop's
-health two observable numbers — how much of distribution stays in the
-system, and how much of distribution the system's own absorption funds. Pure
-indexer/metrics work; no contract change beyond events already specified.
+**Attribution rule (pinned — reward VPFI is fungible inside a vault, so
+"still vaulted" is not observable from balances alone).** The indexer
+derives retention from the RL-1 `RewardDeliveredToVault` events plus vault
+balance, under one documented convention:
+
+```
+vaultRetained[u] = min(trackedVaultVpfi[u], cumRewardsDeliveredToVault[u])
+vaultRetainedRewards[D] = Σ_u vaultRetained[u] at day-D close
+```
+
+i.e. withdrawals are deemed to spend reward-delivered VPFI **first**, so the
+metric is a conservative lower bound and can never overstate loop closure;
+every indexer computing from the same events and balances reports the same
+number. Per-day values are point-in-time snapshots at day close (never
+summed across days — cumulative views recompute from the same rule, which
+also prevents double-counting a balance that persists across day closes).
+
+**Zero-distribution convention:** on days with `distributed[D] == 0` (day 0
+/ non-emitting days, zero-demand days), the per-day ratio is reported as
+`null / not applicable` and excluded from averages — never `0`, `NaN`, or
+`∞`. Cumulative views use cumulative sums, which stay well-defined once any
+distribution has occurred.
+
+Together with `selfFundingRatio` (#1218) this makes the loop's health two
+observable numbers — how much of distribution stays in the system, and how
+much of distribution the system's own absorption funds. Indexer/metrics
+work on top of RL-1's event; no other contract change.
 
 ### RL-3 — Reward claim horizon (bounded liability tail) — RATIFIED (see §10.2)
 
@@ -220,24 +278,37 @@ bucket credit; recycled-funded share = commitment release).
   terminal + full claimability (never while a claim is blocked by
   missing finalization/broadcast).
 
-This is presented as a decision, not folded in, precisely because it
-amends a ratified sentence.
+*(Historical note: this delta was drafted as an owner decision — rather
+than folded in — because it amends a ratified sentence in the governor doc.
+It has since been **ratified for adoption** (§10.2) and is as binding on
+implementation cards as every other adopted delta: the 365-day sweep ships
+with the RL-3 implementation PR, which also adds the superseding note to
+governor §3.1.)*
 
 ### RL-4 — Recycled-stream allocation register — ADOPT AT PHASE C′ (dormant before)
 
 Generalize the Phase-C "optional keeper-budget credit" into one bounded,
-timelocked register over the recycled term only (never the schedule floor):
+timelocked register — **defined over the residual only, so the claims-first
+invariant holds by construction** (a naive bps split of the whole recycled
+term could divert budget from reward claims to keeper/reserve on
+high-demand days, contradicting the cross-chain design's §3.5 claims-first
+rule; the register therefore never touches the claim-funded portion):
 
 ```
-recycledBudget[D] split by weights: [interactionRewards, keeperBudget, retainedReserve]
-defaults: [10000, 0, 0] bps   // exactly today's ratified behaviour
-bounds: interactionRewards ≥ 5000; weights sum to 10000
+// Day D, after the governor sizes recycledBudget[D] and the claim
+// commitments are fully funded (claims-first, unchanged):
+residual[D] = day-D recycled availability left after claim commitments
+residual[D] split by weights: [keeperBudget, retainedReserve]
+defaults: [0, 10000] bps      // exactly today's ratified behaviour:
+                              // margin/surplus stays in the bucket
+bounds: weights sum to 10000; keeperBudget ≤ 5000
 ```
 
 - Encodes "what is the margin/surplus *for*" (G3) as an explicit priority
-  stack: claims first, keeper gas second, reserve last — the same order the
-  cross-chain design already enforces per-day (§3.5 claims-first rule),
-  now as a declared config surface instead of an emergent property.
+  stack: claims first (structural, not a weight — identical to §3.5 of the
+  cross-chain design), keeper gas second, reserve last — now a declared
+  config surface instead of an emergent property. Reward claims can never
+  be defunded by the register at any weight setting.
 - Stays deterministic (weights read once at finalization, stamped like the
   margin) — no per-epoch discretion, preserving the
   administrative/ministerial property (§4).
@@ -344,7 +415,8 @@ ratified), §9 (allocation register; loop-closure metric), plus
    full claimability). The governor doc §3.1 gains a superseding note in the
    RL-3 implementation PR.
 3. **RL-4 allocation register** — **RATIFIED: adopt** at Phase C′ with
-   dormant `[10000,0,0]` defaults.
+   dormant defaults (claims-first structural; residual split
+   `[keeper 0, reserve 10000]` — exactly today's ratified behaviour).
 4. **RL-5 sequencing** — **RATIFIED: adopt** — notification flat tariff +
    two spend-gated perks committed to the same release train as the Full
    tariff; #1219 legal glance scheduled with the excision doc's bounded
