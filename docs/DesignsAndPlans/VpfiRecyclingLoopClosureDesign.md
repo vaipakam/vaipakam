@@ -186,6 +186,14 @@ mutation or keeper pass carries it), or — if the local rollup itself would
 revert — the claim falls back to wallet delivery. Claim availability is
 never reduced by delivery venue, tier plumbing included.
 
+**Atomicity of the fallback:** the transfer + recording + rollup runs as
+one revert-isolated unit (the house try/catch-around-self-call pattern), so
+a failure at ANY step rolls back **all** vault-side effects before the
+wallet fallback pays — never untracked vault dust from a
+transfer-succeeded/rollup-failed split, never a double-pay (vault and
+wallet), and never a bubbled revert that regresses availability. Tests
+cover a forced rollup failure: vault state unchanged, wallet paid once.
+
 **Why this is the highest-leverage delta:**
 
 - Every rewarded VPFI lands **inside the sink system** on arrival: it
@@ -238,7 +246,14 @@ auto-staking or compounding.
   below-mandatory-version claimant.
 - Sanctions posture unchanged: the claim entry point keeps its existing
   tier gating; delivery venue does not alter it.
-- Forfeit routing (`toTreasury`) is untouched.
+- Forfeit routing is untouched **by RL-1**: forfeited amounts keep
+  flowing to treasury exactly as today until the governor stack's PR-3a
+  re-routes that class into the recycle bucket (forfeited interaction
+  rewards are one of the governor §4 LIVE absorption classes, so the
+  re-route is PR-3a's job, with the source-split rules applied there).
+  RL-1 neither implements nor blocks that re-route — but the re-route
+  must land with PR-3a or the G2 cold-start absorption stays thinner
+  than this design specifies.
 - **Mirror chains — same mechanics, honestly scoped benefit.** The vault
   system is per-chain, so the credit primitive applies identically on
   mirrors; but tier standing is resolved on Base and mirrors read only the
@@ -276,10 +291,13 @@ meaning anything):
 ```
 // Daily (flow): of what went out today, how much stayed in / came back
 loopClosureRatio[D] = (netVaultDelivered[D] + absorbed[D]) / distributed[D]
-//   vaultDelivered[D]     = rewards delivered to vaults ON day D (event flow)
-//   rewardFundedDebits[D] = retention-ledger decrements ON day D
-//   netVaultDelivered[D]  = vaultDelivered[D]
-//                           − min(vaultDelivered[D], rewardFundedDebits[D])
+//   vaultDelivered[u][D]     = rewards delivered to u's vault ON day D
+//   rewardFundedDebits[u][D] = u's retention-ledger decrements ON day D
+//   netVaultDelivered[D]     = Σ_u max(0, vaultDelivered[u][D]
+//                                        − rewardFundedDebits[u][D])
+//   // netting is PER USER, then summed — an aggregate net would let
+//   // user B spending old rewards cancel user A's same-day retained
+//   // delivery and under-report closure on mixed-user days
 
 // Cumulative (stock): lifetime view
 cumLoopClosureRatio[D] = (retainedStock[D] + cumAbsorbed[D]) / cumDistributed[D]
@@ -352,10 +370,17 @@ much of distribution the system's own absorption funds.
 
 **Proposal:** rewards become sweepable to the recycle bucket `H` days after
 the underlying loan's terminal event (proposed `H = 365`; bounded knob,
-min 180). The sweep is permissionless (keeper class), emits a dedicated
-`VpfiRecycled(EXPIRED_REWARD, …)` source, and releases the day-commitment
-per the governor's existing source-split rules (fresh-funded share = real
-bucket credit; recycled-funded share = commitment release).
+min 180). The sweep is permissionless (keeper class) and applies the
+governor's source-split rules with **split signals** — the two shares must
+not share one credit event: the **fresh-funded share** (tokens genuinely
+leaving the fresh budget into protocol custody) emits
+`VpfiRecycled(EXPIRED_REWARD, …)` and enters the day-bucketed `credited[D]`
+that feeds `Ā`; the **recycled-funded share** is a pure commitment release
+(bucket availability restores, no tokens newly absorbed) and emits a
+separate non-credit signal (e.g. `RewardCommitmentReleased(EXPIRED_REWARD,
+…)`) that never touches `credited[D]` — otherwise dormant recycled-funded
+rewards would inflate trailing `Ā` and future budgets on every expiry,
+absorbing nothing.
 
 - **For:** closes G4 — without a horizon, `fundable[D]` degrades forever
   under dormant commitments, and the accounting tail grows unboundedly.
