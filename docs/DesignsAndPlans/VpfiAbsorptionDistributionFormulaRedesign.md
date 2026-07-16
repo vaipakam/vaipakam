@@ -5,7 +5,7 @@
 | **Title** | VPFI Absorption & Distribution Formula Redesign |
 | **Author** | Vaipakam Developer Team |
 | **Date** | 2026-07-16 |
-| **Status** | **Draft — design proposal (rev 9)** — Codex r1 findings folded; pending re-review / owner ratification |
+| **Status** | **Draft — design proposal (rev 10)** — Codex r1+r2 findings folded; pending re-review / owner ratification |
 | **Related** | `#687-A/B`, `#694`, `#1002` / Card-C rewards hardening, `#1008` / S13 day cap, `#1203` (E-1), `#1217` / `#1222` (recycling governor), TokenomicsTechSpec §§4–9 |
 | **Prior art (binding substrate)** | [`VpfiRecyclingBalanceGovernorDesign.md`](VpfiRecyclingBalanceGovernorDesign.md) (RATIFIED 2026-07-15), [`VpfiLenderDiscountPegDecouplingDesign.md`](VpfiLenderDiscountPegDecouplingDesign.md) (E-1), [`VPFITokenomicsRedesignResearch.md`](VPFITokenomicsRedesignResearch.md) §9 |
 
@@ -203,10 +203,15 @@ At `acceptOffer` / `matchOffers` / signed-offer fill:
 2. Quote **one shared notional** `C* = baseLifListNumeraire18 × tYears × K / 1e18` for the loan (see F4 unit freeze).
 3. **Per-party Full authorization (frozen):** Full is **not** a single `useFeeEntitlement` bool.
    - **Borrower Full** requires explicit borrower authorization on the accept/match path the borrower signs or initiates (calldata flag `borrowerFull`, or borrower-signed permit/intent field).
-   - **Lender Full** requires **prior** lender authorization that the non-lender caller cannot forge: e.g. `lenderFull` bit on the **lender’s offer** / standing intent / signed offer EIP-712 field. A bare accept calldata flag set by the borrower/matcher **MUST NOT** pull `C*` from the lender vault.
-   - Matcher/keeper fills may apply lender Full **only** if the offer/intent already stamped `lenderFull=true`.
-4. For each party with authorized Full: if `cfgFeeEntitlementEnabled` and vault VPFI ≥ `C*`, pull `C*` from **that party’s** vault → recycle bucket; stamp mode = Full; `tariffPaid[party] = C*`.
-5. **Failed Full opt-in (frozen):** if a party is authorized Full but cannot pay `C*` (balance, pause, transfer fail), the whole accept/match **reverts** (`FeeEntitlementFullPaymentFailed(party)`). **No silent downgrade** to HoldOnly/None unless that party also set an explicit `allowFullDowngrade=true` authorization bit (default **false**). HoldOnly/None paths are chosen only when Full was never authorized.
+   - **Lender Full** requires **prior** lender authorization that the non-lender caller cannot forge: e.g. fields on the **lender’s offer** / standing intent / signed offer EIP-712. A bare accept calldata flag set by the borrower/matcher **MUST NOT** pull `C*` from the lender vault.
+   - Matcher/keeper fills may apply lender Full **only** if the offer/intent already stamped lender Full auth.
+   - **Tariff ceiling bound (rev 10):** every Full authorization that can be filled later (standing offer / EIP-712 intent) **MUST** bind a signer-chosen ceiling, not a bare bool:
+     - `maxCStar` (VPFI 1e18 upper bound on the pull), **or**
+     - `(tariffKVersion, maxK)` + optional `maxCStar`,  
+     such that at fill: if quoted `C* > maxCStar` (or K above bound) → **revert** `FeeEntitlementTariffAboveAuth` (or downgrade only if `allowFullDowngrade`).  
+     Borrower Full on the same tx may use live quote without a prior max if the borrower is the signer of that tx; any **pre-authorized** Full still needs a ceiling.
+4. For each party with authorized Full: if `cfgFeeEntitlementEnabled` and vault VPFI ≥ `C*` and `C* ≤ auth.maxCStar` (when set), pull `C*` from **that party’s** vault → recycle bucket; stamp mode = Full; `tariffPaid[party] = C*`.
+5. **Failed Full opt-in (frozen):** if a party is authorized Full but cannot pay `C*` (balance, pause, transfer fail, or `C* > maxCStar`), the whole accept/match **reverts** (`FeeEntitlementFullPaymentFailed(party)` / `FeeEntitlementTariffAboveAuth`). **No silent downgrade** to HoldOnly/None unless that party also set an explicit `allowFullDowngrade=true` authorization bit (default **false**). HoldOnly/None paths are chosen only when Full was never authorized.
 6. Else if that party consent + tier ≥ 1 (and Full not authorized): mode = HoldOnly.
 7. Else: None.
 8. Apply LIF using **borrower** mode/discount; yield fee later using **lender** mode/discount (including Full +10% when `lenderMode == Full`). Position NFT carries **both** stamps; **no tariff refund** on sale/transfer/preclose.
@@ -389,7 +394,7 @@ No separate `notionalLifVpfiSchedule`. No fee-value conversion.
 | Open-ended / max-term | `max(1, ceil(offer.maxDurationSeconds / 1 days))` |
 | Range / partial fill | Use **filled** `effectivePrincipal` and the **loan’s** term (not unfilled remainder) |
 | Preclose / early repay | **No refund** of tariff; UX must warn “tariff priced on full term at open” |
-| Refinance | **New loan** → new quote / new tariff if Full again; old loan’s entitlement does not carry; no double LIF on refinance of already-initiated (existing rules); **new** initiation may charge LIF/tariff per new loan policy |
+| Refinance | **New loan** with **fresh reward entries** → **hard rule (rev 10):** new loan gets its own `cStar` / `loanSideRewardCap` **only if** it pays the **new-loan list LIF** (and Full tariff if Full) under the same incidence as a fresh origination. If product policy skips LIF on a refinance path, then **either** (a) new loan **inherits** remaining `loanSideRewardPaid` / cap budget from the closed parent (no cap reset), **or** (b) new loan is **reward-ineligible** (`cStar=0` ⇒ loan-side cap 0). **Forbidden:** free cap reset via refinance without LIF/tariff (rollover farming). |
 | Term extend (if any) | If product adds extend later: either block Full loans from free extend or require top-up tariff for added days — **v1: no free extend that increases duration without new tariff** |
 | Sale-vehicle accept | **No tariff** (not a fresh origination) |
 
@@ -702,9 +707,18 @@ function processUserSideDay(user, side, d, transferSet) -> (toUser, toTreasury):
     return (0, 0)
 
   budget = rawPay < remaining ? rawPay : remaining   // min of D1 day remainder
-  // Pro-rata floor on cEff (not raw c); dust-to-largest so Σ slices == budget.
-  slices = proRataFloorWithDustToLargest(budget, cEff, transferSet)
-  sumSlices = Σ slices[e]   // == budget under dust-to-largest
+  // Pro-rata floor on cEff (not raw c).
+  // Rev 10 dust rule: dust-to-largest MUST NOT raise any slice above cEff[e]
+  // (loan-side residual). Use capacity-bounded dust:
+  //   floor_e = budget * cEff[e] / rawPay  (floor)
+  //   remDust = budget - Σ floor_e
+  //   assign remDust only to entries with residual capacity (cEff[e]-floor_e),
+  //   largest-first among positive residual; never slice[e] > cEff[e].
+  // If remDust cannot be placed (all residuals 0), leave unallocated in the
+  // day budget (do not overpay a loan-side cap) — same as under-fill day.
+  slices = proRataFloorWithCapacityBoundedDust(budget, cEff, transferSet)
+  // assert ∀e: slices[e] ≤ cEff[e]
+  sumSlices = Σ slices[e]   // ≤ budget; may be < budget if dust unplaceable
 
   for e in transferSet:
     rewardEntryClaimNextDay[e.id] = d + 1
@@ -717,14 +731,15 @@ function processUserSideDay(user, side, d, transferSet) -> (toUser, toTreasury):
     // so forfeit sweeps cannot bypass the lifetime loan-side ceiling.
     if slices[e] > 0:
       loanSideRewardPaidVpfi[e.loanId][side] += slices[e]
+      // assert loanSideRewardPaid ≤ loanSideRewardCap after charge
 
   userSideDayPaidVpfi[user][side][d] = paid + sumSlices
   return (toUser, toTreasury)
 ```
 
-**Invariant (rev 9):** for every `(loanId, side)`,  
+**Invariant (rev 9/10):** for every `(loanId, side)`,  
 `loanSideRewardPaidVpfi[loanId][side] ≤ loanSideRewardCap(loanId)`  
-across claim **and** forfeit sweep order. Multi-loan `transferSet` days never overpay one loan by pro-rating only on D1.
+across claim **and** forfeit sweep order. Multi-loan `transferSet` days never overpay one loan by pro-rating only on D1. Dust must respect per-entry `cEff`.
 
 **0-slice advance policy (frozen — when may `claimNextDay` move with 0 pay):**
 
@@ -907,21 +922,31 @@ function previewForUserEntries(user) -> userTotal:
         if paid >= C:
           for e in transferSet: simNext[e] = d + 1   // 0-slice advance ALL in set
         else:
-          rawPay = Σ contrib(e, side, d) for e in transferSet
+          // Rev 10 — mirror claim: clamp by loan-side remaining (sim state)
+          // simLoanPaid[loanId] starts from durable loanSideRewardPaidVpfi and
+          // advances as this preview walks days (view-only twin of claim charges).
+          rawPay = 0
+          for e in transferSet:
+            cEff[e] = min(contrib(e,side,d), loanSideCap(e.loanId) - simLoanPaid[e.loanId])
+            if cEff[e] < 0: cEff[e] = 0
+            rawPay += cEff[e]
           if rawPay == 0:
             for e in transferSet: simNext[e] = d + 1
           else:
             budget = min(rawPay, C - paid)
-            slices = proRataFloorWithDustToLargest(budget, c, transferSet)
+            slices = proRataFloorWithCapacityBoundedDust(budget, cEff, transferSet)
             for e in transferSet:
               // ONLY difference vs claim user sum:
               if !(e.forfeited || terminalForfeit(e)):
                 userTotal += slices[e]
+              simLoanPaid[e.loanId] += slices[e]   // all slices, incl. forfeit
               simNext[e] = d + 1          // advance forfeit entries too
       daysUsed += 1
 
   return userTotal
 ```
+
+**Preview/claim parity (rev 10):** after PR-5c, preview **must** use the same `cEff` / capacity-bounded dust / simulated `loanSidePaid` walk as claim. Violating this breaks `preview ≤ claim` when loan-side ≪ D1 (worked example ~4 vs ~2016).
 
 **Preview properties (frozen):**
 
@@ -1044,11 +1069,22 @@ where `raw_full` sums all entries’ contrib for that day (including those paid 
 if globalInterest_s[D] == 0:
     chainBudget_s = 0
 else:
-    // STOP applying min(Δ, T) on ShareOfPool days:
-    chainBudget_s = ceilDiv(half * chainInterest_s[c][D], globalInterest_s[D])
+    uncappedSlice = ceilDiv(half * chainInterest_s[c][D], globalInterest_s[D])
+    // Rev 10 — after PR-5c loan-side caps are live, remittance MUST NOT fund
+    // the full uncapped raw share when loans cannot claim it.
+    // Safe upper bound for chain c, side s, day D:
+    //   loanSideHeadroom_c,s,D = Σ_{entries on chain c covering D on side s}
+    //                            remaining loanSideCap(loanId, side)
+    //                            (cap - paid, floored at 0; only loans with cStar stamped)
+    //   chainBudget_s = min(uncappedSlice, loanSideHeadroom_c,s,D)
+    // Before joint D*+5c cutover (legacy #1008 path): keep uncappedSlice only
+    // (or existing min(Δ,T) on legacy days).
+    chainBudget_s = min(uncappedSlice, loanSideHeadroom_c_s_D)
 ```
 
 Legacy days keep today’s `min(Δ,T)` remittance tightener. A finalized day with nonzero side half but **zero** global interest on that side must remit **0**, never revert.
+
+**Why (rev 10):** sole-loan worked example would otherwise remit ~halfPool while claimable is ~`½×C*×0.98`, stranding almost all remitted VPFI on the chain and over-consuming fresh/recycled budget.
 
 #### Migration from ETH cap / dual pipe / storage
 
@@ -1166,6 +1202,7 @@ mapping(uint256 => mapping(uint8 => uint256)) loanSideRewardPaidVpfi; // loanId 
 
 // D1 — append-only at LibVaipakam.Storage tail
 enum CapMode { LegacyEthRatio, ShareOfPool } // uint8: 0 / 1
+uint64 shareOfPoolCutoverDay;              // canonical D*; 0 = not armed (rev 10)
 mapping(uint256 => uint8) dayCapMode;              // per dayId — authoritative switch
 mapping(uint256 => uint256) dayUserSideCapVpfi18;   // C[D] VPFI 1e18; 0 is valid under ShareOfPool
 // dayCapThreshold18 remains for Legacy days + set to type(uint256).max on ShareOfPool days
@@ -1189,14 +1226,20 @@ uint256 tariffKPerLifYear;         // 0 ⇒ default 5e18; NEW unit — not ETH·
 // Do NOT introduce a second MAX_D1_CLAIM_DAYS constant.
 ```
 
-### Fee-default migration (rev 9 — list LIF/yield)
+### Fee-default migration (rev 9/10 — list LIF/yield)
 
-Current code zero-sentinels compile to **10 bps LIF / 100 bps yield**. Rev 8 freezes **20 / 200**. Implementation **must** ship both:
+Current code zero-sentinels compile to **10 bps LIF / 100 bps yield**. Rev 8 freezes **20 / 200** for the **new package**.
 
-1. Update compiled defaults / zero-sentinel resolution to **20 / 200**, **and**
-2. A deploy/configure step (testnet + mainnet runbook + tests) that sets non-zero config to 20/200 if storage already holds explicit old values.
+**Critical (rev 10):** loans with `treasuryFeeBpsAtInit == 0` today resolve settlement yield fee through the **live** default. Blindly changing the zero-sentinel from 100→200 would reprice **already open** loans from 1% → 2% at repay. Same risk class for LIF if any path re-reads zero as “current default” post-open.
 
-Zero-config Anvil/tests and fresh deploys must charge **0.2% / 2%** without a manual operator step. Add a deploy-sanity or config assert in PR-9 family.
+Implementation **must**:
+
+1. **Active-loan cutoff / legacy resolver:** settlement yield fee uses  
+   `effectiveTreasuryFeeBps(loan) = loan.treasuryFeeBpsAtInit != 0 ? loan.treasuryFeeBpsAtInit : LEGACY_DEFAULT_100`  
+   for loans originated **before** fee-package activation timestamp / loan-id watermark, **or** backfill every open loan’s snapshot to explicit 100 before flipping the sentinel.  
+2. **New loans** after activation: stamp **200** (or explicit non-zero) at init; compiled default / zero-sentinel for **new** originations becomes **20 / 200**.  
+3. Deploy/configure step + tests for both fresh Anvil (20/200) and grandfather path (open loan still 1% yield fee).  
+4. Deploy-sanity assert in PR-9 family for post-activation defaults **and** a regression that an open loan with snapshot 0 or 100 is not charged 200 after upgrade.
 
 ---
 
@@ -1539,15 +1582,25 @@ See Parameter Table storage layout. Migration: existing loans `mode=None` or inf
   - `LibInteractionRewards.sol` — `processUserSideDay` + remaining-budget SM; rewrite `claimForUserEntries` / **re-entrant** `sweepForfeitedByLoanId` for ShareOfPool; **cum-ready gate**; **`previewForUserEntries` worklist = claim worklist** (clean+forfeit; sum omits forfeit only); day-branch + **fail-closed** `dayCapMode` for `d ≥ D*`; dual-pipe skip; `chainRewardBudgetForDay` uncapped on D1 days; `snapshotDayCap` **always** writes mode+C+max T  
   - NatSpec: multi-call sweep + multi-call claim; preview first-chunk lower bound  
   - Tests **11** (staggered forfeit-before-clean preview), **17** (re-entrant sweep), **18** (fail-closed mode)  
-  - `LibVaipakam.sol` — `dayCapMode`, `dayUserSideCapVpfi18`, `userSideDayPaidVpfi`, `userSideShareCapBps`, `rewardEntryClaimNextDay` (reuse `MAX_INTERACTION_CLAIM_DAYS`, no new day-chunk constant)  
+  - `LibVaipakam.sol` — `dayCapMode`, `dayUserSideCapVpfi18`, `userSideDayPaidVpfi`, `userSideShareCapBps`, `rewardEntryClaimNextDay` (reuse `MAX_INTERACTION_CLAIM_DAYS`, no new day-chunk constant); **`shareOfPoolCutoverDay` (canonical `D*`)**  
   - `IRewardMessenger.sol` / `VaipakamRewardMessenger.sol` — **`MSG_TYPE_BROADCAST_V2 = 5`**, `BROADCAST_V2_PAYLOAD_SIZE = 6*32`, `broadcastGlobalV2` + quote helper; keep kind 2 decode forever  
   - `RewardAggregatorFacet`, `RewardReporterFacet` — finalize + receive v2  
   - `InteractionRewardsFacet` — dual-pipe freeze; preview parity  
-  - `ConfigFacet.setUserSideShareCapBps`  
+  - `ConfigFacet.setUserSideShareCapBps`; **`ConfigFacet.setShareOfPoolCutoverDay(uint64 Dstar)`** (timelocked; 0 = not armed)  
   - Tests: F8 list 1–14 (sequential multi-entry ≤C, chunk pay/persist, sweep order, dual-pipe, messenger size, dust)  
 - **Deps:** PR-1 preferred; **mesh v2 decoder on all reward chains before cutover**  
 - **Blocked until:** F8 rev-4 freezes (remaining-budget, chunk SM, shared sweep, dual-pipe) — **unblocked by rev 4**  
-- **Must:** `userSideDayPaid ≤ C` across claim/sweep order; pay-per-chunk persistence; window path 0 on ShareOfPool; remittance ≥ uncapped slice; day-branch cutover
+- **Must:** `userSideDayPaid ≤ C` across claim/sweep order; pay-per-chunk persistence; window path 0 on ShareOfPool; remittance ≥ uncapped slice; day-branch cutover  
+
+**`D*` source of truth (rev 10 — freeze):**
+
+| Surface | Rule |
+| --- | --- |
+| Storage | `uint64 shareOfPoolCutoverDay` on Base (and each reward chain after mesh B′/config sync). **0 = cutover not armed** → all days use pre-cutover rules (Legacy / #1008 path). |
+| Semantics | Day `d` is post-cutover iff `shareOfPoolCutoverDay != 0 && d >= shareOfPoolCutoverDay`. |
+| Fail-closed | If post-cutover and `dayCapMode[d] != ShareOfPool` → claim/sweep revert (existing); preview breaks. |
+| Broadcast | v2 payload carries `capMode` per day; cutover day itself is **config**, not inferred per-finalize. Mirrors must receive the same `D*` (config message or admin set) **before** Base arms cutover. |
+| Forbidden | Inferring `D*` as “first day we saw ShareOfPool mode” or per-facet hardcoded constants that can diverge. |
 
 ### PR-3 stack — Governor Phase A′ (split)
 
@@ -1634,6 +1687,16 @@ PR plan assumes interaction rewards remain enabled only if: claim-on-close paths
 
 ---
 
+### Rev 10 changelog (Codex r2 design-doc findings)
+
+- **Preview mirrors claim loan-side clamp** (`cEff` + sim `loanSidePaid` walk).  
+- **Dust capacity-bounded** — never `slice > cEff`.  
+- **Full auth binds `maxCStar` / K ceiling** on standing offers & EIP-712 intents.  
+- **Canonical `shareOfPoolCutoverDay` (`D*`)** in PR-2 storage/API + mesh rule.  
+- **Refinance cap-reset freeze:** new cap only with real LIF/tariff; else inherit or reward-ineligible.  
+- **Remittance `min(uncappedSlice, loanSideHeadroom)`** after 5c.  
+- **Fee-default migration:** grandfather open loans (legacy 100 bps yield) before zero-sentinel → 200.
+
 ### Rev 9 changelog (Codex r1 design-doc findings)
 
 - **P1 joint cutover:** ShareOfPool `D*` forbidden until PR-5c loan-side caps live; keep #1008 until then.  
@@ -1703,4 +1766,4 @@ PR plan assumes interaction rewards remain enabled only if: claim-on-close paths
 
 ---
 
-*End of design document (rev 9).*
+*End of design document (rev 10).*
