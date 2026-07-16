@@ -31,6 +31,7 @@ import {
 } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
 import { getDeployment } from '@vaipakam/contracts/deployments';
+import { copy, type CopySource } from '../content/copy';
 import { useMode } from '../app/ModeContext';
 import { ErrorBoundary } from './ErrorBoundary';
 import { useActiveChain } from '../chain/useActiveChain';
@@ -54,9 +55,15 @@ const SanctionsBanner = lazy(() =>
   import('./SanctionsBanner').then((m) => ({ default: m.SanctionsBanner })),
 );
 
+/** Nav labels are stored as KEYS into `copy.chrome.nav` and resolved
+ *  at render time — resolving here at module scope would freeze the
+ *  English string before a language switch (the copy proxy translates
+ *  at ACCESS time; see src/i18n/reactiveCopy.ts). */
+type NavLabelKey = keyof CopySource['chrome']['nav'];
+
 interface NavItem {
   to: string;
-  label: string;
+  labelKey: NavLabelKey;
   icon: LucideIcon;
   advancedOnly?: boolean;
   /** Shown only while reads target a test network (the faucet). */
@@ -64,43 +71,43 @@ interface NavItem {
 }
 
 const PRIMARY_NAV: NavItem[] = [
-  { to: '/', label: 'Home', icon: House },
-  { to: '/borrow', label: 'Borrow', icon: HandCoins },
-  { to: '/lend', label: 'Lend', icon: Coins },
-  { to: '/rent', label: 'NFT Rental', icon: Images },
-  { to: '/positions', label: 'My positions', icon: ListChecks },
-  { to: '/claims', label: 'Claims', icon: Gift },
+  { to: '/', labelKey: 'home', icon: House },
+  { to: '/borrow', labelKey: 'borrow', icon: HandCoins },
+  { to: '/lend', labelKey: 'lend', icon: Coins },
+  { to: '/rent', labelKey: 'rent', icon: Images },
+  { to: '/positions', labelKey: 'positions', icon: ListChecks },
+  { to: '/claims', labelKey: 'claims', icon: Gift },
 ];
 
 const SECONDARY_NAV: NavItem[] = [
-  { to: '/vault', label: 'My vault', icon: Landmark },
-  { to: '/faucet', label: 'Get test assets', icon: Droplets, testnetOnly: true },
-  { to: '/offers', label: 'Offer Book', icon: BookOpen, advancedOnly: true },
-  { to: '/desk', label: 'Rate Desk', icon: CandlestickChart, advancedOnly: true },
-  { to: '/vpfi', label: 'VPFI discounts', icon: Coins, advancedOnly: true },
-  { to: '/activity', label: 'Activity', icon: History, advancedOnly: true },
+  { to: '/vault', labelKey: 'vault', icon: Landmark },
+  { to: '/faucet', labelKey: 'faucet', icon: Droplets, testnetOnly: true },
+  { to: '/offers', labelKey: 'offers', icon: BookOpen, advancedOnly: true },
+  { to: '/desk', labelKey: 'desk', icon: CandlestickChart, advancedOnly: true },
+  { to: '/vpfi', labelKey: 'vpfi', icon: Coins, advancedOnly: true },
+  { to: '/activity', labelKey: 'activity', icon: History, advancedOnly: true },
   // UX-032 — the trust tool for exactly the off-platform user must be
   // reachable without a deep link.
-  { to: '/nft', label: 'NFT verifier', icon: BadgeCheck },
-  { to: '/settings', label: 'Settings', icon: Settings },
-  { to: '/help', label: 'Help', icon: CircleHelp },
+  { to: '/nft', labelKey: 'nftVerifier', icon: BadgeCheck },
+  { to: '/settings', labelKey: 'settings', icon: Settings },
+  { to: '/help', labelKey: 'help', icon: CircleHelp },
 ];
 
 /** Phone tab bar keeps only the highest-frequency destinations; the
  *  fifth slot is a real "More" menu (UX-011), not a Settings alias. */
 const TABBAR: NavItem[] = [
-  { to: '/', label: 'Home', icon: House },
-  { to: '/borrow', label: 'Borrow', icon: HandCoins },
-  { to: '/lend', label: 'Lend', icon: Coins },
-  { to: '/positions', label: 'Positions', icon: ListChecks },
+  { to: '/', labelKey: 'home', icon: House },
+  { to: '/borrow', labelKey: 'borrow', icon: HandCoins },
+  { to: '/lend', labelKey: 'lend', icon: Coins },
+  { to: '/positions', labelKey: 'positionsShort', icon: ListChecks },
 ];
 
 /** The phone More sheet fronts every destination without a tab of its
  *  own — the pages with tabs stay out so the sheet reads as "the rest
  *  of the product", not a second copy of the tab bar. */
 const MORE_SHEET: NavItem[] = [
-  { to: '/rent', label: 'NFT Rental', icon: Images },
-  { to: '/claims', label: 'Claims', icon: Gift },
+  { to: '/rent', labelKey: 'rent', icon: Images },
+  { to: '/claims', labelKey: 'claims', icon: Gift },
   ...SECONDARY_NAV,
 ];
 
@@ -236,7 +243,7 @@ export function AppShell() {
               }
             >
               <item.icon aria-hidden />
-              {item.label}
+              {copy.chrome.nav[item.labelKey]}
             </NavLink>
           ))}
           <div className="sidenav-section">More</div>
@@ -249,7 +256,7 @@ export function AppShell() {
               }
             >
               <item.icon aria-hidden />
-              {item.label}
+              {copy.chrome.nav[item.labelKey]}
             </NavLink>
           ))}
           {/* UX-011 — the mode switch lives where the nav lives, so
@@ -324,7 +331,7 @@ export function AppShell() {
                 onClick={() => setMoreOpen(false)}
               >
                 <item.icon aria-hidden />
-                {item.label}
+                {copy.chrome.nav[item.labelKey]}
               </NavLink>
             ))}
             <div className="more-sheet-mode">
@@ -345,7 +352,7 @@ export function AppShell() {
             }
           >
             <item.icon aria-hidden />
-            {item.label}
+            {copy.chrome.nav[item.labelKey]}
           </NavLink>
         ))}
         {/* UX-011 — a real More menu, not a Settings alias: every

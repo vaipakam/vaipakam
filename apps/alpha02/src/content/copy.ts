@@ -4,7 +4,15 @@
  * Why centralized: (1) the naive-user wording rules from
  * docs/DesignsAndPlans/BasicUserUXSimplification.md are enforceable in
  * one place; (2) localization later becomes a matter of swapping this
- * module for an i18n catalog without touching pages.
+ * module for an i18n catalog without touching pages — which is now
+ * wired: the exported `copy` is an i18n-aware Proxy over the English
+ * source below (see src/i18n/reactiveCopy.ts). English strings here
+ * remain the single source of truth; locale bundles in
+ * src/i18n/locales/<code>.json override per key, missing keys fall
+ * back to the English text. Editing a string here is still all it
+ * takes for the English app — plus re-running
+ * `pnpm --filter @vaipakam/alpha02 i18n:template` so translators see
+ * the new key (a vitest drift check enforces this).
  *
  * Wording rules encoded here (do not violate when editing):
  *   - No protocol jargon in Basic strings: no "matcher share", "bps",
@@ -18,10 +26,42 @@
  *     action-blocking surfaces.
  */
 
-export const copy = {
+import { createTranslatedCopy } from '../i18n/reactiveCopy';
+
+const copySource = {
   app: {
     name: 'Vaipakam',
     tagline: 'Lend, borrow, and rent NFTs — directly with other people.',
+  },
+
+  /** App chrome — nav labels + settings screen strings (extracted
+   *  from AppShell/Settings inline JSX when i18n landed, so the
+   *  highest-visibility chrome is translatable). */
+  chrome: {
+    nav: {
+      home: 'Home',
+      borrow: 'Borrow',
+      lend: 'Lend',
+      rent: 'NFT Rental',
+      positions: 'My positions',
+      positionsShort: 'Positions',
+      claims: 'Claims',
+      vault: 'My vault',
+      faucet: 'Get test assets',
+      offers: 'Offer Book',
+      desk: 'Rate Desk',
+      vpfi: 'VPFI discounts',
+      activity: 'Activity',
+      nftVerifier: 'NFT verifier',
+      settings: 'Settings',
+      help: 'Help',
+    },
+    settings: {
+      language: 'Language',
+      languageHint:
+        'Languages without a finished translation show English text for now.',
+      languagePickerAria: 'Display language',
+    },
   },
 
   home: {
@@ -1683,3 +1723,15 @@ export const copy = {
     backHome: 'Back to Home',
   },
 } as const;
+
+export type CopySource = typeof copySource;
+
+/** The raw English catalog — consumed by the i18n template exporter
+ *  (`scripts/export-i18n-template.ts`) and its vitest drift check.
+ *  App code should import `copy` below, never this. */
+export { copySource };
+
+/** i18n-aware view over the catalog. Same shape and types as the
+ *  source; string leaves resolve through i18next at access time with
+ *  the English text as fallback. See src/i18n/reactiveCopy.ts. */
+export const copy: CopySource = createTranslatedCopy(copySource);

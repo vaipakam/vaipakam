@@ -9,6 +9,11 @@ import { ThemeProvider, useTheme } from './app/ThemeContext';
 import { ModeProvider } from './app/ModeContext';
 import { App } from './App';
 import { ErrorBoundary } from './components/ErrorBoundary';
+// i18n bootstrap — side-effect import BEFORE the app renders so the
+// detection chain (cross-subdomain cookie → localStorage → navigator)
+// has resolved and `<html lang>`/`dir` are correct by first paint.
+import './i18n';
+import { LanguageRemount } from './i18n/LanguageRemount';
 import './styles/global.css';
 
 // UX-005 (Codex #1169 r1) — with route-level code splitting, a user who
@@ -96,7 +101,13 @@ createRoot(document.getElementById('root')!).render(
           <QueryClientProvider client={queryClient}>
             <ConnectKitThemed>
               <BrowserRouter>
-                <App />
+                {/* Inside the router + providers: a language switch
+                    remounts the page tree (re-resolving every copy.*
+                    string) while the URL, wallet connection, and
+                    react-query cache survive above. */}
+                <LanguageRemount>
+                  <App />
+                </LanguageRemount>
               </BrowserRouter>
             </ConnectKitThemed>
           </QueryClientProvider>

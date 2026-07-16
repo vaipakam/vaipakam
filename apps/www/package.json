@@ -15,6 +15,7 @@
   },
   "dependencies": {
     "@vaipakam/contracts": "workspace:*",
+    "@vaipakam/i18n": "workspace:*",
     "@vaipakam/lib": "workspace:*",
     "@vaipakam/ui": "workspace:*",
     "i18next": "^26.0.8",

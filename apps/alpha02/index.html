@@ -28,6 +28,55 @@
         }
       })();
     </script>
+    <script>
+      // Language + direction bootstrap — mirrors the i18n detection
+      // chain (packages/i18n createI18n.ts) so `lang`/`dir` are right
+      // during the very first paint: no flash of LTR layout for an RTL
+      // user, correct `lang` for screen readers before React mounts.
+      // Read order: (1) `vaipakam_lang` cookie at the `.vaipakam.com`
+      // parent scope — cross-subdomain truth, a choice made on
+      // vaipakam.com is honoured here; (2) localStorage
+      // `vaipakam:language`; (3) navigator.language. The SUPPORTED
+      // list mirrors SUPPORTED_LOCALES in packages/i18n (keep in
+      // sync), RTL mirrors RTL_LOCALES.
+      (function () {
+        function readCookie(name) {
+          var prefix = name + '=';
+          var parts = document.cookie ? document.cookie.split(';') : [];
+          for (var i = 0; i < parts.length; i++) {
+            var seg = parts[i].replace(/^\s+/, '');
+            if (seg.indexOf(prefix) === 0) {
+              try { return decodeURIComponent(seg.slice(prefix.length)); } catch (_) { return null; }
+            }
+          }
+          return null;
+        }
+        var SUPPORTED = ['en','es','fr','de','ja','zh','hi','ar','ta','ko','te','kn','ml','bn','mr','pa','gu','ur','vi','th','tl','id','pt','ru','uk','tr','it','nl','pl','el','cs','fa','he','sw'];
+        var RTL = ['ar', 'he', 'fa', 'ur'];
+        var lang = null;
+        try {
+          var cookieLang = readCookie('vaipakam_lang');
+          if (cookieLang && SUPPORTED.indexOf(cookieLang) !== -1) {
+            lang = cookieLang;
+          } else {
+            var storedLang = localStorage.getItem('vaipakam:language');
+            if (storedLang && SUPPORTED.indexOf(storedLang) !== -1) {
+              lang = storedLang;
+            } else if (navigator.language) {
+              var nav = navigator.language.toLowerCase().split('-')[0];
+              if (SUPPORTED.indexOf(nav) !== -1) lang = nav;
+            }
+          }
+        } catch (_) { /* keep lang === null (stay with the static lang="en") */ }
+        if (lang) {
+          document.documentElement.setAttribute('lang', lang);
+          document.documentElement.setAttribute(
+            'dir',
+            RTL.indexOf(lang) !== -1 ? 'rtl' : 'ltr'
+          );
+        }
+      })();
+    </script>
     <style>
       /* UX-005 — a boot splash that paints from the HTML itself, before
          the JS bundle loads or executes. On a slow connection the app
