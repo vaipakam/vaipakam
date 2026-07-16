@@ -94,6 +94,20 @@ describe('buildClaimAllItems', () => {
     expect(vault.defaultSelected).toBe(false);
   });
 
+  it('binds the vault opt-in to the exact amount via its key', () => {
+    // A different free balance yields a different key, so a stale
+    // "checked once" override can't carry over to a later/larger
+    // withdrawal (Codex #1291 r2 — the fee-tier footgun).
+    const a = buildClaimAllItems({ loans: [], rewardsPending: 0n, vpfiFree: 3n });
+    const b = buildClaimAllItems({ loans: [], rewardsPending: 0n, vpfiFree: 4n });
+    const keyA = a.find((i) => i.kind === 'vpfi-vault')!.key;
+    const keyB = b.find((i) => i.kind === 'vpfi-vault')!.key;
+    expect(keyA).not.toBe(keyB);
+    // Same balance → stable key (a no-op refresh keeps the choice).
+    const a2 = buildClaimAllItems({ loans: [], rewardsPending: 0n, vpfiFree: 3n });
+    expect(a2.find((i) => i.kind === 'vpfi-vault')!.key).toBe(keyA);
+  });
+
   it('omits zero-value rewards and vault legs', () => {
     const items = buildClaimAllItems({
       loans: [loan(1, 'lender')],
@@ -157,11 +171,12 @@ describe('defaultSelectedKeys', () => {
       vpfiFree: 1n,
     });
     const keys = defaultSelectedKeys(items);
+    const vaultKey = items.find((i) => i.kind === 'vpfi-vault')!.key;
     // Both loans + rewards on; vault VPFI off.
     expect(keys.has('loan-lender-1')).toBe(true);
     expect(keys.has('loan-borrower-2')).toBe(true);
     expect(keys.has('rewards')).toBe(true);
-    expect(keys.has('vpfi-vault')).toBe(false);
+    expect(keys.has(vaultKey)).toBe(false);
   });
 
   it('never pre-checks more than the cap (whale lands submittable)', () => {

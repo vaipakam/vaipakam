@@ -130,7 +130,14 @@ export function buildClaimAllItems({
 
   if (vpfiFree > 0n) {
     items.push({
-      key: 'vpfi-vault',
+      // The key carries the amount so a one-time opt-in binds to THIS
+      // exact withdrawal: if the free balance changes, or the item
+      // leaves (after a withdrawal) and later reappears (more VPFI
+      // parked), the stale opt-in does NOT carry over — the default-off
+      // vault leg re-defaults to off and needs a fresh, explicit opt-in.
+      // Without this, a single historical check could silently authorize
+      // a later/larger withdrawal, the fee-tier footgun (Codex #1291 r2).
+      key: `vpfi-vault-${vpfiFree}`,
       kind: 'vpfi-vault',
       // Pull the WHOLE free (unencumbered) balance — the amount the
       // snapshot reports as withdrawable. Encumbered VPFI stays put.

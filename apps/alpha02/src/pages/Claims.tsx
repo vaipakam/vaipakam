@@ -12,7 +12,6 @@ import { useQueryClient } from '@tanstack/react-query';
 import { copy } from '../content/copy';
 import { useMyClaimables, type ClaimableLoan } from '../data/claimables';
 import { useInteractionRewards } from '../data/rewards';
-import { useVpfi } from '../data/vpfi';
 import { assertWalletNotSanctionedLive, useSanctionsCheck } from '../data/sanctions';
 import { useActiveChain } from '../chain/useActiveChain';
 import { useDiamondWrite } from '../contracts/diamond';
@@ -270,15 +269,16 @@ export function Claims() {
   const rows: ClaimableLoan[] =
     rowsLoading || rowsUnavailable ? [] : claimables.data!;
 
-  // Non-loan payouts (interaction rewards / free vault VPFI) still count
-  // as "something to claim": with zero loan rows but a pending reward or
-  // withdrawable vault VPFI, the "Nothing to claim" empty state would be
-  // false (RewardsCard / the Claim-All card are showing a real payout).
-  // These hooks dedupe with the cards' own reads (same query keys).
+  // Pending interaction rewards still count as "something to claim":
+  // with zero loan rows but a pending reward, RewardsCard is showing a
+  // real payout, so the "Nothing to claim" empty state would be false.
+  // (Free vault VPFI is deliberately NOT counted here: it is surfaced on
+  // this page only WITHIN a Claim-All batch of ≥2 payouts — a solo
+  // vault balance is withdrawn on /vpfi, so suppressing the empty state
+  // for it would leave a dead screen with nothing actionable, Codex
+  // #1291 r2.) The hook dedupes with RewardsCard's read (same key).
   const rewards = useInteractionRewards();
-  const vpfi = useVpfi();
-  const hasOtherClaimable =
-    (rewards.data?.pending ?? 0n) > 0n || (vpfi.data?.freeBalance ?? 0n) > 0n;
+  const hasOtherClaimable = (rewards.data?.pending ?? 0n) > 0n;
 
   return (
     <div>
