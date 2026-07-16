@@ -5,7 +5,7 @@
 | **Title** | VPFI Absorption & Distribution Formula Redesign |
 | **Author** | Vaipakam Developer Team |
 | **Date** | 2026-07-16 |
-| **Status** | **Draft — design proposal (rev 14)** — Codex r1–r6 freezes (post-#1294 r6 P2s folded); pending **owner ratification** for implementation |
+| **Status** | **Draft — design proposal (rev 15)** — Codex r1–r6 + #1297 r1 freezes; pending **owner ratification** for implementation |
 | **Related** | `#687-A/B`, `#694`, `#1002` / Card-C rewards hardening, `#1008` / S13 day cap, `#1203` (E-1), `#1217` / `#1222` (recycling governor), TokenomicsTechSpec §§4–9 |
 | **Prior art (binding substrate)** | [`VpfiRecyclingBalanceGovernorDesign.md`](VpfiRecyclingBalanceGovernorDesign.md) (RATIFIED 2026-07-15), [`VpfiLenderDiscountPegDecouplingDesign.md`](VpfiLenderDiscountPegDecouplingDesign.md) (E-1), [`VPFITokenomicsRedesignResearch.md`](VPFITokenomicsRedesignResearch.md) §9 |
 
@@ -472,7 +472,8 @@ loanSideRewardCapOpen = C_star_open * (BPS - m_reward) / BPS / 2
 // At claim for reward entries of this loan on side S:
 //   paid_to_side_on_loan ≤ loanSideRewardCapEff
 // Then ALSO apply D1: userSideDayPaid[user][side][day] ≤ C_day share cap
-// final slice = min(rawShare, loanSideRemaining, d1Remaining, poolRemaining)
+// final slice = min(rawShare, loanSideRemaining, remittedRemaining, d1Remaining)
+//               and day is all-or-nothing vs poolRemaining (see processUserSideDay)
 
 // 50/50 half-pools UNCHANGED — loanSideRewardCap is the per-side half of the
 // tariff-linked ceiling; it is NOT a second split of the global pool.
@@ -656,7 +657,13 @@ pending      = entryReward + windowReward
 Both `claimForUserEntries` and `sweepForfeitedByLoanId` **must** call the same internal:
 
 ```
-processUserSideDay(user, side, d, payableEntryIds[]) -> (toUser, toTreasury)
+// Rev 15 — poolRemaining is part of the frozen helper contract (not outer-only).
+// In:  poolRemaining (mutable claim/sweep budget)
+// Out: (toUser, toTreasury, poolRemaining')  OR mutate poolRemaining in-place
+// Helper enforces: clamp budget to pool; no cursor advance on pool-only zeros;
+// paid maps only for actual transfer amounts.
+processUserSideDay(user, side, d, payableEntryIds[], poolRemaining)
+  -> (toUser, toTreasury, poolRemaining)
 ```
 
 `sweepForfeitedByLoanId` **must not** call standalone `_processEntry` for ShareOfPool days (live path today). It may still use `_processEntry` only for pure-LegacyEthRatio days. For ShareOfPool:
@@ -713,60 +720,48 @@ function contrib(e, side, d):
   if globalInterest[side][d] == 0: return 0
   return e.perDayNumeraire18 * Δ / 1e18
 
-function processUserSideDay(user, side, d, transferSet) -> (toUser, toTreasury):
+function processUserSideDay(user, side, d, transferSet, poolRemaining)
+  -> (toUser, toTreasury, poolRemaining):
   // transferSet ⊆ entries of user/side covering d with nextDay(e) == d
-  //   and ready to transfer under caller rules (claimable clean / forfeited)
   require dayCapMode[d] == ShareOfPool
-  require rpnReady(side, d)        // hard: outer SM must not call without this
+  require rpnReady(side, d)
 
-  C = dayUserSideCapVpfi18[d]      // may be 0
+  C = dayUserSideCapVpfi18[d]
   paid = userSideDayPaidVpfi[user][side][d]
-  if paid >= C:                    // nothing left (also handles C==0)
-    // 0-slice advance ALLOWED — budget exhausted is permanent for this (u,s,d).
+  if paid >= C:
     for e in transferSet:
       if nextDay(e) == d: rewardEntryClaimNextDay[e.id] = d + 1
       if nextDay(e) >= e.endDay: e.processed = true
-    return (0, 0)
+    return (0, 0, poolRemaining)
 
-  remaining = C - paid
+  remainingD1 = C - paid
   rawPay = 0
   for e in transferSet:
     c[e] = contrib(e, side, d)
-    // Rev 9 — loan-side remaining budget (F6b) is an INPUT weight clamp:
-    // each entry's payable weight cannot exceed that loan's remaining side cap.
-    // loanSideCap[e] = loanSideRewardCap(e.loanId)  // ½×C*×(1−m_reward), 0 if unset pre-5c
-    // loanSidePaid[e] = loanSideRewardPaidVpfi[e.loanId][side]
-    // loanSideRem[e] = loanSideCap[e]==0 && !loanSideCapsLive ? +inf : loanSideCap[e]-loanSidePaid[e]
-    // cEff[e] = min(c[e], max(loanSideRem[e], 0))
-    cEff[e] = min(c[e], loanSideRemaining(e.loanId, side))
+    // Cap + remitted clamps (rev 15 — remitted on mirrors; +inf on Base)
+    cEff[e] = min(c[e],
+                  loanSideRemaining(e.loanId, side),
+                  remittedRemaining(e.loanId, side))
     rawPay += cEff[e]
 
   if rawPay == 0:
-    // Legitimate zero weights only — advance (day permanently empty for these entries).
     for e in transferSet where nextDay(e) == d:
       rewardEntryClaimNextDay[e.id] = d + 1
       if nextDay(e) >= e.endDay: e.processed = true
-    return (0, 0)
+    return (0, 0, poolRemaining)
 
-  budget = min(rawPay, remaining)   // D1 day remainder
-
-  // poolRemaining: outer mutable. If 0, OUTER must not call this helper
-  // (see claim SM). If budget would be 0 only because poolRemaining==0 while
-  // rawPay>0 and D1 remaining>0 → do NOT advance cursors; return (0,0) and
-  // outer BREAKS (retryable when pool refills / next claim). 
+  budgetBeforePool = min(rawPay, remainingD1)
   if poolRemaining == 0:
-    return (0, 0)   // NO cursor advance — retryable pool exhaustion
-  budget = min(budget, poolRemaining)
+    return (0, 0, poolRemaining)   // NO advance — retryable
 
-  // Pro-rata floor on cEff; capacity-bounded dust; Σ may be < budget.
-  // ALL paid-map charges happen ONLY for the actual transfer amounts below.
-  // Forbidden: charge paid maps then scale down post-hoc at facet layer.
+  // Rev 15 — partial pool shortage: ALL-OR-NOTHING. Do not pay a fraction
+  // of the day and advance (no partial-day paid map in v1).
+  if poolRemaining < budgetBeforePool:
+    return (0, 0, poolRemaining)   // NO advance — retry when pool refills
+
+  budget = budgetBeforePool
   slices = proRataFloorWithCapacityBoundedDust(budget, cEff, transferSet)
-  sumSlices = Σ slices[e]
-
-  // If pool clamp left nothing payable but day still has raw/D1 headroom:
-  if sumSlices == 0 && rawPay > 0 && remaining > 0:
-    return (0, 0)   // NO cursor advance — retryable
+  sumSlices = Σ slices[e]   // may be < budget only for cEff dust, not pool
 
   for e in transferSet:
     rewardEntryClaimNextDay[e.id] = d + 1
@@ -779,25 +774,25 @@ function processUserSideDay(user, side, d, transferSet) -> (toUser, toTreasury):
       loanSideRewardPaidVpfi[e.loanId][side] += slices[e]
 
   userSideDayPaidVpfi[user][side][d] = paid + sumSlices
-  // Caller: poolRemaining -= (toUser + toTreasury)  — only path that mutates pool
-  return (toUser, toTreasury)
+  poolRemaining -= (toUser + toTreasury)
+  return (toUser, toTreasury, poolRemaining)
 ```
 
-**Invariant (rev 9–14):** for every `(loanId, side)`,  
-`loanSideRewardPaidVpfi[loanId][side] ≤ loanSideRewardCapEff(loanId)`.  
-Outer multi-day loop **debits** `poolRemaining` after each day. Dust respects `cEff`.  
-**Forbidden:** facet post-hoc scale of `userTotal` after paid maps / cursors already advanced (burns budget permanently). Share **one** mutable `poolRemaining` across ShareOfPool, legacy-day, and any residual window paths **before** mutations.
+**Invariant (rev 9–15):**  
+`paid_L ≤ min(capEff_L, remitted_L)` on mirrors (`remitted` = +inf on Base).  
+**Pool rule:** day is **all-or-nothing** vs `poolRemaining` — partial pool does not advance cursors.  
+**Forbidden:** post-hoc scale after mutations; partial-day pool pay without durable partial-day accounting.
 
 **0-slice advance policy (frozen — when may `claimNextDay` move with 0 pay):**
 
 | Condition | Advance `claimNextDay` with 0 slice? |
 | --- | --- |
-| `paid >= C` (D1 day budget exhausted, incl. `C==0`) | **Yes** — day permanently consumed for those entries |
-| `rpnReady` and legitimate `rawPay==0` (zero global / zero half / zero weights / all loan-side exhausted) | **Yes** — nothing ever payable for that day |
-| **`poolRemaining == 0`** (or clamp zeros a still-payable day) | **No** — return without advance; **outer BREAK**; retry later |
-| `!knownGlobalSet[d]` | **No** — break outer loop; do not call `processUserSideDay` |
-| `knownGlobalSet[d]` but `cumCursor[side] < d` | **No** — **break** outer loop; retry after further `advanceCum*Through` |
-| Unset / garbage `cumRpn[d]` read without gate | **Forbidden** |
+| `paid >= C` (D1 exhausted, incl. `C==0`) | **Yes** |
+| Legitimate `rawPay==0` (weights/loan-side/remitted exhausted) | **Yes** |
+| **`poolRemaining == 0` or `poolRemaining < budgetBeforePool`** | **No** — return; outer **break**/retry |
+| `!knownGlobalSet[d]` | **No** |
+| `cumCursor < d` | **No** |
+| Unset RPN without gate | **Forbidden** |
 
 This matches live `_processEntry` spirit: if `cum*Cursor < need` after `advanceCum*Through`, return `(0,0)` **without** setting `processed` (retryable).
 
@@ -857,35 +852,33 @@ function claimForUserEntries(user) -> (userTotal, treasuryTotal):
       else if mode == CapMode.ShareOfPool:
         ;
       else:
-        // Legacy day — MUST return routed amounts and debit pool (rev 14)
-        (u, t) = applyLegacyDay(user, side, d, E, poolRemaining)
-        // applyLegacyDay: pays min(legacy slices, poolRemaining); advances
-        // only days it actually settled; if pool-clamped to 0 with remaining
-        // legacy entitlement → do not advance; outer will break on pool==0.
+        // Legacy day (rev 15): ALL-OR-NOTHING vs poolRemaining — same as ShareOfPool.
+        // entitlement = full legacy (u+t) for the day; if poolRemaining < entitlement
+        // and entitlement > 0 → do not pay, do not advance (retryable). No partial
+        // legacy paid map in v1.
+        (u, t, poolRemaining, advanced) = applyLegacyDay(user, side, d, E, poolRemaining)
+        if !advanced && (u + t == 0) && poolRemaining < legacyEntitlement(d):
+          break   // pool shortfall — retry later
         userTotal += u
         treasuryTotal += t
-        poolRemaining -= (u + t)
         daysUsed += 1
         continue
 
       transferSet = [ e in E | nextDay(e) == d && e.startDay <= d < e.endDay
                       && readyToTransfer(e) ]
-      (u, t) = processUserSideDay(user, side, d, transferSet, poolRemaining)
-      // If helper returned 0,0 without advancing (pool exhaustion), break
+      (u, t, poolRemaining) = processUserSideDay(user, side, d, transferSet, poolRemaining)
+      // Helper returns poolRemaining already debited; may advance or not.
+      // If pool shortfall left day unadvanced and poolRemaining still 0 → break.
       if u + t == 0 && poolRemaining == 0:
-        break
-      if u + t == 0:
-        // Helper may have advanced (legit empty day) or not (retryable).
-        // processUserSideDay documents which; if no advance and day still
-        // needs pay, break to retry. If advanced, continue.
-        ;
+        // Distinguishing legit empty day (advanced) vs pool block (not advanced)
+        // is internal to helper; outer breaks only when still stuck on d and pool==0.
+        if any e in transferSet with nextDay(e) == d:
+          break
       userTotal += u
       treasuryTotal += t
-      poolRemaining -= (u + t)
       daysUsed += 1
 
   // Transfer EXACTLY userTotal / treasuryTotal — no post-mutation scale.
-  // poolRemaining already enforced every day; facet must not re-truncate.
   return (userTotal, treasuryTotal)
 ```
 
@@ -929,46 +922,43 @@ function previewForUserEntries(user) -> userTotal:
 
   daysBudget = MAX_INTERACTION_CLAIM_DAYS   // same bound as claim — see below
 
+  // ONE pool for the whole preview (rev 15) — both sides share it, like claim.
+  simPoolRemaining = availableInteractionPool()
+  simLoanPaid[loanId][side] seeds from durable loanSideRewardPaidVpfi for all sides
+
   for side in {Lender, Borrower}:
     E = claim worklist for side   // clean + forfeit; NOT clean-only
     if E empty: continue
 
-    // VIEW: do NOT call advanceCum*Through (cannot mutate). Read live cumCursor.
-    // If cursor short, break — under-report (never over-report), same as live
-    // _previewEntryReward when cum*Cursor < need (Codex #1147 r8 L3).
-
     daysUsed = 0
-    // Initialize simNext for ALL e in E (including forfeit)
     for e in E:
-      simNext[e] = nextDay(e)   // rewardEntryClaimNextDay / startDay; read-only
-    // simPoolRemaining: same initial pool as claim would use (rev 14)
-    simPoolRemaining = availableInteractionPool()
-    // simLoanPaid[loanId][side] seeds from durable loanSideRewardPaidVpfi
+      simNext[e] = nextDay(e)
 
     while daysUsed < daysBudget:
-      // Day order = claim: min simNext over full E (forfeit prefixes included)
       d = min { simNext[e] | e in E, simNext[e] < e.endDay, !e.processed }
       if no such d: break
       if !knownGlobalSet[d]: break
-      if !rpnReady(side, d): break       // cumCursor < d — stop; retry later
+      if !rpnReady(side, d): break
+      if simPoolRemaining == 0: break
 
       mode = dayCapMode[d]
       if postCutover(d) && mode != CapMode.ShareOfPool:
-        // Fail-closed parity with claim: unstamped post-cutover day is not
-        // previewable as Legacy/uncapped — break (under-report) rather than
-        // invent Legacy product with T=max. Mutating claim would revert.
         break
-      if simPoolRemaining == 0:
-        break   // match claim: stop; do not invent uncapped later days
       if !postCutover(d) && (mode == CapMode.LegacyEthRatio || mode == 0):
-        // View twin of applyLegacyDay — also pool-clamped
+        // View twin: charge user AND treasury (forfeit) against pool (rev 15)
         dayUser = 0
+        dayTreasury = 0
+        entitlement = 0
         for e in E with simNext[e]==d:
-          if !(e.forfeited || terminalForfeit(e)):
-            dayUser += legacyDaySliceView(e, d)
-        dayUser = min(dayUser, simPoolRemaining)
-        userTotal += dayUser
-        simPoolRemaining -= dayUser
+          s = legacyDaySliceView(e, d)
+          entitlement += s
+          if e.forfeited || terminalForfeit(e): dayTreasury += s
+          else: dayUser += s
+        // All-or-nothing vs pool (match claim)
+        if entitlement > 0 && simPoolRemaining < entitlement:
+          break   // do not advance — under-report; claim would also retry
+        userTotal += dayUser   // preview user-facing omits treasury
+        simPoolRemaining -= (dayUser + dayTreasury)
         for e in E with simNext[e]==d:
           simNext[e] = d + 1
       else:
@@ -978,17 +968,20 @@ function previewForUserEntries(user) -> userTotal:
         if paid >= C:
           for e in transferSet: simNext[e] = d + 1
         else:
-          // simLoanPaid keyed by (loanId, side) — NOT loanId alone (rev 14)
           rawPay = 0
           for e in transferSet:
-            rem = loanSideRemainingSaturated(
-              e.loanId, side, simLoanPaid[e.loanId][side])
+            rem = min(
+              loanSideRemainingSaturated(e.loanId, side, simLoanPaid[e.loanId][side]),
+              remittedRemaining(e.loanId, side))
             cEff[e] = min(contrib(e,side,d), rem)
             rawPay += cEff[e]
           if rawPay == 0:
             for e in transferSet: simNext[e] = d + 1
           else:
-            budget = min(rawPay, C - paid, simPoolRemaining)
+            budgetBeforePool = min(rawPay, C - paid)
+            if simPoolRemaining < budgetBeforePool:
+              break   // all-or-nothing pool; no advance
+            budget = budgetBeforePool
             slices = proRataFloorWithCapacityBoundedDust(budget, cEff, transferSet)
             for e in transferSet:
               if !(e.forfeited || terminalForfeit(e)):
@@ -1001,7 +994,7 @@ function previewForUserEntries(user) -> userTotal:
   return userTotal
 ```
 
-**Preview/claim parity (rev 10/14):** after PR-5c, preview **must** use the same `cEff` / capacity-bounded dust / simulated `loanSidePaid[(loanId,side)]` / **`simPoolRemaining`** walk as claim. Violating this breaks `preview ≤ claim` when loan-side ≪ D1 or pool is tight.
+**Preview/claim parity (rev 10/15):** one **`simPoolRemaining` across both sides**; forfeit legacy slices debit pool; `simLoanPaid[loanId][side]`; remitted clamp on mirrors; pool all-or-nothing (no partial-day preview overstate).
 
 **Preview properties (frozen):**
 
@@ -1175,13 +1168,14 @@ Live path is **Base-orchestrated**: `RewardRemittanceFacet.remitRewardBudget` on
 
 | Option | Status | Rule |
 | --- | --- | --- |
-| **B (required)** | **Adopt** | Mirror→Base report carries **per-loan (or per-entry) headroom commitments** for day D on each side — not only aggregates. Base `chainRewardBudgetForDay` uses `min(uncappedSlice, Σ commitments)`. After remit, Base **and mirror** increment **`loanSideRewardRemitted[loanId][side]`** by the **attributed** amount. |
-| **B-attribution** | **Required with B** | If day budget is truncated, attribute pro-rata by commitment weight (or deterministic loanId order). **Forbidden:** aggregate-only headroom with no attribution rule. |
-| **Mirror enforcement (rev 14)** | **Required** | Remitted VPFI is **not** a free shared pot for any claim. Mirror claim path enforces `paid_L ≤ remitted_L` (or holds attributed remits in per-loan escrow until claim). Prevents loan A draining loan B’s attributed budget while Base blocks B’s future remits. |
-| **A** | **Rejected** Phase-1 | Mirror pull of Base pool without new message + Base debit handler. |
-| **Forbidden** | — | Invent headroom from numeraire-only v1 reports; aggregate headroom without remitted_L attribution; shared mirror balance without per-loan remitted caps. |
+| **B (required)** | **Adopt** | Per-loan headroom commitments in report; Base `chainRewardBudgetForDay = min(uncappedSlice, Σ commitments)`. |
+| **B-attribution** | **Required** | Truncated budget attributed pro-rata / deterministic loanId order. |
+| **Remitted timing (rev 15)** | **On delivery/ack** | Advance Base + mirror `loanSideRewardRemitted` only after **confirmed** mirror credit. Forbidden: ++ at Base send if bridge may fail. |
+| **Mirror enforcement** | **Required** | `processUserSideDay` clamps `cEff` by `remittedRemaining`; optional escrow. Not a free shared pot. |
+| **A** | **Rejected** Phase-1 | Mirror pull of Base pool. |
+| **Forbidden** | — | Aggregate-only headroom; remitted++ on unacked send; shared pot without per-loan caps. |
 
-PR-2/PR-5c must ship report extension **B + attribution + mirror remitted enforcement** before joint cutover uses loan-side remittance bounds on mirrors.
+PR-2/PR-5c: **B + attribution + ack-timed remitted + remitted clamp in claim SM**.
 
 #### Migration from ETH cap / dual pipe / storage
 
@@ -1290,8 +1284,10 @@ struct FeeEntitlementState {
     uint128 tariffPaidBorrower; // 0 or C*
     uint128 tariffPaidLender;   // 0 or C*
     uint128 cStar;              // notional C* at open (VPFI 1e18)
-    uint32 openDays;            // durationDays stamped at open (rev 14 — cap proration)
-    uint128 loanSideRewardCapOpen; // optional cache of ½×cStar×(1−m); or recompute from cStar
+    uint32 openDays;            // durationDays stamped at open (rev 14)
+    uint16 rewardHaircutBpsAtOpen; // m_reward snapshot (rev 15) — do NOT re-read live cfg
+    uint128 loanSideRewardCapOpen; // REQUIRED cache: ½×cStar×(1−haircutAtOpen)/BPS
+                                   // recompute only as consistency check, never sole source
 }
 mapping(uint256 => FeeEntitlementState) feeEntitlementByLoanId;
 
@@ -1466,7 +1462,7 @@ Borrower T4 Full, lender HoldOnly T4: LIF **13.20**, yield fee **~1.25**, absorb
 | Cum-ready + entry preview | Outer SM `cumCursor ≥ d` or break; preview worklist = claim; re-entrant sweep; fail-closed mode post-`D*` |
 | Entitlement enable | `ConfigFacet.setFeeEntitlementEnabled(bool)` |
 | Quote | `quoteFeeEntitlementTariff(asset, principal, durationDays)` → returns `C*` (party-independent notional) |
-| **Per-party Full auth** | Offer/intent: `lenderFull` + **`maxCStar`** (lender-signed). Accept/match: `borrowerFull` + **`maxCStar`** (even same-tx) + optional `allowFullDowngrade` (default false). Kill switch off → failed Full. |
+| **Per-party Full auth** | Offer/intent: `lenderFull` + **`maxCStar`** + optional **`allowFullDowngrade`** (all lender-signed). Accept/match: `borrowerFull` + **`maxCStar`** + optional **`allowFullDowngrade`**. Kill switch off / over-max → failed Full unless that party’s signed downgrade bit. |
 
 ### Facet / library touch list + grep checklist (Issue 17)
 
@@ -1614,7 +1610,7 @@ Runtime disable remains a kill switch. **Package ship order (C3):** HoldOnly (PR
 11. Governor multi-PR; tariff may precede D2 coupling.  
 12. New loans never set `vpfiHeld`; legacy settle/forfeit remain.  
 13. Duration = max/fixed term at open; **no tariff refund** on preclose.  
-14. **Owner calibration:** C1 Enabled default; C2 share cap 2000 bps; C3 Full package together; **C5 double absorption**; **C6** fee freeze + loan-side reward cap.
+14. **Owner calibration:** C1 Enabled **only after PR-5c / rewards-dark** (default false until then); C2 share cap 2000 bps; C3 Full package with 5c gate; **C5 double absorption**; **C6** fee freeze + loan-side reward cap.
 
 ---
 
@@ -1665,7 +1661,7 @@ Runtime disable remains a kill switch. **Package ship order (C3):** HoldOnly (PR
 | Track | Phase-1 | Wait |
 | --- | --- | --- |
 | Hold E-1 + HoldOnly hybrid LIF | Yes | — |
-| Full dual-fee (tiered LIF + VPFI tariff) | Yes — **default Enabled** (C1); PR-4→PR-5 with HoldOnly (C3) | — |
+| Full dual-fee (tiered LIF + VPFI tariff) | Yes — **default false until PR-5c or rewards-dark**, then Enabled (C1 rev 14/15); PR-4→PR-5c→PR-5b | — |
 | LIF or yield waived by Full | **No** (rev 7) | — |
 | Peg conversion / new custody LIF | No | Market-era + counsel |
 | D1 share cap | Yes | — |
@@ -1796,6 +1792,18 @@ PR plan assumes interaction rewards remain enabled only if: claim-on-close paths
 
 ---
 
+### Rev 15 changelog (Codex #1297 r1)
+
+- **`processUserSideDay(..., poolRemaining)`** in shared helper signature; returns updated pool.  
+- **Pool all-or-nothing** for partial day (`poolRemaining < budgetBeforePool` → no advance).  
+- **Legacy all-or-nothing** vs pool (no partial legacy without paid map).  
+- **Preview:** one `simPoolRemaining` for **both** sides; forfeit legacy debits pool; remitted clamp.  
+- **`remittedRemaining` in claim cEff** (not remittance-table-only).  
+- **Remitted++ on delivery/ack**, not Base send.  
+- **Stamp `rewardHaircutBpsAtOpen` + required `loanSideRewardCapOpen`**.  
+- **Lender-signed `allowFullDowngrade`** on offer/intent.  
+- **Recommendation summary** matches gated Full default.
+
 ### Rev 14 changelog (Codex r6 — post-#1294 late P2s)
 
 - **Pool exhaustion:** break claim loop when `poolRemaining==0`; do **not** advance cursors on pool-only zero (retryable).  
@@ -1920,4 +1928,4 @@ PR plan assumes interaction rewards remain enabled only if: claim-on-close paths
 
 ---
 
-*End of design document (rev 14).*
+*End of design document (rev 15).*
