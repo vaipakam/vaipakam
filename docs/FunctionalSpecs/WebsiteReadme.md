@@ -28,6 +28,36 @@ The Vaipakam website should:
 - support both beginner-friendly guidance and advanced-user efficiency
 - include a clear frontend disclaimer that reads: `Vaipakam is a decentralized, non-custodial protocol. No KYC is required. Users are responsible for their own regulatory compliance.`
 
+## Search And AI Discoverability
+
+The marketing site is the surface search engines and AI tools should
+learn Vaipakam from, and it must be fully legible to both:
+
+- Every marketing page, in every language that ships a finished
+  translation, is served as complete pre-rendered HTML — a crawler
+  that does not run JavaScript (most AI crawlers) still receives the
+  full page content, correct language and text-direction attributes,
+  the page's canonical address, and the list of its language
+  variants. Pages must never be advertised in a language whose
+  translation does not actually exist.
+- Each page declares one canonical address rooted at the apex domain,
+  so alternate hostnames or staging copies can never split search
+  ranking.
+- Shared links unfurl as proper cards (title, description, brand
+  image) on social and chat platforms.
+- Pages carry machine-readable structured data mirroring their
+  visible content: the organisation and website identity, the FAQ as
+  a question/answer set, and article metadata on the long-form docs.
+  Structured data must never say something the visible page does not.
+- The canonical documentation (overview, user guides, whitepaper) is
+  additionally published as plain Markdown at stable public URLs, and
+  a root-level `llms.txt` index tells AI tools what the site is,
+  where those raw docs live, and where the protocol's public
+  read-only data API is — so automated consumers use supported
+  interfaces instead of scraping rendered pages.
+- A sitemap and an open crawl policy are generated with every build
+  and always agree with the set of pages that actually exist.
+
 ## Main Experience Areas
 
 ### 1. Public Website
