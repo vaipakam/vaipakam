@@ -63,6 +63,7 @@ import {
   refreshMarketSummaries,
   MARKET_SWEEP_CURSOR_KIND,
 } from './marketSummary';
+import { materializeNotifications } from './notifications';
 
 /** Resolve a chain's deployBlock from the consolidated deployments
  *  JSON — the indexer's first-run fallback when no cursor exists. */
@@ -717,6 +718,13 @@ export async function runChainIndexerForChain(
   // never fail a scan. The window watermark lives in indexer_cursor
   // under its own kind (see sweepMarketSummaries).
   await sweepMarketSummaries(env, chainId, now);
+
+  // #1213 / E-11 — materialize per-recipient inbox rows for the
+  // notification center from this scan's loan-lifecycle events. Derived
+  // data, fail-open INSIDE (see notifications.ts), after the cursor
+  // advance — a hiccup here must never fail a scan whose authoritative
+  // activity_events / loans writes already landed.
+  await materializeNotifications(env.DB, chainId, allLogs, blockTimestamps, now);
 
   // RPC read-diet PR B — keep the display config snapshot current
   // (event-triggered + slow backstop; fail-open INSIDE, so a refresh

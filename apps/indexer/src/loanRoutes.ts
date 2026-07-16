@@ -1807,6 +1807,195 @@ function parseMarketFilter(url: URL): MarketFilter | 'bad' {
   return out;
 }
 
+// ─── Notification center (#1213 / E-11) ──────────────────────────────
+
+interface NotificationRow {
+  id: number;
+  kind: string;
+  loan_id: number | null;
+  offer_id: number | null;
+  event_kind: string | null;
+  data_json: string | null;
+  created_at: number;
+  read_at: number | null;
+}
+
+function notificationToJson(row: NotificationRow) {
+  let data: unknown = null;
+  if (row.data_json) {
+    try {
+      data = JSON.parse(row.data_json);
+    } catch {
+      data = null;
+    }
+  }
+  return {
+    id: row.id,
+    kind: row.kind,
+    loanId: row.loan_id,
+    offerId: row.offer_id,
+    eventKind: row.event_kind,
+    data,
+    createdAt: row.created_at,
+    read: row.read_at != null,
+  };
+}
+
+/**
+ * GET /notifications/:addr?chainId=8453&limit&before&unreadOnly=1
+ *
+ * The wallet's in-app inbox (#1213 / E-11): per-recipient lifecycle
+ * rows the ingest materialized (see notifications.ts), newest-first,
+ * plus the total unread count for the bell badge. Pure D1, open CORS —
+ * every row is derived from public on-chain events (same privacy model
+ * as /claimables and /activity). The chain stays authoritative: rows
+ * deep-link to Loan Details / the Claim Center and re-verify there.
+ *
+ * Cursor `before` = `"<createdAt>:<id>"` matching the
+ * (created_at DESC, id DESC) order.
+ */
+export async function handleNotifications(
+  req: Request,
+  env: Env,
+  addrRaw: string,
+): Promise<Response> {
+  const url = new URL(req.url);
+  const chainId = parseChainId(url.searchParams.get('chainId')) ?? 8453;
+  const addr = addrRaw.toLowerCase();
+  if (!/^0x[0-9a-f]{40}$/.test(addr)) {
+    return jsonResponse({ error: 'bad-address' }, 400);
+  }
+  if (!chainConfigured(env, chainId)) {
+    return jsonResponse({ error: 'chain-not-configured' }, 503);
+  }
+  const limit = parseLimit(url.searchParams.get('limit'));
+  const unreadOnly = url.searchParams.get('unreadOnly') === '1';
+  const beforeRaw = url.searchParams.get('before');
+
+  const where: string[] = ['chain_id = ?', 'recipient = ?'];
+  const binds: (string | number)[] = [chainId, addr];
+  if (unreadOnly) where.push('read_at IS NULL');
+  if (beforeRaw) {
+    const m = beforeRaw.match(/^(\d+):(\d+)$/);
+    if (!m) return jsonResponse({ error: 'bad-before' }, 400);
+    // (created_at, id) < (?, ?) — the composite keyset the feed index
+    // (chain_id, recipient, created_at, id) serves.
+    where.push('(created_at < ? OR (created_at = ? AND id < ?))');
+    const at = Number.parseInt(m[1], 10);
+    binds.push(at, at, Number.parseInt(m[2], 10));
+  }
+  try {
+    const rows = await env.DB.prepare(
+      `SELECT id, kind, loan_id, offer_id, event_kind, data_json, created_at, read_at
+         FROM notifications
+        WHERE ${where.join(' AND ')}
+        ORDER BY created_at DESC, id DESC
+        LIMIT ?`,
+    )
+      .bind(...binds, limit)
+      .all<NotificationRow>();
+    const results = rows.results ?? [];
+    const notifications = results.map(notificationToJson);
+    const last = results.length === limit ? results[results.length - 1] : null;
+    const nextBefore = last ? `${last.created_at}:${last.id}` : null;
+
+    // Unread count for the bell badge — always the FULL unread total,
+    // independent of the page/unreadOnly filter above.
+    const cnt = await env.DB.prepare(
+      `SELECT COUNT(*) AS n FROM notifications
+        WHERE chain_id = ? AND recipient = ? AND read_at IS NULL`,
+    )
+      .bind(chainId, addr)
+      .first<{ n: number }>();
+    return jsonResponse({
+      chainId,
+      address: addr,
+      notifications,
+      unreadCount: cnt?.n ?? 0,
+      nextBefore,
+    });
+  } catch (err) {
+    console.error('[loanRoutes] notifications failed', err);
+    return jsonResponse({ error: 'notifications-failed' }, 500);
+  }
+}
+
+/** Cap on ids per mark-read call — bounds the IN-list. */
+const NOTIF_MARK_READ_CAP = 200;
+
+/**
+ * POST /notifications/:addr/read  — body `{ ids?: number[], all?: true }`.
+ *
+ * Marks the wallet's rows read (sets `read_at`). `all: true` marks every
+ * unread row; otherwise `ids` marks that bounded set. Scoped to the
+ * recipient in the path, and only ever flips unread→read (idempotent;
+ * a new event always creates a fresh unread row). Read-state is a
+ * per-wallet convenience over public data — the mutation is NOT
+ * signature-gated in this PR (worst case a griefer clears another
+ * wallet's badge, reversible on the next event); SIWE-gating is a
+ * documented follow-up.
+ */
+export async function handleNotificationsRead(
+  req: Request,
+  env: Env,
+  addrRaw: string,
+): Promise<Response> {
+  const url = new URL(req.url);
+  const chainId = parseChainId(url.searchParams.get('chainId')) ?? 8453;
+  const addr = addrRaw.toLowerCase();
+  if (!/^0x[0-9a-f]{40}$/.test(addr)) {
+    return jsonResponse({ error: 'bad-address' }, 400);
+  }
+  if (!chainConfigured(env, chainId)) {
+    return jsonResponse({ error: 'chain-not-configured' }, 503);
+  }
+  let body: { ids?: unknown; all?: unknown };
+  try {
+    body = (await req.json()) as { ids?: unknown; all?: unknown };
+  } catch {
+    return jsonResponse({ error: 'bad-body' }, 400);
+  }
+  const markAll = body.all === true;
+  let ids: number[] = [];
+  if (!markAll) {
+    if (!Array.isArray(body.ids)) {
+      return jsonResponse({ error: 'ids-or-all-required' }, 400);
+    }
+    ids = body.ids
+      .map((v) => (typeof v === 'number' ? v : Number.NaN))
+      .filter((n) => Number.isInteger(n) && n > 0);
+    if (ids.length === 0) return jsonResponse({ chainId, address: addr, marked: 0 });
+    if (ids.length > NOTIF_MARK_READ_CAP) {
+      return jsonResponse({ error: 'too-many-ids', max: NOTIF_MARK_READ_CAP }, 400);
+    }
+  }
+  const now = Math.floor(Date.now() / 1000);
+  try {
+    let res;
+    if (markAll) {
+      res = await env.DB.prepare(
+        `UPDATE notifications SET read_at = ?
+          WHERE chain_id = ? AND recipient = ? AND read_at IS NULL`,
+      )
+        .bind(now, chainId, addr)
+        .run();
+    } else {
+      const placeholders = ids.map(() => '?').join(',');
+      res = await env.DB.prepare(
+        `UPDATE notifications SET read_at = ?
+          WHERE chain_id = ? AND recipient = ? AND read_at IS NULL
+            AND id IN (${placeholders})`,
+      )
+        .bind(now, chainId, addr, ...ids)
+        .run();
+    }
+    return jsonResponse({ chainId, address: addr, marked: res.meta?.changes ?? 0 });
+  } catch (err) {
+    console.error('[loanRoutes] notifications-read failed', err);
+    return jsonResponse({ error: 'notifications-read-failed' }, 500);
+  }
+}
+
 function parseChainId(raw: string | null): number | null {
   if (!raw) return null;
   const n = Number.parseInt(raw, 10);

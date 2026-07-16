@@ -9,7 +9,8 @@
     "deploy": "wrangler deploy",
     "build": "pnpm run typecheck",
     "check-event-coverage": "node scripts/check-event-coverage.mjs",
-    "typecheck": "tsc -p . --noEmit && node scripts/check-event-coverage.mjs",
+    "check-notification-coverage": "node scripts/check-notification-coverage.mjs",
+    "typecheck": "tsc -p . --noEmit && node scripts/check-event-coverage.mjs && node scripts/check-notification-coverage.mjs",
     "test": "vitest run"
   },
   "dependencies": {
