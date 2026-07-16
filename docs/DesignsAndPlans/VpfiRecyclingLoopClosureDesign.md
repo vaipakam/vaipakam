@@ -176,6 +176,16 @@ the post-mutation tier rollup (`rollupUserDiscount`) — so the credit counts
 toward tier standing instead of being clamped out as unsolicited dust. Only
 the recording logic is reused; the user-funded pull is not.
 
+**Broadcast-safety rule:** on the canonical chain a tier-changing rollup
+can trigger a protocol-budget-gated CCIP tier broadcast that bubbles
+failures into the mutation (per `VPFIDiscountSystem.md`) — a claim must
+never inherit that failure mode when today's wallet claim would have
+succeeded. The credit primitive therefore records locally with the tier
+broadcast **deferred/suppressed** (the push is an optimization; the next
+mutation or keeper pass carries it), or — if the local rollup itself would
+revert — the claim falls back to wallet delivery. Claim availability is
+never reduced by delivery venue, tier plumbing included.
+
 **Why this is the highest-leverage delta:**
 
 - Every rewarded VPFI lands **inside the sink system** on arrival: it
@@ -204,16 +214,20 @@ auto-staking or compounding.
   transfer to the vault address — a bare transfer would be clamped out by
   the anti-dust tracked-balance rule and earn no tier standing — and never
   the user-funded deposit chokepoint (see the load-bearing note above).
-- **Contract-routed claimants keep raw-balance delivery.** Two live
-  wrappers depend on the claim paying a raw balance to the calling
-  contract: `AggregatorAdapterImplementation.claimInteractionRewards`
+- **Contract-routed claimants: raw default, explicit selector for all.**
+  Two live wrappers depend on the claim paying a raw balance to the
+  calling contract: `AggregatorAdapterImplementation.claimInteractionRewards`
   (adapter must hold the VPFI for `sweepToPrincipal`) and
   `BackstopVaultImplementation.claimInteractionRewardsToDiamond` (forwards
-  the raw balance to treasury). Vault delivery is the default **only for
-  direct user claims**; the contract wrappers explicitly request
-  raw/wallet delivery (updated in the same PR), and the delivery selector
-  defaults conservatively so any other contract caller integrating today
-  keeps its observed raw-balance behaviour. Tests cover both wrappers.
+  the raw balance to treasury) — these are hardwired to raw delivery
+  (updated in the same PR). For **other** contract callers the default is
+  also raw (preserving every integration's observed behaviour), but the
+  delivery selector (`deliverTo`) is an explicit claim parameter available
+  to every caller — so a user claiming through a smart-contract wallet
+  (Safe, AA account) is not shut out of the loop: their wallet passes
+  `deliverTo = Vault` and gets the same Diamond-funded vault credit as an
+  EOA. Only direct EOA-style user claims default to vault delivery. Tests
+  cover both wrappers plus a contract-wallet vault opt-in.
 - **Delivery must never reduce claim availability.** The claim path
   resolves the claimant's vault **read-only** (the existing vault mapping)
   — it never routes through `getOrCreateUserVault`, which both creates
@@ -225,7 +239,16 @@ auto-staking or compounding.
 - Sanctions posture unchanged: the claim entry point keeps its existing
   tier gating; delivery venue does not alter it.
 - Forfeit routing (`toTreasury`) is untouched.
-- Mirror chains: identical change; the vault system is per-chain already.
+- **Mirror chains — same mechanics, honestly scoped benefit.** The vault
+  system is per-chain, so the credit primitive applies identically on
+  mirrors; but tier standing is resolved on Base and mirrors read only the
+  Base-pushed cached tier (per the tier-propagation design), while local
+  mirror vault VPFI satisfies only the required-balance checks. Rewards
+  delivered into a mirror vault therefore give **local spendable balance**
+  (Full-tariff spending power, balance gates) — they do not by themselves
+  raise the user's tier. The tier-standing bootstrap is a Base-side
+  benefit; a canonical-credit path for mirror deliveries is a possible
+  future extension, deliberately out of RL-1's scope.
 - Emit `RewardDeliveredToVault(user, amount, claimDayId)` per
   vault-delivered claim, stamped with the **claim day** — the day the
   tokens actually leave protocol custody — never one of the underlying
@@ -252,16 +275,25 @@ meaning anything):
 
 ```
 // Daily (flow): of what went out today, how much stayed in / came back
-loopClosureRatio[D] = (vaultDelivered[D] + absorbed[D]) / distributed[D]
-//   vaultDelivered[D] = rewards delivered to vaults ON day D (event flow)
+loopClosureRatio[D] = (netVaultDelivered[D] + absorbed[D]) / distributed[D]
+//   vaultDelivered[D]     = rewards delivered to vaults ON day D (event flow)
+//   rewardFundedDebits[D] = retention-ledger decrements ON day D
+//   netVaultDelivered[D]  = vaultDelivered[D]
+//                           − min(vaultDelivered[D], rewardFundedDebits[D])
 
 // Cumulative (stock): lifetime view
 cumLoopClosureRatio[D] = (retainedStock[D] + cumAbsorbed[D]) / cumDistributed[D]
 //   retainedStock[D] = Σ_u rewardRetained[u] at day-D close (ledger below)
 ```
 
-(A daily value above 100% remains possible only for the legitimate reason —
-a day that absorbed more than it distributed — never from stock re-counting.)
+The same-day netting is load-bearing: a user who claims 100 VPFI to the
+vault and spends that same 100 on a tariff the same day must count **once**
+(in `absorbed`), not once as "stayed" and again as "came back" — without
+the netting that day would read 200%. Same-day reward-funded debits net
+against that day's deliveries first (consistent with the ledger's
+rewards-spent-first rule), so a daily value above 100% remains possible
+only for the legitimate reason — a day that absorbed more than it
+distributed — never from counting the same tokens twice.
 
 **Day basis (pinned):** both sides of the ratio are **claim-day based** —
 `distributed[D]` is the VPFI actually paid out by claims on day `D` (the
@@ -302,10 +334,19 @@ day closes).
 `∞`. Cumulative views use cumulative sums, which stay well-defined once any
 distribution has occurred.
 
+**Observability dependency (one small contract addition):** the ledger's
+debit leg requires vault VPFI debits to be event-visible, and today
+`VaultFactoryFacet.vaultWithdrawERC20` adjusts `protocolTrackedVaultBalance`
+without emitting a generic debit event — VPFI leaving through a generic
+vault path would be invisible and `rewardRetained` would overstate. RL-2
+therefore adds one event, `VaultVpfiDebited(user, amount, source)`, emitted
+at the tracked-balance decrement chokepoint (covers withdrawals, tariff
+pulls, fee pulls, perk spends in one place). This is the delta's only
+contract change beyond RL-1's delivery event.
+
 Together with `selfFundingRatio` (#1218) this makes the loop's health two
 observable numbers — how much of distribution stays in the system, and how
-much of distribution the system's own absorption funds. Indexer/metrics
-work on top of RL-1's event; no other contract change.
+much of distribution the system's own absorption funds.
 
 ### RL-3 — Reward claim horizon (bounded liability tail) — RATIFIED (see §10.2)
 
@@ -323,8 +364,13 @@ bucket credit; recycled-funded share = commitment release).
   are the norm; a 12-month window on a fee rebate is conservative).
 - **Against:** it takes value from dormant users; the ratified governor
   deliberately chose "released only by forfeit — never by time."
-- **If adopted:** prominent UX (claim-center countdown, notification
-  pre-expiry via the existing paid-push channel), spec edit to the
+- **If adopted:** prominent UX — claim-center countdown plus a pre-expiry
+  notice that **must ride free channels** (the in-app notification center
+  from #1213, which needs no billing): the existing paid-push channel is
+  VPFI-billed and skips users with insufficient vault VPFI
+  (`markNotifBilled` reverts and the watcher skips) — exactly the dormant,
+  broke claimants RL-3 would sweep, so paid push may only ever be an
+  *additional* channel, never the required one. Spec edit to the
   governor's commitment rules, and the horizon runs **per reward entry
   from that entry's first full claimability** — for most entries that is
   the loan's terminal event, but an entry that becomes claimable earlier
@@ -473,8 +519,8 @@ Mapped onto #1294's PR plan (which this design does not renumber):
 
 | Card | Scope | Depends on | Notes |
 | --- | --- | --- | --- |
-| **RL-1 PR** | Claim-to-vault delivery + opt-out + tests | None (independent of D1/governor; touches `InteractionRewardsFacet` claim tail only) | Can ship **first** — immediate loop value even before the governor exists, since it feeds the live tier system |
-| **RL-2** | Indexer/dashboard metric | #1218 metrics card | Rides the same events |
+| **RL-1 PR** | Claim-to-vault delivery: the **Diamond-funded vault credit primitive** (new VaultFactory/diamond surface — direct Diamond→vault transfer + tracked-balance/rollup recording tail, broadcast-safe), delivery selector (`deliverTo`) + wrapper hardwiring, `RewardDeliveredToVault` event, opt-out, tests | None (independent of D1/governor) | Can ship **first** — immediate loop value even before the governor exists, since it feeds the live tier system. Scope is NOT the claim tail alone — the credit primitive is load-bearing (§6 RL-1); reusing user-funded `vaultDepositERC20` or a bare transfer is forbidden |
+| **RL-2** | Indexer/dashboard metric + the `VaultVpfiDebited` event at the tracked-balance decrement chokepoint (its one contract change) | RL-1 (`RewardDeliveredToVault`), #1218 metrics card | Ledger + flow/stock ratios per §6 RL-2 |
 | **RL-3** | Claim-horizon sweep (**RATIFIED**, §10.2) | Governor PR-3 stack (commitment model) | Ships the 365-day per-entry sweep + the governor §3.1 superseding note |
 | **RL-4** | Allocation register (dormant defaults) | Governor PR-3b | Config plumbing in the #1217 knob pattern |
 | **RL-5** | Sequencing: pull PR-7 forward; E-2 spend-gated perks alongside PR-5b; schedule #1219 legal glance | — | Project-board sequencing, not new code design |
