@@ -53,7 +53,10 @@ interface IBackstopDiamond {
         LibSwap.AdapterCall[] calldata retryCalls
     ) external;
 
-    function claimInteractionRewards()
+    /// @dev RL-1 — explicit-venue claim. `deliverTo` is the
+    ///      `LibVaipakam.RewardDelivery` enum (ABI uint8); this vault
+    ///      hardwires 1 = Wallet (raw transfer to the caller).
+    function claimInteractionRewardsTo(uint8 deliverTo)
         external
         returns (uint256 paid, uint256 fromDay, uint256 toDay);
 
@@ -265,7 +268,14 @@ contract BackstopVaultImplementation is
         returns (uint256 recovered)
     {
         uint256 before = IERC20(vpfi).balanceOf(address(this));
-        IBackstopDiamond(diamond).claimInteractionRewards();
+        // RL-1 — HARDWIRED Wallet delivery: this forwarder reads its own raw
+        // balance delta and ships it to the Diamond/treasury; a vault
+        // delivery would strand the VPFI in this vault's per-user vault
+        // where the delta never shows. Explicit rather than relying on the
+        // contract-caller default so the behaviour can't drift.
+        IBackstopDiamond(diamond).claimInteractionRewardsTo(
+            uint8(LibVaipakam.RewardDelivery.Wallet)
+        );
         recovered = IERC20(vpfi).balanceOf(address(this)) - before;
         if (recovered > 0) IERC20(vpfi).safeTransfer(diamond, recovered);
     }

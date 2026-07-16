@@ -83,7 +83,7 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](109);
+        selectors = new bytes4[](111);
         selectors[0] = TestMutatorFacet.setLoan.selector;
         selectors[1] = TestMutatorFacet.setOffer.selector;
         selectors[2] = TestMutatorFacet.setNextLoanId.selector;
@@ -282,6 +282,9 @@ contract HelperTest {
         selectors[106] = TestMutatorFacet.callRepointRewardEntry.selector;
         selectors[107] = TestMutatorFacet.getUserRewardEntryIds.selector;
         selectors[108] = TestMutatorFacet.getRewardEntryUserIdx.selector;
+        // RL-1 — claim-to-vault delivery test scaffolding.
+        selectors[109] = TestMutatorFacet.setMandatoryVaultVersionRaw.selector;
+        selectors[110] = TestMutatorFacet.getStakeRollupStateRaw.selector;
         // #951 v2 (Codex #959 bind-to-live) — setSaleListingCollateralRaw removed
         // with the snapshot mapping; the accept binds `>=` live collateral.
         // #687-B: the former tail entries ([83]-[87]: setBackstopAbsorbCashRaw,
@@ -629,7 +632,7 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](29);
+        selectors = new bytes4[](30);
         selectors[0] = VaultFactoryFacet
             .initializeVaultImplementation
             .selector;
@@ -666,6 +669,9 @@ contract HelperTest {
         selectors[27] = VaultFactoryFacet.vaultBannedSource.selector;
         // #398 — adapter `_withdrawalsBlocked()` reads the vault-upgrade floor.
         selectors[28] = VaultFactoryFacet.getVaultVersionInfo.selector;
+        // RL-1 — Diamond-funded vault credit primitive (reward
+        // claim-to-vault delivery).
+        selectors[29] = VaultFactoryFacet.vaultCreditFromDiamondERC20.selector;
         return selectors;
     }
 
@@ -1475,11 +1481,14 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](3);
+        selectors = new bytes4[](4);
         selectors[0] = VPFIDiscountAccumulatorFacet.rollupUserDiscount.selector;
         selectors[1] = VPFIDiscountAccumulatorFacet.effectiveTierAndBps.selector;
         // T-087 Sub 2.A — projected tier-expiry view.
         selectors[2] = VPFIDiscountAccumulatorFacet.getTierExpirySec.selector;
+        // RL-1 — broadcast-free rollup for the vault credit primitive.
+        selectors[3] =
+            VPFIDiscountAccumulatorFacet.rollupUserDiscountLocal.selector;
         return selectors;
     }
 
@@ -1726,7 +1735,7 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](23);
+        selectors = new bytes4[](24);
         selectors[0] = InteractionRewardsFacet.claimInteractionRewards.selector;
         selectors[1] = InteractionRewardsFacet.setInteractionLaunchTimestamp.selector;
         selectors[2] = InteractionRewardsFacet.getInteractionLaunchTimestamp.selector;
@@ -1753,6 +1762,8 @@ contract HelperTest {
         selectors[20] = InteractionRewardsFacet.liquidationRewardClose.selector;
         selectors[21] = InteractionRewardsFacet.terminalRewardClose.selector;
         selectors[22] = InteractionRewardsFacet.transferLenderRewardEntry.selector;
+        // RL-1 — explicit-delivery claim (vault default / wallet opt-out).
+        selectors[23] = InteractionRewardsFacet.claimInteractionRewardsTo.selector;
         return selectors;
     }
 
@@ -1826,7 +1837,7 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](31);
+        selectors = new bytes4[](32);
         selectors[0] = VaultFactoryFacet.initializeVaultImplementation.selector;
         selectors[1] = VaultFactoryFacet.getOrCreateUserVault.selector;
         selectors[2] = VaultFactoryFacet.upgradeVaultImplementation.selector;
@@ -1860,6 +1871,9 @@ contract HelperTest {
         selectors[28] = VaultFactoryFacet.recoveryNonce.selector;
         selectors[29] = VaultFactoryFacet.vaultBannedSource.selector;
         selectors[30] = VaultFactoryFacet.getVaultVersionInfo.selector;
+        // RL-1 — Diamond-funded vault credit primitive (reward
+        // claim-to-vault delivery).
+        selectors[31] = VaultFactoryFacet.vaultCreditFromDiamondERC20.selector;
         return selectors;
     }
 

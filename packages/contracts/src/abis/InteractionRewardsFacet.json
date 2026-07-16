@@ -24,6 +24,35 @@
   },
   {
     "type": "function",
+    "name": "claimInteractionRewardsTo",
+    "inputs": [
+      {
+        "name": "deliverTo",
+        "type": "uint8",
+        "internalType": "enum LibVaipakam.RewardDelivery"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "paid",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "fromDay",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "toDay",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
     "name": "getInteractionAnnualRateBps",
     "inputs": [
       {
@@ -561,6 +590,31 @@
       },
       {
         "name": "amount",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "RewardDeliveredToVault",
+    "inputs": [
+      {
+        "name": "user",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      },
+      {
+        "name": "amount",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      },
+      {
+        "name": "claimDayId",
         "type": "uint256",
         "indexed": false,
         "internalType": "uint256"

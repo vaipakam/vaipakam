@@ -51,6 +51,39 @@ contract TestMutatorFacet {
         LibVaipakam.storageSlot().offerIdToLoanId[offerId] = loanId;
     }
 
+    /// @notice RL-1 test-only — force the mandatory-vault-upgrade gate
+    ///         without deploying a fresh implementation, so tests can put a
+    ///         claimant's vault below `mandatoryVaultVersion` and assert the
+    ///         vault-credit → wallet fallback.
+    function setMandatoryVaultVersionRaw(uint256 version) external {
+        LibVaipakam.storageSlot().mandatoryVaultVersion = version;
+    }
+
+    /// @notice RL-1 test-only — inspect the T-087 accumulator's lifecycle +
+    ///         ring-buffer state for `user`, so tests can assert a tier
+    ///         rollup actually stamped at the post-mutation balance (and
+    ///         that a rolled-back credit left NO stamp).
+    /// @return startSec      `currentStakeStartSec[user]` (0 = not an active staker).
+    /// @return lastUpdateDay `lastUpdateDayId[user]`.
+    /// @return dayClose      Close-of-day balance in the last-written slot
+    ///                       (0 when that slot doesn't belong to `lastUpdateDay`).
+    /// @return dayMin        Day-min balance in the same slot.
+    function getStakeRollupStateRaw(address user)
+        external
+        view
+        returns (uint40 startSec, uint16 lastUpdateDay, uint120 dayClose, uint120 dayMin)
+    {
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        startSec = s.currentStakeStartSec[user];
+        lastUpdateDay = s.lastUpdateDayId[user];
+        LibVaipakam.DaySnapshot storage snap =
+            s.dayBalances[user][lastUpdateDay % 30];
+        if (snap.dayId == lastUpdateDay) {
+            dayClose = snap.dayClose;
+            dayMin = snap.dayMin;
+        }
+    }
+
     /// @notice Scaffold an active loan end-to-end — writes the struct AND
     ///         fires {LibMetricsHooks.onLoanInitialized} so counters, the
     ///         active-loan list, NFT-by-collection tallies, unique-user

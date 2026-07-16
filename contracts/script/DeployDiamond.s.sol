@@ -1206,7 +1206,7 @@ contract DeployDiamond is Script {
     }
 
     function _getVaultFactorySelectors() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](31);
+        s = new bytes4[](32);
         s[0] = VaultFactoryFacet.initializeVaultImplementation.selector;
         s[1] = VaultFactoryFacet.getOrCreateUserVault.selector;
         s[2] = VaultFactoryFacet.upgradeVaultImplementation.selector;
@@ -1244,6 +1244,9 @@ contract DeployDiamond is Script {
         s[28] = VaultFactoryFacet.recoveryAckTextHash.selector;
         s[29] = VaultFactoryFacet.recoveryNonce.selector;
         s[30] = VaultFactoryFacet.vaultBannedSource.selector;
+        // RL-1 — Diamond-funded vault credit primitive (reward
+        // claim-to-vault delivery).
+        s[31] = VaultFactoryFacet.vaultCreditFromDiamondERC20.selector;
     }
 
     /// @dev Issue #67 — `OfferFacet` was split into `OfferCreateFacet`
@@ -2024,7 +2027,7 @@ contract DeployDiamond is Script {
     // #687-B: _getStakingRewardsSelectors removed with the 5% VPFI staking yield.
 
     function _getInteractionRewardsSelectors() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](23);
+        s = new bytes4[](24);
         s[0] = InteractionRewardsFacet.claimInteractionRewards.selector;
         s[1] = InteractionRewardsFacet.setInteractionLaunchTimestamp.selector;
         s[2] = InteractionRewardsFacet.getInteractionLaunchTimestamp.selector;
@@ -2051,6 +2054,8 @@ contract DeployDiamond is Script {
         s[20] = InteractionRewardsFacet.liquidationRewardClose.selector;
         s[21] = InteractionRewardsFacet.terminalRewardClose.selector;
         s[22] = InteractionRewardsFacet.transferLenderRewardEntry.selector;
+        // RL-1 — explicit-delivery claim (vault default / wallet opt-out).
+        s[23] = InteractionRewardsFacet.claimInteractionRewardsTo.selector;
     }
 
     function _getRewardReporterSelectors() internal pure returns (bytes4[] memory s) {
@@ -2082,12 +2087,15 @@ contract DeployDiamond is Script {
         pure
         returns (bytes4[] memory s)
     {
-        s = new bytes4[](3);
+        s = new bytes4[](4);
         s[0] = VPFIDiscountAccumulatorFacet.rollupUserDiscount.selector;
         s[1] = VPFIDiscountAccumulatorFacet.effectiveTierAndBps.selector;
         // T-087 Sub 2.A — projected tier-expiry view (off-chain
         // monitoring + Sub 2.B CCIP payload source + test inspection).
         s[2] = VPFIDiscountAccumulatorFacet.getTierExpirySec.selector;
+        // RL-1 — broadcast-free rollup used by the Diamond-funded vault
+        // credit primitive on the reward claim-to-vault path.
+        s[3] = VPFIDiscountAccumulatorFacet.rollupUserDiscountLocal.selector;
     }
 
     /// T-087 Sub 2.C — mirror-side tier-push receiver facet. Both

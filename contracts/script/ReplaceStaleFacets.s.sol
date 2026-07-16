@@ -4,6 +4,7 @@ pragma solidity ^0.8.29;
 import {Script} from "forge-std/Script.sol";
 import {console} from "forge-std/console.sol";
 import {IDiamondCut} from "@diamond-3/interfaces/IDiamondCut.sol";
+import {IDiamondLoupe} from "@diamond-3/interfaces/IDiamondLoupe.sol";
 import {OfferCreateFacet} from "../src/facets/OfferCreateFacet.sol";
 import {OfferAcceptFacet} from "../src/facets/OfferAcceptFacet.sol";
 import {OracleFacet} from "../src/facets/OracleFacet.sol";
@@ -69,17 +70,33 @@ contract ReplaceStaleFacets is Script {
         // pre-T-068 diamond gets via the dedicated CCIP deploy/migration
         // path, not this one-off bytecode-refresh script.
 
-        // 10 cuts:
+        // RL-1 (Codex #1302 P2) — the shared `FacetSelectors.vaultFactory()`
+        // list now grows over time (it gained `vaultCreditFromDiamondERC20`),
+        // and a blanket `Replace` of the full list reverts on any diamond
+        // that doesn't route a newly-added selector yet. Partition by live
+        // routing (the `RedeployFacets` pattern) so routed selectors get a
+        // Replace and not-yet-routed ones get an Add — the script stays
+        // correct for every future addition to the shared list.
+        (bytes4[] memory vfAdd, bytes4[] memory vfReplace) =
+            _partitionByRouting(diamond, _vaultFactorySelectors());
+
+        // 10 cuts (+1 when the diamond is missing new VaultFactory selectors):
         //   3 Replace (Offer / Oracle / VaultFactory bytecode refresh)
         //   1 Replace + 1 Add (ConfigFacet — existing 28 selectors + 8 missing for protocol-console knobs)
         //   1 Add (NumeraireConfigFacet — 19 numeraire/PAD/periodic selectors carved out of ConfigFacet)
         //   1 Replace + 1 Add (OracleAdminFacet — existing 20 + 10 missing Pyth/admin getters)
         //   1 Replace + 1 Add (OfferAcceptFacet — existing 4 selectors + 1 missing #627 KYC-value view)
-        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](10);
+        //   [+1 Add] (VaultFactoryFacet — selectors the target diamond doesn't route yet)
+        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](
+            vfAdd.length > 0 ? 11 : 10
+        );
         cuts[0] = _replace(address(offerCreateFacet), _offerCreateSelectors());
         cuts[7] = _replace(address(offerAcceptFacet), _offerAcceptSelectors());
         cuts[1] = _replace(address(oracleFacet), _oracleSelectors());
-        cuts[2] = _replace(address(vaultFactoryFacet), _vaultFactorySelectors());
+        cuts[2] = _replace(address(vaultFactoryFacet), vfReplace);
+        if (vfAdd.length > 0) {
+            cuts[10] = _add(address(vaultFactoryFacet), vfAdd);
+        }
         cuts[3] = _replace(address(configFacet), _configFacetExistingSelectors());
         cuts[4] = _add(address(configFacet), _configFacetMissingSelectors());
         cuts[5] = _replace(address(oracleAdminFacet), _oracleAdminExistingSelectors());
@@ -96,7 +113,10 @@ contract ReplaceStaleFacets is Script {
 
         vm.stopBroadcast();
 
-        console.log("DiamondCut applied: 5 facets replaced + 38 missing selectors added.");
+        console.log(
+            "DiamondCut applied: 5 facets replaced; missing selectors added:",
+            38 + vfAdd.length
+        );
     }
 
     function _add(address facet, bytes4[] memory selectors)
@@ -121,6 +141,34 @@ contract ReplaceStaleFacets is Script {
             action: IDiamondCut.FacetCutAction.Replace,
             functionSelectors: selectors
         });
+    }
+
+    /// @dev RL-1 (Codex #1302 P2) — split `selectors` into the subset the
+    ///      live diamond already routes (safe to Replace) and the subset it
+    ///      doesn't (must be Add — a Replace of an unrouted selector
+    ///      reverts). Mirrors `RedeployFacets._partitionByRouting`.
+    function _partitionByRouting(address diamond, bytes4[] memory selectors)
+        internal
+        view
+        returns (bytes4[] memory toAdd, bytes4[] memory toReplace)
+    {
+        bool[] memory routed = new bool[](selectors.length);
+        uint256 addN;
+        uint256 replN;
+        for (uint256 i; i < selectors.length; i++) {
+            routed[i] =
+                IDiamondLoupe(diamond).facetAddress(selectors[i]) != address(0);
+            if (routed[i]) replN++;
+            else addN++;
+        }
+        toAdd = new bytes4[](addN);
+        toReplace = new bytes4[](replN);
+        uint256 a;
+        uint256 r;
+        for (uint256 i; i < selectors.length; i++) {
+            if (routed[i]) toReplace[r++] = selectors[i];
+            else toAdd[a++] = selectors[i];
+        }
     }
 
     function _offerCreateSelectors() internal pure returns (bytes4[] memory s) {

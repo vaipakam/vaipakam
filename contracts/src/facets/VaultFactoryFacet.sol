@@ -4,6 +4,7 @@ pragma solidity ^0.8.29;
 
 import {LibVaipakam} from "../libraries/LibVaipakam.sol";
 import {LibEncumbrance} from "../libraries/LibEncumbrance.sol";
+import {LibVPFIDiscount} from "../libraries/LibVPFIDiscount.sol";
 import {VaipakamVaultImplementation} from "../VaipakamVaultImplementation.sol";
 import {ERC1967Proxy} from "@openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy.sol";
 import {UUPSUpgradeable} from "@openzeppelin/contracts/proxy/utils/UUPSUpgradeable.sol";
@@ -454,6 +455,80 @@ contract VaultFactoryFacet is DiamondAccessControl, IVaipakamErrors {
         uint256 amount
     ) external onlyDiamondInternal {
         LibVaipakam.recordVaultDeposit(user, token, amount);
+    }
+
+    /**
+     * @notice RL-1 (VpfiRecyclingLoopClosureDesign §6) — the Diamond-funded
+     *         vault credit primitive. Transfers `amount` of `token` from the
+     *         DIAMOND's own balance into `user`'s vault proxy, then runs the
+     *         same recording tail the user-funded deposit chokepoint runs:
+     *         the `protocolTrackedVaultBalance` increment plus (for VPFI)
+     *         the post-mutation tier rollup — so the credit counts toward
+     *         fee-discount standing instead of being clamped out as
+     *         unsolicited dust.
+     *
+     * @dev    NOT a variant of {vaultDepositERC20}: that chokepoint is
+     *         user-funded (`safeTransferFrom(user, proxy, amount)` against
+     *         the claimant's wallet allowance), while this pays from the
+     *         Diamond's pre-funded balance — routing a protocol payout
+     *         through the user-funded pull would revert for claimants with
+     *         no matching wallet balance/allowance, or silently move the
+     *         user's own tokens instead of the payout.
+     *
+     *         Vault resolution is READ-ONLY on purpose: never
+     *         {getOrCreateUserVault}, which both mints vaults and reverts
+     *         `VaultUpgradeRequired`. A payout path must not mint a vault as
+     *         a side effect, and callers (the reward claim) treat any revert
+     *         here as "fall back to wallet delivery" — so `NoVault` /
+     *         `VaultUpgradeRequired` below are the fallback triggers, not
+     *         hard failures. The whole body runs in the caller's
+     *         revert-isolated cross-facet frame: a failure at ANY step
+     *         (transfer, record, rollup) rolls back every vault-side effect
+     *         before the caller's fallback pays.
+     *
+     *         Tier rollup uses the broadcast-FREE
+     *         {LibVPFIDiscount.rollupUserDiscountLocal} — a protocol payout
+     *         must never inherit the CCIP tier-push failure modes
+     *         (`ProtocolBudgetExhausted`); the next broadcasting mutation
+     *         carries the push. Sanctions posture is the CALLER's concern
+     *         (the claim entry point Tier-1-gates `msg.sender` already);
+     *         onlyDiamondInternal keeps external parties out.
+     *
+     * @param user   User whose vault is credited (counter increments under
+     *               this address).
+     * @param token  ERC-20 token address (tier rollup fires only when this
+     *               is the registered VPFI token).
+     * @param amount Amount to credit from the Diamond's balance.
+     */
+    // forge-lint: disable-next-line(mixed-case-function)
+    function vaultCreditFromDiamondERC20(
+        address user,
+        address token,
+        uint256 amount
+    ) external onlyDiamondInternal {
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        address proxy = s.userVaipakamVaults[user];
+        if (proxy == address(0)) revert NoVault();
+        if (
+            s.mandatoryVaultVersion > 0 &&
+            s.vaultVersion[user] < s.mandatoryVaultVersion
+        ) {
+            revert VaultUpgradeRequired();
+        }
+
+        IERC20(token).safeTransfer(proxy, amount);
+        LibVaipakam.recordVaultDeposit(user, token, amount);
+
+        if (token == s.vpfiToken) {
+            // Post-mutation stamp, clamped against the tracked counter so
+            // pre-existing unsolicited dust in the vault still can't inflate
+            // the tier (same T-054 rule every staking mutation applies).
+            uint256 newBal = LibVPFIDiscount.clampToTracked(
+                IERC20(token).balanceOf(proxy),
+                s.protocolTrackedVaultBalance[user][token]
+            );
+            LibVPFIDiscount.rollupUserDiscountLocal(user, newBal);
+        }
     }
 
     /**

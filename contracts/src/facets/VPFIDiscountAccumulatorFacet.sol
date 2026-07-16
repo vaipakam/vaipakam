@@ -62,26 +62,7 @@ contract VPFIDiscountAccumulatorFacet {
         onlyInternal
     {
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
-        uint16 today = _todayId();
-        uint16 prevUpdateDay = s.lastUpdateDayId[user];
-        uint120 prevBal = _readLastKnownBalance(s, user, prevUpdateDay);
-        _maintainStakerLifecycle(s, user, prevBal, balPostMutation, today);
-        _advanceRingBuffer(s, user, balPostMutation, today, prevBal, prevUpdateDay);
-        // T-087 Sub 2.A — replace the old `type(uint40).max` sentinel
-        // (which Sub 1.B / 1.C wrote unconditionally as a placeholder)
-        // with the actual projected expiry. The scan walks the future
-        // trajectory of the ring buffer assuming the user holds the
-        // current balance forever, and finds the first day on which
-        // the projected TWA crosses below the current EFFECTIVE_TIER
-        // boundary. The mirror cache's freshness gate now has a
-        // meaningful timestamp to compare against (design §4.3 +
-        // round-3 P1 #1).
-        s.tierExpirySec[user] = _computeProjectedTierExpiry(
-            s,
-            user,
-            today,
-            uint120(balPostMutation)
-        );
+        _rollupCore(s, user, balPostMutation);
 
         // T-087 Sub 2.D — protocol-funded mirror broadcast via cross-
         // facet call to `ProtocolBroadcastFacet`.
@@ -116,6 +97,61 @@ contract VPFIDiscountAccumulatorFacet {
                 }
             }
         }
+    }
+
+    /// @notice RL-1 (VpfiRecyclingLoopClosureDesign §6) — broadcast-FREE
+    ///         sibling of {rollupUserDiscount}. Runs the identical local
+    ///         ring-buffer + lifecycle + expiry writes but deliberately
+    ///         skips the CCIP tier push.
+    /// @dev    Used by the Diamond-funded vault credit primitive
+    ///         ({VaultFactoryFacet.vaultCreditFromDiamondERC20}) on the
+    ///         reward claim-to-vault path: a claim must never inherit the
+    ///         broadcast path's failure modes (`ProtocolBudgetExhausted`,
+    ///         messenger misconfig) when today's wallet claim would have
+    ///         succeeded. The push is an optimization, not a correctness
+    ///         requirement — the user's NEXT balance mutation (or any
+    ///         keeper poke) runs the broadcasting rollup and carries the
+    ///         tier update to mirrors; until then mirrors serve the
+    ///         previously-pushed cache, exactly as they do between any two
+    ///         mutations. Gated to internal cross-facet calls only.
+    /// @param  user            User whose accumulator is being rolled up.
+    /// @param  balPostMutation The balance in effect after the caller's
+    ///                         vault mutation lands.
+    function rollupUserDiscountLocal(address user, uint256 balPostMutation)
+        external
+        onlyInternal
+    {
+        _rollupCore(LibVaipakam.storageSlot(), user, balPostMutation);
+    }
+
+    /// @dev Shared local-write body of the two rollup entries: ring-buffer
+    ///      advance, staker-lifecycle maintenance, and the projected
+    ///      tier-expiry stamp. Broadcast policy is the CALLER's concern.
+    function _rollupCore(
+        LibVaipakam.Storage storage s,
+        address user,
+        uint256 balPostMutation
+    ) private {
+        uint16 today = _todayId();
+        uint16 prevUpdateDay = s.lastUpdateDayId[user];
+        uint120 prevBal = _readLastKnownBalance(s, user, prevUpdateDay);
+        _maintainStakerLifecycle(s, user, prevBal, balPostMutation, today);
+        _advanceRingBuffer(s, user, balPostMutation, today, prevBal, prevUpdateDay);
+        // T-087 Sub 2.A — replace the old `type(uint40).max` sentinel
+        // (which Sub 1.B / 1.C wrote unconditionally as a placeholder)
+        // with the actual projected expiry. The scan walks the future
+        // trajectory of the ring buffer assuming the user holds the
+        // current balance forever, and finds the first day on which
+        // the projected TWA crosses below the current EFFECTIVE_TIER
+        // boundary. The mirror cache's freshness gate now has a
+        // meaningful timestamp to compare against (design §4.3 +
+        // round-3 P1 #1).
+        s.tierExpirySec[user] = _computeProjectedTierExpiry(
+            s,
+            user,
+            today,
+            uint120(balPostMutation)
+        );
     }
 
     /// @notice T-087 Sub 2.A — read the user's projected tier-expiry

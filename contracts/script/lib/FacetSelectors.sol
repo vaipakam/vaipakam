@@ -55,14 +55,14 @@ library FacetSelectors {
         s[17] = OracleFacet.countLiveSecondaryOracleFeeds.selector;
     }
 
-    /// @notice Full external selector surface of {VaultFactoryFacet} (31).
+    /// @notice Full external selector surface of {VaultFactoryFacet} (32).
     /// @dev    Sourced from the compiled ABI (`forge inspect VaultFactoryFacet
     ///         methodIdentifiers`), NOT from any prior hand-list — the parallel
     ///         lists in HelperTest / the scripts were both missing
     ///         `getDiamondAddress` and `vaultSetNFTUser1155` (the exact drift
     ///         #778 warns about). The parity test keeps this list == the ABI.
     function vaultFactory() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](31);
+        s = new bytes4[](32);
         s[0] = VaultFactoryFacet.initializeVaultImplementation.selector;
         s[1] = VaultFactoryFacet.getOrCreateUserVault.selector;
         s[2] = VaultFactoryFacet.upgradeVaultImplementation.selector;
@@ -94,6 +94,9 @@ library FacetSelectors {
         s[28] = VaultFactoryFacet.recoveryNonce.selector;
         s[29] = VaultFactoryFacet.vaultBannedSource.selector;
         s[30] = VaultFactoryFacet.getVaultVersionInfo.selector;
+        // RL-1 — Diamond-funded vault credit primitive (reward
+        // claim-to-vault delivery).
+        s[31] = VaultFactoryFacet.vaultCreditFromDiamondERC20.selector;
     }
 
     /// @notice Full external selector surface of {ProfileFacet} (25).
