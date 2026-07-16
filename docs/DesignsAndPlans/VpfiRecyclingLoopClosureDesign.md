@@ -5,9 +5,9 @@
 | **Title** | VPFI Recycling — Loop-Closure Design |
 | **Author** | Vaipakam Developer Team |
 | **Date** | 2026-07-16 |
-| **Status** | **Draft — proposal for owner decision** (assessment + additive deltas; changes nothing already RATIFIED without an explicit decision below) |
+| **Status** | **RATIFIED (owner, 2026-07-16)** — all five §10 decisions accepted as recommended; pending Codex design-doc review before implementation cards are cut |
 | **Owner directive** | *"Near-zero legal expenditure; better for the platform; no burning — recycle absorbed VPFI into the reward stream."* |
-| **Related** | [`VpfiRecyclingBalanceGovernorDesign.md`](VpfiRecyclingBalanceGovernorDesign.md) (RATIFIED 2026-07-15), [`VpfiCrossChainRecyclingDesign.md`](VpfiCrossChainRecyclingDesign.md), [`VpfiAbsorptionDistributionFormulaRedesign.md`](VpfiAbsorptionDistributionFormulaRedesign.md) (#1294 rev 13, Draft), [`UserValueEnhancementOpportunities.md`](UserValueEnhancementOpportunities.md) §5, [`VPFITokenomicsRedesignResearch.md`](VPFITokenomicsRedesignResearch.md), [`VPFISecuritiesFeatureExcision.md`](VPFISecuritiesFeatureExcision.md) |
+| **Related** | [`VpfiRecyclingBalanceGovernorDesign.md`](VpfiRecyclingBalanceGovernorDesign.md) (RATIFIED 2026-07-15), [`VpfiCrossChainRecyclingDesign.md`](VpfiCrossChainRecyclingDesign.md), [`VpfiAbsorptionDistributionFormulaRedesign.md`](VpfiAbsorptionDistributionFormulaRedesign.md) (#1294 rev 13 + #1297 rev 14 Codex-r6 freezes), [`UserValueEnhancementOpportunities.md`](UserValueEnhancementOpportunities.md) §5, [`VPFITokenomicsRedesignResearch.md`](VPFITokenomicsRedesignResearch.md), [`VPFISecuritiesFeatureExcision.md`](VPFISecuritiesFeatureExcision.md) |
 
 > ⚠️ **Not legal advice.** Same posture as every doc in this family: near-zero
 > legal *expenditure* is a design constraint, not a clearance claim.
@@ -198,7 +198,7 @@ health two observable numbers — how much of distribution stays in the
 system, and how much of distribution the system's own absorption funds. Pure
 indexer/metrics work; no contract change beyond events already specified.
 
-### RL-3 — Reward claim horizon (bounded liability tail) — OWNER DECISION
+### RL-3 — Reward claim horizon (bounded liability tail) — RATIFIED (see §10.2)
 
 **Proposal:** rewards become sweepable to the recycle bucket `H` days after
 the underlying loan's terminal event (proposed `H = 365`; bounded knob,
@@ -332,20 +332,23 @@ TokenomicsTechSpec §4 (claim delivery default + opt-out; claim horizon if
 ratified), §9 (allocation register; loop-closure metric), plus
 `_CodeVsDocsAudit` rows and release-note fragments per PR.
 
-## 10. Decisions asked of the owner
+## 10. Owner decisions — RATIFIED (2026-07-16, all as recommended)
 
-1. **RL-1 claim-to-vault delivery** — adopt as the default reward delivery
-   (wallet opt-out preserved)? *(Recommended: yes — highest-leverage,
-   zero-legal-delta loop closure.)*
-2. **RL-3 claim horizon** — amend the ratified "commitments never expire by
-   time" to a 365-day post-terminal horizon with sweep-to-bucket?
-   *(Recommended: yes, with the UX safeguards listed; but this is the one
-   delta that touches a ratified sentence, so it is strictly the owner's
-   call.)*
-3. **RL-4 allocation register** — adopt at Phase C′ with dormant
-   `[10000,0,0]` defaults? *(Recommended: yes.)*
-4. **RL-5 sequencing** — commit notification flat tariff + two spend-gated
-   perks to the same release train as the Full tariff? *(Recommended: yes.)*
-5. Confirm the standing backbone is unchanged by this review: governor
-   (RATIFIED), cross-chain substrate, #1294 formulas proceed as planned —
-   this design adds to them and reopens nothing else.
+1. **RL-1 claim-to-vault delivery** — **RATIFIED: adopt** as the default
+   reward delivery (wallet opt-out preserved). Highest-leverage,
+   zero-legal-delta loop closure.
+2. **RL-3 claim horizon** — **RATIFIED: adopt** the 365-day post-terminal
+   horizon with sweep-to-bucket, amending the governor's "commitments never
+   expire by time" sentence, with the UX safeguards listed in §6 (claim-center
+   countdown, pre-expiry notification, horizon starts only at loan terminal +
+   full claimability). The governor doc §3.1 gains a superseding note in the
+   RL-3 implementation PR.
+3. **RL-4 allocation register** — **RATIFIED: adopt** at Phase C′ with
+   dormant `[10000,0,0]` defaults.
+4. **RL-5 sequencing** — **RATIFIED: adopt** — notification flat tariff +
+   two spend-gated perks committed to the same release train as the Full
+   tariff; #1219 legal glance scheduled with the excision doc's bounded
+   review slot.
+5. **Backbone confirmation** — **RATIFIED**: governor (RATIFIED 2026-07-15),
+   cross-chain substrate, and the #1294/#1297 formula freezes proceed as
+   planned; this design adds to them and reopens nothing else.
