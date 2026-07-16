@@ -28,7 +28,7 @@ const MIGRATION_0035 = readFileSync(
 
 /** Env + client stubs for the refresh path: real SQLite behind the D1
  *  shape (the upsert/stale-mark guards ARE SQL), canned reads. */
-function refreshHarness() {
+function refreshHarness(opts?: { graceRead?: () => Promise<unknown> }) {
   const { db, d1 } = createSqliteD1([MIGRATION_0035, MIGRATION_0039]);
   const reads: string[] = [];
   const client = {
@@ -37,7 +37,9 @@ function refreshHarness() {
       if (args.functionName === 'getMasterFlags') return [true, true, false] as const;
       // #1213 PR 2 — the grace-bucket read rides the same refresh; the
       // retail default is an empty array (compile-time schedule).
-      if (args.functionName === 'getGraceBuckets') return [] as const;
+      if (args.functionName === 'getGraceBuckets') {
+        return opts?.graceRead ? opts.graceRead() : ([] as const);
+      }
       return [100n, [1n, 2n, 3n, 4n]] as const;
     },
   } as unknown as PublicClient;
@@ -45,10 +47,11 @@ function refreshHarness() {
   const row = () =>
     db
       .prepare(
-        `SELECT source_block AS sb, updated_at AS ua, bundle_json AS bj
+        `SELECT source_block AS sb, updated_at AS ua, bundle_json AS bj,
+                grace_buckets_json AS gb
          FROM protocol_config WHERE chain_id = 84532`,
       )
-      .get() as { sb: number; ua: number; bj: string } | undefined;
+      .get() as { sb: number; ua: number; bj: string; gb: string | null } | undefined;
   return { db, env, client, reads, row };
 }
 
@@ -205,6 +208,85 @@ describe('configSnapshot', () => {
     ]);
     expect(h.row()).toMatchObject({ sb: 100 });
     expect(JSON.parse(h.row()!.bj)).toEqual(['100', ['1', '2', '3', '4']]);
+  });
+
+  it("treats the Diamond's FunctionDoesNotExist revert as a definitive empty bucket set (Codex #1298 r4)", async () => {
+    // A pre-getter diamond's fallback reverts `FunctionDoesNotExist()`
+    // (selector 0xa9ad62f8). That must store '[]' — getter and setter
+    // ship in the same facet cut, so no getter ⇒ no buckets — NOT fall
+    // into the transient branch, which would leave the column NULL and
+    // re-force the three config reads on every near-head scan forever.
+    const h = refreshHarness({
+      graceRead: async () => {
+        throw new Error(
+          'The contract function "getGraceBuckets" reverted. Error: FunctionDoesNotExist() (0xa9ad62f8)',
+        );
+      },
+    });
+    await maybeRefreshProtocolConfig({
+      env: h.env,
+      chainId: 84532,
+      client: h.client,
+      diamond: DIAMOND,
+      scannedEventNames: [],
+      blockNumber: 100n,
+      headBlock: 110n,
+    });
+    expect(h.row()?.gb).toBe('[]');
+  });
+
+  it('preserves a snapshotted bucket set through a transient grace-read failure', async () => {
+    // Codex #1298 r3: a transient RPC hiccup must not clobber real
+    // governance buckets back to defaults — COALESCE keeps the column.
+    const h = refreshHarness({
+      graceRead: async () => {
+        throw new Error('HTTP request failed: 503');
+      },
+    });
+    h.db
+      .prepare(
+        `INSERT INTO protocol_config (chain_id, bundle_json, master_flags_json, grace_buckets_json, source_block, updated_at)
+         VALUES (84532, '[]', '[]', '[{"maxDurationDays":"0","graceSeconds":"3888000"}]', 50, 0)`,
+      )
+      .run();
+    await maybeRefreshProtocolConfig({
+      env: h.env,
+      chainId: 84532,
+      client: h.client,
+      diamond: DIAMOND,
+      scannedEventNames: [],
+      blockNumber: 100n,
+      headBlock: 110n,
+    });
+    // Bundle/flags refreshed (the isolated grace failure never sinks
+    // them), buckets preserved.
+    expect(h.row()).toMatchObject({
+      sb: 100,
+      gb: '[{"maxDurationDays":"0","graceSeconds":"3888000"}]',
+    });
+  });
+
+  it('force-refreshes a populated row whose grace column is still NULL (Codex #1298 r3)', async () => {
+    const h = refreshHarness();
+    // Fresh pre-0039 row: updated_at is current, so the event/backstop
+    // gates would skip — the NULL grace column alone must trigger.
+    h.db
+      .prepare(
+        `INSERT INTO protocol_config (chain_id, bundle_json, master_flags_json, source_block, updated_at)
+         VALUES (84532, '[]', '[]', 50, ?)`,
+      )
+      .run(Math.floor(Date.now() / 1000));
+    await maybeRefreshProtocolConfig({
+      env: h.env,
+      chainId: 84532,
+      client: h.client,
+      diamond: DIAMOND,
+      scannedEventNames: [],
+      blockNumber: 100n,
+      headBlock: 110n,
+    });
+    expect(h.reads).toContain('getGraceBuckets');
+    expect(h.row()?.gb).toBe('[]'); // populated — the force stops firing
   });
 
   it('serializes nested bigint arrays (the uint256[4] tier slots)', () => {

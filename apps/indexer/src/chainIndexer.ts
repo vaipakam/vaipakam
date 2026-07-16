@@ -545,6 +545,24 @@ export async function runChainIndexerForChain(
     // stall) until the next real block. The expiry-window legs make
     // this a bounded index scan even when nothing expired.
     await sweepMarketSummaries(env, chainId, Math.floor(Date.now() / 1000));
+    // #1213 PR 2 (Codex #1298 r4) — keep the config snapshot current on
+    // quiet ticks too, BEFORE the calendar sweep derives grace windows
+    // from it. A deploy landing on an already-caught-up chain sees no
+    // scanned tick, so without this the pre-0039 NULL grace column (or
+    // a 6h-stale row) would never heal until a new block arrives — and
+    // the sweep would mint non-retractable grace reminders off the
+    // default schedule on a chain whose governance buckets differ.
+    // Internally gated (event/backstop/unpopulated-column checks), so a
+    // quiet tick with a fresh row costs one D1 row read and no RPC.
+    await maybeRefreshProtocolConfig({
+      env,
+      chainId,
+      client,
+      diamond,
+      scannedEventNames: [],
+      blockNumber: lastBlock,
+      headBlock: head,
+    });
     // #1213 PR 2 (Codex #1298 r1) — the calendar sweep is TIME-driven
     // for the same reason: a loan enters its T-7d/T-1d/grace window by
     // clock alone, with no new block or log. This caught-up path is

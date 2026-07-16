@@ -264,8 +264,21 @@ export async function maybeRefreshProtocolConfig(opts: {
           blockNumber: opts.blockNumber,
         }) as Promise<readonly { maxDurationDays: bigint; graceSeconds: bigint }[]>
       ).catch((err: unknown) => {
-        const msg = String(err);
-        if (/function.*(does not exist|not found)|FunctionNotFound/i.test(msg)) {
+        // The Diamond's fallback reverts `FunctionDoesNotExist()`
+        // (selector 0xa9ad62f8) for an uncut selector — match the
+        // decoded name AND the raw selector, exactly like alpha02's
+        // shared `isMissingSelectorError` does, plus viem's generic
+        // wordings (Codex #1298 r4: the spaced-string-only matcher
+        // missed the repo's own error, so a pre-getter diamond fell
+        // into the transient branch and re-forced the three config
+        // reads on every near-head scan forever).
+        const raw = (err as { data?: unknown })?.data;
+        const msg = `${typeof raw === 'string' ? raw : ''} ${String(err)}`;
+        if (
+          /function.*(does not exist|not found)|FunctionNotFound|FunctionDoesNotExist|0xa9ad62f8/i.test(
+            msg,
+          )
+        ) {
           return [] as const; // pre-getter diamond — definitively no buckets
         }
         // eslint-disable-next-line no-console

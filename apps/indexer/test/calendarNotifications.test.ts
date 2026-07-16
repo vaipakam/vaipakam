@@ -9,6 +9,7 @@ import { readFileSync, readdirSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import {
   CRON_LOG_INDEX,
+  calendarWindowSql,
   defaultGraceSeconds,
   effectiveGraceSeconds,
   graceCaseSql,
@@ -328,5 +329,29 @@ describe('sweepCalendarNotifications (over the migrated schema)', () => {
     const rows = rowsInDb(h);
     expect(rows.map((r) => r.kind)).toEqual(['grace_entered', 'grace_entered']);
     expect(rows.map((r) => r.recipient).sort()).toEqual([LENDER, BORROWER].sort());
+  });
+
+  it('range-scans idx_loans_calendar_maturity — no full-set temp B-tree (Codex #1298 r4)', () => {
+    const h = createSqliteD1(ALL_MIGRATIONS);
+    // EXPLAIN QUERY PLAN over the EXACT production SQL (default and
+    // governance-bucket grace CASEs): migration 0040's partial
+    // expression index must serve both the window filter and the
+    // ORDER BY, or the every-tick sweep scales with the chain's whole
+    // active loan set instead of the due/grace window.
+    for (const graceCase of [
+      graceCaseSql(null),
+      graceCaseSql([
+        { maxDurationDays: '30', graceSeconds: String(2 * DAY) },
+        { maxDurationDays: '0', graceSeconds: String(45 * DAY) },
+      ]),
+    ]) {
+      const plan = h.db
+        .prepare(`EXPLAIN QUERY PLAN ${calendarWindowSql(graceCase)}`)
+        .all(CHAIN, NOW - 45 * DAY, NOW + 7 * DAY, NOW)
+        .map((r) => String((r as { detail: string }).detail))
+        .join(' | ');
+      expect(plan).toContain('idx_loans_calendar_maturity');
+      expect(plan).not.toContain('TEMP B-TREE');
+    }
   });
 });

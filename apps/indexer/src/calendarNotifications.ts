@@ -274,6 +274,31 @@ export interface CalendarSweepResult {
 export const EMPTY_SWEEP: CalendarSweepResult = { inserted: 0, loanIds: [] };
 
 /**
+ * The window SELECT the sweep runs, as one exported builder so the
+ * query-plan test pins the EXACT production SQL against migration
+ * 0040's `idx_loans_calendar_maturity` (Codex #1298 r4: without the
+ * expression index SQLite picked idx_loans_chain_is_stub + a temp
+ * B-tree for the ORDER BY, scaling each tick with the chain's whole
+ * active set instead of the due/grace window). The fixed predicate
+ * terms and the maturity expression must stay textually identical to
+ * that index's definition — SQLite matches partial/expression indexes
+ * structurally.
+ */
+export function calendarWindowSql(graceCase: string): string {
+  return `SELECT loan_id, lender, borrower, lender_current_owner,
+                borrower_current_owner, start_time, duration_days
+           FROM loans
+          WHERE chain_id = ?
+            AND status = 'active'
+            AND is_stub = 0 AND is_sale_vehicle = 0
+            AND start_time > 0
+            AND (start_time + duration_days * 86400) BETWEEN ? AND ?
+            AND (start_time + duration_days * 86400 + ${graceCase}) > ?
+          ORDER BY (start_time + duration_days * 86400) ASC
+          LIMIT ${SWEEP_LIMIT}`;
+}
+
+/**
  * The sweep: SELECT the maturity-window slice of active loans and insert
  * any due milestone rows. Fail-open — a hiccup logs and returns an empty
  * result, never wedges the scan (same contract as
@@ -328,21 +353,8 @@ export async function sweepCalendarNotifications(
     // look-back otherwise keeps selecting) would starve the emitting
     // tail. Every selected row is now pre-maturity or inside its own
     // grace — a LIMIT hit only ever defers rows that WOULD emit.
-    const graceCase = graceCaseSql(graceBuckets);
     const res = await db
-      .prepare(
-        `SELECT loan_id, lender, borrower, lender_current_owner,
-                borrower_current_owner, start_time, duration_days
-           FROM loans
-          WHERE chain_id = ?
-            AND status = 'active'
-            AND is_stub = 0 AND is_sale_vehicle = 0
-            AND start_time > 0
-            AND (start_time + duration_days * 86400) BETWEEN ? AND ?
-            AND (start_time + duration_days * 86400 + ${graceCase}) > ?
-          ORDER BY (start_time + duration_days * 86400) ASC
-          LIMIT ${SWEEP_LIMIT}`,
-      )
+      .prepare(calendarWindowSql(graceCaseSql(graceBuckets)))
       .bind(
         chainId,
         nowSec - maxGraceSeconds(graceBuckets),
