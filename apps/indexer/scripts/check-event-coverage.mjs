@@ -54,12 +54,13 @@ const DELIBERATELY_NOT_HANDLED = {
     'companion to OfferCreated — the offer row is still built via a getOfferDetails read-back; switching the offer side to consume this companion event (the loan side already consumes LoanInitiatedDetails) is a follow-up',
   OfferCanceledDetails: 'companion to OfferCanceled — extra fields not needed beyond the status flip',
   AutoDailyDeducted: 'NFT-rental daily-fee deduction — surfaced via activity_events, no loans row field for it',
-  HFLiquidationTriggered:
-    'liquidation-attempt marker — the actual status change to Defaulted arrives via LoanLiquidated / LoanDefaulted, which ARE handled',
+  // NB (#1293): HFLiquidationTriggered + LiquidationDiscounted are now
+  // HANDLED in chainIndexer.ts (Active→Defaulted) — they emit no
+  // LoanDefaulted companion, so the earlier "arrives via LoanDefaulted"
+  // reason was factually wrong and the loan was stranded active. Removed
+  // from this allowlist.
   LoanPartiallyLiquidated:
-    'partial-liquidation companion event — surfaced via activity_events but the loans row keeps its Active status with reduced principal/collateral (read via live RPC getLoanDetails). Schema-side indexing is a follow-up.',
-  LiquidationDiscounted:
-    'discount-path companion event (flash-loan path, FlashLoanLiquidationPath.md) — surfaced via activity_events; the loan-status flip to Defaulted arrives via LoanDefaulted which IS handled.',
+    'partial-liquidation companion event — the loans row KEEPS its Active status with reduced principal/collateral (read via live RPC getLoanDetails), unlike the terminal HFLiquidationTriggered which IS handled (#1293). Schema-side size indexing is a follow-up.',
   AutoListOptOutCleared:
     'T-086 Round-7 (#355) — borrower-side opt-out clear is a UI-facing action signal, not a loans/offers row mutation. The opt-out flag is exposed as a live read via the production getter `NFTPrepayListingFacet.getPrepayListingAutoListOptedOut(uint256)` (Codex round-13 P2 #3 follow-up — added so the indexer / UI can render the live state without optimistic-retry against the auto-list reverts). Round-12 follow-up dropped the AutoListPosted / AutoListRotated events in favor of re-emitting the existing PrepayListingPosted / PrepayListingUpdated (those ARE handled), so this is the only auto-list signal that does not fold into an existing handler.',
   PostParallelSaleListing:

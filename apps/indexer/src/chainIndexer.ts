@@ -1954,7 +1954,10 @@ async function recordLoanParticipant(
     .run();
 }
 
-async function processLoanLogs(
+// Exported for the loan-status-projection unit test (#1293): the HF
+// terminal branches flip `loans.status` off the event alone (no RPC), so a
+// focused test can drive them with a stub client over the sqlite D1 shim.
+export async function processLoanLogs(
   logs: DecodedLog[],
   env: Env,
   chainId: number,
@@ -2849,6 +2852,29 @@ async function processLoanLogs(
       await _deletePrepayListing(env, chainId, Number(a.loanId as bigint));
     } else if (log.eventName === 'LoanLiquidated') {
       const r = await flipLoanStatus(env, chainId, a, log, 'liquidated');
+      if (r) statusUpdates++;
+      await _deletePrepayListing(env, chainId, Number(a.loanId as bigint));
+    } else if (log.eventName === 'HFLiquidationTriggered') {
+      // #1293 — HF-based liquidation terminalizes the loan Active→Defaulted
+      // through `EncumbranceMutateFacet.terminalize` (RiskFacet.sol:930 full
+      // close, RiskSplitLiquidationFacet.sol:368 split terminal) and emits
+      // ONLY this event — `terminalize` itself emits nothing and there is NO
+      // `LoanDefaulted` companion. Without this branch an HF-liquidated loan
+      // is stranded `active` in D1 forever (the "loan stuck active" class).
+      // The PARTIAL HF path is a SEPARATE event (`LoanPartiallyLiquidated`,
+      // allowlisted) that leaves the loan active — deliberately not handled
+      // here. `flipLoanStatus` is guarded on `status = 'active'`, so it's an
+      // idempotent no-op on re-scan.
+      const r = await flipLoanStatus(env, chainId, a, log, 'defaulted');
+      if (r) statusUpdates++;
+      await _deletePrepayListing(env, chainId, Number(a.loanId as bigint));
+    } else if (log.eventName === 'LiquidationDiscounted') {
+      // #1293 — the flash-loan discount liquidation (RiskFacet.sol:1665) is the
+      // same Active→Defaulted terminalize and likewise emits ONLY its own
+      // event. The discount path is governance-gated (`discountPathEnabled`
+      // ships off), but project the flip so an enabled deploy doesn't strand
+      // the loan `active`.
+      const r = await flipLoanStatus(env, chainId, a, log, 'defaulted');
       if (r) statusUpdates++;
       await _deletePrepayListing(env, chainId, Number(a.loanId as bigint));
     } else if (log.eventName === 'BackstopAbsorbedLoan') {

@@ -84,13 +84,13 @@ export const EVENT_NOTIF_MAP: Readonly<Record<string, NotifMapping>> = {
   // emits a `LoanDefaulted` companion, so without these mappings a real
   // HF liquidation gives both holders no terminal row (Codex #1292 r4).
   //
-  // IMPORTANT (Codex #1292 r7): the indexer does NOT yet project these two
-  // events to `loans.status = 'defaulted'` — there is no `chainIndexer.ts`
-  // branch for them, so after an HF liquidation D1 still shows the loan
-  // 'active' (a pre-existing loan-projection gap, tracked as issue #1293).
-  // `planNotifications`'s terminal-status gate therefore DEFERS these rows:
-  // they stay suppressed until that projection lands, then auto-activate —
-  // so a terminal row can never deep-link into a loan D1 still shows active.
+  // The indexer projects these two events to `loans.status = 'defaulted'`
+  // (chainIndexer.ts HF branches, #1293) — they emit no `LoanDefaulted`
+  // companion, so before #1293 the loan was stranded 'active' and the
+  // terminal-status gate suppressed the row. With the projection in place
+  // the gate passes and a real HF liquidation now produces the terminal
+  // row. (The gate still protects the PARTIAL InternalMatchExecuted leg,
+  // which legitimately stays active.)
   //
   // (The PARTIAL HF liquidation is a separate event, `LoanPartiallyLiquidated`,
   // allowlisted below — the loan stays active there.)
@@ -365,20 +365,15 @@ export function planNotifications(
       // Gate 2 (Codex #1292 r7) — a TERMINAL-kind row asserts the loan
       // CLOSED (it deep-links to the Claim Center), so only materialize it
       // when the indexer has actually PROJECTED the loan to a terminal
-      // status. Two cases otherwise fire a false "closed" row against a
-      // still-active loan:
-      //   • a PARTIAL `InternalMatchExecuted` leg — the indexer reduces
-      //     principal/collateral but leaves status 'active' (only a
-      //     fully-closed leg flips to 'internal_matched');
-      //   • an `HFLiquidationTriggered` / `LiquidationDiscounted` the
-      //     indexer does not yet project to 'defaulted' (issue #1293) — the
-      //     loan stays 'active' until that projection lands, at which point
-      //     this row auto-activates with no change here.
+      // status. This suppresses a false "closed" row for a PARTIAL
+      // `InternalMatchExecuted` leg — the indexer reduces principal/
+      // collateral but leaves status 'active' (only a fully-closed leg
+      // flips to 'internal_matched').
       // This gate keys off the END-OF-BATCH projected status — materialize
       // runs after every same-batch status flip — so a properly-handled
       // terminal event (LoanRepaid / LoanDefaulted / swap-to-repay /
-      // preclose / offset / refinance / backstop) has already flipped D1 to
-      // terminal and passes.
+      // preclose / offset / refinance / backstop / HF liquidation #1293)
+      // has already flipped D1 to terminal and passes.
       if (
         TERMINAL_NOTIF_KINDS.has(mapping.kind) &&
         !isTerminalStatus(parties?.status)
