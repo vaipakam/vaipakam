@@ -72,10 +72,16 @@ Claim Center and re-verify there (indexed-hints-only discipline).
 > (first observation inside a band notifies once; recoveries update state
 > silently; state rows live in `hf_band_state`, migration 0041, pruned
 > when a loan leaves the active set). Day-bucketed dedup keys bound a
-> flapping HF to one row per band per UTC day. Rows stamp the INDEXER's
-> cursor block + the cron log-index sentinel so the chain-ordered feed
-> sorts them as current; a crossing whose loan the indexer hasn't landed
-> yet defers to the next tick rather than silently swallowing. Illiquid
+> flapping HF to one row per band per UTC day. Rows stamp the indexer's
+> `notified` WATERMARK block (a cursor kind advanced only after a
+> caught-up scan finishes materializing notifications — the main
+> `diamond` cursor advances before materialization, so stamping against
+> it could out-sort a block's still-pending event rows under the
+> client's read cursor) + the cron log-index sentinel, so the
+> chain-ordered feed sorts them as current; the pass DEFERS whenever
+> that watermark is stale (indexer behind → D1 ownership could lag the
+> live HF reads) or a crossing's loan row hasn't landed yet — a
+> crossing is never silently swallowed. Illiquid
 > loans revert `IlliquidLoanNoRiskMath` inside the same multicall and are
 > inherently excluded — the calendar rows are their risk lane. Two
 > documented trade-offs: the rows only mint while the autonomous keeper

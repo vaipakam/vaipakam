@@ -128,6 +128,42 @@ const DETAILS_REFRESH_BATCH = 50;
  *  consumes the same scan window. */
 const CURSOR_KIND = 'diamond';
 
+/** #1213 PR 2b — "notifications complete through last_block" watermark
+ *  for independent writers of the notifications table (the keeper's
+ *  HF-band pass). Advanced only at a CAUGHT-UP scan tail, after
+ *  materializeNotifications + the calendar sweep (see the stamp sites);
+ *  the main `diamond` cursor is NOT that signal — it advances before
+ *  materialization. */
+const NOTIFIED_CURSOR_KIND = 'notified';
+
+/** Upsert the notified watermark. Fail-open: a missed stamp just makes
+ *  the keeper's band pass defer a tick (its staleness gate), never
+ *  fails a scan whose authoritative writes already landed. */
+async function stampNotifiedWatermark(
+  env: Env,
+  chainId: number,
+  block: bigint,
+): Promise<void> {
+  try {
+    await env.DB.prepare(
+      `INSERT INTO indexer_cursor (chain_id, kind, last_block, updated_at)
+       VALUES (?, ?, ?, ?)
+       ON CONFLICT(chain_id, kind) DO UPDATE SET
+         last_block = excluded.last_block,
+         updated_at = excluded.updated_at`,
+    )
+      .bind(
+        chainId,
+        NOTIFIED_CURSOR_KIND,
+        Number(block),
+        Math.floor(Date.now() / 1000),
+      )
+      .run();
+  } catch (err) {
+    console.error('[chainIndexer] notified-watermark stamp failed', err);
+  }
+}
+
 /** `LibVaipakam.LoanStatus` (uint8) → the indexer's TERMINAL status string, for
  *  the subset that are terminal end-of-block states an `InternalMatchExecuted`
  *  block-pinned read can land on (#762/#766). Append-only enum, so the slots are
@@ -575,6 +611,9 @@ export async function runChainIndexerForChain(
       Math.floor(Date.now() / 1000),
       Number(lastBlock),
     );
+    // #1213 PR 2b (Codex #1300 r1) — the caught-up quiet tick is a
+    // valid "notifications complete through lastBlock" point too.
+    await stampNotifiedWatermark(env, chainId, lastBlock);
     return {
       scannedFrom: scanFrom,
       scannedTo: scanFrom - 1n,
@@ -818,6 +857,21 @@ export async function runChainIndexerForChain(
     scanTo === head
       ? await sweepCalendarNotifications(env.DB, chainId, now, Number(scanTo))
       : EMPTY_SWEEP;
+
+  // #1213 PR 2b (Codex #1300 r1) — the "notifications complete" watermark
+  // for OTHER writers of the notifications table (today: the keeper's
+  // HF-band pass). The main `diamond` cursor advances BEFORE
+  // `materializeNotifications`, so an independent writer keying on it
+  // could stamp a cron-sentinel row for a block whose real event rows
+  // haven't landed yet — a client opening the inbox in that interleaving
+  // would set its read cursor PAST those pending rows and never count
+  // them unread. This kind advances only at the scan tail, after the
+  // event materializer AND the calendar sweep, and only when the scan
+  // reached the safe head — so `updated_at` fresh ⇒ D1's notification
+  // and ownership rows are current through `last_block`.
+  if (scanTo === head) {
+    await stampNotifiedWatermark(env, chainId, scanTo);
+  }
 
   // #1245 measurement rail — one structured line per scan that touched
   // anything, so `wrangler tail | grep hint-telemetry` yields the

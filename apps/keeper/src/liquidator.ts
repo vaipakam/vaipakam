@@ -92,7 +92,13 @@ async function liquidatePassForChain(env: Env, chain: ChainConfig): Promise<void
     );
     return;
   }
-  if (total === 0n) return;
+  if (total === 0n) {
+    // Still run the band pass with zero readings — it prunes stale
+    // hf_band_state rows (Codex #1300 r1: the last at-risk loan closing
+    // is exactly when the active set goes empty).
+    await hfBandPass(env, chain, []);
+    return;
+  }
 
   // Page the loan-id list.
   const ids: bigint[] = [];
@@ -114,7 +120,10 @@ async function liquidatePassForChain(env: Env, chain: ChainConfig): Promise<void
     if (page.length === 0) break;
     ids.push(...page);
   }
-  if (ids.length === 0) return;
+  if (ids.length === 0) {
+    await hfBandPass(env, chain, []); // prune-only pass (see above)
+    return;
+  }
 
   // Batch-read HF via Multicall3 (deployed at the canonical address on
   // every viem-known chain). Falls back to a serial read if multicall
@@ -165,24 +174,12 @@ async function liquidatePassForChain(env: Env, chain: ChainConfig): Promise<void
     }
   }
 
-  // #1213 PR 2b — free in-app HF-band rows from the same scan. Derived
-  // convenience data: fail-open INSIDE (and belt-and-braces here), so
-  // a D1 hiccup can never delay the liquidation submits below.
-  try {
-    await recordHfBandNotifications(
-      env.DB,
-      chain.id,
-      readings,
-      Math.floor(Date.now() / 1000),
-    );
-  } catch (err) {
-    console.error(
-      `[keeper] hf-band pass chain=${chain.name} failed (fail-open): ${String(err).slice(0, 200)}`,
-    );
-  }
-
   const atRisk = readings.filter((r) => r.hf < HF_LIQUIDATION_THRESHOLD);
-  if (atRisk.length === 0) return;
+  if (atRisk.length === 0) {
+    // Nothing to submit — the band pass is all that's left this tick.
+    await hfBandPass(env, chain, readings);
+    return;
+  }
   // Lowest HF first — the keeper's gas budget goes to the most-at-risk
   // loans first when the submit cap is hit.
   atRisk.sort((a, b) => (a.hf < b.hf ? -1 : 1));
@@ -197,5 +194,33 @@ async function liquidatePassForChain(env: Env, chain: ChainConfig): Promise<void
     }
     const submitted = await maybeAutonomousLiquidate(env, chain, r.id, r.hf, client);
     if (submitted) submits += 1;
+  }
+
+  // #1213 PR 2b — free in-app HF-band rows from the same scan. Runs
+  // AFTER the liquidation submits on purpose (Codex #1300 r1 P1): the
+  // pass awaits D1, and derived inbox rows must never sit between an
+  // underwater loan and its `triggerLiquidation`.
+  await hfBandPass(env, chain, readings);
+}
+
+/** Fail-open wrapper around the band pass — belt-and-braces on top of
+ *  the module's own catch, so no failure shape can escape into the
+ *  liquidator's per-chain error handling. */
+async function hfBandPass(
+  env: Env,
+  chain: ChainConfig,
+  readings: HfReading[],
+): Promise<void> {
+  try {
+    await recordHfBandNotifications(
+      env.DB,
+      chain.id,
+      readings,
+      Math.floor(Date.now() / 1000),
+    );
+  } catch (err) {
+    console.error(
+      `[keeper] hf-band pass chain=${chain.name} failed (fail-open): ${String(err).slice(0, 200)}`,
+    );
   }
 }

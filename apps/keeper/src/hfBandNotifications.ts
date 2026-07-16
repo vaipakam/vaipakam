@@ -118,10 +118,21 @@ export interface HfBandResult {
 
 const ZERO_ADDR = '0x0000000000000000000000000000000000000000';
 
+/** Max age of the indexer's `notified` watermark before the pass
+ *  defers (Codex #1300 r1). The watermark is stamped only when a scan
+ *  BOTH reached the safe head AND finished materializing notifications
+ *  — so a fresh stamp means D1's ownership and notification rows are
+ *  current. The indexer's round-robin gives each chain a scan roughly
+ *  every `len(chains) × 1min`; 6 minutes tolerates a busy rotation
+ *  while still bounding how stale a resolved recipient can be. */
+const WATERMARK_MAX_AGE_SEC = 360;
+
 /**
  * Record band crossings for one chain's full active-book HF readings.
- * Called from the liquidator pass with EVERY successful reading (not
- * just the at-risk subset). Fail-open: returns zeros on any error.
+ * Called from the liquidator pass (AFTER its liquidation submits) with
+ * EVERY successful reading — including an empty set, so the terminal
+ * prune still runs on a quiet book. Fail-open: returns zeros on any
+ * error.
  */
 export async function recordHfBandNotifications(
   db: D1Database,
@@ -130,27 +141,33 @@ export async function recordHfBandNotifications(
   nowSec: number,
 ): Promise<HfBandResult> {
   const empty: HfBandResult = { inserted: 0, stateWrites: 0 };
-  if (readings.length === 0) return empty;
   try {
-    // Head block for the feed's chain-order stamp — the indexer's own
-    // cursor on the shared DB. No cursor row means the indexer has
-    // never scanned this chain: the loans table has no recipients to
-    // resolve anyway, so skip the whole pass this tick.
-    const cursor = await db
+    // The indexer's "notifications complete through last_block"
+    // watermark (Codex #1300 r1) — NOT the main `diamond` cursor, which
+    // advances BEFORE materializeNotifications: stamping a cron-sentinel
+    // row against it could out-sort that block's still-pending event
+    // rows and swallow them under the client's read cursor. No
+    // watermark row means the indexer has never completed a caught-up
+    // pass on this chain — nothing to resolve against; skip.
+    const watermark = await db
       .prepare(
-        `SELECT last_block FROM indexer_cursor WHERE chain_id = ? AND kind = 'diamond'`,
+        `SELECT last_block, updated_at FROM indexer_cursor
+          WHERE chain_id = ? AND kind = 'notified'`,
       )
       .bind(chainId)
-      .first<{ last_block: number }>();
-    if (!cursor) return empty;
-    const headBlock = cursor.last_block;
+      .first<{ last_block: number; updated_at: number }>();
+    if (!watermark) return empty;
+    const headBlock = watermark.last_block;
 
     // Prune state for loans that left the active set (repaid/defaulted/
     // liquidated) — their terminal inbox rows come from the indexer's
     // event materializer; keeping band state would only re-alert a
-    // re-observed id. Runs every pass (BEFORE the early returns — a
-    // quiet book still prunes). Bounded: hf_band_state holds only
-    // at-risk loans.
+    // re-observed id. Runs every pass, BEFORE the staleness/empty
+    // returns (Codex #1300 r1: a chain whose last at-risk loan just
+    // closed has zero readings but still needs its rows pruned), and
+    // is safe against a lagging index: a terminal D1 status is
+    // definitive, it can only arrive late — never wrongly. Bounded:
+    // hf_band_state holds only at-risk loans.
     await db
       .prepare(
         `DELETE FROM hf_band_state
@@ -163,6 +180,26 @@ export async function recordHfBandNotifications(
       )
       .bind(chainId)
       .run();
+
+    if (readings.length === 0) return empty;
+
+    // STALENESS GATE (Codex #1300 r1): the HF readings are LIVE RPC
+    // state, but recipients and band-state commits resolve against D1.
+    // If the indexer hasn't completed a caught-up pass recently, a
+    // just-transferred borrower position could still show its previous
+    // holder — the row would go to the wrong wallet and the committed
+    // state would swallow the crossing for the real holder. Defer the
+    // tick instead; the crossing re-detects as soon as the watermark
+    // freshens. (Residual window: a transfer inside the last watermark
+    // interval — minutes — can still resolve to the just-previous
+    // holder; the position page and the subscriber alert rail remain
+    // the authoritative/immediate surfaces.)
+    if (nowSec - watermark.updated_at > WATERMARK_MAX_AGE_SEC) {
+      console.warn(
+        `[keeper] hfBandNotifications chain=${chainId} deferred — notified watermark is ${nowSec - watermark.updated_at}s old`,
+      );
+      return empty;
+    }
 
     const observed = readings.map((r) => {
       const milli = hfToMilli(r.hf);

@@ -34,14 +34,16 @@ const E15 = 10n ** 15n;
 /** milli-HF → the 1e18-scaled bigint the contract returns. */
 const hf = (milli: number) => BigInt(milli) * E15;
 
-function harness(): SqliteD1 {
+function harness(watermarkAt = NOW): SqliteD1 {
   const h = createSqliteD1(ALL_MIGRATIONS);
-  // The indexer cursor the pass stamps rows from.
+  // The indexer's post-materialization `notified` watermark the pass
+  // stamps rows from and gates staleness on (Codex #1300 r1 — NOT the
+  // main `diamond` cursor, which advances before materialization).
   h.db
     .prepare(
-      `INSERT INTO indexer_cursor (chain_id, kind, last_block, updated_at) VALUES (?, 'diamond', ?, ?)`,
+      `INSERT INTO indexer_cursor (chain_id, kind, last_block, updated_at) VALUES (?, 'notified', ?, ?)`,
     )
-    .run(CHAIN, HEAD, NOW);
+    .run(CHAIN, HEAD, watermarkAt);
   return h;
 }
 
@@ -148,8 +150,13 @@ describe('recordHfBandNotifications (over the migrated shared schema)', () => {
     await recordHfBandNotifications(h.d1 as never, CHAIN, [{ id: 4n, hf: hf(1_600) }], NOW + 60);
     await recordHfBandNotifications(h.d1 as never, CHAIN, [{ id: 4n, hf: hf(1_400) }], NOW + 120);
     expect(notifRows(h)).toHaveLength(1); // same day bucket → INSERT OR IGNORE
-    // next UTC day: recover + re-drop mints a fresh row
+    // next UTC day: recover + re-drop mints a fresh row (freshen the
+    // watermark as the live indexer would keep doing — a day-old stamp
+    // correctly defers under the staleness gate).
     const nextDay = NOW + 86_400;
+    h.db
+      .prepare(`UPDATE indexer_cursor SET updated_at = ? WHERE kind = 'notified'`)
+      .run(nextDay);
     await recordHfBandNotifications(h.d1 as never, CHAIN, [{ id: 4n, hf: hf(1_600) }], nextDay);
     await recordHfBandNotifications(h.d1 as never, CHAIN, [{ id: 4n, hf: hf(1_400) }], nextDay + 60);
     expect(notifRows(h)).toHaveLength(2);
@@ -195,9 +202,37 @@ describe('recordHfBandNotifications (over the migrated shared schema)', () => {
     expect(stateRows(h)).toHaveLength(0);
   });
 
-  it('skips the whole pass when the indexer has never scanned the chain (no cursor)', async () => {
-    const h = createSqliteD1(ALL_MIGRATIONS); // no cursor seeded
+  it('skips the whole pass when the indexer has no notified watermark for the chain', async () => {
+    const h = createSqliteD1(ALL_MIGRATIONS); // no watermark seeded
+    // A `diamond` cursor alone is NOT enough — it advances before
+    // materialization, so keying rows on it could out-sort pending
+    // same-block event rows (Codex #1300 r1).
+    h.db
+      .prepare(
+        `INSERT INTO indexer_cursor (chain_id, kind, last_block, updated_at) VALUES (?, 'diamond', ?, ?)`,
+      )
+      .run(CHAIN, HEAD, NOW);
     await recordHfBandNotifications(h.d1 as never, CHAIN, [{ id: 1n, hf: hf(1_000) }], NOW);
     expect(notifRows(h)).toHaveLength(0);
+  });
+
+  it('defers minting on a stale watermark (indexer behind — D1 ownership may lag live HF)', async () => {
+    const h = harness(NOW - 3_600); // watermark an hour old
+    seedLoan(h, 10);
+    await recordHfBandNotifications(h.d1 as never, CHAIN, [{ id: 10n, hf: hf(1_000) }], NOW);
+    expect(notifRows(h)).toHaveLength(0);
+    expect(stateRows(h)).toHaveLength(0); // crossing NOT committed — retries when fresh
+  });
+
+  it('prunes terminal state even on a zero-readings pass (Codex #1300 r1)', async () => {
+    const h = harness();
+    seedLoan(h, 11);
+    await recordHfBandNotifications(h.d1 as never, CHAIN, [{ id: 11n, hf: hf(1_400) }], NOW);
+    expect(stateRows(h)).toHaveLength(1);
+    // The loan closes and the active set goes empty — the liquidator
+    // still calls the pass with [] and the state row must not linger.
+    h.db.prepare(`UPDATE loans SET status = 'repaid' WHERE loan_id = 11`).run();
+    await recordHfBandNotifications(h.d1 as never, CHAIN, [], NOW + 60);
+    expect(stateRows(h)).toHaveLength(0);
   });
 });
