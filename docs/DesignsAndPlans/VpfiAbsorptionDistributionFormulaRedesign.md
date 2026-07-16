@@ -5,7 +5,7 @@
 | **Title** | VPFI Absorption & Distribution Formula Redesign |
 | **Author** | Vaipakam Developer Team |
 | **Date** | 2026-07-16 |
-| **Status** | **Draft — design proposal (rev 13)** — Codex r1–r5 findings folded; pending re-review / owner ratification |
+| **Status** | **Draft — design proposal (rev 13)** — Codex r1–r5 design-doc rounds folded; pending **owner ratification** for implementation (not code) |
 | **Related** | `#687-A/B`, `#694`, `#1002` / Card-C rewards hardening, `#1008` / S13 day cap, `#1203` (E-1), `#1217` / `#1222` (recycling governor), TokenomicsTechSpec §§4–9 |
 | **Prior art (binding substrate)** | [`VpfiRecyclingBalanceGovernorDesign.md`](VpfiRecyclingBalanceGovernorDesign.md) (RATIFIED 2026-07-15), [`VpfiLenderDiscountPegDecouplingDesign.md`](VpfiLenderDiscountPegDecouplingDesign.md) (E-1), [`VPFITokenomicsRedesignResearch.md`](VPFITokenomicsRedesignResearch.md) §9 |
 
