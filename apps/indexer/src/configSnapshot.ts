@@ -217,7 +217,7 @@ export async function maybeRefreshProtocolConfig(opts: {
       return;
     }
 
-    const [bundle, flags] = await Promise.all([
+    const [bundle, flags, graceBuckets] = await Promise.all([
       opts.client.readContract({
         address: opts.diamond,
         abi: DIAMOND_ABI_VIEM,
@@ -230,15 +230,27 @@ export async function maybeRefreshProtocolConfig(opts: {
         functionName: 'getMasterFlags',
         blockNumber: opts.blockNumber,
       }) as Promise<readonly [boolean, boolean, boolean]>,
+      // #1213 PR 2 (Codex #1298 r1) — the effective governance grace
+      // buckets. Not part of the bundle tuple; the calendar sweep derives
+      // grace windows from this snapshot column (empty array = the
+      // compile-time default schedule, the retail deploy's state). The
+      // refresh already triggers on `GraceBucketsUpdated`.
+      opts.client.readContract({
+        address: opts.diamond,
+        abi: DIAMOND_ABI_VIEM,
+        functionName: 'getGraceBuckets',
+        blockNumber: opts.blockNumber,
+      }) as Promise<readonly { maxDurationDays: bigint; graceSeconds: bigint }[]>,
     ]);
 
     await opts.env.DB.prepare(
       `INSERT INTO protocol_config
-         (chain_id, bundle_json, master_flags_json, source_block, updated_at)
-       VALUES (?, ?, ?, ?, ?)
+         (chain_id, bundle_json, master_flags_json, grace_buckets_json, source_block, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?)
        ON CONFLICT (chain_id) DO UPDATE SET
          bundle_json = excluded.bundle_json,
          master_flags_json = excluded.master_flags_json,
+         grace_buckets_json = excluded.grace_buckets_json,
          source_block = excluded.source_block,
          updated_at = excluded.updated_at
        WHERE excluded.source_block >= protocol_config.source_block`,
@@ -247,6 +259,7 @@ export async function maybeRefreshProtocolConfig(opts: {
         opts.chainId,
         serializeTuple(bundle),
         JSON.stringify([flags[0], flags[1], flags[2]]),
+        serializeTuple(graceBuckets),
         Number(opts.blockNumber),
         now,
       )

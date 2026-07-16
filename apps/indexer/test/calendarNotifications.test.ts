@@ -9,9 +9,12 @@ import { readFileSync, readdirSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import {
   defaultGraceSeconds,
+  effectiveGraceSeconds,
+  maxGraceSeconds,
   planCalendarRows,
   sweepCalendarNotifications,
   type CalendarLoanRow,
+  type GraceBucketJson,
 } from '../src/calendarNotifications';
 import { createSqliteD1, type SqliteD1 } from './helpers/sqliteD1';
 
@@ -54,6 +57,44 @@ describe('defaultGraceSeconds (LibVaipakam.gracePeriod zero-bucket mirror)', () 
     expect(defaultGraceSeconds(90)).toBe(7 * DAY);
     expect(defaultGraceSeconds(180)).toBe(14 * DAY);
     expect(defaultGraceSeconds(365)).toBe(30 * DAY);
+  });
+});
+
+describe('effectiveGraceSeconds (governance buckets — LibVaipakam.gracePeriod semantics)', () => {
+  const BUCKETS: GraceBucketJson[] = [
+    { maxDurationDays: '30', graceSeconds: '7200' }, // <30d → 2h
+    { maxDurationDays: '0', graceSeconds: String(45 * DAY) }, // catch-all → 45d
+  ];
+
+  it('falls back to the default schedule when no buckets are set', () => {
+    expect(effectiveGraceSeconds(30, null)).toBe(3 * DAY);
+    expect(effectiveGraceSeconds(30, [])).toBe(3 * DAY);
+  });
+
+  it('walks buckets in order — first strictly-exceeding threshold wins, 0 is the catch-all', () => {
+    expect(effectiveGraceSeconds(10, BUCKETS)).toBe(7200); // 10 < 30
+    expect(effectiveGraceSeconds(30, BUCKETS)).toBe(45 * DAY); // 30 !< 30 → catch-all
+    expect(effectiveGraceSeconds(365, BUCKETS)).toBe(45 * DAY);
+  });
+
+  it('bounds the sweep look-back by the WIDEST grace (custom > default supported)', () => {
+    expect(maxGraceSeconds(null)).toBe(30 * DAY);
+    expect(maxGraceSeconds(BUCKETS)).toBe(45 * DAY); // custom 45d wins
+    // A schedule narrower than the default never SHRINKS the window
+    // (defensive — missing a live grace loan is the worse failure).
+    expect(maxGraceSeconds([{ maxDurationDays: '0', graceSeconds: '3600' }])).toBe(30 * DAY);
+  });
+
+  it('plans grace_entered against the CONFIGURED schedule, not the default', () => {
+    // 30d loan, 4 days past due. Default grace (3d) would suppress; the
+    // configured catch-all (45d) keeps the window open (Codex #1298 r1).
+    const rows = planCalendarRows(CHAIN, [maturingIn(40, -4 * DAY)], NOW, HEAD, BUCKETS);
+    expect(rows.filter((r) => r.kind === 'grace_entered')).toHaveLength(2);
+    // And a schedule SHORTER than default closes it earlier: 2h grace,
+    // 1 day past due → suppressed.
+    const short: GraceBucketJson[] = [{ maxDurationDays: '0', graceSeconds: '7200' }];
+    const none = planCalendarRows(CHAIN, [maturingIn(41, -1 * DAY)], NOW, HEAD, short);
+    expect(none.filter((r) => r.kind === 'grace_entered')).toHaveLength(0);
   });
 });
 
@@ -200,6 +241,27 @@ describe('sweepCalendarNotifications (over the migrated schema)', () => {
     seedLoan(h, 5, NOW + DAY - 30 * DAY, 30, 'active', { isStub: 1 });
     await sweepCalendarNotifications(h.d1 as never, CHAIN, NOW, HEAD);
     expect(rowsInDb(h)).toHaveLength(0);
+  });
+
+  it('honors snapshotted governance grace buckets over the default schedule', async () => {
+    const h = createSqliteD1(ALL_MIGRATIONS);
+    // 30d loan, 4 days past due — default grace (3d) has closed, but the
+    // snapshotted catch-all bucket (45d) keeps the window open.
+    seedLoan(h, 7, NOW - 4 * DAY - 30 * DAY, 30);
+    h.db
+      .prepare(
+        `INSERT INTO protocol_config
+           (chain_id, bundle_json, master_flags_json, grace_buckets_json, source_block, updated_at)
+         VALUES (?, '[]', '[]', ?, 1, ?)`,
+      )
+      .run(
+        CHAIN,
+        JSON.stringify([{ maxDurationDays: '0', graceSeconds: String(45 * DAY) }]),
+        NOW,
+      );
+    await sweepCalendarNotifications(h.d1 as never, CHAIN, NOW, HEAD);
+    const rows = rowsInDb(h);
+    expect(rows.map((r) => r.kind)).toEqual(['grace_entered', 'grace_entered']);
   });
 
   it('emits grace_entered to both parties for a just-past-due loan', async () => {

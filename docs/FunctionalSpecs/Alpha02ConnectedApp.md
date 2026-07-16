@@ -366,9 +366,14 @@ Thin-market honesty rules apply.
   day, and both parties are told when a loan goes past due while its grace
   window is still running. These reminders cover loans whose collateral has no
   price feed, fire once per due date (extending a loan re-arms them for the
-  new date), and are never shown once the grace window has closed — a stale
-  reminder is worse than none, and the definitive outcome arrives as its own
-  notification.
+  new date), and the past-due reminder is only ever CREATED while the grace
+  window is still running. Like every inbox entry it then remains as
+  history, so its wording states the past-due fact and points at the
+  position page — the authority for whether the repay window is still
+  open — rather than promising a window that may have since closed. The
+  definitive outcome arrives as its own notification. The grace length
+  follows the protocol's configured schedule (the default one unless
+  governance has set custom tiers).
 - Whether a notification is read is tracked on the user's own device, per
   wallet. Opening the inbox marks the shown updates as read; that state is not
   stored on any server, so no one else can clear another wallet's unread

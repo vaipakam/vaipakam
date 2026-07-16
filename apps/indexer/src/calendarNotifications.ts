@@ -31,13 +31,13 @@
  *     and a NULL block would sort a cron row to the bottom AND fall out
  *     of every keyset continuation (`block_number < ?` is NULL-false) —
  *     the 0038 migration's "stamp the head block" note.
- *   - Grace length mirrors `LibVaipakam.gracePeriod`'s compile-time
- *     zero-bucket default schedule (the same mirror the frontend's
- *     `lib/grace.ts` uses). Governance CAN set custom `graceBuckets`
- *     on-chain; the retail deploy runs the default, and the config
- *     snapshot bundle does not expose buckets yet — if a custom
- *     schedule ever ships, this mirror (and the frontend's) must gain
- *     a snapshot field. Until then the mirror is exact.
+ *   - Grace length mirrors `LibVaipakam.gracePeriod` EXACTLY (Codex
+ *     #1298 r1): when governance has set custom `graceBuckets`, the
+ *     sweep consults the snapshotted array (the `protocol_config`
+ *     row's `grace_buckets_json`, refreshed on `GraceBucketsUpdated`
+ *     + the 6h backstop — see configSnapshot.ts); an empty/absent
+ *     array means the compile-time default schedule, which is what
+ *     the retail deploy runs.
  */
 
 import {
@@ -47,6 +47,13 @@ import {
   type NotifKind,
   type NotifRow,
 } from './notifications';
+
+/** One governance grace bucket as snapshotted (decimal strings — the
+ *  bigint-safe serialization `configSnapshot.serializeTuple` writes). */
+export interface GraceBucketJson {
+  maxDurationDays: string;
+  graceSeconds: string;
+}
 
 /** Mirrors LibVaipakam.gracePeriod's zero-bucket default schedule
  *  (same table as apps/alpha02/src/lib/grace.ts). */
@@ -59,9 +66,44 @@ export function defaultGraceSeconds(durationDays: number): number {
   return 30 * 86_400;
 }
 
+/**
+ * The EFFECTIVE grace for a duration — LibVaipakam.gracePeriod's exact
+ * semantics (Codex #1298 r1): no buckets → the compile-time default;
+ * else walk in array order, `maxDurationDays == 0` is the catch-all,
+ * the first bucket whose threshold strictly exceeds durationDays wins,
+ * defensive fallback to the last entry.
+ */
+export function effectiveGraceSeconds(
+  durationDays: number,
+  buckets: GraceBucketJson[] | null,
+): number {
+  if (!buckets || buckets.length === 0) return defaultGraceSeconds(durationDays);
+  for (const b of buckets) {
+    const maxD = Number(b.maxDurationDays);
+    if (maxD === 0) return Number(b.graceSeconds);
+    if (durationDays < maxD) return Number(b.graceSeconds);
+  }
+  return Number(buckets[buckets.length - 1].graceSeconds);
+}
+
 const DAY = 86_400;
-/** The widest grace bucket — bounds the "recently matured" SQL window. */
-const MAX_GRACE_SECONDS = 30 * DAY;
+/** The widest DEFAULT grace bucket. The sweep's "recently matured" SQL
+ *  window bound uses max(this, widest configured bucket) so a custom
+ *  longer-than-30d grace can't fall out of the window early. */
+const MAX_DEFAULT_GRACE_SECONDS = 30 * DAY;
+
+/** The widest grace across the effective schedule — bounds the sweep's
+ *  look-back so every loan still inside ANY possible grace window is
+ *  selected. */
+export function maxGraceSeconds(buckets: GraceBucketJson[] | null): number {
+  if (!buckets || buckets.length === 0) return MAX_DEFAULT_GRACE_SECONDS;
+  let max = 0;
+  for (const b of buckets) max = Math.max(max, Number(b.graceSeconds));
+  // Defensive: a malformed/empty-values array must never shrink the
+  // window below the default (missing a live grace loan is worse than
+  // scanning a few extra aged-out rows).
+  return Math.max(max, MAX_DEFAULT_GRACE_SECONDS);
+}
 
 /** Fail-loud sweep bound: the maturity window (matured within max-grace,
  *  or due within 7d) should hold at most a few hundred loans per chain;
@@ -86,7 +128,7 @@ interface Milestone {
   /** Window start relative to maturity (seconds; negative = before). */
   fromOffset: number;
   /** Window end relative to maturity (exclusive). */
-  toOffset: (durationDays: number) => number;
+  toOffset: (durationDays: number, buckets: GraceBucketJson[] | null) => number;
   recipients: 'borrower' | 'both';
 }
 
@@ -101,7 +143,7 @@ const MILESTONES: Milestone[] = [
   {
     kind: 'grace_entered',
     fromOffset: 0,
-    toOffset: (durationDays) => defaultGraceSeconds(durationDays),
+    toOffset: (durationDays, buckets) => effectiveGraceSeconds(durationDays, buckets),
     recipients: 'both',
   },
 ];
@@ -109,13 +151,15 @@ const MILESTONES: Milestone[] = [
 /**
  * Pure planner (exported for the unit test): which calendar rows are due
  * NOW for these active loans. `headBlock` stamps the rows' chain-order
- * position so the feed sorts them as current.
+ * position so the feed sorts them as current. `graceBuckets` is the
+ * snapshotted governance schedule (null/empty = the default).
  */
 export function planCalendarRows(
   chainId: number,
   loans: CalendarLoanRow[],
   nowSec: number,
   headBlock: number,
+  graceBuckets: GraceBucketJson[] | null = null,
 ): NotifRow[] {
   const rows: NotifRow[] = [];
   for (const loan of loans) {
@@ -131,7 +175,7 @@ export function planCalendarRows(
     };
     for (const m of MILESTONES) {
       const from = maturity + m.fromOffset;
-      const to = maturity + m.toOffset(loan.duration_days);
+      const to = maturity + m.toOffset(loan.duration_days, graceBuckets);
       if (nowSec < from || nowSec >= to) continue;
       const sides: ('lender' | 'borrower')[] =
         m.recipients === 'both' ? ['lender', 'borrower'] : ['borrower'];
@@ -174,13 +218,40 @@ export async function sweepCalendarNotifications(
   headBlock: number,
 ): Promise<number> {
   try {
+    // The effective grace schedule — snapshotted governance buckets
+    // (configSnapshot.ts refreshes on GraceBucketsUpdated + the 6h
+    // backstop); null/absent column or empty array = the compile-time
+    // default (Codex #1298 r1).
+    const cfg = await db
+      .prepare(`SELECT grace_buckets_json FROM protocol_config WHERE chain_id = ?`)
+      .bind(chainId)
+      .first<{ grace_buckets_json: string | null }>();
+    let graceBuckets: GraceBucketJson[] | null = null;
+    if (cfg?.grace_buckets_json) {
+      try {
+        const parsed = JSON.parse(cfg.grace_buckets_json) as GraceBucketJson[];
+        if (Array.isArray(parsed) && parsed.length > 0) graceBuckets = parsed;
+      } catch {
+        // Malformed snapshot → default schedule (fail-open, never wedge).
+      }
+    }
+
     // Window: every real active loan whose maturity is within 7d ahead
-    // (T-7d arm) or within max-grace behind (grace_entered arm). The
-    // arithmetic runs in SQLite so the scan never loads the whole
-    // active set. Sale-vehicle/stub rows are excluded (bookkeeping, not
-    // user loans); there is no loans-side offset-vehicle flag — an
-    // offset acceptance re-originates a REAL loan (0031's offers-only
-    // rationale), so those rows are legitimately swept.
+    // (T-7d arm) or within the WIDEST possible grace behind
+    // (grace_entered arm — bucket-derived so a custom longer-than-30d
+    // grace can't fall out early). The arithmetic runs in SQLite so the
+    // scan never loads the whole active set. Sale-vehicle/stub rows are
+    // excluded (bookkeeping, not user loans); there is no loans-side
+    // offset-vehicle flag — an offset acceptance re-originates a REAL
+    // loan (0031's offers-only rationale), so those rows are
+    // legitimately swept.
+    //
+    // ORDER BY maturity ASC — soonest-due first (Codex #1298 r1): if
+    // the window ever holds more than SWEEP_LIMIT loans, the loans
+    // whose one-shot windows are closing (in/near grace, T-1d) are
+    // always in the served prefix; only the far-out T-7d tail defers,
+    // and those have days of window left before their reminder is
+    // late. A loan-id order would starve a fixed tail instead.
     const res = await db
       .prepare(
         `SELECT loan_id, lender, borrower, lender_current_owner,
@@ -191,21 +262,21 @@ export async function sweepCalendarNotifications(
             AND is_stub = 0 AND is_sale_vehicle = 0
             AND start_time > 0
             AND (start_time + duration_days * 86400) BETWEEN ? AND ?
-          ORDER BY loan_id
+          ORDER BY (start_time + duration_days * 86400) ASC
           LIMIT ${SWEEP_LIMIT}`,
       )
-      .bind(chainId, nowSec - MAX_GRACE_SECONDS, nowSec + 7 * DAY)
+      .bind(chainId, nowSec - maxGraceSeconds(graceBuckets), nowSec + 7 * DAY)
       .all<CalendarLoanRow>();
     const loans = res.results ?? [];
     if (loans.length === SWEEP_LIMIT) {
-      // Fail-loud, not silent: the window is saturated; the tail waits
-      // for a later tick as loans mature out of the window.
+      // Fail-loud, not silent: the window is saturated; the urgent
+      // prefix was served, the far-out tail waits for later ticks.
       console.warn(
-        `[calendarNotifications] sweep hit LIMIT ${SWEEP_LIMIT} on chain ${chainId} — tail deferred to later ticks`,
+        `[calendarNotifications] sweep hit LIMIT ${SWEEP_LIMIT} on chain ${chainId} — far-out T-7d tail deferred to later ticks`,
       );
     }
     if (loans.length === 0) return 0;
-    const rows = planCalendarRows(chainId, loans, nowSec, headBlock);
+    const rows = planCalendarRows(chainId, loans, nowSec, headBlock, graceBuckets);
     if (rows.length === 0) return 0;
     return await insertNotificationRows(db, rows);
   } catch (err) {

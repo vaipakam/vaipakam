@@ -17,6 +17,10 @@ import {
 import type { Env } from '../src/env';
 import { createSqliteD1 } from './helpers/sqliteD1';
 
+const MIGRATION_0039 = readFileSync(
+  new URL('../migrations/0039_protocol_config_grace_buckets.sql', import.meta.url),
+  'utf8',
+);
 const MIGRATION_0035 = readFileSync(
   new URL('../migrations/0035_protocol_config.sql', import.meta.url),
   'utf8',
@@ -25,14 +29,16 @@ const MIGRATION_0035 = readFileSync(
 /** Env + client stubs for the refresh path: real SQLite behind the D1
  *  shape (the upsert/stale-mark guards ARE SQL), canned reads. */
 function refreshHarness() {
-  const { db, d1 } = createSqliteD1([MIGRATION_0035]);
+  const { db, d1 } = createSqliteD1([MIGRATION_0035, MIGRATION_0039]);
   const reads: string[] = [];
   const client = {
     readContract: async (args: { functionName: string }) => {
       reads.push(args.functionName);
-      return args.functionName === 'getMasterFlags'
-        ? ([true, true, false] as const)
-        : ([100n, [1n, 2n, 3n, 4n]] as const);
+      if (args.functionName === 'getMasterFlags') return [true, true, false] as const;
+      // #1213 PR 2 — the grace-bucket read rides the same refresh; the
+      // retail default is an empty array (compile-time schedule).
+      if (args.functionName === 'getGraceBuckets') return [] as const;
+      return [100n, [1n, 2n, 3n, 4n]] as const;
     },
   } as unknown as PublicClient;
   const env = { DB: d1 } as unknown as Env;
@@ -128,7 +134,8 @@ describe('configSnapshot', () => {
     const h = refreshHarness();
     h.db
       .prepare(
-        `INSERT INTO protocol_config VALUES (84532, '[]', '[]', 50, ?)`,
+        `INSERT INTO protocol_config (chain_id, bundle_json, master_flags_json, source_block, updated_at)
+         VALUES (84532, '[]', '[]', 50, ?)`,
       )
       .run(Math.floor(Date.now() / 1000));
     await maybeRefreshProtocolConfig({
@@ -151,7 +158,8 @@ describe('configSnapshot', () => {
     const freshAt = Math.floor(Date.now() / 1000);
     h.db
       .prepare(
-        `INSERT INTO protocol_config VALUES (84532, '["newer"]', '[]', 200, ?)`,
+        `INSERT INTO protocol_config (chain_id, bundle_json, master_flags_json, source_block, updated_at)
+         VALUES (84532, '["newer"]', '[]', 200, ?)`,
       )
       .run(freshAt);
     // Older scan, near head, saw a config event → reads happen, but the
@@ -190,7 +198,11 @@ describe('configSnapshot', () => {
       blockNumber: 100n,
       headBlock: 110n,
     });
-    expect(h.reads.sort()).toEqual(['getMasterFlags', 'getProtocolConfigBundle']);
+    expect(h.reads.sort()).toEqual([
+      'getGraceBuckets',
+      'getMasterFlags',
+      'getProtocolConfigBundle',
+    ]);
     expect(h.row()).toMatchObject({ sb: 100 });
     expect(JSON.parse(h.row()!.bj)).toEqual(['100', ['1', '2', '3', '4']]);
   });

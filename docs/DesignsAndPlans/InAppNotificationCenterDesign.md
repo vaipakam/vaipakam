@@ -49,9 +49,16 @@ Claim Center and re-verify there (indexed-hints-only discipline).
 > by the Transfer handlers) rather than a per-row live `ownerOf` read.
 > Dedup keys embed the maturity timestamp, so `LoanExtended` (which rewrites
 > `start_time` + `duration_days`) re-arms the milestones for the new date.
-> Grace mirrors `LibVaipakam.gracePeriod`'s zero-bucket default — if
-> governance ever sets custom buckets, the mirror (and the frontend's)
-> needs a config-snapshot field. Rows are stamped at the sweep's head block
+> Grace follows `LibVaipakam.gracePeriod` exactly: the effective
+> governance buckets ride the `protocol_config` snapshot
+> (`grace_buckets_json`, migration 0039, refreshed on
+> `GraceBucketsUpdated` + the 6h backstop); an empty/absent array means
+> the compile-time default (Codex #1298 r1). The sweep runs only when the
+> indexer is CONSISTENT — every caught-up quiet tick, and scanned ticks
+> within 60 blocks of head — never mid-catch-up, where wall-clock windows
+> against stale rows would mint never-retracted reminders (Codex #1298
+> r1). Under a saturated window the sweep serves soonest-due first, so
+> only the far-out T-7d tail can defer. Rows are stamped at the sweep's head block
 > so the chain-ordered feed sorts them as current. The liquid-only HF-band
 > rows remain a follow-up (they need per-loan HF reads — a different cost
 > profile than pure calendar math).

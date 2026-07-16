@@ -20,11 +20,17 @@ Each reminder fires once per loan per due date: extending a loan pushes
 the due date out and re-arms the reminders for the new date, and repeated
 sweep ticks never duplicate a row. Reminders are stamped at the current
 chain position so they sort as fresh items in the inbox, and the
-past-due reminder stops once the grace window has closed — stale advice
-is never shown (the definitive outcome row arrives from the default /
-liquidation events instead). The grace length mirrors the contract's
-default schedule; the sweep skips bookkeeping rows (sale vehicles,
-unhealed stubs) the same way the market views do.
+past-due reminder is only ever created while the grace window is still
+running — its wording states the past-due fact and points at the
+position page (the authority for whether the repay window is still
+open), so it stays truthful as inbox history. The grace length follows
+the protocol's configured schedule — the governance tiers when set,
+snapshotted alongside the protocol config, the default table otherwise.
+The sweep runs only when the index is consistent with the chain (every
+caught-up tick — including quiet ones with no new blocks — and scans
+near the head; never mid-catch-up, where stale rows could mint wrong
+reminders), serves the soonest-due loans first, and skips bookkeeping
+rows (sale vehicles, unhealed stubs) the same way the market views do.
 
 The app renders the three new reminder kinds with their own icons and
 plain-English copy; an older app build shows them as a generic loan

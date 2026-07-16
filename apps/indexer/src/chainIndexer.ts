@@ -532,6 +532,18 @@ export async function runChainIndexerForChain(
     // stall) until the next real block. The expiry-window legs make
     // this a bounded index scan even when nothing expired.
     await sweepMarketSummaries(env, chainId, Math.floor(Date.now() / 1000));
+    // #1213 PR 2 (Codex #1298 r1) — the calendar sweep is TIME-driven
+    // for the same reason: a loan enters its T-7d/T-1d/grace window by
+    // clock alone, with no new block or log. This caught-up path is
+    // also the CONSISTENT one (D1 reflects everything up to the safe
+    // head), so the sweep always runs here; rows stamp the cursor's
+    // caught-up position.
+    await sweepCalendarNotifications(
+      env.DB,
+      chainId,
+      Math.floor(Date.now() / 1000),
+      Number(lastBlock),
+    );
     return {
       scannedFrom: scanFrom,
       scannedTo: scanFrom - 1n,
@@ -733,7 +745,17 @@ export async function runChainIndexerForChain(
   // (covers illiquid loans too — no oracle involved). Fail-open INSIDE;
   // rows are stamped with this scan's head so they sort as current in
   // the chain-ordered feed.
-  await sweepCalendarNotifications(env.DB, chainId, now, Number(scanTo));
+  //
+  // NEAR-HEAD GATE (Codex #1298 r1 P1): during a deep catch-up (cold
+  // start, redeploy, RPC-outage recovery) D1 only reflects blocks up to
+  // `scanTo` while the sweep's clock is wall time — a loan extended or
+  // repaid in the not-yet-scanned blocks would look due/overdue and get
+  // a never-retracted reminder. Skip until the scan is near the head
+  // (same 60-block consistency bound the config snapshot uses); the
+  // caught-up quiet path above then runs the sweep every tick.
+  if (head - scanTo <= 60n) {
+    await sweepCalendarNotifications(env.DB, chainId, now, Number(scanTo));
+  }
 
   // RPC read-diet PR B — keep the display config snapshot current
   // (event-triggered + slow backstop; fail-open INSIDE, so a refresh

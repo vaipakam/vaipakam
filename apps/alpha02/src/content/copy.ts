@@ -212,10 +212,14 @@ export const copy = {
       loan_defaulted: 'A loan defaulted — see what you can claim.',
       internal_matched: 'A loan of yours closed by matching — see what you can claim.',
       // Calendar rows (#1213 PR 2) — time-derived reminders from the
-      // indexer's cron sweep, covering illiquid loans too.
+      // indexer's cron sweep, covering illiquid loans too. Each line must
+      // stay TRUE FOREVER as an inbox history entry (Codex #1298 r1): the
+      // grace line reports the past-due fact and points at the position
+      // page — the authority for whether the repay window is still open —
+      // rather than promising a window that may have since closed.
       maturity_7d: 'A loan is due within a week.',
       maturity_1d: 'A loan is due within a day.',
-      grace_entered: 'A loan is past its due date — there’s still a short window to repay.',
+      grace_entered: 'A loan went past its due date — open it to see where it stands.',
       // Fallback for any future kind the client doesn't know yet.
       generic: 'There’s an update on your loan.',
     } as Record<string, string>,
