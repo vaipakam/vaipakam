@@ -59,6 +59,19 @@ export const EVENT_NOTIF_MAP: Readonly<Record<string, NotifMapping>> = {
   LoanRepaid: { kind: 'loan_repaid', recipients: 'both' },
   LoanDefaulted: { kind: 'loan_defaulted', recipients: 'both' },
   LoanLiquidated: { kind: 'loan_liquidated', recipients: 'both' },
+  // Swap-to-repay is a DISTINCT repayment path: it flips the position
+  // status inline and emits its OWN event WITHOUT a LoanRepaid /
+  // PartialRepaid companion (SwapToRepayFacet.sol), so it must map
+  // directly or those repayments produce no inbox row (Codex #1292 r1).
+  SwapToRepayExecuted: { kind: 'loan_repaid', recipients: 'both' },
+  SwapToRepayPartialExecuted: { kind: 'partial_repay', recipients: 'lender' },
+  // Backstop absorption terminalizes the loan to Defaulted via
+  // `terminalizeFromAny` and emits ONLY `BackstopAbsorbedLoan` — no
+  // `LoanDefaulted` companion (ClaimFacet.sol) — so the affected
+  // borrower would otherwise get no terminal row (Codex #1292 r1). The
+  // lender NFT is burned in this path, so `recipientFor` skips that
+  // side; the borrower (with the residual collateral claim) is notified.
+  BackstopAbsorbedLoan: { kind: 'loan_defaulted', recipients: 'both' },
 };
 
 /**
@@ -101,7 +114,6 @@ export const NOTIF_DELIBERATELY_NOT_HANDLED: Readonly<Record<string, string>> = 
   LoanSaleOfferLinked: 'internal linkage breadcrumb — no user meaning',
   CollateralAdded: 'own action — the borrower topped up their own collateral',
   InternalMatchExecuted: 'matcher-path bookkeeping — parties see loan_matched via LoanInitiated',
-  BackstopAbsorbedLoan: 'keeper/backstop internal absorption — terminal row arrives via LoanDefaulted/Liquidated',
   LoanFallbackPending: 'transient — status stays active through the fallback episode',
   LoanCuredFromFallback: 'transient — pairs with LoanFallbackPending',
   HFLiquidationTriggered: 'liquidation-attempt marker — terminal row via LoanLiquidated/Defaulted',
@@ -122,8 +134,6 @@ export const NOTIF_DELIBERATELY_NOT_HANDLED: Readonly<Record<string, string>> = 
   OfferSaleProceedsSplit: 'per-recipient split breakdown — terminal loan row covers the user',
   PostParallelSaleListing: 'UI-facing OpenSea listing breadcrumb — no loan-state notification',
   ParallelSaleLockReleased: 'non-destructive unwind — offer stays open, no user meaning',
-  SwapToRepayExecuted: 'swap-to-repay mechanics — the repay terminal row covers the user',
-  SwapToRepayPartialExecuted: 'swap-to-repay mechanics — partial_repay row covers the user',
   SwapToRepayIntentCommitted: 'own action — the borrower committed a swap intent',
   SwapToRepayIntentCancelled: 'own action — the borrower cancelled their swap intent',
   SwapToRepayIntentForceCancelled: 'keeper force-cancel — no distinct user-facing state',
@@ -260,28 +270,37 @@ export async function materializeNotifications(
 
   const partiesByLoan = new Map<number, LoanParties>();
   try {
-    const placeholders = loanIds.map(() => '?').join(',');
-    const res = await db
-      .prepare(
-        `SELECT loan_id, lender, borrower, lender_current_owner, borrower_current_owner
-           FROM loans
-          WHERE chain_id = ? AND loan_id IN (${placeholders})`,
-      )
-      .bind(chainId, ...loanIds)
-      .all<{
-        loan_id: number;
-        lender: string | null;
-        borrower: string | null;
-        lender_current_owner: string | null;
-        borrower_current_owner: string | null;
-      }>();
-    for (const r of res.results ?? []) {
-      partiesByLoan.set(r.loan_id, {
-        lender: r.lender,
-        borrower: r.borrower,
-        lenderCurrentOwner: r.lender_current_owner,
-        borrowerCurrentOwner: r.borrower_current_owner,
-      });
+    // Chunk the IN-list: D1 caps a statement at 100 bound parameters, so
+    // a catch-up scan touching >99 distinct loans would otherwise blow
+    // the limit, throw, and (fail-open) skip that scan's rows forever —
+    // the cursor has already advanced (Codex #1292 r1). 90 ids + the
+    // chainId bind stays safely under the cap.
+    const CHUNK = 90;
+    for (let i = 0; i < loanIds.length; i += CHUNK) {
+      const slice = loanIds.slice(i, i + CHUNK);
+      const placeholders = slice.map(() => '?').join(',');
+      const res = await db
+        .prepare(
+          `SELECT loan_id, lender, borrower, lender_current_owner, borrower_current_owner
+             FROM loans
+            WHERE chain_id = ? AND loan_id IN (${placeholders})`,
+        )
+        .bind(chainId, ...slice)
+        .all<{
+          loan_id: number;
+          lender: string | null;
+          borrower: string | null;
+          lender_current_owner: string | null;
+          borrower_current_owner: string | null;
+        }>();
+      for (const r of res.results ?? []) {
+        partiesByLoan.set(r.loan_id, {
+          lender: r.lender,
+          borrower: r.borrower,
+          lenderCurrentOwner: r.lender_current_owner,
+          borrowerCurrentOwner: r.borrower_current_owner,
+        });
+      }
     }
   } catch (err) {
     console.error('[notifications] party lookup failed', err);

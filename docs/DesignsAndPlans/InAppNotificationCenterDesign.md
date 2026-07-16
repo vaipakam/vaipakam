@@ -32,6 +32,14 @@ Read/unread state: per-wallet in D1 (wallet-keyed, no PII). The chain
 remains authoritative for any action; rows deep-link to Loan Details /
 Claim Center and re-verify there (indexed-hints-only discipline).
 
+> **Implementation refinement (PR 1, Codex #1292 r1):** the launch tracks
+> read/unread state CLIENT-side (a per-wallet last-seen cursor in the
+> frontend), not as a D1 column. An unauthenticated server mark-read
+> mutation is griefable (anyone could clear a victim's badge) and a
+> per-action wallet signature is poor UX, so there is no server mutation
+> route; the feed is served `no-store`. A future SIWE-session-gated
+> server-side read-state (for cross-device sync) can add the column back.
+
 ### Surface
 
 - Bell + unread count in the connected-app header; panel with filter by

@@ -9,8 +9,16 @@
 --
 -- One row per (recipient wallet, notification). A loan event that
 -- concerns both parties materializes TWO rows (one per wallet), so the
--- per-wallet feed is a plain indexed `WHERE recipient = ?` read and
--- read/unread state lives on the row itself (wallet-keyed, no PII).
+-- per-wallet feed is a plain indexed `WHERE recipient = ?` read.
+--
+-- Read/unread state is CLIENT-side (a per-wallet last-seen cursor in the
+-- frontend), NOT a server column: an unauthenticated server mutation
+-- would be griefable (anyone could clear a victim's badge) and a
+-- per-action signature is poor UX, so the launch tracks read-state
+-- locally (Codex #1292 r1). This is a deliberate deviation from the
+-- design doc's "read-state in D1" line; see the design doc + release
+-- fragment. A future authenticated (SIWE-session) server-side read-state
+-- can add a `read_at` column then.
 --
 -- Idempotency: `dedup_key` is UNIQUE and every producer computes a
 -- deterministic key, so a re-scan / catch-up re-run of the same event
@@ -41,8 +49,6 @@ CREATE TABLE IF NOT EXISTS notifications (
   data_json    TEXT,
   -- Unix seconds; the source block time for event rows.
   created_at   INTEGER NOT NULL,
-  -- Unix seconds when the recipient marked it read; NULL = unread.
-  read_at      INTEGER,
   -- Deterministic idempotency key (UNIQUE) — see notifications.ts.
   dedup_key    TEXT    NOT NULL
 );
@@ -54,7 +60,3 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_notifications_dedup
 -- The per-wallet feed: newest-first, cursor on (created_at, id).
 CREATE INDEX IF NOT EXISTS idx_notifications_feed
   ON notifications(chain_id, recipient, created_at, id);
-
--- Unread-count + unread-only filter.
-CREATE INDEX IF NOT EXISTS idx_notifications_unread
-  ON notifications(chain_id, recipient, read_at);

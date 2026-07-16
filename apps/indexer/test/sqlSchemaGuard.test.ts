@@ -95,11 +95,12 @@ describe('SQL-vs-schema guard (#1149)', () => {
     // GROWS, someone moved statements out of the guard's reach —
     // either make the new statement static or consciously raise this
     // pin with a route test covering the dynamic shape.
-    // Raised 10 → 12 for #1213: the notification-center routes build the
-    // feed `WHERE` and the mark-read `IN (…)` dynamically; both shapes
-    // are covered by test/notificationRoutes.test.ts against the real
-    // migrated schema.
-    expect(skipped.length).toBeLessThanOrEqual(12);
+    // Raised 10 → 11 for #1213: the notification-center feed route builds
+    // its `WHERE` (chain/recipient + optional keyset cursor) dynamically;
+    // the shape is covered by test/notificationRoutes.test.ts against the
+    // real migrated schema. (Read-state is client-side, so there is no
+    // mark-read UPDATE.)
+    expect(skipped.length).toBeLessThanOrEqual(11);
   });
 
   it('every static SQL statement prepares against the migrated schema', () => {

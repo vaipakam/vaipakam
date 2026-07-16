@@ -129,6 +129,50 @@ describe('planNotifications', () => {
       expect(['both', 'lender', 'borrower']).toContain(m.recipients);
     }
   });
+
+  it('maps the swap-to-repay + backstop paths that have no LoanRepaid/Defaulted companion (Codex #1292 r1)', () => {
+    // These emit only their own event on-chain, so without a direct
+    // mapping the affected wallets would get no inbox row.
+    expect(EVENT_NOTIF_MAP.SwapToRepayExecuted).toEqual({
+      kind: 'loan_repaid',
+      recipients: 'both',
+    });
+    expect(EVENT_NOTIF_MAP.SwapToRepayPartialExecuted).toEqual({
+      kind: 'partial_repay',
+      recipients: 'lender',
+    });
+    expect(EVENT_NOTIF_MAP.BackstopAbsorbedLoan).toEqual({
+      kind: 'loan_defaulted',
+      recipients: 'both',
+    });
+
+    const rows = planNotifications(
+      84532,
+      [log('SwapToRepayExecuted', 7)],
+      new Map([[7, parties(LENDER, BORROWER)]]),
+      new Map(),
+      1,
+    );
+    expect(rows.map((r) => r.recipient).sort()).toEqual([LENDER, BORROWER].sort());
+    expect(rows.every((r) => r.kind === 'loan_repaid')).toBe(true);
+  });
+
+  it('chunks the party lookup so a >99-loan scan does not overflow D1 binds', async () => {
+    // 120 distinct notification-worthy loans in one scan: the single-IN
+    // query would exceed D1's 100-bind cap and (fail-open) skip the whole
+    // scan; chunking keeps every row.
+    const h = createSqliteD1(ALL_MIGRATIONS);
+    const logs: NotifSourceLog[] = [];
+    for (let id = 1; id <= 120; id++) {
+      seedLoan(h, id, LENDER, BORROWER);
+      logs.push(log('LoanRepaid', id, BigInt(100 + id), 0));
+    }
+    await materializeNotifications(h.d1 as never, 84532, logs, new Map(), 999);
+    const n = (
+      h.db.prepare('SELECT COUNT(*) AS n FROM notifications').get() as { n: number }
+    ).n;
+    expect(n).toBe(240); // 120 loans × both parties
+  });
 });
 
 function seedLoan(
@@ -165,11 +209,10 @@ describe('materializeNotifications (over the migrated schema)', () => {
     await materializeNotifications(h.d1 as never, 84532, logs, new Map([[100n, 500]]), 999);
     expect(countRows(h)).toBe(2);
     const rows = h.db
-      .prepare('SELECT recipient, kind, loan_id, read_at FROM notifications ORDER BY recipient')
-      .all() as Array<{ recipient: string; kind: string; loan_id: number; read_at: number | null }>;
+      .prepare('SELECT recipient, kind, loan_id FROM notifications ORDER BY recipient')
+      .all() as Array<{ recipient: string; kind: string; loan_id: number }>;
     expect(rows.map((r) => r.recipient)).toEqual([LENDER, BORROWER].sort());
     expect(rows.every((r) => r.kind === 'loan_matched' && r.loan_id === 7)).toBe(true);
-    expect(rows.every((r) => r.read_at === null)).toBe(true);
 
     // Re-scan the same event → INSERT OR IGNORE, no duplicates.
     await materializeNotifications(h.d1 as never, 84532, logs, new Map([[100n, 500]]), 999);
