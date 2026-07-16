@@ -18,7 +18,20 @@ backstop absorption, and HF-based liquidation), and the internal-match
 close (which fans out to each of the matched loan legs). Several of these
 the contracts emit under their own terminal event with no generic
 LoanRepaid/LoanDefaulted companion, so each is mapped explicitly rather
-than assumed covered. The recipient resolves
+than assumed covered.
+
+A row that asserts a loan has *closed* is gated on the indexer's own
+projected loan state, so the inbox can never disagree with what the loan
+detail page shows: a "closed — check the Claim Center" row is only
+materialized once the indexer has actually flipped that loan to a
+terminal status. This suppresses two false-positive cases — a *partial*
+internal-match leg (principal reduced but the loan still open) and a
+lender-sale *vehicle*'s temporary bookkeeping loan (excluded from every
+market surface) never generate a row. It also defers HF-based liquidation
+rows: the indexer does not yet project HF-liquidation terminal status
+onto the loan table (a pre-existing gap tracked separately), so those
+rows stay dormant until that projection lands, at which point they
+activate automatically. The recipient resolves
 to the CURRENT position-NFT holder at materialization time (the design's
 ownership discipline): a secondary-market buyer who now holds the claim
 is notified, while an exited seller and a burned/cash-satisfied side

@@ -40,6 +40,25 @@ Claim Center and re-verify there (indexed-hints-only discipline).
 > route; the feed is served `no-store`. A future SIWE-session-gated
 > server-side read-state (for cross-device sync) can add the column back.
 
+> **Implementation refinement (PR 1, Codex #1292 r7):** a notification
+> whose *kind* asserts a loan has CLOSED (`loan_repaid` / `loan_defaulted`
+> / `internal_matched` — the rows that deep-link to the Claim Center) is
+> gated on the indexer's own **projected** loan state, so the inbox can
+> never disagree with the loan detail page. The materializer reads
+> `loans.status` (+ `is_sale_vehicle`) at the scan's end and:
+> - suppresses a **partial** `InternalMatchExecuted` leg — a partial match
+>   reduces principal/collateral but leaves the loan `active`; only a fully
+>   closed leg (`status = 'internal_matched'`) gets a row;
+> - suppresses a lender-sale **vehicle**'s temporary bookkeeping loan
+>   (`is_sale_vehicle = 1`) from a `loan_matched` row — the real
+>   secondary-market sale surfaces via the sale-terminal rows (PR2);
+> - **defers** HF-liquidation rows (`HFLiquidationTriggered` /
+>   `LiquidationDiscounted`): the indexer does not yet project their
+>   terminal status onto `loans.status` (a pre-existing gap — issue
+>   #1293), so the loan stays `active` and the gate holds the row until
+>   that projection lands, at which point it activates with no
+>   notification-code change.
+
 ### Surface
 
 - Bell + unread count in the connected-app header; panel with filter by

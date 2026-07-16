@@ -83,6 +83,15 @@ export const EVENT_NOTIF_MAP: Readonly<Record<string, NotifMapping>> = {
   // (RiskFacet.sol:1665) emits ONLY `LiquidationDiscounted`. Neither
   // emits a `LoanDefaulted` companion, so without these mappings a real
   // HF liquidation gives both holders no terminal row (Codex #1292 r4).
+  //
+  // IMPORTANT (Codex #1292 r7): the indexer does NOT yet project these two
+  // events to `loans.status = 'defaulted'` — there is no `chainIndexer.ts`
+  // branch for them, so after an HF liquidation D1 still shows the loan
+  // 'active' (a pre-existing loan-projection gap, tracked as issue #1293).
+  // `planNotifications`'s terminal-status gate therefore DEFERS these rows:
+  // they stay suppressed until that projection lands, then auto-activate —
+  // so a terminal row can never deep-link into a loan D1 still shows active.
+  //
   // (The PARTIAL HF liquidation is a separate event, `LoanPartiallyLiquidated`,
   // allowlisted below — the loan stays active there.)
   HFLiquidationTriggered: { kind: 'loan_defaulted', recipients: 'both' },
@@ -102,7 +111,11 @@ export const EVENT_NOTIF_MAP: Readonly<Record<string, NotifMapping>> = {
   // LoanRepaid/LoanDefaulted companion (Codex #1292 r5). Handled specially
   // in `loanIdsOf` (the triple) — both parties of each closed leg are
   // notified to check the Claim Center, where the exact terminal status
-  // and any residual are re-verified on chain.
+  // and any residual are re-verified on chain. A PARTIAL match only reduces
+  // principal/collateral and leaves the leg 'active' (the indexer flips to
+  // 'internal_matched' ONLY on a full close); `planNotifications`'s
+  // terminal-status gate suppresses the row for those partial legs so a
+  // still-open loan can't get a false "closed" row (Codex #1292 r7).
   InternalMatchExecuted: { kind: 'internal_matched', recipients: 'both' },
 };
 
@@ -177,12 +190,48 @@ export interface NotifSourceLog {
 
 const ZERO_ADDR = '0x0000000000000000000000000000000000000000';
 
-/** A loan's parties as the recipient resolution needs them. */
+/**
+ * The indexer's terminal loan statuses (`loans.status` string values —
+ * see `LOAN_STATUS_TO_INDEXER_TERMINAL` in chainIndexer.ts). A terminal
+ * KIND of notification (`loan_repaid` / `loan_defaulted` /
+ * `internal_matched`) is only materialized when the loan the indexer has
+ * PROJECTED is actually in one of these — see the gate in
+ * `planNotifications` (Codex #1292 r7).
+ */
+const TERMINAL_LOAN_STATUSES = new Set([
+  'repaid',
+  'defaulted',
+  'settled',
+  'liquidated',
+  'internal_matched',
+]);
+
+/** The notification kinds that assert a loan has CLOSED — a row deep-links
+ *  the recipient to the Claim Center. Gated on the projected loan status so
+ *  a still-active loan can't get a false "closed" row (Codex #1292 r7). */
+const TERMINAL_NOTIF_KINDS = new Set<NotifKind>([
+  'loan_repaid',
+  'loan_defaulted',
+  'internal_matched',
+]);
+
+function isTerminalStatus(status: string | null | undefined): boolean {
+  return status != null && TERMINAL_LOAN_STATUSES.has(status);
+}
+
+/** A loan's parties + projected state as the recipient resolution and the
+ *  materialization gates need them. */
 interface LoanParties {
   lender: string | null;
   borrower: string | null;
   lenderCurrentOwner: string | null;
   borrowerCurrentOwner: string | null;
+  /** The indexer's projected `loans.status` at the scan's end (see
+   *  `isTerminalStatus`). Null for an unknown loan. */
+  status: string | null;
+  /** True for a lender-sale VEHICLE's temporary bookkeeping loan
+   *  (`loans.is_sale_vehicle = 1`) — excluded from a `loan_matched` row. */
+  isSaleVehicle: boolean;
 }
 
 /**
@@ -306,6 +355,35 @@ export function planNotifications(
     const seen = new Set<string>();
     for (const loanId of loanIdsOf(log.eventName, log.args)) {
       const parties = partiesByLoan.get(loanId);
+      // Gate 1 (Codex #1292 r7) — a lender-sale VEHICLE accept emits a
+      // normal `LoanInitiated` for a temporary bookkeeping loan that is
+      // excluded from every market surface (`is_sale_vehicle = 1`). A
+      // `loan_matched` row would deep-link the buyer/seller to that temp
+      // loan; the real secondary-market sale is surfaced by the sale
+      // terminal rows (PR2, `LoanSaleCompleted` / `LoanSold`), not here.
+      if (mapping.kind === 'loan_matched' && parties?.isSaleVehicle) continue;
+      // Gate 2 (Codex #1292 r7) — a TERMINAL-kind row asserts the loan
+      // CLOSED (it deep-links to the Claim Center), so only materialize it
+      // when the indexer has actually PROJECTED the loan to a terminal
+      // status. Two cases otherwise fire a false "closed" row against a
+      // still-active loan:
+      //   • a PARTIAL `InternalMatchExecuted` leg — the indexer reduces
+      //     principal/collateral but leaves status 'active' (only a
+      //     fully-closed leg flips to 'internal_matched');
+      //   • an `HFLiquidationTriggered` / `LiquidationDiscounted` the
+      //     indexer does not yet project to 'defaulted' (issue #1293) — the
+      //     loan stays 'active' until that projection lands, at which point
+      //     this row auto-activates with no change here.
+      // This gate keys off the END-OF-BATCH projected status — materialize
+      // runs after every same-batch status flip — so a properly-handled
+      // terminal event (LoanRepaid / LoanDefaulted / swap-to-repay /
+      // preclose / offset / refinance / backstop) has already flipped D1 to
+      // terminal and passes.
+      if (
+        TERMINAL_NOTIF_KINDS.has(mapping.kind) &&
+        !isTerminalStatus(parties?.status)
+      )
+        continue;
       for (const side of sides) {
       const recipient = recipientFor(parties, side);
       if (!recipient) continue;
@@ -363,7 +441,8 @@ export async function materializeNotifications(
       const placeholders = slice.map(() => '?').join(',');
       const res = await db
         .prepare(
-          `SELECT loan_id, lender, borrower, lender_current_owner, borrower_current_owner
+          `SELECT loan_id, lender, borrower, lender_current_owner, borrower_current_owner,
+                  status, is_sale_vehicle
              FROM loans
             WHERE chain_id = ? AND loan_id IN (${placeholders})`,
         )
@@ -374,6 +453,8 @@ export async function materializeNotifications(
           borrower: string | null;
           lender_current_owner: string | null;
           borrower_current_owner: string | null;
+          status: string | null;
+          is_sale_vehicle: number | null;
         }>();
       for (const r of res.results ?? []) {
         partiesByLoan.set(r.loan_id, {
@@ -381,6 +462,8 @@ export async function materializeNotifications(
           borrower: r.borrower,
           lenderCurrentOwner: r.lender_current_owner,
           borrowerCurrentOwner: r.borrower_current_owner,
+          status: r.status,
+          isSaleVehicle: (r.is_sale_vehicle ?? 0) === 1,
         });
       }
     }
