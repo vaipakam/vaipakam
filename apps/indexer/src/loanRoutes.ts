@@ -1807,6 +1807,131 @@ function parseMarketFilter(url: URL): MarketFilter | 'bad' {
   return out;
 }
 
+// ─── Notification center (#1213 / E-11) ──────────────────────────────
+
+interface NotificationRow {
+  id: number;
+  kind: string;
+  loan_id: number | null;
+  offer_id: number | null;
+  event_kind: string | null;
+  data_json: string | null;
+  created_at: number;
+  block_number: number | null;
+  log_index: number | null;
+}
+
+function notificationToJson(row: NotificationRow) {
+  let data: unknown = null;
+  if (row.data_json) {
+    try {
+      data = JSON.parse(row.data_json);
+    } catch {
+      data = null;
+    }
+  }
+  return {
+    id: row.id,
+    kind: row.kind,
+    loanId: row.loan_id,
+    offerId: row.offer_id,
+    eventKind: row.event_kind,
+    data,
+    createdAt: row.created_at,
+    // Chain-order key — the client tracks read/unread as a per-wallet
+    // last-seen cursor, which must be the SAME (block, logIndex) key the
+    // feed orders + paginates by; `createdAt` alone can't order (Codex
+    // #1292 r5).
+    blockNumber: row.block_number,
+    logIndex: row.log_index,
+  };
+}
+
+/**
+ * GET /notifications/:addr?chainId=8453&limit&before
+ *
+ * The wallet's in-app inbox (#1213 / E-11): per-recipient lifecycle
+ * rows the ingest materialized (see notifications.ts), newest-first.
+ * Pure D1, open CORS — every row is derived from public on-chain events
+ * (same privacy model as /claimables and /activity). The chain stays
+ * authoritative: rows deep-link to Loan Details / the Claim Center and
+ * re-verify there.
+ *
+ * Read/unread state is CLIENT-side (a per-wallet last-seen cursor in the
+ * frontend), NOT a server column — so there is no unauthenticated
+ * mutation to grief (Codex #1292 r1) and no per-wallet mutable state to
+ * cache-poison. The response is therefore served `no-store`: it is a
+ * per-wallet surface whose freshness (a just-materialized row) drives
+ * the bell badge, so a shared/edge cache must never replay a stale page.
+ *
+ * Ordered newest-first by CHAIN ORDER (block, log_index, id), NOT by
+ * `created_at` — that column is the block timestamp but falls back to
+ * wall-clock on a mid-catch-up read failure, which would sort a
+ * historical row as newest (Codex #1292 r4). `id` is the unique
+ * tiebreaker: a single log can fan out multiple rows for one recipient
+ * (an `InternalMatchExecuted` leg fan-out shares block+log_index), so a
+ * `block:log`-only cursor could skip the rest of that group (Codex #1292
+ * r6). Cursor `before` = `"<blockNumber>:<logIndex>:<id>"`.
+ */
+export async function handleNotifications(
+  req: Request,
+  env: Env,
+  addrRaw: string,
+): Promise<Response> {
+  const url = new URL(req.url);
+  const chainId = parseChainId(url.searchParams.get('chainId')) ?? 8453;
+  const addr = addrRaw.toLowerCase();
+  if (!/^0x[0-9a-f]{40}$/.test(addr)) {
+    return jsonResponse({ error: 'bad-address' }, 400);
+  }
+  if (!chainConfigured(env, chainId)) {
+    return jsonResponse({ error: 'chain-not-configured' }, 503);
+  }
+  const limit = parseLimit(url.searchParams.get('limit'));
+  const beforeRaw = url.searchParams.get('before');
+
+  const where: string[] = ['chain_id = ?', 'recipient = ?'];
+  const binds: (string | number)[] = [chainId, addr];
+  if (beforeRaw) {
+    const m = beforeRaw.match(/^(\d+):(\d+):(\d+)$/);
+    if (!m) return jsonResponse({ error: 'bad-before' }, 400);
+    // (block_number, log_index, id) < (?, ?, ?) — the UNIQUE chain-order
+    // keyset (id tiebreaks a same-log fan-out so no row is skipped).
+    where.push(
+      '(block_number < ? OR (block_number = ? AND (log_index < ? OR (log_index = ? AND id < ?))))',
+    );
+    const blk = Number.parseInt(m[1], 10);
+    const li = Number.parseInt(m[2], 10);
+    binds.push(blk, blk, li, li, Number.parseInt(m[3], 10));
+  }
+  try {
+    const rows = await env.DB.prepare(
+      `SELECT id, kind, loan_id, offer_id, event_kind, data_json,
+              created_at, block_number, log_index
+         FROM notifications
+        WHERE ${where.join(' AND ')}
+        ORDER BY block_number DESC, log_index DESC, id DESC
+        LIMIT ?`,
+    )
+      .bind(...binds, limit)
+      .all<NotificationRow>();
+    const results = rows.results ?? [];
+    const notifications = results.map(notificationToJson);
+    const last = results.length === limit ? results[results.length - 1] : null;
+    const nextBefore = last
+      ? `${last.block_number}:${last.log_index}:${last.id}`
+      : null;
+    return jsonResponse(
+      { chainId, address: addr, notifications, nextBefore },
+      200,
+      { 'Cache-Control': 'no-store' },
+    );
+  } catch (err) {
+    console.error('[loanRoutes] notifications failed', err);
+    return jsonResponse({ error: 'notifications-failed' }, 500);
+  }
+}
+
 function parseChainId(raw: string | null): number | null {
   if (!raw) return null;
   const n = Number.parseInt(raw, 10);

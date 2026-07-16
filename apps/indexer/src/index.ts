@@ -114,6 +114,7 @@ import {
   handleActivity,
   handleClaimables,
   handleClaimCandidates,
+  handleNotifications,
   handleLoansPreflight,
   handleLoanPrepayMatchSource,
 } from './loanRoutes';
@@ -399,6 +400,21 @@ export default {
       if (req.method === 'GET') {
         const m = url.pathname.match(/^\/claimables\/(0x[0-9a-fA-F]{40})$/);
         if (m) return handleClaimables(req, resolved, m[1]);
+      }
+      return new Response('Not found', { status: 404 });
+    }
+
+    // ─── /notifications/:address ────────────────────────────────
+    // #1213 / E-11 — the in-app inbox feed (GET). Read/unread state is
+    // client-side (a per-wallet last-seen cursor), so there is no server
+    // mutation route.
+    if (url.pathname.startsWith('/notifications/')) {
+      if (req.method === 'OPTIONS') return handleLoansPreflight();
+      const feedMatch = url.pathname.match(
+        /^\/notifications\/(0x[0-9a-fA-F]{40})$/,
+      );
+      if (feedMatch && req.method === 'GET') {
+        return handleNotifications(req, resolved, feedMatch[1]);
       }
       return new Response('Not found', { status: 404 });
     }
