@@ -226,6 +226,20 @@ function seedLoan(
     );
 }
 
+/** Seed the grace snapshot the sweep now REQUIRES (Codex #1298 r5):
+ *  '[]' = the definitive no-buckets state (default schedule); a JSON
+ *  array = governance buckets; without a populated row the sweep
+ *  defers rather than guess. */
+function seedGraceConfig(h: SqliteD1, bucketsJson = '[]') {
+  h.db
+    .prepare(
+      `INSERT INTO protocol_config
+         (chain_id, bundle_json, master_flags_json, grace_buckets_json, source_block, updated_at)
+       VALUES (?, '[]', '[]', ?, 1, ?)`,
+    )
+    .run(CHAIN, bucketsJson, NOW);
+}
+
 describe('sweepCalendarNotifications (over the migrated schema)', () => {
   const rowsInDb = (h: SqliteD1) =>
     h.db
@@ -243,6 +257,7 @@ describe('sweepCalendarNotifications (over the migrated schema)', () => {
 
   it('inserts due milestones stamped at the head block, idempotent across ticks', async () => {
     const h = createSqliteD1(ALL_MIGRATIONS);
+    seedGraceConfig(h);
     seedLoan(h, 1, NOW + 6 * DAY - 30 * DAY, 30); // matures in 6d → T-7d due
     // NB: assert on the TABLE, not the return value — the test shim's
     // db.batch() surfaces no meta.changes counts.
@@ -264,6 +279,7 @@ describe('sweepCalendarNotifications (over the migrated schema)', () => {
 
   it('skips terminal loans, vehicles, and stubs', async () => {
     const h = createSqliteD1(ALL_MIGRATIONS);
+    seedGraceConfig(h);
     seedLoan(h, 2, NOW + DAY - 30 * DAY, 30, 'repaid');
     seedLoan(h, 3, NOW + DAY - 30 * DAY, 30, 'active', { isSaleVehicle: 1 });
     seedLoan(h, 5, NOW + DAY - 30 * DAY, 30, 'active', { isStub: 1 });
@@ -273,6 +289,7 @@ describe('sweepCalendarNotifications (over the migrated schema)', () => {
 
   it('never lets dead past-grace loans occupy the LIMIT and starve live reminders (Codex #1298 r2)', async () => {
     const h = createSqliteD1(ALL_MIGRATIONS);
+    seedGraceConfig(h);
     // 2000 loans (the full SWEEP_LIMIT) that are 4–20 days overdue on the
     // default 3d grace — past their OWN grace end, so they emit nothing.
     // Their maturities are all EARLIER than the live loan's, so a
@@ -322,6 +339,7 @@ describe('sweepCalendarNotifications (over the migrated schema)', () => {
 
   it('emits grace_entered to both parties for a just-past-due loan', async () => {
     const h = createSqliteD1(ALL_MIGRATIONS);
+    seedGraceConfig(h);
     seedLoan(h, 6, NOW - 1 * DAY - 30 * DAY, 30); // 1d past due, 3d grace
     await sweepCalendarNotifications(h.d1 as never, CHAIN, NOW, HEAD);
     // grace_entered × both parties (T-7d/T-1d windows are behind us —
@@ -329,6 +347,57 @@ describe('sweepCalendarNotifications (over the migrated schema)', () => {
     const rows = rowsInDb(h);
     expect(rows.map((r) => r.kind)).toEqual(['grace_entered', 'grace_entered']);
     expect(rows.map((r) => r.recipient).sort()).toEqual([LENDER, BORROWER].sort());
+  });
+
+  it('defers while the grace schedule is unknown, sweeps once it is definitive (Codex #1298 r5)', async () => {
+    const h = createSqliteD1(ALL_MIGRATIONS);
+    seedLoan(h, 9, NOW - 1 * DAY - 30 * DAY, 30); // in grace — would emit
+    // No protocol_config row at all → schedule unknown → defer.
+    await sweepCalendarNotifications(h.d1 as never, CHAIN, NOW, HEAD);
+    expect(rowsInDb(h)).toHaveLength(0);
+    // Pre-0039 row (NULL column) → still unknown → defer.
+    h.db
+      .prepare(
+        `INSERT INTO protocol_config (chain_id, bundle_json, master_flags_json, source_block, updated_at)
+         VALUES (?, '[]', '[]', 1, ?)`,
+      )
+      .run(CHAIN, NOW);
+    await sweepCalendarNotifications(h.d1 as never, CHAIN, NOW, HEAD);
+    expect(rowsInDb(h)).toHaveLength(0);
+    // '[]' = the DEFINITIVE no-buckets state → default schedule applies.
+    h.db.prepare(`UPDATE protocol_config SET grace_buckets_json = '[]' WHERE chain_id = ?`).run(CHAIN);
+    await sweepCalendarNotifications(h.d1 as never, CHAIN, NOW, HEAD);
+    expect(rowsInDb(h).map((r) => r.kind)).toEqual(['grace_entered', 'grace_entered']);
+  });
+
+  it('advances past already-notified loans instead of re-spending the LIMIT on them (Codex #1298 r5)', async () => {
+    const h = createSqliteD1(ALL_MIGRATIONS);
+    seedGraceConfig(h);
+    // SWEEP_LIMIT in-grace loans (30d duration → 3d default grace, all
+    // ~1 day overdue) whose maturities all precede the straggler's.
+    const stmt = h.db.prepare(
+      `INSERT INTO loans (chain_id, loan_id, offer_id, status, lender, borrower,
+         principal, collateral_amount, asset_type, collateral_asset_type,
+         lending_asset, collateral_asset, duration_days, token_id,
+         collateral_token_id, lender_token_id, borrower_token_id,
+         lender_current_owner, borrower_current_owner, interest_rate_bps,
+         start_time, start_block, start_at, updated_at, is_stub, is_sale_vehicle)
+       VALUES (?, ?, 1, 'active', ?, ?, '100', '200', 0, 0, '0xa', '0xc', 30, '0', '0',
+         '1', '2', ?, ?, 500, ?, 0, 0, 0, 0, 0)`,
+    );
+    for (let i = 1; i <= 2000; i++) {
+      const overdue = DAY + (i % 1000); // in grace, earlier maturity than the straggler
+      stmt.run(CHAIN, i, LENDER, BORROWER, LENDER, BORROWER, NOW - overdue - 30 * DAY);
+    }
+    // The straggler: in grace too, but the LATEST maturity — pre-r5 the
+    // 2000 already-notified rows would re-occupy the LIMIT every tick
+    // (INSERT OR IGNORE no-ops) and starve it for its whole window.
+    seedLoan(h, 3000, NOW - 12 * 3_600 - 30 * DAY, 30); // 12h overdue
+    await sweepCalendarNotifications(h.d1 as never, CHAIN, NOW, HEAD);
+    expect(rowsInDb(h).filter((r) => r.loan_id === 3000)).toHaveLength(0); // tick 1: starved
+    await sweepCalendarNotifications(h.d1 as never, CHAIN, NOW + 60, HEAD + 5);
+    const straggler = rowsInDb(h).filter((r) => r.loan_id === 3000);
+    expect(straggler.map((r) => r.kind)).toEqual(['grace_entered', 'grace_entered']); // tick 2: served
   });
 
   it('range-scans idx_loans_calendar_maturity — no full-set temp B-tree (Codex #1298 r4)', () => {
@@ -347,7 +416,7 @@ describe('sweepCalendarNotifications (over the migrated schema)', () => {
     ]) {
       const plan = h.db
         .prepare(`EXPLAIN QUERY PLAN ${calendarWindowSql(graceCase)}`)
-        .all(CHAIN, NOW - 45 * DAY, NOW + 7 * DAY, NOW)
+        .all(CHAIN, NOW - 45 * DAY, NOW + 7 * DAY, NOW, NOW, NOW)
         .map((r) => String((r as { detail: string }).detail))
         .join(' | ');
       expect(plan).toContain('idx_loans_calendar_maturity');

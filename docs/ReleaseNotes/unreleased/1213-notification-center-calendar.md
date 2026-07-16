@@ -29,8 +29,13 @@ snapshotted alongside the protocol config, the default table otherwise.
 The sweep runs only when the index is consistent with the chain (every
 caught-up tick — including quiet ones with no new blocks — and scans
 near the head; never mid-catch-up, where stale rows could mint wrong
-reminders), serves the soonest-due loans first, and skips bookkeeping
-rows (sale vehicles, unhealed stubs) the same way the market views do.
+reminders), serves the soonest-due loans first, skips loans whose
+current reminder already exists (so a busy chain's backlog can never
+crowd out the not-yet-reminded tail), and skips bookkeeping rows (sale
+vehicles, unhealed stubs) the same way the market views do. If the
+protocol's grace schedule has not been read successfully yet, the sweep
+waits rather than guessing — a reminder minted off the wrong schedule
+could never be retracted.
 
 The app renders the three new reminder kinds with their own icons and
 plain-English copy; an older app build shows them as a generic loan

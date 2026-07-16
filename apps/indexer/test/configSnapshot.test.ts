@@ -266,6 +266,34 @@ describe('configSnapshot', () => {
     });
   });
 
+  it('invalidates (not preserves) stored buckets when the grace read fails ON a GraceBucketsUpdated scan (Codex #1298 r5)', async () => {
+    // The scan proves the buckets CHANGED; a transient read failure must
+    // not keep the pre-change schedule looking current — force the
+    // column to NULL so the sweep defers and the unpopulated-column
+    // force-refresh retries next tick.
+    const h = refreshHarness({
+      graceRead: async () => {
+        throw new Error('HTTP request failed: 503');
+      },
+    });
+    h.db
+      .prepare(
+        `INSERT INTO protocol_config (chain_id, bundle_json, master_flags_json, grace_buckets_json, source_block, updated_at)
+         VALUES (84532, '[]', '[]', '[{"maxDurationDays":"0","graceSeconds":"3888000"}]', 50, 0)`,
+      )
+      .run();
+    await maybeRefreshProtocolConfig({
+      env: h.env,
+      chainId: 84532,
+      client: h.client,
+      diamond: DIAMOND,
+      scannedEventNames: ['GraceBucketsUpdated'],
+      blockNumber: 100n,
+      headBlock: 110n,
+    });
+    expect(h.row()).toMatchObject({ sb: 100, gb: null });
+  });
+
   it('force-refreshes a populated row whose grace column is still NULL (Codex #1298 r3)', async () => {
     const h = refreshHarness();
     // Fresh pre-0039 row: updated_at is current, so the event/backstop

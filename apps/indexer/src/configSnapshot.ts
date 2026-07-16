@@ -184,11 +184,13 @@ export async function maybeRefreshProtocolConfig(opts: {
   headBlock: bigint;
 }): Promise<void> {
   let saw = false;
+  // Tracked separately (Codex #1298 r5): when THIS scan carries
+  // `GraceBucketsUpdated`, any previously-snapshotted bucket set is
+  // known-obsolete — a failed grace read must not preserve it.
+  let sawGraceEvent = false;
   for (const n of opts.scannedEventNames) {
-    if (isConfigEventName(n)) {
-      saw = true;
-      break;
-    }
+    if (n === 'GraceBucketsUpdated') sawGraceEvent = true;
+    if (isConfigEventName(n)) saw = true;
   }
   try {
     // Catch-up scans read historic state — never stamp those fresh.
@@ -290,6 +292,14 @@ export async function maybeRefreshProtocolConfig(opts: {
       }),
     ]);
 
+    // A transient grace-read failure normally PRESERVES the existing
+    // column (COALESCE) — the stored schedule is still current. But when
+    // this scan SAW `GraceBucketsUpdated`, the stored schedule is
+    // known-obsolete (Codex #1298 r5): force the column back to NULL —
+    // the calendar sweep treats NULL as "unknown, skip" and the
+    // unpopulated-column force-refresh retries next tick, so one RPC
+    // hiccup can never let reminders mint off the pre-change buckets.
+    const invalidateGrace = graceBuckets === null && sawGraceEvent;
     await opts.env.DB.prepare(
       `INSERT INTO protocol_config
          (chain_id, bundle_json, master_flags_json, grace_buckets_json, source_block, updated_at)
@@ -297,7 +307,8 @@ export async function maybeRefreshProtocolConfig(opts: {
        ON CONFLICT (chain_id) DO UPDATE SET
          bundle_json = excluded.bundle_json,
          master_flags_json = excluded.master_flags_json,
-         grace_buckets_json = COALESCE(excluded.grace_buckets_json, protocol_config.grace_buckets_json),
+         grace_buckets_json = CASE WHEN ?7 = 1 THEN NULL
+           ELSE COALESCE(excluded.grace_buckets_json, protocol_config.grace_buckets_json) END,
          source_block = excluded.source_block,
          updated_at = excluded.updated_at
        WHERE excluded.source_block >= protocol_config.source_block`,
@@ -309,6 +320,7 @@ export async function maybeRefreshProtocolConfig(opts: {
         graceBuckets === null ? null : serializeTuple(graceBuckets),
         Number(opts.blockNumber),
         now,
+        invalidateGrace ? 1 : 0,
       )
       .run();
   } catch (err) {

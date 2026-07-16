@@ -20,8 +20,13 @@
  * Correctness notes:
  *   - Maturity is computed from the LIVE `start_time + duration_days`
  *     columns (never the immutable `init_*` history): the LoanExtended
- *     handler rewrites both, and a partial repay resets `start_time`,
- *     so the milestone windows re-derive correctly after either.
+ *     handler rewrites both, so the milestone windows re-derive
+ *     correctly after an extension. Partial repays do NOT move the
+ *     maturity: since #641 every partial path (ERC-20 RepayFacet,
+ *     rental #1188, SwapToRepayFacet) re-stamps only the dedicated
+ *     interest clock (`interestAccrualStart`/`interestRemainingDays`)
+ *     and leaves the term tuple untouched — the D1 columns stay
+ *     correct without a refresh.
  *   - The dedup key embeds the maturity timestamp, so an extension
  *     that pushes the due date out RE-ARMS the milestones (a fresh
  *     T-7d/T-1d row for the new date) while `INSERT OR IGNORE` keeps
@@ -285,6 +290,17 @@ export const EMPTY_SWEEP: CalendarSweepResult = { inserted: 0, loanIds: [] };
  * structurally.
  */
 export function calendarWindowSql(graceCase: string): string {
+  // The NOT EXISTS leg (Codex #1298 r5) drops loans whose CURRENT-stage
+  // milestone row already exists, so a saturated window can't spend the
+  // LIMIT on INSERT OR IGNORE no-ops tick after tick and starve the
+  // un-notified tail. The probe reconstructs the borrower-side dedup
+  // key (`chain:recipient:kind:loan:maturity` — the borrower row exists
+  // for EVERY milestone kind, and a milestone's rows insert in one
+  // transactional batch, so it is a faithful representative) for the
+  // most advanced kind due NOW: past maturity → grace_entered, within
+  // a day → maturity_1d, else maturity_7d. A stage crossing (T-1d,
+  // grace) changes the computed kind, so the loan re-enters the window
+  // exactly when it has something new to emit.
   return `SELECT loan_id, lender, borrower, lender_current_owner,
                 borrower_current_owner, start_time, duration_days
            FROM loans
@@ -294,6 +310,15 @@ export function calendarWindowSql(graceCase: string): string {
             AND start_time > 0
             AND (start_time + duration_days * 86400) BETWEEN ? AND ?
             AND (start_time + duration_days * 86400 + ${graceCase}) > ?
+            AND NOT EXISTS (
+              SELECT 1 FROM notifications n
+              WHERE n.dedup_key = chain_id || ':' ||
+                LOWER(COALESCE(borrower_current_owner, borrower)) || ':' ||
+                (CASE WHEN (start_time + duration_days * 86400) <= ? THEN 'grace_entered'
+                      WHEN (start_time + duration_days * 86400) - ? <= 86400 THEN 'maturity_1d'
+                      ELSE 'maturity_7d' END) || ':' ||
+                loan_id || ':' || (start_time + duration_days * 86400)
+            )
           ORDER BY (start_time + duration_days * 86400) ASC
           LIMIT ${SWEEP_LIMIT}`;
 }
@@ -319,8 +344,23 @@ export async function sweepCalendarNotifications(
       .prepare(`SELECT grace_buckets_json FROM protocol_config WHERE chain_id = ?`)
       .bind(chainId)
       .first<{ grace_buckets_json: string | null }>();
+    // UNKNOWN vs DEFINITIVE (Codex #1298 r5): a missing row or a NULL
+    // column means the schedule was never successfully read (pre-0039
+    // row, or the isolated getGraceBuckets read is still failing) — on
+    // a chain with custom buckets the default schedule would be WRONG,
+    // and calendar rows are never retracted. Skip the sweep until the
+    // snapshot populates: the unpopulated-column force-refresh retries
+    // on every near-head/quiet tick, and reminders have hours-to-days
+    // of window, so the deferral costs nothing. A '[]' column is the
+    // DEFINITIVE no-buckets state (default schedule applies).
+    if (!cfg || cfg.grace_buckets_json === null) {
+      console.warn(
+        `[calendarNotifications] grace schedule not yet snapshotted for chain ${chainId} — sweep deferred`,
+      );
+      return EMPTY_SWEEP;
+    }
     let graceBuckets: GraceBucketJson[] | null = null;
-    if (cfg?.grace_buckets_json) {
+    if (cfg.grace_buckets_json !== '[]') {
       try {
         const parsed = JSON.parse(cfg.grace_buckets_json) as GraceBucketJson[];
         if (Array.isArray(parsed) && parsed.length > 0) graceBuckets = parsed;
@@ -359,6 +399,13 @@ export async function sweepCalendarNotifications(
         chainId,
         nowSec - maxGraceSeconds(graceBuckets),
         nowSec + 7 * DAY,
+        nowSec,
+        // NOT EXISTS dedup-probe binds (r5): the two `now` comparisons
+        // that pick the current-stage kind. The key's chain/loan/maturity
+        // segments concat the row's own INTEGER columns — a BOUND number
+        // can arrive as REAL (driver-dependent) and render '84532.0',
+        // silently missing every stored key.
+        nowSec,
         nowSec,
       )
       .all<CalendarLoanRow>();
