@@ -374,6 +374,19 @@ Thin-market honesty rules apply.
   definitive outcome arrives as its own notification. The grace length
   follows the protocol's configured schedule (the default one unless
   governance has set custom tiers).
+- For loans whose collateral has a live price, the borrower is also warned in
+  the inbox when the loan's health worsens past protocol-level lines (below
+  1.5, below 1.2, and below 1.05 — the last close to the 1.0 liquidation
+  line). These fire only on the way DOWN — a recovering loan is not an alert —
+  at most once per line per day, and follow the borrower position to its
+  current holder. The wording states the dip as of the notice and defers the
+  live number to the position page, so an old entry stays truthful after the
+  loan recovers or closes. Loans without a price feed have no health number;
+  their risk reminders are the due-date and grace entries above. These health
+  warnings ride the platform's autonomous monitoring, so they are only
+  produced while that monitoring is running, and they may reach the inbox
+  less immediately than the optional external alert channels a user has
+  linked.
 - Whether a notification is read is tracked on the user's own device, per
   wallet. Opening the inbox marks the shown updates as read; that state is not
   stored on any server, so no one else can clear another wallet's unread

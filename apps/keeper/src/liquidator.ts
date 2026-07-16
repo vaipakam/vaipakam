@@ -40,6 +40,7 @@ import { MetricsFacetABI, RiskFacetABI } from '@vaipakam/contracts/abis';
 import type { ChainConfig, Env } from './env';
 import { getChainConfigs } from './env';
 import { isKeeperEnabled, maybeAutonomousLiquidate, resetKeeperDedupe } from './keeper';
+import { recordHfBandNotifications, type HfReading } from './hfBandNotifications';
 
 const METRICS_ABI: Abi = MetricsFacetABI as Abi;
 const RISK_ABI: Abi = RiskFacetABI as Abi;
@@ -119,7 +120,13 @@ async function liquidatePassForChain(env: Env, chain: ChainConfig): Promise<void
   // every viem-known chain). Falls back to a serial read if multicall
   // errors so a chain without Multicall3 (rare on production EVM) still
   // gets scanned, just slower.
-  const atRisk: { id: bigint; hf: bigint }[] = [];
+  //
+  // EVERY successful reading is kept (`readings`), not just the
+  // liquidatable subset: the HF-band inbox pass (#1213 PR 2b) reuses
+  // the full-book scan to detect 1.5/1.2/1.05 band crossings. Illiquid
+  // loans revert `IlliquidLoanNoRiskMath` and land in the failure
+  // bucket — exactly the design split (calendar rows cover them).
+  const readings: HfReading[] = [];
   for (let i = 0; i < ids.length; i += HF_MULTICALL_CHUNK) {
     const chunk = ids.slice(i, i + HF_MULTICALL_CHUNK);
     const contracts = chunk.map((id) => ({
@@ -154,11 +161,27 @@ async function liquidatePassForChain(env: Env, chain: ChainConfig): Promise<void
     for (let j = 0; j < chunk.length; j++) {
       const r = results[j];
       if (r.status !== 'success' || typeof r.result !== 'bigint') continue;
-      const hf = r.result as bigint;
-      if (hf < HF_LIQUIDATION_THRESHOLD) atRisk.push({ id: chunk[j], hf });
+      readings.push({ id: chunk[j], hf: r.result as bigint });
     }
   }
 
+  // #1213 PR 2b — free in-app HF-band rows from the same scan. Derived
+  // convenience data: fail-open INSIDE (and belt-and-braces here), so
+  // a D1 hiccup can never delay the liquidation submits below.
+  try {
+    await recordHfBandNotifications(
+      env.DB,
+      chain.id,
+      readings,
+      Math.floor(Date.now() / 1000),
+    );
+  } catch (err) {
+    console.error(
+      `[keeper] hf-band pass chain=${chain.name} failed (fail-open): ${String(err).slice(0, 200)}`,
+    );
+  }
+
+  const atRisk = readings.filter((r) => r.hf < HF_LIQUIDATION_THRESHOLD);
   if (atRisk.length === 0) return;
   // Lowest HF first — the keeper's gas budget goes to the most-at-risk
   // loans first when the submit cap is hit.

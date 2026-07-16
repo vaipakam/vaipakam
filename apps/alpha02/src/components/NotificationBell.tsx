@@ -24,6 +24,9 @@ import {
   Handshake,
   Hourglass,
   Repeat,
+  ShieldAlert,
+  Siren,
+  TrendingDown,
   type LucideIcon,
 } from 'lucide-react';
 import { useActiveChain } from '../chain/useActiveChain';
@@ -51,6 +54,10 @@ const KIND_ICON: Record<string, LucideIcon> = {
   maturity_7d: CalendarClock,
   maturity_1d: AlarmClock,
   grace_entered: Hourglass,
+  // HF-band rows (#1213 PR 2b) — the keeper's loan-health crossings.
+  hf_warn: TrendingDown,
+  hf_alert: ShieldAlert,
+  hf_critical: Siren,
 };
 
 /** The newest chain-order cursor among loaded rows (feed is newest-first,

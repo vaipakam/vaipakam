@@ -59,9 +59,30 @@ Claim Center and re-verify there (indexed-hints-only discipline).
 > against stale rows would mint never-retracted reminders (Codex #1298
 > r1). Under a saturated window the sweep serves soonest-due first, so
 > only the far-out T-7d tail can defer. Rows are stamped at the sweep's head block
-> so the chain-ordered feed sorts them as current. The liquid-only HF-band
-> rows remain a follow-up (they need per-loan HF reads — a different cost
-> profile than pure calendar math).
+> so the chain-ordered feed sorts them as current.
+
+> **Implementation status (PR 2b):** the liquid-only HF-band rows shipped
+> as a piggyback on the KEEPER's liquidator pass
+> (`apps/keeper/src/hfBandNotifications.ts`) — that pass already
+> multicalls `calculateHealthFactor` for every active loan each tick, so
+> band classification adds zero RPC. Fixed protocol thresholds (`hf_warn`
+> < 1.5, `hf_alert` < 1.2, `hf_critical` < 1.05, milli-HF), borrower-only
+> (HF is the borrower's actionable number; the lender's risk lane is
+> grace/terminal rows), DOWNGRADE-only with absence-of-state = healthy
+> (first observation inside a band notifies once; recoveries update state
+> silently; state rows live in `hf_band_state`, migration 0041, pruned
+> when a loan leaves the active set). Day-bucketed dedup keys bound a
+> flapping HF to one row per band per UTC day. Rows stamp the INDEXER's
+> cursor block + the cron log-index sentinel so the chain-ordered feed
+> sorts them as current; a crossing whose loan the indexer hasn't landed
+> yet defers to the next tick rather than silently swallowing. Illiquid
+> loans revert `IlliquidLoanNoRiskMath` inside the same multicall and are
+> inherently excluded — the calendar rows are their risk lane. Two
+> documented trade-offs: the rows only mint while the autonomous keeper
+> is enabled (no keeper → no per-tick HF scan to reuse), and they reach
+> the bell on its polling cadence (the keeper cannot push the indexer
+> DO's `notification.created` invalidation) — the subscriber
+> Telegram/Push rail remains the immediate channel.
 
 > **Implementation refinement (PR 1, Codex #1292 r7):** a notification
 > whose *kind* asserts a loan has CLOSED (`loan_repaid` / `loan_defaulted`
