@@ -61,6 +61,25 @@ contract InteractionRewardsFacet is
     /// @custom:event-category state-change/treasury-mutation
     event InteractionForfeitedToTreasury(uint256 amount);
 
+    /// @notice RL-1 (VpfiRecyclingLoopClosureDesign §6) — emitted when a
+    ///         claim's payout was delivered into the claimant's per-user
+    ///         vault instead of their wallet. One aggregate event per
+    ///         vault-delivered claim, stamped with the CLAIM day (the day
+    ///         the tokens actually left protocol custody) — never one of
+    ///         the underlying finalized reward days. The RL-2 loop-closure
+    ///         metric's retention ledger is driven off this event, and both
+    ///         sides of that ratio are claim-day based, so no per-reward-day
+    ///         split is emitted or needed.
+    /// @param user       Claimant whose vault was credited.
+    /// @param amount     VPFI wei credited to the vault.
+    /// @param claimDayId Schedule day index on which the claim executed.
+    /// @custom:event-category state-change/reward-claim
+    event RewardDeliveredToVault(
+        address indexed user,
+        uint256 amount,
+        uint256 claimDayId
+    );
+
     /// @notice Emitted when admin seeds the launch timestamp (once).
     /// @param timestamp UNIX epoch seconds at which day 0 begins.
     /// @custom:event-category informational/config
@@ -90,6 +109,13 @@ contract InteractionRewardsFacet is
      *      has been fully paid out.
      *
      *      Pausable + reentrancy-guarded. Emits {InteractionRewardsClaimed}.
+     *
+     *      RL-1 delivery default: a direct EOA-style claim delivers the
+     *      payout into the claimant's per-user VAULT (closing the reward
+     *      loop — see {claimInteractionRewardsTo}); a contract caller gets
+     *      the raw wallet transfer every pre-RL-1 integration observed.
+     *      Pass an explicit venue via {claimInteractionRewardsTo} to
+     *      override either default.
      * @return paid    VPFI wei transferred to the caller.
      * @return fromDay First day walked (inclusive).
      * @return toDay   Last day walked (inclusive).
@@ -98,6 +124,56 @@ contract InteractionRewardsFacet is
         external
         nonReentrant
         whenNotPaused
+        returns (uint256 paid, uint256 fromDay, uint256 toDay)
+    {
+        return _claimInteractionRewards(LibVaipakam.RewardDelivery.Default);
+    }
+
+    /**
+     * @notice RL-1 (VpfiRecyclingLoopClosureDesign §6) — claim with an
+     *         explicit delivery venue. Identical accrual/cap/forfeit
+     *         semantics to {claimInteractionRewards}; only where the payout
+     *         lands differs:
+     *
+     *         - `Vault`: the payout is credited into the claimant's
+     *           per-user vault via the Diamond-funded credit primitive, so
+     *           it immediately counts toward protocol-tracked balance and
+     *           fee-discount tier standing. NOT a lockup — the vault is the
+     *           user's own custody surface and withdrawal stays available
+     *           at any time. Available to every caller: a smart-contract
+     *           wallet (Safe, AA account) passes `Vault` to get the same
+     *           loop-closing credit as an EOA.
+     *         - `Wallet`: raw `safeTransfer` to `msg.sender` (the pre-RL-1
+     *           behaviour; the EOA opt-out and the integration default).
+     *         - `Default`: resolves by caller shape — EOA-style → `Vault`,
+     *           contract caller → `Wallet`.
+     *
+     *         Delivery is best-effort and NEVER reduces claim availability:
+     *         if the vault credit cannot complete (no vault yet, mandatory
+     *         vault upgrade pending, or the tier bookkeeping reverts), the
+     *         whole vault-side frame rolls back and the payout falls back
+     *         to the wallet transfer — never a double-pay, never untracked
+     *         vault dust, never a bubbled revert.
+     *
+     * @param  deliverTo Delivery venue selector.
+     * @return paid    VPFI wei paid out (vault-credited or transferred).
+     * @return fromDay First day walked (inclusive).
+     * @return toDay   Last day walked (inclusive).
+     */
+    function claimInteractionRewardsTo(LibVaipakam.RewardDelivery deliverTo)
+        external
+        nonReentrant
+        whenNotPaused
+        returns (uint256 paid, uint256 fromDay, uint256 toDay)
+    {
+        return _claimInteractionRewards(deliverTo);
+    }
+
+    /// @dev Shared claim body. See {claimInteractionRewards} for the
+    ///      accrual/window/cap semantics and {claimInteractionRewardsTo}
+    ///      for the RL-1 delivery rules.
+    function _claimInteractionRewards(LibVaipakam.RewardDelivery deliverTo)
+        private
         returns (uint256 paid, uint256 fromDay, uint256 toDay)
     {
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
@@ -188,7 +264,7 @@ contract InteractionRewardsFacet is
         s.interactionPoolPaidOut = paidOut + paid + treasuryDelta;
 
         if (paid > 0) {
-            IERC20(vpfi).safeTransfer(msg.sender, paid);
+            _deliverReward(vpfi, paid, deliverTo, today);
         }
         if (treasuryDelta > 0) {
             address treasury = s.treasury;
@@ -198,6 +274,59 @@ contract InteractionRewardsFacet is
             emit InteractionForfeitedToTreasury(treasuryDelta);
         }
         emit InteractionRewardsClaimed(msg.sender, fromDay, toDay, paid);
+    }
+
+    /**
+     * @dev RL-1 payout delivery. Resolves `Default` by caller shape (an
+     *      EOA-style claimant — `msg.sender.code.length == 0` — joins the
+     *      loop by default; a contract caller keeps the raw transfer every
+     *      pre-RL-1 integration observed), then attempts the Diamond-funded
+     *      vault credit for `Vault` deliveries.
+     *
+     *      The credit runs as ONE revert-isolated unit: the cross-facet
+     *      self-call routes through the Diamond's fallback into
+     *      {VaultFactoryFacet.vaultCreditFromDiamondERC20} in its own call
+     *      frame, so a failure at ANY step (no vault, mandatory-upgrade
+     *      gate, transfer, tracked-balance record, tier rollup) rolls back
+     *      every vault-side effect before the wallet fallback pays — never
+     *      a double-pay, never untracked vault dust, and never a bubbled
+     *      revert that regresses claim availability relative to the
+     *      pre-RL-1 wallet claim. `abi.encodeWithSignature` (not
+     *      `.selector`) keeps the heavy VaultFactoryFacet source out of
+     *      this facet's import graph; the deploy-sanity selector-coverage
+     *      suite pins the routed signature.
+     *
+     *      NOTE deliberately NOT nonReentrant-guarded on the inner call:
+     *      the claim entry holds the shared diamond guard and the credit
+     *      primitive is onlyDiamondInternal, running inside this frame.
+     */
+    function _deliverReward(
+        address vpfi,
+        uint256 amount,
+        LibVaipakam.RewardDelivery deliverTo,
+        uint256 claimDayId
+    ) private {
+        bool toVault = deliverTo == LibVaipakam.RewardDelivery.Vault
+            || (
+                deliverTo == LibVaipakam.RewardDelivery.Default
+                    && msg.sender.code.length == 0
+            );
+        if (toVault) {
+            // slither-disable-next-line low-level-calls
+            (bool ok, ) = address(this).call(
+                abi.encodeWithSignature(
+                    "vaultCreditFromDiamondERC20(address,address,uint256)",
+                    msg.sender,
+                    vpfi,
+                    amount
+                )
+            );
+            if (ok) {
+                emit RewardDeliveredToVault(msg.sender, amount, claimDayId);
+                return;
+            }
+        }
+        IERC20(vpfi).safeTransfer(msg.sender, amount);
     }
 
     /**

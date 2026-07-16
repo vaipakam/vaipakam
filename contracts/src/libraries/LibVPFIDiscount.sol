@@ -281,6 +281,58 @@ library LibVPFIDiscount {
         }
     }
 
+    /**
+     * @notice RL-1 (VpfiRecyclingLoopClosureDesign §6) — broadcast-FREE
+     *         sibling of {rollupUserDiscount}. Identical local accumulator
+     *         writes (frozen-owed exclusion included), but routes to
+     *         {VPFIDiscountAccumulatorFacet.rollupUserDiscountLocal}, which
+     *         never attempts the CCIP tier push.
+     *
+     * @dev Used by the Diamond-funded vault credit primitive on the reward
+     *      claim-to-vault path, where inheriting the broadcast path's
+     *      failure modes (`ProtocolBudgetExhausted`, messenger misconfig)
+     *      would regress claim availability. The deferred push is carried
+     *      by the user's next broadcasting rollup.
+     *
+     *      Silent-fallback rule is SIMPLER than {rollupUserDiscount}'s: the
+     *      local entry never reaches the broadcast facet, so a returned
+     *      `FunctionDoesNotExist()` selector can only mean "the accumulator
+     *      facet isn't cut" (minimal-fixture test diamonds) — safe to no-op
+     *      regardless of messenger configuration. Every other revert
+     *      bubbles.
+     *
+     * @param user            Address whose discount state is being rolled up.
+     * @param balPostMutation Vault VPFI balance in effect after the caller's
+     *                        mutation.
+     */
+    function rollupUserDiscountLocal(
+        address user,
+        uint256 balPostMutation
+    ) internal {
+        balPostMutation = tierVpfiBalance(user, balPostMutation);
+        (bool ok, bytes memory returnData) = address(this).call(
+            abi.encodeWithSelector(
+                VPFIDiscountAccumulatorFacet.rollupUserDiscountLocal.selector,
+                user,
+                balPostMutation
+            )
+        );
+        if (!ok) {
+            bytes4 functionDoesNotExistSelector = bytes4(
+                keccak256(bytes("FunctionDoesNotExist()"))
+            );
+            if (
+                returnData.length >= 4
+                    && bytes4(returnData) == functionDoesNotExistSelector
+            ) {
+                return;
+            }
+            assembly {
+                revert(add(32, returnData), mload(returnData))
+            }
+        }
+    }
+
     /// @notice T-087 Sub 1.B — read entry point used by every fee-charging
     ///         path on Base. Returns the user's EFFECTIVE_TIER and the
     ///         BPS to apply, both already past the min-history gate and

@@ -2157,6 +2157,27 @@ library LibVaipakam {
     }
 
     /**
+     * @notice RL-1 (VpfiRecyclingLoopClosureDesign §6) — delivery venue for a
+     *         claimed interaction reward.
+     * @dev `Default` resolves at claim time by caller shape: a direct
+     *      EOA-style claim (`msg.sender.code.length == 0`) delivers to the
+     *      claimant's per-user VAULT (the loop-closing default — the reward
+     *      immediately counts toward tracked balance + fee-tier standing),
+     *      while a contract caller gets the raw WALLET transfer every live
+     *      integration observed before RL-1. `Wallet`/`Vault` are explicit
+     *      overrides available to every caller — a smart-contract wallet
+     *      (Safe, AA account) passes `Vault` to join the loop; an EOA passes
+     *      `Wallet` to opt out. Vault delivery is best-effort and must never
+     *      reduce claim availability: any vault-credit failure falls back to
+     *      the wallet transfer.
+     */
+    enum RewardDelivery {
+        Default,
+        Wallet,
+        Vault
+    }
+
+    /**
      * @notice Per-loan per-side reward accrual entry (spec §4 daily accrual).
      * @dev One entry per loan per side EXCEPT lender side, which may have
      *      multiple entries if the lender position is transferred via

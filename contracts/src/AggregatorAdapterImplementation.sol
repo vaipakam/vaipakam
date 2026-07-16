@@ -109,8 +109,12 @@ interface IVaipakamIntentSurface {
         view
         returns (bool);
 
-    /// @dev Pays the caller (`msg.sender`) any finalized interaction rewards.
-    function claimInteractionRewards() external;
+    /// @dev Pays the caller (`msg.sender`) any finalized interaction rewards
+    ///      to an explicit delivery venue (RL-1). `deliverTo` is the
+    ///      `LibVaipakam.RewardDelivery` enum (ABI uint8): 1 = Wallet (raw
+    ///      transfer to the caller), 2 = Vault. The adapter hardwires
+    ///      Wallet — it must hold the raw VPFI for {sweepToPrincipal}.
+    function claimInteractionRewardsTo(uint8 deliverTo) external;
 
     function isAssetPaused(address asset) external view returns (bool);
 
@@ -766,9 +770,17 @@ contract AggregatorAdapterImplementation is
     /// @dev    #626 round-9 P3 — the claimed VPFI lands raw on the adapter and is
     ///         forwarded to the principal via {sweepToPrincipal} (the principal's
     ///         earned yield; not part of the underlying-denominated NAV).
+    ///         RL-1 — HARDWIRED to Wallet delivery (`deliverTo = 1`): the
+    ///         adapter depends on the claim paying a raw balance to itself;
+    ///         a vault delivery would strand the VPFI where
+    ///         {sweepToPrincipal} can't reach it. Explicit rather than
+    ///         relying on the contract-caller default so the behaviour
+    ///         can't drift with the default's resolution rule.
     function claimInteractionRewards() external {
         _onlyKeeperOrPrincipal();
-        IVaipakamIntentSurface(diamond).claimInteractionRewards();
+        IVaipakamIntentSurface(diamond).claimInteractionRewardsTo(
+            uint8(LibVaipakam.RewardDelivery.Wallet)
+        );
     }
 
     // ─── ERC721 receiver (#626 Codex P1) ────────────────────────────────────

@@ -229,6 +229,17 @@ Distribution rules:
 - if the proportional formula produces a value above the user's cap, the user receives only the capped amount and the unused remainder stays in the interaction-reward allocation rather than being re-assigned to other users for that day
 - once the `69,000,000` VPFI category cap is exhausted, platform interaction rewards must stop
 - distribution must follow a pull model only via `claimInteractionRewards()`
+
+Claim delivery venue (RL-1, `VpfiRecyclingLoopClosureDesign.md` §6 — ratified 2026-07-16):
+
+- a claimed interaction reward is delivered into the claimant's own per-user **vault** by default when the claim comes from a direct wallet (EOA-style) caller — the reward lands where it is immediately useful: it counts toward the protocol-tracked vault balance and VPFI fee-discount tier standing from the moment of claim, and is spendable on every vault-VPFI surface
+- vault delivery is **not a lockup**: the vault is the user's own custody surface and withdrawal stays available at any time; no holding requirement or vesting condition is introduced. User-facing copy describes this as "rewards land in your vault, ready to use" — never as auto-staking, compounding, or yield
+- wallet delivery remains available as an explicit per-claim choice, and every caller may select the delivery venue explicitly; contract callers default to the raw wallet-style transfer they observed before this change (existing integrations keep their behaviour with no migration), while a smart-contract wallet may explicitly opt in to vault delivery and receive the same credit as a direct wallet claim
+- the vault credit is funded from protocol custody, never from the claimant's own wallet funds or allowances — a claimant with an empty wallet and no token approvals receives the vault credit normally
+- delivery venue must **never reduce claim availability**: if the vault credit cannot complete (the claimant has no vault yet, the vault is gated by a pending mandatory upgrade, or the tier bookkeeping fails), the claim pays to the wallet exactly as before — and a claim never creates a vault as a side effect
+- a vault delivery and its bookkeeping succeed or fail as **one unit**: a failure leaves no partial vault-side state (no untracked vault dust, no double-pay) and the wallet fallback pays exactly once
+- a vault-delivered claim updates tier standing locally without depending on the cross-chain tier push; the push may be deferred to the claimant's next balance mutation. On mirror chains a vault-delivered reward gives local spendable balance; tier standing continues to be resolved on the canonical chain
+- the delivery venue does not alter the claim's sanctions posture — the claim entry point keeps its existing screening regardless of where the payout lands
 - the frontend claim surface for interaction rewards belongs in `Claim Center`, above per-loan claim rows, rather than on a combined Rewards page
 - the interaction-rewards UI should show:
   - pending claimable VPFI from `previewInteractionRewards(user)`
@@ -242,6 +253,7 @@ Public read surface:
 - `previewInteractionRewards(user)` returns the current pending VPFI headline for the active chain
 - `getUserRewardEntries(user)` returns the full `RewardEntry[]` array from storage, including loan ID, side, start / end day, per-day numeraire contribution, processed state, and forfeited state
 - `InteractionRewardsClaimed(user, fromDay, toDay, amount)` events are the source for lifetime-claimed totals in the UI and log-index cache
+- `RewardDeliveredToVault(user, amount, claimDayId)` events mark claims whose payout was credited into the claimant's vault — one aggregate event per vault-delivered claim, stamped with the **claim day** (the day the tokens actually leave protocol custody), never one of the underlying finalized reward days; the same amount still appears in `InteractionRewardsClaimed`, so lifetime-claimed totals are unaffected by delivery venue
 - the Dashboard may summarize interaction-reward pending + lifetime claimed, but Claim Center remains the canonical interaction-reward claim surface
 
 ---
@@ -338,7 +350,8 @@ Diamond surface (Phase 1 to add):
   - a caller is never paid for a `dayId` before that day's global denominator has been finalized/broadcast, and the per-day claim only ever advances over the **contiguous finalized prefix** — a later still-unfinalized day pauses the daily catch-up without discarding the earlier finalized days;
   - the daily catch-up is **bounded per call**, so a user who has been away for a long stretch of finalized days may need to call `claimInteractionRewards()` more than once to fully catch up; nothing is lost — the caller's cursor persists between calls, so each call resumes where the last stopped. Claim Center / integrator UX should surface "more rewards still pending" after a bounded claim rather than implying a single call always clears everything;
   - the surface is deliberately cursor/entry driven rather than a caller-supplied `dayId[]`, so integrators do not select days explicitly;
-  - the claim is a value transfer to the caller, so it is a **Tier-1 sanctions entry point**: a caller flagged by the sanctions oracle is refused the claim entirely, consistent with every other protocol payout path. This gate lives at the contract level, not only in any one client, so keeper bots, third-party frontends, and direct callers are all screened. The sibling forfeited-reward sweep, which routes value to treasury rather than the caller, is intentionally **not** caller-gated.
+  - the claim is a value transfer to the caller, so it is a **Tier-1 sanctions entry point**: a caller flagged by the sanctions oracle is refused the claim entirely, consistent with every other protocol payout path. This gate lives at the contract level, not only in any one client, so keeper bots, third-party frontends, and direct callers are all screened. The sibling forfeited-reward sweep, which routes value to treasury rather than the caller, is intentionally **not** caller-gated;
+  - the payout's delivery venue follows the §4 "Claim delivery venue" rules — vault by default for direct wallet claims, raw transfer for contract callers, explicit venue selection available to all via the explicit-venue claim entry, and wallet fallback whenever a vault credit cannot complete.
 
 Testing requirements beyond §9:
 
@@ -743,7 +756,8 @@ Distribution model:
 
 Primary claim paths:
 
-- `claimInteractionRewards()`
+- `claimInteractionRewards()` — venue-defaulted delivery per §4 "Claim delivery venue"
+- `claimInteractionRewardsTo(deliverTo)` — the same claim with an explicit delivery venue (vault or wallet)
 
 Initial mint routing:
 
