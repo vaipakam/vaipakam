@@ -1,0 +1,215 @@
+/**
+ * Calendar notification sweep (#1213 / E-11, PR 2) — the TIME-derived
+ * inbox rows the event materializer can't produce: no contract event
+ * fires when a due date approaches or a grace window opens quietly.
+ *
+ *   - `maturity_7d` — the loan is due within 7 days (borrower; they are
+ *     the party who can act — repay, extend, or list collateral).
+ *   - `maturity_1d` — the loan is due within 1 day (borrower).
+ *   - `grace_entered` — the loan is past due and its grace window is
+ *     running (BOTH parties, per the design table: the borrower can
+ *     still repay with the late fee; the current lender-position holder
+ *     learns a default — and their claim — may be near).
+ *
+ * Runs at the ingest scan tail (chainIndexer.ts), same fail-open
+ * discipline as the event materializer: derived convenience rows must
+ * never wedge a scan. Pure D1 — no RPC — so it covers ILLIQUID loans
+ * too (calendar math needs no oracle), which is exactly the gap the
+ * design calls out (HF alerts cover only liquid loans).
+ *
+ * Correctness notes:
+ *   - Maturity is computed from the LIVE `start_time + duration_days`
+ *     columns (never the immutable `init_*` history): the LoanExtended
+ *     handler rewrites both, and a partial repay resets `start_time`,
+ *     so the milestone windows re-derive correctly after either.
+ *   - The dedup key embeds the maturity timestamp, so an extension
+ *     that pushes the due date out RE-ARMS the milestones (a fresh
+ *     T-7d/T-1d row for the new date) while `INSERT OR IGNORE` keeps
+ *     every per-maturity milestone one-shot across cron re-runs.
+ *   - Rows are stamped with the scan's head block (`block_number`,
+ *     `log_index = 0`): the feed orders + keyset-pages by chain order,
+ *     and a NULL block would sort a cron row to the bottom AND fall out
+ *     of every keyset continuation (`block_number < ?` is NULL-false) —
+ *     the 0038 migration's "stamp the head block" note.
+ *   - Grace length mirrors `LibVaipakam.gracePeriod`'s compile-time
+ *     zero-bucket default schedule (the same mirror the frontend's
+ *     `lib/grace.ts` uses). Governance CAN set custom `graceBuckets`
+ *     on-chain; the retail deploy runs the default, and the config
+ *     snapshot bundle does not expose buckets yet — if a custom
+ *     schedule ever ships, this mirror (and the frontend's) must gain
+ *     a snapshot field. Until then the mirror is exact.
+ */
+
+import {
+  insertNotificationRows,
+  recipientFor,
+  type LoanParties,
+  type NotifKind,
+  type NotifRow,
+} from './notifications';
+
+/** Mirrors LibVaipakam.gracePeriod's zero-bucket default schedule
+ *  (same table as apps/alpha02/src/lib/grace.ts). */
+export function defaultGraceSeconds(durationDays: number): number {
+  if (durationDays < 7) return 3_600;
+  if (durationDays < 30) return 86_400;
+  if (durationDays < 90) return 3 * 86_400;
+  if (durationDays < 180) return 7 * 86_400;
+  if (durationDays < 365) return 14 * 86_400;
+  return 30 * 86_400;
+}
+
+const DAY = 86_400;
+/** The widest grace bucket — bounds the "recently matured" SQL window. */
+const MAX_GRACE_SECONDS = 30 * DAY;
+
+/** Fail-loud sweep bound: the maturity window (matured within max-grace,
+ *  or due within 7d) should hold at most a few hundred loans per chain;
+ *  if it ever exceeds this, log the truncation rather than silently
+ *  skipping the tail (no-silent-caps rule). The window keeps shifting,
+ *  so a transient overflow self-heals on later ticks. */
+const SWEEP_LIMIT = 2000;
+
+/** The slice of a `loans` row the calendar planner needs. */
+export interface CalendarLoanRow {
+  loan_id: number;
+  lender: string | null;
+  borrower: string | null;
+  lender_current_owner: string | null;
+  borrower_current_owner: string | null;
+  start_time: number;
+  duration_days: number;
+}
+
+interface Milestone {
+  kind: NotifKind;
+  /** Window start relative to maturity (seconds; negative = before). */
+  fromOffset: number;
+  /** Window end relative to maturity (exclusive). */
+  toOffset: (durationDays: number) => number;
+  recipients: 'borrower' | 'both';
+}
+
+/** The three calendar milestones. Each fires once per (loan, maturity):
+ *  T-7d and T-1d while the loan is still live; grace_entered from the
+ *  due date until the grace window closes (past grace end the loan is
+ *  liquidatable — a "grace running" nudge would be stale advice, and
+ *  the terminal row arrives via the default/liquidation events). */
+const MILESTONES: Milestone[] = [
+  { kind: 'maturity_7d', fromOffset: -7 * DAY, toOffset: () => 0, recipients: 'borrower' },
+  { kind: 'maturity_1d', fromOffset: -1 * DAY, toOffset: () => 0, recipients: 'borrower' },
+  {
+    kind: 'grace_entered',
+    fromOffset: 0,
+    toOffset: (durationDays) => defaultGraceSeconds(durationDays),
+    recipients: 'both',
+  },
+];
+
+/**
+ * Pure planner (exported for the unit test): which calendar rows are due
+ * NOW for these active loans. `headBlock` stamps the rows' chain-order
+ * position so the feed sorts them as current.
+ */
+export function planCalendarRows(
+  chainId: number,
+  loans: CalendarLoanRow[],
+  nowSec: number,
+  headBlock: number,
+): NotifRow[] {
+  const rows: NotifRow[] = [];
+  for (const loan of loans) {
+    if (loan.start_time <= 0) continue; // unhealed stub — no real clock yet
+    const maturity = loan.start_time + loan.duration_days * DAY;
+    const parties: LoanParties = {
+      lender: loan.lender,
+      borrower: loan.borrower,
+      lenderCurrentOwner: loan.lender_current_owner,
+      borrowerCurrentOwner: loan.borrower_current_owner,
+      status: 'active',
+      isSaleVehicle: false,
+    };
+    for (const m of MILESTONES) {
+      const from = maturity + m.fromOffset;
+      const to = maturity + m.toOffset(loan.duration_days);
+      if (nowSec < from || nowSec >= to) continue;
+      const sides: ('lender' | 'borrower')[] =
+        m.recipients === 'both' ? ['lender', 'borrower'] : ['borrower'];
+      const seen = new Set<string>();
+      for (const side of sides) {
+        const recipient = recipientFor(parties, side);
+        if (!recipient) continue;
+        // Maturity in the key → an extension re-arms; no block/log in the
+        // key → the milestone is one-shot per (loan, maturity) no matter
+        // how many cron ticks land inside its window.
+        const dedupKey = `${chainId}:${recipient}:${m.kind}:${loan.loan_id}:${maturity}`;
+        if (seen.has(dedupKey)) continue; // same wallet on both sides
+        seen.add(dedupKey);
+        rows.push({
+          chainId,
+          recipient,
+          kind: m.kind,
+          loanId: loan.loan_id,
+          eventKind: null, // cron-derived — no source event
+          blockNumber: headBlock,
+          logIndex: 0,
+          createdAt: nowSec,
+          dedupKey,
+        });
+      }
+    }
+  }
+  return rows;
+}
+
+/**
+ * The sweep: SELECT the maturity-window slice of active loans and insert
+ * any due milestone rows. Fail-open — a hiccup logs and returns 0, never
+ * wedges the scan (same contract as materializeNotifications).
+ */
+export async function sweepCalendarNotifications(
+  db: D1Database,
+  chainId: number,
+  nowSec: number,
+  headBlock: number,
+): Promise<number> {
+  try {
+    // Window: every real active loan whose maturity is within 7d ahead
+    // (T-7d arm) or within max-grace behind (grace_entered arm). The
+    // arithmetic runs in SQLite so the scan never loads the whole
+    // active set. Sale-vehicle/stub rows are excluded (bookkeeping, not
+    // user loans); there is no loans-side offset-vehicle flag — an
+    // offset acceptance re-originates a REAL loan (0031's offers-only
+    // rationale), so those rows are legitimately swept.
+    const res = await db
+      .prepare(
+        `SELECT loan_id, lender, borrower, lender_current_owner,
+                borrower_current_owner, start_time, duration_days
+           FROM loans
+          WHERE chain_id = ?
+            AND status = 'active'
+            AND is_stub = 0 AND is_sale_vehicle = 0
+            AND start_time > 0
+            AND (start_time + duration_days * 86400) BETWEEN ? AND ?
+          ORDER BY loan_id
+          LIMIT ${SWEEP_LIMIT}`,
+      )
+      .bind(chainId, nowSec - MAX_GRACE_SECONDS, nowSec + 7 * DAY)
+      .all<CalendarLoanRow>();
+    const loans = res.results ?? [];
+    if (loans.length === SWEEP_LIMIT) {
+      // Fail-loud, not silent: the window is saturated; the tail waits
+      // for a later tick as loans mature out of the window.
+      console.warn(
+        `[calendarNotifications] sweep hit LIMIT ${SWEEP_LIMIT} on chain ${chainId} — tail deferred to later ticks`,
+      );
+    }
+    if (loans.length === 0) return 0;
+    const rows = planCalendarRows(chainId, loans, nowSec, headBlock);
+    if (rows.length === 0) return 0;
+    return await insertNotificationRows(db, rows);
+  } catch (err) {
+    console.error('[calendarNotifications] sweep failed', err);
+    return 0;
+  }
+}

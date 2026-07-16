@@ -361,6 +361,14 @@ Thin-market honesty rules apply.
   in, a loan was repaid or defaulted, a loan closed by matching) and links to
   the affected position, where the exact state is re-confirmed on chain. The
   inbox is a convenience view, never the authority for an action.
+- The inbox also carries time-based reminders that no on-chain event produces:
+  the borrower is reminded when a loan is due within a week and again within a
+  day, and both parties are told when a loan goes past due while its grace
+  window is still running. These reminders cover loans whose collateral has no
+  price feed, fire once per due date (extending a loan re-arms them for the
+  new date), and are never shown once the grace window has closed — a stale
+  reminder is worse than none, and the definitive outcome arrives as its own
+  notification.
 - Whether a notification is read is tracked on the user's own device, per
   wallet. Opening the inbox marks the shown updates as read; that state is not
   stored on any server, so no one else can clear another wallet's unread

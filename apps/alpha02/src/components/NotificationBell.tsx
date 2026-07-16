@@ -15,11 +15,14 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 import {
+  AlarmClock,
   AlertTriangle,
   Bell,
+  CalendarClock,
   CheckCircle2,
   Coins,
   Handshake,
+  Hourglass,
   Repeat,
   type LucideIcon,
 } from 'lucide-react';
@@ -44,6 +47,10 @@ const KIND_ICON: Record<string, LucideIcon> = {
   loan_repaid: CheckCircle2,
   loan_defaulted: AlertTriangle,
   internal_matched: Repeat,
+  // Calendar rows (#1213 PR 2) — the indexer's time-derived reminders.
+  maturity_7d: CalendarClock,
+  maturity_1d: AlarmClock,
+  grace_entered: Hourglass,
 };
 
 /** The newest chain-order cursor among loaded rows (feed is newest-first,

@@ -211,6 +211,11 @@ export const copy = {
       loan_repaid: 'A loan was fully repaid — see what you can claim.',
       loan_defaulted: 'A loan defaulted — see what you can claim.',
       internal_matched: 'A loan of yours closed by matching — see what you can claim.',
+      // Calendar rows (#1213 PR 2) — time-derived reminders from the
+      // indexer's cron sweep, covering illiquid loans too.
+      maturity_7d: 'A loan is due within a week.',
+      maturity_1d: 'A loan is due within a day.',
+      grace_entered: 'A loan is past its due date — there’s still a short window to repay.',
       // Fallback for any future kind the client doesn't know yet.
       generic: 'There’s an update on your loan.',
     } as Record<string, string>,

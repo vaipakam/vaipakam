@@ -34,13 +34,18 @@
  */
 
 /** Notification taxonomy — the row's `kind`, distinct from the raw
- *  contract event. The client renders copy + icon from this. */
+ *  contract event. The client renders copy + icon from this. The last
+ *  three are CRON-derived calendar kinds (#1213 PR 2, see
+ *  calendarNotifications.ts) — no source contract event. */
 export const NOTIF_KINDS = [
   'loan_matched',
   'partial_repay',
   'loan_repaid',
   'loan_defaulted',
   'internal_matched',
+  'maturity_7d',
+  'maturity_1d',
+  'grace_entered',
 ] as const;
 export type NotifKind = (typeof NOTIF_KINDS)[number];
 
@@ -220,8 +225,9 @@ function isTerminalStatus(status: string | null | undefined): boolean {
 }
 
 /** A loan's parties + projected state as the recipient resolution and the
- *  materialization gates need them. */
-interface LoanParties {
+ *  materialization gates need them. Exported for the calendar sweep
+ *  (calendarNotifications.ts), which resolves recipients the same way. */
+export interface LoanParties {
   lender: string | null;
   borrower: string | null;
   lenderCurrentOwner: string | null;
@@ -263,7 +269,7 @@ interface LoanParties {
  *
  * Returns null for a burned side (0x0), empty, or unknown loan.
  */
-function recipientFor(
+export function recipientFor(
   parties: LoanParties | undefined,
   side: 'lender' | 'borrower',
 ): string | null {
@@ -313,12 +319,13 @@ export function loanIdsOf(
   return single != null ? [single] : [];
 }
 
-interface NotifRow {
+export interface NotifRow {
   chainId: number;
   recipient: string;
   kind: NotifKind;
   loanId: number | null;
-  eventKind: string;
+  /** Source event name; null for a CRON-derived calendar row. */
+  eventKind: string | null;
   blockNumber: number;
   logIndex: number;
   createdAt: number;
@@ -470,40 +477,54 @@ export async function materializeNotifications(
   const rows = planNotifications(chainId, worthy, partiesByLoan, blockTimestamps, nowSec);
   if (rows.length === 0) return 0;
 
-  let inserted = 0;
   try {
-    const stmt = db.prepare(
-      `INSERT OR IGNORE INTO notifications
-         (chain_id, recipient, kind, loan_id, event_kind,
-          block_number, log_index, created_at, dedup_key)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-    );
-    // Chunk the batch: each row binds 9 params and D1 caps a Worker
-    // invocation at ~5000 bindings, so a busy catch-up scan with hundreds
-    // of recipient rows would blow the limit, throw, and (fail-open) skip
-    // that scan's rows forever. 500 rows × 9 = 4500 binds stays under
-    // (Codex #1292 r4).
-    const INSERT_CHUNK = 500;
-    for (let i = 0; i < rows.length; i += INSERT_CHUNK) {
-      const batch = rows.slice(i, i + INSERT_CHUNK).map((r) =>
-        stmt.bind(
-          r.chainId,
-          r.recipient,
-          r.kind,
-          r.loanId,
-          r.eventKind,
-          r.blockNumber,
-          r.logIndex,
-          r.createdAt,
-          r.dedupKey,
-        ),
-      );
-      const results = await db.batch(batch);
-      for (const res of results) inserted += res.meta?.changes ?? 0;
-    }
+    return await insertNotificationRows(db, rows);
   } catch (err) {
     console.error('[notifications] insert failed', err);
     return 0;
+  }
+}
+
+/**
+ * Chunked idempotent INSERT of planned inbox rows — shared by the
+ * event materializer above and the cron calendar sweep
+ * (calendarNotifications.ts). Throws on a D1 failure; callers wrap in
+ * their own fail-open try/catch. Returns the number of rows actually
+ * inserted (INSERT OR IGNORE re-runs count 0).
+ */
+export async function insertNotificationRows(
+  db: D1Database,
+  rows: NotifRow[],
+): Promise<number> {
+  let inserted = 0;
+  const stmt = db.prepare(
+    `INSERT OR IGNORE INTO notifications
+       (chain_id, recipient, kind, loan_id, event_kind,
+        block_number, log_index, created_at, dedup_key)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+  );
+  // Chunk the batch: each row binds 9 params and D1 caps a Worker
+  // invocation at ~5000 bindings, so a busy catch-up scan with hundreds
+  // of recipient rows would blow the limit, throw, and (fail-open) skip
+  // that scan's rows forever. 500 rows × 9 = 4500 binds stays under
+  // (Codex #1292 r4).
+  const INSERT_CHUNK = 500;
+  for (let i = 0; i < rows.length; i += INSERT_CHUNK) {
+    const batch = rows.slice(i, i + INSERT_CHUNK).map((r) =>
+      stmt.bind(
+        r.chainId,
+        r.recipient,
+        r.kind,
+        r.loanId,
+        r.eventKind,
+        r.blockNumber,
+        r.logIndex,
+        r.createdAt,
+        r.dedupKey,
+      ),
+    );
+    const results = await db.batch(batch);
+    for (const res of results) inserted += res.meta?.changes ?? 0;
   }
   return inserted;
 }

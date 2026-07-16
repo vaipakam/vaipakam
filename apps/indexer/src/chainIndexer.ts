@@ -64,6 +64,7 @@ import {
   MARKET_SWEEP_CURSOR_KIND,
 } from './marketSummary';
 import { materializeNotifications } from './notifications';
+import { sweepCalendarNotifications } from './calendarNotifications';
 
 /** Resolve a chain's deployBlock from the consolidated deployments
  *  JSON — the indexer's first-run fallback when no cursor exists. */
@@ -725,6 +726,14 @@ export async function runChainIndexerForChain(
   // advance — a hiccup here must never fail a scan whose authoritative
   // activity_events / loans writes already landed.
   await materializeNotifications(env.DB, chainId, allLogs, blockTimestamps, now);
+
+  // #1213 PR 2 — the TIME-derived calendar rows (maturity T-7d / T-1d,
+  // grace entered): no event fires when a due date approaches, so a
+  // cron sweep over the maturity window derives them from D1 alone
+  // (covers illiquid loans too — no oracle involved). Fail-open INSIDE;
+  // rows are stamped with this scan's head so they sort as current in
+  // the chain-ordered feed.
+  await sweepCalendarNotifications(env.DB, chainId, now, Number(scanTo));
 
   // RPC read-diet PR B — keep the display config snapshot current
   // (event-triggered + slow backstop; fail-open INSIDE, so a refresh
