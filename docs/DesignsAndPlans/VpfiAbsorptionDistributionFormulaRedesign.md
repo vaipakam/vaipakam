@@ -383,7 +383,9 @@ No separate `notionalLifVpfiSchedule`. No fee-value conversion.
 // do NOT add tariffTierMultBps storage.
 ```
 
-**Illiquid / oracle:** Full requires a successful **numeraire** quote for list LIF (principal asset oracle). No ETH path required. Zero principal or feed failure ⇒ Full unavailable for that origination.
+**Illiquid / oracle (rev 12):** A successful **numeraire** quote for list LIF is required for **any reward-eligible origination** (Full **and** HoldOnly/None that will create interaction-reward entries), not only Full — because F6b stamps notional `cStar` for loan-side caps.  
+- Feed failure / zero principal: **either** (a) origination reverts if the product path is reward-eligible, **or** (b) loan is stamped **reward-ineligible** (`cStar=0`, no reward entries / no claim) while still allowing HoldOnly/None fee paths.  
+- **Forbidden:** reward-eligible loan without `cStar` (blocks cutover or forces zero/infinite cap ambiguity).
 
 #### Duration rules (frozen — Issue 9)
 
@@ -404,22 +406,34 @@ No separate `notionalLifVpfiSchedule`. No fee-value conversion.
 ### F6 — Absorption accounting
 
 ```
-// Rev 11 — use INTERACTION day id, not Unix epoch day.
-// Same basis as reward finalization / governor Ā[D]:
-//   interactionDay = (block.timestamp - s.interactionLaunchTimestamp) / 1 days
-//                   (or the live LibInteractionRewards.currentDay() helper)
-// Do NOT use block.timestamp / 1 days alone — that desyncs recycledCreditedByDay
-// from scheduleFloor / finalize day indices and can zero Ā[D].
+// Rev 11/12 — use INTERACTION day id when emissions are launched; never
+// call a reverting currentDay() when launch is unset/future.
+//
+// if interactionLaunchTimestamp == 0 || block.timestamp < launch:
+//   // Tariff may still ship before rewards enablement (rollout debt).
+//   // Bucket credit MUST NOT depend on currentDay() in this window.
+//   recycleBucket += netAbsorb
+//   recycledCreditedByDayPreLaunch += netAbsorb   // or single cumulative
+//   // Optional: do NOT write recycledCreditedByDay[dayId] until launch;
+//   // backfill into day-0 / first live day when launch arms, OR keep
+//   // pre-launch absorbs only in recycleBucket total (governor Ā reads
+//   // cumulative until day map is live).
+//   emit VpfiRecycled(..., dayId=type(uint64).max or 0 sentinel)
+// else:
+//   dayId = interactionDayId()   // same as LibInteractionRewards.currentDay()
+//   recycleBucket += netAbsorb
+//   recycledCreditedByDay[dayId] += netAbsorb
+//   emit VpfiRecycled(..., dayId)
+//
+// Product gate: feeEntitlementEnabled may be true before launch ONLY if
+// the pre-launch absorb path above is implemented. Otherwise Full enable
+// requires interaction launch armed (same as rewards enablement checklist).
 
-dayId = interactionDayId()
-// matcherCutVpfi = 0 default (matcher paid from lifAsset in lending asset)
-// tariffPaidTotal = sum of per-party C* pulls (0, C*, or 2×C*)
+// matcherCutVpfi = 0 default
+// tariffPaidTotal = sum of per-party C* pulls
 netAbsorb = tariffPaidTotal
-recycleBucket += netAbsorb
-recycledCreditedByDay[dayId] += netAbsorb
-emit VpfiRecycled(FeeEntitlementTariff, loanId, netAbsorb, dayId)
-// emit per-party pulls for indexer clarity
-// Margin NOT skimmed at absorb-time (governor retains at budget sizing)
+// ... apply branch above ...
+// Margin NOT skimmed at absorb-time
 ```
 
 ### F6b — Loan-side interaction reward cap (rev 8/11 — replaces #1008 ETH ratio)
@@ -432,19 +446,26 @@ m_reward = cfgRewardHaircutBps()                // default 200 (2%)
 // Lifetime side cap at open (upper bound):
 loanSideRewardCapOpen = C_star_open * (BPS - m_reward) / BPS / 2
 
-// Rev 11 — EARLY-CLOSE / PRECLOSE PRORATION (anti multi-year term farm):
-// Effective lifetime cap for claims uses ELAPSED rewarded duration, not full open term.
-// Let rewardedDays = number of interaction days in the entry window that are
-// reward-eligible (exclude day-0 emission rules already in F9; typically
-// endDay - startDay after close, or days with non-zero eligible interest).
-// Let openDays = durationDays stamped at open (denominator for tYears_open).
+// Rev 11/12 — EARLY-CLOSE PRORATION + POSITION-SALE ENTRY SPLITS:
+// Cap is per (loanId, side), SHARED across all reward entries for that side
+// (including after LibInteractionRewards.transferLenderEntry splits).
 //
-//   loanSideRewardCapEff = loanSideRewardCapOpen * rewardedDays / openDays
-//   (integer floor; if openDays==0 treat as 1)
+// Let openDays = durationDays stamped at open.
+// Let cumulativeRewardedDays(loanId, side) = |union of reward-eligible days
+//   covered by ANY entry for that loanId+side, from open through the claim
+//   moment| (not a single entry window). Entry split after sale must not
+//   recompute cap from the new entry’s remaining window alone.
 //
-// At claim: paid_to_side_on_loan ≤ loanSideRewardCapEff
-// Preclose after 1 rewarded day on a 365d stamp → ~1/365 of open cap, not full.
-// HoldOnly/None still stamp cStar_open (notional) so this applies without tariff.
+//   loanSideRewardCapEff = loanSideRewardCapOpen
+//                          * cumulativeRewardedDays / openDays
+//   (floor; openDays==0 → 1)
+//
+// At claim: loanSideRewardPaidVpfi[loanId][side] ≤ loanSideRewardCapEff
+// Preclose after 1 rewarded day on a 365d stamp → ~1/365 of open cap.
+// Sale split: old entry 10d + new entry 20d of same 30d loan → cumulative 30
+// (union), not 20 on the new entry with shared paid already counting 10.
+//
+// HoldOnly/None stamp cStar_open (notional) whenever reward-eligible.
 
 // Accrual remains daily + proportional to eligible interest (F9).
 // At claim for reward entries of this loan on side S:
@@ -731,20 +752,21 @@ function processUserSideDay(user, side, d, transferSet) -> (toUser, toTreasury):
 
   budget = rawPay < remaining ? rawPay : remaining   // min of D1 day remainder
 
-  // Rev 11 — clamp to remaining interaction-pool (69M fresh / recycled available)
-  // BEFORE mutating paid maps. Live facet truncates after helper return would
-  // otherwise mark days advanced and consume loan-side/D1 budgets for VPFI
-  // never transferred. poolAvail = available interaction reward VPFI for this
-  // claim path (same ceiling the facet enforces today).
-  budget = min(budget, poolAvail)
+  // Rev 11/12 — poolAvail is a MUTABLE remaining budget owned by the OUTER
+  // multi-day claim loop (not a constant re-read each day).
+  //   budget = min(budget, poolRemaining)
+  // After this day returns sumSlices, outer MUST:
+  //   poolRemaining -= (toUser + toTreasury)   // or sumSlices
+  // before processing the next day. Otherwise two days can each budget the
+  // same full poolAvail and over-charge paid maps.
+  budget = min(budget, poolRemaining)
 
   // Pro-rata floor on cEff (not raw c).
   // Capacity-bounded dust (rev 10/11): never slice[e] > cEff[e].
-  // Σ slices MAY be < budget when dust cannot be placed — that is REQUIRED,
-  // not a bug. Do NOT force Σ slices == B when capacity is exhausted.
+  // Σ slices MAY be < budget when dust cannot be placed — REQUIRED.
   slices = proRataFloorWithCapacityBoundedDust(budget, cEff, transferSet)
   // assert ∀e: slices[e] ≤ cEff[e]
-  sumSlices = Σ slices[e]   // ≤ budget; may be < budget if dust unplaceable
+  sumSlices = Σ slices[e]
 
   for e in transferSet:
     rewardEntryClaimNextDay[e.id] = d + 1
@@ -753,19 +775,17 @@ function processUserSideDay(user, side, d, transferSet) -> (toUser, toTreasury):
       toTreasury += slices[e]
     else:
       toUser += slices[e]
-    // Charge loan-side paid map for EVERY transferred slice (user or treasury),
-    // so forfeit sweeps cannot bypass the lifetime loan-side ceiling.
     if slices[e] > 0:
       loanSideRewardPaidVpfi[e.loanId][side] += slices[e]
-      // assert loanSideRewardPaid ≤ loanSideRewardCapEff after charge
 
   userSideDayPaidVpfi[user][side][d] = paid + sumSlices
+  // Caller: poolRemaining -= (toUser + toTreasury)
   return (toUser, toTreasury)
 ```
 
-**Invariant (rev 9–11):** for every `(loanId, side)`,  
+**Invariant (rev 9–12):** for every `(loanId, side)`,  
 `loanSideRewardPaidVpfi[loanId][side] ≤ loanSideRewardCapEff(loanId)`  
-across claim **and** forfeit sweep order. Multi-loan `transferSet` days never overpay one loan by pro-rating only on D1. Dust must respect per-entry `cEff`. Pool clamp happens **before** paid-map charges.
+across claim **and** forfeit sweep order. Outer multi-day loop **debits** `poolRemaining` after each day. Dust respects `cEff`.
 
 **0-slice advance policy (frozen — when may `claimNextDay` move with 0 pay):**
 
@@ -1069,7 +1089,7 @@ Deploy checklist still requires: all mirrors decode v2; Base sends only kind 5+ 
 - Dust is **not** redistributed to other users or later days.  
 - Global unused remainder when `rawPay < C` or dust unplaceable stays unassigned — same spirit as today’s “unused remainder stays in the pool.”
 
-Fuzz targets: `Σ entry slices ≤ budget ≤ remaining`; `∀e slices[e] ≤ cEff[e]`; `userSideDayPaid ≤ C`; loan-side paid ≤ capEff.
+Fuzz / unit tests (rev 12): `Σ entry slices ≤ budget ≤ remaining` (**not** `== budget` when capacity exhausted); `∀e slices[e] ≤ cEff[e]`; `userSideDayPaid ≤ C`; loan-side paid ≤ capEff; multi-day claim with low `poolRemaining` never charges paid maps above actual transfer.
 
 #### Dual fresh/recycled RPN (when PR-3c lands)
 
@@ -1103,22 +1123,28 @@ if globalInterest_s[D] == 0:
     chainBudget_s = 0
 else:
     uncappedSlice = ceilDiv(half * chainInterest_s[c][D], globalInterest_s[D])
-    // Rev 11 — lifetime headroom must NOT be re-offered every day.
-    // Per loan L on chain c, side s:
-    //   capEff_L = loanSideRewardCapEff(L)   // after early-close proration when closed;
-    //                                         // while open use open cap * daysElapsedSoFar/openDays
-    //                                         // OR allocate open cap flat per openDay:
-    //   dailyLoanQuota_L = loanSideRewardCapOpen(L) / openDays_L   (ceil or floor — pick floor)
-    //   alreadyReserved_L = loanSideRewardRemitted[L][s]   // durable, + on each remit
-    //   alreadyPaid_L = loanSideRewardPaidVpfi[L][s]
-    //   // Headroom for this remit day: min(dailyLoanQuota, capEff - max(paid, reserved))
-    //   loanDayHeadroom_L = min(dailyLoanQuota_L,
-    //                           saturatingSub(capEff_L, max(alreadyPaid_L, alreadyReserved_L)))
-    // loanSideHeadroom_c,s,D = Σ loanDayHeadroom_L for entries covering D on chain c
+    // Rev 11/12 — lifetime headroom must NOT be re-offered every day, AND
+    // remittance must not under-fund a claim that can pull remaining cap on
+    // the first closed claim day.
     //
+    // Frozen claim-side rule (align remittance with claim):
+    //   processUserSideDay cEff uses TOTAL remaining capEff (no daily claim quota).
+    //   A closed loan may claim up to full remaining lifetime on the first
+    //   walked days (subject to D1 / pool).
+    //
+    // Therefore remittance headroom for loan L on day D is NOT flat
+    // cap/openDays alone. Use:
+    //   remainingCap_L = saturatingSub(capEff_L, max(paid_L, remitted_L))
+    //   // Front-load enough for claimable path: remaining lifetime, not daily slice
+    //   // Optional soft daily ceiling for thin remits: max(dailyQuota, remainingCap)
+    //   // Phase-1 freeze: loanDayHeadroom_L = remainingCap_L
+    //   // (full remaining lifetime may be remitted on first post-close day —
+    //   //  matches claim; prevents mirror underfund. Do NOT use flat daily
+    //   //  only, which underfunds first claim day.)
+    //
+    // loanSideHeadroom_c,s,D = Σ loanDayHeadroom_L for loans covering D on chain c
     // chainBudget_s = min(uncappedSlice, loanSideHeadroom_c,s,D)
-    // After successful remit: loanSideRewardRemitted[L][s] += pro-rata share of chainBudget
-    //   attributed to L (or full loanDayHeadroom if sole).
+    // After remit: remitted_L += attributed share
     //
     // Before joint D*+5c: keep uncappedSlice / legacy min(Δ,T) only.
     chainBudget_s = min(uncappedSlice, loanSideHeadroom_c_s_D)
@@ -1126,17 +1152,19 @@ else:
 
 Legacy days keep today’s `min(Δ,T)` remittance tightener. A finalized day with nonzero side half but **zero** global interest on that side must remit **0**, never revert.
 
-**Why (rev 10/11):** sole-loan worked example must not remit ~halfPool or re-send full lifetime ~4 VPFI on each of 30 days (~120). Daily quota + remitted counter binds lifetime remittance ≈ claimable.
+**Why (rev 10–12):** prevent (a) remitting full halfPool, (b) re-sending lifetime every day via flat remaining without remitted counter, (c) underfunding claim by flat dailyQuota when claim can take full remaining on first walk.
 
-**How Base learns per-chain loan headroom (rev 11 — freeze):**
+**How Base learns per-chain loan headroom (rev 12 — freeze to live architecture):**
 
-| Option | When | Rule |
+Live path is **Base-orchestrated**: `RewardRemittanceFacet.remitRewardBudget` on Base computes `chainRewardBudgetForDay` then pushes VPFI to mirrors. **Option A (mirror-initiated pull) is REJECTED** for Phase-1 — no authenticated debit of Base’s pool from mirrors without a new protocol surface.
+
+| Option | Status | Rule |
 | --- | --- | --- |
-| **A (preferred Phase-1 mesh)** | Mirror-local remit | Mirror computes `loanSideHeadroom` from **local** `feeEntitlement` / reward entries / remitted maps; Base only receives aggregate report numeraires as today. Remit pull is mirror-initiated with self-proven headroom. |
-| **B** | Base-orchestrated remit | Extend report payload (new kind or extra words) with `loanSideHeadroomLender` + `loanSideHeadroomBorrower` per day (aggregates), committed by mirror reporter under existing auth. Base uses those fields in `chainRewardBudgetForDay`. |
-| **Forbidden** | — | Assuming Base can reconstruct per-loan caps from numeraire-only v1 reports. |
+| **B (required)** | **Adopt** | Extend mirror→Base report (new kind or extra words) with aggregate `loanSideHeadroomLender` + `loanSideHeadroomBorrower` for day D (or per-loan commitments if needed later). Reporter auth unchanged. Base `chainRewardBudgetForDay` uses `min(uncappedSlice, reportedHeadroom)`. |
+| **A** | **Rejected** Phase-1 | Mirror pull of Base pool without new message + Base debit handler. |
+| **Forbidden** | — | Invent headroom from numeraire-only v1 reports. |
 
-Ship **A** unless product requires Base-pushed remits; document chosen option in PR-5c/PR-2.
+PR-2/PR-5c must ship report extension **B** before joint cutover uses loan-side remittance bounds on mirrors.
 
 #### Migration from ETH cap / dual pipe / storage
 
@@ -1740,12 +1768,22 @@ PR plan assumes interaction rewards remain enabled only if: claim-on-close paths
 
 ---
 
+### Rev 12 changelog (Codex r4 design-doc findings)
+
+- **Outer multi-day loop debits `poolRemaining`** after each day.  
+- **Cap proration uses cumulative/union rewarded days** per (loanId, side) — sale entry splits OK.  
+- **Dust tests:** `Σ ≤ budget`, not `==`.  
+- **Remittance headroom = Base-orchestrated report extension (B)**; reject mirror-pull A.  
+- **Remittance headroom = remaining lifetime** (align with claim; not flat daily-only).  
+- **cStar required for all reward-eligible originations** (or explicit reward-ineligible on feed fail).  
+- **Pre-launch absorb path** when interaction day helper would revert.
+
 ### Rev 11 changelog (Codex r3 design-doc findings)
 
 - **`postCutover(d)`** requires armed `D* != 0` everywhere (no bare `d >= 0`).  
 - **`maxCStar` mandatory** on pre-authorized Full (K-only insufficient).  
 - **Early-close cap proration** by rewardedDays/openDays.  
-- **Remittance daily quota + remitted counter** (no lifetime re-send each day); Base headroom source = mirror-local or extended report.  
+- **Remittance remitted counter** (no lifetime re-send each day).  
 - **Absorption day id = interaction day**, not Unix epoch.  
 - **Pool avail clamp before paid-map charges.**  
 - **Preview saturated loan remaining** (no uint underflow).  
@@ -1832,4 +1870,4 @@ PR plan assumes interaction rewards remain enabled only if: claim-on-close paths
 
 ---
 
-*End of design document (rev 11).*
+*End of design document (rev 12).*
