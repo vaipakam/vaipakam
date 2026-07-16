@@ -50,8 +50,11 @@ future slashes — the governor §4 classes) credits a protocol-owned
 as the decaying pre-funded floor **plus** `(1−m)` of trailing-7-day
 absorption (`m` = 5% retained platform margin). Users earn from that budget
 only through their **own completed lending activity**, per-user- and
-per-loan-capped so a participant can never extract more than a fixed
-fraction of what their own loan absorbed. Nothing is burned: the 230M hard
+per-loan-capped: rewards on a loan are bounded by a **fee-linked ceiling**
+sized from that loan's notional tariff (`½×C*×(1−m_reward)` per side —
+stamped for every reward-eligible loan whether or not any VPFI was actually
+absorbed), so reward extraction is capped by the scale of fees genuinely
+paid on that loan (the dYdX-style fee-linked cap), never by pool size. Nothing is burned: the 230M hard
 cap already provides permanent scarcity (owner decision 2026-07-13), and
 every recycled token extends the reward program's life instead —
 after the 69M pre-fund exhausts, the program continues indefinitely at
@@ -241,11 +244,24 @@ leaves the diamond either way).
 
 ### RL-2 — Loop-closure metric (extends #1218) — ADOPT
 
-Add to the transparency dashboard, per day and cumulative:
+Add to the transparency dashboard — **daily is a flow ratio, cumulative is
+a stock ratio; the two are deliberately different quantities** (a stock
+numerator over a flow denominator would re-count Monday's still-vaulted
+rewards against Tuesday's small claim volume and spike above 100% without
+meaning anything):
 
 ```
-loopClosureRatio[D] = (vaultRetainedRewards[D] + absorbed[D]) / distributed[D]
+// Daily (flow): of what went out today, how much stayed in / came back
+loopClosureRatio[D] = (vaultDelivered[D] + absorbed[D]) / distributed[D]
+//   vaultDelivered[D] = rewards delivered to vaults ON day D (event flow)
+
+// Cumulative (stock): lifetime view
+cumLoopClosureRatio[D] = (retainedStock[D] + cumAbsorbed[D]) / cumDistributed[D]
+//   retainedStock[D] = Σ_u rewardRetained[u] at day-D close (ledger below)
 ```
+
+(A daily value above 100% remains possible only for the legitimate reason —
+a day that absorbed more than it distributed — never from stock re-counting.)
 
 **Day basis (pinned):** both sides of the ratio are **claim-day based** —
 `distributed[D]` is the VPFI actually paid out by claims on day `D` (the
@@ -316,6 +332,12 @@ bucket credit; recycled-funded share = commitment release).
   its horizon at that earlier moment, so the liability tail is genuinely
   bounded from first claimability. The clock never runs while a claim is
   blocked by missing finalization/broadcast.
+- **Grandfathering at activation:** entries already claimable when the
+  feature activates are never sweepable immediately —
+  `expiresAt = max(firstClaimableAt + H, activationAt + noticeWindow)`
+  with `noticeWindow ≥ 90 days` (bounded), so every pre-existing dormant
+  claimant gets the full claim-center countdown and pre-expiry
+  notification before any sweep is possible.
 
 *(Historical note: this delta was drafted as an owner decision — rather
 than folded in — because it amends a ratified sentence in the governor doc.
@@ -336,8 +358,12 @@ rule; the register therefore never touches the claim-funded portion):
 ```
 // Day D, after the governor sizes recycledBudget[D] and the claim
 // commitments are fully funded (claims-first, unchanged):
-residual[D] = day-D recycled availability left after claim commitments
-residual[D] split by weights: [keeperBudget, retainedReserve]
+forwardReserve[D] = RESERVE_N × Ā[D]   // RESERVE_N default 7: keep at least
+                                       // one trailing week of coupled budget
+                                       // in the bucket for future days
+splittable[D] = min( marginRealized[D],                       // day-D m-share
+                     max(0, uncommittedBucket[D] − forwardReserve[D]) )
+splittable[D] split by weights: [keeperBudget, retainedReserve]
 defaults: [0, 10000] bps      // exactly today's ratified behaviour:
                               // margin/surplus stays in the bucket
 bounds: weights sum to 10000; keeperBudget ≤ 5000
@@ -346,8 +372,17 @@ bounds: weights sum to 10000; keeperBudget ≤ 5000
 - Encodes "what is the margin/surplus *for*" (G3) as an explicit priority
   stack: claims first (structural, not a weight — identical to §3.5 of the
   cross-chain design), keeper gas second, reserve last — now a declared
-  config surface instead of an emergent property. Reward claims can never
-  be defunded by the register at any weight setting.
+  config surface instead of an emergent property.
+- **Scope of the no-defund guarantee (both horizons):** same-day claim
+  commitments are funded before the register sees anything (structural),
+  and the register's base is capped at the day's **realized margin** and
+  floored by the **forward reserve** (`RESERVE_N × Ā`) — so a quiet day
+  with a large bucket and small commitments cannot drain funds that
+  future high-demand days would size against. The register never
+  consumes bucket capacity below the forward reserve, and never faster
+  than the platform's own margin accrues. Larger aged surpluses remain
+  Phase-C surplus-tooling territory (operator-visible, deliberate,
+  batched) — never the register's.
 - Stays deterministic (weights read once at finalization, stamped like the
   margin) — no per-epoch discretion, preserving the
   administrative/ministerial property (§4).
@@ -360,7 +395,15 @@ Commit the second and third absorption channels to the same release train as
 the tariff, so launch absorption is never single-channel:
 
 1. **Notification flat VPFI tariff** (#1294 PR-7 / governor §13) — also
-   removes the last conversion residual. Pull forward; it has no deps.
+   removes the last conversion residual. Two separable halves with
+   different dependencies: the **flat re-denomination** (dropping the
+   `VPFI_PER_ETH_FIXED_PHASE1` conversion) has no deps and pulls forward
+   freely; the **bucket credit** requires the recycle-bucket ledger +
+   Diamond-custody re-route (governor §4.1 Layer 0 / PR-3a) — today's
+   `LibNotificationFee.bill` withdraws user-vault VPFI straight to
+   treasury, so shipping PR-7 alone re-denominates the fee but does not
+   yet capture it as absorption. Sequence the credit half with (or after)
+   PR-3a; until then the tariff is a fee, not yet a loop input.
 2. **Spend-gated perks (E-2 / #1204)** — priority solver routing and
    listing-visibility boost are pure fee-for-service VPFI sinks that credit
    the bucket; build the two spend-gated perks (skip hold-gated ones if
