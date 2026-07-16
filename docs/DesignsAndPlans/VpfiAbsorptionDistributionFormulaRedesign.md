@@ -5,7 +5,7 @@
 | **Title** | VPFI Absorption & Distribution Formula Redesign |
 | **Author** | Vaipakam Developer Team |
 | **Date** | 2026-07-16 |
-| **Status** | **Draft — design proposal (rev 8)** pending adversarial design-doc review; not yet RATIFIED for implementation |
+| **Status** | **Draft — design proposal (rev 9)** — Codex r1 findings folded; pending re-review / owner ratification |
 | **Related** | `#687-A/B`, `#694`, `#1002` / Card-C rewards hardening, `#1008` / S13 day cap, `#1203` (E-1), `#1217` / `#1222` (recycling governor), TokenomicsTechSpec §§4–9 |
 | **Prior art (binding substrate)** | [`VpfiRecyclingBalanceGovernorDesign.md`](VpfiRecyclingBalanceGovernorDesign.md) (RATIFIED 2026-07-15), [`VpfiLenderDiscountPegDecouplingDesign.md`](VpfiLenderDiscountPegDecouplingDesign.md) (E-1), [`VPFITokenomicsRedesignResearch.md`](VPFITokenomicsRedesignResearch.md) §9 |
 
@@ -195,16 +195,21 @@ flowchart TB
 | **Hold-tier** | Deposit VPFI, min-history, consent | Own-side discount `d_hold` on that party’s fee line. |
 | **Full dual-fee tariff** | **That party** opt-in at accept/match, pay `C*` VPFI | Own-side `d = min(d_hold+10%, 50%)` **and** absorb `C*` from **that party’s** vault. |
 
-### Loan-bound entitlement (per-party — rev 8)
+### Loan-bound entitlement (per-party — rev 9)
 
 At `acceptOffer` / `matchOffers` / signed-offer fill:
 
 1. Resolve **borrower** and **lender** effective tiers independently.
-2. Quote **one shared notional** `C* = baseLif_list × tYears × K` for the loan (list LIF, filled principal, term at open).
-3. For **each** party independently, if `cfgFeeEntitlementEnabled` and that party selects Full and can pay `C*` from **their** vault: pull `C*` → recycle bucket; stamp that party’s mode = Full; record `tariffPaid[party] = C*`.
-4. Else if that party consent + tier ≥ 1: mode = HoldOnly.
-5. Else: None.
-6. Apply LIF using **borrower** mode/discount; yield fee later using **lender** mode/discount. Position NFT carries **both** stamps; **no tariff refund** on sale/transfer/preclose.
+2. Quote **one shared notional** `C* = baseLifListNumeraire18 × tYears × K / 1e18` for the loan (see F4 unit freeze).
+3. **Per-party Full authorization (frozen):** Full is **not** a single `useFeeEntitlement` bool.
+   - **Borrower Full** requires explicit borrower authorization on the accept/match path the borrower signs or initiates (calldata flag `borrowerFull`, or borrower-signed permit/intent field).
+   - **Lender Full** requires **prior** lender authorization that the non-lender caller cannot forge: e.g. `lenderFull` bit on the **lender’s offer** / standing intent / signed offer EIP-712 field. A bare accept calldata flag set by the borrower/matcher **MUST NOT** pull `C*` from the lender vault.
+   - Matcher/keeper fills may apply lender Full **only** if the offer/intent already stamped `lenderFull=true`.
+4. For each party with authorized Full: if `cfgFeeEntitlementEnabled` and vault VPFI ≥ `C*`, pull `C*` from **that party’s** vault → recycle bucket; stamp mode = Full; `tariffPaid[party] = C*`.
+5. **Failed Full opt-in (frozen):** if a party is authorized Full but cannot pay `C*` (balance, pause, transfer fail), the whole accept/match **reverts** (`FeeEntitlementFullPaymentFailed(party)`). **No silent downgrade** to HoldOnly/None unless that party also set an explicit `allowFullDowngrade=true` authorization bit (default **false**). HoldOnly/None paths are chosen only when Full was never authorized.
+6. Else if that party consent + tier ≥ 1 (and Full not authorized): mode = HoldOnly.
+7. Else: None.
+8. Apply LIF using **borrower** mode/discount; yield fee later using **lender** mode/discount (including Full +10% when `lenderMode == Full`). Position NFT carries **both** stamps; **no tariff refund** on sale/transfer/preclose.
 
 ```mermaid
 sequenceDiagram
@@ -236,10 +241,11 @@ sequenceDiagram
 **Current non-VPFI path (code of record, `OfferAcceptFacet`):**
 
 - Debt principal the borrower owes = full `effectivePrincipal` (LIF is not added to debt).
-- Lender vault funds principal; protocol pulls `initiationFee` from **lender** vault to treasury/matcher, then delivers `netToBorrower = principal − initiationFee` to borrower.
-- Economically: LIF is a **lender principal haircut** at origination; borrower receives less cash but still owes full principal (standard initiation-fee haircut model).
+- **Transfer path:** lender vault funds principal; protocol pulls `initiationFee` from the **lender** vault to treasury/matcher, then delivers `netToBorrower = principal − initiationFee` to the borrower vault.
+- **Economic incidence (frozen wording):** LIF is a **borrower cash haircut at origination** — the borrower receives less spendable principal while still owing full principal. The fee is **sourced** from the lender vault’s principal transfer (not a separate borrower wallet pull), but the discount control (`d_borrower`) is **borrower-selected** and benefits the **borrower** (higher `d` → higher cash received). Do **not** describe LIF as a “lender principal haircut” in product/UI copy; that mis-assigns who the discount is for.
+- Lender still ends the open with less principal outlaid net of fee routing; accounting remains “fee from funded principal,” not “lender pays fee from unrelated balances.”
 
-**HoldOnly hybrid (this design):** same incidence; only the fee amount changes:
+**HoldOnly hybrid (this design):** same transfer path and borrower-cash incidence; only the fee amount changes:
 
 ```
 initiationFee = principal * LIF_BPS * (BPS - d_borrower) / BPS²
@@ -336,32 +342,44 @@ Because Full always has `lifAsset > 0` (when LIF BPS > 0), the **primary** match
 
 No separate `notionalLifVpfiSchedule`. No fee-value conversion.
 
-### F4 — Consumptive tariff (A3) — rev 8 LIF·year, double absorption
+### F4 — Consumptive tariff (A3) — rev 9 LIF·year, double absorption
 
 ```
 // Fee-native — NO ethVolume, NO feeUSD/vpfiPrice.
 // baseLif is LIST LIF (pre-discount) so high tiers do not shrink absorption.
 
-baseLifList = principal * cfgLoanInitiationFeeBps() / BPS   // e.g. 0.2% × principal
-durationDays = feeEntitlementDurationDays(offer)            // see Duration rules
-// require durationDays >= 1
-tYears = durationDays / 365                                 // integer math: durationDays * 1e18 / 365
-
-K = cfgTariffKPerLifYear()                                  // default 5e18 (5 VPFI per 1 list-LIF unit · year)
-// Unit: if baseLifList is in token wei, scale so C* is VPFI 1e18 — implementer
-// normalizes list LIF to a numeraire-or-token unit consistent with K’s dimension.
-// Product intent: C* = (list LIF amount) × tYears × K with K=5 on the $ example.
-
-C_star = baseLifList * tYears * K / SCALE                   // one shared notional per loan
+// ── Unit freeze (rev 9 — implementable, asset-decimal-safe) ──────────────
+// K is "VPFI (1e18) per 1 whole unit of list-LIF numeraire (1e18) per year".
+// List LIF is ALWAYS converted to protocol numeraire 1e18 (same family as
+// interest numeraire / LTV USD-like unit — NOT raw token wei, NOT ETH).
+//
+//   baseLifTokenWei = principal * cfgLoanInitiationFeeBps() / BPS
+//   baseLifListNumeraire18 = OracleFacet asset→numeraire conversion of
+//                           baseLifTokenWei (same helper family as
+//                           LibInteractionRewards interest numeraire)
+//   durationDays = feeEntitlementDurationDays(offer)   // ≥ 1
+//   tYearsRay = durationDays * 1e18 / 365              // 1e18 fixed-point years
+//   K = cfgTariffKPerLifYear()                         // default 5e18
+//        meaning: 5 VPFI per 1.0 numeraire-unit of list LIF per year
+//
+//   C_star = baseLifListNumeraire18 * tYearsRay / 1e18 * K / 1e18
+//          = VPFI wei (1e18)
+//
+// Worked example: 20 USDC list LIF → baseLifListNumeraire18 ≈ 20e18
+//   tYears = 30/365, K = 5e18 → C* ≈ 8.22e18 VPFI wei.
+// USDC-6, DAI-18, WETH all normalize through numeraire first → same economics
+// for same $ list LIF. Feed failure ⇒ Full unavailable (HoldOnly/None OK).
 
 // Each Full party pays the SAME C* from their own vault (double absorption):
 //   if borrowerMode == Full: pull C_star from borrower vault → bucket
 //   if lenderMode   == Full: pull C_star from lender vault   → bucket
 // canPay(party) iff trackedVaultVpfi[party] >= C_star && consent && feeEntitlementEnabled
-// HoldOnly/None: no pull. Tier mult table on raw tariff: **retired** for v1 (K is single knob).
+// HoldOnly/None: no pull.
+// Tier mult table on raw tariff: **retired** for v1 (K is single knob) —
+// do NOT add tariffTierMultBps storage.
 ```
 
-**Illiquid / oracle:** Full still available if principal asset has no ETH path — tariff no longer needs ETH volume. If list LIF cannot be formed (zero principal), Full unavailable.
+**Illiquid / oracle:** Full requires a successful **numeraire** quote for list LIF (principal asset oracle). No ETH path required. Zero principal or feed failure ⇒ Full unavailable for that origination.
 
 #### Duration rules (frozen — Issue 9)
 
@@ -664,20 +682,28 @@ function processUserSideDay(user, side, d, transferSet) -> (toUser, toTreasury):
   rawPay = 0
   for e in transferSet:
     c[e] = contrib(e, side, d)
-    rawPay += c[e]
+    // Rev 9 — loan-side remaining budget (F6b) is an INPUT weight clamp:
+    // each entry's payable weight cannot exceed that loan's remaining side cap.
+    // loanSideCap[e] = loanSideRewardCap(e.loanId)  // ½×C*×(1−m_reward), 0 if unset pre-5c
+    // loanSidePaid[e] = loanSideRewardPaidVpfi[e.loanId][side]
+    // loanSideRem[e] = loanSideCap[e]==0 && !loanSideCapsLive ? +inf : loanSideCap[e]-loanSidePaid[e]
+    // cEff[e] = min(c[e], max(loanSideRem[e], 0))
+    cEff[e] = min(c[e], loanSideRemaining(e.loanId, side))
+    rawPay += cEff[e]
 
   if rawPay == 0:
     // 0-slice advance ALLOWED only because RPN is ready (require above) and
-    // legitimate zero: globalInterest==0 and/or half==0 and/or all weights 0.
+    // legitimate zero: globalInterest==0 and/or half==0 and/or all weights 0
+    // and/or all loans loan-side-exhausted.
     // NEVER treat "RPN not written yet" as rawPay==0 (that case never enters here).
     for e in transferSet where nextDay(e) == d:
       rewardEntryClaimNextDay[e.id] = d + 1
       if nextDay(e) >= e.endDay: e.processed = true
     return (0, 0)
 
-  budget = rawPay < remaining ? rawPay : remaining   // min
-  // Pro-rata floor; dust policy: floor + dust-to-largest so Σ slices == budget.
-  slices = proRataFloorWithDustToLargest(budget, c, transferSet)
+  budget = rawPay < remaining ? rawPay : remaining   // min of D1 day remainder
+  // Pro-rata floor on cEff (not raw c); dust-to-largest so Σ slices == budget.
+  slices = proRataFloorWithDustToLargest(budget, cEff, transferSet)
   sumSlices = Σ slices[e]   // == budget under dust-to-largest
 
   for e in transferSet:
@@ -687,10 +713,18 @@ function processUserSideDay(user, side, d, transferSet) -> (toUser, toTreasury):
       toTreasury += slices[e]
     else:
       toUser += slices[e]
+    // Charge loan-side paid map for EVERY transferred slice (user or treasury),
+    // so forfeit sweeps cannot bypass the lifetime loan-side ceiling.
+    if slices[e] > 0:
+      loanSideRewardPaidVpfi[e.loanId][side] += slices[e]
 
   userSideDayPaidVpfi[user][side][d] = paid + sumSlices
   return (toUser, toTreasury)
 ```
+
+**Invariant (rev 9):** for every `(loanId, side)`,  
+`loanSideRewardPaidVpfi[loanId][side] ≤ loanSideRewardCap(loanId)`  
+across claim **and** forfeit sweep order. Multi-loan `transferSet` days never overpay one loan by pro-rating only on D1.
 
 **0-slice advance policy (frozen — when may `claimNextDay` move with 0 pay):**
 
@@ -1006,11 +1040,15 @@ where `raw_full` sums all entries’ contrib for that day (including those paid 
 **v1 remittance rule for ShareOfPool days** (`chainRewardBudgetForDay`):
 
 ```
-// STOP applying min(Δ, T):
-chainBudget_s = ceilDiv(half * chainInterest_s[c][D], globalInterest_s[D])
+// Preserve zero-denominator guard (live code invariant — do not drop):
+if globalInterest_s[D] == 0:
+    chainBudget_s = 0
+else:
+    // STOP applying min(Δ, T) on ShareOfPool days:
+    chainBudget_s = ceilDiv(half * chainInterest_s[c][D], globalInterest_s[D])
 ```
 
-Legacy days keep today’s `min(Δ,T)` remittance tightener.
+Legacy days keep today’s `min(Δ,T)` remittance tightener. A finalized day with nonzero side half but **zero** global interest on that side must remit **0**, never revert.
 
 #### Migration from ETH cap / dual pipe / storage
 
@@ -1095,7 +1133,7 @@ On a **10,000** principal / **30d** / **10% APR** / list LIF **0.2%** (= **20**)
 | Parameter | Default | Bounds | Storage / API | Zero-sentinel |
 | --- | --- | --- | --- | --- |
 | `RECYCLE_MARGIN_DEFAULT_BPS` | 500 | 1–2500 | `LibVaipakam`; `ConfigFacet.setRecycleMarginBps(uint16)`; `cfgRecycleMarginBps()` | 0 ⇒ default |
-| `TARIFF_K_PER_LIF_YEAR_DEFAULT` | **5** (product K; store as 1e18-scaled) | governance bounds TBD | **New** `ConfigFacet.setTariffKPerLifYear`; retires ETH·day K for new loans | 0 ⇒ default |
+| `TARIFF_K_PER_LIF_YEAR_DEFAULT` | **5e18** (5 VPFI per 1 numeraire-unit list LIF per year) | e.g. 1e17–1e20 | **New** `ConfigFacet.setTariffKPerLifYear(uint256)` / `cfgTariffKPerLifYear()` — **do not** reuse ETH·day setter | 0 ⇒ default |
 | `USER_SIDE_SHARE_CAP_DEFAULT_BPS` | **2000 (20% of side half)** | 50–**5000** | `ConfigFacet.setUserSideShareCapBps` | 0 ⇒ default |
 | `REWARD_HAIRCUT_DEFAULT_BPS` | **200 (2%)** | 0–2000 | **New** `cfgRewardHaircutBps` — `m_reward` in loan-side cap | 0 ⇒ default 200 |
 | `DISCOUNT_CAP_BPS` | **5000 (50%)** | ≤ 5000 | hard constant or config | — |
@@ -1103,11 +1141,11 @@ On a **10,000** principal / **30d** / **10% APR** / list LIF **0.2%** (= **20**)
 | `cfgFeeEntitlementEnabled` | **true** | bool | `setFeeEntitlementEnabled` | C1 |
 | `cfgLifMatcherFeeBps` | 100 | ≤ 5000 | existing | existing |
 | Hold-tier thresholds / discounts | 10/15/20/24% | existing | ConfigFacet | existing |
-| LIF BPS / yield fee BPS | **20 / 200** (0.2% / 2%) | existing knobs | ProtocolConfig | rev 8 freeze |
+| LIF BPS / yield fee BPS | **20 / 200** (0.2% / 2%) | existing knobs | **Must change compiled zero-sentinel defaults** from 10/100 → 20/200 (see fee-default migration) | rev 8/9 freeze |
 | Min-history | 3 days | existing | existing | existing |
 | `ENTITLEMENT_ZERO_YIELD_FEE` | **absent v1** | — | — | — |
-| `INTERACTION_CAP_DEFAULT_VPFI_PER_ETH` | 500 | legacy | deprecate after loan-side cap cutover | dual-read window optional |
-| `RECYCLE_TARIFF_K` ETH·day | legacy | — | **superseded for new Full** by LIF·year K | may remain for old paths |
+| `INTERACTION_CAP_DEFAULT_VPFI_PER_ETH` | 500 | legacy | keep active until **joint** D1+loan-side cutover (PR-2 + PR-5c) | dual-read optional |
+| `RECYCLE_TARIFF_K` ETH·day | legacy | — | **Do not use for new Full.** Keep only if old paths need it; new code calls `cfgTariffKPerLifYear` only | superseded |
 
 ### Storage layout (append-only preferred)
 
@@ -1144,11 +1182,21 @@ mapping(uint256 => uint64) rewardEntryClaimNextDay; // entryId => next unpaid da
 // recycleBucket, recycledCreditedByDay, dual RPN fields, commits...
 bool feeEntitlementEnabled;
 uint16 userSideShareCapBps;
-uint16[5] tariffTierMultBps; // index by tier
-uint32 tariffMultTableVersion;
+uint16 rewardHaircutBps;           // m_reward; 0 ⇒ default 200
+uint256 tariffKPerLifYear;         // 0 ⇒ default 5e18; NEW unit — not ETH·day
+// REV 9: do NOT add tariffTierMultBps / tariffMultTableVersion — F4 single-K only.
 // Day chunk bound: REUSE LibVaipakam.MAX_INTERACTION_CLAIM_DAYS (=30).
 // Do NOT introduce a second MAX_D1_CLAIM_DAYS constant.
 ```
+
+### Fee-default migration (rev 9 — list LIF/yield)
+
+Current code zero-sentinels compile to **10 bps LIF / 100 bps yield**. Rev 8 freezes **20 / 200**. Implementation **must** ship both:
+
+1. Update compiled defaults / zero-sentinel resolution to **20 / 200**, **and**
+2. A deploy/configure step (testnet + mainnet runbook + tests) that sets non-zero config to 20/200 if storage already holds explicit old values.
+
+Zero-config Anvil/tests and fresh deploys must charge **0.2% / 2%** without a manual operator step. Add a deploy-sanity or config assert in PR-9 family.
 
 ---
 
@@ -1263,17 +1311,17 @@ Borrower T4 Full, lender HoldOnly T4: LIF **13.20**, yield fee **~1.25**, absorb
 | --- | --- |
 | Margin setter | `ConfigFacet.setRecycleMarginBps(uint16 newMarginBps)` |
 | Margin read | `LibVaipakam.cfgRecycleMarginBps()` |
-| Tariff k setter | `ConfigFacet.setRecycleTariffKPer1e18EthDay(uint256 newKPer1e18EthDay)` |
-| Tariff k read | `LibVaipakam.cfgRecycleTariffKPer1e18EthDay()` |
-| Legacy reward cap | `InteractionRewardsFacet.setInteractionCapVpfiPerEth(uint256)` |
-| Legacy threshold | `LibInteractionRewards.snapshotDayCapThreshold` / `dayCapThreshold18` / `chainRewardBudgetForDay` |
-| New share cap | `ConfigFacet.setUserSideShareCapBps(uint16)`; `dayCapMode`; `dayUserSideCapVpfi18`; `userSideDayPaidVpfi`; `rewardEntryClaimNextDay`; `processUserSideDay` |
-| Messenger v2 | `MSG_TYPE_BROADCAST_V2 = 5`; `BROADCAST_V2_PAYLOAD_SIZE = 6*32`; `broadcastGlobalV2(dayId,L,B,capMode,capPayload)`; `quoteBroadcastGlobalV2` |
-| Dual-pipe freeze | `claimForUserWindow` skips `dayCapMode==ShareOfPool`; window preview matches |  
-| Cum-ready + entry preview | Outer SM `cumCursor ≥ d` or break; `previewForUserEntries` worklist = claim (clean+forfeit); re-entrant sweep; fail-closed mode post-`D*` |
-| New entitlement flag | `ConfigFacet.setFeeEntitlementEnabled(bool)` (to add) |
-| Quote | `quoteFeeEntitlementTariff(asset, principal, durationDays, borrower)` |
-| Accept flag | `useFeeEntitlement` on accept/match calldata or internal bool |
+| **Tariff K (rev 9 — LIF·year)** | **New** `ConfigFacet.setTariffKPerLifYear(uint256)` / `LibVaipakam.cfgTariffKPerLifYear()` — default **5e18**; unit = VPFI per numeraire-unit list LIF per year |
+| Legacy ETH·day K | `setRecycleTariffKPer1e18EthDay` / `cfgRecycleTariffKPer1e18EthDay` — **must not** be used by new Full path; leave dormant or delete in a follow-up once no caller remains |
+| Legacy reward cap | `InteractionRewardsFacet.setInteractionCapVpfiPerEth(uint256)` — remains until joint cutover |
+| Legacy threshold | `snapshotDayCapThreshold` / `dayCapThreshold18` / `chainRewardBudgetForDay` (with **zero-denominator guard**) |
+| New share cap + loan-side | `setUserSideShareCapBps`; `dayCapMode`; `dayUserSideCapVpfi18`; `userSideDayPaidVpfi`; `rewardEntryClaimNextDay`; `loanSideRewardPaidVpfi`; `processUserSideDay` (clamps **both** D1 and loan-side) |
+| Messenger v2 | `MSG_TYPE_BROADCAST_V2 = 5`; `BROADCAST_V2_PAYLOAD_SIZE = 6*32`; `broadcastGlobalV2(...)`; `quoteBroadcastGlobalV2` |
+| Dual-pipe freeze | `claimForUserWindow` skips `dayCapMode==ShareOfPool` |
+| Cum-ready + entry preview | Outer SM `cumCursor ≥ d` or break; preview worklist = claim; re-entrant sweep; fail-closed mode post-`D*` |
+| Entitlement enable | `ConfigFacet.setFeeEntitlementEnabled(bool)` |
+| Quote | `quoteFeeEntitlementTariff(asset, principal, durationDays)` → returns `C*` (party-independent notional) |
+| **Per-party Full auth** | Offer/intent: `lenderFull` (lender-signed). Accept/match: `borrowerFull` + optional `allowFullDowngrade` (default false). **Not** a single shared `useFeeEntitlement` bool that can drain the counterparty. |
 
 ### Facet / library touch list + grep checklist (Issue 17)
 
@@ -1326,12 +1374,12 @@ See Parameter Table storage layout. Migration: existing loans `mode=None` or inf
 
 | Risk | Sev | Mitigation |
 | --- | --- | --- |
-| Borrower tariff free-rides lender discount | Crit | **Frozen:** yield fee = lender hold only |
+| Borrower tariff free-rides lender discount | Crit | **Frozen:** yield fee = lender hold **and** lender Full only (own vault `C*`) |
 | Cheap secondary VPFI → cheap dual-fee attach | Low | Full no longer waives LIF; cheap VPFI only increases absorption, does not erase asset fees; still monitor attach rate / raise `k` |
 | Wash vs scheduleFloor | Med | Not claimed impossible; D1, forfeit rules, monitoring |
 | D1 remittance under-fund | Crit | Uncapped chain slice proof |
 | `k` too low/high | Med | Bounds + timelock |
-| Oracle ethVolume manipulation | High | Same feeds/probes as LTV; illiquid excluded |
+| Oracle numeraire manipulation (list LIF) | High | Same feeds/probes as LTV; feed fail ⇒ Full unavailable |
 | Sanctions | High | Tier-1 on accept, tariff, claim |
 | Sale double LIF/tariff | Med | Sale-vehicle skip |
 | Bucket insolvency | High | Commitment accounting when governor lands |
@@ -1350,17 +1398,26 @@ See Parameter Table storage layout. Migration: existing loans `mode=None` or inf
 
 | Stage | Work | Notes |
 | --- | --- | --- |
-| 0 | PR-1 specs / supersession map | Docs only |
-| 1a | PR-2a D1 share cap (security-critical) | Can land without governor |
-| 1b | PR-4 hybrid HoldOnly LIF | Independent of Full |
-| 2 | PR-5a bucket ledger credit path (minimal) | Absorb without D2 |
-| 3 | PR-5b Full tariff + accept integration | Depends on 2 (or temporary cumulative credit) |
-| 4 | PR-6 settlement call-site sweep | After 5b |
+| 0 | PR-1 specs / supersession map | Docs only; fee defaults 20/200 |
+| 1a | PR-2 D1 share cap **code** (may merge dark) | **Must not cut over `D*` alone** — see joint gate below |
+| 1b | PR-4 hybrid HoldOnly LIF + **fee-default 20/200 migration** | Independent of Full |
+| 2 | PR-5a bucket ledger credit path | Absorb without D2 |
+| 3 | PR-5b Full tariff + **per-party auth** + double absorption | Depends on 2 |
+| 3b | **PR-5c loan-side reward cap** integrated into `processUserSideDay` | Needs `cStar` from 5b (or notional stamp on all new loans from 4+) |
+| 3c | **Joint cutover** `D*`: enable ShareOfPool **only when** loan-side caps live for all reward-eligible loans in scope | Blocks wash-economics hole |
+| 4 | PR-6 settlement sweep (**requires Full stamp** for lender +10%) | **Hard dep PR-5b** |
 | 5 | PR-3a–3d governor Phase A′ stack | Parallel after 2; **not** one mega-PR |
 | 6 | PR-N notification flat tariff | Anytime |
 | 7 | PR-8 frontend | After 5b selectors |
-| 8 | PR-9 deploy peg-unset assert | Before mainnet |
+| 8 | PR-9 deploy peg-unset + fee 20/200 assert | Before mainnet |
 | 9 | PR-10 mesh B′ | After Base governor |
+
+**Joint D1 + loan-side cutover (rev 9 — P1 freeze):**
+
+- Shipping PR-2 ShareOfPool **without** PR-5c leaves sole-user / thin-book rewards at ~20% of halfPool (~2k VPFI) instead of ~`½×C*×0.98` (~4 VPFI on the worked example) and **invalidates** wash-economics freezes.
+- **Allowed:** merge PR-2 implementation with `dayCapMode` still Legacy until cutover.
+- **Forbidden:** set production `D*` / write `dayCapMode=ShareOfPool` until PR-5c is live and `loanSideRewardCap` is stamped for loans whose reward days are ShareOfPool.
+- Until joint cutover, keep **#1008 ETH ratio** (or hold rewards dark) — do not run uncapped-vs-D1-only.
 
 **Accepted launch debt:** tariff credits bucket while `dailyPool = scheduleFloor` only — absorption without distribution coupling until PR-3 stack. Document in release notes.
 
@@ -1399,7 +1456,7 @@ See Parameter Table storage layout. Migration: existing loans `mode=None` or inf
 4. **Double absorption (rev 8):** each Full party pays **`C*`** from own vault; both Full ⇒ **`2×C*`**.  
 5. **List fees (rev 8):** LIF **0.2%**, yield fee **2%**.  
 6. **Tariff:** `C* = baseLif_list × tYears × K`, default **K=5**; list LIF not post-discount.  
-7. **Rewards:** still **50/50** lender/borrower halves; **per-loan per-side** cap `loanSideRewardCap = ½×C*×(1−m_reward)`, default **m_reward=2%**; **D1** user-side-day share cap retained; **#1008 ETH ratio retired** for new loans.  
+7. **Rewards:** still **50/50** lender/borrower halves; **per-loan per-side** cap `loanSideRewardCap = ½×C*×(1−m_reward)`, default **m_reward=2%**, enforced **inside** `processUserSideDay`; **D1** retained; **#1008 retired only at joint D*+5c cutover**.  
 8. Yield fee Phase-1 delivery = **direct-reduction only** (peg unset).  
 9. Matcher = **lending-asset share of lifAsset**; tariff → bucket (no VPFI matcher skim).  
 10. D1 claim SM freezes (rev 4–6) unchanged: remaining-budget, chunk SM, cum-ready, preview=claim worklist, re-entrant sweep, fail-closed dayCapMode, messenger v2.  
@@ -1416,7 +1473,7 @@ See Parameter Table storage layout. Migration: existing loans `mode=None` or inf
 
 | Former | Resolution |
 | --- | --- |
-| Q1 payer | **Rev 8: per-party double absorption** (was borrower-only) |
+| Q1 payer | **Rev 8/9: per-party double absorption + signed/offer-level Full auth** |
 | Q2 matcher | LIF asset matcher; tariff VPFI matcher skim **off** |
 | Q4 duration | **maxDuration / fixed term at open** |
 | Q6 yield waive | **No** |
@@ -1526,17 +1583,18 @@ See Parameter Table storage layout. Migration: existing loans `mode=None` or inf
 
 ### PR-5c — Loan-side reward cap (replace #1008)
 
-- **Title:** `feat(rewards): per-loan per-side cap ½×C*×(1−m_reward); retire ETH ratio on new loans`  
-- **Files:** `LibInteractionRewards`, claim/sweep paths, storage `loanSideRewardPaidVpfi`, ConfigFacet m_reward, tests  
-- **Deps:** PR-5b (needs `cStar` stamped); can parallel D1 PR-2 if dual-pipe careful  
-- **Must:** 50/50 unchanged; cap is ceiling not re-split; notional C* even if no Full
+- **Title:** `feat(rewards): per-loan per-side cap ½×C*×(1−m_reward) inside processUserSideDay; joint D* gate`  
+- **Files:** `LibInteractionRewards` (`processUserSideDay` clamp + `loanSideRewardPaidVpfi` charge), claim/sweep, ConfigFacet m_reward, tests (multi-loan day, forfeit charge, remaining-budget)  
+- **Deps:** PR-5b (or earlier notional `cStar` stamp on every new loan); PR-2 code may land first but **cutover blocked** until 5c  
+- **Must:** 50/50 unchanged; cap is ceiling not re-split; notional C* even if no Full; forfeit slices charge loan-side paid; **no ShareOfPool production cutover without 5c**
 
 ### PR-6 — Entitlement-aware settlement sweep
 
-- **Title:** `feat(fees): yield-fee sites honor lender-hold-only rule; grep checklist green`  
+- **Title:** `feat(fees): yield-fee sites honor lender hold + Full +10% stamp; grep checklist green`  
 - **Files:** all F2 call sites listed above  
-- **Hard deps:** **PR-4** (hybrid LIF) + existing E-1 path — **fee math does not require Full stamp** (F2 ignores Full for `d`)  
-- **Soft deps:** PR-5b only for optional analytics/events (`discountMode`, entitlement mode in logs). PR-6 may merge **before** PR-5b if analytics are deferred.
+- **Hard deps:** **PR-4** (hybrid LIF) **and PR-5b** (lender Full stamp / `lenderMode`) — F2 **does** read Full for `d_tariff = 1000` when `lenderMode == Full`  
+- **Forbidden:** shipping PR-6 yield-fee math that ignores Full (would under-discount Full lenders until a later migration touches every settlement path)  
+- Soft: analytics/events only after 5b (already required)
 
 ### PR-7 — Notification flat VPFI tariff
 
@@ -1575,6 +1633,19 @@ PR plan assumes interaction rewards remain enabled only if: claim-on-close paths
 | Low Full attach (tariff is extra cost) | Med | Honest UX; hybrid HoldOnly still collects discounted asset fees |
 
 ---
+
+### Rev 9 changelog (Codex r1 design-doc findings)
+
+- **P1 joint cutover:** ShareOfPool `D*` forbidden until PR-5c loan-side caps live; keep #1008 until then.  
+- **P1 per-party Full auth:** lender Full only via lender-signed offer/intent; no single counterparty-draining flag; failed Full **reverts** unless explicit `allowFullDowngrade`.  
+- **P1 processUserSideDay:** clamp weights by `loanSideRemaining`; charge `loanSideRewardPaidVpfi` on every slice (incl. forfeit).  
+- **P2 F4 unit freeze:** list LIF → **numeraire 1e18**, then `C* = num × tYears × K / scales`; K default **5e18**.  
+- **P2 API:** new `setTariffKPerLifYear` / `cfgTariffKPerLifYear`; do **not** reuse ETH·day setter for Full.  
+- **P2 storage:** remove `tariffTierMultBps` / version from layout.  
+- **P2 LIF incidence wording:** borrower **cash** haircut; fee sourced from lender vault principal path.  
+- **P2 PR-6 hard-deps PR-5b** (Full stamp required for +10% yield fee).  
+- **P2 fee-default migration:** compiled + deploy path for **20/200** bps (not zero-sentinel 10/100).  
+- **P2 remittance:** `globalInterest == 0 ⇒ chainBudget = 0` (no div-by-zero revert).
 
 ### Rev 8 changelog (fee freeze + double absorption + loan-side reward cap)
 
@@ -1632,4 +1703,4 @@ PR plan assumes interaction rewards remain enabled only if: claim-on-close paths
 
 ---
 
-*End of design document (rev 8).*
+*End of design document (rev 9).*
