@@ -13,9 +13,10 @@ A new `notifications` table (migration 0038) holds one row per
 derives inbox rows for the loan-lifecycle events that concern a wallet —
 loan matched, partial repayment, repaid (including the swap-to-repay
 path), defaulted (including backstop absorption), and liquidated — with
-the recipient resolved to the CURRENT position-NFT holder (so a
-secondary-market buyer is notified and an exited seller is not, the same
-ownership discipline the claim rows use). Materialization is idempotent:
+the recipient resolved to the loan's original parties, a deterministic
+choice that does not depend on how the indexer batched blocks (resolving
+the current position-NFT holder for a secondary-market buyer's claim
+relevance is the follow-up cron rows' job). Materialization is idempotent:
 each row carries a deterministic dedup key, so a re-scan or catch-up
 never duplicates an inbox row; the per-loan party lookup is chunked so a
 large catch-up scan can't exceed the database's bind-parameter limit; and

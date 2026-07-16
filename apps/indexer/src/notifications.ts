@@ -11,10 +11,12 @@
  * Design (docs/DesignsAndPlans/InAppNotificationCenterDesign.md):
  *   - One row per (recipient wallet, notification). A both-parties
  *     event materializes two rows.
- *   - Recipients resolve to the CURRENT position-NFT holders
- *     (`*_current_owner`, kept authoritative by the Transfer/sale
- *     handlers), so a secondary-market buyer is notified and an exited
- *     seller is not — the same ownership discipline the claim rows use.
+ *   - Recipients resolve to the ORIGINAL loan parties (`loans.lender` /
+ *     `loans.borrower`, immutable from init) — deterministic regardless
+ *     of how the indexer batched blocks. Resolving the CURRENT holder
+ *     (a secondary-market buyer's claim relevance) is the follow-up
+ *     cron rows' job; see `recipientFor` for why event rows can't use
+ *     the end-of-window `*_current_owner` columns.
  *   - Idempotent: every row carries a deterministic `dedup_key`; a
  *     re-scan / catch-up re-runs `INSERT OR IGNORE` with no duplicates.
  *   - Truncation-free: this is a bounded per-scan derivation (a scan
@@ -155,23 +157,31 @@ const ZERO_ADDR = '0x0000000000000000000000000000000000000000';
 interface LoanParties {
   lender: string | null;
   borrower: string | null;
-  lenderCurrentOwner: string | null;
-  borrowerCurrentOwner: string | null;
 }
 
-/** Resolve the notification recipient wallet for a side — the CURRENT
- *  position-NFT holder, falling back to the original party for legacy
- *  rows without the `*_current_owner` columns populated. Returns null
- *  for a burned side (0x0) or an unknown loan. */
+/**
+ * Resolve the notification recipient wallet for a side — the ORIGINAL
+ * loan party (`loans.lender` / `loans.borrower`, immutable from init).
+ *
+ * Deliberately NOT the `*_current_owner` columns (Codex #1292 r2): those
+ * reflect the END of the scan window, so a position transfer landing in
+ * the SAME scan as an earlier lifecycle event would make that event's
+ * recipient depend on how the indexer batched blocks — the same event
+ * could notify different wallets on different runs. The original party
+ * is batching-independent and deterministic. Resolving the CURRENT
+ * holder (for a secondary-market buyer's claim relevance) is the job of
+ * the follow-up cron rows (maturity / grace / claim-available), which do
+ * a point-in-time `ownerOf` at materialization — see the design doc's
+ * ownership discipline, scoped to those rows.
+ *
+ * Returns null for a missing party (0x0 / empty / unknown loan).
+ */
 function recipientFor(
   parties: LoanParties | undefined,
   side: 'lender' | 'borrower',
 ): string | null {
   if (!parties) return null;
-  const current =
-    side === 'lender' ? parties.lenderCurrentOwner : parties.borrowerCurrentOwner;
-  const original = side === 'lender' ? parties.lender : parties.borrower;
-  const who = (current ?? original ?? '').toLowerCase();
+  const who = ((side === 'lender' ? parties.lender : parties.borrower) ?? '').toLowerCase();
   if (!who || who === ZERO_ADDR) return null;
   return who;
 }
@@ -281,7 +291,7 @@ export async function materializeNotifications(
       const placeholders = slice.map(() => '?').join(',');
       const res = await db
         .prepare(
-          `SELECT loan_id, lender, borrower, lender_current_owner, borrower_current_owner
+          `SELECT loan_id, lender, borrower
              FROM loans
             WHERE chain_id = ? AND loan_id IN (${placeholders})`,
         )
@@ -290,16 +300,9 @@ export async function materializeNotifications(
           loan_id: number;
           lender: string | null;
           borrower: string | null;
-          lender_current_owner: string | null;
-          borrower_current_owner: string | null;
         }>();
       for (const r of res.results ?? []) {
-        partiesByLoan.set(r.loan_id, {
-          lender: r.lender,
-          borrower: r.borrower,
-          lenderCurrentOwner: r.lender_current_owner,
-          borrowerCurrentOwner: r.borrower_current_owner,
-        });
+        partiesByLoan.set(r.loan_id, { lender: r.lender, borrower: r.borrower });
       }
     }
   } catch (err) {

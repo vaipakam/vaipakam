@@ -37,16 +37,9 @@ const log = (
   logIndex,
 });
 
-const parties = (
-  lender: string | null,
-  borrower: string | null,
-  lenderCur = lender,
-  borrowerCur = borrower,
-) => ({
+const parties = (lender: string | null, borrower: string | null) => ({
   lender,
   borrower,
-  lenderCurrentOwner: lenderCur,
-  borrowerCurrentOwner: borrowerCur,
 });
 
 describe('planNotifications', () => {
@@ -77,25 +70,27 @@ describe('planNotifications', () => {
     expect(rows[0].createdAt).toBe(9999); // nowSec fallback (no block ts)
   });
 
-  it('prefers the CURRENT position-NFT holder over the original party', () => {
-    // The borrower side was sold to BUYER — the claim-relevant row must
-    // reach the current holder, not the exited original borrower.
+  it('resolves the ORIGINAL loan parties, deterministic regardless of a same-scan transfer (Codex #1292 r2)', () => {
+    // A same-scan transfer would move `*_current_owner` to BUYER, but the
+    // recipient must NOT depend on batching — the original parties are
+    // used, so the event notifies LENDER + BORROWER whether or not a
+    // transfer landed in the same window.
     const rows = planNotifications(
       84532,
       [log('LoanRepaid', 7)],
-      new Map([[7, parties(LENDER, BORROWER, LENDER, BUYER)]]),
+      new Map([[7, parties(LENDER, BORROWER)]]),
       new Map(),
       1,
     );
-    expect(rows.map((r) => r.recipient).sort()).toEqual([LENDER, BUYER].sort());
-    expect(rows.some((r) => r.recipient === BORROWER)).toBe(false);
+    expect(rows.map((r) => r.recipient).sort()).toEqual([LENDER, BORROWER].sort());
+    expect(rows.some((r) => r.recipient === BUYER)).toBe(false);
   });
 
-  it('skips a burned side (0x0 current owner)', () => {
+  it('skips a missing/zero party', () => {
     const rows = planNotifications(
       84532,
       [log('LoanLiquidated', 7)],
-      new Map([[7, parties(LENDER, BORROWER, LENDER, ZERO)]]),
+      new Map([[7, parties(LENDER, ZERO)]]),
       new Map(),
       1,
     );
