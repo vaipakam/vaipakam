@@ -37,9 +37,16 @@ const log = (
   logIndex,
 });
 
-const parties = (lender: string | null, borrower: string | null) => ({
+const parties = (
+  lender: string | null,
+  borrower: string | null,
+  lenderCur = lender,
+  borrowerCur = borrower,
+) => ({
   lender,
   borrower,
+  lenderCurrentOwner: lenderCur,
+  borrowerCurrentOwner: borrowerCur,
 });
 
 describe('planNotifications', () => {
@@ -70,32 +77,35 @@ describe('planNotifications', () => {
     expect(rows[0].createdAt).toBe(9999); // nowSec fallback (no block ts)
   });
 
-  it('resolves the ORIGINAL loan parties, deterministic regardless of a same-scan transfer (Codex #1292 r2)', () => {
-    // A same-scan transfer would move `*_current_owner` to BUYER, but the
-    // recipient must NOT depend on batching — the original parties are
-    // used, so the event notifies LENDER + BORROWER whether or not a
-    // transfer landed in the same window.
+  it('resolves the CURRENT position-NFT holder, not the origination party (Codex #1292 r3)', () => {
+    // The lender side was sold to BUYER (current owner) — the design's
+    // ownership discipline routes the row to the current holder (who owns
+    // the claim), not the exited origination lender.
     const rows = planNotifications(
       84532,
       [log('LoanRepaid', 7)],
-      new Map([[7, parties(LENDER, BORROWER)]]),
+      new Map([[7, parties(LENDER, BORROWER, BUYER, BORROWER)]]),
       new Map(),
       1,
     );
-    expect(rows.map((r) => r.recipient).sort()).toEqual([LENDER, BORROWER].sort());
-    expect(rows.some((r) => r.recipient === BUYER)).toBe(false);
+    expect(rows.map((r) => r.recipient).sort()).toEqual([BUYER, BORROWER].sort());
+    expect(rows.some((r) => r.recipient === LENDER)).toBe(false);
   });
 
-  it('skips a missing/zero party', () => {
+  it('skips a burned/cash-satisfied side (0x0 current owner) — the backstop lender case', () => {
+    // BackstopAbsorbedLoan burns + cash-satisfies the lender NFT
+    // (lender_current_owner → 0x0), so only the live borrower (residual
+    // claim) is notified — the cashed-out lender is not pinged.
     const rows = planNotifications(
       84532,
-      [log('LoanLiquidated', 7)],
-      new Map([[7, parties(LENDER, ZERO)]]),
+      [log('BackstopAbsorbedLoan', 7)],
+      new Map([[7, parties(LENDER, BORROWER, ZERO, BORROWER)]]),
       new Map(),
       1,
     );
     expect(rows).toHaveLength(1);
-    expect(rows[0].recipient).toBe(LENDER);
+    expect(rows[0].recipient).toBe(BORROWER);
+    expect(rows[0].kind).toBe('loan_defaulted');
   });
 
   it('self-dedups a wallet on both sides of its own loan', () => {

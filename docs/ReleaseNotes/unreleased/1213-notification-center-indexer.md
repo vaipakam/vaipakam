@@ -12,11 +12,13 @@ A new `notifications` table (migration 0038) holds one row per
 (recipient wallet, notification). On every ingest scan the indexer
 derives inbox rows for the loan-lifecycle events that concern a wallet —
 loan matched, partial repayment, repaid (including the swap-to-repay
-path), defaulted (including backstop absorption), and liquidated — with
-the recipient resolved to the loan's original parties, a deterministic
-choice that does not depend on how the indexer batched blocks (resolving
-the current position-NFT holder for a secondary-market buyer's claim
-relevance is the follow-up cron rows' job). Materialization is idempotent:
+path), and defaulted (including backstop absorption, and the liquidation
+close-out, which the contracts emit as a default). The recipient resolves
+to the CURRENT position-NFT holder at materialization time (the design's
+ownership discipline): a secondary-market buyer who now holds the claim
+is notified, while an exited seller and a burned/cash-satisfied side
+(e.g. the cashed-out lender on a backstop absorption) are not.
+Materialization is idempotent:
 each row carries a deterministic dedup key, so a re-scan or catch-up
 never duplicates an inbox row; the per-loan party lookup is chunked so a
 large catch-up scan can't exceed the database's bind-parameter limit; and
