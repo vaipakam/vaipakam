@@ -986,6 +986,23 @@ export const copy = {
       'We couldn’t load your claims right now. Your funds are unaffected — please try again in a moment.',
     claim: 'Claim',
     claimed: 'Claim complete.',
+    // #1268 / E-10 — one-signature Claim-All.
+    allTitle: 'Claim everything at once',
+    allBlurb:
+      'Collect every ready payout in a single wallet signature instead of one at a time.',
+    allButton: (n: number) => `Claim ${n} ${n === 1 ? 'item' : 'items'}`,
+    allEmpty: 'Nothing is batchable right now.',
+    allTooMany: (max: number) =>
+      `Select up to ${max} at once — claim the rest in a second batch.`,
+    allVpfiNote:
+      'Withdrawing parked VPFI lowers your fee-discount tier — off by default.',
+    allResidualNote:
+      'Anything that wasn’t ready is still listed below to claim on its own.',
+    allRewardsUnavailable:
+      'We couldn’t check your rewards, so they’re not in this batch — claim them separately.',
+    allVpfiUnavailable:
+      'We couldn’t check your vault VPFI, so it’s not in this batch.',
+    allWorking: 'Waiting for wallet…',
   },
 
   offers: {

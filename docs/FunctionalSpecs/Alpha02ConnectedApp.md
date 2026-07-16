@@ -258,6 +258,27 @@ Thin-market honesty rules apply.
   enumeration finds is verified whether or not the indexer suggested it.
 - Frozen sanctioned proceeds remain parked until the recorded frozen claimant is
   proven clean.
+- When two or more payouts are ready at once, the user may collect them all in a
+  single wallet signature instead of one transaction per claim. The batch spans
+  lender and borrower loan proceeds, pending interaction rewards, and free
+  (unencumbered) vault VPFI.
+- The batch presents each payout for individual include/exclude before signing.
+  Withdrawing parked vault VPFI is opt-in and off by default, because that
+  balance backs the fee-discount tier and pulling it lowers the tier.
+- A payout that another party finalizes between preview and signing is skipped,
+  not fatal — the remaining payouts still succeed, and anything skipped stays
+  listed for the user to claim on its own.
+- The batch is bounded; when more payouts are ready than fit in one batch, the
+  user is asked to collect the remainder in a second batch rather than being
+  allowed to submit a transaction that would fail.
+- The same sanctions posture as any individual claim applies to the batch: a
+  flagged wallet, or an oracle that cannot be read, blocks the batch before it
+  is signed.
+- The batch is only offered once every ready amount it would include is known; a
+  still-loading balance is never silently omitted, and if a balance genuinely
+  cannot be read, the user is told it is excluded rather than the batch
+  pretending to be complete. A batch that would pre-select more payouts than the
+  bound allows starts within the bound instead of forcing the user to unselect.
 
 ## NFT Rentals
 

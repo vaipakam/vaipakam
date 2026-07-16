@@ -16,6 +16,7 @@ import { assertWalletNotSanctionedLive, useSanctionsCheck } from '../data/sancti
 import { useActiveChain } from '../chain/useActiveChain';
 import { useDiamondWrite } from '../contracts/diamond';
 import { EmptyState, UnavailableState } from '../components/EmptyState';
+import { ClaimAllCard } from '../components/ClaimAllCard';
 import { useTokenMeta } from '../contracts/erc20';
 import { AssetType } from '../lib/types';
 import { formatTokenAmount, shortAddress } from '../lib/format';
@@ -268,6 +269,17 @@ export function Claims() {
   const rows: ClaimableLoan[] =
     rowsLoading || rowsUnavailable ? [] : claimables.data!;
 
+  // Pending interaction rewards still count as "something to claim":
+  // with zero loan rows but a pending reward, RewardsCard is showing a
+  // real payout, so the "Nothing to claim" empty state would be false.
+  // (Free vault VPFI is deliberately NOT counted here: it is surfaced on
+  // this page only WITHIN a Claim-All batch of ≥2 payouts — a solo
+  // vault balance is withdrawn on /vpfi, so suppressing the empty state
+  // for it would leave a dead screen with nothing actionable, Codex
+  // #1291 r2.) The hook dedupes with RewardsCard's read (same key).
+  const rewards = useInteractionRewards();
+  const hasOtherClaimable = (rewards.data?.pending ?? 0n) > 0n;
+
   return (
     <div>
       <h1 className="page-title">{copy.claims.title}</h1>
@@ -286,22 +298,34 @@ export function Claims() {
       ) : (
         <>
           <RewardsCard />
+          {/* #1268 / E-10 — one-signature Claim-All over the settled,
+              confirmed claimables (+ rewards + free vault VPFI). Only
+              once the claimables list is settled, so the batch never
+              advertises a partial loan set that's still loading. */}
+          {!rowsLoading && !rowsUnavailable ? (
+            <ClaimAllCard loans={rows} />
+          ) : null}
           {rowsLoading ? (
             <EmptyState icon={LoaderCircle} title="Checking for claims…" />
           ) : rowsUnavailable ? (
             <UnavailableState body={copy.claims.unavailable} onRetry={() => void claimables.refetch()} />
           ) : rows.length === 0 ? (
-            // UX-023 — say where claims come from and point forward.
-            <EmptyState
-              icon={Gift}
-              title={copy.claims.empty}
-              body={copy.claims.emptyBody}
-              action={
-                <Link to="/positions" className="btn btn-secondary">
-                  {copy.claims.emptyCta}
-                </Link>
-              }
-            />
+            // No loan claims. If a reward / vault-VPFI payout is showing
+            // above, the cards already say what's claimable — a "Nothing
+            // to claim" panel here would be false (Codex #1291 r1).
+            hasOtherClaimable ? null : (
+              // UX-023 — say where claims come from and point forward.
+              <EmptyState
+                icon={Gift}
+                title={copy.claims.empty}
+                body={copy.claims.emptyBody}
+                action={
+                  <Link to="/positions" className="btn btn-secondary">
+                    {copy.claims.emptyCta}
+                  </Link>
+                }
+              />
+            )
           ) : (
             // #1247 PAG-003 — a long-lived wallet's terminal history
             // only ever grows; render it a page at a time.
