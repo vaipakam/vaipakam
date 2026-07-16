@@ -5,7 +5,7 @@
 | **Title** | VPFI Absorption & Distribution Formula Redesign |
 | **Author** | Vaipakam Developer Team |
 | **Date** | 2026-07-16 |
-| **Status** | **Draft — design proposal (rev 13)** — Codex r1–r5 design-doc rounds folded; pending **owner ratification** for implementation (not code) |
+| **Status** | **Draft — design proposal (rev 14)** — Codex r1–r6 freezes (post-#1294 r6 P2s folded); pending **owner ratification** for implementation |
 | **Related** | `#687-A/B`, `#694`, `#1002` / Card-C rewards hardening, `#1008` / S13 day cap, `#1203` (E-1), `#1217` / `#1222` (recycling governor), TokenomicsTechSpec §§4–9 |
 | **Prior art (binding substrate)** | [`VpfiRecyclingBalanceGovernorDesign.md`](VpfiRecyclingBalanceGovernorDesign.md) (RATIFIED 2026-07-15), [`VpfiLenderDiscountPegDecouplingDesign.md`](VpfiLenderDiscountPegDecouplingDesign.md) (E-1), [`VPFITokenomicsRedesignResearch.md`](VPFITokenomicsRedesignResearch.md) §9 |
 
@@ -205,15 +205,15 @@ At `acceptOffer` / `matchOffers` / signed-offer fill:
    - **Borrower Full** requires explicit borrower authorization on the accept/match path the borrower signs or initiates (calldata flag `borrowerFull`, or borrower-signed permit/intent field).
    - **Lender Full** requires **prior** lender authorization that the non-lender caller cannot forge: e.g. fields on the **lender’s offer** / standing intent / signed offer EIP-712. A bare accept calldata flag set by the borrower/matcher **MUST NOT** pull `C*` from the lender vault.
    - Matcher/keeper fills may apply lender Full **only** if the offer/intent already stamped lender Full auth.
-   - **Tariff ceiling bound (rev 11):** every Full authorization that can be filled later (standing offer / EIP-712 intent) **MUST** include a mandatory absolute **`maxCStar`** (VPFI 1e18). Optional extras: `tariffKVersion` / `maxK` for UX rejection earlier — **not** a substitute for `maxCStar`.  
+   - **Tariff ceiling bound (rev 14):** **every** Full authorization — standing offer, EIP-712 intent, **and same-tx borrower calldata** — **MUST** include a mandatory absolute **`maxCStar`** (VPFI 1e18) in the signed/calldata payload. Optional extras: `tariffKVersion` / `maxK` for early UX rejection — **not** a substitute for `maxCStar`.  
      At fill: if quoted `C* > auth.maxCStar` → **revert** `FeeEntitlementTariffAboveAuth` (or downgrade only if `allowFullDowngrade`).  
-     Rationale: K-only bounds miss principal, duration, and numeraire-price moves.  
-     Borrower Full on the **same** tx (borrower is the signer) may omit a prior max and use the live quote; any **pre-authorized** Full (including lender standing) **always** requires `maxCStar > 0`.
-4. For each party with authorized Full: if `cfgFeeEntitlementEnabled` and vault VPFI ≥ `C*` and `C* ≤ auth.maxCStar` (required when auth is pre-signed), pull `C*` from **that party’s** vault → recycle bucket; stamp mode = Full; `tariffPaid[party] = C*`.
-5. **Failed Full opt-in (frozen):** if a party is authorized Full but cannot pay `C*` (balance, pause, transfer fail, or `C* > maxCStar`), the whole accept/match **reverts** (`FeeEntitlementFullPaymentFailed(party)` / `FeeEntitlementTariffAboveAuth`). **No silent downgrade** to HoldOnly/None unless that party also set an explicit `allowFullDowngrade=true` authorization bit (default **false**). HoldOnly/None paths are chosen only when Full was never authorized.
-6. Else if that party consent + tier ≥ 1 (and Full not authorized): mode = HoldOnly.
-7. Else: None.
-8. Apply LIF using **borrower** mode/discount; yield fee later using **lender** mode/discount (including Full +10% when `lenderMode == Full`). Position NFT carries **both** stamps; **no tariff refund** on sale/transfer/preclose.
+     Rationale: K-only bounds and “live quote without max” both miss oracle/numeraire or K moves between UI quote and execution. **No exception for same-tx borrower Full.**
+4. **Kill switch first (rev 14):** if any party presents Full auth and `cfgFeeEntitlementEnabled == false` → treat as **failed Full opt-in** (`FeeEntitlementDisabled`) unless that party set `allowFullDowngrade=true` (then HoldOnly/None per rules below). **Forbidden:** silently ignore Full and continue as HoldOnly when the flag is off without explicit downgrade permission.
+5. For each party with authorized Full and flag enabled: if vault VPFI ≥ `C*` and `C* ≤ auth.maxCStar`, pull `C*` from **that party’s** vault → recycle bucket; stamp mode = Full; `tariffPaid[party] = C*`.
+6. **Failed Full opt-in (frozen):** if a party is authorized Full but cannot complete (flag off, balance, pause, transfer fail, or `C* > maxCStar`), the whole accept/match **reverts** unless `allowFullDowngrade=true`. HoldOnly/None only when Full was **never** authorized or downgrade was explicit.
+7. Else if that party consent + tier ≥ 1 (and Full not authorized): mode = HoldOnly.
+8. Else: None.
+9. Apply LIF using **borrower** mode/discount; yield fee later using **lender** mode/discount (including Full +10% when `lenderMode == Full`). Position NFT carries **both** stamps; **no tariff refund** on sale/transfer/preclose.
 
 ```mermaid
 sequenceDiagram
@@ -742,32 +742,31 @@ function processUserSideDay(user, side, d, transferSet) -> (toUser, toTreasury):
     rawPay += cEff[e]
 
   if rawPay == 0:
-    // 0-slice advance ALLOWED only because RPN is ready (require above) and
-    // legitimate zero: globalInterest==0 and/or half==0 and/or all weights 0
-    // and/or all loans loan-side-exhausted.
-    // NEVER treat "RPN not written yet" as rawPay==0 (that case never enters here).
+    // Legitimate zero weights only — advance (day permanently empty for these entries).
     for e in transferSet where nextDay(e) == d:
       rewardEntryClaimNextDay[e.id] = d + 1
       if nextDay(e) >= e.endDay: e.processed = true
     return (0, 0)
 
-  budget = rawPay < remaining ? rawPay : remaining   // min of D1 day remainder
+  budget = min(rawPay, remaining)   // D1 day remainder
 
-  // Rev 11/12 — poolAvail is a MUTABLE remaining budget owned by the OUTER
-  // multi-day claim loop (not a constant re-read each day).
-  //   budget = min(budget, poolRemaining)
-  // After this day returns sumSlices, outer MUST:
-  //   poolRemaining -= (toUser + toTreasury)   // or sumSlices
-  // before processing the next day. Otherwise two days can each budget the
-  // same full poolAvail and over-charge paid maps.
+  // poolRemaining: outer mutable. If 0, OUTER must not call this helper
+  // (see claim SM). If budget would be 0 only because poolRemaining==0 while
+  // rawPay>0 and D1 remaining>0 → do NOT advance cursors; return (0,0) and
+  // outer BREAKS (retryable when pool refills / next claim). 
+  if poolRemaining == 0:
+    return (0, 0)   // NO cursor advance — retryable pool exhaustion
   budget = min(budget, poolRemaining)
 
-  // Pro-rata floor on cEff (not raw c).
-  // Capacity-bounded dust (rev 10/11): never slice[e] > cEff[e].
-  // Σ slices MAY be < budget when dust cannot be placed — REQUIRED.
+  // Pro-rata floor on cEff; capacity-bounded dust; Σ may be < budget.
+  // ALL paid-map charges happen ONLY for the actual transfer amounts below.
+  // Forbidden: charge paid maps then scale down post-hoc at facet layer.
   slices = proRataFloorWithCapacityBoundedDust(budget, cEff, transferSet)
-  // assert ∀e: slices[e] ≤ cEff[e]
   sumSlices = Σ slices[e]
+
+  // If pool clamp left nothing payable but day still has raw/D1 headroom:
+  if sumSlices == 0 && rawPay > 0 && remaining > 0:
+    return (0, 0)   // NO cursor advance — retryable
 
   for e in transferSet:
     rewardEntryClaimNextDay[e.id] = d + 1
@@ -780,23 +779,25 @@ function processUserSideDay(user, side, d, transferSet) -> (toUser, toTreasury):
       loanSideRewardPaidVpfi[e.loanId][side] += slices[e]
 
   userSideDayPaidVpfi[user][side][d] = paid + sumSlices
-  // Caller: poolRemaining -= (toUser + toTreasury)
+  // Caller: poolRemaining -= (toUser + toTreasury)  — only path that mutates pool
   return (toUser, toTreasury)
 ```
 
-**Invariant (rev 9–12):** for every `(loanId, side)`,  
-`loanSideRewardPaidVpfi[loanId][side] ≤ loanSideRewardCapEff(loanId)`  
-across claim **and** forfeit sweep order. Outer multi-day loop **debits** `poolRemaining` after each day. Dust respects `cEff`.
+**Invariant (rev 9–14):** for every `(loanId, side)`,  
+`loanSideRewardPaidVpfi[loanId][side] ≤ loanSideRewardCapEff(loanId)`.  
+Outer multi-day loop **debits** `poolRemaining` after each day. Dust respects `cEff`.  
+**Forbidden:** facet post-hoc scale of `userTotal` after paid maps / cursors already advanced (burns budget permanently). Share **one** mutable `poolRemaining` across ShareOfPool, legacy-day, and any residual window paths **before** mutations.
 
 **0-slice advance policy (frozen — when may `claimNextDay` move with 0 pay):**
 
 | Condition | Advance `claimNextDay` with 0 slice? |
 | --- | --- |
-| `paid >= C` (budget exhausted, incl. `C==0`) | **Yes** — day permanently consumed for those entries |
-| `rpnReady` and legitimate `rawPay==0` (zero global / zero half / zero weights) | **Yes** — nothing ever payable for that day |
+| `paid >= C` (D1 day budget exhausted, incl. `C==0`) | **Yes** — day permanently consumed for those entries |
+| `rpnReady` and legitimate `rawPay==0` (zero global / zero half / zero weights / all loan-side exhausted) | **Yes** — nothing ever payable for that day |
+| **`poolRemaining == 0`** (or clamp zeros a still-payable day) | **No** — return without advance; **outer BREAK**; retry later |
 | `!knownGlobalSet[d]` | **No** — break outer loop; do not call `processUserSideDay` |
-| `knownGlobalSet[d]` but `cumCursor[side] < d` (RPN not materialized; e.g. `MAX_CUM_ADVANCE_DAYS=730` mid-catch-up) | **No** — **break** outer loop; **do not** advance `claimNextDay`; retry after further `advanceCum*Through` |
-| Unset / garbage `cumRpn[d]` read without gate | **Forbidden** — underflow under 0.8 or permanent skip |
+| `knownGlobalSet[d]` but `cumCursor[side] < d` | **No** — **break** outer loop; retry after further `advanceCum*Through` |
+| Unset / garbage `cumRpn[d]` read without gate | **Forbidden** |
 
 This matches live `_processEntry` spirit: if `cum*Cursor < need` after `advanceCum*Through`, return `(0,0)` **without** setting `processed` (retryable).
 
@@ -836,54 +837,55 @@ function claimForUserEntries(user) -> (userTotal, treasuryTotal):
     // cumCursor may still be < some d; outer loop MUST break on !rpnReady — never fake Δ=0
 
     daysUsed = 0
-    // Global day cursor for this call: walk ascending days that any entry still needs
+    // poolRemaining: ONE mutable budget for this claim call (rev 14).
+    // Initialized once from available interaction-pool VPFI BEFORE the loop.
+    // Shared by legacy-day path AND ShareOfPool path. Never post-hoc scale totals.
     while daysUsed < daysBudget:
+      if poolRemaining == 0:
+        break   // stop day walk; remaining days retryable on next claim
       d = min { nextDay(e) | e in E, nextDay(e) < e.endDay, !e.processed }
       if no such d: break
-      if !knownGlobalSet[d]: break          // wait for finalization / broadcast
+      if !knownGlobalSet[d]: break
 
-      // --- Cum-ready gate (MANDATORY — rev 5) ---
-      // Matches live _processEntry: cursor short ⇒ no progress, retryable.
-      if !rpnReady(side, d):               // cumCursor[side] < d
-        break                              // DO NOT advance claimNextDay; DO NOT processUserSideDay
-      // After this gate: Δ = cumRpn[d]-cumRpn[d-1] is safe (no underflow / false 0 skip)
+      if !rpnReady(side, d):
+        break
 
-      // --- Cutover day-branch (MANDATORY + rev-6/11 fail-closed) ---
-      // postCutover(d) := shareOfPoolCutoverDay != 0 && d >= shareOfPoolCutoverDay
-      mode = dayCapMode[d]   // 0 = unset / CapMode.LegacyEthRatio enum default
+      mode = dayCapMode[d]
       if postCutover(d):
-        // Armed post-cutover: ShareOfPool is REQUIRED. Unstamped mode==0 must NOT
-        // fall through to Legacy product with T=max (uncapped + no paid map).
         if mode != CapMode.ShareOfPool:
-          revert DayCapModeUnsetPostCutover(d)   // fail-closed claim/finalize
-        // ShareOfPool path below
+          revert DayCapModeUnsetPostCutover(d)
       else if mode == CapMode.ShareOfPool:
-        // Unarmed or pre-D* day stamped ShareOfPool — still use D1 (defensive)
         ;
       else:
-        // Not postCutover: LegacyEthRatio OR unset (0) → legacy product path
-        // (includes entire history when shareOfPoolCutoverDay == 0)
-        applyLegacyDay(user, side, d, E)
+        // Legacy day — MUST return routed amounts and debit pool (rev 14)
+        (u, t) = applyLegacyDay(user, side, d, E, poolRemaining)
+        // applyLegacyDay: pays min(legacy slices, poolRemaining); advances
+        // only days it actually settled; if pool-clamped to 0 with remaining
+        // legacy entitlement → do not advance; outer will break on pool==0.
+        userTotal += u
+        treasuryTotal += t
+        poolRemaining -= (u + t)
         daysUsed += 1
         continue
 
-      // ShareOfPool — JOINT day: all transfer-ready entries covering d
       transferSet = [ e in E | nextDay(e) == d && e.startDay <= d < e.endDay
                       && readyToTransfer(e) ]
-      // readyToTransfer = claimable (clean or forfeited) under existing gates
-      // CRITICAL: never process a proper subset when multiple entries share d
-      // in E with nextDay==d — transferSet is the full joint set.
-      // poolRemaining is outer-loop mutable (rev 12/13) — pass into helper
       (u, t) = processUserSideDay(user, side, d, transferSet, poolRemaining)
+      // If helper returned 0,0 without advancing (pool exhaustion), break
+      if u + t == 0 && poolRemaining == 0:
+        break
+      if u + t == 0:
+        // Helper may have advanced (legit empty day) or not (retryable).
+        // processUserSideDay documents which; if no advance and day still
+        // needs pay, break to retry. If advanced, continue.
+        ;
       userTotal += u
       treasuryTotal += t
-      poolRemaining -= (u + t)   // REQUIRED debit before next day
-      // assert poolRemaining does not underflow (helper already min'd)
-
+      poolRemaining -= (u + t)
       daysUsed += 1
 
-  // Transfer userTotal / treasuryTotal at facet layer (existing pattern)
-  // Facet must also enforce final transfer ≤ initial poolAvail (belt-and-braces)
+  // Transfer EXACTLY userTotal / treasuryTotal — no post-mutation scale.
+  // poolRemaining already enforced every day; facet must not re-truncate.
   return (userTotal, treasuryTotal)
 ```
 
@@ -939,6 +941,9 @@ function previewForUserEntries(user) -> userTotal:
     // Initialize simNext for ALL e in E (including forfeit)
     for e in E:
       simNext[e] = nextDay(e)   // rewardEntryClaimNextDay / startDay; read-only
+    // simPoolRemaining: same initial pool as claim would use (rev 14)
+    simPoolRemaining = availableInteractionPool()
+    // simLoanPaid[loanId][side] seeds from durable loanSideRewardPaidVpfi
 
     while daysUsed < daysBudget:
       // Day order = claim: min simNext over full E (forfeit prefixes included)
@@ -953,49 +958,50 @@ function previewForUserEntries(user) -> userTotal:
         // previewable as Legacy/uncapped — break (under-report) rather than
         // invent Legacy product with T=max. Mutating claim would revert.
         break
+      if simPoolRemaining == 0:
+        break   // match claim: stop; do not invent uncapped later days
       if !postCutover(d) && (mode == CapMode.LegacyEthRatio || mode == 0):
-        // View twin of applyLegacyDay: per-entry min(Δ,T) product for day d
+        // View twin of applyLegacyDay — also pool-clamped
+        dayUser = 0
         for e in E with simNext[e]==d:
           if !(e.forfeited || terminalForfeit(e)):
-            userTotal += legacyDaySliceView(e, d)
-          simNext[e] = d + 1              // advance forfeit too
+            dayUser += legacyDaySliceView(e, d)
+        dayUser = min(dayUser, simPoolRemaining)
+        userTotal += dayUser
+        simPoolRemaining -= dayUser
+        for e in E with simNext[e]==d:
+          simNext[e] = d + 1
       else:
-        // ShareOfPool — JOINT remaining-budget view (same transferSet as claim)
         transferSet = [ e in E | simNext[e]==d && covers(e,d) && readyToTransfer(e) ]
-        // readyToTransfer = claimable clean OR forfeited (same as claim)
-
         C = dayUserSideCapVpfi18[d]
-        paid = userSideDayPaidVpfi[user][side][d]   // durable — prior claims/sweeps
+        paid = userSideDayPaidVpfi[user][side][d]
         if paid >= C:
-          for e in transferSet: simNext[e] = d + 1   // 0-slice advance ALL in set
+          for e in transferSet: simNext[e] = d + 1
         else:
-          // Rev 10/11 — mirror claim: clamp by loan-side remaining (sim state)
-          // simLoanPaid[loanId] starts from durable loanSideRewardPaidVpfi and
-          // advances as this preview walks days (view-only twin of claim charges).
-          // Saturating subtract — NEVER uint underflow:
-          //   rem = capEff > simPaid ? capEff - simPaid : 0
+          // simLoanPaid keyed by (loanId, side) — NOT loanId alone (rev 14)
           rawPay = 0
           for e in transferSet:
-            rem = loanSideRemainingSaturated(e.loanId, side, simLoanPaid[e.loanId])
+            rem = loanSideRemainingSaturated(
+              e.loanId, side, simLoanPaid[e.loanId][side])
             cEff[e] = min(contrib(e,side,d), rem)
             rawPay += cEff[e]
           if rawPay == 0:
             for e in transferSet: simNext[e] = d + 1
           else:
-            budget = min(rawPay, C - paid)
+            budget = min(rawPay, C - paid, simPoolRemaining)
             slices = proRataFloorWithCapacityBoundedDust(budget, cEff, transferSet)
             for e in transferSet:
-              // ONLY difference vs claim user sum:
               if !(e.forfeited || terminalForfeit(e)):
                 userTotal += slices[e]
-              simLoanPaid[e.loanId] += slices[e]   // all slices, incl. forfeit
-              simNext[e] = d + 1          // advance forfeit entries too
+              simLoanPaid[e.loanId][side] += slices[e]
+              simNext[e] = d + 1
+            simPoolRemaining -= Σ slices[e]
       daysUsed += 1
 
   return userTotal
 ```
 
-**Preview/claim parity (rev 10):** after PR-5c, preview **must** use the same `cEff` / capacity-bounded dust / simulated `loanSidePaid` walk as claim. Violating this breaks `preview ≤ claim` when loan-side ≪ D1 (worked example ~4 vs ~2016).
+**Preview/claim parity (rev 10/14):** after PR-5c, preview **must** use the same `cEff` / capacity-bounded dust / simulated `loanSidePaid[(loanId,side)]` / **`simPoolRemaining`** walk as claim. Violating this breaks `preview ≤ claim` when loan-side ≪ D1 or pool is tight.
 
 **Preview properties (frozen):**
 
@@ -1169,12 +1175,13 @@ Live path is **Base-orchestrated**: `RewardRemittanceFacet.remitRewardBudget` on
 
 | Option | Status | Rule |
 | --- | --- | --- |
-| **B (required)** | **Adopt** | Mirror→Base report carries **per-loan (or per-entry) headroom commitments** for day D on each side — not only aggregates. Base `chainRewardBudgetForDay` uses `min(uncappedSlice, Σ commitments)`. After remit, Base (or mirror via ack) increments **`loanSideRewardRemitted[loanId][side]`** by the **attributed** amount. |
-| **B-attribution** | **Required with B** | If day budget is truncated (uncappedSlice or global cap < Σ commitments), attribute pro-rata by commitment weight (or deterministic loanId order) so each `remitted_L` is unambiguous. **Forbidden:** aggregate-only headroom with no attribution rule. |
+| **B (required)** | **Adopt** | Mirror→Base report carries **per-loan (or per-entry) headroom commitments** for day D on each side — not only aggregates. Base `chainRewardBudgetForDay` uses `min(uncappedSlice, Σ commitments)`. After remit, Base **and mirror** increment **`loanSideRewardRemitted[loanId][side]`** by the **attributed** amount. |
+| **B-attribution** | **Required with B** | If day budget is truncated, attribute pro-rata by commitment weight (or deterministic loanId order). **Forbidden:** aggregate-only headroom with no attribution rule. |
+| **Mirror enforcement (rev 14)** | **Required** | Remitted VPFI is **not** a free shared pot for any claim. Mirror claim path enforces `paid_L ≤ remitted_L` (or holds attributed remits in per-loan escrow until claim). Prevents loan A draining loan B’s attributed budget while Base blocks B’s future remits. |
 | **A** | **Rejected** Phase-1 | Mirror pull of Base pool without new message + Base debit handler. |
-| **Forbidden** | — | Invent headroom from numeraire-only v1 reports; aggregate headroom without remitted_L attribution. |
+| **Forbidden** | — | Invent headroom from numeraire-only v1 reports; aggregate headroom without remitted_L attribution; shared mirror balance without per-loan remitted caps. |
 
-PR-2/PR-5c must ship report extension **B + attribution** before joint cutover uses loan-side remittance bounds on mirrors.
+PR-2/PR-5c must ship report extension **B + attribution + mirror remitted enforcement** before joint cutover uses loan-side remittance bounds on mirrors.
 
 #### Migration from ETH cap / dual pipe / storage
 
@@ -1264,7 +1271,7 @@ On a **10,000** principal / **30d** / **10% APR** / list LIF **0.2%** (= **20**)
 | `REWARD_HAIRCUT_DEFAULT_BPS` | **200 (2%)** | 0–2000 | **New** `cfgRewardHaircutBps` — `m_reward` in loan-side cap | 0 ⇒ default 200 |
 | `DISCOUNT_CAP_BPS` | **5000 (50%)** | ≤ 5000 | hard constant or config | — |
 | `FULL_TARIFF_BONUS_BPS` | **1000 (10%)** | 0–2000 | constant or config | — |
-| `cfgFeeEntitlementEnabled` | **true** | bool | `setFeeEntitlementEnabled` | C1 |
+| `cfgFeeEntitlementEnabled` | **false until PR-5c (or rewards-dark)**; then **true** for mainnet Full (C1) | bool | `setFeeEntitlementEnabled` | **Rev 14:** compile/default **false**; flip true only when loan-side cap live or rewards disabled |
 | `cfgLifMatcherFeeBps` | 100 | ≤ 5000 | existing | existing |
 | Hold-tier thresholds / discounts | 10/15/20/24% | existing | ConfigFacet | existing |
 | LIF BPS / yield fee BPS | **20 / 200** (0.2% / 2%) | existing knobs | **Must change compiled zero-sentinel defaults** from 10/100 → 20/200 (see fee-default migration) | rev 8/9 freeze |
@@ -1282,13 +1289,17 @@ struct FeeEntitlementState {
     uint8 lenderMode;         // 0 None, 1 HoldOnly, 2 Full
     uint128 tariffPaidBorrower; // 0 or C*
     uint128 tariffPaidLender;   // 0 or C*
-    uint128 cStar;              // notional C* (loan-level; drives reward cap)
+    uint128 cStar;              // notional C* at open (VPFI 1e18)
+    uint32 openDays;            // durationDays stamped at open (rev 14 — cap proration)
+    uint128 loanSideRewardCapOpen; // optional cache of ½×cStar×(1−m); or recompute from cStar
 }
 mapping(uint256 => FeeEntitlementState) feeEntitlementByLoanId;
 
 // Loan-side reward remaining budget (replaces #1008 per-entry ETH cap on new loans)
 // side: 0 = lender, 1 = borrower
 mapping(uint256 => mapping(uint8 => uint256)) loanSideRewardPaidVpfi; // loanId => side => paid
+// Base + each mirror: attributed remitted budget (rev 12/14)
+mapping(uint256 => mapping(uint8 => uint256)) loanSideRewardRemitted; // loanId => side => remitted
 
 // D1 — append-only at LibVaipakam.Storage tail
 enum CapMode { LegacyEthRatio, ShareOfPool } // uint8: 0 / 1
@@ -1455,7 +1466,7 @@ Borrower T4 Full, lender HoldOnly T4: LIF **13.20**, yield fee **~1.25**, absorb
 | Cum-ready + entry preview | Outer SM `cumCursor ≥ d` or break; preview worklist = claim; re-entrant sweep; fail-closed mode post-`D*` |
 | Entitlement enable | `ConfigFacet.setFeeEntitlementEnabled(bool)` |
 | Quote | `quoteFeeEntitlementTariff(asset, principal, durationDays)` → returns `C*` (party-independent notional) |
-| **Per-party Full auth** | Offer/intent: `lenderFull` (lender-signed). Accept/match: `borrowerFull` + optional `allowFullDowngrade` (default false). **Not** a single shared `useFeeEntitlement` bool that can drain the counterparty. |
+| **Per-party Full auth** | Offer/intent: `lenderFull` + **`maxCStar`** (lender-signed). Accept/match: `borrowerFull` + **`maxCStar`** (even same-tx) + optional `allowFullDowngrade` (default false). Kill switch off → failed Full. |
 
 ### Facet / library touch list + grep checklist (Issue 17)
 
@@ -1559,11 +1570,11 @@ See Parameter Table storage layout. Migration: existing loans `mode=None` or inf
 
 | Flag | Rule |
 | --- | --- |
-| `feeEntitlementEnabled` | Gates **Full** tariff path. Owner C1 wants Enabled on mainnet — **but only when PR-5c loan-side caps are live** (or rewards are dark). |
-| **Full enablement gate** | **Forbidden** to set `feeEntitlementEnabled=true` in production while rewards use legacy #1008 without loan-side `½×C*×0.98`. Worked wash case: legacy rewards can exceed absorbed VPFI. Order: PR-5c (or rewards-dark) **before** Full default-on. |
+| `feeEntitlementEnabled` | Gates **Full** tariff path. **Default false** (rev 14) until PR-5c live or rewards dark; then C1 allows mainnet **true**. |
+| **Full enablement gate** | **Forbidden** to ship `feeEntitlementEnabled=true` while rewards use legacy #1008 without loan-side `½×C*×0.98`. Parameter table default must match (not unconditional true). |
 | HoldOnly hybrid | Always on when hybrid LIF ships (PR-4); independent of Full flag. |
 
-Runtime disable remains a kill switch. **Package ship order (C3):** HoldOnly (PR-4) then Full (PR-5b) **with** loan-side cap (PR-5c) before Full is user-visible/Enabled.
+Runtime disable remains a kill switch. **Package ship order (C3):** HoldOnly (PR-4) → PR-5c loan-side (or rewards-dark) → Full (PR-5b) with flag **true**.
 
 ---
 
@@ -1624,7 +1635,7 @@ Runtime disable remains a kill switch. **Package ship order (C3):** HoldOnly (PR
 
 | ID | Decision |
 | --- | --- |
-| **C1** | Mainnet `feeEntitlementEnabled` default = **Enabled**. |
+| **C1** | Mainnet `feeEntitlementEnabled` **Enabled only after PR-5c (or rewards-dark)**; compile default **false** until then (rev 14). |
 | **C2** | `USER_SIDE_SHARE_CAP` default **2000 bps (20%)**. |
 | **C3** | Ship **Full package together** (PR-4 → PR-5). |
 | **C5** | **Double absorption** — each Full party pays `C*`. |
@@ -1785,6 +1796,18 @@ PR plan assumes interaction rewards remain enabled only if: claim-on-close paths
 
 ---
 
+### Rev 14 changelog (Codex r6 — post-#1294 late P2s)
+
+- **Pool exhaustion:** break claim loop when `poolRemaining==0`; do **not** advance cursors on pool-only zero (retryable).  
+- **No post-hoc pool scale** after paid-map / cursor mutations; one shared `poolRemaining` across legacy + ShareOfPool.  
+- **Legacy `applyLegacyDay` returns (u,t)** and debits pool.  
+- **Preview:** `simPoolRemaining` + `simLoanPaid[loanId][side]`.  
+- **`maxCStar` required for all Full**, including same-tx borrower.  
+- **Kill switch off** = failed Full (unless allowFullDowngrade).  
+- **`cfgFeeEntitlementEnabled` default false** until PR-5c / rewards-dark.  
+- **Storage:** `openDays` (+ optional `loanSideRewardCapOpen`) with `cStar`.  
+- **Mirror enforces per-loan remitted** budgets / escrow (not free shared pot).
+
 ### Rev 13 changelog (Codex r5 design-doc findings)
 
 - **Canonical claim SM** debits `poolRemaining` after each `processUserSideDay`.  
@@ -1897,4 +1920,4 @@ PR plan assumes interaction rewards remain enabled only if: claim-on-close paths
 
 ---
 
-*End of design document (rev 13).*
+*End of design document (rev 14).*
