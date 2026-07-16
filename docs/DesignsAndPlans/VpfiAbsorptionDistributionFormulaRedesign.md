@@ -5,7 +5,7 @@
 | **Title** | VPFI Absorption & Distribution Formula Redesign |
 | **Author** | Vaipakam Developer Team |
 | **Date** | 2026-07-16 |
-| **Status** | **Draft — design proposal (rev 12)** — Codex r1–r4 findings folded; pending re-review / owner ratification |
+| **Status** | **Draft — design proposal (rev 13)** — Codex r1–r5 findings folded; pending re-review / owner ratification |
 | **Related** | `#687-A/B`, `#694`, `#1002` / Card-C rewards hardening, `#1008` / S13 day cap, `#1203` (E-1), `#1217` / `#1222` (recycling governor), TokenomicsTechSpec §§4–9 |
 | **Prior art (binding substrate)** | [`VpfiRecyclingBalanceGovernorDesign.md`](VpfiRecyclingBalanceGovernorDesign.md) (RATIFIED 2026-07-15), [`VpfiLenderDiscountPegDecouplingDesign.md`](VpfiLenderDiscountPegDecouplingDesign.md) (E-1), [`VPFITokenomicsRedesignResearch.md`](VPFITokenomicsRedesignResearch.md) §9 |
 
@@ -372,7 +372,8 @@ No separate `notionalLifVpfiSchedule`. No fee-value conversion.
 // Worked example: 20 USDC list LIF → baseLifListNumeraire18 ≈ 20e18
 //   tYears = 30/365, K = 5e18 → C* ≈ 8.22e18 VPFI wei.
 // USDC-6, DAI-18, WETH all normalize through numeraire first → same economics
-// for same $ list LIF. Feed failure ⇒ Full unavailable (HoldOnly/None OK).
+// for same $ list LIF. Feed failure: see Illiquid/oracle (rev 12) — reward-eligible
+// originations need numeraire for cStar; not "HoldOnly/None always OK".
 
 // Each Full party pays the SAME C* from their own vault (double absorption):
 //   if borrowerMode == Full: pull C_star from borrower vault → bucket
