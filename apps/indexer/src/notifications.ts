@@ -21,10 +21,14 @@
  *   - Truncation-free: this is a bounded per-scan derivation (a scan
  *     has a bounded log count), not a capped hint.
  *
- * This PR ships the five core loan-lifecycle rows. Offer-matched,
- * periodic-interest, the richer terminal variants, the time-based
- * calendar rows (maturity / grace) and the liquid-only HF-band rows are
- * follow-ups — each source event is consciously deferred in
+ * This PR ships every loan-lifecycle TERMINAL/repay row (matched,
+ * partial repay, and each distinct repaid / defaulted / liquidated /
+ * internal-match close-out — the contracts emit several of these under
+ * their own terminal event with no generic LoanRepaid/LoanDefaulted
+ * companion, so each is mapped explicitly). Offer-matched,
+ * periodic-interest, secondary-market transfers, the time-based calendar
+ * rows (maturity / grace) and the liquid-only HF-band rows are follow-ups
+ * — each source event is consciously deferred in
  * `NOTIF_DELIBERATELY_NOT_HANDLED` (the coverage guardrail enforces that
  * every loan/offer state-change event is mapped OR allowlisted).
  */
@@ -36,6 +40,7 @@ export const NOTIF_KINDS = [
   'partial_repay',
   'loan_repaid',
   'loan_defaulted',
+  'internal_matched',
 ] as const;
 export type NotifKind = (typeof NOTIF_KINDS)[number];
 
@@ -82,6 +87,23 @@ export const EVENT_NOTIF_MAP: Readonly<Record<string, NotifMapping>> = {
   // allowlisted below — the loan stays active there.)
   HFLiquidationTriggered: { kind: 'loan_defaulted', recipients: 'both' },
   LiquidationDiscounted: { kind: 'loan_defaulted', recipients: 'both' },
+  // Terminal repayment close-outs that flip the loan to Repaid inline and
+  // emit ONLY their own event (dedicated indexer branches, verified: no
+  // LoanRepaid companion in PrecloseFacet / RefinanceFacet /
+  // LibSwapToRepayIntentSettlement) — Codex #1292 r5. Without these
+  // mappings a preclose / offset / refinance / intent-fill full repayment
+  // produces no inbox row.
+  SwapToRepayIntentFilled: { kind: 'loan_repaid', recipients: 'both' },
+  LoanPreclosedDirect: { kind: 'loan_repaid', recipients: 'both' },
+  OffsetCompleted: { kind: 'loan_repaid', recipients: 'both' },
+  LoanRefinanced: { kind: 'loan_repaid', recipients: 'both' },
+  // Internal-match close (RiskMatchLiquidationFacet) — a MULTI-loan event
+  // (loanIdA/B/C) that terminalizes each involved leg with no per-leg
+  // LoanRepaid/LoanDefaulted companion (Codex #1292 r5). Handled specially
+  // in `loanIdsOf` (the triple) — both parties of each closed leg are
+  // notified to check the Claim Center, where the exact terminal status
+  // and any residual are re-verified on chain.
+  InternalMatchExecuted: { kind: 'internal_matched', recipients: 'both' },
 };
 
 /**
@@ -100,9 +122,6 @@ export const NOTIF_DELIBERATELY_NOT_HANDLED: Readonly<Record<string, string>> = 
   OfferAccepted: 'PR2 — "your offer was accepted" to the offer creator',
   PeriodicInterestSettled: 'PR2 — periodic-interest settled row to the lender',
   LoanSettled: 'PR2 — folded into the claim-available row precision pass',
-  LoanPreclosedDirect: 'PR2 — richer terminal variant (direct preclose)',
-  LoanRefinanced: 'PR2 — richer terminal variant (refinance)',
-  OffsetCompleted: 'PR2 — richer terminal variant (offset)',
   LoanSaleCompleted: 'PR2 — secondary-market sale completed → new/old lender',
   LoanSold: 'PR2 — secondary-market sale → both sides',
   LoanObligationTransferred: 'PR2 — obligation transfer → both sides',
@@ -123,7 +142,6 @@ export const NOTIF_DELIBERATELY_NOT_HANDLED: Readonly<Record<string, string>> = 
   OffsetOfferCreated: 'own action — offset offer creation',
   LoanSaleOfferLinked: 'internal linkage breadcrumb — no user meaning',
   CollateralAdded: 'own action — the borrower topped up their own collateral',
-  InternalMatchExecuted: 'matcher-path bookkeeping — parties see loan_matched via LoanInitiated',
   LoanFallbackPending: 'transient — status stays active through the fallback episode',
   LoanCuredFromFallback: 'transient — pairs with LoanFallbackPending',
   LoanLiquidated: 'declared but never `emit`ted (DefaultedFacet.sol) — the time-based liquidation close-out sets the NFT LoanLiquidated status and emits LoanDefaulted (mapped), so a liquidation already produces a loan_defaulted row (Codex #1292 r3)',
@@ -146,7 +164,6 @@ export const NOTIF_DELIBERATELY_NOT_HANDLED: Readonly<Record<string, string>> = 
   SwapToRepayIntentCommitted: 'own action — the borrower committed a swap intent',
   SwapToRepayIntentCancelled: 'own action — the borrower cancelled their swap intent',
   SwapToRepayIntentForceCancelled: 'keeper force-cancel — no distinct user-facing state',
-  SwapToRepayIntentFilled: 'swap-fill mechanics — the repay terminal row covers the user',
 };
 
 /** The minimal source-log shape this module needs (structurally
@@ -210,12 +227,30 @@ function recipientFor(
   return who;
 }
 
-/** Read `loanId` from a decoded event's args (bigint or number). */
-function loanIdOf(args: Record<string, unknown>): number | null {
-  const raw = args.loanId;
+/** Coerce a single arg to a positive loan id (bigint/number). */
+function toLoanId(raw: unknown): number | null {
   if (typeof raw === 'bigint') return Number(raw);
   if (typeof raw === 'number' && Number.isFinite(raw)) return raw;
   return null;
+}
+
+/**
+ * The loan id(s) a notification-worthy event concerns. Almost every event
+ * carries a single `loanId`; `InternalMatchExecuted` is a MULTI-loan event
+ * (loanIdA/B/C, up to three legs — the third is 0 for a two-way match), so
+ * it fans out to one notification per closed leg (Codex #1292 r5).
+ */
+export function loanIdsOf(
+  eventName: string,
+  args: Record<string, unknown>,
+): number[] {
+  if (eventName === 'InternalMatchExecuted') {
+    return [args.loanIdA, args.loanIdB, args.loanIdC]
+      .map(toLoanId)
+      .filter((n): n is number => n != null && n > 0);
+  }
+  const single = toLoanId(args.loanId);
+  return single != null ? [single] : [];
 }
 
 interface NotifRow {
@@ -247,22 +282,23 @@ export function planNotifications(
   for (const log of logs) {
     const mapping = EVENT_NOTIF_MAP[log.eventName];
     if (!mapping) continue;
-    const loanId = loanIdOf(log.args);
-    if (loanId == null) continue;
-    const parties = partiesByLoan.get(loanId);
     const sides: ('lender' | 'borrower')[] =
       mapping.recipients === 'both'
         ? ['lender', 'borrower']
         : [mapping.recipients];
     const blockNumber = Number(log.blockNumber);
     const createdAt = blockTimestamps.get(log.blockNumber) ?? nowSec;
-    // Self-dedup: a wallet on BOTH sides of its own loan yields the same
-    // (recipient, event) dedup_key twice → INSERT OR IGNORE collapses it.
+    // Self-dedup within this event: a wallet on BOTH sides of the same
+    // loan yields one dedup_key twice → collapse. The dedup_key includes
+    // loanId so a MULTI-loan event (InternalMatchExecuted) can't collide
+    // its legs (same block+logIndex, different loan).
     const seen = new Set<string>();
-    for (const side of sides) {
+    for (const loanId of loanIdsOf(log.eventName, log.args)) {
+      const parties = partiesByLoan.get(loanId);
+      for (const side of sides) {
       const recipient = recipientFor(parties, side);
       if (!recipient) continue;
-      const dedupKey = `${chainId}:${recipient}:${mapping.kind}:${blockNumber}:${log.logIndex}`;
+      const dedupKey = `${chainId}:${recipient}:${mapping.kind}:${loanId}:${blockNumber}:${log.logIndex}`;
       if (seen.has(dedupKey)) continue;
       seen.add(dedupKey);
       rows.push({
@@ -276,6 +312,7 @@ export function planNotifications(
         createdAt,
         dedupKey,
       });
+      }
     }
   }
   return rows;
@@ -298,7 +335,7 @@ export async function materializeNotifications(
   if (worthy.length === 0) return 0;
 
   const loanIds = [
-    ...new Set(worthy.map((l) => loanIdOf(l.args)).filter((n): n is number => n != null)),
+    ...new Set(worthy.flatMap((l) => loanIdsOf(l.eventName, l.args))),
   ];
   if (loanIds.length === 0) return 0;
 

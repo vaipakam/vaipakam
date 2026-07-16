@@ -119,6 +119,32 @@ describe('planNotifications', () => {
     expect(rows).toHaveLength(1);
   });
 
+  it('fans an internal-match close out to every leg (multi-loan event)', () => {
+    // InternalMatchExecuted carries loanIdA/B/C; a two-way match sets C=0.
+    const rows = planNotifications(
+      84532,
+      [
+        {
+          eventName: 'InternalMatchExecuted',
+          args: { loanIdA: 4n, loanIdB: 5n, loanIdC: 0n },
+          blockNumber: 100n,
+          logIndex: 0,
+        },
+      ],
+      new Map([
+        [4, parties(LENDER, BORROWER)],
+        [5, parties(BUYER, BORROWER)],
+      ]),
+      new Map(),
+      1,
+    );
+    // Loan 4 → LENDER + BORROWER; loan 5 → BUYER + BORROWER; loan 0 skipped.
+    expect(rows.map((r) => r.loanId).sort()).toEqual([4, 4, 5, 5]);
+    expect(rows.every((r) => r.kind === 'internal_matched')).toBe(true);
+    // A shared party across legs still gets one row PER leg (distinct loanId).
+    expect(rows.filter((r) => r.recipient === BORROWER).map((r) => r.loanId).sort()).toEqual([4, 5]);
+  });
+
   it('ignores unmapped events and unknown loans', () => {
     expect(
       planNotifications(84532, [log('OfferCreated', 1)], new Map(), new Map(), 1),

@@ -11,11 +11,14 @@ follow-up frontend PR.
 A new `notifications` table (migration 0038) holds one row per
 (recipient wallet, notification). On every ingest scan the indexer
 derives inbox rows for the loan-lifecycle events that concern a wallet —
-loan matched, partial repayment, repaid (including the swap-to-repay
-path), and defaulted (including backstop absorption, time-based
-liquidation, and HF-based liquidation — each of which the contracts emit
-under its own terminal event rather than a generic default). The
-recipient resolves
+loan matched, partial repayment, every repayment close-out (ordinary
+repay, swap-to-repay, swap-to-repay-intent fill, direct preclose, offset,
+and refinance), every default/liquidation close-out (time-based default,
+backstop absorption, and HF-based liquidation), and the internal-match
+close (which fans out to each of the matched loan legs). Several of these
+the contracts emit under their own terminal event with no generic
+LoanRepaid/LoanDefaulted companion, so each is mapped explicitly rather
+than assumed covered. The recipient resolves
 to the CURRENT position-NFT holder at materialization time (the design's
 ownership discipline): a secondary-market buyer who now holds the claim
 is notified, while an exited seller and a burned/cash-satisfied side

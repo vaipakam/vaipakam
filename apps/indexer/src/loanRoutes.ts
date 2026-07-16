@@ -1838,6 +1838,12 @@ function notificationToJson(row: NotificationRow) {
     eventKind: row.event_kind,
     data,
     createdAt: row.created_at,
+    // Chain-order key — the client tracks read/unread as a per-wallet
+    // last-seen cursor, which must be the SAME (block, logIndex) key the
+    // feed orders + paginates by; `createdAt` alone can't order (Codex
+    // #1292 r5).
+    blockNumber: row.block_number,
+    logIndex: row.log_index,
   };
 }
 
