@@ -55,6 +55,28 @@ export interface PushHints {
   truncated: boolean;
 }
 
+/**
+ * Union extra loan ids (the calendar sweep's reminded loans, #1213 PR 2 /
+ * Codex #1298 r3) into an existing hint set, preserving the completeness
+ * contract: exceed HINT_CAP → truncated (clients go coarse — the safe
+ * direction), never a silent drop. Pure + exported for the unit test.
+ */
+export function mergeHintLoanIds(hints: PushHints, extraLoanIds: number[]): PushHints {
+  if (extraLoanIds.length === 0) return hints;
+  const union = [...new Set([...hints.loanIds, ...extraLoanIds])];
+  return {
+    ...hints,
+    loanIds: union.slice(0, HINT_CAP),
+    truncated: hints.truncated || union.length > HINT_CAP,
+  };
+}
+
+/** An empty (complete) hint set — the quiet caught-up path's base when
+ *  only calendar rows minted this tick. */
+export function emptyHints(): PushHints {
+  return { loanIds: [], offerIds: [], links: [], truncated: false };
+}
+
 const LOAN_ID_ARGS = ['loanId', 'loanIdA', 'loanIdB', 'loanIdC'] as const;
 const OFFER_ID_ARGS = ['offerId', 'lenderOfferId', 'borrowerOfferId', 'buyOfferId'] as const;
 

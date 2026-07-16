@@ -202,12 +202,21 @@ export async function maybeRefreshProtocolConfig(opts: {
       return;
     }
     const row = await opts.env.DB.prepare(
-      `SELECT updated_at FROM protocol_config WHERE chain_id = ?`,
+      `SELECT updated_at, grace_buckets_json FROM protocol_config WHERE chain_id = ?`,
     )
       .bind(opts.chainId)
-      .first<{ updated_at: number }>();
+      .first<{ updated_at: number; grace_buckets_json: string | null }>();
     const now = Math.floor(Date.now() / 1000);
+    // #1213 PR 2 (Codex #1298 r3) — a fresh pre-0039 row has
+    // `grace_buckets_json IS NULL`, and the calendar sweep would fall
+    // back to the DEFAULT schedule until the 6h backstop — wrong on a
+    // chain where governance buckets are set. Force the read once so
+    // the column is populated on the first near-head tick after the
+    // migration lands (after which it is always non-null: the read
+    // stores '[]' for the no-buckets state).
+    const graceColumnUnpopulated = row !== null && row.grace_buckets_json === null;
     if (
+      !graceColumnUnpopulated &&
       !shouldRefreshConfig({
         sawConfigEvent: saw,
         rowUpdatedAt: row?.updated_at ?? null,
@@ -235,22 +244,47 @@ export async function maybeRefreshProtocolConfig(opts: {
       // grace windows from this snapshot column (empty array = the
       // compile-time default schedule, the retail deploy's state). The
       // refresh already triggers on `GraceBucketsUpdated`.
-      opts.client.readContract({
-        address: opts.diamond,
-        abi: DIAMOND_ABI_VIEM,
-        functionName: 'getGraceBuckets',
-        blockNumber: opts.blockNumber,
-      }) as Promise<readonly { maxDurationDays: bigint; graceSeconds: bigint }[]>,
+      //
+      // Isolated failure handling (Codex #1298 r3): this one read must
+      // never sink the bundle/flags refresh.
+      //   - MISSING SELECTOR (a deployed diamond that predates the
+      //     getter): the getter and setter ship in the same ConfigFacet
+      //     cut, so no getter ⇒ no setter ⇒ buckets cannot be set ⇒ the
+      //     empty array is DEFINITIVE, not a guess.
+      //   - any other (transient) failure: `null` → the upsert PRESERVES
+      //     the existing column (COALESCE below) rather than clobbering
+      //     real buckets with '[]'; if the column was never populated it
+      //     stays NULL and the unpopulated-column force-refresh retries
+      //     next tick.
+      (
+        opts.client.readContract({
+          address: opts.diamond,
+          abi: DIAMOND_ABI_VIEM,
+          functionName: 'getGraceBuckets',
+          blockNumber: opts.blockNumber,
+        }) as Promise<readonly { maxDurationDays: bigint; graceSeconds: bigint }[]>
+      ).catch((err: unknown) => {
+        const msg = String(err);
+        if (/function.*(does not exist|not found)|FunctionNotFound/i.test(msg)) {
+          return [] as const; // pre-getter diamond — definitively no buckets
+        }
+        // eslint-disable-next-line no-console
+        console.error(
+          `[configSnapshot] getGraceBuckets read failed for chain ${opts.chainId} (keeping previous value)`,
+          err,
+        );
+        return null;
+      }),
     ]);
 
     await opts.env.DB.prepare(
       `INSERT INTO protocol_config
          (chain_id, bundle_json, master_flags_json, grace_buckets_json, source_block, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?)
+       VALUES (?1, ?2, ?3, ?4, ?5, ?6)
        ON CONFLICT (chain_id) DO UPDATE SET
          bundle_json = excluded.bundle_json,
          master_flags_json = excluded.master_flags_json,
-         grace_buckets_json = excluded.grace_buckets_json,
+         grace_buckets_json = COALESCE(excluded.grace_buckets_json, protocol_config.grace_buckets_json),
          source_block = excluded.source_block,
          updated_at = excluded.updated_at
        WHERE excluded.source_block >= protocol_config.source_block`,
@@ -259,7 +293,7 @@ export async function maybeRefreshProtocolConfig(opts: {
         opts.chainId,
         serializeTuple(bundle),
         JSON.stringify([flags[0], flags[1], flags[2]]),
-        serializeTuple(graceBuckets),
+        graceBuckets === null ? null : serializeTuple(graceBuckets),
         Number(opts.blockNumber),
         now,
       )

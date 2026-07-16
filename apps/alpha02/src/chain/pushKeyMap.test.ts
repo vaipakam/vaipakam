@@ -96,8 +96,16 @@ describe('IndexerPushSync KEY_MAP (#1131 desk roots)', () => {
         'activityParticipantIds',
         'vaultAssets',
       ],
+      // #1213 PR 2 — a calendar reminder row (maturity T-7d/T-1d, grace
+      // entered) has NO on-chain log, so no other key fires on the tick
+      // that mints it; the dedicated key maps to the bell's feed only.
+      'notification.created': ['notifications'],
       'activity.appended': ['activity'],
     });
+  });
+
+  it('calendar reminders reach the bell without a chain event (#1213 PR 2)', () => {
+    expect(KEY_MAP['notification.created']).toEqual(['notifications']);
   });
 
   it('ownership flips dirty every holder-keyed root (RPC read-diet PR 0)', () => {

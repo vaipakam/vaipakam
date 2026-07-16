@@ -56,6 +56,8 @@ import { maybeRefreshProtocolConfig } from './configSnapshot';
 import {
   collectPushHints,
   pushHintStats,
+  mergeHintLoanIds,
+  emptyHints,
   HINT_CAP,
   type PushHints,
 } from './pushHints';
@@ -64,7 +66,10 @@ import {
   MARKET_SWEEP_CURSOR_KIND,
 } from './marketSummary';
 import { materializeNotifications } from './notifications';
-import { sweepCalendarNotifications } from './calendarNotifications';
+import {
+  sweepCalendarNotifications,
+  EMPTY_SWEEP,
+} from './calendarNotifications';
 
 /** Resolve a chain's deployBlock from the consolidated deployments
  *  JSON — the indexer's first-run fallback when no cursor exists. */
@@ -183,6 +188,14 @@ export interface ChainIndexerResult {
    *  push key so own-position / claimables views learn an ownership flip
    *  from the push rail instead of a block-driven refetch. */
   ownershipTransfers?: number;
+  /** #1213 PR 2 (Codex #1298 r3) — calendar reminder rows minted this
+   *  tick by the TIME-driven sweep (maturity T-7d / T-1d, grace
+   *  entered). These rows have no on-chain log, so no event-derived
+   *  count covers them; this field feeds the `notification.created`
+   *  push key so the bell learns of a reminder from the push rail
+   *  instead of the 180 s poll. Optional so error/early-return paths
+   *  stay untouched (absent reads as 0). */
+  calendarNotifications?: number;
   /** RPC read-diet PR D (design §4.2.2) — bounded affected-id hints +
    *  causative linkage for this scan's row mutations, truncation-honest
    *  (see pushHints.ts). Optional so error/early-return paths stay
@@ -538,7 +551,7 @@ export async function runChainIndexerForChain(
     // also the CONSISTENT one (D1 reflects everything up to the safe
     // head), so the sweep always runs here; rows stamp the cursor's
     // caught-up position.
-    await sweepCalendarNotifications(
+    const quietCal = await sweepCalendarNotifications(
       env.DB,
       chainId,
       Math.floor(Date.now() / 1000),
@@ -554,6 +567,16 @@ export async function runChainIndexerForChain(
       loanStatusUpdates: 0,
       loanDetailRefreshes: 0,
       activityEvents: 0,
+      // #1213 PR 2 (Codex #1298 r3) — a reminder minted on this quiet
+      // tick must still reach the bell promptly: the count maps to the
+      // `notification.created` push key, and the reminded loan ids ride
+      // the hints so client relevance scoping keeps the refetch on the
+      // wallets that hold those loans.
+      calendarNotifications: quietCal.inserted,
+      hints:
+        quietCal.inserted > 0
+          ? mergeHintLoanIds(emptyHints(), quietCal.loanIds)
+          : undefined,
       skipped: 'caught-up',
     };
   }
@@ -773,9 +796,10 @@ export async function runChainIndexerForChain(
   // chunk-capped busy scan just defers to the tick that catches up; the
   // caught-up quiet path above sweeps every tick thereafter (reminders
   // have hours-to-days of window, so a deferred tick costs nothing).
-  if (scanTo === head) {
-    await sweepCalendarNotifications(env.DB, chainId, now, Number(scanTo));
-  }
+  const cal =
+    scanTo === head
+      ? await sweepCalendarNotifications(env.DB, chainId, now, Number(scanTo))
+      : EMPTY_SWEEP;
 
   // #1245 measurement rail — one structured line per scan that touched
   // anything, so `wrangler tail | grep hint-telemetry` yields the
@@ -822,16 +846,22 @@ export async function runChainIndexerForChain(
     signedOfferUpdates,
     loanEntitlementUpdates: loanStats.entitlementUpdates,
     ownershipTransfers: loanStats.ownershipTransfers,
+    // #1213 PR 2 (Codex #1298 r3) — calendar rows minted at this scan's
+    // tail feed the `notification.created` push key; their loan ids join
+    // the hints below so client relevance scoping still applies.
+    calendarNotifications: cal.inserted,
     // RPC read-diet PR D — one central pass over the SAME decoded log
     // set every handler consumed; a handler can't drift out of a list
     // it doesn't maintain (unrecognised shapes force `truncated`).
     // Stub HEALS mutate rows without a corresponding log in THIS scan
     // (refreshStubOffers/refreshStubLoans), so a heal-carrying result
     // can't claim its id list is complete (Codex #1244 r1).
-    hints:
+    hints: mergeHintLoanIds(
       detailRefreshes > 0 || loanDetailRefreshes > 0
         ? { ...collectPushHints(allLogs), truncated: true }
         : collectPushHints(allLogs),
+      cal.loanIds,
+    ),
   };
 }
 

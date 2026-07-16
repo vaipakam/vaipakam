@@ -4,7 +4,13 @@
  * log in the scan contributed an extractable id.
  */
 import { describe, expect, it } from 'vitest';
-import { collectPushHints, pushHintStats, HINT_CAP } from '../src/pushHints';
+import {
+  collectPushHints,
+  pushHintStats,
+  mergeHintLoanIds,
+  emptyHints,
+  HINT_CAP,
+} from '../src/pushHints';
 
 const log = (eventName: string, args: Record<string, unknown>) => ({ eventName, args });
 
@@ -83,6 +89,35 @@ describe('collectPushHints', () => {
     const h = collectPushHints(logs);
     expect(h.truncated).toBe(true);
     expect(h.loanIds).toHaveLength(HINT_CAP);
+  });
+});
+
+describe('mergeHintLoanIds (#1213 PR 2 calendar rows)', () => {
+  it('unions calendar loan ids into the scan hints, deduped, complete stays complete', () => {
+    const base = collectPushHints([log('LoanRepaid', { loanId: 7n })]);
+    const merged = mergeHintLoanIds(base, [7, 9]);
+    expect(merged.loanIds.sort()).toEqual([7, 9]);
+    expect(merged.truncated).toBe(false);
+  });
+
+  it('returns the input untouched for an empty extra set', () => {
+    const base = collectPushHints([log('LoanRepaid', { loanId: 7n })]);
+    expect(mergeHintLoanIds(base, [])).toBe(base);
+  });
+
+  it('marks truncated (never silently drops) when the union exceeds HINT_CAP', () => {
+    const merged = mergeHintLoanIds(
+      emptyHints(),
+      Array.from({ length: HINT_CAP + 1 }, (_, i) => i),
+    );
+    expect(merged.loanIds).toHaveLength(HINT_CAP);
+    expect(merged.truncated).toBe(true);
+  });
+
+  it('preserves an already-truncated flag', () => {
+    const merged = mergeHintLoanIds({ ...emptyHints(), truncated: true }, [1]);
+    expect(merged.truncated).toBe(true);
+    expect(merged.loanIds).toEqual([1]);
   });
 });
 

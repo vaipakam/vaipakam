@@ -257,17 +257,34 @@ export function planCalendarRows(
   return rows;
 }
 
+/** What a sweep did — the inserted count feeds the push rail's
+ *  `notification.created` invalidation key, and the affected loan ids
+ *  ride the frame hints so client-side relevance scoping keeps the
+ *  refetch on the wallets that hold those loans (Codex #1298 r3). */
+export interface CalendarSweepResult {
+  inserted: number;
+  /** Distinct loan ids of the PLANNED rows when anything inserted —
+   *  a partially-deduped tick may over-hint slightly, which is safe
+   *  (hints only ever ADD relevance, never suppress). */
+  loanIds: number[];
+}
+
+/** Zero-result sweep — also the scanned path's stand-in when the
+ *  full-catch-up gate defers the sweep (exported for chainIndexer). */
+export const EMPTY_SWEEP: CalendarSweepResult = { inserted: 0, loanIds: [] };
+
 /**
  * The sweep: SELECT the maturity-window slice of active loans and insert
- * any due milestone rows. Fail-open — a hiccup logs and returns 0, never
- * wedges the scan (same contract as materializeNotifications).
+ * any due milestone rows. Fail-open — a hiccup logs and returns an empty
+ * result, never wedges the scan (same contract as
+ * materializeNotifications).
  */
 export async function sweepCalendarNotifications(
   db: D1Database,
   chainId: number,
   nowSec: number,
   headBlock: number,
-): Promise<number> {
+): Promise<CalendarSweepResult> {
   try {
     // The effective grace schedule — snapshotted governance buckets
     // (configSnapshot.ts refreshes on GraceBucketsUpdated + the 6h
@@ -341,12 +358,17 @@ export async function sweepCalendarNotifications(
         `[calendarNotifications] sweep hit LIMIT ${SWEEP_LIMIT} on chain ${chainId} — far-out T-7d tail deferred to later ticks`,
       );
     }
-    if (loans.length === 0) return 0;
+    if (loans.length === 0) return EMPTY_SWEEP;
     const rows = planCalendarRows(chainId, loans, nowSec, headBlock, graceBuckets);
-    if (rows.length === 0) return 0;
-    return await insertNotificationRows(db, rows);
+    if (rows.length === 0) return EMPTY_SWEEP;
+    const inserted = await insertNotificationRows(db, rows);
+    if (inserted === 0) return EMPTY_SWEEP; // pure re-tick — nothing new
+    return {
+      inserted,
+      loanIds: [...new Set(rows.map((r) => r.loanId).filter((id): id is number => id !== null))],
+    };
   } catch (err) {
     console.error('[calendarNotifications] sweep failed', err);
-    return 0;
+    return EMPTY_SWEEP;
   }
 }

@@ -69,6 +69,14 @@ describe('invalidationKeysFromResult', () => {
     expect(invalidationKeysFromResult(result({ ownershipTransfers: 1 }))).toEqual([
       'ownership.changed',
     ]);
+    // #1213 PR 2 (Codex #1298 r3) — a calendar reminder minted by the
+    // TIME-driven sweep has NO on-chain log, so every event-derived count
+    // is zero on the tick that mints it (the quiet caught-up path
+    // especially): this count is the ONLY signal that reaches the bell
+    // ahead of the 180 s poll.
+    expect(
+      invalidationKeysFromResult(result({ calendarNotifications: 1 })),
+    ).toEqual(['notification.created']);
   });
 
   it('treats absent optional counts as zero (older result shapes)', () => {
@@ -89,6 +97,7 @@ describe('invalidationKeysFromResult', () => {
         loanDetailRefreshes: 3,
         loanEntitlementUpdates: 2,
         ownershipTransfers: 1,
+        calendarNotifications: 2,
         activityEvents: 9,
       }),
     );
@@ -98,6 +107,7 @@ describe('invalidationKeysFromResult', () => {
       'loan.created',
       'loan.updated',
       'ownership.changed',
+      'notification.created',
       'activity.appended',
     ]);
     expect(new Set(keys).size).toBe(keys.length);
