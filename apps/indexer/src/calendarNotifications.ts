@@ -105,12 +105,63 @@ export function maxGraceSeconds(buckets: GraceBucketJson[] | null): number {
   return Math.max(max, MAX_DEFAULT_GRACE_SECONDS);
 }
 
+/**
+ * The effective schedule as a SQL CASE over `duration_days` — so the
+ * sweep's window predicate is PER-LOAN-grace-aware (Codex #1298 r2): a
+ * loan past its OWN grace end emits nothing and must not occupy a
+ * LIMIT slot (with the default 3d grace, 30d loans 4–30 days overdue
+ * would otherwise fill the soonest-due prefix and starve the emitting
+ * tail on every tick). Every number is validated (`Number.isFinite`)
+ * before interpolation; any malformed bucket falls back to the default
+ * CASE — the same values `effectiveGraceSeconds` computes in JS, so the
+ * SQL filter and the planner can never disagree.
+ */
+export function graceCaseSql(buckets: GraceBucketJson[] | null): string {
+  const DEFAULT_CASE =
+    `CASE WHEN duration_days < 7 THEN 3600 ` +
+    `WHEN duration_days < 30 THEN 86400 ` +
+    `WHEN duration_days < 90 THEN 259200 ` +
+    `WHEN duration_days < 180 THEN 604800 ` +
+    `WHEN duration_days < 365 THEN 1209600 ` +
+    `ELSE 2592000 END`;
+  if (!buckets || buckets.length === 0) return DEFAULT_CASE;
+  const whens: string[] = [];
+  let catchAll: number | null = null;
+  for (const b of buckets) {
+    const maxD = Number(b.maxDurationDays);
+    const g = Number(b.graceSeconds);
+    if (!Number.isFinite(maxD) || !Number.isFinite(g) || maxD < 0 || g < 0) {
+      return DEFAULT_CASE; // malformed snapshot → default (never inject)
+    }
+    if (maxD === 0) {
+      catchAll = g; // the schedule's catch-all marker
+    } else {
+      whens.push(`WHEN duration_days < ${Math.floor(maxD)} THEN ${Math.floor(g)}`);
+    }
+  }
+  // Defensive fallback mirrors effectiveGraceSeconds: a schedule with no
+  // 0-marker uses the last entry's grace as the ELSE.
+  const elseG =
+    catchAll ?? Number(buckets[buckets.length - 1].graceSeconds);
+  if (whens.length === 0) return `${Math.floor(elseG)}`; // constant grace
+  return `CASE ${whens.join(' ')} ELSE ${Math.floor(elseG)} END`;
+}
+
 /** Fail-loud sweep bound: the maturity window (matured within max-grace,
  *  or due within 7d) should hold at most a few hundred loans per chain;
  *  if it ever exceeds this, log the truncation rather than silently
  *  skipping the tail (no-silent-caps rule). The window keeps shifting,
  *  so a transient overflow self-heals on later ticks. */
 const SWEEP_LIMIT = 2000;
+
+/** The log_index stamped on cron rows — a sentinel ABOVE any real
+ *  per-block log index (Codex #1298 r2): the feed and the client's
+ *  read-state cursor order by (block, logIndex, id), and a real log in
+ *  the same head block can carry logIndex > 0 — a cron row at 0 would
+ *  sort OLDER than an already-seen event row and never raise the
+ *  badge. Blocks hold nowhere near a million logs, so the sentinel
+ *  keeps head-stamped cron rows strictly newest within their block. */
+export const CRON_LOG_INDEX = 1_000_000;
 
 /** The slice of a `loans` row the calendar planner needs. */
 export interface CalendarLoanRow {
@@ -196,7 +247,7 @@ export function planCalendarRows(
           loanId: loan.loan_id,
           eventKind: null, // cron-derived — no source event
           blockNumber: headBlock,
-          logIndex: 0,
+          logIndex: CRON_LOG_INDEX, // above any real log in this block
           createdAt: nowSec,
           dedupKey,
         });
@@ -252,6 +303,15 @@ export async function sweepCalendarNotifications(
     // always in the served prefix; only the far-out T-7d tail defers,
     // and those have days of window left before their reminder is
     // late. A loan-id order would starve a fixed tail instead.
+    //
+    // The `maturity + <per-loan grace> > now` leg (Codex #1298 r2) drops
+    // loans already past their OWN grace end IN SQL: they emit nothing,
+    // so letting them occupy LIMIT slots (e.g. 30d loans 4–30 days
+    // overdue under the default 3d grace, which the broad max-grace
+    // look-back otherwise keeps selecting) would starve the emitting
+    // tail. Every selected row is now pre-maturity or inside its own
+    // grace — a LIMIT hit only ever defers rows that WOULD emit.
+    const graceCase = graceCaseSql(graceBuckets);
     const res = await db
       .prepare(
         `SELECT loan_id, lender, borrower, lender_current_owner,
@@ -262,10 +322,16 @@ export async function sweepCalendarNotifications(
             AND is_stub = 0 AND is_sale_vehicle = 0
             AND start_time > 0
             AND (start_time + duration_days * 86400) BETWEEN ? AND ?
+            AND (start_time + duration_days * 86400 + ${graceCase}) > ?
           ORDER BY (start_time + duration_days * 86400) ASC
           LIMIT ${SWEEP_LIMIT}`,
       )
-      .bind(chainId, nowSec - maxGraceSeconds(graceBuckets), nowSec + 7 * DAY)
+      .bind(
+        chainId,
+        nowSec - maxGraceSeconds(graceBuckets),
+        nowSec + 7 * DAY,
+        nowSec,
+      )
       .all<CalendarLoanRow>();
     const loans = res.results ?? [];
     if (loans.length === SWEEP_LIMIT) {

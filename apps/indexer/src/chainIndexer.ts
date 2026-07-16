@@ -739,27 +739,15 @@ export async function runChainIndexerForChain(
   // activity_events / loans writes already landed.
   await materializeNotifications(env.DB, chainId, allLogs, blockTimestamps, now);
 
-  // #1213 PR 2 — the TIME-derived calendar rows (maturity T-7d / T-1d,
-  // grace entered): no event fires when a due date approaches, so a
-  // cron sweep over the maturity window derives them from D1 alone
-  // (covers illiquid loans too — no oracle involved). Fail-open INSIDE;
-  // rows are stamped with this scan's head so they sort as current in
-  // the chain-ordered feed.
-  //
-  // NEAR-HEAD GATE (Codex #1298 r1 P1): during a deep catch-up (cold
-  // start, redeploy, RPC-outage recovery) D1 only reflects blocks up to
-  // `scanTo` while the sweep's clock is wall time — a loan extended or
-  // repaid in the not-yet-scanned blocks would look due/overdue and get
-  // a never-retracted reminder. Skip until the scan is near the head
-  // (same 60-block consistency bound the config snapshot uses); the
-  // caught-up quiet path above then runs the sweep every tick.
-  if (head - scanTo <= 60n) {
-    await sweepCalendarNotifications(env.DB, chainId, now, Number(scanTo));
-  }
-
   // RPC read-diet PR B — keep the display config snapshot current
   // (event-triggered + slow backstop; fail-open INSIDE, so a refresh
   // hiccup can never fail a scan whose cursor already advanced).
+  // Runs BEFORE the calendar sweep (Codex #1298 r2): the sweep derives
+  // grace windows from the snapshot's `grace_buckets_json`, so a scan
+  // that carries `GraceBucketsUpdated` (or the first near-head scan
+  // after a catch-up stale-mark) must land the refreshed schedule
+  // first, or one tick of non-retractable grace reminders would use
+  // the obsolete buckets.
   await maybeRefreshProtocolConfig({
     env,
     chainId,
@@ -769,6 +757,25 @@ export async function runChainIndexerForChain(
     blockNumber: scanTo,
     headBlock: head,
   });
+
+  // #1213 PR 2 — the TIME-derived calendar rows (maturity T-7d / T-1d,
+  // grace entered): no event fires when a due date approaches, so a
+  // cron sweep over the maturity window derives them from D1 alone
+  // (covers illiquid loans too — no oracle involved). Fail-open INSIDE;
+  // rows are stamped with this scan's head so they sort as current in
+  // the chain-ordered feed.
+  //
+  // FULL-CATCH-UP GATE (Codex #1298 r1 P1, tightened r2): the sweep
+  // compares wall-clock windows against D1 state, so it runs ONLY when
+  // this scan reached the safe head (`scanTo === head`) — even a few
+  // unscanned blocks could hold the repay/extension that makes a
+  // reminder wrong, and calendar rows are never retracted. A
+  // chunk-capped busy scan just defers to the tick that catches up; the
+  // caught-up quiet path above sweeps every tick thereafter (reminders
+  // have hours-to-days of window, so a deferred tick costs nothing).
+  if (scanTo === head) {
+    await sweepCalendarNotifications(env.DB, chainId, now, Number(scanTo));
+  }
 
   // #1245 measurement rail — one structured line per scan that touched
   // anything, so `wrangler tail | grep hint-telemetry` yields the

@@ -1155,7 +1155,7 @@ async function handler(req, res) {
               data: null,
               createdAt: 1_700_000_300,
               blockNumber: 300,
-              logIndex: 0,
+              logIndex: 1_000_000, // cron sentinel — above real logs
             },
             {
               id: 2,

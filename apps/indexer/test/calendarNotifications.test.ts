@@ -8,8 +8,10 @@
 import { readFileSync, readdirSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import {
+  CRON_LOG_INDEX,
   defaultGraceSeconds,
   effectiveGraceSeconds,
+  graceCaseSql,
   maxGraceSeconds,
   planCalendarRows,
   sweepCalendarNotifications,
@@ -98,6 +100,28 @@ describe('effectiveGraceSeconds (governance buckets — LibVaipakam.gracePeriod 
   });
 });
 
+describe('graceCaseSql (per-loan grace as a SQL predicate)', () => {
+  it('renders the default schedule when no buckets are set', () => {
+    const sql = graceCaseSql(null);
+    expect(sql).toContain('WHEN duration_days < 7 THEN 3600');
+    expect(sql).toContain('ELSE 2592000 END');
+  });
+
+  it('renders configured buckets (catch-all → ELSE) and rejects malformed values', () => {
+    const sql = graceCaseSql([
+      { maxDurationDays: '30', graceSeconds: '7200' },
+      { maxDurationDays: '0', graceSeconds: String(45 * DAY) },
+    ]);
+    expect(sql).toBe(`CASE WHEN duration_days < 30 THEN 7200 ELSE ${45 * DAY} END`);
+    // A single catch-all renders as a constant.
+    expect(graceCaseSql([{ maxDurationDays: '0', graceSeconds: '3600' }])).toBe('3600');
+    // Malformed values must never be interpolated — default instead.
+    expect(graceCaseSql([{ maxDurationDays: 'DROP TABLE', graceSeconds: '1' }])).toContain(
+      'WHEN duration_days < 7 THEN 3600',
+    );
+  });
+});
+
 describe('planCalendarRows (pure window + dedup logic)', () => {
   it('fires T-7d (borrower only) inside the window, not before', () => {
     const inWindow = planCalendarRows(CHAIN, [maturingIn(1, 6 * DAY)], NOW, HEAD);
@@ -107,7 +131,10 @@ describe('planCalendarRows (pure window + dedup logic)', () => {
       recipient: BORROWER,
       loanId: 1,
       blockNumber: HEAD,
-      logIndex: 0,
+      // The sentinel keeps a head-stamped cron row NEWER than any real
+      // log in the same block, so a read cursor set on an event row
+      // can't swallow a fresh reminder (Codex #1298 r2).
+      logIndex: CRON_LOG_INDEX,
       eventKind: null,
     });
     // 8 days out — not yet.
@@ -226,7 +253,7 @@ describe('sweepCalendarNotifications (over the migrated schema)', () => {
       recipient: BORROWER,
       loan_id: 1,
       block_number: HEAD, // stamped — a NULL block would sink + break keyset paging
-      log_index: 0,
+      log_index: CRON_LOG_INDEX, // above real logs in the block (r2)
       event_kind: null,
     });
     // Next cron tick, same window → INSERT OR IGNORE no-op.
@@ -241,6 +268,34 @@ describe('sweepCalendarNotifications (over the migrated schema)', () => {
     seedLoan(h, 5, NOW + DAY - 30 * DAY, 30, 'active', { isStub: 1 });
     await sweepCalendarNotifications(h.d1 as never, CHAIN, NOW, HEAD);
     expect(rowsInDb(h)).toHaveLength(0);
+  });
+
+  it('never lets dead past-grace loans occupy the LIMIT and starve live reminders (Codex #1298 r2)', async () => {
+    const h = createSqliteD1(ALL_MIGRATIONS);
+    // 2000 loans (the full SWEEP_LIMIT) that are 4–20 days overdue on the
+    // default 3d grace — past their OWN grace end, so they emit nothing.
+    // Their maturities are all EARLIER than the live loan's, so a
+    // window-then-LIMIT ordering without the per-loan-grace SQL filter
+    // would serve exactly these 2000 and starve the live loan forever.
+    const stmt = h.db.prepare(
+      `INSERT INTO loans (chain_id, loan_id, offer_id, status, lender, borrower,
+         principal, collateral_amount, asset_type, collateral_asset_type,
+         lending_asset, collateral_asset, duration_days, token_id,
+         collateral_token_id, lender_token_id, borrower_token_id,
+         lender_current_owner, borrower_current_owner, interest_rate_bps,
+         start_time, start_block, start_at, updated_at, is_stub, is_sale_vehicle)
+       VALUES (?, ?, 1, 'active', ?, ?, '100', '200', 0, 0, '0xa', '0xc', 30, '0', '0',
+         '1', '2', ?, ?, 500, ?, 0, 0, 0, 0, 0)`,
+    );
+    for (let i = 1; i <= 2000; i++) {
+      const overdue = (4 + (i % 17)) * DAY; // 4..20 days overdue
+      stmt.run(CHAIN, i, LENDER, BORROWER, LENDER, BORROWER, NOW - overdue - 30 * DAY);
+    }
+    // The one live loan: in grace (1 day past due), latest maturity.
+    seedLoan(h, 3000, NOW - 1 * DAY - 30 * DAY, 30);
+    await sweepCalendarNotifications(h.d1 as never, CHAIN, NOW, HEAD);
+    const rows = rowsInDb(h);
+    expect(rows.map((r) => r.loan_id)).toEqual([3000, 3000]); // both parties, only the live loan
   });
 
   it('honors snapshotted governance grace buckets over the default schedule', async () => {

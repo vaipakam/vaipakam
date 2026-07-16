@@ -34,7 +34,7 @@ test('bell shows unread count, panel lists rows, and a row deep-links to the pos
   await bell.click();
   const rows = page.getByTestId('notif-row');
   await expect(rows).toHaveCount(3);
-  await expect(rows.first()).toContainText('due within a week');
+  await expect(rows.first()).toContainText('week from its due date');
 
   // Opening marks everything loaded as read → the badge clears.
   await expect(badge).toHaveCount(0);
