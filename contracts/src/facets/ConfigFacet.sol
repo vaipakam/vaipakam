@@ -878,6 +878,29 @@ contract ConfigFacet is DiamondAccessControl {
         );
     }
 
+    /// @notice Governor PR-3a (#1217) — the recycle bucket's live ledger
+    ///         balance (a slice of the Diamond's own VPFI balance; see
+    ///         {LibVpfiRecycle}). Transparency read for #1218 metrics and
+    ///         operator monitoring.
+    /// @return VPFI wei currently labelled as recycled reward runway.
+    function getRecycleBucket() external view returns (uint256) {
+        return LibVaipakam.storageSlot().recycleBucket;
+    }
+
+    /// @notice Governor PR-3a (#1217) — VPFI wei credited to the recycle
+    ///         bucket on schedule day `dayId` (the `credited[D]` series the
+    ///         PR-3b trailing absorption average `Ā[D]` reads).
+    /// @param  dayId Interaction-reward schedule day index (0 collects
+    ///         pre-launch credits).
+    /// @return VPFI wei credited on that day.
+    function getRecycledCreditedByDay(uint256 dayId)
+        external
+        view
+        returns (uint256)
+    {
+        return LibVaipakam.storageSlot().recycledCreditedByDay[dayId];
+    }
+
     /**
      * @notice T-032 / Numeraire generalization (Phase 1) — read the live notification-
      *         fee config in one RPC. Frontend reads this to render the
