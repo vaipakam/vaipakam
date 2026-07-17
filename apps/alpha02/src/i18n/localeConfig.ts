@@ -40,7 +40,7 @@ import {
 
 /** Locales with genuinely translated bundles in apps/alpha02. */
 /** Locales with genuinely translated bundles in apps/alpha02. */
-export const TRANSLATED_LOCALES = ['en', 'es', 'ja', 'hi', 'ta', 'zh', 'fr', 'de'] as const;
+export const TRANSLATED_LOCALES = ['en', 'es', 'ja', 'hi', 'ta', 'zh', 'fr', 'de', 'ar'] as const;
 export type TranslatedLocale = (typeof TRANSLATED_LOCALES)[number];
 
 /** Master switch. When false, the Language card is not rendered at

@@ -1,1 +1,970 @@
-{}
+{
+  "copy": {
+    "app": {
+      "name": "Vaipakam",
+      "tagline": "أقرض واقترض واستأجر NFTs مباشرة مع أشخاص آخرين."
+    },
+    "chrome": {
+      "nav": {
+        "home": "الرئيسية",
+        "borrow": "اقتراض",
+        "lend": "إقراض",
+        "rent": "تأجير NFT",
+        "positions": "مراكزي",
+        "positionsShort": "المراكز",
+        "claims": "المطالبات",
+        "vault": "مخزني",
+        "faucet": "الحصول على أصول اختبار",
+        "offers": "دفتر العروض",
+        "desk": "مكتب الأسعار",
+        "vpfi": "خصومات VPFI",
+        "activity": "النشاط",
+        "nftVerifier": "مدقق NFT",
+        "settings": "الإعدادات",
+        "help": "المساعدة"
+      },
+      "settings": {
+        "language": "اللغة",
+        "languageHint": "اللغات التي لم تكتمل ترجمتها تعرض النص الإنجليزي مؤقتًا.",
+        "languagePickerAria": "لغة العرض"
+      }
+    },
+    "seo": {
+      "home": {
+        "title": "Vaipakam — إقراض واقتراض P2P وتأجير NFT",
+        "description": "أقرض واقترض واستأجر NFTs مباشرة مع أشخاص آخرين. حدّد شروطك بنفسك — تبقى أصولك في مخزنك على السلسلة، بلا مجمع وبلا وسيط."
+      },
+      "borrow": {
+        "title": "اقتراض الأصول — Vaipakam",
+        "description": "اقفل ضمانًا تملكه واستلم الرموز التي تحتاجها. قروض مباشرة بين الأشخاص بشروط تختارها، من مخزنك على السلسلة."
+      },
+      "lend": {
+        "title": "اكسب من الإقراض — Vaipakam",
+        "description": "اعرض رموزك للمقترضين واكسب فائدة إذا سددوا. تبقى أصولك في مخزنك على السلسلة حتى يقبل مقترض شروطك."
+      },
+      "rent": {
+        "title": "تأجير NFT — Vaipakam",
+        "description": "اكسب رسومًا من NFT تملكه، أو احصل على استخدام مؤقت لواحد. لا تنتقل الملكية أبدًا — يبقى NFT مقفلاً في مخزن المالك طوال مدة الإيجار."
+      },
+      "offers": {
+        "title": "دفتر العروض — Vaipakam",
+        "description": "تصفح كل عروض الإقراض والاقتراض المفتوحة على الشبكة — الأصول والأسعار والمدد وشروط الضمان مباشرة من السلسلة."
+      },
+      "desk": {
+        "title": "مكتب الأسعار — Vaipakam",
+        "description": "أسعار إقراض مباشرة بين الأشخاص حسب زوج الأصول والمدة، وسجل الأسعار المنفذة، ودفتر العروض الموقعة."
+      },
+      "vpfi": {
+        "title": "خصومات رسوم VPFI — Vaipakam",
+        "description": "اختياري: احتفظ بـ VPFI في مخزنك لتقليل رسوم البروتوكول. لا يلزم أبدًا للإقراض أو الاقتراض أو التأجير."
+      },
+      "nftVerifier": {
+        "title": "مدقق تأجير NFT — Vaipakam",
+        "description": "تحقق مما إذا كان تأجير NFT المدرج على Vaipakam حقيقيًا، وشاهد حالة الإيجار الحالية للرمز مباشرة من السلسلة."
+      },
+      "help": {
+        "title": "المساعدة — Vaipakam",
+        "description": "إجابات واضحة حول الإقراض والاقتراض وتأجير NFT والرسوم والمخاطر — مع معلومات الإصدار والعقود لهذا النشر."
+      },
+      "positions": {
+        "title": "مراكزي — Vaipakam"
+      },
+      "claims": {
+        "title": "المطالبات — Vaipakam"
+      },
+      "vault": {
+        "title": "مخزني — Vaipakam"
+      },
+      "activity": {
+        "title": "النشاط — Vaipakam"
+      },
+      "settings": {
+        "title": "الإعدادات — Vaipakam"
+      },
+      "faucet": {
+        "title": "أصول الاختبار — Vaipakam"
+      },
+      "notFound": {
+        "title": "الصفحة غير موجودة — Vaipakam"
+      }
+    },
+    "home": {
+      "title": "ماذا تريد أن تفعل؟",
+      "lede": "اختر إجراءً للبدء. يمكنك التبديل إلى الوضع المتقدم في أي وقت من الإعدادات.",
+      "jobs": {
+        "borrow": {
+          "title": "اقتراض الأصول",
+          "blurb": "اقفل ضمانًا تملكه واستلم الرموز التي تحتاجها."
+        },
+        "lend": {
+          "title": "اكسب من الإقراض",
+          "blurb": "اعرض رموزك للمقترضين واكسب فائدة إذا سددوا."
+        },
+        "rent": {
+          "title": "استأجر أو أجّر NFT",
+          "blurb": "اكسب رسومًا من NFT تملكه، أو احصل على استخدام مؤقت لواحد."
+        },
+        "manage": {
+          "title": "إدارة مراكزي",
+          "blurb": "اعرض قروضك وإيجاراتك، وسدّد، وأضف ضمانًا، أو طالب بما لك."
+        }
+      }
+    },
+    "tokenSecurity": {
+      "pickerUnknown": "تعذر على فحص الأمان المستقل التحقق من هذا الرمز الآن. يتم حجز الصفقات ذات الرموز غير المتحقق منها حتى ينجح الفحص.",
+      "pickerUnsupported": "لا يغطي فحص الأمان المستقل هذه الشبكة (شبكات الاختبار غير مفهرسة). انتبه: استخدم فقط الرموز التي نشرتها أو تثق بها.",
+      "retry": "تحقق مرة أخرى",
+      "badge": {
+        "block": {
+          "label": "تم تعليم خطر",
+          "title": "An independent security check flags a الرمز in this العرض as dangerous (for example impossible to sell). The مراجعة will not let this deal proceed."
+        },
+        "warn": {
+          "label": "تنبيه",
+          "title": "An independent security check reports owner powers or taxes on a الرمز in this العرض. The مراجعة shows the details before you توقيع anything."
+        },
+        "unchecked": {
+          "label": "غير مفحوص",
+          "title": "A الرمز in this العرض could not be checked by the independent security screen. Treat it with extra care."
+        }
+      },
+      "reputationUnlisted": "لم يتم العثور على إدراج سوق لهذا العنوان — السوق الأوسع لا يعرف هذا الرمز. هذا وحده لا يجعله سيئًا، لكن تحقق من عنوان العقد مع المشروع قبل التعامل به."
+    },
+    "signing": {
+      "approveUnknown": "اعتمد الرمز — تأكيد واحد، أو تأكيدان إذا احتاجت محفظتك إلى تصفير اعتماد قديم أولًا (جارٍ التحقق).",
+      "sign": "وقّع الشروط التي قرأتها للتو — توقيع مجاني بلا gas.",
+      "approve": "اعتمد الرمز — تسمح للبروتوكول بأخذ المبلغ المعروض أعلاه. هذه معاملة.",
+      "approveReset": "اعتمد الرمز — هنا يلزم تأكيدان: تحتاج محفظتك إلى تصفير اعتماد قديم قبل تعيين المبلغ الجديد.",
+      "post": "انشر العرض — المعاملة النهائية.",
+      "accept": "افتح الصفقة — المعاملة النهائية.",
+      "approveNft": "اسمح للبروتوكول بنقل NFTs من هذه المجموعة — معاملة مرة واحدة لكل مجموعة.",
+      "postListing": "انشر الإدراج — المعاملة النهائية.",
+      "acceptRental": "ابدأ الإيجار — المعاملة النهائية."
+    },
+    "killSwitch": {
+      "disabled": "هذا الإجراء متوقف الآن — أوقفه المشغلون احترازيًا أثناء فحص أمر ما. ما تملكه بالفعل لا يتأثر: السداد والمطالبات والسحوبات تبقى مفتوحة."
+    },
+    "alerts": {
+      "title": "التنبيهات",
+      "lede": "احصل على رسالة Telegram عن مراكزك حتى عندما يكون الموقع مغلقًا — المواعيد والمخاطر لا تنتظر فتح تبويب.",
+      "notConfigured": "التنبيهات غير معدة في هذا الإصدار. لم يربطها المشغل بخلفية تنبيهات، لذلك لن يعمل شيء هنا — ولهذا يبقى هذا القسم معطلاً.",
+      "connectFirst": "اربط محفظتك لإعداد التنبيهات لها.",
+      "privacy": "يربط هذا الإعداد عنوان محفظتك، وتفضيلات التنبيه من هذه البطاقة، ومعرّف محادثة Telegram الخاص بك في خدمة تنبيهات Vaipakam، إضافة إلى سجل تسليم صغير لكل تنبيه يُرسل (أي قرض، أي مستوى، ومتى) حتى لا تصلك رسالتان عن الشيء نفسه. يؤدي فصل الربط إلى إزالة اتصال Telegram.",
+      "linkButton": "ربط Telegram",
+      "linkSignNote": "ستطلب منك محفظتك أولًا توقيع رسالة قصيرة — هذا مجاني، وليس معاملة، ويثبت أن الطلب صادر منك فعلًا.",
+      "linkIssued": "افتح البوت واضغط Start — أو أرسل له هذا الرمز كرسالة. بذلك يتم ربط هذه المحفظة بـ Telegram الخاص بك.",
+      "openBot": "فتح Telegram",
+      "testAlertButton": "إرسال تنبيه اختبار",
+      "testAlertNote": "بعد إرسال الرمز إلى البوت، اضغط هنا — سندفع رسالة واحدة إلى Telegram لإثبات أن الاتصال يعمل. توقع محفظتك أولًا رسالة قصيرة ومجانية.",
+      "testAlertSending": "جارٍ إرسال تنبيه الاختبار…",
+      "testAlertSent": "تم إرسال تنبيه الاختبار — تحقق من Telegram. أصبحت تنبيهات هذه المحفظة مفعّلة الآن.",
+      "testAlertNotLinked": "لم نجد محادثة Telegram الخاصة بك بعد. افتح البوت وأرسل له الرمز أعلاه، ثم اضغط “إرسال تنبيه اختبار” مرة أخرى. إذا انتهت صلاحية الرمز، اضغط “البدء من جديد” للحصول على رمز جديد.",
+      "testAlertError": "تعذر إرسال تنبيه الاختبار الآن. يرجى المحاولة بعد قليل.",
+      "startOver": "البدء من جديد",
+      "linked": "تم ربط Telegram — ستصل تنبيهات هذه المحفظة إلى محادثتك.",
+      "unlink": "فصل الربط",
+      "unlinkElsewhereTitle": "هل ربطت هذه المحفظة على جهاز آخر؟",
+      "unlinkElsewhereBody": "رابط Telegram محفوظ على خادمنا، وليس في هذا المتصفح فقط. افصله هنا — سيتوقف إرسال الرسائل في كل مكان.",
+      "unlinkElsewhere": "فصل هذه المحفظة",
+      "unlinked": "تم فصل الربط. لن تصل رسائل Telegram أخرى لهذه المحفظة.",
+      "toggleRepayDue": "أرسل لي رسالة قبل استحقاق دفعة فائدة",
+      "toggleRisky": "أرسل لي رسالة إذا أصبح قرضي خطِرًا",
+      "riskyOffNote": "حتى عند إيقافه، ستظل تتلقى تحذيرًا قبل أن يصبح القرض قابلًا للتصفية مباشرة.",
+      "advancedBands": "حدود المخاطر (عامل الصحة): تُرسل رسالة عندما يتجاوز القرض كل مستوى.",
+      "bandsInvalid": "يجب أن تنخفض المستويات الثلاثة — التحذير فوق التنبيه، والتنبيه فوق الحرج، والحرج فوق 1.00.",
+      "saved": "تم الحفظ.",
+      "pushTitle": "تفضل إشعارات التطبيق بدلًا من ذلك؟",
+      "pushBody": "تُنشر التنبيهات نفسها في قناة Push Protocol الخاصة بـ Vaipakam — اشترك هناك بمحفظتك، وأي تطبيق متوافق مع Push سيوصلها.",
+      "pushEnable": "تفعيل تسليم Push",
+      "pushEnabled": "تسليم Push مفعّل لهذه المحفظة.",
+      "pushButton": "فتح قناة Push",
+      "loanNudge": "تريد تحذير Telegram إذا أصبح هذا القرض خطِرًا؟ اضبط التنبيهات من الإعدادات."
+    },
+    "notifications": {
+      "bellLabel": "الإشعارات",
+      "title": "الإشعارات",
+      "loading": "جارٍ تحميل إشعاراتك…",
+      "empty": "لا شيء بعد. تظهر تحديثات قروضك هنا.",
+      "unavailable": "تعذر تحميل إشعاراتك الآن. ستظهر هنا عند عودة الاتصال.",
+      "connectFirst": "اربط محفظتك لرؤية تحديثات قروضك.",
+      "line": {
+        "loan_matched": "قرضك نشط الآن.",
+        "partial_repay": "وصل سداد على قرضك.",
+        "loan_repaid": "تم سداد قرض بالكامل — انظر ما يمكنك المطالبة به.",
+        "loan_defaulted": "تخلف قرض عن السداد — انظر ما يمكنك المطالبة به.",
+        "internal_matched": "أُغلق أحد قروضك عبر المطابقة — انظر ما يمكنك المطالبة به.",
+        "maturity_7d": "كان أحد القروض على بُعد أسبوع من تاريخ الاستحقاق — افتحه لمعرفة وضعه.",
+        "maturity_1d": "كان أحد القروض على بُعد يوم من تاريخ الاستحقاق — افتحه لمعرفة وضعه.",
+        "grace_entered": "تجاوز أحد القروض تاريخ الاستحقاق — افتحه لمعرفة وضعه.",
+        "hf_warn": "انخفضت صحة أحد القروض دون 1.5 — افتحه لمعرفة وضعه.",
+        "hf_alert": "انخفضت صحة أحد القروض دون 1.2 — افتحه لمعرفة وضعه.",
+        "hf_critical": "انخفضت صحة أحد القروض دون 1.05، قريبًا من خط التصفية 1.0 — افتحه للتصرف.",
+        "generic": "هناك تحديث على قرضك."
+      }
+    },
+    "errorBoundary": {
+      "title": "حدث خطأ في هذه الصفحة",
+      "body": "The page hit an unexpected error and stopped rendering. Your funds and on-السلسلة المركزs are unaffected — this is a display-side fault, and a المعاملة you just توقيعed may still have gone through (check My المركزs after reجارٍ التحميل). Reجارٍ التحميل usually clears it.",
+      "reload": "إعادة تحميل الصفحة",
+      "home": "العودة إلى الرئيسية"
+    },
+    "diagnostics": {
+      "open": "الدعم وفحص الاتصال",
+      "title": "الدعم",
+      "lede": "فحص سريع للاتصالات التي يعتمد عليها التطبيق، وطريقة للإبلاغ عن مشكلة.",
+      "close": "إغلاق",
+      "network": "الشبكة",
+      "wallet": "المحفظة",
+      "walletNotConnected": "غير متصل",
+      "rpc": "اتصال البلوكشين",
+      "rpcChecking": "جارٍ التحقق…",
+      "rpcFailing": "Not responding — the app can’t reach the blockالسلسلة right الآن. Reجارٍ التحميل, or switching الشبكةs and back, often clears it.",
+      "indexer": "ذاكرة بيانات السوق",
+      "indexerUnreachable": "Unreachable right الآن — السوق lists may not load until it recovers. Your own المركزs still load directly from the السلسلة.",
+      "indexerNoCursor": "Reachable, but no data has been recorded for this الشبكة yet — it will fill as activity arrives.",
+      "indexerNotConfigured": "Not configured on this build — السوق lists can’t load here. Your own المركزs still load directly from the السلسلة.",
+      "build": "إصدار التطبيق",
+      "lastErrorTitle": "آخر خطأ على هذا الجهاز",
+      "noError": "لا توجد أخطاء مسجلة في هذه الجلسة.",
+      "report": "الإبلاغ عن مشكلة على GitHub",
+      "reportHint": "فتحs a pre-filled GitHub issue with the details above and the last recorded error. Your full المحفظة العنوان is never included.",
+      "copyDetails": "نسخ التفاصيل",
+      "copied": "تم النسخ."
+    },
+    "support": {
+      "title": "التواصل مع الدعم",
+      "lede": "أرسل رسالة إلى الفريق — ستحصل فورًا على رقم تذكرة.",
+      "notConfigured": "The الدعم inbox isn’t ربطed in this build, so in-app messages can’t be sent from here. Email works instead:",
+      "messageLabel": "ماذا حدث؟",
+      "messagePlaceholder": "أخبرنا بما كنت تفعله وما الخطأ الذي حدث، بكلماتك.",
+      "emailLabel": "البريد الإلكتروني للرد (اختياري)",
+      "emailHint": "Leave it empty if you’d rather follow up yourself — the ticket number below is all الدعم needs.",
+      "attach": "Attach the الصحة details shown above (recommended — they usually hold the cause)",
+      "privacy": "Sending stores your message, the page you sent it from and the الشبكة you were on, the reply العنوان if you gave one, and — only if you ticked the box — the الصحة details above, on Vaipakam’s الدعم service under your ticket number. The team is notified that a ticket arrived (its number and context flags — never your message text or email). Your full المحفظة العنوان is never included in the الصحة details.",
+      "send": "إرسال إلى الدعم",
+      "sending": "جارٍ الإرسال…",
+      "mailHint": "تفضل البريد الإلكتروني، أو تريد إضافة المزيد؟ اكتب إلينا مع ذكر رقم التذكرة:",
+      "mailButton": "Email الدعم@vaipakam.com",
+      "invalidMessage": "اكتب أولًا بضع كلمات عما حدث.",
+      "invalidEmail": "هذا البريد الإلكتروني لا يبدو كاملًا — صححه أو اترك الحقل فارغًا (اختياري).",
+      "rateLimited": "A few messages went out just الآن — wait a minute and محاولة مرة أخرى.",
+      "unavailable": "The الدعم inbox couldn’t take the message right الآن. Nothing was lost on your side — email us instead:",
+      "failed": "The message didn’t go through. محاولة مرة أخرى in a moment, or email us:",
+      "helpTitle": "تحتاج إلى شخص؟",
+      "helpBody": "فتح the الدعم panel (the round button in the corner of every page) to send the team a message with one click — it can attach the app’s own الصحة details, which usually hold the cause. Or email us directly:"
+    },
+    "wallet": {
+      "connect": "ربط المحفظة",
+      "connectFirst": "اربط محفظة للمتابعة.",
+      "switchNetwork": "تبديل الشبكة"
+    },
+    "checks": {
+      "walletConnected": "تم ربط المحفظة",
+      "supportedChain": "على شبكة مدعومة",
+      "tokenValid": "تم التعرف على الأصل كرمز",
+      "consent": "تم قبول إفصاحات المخاطر والشروط",
+      "getTestAssets": "الحصول على أصول اختبار",
+      "connectEarly": "اربط محفظتك للمتابعة — ستحتاج إليها للتوقيع، لذا الأسهل ربطها الآن."
+    },
+    "receipt": {
+      "heading": "راجع قبل التوقيع",
+      "youReceive": "تستلم",
+      "youLock": "تقفل",
+      "youMayOwe": "قد تكون مدينًا",
+      "youCanLose": "قد تخسر",
+      "fees": "الرسوم",
+      "whenThisEnds": "عند انتهاء ذلك",
+      "gasNote": "رسوم gas للشبكة منفصلة عن رسوم بروتوكول Vaipakam."
+    },
+    "simulation": {
+      "running": "جارٍ إجراء محاكاة مجانية لهذه المعاملة…",
+      "passed": "نجحت المحاكاة — ينبغي أن تمر هذه المعاملة كما تمت مراجعتها.",
+      "wouldFail": "تنبيه — ستفشل هذه المعاملة إذا وقعتها الآن. لم يُرسل شيء ولم تُنفق رسوم gas.",
+      "wouldFailNote": "يمكنك تعديل التفاصيل أعلاه والمحاولة بعد قليل، أو التوقيع رغم ذلك.",
+      "approvalNeeded": "سيُطلب اعتماد رمز أولًا — المحاكاة لا ترى هذه الخطوة بعد، وهذا متوقع وليس مشكلة.",
+      "unavailable": "المحاكاة المجانية غير متاحة الآن. يمكنك المتابعة — هذا الفحص مجرد تنبيه إضافي."
+    },
+    "help": {
+      "disclaimer": "Vaipakam بروتوكول لامركزي وغير حافظ. لا يلزم KYC. المستخدمون مسؤولون عن امتثالهم التنظيمي.",
+      "risksTitle": "إفصاحات المخاطر",
+      "risks": [
+        "الاقتراض: إذا لم تسدد بحلول تاريخ الاستحقاق مع فترة السماح، ينتقل ضمانك المقفل إلى المُقرض. الضمان بلا سعر سوق حي ينتقل بالكامل.",
+        "الاقتراض: يمكن بيع الضمان ذي سعر السوق الحي تلقائيًا (تصفيته) قبل الاستحقاق إذا انخفضت قيمته كثيرًا.",
+        "الإقراض: لا تُكسب الفائدة إلا إذا سدد المقترض. عند التخلف، يكون ما تسترده هو قيمة الضمان المقفل فعليًا.",
+        "تأجير NFT: يحصل المستأجرون على حقوق استخدام مؤقتة لا ملكية؛ يبقى NFT في مخزن المالك. تُدفع رسوم الإيجار مسبقًا مع هامش صغير قابل للاسترداد.",
+        "مخاطر العقود الذكية: Vaipakam كود على شبكة عامة. الأخطاء أو أعطال الشبكة أو ظروف السوق القصوى قد تسبب خسارة — لا تلتزم بأموال لا يمكنك تحمل خسارتها."
+      ]
+    },
+    "consentParts": {
+      "prefix": "أفهم وأوافق على ",
+      "risk": "إفصاحات المخاطر",
+      "mid": " و ",
+      "terms": "شروط Vaipakam",
+      "suffix": "."
+    },
+    "match": {
+      "borrowTitle": "مُقرضون جاهزون لتمويلك الآن",
+      "borrowLede": "These العرضs match your الأصل. Accepting one مفتوحs the القرض immediately — you take the العرض’s full المبلغ and الشروط.",
+      "lendTitle": "مقترضون ينتظرون التمويل",
+      "lendLede": "These الطلبs match your الأصل. Funding one مفتوحs the القرض immediately at the الطلب’s الشروط.",
+      "wholeOfferNote": "العرضs are taken whole — the المبلغ shown is what the القرض will be.",
+      "choose": "اختيار",
+      "emptyBorrow": "لا توجد عروض مطابقة الآن.",
+      "emptyLend": "لا توجد طلبات مطابقة الآن.",
+      "orPostBorrow": "انشر طلب اقتراض خاص بي بدلًا من ذلك",
+      "orPostLend": "انشر عرض إقراض خاص بي بدلًا من ذلك",
+      "unavailable": "We couldn’t load matching العرضs right الآن. You can still post your own below.",
+      "loanOpened": "تم فتح القرض",
+      "borrowerNext": "The funds are in your Vaipakam Vault and your الضمان is locked. سداد by the due date to get it back — everything is under My المركزs.",
+      "lenderNext": "Your funds are lent and the المُقترض’s الضمان is locked. Track سدادment under My المركزs; you’ll مطالبة your funds back after they سداد.",
+      "wrongSide": "That link points to the other side of the السوق — a الإقراض العرض is accepted from اقتراض, a اقتراض الطلب from إقراض.",
+      "wrongKind": "That العرض involves an NFT — مفتوح it from the NFT الإيجار page instead.",
+      "ownOffer": "That’s your own العرض — you can إلغاء it from My المركزs, but you can’t accept it yourself.",
+      "offerGone": "That العرض is no longer مفتوح. Browse curاستئجار matches below or post your own.",
+      "counterpartyBlocked": "The other side of this العرض can’t transact right الآن (compliance flag), so it can’t be accepted. Nothing was sent.",
+      "offerNotFound": "We couldn’t find that العرض — the link may be old, or the data source is catching up. Browse curاستئجار العرضs below.",
+      "termsChanged": "This العرض’s الشروط changed since you مراجعةed it. Nothing was sent — please مراجعة the updated العرض.",
+      "illiquidWarning": "One side of this deal isn’t priced by the البروتوكول — it has no usable السوق price or deep-enough trading السوق right الآن. If it ends in التخلف, the entire الضمان transfers directly to the المُقرض — nobody sells it for a fair السوق price first, and there is no automatic price-based التصفية. Only proceed if you accept that.",
+      "interestModeFullTerm": "Interest is full-term: the whole term’s interest applies even if the القرض is repaid early.",
+      "interestModeProRata": "Interest accrues day by day — سدادing early costs less.",
+      "interestModeProRataLender": "Interest accrues day by day — if the المُقترض سدادs early, you earn less.",
+      "saleLoanChecking": "Reading the running القرض behind this listing — the مراجعة must show its real numbers before you can توقيع.",
+      "saleLoanCheckFailed": "We couldn’t read the running القرض behind this listing, and the مراجعة must show its real numbers — توقيعing stays paused until it succeeds.",
+      "saleLoanNotActive": "The القرض behind this listing is no longer نشط, so this purchase can’t complete. Nothing was sent or اعتمادd.",
+      "saleSellerNotCovered": "The seller’s standing settlement الاعتماد no longer covers completing this sale, so the purchase would fail on-السلسلة. Nothing was sent or اعتمادd — the seller needs to restore their الاعتماد (their listing card shows a restore action).",
+      "saleMaturityPassed": "This القرض has reached its due date — the المركز can no longer be bought. Nothing was sent or اعتمادd.",
+      "saleBought": "المركز bought",
+      "saleSelfBuy": "You are the المُقترض of this القرض, so you can’t also buy its المُقرض side — the البروتوكول rejects that. سدادing or closing early from My المركزs are your moves instead. Nothing was sent or اعتمادd.",
+      "liquidityChecking": "Checking how these الأصلs are priced by the البروتوكول…",
+      "liquidityCheckFailed": "We couldn’t check how these الأصلs are priced, and that check decides an important warning — توقيعing stays paused until it succeeds.",
+      "linkedLoanCheckFailed": "We couldn’t check whether this العرض is a المركز sale of a running القرض, and that check decides an important disclosure — توقيعing stays paused until it succeeds.",
+      "graceChecking": "Confirming the سدادment grace window this deal is judged مرة أخرىst…",
+      "graceCheckFailed": "We couldn’t confirm the سدادment grace window, and the مراجعة must show the real one — توقيعing stays paused until it succeeds.",
+      "riskGateBlocked": "The البروتوكول’s المخاطر-access rules block this acceptance for your المحفظة right الآن — it needs a standing on-السلسلة ackالآنledgement or access level this app can’t collect yet. Nothing was sent or اعتمادd."
+    },
+    "borrow": {
+      "title": "اقتراض الأصول",
+      "lede": "Tell us what you need and what you can lock as الضمان. We’ll show you exactly what you’d owe before anything is توقيعed.",
+      "postRequest": "نشر طلب اقتراض",
+      "posted": "تم نشر طلب الاقتراض",
+      "postedNext": "Your الضمان is locked while the الطلب is مفتوح. Funds arrive only when a المُقرض accepts — we’ll show the القرض under My المركزs.",
+      "collateralWarning": "إذا لم تسدد في الوقت المحدد، يمكن للمُقرض الحصول على ضمانك.",
+      "lockNow": "Your الضمان is locked when you post this الطلب. You can إلغاء before a المُقرض accepts to unlock it.",
+      "collateralPrecheck": "Before you متابعة —"
+    },
+    "lend": {
+      "title": "اكسب من الإقراض",
+      "lede": "Choose what to إقراض and the return you want. الإقراض is choosing a المخاطر, not just a yield — you’ll see the downside before you توقيع.",
+      "postOffer": "نشر عرض إقراض",
+      "posted": "تم نشر عرض الإقراض",
+      "postedNext": "Your الرمزs are locked while the العرض is مفتوح. When a المُقترض accepts, the القرض appears under My المركزs. You can إلغاء before acceptance to unlock your الرمزs.",
+      "yieldNotGuaranteed": "Expected interest if the المُقترض سدادs on time.",
+      "defaultOutcome": "If the المُقترض التخلفs, your recovery depends on their الضمان."
+    },
+    "rent": {
+      "title": "استأجر أو أجّر NFT",
+      "lede": "NFT الإيجارs give temporary use rights — never ownership. The NFT stays locked in its owner’s vault for the whole الإيجار.",
+      "ownPath": "أملك NFT أريد تأجيره",
+      "ownPathBlurb": "حدّد رسومًا يومية — يدفع المستأجرون كامل الإيجار مقدمًا.",
+      "wantPath": "أريد استئجار NFT",
+      "wantPathBlurb": "ادفع مقدمًا واستخدم NFT حتى ينتهي الإيجار.",
+      "browseCta": "تصفح NFTs المتاحة للاستئجار",
+      "custodyNote": "لا يغادر NFT عهدة المخزن أبدًا. يحصل المستأجر على حقوق استخدام مؤقتة فقط — لا ملكية.",
+      "postListing": "نشر إدراج تأجير",
+      "listingPosted": "تم نشر إدراج التأجير",
+      "listingPostedNext": "Your NFT is held in your vault while the listing is مفتوح. When a استئجارer accepts, the الإيجار appears under My المركزs; إلغاء the listing any time before that to get the NFT back.",
+      "acceptRental": "استئجار هذا NFT",
+      "rentalOpened": "بدأ الإيجار",
+      "rentalOpenedNext": "You الآن hold the use rights until the الإيجار ends — the NFT itself stays in the owner’s vault. Your prepaid الرسوم cover the whole term; close on time and the buffer comes back to you.",
+      "checkOwnNft": "أنت تملك هذا NFT",
+      "checkNotOwner": "The ربطed المحفظة doesn’t own this NFT — check the contract العنوان and الرمز id.",
+      "browseTitle": "NFTs متاحة للاستئجار",
+      "browseEmpty": "لا توجد إدراجات تأجير الآن.",
+      "browseEmptyCta": "Own an NFT? Use the switch above to list it for استئجار instead — استئجارers pسداد the whole الإيجار up front, so an empty السوق is an opportunity.",
+      "browseUnavailable": "We couldn’t load الإيجار listings right الآن. Please محاولة مرة أخرى in a moment.",
+      "notDebt": "A الإيجار is not a القرض: there’s nothing to سداد — your الرسوم are prepaid and your rights simply end when the term does.",
+      "no4907Warning": "Heads up: this NFT collection doesn’t الدعم the on-السلسلة الإيجار standard (ERC-4907). استئجارing still works — Vaipakam tracks the استئجارer’s use rights in your vault — but apps and games outside Vaipakam won’t recognise the استئجارer.",
+      "no4907Unknown": "We couldn’t check whether this NFT collection الدعمs the on-السلسلة الإيجار standard (ERC-4907). If it doesn’t, apps outside Vaipakam won’t recognise the استئجارer — استئجارing inside Vaipakam still works.",
+      "vpfiPrepayListing": "This listing asks to be paid in VPFI, which الإيجارs don’t allow — it can’t be accepted. Please pick a diffeاستئجار listing.",
+      "vpfiCheckRetry": "We couldn’t verify this listing’s payment الأصل just الآن — nothing was sent or اعتمادd. Please محاولة مرة أخرى in a moment.",
+      "vpfiPrepayNotAllowed": "VPFI can’t be used as the الإيجار payment الأصل — pick another الرمز."
+    },
+    "preclose": {
+      "title": "إغلاق هذا القرض مبكرًا",
+      "blurb": "ادفع كل شيء الآن وأغلق القرض اليوم — يُفرج عن ضمانك مباشرة بعد ذلك.",
+      "fullTermNote": "This القرض uses full-term interest, so closing early still pays the whole term’s interest.",
+      "proRataNote": "This القرض accrues interest day by day, so closing early pays only what has accrued.",
+      "action": "إغلاق مبكر",
+      "confirm": "تأكيد — ادفع وأغلق الآن",
+      "done": "تم إغلاق القرض مبكرًا. ضمانك جاهز — طالب به أدناه أو من مركز المطالبات.",
+      "checking": "Checking whether this القرض can close early…",
+      "checkFailed": "We couldn’t read this القرض’s close-early cost right الآن — reمحاولةing. سدادing normally stays available below.",
+      "graceNote": "This القرض is past its due date. The المبلغ below already includes the late fee for being late (it grows a little each day), and closing this way stays possible only until the grace window ends.",
+      "graceFeeReceiptNote": "The late fee for being past due is included in this المبلغ — the same fee a normal سدادment would charge."
+    },
+    "refinance": {
+      "title": "إعادة تمويل هذا القرض",
+      "blurb": "Post a الطلب for a new القرض on better الشروط. The moment a المُقرض accepts it, your curاستئجار القرض is paid off and مغلق automatically in the same المعاملة — your الضمان moves to the new القرض without ever unlocking.",
+      "rateLabel": "أعلى سعر سنوي تقبله",
+      "durationLabel": "مدة القرض الجديد (أيام)",
+      "action": "مراجعة طلب إعادة التمويل",
+      "confirm": "تأكيد — نشر طلب إعادة التمويل",
+      "payoffNote": "The old القرض’s payoff is always principal plus the full remaining term’s interest — even if the القرض normally accrues day by day. That is the exiting المُقرض’s fixed entitlement on an early exit.",
+      "shortIsSafe": "If your المحفظة is short when a المُقرض tries to accept, the acceptance simply fails — nothing is taken and your curاستئجار القرض متابعةs unchanged.",
+      "periodicWarning": "This القرض pays interest on a periodic schedule. If a payment period becomes overdue while the الطلب is مفتوح, a المُقرض’s acceptance will fail until the period is settled — keep the القرض’s payments curاستئجار.",
+      "done": "Refinance الطلب posted. When a المُقرض accepts it, this القرض closes automatically — you don’t need to do anything else. You can إلغاء the الطلب below (إلغاءlation مفتوحs a few minutes after posting).",
+      "pendingAccepted": "Your refinance الطلب was accepted — this القرض is being replaced by the new one. تحديث in a moment to see the final state.",
+      "pendingLoanClosed": "This القرض has since مغلق another way, so the الطلب can no longer complete — إلغاء it to also remove its standing payoff الاعتماد.",
+      "cancel": "إلغاء طلب إعادة التمويل",
+      "cancelSoon": "إلغاءlation مفتوحs a few minutes after posting — محاولة مرة أخرى shortly.",
+      "cancelled": "Refinance الطلب إلغاءled and the payoff الاعتماد removed — this القرض متابعةs unchanged. If you have other listings or الطلبs using the same الرمز, restore their الاعتمادs from their cards.",
+      "cancelledRevokeFailed": "Refinance الطلب إلغاءled — this القرض متابعةs unchanged. The standing payoff الاعتماد couldn’t be removed automatically; you can revoke it from your المحفظة’s الرمز-الاعتمادs view.",
+      "allowanceShort": "The payoff الاعتماد no longer covers everything this الطلب could pull — a المُقرض’s acceptance could fail (an acceptance after the due date also pulls the late fee and extra interest). Restore it below or إلغاء the الطلب.",
+      "reapprove": "استعادة اعتماد السداد",
+      "reapproved": "Payoff الاعتماد restored — the الطلب can complete مرة أخرى.",
+      "reapproveAborted": "This الطلب is no longer completable (accepted, إلغاءled, or the القرض مغلق) — nothing was اعتمادd. تحديث to see the latest state.",
+      "guardrailNote": "Your الطلب carries its own الانتهاء and on-السلسلة guardrails: it can only complete at or below the السعر you set here, and never after the الانتهاء you see in this مراجعة.",
+      "graceNote": "This القرض is past its due date. A المُقرض can still accept this الطلب until the grace window ends, and the payoff already includes the late fee for being late (it grows a little each day).",
+      "pendingPastGrace": "This القرض has passed its due date and grace window, so no المُقرض can accept this الطلب any more — it no longer holds up your other actions here. إلغاء it below to also remove its standing payoff الاعتماد.",
+      "cadenceChangeNote": "Your curاستئجار القرض pays interest on a schedule. The replacement القرض will NOT — its interest settles when it closes. Make sure that cash-flow change is what you want.",
+      "multiStepNote": "Posting takes up to three المحفظة confirmations (guardrails, payoff الاعتماد, the الطلب itself). If you stop partway, the earlier steps stay in place on-السلسلة until you finish posting or إلغاء — إلغاءling also removes the الاعتماد.",
+      "partialBlockedByPending": "A refinance الطلب is live for this القرض. A partial سدادment would change the المبلغ and make that الطلب permanently unacceptable — إلغاء the refinance الطلب first.",
+      "precloseBlockedByPending": "A refinance الطلب is live for this القرض. Closing early الآن would strand it — إلغاء the refinance الطلب first.",
+      "repayWarnPending": "A refinance الطلب is still live for this القرض. سدادing settles the القرض, after which the الطلب can never complete — إلغاء it from its card afterwards (that also removes its standing payoff الاعتماد); until then it just sits until it expires."
+    },
+    "approvals": {
+      "title": "اعتمادات الرموز الدائمة",
+      "blurb": "These are the spending permissions your المحفظة has granted Vaipakam’s contract for الرمزs your القرضs and العرضs touch. Some flows set them on purpose (a refinance الطلب’s payoff, a sale listing’s settlement); anything left over from an abandoned attempt can be removed here.",
+      "revokeWarning": "Careful: if a live refinance الطلب or sale listing depends on a الرمز’s الاعتماد, revoking it makes that flow fail until you restore it from its card — the card will warn you within moments.",
+      "scopeNote": "This list covers الرمزs seen in your Vaipakam القرضs and العرضs on this الشبكة. الاعتمادs granted to other apps or for other الرمزs aren’t shown — your المحفظة’s own الرمز-الاعتمادs view remains the complete picture.",
+      "none": "No standing الاعتمادs to Vaipakam found for your kالآنn الرمزs.",
+      "loading": "Reading your standing الاعتمادs…",
+      "unavailable": "We couldn’t read your الاعتمادs right الآن — please محاولة مرة أخرى in a moment.",
+      "sourcesUnavailable": "We couldn’t load your القرضs and العرضs just الآن, so this list can’t be built completely — rather than show a partial picture, محاولة مرة أخرى in a moment.",
+      "revoke": "إلغاء",
+      "staleNote": "We couldn’t تحديث this list just الآن — the rows shown may be slightly stale. Revoking still works."
+    },
+    "nftVerifier": {
+      "title": "مدقق NFT",
+      "lede": "Vaipakam المركز NFTs carry real مطالبة rights — whoever holds one controls that side of its القرض. Check any الرمز id before trusting it.",
+      "placeholder": "معرّف رمز NFT للمركز",
+      "check": "تحقق",
+      "checking": "Checking this الرمز on-السلسلة…",
+      "checkFailed": "We couldn’t check this الرمز right الآن — please محاولة مرة أخرى in a moment.",
+      "ownerLabel": "الحامل الحالي",
+      "roleLabel": "الجانب الذي يتحكم به",
+      "roleLender": "جانب المُقرض — حامله يحصل على السداد أو الاسترداد.",
+      "roleBorrower": "جانب المقترض — حامله يسدد ويسترد الضمان.",
+      "roleUnknown": "We couldn’t read this الرمز’s role details right الآن.",
+      "loanLabel": "القرض المرتبط",
+      "offerLabel": "أُنشئ للعرض",
+      "lockUnrecognized": "Transfer-locked for a reason this app version doesn’t recognise — it can’t be transferred until that flow completes or is إلغاءled.",
+      "lockUnknown": "We couldn’t read whether this الرمز is transfer-locked right الآن — don’t rely on it being transferable until this reads clean.",
+      "positionRowLabel": "NFT مركزك",
+      "lockLabel": "قفل النقل",
+      "lockPrecloseOffset": "Locked for a preclose-by-offset — it can’t be transferred until that completes or is إلغاءled.",
+      "lockSale": "Locked for a المركز sale listing — it can’t be transferred until the sale completes or the listing is إلغاءled.",
+      "lockPrepayListing": "Locked for a الضمان listing — it can’t be transferred while that listing stands.",
+      "sanctionsLabel": "حالة الامتثال",
+      "sanctionsFlagged": "The curاستئجار holder is compliance-flagged: this NFT cannot be transferred in or out of their المحفظة, and its مطالبةs stay frozen until the flag clears. Do not buy this الرمز expecting delivery.",
+      "sanctionsUnknown": "We couldn’t check the holder’s compliance status right الآن — a flagged holder would mean the الرمز can’t be transferred, so re-check before relying on it.",
+      "inKindLabel": "دفع التخلف",
+      "inKindNote": "If the المُقترض of the linked القرض التخلفs, this مطالبة pays out the القرض’s raw الضمان in kind — the البروتوكول does not price or sell it for you. Value what you would actually receive before buying this المركز.",
+      "liveNote": "Live means exactly this: the الرمز exists here and its holder controls the linked المركز. It does not vouch for the القرض’s الصحة or the other side’s behaviour.",
+      "goneBody": "Either its مطالبة was completed and the الرمز was retired, or it was never minted here at all — the الشبكة doesn’t record which. Treat any العرض to sell or transfer this الرمز id as worthless on this الشبكة."
+    },
+    "keepers": {
+      "title": "صلاحيات Keeper",
+      "blurb": "Keepers are third-party services (or your own bot) you can allow to run specific القرض actions FOR you — start an early close, finish a refinance you set up, list a المركز for sale. Everything here is off until you turn it on, and three switches must all agree before a keeper can act: the master switch, the action on that keeper, and a per-القرض switch on each القرض’s page.",
+      "safetyNote": "A keeper can never receive your money — payouts always go to whoever holds the المركز. You can revoke any keeper (or flip the master switch off) at any time, the البروتوكول can pause all keepers at once, and refinances are additionally bounded by the guardrails you set per القرض. If a المركز changes hands, these permissions apply to the new holder’s الإعدادات, not yours.",
+      "masterLabel": "Allow my اعتمادd keepers to act (master switch — nothing runs while this is off)",
+      "addressPlaceholder": "0x… keeper العنوان",
+      "actions": {
+        "initPreclose": {
+          "label": "Start closing a القرض early for me",
+          "side": "acts on القرضs you اقتراضed",
+          "blurb": "Begin any early-close path on a القرض where you are the المُقترض. The payoff still comes from your المحفظة under your standing الاعتمادs."
+        },
+        "refinance": {
+          "label": "إكمال إعادة التمويل نيابة عني",
+          "side": "acts on القرضs you اقتراضed",
+          "blurb": "Finish a refinance you set up, bounded by the guardrails (السعر ceiling, end date) you اعتمادd — and the البروتوكول’s own keeper kill switch."
+        },
+        "completeOffset": {
+          "label": "إكمال إغلاق المقاصة نيابة عني",
+          "side": "acts on القرضs you اقتراضed",
+          "blurb": "Complete a preclose-by-offset once its العرض has been accepted."
+        },
+        "extend": {
+          "label": "Extend a القرض in place for me",
+          "side": "acts on القرضs you اقتراضed",
+          "blurb": "Extend a القرض without reمفتوحing it — only when BOTH sides have opted into extension limits."
+        },
+        "initEarlyWithdraw": {
+          "label": "List my القرض المركز for sale",
+          "side": "acts on القرضs you funded",
+          "blurb": "Start a المُقرض early exit by listing a القرض you funded. The proceeds still pay only you."
+        },
+        "completeLoanSale": {
+          "label": "Finish a المركز sale for me",
+          "side": "acts on القرضs you funded",
+          "blurb": "Complete an accepted المركز sale, moving the القرض to its buyer. The payment still routes only to you."
+        }
+      },
+      "enabledOn": "Keeper access enabled. Keepers can الآن act where you granted permissions AND the القرض’s own switch is on.",
+      "enabledOff": "تم تعطيل وصول Keeper — لا يمكن لأي Keeper التصرف نيابة عنك في أي مكان ما دام هذا مطفأ.",
+      "addTitle": "اعتماد a keeper",
+      "add": "اعتماد Keeper",
+      "added": "Keeper اعتمادd. Remember: it can only act on القرضs where you also flip that القرض’s keeper switch.",
+      "alreadyListed": "That keeper is already اعتمادd — edit its permissions above instead.",
+      "save": "حفظ الصلاحيات",
+      "updated": "تم تحديث صلاحيات Keeper.",
+      "revoke": "إلغاء",
+      "revoked": "تم إلغاء Keeper — لم يعد يستطيع التصرف نيابة عنك في أي مكان.",
+      "maskUnreadable": "We couldn’t read this keeper’s curاستئجار permissions, so editing is disabled (saving الآن could silently overwrite them). Reمحاولة in a moment; revoking still works.",
+      "extraBitsNote": "This keeper also holds advanced permissions not shown here — they are preserved unchanged when you حفظ.",
+      "perLoanReminder": "Approving a keeper here is not enough by itself: each القرض’s page has a per-القرض keeper switch that must also be on.",
+      "loading": "جارٍ التحميل your keeper الإعدادات…",
+      "staleWarning": "We couldn’t تحديث your keeper الإعدادات just الآن — what’s shown may be slightly stale. Revoking and saving still work.",
+      "unavailable": "We couldn’t load your keeper الإعدادات right الآن — please محاولة مرة أخرى in a moment.",
+      "loanTitle": "Keepers for this القرض",
+      "loanBlurb": "Your اعتمادd keepers can act on this القرض only while its switch is on. Actions stay bounded by the permissions you granted in الإعدادات.",
+      "loanToggleOn": "Keeper enabled for this القرض.",
+      "loanToggleOff": "Keeper disabled for this القرض.",
+      "loanEnablesUnavailable": "We couldn’t read this القرض’s keeper switches right الآن — the toggles are paused until the read succeeds (their shown state may be stale).",
+      "loanNoKeepers": "You haven’t اعتمادd any keepers yet — set them up under الإعدادات → Keeper permissions.",
+      "loanMasterOff": "Your keeper master switch is off, so nothing can run even with this القرض’s switch on — turn it on under الإعدادات → Keeper permissions."
+    },
+    "earlyExit": {
+      "title": "الخروج من هذا القرض مبكرًا",
+      "blurb": "Sell your side of this القرض to another المُقرض with a matching مفتوح الإقراض العرض. You’re paid immediately from their already-locked funds — nothing to اعتماد, nothing to مطالبة afterwards — and the المُقترض’s الشروط don’t change at all.",
+      "pickerLead": "فتح الإقراض العرضs that can buy you out:",
+      "none": "No matching الإقراض العرضs right الآن. An العرض must match this القرض’s الأصلs, cover its remaining المبلغ, and fit inside its remaining time — check back later.",
+      "unavailable": "We couldn’t load matching العرضs right الآن — please محاولة مرة أخرى in a moment.",
+      "shortfallWarn": "This buyer expects a higher السعر than your القرض pays, and for this candidate that السعر difference (not the accrued interest — you pay the larger of the two, never both) is what sets your payout.",
+      "forfeitNote": "Exiting early forfeits the interest accrued so far: it covers the البروتوكول’s cut and, when the buyer’s السعر is higher, helps bridge the difference. The figure shown already accounts for this.",
+      "action": "مراجعة الخروج",
+      "confirm": "تأكيد — بيع مركزي",
+      "done": "المركز sold — the payout is already in your المحفظة, and this القرض الآن belongs to the new المُقرض. Nothing more to do here.",
+      "loadingOffers": "Looking for matching الإقراض العرضs…",
+      "figureMoved": "The payout figure moved with time, so the مراجعة مغلق — مفتوح it مرة أخرى to confirm مرة أخرىst the curاستئجار number.",
+      "checking": "Checking whether this القرض can be exited early…",
+      "checkFailed": "We couldn’t read this القرض’s exit details right الآن — reمحاولةing."
+    },
+    "loanSale": {
+      "title": "إدراج هذا المركز للبيع",
+      "blurb": "Set the yearly السعر a buyer would earn for the القرض’s remaining time and list your المركز publicly. When a buyer accepts, you receive the full outstanding المبلغ in that same المعاملة. (If a matching العرض above already pays enough, the instant exit is simpler — listing is for naming your own price and waiting.)",
+      "rateLabel": "Yearly السعر the buyer earns",
+      "action": "مراجعة الإدراج",
+      "confirm": "تأكيد — إدراج مركزي",
+      "lockWarning": "Listing locks your المُقرض المركز NFT — it can’t be transferred until the sale completes or you إلغاء the listing. Your مطالبة rights are unaffected.",
+      "sweetenNote": "A السعر above the القرض’s own السعر attracts buyers faster, but the difference for the remaining term comes out of your المحفظة at completion.",
+      "done": "المركز listed. When a buyer accepts, the sale settles automatically — keep the standing الاعتماد (and enough balance for the settlement figure) in place until then, or إلغاء the listing below.",
+      "pendingNoId": "This المركز is listed for sale (listed from another device, so إلغاءling here isn’t available — إلغاء where it was listed). Your المُقرض NFT is locked while the listing stands.",
+      "allowanceShort": "The standing settlement الاعتماد (or your المحفظة balance) no longer covers what a buyer’s acceptance would pull — the sale would fail right الآن. Restore it below or إلغاء the listing.",
+      "restore": "Restore the settlement الاعتماد",
+      "restored": "Settlement الاعتماد restored — the listing can complete مرة أخرى.",
+      "cancel": "إلغاء الإدراج",
+      "cancelled": "Listing إلغاءled — your المُقرض NFT is unlocked and the settlement الاعتماد was removed (if you have other listings or الطلبs using the same الرمز, restore their الاعتمادs from their cards). The القرض متابعةs unchanged.",
+      "cancelledRevokeFailed": "Listing إلغاءled and your المُقرض NFT unlocked. The standing settlement الاعتماد couldn’t be removed automatically — you can revoke it from your المحفظة’s الرمز-الاعتمادs view.",
+      "cancelSoon": "إلغاءlation مفتوحs a few minutes after listing — محاولة مرة أخرى shortly.",
+      "restoreAborted": "This listing is no longer standing (sold, إلغاءled, or unlocked) — nothing was اعتمادd. تحديث to see the latest state.",
+      "loanSettledWhileListed": "This القرض has settled, so the sale listing can never complete — إلغاء it to unlock your المُقرض NFT and remove the standing الاعتماد.",
+      "fundingUnknown": "We couldn’t identify this listing’s العرض record from this device, so we can’t verify its settlement funding here — manage it from the device that listed it, or keep a generous الاعتماد and balance in place.",
+      "ended": "Your sale listing is no longer نشط. If a buyer accepted it, the payout is already in your المحفظة and the settlement was pulled via the standing الاعتماد; any remaining الاعتماد can be revoked from your المحفظة’s الرمز-الاعتمادs view.",
+      "listingUnavailable": "Listing your المركز at your own price isn’t available yet — the on-السلسلة step it needs is being fixed. The instant exit above works: it sells into a matching مفتوح العرض right away.",
+      "partialBlockedByListing": "The المُقرض has this المركز listed for sale at its curاستئجار outstanding المبلغ. Partial سدادment is paused while the listing stands — it would change that المبلغ and mislead a buyer. You can still سداد in full or close early at any time."
+    },
+    "positions": {
+      "title": "مراكزي",
+      "lede": "Your القرضs and الإيجارs, with the one action each needs right الآن.",
+      "emptyTitle": "لا توجد مراكز نشطة بعد",
+      "emptyBody": "اقترض أو أقرض للبدء.",
+      "unavailable": "We couldn’t load your المركزs right الآن. Your funds are unaffected — please محاولة مرة أخرى in a moment.",
+      "sourcesDegraded": "One of this page’s data sources is temporarily غير متاح. Your curاستئجار المركزs are shown from the remaining source and recently changed items may take a moment to appear.",
+      "roleBorrower": "You اقتراضed",
+      "roleLender": "أنت أقرضت",
+      "groupAttention": "يتطلب انتباهك",
+      "groupActive": "القروض النشطة",
+      "groupEnded": "القروض المنتهية",
+      "claimWaiting": "مطالبة بانتظارك",
+      "seeActivity": "عرض سجل نشاطك الكامل ←",
+      "graceOverViewer": "The grace period has ended — the القرض can الآن be marked التخلفed, and the الضمان goes to the المُقرض.",
+      "graceUnknownBorrower": "This القرض is past due and the grace window may be running out — we couldn’t read the exact deadline right الآن. سداد as soon as possible, before the المُقرض can take the الضمان.",
+      "graceUnknownLender": "This القرض is past due — we couldn’t read the exact grace deadline right الآن. Once the grace window ends and the التخلف is recorded, the الضمان مطالبة appears here.",
+      "graceUnknownViewer": "This القرض is past due. Once its grace window ends, the المُقرض can مطالبة the الضمان.",
+      "graceOverBorrower": "The grace period has ended — the البروتوكول no longer accepts سدادment, and the المُقرض can take the الضمان at any moment. Once they مطالبة it, the outcome will show here.",
+      "graceOverLender": "The grace period has ended — this القرض can الآن be marked التخلفed. That normally happens automatically shortly after; once the التخلف is recorded, the الضمان مطالبة appears here.",
+      "fallbackCureBorrower": "This القرض is past its grace period and a التخلف is being settled. You can still سداد in full to cure it and get your الضمان back — but only until the المُقرض finalizes the التخلف, which can happen at any moment.",
+      "owedDefaulted": "Nothing to سداد anymore — this القرض ended in التخلف and the الضمان covers it.",
+      "owedDefaultedNoCollateral": "Nothing to سداد anymore — this القرض ended in التخلف and was settled.",
+      "owedClosed": "Nothing — this القرض is مغلق and settled.",
+      "whatNextRepaidBorrower": "You repaid this القرض. Nothing else can happen to it — مطالبة your الضمان back below if you haven’t yet.",
+      "whatNextRepaidLender": "The المُقترض repaid. Nothing else can happen to this القرض — مطالبة your funds below if you haven’t yet.",
+      "whatNextRepaidViewer": "The المُقترض repaid. Nothing else can happen to this القرض — any remaining مطالبةs belong to the المركز holders.",
+      "whatNextDefaultedBorrower": "This القرض already ended in التخلف. Any remainder after settlement is مطالبةable (it may be zero).",
+      "whatNextDefaultedLender": "This القرض already ended in التخلف — what it recovered is مطالبةable in the مطالبة Center.",
+      "whatNextDefaultedViewer": "This القرض already ended in التخلف — the settlement’s recovery belongs to the المركز holders.",
+      "whatNextInternalMatchBorrower": "This القرض مغلق by internal matching. Collect any residual and VPFI rebate below (either may be zero).",
+      "whatNextInternalMatchLender": "This القرض مغلق by internal matching — collect your funds below if you haven’t yet.",
+      "whatNextInternalMatchViewer": "This القرض مغلق by internal matching — any residual مطالبةs belong to the المركز holders.",
+      "whatNextClosed": "This القرض is fully settled — there is nothing left to do.",
+      "whatNextRentalEnded": "This الإيجار has ended. Any earned الرسوم or refundable buffer can be مطالبةed below by the المركز holders — nothing else can change it.",
+      "settledAhead": "This المركز has already مغلق on-السلسلة — the status here is live. Your lists may take a moment to catch up."
+    },
+    "powerSurface": {
+      "body": "This is a power-user screen — raw العرضs and live السعرs with less hand-holding. The guided اقتراض and إقراض flows cover the same actions with step-by-step explanations.",
+      "guidedBorrow": "Guided اقتراض",
+      "guidedLend": "Guided إقراض",
+      "enableAdvanced": "I kالآن what I’m doing — enable Advanced mode",
+      "dismiss": "إغلاق"
+    },
+    "claims": {
+      "title": "المطالبات",
+      "lede": "Money and الأصلs that are ready for you to collect.",
+      "empty": "لا يوجد ما يمكن المطالبة به الآن.",
+      "emptyBody": "When a القرض or الإيجار you are part of ends, anything owed to you appears here automatically.",
+      "emptyCta": "عرض مراكزي",
+      "unavailable": "We couldn’t load your مطالبةs right الآن. Your funds are unaffected — please محاولة مرة أخرى in a moment.",
+      "claim": "مطالبة",
+      "claimed": "اكتملت المطالبة.",
+      "allTitle": "المطالبة بكل شيء دفعة واحدة",
+      "allBlurb": "Collect every ready payout in a single المحفظة توقيعature instead of one at a time.",
+      "allEmpty": "Nothing is batchable right الآن.",
+      "allVpfiNote": "Withdrawing parked VPFI lowers your fee-discount tier — off by التخلف.",
+      "allResidualNote": "Anything that wasn’t ready is still listed below to مطالبة on its own.",
+      "allRewardsUnavailable": "We couldn’t check your rewards, so they’re not in this batch — مطالبة them sepaالسعرly.",
+      "allVpfiUnavailable": "تعذر فحص VPFI في مخزنك، لذلك ليس ضمن هذه الدفعة.",
+      "allWorking": "Waiting for المحفظة…"
+    },
+    "offers": {
+      "title": "دفتر العروض",
+      "lede": "عروض إقراض وطلبات اقتراض مفتوحة من مستخدمين آخرين.",
+      "emptyTitle": "لا توجد عروض مفتوحة الآن",
+      "emptyBody": "أنشئ عرضك ودع الطرف الآخر يأتي إليك.",
+      "unavailable": "We couldn’t load the العرض الدفتر right الآن. Please محاولة مرة أخرى in a moment.",
+      "lenderOffer": "عرض إقراض",
+      "borrowerOffer": "طلب اقتراض"
+    },
+    "desk": {
+      "title": "مكتب الأسعار",
+      "lede": "The الأمر الدفتر for one السوق — read the السعرs, post or amend limit-السعر العرضs, and watch your مفتوح الأمرs and المركزs in one place.",
+      "marketLabel": "السوق",
+      "tenorLabel": "المدة",
+      "customPair": "زوج مخصص…",
+      "customLend": "عنوان أصل القرض",
+      "customCollateral": "عنوان أصل الضمان",
+      "marketsUnavailable": "The السوقs list couldn’t load right الآن, so pair discovery is limited — enter a pair manually and the الدفتر itself can still load.",
+      "marketsEmpty": "No live السوقs right الآن. Pick a pair and post the first العرض with the ticket.",
+      "marketsTruncated": "Showing the most نشط السوقs — smaller السوقs aren’t listed here, but you can load any pair with “Custom pair…”.",
+      "pickPair": "Pick a السوق to load its الدفتر.",
+      "lastFill": "آخر تنفيذ",
+      "quotedMid": "منتصف السعر المعروض",
+      "spread": "الفارق",
+      "crossed": "متقاطع",
+      "statUnknown": "—",
+      "bookTitle": "دفتر الأوامر",
+      "rateHeading": "السعر (APR %)",
+      "sizeHeading": "الحجم",
+      "cumHeading": "العمق",
+      "asksHeading": "عروض المُقرضين (asks)",
+      "bidsHeading": "طلبات الاقتراض (bids)",
+      "bookEmpty": "لا توجد عروض مفتوحة لهذا السوق بعد — يمكن أن يكون عرضك الأول.",
+      "bookUnavailable": "We couldn’t load the الأمر الدفتر right الآن. Please محاولة مرة أخرى in a moment.",
+      "bookIndexedCopy": "Live السلسلة read غير متاح — showing the indexed copy of the الدفتر, which can lag the السلسلة.",
+      "yourOrderMark": "Your الأمر at this السعر",
+      "takeAsk": "اقتراض this",
+      "takeBid": "إقراض to this",
+      "rowPrefills": "Tap a السعر to pre-fill the ticket. Taking the top of the الدفتر goes through the same guided مراجعة as اقتراض/إقراض.",
+      "tapeTitle": "التنفيذات الأخيرة",
+      "tapeEmpty": "لا توجد تنفيذات لهذا السوق بعد.",
+      "tapeUnavailable": "We couldn’t load recent fills right الآن.",
+      "match": {
+        "body": "These top-of-الدفتر العرضs can cross. Anyone can execute this match and earn the matcher fee — you pay the الشبكة gas to execute it.",
+        "execute": "تنفيذ المطابقة",
+        "executing": "جارٍ المطابقة…",
+        "executed": "Match executed — the crossed العرضs settled into a القرض.",
+        "noLongerMatchable": "These العرضs can no longer cross — the الدفتر moved before the match was sent. Nothing was sent.",
+        "matchingDisabled": "العرض matching was just switched off by البروتوكول governance, so this match can’t be sent right الآن. Nothing was sent."
+      },
+      "signed": {
+        "badge": "موقّع",
+        "badgeTooltip": "Gasless توقيعed الأمر from the off-السلسلة الدفتر — the maker توقيعed it without a المعاملة, and it fills in a single on-السلسلة المعاملة by whoever takes it. توقيعed rows always come from the الأمر-الدفتر service, never the السلسلة, until they fill.",
+        "partialBadgeTooltip": "Partially matched توقيعed الأمر — its remainder still counts as depth and fills through the permissionless matcher, but a direct fill is no longer possible.",
+        "rangedBadgeTooltip": "Range-sized توقيعed الأمر — its size still counts as depth, but only the permissionless matcher can consume it in slices; there is no whole-الأمر direct fill.",
+        "fill": "تنفيذ",
+        "confirmTitle": "Fill توقيعed الأمر",
+        "confirmLede": "You execute the whole fill in one المعاملة: your side moves from your المحفظة, the maker’s side from their vault, and the القرض starts immediately.",
+        "gone": "This توقيعed الأمر is no longer fillable (filled, إلغاءled, or expired). The الدفتر will catch up shortly. Nothing was sent.",
+        "makerNotFunded": "The maker’s vault doesn’t curاستئجارly cover this الأمر, so the fill would fail on-السلسلة. Nothing was sent — the maker must top up their vault first.",
+        "illiquid": "One of this الأمر’s الأصلs isn’t priced by the البروتوكول right الآن, and this compact confirm can’t walk you through the in-kind التخلف الشروط that implies. Nothing was sent.",
+        "kycBlocked": "This deployment’s identity-verification rules don’t cover one side of this الأمر at this value, so the fill would fail on-السلسلة. Nothing was sent or اعتمادd.",
+        "riskBlocked": "This deployment’s المخاطر-access rules block one side of this الأمر right الآن — the maker or your المحفظة needs an on-السلسلة access level or standing consent this compact confirm can’t collect. Nothing was sent or اعتمادd.",
+        "accept": "تنفيذ الأمر",
+        "accepting": "جارٍ التنفيذ…",
+        "accepted": "تم تنفيذ الأمر الموقّع — القرض نشط."
+      },
+      "chart": {
+        "title": "الأسعار المنفذة",
+        "loading": "جارٍ تحميل الرسم…",
+        "lastFillNone": "لا توجد تنفيذات بعد",
+        "empty": "No fills yet for this السوق — the chart draws only executed السعرs.",
+        "emptyRange": "No fills in this range — محاولة a longer range.",
+        "unavailable": "We couldn’t load the السعر السجل right الآن.",
+        "retry": "إعادة المحاولة",
+        "quotedMid": "منتصف السعر المعروض",
+        "quotedMidHint": "Dashed line = the الدفتر’s curاستئجار quoted mid — a resting quote, not an executed السعر.",
+        "truncatedNote": "Long السجل — showing the most recent fills only. The oldest candles are not drawn.",
+        "intervalLabel": "الفاصل",
+        "rangeLabel": "النطاق",
+        "attribution": "الرسوم بواسطة TradingView",
+        "mobileBook": "الدفتر",
+        "mobileChart": "الرسم",
+        "mobileViewLabel": "عرض المكتب"
+      },
+      "history": {
+        "tab": "السجل",
+        "caption": "Everything this المحفظة ever traded on the desk — every السوق, every status. Repaid, مطالبةed, and transferred المركزs stay listed.",
+        "empty": "No desk السجل for this المحفظة yet.",
+        "unavailable": "We couldn’t load your السجل right الآن.",
+        "loadMore": "تحميل المزيد",
+        "loadingMore": "جارٍ التحميل…",
+        "loading": "جارٍ تحميل سجلك…",
+        "roleLender": "المُقرض",
+        "roleBorrower": "المُقترض",
+        "started": "بدأ"
+      },
+      "ticket": {
+        "title": "تذكرة الأمر",
+        "sideLend": "إقراض",
+        "sideBorrow": "اقتراض",
+        "amountLend": "المبلغ للإقراض",
+        "amountBorrow": "المبلغ للاقتراض",
+        "rateLend": "السعر — minimum you’ll accept (APR %)",
+        "rateBorrow": "السعر — maximum you’ll pay (APR %)",
+        "collateralRequire": "الضمان الذي تطلبه",
+        "collateralLock": "الضمان الذي تقفله",
+        "collateralFixedNote": "Set by the selected السوق — switch السوقs in the header to post مرة أخرىst a diffeاستئجار الضمان الأصل.",
+        "expiryLabel": "الانتهاء",
+        "expiryGtc": "GTC",
+        "expiryCustom": "مخصص…",
+        "expiryInvalid": "The custom الانتهاء must be a future date and time.",
+        "expiryTooFar": "The custom الانتهاء can be at most one year ahead — the البروتوكول caps العرض الانتهاء at 365 days out.",
+        "fillModeLabel": "وضع التنفيذ",
+        "fillPartial": "جزئي",
+        "fillAon": "AON",
+        "fillIoc": "IOC",
+        "fillPartialHint": "Partial: the العرض can fill in pieces down to a minimum.",
+        "fillAonHint": "All-or-nothing: fills only as one whole القرض at the full المبلغ.",
+        "fillIocHint": "Immediate-or-إلغاء: rests only until its الانتهاء — an الانتهاء is required.",
+        "iocNeedsExpiry": "IOC الأمرs need an الانتهاء — pick 24h, 7d, or a custom time.",
+        "post": "نشر الأمر",
+        "posting": "جارٍ النشر…",
+        "posted": "تم نشر الأمر",
+        "postedNext": "Your العرض is live on the الدفتر. Manage it under فتح الأمرs below — amend or إلغاء any time before it fills.",
+        "modeLabel": "النشر",
+        "modeOnchain": "على السلسلة",
+        "modeGasless": "بلا gas (توقيع فقط)",
+        "modeOnchainHint": "Post the العرض as a المعاملة — funds are escrowed in your vault الآن.",
+        "modeGaslessHint": "توقيع the الأمر off-السلسلة and post it to the الدفتر — no المعاملة, no gas. Funds move only when a taker fills it.",
+        "gaslessEscrowNote": "Nothing is escrowed when you توقيع — a taker’s fill pulls from your vault’s free balance at that moment. إلغاءling later is an on-السلسلة المعاملة (unlike posting).",
+        "gaslessNeedsIndexer": "Gasless posting needs the الأمر-الدفتر service, which isn’t configured right الآن. On-السلسلة posting still works.",
+        "gaslessLenderAonNote": "Gasless إقراض الأمرs fill only as one whole القرض — a توقيعed المُقرض الأمر can’t be sliced on-السلسلة, so it posts all-or-nothing. Partial stays available with on-السلسلة posting.",
+        "gaslessPost": "وقّع وانشر في الدفتر",
+        "gaslessPosting": "جارٍ التوقيع…",
+        "gaslessConsentRequired": "مراجعة and accept the المخاطر disclosures and الشروط first — for a gasless الأمر, your توقيعature is what records that consent.",
+        "gaslessPosted": "توقيعed الأمر posted to the الدفتر — no gas spent. It fills when a taker accepts it.",
+        "gaslessUnavailable": "We couldn’t reach the الأمر الدفتر right الآن — the الأمر was NOT posted. Please محاولة مرة أخرى in a moment.",
+        "blockNetwork": "بدّل إلى شبكة مدعومة للنشر.",
+        "blockNoMarket": "اختر سوقًا في الرأس أولًا.",
+        "blockAmount": "أدخل المبلغ أعلاه.",
+        "blockRate": "أدخل سعرًا بين 0 و100%.",
+        "blockCollateral": "أدخل مبلغ الضمان أعلاه.",
+        "blockLoading": "جارٍ التحميل السوق details — one moment.",
+        "blockConsent": "مراجعة and accept the المخاطر الشروط above to post.",
+        "blockGaslessService": "Gasless posting needs the الأمر-الدفتر service, which isn’t available right الآن — switch Posting to On-السلسلة.",
+        "consentRecheck": "تغيرت الشروط — يرجى التأكيد مرة أخرى.",
+        "max": "الحد الأقصى",
+        "feePreviewTitle": "الرسوم والالتزام"
+      },
+      "orders": {
+        "tab": "الأوامر المفتوحة",
+        "empty": "لا توجد أوامر مفتوحة. انشر واحدًا من التذكرة.",
+        "unavailable": "We couldn’t load your مفتوح الأمرs right الآن.",
+        "heldNotCreated": "محتفظ به — يديره منشئه",
+        "cancel": "إلغاء",
+        "cancelling": "جارٍ الإلغاء…",
+        "amend": "تعديل",
+        "amendTitle": "Amend in place — same العرض, same المركز, one المعاملة.",
+        "amendLoadFailed": "We couldn’t read this العرض’s live values, and amending must start from them. Please محاولة مرة أخرى.",
+        "amendMinAmount": "الحد الأدنى للمبلغ",
+        "amendMaxAmount": "الحد الأقصى للمبلغ",
+        "amendAmountAon": "المبلغ (الكل أو لا شيء)",
+        "amendRate": "السعر (APR %)",
+        "amendRateMax": "الحد الأقصى للسعر (APR %)",
+        "amendCollateral": "الضمان",
+        "amendCollateralMax": "الحد الأقصى للضمان",
+        "amendNoChange": "لم يتغير شيء بعد.",
+        "amendMalformed": "أدخل أرقامًا عشرية بسيطة فقط — أرقام مع فاصلة عشرية اختيارية.",
+        "amendInvalid": "يجب أن يكون كل حد أدنى أقل من أو مساويًا لحده الأقصى، ولا يجوز لأي حد أقصى أن ينخفض دون ما تم تنفيذه بالفعل.",
+        "amendPositive": "المبلغs and الضمان must be greater than zero.",
+        "amendAllowanceLost": "The الرمز الاعتماد for this grow is no longer sufficient — nothing was changed. Please اعتماد مرة أخرى.",
+        "approveFirst": "اعتمد أولًا",
+        "approving": "جارٍ الاعتماد…",
+        "save": "حفظ التغييرات",
+        "saving": "جارٍ التعديل…",
+        "amended": "تم تعديل الأمر.",
+        "signedTitle": "الأوامر الموقعة (هذا السوق)",
+        "signedNote": "Gasless توقيعed الأمرs you posted for the selected السوق. الأمرs for other السوقs don’t show here — switch the السوق in the header to manage them.",
+        "signedCancel": "إلغاء على السلسلة",
+        "signedCancelling": "جارٍ الإلغاء…",
+        "signedCancelNote": "Posting was free, but إلغاءling costs gas: the only way to revoke a توقيعature the الدفتر already holds is an on-السلسلة المعاملة.",
+        "signedCancelled": "تم إلغاء الأمر الموقّع على السلسلة.",
+        "signedTruncated": "You have more توقيعed الأمرs in this السوق than we can list at once — this is not the complete set."
+      },
+      "positions": {
+        "tab": "المراكز",
+        "empty": "No مفتوح المركزs in this المحفظة.",
+        "unavailable": "We couldn’t load your المركزs right الآن.",
+        "health": "الصحة",
+        "notPriced": "لا توجد تصفية تلقائية",
+        "manage": "إدارة",
+        "allPositions": "كل المراكز ←"
+      }
+    },
+    "vpfi": {
+      "title": "خصومات VPFI",
+      "optional": "اختياري: احتفظ بـ VPFI في مخزنك لتقليل رسوم البروتوكول على القروض المؤهلة. لا تحتاج VPFI أبدًا لاستخدام Vaipakam.",
+      "noGasDiscount": "خصم VPFI لا يقلل gas الشبكة.",
+      "withdrawWarning": "سحب VPFI قد يخفض خصومات الرسوم المستقبلية.",
+      "tokenChanged": "The VPFI الرمز configuration changed since you مراجعةed. Nothing was اعتمادd — please check the updated numbers and محاولة مرة أخرى.",
+      "tokenCheckRetry": "We couldn’t confirm the VPFI الرمز just الآن — nothing was اعتمادd. Please محاولة مرة أخرى in a moment.",
+      "addToWallet": "إضافة VPFI إلى MetaMask",
+      "addedToWallet": "طُلب من محفظتك تتبع VPFI."
+    },
+    "errors": {
+      "partialOverPrincipal": "That covers the القرض’s whole remaining principal. Use “سداد this القرض” instead — it settles the القرض properly and releases your الضمان.",
+      "notAToken": "That العنوان doesn’t look like a الرمز on this الشبكة. Double-check it or pick a suggested الأصل.",
+      "txRejected": "You إلغاءled in your المحفظة. Nothing was sent.",
+      "txFailed": "The المعاملة didn’t go through. Nothing was taken beyond الشبكة gas. Please محاولة مرة أخرى.",
+      "sanctionsBlocked": "This المحفظة is flagged by the sanctions oracle, so new المركزs and payouts are blocked. Nothing was sent. سدادing and closing existing المركزs stays مفتوح.",
+      "sanctionsCheckRetry": "We couldn’t run the compliance check just الآن — nothing was sent. Please محاولة مرة أخرى in a moment.",
+      "checkRetry": "We couldn’t verify this on-السلسلة just الآن — nothing was sent. Please محاولة مرة أخرى in a moment.",
+      "assetPaused": "One of this deal’s الأصلs is temporarily paused by the البروتوكول, so this action can’t go through right الآن. Nothing was sent — please محاولة مرة أخرى later.",
+      "positionMoved": "This المركز is no longer held by the ربطed المحفظة (it may have been transferred or already مطالبةed). Nothing was sent — تحديث to see the curاستئجار state.",
+      "collateralNotPriced": "This القرض’s الضمان isn’t curاستئجارly priced by the البروتوكول, so الضمان top-ups aren’t available for it. Nothing was sent.",
+      "pastGrace": "This القرض is past its due date and grace window, so سدادment is مغلق on-السلسلة — the التخلف process applies الآن. Nothing was sent.",
+      "loanAlreadySettled": "This القرض looks already settled on-السلسلة — nothing was sent. تحديث in a moment to see its final state.",
+      "nothingToClaim": "There’s nothing for this side to مطالبة on-السلسلة right الآن — the payout may be zero or already collected. Nothing was sent.",
+      "preclosePastGrace": "This القرض is past its due date and grace window, so closing early is no longer possible — nothing was sent. The التخلف process applies الآن.",
+      "refinancePastGrace": "This القرض is past its due date and grace window, so it can no longer be refinanced — nothing was sent. The التخلف process applies الآن.",
+      "saleListingMatured": "This القرض is past its due date, so the المركز can no longer be listed for sale — nothing was sent.",
+      "refinanceNotOriginalBorrower": "This المركز changed hands since the القرض began, so its الضمان can’t carry over into a refinance — nothing was sent. سدادing or closing early stays available.",
+      "lenderBlockedPartial": "The المُقرض’s المحفظة can’t receive a direct partial payment right الآن (compliance flag). سدادing the القرض in full stays مفتوح — that path holds the funds for a screened مطالبة instead."
+    },
+    "fees": {
+      "lateFee": "Late سدادment adds 1% of the outstanding المبلغ after day one, growing 0.5% per day, capped at 5%.",
+      "faqQuestion": "ما الرسوم التي يفرضها Vaipakam؟",
+      "faqAnswerGeneric": "Vaipakam charges a القرض initiation fee on the المبلغ اقتراضed and keeps a share of the interest a المُقرض earns. Late سدادment adds 1% of the outstanding المبلغ after day one, growing 0.5% per day, capped at 5%. الشبكة gas is sepaالسعر and goes to the blockالسلسلة, not to Vaipakam. ربط your المحفظة to see the exact curاستئجار السعرs."
+    },
+    "faucet": {
+      "title": "الحصول على أصول اختبار",
+      "lede": "Mint mock الرمزs and a test NFT so you can محاولة اقتراضing, الإقراض, and استئجارing on a test الشبكة — no real value, no cost beyond gas.",
+      "notTestnetTitle": "Test الأصلs aren’t available here",
+      "backHome": "العودة إلى الرئيسية",
+      "minting": "جارٍ السك…",
+      "viewTx": "عرض المعاملة",
+      "nextSteps": "التالي: شغّله —",
+      "nextBorrow": "اقتراض مرة أخرىst it",
+      "nextLend": "إقراض it out",
+      "nextRent": "List it for استئجار",
+      "footer": "Minted الأصلs land in your المحفظة. Use “My vault” and the اقتراض, إقراض, and NFT الإيجار screens to put them to work.",
+      "mintedNft": "Minted a test الإيجار NFT to your المحفظة. Its الرمز ID — you’ll need it to list the الإيجار:",
+      "copyTokenId": "نسخ معرّف الرمز",
+      "copiedTokenId": "تم النسخ.",
+      "liquid": {
+        "title": "Liquid test الرمز (tLIQ)",
+        "blurb": "Priced by a test oracle, so it behaves like a liquid الأصل — الصحة factor, التصفية, and refinancing all work with it. Pair it with mWETH (one as the القرض, one as الضمان) when a flow needs two diffeاستئجار liquid الرمزs."
+      },
+      "liquid2": {
+        "blurb": "A test USDC priced at $1 by a test oracle — a second, distinct liquid الرمز so you can run a deal where both the القرض and the الضمان are liquid (with a realistic price spread مرة أخرىst tLIQ / mWETH) without pairing a الرمز مرة أخرىst itself."
+      },
+      "mweth": {
+        "title": "Mock wrapped ETH (mWETH)",
+        "blurb": "An oracle-priced test الرمز that plays the “wrapped ETH” role in demos. It is NOT real WETH — it mints for free and has no value."
+      },
+      "nft2": {
+        "title": "Second استئجارable test NFT (vART)",
+        "blurb": "Another ERC-4907 collection — handy when you want to list one NFT and استئجار a diffeاستئجار one, or run several الإيجارs at once.",
+        "action": "سكّ NFT vART"
+      },
+      "addedToWallet": "Asked your المحفظة to track it.",
+      "illiquid": {
+        "title": "Illiquid test الرمز (tILQ)",
+        "blurb": "No price feed, so it behaves like an illiquid الأصل — both sides must consent, and التخلف transfers the الضمان in kind."
+      },
+      "illiquid2": {
+        "title": "Second illiquid test الرمز (tILQ2)",
+        "blurb": "Also unpriced. Pair it with tILQ (one as the القرض, one as الضمان) to محاولة a deal where NEITHER side has a price — both parties must consent, no الصحة factor applies, and التخلف hands the الضمان over in kind."
+      },
+      "nft": {
+        "title": "الإيجار test NFT (vRENT)",
+        "blurb": "An ERC-4907 استئجارable NFT for محاولةing the NFT الإيجار flows.",
+        "action": "سكّ NFT اختبار"
+      }
+    },
+    "vault": {
+      "title": "مخزني",
+      "lede": "Your own on-السلسلة account. Only your المحفظة controls it — Vaipakam never pools user funds.",
+      "noVaultYet": "Your vault is created automatically with your first العرض, القرض, or deposit. Nothing to set up.",
+      "emptyCta": "ابدأ",
+      "emptyCtaFaucet": "الحصول على أصول اختبار",
+      "unavailable": "We couldn’t read your vault right الآن. Your funds are unaffected — please محاولة مرة أخرى in a moment.",
+      "lockedHint": "Locked المبلغs back your مفتوح العرضs, نشط القرضs, and الإيجارs. They free up when those close."
+    },
+    "activity": {
+      "title": "النشاط",
+      "lede": "Everything your المحفظة has done on Vaipakam, newest first.",
+      "empty": "لا يوجد نشاط بعد. سيظهر هنا عند استخدام Vaipakam.",
+      "emptyCtaBorrow": "اقترض شيئًا",
+      "emptyCtaLend": "أقرض شيئًا",
+      "unavailable": "We couldn’t load your activity right الآن. Please محاولة مرة أخرى in a moment.",
+      "truncatedNote": "Showing recent activity only — the البروتوكول feed is busy and older events may not be listed.",
+      "participantTruncatedNote": "This المحفظة has more القرض السجل than we can check at once — some events tied to its oldest القرضs may be missing here.",
+      "truncatedEmpty": "Nothing of yours in recent البروتوكول activity. This page lists recent activity only, so anything older isn’t shown here.",
+      "viewTx": "عرض المعاملة",
+      "loadMore": "تحميل نشاط أقدم",
+      "loadingMore": "جارٍ التحميل…",
+      "unavailableFallback": "Your curاستئجار القرضs and الإيجارs are always available on",
+      "positionsLink": "مراكزي"
+    },
+    "rewards": {
+      "title": "مكافآت التفاعل",
+      "blurb": "VPFI rewards from your الإقراض and اقتراضing activity. They become مطالبةable after a القرض closes and the reward day finalizes.",
+      "empty": "No rewards yet. Rewards appear after الإقراض or اقتراضing activity.",
+      "waiting": "Your rewards are being finalized — a reward day closes across all السلسلةs before it can be مطالبةed. Check back soon.",
+      "claim": "المطالبة بالمكافآت"
+    },
+    "sanctions": {
+      "title": "This المحفظة is listed by the compliance oracle.",
+      "line1": "The ربطed العنوان appears on the on-السلسلة sanctions oracle Vaipakam screens مرة أخرىst.",
+      "line2": "New المركزs (العرضs, القرضs, الإيجارs, deposits) are blocked and will not go through.",
+      "line3": "سدادing and closing existing المركزs stays مفتوح so your counterparties can be made whole, but مطالبةs and payouts to this المحفظة are blocked while it is flagged. If you believe this is an error, contact the oracle provider (السلسلةalysis)."
+    },
+    "risk": {
+      "notPriced": "This القرض’s الأصلs aren’t priced by the البروتوكول, so there is no automatic التصفية — the الضمان transfers as-is on التخلف.",
+      "healthy": "سليم",
+      "watch": "راقب عن قرب",
+      "danger": "قريب من التصفية",
+      "liquidatable": "يمكن تصفيته الآن",
+      "explain": "If the الضمان’s value falls too far مرة أخرىst the اقتراضed المبلغ, the القرض can be liquidated. Adding الضمان makes it safer.",
+      "listChecking": "جارٍ فحص الصحة",
+      "listCheckingTitle": "This القرض’s الصحة hasn’t been read yet, so the badge stays neutral. التصفية protection still applies on-السلسلة."
+    },
+    "notFound": {
+      "title": "هذه الصفحة غير موجودة",
+      "body": "قد يكون الرابط قديمًا أو مكتوبًا خطأ. لم يُفقد شيء — مراكزك آمنة.",
+      "backHome": "العودة إلى الرئيسية"
+    }
+  }
+}
