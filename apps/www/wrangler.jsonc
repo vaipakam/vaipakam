@@ -40,6 +40,16 @@
   "assets": {
     "directory": "./dist",
     "not_found_handling": "single-page-application",
+    // The prerender pass (scripts/prerender.mjs) writes each route's
+    // snapshot as `<route>/index.html`, while every advertised URL —
+    // sitemap, canonicals, hreflang — is SLASHLESS (`/help/basic`).
+    // The default `auto-trailing-slash` would 301 `/help/basic` →
+    // `/help/basic/`, putting every prerendered page behind a
+    // redirect whose target's canonical points back at the
+    // redirecting URL (Codex #1309 r4). `drop-trailing-slash` serves
+    // `/help/basic` directly from `help/basic/index.html` and 301s
+    // the slashed form to slashless — matching the canonical policy.
+    "html_handling": "drop-trailing-slash",
   },
   "observability": {
     "enabled": true,

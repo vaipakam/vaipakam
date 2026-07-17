@@ -26,6 +26,7 @@ import {
   mkdirSync,
   readdirSync,
   readFileSync,
+  rmSync,
   writeFileSync,
 } from 'node:fs';
 import { resolve, dirname } from 'node:path';
@@ -49,6 +50,11 @@ const DOC_SETS = [
   { dir: 'userguide', filePrefix: 'Advanced', slug: 'userguide-advanced' },
 ];
 
+// Recreate from scratch: public/docs/ is generated + gitignored, so a
+// deleted/renamed source markdown would otherwise leave its stale copy
+// behind for Vite to keep shipping (Codex #1309 r4). Each build's
+// public docs exactly match the current src/content set.
+rmSync(DOCS_OUT, { recursive: true, force: true });
 mkdirSync(DOCS_OUT, { recursive: true });
 
 const published = []; // { slug, locale, url }
