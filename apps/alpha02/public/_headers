@@ -134,6 +134,8 @@
   X-Robots-Tag: noindex
 /loans/*
   X-Robots-Tag: noindex
+/app/loans
+  X-Robots-Tag: noindex
 /app/loans/*
   X-Robots-Tag: noindex
 /claim
