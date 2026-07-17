@@ -267,9 +267,15 @@ const rulePaths = [
   ...ROUTES.filter((r) => r !== '/'),
   ...EN_ONLY_ROUTES,
 ];
-let headersBody = existsSync(HEADERS_PATH)
-  ? readFileSync(HEADERS_PATH, 'utf8')
-  : '';
+let headersBody = '';
+try {
+  headersBody = readFileSync(HEADERS_PATH, 'utf8');
+} catch {
+  // No _headers in dist (public/ copy absent) — emit the generated
+  // section alone. Read-with-catch instead of exists-then-read keeps
+  // CodeQL's TOCTOU checker satisfied, though this single-process
+  // build script has no concurrent writers.
+}
 const markerIdx = headersBody.indexOf(MARKER);
 if (markerIdx !== -1) headersBody = headersBody.slice(0, markerIdx);
 const generated = [MARKER, ...rulePaths.map((p) => `${p}\n${CACHE_LINE}`)].join(
