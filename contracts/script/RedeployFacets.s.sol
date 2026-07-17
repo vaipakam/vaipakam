@@ -169,6 +169,13 @@ contract RedeployFacets is Script {
         // the step is idempotent.
         (, bytes4[] memory profToRemove) =
             _partitionByRouting(diamond, _legacyProfileRemovedSelectors());
+        // Governor PR-3c (#1217) — the composition broadcast widened
+        // `onRewardBroadcastReceived` from 4 to 7 params, changing its
+        // 4-byte selector. Same removal discipline as the keeper-mask
+        // widen above: on a pre-PR-3c diamond the OLD selector stays
+        // routed to stale RewardReporterFacet bytecode unless Removed.
+        (, bytes4[] memory reporterToRemove) =
+            _partitionByRouting(diamond, _legacyRewardReporterRemovedSelectors());
         // #1123 — VaipakamNFTFacet (inline transfer gate) + VaultFactoryFacet
         // (recovery-ban register) partitioned by routing. On a current-version
         // diamond every selector is already routed (all Replace); the split just
@@ -185,7 +192,8 @@ contract RedeployFacets is Script {
             (profToAdd.length > 0 ? 1 : 0) + (profToReplace.length > 0 ? 1 : 0) +
             (nftToAdd.length > 0 ? 1 : 0) + (nftToReplace.length > 0 ? 1 : 0) +
             (vfToAdd.length > 0 ? 1 : 0) + (vfToReplace.length > 0 ? 1 : 0) +
-            (profToRemove.length > 0 ? 1 : 0);
+            (profToRemove.length > 0 ? 1 : 0) +
+            (reporterToRemove.length > 0 ? 1 : 0);
         IDiamondCut.FacetCut[] memory cuts =
             new IDiamondCut.FacetCut[](8 + nExtra);
         cuts[0] = _replace(address(riskFacet), _riskSelectors());
@@ -241,6 +249,9 @@ contract RedeployFacets is Script {
         // pre-#1221 diamond (empty, so skipped, on a fresh/already-migrated one).
         if (profToRemove.length > 0) {
             cuts[idx++] = _remove(profToRemove);
+        }
+        if (reporterToRemove.length > 0) {
+            cuts[idx++] = _remove(reporterToRemove);
         }
         // #1123 — VaipakamNFTFacet (inline transfer gate) + VaultFactoryFacet
         // (recovery-ban register) repoint to the refreshed bytecode.
@@ -325,6 +336,20 @@ contract RedeployFacets is Script {
         s = new bytes4[](2);
         s[0] = bytes4(keccak256("approveKeeper(address,uint8)"));
         s[1] = bytes4(keccak256("setKeeperActions(address,uint8)"));
+    }
+
+    /// @dev Governor PR-3c (#1217) — the pre-composition 4-param broadcast
+    ///      ingress selector, retired when the payload gained the day-pool
+    ///      halves + arming day.
+    function _legacyRewardReporterRemovedSelectors()
+        internal
+        pure
+        returns (bytes4[] memory s)
+    {
+        s = new bytes4[](1);
+        s[0] = bytes4(
+            keccak256("onRewardBroadcastReceived(uint256,uint256,uint256,uint256)")
+        );
     }
 
     /// @dev #394 (Codex #647 round-7) — split `selectors` into those NOT yet

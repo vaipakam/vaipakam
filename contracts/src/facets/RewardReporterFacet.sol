@@ -8,6 +8,7 @@ import {DiamondPausable} from "../libraries/LibPausable.sol";
 import {IVaipakamErrors} from "../interfaces/IVaipakamErrors.sol";
 import {IRewardMessenger} from "../interfaces/IRewardMessenger.sol";
 import {LibInteractionRewards} from "../libraries/LibInteractionRewards.sol";
+import {SafeCast} from "@openzeppelin/contracts/utils/math/SafeCast.sol";
 
 /**
  * @title RewardReporterFacet
@@ -236,7 +237,10 @@ contract RewardReporterFacet is
         uint256 dayId,
         uint256 globalLenderNumeraire18,
         uint256 globalBorrowerNumeraire18,
-        uint256 capThreshold18
+        uint256 capThreshold18,
+        uint256 scheduleFloorHalf,
+        uint256 recycledHalf,
+        uint256 armedFromDay
     ) external {
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         if (msg.sender != s.rewardMessenger || s.rewardMessenger == address(0)) {
@@ -248,11 +252,16 @@ contract RewardReporterFacet is
             // duplicate a packet. Divergent values must never overwrite.
             // #1008 (S13) — `capThreshold18` is part of the broadcast's
             // consensus value, so a divergent-threshold replay reverts too
-            // (Codex #1147 r7 K6).
+            // (Codex #1147 r7 K6). PR-3c — the composition halves join the
+            // consensus tuple for the same reason.
+            LibVaipakam.DayPoolStamp storage prior = s.dayPoolStamp[dayId];
             if (
                 s.knownGlobalLenderInterestNumeraire18[dayId] != globalLenderNumeraire18 ||
                 s.knownGlobalBorrowerInterestNumeraire18[dayId] != globalBorrowerNumeraire18 ||
-                s.dayCapThreshold18[dayId] != capThreshold18
+                s.dayCapThreshold18[dayId] != capThreshold18 ||
+                (prior.stamped &&
+                    (uint256(prior.scheduleFloor) != scheduleFloorHalf * 2 ||
+                        uint256(prior.recycledBudget) != recycledHalf * 2))
             ) {
                 revert KnownGlobalAlreadySet();
             }
@@ -264,6 +273,22 @@ contract RewardReporterFacet is
         // #1008 (S13) — store the CANONICAL threshold from Base; mirrors never
         // recompute locally, so Base + every mirror cap identically.
         LibInteractionRewards.setBroadcastDayCapThreshold(dayId, capThreshold18);
+        // Governor PR-3c (#1217 §6/§8) — store the Base-stamped day-pool
+        // composition verbatim so the mirror's dual accumulators price the
+        // IDENTICAL dailyPool (never recomputed locally; margin/Ā stay 0 —
+        // they are Base-side transparency fields). The arming day travels
+        // in-band too, so mirrors arm on the same D* with zero operator
+        // drift (a mirror only ever moves it forward from unset).
+        s.dayPoolStamp[dayId] = LibVaipakam.DayPoolStamp({
+            scheduleFloor: SafeCast.toUint128(scheduleFloorHalf * 2),
+            recycledBudget: SafeCast.toUint128(recycledHalf * 2),
+            aBarAtFinalize: 0,
+            marginBpsAtFinalize: 0,
+            stamped: true
+        });
+        if (armedFromDay != 0 && s.governorCommitArmedFromDay == 0) {
+            s.governorCommitArmedFromDay = armedFromDay;
+        }
         s.knownGlobalSet[dayId] = true;
 
         emit KnownGlobalInterestSet(

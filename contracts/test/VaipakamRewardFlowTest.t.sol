@@ -41,7 +41,10 @@ contract MockRewardDiamond {
         uint256 day,
         uint256 l,
         uint256 b,
-        uint256 /* capThreshold18 */
+        uint256, /* capThreshold18 */
+        uint256, /* scheduleFloorHalf (PR-3c) */
+        uint256, /* recycledHalf */
+        uint256 /* armedFromDay */
     ) external {
         lastBcastDay = day;
         lastBcastLender = l;
@@ -227,7 +230,8 @@ contract VaipakamRewardFlowTest is Test {
     function test_Broadcast_BaseToMirror() public {
         vm.prank(address(diamondBase));
         rewardBase.broadcastGlobal{value: fee}(
-            42, 9_000 ether, 4_000 ether, type(uint256).max, payable(address(diamondBase))
+            42, 9_000 ether, 4_000 ether, type(uint256).max,
+            0, 0, 0, payable(address(diamondBase))
         );
         assertEq(router.pendingCount(), 1, "broadcast captured");
 
@@ -250,7 +254,7 @@ contract VaipakamRewardFlowTest is Test {
     function test_BroadcastGlobal_RevertWhen_NotDiamond() public {
         vm.deal(address(this), 1 ether);
         vm.expectRevert(VaipakamRewardMessenger.OnlyDiamond.selector);
-        rewardBase.broadcastGlobal{value: fee}(1, 0, 0, type(uint256).max, payable(owner));
+        rewardBase.broadcastGlobal{value: fee}(1, 0, 0, type(uint256).max, 0, 0, 0, payable(owner));
     }
 
     // ─── Inbound routing + integrity guards ─────────────────────────────────
@@ -287,8 +291,18 @@ contract VaipakamRewardFlowTest is Test {
         rewardBase.onCrossChainMessage(
             MIRROR,
             address(rewardMirror),
-            // #1008 (S13) — broadcast payload is now 5 words (+ capThreshold18).
-            abi.encode(BROADCAST, uint256(1), uint256(0), uint256(0), uint256(0)),
+            // PR-3c (#1217) — broadcast payload is 8 words (+ capThreshold18
+            // + composition halves + arming day).
+            abi.encode(
+                BROADCAST,
+                uint256(1),
+                uint256(0),
+                uint256(0),
+                uint256(0),
+                uint256(0),
+                uint256(0),
+                uint256(0)
+            ),
             _empty()
         );
     }

@@ -55,6 +55,19 @@ import {SafeCast} from "@openzeppelin/contracts/utils/math/SafeCast.sol";
  *      path ({claimForUserEntries}); the facet sums both.
  */
 library LibInteractionRewards {
+    /// @notice PR-3c — the source decomposition of a processed reward
+    ///         entry's value (governor §3.1 dual accumulator).
+    /// @param total      Combined capped reward (what actually pays/forfeits).
+    /// @param recycled   RECYCLED component (armed days only by construction).
+    /// @param armedFresh FRESH component of ARMED days only (`armedCombined
+    ///                   − recycled`) — the exact fresh-commitment
+    ///                   consumption; pre-arming days never reserved.
+    struct EntrySplit {
+        uint256 total;
+        uint256 recycled;
+        uint256 armedFresh;
+    }
+
     // ─── Schedule helpers ────────────────────────────────────────────────────
 
     uint256 private constant CUTOFF_0 = 182;
@@ -147,11 +160,42 @@ library LibInteractionRewards {
         uint32 chainId,
         uint256 dayId
     ) internal view returns (uint256 budget) {
-        uint256 half = halfPoolForDay(dayId);
-        if (half == 0) return 0;
+        (uint256 budgetFresh, uint256 budgetRecycled) =
+            chainRewardBudgetSplitForDay(s, chainId, dayId);
+        return budgetFresh + budgetRecycled;
+    }
+
+    /// @notice Governor PR-3c (#1217) — the per-chain remittance budget,
+    ///         decomposed into its FRESH and RECYCLED funding sources so
+    ///         the remit path can account each correctly (fresh reserves
+    ///         against the 69M cap; recycled debits the bucket at remit —
+    ///         the doc-flagged `chainRewardBudgetForDay` underfunding site).
+    ///         Pre-cutover days are fresh-only (legacy schedule).
+    function chainRewardBudgetSplitForDay(
+        LibVaipakam.Storage storage s,
+        uint32 chainId,
+        uint256 dayId
+    ) internal view returns (uint256 budgetFresh, uint256 budgetRecycled) {
+        uint256 half;
+        uint256 recycledHalf;
+        {
+            uint256 armedFrom = s.governorCommitArmedFromDay;
+            if (armedFrom != 0 && dayId >= armedFrom) {
+                LibVaipakam.DayPoolStamp storage p = s.dayPoolStamp[dayId];
+                // Fail-closed: an armed day without a stamp funds nothing
+                // yet (finalization/broadcast pending) — same wait the
+                // claim-side accumulators apply.
+                if (!p.stamped) return (0, 0);
+                half = uint256(p.scheduleFloor) / 2;
+                recycledHalf = uint256(p.recycledBudget) / 2;
+            } else {
+                half = halfPoolForDay(dayId);
+            }
+        }
+        if (half == 0 && recycledHalf == 0) return (0, 0);
         // #776 — only chains whose numerator was folded into `dayId`'s finalized
         // denominator get a slice; a reported-but-then-de-listed chain is out.
-        if (!s.chainDailyIncluded[dayId][chainId]) return 0;
+        if (!s.chainDailyIncluded[dayId][chainId]) return (0, 0);
         // #1008 (S13) — cap the per-chain remittance with the SAME finalize-
         // snapshotted threshold the per-user claims use. Because the §4 threshold
         // is ENTRY-INDEPENDENT, `min(Δ_d, T_d)` factors out of the per-user sum, so
@@ -160,25 +204,58 @@ library LibInteractionRewards {
         // uses. CEIL (not floor) per side so `Σ_days ceil ≥` the once-floored claim
         // over ANY window: a mirror is never underfunded (Codex #1147 r5 I1 / r6 J5).
         // `t == max` (cap disabled that day) ⇒ `min == Δ_d` ⇒ uncapped.
+        // PR-3c — the cap applies to the COMBINED per-day Δ first, then the
+        // capped value is apportioned pro-rata across the two sources —
+        // mirroring the claim-side accumulators exactly so per-chain funding
+        // and per-user claims can never diverge on the split.
         uint256 t = s.dayCapThreshold18[dayId];
         uint256 gLender = s.dailyGlobalLenderInterestNumeraire18[dayId];
         if (gLender != 0) {
-            uint256 dL = (half * 1e18) / gLender; // Δ_d (lender)
-            uint256 mL = dL < t ? dL : t; // min(Δ_d, T_d)
-            budget += _ceilDiv(
-                mL * s.chainDailyLenderInterestNumeraire18[dayId][chainId],
-                1e18
+            (uint256 f, uint256 r) = _sideBudgetSplit(
+                half,
+                recycledHalf,
+                gLender,
+                t,
+                s.chainDailyLenderInterestNumeraire18[dayId][chainId]
             );
+            budgetFresh += f;
+            budgetRecycled += r;
         }
         uint256 gBorrower = s.dailyGlobalBorrowerInterestNumeraire18[dayId];
         if (gBorrower != 0) {
-            uint256 dB = (half * 1e18) / gBorrower; // Δ_d (borrower)
-            uint256 mB = dB < t ? dB : t;
-            budget += _ceilDiv(
-                mB * s.chainDailyBorrowerInterestNumeraire18[dayId][chainId],
-                1e18
+            (uint256 f, uint256 r) = _sideBudgetSplit(
+                half,
+                recycledHalf,
+                gBorrower,
+                t,
+                s.chainDailyBorrowerInterestNumeraire18[dayId][chainId]
             );
+            budgetFresh += f;
+            budgetRecycled += r;
         }
+    }
+
+    /// @dev One side's capped per-chain budget, split fresh/recycled with
+    ///      the combined-first + pro-rata trim rule. CEIL per side so the
+    ///      remitted funding can never fall below the once-floored claim
+    ///      (Codex #1147 r5 I1 — unchanged from the single-source math).
+    function _sideBudgetSplit(
+        uint256 freshHalf,
+        uint256 recycledHalf,
+        uint256 globalTotal,
+        uint256 t,
+        uint256 chainNumeraire
+    ) private pure returns (uint256 f, uint256 r) {
+        uint256 dF = freshHalf == 0 ? 0 : (freshHalf * 1e18) / globalTotal;
+        uint256 dR =
+            recycledHalf == 0 ? 0 : (recycledHalf * 1e18) / globalTotal;
+        uint256 d = dF + dR;
+        if (d == 0) return (0, 0);
+        uint256 m = d < t ? d : t; // min(Δ_d, T_d), combined-first
+        uint256 mR = (m * dR) / d; // pro-rata recycled share of the cap
+        uint256 mF = m - mR;
+        f = _ceilDiv(mF * chainNumeraire, 1e18);
+        r = _ceilDiv(mR * chainNumeraire, 1e18);
     }
 
     /// @dev Ceiling division `⌈a / b⌉` (b != 0). Used by the per-chain remittance
@@ -621,6 +698,48 @@ library LibInteractionRewards {
      * @return reached Highest day actually reached (may be < `through`
      *                 if the finalization gate or per-call cap intervened).
      */
+    /// @dev PR-3c — the redesign's D* predicate: `armed != 0 && d >= armed`
+    ///      (NEVER `>=` alone — default 0 would make every day post-cutover).
+    function _isArmedDay(
+        LibVaipakam.Storage storage s,
+        uint256 d
+    ) private view returns (bool) {
+        uint256 armedFrom = s.governorCommitArmedFromDay;
+        return armedFrom != 0 && d >= armedFrom;
+    }
+
+    /// @dev Governor PR-3c (#1217 §3.1) — resolve day `d`'s per-side pool
+    ///      halves for the accumulator build.
+    ///
+    ///      Pre-cutover days keep the legacy schedule (`halfPoolForDay`,
+    ///      fresh-only). Post-cutover days (`armedFrom != 0 && d >=
+    ///      armedFrom` — NEVER `>=` alone, per the redesign's D* rule) read
+    ///      the finalize-stamped {LibVaipakam.DayPoolStamp} halves: the
+    ///      fresh component from `scheduleFloor` and the recycled component
+    ///      from `recycledBudget`, each split 50/50 per side. A post-cutover
+    ///      day whose stamp hasn't landed yet (mirror waiting on the
+    ///      composition broadcast) HALTS the cursor — the same fail-closed
+    ///      wait the `knownGlobalSet` gate already applies, so a claim can
+    ///      never price an armed day from the wrong pool.
+    /// @return freshHalf    Per-side fresh pool for day `d`.
+    /// @return recycledHalf Per-side recycled pool (0 pre-cutover).
+    /// @return halt         True ⇒ armed day without a stamp: stop advancing.
+function _dayPoolHalves(
+        LibVaipakam.Storage storage s,
+        uint256 d
+    )
+        private
+        view
+        returns (uint256 freshHalf, uint256 recycledHalf, bool halt)
+    {
+        if (_isArmedDay(s, d)) {
+            LibVaipakam.DayPoolStamp storage p = s.dayPoolStamp[d];
+            if (!p.stamped) return (0, 0, true);
+            return (uint256(p.scheduleFloor) / 2, uint256(p.recycledBudget) / 2, false);
+        }
+        return (halfPoolForDay(d), 0, false);
+    }
+
     function advanceCumLenderThrough(uint256 through)
         internal
         returns (uint256 reached)
@@ -634,24 +753,52 @@ library LibInteractionRewards {
         uint256 prev = cursor == 0 ? 0 : s.cumLenderRpn18[cursor];
         // #1008 (S13) — the capped cumulative rides the SAME cursor.
         uint256 prevMin = cursor == 0 ? 0 : s.cumMinLenderRpn18[cursor];
+        // PR-3c — the capped RECYCLED component rides it too (fresh is
+        // derived by subtraction, never stored).
+        uint256 prevMinRec =
+            cursor == 0 ? 0 : s.cumMinRecycledLenderRpn18[cursor];
+        uint256 prevMinArmed =
+            cursor == 0 ? 0 : s.cumMinArmedLenderRpn18[cursor];
         for (uint256 d = cursor + 1; d <= through; ) {
             if (!s.knownGlobalSet[d]) break;
+            (uint256 freshHalf, uint256 recycledHalf, bool halt) =
+                _dayPoolHalves(s, d);
+            if (halt) break;
             uint256 globalTotal = s.knownGlobalLenderInterestNumeraire18[d];
-            uint256 half = halfPoolForDay(d);
-            uint256 daily; // Δ_d in RPN units
-            if (globalTotal != 0 && half != 0) {
-                daily = (half * 1e18) / globalTotal;
+            uint256 freshDaily;
+            uint256 recycledDaily;
+            if (globalTotal != 0) {
+                if (freshHalf != 0) {
+                    freshDaily = (freshHalf * 1e18) / globalTotal;
+                }
+                if (recycledHalf != 0) {
+                    recycledDaily = (recycledHalf * 1e18) / globalTotal;
+                }
             }
+            uint256 daily = freshDaily + recycledDaily; // Δ_d in RPN units
             uint256 next = prev + daily;
             s.cumLenderRpn18[d] = next;
             // #1008 (S13) — capped cumulative: Σ min(Δ_d, T_d) using the
             // finalize-snapshotted threshold (broadcast-canonical). t == max
             // (cap disabled that day) ⇒ min == daily ⇒ cumMin tracks cumRpn.
+            // PR-3c (governor §3.1 / Codex r7): the cap applies to the
+            // COMBINED Δ first; the trim is then apportioned pro-rata
+            // across the two sources so capping never changes the total.
             uint256 t = s.dayCapThreshold18[d];
-            uint256 nextMin = prevMin + (daily < t ? daily : t);
+            uint256 capped = daily < t ? daily : t;
+            uint256 cappedRecycled =
+                daily == 0 ? 0 : (capped * recycledDaily) / daily;
+            uint256 nextMin = prevMin + capped;
             s.cumMinLenderRpn18[d] = nextMin;
+            uint256 nextMinRec = prevMinRec + cappedRecycled;
+            s.cumMinRecycledLenderRpn18[d] = nextMinRec;
+            // Armed-day combined cumulative (consumption accounting): a
+            // pre-arming day contributes 0 here.
+            prevMinArmed += _isArmedDay(s, d) ? capped : 0;
+            s.cumMinArmedLenderRpn18[d] = prevMinArmed;
             prev = next;
             prevMin = nextMin;
+            prevMinRec = nextMinRec;
             cursor = d;
             unchecked { ++d; }
         }
@@ -672,21 +819,42 @@ library LibInteractionRewards {
 
         uint256 prev = cursor == 0 ? 0 : s.cumBorrowerRpn18[cursor];
         uint256 prevMin = cursor == 0 ? 0 : s.cumMinBorrowerRpn18[cursor];
+        uint256 prevMinRec =
+            cursor == 0 ? 0 : s.cumMinRecycledBorrowerRpn18[cursor];
+        uint256 prevMinArmed =
+            cursor == 0 ? 0 : s.cumMinArmedBorrowerRpn18[cursor];
         for (uint256 d = cursor + 1; d <= through; ) {
             if (!s.knownGlobalSet[d]) break;
+            (uint256 freshHalf, uint256 recycledHalf, bool halt) =
+                _dayPoolHalves(s, d);
+            if (halt) break;
             uint256 globalTotal = s.knownGlobalBorrowerInterestNumeraire18[d];
-            uint256 half = halfPoolForDay(d);
-            uint256 daily;
-            if (globalTotal != 0 && half != 0) {
-                daily = (half * 1e18) / globalTotal;
+            uint256 freshDaily;
+            uint256 recycledDaily;
+            if (globalTotal != 0) {
+                if (freshHalf != 0) {
+                    freshDaily = (freshHalf * 1e18) / globalTotal;
+                }
+                if (recycledHalf != 0) {
+                    recycledDaily = (recycledHalf * 1e18) / globalTotal;
+                }
             }
+            uint256 daily = freshDaily + recycledDaily;
             uint256 next = prev + daily;
             s.cumBorrowerRpn18[d] = next;
             uint256 t = s.dayCapThreshold18[d];
-            uint256 nextMin = prevMin + (daily < t ? daily : t);
+            uint256 capped = daily < t ? daily : t;
+            uint256 cappedRecycled =
+                daily == 0 ? 0 : (capped * recycledDaily) / daily;
+            uint256 nextMin = prevMin + capped;
             s.cumMinBorrowerRpn18[d] = nextMin;
+            uint256 nextMinRec = prevMinRec + cappedRecycled;
+            s.cumMinRecycledBorrowerRpn18[d] = nextMinRec;
+            prevMinArmed += _isArmedDay(s, d) ? capped : 0;
+            s.cumMinArmedBorrowerRpn18[d] = prevMinArmed;
             prev = next;
             prevMin = nextMin;
+            prevMinRec = nextMinRec;
             cursor = d;
             unchecked { ++d; }
         }
@@ -704,12 +872,15 @@ library LibInteractionRewards {
      *         made separately by the facet wrapping this helper).
      *
      * @param user User being claimed for.
-     * @return userTotal     VPFI wei accruing to `user`.
-     * @return treasuryTotal VPFI wei routed to treasury (forfeits).
+     * @return toUser     Aggregated decomposition of what accrues to `user`
+     *                    (PR-3c {EntrySplit}: total / recycled / armedFresh).
+     * @return toTreasury Aggregated decomposition of the forfeits (the facet
+     *                    routes the fresh share to the recycle bucket and
+     *                    releases the recycled share's commitment).
      */
     function claimForUserEntries(address user)
         internal
-        returns (uint256 userTotal, uint256 treasuryTotal)
+        returns (EntrySplit memory toUser, EntrySplit memory toTreasury)
     {
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         uint256[] storage ids = s.userRewardEntryIds[user];
@@ -718,14 +889,14 @@ library LibInteractionRewards {
         // #1008 (S13) — the §4 cap is baked into `cumMin*Rpn18` at finalization,
         // so the claim no longer reads the ETH feed / cap ratio here.
         for (uint256 i = 0; i < len; ) {
-            uint256 id = ids[i];
-            (uint256 toUser, uint256 toTreasury) = _processEntry(
-                s,
-                id,
-                /* mutate */ true
-            );
-            userTotal += toUser;
-            treasuryTotal += toTreasury;
+            (EntrySplit memory u, EntrySplit memory t) =
+                _processEntry(s, ids[i], /* mutate */ true);
+            toUser.total += u.total;
+            toUser.recycled += u.recycled;
+            toUser.armedFresh += u.armedFresh;
+            toTreasury.total += t.total;
+            toTreasury.recycled += t.recycled;
+            toTreasury.armedFresh += t.armedFresh;
             unchecked { ++i; }
         }
     }
@@ -766,11 +937,12 @@ library LibInteractionRewards {
      *         claim still get their forfeited VPFI routed to treasury.
      *
      * @param loanId Loan id whose closed+forfeited entries to sweep.
-     * @return treasuryTotal VPFI wei routed to treasury by this sweep.
+     * @return toTreasury Aggregated {EntrySplit} of the forfeits (the facet
+     *                    splits fresh-credit vs recycled-release — PR-3c).
      */
     function sweepForfeitedByLoanId(uint256 loanId)
         internal
-        returns (uint256 treasuryTotal)
+        returns (EntrySplit memory toTreasury)
     {
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
 
@@ -782,13 +954,13 @@ library LibInteractionRewards {
         // derived) — a permissionless sweep can never touch a payable entry.
         uint256 lenderId = s.loanActiveLenderEntryId[loanId];
         if (lenderId != 0 && _isForfeited(s, s.rewardEntries[lenderId])) {
-            (, uint256 t) = _processEntry(s, lenderId, true);
-            treasuryTotal += t;
+            (, EntrySplit memory t) = _processEntry(s, lenderId, true);
+            _foldSplit(toTreasury, t);
         }
         uint256 borrowerId = s.loanBorrowerEntryId[loanId];
         if (borrowerId != 0 && _isForfeited(s, s.rewardEntries[borrowerId])) {
-            (, uint256 t) = _processEntry(s, borrowerId, true);
-            treasuryTotal += t;
+            (, EntrySplit memory t) = _processEntry(s, borrowerId, true);
+            _foldSplit(toTreasury, t);
         }
 
         // #953 (Codex) — also drain lender entries that a position sale orphaned
@@ -799,11 +971,32 @@ library LibInteractionRewards {
         uint256 olen = orphaned.length;
         for (uint256 i = 0; i < olen; ) {
             if (_isForfeited(s, s.rewardEntries[orphaned[i]])) {
-                (, uint256 t) = _processEntry(s, orphaned[i], true);
-                treasuryTotal += t;
+                (, EntrySplit memory t) = _processEntry(s, orphaned[i], true);
+                _foldSplit(toTreasury, t);
             }
             unchecked { ++i; }
         }
+    }
+
+    /// @dev PR-3c — accumulate `part` into `acc` (memory fold helper).
+    function _foldSplit(
+        EntrySplit memory acc,
+        EntrySplit memory part
+    ) private pure {
+        acc.total += part.total;
+        acc.recycled += part.recycled;
+        acc.armedFresh += part.armedFresh;
+    }
+
+    /// @notice PR-3c — retire armed FRESH commitments consumed by a
+    ///         claim/forfeit/remit (floored at zero: bounded ceil-dust can
+    ///         make consumption exceed the recorded commitment by wei).
+    function consumeArmedFresh(uint256 amount) internal {
+        if (amount == 0) return;
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        uint256 outstanding = s.outstandingCommitFresh;
+        s.outstandingCommitFresh =
+            outstanding > amount ? outstanding - amount : 0;
     }
 
     /// @dev #1061 P1 — an entry destined for treasury: an explicit forfeit set
@@ -1001,18 +1194,21 @@ library LibInteractionRewards {
         LibVaipakam.Storage storage s,
         uint256 id,
         bool mutate
-    ) private returns (uint256 toUser, uint256 toTreasury) {
+    )
+        private
+        returns (EntrySplit memory toUser, EntrySplit memory toTreasury)
+    {
         LibVaipakam.RewardEntry storage e = s.rewardEntries[id];
-        if (e.processed) return (0, 0);
+        if (e.processed) return (toUser, toTreasury);
         // #1002 (S4) — an entry is claimable/sweepable ONLY once the loan is
         // actually over, not merely because the calendar passed maturity. See
         // {_entryClaimable}: either the entry was explicitly closed (window
         // finalized by closeLoan / lender-sale) OR its loan has reached a
         // terminal status. `endDay` is purely the accrual bound now.
-        if (!_entryClaimable(s, e)) return (0, 0);
+        if (!_entryClaimable(s, e)) return (toUser, toTreasury);
         if (e.startDay >= e.endDay) {
             if (mutate) e.processed = true;
-            return (0, 0);
+            return (toUser, toTreasury);
         }
 
         // Need cumRPN populated through endDay - 1 for the matching side.
@@ -1024,33 +1220,28 @@ library LibInteractionRewards {
                 // Try to extend; may not be possible if globals not finalized.
                 cursor = advanceCumLenderThrough(need);
             }
-            if (cursor < need) return (0, 0);
+            if (cursor < need) return (toUser, toTreasury);
         } else {
             cursor = s.cumBorrowerCursor;
             if (cursor < need) {
                 cursor = advanceCumBorrowerThrough(need);
             }
-            if (cursor < need) return (0, 0);
+            if (cursor < need) return (toUser, toTreasury);
         }
 
         // #1008 (S13, Option B) — read the CAPPED cumulative so the §4 daily
         // cap is applied per day (baked at finalization) while the claim stays
         // O(1). `cumMin*Rpn18` == `cum*Rpn18` on days the cap was disabled.
-        uint256 cumEnd;
-        uint256 cumStart;
-        if (e.side == LibVaipakam.RewardSide.Lender) {
-            cumEnd = s.cumMinLenderRpn18[e.endDay - 1];
-            cumStart = e.startDay == 0 ? 0 : s.cumMinLenderRpn18[e.startDay - 1];
-        } else {
-            cumEnd = s.cumMinBorrowerRpn18[e.endDay - 1];
-            cumStart = e.startDay == 0 ? 0 : s.cumMinBorrowerRpn18[e.startDay - 1];
-        }
-        if (cumEnd <= cumStart) {
+        // PR-3c — the RECYCLED capped component rides the same window
+        // delta; mixed pre/post-cutover windows slice correctly by
+        // construction (pre-arming days contribute 0 to the recycled
+        // cumulative), satisfying the redesign's D* day-slicing rule
+        // without a per-day loop.
+        EntrySplit memory split = _entryWindowSplit(s, e);
+        if (split.total == 0) {
             if (mutate) e.processed = true;
-            return (0, 0);
+            return (toUser, toTreasury);
         }
-
-        uint256 reward = (e.perDayNumeraire18 * (cumEnd - cumStart)) / 1e18;
 
         if (mutate) e.processed = true;
         // #1061 P2 — route to treasury on an explicit forfeit OR a terminal
@@ -1058,10 +1249,64 @@ library LibInteractionRewards {
         // borrower can't collect via the {_entryClaimable} loan-terminal
         // fallback).
         if (e.forfeited || _entryTerminalForfeit(s, e)) {
-            toTreasury = reward;
+            toTreasury = split;
         } else {
-            toUser = reward;
+            toUser = split;
         }
+    }
+
+    /// @dev PR-3c — compute an entry window's capped reward decomposition
+    ///      from the three cumulative series. Mixed pre/post-cutover
+    ///      windows slice correctly by construction: pre-arming days
+    ///      contribute 0 to both the recycled and armed cumulatives
+    ///      (the redesign's D* day-slicing rule with no per-day loop).
+    function _entryWindowSplit(
+        LibVaipakam.Storage storage s,
+        LibVaipakam.RewardEntry storage e
+    ) private view returns (EntrySplit memory split) {
+        uint256 cumEnd;
+        uint256 cumStart;
+        uint256 cumRecEnd;
+        uint256 cumRecStart;
+        uint256 cumArmEnd;
+        uint256 cumArmStart;
+        uint256 endD = e.endDay - 1;
+        bool hasStart = e.startDay != 0;
+        if (e.side == LibVaipakam.RewardSide.Lender) {
+            cumEnd = s.cumMinLenderRpn18[endD];
+            cumStart = hasStart ? s.cumMinLenderRpn18[e.startDay - 1] : 0;
+            cumRecEnd = s.cumMinRecycledLenderRpn18[endD];
+            cumRecStart =
+                hasStart ? s.cumMinRecycledLenderRpn18[e.startDay - 1] : 0;
+            cumArmEnd = s.cumMinArmedLenderRpn18[endD];
+            cumArmStart =
+                hasStart ? s.cumMinArmedLenderRpn18[e.startDay - 1] : 0;
+        } else {
+            cumEnd = s.cumMinBorrowerRpn18[endD];
+            cumStart = hasStart ? s.cumMinBorrowerRpn18[e.startDay - 1] : 0;
+            cumRecEnd = s.cumMinRecycledBorrowerRpn18[endD];
+            cumRecStart =
+                hasStart ? s.cumMinRecycledBorrowerRpn18[e.startDay - 1] : 0;
+            cumArmEnd = s.cumMinArmedBorrowerRpn18[endD];
+            cumArmStart =
+                hasStart ? s.cumMinArmedBorrowerRpn18[e.startDay - 1] : 0;
+        }
+        if (cumEnd <= cumStart) return split;
+
+        split.total = (e.perDayNumeraire18 * (cumEnd - cumStart)) / 1e18;
+        uint256 recycled = cumRecEnd > cumRecStart
+            ? (e.perDayNumeraire18 * (cumRecEnd - cumRecStart)) / 1e18
+            : 0;
+        uint256 armedCombined = cumArmEnd > cumArmStart
+            ? (e.perDayNumeraire18 * (cumArmEnd - cumArmStart)) / 1e18
+            : 0;
+        // Rounding safety chain: recycled ≤ armedCombined ≤ total holds in
+        // exact arithmetic; clamp against 1-wei division dust so the
+        // subtraction-derived fresh shares can never underflow.
+        if (armedCombined > split.total) armedCombined = split.total;
+        if (recycled > armedCombined) recycled = armedCombined;
+        split.recycled = recycled;
+        split.armedFresh = armedCombined - recycled;
     }
 
     /// @dev View-only variant of the entry processing path (no advance).
