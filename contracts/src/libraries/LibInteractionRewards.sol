@@ -69,6 +69,33 @@ library LibInteractionRewards {
         uint256 armedFresh;
     }
 
+    /// @notice RL-3 (#1305) — the horizon clock started for `entryId`: the
+    ///         sweep observed the entry fully claimable for the first time.
+    ///         This is the notification pipeline's schedule signal — the
+    ///         indexer materialises the free pre-expiry notice (and the
+    ///         Claim Center countdown) from it. `expiresAt` reflects the
+    ///         horizon AND activation-notice floor at stamp time; a later
+    ///         dark reset can lift it, so {rewardEntryExpiry} stays the
+    ///         authoritative read.
+    /// @custom:event-category state-change/reward-claim
+    event RewardEntryHorizonStamped(
+        uint256 indexed entryId,
+        address indexed user,
+        uint64 firstClaimableAt,
+        uint64 expiresAt
+    );
+
+    /// @notice RL-3 — `entryId` expired past its claim horizon and was
+    ///         swept into the recycle bucket (`total` split into the
+    ///         fresh absorption credit and the `recycled` release).
+    /// @custom:event-category state-change/reward-claim
+    event RewardEntryExpired(
+        uint256 indexed entryId,
+        address indexed user,
+        uint256 total,
+        uint256 recycled
+    );
+
     // ─── Schedule helpers ────────────────────────────────────────────────────
 
     uint256 private constant CUTOFF_0 = 182;
@@ -1072,20 +1099,52 @@ function _dayPoolHalves(
         uint64 stamp = s.rewardEntryFirstClaimableAt[id];
         if (stamp == 0) {
             // First observed claimability — start the clock, expire later.
-            s.rewardEntryFirstClaimableAt[id] = uint64(block.timestamp);
+            // The stamp event is the notification pipeline's schedule
+            // signal (the indexer materialises the free pre-expiry notice
+            // from it); {rewardEntryExpiry} stays the authoritative
+            // expiry read (a later dark reset can lift it).
+            stamp = uint64(block.timestamp);
+            s.rewardEntryFirstClaimableAt[id] = stamp;
+            emit RewardEntryHorizonStamped(
+                id, e.user, stamp, uint64(_horizonExpiryAt(s, stamp, horizonDays))
+            );
             return expired;
         }
-        // Expiry needs BOTH the per-entry horizon AND the ratified ≥90-day
-        // activation-notice floor — a dark reset + re-activation re-grants
-        // every stale-stamped entry a fresh notice window before expiry.
-        uint256 expiresAt = uint256(stamp) + uint256(horizonDays) * 1 days;
+        if (block.timestamp < _horizonExpiryAt(s, stamp, horizonDays)) {
+            return expired;
+        }
+
+        EntrySplit memory split_ = _entryWindowSplit(s, e);
+        // Never expire an entry whose FRESH share cannot be credited: at
+        // full fresh-pool exhaustion an all-fresh entry would be processed
+        // with ZERO bucket credit — value silently burned. Defer instead
+        // (entry stays live), mirroring the claim path's revert in the
+        // same state. Partial exhaustion still processes (bounded
+        // boundary truncation, identical to the claim path).
+        if (split_.total > split_.recycled) {
+            uint256 reserved =
+                s.interactionPoolPaidOut + s.rewardBudgetRemittedGlobal;
+            if (LibVaipakam.VPFI_INTERACTION_POOL_CAP <= reserved) {
+                return expired;
+            }
+        }
+        expired = split_;
+        e.processed = true;
+        emit RewardEntryExpired(id, e.user, expired.total, expired.recycled);
+    }
+
+    /// @dev RL-3 — the entry's expiry instant:
+    ///      `max(stamp + H days, activation + notice floor)`. Single home
+    ///      for the rule so the sweep and the countdown view can't drift.
+    function _horizonExpiryAt(
+        LibVaipakam.Storage storage s,
+        uint64 stamp,
+        uint32 horizonDays
+    ) private view returns (uint256 at) {
+        at = uint256(stamp) + uint256(horizonDays) * 1 days;
         uint256 noticeFloor = uint256(s.rewardHorizonActivatedAt) +
             uint256(LibVaipakam.REWARD_CLAIM_HORIZON_NOTICE_DAYS) * 1 days;
-        if (expiresAt < noticeFloor) expiresAt = noticeFloor;
-        if (block.timestamp < expiresAt) return expired;
-
-        expired = _entryWindowSplit(s, e);
-        e.processed = true;
+        if (at < noticeFloor) at = noticeFloor;
     }
 
     /// @notice RL-3 — UX view: the entry's horizon state for the
@@ -1103,11 +1162,9 @@ function _dayPoolHalves(
         firstClaimableAt = s.rewardEntryFirstClaimableAt[id];
         uint32 horizonDays = s.rewardClaimHorizonDays;
         if (firstClaimableAt != 0 && horizonDays != 0) {
-            uint256 at = uint256(firstClaimableAt) +
-                uint256(horizonDays) * 1 days;
-            uint256 noticeFloor = uint256(s.rewardHorizonActivatedAt) +
-                uint256(LibVaipakam.REWARD_CLAIM_HORIZON_NOTICE_DAYS) * 1 days;
-            expiresAt = uint64(at < noticeFloor ? noticeFloor : at);
+            expiresAt = uint64(
+                _horizonExpiryAt(s, firstClaimableAt, horizonDays)
+            );
         }
     }
 

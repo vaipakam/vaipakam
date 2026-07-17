@@ -251,6 +251,7 @@ Claim horizon (RL-3, `VpfiRecyclingLoopClosureDesign.md` §6 — ratified §10.2
 - a claim landing any time before expiry always wins; an expired entry is simply processed, exactly like a claimed one — never clawed back retroactively
 - expiry uses the ratified **split signals**: the fresh-funded share genuinely leaves the fresh budget, consumes its pool cap, and credits the recycle bucket as absorption; the recycled-funded share never left the bucket and is released with **zero new credit** (it must never inflate the absorption average)
 - the claim surface exposes each entry's clock start and expiry timestamp so the Claim Center can render a countdown; the pre-expiry notice must ride **free** notification channels (the in-app notification center) — paid push may only ever be additional, since it skips exactly the dormant claimants the sweep would affect
+- the horizon lifecycle is fully observable on-chain: each user's reward-entry ids are enumerable next to the entry details, the clock start and the expiry both emit public per-entry signals (so the notification pipeline can schedule the notice from indexed events alone), and an entry whose fresh share could not actually be credited at expiry (fresh budget fully exhausted) is deferred — never processed with its value silently burned
 - the frontend claim surface for interaction rewards belongs in `Claim Center`, above per-loan claim rows, rather than on a combined Rewards page
 - the interaction-rewards UI should show:
   - pending claimable VPFI from `previewInteractionRewards(user)`

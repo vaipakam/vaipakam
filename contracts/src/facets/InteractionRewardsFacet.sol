@@ -883,6 +883,22 @@ contract InteractionRewardsFacet is
         }
     }
 
+    /// @notice RL-3 (#1305) — the storage ids backing
+    ///         {getUserRewardEntries}, same length and registration order,
+    ///         so keepers and the Claim Center can address
+    ///         {getRewardEntryExpiry} / {sweepExpiredInteractionRewards}
+    ///         (both are id-keyed) without reconstructing internal storage
+    ///         from events off-chain.
+    /// @param  user Address whose entry ids to enumerate.
+    /// @return ids Entry ids in registration order.
+    function getUserRewardEntryIds(address user)
+        external
+        view
+        returns (uint256[] memory ids)
+    {
+        return LibVaipakam.storageSlot().userRewardEntryIds[user];
+    }
+
     // ─── #969 / S5 — diamond-internal reward-lifecycle hooks ─────────────────
     //
     // PrecloseFacet must close / re-point reward entries when it flips a loan's

@@ -309,21 +309,21 @@ contract GovernorDualAccumulatorTest is SetupTest {
         _facet().sweepExpiredInteractionRewards(ids); // stamp the clock
         vm.warp(block.timestamp + 181 days);
 
-        // Exhaust the fresh pool AFTER the stamp: the expiry's fresh share
-        // truncates to zero, but the entry is terminally processed, so its
-        // ENTIRE armed fresh commitment must still retire.
+        // Near-exhaust the fresh pool AFTER the stamp (1 wei of headroom):
+        // the expiry's fresh share truncates to that sliver, but the entry
+        // is terminally processed, so its ENTIRE armed fresh commitment
+        // must still retire.
         _mut().setInteractionPoolPaidOut(
-            LibVaipakam.VPFI_INTERACTION_POOL_CAP
+            LibVaipakam.VPFI_INTERACTION_POOL_CAP - 1
         );
         (, uint256 outFBefore, uint256 outRBefore, ) =
             _agg().getGovernorCommitState();
-        uint256 bucketBefore = _cfg().getRecycleBucket();
 
         uint256 swept = _facet().sweepExpiredInteractionRewards(ids);
 
         assertApproxEqAbs(
             swept, recycled5 / 2, 1e6,
-            "only the recycled share is expirable at exhaustion"
+            "recycled share + 1 wei fresh sliver expirable at near-exhaustion"
         );
         (, uint256 outFAfter, uint256 outRAfter, ) =
             _agg().getGovernorCommitState();
@@ -339,11 +339,39 @@ contract GovernorDualAccumulatorTest is SetupTest {
             1e6,
             "recycled commitment released"
         );
-        assertEq(
-            _cfg().getRecycleBucket(),
-            bucketBefore,
-            "bucket untouched: zero fresh credit, release is not a debit"
+    }
+
+    // ─── 4c. RL-3 Codex r2 — zero-credit expiry defers, never burns ──────────
+
+    function testExpirySweepDefersAtFullFreshExhaustion() public {
+        _cfg().setRewardClaimHorizonDays(180);
+        (uint256 floor5, ) = _armAndFinalize(5, 700 ether);
+        assertGt(floor5, 0, "entry carries a fresh share");
+
+        uint256 id = _seedEntry(alice, 46, 5, 6);
+        uint256[] memory ids = new uint256[](1);
+        ids[0] = id;
+        _facet().sweepExpiredInteractionRewards(ids); // stamp the clock
+        vm.warp(block.timestamp + 181 days);
+
+        // FULL fresh exhaustion: expiring now would credit the bucket
+        // nothing for the fresh share — the entry must be DEFERRED (stay
+        // live), not processed with its value silently burned.
+        _mut().setInteractionPoolPaidOut(
+            LibVaipakam.VPFI_INTERACTION_POOL_CAP
         );
+        (, uint256 outFBefore, , ) = _agg().getGovernorCommitState();
+        assertEq(
+            _facet().sweepExpiredInteractionRewards(ids),
+            0,
+            "zero-credit expiry deferred"
+        );
+        (, uint256 outFAfter, , ) = _agg().getGovernorCommitState();
+        assertEq(outFBefore, outFAfter, "commitments untouched by a defer");
+        // The id surface keepers/UI drive this from is enumerable on-chain.
+        uint256[] memory got = _facet().getUserRewardEntryIds(alice);
+        assertEq(got.length, 1, "id enumeration exposed");
+        assertEq(got[0], id, "id matches the entry");
     }
 
     // ─── 5. Composition broadcast to a mirror ────────────────────────────────

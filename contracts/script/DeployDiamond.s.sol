@@ -2027,7 +2027,7 @@ contract DeployDiamond is Script {
     // #687-B: _getStakingRewardsSelectors removed with the 5% VPFI staking yield.
 
     function _getInteractionRewardsSelectors() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](26);
+        s = new bytes4[](27);
         s[0] = InteractionRewardsFacet.claimInteractionRewards.selector;
         s[1] = InteractionRewardsFacet.setInteractionLaunchTimestamp.selector;
         s[2] = InteractionRewardsFacet.getInteractionLaunchTimestamp.selector;
@@ -2059,6 +2059,8 @@ contract DeployDiamond is Script {
         // RL-3 (#1305) — claim-horizon sweep + countdown view.
         s[24] = InteractionRewardsFacet.sweepExpiredInteractionRewards.selector;
         s[25] = InteractionRewardsFacet.getRewardEntryExpiry.selector;
+        // RL-3 Codex r2 — id enumeration for the id-keyed horizon surface.
+        s[26] = InteractionRewardsFacet.getUserRewardEntryIds.selector;
     }
 
     function _getRewardReporterSelectors() internal pure returns (bytes4[] memory s) {

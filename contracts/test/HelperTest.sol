@@ -83,7 +83,7 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](115);
+        selectors = new bytes4[](114);
         selectors[0] = TestMutatorFacet.setLoan.selector;
         selectors[1] = TestMutatorFacet.setOffer.selector;
         selectors[2] = TestMutatorFacet.setNextLoanId.selector;
@@ -280,17 +280,18 @@ contract HelperTest {
         // #1067 (S13 Part 2) — terminal re-anchor + O(1) index test scaffolding.
         selectors[105] = TestMutatorFacet.setLoanBorrowerEntryId.selector;
         selectors[106] = TestMutatorFacet.callRepointRewardEntry.selector;
-        selectors[107] = TestMutatorFacet.getUserRewardEntryIds.selector;
-        selectors[108] = TestMutatorFacet.getRewardEntryUserIdx.selector;
+        // getUserRewardEntryIds now routes to the REAL facet view (RL-3
+        // Codex r2 promoted it); the mutator's duplicate stays un-routed.
+        selectors[107] = TestMutatorFacet.getRewardEntryUserIdx.selector;
         // RL-1 — claim-to-vault delivery test scaffolding.
-        selectors[109] = TestMutatorFacet.setMandatoryVaultVersionRaw.selector;
-        selectors[110] = TestMutatorFacet.getStakeRollupStateRaw.selector;
+        selectors[108] = TestMutatorFacet.setMandatoryVaultVersionRaw.selector;
+        selectors[109] = TestMutatorFacet.getStakeRollupStateRaw.selector;
         // Governor PR-3a — recycle-bucket forfeit-routing scaffolding.
-        selectors[111] = TestMutatorFacet.setRewardEntryForfeitedRaw.selector;
+        selectors[110] = TestMutatorFacet.setRewardEntryForfeitedRaw.selector;
         // Governor PR-3b — day-pool stamp test scaffolding.
-        selectors[112] = TestMutatorFacet.setRecycleBucketRaw.selector;
-        selectors[113] = TestMutatorFacet.setRecycledCreditedByDayRaw.selector;
-        selectors[114] = TestMutatorFacet.setGovernorCommitArmedFromDayRaw.selector;
+        selectors[111] = TestMutatorFacet.setRecycleBucketRaw.selector;
+        selectors[112] = TestMutatorFacet.setRecycledCreditedByDayRaw.selector;
+        selectors[113] = TestMutatorFacet.setGovernorCommitArmedFromDayRaw.selector;
         // #951 v2 (Codex #959 bind-to-live) — setSaleListingCollateralRaw removed
         // with the snapshot mapping; the accept binds `>=` live collateral.
         // #687-B: the former tail entries ([83]-[87]: setBackstopAbsorbCashRaw,
@@ -1747,7 +1748,7 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](26);
+        selectors = new bytes4[](27);
         selectors[0] = InteractionRewardsFacet.claimInteractionRewards.selector;
         selectors[1] = InteractionRewardsFacet.setInteractionLaunchTimestamp.selector;
         selectors[2] = InteractionRewardsFacet.getInteractionLaunchTimestamp.selector;
@@ -1779,6 +1780,8 @@ contract HelperTest {
         // RL-3 (#1305) — claim-horizon sweep + countdown view.
         selectors[24] = InteractionRewardsFacet.sweepExpiredInteractionRewards.selector;
         selectors[25] = InteractionRewardsFacet.getRewardEntryExpiry.selector;
+        // RL-3 Codex r2 — id enumeration for the id-keyed horizon surface.
+        selectors[26] = InteractionRewardsFacet.getUserRewardEntryIds.selector;
         return selectors;
     }
 

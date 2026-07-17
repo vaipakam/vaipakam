@@ -19,6 +19,13 @@ at least 90 days of fresh runway before it can expire, so a dark
 interval is never silently counted against dormant claimants. A claim
 landing any time before expiry always wins.
 
+The lifecycle is fully observable: reward-entry ids are enumerable
+per user, the clock start and the expiry each emit a public per-entry
+signal (the notification pipeline schedules the free pre-expiry notice
+from indexed events alone), and an entry whose fresh share cannot be
+credited at expiry — the fresh budget fully exhausted — is deferred,
+never processed with its value silently burned.
+
 Expiry uses the ratified split signals riding the governor's PR-3c
 machinery: the fresh-funded share genuinely leaves the fresh budget
 (consumes the pool cap) and credits the bucket as ExpiredReward
