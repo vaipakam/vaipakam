@@ -66,7 +66,10 @@ import {
   MARKET_SWEEP_CURSOR_KIND,
 } from './marketSummary';
 import { materializeNotifications } from './notifications';
-import { applyRewardLoopLedger } from './rewardLoopLedger';
+import {
+  applyRewardLoopLedger,
+  ensureRewardLoopBackfill,
+} from './rewardLoopLedger';
 import {
   sweepCalendarNotifications,
   EMPTY_SWEEP,
@@ -615,6 +618,12 @@ export async function runChainIndexerForChain(
     // #1213 PR 2b (Codex #1300 r1) — the caught-up quiet tick is a
     // valid "notifications complete through lastBlock" point too.
     await stampNotifiedWatermark(env, chainId, lastBlock);
+    // RL-2 (Codex #1310 r2 P2) — seed the loop-closure ledger's one-time
+    // activity_events backfill on quiet chains too: a deploy landing on
+    // an already-caught-up chain would otherwise serve zeros from
+    // /metrics/loop-closure until an unrelated future log arrived.
+    // Cheap after the first run (a single flag SELECT).
+    await ensureRewardLoopBackfill(env, chainId);
     return {
       scannedFrom: scanFrom,
       scannedTo: scanFrom - 1n,
@@ -769,23 +778,34 @@ export async function runChainIndexerForChain(
   // A and Phase B handlers above mutate domain tables; this writer
   // appends one row per log to the unified feed for the Activity
   // page + LoanTimeline + per-wallet history surfaces.
-  const activityEvents = await recordActivityEvents(allLogs, env, chainId, blockTimestamps);
-
   // RL-2 (#1303) — reward loop-closure ledger: per-user retention +
   // per-day flow components behind /metrics/loop-closure. Exactly-once
   // via the reward_loop_events dedup table, so overlapping scan ranges
-  // never double-count. Logs whose block timestamp fell back to the
-  // wall-clock sentinel are SKIPPED (not dedup-recorded) so a later
-  // overlapping scan applies them under the true claim day (Codex
-  // #1310 P2). See rewardLoopLedger.ts for the backfill that seeds
-  // historical claims from activity_events on first run.
+  // never double-count. Runs BEFORE recordActivityEvents so its one-time
+  // backfill can never consume a sentinel-stamped row this scan is about
+  // to insert (Codex #1310 r2 P2). A reward log whose block timestamp
+  // fell back to the wall-clock sentinel gets one in-place retry; if the
+  // chain timestamp is still unavailable the ledger THROWS and the scan
+  // fails without advancing the cursor (Codex #1310 r2 P1 — the cron
+  // path has no guaranteed overlapping scan, so a silent skip would lose
+  // the event forever).
   await applyRewardLoopLedger(
     allLogs,
     env,
     chainId,
     blockTimestamps,
     fallbackTimestampBlocks,
+    async (blockNumber) => {
+      try {
+        const block = await client.getBlock({ blockNumber });
+        return Number(block.timestamp);
+      } catch {
+        return null;
+      }
+    },
   );
+
+  const activityEvents = await recordActivityEvents(allLogs, env, chainId, blockTimestamps);
 
   // Per-domain detail refresh, batched per tick.
   const detailRefreshes = await refreshStubOffers(

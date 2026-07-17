@@ -254,28 +254,80 @@ describe('GET /metrics/loop-closure', () => {
 });
 
 describe('robustness (Codex #1310 round 1)', () => {
-  it('skips logs with sentinel block timestamps WITHOUT a dedup row, so a later scan applies them', async () => {
+  it('retries sentinel block timestamps in place, and THROWS (failing the scan) when unrecoverable', async () => {
     const { h, env } = makeHarness();
     const l = log('RewardDeliveredToVault', ALICE, 30n, 100n);
-    // First scan: block 100's timestamp read failed → sentinel.
-    const first = await applyRewardLoopLedger(
+    // Retry also fails → the ledger must throw so the ingest scan fails
+    // and the cursor never advances past the reward event (the cron path
+    // has no guaranteed overlapping scan — a silent skip loses it).
+    await expect(
+      applyRewardLoopLedger(
+        [l],
+        env,
+        CHAIN,
+        ts([[100n, TODAY_TS]]),
+        new Set([100n]),
+        async () => null,
+      ),
+    ).rejects.toThrow(/unrecoverable block timestamp/);
+    expect(await retained(h, ALICE)).toBe('0');
+    // Same log, retry now returns the real chain timestamp → applied
+    // under the true day (no dedup row was written by the failed pass).
+    const applied = await applyRewardLoopLedger(
       [l],
       env,
       CHAIN,
       ts([[100n, TODAY_TS]]),
       new Set([100n]),
+      async () => TODAY_TS,
     );
-    expect(first).toBe(0);
-    expect(await retained(h, ALICE)).toBe('0');
-    // Later overlapping scan with the REAL timestamp applies normally.
-    const second = await applyRewardLoopLedger(
-      [l],
-      env,
-      CHAIN,
-      ts([[100n, TODAY_TS]]),
-    );
-    expect(second).toBe(1);
+    expect(applied).toBe(1);
     expect(await retained(h, ALICE)).toBe('30');
+  });
+
+  it('backfill replays pre-boundary VPFIWithdrawnFromVault as debits, excludes post-boundary ones', async () => {
+    const { h, env } = makeHarness();
+    const seedActivity = (
+      block: number,
+      logIndex: number,
+      kind: string,
+      args: Record<string, string>,
+      blockAt: number,
+    ) =>
+      h.db
+        .prepare(
+          `INSERT INTO activity_events
+             (chain_id, block_number, log_index, tx_hash, kind,
+              loan_id, offer_id, actor, args_json, block_at)
+           VALUES (?, ?, ?, ?, ?, NULL, NULL, ?, ?, ?)`,
+        )
+        .run(
+          CHAIN,
+          block,
+          logIndex,
+          `0x${block.toString(16).padStart(64, '0')}`,
+          kind,
+          ALICE,
+          JSON.stringify(args),
+          blockAt,
+        );
+
+    const t0 = TODAY_TS - 3 * 86400;
+    // Historical: delivery 100, then an unstake of 40 observable only as
+    // VPFIWithdrawnFromVault (pre-VaultVpfiDebited era).
+    seedActivity(10, 0, 'RewardDeliveredToVault', { user: ALICE, amount: '100' }, t0);
+    seedActivity(20, 0, 'VPFIWithdrawnFromVault', { user: ALICE, amount: '40', newVaultBalance: '60' }, t0 + 3600);
+    // Boundary: the first VaultVpfiDebited row (both events fire in the
+    // same unstake tx from here on — replaying the withdraw twin would
+    // double-decrement).
+    seedActivity(30, 0, 'VaultVpfiDebited', { user: ALICE, amount: '10', recipient: ALICE }, t0 + 7200);
+    seedActivity(30, 1, 'VPFIWithdrawnFromVault', { user: ALICE, amount: '10', newVaultBalance: '50' }, t0 + 7200);
+
+    await applyRewardLoopLedger([], env, CHAIN, ts([]));
+
+    // 100 delivered − 40 (pre-boundary withdraw) − 10 (boundary debit,
+    // counted ONCE despite its withdraw twin) = 50.
+    expect(await retained(h, ALICE)).toBe('50');
   });
 
   it('backfills historical reward events from activity_events once, dedup-safe against live replay', async () => {

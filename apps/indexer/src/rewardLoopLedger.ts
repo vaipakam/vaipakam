@@ -22,9 +22,11 @@
  * of the ratio, so every indexer reading the same events reports the same
  * number and a claim spanning many finalized reward days is never re-split.
  * Logs whose block timestamp fell back to the ingest's wall-clock sentinel
- * are SKIPPED without a dedup row (Codex #1310 P2): the metric buckets by
- * day permanently, so a sentinel day must never be locked in — a later
- * overlapping scan applies the event under its true chain timestamp.
+ * get ONE in-place retry via the caller-supplied `retryTimestamp`; if the
+ * timestamp is still unavailable the ledger THROWS, failing the whole scan
+ * so the cursor does not advance past the event (Codex #1310 r2 P1: the
+ * cron path has no guaranteed overlapping scan, so a silent skip would
+ * lose the event forever; day bucketing must never lock in a sentinel).
  *
  * Exactly-once: the ingest can re-scan overlapping block ranges, so each
  * event's effects apply only if its `reward_loop_events` row inserts fresh,
@@ -40,11 +42,18 @@
  * OVERSTATE closure. First invocation per chain therefore replays the
  * three event kinds from the `activity_events` ledger (which records
  * every decoded event since the indexer's genesis) through the same
- * apply-one path, then stamps `reward_loop_totals.backfill_done`. The
- * dedup key is identical, so backfill and live application can overlap
- * safely. (`activity_events.block_at` can itself carry a rare wall-clock
- * sentinel from a historical RPC hiccup — it is the best available
- * record for history and accepted as-is for the backfill only.)
+ratio-critical apply-one path, then stamps
+ * `reward_loop_totals.backfill_done`. The dedup key is identical, so
+ * backfill and live application can overlap safely, and the backfill runs
+ * BEFORE this scan's rows land in activity_events (Codex #1310 r2 P2) so
+ * it can never consume a sentinel-stamped row from the current scan.
+ * Historical vault debits that predate the `VaultVpfiDebited` event are
+ * replayed from `VPFIWithdrawnFromVault` rows, bounded to blocks BEFORE
+ * the first VaultVpfiDebited row (Codex #1310 r2 P1) — past that boundary
+ * both events fire in the same unstake tx and replaying both would
+ * double-decrement. (`activity_events.block_at` can itself carry a rare
+ * wall-clock sentinel from a historical RPC hiccup — it is the best
+ * available record for history and accepted as-is for the backfill only.)
  *
  * `absorbed[D]` / `cum_absorbed`: deliberately ZERO until the governor
  * stack's recycle-bucket events exist. When PR-3a lands its
@@ -149,7 +158,9 @@ async function applyOne(
     vaultDelivered += ev.amount;
     retainedDelta = ev.amount;
   } else {
-    // VaultVpfiDebited — min-clamped retention decrement.
+    // VaultVpfiDebited (or a pre-boundary historical
+    // VPFIWithdrawnFromVault replayed by the backfill) — min-clamped
+    // retention decrement.
     const dec = ev.amount < retained ? ev.amount : retained;
     retained -= dec;
     retainedStock -= dec;
@@ -244,8 +255,14 @@ function eventFromActivityRow(row: {
 
 /** One-time per-chain backfill from the activity_events ledger (see the
  *  module header). Idempotent: dedup keys match the live path, so an
- *  interrupted backfill resumes safely on the next scan. */
-async function ensureBackfilled(env: Env, chainId: number): Promise<void> {
+ *  interrupted backfill resumes safely on the next scan. Exported so the
+ *  ingest's caught-up quiet tick can seed the tables on a chain with no
+ *  new logs (Codex #1310 r2 P2 — without this, /metrics/loop-closure
+ *  would serve zeros until an unrelated future log arrived). */
+export async function ensureRewardLoopBackfill(
+  env: Env,
+  chainId: number,
+): Promise<void> {
   const totals = await env.DB.prepare(
     `SELECT backfill_done FROM reward_loop_totals WHERE chain_id = ?`,
   )
@@ -253,13 +270,28 @@ async function ensureBackfilled(env: Env, chainId: number): Promise<void> {
     .first<{ backfill_done: number }>();
   if (totals?.backfill_done) return;
 
+  // Debit-observability boundary: before the first VaultVpfiDebited row,
+  // vault VPFI outflows were visible only as VPFIWithdrawnFromVault
+  // (unstakes) — replay those as debits so historical deliveries that
+  // were later withdrawn don't overstate retention. From the boundary on,
+  // an unstake tx emits BOTH events, so the withdraw rows are excluded
+  // to avoid double-decrementing.
+  const boundaryRow = await env.DB.prepare(
+    `SELECT MIN(block_number) AS b FROM activity_events
+      WHERE chain_id = ? AND kind = 'VaultVpfiDebited'`,
+  )
+    .bind(chainId)
+    .first<{ b: number | null }>();
+  const boundary = boundaryRow?.b ?? null;
+
   const rows = await env.DB.prepare(
     `SELECT block_number, log_index, tx_hash, kind, args_json, block_at
        FROM activity_events
       WHERE chain_id = ?
         AND kind IN ('InteractionRewardsClaimed',
                      'RewardDeliveredToVault',
-                     'VaultVpfiDebited')
+                     'VaultVpfiDebited',
+                     'VPFIWithdrawnFromVault')
       ORDER BY block_number ASC, log_index ASC`,
   )
     .bind(chainId)
@@ -273,6 +305,12 @@ async function ensureBackfilled(env: Env, chainId: number): Promise<void> {
     }>();
 
   for (const row of rows.results ?? []) {
+    if (
+      row.kind === 'VPFIWithdrawnFromVault' &&
+      (boundary === null || row.block_number >= boundary)
+    ) {
+      continue;
+    }
     const ev = eventFromActivityRow(row);
     if (ev && ev.amount >= 0n) await applyOne(env, chainId, ev);
   }
@@ -292,9 +330,13 @@ async function ensureBackfilled(env: Env, chainId: number): Promise<void> {
  * done). Returns the number of events applied fresh (replays skip).
  *
  * @param fallbackTimestampBlocks Blocks whose `blockTimestamps` entry is
- *        the ingest's wall-clock sentinel — their logs are skipped
- *        WITHOUT a dedup row so a later scan applies them under the true
- *        chain timestamp (day bucketing must never lock in a sentinel).
+ *        the ingest's wall-clock sentinel. A reward log in such a block
+ *        gets ONE retry via `retryTimestamp`; if the real timestamp is
+ *        still unavailable this function THROWS so the whole scan fails
+ *        and the cursor never advances past the event (reward events are
+ *        rare — failing the tick beats corrupting the day bucketing).
+ * @param retryTimestamp Re-fetches a block's chain timestamp (seconds),
+ *        returning null on failure. Optional for unit tests.
  */
 export async function applyRewardLoopLedger(
   logs: RewardLoopLog[],
@@ -302,15 +344,26 @@ export async function applyRewardLoopLedger(
   chainId: number,
   blockTimestamps: Map<bigint, number>,
   fallbackTimestampBlocks: Set<bigint> = new Set(),
+  retryTimestamp?: (blockNumber: bigint) => Promise<number | null>,
 ): Promise<number> {
-  await ensureBackfilled(env, chainId);
+  await ensureRewardLoopBackfill(env, chainId);
 
   let applied = 0;
   for (const log of logs) {
     if (!HANDLED.has(log.eventName)) continue;
-    if (fallbackTimestampBlocks.has(log.blockNumber)) continue;
-    const blockAt = blockTimestamps.get(log.blockNumber);
-    if (blockAt === undefined) continue;
+    let blockAt: number | undefined;
+    if (fallbackTimestampBlocks.has(log.blockNumber)) {
+      blockAt = (await retryTimestamp?.(log.blockNumber)) ?? undefined;
+    } else {
+      blockAt = blockTimestamps.get(log.blockNumber);
+    }
+    if (blockAt === undefined) {
+      throw new Error(
+        `reward-loop: unrecoverable block timestamp for block ` +
+          `${log.blockNumber} (chain ${chainId}) — failing the scan so ` +
+          `the cursor does not advance past a reward event`,
+      );
+    }
 
     const user = String(log.args.user ?? '').toLowerCase();
     const amount = BigInt((log.args.amount as bigint) ?? 0n);
