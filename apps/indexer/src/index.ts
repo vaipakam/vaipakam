@@ -96,6 +96,7 @@ import {
   handleOffersByCurrentHolder,
   handleOffersPreflight,
 } from './offerRoutes';
+import { handleLoopClosure } from './rewardRoutes';
 import {
   handleSignedOfferPost,
   handleSignedOffersGet,
@@ -272,6 +273,11 @@ export default {
         if (url.pathname === '/offers/markets') {
           // Rate Desk (#1129) — market discovery for the pair/tenor chips.
           return handleOffersMarkets(req, resolved);
+        }
+        if (url.pathname === '/metrics/loop-closure') {
+          // RL-2 (#1303) — reward loop-closure ratios (daily flow +
+          // cumulative stock) from the ingest-maintained retention ledger.
+          return handleLoopClosure(req, resolved);
         }
         if (url.pathname === '/offers/recent') {
           return handleOffersRecent(req, resolved);

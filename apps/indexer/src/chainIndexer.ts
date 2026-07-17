@@ -66,6 +66,7 @@ import {
   MARKET_SWEEP_CURSOR_KIND,
 } from './marketSummary';
 import { materializeNotifications } from './notifications';
+import { applyRewardLoopLedger } from './rewardLoopLedger';
 import {
   sweepCalendarNotifications,
   EMPTY_SWEEP,
@@ -762,6 +763,12 @@ export async function runChainIndexerForChain(
   // appends one row per log to the unified feed for the Activity
   // page + LoanTimeline + per-wallet history surfaces.
   const activityEvents = await recordActivityEvents(allLogs, env, chainId, blockTimestamps);
+
+  // RL-2 (#1303) — reward loop-closure ledger: per-user retention +
+  // per-day flow components behind /metrics/loop-closure. Exactly-once
+  // via the reward_loop_events dedup table, so overlapping scan ranges
+  // never double-count (see rewardLoopLedger.ts).
+  await applyRewardLoopLedger(allLogs, env, chainId, blockTimestamps);
 
   // Per-domain detail refresh, batched per tick.
   const detailRefreshes = await refreshStubOffers(
@@ -4271,6 +4278,13 @@ function pluckActivityRefs(
       };
     case 'VPFIDepositedToVault':
     case 'VPFIWithdrawnFromVault':
+    // RL-2 (#1303) — reward loop-closure events: actor = the wallet whose
+    // claim / vault the VPFI moved through, so the Activity feed's
+    // per-wallet filter surfaces them (the ledger itself lives in the
+    // dedicated reward_* tables, not args_json).
+    case 'InteractionRewardsClaimed':
+    case 'RewardDeliveredToVault':
+    case 'VaultVpfiDebited':
       return {
         actor: (args.user as string)?.toLowerCase() ?? null,
         loanId: null,

@@ -665,6 +665,17 @@ Treasury management:
 - treasury conversion should avoid dust-sized execution by requiring either a minimum value threshold or a maximum time-since-last-conversion threshold
 - converted output remains in protocol-controlled treasury custody; treasury conversion is not a user reward push
 
+Loop-closure transparency metric (RL-2, `VpfiRecyclingLoopClosureDesign.md` §6 — ratified 2026-07-16):
+
+- the platform publishes two observable numbers describing how much of the distributed interaction-reward VPFI stays inside the sink system, computed off-chain from on-chain events so every independent indexer reading the same events reports the same values
+- the **daily** value is a flow ratio: of what was distributed by claims that day, how much stayed in the system — vault-retained deliveries plus protocol-absorbed VPFI, over total claim payouts. The **cumulative** value is a stock ratio: reward VPFI still retained in vaults plus lifetime absorption, over lifetime distribution. The two are deliberately different quantities and must not be mixed
+- both sides of each ratio use the **claim-day** basis — the day tokens actually leave protocol custody; a claim spanning many finalized reward days is never re-split across those days
+- retention is a per-user ledger: reward-delivered VPFI credits it, and any vault VPFI debit (withdrawal, tariff, fee, or perk spend) decrements it **rewards-spent-first**, clamped at zero; a user's later personal deposits never re-inflate it. Same-day netting is per user, then summed — one user spending old rewards must never cancel another user's same-day retained delivery
+- the metric is a **conservative lower bound** and may never overstate closure: a day when a user claims to the vault and spends the same amount on a platform fee the same day counts once, never twice
+- on days with zero distribution the daily ratio is reported as **not applicable** (never zero, NaN, or infinite) and excluded from averages
+- the absorption term reads zero until the recycle-bucket accounting exists (the governor stack); the metric's definition already carries the term so no re-baselining happens when absorption goes live
+- every vault VPFI outflow must be observable from a single on-chain signal at the tracked-balance decrement point, so the retention ledger cannot be silently bypassed by any debit path
+
 Founder and contributor compensation:
 
 - contributor salary streams should be explicit budgeted treasury expenses, funded deliberately for a budget period and withdrawable only up to the funded amount
