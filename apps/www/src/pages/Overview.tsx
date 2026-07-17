@@ -61,13 +61,16 @@ export default function Overview() {
     titleKey: 'pageMeta.overview.title',
     descriptionKey: 'pageMeta.overview.description',
   });
-  useArticleJsonLd({
-    titleKey: 'pageMeta.overview.title',
-    descriptionKey: 'pageMeta.overview.description',
-  });
   const location = useLocation();
   const lang = i18n.resolvedLanguage ?? 'en';
   const { text, fellBackToEnglish } = useMemo(() => resolveOverview(lang), [lang]);
+  useArticleJsonLd({
+    titleKey: 'pageMeta.overview.title',
+    descriptionKey: 'pageMeta.overview.description',
+    // Advertise the language of the markdown actually rendered — a
+    // locale without its own Overview file falls back to English.
+    contentLanguage: fellBackToEnglish ? 'en' : lang,
+  });
   const toc = useMemo(() => extractMarkdownToc(text), [text]);
   // Use the actual current pathname so locale-prefixed routes
   // (`/ta/help/overview`) and the unprefixed default route both

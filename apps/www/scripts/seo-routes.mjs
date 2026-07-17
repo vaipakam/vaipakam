@@ -31,6 +31,16 @@ export const LOCALES = [
   'ko',
 ];
 
+/** The Protocol Console reference docs are public-transparency
+ *  content meant to index alongside the other explainer pages (see
+ *  src/lib/protocolConsoleVisibility.ts), but the page is env-gated:
+ *  `VITE_ADMIN_DASHBOARD_PUBLIC=false` hides it (industrial fork /
+ *  pre-launch deploys). The SEO registry honours the SAME flag with
+ *  the SAME default-true semantics, so a hidden page is never
+ *  advertised in the sitemap or prerendered. */
+const PROTOCOL_CONSOLE_PUBLIC =
+  (process.env.VITE_ADMIN_DASHBOARD_PUBLIC ?? '').toLowerCase() !== 'false';
+
 export const ROUTES = [
   '/',
   '/vpfi',
@@ -39,6 +49,7 @@ export const ROUTES = [
   '/help/advanced',
   '/help/technical',
   '/help/search',
+  ...(PROTOCOL_CONSOLE_PUBLIC ? ['/protocol-console/docs'] : []),
   '/discord',
   '/terms',
   '/privacy',

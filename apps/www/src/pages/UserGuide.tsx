@@ -512,6 +512,12 @@ export default function UserGuide({ variant }: UserGuideProps) {
       ? 'pageMeta.userGuideBasic.description'
       : 'pageMeta.userGuideAdvanced.description',
   });
+  const mode: 'Basic' | 'Advanced' = variant === 'advanced' ? 'Advanced' : 'Basic';
+  const lang = i18n.resolvedLanguage ?? 'en';
+  const { text: raw, usedLocale, fellBackToEnglish } = useMemo(
+    () => resolveGuide(mode, lang),
+    [mode, lang],
+  );
   useArticleJsonLd({
     titleKey: variant === 'basic'
       ? 'pageMeta.userGuideBasic.title'
@@ -519,13 +525,10 @@ export default function UserGuide({ variant }: UserGuideProps) {
     descriptionKey: variant === 'basic'
       ? 'pageMeta.userGuideBasic.description'
       : 'pageMeta.userGuideAdvanced.description',
+    // Advertise the language of the guide markdown actually rendered
+    // (resolveGuide falls back to English for missing locales).
+    contentLanguage: usedLocale,
   });
-  const mode: 'Basic' | 'Advanced' = variant === 'advanced' ? 'Advanced' : 'Basic';
-  const lang = i18n.resolvedLanguage ?? 'en';
-  const { text: raw, fellBackToEnglish } = useMemo(
-    () => resolveGuide(mode, lang),
-    [mode, lang],
-  );
   const blocks = useMemo(() => parseGuide(raw), [raw]);
   const toc = useMemo(() => extractToc(raw), [raw]);
   // TOC links must keep the user on the same locale-prefixed route.

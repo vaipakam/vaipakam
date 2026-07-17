@@ -53,6 +53,9 @@ export default function Whitepaper() {
   useArticleJsonLd({
     titleKey: 'pageMeta.whitepaper.title',
     descriptionKey: 'pageMeta.whitepaper.description',
+    // The whitepaper body ships English-only (Whitepaper.en.md) on
+    // every localized route — advertise what's actually rendered.
+    contentLanguage: 'en',
   });
   const text = useMemo(() => resolveWhitepaper(), []);
   const toc = useMemo(() => extractMarkdownToc(text), [text]);

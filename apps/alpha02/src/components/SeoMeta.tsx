@@ -47,26 +47,36 @@ interface RouteMeta {
   index: boolean;
 }
 
+/** Segment-boundary match: `/borrow` and `/borrow/…` — but NOT
+ *  `/borrow-old`, which App.tsx routes to NotFound. A bare
+ *  startsWith would emit indexable meta for soft-404 URLs under
+ *  every public prefix (Codex #1309 r1 P2). */
+function inSection(pathname: string, base: string): boolean {
+  return pathname === base || pathname.startsWith(`${base}/`);
+}
+
 function metaForPath(pathname: string): RouteMeta {
   const seo = copy.seo;
-  // Longest-prefix table; aliases (App.tsx `Navigate` routes) never
-  // render AppShell content long enough to matter — the canonical of
-  // the target route wins after the redirect.
+  // Section table; aliases (App.tsx `Navigate` routes) never render
+  // AppShell content long enough to matter — the canonical of the
+  // target route wins after the redirect, and anything unmatched
+  // (including alias paths pre-redirect and true 404s) falls to the
+  // noindex NotFound row.
   if (pathname === '/') return { ...seo.home, index: true };
-  if (pathname.startsWith('/borrow')) return { ...seo.borrow, index: true };
-  if (pathname.startsWith('/lend')) return { ...seo.lend, index: true };
-  if (pathname.startsWith('/rent')) return { ...seo.rent, index: true };
-  if (pathname.startsWith('/offers')) return { ...seo.offers, index: true };
-  if (pathname.startsWith('/desk')) return { ...seo.desk, index: true };
-  if (pathname.startsWith('/vpfi')) return { ...seo.vpfi, index: true };
-  if (pathname.startsWith('/nft')) return { ...seo.nftVerifier, index: true };
-  if (pathname.startsWith('/help')) return { ...seo.help, index: true };
-  if (pathname.startsWith('/positions')) return { ...seo.positions, index: false };
-  if (pathname.startsWith('/claims')) return { ...seo.claims, index: false };
-  if (pathname.startsWith('/vault')) return { ...seo.vault, index: false };
-  if (pathname.startsWith('/activity')) return { ...seo.activity, index: false };
-  if (pathname.startsWith('/settings')) return { ...seo.settings, index: false };
-  if (pathname.startsWith('/faucet')) return { ...seo.faucet, index: false };
+  if (inSection(pathname, '/borrow')) return { ...seo.borrow, index: true };
+  if (inSection(pathname, '/lend')) return { ...seo.lend, index: true };
+  if (inSection(pathname, '/rent')) return { ...seo.rent, index: true };
+  if (inSection(pathname, '/offers')) return { ...seo.offers, index: true };
+  if (inSection(pathname, '/desk')) return { ...seo.desk, index: true };
+  if (inSection(pathname, '/vpfi')) return { ...seo.vpfi, index: true };
+  if (inSection(pathname, '/nft')) return { ...seo.nftVerifier, index: true };
+  if (inSection(pathname, '/help')) return { ...seo.help, index: true };
+  if (inSection(pathname, '/positions')) return { ...seo.positions, index: false };
+  if (inSection(pathname, '/claims')) return { ...seo.claims, index: false };
+  if (inSection(pathname, '/vault')) return { ...seo.vault, index: false };
+  if (inSection(pathname, '/activity')) return { ...seo.activity, index: false };
+  if (inSection(pathname, '/settings')) return { ...seo.settings, index: false };
+  if (inSection(pathname, '/faucet')) return { ...seo.faucet, index: false };
   return { ...seo.notFound, index: false };
 }
 

@@ -75,3 +75,31 @@
   X-Robots-Tag: noindex
 /faucet
   X-Robots-Tag: noindex
+
+# SPA aliases of the per-user surfaces above (App.tsx Navigate
+# routes: /dashboard|/manage → /positions, /loans/* + /app/loans/* →
+# /positions/*, /claim|/claim-center → /claims, /vault-assets →
+# /vault, /history → /activity). The redirect only happens after JS
+# runs, so a non-executing crawler fetching an alias gets the index
+# shell — these rules keep that shell noindex too (Codex #1309 r1).
+# Public-surface aliases (/earn, /offer-book, /trade, …) are
+# deliberately NOT listed: their targets are indexable.
+
+/dashboard
+  X-Robots-Tag: noindex
+/manage
+  X-Robots-Tag: noindex
+/loans
+  X-Robots-Tag: noindex
+/loans/*
+  X-Robots-Tag: noindex
+/app/loans/*
+  X-Robots-Tag: noindex
+/claim
+  X-Robots-Tag: noindex
+/claim-center
+  X-Robots-Tag: noindex
+/vault-assets
+  X-Robots-Tag: noindex
+/history
+  X-Robots-Tag: noindex

@@ -15,9 +15,19 @@ const ORIGIN = 'https://vaipakam.com';
 export function useArticleJsonLd({
   titleKey,
   descriptionKey,
+  contentLanguage,
 }: {
   titleKey: string;
   descriptionKey: string;
+  /** Language of the ARTICLE BODY actually rendered — pass this
+   *  whenever it can differ from the active UI language (Codex #1309
+   *  r1 P2): an English-only doc (Whitepaper) or a locale that fell
+   *  back to the English markdown must advertise `inLanguage: en`,
+   *  not the locale of the surrounding chrome. Structured data that
+   *  claims a Spanish article over an English body is a mismatch
+   *  crawlers penalise. Defaults to the active UI language for pages
+   *  whose body genuinely follows it. */
+  contentLanguage?: string;
 }) {
   const { t, i18n } = useTranslation();
   const { pathname } = useLocation();
@@ -33,7 +43,7 @@ export function useArticleJsonLd({
           headline: t(titleKey),
           description: t(descriptionKey),
           url,
-          inLanguage: i18n.language,
+          inLanguage: contentLanguage ?? i18n.language,
           author: { '@type': 'Organization', name: 'Vaipakam' },
           publisher: { '@id': `${ORIGIN}/#organization` },
         },
@@ -56,7 +66,7 @@ export function useArticleJsonLd({
         },
       ],
     };
-  }, [t, titleKey, descriptionKey, pathname, i18n.language]);
+  }, [t, titleKey, descriptionKey, contentLanguage, pathname, i18n.language]);
 
   useJsonLd('article', data);
 }

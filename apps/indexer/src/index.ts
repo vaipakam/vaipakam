@@ -245,6 +245,20 @@ export default {
       );
     }
 
+    // ─── / — public API index ───────────────────────────────────
+    // Self-describing catalog of the keyless GET surface, for AI
+    // agents / integrators arriving via vaipakam.com/llms.txt.
+    // Static JSON, no D1/RPC reads — dispatched BEFORE `resolveEnv`
+    // (like the webhook and WebSocket routes) so a root fetch never
+    // fans out to the Secrets Store bindings it doesn't need
+    // (Codex #1309 r1).
+    if (url.pathname === '/') {
+      if (req.method === 'GET' || req.method === 'OPTIONS') {
+        return handleApiIndex(req);
+      }
+      return new Response('Not found', { status: 404 });
+    }
+
     // T-078 — resolve the Secrets Store RPC bindings once, at the
     // boundary; every route handler receives the plain resolved env.
     const resolved = await resolveEnv(env);
@@ -416,17 +430,6 @@ export default {
       );
       if (feedMatch && req.method === 'GET') {
         return handleNotifications(req, resolved, feedMatch[1]);
-      }
-      return new Response('Not found', { status: 404 });
-    }
-
-    // ─── / — public API index ───────────────────────────────────
-    // Self-describing catalog of the keyless GET surface, for AI
-    // agents / integrators arriving via vaipakam.com/llms.txt.
-    // Static JSON, no D1/RPC reads — see apiIndex.ts.
-    if (url.pathname === '/') {
-      if (req.method === 'GET' || req.method === 'OPTIONS') {
-        return handleApiIndex(req);
       }
       return new Response('Not found', { status: 404 });
     }
