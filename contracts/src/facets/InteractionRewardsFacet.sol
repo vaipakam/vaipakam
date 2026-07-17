@@ -196,10 +196,18 @@ contract InteractionRewardsFacet is
         (uint256 today, bool active) = LibInteractionRewards.currentDayOrZero();
         if (!active || today == 0) revert NoInteractionRewardsToClaim();
 
-        // Fold new entry-path rewards first. Forfeited entries route to
-        // treasury via the returned `treasuryDelta`.
-        (uint256 entryReward, uint256 treasuryDelta) =
-            LibInteractionRewards.claimForUserEntries(msg.sender);
+        // Fold new entry-path rewards first. Forfeited entries accumulate
+        // in the treasury split; PR-3c surfaces each aggregate's RECYCLED
+        // and ARMED-FRESH components (governor dual accumulator) so
+        // consumption can split fresh-vs-recycled below.
+        (
+            LibInteractionRewards.EntrySplit memory userSplit,
+            LibInteractionRewards.EntrySplit memory forfeitSplit
+        ) = LibInteractionRewards.claimForUserEntries(msg.sender);
+        uint256 entryReward = userSplit.total;
+        uint256 treasuryDelta = forfeitSplit.total;
+        uint256 paidRecycled = userSplit.recycled;
+        uint256 forfeitRecycled = forfeitSplit.recycled;
 
         uint256 last = s.interactionLastClaimedDay[msg.sender];
         uint256 lastFinalized = today - 1;
@@ -250,35 +258,70 @@ contract InteractionRewardsFacet is
             ? LibVaipakam.VPFI_INTERACTION_POOL_CAP - reserved
             : 0;
 
-        uint256 grossSpend = pending + treasuryDelta;
-        if (grossSpend > remaining) {
-            // Truncate proportionally when the pool can't cover both
-            // payouts — treasury sweep is part of the same pool.
-            if (remaining == 0) revert InteractionPoolExhausted();
-            if (grossSpend > 0) {
-                uint256 scaledPending = (pending * remaining) / grossSpend;
-                treasuryDelta = remaining - scaledPending;
-                pending = scaledPending;
+        // PR-3c (#1217 §3.1) — the 69M hard cap governs the FRESH term
+        // only. The recycled components are bucket-backed (sized by the
+        // finalize stamp against `fundable`) and NEVER consume the fresh
+        // pool — at fresh exhaustion the recycled term keeps paying: the
+        // promised steady state. Truncation therefore scales only the
+        // fresh shares. (The legacy window reward is fresh by
+        // construction — pre-cutover math.)
+        uint256 freshPending = pending - paidRecycled;
+        uint256 freshTreasury = treasuryDelta - forfeitRecycled;
+        uint256 freshSpend = freshPending + freshTreasury;
+        if (freshSpend > remaining) {
+            if (remaining == 0 && paidRecycled + forfeitRecycled == 0) {
+                revert InteractionPoolExhausted();
             }
+            uint256 scaledFreshPending =
+                freshSpend > 0 ? (freshPending * remaining) / freshSpend : 0;
+            freshTreasury = remaining - scaledFreshPending;
+            freshPending = scaledFreshPending;
+            pending = freshPending + paidRecycled;
+            treasuryDelta = freshTreasury + forfeitRecycled;
         }
 
         paid = pending;
-        s.interactionPoolPaidOut = paidOut + paid + treasuryDelta;
+        // Fresh-pool accounting: interactionPoolPaidOut remains the
+        // FRESH-only counter (recycled payouts debit the bucket instead).
+        s.interactionPoolPaidOut = paidOut + freshPending + freshTreasury;
+
+        // PR-3c consume-at-claim — retire the FULL armed-fresh commitment
+        // of every entry processed by this claim, paid OR truncated (Codex
+        // #1315 P2): a processed entry can never be claimed or forfeited
+        // again, so any truncated remainder is gone for good — leaving its
+        // commitment outstanding would permanently depress freshAvailable
+        // for value nobody can ever draw.
+        LibInteractionRewards.consumeArmedFresh(
+            userSplit.armedFresh + forfeitSplit.armedFresh
+        );
+        if (paidRecycled > 0) {
+            LibVpfiRecycle.consume(paidRecycled);
+        }
 
         if (paid > 0) {
             _deliverReward(vpfi, paid, deliverTo, today);
         }
         if (treasuryDelta > 0) {
-            // Governor PR-3a (#1217) — forfeited accruals stay in Diamond
-            // custody and credit the recycle bucket (a pure ledger
-            // re-label; no token movement). Pool accounting above already
-            // consumed them from the 69M cap. refId 0: a claim-path
-            // forfeit batch can span several entries/loans.
-            LibVpfiRecycle.credit(
-                LibVpfiRecycle.RecycleSource.ForfeitedReward,
-                0,
-                treasuryDelta
-            );
+            // Governor PR-3a/PR-3c (#1217 §4) — the forfeit's source split:
+            // the FRESH-funded share is genuine absorption and credits the
+            // recycle bucket; the RECYCLED-funded share never physically
+            // left the bucket, so it is a pure commitment RELEASE with
+            // ZERO new credit (crediting it would inflate Ā on every
+            // forfeit while absorbing nothing).
+            if (freshTreasury > 0) {
+                LibVpfiRecycle.credit(
+                    LibVpfiRecycle.RecycleSource.ForfeitedReward,
+                    0,
+                    freshTreasury
+                );
+            }
+            if (forfeitRecycled > 0) {
+                LibVpfiRecycle.releaseCommitment(
+                    LibVpfiRecycle.RecycleSource.ForfeitedReward,
+                    0,
+                    forfeitRecycled
+                );
+            }
         }
         emit InteractionRewardsClaimed(msg.sender, fromDay, toDay, paid);
     }
@@ -357,7 +400,9 @@ contract InteractionRewardsFacet is
         address vpfi = s.vpfiToken;
         if (vpfi == address(0)) revert VPFITokenNotSet();
 
-        uint256 treasuryDelta = LibInteractionRewards.sweepForfeitedByLoanId(loanId);
+        LibInteractionRewards.EntrySplit memory sweepSplit =
+            LibInteractionRewards.sweepForfeitedByLoanId(loanId);
+        uint256 treasuryDelta = sweepSplit.total;
         if (treasuryDelta == 0) return 0;
 
         uint256 paidOut = s.interactionPoolPaidOut;
@@ -366,19 +411,43 @@ contract InteractionRewardsFacet is
         uint256 remaining = LibVaipakam.VPFI_INTERACTION_POOL_CAP > reserved
             ? LibVaipakam.VPFI_INTERACTION_POOL_CAP - reserved
             : 0;
-        if (remaining == 0) revert InteractionPoolExhausted();
 
-        swept = treasuryDelta > remaining ? remaining : treasuryDelta;
-        s.interactionPoolPaidOut = paidOut + swept;
+        // PR-3c — the 69M cap + truncation govern the FRESH share only;
+        // the recycled share is bucket-backed. Exhaustion blocks the sweep
+        // ONLY when there is nothing recycled to release (Codex #1315 P2:
+        // a post-arming forfeit with a recycled component must still be
+        // sweepable at fresh exhaustion, or its commitment stays stuck).
+        uint256 freshSwept = sweepSplit.total - sweepSplit.recycled;
+        if (remaining == 0 && sweepSplit.recycled == 0) {
+            revert InteractionPoolExhausted();
+        }
+        if (freshSwept > remaining) freshSwept = remaining;
+        swept = freshSwept + sweepSplit.recycled;
+        s.interactionPoolPaidOut = paidOut + freshSwept;
 
-        // Governor PR-3a (#1217) — the swept forfeit stays in Diamond
-        // custody and credits the recycle bucket (ledger re-label, no
-        // transfer). refId = the swept loan for per-loan observability.
-        LibVpfiRecycle.credit(
-            LibVpfiRecycle.RecycleSource.ForfeitedReward,
-            loanId,
-            swept
-        );
+        // PR-3c consume-at-sweep: retire the FULL armed-fresh commitment —
+        // the entries are processed either way (see the claim path note).
+        LibInteractionRewards.consumeArmedFresh(sweepSplit.armedFresh);
+
+        // Governor PR-3a/PR-3c (#1217 §4) — forfeit source split: the
+        // FRESH share stays in Diamond custody and credits the recycle
+        // bucket (genuine absorption); the RECYCLED share never left the
+        // bucket, so its commitment releases with ZERO new credit.
+        // refId = the swept loan for per-loan observability.
+        if (freshSwept > 0) {
+            LibVpfiRecycle.credit(
+                LibVpfiRecycle.RecycleSource.ForfeitedReward,
+                loanId,
+                freshSwept
+            );
+        }
+        if (sweepSplit.recycled > 0) {
+            LibVpfiRecycle.releaseCommitment(
+                LibVpfiRecycle.RecycleSource.ForfeitedReward,
+                loanId,
+                sweepSplit.recycled
+            );
+        }
     }
 
     // ─── Admin ───────────────────────────────────────────────────────────────

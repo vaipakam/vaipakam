@@ -1803,7 +1803,7 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](15);
+        selectors = new bytes4[](16);
         selectors[0] = RewardAggregatorFacet.onChainReportReceived.selector;
         selectors[1] = RewardAggregatorFacet.finalizeDay.selector;
         selectors[2] = RewardAggregatorFacet.forceFinalizeDay.selector;
@@ -1820,6 +1820,8 @@ contract HelperTest {
         // Governor PR-3b (#1217) — day-pool stamp + commitment-state reads.
         selectors[13] = RewardAggregatorFacet.getDayPoolStamp.selector;
         selectors[14] = RewardAggregatorFacet.getGovernorCommitState.selector;
+        // Governor PR-3c (#1217) — the D* cutover arming (one-shot admin).
+        selectors[15] = RewardAggregatorFacet.setGovernorCommitArmedFromDay.selector;
         return selectors;
     }
 

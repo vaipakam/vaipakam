@@ -3,6 +3,7 @@ pragma solidity 0.8.29;
 
 import {LibVaipakam} from "../libraries/LibVaipakam.sol";
 import {LibInteractionRewards} from "../libraries/LibInteractionRewards.sol";
+import {LibVpfiRecycle} from "../libraries/LibVpfiRecycle.sol";
 import {LibAccessControl, DiamondAccessControl} from "../libraries/LibAccessControl.sol";
 import {DiamondReentrancyGuard} from "../libraries/LibReentrancyGuard.sol";
 import {DiamondPausable} from "../libraries/LibPausable.sol";
@@ -54,6 +55,16 @@ contract RewardRemittanceFacet is
     DiamondPausable,
     IVaipakamErrors
 {
+    /// @dev PR-3c — remit-batch funding decomposition (memory struct so the
+    ///      send path stays under the viaIR stack ceiling).
+    struct RemitSplitTotals {
+        uint256 totalAll;
+        uint256 fresh;
+        uint256 recycled;
+        uint256 armedFresh;
+        uint256 armedFrom;
+    }
+
     using SafeERC20 for IERC20;
 
     /// @notice Gas allotted to the mirror {RewardRemittanceReceiver} callback.
@@ -216,23 +227,36 @@ contract RewardRemittanceFacet is
         // (skipping already-remitted, zero-slice, and duplicate days) — that
         // filtered set, not the caller's raw `dayIds`, rides the payload so the
         // mirror's reconciliation events name exactly the funded days.
-        uint256 total;
-        uint256[] memory fundedDays = new uint256[](dayIds.length);
+                uint256[] memory fundedDays = new uint256[](dayIds.length);
         uint256 fundedCount;
+        // PR-3c (#1217) — track the funding-source decomposition: the FRESH
+        // share reserves against the 69M cap; the RECYCLED share debits the
+        // bucket at remit (governor §3.2 — the tokens leave Base custody
+        // here); armed-day fresh retires its finalize-time commitment.
+        // (Memory struct: keeps the viaIR stack under the ceiling.)
+        RemitSplitTotals memory st;
+        st.armedFrom = s.governorCommitArmedFromDay;
         for (uint256 i; i < dayIds.length; ) {
             uint256 dayId = dayIds[i];
             if (!s.dailyGlobalFinalized[dayId]) {
                 revert RewardDayNotFinalized(dayId);
             }
             if (s.rewardBudgetRemitted[dstChainId][dayId] == 0) {
-                uint256 slice = LibInteractionRewards.chainRewardBudgetForDay(
-                    s,
-                    dstChainId,
-                    dayId
-                );
+                (uint256 sliceFresh, uint256 sliceRecycled) =
+                    LibInteractionRewards.chainRewardBudgetSplitForDay(
+                        s,
+                        dstChainId,
+                        dayId
+                    );
+                uint256 slice = sliceFresh + sliceRecycled;
                 if (slice > 0) {
                     s.rewardBudgetRemitted[dstChainId][dayId] = slice;
-                    total += slice;
+                    st.totalAll += slice;
+                    st.fresh += sliceFresh;
+                    st.recycled += sliceRecycled;
+                    if (st.armedFrom != 0 && dayId >= st.armedFrom) {
+                        st.armedFresh += sliceFresh;
+                    }
                     fundedDays[fundedCount] = dayId;
                     unchecked {
                         ++fundedCount;
@@ -243,39 +267,52 @@ contract RewardRemittanceFacet is
                 ++i;
             }
         }
-        if (total == 0) revert NothingToRemit();
+        if (st.totalAll == 0) revert NothingToRemit();
         // Trim `fundedDays` to the days that actually funded (shrink the memory
         // array's length in place — safe, we only ever reduce it).
         assembly {
             mstore(fundedDays, fundedCount)
         }
-        if (total > perRemittanceCap) {
-            revert RemittanceExceedsCap(total, perRemittanceCap);
+        if (st.totalAll > perRemittanceCap) {
+            revert RemittanceExceedsCap(st.totalAll, perRemittanceCap);
         }
 
         // Global 69M-cap guard: everything remitted so far, plus what Base has
-        // itself paid out locally, plus this batch, must stay within the pool.
+        // itself paid out locally, plus this batch's FRESH share, must stay
+        // within the pool. PR-3c — the recycled share is bucket-backed (its
+        // finalize-time commitment already reserved it against `fundable`)
+        // and never consumes the fresh cap: at fresh exhaustion recycled
+        // remittances keep flowing, the promised steady state.
         uint256 used = s.rewardBudgetRemittedGlobal + s.interactionPoolPaidOut;
         uint256 remaining = used >= LibVaipakam.VPFI_INTERACTION_POOL_CAP
             ? 0
             : LibVaipakam.VPFI_INTERACTION_POOL_CAP - used;
-        if (total > remaining) revert RewardPoolCapExceeded(total, remaining);
+        if (st.fresh > remaining) {
+            revert RewardPoolCapExceeded(st.fresh, remaining);
+        }
 
-        // Effects (CEI) — before the external send.
-        s.rewardBudgetRemittedGlobal += total;
-        s.rewardBudgetRemittedTotal[dstChainId] += total;
+        // Effects (CEI) — before the external send. `rewardBudgetRemittedGlobal`
+        // stays the FRESH-only reservation counter (the availability terms in
+        // the governor stamp and the claim cap both read it that way);
+        // `rewardBudgetRemittedTotal` keeps the full funding record.
+        s.rewardBudgetRemittedGlobal += st.fresh;
+        s.rewardBudgetRemittedTotal[dstChainId] += st.totalAll;
+        if (st.recycled > 0) {
+            LibVpfiRecycle.consume(st.recycled);
+        }
+        LibInteractionRewards.consumeArmedFresh(st.armedFresh);
 
         // Interaction: approve the messenger for exactly `total`, then send the
         // VPFI + payload over the CCIP token path. `forceApprove` re-sets the
         // allowance to exactly `total` (handles non-standard ERC20s + any
         // leftover). The receiver validates delivered-vs-declared against the
         // `total` in the payload.
-        IERC20(vpfi).forceApprove(messenger, total);
+        IERC20(vpfi).forceApprove(messenger, st.totalAll);
 
-        bytes memory payload = abi.encode(fundedDays, total);
+        bytes memory payload = abi.encode(fundedDays, st.totalAll);
         ICrossChainMessenger.TokenAmount[] memory tokens =
             new ICrossChainMessenger.TokenAmount[](1);
-        tokens[0] = ICrossChainMessenger.TokenAmount({token: vpfi, amount: total});
+        tokens[0] = ICrossChainMessenger.TokenAmount({token: vpfi, amount: st.totalAll});
 
         uint256 fee = ICrossChainMessenger(messenger).quoteMessageFee(
             dstChainId,
@@ -298,7 +335,7 @@ contract RewardRemittanceFacet is
             if (!ok) revert RemittanceRefundFailed();
         }
 
-        emit RewardBudgetRemitted(dstChainId, total, fundedCount, messageId);
+        emit RewardBudgetRemitted(dstChainId, st.totalAll, fundedCount, messageId);
     }
 
     // ─── Admin ────────────────────────────────────────────────────────────
@@ -458,6 +495,7 @@ contract RewardRemittanceFacet is
 
         uint256[] memory fundedDays = new uint256[](dayIds.length);
         uint256 fundedCount;
+        uint256 totalFresh; // PR-3c — fresh share for the cap guard below.
         for (uint256 i; i < dayIds.length; ) {
             uint256 dayId = dayIds[i];
             // Mirror remit's revert on any unfinalized day so this quote never
@@ -476,17 +514,20 @@ contract RewardRemittanceFacet is
                 }
             }
             if (!seen && s.rewardBudgetRemitted[dstChainId][dayId] == 0) {
-                uint256 slice = LibInteractionRewards.chainRewardBudgetForDay(
-                    s,
-                    dstChainId,
-                    dayId
-                );
+                (uint256 sliceFresh, uint256 sliceRecycled) =
+                    LibInteractionRewards.chainRewardBudgetSplitForDay(
+                        s,
+                        dstChainId,
+                        dayId
+                    );
+                uint256 slice = sliceFresh + sliceRecycled;
                 if (slice > 0) {
                     fundedDays[fundedCount] = dayId;
                     unchecked {
                         ++fundedCount;
                     }
                     total += slice;
+                    totalFresh += sliceFresh;
                 }
             }
             unchecked {
@@ -495,12 +536,15 @@ contract RewardRemittanceFacet is
         }
         if (total == 0) return (0, 0);
         // Mirror remit's 69M pool-cap guard so a quote can't succeed for a batch
-        // remit would reject near pool exhaustion.
+        // remit would reject near pool exhaustion. PR-3c — fresh share only,
+        // mirroring the send path.
         uint256 used = s.rewardBudgetRemittedGlobal + s.interactionPoolPaidOut;
         uint256 remaining = used >= LibVaipakam.VPFI_INTERACTION_POOL_CAP
             ? 0
             : LibVaipakam.VPFI_INTERACTION_POOL_CAP - used;
-        if (total > remaining) revert RewardPoolCapExceeded(total, remaining);
+        if (totalFresh > remaining) {
+            revert RewardPoolCapExceeded(totalFresh, remaining);
+        }
         assembly {
             mstore(fundedDays, fundedCount)
         }

@@ -89,6 +89,9 @@ interface IRewardMessenger {
         uint256 globalLenderNumeraire18,
         uint256 globalBorrowerNumeraire18,
         uint256 capThreshold18,
+        uint256 scheduleFloorHalf,
+        uint256 recycledHalf,
+        uint256 armedFromDay,
         address payable refundAddress
     ) external payable;
 

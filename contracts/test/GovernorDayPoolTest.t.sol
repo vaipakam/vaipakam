@@ -101,7 +101,7 @@ contract GovernorDayPoolTest is SetupTest {
         // recycled = min(fundable, 100 x 95%) = 95 VPFI (bucket is ample).
         assertEq(recycledBudget, 95 ether, "coupled term at 1-minus-margin");
         // Records-only: reservation is unarmed by default.
-        (uint256 armed, uint256 outF, uint256 outR) =
+        (uint256 armed, uint256 outF, uint256 outR, ) =
             _agg().getGovernorCommitState();
         assertEq(armed, 0, "unarmed by default");
         assertEq(outF, 0, "no fresh reservation while unarmed");
@@ -179,11 +179,14 @@ contract GovernorDayPoolTest is SetupTest {
         _finalize(5);
 
         (, uint256 floor5, uint256 recycled5, , ) = _agg().getDayPoolStamp(5);
-        (uint256 armed, uint256 outF, uint256 outR) =
+        (uint256 armed, uint256 outF, uint256 outR, ) =
             _agg().getGovernorCommitState();
         assertEq(armed, 5, "armed from day 5");
-        assertEq(outF, floor5, "fresh commitment reserved");
-        assertEq(outR, recycled5, "recycled commitment reserved");
+        // PR-3c (Codex #1315 P1): what is reserved is the CAPPED committable
+        // (per-side ceil-div against the finalized denominators), which can
+        // exceed the raw stamp by bounded ceil-dust (≤ sides wei-scale).
+        assertApproxEqAbs(outF, floor5, 100, "fresh commitment reserved");
+        assertApproxEqAbs(outR, recycled5, 100, "recycled commitment reserved");
 
         // The NEXT day's availability nets the day-5 reservations out:
         // fundable[6] = bucket − outR ⇒ with a tiny remaining bucket the
@@ -206,7 +209,7 @@ contract GovernorDayPoolTest is SetupTest {
 
         _finalize(5);
 
-        (, uint256 outF, uint256 outR2) = _agg().getGovernorCommitState();
+        (, uint256 outF, uint256 outR2, ) = _agg().getGovernorCommitState();
         // (destructure order: armedFromDay, fresh, recycled)
         assertEq(outF, 0, "pre-arming day reserves nothing (fresh)");
         assertEq(outR2, 0, "pre-arming day reserves nothing (recycled)");

@@ -685,6 +685,15 @@ Day-pool stamps (recycling governor budget formula — stamped at finalization):
 - **commitment reservation is armed only at the distribution-coupling cutover** (the stage that makes claims actually consume these budgets): until then the stamps are public records and the live claim math remains schedule-based, so no reservation can accumulate without a matching consumption path
 - once armed, each finalized day's stamped halves are reserved against future availability, and a commitment is released back only by forfeit or by the ratified claim-horizon sweep — never silently
 
+Distribution coupling (recycling governor cutover — the stage that makes claims consume the stamped budgets):
+
+- from an admin-armed **cutover day** forward (one-shot, strictly future, propagated to every mirror in-band with the day broadcast so no chain can drift), each finalized day's claims price against the **stamped day pool** — the schedule floor plus the recycled budget — instead of the raw emission schedule
+- a claim spanning the cutover day slices exactly: pre-cutover days pay schedule-only, post-cutover days pay both components; the per-user daily cap applies to the **combined** per-day value first, and any trim is apportioned **pro-rata across the two sources** so capping never changes a user's total
+- consumption is source-split: the fresh component consumes the pre-funded pool's hard cap and retires that day's fresh commitment; the recycled component **debits the recycle bucket at claim/remit time** (never at finalization) and retires the recycled commitment. At fresh-pool exhaustion the recycled term keeps paying — claims never fail on an exhausted fresh pool while a recycled budget stands
+- a **forfeited** reward splits the same way: its fresh share is genuine absorption and credits the recycle bucket; its recycled share **never left the bucket**, so it is a pure commitment release with zero new credit — it must never feed the absorption average (otherwise every dormant recycled reward would inflate future budgets while absorbing nothing)
+- cross-chain remittances decompose identically: the fresh share reserves against the pool cap, the recycled share debits the bucket when the tokens leave canonical custody, and the per-chain funding split mirrors the claim-side split exactly so funding and claims can never diverge
+- a post-cutover day whose pool composition has not yet arrived on a chain **halts claims for that day** (fail-closed wait, identical to the existing finalization gate) rather than pricing from the wrong pool
+
 Loop-closure transparency metric (RL-2, `VpfiRecyclingLoopClosureDesign.md` §6 — ratified 2026-07-16):
 
 - the platform publishes two observable numbers describing how much of the distributed interaction-reward VPFI stays inside the sink system, computed off-chain from on-chain events so every independent indexer reading the same events reports the same values

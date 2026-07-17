@@ -5002,6 +5002,37 @@ library LibVaipakam {
         /// @dev Σ armed recycled commitments not yet consumed/released
         ///      (`fundable[D] = recycleBucket − this`).
         uint256 outstandingCommitRecycled;
+        // ─── Governor PR-3c (#1217 §3.1) — dual accumulator + consumption ──
+        /// @dev Capped cumulative of the RECYCLED per-day RPN component:
+        ///      `Σ_{k≤d} cappedRecycledΔ_k`, riding the same lazy cursor as
+        ///      {cumMinLenderRpn18}. The per-user #1008 cap applies to the
+        ///      COMBINED (fresh+recycled) Δ FIRST and the trim is
+        ///      apportioned pro-rata (governor §3.1 / Codex r7 — capping
+        ///      per-source would change the user's total); the FRESH capped
+        ///      component is therefore always derived by subtraction
+        ///      (`cumMin − cumMinRecycled`), never stored separately.
+        ///      Zero for every pre-arming day (the recycled term only
+        ///      exists post-cutover).
+        mapping(uint256 => uint256) cumMinRecycledLenderRpn18;
+        /// @dev Borrower-side mirror of {cumMinRecycledLenderRpn18}.
+        mapping(uint256 => uint256) cumMinRecycledBorrowerRpn18;
+        /// @dev Capped cumulative of the ARMED-DAY combined Δ (fresh +
+        ///      recycled, post-cutover days only; 0 contribution from
+        ///      pre-arming days). Lets a claim spanning the arming day
+        ///      split its consumption exactly: `armedFresh = armedCombined
+        ///      − recycled` releases the fresh commitment for precisely the
+        ///      armed-day share — decrementing by the WHOLE fresh component
+        ///      would eat other days' reservations (pre-arming days never
+        ///      reserved anything).
+        mapping(uint256 => uint256) cumMinArmedLenderRpn18;
+        /// @dev Borrower-side mirror of {cumMinArmedLenderRpn18}.
+        mapping(uint256 => uint256) cumMinArmedBorrowerRpn18;
+        /// @dev VPFI paid out (or remitted) from the RECYCLED term since
+        ///      arming. Never touches the 69M fresh pool:
+        ///      `interactionPoolPaidOut` remains the FRESH-only counter
+        ///      post-cutover (recycled payouts debit {recycleBucket}
+        ///      instead). Transparency + reconciliation counter.
+        uint256 paidOutRecycled;
     }
 
     /// @notice Governor PR-3b (#1217 §3.1) — the per-day pool composition

@@ -619,7 +619,7 @@ contract CrossChainRewardPlumbingTest is SetupTest, IVaipakamErrors {
         _configureMirror(CHAIN_ARB);
         vm.prank(alice);
         vm.expectRevert(NotAuthorizedRewardMessenger.selector);
-        _rep().onRewardBroadcastReceived(1, 10e18, 5e18, type(uint256).max);
+        _rep().onRewardBroadcastReceived(1, 10e18, 5e18, type(uint256).max, 0, 0, 0);
     }
 
     function testBroadcastReceivedRevertsWhenMessengerUnset() public {

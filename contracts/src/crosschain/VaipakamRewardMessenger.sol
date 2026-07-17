@@ -30,7 +30,10 @@ interface IRewardReporterIngress {
         uint256 dayId,
         uint256 globalLenderNumeraire18,
         uint256 globalBorrowerNumeraire18,
-        uint256 capThreshold18
+        uint256 capThreshold18,
+        uint256 scheduleFloorHalf,
+        uint256 recycledHalf,
+        uint256 armedFromDay
     ) external;
 }
 
@@ -113,13 +116,19 @@ contract VaipakamRewardMessenger is
     ///         the inbound path rejects a padded packet (`abi.decode` would
     ///         otherwise ignore trailing bytes).
     uint256 internal constant REPORT_PAYLOAD_SIZE = 4 * 32;
-    /// @notice #1008 (S13) — BROADCAST payload size. Base→mirror broadcasts now
-    ///         carry the canonical §4 cap threshold, so `abi.encode(uint8, uint256
-    ///         dayId, uint256 lender, uint256 borrower, uint256 capThreshold18)`
-    ///         is FIVE words. Kept SEPARATE from {REPORT_PAYLOAD_SIZE} so growing
-    ///         the broadcast shape cannot start rejecting the still-4-word reports
-    ///         (Codex #1147 r9 M2).
-    uint256 internal constant BROADCAST_PAYLOAD_SIZE = 5 * 32;
+    /// @notice Broadcast payload size. #1008 (S13) added the canonical §4 cap
+    ///         threshold (5th word); governor PR-3c (#1217 §6/§8) adds the
+    ///         day-pool COMPOSITION — `scheduleFloorHalf` + `recycledHalf`
+    ///         (6th/7th) — and the commitment-arming day `armedFromDay`
+    ///         (8th), so every mirror prices the identical
+    ///         `dailyPool[D] = scheduleFloor + recycledBudget` and arms its
+    ///         dual accumulators on the same D* with zero operator drift.
+    ///         `abi.encode(uint8, dayId, lender, borrower, capThreshold18,
+    ///         scheduleFloorHalf, recycledHalf, armedFromDay)` = EIGHT words.
+    ///         Kept SEPARATE from {REPORT_PAYLOAD_SIZE} so growing the
+    ///         broadcast shape cannot start rejecting the still-4-word
+    ///         reports (Codex #1147 r9 M2).
+    uint256 internal constant BROADCAST_PAYLOAD_SIZE = 8 * 32;
     /// @notice T-087 Sub 2.B — `abi.encode(uint8 kind, address user,
     ///         uint8 effTier, uint16 effBps, uint40 computedAt, uint256
     ///         nonce, uint40 tierExpirySec, uint16 tierTableVersion)`
@@ -390,6 +399,9 @@ contract VaipakamRewardMessenger is
         uint256 globalLenderNumeraire18,
         uint256 globalBorrowerNumeraire18,
         uint256 capThreshold18,
+        uint256 scheduleFloorHalf,
+        uint256 recycledHalf,
+        uint256 armedFromDay,
         address payable refundAddress
     ) external payable onlyDiamond whenNotPaused nonReentrant {
         if (messenger == address(0)) revert MessengerNotSet();
@@ -397,12 +409,17 @@ contract VaipakamRewardMessenger is
         if (n == 0) revert NoBroadcastDestinations();
 
         // #1008 (S13) — 5th word is the canonical §4 cap threshold `T_d`.
+        // PR-3c (#1217) — 6th/7th are the day-pool composition halves,
+        // 8th the commitment-arming day (see BROADCAST_PAYLOAD_SIZE).
         bytes memory payload = abi.encode(
             MSG_TYPE_BROADCAST,
             dayId,
             globalLenderNumeraire18,
             globalBorrowerNumeraire18,
-            capThreshold18
+            capThreshold18,
+            scheduleFloorHalf,
+            recycledHalf,
+            armedFromDay
         );
 
         uint256 spent;
@@ -613,14 +630,17 @@ contract VaipakamRewardMessenger is
         uint256 globalBorrowerNumeraire18
     ) external view returns (uint256 nativeFee) {
         uint256 n = broadcastDestinationChainIds.length;
-        // #1008 (S13) — size-accurate 5-word payload (the 5th word is the cap
-        // threshold; a zero placeholder gives the same 32-byte width so the fee
-        // quote matches the real {broadcastGlobal} send).
+        // Size-accurate 8-word payload (cap threshold + PR-3c composition
+        // halves + arming day as zero placeholders — same 32-byte widths, so
+        // the fee quote matches the real {broadcastGlobal} send).
         bytes memory payload = abi.encode(
             MSG_TYPE_BROADCAST,
             dayId,
             globalLenderNumeraire18,
             globalBorrowerNumeraire18,
+            uint256(0),
+            uint256(0),
+            uint256(0),
             uint256(0)
         );
         for (uint256 i; i < n; ++i) {
@@ -695,12 +715,31 @@ contract VaipakamRewardMessenger is
             if (isCanonical) revert BroadcastOnCanonical();
             // #1008 (S13) — the 5th word is the canonical §4 cap threshold `T_d`,
             // computed once on Base at finalization; the mirror stores it verbatim
-            // (never recomputes) so every chain caps identically.
-            (, uint256 dayId, uint256 a, uint256 b, uint256 capThreshold18) =
-                abi.decode(payload, (uint8, uint256, uint256, uint256, uint256));
+            // (never recomputes) so every chain caps identically. PR-3c (#1217)
+            // — 6th/7th are the day-pool composition halves and 8th the
+            // commitment-arming day, likewise stored verbatim.
+            (
+                ,
+                uint256 dayId,
+                uint256 a,
+                uint256 b,
+                uint256 capThreshold18,
+                uint256 scheduleFloorHalf,
+                uint256 recycledHalf,
+                uint256 armedFromDay
+            ) = abi.decode(
+                payload,
+                (uint8, uint256, uint256, uint256, uint256, uint256, uint256, uint256)
+            );
             emit BroadcastReceived(sourceChainId, dayId, a, b);
             IRewardReporterIngress(diamond).onRewardBroadcastReceived(
-                dayId, a, b, capThreshold18
+                dayId,
+                a,
+                b,
+                capThreshold18,
+                scheduleFloorHalf,
+                recycledHalf,
+                armedFromDay
             );
         } else if (msgType == MSG_TYPE_TIER_UPDATED) {
             if (len != TIER_UPDATED_PAYLOAD_SIZE) {

@@ -41,6 +41,10 @@ contract MockRewardMessenger is IRewardMessenger {
     uint256 public lastBroadcastLenderNumeraire18;
     uint256 public lastBroadcastBorrowerNumeraire18;
     uint256 public lastBroadcastCapThreshold18;
+    // PR-3c composition + arming spies.
+    uint256 public lastBroadcastScheduleFloorHalf;
+    uint256 public lastBroadcastRecycledHalf;
+    uint256 public lastBroadcastArmedFromDay;
     address public lastBroadcastRefund;
     uint256 public lastBroadcastValue;
     uint256 public broadcastCount;
@@ -89,6 +93,9 @@ contract MockRewardMessenger is IRewardMessenger {
         uint256 globalLenderNumeraire18,
         uint256 globalBorrowerNumeraire18,
         uint256 capThreshold18,
+        uint256 scheduleFloorHalf,
+        uint256 recycledHalf,
+        uint256 armedFromDay,
         address payable refundAddress
     ) external payable override {
         require(msg.sender == diamond, "MockMessenger: only diamond");
@@ -97,6 +104,10 @@ contract MockRewardMessenger is IRewardMessenger {
         lastBroadcastLenderNumeraire18 = globalLenderNumeraire18;
         lastBroadcastBorrowerNumeraire18 = globalBorrowerNumeraire18;
         lastBroadcastCapThreshold18 = capThreshold18;
+        // PR-3c — composition + arming spies.
+        lastBroadcastScheduleFloorHalf = scheduleFloorHalf;
+        lastBroadcastRecycledHalf = recycledHalf;
+        lastBroadcastArmedFromDay = armedFromDay;
         lastBroadcastRefund = refundAddress;
         lastBroadcastValue = msg.value;
         broadcastCount += 1;
@@ -138,6 +149,8 @@ contract MockRewardMessenger is IRewardMessenger {
     }
 
     /// @notice Simulate a Base broadcast landing on a mirror reporter.
+    ///         Legacy 4-arg shape kept for the pre-PR-3c tests: composition
+    ///         halves zero, unarmed.
     function deliverBroadcast(
         uint256 dayId,
         uint256 globalLenderNumeraire18,
@@ -148,7 +161,31 @@ contract MockRewardMessenger is IRewardMessenger {
             dayId,
             globalLenderNumeraire18,
             globalBorrowerNumeraire18,
-            capThreshold18
+            capThreshold18,
+            0,
+            0,
+            0
+        );
+    }
+
+    /// @notice PR-3c — full-shape broadcast delivery (composition + arming).
+    function deliverBroadcastWithComposition(
+        uint256 dayId,
+        uint256 globalLenderNumeraire18,
+        uint256 globalBorrowerNumeraire18,
+        uint256 capThreshold18,
+        uint256 scheduleFloorHalf,
+        uint256 recycledHalf,
+        uint256 armedFromDay
+    ) external {
+        RewardReporterFacet(diamond).onRewardBroadcastReceived(
+            dayId,
+            globalLenderNumeraire18,
+            globalBorrowerNumeraire18,
+            capThreshold18,
+            scheduleFloorHalf,
+            recycledHalf,
+            armedFromDay
         );
     }
 

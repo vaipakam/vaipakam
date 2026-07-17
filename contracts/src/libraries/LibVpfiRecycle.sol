@@ -115,4 +115,73 @@ library LibVpfiRecycle {
         s.recycledCreditedByDay[dayId] += amount;
         emit VpfiRecycled(uint8(source), refId, amount, dayId);
     }
+
+    /// @notice PR-3c — emitted when a recycled payout leaves the bucket
+    ///         (a claim or remittance paid its recycled component). The
+    ///         governor §3.2 rule: the recycled budget is a sizing
+    ///         reservation, debited pro-rata at claim/remit time — never a
+    ///         finalize-time transfer.
+    /// @custom:event-category state-change/treasury-mutation
+    event VpfiRecycleConsumed(uint256 amount, uint256 dayId);
+
+    /// @notice PR-3c — emitted when a RECYCLED-funded commitment is
+    ///         released without consumption (a recycled-funded reward was
+    ///         forfeited, or RL-3's horizon sweep expired it). ZERO new
+    ///         absorption: the tokens never physically left the bucket, so
+    ///         this must NEVER feed `credited[D]` / Ā (governor §4 —
+    ///         otherwise dormant recycled rewards would inflate future
+    ///         budgets on every forfeit, absorbing nothing).
+    /// @param  source Same class vocabulary as {VpfiRecycled}.
+    /// @custom:event-category informational/reward-governor
+    event RewardCommitmentReleased(
+        uint8 indexed source,
+        uint256 indexed refId,
+        uint256 amount
+    );
+
+    /**
+     * @notice PR-3c — consume `amount` from the bucket for a recycled
+     *         payout (claim / remittance). Ledger decrement paralleling the
+     *         caller's actual token transfer; also retires the matching
+     *         outstanding recycled commitment and advances the
+     *         `paidOutRecycled` transparency counter.
+     * @dev    Floors both the bucket and the outstanding sum at zero
+     *         instead of reverting: bounded cap-trim dust can make a day's
+     *         consumption exceed its recorded commitment by wei-scale
+     *         amounts (redesign ceil-dust rule), and a payout that the
+     *         claim math authorized must not brick on ledger dust.
+     */
+    function consume(uint256 amount) internal {
+        if (amount == 0) return;
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        uint256 bucket = s.recycleBucket;
+        s.recycleBucket = bucket > amount ? bucket - amount : 0;
+        uint256 outstanding = s.outstandingCommitRecycled;
+        s.outstandingCommitRecycled =
+            outstanding > amount ? outstanding - amount : 0;
+        s.paidOutRecycled += amount;
+        (uint256 dayId, bool active) = LibInteractionRewards.currentDayOrZero();
+        if (!active) dayId = 0;
+        emit VpfiRecycleConsumed(amount, dayId);
+    }
+
+    /**
+     * @notice PR-3c — release a RECYCLED-funded commitment without
+     *         consumption (forfeit / RL-3 expiry of a recycled-funded
+     *         reward). Restores bucket availability (`fundable` reads
+     *         `recycleBucket − outstandingCommitRecycled`) with ZERO new
+     *         credit — never touches `recycledCreditedByDay`.
+     */
+    function releaseCommitment(
+        RecycleSource source,
+        uint256 refId,
+        uint256 amount
+    ) internal {
+        if (amount == 0) return;
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        uint256 outstanding = s.outstandingCommitRecycled;
+        s.outstandingCommitRecycled =
+            outstanding > amount ? outstanding - amount : 0;
+        emit RewardCommitmentReleased(uint8(source), refId, amount);
+    }
 }

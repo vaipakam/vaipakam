@@ -467,13 +467,24 @@ contract RewardAggregatorFacet is
             stamped: true
         });
 
-        // Commitment reservation — armed only from the PR-3c cutover day
-        // (Phase A′ single-chain: the day's commitments ARE the stamped
-        // halves; the per-chain ceil-div refinement arrives with the mesh).
+        // Commitment reservation — armed only from the PR-3c cutover day.
+        // Codex #1315 P1: reserve the CAPPED committable amounts, not the
+        // raw stamp — claims/remits can only ever consume the #1008-capped
+        // per-side budgets, and a zero-denominator side consumes nothing;
+        // reserving the raw halves would strand the unclaimable remainder
+        // in `outstandingCommit*` and shrink every later day's
+        // availability for value no user can draw.
         uint256 armedFrom = s.governorCommitArmedFromDay;
         if (armedFrom != 0 && dayId >= armedFrom) {
-            s.outstandingCommitFresh += scheduleFloor;
-            s.outstandingCommitRecycled += recycledBudget;
+            (uint256 commitFresh, uint256 commitRecycled) =
+                LibInteractionRewards.committableForDay(
+                    s,
+                    dayId,
+                    scheduleFloor / 2,
+                    recycledBudget / 2
+                );
+            s.outstandingCommitFresh += commitFresh;
+            s.outstandingCommitRecycled += commitRecycled;
         }
 
         emit GovernorDayPoolStamped(
@@ -528,14 +539,16 @@ contract RewardAggregatorFacet is
         returns (
             uint256 armedFromDay,
             uint256 outstandingFresh,
-            uint256 outstandingRecycled
+            uint256 outstandingRecycled,
+            uint256 paidOutRecycled
         )
     {
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         return (
             s.governorCommitArmedFromDay,
             s.outstandingCommitFresh,
-            s.outstandingCommitRecycled
+            s.outstandingCommitRecycled,
+            s.paidOutRecycled
         );
     }
 
@@ -562,6 +575,7 @@ contract RewardAggregatorFacet is
         address messenger = s.rewardMessenger;
         if (messenger == address(0)) revert RewardMessengerNotSet();
 
+        LibVaipakam.DayPoolStamp storage stamp = s.dayPoolStamp[dayId];
         IRewardMessenger(messenger).broadcastGlobal{value: msg.value}(
             dayId,
             s.dailyGlobalLenderInterestNumeraire18[dayId],
@@ -569,9 +583,50 @@ contract RewardAggregatorFacet is
             // #1008 (S13) — ship the finalize-snapshotted canonical §4 cap
             // threshold so every mirror caps identically.
             s.dayCapThreshold18[dayId],
+            // Governor PR-3c (#1217 §6/§8) — ship the finalize-stamped
+            // day-pool composition (per-side halves) + the arming day so
+            // every mirror prices the identical dailyPool and arms on the
+            // same D* with zero operator drift.
+            uint256(stamp.scheduleFloor) / 2,
+            uint256(stamp.recycledBudget) / 2,
+            s.governorCommitArmedFromDay,
             payable(msg.sender)
         );
     }
+
+    /// @notice Governor PR-3c (#1217) — arm commitment reservation +
+    ///         consume-at-claim from `dayId` forward (the D* cutover).
+    ///         One-shot and future-only: arming must never rewrite already
+    ///         -finalized days (their stamps were records, not
+    ///         reservations), and un-arming would strand outstanding
+    ///         commitments. Mirrors receive D* in-band with every
+    ///         subsequent broadcast — no per-chain admin step.
+    /// @dev    ADMIN_ROLE + canonical-only. Requires a FUTURE day so no
+    ///         already-stamped day flips semantics retroactively.
+    function setGovernorCommitArmedFromDay(uint256 dayId)
+        external
+        onlyRole(LibAccessControl.ADMIN_ROLE)
+        onlyCanonical
+    {
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        if (s.governorCommitArmedFromDay != 0) {
+            revert GovernorAlreadyArmed(s.governorCommitArmedFromDay);
+        }
+        (uint256 today, ) = LibInteractionRewards.currentDayOrZero();
+        if (dayId == 0 || dayId <= today) {
+            revert GovernorArmingDayNotFuture(dayId, today);
+        }
+        s.governorCommitArmedFromDay = dayId;
+        emit GovernorCommitArmed(dayId);
+    }
+
+    /// @notice PR-3c — arming is one-shot; a second call reverts.
+    error GovernorAlreadyArmed(uint256 armedFromDay);
+    /// @notice PR-3c — the arming day must be strictly in the future.
+    error GovernorArmingDayNotFuture(uint256 dayId, uint256 today);
+    /// @notice PR-3c — emitted once when the D* cutover is armed.
+    /// @custom:event-category informational/reward-governor
+    event GovernorCommitArmed(uint256 dayId);
 
     // ─── Admin ──────────────────────────────────────────────────────────────
 

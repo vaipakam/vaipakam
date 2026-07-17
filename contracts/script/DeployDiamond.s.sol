@@ -2364,7 +2364,7 @@ contract DeployDiamond is Script {
     }
 
     function _getRewardAggregatorSelectors() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](15);
+        s = new bytes4[](16);
         s[0] = RewardAggregatorFacet.onChainReportReceived.selector;
         s[1] = RewardAggregatorFacet.finalizeDay.selector;
         s[2] = RewardAggregatorFacet.forceFinalizeDay.selector;
@@ -2381,6 +2381,8 @@ contract DeployDiamond is Script {
         // Governor PR-3b (#1217) — day-pool stamp + commitment-state reads.
         s[13] = RewardAggregatorFacet.getDayPoolStamp.selector;
         s[14] = RewardAggregatorFacet.getGovernorCommitState.selector;
+        // Governor PR-3c (#1217) — the D* cutover arming (one-shot admin).
+        s[15] = RewardAggregatorFacet.setGovernorCommitArmedFromDay.selector;
     }
 
     function _getRewardRemittanceSelectors() internal pure returns (bytes4[] memory s) {
