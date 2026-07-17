@@ -705,6 +705,15 @@ contract TestMutatorFacet {
         e.closed = true;
     }
 
+    /// @notice Governor PR-3a test-only — stamp a seeded entry as forfeited
+    ///         (production stamps it via {LibInteractionRewards.closeLoan}
+    ///         on liquidation-class terminals) so recycle-bucket tests can
+    ///         drive the claim/sweep forfeit routing without a full default
+    ///         scaffold.
+    function setRewardEntryForfeitedRaw(uint256 id) external {
+        LibVaipakam.storageSlot().rewardEntries[id].forfeited = true;
+    }
+
     /// @notice #1008 (S13) — seed the per-day §4 cap threshold `T_d` directly
     ///         (production snapshots it at finalization from the ETH feed +
     ///         effective cap ratio). `type(uint256).max` = cap disabled that

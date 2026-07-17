@@ -2133,7 +2133,7 @@ contract DeployDiamond is Script {
     }
 
     function _getConfigSelectors() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](78);
+        s = new bytes4[](80);
         // Setters
         s[0] = ConfigFacet.setFeesConfig.selector;
         s[1] = ConfigFacet.setLiquidationConfig.selector;
@@ -2301,6 +2301,9 @@ contract DeployDiamond is Script {
         s[75] = ConfigFacet.setRecycleMarginBps.selector;
         s[76] = ConfigFacet.setRecycleTariffKPer1e18EthDay.selector;
         s[77] = ConfigFacet.getRecycleConfig.selector;
+        // Governor PR-3a (#1217) — recycle-bucket transparency reads.
+        s[78] = ConfigFacet.getRecycleBucket.selector;
+        s[79] = ConfigFacet.getRecycledCreditedByDay.selector;
     }
 
     /// T-034 / T-048 numeraire / PAD / periodic-interest config

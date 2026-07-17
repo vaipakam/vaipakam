@@ -3,6 +3,7 @@ pragma solidity ^0.8.29;
 
 import {LibVaipakam} from "../libraries/LibVaipakam.sol";
 import {LibInteractionRewards} from "../libraries/LibInteractionRewards.sol";
+import {LibVpfiRecycle} from "../libraries/LibVpfiRecycle.sol";
 import {LibAccessControl, DiamondAccessControl} from "../libraries/LibAccessControl.sol";
 import {DiamondReentrancyGuard} from "../libraries/LibReentrancyGuard.sol";
 import {DiamondPausable} from "../libraries/LibPausable.sol";
@@ -55,11 +56,12 @@ contract InteractionRewardsFacet is
         uint256 amount
     );
 
-    /// @notice Emitted when forfeited reward accruals are routed to treasury
-    ///         — either as a side effect of a claim or a permissionless sweep.
-    /// @param amount VPFI wei routed to the treasury from forfeited entries.
-    /// @custom:event-category state-change/treasury-mutation
-    event InteractionForfeitedToTreasury(uint256 amount);
+    // Governor PR-3a (#1217) — the former `InteractionForfeitedToTreasury`
+    // event and its treasury transfer are REPLACED: forfeited reward
+    // accruals now stay in Diamond custody and credit the recycle bucket
+    // (owner directive: no burning — recycle absorbed VPFI into the reward
+    // stream). {LibVpfiRecycle.VpfiRecycled} is the observability signal.
+    // No off-chain consumer read the old event (grep-verified at removal).
 
     /// @notice RL-1 (VpfiRecyclingLoopClosureDesign §6) — emitted when a
     ///         claim's payout was delivered into the claimant's per-user
@@ -267,11 +269,16 @@ contract InteractionRewardsFacet is
             _deliverReward(vpfi, paid, deliverTo, today);
         }
         if (treasuryDelta > 0) {
-            address treasury = s.treasury;
-            if (treasury != address(0)) {
-                IERC20(vpfi).safeTransfer(treasury, treasuryDelta);
-            }
-            emit InteractionForfeitedToTreasury(treasuryDelta);
+            // Governor PR-3a (#1217) — forfeited accruals stay in Diamond
+            // custody and credit the recycle bucket (a pure ledger
+            // re-label; no token movement). Pool accounting above already
+            // consumed them from the 69M cap. refId 0: a claim-path
+            // forfeit batch can span several entries/loans.
+            LibVpfiRecycle.credit(
+                LibVpfiRecycle.RecycleSource.ForfeitedReward,
+                0,
+                treasuryDelta
+            );
         }
         emit InteractionRewardsClaimed(msg.sender, fromDay, toDay, paid);
     }
@@ -364,11 +371,14 @@ contract InteractionRewardsFacet is
         swept = treasuryDelta > remaining ? remaining : treasuryDelta;
         s.interactionPoolPaidOut = paidOut + swept;
 
-        address treasury = s.treasury;
-        if (treasury != address(0)) {
-            IERC20(vpfi).safeTransfer(treasury, swept);
-        }
-        emit InteractionForfeitedToTreasury(swept);
+        // Governor PR-3a (#1217) — the swept forfeit stays in Diamond
+        // custody and credits the recycle bucket (ledger re-label, no
+        // transfer). refId = the swept loan for per-loan observability.
+        LibVpfiRecycle.credit(
+            LibVpfiRecycle.RecycleSource.ForfeitedReward,
+            loanId,
+            swept
+        );
     }
 
     // ─── Admin ───────────────────────────────────────────────────────────────
