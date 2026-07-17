@@ -1534,7 +1534,7 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](80);
+        selectors = new bytes4[](82);
         selectors[0] = ConfigFacet.setFeesConfig.selector;
         selectors[1] = ConfigFacet.setLiquidationConfig.selector;
         selectors[2] = ConfigFacet.setRiskConfig.selector;
@@ -1671,6 +1671,9 @@ contract HelperTest {
         // Governor PR-3a (#1217) — recycle-bucket transparency reads.
         selectors[78] = ConfigFacet.getRecycleBucket.selector;
         selectors[79] = ConfigFacet.getRecycledCreditedByDay.selector;
+        // RL-3 (#1305) — reward claim-horizon knob.
+        selectors[80] = ConfigFacet.setRewardClaimHorizonDays.selector;
+        selectors[81] = ConfigFacet.getRewardClaimHorizonDays.selector;
         return selectors;
     }
 
@@ -1744,7 +1747,7 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](24);
+        selectors = new bytes4[](26);
         selectors[0] = InteractionRewardsFacet.claimInteractionRewards.selector;
         selectors[1] = InteractionRewardsFacet.setInteractionLaunchTimestamp.selector;
         selectors[2] = InteractionRewardsFacet.getInteractionLaunchTimestamp.selector;
@@ -1773,6 +1776,9 @@ contract HelperTest {
         selectors[22] = InteractionRewardsFacet.transferLenderRewardEntry.selector;
         // RL-1 — explicit-delivery claim (vault default / wallet opt-out).
         selectors[23] = InteractionRewardsFacet.claimInteractionRewardsTo.selector;
+        // RL-3 (#1305) — claim-horizon sweep + countdown view.
+        selectors[24] = InteractionRewardsFacet.sweepExpiredInteractionRewards.selector;
+        selectors[25] = InteractionRewardsFacet.getRewardEntryExpiry.selector;
         return selectors;
     }
 

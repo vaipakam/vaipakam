@@ -1022,6 +1022,86 @@ function _dayPoolHalves(
         }
     }
 
+    /**
+     * @notice RL-3 (#1305) — advance the claim-horizon clock for `id` and,
+     *         once expired, process the entry into the EXPIRED channel.
+     *
+     *         State machine per call (permissionless, keeper-class):
+     *           - feature dark (`rewardClaimHorizonDays == 0`)      → no-op
+     *           - entry processed / not yet claimable                → no-op
+     *             (the clock NEVER runs while a claim is blocked by
+     *             missing finalization/broadcast — ratified rule)
+     *           - claimable, clock unset → STAMP `firstClaimableAt`  → no-op
+     *           - claimable, `now < stamp + H days`                  → no-op
+     *           - claimable, `now ≥ stamp + H days` → EXPIRE: process
+     *             the entry (marks it `processed`) and return its
+     *             {EntrySplit} for the facet's source-split routing.
+     *
+     *         Forfeited entries are excluded — {sweepForfeitedByLoanId}
+     *         owns those; this sweep only ever expires PAYABLE value whose
+     *         owner never came back.
+     * @return expired The expired value decomposition (all zeros unless
+     *                 the entry expired on this call).
+     */
+    function sweepExpiredEntry(uint256 id)
+        internal
+        returns (EntrySplit memory expired)
+    {
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        uint32 horizonDays = s.rewardClaimHorizonDays;
+        if (horizonDays == 0) return expired;
+        LibVaipakam.RewardEntry storage e = s.rewardEntries[id];
+        if (e.processed || e.user == address(0)) return expired;
+        if (e.forfeited || _entryTerminalForfeit(s, e)) return expired;
+        if (!_entryClaimable(s, e)) return expired;
+        if (e.startDay >= e.endDay) return expired;
+
+        // The cursor must actually cover the window — a claim blocked on
+        // finalization keeps the clock frozen (never stamps, never expires).
+        uint256 need = e.endDay - 1;
+        uint256 cursor = e.side == LibVaipakam.RewardSide.Lender
+            ? s.cumLenderCursor
+            : s.cumBorrowerCursor;
+        if (cursor < need) {
+            cursor = e.side == LibVaipakam.RewardSide.Lender
+                ? advanceCumLenderThrough(need)
+                : advanceCumBorrowerThrough(need);
+            if (cursor < need) return expired;
+        }
+
+        uint64 stamp = s.rewardEntryFirstClaimableAt[id];
+        if (stamp == 0) {
+            // First observed claimability — start the clock, expire later.
+            s.rewardEntryFirstClaimableAt[id] = uint64(block.timestamp);
+            return expired;
+        }
+        if (block.timestamp < uint256(stamp) + uint256(horizonDays) * 1 days) {
+            return expired;
+        }
+
+        expired = _entryWindowSplit(s, e);
+        e.processed = true;
+    }
+
+    /// @notice RL-3 — UX view: the entry's horizon state for the
+    ///         claim-center countdown.
+    /// @return firstClaimableAt Clock start (0 = not started).
+    /// @return expiresAt        `stamp + H days` (0 = dark or unstarted).
+    function rewardEntryExpiry(uint256 id)
+        internal
+        view
+        returns (uint64 firstClaimableAt, uint64 expiresAt)
+    {
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        firstClaimableAt = s.rewardEntryFirstClaimableAt[id];
+        uint32 horizonDays = s.rewardClaimHorizonDays;
+        if (firstClaimableAt != 0 && horizonDays != 0) {
+            expiresAt = uint64(
+                uint256(firstClaimableAt) + uint256(horizonDays) * 1 days
+            );
+        }
+    }
+
     /// @dev PR-3c — accumulate `part` into `acc` (memory fold helper).
     function _foldSplit(
         EntrySplit memory acc,

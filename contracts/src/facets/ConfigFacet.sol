@@ -878,6 +878,47 @@ contract ConfigFacet is DiamondAccessControl {
         );
     }
 
+    /// @notice RL-3 (#1305) — emitted when the reward claim horizon knob
+    ///         changes. `0` = feature dark.
+    /// @custom:event-category informational/config
+    event RewardClaimHorizonDaysSet(uint32 horizonDays);
+
+    /// @notice RL-3 (#1305, ratified §10.2) — set the post-claimability
+    ///         reward claim horizon `H` (days). While `0` (deploy default)
+    ///         the feature is DARK: no clock runs, nothing expires. Bounded
+    ///         `[180, 1095]` so a horizon can never be sprung on dormant
+    ///         claimants nor stretched into an unbounded liability tail.
+    ///         Setting it activates the horizon: the permissionless expiry
+    ///         sweep stamps each entry's first-observed claimability from
+    ///         then on, and an entry expires `H` days after its stamp —
+    ///         every pre-existing dormant entry therefore gets at least a
+    ///         full `H` of notice after activation (grandfathering by
+    ///         construction, stronger than the ratified 90-day floor).
+    function setRewardClaimHorizonDays(uint32 horizonDays)
+        external
+        onlyRole(LibAccessControl.ADMIN_ROLE)
+    {
+        if (
+            horizonDays != 0 &&
+            (horizonDays < LibVaipakam.REWARD_CLAIM_HORIZON_MIN_DAYS ||
+                horizonDays > LibVaipakam.REWARD_CLAIM_HORIZON_MAX_DAYS)
+        ) {
+            revert IVaipakamErrors.ParameterOutOfRange(
+                "rewardClaimHorizonDays",
+                horizonDays,
+                LibVaipakam.REWARD_CLAIM_HORIZON_MIN_DAYS,
+                LibVaipakam.REWARD_CLAIM_HORIZON_MAX_DAYS
+            );
+        }
+        LibVaipakam.storageSlot().rewardClaimHorizonDays = horizonDays;
+        emit RewardClaimHorizonDaysSet(horizonDays);
+    }
+
+    /// @notice RL-3 — the live claim-horizon knob (`0` = dark).
+    function getRewardClaimHorizonDays() external view returns (uint32) {
+        return LibVaipakam.storageSlot().rewardClaimHorizonDays;
+    }
+
     /// @notice Governor PR-3a (#1217) — the recycle bucket's live ledger
     ///         balance (a slice of the Diamond's own VPFI balance; see
     ///         {LibVpfiRecycle}). Transparency read for #1218 metrics and

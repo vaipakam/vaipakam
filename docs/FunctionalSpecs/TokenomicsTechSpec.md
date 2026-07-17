@@ -241,6 +241,15 @@ Claim delivery venue (RL-1, `VpfiRecyclingLoopClosureDesign.md` §6 — ratified
 - a vault delivery and its bookkeeping succeed or fail as **one unit**: a failure leaves no partial vault-side state (no untracked vault dust, no double-pay) and the wallet fallback pays exactly once
 - a vault-delivered claim updates tier standing locally without depending on the cross-chain tier push; the push may be deferred to the claimant's next balance mutation. On mirror chains a vault-delivered reward gives local spendable balance; tier standing continues to be resolved on the canonical chain
 - the delivery venue does not alter the claim's sanctions posture — the claim entry point keeps its existing screening regardless of where the payout lands
+
+Claim horizon (RL-3, `VpfiRecyclingLoopClosureDesign.md` §6 — ratified §10.2):
+
+- once activated by governance (a bounded horizon knob, default 365 days, never below 180; dark until set), a reward that has been **fully claimable** for the horizon becomes sweepable into the recycle bucket by a **permissionless** keeper call — bounding the liability tail of dormant claimants who never return
+- the horizon clock runs **per reward entry from its first observed full claimability**, and it never runs while the claim is blocked by missing finalization or broadcast — a cross-chain delay can never eat into a user's window
+- the clock starts only when the sweep first observes the entry claimable, which cannot happen before feature activation — so every entry that existed before activation gets at least one full horizon of runway afterward (stronger than the ratified 90-day notice floor)
+- a claim landing any time before expiry always wins; an expired entry is simply processed, exactly like a claimed one — never clawed back retroactively
+- expiry uses the ratified **split signals**: the fresh-funded share genuinely leaves the fresh budget, consumes its pool cap, and credits the recycle bucket as absorption; the recycled-funded share never left the bucket and is released with **zero new credit** (it must never inflate the absorption average)
+- the claim surface exposes each entry's clock start and expiry timestamp so the Claim Center can render a countdown; the pre-expiry notice must ride **free** notification channels (the in-app notification center) — paid push may only ever be additional, since it skips exactly the dormant claimants the sweep would affect
 - the frontend claim surface for interaction rewards belongs in `Claim Center`, above per-loan claim rows, rather than on a combined Rewards page
 - the interaction-rewards UI should show:
   - pending claimable VPFI from `previewInteractionRewards(user)`

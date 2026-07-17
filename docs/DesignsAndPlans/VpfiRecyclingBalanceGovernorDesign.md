@@ -146,6 +146,23 @@ Claims/remits consume from their day's commitment (`paidOutFresh` /
 commitment is released back to availability only by forfeit (§4) — never by
 time, so no user's claimable reward is ever silently defunded.
 
+> **SUPERSEDED IN PART (RL-3, ratified §10.2 of
+> [`VpfiRecyclingLoopClosureDesign.md`](VpfiRecyclingLoopClosureDesign.md),
+> 2026-07-16; implemented #1305):** the "never by time" clause is amended
+> by the post-claimability claim horizon. An entry whose reward has been
+> FULLY claimable for `H` days (knob, default 365, bounded `[180, 1095]`,
+> dark until governance sets it) becomes sweepable to the recycle bucket
+> by a permissionless keeper, with the ratified split signals: the
+> fresh-funded share emits `VpfiRecycled(ExpiredReward, …)` and feeds
+> `credited[D]`; the recycled-funded share is a pure commitment release
+> (`RewardCommitmentReleased`) with zero new credit. The clock never runs
+> while a claim is blocked on finalization/broadcast, and it starts only
+> when the permissionless sweep first OBSERVES claimability — so every
+> pre-activation dormant entry gets at least a full `H` of runway after
+> the feature arms (grandfathering by construction). "Silently defunded"
+> remains impossible: expiry requires the full horizon plus the
+> claim-center countdown + free-channel pre-expiry notice (#1213).
+
 **Dual accumulator (Codex r2 P1 — a single cumulative RPN cannot recover a
 per-user fresh/recycled split).** Each finalized day contributes to **two**
 parallel reward-per-numerator accumulators — `freshRpn` (from

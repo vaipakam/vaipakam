@@ -2027,7 +2027,7 @@ contract DeployDiamond is Script {
     // #687-B: _getStakingRewardsSelectors removed with the 5% VPFI staking yield.
 
     function _getInteractionRewardsSelectors() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](24);
+        s = new bytes4[](26);
         s[0] = InteractionRewardsFacet.claimInteractionRewards.selector;
         s[1] = InteractionRewardsFacet.setInteractionLaunchTimestamp.selector;
         s[2] = InteractionRewardsFacet.getInteractionLaunchTimestamp.selector;
@@ -2056,6 +2056,9 @@ contract DeployDiamond is Script {
         s[22] = InteractionRewardsFacet.transferLenderRewardEntry.selector;
         // RL-1 — explicit-delivery claim (vault default / wallet opt-out).
         s[23] = InteractionRewardsFacet.claimInteractionRewardsTo.selector;
+        // RL-3 (#1305) — claim-horizon sweep + countdown view.
+        s[24] = InteractionRewardsFacet.sweepExpiredInteractionRewards.selector;
+        s[25] = InteractionRewardsFacet.getRewardEntryExpiry.selector;
     }
 
     function _getRewardReporterSelectors() internal pure returns (bytes4[] memory s) {
@@ -2133,7 +2136,7 @@ contract DeployDiamond is Script {
     }
 
     function _getConfigSelectors() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](80);
+        s = new bytes4[](82);
         // Setters
         s[0] = ConfigFacet.setFeesConfig.selector;
         s[1] = ConfigFacet.setLiquidationConfig.selector;
@@ -2304,6 +2307,9 @@ contract DeployDiamond is Script {
         // Governor PR-3a (#1217) — recycle-bucket transparency reads.
         s[78] = ConfigFacet.getRecycleBucket.selector;
         s[79] = ConfigFacet.getRecycledCreditedByDay.selector;
+        // RL-3 (#1305) — reward claim-horizon knob.
+        s[80] = ConfigFacet.setRewardClaimHorizonDays.selector;
+        s[81] = ConfigFacet.getRewardClaimHorizonDays.selector;
     }
 
     /// T-034 / T-048 numeraire / PAD / periodic-interest config

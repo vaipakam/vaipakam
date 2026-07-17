@@ -450,6 +450,93 @@ contract InteractionRewardsFacet is
         }
     }
 
+    /**
+     * @notice RL-3 (#1305, ratified §10.2) — permissionless claim-horizon
+     *         sweep. For each entry: starts the horizon clock on first
+     *         observed claimability, and once `H` days have passed since
+     *         that stamp, EXPIRES the entry into the recycle bucket.
+     *
+     *         Source-split per the ratified split-signals rule: the
+     *         fresh-funded share genuinely leaves the fresh budget into
+     *         protocol custody — it consumes the 69M pool and credits the
+     *         bucket as `ExpiredReward` absorption (feeds `credited[D]`/Ā);
+     *         the recycled-funded share never left the bucket, so it is a
+     *         pure commitment RELEASE with zero new credit.
+     *
+     *         Forfeited entries are out of scope (the forfeit sweep owns
+     *         them); a claim landing before expiry always wins (an expired
+     *         entry is simply `processed`, identical to a claimed one).
+     * @param  entryIds Entries to advance/expire (keeper batches).
+     * @return expiredTotal VPFI wei expired into the bucket by this call.
+     */
+    function sweepExpiredInteractionRewards(uint256[] calldata entryIds)
+        external
+        nonReentrant
+        whenNotPaused
+        returns (uint256 expiredTotal)
+    {
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        if (s.interactionLaunchTimestamp == 0) {
+            revert InteractionEmissionsNotStarted();
+        }
+        if (s.vpfiToken == address(0)) revert VPFITokenNotSet();
+
+        uint256 freshTotal;
+        uint256 recycledTotal;
+        uint256 armedFreshTotal;
+        for (uint256 i = 0; i < entryIds.length; ) {
+            LibInteractionRewards.EntrySplit memory ex =
+                LibInteractionRewards.sweepExpiredEntry(entryIds[i]);
+            freshTotal += ex.total - ex.recycled;
+            recycledTotal += ex.recycled;
+            armedFreshTotal += ex.armedFresh;
+            unchecked { ++i; }
+        }
+        if (freshTotal + recycledTotal == 0) return 0;
+
+        // Fresh share: consumes the 69M pool (tokens leave the fresh
+        // budget) exactly like a forfeit, capped at what remains.
+        uint256 paidOut = s.interactionPoolPaidOut;
+        uint256 reserved = paidOut + s.rewardBudgetRemittedGlobal;
+        uint256 remaining = LibVaipakam.VPFI_INTERACTION_POOL_CAP > reserved
+            ? LibVaipakam.VPFI_INTERACTION_POOL_CAP - reserved
+            : 0;
+        if (freshTotal > remaining) freshTotal = remaining;
+        s.interactionPoolPaidOut = paidOut + freshTotal;
+        LibInteractionRewards.consumeArmedFresh(
+            armedFreshTotal < freshTotal ? armedFreshTotal : freshTotal
+        );
+
+        if (freshTotal > 0) {
+            LibVpfiRecycle.credit(
+                LibVpfiRecycle.RecycleSource.ExpiredReward,
+                0,
+                freshTotal
+            );
+        }
+        if (recycledTotal > 0) {
+            LibVpfiRecycle.releaseCommitment(
+                LibVpfiRecycle.RecycleSource.ExpiredReward,
+                0,
+                recycledTotal
+            );
+        }
+        expiredTotal = freshTotal + recycledTotal;
+    }
+
+    /// @notice RL-3 — claim-center countdown view: the horizon state of a
+    ///         reward entry.
+    /// @param  entryId Entry to inspect.
+    /// @return firstClaimableAt Clock start (0 = not started / dark).
+    /// @return expiresAt        Expiry timestamp (0 = dark or unstarted).
+    function getRewardEntryExpiry(uint256 entryId)
+        external
+        view
+        returns (uint64 firstClaimableAt, uint64 expiresAt)
+    {
+        return LibInteractionRewards.rewardEntryExpiry(entryId);
+    }
+
     // ─── Admin ───────────────────────────────────────────────────────────────
 
     /**

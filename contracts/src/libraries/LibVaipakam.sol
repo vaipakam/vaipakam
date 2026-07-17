@@ -652,6 +652,15 @@ library LibVaipakam {
     ///      elapsed days would count a launch-day spike ≈2.6×, violating
     ///      the ≤1× lifetime-contribution bound (Codex r2).
     uint256 constant RECYCLE_TRAILING_WINDOW_DAYS = 7;
+    /// @dev RL-3 (#1305, VpfiRecyclingLoopClosureDesign §6 — ratified
+    ///      §10.2) — bounds for the post-claimability reward claim horizon
+    ///      `H` (days). The ratified default is 365; the knob is bounded
+    ///      below at 180 so governance can never spring a short horizon on
+    ///      dormant claimants, and above at 1095 so the liability tail
+    ///      stays genuinely bounded. Stored `0` ⇒ the feature is DARK
+    ///      (deploy default): nothing expires, no clock runs.
+    uint32 constant REWARD_CLAIM_HORIZON_MIN_DAYS = 180;
+    uint32 constant REWARD_CLAIM_HORIZON_MAX_DAYS = 1095;
 
     /// @dev Tariff `k` for peg-free discount entitlements (design §4.2): VPFI
     ///      (1e18) charged per 1 ETH (1e18) of loan volume per day, so a
@@ -5033,6 +5042,19 @@ library LibVaipakam {
         ///      post-cutover (recycled payouts debit {recycleBucket}
         ///      instead). Transparency + reconciliation counter.
         uint256 paidOutRecycled;
+        // ─── RL-3 (#1305) — post-claimability reward claim horizon ─────────
+        /// @dev Horizon `H` in days. `0` ⇒ feature DARK (deploy default);
+        ///      set via {ConfigFacet.setRewardClaimHorizonDays}, bounded
+        ///      `[REWARD_CLAIM_HORIZON_MIN_DAYS, REWARD_CLAIM_HORIZON_MAX_DAYS]`.
+        uint32 rewardClaimHorizonDays;
+        /// @dev Per-entry first-observed-claimable timestamp — the horizon
+        ///      clock's start. Stamped LAZILY by the permissionless expiry
+        ///      sweep on its first touch of a claimable entry (never while a
+        ///      claim is blocked by missing finalization/broadcast, which is
+        ///      exactly the ratified "clock never runs while blocked" rule),
+        ///      so every pre-existing dormant entry's clock starts at or
+        ///      after feature activation — grandfathering by construction.
+        mapping(uint256 => uint64) rewardEntryFirstClaimableAt;
     }
 
     /// @notice Governor PR-3b (#1217 §3.1) — the per-day pool composition
