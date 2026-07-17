@@ -330,6 +330,42 @@ describe('robustness (Codex #1310 round 1)', () => {
     expect(await retained(h, ALICE)).toBe('50');
   });
 
+  it('backfill with NO VaultVpfiDebited rows treats every withdraw as pre-boundary', async () => {
+    const { h, env } = makeHarness();
+    const seed = (block: number, kind: string, args: Record<string, string>) =>
+      h.db
+        .prepare(
+          `INSERT INTO activity_events
+             (chain_id, block_number, log_index, tx_hash, kind,
+              loan_id, offer_id, actor, args_json, block_at)
+           VALUES (?, ?, 0, ?, ?, NULL, NULL, ?, ?, ?)`,
+        )
+        .run(
+          CHAIN,
+          block,
+          `0x${block.toString(16).padStart(64, '0')}`,
+          kind,
+          ALICE,
+          JSON.stringify(args),
+          TODAY_TS - 2 * 86400,
+        );
+
+    // Right-after-migration state: deliveries + a reward-funded unstake,
+    // but the VaultVpfiDebited event has never fired on this chain yet.
+    seed(10, 'RewardDeliveredToVault', { user: ALICE, amount: '100' });
+    seed(20, 'VPFIWithdrawnFromVault', {
+      user: ALICE,
+      amount: '60',
+      newVaultBalance: '40',
+    });
+
+    await applyRewardLoopLedger([], env, CHAIN, ts([]));
+
+    // A null boundary must mean "replay ALL withdraws", not "skip all"
+    // (Codex #1310 r3): 100 − 60 = 40; skipping would overstate at 100.
+    expect(await retained(h, ALICE)).toBe('40');
+  });
+
   it('backfills historical reward events from activity_events once, dedup-safe against live replay', async () => {
     const { h, env } = makeHarness();
     // A historical wallet-paid claim the ingest cursor already passed —

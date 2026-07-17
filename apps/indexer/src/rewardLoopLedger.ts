@@ -305,9 +305,15 @@ export async function ensureRewardLoopBackfill(
     }>();
 
   for (const row of rows.results ?? []) {
+    // A null boundary means NO VaultVpfiDebited has been indexed yet —
+    // the expected state right after the migration deploys — so EVERY
+    // historical withdraw row is pre-boundary and must replay as a debit
+    // (Codex #1310 r3: skipping them all would leave prior reward-funded
+    // unstakes out of the ledger and overstate retention).
     if (
       row.kind === 'VPFIWithdrawnFromVault' &&
-      (boundary === null || row.block_number >= boundary)
+      boundary !== null &&
+      row.block_number >= boundary
     ) {
       continue;
     }
