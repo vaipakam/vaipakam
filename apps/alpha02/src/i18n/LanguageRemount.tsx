@@ -25,10 +25,14 @@
 import { type ReactNode } from 'react';
 import { Fragment } from 'react';
 import { useTranslation } from 'react-i18next';
+import { normalizeToSupportedLocale } from '@vaipakam/i18n/createI18n';
 
 export function LanguageRemount({ children }: { children: ReactNode }) {
   const { i18n } = useTranslation();
-  const lng = i18n.resolvedLanguage ?? i18n.language ?? 'en';
+  // ACTIVE language, never resolvedLanguage — a placeholder locale
+  // (empty bundle) resolves to 'en', which would suppress the remount
+  // for exactly the switch that needs it once its translation lands.
+  const lng = normalizeToSupportedLocale(i18n.language);
   const loaded = lng === 'en' || i18n.hasResourceBundle(lng, 'translation');
   return <Fragment key={`${lng}:${loaded ? 1 : 0}`}>{children}</Fragment>;
 }

@@ -53,6 +53,27 @@ import { applyDocumentDirection } from './rtl';
  *  always written here, so preferences carry forward. */
 export const LANGUAGE_STORAGE_KEY = 'vaipakam:language';
 
+/**
+ * Normalise a raw i18next language tag to a SUPPORTED_LOCALES base
+ * code ('es-MX' → 'es'; anything unrecognised → 'en').
+ *
+ * Why the ACTIVE language (`i18n.language`) and never
+ * `resolvedLanguage` for user-choice surfaces (`<html lang>`/`dir`,
+ * the cross-domain cookie, picker selection): i18next only "resolves"
+ * a language that has at least one loaded translation. A placeholder
+ * locale (empty `{}` bundle awaiting translation) — or any lazy
+ * bundle still in flight at init — therefore resolves to 'en', and
+ * keying the document language off it stomps the user's actual
+ * choice back to English on every reload. The active language is
+ * what the user picked; the resolution result is only about which
+ * strings render.
+ */
+export function normalizeToSupportedLocale(raw: string | undefined): string {
+  if (!raw) return 'en';
+  const base = raw.toLowerCase().split('-')[0];
+  return (SUPPORTED_LOCALES as readonly string[]).includes(base) ? base : 'en';
+}
+
 export type LocaleBundle = Record<string, unknown>;
 export type LazyLocaleLoader = () => Promise<{ default: LocaleBundle }>;
 
@@ -170,11 +191,12 @@ export function initVaipakamI18n(options: VaipakamI18nOptions): I18nInstance {
     });
 
   // Kick off the detected locale's bundle if it's not English. Done
-  // after init so `i18n.resolvedLanguage` is populated by the
-  // detector chain. Awaiting isn't necessary — `useTranslation()`
-  // re-renders when `addResourceBundle()` fires, and the English
-  // fallback covers the in-flight window.
-  const initialLng = i18n.resolvedLanguage ?? 'en';
+  // after init so the detector chain has populated `i18n.language`.
+  // Awaiting isn't necessary — `useTranslation()` re-renders when
+  // `addResourceBundle()` fires, and the English fallback covers the
+  // in-flight window. The ACTIVE language (never resolvedLanguage) is
+  // the right source here — see normalizeToSupportedLocale.
+  const initialLng = normalizeToSupportedLocale(i18n.language);
   if (initialLng !== 'en') void loadLocaleBundle(initialLng);
 
   // Init-time cookie write so the FIRST-visit navigator-detected
@@ -190,20 +212,24 @@ export function initVaipakamI18n(options: VaipakamI18nOptions): I18nInstance {
   // Future language changes (LanguagePicker click, etc.) load the
   // new bundle on demand.
   i18n.on('languageChanged', (lng) => {
-    void loadLocaleBundle(lng);
+    void loadLocaleBundle(normalizeToSupportedLocale(lng));
   });
 
   // Mirror every user-initiated language change to the parent-domain
   // cookie so sibling subdomains under `.vaipakam.com` pick the new
-  // value up on their next visit. Idempotent.
+  // value up on their next visit. Idempotent. Normalised so the
+  // cookie value always passes the seed-side SUPPORTED_LOCALES
+  // validation.
   i18n.on('languageChanged', (lng) => {
-    writeCookie(LANG_COOKIE, lng);
+    writeCookie(LANG_COOKIE, normalizeToSupportedLocale(lng));
   });
 
   // Keep the document direction in sync with the active language so
   // RTL scripts (Arabic, Hebrew, Farsi, Urdu) flip layout.
   applyDocumentDirection(initialLng);
-  i18n.on('languageChanged', applyDocumentDirection);
+  i18n.on('languageChanged', (lng) => {
+    applyDocumentDirection(normalizeToSupportedLocale(lng));
+  });
 
   return i18n;
 }

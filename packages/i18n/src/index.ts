@@ -17,6 +17,7 @@ export {
 } from './localeDisplay';
 export {
   initVaipakamI18n,
+  normalizeToSupportedLocale,
   LANGUAGE_STORAGE_KEY,
   type VaipakamI18nOptions,
   type LocaleBundle,

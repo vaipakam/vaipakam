@@ -13,12 +13,17 @@
  */
 
 import { useTranslation } from 'react-i18next';
+import { normalizeToSupportedLocale } from '@vaipakam/i18n/createI18n';
 import { copy } from '../content/copy';
 import { VISIBLE_LOCALES } from '../i18n/localeConfig';
 
 export function LanguagePicker() {
   const { i18n } = useTranslation();
-  const active = i18n.resolvedLanguage ?? i18n.language ?? 'en';
+  // ACTIVE language, never resolvedLanguage: a placeholder locale
+  // (empty bundle) resolves to 'en', which would show English as
+  // selected right after the user picked Spanish. The picker reflects
+  // the CHOICE; the strings' fallback is a separate concern.
+  const active = normalizeToSupportedLocale(i18n.language);
 
   return (
     <select
