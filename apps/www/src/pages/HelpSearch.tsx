@@ -29,6 +29,7 @@ import {
 } from '../lib/docSearch';
 import { usePageMeta } from '../lib/usePageMeta';
 import './UserGuide.css';
+import { useActiveLocale } from '../i18n/useActiveLocale';
 
 const DOC_KIND_ORDER: DocKind[] = [
   'overview',
@@ -48,7 +49,7 @@ export default function HelpSearch() {
   const inputRef = useRef<HTMLInputElement>(null);
 
   const query = params.get('q') ?? '';
-  const lang = i18n.resolvedLanguage ?? 'en';
+  const lang = useActiveLocale();
 
   const hits = useMemo(
     () => (query.length >= 2 ? searchDocs(query, lang, t) : []),

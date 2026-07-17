@@ -1,0 +1,25 @@
+# Cloudflare Workers static-assets redirects. Copied verbatim from
+# `public/` to `dist/` by Vite at build time; Cloudflare evaluates
+# these BEFORE the SPA fallback, so a JS-less crawler or AI agent
+# fetching a legacy URL gets a real 301 to the canonical route
+# instead of a 200 SPA shell (Codex #1309 r9).
+#
+# /buy-vpfi → /vpfi: the marketing page moved when the fixed-rate
+# sale was removed (#712). The React-router alias (App.tsx
+# `path="buy-vpfi"`) stays for client-side navigations; these rules
+# cover direct fetches. Query strings carry over automatically;
+# fragments are preserved by the browser across a 301.
+#
+# Locale list mirrors LOCALES in scripts/seo-routes.mjs — keep in
+# sync when a translated locale is added.
+
+/buy-vpfi /vpfi 301
+/es/buy-vpfi /es/vpfi 301
+/fr/buy-vpfi /fr/vpfi 301
+/de/buy-vpfi /de/vpfi 301
+/ja/buy-vpfi /ja/vpfi 301
+/zh/buy-vpfi /zh/vpfi 301
+/hi/buy-vpfi /hi/vpfi 301
+/ar/buy-vpfi /ar/vpfi 301
+/ta/buy-vpfi /ta/vpfi 301
+/ko/buy-vpfi /ko/vpfi 301

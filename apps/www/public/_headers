@@ -88,3 +88,9 @@
 
 /assets/*
   Cache-Control: public, max-age=31536000, immutable
+
+# NOTE: scripts/prerender.mjs APPENDS a generated, marker-delimited
+# section of per-route revalidation rules to the built dist/_headers
+# (one rule per prerendered entry point, derived from the same
+# seo-routes.mjs registry as the snapshots) — the deployed file is
+# this one PLUS that section (Codex #1309 r9).

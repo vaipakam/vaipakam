@@ -52,3 +52,129 @@
 
 /assets/*
   Cache-Control: public, max-age=31536000, immutable
+
+# Wallet-gated, per-user surfaces — never index. Header-level noindex
+# so even a crawler that doesn't execute JS sees the policy (the SPA
+# fallback serves index.html for these paths; SeoMeta's
+# <meta name="robots"> only exists after hydration). Deliberately NOT
+# robots.txt-Disallowed: a Disallow blocks crawling but not reference-
+# only indexing of the URL — noindex requires the fetch to be seen.
+# Every rule has a `/*` sibling: the router also renders trailing-
+# slash and deeper variants, and _headers matching is exact
+# (Codex #1309 r7). Keep in sync with SeoMeta.tsx + generate-seo.mjs.
+
+/positions
+  X-Robots-Tag: noindex
+/positions/*
+  X-Robots-Tag: noindex
+/claims
+  X-Robots-Tag: noindex
+/claims/*
+  X-Robots-Tag: noindex
+/vault
+  X-Robots-Tag: noindex
+/vault/*
+  X-Robots-Tag: noindex
+/activity
+  X-Robots-Tag: noindex
+/activity/*
+  X-Robots-Tag: noindex
+/settings
+  X-Robots-Tag: noindex
+/settings/*
+  X-Robots-Tag: noindex
+/faucet
+  X-Robots-Tag: noindex
+/faucet/*
+  X-Robots-Tag: noindex
+
+# Childless PUBLIC routes — the route itself is indexable, but any
+# deeper path (`/borrow/anything`) is NotFound in the router: the SPA
+# fallback still serves the index shell with a 200, so a non-executing
+# crawler would otherwise index a soft 404 (Codex #1309 r8). `/nft` is
+# deliberately ABSENT from this list: `/nft/:tokenId` children are
+# valid, indexable pages (SeoMeta noindexes the malformed ones after
+# hydration). `/positions/*` already carries noindex in the
+# wallet-gated block above.
+
+/borrow/*
+  X-Robots-Tag: noindex
+/lend/*
+  X-Robots-Tag: noindex
+/rent/*
+  X-Robots-Tag: noindex
+/offers/*
+  X-Robots-Tag: noindex
+/desk/*
+  X-Robots-Tag: noindex
+/vpfi/*
+  X-Robots-Tag: noindex
+/help/*
+  X-Robots-Tag: noindex
+
+# SPA aliases (App.tsx Navigate routes). The redirect only happens
+# after JS runs, so a non-executing crawler fetching an alias gets
+# the index shell — noindex ALL of them (Codex #1309 r1 + r2): the
+# per-user-surface aliases (/dashboard, /manage, /loans*, /claim*,
+# /vault-assets, /history) because their targets are never indexed,
+# and the public-surface aliases (/earn, /offer-book, /trade,
+# /terminal, /vpfi-vault, /nft-rental) because the alias URL is a
+# duplicate of an indexable canonical target — the canonical route
+# is the ONLY indexable address for that content.
+
+/dashboard
+  X-Robots-Tag: noindex
+/dashboard/*
+  X-Robots-Tag: noindex
+/manage
+  X-Robots-Tag: noindex
+/manage/*
+  X-Robots-Tag: noindex
+/loans
+  X-Robots-Tag: noindex
+/loans/*
+  X-Robots-Tag: noindex
+/app/loans
+  X-Robots-Tag: noindex
+/app/loans/*
+  X-Robots-Tag: noindex
+/claim
+  X-Robots-Tag: noindex
+/claim/*
+  X-Robots-Tag: noindex
+/claim-center
+  X-Robots-Tag: noindex
+/claim-center/*
+  X-Robots-Tag: noindex
+/vault-assets
+  X-Robots-Tag: noindex
+/vault-assets/*
+  X-Robots-Tag: noindex
+/history
+  X-Robots-Tag: noindex
+/history/*
+  X-Robots-Tag: noindex
+/earn
+  X-Robots-Tag: noindex
+/earn/*
+  X-Robots-Tag: noindex
+/offer-book
+  X-Robots-Tag: noindex
+/offer-book/*
+  X-Robots-Tag: noindex
+/trade
+  X-Robots-Tag: noindex
+/trade/*
+  X-Robots-Tag: noindex
+/terminal
+  X-Robots-Tag: noindex
+/terminal/*
+  X-Robots-Tag: noindex
+/vpfi-vault
+  X-Robots-Tag: noindex
+/vpfi-vault/*
+  X-Robots-Tag: noindex
+/nft-rental
+  X-Robots-Tag: noindex
+/nft-rental/*
+  X-Robots-Tag: noindex

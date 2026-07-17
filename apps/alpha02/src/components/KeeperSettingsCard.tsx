@@ -47,7 +47,7 @@ function ActionChecklist({
 }) {
   return (
     <div className="stack" style={{ gap: 6 }}>
-      {KEEPER_ACTIONS.map((a) => (
+      {KEEPER_ACTIONS().map((a) => (
         <label key={a.bit} className="cluster" style={{ alignItems: 'flex-start' }}>
           <input
             type="checkbox"

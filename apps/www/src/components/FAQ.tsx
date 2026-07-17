@@ -10,6 +10,7 @@ import { ChevronDown, Search } from "lucide-react";
 import { L as Link } from "./L";
 import { Trans, useTranslation } from "react-i18next";
 import type { TFunction } from "i18next";
+import { useJsonLd } from "../lib/useJsonLd";
 import "./FAQ.css";
 
 type Category = "basics" | "users" | "economics" | "integrators";
@@ -827,8 +828,45 @@ event VaultRentalUpdated(
 const LS_KEY = "vaipakam.faq.lastCategory";
 
 export default function FAQ() {
-  const { t } = useTranslation();
+  const { t, i18n } = useTranslation();
   const [open, setOpen] = useState<string | null>(null);
+
+  // FAQPage structured data — feeds Google's FAQ rich result and gives
+  // AI crawlers the Q/A corpus as machine-readable text. Answers are
+  // reassembled from the same `faq.entries.<id>.a<N>` locale keys the
+  // <Trans> bodies render, with Trans placeholder tags (<0>…</0>)
+  // stripped — a plain-text approximation of the visible answer, which
+  // is what the spec wants (acceptedAnswer.text is plain text/HTML).
+  // Recomputed per language so the emitted JSON-LD matches the
+  // rendered locale.
+  const faqJsonLd = useMemo(() => {
+    const entities = FAQS.flatMap((f) => {
+      const qKey = `faq.entries.${f.id}.q`;
+      if (!i18n.exists(qKey)) return [];
+      const parts: string[] = [];
+      for (let n = 1; n <= 12; n++) {
+        const aKey = `faq.entries.${f.id}.a${n}`;
+        if (!i18n.exists(aKey)) break;
+        parts.push(t(aKey).replace(/<\/?\d+>/g, ''));
+      }
+      if (parts.length === 0) return [];
+      return [
+        {
+          '@type': 'Question',
+          name: t(qKey),
+          acceptedAnswer: { '@type': 'Answer', text: parts.join('\n\n') },
+        },
+      ];
+    });
+    if (entities.length === 0) return null;
+    return {
+      '@context': 'https://schema.org',
+      '@type': 'FAQPage',
+      mainEntity: entities,
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [t, i18n, i18n.language]);
+  useJsonLd('faq', faqJsonLd);
   const [category, setCategory] = useState<Category | "all">(() => {
     // Default fresh visitors to the "Basics" (Getting Started) tab — the
     // entries there are the welcoming-the-newcomer set (what is Vaipakam,

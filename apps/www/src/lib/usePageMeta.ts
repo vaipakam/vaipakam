@@ -54,15 +54,55 @@ import { useTranslation } from 'react-i18next';
  *  builds (otherwise staging URLs leak into Google's index). */
 const CANONICAL_ORIGIN = 'https://vaipakam.com';
 
+/** Social-share image served from public/ — absolute URL because
+ *  scrapers don't resolve relative og:image paths reliably. */
+const OG_IMAGE = `${CANONICAL_ORIGIN}/banner.png`;
+
 interface UsePageMetaInput {
   /** i18n key for the page title. Resolved via `t()` so each locale
    *  renders its own translated string. */
   titleKey: string;
   /** i18n key for the page description. Same resolution. */
   descriptionKey: string;
+  /** Override the canonical PATH (default: the current pathname).
+   *  For English-only pages reachable under locale prefixes (see
+   *  EN_ONLY_ROUTES in scripts/seo-routes.mjs): `/es/protocol-
+   *  console/docs` self-canonicalizing would let English duplicates
+   *  be indexed per locale — pinning the canonical to the unprefixed
+   *  path consolidates every variant onto the one advertised URL
+   *  (Codex #1309 r5). */
+  canonicalPath?: string;
 }
 
-export function usePageMeta({ titleKey, descriptionKey }: UsePageMetaInput) {
+/** Open Graph + Twitter Card tags maintained alongside the basics.
+ *  Derived from the SAME title/description/canonical, so pages never
+ *  drift between what Google shows and what a Discord/X/Telegram
+ *  unfurl shows. `property` vs `name` matters: OG readers look up
+ *  `meta[property=...]`, Twitter looks up `meta[name=...]`. */
+const OG_TAGS = (
+  title: string,
+  description: string,
+  url: string,
+  locale: string,
+): Array<{ attr: 'property' | 'name'; key: string; content: string }> => [
+  { attr: 'property', key: 'og:type', content: 'website' },
+  { attr: 'property', key: 'og:site_name', content: 'Vaipakam' },
+  { attr: 'property', key: 'og:title', content: title },
+  { attr: 'property', key: 'og:description', content: description },
+  { attr: 'property', key: 'og:url', content: url },
+  { attr: 'property', key: 'og:image', content: OG_IMAGE },
+  { attr: 'property', key: 'og:locale', content: locale },
+  { attr: 'name', key: 'twitter:card', content: 'summary_large_image' },
+  { attr: 'name', key: 'twitter:title', content: title },
+  { attr: 'name', key: 'twitter:description', content: description },
+  { attr: 'name', key: 'twitter:image', content: OG_IMAGE },
+];
+
+export function usePageMeta({
+  titleKey,
+  descriptionKey,
+  canonicalPath,
+}: UsePageMetaInput) {
   const { t, i18n } = useTranslation();
   const location = useLocation();
 
@@ -99,7 +139,8 @@ export function usePageMeta({ titleKey, descriptionKey }: UsePageMetaInput) {
     // because none of the marketing routes have canonical query
     // parameters; if a future route does, it can override via a
     // route-specific `usePageMeta` extension.
-    const path = location.pathname.replace(/\/+$/, '') || '/';
+    const path =
+      (canonicalPath ?? location.pathname).replace(/\/+$/, '') || '/';
     const canonicalHref = `${CANONICAL_ORIGIN}${path}`;
 
     let canonicalTag = document.querySelector(
@@ -113,6 +154,21 @@ export function usePageMeta({ titleKey, descriptionKey }: UsePageMetaInput) {
     }
     canonicalTag.href = canonicalHref;
 
+    // OG + Twitter tags — one upsert per tag, keyed by property/name.
+    // BCP-47-ish og:locale from the active language (coarse two-letter
+    // codes are accepted by every major scraper).
+    for (const tag of OG_TAGS(title, description, canonicalHref, i18n.language)) {
+      let el = document.querySelector(
+        `meta[${tag.attr}="${tag.key}"]`,
+      ) as HTMLMetaElement | null;
+      if (!el) {
+        el = document.createElement('meta');
+        el.setAttribute(tag.attr, tag.key);
+        document.head.appendChild(el);
+      }
+      el.content = tag.content;
+    }
+
     return () => {
       // Tear down ONLY the canonical on unmount — leaving the title
       // and description in place avoids a flash of empty/old values
@@ -125,5 +181,5 @@ export function usePageMeta({ titleKey, descriptionKey }: UsePageMetaInput) {
         canonicalTag.parentNode.removeChild(canonicalTag);
       }
     };
-  }, [t, titleKey, descriptionKey, location.pathname, i18n.language]);
+  }, [t, titleKey, descriptionKey, canonicalPath, location.pathname, i18n.language]);
 }

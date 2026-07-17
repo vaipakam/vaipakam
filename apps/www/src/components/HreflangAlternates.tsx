@@ -19,6 +19,13 @@ import { stripLocalePrefix, withLocalePrefix } from './LocaleResolver';
  * Mounted once at the top of the app (`App.tsx`); routes don't need
  * to render their own copy.
  */
+/** Routes whose CONTENT ships English-only (no localized markdown),
+ *  so no locale alternates exist to advertise — emitting hreflang for
+ *  them would present English duplicates as localized pages. Mirrors
+ *  `EN_ONLY_ROUTES` in scripts/seo-routes.mjs (duplicated for the
+ *  usual Node-.mjs-can't-share-TS reason — keep the two in sync). */
+const EN_ONLY_PATHS = ['/protocol-console/docs'];
+
 export function HreflangAlternates() {
   const location = useLocation();
 
@@ -40,6 +47,11 @@ export function HreflangAlternates() {
     head
       .querySelectorAll('link[rel="alternate"][data-i18n-alt="1"]')
       .forEach((el) => el.remove());
+
+    // English-only content: no locale alternates exist — emit nothing
+    // (the tags above are already cleared, so a navigation FROM a
+    // localized page leaves no stale set behind).
+    if (EN_ONLY_PATHS.includes(stripped.replace(/\/+$/, '') || '/')) return;
 
     // One alternate per **translated** locale, pointing at the same
     // page in that locale. Placeholder locales (recognised by URL

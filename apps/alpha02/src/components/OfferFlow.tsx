@@ -143,7 +143,11 @@ interface SideCopy {
   acceptDoneBody: string;
 }
 
-const SIDE_COPY: Record<Side, SideCopy> = {
+/** Computed per render (not a module constant): the copy proxy
+ *  translates at ACCESS time, so a module-scope read would freeze the
+ *  import-time language (Codex #1309 r3). Re-read on every render;
+ *  LanguageRemount re-renders this flow on language change. */
+const SIDE_COPY = (): Record<Side, SideCopy> => ({
   lender: {
     title: copy.lend.title,
     lede: copy.lend.lede,
@@ -182,7 +186,7 @@ const SIDE_COPY: Record<Side, SideCopy> = {
     acceptSubmitLabel: 'Borrow this now',
     acceptDoneBody: copy.match.borrowerNext,
   },
-};
+});
 
 /** The headline principal of an offer row, role-correct: a lender
  *  offer's size is `amountMax`; a borrower request's is `amount`
@@ -255,7 +259,7 @@ function MatchOfferRow({
 }
 
 export function OfferFlow({ side }: { side: Side }) {
-  const text = SIDE_COPY[side];
+  const text = SIDE_COPY()[side];
   const { isAdvanced } = useMode();
   const { address, walletChain, readChain, isConnected } = useActiveChain();
   const { data: walletClient } = useWalletClient();

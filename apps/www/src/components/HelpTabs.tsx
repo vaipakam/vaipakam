@@ -5,6 +5,7 @@ import { Search } from 'lucide-react';
 import { useMode } from '../context/ModeContext';
 import { isSupportedLocale, withLocalePrefix } from './LocaleResolver';
 import type { SupportedLocale } from '../i18n/glossary';
+import { useActiveLocale } from '../i18n/useActiveLocale';
 
 /**
  * Three-tab strip rendered at the top of every `/help/*` page:
@@ -39,9 +40,7 @@ export function HelpTabs() {
   const initialQuery = new URLSearchParams(search).get('q') ?? '';
   const [searchQuery, setSearchQuery] = useState(initialQuery);
 
-  const locale: SupportedLocale = isSupportedLocale(i18n.resolvedLanguage)
-    ? i18n.resolvedLanguage
-    : 'en';
+  const locale: SupportedLocale = useActiveLocale();
 
   // Strip an optional `/<locale>` prefix so the active-tab predicate
   // doesn't have to special-case ten URL shapes.

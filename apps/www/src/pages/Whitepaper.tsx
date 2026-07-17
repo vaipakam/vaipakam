@@ -30,7 +30,9 @@ import {
   markdownComponents,
 } from '../lib/markdownToc';
 import { usePageMeta } from '../lib/usePageMeta';
+import { useArticleJsonLd } from '../lib/useArticleJsonLd';
 import './UserGuide.css';
+import { useActiveLocale } from '../i18n/useActiveLocale';
 
 const WHITEPAPER_FILES = import.meta.glob('../content/whitepaper/*.md', {
   eager: true,
@@ -49,10 +51,17 @@ export default function Whitepaper() {
     titleKey: 'pageMeta.whitepaper.title',
     descriptionKey: 'pageMeta.whitepaper.description',
   });
+  useArticleJsonLd({
+    titleKey: 'pageMeta.whitepaper.title',
+    descriptionKey: 'pageMeta.whitepaper.description',
+    // The whitepaper body ships English-only (Whitepaper.en.md) on
+    // every localized route — advertise what's actually rendered.
+    contentLanguage: 'en',
+  });
   const text = useMemo(() => resolveWhitepaper(), []);
   const toc = useMemo(() => extractMarkdownToc(text), [text]);
   const basePath = location.pathname.replace(/\/$/, '');
-  const isNonEnglish = (i18n.resolvedLanguage ?? 'en') !== 'en';
+  const isNonEnglish = useActiveLocale() !== 'en';
 
   const collapseEnclosingDetails = (e: React.MouseEvent<HTMLAnchorElement>) => {
     const details = e.currentTarget.closest('details');

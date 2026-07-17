@@ -1772,6 +1772,10 @@
     "helpSearch": {
       "title": "Search — Vaipakam Documentation",
       "description": "Search across the Vaipakam Overview, User Guide, and Whitepaper for any concept, function, or feature."
+    },
+    "adminKnobs": {
+      "title": "Protocol Console Docs — Governance Parameters Reference | Vaipakam",
+      "description": "Reference for every governance-tunable Vaipakam parameter: current defaults, hard bounds, and recommended operational zones — LTV tiers, fees, grace periods, and more."
     }
   }
 }

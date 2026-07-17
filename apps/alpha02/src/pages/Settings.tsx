@@ -12,6 +12,7 @@ import {
   Gift,
   History,
   Landmark,
+  Languages,
   Moon,
   MonitorCog,
   Sun,
@@ -21,6 +22,9 @@ import { useMode } from '../app/ModeContext';
 import { KeeperSettingsCard } from '../components/KeeperSettingsCard';
 import { ApprovalsCard } from '../components/ApprovalsCard';
 import { AlertsCard } from '../components/AlertsCard';
+import { LanguagePicker } from '../components/LanguagePicker';
+import { LANGUAGE_PICKER_ENABLED } from '../i18n/localeConfig';
+import { copy } from '../content/copy';
 
 const THEME_OPTIONS: Array<{ value: ThemePreference; label: string }> = [
   { value: 'light', label: 'Light' },
@@ -59,6 +63,19 @@ export function Settings() {
           ))}
         </div>
       </section>
+
+      {LANGUAGE_PICKER_ENABLED ? (
+        <section className="card">
+          <div className="card-title">
+            <Languages aria-hidden />
+            <h2 style={{ margin: 0 }}>{copy.chrome.settings.language}</h2>
+          </div>
+          <LanguagePicker />
+          <p className="muted" style={{ marginTop: 12 }}>
+            {copy.chrome.settings.languageHint}
+          </p>
+        </section>
+      ) : null}
 
       <section className="card">
         <div className="card-title">

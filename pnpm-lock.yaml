@@ -189,12 +189,21 @@ importers:
       '@vaipakam/contracts':
         specifier: workspace:*
         version: link:../../packages/contracts
+      '@vaipakam/i18n':
+        specifier: workspace:*
+        version: link:../../packages/i18n
       '@vaipakam/lib':
         specifier: workspace:*
         version: link:../../packages/lib
       connectkit:
         specifier: ^1.9.2
         version: 1.9.2(@babel/core@7.29.0)(@tanstack/react-query@5.100.9(react@19.2.6))(react-dom@19.2.6(react@19.2.6))(react-is@19.2.6)(react@19.2.6)(viem@2.48.11(bufferutil@4.1.0)(typescript@6.0.3)(utf-8-validate@5.0.10)(zod@3.25.76))(wagmi@2.19.5(@tanstack/query-core@5.100.9)(@tanstack/react-query@5.100.9(react@19.2.6))(@types/react@19.2.14)(bufferutil@4.1.0)(immer@10.2.0)(react@19.2.6)(typescript@6.0.3)(utf-8-validate@5.0.10)(viem@2.48.11(bufferutil@4.1.0)(typescript@6.0.3)(utf-8-validate@5.0.10)(zod@3.25.76))(zod@3.25.76))
+      i18next:
+        specifier: ^26.0.8
+        version: 26.0.10(typescript@6.0.3)
+      i18next-browser-languagedetector:
+        specifier: ^8.2.1
+        version: 8.2.1
       lightweight-charts:
         specifier: ^5
         version: 5.2.0
@@ -207,6 +216,9 @@ importers:
       react-dom:
         specifier: ^19.2.4
         version: 19.2.6(react@19.2.6)
+      react-i18next:
+        specifier: ^17.0.4
+        version: 17.0.7(i18next@26.0.10(typescript@6.0.3))(react-dom@19.2.6(react@19.2.6))(react@19.2.6)(typescript@6.0.3)
       react-router-dom:
         specifier: ^7.14.0
         version: 7.15.0(react-dom@19.2.6(react@19.2.6))(react@19.2.6)
@@ -235,6 +247,9 @@ importers:
       '@vitejs/plugin-react':
         specifier: ^6.0.1
         version: 6.0.1(vite@8.0.11(@types/node@22.19.18)(esbuild@0.27.7)(tsx@4.21.0))
+      tsx:
+        specifier: ^4.19.0
+        version: 4.21.0
       typescript:
         specifier: ~6.0.2
         version: 6.0.3
@@ -433,6 +448,9 @@ importers:
       '@vaipakam/contracts':
         specifier: workspace:*
         version: link:../../packages/contracts
+      '@vaipakam/i18n':
+        specifier: workspace:*
+        version: link:../../packages/i18n
       '@vaipakam/lib':
         specifier: workspace:*
         version: link:../../packages/lib
@@ -482,6 +500,9 @@ importers:
       '@vitejs/plugin-react':
         specifier: ^5.0.0
         version: 5.2.0(vite@8.0.11(@types/node@22.19.18)(esbuild@0.27.7)(tsx@4.21.0))
+      playwright:
+        specifier: ^1.61.0
+        version: 1.61.1
       typescript:
         specifier: ^6.0.0
         version: 6.0.3
@@ -516,6 +537,31 @@ importers:
       vitest:
         specifier: ^4.1.4
         version: 4.1.5(@types/node@24.12.2)(@vitest/coverage-v8@4.1.5)(jsdom@29.1.1(@noble/hashes@1.8.0))(vite@8.0.11(@types/node@24.12.2)(esbuild@0.27.7)(tsx@4.21.0))
+
+  packages/i18n:
+    dependencies:
+      '@vaipakam/lib':
+        specifier: workspace:*
+        version: link:../lib
+    devDependencies:
+      i18next:
+        specifier: ^26.0.8
+        version: 26.0.10(typescript@6.0.3)
+      i18next-browser-languagedetector:
+        specifier: ^8.2.1
+        version: 8.2.1
+      react:
+        specifier: ^19.2.4
+        version: 19.2.6
+      react-i18next:
+        specifier: ^17.0.4
+        version: 17.0.7(i18next@26.0.10(typescript@6.0.3))(react-dom@19.2.6(react@19.2.6))(react@19.2.6)(typescript@6.0.3)
+      tsx:
+        specifier: ^4.19.0
+        version: 4.21.0
+      typescript:
+        specifier: ^6.0.0
+        version: 6.0.3
 
   packages/lib:
     devDependencies:
@@ -7412,7 +7458,7 @@ snapshots:
       obug: 2.1.1
       std-env: 4.1.0
       tinyrainbow: 3.1.0
-      vitest: 4.1.5(@types/node@22.19.18)(@vitest/coverage-v8@4.1.5)(jsdom@29.1.1(@noble/hashes@1.8.0))(vite@8.0.11(@types/node@22.19.18)(esbuild@0.27.7)(tsx@4.21.0))
+      vitest: 4.1.5(@types/node@24.12.2)(@vitest/coverage-v8@4.1.5)(jsdom@29.1.1(@noble/hashes@1.8.0))(vite@8.0.11(@types/node@24.12.2)(esbuild@0.27.7)(tsx@4.21.0))
 
   '@vitest/expect@4.1.5':
     dependencies:

@@ -5,6 +5,41 @@ language from the gear-popover **Language** dropdown. This doc records
 what's wired today, how to refresh translations when source strings
 change, and the staged rollout plan for the broader string corpus.
 
+## 2026-07 update — shared package + alpha02 wiring
+
+The i18n core was hoisted into **`packages/i18n` (`@vaipakam/i18n`)**
+when alpha02 became the third surface needing it (frontend → www →
+alpha02 would have been the third copy). The package owns everything
+that must not drift between apps: `SUPPORTED_LOCALES` (34 codes),
+the do-not-translate glossary + style notes, the RTL set +
+`<html dir>` applier, native locale labels, the `initVaipakamI18n`
+bootstrap factory (the cookie-seeded cross-subdomain detection chain
+extracted verbatim from apps/www), and the generalised translate
+script (`pnpm --filter @vaipakam/i18n translate -- --locales-dir
+<app locales dir> [codes...]`). Each app keeps only its
+`locales/*.json` bundles, its `TRANSLATED_LOCALES` subset (drives
+hreflang / sitemap / SEO shells), and its picker visibility flags.
+See `packages/i18n/README.md`.
+
+**alpha02's model differs from www's in one important way**: its
+English strings live in the typed copy catalog
+(`apps/alpha02/src/content/copy.ts`), not in `en.json`. The exported
+`copy` object is an i18n-aware Proxy (`src/i18n/reactiveCopy.ts`)
+that resolves every string leaf through i18next at access time with
+the English source as `defaultValue` — zero changes at the ~900
+call sites, and no second English catalog to drift.
+`locales/en.json` is the generated **translators' template**
+(`pnpm --filter @vaipakam/alpha02 i18n:template`, drift-checked by
+vitest); all 33 non-English locales ship as placeholder `{}` bundles
+that render English until filled in (the operator translates them —
+no machine translations were committed). A `<LanguageRemount>`
+wrapper remounts the page tree on language change so non-subscribed
+components re-read the catalog. Wave-1 picker codes: en, es, zh, hi,
+ja. Parametrized strings (function values in copy.ts) are not yet
+translatable — converting them to i18next interpolation keys is the
+tracked follow-up. Locale URL prefixes + hreflang for alpha02 are
+deferred until the first translated bundle ships.
+
 ## Stack
 
 - **Framework**: [`react-i18next`](https://react.i18next.com/) +

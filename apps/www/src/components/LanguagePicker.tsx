@@ -13,6 +13,7 @@ import {
   VISIBLE_LOCALES,
 } from "../i18n/localeConfig";
 import "./LanguagePicker.css";
+import { normalizeToSupportedLocale } from '@vaipakam/i18n/createI18n';
 
 /**
  * `<LanguagePicker>` — display-language selector. Custom-rendered
@@ -54,7 +55,7 @@ function LanguagePickerInner() {
   const { i18n, t } = useTranslation();
   const navigate = useNavigate();
   const location = useLocation();
-  const [code, setCode] = useState<string>(i18n.resolvedLanguage ?? "en");
+  const [code, setCode] = useState<string>(() => normalizeToSupportedLocale(i18n.language));
   const [open, setOpen] = useState(false);
   const wrapRef = useRef<HTMLDivElement | null>(null);
 

@@ -24,11 +24,9 @@ function rewrite(
   return to;
 }
 
-function useActiveLocale(): SupportedLocale {
-  const { i18n } = useTranslation();
-  const lng = i18n.resolvedLanguage;
-  return isSupportedLocale(lng) ? lng : 'en';
-}
+// Shared hook — the ACTIVE locale, not resolvedLanguage (which lags
+// lazily-loaded bundles); see src/i18n/useActiveLocale.ts.
+import { useActiveLocale } from '../i18n/useActiveLocale';
 
 /**
  * Drop-in replacement for `react-router-dom`'s `<Link>` that

@@ -4,7 +4,15 @@
  * Why centralized: (1) the naive-user wording rules from
  * docs/DesignsAndPlans/BasicUserUXSimplification.md are enforceable in
  * one place; (2) localization later becomes a matter of swapping this
- * module for an i18n catalog without touching pages.
+ * module for an i18n catalog without touching pages — which is now
+ * wired: the exported `copy` is an i18n-aware Proxy over the English
+ * source below (see src/i18n/reactiveCopy.ts). English strings here
+ * remain the single source of truth; locale bundles in
+ * src/i18n/locales/<code>.json override per key, missing keys fall
+ * back to the English text. Editing a string here is still all it
+ * takes for the English app — plus re-running
+ * `pnpm --filter @vaipakam/alpha02 i18n:template` so translators see
+ * the new key (a vitest drift check enforces this).
  *
  * Wording rules encoded here (do not violate when editing):
  *   - No protocol jargon in Basic strings: no "matcher share", "bps",
@@ -18,10 +26,103 @@
  *     action-blocking surfaces.
  */
 
-export const copy = {
+import { createTranslatedCopy } from '../i18n/reactiveCopy';
+
+const copySource = {
   app: {
     name: 'Vaipakam',
     tagline: 'Lend, borrow, and rent NFTs — directly with other people.',
+  },
+
+  /** App chrome — nav labels + settings screen strings (extracted
+   *  from AppShell/Settings inline JSX when i18n landed, so the
+   *  highest-visibility chrome is translatable). */
+  chrome: {
+    nav: {
+      home: 'Home',
+      borrow: 'Borrow',
+      lend: 'Lend',
+      rent: 'NFT Rental',
+      positions: 'My positions',
+      positionsShort: 'Positions',
+      claims: 'Claims',
+      vault: 'My vault',
+      faucet: 'Get test assets',
+      offers: 'Offer Book',
+      desk: 'Rate Desk',
+      vpfi: 'VPFI discounts',
+      activity: 'Activity',
+      nftVerifier: 'NFT verifier',
+      settings: 'Settings',
+      help: 'Help',
+    },
+    settings: {
+      language: 'Language',
+      languageHint:
+        'Languages without a finished translation show English text for now.',
+      languagePickerAria: 'Display language',
+    },
+  },
+
+  /** Per-route search-result metadata (title + ~155-char description),
+   *  consumed by SeoMeta. Same wording rules as the rest of this file
+   *  apply — descriptions are what a stranger reads on a Google result
+   *  page, so no jargon and never guaranteed-yield phrasing. */
+  seo: {
+    home: {
+      title: 'Vaipakam — P2P lending, borrowing & NFT rental',
+      description:
+        'Lend, borrow, and rent NFTs directly with other people. Set your own terms — your assets stay in your own on-chain vault, with no pool and no middleman.',
+    },
+    borrow: {
+      title: 'Borrow assets — Vaipakam',
+      description:
+        'Lock collateral you own and receive the tokens you need. Direct person-to-person loans on terms you choose, from your own on-chain vault.',
+    },
+    lend: {
+      title: 'Earn by lending — Vaipakam',
+      description:
+        'Offer your tokens to borrowers and earn interest if they repay. Your assets stay in your own on-chain vault until a borrower accepts your terms.',
+    },
+    rent: {
+      title: 'NFT rental — Vaipakam',
+      description:
+        'Earn fees from an NFT you own, or get temporary use of one. Ownership never moves — the NFT stays locked in the owner’s vault for the rental term.',
+    },
+    offers: {
+      title: 'Offer Book — Vaipakam',
+      description:
+        'Browse every open lending and borrowing offer on the network — assets, rates, durations, and collateral terms, live from the chain.',
+    },
+    desk: {
+      title: 'Rate Desk — Vaipakam',
+      description:
+        'Live person-to-person lending rates by asset pair and duration, executed-rate history, and the signed-offer book.',
+    },
+    vpfi: {
+      title: 'VPFI fee discounts — Vaipakam',
+      description:
+        'Optional: hold VPFI in your vault to reduce protocol fees. Never required to lend, borrow, or rent.',
+    },
+    nftVerifier: {
+      title: 'NFT rental verifier — Vaipakam',
+      description:
+        'Check whether an NFT rental listed on Vaipakam is genuine, and see the token’s current rental status straight from the chain.',
+    },
+    help: {
+      title: 'Help — Vaipakam',
+      description:
+        'Plain-language answers about lending, borrowing, NFT rentals, fees, and the risks — plus build and contract info for this deployment.',
+    },
+    // Wallet-gated, per-user surfaces — carried for the browser tab
+    // title only; SeoMeta marks all of these noindex.
+    positions: { title: 'My positions — Vaipakam' },
+    claims: { title: 'Claims — Vaipakam' },
+    vault: { title: 'My vault — Vaipakam' },
+    activity: { title: 'Activity — Vaipakam' },
+    settings: { title: 'Settings — Vaipakam' },
+    faucet: { title: 'Test assets — Vaipakam' },
+    notFound: { title: 'Page not found — Vaipakam' },
   },
 
   home: {
@@ -1683,3 +1784,15 @@ export const copy = {
     backHome: 'Back to Home',
   },
 } as const;
+
+export type CopySource = typeof copySource;
+
+/** The raw English catalog — consumed by the i18n template exporter
+ *  (`scripts/export-i18n-template.ts`) and its vitest drift check.
+ *  App code should import `copy` below, never this. */
+export { copySource };
+
+/** i18n-aware view over the catalog. Same shape and types as the
+ *  source; string leaves resolve through i18next at access time with
+ *  the English text as fallback. See src/i18n/reactiveCopy.ts. */
+export const copy: CopySource = createTranslatedCopy(copySource);

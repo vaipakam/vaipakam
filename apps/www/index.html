@@ -9,6 +9,27 @@
       name="description"
       content="Vaipakam is a decentralized vault-to-vault lending, borrowing and NFT rental protocol. Set your own terms, lend or borrow any token, rent NFTs — no pool, no middleman."
     />
+    <!-- Default share/unfurl meta — usePageMeta rewrites these per
+         route at runtime (and the prerender pass bakes the per-page
+         values into each snapshot); this static set is what a scraper
+         that reads only the raw shell sees. -->
+    <meta property="og:type" content="website" />
+    <meta property="og:site_name" content="Vaipakam" />
+    <meta property="og:title" content="Vaipakam — Decentralized P2P Lending, Borrowing & NFT Rental" />
+    <meta
+      property="og:description"
+      content="Vaipakam is a decentralized vault-to-vault lending, borrowing and NFT rental protocol. Set your own terms, lend or borrow any token, rent NFTs — no pool, no middleman."
+    />
+    <meta property="og:url" content="https://vaipakam.com/" />
+    <meta property="og:image" content="https://vaipakam.com/banner.png" />
+    <meta property="og:locale" content="en" />
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:title" content="Vaipakam — Decentralized P2P Lending, Borrowing & NFT Rental" />
+    <meta
+      name="twitter:description"
+      content="Vaipakam is a decentralized vault-to-vault lending, borrowing and NFT rental protocol. Set your own terms, lend or borrow any token, rent NFTs — no pool, no middleman."
+    />
+    <meta name="twitter:image" content="https://vaipakam.com/banner.png" />
     <!-- Theme + language bootstrap. Runs before any CSS or React
          loads so the `data-theme` / `lang` / `dir` attributes are
          set during the very first paint — no flash of wrong theme,
@@ -72,16 +93,29 @@
         var RTL = ['ar','he','fa','ur'];
         var lang = null;
         try {
-          var cookieLang = readCookie('vaipakam_lang');
-          if (cookieLang && SUPPORTED.indexOf(cookieLang) !== -1) {
-            lang = cookieLang;
+          // (0) URL locale prefix — authoritative on this site:
+          //     locale-prefixed URLs are distinct localized pages and
+          //     the prerender pass bakes the SAME value into each
+          //     snapshot's <html>, so an /ar/... snapshot must never
+          //     be re-stamped from a cookie / navigator preference —
+          //     that would flip the already-rendered Arabic body to
+          //     lang="en"/ltr for the first paint, exactly the flash
+          //     this bootstrap exists to prevent (Codex #1309 r10).
+          var seg = window.location.pathname.split('/')[1];
+          if (seg && SUPPORTED.indexOf(seg) !== -1) {
+            lang = seg;
           } else {
-            var storedLang = localStorage.getItem('vaipakam:language');
-            if (storedLang && SUPPORTED.indexOf(storedLang) !== -1) {
-              lang = storedLang;
-            } else if (navigator.language) {
-              var nav = navigator.language.toLowerCase().split('-')[0];
-              if (SUPPORTED.indexOf(nav) !== -1) lang = nav;
+            var cookieLang = readCookie('vaipakam_lang');
+            if (cookieLang && SUPPORTED.indexOf(cookieLang) !== -1) {
+              lang = cookieLang;
+            } else {
+              var storedLang = localStorage.getItem('vaipakam:language');
+              if (storedLang && SUPPORTED.indexOf(storedLang) !== -1) {
+                lang = storedLang;
+              } else if (navigator.language) {
+                var nav = navigator.language.toLowerCase().split('-')[0];
+                if (SUPPORTED.indexOf(nav) !== -1) lang = nav;
+              }
             }
           }
         } catch (_) { /* keep lang === null */ }

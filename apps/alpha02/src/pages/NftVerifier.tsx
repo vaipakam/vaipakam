@@ -31,12 +31,14 @@ import { AssetType } from '../lib/types';
 import { shortAddress } from '../lib/format';
 import { EmptyState } from '../components/EmptyState';
 
-/** LibERC721.LockReason display labels (None omitted). */
-const LOCK_LABELS: Record<number, string> = {
+/** LibERC721.LockReason display labels (None omitted). A function so
+ *  the copy proxy is read at render time, not frozen at import
+ *  (Codex #1309 r3). */
+const LOCK_LABELS = (): Record<number, string> => ({
   1: copy.nftVerifier.lockPrecloseOffset,
   2: copy.nftVerifier.lockSale,
   3: copy.nftVerifier.lockPrepayListing,
-};
+});
 
 interface VerifierResult {
   exists: boolean;
@@ -294,7 +296,7 @@ export function NftVerifier() {
               <div className="receipt-row receipt-risk">
                 <dt>{copy.nftVerifier.lockLabel}</dt>
                 <dd>
-                  {LOCK_LABELS[result.data.lock] ??
+                  {LOCK_LABELS()[result.data.lock] ??
                     copy.nftVerifier.lockUnrecognized}
                 </dd>
               </div>

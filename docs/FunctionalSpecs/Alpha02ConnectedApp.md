@@ -417,6 +417,39 @@ Thin-market honesty rules apply.
   withdrawals stay available.
 - A paused flow explains that existing positions are unaffected.
 
+## Display Language
+
+- The app ships English as its source language, with a Language
+  selector in Settings offering additional display languages. The
+  first wave is English, Spanish, Chinese, Hindi, and Japanese;
+  further languages are added by filling in their translation
+  bundles, without code changes to the selector.
+- A language whose translation is not finished may be offered in the
+  picker; selecting it shows English text (never untranslated keys,
+  never a broken page) until the translation lands.
+- The chosen language applies immediately across the whole app,
+  persists for future visits, and carries across the Vaipakam
+  subdomains — a choice made on the marketing site is honoured in the
+  connected app and vice versa.
+- Right-to-left languages flip the layout direction, and the correct
+  language/direction is applied before the first paint (no flash of
+  wrong-direction layout).
+- Protocol-specific terms (VPFI, HF, LTV, asset and network names)
+  stay verbatim in every language.
+
+## Indexing Policy
+
+- Generic product surfaces (home, borrow, lend, rent, offer book,
+  rate desk, VPFI, NFT verifier, help) are indexable by search
+  engines, each with its own title, plain-language description, and a
+  canonical address rooted at the production hostname.
+- Wallet-scoped, per-user surfaces (positions, claims, vault,
+  activity, settings, faucet) are never indexed. The exclusion is
+  visible both to browsers and to crawlers that do not run
+  JavaScript.
+- A crawl policy file and a sitemap of the indexable pages ship with
+  every build.
+
 ## Privacy and Legal Posture
 
 - alpha02 does not require KYC for the retail flow.
