@@ -847,7 +847,7 @@
       "notAToken": "Esa dirección no parece un token en esta red. Revísala o elige un activo sugerido.",
       "txRejected": "Cancelaste en tu billetera. No se envió nada.",
       "txFailed": "La transacción no pasó. No se tomó nada más allá del gas de red. Inténtalo de nuevo.",
-      "sanctionsBlocked": "Esta billetera está marcada por el oráculo de sanciones, así que nuevas posiciones y pagos están bloqueados. No se envió nada. Pagar y cerrar posiciones existentes sigue abierto.",
+      "sanctionsBlocked": "Esta billetera está marcada por el oráculo de sanciones, así que las nuevas posiciones y los cobros de fondos están bloqueados. No se envió nada. Reembolsar y cerrar posiciones existentes sigue abierto.",
       "sanctionsCheckRetry": "No pudimos ejecutar la revisión de cumplimiento ahora mismo — no se envió nada. Inténtalo de nuevo en un momento.",
       "checkRetry": "No pudimos verificar esto on-chain ahora mismo — no se envió nada. Inténtalo de nuevo en un momento.",
       "assetPaused": "Uno de los activos de esta operación está pausado temporalmente por el protocolo, así que esta acción no puede pasar ahora mismo. No se envió nada — inténtalo de nuevo más tarde.",
@@ -949,7 +949,7 @@
       "title": "Esta billetera aparece en el oráculo de cumplimiento.",
       "line1": "La dirección conectada aparece en el oráculo de sanciones on-chain contra el que Vaipakam revisa.",
       "line2": "Las nuevas posiciones (ofertas, préstamos, alquileres, depósitos) están bloqueadas y no pasarán.",
-      "line3": "Pagar y cerrar posiciones existentes sigue abierto para que tus contrapartes puedan quedar cubiertas, pero los reclamos y pagos a esta billetera están bloqueados mientras esté marcada. Si crees que es un error, contacta al proveedor del oráculo (Chainalysis)."
+      "line3": "Reembolsar y cerrar posiciones existentes sigue abierto para que tus contrapartes puedan quedar cubiertas, pero los reclamos y cobros de fondos hacia esta billetera están bloqueados mientras esté marcada. Si crees que es un error, contacta al proveedor del oráculo (Chainalysis)."
     },
     "risk": {
       "notPriced": "Los activos de este préstamo no tienen precio por el protocolo, así que no hay liquidación automática — la garantía se transfiere tal cual en caso de incumplimiento.",
