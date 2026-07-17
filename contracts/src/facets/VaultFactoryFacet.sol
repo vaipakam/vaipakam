@@ -132,6 +132,33 @@ contract VaultFactoryFacet is DiamondAccessControl, IVaipakamErrors {
         uint256 indexed newVersion
     );
 
+    /// @notice RL-2 (VpfiRecyclingLoopClosureDesign §6) — emitted whenever
+    ///         protocol-tracked VPFI leaves a user's vault through the
+    ///         tracked-balance decrement chokepoint
+    ///         ({vaultWithdrawERC20} → `LibVaipakam.recordVaultWithdraw`,
+    ///         the single decrement site — wallet withdrawals, notification
+    ///         tariff pulls, fee pulls, and future perk spends all route
+    ///         through it). The RL-2 reward-retention ledger consumes this:
+    ///         debits spend reward-delivered VPFI FIRST, so without this
+    ///         event vault VPFI outflows would be invisible off-chain and
+    ///         `rewardRetained` would overstate loop closure.
+    /// @dev    VPFI-only by design — the loop-closure metric tracks the
+    ///         protocol token, not general vault traffic (other tokens keep
+    ///         their existing per-flow events). The ledger never consults
+    ///         `recipient` (ANY debit decrements); it is observability
+    ///         metadata distinguishing wallet withdrawals from
+    ///         treasury/fee destinations. If a second tracked-balance
+    ///         decrement site is ever added, it MUST emit this event too.
+    /// @param user      Vault owner whose tracked VPFI decreased.
+    /// @param amount    VPFI wei debited from the tracked balance.
+    /// @param recipient Where the debited VPFI was sent.
+    /// @custom:event-category state-change/vault-mutation
+    event VaultVpfiDebited(
+        address indexed user,
+        uint256 amount,
+        address recipient
+    );
+
     // Custom errors for better gas efficiency and clarity.
     error AlreadyInitialized();
     error UpgradeFailed();
@@ -595,6 +622,12 @@ contract VaultFactoryFacet is DiamondAccessControl, IVaipakamErrors {
         );
         if (!success) revert ProxyCallFailed("Withdraw ERC20 failed");
         LibVaipakam.recordVaultWithdraw(user, token, amount);
+        // RL-2 — VPFI outflow observability for the reward-retention
+        // ledger. This is the only recordVaultWithdraw caller, so emitting
+        // here covers every tracked VPFI debit (see the event natspec).
+        if (token == LibVaipakam.storageSlot().vpfiToken) {
+            emit VaultVpfiDebited(user, amount, recipient);
+        }
     }
 
     /**

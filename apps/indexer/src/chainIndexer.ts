@@ -67,6 +67,10 @@ import {
 } from './marketSummary';
 import { materializeNotifications } from './notifications';
 import {
+  applyRewardLoopLedger,
+  ensureRewardLoopBackfill,
+} from './rewardLoopLedger';
+import {
   sweepCalendarNotifications,
   EMPTY_SWEEP,
 } from './calendarNotifications';
@@ -614,6 +618,12 @@ export async function runChainIndexerForChain(
     // #1213 PR 2b (Codex #1300 r1) — the caught-up quiet tick is a
     // valid "notifications complete through lastBlock" point too.
     await stampNotifiedWatermark(env, chainId, lastBlock);
+    // RL-2 (Codex #1310 r2 P2) — seed the loop-closure ledger's one-time
+    // activity_events backfill on quiet chains too: a deploy landing on
+    // an already-caught-up chain would otherwise serve zeros from
+    // /metrics/loop-closure until an unrelated future log arrived.
+    // Cheap after the first run (a single flag SELECT).
+    await ensureRewardLoopBackfill(env, chainId);
     return {
       scannedFrom: scanFrom,
       scannedTo: scanFrom - 1n,
@@ -720,6 +730,12 @@ export async function runChainIndexerForChain(
   const uniqueBlocks = new Set<bigint>();
   for (const log of allLogs) uniqueBlocks.add(log.blockNumber);
   const blockTimestamps = new Map<bigint, number>();
+  // RL-2 (Codex #1310 P2) — blocks whose timestamp below is the wall-clock
+  // SENTINEL, not the real chain time. Consumers that BUCKET BY DAY and
+  // dedup permanently (the reward loop-closure ledger) must skip these so
+  // a later scan can apply the event under its true claim day; consumers
+  // that only display block_at (activity_events) keep using the sentinel.
+  const fallbackTimestampBlocks = new Set<bigint>();
   for (const blockNum of uniqueBlocks) {
     try {
       const block = await client.getBlock({ blockNumber: blockNum });
@@ -729,6 +745,7 @@ export async function runChainIndexerForChain(
       // ordering still works because activity_events keys on
       // (block_number, log_index), not block_at.
       blockTimestamps.set(blockNum, Math.floor(Date.now() / 1000));
+      fallbackTimestampBlocks.add(blockNum);
     }
   }
 
@@ -761,6 +778,33 @@ export async function runChainIndexerForChain(
   // A and Phase B handlers above mutate domain tables; this writer
   // appends one row per log to the unified feed for the Activity
   // page + LoanTimeline + per-wallet history surfaces.
+  // RL-2 (#1303) — reward loop-closure ledger: per-user retention +
+  // per-day flow components behind /metrics/loop-closure. Exactly-once
+  // via the reward_loop_events dedup table, so overlapping scan ranges
+  // never double-count. Runs BEFORE recordActivityEvents so its one-time
+  // backfill can never consume a sentinel-stamped row this scan is about
+  // to insert (Codex #1310 r2 P2). A reward log whose block timestamp
+  // fell back to the wall-clock sentinel gets one in-place retry; if the
+  // chain timestamp is still unavailable the ledger THROWS and the scan
+  // fails without advancing the cursor (Codex #1310 r2 P1 — the cron
+  // path has no guaranteed overlapping scan, so a silent skip would lose
+  // the event forever).
+  await applyRewardLoopLedger(
+    allLogs,
+    env,
+    chainId,
+    blockTimestamps,
+    fallbackTimestampBlocks,
+    async (blockNumber) => {
+      try {
+        const block = await client.getBlock({ blockNumber });
+        return Number(block.timestamp);
+      } catch {
+        return null;
+      }
+    },
+  );
+
   const activityEvents = await recordActivityEvents(allLogs, env, chainId, blockTimestamps);
 
   // Per-domain detail refresh, batched per tick.
@@ -4271,6 +4315,13 @@ function pluckActivityRefs(
       };
     case 'VPFIDepositedToVault':
     case 'VPFIWithdrawnFromVault':
+    // RL-2 (#1303) — reward loop-closure events: actor = the wallet whose
+    // claim / vault the VPFI moved through, so the Activity feed's
+    // per-wallet filter surfaces them (the ledger itself lives in the
+    // dedicated reward_* tables, not args_json).
+    case 'InteractionRewardsClaimed':
+    case 'RewardDeliveredToVault':
+    case 'VaultVpfiDebited':
       return {
         actor: (args.user as string)?.toLowerCase() ?? null,
         loanId: null,

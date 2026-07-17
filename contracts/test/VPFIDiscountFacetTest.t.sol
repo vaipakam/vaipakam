@@ -2,6 +2,7 @@
 pragma solidity ^0.8.29;
 
 import {SetupTest} from "./SetupTest.t.sol";
+import {Vm} from "forge-std/Vm.sol";
 import {defaultAdapterCalls} from "./helpers/AdapterCallHelpers.sol";
 import {ERC1967Proxy} from "@openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
@@ -66,6 +67,12 @@ contract VPFIDiscountFacetTest is SetupTest {
         address indexed user,
         uint256 amount,
         uint256 newVaultBalance
+    );
+    // RL-2 — VPFI tracked-balance debit observability (VaultFactoryFacet).
+    event VaultVpfiDebited(
+        address indexed user,
+        uint256 amount,
+        address recipient
     );
     event VPFIDiscountApplied(
         uint256 indexed loanId,
@@ -207,6 +214,59 @@ contract VPFIDiscountFacetTest is SetupTest {
             )
         );
         _facet().withdrawVPFIFromVault(staked);
+    }
+
+    // ─── RL-2 — VaultVpfiDebited observability event ─────────────────────────
+
+    /// @notice RL-2 (VpfiRecyclingLoopClosureDesign §6): every tracked VPFI
+    ///         debit through the single decrement chokepoint emits
+    ///         {VaultVpfiDebited} so the off-chain reward-retention ledger
+    ///         sees vault outflows. A wallet unstake is the canonical debit —
+    ///         recipient is the unstaking user.
+    function test_RL2_withdrawEmitsVaultVpfiDebited() public {
+        uint256 staked = 100 ether;
+        vm.prank(borrower);
+        vpfiToken.approve(address(diamond), staked);
+        vm.prank(borrower);
+        _facet().depositVPFIToVault(staked);
+
+        uint256 unstake = 40 ether;
+        vm.expectEmit(true, false, false, true, address(diamond));
+        emit VaultVpfiDebited(borrower, unstake, borrower);
+        vm.prank(borrower);
+        _facet().withdrawVPFIFromVault(unstake);
+    }
+
+    /// @notice The debit event is VPFI-only by design: a plain ERC-20 vault
+    ///         deposit/withdraw of a non-VPFI token must NOT emit it (the
+    ///         loop-closure ledger tracks the protocol token, not general
+    ///         vault traffic).
+    function test_RL2_nonVpfiWithdrawDoesNotEmit() public {
+        // Route a non-VPFI ERC-20 through the same chokepoint via the
+        // diamond-internal surface (prank as the diamond itself).
+        uint256 amount = 25 ether;
+        ERC20Mock(mockERC20).mint(borrower, amount);
+        vm.prank(borrower);
+        ERC20Mock(mockERC20).approve(address(diamond), amount);
+        vm.prank(address(diamond));
+        VaultFactoryFacet(address(diamond)).vaultDepositERC20(
+            borrower, address(mockERC20), amount
+        );
+
+        vm.recordLogs();
+        vm.prank(address(diamond));
+        VaultFactoryFacet(address(diamond)).vaultWithdrawERC20(
+            borrower, address(mockERC20), borrower, amount
+        );
+        Vm.Log[] memory logs = vm.getRecordedLogs();
+        bytes32 debitedTopic =
+            keccak256("VaultVpfiDebited(address,uint256,address)");
+        for (uint256 i = 0; i < logs.length; i++) {
+            assertTrue(
+                logs[i].topics[0] != debitedTopic,
+                "non-VPFI withdraw must not emit VaultVpfiDebited"
+            );
+        }
     }
 
     // ─── #569 §6 F-1 — withdrawVPFIFromVault respects collateral lien ────────

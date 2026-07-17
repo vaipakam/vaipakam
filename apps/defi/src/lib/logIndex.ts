@@ -373,7 +373,12 @@ export type ActivityEventKind =
   // exist in the diamond ABI — their decode branches are gone too.
   | 'InteractionRewardsClaimed'
   | 'VPFIDepositedToVault'
-  | 'VPFIWithdrawnFromVault';
+  | 'VPFIWithdrawnFromVault'
+  // RL-1/RL-2 (#1302/#1310) — claim-to-vault delivery + the vault VPFI
+  // debit observability event (indexer-sourced activity rows; the local
+  // log decoder does not need to decode these for chain-fallback mode).
+  | 'RewardDeliveredToVault'
+  | 'VaultVpfiDebited';
 
 export interface ActivityEvent {
   kind: ActivityEventKind;

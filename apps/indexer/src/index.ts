@@ -96,6 +96,7 @@ import {
   handleOffersByCurrentHolder,
   handleOffersPreflight,
 } from './offerRoutes';
+import { handleLoopClosure } from './rewardRoutes';
 import {
   handleSignedOfferPost,
   handleSignedOffersGet,
@@ -257,6 +258,17 @@ export default {
         return handleConfigSnapshot(Number(m[1]), resolved);
       }
       if (m && req.method === 'OPTIONS') return handleOffersPreflight();
+    }
+
+    // ─── /metrics/loop-closure ──────────────────────────────────
+    // RL-2 (#1303) — reward loop-closure ratios (daily flow +
+    // cumulative stock) from the ingest-maintained retention ledger.
+    // Top-level on purpose (Codex #1310 P1): the /offers block below is
+    // guarded by a pathname prefix this route doesn't share.
+    if (url.pathname === '/metrics/loop-closure') {
+      if (req.method === 'OPTIONS') return handleOffersPreflight();
+      if (req.method === 'GET') return handleLoopClosure(req, resolved);
+      return new Response('Not found', { status: 404 });
     }
 
     // ─── /offers/* ──────────────────────────────────────────────

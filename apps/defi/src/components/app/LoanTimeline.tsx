@@ -85,6 +85,11 @@ const KIND_LABEL_KEY: Record<ActivityEventKind, string> = {
   InteractionRewardsClaimed: 'loanTimeline.interactionRewardsClaimed',
   VPFIDepositedToVault: 'loanTimeline.vpfiDeposited',
   VPFIWithdrawnFromVault: 'loanTimeline.vpfiWithdrawn',
+  // RL-1/RL-2 — vault-delivered rewards + vault VPFI debit rows. Not
+  // loan-keyed today (actor-only), so these never appear in a loan
+  // timeline, but the kind maps are total over ActivityEventKind.
+  RewardDeliveredToVault: 'loanTimeline.rewardDeliveredToVault',
+  VaultVpfiDebited: 'loanTimeline.vaultVpfiDebited',
 };
 
 /** Per-kind icon tint. Matches the Activity-page severity scheme. */
@@ -122,6 +127,8 @@ const KIND_ACCENT: Record<ActivityEventKind, 'success' | 'failure' | 'info' | 'w
   InteractionRewardsClaimed: 'success',
   VPFIDepositedToVault: 'success',
   VPFIWithdrawnFromVault: 'info',
+  RewardDeliveredToVault: 'success',
+  VaultVpfiDebited: 'info',
 };
 
 function iconForKind(kind: ActivityEventKind) {

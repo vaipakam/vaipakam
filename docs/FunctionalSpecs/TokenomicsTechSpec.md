@@ -685,7 +685,16 @@ Day-pool stamps (recycling governor budget formula — stamped at finalization):
 - **commitment reservation is armed only at the distribution-coupling cutover** (the stage that makes claims actually consume these budgets): until then the stamps are public records and the live claim math remains schedule-based, so no reservation can accumulate without a matching consumption path
 - once armed, each finalized day's stamped halves are reserved against future availability, and a commitment is released back only by forfeit or by the ratified claim-horizon sweep — never silently
 
-Loop-closure metric note: the recycle-bucket credit event is the designated feed for the loop-closure ratio's absorption term and the transparency dashboard's self-funding ratio (#1218) once those consume it.
+Loop-closure transparency metric (RL-2, `VpfiRecyclingLoopClosureDesign.md` §6 — ratified 2026-07-16):
+
+- the platform publishes two observable numbers describing how much of the distributed interaction-reward VPFI stays inside the sink system, computed off-chain from on-chain events so every independent indexer reading the same events reports the same values
+- the **daily** value is a flow ratio: of what was distributed by claims that day, how much stayed in the system — vault-retained deliveries plus protocol-absorbed VPFI, over total claim payouts. The **cumulative** value is a stock ratio: reward VPFI still retained in vaults plus lifetime absorption, over lifetime distribution. The two are deliberately different quantities and must not be mixed
+- both sides of each ratio use the **claim-day** basis — the day tokens actually leave protocol custody; a claim spanning many finalized reward days is never re-split across those days
+- retention is a per-user ledger: reward-delivered VPFI credits it, and any vault VPFI debit (withdrawal, tariff, fee, or perk spend) decrements it **rewards-spent-first**, clamped at zero; a user's later personal deposits never re-inflate it. Same-day netting is per user, then summed — one user spending old rewards must never cancel another user's same-day retained delivery
+- the metric is a **conservative lower bound** and may never overstate closure: a day when a user claims to the vault and spends the same amount on a platform fee the same day counts once, never twice
+- on days with zero distribution the daily ratio is reported as **not applicable** (never zero, NaN, or infinite) and excluded from averages
+- the absorption term's designated feed is the recycle-bucket credit event above; the term reads zero until the governor's later stages consume the bucket, and the metric's definition already carries it so no re-baselining happens when absorption goes live
+- every vault VPFI outflow must be observable from a single on-chain signal at the tracked-balance decrement point, so the retention ledger cannot be silently bypassed by any debit path
 
 Founder and contributor compensation:
 

@@ -68,6 +68,9 @@ const KIND_LABELS: Record<ActivityEventKind, string> = {
   InteractionRewardsClaimed: 'Platform-interaction rewards claimed',
   VPFIDepositedToVault: 'VPFI deposited to vault',
   VPFIWithdrawnFromVault: 'VPFI withdrawn from vault',
+  // RL-1/RL-2 — vault-delivered rewards + vault VPFI debits.
+  RewardDeliveredToVault: 'Rewards delivered to vault',
+  VaultVpfiDebited: 'VPFI debited from vault',
 };
 
 // Kind-kind → primary row accent colour class. Mirrors status accents from the
@@ -109,6 +112,10 @@ const KIND_ACCENT: Record<ActivityEventKind, string> = {
   InteractionRewardsClaimed: 'success',
   VPFIDepositedToVault: 'success',
   VPFIWithdrawnFromVault: 'info',
+  // RL-1/RL-2 — vault-delivered rewards read as positive inflow;
+  // a vault debit is neutral movement (withdrawal / fee / tariff).
+  RewardDeliveredToVault: 'success',
+  VaultVpfiDebited: 'info',
 };
 
 interface TxGroup {
@@ -177,6 +184,8 @@ const KIND_PRIORITY: ActivityEventKind[] = [
   'BorrowerFundsClaimed',
   'VPFIDepositedToVault',
   'VPFIWithdrawnFromVault',
+  'RewardDeliveredToVault',
+  'VaultVpfiDebited',
   'OfferCreated',
   'OfferCanceled',
   // T-086 Round-8 §19.7e + Codex round-20 P3 — parallel-sale

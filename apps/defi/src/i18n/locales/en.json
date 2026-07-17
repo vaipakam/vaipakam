@@ -1226,6 +1226,8 @@
     "interactionRewardsClaimed": "Platform-interaction rewards claimed",
     "vpfiDeposited": "VPFI deposited",
     "vpfiWithdrawn": "VPFI withdrawn",
+    "rewardDeliveredToVault": "Rewards delivered to vault",
+    "vaultVpfiDebited": "VPFI debited from vault",
     "lblPrincipal": "Principal",
     "lblCollateral": "Collateral",
     "lblLender": "Lender",
