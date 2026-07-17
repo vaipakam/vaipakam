@@ -81,7 +81,29 @@ const HANDLED = new Set([
   'InteractionRewardsClaimed',
   'RewardDeliveredToVault',
   'VaultVpfiDebited',
+  // PR-3a (#1312) — the recycle-bucket credit event: the absorption term's
+  // designated feed (spec §9). Not user-keyed; applied as a per-day
+  // aggregate + cumulative counter.
+  'VpfiRecycled',
 ]);
+
+/** Kinds applied as retention DEBITS. Beyond the canonical
+ *  `VaultVpfiDebited`, the backfill replays the pre-boundary historical
+ *  debit-observable events (Codex #1310 post-merge round): unstakes
+ *  (`VPFIWithdrawnFromVault`), notification fee pulls
+ *  (`NotificationFeeBilled`), and VPFI discount deductions
+ *  (`VPFIDiscountApplied`) — all of which route through
+ *  `vaultWithdrawERC20` and therefore emit `VaultVpfiDebited` too once
+ *  the RL-2 facet is live (the boundary rule prevents double-counting).
+ */
+const DEBIT_KINDS = new Set([
+  'VaultVpfiDebited',
+  'VPFIWithdrawnFromVault',
+  'NotificationFeeBilled',
+  'VPFIDiscountApplied',
+]);
+
+const ZERO_ADDR = '0x0000000000000000000000000000000000000000';
 
 interface LedgerEvent {
   blockNumber: number;
@@ -116,6 +138,57 @@ async function applyOne(
     .bind(chainId, ev.blockNumber, ev.logIndex)
     .first();
   if (seen) return false;
+
+  // Absorption credits are day-aggregates, not per-user retention flows —
+  // handled on their own branch (dedup row + day absorbed + cum counter).
+  if (ev.kind === 'VpfiRecycled') {
+    const dayAbs = await env.DB.prepare(
+      `SELECT absorbed FROM reward_loop_day
+        WHERE chain_id = ? AND day_id = ?`,
+    )
+      .bind(chainId, dayId)
+      .first<{ absorbed: string }>();
+    const totalsAbs = await env.DB.prepare(
+      `SELECT cum_absorbed FROM reward_loop_totals WHERE chain_id = ?`,
+    )
+      .bind(chainId)
+      .first<{ cum_absorbed: string }>();
+    await env.DB.batch([
+      env.DB.prepare(
+        `INSERT INTO reward_loop_events
+           (chain_id, block_number, log_index, tx_hash, kind, user,
+            amount, day_id, retained_delta, block_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, '0', ?)`,
+      ).bind(
+        chainId,
+        ev.blockNumber,
+        ev.logIndex,
+        ev.txHash.toLowerCase(),
+        ev.kind,
+        ev.user,
+        ev.amount.toString(),
+        dayId,
+        ev.blockAt,
+      ),
+      env.DB.prepare(
+        `INSERT INTO reward_loop_day (chain_id, day_id, absorbed)
+         VALUES (?, ?, ?)
+         ON CONFLICT (chain_id, day_id)
+         DO UPDATE SET absorbed = excluded.absorbed`,
+      ).bind(
+        chainId,
+        dayId,
+        (big(dayAbs?.absorbed) + ev.amount).toString(),
+      ),
+      env.DB.prepare(
+        `INSERT INTO reward_loop_totals (chain_id, cum_absorbed)
+         VALUES (?, ?)
+         ON CONFLICT (chain_id)
+         DO UPDATE SET cum_absorbed = excluded.cum_absorbed`,
+      ).bind(chainId, (big(totalsAbs?.cum_absorbed) + ev.amount).toString()),
+    ]);
+    return true;
+  }
 
   // Current state reads (race-free under the single-writer DO).
   const retention = await env.DB.prepare(
@@ -158,9 +231,9 @@ async function applyOne(
     vaultDelivered += ev.amount;
     retainedDelta = ev.amount;
   } else {
-    // VaultVpfiDebited (or a pre-boundary historical
-    // VPFIWithdrawnFromVault replayed by the backfill) — min-clamped
-    // retention decrement.
+    // A DEBIT_KINDS event (VaultVpfiDebited live, or a pre-boundary
+    // historical withdraw/fee/discount replayed by the backfill) —
+    // min-clamped retention decrement.
     const dec = ev.amount < retained ? ev.amount : retained;
     retained -= dec;
     retainedStock -= dec;
@@ -236,7 +309,26 @@ function eventFromActivityRow(row: {
 }): LedgerEvent | null {
   try {
     const args = JSON.parse(row.args_json) as Record<string, unknown>;
-    const user = String(args.user ?? '').toLowerCase();
+    // Per-kind arg shapes (serializeArgs coerces bigints to strings):
+    //   NotificationFeeBilled(loanId, isLenderSide, payer, vpfiAmount, …)
+    //   VPFIDiscountApplied(loanId, borrower, lendingAsset, vpfiDeducted)
+    //   VpfiRecycled(source, refId, amount, dayId) — not user-keyed
+    //   everything else carries (user, amount).
+    let user: string;
+    let amount: bigint;
+    if (row.kind === 'NotificationFeeBilled') {
+      user = String(args.payer ?? '').toLowerCase();
+      amount = BigInt(String(args.vpfiAmount ?? '0'));
+    } else if (row.kind === 'VPFIDiscountApplied') {
+      user = String(args.borrower ?? '').toLowerCase();
+      amount = BigInt(String(args.vpfiDeducted ?? '0'));
+    } else if (row.kind === 'VpfiRecycled') {
+      user = ZERO_ADDR;
+      amount = BigInt(String(args.amount ?? '0'));
+    } else {
+      user = String(args.user ?? '').toLowerCase();
+      amount = BigInt(String(args.amount ?? '0'));
+    }
     if (!user.startsWith('0x')) return null;
     return {
       blockNumber: row.block_number,
@@ -244,8 +336,7 @@ function eventFromActivityRow(row: {
       txHash: row.tx_hash,
       kind: row.kind,
       user,
-      // serializeArgs coerces bigints to decimal strings in args_json.
-      amount: BigInt(String(args.amount ?? '0')),
+      amount,
       blockAt: row.block_at,
     };
   } catch {
@@ -277,12 +368,12 @@ export async function ensureRewardLoopBackfill(
   // an unstake tx emits BOTH events, so the withdraw rows are excluded
   // to avoid double-decrementing.
   const boundaryRow = await env.DB.prepare(
-    `SELECT MIN(block_number) AS b FROM activity_events
-      WHERE chain_id = ? AND kind = 'VaultVpfiDebited'`,
+    `SELECT block_number AS b, log_index AS li FROM activity_events
+      WHERE chain_id = ? AND kind = 'VaultVpfiDebited'
+      ORDER BY block_number ASC, log_index ASC LIMIT 1`,
   )
     .bind(chainId)
-    .first<{ b: number | null }>();
-  const boundary = boundaryRow?.b ?? null;
+    .first<{ b: number; li: number }>();
 
   const rows = await env.DB.prepare(
     `SELECT block_number, log_index, tx_hash, kind, args_json, block_at
@@ -291,7 +382,10 @@ export async function ensureRewardLoopBackfill(
         AND kind IN ('InteractionRewardsClaimed',
                      'RewardDeliveredToVault',
                      'VaultVpfiDebited',
-                     'VPFIWithdrawnFromVault')
+                     'VpfiRecycled',
+                     'VPFIWithdrawnFromVault',
+                     'NotificationFeeBilled',
+                     'VPFIDiscountApplied')
       ORDER BY block_number ASC, log_index ASC`,
   )
     .bind(chainId)
@@ -305,15 +399,22 @@ export async function ensureRewardLoopBackfill(
     }>();
 
   for (const row of rows.results ?? []) {
-    // A null boundary means NO VaultVpfiDebited has been indexed yet —
-    // the expected state right after the migration deploys — so EVERY
-    // historical withdraw row is pre-boundary and must replay as a debit
-    // (Codex #1310 r3: skipping them all would leave prior reward-funded
-    // unstakes out of the ledger and overstate retention).
+    // Historical debit-observable kinds (withdraw / notification fee /
+    // discount deduction) replay ONLY strictly before the first
+    // VaultVpfiDebited (block, log_index) — from that point each such tx
+    // also emits the canonical debit event and replaying the twin would
+    // double-decrement. A missing boundary means NO VaultVpfiDebited has
+    // been indexed yet (the right-after-migration state) — every
+    // historical row is pre-boundary and must replay (Codex #1310 r3).
+    // The log-index comparison covers an upgrade-block mix of old-facet
+    // and new-facet txs (Codex post-merge P3).
     if (
-      row.kind === 'VPFIWithdrawnFromVault' &&
-      boundary !== null &&
-      row.block_number >= boundary
+      row.kind !== 'VaultVpfiDebited' &&
+      DEBIT_KINDS.has(row.kind) &&
+      boundaryRow &&
+      (row.block_number > boundaryRow.b ||
+        (row.block_number === boundaryRow.b &&
+          row.log_index > boundaryRow.li))
     ) {
       continue;
     }
@@ -371,7 +472,10 @@ export async function applyRewardLoopLedger(
       );
     }
 
-    const user = String(log.args.user ?? '').toLowerCase();
+    const user =
+      log.eventName === 'VpfiRecycled'
+        ? ZERO_ADDR
+        : String(log.args.user ?? '').toLowerCase();
     const amount = BigInt((log.args.amount as bigint) ?? 0n);
     if (!user.startsWith('0x') || amount < 0n) continue;
 

@@ -68,6 +68,18 @@ CREATE TABLE IF NOT EXISTS reward_day_user (
 CREATE INDEX IF NOT EXISTS idx_reward_day_user_day
   ON reward_day_user (chain_id, day_id);
 
+-- Per-day ABSORBED aggregate (not per-user): VPFI the protocol recycled
+-- into the bucket that day (VpfiRecycled events — the PR-3a feed). The
+-- daily flow ratio's absorption term reads this; day_id is the UTC
+-- epoch-day of the block (claim-day basis, consistent with both other
+-- sides of the ratio).
+CREATE TABLE IF NOT EXISTS reward_loop_day (
+  chain_id INTEGER NOT NULL,
+  day_id INTEGER NOT NULL,
+  absorbed TEXT NOT NULL DEFAULT '0',
+  PRIMARY KEY (chain_id, day_id)
+);
+
 -- O(1) cumulative counters for the stock ratio:
 --   cumLoopClosureRatio = (retained_stock + cum_absorbed) / cum_distributed
 -- cum_absorbed stays '0' until the governor stack's VpfiRecycled events

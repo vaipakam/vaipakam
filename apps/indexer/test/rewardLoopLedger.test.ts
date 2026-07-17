@@ -27,6 +27,7 @@ const ALL_MIGRATIONS = readdirSync(MIGRATIONS_DIR)
 const CHAIN = 84532;
 const ALICE = '0x00000000000000000000000000000000000000aa';
 const BOB = '0x00000000000000000000000000000000000000bb';
+const ZERO = '0x0000000000000000000000000000000000000000';
 
 // Fixed "today" so day bucketing is deterministic: the route computes
 // todayId from Date.now(), so anchor test blocks to the CURRENT epoch-day.
@@ -364,6 +365,111 @@ describe('robustness (Codex #1310 round 1)', () => {
     // A null boundary must mean "replay ALL withdraws", not "skip all"
     // (Codex #1310 r3): 100 − 60 = 40; skipping would overstate at 100.
     expect(await retained(h, ALICE)).toBe('40');
+  });
+
+  it('VpfiRecycled feeds the absorption term: daily absorbed + cumulative + ratio', async () => {
+    const { env } = makeHarness();
+    await applyRewardLoopLedger(
+      [
+        log('InteractionRewardsClaimed', ALICE, 100n),
+        // A forfeit recycled into the bucket the same day (PR-3a feed).
+        // VpfiRecycled carries no user arg — day-aggregate only.
+        {
+          eventName: 'VpfiRecycled',
+          args: { source: 0, refId: 42n, amount: 60n, dayId: 5n },
+          blockNumber: 100n,
+          transactionHash: `0x${'cd'.repeat(32)}`,
+          logIndex: 999,
+        },
+      ],
+      env,
+      CHAIN,
+      ts([[100n, TODAY_TS]]),
+    );
+    const res = await handleLoopClosure(
+      new Request(
+        `http://indexer.local/metrics/loop-closure?chainId=${CHAIN}&days=7`,
+      ),
+      env,
+    );
+    const body = (await res.json()) as {
+      daily: Array<{ dayId: number; absorbed: string; ratio: number | null }>;
+      cumulative: { cumAbsorbed: string; ratio: number | null };
+    };
+    const today = body.daily.find((d) => d.dayId === TODAY)!;
+    expect(today.absorbed).toBe('60');
+    // (net 0 + absorbed 60) / distributed 100 = 0.6
+    expect(today.ratio).toBe(0.6);
+    expect(body.cumulative.cumAbsorbed).toBe('60');
+  });
+
+  it('backfill replays historical fee debits (NotificationFeeBilled / VPFIDiscountApplied) pre-boundary, with (block, log_index) precision', async () => {
+    const { h, env } = makeHarness();
+    const seed = (
+      block: number,
+      logIndex: number,
+      kind: string,
+      args: Record<string, unknown>,
+    ) =>
+      h.db
+        .prepare(
+          `INSERT INTO activity_events
+             (chain_id, block_number, log_index, tx_hash, kind,
+              loan_id, offer_id, actor, args_json, block_at)
+           VALUES (?, ?, ?, ?, ?, NULL, NULL, ?, ?, ?)`,
+        )
+        .run(
+          CHAIN,
+          block,
+          logIndex,
+          `0x${(block * 1000 + logIndex).toString(16).padStart(64, '0')}`,
+          kind,
+          ALICE,
+          JSON.stringify(args),
+          TODAY_TS - 86400,
+        );
+
+    seed(10, 0, 'RewardDeliveredToVault', { user: ALICE, amount: '100' });
+    // Historical fee debits, only observable via their own events then:
+    seed(20, 0, 'NotificationFeeBilled', {
+      loanId: '1',
+      isLenderSide: true,
+      payer: ALICE,
+      vpfiAmount: '15',
+      feeNumeraire1e18: '0',
+    });
+    seed(21, 0, 'VPFIDiscountApplied', {
+      loanId: '2',
+      borrower: ALICE,
+      lendingAsset: ZERO,
+      vpfiDeducted: '25',
+    });
+    // Upgrade block 30: an old-facet withdraw at log_index 1 (BEFORE the
+    // first debit at log_index 5) must replay; the fee twin AFTER it must
+    // not.
+    seed(30, 1, 'VPFIWithdrawnFromVault', {
+      user: ALICE,
+      amount: '10',
+      newVaultBalance: '50',
+    });
+    seed(30, 5, 'VaultVpfiDebited', {
+      user: ALICE,
+      amount: '20',
+      recipient: ALICE,
+    });
+    seed(30, 6, 'NotificationFeeBilled', {
+      loanId: '3',
+      isLenderSide: false,
+      payer: ALICE,
+      vpfiAmount: '20',
+      feeNumeraire1e18: '0',
+    });
+
+    await applyRewardLoopLedger([], env, CHAIN, ts([]));
+
+    // 100 − 15 (fee) − 25 (discount) − 10 (same-block pre-boundary
+    // withdraw) − 20 (canonical debit; its fee twin skipped) = 30.
+    expect(await retained(h, ALICE)).toBe('30');
   });
 
   it('backfills historical reward events from activity_events once, dedup-safe against live replay', async () => {

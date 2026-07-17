@@ -60,7 +60,7 @@ export async function handleLoopClosure(
   const cutoff = todayId - days + 1;
 
   try {
-    const [dayRows, totals] = await Promise.all([
+    const [dayRows, absorbedRows, totals] = await Promise.all([
       env.DB.prepare(
         `SELECT day_id, user, distributed, vault_delivered,
                 reward_funded_debits
@@ -76,6 +76,12 @@ export async function handleLoopClosure(
           vault_delivered: string;
           reward_funded_debits: string;
         }>(),
+      env.DB.prepare(
+        `SELECT day_id, absorbed FROM reward_loop_day
+          WHERE chain_id = ? AND day_id >= ?`,
+      )
+        .bind(chainId, cutoff)
+        .all<{ day_id: number; absorbed: string }>(),
       env.DB.prepare(
         `SELECT cum_distributed, cum_absorbed, retained_stock
            FROM reward_loop_totals WHERE chain_id = ?`,
@@ -110,19 +116,25 @@ export async function handleLoopClosure(
     // window, so a dashboard can distinguish a quiet day (an explicit
     // `ratio: null` bucket per the zero-distribution convention) from a
     // missing bucket. Days without events simply have no rows.
+    const absorbedByDay = new Map<number, bigint>();
+    for (const r of absorbedRows.results ?? []) {
+      absorbedByDay.set(r.day_id, BigInt(r.absorbed));
+    }
+
     const daily = [];
     for (let dayId = cutoff; dayId <= todayId; dayId++) {
       const d = byDay.get(dayId) ?? {
         distributed: 0n,
         netVaultDelivered: 0n,
       };
+      const absorbed = absorbedByDay.get(dayId) ?? 0n;
       daily.push({
         dayId,
         date: new Date(dayId * 86_400_000).toISOString().slice(0, 10),
         distributed: d.distributed.toString(),
         netVaultDelivered: d.netVaultDelivered.toString(),
-        absorbed: '0',
-        ratio: ratio6(d.netVaultDelivered, d.distributed),
+        absorbed: absorbed.toString(),
+        ratio: ratio6(d.netVaultDelivered + absorbed, d.distributed),
       });
     }
 
