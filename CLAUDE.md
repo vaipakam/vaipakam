@@ -513,6 +513,23 @@ Full detail in [`docs/TokenomicsTechSpec.md`](docs/TokenomicsTechSpec.md)
 §5.2b and the Phase 5 section of
 [`docs/ReleaseNotes-2026-04-23-to-24.md`](docs/ReleaseNotes-2026-04-23-to-24.md).
 
+## VPFI rewards/recycling copy rules — release-gate checklist (RL-6)
+
+Every PR that adds or changes a **user-facing recycling/rewards surface**
+(app copy, docs, notifications, marketing) must pass the four-item
+checklist in
+[`docs/DesignsAndPlans/VPFITokenomicsRedesignResearch.md`](docs/DesignsAndPlans/VPFITokenomicsRedesignResearch.md)
+§A.4 before merge: rewards are **usage rebates / fee discounts /
+program longevity** (never yield, APY, income, deflation, scarcity, or
+price); sized by the **user's own activity** (never pro-rata-to-holding
+or a promised rate); **no market touch / published price / purchase
+surface** implied; and the flow presented as **deterministic bookkeeping
+over fees already received** (no operator-discretion framing). Vault-
+delivered rewards (RL-1) are "rewards land in your vault, ready to use" —
+never auto-staking or compounding. Issuer representations are the
+dominant factor under release 33-11412, so this checklist is part of the
+release gate, not optional style guidance.
+
 ## Retail-deploy policy — sanctions ON; KYC / country-pair OFF
 
 The retail Vaipakam deploy is permissionless for KYC and country-pair

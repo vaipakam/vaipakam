@@ -256,3 +256,134 @@ Verified during the research sweep:
   - https://cryptodaily.co.uk/2026/05/defi-revenue-tokens-fees-burns-buybacks-over-tvl
 
 **Research stats:** 5 search angles · 22 sources fetched · 104 claims extracted · 25 verified · 19 confirmed · 6 refuted.
+
+---
+
+## 11. Appendix A — External evidence pack (RL-6, added 2026-07-17)
+
+> Added per **RL-6** of
+> [`VpfiRecyclingLoopClosureDesign.md`](VpfiRecyclingLoopClosureDesign.md)
+> (ratified 2026-07-16, issue #1304). Purpose: make the recycling/rewards
+> stack's legal argument **checkable by a future counsel in one sitting** —
+> the hand-off package is **two documents**: the SEC/CFTC interpretation of
+> 2026-03-17 (release 33-11412, §2 above) **plus the Fuse no-action letter
+> (A.1)**, with the production-protocol benchmark (A.3) as context. Same
+> posture as the rest of this doc: informational, **not legal advice**, and
+> nothing here upgrades the §3/§9 confidence levels or reopens the §5
+> refuted claims.
+
+### A.1 Fuse no-action letter (SEC Corp Fin, 2025-11-24) — closest external precedent for the rewards shape
+
+First no-action relief for a **rewards token**: a token earned through user
+activity and redeemable **only for discounts/rebates on platform costs**
+([SEC no-action page](https://www.sec.gov/rules-regulations/no-action-interpretive-exemptive-letters/division-corporation-finance-no-action/fuse-crypto-limited-112425),
+[incoming counsel letter, conformed 2025-11-19](https://www.sec.gov/files/corpfin/no-action/fuse-incoming-final-conformed-111925.pdf)).
+
+**Attribution discipline (load-bearing — travels with every citation):**
+
+- The argument that *"cost reduction or redemption capability are not
+  'profits' to the consumer but rather a type of rebate to encourage
+  certain consumptive behaviors"* comes from **Fuse's incoming counsel
+  letter** — the representations on which relief was requested.
+- The **staff response itself** grants no-action relief **based on those
+  representations** and expressly does not provide a generally applicable
+  legal conclusion. The precedent is therefore: a rewards program with
+  exactly this consumptive/rebate fact pattern, described to the staff in
+  exactly these terms, drew no-action relief — not "the SEC held rewards
+  tokens are not securities."
+- **Partial analogy only.** The fact pattern **partially maps** to
+  Vaipakam's shape — rewards earned by the user's own activity whose
+  in-platform utility is fee-discount standing — and the material
+  differences must travel with the citation: Fuse's rewards were for
+  **energy/grid-support behaviours, not financial/lending activity**, and
+  Fuse represented that it does not pass utility payments through to
+  consumers. This repo's own research (§4.2, §6.3, §9.2) continues to
+  treat foreseeable activity rewards on a **lending** platform as a
+  counsel-relevant residual — Fuse supports the **consumptive-rebate
+  characterization** of rewards-redeemable-for-fee-discounts; it is
+  **never clearance** for a lending rewards surface.
+
+Secondary summary:
+[Global Fintech & Digital Assets Blog (2025-12)](https://www.fintechanddigitalassets.com/2025/12/sec-staff-issues-no-action-letter-for-fuse-crypto-token/).
+
+### A.2 SEC Corp Fin statement on protocol staking (2025-05-29) — the determinism property, nothing more
+
+The Division's *Statement on Certain Protocol Staking Activities*
+(2025-05-29) took the view that certain **PoS network protocol staking**
+activities are not securities offerings because they are "administrative or
+ministerial," not entrepreneurial — see the companion commissioner
+statements for the primary context
+([Peirce](https://www.sec.gov/newsroom/speeches-statements/peirce-statement-protocol-staking-052925),
+[Crenshaw dissent](https://www.sec.gov/newsroom/speeches-statements/crenshaw-statement-protocol-staking-052925))
+and the Division's follow-on
+[liquid-staking statement (2025-08-05)](https://www.sec.gov/newsroom/speeches-statements/corpfin-certain-liquid-staking-activities-080525).
+
+**Scope — §2's warning stands unchanged.** This is **not directly
+applicable** to VPFI (VPFI is not PoS stake, and §2 above already
+establishes that the protocol-staking frame must NOT be generalized to
+token-holder reward products — a vault-yield cannot be rescued by making
+it "ministerial"). What the statement evidences for this stack is
+narrower: the *property it rewards* — **full determinism, no operator
+discretion in the flow** — is one the recycling loop already has and must
+keep. Concretely: no per-epoch allocation committee; the RL-4 allocation
+register reads bounded weights once at finalization; the loop is
+bookkeeping over fees already received (loop-closure design §4).
+Crenshaw's dissent is a standing reminder that staff statements are
+contestable and rescindable — the same caveat §2 applies to 33-11412.
+
+### A.3 Production-protocol benchmark (context document)
+
+Where the Vaipakam recycling stack sits against production designs for
+"protocol-absorbed native token → what now?" — condensed from the
+loop-closure design §3 (see that table for per-protocol sources):
+
+| Pattern | Production examples | Vaipakam position |
+| --- | --- | --- |
+| Fee-linked reward caps (rewards ≤ scale of the user's own fees) | dYdX v4 (≤90% of own net fees per fill; killed v3 wash-farming) | **Mirrored**: the loan-side reward cap sized from that loan's notional tariff; the governor's absorption-coupled epoch budget |
+| Revenue → reserve that refills future incentives (no burn) | Aave "Buy and Distribute" ecosystem reserve | **Mirrored minus the market operation**: the recycle bucket refills the reward runway; receipts arrive as fees, no buyback needed (#687-C stays dormant) |
+| Forfeiture extends the runway | GMX (unvested esGMX forfeits return to pool) | **Mirrored**: forfeited/expired rewards → recycle bucket (governor absorption class; RL-3 sweep) |
+| Reward re-enters the system at claim | Jupiter ASR (auto-staked at claim) | **Mirrored**: RL-1 claim-to-vault delivery (shipped #1302) — delivery venue only, no lockup |
+| Sweep unclaimed rewards back to the pool | dYdX retroactive epoch sweep | **Mirrored**: RL-3 365-day post-claimability horizon (ratified) |
+| Emissions sunset into fee-funded rewards | Synthetix (SIP-2043) | **Mirrored by construction**: floor decays to zero, budget becomes `(1−m)×Ā` |
+| Cash-equivalent revenue share to passive lockers | Curve/Convex veCRV, Trader Joe sJOE | **Avoided** — the dividend shape #687-B excised; no vote-directable emissions (Curve-Wars capture surface) |
+| Buyback / burn as the legal-comfort tool | Hyperliquid (~97% fees auto-buy), Uniswap UNIfication burn | **Avoided** — burn was their legal-comfort tool because their alternative was a dividend; Vaipakam's alternative is a **usage rebate** (stronger shape), so no-burn costs nothing legally *while rewards stay usage-shaped* |
+
+### A.4 Copy rules — release-gate checklist for every user-facing recycling/rewards surface
+
+The four design rules from the loop-closure design §4, restated as the
+**release-gate checklist**. Every PR that adds or changes a user-facing
+recycling/rewards surface (app copy, docs, notifications, marketing)
+checks all four before merge; under 33-11412 the issuer's representations
+are the dominant factor, making this the cheapest legal insurance in the
+program:
+
+- [ ] Rewards are described as **usage rebates / fee discounts / program
+      longevity** — never yield, APY, income, deflation, scarcity, or
+      price. (RL-1 addendum: vault delivery is "rewards land in your
+      vault, ready to use" — never auto-staking or compounding.)
+- [ ] Rewards are sized by the **user's own activity**, fee-linked-capped —
+      no copy implies pro-rata-to-holding, cash-equivalent revenue share,
+      or a promised rate.
+- [ ] **No market touch, no published price, no purchase surface** appears
+      or is implied (#687-A stands; buyback stays dormant).
+- [ ] The flow stays presented as **deterministic bookkeeping over fees
+      already received** — no operator-discretion framing ("we decide,"
+      "the team allocates").
+
+This checklist reinforces (never replaces) the §9.2 marketing lever and
+the retail-copy rules in `CLAUDE.md`.
+
+### A.5 Sources added by this appendix
+
+- SEC Corp Fin no-action letter, Fuse Crypto Limited (2025-11-24):
+  https://www.sec.gov/rules-regulations/no-action-interpretive-exemptive-letters/division-corporation-finance-no-action/fuse-crypto-limited-112425
+  (incoming counsel letter: https://www.sec.gov/files/corpfin/no-action/fuse-incoming-final-conformed-111925.pdf)
+- Secondary: https://www.fintechanddigitalassets.com/2025/12/sec-staff-issues-no-action-letter-for-fuse-crypto-token/
+- SEC Corp Fin, *Statement on Certain Protocol Staking Activities*
+  (2025-05-29) — companion commissioner statements:
+  https://www.sec.gov/newsroom/speeches-statements/peirce-statement-protocol-staking-052925 ·
+  https://www.sec.gov/newsroom/speeches-statements/crenshaw-statement-protocol-staking-052925
+- SEC Corp Fin, *Statement on Certain Liquid Staking Activities*
+  (2025-08-05): https://www.sec.gov/newsroom/speeches-statements/corpfin-certain-liquid-staking-activities-080525
+- Production-protocol benchmark sources: see
+  [`VpfiRecyclingLoopClosureDesign.md`](VpfiRecyclingLoopClosureDesign.md) §3.
