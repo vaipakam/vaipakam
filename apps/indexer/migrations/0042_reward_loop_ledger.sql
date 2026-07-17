@@ -72,9 +72,14 @@ CREATE INDEX IF NOT EXISTS idx_reward_day_user_day
 --   cumLoopClosureRatio = (retained_stock + cum_absorbed) / cum_distributed
 -- cum_absorbed stays '0' until the governor stack's VpfiRecycled events
 -- exist (PR-3a extension point — see rewardLoopLedger.ts).
+-- backfill_done: stamped after the one-time replay of historical
+-- InteractionRewardsClaimed / reward events from activity_events —
+-- without it, a chain whose ingest cursor predates this migration would
+-- omit prior wallet-paid distributions and OVERSTATE closure.
 CREATE TABLE IF NOT EXISTS reward_loop_totals (
   chain_id INTEGER PRIMARY KEY,
   cum_distributed TEXT NOT NULL DEFAULT '0',
   cum_absorbed TEXT NOT NULL DEFAULT '0',
-  retained_stock TEXT NOT NULL DEFAULT '0'
+  retained_stock TEXT NOT NULL DEFAULT '0',
+  backfill_done INTEGER NOT NULL DEFAULT 0
 );

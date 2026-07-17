@@ -192,12 +192,18 @@ describe('GET /metrics/loop-closure', () => {
       ts([[100n, TODAY_TS]]),
     );
     const body = await fetchMetric(env);
-    expect(body.daily).toHaveLength(1);
+    // Dense series: every day in the 7-day window gets a bucket.
+    expect(body.daily).toHaveLength(7);
+    const today = body.daily.find((d) => d.dayId === TODAY)!;
     // net = max(0, 100 − 100) = 0; with absorbed still 0 (pre-PR-3a) the
     // day reads 0.0 — the tokens re-entered as a tariff the ledger can't
     // yet see, and the metric may NEVER overstate closure.
-    expect(body.daily[0].netVaultDelivered).toBe('0');
-    expect(body.daily[0].ratio).toBe(0);
+    expect(today.netVaultDelivered).toBe('0');
+    expect(today.ratio).toBe(0);
+    // Quiet days are explicit null buckets, not missing entries.
+    const quiet = body.daily.find((d) => d.dayId === TODAY - 3)!;
+    expect(quiet.distributed).toBe('0');
+    expect(quiet.ratio).toBeNull();
   });
 
   it('nets PER USER: Bob spending old rewards cannot cancel Alice’s same-day delivery', async () => {
@@ -239,9 +245,94 @@ describe('GET /metrics/loop-closure', () => {
       ts([[100n, TODAY_TS]]),
     );
     const body = await fetchMetric(env);
-    expect(body.daily[0].ratio).toBeNull();
+    const today = body.daily.find((d) => d.dayId === TODAY)!;
+    expect(today.ratio).toBeNull();
     expect(body.cumulative.cumDistributed).toBe('0');
     expect(body.cumulative.retainedStock).toBe('70');
     expect(body.cumulative.ratio).toBeNull();
+  });
+});
+
+describe('robustness (Codex #1310 round 1)', () => {
+  it('skips logs with sentinel block timestamps WITHOUT a dedup row, so a later scan applies them', async () => {
+    const { h, env } = makeHarness();
+    const l = log('RewardDeliveredToVault', ALICE, 30n, 100n);
+    // First scan: block 100's timestamp read failed → sentinel.
+    const first = await applyRewardLoopLedger(
+      [l],
+      env,
+      CHAIN,
+      ts([[100n, TODAY_TS]]),
+      new Set([100n]),
+    );
+    expect(first).toBe(0);
+    expect(await retained(h, ALICE)).toBe('0');
+    // Later overlapping scan with the REAL timestamp applies normally.
+    const second = await applyRewardLoopLedger(
+      [l],
+      env,
+      CHAIN,
+      ts([[100n, TODAY_TS]]),
+    );
+    expect(second).toBe(1);
+    expect(await retained(h, ALICE)).toBe('30');
+  });
+
+  it('backfills historical reward events from activity_events once, dedup-safe against live replay', async () => {
+    const { h, env } = makeHarness();
+    // A historical wallet-paid claim the ingest cursor already passed —
+    // present only in activity_events.
+    h.db
+      .prepare(
+        `INSERT INTO activity_events
+           (chain_id, block_number, log_index, tx_hash, kind,
+            loan_id, offer_id, actor, args_json, block_at)
+         VALUES (?, ?, ?, ?, ?, NULL, NULL, ?, ?, ?)`,
+      )
+      .run(
+        CHAIN,
+        50,
+        7,
+        '0x' + 'ab'.repeat(32),
+        'InteractionRewardsClaimed',
+        ALICE,
+        JSON.stringify({ user: ALICE, fromDay: '1', toDay: '2', amount: '80' }),
+        TODAY_TS - 86400,
+      );
+
+    // First ledger invocation (empty live logs) runs the backfill.
+    await applyRewardLoopLedger([], env, CHAIN, ts([]));
+    let totals = h.db
+      .prepare(
+        `SELECT cum_distributed, backfill_done FROM reward_loop_totals
+          WHERE chain_id = ?`,
+      )
+      .get(CHAIN) as { cum_distributed: string; backfill_done: number };
+    expect(totals.cum_distributed).toBe('80');
+    expect(totals.backfill_done).toBe(1);
+
+    // A live re-delivery of the SAME log (overlap) must not double-count,
+    // and the backfill must not re-run.
+    await applyRewardLoopLedger(
+      [
+        {
+          eventName: 'InteractionRewardsClaimed',
+          args: { user: ALICE, amount: 80n },
+          blockNumber: 50n,
+          transactionHash: '0x' + 'ab'.repeat(32),
+          logIndex: 7,
+        },
+      ],
+      env,
+      CHAIN,
+      ts([[50n, TODAY_TS - 86400]]),
+    );
+    totals = h.db
+      .prepare(
+        `SELECT cum_distributed, backfill_done FROM reward_loop_totals
+          WHERE chain_id = ?`,
+      )
+      .get(CHAIN) as { cum_distributed: string; backfill_done: number };
+    expect(totals.cum_distributed).toBe('80');
   });
 });

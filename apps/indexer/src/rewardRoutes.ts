@@ -106,16 +106,25 @@ export async function handleLoopClosure(
       byDay.set(r.day_id, d);
     }
 
-    const daily = [...byDay.entries()]
-      .sort(([a], [b]) => a - b)
-      .map(([dayId, d]) => ({
+    // Dense series (Codex #1310 P3): emit EVERY day in the requested
+    // window, so a dashboard can distinguish a quiet day (an explicit
+    // `ratio: null` bucket per the zero-distribution convention) from a
+    // missing bucket. Days without events simply have no rows.
+    const daily = [];
+    for (let dayId = cutoff; dayId <= todayId; dayId++) {
+      const d = byDay.get(dayId) ?? {
+        distributed: 0n,
+        netVaultDelivered: 0n,
+      };
+      daily.push({
         dayId,
         date: new Date(dayId * 86_400_000).toISOString().slice(0, 10),
         distributed: d.distributed.toString(),
         netVaultDelivered: d.netVaultDelivered.toString(),
         absorbed: '0',
         ratio: ratio6(d.netVaultDelivered, d.distributed),
-      }));
+      });
+    }
 
     const cumDistributed = BigInt(totals?.cum_distributed ?? '0');
     const cumAbsorbed = BigInt(totals?.cum_absorbed ?? '0');

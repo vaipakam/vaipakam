@@ -721,6 +721,12 @@ export async function runChainIndexerForChain(
   const uniqueBlocks = new Set<bigint>();
   for (const log of allLogs) uniqueBlocks.add(log.blockNumber);
   const blockTimestamps = new Map<bigint, number>();
+  // RL-2 (Codex #1310 P2) — blocks whose timestamp below is the wall-clock
+  // SENTINEL, not the real chain time. Consumers that BUCKET BY DAY and
+  // dedup permanently (the reward loop-closure ledger) must skip these so
+  // a later scan can apply the event under its true claim day; consumers
+  // that only display block_at (activity_events) keep using the sentinel.
+  const fallbackTimestampBlocks = new Set<bigint>();
   for (const blockNum of uniqueBlocks) {
     try {
       const block = await client.getBlock({ blockNumber: blockNum });
@@ -730,6 +736,7 @@ export async function runChainIndexerForChain(
       // ordering still works because activity_events keys on
       // (block_number, log_index), not block_at.
       blockTimestamps.set(blockNum, Math.floor(Date.now() / 1000));
+      fallbackTimestampBlocks.add(blockNum);
     }
   }
 
@@ -767,8 +774,18 @@ export async function runChainIndexerForChain(
   // RL-2 (#1303) — reward loop-closure ledger: per-user retention +
   // per-day flow components behind /metrics/loop-closure. Exactly-once
   // via the reward_loop_events dedup table, so overlapping scan ranges
-  // never double-count (see rewardLoopLedger.ts).
-  await applyRewardLoopLedger(allLogs, env, chainId, blockTimestamps);
+  // never double-count. Logs whose block timestamp fell back to the
+  // wall-clock sentinel are SKIPPED (not dedup-recorded) so a later
+  // overlapping scan applies them under the true claim day (Codex
+  // #1310 P2). See rewardLoopLedger.ts for the backfill that seeds
+  // historical claims from activity_events on first run.
+  await applyRewardLoopLedger(
+    allLogs,
+    env,
+    chainId,
+    blockTimestamps,
+    fallbackTimestampBlocks,
+  );
 
   // Per-domain detail refresh, batched per tick.
   const detailRefreshes = await refreshStubOffers(

@@ -260,6 +260,17 @@ export default {
       if (m && req.method === 'OPTIONS') return handleOffersPreflight();
     }
 
+    // ─── /metrics/loop-closure ──────────────────────────────────
+    // RL-2 (#1303) — reward loop-closure ratios (daily flow +
+    // cumulative stock) from the ingest-maintained retention ledger.
+    // Top-level on purpose (Codex #1310 P1): the /offers block below is
+    // guarded by a pathname prefix this route doesn't share.
+    if (url.pathname === '/metrics/loop-closure') {
+      if (req.method === 'OPTIONS') return handleOffersPreflight();
+      if (req.method === 'GET') return handleLoopClosure(req, resolved);
+      return new Response('Not found', { status: 404 });
+    }
+
     // ─── /offers/* ──────────────────────────────────────────────
     if (url.pathname.startsWith('/offers')) {
       if (req.method === 'OPTIONS') return handleOffersPreflight();
@@ -273,11 +284,6 @@ export default {
         if (url.pathname === '/offers/markets') {
           // Rate Desk (#1129) — market discovery for the pair/tenor chips.
           return handleOffersMarkets(req, resolved);
-        }
-        if (url.pathname === '/metrics/loop-closure') {
-          // RL-2 (#1303) — reward loop-closure ratios (daily flow +
-          // cumulative stock) from the ingest-maintained retention ledger.
-          return handleLoopClosure(req, resolved);
         }
         if (url.pathname === '/offers/recent') {
           return handleOffersRecent(req, resolved);
