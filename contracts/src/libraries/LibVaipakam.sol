@@ -4953,6 +4953,22 @@ library LibVaipakam {
         ///      {ConfigFacet.setRecycleTariffKPer1e18EthDay} (ADMIN_ROLE,
         ///      bounded `[RECYCLE_TARIFF_K_MIN, RECYCLE_TARIFF_K_MAX]`).
         uint256 recycleTariffKPer1e18EthDay;
+        // ─── VPFI recycling governor PR-3a (#1217/#1222 §5) — bucket ledger ──
+        /// @dev Protocol-owned recycle bucket: a LEDGER SLICE of the Diamond's
+        ///      own VPFI balance (never a separate token pocket). Credited by
+        ///      {LibVpfiRecycle.credit} at every recyclable VPFI receipt;
+        ///      consumed only by the governor's coupled reward budget (PR-3b/3c)
+        ///      and Phase-C surplus tooling. Separation invariant (governor §5):
+        ///      `diamondVpfiBalance ≥ userLifCustody + unclaimedRewardBudget +
+        ///      recycleBucket`. Appended at struct end — no layout shift for an
+        ///      in-place facet refresh.
+        uint256 recycleBucket;
+        /// @dev Day-bucketed credit totals feeding the trailing-window
+        ///      absorption average `Ā[D]` cheaply at day finalization
+        ///      (governor §3.1/§5). Key = the interaction-reward schedule day
+        ///      the credit landed in (day 0 collects pre-launch credits — the
+        ///      trailing window ages them out naturally once emissions start).
+        mapping(uint256 => uint256) recycledCreditedByDay;
     }
 
     /// @notice #393 v1-b — the originating intent of a `matchIntent` loan,

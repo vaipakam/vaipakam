@@ -83,7 +83,7 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](111);
+        selectors = new bytes4[](112);
         selectors[0] = TestMutatorFacet.setLoan.selector;
         selectors[1] = TestMutatorFacet.setOffer.selector;
         selectors[2] = TestMutatorFacet.setNextLoanId.selector;
@@ -285,6 +285,8 @@ contract HelperTest {
         // RL-1 — claim-to-vault delivery test scaffolding.
         selectors[109] = TestMutatorFacet.setMandatoryVaultVersionRaw.selector;
         selectors[110] = TestMutatorFacet.getStakeRollupStateRaw.selector;
+        // Governor PR-3a — recycle-bucket forfeit-routing scaffolding.
+        selectors[111] = TestMutatorFacet.setRewardEntryForfeitedRaw.selector;
         // #951 v2 (Codex #959 bind-to-live) — setSaleListingCollateralRaw removed
         // with the snapshot mapping; the accept binds `>=` live collateral.
         // #687-B: the former tail entries ([83]-[87]: setBackstopAbsorbCashRaw,
@@ -1528,7 +1530,7 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](78);
+        selectors = new bytes4[](80);
         selectors[0] = ConfigFacet.setFeesConfig.selector;
         selectors[1] = ConfigFacet.setLiquidationConfig.selector;
         selectors[2] = ConfigFacet.setRiskConfig.selector;
@@ -1662,6 +1664,9 @@ contract HelperTest {
         selectors[75] = ConfigFacet.setRecycleMarginBps.selector;
         selectors[76] = ConfigFacet.setRecycleTariffKPer1e18EthDay.selector;
         selectors[77] = ConfigFacet.getRecycleConfig.selector;
+        // Governor PR-3a (#1217) — recycle-bucket transparency reads.
+        selectors[78] = ConfigFacet.getRecycleBucket.selector;
+        selectors[79] = ConfigFacet.getRecycledCreditedByDay.selector;
         return selectors;
     }
 
