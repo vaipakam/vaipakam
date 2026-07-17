@@ -88,6 +88,30 @@
 /faucet/*
   X-Robots-Tag: noindex
 
+# Childless PUBLIC routes — the route itself is indexable, but any
+# deeper path (`/borrow/anything`) is NotFound in the router: the SPA
+# fallback still serves the index shell with a 200, so a non-executing
+# crawler would otherwise index a soft 404 (Codex #1309 r8). `/nft` is
+# deliberately ABSENT from this list: `/nft/:tokenId` children are
+# valid, indexable pages (SeoMeta noindexes the malformed ones after
+# hydration). `/positions/*` already carries noindex in the
+# wallet-gated block above.
+
+/borrow/*
+  X-Robots-Tag: noindex
+/lend/*
+  X-Robots-Tag: noindex
+/rent/*
+  X-Robots-Tag: noindex
+/offers/*
+  X-Robots-Tag: noindex
+/desk/*
+  X-Robots-Tag: noindex
+/vpfi/*
+  X-Robots-Tag: noindex
+/help/*
+  X-Robots-Tag: noindex
+
 # SPA aliases (App.tsx Navigate routes). The redirect only happens
 # after JS runs, so a non-executing crawler fetching an alias gets
 # the index shell — noindex ALL of them (Codex #1309 r1 + r2): the

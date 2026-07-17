@@ -1,6 +1,7 @@
 import { useEffect, type ReactNode } from 'react';
 import { Outlet, useParams } from 'react-router-dom';
 import i18n from 'i18next';
+import { LANGUAGE_STORAGE_KEY } from '@vaipakam/i18n';
 import { SUPPORTED_LOCALES, type SupportedLocale } from '../i18n/glossary';
 
 /**
@@ -44,15 +45,36 @@ export function LocaleResolver({ locale, children }: LocaleResolverProps) {
   const fromParam = params.locale;
   const target: SupportedLocale = locale
     ?? (isSupportedLocale(fromParam) ? fromParam : 'en');
+  // True only for the unprefixed root tree (explicit `locale="en"`
+  // prop, no `:locale` URL param).
+  const isDefaultTree = locale === 'en' && !fromParam;
 
   useEffect(() => {
     // Compare against the ACTIVE language, not resolvedLanguage —
     // the latter lags a lazily-loading bundle and would re-fire
     // changeLanguage on every remount during the load window.
-    if (i18n.language !== target) {
-      void i18n.changeLanguage(target);
+    if (i18n.language === target) return;
+    if (isDefaultTree) {
+      // Unprefixed URL, but the user carries a stored non-English
+      // preference (their own picker choice, or one seeded from the
+      // cross-app cookie). Forcing `en` here would fire the
+      // `languageChanged` cookie write-back and clobber a language
+      // the user chose on a sibling surface (Codex #1309 r8). Leave
+      // the active language alone: translated preferences are about
+      // to be redirected to their prefixed URL by
+      // `DefaultLocaleRedirect`, and placeholder preferences render
+      // English anyway via i18next fallback (with the `<html lang>`
+      // stamp already gated to translated locales by the factory).
+      let stored: string | null = null;
+      try {
+        stored = window.localStorage.getItem(LANGUAGE_STORAGE_KEY);
+      } catch {
+        // Storage unavailable — fall through to the normal force.
+      }
+      if (stored && stored !== 'en' && isSupportedLocale(stored)) return;
     }
-  }, [target]);
+    void i18n.changeLanguage(target);
+  }, [target, isDefaultTree]);
 
   return <>{children ?? <Outlet />}</>;
 }

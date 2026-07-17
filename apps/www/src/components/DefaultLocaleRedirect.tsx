@@ -4,19 +4,27 @@ import { TRANSLATED_LOCALES } from '../i18n/glossary';
 import { isSupportedLocale, withLocalePrefix } from './LocaleResolver';
 
 /**
- * First-visit default-locale redirect.
+ * Default-locale redirect.
  *
  * Behaviour:
  *   1. If the user has already chosen a language (a non-empty
- *      `localStorage["vaipakam:language"]` entry exists), do nothing —
- *      the LanguagePicker is the source of truth.
+ *      `localStorage["vaipakam:language"]` entry exists — their own
+ *      picker choice, or one seeded from the cross-app cookie), the
+ *      stored value is the source of truth. English needs no redirect
+ *      (it lives at the unprefixed root). A non-English TRANSLATED
+ *      preference on an UNPREFIXED URL is redirected to its prefixed
+ *      equivalent — this is what keeps the root `LocaleResolver` from
+ *      ever forcing `en` over a cross-app cookie preference
+ *      (Codex #1309 r8). Placeholder (untranslated) preferences stay
+ *      put: redirecting a Telugu preference to `/te/` would serve
+ *      English content under a Telugu URL.
  *   2. Otherwise, walk `navigator.languages` and find the first entry
- *      whose primary tag matches a SUPPORTED_LOCALES code. Falls back
- *      to English if none match.
+ *      whose primary tag matches a TRANSLATED locale. Falls back to
+ *      English if none match.
  *   3. If the matched locale is non-English AND the current URL has no
  *      `/<locale>` prefix, navigate to the locale-prefixed equivalent.
- *      Persists the choice to localStorage so subsequent visits skip
- *      the redirect.
+ *      Persists the choice to localStorage so subsequent visits take
+ *      the cheap step-1 path.
  *
  * Why a redirect (and not just `i18n.changeLanguage(lng)`)?
  *   - The URL is the canonical signal for the active locale (SEO
@@ -41,9 +49,30 @@ export function DefaultLocaleRedirect() {
   useEffect(() => {
     if (typeof window === 'undefined' || typeof navigator === 'undefined') return;
 
-    // Step 1 — explicit user choice trumps everything.
+    const onLocalePrefix = /^\/([a-z]{2})(\/|$)/.exec(location.pathname);
+    const prefixed = !!(onLocalePrefix && isSupportedLocale(onLocalePrefix[1]));
+
+    // Step 1 — explicit user choice trumps everything. English stays
+    // at the unprefixed root; a non-English TRANSLATED preference on
+    // an unprefixed URL gets moved to its prefixed equivalent (see
+    // the doc comment — this also protects the cross-app cookie from
+    // the root LocaleResolver's `en` force). Placeholder preferences
+    // are left where they are.
     const stored = window.localStorage.getItem(STORAGE_KEY);
-    if (stored) return;
+    if (stored) {
+      if (
+        !prefixed &&
+        stored !== 'en' &&
+        isSupportedLocale(stored) &&
+        (TRANSLATED_LOCALES as readonly string[]).includes(stored)
+      ) {
+        const target = withLocalePrefix(location.pathname, stored);
+        navigate(`${target}${location.search}${location.hash}`, {
+          replace: true,
+        });
+      }
+      return;
+    }
 
     // Step 2 — find the first navigator-language match. `navigator.languages`
     // is a priority-ordered list (e.g. `['en-US', 'en', 'es']`); we
@@ -75,8 +104,7 @@ export function DefaultLocaleRedirect() {
     // Step 3 — only redirect if we're not already on a localised path.
     // The LocaleResolver / route table already flips i18n based on the
     // URL prefix; this redirect is only for the unprefixed root.
-    const onLocalePrefix = /^\/([a-z]{2})(\/|$)/.exec(location.pathname);
-    if (onLocalePrefix && isSupportedLocale(onLocalePrefix[1])) {
+    if (prefixed && onLocalePrefix) {
       // Already on a prefixed URL — persist the user's effective
       // locale (the one in the URL) so future no-prefix visits don't
       // bounce them away.
@@ -95,10 +123,14 @@ export function DefaultLocaleRedirect() {
     }
     const target = withLocalePrefix(location.pathname, matched);
     navigate(`${target}${location.search}${location.hash}`, { replace: true });
-    // Empty deps — fires exactly once on mount. We don't want this
-    // running on every navigation.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+    // Re-runs per navigation (Codex #1309 r8): a bare `<Link>` that
+    // missed the `<L>` migration lands the user on an unprefixed URL
+    // mid-session, and the stored-preference redirect in step 1 must
+    // catch that too, not just the first mount. After the first run a
+    // stored value always exists, so subsequent runs are just the
+    // cheap step-1 check (idempotent — prefixed URLs and English
+    // return without navigating, so there is no redirect loop).
+  }, [location.pathname, location.search, location.hash, navigate]);
 
   return null;
 }
