@@ -104,7 +104,7 @@ function OfferRow({ offer, risk }: { offer: IndexedOffer; risk: RiskLevel | null
       : `/lend?offer=${offer.offerId}&chain=${offer.chainId}`;
 
   const title = isRentalListing
-    ? `NFT rental · ${shortAddress(offer.lendingAsset)} #${offer.tokenId}${
+    ? `${copy.offers.rentalListing} · ${shortAddress(offer.lendingAsset)} #${offer.tokenId}${
         offer.assetType === AssetType.ERC1155 ? ` ×${offer.quantity}` : ''
       }`
     : `${isLending ? copy.offers.lenderOffer : copy.offers.borrowerOffer} · ${
@@ -120,14 +120,14 @@ function OfferRow({ offer, risk }: { offer: IndexedOffer; risk: RiskLevel | null
     ? `${
         prepayMeta.data
           ? `${formatTokenAmount(offer.amount, prepayMeta.data.decimals)} ${prepayMeta.data.symbol}/day`
-          : 'daily fee loading…'
-      } · ${formatDurationDays(offer.durationDays)} · fees prepaid`
+          : copy.offers.dailyFeeLoading
+      } · ${formatDurationDays(offer.durationDays)} · ${copy.offers.feesPrepaid}`
     : `${formatBpsAsPercent(
         isLending ? offer.interestRateBps : offer.interestRateBpsMax,
-      )} yearly · ${formatDurationDays(offer.durationDays)} · collateral ${
+      )} ${copy.offers.yearly} · ${formatDurationDays(offer.durationDays)} · ${copy.offers.collateralLabel} ${
         hasCollateral
           ? (collateralMeta.data?.symbol ?? shortAddress(offer.collateralAsset))
-          : 'none'
+          : copy.offers.collateralNone
       }`;
 
   // Advanced detail line: the exact numbers a DEX-versed user expects
@@ -155,11 +155,15 @@ function OfferRow({ offer, risk }: { offer: IndexedOffer; risk: RiskLevel | null
       // Always state the flag both ways — on rows where it's absent an
       // advanced user can't tell "disabled" from "not rendered".
       advancedBits.push(
-        offer.allowsPartialRepay ? 'partial repay OK' : 'no partial repay',
+        offer.allowsPartialRepay
+          ? copy.offers.advancedPartialRepayOk
+          : copy.offers.advancedNoPartialRepay,
       );
     }
     advancedBits.push(
-      offer.expiresAt ? `expires ${formatDate(offer.expiresAt)}` : 'no expiry',
+      offer.expiresAt
+        ? `expires ${formatDate(offer.expiresAt)}`
+        : copy.offers.advancedNoExpiry,
     );
   }
 
@@ -171,7 +175,7 @@ function OfferRow({ offer, risk }: { offer: IndexedOffer; risk: RiskLevel | null
         </span>
         <br />
         <span className="row-sub">
-          {sub} · by <AddressName address={offer.creator} />
+          {sub} · {copy.offers.byCreator} <AddressName address={offer.creator} />
         </span>
         {isAdvanced && advancedBits.length > 0 ? (
           <>
@@ -189,16 +193,16 @@ function OfferRow({ offer, risk }: { offer: IndexedOffer; risk: RiskLevel | null
               it BUYS a running lender position, not funds a new borrow —
               so it must not read "Fund this request" (Codex #1175 r1). */}
           {isRentalListing
-            ? 'Rent this NFT'
+            ? copy.offers.ctaRent
             : offer.isSaleVehicle
-              ? 'Buy this loan position'
+              ? copy.offers.ctaBuyPosition
               : isLending
-                ? 'Borrow this'
-                : 'Fund this request'}
+                ? copy.offers.ctaBorrow
+                : copy.offers.ctaFund}
         </Link>
       ) : (
         <span className={`badge ${isLending ? 'badge-info' : 'badge-neutral'}`}>
-          {isLending ? 'Lender' : 'Borrower'}
+          {isLending ? copy.offers.badgeLender : copy.offers.badgeBorrower}
         </span>
       )}
     </div>
@@ -309,40 +313,40 @@ export function Offers() {
         <div className="card" style={{ marginBottom: 16 }}>
           <div className="cluster" style={{ flexWrap: 'wrap', gap: 12 }}>
             <div className="field" style={{ margin: 0 }}>
-              <label htmlFor="book-side">Show</label>
+              <label htmlFor="book-side">{copy.offers.filters.showLabel}</label>
               <SelectMenu
                 id="book-side"
                 value={side}
                 onChange={(next) => setSide(next as SideFilter)}
                 options={[
-                  { value: 'all', label: 'Everything' },
-                  { value: 'lending', label: 'Lending offers (borrow from these)' },
-                  { value: 'borrowing', label: 'Borrow requests (lend to these)' },
-                  { value: 'rentals', label: 'NFT rentals' },
+                  { value: 'all', label: copy.offers.filters.sideAll },
+                  { value: 'lending', label: copy.offers.filters.sideLending },
+                  { value: 'borrowing', label: copy.offers.filters.sideBorrowing },
+                  { value: 'rentals', label: copy.offers.filters.sideRentals },
                 ]}
               />
             </div>
             <div className="field" style={{ margin: 0 }}>
-              <label htmlFor="book-sort">Sort by</label>
+              <label htmlFor="book-sort">{copy.offers.filters.sortLabel}</label>
               <SelectMenu
                 id="book-sort"
                 value={sort}
                 onChange={(next) => setSort(next as SortKey)}
                 options={[
-                  { value: 'newest', label: 'Newest first' },
-                  { value: 'rate-low', label: 'Rate — low to high' },
-                  { value: 'rate-high', label: 'Rate — high to low' },
-                  { value: 'duration-short', label: 'Duration — shortest first' },
-                  { value: 'duration-long', label: 'Duration — longest first' },
+                  { value: 'newest', label: copy.offers.filters.sortNewest },
+                  { value: 'rate-low', label: copy.offers.filters.sortRateLow },
+                  { value: 'rate-high', label: copy.offers.filters.sortRateHigh },
+                  { value: 'duration-short', label: copy.offers.filters.sortDurationShort },
+                  { value: 'duration-long', label: copy.offers.filters.sortDurationLong },
                 ]}
               />
             </div>
             <div className="field" style={{ margin: 0, flex: 1, minWidth: 220 }}>
-              <label htmlFor="book-asset">Filter by asset address</label>
+              <label htmlFor="book-asset">{copy.offers.filters.assetLabel}</label>
               <input
                 id="book-asset"
                 className="input"
-                placeholder="0x… (any leg: principal, collateral, payment)"
+                placeholder={copy.offers.filters.assetPlaceholder}
                 value={assetFilter}
                 onChange={(e) => setAssetFilter(e.target.value)}
                 spellCheck={false}
@@ -354,7 +358,7 @@ export function Offers() {
       ) : null}
 
       {offers.isLoading ? (
-        <EmptyState icon={LoaderCircle} title="Loading the offer book…" />
+        <EmptyState icon={LoaderCircle} title={copy.offers.loading} />
       ) : visible === null || visible === undefined ? (
         <UnavailableState body={copy.offers.unavailable} />
       ) : visible.length === 0 ? (
@@ -362,8 +366,8 @@ export function Offers() {
           // The MARKET isn't empty — the filters matched nothing.
           <EmptyState
             icon={BookOpen}
-            title="No offers match these filters"
-            body="Loosen the filters above — the offer book itself has open offers."
+            title={copy.offers.filteredEmptyTitle}
+            body={copy.offers.filteredEmptyBody}
             action={
               <button
                 type="button"
@@ -374,7 +378,7 @@ export function Offers() {
                   setAssetFilter('');
                 }}
               >
-                Clear filters
+                {copy.offers.filters.clear}
               </button>
             }
           />
@@ -385,7 +389,7 @@ export function Offers() {
             body={copy.offers.emptyBody}
             action={
               <Link to="/" className="btn btn-primary">
-                Create an offer
+                {copy.offers.createOffer}
               </Link>
             }
           />
@@ -409,11 +413,13 @@ export function Offers() {
           />
           <p className="muted" style={{ marginTop: 16 }}>
             {/* Copy follows the role-specific card CTAs (Codex #1175 r2)
-                — the button no longer reads "Use this offer". */}
-            Taking an offer here — “Borrow this”, “Fund this request”, or “Buy
-            this loan position” — walks you through the same review-and-sign
-            steps as the guided <Link to="/borrow">Borrow</Link> and{' '}
-            <Link to="/lend">Lend</Link> flows.
+                — the button no longer reads "Use this offer". Sentence
+                spacing lives inside the footerParts strings. */}
+            {copy.offers.footerParts.lead}
+            <Link to="/borrow">{copy.offers.footerParts.borrowLink}</Link>
+            {copy.offers.footerParts.mid}
+            <Link to="/lend">{copy.offers.footerParts.lendLink}</Link>
+            {copy.offers.footerParts.tail}
           </p>
         </>
       )}

@@ -528,10 +528,7 @@ export function RefinanceFlow({
                 onChange={(e) => setConsent(e.target.checked)}
                 style={{ marginTop: 4 }}
               />
-              <span>
-                I understand the payoff and wallet-balance terms below and
-                agree to them.
-              </span>
+              <span>{copy.refinance.consentLabel}</span>
             </label>
             <ConfirmReceipt
               busy={busy}
@@ -547,10 +544,8 @@ export function RefinanceFlow({
                 flowDisabled('post-offer')
               }
               data={{
-                youReceive:
-                  'A new loan at your chosen terms the moment a lender accepts — your collateral moves to it automatically and this loan closes in the same transaction.',
-                youLock:
-                  'Nothing new — your existing collateral carries over to the new loan without ever unlocking.',
+                youReceive: copy.refinance.receiptReceive,
+                youLock: copy.refinance.receiptLock,
                 youMayOwe: `~${payoffStr} to pay off this loan, pulled automatically when a lender accepts. ${copy.refinance.payoffNote} ${
                   payoffHeadroom > 0n
                     ? `${copy.refinance.lateFeeDisclosure(headroomStr)} `

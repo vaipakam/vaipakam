@@ -118,14 +118,14 @@ const MORE_SHEET: NavItem[] = [
 function ModeSwitch() {
   const { mode, setMode } = useMode();
   return (
-    <div className="mode-switch" role="group" aria-label="Interface mode">
+    <div className="mode-switch" role="group" aria-label={copy.chrome.modeSwitchAria}>
       <button
         type="button"
         className={mode === 'basic' ? 'active' : ''}
         aria-pressed={mode === 'basic'}
         onClick={() => setMode('basic')}
       >
-        Basic
+        {copy.chrome.modeBasic}
       </button>
       <button
         type="button"
@@ -133,7 +133,7 @@ function ModeSwitch() {
         aria-pressed={mode === 'advanced'}
         onClick={() => setMode('advanced')}
       >
-        Advanced
+        {copy.chrome.modeAdvanced}
       </button>
     </div>
   );
@@ -201,7 +201,7 @@ export function AppShell() {
           nav and land on the page content. Visually hidden until
           focused (see `.skip-link`). */}
       <a className="skip-link" href="#main-content">
-        Skip to content
+        {copy.chrome.skipToContent}
       </a>
       {/* Block-driven live refresh of transaction caches (WS push when
           configured, HTTP block-poll otherwise). Renders nothing. */}
@@ -236,7 +236,7 @@ export function AppShell() {
       </header>
 
       <div className="shell-body">
-        <nav className="shell-sidenav" aria-label="Primary">
+        <nav className="shell-sidenav" aria-label={copy.chrome.navPrimaryAria}>
           {PRIMARY_NAV.filter(visible).map((item) => (
             <NavLink
               key={item.to}
@@ -250,7 +250,7 @@ export function AppShell() {
               {copy.chrome.nav[item.labelKey]}
             </NavLink>
           ))}
-          <div className="sidenav-section">More</div>
+          <div className="sidenav-section">{copy.chrome.more}</div>
           {SECONDARY_NAV.filter(visible).map((item) => (
             <NavLink
               key={item.to}
@@ -305,7 +305,7 @@ export function AppShell() {
               chunk fetch reads as "loading" inside the already-painted
               shell, never a blank panel. */}
           <ErrorBoundary resetKey={pathname + search}>
-            <Suspense fallback={<EmptyState icon={LoaderCircle} title="Loading…" />}>
+            <Suspense fallback={<EmptyState icon={LoaderCircle} title={copy.chrome.loading} />}>
               <Outlet />
             </Suspense>
           </ErrorBoundary>
@@ -324,7 +324,7 @@ export function AppShell() {
             onClick={() => setMoreOpen(false)}
             aria-hidden
           />
-          <nav className="more-sheet" aria-label="More destinations">
+          <nav className="more-sheet" aria-label={copy.chrome.moreSheetAria}>
             {MORE_SHEET.filter(visible).map((item) => (
               <NavLink
                 key={item.to}
@@ -345,7 +345,7 @@ export function AppShell() {
         </>
       ) : null}
 
-      <nav className="shell-tabbar" aria-label="Quick navigation">
+      <nav className="shell-tabbar" aria-label={copy.chrome.navQuickAria}>
         {TABBAR.map((item) => (
           <NavLink
             key={item.to}
@@ -369,7 +369,7 @@ export function AppShell() {
           onClick={() => setMoreOpen((o) => !o)}
         >
           <Menu aria-hidden />
-          More
+          {copy.chrome.more}
         </button>
       </nav>
     </div>

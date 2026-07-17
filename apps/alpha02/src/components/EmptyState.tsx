@@ -6,6 +6,7 @@
 import type { LucideIcon } from 'lucide-react';
 import type { ReactNode } from 'react';
 import { CloudOff, LoaderCircle } from 'lucide-react';
+import { copy } from '../content/copy';
 
 export function EmptyState({
   icon: Icon,
@@ -55,7 +56,7 @@ export function UnavailableState({
       <p>{body}</p>
       {onRetry ? (
         <button type="button" className="btn btn-secondary" onClick={onRetry}>
-          Try again
+          {copy.common.tryAgain}
         </button>
       ) : null}
     </div>

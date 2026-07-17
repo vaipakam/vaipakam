@@ -67,23 +67,19 @@ function normalizeThrown(value: unknown): Error {
 }
 
 /** React production builds throw `Minified React error #NNN` — useless
- *  to a user. Map the likely ones to a one-line plain-English gloss;
- *  anything unlisted falls back to the raw message.
+ *  to a user. The likely codes map to a one-line plain-English gloss in
+ *  the copy catalog (`copy.errorBoundary.glosses`, keyed by code);
+ *  anything unlisted falls back to the raw message. Resolved INSIDE the
+ *  function so the i18n copy proxy translates at access time (a
+ *  module-scope map would freeze the English strings).
  *  See https://react.dev/errors/<code>. */
-const REACT_ERROR_GLOSS: Record<string, string> = {
-  '185':
-    'Maximum update depth exceeded — a component is updating state on every render. This is an infinite render loop.',
-  '300': 'Rendered fewer hooks than expected — a hook was skipped by a conditional return.',
-  '301': 'Too many re-renders — a state setter is being called during render.',
-  '310': 'Rules of Hooks violation — a hook was called conditionally or out of order.',
-  '321': 'Invalid hook call — hooks can only run inside a React function component.',
-  '418': 'Hydration mismatch — server and client rendered different markup.',
-};
-
 function reactErrorGloss(message: string): string | null {
   const m = /Minified React error #(\d+)/.exec(message);
   if (!m) return null;
-  return REACT_ERROR_GLOSS[m[1]] ?? `React error #${m[1]} — see https://react.dev/errors/${m[1]}`;
+  const glosses: Record<string, string | undefined> = {
+    ...copy.errorBoundary.glosses,
+  };
+  return glosses[m[1]] ?? `React error #${m[1]} — see https://react.dev/errors/${m[1]}`;
 }
 
 /** Top frames of the component stack (nearest the throw — they name
@@ -152,7 +148,7 @@ export class ErrorBoundary extends Component<ErrorBoundaryProps, ErrorBoundarySt
         {gloss ? <p>{gloss}</p> : null}
         <pre
           className="mono"
-          aria-label="Error detail"
+          aria-label={copy.errorBoundary.detailAria}
           style={{
             textAlign: 'left',
             whiteSpace: 'pre-wrap',

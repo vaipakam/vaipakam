@@ -50,7 +50,7 @@ export function LoanRow({
       <span className="row-main">
         <span className="row-title">
           {isRental
-            ? `${loan.role === 'borrower' ? 'You rent' : 'You rent out'} NFT ${shortAddress(loan.lendingAsset)} #${loan.tokenId}`
+            ? `${loan.role === 'borrower' ? copy.loanRow.youRent : copy.loanRow.youRentOut} NFT ${shortAddress(loan.lendingAsset)} #${loan.tokenId}`
             : `${loan.role === 'borrower' ? copy.positions.roleBorrower : copy.positions.roleLender} ${amount} ${symbol}`}
         </span>
         <br />

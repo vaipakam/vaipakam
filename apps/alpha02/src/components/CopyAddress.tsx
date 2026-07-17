@@ -7,6 +7,7 @@
  */
 import { useEffect, useRef, useState } from 'react';
 import { Check, Copy, ExternalLink } from 'lucide-react';
+import { copy } from '../content/copy';
 import { shortAddress } from '../lib/format';
 
 export function CopyAddress({
@@ -45,7 +46,7 @@ export function CopyAddress({
         {shortAddress(address)}
         {copied ? <Check size={14} aria-hidden /> : <Copy size={14} aria-hidden />}
         <span className="visually-hidden" role="status">
-          {copied ? 'Address copied' : ''}
+          {copied ? copy.copyAddress.copied : ''}
         </span>
       </button>
       {explorerBase ? (

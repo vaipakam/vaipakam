@@ -1016,7 +1016,7 @@ export function OrderTicket({
           className="input"
           inputMode="decimal"
           placeholder="5.0"
-          title="Rates are stored in basis points (1% = 100 bps)"
+          title={text.rateBpsNote}
           value={rate}
           onChange={(e) => {
             setRate(e.target.value.trim());
@@ -1042,14 +1042,14 @@ export function OrderTicket({
       </div>
       {selfCollateral ? (
         <p className="field-hint" style={{ color: 'var(--danger)' }}>
-          Collateral can’t be the same token as the loan asset.
+          {text.selfCollateral}
         </p>
       ) : null}
 
       <div className="field">
         <div className="field-label-row">
           <label htmlFor="desk-collateral-amount">
-            Collateral amount
+            {text.collateralAmount}
             {collateralMeta.data ? ` (${collateralMeta.data.symbol})` : ''}
           </label>
           {showCollateralMax ? (
@@ -1092,9 +1092,7 @@ export function OrderTicket({
               type="button"
               className={`desk-chip${expiry === value ? ' active' : ''}`}
               title={
-                value === 'gtc'
-                  ? 'Good-til-cancelled — rests until you cancel it'
-                  : 'Good-til-time — lapses on its own at the deadline'
+                value === 'gtc' ? text.expiryGtcTitle : text.expiryGttTitle
               }
               onClick={() => {
                 setExpiry(value);

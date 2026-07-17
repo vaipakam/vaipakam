@@ -426,13 +426,12 @@ export function EarlyExitFlow({
                     // Names the exact offer — an open review must
                     // never be ambiguous about which row it binds.
                     youReceive: `~${toSellerStr}, paid straight to your wallet in the same transaction — selling to offer #${selected.offerId} at ${formatBpsAsPercent(selected.interestRateBps)} yearly. Nothing to claim afterwards.`,
-                    youLock: 'Nothing.',
-                    youMayOwe: `Nothing — you approve nothing and pay nothing out of pocket. ${copy.earlyExit.forfeitNote}`,
+                    youLock: copy.earlyExit.receiptLockNothing,
+                    youMayOwe: `${copy.earlyExit.receiptOweNothing} ${copy.earlyExit.forfeitNote}`,
                     // max(accrued, shortfall) — never the sum.
-                    youCanLose: `The LARGER of the interest accrued so far or the rate difference for the remaining term — never both. Already reflected in the figure above; the exact amount is re-read live when you confirm.`,
-                    fees: 'The protocol’s cut comes out of the forfeited interest — never out of your payout beyond the figure shown.',
-                    whenThisEnds:
-                      'Immediately — your position transfers to the buyer and you’re done with this loan. The borrower’s rate and due date don’t change.',
+                    youCanLose: copy.earlyExit.receiptCanLose,
+                    fees: copy.earlyExit.receiptFees,
+                    whenThisEnds: copy.earlyExit.receiptEnds,
                   }}
                 >
                   <SimulationPreview tx={simTx} />

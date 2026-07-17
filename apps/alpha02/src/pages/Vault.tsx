@@ -60,13 +60,13 @@ export function Vault() {
           }
         />
       ) : vault.isLoading || vault.depsLoading ? (
-        <EmptyState icon={LoaderCircle} title="Reading your vault…" />
+        <EmptyState icon={LoaderCircle} title={copy.vault.loading} />
       ) : vault.depsUnavailable || vault.isError || !vault.data ? (
         <UnavailableState body={copy.vault.unavailable} />
       ) : vault.data.vaultAddress === null ? (
         <EmptyState
           icon={Landmark}
-          title="No vault yet"
+          title={copy.vault.noVaultTitle}
           body={copy.vault.noVaultYet}
           action={forwardCta}
         />
@@ -74,7 +74,7 @@ export function Vault() {
         <div className="stack">
           <section className="card">
             <p className="muted" style={{ margin: 0 }}>
-              Vault address:{' '}
+              {copy.vault.addressLabel}{' '}
               <CopyAddress
                 address={vault.data.vaultAddress}
                 explorerBase={readChain.blockExplorer}
@@ -101,8 +101,8 @@ export function Vault() {
             ) : (
               <EmptyState
                 icon={Landmark}
-                title="Nothing in your vault yet"
-                body="Assets appear here when you post offers, open loans, or deposit VPFI."
+                title={copy.vault.emptyTitle}
+                body={copy.vault.emptyBody}
                 action={forwardCta}
               />
             )
@@ -138,7 +138,9 @@ export function Vault() {
                     <span
                       className={`badge ${asset.locked > 0n ? 'badge-info' : 'badge-ok'}`}
                     >
-                      {asset.locked > 0n ? 'Partly locked' : 'Free'}
+                      {asset.locked > 0n
+                        ? copy.vault.badgePartlyLocked
+                        : copy.vault.badgeFree}
                     </span>
                   </div>
                 )}

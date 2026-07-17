@@ -420,16 +420,16 @@ function AdvancedBands({
     <div>
       <p className="muted" style={{ marginBottom: 8 }}>{copy.alerts.advancedBands}</p>
       <div className="cluster">
-        {field('Warn', warn, setWarn)}
-        {field('Alert', alert, setAlert)}
-        {field('Critical', critical, setCritical)}
+        {field(copy.alerts.bandWarn, warn, setWarn)}
+        {field(copy.alerts.bandAlert, alert, setAlert)}
+        {field(copy.alerts.bandCritical, critical, setCritical)}
         <button
           type="button"
           className="btn btn-secondary"
           disabled={busy || !valid}
           onClick={() => onSave(bands)}
         >
-          Save
+          {copy.alerts.bandsSave}
         </button>
       </div>
       {!valid ? (

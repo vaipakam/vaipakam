@@ -51,8 +51,7 @@ function RewardsCard() {
           <h2 style={{ margin: 0 }}>{copy.rewards.title}</h2>
         </div>
         <p className="muted" style={{ margin: 0 }}>
-          We couldn’t check your rewards right now — please try again in a
-          moment.
+          {copy.rewards.unavailable}
         </p>
         <button
           type="button"
@@ -60,7 +59,7 @@ function RewardsCard() {
           style={{ marginTop: 12 }}
           onClick={() => void rewards.refetch()}
         >
-          Try again
+          {copy.common.tryAgain}
         </button>
       </section>
     );
@@ -118,7 +117,7 @@ function RewardsCard() {
             onClick={() => void claim()}
           >
             {busy ? <LoaderCircle className="spin" aria-hidden size={18} /> : null}
-            {busy ? 'Waiting for wallet…' : copy.rewards.claim}
+            {busy ? copy.common.waitingForWallet : copy.rewards.claim}
           </button>
         </>
       ) : snapshot.waiting ? (
@@ -183,30 +182,29 @@ function ClaimRow({ loan }: { loan: ClaimableLoan }) {
       what = baseAmountStr
         ? `${baseAmountStr} fees + your ${nft} back`
         : `Rental fees + your ${nft} back`;
-      why = 'The rental ended — collect your earned fees and reclaim the NFT.';
+      why = copy.claims.row.whyRentalEnded;
     } else {
       what = baseAmountStr
         ? `${baseAmountStr} buffer back`
-        : 'Your prepaid buffer back';
-      why = 'The rental closed — the refundable buffer is released.';
+        : copy.claims.row.prepaidBufferBack;
+      why = copy.claims.row.whyRentalClosed;
     }
   } else if (loan.role === 'lender') {
     if (properClose) {
       what = baseAmountStr
         ? `${baseAmountStr}${heldSuffix}`
         : hasHeld
-          ? 'Held proceeds for this loan'
+          ? copy.claims.row.heldProceeds
           : principalMeta.data
             ? `${formatTokenAmount(loan.principal, principalMeta.data.decimals)} ${principalMeta.data.symbol} + interest`
-            : 'Repaid funds';
+            : copy.claims.row.repaidFunds;
       why =
         loan.status === 'repaid'
-          ? 'The borrower repaid this loan.'
-          : 'This loan closed by internal matching — collect your funds.';
+          ? copy.claims.row.whyRepaidLender
+          : copy.claims.row.whyInternalMatchLender;
     } else if (loan.status === 'fallback_pending') {
       what = `${collateralStr} collateral`;
-      why =
-        'An automatic liquidation didn’t complete — claiming finalizes the recovery yourself.';
+      why = copy.claims.row.whyFallbackPending;
     } else {
       // Liquid-collateral defaults settle by swap (proceeds in the
       // loan asset); in-kind paths hand over the collateral itself.
@@ -216,29 +214,29 @@ function ClaimRow({ loan }: { loan: ClaimableLoan }) {
       what = baseAmountStr
         ? `${baseAmountStr}${heldSuffix} recovered from the default`
         : hasHeld
-          ? 'Held proceeds recovered from the default'
+          ? copy.claims.row.heldProceedsDefault
           : `Default recovery — ${collateralStr}`;
-      why = 'The loan defaulted — collect what the default settlement recovered for you.';
+      why = copy.claims.row.whyDefaultLender;
     }
   } else if (defaulted) {
     // After a liquidation only a residue (if any) is claimable — never
     // promise the full original collateral, and never say "you repaid".
     what = baseAmountStr
       ? `${baseAmountStr}${rebateStr ? ` + ${rebateStr}` : ''}`
-      : (rebateStr ?? 'Anything left after liquidation');
-    why = 'This loan defaulted. If the liquidation left a surplus, you can claim it.';
+      : (rebateStr ?? copy.claims.row.surplusAfterLiquidation);
+    why = copy.claims.row.whyDefaultBorrower;
   } else if (loan.status === 'internal_matched') {
     // An internal match leaves the borrower a residual and/or VPFI
     // rebate at most — never promise the full collateral back.
     what = baseAmountStr
       ? `${baseAmountStr}${rebateStr ? ` + ${rebateStr}` : ''}`
-      : (rebateStr ?? 'Anything left after the internal match');
-    why = 'This loan closed by internal matching — collect any residual left for you.';
+      : (rebateStr ?? copy.claims.row.residualAfterMatch);
+    why = copy.claims.row.whyInternalMatchBorrower;
   } else {
     what = baseAmountStr
       ? `${baseAmountStr} collateral back${rebateStr ? ` + ${rebateStr}` : ''}`
       : (rebateStr ?? `${collateralStr} collateral back`);
-    why = 'You repaid this loan, so your collateral is released.';
+    why = copy.claims.row.whyRepaidBorrower;
   }
 
   return (
@@ -247,7 +245,7 @@ function ClaimRow({ loan }: { loan: ClaimableLoan }) {
         <span className="row-title">{what}</span>
         <br />
         <span className="row-sub">
-          {isRental ? 'Rental' : 'Loan'} #{loan.loanId} · {why}
+          {isRental ? copy.claims.row.rental : copy.claims.row.loan} #{loan.loanId} · {why}
         </span>
       </span>
       <span className="btn btn-primary btn-sm">{copy.claims.claim}</span>
@@ -306,7 +304,7 @@ export function Claims() {
             <ClaimAllCard loans={rows} />
           ) : null}
           {rowsLoading ? (
-            <EmptyState icon={LoaderCircle} title="Checking for claims…" />
+            <EmptyState icon={LoaderCircle} title={copy.claims.checking} />
           ) : rowsUnavailable ? (
             <UnavailableState body={copy.claims.unavailable} onRetry={() => void claimables.refetch()} />
           ) : rows.length === 0 ? (

@@ -1060,7 +1060,7 @@ export function OpenOrdersPanel({
     return <EmptyState icon={Inbox} title={copy.wallet.connectFirst} />;
   }
   if (offers.isLoading) {
-    return <EmptyState icon={LoaderCircle} title="Loading your open orders…" />;
+    return <EmptyState icon={LoaderCircle} title={text.loading} />;
   }
   if (offers.data == null || rows === null) {
     return <UnavailableState body={text.unavailable} />;
