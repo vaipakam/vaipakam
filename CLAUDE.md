@@ -521,10 +521,11 @@ checklist in
 [`docs/DesignsAndPlans/VPFITokenomicsRedesignResearch.md`](docs/DesignsAndPlans/VPFITokenomicsRedesignResearch.md)
 §A.4 before merge: rewards are **usage rebates / fee discounts /
 program longevity** (never yield, APY, income, deflation, scarcity, or
-price); sized by the **user's own activity** (never pro-rata-to-holding
-or a promised rate); **no market touch / published price / purchase
-surface** implied; and the flow presented as **deterministic bookkeeping
-over fees already received** (no operator-discretion framing). Vault-
+price); sized by the **user's own activity** (never pro-rata-to-holding,
+never a cash-equivalent **revenue share**, never a promised rate);
+**no market touch / published price / purchase surface** implied; and
+the flow presented as **deterministic bookkeeping over fees already
+received** (no operator-discretion framing). Vault-
 delivered rewards (RL-1) are "rewards land in your vault, ready to use" —
 never auto-staking or compounding. Issuer representations are the
 dominant factor under release 33-11412, so this checklist is part of the

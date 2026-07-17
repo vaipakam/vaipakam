@@ -230,7 +230,14 @@ Phase-2 items (governance, then buyback-and-burn, then any fee-share) unlock **o
 
 Verified during the research sweep:
 
-- SEC/CFTC 2026 Interpretation **— primary source TO ADD:** the official SEC/CFTC interpretive release (sec.gov newsroom + the Federal Register notice) should be linked here and used as the authoritative text; the client-alert analyses below are **secondary summaries** and can drift, so counsel/implementers must validate the quoted airdrop / staking / issuer-representation boundaries against the primary release.
+- SEC/CFTC 2026 Interpretation — **primary source** (added with the RL-6
+  Appendix A evidence pack, resolving the earlier "TO ADD"): release
+  33-11412, https://www.sec.gov/rule-release/33-11412
+  (PDF: https://www.sec.gov/files/rules/interp/2026/33-11412.pdf). This is
+  the authoritative text; the client-alert analyses below are **secondary
+  summaries** and can drift, so counsel/implementers must validate the
+  quoted airdrop / staking / issuer-representation boundaries against the
+  primary release.
 - SEC/CFTC 2026 Interpretation analyses (secondary summaries):
   - https://www.wilmerhale.com/en/insights/client-alerts/20260324-the-secs-new-framework-for-crypto-assets-under-howey
   - https://www.sidley.com/en/insights/newsupdates/2026/03/sec-releases-landmark-interpretation-on-application-of-us-securities-laws-to-crypto-assets
@@ -266,8 +273,11 @@ Verified during the research sweep:
 > (ratified 2026-07-16, issue #1304). Purpose: make the recycling/rewards
 > stack's legal argument **checkable by a future counsel in one sitting** —
 > the hand-off package is **two documents**: the SEC/CFTC interpretation of
-> 2026-03-17 (release 33-11412, §2 above) **plus the Fuse no-action letter
-> (A.1)**, with the production-protocol benchmark (A.3) as context. Same
+> 2026-03-17 (release 33-11412, §2 above — primary source:
+> [release page](https://www.sec.gov/rule-release/33-11412) /
+> [PDF](https://www.sec.gov/files/rules/interp/2026/33-11412.pdf))
+> **plus the Fuse no-action letter (A.1)**, with the production-protocol
+> benchmark (A.3) as context. Same
 > posture as the rest of this doc: informational, **not legal advice**, and
 > nothing here upgrades the §3/§9 confidence levels or reopens the §5
 > refuted claims.
@@ -295,24 +305,31 @@ activity and redeemable **only for discounts/rebates on platform costs**
   Vaipakam's shape — rewards earned by the user's own activity whose
   in-platform utility is fee-discount standing — and the material
   differences must travel with the citation: Fuse's rewards were for
-  **energy/grid-support behaviours, not financial/lending activity**, and
+  **energy/grid-support behaviours, not financial/lending activity**;
   Fuse represented that it does not pass utility payments through to
-  consumers. This repo's own research (§4.2, §6.3, §9.2) continues to
-  treat foreseeable activity rewards on a **lending** platform as a
-  counsel-relevant residual — Fuse supports the **consumptive-rebate
-  characterization** of rewards-redeemable-for-fee-discounts; it is
-  **never clearance** for a lending rewards surface.
+  consumers; and — cutting the OTHER way — Fuse's incoming letter
+  represented **freely transferable/tradable tokens with redemption value
+  referenced to the average third-party market price**, a
+  secondary-market element Vaipakam deliberately does **not** share
+  (§A.4's "no market touch, no published price, no purchase surface" is
+  load-bearing here, so the analogy must not be read as endorsing any
+  market-referenced mechanic). This repo's own research (§4.2, §6
+  item 3, §9.2) continues to treat foreseeable activity rewards on a
+  **lending** platform as a counsel-relevant residual — Fuse supports
+  the **consumptive-rebate characterization** of
+  rewards-redeemable-for-fee-discounts; it is **never clearance** for a
+  lending rewards surface.
 
 Secondary summary:
 [Global Fintech & Digital Assets Blog (2025-12)](https://www.fintechanddigitalassets.com/2025/12/sec-staff-issues-no-action-letter-for-fuse-crypto-token/).
 
 ### A.2 SEC Corp Fin statement on protocol staking (2025-05-29) — the determinism property, nothing more
 
-The Division's *Statement on Certain Protocol Staking Activities*
-(2025-05-29) took the view that certain **PoS network protocol staking**
-activities are not securities offerings because they are "administrative or
-ministerial," not entrepreneurial — see the companion commissioner
-statements for the primary context
+The Division's
+[*Statement on Certain Protocol Staking Activities* (2025-05-29)](https://www.sec.gov/newsroom/speeches-statements/statement-certain-protocol-staking-activities-052925)
+took the view that certain **PoS network protocol staking** activities are
+not securities offerings because they are "administrative or ministerial,"
+not entrepreneurial — see also the companion commissioner statements
 ([Peirce](https://www.sec.gov/newsroom/speeches-statements/peirce-statement-protocol-staking-052925),
 [Crenshaw dissent](https://www.sec.gov/newsroom/speeches-statements/crenshaw-statement-protocol-staking-052925))
 and the Division's follow-on
@@ -375,15 +392,36 @@ the retail-copy rules in `CLAUDE.md`.
 
 ### A.5 Sources added by this appendix
 
+- SEC/CFTC interpretive release 33-11412 (2026-03-17) — **primary**:
+  https://www.sec.gov/rule-release/33-11412
+  (PDF: https://www.sec.gov/files/rules/interp/2026/33-11412.pdf)
 - SEC Corp Fin no-action letter, Fuse Crypto Limited (2025-11-24):
   https://www.sec.gov/rules-regulations/no-action-interpretive-exemptive-letters/division-corporation-finance-no-action/fuse-crypto-limited-112425
   (incoming counsel letter: https://www.sec.gov/files/corpfin/no-action/fuse-incoming-final-conformed-111925.pdf)
 - Secondary: https://www.fintechanddigitalassets.com/2025/12/sec-staff-issues-no-action-letter-for-fuse-crypto-token/
 - SEC Corp Fin, *Statement on Certain Protocol Staking Activities*
-  (2025-05-29) — companion commissioner statements:
+  (2025-05-29) — **operative statement**:
+  https://www.sec.gov/newsroom/speeches-statements/statement-certain-protocol-staking-activities-052925
+  — companion commissioner statements:
   https://www.sec.gov/newsroom/speeches-statements/peirce-statement-protocol-staking-052925 ·
   https://www.sec.gov/newsroom/speeches-statements/crenshaw-statement-protocol-staking-052925
 - SEC Corp Fin, *Statement on Certain Liquid Staking Activities*
   (2025-08-05): https://www.sec.gov/newsroom/speeches-statements/corpfin-certain-liquid-staking-activities-080525
-- Production-protocol benchmark sources: see
-  [`VpfiRecyclingLoopClosureDesign.md`](VpfiRecyclingLoopClosureDesign.md) §3.
+- Production-protocol benchmark sources (per-protocol; the loop-closure
+  design §3 carries the full comparison narrative). Doc-site paths move,
+  so entries name the canonical home + the document to pull:
+  - dYdX v4 fee-linked trading-reward cap: https://docs.dydx.exchange —
+    "Trading Rewards" (rewards ≤ a fraction of the user's own net fees).
+  - GMX esGMX forfeiture / Multiplier Points: https://docs.gmx.io —
+    "Rewards" / "Tokenomics".
+  - Aave "Buy and Distribute" ecosystem-reserve refill:
+    https://governance.aave.com — the 2025 "Aavenomics update" proposal
+    thread (also summarized in the §10 buyback/fee-switch links).
+  - Jupiter Active Staking Rewards (auto-stake at claim):
+    https://docs.jup.ag — "Active Staking Rewards (ASR)".
+  - Synthetix emissions sunset: https://sips.synthetix.io — SIP-2043
+    ("End SNX inflation").
+  - Uniswap UNIfication burn-over-distribute choice: see the §10 DLNews
+    fee-switch link.
+  - Curve/Convex veCRV fee share (the avoided dividend shape):
+    https://resources.curve.finance — "veCRV" / fee distribution.
