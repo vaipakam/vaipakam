@@ -360,6 +360,16 @@ contract RewardAggregatorFacet is
         // mirrors cap identically and the per-chain remittance identity holds.
         LibInteractionRewards.snapshotDayCapThreshold(dayId);
 
+        // Governor PR-3b (#1217 §3.1) — stamp the day's pool composition
+        // (schedule floor + absorption-coupled recycled budget) at the same
+        // snapshot point. Records-only until the PR-3c cutover arms
+        // commitment reservation (see {LibVaipakam.Storage
+        // .governorCommitArmedFromDay}); the live claim math stays
+        // schedule-based until that cutover, so nothing pays from the
+        // recycled term yet — absorption without distribution coupling is
+        // the accepted launch posture.
+        _stampGovernorDayPool(s, dayId);
+
         emit DailyGlobalInterestFinalized(
             dayId,
             globalLender,
@@ -375,6 +385,158 @@ contract RewardAggregatorFacet is
                 missing
             );
         }
+    }
+
+    /// @notice Governor PR-3b (#1217 §3.1) — emitted once per finalized day
+    ///         with the stamped pool composition. `dailyPool` is
+    ///         `scheduleFloor + recycledBudget`; `aBar` is the trailing
+    ///         absorption average the recycled term was sized from.
+    /// @custom:event-category informational/reward-governor
+    event GovernorDayPoolStamped(
+        uint256 indexed dayId,
+        uint256 scheduleFloor,
+        uint256 recycledBudget,
+        uint256 aBar,
+        uint256 marginBps
+    );
+
+    /// @dev Governor PR-3b (#1217 §3.1) — compute + stamp the day's pool
+    ///      composition at finalization (write-once; the finalize entry
+    ///      points already guard replay via `dailyGlobalFinalized`):
+    ///
+    ///        Ā[D]           = Σ_{d∈(D−W..D]} credited[d] / W   (W = 7,
+    ///                         zero-padded — NEVER ÷ elapsed days)
+    ///        scheduleFloor  = min(schedule[D], freshAvailable)
+    ///        recycledBudget = schedule==0 ? 0
+    ///                         : min(fundable, Ā×(10000−m)/10000)
+    ///
+    ///      `schedule[D] = halfPoolForDay × 2`, zeroed on day 0 (the
+    ///      first 24h stay reward-excluded; the coupled term is gated off
+    ///      with it — recycling must not make day-0 activity rewardable).
+    ///      `freshAvailable` nets the pool cap against paid-out +
+    ///      remitted-to-mirror + ARMED outstanding fresh commitments;
+    ///      `fundable` nets the recycle bucket against ARMED outstanding
+    ///      recycled commitments. While `governorCommitArmedFromDay` is 0
+    ///      the outstanding sums stay untouched (records-only — see the
+    ///      storage natspec for why reservation must arm atomically with
+    ///      PR-3c's consume-at-claim).
+    function _stampGovernorDayPool(
+        LibVaipakam.Storage storage s,
+        uint256 dayId
+    ) internal {
+        uint256 w = LibVaipakam.RECYCLE_TRAILING_WINDOW_DAYS;
+        uint256 credited;
+        for (uint256 i; i < w; ) {
+            if (dayId >= i) {
+                credited += s.recycledCreditedByDay[dayId - i];
+            }
+            unchecked {
+                ++i;
+            }
+        }
+        uint256 aBar = credited / w;
+
+        uint256 schedule = dayId == 0
+            ? 0
+            : LibInteractionRewards.halfPoolForDay(dayId) * 2;
+
+        uint256 reserved = s.interactionPoolPaidOut
+            + s.rewardBudgetRemittedGlobal
+            + s.outstandingCommitFresh;
+        uint256 freshAvailable = LibVaipakam.VPFI_INTERACTION_POOL_CAP > reserved
+            ? LibVaipakam.VPFI_INTERACTION_POOL_CAP - reserved
+            : 0;
+        uint256 scheduleFloor = schedule < freshAvailable
+            ? schedule
+            : freshAvailable;
+
+        uint256 marginBps = LibVaipakam.cfgRecycleMarginBps();
+        uint256 fundable = s.recycleBucket > s.outstandingCommitRecycled
+            ? s.recycleBucket - s.outstandingCommitRecycled
+            : 0;
+        uint256 coupled = (aBar * (10_000 - marginBps)) / 10_000;
+        uint256 recycledBudget = schedule == 0
+            ? 0
+            : (fundable < coupled ? fundable : coupled);
+
+        s.dayPoolStamp[dayId] = LibVaipakam.DayPoolStamp({
+            scheduleFloor: uint128(scheduleFloor),
+            recycledBudget: uint128(recycledBudget),
+            aBarAtFinalize: uint128(aBar),
+            marginBpsAtFinalize: uint16(marginBps),
+            stamped: true
+        });
+
+        // Commitment reservation — armed only from the PR-3c cutover day
+        // (Phase A′ single-chain: the day's commitments ARE the stamped
+        // halves; the per-chain ceil-div refinement arrives with the mesh).
+        uint256 armedFrom = s.governorCommitArmedFromDay;
+        if (armedFrom != 0 && dayId >= armedFrom) {
+            s.outstandingCommitFresh += scheduleFloor;
+            s.outstandingCommitRecycled += recycledBudget;
+        }
+
+        emit GovernorDayPoolStamped(
+            dayId,
+            scheduleFloor,
+            recycledBudget,
+            aBar,
+            marginBps
+        );
+    }
+
+    /// @notice Governor PR-3b — read a finalized day's stamped pool
+    ///         composition (transparency + #1218 metrics + PR-3c claim
+    ///         math source).
+    /// @param  dayId Day to read.
+    /// @return stamped        True once the day finalized (stamp exists).
+    /// @return scheduleFloor  Fresh (pre-fund) half of the day's pool.
+    /// @return recycledBudget Absorption-coupled recycled half.
+    /// @return aBar           Trailing absorption average at finalize.
+    /// @return marginBps      Retained-margin bps stamped at finalize.
+    function getDayPoolStamp(uint256 dayId)
+        external
+        view
+        returns (
+            bool stamped,
+            uint256 scheduleFloor,
+            uint256 recycledBudget,
+            uint256 aBar,
+            uint256 marginBps
+        )
+    {
+        LibVaipakam.DayPoolStamp storage p =
+            LibVaipakam.storageSlot().dayPoolStamp[dayId];
+        return (
+            p.stamped,
+            p.scheduleFloor,
+            p.recycledBudget,
+            p.aBarAtFinalize,
+            p.marginBpsAtFinalize
+        );
+    }
+
+    /// @notice Governor PR-3b — the outstanding (armed) commitment sums and
+    ///         arming day. All zero until the PR-3c cutover arms
+    ///         reservation.
+    /// @return armedFromDay        First day whose stamp reserves (0 = unarmed).
+    /// @return outstandingFresh    Σ armed fresh commitments not yet consumed.
+    /// @return outstandingRecycled Σ armed recycled commitments not yet consumed.
+    function getGovernorCommitState()
+        external
+        view
+        returns (
+            uint256 armedFromDay,
+            uint256 outstandingFresh,
+            uint256 outstandingRecycled
+        )
+    {
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        return (
+            s.governorCommitArmedFromDay,
+            s.outstandingCommitFresh,
+            s.outstandingCommitRecycled
+        );
     }
 
     // ─── Broadcast trigger ─────────────────────────────────────────────────

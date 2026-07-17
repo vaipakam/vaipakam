@@ -2364,7 +2364,7 @@ contract DeployDiamond is Script {
     }
 
     function _getRewardAggregatorSelectors() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](13);
+        s = new bytes4[](15);
         s[0] = RewardAggregatorFacet.onChainReportReceived.selector;
         s[1] = RewardAggregatorFacet.finalizeDay.selector;
         s[2] = RewardAggregatorFacet.forceFinalizeDay.selector;
@@ -2378,6 +2378,9 @@ contract DeployDiamond is Script {
         s[10] = RewardAggregatorFacet.getExpectedSourceChainIds.selector;
         s[11] = RewardAggregatorFacet.isDayReadyToFinalize.selector;
         s[12] = RewardAggregatorFacet.backfillDayInclusion.selector;
+        // Governor PR-3b (#1217) — day-pool stamp + commitment-state reads.
+        s[13] = RewardAggregatorFacet.getDayPoolStamp.selector;
+        s[14] = RewardAggregatorFacet.getGovernorCommitState.selector;
     }
 
     function _getRewardRemittanceSelectors() internal pure returns (bytes4[] memory s) {
