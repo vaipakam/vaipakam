@@ -893,11 +893,12 @@ contract ConfigFacet is DiamondAccessControl {
     ///         then on, and an entry expires `H` days after its stamp —
     ///         every pre-existing dormant entry therefore gets at least a
     ///         full `H` of notice after first activation (grandfathering by
-    ///         construction). Every 0→non-zero transition additionally
-    ///         re-stamps the activation-notice floor: after a dark reset,
-    ///         re-enabling grants EVERY entry — however stale its clock
-    ///         stamp — at least `REWARD_CLAIM_HORIZON_NOTICE_DAYS` (90) of
-    ///         fresh runway before it can expire (the ratified notice floor).
+    ///         construction). Every non-zero (re)configuration — activation
+    ///         after a dark reset AND any horizon retune, including a
+    ///         shortening — re-stamps the activation-notice floor: every
+    ///         entry, however stale its clock stamp, gets at least
+    ///         `REWARD_CLAIM_HORIZON_NOTICE_DAYS` (90) of fresh runway
+    ///         before it can expire (the ratified notice floor).
     function setRewardClaimHorizonDays(uint32 horizonDays)
         external
         onlyRole(LibAccessControl.ADMIN_ROLE)
@@ -915,7 +916,14 @@ contract ConfigFacet is DiamondAccessControl {
             );
         }
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
-        if (horizonDays != 0 && s.rewardClaimHorizonDays == 0) {
+        if (horizonDays != 0) {
+            // EVERY (re)configuration re-stamps the ≥90-day notice floor —
+            // not just a 0→non-zero activation. Shortening the horizon
+            // (e.g. 1095 → 180) must never let the next sweep expire an
+            // already-stamped dormant entry immediately; the floor gives
+            // every claimant at least the ratified notice from the moment
+            // the rules changed. Lengthening re-stamps too, harmlessly
+            // (the floor only binds entries already past `stamp + H`).
             s.rewardHorizonActivatedAt = uint64(block.timestamp);
         }
         s.rewardClaimHorizonDays = horizonDays;

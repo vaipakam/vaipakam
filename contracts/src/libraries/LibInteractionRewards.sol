@@ -88,6 +88,13 @@ library LibInteractionRewards {
     /// @notice RL-3 — `entryId` expired past its claim horizon and was
     ///         swept into the recycle bucket (`total` split into the
     ///         fresh absorption credit and the `recycled` release).
+    /// @dev    FACE-VALUE decomposition, deliberately non-accounting: in
+    ///         the pool-cap boundary case the batch's fresh credit is
+    ///         truncated AFTER this emits, so the authoritative
+    ///         absorbed/released amounts are the `VpfiRecycled` /
+    ///         `RewardCommitmentReleased` events (both post-truncation) —
+    ///         the designated accounting feeds. Reconcile from those,
+    ///         never from this event.
     /// @custom:event-category state-change/reward-claim
     event RewardEntryExpired(
         uint256 indexed entryId,
@@ -1096,6 +1103,19 @@ function _dayPoolHalves(
             if (cursor < need) return expired;
         }
 
+        EntrySplit memory split_ = _entryWindowSplit(s, e);
+        // Underfunded gate (both phases): horizon time only counts — and
+        // expiry only processes — while the LOCAL chain could actually pay
+        // this entry's claim. On a mirror mid-remittance-outage the claim's
+        // terminal `safeTransfer` would revert, so stamping (or expiring)
+        // there would charge the funding delay against the claimant.
+        if (
+            IERC20Metadata(s.vpfiToken).balanceOf(address(this)) <
+            split_.total
+        ) {
+            return expired;
+        }
+
         uint64 stamp = s.rewardEntryFirstClaimableAt[id];
         if (stamp == 0) {
             // First observed claimability — start the clock, expire later.
@@ -1114,7 +1134,6 @@ function _dayPoolHalves(
             return expired;
         }
 
-        EntrySplit memory split_ = _entryWindowSplit(s, e);
         // Never expire an entry whose FRESH share cannot be credited: at
         // full fresh-pool exhaustion an all-fresh entry would be processed
         // with ZERO bucket credit — value silently burned. Defer instead

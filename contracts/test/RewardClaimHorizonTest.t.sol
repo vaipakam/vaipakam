@@ -222,6 +222,69 @@ contract RewardClaimHorizonTest is SetupTest, IVaipakamErrors {
         );
     }
 
+    function testShorteningHorizonRegrantsNoticeFloor() public {
+        _cfg().setRewardClaimHorizonDays(1095);
+        uint256 id = _seedClaimableEntry();
+        _facet().sweepExpiredInteractionRewards(_ids(id)); // stamp
+
+        // Past the SHORT horizon but well inside the configured long one.
+        vm.warp(block.timestamp + 200 days);
+        _cfg().setRewardClaimHorizonDays(180);
+
+        // The retune re-stamps the notice floor — the next sweep cannot
+        // spring instant expiry on the already-stamped dormant entry.
+        assertEq(
+            _facet().sweepExpiredInteractionRewards(_ids(id)),
+            0,
+            "a shortened horizon cannot spring expiry"
+        );
+        (, uint64 expiry) = _facet().getRewardEntryExpiry(id);
+        assertEq(
+            expiry,
+            uint64(block.timestamp + 90 days),
+            "expiry lifted to retune + notice"
+        );
+        vm.warp(block.timestamp + 91 days);
+        assertGt(
+            _facet().sweepExpiredInteractionRewards(_ids(id)),
+            0,
+            "expires once the re-granted notice elapses"
+        );
+    }
+
+    function testUnderfundedChainNeverStampsOrExpires() public {
+        _cfg().setRewardClaimHorizonDays(365);
+        uint256 id = _seedClaimableEntry();
+
+        // Remittance outage: the chain cannot pay the entry's claim, so
+        // horizon time must not count — no stamp.
+        deal(address(vpfi), address(diamond), 0);
+        _facet().sweepExpiredInteractionRewards(_ids(id));
+        (uint64 stamp, ) = _facet().getRewardEntryExpiry(id);
+        assertEq(stamp, 0, "no clock while the chain cannot pay");
+
+        // Funding arrives → the clock starts from here, not earlier.
+        deal(address(vpfi), address(diamond), DIAMOND_SEED);
+        _facet().sweepExpiredInteractionRewards(_ids(id));
+        (stamp, ) = _facet().getRewardEntryExpiry(id);
+        assertGt(stamp, 0, "clock starts once funded");
+
+        // An outage AT the expiry moment defers processing too.
+        vm.warp(block.timestamp + 366 days);
+        deal(address(vpfi), address(diamond), 0);
+        assertEq(
+            _facet().sweepExpiredInteractionRewards(_ids(id)),
+            0,
+            "expiry deferred while unfunded"
+        );
+        deal(address(vpfi), address(diamond), DIAMOND_SEED);
+        assertGt(
+            _facet().sweepExpiredInteractionRewards(_ids(id)),
+            0,
+            "expires once funded again"
+        );
+    }
+
     function testHorizonKnobBounds() public {
         vm.expectRevert();
         _cfg().setRewardClaimHorizonDays(179);

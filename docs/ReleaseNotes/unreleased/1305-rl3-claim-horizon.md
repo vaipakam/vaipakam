@@ -13,11 +13,15 @@ or broadcast (a cross-chain delay can't eat a user's window), and it
 cannot start before feature activation, so every pre-existing dormant
 entry gets at least one full horizon of runway after arming —
 grandfathering by construction. The ratified 90-day notice floor is
-also explicit: every activation — including a re-activation after a
-governance dark reset — re-grants every entry, however stale its clock,
-at least 90 days of fresh runway before it can expire, so a dark
-interval is never silently counted against dormant claimants. A claim
-landing any time before expiry always wins.
+also explicit: every non-zero configuration — first activation,
+re-activation after a governance dark reset, and any retune including
+a shortening — re-grants every entry, however stale its clock, at
+least 90 days of fresh runway before it can expire, so neither a dark
+interval nor a horizon shortening is ever silently counted against
+dormant claimants. Horizon time also only counts while the chain could
+actually pay the claim: during a cross-chain funding outage the clock
+does not start and a due expiry is deferred until funding returns. A
+claim landing any time before expiry always wins.
 
 The lifecycle is fully observable: reward-entry ids are enumerable
 per user, the clock start and the expiry each emit a public per-entry
