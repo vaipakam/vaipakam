@@ -31,6 +31,7 @@
 
 import { useMemo, type ReactNode } from 'react';
 import { useTranslation } from 'react-i18next';
+import { usePageMeta } from '../lib/usePageMeta';
 import { useLocation, Navigate } from 'react-router-dom';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
@@ -59,6 +60,16 @@ function resolveAdminDoc(): string {
 export default function AdminKnobsDocs() {
   const { i18n } = useTranslation();
   const location = useLocation();
+  // Per-route SEO meta — this route is in the sitemap/prerender set
+  // (scripts/seo-routes.mjs, same env gate), so it needs its own
+  // title/description/canonical like every other advertised page.
+  // Called before the visibility gate below: hooks must run
+  // unconditionally, and on the hidden-console redirect the target
+  // route's own meta immediately overwrites this.
+  usePageMeta({
+    titleKey: 'pageMeta.adminKnobs.title',
+    descriptionKey: 'pageMeta.adminKnobs.description',
+  });
   // Same visibility gate as the defi-side dashboard route. Hide
   // the prose reference when the parameter values themselves are
   // hidden — the env flag VITE_ADMIN_DASHBOARD_PUBLIC must be set

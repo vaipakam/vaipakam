@@ -19,6 +19,7 @@
  */
 
 import { initVaipakamI18n } from '@vaipakam/i18n/createI18n';
+import { TRANSLATED_LOCALES } from './glossary';
 
 // English — eager. Always available so the fallback chain renders
 // readable copy instead of raw keys while a non-English bundle is
@@ -27,6 +28,10 @@ import en from './locales/en.json';
 
 const i18n = initVaipakamI18n({
   en,
+  // Gates what a bare navigator detection may persist at init — a
+  // placeholder locale must not be cookie'd / stamped on <html lang>
+  // over English fallback text. Explicit choices always honoured.
+  translatedLocales: TRANSLATED_LOCALES,
   lazyLoaders: {
     es: () => import('./locales/es.json'),
     fr: () => import('./locales/fr.json'),

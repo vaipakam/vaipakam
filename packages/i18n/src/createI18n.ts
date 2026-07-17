@@ -88,6 +88,20 @@ export interface VaipakamI18nOptions {
    * English silently.
    */
   lazyLoaders?: Record<string, LazyLocaleLoader>;
+  /**
+   * Locales this app actually renders translated content for (the
+   * app's TRANSLATED_LOCALES). Gates what a bare navigator detection
+   * may PERSIST at init: a first-time visitor whose browser reports a
+   * placeholder locale (recognised code, no real translation) must
+   * not get that code written to the cross-domain cookie or stamped
+   * on `<html lang>` over English text — that would label English
+   * content as another language and seed sibling subdomains as if the
+   * user explicitly chose it (Codex #1309 r2 P2). An EXPLICIT choice
+   * (existing cookie/localStorage, a picker click, a locale URL
+   * prefix) is always honoured in full, placeholder or not.
+   * Defaults to 'en' + every code with a lazy loader.
+   */
+  translatedLocales?: readonly string[];
   /** Override the localStorage key (default `vaipakam:language`). */
   storageKey?: string;
 }
@@ -106,20 +120,36 @@ export interface VaipakamI18nOptions {
  * version. Seeding-then-detecting is one well-understood line of
  * code; a `languageChanged` listener handles the write-back.
  */
-function seedLanguageFromCookie(storageKey: string) {
-  if (typeof window === 'undefined') return;
+/** Seed localStorage from the parent-domain cookie (see file header)
+ *  and report whether ANY explicit stored preference existed BEFORE
+ *  i18next initialises — i18next's `caches: ['localStorage']` writes
+ *  the navigator-detected language during init, so this is the only
+ *  moment "explicit user choice" and "automatic detection cache" can
+ *  be told apart. */
+function seedLanguageFromCookie(storageKey: string): boolean {
+  if (typeof window === 'undefined') return false;
+  let hadExplicitPref = false;
+  try {
+    hadExplicitPref = window.localStorage.getItem(storageKey) !== null;
+  } catch {
+    /* storage blocked — treat as no stored preference */
+  }
   const cookie = readCookie(LANG_COOKIE);
-  if (!cookie) return;
+  if (!cookie) return hadExplicitPref;
   // Defensive: only honour cookie values that match a supported
   // locale. Stops a tampered cookie from forcing i18next into
   // a missing-bundle state.
-  if (!(SUPPORTED_LOCALES as readonly string[]).includes(cookie)) return;
+  if (!(SUPPORTED_LOCALES as readonly string[]).includes(cookie)) {
+    return hadExplicitPref;
+  }
+  hadExplicitPref = true;
   // Overwrite localStorage when it disagrees so the detector picks
   // the cookie value. No-op when they already agree.
   const stored = window.localStorage.getItem(storageKey);
   if (stored !== cookie) {
     window.localStorage.setItem(storageKey, cookie);
   }
+  return hadExplicitPref;
 }
 
 /**
@@ -130,8 +160,10 @@ function seedLanguageFromCookie(storageKey: string) {
 export function initVaipakamI18n(options: VaipakamI18nOptions): I18nInstance {
   const storageKey = options.storageKey ?? LANGUAGE_STORAGE_KEY;
   const lazyLoaders = options.lazyLoaders ?? {};
+  const translatedLocales =
+    options.translatedLocales ?? ['en', ...Object.keys(lazyLoaders)];
 
-  seedLanguageFromCookie(storageKey);
+  const hadExplicitPref = seedLanguageFromCookie(storageKey);
 
   async function loadLocaleBundle(lng: string): Promise<void> {
     if (lng === 'en') return; // already eager-loaded
@@ -199,15 +231,38 @@ export function initVaipakamI18n(options: VaipakamI18nOptions): I18nInstance {
   const initialLng = normalizeToSupportedLocale(i18n.language);
   if (initialLng !== 'en') void loadLocaleBundle(initialLng);
 
+  // What init may PERSIST and stamp on the document: the active
+  // language when it came from an explicit stored preference OR the
+  // app renders it translated; otherwise English. A bare navigator
+  // detection of a PLACEHOLDER locale must not write the cross-domain
+  // cookie or set `<html lang>` over English fallback text (see
+  // VaipakamI18nOptions.translatedLocales). i18next auto-caches the
+  // detection to localStorage during init — scrub that in the gated
+  // case so the cache can't masquerade as an explicit choice on the
+  // next visit.
+  const persistable =
+    hadExplicitPref || translatedLocales.includes(initialLng);
+  const displayLng = persistable ? initialLng : 'en';
+  if (!persistable && typeof window !== 'undefined') {
+    try {
+      if (window.localStorage.getItem(storageKey) === i18n.language) {
+        window.localStorage.removeItem(storageKey);
+      }
+    } catch {
+      /* storage blocked — nothing cached to scrub */
+    }
+  }
+
   // Init-time cookie write so the FIRST-visit navigator-detected
-  // language propagates across `.vaipakam.com` immediately, even
-  // before the user touches the picker. Writing the cookie at init
-  // means every first picker click LATER on any subdomain just
-  // rewrites the same cookie key — there's no "before-cookie-existed"
-  // window. In source-order BEFORE the `languageChanged` listener
-  // registration because i18next may emit `languageChanged`
-  // synchronously during init (inline resources + sync detector).
-  writeCookie(LANG_COOKIE, initialLng);
+  // (translated) language propagates across `.vaipakam.com`
+  // immediately, even before the user touches the picker. Writing the
+  // cookie at init means every first picker click LATER on any
+  // subdomain just rewrites the same cookie key — there's no
+  // "before-cookie-existed" window. In source-order BEFORE the
+  // `languageChanged` listener registration because i18next may emit
+  // `languageChanged` synchronously during init (inline resources +
+  // sync detector).
+  writeCookie(LANG_COOKIE, displayLng);
 
   // Future language changes (LanguagePicker click, etc.) load the
   // new bundle on demand.
@@ -225,8 +280,12 @@ export function initVaipakamI18n(options: VaipakamI18nOptions): I18nInstance {
   });
 
   // Keep the document direction in sync with the active language so
-  // RTL scripts (Arabic, Hebrew, Farsi, Urdu) flip layout.
-  applyDocumentDirection(initialLng);
+  // RTL scripts (Arabic, Hebrew, Farsi, Urdu) flip layout. Init uses
+  // the gated displayLng (never stamps a navigator-detected
+  // placeholder over English text); the listener path is always an
+  // explicit act — a picker click or a locale URL prefix — and is
+  // honoured in full.
+  applyDocumentDirection(displayLng);
   i18n.on('languageChanged', (lng) => {
     applyDocumentDirection(normalizeToSupportedLocale(lng));
   });

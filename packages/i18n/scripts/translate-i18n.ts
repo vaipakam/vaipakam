@@ -185,6 +185,7 @@ async function main() {
   console.log(`  ${targets.join(', ')}`);
   console.log();
 
+  const failed: LocaleCode[] = [];
   for (const code of targets) {
     process.stdout.write(`→ ${code} (${LOCALE_NAMES[code]})… `);
     try {
@@ -199,7 +200,20 @@ async function main() {
     } catch (err) {
       console.log('FAILED.');
       console.error(`    ${(err as Error).message}`);
+      failed.push(code);
     }
+  }
+
+  // Partial failure must not exit 0 — automation (and a human
+  // skimming a long batch) would ship missing/stale bundles. The
+  // successful locales' files are already written; re-running with
+  // no args picks up exactly the failed ones (they're still
+  // missing / placeholder).
+  if (failed.length > 0) {
+    console.error(
+      `\n${failed.length}/${targets.length} locale(s) failed: ${failed.join(', ')}`,
+    );
+    process.exitCode = 1;
   }
 }
 

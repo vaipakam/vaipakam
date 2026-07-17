@@ -16,9 +16,15 @@
  */
 
 import { initVaipakamI18n } from '@vaipakam/i18n/createI18n';
+import { TRANSLATED_LOCALES } from './localeConfig';
 
 const i18n = initVaipakamI18n({
   en: {},
+  // English-only today: a navigator-detected non-English locale is
+  // NOT persisted or stamped on <html lang> at init (the text would
+  // be English fallback). An explicit picker choice IS honoured in
+  // full — including for placeholder locales awaiting translation.
+  translatedLocales: TRANSLATED_LOCALES,
   lazyLoaders: {
     es: () => import('./locales/es.json'),
     fr: () => import('./locales/fr.json'),

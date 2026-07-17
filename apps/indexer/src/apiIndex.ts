@@ -24,7 +24,7 @@ const API_INDEX = {
   app: 'https://alpha02.vaipakam.com/',
   conventions: {
     chainParam:
-      "Most endpoints accept ?chain=<chainId> (e.g. 84532 for Base Sepolia). Amounts are decimal strings in the asset's smallest unit unless a field says otherwise.",
+      "Most endpoints accept ?chainId=<id> (e.g. 84532 for Base Sepolia); omitting it defaults to Base mainnet (8453). Amounts are decimal strings in the asset's smallest unit unless a field says otherwise.",
   },
   endpoints: [
     { method: 'GET', path: '/offers/stats', description: 'Open-offer counts and totals per chain.' },
