@@ -117,9 +117,22 @@ contract RewardClaimHorizonTest is SetupTest, IVaipakamErrors {
         vm.warp(block.timestamp + 364 days);
         assertEq(_facet().sweepExpiredInteractionRewards(_ids(id)), 0);
 
-        // Past the horizon: expires; fresh share consumes the pool and
-        // credits the bucket as ExpiredReward absorption.
+        // Past the horizon: the first funded touch ARMS the final-notice
+        // window (nothing expires yet); processing needs a second touch
+        // ≥ 90 days later.
         vm.warp(block.timestamp + 2 days);
+        assertEq(
+            _facet().sweepExpiredInteractionRewards(_ids(id)),
+            0,
+            "due touch only arms the funded final notice"
+        );
+        (, uint64 armedExpiry) = _facet().getRewardEntryExpiry(id);
+        assertEq(
+            armedExpiry,
+            uint64(block.timestamp + 90 days),
+            "view reflects the armed final-notice window"
+        );
+        vm.warp(block.timestamp + 91 days);
         uint256 bucketBefore = _cfg().getRecycleBucket();
         uint256 poolBefore = _facet().getInteractionPoolPaidOut();
         uint256 swept = _facet().sweepExpiredInteractionRewards(_ids(id));
@@ -215,10 +228,16 @@ contract RewardClaimHorizonTest is SetupTest, IVaipakamErrors {
             "still inside the notice window"
         );
         vm.warp(block.timestamp + 2 days);
+        assertEq(
+            _facet().sweepExpiredInteractionRewards(_ids(id)),
+            0,
+            "past the floor: arms the funded final notice"
+        );
+        vm.warp(block.timestamp + 91 days);
         assertGt(
             _facet().sweepExpiredInteractionRewards(_ids(id)),
             0,
-            "expires once the re-granted notice elapses"
+            "expires once the armed notice elapses"
         );
     }
 
@@ -244,11 +263,22 @@ contract RewardClaimHorizonTest is SetupTest, IVaipakamErrors {
             uint64(block.timestamp + 90 days),
             "expiry lifted to retune + notice"
         );
-        vm.warp(block.timestamp + 91 days);
+        // Distinct absolute warp targets: two identical
+        // `block.timestamp + N` warp expressions can be CSE'd by the
+        // optimizer (TIMESTAMP is tx-constant in real EVM semantics),
+        // making the second warp a no-op.
+        uint256 tArm = block.timestamp + 91 days;
+        vm.warp(tArm);
+        assertEq(
+            _facet().sweepExpiredInteractionRewards(_ids(id)),
+            0,
+            "past the floor: arms the funded final notice"
+        );
+        vm.warp(tArm + 91 days);
         assertGt(
             _facet().sweepExpiredInteractionRewards(_ids(id)),
             0,
-            "expires once the re-granted notice elapses"
+            "expires once the armed notice elapses"
         );
     }
 
@@ -269,19 +299,36 @@ contract RewardClaimHorizonTest is SetupTest, IVaipakamErrors {
         (stamp, ) = _facet().getRewardEntryExpiry(id);
         assertGt(stamp, 0, "clock starts once funded");
 
-        // An outage AT the expiry moment defers processing too.
+        // An outage AT the expiry moment blocks even the ARMING touch.
         vm.warp(block.timestamp + 366 days);
         deal(address(vpfi), address(diamond), 0);
         assertEq(
             _facet().sweepExpiredInteractionRewards(_ids(id)),
             0,
-            "expiry deferred while unfunded"
+            "outage blocks arming too"
         );
+        (, uint64 preArmExpiry) = _facet().getRewardEntryExpiry(id);
+
+        // Funding returns: the funded touch arms the final notice, and
+        // only after it elapses does the entry expire — the outage never
+        // consumed the claimant's executable window.
         deal(address(vpfi), address(diamond), DIAMOND_SEED);
+        assertEq(
+            _facet().sweepExpiredInteractionRewards(_ids(id)),
+            0,
+            "funded touch arms, never expires instantly post-outage"
+        );
+        (, uint64 postArmExpiry) = _facet().getRewardEntryExpiry(id);
+        assertGt(
+            postArmExpiry,
+            preArmExpiry,
+            "armed notice extends past the outage"
+        );
+        vm.warp(block.timestamp + 91 days);
         assertGt(
             _facet().sweepExpiredInteractionRewards(_ids(id)),
             0,
-            "expires once funded again"
+            "expires after a fully funded final notice"
         );
     }
 

@@ -5062,12 +5062,22 @@ library LibVaipakam {
         ///      so every pre-existing dormant entry's clock starts at or
         ///      after feature activation — grandfathering by construction.
         mapping(uint256 => uint64) rewardEntryFirstClaimableAt;
-        /// @dev Timestamp of the most recent 0→non-zero horizon activation.
-        ///      Expiry additionally requires
+        /// @dev Timestamp of the most recent non-zero horizon
+        ///      (re)configuration. Expiry additionally requires
         ///      `now ≥ rewardHorizonActivatedAt + REWARD_CLAIM_HORIZON_NOTICE_DAYS`,
-        ///      so a dark reset + re-activation can never expire stale-stamped
-        ///      entries immediately (the ratified activation-notice floor).
+        ///      so neither a dark reset + re-activation nor a horizon
+        ///      shortening can expire stale-stamped entries immediately
+        ///      (the ratified activation-notice floor).
         uint64 rewardHorizonActivatedAt;
+        /// @dev Per-entry FUNDED-DUE observation (two-phase expiry arming,
+        ///      Codex #1317 r4): the first sweep touch that finds the entry
+        ///      past its horizon AND currently claim-executable records this
+        ///      timestamp; actual expiry processing requires a second touch
+        ///      ≥ `REWARD_CLAIM_HORIZON_NOTICE_DAYS` later. Guarantees every
+        ///      expiry follows a funded final-notice window even when a
+        ///      funding outage straddled the horizon instant — without
+        ///      needing anyone to observe the outage itself.
+        mapping(uint256 => uint64) rewardEntryDueFundedAt;
     }
 
     /// @notice Governor PR-3b (#1217 §3.1) — the per-day pool composition

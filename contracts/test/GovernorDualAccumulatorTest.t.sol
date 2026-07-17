@@ -308,8 +308,11 @@ contract GovernorDualAccumulatorTest is SetupTest {
         ids[0] = id;
         _facet().sweepExpiredInteractionRewards(ids); // stamp the clock
         vm.warp(block.timestamp + 181 days);
+        _facet().sweepExpiredInteractionRewards(ids); // arm the final notice
+        vm.warp(block.timestamp + 91 days);
 
-        // Near-exhaust the fresh pool AFTER the stamp (1 wei of headroom):
+        // Near-exhaust the fresh pool AFTER the armed notice (1 wei of
+        // headroom):
         // the expiry's fresh share truncates to that sliver, but the entry
         // is terminally processed, so its ENTIRE armed fresh commitment
         // must still retire.
@@ -353,6 +356,8 @@ contract GovernorDualAccumulatorTest is SetupTest {
         ids[0] = id;
         _facet().sweepExpiredInteractionRewards(ids); // stamp the clock
         vm.warp(block.timestamp + 181 days);
+        _facet().sweepExpiredInteractionRewards(ids); // arm the final notice
+        vm.warp(block.timestamp + 91 days);
 
         // FULL fresh exhaustion: expiring now would credit the bucket
         // nothing for the fresh share — the entry must be DEFERRED (stay

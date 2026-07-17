@@ -85,6 +85,18 @@ library LibInteractionRewards {
         uint64 expiresAt
     );
 
+    /// @notice RL-3 — `entryId` is past its horizon and was observed
+    ///         claim-EXECUTABLE (funded, non-zero payable): the funded
+    ///         final-notice window started; the entry can actually be
+    ///         expired from `executableAt` on. This is the notification
+    ///         pipeline's LAST-CALL signal.
+    /// @custom:event-category state-change/reward-claim
+    event RewardEntryExpiryArmed(
+        uint256 indexed entryId,
+        address indexed user,
+        uint64 executableAt
+    );
+
     /// @notice RL-3 — `entryId` expired past its claim horizon and was
     ///         swept into the recycle bucket (`total` split into the
     ///         fresh absorption credit and the `recycled` release).
@@ -1065,30 +1077,43 @@ function _dayPoolHalves(
      *           - entry processed / not yet claimable                → no-op
      *             (the clock NEVER runs while a claim is blocked by
      *             missing finalization/broadcast — ratified rule)
-     *           - claimable, clock unset → STAMP `firstClaimableAt`  → no-op
-     *           - claimable, `now < stamp + H days`                  → no-op
-     *           - claimable, `now ≥ stamp + H days` → EXPIRE: process
-     *             the entry (marks it `processed`) and return its
-     *             {EntrySplit} for the facet's source-split routing.
+     *           - claim not currently EXECUTABLE (post-cap payable is
+     *             zero, or local VPFI balance can't cover it)        → no-op
+     *             (underfunded/exhausted time never counts)
+     *           - executable, clock unset → STAMP `firstClaimableAt` → no-op
+     *           - executable, `now < horizon expiry`                 → no-op
+     *           - executable + due, not yet armed → ARM
+     *             `rewardEntryDueFundedAt` (funded final notice)     → no-op
+     *           - executable + due + armed ≥ notice ago → EXPIRE:
+     *             process the entry (marks it `processed`) and return
+     *             its {EntrySplit} for the facet's source-split routing.
      *
      *         Forfeited entries are excluded — {sweepForfeitedByLoanId}
      *         owns those; this sweep only ever expires PAYABLE value whose
      *         owner never came back.
-     * @return expired The expired value decomposition (all zeros unless
-     *                 the entry expired on this call).
+     * @param  freshHeadroom Remaining fresh-pool capacity the CALLER's
+     *                       batch may still consume — the fresh share is
+     *                       capped to it per entry, so a batch can never
+     *                       terminalise several fresh entries against one
+     *                       capacity sliver.
+     * @return expired The expired FACE-VALUE decomposition (all zeros
+     *                 unless the entry expired on this call).
+     * @return freshCredited The post-cap fresh amount actually creditable
+     *                       for this entry — the caller decrements its
+     *                       headroom and credits the bucket with this.
      */
-    function sweepExpiredEntry(uint256 id)
+    function sweepExpiredEntry(uint256 id, uint256 freshHeadroom)
         internal
-        returns (EntrySplit memory expired)
+        returns (EntrySplit memory expired, uint256 freshCredited)
     {
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         uint32 horizonDays = s.rewardClaimHorizonDays;
-        if (horizonDays == 0) return expired;
+        if (horizonDays == 0) return (expired, 0);
         LibVaipakam.RewardEntry storage e = s.rewardEntries[id];
-        if (e.processed || e.user == address(0)) return expired;
-        if (e.forfeited || _entryTerminalForfeit(s, e)) return expired;
-        if (!_entryClaimable(s, e)) return expired;
-        if (e.startDay >= e.endDay) return expired;
+        if (e.processed || e.user == address(0)) return (expired, 0);
+        if (e.forfeited || _entryTerminalForfeit(s, e)) return (expired, 0);
+        if (!_entryClaimable(s, e)) return (expired, 0);
+        if (e.startDay >= e.endDay) return (expired, 0);
 
         // The cursor must actually cover the window — a claim blocked on
         // finalization keeps the clock frozen (never stamps, never expires).
@@ -1100,20 +1125,28 @@ function _dayPoolHalves(
             cursor = e.side == LibVaipakam.RewardSide.Lender
                 ? advanceCumLenderThrough(need)
                 : advanceCumBorrowerThrough(need);
-            if (cursor < need) return expired;
+            if (cursor < need) return (expired, 0);
         }
 
         EntrySplit memory split_ = _entryWindowSplit(s, e);
-        // Underfunded gate (both phases): horizon time only counts — and
-        // expiry only processes — while the LOCAL chain could actually pay
-        // this entry's claim. On a mirror mid-remittance-outage the claim's
-        // terminal `safeTransfer` would revert, so stamping (or expiring)
-        // there would charge the funding delay against the claimant.
+        uint256 freshShare = split_.total - split_.recycled;
+        uint256 cappedFresh =
+            freshShare < freshHeadroom ? freshShare : freshHeadroom;
+        // Claim-EXECUTABLE gate (every phase): horizon time only counts —
+        // and expiry only arms/processes — while a claim would actually
+        // succeed right now. That means the POST-CAP payable (a claim
+        // truncates its fresh component to remaining pool capacity, so the
+        // face value is the wrong bar) must be non-zero AND covered by the
+        // local VPFI balance. On a mirror mid-remittance-outage, or at
+        // full fresh exhaustion with no recycled term, the claim's
+        // terminal transfer/exhaustion check would revert — so neither the
+        // clock nor the final notice may run there.
+        uint256 payableNow = cappedFresh + split_.recycled;
         if (
-            IERC20Metadata(s.vpfiToken).balanceOf(address(this)) <
-            split_.total
+            payableNow == 0 ||
+            IERC20Metadata(s.vpfiToken).balanceOf(address(this)) < payableNow
         ) {
-            return expired;
+            return (expired, 0);
         }
 
         uint64 stamp = s.rewardEntryFirstClaimableAt[id];
@@ -1128,26 +1161,52 @@ function _dayPoolHalves(
             emit RewardEntryHorizonStamped(
                 id, e.user, stamp, uint64(_horizonExpiryAt(s, stamp, horizonDays))
             );
-            return expired;
+            return (expired, 0);
         }
         if (block.timestamp < _horizonExpiryAt(s, stamp, horizonDays)) {
-            return expired;
+            return (expired, 0);
         }
 
-        // Never expire an entry whose FRESH share cannot be credited: at
-        // full fresh-pool exhaustion an all-fresh entry would be processed
-        // with ZERO bucket credit — value silently burned. Defer instead
-        // (entry stays live), mirroring the claim path's revert in the
-        // same state. Partial exhaustion still processes (bounded
-        // boundary truncation, identical to the claim path).
-        if (split_.total > split_.recycled) {
-            uint256 reserved =
-                s.interactionPoolPaidOut + s.rewardBudgetRemittedGlobal;
-            if (LibVaipakam.VPFI_INTERACTION_POOL_CAP <= reserved) {
-                return expired;
-            }
+        // Two-phase expiry arming: the first sweep that finds the entry
+        // due AND executable records the FUNDED-DUE observation; actual
+        // processing needs a second touch ≥ the notice window later. A
+        // funding outage straddling the horizon instant therefore can't
+        // consume the claimant's window — every expiry follows a funded
+        // final notice, with no need for anyone to observe the outage.
+        uint64 armedAt = s.rewardEntryDueFundedAt[id];
+        if (armedAt == 0) {
+            armedAt = uint64(block.timestamp);
+            s.rewardEntryDueFundedAt[id] = armedAt;
+            emit RewardEntryExpiryArmed(
+                id,
+                e.user,
+                uint64(
+                    uint256(armedAt) +
+                        uint256(LibVaipakam.REWARD_CLAIM_HORIZON_NOTICE_DAYS) *
+                        1 days
+                )
+            );
+            return (expired, 0);
+        }
+        if (
+            block.timestamp <
+            uint256(armedAt) +
+                uint256(LibVaipakam.REWARD_CLAIM_HORIZON_NOTICE_DAYS) * 1 days
+        ) {
+            return (expired, 0);
+        }
+
+        // Never terminalise an entry whose FRESH share cannot be credited
+        // at all: with the batch's fresh headroom exhausted an all-fresh
+        // entry would be processed with ZERO bucket credit — value
+        // silently burned. Defer instead (entry stays live). A PARTIAL
+        // cap still processes (one bounded boundary entry per batch,
+        // identical to the claim path's truncation).
+        if (freshShare > 0 && cappedFresh == 0) {
+            return (expired, 0);
         }
         expired = split_;
+        freshCredited = cappedFresh;
         e.processed = true;
         emit RewardEntryExpired(id, e.user, expired.total, expired.recycled);
     }
@@ -1169,9 +1228,13 @@ function _dayPoolHalves(
     /// @notice RL-3 — UX view: the entry's horizon state for the
     ///         claim-center countdown.
     /// @return firstClaimableAt Clock start (0 = not started).
-    /// @return expiresAt        `max(stamp + H days, activation + notice)`
-    ///                          (0 = dark or unstarted) — mirrors the sweep's
-    ///                          expiry condition exactly.
+    /// @return expiresAt        `max(stamp + H days, activation + notice,
+    ///                          armed + notice)` (0 = dark or unstarted).
+    ///                          The EARLIEST instant the entry can be
+    ///                          expired: past the horizon a funded arming
+    ///                          touch must still start (or have started)
+    ///                          the final-notice window, so actual removal
+    ///                          never precedes this value.
     function rewardEntryExpiry(uint256 id)
         internal
         view
@@ -1181,9 +1244,15 @@ function _dayPoolHalves(
         firstClaimableAt = s.rewardEntryFirstClaimableAt[id];
         uint32 horizonDays = s.rewardClaimHorizonDays;
         if (firstClaimableAt != 0 && horizonDays != 0) {
-            expiresAt = uint64(
-                _horizonExpiryAt(s, firstClaimableAt, horizonDays)
-            );
+            uint256 at = _horizonExpiryAt(s, firstClaimableAt, horizonDays);
+            uint64 armedAt = s.rewardEntryDueFundedAt[id];
+            if (armedAt != 0) {
+                uint256 armedFloor = uint256(armedAt) +
+                    uint256(LibVaipakam.REWARD_CLAIM_HORIZON_NOTICE_DAYS) *
+                    1 days;
+                if (at < armedFloor) at = armedFloor;
+            }
+            expiresAt = uint64(at);
         }
     }
 

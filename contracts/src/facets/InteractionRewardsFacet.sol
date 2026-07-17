@@ -481,13 +481,27 @@ contract InteractionRewardsFacet is
         }
         if (s.vpfiToken == address(0)) revert VPFITokenNotSet();
 
+        // Fresh headroom is tracked PER ENTRY across the batch (Codex
+        // #1317 r4): each processed entry's creditable fresh share is
+        // capped inside {sweepExpiredEntry} against what the batch has
+        // left, so several fresh entries can never all go terminal
+        // against one remaining-capacity sliver — at most one bounded
+        // boundary entry is partially credited, then the rest defer.
+        uint256 paidOut = s.interactionPoolPaidOut;
+        uint256 reserved = paidOut + s.rewardBudgetRemittedGlobal;
+        uint256 headroom = LibVaipakam.VPFI_INTERACTION_POOL_CAP > reserved
+            ? LibVaipakam.VPFI_INTERACTION_POOL_CAP - reserved
+            : 0;
         uint256 freshTotal;
         uint256 recycledTotal;
         uint256 armedFreshTotal;
         for (uint256 i = 0; i < entryIds.length; ) {
-            LibInteractionRewards.EntrySplit memory ex =
-                LibInteractionRewards.sweepExpiredEntry(entryIds[i]);
-            freshTotal += ex.total - ex.recycled;
+            (
+                LibInteractionRewards.EntrySplit memory ex,
+                uint256 freshCredited
+            ) = LibInteractionRewards.sweepExpiredEntry(entryIds[i], headroom);
+            headroom -= freshCredited;
+            freshTotal += freshCredited;
             recycledTotal += ex.recycled;
             armedFreshTotal += ex.armedFresh;
             unchecked { ++i; }
@@ -495,17 +509,11 @@ contract InteractionRewardsFacet is
         if (freshTotal + recycledTotal == 0) return 0;
 
         // Fresh share: consumes the 69M pool (tokens leave the fresh
-        // budget) exactly like a forfeit, capped at what remains.
-        uint256 paidOut = s.interactionPoolPaidOut;
-        uint256 reserved = paidOut + s.rewardBudgetRemittedGlobal;
-        uint256 remaining = LibVaipakam.VPFI_INTERACTION_POOL_CAP > reserved
-            ? LibVaipakam.VPFI_INTERACTION_POOL_CAP - reserved
-            : 0;
-        if (freshTotal > remaining) freshTotal = remaining;
+        // budget) exactly like a forfeit — already per-entry capped above.
         s.interactionPoolPaidOut = paidOut + freshTotal;
         // Every swept entry is terminally `processed`, so its ENTIRE armed
         // fresh commitment retires here even when the pool cap truncated the
-        // payable fresh total — otherwise the truncated remainder would sit
+        // creditable fresh — otherwise the truncated remainder would sit
         // in the outstanding-commitment sum forever (same rule as the claim
         // and forfeit paths).
         LibInteractionRewards.consumeArmedFresh(armedFreshTotal);
