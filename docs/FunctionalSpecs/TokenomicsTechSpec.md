@@ -710,6 +710,15 @@ Distribution coupling (recycling governor cutover — the stage that makes claim
 - cross-chain remittances decompose identically: the fresh share reserves against the pool cap, the recycled share debits the bucket when the tokens leave canonical custody, and the per-chain funding split mirrors the claim-side split exactly so funding and claims can never diverge
 - a post-cutover day whose pool composition has not yet arrived on a chain **halts claims for that day** (fail-closed wait, identical to the existing finalization gate) rather than pricing from the wrong pool
 
+Recycled-stream allocation register (RL-4, `VpfiRecyclingLoopClosureDesign.md` §7 — ratified 2026-07-16):
+
+- the platform may carve a bounded **keeper-incentive share** out of each day's recycled margin, so permissionless upkeep (sweeps, liquidation-adjacent reward calls) can eventually be paid from recycled value instead of fresh emissions
+- the register is **dormant by default** (keeper weight zero); until governance sets a non-zero weight the day finalization behaves exactly as before — no ledger movement, no event
+- when armed, the day's splittable amount is bounded by BOTH signals: it never exceeds the day's **realized margin** (the trailing absorption average times the retained-margin weight actually stamped for that day), and it never dips the bucket below a **forward reserve** of seven days of the trailing absorption average — a quiet-week bucket can shrink from a register split only down to its reserve floor, never through it
+- the keeper share is a pure **ledger move** (recycle bucket → keeper budget) inside the same protocol custody; no tokens transfer at split time, and the un-carved remainder simply stays in the bucket as reward runway
+- the keeper weight is range-bounded at or below **half** the splittable amount (50%); every split emits a public event carrying the day, the bounds inputs, and the resulting shares so indexers can replay the register from events alone
+- spend paths for the keeper budget are deliberately out of scope for this stage — the budget only accumulates until a later ratified stage wires a payout
+
 Loop-closure transparency metric (RL-2, `VpfiRecyclingLoopClosureDesign.md` §6 — ratified 2026-07-16):
 
 - the platform publishes two observable numbers describing how much of the distributed interaction-reward VPFI stays inside the sink system, computed off-chain from on-chain events so every independent indexer reading the same events reports the same values

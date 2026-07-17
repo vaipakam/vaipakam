@@ -678,6 +678,15 @@ library LibVaipakam {
     ///      window. Bounds the largest outage that could pass undetected;
     ///      keepers sweep far more often than weekly, so this is slack.
     uint32 constant REWARD_CLAIM_NOTICE_MAX_OBS_GAP_DAYS = 7;
+    /// @dev RL-4 (#1306, ratified §10.3) — the recycled-stream allocation
+    ///      register's hard ceiling on the keeper-budget weight (50%).
+    uint16 constant RECYCLE_REGISTER_KEEPER_MAX_BPS = 5_000;
+    /// @dev RL-4 — forward-reserve depth `RESERVE_N` (ratified default 7):
+    ///      the register never consumes bucket capacity below
+    ///      `RESERVE_N × Ā` — at least one trailing week of coupled budget
+    ///      stays in the bucket for future days. Compile-time constant
+    ///      (one auditable economic knob beats two interacting ones).
+    uint256 constant RECYCLE_FORWARD_RESERVE_DAYS = 7;
 
     /// @dev Tariff `k` for peg-free discount entitlements (design §4.2): VPFI
     ///      (1e18) charged per 1 ETH (1e18) of loan volume per day, so a
@@ -5112,6 +5121,19 @@ library LibVaipakam {
         ///      that observed block, so even a short (< max-gap) outage that
         ///      a keeper actually saw is never counted toward the window.
         mapping(uint256 => bool) rewardEntryObsBlocked;
+        // ─── RL-4 (#1306) — recycled-stream allocation register ────────────
+        /// @dev Keeper-budget weight (bps) of the register split. `0` (the
+        ///      deploy default) = DORMANT: the full residual stays in the
+        ///      bucket — exactly today's ratified behaviour. Bounded
+        ///      `[0, RECYCLE_REGISTER_KEEPER_MAX_BPS]`; the reserve weight
+        ///      is implicit (`10000 − keeperBps` — weights sum to 10000 by
+        ///      construction, never a stored pair that could drift).
+        uint16 recycleRegisterKeeperBps;
+        /// @dev Accumulated keeper-gas budget carved from the register
+        ///      split (a ledger slice of Diamond VPFI custody, like the
+        ///      bucket). Consumption arrives with the keeper-payment
+        ///      surface; until then it is a transparency counter.
+        uint256 recycleKeeperBudget;
     }
 
     /// @notice Governor PR-3b (#1217 §3.1) — the per-day pool composition

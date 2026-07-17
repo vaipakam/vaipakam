@@ -494,6 +494,63 @@ contract RewardAggregatorFacet is
             aBar,
             marginBps
         );
+
+        _applyRecycleRegister(s, dayId, aBar, marginBps);
+    }
+
+    /// @notice RL-4 (#1306, ratified §10.3) — emitted when the allocation
+    ///         register splits a day's residual (non-dormant weights only).
+    /// @custom:event-category state-change/treasury-mutation
+    event RecycleRegisterSplit(
+        uint256 indexed dayId,
+        uint256 splittable,
+        uint256 keeperShare
+    );
+
+    /// @dev RL-4 — the recycled-stream allocation register, applied at the
+    ///      SAME finalization snapshot as the day-pool stamp (weights read
+    ///      once, deterministic — no per-epoch discretion). Defined over
+    ///      the RESIDUAL only, claims-first by construction:
+    ///
+    ///        splittable = min( marginRealized,                    // Ā×m
+    ///                          max(0, fundable − RESERVE_N × Ā) )
+    ///
+    ///      where `fundable` is the bucket net of ALL outstanding recycled
+    ///      commitments (this day's included — claims were funded first,
+    ///      structurally), and the forward reserve keeps at least one
+    ///      trailing week of coupled budget in the bucket for future days.
+    ///      The keeper share moves bucket → keeper-budget ledger; the
+    ///      reserve share stays in the bucket (no movement). Dormant
+    ///      (`keeperBps == 0`, the deploy default) this is a no-op —
+    ///      exactly today's ratified behaviour.
+    function _applyRecycleRegister(
+        LibVaipakam.Storage storage s,
+        uint256 dayId,
+        uint256 aBar,
+        uint256 marginBps
+    ) internal {
+        uint16 keeperBps = s.recycleRegisterKeeperBps;
+        if (keeperBps == 0 || aBar == 0) return;
+
+        uint256 marginRealized = (aBar * marginBps) / 10_000;
+        uint256 bucket = s.recycleBucket;
+        uint256 outstanding = s.outstandingCommitRecycled;
+        uint256 fundable = bucket > outstanding ? bucket - outstanding : 0;
+        uint256 forwardReserve =
+            LibVaipakam.RECYCLE_FORWARD_RESERVE_DAYS * aBar;
+        uint256 aboveReserve =
+            fundable > forwardReserve ? fundable - forwardReserve : 0;
+        uint256 splittable =
+            marginRealized < aboveReserve ? marginRealized : aboveReserve;
+        if (splittable == 0) return;
+
+        uint256 keeperShare = (splittable * keeperBps) / 10_000;
+        if (keeperShare == 0) return;
+        // Bucket → keeper-budget ledger (both are Diamond-custody slices;
+        // no token movement). The reserve share never moves.
+        s.recycleBucket = bucket - keeperShare;
+        s.recycleKeeperBudget += keeperShare;
+        emit RecycleRegisterSplit(dayId, splittable, keeperShare);
     }
 
     /// @notice Governor PR-3b — read a finalized day's stamped pool
