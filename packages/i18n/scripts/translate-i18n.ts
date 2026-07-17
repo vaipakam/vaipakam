@@ -44,7 +44,14 @@ if (!localesDirArg) {
   );
   process.exit(1);
 }
-const LOCALES_DIR = path.resolve(process.cwd(), localesDirArg);
+// pnpm --filter runs scripts with cwd = the package dir; INIT_CWD is
+// where the user actually invoked pnpm (repo root in the documented
+// command), so relative --locales-dir paths resolve as typed
+// (Codex #1309 r7).
+const LOCALES_DIR = path.resolve(
+  process.env.INIT_CWD ?? process.cwd(),
+  localesDirArg,
+);
 if (!fs.existsSync(LOCALES_DIR)) {
   console.error(`Locales dir not found: ${LOCALES_DIR}`);
   process.exit(1);

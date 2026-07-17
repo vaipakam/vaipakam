@@ -126,8 +126,22 @@ export interface VaipakamI18nOptions {
  *  the navigator-detected language during init, so this is the only
  *  moment "explicit user choice" and "automatic detection cache" can
  *  be told apart. */
-function seedLanguageFromCookie(storageKey: string): boolean {
-  if (typeof window === 'undefined') return false;
+interface CookieSeedResult {
+  /** An explicit stored preference (cookie or localStorage) existed
+   *  before i18next initialised. */
+  hadExplicitPref: boolean;
+  /** A valid cookie existed but could NOT be seeded into localStorage
+   *  (storage blocked) — the detector chain therefore cannot see it,
+   *  and the init-time cookie write must be suppressed so a
+   *  navigator-detected fallback doesn't clobber the user's
+   *  cross-subdomain choice (Codex #1309 r7). */
+  cookieSeedFailed: boolean;
+}
+
+function seedLanguageFromCookie(storageKey: string): CookieSeedResult {
+  if (typeof window === 'undefined') {
+    return { hadExplicitPref: false, cookieSeedFailed: false };
+  }
   let hadExplicitPref = false;
   try {
     hadExplicitPref = window.localStorage.getItem(storageKey) !== null;
@@ -135,12 +149,12 @@ function seedLanguageFromCookie(storageKey: string): boolean {
     /* storage blocked — treat as no stored preference */
   }
   const cookie = readCookie(LANG_COOKIE);
-  if (!cookie) return hadExplicitPref;
+  if (!cookie) return { hadExplicitPref, cookieSeedFailed: false };
   // Defensive: only honour cookie values that match a supported
   // locale. Stops a tampered cookie from forcing i18next into
   // a missing-bundle state.
   if (!(SUPPORTED_LOCALES as readonly string[]).includes(cookie)) {
-    return hadExplicitPref;
+    return { hadExplicitPref, cookieSeedFailed: false };
   }
   hadExplicitPref = true;
   // Overwrite localStorage when it disagrees so the detector picks
@@ -153,10 +167,11 @@ function seedLanguageFromCookie(storageKey: string): boolean {
     if (stored !== cookie) {
       window.localStorage.setItem(storageKey, cookie);
     }
+    return { hadExplicitPref, cookieSeedFailed: false };
   } catch {
     /* storage blocked — i18next's own detector falls back gracefully */
+    return { hadExplicitPref, cookieSeedFailed: true };
   }
-  return hadExplicitPref;
 }
 
 /**
@@ -170,7 +185,8 @@ export function initVaipakamI18n(options: VaipakamI18nOptions): I18nInstance {
   const translatedLocales =
     options.translatedLocales ?? ['en', ...Object.keys(lazyLoaders)];
 
-  const hadExplicitPref = seedLanguageFromCookie(storageKey);
+  const { hadExplicitPref, cookieSeedFailed } =
+    seedLanguageFromCookie(storageKey);
 
   async function loadLocaleBundle(lng: string): Promise<void> {
     if (lng === 'en') return; // already eager-loaded
@@ -300,7 +316,11 @@ export function initVaipakamI18n(options: VaipakamI18nOptions): I18nInstance {
   // sibling subdomains that DO translate the user's language to
   // English — a preference the user never expressed (Codex #1309 r3).
   // No cookie = each surface keeps making its own best detection.
-  if (persistable) {
+  // Suppressed entirely when a valid cookie existed but couldn't be
+  // seeded (storage blocked): the detector never saw it, so initialLng
+  // is a navigator fallback that must not overwrite the user's real
+  // cross-subdomain choice (Codex #1309 r7).
+  if (persistable && !cookieSeedFailed) {
     writeCookie(LANG_COOKIE, initialLng);
   }
 

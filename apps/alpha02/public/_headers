@@ -59,7 +59,9 @@
 # <meta name="robots"> only exists after hydration). Deliberately NOT
 # robots.txt-Disallowed: a Disallow blocks crawling but not reference-
 # only indexing of the URL — noindex requires the fetch to be seen.
-# Keep this list in sync with SeoMeta.tsx + generate-seo.mjs.
+# Every rule has a `/*` sibling: the router also renders trailing-
+# slash and deeper variants, and _headers matching is exact
+# (Codex #1309 r7). Keep in sync with SeoMeta.tsx + generate-seo.mjs.
 
 /positions
   X-Robots-Tag: noindex
@@ -67,13 +69,23 @@
   X-Robots-Tag: noindex
 /claims
   X-Robots-Tag: noindex
+/claims/*
+  X-Robots-Tag: noindex
 /vault
+  X-Robots-Tag: noindex
+/vault/*
   X-Robots-Tag: noindex
 /activity
   X-Robots-Tag: noindex
+/activity/*
+  X-Robots-Tag: noindex
 /settings
   X-Robots-Tag: noindex
+/settings/*
+  X-Robots-Tag: noindex
 /faucet
+  X-Robots-Tag: noindex
+/faucet/*
   X-Robots-Tag: noindex
 
 # SPA aliases (App.tsx Navigate routes). The redirect only happens
@@ -88,7 +100,11 @@
 
 /dashboard
   X-Robots-Tag: noindex
+/dashboard/*
+  X-Robots-Tag: noindex
 /manage
+  X-Robots-Tag: noindex
+/manage/*
   X-Robots-Tag: noindex
 /loans
   X-Robots-Tag: noindex
@@ -98,21 +114,41 @@
   X-Robots-Tag: noindex
 /claim
   X-Robots-Tag: noindex
+/claim/*
+  X-Robots-Tag: noindex
 /claim-center
+  X-Robots-Tag: noindex
+/claim-center/*
   X-Robots-Tag: noindex
 /vault-assets
   X-Robots-Tag: noindex
+/vault-assets/*
+  X-Robots-Tag: noindex
 /history
+  X-Robots-Tag: noindex
+/history/*
   X-Robots-Tag: noindex
 /earn
   X-Robots-Tag: noindex
+/earn/*
+  X-Robots-Tag: noindex
 /offer-book
+  X-Robots-Tag: noindex
+/offer-book/*
   X-Robots-Tag: noindex
 /trade
   X-Robots-Tag: noindex
+/trade/*
+  X-Robots-Tag: noindex
 /terminal
+  X-Robots-Tag: noindex
+/terminal/*
   X-Robots-Tag: noindex
 /vpfi-vault
   X-Robots-Tag: noindex
+/vpfi-vault/*
+  X-Robots-Tag: noindex
 /nft-rental
+  X-Robots-Tag: noindex
+/nft-rental/*
   X-Robots-Tag: noindex
