@@ -59,7 +59,12 @@ function inSection(pathname: string, base: string): boolean {
   return rest.length > 0 && !rest.includes('/');
 }
 
-function metaForPath(pathname: string): RouteMeta {
+function metaForPath(rawPathname: string): RouteMeta {
+  // React Router matches `/borrow/` to the `/borrow` route (verified
+  // matchRoutes behaviour) — normalize trailing slashes so a slashed
+  // URL of a public page doesn't fall through to the noindex NotFound
+  // row while rendering valid content (Codex #1309 r6).
+  const pathname = rawPathname.replace(/\/+$/, '') || '/';
   const seo = copy.seo;
   // Route table mirroring App.tsx EXACTLY: exact-only routes match
   // exactly (in the router, `/borrow/anything` is NotFound — emitting

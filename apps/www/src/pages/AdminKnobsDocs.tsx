@@ -44,6 +44,7 @@ import { HelpTabs } from '../components/HelpTabs';
 import { extractMarkdownToc, markdownComponents } from '../lib/markdownToc';
 import { isProtocolConsolePublic } from '../lib/protocolConsoleVisibility';
 import './UserGuide.css';
+import { useActiveLocale } from '../i18n/useActiveLocale';
 
 const ADMIN_DOC_FILES = import.meta.glob('../content/admin/*.md', {
   eager: true,
@@ -85,7 +86,7 @@ export default function AdminKnobsDocs() {
   const text = useMemo(() => resolveAdminDoc(), []);
   const toc = useMemo(() => extractMarkdownToc(text), [text]);
   const basePath = location.pathname.replace(/\/$/, '');
-  const isNonEnglish = (i18n.resolvedLanguage ?? 'en') !== 'en';
+  const isNonEnglish = useActiveLocale() !== 'en';
   const headingComps = useMemo(() => markdownComponents(), []);
 
   const collapseEnclosingDetails = (e: React.MouseEvent<HTMLAnchorElement>) => {

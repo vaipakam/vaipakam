@@ -32,6 +32,7 @@ import {
 import { usePageMeta } from '../lib/usePageMeta';
 import { useArticleJsonLd } from '../lib/useArticleJsonLd';
 import './UserGuide.css';
+import { useActiveLocale } from '../i18n/useActiveLocale';
 
 const WHITEPAPER_FILES = import.meta.glob('../content/whitepaper/*.md', {
   eager: true,
@@ -60,7 +61,7 @@ export default function Whitepaper() {
   const text = useMemo(() => resolveWhitepaper(), []);
   const toc = useMemo(() => extractMarkdownToc(text), [text]);
   const basePath = location.pathname.replace(/\/$/, '');
-  const isNonEnglish = (i18n.resolvedLanguage ?? 'en') !== 'en';
+  const isNonEnglish = useActiveLocale() !== 'en';
 
   const collapseEnclosingDetails = (e: React.MouseEvent<HTMLAnchorElement>) => {
     const details = e.currentTarget.closest('details');

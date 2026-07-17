@@ -33,6 +33,7 @@ import {
 import { usePageMeta } from '../lib/usePageMeta';
 import { useArticleJsonLd } from '../lib/useArticleJsonLd';
 import './UserGuide.css';
+import { useActiveLocale } from '../i18n/useActiveLocale';
 
 const OVERVIEW_FILES = import.meta.glob('../content/overview/*.md', {
   eager: true,
@@ -62,7 +63,7 @@ export default function Overview() {
     descriptionKey: 'pageMeta.overview.description',
   });
   const location = useLocation();
-  const lang = i18n.resolvedLanguage ?? 'en';
+  const lang = useActiveLocale();
   const { text, fellBackToEnglish } = useMemo(() => resolveOverview(lang), [lang]);
   useArticleJsonLd({
     titleKey: 'pageMeta.overview.title',

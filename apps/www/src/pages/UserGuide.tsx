@@ -55,6 +55,7 @@
  *   loans; each visit starts from the URL or the lender default.
  */
 
+import { useActiveLocale } from '../i18n/useActiveLocale';
 import {
   createContext,
   useContext,
@@ -513,7 +514,7 @@ export default function UserGuide({ variant }: UserGuideProps) {
       : 'pageMeta.userGuideAdvanced.description',
   });
   const mode: 'Basic' | 'Advanced' = variant === 'advanced' ? 'Advanced' : 'Basic';
-  const lang = i18n.resolvedLanguage ?? 'en';
+  const lang = useActiveLocale();
   const { text: raw, usedLocale, fellBackToEnglish } = useMemo(
     () => resolveGuide(mode, lang),
     [mode, lang],
@@ -535,9 +536,7 @@ export default function UserGuide({ variant }: UserGuideProps) {
   // Without `withLocalePrefix` the hrefs come out as `/help/<variant>#…`
   // and React Router's locale guard at the root mount falls back to
   // English, silently flipping the language on every TOC tap.
-  const locale: SupportedLocale = isSupportedLocale(i18n.resolvedLanguage)
-    ? i18n.resolvedLanguage
-    : 'en';
+  const locale: SupportedLocale = useActiveLocale();
   const basePath = withLocalePrefix(`/help/${variant}`, locale);
 
   const [role, setRole] = useState<Role>(() => {

@@ -46,7 +46,10 @@ export function LocaleResolver({ locale, children }: LocaleResolverProps) {
     ?? (isSupportedLocale(fromParam) ? fromParam : 'en');
 
   useEffect(() => {
-    if (i18n.resolvedLanguage !== target) {
+    // Compare against the ACTIVE language, not resolvedLanguage —
+    // the latter lags a lazily-loading bundle and would re-fire
+    // changeLanguage on every remount during the load window.
+    if (i18n.language !== target) {
       void i18n.changeLanguage(target);
     }
   }, [target]);

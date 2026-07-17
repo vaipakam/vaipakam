@@ -1,5 +1,6 @@
 import { Info } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
+import { useActiveLocale } from '../i18n/useActiveLocale';
 
 /**
  * Banner shown at the top of long-prose pages (Terms, Privacy) and on
@@ -15,8 +16,9 @@ interface EnglishOnlyNoticeProps {
 }
 
 export function EnglishOnlyNotice({ variant = 'legal' }: EnglishOnlyNoticeProps) {
-  const { t, i18n } = useTranslation();
-  if (i18n.resolvedLanguage === 'en') return null;
+  const { t } = useTranslation();
+  const locale = useActiveLocale();
+  if (locale === 'en') return null;
   const titleKey =
     variant === 'guide'
       ? 'pageNotice.translationPendingTitle'

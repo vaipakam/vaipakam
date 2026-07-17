@@ -180,6 +180,21 @@ export function initVaipakamI18n(options: VaipakamI18nOptions): I18nInstance {
     try {
       const mod = await loader();
       i18n.addResourceBundle(lng, 'translation', mod.default, true, true);
+      // Re-run language resolution now that the bundle exists.
+      // i18next computes `resolvedLanguage` only inside init /
+      // changeLanguage — a cold load of a non-English page fires
+      // changeLanguage BEFORE the lazy chunk lands, so resolution
+      // stays 'en' and every resolvedLanguage consumer (the www
+      // markdown-doc resolvers picking Basic.<locale>.md, notably)
+      // keeps rendering English even though the translation is now
+      // in memory — localized prerender snapshots baked English
+      // bodies (Codex #1309 r6, verified: /es/help/basic carried the
+      // English guide). Re-invoking changeLanguage with the same
+      // active language is idempotent and recomputes resolution.
+      const active = normalizeToSupportedLocale(i18n.language);
+      if (active === lng && i18n.resolvedLanguage !== lng) {
+        await i18n.changeLanguage(i18n.language);
+      }
     } catch (err) {
       // Loader failed — i18next falls back to English silently. Log
       // for diagnostics but don't break the page.
