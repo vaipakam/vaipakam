@@ -74,7 +74,13 @@ function metaForPath(pathname: string): RouteMeta {
   if (pathname === '/offers') return { ...seo.offers, index: true };
   if (pathname === '/desk') return { ...seo.desk, index: true };
   if (pathname === '/vpfi') return { ...seo.vpfi, index: true };
-  if (inSection(pathname, '/nft')) return { ...seo.nftVerifier, index: true };
+  // NftVerifier only performs a lookup for positive-integer token ids
+  // (`/^[1-9]\d*$/` in the page) — a malformed id (`/nft/foo`,
+  // `/nft/0`) renders just the empty form, a thin duplicate that must
+  // not be indexable (Codex #1309 r5).
+  if (pathname === '/nft' || /^\/nft\/[1-9]\d*$/.test(pathname)) {
+    return { ...seo.nftVerifier, index: true };
+  }
   if (pathname === '/help') return { ...seo.help, index: true };
   if (inSection(pathname, '/positions')) return { ...seo.positions, index: false };
   if (pathname === '/claims') return { ...seo.claims, index: false };
@@ -101,8 +107,12 @@ function upsertMeta(name: string, content: string): HTMLMetaElement {
 export function SeoMeta() {
   const { pathname } = useLocation();
   // Subscribes this component to language changes so head tags
-  // re-resolve — it renders no DOM, so it sits outside the
-  // LanguageRemount subtree's copy-proxy re-evaluation guarantee.
+  // re-resolve. Belt-and-braces: this component lives INSIDE
+  // LanguageRemount (via AppShell), so a language switch — and the
+  // later bundle-arrival remount — re-mounts it and re-runs the
+  // effect regardless of deps; the ACTIVE-language dep below is the
+  // explicit signal (resolvedLanguage would miss placeholder/lazy
+  // states — Codex #1309 r5).
   const { i18n } = useTranslation();
 
   useEffect(() => {
@@ -141,7 +151,7 @@ export function SeoMeta() {
       // A canonical on a noindex page is contradictory — drop it.
       canonical.remove();
     }
-  }, [pathname, i18n.resolvedLanguage]);
+  }, [pathname, i18n.language]);
 
   return null;
 }

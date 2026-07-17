@@ -238,18 +238,28 @@ export function initVaipakamI18n(options: VaipakamI18nOptions): I18nInstance {
   const initialLng = normalizeToSupportedLocale(i18n.language);
   if (initialLng !== 'en') void loadLocaleBundle(initialLng);
 
-  // What init may PERSIST and stamp on the document: the active
-  // language when it came from an explicit stored preference OR the
-  // app renders it translated; otherwise English. A bare navigator
-  // detection of a PLACEHOLDER locale must not write the cross-domain
-  // cookie or set `<html lang>` over English fallback text (see
-  // VaipakamI18nOptions.translatedLocales). i18next auto-caches the
-  // detection to localStorage during init — scrub that in the gated
-  // case so the cache can't masquerade as an explicit choice on the
-  // next visit.
+  // Two distinct concepts (Codex #1309 r5):
+  //
+  //   PREFERENCE — the language the user wants (persists to
+  //   localStorage + the cross-domain cookie, drives the picker and
+  //   the active i18next language). Persisted at init only when it
+  //   came from an explicit stored preference OR this app renders it
+  //   translated; a bare navigator detection of a placeholder locale
+  //   is not persisted, and i18next's localStorage auto-cache of it
+  //   is scrubbed so it can't masquerade as explicit next visit.
+  //
+  //   CONTENT LANGUAGE — what `<html lang>`/`dir` declare. Always
+  //   gated on translatedLocales, REGARDLESS of how the preference
+  //   arrived (picker, cookie from a sibling subdomain, URL prefix):
+  //   the attribute describes the text actually rendered, and a
+  //   placeholder locale renders English fallback text. A preference
+  //   for an untranslated locale therefore keeps `lang="en"` until
+  //   its bundle ships — at which point the same stamp flips
+  //   automatically.
+  const stampFor = (lng: string) =>
+    translatedLocales.includes(lng) ? lng : 'en';
   const persistable =
     hadExplicitPref || translatedLocales.includes(initialLng);
-  const displayLng = persistable ? initialLng : 'en';
   if (!persistable && typeof window !== 'undefined') {
     try {
       if (window.localStorage.getItem(storageKey) === i18n.language) {
@@ -270,13 +280,13 @@ export function initVaipakamI18n(options: VaipakamI18nOptions): I18nInstance {
   // `languageChanged` synchronously during init (inline resources +
   // sync detector).
   //
-  // ONLY in the persistable case: writing the forced-'en' fallback of
-  // a gated placeholder detection would lock sibling subdomains that
-  // DO translate the user's language to English — a preference the
-  // user never expressed (Codex #1309 r3). No cookie = each surface
-  // keeps making its own best detection.
+  // ONLY in the persistable case, and carrying the PREFERENCE (not
+  // the gated stamp): writing a forced-'en' fallback would lock
+  // sibling subdomains that DO translate the user's language to
+  // English — a preference the user never expressed (Codex #1309 r3).
+  // No cookie = each surface keeps making its own best detection.
   if (persistable) {
-    writeCookie(LANG_COOKIE, displayLng);
+    writeCookie(LANG_COOKIE, initialLng);
   }
 
   // Future language changes (LanguagePicker click, etc.) load the
@@ -294,15 +304,15 @@ export function initVaipakamI18n(options: VaipakamI18nOptions): I18nInstance {
     writeCookie(LANG_COOKIE, normalizeToSupportedLocale(lng));
   });
 
-  // Keep the document direction in sync with the active language so
-  // RTL scripts (Arabic, Hebrew, Farsi, Urdu) flip layout. Init uses
-  // the gated displayLng (never stamps a navigator-detected
-  // placeholder over English text); the listener path is always an
-  // explicit act — a picker click or a locale URL prefix — and is
-  // honoured in full.
-  applyDocumentDirection(displayLng);
+  // Keep the document `lang`/`dir` in sync with the CONTENT language
+  // (see stampFor above) so RTL scripts flip layout exactly when a
+  // translated bundle actually renders. Applies on BOTH paths — init
+  // and every language change — so no route into a placeholder
+  // preference (picker, sibling-subdomain cookie, URL prefix) can
+  // label English fallback text as another language.
+  applyDocumentDirection(stampFor(initialLng));
   i18n.on('languageChanged', (lng) => {
-    applyDocumentDirection(normalizeToSupportedLocale(lng));
+    applyDocumentDirection(stampFor(normalizeToSupportedLocale(lng)));
   });
 
   return i18n;

@@ -6,11 +6,14 @@
  *     per-user routes (settings et al.) carry `noindex` and no
  *     canonical — the policy that keeps wallet-scoped pages out of
  *     search indexes while the product surfaces stay indexable.
- *   - the Settings Language picker switches `<html lang>` (and
- *     persists the choice for the next visit via localStorage — the
- *     same key the pre-paint index.html bootstrap reads).
- *   - placeholder locales (wave-1 codes shipped as `{}` bundles
- *     awaiting translation) render ENGLISH text after switching —
+ *   - the Settings Language picker persists the PREFERENCE
+ *     (localStorage — the key the pre-paint bootstrap reads — and
+ *     the picker selection survive a reload), while `<html lang>`
+ *     declares the CONTENT language: a placeholder locale (bundle
+ *     still `{}`) renders English fallback text, so the attribute
+ *     stays `en` until the locale's translation actually ships —
+ *     no matter how the preference arrived (Codex #1309 r5).
+ *   - placeholder locales render ENGLISH text after switching —
  *     the fallback chain, not raw keys or a crash.
  *
  *  The cross-subdomain `vaipakam_lang` cookie half of persistence is
@@ -53,7 +56,7 @@ test('public routes carry per-route meta; per-user routes are noindex', async ({
   await expect(page.locator('meta[name="robots"]')).toHaveCount(0);
 });
 
-test('language picker switches <html lang>, persists, and placeholder locales render English', async ({
+test('language preference persists; placeholder locales render English with honest <html lang>', async ({
   launchWallet,
 }) => {
   const { page } = await launchWallet('lender');
@@ -65,22 +68,31 @@ test('language picker switches <html lang>, persists, and placeholder locales re
   await expect(picker.locator('option')).toHaveCount(5);
 
   await picker.selectOption('es');
-  await expect(page.locator('html')).toHaveAttribute('lang', 'es');
-  // es ships as a placeholder bundle ({}) — the UI must fall back to
-  // the English copy (not raw keys, not a blank remount).
+  // The PREFERENCE took: the picker reflects it immediately…
+  await expect(picker).toHaveValue('es');
+  // …but es ships as a placeholder bundle ({}), so the rendered text
+  // is the English fallback (not raw keys, not a blank remount) and
+  // <html lang> keeps declaring the CONTENT language honestly.
   await expect(
     page.getByRole('heading', { name: 'Language', exact: true }),
   ).toBeVisible();
+  await expect(page.locator('html')).toHaveAttribute('lang', 'en');
 
   // Same-origin persistence (the pre-paint bootstrap in index.html
-  // reads this key before React mounts).
+  // reads this key before React mounts) — the preference survives a
+  // reload even though the stamp stays English until the translation
+  // ships.
   expect(
     await page.evaluate(() => localStorage.getItem('vaipakam:language')),
   ).toBe('es');
   await page.reload({ waitUntil: 'domcontentloaded' });
-  await expect(page.locator('html')).toHaveAttribute('lang', 'es');
+  await expect(page.getByLabel('Display language')).toHaveValue('es');
+  await expect(page.locator('html')).toHaveAttribute('lang', 'en');
 
   // And back to English.
   await page.getByLabel('Display language').selectOption('en');
-  await expect(page.locator('html')).toHaveAttribute('lang', 'en');
+  await expect(page.getByLabel('Display language')).toHaveValue('en');
+  expect(
+    await page.evaluate(() => localStorage.getItem('vaipakam:language')),
+  ).toBe('en');
 });

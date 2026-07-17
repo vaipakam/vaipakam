@@ -69,6 +69,11 @@ export default function AdminKnobsDocs() {
   usePageMeta({
     titleKey: 'pageMeta.adminKnobs.title',
     descriptionKey: 'pageMeta.adminKnobs.description',
+    // English-only content reachable under locale prefixes (HelpTabs
+    // links it per locale): every variant canonicalizes to the one
+    // advertised unprefixed URL instead of self-canonicalizing an
+    // English duplicate per locale (EN_ONLY_ROUTES policy).
+    canonicalPath: '/protocol-console/docs',
   });
   // Same visibility gate as the defi-side dashboard route. Hide
   // the prose reference when the parameter values themselves are

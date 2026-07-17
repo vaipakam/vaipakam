@@ -52,12 +52,15 @@
           return null;
         }
         var SUPPORTED = ['en','es','fr','de','ja','zh','hi','ar','ta','ko','te','kn','ml','bn','mr','pa','gu','ur','vi','th','tl','id','pt','ru','uk','tr','it','nl','pl','el','cs','fa','he','sw'];
-        // TRANSLATED gates the navigator leg only: a browser-detected
-        // language with no finished translation must not stamp <html
-        // lang> over English text. Cookie/localStorage are explicit
-        // user choices and honour the full SUPPORTED list. Mirrors
-        // TRANSLATED_LOCALES in src/i18n/localeConfig.ts — grow both
-        // together as translations land.
+        // TRANSLATED gates the lang/dir STAMP for every detection leg
+        // (cookie, localStorage, navigator): <html lang> declares the
+        // language of the text actually rendered, and a locale whose
+        // bundle isn't translated yet renders English fallback — so
+        // English stays declared until the translation ships, no
+        // matter how the preference arrived (Codex #1309 r5). The
+        // PREFERENCE itself still round-trips via cookie/localStorage
+        // untouched. Mirrors TRANSLATED_LOCALES in
+        // src/i18n/localeConfig.ts — grow both together.
         var TRANSLATED = ['en'];
         var RTL = ['ar', 'he', 'fa', 'ur'];
         var lang = null;
@@ -71,10 +74,12 @@
               lang = storedLang;
             } else if (navigator.language) {
               var nav = navigator.language.toLowerCase().split('-')[0];
-              if (TRANSLATED.indexOf(nav) !== -1) lang = nav;
+              if (SUPPORTED.indexOf(nav) !== -1) lang = nav;
             }
           }
         } catch (_) { /* keep lang === null (stay with the static lang="en") */ }
+        // Content-language gate: stamp only translated locales.
+        if (lang && TRANSLATED.indexOf(lang) === -1) lang = null;
         if (lang) {
           document.documentElement.setAttribute('lang', lang);
           document.documentElement.setAttribute(

@@ -64,6 +64,14 @@ interface UsePageMetaInput {
   titleKey: string;
   /** i18n key for the page description. Same resolution. */
   descriptionKey: string;
+  /** Override the canonical PATH (default: the current pathname).
+   *  For English-only pages reachable under locale prefixes (see
+   *  EN_ONLY_ROUTES in scripts/seo-routes.mjs): `/es/protocol-
+   *  console/docs` self-canonicalizing would let English duplicates
+   *  be indexed per locale — pinning the canonical to the unprefixed
+   *  path consolidates every variant onto the one advertised URL
+   *  (Codex #1309 r5). */
+  canonicalPath?: string;
 }
 
 /** Open Graph + Twitter Card tags maintained alongside the basics.
@@ -90,7 +98,11 @@ const OG_TAGS = (
   { attr: 'name', key: 'twitter:image', content: OG_IMAGE },
 ];
 
-export function usePageMeta({ titleKey, descriptionKey }: UsePageMetaInput) {
+export function usePageMeta({
+  titleKey,
+  descriptionKey,
+  canonicalPath,
+}: UsePageMetaInput) {
   const { t, i18n } = useTranslation();
   const location = useLocation();
 
@@ -127,7 +139,8 @@ export function usePageMeta({ titleKey, descriptionKey }: UsePageMetaInput) {
     // because none of the marketing routes have canonical query
     // parameters; if a future route does, it can override via a
     // route-specific `usePageMeta` extension.
-    const path = location.pathname.replace(/\/+$/, '') || '/';
+    const path =
+      (canonicalPath ?? location.pathname).replace(/\/+$/, '') || '/';
     const canonicalHref = `${CANONICAL_ORIGIN}${path}`;
 
     let canonicalTag = document.querySelector(
@@ -168,5 +181,5 @@ export function usePageMeta({ titleKey, descriptionKey }: UsePageMetaInput) {
         canonicalTag.parentNode.removeChild(canonicalTag);
       }
     };
-  }, [t, titleKey, descriptionKey, location.pathname, i18n.language]);
+  }, [t, titleKey, descriptionKey, canonicalPath, location.pathname, i18n.language]);
 }
