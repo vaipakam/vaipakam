@@ -149,6 +149,45 @@
   },
   {
     "type": "function",
+    "name": "getDayPoolStamp",
+    "inputs": [
+      {
+        "name": "dayId",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "stamped",
+        "type": "bool",
+        "internalType": "bool"
+      },
+      {
+        "name": "scheduleFloor",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "recycledBudget",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "aBar",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "marginBps",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
     "name": "getExpectedSourceChainIds",
     "inputs": [],
     "outputs": [
@@ -156,6 +195,29 @@
         "name": "",
         "type": "uint32[]",
         "internalType": "uint32[]"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "getGovernorCommitState",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "armedFromDay",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "outstandingFresh",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "outstandingRecycled",
+        "type": "uint256",
+        "internalType": "uint256"
       }
     ],
     "stateMutability": "view"
@@ -401,6 +463,43 @@
         "type": "uint32[]",
         "indexed": false,
         "internalType": "uint32[]"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "GovernorDayPoolStamped",
+    "inputs": [
+      {
+        "name": "dayId",
+        "type": "uint256",
+        "indexed": true,
+        "internalType": "uint256"
+      },
+      {
+        "name": "scheduleFloor",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      },
+      {
+        "name": "recycledBudget",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      },
+      {
+        "name": "aBar",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      },
+      {
+        "name": "marginBps",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
       }
     ],
     "anonymous": false

@@ -83,7 +83,7 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](112);
+        selectors = new bytes4[](115);
         selectors[0] = TestMutatorFacet.setLoan.selector;
         selectors[1] = TestMutatorFacet.setOffer.selector;
         selectors[2] = TestMutatorFacet.setNextLoanId.selector;
@@ -287,6 +287,10 @@ contract HelperTest {
         selectors[110] = TestMutatorFacet.getStakeRollupStateRaw.selector;
         // Governor PR-3a — recycle-bucket forfeit-routing scaffolding.
         selectors[111] = TestMutatorFacet.setRewardEntryForfeitedRaw.selector;
+        // Governor PR-3b — day-pool stamp test scaffolding.
+        selectors[112] = TestMutatorFacet.setRecycleBucketRaw.selector;
+        selectors[113] = TestMutatorFacet.setRecycledCreditedByDayRaw.selector;
+        selectors[114] = TestMutatorFacet.setGovernorCommitArmedFromDayRaw.selector;
         // #951 v2 (Codex #959 bind-to-live) — setSaleListingCollateralRaw removed
         // with the snapshot mapping; the accept binds `>=` live collateral.
         // #687-B: the former tail entries ([83]-[87]: setBackstopAbsorbCashRaw,
@@ -1799,7 +1803,7 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](13);
+        selectors = new bytes4[](15);
         selectors[0] = RewardAggregatorFacet.onChainReportReceived.selector;
         selectors[1] = RewardAggregatorFacet.finalizeDay.selector;
         selectors[2] = RewardAggregatorFacet.forceFinalizeDay.selector;
@@ -1813,6 +1817,9 @@ contract HelperTest {
         selectors[10] = RewardAggregatorFacet.getExpectedSourceChainIds.selector;
         selectors[11] = RewardAggregatorFacet.isDayReadyToFinalize.selector;
         selectors[12] = RewardAggregatorFacet.backfillDayInclusion.selector;
+        // Governor PR-3b (#1217) — day-pool stamp + commitment-state reads.
+        selectors[13] = RewardAggregatorFacet.getDayPoolStamp.selector;
+        selectors[14] = RewardAggregatorFacet.getGovernorCommitState.selector;
         return selectors;
     }
 
