@@ -1,1 +1,970 @@
-{}
+{
+  "copy": {
+    "app": {
+      "name": "Vaipakam",
+      "tagline": "直接与他人借出、借入和租赁 NFT。"
+    },
+    "chrome": {
+      "nav": {
+        "home": "首页",
+        "borrow": "借入",
+        "lend": "出借",
+        "rent": "NFT 租赁",
+        "positions": "我的持仓",
+        "positionsShort": "持仓",
+        "claims": "领取",
+        "vault": "我的 vault",
+        "faucet": "获取测试资产",
+        "offers": "报价簿",
+        "desk": "利率台",
+        "vpfi": "VPFI 折扣",
+        "activity": "活动",
+        "nftVerifier": "NFT 验证器",
+        "settings": "设置",
+        "help": "帮助"
+      },
+      "settings": {
+        "language": "语言",
+        "languageHint": "尚未完成翻译的语言暂时显示英文文本。",
+        "languagePickerAria": "显示语言"
+      }
+    },
+    "seo": {
+      "home": {
+        "title": "Vaipakam — P2P 借贷与 NFT 租赁",
+        "description": "直接与他人借出、借入和租赁 NFT。自行设定条款 — 您的资产留在自己的链上 vault 中，没有资金池，也没有中间人。"
+      },
+      "borrow": {
+        "title": "借入资产 — Vaipakam",
+        "description": "锁定您拥有的抵押品，收到所需的 token。通过自己的链上 vault，按您选择的条款进行点对点直接贷款。"
+      },
+      "lend": {
+        "title": "出借赚取收益 — Vaipakam",
+        "description": "向借款人提供您的 token；如果他们还款，您即可赚取利息。在借款人接受您的条款前，资产留在您自己的链上 vault 中。"
+      },
+      "rent": {
+        "title": "NFT 租赁 — Vaipakam",
+        "description": "用您拥有的 NFT 赚取费用，或临时使用他人的 NFT。所有权从不转移 — 租期内 NFT 锁定在所有者的 vault 中。"
+      },
+      "offers": {
+        "title": "报价簿 — Vaipakam",
+        "description": "浏览网络上所有开放的出借和借入报价 — 资产、利率、期限和抵押条款，均来自链上实时数据。"
+      },
+      "desk": {
+        "title": "利率台 — Vaipakam",
+        "description": "按资产对和期限展示实时点对点借贷利率、成交利率历史以及签名报价簿。"
+      },
+      "vpfi": {
+        "title": "VPFI 手续费折扣 — Vaipakam",
+        "description": "可选：在 vault 中持有 VPFI 以降低协议手续费。出借、借入或租赁都不要求持有 VPFI。"
+      },
+      "nftVerifier": {
+        "title": "NFT 租赁验证器 — Vaipakam",
+        "description": "检查 Vaipakam 上列出的 NFT 租赁是否真实，并直接从链上查看该 token 的当前租赁状态。"
+      },
+      "help": {
+        "title": "帮助 — Vaipakam",
+        "description": "用通俗语言解释出借、借入、NFT 租赁、费用和风险 — 还包括此部署的构建和合约信息。"
+      },
+      "positions": {
+        "title": "我的持仓 — Vaipakam"
+      },
+      "claims": {
+        "title": "领取 — Vaipakam"
+      },
+      "vault": {
+        "title": "我的 vault — Vaipakam"
+      },
+      "activity": {
+        "title": "活动 — Vaipakam"
+      },
+      "settings": {
+        "title": "设置 — Vaipakam"
+      },
+      "faucet": {
+        "title": "测试资产 — Vaipakam"
+      },
+      "notFound": {
+        "title": "页面未找到 — Vaipakam"
+      }
+    },
+    "home": {
+      "title": "您想做什么？",
+      "lede": "选择一个任务开始。您可以随时在设置中切换到高级模式。",
+      "jobs": {
+        "borrow": {
+          "title": "借入资产",
+          "blurb": "锁定您拥有的抵押品，收到所需的 token。"
+        },
+        "lend": {
+          "title": "出借赚取收益",
+          "blurb": "向借款人提供您的 token；如果他们还款，您即可赚取利息。"
+        },
+        "rent": {
+          "title": "租入或出借 NFT",
+          "blurb": "用您拥有的 NFT 赚取费用，或临时使用他人的 NFT。"
+        },
+        "manage": {
+          "title": "管理我的持仓",
+          "blurb": "查看您的贷款和租赁，进行还款、追加抵押或领取。"
+        }
+      }
+    },
+    "tokenSecurity": {
+      "pickerUnknown": "独立安全检查目前无法验证此 token。涉及未验证 token 的交易会被保留，直到检查成功。",
+      "pickerUnsupported": "独立安全检查不覆盖此网络（测试网络未被索引）。请格外谨慎：只使用您部署或信任的 token。",
+      "retry": "重新检查",
+      "badge": {
+        "block": {
+          "label": "已标记风险",
+          "title": "独立安全检查将此报价中的某个 token 标记为危险（例如无法卖出）。审核不会允许此交易继续。"
+        },
+        "warn": {
+          "label": "注意",
+          "title": "独立安全检查报告此报价中的某个 token 存在所有者权限或税费。签署任何内容前，审核会显示详细信息。"
+        },
+        "unchecked": {
+          "label": "未筛查",
+          "title": "此报价中的某个 token 无法通过独立安全筛查。请格外谨慎。"
+        }
+      },
+      "reputationUnlisted": "未找到此地址的市场 listing — 更广泛的市场不了解此 token。这本身不代表它有问题，但交易前请与项目方核对合约地址。"
+    },
+    "signing": {
+      "approveUnknown": "批准 token — 一次确认；如果您的钱包需要先把旧批准重置为 0，则需要两次确认（仍在检查）。",
+      "sign": "签署您刚阅读的条款 — 免费签名，无 gas。",
+      "approve": "批准 token — 您允许协议取走上方显示的金额。这是一笔交易。",
+      "approveReset": "批准 token — 这里需要两次确认：您的钱包需要先将旧批准重置为 0，才能设置新金额。",
+      "post": "发布报价 — 最终交易。",
+      "accept": "开启交易 — 最终交易。",
+      "approveNft": "允许协议移动此 collection 中的 NFT — 每个 collection 一次性交易。",
+      "postListing": "发布 listing — 最终交易。",
+      "acceptRental": "开始租赁 — 最终交易。"
+    },
+    "killSwitch": {
+      "disabled": "此操作当前已关闭 — 运营方出于谨慎暂停了它，以便调查问题。已属于您的内容不受影响：还款、领取和提现都保持开放。"
+    },
+    "alerts": {
+      "title": "提醒",
+      "lede": "站点关闭时也能收到有关您持仓的 Telegram 消息 — 截止时间和风险不会等您打开标签页。",
+      "notConfigured": "此构建未设置提醒。运营方尚未将其指向提醒 backend，因此这里不会工作 — 与其假装可用，此部分保持关闭。",
+      "connectFirst": "连接钱包以为其设置提醒。",
+      "privacy": "链接会将您的钱包地址、本卡片中的提醒偏好以及 Telegram chat id 存储在 Vaipakam 的提醒服务中，并为每条发送的提醒保存小型投递记录（哪笔贷款、哪个级别、何时），确保不会因同一件事重复给您发消息。取消链接会删除 Telegram 连接。",
+      "linkButton": "链接 Telegram",
+      "linkSignNote": "您的钱包会先要求签署一条短消息 — 免费、不是交易，并证明此请求确实来自您。",
+      "linkIssued": "打开我们的 bot 并按 Start — 或把此代码作为消息发送给它。这会把此钱包连接到您的 Telegram。",
+      "openBot": "打开 Telegram",
+      "testAlertButton": "发送测试提醒",
+      "testAlertNote": "把代码发给 bot 后，点这里 — 我们会向您的 Telegram 推送一条消息以证明连接成功。您的钱包会先签署一条短的免费消息。",
+      "testAlertSending": "正在发送测试提醒…",
+      "testAlertSent": "测试提醒已发送 — 请检查 Telegram。此钱包的提醒现在已开启。",
+      "testAlertNotLinked": "我们还没找到您的 Telegram chat。打开 bot 并发送上方代码，然后再次点击“发送测试提醒”。如果代码已过期，点击“重新开始”获取新代码。",
+      "testAlertError": "刚才无法发送测试提醒。请稍后重试。",
+      "startOver": "重新开始",
+      "linked": "Telegram 已链接 — 此钱包的提醒会发送到您的聊天。",
+      "unlink": "取消链接",
+      "unlinkElsewhereTitle": "在另一台设备上链接了此钱包？",
+      "unlinkElsewhereBody": "它的 Telegram 链接存在我们的服务器上，不只在此浏览器中。可在此断开 — 会停止所有位置的消息。",
+      "unlinkElsewhere": "取消链接此钱包",
+      "unlinked": "已取消链接。此钱包不会再收到 Telegram 消息。",
+      "toggleRepayDue": "在利息付款到期前给我发消息",
+      "toggleRisky": "如果我的贷款变得有风险，给我发消息",
+      "riskyOffNote": "即使关闭，贷款即将被清算前您仍会收到警告。",
+      "advancedBands": "风险阈值（健康因子）：贷款跨过每个级别时会发送消息。",
+      "bandsInvalid": "三个级别必须递减 — warn 高于 alert，alert 高于 critical，critical 高于 1.00。",
+      "saved": "已保存。",
+      "pushTitle": "更喜欢应用推送？",
+      "pushBody": "同样的提醒会发布到 Vaipakam 的 Push Protocol 频道 — 用您的钱包在那里订阅，任何兼容 Push 的应用都会投递它们。",
+      "pushEnable": "启用 Push 投递",
+      "pushEnabled": "此钱包的 Push 投递已开启。",
+      "pushButton": "打开 Push 频道",
+      "loanNudge": "想在此贷款变得有风险时收到 Telegram 警告？请在设置中配置提醒。"
+    },
+    "notifications": {
+      "bellLabel": "通知",
+      "title": "通知",
+      "loading": "正在加载您的通知…",
+      "empty": "还没有。贷款更新会显示在这里。",
+      "unavailable": "刚才无法加载您的通知。连接恢复后会显示在这里。",
+      "connectFirst": "连接钱包以查看有关您贷款的更新。",
+      "line": {
+        "loan_matched": "您的贷款现在已激活。",
+        "partial_repay": "您的贷款收到了一笔还款。",
+        "loan_repaid": "一笔贷款已全额还清 — 查看您可以领取什么。",
+        "loan_defaulted": "一笔贷款已违约 — 查看您可以领取什么。",
+        "internal_matched": "您的一笔贷款通过匹配关闭 — 查看您可以领取什么。",
+        "maturity_7d": "一笔贷款距离到期还有一周 — 打开查看当前状态。",
+        "maturity_1d": "一笔贷款距离到期还有一天 — 打开查看当前状态。",
+        "grace_entered": "一笔贷款已超过到期日 — 打开查看当前状态。",
+        "hf_warn": "一笔贷款的健康值跌破 1.5 — 打开查看当前状态。",
+        "hf_alert": "一笔贷款的健康值跌破 1.2 — 打开查看当前状态。",
+        "hf_critical": "一笔贷款的健康值跌破 1.05，接近 1.0 清算线 — 打开采取行动。",
+        "generic": "您的贷款有更新。"
+      }
+    },
+    "errorBoundary": {
+      "title": "此页面出现问题",
+      "body": "页面遇到意外错误并停止渲染。您的资金和链上持仓不受影响 — 这是显示侧故障，您刚签署的交易仍可能已经通过（重新加载后查看我的持仓）。重新加载通常可以清除它。",
+      "reload": "重新加载页面",
+      "home": "返回首页"
+    },
+    "diagnostics": {
+      "open": "支持与连接检查",
+      "title": "支持",
+      "lede": "快速检查此应用依赖的连接状态，并提供报告问题的方式。",
+      "close": "关闭",
+      "network": "网络",
+      "wallet": "钱包",
+      "walletNotConnected": "未连接",
+      "rpc": "区块链连接",
+      "rpcChecking": "检查中…",
+      "rpcFailing": "无响应 — 应用现在无法访问区块链。重新加载，或切换网络再切回来，通常可以解决。",
+      "indexer": "市场数据缓存",
+      "indexerUnreachable": "当前不可达 — 市场列表可能要等其恢复后才能加载。您自己的持仓仍会直接从链上加载。",
+      "indexerNoCursor": "可达，但此网络尚未记录数据 — 活动到来后会填充。",
+      "indexerNotConfigured": "此构建未配置 — 这里无法加载市场列表。您自己的持仓仍会直接从链上加载。",
+      "build": "应用版本",
+      "lastErrorTitle": "此设备上的上次错误",
+      "noError": "本会话未记录错误。",
+      "report": "在 GitHub 上报告问题",
+      "reportHint": "打开一个预填充的 GitHub issue，包含上方详情和最后记录的错误。您的完整钱包地址绝不会包含在内。",
+      "copyDetails": "复制详情",
+      "copied": "已复制。"
+    },
+    "support": {
+      "title": "联系支持",
+      "lede": "向团队发送消息 — 您会立即收到 ticket 编号。",
+      "notConfigured": "此构建未连接支持 inbox，因此无法从这里发送应用内消息。可以改用 email：",
+      "messageLabel": "发生了什么？",
+      "messagePlaceholder": "请用自己的话告诉我们您当时在做什么、哪里出了问题。",
+      "emailLabel": "用于回复的 email（可选）",
+      "emailHint": "如果您更愿意自己跟进，可留空 — 下方 ticket 编号就是支持所需的一切。",
+      "attach": "附加上方显示的健康详情（推荐 — 通常包含原因）",
+      "privacy": "发送会将您的消息、发送页面和所在网络、您提供的回复地址，以及 — 仅在勾选时 — 上方健康详情，存储在 Vaipakam 支持服务中并归入您的 ticket 编号。团队会收到 ticket 到达通知（编号和上下文标记 — 不包含您的消息文本或 email）。健康详情中绝不包含您的完整钱包地址。",
+      "send": "发送给支持",
+      "sending": "发送中…",
+      "mailHint": "更喜欢 email，或想补充更多？请引用 ticket 编号写信给我们：",
+      "mailButton": "发送 email 至 support@vaipakam.com",
+      "invalidMessage": "请先写几句话说明发生了什么。",
+      "invalidEmail": "此 email 看起来不完整 — 请修正或清空该字段（它是可选的）。",
+      "rateLimited": "刚才已有几条消息发出 — 请等一分钟再试。",
+      "unavailable": "支持 inbox 当前无法接收消息。您这边没有丢失任何内容 — 请改发 email：",
+      "failed": "消息未发送成功。稍后重试，或发 email 给我们：",
+      "helpTitle": "需要人工帮助？",
+      "helpBody": "打开支持面板（每个页面角落的圆形按钮），一键给团队发送消息 — 它可以附加应用自身的健康详情，这些通常包含原因。也可以直接发 email："
+    },
+    "wallet": {
+      "connect": "连接钱包",
+      "connectFirst": "连接钱包以继续。",
+      "switchNetwork": "切换网络"
+    },
+    "checks": {
+      "walletConnected": "钱包已连接",
+      "supportedChain": "位于支持的网络",
+      "tokenValid": "资产已识别为 token",
+      "consent": "已接受风险披露和条款",
+      "getTestAssets": "获取测试资产",
+      "connectEarly": "连接钱包以继续 — 您需要它来签名，所以现在连接最方便。"
+    },
+    "receipt": {
+      "heading": "签名前请审核",
+      "youReceive": "您收到",
+      "youLock": "您锁定",
+      "youMayOwe": "您可能欠付",
+      "youCanLose": "您可能失去",
+      "fees": "费用",
+      "whenThisEnds": "结束时",
+      "gasNote": "网络 gas 与 Vaipakam 协议费用分开计算。"
+    },
+    "simulation": {
+      "running": "正在免费 dry run 此交易…",
+      "passed": "Dry run 通过 — 此交易应会按审核内容执行成功。",
+      "wouldFail": "注意 — 如果现在签署，此交易会失败。没有发送任何内容，也未花费 gas。",
+      "wouldFailNote": "您可以调整上方详情，稍后再试；也可以仍然签署。",
+      "approvalNeeded": "将先请求 token 批准 — dry run 还看不到此步骤，因此这是预期情况，不是问题。",
+      "unavailable": "免费 dry run 当前不可用。您仍可继续 — 此检查只是额外提醒。"
+    },
+    "help": {
+      "disclaimer": "Vaipakam 是去中心化、非保管协议。无需 KYC。用户需自行负责适用的监管合规。",
+      "risksTitle": "风险披露",
+      "risks": [
+        "借入：如果您未在到期日加宽限期前还款，锁定的抵押品会归出借人所有。没有实时市场价格的抵押品会整体转移。",
+        "借入：有实时市场价格的抵押品，如果价值跌幅过大，可能在到期日前被自动卖出（清算）。",
+        "出借：只有借款人还款时才赚取利息。违约时，您的回收取决于锁定抵押品最终的实际价值。",
+        "NFT 租赁：租用者获得临时使用权，不获得所有权；NFT 留在所有者的 vault 中。租赁费预付，并带有小额可退还缓冲金。",
+        "智能合约风险：Vaipakam 是公网上的代码。Bug、网络故障或极端市场状况可能造成损失 — 切勿投入无法承受损失的资金。"
+      ]
+    },
+    "consentParts": {
+      "prefix": "我理解并同意 ",
+      "risk": "风险披露",
+      "mid": " 和 ",
+      "terms": "Vaipakam 条款",
+      "suffix": "。"
+    },
+    "match": {
+      "borrowTitle": "现在准备为您提供资金的出借人",
+      "borrowLede": "这些报价与您的资产匹配。接受其中一个会立即开启贷款 — 您将采用该报价的全部金额和条款。",
+      "lendTitle": "等待资金的借款人",
+      "lendLede": "这些请求与您的资产匹配。为其中一个提供资金会按该请求的条款立即开启贷款。",
+      "wholeOfferNote": "报价会被整单接受 — 显示金额就是贷款金额。",
+      "choose": "选择",
+      "emptyBorrow": "当前没有匹配报价。",
+      "emptyLend": "当前没有匹配请求。",
+      "orPostBorrow": "改为发布我的借入请求",
+      "orPostLend": "改为发布我的出借报价",
+      "unavailable": "当前无法加载匹配报价。您仍可在下方发布自己的报价。",
+      "loanOpened": "贷款已开启",
+      "borrowerNext": "资金已在您的 Vaipakam Vault 中，抵押品已锁定。请在到期日前还款以取回抵押品 — 一切都在我的持仓中。",
+      "lenderNext": "您的资金已出借，借款人的抵押品已锁定。在我的持仓中跟踪还款；他们还款后您可领取资金。",
+      "wrongSide": "该链接指向市场另一侧 — 出借报价从借入页接受，借入请求从出借页接受。",
+      "wrongKind": "该报价涉及 NFT — 请从 NFT 租赁页面打开。",
+      "ownOffer": "那是您自己的报价 — 您可以在我的持仓中取消，但不能自己接受。",
+      "offerGone": "该报价不再开放。请浏览下方当前匹配项，或发布自己的报价。",
+      "counterpartyBlocked": "此报价的另一方当前无法交易（合规标记），因此无法接受。没有发送任何内容。",
+      "offerNotFound": "我们找不到该报价 — 链接可能已旧，或数据源仍在同步。请浏览下方当前报价。",
+      "termsChanged": "此报价的条款在您审核后发生变化。没有发送任何内容 — 请审核更新后的报价。",
+      "illiquidWarning": "此交易的一侧未被协议定价 — 当前没有可用市场价格或足够深的交易市场。如果它以违约结束，全部抵押品会直接转给出借人 — 没有人会先按公平市场价格出售它，也没有基于价格的自动清算。只有在接受这一点时才继续。",
+      "interestModeFullTerm": "利息为全期限：即使提前还款，也适用整个期限的利息。",
+      "interestModeProRata": "利息按日累积 — 提前还款成本更低。",
+      "interestModeProRataLender": "利息按日累积 — 如果借款人提前还款，您赚得更少。",
+      "saleLoanChecking": "正在读取此 listing 背后的运行中贷款 — 签署前审核必须显示真实数字。",
+      "saleLoanCheckFailed": "无法读取此 listing 背后的运行中贷款，而审核必须显示真实数字 — 成功前签署保持暂停。",
+      "saleLoanNotActive": "此 listing 背后的贷款不再活跃，因此购买无法完成。没有发送或批准任何内容。",
+      "saleSellerNotCovered": "卖方的常设结算批准不再覆盖完成此销售，因此购买会在链上失败。没有发送或批准任何内容 — 卖方需要恢复批准（其 listing 卡片会显示恢复操作）。",
+      "saleMaturityPassed": "此贷款已到期 — 该持仓无法再购买。没有发送或批准任何内容。",
+      "saleBought": "持仓已购买",
+      "saleSelfBuy": "您是此贷款的借款人，因此不能同时购买其出借人一侧 — 协议会拒绝。请从我的持仓中还款或提前关闭。没有发送或批准任何内容。",
+      "liquidityChecking": "正在检查协议如何为这些资产定价…",
+      "liquidityCheckFailed": "无法检查这些资产如何定价，而该检查决定一项重要警告 — 成功前签署保持暂停。",
+      "linkedLoanCheckFailed": "无法检查此报价是否为运行中贷款的持仓销售，而该检查决定一项重要披露 — 成功前签署保持暂停。",
+      "graceChecking": "正在确认用于判断此交易的还款宽限窗口…",
+      "graceCheckFailed": "无法确认还款宽限窗口，而审核必须显示真实窗口 — 成功前签署保持暂停。",
+      "riskGateBlocked": "协议的风险访问规则当前阻止您的钱包接受此项 — 它需要此应用尚无法收集的常设链上确认或访问级别。没有发送或批准任何内容。"
+    },
+    "borrow": {
+      "title": "借入资产",
+      "lede": "告诉我们您需要什么，以及可以锁定什么作为抵押品。签署任何内容前，我们会明确显示您将欠付什么。",
+      "postRequest": "发布借入请求",
+      "posted": "借入请求已发布",
+      "postedNext": "请求开放期间，您的抵押品会被锁定。只有出借人接受时资金才会到达 — 贷款会显示在我的持仓中。",
+      "collateralWarning": "如果您未按时还款，出借人可能收到您的抵押品。",
+      "lockNow": "发布此请求时，您的抵押品会被锁定。在出借人接受前，您可以取消以解锁。",
+      "collateralPrecheck": "继续前 —"
+    },
+    "lend": {
+      "title": "出借赚取收益",
+      "lede": "选择要出借的资产和希望获得的回报。出借是在选择风险，而不只是收益 — 签署前您会看到下行风险。",
+      "postOffer": "发布出借报价",
+      "posted": "出借报价已发布",
+      "postedNext": "报价开放期间，您的 token 会被锁定。借款人接受后，贷款会显示在我的持仓中。接受前可取消以解锁 token。",
+      "yieldNotGuaranteed": "如果借款人按时还款，预计可获得的利息。",
+      "defaultOutcome": "如果借款人违约，您的回收取决于其抵押品。"
+    },
+    "rent": {
+      "title": "租入或出借 NFT",
+      "lede": "NFT 租赁提供临时使用权 — 从不提供所有权。整个租赁期间，NFT 都锁定在所有者的 vault 中。",
+      "ownPath": "我有 NFT 可出租",
+      "ownPathBlurb": "设置每日费用 — 租用者会预付整个租期。",
+      "wantPath": "我想租用 NFT",
+      "wantPathBlurb": "预先付款，并在租赁结束前使用 NFT。",
+      "browseCta": "浏览可租赁 NFT",
+      "custodyNote": "NFT 永不离开 vault 托管。租用者只获得临时使用权 — 不获得所有权。",
+      "postListing": "发布租赁 listing",
+      "listingPosted": "租赁 listing 已发布",
+      "listingPostedNext": "listing 开放期间，您的 NFT 会保存在 vault 中。租用者接受后，租赁会显示在我的持仓中；在此之前可随时取消 listing 取回 NFT。",
+      "acceptRental": "租用此 NFT",
+      "rentalOpened": "租赁已开始",
+      "rentalOpenedNext": "您现在持有使用权，直到租赁结束 — NFT 本身仍在所有者 vault 中。您的预付费用覆盖整个期限；按时关闭后，缓冲金会退回给您。",
+      "checkOwnNft": "您拥有此 NFT",
+      "checkNotOwner": "连接的钱包不拥有此 NFT — 请检查合约地址和 token id。",
+      "browseTitle": "可租赁 NFT",
+      "browseEmpty": "当前没有租赁 listing。",
+      "browseEmptyCta": "拥有 NFT？使用上方切换把它列出出租 — 租用者会预付整个租期，因此空市场也是机会。",
+      "browseUnavailable": "当前无法加载租赁 listing。请稍后重试。",
+      "notDebt": "租赁不是贷款：没有需要偿还的内容 — 您的费用已预付，权利会在期限结束时自然终止。",
+      "no4907Warning": "注意：此 NFT collection 不支持链上租赁标准 (ERC-4907)。租赁仍可工作 — Vaipakam 会在您的 vault 中跟踪租用者使用权 — 但 Vaipakam 外部的应用和游戏不会识别租用者。",
+      "no4907Unknown": "无法检查此 NFT collection 是否支持链上租赁标准 (ERC-4907)。如果不支持，Vaipakam 外部应用不会识别租用者 — 在 Vaipakam 内租赁仍可工作。",
+      "vpfiPrepayListing": "此 listing 要求用 VPFI 支付，但租赁不允许 — 无法接受。请选择其他 listing。",
+      "vpfiCheckRetry": "刚才无法验证此 listing 的支付资产 — 没有发送或批准任何内容。请稍后重试。",
+      "vpfiPrepayNotAllowed": "VPFI 不能用作租赁支付资产 — 请选择其他 token。"
+    },
+    "preclose": {
+      "title": "提前关闭此贷款",
+      "blurb": "现在支付全部并在今天关闭贷款 — 随后您的抵押品会立即释放。",
+      "fullTermNote": "此贷款使用全期限利息，因此提前关闭仍需支付整个期限的利息。",
+      "proRataNote": "此贷款按日累积利息，因此提前关闭只需支付已累积部分。",
+      "action": "提前关闭",
+      "confirm": "确认 — 现在支付并关闭",
+      "done": "贷款已提前关闭。您的抵押品已准备好 — 请在下方或领取中心领取。",
+      "checking": "正在检查此贷款是否可提前关闭…",
+      "checkFailed": "当前无法读取此贷款的提前关闭成本 — 正在重试。普通还款仍可在下方使用。",
+      "graceNote": "此贷款已超过到期日。下方金额已包含逾期费用（每天略有增长），并且这种关闭方式只能在宽限窗口结束前使用。",
+      "graceFeeReceiptNote": "因逾期产生的 late fee 已包含在此金额中 — 与普通还款会收取的费用相同。"
+    },
+    "refinance": {
+      "title": "为此贷款再融资",
+      "blurb": "发布一笔条件更好的新贷款请求。出借人接受的瞬间，当前贷款会在同一笔交易中自动还清并关闭 — 您的抵押品会转到新贷款中，期间从不解锁。",
+      "rateLabel": "您愿意接受的最高年利率",
+      "durationLabel": "新贷款长度（天）",
+      "action": "审核再融资请求",
+      "confirm": "确认 — 发布再融资请求",
+      "payoffNote": "旧贷款的 payoff 始终是本金加剩余全期限利息 — 即使该贷款通常按日累积。这是退出出借人在提前退出时的固定权益。",
+      "shortIsSafe": "如果出借人尝试接受时您的钱包余额不足，接受会直接失败 — 不会取走任何内容，当前贷款保持不变。",
+      "periodicWarning": "此贷款按周期计划支付利息。如果请求开放期间有付款周期逾期，出借人的接受会失败，直到该周期结清 — 请保持贷款付款为最新。",
+      "done": "再融资请求已发布。出借人接受后，此贷款会自动关闭 — 您无需做其他事。可在下方取消请求（发布几分钟后开放取消）。",
+      "pendingAccepted": "您的再融资请求已被接受 — 此贷款正在被新贷款替换。稍后刷新以查看最终状态。",
+      "pendingLoanClosed": "此贷款随后已通过其他方式关闭，因此请求无法再完成 — 取消它也会移除其常设 payoff 批准。",
+      "cancel": "取消再融资请求",
+      "cancelSoon": "取消会在发布几分钟后开放 — 请稍后重试。",
+      "cancelled": "再融资请求已取消，payoff 批准已移除 — 此贷款保持不变。如果您有其他使用同一 token 的 listing 或请求，请从其卡片恢复批准。",
+      "cancelledRevokeFailed": "再融资请求已取消 — 此贷款保持不变。常设 payoff 批准无法自动移除；您可从钱包的 token 批准视图中撤销。",
+      "allowanceShort": "payoff 批准已不再覆盖此请求可能拉取的全部金额 — 出借人的接受可能失败（到期日后的接受还会拉取 late fee 和额外利息）。请在下方恢复或取消请求。",
+      "reapprove": "恢复 payoff 批准",
+      "reapproved": "payoff 批准已恢复 — 请求可再次完成。",
+      "reapproveAborted": "此请求已无法完成（已接受、已取消或贷款已关闭）— 没有批准任何内容。刷新以查看最新状态。",
+      "guardrailNote": "您的请求带有自己的到期时间和链上 guardrail：只能以您在此设置的利率或更低利率完成，并且绝不能超过审核中显示的到期时间。",
+      "graceNote": "此贷款已超过到期日。出借人仍可在宽限窗口结束前接受此请求，payoff 已包含逾期费用（每天略有增长）。",
+      "pendingPastGrace": "此贷款已超过到期日和宽限窗口，因此没有出借人能再接受此请求 — 它不再阻碍您这里的其他操作。请在下方取消它，也会移除常设 payoff 批准。",
+      "cadenceChangeNote": "您当前的贷款按计划支付利息。替换贷款不会 — 其利息会在关闭时结算。请确认这种现金流变化符合您的预期。",
+      "multiStepNote": "发布最多需要三次钱包确认（guardrail、payoff 批准、请求本身）。如果中途停止，前面的步骤会留在链上，直到完成发布或取消 — 取消也会移除批准。",
+      "partialBlockedByPending": "此贷款有实时再融资请求。部分还款会改变金额，并使该请求永久无法接受 — 请先取消再融资请求。",
+      "precloseBlockedByPending": "此贷款有实时再融资请求。现在提前关闭会让它搁置 — 请先取消再融资请求。",
+      "repayWarnPending": "此贷款仍有实时再融资请求。还款会结清贷款，之后该请求永远无法完成 — 稍后从其卡片取消它（也会移除常设 payoff 批准）；在此之前它只会留到过期。"
+    },
+    "approvals": {
+      "title": "常设 token 批准",
+      "blurb": "这些是您的钱包授予 Vaipakam 合约、用于您贷款和报价涉及 token 的花费权限。有些流程会有意设置它们（再融资请求的 payoff、销售 listing 的结算）；任何 abandoned 尝试留下的内容都可在此移除。",
+      "revokeWarning": "注意：如果实时再融资请求或销售 listing 依赖某个 token 的批准，撤销它会让该流程失败，直到您从卡片恢复 — 卡片会很快提示。",
+      "scopeNote": "此列表覆盖此网络上您的 Vaipakam 贷款和报价中出现过的 token。授予其他应用或其他 token 的批准不会显示 — 钱包自己的 token 批准视图仍是完整图景。",
+      "none": "未找到您已知 token 对 Vaipakam 的常设批准。",
+      "loading": "正在读取您的常设批准…",
+      "unavailable": "当前无法读取您的批准 — 请稍后重试。",
+      "sourcesUnavailable": "刚才无法加载您的贷款和报价，因此无法完整构建此列表 — 与其显示部分图景，请稍后重试。",
+      "revoke": "撤销",
+      "staleNote": "刚才无法刷新此列表 — 显示的行可能略有滞后。撤销仍可工作。"
+    },
+    "nftVerifier": {
+      "title": "NFT 验证器",
+      "lede": "Vaipakam 持仓 NFT 携带真实领取权 — 持有者控制其贷款的那一侧。信任任何 token id 前请先检查。",
+      "placeholder": "持仓 NFT token id",
+      "check": "检查",
+      "checking": "正在链上检查此 token…",
+      "checkFailed": "当前无法检查此 token — 请稍后重试。",
+      "ownerLabel": "当前持有者",
+      "roleLabel": "它控制的一侧",
+      "roleLender": "出借人侧 — 其持有者收取还款或回收。",
+      "roleBorrower": "借款人侧 — 其持有者还款并取回抵押品。",
+      "roleUnknown": "当前无法读取此 token 的角色详情。",
+      "loanLabel": "关联贷款",
+      "offerLabel": "为报价创建",
+      "lockUnrecognized": "因本应用版本无法识别的原因被转账锁定 — 在该流程完成或取消前无法转账。",
+      "lockUnknown": "当前无法读取此 token 是否转账锁定 — 在读取正常前，不要依赖其可转账。",
+      "positionRowLabel": "您的持仓 NFT",
+      "lockLabel": "转账锁",
+      "lockPrecloseOffset": "因 offset 提前关闭而锁定 — 在完成或取消前无法转账。",
+      "lockSale": "因持仓销售 listing 而锁定 — 在销售完成或 listing 取消前无法转账。",
+      "lockPrepayListing": "因抵押品 listing 而锁定 — listing 存续期间无法转账。",
+      "sanctionsLabel": "合规状态",
+      "sanctionsFlagged": "当前持有者有合规标记：此 NFT 不能转入或转出其钱包，且其领取权在标记清除前冻结。不要购买此 token 并期待交付。",
+      "sanctionsUnknown": "当前无法检查持有者的合规状态 — 如果持有者被标记，token 将无法转账，因此依赖前请重新检查。",
+      "inKindLabel": "违约支付",
+      "inKindNote": "如果关联贷款的借款人违约，此领取权会以实物支付贷款的原始抵押品 — 协议不会为您定价或出售。购买此持仓前，请评估您实际会收到什么。",
+      "liveNote": "Live 的含义正是：token 在这里存在，其持有者控制关联持仓。它不担保贷款健康或另一方行为。",
+      "goneBody": "要么其领取已完成且 token 已退役，要么它从未在这里铸造 — 网络不会记录是哪一种。请将任何出售或转让此 token id 的报价视为在此网络上无价值。"
+    },
+    "keepers": {
+      "title": "Keeper 权限",
+      "blurb": "Keepers 是第三方服务（或您自己的 bot），您可以允许它们替您运行特定贷款操作 — 开始提前关闭、完成您设置的再融资、列出持仓销售。这里的一切在您开启前都是关闭的，并且 keeper 能行动前必须有三个开关同时同意：总开关、该 keeper 的操作开关，以及每个贷款页面上的逐贷款开关。",
+      "safetyNote": "keeper 永远不能收取您的钱 — 支付始终流向持仓持有者。您可随时撤销任何 keeper（或关闭总开关），协议可一次性暂停所有 keeper，再融资还会受您为每笔贷款设置的 guardrail 限制。如果持仓转手，这些权限适用于新持有者的设置，而不是您的设置。",
+      "masterLabel": "允许我批准的 keepers 行动（总开关 — 关闭时什么都不会运行）",
+      "addressPlaceholder": "0x… keeper 地址",
+      "actions": {
+        "initPreclose": {
+          "label": "替我开始提前关闭贷款",
+          "side": "作用于您借入的贷款",
+          "blurb": "在您作为借款人的贷款上开始任何提前关闭路径。payoff 仍会通过您的常设批准从您的钱包支付。"
+        },
+        "refinance": {
+          "label": "替我完成再融资",
+          "side": "作用于您借入的贷款",
+          "blurb": "完成您设置的再融资，受您批准的 guardrail（利率上限、结束日期）以及协议自身 keeper kill switch 限制。"
+        },
+        "completeOffset": {
+          "label": "替我完成 offset 关闭",
+          "side": "作用于您借入的贷款",
+          "blurb": "在其报价被接受后，完成通过 offset 的提前关闭。"
+        },
+        "extend": {
+          "label": "替我原地延长贷款",
+          "side": "作用于您借入的贷款",
+          "blurb": "不重新开启贷款而延长 — 只有双方都选择了延长期限限制时才可执行。"
+        },
+        "initEarlyWithdraw": {
+          "label": "列出我的贷款持仓出售",
+          "side": "作用于您资助的贷款",
+          "blurb": "列出您资助的贷款，开始出借人提前退出。收益仍只支付给您。"
+        },
+        "completeLoanSale": {
+          "label": "替我完成持仓销售",
+          "side": "作用于您资助的贷款",
+          "blurb": "完成已接受的持仓销售，把贷款移动给买家。付款仍只路由给您。"
+        }
+      },
+      "enabledOn": "Keeper 访问已启用。Keepers 现在可在您授予权限且贷款自身开关开启的地方行动。",
+      "enabledOff": "Keeper 访问已禁用 — 保持关闭时，任何 keeper 都不能在任何地方替您行动。",
+      "addTitle": "批准 keeper",
+      "add": "批准 keeper",
+      "added": "Keeper 已批准。请记住：它只能在您也打开该贷款 keeper 开关的贷款上行动。",
+      "alreadyListed": "该 keeper 已获批准 — 请在上方编辑其权限。",
+      "save": "保存权限",
+      "updated": "Keeper 权限已更新。",
+      "revoke": "撤销",
+      "revoked": "Keeper 已撤销 — 它不再能在任何地方替您行动。",
+      "maskUnreadable": "无法读取此 keeper 的当前权限，因此编辑已禁用（现在保存可能会静默覆盖它们）。请稍后重试；撤销仍可工作。",
+      "extraBitsNote": "此 keeper 还持有此处未显示的高级权限 — 保存时它们会原样保留。",
+      "perLoanReminder": "仅在这里批准 keeper 还不够：每个贷款页面还有逐贷款 keeper 开关，也必须开启。",
+      "loading": "正在加载您的 keeper 设置…",
+      "staleWarning": "刚才无法刷新您的 keeper 设置 — 显示内容可能略有滞后。撤销和保存仍可工作。",
+      "unavailable": "当前无法加载您的 keeper 设置 — 请稍后重试。",
+      "loanTitle": "此贷款的 keepers",
+      "loanBlurb": "您的已批准 keepers 只有在此贷款开关开启时才能作用于此贷款。操作仍受您在设置中授予的权限限制。",
+      "loanToggleOn": "此贷款的 keeper 已启用。",
+      "loanToggleOff": "此贷款的 keeper 已禁用。",
+      "loanEnablesUnavailable": "当前无法读取此贷款的 keeper 开关 — 读取成功前，切换按钮暂停（其显示状态可能滞后）。",
+      "loanNoKeepers": "您尚未批准任何 keepers — 请在设置 → Keeper 权限中设置。",
+      "loanMasterOff": "您的 keeper 总开关已关闭，因此即使此贷款开关开启，也不会运行任何操作 — 请在设置 → Keeper 权限中开启。"
+    },
+    "earlyExit": {
+      "title": "提前退出此贷款",
+      "blurb": "将此贷款中您的一侧卖给另一个拥有匹配开放出借报价的出借人。您会立即从其已锁定资金中获得付款 — 无需批准，之后也无需领取 — 借款人的条款完全不变。",
+      "pickerLead": "可买断您的开放出借报价：",
+      "none": "当前没有匹配的出借报价。报价必须匹配此贷款资产、覆盖剩余金额并适配剩余时间 — 请稍后查看。",
+      "unavailable": "当前无法加载匹配报价 — 请稍后重试。",
+      "shortfallWarn": "此买家期望的利率高于您贷款支付的利率；对于此候选项，该利率差（不是已累积利息 — 您支付两者中较大者，从不同时支付两者）决定您的 payout。",
+      "forfeitNote": "提前退出会放弃目前已累积的利息：它用于覆盖协议分成，并在买家利率更高时帮助弥合差额。显示数字已考虑这一点。",
+      "action": "审核退出",
+      "confirm": "确认 — 出售我的持仓",
+      "done": "持仓已出售 — payout 已在您的钱包中，此贷款现在属于新出借人。这里无需再做任何事。",
+      "loadingOffers": "正在寻找匹配的出借报价…",
+      "figureMoved": "payout 数字随时间变化，因此审核已关闭 — 请重新打开以按当前数字确认。",
+      "checking": "正在检查此贷款是否可提前退出…",
+      "checkFailed": "当前无法读取此贷款的退出详情 — 正在重试。"
+    },
+    "loanSale": {
+      "title": "列出此持仓出售",
+      "blurb": "设置买家在贷款剩余时间内可赚取的年利率，并公开列出您的持仓。买家接受时，您会在同一笔交易中收到全部未偿金额。（如果上方匹配报价已支付足够，instant exit 更简单 — listing 用于自己定价并等待。）",
+      "rateLabel": "买家赚取的年利率",
+      "action": "审核 listing",
+      "confirm": "确认 — 列出我的持仓",
+      "lockWarning": "listing 会锁定您的出借人持仓 NFT — 在销售完成或您取消 listing 前无法转账。您的领取权不受影响。",
+      "sweetenNote": "高于贷款自身利率的利率能更快吸引买家，但剩余期限的差额会在完成时从您的钱包中扣除。",
+      "done": "持仓已列出。买家接受后，销售会自动结算 — 在此之前请保持常设批准（以及足够支付结算数字的余额），或在下方取消 listing。",
+      "pendingNoId": "此持仓已列出出售（从另一台设备列出，因此这里无法取消 — 请在列出的设备上取消）。listing 存在期间，您的出借人 NFT 会被锁定。",
+      "allowanceShort": "常设结算批准（或您的钱包余额）不再覆盖买家接受时会拉取的金额 — 销售现在会失败。请在下方恢复或取消 listing。",
+      "restore": "恢复结算批准",
+      "restored": "结算批准已恢复 — listing 可再次完成。",
+      "cancel": "取消 listing",
+      "cancelled": "listing 已取消 — 您的出借人 NFT 已解锁，结算批准已移除（如果您有其他使用同一 token 的 listing 或请求，请从其卡片恢复批准）。贷款保持不变。",
+      "cancelledRevokeFailed": "listing 已取消，您的出借人 NFT 已解锁。常设结算批准无法自动移除 — 您可从钱包的 token 批准视图中撤销。",
+      "cancelSoon": "取消会在 listing 后几分钟开放 — 请稍后重试。",
+      "restoreAborted": "此 listing 已不再存在（已售出、已取消或已解锁）— 没有批准任何内容。刷新以查看最新状态。",
+      "loanSettledWhileListed": "此贷款已结算，因此销售 listing 永远无法完成 — 请取消以解锁您的出借人 NFT 并移除常设批准。",
+      "fundingUnknown": "无法从此设备识别此 listing 的报价记录，因此无法在此验证其结算资金 — 请在列出它的设备上管理，或保持充足批准和余额。",
+      "ended": "您的销售 listing 已不再活跃。如果买家已接受，payout 已在您的钱包中，结算通过常设批准拉取；任何剩余批准可从钱包的 token 批准视图撤销。",
+      "listingUnavailable": "按自己价格列出持仓功能尚不可用 — 所需链上步骤正在修复。上方 instant exit 可用：它会立即卖给匹配开放报价。",
+      "partialBlockedByListing": "出借人已按当前未偿金额列出此持仓出售。listing 存续期间暂停部分还款 — 它会改变金额并误导买家。您仍可随时全额还款或提前关闭。"
+    },
+    "positions": {
+      "title": "我的持仓",
+      "lede": "您的贷款和租赁，以及每项当前需要的一个操作。",
+      "emptyTitle": "还没有活跃持仓",
+      "emptyBody": "借入或出借即可开始。",
+      "unavailable": "当前无法加载您的持仓。资金不受影响 — 请稍后重试。",
+      "sourcesDegraded": "此页面的一个数据源暂时不可用。您的当前持仓会从剩余数据源显示，最近变化的项目可能需要一点时间才会出现。",
+      "roleBorrower": "您借入了",
+      "roleLender": "您出借了",
+      "groupAttention": "需要您关注",
+      "groupActive": "活跃贷款",
+      "groupEnded": "已结束贷款",
+      "claimWaiting": "等待领取",
+      "seeActivity": "查看完整活动历史 →",
+      "graceOverViewer": "宽限期已结束 — 贷款现在可标记为违约，抵押品会归出借人所有。",
+      "graceUnknownBorrower": "此贷款已逾期，宽限窗口可能即将结束 — 目前无法读取确切截止时间。请尽快还款，赶在出借人可拿走抵押品之前。",
+      "graceUnknownLender": "此贷款已逾期 — 目前无法读取确切宽限截止时间。宽限窗口结束且违约被记录后，抵押品领取会显示在这里。",
+      "graceUnknownViewer": "此贷款已逾期。宽限窗口结束后，出借人可领取抵押品。",
+      "graceOverBorrower": "宽限期已结束 — 协议不再接受还款，出借人可随时拿走抵押品。他们领取后，结果会显示在这里。",
+      "graceOverLender": "宽限期已结束 — 此贷款现在可标记为违约。通常这会在不久后自动发生；违约记录后，抵押品领取会显示在这里。",
+      "fallbackCureBorrower": "此贷款已过宽限期，正在结算违约。您仍可全额还款以 cure 并取回抵押品 — 但只到出借人最终确认违约为止，而这可能随时发生。",
+      "owedDefaulted": "无需再还款 — 此贷款以违约结束，抵押品覆盖了它。",
+      "owedDefaultedNoCollateral": "无需再还款 — 此贷款以违约结束并已结算。",
+      "owedClosed": "无 — 此贷款已关闭并结算。",
+      "whatNextRepaidBorrower": "您已还清此贷款。它不会再发生变化 — 如果尚未领取，请在下方取回抵押品。",
+      "whatNextRepaidLender": "借款人已还款。此贷款不会再发生变化 — 如果尚未领取，请在下方领取资金。",
+      "whatNextRepaidViewer": "借款人已还款。此贷款不会再发生变化 — 任何剩余领取权属于持仓持有者。",
+      "whatNextDefaultedBorrower": "此贷款已以违约结束。结算后的任何剩余部分可领取（可能为零）。",
+      "whatNextDefaultedLender": "此贷款已以违约结束 — 回收内容可在领取中心领取。",
+      "whatNextDefaultedViewer": "此贷款已以违约结束 — 结算回收属于持仓持有者。",
+      "whatNextInternalMatchBorrower": "此贷款通过内部匹配关闭。请在下方领取任何 residual 和 VPFI rebate（两者都可能为零）。",
+      "whatNextInternalMatchLender": "此贷款通过内部匹配关闭 — 如果尚未领取，请在下方领取资金。",
+      "whatNextInternalMatchViewer": "此贷款通过内部匹配关闭 — 任何 residual 领取权属于持仓持有者。",
+      "whatNextClosed": "此贷款已完全结算 — 没有剩余操作。",
+      "whatNextRentalEnded": "此租赁已结束。任何赚取费用或可退还缓冲金可由持仓持有者在下方领取 — 不会再发生其他变化。",
+      "settledAhead": "此持仓已在链上关闭 — 这里的状态是实时的。您的列表可能需要一点时间同步。"
+    },
+    "powerSurface": {
+      "body": "这是高级用户界面 — 提供原始报价和实时利率，减少引导。引导式借入和出借流程也覆盖相同操作，并提供逐步说明。",
+      "guidedBorrow": "引导式借入",
+      "guidedLend": "引导式出借",
+      "enableAdvanced": "我知道自己在做什么 — 启用高级模式",
+      "dismiss": "关闭"
+    },
+    "claims": {
+      "title": "领取",
+      "lede": "已准备好供您收取的资金和资产。",
+      "empty": "当前没有可领取内容。",
+      "emptyBody": "当您参与的贷款或租赁结束时，任何应付给您的内容都会自动显示在这里。",
+      "emptyCta": "查看我的持仓",
+      "unavailable": "当前无法加载您的领取项。资金不受影响 — 请稍后重试。",
+      "claim": "领取",
+      "claimed": "领取完成。",
+      "allTitle": "一次性领取全部",
+      "allBlurb": "用一次钱包签名收取所有已准备好的 payout，而不是逐个领取。",
+      "allEmpty": "当前没有可批量处理的内容。",
+      "allVpfiNote": "提取 parked VPFI 会降低您的手续费折扣等级 — 默认关闭。",
+      "allResidualNote": "未准备好的内容仍会在下方列出，可单独领取。",
+      "allRewardsUnavailable": "无法检查您的奖励，因此它们不在此批次中 — 请单独领取。",
+      "allVpfiUnavailable": "无法检查您的 vault VPFI，因此它不在此批次中。",
+      "allWorking": "等待钱包…"
+    },
+    "offers": {
+      "title": "报价簿",
+      "lede": "其他用户的开放出借报价和借入请求。",
+      "emptyTitle": "当前没有开放报价",
+      "emptyBody": "创建自己的报价，让另一方来找您。",
+      "unavailable": "当前无法加载报价簿。请稍后重试。",
+      "lenderOffer": "出借报价",
+      "borrowerOffer": "借入请求"
+    },
+    "desk": {
+      "title": "利率台",
+      "lede": "一个市场的订单簿 — 查看利率，发布或修改限价利率报价，并在一处查看您的开放订单和持仓。",
+      "marketLabel": "市场",
+      "tenorLabel": "期限",
+      "customPair": "自定义交易对…",
+      "customLend": "贷款资产地址",
+      "customCollateral": "抵押资产地址",
+      "marketsUnavailable": "市场列表当前无法加载，因此交易对发现受限 — 可手动输入交易对，簿本身仍可加载。",
+      "marketsEmpty": "当前没有实时市场。选择一个交易对，并用 ticket 发布第一个报价。",
+      "marketsTruncated": "显示最活跃市场 — 较小市场不会列出，但可用“自定义交易对…”加载任意交易对。",
+      "pickPair": "选择市场以加载其簿。",
+      "lastFill": "最近成交",
+      "quotedMid": "报价中间价",
+      "spread": "价差",
+      "crossed": "交叉",
+      "statUnknown": "—",
+      "bookTitle": "订单簿",
+      "rateHeading": "利率 (APR %)",
+      "sizeHeading": "规模",
+      "cumHeading": "深度",
+      "asksHeading": "出借人报价 (asks)",
+      "bidsHeading": "借款人请求 (bids)",
+      "bookEmpty": "此市场尚无开放报价 — 您可以成为第一个。",
+      "bookUnavailable": "当前无法加载订单簿。请稍后重试。",
+      "bookIndexedCopy": "实时链读取不可用 — 显示簿的索引副本，可能落后于链。",
+      "yourOrderMark": "您在此利率的订单",
+      "takeAsk": "借入此项",
+      "takeBid": "出借给此项",
+      "rowPrefills": "点击利率可预填 ticket。吃掉簿顶会经过与借入/出借相同的引导式审核。",
+      "tapeTitle": "最近成交",
+      "tapeEmpty": "此市场尚无成交。",
+      "tapeUnavailable": "当前无法加载最近成交。",
+      "match": {
+        "body": "这些簿顶报价可以交叉。任何人都可执行此匹配并赚取 matcher fee — 您支付执行所需网络 gas。",
+        "execute": "执行匹配",
+        "executing": "匹配中…",
+        "executed": "匹配已执行 — 交叉报价已结算为贷款。",
+        "noLongerMatchable": "这些报价已无法交叉 — 发送匹配前订单簿已移动。没有发送任何内容。",
+        "matchingDisabled": "报价匹配刚被协议治理关闭，因此此匹配当前无法发送。没有发送任何内容。"
+      },
+      "signed": {
+        "badge": "已签名",
+        "badgeTooltip": "来自链下簿的 gasless 签名订单 — maker 无需交易即可签名，由接受者通过单笔链上交易成交。签名行在成交前始终来自订单簿服务，而不是链。",
+        "partialBadgeTooltip": "部分匹配的签名订单 — 其剩余部分仍计入深度，并通过 permissionless matcher 成交，但直接 fill 已不再可能。",
+        "rangedBadgeTooltip": "范围规模签名订单 — 其规模仍计入深度，但只有 permissionless matcher 可分片消耗；没有整单直接 fill。",
+        "fill": "Fill",
+        "confirmTitle": "Fill 签名订单",
+        "confirmLede": "您在一笔交易中执行整个 fill：您的一侧从钱包移动，maker 的一侧从其 vault 移动，贷款立即开始。",
+        "gone": "此签名订单已无法 fill（已 fill、已取消或已过期）。订单簿会很快同步。没有发送任何内容。",
+        "makerNotFunded": "maker 的 vault 当前不足以覆盖此订单，因此 fill 会在链上失败。没有发送任何内容 — maker 必须先补充 vault。",
+        "illiquid": "此订单中的某个资产当前未被协议定价，而此紧凑确认无法说明这意味着的实物违约条款。没有发送任何内容。",
+        "kycBlocked": "此部署的身份验证规则未覆盖此价值下订单的一侧，因此 fill 会在链上失败。没有发送或批准任何内容。",
+        "riskBlocked": "此部署的风险访问规则当前阻止订单的一侧 — maker 或您的钱包需要此紧凑确认无法收集的链上访问级别或常设同意。没有发送或批准任何内容。",
+        "accept": "Fill 订单",
+        "accepting": "Filling…",
+        "accepted": "签名订单已 fill — 贷款已 live。"
+      },
+      "chart": {
+        "title": "成交利率",
+        "loading": "正在加载图表…",
+        "lastFillNone": "尚无成交",
+        "empty": "此市场尚无成交 — 图表只绘制成交利率。",
+        "emptyRange": "此范围内没有成交 — 尝试更长范围。",
+        "unavailable": "当前无法加载利率历史。",
+        "retry": "重试",
+        "quotedMid": "报价中间价",
+        "quotedMidHint": "虚线 = 簿当前报价中间价 — 是静置报价，不是成交利率。",
+        "truncatedNote": "历史较长 — 仅显示最近成交。最旧的蜡烛未绘制。",
+        "intervalLabel": "间隔",
+        "rangeLabel": "范围",
+        "attribution": "Charts by TradingView",
+        "mobileBook": "簿",
+        "mobileChart": "图表",
+        "mobileViewLabel": "利率台视图"
+      },
+      "history": {
+        "tab": "历史",
+        "caption": "此钱包在利率台上交易过的一切 — 每个市场、每个状态。已还款、已领取和已转移的持仓仍会列出。",
+        "empty": "此钱包尚无利率台历史。",
+        "unavailable": "当前无法加载您的历史。",
+        "loadMore": "加载更多",
+        "loadingMore": "加载中…",
+        "loading": "正在加载您的历史…",
+        "roleLender": "出借人",
+        "roleBorrower": "借款人",
+        "started": "已开始"
+      },
+      "ticket": {
+        "title": "订单 ticket",
+        "sideLend": "出借",
+        "sideBorrow": "借入",
+        "amountLend": "出借金额",
+        "amountBorrow": "借入金额",
+        "rateLend": "利率 — 您可接受的最低值 (APR %)",
+        "rateBorrow": "利率 — 您愿意支付的最高值 (APR %)",
+        "collateralRequire": "您要求的抵押品",
+        "collateralLock": "您锁定的抵押品",
+        "collateralFixedNote": "由所选市场设置 — 要针对不同抵押资产发布，请在页头切换市场。",
+        "expiryLabel": "到期",
+        "expiryGtc": "GTC",
+        "expiryCustom": "自定义…",
+        "expiryInvalid": "自定义到期时间必须是未来日期和时间。",
+        "expiryTooFar": "自定义到期时间最多一年后 — 协议将报价到期限制在 365 天内。",
+        "fillModeLabel": "Fill 模式",
+        "fillPartial": "部分",
+        "fillAon": "AON",
+        "fillIoc": "IOC",
+        "fillPartialHint": "部分：报价可分批 fill，直到最小值。",
+        "fillAonHint": "全有或全无：只能按全额作为一整笔贷款 fill。",
+        "fillIocHint": "立即或取消：只停留到到期 — 需要到期时间。",
+        "iocNeedsExpiry": "IOC 订单需要到期时间 — 请选择 24h、7d 或自定义时间。",
+        "post": "发布订单",
+        "posting": "发布中…",
+        "posted": "订单已发布",
+        "postedNext": "您的报价已在簿上 live。在下方开放订单中管理 — fill 前可随时修改或取消。",
+        "modeLabel": "发布",
+        "modeOnchain": "On-chain",
+        "modeGasless": "Gasless（仅签名）",
+        "modeOnchainHint": "将报价作为交易发布 — 资金现在会托管在您的 vault 中。",
+        "modeGaslessHint": "链下签署订单并发布到簿 — 无交易、无 gas。资金只在 taker fill 时移动。",
+        "gaslessEscrowNote": "签名时没有任何内容被托管 — taker fill 会在当时从您 vault 的可用余额中拉取。之后取消是链上交易（不同于发布）。",
+        "gaslessNeedsIndexer": "Gasless 发布需要订单簿服务，但当前未配置。链上发布仍可工作。",
+        "gaslessLenderAonNote": "Gasless 出借订单只能作为一整笔贷款 fill — 签名出借人订单无法在链上切片，因此以 all-or-nothing 发布。链上发布仍可使用部分 fill。",
+        "gaslessPost": "签名并发布到簿",
+        "gaslessPosting": "签名中…",
+        "gaslessConsentRequired": "请先审核并接受风险披露和条款 — 对 gasless 订单，您的签名就是记录该同意的方式。",
+        "gaslessPosted": "签名订单已发布到簿 — 未花费 gas。taker 接受时会 fill。",
+        "gaslessUnavailable": "当前无法访问订单簿 — 订单未发布。请稍后重试。",
+        "blockNetwork": "切换到支持的网络以发布。",
+        "blockNoMarket": "请先在页头选择市场。",
+        "blockAmount": "请在上方输入金额。",
+        "blockRate": "请输入 0 到 100% 之间的利率。",
+        "blockCollateral": "请在上方输入抵押金额。",
+        "blockLoading": "正在加载市场详情 — 请稍候。",
+        "blockConsent": "请审核并接受上方风险条款以发布。",
+        "blockGaslessService": "Gasless 发布需要订单簿服务，但当前不可用 — 请将发布切换为 On-chain。",
+        "consentRecheck": "条款已变化 — 请重新确认。",
+        "max": "最大",
+        "feePreviewTitle": "费用与承诺"
+      },
+      "orders": {
+        "tab": "开放订单",
+        "empty": "没有开放订单。用 ticket 发布一个。",
+        "unavailable": "当前无法加载您的开放订单。",
+        "heldNotCreated": "已持有 — 由创建者管理",
+        "cancel": "取消",
+        "cancelling": "取消中…",
+        "amend": "修改",
+        "amendTitle": "原地修改 — 同一报价、同一持仓、一笔交易。",
+        "amendLoadFailed": "无法读取此报价的实时值，而修改必须从这些值开始。请重试。",
+        "amendMinAmount": "最小金额",
+        "amendMaxAmount": "最大金额",
+        "amendAmountAon": "金额（all-or-nothing）",
+        "amendRate": "利率 (APR %)",
+        "amendRateMax": "最大利率 (APR %)",
+        "amendCollateral": "抵押品",
+        "amendCollateralMax": "最大抵押品",
+        "amendNoChange": "尚未更改。",
+        "amendMalformed": "只能输入普通十进制数字 — 数字，可带可选小数点。",
+        "amendInvalid": "每个最小值必须小于等于其最大值，且任何最大值都不能低于已 fill 的部分。",
+        "amendPositive": "金额和抵押品必须大于零。",
+        "amendAllowanceLost": "此次增大的 token 批准已不再足够 — 没有更改任何内容。请重新批准。",
+        "approveFirst": "先批准",
+        "approving": "批准中…",
+        "save": "保存更改",
+        "saving": "修改中…",
+        "amended": "订单已修改。",
+        "signedTitle": "签名订单（此市场）",
+        "signedNote": "您为所选市场发布的 gasless 签名订单。其他市场的订单不会显示 — 请在页头切换市场以管理它们。",
+        "signedCancel": "链上取消",
+        "signedCancelling": "取消中…",
+        "signedCancelNote": "发布是免费的，但取消需要 gas：撤销簿中已持有签名的唯一方式是链上交易。",
+        "signedCancelled": "签名订单已在链上取消。",
+        "signedTruncated": "此市场中您的签名订单超过一次可列出的数量 — 这不是完整集合。"
+      },
+      "positions": {
+        "tab": "持仓",
+        "empty": "此钱包没有开放持仓。",
+        "unavailable": "当前无法加载您的持仓。",
+        "health": "健康度",
+        "notPriced": "无自动清算",
+        "manage": "管理",
+        "allPositions": "全部持仓 →"
+      }
+    },
+    "vpfi": {
+      "title": "VPFI 折扣",
+      "optional": "可选：在 vault 中持有 VPFI，以降低符合条件贷款的协议手续费。使用 Vaipakam 从不需要 VPFI。",
+      "noGasDiscount": "您的 VPFI 折扣不会降低网络 gas。",
+      "withdrawWarning": "提取 VPFI 可能降低未来手续费折扣。",
+      "tokenChanged": "VPFI token 配置在您审核后发生变化。没有批准任何内容 — 请检查更新后的数字并重试。",
+      "tokenCheckRetry": "刚才无法确认 VPFI token — 没有批准任何内容。请稍后重试。",
+      "addToWallet": "将 VPFI 添加到 MetaMask",
+      "addedToWallet": "已请求您的钱包跟踪 VPFI。"
+    },
+    "errors": {
+      "partialOverPrincipal": "这已覆盖贷款的全部剩余本金。请改用“还清此贷款” — 它会正确结算贷款并释放您的抵押品。",
+      "notAToken": "该地址在此网络上不像 token。请仔细检查或选择建议资产。",
+      "txRejected": "您在钱包中取消了。没有发送任何内容。",
+      "txFailed": "交易未通过。除网络 gas 外没有取走任何内容。请重试。",
+      "sanctionsBlocked": "此钱包被 sanctions oracle 标记，因此新持仓和 payout 被阻止。没有发送任何内容。还款和关闭现有持仓仍保持开放。",
+      "sanctionsCheckRetry": "刚才无法运行合规检查 — 没有发送任何内容。请稍后重试。",
+      "checkRetry": "刚才无法在链上验证 — 没有发送任何内容。请稍后重试。",
+      "assetPaused": "此交易的某个资产被协议暂时暂停，因此当前无法执行此操作。没有发送任何内容 — 请稍后重试。",
+      "positionMoved": "此持仓已不再由连接的钱包持有（可能已转移或已领取）。没有发送任何内容 — 刷新以查看当前状态。",
+      "collateralNotPriced": "此贷款的抵押品当前未被协议定价，因此无法为其追加抵押品。没有发送任何内容。",
+      "pastGrace": "此贷款已超过到期日和宽限窗口，因此链上还款已关闭 — 现在适用违约流程。没有发送任何内容。",
+      "loanAlreadySettled": "此贷款看起来已在链上结算 — 没有发送任何内容。稍后刷新以查看最终状态。",
+      "nothingToClaim": "此侧当前没有可在链上领取的内容 — payout 可能为零或已领取。没有发送任何内容。",
+      "preclosePastGrace": "此贷款已超过到期日和宽限窗口，因此无法再提前关闭 — 没有发送任何内容。现在适用违约流程。",
+      "refinancePastGrace": "此贷款已超过到期日和宽限窗口，因此无法再再融资 — 没有发送任何内容。现在适用违约流程。",
+      "saleListingMatured": "此贷款已过到期日，因此持仓无法再列出出售 — 没有发送任何内容。",
+      "refinanceNotOriginalBorrower": "此持仓在贷款开始后已转手，因此其抵押品无法带入再融资 — 没有发送任何内容。还款或提前关闭仍可使用。",
+      "lenderBlockedPartial": "出借人的钱包当前无法接收直接部分付款（合规标记）。全额还清贷款仍开放 — 该路径会为经过筛查的领取保留资金。"
+    },
+    "fees": {
+      "lateFee": "逾期还款会在第一天后增加未偿金额的 1%，每天增加 0.5%，上限 5%。",
+      "faqQuestion": "Vaipakam 收取哪些费用？",
+      "faqAnswerGeneric": "Vaipakam 会按借入金额收取贷款发起费，并保留出借人赚取利息的一部分。逾期还款会在第一天后增加未偿金额的 1%，每天增加 0.5%，上限 5%。网络 gas 是独立的，会支付给区块链，不支付给 Vaipakam。连接钱包以查看精确当前费率。"
+    },
+    "faucet": {
+      "title": "获取测试资产",
+      "lede": "铸造 mock token 和测试 NFT，以便在测试网络上试用借入、出借和租赁 — 没有真实价值，除 gas 外无成本。",
+      "notTestnetTitle": "这里无法使用测试资产",
+      "backHome": "返回首页",
+      "minting": "铸造中…",
+      "viewTx": "查看交易",
+      "nextSteps": "下一步：让它发挥作用 —",
+      "nextBorrow": "用它作抵押借入",
+      "nextLend": "把它出借",
+      "nextRent": "列出出租",
+      "footer": "铸造的资产会进入您的钱包。使用“我的 vault”以及借入、出借、NFT 租赁页面让它们发挥作用。",
+      "mintedNft": "已向您的钱包铸造测试租赁 NFT。它的 token ID — 列出租赁时会用到：",
+      "copyTokenId": "复制 token ID",
+      "copiedTokenId": "已复制。",
+      "liquid": {
+        "title": "流动测试 token (tLIQ)",
+        "blurb": "由测试预言机定价，因此表现得像流动资产 — 健康因子、清算和再融资都可使用它。当流程需要两个不同流动 token 时，将其与 mWETH 配对（一个作贷款，一个作抵押）。"
+      },
+      "liquid2": {
+        "blurb": "由测试预言机定价为 $1 的测试 USDC — 第二个独立流动 token，让您可以运行贷款和抵押品都为流动资产的交易（相对 tLIQ / mWETH 有现实价差），而无需把 token 与自身配对。"
+      },
+      "mweth": {
+        "title": "Mock wrapped ETH (mWETH)",
+        "blurb": "一个由预言机定价的测试 token，在演示中扮演 “wrapped ETH” 角色。它不是真正的 WETH — 可免费铸造且没有价值。"
+      },
+      "nft2": {
+        "title": "第二个可租赁测试 NFT (vART)",
+        "blurb": "另一个 ERC-4907 collection — 当您想列出一个 NFT、租用另一个 NFT，或同时运行多个租赁时很方便。",
+        "action": "铸造 vART NFT"
+      },
+      "addedToWallet": "已请求您的钱包跟踪它。",
+      "illiquid": {
+        "title": "非流动测试 token (tILQ)",
+        "blurb": "没有价格 feed，因此表现得像非流动资产 — 双方都必须同意，违约会以实物转移抵押品。"
+      },
+      "illiquid2": {
+        "title": "第二个非流动测试 token (tILQ2)",
+        "blurb": "同样未定价。将它与 tILQ 配对（一个作贷款，一个作抵押），以尝试双方都没有价格的交易 — 双方必须同意，不适用健康因子，违约时抵押品以实物交付。"
+      },
+      "nft": {
+        "title": "租赁测试 NFT (vRENT)",
+        "blurb": "用于试用 NFT 租赁流程的 ERC-4907 可租赁 NFT。",
+        "action": "铸造测试 NFT"
+      }
+    },
+    "vault": {
+      "title": "我的 vault",
+      "lede": "您自己的链上账户。只有您的钱包控制它 — Vaipakam 从不汇集用户资金。",
+      "noVaultYet": "您的 vault 会在第一笔报价、贷款或存入时自动创建。无需设置。",
+      "emptyCta": "开始",
+      "emptyCtaFaucet": "获取测试资产",
+      "unavailable": "当前无法读取您的 vault。资金不受影响 — 请稍后重试。",
+      "lockedHint": "锁定金额支持您的开放报价、活跃贷款和租赁。它们关闭后会释放。"
+    },
+    "activity": {
+      "title": "活动",
+      "lede": "您的钱包在 Vaipakam 上完成的一切，按最新优先显示。",
+      "empty": "暂无活动。使用 Vaipakam 时会显示在这里。",
+      "emptyCtaBorrow": "借点东西",
+      "emptyCtaLend": "出借点东西",
+      "unavailable": "当前无法加载您的活动。请稍后重试。",
+      "truncatedNote": "仅显示最近活动 — 协议 feed 繁忙，较旧事件可能未列出。",
+      "participantTruncatedNote": "此钱包的贷款历史超过我们一次可检查的范围 — 与其最旧贷款相关的某些事件可能缺失。",
+      "truncatedEmpty": "最近协议活动中没有属于您的内容。此页面只列出最近活动，因此更旧内容不会显示。",
+      "viewTx": "查看交易",
+      "loadMore": "加载更早活动",
+      "loadingMore": "加载中…",
+      "unavailableFallback": "您的当前贷款和租赁始终可在这里查看",
+      "positionsLink": "我的持仓"
+    },
+    "rewards": {
+      "title": "交互奖励",
+      "blurb": "来自您出借和借入活动的 VPFI 奖励。贷款关闭且奖励日最终确定后，它们会变为可领取。",
+      "empty": "暂无奖励。奖励会在出借或借入活动后出现。",
+      "waiting": "您的奖励正在最终确定 — 奖励日需跨所有链关闭后才能领取。请稍后查看。",
+      "claim": "领取奖励"
+    },
+    "sanctions": {
+      "title": "此钱包被合规预言机列出。",
+      "line1": "连接地址出现在 Vaipakam 筛查所用的链上 sanctions oracle 中。",
+      "line2": "新持仓（报价、贷款、租赁、存入）被阻止且不会通过。",
+      "line3": "现有持仓的还款和关闭仍开放，以便让交易对手完整结算，但对此钱包的领取和 payout 在标记期间会被阻止。如果您认为这是错误，请联系预言机提供方 (Chainalysis)。"
+    },
+    "risk": {
+      "notPriced": "此贷款的资产未被协议定价，因此没有自动清算 — 违约时抵押品会原样转移。",
+      "healthy": "健康",
+      "watch": "密切关注",
+      "danger": "接近清算",
+      "liquidatable": "现在可清算",
+      "explain": "如果抵押品价值相对借入金额下跌过多，贷款可能被清算。追加抵押品会使其更安全。",
+      "listChecking": "正在检查健康度",
+      "listCheckingTitle": "此贷款的健康度尚未读取，因此徽章保持中性。清算保护仍在链上适用。"
+    },
+    "notFound": {
+      "title": "此页面不存在",
+      "body": "链接可能过旧或拼写错误。没有任何内容丢失 — 您的持仓是安全的。",
+      "backHome": "返回首页"
+    }
+  }
+}
