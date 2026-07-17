@@ -1,1 +1,970 @@
-{}
+{
+  "copy": {
+    "app": {
+      "name": "Vaipakam",
+      "tagline": "NFTs direkt mit anderen verleihen, ausleihen und mieten."
+    },
+    "chrome": {
+      "nav": {
+        "home": "Startseite",
+        "borrow": "Leihen",
+        "lend": "Verleihen",
+        "rent": "NFT-Vermietung",
+        "positions": "Meine Positionen",
+        "positionsShort": "Positionen",
+        "claims": "Ansprüche",
+        "vault": "Mein Vault",
+        "faucet": "Test-Assets erhalten",
+        "offers": "Angebotebuch",
+        "desk": "Zins-Desk",
+        "vpfi": "VPFI-Rabatte",
+        "activity": "Aktivität",
+        "nftVerifier": "NFT-Verifizierer",
+        "settings": "Einstellungen",
+        "help": "Hilfe"
+      },
+      "settings": {
+        "language": "Sprache",
+        "languageHint": "Sprachen ohne abgeschlossene Übersetzung zeigen vorerst englischen Text.",
+        "languagePickerAria": "Anzeigesprache"
+      }
+    },
+    "seo": {
+      "home": {
+        "title": "Vaipakam — P2P-Kredite, Leihen und NFT-Vermietung",
+        "description": "Verleihen, leihen und mieten Sie NFTs direkt mit anderen Personen. Sie legen die Bedingungen fest — Ihre Assets bleiben in Ihrem eigenen On-Chain-Vault, ohne Pool und ohne Mittelsmann."
+      },
+      "borrow": {
+        "title": "Assets leihen — Vaipakam",
+        "description": "Sperren Sie eigene Sicherheiten und erhalten Sie die Tokens, die Sie benötigen. Direkte Kredite von Person zu Person zu Bedingungen, die Sie wählen, aus Ihrem eigenen On-Chain-Vault."
+      },
+      "lend": {
+        "title": "Durch Verleihen verdienen — Vaipakam",
+        "description": "Bieten Sie Ihre Tokens Kreditnehmern an und verdienen Sie Zinsen, wenn sie zurückzahlen. Ihre Assets bleiben in Ihrem eigenen On-Chain-Vault, bis ein Kreditnehmer Ihre Bedingungen annimmt."
+      },
+      "rent": {
+        "title": "NFT-Vermietung — Vaipakam",
+        "description": "Verdienen Sie Gebühren mit einem NFT, das Ihnen gehört, oder nutzen Sie eines vorübergehend. Das Eigentum wechselt nie — das NFT bleibt für die Mietdauer im Vault des Eigentümers gesperrt."
+      },
+      "offers": {
+        "title": "Angebotebuch — Vaipakam",
+        "description": "Durchsuchen Sie alle offenen Kredit- und Leihangebote im Netzwerk — Assets, Zinssätze, Laufzeiten und Sicherheitenbedingungen live von der Chain."
+      },
+      "desk": {
+        "title": "Zins-Desk — Vaipakam",
+        "description": "Live-Zinssätze für Person-zu-Person-Kredite nach Asset-Paar und Laufzeit, Historie ausgeführter Sätze und das Buch signierter Angebote."
+      },
+      "vpfi": {
+        "title": "VPFI-Gebührenrabatte — Vaipakam",
+        "description": "Optional: Halten Sie VPFI in Ihrem Vault, um Protokollgebühren zu reduzieren. Zum Verleihen, Leihen oder Mieten ist VPFI nie erforderlich."
+      },
+      "nftVerifier": {
+        "title": "NFT-Vermietungen-Verifizierer — Vaipakam",
+        "description": "Prüfen Sie, ob eine auf Vaipakam gelistete NFT-Vermietung echt ist, und sehen Sie den aktuellen Mietstatus des Tokens direkt von der Chain."
+      },
+      "help": {
+        "title": "Hilfe — Vaipakam",
+        "description": "Klare Antworten zu Verleihen, Leihen, NFT-Vermietung, Gebühren und Risiken — plus Build- und Vertragsinformationen für dieses Deployment."
+      },
+      "positions": {
+        "title": "Meine Positionen — Vaipakam"
+      },
+      "claims": {
+        "title": "Ansprüche — Vaipakam"
+      },
+      "vault": {
+        "title": "Mein Vault — Vaipakam"
+      },
+      "activity": {
+        "title": "Aktivität — Vaipakam"
+      },
+      "settings": {
+        "title": "Einstellungen — Vaipakam"
+      },
+      "faucet": {
+        "title": "Test-Assets — Vaipakam"
+      },
+      "notFound": {
+        "title": "Seite nicht gefunden — Vaipakam"
+      }
+    },
+    "home": {
+      "title": "Was möchten Sie tun?",
+      "lede": "Wählen Sie eine Aufgabe, um zu beginnen. Sie können in den Einstellungen jederzeit in den erweiterten Modus wechseln.",
+      "jobs": {
+        "borrow": {
+          "title": "Assets leihen",
+          "blurb": "Sperren Sie eigene Sicherheiten und erhalten Sie die Tokens, die Sie benötigen."
+        },
+        "lend": {
+          "title": "Durch Verleihen verdienen",
+          "blurb": "Bieten Sie Ihre Tokens Kreditnehmern an und verdienen Sie Zinsen, wenn sie zurückzahlen."
+        },
+        "rent": {
+          "title": "NFT mieten oder vermieten",
+          "blurb": "Verdienen Sie Gebühren mit einem eigenen NFT oder nutzen Sie eines vorübergehend."
+        },
+        "manage": {
+          "title": "Meine Positionen verwalten",
+          "blurb": "Sehen Sie Ihre Kredite und Vermietungen, zahlen Sie zurück, fügen Sie Sicherheiten hinzu oder beanspruchen Sie Auszahlungen."
+        }
+      }
+    },
+    "tokenSecurity": {
+      "pickerUnknown": "Die unabhängige Sicherheitsprüfung konnte dieses Token gerade nicht verifizieren. Geschäfte mit ungeprüften Tokens werden zurückgehalten, bis die Prüfung erfolgreich ist.",
+      "pickerUnsupported": "Die unabhängige Sicherheitsprüfung deckt dieses Netzwerk nicht ab (Testnetzwerke werden nicht indexiert). Vorsicht: Verwenden Sie nur Tokens, die Sie selbst bereitgestellt haben oder denen Sie vertrauen.",
+      "retry": "Erneut prüfen",
+      "badge": {
+        "block": {
+          "label": "Risiko markiert",
+          "title": "An independent security check flags a Token in this Angebot as dangerous (for example impossible to sell). Die Prüfung will not let this deal proceed."
+        },
+        "warn": {
+          "label": "Vorsicht",
+          "title": "An independent security check reports owner powers or taxes on a Token in this Angebot. Die Prüfung shows the details before Sie signieren anything."
+        },
+        "unchecked": {
+          "label": "Nicht geprüft",
+          "title": "A Token in this Angebot could not be checked by the independent security screen. Treat it with extra care."
+        }
+      },
+      "reputationUnlisted": "Für diese Adresse wurde kein Markteintrag gefunden — der breitere Markt kennt dieses Token nicht. Das macht es nicht automatisch schlecht, aber prüfen Sie die Vertragsadresse beim Projekt, bevor Sie damit handeln."
+    },
+    "signing": {
+      "approveUnknown": "Token genehmigen — eine Bestätigung, oder zwei, wenn Ihre Wallet zuerst eine ältere Genehmigung auf null zurücksetzen muss (Prüfung läuft).",
+      "sign": "Unterzeichnen Sie die gerade gelesenen Bedingungen — eine kostenlose Signatur, kein Gas.",
+      "approve": "Token genehmigen — Sie erlauben dem Protokoll, den oben angezeigten Betrag zu nehmen. Dies ist eine Transaktion.",
+      "approveReset": "Token genehmigen — hier sind zwei Bestätigungen nötig: Ihre Wallet muss eine ältere Genehmigung auf null zurücksetzen, bevor der neue Betrag gesetzt werden kann.",
+      "post": "Angebot veröffentlichen — die letzte Transaktion.",
+      "accept": "Geschäft eröffnen — die letzte Transaktion.",
+      "approveNft": "Erlauben Sie dem Protokoll, NFTs aus dieser Sammlung zu bewegen — eine einmalige Transaktion pro Sammlung.",
+      "postListing": "Listing veröffentlichen — die letzte Transaktion.",
+      "acceptRental": "Vermietung starten — die letzte Transaktion."
+    },
+    "killSwitch": {
+      "disabled": "Diese Aktion ist derzeit abgeschaltet — die Betreiber haben sie vorsorglich pausiert, während etwas geprüft wird. Alles, was Ihnen bereits gehört, bleibt unberührt: Rückzahlungen, Ansprüche und Abhebungen bleiben offen."
+    },
+    "alerts": {
+      "title": "Benachrichtigungen",
+      "lede": "Erhalten Sie Telegram-Nachrichten zu Ihren Positionen, auch wenn die Website geschlossen ist — Fristen und Risiken warten nicht, bis Sie einen Tab öffnen.",
+      "notConfigured": "Benachrichtigungen sind in diesem Build nicht eingerichtet. Der Betreiber hat kein Benachrichtigungs-Backend konfiguriert; deshalb bleibt dieser Bereich deaktiviert.",
+      "connectFirst": "Verbinden Sie Ihre Wallet, um Benachrichtigungen einzurichten.",
+      "privacy": "Beim Verknüpfen werden Ihre Wallet-Adresse, die Benachrichtigungseinstellungen dieser Karte und Ihre Telegram-Chat-ID im Vaipakam-Benachrichtigungsdienst gespeichert, plus ein kleiner Zustellnachweis pro gesendeter Benachrichtigung (welcher Kredit, welche Stufe, wann), damit Sie nie zweimal zur gleichen Sache benachrichtigt werden. Das Lösen der Verknüpfung entfernt die Telegram-Verbindung.",
+      "linkButton": "Telegram verknüpfen",
+      "linkSignNote": "Ihre Wallet bittet Sie zuerst, eine kurze Nachricht zu signieren — kostenlos, keine Transaktion, und als Nachweis, dass die Anfrage wirklich von Ihnen kommt.",
+      "linkIssued": "Öffnen Sie unseren Bot und drücken Sie Start — oder senden Sie ihm diesen Code als Nachricht. Dadurch wird diese Wallet mit Ihrem Telegram verbunden.",
+      "openBot": "Telegram öffnen",
+      "testAlertButton": "Testbenachrichtigung senden",
+      "testAlertNote": "Sobald Sie den Code an den Bot gesendet haben, tippen Sie hier — wir senden eine Nachricht an Telegram, um die Verbindung zu prüfen. Ihre Wallet signiert zuerst eine kurze kostenlose Nachricht.",
+      "testAlertSending": "Testbenachrichtigung wird gesendet…",
+      "testAlertSent": "Testbenachrichtigung gesendet — prüfen Sie Telegram. Benachrichtigungen für diese Wallet sind jetzt aktiv.",
+      "testAlertNotLinked": "Wir konnten Ihren Telegram-Chat noch nicht finden. Öffnen Sie den Bot, senden Sie ihm den Code oben und tippen Sie erneut auf “Testbenachrichtigung senden”. Wenn der Code abgelaufen ist, tippen Sie auf “Neu beginnen”.",
+      "testAlertError": "Die Testbenachrichtigung konnte gerade nicht gesendet werden. Bitte versuchen Sie es gleich erneut.",
+      "startOver": "Neu beginnen",
+      "linked": "Telegram verknüpft — Benachrichtigungen für diese Wallet gehen an Ihren Chat.",
+      "unlink": "Verknüpfung lösen",
+      "unlinkElsewhereTitle": "Diese Wallet auf einem anderen Gerät verknüpft?",
+      "unlinkElsewhereBody": "Die Telegram-Verknüpfung liegt auf unserem Server, nicht nur in diesem Browser. Trennen Sie sie hier — dadurch stoppen Nachrichten überall.",
+      "unlinkElsewhere": "Diese Wallet trennen",
+      "unlinked": "Verknüpfung gelöst. Keine Telegram-Nachrichten mehr für diese Wallet.",
+      "toggleRepayDue": "Vor Fälligkeit einer Zinszahlung benachrichtigen",
+      "toggleRisky": "Benachrichtigen, wenn mein Kredit riskant wird",
+      "riskyOffNote": "Auch ausgeschaltet werden Sie weiterhin gewarnt, kurz bevor ein Kredit liquidiert werden könnte.",
+      "advancedBands": "Risikoschwellen (Health Factor): Eine Nachricht wird gesendet, wenn ein Kredit jede Stufe überschreitet.",
+      "bandsInvalid": "Die drei Stufen müssen abnehmen — Warnung über Alarm, Alarm über Kritisch und Kritisch über 1,00.",
+      "saved": "Gespeichert.",
+      "pushTitle": "Lieber App-Push statt Telegram?",
+      "pushBody": "Dieselben Benachrichtigungen werden im Push-Protocol-Kanal von Vaipakam veröffentlicht — abonnieren Sie dort mit Ihrer Wallet, und jede Push-kompatible App stellt sie zu.",
+      "pushEnable": "Push-Zustellung aktivieren",
+      "pushEnabled": "Push-Zustellung ist für diese Wallet aktiv.",
+      "pushButton": "Push-Kanal öffnen",
+      "loanNudge": "Möchten Sie eine Telegram-Warnung, wenn dieser Kredit riskant wird? Richten Sie Benachrichtigungen in den Einstellungen ein."
+    },
+    "notifications": {
+      "bellLabel": "Benachrichtigungen",
+      "title": "Benachrichtigungen",
+      "loading": "Benachrichtigungen werden geladen…",
+      "empty": "Noch nichts. Updates zu Ihren Krediten erscheinen hier.",
+      "unavailable": "Benachrichtigungen konnten gerade nicht geladen werden. Sie erscheinen hier, sobald die Verbindung wieder da ist.",
+      "connectFirst": "Verbinden Sie Ihre Wallet, um Updates zu Ihren Krediten zu sehen.",
+      "line": {
+        "loan_matched": "Ihr Kredit ist jetzt aktiv.",
+        "partial_repay": "Eine Rückzahlung ist für Ihren Kredit eingegangen.",
+        "loan_repaid": "Ein Kredit wurde vollständig zurückgezahlt — sehen Sie, was Sie beanspruchen können.",
+        "loan_defaulted": "Ein Kredit ist ausgefallen — sehen Sie, was Sie beanspruchen können.",
+        "internal_matched": "Einer Ihrer Kredite wurde durch Matching geschlossen — sehen Sie, was Sie beanspruchen können.",
+        "maturity_7d": "Ein Kredit war eine Woche vor Fälligkeit — öffnen Sie ihn, um den Stand zu sehen.",
+        "maturity_1d": "Ein Kredit war einen Tag vor Fälligkeit — öffnen Sie ihn, um den Stand zu sehen.",
+        "grace_entered": "Ein Kredit ist überfällig — öffnen Sie ihn, um den Stand zu sehen.",
+        "hf_warn": "Die Gesundheit eines Kredits fiel unter 1,5 — öffnen Sie ihn, um den Stand zu sehen.",
+        "hf_alert": "Die Gesundheit eines Kredits fiel unter 1,2 — öffnen Sie ihn, um den Stand zu sehen.",
+        "hf_critical": "Die Gesundheit eines Kredits fiel unter 1,05, nahe an der Liquidationslinie 1,0 — öffnen Sie ihn, um zu handeln.",
+        "generic": "Es gibt ein Update zu Ihrem Kredit."
+      }
+    },
+    "errorBoundary": {
+      "title": "Auf dieser Seite ist etwas schiefgelaufen",
+      "body": "Die page hit an unexpected error and stopped rendering. Ihre Mittel and On-chain Positionen are unaffected — this is a display-side fault, and a Transaktion, die Sie gerade signiert may still have gone through (check Meine Positionen after erneutem Laden). Erneutes Laden usually clears it.",
+      "reload": "Seite neu laden",
+      "home": "Zurück zur Startseite"
+    },
+    "diagnostics": {
+      "open": "Support und Verbindungsprüfung",
+      "title": "Support",
+      "lede": "Eine schnelle Prüfung der Verbindungen, von denen diese App abhängt, und eine Möglichkeit, ein Problem zu melden.",
+      "close": "Schließen",
+      "network": "Netzwerk",
+      "wallet": "Wallet",
+      "walletNotConnected": "Nicht verbunden",
+      "rpc": "Blockchain-Verbindung",
+      "rpcChecking": "Prüfung läuft…",
+      "rpcFailing": "Not responding — the app kann nicht reach the Blockchain gerade. Erneutes Laden, or switching Netzwerke and back, often clears it.",
+      "indexer": "Marktdaten-Cache",
+      "indexerUnreachable": "Unreachable gerade — Markt lists may not load until it recovers. Ihr eigenes Positionen still load directly from the Chain.",
+      "indexerNoCursor": "Reachable, but no data has been recorded for this Netzwerk yet — it will fill as activity arrives.",
+      "indexerNotConfigured": "Not configured on this build — Markt lists kann nicht load here. Ihr eigenes Positionen still load directly from the Chain.",
+      "build": "App-Version",
+      "lastErrorTitle": "Letzter Fehler auf diesem Gerät",
+      "noError": "In dieser Sitzung wurden keine Fehler aufgezeichnet.",
+      "report": "Problem auf GitHub melden",
+      "reportHint": "Öffnet a pre-filled GitHub issue with the details above and the last recorded error. Your full Wallet Adresse is never included.",
+      "copyDetails": "Details kopieren",
+      "copied": "Kopiert."
+    },
+    "support": {
+      "title": "Support kontaktieren",
+      "lede": "Senden Sie dem Team eine Nachricht — Sie erhalten sofort eine Ticketnummer.",
+      "notConfigured": "Die Support inbox isn’t verbunden in this build, so in-app messages kann nicht be sent from here. Email works instead:",
+      "messageLabel": "Was ist passiert?",
+      "messagePlaceholder": "Beschreiben Sie mit eigenen Worten, was Sie getan haben und was schiefgelaufen ist.",
+      "emailLabel": "E-Mail für Antwort (optional)",
+      "emailHint": "Leave it empty if you’d rather follow up yourself — the ticket number below is all Support needs.",
+      "attach": "Attach the Gesundheit details shown above (recommended — they usually hold the cause)",
+      "privacy": "Sending stores your message, the page Sie sent it from and the Netzwerk Sie were on, the reply Adresse if Sie gave one, and — only if Sie ticked the box — the Gesundheit details above, on Vaipakam’s Support service under your ticket number. Die team is notified that a ticket arrived (its number and context flags — never your message text or email). Your full Wallet Adresse is never included in the Gesundheit details.",
+      "send": "An Support senden",
+      "sending": "Wird gesendet…",
+      "mailHint": "Lieber per E-Mail oder möchten Sie mehr hinzufügen? Schreiben Sie uns unter Angabe der Ticketnummer:",
+      "mailButton": "Email Support@vaipakam.com",
+      "invalidMessage": "Schreiben Sie zuerst ein paar Worte dazu, was passiert ist.",
+      "invalidEmail": "Diese E-Mail sieht nicht vollständig aus — korrigieren Sie sie oder leeren Sie das Feld (optional).",
+      "rateLimited": "A few messages went out gerade — wait a minute and erneut versuchen.",
+      "unavailable": "Die Support inbox couldn’t take the message gerade. Nichts was lost on your side — email us instead:",
+      "failed": "Die message didn’t go through. Versuchen erneut in Kürze, or email us:",
+      "helpTitle": "Brauchen Sie einen Menschen?",
+      "helpBody": "Offen the Support panel (the round button in the corner of every page) to send the team a message with one click — it can attach the app’s own Gesundheit details, which usually hold the cause. Or email us directly:"
+    },
+    "wallet": {
+      "connect": "Wallet verbinden",
+      "connectFirst": "Verbinden Sie eine Wallet, um fortzufahren.",
+      "switchNetwork": "Netzwerk wechseln"
+    },
+    "checks": {
+      "walletConnected": "Wallet verbunden",
+      "supportedChain": "In einem unterstützten Netzwerk",
+      "tokenValid": "Asset als Token erkannt",
+      "consent": "Risikohinweise und Bedingungen akzeptiert",
+      "getTestAssets": "Test-Assets erhalten",
+      "connectEarly": "Verbinden Sie Ihre Wallet, um fortzufahren — Sie benötigen sie zum Signieren, daher ist es am einfachsten, sie jetzt zu verbinden."
+    },
+    "receipt": {
+      "heading": "Vor dem Signieren prüfen",
+      "youReceive": "Sie erhalten",
+      "youLock": "Sie sperren",
+      "youMayOwe": "Sie schulden möglicherweise",
+      "youCanLose": "Sie können verlieren",
+      "fees": "Gebühren",
+      "whenThisEnds": "Wenn dies endet",
+      "gasNote": "Netzwerk-Gas ist getrennt von den Vaipakam-Protokollgebühren."
+    },
+    "simulation": {
+      "running": "Kostenlose Simulation dieser Transaktion läuft…",
+      "passed": "Simulation bestanden — diese Transaktion sollte wie geprüft durchgehen.",
+      "wouldFail": "Achtung — diese Transaktion würde fehlschlagen, wenn Sie sie jetzt signieren. Es wurde nichts gesendet und kein Gas ausgegeben.",
+      "wouldFailNote": "Sie können die Details oben anpassen und gleich erneut versuchen oder trotzdem signieren.",
+      "approvalNeeded": "Zuerst wird eine Token-Genehmigung angefordert — die Simulation kann diesen Schritt noch nicht sehen; das ist erwartet und kein Problem.",
+      "unavailable": "Die kostenlose Simulation ist derzeit nicht verfügbar. Sie können trotzdem fortfahren — diese Prüfung ist nur ein zusätzlicher Hinweis."
+    },
+    "help": {
+      "disclaimer": "Vaipakam ist ein dezentrales, nicht-verwahrendes Protokoll. KYC ist nicht erforderlich. Benutzer sind selbst für die Einhaltung gesetzlicher Vorschriften verantwortlich.",
+      "risksTitle": "Risikohinweise",
+      "risks": [
+        "Leihen: Wenn Sie nicht bis zum Fälligkeitsdatum plus Kulanzfrist zurückzahlen, geht Ihre gesperrte Sicherheit an den Kreditgeber. Sicherheiten ohne Live-Marktpreis werden vollständig übertragen.",
+        "Leihen: Sicherheiten mit Live-Marktpreis können vor Fälligkeit automatisch verkauft (liquidiert) werden, wenn ihr Wert zu stark fällt.",
+        "Verleihen: Zinsen werden nur verdient, wenn der Kreditnehmer zurückzahlt. Bei Ausfall entspricht Ihre Rückgewinnung dem Wert der gesperrten Sicherheit.",
+        "NFT-Vermietungen: Mieter erhalten nur vorübergehende Nutzungsrechte, niemals Eigentum; das NFT bleibt im Vault des Eigentümers. Mietgebühren werden im Voraus bezahlt, mit einem kleinen erstattbaren Puffer.",
+        "Smart-Contract-Risiko: Vaipakam ist Code in einem öffentlichen Netzwerk. Fehler, Netzwerkausfälle oder extreme Marktbedingungen können Verluste verursachen — setzen Sie nie Mittel ein, deren Verlust Sie sich nicht leisten können."
+      ]
+    },
+    "consentParts": {
+      "prefix": "Ich verstehe und akzeptiere die ",
+      "risk": "Risikohinweise",
+      "mid": " und ",
+      "terms": "Vaipakam-Bedingungen",
+      "suffix": "."
+    },
+    "match": {
+      "borrowTitle": "Kreditgeber, die jetzt finanzieren können",
+      "borrowLede": "These Angebote match your Asset. Accepting one öffnet the Kredit immediately — Sie take the Angebot’s full Betrag and Bedingungen.",
+      "lendTitle": "Kreditnehmer, die auf Finanzierung warten",
+      "lendLede": "These Anfragen match your Asset. Funding one öffnet the Kredit immediately at the Anfrage’s Bedingungen.",
+      "wholeOfferNote": "Angebote are taken whole — the Betrag shown is what the Kredit will be.",
+      "choose": "Auswählen",
+      "emptyBorrow": "Derzeit keine passenden Angebote.",
+      "emptyLend": "Derzeit keine passenden Anfragen.",
+      "orPostBorrow": "Stattdessen eigene Leihanfrage veröffentlichen",
+      "orPostLend": "Stattdessen eigenes Kreditangebot veröffentlichen",
+      "unavailable": "Wir konnten load matching Angebote gerade. Sie können still post Ihre eigenen below.",
+      "loanOpened": "Kredit eröffnet",
+      "borrowerNext": "Die funds are in your Vaipakam Vault and Ihre Sicherheit is locked. Zurückzahlen by the due date to get it back — everything is under Meine Positionen.",
+      "lenderNext": "Ihre Mittel are lent and the Kreditnehmer’s Sicherheit is locked. Track Rückzahlung under Meine Positionen; Sie werden beanspruchen Ihre Mittel back after they zurückzahlen.",
+      "wrongSide": "Das link points to the other side of the Markt — a Kreditvergabe Angebot is accepted from Leihen, a leihen Anfrage from Verleihen.",
+      "wrongKind": "Das Angebot involves an NFT — offen it from the NFT Vermietung page instead.",
+      "ownOffer": "That’s Ihre eigenen Angebot — Sie können abbrechen it from Meine Positionen, but Sie können’t accept it yourself.",
+      "offerGone": "Das Angebot is no longer offen. Browse aktuell matches below or post Ihre eigenen.",
+      "counterpartyBlocked": "Die other side of this Angebot kann nicht transact gerade (compliance flag), so it kann nicht be accepted. Es wurde nichts gesendet.",
+      "offerNotFound": "Wir konnten find that Angebot — the link may be old, or the data source is catching up. Browse aktuell Angebote below.",
+      "termsChanged": "Diese Angebot’s Bedingungen changed since Sie geprüft it. Es wurde nichts gesendet — please Prüfen Sie das updated Angebot.",
+      "illiquidWarning": "One side of this deal isn’t priced by the Protokoll — it has no usable Markt price or deep-enough trading Markt gerade. Wenn it ends in Ausfall, the entire Sicherheit transfers directly to the Kreditgeber — nobody sells it for a fair Markt price first, and there is no automatic price-based Liquidation. Only proceed if Sie accept that.",
+      "interestModeFullTerm": "Interest is full-term: the whole term’s interest applies even if the Kredit is repaid early.",
+      "interestModeProRata": "Interest accrues day by day — Rückzahlung early costs less.",
+      "interestModeProRataLender": "Interest accrues day by day — if the Kreditnehmer zahlt zurück early, Sie earn less.",
+      "saleLoanChecking": "Reading the running Kredit behind this listing — the Prüfung must show its real numbers before Sie können signieren.",
+      "saleLoanCheckFailed": "Wir konnten read the running Kredit behind this listing, and the Prüfung must show its real numbers — Signieren stays paused until it succeeds.",
+      "saleLoanNotActive": "Die Kredit behind this listing is no longer aktiv, so this purchase kann nicht complete. Es wurde nichts gesendet or genehmigt.",
+      "saleSellerNotCovered": "Die seller’s standing settlement Genehmigung no longer covers completing this sale, so the purchase würde fehlschlagen On-chain. Es wurde nichts gesendet or genehmigt — the seller needs to restore their Genehmigung (their listing card shows a restore action).",
+      "saleMaturityPassed": "Diese Kredit has reached its due date — the Position can no longer be bought. Es wurde nichts gesendet or genehmigt.",
+      "saleBought": "Position gekauft",
+      "saleSelfBuy": "Sie are the Kreditnehmer of this Kredit, so Sie können’t also buy its Kreditgeber side — the Protokoll rejects that. Rückzahlung or closing early from Meine Positionen are your moves instead. Es wurde nichts gesendet or genehmigt.",
+      "liquidityChecking": "Checking how these Assets are priced by the Protokoll…",
+      "liquidityCheckFailed": "Wir konnten check how these Assets are priced, and that check decides an important warning — Signieren stays paused until it succeeds.",
+      "linkedLoanCheckFailed": "Wir konnten check whether this Angebot is a Position sale of a running Kredit, and that check decides an important disclosure — Signieren stays paused until it succeeds.",
+      "graceChecking": "Confirming the Rückzahlung grace window this deal is judged gegen…",
+      "graceCheckFailed": "Wir konnten confirm the Rückzahlung grace window, and the Prüfung must show the real one — Signieren stays paused until it succeeds.",
+      "riskGateBlocked": "Die Protokoll’s Risiko-Zugriffs rules block this acceptance for Ihre Wallet gerade — it needs a standing On-chain Bestätigung or access level this app kann nicht collect yet. Es wurde nichts gesendet or genehmigt."
+    },
+    "borrow": {
+      "title": "Assets leihen",
+      "lede": "Tell us what Sie need and what Sie können lock as Sicherheit. We’ll show Sie exactly what you’d owe before anything is signiert.",
+      "postRequest": "Leihanfrage veröffentlichen",
+      "posted": "Leihanfrage veröffentlicht",
+      "postedNext": "Ihre Sicherheit is locked while the Anfrage is offen. Funds arrive only when a Kreditgeber accepts — we’ll show the Kredit under Meine Positionen.",
+      "collateralWarning": "Wenn Sie nicht rechtzeitig zurückzahlen, kann der Kreditgeber Ihre Sicherheit erhalten.",
+      "lockNow": "Ihre Sicherheit is locked when Sie post this Anfrage. Sie können abbrechen before a Kreditgeber accepts to unlock it.",
+      "collateralPrecheck": "Bevor Sie fortfahren —"
+    },
+    "lend": {
+      "title": "Durch Verleihen verdienen",
+      "lede": "Choose what to verleihen and the return Sie want. Kreditvergabe is choosing a Risiko, not just a yield — Sie werden see the downside before Sie signieren.",
+      "postOffer": "Kreditangebot veröffentlichen",
+      "posted": "Kreditangebot veröffentlicht",
+      "postedNext": "Ihre Tokens are locked while the Angebot is offen. Wenn a Kreditnehmer accepts, the Kredit appears under Meine Positionen. Sie können abbrechen before acceptance to unlock Ihre Tokens.",
+      "yieldNotGuaranteed": "Expected interest if the Kreditnehmer zahlt zurück on time.",
+      "defaultOutcome": "Wenn the Kreditnehmer ausfällt, your recovery depends on their Sicherheit."
+    },
+    "rent": {
+      "title": "NFT mieten oder vermieten",
+      "lede": "NFT Vermietungen give temporary use rights — never ownership. Die NFT stays locked in its owner’s vault for the whole Vermietung.",
+      "ownPath": "Ich besitze ein NFT zur Vermietung",
+      "ownPathBlurb": "Legen Sie eine Tagesgebühr fest — Mieter zahlen die gesamte Miete im Voraus.",
+      "wantPath": "Ich möchte ein NFT mieten",
+      "wantPathBlurb": "Zahlen Sie im Voraus und nutzen Sie das NFT bis zum Ende der Mietdauer.",
+      "browseCta": "Mietbare NFTs durchsuchen",
+      "custodyNote": "Das NFT verlässt nie die Vault-Verwahrung. Der Mieter erhält nur vorübergehende Nutzungsrechte — kein Eigentum.",
+      "postListing": "Vermietungenlisting veröffentlichen",
+      "listingPosted": "Vermietungenlisting veröffentlicht",
+      "listingPostedNext": "Your NFT is held in Ihr Vault while the listing is offen. Wenn a Mieter accepts, the Vermietung appears under Meine Positionen; abbrechen the listing any time before that to get the NFT back.",
+      "acceptRental": "Dieses NFT mieten",
+      "rentalOpened": "Vermietung gestartet",
+      "rentalOpenedNext": "Sie jetzt hold the use rights until the Vermietung ends — the NFT itself stays in the owner’s vault. Your prepaid Gebühren cover the whole term; close on time and the buffer comes back to you.",
+      "checkOwnNft": "Dieses NFT gehört Ihnen",
+      "checkNotOwner": "Die verbunden Wallet nicht own this NFT — check the contract Adresse and Token id.",
+      "browseTitle": "Mietbare NFTs",
+      "browseEmpty": "Derzeit keine Vermietungenlistings.",
+      "browseEmptyCta": "Own an NFT? Use the switch above to list it for mieten instead — Mieters pzurückzahlen the whole Vermietung up front, so an empty Markt is an opportunity.",
+      "browseUnavailable": "Wir konnten load Vermietung listings gerade. Bitte versuchen Sie es erneut in Kürze.",
+      "notDebt": "A Vermietung is not a Kredit: there’s nothing to zurückzahlen — your Gebühren are prepaid and your rights simply end when the term does.",
+      "no4907Warning": "Heads up: this NFT collection nicht Support the On-chain Vermietung standard (ERC-4907). Mietening still works — Vaipakam tracks the Mieter’s use rights in Ihr Vault — but apps and games outside Vaipakam wird nicht recognise the Mieter.",
+      "no4907Unknown": "Wir konnten check whether this NFT collection Supports the On-chain Vermietung standard (ERC-4907). Wenn it nicht, apps outside Vaipakam wird nicht recognise the Mieter — Mieten inside Vaipakam still works.",
+      "vpfiPrepayListing": "Diese listing asks to be paid in VPFI, which Vermietungen don’t allow — it kann nicht be accepted. Please pick a ander listing.",
+      "vpfiCheckRetry": "Wir konnten verify this listing’s payment Asset gerade — nothing was sent or genehmigt. Bitte versuchen Sie es erneut in Kürze.",
+      "vpfiPrepayNotAllowed": "VPFI kann nicht be used as the Vermietung payment Asset — pick another Token."
+    },
+    "preclose": {
+      "title": "Diesen Kredit vorzeitig schließen",
+      "blurb": "Zahlen Sie jetzt alles und schließen Sie den Kredit heute — Ihre Sicherheit wird direkt danach freigegeben.",
+      "fullTermNote": "Diese Kredit uses full-term interest, so closing early still pays the whole term’s interest.",
+      "proRataNote": "Diese Kredit accrues interest day by day, so closing early pays only what has accrued.",
+      "action": "Vorzeitig schließen",
+      "confirm": "Bestätigen — jetzt zahlen und schließen",
+      "done": "Kredit vorzeitig geschlossen. Ihre Sicherheit ist bereit — beanspruchen Sie sie unten oder im Anspruchszentrum.",
+      "checking": "Checking whether this Kredit can close early…",
+      "checkFailed": "Wir konnten read this Kredit’s close-early cost gerade — reAusprobieren. Rückzahlung normally stays available below.",
+      "graceNote": "Diese Kredit is past its due date. Die Betrag below already includes the late fee for being late (it grows a little each day), and closing this way stays possible only until the grace window ends.",
+      "graceFeeReceiptNote": "Die late fee for being past due is included in this Betrag — the same fee a normal Rückzahlung would charge."
+    },
+    "refinance": {
+      "title": "Diesen Kredit refinanzieren",
+      "blurb": "Post a Anfrage for a new Kredit on better Bedingungen. Die moment a Kreditgeber accepts it, your aktuell Kredit is paid off and geschlossen automatically in the same Transaktion — Ihre Sicherheit moves to the new Kredit without ever unlocking.",
+      "rateLabel": "Höchster jährlicher Satz, den Sie akzeptieren",
+      "durationLabel": "Neue Kreditlaufzeit (Tage)",
+      "action": "Refinanzierungsanfrage prüfen",
+      "confirm": "Bestätigen — Refinanzierungsanfrage veröffentlichen",
+      "payoffNote": "Die old Kredit’s payoff is always principal plus the full remaining term’s interest — even if the Kredit normally accrues day by day. Das is the exiting Kreditgeber’s fixed entitlement on an early exit.",
+      "shortIsSafe": "Wenn Ihre Wallet is short when a Kreditgeber tries to accept, the acceptance simply fails — nothing is taken and your aktuell Kredit fortfahrens unchanged.",
+      "periodicWarning": "Diese Kredit pays interest on a periodic schedule. Wenn a payment period becomes overdue while the Anfrage is offen, a Kreditgeber’s acceptance will fail until the period is settled — keep the Kredit’s payments aktuell.",
+      "done": "Refinance Anfrage posted. Wenn a Kreditgeber accepts it, this Kredit closes automatically — Sie don’t need to do anything else. Sie können abbrechen the Anfrage below (abbrechenlation öffnet a few minutes after posting).",
+      "pendingAccepted": "Your refinance Anfrage was accepted — this Kredit is being replaced by the new one. Aktualisieren in Kürze to see the final state.",
+      "pendingLoanClosed": "Diese Kredit has since geschlossen another way, so the Anfrage can no longer complete — abbrechen it to also remove its standing payoff Genehmigung.",
+      "cancel": "Refinanzierungsanfrage abbrechen",
+      "cancelSoon": "Abbruch öffnet a few minutes after posting — erneut versuchen shortly.",
+      "cancelled": "Refinance Anfrage abgebrochen and the payoff Genehmigung removed — this Kredit fortfahrens unchanged. Wenn Sie have other listings or Anfragen using the same Token, restore their Genehmigungen from their cards.",
+      "cancelledRevokeFailed": "Refinance Anfrage abgebrochen — this Kredit fortfahrens unchanged. Die standing payoff Genehmigung couldn’t be removed automatically; Sie können revoke it from Ihre Wallet’s Token-Genehmigungen view.",
+      "allowanceShort": "Die payoff Genehmigung no longer covers everything this Anfrage could pull — a Kreditgeber’s acceptance könnte fehlschlagen (an acceptance after the due date also pulls the late fee and extra interest). Restore it below or abbrechen the Anfrage.",
+      "reapprove": "Rückzahlungsfreigabe wiederherstellen",
+      "reapproved": "Payoff Genehmigung restored — the Anfrage can complete erneut.",
+      "reapproveAborted": "Diese Anfrage is no longer completable (accepted, abgebrochen, or the Kredit geschlossen) — nothing was genehmigt. Aktualisieren to see the latest state.",
+      "guardrailNote": "Your Anfrage carries its own Ablauf and On-chain guardrails: it can only complete at or below the Satz Sie set here, and never after the Ablauf Sie see in this Prüfung.",
+      "graceNote": "Diese Kredit is past its due date. A Kreditgeber can still accept this Anfrage until the grace window ends, and the payoff already includes the late fee for being late (it grows a little each day).",
+      "pendingPastGrace": "Diese Kredit has passed its due date and grace window, so no Kreditgeber can accept this Anfrage any more — it no longer holds up your other actions here. Abbrechen it below to also remove its standing payoff Genehmigung.",
+      "cadenceChangeNote": "Your aktuell Kredit pays interest on a schedule. Die replacement Kredit will NOT — its interest settles when it closes. Make sure that cash-flow change is what Sie want.",
+      "multiStepNote": "Posting takes up to three Wallet confirmations (guardrails, payoff Genehmigung, the Anfrage itself). Wenn Sie stop partway, the earlier steps stay in place On-chain until Sie finish posting or abbrechen — Abbrechen also removes the Genehmigung.",
+      "partialBlockedByPending": "A refinance Anfrage is live for this Kredit. A partial Rückzahlung would change the Betrag and make that Anfrage permanently unacceptable — abbrechen the refinance Anfrage first.",
+      "precloseBlockedByPending": "A refinance Anfrage is live for this Kredit. Closing early jetzt would strand it — abbrechen the refinance Anfrage first.",
+      "repayWarnPending": "A refinance Anfrage is still live for this Kredit. Rückzahlung settles the Kredit, after which the Anfrage can never complete — abbrechen it from its card afterwards (that also removes its standing payoff Genehmigung); until then it just sits until it expires."
+    },
+    "approvals": {
+      "title": "Dauerhafte Token-Genehmigungen",
+      "blurb": "These are the spending permissions Ihre Wallet has granted Vaipakam’s contract for Tokens your Kredite and Angebote touch. Some flows set them on purpose (a refinance Anfrage’s payoff, a sale listing’s settlement); anything left over from an abandoned attempt can be removed here.",
+      "revokeWarning": "Careful: if a live refinance Anfrage or sale listing depends on a Token’s Genehmigung, revoking it makes that flow fail until Sie restore it from its card — the card will warn Sie within moments.",
+      "scopeNote": "Diese list covers Tokens seen in your Vaipakam Kredite and Angebote on this Netzwerk. Genehmigungen granted to other apps or for other Tokens aren’t shown — Ihre Wallet’s own Token-Genehmigungen view remains the complete picture.",
+      "none": "Keine standing Genehmigungen to Vaipakam found for your weißn Tokens.",
+      "loading": "Reading your standing Genehmigungen…",
+      "unavailable": "Wir konnten read your Genehmigungen gerade — please erneut versuchen in Kürze.",
+      "sourcesUnavailable": "Wir konnten load your Kredite and Angebote gerade, so this list kann nicht be built completely — rather than show a partial picture, erneut versuchen in Kürze.",
+      "revoke": "Widerrufen",
+      "staleNote": "Wir konnten aktualisieren this list gerade — the rows shown may be slightly stale. Revoking still works."
+    },
+    "nftVerifier": {
+      "title": "NFT-Verifizierer",
+      "lede": "Vaipakam Position NFTs carry real beanspruchen rights — whoever holds one controls that side of its Kredit. Check any Token id before trusting it.",
+      "placeholder": "Positions-NFT-Token-ID",
+      "check": "Prüfen",
+      "checking": "Checking this Token On-chain…",
+      "checkFailed": "Wir konnten check this Token gerade — please erneut versuchen in Kürze.",
+      "ownerLabel": "Aktueller Inhaber",
+      "roleLabel": "Kontrollierte Seite",
+      "roleLender": "Kreditgeberseite — ihr Inhaber erhält Rückzahlung oder Rückgewinnung.",
+      "roleBorrower": "Kreditnehmerseite — ihr Inhaber zahlt zurück und fordert die Sicherheit zurück.",
+      "roleUnknown": "Wir konnten read this Token’s role details gerade.",
+      "loanLabel": "Verknüpfter Kredit",
+      "offerLabel": "Für Angebot erstellt",
+      "lockUnrecognized": "Transfer-locked for a reason this app version nicht recognise — it kann nicht be transferred until that flow completes or is abgebrochen.",
+      "lockUnknown": "Wir konnten read whether this Token is transfer-locked gerade — don’t rely on it being transferable until this reads clean.",
+      "positionRowLabel": "Ihr Positions-NFT",
+      "lockLabel": "Transfersperre",
+      "lockPrecloseOffset": "Locked for a preclose-by-offset — it kann nicht be transferred until that completes or is abgebrochen.",
+      "lockSale": "Locked for a Position sale listing — it kann nicht be transferred until the sale completes or the listing is abgebrochen.",
+      "lockPrepayListing": "Locked for a Sicherheit listing — it kann nicht be transferred while that listing stands.",
+      "sanctionsLabel": "Compliance-Status",
+      "sanctionsFlagged": "Die aktuell holder is compliance-flagged: this NFT cannot be transferred in or out of their Wallet, and its Ansprüche stay frozen until the flag clears. Do not buy this Token expecting delivery.",
+      "sanctionsUnknown": "Wir konnten check the holder’s compliance status gerade — a flagged holder would mean the Token kann nicht be transferred, so re-check before relying on it.",
+      "inKindLabel": "Ausfallauszahlung",
+      "inKindNote": "Wenn the Kreditnehmer of the linked Kredit ausfällt, this beanspruchen pays out the Kredit’s raw Sicherheit in kind — the Protokoll does not price or sell it for you. Value what Sie would actually receive before buying this Position.",
+      "liveNote": "Live means exactly this: the Token exists here and its holder controls the linked Position. It does not vouch for the Kredit’s Gesundheit or the other side’s behaviour.",
+      "goneBody": "Either its beanspruchen was completed and the Token was retired, or it was never minted here at all — the Netzwerk nicht record which. Treat any Angebot to sell or transfer this Token id as worthless on this Netzwerk."
+    },
+    "keepers": {
+      "title": "Keeper-Berechtigungen",
+      "blurb": "Keepers are third-party services (or Ihre eigenen bot) Sie können allow to run specific Kredit actions FOR Sie — start an early close, finish a refinance Sie set up, list a Position for sale. Everything here is off until Sie turn it on, and three switches must all agree before a keeper can act: the master switch, the action on that keeper, and a per-Kredit switch on each Kredit’s page.",
+      "safetyNote": "A keeper can never receive your money — payouts always go to whoever holds the Position. Sie können revoke any keeper (or flip the master switch off) at any time, the Protokoll can pause all keepers at once, and refinances are additionally bounded by the guardrails Sie set per Kredit. Wenn a Position changes hands, these permissions apply to the new holder’s Einstellungen, not yours.",
+      "masterLabel": "Allow my genehmigt keepers to act (master switch — nothing runs while this is off)",
+      "addressPlaceholder": "0x… keeper Adresse",
+      "actions": {
+        "initPreclose": {
+          "label": "Start closing a Kredit early for me",
+          "side": "acts on Kredite Sie leihened",
+          "blurb": "Begin any early-close path on a Kredit where Sie are the Kreditnehmer. Die payoff still comes from Ihre Wallet under your standing Genehmigungen."
+        },
+        "refinance": {
+          "label": "Eine Refinanzierung für mich abschließen",
+          "side": "acts on Kredite Sie leihened",
+          "blurb": "Finish a refinance Sie set up, bounded by the guardrails (Satz ceiling, end date) Sie genehmigt — and the Protokoll’s own keeper kill switch."
+        },
+        "completeOffset": {
+          "label": "Einen Offset-Abschluss für mich fertigstellen",
+          "side": "acts on Kredite Sie leihened",
+          "blurb": "Complete a preclose-by-offset once its Angebot has been accepted."
+        },
+        "extend": {
+          "label": "Extend a Kredit in place for me",
+          "side": "acts on Kredite Sie leihened",
+          "blurb": "Extend a Kredit without reoffening it — only when BOTH sides have opted into extension limits."
+        },
+        "initEarlyWithdraw": {
+          "label": "List my Kredit Position for sale",
+          "side": "acts on Kredite Sie funded",
+          "blurb": "Start a Kreditgeber early exit by listing a Kredit Sie funded. Die proceeds still pay only you."
+        },
+        "completeLoanSale": {
+          "label": "Finish a Position sale for me",
+          "side": "acts on Kredite Sie funded",
+          "blurb": "Complete an accepted Position sale, moving the Kredit to its buyer. Die payment still routes only to you."
+        }
+      },
+      "enabledOn": "Keeper access enabled. Keepers can jetzt act where Sie granted permissions AND the Kredit’s own switch is on.",
+      "enabledOff": "Keeper-Zugriff deaktiviert — kein Keeper kann für Sie handeln, solange dies ausgeschaltet bleibt.",
+      "addTitle": "Genehmigen a keeper",
+      "add": "Keeper genehmigen",
+      "added": "Keeper genehmigt. Remember: it can only act on Kredite where Sie also flip that Kredit’s keeper switch.",
+      "alreadyListed": "Das keeper is already genehmigt — edit its permissions above instead.",
+      "save": "Berechtigungen speichern",
+      "updated": "Keeper-Berechtigungen aktualisiert.",
+      "revoke": "Widerrufen",
+      "revoked": "Keeper widerrufen — er kann nirgends mehr für Sie handeln.",
+      "maskUnreadable": "Wir konnten read this keeper’s aktuell permissions, so editing is disabled (saving jetzt could silently overwrite them). Reversuchen in Kürze; revoking still works.",
+      "extraBitsNote": "Diese keeper also holds advanced permissions not shown here — they are preserved unchanged when Sie speichern.",
+      "perLoanReminder": "Approving a keeper here is not enough by itself: each Kredit’s page has a per-Kredit keeper switch that must also be on.",
+      "loading": "Lädt your keeper Einstellungen…",
+      "staleWarning": "Wir konnten aktualisieren your keeper Einstellungen gerade — what’s shown may be slightly stale. Revoking and saving still work.",
+      "unavailable": "Wir konnten load your keeper Einstellungen gerade — please erneut versuchen in Kürze.",
+      "loanTitle": "Keepers for this Kredit",
+      "loanBlurb": "Your genehmigt keepers can act on this Kredit only while its switch is on. Actions stay bounded by the permissions Sie granted in Einstellungen.",
+      "loanToggleOn": "Keeper enabled for this Kredit.",
+      "loanToggleOff": "Keeper disabled for this Kredit.",
+      "loanEnablesUnavailable": "Wir konnten read this Kredit’s keeper switches gerade — the toggles are paused until the read succeeds (their shown state may be stale).",
+      "loanNoKeepers": "Sie haven’t genehmigt any keepers yet — set them up under Einstellungen → Keeper permissions.",
+      "loanMasterOff": "Your keeper master switch is off, so nothing can run even with this Kredit’s switch on — turn it on under Einstellungen → Keeper permissions."
+    },
+    "earlyExit": {
+      "title": "Diesen Kredit vorzeitig verlassen",
+      "blurb": "Sell your side of this Kredit to another Kreditgeber with a matching offen Kreditvergabe Angebot. You’re paid immediately from their already-locked funds — nothing to genehmigen, nothing to beanspruchen afterwards — and the Kreditnehmer’s Bedingungen don’t change at all.",
+      "pickerLead": "Offen Kreditvergabe Angebote that can buy Sie out:",
+      "none": "Keine matching Kreditvergabe Angebote gerade. An Angebot must match this Kredit’s Assets, cover its remaining Betrag, and fit inside its remaining time — check back later.",
+      "unavailable": "Wir konnten load matching Angebote gerade — please erneut versuchen in Kürze.",
+      "shortfallWarn": "Diese buyer expects a higher Satz than your Kredit pays, and for this candidate that Satz difference (not the accrued interest — Sie pay the larger of the two, never both) is what sets your payout.",
+      "forfeitNote": "Exiting early forfeits the interest accrued so far: it covers the Protokoll’s cut and, when the buyer’s Satz is higher, helps bridge the difference. Die figure shown already accounts for this.",
+      "action": "Ausstieg prüfen",
+      "confirm": "Bestätigen — meine Position verkaufen",
+      "done": "Position sold — the payout is already in Ihre Wallet, and this Kredit jetzt belongs to the new Kreditgeber. Nichts more to do here.",
+      "loadingOffers": "Looking for matching Kreditvergabe Angebote…",
+      "figureMoved": "Die payout figure moved with time, so the Prüfung geschlossen — offen it erneut to confirm gegen the aktuell number.",
+      "checking": "Checking whether this Kredit can be exited early…",
+      "checkFailed": "Wir konnten read this Kredit’s exit details gerade — reAusprobieren."
+    },
+    "loanSale": {
+      "title": "Diese Position zum Verkauf listen",
+      "blurb": "Set the yearly Satz a buyer would earn for the Kredit’s remaining time and list your Position publicly. Wenn a buyer accepts, Sie receive the full outstanding Betrag in that same Transaktion. (Wenn a matching Angebot above already pays enough, the instant exit is simpler — listing is for naming Ihre eigenen price and waiting.)",
+      "rateLabel": "Yearly Satz the buyer earns",
+      "action": "Listing prüfen",
+      "confirm": "Bestätigen — meine Position listen",
+      "lockWarning": "Listing locks your Kreditgeber Position NFT — it kann nicht be transferred until the sale completes or Sie abbrechen the listing. Your beanspruchen rights are unaffected.",
+      "sweetenNote": "A Satz above the Kredit’s own Satz attracts buyers faster, but the difference for the remaining term comes out of Ihre Wallet at completion.",
+      "done": "Position listed. Wenn a buyer accepts, the sale settles automatically — keep the standing Genehmigung (and enough balance for the settlement figure) in place until then, or abbrechen the listing below.",
+      "pendingNoId": "Diese Position is listed for sale (listed from another device, so Abbrechen here isn’t available — abbrechen where it was listed). Your Kreditgeber NFT is locked while the listing stands.",
+      "allowanceShort": "Die standing settlement Genehmigung (or Ihre Wallet balance) no longer covers what a buyer’s acceptance would pull — the sale würde fehlschlagen gerade. Restore it below or abbrechen the listing.",
+      "restore": "Restore the settlement Genehmigung",
+      "restored": "Settlement Genehmigung restored — the listing can complete erneut.",
+      "cancel": "Listing abbrechen",
+      "cancelled": "Listing abgebrochen — your Kreditgeber NFT is unlocked and the settlement Genehmigung was removed (if Sie have other listings or Anfragen using the same Token, restore their Genehmigungen from their cards). Die Kredit fortfahrens unchanged.",
+      "cancelledRevokeFailed": "Listing abgebrochen and your Kreditgeber NFT unlocked. Die standing settlement Genehmigung couldn’t be removed automatically — Sie können revoke it from Ihre Wallet’s Token-Genehmigungen view.",
+      "cancelSoon": "Abbruch öffnet a few minutes after listing — erneut versuchen shortly.",
+      "restoreAborted": "Diese listing is no longer standing (sold, abgebrochen, or unlocked) — nothing was genehmigt. Aktualisieren to see the latest state.",
+      "loanSettledWhileListed": "Diese Kredit has settled, so the sale listing can never complete — abbrechen it to unlock your Kreditgeber NFT and remove the standing Genehmigung.",
+      "fundingUnknown": "Wir konnten identify this listing’s Angebot record from this device, so we kann nicht verify its settlement funding here — manage it from the device that listed it, or keep a generous Genehmigung and balance in place.",
+      "ended": "Your sale listing is no longer aktiv. Wenn a buyer accepted it, the payout is already in Ihre Wallet and the settlement was pulled via the standing Genehmigung; any remaining Genehmigung can be revoked from Ihre Wallet’s Token-Genehmigungen view.",
+      "listingUnavailable": "Listing your Position at Ihre eigenen price isn’t available yet — the On-chain step it needs is being fixed. Die instant exit above works: it sells into a matching offen Angebot right away.",
+      "partialBlockedByListing": "Die Kreditgeber has this Position listed for sale at its aktuell outstanding Betrag. Partial Rückzahlung is paused while the listing stands — it would change that Betrag and mislead a buyer. Sie können still zurückzahlen in full or close early at any time."
+    },
+    "positions": {
+      "title": "Meine Positionen",
+      "lede": "Your Kredite and Vermietungen, with the one action each needs gerade.",
+      "emptyTitle": "Noch keine aktiven Positionen",
+      "emptyBody": "Leihen oder verleihen Sie, um zu beginnen.",
+      "unavailable": "Wir konnten load Ihre Positionen gerade. Ihre Mittel are unaffected — please erneut versuchen in Kürze.",
+      "sourcesDegraded": "One of this page’s data sources is temporarily nicht verfügbar. Your aktuell Positionen are shown from the remaining source and recently changed items may take a moment to appear.",
+      "roleBorrower": "Sie leihened",
+      "roleLender": "Sie haben verliehen",
+      "groupAttention": "Benötigt Ihre Aufmerksamkeit",
+      "groupActive": "Aktive Kredite",
+      "groupEnded": "Beendete Kredite",
+      "claimWaiting": "Anspruch wartet",
+      "seeActivity": "Vollständigen Aktivitätsverlauf ansehen →",
+      "graceOverViewer": "Die grace period has ended — the Kredit can jetzt be marked Ausfalled, and the Sicherheit goes to the Kreditgeber.",
+      "graceUnknownBorrower": "Diese Kredit is past due and the grace window may be running out — wir konnten read the exact deadline gerade. Zurückzahlen as soon as possible, before the Kreditgeber can take the Sicherheit.",
+      "graceUnknownLender": "Diese Kredit is past due — wir konnten read the exact grace deadline gerade. Sobald the grace window ends and the Ausfall is recorded, the Sicherheit beanspruchen appears here.",
+      "graceUnknownViewer": "Diese Kredit is past due. Sobald its grace window ends, the Kreditgeber can beanspruchen the Sicherheit.",
+      "graceOverBorrower": "Die grace period has ended — the Protokoll no longer accepts Rückzahlung, and the Kreditgeber can take the Sicherheit at any moment. Sobald they beanspruchen it, the outcome will show here.",
+      "graceOverLender": "Die grace period has ended — this Kredit can jetzt be marked Ausfalled. Das normally happens automatically shortly after; once the Ausfall is recorded, the Sicherheit beanspruchen appears here.",
+      "fallbackCureBorrower": "Diese Kredit is past its grace period and a Ausfall is being settled. Sie können still zurückzahlen in full to cure it and get Ihre Sicherheit back — but only until the Kreditgeber finalizes the Ausfall, which can happen at any moment.",
+      "owedDefaulted": "Nichts to zurückzahlen anymore — this Kredit ended in Ausfall and the Sicherheit covers it.",
+      "owedDefaultedNoCollateral": "Nichts to zurückzahlen anymore — this Kredit ended in Ausfall and was settled.",
+      "owedClosed": "Nichts — this Kredit is geschlossen and settled.",
+      "whatNextRepaidBorrower": "Sie repaid this Kredit. Nichts else can happen to it — beanspruchen Ihre Sicherheit back below if Sie haven’t yet.",
+      "whatNextRepaidLender": "Die Kreditnehmer repaid. Nichts else can happen to this Kredit — beanspruchen Ihre Mittel below if Sie haven’t yet.",
+      "whatNextRepaidViewer": "Die Kreditnehmer repaid. Nichts else can happen to this Kredit — any remaining Ansprüche belong to the Position holders.",
+      "whatNextDefaultedBorrower": "Diese Kredit already ended in Ausfall. Any remainder after settlement is beanspruchbar (it may be zero).",
+      "whatNextDefaultedLender": "Diese Kredit already ended in Ausfall — what it recovered is beanspruchbar in the Anspruchszentrum.",
+      "whatNextDefaultedViewer": "Diese Kredit already ended in Ausfall — the settlement’s recovery belongs to the Position holders.",
+      "whatNextInternalMatchBorrower": "Diese Kredit geschlossen by internal matching. Collect any residual and VPFI rebate below (either may be zero).",
+      "whatNextInternalMatchLender": "Diese Kredit geschlossen by internal matching — collect Ihre Mittel below if Sie haven’t yet.",
+      "whatNextInternalMatchViewer": "Diese Kredit geschlossen by internal matching — any residual Ansprüche belong to the Position holders.",
+      "whatNextClosed": "Diese Kredit is fully settled — there is nothing left to do.",
+      "whatNextRentalEnded": "Diese Vermietung has ended. Any earned Gebühren or refundable buffer can be beansprucht below by the Position holders — nothing else can change it.",
+      "settledAhead": "Diese Position has already geschlossen On-chain — the status here is live. Your lists may take a moment to catch up."
+    },
+    "powerSurface": {
+      "body": "Diese is a power-user screen — raw Angebote and live Sätze with less hand-holding. Die guided Leihen and Verleihen flows cover the same actions with step-by-step explanations.",
+      "guidedBorrow": "Guided Leihen",
+      "guidedLend": "Guided Verleihen",
+      "enableAdvanced": "I weiß what I’m doing — enable Advanced mode",
+      "dismiss": "Schließen"
+    },
+    "claims": {
+      "title": "Ansprüche",
+      "lede": "Money and Assets that are ready for Sie to collect.",
+      "empty": "Derzeit nichts zu beanspruchen.",
+      "emptyBody": "Wenn a Kredit or Vermietung Sie are part of ends, anything owed to Sie appears here automatically.",
+      "emptyCta": "Meine Positionen anzeigen",
+      "unavailable": "Wir konnten load your Ansprüche gerade. Ihre Mittel are unaffected — please erneut versuchen in Kürze.",
+      "claim": "Beanspruchen",
+      "claimed": "Anspruch abgeschlossen.",
+      "allTitle": "Alles auf einmal beanspruchen",
+      "allBlurb": "Collect every ready payout in a single Wallet Signatur instead of one at a time.",
+      "allEmpty": "Nichts is batchable gerade.",
+      "allVpfiNote": "Abhebening parked VPFI lowers your fee-discount tier — off by Ausfall.",
+      "allResidualNote": "Alles that wasn’t ready is still listed below to beanspruchen on its own.",
+      "allRewardsUnavailable": "Wir konnten check your rewards, so they’re not in this batch — beanspruchen them separat.",
+      "allVpfiUnavailable": "Ihr Vault-VPFI konnte nicht geprüft werden, daher ist es nicht in diesem Batch enthalten.",
+      "allWorking": "Waiting for Wallet…"
+    },
+    "offers": {
+      "title": "Angebotebuch",
+      "lede": "Offene Kreditangebote und Leihanfragen anderer Benutzer.",
+      "emptyTitle": "Derzeit keine offenen Angebote",
+      "emptyBody": "Erstellen Sie Ihr eigenes Angebot und lassen Sie die Gegenseite zu Ihnen kommen.",
+      "unavailable": "Wir konnten load the Angebotsbuch gerade. Bitte versuchen Sie es erneut in Kürze.",
+      "lenderOffer": "Kreditangebot",
+      "borrowerOffer": "Leihanfrage"
+    },
+    "desk": {
+      "title": "Zins-Desk",
+      "lede": "Die Orderbuch for one Markt — read the Sätze, post or amend limit-Satz Angebote, and watch your offen Orders and Positionen in one place.",
+      "marketLabel": "Markt",
+      "tenorLabel": "Laufzeit",
+      "customPair": "Eigenes Paar…",
+      "customLend": "Kredit-Asset-Adresse",
+      "customCollateral": "Sicherheiten-Asset-Adresse",
+      "marketsUnavailable": "Die Märkte list couldn’t load gerade, so pair discovery is limited — enter a pair manually and the Buch itself can still load.",
+      "marketsEmpty": "Keine live Märkte gerade. Pick a pair and post the first Angebot with the ticket.",
+      "marketsTruncated": "Showing the most aktiv Märkte — smaller Märkte aren’t listed here, but Sie können load any pair with “Custom pair…”.",
+      "pickPair": "Pick a Markt to load its Buch.",
+      "lastFill": "Letzte Ausführung",
+      "quotedMid": "quotierte Mitte",
+      "spread": "Spread",
+      "crossed": "gekreuzt",
+      "statUnknown": "—",
+      "bookTitle": "Orderbuch",
+      "rateHeading": "Satz (APR %)",
+      "sizeHeading": "Größe",
+      "cumHeading": "Tiefe",
+      "asksHeading": "Kreditgeberangebote (Asks)",
+      "bidsHeading": "Leihanfragen (Bids)",
+      "bookEmpty": "Für diesen Markt gibt es noch keine offenen Angebote — Ihres kann das erste sein.",
+      "bookUnavailable": "Wir konnten load the Orderbuch gerade. Bitte versuchen Sie es erneut in Kürze.",
+      "bookIndexedCopy": "Live Chain read nicht verfügbar — showing the indexed copy of the Buch, which can lag the Chain.",
+      "yourOrderMark": "Your Order at this Satz",
+      "takeAsk": "Leihen this",
+      "takeBid": "Verleihen to this",
+      "rowPrefills": "Tap a Satz to pre-fill the ticket. Taking the top of the Buch goes through the same guided Prüfung as Leihen/Verleihen.",
+      "tapeTitle": "Letzte Ausführungen",
+      "tapeEmpty": "Noch keine Ausführungen für diesen Markt.",
+      "tapeUnavailable": "Wir konnten load recent fills gerade.",
+      "match": {
+        "body": "These Top-of-Book Angebote can cross. Anyone can execute this match and earn the matcher fee — Sie pay the Netzwerk gas to execute it.",
+        "execute": "Match ausführen",
+        "executing": "Matching läuft…",
+        "executed": "Match executed — the crossed Angebote settled into a Kredit.",
+        "noLongerMatchable": "These Angebote can no longer cross — the Buch moved before the match was sent. Es wurde nichts gesendet.",
+        "matchingDisabled": "Angebot matching was just switched off by Protokoll governance, so this match kann nicht be sent gerade. Es wurde nichts gesendet."
+      },
+      "signed": {
+        "badge": "Signiert",
+        "badgeTooltip": "Gasless signierte Order from the off-Chain Buch — the maker signiert it without a Transaktion, and it fills in a single On-chain Transaktion by whoever takes it. Signiert rows always come from the Orderbuch service, never the Chain, until they fill.",
+        "partialBadgeTooltip": "Partially matched signiert Order — its remainder still counts as depth and fills through the permissionless matcher, but a direct fill is no longer possible.",
+        "rangedBadgeTooltip": "Range-sized signiert Order — its size still counts as depth, but only the permissionless matcher can consume it in slices; there is no whole-Order direct fill.",
+        "fill": "Ausführen",
+        "confirmTitle": "Fill signiert Order",
+        "confirmLede": "Sie execute the whole fill in one Transaktion: your side moves from Ihre Wallet, the maker’s side from their vault, and the Kredit starts immediately.",
+        "gone": "Diese signiert Order is no longer fillable (filled, abgebrochen, or expired). Die Buch will catch up shortly. Es wurde nichts gesendet.",
+        "makerNotFunded": "Die maker’s vault nicht aktuellly cover this Order, so the fill würde fehlschlagen On-chain. Es wurde nichts gesendet — the maker must top up their vault first.",
+        "illiquid": "One of this Order’s Assets isn’t priced by the Protokoll gerade, and this compact confirm kann nicht walk Sie through the in-kind Ausfall Bedingungen that implies. Es wurde nichts gesendet.",
+        "kycBlocked": "Diese deployment’s identity-verification rules don’t cover one side of this Order at this value, so the fill würde fehlschlagen On-chain. Es wurde nichts gesendet or genehmigt.",
+        "riskBlocked": "Diese deployment’s Risiko-Zugriffs rules block one side of this Order gerade — the maker or Ihre Wallet needs an On-chain access level or standing consent this compact confirm kann nicht collect. Es wurde nichts gesendet or genehmigt.",
+        "accept": "Order ausführen",
+        "accepting": "Wird ausgeführt…",
+        "accepted": "Signierte Order ausgeführt — der Kredit ist live."
+      },
+      "chart": {
+        "title": "Ausgeführte Zinssätze",
+        "loading": "Chart wird geladen…",
+        "lastFillNone": "noch keine Ausführungen",
+        "empty": "Keine fills yet for this Markt — the chart draws only executed Sätze.",
+        "emptyRange": "Keine fills in this range — versuchen a longer range.",
+        "unavailable": "Wir konnten load the Satz Verlauf gerade.",
+        "retry": "Erneut versuchen",
+        "quotedMid": "quotierte Mitte",
+        "quotedMidHint": "Dashed line = the Buch’s aktuell quoted mid — a resting quote, not an executed Satz.",
+        "truncatedNote": "Long Verlauf — showing the most recent fills only. Die oldest candles are not drawn.",
+        "intervalLabel": "Intervall",
+        "rangeLabel": "Bereich",
+        "attribution": "Charts von TradingView",
+        "mobileBook": "Buch",
+        "mobileChart": "Chart",
+        "mobileViewLabel": "Desk-Ansicht"
+      },
+      "history": {
+        "tab": "Verlauf",
+        "caption": "Everything this Wallet ever traded on the desk — every Markt, every status. Repaid, beansprucht, and transferred Positionen stay listed.",
+        "empty": "Keine desk Verlauf for this Wallet yet.",
+        "unavailable": "Wir konnten load your Verlauf gerade.",
+        "loadMore": "Mehr laden",
+        "loadingMore": "Wird geladen…",
+        "loading": "Verlauf wird geladen…",
+        "roleLender": "Kreditgeber",
+        "roleBorrower": "Kreditnehmer",
+        "started": "gestartet"
+      },
+      "ticket": {
+        "title": "Orderticket",
+        "sideLend": "Verleihen",
+        "sideBorrow": "Leihen",
+        "amountLend": "Zu verleihender Betrag",
+        "amountBorrow": "Zu leihender Betrag",
+        "rateLend": "Satz — minimum Sie werden accept (APR %)",
+        "rateBorrow": "Satz — maximum Sie werden pay (APR %)",
+        "collateralRequire": "Geforderte Sicherheit",
+        "collateralLock": "Gesperrte Sicherheit",
+        "collateralFixedNote": "Set by the selected Markt — switch Märkte in the header to post gegen a ander Sicherheit Asset.",
+        "expiryLabel": "Ablauf",
+        "expiryGtc": "GTC",
+        "expiryCustom": "Benutzerdefiniert…",
+        "expiryInvalid": "Die custom Ablauf must be a future date and time.",
+        "expiryTooFar": "Die custom Ablauf can be at most one year ahead — the Protokoll caps Angebot Ablauf at 365 days out.",
+        "fillModeLabel": "Ausführungsmodus",
+        "fillPartial": "Teilweise",
+        "fillAon": "AON",
+        "fillIoc": "IOC",
+        "fillPartialHint": "Partial: the Angebot can fill in pieces down to a minimum.",
+        "fillAonHint": "Alles oder nichts: fills only as one whole Kredit at the full Betrag.",
+        "fillIocHint": "Sofort oder Abbrechen: rests only until its Ablauf — an Ablauf is required.",
+        "iocNeedsExpiry": "IOC Orders need an Ablauf — pick 24h, 7d, or a custom time.",
+        "post": "Order veröffentlichen",
+        "posting": "Wird veröffentlicht…",
+        "posted": "Order veröffentlicht",
+        "postedNext": "Ihr Angebot is live on the Buch. Manage it under Offen Orders below — amend or abbrechen any time before it fills.",
+        "modeLabel": "Veröffentlichung",
+        "modeOnchain": "On-chain",
+        "modeGasless": "Gasless (nur signieren)",
+        "modeOnchainHint": "Post the Angebot as a Transaktion — funds are escrowed in Ihr Vault jetzt.",
+        "modeGaslessHint": "Signieren the Order off-Chain and post it to the Buch — no Transaktion, no gas. Funds move only when a taker fills it.",
+        "gaslessEscrowNote": "Nichts is escrowed when Sie signieren — a taker’s fill pulls from Ihr Vault’s free balance at that moment. Abbrechen later is an On-chain Transaktion (unlike posting).",
+        "gaslessNeedsIndexer": "Gasless-Veröffentlichung needs the Orderbuch service, which isn’t configured gerade. On-Chain posting still works.",
+        "gaslessLenderAonNote": "Gasless-Verleih Orders fill only as one whole Kredit — a signiert Kreditgeber Order kann nicht be sliced On-chain, so it posts all-or-nothing. Teilweise Ausführung bleibt verfügbar with On-chain posting.",
+        "gaslessPost": "Signieren und ins Buch stellen",
+        "gaslessPosting": "Signierung läuft…",
+        "gaslessConsentRequired": "Prüfen Sie und accept the Risiko disclosures and Bedingungen first — for a gasless Order, your Signatur is what records that consent.",
+        "gaslessPosted": "Signiert Order posted to the Buch — no gas spent. It fills when a taker accepts it.",
+        "gaslessUnavailable": "Wir konnten reach the Orderbuch gerade — the Order was NOT posted. Bitte versuchen Sie es erneut in Kürze.",
+        "blockNetwork": "Zum Veröffentlichen in ein unterstütztes Netzwerk wechseln.",
+        "blockNoMarket": "Wählen Sie zuerst im Header einen Markt.",
+        "blockAmount": "Geben Sie oben den Betrag ein.",
+        "blockRate": "Geben Sie einen Satz zwischen 0 und 100% ein.",
+        "blockCollateral": "Geben Sie oben den Sicherheitenbetrag ein.",
+        "blockLoading": "Lädt Markt details — one moment.",
+        "blockConsent": "Prüfen Sie und accept the Risiko Bedingungen above to post.",
+        "blockGaslessService": "Gasless-Veröffentlichung needs the Orderbuch service, which isn’t available gerade — switch Posting to On-Chain.",
+        "consentRecheck": "Bedingungen geändert — bitte erneut bestätigen.",
+        "max": "Max",
+        "feePreviewTitle": "Gebühren und Bindung"
+      },
+      "orders": {
+        "tab": "Offene Orders",
+        "empty": "Keine offenen Orders. Veröffentlichen Sie eine über das Ticket.",
+        "unavailable": "Wir konnten load your offen Orders gerade.",
+        "heldNotCreated": "Gehalten — vom Ersteller verwaltet",
+        "cancel": "Abbrechen",
+        "cancelling": "Wird abgebrochen…",
+        "amend": "Ändern",
+        "amendTitle": "Amend in place — same Angebot, same Position, one Transaktion.",
+        "amendLoadFailed": "Wir konnten read this Angebot’s live values, and amending must start from them. Bitte versuchen Sie es erneut.",
+        "amendMinAmount": "Mindestbetrag",
+        "amendMaxAmount": "Höchstbetrag",
+        "amendAmountAon": "Betrag (alles oder nichts)",
+        "amendRate": "Satz (APR %)",
+        "amendRateMax": "Max. Satz (APR %)",
+        "amendCollateral": "Sicherheit",
+        "amendCollateralMax": "Max. Sicherheit",
+        "amendNoChange": "Noch nichts geändert.",
+        "amendMalformed": "Nur einfache Dezimalzahlen eingeben — Ziffern mit optionalem Dezimalpunkt.",
+        "amendInvalid": "Jedes Minimum muss kleiner oder gleich seinem Maximum sein, und kein Maximum darf unter den bereits ausgeführten Betrag fallen.",
+        "amendPositive": "Beträge and Sicherheit must be greater than zero.",
+        "amendAllowanceLost": "Die Token Genehmigung for this grow is no longer sufficient — nothing was changed. Please genehmigen erneut.",
+        "approveFirst": "Zuerst genehmigen",
+        "approving": "Genehmigung läuft…",
+        "save": "Änderungen speichern",
+        "saving": "Änderung läuft…",
+        "amended": "Order geändert.",
+        "signedTitle": "Signierte Orders (dieser Markt)",
+        "signedNote": "Gasless signierte Orders Sie posted for the selected Markt. Orders for other Märkte don’t show here — switch the Markt in the header to manage them.",
+        "signedCancel": "On-chain abbrechen",
+        "signedCancelling": "Wird abgebrochen…",
+        "signedCancelNote": "Die Veröffentlichung war kostenlos, but Abbrechen costs gas: the only way to revoke a Signatur the Buch already holds is an On-chain Transaktion.",
+        "signedCancelled": "Signierte Order on-chain abgebrochen.",
+        "signedTruncated": "Sie have more signiert Orders in this Markt than we can list at once — this is not the complete set."
+      },
+      "positions": {
+        "tab": "Positionen",
+        "empty": "Keine offen Positionen in this Wallet.",
+        "unavailable": "Wir konnten load Ihre Positionen gerade.",
+        "health": "Gesundheit",
+        "notPriced": "Keine Auto-Liquidation",
+        "manage": "Verwalten",
+        "allPositions": "Alle Positionen →"
+      }
+    },
+    "vpfi": {
+      "title": "VPFI-Rabatte",
+      "optional": "Optional: Halten Sie VPFI in Ihrem Vault, um Protokollgebühren bei berechtigten Krediten zu reduzieren. Sie benötigen VPFI nie, um Vaipakam zu nutzen.",
+      "noGasDiscount": "Ihr VPFI-Rabatt reduziert kein Netzwerk-Gas.",
+      "withdrawWarning": "Das Abheben von VPFI kann künftige Gebührenrabatte senken.",
+      "tokenChanged": "Die VPFI Token configuration changed since Sie geprüft. Nichts was genehmigt — please check the updated numbers and erneut versuchen.",
+      "tokenCheckRetry": "Wir konnten confirm the VPFI Token gerade — nothing was genehmigt. Bitte versuchen Sie es erneut in Kürze.",
+      "addToWallet": "VPFI zu MetaMask hinzufügen",
+      "addedToWallet": "Ihre Wallet wurde gebeten, VPFI zu verfolgen."
+    },
+    "errors": {
+      "partialOverPrincipal": "Das covers the Kredit’s whole remaining principal. Use “Zurückzahlen this Kredit” instead — it settles the Kredit properly and releases Ihre Sicherheit.",
+      "notAToken": "Das Adresse nicht look like a Token on this Netzwerk. Double-check it or pick a suggested Asset.",
+      "txRejected": "Sie abgebrochen in Ihre Wallet. Es wurde nichts gesendet.",
+      "txFailed": "Die Transaktion didn’t go through. Nichts was taken beyond Netzwerk gas. Bitte versuchen Sie es erneut.",
+      "sanctionsBlocked": "Diese Wallet is flagged by the sanctions oracle, so new Positionen and payouts are blocked. Es wurde nichts gesendet. Rückzahlung and closing existing Positionen stays offen.",
+      "sanctionsCheckRetry": "Wir konnten run the compliance check gerade — nothing was sent. Bitte versuchen Sie es erneut in Kürze.",
+      "checkRetry": "Wir konnten verify this On-chain gerade — nothing was sent. Bitte versuchen Sie es erneut in Kürze.",
+      "assetPaused": "One of this deal’s Assets is temporarily paused by the Protokoll, so this action kann nicht go through gerade. Es wurde nichts gesendet — please erneut versuchen later.",
+      "positionMoved": "Diese Position is no longer held by the verbunden Wallet (it may have been transferred or already beansprucht). Es wurde nichts gesendet — aktualisieren to see the aktuell state.",
+      "collateralNotPriced": "Diese Kredit’s Sicherheit isn’t aktuellly priced by the Protokoll, so zusätzliche Sicherheiten aren’t available for it. Es wurde nichts gesendet.",
+      "pastGrace": "Diese Kredit is past its due date and grace window, so Rückzahlung is geschlossen On-chain — the Ausfall process applies jetzt. Es wurde nichts gesendet.",
+      "loanAlreadySettled": "Diese Kredit looks already settled On-chain — nothing was sent. Aktualisieren in Kürze to see its final state.",
+      "nothingToClaim": "There’s nothing for this side to beanspruchen On-chain gerade — the payout may be zero or already collected. Es wurde nichts gesendet.",
+      "preclosePastGrace": "Diese Kredit is past its due date and grace window, so closing early is no longer possible — nothing was sent. Die Ausfall process applies jetzt.",
+      "refinancePastGrace": "Diese Kredit is past its due date and grace window, so it can no longer be refinanced — nothing was sent. Die Ausfall process applies jetzt.",
+      "saleListingMatured": "Diese Kredit is past its due date, so the Position can no longer be listed for sale — nothing was sent.",
+      "refinanceNotOriginalBorrower": "Diese Position changed hands since the Kredit began, so its Sicherheit kann nicht carry over into a refinance — nothing was sent. Rückzahlung or closing early stays available.",
+      "lenderBlockedPartial": "Die Kreditgeber’s Wallet kann nicht receive a direct partial payment gerade (compliance flag). Rückzahlung the Kredit in full stays offen — that path holds the funds for a screened beanspruchen instead."
+    },
+    "fees": {
+      "lateFee": "Late Rückzahlung adds 1% of the outstanding Betrag after day one, growing 0.5% per day, capped at 5%.",
+      "faqQuestion": "Welche Gebühren erhebt Vaipakam?",
+      "faqAnswerGeneric": "Vaipakam charges a Kredit initiation fee on the Betrag leihened and keeps a share of the interest a Kreditgeber earns. Late Rückzahlung adds 1% of the outstanding Betrag after day one, growing 0.5% per day, capped at 5%. Netzwerk gas is separat and goes to the Blockchain, not to Vaipakam. Verbinden Ihre Wallet to see the exact aktuell Sätze."
+    },
+    "faucet": {
+      "title": "Test-Assets erhalten",
+      "lede": "Mint mock Tokens and a test NFT so Sie können versuchen Leihen, Kreditvergabe, and Mieten on a test Netzwerk — no real value, no cost beyond gas.",
+      "notTestnetTitle": "Test Assets aren’t available here",
+      "backHome": "Zurück zur Startseite",
+      "minting": "Minting…",
+      "viewTx": "Transaktion anzeigen",
+      "nextSteps": "Als Nächstes: einsetzen —",
+      "nextBorrow": "Leihen gegen it",
+      "nextLend": "Verleihen it out",
+      "nextRent": "List it for mieten",
+      "footer": "Minted Assets land in Ihre Wallet. Use “My vault” and the Leihen, Verleihen, and NFT Vermietung screens to put them to work.",
+      "mintedNft": "Minted a test Vermietung NFT to Ihre Wallet. Its Token ID — Sie werden need it to list the Vermietung:",
+      "copyTokenId": "Token-ID kopieren",
+      "copiedTokenId": "Kopiert.",
+      "liquid": {
+        "title": "Liquid test Token (tLIQ)",
+        "blurb": "Priced by a test oracle, so it behaves like a liquid Asset — Health Factor, Liquidation, and refinancing all work with it. Pair it with mWETH (one as the Kredit, one as Sicherheit) when a flow needs two ander liquid Tokens."
+      },
+      "liquid2": {
+        "blurb": "A test USDC priced at $1 by a test oracle — a second, distinct liquid Token so Sie können run a deal where both the Kredit and the Sicherheit are liquid (with a realistic price spread gegen tLIQ / mWETH) without pairing a Token gegen itself."
+      },
+      "mweth": {
+        "title": "Mock Wrapped ETH (mWETH)",
+        "blurb": "An oracle-priced test Token that plays the “wrapped ETH” role in demos. It is NOT real WETH — it mints for free and has no value."
+      },
+      "nft2": {
+        "title": "Second vermietbares test NFT (vART)",
+        "blurb": "Another ERC-4907 collection — handy when Sie want to list one NFT and mieten a ander one, or run several Vermietungen at once.",
+        "action": "vART-NFT minten"
+      },
+      "addedToWallet": "Asked Ihre Wallet to track it.",
+      "illiquid": {
+        "title": "Illiquid test Token (tILQ)",
+        "blurb": "Keine price feed, so it behaves like an illiquid Asset — both sides must consent, and Ausfall transfers the Sicherheit in kind."
+      },
+      "illiquid2": {
+        "title": "Second illiquid test Token (tILQ2)",
+        "blurb": "Also unpriced. Pair it with tILQ (one as the Kredit, one as Sicherheit) to versuchen a deal where NEITHER side has a price — both parties must consent, no Health Factor applies, and Ausfall hands the Sicherheit over in kind."
+      },
+      "nft": {
+        "title": "Vermietung test NFT (vRENT)",
+        "blurb": "An ERC-4907 vermietbares NFT for Ausprobieren the NFT Vermietung flows.",
+        "action": "Test-NFT minten"
+      }
+    },
+    "vault": {
+      "title": "Mein Vault",
+      "lede": "Ihr eigenes On-chain account. Only Ihre Wallet controls it — Vaipakam never pools user funds.",
+      "noVaultYet": "Ihr Vault is created automatically with your first Angebot, Kredit, or deposit. Nichts to set up.",
+      "emptyCta": "Loslegen",
+      "emptyCtaFaucet": "Test-Assets erhalten",
+      "unavailable": "Wir konnten read Ihr Vault gerade. Ihre Mittel are unaffected — please erneut versuchen in Kürze.",
+      "lockedHint": "Locked Beträge back your offen Angebote, aktiv Kredite, and Vermietungen. They free up when those close."
+    },
+    "activity": {
+      "title": "Aktivität",
+      "lede": "Everything Ihre Wallet has done on Vaipakam, newest first.",
+      "empty": "Noch keine Aktivität. Sie erscheint hier, sobald Sie Vaipakam nutzen.",
+      "emptyCtaBorrow": "Etwas leihen",
+      "emptyCtaLend": "Etwas verleihen",
+      "unavailable": "Wir konnten load your activity gerade. Bitte versuchen Sie es erneut in Kürze.",
+      "truncatedNote": "Showing recent activity only — the Protokoll feed is busy and older events may not be listed.",
+      "participantTruncatedNote": "Diese Wallet has more Kredit Verlauf than we can check at once — some events tied to its oldest Kredite may be missing here.",
+      "truncatedEmpty": "Nichts of yours in recent Protokoll activity. Diese page lists recent activity only, so anything older isn’t shown here.",
+      "viewTx": "Transaktion anzeigen",
+      "loadMore": "Ältere Aktivität laden",
+      "loadingMore": "Wird geladen…",
+      "unavailableFallback": "Your aktuell Kredite and Vermietungen are always available on",
+      "positionsLink": "Meine Positionen"
+    },
+    "rewards": {
+      "title": "Interaktionsbelohnungen",
+      "blurb": "VPFI rewards from your Kreditvergabe and Leihen activity. They become beanspruchbar after a Kredit closes and the reward day finalizes.",
+      "empty": "Keine rewards yet. Rewards appear after Kreditvergabe or Leihen activity.",
+      "waiting": "Your rewards are being finalized — a reward day closes across all Chains before it can be beansprucht. Check back soon.",
+      "claim": "Belohnungen beanspruchen"
+    },
+    "sanctions": {
+      "title": "Diese Wallet is listed by the compliance oracle.",
+      "line1": "Die verbunden Adresse appears on the On-chain sanctions oracle Vaipakam screens gegen.",
+      "line2": "New Positionen (Angebote, Kredite, Vermietungen, deposits) are blocked and will not go through.",
+      "line3": "Rückzahlung and closing existing Positionen stays offen so your counterparties can be made whole, but Ansprüche and payouts to this Wallet are blocked while it is flagged. Wenn Sie believe this is an error, contact the oracle provider (Chainalysis)."
+    },
+    "risk": {
+      "notPriced": "Diese Kredit’s Assets aren’t priced by the Protokoll, so there is no automatic Liquidation — the Sicherheit transfers as-is on Ausfall.",
+      "healthy": "Gesund",
+      "watch": "Genau beobachten",
+      "danger": "Nahe an Liquidation",
+      "liquidatable": "Kann jetzt liquidiert werden",
+      "explain": "Wenn the Sicherheit’s value falls too far gegen the leihened Betrag, the Kredit can be liquidated. Adding Sicherheit makes it safer.",
+      "listChecking": "Gesundheit wird geprüft",
+      "listCheckingTitle": "Diese Kredit’s Gesundheit hasn’t been read yet, so the badge stays neutral. Liquidation protection still applies On-chain."
+    },
+    "notFound": {
+      "title": "Diese Seite existiert nicht",
+      "body": "Der Link ist möglicherweise alt oder falsch eingegeben. Nichts ist verloren — Ihre Positionen sind sicher.",
+      "backHome": "Zurück zur Startseite"
+    }
+  }
+}
