@@ -1,1 +1,970 @@
-{}
+{
+  "copy": {
+    "app": {
+      "name": "Vaipakam",
+      "tagline": "다른 사람과 직접 NFT를 빌려주고, 빌리고, 임대하세요."
+    },
+    "chrome": {
+      "nav": {
+        "home": "홈",
+        "borrow": "빌리기",
+        "lend": "빌려주기",
+        "rent": "NFT 임대",
+        "positions": "내 포지션",
+        "positionsShort": "포지션",
+        "claims": "청구",
+        "vault": "내 Vault",
+        "faucet": "테스트 자산 받기",
+        "offers": "오퍼북",
+        "desk": "금리 데스크",
+        "vpfi": "VPFI 할인",
+        "activity": "활동",
+        "nftVerifier": "NFT 검증기",
+        "settings": "설정",
+        "help": "도움말"
+      },
+      "settings": {
+        "language": "언어",
+        "languageHint": "번역이 완료되지 않은 언어는 현재 영어 텍스트를 표시합니다.",
+        "languagePickerAria": "표시 언어"
+      }
+    },
+    "seo": {
+      "home": {
+        "title": "Vaipakam — P2P 대출, 차입 및 NFT 임대",
+        "description": "다른 사람과 직접 NFT를 빌려주고, 빌리고, 임대하세요. 조건은 직접 정하고, 자산은 풀이나 중개자 없이 자신의 온체인 Vault에 남아 있습니다."
+      },
+      "borrow": {
+        "title": "자산 빌리기 — Vaipakam",
+        "description": "보유한 담보를 잠그고 필요한 토큰을 받으세요. 자신의 온체인 Vault에서, 직접 선택한 조건으로 사람 간 직접 대출을 이용합니다."
+      },
+      "lend": {
+        "title": "대출로 수익 얻기 — Vaipakam",
+        "description": "토큰을 차입자에게 제안하고, 차입자가 상환하면 이자를 얻습니다. 차입자가 조건을 수락할 때까지 자산은 자신의 온체인 Vault에 남아 있습니다."
+      },
+      "rent": {
+        "title": "NFT 임대 — Vaipakam",
+        "description": "보유한 NFT로 수수료를 벌거나 NFT를 임시로 사용할 수 있습니다. 소유권은 이동하지 않으며, NFT는 임대 기간 동안 소유자의 Vault에 잠겨 있습니다."
+      },
+      "offers": {
+        "title": "오퍼북 — Vaipakam",
+        "description": "네트워크의 모든 열린 대출 및 차입 오퍼를 확인하세요 — 자산, 금리, 기간, 담보 조건이 체인에서 실시간으로 표시됩니다."
+      },
+      "desk": {
+        "title": "금리 데스크 — Vaipakam",
+        "description": "자산 쌍과 기간별 실시간 개인 간 대출 금리, 체결 금리 이력, 서명 오퍼북을 확인합니다."
+      },
+      "vpfi": {
+        "title": "VPFI 수수료 할인 — Vaipakam",
+        "description": "선택 사항: Vault에 VPFI를 보유하면 프로토콜 수수료를 줄일 수 있습니다. 대출, 차입, 임대에 VPFI가 필수는 아닙니다."
+      },
+      "nftVerifier": {
+        "title": "NFT 임대 검증기 — Vaipakam",
+        "description": "Vaipakam에 등록된 NFT 임대가 진짜인지 확인하고, 토큰의 현재 임대 상태를 체인에서 직접 확인하세요."
+      },
+      "help": {
+        "title": "도움말 — Vaipakam",
+        "description": "대출, 차입, NFT 임대, 수수료, 위험에 대한 쉬운 설명과 이 배포의 빌드 및 컨트랙트 정보를 제공합니다."
+      },
+      "positions": {
+        "title": "내 포지션 — Vaipakam"
+      },
+      "claims": {
+        "title": "청구 — Vaipakam"
+      },
+      "vault": {
+        "title": "내 Vault — Vaipakam"
+      },
+      "activity": {
+        "title": "활동 — Vaipakam"
+      },
+      "settings": {
+        "title": "설정 — Vaipakam"
+      },
+      "faucet": {
+        "title": "테스트 자산 — Vaipakam"
+      },
+      "notFound": {
+        "title": "페이지를 찾을 수 없음 — Vaipakam"
+      }
+    },
+    "home": {
+      "title": "무엇을 하시겠습니까?",
+      "lede": "시작할 작업을 선택하세요. 설정에서 언제든 고급 모드로 전환할 수 있습니다.",
+      "jobs": {
+        "borrow": {
+          "title": "자산 빌리기",
+          "blurb": "보유한 담보를 잠그고 필요한 토큰을 받으세요."
+        },
+        "lend": {
+          "title": "대출로 수익 얻기",
+          "blurb": "토큰을 차입자에게 제안하고, 상환되면 이자를 얻습니다."
+        },
+        "rent": {
+          "title": "NFT 빌리기 또는 빌려주기",
+          "blurb": "보유한 NFT로 수수료를 벌거나 NFT를 임시로 사용하세요."
+        },
+        "manage": {
+          "title": "내 포지션 관리",
+          "blurb": "대출과 임대를 보고, 상환하거나 담보를 추가하거나 청구하세요."
+        }
+      }
+    },
+    "tokenSecurity": {
+      "pickerUnknown": "독립 보안 검사가 현재 이 토큰을 확인할 수 없습니다. 확인되지 않은 토큰이 포함된 거래는 검사가 성공할 때까지 보류됩니다.",
+      "pickerUnsupported": "독립 보안 검사는 이 네트워크를 지원하지 않습니다(테스트 네트워크는 인덱싱되지 않음). 배포했거나 신뢰하는 토큰만 사용하세요.",
+      "retry": "다시 확인",
+      "badge": {
+        "block": {
+          "label": "위험 표시됨",
+          "title": "An independent security check flags a 토큰 in this 오퍼 as dangerous (for example impossible to sell). The 검토 will not let this deal proceed."
+        },
+        "warn": {
+          "label": "주의",
+          "title": "An independent security check reports owner powers or taxes on a 토큰 in this 오퍼. The 검토 shows the details before you 서명 anything."
+        },
+        "unchecked": {
+          "label": "검사되지 않음",
+          "title": "A 토큰 in this 오퍼 could not be checked by the independent security screen. Treat it with extra care."
+        }
+      },
+      "reputationUnlisted": "이 주소에 대한 시장 상장이 없습니다 — 더 넓은 시장에서 이 토큰을 알지 못합니다. 그것만으로 나쁜 것은 아니지만 거래 전 프로젝트에서 컨트랙트 주소를 확인하세요."
+    },
+    "signing": {
+      "approveUnknown": "토큰 승인 — 지갑이 이전 승인을 먼저 0으로 재설정해야 하면 두 번, 아니면 한 번 확인합니다(확인 중).",
+      "sign": "방금 읽은 조건에 서명하세요 — gas가 없는 무료 서명입니다.",
+      "approve": "토큰 승인 — 위에 표시된 금액을 프로토콜이 가져갈 수 있도록 허용합니다. 이는 트랜잭션입니다.",
+      "approveReset": "토큰 승인 — 여기서는 두 번 확인합니다. 새 금액을 설정하기 전에 지갑이 이전 승인을 0으로 재설정해야 합니다.",
+      "post": "오퍼 게시 — 마지막 트랜잭션입니다.",
+      "accept": "거래 열기 — 마지막 트랜잭션입니다.",
+      "approveNft": "프로토콜이 이 컬렉션의 NFT를 이동하도록 허용합니다 — 컬렉션당 1회 트랜잭션입니다.",
+      "postListing": "리스팅 게시 — 마지막 트랜잭션입니다.",
+      "acceptRental": "임대 시작 — 마지막 트랜잭션입니다."
+    },
+    "killSwitch": {
+      "disabled": "이 작업은 현재 꺼져 있습니다 — 운영자가 확인 중인 사항이 있어 예방적으로 일시 중지했습니다. 이미 보유한 것은 영향받지 않으며, 상환, 청구, 인출은 계속 열려 있습니다."
+    },
+    "alerts": {
+      "title": "알림",
+      "lede": "사이트가 닫혀 있어도 포지션에 대한 Telegram 메시지를 받으세요 — 마감과 위험은 탭을 열 때까지 기다리지 않습니다.",
+      "notConfigured": "이 빌드에는 알림이 설정되어 있지 않습니다. 운영자가 알림 백엔드에 연결하지 않았으므로 이 섹션은 비활성화됩니다.",
+      "connectFirst": "알림을 설정하려면 지갑을 연결하세요.",
+      "privacy": "연결하면 지갑 주소, 이 카드의 알림 설정, Telegram 채팅 ID가 Vaipakam 알림 서비스에 저장됩니다. 또한 같은 일로 두 번 알림을 받지 않도록 각 알림의 작은 전송 기록(어떤 대출, 어떤 수준, 언제)이 함께 저장됩니다. 연결 해제는 Telegram 연결을 제거합니다.",
+      "linkButton": "Telegram 연결",
+      "linkSignNote": "지갑이 먼저 짧은 메시지 서명을 요청합니다 — 무료이며 트랜잭션이 아니고, 요청이 실제로 본인에게서 왔음을 증명합니다.",
+      "linkIssued": "봇을 열고 Start를 누르거나 이 코드를 메시지로 보내세요. 그러면 이 지갑이 Telegram에 연결됩니다.",
+      "openBot": "Telegram 열기",
+      "testAlertButton": "테스트 알림 보내기",
+      "testAlertNote": "봇에 코드를 보낸 뒤 여기를 누르세요 — 연결 확인을 위해 Telegram으로 메시지 하나를 보냅니다. 먼저 지갑이 짧은 무료 메시지에 서명합니다.",
+      "testAlertSending": "테스트 알림 보내는 중…",
+      "testAlertSent": "테스트 알림을 보냈습니다 — Telegram을 확인하세요. 이 지갑의 알림이 켜졌습니다.",
+      "testAlertNotLinked": "아직 Telegram 채팅을 찾지 못했습니다. 봇을 열어 위 코드를 보내고 “테스트 알림 보내기”를 다시 누르세요. 코드가 만료되었다면 “다시 시작”을 눌러 새 코드를 받으세요.",
+      "testAlertError": "지금 테스트 알림을 보낼 수 없습니다. 잠시 후 다시 시도하세요.",
+      "startOver": "다시 시작",
+      "linked": "Telegram이 연결되었습니다 — 이 지갑의 알림은 채팅으로 전송됩니다.",
+      "unlink": "연결 해제",
+      "unlinkElsewhereTitle": "다른 기기에서 이 지갑을 연결했나요?",
+      "unlinkElsewhereBody": "Telegram 연결은 이 브라우저뿐 아니라 서버에도 저장됩니다. 여기에서 연결을 끊으면 모든 곳에서 메시지가 중지됩니다.",
+      "unlinkElsewhere": "이 지갑 연결 해제",
+      "unlinked": "연결이 해제되었습니다. 이 지갑에는 더 이상 Telegram 메시지가 가지 않습니다.",
+      "toggleRepayDue": "이자 지급 기한 전에 메시지 받기",
+      "toggleRisky": "대출이 위험해지면 메시지 받기",
+      "riskyOffNote": "꺼져 있어도 대출이 청산될 수 있기 직전에는 계속 경고를 받습니다.",
+      "advancedBands": "위험 임계값(Health Factor): 대출이 각 수준을 넘을 때 메시지가 전송됩니다.",
+      "bandsInvalid": "세 단계는 내려가는 순서여야 합니다 — warn은 alert보다 높고, alert는 critical보다 높으며, critical은 1.00보다 높아야 합니다.",
+      "saved": "저장되었습니다.",
+      "pushTitle": "앱 푸시를 선호하시나요?",
+      "pushBody": "같은 알림이 Vaipakam의 Push Protocol 채널에도 게시됩니다 — 지갑으로 구독하면 Push 호환 앱이 전달합니다.",
+      "pushEnable": "Push 전송 활성화",
+      "pushEnabled": "이 지갑의 Push 전송이 켜져 있습니다.",
+      "pushButton": "Push 채널 열기",
+      "loanNudge": "이 대출이 위험해질 때 Telegram 경고를 받고 싶나요? 설정에서 알림을 구성하세요."
+    },
+    "notifications": {
+      "bellLabel": "알림",
+      "title": "알림",
+      "loading": "알림을 불러오는 중…",
+      "empty": "아직 없습니다. 대출 업데이트가 여기에 표시됩니다.",
+      "unavailable": "지금 알림을 불러올 수 없습니다. 연결이 복구되면 여기에 표시됩니다.",
+      "connectFirst": "대출 업데이트를 보려면 지갑을 연결하세요.",
+      "line": {
+        "loan_matched": "대출이 활성화되었습니다.",
+        "partial_repay": "대출에 상환이 들어왔습니다.",
+        "loan_repaid": "대출이 전액 상환되었습니다 — 청구할 수 있는 항목을 확인하세요.",
+        "loan_defaulted": "대출이 부도 처리되었습니다 — 청구할 수 있는 항목을 확인하세요.",
+        "internal_matched": "내 대출 중 하나가 매칭으로 종료되었습니다 — 청구할 수 있는 항목을 확인하세요.",
+        "maturity_7d": "대출 하나가 만기 일주일 전이었습니다 — 열어서 상태를 확인하세요.",
+        "maturity_1d": "대출 하나가 만기 하루 전이었습니다 — 열어서 상태를 확인하세요.",
+        "grace_entered": "대출 하나가 만기를 지났습니다 — 열어서 상태를 확인하세요.",
+        "hf_warn": "대출의 건전성이 1.5 아래로 내려갔습니다 — 열어서 상태를 확인하세요.",
+        "hf_alert": "대출의 건전성이 1.2 아래로 내려갔습니다 — 열어서 상태를 확인하세요.",
+        "hf_critical": "대출의 건전성이 1.05 아래로 내려가 1.0 청산선에 가까워졌습니다 — 열어서 조치하세요.",
+        "generic": "대출에 업데이트가 있습니다."
+      }
+    },
+    "errorBoundary": {
+      "title": "이 페이지에서 문제가 발생했습니다",
+      "body": "The page hit an unexpected error and stopped rendering. Your funds and on-체인 포지션s are unaffected — this is a display-side fault, and a 트랜잭션 you just 서명ed may still have gone through (check My 포지션s after re불러오는 중). Re불러오는 중 usually clears it.",
+      "reload": "페이지 새로고침",
+      "home": "홈으로 돌아가기"
+    },
+    "diagnostics": {
+      "open": "지원 및 연결 확인",
+      "title": "지원",
+      "lede": "이 앱이 의존하는 연결을 빠르게 확인하고 문제를 신고하는 방법입니다.",
+      "close": "닫기",
+      "network": "네트워크",
+      "wallet": "지갑",
+      "walletNotConnected": "연결되지 않음",
+      "rpc": "블록체인 연결",
+      "rpcChecking": "확인 중…",
+      "rpcFailing": "Not responding — the app can’t reach the block체인 right 지금. Re불러오는 중, or switching 네트워크s and back, often clears it.",
+      "indexer": "시장 데이터 캐시",
+      "indexerUnreachable": "Unreachable right 지금 — 시장 lists may not load until it recovers. Your own 포지션s still load directly from the 체인.",
+      "indexerNoCursor": "Reachable, but no data has been recorded for this 네트워크 yet — it will fill as activity arrives.",
+      "indexerNotConfigured": "Not configured on this build — 시장 lists can’t load here. Your own 포지션s still load directly from the 체인.",
+      "build": "앱 버전",
+      "lastErrorTitle": "이 기기의 마지막 오류",
+      "noError": "이 세션에 기록된 오류가 없습니다.",
+      "report": "GitHub에 문제 신고",
+      "reportHint": "열기s a pre-filled GitHub issue with the details above and the last recorded error. Your full 지갑 주소 is never included.",
+      "copyDetails": "세부 정보 복사",
+      "copied": "복사되었습니다."
+    },
+    "support": {
+      "title": "지원 문의",
+      "lede": "팀에 메시지를 보내면 즉시 티켓 번호를 받습니다.",
+      "notConfigured": "The 지원 inbox isn’t 연결ed in this build, so in-app messages can’t be sent from here. Email works instead:",
+      "messageLabel": "무슨 일이 있었나요?",
+      "messagePlaceholder": "무엇을 하던 중 어떤 문제가 있었는지 직접 설명해 주세요.",
+      "emailLabel": "답장 받을 이메일(선택)",
+      "emailHint": "Leave it empty if you’d rather follow up yourself — the ticket number below is all 지원 needs.",
+      "attach": "Attach the 건전성 details shown above (recommended — they usually hold the cause)",
+      "privacy": "Sending stores your message, the page you sent it from and the 네트워크 you were on, the reply 주소 if you gave one, and — only if you ticked the box — the 건전성 details above, on Vaipakam’s 지원 service under your ticket number. The team is notified that a ticket arrived (its number and context flags — never your message text or email). Your full 지갑 주소 is never included in the 건전성 details.",
+      "send": "지원팀에 보내기",
+      "sending": "보내는 중…",
+      "mailHint": "이메일을 선호하거나 더 추가할 내용이 있나요? 티켓 번호를 적어 문의하세요:",
+      "mailButton": "Email 지원@vaipakam.com",
+      "invalidMessage": "먼저 무슨 일이 있었는지 몇 글자 적어 주세요.",
+      "invalidEmail": "이 이메일은 완전해 보이지 않습니다 — 수정하거나 필드를 비우세요(선택 사항).",
+      "rateLimited": "A few messages went out just 지금 — wait a minute and 시도 다시.",
+      "unavailable": "The 지원 inbox couldn’t take the message right 지금. Nothing was lost on your side — email us instead:",
+      "failed": "The message didn’t go through. 시도 다시 in a moment, or email us:",
+      "helpTitle": "사람의 도움이 필요하신가요?",
+      "helpBody": "열기 the 지원 panel (the round button in the corner of every page) to send the team a message with one click — it can attach the app’s own 건전성 details, which usually hold the cause. Or email us directly:"
+    },
+    "wallet": {
+      "connect": "지갑 연결",
+      "connectFirst": "계속하려면 지갑을 연결하세요.",
+      "switchNetwork": "네트워크 전환"
+    },
+    "checks": {
+      "walletConnected": "지갑 연결됨",
+      "supportedChain": "지원 네트워크에 있음",
+      "tokenValid": "자산이 토큰으로 인식됨",
+      "consent": "위험 고지와 약관 수락됨",
+      "getTestAssets": "테스트 자산 받기",
+      "connectEarly": "계속하려면 지갑을 연결하세요 — 서명에 필요하므로 지금 연결하는 것이 가장 쉽습니다."
+    },
+    "receipt": {
+      "heading": "서명 전 검토",
+      "youReceive": "받는 것",
+      "youLock": "잠그는 것",
+      "youMayOwe": "부담할 수 있는 것",
+      "youCanLose": "잃을 수 있는 것",
+      "fees": "수수료",
+      "whenThisEnds": "종료 시점",
+      "gasNote": "네트워크 gas는 Vaipakam 프로토콜 수수료와 별도입니다."
+    },
+    "simulation": {
+      "running": "이 트랜잭션을 무료로 시뮬레이션하는 중…",
+      "passed": "시뮬레이션 통과 — 이 트랜잭션은 검토한 대로 진행될 가능성이 높습니다.",
+      "wouldFail": "주의 — 지금 서명하면 이 트랜잭션은 실패합니다. 아무것도 전송되지 않았고 gas도 사용되지 않았습니다.",
+      "wouldFailNote": "위 세부 정보를 조정하고 잠시 후 다시 시도하거나, 그래도 서명할 수 있습니다.",
+      "approvalNeeded": "먼저 토큰 승인이 요청됩니다 — 시뮬레이션은 그 단계를 아직 볼 수 없으므로 예상된 동작입니다.",
+      "unavailable": "무료 시뮬레이션을 지금 사용할 수 없습니다. 계속할 수 있으며, 이 검사는 추가 안내일 뿐입니다."
+    },
+    "help": {
+      "disclaimer": "Vaipakam은 탈중앙화 비수탁 프로토콜입니다. KYC는 필요하지 않습니다. 적용되는 규제 준수 책임은 사용자 본인에게 있습니다.",
+      "risksTitle": "위험 고지",
+      "risks": [
+        "차입: 만기일과 유예 기간까지 상환하지 않으면 잠긴 담보가 대여자에게 넘어갑니다. 실시간 시장 가격이 없는 담보는 전체가 이전됩니다.",
+        "차입: 실시간 시장 가격이 있는 담보는 가치가 너무 떨어지면 만기 전에 자동 매도(청산)될 수 있습니다.",
+        "대출: 차입자가 상환할 때만 이자를 얻습니다. 부도 시 회수액은 잠긴 담보의 실제 가치에 달려 있습니다.",
+        "NFT 임대: 임차인은 소유권이 아닌 임시 사용권만 받습니다. NFT는 소유자의 Vault에 남아 있으며, 임대료는 소액의 환불 가능한 버퍼와 함께 선불입니다.",
+        "스마트 컨트랙트 위험: Vaipakam은 공개 네트워크의 코드입니다. 버그, 네트워크 장애, 극단적 시장 상황은 손실을 일으킬 수 있습니다 — 감당할 수 없는 자금은 투입하지 마세요."
+      ]
+    },
+    "consentParts": {
+      "prefix": "다음을 이해하고 동의합니다: ",
+      "risk": "위험 고지",
+      "mid": " 및 ",
+      "terms": "Vaipakam 약관",
+      "suffix": "에서 가능합니다."
+    },
+    "match": {
+      "borrowTitle": "지금 자금을 제공할 수 있는 대여자",
+      "borrowLede": "These 오퍼s match your 자산. Accepting one 열린s the 대출 immediately — you take the 오퍼’s full 금액 and 조건.",
+      "lendTitle": "자금 조달을 기다리는 차입자",
+      "lendLede": "These 요청s match your 자산. Funding one 열린s the 대출 immediately at the 요청’s 조건.",
+      "wholeOfferNote": "오퍼s are taken whole — the 금액 shown is what the 대출 will be.",
+      "choose": "선택",
+      "emptyBorrow": "현재 일치하는 오퍼가 없습니다.",
+      "emptyLend": "현재 일치하는 요청이 없습니다.",
+      "orPostBorrow": "대신 내 차입 요청 게시",
+      "orPostLend": "대신 내 대출 오퍼 게시",
+      "unavailable": "We couldn’t load matching 오퍼s right 지금. You can still post your own below.",
+      "loanOpened": "대출 열림",
+      "borrowerNext": "The funds are in your Vaipakam Vault and your 담보 is locked. 상환 by the due date to get it back — everything is under My 포지션s.",
+      "lenderNext": "Your funds are lent and the 차입자’s 담보 is locked. Track 상환ment under My 포지션s; you’ll 청구 your funds back after they 상환.",
+      "wrongSide": "That link points to the other side of the 시장 — a 대출 오퍼 is accepted from 차입, a 차입 요청 from 대출.",
+      "wrongKind": "That 오퍼 involves an NFT — 열린 it from the NFT 임대 page instead.",
+      "ownOffer": "That’s your own 오퍼 — you can 취소 it from My 포지션s, but you can’t accept it yourself.",
+      "offerGone": "That 오퍼 is no longer 열린. Browse cur임대 matches below or post your own.",
+      "counterpartyBlocked": "The other side of this 오퍼 can’t transact right 지금 (compliance flag), so it can’t be accepted. Nothing was sent.",
+      "offerNotFound": "We couldn’t find that 오퍼 — the link may be old, or the data source is catching up. Browse cur임대 오퍼s below.",
+      "termsChanged": "This 오퍼’s 조건 changed since you 검토ed it. Nothing was sent — please 검토 the updated 오퍼.",
+      "illiquidWarning": "One side of this deal isn’t priced by the 프로토콜 — it has no usable 시장 price or deep-enough trading 시장 right 지금. If it ends in 부도, the entire 담보 transfers directly to the 대여자 — nobody sells it for a fair 시장 price first, and there is no automatic price-based 청산. Only proceed if you accept that.",
+      "interestModeFullTerm": "Interest is full-term: the whole term’s interest applies even if the 대출 is repaid early.",
+      "interestModeProRata": "Interest accrues day by day — 상환ing early costs less.",
+      "interestModeProRataLender": "Interest accrues day by day — if the 차입자 상환s early, you earn less.",
+      "saleLoanChecking": "Reading the running 대출 behind this listing — the 검토 must show its real numbers before you can 서명.",
+      "saleLoanCheckFailed": "We couldn’t read the running 대출 behind this listing, and the 검토 must show its real numbers — 서명ing stays paused until it succeeds.",
+      "saleLoanNotActive": "The 대출 behind this listing is no longer 활성, so this purchase can’t complete. Nothing was sent or 승인d.",
+      "saleSellerNotCovered": "The seller’s standing settlement 승인 no longer covers completing this sale, so the purchase would fail on-체인. Nothing was sent or 승인d — the seller needs to restore their 승인 (their listing card shows a restore action).",
+      "saleMaturityPassed": "This 대출 has reached its due date — the 포지션 can no longer be bought. Nothing was sent or 승인d.",
+      "saleBought": "포지션 bought",
+      "saleSelfBuy": "You are the 차입자 of this 대출, so you can’t also buy its 대여자 side — the 프로토콜 rejects that. 상환ing or closing early from My 포지션s are your moves instead. Nothing was sent or 승인d.",
+      "liquidityChecking": "Checking how these 자산s are priced by the 프로토콜…",
+      "liquidityCheckFailed": "We couldn’t check how these 자산s are priced, and that check decides an important warning — 서명ing stays paused until it succeeds.",
+      "linkedLoanCheckFailed": "We couldn’t check whether this 오퍼 is a 포지션 sale of a running 대출, and that check decides an important disclosure — 서명ing stays paused until it succeeds.",
+      "graceChecking": "Confirming the 상환ment grace window this deal is judged 다시st…",
+      "graceCheckFailed": "We couldn’t confirm the 상환ment grace window, and the 검토 must show the real one — 서명ing stays paused until it succeeds.",
+      "riskGateBlocked": "The 프로토콜’s 위험-access rules block this acceptance for your 지갑 right 지금 — it needs a standing on-체인 ack지금ledgement or access level this app can’t collect yet. Nothing was sent or 승인d."
+    },
+    "borrow": {
+      "title": "자산 빌리기",
+      "lede": "Tell us what you need and what you can lock as 담보. We’ll show you exactly what you’d owe before anything is 서명ed.",
+      "postRequest": "차입 요청 게시",
+      "posted": "차입 요청 게시됨",
+      "postedNext": "Your 담보 is locked while the 요청 is 열린. Funds arrive only when a 대여자 accepts — we’ll show the 대출 under My 포지션s.",
+      "collateralWarning": "제때 상환하지 않으면 대여자가 담보를 받을 수 있습니다.",
+      "lockNow": "Your 담보 is locked when you post this 요청. You can 취소 before a 대여자 accepts to unlock it.",
+      "collateralPrecheck": "Before you 계속 —"
+    },
+    "lend": {
+      "title": "대출로 수익 얻기",
+      "lede": "Choose what to 대출 and the return you want. 대출 is choosing a 위험, not just a yield — you’ll see the downside before you 서명.",
+      "postOffer": "대출 오퍼 게시",
+      "posted": "대출 오퍼 게시됨",
+      "postedNext": "Your 토큰s are locked while the 오퍼 is 열린. When a 차입자 accepts, the 대출 appears under My 포지션s. You can 취소 before acceptance to unlock your 토큰s.",
+      "yieldNotGuaranteed": "Expected interest if the 차입자 상환s on time.",
+      "defaultOutcome": "If the 차입자 부도s, your recovery depends on their 담보."
+    },
+    "rent": {
+      "title": "NFT 빌리기 또는 빌려주기",
+      "lede": "NFT 임대s give temporary use rights — never ownership. The NFT stays locked in its owner’s vault for the whole 임대.",
+      "ownPath": "임대할 NFT를 보유하고 있습니다",
+      "ownPathBlurb": "일일 수수료를 설정하세요 — 임차인은 전체 임대료를 선불로 지불합니다.",
+      "wantPath": "NFT를 임대하고 싶습니다",
+      "wantPathBlurb": "선불로 지불하고 임대가 끝날 때까지 NFT를 사용하세요.",
+      "browseCta": "임대 가능한 NFT 보기",
+      "custodyNote": "NFT는 Vault 보관을 벗어나지 않습니다. 임차인은 소유권이 아닌 임시 사용권만 받습니다.",
+      "postListing": "임대 리스팅 게시",
+      "listingPosted": "임대 리스팅 게시됨",
+      "listingPostedNext": "Your NFT is held in your vault while the listing is 열린. When a 임대er accepts, the 임대 appears under My 포지션s; 취소 the listing any time before that to get the NFT back.",
+      "acceptRental": "이 NFT 임대",
+      "rentalOpened": "임대 시작됨",
+      "rentalOpenedNext": "You 지금 hold the use rights until the 임대 ends — the NFT itself stays in the owner’s vault. Your prepaid 수수료 cover the whole term; close on time and the buffer comes back to you.",
+      "checkOwnNft": "이 NFT는 내 소유입니다",
+      "checkNotOwner": "The 연결ed 지갑 doesn’t own this NFT — check the contract 주소 and 토큰 id.",
+      "browseTitle": "임대 가능한 NFT",
+      "browseEmpty": "현재 임대 리스팅이 없습니다.",
+      "browseEmptyCta": "Own an NFT? Use the switch above to list it for 임대 instead — 임대ers p상환 the whole 임대 up front, so an empty 시장 is an opportunity.",
+      "browseUnavailable": "We couldn’t load 임대 listings right 지금. Please 시도 다시 in a moment.",
+      "notDebt": "A 임대 is not a 대출: there’s nothing to 상환 — your 수수료 are prepaid and your rights simply end when the term does.",
+      "no4907Warning": "Heads up: this NFT collection doesn’t 지원 the on-체인 임대 standard (ERC-4907). 임대ing still works — Vaipakam tracks the 임대er’s use rights in your vault — but apps and games outside Vaipakam won’t recognise the 임대er.",
+      "no4907Unknown": "We couldn’t check whether this NFT collection 지원s the on-체인 임대 standard (ERC-4907). If it doesn’t, apps outside Vaipakam won’t recognise the 임대er — 임대ing inside Vaipakam still works.",
+      "vpfiPrepayListing": "This listing asks to be paid in VPFI, which 임대s don’t allow — it can’t be accepted. Please pick a diffe임대 listing.",
+      "vpfiCheckRetry": "We couldn’t verify this listing’s payment 자산 just 지금 — nothing was sent or 승인d. Please 시도 다시 in a moment.",
+      "vpfiPrepayNotAllowed": "VPFI can’t be used as the 임대 payment 자산 — pick another 토큰."
+    },
+    "preclose": {
+      "title": "이 대출 조기 종료",
+      "blurb": "지금 전액을 지불하고 오늘 대출을 종료하세요 — 담보는 즉시 해제됩니다.",
+      "fullTermNote": "This 대출 uses full-term interest, so closing early still pays the whole term’s interest.",
+      "proRataNote": "This 대출 accrues interest day by day, so closing early pays only what has accrued.",
+      "action": "조기 종료",
+      "confirm": "확인 — 지금 지불하고 종료",
+      "done": "대출이 조기 종료되었습니다. 담보를 아래 또는 클레임 센터에서 청구할 수 있습니다.",
+      "checking": "Checking whether this 대출 can close early…",
+      "checkFailed": "We couldn’t read this 대출’s close-early cost right 지금 — re시도ing. 상환ing normally stays available below.",
+      "graceNote": "This 대출 is past its due date. The 금액 below already includes the late fee for being late (it grows a little each day), and closing this way stays possible only until the grace window ends.",
+      "graceFeeReceiptNote": "The late fee for being past due is included in this 금액 — the same fee a normal 상환ment would charge."
+    },
+    "refinance": {
+      "title": "이 대출 리파이낸스",
+      "blurb": "Post a 요청 for a new 대출 on better 조건. The moment a 대여자 accepts it, your cur임대 대출 is paid off and 닫힌 automatically in the same 트랜잭션 — your 담보 moves to the new 대출 without ever unlocking.",
+      "rateLabel": "수락할 최대 연 이율",
+      "durationLabel": "새 대출 기간(일)",
+      "action": "리파이낸스 요청 검토",
+      "confirm": "확인 — 리파이낸스 요청 게시",
+      "payoffNote": "The old 대출’s payoff is always principal plus the full remaining term’s interest — even if the 대출 normally accrues day by day. That is the exiting 대여자’s fixed entitlement on an early exit.",
+      "shortIsSafe": "If your 지갑 is short when a 대여자 tries to accept, the acceptance simply fails — nothing is taken and your cur임대 대출 계속s unchanged.",
+      "periodicWarning": "This 대출 pays interest on a periodic schedule. If a payment period becomes overdue while the 요청 is 열린, a 대여자’s acceptance will fail until the period is settled — keep the 대출’s payments cur임대.",
+      "done": "Refinance 요청 posted. When a 대여자 accepts it, this 대출 closes automatically — you don’t need to do anything else. You can 취소 the 요청 below (취소lation 열린s a few minutes after posting).",
+      "pendingAccepted": "Your refinance 요청 was accepted — this 대출 is being replaced by the new one. 새로고침 in a moment to see the final state.",
+      "pendingLoanClosed": "This 대출 has since 닫힌 another way, so the 요청 can no longer complete — 취소 it to also remove its standing payoff 승인.",
+      "cancel": "리파이낸스 요청 취소",
+      "cancelSoon": "취소lation 열린s a few minutes after posting — 시도 다시 shortly.",
+      "cancelled": "Refinance 요청 취소led and the payoff 승인 removed — this 대출 계속s unchanged. If you have other listings or 요청s using the same 토큰, restore their 승인s from their cards.",
+      "cancelledRevokeFailed": "Refinance 요청 취소led — this 대출 계속s unchanged. The standing payoff 승인 couldn’t be removed automatically; you can revoke it from your 지갑’s 토큰-승인s view.",
+      "allowanceShort": "The payoff 승인 no longer covers everything this 요청 could pull — a 대여자’s acceptance could fail (an acceptance after the due date also pulls the late fee and extra interest). Restore it below or 취소 the 요청.",
+      "reapprove": "상환 승인 복구",
+      "reapproved": "Payoff 승인 restored — the 요청 can complete 다시.",
+      "reapproveAborted": "This 요청 is no longer completable (accepted, 취소led, or the 대출 닫힌) — nothing was 승인d. 새로고침 to see the latest state.",
+      "guardrailNote": "Your 요청 carries its own 만료 and on-체인 guardrails: it can only complete at or below the 금리 you set here, and never after the 만료 you see in this 검토.",
+      "graceNote": "This 대출 is past its due date. A 대여자 can still accept this 요청 until the grace window ends, and the payoff already includes the late fee for being late (it grows a little each day).",
+      "pendingPastGrace": "This 대출 has passed its due date and grace window, so no 대여자 can accept this 요청 any more — it no longer holds up your other actions here. 취소 it below to also remove its standing payoff 승인.",
+      "cadenceChangeNote": "Your cur임대 대출 pays interest on a schedule. The replacement 대출 will NOT — its interest settles when it closes. Make sure that cash-flow change is what you want.",
+      "multiStepNote": "Posting takes up to three 지갑 confirmations (guardrails, payoff 승인, the 요청 itself). If you stop partway, the earlier steps stay in place on-체인 until you finish posting or 취소 — 취소ling also removes the 승인.",
+      "partialBlockedByPending": "A refinance 요청 is live for this 대출. A partial 상환ment would change the 금액 and make that 요청 permanently unacceptable — 취소 the refinance 요청 first.",
+      "precloseBlockedByPending": "A refinance 요청 is live for this 대출. Closing early 지금 would strand it — 취소 the refinance 요청 first.",
+      "repayWarnPending": "A refinance 요청 is still live for this 대출. 상환ing settles the 대출, after which the 요청 can never complete — 취소 it from its card afterwards (that also removes its standing payoff 승인); until then it just sits until it expires."
+    },
+    "approvals": {
+      "title": "상시 토큰 승인",
+      "blurb": "These are the spending permissions your 지갑 has granted Vaipakam’s contract for 토큰s your 대출s and 오퍼s touch. Some flows set them on purpose (a refinance 요청’s payoff, a sale listing’s settlement); anything left over from an abandoned attempt can be removed here.",
+      "revokeWarning": "Careful: if a live refinance 요청 or sale listing depends on a 토큰’s 승인, revoking it makes that flow fail until you restore it from its card — the card will warn you within moments.",
+      "scopeNote": "This list covers 토큰s seen in your Vaipakam 대출s and 오퍼s on this 네트워크. 승인s granted to other apps or for other 토큰s aren’t shown — your 지갑’s own 토큰-승인s view remains the complete picture.",
+      "none": "No standing 승인s to Vaipakam found for your k지금n 토큰s.",
+      "loading": "Reading your standing 승인s…",
+      "unavailable": "We couldn’t read your 승인s right 지금 — please 시도 다시 in a moment.",
+      "sourcesUnavailable": "We couldn’t load your 대출s and 오퍼s just 지금, so this list can’t be built completely — rather than show a partial picture, 시도 다시 in a moment.",
+      "revoke": "철회",
+      "staleNote": "We couldn’t 새로고침 this list just 지금 — the rows shown may be slightly stale. Revoking still works."
+    },
+    "nftVerifier": {
+      "title": "NFT 검증기",
+      "lede": "Vaipakam 포지션 NFTs carry real 청구 rights — whoever holds one controls that side of its 대출. Check any 토큰 id before trusting it.",
+      "placeholder": "포지션 NFT 토큰 ID",
+      "check": "확인",
+      "checking": "Checking this 토큰 on-체인…",
+      "checkFailed": "We couldn’t check this 토큰 right 지금 — please 시도 다시 in a moment.",
+      "ownerLabel": "현재 보유자",
+      "roleLabel": "제어하는 쪽",
+      "roleLender": "대여자 측 — 보유자는 상환금 또는 회수금을 받습니다.",
+      "roleBorrower": "차입자 측 — 보유자는 상환하고 담보를 회수합니다.",
+      "roleUnknown": "We couldn’t read this 토큰’s role details right 지금.",
+      "loanLabel": "연결된 대출",
+      "offerLabel": "오퍼용으로 생성됨",
+      "lockUnrecognized": "Transfer-locked for a reason this app version doesn’t recognise — it can’t be transferred until that flow completes or is 취소led.",
+      "lockUnknown": "We couldn’t read whether this 토큰 is transfer-locked right 지금 — don’t rely on it being transferable until this reads clean.",
+      "positionRowLabel": "내 포지션 NFT",
+      "lockLabel": "이전 잠금",
+      "lockPrecloseOffset": "Locked for a preclose-by-offset — it can’t be transferred until that completes or is 취소led.",
+      "lockSale": "Locked for a 포지션 sale listing — it can’t be transferred until the sale completes or the listing is 취소led.",
+      "lockPrepayListing": "Locked for a 담보 listing — it can’t be transferred while that listing stands.",
+      "sanctionsLabel": "컴플라이언스 상태",
+      "sanctionsFlagged": "The cur임대 holder is compliance-flagged: this NFT cannot be transferred in or out of their 지갑, and its 청구s stay frozen until the flag clears. Do not buy this 토큰 expecting delivery.",
+      "sanctionsUnknown": "We couldn’t check the holder’s compliance status right 지금 — a flagged holder would mean the 토큰 can’t be transferred, so re-check before relying on it.",
+      "inKindLabel": "부도 지급",
+      "inKindNote": "If the 차입자 of the linked 대출 부도s, this 청구 pays out the 대출’s raw 담보 in kind — the 프로토콜 does not price or sell it for you. Value what you would actually receive before buying this 포지션.",
+      "liveNote": "Live means exactly this: the 토큰 exists here and its holder controls the linked 포지션. It does not vouch for the 대출’s 건전성 or the other side’s behaviour.",
+      "goneBody": "Either its 청구 was completed and the 토큰 was retired, or it was never minted here at all — the 네트워크 doesn’t record which. Treat any 오퍼 to sell or transfer this 토큰 id as worthless on this 네트워크."
+    },
+    "keepers": {
+      "title": "Keeper 권한",
+      "blurb": "Keepers are third-party services (or your own bot) you can allow to run specific 대출 actions FOR you — start an early close, finish a refinance you set up, list a 포지션 for sale. Everything here is off until you turn it on, and three switches must all agree before a keeper can act: the master switch, the action on that keeper, and a per-대출 switch on each 대출’s page.",
+      "safetyNote": "A keeper can never receive your money — payouts always go to whoever holds the 포지션. You can revoke any keeper (or flip the master switch off) at any time, the 프로토콜 can pause all keepers at once, and refinances are additionally bounded by the guardrails you set per 대출. If a 포지션 changes hands, these permissions apply to the new holder’s 설정, not yours.",
+      "masterLabel": "Allow my 승인d keepers to act (master switch — nothing runs while this is off)",
+      "addressPlaceholder": "0x… keeper 주소",
+      "actions": {
+        "initPreclose": {
+          "label": "Start closing a 대출 early for me",
+          "side": "acts on 대출s you 차입ed",
+          "blurb": "Begin any early-close path on a 대출 where you are the 차입자. The payoff still comes from your 지갑 under your standing 승인s."
+        },
+        "refinance": {
+          "label": "나를 대신해 리파이낸스 완료",
+          "side": "acts on 대출s you 차입ed",
+          "blurb": "Finish a refinance you set up, bounded by the guardrails (금리 ceiling, end date) you 승인d — and the 프로토콜’s own keeper kill switch."
+        },
+        "completeOffset": {
+          "label": "나를 대신해 오프셋 종료 완료",
+          "side": "acts on 대출s you 차입ed",
+          "blurb": "Complete a preclose-by-offset once its 오퍼 has been accepted."
+        },
+        "extend": {
+          "label": "Extend a 대출 in place for me",
+          "side": "acts on 대출s you 차입ed",
+          "blurb": "Extend a 대출 without re열린ing it — only when BOTH sides have opted into extension limits."
+        },
+        "initEarlyWithdraw": {
+          "label": "List my 대출 포지션 for sale",
+          "side": "acts on 대출s you funded",
+          "blurb": "Start a 대여자 early exit by listing a 대출 you funded. The proceeds still pay only you."
+        },
+        "completeLoanSale": {
+          "label": "Finish a 포지션 sale for me",
+          "side": "acts on 대출s you funded",
+          "blurb": "Complete an accepted 포지션 sale, moving the 대출 to its buyer. The payment still routes only to you."
+        }
+      },
+      "enabledOn": "Keeper access enabled. Keepers can 지금 act where you granted permissions AND the 대출’s own switch is on.",
+      "enabledOff": "Keeper 접근이 비활성화되었습니다 — 이 상태에서는 어떤 Keeper도 대신 행동할 수 없습니다.",
+      "addTitle": "승인 a keeper",
+      "add": "Keeper 승인",
+      "added": "Keeper 승인d. Remember: it can only act on 대출s where you also flip that 대출’s keeper switch.",
+      "alreadyListed": "That keeper is already 승인d — edit its permissions above instead.",
+      "save": "권한 저장",
+      "updated": "Keeper 권한이 업데이트되었습니다.",
+      "revoke": "철회",
+      "revoked": "Keeper가 철회되었습니다 — 더 이상 어디에서도 대신 행동할 수 없습니다.",
+      "maskUnreadable": "We couldn’t read this keeper’s cur임대 permissions, so editing is disabled (saving 지금 could silently overwrite them). Re시도 in a moment; revoking still works.",
+      "extraBitsNote": "This keeper also holds advanced permissions not shown here — they are preserved unchanged when you 저장.",
+      "perLoanReminder": "Approving a keeper here is not enough by itself: each 대출’s page has a per-대출 keeper switch that must also be on.",
+      "loading": "불러오는 중 your keeper 설정…",
+      "staleWarning": "We couldn’t 새로고침 your keeper 설정 just 지금 — what’s shown may be slightly stale. Revoking and saving still work.",
+      "unavailable": "We couldn’t load your keeper 설정 right 지금 — please 시도 다시 in a moment.",
+      "loanTitle": "Keepers for this 대출",
+      "loanBlurb": "Your 승인d keepers can act on this 대출 only while its switch is on. Actions stay bounded by the permissions you granted in 설정.",
+      "loanToggleOn": "Keeper enabled for this 대출.",
+      "loanToggleOff": "Keeper disabled for this 대출.",
+      "loanEnablesUnavailable": "We couldn’t read this 대출’s keeper switches right 지금 — the toggles are paused until the read succeeds (their shown state may be stale).",
+      "loanNoKeepers": "You haven’t 승인d any keepers yet — set them up under 설정 → Keeper permissions.",
+      "loanMasterOff": "Your keeper master switch is off, so nothing can run even with this 대출’s switch on — turn it on under 설정 → Keeper permissions."
+    },
+    "earlyExit": {
+      "title": "이 대출에서 조기退出",
+      "blurb": "Sell your side of this 대출 to another 대여자 with a matching 열린 대출 오퍼. You’re paid immediately from their already-locked funds — nothing to 승인, nothing to 청구 afterwards — and the 차입자’s 조건 don’t change at all.",
+      "pickerLead": "열기 대출 오퍼s that can buy you out:",
+      "none": "No matching 대출 오퍼s right 지금. An 오퍼 must match this 대출’s 자산s, cover its remaining 금액, and fit inside its remaining time — check back later.",
+      "unavailable": "We couldn’t load matching 오퍼s right 지금 — please 시도 다시 in a moment.",
+      "shortfallWarn": "This buyer expects a higher 금리 than your 대출 pays, and for this candidate that 금리 difference (not the accrued interest — you pay the larger of the two, never both) is what sets your payout.",
+      "forfeitNote": "Exiting early forfeits the interest accrued so far: it covers the 프로토콜’s cut and, when the buyer’s 금리 is higher, helps bridge the difference. The figure shown already accounts for this.",
+      "action": "退出 검토",
+      "confirm": "확인 — 내 포지션 판매",
+      "done": "포지션 sold — the payout is already in your 지갑, and this 대출 지금 belongs to the new 대여자. Nothing more to do here.",
+      "loadingOffers": "Looking for matching 대출 오퍼s…",
+      "figureMoved": "The payout figure moved with time, so the 검토 닫힌 — 열린 it 다시 to confirm 다시st the cur임대 number.",
+      "checking": "Checking whether this 대출 can be exited early…",
+      "checkFailed": "We couldn’t read this 대출’s exit details right 지금 — re시도ing."
+    },
+    "loanSale": {
+      "title": "이 포지션 판매 등록",
+      "blurb": "Set the yearly 금리 a buyer would earn for the 대출’s remaining time and list your 포지션 publicly. When a buyer accepts, you receive the full outstanding 금액 in that same 트랜잭션. (If a matching 오퍼 above already pays enough, the instant exit is simpler — listing is for naming your own price and waiting.)",
+      "rateLabel": "Yearly 금리 the buyer earns",
+      "action": "리스팅 검토",
+      "confirm": "확인 — 내 포지션 등록",
+      "lockWarning": "Listing locks your 대여자 포지션 NFT — it can’t be transferred until the sale completes or you 취소 the listing. Your 청구 rights are unaffected.",
+      "sweetenNote": "A 금리 above the 대출’s own 금리 attracts buyers faster, but the difference for the remaining term comes out of your 지갑 at completion.",
+      "done": "포지션 listed. When a buyer accepts, the sale settles automatically — keep the standing 승인 (and enough balance for the settlement figure) in place until then, or 취소 the listing below.",
+      "pendingNoId": "This 포지션 is listed for sale (listed from another device, so 취소ling here isn’t available — 취소 where it was listed). Your 대여자 NFT is locked while the listing stands.",
+      "allowanceShort": "The standing settlement 승인 (or your 지갑 balance) no longer covers what a buyer’s acceptance would pull — the sale would fail right 지금. Restore it below or 취소 the listing.",
+      "restore": "Restore the settlement 승인",
+      "restored": "Settlement 승인 restored — the listing can complete 다시.",
+      "cancel": "리스팅 취소",
+      "cancelled": "Listing 취소led — your 대여자 NFT is unlocked and the settlement 승인 was removed (if you have other listings or 요청s using the same 토큰, restore their 승인s from their cards). The 대출 계속s unchanged.",
+      "cancelledRevokeFailed": "Listing 취소led and your 대여자 NFT unlocked. The standing settlement 승인 couldn’t be removed automatically — you can revoke it from your 지갑’s 토큰-승인s view.",
+      "cancelSoon": "취소lation 열린s a few minutes after listing — 시도 다시 shortly.",
+      "restoreAborted": "This listing is no longer standing (sold, 취소led, or unlocked) — nothing was 승인d. 새로고침 to see the latest state.",
+      "loanSettledWhileListed": "This 대출 has settled, so the sale listing can never complete — 취소 it to unlock your 대여자 NFT and remove the standing 승인.",
+      "fundingUnknown": "We couldn’t identify this listing’s 오퍼 record from this device, so we can’t verify its settlement funding here — manage it from the device that listed it, or keep a generous 승인 and balance in place.",
+      "ended": "Your sale listing is no longer 활성. If a buyer accepted it, the payout is already in your 지갑 and the settlement was pulled via the standing 승인; any remaining 승인 can be revoked from your 지갑’s 토큰-승인s view.",
+      "listingUnavailable": "Listing your 포지션 at your own price isn’t available yet — the on-체인 step it needs is being fixed. The instant exit above works: it sells into a matching 열린 오퍼 right away.",
+      "partialBlockedByListing": "The 대여자 has this 포지션 listed for sale at its cur임대 outstanding 금액. Partial 상환ment is paused while the listing stands — it would change that 금액 and mislead a buyer. You can still 상환 in full or close early at any time."
+    },
+    "positions": {
+      "title": "내 포지션",
+      "lede": "Your 대출s and 임대s, with the one action each needs right 지금.",
+      "emptyTitle": "아직 활성 포지션이 없습니다",
+      "emptyBody": "시작하려면 빌리거나 빌려주세요.",
+      "unavailable": "We couldn’t load your 포지션s right 지금. Your funds are unaffected — please 시도 다시 in a moment.",
+      "sourcesDegraded": "One of this page’s data sources is temporarily 사용할 수 없음. Your cur임대 포지션s are shown from the remaining source and recently changed items may take a moment to appear.",
+      "roleBorrower": "You 차입ed",
+      "roleLender": "빌려준 항목",
+      "groupAttention": "주의 필요",
+      "groupActive": "활성 대출",
+      "groupEnded": "종료된 대출",
+      "claimWaiting": "청구 대기 중",
+      "seeActivity": "전체 활동 기록 보기 →",
+      "graceOverViewer": "The grace period has ended — the 대출 can 지금 be marked 부도ed, and the 담보 goes to the 대여자.",
+      "graceUnknownBorrower": "This 대출 is past due and the grace window may be running out — we couldn’t read the exact deadline right 지금. 상환 as soon as possible, before the 대여자 can take the 담보.",
+      "graceUnknownLender": "This 대출 is past due — we couldn’t read the exact grace deadline right 지금. Once the grace window ends and the 부도 is recorded, the 담보 청구 appears here.",
+      "graceUnknownViewer": "This 대출 is past due. Once its grace window ends, the 대여자 can 청구 the 담보.",
+      "graceOverBorrower": "The grace period has ended — the 프로토콜 no longer accepts 상환ment, and the 대여자 can take the 담보 at any moment. Once they 청구 it, the outcome will show here.",
+      "graceOverLender": "The grace period has ended — this 대출 can 지금 be marked 부도ed. That normally happens automatically shortly after; once the 부도 is recorded, the 담보 청구 appears here.",
+      "fallbackCureBorrower": "This 대출 is past its grace period and a 부도 is being settled. You can still 상환 in full to cure it and get your 담보 back — but only until the 대여자 finalizes the 부도, which can happen at any moment.",
+      "owedDefaulted": "Nothing to 상환 anymore — this 대출 ended in 부도 and the 담보 covers it.",
+      "owedDefaultedNoCollateral": "Nothing to 상환 anymore — this 대출 ended in 부도 and was settled.",
+      "owedClosed": "Nothing — this 대출 is 닫힌 and settled.",
+      "whatNextRepaidBorrower": "You repaid this 대출. Nothing else can happen to it — 청구 your 담보 back below if you haven’t yet.",
+      "whatNextRepaidLender": "The 차입자 repaid. Nothing else can happen to this 대출 — 청구 your funds below if you haven’t yet.",
+      "whatNextRepaidViewer": "The 차입자 repaid. Nothing else can happen to this 대출 — any remaining 청구s belong to the 포지션 holders.",
+      "whatNextDefaultedBorrower": "This 대출 already ended in 부도. Any remainder after settlement is 청구able (it may be zero).",
+      "whatNextDefaultedLender": "This 대출 already ended in 부도 — what it recovered is 청구able in the 청구 Center.",
+      "whatNextDefaultedViewer": "This 대출 already ended in 부도 — the settlement’s recovery belongs to the 포지션 holders.",
+      "whatNextInternalMatchBorrower": "This 대출 닫힌 by internal matching. Collect any residual and VPFI rebate below (either may be zero).",
+      "whatNextInternalMatchLender": "This 대출 닫힌 by internal matching — collect your funds below if you haven’t yet.",
+      "whatNextInternalMatchViewer": "This 대출 닫힌 by internal matching — any residual 청구s belong to the 포지션 holders.",
+      "whatNextClosed": "This 대출 is fully settled — there is nothing left to do.",
+      "whatNextRentalEnded": "This 임대 has ended. Any earned 수수료 or refundable buffer can be 청구ed below by the 포지션 holders — nothing else can change it.",
+      "settledAhead": "This 포지션 has already 닫힌 on-체인 — the status here is live. Your lists may take a moment to catch up."
+    },
+    "powerSurface": {
+      "body": "This is a power-user screen — raw 오퍼s and live 금리s with less hand-holding. The guided 차입 and 대출 flows cover the same actions with step-by-step explanations.",
+      "guidedBorrow": "Guided 차입",
+      "guidedLend": "Guided 대출",
+      "enableAdvanced": "I k지금 what I’m doing — enable Advanced mode",
+      "dismiss": "닫기"
+    },
+    "claims": {
+      "title": "청구",
+      "lede": "Money and 자산s that are ready for you to collect.",
+      "empty": "현재 청구할 항목이 없습니다.",
+      "emptyBody": "When a 대출 or 임대 you are part of ends, anything owed to you appears here automatically.",
+      "emptyCta": "내 포지션 보기",
+      "unavailable": "We couldn’t load your 청구s right 지금. Your funds are unaffected — please 시도 다시 in a moment.",
+      "claim": "청구",
+      "claimed": "청구 완료.",
+      "allTitle": "모두 한 번에 청구",
+      "allBlurb": "Collect every ready payout in a single 지갑 서명ature instead of one at a time.",
+      "allEmpty": "Nothing is batchable right 지금.",
+      "allVpfiNote": "Withdrawing parked VPFI lowers your fee-discount tier — off by 부도.",
+      "allResidualNote": "Anything that wasn’t ready is still listed below to 청구 on its own.",
+      "allRewardsUnavailable": "We couldn’t check your rewards, so they’re not in this batch — 청구 them sepa금리ly.",
+      "allVpfiUnavailable": "Vault의 VPFI를 확인할 수 없어 이 배치에 포함되지 않았습니다.",
+      "allWorking": "Waiting for 지갑…"
+    },
+    "offers": {
+      "title": "오퍼북",
+      "lede": "다른 사용자의 열린 대출 오퍼와 차입 요청입니다.",
+      "emptyTitle": "현재 열린 오퍼가 없습니다",
+      "emptyBody": "직접 오퍼를 만들고 상대방이 찾아오게 하세요.",
+      "unavailable": "We couldn’t load the 오퍼 북 right 지금. Please 시도 다시 in a moment.",
+      "lenderOffer": "대출 오퍼",
+      "borrowerOffer": "차입 요청"
+    },
+    "desk": {
+      "title": "금리 데스크",
+      "lede": "The 오더 북 for one 시장 — read the 금리s, post or amend limit-금리 오퍼s, and watch your 열린 오더s and 포지션s in one place.",
+      "marketLabel": "시장",
+      "tenorLabel": "기간",
+      "customPair": "사용자 지정 페어…",
+      "customLend": "대출 자산 주소",
+      "customCollateral": "담보 자산 주소",
+      "marketsUnavailable": "The 시장s list couldn’t load right 지금, so pair discovery is limited — enter a pair manually and the 북 itself can still load.",
+      "marketsEmpty": "No live 시장s right 지금. Pick a pair and post the first 오퍼 with the ticket.",
+      "marketsTruncated": "Showing the most 활성 시장s — smaller 시장s aren’t listed here, but you can load any pair with “Custom pair…”.",
+      "pickPair": "Pick a 시장 to load its 북.",
+      "lastFill": "마지막 체결",
+      "quotedMid": "호가 중간값",
+      "spread": "스프레드",
+      "crossed": "교차됨",
+      "statUnknown": "—",
+      "bookTitle": "오더북",
+      "rateHeading": "금리 (APR %)",
+      "sizeHeading": "크기",
+      "cumHeading": "깊이",
+      "asksHeading": "대여자 오퍼 (매도호가)",
+      "bidsHeading": "차입 요청 (매수호가)",
+      "bookEmpty": "이 시장에는 아직 열린 오퍼가 없습니다 — 내 오퍼가 첫 번째가 될 수 있습니다.",
+      "bookUnavailable": "We couldn’t load the 오더 북 right 지금. Please 시도 다시 in a moment.",
+      "bookIndexedCopy": "Live 체인 read 사용할 수 없음 — showing the indexed copy of the 북, which can lag the 체인.",
+      "yourOrderMark": "Your 오더 at this 금리",
+      "takeAsk": "차입 this",
+      "takeBid": "대출 to this",
+      "rowPrefills": "Tap a 금리 to pre-fill the ticket. Taking the top of the 북 goes through the same guided 검토 as 차입/대출.",
+      "tapeTitle": "최근 체결",
+      "tapeEmpty": "이 시장에는 아직 체결이 없습니다.",
+      "tapeUnavailable": "We couldn’t load recent fills right 지금.",
+      "match": {
+        "body": "These top-of-북 오퍼s can cross. Anyone can execute this match and earn the matcher fee — you pay the 네트워크 gas to execute it.",
+        "execute": "매칭 실행",
+        "executing": "매칭 중…",
+        "executed": "Match executed — the crossed 오퍼s settled into a 대출.",
+        "noLongerMatchable": "These 오퍼s can no longer cross — the 북 moved before the match was sent. Nothing was sent.",
+        "matchingDisabled": "오퍼 matching was just switched off by 프로토콜 governance, so this match can’t be sent right 지금. Nothing was sent."
+      },
+      "signed": {
+        "badge": "서명됨",
+        "badgeTooltip": "Gasless 서명ed 오더 from the off-체인 북 — the maker 서명ed it without a 트랜잭션, and it fills in a single on-체인 트랜잭션 by whoever takes it. 서명ed rows always come from the 오더-북 service, never the 체인, until they fill.",
+        "partialBadgeTooltip": "Partially matched 서명ed 오더 — its remainder still counts as depth and fills through the permissionless matcher, but a direct fill is no longer possible.",
+        "rangedBadgeTooltip": "Range-sized 서명ed 오더 — its size still counts as depth, but only the permissionless matcher can consume it in slices; there is no whole-오더 direct fill.",
+        "fill": "체결",
+        "confirmTitle": "Fill 서명ed 오더",
+        "confirmLede": "You execute the whole fill in one 트랜잭션: your side moves from your 지갑, the maker’s side from their vault, and the 대출 starts immediately.",
+        "gone": "This 서명ed 오더 is no longer fillable (filled, 취소led, or expired). The 북 will catch up shortly. Nothing was sent.",
+        "makerNotFunded": "The maker’s vault doesn’t cur임대ly cover this 오더, so the fill would fail on-체인. Nothing was sent — the maker must top up their vault first.",
+        "illiquid": "One of this 오더’s 자산s isn’t priced by the 프로토콜 right 지금, and this compact confirm can’t walk you through the in-kind 부도 조건 that implies. Nothing was sent.",
+        "kycBlocked": "This deployment’s identity-verification rules don’t cover one side of this 오더 at this value, so the fill would fail on-체인. Nothing was sent or 승인d.",
+        "riskBlocked": "This deployment’s 위험-access rules block one side of this 오더 right 지금 — the maker or your 지갑 needs an on-체인 access level or standing consent this compact confirm can’t collect. Nothing was sent or 승인d.",
+        "accept": "오더 체결",
+        "accepting": "체결 중…",
+        "accepted": "서명된 오더가 체결되었습니다 — 대출이 활성화되었습니다."
+      },
+      "chart": {
+        "title": "체결 금리",
+        "loading": "차트 불러오는 중…",
+        "lastFillNone": "아직 체결 없음",
+        "empty": "No fills yet for this 시장 — the chart draws only executed 금리s.",
+        "emptyRange": "No fills in this range — 시도 a longer range.",
+        "unavailable": "We couldn’t load the 금리 기록 right 지금.",
+        "retry": "다시 시도",
+        "quotedMid": "호가 중간값",
+        "quotedMidHint": "Dashed line = the 북’s cur임대 quoted mid — a resting quote, not an executed 금리.",
+        "truncatedNote": "Long 기록 — showing the most recent fills only. The oldest candles are not drawn.",
+        "intervalLabel": "간격",
+        "rangeLabel": "범위",
+        "attribution": "TradingView 제공 차트",
+        "mobileBook": "북",
+        "mobileChart": "차트",
+        "mobileViewLabel": "데스크 보기"
+      },
+      "history": {
+        "tab": "기록",
+        "caption": "Everything this 지갑 ever traded on the desk — every 시장, every status. Repaid, 청구ed, and transferred 포지션s stay listed.",
+        "empty": "No desk 기록 for this 지갑 yet.",
+        "unavailable": "We couldn’t load your 기록 right 지금.",
+        "loadMore": "더 불러오기",
+        "loadingMore": "불러오는 중…",
+        "loading": "기록 불러오는 중…",
+        "roleLender": "대여자",
+        "roleBorrower": "차입자",
+        "started": "시작됨"
+      },
+      "ticket": {
+        "title": "오더 티켓",
+        "sideLend": "빌려주기",
+        "sideBorrow": "빌리기",
+        "amountLend": "빌려줄 금액",
+        "amountBorrow": "빌릴 금액",
+        "rateLend": "금리 — minimum you’ll accept (APR %)",
+        "rateBorrow": "금리 — maximum you’ll pay (APR %)",
+        "collateralRequire": "요구하는 담보",
+        "collateralLock": "잠그는 담보",
+        "collateralFixedNote": "Set by the selected 시장 — switch 시장s in the header to post 다시st a diffe임대 담보 자산.",
+        "expiryLabel": "만료",
+        "expiryGtc": "GTC",
+        "expiryCustom": "사용자 지정…",
+        "expiryInvalid": "The custom 만료 must be a future date and time.",
+        "expiryTooFar": "The custom 만료 can be at most one year ahead — the 프로토콜 caps 오퍼 만료 at 365 days out.",
+        "fillModeLabel": "체결 모드",
+        "fillPartial": "부분",
+        "fillAon": "AON",
+        "fillIoc": "IOC",
+        "fillPartialHint": "Partial: the 오퍼 can fill in pieces down to a minimum.",
+        "fillAonHint": "All-or-nothing: fills only as one whole 대출 at the full 금액.",
+        "fillIocHint": "Immediate-or-취소: rests only until its 만료 — an 만료 is required.",
+        "iocNeedsExpiry": "IOC 오더s need an 만료 — pick 24h, 7d, or a custom time.",
+        "post": "오더 게시",
+        "posting": "게시 중…",
+        "posted": "오더 게시됨",
+        "postedNext": "Your 오퍼 is live on the 북. Manage it under 열기 오더s below — amend or 취소 any time before it fills.",
+        "modeLabel": "게시",
+        "modeOnchain": "온체인",
+        "modeGasless": "Gasless (서명만)",
+        "modeOnchainHint": "Post the 오퍼 as a 트랜잭션 — funds are escrowed in your vault 지금.",
+        "modeGaslessHint": "서명 the 오더 off-체인 and post it to the 북 — no 트랜잭션, no gas. Funds move only when a taker fills it.",
+        "gaslessEscrowNote": "Nothing is escrowed when you 서명 — a taker’s fill pulls from your vault’s free balance at that moment. 취소ling later is an on-체인 트랜잭션 (unlike posting).",
+        "gaslessNeedsIndexer": "Gasless posting needs the 오더-북 service, which isn’t configured right 지금. On-체인 posting still works.",
+        "gaslessLenderAonNote": "Gasless 대출 오더s fill only as one whole 대출 — a 서명ed 대여자 오더 can’t be sliced on-체인, so it posts all-or-nothing. Partial stays available with on-체인 posting.",
+        "gaslessPost": "서명하고 북에 게시",
+        "gaslessPosting": "서명 중…",
+        "gaslessConsentRequired": "검토 and accept the 위험 disclosures and 조건 first — for a gasless 오더, your 서명ature is what records that consent.",
+        "gaslessPosted": "서명ed 오더 posted to the 북 — no gas spent. It fills when a taker accepts it.",
+        "gaslessUnavailable": "We couldn’t reach the 오더 북 right 지금 — the 오더 was NOT posted. Please 시도 다시 in a moment.",
+        "blockNetwork": "게시하려면 지원 네트워크로 전환하세요.",
+        "blockNoMarket": "먼저 헤더에서 시장을 선택하세요.",
+        "blockAmount": "위 금액을 입력하세요.",
+        "blockRate": "0에서 100% 사이의 금리를 입력하세요.",
+        "blockCollateral": "위 담보 금액을 입력하세요.",
+        "blockLoading": "불러오는 중 시장 details — one moment.",
+        "blockConsent": "검토 and accept the 위험 조건 above to post.",
+        "blockGaslessService": "Gasless posting needs the 오더-북 service, which isn’t available right 지금 — switch Posting to On-체인.",
+        "consentRecheck": "조건이 변경되었습니다 — 다시 확인하세요.",
+        "max": "최대",
+        "feePreviewTitle": "수수료 및 약정"
+      },
+      "orders": {
+        "tab": "열린 오더",
+        "empty": "열린 오더가 없습니다. 티켓으로 하나 게시하세요.",
+        "unavailable": "We couldn’t load your 열린 오더s right 지금.",
+        "heldNotCreated": "보유됨 — 생성자가 관리",
+        "cancel": "취소",
+        "cancelling": "취소 중…",
+        "amend": "수정",
+        "amendTitle": "Amend in place — same 오퍼, same 포지션, one 트랜잭션.",
+        "amendLoadFailed": "We couldn’t read this 오퍼’s live values, and amending must start from them. Please 시도 다시.",
+        "amendMinAmount": "최소 금액",
+        "amendMaxAmount": "최대 금액",
+        "amendAmountAon": "금액 (전부 아니면 없음)",
+        "amendRate": "금리 (APR %)",
+        "amendRateMax": "최대 금리 (APR %)",
+        "amendCollateral": "담보",
+        "amendCollateralMax": "최대 담보",
+        "amendNoChange": "아직 변경된 것이 없습니다.",
+        "amendMalformed": "일반 십진수만 입력하세요 — 숫자와 선택적 소수점만 허용됩니다.",
+        "amendInvalid": "각 최소값은 최대값 이하이어야 하며, 어떤 최대값도 이미 체결된 값보다 낮아질 수 없습니다.",
+        "amendPositive": "금액s and 담보 must be greater than zero.",
+        "amendAllowanceLost": "The 토큰 승인 for this grow is no longer sufficient — nothing was changed. Please 승인 다시.",
+        "approveFirst": "먼저 승인",
+        "approving": "승인 중…",
+        "save": "변경 저장",
+        "saving": "수정 중…",
+        "amended": "오더가 수정되었습니다.",
+        "signedTitle": "서명된 오더 (이 시장)",
+        "signedNote": "Gasless 서명ed 오더s you posted for the selected 시장. 오더s for other 시장s don’t show here — switch the 시장 in the header to manage them.",
+        "signedCancel": "온체인 취소",
+        "signedCancelling": "취소 중…",
+        "signedCancelNote": "Posting was free, but 취소ling costs gas: the only way to revoke a 서명ature the 북 already holds is an on-체인 트랜잭션.",
+        "signedCancelled": "서명된 오더가 온체인에서 취소되었습니다.",
+        "signedTruncated": "You have more 서명ed 오더s in this 시장 than we can list at once — this is not the complete set."
+      },
+      "positions": {
+        "tab": "포지션",
+        "empty": "No 열린 포지션s in this 지갑.",
+        "unavailable": "We couldn’t load your 포지션s right 지금.",
+        "health": "건전성",
+        "notPriced": "자동 청산 없음",
+        "manage": "관리",
+        "allPositions": "모든 포지션 →"
+      }
+    },
+    "vpfi": {
+      "title": "VPFI 할인",
+      "optional": "선택 사항: 적격 대출의 프로토콜 수수료를 줄이려면 Vault에 VPFI를 보유하세요. Vaipakam 사용에 VPFI가 필수는 아닙니다.",
+      "noGasDiscount": "VPFI 할인은 네트워크 gas를 줄이지 않습니다.",
+      "withdrawWarning": "VPFI를 인출하면 향후 수수료 할인이 낮아질 수 있습니다.",
+      "tokenChanged": "The VPFI 토큰 configuration changed since you 검토ed. Nothing was 승인d — please check the updated numbers and 시도 다시.",
+      "tokenCheckRetry": "We couldn’t confirm the VPFI 토큰 just 지금 — nothing was 승인d. Please 시도 다시 in a moment.",
+      "addToWallet": "MetaMask에 VPFI 추가",
+      "addedToWallet": "지갑에 VPFI 추적을 요청했습니다."
+    },
+    "errors": {
+      "partialOverPrincipal": "That covers the 대출’s whole remaining principal. Use “상환 this 대출” instead — it settles the 대출 properly and releases your 담보.",
+      "notAToken": "That 주소 doesn’t look like a 토큰 on this 네트워크. Double-check it or pick a suggested 자산.",
+      "txRejected": "You 취소led in your 지갑. Nothing was sent.",
+      "txFailed": "The 트랜잭션 didn’t go through. Nothing was taken beyond 네트워크 gas. Please 시도 다시.",
+      "sanctionsBlocked": "This 지갑 is flagged by the sanctions oracle, so new 포지션s and payouts are blocked. Nothing was sent. 상환ing and closing existing 포지션s stays 열린.",
+      "sanctionsCheckRetry": "We couldn’t run the compliance check just 지금 — nothing was sent. Please 시도 다시 in a moment.",
+      "checkRetry": "We couldn’t verify this on-체인 just 지금 — nothing was sent. Please 시도 다시 in a moment.",
+      "assetPaused": "One of this deal’s 자산s is temporarily paused by the 프로토콜, so this action can’t go through right 지금. Nothing was sent — please 시도 다시 later.",
+      "positionMoved": "This 포지션 is no longer held by the 연결ed 지갑 (it may have been transferred or already 청구ed). Nothing was sent — 새로고침 to see the cur임대 state.",
+      "collateralNotPriced": "This 대출’s 담보 isn’t cur임대ly priced by the 프로토콜, so 담보 top-ups aren’t available for it. Nothing was sent.",
+      "pastGrace": "This 대출 is past its due date and grace window, so 상환ment is 닫힌 on-체인 — the 부도 process applies 지금. Nothing was sent.",
+      "loanAlreadySettled": "This 대출 looks already settled on-체인 — nothing was sent. 새로고침 in a moment to see its final state.",
+      "nothingToClaim": "There’s nothing for this side to 청구 on-체인 right 지금 — the payout may be zero or already collected. Nothing was sent.",
+      "preclosePastGrace": "This 대출 is past its due date and grace window, so closing early is no longer possible — nothing was sent. The 부도 process applies 지금.",
+      "refinancePastGrace": "This 대출 is past its due date and grace window, so it can no longer be refinanced — nothing was sent. The 부도 process applies 지금.",
+      "saleListingMatured": "This 대출 is past its due date, so the 포지션 can no longer be listed for sale — nothing was sent.",
+      "refinanceNotOriginalBorrower": "This 포지션 changed hands since the 대출 began, so its 담보 can’t carry over into a refinance — nothing was sent. 상환ing or closing early stays available.",
+      "lenderBlockedPartial": "The 대여자’s 지갑 can’t receive a direct partial payment right 지금 (compliance flag). 상환ing the 대출 in full stays 열린 — that path holds the funds for a screened 청구 instead."
+    },
+    "fees": {
+      "lateFee": "Late 상환ment adds 1% of the outstanding 금액 after day one, growing 0.5% per day, capped at 5%.",
+      "faqQuestion": "Vaipakam은 어떤 수수료를 부과하나요?",
+      "faqAnswerGeneric": "Vaipakam charges a 대출 initiation fee on the 금액 차입ed and keeps a share of the interest a 대여자 earns. Late 상환ment adds 1% of the outstanding 금액 after day one, growing 0.5% per day, capped at 5%. 네트워크 gas is sepa금리 and goes to the block체인, not to Vaipakam. 연결 your 지갑 to see the exact cur임대 금리s."
+    },
+    "faucet": {
+      "title": "테스트 자산 받기",
+      "lede": "Mint mock 토큰s and a test NFT so you can 시도 차입ing, 대출, and 임대ing on a test 네트워크 — no real value, no cost beyond gas.",
+      "notTestnetTitle": "Test 자산s aren’t available here",
+      "backHome": "홈으로 돌아가기",
+      "minting": "민팅 중…",
+      "viewTx": "트랜잭션 보기",
+      "nextSteps": "다음: 활용하기 —",
+      "nextBorrow": "차입 다시st it",
+      "nextLend": "대출 it out",
+      "nextRent": "List it for 임대",
+      "footer": "Minted 자산s land in your 지갑. Use “My vault” and the 차입, 대출, and NFT 임대 screens to put them to work.",
+      "mintedNft": "Minted a test 임대 NFT to your 지갑. Its 토큰 ID — you’ll need it to list the 임대:",
+      "copyTokenId": "토큰 ID 복사",
+      "copiedTokenId": "복사되었습니다.",
+      "liquid": {
+        "title": "Liquid test 토큰 (tLIQ)",
+        "blurb": "Priced by a test oracle, so it behaves like a liquid 자산 — 건전성 factor, 청산, and refinancing all work with it. Pair it with mWETH (one as the 대출, one as 담보) when a flow needs two diffe임대 liquid 토큰s."
+      },
+      "liquid2": {
+        "blurb": "A test USDC priced at $1 by a test oracle — a second, distinct liquid 토큰 so you can run a deal where both the 대출 and the 담보 are liquid (with a realistic price spread 다시st tLIQ / mWETH) without pairing a 토큰 다시st itself."
+      },
+      "mweth": {
+        "title": "Mock wrapped ETH (mWETH)",
+        "blurb": "An oracle-priced test 토큰 that plays the “wrapped ETH” role in demos. It is NOT real WETH — it mints for free and has no value."
+      },
+      "nft2": {
+        "title": "Second 임대able test NFT (vART)",
+        "blurb": "Another ERC-4907 collection — handy when you want to list one NFT and 임대 a diffe임대 one, or run several 임대s at once.",
+        "action": "vART NFT 민팅"
+      },
+      "addedToWallet": "Asked your 지갑 to track it.",
+      "illiquid": {
+        "title": "Illiquid test 토큰 (tILQ)",
+        "blurb": "No price feed, so it behaves like an illiquid 자산 — both sides must consent, and 부도 transfers the 담보 in kind."
+      },
+      "illiquid2": {
+        "title": "Second illiquid test 토큰 (tILQ2)",
+        "blurb": "Also unpriced. Pair it with tILQ (one as the 대출, one as 담보) to 시도 a deal where NEITHER side has a price — both parties must consent, no 건전성 factor applies, and 부도 hands the 담보 over in kind."
+      },
+      "nft": {
+        "title": "임대 test NFT (vRENT)",
+        "blurb": "An ERC-4907 임대able NFT for 시도ing the NFT 임대 flows.",
+        "action": "테스트 NFT 민팅"
+      }
+    },
+    "vault": {
+      "title": "내 Vault",
+      "lede": "Your own on-체인 account. Only your 지갑 controls it — Vaipakam never pools user funds.",
+      "noVaultYet": "Your vault is created automatically with your first 오퍼, 대출, or deposit. Nothing to set up.",
+      "emptyCta": "시작하기",
+      "emptyCtaFaucet": "테스트 자산 받기",
+      "unavailable": "We couldn’t read your vault right 지금. Your funds are unaffected — please 시도 다시 in a moment.",
+      "lockedHint": "Locked 금액s back your 열린 오퍼s, 활성 대출s, and 임대s. They free up when those close."
+    },
+    "activity": {
+      "title": "활동",
+      "lede": "Everything your 지갑 has done on Vaipakam, newest first.",
+      "empty": "아직 활동이 없습니다. Vaipakam을 사용하면 여기에 표시됩니다.",
+      "emptyCtaBorrow": "무언가 빌리기",
+      "emptyCtaLend": "무언가 빌려주기",
+      "unavailable": "We couldn’t load your activity right 지금. Please 시도 다시 in a moment.",
+      "truncatedNote": "Showing recent activity only — the 프로토콜 feed is busy and older events may not be listed.",
+      "participantTruncatedNote": "This 지갑 has more 대출 기록 than we can check at once — some events tied to its oldest 대출s may be missing here.",
+      "truncatedEmpty": "Nothing of yours in recent 프로토콜 activity. This page lists recent activity only, so anything older isn’t shown here.",
+      "viewTx": "트랜잭션 보기",
+      "loadMore": "이전 활동 불러오기",
+      "loadingMore": "불러오는 중…",
+      "unavailableFallback": "Your cur임대 대출s and 임대s are always available on",
+      "positionsLink": "내 포지션"
+    },
+    "rewards": {
+      "title": "상호작용 보상",
+      "blurb": "VPFI rewards from your 대출 and 차입ing activity. They become 청구able after a 대출 closes and the reward day finalizes.",
+      "empty": "No rewards yet. Rewards appear after 대출 or 차입ing activity.",
+      "waiting": "Your rewards are being finalized — a reward day closes across all 체인s before it can be 청구ed. Check back soon.",
+      "claim": "보상 청구"
+    },
+    "sanctions": {
+      "title": "This 지갑 is listed by the compliance oracle.",
+      "line1": "The 연결ed 주소 appears on the on-체인 sanctions oracle Vaipakam screens 다시st.",
+      "line2": "New 포지션s (오퍼s, 대출s, 임대s, deposits) are blocked and will not go through.",
+      "line3": "상환ing and closing existing 포지션s stays 열린 so your counterparties can be made whole, but 청구s and payouts to this 지갑 are blocked while it is flagged. If you believe this is an error, contact the oracle provider (체인alysis)."
+    },
+    "risk": {
+      "notPriced": "This 대출’s 자산s aren’t priced by the 프로토콜, so there is no automatic 청산 — the 담보 transfers as-is on 부도.",
+      "healthy": "건전",
+      "watch": "주의 깊게 보기",
+      "danger": "청산에 가까움",
+      "liquidatable": "지금 청산 가능",
+      "explain": "If the 담보’s value falls too far 다시st the 차입ed 금액, the 대출 can be liquidated. Adding 담보 makes it safer.",
+      "listChecking": "건전성 확인 중",
+      "listCheckingTitle": "This 대출’s 건전성 hasn’t been read yet, so the badge stays neutral. 청산 protection still applies on-체인."
+    },
+    "notFound": {
+      "title": "이 페이지는 존재하지 않습니다",
+      "body": "링크가 오래되었거나 잘못 입력되었을 수 있습니다. 손실된 것은 없으며 포지션은 안전합니다.",
+      "backHome": "홈으로 돌아가기"
+    }
+  }
+}
