@@ -1,1 +1,970 @@
-{}
+{
+  "copy": {
+    "app": {
+      "name": "Vaipakam",
+      "tagline": "NFT-களை நேரடியாக பிறருடன் கடனளிக்கவும், கடன் வாங்கவும், வாடகைக்கு விடவும்."
+    },
+    "chrome": {
+      "nav": {
+        "home": "முகப்பு",
+        "borrow": "கடன் வாங்கு",
+        "lend": "கடனளி",
+        "rent": "NFT வாடகை",
+        "positions": "என் நிலைகள்",
+        "positionsShort": "நிலைகள்",
+        "claims": "கோரிக்கைகள்",
+        "vault": "என் vault",
+        "faucet": "சோதனை சொத்துகளைப் பெறு",
+        "offers": "வாய்ப்பு புத்தகம்",
+        "desk": "விகித மேசை",
+        "vpfi": "VPFI தள்ளுபடிகள்",
+        "activity": "செயல்பாடு",
+        "nftVerifier": "NFT சரிபார்ப்பாளர்",
+        "settings": "அமைப்புகள்",
+        "help": "உதவி"
+      },
+      "settings": {
+        "language": "மொழி",
+        "languageHint": "முழுமையாக மொழிபெயர்க்கப்படாத மொழிகளில் இப்போது ஆங்கில உரை காட்டப்படும்.",
+        "languagePickerAria": "காட்சி மொழி"
+      }
+    },
+    "seo": {
+      "home": {
+        "title": "Vaipakam — P2P கடனளிப்பு, கடன் வாங்குதல் மற்றும் NFT வாடகை",
+        "description": "NFT-களை நேரடியாக பிறருடன் கடனளிக்கவும், கடன் வாங்கவும், வாடகைக்கு விடவும். உங்கள் நிபந்தனைகளை நீங்களே அமைக்கலாம் — pool அல்லது இடைத்தரகர் இல்லாமல் உங்கள் சொத்துகள் உங்கள் சொந்த on-chain vault-லேயே இருக்கும்."
+      },
+      "borrow": {
+        "title": "சொத்துகளை கடன் வாங்கு — Vaipakam",
+        "description": "உங்களுடைய பிணையத்தை பூட்டி, தேவையான token-களைப் பெறுங்கள். உங்கள் சொந்த on-chain vault-இலிருந்து, நீங்கள் தேர்ந்தெடுக்கும் நிபந்தனைகளில் நேரடி person-to-person கடன்கள்."
+      },
+      "lend": {
+        "title": "கடனளித்து வருமானம் ஈட்டு — Vaipakam",
+        "description": "உங்கள் token-களை கடன் வாங்குபவர்களுக்கு வழங்கி, அவர்கள் திருப்பிச் செலுத்தினால் வட்டி ஈட்டுங்கள். கடன் வாங்குபவர் உங்கள் நிபந்தனைகளை ஏற்கும் வரை உங்கள் சொத்துகள் உங்கள் சொந்த on-chain vault-லேயே இருக்கும்."
+      },
+      "rent": {
+        "title": "NFT வாடகை — Vaipakam",
+        "description": "உங்களுடைய NFT-இல் இருந்து கட்டணம் ஈட்டுங்கள், அல்லது ஒன்றை தற்காலிகமாகப் பயன்படுத்துங்கள். உரிமை ஒருபோதும் மாறாது — NFT வாடகை காலம் முழுவதும் உரிமையாளரின் vault-ல் பூட்டப்பட்டே இருக்கும்."
+      },
+      "offers": {
+        "title": "வாய்ப்பு புத்தகம் — Vaipakam",
+        "description": "நெட்வொர்க்கில் உள்ள ஒவ்வொரு திறந்த கடனளிப்பு வாய்ப்பையும் கடன் கோரிக்கையையும் பாருங்கள் — சொத்துகள், விகிதங்கள், காலங்கள், பிணைய நிபந்தனைகள் அனைத்தும் chain-லிருந்து live."
+      },
+      "desk": {
+        "title": "விகித மேசை — Vaipakam",
+        "description": "சொத்து ஜோடி மற்றும் கால அளவின்படி நேரடி person-to-person கடனளிப்பு விகிதங்கள், நிறைவேற்றப்பட்ட விகித வரலாறு, மற்றும் கையெழுத்திட்ட வாய்ப்பு புத்தகம்."
+      },
+      "vpfi": {
+        "title": "VPFI கட்டண தள்ளுபடிகள் — Vaipakam",
+        "description": "விருப்பம்: தகுதியான protocol கட்டணங்களை குறைக்க உங்கள் vault-ல் VPFI வைத்திருக்கலாம். கடனளிக்க, கடன் வாங்க, அல்லது வாடகைக்கு எடுக்க VPFI ஒருபோதும் அவசியமில்லை."
+      },
+      "nftVerifier": {
+        "title": "NFT வாடகை சரிபார்ப்பாளர் — Vaipakam",
+        "description": "Vaipakam-ல் பட்டியலிடப்பட்ட NFT வாடகை உண்மையானதா என்பதைச் சரிபார்த்து, அந்த token-ன் தற்போதைய வாடகை நிலையை chain-லிருந்து நேரடியாகப் பாருங்கள்."
+      },
+      "help": {
+        "title": "உதவி — Vaipakam",
+        "description": "எளிய மொழியில் விளக்கங்கள்: கடனளிப்பு, கடன் வாங்குதல், NFT வாடகைகள், கட்டணங்கள், மற்றும் ஆபத்துகள் — மேலும் இந்த deployment-க்கான build மற்றும் contract தகவல்கள்."
+      },
+      "positions": {
+        "title": "என் நிலைகள் — Vaipakam"
+      },
+      "claims": {
+        "title": "கோரிக்கைகள் — Vaipakam"
+      },
+      "vault": {
+        "title": "என் vault — Vaipakam"
+      },
+      "activity": {
+        "title": "செயல்பாடு — Vaipakam"
+      },
+      "settings": {
+        "title": "அமைப்புகள் — Vaipakam"
+      },
+      "faucet": {
+        "title": "சோதனை சொத்துகள் — Vaipakam"
+      },
+      "notFound": {
+        "title": "பக்கம் கிடைக்கவில்லை — Vaipakam"
+      }
+    },
+    "home": {
+      "title": "நீங்கள் என்ன செய்ய விரும்புகிறீர்கள்?",
+      "lede": "தொடங்க ஒரு செயலைத் தேர்ந்தெடுக்கவும். அமைப்புகளில் எப்போது வேண்டுமானாலும் மேம்பட்ட முறைக்கு மாறலாம்.",
+      "jobs": {
+        "borrow": {
+          "title": "சொத்துகளை கடன் வாங்கு",
+          "blurb": "உங்களுடைய பிணையத்தை பூட்டி, உங்களுக்கு தேவையான token-களைப் பெறுங்கள்."
+        },
+        "lend": {
+          "title": "கடனளித்து வருமானம் ஈட்டு",
+          "blurb": "உங்கள் token-களை கடன் வாங்குபவர்களுக்கு வழங்கி, அவர்கள் திருப்பிச் செலுத்தினால் வட்டி ஈட்டுங்கள்."
+        },
+        "rent": {
+          "title": "NFT-ஐ வாடகைக்கு எடு அல்லது விடு",
+          "blurb": "உங்களுடைய NFT-இல் இருந்து கட்டணம் ஈட்டுங்கள், அல்லது ஒன்றை தற்காலிகமாகப் பயன்படுத்துங்கள்."
+        },
+        "manage": {
+          "title": "என் நிலைகளை நிர்வகி",
+          "blurb": "உங்கள் கடன்கள் மற்றும் வாடகைகளைப் பார்க்கவும், திருப்பிச் செலுத்தவும், பிணையம் சேர்க்கவும் அல்லது கோரவும்."
+        }
+      }
+    },
+    "tokenSecurity": {
+      "pickerUnknown": "The independent security check could not verify this token இப்போது. Deals with unverified token-கள் are held back until the check succeeds.",
+      "pickerUnsupported": "The independent security check does not cover this நெட்வொர்க் (test நெட்வொர்க்குகள் are not indexed). Extra care: only use token-கள் you deployed or trust.",
+      "retry": "மீண்டும் சரிபார்",
+      "badge": {
+        "block": {
+          "label": "ஆபத்து குறிக்கப்பட்டது",
+          "title": "An independent security check flags a token in this வாய்ப்பு as dangerous (for example impossible to sell). The சரிபார் will not let this deal proceed."
+        },
+        "warn": {
+          "label": "எச்சரிக்கை",
+          "title": "An independent security check reports owner powers or taxes on a token in this வாய்ப்பு. The சரிபார் shows the details before you எதிலும் கையெழுத்திடு."
+        },
+        "unchecked": {
+          "label": "சரிபார்க்கப்படவில்லை",
+          "title": "A token in this வாய்ப்பு could not be checked by the independent security screen. Treat it with extra care."
+        }
+      },
+      "reputationUnlisted": "No சந்தை listing found for this முகவரி — the wider சந்தை doesn’t kஇப்போது this token. That alone doesn’t make it bad, but verify the contract முகவரி with the project before dealing in it."
+    },
+    "signing": {
+      "approveUnknown": "ஒப்புதல் செய்யவும் token — one confirmation, or two if your வாலெட் needs an older ஒப்புதல் reset to zero first (still checking).",
+      "sign": "கையெழுத்திடவும் terms you just read — a free கையெழுத்து, no gas.",
+      "approve": "ஒப்புதல் செய்யவும் token — you allow the protocol to take the தொகை shown above. This is a பரிவர்த்தனை.",
+      "approveReset": "ஒப்புதல் செய்யவும் token — two confirmations here: your வாலெட் needs an older ஒப்புதல் reset to zero before the new தொகை can be set.",
+      "post": "வாய்ப்பை பதிவிடு — இறுதி பரிவர்த்தனை.",
+      "accept": "ஒப்பந்தத்தைத் தொடங்கு — இறுதி பரிவர்த்தனை.",
+      "approveNft": "Allow the protocol to move NFTs from this collection — a one-time பரிவர்த்தனை per collection.",
+      "postListing": "பட்டியலை பதிவிடு — இறுதி பரிவர்த்தனை.",
+      "acceptRental": "வாடகையைத் தொடங்கு — இறுதி பரிவர்த்தனை."
+    },
+    "killSwitch": {
+      "disabled": "This action is switched off இப்போது — the operators have paused it as a precaution while something is looked into. Anything already yours is unaffected: repayments, கோரிக்கைகள், and withdrawals all stay திறந்த."
+    },
+    "alerts": {
+      "title": "எச்சரிக்கைகள்",
+      "lede": "Get a Telegram message about your நிலைகள் while the site is மூடப்பட்ட — deadlines and risk don’t wait for you to ஒரு tab.",
+      "notConfigured": "இந்த build-ல் alerts அமைக்கப்படவில்லை. operator இதை alerts backend-க்கு இணைக்கவில்லை; எனவே இங்கே எதுவும் வேலை செய்யாது — போலியாக காட்டாமல், இந்த பகுதி முடக்கப்பட்டே இருக்கும்.",
+      "connectFirst": "உங்கள் வாலெட் to set up alerts for it.",
+      "privacy": "Linking stores your வாலெட் முகவரி, your alert preferences from this card, and your Telegram chat id on Vaipakam’s alert service, plus a small delivery record per alert it sends (which கடன், which level, when) so you’re never messaged twice about the same thing. Unlink removes the Telegram இணைப்பு.",
+      "linkButton": "Telegram ஐ இணை",
+      "linkSignNote": "Your வாலெட் will first ask you to கையெழுத்திடு a short message — it’s free, it’s not a பரிவர்த்தனை, and it proves this கோரிக்கை really comes from you.",
+      "linkIssued": "திறந்த our bot and press Start — or send it this code as a message. That இணைs this வாலெட் to your Telegram.",
+      "openBot": "திறந்த Telegram",
+      "testAlertButton": "சோதனை alert அனுப்பு",
+      "testAlertNote": "Once you’ve sent the code to the bot, tap this — we’ll push one message to your Telegram to prove it’s இணைக்கப்பட்டது. Your வாலெட் கையெழுத்திடுகிறது a short, free message first.",
+      "testAlertSending": "உங்கள் சோதனை alert அனுப்பப்படுகிறது…",
+      "testAlertSent": "Test alert sent — check Telegram. Your alerts for this வாலெட் are இப்போது இயங்குகிறது.",
+      "testAlertNotLinked": "We couldn’t find your Telegram chat yet. திறக்கவும் bot and send it the code above, then tap “Send a test alert” மீண்டும். If the code has expired, tap “Start over” for a fresh one.",
+      "testAlertError": "Couldn’t send the test alert இப்போதே. Please மீண்டும் முயற்சி in a moment.",
+      "startOver": "மீண்டும் தொடங்கு",
+      "linked": "Telegram linked — alerts for this வாலெட் go to your chat.",
+      "unlink": "இணைப்பை நீக்கு",
+      "unlinkElsewhereTitle": "Linked this வாலெட் on another device?",
+      "unlinkElsewhereBody": "Its Telegram link lives on our server, not just this browser. இணைப்பை நீக்கு it here — it stops messages everywhere.",
+      "unlinkElsewhere": "Unlink this வாலெட்",
+      "unlinked": "Unlinked. No more Telegram messages for this வாலெட்.",
+      "toggleRepayDue": "வட்டி செலுத்த வேண்டிய நேரத்திற்கு முன் எனக்கு message அனுப்பு",
+      "toggleRisky": "Message me if my கடன் gets risky",
+      "riskyOffNote": "Even switched off, you’ll still be warned right before a கடன் would be liquidated.",
+      "advancedBands": "Risk thresholds (ஆரோக்கியம் factor): a message is sent when a கடன் crosses each level.",
+      "bandsInvalid": "மூன்று நிலைகளும் குறைந்து வர வேண்டும் — warn alert-ஐ விட மேல், alert critical-ஐ விட மேல், critical 1.00-ஐ விட மேல்.",
+      "saved": "சேமிd.",
+      "pushTitle": "அதற்கு பதிலாக app push விருப்பமா?",
+      "pushBody": "The same alerts are published to Vaipakam’s Push Protocol channel — subscribe there with your வாலெட் and any Push-compatible app delivers them.",
+      "pushEnable": "Push delivery-ஐ இயக்கு",
+      "pushEnabled": "Push delivery is on for this வாலெட்.",
+      "pushButton": "திறக்கவும் Push channel",
+      "loanNudge": "Want a Telegram warning if this கடன் gets risky? Set up alerts in அமைப்புகள்."
+    },
+    "notifications": {
+      "bellLabel": "அறிவிப்புகள்",
+      "title": "அறிவிப்புகள்",
+      "loading": "ஏற்றுகிறது your notifications…",
+      "empty": "இன்னும் எதுவும் இல்லை. உங்கள் கடன்களின் புதுப்பிப்புகள் இங்கே தோன்றும்.",
+      "unavailable": "Couldn’t load your notifications இப்போதே. They’ll be here when the இணைப்பு is back.",
+      "connectFirst": "உங்கள் கடன்களின் புதுப்பிப்புகளைப் பார்க்க வாலெட்டை இணைக்கவும்.",
+      "line": {
+        "loan_matched": "உங்கள் கடன் இப்போது செயலில் உள்ளது.",
+        "partial_repay": "உங்கள் கடனுக்கு ஒரு திருப்பிச்செலுத்தல் வந்துள்ளது.",
+        "loan_repaid": "ஒரு கடன் முழுமையாக திருப்பிச் செலுத்தப்பட்டது — நீங்கள் கோரக்கூடியதைப் பார்க்கவும்.",
+        "loan_defaulted": "ஒரு கடன் default ஆனது — நீங்கள் கோரக்கூடியதைப் பார்க்கவும்.",
+        "internal_matched": "A கடன் of yours மூடப்பட்ட by matching — see what you can கோரு.",
+        "maturity_7d": "A கடன் was a week from its due date — அதைத் திறக்கவும் to see where it stands.",
+        "maturity_1d": "A கடன் was a day from its due date — அதைத் திறக்கவும் to see where it stands.",
+        "grace_entered": "A கடன் went past its due date — அதைத் திறக்கவும் to see where it stands.",
+        "hf_warn": "A கடன்’s ஆரோக்கியம் dipped below 1.5 — அதைத் திறக்கவும் to see where it stands.",
+        "hf_alert": "A கடன்’s ஆரோக்கியம் dipped below 1.2 — அதைத் திறக்கவும் to see where it stands.",
+        "hf_critical": "A கடன்’s ஆரோக்கியம் dipped below 1.05, close to the 1.0 liquidation line — அதைத் திறக்கவும் to act.",
+        "generic": "There’s an update on your கடன்."
+      }
+    },
+    "errorBoundary": {
+      "title": "இந்தப் பக்கத்தில் ஏதோ தவறு ஏற்பட்டது",
+      "body": "The page hit an unexpected error and stopped rendering. Your funds and on-chain நிலைகள் are unaffected — this is a display-side fault, and a பரிவர்த்தனை you just கையெழுத்திட்ட may still have gone through (check My நிலைகள் after மீண்டும் ஏற்றிய பிறகு). மீண்டும் ஏற்றுதல் usually clears it.",
+      "reload": "பக்கத்தை மீண்டும் ஏற்று",
+      "home": "முகப்பிற்கு திரும்பு"
+    },
+    "diagnostics": {
+      "open": "ஆதரவு மற்றும் இணைப்பு சோதனை",
+      "title": "ஆதரவு",
+      "lede": "A quick ஆரோக்கியம் check of the இணைப்புs this app depends on, and a way to report a problem.",
+      "close": "மூடு",
+      "network": "நெட்வொர்க்",
+      "wallet": "வாலெட்",
+      "walletNotConnected": "இணைக்கப்படவில்லை",
+      "rpc": "Blockchain இணைப்பு",
+      "rpcChecking": "சரிபார்க்கிறது…",
+      "rpcFailing": "Not responding — the app can’t reach the blockchain இப்போது. மீண்டும் ஏற்றுதல், or switching நெட்வொர்க்குகள் and back, often clears it.",
+      "indexer": "சந்தை data cache",
+      "indexerUnreachable": "Unreachable இப்போது — சந்தை lists may not load until it recovers. Your own நிலைகள் still load directly from the chain.",
+      "indexerNoCursor": "Reachable, but no data has been recorded for this நெட்வொர்க் yet — it will fill as activity arrives.",
+      "indexerNotConfigured": "Not configured on this build — சந்தை lists can’t load here. Your own நிலைகள் still load directly from the chain.",
+      "build": "App பதிப்பு",
+      "lastErrorTitle": "இந்த சாதனத்தில் கடைசி பிழை",
+      "noError": "இந்த session-ல் பிழைகள் பதிவாகவில்லை.",
+      "report": "GitHub-ல் பிரச்சினையைப் பதிவு செய்",
+      "reportHint": "திறக்கிறது a pre-filled GitHub issue with the details above and the last recorded error. Your full வாலெட் முகவரி is never included.",
+      "copyDetails": "விவரங்களை நகலெடு",
+      "copied": "நகலெடுக்கப்பட்டது."
+    },
+    "support": {
+      "title": "ஆதரவை தொடர்புகொள்",
+      "lede": "அணிக்கு ஒரு message அனுப்புங்கள் — உடனே ticket number கிடைக்கும்.",
+      "notConfigured": "The ஆதரவு inbox isn’t இணைக்கப்பட்டது in this build, so in-app messages can’t be sent from here. Email works instead:",
+      "messageLabel": "என்ன நடந்தது?",
+      "messagePlaceholder": "நீங்கள் என்ன செய்து கொண்டிருந்தீர்கள், என்ன தவறானது என்பதை உங்கள் சொற்களில் சொல்லுங்கள்.",
+      "emailLabel": "பதில் பெற email (விருப்பம்)",
+      "emailHint": "Leave it empty if you’d rather follow up yourself — the ticket number below is all ஆதரவு needs.",
+      "attach": "Attach the ஆரோக்கியம் details shown above (recommended — they usually hold the cause)",
+      "privacy": "Sending stores your message, the page you sent it from and the நெட்வொர்க் you were on, the reply முகவரி if you gave one, and — only if you ticked the box — the ஆரோக்கியம் details above, on Vaipakam’s ஆதரவு service under your ticket number. The team is notified that a ticket arrived (its number and context flags — never your message text or email). Your full வாலெட் முகவரி is never included in the ஆரோக்கியம் details.",
+      "send": "ஆதரவிற்கு அனுப்பு",
+      "sending": "அனுப்புகிறது…",
+      "mailHint": "email விருப்பமா, அல்லது மேலும் சேர்க்க வேண்டுமா? ticket number-ஐ குறிப்பிட்டு எங்களுக்கு எழுதுங்கள்:",
+      "mailButton": "Email ஆதரவு@vaipakam.com",
+      "invalidMessage": "முதலில் என்ன நடந்தது பற்றி சில வார்த்தைகள் எழுதுங்கள்.",
+      "invalidEmail": "அந்த email முழுமையாக தெரியவில்லை — திருத்தவும் அல்லது புலத்தை காலி செய்யவும் (இது விருப்பம்).",
+      "rateLimited": "A few messages went out இப்போதே — wait a minute and மீண்டும் முயற்சி.",
+      "unavailable": "The ஆதரவு inbox couldn’t take the message இப்போது. Nothing was lost on your side — email us instead:",
+      "failed": "The message didn’t go through. மீண்டும் முயற்சி in a moment, or email us:",
+      "helpTitle": "ஒரு மனிதரின் உதவி வேண்டுமா?",
+      "helpBody": "திறக்கவும் ஆதரவு panel (the round button in the corner of every page) to send the team a message with one click — it can attach the app’s own ஆரோக்கியம் details, which usually hold the cause. Or email us directly:"
+    },
+    "wallet": {
+      "connect": "வாலெட்டை இணை",
+      "connectFirst": "தொடர வாலெட்டை இணைக்கவும்.",
+      "switchNetwork": "நெட்வொர்க் மாற்றவும்"
+    },
+    "checks": {
+      "walletConnected": "வாலெட் இணைக்கப்பட்டது",
+      "supportedChain": "ஆதரிக்கப்படும் நெட்வொர்க்கில்",
+      "tokenValid": "சொத்து token ஆக அடையாளம் காணப்பட்டது",
+      "consent": "ஆபத்து விளக்கங்கள் மற்றும் விதிமுறைகள் ஏற்கப்பட்டன",
+      "getTestAssets": "சோதனை சொத்துகளைப் பெறு",
+      "connectEarly": "உங்கள் வாலெட் to தொடர — you’ll need it to கையெழுத்திடு, so it’s easiest to இப்போது இணைப்பது."
+    },
+    "receipt": {
+      "heading": "கையெழுத்திட முன் சரிபார்க்கவும்",
+      "youReceive": "நீங்கள் பெறுவது",
+      "youLock": "நீங்கள் பூட்டுவது",
+      "youMayOwe": "நீங்கள் செலுத்த வேண்டியிருக்கும்",
+      "youCanLose": "நீங்கள் இழக்கக்கூடும்",
+      "fees": "கட்டணங்கள்",
+      "whenThisEnds": "இது முடியும் போது",
+      "gasNote": "Network gas, Vaipakam protocol கட்டணங்களிலிருந்து தனியானது."
+    },
+    "simulation": {
+      "running": "இந்த பரிவர்த்தனையின் இலவச dry run நடக்கிறது…",
+      "passed": "Dry run வெற்றியடைந்தது — இந்த பரிவர்த்தனை சரிபார்த்தபடி நிறைவேற வேண்டும்.",
+      "wouldFail": "கவனம் — இப்போது கையெழுத்திட்டால் இந்த பரிவர்த்தனை தோல்வியடையும். எதுவும் அனுப்பப்படவில்லை, gas செலவாகவில்லை.",
+      "wouldFailNote": "You can adjust the details above and மீண்டும் முயற்சி in a moment, or கையெழுத்திடு anyway.",
+      "approvalNeeded": "A token ஒப்புதல் will be கோரப்படும் first — the dry run can’t see that step yet, so this is expected, not a problem.",
+      "unavailable": "The free dry run isn’t available இப்போது. You can still தொடர — this check is only an extra heads-up."
+    },
+    "help": {
+      "disclaimer": "Vaipakam ஒரு பரவலாக்கப்பட்ட, non-custodial புரோட்டோகால். KYC தேவையில்லை. தங்களுக்குப் பொருந்தும் சட்ட/ஒழுங்குமுறை இணக்கத்திற்கு பயனர்களே பொறுப்பு.",
+      "risksTitle": "ஆபத்து விளக்கங்கள்",
+      "risks": [
+        "கடன் வாங்குதல்: if you don’t repay by the due date plus the grace period, your locked பிணையம் goes to the கடனளிப்பவர். பிணையம் without a live சந்தை price transfers in full.",
+        "கடன் வாங்குதல்: பிணையம் with a live சந்தை price can be sold automatically (liquidated) before the due date if its value falls too far.",
+        "கடனளிப்பு: interest is earned only if the கடன் வாங்குபவர் repays. On default, your recovery is whatever the locked பிணையம் turns out to be worth.",
+        "NFT வாடகைகள்: renters receive temporary use rights, never ownership; the NFT stays in the owner’s vault. வாடகை கட்டணங்கள் are prepaid, with a small refundable buffer.",
+        "Smart-contract risk: Vaipakam is code on a public நெட்வொர்க். Bugs, நெட்வொர்க் failures, or extreme சந்தை conditions can cause loss — never commit funds you cannot afford to lose."
+      ]
+    },
+    "consentParts": {
+      "prefix": "நான் புரிந்துகொண்டு ஏற்கிறேன்: ",
+      "risk": "ஆபத்து விளக்கங்கள்",
+      "mid": " மற்றும் ",
+      "terms": "Vaipakam விதிமுறைகள்",
+      "suffix": "."
+    },
+    "match": {
+      "borrowTitle": "இப்போது நிதியளிக்க தயாரான கடனளிப்பவர்கள்",
+      "borrowLede": "These வாய்ப்புகள் match your சொத்து. Accepting one திறக்கிறது the கடன் immediately — you take the வாய்ப்பு’s full தொகை and terms.",
+      "lendTitle": "நிதிக்காக காத்திருக்கும் கடன் வாங்குபவர்கள்",
+      "lendLede": "These கோரிக்கைகள் match your சொத்து. Funding one திறக்கிறது the கடன் immediately at the கோரிக்கை’s terms.",
+      "wholeOfferNote": "வாய்ப்புகள் are taken whole — the தொகை shown is what the கடன் will be.",
+      "choose": "தேர்வு செய்",
+      "emptyBorrow": "இப்போது பொருந்தும் வாய்ப்புகள் இல்லை.",
+      "emptyLend": "இப்போது பொருந்தும் கோரிக்கைகள் இல்லை.",
+      "orPostBorrow": "Post my own கடன் வாங்கு கோரிக்கை instead",
+      "orPostLend": "Post my own கடனளிப்பு வாய்ப்பு instead",
+      "unavailable": "We couldn’t load matching வாய்ப்புகள் இப்போது. You can still post your own below.",
+      "loanOpened": "கடன் திறக்கப்பட்டது",
+      "borrowerNext": "The funds are in your Vaipakam Vault and your பிணையம் is locked. Repay by the due date to get it back — everything is under My நிலைகள்.",
+      "lenderNext": "Your funds are lent and the கடன் வாங்குபவர்’s பிணையம் is locked. Track repayment under My நிலைகள்; you’ll கோரு your funds back after they repay.",
+      "wrongSide": "That link points to the other side of the சந்தை — a கடனளிப்பு வாய்ப்பு is accepted from கடன் வாங்கு, a கடன் வாங்கு கோரிக்கை from கடனளி.",
+      "wrongKind": "That வாய்ப்பு involves an NFT — அதைத் திறக்கவும் from the NFT வாடகை page instead.",
+      "ownOffer": "That’s your own வாய்ப்பு — you can ரத்து செய் it from My நிலைகள், but you can’t accept it yourself.",
+      "offerGone": "That வாய்ப்பு is no longer திறந்த. Browse current matches below or post your own.",
+      "counterpartyBlocked": "The other side of this வாய்ப்பு can’t transact இப்போது (compliance flag), so it can’t be accepted. Nothing was sent.",
+      "offerNotFound": "We couldn’t find that வாய்ப்பு — the link may be old, or the data source is catching up. Browse current வாய்ப்புகள் below.",
+      "termsChanged": "This வாய்ப்பு’s terms changed since you சரிபார்த்த it. Nothing was sent — please சரிபார் the updated வாய்ப்பு.",
+      "illiquidWarning": "One side of this deal isn’t priced by the protocol — it has no usable சந்தை price or deep-enough trading சந்தை இப்போது. If it ends in default, the entire பிணையம் transfers directly to the கடனளிப்பவர் — nobody sells it for a fair சந்தை price first, and there is no automatic price-based liquidation. Only proceed if you accept that.",
+      "interestModeFullTerm": "Interest is full-term: the whole term’s interest applies even if the கடன் is repaid early.",
+      "interestModeProRata": "வட்டி தினந்தோறும் சேரும் — முன்கூட்டியே திருப்பிச் செலுத்தினால் குறைவாக செலவாகும்.",
+      "interestModeProRataLender": "Interest accrues day by day — if the கடன் வாங்குபவர் repays early, you earn less.",
+      "saleLoanChecking": "Reading the running கடன் behind this listing — the சரிபார் must show its real numbers before you can கையெழுத்திடு.",
+      "saleLoanCheckFailed": "We couldn’t read the running கடன் behind this listing, and the சரிபார் must show its real numbers — கையெழுத்திடல் stays paused until it succeeds.",
+      "saleLoanNotActive": "The கடன் behind this listing is no longer செயலில், so this purchase can’t complete. Nothing was sent or ஒப்புதல் செய்யப்பட்டது.",
+      "saleSellerNotCovered": "The seller’s standing settlement ஒப்புதல் no longer covers completing this sale, so the purchase would fail on-chain. Nothing was sent or ஒப்புதல் செய்யப்பட்டது — the seller needs to restore their ஒப்புதல் (their listing card shows a restore action).",
+      "saleMaturityPassed": "This கடன் has reached its due date — the நிலை can no longer be bought. Nothing was sent or ஒப்புதல் செய்யப்பட்டது.",
+      "saleBought": "நிலை bought",
+      "saleSelfBuy": "You are the கடன் வாங்குபவர் of this கடன், so you can’t also buy its கடனளிப்பவர் side — the protocol rejects that. Repaying or closing early from My நிலைகள் are your moves instead. Nothing was sent or ஒப்புதல் செய்யப்பட்டது.",
+      "liquidityChecking": "Checking how these சொத்துகள் are priced by the protocol…",
+      "liquidityCheckFailed": "We couldn’t check how these சொத்துகள் are priced, and that check decides an important warning — கையெழுத்திடல் stays paused until it succeeds.",
+      "linkedLoanCheckFailed": "We couldn’t check whether this வாய்ப்பு is a நிலை sale of a running கடன், and that check decides an important disclosure — கையெழுத்திடல் stays paused until it succeeds.",
+      "graceChecking": "Confirming the repayment grace window this deal is judged எதிராக…",
+      "graceCheckFailed": "We couldn’t confirm the repayment grace window, and the சரிபார் must show the real one — கையெழுத்திடல் stays paused until it succeeds.",
+      "riskGateBlocked": "The protocol’s risk-access rules block this acceptance for your வாலெட் இப்போது — it needs a standing on-chain ackஇப்போதுledgement or access level this app can’t collect yet. Nothing was sent or ஒப்புதல் செய்யப்பட்டது."
+    },
+    "borrow": {
+      "title": "சொத்துகளை கடன் வாங்கு",
+      "lede": "Tell us what you need and what you can lock as பிணையம். We’ll show you exactly what you’d owe before anything is கையெழுத்திட்ட.",
+      "postRequest": "கடன் கோரிக்கையை பதிவிடு",
+      "posted": "கடன் கோரிக்கை பதிவிடப்பட்டது",
+      "postedNext": "Your பிணையம் is locked while the கோரிக்கை is திறந்த. Funds arrive only when a கடனளிப்பவர் accepts — we’ll show the கடன் under My நிலைகள்.",
+      "collateralWarning": "நேரத்தில் திருப்பிச் செலுத்தாவிட்டால், கடனளிப்பவர் உங்கள் பிணையத்தைப் பெறலாம்.",
+      "lockNow": "Your பிணையம் is locked when you post this கோரிக்கை. You can ரத்து செய் before a கடனளிப்பவர் accepts to unlock it.",
+      "collateralPrecheck": "Before you தொடர —"
+    },
+    "lend": {
+      "title": "கடனளித்து வருமானம் ஈட்டு",
+      "lede": "Choose what to கடனளி and the return you want. கடனளிப்பு is choosing a risk, not just a yield — you’ll see the downside before you கையெழுத்திடு.",
+      "postOffer": "கடனளிப்பு வாய்ப்பை பதிவிடு",
+      "posted": "கடனளிப்பு வாய்ப்பு பதிவிடப்பட்டது",
+      "postedNext": "Your token-கள் are locked while the வாய்ப்பு is திறந்த. When a கடன் வாங்குபவர் accepts, the கடன் appears under My நிலைகள். You can ரத்து செய் before acceptance to unlock your token-கள்.",
+      "yieldNotGuaranteed": "Expected interest if the கடன் வாங்குபவர் repays on time.",
+      "defaultOutcome": "If the கடன் வாங்குபவர் defaults, your recovery depends on their பிணையம்."
+    },
+    "rent": {
+      "title": "NFT-ஐ வாடகைக்கு எடு அல்லது விடு",
+      "lede": "NFT வாடகைகள் give temporary use rights — never ownership. The NFT stays locked in its owner’s vault for the whole வாடகை.",
+      "ownPath": "வாடகைக்கு விட எனக்கு NFT உள்ளது",
+      "ownPathBlurb": "Set a daily fee — renters prepay the whole வாடகை up front.",
+      "wantPath": "நான் NFT-ஐ வாடகைக்கு எடுக்க விரும்புகிறேன்",
+      "wantPathBlurb": "Pay up front, use the NFT until the வாடகை ends.",
+      "browseCta": "வாடகைக்கு கிடைக்கும் NFT-களைப் பார்க்கவும்",
+      "custodyNote": "NFT ஒருபோதும் vault custody-யை விட்டு வெளியேறாது. வாடகையாளர் தற்காலிக பயன்பாட்டு உரிமைகள் மட்டுமே பெறுகிறார் — உரிமை அல்ல.",
+      "postListing": "வாடகை பட்டியலை பதிவிடு",
+      "listingPosted": "வாடகை பட்டியல் பதிவிடப்பட்டது",
+      "listingPostedNext": "Your NFT is held in your vault while the listing is திறந்த. When a renter accepts, the வாடகை appears under My நிலைகள்; ரத்து செய் the listing any time before that to get the NFT back.",
+      "acceptRental": "இந்த NFT-ஐ வாடகைக்கு எடு",
+      "rentalOpened": "வாடகை தொடங்கியது",
+      "rentalOpenedNext": "You இப்போது hold the use rights until the வாடகை ends — the NFT itself stays in the owner’s vault. Your prepaid கட்டணங்கள் cover the whole term; close on time and the buffer comes back to you.",
+      "checkOwnNft": "இந்த NFT உங்களுடையது",
+      "checkNotOwner": "The இணைக்கப்பட்டது வாலெட் doesn’t own this NFT — check the contract முகவரி and token id.",
+      "browseTitle": "வாடகைக்கு கிடைக்கும் NFT-கள்",
+      "browseEmpty": "இப்போது வாடகை பட்டியல்கள் இல்லை.",
+      "browseEmptyCta": "Own an NFT? Use the switch above to list it for rent instead — renters prepay the whole வாடகை up front, so an empty சந்தை is an opportunity.",
+      "browseUnavailable": "We couldn’t load வாடகை listings இப்போது. Please மீண்டும் முயற்சி in a moment.",
+      "notDebt": "A வாடகை is not a கடன்: there’s nothing to repay — your கட்டணங்கள் are prepaid and your rights simply end when the term does.",
+      "no4907Warning": "Heads up: this NFT collection doesn’t ஆதரவு the on-chain வாடகை standard (ERC-4907). Renting still works — Vaipakam tracks the renter’s use rights in your vault — but apps and games outside Vaipakam won’t recognise the renter.",
+      "no4907Unknown": "We couldn’t check whether this NFT collection ஆதரவுs the on-chain வாடகை standard (ERC-4907). If it doesn’t, apps outside Vaipakam won’t recognise the renter — renting inside Vaipakam still works.",
+      "vpfiPrepayListing": "This listing asks to be paid in VPFI, which வாடகைகள் don’t allow — it can’t be accepted. Please pick a different listing.",
+      "vpfiCheckRetry": "We couldn’t verify this listing’s payment சொத்து இப்போதே — nothing was sent or ஒப்புதல் செய்யப்பட்டது. Please மீண்டும் முயற்சி in a moment.",
+      "vpfiPrepayNotAllowed": "VPFI can’t be used as the வாடகை payment சொத்து — pick another token."
+    },
+    "preclose": {
+      "title": "இந்தக் கடனை முன்கூட்டியே மூடு",
+      "blurb": "Pay everything இப்போது and close the கடன் today — your பிணையம் is released immediately after.",
+      "fullTermNote": "This கடன் uses full-term interest, so closing early still pays the whole term’s interest.",
+      "proRataNote": "This கடன் accrues interest day by day, so closing early pays only what has accrued.",
+      "action": "முன்கூட்டியே மூடு",
+      "confirm": "உறுதிப்படுத்து — இப்போது செலுத்தி மூடு",
+      "done": "கடன் முன்கூட்டியே மூடப்பட்டது. உங்கள் பிணையம் தயாராக உள்ளது — கீழே அல்லது Claim Center-ல் கோருங்கள்.",
+      "checking": "Checking whether this கடன் can close early…",
+      "checkFailed": "We couldn’t read this கடன்’s close-early cost இப்போது — reமுயற்சிக்கும். Repaying normally stays available below.",
+      "graceNote": "This கடன் is past its due date. The தொகை below already includes the late fee for being late (it grows a little each day), and closing this way stays possible only until the grace window ends.",
+      "graceFeeReceiptNote": "The late fee for being past due is included in this தொகை — the same fee a normal repayment would charge."
+    },
+    "refinance": {
+      "title": "இந்தக் கடனை refinance செய்",
+      "blurb": "Post a கோரிக்கை for a new கடன் on better terms. The moment a கடனளிப்பவர் accepts it, your current கடன் is paid off and மூடப்பட்ட automatically in the same பரிவர்த்தனை — your பிணையம் moves to the new கடன் without ever unlocking.",
+      "rateLabel": "Highest yearly விகிதம் you’d accept",
+      "durationLabel": "New கடன் length (days)",
+      "action": "சரிபார் refinance கோரிக்கை",
+      "confirm": "Confirm — post refinance கோரிக்கை",
+      "payoffNote": "The old கடன்’s payoff is always principal plus the full remaining term’s interest — even if the கடன் normally accrues day by day. That is the exiting கடனளிப்பவர்’s fixed entitlement on an early exit.",
+      "shortIsSafe": "If your வாலெட் is short when a கடனளிப்பவர் tries to accept, the acceptance simply fails — nothing is taken and your current கடன் தொடரs unchanged.",
+      "periodicWarning": "This கடன் pays interest on a periodic schedule. If a payment period becomes overdue while the கோரிக்கை is திறந்த, a கடனளிப்பவர்’s acceptance will fail until the period is settled — keep the கடன்’s payments current.",
+      "done": "Refinance கோரிக்கை posted. When a கடனளிப்பவர் accepts it, this கடன் closes automatically — you don’t need to do anything else. You can ரத்து செய் the கோரிக்கை below (ரத்து செய்lation திறக்கிறது a few minutes after posting).",
+      "pendingAccepted": "Your refinance கோரிக்கை was accepted — this கடன் is being replaced by the new one. சிறிது நேரத்தில் புதுப்பி a moment to see the final state.",
+      "pendingLoanClosed": "This கடன் has since மூடப்பட்ட another way, so the கோரிக்கை can no longer complete — ரத்து செய் it to also remove its standing payoff ஒப்புதல்.",
+      "cancel": "refinance கோரிக்கையை ரத்து செய்",
+      "cancelSoon": "ரத்து செய்lation திறக்கிறது a few minutes after posting — மீண்டும் முயற்சி shortly.",
+      "cancelled": "Refinance கோரிக்கை ரத்து செய்யப்பட்டது and the payoff ஒப்புதல் removed — this கடன் தொடரs unchanged. If you have other listings or கோரிக்கைகள் using the same token, restore their ஒப்புதல்கள் from their cards.",
+      "cancelledRevokeFailed": "Refinance கோரிக்கை ரத்து செய்யப்பட்டது — this கடன் தொடரs unchanged. The standing payoff ஒப்புதல் couldn’t be removed automatically; you can revoke it from your வாலெட்’s token-ஒப்புதல்கள் view.",
+      "allowanceShort": "The payoff ஒப்புதல் no longer covers everything this கோரிக்கை could pull — a கடனளிப்பவர்’s acceptance could fail (an acceptance after the due date also pulls the late fee and extra interest). Restore it below or ரத்து செய் the கோரிக்கை.",
+      "reapprove": "payoff ஒப்புதலை மீட்டமை",
+      "reapproved": "Payoff ஒப்புதல் restored — the கோரிக்கை can complete மீண்டும்.",
+      "reapproveAborted": "This கோரிக்கை is no longer completable (accepted, ரத்து செய்யப்பட்டது, or the கடன் மூடப்பட்ட) — nothing was ஒப்புதல் செய்யப்பட்டது. புதுப்பி to see the latest state.",
+      "guardrailNote": "Your கோரிக்கை carries its own காலாவதி and on-chain guardrails: it can only complete at or below the விகிதம் you set here, and never after the காலாவதி you see in this சரிபார்.",
+      "graceNote": "This கடன் is past its due date. A கடனளிப்பவர் can still accept this கோரிக்கை until the grace window ends, and the payoff already includes the late fee for being late (it grows a little each day).",
+      "pendingPastGrace": "This கடன் has passed its due date and grace window, so no கடனளிப்பவர் can accept this கோரிக்கை any more — it no longer holds up your other actions here. ரத்து செய் it below to also remove its standing payoff ஒப்புதல்.",
+      "cadenceChangeNote": "Your current கடன் pays interest on a schedule. The replacement கடன் will NOT — its interest settles when it closes. Make sure that cash-flow change is what you want.",
+      "multiStepNote": "Posting takes up to three வாலெட் confirmations (guardrails, payoff ஒப்புதல், the கோரிக்கை itself). If you stop partway, the earlier steps stay in place on-chain until you finish posting or ரத்து செய் — ரத்து செய்கிறது also removes the ஒப்புதல்.",
+      "partialBlockedByPending": "A refinance கோரிக்கை is live for this கடன். A partial repayment would change the தொகை and make that கோரிக்கை permanently unacceptable — ரத்து செய் the refinance கோரிக்கை first.",
+      "precloseBlockedByPending": "A refinance கோரிக்கை is live for this கடன். Closing early இப்போது would strand it — ரத்து செய் the refinance கோரிக்கை first.",
+      "repayWarnPending": "A refinance கோரிக்கை is still live for this கடன். Repaying settles the கடன், after which the கோரிக்கை can never complete — ரத்து செய் it from its card afterwards (that also removes its standing payoff ஒப்புதல்); until then it just sits until it expires."
+    },
+    "approvals": {
+      "title": "நிலையான token ஒப்புதல்கள்",
+      "blurb": "These are the spending permissions your வாலெட் has granted Vaipakam’s contract for token-கள் your கடன்கள் and வாய்ப்புகள் touch. Some flows set them on purpose (a refinance கோரிக்கை’s payoff, a sale listing’s settlement); anything left over from an abandoned attempt can be removed here.",
+      "revokeWarning": "Careful: if a live refinance கோரிக்கை or sale listing depends on a token’s ஒப்புதல், revoking it makes that flow fail until you restore it from its card — the card will warn you within moments.",
+      "scopeNote": "This list covers token-கள் seen in your Vaipakam கடன்கள் and வாய்ப்புகள் on this நெட்வொர்க். ஒப்புதல்கள் granted to other apps or for other token-கள் aren’t shown — your வாலெட்’s own token-ஒப்புதல்கள் view remains the complete picture.",
+      "none": "உங்கள் அறியப்பட்ட token-களுக்கு Vaipakam-க்கு நிலையான ஒப்புதல்கள் இல்லை.",
+      "loading": "Reading your standing ஒப்புதல்கள்…",
+      "unavailable": "We couldn’t read your ஒப்புதல்கள் இப்போது — please மீண்டும் முயற்சி in a moment.",
+      "sourcesUnavailable": "We couldn’t load your கடன்கள் and வாய்ப்புகள் இப்போதே, so this list can’t be built completely — rather than show a partial picture, மீண்டும் முயற்சி in a moment.",
+      "revoke": "ரத்து செய்",
+      "staleNote": "We couldn’t புதுப்பி this list இப்போதே — the rows shown may be slightly stale. Revoking still works."
+    },
+    "nftVerifier": {
+      "title": "NFT சரிபார்ப்பாளர்",
+      "lede": "Vaipakam நிலை NFTs carry real கோரு rights — whoever holds one controls that side of its கடன். Check any token id before trusting it.",
+      "placeholder": "நிலை NFT token id",
+      "check": "சரிபார்",
+      "checking": "இந்த token on-chain சரிபார்க்கப்படுகிறது…",
+      "checkFailed": "We couldn’t check this token இப்போது — please மீண்டும் முயற்சி in a moment.",
+      "ownerLabel": "தற்போதைய வைத்திருப்பவர்",
+      "roleLabel": "இது கட்டுப்படுத்தும் பக்கம்",
+      "roleLender": "கடனளிப்பவர் side — its holder collects the repayment or recovery.",
+      "roleBorrower": "கடன் வாங்குபவர் side — its holder repays and reகோரிக்கைகள் the பிணையம்.",
+      "roleUnknown": "We couldn’t read this token’s role details இப்போது.",
+      "loanLabel": "இணைக்கப்பட்ட கடன்",
+      "offerLabel": "வாய்ப்புக்காக உருவாக்கப்பட்டது",
+      "lockUnrecognized": "Transfer-locked for a reason this app version doesn’t recognise — it can’t be transferred until that flow completes or is ரத்து செய்யப்பட்டது.",
+      "lockUnknown": "We couldn’t read whether this token is transfer-locked இப்போது — don’t rely on it being transferable until this reads clean.",
+      "positionRowLabel": "உங்கள் நிலை NFT",
+      "lockLabel": "மாற்று பூட்டு",
+      "lockPrecloseOffset": "Locked for a preclose-by-offset — it can’t be transferred until that completes or is ரத்து செய்யப்பட்டது.",
+      "lockSale": "Locked for a நிலை sale listing — it can’t be transferred until the sale completes or the listing is ரத்து செய்யப்பட்டது.",
+      "lockPrepayListing": "Locked for a பிணையம் listing — it can’t be transferred while that listing stands.",
+      "sanctionsLabel": "இணக்க நிலை",
+      "sanctionsFlagged": "The current holder is compliance-flagged: this NFT cannot be transferred in or out of their வாலெட், and its கோரிக்கைகள் stay frozen until the flag clears. Do not buy this token expecting delivery.",
+      "sanctionsUnknown": "We couldn’t check the holder’s compliance status இப்போது — a flagged holder would mean the token can’t be transferred, so re-check before relying on it.",
+      "inKindLabel": "default payout",
+      "inKindNote": "If the கடன் வாங்குபவர் of the linked கடன் defaults, this கோரு pays out the கடன்’s raw பிணையம் in kind — the protocol does not price or sell it for you. Value what you would actually receive before buying this நிலை.",
+      "liveNote": "Live means exactly this: the token exists here and its holder controls the linked நிலை. It does not vouch for the கடன்’s ஆரோக்கியம் or the other side’s behaviour.",
+      "goneBody": "Either its கோரு was completed and the token was retired, or it was never minted here at all — the நெட்வொர்க் doesn’t record which. Treat any வாய்ப்பு to sell or transfer this token id as worthless on this நெட்வொர்க்."
+    },
+    "keepers": {
+      "title": "Keeper அனுமதிகள்",
+      "blurb": "Keepers are third-party services (or your own bot) you can allow to run specific கடன் actions FOR you — start an early close, finish a refinance you set up, list a நிலை for sale. Everything here is off until you turn it on, and three switches must all agree before a keeper can act: the master switch, the action on that keeper, and a per-கடன் switch on each கடன்’s page.",
+      "safetyNote": "A keeper can never receive your money — payouts always go to whoever holds the நிலை. You can revoke any keeper (or flip the master switch off) at any time, the protocol can pause all keepers at once, and refinances are additionally bounded by the guardrails you set per கடன். If a நிலை changes hands, these permissions apply to the new holder’s அமைப்புகள், not yours.",
+      "masterLabel": "Allow my ஒப்புதல் செய்யப்பட்டது keepers to act (master switch — nothing runs while this is off)",
+      "addressPlaceholder": "0x… keeper முகவரி",
+      "actions": {
+        "initPreclose": {
+          "label": "Start closing a கடன் early for me",
+          "side": "acts on கடன்கள் you கடன் வாங்கிய",
+          "blurb": "Begin any early-close path on a கடன் where you are the கடன் வாங்குபவர். The payoff still comes from your வாலெட் under your standing ஒப்புதல்கள்."
+        },
+        "refinance": {
+          "label": "எனக்காக refinance-ஐ முடிக்க அனுமதி",
+          "side": "acts on கடன்கள் you கடன் வாங்கிய",
+          "blurb": "Finish a refinance you set up, bounded by the guardrails (விகிதம் ceiling, end date) you ஒப்புதல் செய்யப்பட்டது — and the protocol’s own keeper kill switch."
+        },
+        "completeOffset": {
+          "label": "எனக்காக offset close-ஐ முடிக்க அனுமதி",
+          "side": "acts on கடன்கள் you கடன் வாங்கிய",
+          "blurb": "Complete a preclose-by-offset once its வாய்ப்பு has been accepted."
+        },
+        "extend": {
+          "label": "Extend a கடன் in place for me",
+          "side": "acts on கடன்கள் you கடன் வாங்கிய",
+          "blurb": "Extend a கடன் without reஅதைத் திறக்கவும் — only when BOTH sides have opted into extension limits."
+        },
+        "initEarlyWithdraw": {
+          "label": "List my கடன் நிலை for sale",
+          "side": "acts on கடன்கள் you funded",
+          "blurb": "Start a கடனளிப்பவர் early exit by listing a கடன் you funded. The proceeds still pay only you."
+        },
+        "completeLoanSale": {
+          "label": "Finish a நிலை sale for me",
+          "side": "acts on கடன்கள் you funded",
+          "blurb": "Complete an accepted நிலை sale, moving the கடன் to its buyer. The payment still routes only to you."
+        }
+      },
+      "enabledOn": "Keeper access enabled. Keepers can இப்போது act where you granted permissions AND the கடன்’s own switch is on.",
+      "enabledOff": "Keeper access முடக்கப்பட்டது — இது off ஆக இருக்கும் வரை எந்த keeper-மும் உங்களுக்காக எங்கும் செயல்பட முடியாது.",
+      "addTitle": "ஒப்புதல் செய் a keeper",
+      "add": "Keeper-ஐ ஒப்புதல் செய்",
+      "added": "Keeper ஒப்புதல் செய்யப்பட்டது. நினைவில் கொள்ளுங்கள்: அந்தக் கடனின் keeper switch-ஐயும் இயக்கிய கடன்களில் மட்டுமே அது செயல்படும்.",
+      "alreadyListed": "That keeper is already ஒப்புதல் செய்யப்பட்டது — edit its permissions above instead.",
+      "save": "அனுமதிகளை சேமி",
+      "updated": "Keeper அனுமதிகள் புதுப்பிக்கப்பட்டன.",
+      "revoke": "ரத்து செய்",
+      "revoked": "Keeper ரத்து செய்யப்பட்டது — அது இனி எங்கும் உங்களுக்காக செயல்பட முடியாது.",
+      "maskUnreadable": "We couldn’t read this keeper’s current permissions, so editing is disabled (saving இப்போது could silently overwrite them). Reமுயற்சி in a moment; revoking still works.",
+      "extraBitsNote": "This keeper also holds advanced permissions not shown here — they are preserved unchanged when you சேமி.",
+      "perLoanReminder": "Approving a keeper here is not enough by itself: each கடன்’s page has a per-கடன் keeper switch that must also be on.",
+      "loading": "ஏற்றுகிறது your keeper அமைப்புகள்…",
+      "staleWarning": "We couldn’t புதுப்பி your keeper அமைப்புகள் இப்போதே — what’s shown may be slightly stale. Revoking and saving still work.",
+      "unavailable": "We couldn’t load your keeper அமைப்புகள் இப்போது — please மீண்டும் முயற்சி in a moment.",
+      "loanTitle": "Keepers for this கடன்",
+      "loanBlurb": "Your ஒப்புதல் செய்யப்பட்டது keepers can act on this கடன் only while its switch is on. Actions stay bounded by the permissions you granted in அமைப்புகள்.",
+      "loanToggleOn": "Keeper enabled for this கடன்.",
+      "loanToggleOff": "Keeper disabled for this கடன்.",
+      "loanEnablesUnavailable": "We couldn’t read this கடன்’s keeper switches இப்போது — the toggles are paused until the read succeeds (their shown state may be stale).",
+      "loanNoKeepers": "You haven’t ஒப்புதல் செய்யப்பட்டது any keepers yet — set them up under அமைப்புகள் → Keeper permissions.",
+      "loanMasterOff": "Your keeper master switch is off, so nothing can run even with this கடன்’s switch on — turn it on under அமைப்புகள் → Keeper permissions."
+    },
+    "earlyExit": {
+      "title": "இந்தக் கடனிலிருந்து முன்கூட்டியே வெளியேறு",
+      "blurb": "Sell your side of this கடன் to another கடனளிப்பவர் with a matching திறந்த கடனளிப்பு வாய்ப்பு. You’re paid immediately from their already-locked funds — nothing to ஒப்புதல் செய், nothing to கோரு afterwards — and the கடன் வாங்குபவர்’s terms don’t change at all.",
+      "pickerLead": "திறந்த கடனளிப்பு வாய்ப்புகள் that can buy you out:",
+      "none": "No matching கடனளிப்பு வாய்ப்புகள் இப்போது. An வாய்ப்பு must match this கடன்’s சொத்துகள், cover its remaining தொகை, and fit inside its remaining time — check back later.",
+      "unavailable": "We couldn’t load matching வாய்ப்புகள் இப்போது — please மீண்டும் முயற்சி in a moment.",
+      "shortfallWarn": "This buyer expects a higher விகிதம் than your கடன் pays, and for this candidate that விகிதம் difference (not the accrued interest — you pay the larger of the two, never both) is what sets your payout.",
+      "forfeitNote": "Exiting early forfeits the interest accrued so far: it covers the protocol’s cut and, when the buyer’s விகிதம் is higher, helps bridge the difference. The figure shown already accounts for this.",
+      "action": "வெளியேற்றத்தை சரிபார்",
+      "confirm": "உறுதிப்படுத்து — என் நிலையை விற்கவும்",
+      "done": "நிலை விற்கப்பட்டது — payout ஏற்கனவே உங்கள் வாலெட்டில் உள்ளது; இந்தக் கடன் இப்போது புதிய கடனளிப்பவருக்குச் சொந்தம். இங்கே மேலும் எதுவும் செய்ய வேண்டாம்.",
+      "loadingOffers": "Looking for matching கடனளிப்பு வாய்ப்புகள்…",
+      "figureMoved": "The payout figure moved with time, so the சரிபார் மூடப்பட்ட — அதைத் திறக்கவும் மீண்டும் to confirm எதிராக the current number.",
+      "checking": "Checking whether this கடன் can be exited early…",
+      "checkFailed": "We couldn’t read this கடன்’s exit details இப்போது — reமுயற்சிக்கும்."
+    },
+    "loanSale": {
+      "title": "இந்த நிலையை விற்பனைக்கு பட்டியலிடு",
+      "blurb": "Set the yearly விகிதம் a buyer would earn for the கடன்’s remaining time and list your நிலை publicly. When a buyer accepts, you receive the full outstanding தொகை in that same பரிவர்த்தனை. (If a matching வாய்ப்பு above already pays enough, the instant exit is simpler — listing is for naming your own price and waiting.)",
+      "rateLabel": "Yearly விகிதம் the buyer earns",
+      "action": "பட்டியலை சரிபார்",
+      "confirm": "உறுதிப்படுத்து — என் நிலையை பட்டியலிடு",
+      "lockWarning": "Listing locks your கடனளிப்பவர் நிலை NFT — it can’t be transferred until the sale completes or you ரத்து செய் the listing. Your கோரு rights are unaffected.",
+      "sweetenNote": "A விகிதம் above the கடன்’s own விகிதம் attracts buyers faster, but the difference for the remaining term comes out of your வாலெட் at completion.",
+      "done": "நிலை listed. When a buyer accepts, the sale settles automatically — keep the standing ஒப்புதல் (and enough balance for the settlement figure) in place until then, or ரத்து செய் the listing below.",
+      "pendingNoId": "This நிலை is listed for sale (listed from another device, so ரத்து செய்கிறது here isn’t available — ரத்து செய் where it was listed). Your கடனளிப்பவர் NFT is locked while the listing stands.",
+      "allowanceShort": "The standing settlement ஒப்புதல் (or your வாலெட் balance) no longer covers what a buyer’s acceptance would pull — the sale would fail இப்போது. Restore it below or ரத்து செய் the listing.",
+      "restore": "Restore the settlement ஒப்புதல்",
+      "restored": "Settlement ஒப்புதல் restored — the listing can complete மீண்டும்.",
+      "cancel": "பட்டியலை ரத்து செய்",
+      "cancelled": "பட்டியல் ரத்து செய்யப்பட்டது — உங்கள் lender NFT unlock செய்யப்பட்டது மற்றும் settlement approval அகற்றப்பட்டது. கடன் மாறாமல் தொடர்கிறது.",
+      "cancelledRevokeFailed": "Listing ரத்து செய்யப்பட்டது and your கடனளிப்பவர் NFT unlocked. The standing settlement ஒப்புதல் couldn’t be removed automatically — you can revoke it from your வாலெட்’s token-ஒப்புதல்கள் view.",
+      "cancelSoon": "ரத்து செய்lation திறக்கிறது a few minutes after listing — மீண்டும் முயற்சி shortly.",
+      "restoreAborted": "This listing is no longer standing (sold, ரத்து செய்யப்பட்டது, or unlocked) — nothing was ஒப்புதல் செய்யப்பட்டது. புதுப்பி to see the latest state.",
+      "loanSettledWhileListed": "This கடன் has settled, so the sale listing can never complete — ரத்து செய் it to unlock your கடனளிப்பவர் NFT and remove the standing ஒப்புதல்.",
+      "fundingUnknown": "We couldn’t identify this listing’s வாய்ப்பு record from this device, so we can’t verify its settlement funding here — manage it from the device that listed it, or keep a generous ஒப்புதல் and balance in place.",
+      "ended": "Your sale listing is no longer செயலில். If a buyer accepted it, the payout is already in your வாலெட் and the settlement was pulled via the standing ஒப்புதல்; any remaining ஒப்புதல் can be revoked from your வாலெட்’s token-ஒப்புதல்கள் view.",
+      "listingUnavailable": "Listing your நிலை at your own price isn’t available yet — the on-chain step it needs is being fixed. The instant exit above works: it sells into a matching திறந்த வாய்ப்பு right away.",
+      "partialBlockedByListing": "The கடனளிப்பவர் has this நிலை listed for sale at its current outstanding தொகை. Partial repayment is paused while the listing stands — it would change that தொகை and mislead a buyer. You can still repay in full or close early at any time."
+    },
+    "positions": {
+      "title": "என் நிலைகள்",
+      "lede": "Your கடன்கள் and வாடகைகள், with the one action each needs இப்போது.",
+      "emptyTitle": "இன்னும் செயலில் உள்ள நிலைகள் இல்லை",
+      "emptyBody": "தொடங்க கடன் வாங்கவும் அல்லது கடனளிக்கவும்.",
+      "unavailable": "We couldn’t load your நிலைகள் இப்போது. Your funds are unaffected — please மீண்டும் முயற்சி in a moment.",
+      "sourcesDegraded": "One of this page’s data sources is temporarily கிடைக்கவில்லை. Your current நிலைகள் are shown from the remaining source and recently changed items may take a moment to appear.",
+      "roleBorrower": "You கடன் வாங்கிய",
+      "roleLender": "நீங்கள் கடனளித்தது",
+      "groupAttention": "உங்கள் கவனம் தேவை",
+      "groupActive": "செயலில் உள்ள கடன்கள்",
+      "groupEnded": "முடிந்த கடன்கள்",
+      "claimWaiting": "கோரிக்கை காத்திருக்கிறது",
+      "seeActivity": "See your full activity வரலாறு →",
+      "graceOverViewer": "The grace period has ended — the கடன் can இப்போது be marked defaulted, and the பிணையம் goes to the கடனளிப்பவர்.",
+      "graceUnknownBorrower": "This கடன் is past due and the grace window may be running out — we couldn’t read the exact deadline இப்போது. Repay as soon as possible, before the கடனளிப்பவர் can take the பிணையம்.",
+      "graceUnknownLender": "This கடன் is past due — we couldn’t read the exact grace deadline இப்போது. Once the grace window ends and the default is recorded, the பிணையம் கோரு appears here.",
+      "graceUnknownViewer": "This கடன் is past due. Once its grace window ends, the கடனளிப்பவர் can கோரு the பிணையம்.",
+      "graceOverBorrower": "The grace period has ended — the protocol no longer accepts repayment, and the கடனளிப்பவர் can take the பிணையம் at any moment. Once they கோரு it, the outcome will show here.",
+      "graceOverLender": "The grace period has ended — this கடன் can இப்போது be marked defaulted. That normally happens automatically shortly after; once the default is recorded, the பிணையம் கோரு appears here.",
+      "fallbackCureBorrower": "This கடன் is past its grace period and a default is being settled. You can still repay in full to cure it and get your பிணையம் back — but only until the கடனளிப்பவர் finalizes the default, which can happen at any moment.",
+      "owedDefaulted": "Nothing to repay anymore — this கடன் ended in default and the பிணையம் covers it.",
+      "owedDefaultedNoCollateral": "Nothing to repay anymore — this கடன் ended in default and was settled.",
+      "owedClosed": "Nothing — this கடன் is மூடப்பட்ட and settled.",
+      "whatNextRepaidBorrower": "You repaid this கடன். Nothing else can happen to it — கோரு your பிணையம் back below if you haven’t yet.",
+      "whatNextRepaidLender": "The கடன் வாங்குபவர் repaid. Nothing else can happen to this கடன் — கோரு your funds below if you haven’t yet.",
+      "whatNextRepaidViewer": "The கடன் வாங்குபவர் repaid. Nothing else can happen to this கடன் — any remaining கோரிக்கைகள் belong to the நிலை holders.",
+      "whatNextDefaultedBorrower": "This கடன் already ended in default. Any remainder after settlement is கோரக்கூடிய (it may be zero).",
+      "whatNextDefaultedLender": "This கடன் already ended in default — what it recovered is கோரக்கூடிய in the கோரு Center.",
+      "whatNextDefaultedViewer": "This கடன் already ended in default — the settlement’s recovery belongs to the நிலை holders.",
+      "whatNextInternalMatchBorrower": "This கடன் மூடப்பட்ட by internal matching. Collect any residual and VPFI rebate below (either may be zero).",
+      "whatNextInternalMatchLender": "This கடன் மூடப்பட்ட by internal matching — collect your funds below if you haven’t yet.",
+      "whatNextInternalMatchViewer": "This கடன் மூடப்பட்ட by internal matching — any residual கோரிக்கைகள் belong to the நிலை holders.",
+      "whatNextClosed": "This கடன் is fully settled — there is nothing left to do.",
+      "whatNextRentalEnded": "This வாடகை has ended. Any earned கட்டணங்கள் or refundable buffer can be கோரப்பட்டது below by the நிலை holders — nothing else can change it.",
+      "settledAhead": "This நிலை has already மூடப்பட்ட on-chain — the status here is live. Your lists may take a moment to catch up."
+    },
+    "powerSurface": {
+      "body": "This is a power-user screen — raw வாய்ப்புகள் and live விகிதங்கள் with less hand-holding. The guided கடன் வாங்கு and கடனளி flows cover the same actions with step-by-step explanations.",
+      "guidedBorrow": "Guided கடன் வாங்கு",
+      "guidedLend": "Guided கடனளி",
+      "enableAdvanced": "I kஇப்போது what I’m doing — enable Advanced mode",
+      "dismiss": "மூடு"
+    },
+    "claims": {
+      "title": "கோரிக்கைகள்",
+      "lede": "Money and சொத்துகள் that are ready for you to collect.",
+      "empty": "இப்போது கோர எதுவும் இல்லை.",
+      "emptyBody": "When a கடன் or வாடகை you are part of ends, anything owed to you appears here automatically.",
+      "emptyCta": "என் நிலைகளைப் பார்",
+      "unavailable": "We couldn’t load your கோரிக்கைகள் இப்போது. Your funds are unaffected — please மீண்டும் முயற்சி in a moment.",
+      "claim": "கோரு",
+      "claimed": "கோரிக்கை முடிந்தது.",
+      "allTitle": "எல்லாவற்றையும் ஒரே நேரத்தில் கோரு",
+      "allBlurb": "Collect every ready payout in a single வாலெட் கையெழுத்து instead of one at a time.",
+      "allEmpty": "Nothing is batchable இப்போது.",
+      "allVpfiNote": "park செய்யப்பட்ட VPFI-ஐ withdraw செய்தால் உங்கள் fee-discount tier குறையலாம் — default-ஆக off.",
+      "allResidualNote": "Anything that wasn’t ready is still listed below to கோரு on its own.",
+      "allRewardsUnavailable": "We couldn’t check your rewards, so they’re not in this batch — கோரு them separately.",
+      "allVpfiUnavailable": "உங்கள் vault VPFI-ஐ சரிபார்க்க முடியவில்லை, எனவே அது இந்த batch-ல் இல்லை.",
+      "allWorking": "Waiting for வாலெட்…"
+    },
+    "offers": {
+      "title": "வாய்ப்பு புத்தகம்",
+      "lede": "மற்ற பயனர்களின் திறந்த கடனளிப்பு வாய்ப்புகள் மற்றும் கடன் கோரிக்கைகள்.",
+      "emptyTitle": "இப்போது திறந்த வாய்ப்புகள் இல்லை",
+      "emptyBody": "உங்கள் சொந்த வாய்ப்பை உருவாக்கி, மறுபக்கத்தை உங்களிடம் வரச் செய்யுங்கள்.",
+      "unavailable": "We couldn’t load the வாய்ப்பு புத்தகம் இப்போது. Please மீண்டும் முயற்சி in a moment.",
+      "lenderOffer": "கடனளிப்பு வாய்ப்பு",
+      "borrowerOffer": "கடன் கோரிக்கை"
+    },
+    "desk": {
+      "title": "விகித மேசை",
+      "lede": "The order புத்தகம் for one சந்தை — read the விகிதங்கள், post or amend limit-விகிதம் வாய்ப்புகள், and watch your திறந்த orders and நிலைகள் in one place.",
+      "marketLabel": "சந்தை",
+      "tenorLabel": "காலம்",
+      "customPair": "தனிப்பயன் ஜோடி…",
+      "customLend": "கடன் சொத்து முகவரி",
+      "customCollateral": "பிணைய சொத்து முகவரி",
+      "marketsUnavailable": "The சந்தைகள் list couldn’t load இப்போது, so pair discovery is limited — enter a pair manually and the புத்தகம் itself can still load.",
+      "marketsEmpty": "No live சந்தைகள் இப்போது. Pick a pair and post the first வாய்ப்பு with the ticket.",
+      "marketsTruncated": "Showing the most செயலில் சந்தைகள் — smaller சந்தைகள் aren’t listed here, but you can load any pair with “Custom pair…”.",
+      "pickPair": "Pick a சந்தை to load its புத்தகம்.",
+      "lastFill": "கடைசி fill",
+      "quotedMid": "quoted mid",
+      "spread": "spread",
+      "crossed": "crossed",
+      "statUnknown": "—",
+      "bookTitle": "Order book",
+      "rateHeading": "விகிதம் (APR %)",
+      "sizeHeading": "அளவு",
+      "cumHeading": "ஆழம்",
+      "asksHeading": "கடனளிப்பவர் வாய்ப்புகள் (asks)",
+      "bidsHeading": "கடன் கோரிக்கைகள் (bids)",
+      "bookEmpty": "இந்த சந்தையில் இன்னும் திறந்த வாய்ப்புகள் இல்லை — உங்கள்து முதலில் இருக்கலாம்.",
+      "bookUnavailable": "We couldn’t load the order புத்தகம் இப்போது. Please மீண்டும் முயற்சி in a moment.",
+      "bookIndexedCopy": "Live chain read கிடைக்கவில்லை — showing the indexed copy of the புத்தகம், which can lag the chain.",
+      "yourOrderMark": "Your order at this விகிதம்",
+      "takeAsk": "கடன் வாங்கு this",
+      "takeBid": "கடனளி to this",
+      "rowPrefills": "Tap a விகிதம் to pre-fill the ticket. Taking the top of the புத்தகம் goes through the same guided சரிபார் as கடன் வாங்கு/கடனளி.",
+      "tapeTitle": "சமீபத்திய நிறைவேற்றங்கள்",
+      "tapeEmpty": "இந்த சந்தையில் இன்னும் நிறைவேற்றங்கள் இல்லை.",
+      "tapeUnavailable": "We couldn’t load recent fills இப்போது.",
+      "match": {
+        "body": "These top-of-புத்தகம் வாய்ப்புகள் can cross. Anyone can execute this match and earn the matcher fee — you pay the நெட்வொர்க் gas to execute it.",
+        "execute": "match-ஐ செயல்படுத்து",
+        "executing": "match செய்கிறது…",
+        "executed": "Match executed — the crossed வாய்ப்புகள் settled into a கடன்.",
+        "noLongerMatchable": "These வாய்ப்புகள் can no longer cross — the புத்தகம் moved before the match was sent. Nothing was sent.",
+        "matchingDisabled": "வாய்ப்பு matching was just switched off by protocol governance, so this match can’t be sent இப்போது. Nothing was sent."
+      },
+      "signed": {
+        "badge": "கையெழுத்திடப்பட்டது",
+        "badgeTooltip": "Gasless கையெழுத்திட்ட order from the off-chain புத்தகம் — the maker கையெழுத்திட்ட it without a பரிவர்த்தனை, and it fills in a single on-chain பரிவர்த்தனை by whoever takes it. கையெழுத்திட்ட rows always come from the order-புத்தகம் service, never the chain, until they fill.",
+        "partialBadgeTooltip": "Partially matched கையெழுத்திட்ட order — its remainder still counts as depth and fills through the permissionless matcher, but a direct fill is no longer possible.",
+        "rangedBadgeTooltip": "Range-sized கையெழுத்திட்ட order — its size still counts as depth, but only the permissionless matcher can consume it in slices; there is no whole-order direct fill.",
+        "fill": "நிரப்பு",
+        "confirmTitle": "Fill கையெழுத்திட்ட order",
+        "confirmLede": "You execute the whole fill in one பரிவர்த்தனை: your side moves from your வாலெட், the maker’s side from their vault, and the கடன் starts immediately.",
+        "gone": "This கையெழுத்திட்ட order is no longer fillable (filled, ரத்து செய்யப்பட்டது, or expired). The புத்தகம் will catch up shortly. Nothing was sent.",
+        "makerNotFunded": "maker-ன் vault இப்போது இந்த order-ஐ cover செய்யவில்லை, எனவே fill on-chain தோல்வியடையும். எதுவும் அனுப்பப்படவில்லை — maker முதலில் vault-ஐ top up செய்ய வேண்டும்.",
+        "illiquid": "One of this order’s சொத்துகள் isn’t priced by the protocol இப்போது, and this compact confirm can’t walk you through the in-kind default terms that implies. Nothing was sent.",
+        "kycBlocked": "This deployment’s identity-verification rules don’t cover one side of this order at this value, so the fill would fail on-chain. Nothing was sent or ஒப்புதல் செய்யப்பட்டது.",
+        "riskBlocked": "This deployment’s risk-access rules block one side of this order இப்போது — the maker or your வாலெட் needs an on-chain access level or standing consent this compact confirm can’t collect. Nothing was sent or ஒப்புதல் செய்யப்பட்டது.",
+        "accept": "order-ஐ நிரப்பு",
+        "accepting": "நிரப்புகிறது…",
+        "accepted": "கையெழுத்திட்ட order நிரப்பப்பட்டது — கடன் live."
+      },
+      "chart": {
+        "title": "நிறைவேற்றப்பட்ட விகிதங்கள்",
+        "loading": "chart ஏற்றுகிறது…",
+        "lastFillNone": "இன்னும் fills இல்லை",
+        "empty": "No fills yet for this சந்தை — the chart draws only executed விகிதங்கள்.",
+        "emptyRange": "No fills in this range — முயற்சி a longer range.",
+        "unavailable": "We couldn’t load the விகிதம் வரலாறு இப்போது.",
+        "retry": "மீண்டும் முயற்சி",
+        "quotedMid": "quoted mid",
+        "quotedMidHint": "Dashed line = the புத்தகம்’s current quoted mid — a resting quote, not an executed விகிதம்.",
+        "truncatedNote": "Long வரலாறு — showing the most recent fills only. The oldest candles are not drawn.",
+        "intervalLabel": "இடைவெளி",
+        "rangeLabel": "வரம்பு",
+        "attribution": "Charts by TradingView",
+        "mobileBook": "புத்தகம்",
+        "mobileChart": "chart",
+        "mobileViewLabel": "Desk view"
+      },
+      "history": {
+        "tab": "வரலாறு",
+        "caption": "Everything this வாலெட் ever traded on the desk — every சந்தை, every status. Repaid, கோரப்பட்டது, and transferred நிலைகள் stay listed.",
+        "empty": "No desk வரலாறு for this வாலெட் yet.",
+        "unavailable": "We couldn’t load your வரலாறு இப்போது.",
+        "loadMore": "மேலும் ஏற்று",
+        "loadingMore": "ஏற்றுகிறது…",
+        "loading": "உங்கள் வரலாறு ஏற்றப்படுகிறது…",
+        "roleLender": "கடன் வழங்குபவர்",
+        "roleBorrower": "கடன் வாங்குபவர்",
+        "started": "தொடங்கியது"
+      },
+      "ticket": {
+        "title": "Order ticket",
+        "sideLend": "கடனளி",
+        "sideBorrow": "கடன் வாங்கு",
+        "amountLend": "கடனளிக்கும் தொகை",
+        "amountBorrow": "கடன் வாங்கும் தொகை",
+        "rateLend": "விகிதம் — minimum you’ll accept (APR %)",
+        "rateBorrow": "விகிதம் — maximum you’ll pay (APR %)",
+        "collateralRequire": "நீங்கள் கோரும் பிணையம்",
+        "collateralLock": "நீங்கள் பூட்டும் பிணையம்",
+        "collateralFixedNote": "Set by the selected சந்தை — switch சந்தைகள் in the header to post எதிராக a different பிணையம் சொத்து.",
+        "expiryLabel": "காலாவதி",
+        "expiryGtc": "GTC",
+        "expiryCustom": "தனிப்பயன்…",
+        "expiryInvalid": "The custom காலாவதி must be a future date and time.",
+        "expiryTooFar": "The custom காலாவதி can be at most one year ahead — the protocol caps வாய்ப்பு காலாவதி at 365 days out.",
+        "fillModeLabel": "நிரப்பு முறை",
+        "fillPartial": "பகுதி",
+        "fillAon": "AON",
+        "fillIoc": "IOC",
+        "fillPartialHint": "Partial: the வாய்ப்பு can fill in pieces down to a minimum.",
+        "fillAonHint": "All-or-nothing: முழுத் தொகையில் ஒரு முழு கடனாக மட்டுமே நிரம்பும்.",
+        "fillIocHint": "Immediate-or-ரத்து செய்: rests only until its காலாவதி — an காலாவதி is required.",
+        "iocNeedsExpiry": "IOC orders need an காலாவதி — pick 24h, 7d, or a custom time.",
+        "post": "order பதிவிடு",
+        "posting": "பதிவிடுகிறது…",
+        "posted": "order பதிவிடப்பட்டது",
+        "postedNext": "Your வாய்ப்பு is live on the புத்தகம். Manage it under திறந்த orders below — amend or ரத்து செய் any time before it fills.",
+        "modeLabel": "பதிவு",
+        "modeOnchain": "On-chain",
+        "modeGasless": "Gasless (கையெழுத்து மட்டும்)",
+        "modeOnchainHint": "Post the வாய்ப்பு as a பரிவர்த்தனை — funds are escrowed in your vault இப்போது.",
+        "modeGaslessHint": "கையெழுத்திடவும் order off-chain and post it to the புத்தகம் — no பரிவர்த்தனை, no gas. Funds move only when a taker fills it.",
+        "gaslessEscrowNote": "Nothing is escrowed when you கையெழுத்திடு — a taker’s fill pulls from your vault’s free balance at that moment. பின்னர் ரத்து செய்வது is an on-chain பரிவர்த்தனை (unlike posting).",
+        "gaslessNeedsIndexer": "Gasless posting needs the order-புத்தகம் service, which isn’t configured இப்போது. On-chain posting still works.",
+        "gaslessLenderAonNote": "Gasless கடனளிப்பு orders fill only as one whole கடன் — a கையெழுத்திட்ட கடனளிப்பவர் order can’t be sliced on-chain, so it posts all-or-nothing. Partial stays available with on-chain posting.",
+        "gaslessPost": "கையெழுத்திட்டு புத்தகத்தில் பதிவிடு",
+        "gaslessPosting": "கையெழுத்திடுகிறது…",
+        "gaslessConsentRequired": "சரிபார் and accept the risk disclosures and terms first — for a gasless order, your கையெழுத்து is what records that consent.",
+        "gaslessPosted": "கையெழுத்திட்ட order posted to the புத்தகம் — no gas spent. It fills when a taker accepts it.",
+        "gaslessUnavailable": "We couldn’t reach the order புத்தகம் இப்போது — the order was NOT posted. Please மீண்டும் முயற்சி in a moment.",
+        "blockNetwork": "பதிவிட ஆதரிக்கப்படும் நெட்வொர்க்குக்கு மாறவும்.",
+        "blockNoMarket": "முதலில் header-ல் சந்தையைத் தேர்ந்தெடுக்கவும்.",
+        "blockAmount": "மேலுள்ள தொகையை உள்ளிடவும்.",
+        "blockRate": "0 முதல் 100% வரை விகிதத்தை உள்ளிடவும்.",
+        "blockCollateral": "மேலுள்ள பிணையத் தொகையை உள்ளிடவும்.",
+        "blockLoading": "ஏற்றுகிறது சந்தை details — one moment.",
+        "blockConsent": "சரிபார் and accept the risk terms above to post.",
+        "blockGaslessService": "Gasless posting needs the order-புத்தகம் service, which isn’t available இப்போது — switch Posting to On-chain.",
+        "consentRecheck": "விதிமுறைகள் மாறிவிட்டன — மீண்டும் உறுதிப்படுத்தவும்.",
+        "max": "அதிகபட்சம்",
+        "feePreviewTitle": "கட்டணங்கள் மற்றும் உறுதி"
+      },
+      "orders": {
+        "tab": "திறந்த orders",
+        "empty": "திறந்த orders இல்லை. ticket மூலம் ஒன்றை பதிவிடுங்கள்.",
+        "unavailable": "We couldn’t load your திறந்த orders இப்போது.",
+        "heldNotCreated": "பிடித்து வைக்கப்பட்டது — உருவாக்கியவரால் நிர்வகிக்கப்படுகிறது",
+        "cancel": "ரத்து செய்",
+        "cancelling": "ரத்து செய்கிறது…",
+        "amend": "திருத்து",
+        "amendTitle": "Amend in place — same வாய்ப்பு, same நிலை, one பரிவர்த்தனை.",
+        "amendLoadFailed": "We couldn’t read this வாய்ப்பு’s live values, and amending must start from them. Please மீண்டும் முயற்சி.",
+        "amendMinAmount": "குறைந்தபட்ச தொகை",
+        "amendMaxAmount": "அதிகபட்ச தொகை",
+        "amendAmountAon": "தொகை (all-or-nothing)",
+        "amendRate": "விகிதம் (APR %)",
+        "amendRateMax": "அதிகபட்ச விகிதம் (APR %)",
+        "amendCollateral": "பிணையம்",
+        "amendCollateralMax": "அதிகபட்ச பிணையம்",
+        "amendNoChange": "இன்னும் எதுவும் மாறவில்லை.",
+        "amendMalformed": "சாதாரண decimal எண்கள் மட்டும் உள்ளிடவும் — விருப்பமான decimal point உடன் digits.",
+        "amendInvalid": "ஒவ்வொரு minimum-மும் அதன் maximum-க்கு சமமாகவோ அதற்கு கீழாகவோ இருக்க வேண்டும்; ஏற்கனவே filled ஆன அளவை விட எந்த maximum-மும் குறையக்கூடாது.",
+        "amendPositive": "தொகைகள் and பிணையம் must be greater than zero.",
+        "amendAllowanceLost": "The token ஒப்புதல் for this grow is no longer sufficient — nothing was changed. Please மீண்டும் ஒப்புதல் செய்.",
+        "approveFirst": "முதலில் ஒப்புதல் செய்",
+        "approving": "ஒப்புதல் செய்கிறது…",
+        "save": "மாற்றங்களை சேமி",
+        "saving": "திருத்துகிறது…",
+        "amended": "order திருத்தப்பட்டது.",
+        "signedTitle": "கையெழுத்திட்ட orders (இந்த சந்தை)",
+        "signedNote": "Gasless கையெழுத்திட்ட orders you posted for the selected சந்தை. Orders for other சந்தைகள் don’t show here — switch the சந்தை in the header to manage them.",
+        "signedCancel": "on-chain ரத்து செய்",
+        "signedCancelling": "ரத்து செய்கிறது…",
+        "signedCancelNote": "Posting was free, but ரத்து செய்வதற்கு செலவாகும் gas: the only way to revoke a கையெழுத்து the புத்தகம் already holds is an on-chain பரிவர்த்தனை.",
+        "signedCancelled": "கையெழுத்திட்ட order on-chain ரத்து செய்யப்பட்டது.",
+        "signedTruncated": "You have more கையெழுத்திட்ட orders in this சந்தை than we can list at once — this is not the complete set."
+      },
+      "positions": {
+        "tab": "நிலைகள்",
+        "empty": "திறந்த நிலைகள் இல்லை in this வாலெட்.",
+        "unavailable": "We couldn’t load your நிலைகள் இப்போது.",
+        "health": "ஆரோக்கியம்",
+        "notPriced": "auto-liquidation இல்லை",
+        "manage": "நிர்வகி",
+        "allPositions": "அனைத்து நிலைகள் →"
+      }
+    },
+    "vpfi": {
+      "title": "VPFI தள்ளுபடிகள்",
+      "optional": "விருப்பம்: தகுதியான கடன்களில் protocol கட்டணங்களை குறைக்க உங்கள் vault-ல் VPFI வைத்திருக்கலாம். Vaipakam பயன்படுத்த VPFI ஒருபோதும் அவசியமில்லை.",
+      "noGasDiscount": "உங்கள் VPFI தள்ளுபடி network gas-ஐக் குறைக்காது.",
+      "withdrawWarning": "VPFI திரும்பப் பெறுவது எதிர்கால கட்டண தள்ளுபடிகளை குறைக்கலாம்.",
+      "tokenChanged": "The VPFI token configuration changed since you சரிபார்த்த. Nothing was ஒப்புதல் செய்யப்பட்டது — please check the updated numbers and மீண்டும் முயற்சி.",
+      "tokenCheckRetry": "We couldn’t confirm the VPFI token இப்போதே — nothing was ஒப்புதல் செய்யப்பட்டது. Please மீண்டும் முயற்சி in a moment.",
+      "addToWallet": "MetaMask-ல் VPFI சேர்க்கவும்",
+      "addedToWallet": "VPFI-ஐ கண்காணிக்க உங்கள் வாலெட்டிடம் கேட்கப்பட்டது."
+    },
+    "errors": {
+      "partialOverPrincipal": "That covers the கடன்’s whole remaining principal. Use “Repay this கடன்” instead — it settles the கடன் properly and releases your பிணையம்.",
+      "notAToken": "That முகவரி doesn’t look like a token on this நெட்வொர்க். Double-check it or pick a suggested சொத்து.",
+      "txRejected": "You ரத்து செய்யப்பட்டது in your வாலெட். Nothing was sent.",
+      "txFailed": "The பரிவர்த்தனை didn’t go through. Nothing was taken beyond நெட்வொர்க் gas. Please மீண்டும் முயற்சி.",
+      "sanctionsBlocked": "This வாலெட் is flagged by the sanctions oracle, so new நிலைகள் and payouts are blocked. Nothing was sent. Repaying and closing existing நிலைகள் stays திறந்த.",
+      "sanctionsCheckRetry": "We couldn’t run the compliance check இப்போதே — nothing was sent. Please மீண்டும் முயற்சி in a moment.",
+      "checkRetry": "We couldn’t verify this on-chain இப்போதே — nothing was sent. Please மீண்டும் முயற்சி in a moment.",
+      "assetPaused": "One of this deal’s சொத்துகள் is temporarily paused by the protocol, so this action can’t go through இப்போது. Nothing was sent — please மீண்டும் முயற்சி later.",
+      "positionMoved": "This நிலை is no longer held by the இணைக்கப்பட்டது வாலெட் (it may have been transferred or already கோரப்பட்டது). Nothing was sent — புதுப்பி to see the current state.",
+      "collateralNotPriced": "This கடன்’s பிணையம் isn’t currently priced by the protocol, so பிணையம் top-ups aren’t available for it. Nothing was sent.",
+      "pastGrace": "This கடன் is past its due date and grace window, so repayment is மூடப்பட்ட on-chain — the default process applies இப்போது. Nothing was sent.",
+      "loanAlreadySettled": "This கடன் looks already settled on-chain — nothing was sent. சிறிது நேரத்தில் புதுப்பி a moment to see its final state.",
+      "nothingToClaim": "There’s nothing for this side to கோரு on-chain இப்போது — the payout may be zero or already collected. Nothing was sent.",
+      "preclosePastGrace": "This கடன் is past its due date and grace window, so closing early is no longer possible — nothing was sent. The default process applies இப்போது.",
+      "refinancePastGrace": "This கடன் is past its due date and grace window, so it can no longer be refinanced — nothing was sent. The default process applies இப்போது.",
+      "saleListingMatured": "This கடன் is past its due date, so the நிலை can no longer be listed for sale — nothing was sent.",
+      "refinanceNotOriginalBorrower": "This நிலை changed hands since the கடன் began, so its பிணையம் can’t carry over into a refinance — nothing was sent. Repaying or closing early stays available.",
+      "lenderBlockedPartial": "The கடனளிப்பவர்’s வாலெட் can’t receive a direct partial payment இப்போது (compliance flag). Repaying the கடன் in full stays திறந்த — that path holds the funds for a screened கோரு instead."
+    },
+    "fees": {
+      "lateFee": "Late repayment adds 1% of the outstanding தொகை after day one, growing 0.5% per day, capped at 5%.",
+      "faqQuestion": "Vaipakam என்ன கட்டணங்கள் வசூலிக்கிறது?",
+      "faqAnswerGeneric": "Vaipakam charges a கடன் initiation fee on the தொகை கடன் வாங்கிய and keeps a share of the interest a கடனளிப்பவர் earns. Late repayment adds 1% of the outstanding தொகை after day one, growing 0.5% per day, capped at 5%. நெட்வொர்க் gas is separate and goes to the blockchain, not to Vaipakam. உங்கள் வாலெட் to see the exact current விகிதங்கள்."
+    },
+    "faucet": {
+      "title": "சோதனை சொத்துகளைப் பெறு",
+      "lede": "Mint mock token-கள் and a test NFT so you can முயற்சி கடன் வாங்குதல், கடனளிப்பு, and renting on a test நெட்வொர்க் — no real value, no cost beyond gas.",
+      "notTestnetTitle": "Test சொத்துகள் aren’t available here",
+      "backHome": "முகப்பிற்கு திரும்பு",
+      "minting": "mint செய்கிறது…",
+      "viewTx": "பரிவர்த்தனையைப் பார்",
+      "nextSteps": "அடுத்து: இதைப் பயன்படுத்தத் தொடங்கு —",
+      "nextBorrow": "கடன் வாங்கு எதிராக it",
+      "nextLend": "கடனளி it out",
+      "nextRent": "வாடகைக்கு பட்டியலிடு",
+      "footer": "Minted சொத்துகள் land in your வாலெட். Use “My vault” and the கடன் வாங்கு, கடனளி, and NFT வாடகை screens to put them to work.",
+      "mintedNft": "Minted a test வாடகை NFT to your வாலெட். Its token ID — you’ll need it to list the வாடகை:",
+      "copyTokenId": "token ID நகலெடு",
+      "copiedTokenId": "நகலெடுக்கப்பட்டது.",
+      "liquid": {
+        "title": "Liquid test token (tLIQ)",
+        "blurb": "Priced by a test oracle, so it behaves like a liquid சொத்து — ஆரோக்கியம் factor, liquidation, and refinancing all work with it. Pair it with mWETH (one as the கடன், one as பிணையம்) when a flow needs two different liquid token-கள்."
+      },
+      "liquid2": {
+        "blurb": "A test USDC priced at $1 by a test oracle — a second, distinct liquid token so you can run a deal where both the கடன் and the பிணையம் are liquid (with a realistic price spread எதிராக tLIQ / mWETH) without pairing a token எதிராக itself."
+      },
+      "mweth": {
+        "title": "Mock wrapped ETH (mWETH)",
+        "blurb": "oracle விலை கொண்ட test token; demos-ல் “wrapped ETH” வேடத்தில் பயன்படும். இது உண்மையான WETH அல்ல — இலவசமாக mint ஆகும், மதிப்பு இல்லை."
+      },
+      "nft2": {
+        "title": "வாடகைக்கு விடக்கூடிய இரண்டாவது test NFT (vART)",
+        "blurb": "Another ERC-4907 collection — handy when you want to list one NFT and rent a different one, or run several வாடகைகள் at once.",
+        "action": "vART NFT mint செய்"
+      },
+      "addedToWallet": "Asked your வாலெட் to track it.",
+      "illiquid": {
+        "title": "Illiquid test token (tILQ)",
+        "blurb": "No price feed, so it behaves like an illiquid சொத்து — both sides must consent, and default transfers the பிணையம் in kind."
+      },
+      "illiquid2": {
+        "title": "இரண்டாவது illiquid test token (tILQ2)",
+        "blurb": "Also unpriced. Pair it with tILQ (one as the கடன், one as பிணையம்) to முயற்சி a deal where NEITHER side has a price — both parties must consent, no ஆரோக்கியம் factor applies, and default hands the பிணையம் over in kind."
+      },
+      "nft": {
+        "title": "வாடகை test NFT (vRENT)",
+        "blurb": "An ERC-4907 rentable NFT for முயற்சிக்கும் the NFT வாடகை flows.",
+        "action": "சோதனை NFT mint செய்"
+      }
+    },
+    "vault": {
+      "title": "என் vault",
+      "lede": "Your own on-chain account. Only your வாலெட் controls it — Vaipakam never pools user funds.",
+      "noVaultYet": "Your vault is created automatically with your first வாய்ப்பு, கடன், or deposit. Nothing to set up.",
+      "emptyCta": "தொடங்கு",
+      "emptyCtaFaucet": "சோதனை சொத்துகளைப் பெறு",
+      "unavailable": "We couldn’t read your vault இப்போது. Your funds are unaffected — please மீண்டும் முயற்சி in a moment.",
+      "lockedHint": "Locked தொகைகள் back your திறந்த வாய்ப்புகள், செயலில் கடன்கள், and வாடகைகள். They free up when those close."
+    },
+    "activity": {
+      "title": "செயல்பாடு",
+      "lede": "Everything your வாலெட் has done on Vaipakam, newest first.",
+      "empty": "இன்னும் செயல்பாடு இல்லை. நீங்கள் Vaipakam பயன்படுத்தும்போது இது இங்கே தோன்றும்.",
+      "emptyCtaBorrow": "ஏதாவது கடன் வாங்கு",
+      "emptyCtaLend": "ஏதாவது கடனளி",
+      "unavailable": "We couldn’t load your activity இப்போது. Please மீண்டும் முயற்சி in a moment.",
+      "truncatedNote": "சமீபத்திய செயல்பாடு மட்டும் காட்டப்படுகிறது — protocol feed busy ஆக உள்ளது; பழைய events பட்டியலிடப்படாமல் இருக்கலாம்.",
+      "participantTruncatedNote": "This வாலெட் has more கடன் வரலாறு than we can check at once — some events tied to its oldest கடன்கள் may be missing here.",
+      "truncatedEmpty": "சமீபத்திய protocol செயல்பாட்டில் உங்களுடையது எதுவும் இல்லை. இந்தப் பக்கம் சமீபத்திய செயல்பாடு மட்டும் காட்டுவதால், பழையவை இங்கே தெரியாது.",
+      "viewTx": "பரிவர்த்தனையைப் பார்",
+      "loadMore": "பழைய செயல்பாட்டை ஏற்று",
+      "loadingMore": "ஏற்றுகிறது…",
+      "unavailableFallback": "Your current கடன்கள் and வாடகைகள் are always available on",
+      "positionsLink": "என் நிலைகள்"
+    },
+    "rewards": {
+      "title": "தொடர்பு வெகுமதிகள்",
+      "blurb": "VPFI rewards from your கடனளிப்பு and கடன் வாங்குதல் activity. They become கோரக்கூடிய after a கடன் closes and the reward day finalizes.",
+      "empty": "No rewards yet. Rewards appear after கடனளிப்பு or கடன் வாங்குதல் activity.",
+      "waiting": "Your rewards are being finalized — a reward day closes across all chains before it can be கோரப்பட்டது. Check back soon.",
+      "claim": "வெகுமதிகளை கோரு"
+    },
+    "sanctions": {
+      "title": "This வாலெட் is listed by the compliance oracle.",
+      "line1": "The இணைக்கப்பட்டது முகவரி appears on the on-chain sanctions oracle Vaipakam screens எதிராக.",
+      "line2": "New நிலைகள் (வாய்ப்புகள், கடன்கள், வாடகைகள், deposits) are blocked and will not go through.",
+      "line3": "Repaying and closing existing நிலைகள் stays திறந்த so your counterparties can be made whole, but கோரிக்கைகள் and payouts to this வாலெட் are blocked while it is flagged. If you believe this is an error, contact the oracle provider (Chainalysis)."
+    },
+    "risk": {
+      "notPriced": "This கடன்’s சொத்துகள் aren’t priced by the protocol, so there is no automatic liquidation — the பிணையம் transfers as-is on default.",
+      "healthy": "சீராக உள்ளது",
+      "watch": "கவனமாக பார்க்கவும்",
+      "danger": "liquidation-க்கு அருகில்",
+      "liquidatable": "இப்போது liquidate செய்யலாம்",
+      "explain": "If the பிணையம்’s value falls too far எதிராக the கடன் வாங்கிய தொகை, the கடன் can be liquidated. Adding பிணையம் makes it safer.",
+      "listChecking": "ஆரோக்கியம் சரிபார்க்கிறது",
+      "listCheckingTitle": "This கடன்’s ஆரோக்கியம் hasn’t been read yet, so the badge stays neutral. Liquidation protection still applies on-chain."
+    },
+    "notFound": {
+      "title": "இந்தப் பக்கம் இல்லை",
+      "body": "இணைப்பு பழையதாகவோ தவறாகவோ இருக்கலாம். எதுவும் இழக்கப்படவில்லை — உங்கள் நிலைகள் பாதுகாப்பாக உள்ளன.",
+      "backHome": "முகப்பிற்கு திரும்பு"
+    }
+  }
+}
