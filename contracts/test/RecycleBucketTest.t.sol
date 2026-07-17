@@ -197,6 +197,43 @@ contract RecycleBucketTest is SetupTest, IVaipakamErrors {
         assertEq(vpfi.balanceOf(treasuryRecipient), 0, "treasury untouched");
     }
 
+    // ─── Backing check (Codex #1312 P1) ──────────────────────────────────────
+
+    /// @notice An UNDERFUNDED Diamond must not mint unbacked recycle credits:
+    ///         the credit chokepoint reverts, rolling back the whole sweep
+    ///         (processed flags + pool accounting included) — the same
+    ///         revert-on-underfunded behaviour the pre-PR-3a treasury
+    ///         transfer provided, strictly stronger.
+    function testUnderfundedDiamondRevertsInsteadOfUnbackedCredit() public {
+        uint64 loanId = 78;
+        (uint256 id, ) = _seedForfeited(alice, loanId);
+        _mut().setLoanActiveLenderEntryId(loanId, id);
+
+        // Drain the Diamond's VPFI (test-only burn via the token owner).
+        uint256 bal = vpfi.balanceOf(address(diamond));
+        vm.prank(address(diamond));
+        vpfi.transfer(address(this), bal);
+
+        vm.prank(makeAddr("keeper"));
+        vm.expectRevert(); // InsufficientRecycleBacking(needed, 0)
+        _facet().sweepForfeitedInteractionRewards(loanId);
+
+        // Whole frame rolled back: nothing processed, nothing credited.
+        assertEq(_cfg().getRecycleBucket(), 0, "no unbacked credit");
+        assertEq(
+            _facet().getInteractionPoolPaidOut(),
+            0,
+            "pool accounting rolled back with the revert"
+        );
+
+        // Refund the Diamond → the same sweep now succeeds.
+        vpfi.transfer(address(diamond), bal);
+        vm.prank(makeAddr("keeper"));
+        uint256 swept = _facet().sweepForfeitedInteractionRewards(loanId);
+        assertGt(swept, 0, "sweep succeeds once backed");
+        assertEq(_cfg().getRecycleBucket(), swept, "credit backed and recorded");
+    }
+
     // ─── Clean claims unaffected ─────────────────────────────────────────────
 
     function testCleanClaimPaysUserAndLeavesBucketEmpty() public {

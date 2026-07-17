@@ -3,6 +3,7 @@ pragma solidity ^0.8.29;
 
 import {LibVaipakam} from "./LibVaipakam.sol";
 import {LibInteractionRewards} from "./LibInteractionRewards.sol";
+import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 
 /**
  * @title  LibVpfiRecycle
@@ -77,10 +78,23 @@ library LibVpfiRecycle {
         uint256 dayId
     );
 
+    /// @notice The Diamond's live VPFI balance cannot back the post-credit
+    ///         bucket — crediting would mint an UNBACKED ledger slice.
+    ///         (Codex #1312 P1: the pre-PR-3a treasury `safeTransfer` doubled
+    ///         as a solvency check that rolled the whole forfeit back on an
+    ///         underfunded Diamond; this restores that revert-on-underfunded
+    ///         behaviour, strictly stronger.)
+    error InsufficientRecycleBacking(uint256 needed, uint256 available);
+
     /**
      * @notice Credit `amount` of Diamond-custody VPFI to the recycle bucket.
-     * @dev    No-op on zero. See the library natspec for the custody
-     *         precondition and the separation invariant.
+     * @dev    No-op on zero. Reverts {InsufficientRecycleBacking} when the
+     *         Diamond's live VPFI balance cannot cover the post-credit
+     *         bucket — the ledger-slice property is enforced HERE, not
+     *         assumed, so a caller that marked value as absorbed without the
+     *         tokens actually sitting on the Diamond rolls back entirely
+     *         (processed flags, pool accounting and all). See the library
+     *         natspec for the full separation invariant.
      * @param  source Receipt class being absorbed.
      * @param  refId  Class-specific reference id (0 when aggregate).
      * @param  amount VPFI wei to credit.
@@ -92,9 +106,12 @@ library LibVpfiRecycle {
     ) internal {
         if (amount == 0) return;
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        uint256 bal = IERC20(s.vpfiToken).balanceOf(address(this));
+        uint256 needed = s.recycleBucket + amount;
+        if (bal < needed) revert InsufficientRecycleBacking(needed, bal);
         (uint256 dayId, bool active) = LibInteractionRewards.currentDayOrZero();
         if (!active) dayId = 0;
-        s.recycleBucket += amount;
+        s.recycleBucket = needed;
         s.recycledCreditedByDay[dayId] += amount;
         emit VpfiRecycled(uint8(source), refId, amount, dayId);
     }
