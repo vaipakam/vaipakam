@@ -847,7 +847,7 @@
       "notAToken": "Cette adresse ne ressemble pas à un token sur ce réseau. Vérifiez-la ou choisissez un actif suggéré.",
       "txRejected": "Vous avez annulé dans votre portefeuille. Rien n'a été envoyé.",
       "txFailed": "La transaction n'est pas passée. Rien n'a été pris au-delà du gas réseau. Réessayez.",
-      "sanctionsBlocked": "Ce portefeuille est signalé par l'oracle de sanctions, les nouvelles positions et paiements sont donc bloqués. Rien n'a été envoyé. Rembourser et clôturer les positions existantes reste ouvert.",
+      "sanctionsBlocked": "Ce portefeuille est signalé par l'oracle de sanctions : les nouvelles positions et les retraits de fonds sont donc bloqués. Rien n'a été envoyé. Rembourser et clôturer les positions existantes reste ouvert.",
       "sanctionsCheckRetry": "Impossible d'exécuter le contrôle de conformité pour le moment — rien n'a été envoyé. Réessayez dans un instant.",
       "checkRetry": "Impossible de vérifier cela on-chain pour le moment — rien n'a été envoyé. Réessayez dans un instant.",
       "assetPaused": "Un des actifs de cette opération est temporairement mis en pause par le protocole, cette action ne peut donc pas passer pour le moment. Rien n'a été envoyé — réessayez plus tard.",
@@ -949,7 +949,7 @@
       "title": "Ce portefeuille est listé par l'oracle de conformité.",
       "line1": "L'adresse connectée apparaît sur l'oracle de sanctions on-chain contre lequel Vaipakam vérifie.",
       "line2": "Les nouvelles positions (offres, prêts, locations, dépôts) sont bloquées et ne passeront pas.",
-      "line3": "Rembourser et clôturer les positions existantes reste ouvert afin que vos contreparties puissent être indemnisées, mais les retraits et paiements vers ce portefeuille sont bloqués tant qu'il est signalé. Si vous pensez qu'il s'agit d'une erreur, contactez le fournisseur de l'oracle (Chainalysis)."
+      "line3": "Rembourser et clôturer les positions existantes reste ouvert afin que vos contreparties puissent être indemnisées, mais les réclamations et retraits de fonds vers ce portefeuille sont bloqués tant qu'il est signalé. Si vous pensez qu'il s'agit d'une erreur, contactez le fournisseur de l'oracle (Chainalysis)."
     },
     "risk": {
       "notPriced": "Les actifs de ce prêt ne sont pas valorisés par le protocole, il n'y a donc pas de liquidation automatique — la garantie est transférée telle quelle en cas de défaut.",
