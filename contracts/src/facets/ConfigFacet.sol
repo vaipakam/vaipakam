@@ -892,8 +892,12 @@ contract ConfigFacet is DiamondAccessControl {
     ///         sweep stamps each entry's first-observed claimability from
     ///         then on, and an entry expires `H` days after its stamp —
     ///         every pre-existing dormant entry therefore gets at least a
-    ///         full `H` of notice after activation (grandfathering by
-    ///         construction, stronger than the ratified 90-day floor).
+    ///         full `H` of notice after first activation (grandfathering by
+    ///         construction). Every 0→non-zero transition additionally
+    ///         re-stamps the activation-notice floor: after a dark reset,
+    ///         re-enabling grants EVERY entry — however stale its clock
+    ///         stamp — at least `REWARD_CLAIM_HORIZON_NOTICE_DAYS` (90) of
+    ///         fresh runway before it can expire (the ratified notice floor).
     function setRewardClaimHorizonDays(uint32 horizonDays)
         external
         onlyRole(LibAccessControl.ADMIN_ROLE)
@@ -910,7 +914,11 @@ contract ConfigFacet is DiamondAccessControl {
                 LibVaipakam.REWARD_CLAIM_HORIZON_MAX_DAYS
             );
         }
-        LibVaipakam.storageSlot().rewardClaimHorizonDays = horizonDays;
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        if (horizonDays != 0 && s.rewardClaimHorizonDays == 0) {
+            s.rewardHorizonActivatedAt = uint64(block.timestamp);
+        }
+        s.rewardClaimHorizonDays = horizonDays;
         emit RewardClaimHorizonDaysSet(horizonDays);
     }
 

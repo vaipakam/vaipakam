@@ -12,8 +12,12 @@ entry claimable: it never runs while a claim is blocked on finalization
 or broadcast (a cross-chain delay can't eat a user's window), and it
 cannot start before feature activation, so every pre-existing dormant
 entry gets at least one full horizon of runway after arming —
-grandfathering by construction, stronger than the ratified 90-day
-notice floor. A claim landing any time before expiry always wins.
+grandfathering by construction. The ratified 90-day notice floor is
+also explicit: every activation — including a re-activation after a
+governance dark reset — re-grants every entry, however stale its clock,
+at least 90 days of fresh runway before it can expire, so a dark
+interval is never silently counted against dormant claimants. A claim
+landing any time before expiry always wins.
 
 Expiry uses the ratified split signals riding the governor's PR-3c
 machinery: the fresh-funded share genuinely leaves the fresh budget

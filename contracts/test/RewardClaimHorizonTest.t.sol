@@ -182,6 +182,46 @@ contract RewardClaimHorizonTest is SetupTest, IVaipakamErrors {
         assertGt(stamp, 0, "clock starts once claimable");
     }
 
+    function testDarkResetRegrantsNoticeFloor() public {
+        _cfg().setRewardClaimHorizonDays(365);
+        uint256 id = _seedClaimableEntry();
+        _facet().sweepExpiredInteractionRewards(_ids(id)); // stamp
+
+        // Dark reset mid-horizon; a long dark interval passes, far beyond
+        // the stale stamp's `stamp + H`.
+        vm.warp(block.timestamp + 200 days);
+        _cfg().setRewardClaimHorizonDays(0);
+        vm.warp(block.timestamp + 400 days);
+
+        // Re-activation re-grants the ratified ≥90-day notice floor: the
+        // stale-stamped entry cannot be expired immediately.
+        _cfg().setRewardClaimHorizonDays(365);
+        assertEq(
+            _facet().sweepExpiredInteractionRewards(_ids(id)),
+            0,
+            "notice floor blocks immediate expiry after re-activation"
+        );
+        (, uint64 expiry) = _facet().getRewardEntryExpiry(id);
+        assertEq(
+            expiry,
+            uint64(block.timestamp + 90 days),
+            "expiry lifted to activation + notice"
+        );
+
+        vm.warp(block.timestamp + 89 days);
+        assertEq(
+            _facet().sweepExpiredInteractionRewards(_ids(id)),
+            0,
+            "still inside the notice window"
+        );
+        vm.warp(block.timestamp + 2 days);
+        assertGt(
+            _facet().sweepExpiredInteractionRewards(_ids(id)),
+            0,
+            "expires once the re-granted notice elapses"
+        );
+    }
+
     function testHorizonKnobBounds() public {
         vm.expectRevert();
         _cfg().setRewardClaimHorizonDays(179);

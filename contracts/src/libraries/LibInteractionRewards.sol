@@ -1075,9 +1075,14 @@ function _dayPoolHalves(
             s.rewardEntryFirstClaimableAt[id] = uint64(block.timestamp);
             return expired;
         }
-        if (block.timestamp < uint256(stamp) + uint256(horizonDays) * 1 days) {
-            return expired;
-        }
+        // Expiry needs BOTH the per-entry horizon AND the ratified ≥90-day
+        // activation-notice floor — a dark reset + re-activation re-grants
+        // every stale-stamped entry a fresh notice window before expiry.
+        uint256 expiresAt = uint256(stamp) + uint256(horizonDays) * 1 days;
+        uint256 noticeFloor = uint256(s.rewardHorizonActivatedAt) +
+            uint256(LibVaipakam.REWARD_CLAIM_HORIZON_NOTICE_DAYS) * 1 days;
+        if (expiresAt < noticeFloor) expiresAt = noticeFloor;
+        if (block.timestamp < expiresAt) return expired;
 
         expired = _entryWindowSplit(s, e);
         e.processed = true;
@@ -1086,7 +1091,9 @@ function _dayPoolHalves(
     /// @notice RL-3 — UX view: the entry's horizon state for the
     ///         claim-center countdown.
     /// @return firstClaimableAt Clock start (0 = not started).
-    /// @return expiresAt        `stamp + H days` (0 = dark or unstarted).
+    /// @return expiresAt        `max(stamp + H days, activation + notice)`
+    ///                          (0 = dark or unstarted) — mirrors the sweep's
+    ///                          expiry condition exactly.
     function rewardEntryExpiry(uint256 id)
         internal
         view
@@ -1096,9 +1103,11 @@ function _dayPoolHalves(
         firstClaimableAt = s.rewardEntryFirstClaimableAt[id];
         uint32 horizonDays = s.rewardClaimHorizonDays;
         if (firstClaimableAt != 0 && horizonDays != 0) {
-            expiresAt = uint64(
-                uint256(firstClaimableAt) + uint256(horizonDays) * 1 days
-            );
+            uint256 at = uint256(firstClaimableAt) +
+                uint256(horizonDays) * 1 days;
+            uint256 noticeFloor = uint256(s.rewardHorizonActivatedAt) +
+                uint256(LibVaipakam.REWARD_CLAIM_HORIZON_NOTICE_DAYS) * 1 days;
+            expiresAt = uint64(at < noticeFloor ? noticeFloor : at);
         }
     }
 

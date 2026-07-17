@@ -503,9 +503,12 @@ contract InteractionRewardsFacet is
             : 0;
         if (freshTotal > remaining) freshTotal = remaining;
         s.interactionPoolPaidOut = paidOut + freshTotal;
-        LibInteractionRewards.consumeArmedFresh(
-            armedFreshTotal < freshTotal ? armedFreshTotal : freshTotal
-        );
+        // Every swept entry is terminally `processed`, so its ENTIRE armed
+        // fresh commitment retires here even when the pool cap truncated the
+        // payable fresh total — otherwise the truncated remainder would sit
+        // in the outstanding-commitment sum forever (same rule as the claim
+        // and forfeit paths).
+        LibInteractionRewards.consumeArmedFresh(armedFreshTotal);
 
         if (freshTotal > 0) {
             LibVpfiRecycle.credit(

@@ -296,6 +296,56 @@ contract GovernorDualAccumulatorTest is SetupTest {
         );
     }
 
+    // ─── 4b. RL-3 expiry sweep at fresh exhaustion retires commitments ───────
+
+    function testExpirySweepRetiresFullArmedCommitmentWhenTruncated() public {
+        _cfg().setRewardClaimHorizonDays(180);
+        (uint256 floor5, uint256 recycled5) = _armAndFinalize(5, 700 ether);
+        assertGt(floor5, 0, "armed day has a fresh floor");
+
+        uint256 id = _seedEntry(alice, 45, 5, 6);
+        uint256[] memory ids = new uint256[](1);
+        ids[0] = id;
+        _facet().sweepExpiredInteractionRewards(ids); // stamp the clock
+        vm.warp(block.timestamp + 181 days);
+
+        // Exhaust the fresh pool AFTER the stamp: the expiry's fresh share
+        // truncates to zero, but the entry is terminally processed, so its
+        // ENTIRE armed fresh commitment must still retire.
+        _mut().setInteractionPoolPaidOut(
+            LibVaipakam.VPFI_INTERACTION_POOL_CAP
+        );
+        (, uint256 outFBefore, uint256 outRBefore, ) =
+            _agg().getGovernorCommitState();
+        uint256 bucketBefore = _cfg().getRecycleBucket();
+
+        uint256 swept = _facet().sweepExpiredInteractionRewards(ids);
+
+        assertApproxEqAbs(
+            swept, recycled5 / 2, 1e6,
+            "only the recycled share is expirable at exhaustion"
+        );
+        (, uint256 outFAfter, uint256 outRAfter, ) =
+            _agg().getGovernorCommitState();
+        assertApproxEqAbs(
+            outFBefore - outFAfter,
+            floor5 / 2,
+            1e6,
+            "full armed fresh commitment retired despite truncation"
+        );
+        assertApproxEqAbs(
+            outRBefore - outRAfter,
+            recycled5 / 2,
+            1e6,
+            "recycled commitment released"
+        );
+        assertEq(
+            _cfg().getRecycleBucket(),
+            bucketBefore,
+            "bucket untouched: zero fresh credit, release is not a debit"
+        );
+    }
+
     // ─── 5. Composition broadcast to a mirror ────────────────────────────────
 
     function testMirrorStoresBroadcastCompositionAndArming() public {

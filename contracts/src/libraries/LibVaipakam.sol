@@ -661,6 +661,13 @@ library LibVaipakam {
     ///      (deploy default): nothing expires, no clock runs.
     uint32 constant REWARD_CLAIM_HORIZON_MIN_DAYS = 180;
     uint32 constant REWARD_CLAIM_HORIZON_MAX_DAYS = 1095;
+    /// @dev RL-3 — the ratified ≥90-day activation notice floor: after every
+    ///      horizon activation (including a re-activation following a dark
+    ///      reset), NO entry may expire before this many days have passed,
+    ///      regardless of how stale its first-claimable stamp is. This is
+    ///      what makes a dark interval safe: disabling and re-enabling the
+    ///      feature always re-grants dormant claimants a fresh notice window.
+    uint32 constant REWARD_CLAIM_HORIZON_NOTICE_DAYS = 90;
 
     /// @dev Tariff `k` for peg-free discount entitlements (design §4.2): VPFI
     ///      (1e18) charged per 1 ETH (1e18) of loan volume per day, so a
@@ -5055,6 +5062,12 @@ library LibVaipakam {
         ///      so every pre-existing dormant entry's clock starts at or
         ///      after feature activation — grandfathering by construction.
         mapping(uint256 => uint64) rewardEntryFirstClaimableAt;
+        /// @dev Timestamp of the most recent 0→non-zero horizon activation.
+        ///      Expiry additionally requires
+        ///      `now ≥ rewardHorizonActivatedAt + REWARD_CLAIM_HORIZON_NOTICE_DAYS`,
+        ///      so a dark reset + re-activation can never expire stale-stamped
+        ///      entries immediately (the ratified activation-notice floor).
+        uint64 rewardHorizonActivatedAt;
     }
 
     /// @notice Governor PR-3b (#1217 §3.1) — the per-day pool composition
