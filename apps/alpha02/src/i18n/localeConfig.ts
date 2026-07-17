@@ -55,6 +55,7 @@ const PICKER_VISIBLE: ReadonlySet<SupportedLocale> = new Set([
   'zh',
   'hi',
   'ja',
+  'ta',
 ]);
 
 /** Per-locale picker config, derived from the shared native-label
