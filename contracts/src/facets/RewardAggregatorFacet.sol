@@ -467,13 +467,24 @@ contract RewardAggregatorFacet is
             stamped: true
         });
 
-        // Commitment reservation — armed only from the PR-3c cutover day
-        // (Phase A′ single-chain: the day's commitments ARE the stamped
-        // halves; the per-chain ceil-div refinement arrives with the mesh).
+        // Commitment reservation — armed only from the PR-3c cutover day.
+        // Codex #1315 P1: reserve the CAPPED committable amounts, not the
+        // raw stamp — claims/remits can only ever consume the #1008-capped
+        // per-side budgets, and a zero-denominator side consumes nothing;
+        // reserving the raw halves would strand the unclaimable remainder
+        // in `outstandingCommit*` and shrink every later day's
+        // availability for value no user can draw.
         uint256 armedFrom = s.governorCommitArmedFromDay;
         if (armedFrom != 0 && dayId >= armedFrom) {
-            s.outstandingCommitFresh += scheduleFloor;
-            s.outstandingCommitRecycled += recycledBudget;
+            (uint256 commitFresh, uint256 commitRecycled) =
+                LibInteractionRewards.committableForDay(
+                    s,
+                    dayId,
+                    scheduleFloor / 2,
+                    recycledBudget / 2
+                );
+            s.outstandingCommitFresh += commitFresh;
+            s.outstandingCommitRecycled += commitRecycled;
         }
 
         emit GovernorDayPoolStamped(

@@ -285,18 +285,15 @@ contract InteractionRewardsFacet is
         // FRESH-only counter (recycled payouts debit the bucket instead).
         s.interactionPoolPaidOut = paidOut + freshPending + freshTreasury;
 
-        // PR-3c consume-at-claim — retire the armed fresh commitment for
-        // exactly the armed-day share of what was paid/forfeited (floored:
-        // ceil-dust rule; capped at the truncated fresh spend so a
-        // pool-exhaustion scale-down never over-releases), and consume the
-        // recycled payout from the bucket.
-        {
-            uint256 armedFresh = userSplit.armedFresh + forfeitSplit.armedFresh;
-            uint256 freshOut = freshPending + freshTreasury;
-            LibInteractionRewards.consumeArmedFresh(
-                armedFresh < freshOut ? armedFresh : freshOut
-            );
-        }
+        // PR-3c consume-at-claim — retire the FULL armed-fresh commitment
+        // of every entry processed by this claim, paid OR truncated (Codex
+        // #1315 P2): a processed entry can never be claimed or forfeited
+        // again, so any truncated remainder is gone for good — leaving its
+        // commitment outstanding would permanently depress freshAvailable
+        // for value nobody can ever draw.
+        LibInteractionRewards.consumeArmedFresh(
+            userSplit.armedFresh + forfeitSplit.armedFresh
+        );
         if (paidRecycled > 0) {
             LibVpfiRecycle.consume(paidRecycled);
         }
@@ -414,23 +411,23 @@ contract InteractionRewardsFacet is
         uint256 remaining = LibVaipakam.VPFI_INTERACTION_POOL_CAP > reserved
             ? LibVaipakam.VPFI_INTERACTION_POOL_CAP - reserved
             : 0;
-        if (remaining == 0) revert InteractionPoolExhausted();
 
         // PR-3c — the 69M cap + truncation govern the FRESH share only;
-        // the recycled share is bucket-backed (its commitment simply
-        // releases below — no cap interplay).
+        // the recycled share is bucket-backed. Exhaustion blocks the sweep
+        // ONLY when there is nothing recycled to release (Codex #1315 P2:
+        // a post-arming forfeit with a recycled component must still be
+        // sweepable at fresh exhaustion, or its commitment stays stuck).
         uint256 freshSwept = sweepSplit.total - sweepSplit.recycled;
+        if (remaining == 0 && sweepSplit.recycled == 0) {
+            revert InteractionPoolExhausted();
+        }
         if (freshSwept > remaining) freshSwept = remaining;
         swept = freshSwept + sweepSplit.recycled;
         s.interactionPoolPaidOut = paidOut + freshSwept;
 
-        // PR-3c consume-at-sweep: retire the armed fresh commitment share
-        // (floored + capped at the truncated fresh amount).
-        LibInteractionRewards.consumeArmedFresh(
-            sweepSplit.armedFresh < freshSwept
-                ? sweepSplit.armedFresh
-                : freshSwept
-        );
+        // PR-3c consume-at-sweep: retire the FULL armed-fresh commitment —
+        // the entries are processed either way (see the claim path note).
+        LibInteractionRewards.consumeArmedFresh(sweepSplit.armedFresh);
 
         // Governor PR-3a/PR-3c (#1217 §4) — forfeit source split: the
         // FRESH share stays in Diamond custody and credits the recycle

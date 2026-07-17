@@ -2,6 +2,7 @@
 pragma solidity ^0.8.29;
 
 import {LibVaipakam} from "./LibVaipakam.sol";
+import {Math} from "@openzeppelin/contracts/utils/math/Math.sol";
 import {OracleFacet} from "../facets/OracleFacet.sol";
 import {IERC20Metadata} from "@openzeppelin/contracts/token/ERC20/extensions/IERC20Metadata.sol";
 import {IERC721} from "@openzeppelin/contracts/token/ERC721/IERC721.sol";
@@ -251,11 +252,51 @@ library LibInteractionRewards {
             recycledHalf == 0 ? 0 : (recycledHalf * 1e18) / globalTotal;
         uint256 d = dF + dR;
         if (d == 0) return (0, 0);
-        uint256 m = d < t ? d : t; // min(Δ_d, T_d), combined-first
-        uint256 mR = (m * dR) / d; // pro-rata recycled share of the cap
-        uint256 mF = m - mR;
+        // Codex #1315 P2 — no-trim fast path (also overflow-proof: the
+        // pro-rata product only runs when a trim actually happened, and
+        // then via 512-bit mulDiv so a tiny denominator's huge RPN values
+        // can't revert the cursor and block the day's claims).
+        uint256 mF;
+        uint256 mR;
+        if (d <= t) {
+            mF = dF;
+            mR = dR;
+        } else {
+            mR = Math.mulDiv(t, dR, d); // pro-rata recycled share of the cap
+            mF = t - mR;
+        }
         f = _ceilDiv(mF * chainNumeraire, 1e18);
         r = _ceilDiv(mR * chainNumeraire, 1e18);
+    }
+
+    /// @notice Governor PR-3c (Codex #1315 P1) — the day's truly
+    ///         COMMITTABLE budget per source: the #1008-capped,
+    ///         pro-rata-split, per-side totals against the finalized
+    ///         global denominators (a zero-denominator side commits
+    ///         nothing). This is what finalization reserves — reserving
+    ///         the raw stamp would strand unclaimable remainders in the
+    ///         outstanding sums forever.
+    function committableForDay(
+        LibVaipakam.Storage storage s,
+        uint256 dayId,
+        uint256 freshHalf,
+        uint256 recycledHalf
+    ) internal view returns (uint256 commitFresh, uint256 commitRecycled) {
+        uint256 t = s.dayCapThreshold18[dayId];
+        uint256 gLender = s.dailyGlobalLenderInterestNumeraire18[dayId];
+        if (gLender != 0) {
+            (uint256 f, uint256 r) =
+                _sideBudgetSplit(freshHalf, recycledHalf, gLender, t, gLender);
+            commitFresh += f;
+            commitRecycled += r;
+        }
+        uint256 gBorrower = s.dailyGlobalBorrowerInterestNumeraire18[dayId];
+        if (gBorrower != 0) {
+            (uint256 f, uint256 r) =
+                _sideBudgetSplit(freshHalf, recycledHalf, gBorrower, t, gBorrower);
+            commitFresh += f;
+            commitRecycled += r;
+        }
     }
 
     /// @dev Ceiling division `⌈a / b⌉` (b != 0). Used by the per-chain remittance
@@ -786,8 +827,10 @@ function _dayPoolHalves(
             // across the two sources so capping never changes the total.
             uint256 t = s.dayCapThreshold18[d];
             uint256 capped = daily < t ? daily : t;
-            uint256 cappedRecycled =
-                daily == 0 ? 0 : (capped * recycledDaily) / daily;
+            // No-trim fast path + 512-bit pro-rata (Codex #1315 P2).
+            uint256 cappedRecycled = daily <= t
+                ? recycledDaily
+                : Math.mulDiv(capped, recycledDaily, daily);
             uint256 nextMin = prevMin + capped;
             s.cumMinLenderRpn18[d] = nextMin;
             uint256 nextMinRec = prevMinRec + cappedRecycled;
@@ -844,8 +887,9 @@ function _dayPoolHalves(
             s.cumBorrowerRpn18[d] = next;
             uint256 t = s.dayCapThreshold18[d];
             uint256 capped = daily < t ? daily : t;
-            uint256 cappedRecycled =
-                daily == 0 ? 0 : (capped * recycledDaily) / daily;
+            uint256 cappedRecycled = daily <= t
+                ? recycledDaily
+                : Math.mulDiv(capped, recycledDaily, daily);
             uint256 nextMin = prevMin + capped;
             s.cumMinBorrowerRpn18[d] = nextMin;
             uint256 nextMinRec = prevMinRec + cappedRecycled;

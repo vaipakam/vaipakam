@@ -182,8 +182,11 @@ contract GovernorDayPoolTest is SetupTest {
         (uint256 armed, uint256 outF, uint256 outR, ) =
             _agg().getGovernorCommitState();
         assertEq(armed, 5, "armed from day 5");
-        assertEq(outF, floor5, "fresh commitment reserved");
-        assertEq(outR, recycled5, "recycled commitment reserved");
+        // PR-3c (Codex #1315 P1): what is reserved is the CAPPED committable
+        // (per-side ceil-div against the finalized denominators), which can
+        // exceed the raw stamp by bounded ceil-dust (≤ sides wei-scale).
+        assertApproxEqAbs(outF, floor5, 100, "fresh commitment reserved");
+        assertApproxEqAbs(outR, recycled5, 100, "recycled commitment reserved");
 
         // The NEXT day's availability nets the day-5 reservations out:
         // fundable[6] = bucket − outR ⇒ with a tiny remaining bucket the
