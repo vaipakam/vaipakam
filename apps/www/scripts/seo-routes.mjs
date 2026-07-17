@@ -77,12 +77,23 @@ export const ROUTES = [
   '/help/advanced',
   '/help/technical',
   '/help/search',
-  ...(PROTOCOL_CONSOLE_PUBLIC ? ['/protocol-console/docs'] : []),
   '/discord',
   '/terms',
   '/privacy',
   '/data-rights',
 ];
+
+/** Routes advertised/prerendered in ENGLISH ONLY. The console docs
+ *  page renders `AdminConfigurableKnobsAndSwitches.en.md` with no
+ *  localized markdown (auditor-facing runbook — translation drift
+ *  would harm more than help, per the page header), so emitting
+ *  `/es/protocol-console/docs` etc. would advertise English
+ *  duplicates as localized pages (Codex #1309 r3). Locale-prefixed
+ *  URLs still WORK for a user who navigates there — they're just not
+ *  advertised or snapshotted. */
+export const EN_ONLY_ROUTES = PROTOCOL_CONSOLE_PUBLIC
+  ? ['/protocol-console/docs']
+  : [];
 
 /** Compose a localised URL — English at the unprefixed root, every
  *  other locale gets a `/<locale>/` prefix. Mirrors the

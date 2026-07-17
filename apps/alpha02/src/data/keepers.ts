@@ -29,8 +29,12 @@ export interface KeeperActionDef {
 
 /** Bits mirror LibVaipakam.KEEPER_ACTION_*; strings live in
  *  copy.keepers.actions under the SAME keys, so neither side can
- *  drift by reordering. Display order: borrower actions first. */
-export const KEEPER_ACTIONS: KeeperActionDef[] = [
+ *  drift by reordering. Display order: borrower actions first.
+ *
+ *  A FUNCTION, not a module constant: spreading the copy proxy at
+ *  module scope would freeze the import-time language (Codex #1309
+ *  r3) — calling per render re-reads through the i18n-aware proxy. */
+export const KEEPER_ACTIONS = (): KeeperActionDef[] => [
   { bit: 0x08, ...copy.keepers.actions.initPreclose },
   { bit: 0x10, ...copy.keepers.actions.refinance },
   { bit: 0x02, ...copy.keepers.actions.completeOffset },
@@ -39,8 +43,9 @@ export const KEEPER_ACTIONS: KeeperActionDef[] = [
   { bit: 0x01, ...copy.keepers.actions.completeLoanSale },
 ];
 
-/** Sum of the bits alpha02 exposes. */
-export const EXPOSED_ACTIONS_MASK = KEEPER_ACTIONS.reduce(
+/** Sum of the bits alpha02 exposes (language-independent, so a real
+ *  constant is fine). */
+export const EXPOSED_ACTIONS_MASK = KEEPER_ACTIONS().reduce(
   (m, a) => m | a.bit,
   0,
 );

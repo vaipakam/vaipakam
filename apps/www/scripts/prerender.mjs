@@ -40,6 +40,7 @@
  */
 
 import { createServer } from 'node:http';
+import { execSync } from 'node:child_process';
 import {
   readFileSync,
   writeFileSync,
@@ -50,7 +51,7 @@ import {
 import { resolve, dirname, join, extname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { chromium } from 'playwright';
-import { LOCALES, ROUTES, localizedPath } from './seo-routes.mjs';
+import { LOCALES, ROUTES, EN_ONLY_ROUTES, localizedPath } from './seo-routes.mjs';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const DIST = resolve(__dirname, '..', 'dist');
@@ -108,14 +109,16 @@ await new Promise((r) => server.listen(0, '127.0.0.1', r));
 const PORT = server.address().port;
 
 /**
- * Launch Chromium with graceful fallbacks so the script runs on any
- * machine that has SOME Chromium, in preference order:
+ * Launch Chromium with graceful fallbacks so the deploy pipeline
+ * never dies on a browserless runner (Codex #1309 r3), in order:
  *   1. Playwright's own managed browser (exact-revision match).
  *   2. `PRERENDER_CHROMIUM` env — explicit executable override.
  *   3. Any chromium under PLAYWRIGHT_BROWSERS_PATH (revision-mismatch
  *      tolerant — fine for a static snapshot pass, which exercises no
  *      bleeding-edge browser APIs).
- * If all fail: `npx playwright install chromium` fixes (1).
+ *   4. Self-heal: `npx playwright install chromium` (the same step
+ *      the alpha02 e2e workflow runs), then retry (1). One-shot —
+ *      a runner without network/deps still fails loudly after this.
  */
 async function launchChromium() {
   try {
@@ -142,7 +145,16 @@ async function launchChromium() {
         /* try the next candidate */
       }
     }
-    throw err;
+    // Last resort: fetch Playwright's managed Chromium, then retry.
+    try {
+      console.warn(
+        '[prerender] no usable Chromium found — running `npx playwright install chromium`…',
+      );
+      execSync('npx playwright install chromium', { stdio: 'inherit' });
+      return await chromium.launch();
+    } catch {
+      throw err;
+    }
   }
 }
 
@@ -198,6 +210,11 @@ for (const route of ROUTES) {
   for (const locale of LOCALES) {
     jobs.push({ route, locale });
   }
+}
+// English-only routes (no localized content — see seo-routes.mjs):
+// snapshot the root URL only, matching the sitemap's advertisement.
+for (const route of EN_ONLY_ROUTES) {
+  jobs.push({ route, locale: 'en' });
 }
 
 const results = [];

@@ -144,10 +144,17 @@ function seedLanguageFromCookie(storageKey: string): boolean {
   }
   hadExplicitPref = true;
   // Overwrite localStorage when it disagrees so the detector picks
-  // the cookie value. No-op when they already agree.
-  const stored = window.localStorage.getItem(storageKey);
-  if (stored !== cookie) {
-    window.localStorage.setItem(storageKey, cookie);
+  // the cookie value. No-op when they already agree. Guarded like the
+  // read above: a privacy mode that blocks storage but kept the
+  // cookie must degrade to cookie-less detection, not throw during
+  // the pre-render side-effect import (Codex #1309 r3).
+  try {
+    const stored = window.localStorage.getItem(storageKey);
+    if (stored !== cookie) {
+      window.localStorage.setItem(storageKey, cookie);
+    }
+  } catch {
+    /* storage blocked — i18next's own detector falls back gracefully */
   }
   return hadExplicitPref;
 }
@@ -262,7 +269,15 @@ export function initVaipakamI18n(options: VaipakamI18nOptions): I18nInstance {
   // `languageChanged` listener registration because i18next may emit
   // `languageChanged` synchronously during init (inline resources +
   // sync detector).
-  writeCookie(LANG_COOKIE, displayLng);
+  //
+  // ONLY in the persistable case: writing the forced-'en' fallback of
+  // a gated placeholder detection would lock sibling subdomains that
+  // DO translate the user's language to English — a preference the
+  // user never expressed (Codex #1309 r3). No cookie = each surface
+  // keeps making its own best detection.
+  if (persistable) {
+    writeCookie(LANG_COOKIE, displayLng);
+  }
 
   // Future language changes (LanguagePicker click, etc.) load the
   // new bundle on demand.

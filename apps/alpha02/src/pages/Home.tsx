@@ -16,12 +16,17 @@ import { ErrorBoundary } from '../components/ErrorBoundary';
 // (marketing hero + job grid) paints without pulling the ABI chunk.
 const ActivePositionsBanner = lazy(() => import('./home/ActivePositionsBanner'));
 
-const JOBS: Array<{
+/** Computed per render (not a module constant): the copy proxy
+ *  translates at ACCESS time, so a module-scope read would freeze
+ *  whatever language was active at import — always English while the
+ *  locale bundle is still lazy-loading (Codex #1309 r3). LanguageRemount
+ *  re-renders Home on language change; this function re-reads then. */
+const JOBS = (): Array<{
   to: string;
   icon: LucideIcon;
   title: string;
   blurb: string;
-}> = [
+}> => [
   {
     to: '/borrow',
     icon: HandCoins,
@@ -86,7 +91,7 @@ export function Home() {
       ) : null}
 
       <div className="intent-grid">
-        {JOBS.map((job) => (
+        {JOBS().map((job) => (
           <Link key={job.to} to={job.to} className="intent-card">
             <span className="intent-icon">
               <job.icon aria-hidden />

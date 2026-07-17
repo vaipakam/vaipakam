@@ -47,11 +47,16 @@ interface RouteMeta {
   index: boolean;
 }
 
-/** Segment-boundary match for routes that genuinely have child
- *  segments (`/nft/:tokenId`, `/positions/:loanId`): `/nft` and
- *  `/nft/…`, but never `/nft-old`. */
+/** Match a route with exactly one optional child segment
+ *  (`/nft/:tokenId`, `/positions/:loanId`): the base itself or ONE
+ *  extra segment — `/nft/123/extra` is NotFound in the router and
+ *  must fall to the noindex row, same as `/nft-old`
+ *  (Codex #1309 r3). */
 function inSection(pathname: string, base: string): boolean {
-  return pathname === base || pathname.startsWith(`${base}/`);
+  if (pathname === base) return true;
+  if (!pathname.startsWith(`${base}/`)) return false;
+  const rest = pathname.slice(base.length + 1);
+  return rest.length > 0 && !rest.includes('/');
 }
 
 function metaForPath(pathname: string): RouteMeta {
