@@ -644,6 +644,14 @@ library LibVaipakam {
     /// @dev Hard ceiling on the retained margin (25%). The setter range is
     ///      `[1, RECYCLE_MARGIN_MAX_BPS]`; `0` resets to the default.
     uint16 constant RECYCLE_MARGIN_MAX_BPS = 2_500; // 25%
+    /// @dev Governor PR-3b (#1217 §3.1) — trailing-window width `W` for the
+    ///      absorption average `Ā[D] = Σ_{d∈(D−W..D]} credited[d] / W`.
+    ///      Compile-time constant, ratified fixed at 7 (governor §11.3 —
+    ///      one auditable economic knob beats two interacting ones). ALWAYS
+    ///      divide by W, zero-padding the pre-launch prefix: dividing by
+    ///      elapsed days would count a launch-day spike ≈2.6×, violating
+    ///      the ≤1× lifetime-contribution bound (Codex r2).
+    uint256 constant RECYCLE_TRAILING_WINDOW_DAYS = 7;
 
     /// @dev Tariff `k` for peg-free discount entitlements (design §4.2): VPFI
     ///      (1e18) charged per 1 ETH (1e18) of loan volume per day, so a
@@ -4969,6 +4977,47 @@ library LibVaipakam {
         ///      the credit landed in (day 0 collects pre-launch credits — the
         ///      trailing window ages them out naturally once emissions start).
         mapping(uint256 => uint256) recycledCreditedByDay;
+        // ─── VPFI recycling governor PR-3b (#1217 §3.1) — day-pool stamps ───
+        /// @dev Per-day governor stamp, written ONCE at day finalization
+        ///      ({RewardAggregatorFacet._finalizeAndWrite}) — the #957/#1008
+        ///      snapshot discipline: a mid-day margin retune or bucket
+        ///      mutation never rewrites an already-finalized day. In Phase A′
+        ///      the stamped values are also the day's commitment records
+        ///      (single-chain: commit == the stamped halves; the per-chain
+        ///      ceil-div refinement arrives with the mesh phase).
+        mapping(uint256 => DayPoolStamp) dayPoolStamp;
+        /// @dev PR-3c cutover arming for commitment RESERVATION. While 0
+        ///      (unarmed, the deploy default) stamps are records only —
+        ///      `outstandingCommit*` stay untouched, because the live claim
+        ///      math still pays schedule-based rewards and nothing consumes
+        ///      commitments yet; accumulating reservations without a consume
+        ///      side would silently collapse `freshAvailable`. PR-3c sets
+        ///      this to its cutover day and wires consume-at-claim, arming
+        ///      reservation atomically with consumption (no migration).
+        uint256 governorCommitArmedFromDay;
+        /// @dev Σ armed fresh commitments not yet consumed/released
+        ///      (governor §3.1: `freshAvailable` nets these out so two
+        ///      near-exhaustion days can never size against the same VPFI).
+        uint256 outstandingCommitFresh;
+        /// @dev Σ armed recycled commitments not yet consumed/released
+        ///      (`fundable[D] = recycleBucket − this`).
+        uint256 outstandingCommitRecycled;
+    }
+
+    /// @notice Governor PR-3b (#1217 §3.1) — the per-day pool composition
+    ///         stamped at finalization.
+    /// @dev `scheduleFloor` = min(schedule, freshAvailable);
+    ///      `recycledBudget` = schedule==0 ? 0 : min(fundable, Ā×(1−m));
+    ///      `dailyPool` = the sum. uint128 is ample (daily pools are
+    ///      ~2e22 wei). `aBarAtFinalize` records the trailing absorption
+    ///      average the recycled term was sized from (transparency +
+    ///      #1218 metrics).
+    struct DayPoolStamp {
+        uint128 scheduleFloor;
+        uint128 recycledBudget;
+        uint128 aBarAtFinalize;
+        uint16 marginBpsAtFinalize;
+        bool stamped;
     }
 
     /// @notice #393 v1-b — the originating intent of a `matchIntent` loan,

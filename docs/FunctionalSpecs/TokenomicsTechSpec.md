@@ -675,6 +675,16 @@ Recycle bucket (recycling governor PR-3a, `VpfiRecyclingBalanceGovernorDesign.md
 - separation invariant: the protocol's VPFI balance always covers LIF custody plus the unclaimed reward budget plus the recycle bucket — the bucket can never claim value that belongs to users
 - the bucket balance and the per-day credited series are publicly readable; consumption of the bucket (the absorption-coupled reward budget) arrives with the governor's later stages and is **zero until then** — absorption without distribution coupling is the accepted launch posture
 
+Day-pool stamps (recycling governor budget formula — stamped at finalization):
+
+- at every day finalization the platform computes and **stamps, write-once**, the day's intended pool composition: a **schedule floor** (the pre-funded emission schedule, capped by remaining fresh availability) plus an **absorption-coupled recycled budget** (the trailing seven-day average of recycle-bucket credits, less the platform's retained margin, capped by what the bucket can actually fund)
+- the trailing average always divides by the full seven-day window, zero-padding missing days — never by elapsed days, so a launch-day spike can never contribute more than once to lifetime budgets
+- the retained-margin percentage is read **once per day at finalization and stamped with the day** — a later governance retune applies only to days not yet finalized, never retroactively
+- a day with no emission schedule (day zero / post-exclusion days) stamps a zero recycled budget too: recycling must never make otherwise-unrewarded activity rewardable
+- when the fresh pre-fund exhausts, the schedule floor goes to zero and the recycled budget carries the pool alone — the promised steady state
+- **commitment reservation is armed only at the distribution-coupling cutover** (the stage that makes claims actually consume these budgets): until then the stamps are public records and the live claim math remains schedule-based, so no reservation can accumulate without a matching consumption path
+- once armed, each finalized day's stamped halves are reserved against future availability, and a commitment is released back only by forfeit or by the ratified claim-horizon sweep — never silently
+
 Loop-closure metric note: the recycle-bucket credit event is the designated feed for the loop-closure ratio's absorption term and the transparency dashboard's self-funding ratio (#1218) once those consume it.
 
 Founder and contributor compensation:
