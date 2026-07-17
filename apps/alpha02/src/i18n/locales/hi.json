@@ -43,27 +43,27 @@
         "description": "अपने tokens borrowers को ऑफर करें और वे repay करें तो interest कमाएँ। जब तक कोई borrower आपकी शर्तें स्वीकार नहीं करता, आपके assets आपके अपने on-chain vault में रहते हैं।"
       },
       "rent": {
-        "title": "NFT rental — Vaipakam",
+        "title": "NFT किराया — Vaipakam",
         "description": "अपने NFT से fees कमाएँ, या किसी NFT का अस्थायी उपयोग लें। Ownership कभी move नहीं होती — rental term के दौरान NFT owner के vault में locked रहता है।"
       },
       "offers": {
-        "title": "Offer Book — Vaipakam",
+        "title": "ऑफ़र बुक — Vaipakam",
         "description": "Network पर हर open lending और borrowing offer देखें — assets, rates, durations और collateral terms, chain से live।"
       },
       "desk": {
-        "title": "Rate Desk — Vaipakam",
+        "title": "रेट डेस्क — Vaipakam",
         "description": "Asset pair और duration के हिसाब से live person-to-person lending rates, executed-rate history और signed-offer book।"
       },
       "vpfi": {
-        "title": "VPFI fee discounts — Vaipakam",
+        "title": "VPFI फ़ीस छूट — Vaipakam",
         "description": "Optional: protocol fees घटाने के लिए अपने vault में VPFI रखें। Lend, borrow या rent करने के लिए यह कभी required नहीं है।"
       },
       "nftVerifier": {
-        "title": "NFT rental verifier — Vaipakam",
+        "title": "NFT किराया वेरिफ़ायर — Vaipakam",
         "description": "जाँचें कि Vaipakam पर listed NFT rental genuine है या नहीं, और token का current rental status सीधे chain से देखें।"
       },
       "help": {
-        "title": "Help — Vaipakam",
+        "title": "सहायता — Vaipakam",
         "description": "Lending, borrowing, NFT rentals, fees और risks पर साफ़ भाषा में जवाब — साथ में इस deployment की build और contract info।"
       },
       "positions": {
@@ -216,10 +216,10 @@
       "network": "Network",
       "wallet": "Wallet",
       "walletNotConnected": "Connected नहीं",
-      "rpc": "Blockchain connection",
+      "rpc": "ब्लॉकचेन कनेक्शन",
       "rpcChecking": "Checking…",
       "rpcFailing": "Respond नहीं कर रहा — app अभी blockchain तक नहीं पहुँच पा रहा। Reload करना, या network switch करके वापस आना, अक्सर इसे clear करता है।",
-      "indexer": "Market data cache",
+      "indexer": "मार्केट डेटा कैश",
       "indexerUnreachable": "अभी unreachable — market lists recover होने तक load नहीं हो सकतीं। आपकी अपनी positions chain से सीधे load होती रहेंगी।",
       "indexerNoCursor": "Reachable है, लेकिन इस network के लिए अभी data record नहीं हुआ — activity आते ही भर जाएगा।",
       "indexerNotConfigured": "इस build पर configured नहीं — यहाँ market lists load नहीं हो सकतीं। आपकी अपनी positions chain से सीधे load होती रहेंगी।",
@@ -259,7 +259,7 @@
       "switchNetwork": "Network switch करें"
     },
     "checks": {
-      "walletConnected": "Wallet connected",
+      "walletConnected": "वॉलेट कनेक्टेड",
       "supportedChain": "Supported network पर",
       "tokenValid": "Asset token के रूप में recognised",
       "consent": "Risk disclosures और terms accepted",
@@ -286,7 +286,7 @@
     },
     "help": {
       "disclaimer": "Vaipakam एक decentralized, non-custodial protocol है। KYC required नहीं है। Users अपने regulatory compliance के लिए खुद responsible हैं।",
-      "risksTitle": "Risk disclosures",
+      "risksTitle": "जोखिम प्रकटीकरण",
       "risks": [
         "Borrowing: अगर आप due date plus grace period तक repay नहीं करते, आपकी locked collateral lender को चली जाती है। Live market price के बिना collateral full transfer होती है।",
         "Borrowing: live market price वाली collateral value बहुत गिरने पर due date से पहले automatically sold (liquidated) हो सकती है।",
@@ -297,7 +297,7 @@
     },
     "consentParts": {
       "prefix": "मैं समझता/समझती हूँ और ",
-      "risk": "Risk Disclosures",
+      "risk": "जोखिम प्रकटीकरण",
       "mid": " और ",
       "terms": "Vaipakam Terms",
       "suffix": " से सहमत हूँ।"
@@ -333,7 +333,7 @@
       "saleLoanNotActive": "इस listing के पीछे loan अब active नहीं है, इसलिए purchase complete नहीं हो सकता। कुछ भेजा या approve नहीं हुआ।",
       "saleSellerNotCovered": "Seller की standing settlement approval अब इस sale को complete करने के लिए cover नहीं करती, इसलिए purchase on-chain fail होगा। कुछ भेजा या approve नहीं हुआ — seller को approval restore करनी होगी (उनकी listing card restore action दिखाती है)।",
       "saleMaturityPassed": "यह loan due date पर पहुँच चुका है — position अब खरीदी नहीं जा सकती। कुछ भेजा या approve नहीं हुआ।",
-      "saleBought": "Position bought",
+      "saleBought": "पोज़िशन खरीदी गई",
       "saleSelfBuy": "आप इस loan के borrower हैं, इसलिए इसका lender side भी नहीं खरीद सकते — protocol reject करता है। My positions से repay या early close करना आपके moves हैं। कुछ भेजा या approve नहीं हुआ।",
       "liquidityChecking": "Protocol इन assets को कैसे price करता है, check कर रहे हैं…",
       "liquidityCheckFailed": "इन assets की pricing check नहीं कर सके, और वही एक important warning तय करती है — success तक signing paused है।",
@@ -346,7 +346,7 @@
       "title": "एसेट उधार लें",
       "lede": "बताएँ आपको क्या चाहिए और collateral के रूप में क्या lock कर सकते हैं। Sign होने से पहले हम exact दिखाएँगे कि आप पर क्या owed होगा।",
       "postRequest": "Borrow request post करें",
-      "posted": "Borrow request posted",
+      "posted": "Borrow request post हो गई",
       "postedNext": "Request open रहने तक आपकी collateral locked है। Funds तभी आते हैं जब lender accept करे — loan My positions में दिखेगा।",
       "collateralWarning": "अगर आप time पर repay नहीं करते, lender आपकी collateral receive कर सकता है।",
       "lockNow": "यह request post करते समय आपकी collateral lock होती है। Lender accept करने से पहले आप cancel करके unlock कर सकते हैं।",
@@ -356,7 +356,7 @@
       "title": "उधार देकर कमाएँ",
       "lede": "क्या lend करना है और क्या return चाहिए, चुनें। Lending सिर्फ yield नहीं, risk चुनना है — sign से पहले downside दिखेगा।",
       "postOffer": "Lending offer post करें",
-      "posted": "Lending offer posted",
+      "posted": "Lending offer post हो गया",
       "postedNext": "Offer open रहने तक आपके tokens locked हैं। Borrower accept करे तो loan My positions में आता है। Acceptance से पहले cancel करके tokens unlock कर सकते हैं।",
       "yieldNotGuaranteed": "Expected interest अगर borrower time पर repay करे।",
       "defaultOutcome": "Borrower default करे तो recovery उसकी collateral पर निर्भर है।"
@@ -371,7 +371,7 @@
       "browseCta": "Rent के लिए available NFTs browse करें",
       "custodyNote": "NFT vault custody से कभी बाहर नहीं जाता। Renter को सिर्फ temporary use rights मिलते हैं — ownership नहीं।",
       "postListing": "Rental listing post करें",
-      "listingPosted": "Rental listing posted",
+      "listingPosted": "Rental listing post हो गई",
       "listingPostedNext": "Listing open रहने तक आपका NFT vault में held है। Renter accept करे तो rental My positions में दिखेगा; उससे पहले listing cancel करके NFT वापस लें।",
       "acceptRental": "यह NFT rent करें",
       "rentalOpened": "Rental started",
@@ -433,7 +433,7 @@
       "repayWarnPending": "इस loan के लिए refinance request अभी भी live है। Repaying loan settle करता है, जिसके बाद request कभी complete नहीं हो सकती — बाद में card से cancel करें (standing payoff approval भी हटेगी); तब तक यह expiry तक बैठी रहती है।"
     },
     "approvals": {
-      "title": "Standing token approvals",
+      "title": "स्थायी token approvals",
       "blurb": "ये spending permissions हैं जो आपके wallet ने Vaipakam के contract को उन tokens के लिए दी हैं जिन्हें आपके loans और offers touch करते हैं। कुछ flows इन्हें purposefully set करते हैं (refinance request का payoff, sale listing का settlement); abandoned attempt से बचा कुछ भी यहाँ remove किया जा सकता है।",
       "revokeWarning": "Careful: अगर live refinance request या sale listing किसी token approval पर depend करती है, उसे revoke करने से वह flow fail होगा जब तक card से restore न करें — card moments में warn करेगा।",
       "scopeNote": "यह list इस network पर आपके Vaipakam loans और offers में देखे गए tokens cover करती है। Other apps या other tokens को दी approvals shown नहीं हैं — wallet का अपना token-approvals view complete picture रहता है।",
@@ -447,7 +447,7 @@
     "nftVerifier": {
       "title": "NFT verifier",
       "lede": "Vaipakam position NFTs real claim rights रखते हैं — जो उन्हें hold करता है, वह loan के उस side को control करता है। Trust करने से पहले कोई भी token id check करें।",
-      "placeholder": "Position NFT token id",
+      "placeholder": "Position NFT का token id",
       "check": "Check",
       "checking": "इस token को on-chain check कर रहे हैं…",
       "checkFailed": "अभी इस token को check नहीं कर सके — थोड़ी देर में try करें।",
@@ -465,7 +465,7 @@
       "lockPrecloseOffset": "Preclose-by-offset के लिए locked — complete या cancel होने तक transfer नहीं हो सकता।",
       "lockSale": "Position sale listing के लिए locked — sale complete या listing cancel होने तक transfer नहीं हो सकता।",
       "lockPrepayListing": "Collateral listing के लिए locked — listing standing रहने तक transfer नहीं हो सकता।",
-      "sanctionsLabel": "Compliance status",
+      "sanctionsLabel": "Compliance स्थिति",
       "sanctionsFlagged": "Current holder compliance-flagged है: यह NFT उसके wallet में या बाहर transfer नहीं हो सकता, और flag clear होने तक claims frozen रहते हैं। Delivery expect करके यह token न खरीदें।",
       "sanctionsUnknown": "अभी holder का compliance status check नहीं कर सके — flagged holder का मतलब token transfer नहीं होगा, इसलिए rely करने से पहले re-check करें।",
       "inKindLabel": "Default payout",
@@ -474,11 +474,11 @@
       "goneBody": "या तो इसका claim complete हुआ और token retired हुआ, या यह यहाँ कभी mint ही नहीं हुआ — network कौन सा record नहीं करता। इस token id को sell या transfer करने का कोई offer इस network पर worthless मानें।"
     },
     "keepers": {
-      "title": "Keeper permissions",
+      "title": "Keeper अनुमतियाँ",
       "blurb": "Keepers third-party services (या आपका अपना bot) हैं जिन्हें आप specific loan actions आपके लिए चलाने की अनुमति दे सकते हैं — early close शुरू करना, आपके set up refinance को finish करना, position sale list करना। यहाँ सब off रहता है जब तक आप on न करें, और keeper act करे उससे पहले three switches agree करने चाहिए: master switch, उस keeper पर action, और हर loan page पर per-loan switch।",
       "safetyNote": "Keeper कभी आपका पैसा receive नहीं कर सकता — payouts हमेशा position holder को जाते हैं। आप कभी भी keeper revoke कर सकते हैं (या master switch off कर सकते हैं), protocol सभी keepers एक साथ pause कर सकता है, और refinances आपके per-loan guardrails से bounded हैं। Position हाथ बदलती है तो ये permissions new holder की settings पर apply होती हैं, आपकी पर नहीं।",
       "masterLabel": "मेरे approved keepers को act करने दें (master switch — यह off है तो कुछ नहीं चलता)",
-      "addressPlaceholder": "0x… keeper address",
+      "addressPlaceholder": "0x… keeper पता",
       "actions": {
         "initPreclose": {
           "label": "मेरे लिए loan early close शुरू करें",
@@ -518,7 +518,7 @@
       "added": "Keeper approved. याद रखें: यह केवल उन loans पर act कर सकता है जहाँ आप उस loan का keeper switch भी flip करते हैं।",
       "alreadyListed": "वह keeper पहले से approved है — ऊपर उसकी permissions edit करें।",
       "save": "Permissions save करें",
-      "updated": "Keeper permissions updated.",
+      "updated": "Keeper अनुमतियाँ अपडेट हो गईं।",
       "revoke": "Revoke",
       "revoked": "Keeper revoked — यह अब आपके लिए कहीं act नहीं कर सकता।",
       "maskUnreadable": "इस keeper की current permissions read नहीं कर सके, इसलिए editing disabled है (अभी save करने से silently overwrite हो सकता है)। थोड़ी देर में retry करें; revoking फिर भी काम करता है।",
@@ -627,7 +627,7 @@
       "emptyCta": "मेरी positions देखें",
       "unavailable": "अभी आपके claims load नहीं कर सके। Funds unaffected हैं — थोड़ी देर में try करें।",
       "claim": "Claim",
-      "claimed": "Claim complete.",
+      "claimed": "Claim पूरा हुआ।",
       "allTitle": "सब कुछ एक साथ claim करें",
       "allBlurb": "हर ready payout को एक-एक करके नहीं, एक wallet signature में collect करें।",
       "allEmpty": "अभी कुछ batchable नहीं।",
@@ -652,8 +652,8 @@
       "marketLabel": "Market",
       "tenorLabel": "Term",
       "customPair": "Custom pair…",
-      "customLend": "Loan asset address",
-      "customCollateral": "Collateral asset address",
+      "customLend": "Loan asset का पता",
+      "customCollateral": "Collateral asset का पता",
       "marketsUnavailable": "Markets list अभी load नहीं हुई, इसलिए pair discovery limited है — pair manually enter करें और book itself फिर भी load हो सकती है।",
       "marketsEmpty": "अभी कोई live markets नहीं। Pair चुनें और ticket से पहला offer post करें।",
       "marketsTruncated": "Most active markets दिखा रहे हैं — छोटे markets यहाँ listed नहीं, लेकिन “Custom pair…” से कोई भी pair load कर सकते हैं।",
@@ -667,8 +667,8 @@
       "rateHeading": "Rate (APR %)",
       "sizeHeading": "Size",
       "cumHeading": "Depth",
-      "asksHeading": "Lender offers (asks)",
-      "bidsHeading": "Borrow requests (bids)",
+      "asksHeading": "Lender ऑफ़र (asks)",
+      "bidsHeading": "उधार अनुरोध (bids)",
       "bookEmpty": "इस market के लिए अभी कोई open offers नहीं — आपका पहला हो सकता है।",
       "bookUnavailable": "अभी order book load नहीं कर सके। थोड़ी देर में try करें।",
       "bookIndexedCopy": "Live chain read unavailable — book की indexed copy दिखा रहे हैं, जो chain से lag कर सकती है।",
@@ -764,13 +764,13 @@
         "postedNext": "आपका offer book पर live है। नीचे Open orders में manage करें — fill से पहले कभी भी amend या cancel करें।",
         "modeLabel": "Posting",
         "modeOnchain": "On-chain",
-        "modeGasless": "Gasless (sign only)",
+        "modeGasless": "Gasless (सिर्फ़ sign)",
         "modeOnchainHint": "Offer को transaction के रूप में post करें — funds अभी vault में escrowed हैं।",
         "modeGaslessHint": "Order off-chain sign करके book पर post करें — no transaction, no gas. Funds तभी move होते हैं जब taker fill करता है।",
         "gaslessEscrowNote": "Sign करते समय कुछ escrowed नहीं होता — taker का fill उस समय vault के free balance से pull करता है। बाद में cancel करना on-chain transaction है (posting के unlike)।",
         "gaslessNeedsIndexer": "Gasless posting को order-book service चाहिए, जो अभी configured नहीं है। On-chain posting फिर भी काम करता है।",
         "gaslessLenderAonNote": "Gasless lend orders सिर्फ one whole loan के रूप में fill होते हैं — signed lender order on-chain sliced नहीं हो सकता, इसलिए all-or-nothing post होता है। Partial on-chain posting के साथ available रहता है।",
-        "gaslessPost": "Sign & post to the book",
+        "gaslessPost": "Sign करें और book में post करें",
         "gaslessPosting": "Signing…",
         "gaslessConsentRequired": "पहले risk disclosures और terms review करके accept करें — gasless order के लिए आपकी signature ही वह consent record करती है।",
         "gaslessPosted": "Signed order book पर posted — gas spent नहीं। Taker accept करेगा तो fill होगा।",
@@ -785,7 +785,7 @@
         "blockGaslessService": "Gasless posting को order-book service चाहिए, जो अभी available नहीं — Posting को On-chain पर switch करें।",
         "consentRecheck": "Terms बदल गईं — फिर confirm करें।",
         "max": "Max",
-        "feePreviewTitle": "Fees & commitment"
+        "feePreviewTitle": "फ़ीस और commitment"
       },
       "orders": {
         "tab": "Open orders",
@@ -799,9 +799,9 @@
         "amendLoadFailed": "इस offer के live values read नहीं कर सके, और amending उन्हीं से start होनी चाहिए। Please try again.",
         "amendMinAmount": "Min amount",
         "amendMaxAmount": "Max amount",
-        "amendAmountAon": "Amount (all-or-nothing)",
+        "amendAmountAon": "राशि (all-or-nothing)",
         "amendRate": "Rate (APR %)",
-        "amendRateMax": "Rate max (APR %)",
+        "amendRateMax": "अधिकतम rate (APR %)",
         "amendCollateral": "Collateral",
         "amendCollateralMax": "Collateral max",
         "amendNoChange": "अभी कुछ changed नहीं।",
@@ -814,12 +814,12 @@
         "save": "Changes save करें",
         "saving": "Amending…",
         "amended": "Order amended.",
-        "signedTitle": "Signed orders (this market)",
+        "signedTitle": "Signed orders (यह market)",
         "signedNote": "Selected market के लिए आपके posted gasless signed orders. Other markets के orders नहीं दिखते — manage करने के लिए header में market switch करें।",
         "signedCancel": "On-chain cancel",
         "signedCancelling": "Cancelling…",
         "signedCancelNote": "Posting free थी, लेकिन cancelling gas cost करती है: book के पास held signature revoke करने का only way on-chain transaction है।",
-        "signedCancelled": "Signed order cancelled on-chain.",
+        "signedCancelled": "Signed order on-chain cancel हो गया।",
         "signedTruncated": "इस market में आपके signed orders list limit से ज्यादा हैं — यह complete set नहीं है।"
       },
       "positions": {
@@ -827,9 +827,9 @@
         "empty": "इस wallet में कोई open positions नहीं।",
         "unavailable": "अभी positions load नहीं कर सके।",
         "health": "Health",
-        "notPriced": "No auto-liquidation",
+        "notPriced": "Auto-liquidation नहीं",
         "manage": "Manage",
-        "allPositions": "All positions →"
+        "allPositions": "सभी positions →"
       }
     },
     "vpfi": {
@@ -883,7 +883,7 @@
       "copyTokenId": "Token ID copy करें",
       "copiedTokenId": "Copied.",
       "liquid": {
-        "title": "Liquid test token (tLIQ)",
+        "title": "Liquid टेस्ट टोकन (tLIQ)",
         "blurb": "Test oracle द्वारा priced, इसलिए liquid asset जैसा behave करता है — health factor, liquidation और refinancing सब इसके साथ काम करते हैं। Flow को two different liquid tokens चाहिए तो इसे mWETH के साथ pair करें (एक loan, एक collateral)।"
       },
       "liquid2": {
@@ -894,21 +894,21 @@
         "blurb": "Oracle-priced test token जो demos में “wrapped ETH” role निभाता है। यह real WETH नहीं है — free mint होता है और value नहीं रखता।"
       },
       "nft2": {
-        "title": "Second rentable test NFT (vART)",
+        "title": "दूसरा rentable टेस्ट NFT (vART)",
         "blurb": "Another ERC-4907 collection — जब आप एक NFT list और दूसरा rent करना चाहते हैं, या कई rentals साथ चलाना चाहते हैं, तब handy।",
         "action": "vART NFT mint करें"
       },
       "addedToWallet": "Wallet से इसे track करने को कहा।",
       "illiquid": {
-        "title": "Illiquid test token (tILQ)",
+        "title": "Illiquid टेस्ट टोकन (tILQ)",
         "blurb": "No price feed, इसलिए illiquid asset जैसा behave करता है — दोनों sides को consent चाहिए, और default collateral in kind transfer करता है।"
       },
       "illiquid2": {
-        "title": "Second illiquid test token (tILQ2)",
+        "title": "दूसरा illiquid टेस्ट टोकन (tILQ2)",
         "blurb": "यह भी unpriced है। इसे tILQ के साथ pair करें (एक loan, एक collateral) ताकि ऐसी deal try करें जहाँ NEITHER side priced है — दोनों parties को consent चाहिए, health factor apply नहीं होता, और default collateral in kind देता है।"
       },
       "nft": {
-        "title": "Rental test NFT (vRENT)",
+        "title": "Rental टेस्ट NFT (vRENT)",
         "blurb": "NFT rental flows try करने के लिए ERC-4907 rentable NFT।",
         "action": "Test NFT mint करें"
       }
@@ -939,7 +939,7 @@
       "positionsLink": "My positions"
     },
     "rewards": {
-      "title": "Interaction rewards",
+      "title": "इंटरैक्शन rewards",
       "blurb": "आपकी lending और borrowing activity से VPFI rewards. Loan close और reward day finalize होने के बाद claimable होते हैं।",
       "empty": "अभी कोई rewards नहीं। Rewards lending या borrowing activity के बाद दिखते हैं।",
       "waiting": "आपके rewards finalize हो रहे हैं — reward day सभी chains पर close होकर ही claimable होता है। बाद में check करें।",
