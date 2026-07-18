@@ -1,10 +1,11 @@
 # alpha02 — translatable interpolated copy (i18n interpolation support)
 
-**Status:** scoping / design (follow-up to the #1329 / #1323 / #1343
-extraction lineage)
+**Status:** Phase 1 (platform + pilot) delivered; domain migration in
+progress
 **Owner:** TBD
 **Related:** #1329 (initial extraction), #1343 (`.ts`-module extraction),
-#1323 (locale backfill tracker)
+#1323 (locale backfill tracker),
+[`I18nPlan.md`](I18nPlan.md) (the canonical i18n plan this expands)
 
 ## Problem
 
@@ -131,23 +132,43 @@ from ever regressing the way `ActivePositionsBanner` did.
   security) keep the join in JS and interpolate the joined string.
 - **Glossary terms** stay verbatim inside templates (VPFI, HF, LTV,
   asset/network names) per the existing rule.
-- **Do NOT touch**: signed-message builders (`buildDueDateOptOutMessage`
-  et al. — byte-identical to the backend verifier), thrown dev-guard
-  errors, EIP-712 domain strings, chain proper names.
+- **Thrown dev-guard errors** (`contracts/*.ts` — "Wallet not
+  connected", "Connect a wallet on a supported network first.", etc.)
+  ARE in scope (per user direction 2026-07-18): extract to
+  `copy.errors.*` and throw the translated string. They're defensive and
+  normally unreachable through the UI, but when they do surface they
+  should read in the user's language like any other message.
+- **Do NOT touch** (translating would break correctness or is wrong):
+  signed-message builders (`buildDueDateOptOutMessage` et al. —
+  byte-identical to the backend verifier that re-derives them),
+  EIP-712 `signTypedData` domain names (hashed into the signature; the
+  contract has them hardcoded — a mismatch fails verification), and
+  chain/asset proper names (verbatim per the functional spec).
 
 ## Phasing (keeps each PR reviewable)
 
-1. **Platform**: `tmpl` helper + factory support + exporter, migrate a
-   small pilot slice (e.g. `loanState` + `activity` refs already added in
-   #1343) and prove translation end-to-end with one locale.
-2. **Catalog migration**: convert the remaining function entries to
-   `tmpl`, batch by domain (offers, rentals, positions, claims, VPFI,
-   alerts), each batch its own PR with call-site updates.
-3. **Inline-notice extraction**: extract the ~51 inline notices into
+1. **Platform** ✅ *delivered* — `src/i18n/tmpl.ts` (`tmpl` helper +
+   `{{}}` interpolation + plural support), `reactiveCopy.ts` binds tmpl
+   leaves to their key path and routes through `i18n.t`, `template.ts`
+   emits tmpl templates (+ `_one`/`_other` plural siblings) into
+   `en.json`. Pilot conversions prove it end-to-end (unit test shows a
+   Spanish bundle rendering both a simple interpolation and a
+   locale-aware plural): `home.testnetNudge` (simple) and the extracted
+   `home.activePositions` (plural — the "You have N active positions"
+   banner that was inline JSX).
+2. **Catalog migration** *(in progress)* — convert the remaining ~110
+   function entries to `tmpl`, batch by domain (offers, rentals,
+   positions, claims, VPFI, alerts), each batch with its call-site
+   updates.
+3. **Inline-notice extraction** — extract the ~51 inline notices
+   (`Claims`, `Vpfi`, `OfferFlow`, `Rent`, `PositionDetails`, …) into
    `tmpl` entries.
-4. **Guardrail**: extend `check-hardcoded-strings.mjs` + add the
+4. **Dev-guard errors** — extract the `contracts/*.ts` thrown-error
+   strings to `copy.errors.*`.
+5. **Guardrail** — extend `check-hardcoded-strings.mjs` to catch
+   interpolation-interspersed JSX + backtick UI templates; add the
    interpolation cases to COVERAGE.md.
-5. **Backfill**: the locale bundles gain the new `{{}}` templates
+6. **Backfill** — the locale bundles gain the new `{{}}` templates
    (tracked with #1323); until translated they fall back to the English
    template exactly as static keys do today.
 

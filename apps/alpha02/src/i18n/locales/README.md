@@ -30,7 +30,10 @@ Then promote the locale in `src/i18n/localeConfig.ts`
 (`TRANSLATED_LOCALES` + picker visibility) — the lazy loader map
 already covers every code.
 
-Note: parametrized strings (function values in copy.ts, e.g.
-`testnetNudge(chainName)`) are not yet in the template and render
-English in every locale — converting them to i18next interpolation
-keys is tracked in docs/DesignsAndPlans/I18nPlan.md.
+Note: parametrized strings are being migrated from JS template
+functions to `tmpl(...)` entries (src/i18n/tmpl.ts), which DO appear in
+the template as i18next `{{var}}` interpolation keys (with `_one` /
+`_other` plural siblings) and translate like any other key. Plain
+function entries not yet migrated still render English in every locale —
+progress + plan in
+docs/DesignsAndPlans/Alpha02InterpolatedCopyI18n.md.

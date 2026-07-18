@@ -27,6 +27,7 @@
  */
 
 import { createTranslatedCopy } from '../i18n/reactiveCopy';
+import { tmpl } from '../i18n/tmpl';
 
 const copySource = {
   app: {
@@ -137,8 +138,18 @@ const copySource = {
   home: {
     title: 'What would you like to do?',
     lede: 'Pick a job to get started. You can switch to Advanced mode any time in Settings.',
-    testnetNudge: (chainName: string) =>
-      `You’re on ${chainName}, a test network. Get free test assets to try things out →`,
+    // Migrated to tmpl (translatable interpolation). Call:
+    // copy.home.testnetNudge({ chainName }).
+    testnetNudge: tmpl(
+      'You’re on {{chainName}}, a test network. Get free test assets to try things out →',
+    ),
+    // The home "you have N active positions" nudge — extracted from
+    // ActivePositionsBanner (was inline JSX the guardrail couldn't see).
+    // Plural via i18next count. Call: copy.home.activePositions({ count }).
+    activePositions: tmpl(
+      'You have {{count}} active positions. View them under My positions.',
+      { one: 'You have {{count}} active position. View them under My positions.' },
+    ),
     jobs: {
       borrow: {
         title: 'Borrow assets',

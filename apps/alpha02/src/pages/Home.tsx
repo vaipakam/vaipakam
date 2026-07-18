@@ -86,7 +86,9 @@ export function Home() {
       {readChain.testnet && getDeployment(readChain.chainId)?.testnetMocks ? (
         <Link to="/faucet" className="banner banner-info" style={{ display: 'flex' }}>
           <Droplets aria-hidden />
-          <span className="banner-body">{copy.home.testnetNudge(readChain.name)}</span>
+          <span className="banner-body">
+            {copy.home.testnetNudge({ chainName: readChain.name })}
+          </span>
         </Link>
       ) : null}
 

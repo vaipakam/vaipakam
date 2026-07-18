@@ -100,6 +100,9 @@
     "home": {
       "title": "What would you like to do?",
       "lede": "Pick a job to get started. You can switch to Advanced mode any time in Settings.",
+      "testnetNudge": "You’re on {{chainName}}, a test network. Get free test assets to try things out →",
+      "activePositions_one": "You have {{count}} active position. View them under My positions.",
+      "activePositions_other": "You have {{count}} active positions. View them under My positions.",
       "jobs": {
         "borrow": {
           "title": "Borrow assets",
