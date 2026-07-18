@@ -816,6 +816,31 @@ contract RewardClaimHorizonTest is SetupTest, IVaipakamErrors {
         );
     }
 
+    /// @notice A no-op / cleanup unpause (the protocol was never paused) must
+    ///         NOT record a pause boundary — otherwise it would spuriously drop
+    ///         the next executable interval and push the countdown back on
+    ///         every routine operational call (Codex #1317 r3 P3).
+    function testNoOpUnpauseDoesNotDropAccrual() public {
+        _cfg().setRewardClaimHorizonDays(180);
+        uint256 required = 180 days + NOTICE;
+        uint256 id = _seedClaimableEntry();
+        _facet().sweepExpiredInteractionRewards(_ids(id)); // stamp
+
+        // Accrue to exactly one heartbeat under the threshold.
+        assertEq(_accrue(id, required - MAX_GAP), 0, "one gap under threshold");
+
+        // A no-op unpause while the protocol is live sets no boundary, so the
+        // final interval is still credited and the entry expires on the next
+        // sweep. (With a spurious boundary that interval would be dropped.)
+        AdminFacet(address(diamond)).unpause();
+        vm.warp(vm.getBlockTimestamp() + MAX_GAP);
+        assertGt(
+            _facet().sweepExpiredInteractionRewards(_ids(id)),
+            0,
+            "no-op unpause drops nothing; the final interval expires the entry"
+        );
+    }
+
     function testHorizonKnobBounds() public {
         vm.expectRevert();
         _cfg().setRewardClaimHorizonDays(179);

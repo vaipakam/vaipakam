@@ -96,9 +96,18 @@ library LibPausable {
         // false-positive auto-pause without waiting for the window
         // to elapse.
         PausableStorage storage ps = _storage();
+        // A pause boundary is a real live→paused→live transition, so stamp it
+        // ONLY when this call actually clears an active pause (manual, or an
+        // auto-pause window still in the future). A no-op / cleanup unpause —
+        // already live, or clearing an already-elapsed window — blocked no
+        // claim, and stamping it would spuriously drop up to a heartbeat of
+        // executable accrual for every RL-3-stamped entry (Codex #1317 r3 P3).
+        bool wasPaused = ps.paused || ps.pausedUntilTimestamp > block.timestamp;
         ps.paused = false;
         ps.pausedUntilTimestamp = 0;
-        ps.lastPauseBoundaryAt = SafeCast.toUint64(block.timestamp);
+        if (wasPaused) {
+            ps.lastPauseBoundaryAt = SafeCast.toUint64(block.timestamp);
+        }
         emit Unpaused(msg.sender);
     }
 
