@@ -152,10 +152,14 @@ export function Vault() {
                   style={{ marginTop: 12 }}
                   onClick={() => setScanWindow((w) => w + LIST_WINDOW_PAGE)}
                 >
-                  {copy.approvals.checkMore(
-                    Math.min(LIST_WINDOW_PAGE, vault.data.moreTokens),
-                    vault.data.moreTokens,
-                  )}
+                  {vault.data.moreTokens > LIST_WINDOW_PAGE
+                    ? copy.approvals.checkMoreUnchecked(
+                        Math.min(LIST_WINDOW_PAGE, vault.data.moreTokens),
+                        vault.data.moreTokens,
+                      )
+                    : copy.approvals.checkMore(
+                        Math.min(LIST_WINDOW_PAGE, vault.data.moreTokens),
+                      )}
                 </button>
               ) : null}
               <p className="muted" style={{ marginTop: 12 }}>

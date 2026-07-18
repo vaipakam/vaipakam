@@ -233,10 +233,14 @@ const copySource = {
     ),
     // CoinGecko reputation soft-signal (#1036 fallback layer) — only
     // on networks with market data; never a block, never a gate.
-    reputationListedTop: (name: string, symbol: string | null, rank: number) =>
-      `Market listing found: ${name}${symbol ? ` (${symbol})` : ''}, ranked #${rank} by market size. Check that this matches the token you meant.`,
-    reputationListedDeep: (name: string, symbol: string | null) =>
-      `Market listing found: ${name}${symbol ? ` (${symbol})` : ''} — outside the top 200 by market size. Smaller tokens move harder and disappear faster; double-check the project.`,
+    reputationListedTop: tmpl(
+      `Market listing found: {{name}}{{symbolSuffix}}, ranked #{{rank}} by market size. Check that this matches the token you meant.`,
+      ['name', 'symbolSuffix', 'rank'],
+    ),
+    reputationListedDeep: tmpl(
+      `Market listing found: {{name}}{{symbolSuffix}} — outside the top 200 by market size. Smaller tokens move harder and disappear faster; double-check the project.`,
+      ['name', 'symbolSuffix'],
+    ),
     reputationUnlisted:
       'No market listing found for this address — the wider market doesn’t know this token. That alone doesn’t make it bad, but verify the contract address with the project before dealing in it.',
   },
@@ -962,10 +966,13 @@ const copySource = {
     none: 'No standing approvals to Vaipakam found for your known tokens.',
     // #1247 PAG-006 — the checked-token window's widen affordance.
     // Same one-click honesty as lists.showMore.
-    checkMore: (next: number, total: number) =>
-      total > next
-        ? `Check ${next} more tokens (${total} unchecked)`
-        : `Check ${next} more token${next === 1 ? '' : 's'}`,
+    checkMore: tmpl(`Check {{count}} more tokens`, ['count'], {
+      one: `Check {{count}} more token`,
+    }),
+    checkMoreUnchecked: tmpl(
+      `Check {{next}} more tokens ({{total}} unchecked)`,
+      ['next', 'total'],
+    ),
     loading: 'Reading your standing approvals…',
     unavailable:
       'We couldn’t read your approvals right now — please try again in a moment.',
@@ -1343,14 +1350,20 @@ const copySource = {
     roleLender: 'You lent',
     // UX-030 — "grace period" glossed inline, with the concrete window
     // length when the live read has it.
-    whatIfNothingBorrower: (collateral: string, grace?: string) =>
-      `If you do nothing and the loan passes its due date and the ${grace ? `${grace} ` : ''}grace period (a short extra window to repay before the lender can take the collateral), the lender can receive your ${collateral} collateral.`,
-    whatIfNothingLender: (grace?: string) =>
-      `If the borrower does not repay by the due date plus the ${grace ? `${grace} ` : ''}grace period (a short extra repayment window), you can claim their collateral.`,
+    whatIfNothingBorrower: tmpl(
+      `If you do nothing and the loan passes its due date and the {{grace}}grace period (a short extra window to repay before the lender can take the collateral), the lender can receive your {{collateral}} collateral.`,
+      ['collateral', 'grace'],
+    ),
+    whatIfNothingLender: tmpl(
+      `If the borrower does not repay by the due date plus the {{grace}}grace period (a short extra repayment window), you can claim their collateral.`,
+      ['grace'],
+    ),
     // #1166 live-review follow-up — a wallet holding neither position
     // must not be addressed as a party ("you can claim…").
-    whatIfNothingViewer: (grace?: string) =>
-      `If the borrower does not repay by the due date plus the ${grace ? `${grace} ` : ''}grace period (a short extra repayment window), the lender can claim the collateral.`,
+    whatIfNothingViewer: tmpl(
+      `If the borrower does not repay by the due date plus the {{grace}}grace period (a short extra repayment window), the lender can claim the collateral.`,
+      ['grace'],
+    ),
     // UX-024 — the list groups by what needs the user, and rows with a
     // pending claim say so instead of a bare status badge.
     groupAttention: 'Needs your attention',
@@ -2013,18 +2026,19 @@ const copySource = {
     // The label promises what ONE click reveals; when more is still
     // hidden beyond that page, say so (Codex #1265 r1 — "Show 475
     // more" revealing 25 would mislead on exactly the big-list path).
-    showMore: (next: number, total: number) =>
-      total > next ? `Show ${next} more (${total} hidden)` : `Show ${next} more`,
+    showMore: tmpl(`Show {{next}} more`, ['next']),
+    showMoreHidden: tmpl(`Show {{next}} more ({{total}} hidden)`, ['next', 'total']),
   },
 
   errors: {
     // F-20260703-005 (#988) — say HOW MUCH more whenever the caller can
     // compute the shortfall; the amount-less form is the fallback for
     // sites that can't (e.g. unknown decimals).
-    needMore: (asset: string, shortBy?: string) =>
-      shortBy
-        ? `You need about ${shortBy} more ${asset} to continue.`
-        : `You need more ${asset} to continue.`,
+    needMore: tmpl(`You need more {{asset}} to continue.`, ['asset']),
+    needMoreBy: tmpl(
+      `You need about {{shortBy}} more {{asset}} to continue.`,
+      ['shortBy', 'asset'],
+    ),
     partialOverPrincipal:
       'That covers the loan’s whole remaining principal. Use “Repay this loan” instead — it settles the loan properly and releases your collateral.',
     notAToken:
@@ -2170,14 +2184,12 @@ const copySource = {
       // the symbol is `null` and we show a GENERIC label — never asserting a
       // specific ticker we haven't confirmed, which would re-open the exact
       // stale-label window this resolves (Codex #1109 P2).
-      title: (symbol: string | null) =>
-        symbol ? `Mock USD Coin (${symbol})` : 'Mock USD Coin (test stablecoin)',
+      title: tmpl(`Mock USD Coin ({{symbol}})`, ['symbol']),
+      titleGeneric: 'Mock USD Coin (test stablecoin)',
       blurb:
         'A test USDC priced at $1 by a test oracle — a second, distinct liquid token so you can run a deal where both the loan and the collateral are liquid (with a realistic price spread against tLIQ / mWETH) without pairing a token against itself.',
-      action: (units: number, symbol: string | null) =>
-        symbol
-          ? `Mint ${units.toLocaleString()} ${symbol}`
-          : `Mint ${units.toLocaleString()} test stablecoin`,
+      action: tmpl(`Mint {{units, number}} {{symbol}}`, ['units', 'symbol']),
+      actionGeneric: tmpl(`Mint {{units, number}} test stablecoin`, ['units']),
     },
     mweth: {
       title: 'Mock wrapped ETH (mWETH)',
@@ -2411,8 +2423,14 @@ const copySource = {
     // UX-030 — the advanced numbers carry their own one-clause
     // definitions; a bare "HF 1.42 / LTV 51%" is noise to anyone who
     // hasn't already internalized the jargon.
-    advancedDetail: (ratio: string, ltvPct: string, drop: string | null) =>
-      `(Health factor ${ratio} — the collateral’s value measured against what’s owed; below 1.00 the loan can be liquidated. Loan-to-value ${ltvPct} — the borrowed amount as a share of the collateral’s value.${drop ? ` Roughly, liquidation begins if the collateral’s value falls about ${drop}.` : ''})`,
+    advancedDetail: tmpl(
+      `(Health factor {{ratio}} — the collateral’s value measured against what’s owed; below 1.00 the loan can be liquidated. Loan-to-value {{ltvPct}} — the borrowed amount as a share of the collateral’s value.{{dropClause}})`,
+      ['ratio', 'ltvPct', 'dropClause'],
+    ),
+    advancedDetailDrop: tmpl(
+      ` Roughly, liquidation begins if the collateral’s value falls about {{drop}}.`,
+      ['drop'],
+    ),
   },
 
   notFound: {

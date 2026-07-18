@@ -308,11 +308,19 @@ export function Faucet() {
             }
           />
           <FaucetRow
-            title={copy.faucet.liquid2.title(liquid2Symbol)}
+            title={
+              liquid2Symbol
+                ? copy.faucet.liquid2.title(liquid2Symbol)
+                : copy.faucet.liquid2.titleGeneric
+            }
             blurb={copy.faucet.liquid2.blurb}
             address={mocks.liquidToken2}
             explorer={readChain.blockExplorer}
-            actionLabel={copy.faucet.liquid2.action(LIQUID_UNITS, liquid2Symbol)}
+            actionLabel={
+              liquid2Symbol
+                ? copy.faucet.liquid2.action(LIQUID_UNITS, liquid2Symbol)
+                : copy.faucet.liquid2.actionGeneric(LIQUID_UNITS)
+            }
             busy={busy === mocks.liquidToken2}
             disabled={!canWrite || busy !== null}
             onClick={() =>

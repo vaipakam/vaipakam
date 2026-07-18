@@ -1492,7 +1492,11 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
                           {copy.risk.advancedDetail(
                             healthView(risk.data).ratio,
                             healthView(risk.data).ltvPct,
-                            healthView(risk.data).dropToLiquidationPct,
+                            healthView(risk.data).dropToLiquidationPct
+                              ? copy.risk.advancedDetailDrop(
+                                  healthView(risk.data).dropToLiquidationPct!,
+                                )
+                              : '',
                           )}
                         </span>
                       </>
@@ -1538,13 +1542,13 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
                   : role === 'borrower'
                     ? copy.positions.whatIfNothingBorrower(
                         collateral?.symbol ?? 'locked',
-                        graceLengthStr,
+                        graceLengthStr ? `${graceLengthStr} ` : '',
                       )
                     : role === 'lender'
-                      ? copy.positions.whatIfNothingLender(graceLengthStr)
+                      ? copy.positions.whatIfNothingLender(graceLengthStr ? `${graceLengthStr} ` : '')
                       : // #1166 live-review follow-up — a wallet holding
                         // neither position is never addressed as a party.
-                        copy.positions.whatIfNothingViewer(graceLengthStr)}
+                        copy.positions.whatIfNothingViewer(graceLengthStr ? `${graceLengthStr} ` : '')}
             </dd>
           </div>
         </dl>
@@ -1610,16 +1614,15 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
           </div>
           {collateralOverBalance ? (
             <p className="field-hint" style={{ color: 'var(--danger)', marginTop: 8 }}>
-              {copy.errors.needMore(
-                collateral.symbol,
-                collateralInputWei !== null &&
-                  collateralBalance.data !== undefined
-                  ? formatTokenAmount(
+              {collateralInputWei !== null && collateralBalance.data !== undefined
+                ? copy.errors.needMoreBy(
+                    formatTokenAmount(
                       collateralInputWei - collateralBalance.data,
                       collateral.decimals,
-                    )
-                  : undefined,
-              )}
+                    ),
+                    collateral.symbol,
+                  )
+                : copy.errors.needMore(collateral.symbol)}
             </p>
           ) : null}
           {confirmingSurface === 'collateral' && collateralInputWei !== null ? (
@@ -1726,15 +1729,15 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
           </div>
           {partialOverBalance ? (
             <p className="field-hint" style={{ color: 'var(--danger)', marginTop: 8 }}>
-              {copy.errors.needMore(
-                principal.symbol,
-                partialInputWei !== null && principalBalance.data !== undefined
-                  ? formatTokenAmount(
+              {partialInputWei !== null && principalBalance.data !== undefined
+                ? copy.errors.needMoreBy(
+                    formatTokenAmount(
                       partialInputWei - principalBalance.data,
                       principal.decimals,
-                    )
-                  : undefined,
-              )}
+                    ),
+                    principal.symbol,
+                  )
+                : copy.errors.needMore(principal.symbol)}
             </p>
           ) : null}
           {confirmingSurface === 'partial' && partialInputWei !== null ? (

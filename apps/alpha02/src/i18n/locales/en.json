@@ -149,6 +149,8 @@
       },
       "matchesHidden_one": "1 matching offer is hidden because an independent security check flagged one of its tokens as dangerous.",
       "matchesHidden_other": "{{count}} matching offers are hidden because an independent security check flagged one of their tokens as dangerous.",
+      "reputationListedTop": "Market listing found: {{name}}{{symbolSuffix}}, ranked #{{rank}} by market size. Check that this matches the token you meant.",
+      "reputationListedDeep": "Market listing found: {{name}}{{symbolSuffix}} — outside the top 200 by market size. Smaller tokens move harder and disappear faster; double-check the project.",
       "reputationUnlisted": "No market listing found for this address — the wider market doesn’t know this token. That alone doesn’t make it bad, but verify the contract address with the project before dealing in it."
     },
     "signing": {
@@ -589,6 +591,9 @@
       "revokeWarning": "Careful: if a live refinance request or sale listing depends on a token’s approval, revoking it makes that flow fail until you restore it from its card — the card will warn you within moments.",
       "scopeNote": "This list covers tokens seen in your Vaipakam loans and offers on this network. Approvals granted to other apps or for other tokens aren’t shown — your wallet’s own token-approvals view remains the complete picture.",
       "none": "No standing approvals to Vaipakam found for your known tokens.",
+      "checkMore_one": "Check {{count}} more token",
+      "checkMore_other": "Check {{count}} more tokens",
+      "checkMoreUnchecked": "Check {{next}} more tokens ({{total}} unchecked)",
       "loading": "Reading your standing approvals…",
       "unavailable": "We couldn’t read your approvals right now — please try again in a moment.",
       "sourcesUnavailable": "We couldn’t load your loans and offers just now, so this list can’t be built completely — rather than show a partial picture, try again in a moment.",
@@ -867,6 +872,9 @@
       "sourcesDegraded": "One of this page’s data sources is temporarily unavailable. Your current positions are shown from the remaining source and recently changed items may take a moment to appear.",
       "roleBorrower": "You borrowed",
       "roleLender": "You lent",
+      "whatIfNothingBorrower": "If you do nothing and the loan passes its due date and the {{grace}}grace period (a short extra window to repay before the lender can take the collateral), the lender can receive your {{collateral}} collateral.",
+      "whatIfNothingLender": "If the borrower does not repay by the due date plus the {{grace}}grace period (a short extra repayment window), you can claim their collateral.",
+      "whatIfNothingViewer": "If the borrower does not repay by the due date plus the {{grace}}grace period (a short extra repayment window), the lender can claim the collateral.",
       "groupAttention": "Needs your attention",
       "groupActive": "Active loans",
       "groupEnded": "Ended loans",
@@ -1278,7 +1286,13 @@
       "addToWallet": "Add VPFI to MetaMask",
       "addedToWallet": "Asked your wallet to track VPFI."
     },
+    "lists": {
+      "showMore": "Show {{next}} more",
+      "showMoreHidden": "Show {{next}} more ({{total}} hidden)"
+    },
     "errors": {
+      "needMore": "You need more {{asset}} to continue.",
+      "needMoreBy": "You need about {{shortBy}} more {{asset}} to continue.",
       "partialOverPrincipal": "That covers the loan’s whole remaining principal. Use “Repay this loan” instead — it settles the loan properly and releases your collateral.",
       "notAToken": "That address doesn’t look like a token on this network. Double-check it or pick a suggested asset.",
       "walletConnectFirst": "Connect a wallet on a supported network first.",
@@ -1337,7 +1351,11 @@
         "action": "Mint {{units, number}} tLIQ"
       },
       "liquid2": {
-        "blurb": "A test USDC priced at $1 by a test oracle — a second, distinct liquid token so you can run a deal where both the loan and the collateral are liquid (with a realistic price spread against tLIQ / mWETH) without pairing a token against itself."
+        "title": "Mock USD Coin ({{symbol}})",
+        "titleGeneric": "Mock USD Coin (test stablecoin)",
+        "blurb": "A test USDC priced at $1 by a test oracle — a second, distinct liquid token so you can run a deal where both the loan and the collateral are liquid (with a realistic price spread against tLIQ / mWETH) without pairing a token against itself.",
+        "action": "Mint {{units, number}} {{symbol}}",
+        "actionGeneric": "Mint {{units, number}} test stablecoin"
       },
       "mweth": {
         "title": "Mock wrapped ETH (mWETH)",
@@ -1507,7 +1525,9 @@
       "liquidatable": "Can be liquidated now",
       "explain": "If the collateral’s value falls too far against the borrowed amount, the loan can be liquidated. Adding collateral makes it safer.",
       "listChecking": "checking health",
-      "listCheckingTitle": "This loan’s health hasn’t been read yet, so the badge stays neutral. Liquidation protection still applies on-chain."
+      "listCheckingTitle": "This loan’s health hasn’t been read yet, so the badge stays neutral. Liquidation protection still applies on-chain.",
+      "advancedDetail": "(Health factor {{ratio}} — the collateral’s value measured against what’s owed; below 1.00 the loan can be liquidated. Loan-to-value {{ltvPct}} — the borrowed amount as a share of the collateral’s value.{{dropClause}})",
+      "advancedDetailDrop": " Roughly, liquidation begins if the collateral’s value falls about {{drop}}."
     },
     "notFound": {
       "title": "This page doesn’t exist",
