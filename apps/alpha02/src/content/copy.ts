@@ -183,10 +183,14 @@ const copySource = {
       'The independent security check does not cover this network (test networks are not indexed). Extra care: only use tokens you deployed or trust.',
     gateBlock: (leg: string, reasons: string[]) =>
       `This deal's ${leg} failed an independent security check: ${reasons.join('; ')}. Accepting it is disabled — a token like this can be impossible to sell or transfer no matter what the deal terms say.`,
-    gateUnknown: (leg: string) =>
-      `The independent security check for this deal's ${leg} could not run. Try again in a moment — accepting is held back until the token can be verified.`,
-    gateUnsupported: (leg: string) =>
-      `The independent security check does not cover this network (test networks are not indexed), so this deal's ${leg} was not screened. Extra care: only accept tokens you trust.`,
+    gateUnknown: tmpl(
+      `The independent security check for this deal's {{leg}} could not run. Try again in a moment — accepting is held back until the token can be verified.`,
+      ['leg'],
+    ),
+    gateUnsupported: tmpl(
+      `The independent security check does not cover this network (test networks are not indexed), so this deal's {{leg}} was not screened. Extra care: only accept tokens you trust.`,
+      ['leg'],
+    ),
     gateWarn: (leg: string, reasons: string[]) =>
       `Heads up on this deal's ${leg}: ${reasons.join('; ')}. Make sure you understand these before you continue.`,
     gateChanged: tmpl(
@@ -248,13 +252,13 @@ const copySource = {
       'Allow the protocol to move NFTs from this collection — a one-time transaction per collection.',
     postListing: 'Post the listing — the final transaction.',
     acceptRental: 'Start the rental — the final transaction.',
-    phaseSign: (c: number, t: number) => `Signing terms… (${c} of ${t})`,
-    phaseApprove: (c: number, t: number) => `Approving… (${c} of ${t})`,
+    phaseSign: tmpl(`Signing terms… ({{c}} of {{t}})`, ['c', 't']),
+    phaseApprove: tmpl(`Approving… ({{c}} of {{t}})`, ['c', 't']),
     phasePermit: tmpl(
       `Signing the permission… ({{c}} of {{t}}) — free, no gas`,
       ['c', 't'],
     ),
-    phaseSend: (c: number, t: number) => `Submitting… (${c} of ${t})`,
+    phaseSend: tmpl(`Submitting… ({{c}} of {{t}})`, ['c', 't']),
   },
   killSwitch: {
     disabled:
@@ -1802,8 +1806,10 @@ const copySource = {
         `Heads up: your vault’s free balance is below the {{amount}} {{symbol}} this order commits. The fill will fail if the funds aren’t there when a taker accepts — deposit to your vault to keep the order fillable.`,
         ['amount', 'symbol'],
       ),
-      gaslessRejected: (reason: string) =>
-        `The book rejected this order (${reason}). Nothing was posted.`,
+      gaslessRejected: tmpl(
+        `The book rejected this order ({{reason}}). Nothing was posted.`,
+        ['reason'],
+      ),
       gaslessUnavailable:
         'We couldn’t reach the order book right now — the order was NOT posted. Please try again in a moment.',
       securityBlocked: (leg: string, reasons: string[]) =>
@@ -2128,8 +2134,10 @@ const copySource = {
     nextRent: 'List it for rent',
     footer:
       'Minted assets land in your wallet. Use “My vault” and the Borrow, Lend, and NFT Rental screens to put them to work.',
-    mintedTokens: (units: number, symbol: string) =>
-      `Minted ${units.toLocaleString()} ${symbol} to your wallet.`,
+    mintedTokens: tmpl(
+      `Minted {{units, number}} {{symbol}} to your wallet.`,
+      ['units', 'symbol'],
+    ),
     // The full token ID matters: the NFT Rental listing form needs the
     // EXACT id, so the success banner shows it whole with a copy button
     // (never truncated — a random 256-bit id can't be retyped).
@@ -2141,7 +2149,7 @@ const copySource = {
       title: 'Liquid test token (tLIQ)',
       blurb:
         'Priced by a test oracle, so it behaves like a liquid asset — health factor, liquidation, and refinancing all work with it. Pair it with mWETH (one as the loan, one as collateral) when a flow needs two different liquid tokens.',
-      action: (units: number) => `Mint ${units.toLocaleString()} tLIQ`,
+      action: tmpl(`Mint {{units, number}} tLIQ`, ['units']),
     },
     liquid2: {
       // Symbol is resolved from the token's live on-chain symbol() (#1103).
@@ -2165,7 +2173,7 @@ const copySource = {
       title: 'Mock wrapped ETH (mWETH)',
       blurb:
         'An oracle-priced test token that plays the “wrapped ETH” role in demos. It is NOT real WETH — it mints for free and has no value.',
-      action: (units: number) => `Mint ${units.toLocaleString()} mWETH`,
+      action: tmpl(`Mint {{units, number}} mWETH`, ['units']),
     },
     nft2: {
       title: 'Second rentable test NFT (vART)',
@@ -2179,13 +2187,13 @@ const copySource = {
       title: 'Illiquid test token (tILQ)',
       blurb:
         'No price feed, so it behaves like an illiquid asset — both sides must consent, and default transfers the collateral in kind.',
-      action: (units: number) => `Mint ${units.toLocaleString()} tILQ`,
+      action: tmpl(`Mint {{units, number}} tILQ`, ['units']),
     },
     illiquid2: {
       title: 'Second illiquid test token (tILQ2)',
       blurb:
         'Also unpriced. Pair it with tILQ (one as the loan, one as collateral) to try a deal where NEITHER side has a price — both parties must consent, no health factor applies, and default hands the collateral over in kind.',
-      action: (units: number) => `Mint ${units.toLocaleString()} tILQ2`,
+      action: tmpl(`Mint {{units, number}} tILQ2`, ['units']),
     },
     nft: {
       title: 'Rental test NFT (vRENT)',

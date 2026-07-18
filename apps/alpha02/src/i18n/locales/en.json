@@ -125,6 +125,8 @@
     "tokenSecurity": {
       "pickerUnknown": "The independent security check could not verify this token right now. Deals with unverified tokens are held back until the check succeeds.",
       "pickerUnsupported": "The independent security check does not cover this network (test networks are not indexed). Extra care: only use tokens you deployed or trust.",
+      "gateUnknown": "The independent security check for this deal's {{leg}} could not run. Try again in a moment — accepting is held back until the token can be verified.",
+      "gateUnsupported": "The independent security check does not cover this network (test networks are not indexed), so this deal's {{leg}} was not screened. Extra care: only accept tokens you trust.",
       "gateChanged": "The security check on this deal's {{leg}} reports new findings since you reviewed it. Nothing was signed. The review above now shows the update — read it and tick the consent box again if you still want to proceed.",
       "retry": "Check again",
       "badge": {
@@ -158,7 +160,10 @@
       "approveNft": "Allow the protocol to move NFTs from this collection — a one-time transaction per collection.",
       "postListing": "Post the listing — the final transaction.",
       "acceptRental": "Start the rental — the final transaction.",
-      "phasePermit": "Signing the permission… ({{c}} of {{t}}) — free, no gas"
+      "phaseSign": "Signing terms… ({{c}} of {{t}})",
+      "phaseApprove": "Approving… ({{c}} of {{t}})",
+      "phasePermit": "Signing the permission… ({{c}} of {{t}}) — free, no gas",
+      "phaseSend": "Submitting… ({{c}} of {{t}})"
     },
     "killSwitch": {
       "disabled": "This action is switched off right now — the operators have paused it as a precaution while something is looked into. Anything already yours is unaffected: repayments, claims, and withdrawals all stay open."
@@ -1142,6 +1147,7 @@
         "gaslessConsentRequired": "Review and accept the risk disclosures and terms first — for a gasless order, your signature is what records that consent.",
         "gaslessPosted": "Signed order posted to the book — no gas spent. It fills when a taker accepts it.",
         "gaslessFundsWarn": "Heads up: your vault’s free balance is below the {{amount}} {{symbol}} this order commits. The fill will fail if the funds aren’t there when a taker accepts — deposit to your vault to keep the order fillable.",
+        "gaslessRejected": "The book rejected this order ({{reason}}). Nothing was posted.",
         "gaslessUnavailable": "We couldn’t reach the order book right now — the order was NOT posted. Please try again in a moment.",
         "securityUnknown": "Posting is held until the independent security check for the {{leg}} succeeds.",
         "blockNetwork": "Switch to a supported network to post.",
@@ -1316,19 +1322,22 @@
       "nextLend": "Lend it out",
       "nextRent": "List it for rent",
       "footer": "Minted assets land in your wallet. Use “My vault” and the Borrow, Lend, and NFT Rental screens to put them to work.",
+      "mintedTokens": "Minted {{units, number}} {{symbol}} to your wallet.",
       "mintedNft": "Minted a test rental NFT to your wallet. Its token ID — you’ll need it to list the rental:",
       "copyTokenId": "Copy token ID",
       "copiedTokenId": "Copied.",
       "liquid": {
         "title": "Liquid test token (tLIQ)",
-        "blurb": "Priced by a test oracle, so it behaves like a liquid asset — health factor, liquidation, and refinancing all work with it. Pair it with mWETH (one as the loan, one as collateral) when a flow needs two different liquid tokens."
+        "blurb": "Priced by a test oracle, so it behaves like a liquid asset — health factor, liquidation, and refinancing all work with it. Pair it with mWETH (one as the loan, one as collateral) when a flow needs two different liquid tokens.",
+        "action": "Mint {{units, number}} tLIQ"
       },
       "liquid2": {
         "blurb": "A test USDC priced at $1 by a test oracle — a second, distinct liquid token so you can run a deal where both the loan and the collateral are liquid (with a realistic price spread against tLIQ / mWETH) without pairing a token against itself."
       },
       "mweth": {
         "title": "Mock wrapped ETH (mWETH)",
-        "blurb": "An oracle-priced test token that plays the “wrapped ETH” role in demos. It is NOT real WETH — it mints for free and has no value."
+        "blurb": "An oracle-priced test token that plays the “wrapped ETH” role in demos. It is NOT real WETH — it mints for free and has no value.",
+        "action": "Mint {{units, number}} mWETH"
       },
       "nft2": {
         "title": "Second rentable test NFT (vART)",
@@ -1339,11 +1348,13 @@
       "addedToWallet": "Asked your wallet to track it.",
       "illiquid": {
         "title": "Illiquid test token (tILQ)",
-        "blurb": "No price feed, so it behaves like an illiquid asset — both sides must consent, and default transfers the collateral in kind."
+        "blurb": "No price feed, so it behaves like an illiquid asset — both sides must consent, and default transfers the collateral in kind.",
+        "action": "Mint {{units, number}} tILQ"
       },
       "illiquid2": {
         "title": "Second illiquid test token (tILQ2)",
-        "blurb": "Also unpriced. Pair it with tILQ (one as the loan, one as collateral) to try a deal where NEITHER side has a price — both parties must consent, no health factor applies, and default hands the collateral over in kind."
+        "blurb": "Also unpriced. Pair it with tILQ (one as the loan, one as collateral) to try a deal where NEITHER side has a price — both parties must consent, no health factor applies, and default hands the collateral over in kind.",
+        "action": "Mint {{units, number}} tILQ2"
       },
       "nft": {
         "title": "Rental test NFT (vRENT)",

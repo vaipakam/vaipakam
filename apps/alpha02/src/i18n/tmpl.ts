@@ -52,11 +52,14 @@ export type TmplFn = ((...args: TmplArg[]) => string) & {
 };
 
 /** Minimal `{{var}}` interpolation for the English / pre-init path.
- *  Unknown placeholders are left intact so a bad param fails loudly
- *  (a visible `{{x}}`) rather than silently vanishing. */
+ *  Tolerates an i18next format suffix (`{{n, number}}`) — the fallback
+ *  inserts the raw value; i18next applies the locale-aware format at
+ *  runtime. Unknown placeholders are left intact so a bad param fails
+ *  loudly (a visible `{{x}}`) rather than silently vanishing. */
 export function interpolate(template: string, params: TmplParams): string {
-  return template.replace(/\{\{\s*(\w+)\s*\}\}/g, (whole, key: string) =>
-    key in params ? String(params[key]) : whole,
+  return template.replace(
+    /\{\{\s*(\w+)\s*(?:,[^}]*)?\}\}/g,
+    (whole, key: string) => (key in params ? String(params[key]) : whole),
   );
 }
 
