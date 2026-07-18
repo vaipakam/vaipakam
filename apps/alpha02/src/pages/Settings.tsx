@@ -26,29 +26,36 @@ import { LanguagePicker } from '../components/LanguagePicker';
 import { LANGUAGE_PICKER_ENABLED } from '../i18n/localeConfig';
 import { copy } from '../content/copy';
 
-const THEME_OPTIONS: Array<{ value: ThemePreference; label: string }> = [
-  { value: 'light', label: 'Light' },
-  { value: 'dark', label: 'Dark' },
-  { value: 'system', label: 'System' },
-];
-
 export function Settings() {
   const { preference, setPreference } = useTheme();
   const { mode, setMode, isAdvanced } = useMode();
 
+  // Theme labels resolve through the copy proxy in render scope — a
+  // module-level read would bake in English and miss locale switches
+  // (see src/i18n/reactiveCopy.ts).
+  const THEME_OPTIONS: Array<{ value: ThemePreference; label: string }> = [
+    { value: 'light', label: copy.settingsPage.theme.light },
+    { value: 'dark', label: copy.settingsPage.theme.dark },
+    { value: 'system', label: copy.settingsPage.theme.system },
+  ];
+
   return (
     <div className="stack">
       <div>
-        <h1 className="page-title">Settings</h1>
-        <p className="page-lede">Appearance, experience level, and more.</p>
+        <h1 className="page-title">{copy.settingsPage.title}</h1>
+        <p className="page-lede">{copy.settingsPage.lede}</p>
       </div>
 
       <section className="card">
         <div className="card-title">
           {preference === 'dark' ? <Moon aria-hidden /> : preference === 'light' ? <Sun aria-hidden /> : <MonitorCog aria-hidden />}
-          <h2 style={{ margin: 0 }}>Theme</h2>
+          <h2 style={{ margin: 0 }}>{copy.settingsPage.theme.title}</h2>
         </div>
-        <div className="segmented" role="radiogroup" aria-label="Theme">
+        <div
+          className="segmented"
+          role="radiogroup"
+          aria-label={copy.settingsPage.theme.title}
+        >
           {THEME_OPTIONS.map((opt) => (
             <button
               key={opt.value}
@@ -80,9 +87,13 @@ export function Settings() {
       <section className="card">
         <div className="card-title">
           <BookOpen aria-hidden />
-          <h2 style={{ margin: 0 }}>Experience level</h2>
+          <h2 style={{ margin: 0 }}>{copy.settingsPage.experience.title}</h2>
         </div>
-        <div className="segmented" role="radiogroup" aria-label="Experience level">
+        <div
+          className="segmented"
+          role="radiogroup"
+          aria-label={copy.settingsPage.experience.title}
+        >
           <button
             type="button"
             role="radio"
@@ -90,7 +101,7 @@ export function Settings() {
             className={mode === 'basic' ? 'active' : ''}
             onClick={() => setMode('basic')}
           >
-            Basic
+            {copy.settingsPage.experience.basic}
           </button>
           <button
             type="button"
@@ -99,13 +110,11 @@ export function Settings() {
             className={mode === 'advanced' ? 'active' : ''}
             onClick={() => setMode('advanced')}
           >
-            Advanced
+            {copy.settingsPage.experience.advanced}
           </button>
         </div>
         <p className="muted" style={{ marginTop: 12 }}>
-          Basic keeps every screen to the essentials. Advanced reveals more
-          controls and market detail on the same pages — the rules of the
-          protocol are identical in both.
+          {copy.settingsPage.experience.hint}
         </p>
       </section>
 
@@ -117,55 +126,55 @@ export function Settings() {
       <section className="card">
         <div className="card-title">
           <Gift aria-hidden />
-          <h2 style={{ margin: 0 }}>More</h2>
+          <h2 style={{ margin: 0 }}>{copy.settingsPage.more.title}</h2>
         </div>
         <div className="row-list">
           <Link to="/claims" className="item-row">
             <Gift aria-hidden size={18} />
             <span className="row-main">
-              <span className="row-title">Claims</span>
+              <span className="row-title">{copy.chrome.nav.claims}</span>
               <br />
-              <span className="row-sub">Collect repayments, collateral, and rewards</span>
+              <span className="row-sub">{copy.settingsPage.more.claimsSub}</span>
             </span>
           </Link>
           <Link to="/offers" className="item-row">
             <BookOpen aria-hidden size={18} />
             <span className="row-main">
-              <span className="row-title">Offer Book</span>
+              <span className="row-title">{copy.chrome.nav.offers}</span>
               <br />
-              <span className="row-sub">Browse every open offer on this network</span>
+              <span className="row-sub">{copy.settingsPage.more.offersSub}</span>
             </span>
           </Link>
           <Link to="/vault" className="item-row">
             <Landmark aria-hidden size={18} />
             <span className="row-main">
-              <span className="row-title">My vault</span>
+              <span className="row-title">{copy.chrome.nav.vault}</span>
               <br />
-              <span className="row-sub">Where your assets sit — totals, locked, and free</span>
+              <span className="row-sub">{copy.settingsPage.more.vaultSub}</span>
             </span>
           </Link>
           <Link to="/vpfi" className="item-row">
             <Coins aria-hidden size={18} />
             <span className="row-main">
-              <span className="row-title">VPFI discounts</span>
+              <span className="row-title">{copy.chrome.nav.vpfi}</span>
               <br />
-              <span className="row-sub">Optional — reduce protocol fees by holding VPFI</span>
+              <span className="row-sub">{copy.settingsPage.more.vpfiSub}</span>
             </span>
           </Link>
           <Link to="/activity" className="item-row">
             <History aria-hidden size={18} />
             <span className="row-main">
-              <span className="row-title">Activity</span>
+              <span className="row-title">{copy.chrome.nav.activity}</span>
               <br />
-              <span className="row-sub">Everything your wallet has done on Vaipakam</span>
+              <span className="row-sub">{copy.settingsPage.more.activitySub}</span>
             </span>
           </Link>
           <Link to="/help" className="item-row">
             <CircleHelp aria-hidden size={18} />
             <span className="row-main">
-              <span className="row-title">Help</span>
+              <span className="row-title">{copy.chrome.nav.help}</span>
               <br />
-              <span className="row-sub">Plain-language answers and build info</span>
+              <span className="row-sub">{copy.settingsPage.more.helpSub}</span>
             </span>
           </Link>
         </div>

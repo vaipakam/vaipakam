@@ -6,6 +6,7 @@
  */
 import type { ReactNode } from 'react';
 import { LoaderCircle } from 'lucide-react';
+import { copy } from '../content/copy';
 import { ReviewReceipt, type ReceiptData } from './ReviewReceipt';
 
 export function ConfirmReceipt({
@@ -38,7 +39,7 @@ export function ConfirmReceipt({
           onClick={onBack}
           disabled={busy}
         >
-          Back
+          {copy.common.back}
         </button>
         <button
           type="button"
@@ -48,7 +49,7 @@ export function ConfirmReceipt({
           onClick={onConfirm}
         >
           {busy ? <LoaderCircle className="spin" aria-hidden size={18} /> : null}
-          {busy ? 'Waiting for wallet…' : confirmLabel}
+          {busy ? copy.common.waitingForWallet : confirmLabel}
         </button>
       </div>
     </div>

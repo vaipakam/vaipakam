@@ -6,6 +6,7 @@
  */
 import { CircleCheck, CircleX, CircleDashed } from 'lucide-react';
 import type { ReactNode } from 'react';
+import { copy } from '../content/copy';
 
 export interface CheckItem {
   id: string;
@@ -21,11 +22,11 @@ export function Checklist({ items }: { items: CheckItem[] }) {
       {items.map((item) => (
         <li key={item.id} className={`check-${item.state}`}>
           {item.state === 'pass' ? (
-            <CircleCheck aria-label="Ready" />
+            <CircleCheck aria-label={copy.checklist.ready} />
           ) : item.state === 'fail' ? (
-            <CircleX aria-label="Needs attention" />
+            <CircleX aria-label={copy.checklist.needsAttention} />
           ) : (
-            <CircleDashed aria-label="Checking" />
+            <CircleDashed aria-label={copy.checklist.checking} />
           )}
           <span>{item.label}</span>
           {item.state === 'fail' && item.fix ? (

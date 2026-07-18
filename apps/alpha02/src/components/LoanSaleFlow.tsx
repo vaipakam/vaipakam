@@ -326,10 +326,7 @@ export function LoanSaleFlow({
               onChange={(e) => setConsent(e.target.checked)}
               style={{ marginTop: 4 }}
             />
-            <span>
-              I understand the lock, the settlement pull, and the standing
-              approval below and agree to them.
-            </span>
+            <span>{copy.loanSale.consentLabel}</span>
           </label>
           <ConfirmReceipt
             busy={busy}
@@ -339,14 +336,11 @@ export function LoanSaleFlow({
             disabled={!walletReady || !consent || flowDisabled('post-offer')}
             data={{
               youReceive: `${principalStr} — the full outstanding amount, paid to your wallet the moment a buyer accepts.`,
-              youLock:
-                'Your lender position NFT, until the sale completes or you cancel the listing. Nothing else.',
+              youLock: copy.loanSale.receiptLock,
               youMayOwe: `At acceptance, the settlement is pulled from your wallet: the LARGER of the interest accrued by then or the rate difference for the remaining term — never both. Right now that would be ~${formatTokenAmount(nowCost, dec)} ${sym}. ${copy.loanSale.approvalNote(boundStr)}`,
-              youCanLose:
-                'If your balance or the standing approval goes short, a buyer’s acceptance simply fails — nothing is taken, but the listing sits unfillable until you restore it or cancel.',
-              fees: 'The protocol’s cut comes out of the settlement figure — nothing beyond it.',
-              whenThisEnds:
-                'When a buyer accepts (everything settles in their transaction) or when you cancel the listing. It does not expire on its own.',
+              youCanLose: copy.loanSale.receiptCanLose,
+              fees: copy.loanSale.receiptFees,
+              whenThisEnds: copy.loanSale.receiptEnds,
             }}
           >
             <div className="banner banner-warn" role="alert" style={{ marginBottom: 12 }}>

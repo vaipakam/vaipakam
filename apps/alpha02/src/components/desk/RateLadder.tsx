@@ -244,7 +244,7 @@ export function RateLadder({
     return (
       <div className="card">
         <h2 className="card-title">{copy.desk.bookTitle}</h2>
-        <EmptyState icon={LoaderCircle} title="Loading the order book…" />
+        <EmptyState icon={LoaderCircle} title={copy.desk.bookLoading} />
       </div>
     );
   }
@@ -284,7 +284,7 @@ export function RateLadder({
               {copy.desk.sizeHeading}
               {symbol ? ` (${symbol})` : ''}
             </span>
-            <span title="Cumulative depth from the top of the side">
+            <span title={copy.desk.cumHeadingTitle}>
               {copy.desk.cumHeading}
             </span>
             <span />
@@ -325,7 +325,7 @@ export function RateLadder({
                       }`
                     : ''
                 }`
-              : 'one-sided book'}
+              : copy.desk.oneSidedBook}
           </div>
 
           {/* Crossable-band previewMatch strip (#1131 slice B) — sits

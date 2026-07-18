@@ -151,12 +151,12 @@ const SIDE_COPY = (): Record<Side, SideCopy> => ({
   lender: {
     title: copy.lend.title,
     lede: copy.lend.lede,
-    amountLabel: 'How much do you want to lend?',
-    amountHint: 'This amount is locked while your offer is open. Cancel any time before acceptance.',
-    rateLabel: 'Yearly interest rate you want (%)',
+    amountLabel: copy.offerFlow.lender.amountLabel,
+    amountHint: copy.offerFlow.lender.amountHint,
+    rateLabel: copy.offerFlow.lender.rateLabel,
     rateHint: copy.lend.yieldNotGuaranteed,
-    collateralLabel: 'Collateral you require from the borrower',
-    collateralHint: 'The borrower must lock this before they get your tokens.',
+    collateralLabel: copy.offerFlow.lender.collateralLabel,
+    collateralHint: copy.offerFlow.lender.collateralHint,
     submitLabel: copy.lend.postOffer,
     doneTitle: copy.lend.posted,
     doneBody: copy.lend.postedNext,
@@ -164,17 +164,17 @@ const SIDE_COPY = (): Record<Side, SideCopy> => ({
     matchLede: copy.match.lendLede,
     matchEmpty: copy.match.emptyLend,
     orPost: copy.match.orPostLend,
-    acceptSubmitLabel: 'Fund this borrower',
+    acceptSubmitLabel: copy.offerFlow.lender.acceptSubmitLabel,
     acceptDoneBody: copy.match.lenderNext,
   },
   borrower: {
     title: copy.borrow.title,
     lede: copy.borrow.lede,
-    amountLabel: 'How much do you want to borrow?',
-    amountHint: 'We’ll look for lenders offering close to this amount.',
-    rateLabel: 'Highest yearly interest rate you’ll accept (%)',
-    rateHint: 'Lenders offering at or below this rate can fund you.',
-    collateralLabel: 'Collateral you will lock',
+    amountLabel: copy.offerFlow.borrower.amountLabel,
+    amountHint: copy.offerFlow.borrower.amountHint,
+    rateLabel: copy.offerFlow.borrower.rateLabel,
+    rateHint: copy.offerFlow.borrower.rateHint,
+    collateralLabel: copy.offerFlow.borrower.collateralLabel,
     collateralHint: copy.borrow.lockNow,
     submitLabel: copy.borrow.postRequest,
     doneTitle: copy.borrow.posted,
@@ -183,7 +183,7 @@ const SIDE_COPY = (): Record<Side, SideCopy> => ({
     matchLede: copy.match.borrowLede,
     matchEmpty: copy.match.emptyBorrow,
     orPost: copy.match.orPostBorrow,
-    acceptSubmitLabel: 'Borrow this now',
+    acceptSubmitLabel: copy.offerFlow.borrower.acceptSubmitLabel,
     acceptDoneBody: copy.match.borrowerNext,
   },
 });
@@ -238,7 +238,7 @@ function MatchOfferRow({
     <div className="item-row">
       <span className="row-main">
         <span className="row-title">
-          {side === 'borrower' ? 'Borrow' : 'Lend'} {amountStr} at{' '}
+          {side === 'borrower' ? copy.offerFlow.rowBorrow : copy.offerFlow.rowLend} {amountStr} at{' '}
           {formatBpsAsPercent(offerRateBps(offer))} yearly{' '}
           <OfferRiskBadge level={risk} />
         </span>
@@ -585,7 +585,9 @@ export function OfferFlow({ side }: { side: Side }) {
     counterAsset: counterAssetAddress
       ? {
           label:
-            side === 'borrower' ? 'Borrowed asset' : 'Collateral asset',
+            side === 'borrower'
+              ? copy.offerFlow.counterAssetBorrowed
+              : copy.offerFlow.counterAssetCollateral,
           meta: counterMeta.data,
           metaError: counterMeta.isError,
         }
@@ -600,7 +602,9 @@ export function OfferFlow({ side }: { side: Side }) {
       ...baseChecks,
       {
         id: 'live-fees',
-        label: fees.ready ? 'Live fee terms loaded' : 'Loading live fee terms…',
+        label: fees.ready
+          ? copy.offerFlow.liveFeesLoaded
+          : copy.offerFlow.liveFeesLoading,
         state: fees.ready ? 'pass' : 'pending',
       },
     ],
@@ -683,8 +687,19 @@ export function OfferFlow({ side }: { side: Side }) {
   // ---- Step plumbing ----------------------------------------------------
   const stepLabels =
     mode === 'post'
-      ? (['Details', 'Offers', 'Your terms', 'Review & sign', 'Done'] as const)
-      : (['Details', 'Offers', 'Review & sign', 'Done'] as const);
+      ? ([
+          copy.offerFlow.steps.details,
+          copy.offerFlow.steps.offers,
+          copy.offerFlow.steps.terms,
+          copy.offerFlow.steps.review,
+          copy.offerFlow.steps.done,
+        ] as const)
+      : ([
+          copy.offerFlow.steps.details,
+          copy.offerFlow.steps.offers,
+          copy.offerFlow.steps.review,
+          copy.offerFlow.steps.done,
+        ] as const);
   const stepIndex =
     step === 'details'
       ? 0
@@ -964,7 +979,7 @@ export function OfferFlow({ side }: { side: Side }) {
           return {
             youReceive: `The lender position of running loan #${saleData.loanId}: up to ~${interestStr} interest from now to the due date if the borrower repays on time, plus the full ${principalStr} principal back.`,
             youLock: `${principalStr} paid now to the exiting lender — the loan itself doesn't change for the borrower.`,
-            youMayOwe: 'Nothing — the borrower owes you.',
+            youMayOwe: copy.offerFlow.receiptOweNothing,
             youCanLose: `${copy.lend.defaultOutcome} Their ${collateralStr} is already locked.${illiquidSuffix}`,
             fees: copy.fees.lenderYieldFee(yieldPct),
             whenThisEnds: `Repayment is due by ${dueStr} (grace period: ${grace.label}). You then claim your funds.`,
@@ -1001,7 +1016,7 @@ export function OfferFlow({ side }: { side: Side }) {
         return {
           youReceive: `Up to ~${interestStr} interest if the borrower repays on time, plus your ${principalStr} back. ${acceptModeNote}`,
           youLock: `${principalStr} lent to the borrower, now.`,
-          youMayOwe: 'Nothing — the borrower owes you.',
+          youMayOwe: copy.offerFlow.receiptOweNothing,
           youCanLose: `${copy.lend.defaultOutcome} They lock ${collateralStr}.${illiquidSuffix}`,
           fees: copy.fees.lenderYieldFee(yieldPct),
           whenThisEnds: `Repayment is due within ${durationStr} (grace period: ${graceStr}). You then claim your funds.`,
@@ -1035,7 +1050,7 @@ export function OfferFlow({ side }: { side: Side }) {
         return {
           youReceive: `Up to ~${interestStr} interest if the borrower repays on time, plus your ${principalStr} back. ${modeNote}`,
           youLock: `${principalStr} now, until your offer is accepted or you cancel it.`,
-          youMayOwe: 'Nothing — the borrower owes you.',
+          youMayOwe: copy.offerFlow.receiptOweNothing,
           youCanLose: `${copy.lend.defaultOutcome} They must lock ${collateralStr}.${postIlliquidSuffix}`,
           fees: copy.fees.lenderYieldFee(yieldPct),
           whenThisEnds: `Repayment is due ${durationStr} after a borrower accepts (grace period: ${graceStr}). You then claim your funds.`,
@@ -1964,7 +1979,11 @@ export function OfferFlow({ side }: { side: Side }) {
         <div className="card">
           <AssetPicker
             id="lending-asset"
-            label={side === 'lender' ? 'Asset to lend' : 'Asset to borrow'}
+            label={
+              side === 'lender'
+                ? copy.offerFlow.lender.assetLabel
+                : copy.offerFlow.borrower.assetLabel
+            }
             value={form.lendingAsset}
             onChange={(v) => set({ lendingAsset: v })}
           />
@@ -1981,7 +2000,7 @@ export function OfferFlow({ side }: { side: Side }) {
             <span className="field-hint">{text.amountHint}</span>
           </div>
           <div className="field">
-            <label htmlFor="duration">Duration</label>
+            <label htmlFor="duration">{copy.offerFlow.durationLabel}</label>
             <SelectMenu
               id="duration"
               value={form.durationDays}
@@ -2024,7 +2043,7 @@ export function OfferFlow({ side }: { side: Side }) {
               setStep('choose');
             }}
           >
-            See matching offers
+            {copy.offerFlow.seeMatches}
           </button>
         </div>
       ) : null}
@@ -2038,7 +2057,7 @@ export function OfferFlow({ side }: { side: Side }) {
             </div>
             <p className="muted">{text.matchLede}</p>
             {activeOffers.isLoading ? (
-              <p className="muted">Looking for matches…</p>
+              <p className="muted">{copy.offerFlow.lookingForMatches}</p>
             ) : matches === null ? (
               <p className="muted">{copy.match.unavailable}</p>
             ) : (
@@ -2098,7 +2117,7 @@ export function OfferFlow({ side }: { side: Side }) {
           </div>
           <div className="cluster">
             <button type="button" className="btn btn-secondary" onClick={() => setStep('details')}>
-              Back
+              {copy.offerFlow.back}
             </button>
             <button
               type="button"
@@ -2143,12 +2162,11 @@ export function OfferFlow({ side }: { side: Side }) {
           />
           {selfCollateral ? (
             <p className="field-hint" style={{ color: 'var(--danger)', marginTop: -8 }}>
-              The collateral must be a different asset than the one being
-              borrowed — the protocol rejects same-asset offers.
+              {copy.offerFlow.selfCollateralError}
             </p>
           ) : null}
           <div className="field">
-            <label htmlFor="collateral-amount">Collateral amount</label>
+            <label htmlFor="collateral-amount">{copy.offerFlow.collateralAmountLabel}</label>
             <input
               id="collateral-amount"
               className="input"
@@ -2165,7 +2183,7 @@ export function OfferFlow({ side }: { side: Side }) {
               className="stack"
             >
               <legend className="muted" style={{ paddingBottom: 8 }}>
-                Advanced options
+                {copy.offerFlow.advancedOptions}
               </legend>
               <label className="cluster" style={{ fontSize: '0.9rem' }}>
                 <input
@@ -2177,7 +2195,7 @@ export function OfferFlow({ side }: { side: Side }) {
                     set({ allowsPartialRepay: e.target.checked })
                   }
                 />
-                Allow the borrower to repay in parts
+                {copy.offerFlow.allowPartialRepay}
               </label>
               <label className="cluster" style={{ fontSize: '0.9rem' }}>
                 <input
@@ -2187,7 +2205,7 @@ export function OfferFlow({ side }: { side: Side }) {
                     set({ useFullTermInterest: !e.target.checked })
                   }
                 />
-                Charge interest only for time used (pro-rata) instead of the full term
+                {copy.offerFlow.proRataInterest}
               </label>
             </fieldset>
           ) : null}
@@ -2198,7 +2216,7 @@ export function OfferFlow({ side }: { side: Side }) {
 
           <div className="cluster">
             <button type="button" className="btn btn-secondary" onClick={() => setStep('choose')}>
-              Back
+              {copy.offerFlow.back}
             </button>
             <button
               type="button"
@@ -2207,7 +2225,7 @@ export function OfferFlow({ side }: { side: Side }) {
               disabled={!postDetailsComplete}
               onClick={() => setStep('review')}
             >
-              Continue to review
+              {copy.offerFlow.continueToReview}
             </button>
           </div>
         </div>
@@ -2247,7 +2265,7 @@ export function OfferFlow({ side }: { side: Side }) {
                   className="btn btn-secondary btn-sm"
                   onClick={() => void saleReview.refetch()}
                 >
-                  Retry
+                  {copy.offerFlow.retry}
                 </button>
               </div>
             ) : saleData === undefined ? (
@@ -2290,7 +2308,7 @@ export function OfferFlow({ side }: { side: Side }) {
                 className="btn btn-secondary btn-sm"
                 onClick={() => void linkedLoan.refetch()}
               >
-                Retry
+                {copy.offerFlow.retry}
               </button>
             </div>
           ) : null}
@@ -2307,7 +2325,7 @@ export function OfferFlow({ side }: { side: Side }) {
                   className="btn btn-secondary btn-sm"
                   onClick={() => void legLiquidity.refetch()}
                 >
-                  Retry
+                  {copy.offerFlow.retry}
                 </button>
               </div>
             ) : (
@@ -2329,7 +2347,7 @@ export function OfferFlow({ side }: { side: Side }) {
                   className="btn btn-secondary btn-sm"
                   onClick={() => grace.refetch()}
                 >
-                  Retry
+                  {copy.offerFlow.retry}
                 </button>
               </div>
             ) : (
@@ -2339,11 +2357,11 @@ export function OfferFlow({ side }: { side: Side }) {
             )
           ) : null}
           <div className="card">
-            <h3>Before you sign</h3>
+            <h3>{copy.offerFlow.beforeYouSign}</h3>
             <Checklist items={checks} />
           </div>
           <div className="card">
-            {receipt ? <ReviewReceipt data={receipt} /> : <p className="muted">Preparing your review…</p>}
+            {receipt ? <ReviewReceipt data={receipt} /> : <p className="muted">{copy.offerFlow.preparingReview}</p>}
             {receipt ? (
               <SimulationPreview tx={simTx} result={preSign.result} />
             ) : null}
@@ -2460,7 +2478,7 @@ export function OfferFlow({ side }: { side: Side }) {
                 onClick={() => setStep(mode === 'post' ? 'terms' : 'choose')}
                 disabled={submitting}
               >
-                Back
+                {copy.offerFlow.back}
               </button>
               <button
                 type="button"
@@ -2474,7 +2492,7 @@ export function OfferFlow({ side }: { side: Side }) {
                 ) : null}
                 {progress !== null
                   ? progress.current === 0
-                    ? 'Waiting for wallet…'
+                    ? copy.offerFlow.waitingForWallet
                     : progress.kind === 'sign'
                       ? copy.signing.phaseSign(progress.current, progress.total)
                       : progress.kind === 'permit'
@@ -2507,7 +2525,7 @@ export function OfferFlow({ side }: { side: Side }) {
                 target="_blank"
                 rel="noreferrer"
               >
-                View the transaction
+                {copy.offerFlow.viewTransaction}
               </a>
             </p>
           ) : null}
@@ -2516,7 +2534,7 @@ export function OfferFlow({ side }: { side: Side }) {
             style={{ justifyContent: 'center', marginTop: 4 }}
           >
             <Link to="/positions" className="btn btn-primary">
-              View my positions
+              {copy.offerFlow.viewPositions}
             </Link>
             {/* UX-041 — a POST flow can go straight into another offer
                 without leaving for /positions and back. Resets the flow
@@ -2546,7 +2564,7 @@ export function OfferFlow({ side }: { side: Side }) {
                   setStep('details');
                 }}
               >
-                Post another
+                {copy.offerFlow.postAnother}
               </button>
             ) : null}
           </div>

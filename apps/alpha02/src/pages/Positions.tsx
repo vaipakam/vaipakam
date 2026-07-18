@@ -48,8 +48,8 @@ function OfferRow({ offer }: { offer: IndexedOffer }) {
     : '…';
   const isLending = offer.offerType === 0;
   const title = isRental
-    ? `Your NFT listing · ${shortAddress(offer.lendingAsset)} #${offer.tokenId}`
-    : `${isLending ? 'Your lending offer' : 'Your borrow request'} · ${amount} ${meta.data?.symbol ?? ''}`;
+    ? `${copy.positions.offerRow.yourNftListing} · ${shortAddress(offer.lendingAsset)} #${offer.tokenId}`
+    : `${isLending ? copy.positions.offerRow.yourLendingOffer : copy.positions.offerRow.yourBorrowRequest} · ${amount} ${meta.data?.symbol ?? ''}`;
 
   async function cancel() {
     setBusy(true);
@@ -100,7 +100,7 @@ function OfferRow({ offer }: { offer: IndexedOffer }) {
           </span>
         </span>
         {!isCreator ? (
-          <span className="badge badge-neutral">Held — managed by its creator</span>
+          <span className="badge badge-neutral">{copy.positions.offerRow.held}</span>
         ) : (
           <button
             type="button"
@@ -108,7 +108,7 @@ function OfferRow({ offer }: { offer: IndexedOffer }) {
             disabled={!onSupportedChain || busy}
             onClick={() => setConfirming((c) => !c)}
           >
-            Cancel offer
+            {copy.positions.offerRow.cancel}
           </button>
         )}
       </div>
@@ -120,12 +120,11 @@ function OfferRow({ offer }: { offer: IndexedOffer }) {
           <ReviewReceipt
             data={{
               youReceive: `${lockedStr} back — unlocked from this offer immediately.`,
-              youLock: 'Nothing.',
-              youMayOwe: 'Nothing.',
-              youCanLose: 'Nothing — cancelling an open offer has no penalty.',
-              fees: 'None (network gas only).',
-              whenThisEnds:
-                'Immediately — the offer leaves the book and can’t be accepted anymore. Post a new offer any time.',
+              youLock: copy.positions.offerRow.receiptNothing,
+              youMayOwe: copy.positions.offerRow.receiptNothing,
+              youCanLose: copy.positions.offerRow.receiptLose,
+              fees: copy.positions.offerRow.receiptFees,
+              whenThisEnds: copy.positions.offerRow.receiptEnds,
             }}
           />
           <div className="cluster" style={{ marginTop: 12 }}>
@@ -135,7 +134,7 @@ function OfferRow({ offer }: { offer: IndexedOffer }) {
               onClick={() => setConfirming(false)}
               disabled={busy}
             >
-              Keep the offer
+              {copy.positions.offerRow.keep}
             </button>
             <button
               type="button"
@@ -144,7 +143,9 @@ function OfferRow({ offer }: { offer: IndexedOffer }) {
               disabled={busy}
               onClick={() => void cancel()}
             >
-              {busy ? 'Cancelling…' : 'Confirm — cancel & unlock my assets'}
+              {busy
+                ? copy.positions.offerRow.cancelling
+                : copy.positions.offerRow.confirmCancel}
             </button>
           </div>
         </div>
@@ -198,7 +199,7 @@ export function Positions() {
           }
         />
       ) : loans.isLoading || offers.isLoading ? (
-        <EmptyState icon={LoaderCircle} title="Loading your positions…" />
+        <EmptyState icon={LoaderCircle} title={copy.positions.loading} />
       ) : loans.data == null || offers.data == null ? (
         // BOTH sources (chain + indexer) failing for a list means the
         // page can't honestly claim "you have nothing" — a user's
@@ -221,7 +222,7 @@ export function Positions() {
 
           {offers.data.rows.length > 0 ? (
             <section style={{ marginBottom: 24 }}>
-              <h2>Open offers</h2>
+              <h2>{copy.positions.openOffers}</h2>
               {/* #1247 PAG-001 — windowed: the data caps allow up to
                   500–2000 rows; render (and each row's token-meta
                   reads) must scale with what the user asks to see. */}
@@ -314,7 +315,7 @@ export function Positions() {
               action={
                 <div className="stack" style={{ alignItems: 'center', gap: 8 }}>
                   <Link to="/" className="btn btn-primary">
-                    Get started
+                    {copy.positions.getStarted}
                   </Link>
                   {/* UX-050 (Codex #1171 r1) — a past user with no current
                       positions but historical activity must still find
