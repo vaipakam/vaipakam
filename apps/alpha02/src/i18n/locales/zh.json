@@ -27,7 +27,16 @@
         "language": "语言",
         "languageHint": "尚未完成翻译的语言暂时显示英文文本。",
         "languagePickerAria": "显示语言"
-      }
+      },
+      "loading": "正在加载…",
+      "modeAdvanced": "高级",
+      "modeBasic": "基础",
+      "modeSwitchAria": "界面模式",
+      "more": "更多",
+      "moreSheetAria": "更多去处",
+      "navPrimaryAria": "主导航",
+      "navQuickAria": "快速导航",
+      "skipToContent": "跳到内容"
     },
     "seo": {
       "home": {
@@ -178,7 +187,11 @@
       "pushEnable": "启用 Push 投递",
       "pushEnabled": "此钱包的 Push 投递已开启。",
       "pushButton": "打开 Push 频道",
-      "loanNudge": "想在此贷款变得有风险时收到 Telegram 警告？请在设置中配置提醒。"
+      "loanNudge": "想在此贷款变得有风险时收到 Telegram 警告？请在设置中配置提醒。",
+      "bandAlert": "警报",
+      "bandCritical": "严重",
+      "bandWarn": "警告",
+      "bandsSave": "保存"
     },
     "notifications": {
       "bellLabel": "通知",
@@ -206,7 +219,16 @@
       "title": "此页面出现问题",
       "body": "页面遇到意外错误并停止渲染。您的资金和链上持仓不受影响 — 这是显示侧故障，您刚签署的交易仍可能已经通过（重新加载后查看我的持仓）。重新加载通常可以清除它。",
       "reload": "重新加载页面",
-      "home": "返回首页"
+      "home": "返回首页",
+      "detailAria": "错误详情",
+      "glosses": {
+        "185": "超过最大更新深度 — 某个组件每次渲染都在更新 state。这是无限渲染循环。",
+        "300": "渲染的 hooks 少于预期 — 某个 hook 被条件返回跳过。",
+        "301": "重新渲染过多 — 渲染期间调用了 state setter。",
+        "310": "违反 Rules of Hooks — hook 被条件调用或调用顺序错误。",
+        "321": "无效的 hook 调用 — hooks 只能在 React 函数组件内运行。",
+        "418": "Hydration 不匹配 — 服务端和客户端渲染了不同的标记。"
+      }
     },
     "diagnostics": {
       "open": "支持与连接检查",
@@ -264,7 +286,8 @@
       "tokenValid": "资产已识别为 token",
       "consent": "已接受风险披露和条款",
       "getTestAssets": "获取测试资产",
-      "connectEarly": "连接钱包以继续 — 您需要它来签名，所以现在连接最方便。"
+      "connectEarly": "连接钱包以继续 — 您需要它来签名，所以现在连接最方便。",
+      "sanctionsChecking": "正在检查合规状态…"
     },
     "receipt": {
       "heading": "签名前请审核",
@@ -293,7 +316,53 @@
         "出借：只有借款人还款时才赚取利息。违约时，您的回收取决于锁定抵押品最终的实际价值。",
         "NFT 租赁：租用者获得临时使用权，不获得所有权；NFT 留在所有者的 vault 中。租赁费预付，并带有小额可退还缓冲金。",
         "智能合约风险：Vaipakam 是公网上的代码。Bug、网络故障或极端市场状况可能造成损失 — 切勿投入无法承受损失的资金。"
-      ]
+      ],
+      "buildDevFallback": "dev",
+      "buildLabel": "Build",
+      "faq": {
+        "alerts": {
+          "a": "在警报卡片中，您可以关联 Telegram（并启用浏览器 push），以便在贷款临近到期或持仓健康度下降时收到提醒。关联只需一次签名；给自己发送测试警报，可以在真正依赖它之前确认通道可用。",
+          "q": "如何在截止日期或清算前收到警报？"
+        },
+        "assetsHeld": {
+          "a": "在您自己的 Vaipakam Vault 中 — 这是只由您的钱包控制的链上账户。Vaipakam 从不汇集用户资金，也不能替您花费它们。",
+          "q": "我的资产存放在哪里？"
+        },
+        "claimCenter": {
+          "a": "当您参与的贷款结算时 — 无论是应收还款，还是违约抵押品 — 资金会等待您领取。领取页面会列出哪些内容可领取、对应哪个持仓，并按协议自己的记录验证，确保没有资金滞留。",
+          "q": "领取中心有什么用？"
+        },
+        "lenderInterest": {
+          "a": "不保证。那是借款人按时还款时您赚到的收益。如果对方违约，您的回收取决于其锁定的抵押品 — 签名前的 review 屏幕会说明这一点。",
+          "q": "我出借时看到的利息是保证的吗？"
+        },
+        "missedRepayment": {
+          "a": "到期日加宽限期之后，出借人可以收到您锁定的抵押品。如果抵押品有实时市场价格，价值下跌过多时也可能被自动卖出 — 按时还款可避免两种情况。",
+          "q": "如果我不偿还贷款会怎样？"
+        },
+        "modes": {
+          "a": "基础模式把引导式借款、出借和 NFT 租赁流程放在前面。高级模式还会显示专业界面 — Offer Book、Rate Desk 订单簿、VPFI 折扣和完整活动历史。可随时从导航中的模式开关切换；它不会移动您的持仓。",
+          "q": "基础模式和高级模式有什么区别？"
+        },
+        "nftRental": {
+          "a": "NFT 仍锁在所有者的 vault 中；租用者只获得临时使用权，永远不是所有权。租金预付，并带有一小笔可退缓冲金。",
+          "q": "什么是 NFT 租赁？"
+        },
+        "nftVerifier": {
+          "a": "NFT verifier（在导航中）会直接从链上读取任何 Vaipakam 持仓 NFT，并显示其真实贷款条款和状态 — 这样您在相信二级市场出售前，可以确认 listing 实际代表什么。",
+          "q": "在平台外购买前如何检查持仓 NFT？"
+        },
+        "vpfi": {
+          "a": "不需要。VPFI 是可选的 — 在 vault 中持有它可以降低符合条件贷款的协议费用。它永远不会降低网络 gas，借款、出借或租赁也永远不需要它。",
+          "q": "我需要 VPFI 吗？"
+        },
+        "wrongNetwork": {
+          "a": "Offer、您的 vault 和 faucet 都按网络区分。如果您的钱包在 Vaipakam 未部署的链上，横幅会提供一键切换到受支持网络；应用绝不会在不支持的链上执行操作。",
+          "q": "它说我在错误网络上 — 我该怎么办？"
+        }
+      },
+      "lede": "用简单语言快速回答。",
+      "title": "帮助"
     },
     "consentParts": {
       "prefix": "我理解并同意 ",
@@ -387,7 +456,42 @@
       "no4907Unknown": "无法检查此 NFT collection 是否支持链上租赁标准 (ERC-4907)。如果不支持，Vaipakam 外部应用不会识别租用者 — 在 Vaipakam 内租赁仍可工作。",
       "vpfiPrepayListing": "此 listing 要求用 VPFI 支付，但租赁不允许 — 无法接受。请选择其他 listing。",
       "vpfiCheckRetry": "刚才无法验证此 listing 的支付资产 — 没有发送或批准任何内容。请稍后重试。",
-      "vpfiPrepayNotAllowed": "VPFI 不能用作租赁支付资产 — 请选择其他 token。"
+      "vpfiPrepayNotAllowed": "VPFI 不能用作租赁支付资产 — 请选择其他 token。",
+      "back": "返回",
+      "beforeYouSign": "签名前",
+      "continueToReview": "继续 review",
+      "contractHint": "支持 ERC-4907 的单个 NFT 会赋予租用者其他应用可见的使用权；其他 NFT 仍可租赁，并在 Vaipakam 内跟踪。",
+      "contractLabel": "NFT 合约地址",
+      "dailyFeeLabel": "日费",
+      "durationLabel": "租赁时长",
+      "listWhenEnds": "租赁结束时，租用者权利会自动重置；您从租赁详情页领取费用并取回 NFT。",
+      "listYouCanLose": "NFT 在出租期间的临时使用权 — 租用者永远不能转移或出售它。",
+      "listingsLoading": "正在加载租赁 listings…",
+      "liveFeesLoaded": "已加载实时费用条款",
+      "liveFeesLoading": "正在加载实时费用条款…",
+      "liveRentalLoaded": "已加载实时租赁条款",
+      "liveRentalLoading": "正在加载实时租赁条款…",
+      "nftTypeErc1155": "多版本 NFT (ERC-1155)",
+      "nftTypeErc721": "单个 NFT (ERC-721)",
+      "nftTypeLabel": "NFT 类型",
+      "nothing": "无。",
+      "paymentAssetCheckFailed": "我们刚才无法验证付款资产 — 请稍后重试。",
+      "paymentAssetRecognised": "已识别付款资产",
+      "preparingReview": "正在准备您的 review…",
+      "prepayAssetHint": "租用者用此代币预付整段租赁。",
+      "prepayAssetLabel": "租用者支付给您的资产",
+      "quantityLabel": "数量",
+      "rentFeesNote": "显示价格是租赁费用；Vaipakam 的分成来自所有者收益，不会额外加到您的成本上。",
+      "rentYouMayOwe": "无需更多 — 费用已预付。",
+      "stepChooseNft": "选择 NFT",
+      "stepDone": "完成",
+      "stepReview": "Review 和签名",
+      "stepYourNft": "您的 NFT 和价格",
+      "tokenIdLabel": "Token ID",
+      "tryAgain": "重试",
+      "viewPositions": "查看我的持仓",
+      "viewTransaction": "查看交易",
+      "waitingForWallet": "等待钱包…"
     },
     "preclose": {
       "title": "提前关闭此贷款",
@@ -430,7 +534,10 @@
       "multiStepNote": "发布最多需要三次钱包确认（guardrail、payoff 批准、请求本身）。如果中途停止，前面的步骤会留在链上，直到完成发布或取消 — 取消也会移除批准。",
       "partialBlockedByPending": "此贷款有实时再融资请求。部分还款会改变金额，并使该请求永久无法接受 — 请先取消再融资请求。",
       "precloseBlockedByPending": "此贷款有实时再融资请求。现在提前关闭会让它搁置 — 请先取消再融资请求。",
-      "repayWarnPending": "此贷款仍有实时再融资请求。还款会结清贷款，之后该请求永远无法完成 — 稍后从其卡片取消它（也会移除常设 payoff 批准）；在此之前它只会留到过期。"
+      "repayWarnPending": "此贷款仍有实时再融资请求。还款会结清贷款，之后该请求永远无法完成 — 稍后从其卡片取消它（也会移除常设 payoff 批准）；在此之前它只会留到过期。",
+      "consentLabel": "我理解下方 payoff 和钱包余额条款，并同意它们。",
+      "receiptLock": "没有新的锁定 — 您现有抵押品会直接转到新贷款，从不解锁。",
+      "receiptReceive": "出借人接受的瞬间，按您选择的条款生成新贷款 — 您的抵押品自动转入其中，此贷款在同一交易中关闭。"
     },
     "approvals": {
       "title": "常设 token 批准",
@@ -549,7 +656,12 @@
       "loadingOffers": "正在寻找匹配的出借报价…",
       "figureMoved": "payout 数字随时间变化，因此审核已关闭 — 请重新打开以按当前数字确认。",
       "checking": "正在检查此贷款是否可提前退出…",
-      "checkFailed": "当前无法读取此贷款的退出详情 — 正在重试。"
+      "checkFailed": "当前无法读取此贷款的退出详情 — 正在重试。",
+      "receiptCanLose": "已累计利息或剩余期限利率差中较大的那个 — 绝不是两者都收。上方数字已反映；确认时会实时重新读取精确金额。",
+      "receiptEnds": "立即 — 您的持仓转给买家，您就退出此贷款。借款人的利率和到期日不变。",
+      "receiptFees": "协议分成来自被放弃的利息 — 不会从显示数字之外再扣您的 payout。",
+      "receiptLockNothing": "无。",
+      "receiptOweNothing": "无 — 您不批准任何内容，也无需自掏腰包支付。"
     },
     "loanSale": {
       "title": "列出此持仓出售",
@@ -573,7 +685,12 @@
       "fundingUnknown": "无法从此设备识别此 listing 的报价记录，因此无法在此验证其结算资金 — 请在列出它的设备上管理，或保持充足批准和余额。",
       "ended": "您的销售 listing 已不再活跃。如果买家已接受，payout 已在您的钱包中，结算通过常设批准拉取；任何剩余批准可从钱包的 token 批准视图撤销。",
       "listingUnavailable": "按自己价格列出持仓功能尚不可用 — 所需链上步骤正在修复。上方 instant exit 可用：它会立即卖给匹配开放报价。",
-      "partialBlockedByListing": "出借人已按当前未偿金额列出此持仓出售。listing 存续期间暂停部分还款 — 它会改变金额并误导买家。您仍可随时全额还款或提前关闭。"
+      "partialBlockedByListing": "出借人已按当前未偿金额列出此持仓出售。listing 存续期间暂停部分还款 — 它会改变金额并误导买家。您仍可随时全额还款或提前关闭。",
+      "consentLabel": "我理解下方的锁定、结算扣款和常设授权，并同意这些条款。",
+      "receiptCanLose": "如果您的余额或常设授权不足，买家的接受只会失败 — 不会扣走任何东西，但 listing 会无法成交，直到您恢复或取消。",
+      "receiptEnds": "当买家接受时（所有内容在其交易中结算）或当您取消 listing 时。它不会自行过期。",
+      "receiptFees": "协议分成来自结算数字 — 不会超过它。",
+      "receiptLock": "您的出借人持仓 NFT，直到出售完成或您取消 listing。没有其他内容。"
     },
     "positions": {
       "title": "我的持仓",
@@ -610,7 +727,117 @@
       "whatNextInternalMatchViewer": "此贷款通过内部匹配关闭 — 任何 residual 领取权属于持仓持有者。",
       "whatNextClosed": "此贷款已完全结算 — 没有剩余操作。",
       "whatNextRentalEnded": "此租赁已结束。任何赚取费用或可退还缓冲金可由持仓持有者在下方领取 — 不会再发生其他变化。",
-      "settledAhead": "此持仓已在链上关闭 — 这里的状态是实时的。您的列表可能需要一点时间同步。"
+      "settledAhead": "此持仓已在链上关闭 — 这里的状态是实时的。您的列表可能需要一点时间同步。",
+      "details": {
+        "actions": {
+          "claimBuffer": "取回我的缓冲金",
+          "claimCollateral": "领取我的抵押品",
+          "claimFeesNft": "领取费用并取回 NFT",
+          "claimFunds": "领取我的资金",
+          "claimRecovered": "领取此贷款追回的部分",
+          "claimResidual": "领取剩余部分（如有）",
+          "closeRental": "关闭此租赁",
+          "repay": "偿还此贷款"
+        },
+        "addCollateral": {
+          "amountAria": "要添加的抵押品金额",
+          "button": "添加",
+          "confirm": "确认 — 添加抵押品",
+          "endsImmediately": "补仓会立即生效。",
+          "fallbackWarn": "此贷款处于清算失败状态。只有当补仓恢复所需健康水平时，添加抵押品才会使其回到 Active — 否则出借人仍可领取，新增抵押品也会处于风险中。全额偿还总能修复。如不确定，请选择还款。",
+          "loseFallback": "新增金额会加入处于风险中的抵押品 — 如果补仓未完全修复，出借人仍可领取全部。",
+          "loseNormal": "新增金额会加入现有抵押品 — 如果贷款违约，它同样处于风险中。",
+          "oweNothingMore": "无需更多 — 这不会改变您欠的金额。",
+          "receiveFallbackCure": "有机会让贷款恢复健康 — 仅当此补仓恢复所需健康水平时（见上方警告）。",
+          "receiveSafer": "现在不收到任何东西 — 贷款更安全（清算更远）。",
+          "title": "添加抵押品"
+        },
+        "backToPositions": "← 返回我的持仓",
+        "confirmingRole": "正在确认您的角色…",
+        "connectToAct": "连接持有此贷款持仓的钱包，才能对其操作。",
+        "done": {
+          "collateralAdded": "抵押品已添加 — 贷款现在更安全。",
+          "partialRepaid": "部分还款已确认 — 您现在欠得更少。",
+          "rentalClosed": "租赁已关闭。任何可退缓冲金已就绪 — 请从领取中心领取。",
+          "repaid": "还款已确认。您的抵押品已就绪 — 在下方或领取中心领取。"
+        },
+        "healthChecking": "正在检查此贷款健康度…",
+        "healthReadFailed": "我们现在无法读取此贷款健康度 — 正在重试。清算保护仍在链上生效。",
+        "labels": {
+          "health": "健康度",
+          "ifNothing": "如果什么都不做",
+          "locked": "已锁定",
+          "owed": "欠款",
+          "terms": "条款",
+          "whatNext": "接下来会发生什么"
+        },
+        "loadingLoan": "正在加载贷款…",
+        "noCollateral": "无抵押品",
+        "notFound": "我们现在找不到此贷款。它可能是新的（仍在索引），或链接已过期。",
+        "owedRentalPrepaid": "无需还款 — 租赁费用已预付（仅在到期后关闭时产生滞纳费）。",
+        "partial": {
+          "amountAria": "现在要偿还的金额",
+          "blurb": "此贷款允许部分还款。付款会先用于利息，然后减少您欠的金额 — 到期日永不改变。",
+          "button": "偿还一部分",
+          "confirm": "确认 — 偿还一部分",
+          "endsPrincipalDrops": "您的剩余本金会立即下降；利息继续按较小金额累计。",
+          "feesAccrued": "已累计利息中的协议分成会在付款内结算。",
+          "loseNothingBeyondPayment": "付款之外没有其他损失。",
+          "receiveSmallerDebt": "现在不收到任何东西 — 债务更小。",
+          "title": "偿还贷款的一部分"
+        },
+        "phase": {
+          "approving": "正在钱包中批准…",
+          "submitting": "正在提交…",
+          "waiting": "等待钱包…"
+        },
+        "receipt": {
+          "bufferBack": "任何可退缓冲金都会返还 — 关闭后即可领取。",
+          "bufferBackShort": "您的可退缓冲金返还。",
+          "endsClaim": "领取会立即支付，并为您关闭此持仓。",
+          "endsPreclose": "立即 — 贷款今天结算，您的抵押品释放。",
+          "endsRepay": "立即 — 贷款结算，您的这一侧释放。",
+          "feesNone": "无。",
+          "feesPreclose": "提前关闭没有额外 Vaipakam 费用 — 协议分成来自出借人的利息。",
+          "feesRental": "协议分成会在支付前从租赁费用中扣除。",
+          "feesRepay": "还款没有额外 Vaipakam 费用 — 协议分成来自出借人的利息。",
+          "feesYield": "协议收益费会在支付前从利息中扣除。",
+          "internalResidual": "内部匹配留给您的任何剩余部分，加上任何 VPFI rebate（可能为零）。",
+          "liquidationResidual": "清算后剩余的任何部分（可能为零）。",
+          "loseNothingBeyondOwed": "不超过您欠的金额。",
+          "loseNothingBeyondPay": "不超过您支付的金额。",
+          "noCollateralBack": "没有额外返还 — 此贷款没有可释放的抵押品。",
+          "nothing": "无。",
+          "nothingNew": "没有新的内容。",
+          "oweRentalPrepaid": "无需更多 — 费用已预付（仅到期后有滞纳费）。",
+          "owedNoCollateral": "此侧仍应收到的内容（此贷款没有抵押品，因此可能没有任何内容）。",
+          "recoveredNoCollateral": "此贷款追回的内容（它没有抵押品，因此可能没有任何内容）。",
+          "rentalFeesAndNft": "您赚到的租赁费用，以及返还的 NFT。"
+        },
+        "roleUnverified": "我们无法验证此持仓当前由谁持有，因此暂时隐藏操作。请稍后重试。",
+        "titleLoan": "贷款",
+        "titleRental": "租赁",
+        "whatIfNothingRentalOwner": "租用者权利会在到期日和宽限期后重置；您的费用仍可在这里领取。",
+        "whatIfNothingRentalRenter": "您的使用权在到期日结束，预付缓冲金会给所有者 — 准时关闭才能取回。",
+        "whatIfNothingRentalViewer": "租用者使用权在到期日结束；所有者费用和缓冲金按租赁条款结算。"
+      },
+      "getStarted": "开始",
+      "loading": "正在加载您的持仓…",
+      "offerRow": {
+        "cancel": "取消 offer",
+        "cancelling": "正在取消…",
+        "confirmCancel": "确认 — 取消并解锁我的资产",
+        "held": "已持有 — 由创建者管理",
+        "keep": "保留 offer",
+        "receiptEnds": "立即 — offer 离开订单簿，不能再被接受。您随时可以发布新 offer。",
+        "receiptFees": "无（仅网络 gas）。",
+        "receiptLose": "无 — 取消开放 offer 没有惩罚。",
+        "receiptNothing": "无。",
+        "yourBorrowRequest": "您的借款请求",
+        "yourLendingOffer": "您的出借 offer",
+        "yourNftListing": "您的 NFT listing"
+      },
+      "openOffers": "开放 offers"
     },
     "powerSurface": {
       "body": "这是高级用户界面 — 提供原始报价和实时利率，减少引导。引导式借入和出借流程也覆盖相同操作，并提供逐步说明。",
@@ -635,7 +862,27 @@
       "allResidualNote": "未准备好的内容仍会在下方列出，可单独领取。",
       "allRewardsUnavailable": "无法检查您的奖励，因此它们不在此批次中 — 请单独领取。",
       "allVpfiUnavailable": "无法检查您的 vault VPFI，因此它不在此批次中。",
-      "allWorking": "等待钱包…"
+      "allWorking": "等待钱包…",
+      "checking": "正在检查可领取项…",
+      "row": {
+        "heldProceeds": "此贷款的托管收益",
+        "heldProceedsDefault": "从违约中追回的托管收益",
+        "loan": "贷款",
+        "prepaidBufferBack": "退回您的预付缓冲金",
+        "rental": "租赁",
+        "repaidFunds": "已偿还资金",
+        "residualAfterMatch": "内部匹配后剩余的部分",
+        "surplusAfterLiquidation": "清算后剩余的部分",
+        "whyDefaultBorrower": "此贷款已违约。如果清算留下盈余，您可以领取。",
+        "whyDefaultLender": "贷款已违约 — 领取违约结算为您追回的部分。",
+        "whyFallbackPending": "自动清算未完成 — 领取会由您自己完成最终追回。",
+        "whyInternalMatchBorrower": "此贷款通过内部匹配关闭 — 领取留给您的任何剩余部分。",
+        "whyInternalMatchLender": "此贷款通过内部匹配关闭 — 领取您的资金。",
+        "whyRentalClosed": "租赁已关闭 — 可退缓冲金已释放。",
+        "whyRentalEnded": "租赁已结束 — 领取您赚到的费用并取回 NFT。",
+        "whyRepaidBorrower": "您已偿还此贷款，因此您的抵押品已释放。",
+        "whyRepaidLender": "借款人已偿还此贷款。"
+      }
     },
     "offers": {
       "title": "报价簿",
@@ -644,7 +891,50 @@
       "emptyBody": "创建自己的报价，让另一方来找您。",
       "unavailable": "当前无法加载报价簿。请稍后重试。",
       "lenderOffer": "出借报价",
-      "borrowerOffer": "借入请求"
+      "borrowerOffer": "借入请求",
+      "advancedNoExpiry": "无过期时间",
+      "advancedNoPartialRepay": "不允许部分还款",
+      "advancedPartialRepayOk": "可部分还款",
+      "badgeBorrower": "借款人",
+      "badgeLender": "出借人",
+      "byCreator": "由",
+      "collateralLabel": "抵押品",
+      "collateralNone": "无",
+      "createOffer": "创建 offer",
+      "ctaBorrow": "借入此项",
+      "ctaBuyPosition": "购买此贷款持仓",
+      "ctaFund": "为此请求出资",
+      "ctaRent": "租用此 NFT",
+      "dailyFeeLoading": "正在加载日费…",
+      "feesPrepaid": "费用已预付",
+      "filteredEmptyBody": "放宽上方筛选条件 — offer book 本身有开放 offer。",
+      "filteredEmptyTitle": "没有 offer 匹配这些筛选条件",
+      "filters": {
+        "assetLabel": "按资产地址筛选",
+        "assetPlaceholder": "0x…（任意一端：本金、抵押品、付款）",
+        "clear": "清除筛选",
+        "showLabel": "显示",
+        "sideAll": "全部",
+        "sideBorrowing": "借款请求（向这些出借）",
+        "sideLending": "出借 offer（从这些借入）",
+        "sideRentals": "NFT 租赁",
+        "sortDurationLong": "期限 — 从长到短",
+        "sortDurationShort": "期限 — 从短到长",
+        "sortLabel": "排序方式",
+        "sortNewest": "最新优先",
+        "sortRateHigh": "利率 — 从高到低",
+        "sortRateLow": "利率 — 从低到高"
+      },
+      "footerParts": {
+        "borrowLink": "借入",
+        "lead": "在这里接受 offer — “借入此项”、“为此请求出资” 或 “购买此贷款持仓” — 会引导您走与引导式 ",
+        "lendLink": "出借",
+        "mid": " 和 ",
+        "tail": " 流程相同的 review 和签名步骤。"
+      },
+      "loading": "正在加载 offer book…",
+      "rentalListing": "NFT 租赁",
+      "yearly": "年化"
     },
     "desk": {
       "title": "利率台",
@@ -692,7 +982,7 @@
         "badgeTooltip": "来自链下簿的 gasless 签名订单 — maker 无需交易即可签名，由接受者通过单笔链上交易成交。签名行在成交前始终来自订单簿服务，而不是链。",
         "partialBadgeTooltip": "部分匹配的签名订单 — 其剩余部分仍计入深度，并通过 permissionless matcher 成交，但直接 fill 已不再可能。",
         "rangedBadgeTooltip": "范围规模签名订单 — 其规模仍计入深度，但只有 permissionless matcher 可分片消耗；没有整单直接 fill。",
-        "fill": "Fill",
+        "fill": "执行",
         "confirmTitle": "Fill 签名订单",
         "confirmLede": "您在一笔交易中执行整个 fill：您的一侧从钱包移动，maker 的一侧从其 vault 移动，贷款立即开始。",
         "gone": "此签名订单已无法 fill（已 fill、已取消或已过期）。订单簿会很快同步。没有发送任何内容。",
@@ -701,7 +991,7 @@
         "kycBlocked": "此部署的身份验证规则未覆盖此价值下订单的一侧，因此 fill 会在链上失败。没有发送或批准任何内容。",
         "riskBlocked": "此部署的风险访问规则当前阻止订单的一侧 — maker 或您的钱包需要此紧凑确认无法收集的链上访问级别或常设同意。没有发送或批准任何内容。",
         "accept": "Fill 订单",
-        "accepting": "Filling…",
+        "accepting": "执行中…",
         "accepted": "签名订单已 fill — 贷款已 live。"
       },
       "chart": {
@@ -785,7 +1075,12 @@
         "blockGaslessService": "Gasless 发布需要订单簿服务，但当前不可用 — 请将发布切换为 On-chain。",
         "consentRecheck": "条款已变化 — 请重新确认。",
         "max": "最大",
-        "feePreviewTitle": "费用与承诺"
+        "feePreviewTitle": "费用与承诺",
+        "collateralAmount": "抵押品金额",
+        "expiryGtcTitle": "取消前有效 — 直到您取消为止都会挂单",
+        "expiryGttTitle": "到指定时间有效 — 到截止时间自动失效",
+        "rateBpsNote": "利率以基点存储（1% = 100 bps）",
+        "selfCollateral": "抵押品不能与贷款资产是同一个代币。"
       },
       "orders": {
         "tab": "开放订单",
@@ -820,7 +1115,8 @@
         "signedCancelling": "取消中…",
         "signedCancelNote": "发布是免费的，但取消需要 gas：撤销簿中已持有签名的唯一方式是链上交易。",
         "signedCancelled": "签名订单已在链上取消。",
-        "signedTruncated": "此市场中您的签名订单超过一次可列出的数量 — 这不是完整集合。"
+        "signedTruncated": "此市场中您的签名订单超过一次可列出的数量 — 这不是完整集合。",
+        "loading": "正在加载您的未完成订单…"
       },
       "positions": {
         "tab": "持仓",
@@ -829,8 +1125,14 @@
         "health": "健康度",
         "notPriced": "无自动清算",
         "manage": "管理",
-        "allPositions": "全部持仓 →"
-      }
+        "allPositions": "全部持仓 →",
+        "loading": "正在加载您的持仓…"
+      },
+      "bookLoading": "正在加载订单簿…",
+      "cumHeadingTitle": "从该侧顶部开始的累计深度",
+      "loadMarket": "加载市场",
+      "marketsLoading": "正在加载市场…",
+      "oneSidedBook": "单边订单簿"
     },
     "vpfi": {
       "title": "VPFI 折扣",
@@ -840,7 +1142,51 @@
       "tokenChanged": "VPFI token 配置在您审核后发生变化。没有批准任何内容 — 请检查更新后的数字并重试。",
       "tokenCheckRetry": "刚才无法确认 VPFI token — 没有批准任何内容。请稍后重试。",
       "addToWallet": "将 VPFI 添加到 MetaMask",
-      "addedToWallet": "已请求您的钱包跟踪 VPFI。"
+      "addedToWallet": "已请求您的钱包跟踪 VPFI。",
+      "activeDiscount": "当前折扣",
+      "amountLabelDeposit": "要移入 vault 的 VPFI",
+      "amountLabelWithdraw": "要取回钱包的 VPFI",
+      "consentToggle": "使用我 vault 中的 VPFI 获得费用折扣",
+      "consentToggleSub": "没有这个设置，持有 VPFI 不会产生折扣。",
+      "deposit": "存入",
+      "depositCta": "存入 VPFI",
+      "depositDone": "存入已确认。您的折扣历史从现在开始累积。",
+      "depositToActivate": " — 存入以启用",
+      "educationBody": "在 Vaipakam Vault 中持有 VPFI，符合条件贷款的协议费用会降低。折扣使用过去 30 天的平均持有量 — 今天补充会让折扣逐步增长，而不是立即生效。",
+      "educationTitle": "折扣如何运作",
+      "inYourVault": "在您的 vault 中",
+      "inYourWallet": "在您的钱包中",
+      "max": "Max",
+      "noSellNote": "Vaipakam 不出售 VPFI，也不支付持有收益 — 您需要在公开市场获得它。",
+      "noneRightNow": "当前无",
+      "nothing": "无。",
+      "offFeesSuffix": "从符合条件的协议费用中减免",
+      "optOutSyncFailed": "您的退出设置已保存在此网络，但同步到其他网络未完成 — 它会在您下一次 VPFI 操作时同步，或尝试再次切换。",
+      "overMaxHint": " — 这超过了您的持有量。",
+      "phaseApproving": "正在批准 VPFI…",
+      "phasePermitting": "正在签署许可… — 免费，无 gas",
+      "phaseSubmitting": "正在提交…",
+      "phaseWaiting": "等待钱包…",
+      "receiptDeposit": {
+        "fees": "存入无 Vaipakam 费用。",
+        "whenThisEnds": "您可随时取出可用 VPFI。",
+        "youCanLose": "无 — vault 中的可用 VPFI 仍可取出。",
+        "youReceive": "现在不收到任何东西 — 未来在符合条件贷款上逐步增长的费用折扣。"
+      },
+      "receiptWithdraw": {
+        "fees": "取出无 Vaipakam 费用。",
+        "whenThisEnds": "立即 — 您的剩余余额继续累积折扣历史。",
+        "youCanLoseLead": "未来费用折扣 —"
+      },
+      "reviewDeposit": "Review 存入",
+      "reviewWithdraw": "Review 取出",
+      "statusTitle": "您的折扣状态",
+      "switchToChange": "切换到受支持网络以更改此项。",
+      "vaultActionLabel": "Vault 操作",
+      "warmingUp": "预热中",
+      "withdraw": "取出",
+      "withdrawCta": "取出 VPFI",
+      "withdrawDone": "取出已确认。VPFI 已回到您的钱包。"
     },
     "errors": {
       "partialOverPrincipal": "这已覆盖贷款的全部剩余本金。请改用“还清此贷款” — 它会正确结算贷款并释放您的抵押品。",
@@ -920,7 +1266,14 @@
       "emptyCta": "开始",
       "emptyCtaFaucet": "获取测试资产",
       "unavailable": "当前无法读取您的 vault。资金不受影响 — 请稍后重试。",
-      "lockedHint": "锁定金额支持您的开放报价、活跃贷款和租赁。它们关闭后会释放。"
+      "lockedHint": "锁定金额支持您的开放报价、活跃贷款和租赁。它们关闭后会释放。",
+      "addressLabel": "Vault 地址：",
+      "badgeFree": "可用",
+      "badgePartlyLocked": "部分锁定",
+      "emptyBody": "当您发布 offers、开启贷款或存入 VPFI 时，资产会显示在这里。",
+      "emptyTitle": "您的 vault 里还没有内容",
+      "loading": "正在读取您的 vault…",
+      "noVaultTitle": "还没有 vault"
     },
     "activity": {
       "title": "活动",
@@ -936,14 +1289,16 @@
       "loadMore": "加载更早活动",
       "loadingMore": "加载中…",
       "unavailableFallback": "您的当前贷款和租赁始终可在这里查看",
-      "positionsLink": "我的持仓"
+      "positionsLink": "我的持仓",
+      "loading": "正在加载您的活动…"
     },
     "rewards": {
       "title": "交互奖励",
       "blurb": "来自您出借和借入活动的 VPFI 奖励。贷款关闭且奖励日最终确定后，它们会变为可领取。",
       "empty": "暂无奖励。奖励会在出借或借入活动后出现。",
       "waiting": "您的奖励正在最终确定 — 奖励日需跨所有链关闭后才能领取。请稍后查看。",
-      "claim": "领取奖励"
+      "claim": "领取奖励",
+      "unavailable": "我们现在无法检查您的 rewards — 请稍后重试。"
     },
     "sanctions": {
       "title": "此钱包被合规预言机列出。",
@@ -965,6 +1320,108 @@
       "title": "此页面不存在",
       "body": "链接可能过旧或拼写错误。没有任何内容丢失 — 您的持仓是安全的。",
       "backHome": "返回首页"
+    },
+    "assetPicker": {
+      "faucetBadge": "Faucet 测试代币",
+      "invalidAddress": "请输入有效的合约地址 — “0x” 后跟 40 个十六进制字符。",
+      "pasteOption": "粘贴代币地址…",
+      "placeholder": "选择资产…"
+    },
+    "checklist": {
+      "checking": "检查中",
+      "needsAttention": "需要注意",
+      "ready": "就绪"
+    },
+    "common": {
+      "back": "返回",
+      "tryAgain": "重试",
+      "waitingForWallet": "等待钱包…"
+    },
+    "copyAddress": {
+      "copied": "地址已复制"
+    },
+    "loanRow": {
+      "youRent": "您租用",
+      "youRentOut": "您出租"
+    },
+    "offerFlow": {
+      "advancedOptions": "高级选项",
+      "allowPartialRepay": "允许借款人分批还款",
+      "back": "返回",
+      "beforeYouSign": "签名前",
+      "borrower": {
+        "acceptSubmitLabel": "现在借入",
+        "amountHint": "我们会寻找接近此金额的出借人。",
+        "amountLabel": "您想借多少？",
+        "assetLabel": "要借入的资产",
+        "collateralLabel": "您将锁定的抵押品",
+        "rateHint": "提供此利率或更低利率的出借人可以为您出资。",
+        "rateLabel": "您接受的最高年利率 (%)"
+      },
+      "collateralAmountLabel": "抵押品金额",
+      "continueToReview": "继续 review",
+      "counterAssetBorrowed": "借入资产",
+      "counterAssetCollateral": "抵押资产",
+      "durationLabel": "期限",
+      "lender": {
+        "acceptSubmitLabel": "为此借款人出资",
+        "amountHint": "您的 offer 开放期间，此金额会被锁定。被接受前可随时取消。",
+        "amountLabel": "您想出借多少？",
+        "assetLabel": "要出借的资产",
+        "collateralHint": "借款人必须先锁定它，才能收到您的代币。",
+        "collateralLabel": "您要求借款人提供的抵押品",
+        "rateLabel": "您想要的年利率 (%)"
+      },
+      "liveFeesLoaded": "已加载实时费用条款",
+      "liveFeesLoading": "正在加载实时费用条款…",
+      "lookingForMatches": "正在寻找匹配 offer…",
+      "postAnother": "再发布一个",
+      "preparingReview": "正在准备您的 review…",
+      "proRataInterest": "只按使用时间收取利息（按比例），而不是按完整期限",
+      "receiptOweNothing": "无 — 借款人欠您。",
+      "retry": "重试",
+      "rowBorrow": "借入",
+      "rowLend": "出借",
+      "seeMatches": "查看匹配 offer",
+      "selfCollateralError": "抵押品必须与被借入资产不同 — 协议会拒绝同资产 offer。",
+      "steps": {
+        "details": "详情",
+        "done": "完成",
+        "offers": "报价",
+        "review": "Review 和签名",
+        "terms": "您的条款"
+      },
+      "viewPositions": "查看我的持仓",
+      "viewTransaction": "查看交易",
+      "waitingForWallet": "等待钱包…"
+    },
+    "settingsPage": {
+      "experience": {
+        "advanced": "高级",
+        "basic": "基础",
+        "hint": "基础模式让每个屏幕只保留核心内容。高级模式在同一页面显示更多控件和市场细节 — 两种模式下协议规则完全相同。",
+        "title": "体验级别"
+      },
+      "lede": "外观、体验级别和更多。",
+      "more": {
+        "activitySub": "您的钱包在 Vaipakam 上做过的一切",
+        "claimsSub": "领取还款、抵押品和 rewards",
+        "helpSub": "简单语言回答和 build 信息",
+        "offersSub": "浏览此网络上的所有开放 offer",
+        "title": "更多",
+        "vaultSub": "您的资产所在位置 — 总额、锁定和可用",
+        "vpfiSub": "可选 — 持有 VPFI 以降低协议费用"
+      },
+      "theme": {
+        "dark": "深色",
+        "light": "浅色",
+        "system": "系统",
+        "title": "主题"
+      },
+      "title": "设置"
+    },
+    "stepNav": {
+      "progressAria": "进度"
     }
   }
 }
