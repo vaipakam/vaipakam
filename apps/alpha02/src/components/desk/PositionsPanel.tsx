@@ -107,7 +107,7 @@ export function PositionsPanel() {
     return <EmptyState icon={ListChecks} title={copy.wallet.connectFirst} />;
   }
   if (loans.isLoading) {
-    return <EmptyState icon={LoaderCircle} title="Loading your positions…" />;
+    return <EmptyState icon={LoaderCircle} title={text.loading} />;
   }
   if (loans.data == null || rows === null) {
     return <UnavailableState body={text.unavailable} />;

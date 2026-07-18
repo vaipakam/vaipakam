@@ -9,12 +9,21 @@
  *   - the Settings Language picker persists the PREFERENCE
  *     (localStorage — the key the pre-paint bootstrap reads — and
  *     the picker selection survive a reload), while `<html lang>`
- *     declares the CONTENT language: a placeholder locale (bundle
- *     still `{}`) renders English fallback text, so the attribute
- *     stays `en` until the locale's translation actually ships —
- *     no matter how the preference arrived (Codex #1309 r5).
- *   - placeholder locales render ENGLISH text after switching —
- *     the fallback chain, not raw keys or a crash.
+ *     declares the CONTENT language. With Spanish now a TRANSLATED
+ *     locale, picking es re-renders the catalog in Spanish AND flips
+ *     `<html lang>` to es — the "lang follows shipped translations"
+ *     half COVERAGE.md flagged as unassertable until a real bundle
+ *     landed.
+ *   - placeholder locales (bundle still `{}`, e.g. te) render
+ *     ENGLISH fallback text — the fallback chain, not raw keys or a
+ *     crash — and `<html lang>` honestly stays `en` until that
+ *     locale's translation ships, no matter how the preference
+ *     arrived (Codex #1309 r5). Asserted via a seeded
+ *     `vaipakam_lang` cookie: on the CI origin the cookie is
+ *     host-scoped (writeCookie omits Domain on an IP), so the real
+ *     cookie-authoritative seed path runs end-to-end. te (Telugu)
+ *     has no scheduled bundle, so this leg stays valid as further
+ *     locales promote (ta itself ships in this PR).
  *
  *  The cross-subdomain `vaipakam_lang` cookie half of persistence is
  *  not assertable here (a `.vaipakam.com`-scoped cookie can't exist
@@ -56,7 +65,7 @@ test('public routes carry per-route meta; per-user routes are noindex', async ({
   await expect(page.locator('meta[name="robots"]')).toHaveCount(0);
 });
 
-test('language preference persists; placeholder locales render English with honest <html lang>', async ({
+test('language preference persists; translated es flips content + <html lang>; placeholders stay honest', async ({
   launchWallet,
 }) => {
   const { page } = await launchWallet('lender');
@@ -64,35 +73,82 @@ test('language preference persists; placeholder locales render English with hone
 
   const picker = page.getByLabel('Display language');
   await expect(picker).toBeVisible();
-  // Wave 1: English + the four first-wave codes, exactly.
-  await expect(picker.locator('option')).toHaveCount(5);
+  // Exactly the PICKER_VISIBLE set: wave-1 (en/es/zh/hi/ja) + ta + fr
+  // + de + ar + ko. Grows by one with every locale promoted into
+  // PICKER_VISIBLE — bump this count in the same diff as the promotion.
+  await expect(picker.locator('option')).toHaveCount(10);
 
   await picker.selectOption('es');
-  // The PREFERENCE took: the picker reflects it immediately…
-  await expect(picker).toHaveValue('es');
-  // …but es ships as a placeholder bundle ({}), so the rendered text
-  // is the English fallback (not raw keys, not a blank remount) and
-  // <html lang> keeps declaring the CONTENT language honestly.
+  // es is a TRANSLATED locale now: the catalog re-resolves in Spanish
+  // (the picker's own aria-label included — re-query by the Spanish
+  // label, which doubles as proof the chrome strings switched), the
+  // Language card heading renders localized, and <html lang> flips to
+  // the content language.
+  const pickerEs = page.getByLabel('Idioma de visualización');
+  await expect(pickerEs).toHaveValue('es');
   await expect(
-    page.getByRole('heading', { name: 'Language', exact: true }),
+    page.getByRole('heading', { name: 'Idioma', exact: true }),
   ).toBeVisible();
-  await expect(page.locator('html')).toHaveAttribute('lang', 'en');
+  await expect(page.locator('html')).toHaveAttribute('lang', 'es');
 
   // Same-origin persistence (the pre-paint bootstrap in index.html
-  // reads this key before React mounts) — the preference survives a
-  // reload even though the stamp stays English until the translation
-  // ships.
+  // reads this key before React mounts) — preference AND stamp
+  // survive a reload.
   expect(
     await page.evaluate(() => localStorage.getItem('vaipakam:language')),
   ).toBe('es');
   await page.reload({ waitUntil: 'domcontentloaded' });
-  await expect(page.getByLabel('Display language')).toHaveValue('es');
-  await expect(page.locator('html')).toHaveAttribute('lang', 'en');
+  await expect(page.getByLabel('Idioma de visualización')).toHaveValue('es');
+  await expect(page.locator('html')).toHaveAttribute('lang', 'es');
 
-  // And back to English.
-  await page.getByLabel('Display language').selectOption('en');
+  // And back to English (via the Spanish-labelled picker).
+  await page.getByLabel('Idioma de visualización').selectOption('en');
   await expect(page.getByLabel('Display language')).toHaveValue('en');
+  await expect(page.locator('html')).toHaveAttribute('lang', 'en');
   expect(
     await page.evaluate(() => localStorage.getItem('vaipakam:language')),
   ).toBe('en');
+
+  // RTL: Arabic is the first right-to-left locale promoted. Picking it
+  // must flip BOTH the content language (`lang="ar"`) AND the layout
+  // direction (`dir="rtl"`) — the applyDocumentDirection half of the
+  // factory that no LTR locale exercises. The picker's own aria-label
+  // switches to Arabic, so re-query by it (doubles as proof the chrome
+  // re-rendered in Arabic). English (and every other shipped locale) is
+  // LTR, so selecting back to en must restore `dir="ltr"`.
+  await page.getByLabel('Display language').selectOption('ar');
+  const pickerAr = page.getByLabel('لغة العرض');
+  await expect(pickerAr).toHaveValue('ar');
+  await expect(page.locator('html')).toHaveAttribute('lang', 'ar');
+  await expect(page.locator('html')).toHaveAttribute('dir', 'rtl');
+  await page.reload({ waitUntil: 'domcontentloaded' });
+  // The pre-paint bootstrap stamps dir before React mounts, so it
+  // survives a reload too (no first-paint LTR flash for RTL users).
+  await expect(page.locator('html')).toHaveAttribute('lang', 'ar');
+  await expect(page.locator('html')).toHaveAttribute('dir', 'rtl');
+  await page.getByLabel('لغة العرض').selectOption('en');
+  await expect(page.getByLabel('Display language')).toHaveValue('en');
+  await expect(page.locator('html')).toHaveAttribute('dir', 'ltr');
+
+  // Placeholder honesty, via the COOKIE leg: a `vaipakam_lang`
+  // cookie carrying a locale alpha02 hasn't translated (te — no
+  // Telugu bundle is scheduled, so this leg stays stable as more
+  // locales promote; a sibling surface writing the cookie is how
+  // such a preference arrives). The cookie is authoritative by
+  // design, and on the CI origin writeCookie emits it host-scoped
+  // (no Domain on an IP), so the exact seed path runs: the factory
+  // copies the cookie into localStorage, the text renders as
+  // English fallback (not raw keys), `<html lang>` honestly stays
+  // `en`, and the preference is preserved — not scrubbed to en.
+  await page.evaluate(() => {
+    document.cookie = 'vaipakam_lang=te; Path=/; SameSite=Lax';
+  });
+  await page.reload({ waitUntil: 'domcontentloaded' });
+  await expect(
+    page.getByRole('heading', { name: 'Language', exact: true }),
+  ).toBeVisible();
+  await expect(page.locator('html')).toHaveAttribute('lang', 'en');
+  expect(
+    await page.evaluate(() => localStorage.getItem('vaipakam:language')),
+  ).toBe('te');
 });

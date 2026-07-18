@@ -7,6 +7,7 @@ import {ERC1967Proxy} from "@openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy.s
 import {VPFIToken} from "../src/token/VPFIToken.sol";
 import {VPFITokenFacet} from "../src/facets/VPFITokenFacet.sol";
 import {InteractionRewardsFacet} from "../src/facets/InteractionRewardsFacet.sol";
+import {InteractionRewardsLensFacet} from "../src/facets/InteractionRewardsLensFacet.sol";
 import {ConfigFacet} from "../src/facets/ConfigFacet.sol";
 import {AdminFacet} from "../src/facets/AdminFacet.sol";
 import {LibVaipakam} from "../src/libraries/LibVaipakam.sol";
@@ -88,6 +89,12 @@ contract RecycleBucketTest is SetupTest, IVaipakamErrors {
         return InteractionRewardsFacet(address(diamond));
     }
 
+    ///  #1306 follow-up — read-only lens accessor (getters moved off
+    ///      InteractionRewardsFacet into InteractionRewardsLensFacet).
+    function _lens() internal view returns (InteractionRewardsLensFacet) {
+        return InteractionRewardsLensFacet(address(diamond));
+    }
+
     function _cfg() internal view returns (ConfigFacet) {
         return ConfigFacet(address(diamond));
     }
@@ -108,8 +115,8 @@ contract RecycleBucketTest is SetupTest, IVaipakamErrors {
         _mut().closeRewardEntryRaw(id, 3);
         _mut().setRewardEntryForfeitedRaw(id);
         expected =
-            _facet().getInteractionHalfPoolForDay(1) +
-            _facet().getInteractionHalfPoolForDay(2);
+            _lens().getInteractionHalfPoolForDay(1) +
+            _lens().getInteractionHalfPoolForDay(2);
     }
 
     // ─── Claim-path forfeit → bucket ─────────────────────────────────────────
@@ -118,7 +125,7 @@ contract RecycleBucketTest is SetupTest, IVaipakamErrors {
         (, uint256 expected) = _seedForfeited(alice, 42);
 
         uint256 diamondBalBefore = vpfi.balanceOf(address(diamond));
-        (uint256 today, ) = _facet().getInteractionCurrentDay();
+        (uint256 today, ) = _lens().getInteractionCurrentDay();
 
         // Topics-only check (source, refId): the exact accrual carries the
         // entry-path formula's integer rounding, asserted against state below.
@@ -155,7 +162,7 @@ contract RecycleBucketTest is SetupTest, IVaipakamErrors {
         );
         // Pool accounting unchanged: the forfeit consumed the 69M cap.
         assertEq(
-            _facet().getInteractionPoolPaidOut(),
+            _lens().getInteractionPoolPaidOut(),
             bucket,
             "forfeit still consumes the interaction pool"
         );
@@ -173,7 +180,7 @@ contract RecycleBucketTest is SetupTest, IVaipakamErrors {
         (uint256 id, uint256 expected) = _seedForfeited(alice, loanId);
         _mut().setLoanActiveLenderEntryId(loanId, id);
 
-        (uint256 today, ) = _facet().getInteractionCurrentDay();
+        (uint256 today, ) = _lens().getInteractionCurrentDay();
         // Topics-only (source, refId=loanId); exact amount asserted vs state.
         vm.expectEmit(true, true, false, false, address(diamond));
         emit VpfiRecycled(
@@ -221,7 +228,7 @@ contract RecycleBucketTest is SetupTest, IVaipakamErrors {
         // Whole frame rolled back: nothing processed, nothing credited.
         assertEq(_cfg().getRecycleBucket(), 0, "no unbacked credit");
         assertEq(
-            _facet().getInteractionPoolPaidOut(),
+            _lens().getInteractionPoolPaidOut(),
             0,
             "pool accounting rolled back with the revert"
         );

@@ -273,7 +273,7 @@ export function Activity() {
       ) : loans.isLoading ||
         loans.data === undefined ||
         participantLeg.data === undefined ? (
-        <EmptyState icon={LoaderCircle} title="Loading your activity…" />
+        <EmptyState icon={LoaderCircle} title={copy.activity.loading} />
       ) : loans.data === null ||
         !loans.data.indexerOk ||
         participantLeg.data === null ? (
@@ -289,7 +289,7 @@ export function Activity() {
           </p>
         </>
       ) : activity.isLoading || activity.data === undefined ? (
-        <EmptyState icon={LoaderCircle} title="Loading your activity…" />
+        <EmptyState icon={LoaderCircle} title={copy.activity.loading} />
       ) : activity.data === null ? (
         <>
           <UnavailableState body={copy.activity.unavailable} />

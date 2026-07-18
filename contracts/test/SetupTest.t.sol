@@ -136,6 +136,7 @@ import {VPFIDiscountAccumulatorFacet} from "../src/facets/VPFIDiscountAccumulato
 import {MirrorTierReceiverFacet} from "../src/facets/MirrorTierReceiverFacet.sol";
 import {ProtocolBroadcastFacet} from "../src/facets/ProtocolBroadcastFacet.sol";
 import {InteractionRewardsFacet} from "../src/facets/InteractionRewardsFacet.sol";
+import {InteractionRewardsLensFacet} from "../src/facets/InteractionRewardsLensFacet.sol";
 import {RewardAggregatorFacet} from "../src/facets/RewardAggregatorFacet.sol";
 import {RewardRemittanceFacet} from "../src/facets/RewardRemittanceFacet.sol";
 import {RewardReporterFacet} from "../src/facets/RewardReporterFacet.sol";
@@ -304,6 +305,7 @@ contract SetupTest is Test {
     MirrorTierReceiverFacet mirrorTierReceiverFacet;
     ProtocolBroadcastFacet protocolBroadcastFacet;
     InteractionRewardsFacet interactionRewardsFacet;
+    InteractionRewardsLensFacet interactionRewardsLensFacet;
     RewardAggregatorFacet rewardAggregatorFacet;
     RewardRemittanceFacet rewardRemittanceFacet;
     RewardReporterFacet rewardReporterFacet;
@@ -411,6 +413,7 @@ contract SetupTest is Test {
         mirrorTierReceiverFacet = new MirrorTierReceiverFacet();
         protocolBroadcastFacet = new ProtocolBroadcastFacet();
         interactionRewardsFacet = new InteractionRewardsFacet();
+        interactionRewardsLensFacet = new InteractionRewardsLensFacet();
         rewardAggregatorFacet = new RewardAggregatorFacet();
         rewardRemittanceFacet = new RewardRemittanceFacet();
         rewardReporterFacet = new RewardReporterFacet();
@@ -442,7 +445,7 @@ contract SetupTest is Test {
         // Preclose / Refinance / EarlyWithdrawal / PartialWithdrawal
         // quartet at slots 24-27 to unblock the PauseGating fold —
         // those slots stay where they are.
-        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](66);
+        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](67);
         cuts[0] = IDiamondCut.FacetCut({
             facetAddress: address(offerCreateFacet),
             action: IDiamondCut.FacetCutAction.Add,
@@ -671,6 +674,13 @@ contract SetupTest is Test {
             facetAddress: address(interactionRewardsFacet),
             action: IDiamondCut.FacetCutAction.Add,
             functionSelectors: helperTest.getInteractionRewardsFacetSelectors()
+        });
+        // #1306 follow-up — read-only lens facet (view/getter surface split
+        // off InteractionRewardsFacet for EIP-170 headroom; shared storage).
+        cuts[66] = IDiamondCut.FacetCut({
+            facetAddress: address(interactionRewardsLensFacet),
+            action: IDiamondCut.FacetCutAction.Add,
+            functionSelectors: helperTest.getInteractionRewardsLensFacetSelectors()
         });
         cuts[35] = IDiamondCut.FacetCut({
             facetAddress: address(rewardAggregatorFacet),

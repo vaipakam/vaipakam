@@ -244,7 +244,7 @@ export function DeskHeader({
             disabled={!isAddressLike(customLend) || !isAddressLike(customColl)}
             onClick={selectCustom}
           >
-            Load market
+            {copy.desk.loadMarket}
           </button>
         </div>
       ) : null}

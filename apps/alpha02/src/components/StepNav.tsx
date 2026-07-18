@@ -1,4 +1,6 @@
 /** Compact step indicator for guided flows. */
+import { copy } from '../content/copy';
+
 export function StepNav({
   steps,
   current,
@@ -7,7 +9,7 @@ export function StepNav({
   current: number;
 }) {
   return (
-    <nav className="steps-nav" aria-label="Progress">
+    <nav className="steps-nav" aria-label={copy.stepNav.progressAria}>
       {/* Phones swap the dot row for this single line (UX-039) — same
           information, no wrapped orphan labels. */}
       <span className="steps-compact">

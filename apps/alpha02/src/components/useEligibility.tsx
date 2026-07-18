@@ -93,7 +93,7 @@ export function useEligibility(inputs: EligibilityInputs): CheckItem[] {
   if (isConnected && !sanctions.ready) {
     items.push({
       id: 'sanctions',
-      label: 'Checking compliance status…',
+      label: copy.checks.sanctionsChecking,
       state: 'pending',
     });
   } else if (sanctions.flagged) {

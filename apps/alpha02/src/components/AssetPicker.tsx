@@ -150,10 +150,10 @@ export function AssetPicker({
         sub: shortAddress(t.address),
         controlLabel: `${t.symbol} (${shortAddress(t.address)})`,
         ...(t.faucet
-          ? { badge: { text: 'Faucet test token', tone: 'info' as const } }
+          ? { badge: { text: copy.assetPicker.faucetBadge, tone: 'info' as const } }
           : {}),
       })),
-      { value: CUSTOM, label: 'Paste a token address…' },
+      { value: CUSTOM, label: copy.assetPicker.pasteOption },
     ],
     [tokens],
   );
@@ -163,7 +163,7 @@ export function AssetPicker({
       <label htmlFor={id}>{label}</label>
       <SelectMenu
         id={id}
-        placeholder="Choose an asset…"
+        placeholder={copy.assetPicker.placeholder}
         options={menuOptions}
         value={showCustom ? CUSTOM : (curatedMatch?.address ?? value)}
         onChange={(next) => {
@@ -192,8 +192,7 @@ export function AssetPicker({
           alone. */}
       {showCustom && value !== '' && !isAddressLike(value) ? (
         <span className="field-hint" style={{ color: 'var(--danger)' }}>
-          Enter a valid contract address — “0x” followed by 40 hex
-          characters.
+          {copy.assetPicker.invalidAddress}
         </span>
       ) : null}
       {showCustom && isAddressLike(value) && security.data ? (

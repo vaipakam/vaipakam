@@ -7,6 +7,7 @@ import {ERC1967Proxy} from "@openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy.s
 import {VPFIToken} from "../src/token/VPFIToken.sol";
 import {VPFITokenFacet} from "../src/facets/VPFITokenFacet.sol";
 import {InteractionRewardsFacet} from "../src/facets/InteractionRewardsFacet.sol";
+import {InteractionRewardsLensFacet} from "../src/facets/InteractionRewardsLensFacet.sol";
 import {LibVaipakam} from "../src/libraries/LibVaipakam.sol";
 import {TestMutatorFacet} from "./mocks/TestMutatorFacet.sol";
 import {IVaipakamErrors} from "../src/interfaces/IVaipakamErrors.sol";
@@ -74,12 +75,18 @@ contract InteractionRewardsCoverageTest is SetupTest, IVaipakamErrors {
         return InteractionRewardsFacet(address(diamond));
     }
 
+    ///  #1306 follow-up — read-only lens accessor (getters moved off
+    ///      InteractionRewardsFacet into InteractionRewardsLensFacet).
+    function _lens() internal view returns (InteractionRewardsLensFacet) {
+        return InteractionRewardsLensFacet(address(diamond));
+    }
+
     function _mut() internal view returns (TestMutatorFacet) {
         return TestMutatorFacet(address(diamond));
     }
 
     function _halfPool(uint256 day) internal view returns (uint256) {
-        return _facet().getInteractionHalfPoolForDay(day);
+        return _lens().getInteractionHalfPoolForDay(day);
     }
 
     // ─── #921 item 1 — Tier-1 sanctions gate ───────────────────────────────
@@ -257,8 +264,8 @@ contract InteractionRewardsCoverageTest is SetupTest, IVaipakamErrors {
 
         assertEq(paid, 1 ether, "truncated to remaining");
         assertEq(vpfi.balanceOf(alice), balBefore + 1 ether, "transfer matches truncation");
-        assertEq(_facet().getInteractionPoolPaidOut(), cap, "paidOut == cap");
-        assertEq(_facet().getInteractionPoolRemaining(), 0, "pool exhausted");
+        assertEq(_lens().getInteractionPoolPaidOut(), cap, "paidOut == cap");
+        assertEq(_lens().getInteractionPoolRemaining(), 0, "pool exhausted");
     }
 
     function testClaimRevertsWhenPoolExhausted() public {
@@ -282,7 +289,7 @@ contract InteractionRewardsCoverageTest is SetupTest, IVaipakamErrors {
         vm.prank(alice);
         _facet().claimInteractionRewards();
 
-        (uint256 userL, , uint256 totalL, ) = _facet().getInteractionDayEntry(1, alice);
+        (uint256 userL, , uint256 totalL, ) = _lens().getInteractionDayEntry(1, alice);
         assertEq(userL, 0, "alice counter cleared");
         assertEq(totalL, 100e18, "total preserved for bob's claim");
 
@@ -343,7 +350,7 @@ contract InteractionRewardsCoverageTest is SetupTest, IVaipakamErrors {
         _mut().setKnownGlobalSet(1, false);
         vm.warp(block.timestamp + 2 days + 1);
 
-        (uint256 amount, uint256 fromDay, uint256 toDay) = _facet()
+        (uint256 amount, uint256 fromDay, uint256 toDay) = _lens()
             .previewInteractionRewards(alice);
         assertEq(amount, 0, "preview amount zeroed");
         assertEq(fromDay, 0, "fromDay zeroed");
@@ -372,13 +379,13 @@ contract InteractionRewardsCoverageTest is SetupTest, IVaipakamErrors {
         assertEq(toDay, 2, "walk stops at last finalized day");
         assertEq(paid, expected, "only finalized prefix was paid");
         assertEq(
-            _facet().getInteractionLastClaimedDay(alice),
+            _lens().getInteractionLastClaimedDay(alice),
             2,
             "cursor advanced to effectiveTo"
         );
 
         // Day 3's per-user counter must still be intact for the catch-up.
-        (uint256 userL, , , ) = _facet().getInteractionDayEntry(3, alice);
+        (uint256 userL, , , ) = _lens().getInteractionDayEntry(3, alice);
         assertEq(userL, 1e18, "day-3 credit preserved for catch-up claim");
     }
 
@@ -408,7 +415,7 @@ contract InteractionRewardsCoverageTest is SetupTest, IVaipakamErrors {
         assertEq(to2, 3, "only the newly finalized day");
         assertEq(paid2, _halfPool(3), "catch-up payout matches half-pool(3)");
         assertEq(
-            _facet().getInteractionLastClaimedDay(alice),
+            _lens().getInteractionLastClaimedDay(alice),
             3,
             "cursor advanced to the new tip"
         );
@@ -425,7 +432,7 @@ contract InteractionRewardsCoverageTest is SetupTest, IVaipakamErrors {
 
         vm.warp(block.timestamp + 4 days + 1);
 
-        (uint256 amount, uint256 fromDay, uint256 toDay) = _facet()
+        (uint256 amount, uint256 fromDay, uint256 toDay) = _lens()
             .previewInteractionRewards(alice);
         assertEq(fromDay, 1, "preview fromDay starts at 1");
         assertEq(toDay, 2, "preview toDay stops at last finalized");
@@ -454,8 +461,8 @@ contract InteractionRewardsCoverageTest is SetupTest, IVaipakamErrors {
         assertEq(paid, _halfPool(1) + _halfPool(2), "gap not skipped");
 
         // Day 4 + 5 credits preserved — they'll claim once day 3 is broadcast.
-        (uint256 u4, , , ) = _facet().getInteractionDayEntry(4, alice);
-        (uint256 u5, , , ) = _facet().getInteractionDayEntry(5, alice);
+        (uint256 u4, , , ) = _lens().getInteractionDayEntry(4, alice);
+        (uint256 u5, , , ) = _lens().getInteractionDayEntry(5, alice);
         assertEq(u4, 1e18, "day 4 credit preserved past the gap");
         assertEq(u5, 1e18, "day 5 credit preserved past the gap");
     }
@@ -474,7 +481,7 @@ contract InteractionRewardsCoverageTest is SetupTest, IVaipakamErrors {
             uint256 effectiveTo,
             bool finalizedPrefix,
             uint256 waitingForDay
-        ) = _facet().getInteractionClaimability(alice);
+        ) = _lens().getInteractionClaimability(alice);
         assertEq(fromDay, 1, "fromDay on the cursor");
         assertEq(windowToDay, 1, "window bounded by lastFinalized");
         assertEq(effectiveTo, 0, "no finalized day yet");
@@ -494,7 +501,7 @@ contract InteractionRewardsCoverageTest is SetupTest, IVaipakamErrors {
             uint256 effectiveTo,
             bool finalizedPrefix,
             uint256 waitingForDay
-        ) = _facet().getInteractionClaimability(alice);
+        ) = _lens().getInteractionClaimability(alice);
         assertEq(fromDay, 1, "fromDay = 1");
         assertEq(windowToDay, 1, "windowToDay = 1");
         assertEq(effectiveTo, 1, "effectiveTo = 1");
@@ -515,7 +522,7 @@ contract InteractionRewardsCoverageTest is SetupTest, IVaipakamErrors {
             uint256 effectiveTo,
             bool finalizedPrefix,
             uint256 waitingForDay
-        ) = _facet().getInteractionClaimability(alice);
+        ) = _lens().getInteractionClaimability(alice);
         // Launch was set but we haven't warped — today = 0 → all zeros.
         assertEq(fromDay, 0, "fromDay zero pre-finalized-day-1");
         assertEq(windowToDay, 0, "windowToDay zero");
@@ -531,7 +538,7 @@ contract InteractionRewardsCoverageTest is SetupTest, IVaipakamErrors {
     ///      from frontends without first checking participation.
     function testGetUserRewardEntriesEmptyForFreshAddress() public {
         address fresh = makeAddr("fresh");
-        LibVaipakam.RewardEntry[] memory entries = _facet().getUserRewardEntries(fresh);
+        LibVaipakam.RewardEntry[] memory entries = _lens().getUserRewardEntries(fresh);
         assertEq(entries.length, 0, "no entries for never-participated user");
     }
 
@@ -559,8 +566,8 @@ contract InteractionRewardsCoverageTest is SetupTest, IVaipakamErrors {
             uint32(1)
         );
 
-        LibVaipakam.RewardEntry[] memory aliceEntries = _facet().getUserRewardEntries(alice);
-        LibVaipakam.RewardEntry[] memory bobEntries = _facet().getUserRewardEntries(bob);
+        LibVaipakam.RewardEntry[] memory aliceEntries = _lens().getUserRewardEntries(alice);
+        LibVaipakam.RewardEntry[] memory bobEntries = _lens().getUserRewardEntries(bob);
 
         assertEq(aliceEntries.length, 1, "alice has one entry (lender side of loan 42)");
         assertEq(aliceEntries[0].loanId, 42);
@@ -577,6 +584,6 @@ contract InteractionRewardsCoverageTest is SetupTest, IVaipakamErrors {
     // ─── Helpers ─────────────────────────────────────────────────────────────
 
     function _previewAmount(address user) internal view returns (uint256 amount) {
-        (amount,,) = _facet().previewInteractionRewards(user);
+        (amount,,) = _lens().previewInteractionRewards(user);
     }
 }

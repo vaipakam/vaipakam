@@ -8,6 +8,7 @@ import {IDiamondCut} from "@diamond-3/interfaces/IDiamondCut.sol";
 import {VPFIToken} from "../src/token/VPFIToken.sol";
 import {VPFITokenFacet} from "../src/facets/VPFITokenFacet.sol";
 import {InteractionRewardsFacet} from "../src/facets/InteractionRewardsFacet.sol";
+import {InteractionRewardsLensFacet} from "../src/facets/InteractionRewardsLensFacet.sol";
 import {VaultFactoryFacet} from "../src/facets/VaultFactoryFacet.sol";
 import {VPFIDiscountAccumulatorFacet} from "../src/facets/VPFIDiscountAccumulatorFacet.sol";
 import {LibVaipakam} from "../src/libraries/LibVaipakam.sol";
@@ -113,6 +114,12 @@ contract InteractionRewardVaultDeliveryTest is SetupTest, IVaipakamErrors {
         return InteractionRewardsFacet(address(diamond));
     }
 
+    ///  #1306 follow-up — read-only lens accessor (getters moved off
+    ///      InteractionRewardsFacet into InteractionRewardsLensFacet).
+    function _lens() internal view returns (InteractionRewardsLensFacet) {
+        return InteractionRewardsLensFacet(address(diamond));
+    }
+
     function _vaultFacet() internal view returns (VaultFactoryFacet) {
         return VaultFactoryFacet(address(diamond));
     }
@@ -126,7 +133,7 @@ contract InteractionRewardVaultDeliveryTest is SetupTest, IVaipakamErrors {
     function _seedClaimable(address user) internal returns (uint256 expected) {
         _mut().setDailyLenderInterest(1, user, 100e18, 100e18);
         vm.warp(block.timestamp + 2 days + 1);
-        expected = _facet().getInteractionHalfPoolForDay(1);
+        expected = _lens().getInteractionHalfPoolForDay(1);
     }
 
     function _tracked(address user) internal view returns (uint256) {
@@ -145,7 +152,7 @@ contract InteractionRewardVaultDeliveryTest is SetupTest, IVaipakamErrors {
         assertEq(vpfi.balanceOf(alice), 0, "no wallet VPFI");
         assertEq(vpfi.allowance(alice, address(diamond)), 0, "no allowance");
 
-        (uint256 today, ) = _facet().getInteractionCurrentDay();
+        (uint256 today, ) = _lens().getInteractionCurrentDay();
         vm.expectEmit(true, false, false, true, address(diamond));
         emit RewardDeliveredToVault(alice, expected, today);
 

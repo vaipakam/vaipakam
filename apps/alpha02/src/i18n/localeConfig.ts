@@ -38,9 +38,9 @@ import {
   type LocaleDisplayConfig,
 } from '@vaipakam/i18n/localeDisplay';
 
-/** Locales with genuinely translated bundles in apps/alpha02.
- *  English-only until the first translation wave lands. */
-export const TRANSLATED_LOCALES = ['en'] as const;
+/** Locales with genuinely translated bundles in apps/alpha02. */
+/** Locales with genuinely translated bundles in apps/alpha02. */
+export const TRANSLATED_LOCALES = ['en', 'es', 'ja', 'hi', 'ta', 'zh', 'fr', 'de', 'ar', 'ko'] as const;
 export type TranslatedLocale = (typeof TRANSLATED_LOCALES)[number];
 
 /** Master switch. When false, the Language card is not rendered at
@@ -56,6 +56,11 @@ const PICKER_VISIBLE: ReadonlySet<SupportedLocale> = new Set([
   'zh',
   'hi',
   'ja',
+  'ta',
+  'fr',
+  'de',
+  'ar',
+  'ko',
 ]);
 
 /** Per-locale picker config, derived from the shared native-label

@@ -205,7 +205,7 @@ export function Desk() {
             <div className="card">
               <h2 className="card-title">{copy.desk.bookTitle}</h2>
               <p className="muted">
-                {markets.isLoading ? 'Loading markets…' : copy.desk.pickPair}
+                {markets.isLoading ? copy.desk.marketsLoading : copy.desk.pickPair}
               </p>
             </div>
           ) : (

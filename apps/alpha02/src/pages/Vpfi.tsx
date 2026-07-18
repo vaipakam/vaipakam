@@ -102,21 +102,21 @@ export function Vpfi() {
     const amtStr = `${formatTokenAmount(amountWei, VPFI_DECIMALS)} VPFI`;
     if (action === 'deposit') {
       return {
-        youReceive: 'Nothing now — a growing fee discount on eligible loans over time.',
+        youReceive: copy.vpfi.receiptDeposit.youReceive,
         youLock: `${amtStr} moves from your wallet into your Vaipakam Vault.`,
-        youMayOwe: 'Nothing.',
-        youCanLose: 'Nothing — free VPFI in your vault stays withdrawable.',
-        fees: 'No Vaipakam fee on deposits.',
-        whenThisEnds: 'Withdraw your free VPFI whenever you like.',
+        youMayOwe: copy.vpfi.nothing,
+        youCanLose: copy.vpfi.receiptDeposit.youCanLose,
+        fees: copy.vpfi.receiptDeposit.fees,
+        whenThisEnds: copy.vpfi.receiptDeposit.whenThisEnds,
       };
     }
     return {
       youReceive: `${amtStr} back in your wallet.`,
-      youLock: 'Nothing.',
-      youMayOwe: 'Nothing.',
-      youCanLose: `Future fee discounts — ${copy.vpfi.withdrawWarning}`,
-      fees: 'No Vaipakam fee on withdrawals.',
-      whenThisEnds: 'Immediately — your remaining balance keeps earning discount history.',
+      youLock: copy.vpfi.nothing,
+      youMayOwe: copy.vpfi.nothing,
+      youCanLose: `${copy.vpfi.receiptWithdraw.youCanLoseLead} ${copy.vpfi.withdrawWarning}`,
+      fees: copy.vpfi.receiptWithdraw.fees,
+      whenThisEnds: copy.vpfi.receiptWithdraw.whenThisEnds,
     };
   }, [action, amountWei, overMax]);
 
@@ -266,11 +266,11 @@ export function Vpfi() {
           setPhase('submitting');
           await write('depositVPFIToVault', [amountWei]);
         }
-        setDone('Deposit confirmed. Your discount history starts building from now.');
+        setDone(copy.vpfi.depositDone);
       } else {
         setPhase('submitting');
         await write('withdrawVPFIFromVault', [amountWei]);
-        setDone('Withdrawal confirmed. The VPFI is back in your wallet.');
+        setDone(copy.vpfi.withdrawDone);
       }
       setAmount('');
       setReviewing(false);
@@ -320,9 +320,7 @@ export function Vpfi() {
         try {
           await write('pokeMyTier', []);
         } catch {
-          setError(
-            'Your opt-out is saved on this network, but syncing it to other networks didn’t go through — it will sync with your next VPFI action, or try toggling again.',
-          );
+          setError(copy.vpfi.optOutSyncFailed);
         }
       }
       // Deliberately NO immediate invalidate here: it would refetch
@@ -341,17 +339,13 @@ export function Vpfi() {
 
   const education = (
     <section className="card">
-      <h3>How the discount works</h3>
-      <p>
-        Hold VPFI in your Vaipakam Vault and the protocol fee on eligible loans
-        shrinks. The discount uses your average holding over the last 30 days —
-        topping up today grows your discount gradually, not instantly.
-      </p>
+      <h3>{copy.vpfi.educationTitle}</h3>
+      <p>{copy.vpfi.educationBody}</p>
       <dl className="receipt" style={{ margin: 0 }}>
         {tierRows.map((t) => (
           <div key={t.held} className="receipt-row">
             <dt>{t.held}</dt>
-            <dd>{t.discount} off eligible protocol fees</dd>
+            <dd>{t.discount} {copy.vpfi.offFeesSuffix}</dd>
           </div>
         ))}
       </dl>
@@ -361,9 +355,7 @@ export function Vpfi() {
         {copy.vpfi.belowMinNote(tierFloorLabel)}
       </p>
       <p className="muted" style={{ marginTop: 12 }}>
-        {copy.vpfi.noGasDiscount} {copy.vpfi.withdrawWarning} Vaipakam does not
-        sell VPFI and pays no holding yield — you acquire it on the open
-        market.
+        {copy.vpfi.noGasDiscount} {copy.vpfi.withdrawWarning} {copy.vpfi.noSellNote}
       </p>
     </section>
   );
@@ -457,11 +449,11 @@ export function Vpfi() {
           <section className="card">
             <div className="card-title">
               <Coins aria-hidden />
-              <h2 style={{ margin: 0 }}>Your discount status</h2>
+              <h2 style={{ margin: 0 }}>{copy.vpfi.statusTitle}</h2>
             </div>
             <dl className="receipt" style={{ margin: 0 }}>
               <div className="receipt-row">
-                <dt>In your vault</dt>
+                <dt>{copy.vpfi.inYourVault}</dt>
                 <dd>{formatTokenAmount(snapshot.vaultBalance, VPFI_DECIMALS)} VPFI</dd>
               </div>
               {/* UX-029 — surface the WALLET balance too: the fine print
@@ -470,25 +462,25 @@ export function Vpfi() {
                   VAULTED balance earns a discount, so nudge a wallet-only
                   holder to deposit. */}
               <div className="receipt-row">
-                <dt>In your wallet</dt>
+                <dt>{copy.vpfi.inYourWallet}</dt>
                 <dd>
                   {formatTokenAmount(snapshot.walletBalance, VPFI_DECIMALS)} VPFI
                   {snapshot.walletBalance > 0n && snapshot.vaultBalance === 0n
-                    ? ' — deposit to activate'
+                    ? copy.vpfi.depositToActivate
                     : ''}
                 </dd>
               </div>
               <div className="receipt-row">
-                <dt>Active discount</dt>
+                <dt>{copy.vpfi.activeDiscount}</dt>
                 <dd>
                   {snapshot.consent && snapshot.effectiveBps > 0
-                    ? `${formatBpsAsPercent(snapshot.effectiveBps)} off eligible protocol fees`
-                    : 'None right now'}
+                    ? `${formatBpsAsPercent(snapshot.effectiveBps)} ${copy.vpfi.offFeesSuffix}`
+                    : copy.vpfi.noneRightNow}
                 </dd>
               </div>
               {snapshot.rawTier > snapshot.effectiveTier ? (
                 <div className="receipt-row">
-                  <dt>Warming up</dt>
+                  <dt>{copy.vpfi.warmingUp}</dt>
                   <dd>
                     Your balance qualifies for
                     {tierRows[snapshot.rawTier - 1]
@@ -536,10 +528,10 @@ export function Vpfi() {
             <label className="toggle-row" style={{ marginTop: 16 }}>
               <span className="toggle-row-main">
                 <span className="toggle-row-title">
-                  Use my vaulted VPFI for fee discounts
+                  {copy.vpfi.consentToggle}
                 </span>
                 <span className="toggle-row-sub">
-                  Without this, holding VPFI gives no discount.
+                  {copy.vpfi.consentToggleSub}
                 </span>
               </span>
               <input
@@ -548,18 +540,18 @@ export function Vpfi() {
                 checked={snapshot.consent}
                 disabled={busy || !onSupportedChain || !sanctionsClear}
                 onChange={() => void toggleConsent()}
-                aria-label="Use my vaulted VPFI for fee discounts"
+                aria-label={copy.vpfi.consentToggle}
               />
             </label>
             {!onSupportedChain ? (
               <p className="field-hint" style={{ color: 'var(--warn)', marginTop: 6 }}>
-                Switch to a supported network to change this.
+                {copy.vpfi.switchToChange}
               </p>
             ) : null}
           </section>
 
           <section className="card">
-            <div className="segmented" role="radiogroup" aria-label="Vault action">
+            <div className="segmented" role="radiogroup" aria-label={copy.vpfi.vaultActionLabel}>
               {(['deposit', 'withdraw'] as const).map((a) => (
                 <button
                   key={a}
@@ -574,7 +566,7 @@ export function Vpfi() {
                     setDone(null);
                   }}
                 >
-                  {a === 'deposit' ? 'Deposit' : 'Withdraw'}
+                  {a === 'deposit' ? copy.vpfi.deposit : copy.vpfi.withdraw}
                 </button>
               ))}
             </div>
@@ -582,8 +574,8 @@ export function Vpfi() {
             <div className="field" style={{ marginTop: 16 }}>
               <label htmlFor="vpfi-amount">
                 {action === 'deposit'
-                  ? 'VPFI to move into your vault'
-                  : 'VPFI to take back to your wallet'}
+                  ? copy.vpfi.amountLabelDeposit
+                  : copy.vpfi.amountLabelWithdraw}
               </label>
               <div className="cluster">
                 <input
@@ -606,14 +598,14 @@ export function Vpfi() {
                     setReviewing(false);
                   }}
                 >
-                  Max
+                  {copy.vpfi.max}
                 </button>
               </div>
               <span className="field-hint">
                 {action === 'deposit'
                   ? `In your wallet: ${formatTokenAmount(snapshot.walletBalance, VPFI_DECIMALS)} VPFI`
                   : `Withdrawable now: ${formatTokenAmount(snapshot.freeBalance, VPFI_DECIMALS)} VPFI of ${formatTokenAmount(snapshot.vaultBalance, VPFI_DECIMALS)} in your vault`}
-                {overMax ? ' — that’s more than you have.' : ''}
+                {overMax ? copy.vpfi.overMaxHint : ''}
               </span>
             </div>
 
@@ -653,7 +645,7 @@ export function Vpfi() {
                   setReviewing(true);
                 }}
               >
-                Review {action}
+                {action === 'deposit' ? copy.vpfi.reviewDeposit : copy.vpfi.reviewWithdraw}
               </button>
             ) : (
               <button
@@ -678,15 +670,15 @@ export function Vpfi() {
                 {busy ? <LoaderCircle className="spin" aria-hidden size={18} /> : null}
                 {phase !== null
                   ? phase === 'approving'
-                    ? 'Approving VPFI…'
+                    ? copy.vpfi.phaseApproving
                     : phase === 'permitting'
-                      ? 'Signing the permission… — free, no gas'
+                      ? copy.vpfi.phasePermitting
                       : phase === 'submitting'
-                        ? 'Submitting…'
-                        : 'Waiting for wallet…'
+                        ? copy.vpfi.phaseSubmitting
+                        : copy.vpfi.phaseWaiting
                   : action === 'deposit'
-                    ? 'Deposit VPFI'
-                    : 'Withdraw VPFI'}
+                    ? copy.vpfi.depositCta
+                    : copy.vpfi.withdrawCta}
               </button>
             )}
           </section>

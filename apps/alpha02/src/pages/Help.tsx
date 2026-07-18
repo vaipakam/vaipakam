@@ -18,54 +18,26 @@ import { ErrorBoundary } from '../components/ErrorBoundary';
 // blanks.
 const FeeFaqCard = lazy(() => import('./help/FeeFaqCard'));
 
-const FAQ: Array<{ q: string; a: string }> = [
-  {
-    q: 'Where are my assets held?',
-    a: 'In your own Vaipakam Vault — an on-chain account that only your wallet controls. Vaipakam never pools user funds and cannot spend them for you.',
-  },
-  {
-    q: 'What happens if I don’t repay a loan?',
-    a: 'After the due date plus a grace period, the lender can receive your locked collateral. If the collateral has a live market price, it can also be sold automatically when its value falls too far — repaying on time avoids both.',
-  },
-  {
-    q: 'Is the interest I see guaranteed when I lend?',
-    a: 'No. It is what you earn if the borrower repays on time. If they default, your recovery depends on the collateral they locked — the review screen spells this out before you sign.',
-  },
-  {
-    q: 'What is an NFT rental?',
-    a: 'The NFT stays locked in its owner’s vault; the renter gets temporary use rights, never ownership. Rental fees are prepaid, with a small refundable buffer.',
-  },
-  {
-    q: 'Do I need VPFI?',
-    a: 'No. VPFI is optional — holding it in your vault can reduce protocol fees on eligible loans. It never reduces network gas, and you never need it to borrow, lend, or rent.',
-  },
-  // UX-049 — the Help page lagged the shipped features; these cover
-  // Basic/Advanced modes, alert setup, Claims, wrong-network, and the
-  // NFT verifier.
-  {
-    q: 'What’s the difference between Basic and Advanced mode?',
-    a: 'Basic keeps the guided Borrow, Lend, and NFT-rental journeys front and centre. Advanced additionally reveals the power surfaces — the Offer Book, the Rate Desk order book, VPFI discounts, and your full activity history. Switch any time from the mode toggle in the navigation; it never moves your positions.',
-  },
-  {
-    q: 'How do I get alerts before a deadline or liquidation?',
-    a: 'On the alerts card you can link Telegram (and enable browser push) to be warned as a loan nears its due date or a position’s health drops. Linking is a one-time signature; sending yourself a test alert confirms the channel actually works before you rely on it.',
-  },
-  {
-    q: 'What is the Claim Center for?',
-    a: 'When a loan you’re part of settles — a repayment you’re owed, or collateral from a default — the funds wait for you to claim them. The Claims page lists exactly what’s claimable and for which position, verified against the protocol’s own record, so nothing is stranded.',
-  },
-  {
-    q: 'It says I’m on the wrong network — what do I do?',
-    a: 'Offers, your vault, and the faucet are all per-network. If your wallet is on a chain Vaipakam isn’t deployed to, a banner offers a one-click switch to a supported network; the app never acts on an unsupported chain.',
-  },
-  {
-    q: 'How do I check a position NFT before buying it off-platform?',
-    a: 'The NFT verifier (in the navigation) reads any Vaipakam position NFT straight from the chain and shows its real loan terms and status — so you can confirm what a listing actually represents before you trust a secondary-market sale.',
-  },
-];
-
 export function Help() {
   const { isConnected } = useActiveChain();
+  // FAQ content lives in the copy catalog (help.faq.*). Read in render
+  // scope — a module-level read would bake in English and miss locale
+  // switches (see src/i18n/reactiveCopy.ts).
+  const faqItems: Array<{ q: string; a: string }> = [
+    copy.help.faq.assetsHeld,
+    copy.help.faq.missedRepayment,
+    copy.help.faq.lenderInterest,
+    copy.help.faq.nftRental,
+    copy.help.faq.vpfi,
+    // UX-049 — the Help page lagged the shipped features; these cover
+    // Basic/Advanced modes, alert setup, Claims, wrong-network, and the
+    // NFT verifier.
+    copy.help.faq.modes,
+    copy.help.faq.alerts,
+    copy.help.faq.claimCenter,
+    copy.help.faq.wrongNetwork,
+    copy.help.faq.nftVerifier,
+  ];
   const buildHash = import.meta.env.VITE_BUILD_HASH as string | undefined;
   const buildTime = import.meta.env.VITE_BUILD_TIME as string | undefined;
   // UX-044 — the footer shows a readable date, not the raw ISO stamp;
@@ -108,11 +80,11 @@ export function Help() {
 
   return (
     <div>
-      <h1 className="page-title">Help</h1>
+      <h1 className="page-title">{copy.help.title}</h1>
       {/* The exact platform disclaimer the spec mandates (§29) —
           wording is load-bearing, don't paraphrase. */}
       <p className="page-lede">
-        Quick answers in plain language. {copy.help.disclaimer}
+        {copy.help.lede} {copy.help.disclaimer}
       </p>
 
       <div className="stack">
@@ -125,7 +97,7 @@ export function Help() {
             ))}
           </ul>
         </section>
-        {FAQ.map((item) => (
+        {faqItems.map((item) => (
           <section key={item.q} className="card">
             <h3>{item.q}</h3>
             <p style={{ margin: 0 }}>{item.a}</p>
@@ -167,7 +139,7 @@ export function Help() {
       </div>
 
       <p className="muted" style={{ marginTop: 24 }}>
-        Build {buildHash ?? 'dev'}
+        {copy.help.buildLabel} {buildHash ?? copy.help.buildDevFallback}
         {buildDateText ? ` · ${buildDateText}` : ''}
       </p>
     </div>

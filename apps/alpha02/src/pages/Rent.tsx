@@ -221,10 +221,10 @@ function ListNftFlow() {
         label: prepayIsVpfi
           ? copy.rent.vpfiPrepayNotAllowed
           : vpfiCheckFailed
-            ? 'We couldn’t verify the payment asset just now — please retry in a moment.'
+            ? copy.rent.paymentAssetCheckFailed
             : prepayMeta.isError
               ? copy.errors.notAToken
-              : `Payment asset recognised (${prepayMeta.data?.symbol ?? '…'})`,
+              : `${copy.rent.paymentAssetRecognised} (${prepayMeta.data?.symbol ?? '…'})`,
         state: prepayIsVpfi
           ? 'fail'
           : vpfiCheckFailed
@@ -239,7 +239,7 @@ function ListNftFlow() {
       },
       {
         id: 'live-fees',
-        label: fees.ready ? 'Live fee terms loaded' : 'Loading live fee terms…',
+        label: fees.ready ? copy.rent.liveFeesLoaded : copy.rent.liveFeesLoading,
         state: fees.ready ? 'pass' : 'pending',
       },
     ];
@@ -282,12 +282,12 @@ function ListNftFlow() {
     return {
       youReceive: `~${feesStr} in rental fees for the full ${formatDurationDays(days)} term — the renter prepays everything up front.`,
       youLock: `Your NFT ${nftStr} moves into your vault and stays there for the whole listing and rental.`,
-      youMayOwe: 'Nothing.',
-      youCanLose: `Temporary use of the NFT while it is rented — the renter can never transfer or sell it. ${copy.rent.notDebt}`,
+      youMayOwe: copy.rent.nothing,
+      youCanLose: `${copy.rent.listYouCanLose} ${copy.rent.notDebt}`,
       fees: copy.fees
         .lenderYieldFee(bpsToPercentText(fees.treasuryFeeBps))
         .replace('interest', 'rental fees'),
-      whenThisEnds: `When the rental ends, the renter’s rights reset automatically; you claim your fees and reclaim the NFT from the rental’s detail page.`,
+      whenThisEnds: copy.rent.listWhenEnds,
     };
   }, [
     form,
@@ -426,14 +426,14 @@ function ListNftFlow() {
   return (
     <div>
       <StepNav
-        steps={['Your NFT & price', 'Review & sign', 'Done']}
+        steps={[copy.rent.stepYourNft, copy.rent.stepReview, copy.rent.stepDone]}
         current={step === 'details' ? 0 : step === 'review' ? 1 : 2}
       />
 
       {step === 'details' ? (
         <div className="card">
           <div className="field">
-            <label htmlFor="nft-standard">NFT type</label>
+            <label htmlFor="nft-standard">{copy.rent.nftTypeLabel}</label>
             <SelectMenu
               id="nft-standard"
               value={standard}
@@ -442,13 +442,13 @@ function ListNftFlow() {
                 setConsent(false);
               }}
               options={[
-                { value: 'erc721', label: 'Single NFT (ERC-721)' },
-                { value: 'erc1155', label: 'Multi-edition NFT (ERC-1155)' },
+                { value: 'erc721', label: copy.rent.nftTypeErc721 },
+                { value: 'erc1155', label: copy.rent.nftTypeErc1155 },
               ]}
             />
           </div>
           <div className="field">
-            <label htmlFor="nft-contract">NFT contract address</label>
+            <label htmlFor="nft-contract">{copy.rent.contractLabel}</label>
             <input
               id="nft-contract"
               className={`input ${contract !== '' && !isAddressLike(contract) ? 'input-invalid' : ''}`}
@@ -462,12 +462,11 @@ function ListNftFlow() {
               autoComplete="off"
             />
             <span className="field-hint">
-              Single NFTs that support ERC-4907 give renters use rights other
-              apps can see; other NFTs still rent, tracked inside Vaipakam.
+              {copy.rent.contractHint}
             </span>
           </div>
           <div className="field">
-            <label htmlFor="nft-token-id">Token id</label>
+            <label htmlFor="nft-token-id">{copy.rent.tokenIdLabel}</label>
             <input
               id="nft-token-id"
               className="input"
@@ -482,7 +481,7 @@ function ListNftFlow() {
           </div>
           {standard === 'erc1155' ? (
             <div className="field">
-              <label htmlFor="nft-quantity">Quantity</label>
+              <label htmlFor="nft-quantity">{copy.rent.quantityLabel}</label>
               <input
                 id="nft-quantity"
                 className="input"
@@ -498,8 +497,8 @@ function ListNftFlow() {
           ) : null}
           <AssetPicker
             id="prepay-asset"
-            label="Asset renters pay you in"
-            hint="Renters prepay the whole rental in this token."
+            label={copy.rent.prepayAssetLabel}
+            hint={copy.rent.prepayAssetHint}
             value={prepayAsset}
             onChange={(v) => {
               setPrepayAsset(v);
@@ -508,7 +507,7 @@ function ListNftFlow() {
           />
           <div className="field">
             <label htmlFor="daily-fee">
-              Daily fee{prepayMeta.data ? ` (${prepayMeta.data.symbol} per day)` : ''}
+              {copy.rent.dailyFeeLabel}{prepayMeta.data ? ` (${prepayMeta.data.symbol} per day)` : ''}
             </label>
             <input
               id="daily-fee"
@@ -526,7 +525,7 @@ function ListNftFlow() {
             </span>
           </div>
           <div className="field">
-            <label htmlFor="rent-duration">Rental length</label>
+            <label htmlFor="rent-duration">{copy.rent.durationLabel}</label>
             <SelectMenu
               id="rent-duration"
               value={durationDays}
@@ -553,7 +552,7 @@ function ListNftFlow() {
             disabled={!detailsComplete}
             onClick={() => setStep('review')}
           >
-            Continue to review
+            {copy.rent.continueToReview}
           </button>
         </div>
       ) : null}
@@ -573,11 +572,11 @@ function ListNftFlow() {
             </div>
           ) : null}
           <div className="card">
-            <h3>Before you sign</h3>
+            <h3>{copy.rent.beforeYouSign}</h3>
             <Checklist items={checks} />
           </div>
           <div className="card">
-            {receipt ? <ReviewReceipt data={receipt} /> : <p className="muted">Preparing your review…</p>}
+            {receipt ? <ReviewReceipt data={receipt} /> : <p className="muted">{copy.rent.preparingReview}</p>}
             {receipt ? <SimulationPreview tx={simTx} /> : null}
             {killed ? (
               <div className="banner banner-warn" role="alert" style={{ marginTop: 16 }}>
@@ -622,7 +621,7 @@ function ListNftFlow() {
                 onClick={() => setStep('details')}
                 disabled={busy}
               >
-                Back
+                {copy.rent.back}
               </button>
               <button
                 type="button"
@@ -634,7 +633,7 @@ function ListNftFlow() {
                 {busy ? <LoaderCircle className="spin" aria-hidden size={18} /> : null}
                 {progress !== null
                   ? progress.current === 0
-                    ? 'Waiting for wallet…'
+                    ? copy.rent.waitingForWallet
                     : progress.kind === 'approve'
                       ? copy.signing.phaseApprove(progress.current, progress.total)
                       : copy.signing.phaseSend(progress.current, progress.total)
@@ -657,12 +656,12 @@ function ListNftFlow() {
                 target="_blank"
                 rel="noreferrer"
               >
-                View the transaction
+                {copy.rent.viewTransaction}
               </a>
             </p>
           ) : null}
           <Link to="/positions" className="btn btn-primary">
-            View my positions
+            {copy.rent.viewPositions}
           </Link>
         </div>
       ) : null}
@@ -885,8 +884,8 @@ function RentNftFlow() {
       {
         id: 'rental-config',
         label: bufferReady
-          ? 'Live rental terms loaded'
-          : 'Loading live rental terms…',
+          ? copy.rent.liveRentalLoaded
+          : copy.rent.liveRentalLoading,
         state: bufferReady ? 'pass' : 'pending',
       },
     ],
@@ -902,9 +901,9 @@ function RentNftFlow() {
     return {
       youReceive: `Use rights of ${nftStr} for ${durationStr}, starting now. ${copy.rent.custodyNote}`,
       youLock: `${totalStr} prepaid — the full term’s fees plus a ${bufferPct(bufferBps)} refundable buffer.`,
-      youMayOwe: `Nothing more — fees are prepaid. ${copy.rent.notDebt}`,
+      youMayOwe: `${copy.rent.rentYouMayOwe} ${copy.rent.notDebt}`,
       youCanLose: `The ${bufferPct(bufferBps)} buffer if the rental isn’t closed on time. Your use rights end at expiry either way.`,
-      fees: 'The price shown is the rental fee; Vaipakam’s cut comes out of the owner’s earnings, not on top of yours.',
+      fees: copy.rent.rentFeesNote,
       whenThisEnds: `Rights reset automatically after ${durationStr}. Close the rental on time from its detail page to get the buffer back.`,
     };
   }, [selected, prepayMeta.data, totalPrepay, bufferBps]);
@@ -1221,7 +1220,7 @@ function RentNftFlow() {
   return (
     <div>
       <StepNav
-        steps={['Choose an NFT', 'Review & sign', 'Done']}
+        steps={[copy.rent.stepChooseNft, copy.rent.stepReview, copy.rent.stepDone]}
         current={step === 'browse' ? 0 : step === 'review' ? 1 : 2}
       />
 
@@ -1238,7 +1237,7 @@ function RentNftFlow() {
             <h2 style={{ margin: 0 }}>{copy.rent.browseTitle}</h2>
           </div>
           {activeOffers.isLoading ? (
-            <p className="muted">Loading rental listings…</p>
+            <p className="muted">{copy.rent.listingsLoading}</p>
           ) : listings === null ? (
             <>
               <p className="muted">{copy.rent.browseUnavailable}</p>
@@ -1247,7 +1246,7 @@ function RentNftFlow() {
                 className="btn btn-secondary"
                 onClick={() => void activeOffers.refetch()}
               >
-                Try again
+                {copy.rent.tryAgain}
               </button>
             </>
           ) : (
@@ -1298,11 +1297,11 @@ function RentNftFlow() {
             <span className="banner-body">{copy.rent.custodyNote}</span>
           </div>
           <div className="card">
-            <h3>Before you sign</h3>
+            <h3>{copy.rent.beforeYouSign}</h3>
             <Checklist items={checks} />
           </div>
           <div className="card">
-            {receipt ? <ReviewReceipt data={receipt} /> : <p className="muted">Preparing your review…</p>}
+            {receipt ? <ReviewReceipt data={receipt} /> : <p className="muted">{copy.rent.preparingReview}</p>}
             {prepaySecBlocked ? (
               <div className="banner banner-danger" role="alert" style={{ marginTop: 16 }}>
                 <span className="banner-body">
@@ -1401,7 +1400,7 @@ function RentNftFlow() {
                 }}
                 disabled={busy}
               >
-                Back
+                {copy.rent.back}
               </button>
               <button
                 type="button"
@@ -1413,7 +1412,7 @@ function RentNftFlow() {
                 {busy ? <LoaderCircle className="spin" aria-hidden size={18} /> : null}
                 {progress !== null
                   ? progress.current === 0
-                    ? 'Waiting for wallet…'
+                    ? copy.rent.waitingForWallet
                     : progress.kind === 'sign'
                       ? copy.signing.phaseSign(progress.current, progress.total)
                       : progress.kind === 'permit'
@@ -1440,12 +1439,12 @@ function RentNftFlow() {
                 target="_blank"
                 rel="noreferrer"
               >
-                View the transaction
+                {copy.rent.viewTransaction}
               </a>
             </p>
           ) : null}
           <Link to="/positions" className="btn btn-primary">
-            View my positions
+            {copy.rent.viewPositions}
           </Link>
         </div>
       ) : null}

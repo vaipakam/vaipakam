@@ -9,6 +9,7 @@ import {AccessControlFacet} from "../../src/facets/AccessControlFacet.sol";
 import {AdminFacet} from "../../src/facets/AdminFacet.sol";
 import {VPFITokenFacet} from "../../src/facets/VPFITokenFacet.sol";
 import {InteractionRewardsFacet} from "../../src/facets/InteractionRewardsFacet.sol";
+import {InteractionRewardsLensFacet} from "../../src/facets/InteractionRewardsLensFacet.sol";
 import {VPFIToken} from "../../src/token/VPFIToken.sol";
 import {LibVaipakam} from "../../src/libraries/LibVaipakam.sol";
 import {TestMutatorFacet} from "../mocks/TestMutatorFacet.sol";
@@ -48,9 +49,13 @@ contract InteractionRewardsInvariant is Test {
         AdminFacet admin = new AdminFacet();
         VPFITokenFacet vpfiFacet = new VPFITokenFacet();
         InteractionRewardsFacet interaction = new InteractionRewardsFacet();
+        // #1306 follow-up — the read-only getters this harness reads
+        // (getInteractionPoolPaidOut / getInteractionCurrentDay) moved to the
+        // lens facet; cut it into this standalone diamond too.
+        InteractionRewardsLensFacet interactionLens = new InteractionRewardsLensFacet();
         TestMutatorFacet mutator = new TestMutatorFacet();
 
-        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](5);
+        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](6);
         cuts[0] = IDiamondCut.FacetCut({
             facetAddress: address(ac),
             action: IDiamondCut.FacetCutAction.Add,
@@ -75,6 +80,11 @@ contract InteractionRewardsInvariant is Test {
             facetAddress: address(mutator),
             action: IDiamondCut.FacetCutAction.Add,
             functionSelectors: helper.getTestMutatorFacetSelectors()
+        });
+        cuts[5] = IDiamondCut.FacetCut({
+            facetAddress: address(interactionLens),
+            action: IDiamondCut.FacetCutAction.Add,
+            functionSelectors: helper.getInteractionRewardsLensFacetSelectors()
         });
         IDiamondCut(address(diamond)).diamondCut(cuts, address(0), "");
 
@@ -108,7 +118,7 @@ contract InteractionRewardsInvariant is Test {
     // ─── Invariants ──────────────────────────────────────────────────────────
 
     function invariant_PaidOutRespectsCap() public view {
-        uint256 paidOut = InteractionRewardsFacet(address(diamond))
+        uint256 paidOut = InteractionRewardsLensFacet(address(diamond))
             .getInteractionPoolPaidOut();
         assertLe(
             paidOut,
@@ -118,7 +128,7 @@ contract InteractionRewardsInvariant is Test {
     }
 
     function invariant_PaidOutMonotonic() public view {
-        uint256 paidOut = InteractionRewardsFacet(address(diamond))
+        uint256 paidOut = InteractionRewardsLensFacet(address(diamond))
             .getInteractionPoolPaidOut();
         assertGe(
             paidOut,
@@ -128,11 +138,11 @@ contract InteractionRewardsInvariant is Test {
     }
 
     function invariant_CursorStrictlyBehindToday() public view {
-        (uint256 today, bool active) = InteractionRewardsFacet(address(diamond))
+        (uint256 today, bool active) = InteractionRewardsLensFacet(address(diamond))
             .getInteractionCurrentDay();
         if (!active || today == 0) return;
         for (uint256 i = 0; i < 3; i++) {
-            uint256 cursor = InteractionRewardsFacet(address(diamond))
+            uint256 cursor = InteractionRewardsLensFacet(address(diamond))
                 .getInteractionLastClaimedDay(handler.actorAt(i));
             assertLt(cursor, today, "cursor walked past today");
         }
@@ -143,7 +153,7 @@ contract InteractionRewardsInvariant is Test {
         for (uint256 i = 0; i < 3; i++) {
             sum += vpfi.balanceOf(handler.actorAt(i));
         }
-        uint256 paidOut = InteractionRewardsFacet(address(diamond))
+        uint256 paidOut = InteractionRewardsLensFacet(address(diamond))
             .getInteractionPoolPaidOut();
         assertEq(sum, paidOut, "user wallets != paidOut");
     }
@@ -179,7 +189,7 @@ contract InteractionHandler is Test {
     }
 
     function _tick() internal {
-        uint256 p = InteractionRewardsFacet(diamond).getInteractionPoolPaidOut();
+        uint256 p = InteractionRewardsLensFacet(diamond).getInteractionPoolPaidOut();
         if (p > observedMaxPaidOut) observedMaxPaidOut = p;
     }
 
@@ -194,7 +204,7 @@ contract InteractionHandler is Test {
         uint256 totalUsd
     ) external {
         address user = actors[actorSeed % 3];
-        (uint256 today, bool active) = InteractionRewardsFacet(diamond)
+        (uint256 today, bool active) = InteractionRewardsLensFacet(diamond)
             .getInteractionCurrentDay();
         if (!active) return;
         uint256 d = daySeed % (today + 1);
@@ -218,7 +228,7 @@ contract InteractionHandler is Test {
         uint256 totalUsd
     ) external {
         address user = actors[actorSeed % 3];
-        (uint256 today, bool active) = InteractionRewardsFacet(diamond)
+        (uint256 today, bool active) = InteractionRewardsLensFacet(diamond)
             .getInteractionCurrentDay();
         if (!active) return;
         uint256 d = daySeed % (today + 1);

@@ -7,6 +7,7 @@ import {ERC1967Proxy} from "@openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy.s
 import {VPFIToken} from "../src/token/VPFIToken.sol";
 import {VPFITokenFacet} from "../src/facets/VPFITokenFacet.sol";
 import {InteractionRewardsFacet} from "../src/facets/InteractionRewardsFacet.sol";
+import {InteractionRewardsLensFacet} from "../src/facets/InteractionRewardsLensFacet.sol";
 import {LibVaipakam} from "../src/libraries/LibVaipakam.sol";
 import {TestMutatorFacet} from "./mocks/TestMutatorFacet.sol";
 
@@ -54,6 +55,12 @@ contract InteractionRewardDailyCapTest is SetupTest {
         return InteractionRewardsFacet(address(diamond));
     }
 
+    ///  #1306 follow-up — read-only lens accessor (getters moved off
+    ///      InteractionRewardsFacet into InteractionRewardsLensFacet).
+    function _lens() internal view returns (InteractionRewardsLensFacet) {
+        return InteractionRewardsLensFacet(address(diamond));
+    }
+
     function _mut() internal view returns (TestMutatorFacet) {
         return TestMutatorFacet(address(diamond));
     }
@@ -69,7 +76,7 @@ contract InteractionRewardDailyCapTest is SetupTest {
         uint256 t1,
         uint256 t2
     ) internal returns (uint256 half, uint256 d1, uint256 d2) {
-        half = _facet().getInteractionHalfPoolForDay(1);
+        half = _lens().getInteractionHalfPoolForDay(1);
         // Day 1 + 2 finalized globals (borrower side left 0 — rewardLender-only test).
         _mut().setKnownGlobalDailyInterest(1, g1, 0, true);
         _mut().setKnownGlobalDailyInterest(2, g2, 0, true);
@@ -90,7 +97,7 @@ contract InteractionRewardDailyCapTest is SetupTest {
     /// absorbs the over-cap day.
     function test_PerDayCap_NettingIsClosed() public {
         uint256 P = 1e18;
-        uint256 half = _facet().getInteractionHalfPoolForDay(1);
+        uint256 half = _lens().getInteractionHalfPoolForDay(1);
         // Δ1 = half/half = 1e18 (day 1); Δ2 = half/(4·half) = 0.25e18 (day 2).
         // T = 0.5e18: day 1 bites (1e18 > 0.5e18), day 2 under (0.25e18 < 0.5e18).
         uint256 T = 0.5e18;
@@ -116,7 +123,7 @@ contract InteractionRewardDailyCapTest is SetupTest {
     /// telescoped total exactly (cumMin == cumRpn over the window).
     function test_AllDaysUnderCap_EqualsUncapped() public {
         uint256 P = 1e18;
-        uint256 half = _facet().getInteractionHalfPoolForDay(1);
+        uint256 half = _lens().getInteractionHalfPoolForDay(1);
         // Δ1 = Δ2 = 0.25e18, T = 1e18 (never bites).
         (, uint256 d1, uint256 d2) = _seed(P, 4 * half, 4 * half, 1e18, 1e18);
         vm.prank(rewardLender);
@@ -128,7 +135,7 @@ contract InteractionRewardDailyCapTest is SetupTest {
     /// uncapped Δ — cumMin tracks cumRpn.
     function test_DisabledThreshold_EqualsUncapped() public {
         uint256 P = 1e18;
-        uint256 half = _facet().getInteractionHalfPoolForDay(1);
+        uint256 half = _lens().getInteractionHalfPoolForDay(1);
         // Day 1 would bite at a finite T, but the sentinel disables it.
         (, uint256 d1, uint256 d2) =
             _seed(P, half, 4 * half, type(uint256).max, type(uint256).max);
@@ -142,7 +149,7 @@ contract InteractionRewardDailyCapTest is SetupTest {
     /// case).
     function test_AllDaysOverCap_SaturatesEachDay() public {
         uint256 P = 1e18;
-        uint256 half = _facet().getInteractionHalfPoolForDay(1);
+        uint256 half = _lens().getInteractionHalfPoolForDay(1);
         uint256 T = 0.1e18; // both Δ (1e18, 0.25e18) exceed T
         _seed(P, half, 4 * half, T, T);
         vm.prank(rewardLender);
