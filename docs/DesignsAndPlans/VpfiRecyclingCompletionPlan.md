@@ -255,8 +255,13 @@ flowchart LR
 
 ## 5. Card actions
 
+**Umbrella: #1349** mirrors this plan's M1–M8 as a single programme
+tracker (checklist per milestone, D1 gate, DoD) — the one card to read;
+constituent cards below remain the working tickets.
+
 | Card | Action |
 | --- | --- |
+| #1349 | Umbrella — keep in lockstep with this plan; tick milestones as constituent cards close |
 | #1346 | Keep as filed = M1; add the #973 restamp note (comment posted) |
 | #1347 | **Blocked on D1** — on (b), re-base body to #1294 at current rev (LIF·year, dual-fee, coupling); on (a), add the supersession note to the formula doc instead |
 | #1222 | Adopt the parked B1–B4/C1–C2 cut with §M3's two corrections (B1 two report fields; two-pass funding in B2/B3); #1331 stays absorbed by B2 |
