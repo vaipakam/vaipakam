@@ -70,31 +70,30 @@ library LibInteractionRewards {
     }
 
     /// @notice RL-3 (#1305) — the horizon clock started for `entryId`: the
-    ///         sweep observed the entry fully claimable for the first time.
-    ///         This is the notification pipeline's schedule signal — the
-    ///         indexer materialises the free pre-expiry notice (and the
-    ///         Claim Center countdown) from it. `expiresAt` reflects the
-    ///         horizon AND activation-notice floor at stamp time; a later
-    ///         dark reset can lift it, so {rewardEntryExpiry} stays the
-    ///         authoritative read.
+    ///         sweep observed the entry claim-executable for the first time,
+    ///         so the executable-elapsed accumulator has begun. This is the
+    ///         notification pipeline's schedule signal.
+    /// @dev    Deliberately carries NO expiry timestamp: expiry is driven by
+    ///         *executable-elapsed* time (it advances only while the entry
+    ///         is provably claimable and keepers observe it), so no fixed
+    ///         removal time exists at stamp time — {rewardEntryExpiry} is
+    ///         the authoritative, continuously-recomputed countdown.
     /// @custom:event-category state-change/reward-claim
     event RewardEntryHorizonStamped(
         uint256 indexed entryId,
         address indexed user,
-        uint64 firstClaimableAt,
-        uint64 expiresAt
+        uint64 firstClaimableAt
     );
 
-    /// @notice RL-3 — `entryId` is past its horizon and was observed
-    ///         claim-EXECUTABLE (funded, non-zero payable): the funded
-    ///         final-notice window started; the entry can actually be
-    ///         expired from `executableAt` on. This is the notification
-    ///         pipeline's LAST-CALL signal.
+    /// @notice RL-3 — `entryId` accrued its full horizon of executable time
+    ///         and entered the final-notice window: it now needs a further
+    ///         `notice` days of provably-executable time before it can be
+    ///         swept. This is the notification pipeline's LAST-CALL signal.
     /// @custom:event-category state-change/reward-claim
     event RewardEntryExpiryArmed(
         uint256 indexed entryId,
         address indexed user,
-        uint64 executableAt
+        uint64 finalNoticeFrom
     );
 
     /// @notice RL-3 — `entryId` expired past its claim horizon and was
@@ -1069,27 +1068,35 @@ function _dayPoolHalves(
     }
 
     /**
-     * @notice RL-3 (#1305) — advance the claim-horizon clock for `id` and,
-     *         once expired, process the entry into the EXPIRED channel.
+     * @notice RL-3 (#1305, Codex #1317 r7) — advance an entry's
+     *         EXECUTABLE-ELAPSED claim-horizon accumulator and, once it has
+     *         accrued a full `H + notice` of provably-claimable time,
+     *         process it into the EXPIRED channel.
+     *
+     *         Expiry is driven by executable time, never wall-clock: an
+     *         interval between two sweep observations is credited toward the
+     *         threshold ONLY if the entry was claim-executable at both ends
+     *         AND the gap is ≤ `REWARD_CLAIM_NOTICE_MAX_OBS_GAP_DAYS` (short
+     *         enough to trust as continuous). A longer gap — or any observed
+     *         non-executable state (unfunded / zero-payable / sanctioned) —
+     *         is never counted, so an unobserved outage can never let the
+     *         clock run past a window the claimant could not actually claim.
      *
      *         State machine per call (permissionless, keeper-class):
-     *           - feature dark (`rewardClaimHorizonDays == 0`)      → no-op
-     *           - entry processed / not yet claimable                → no-op
-     *             (the clock NEVER runs while a claim is blocked by
-     *             missing finalization/broadcast — ratified rule)
-     *           - claim not currently EXECUTABLE (post-cap payable is
-     *             zero, local VPFI balance can't cover it, or the owner
-     *             is sanctioned) → no-op, and DISARM any prior arm
-     *             (underfunded/sanctioned time never counts, and can't
-     *             leave a stale arm that would expire on recovery)
-     *           - executable, clock unset → STAMP `firstClaimableAt` → no-op
-     *           - executable, `now < horizon expiry`                 → no-op
-     *           - executable + due, arm stale/unset (predates the latest
-     *             horizon (re)configuration) → ARM `rewardEntryDueFundedAt`
-     *             (funded final notice)                              → no-op
-     *           - executable + due + armed ≥ notice ago → EXPIRE:
-     *             process the entry (marks it `processed`) and return
-     *             its {EntrySplit} for the facet's source-split routing.
+     *           - feature dark (`rewardClaimHorizonDays == 0`)        → no-op
+     *           - processed / not claimable (finalization) / forfeited → no-op
+     *           - not claim-EXECUTABLE now (zero post-cap payable, local
+     *             VPFI can't cover it, or owner sanctioned) → no-op, and do
+     *             NOT advance the observation stamp (the outage interval
+     *             will exceed the gap bound and stay uncredited)
+     *           - executable, first observation → STAMP + start accumulator
+     *           - executable, gap ≤ bound → CREDIT the interval; emit the
+     *             final-notice signal on crossing `H`; a horizon
+     *             reconfiguration since the last accrual first caps the
+     *             accumulator back to `H` so the notice is re-earned
+     *           - executable, `execElapsed ≥ H + notice` → EXPIRE: process
+     *             the entry and return its {EntrySplit} for source-split
+     *             routing.
      *
      *         Forfeited entries are excluded — {sweepForfeitedByLoanId}
      *         owns those; this sweep only ever expires PAYABLE value whose
@@ -1119,7 +1126,7 @@ function _dayPoolHalves(
         if (e.startDay >= e.endDay) return (expired, 0);
 
         // The cursor must actually cover the window — a claim blocked on
-        // finalization keeps the clock frozen (never stamps, never expires).
+        // finalization keeps the clock frozen (never stamps, never accrues).
         uint256 need = e.endDay - 1;
         uint256 cursor = e.side == LibVaipakam.RewardSide.Lender
             ? s.cumLenderCursor
@@ -1135,85 +1142,73 @@ function _dayPoolHalves(
         uint256 freshShare = split_.total - split_.recycled;
         uint256 cappedFresh =
             freshShare < freshHeadroom ? freshShare : freshHeadroom;
-        // Claim-EXECUTABLE gate (every phase): horizon time only counts —
-        // and expiry only arms/processes — while a claim would actually
-        // succeed right now. Three ways it can't:
+        // Claim-EXECUTABLE gate: the accumulator only ever advances while a
+        // claim would actually succeed right now. Three ways it can't:
         //   1. the POST-CAP payable is zero (a claim truncates its fresh
-        //      component to remaining pool capacity, so the face value is
-        //      the wrong bar — and a wholly-uncreditable fresh entry has
-        //      nothing to pay),
+        //      component to remaining pool capacity — the face value is the
+        //      wrong bar — and a wholly-uncreditable fresh entry pays
+        //      nothing),
         //   2. the local VPFI balance can't cover it (mirror mid-
         //      remittance-outage — the claim's terminal transfer reverts),
         //   3. the owner is sanctioned — the claim path rejects them via
-        //      `_assertNotSanctioned`, so the reward is not claimable while
-        //      flagged (frozen, not seized: a delist re-opens the clock).
-        // A non-executable touch also DISARMS any prior funded-notice arm,
-        // so an outage or a sanctioning that straddles the notice window
-        // can never expire the entry the instant it recovers — the funded
-        // final notice always re-arms and re-counts from a payable state.
+        //      `_assertNotSanctioned` (frozen, not seized: a delist re-opens
+        //      the clock).
+        // On a non-executable touch we return WITHOUT advancing the
+        // observation stamp, so the interval spanning this outage will
+        // exceed the gap bound on the next executable touch and stay
+        // uncredited — the claimant is never charged blocked time.
         uint256 payableNow = cappedFresh + split_.recycled;
         if (
             payableNow == 0 ||
             LibVaipakam.isSanctionedAddress(e.user) ||
             IERC20Metadata(s.vpfiToken).balanceOf(address(this)) < payableNow
         ) {
-            if (s.rewardEntryDueFundedAt[id] != 0) {
-                s.rewardEntryDueFundedAt[id] = 0;
+            return (expired, 0);
+        }
+
+        uint256 hSec = uint256(horizonDays) * 1 days;
+
+        uint64 lastObs = s.rewardEntryExecObsAt[id];
+        if (lastObs == 0) {
+            // First claim-executable observation — start the accumulator.
+            // The stamp event is the notification pipeline's schedule signal.
+            s.rewardEntryFirstClaimableAt[id] = uint64(block.timestamp);
+            s.rewardEntryExecObsAt[id] = uint64(block.timestamp);
+            s.rewardEntryHorizonEpoch[id] = s.rewardHorizonActivatedAt;
+            emit RewardEntryHorizonStamped(id, e.user, uint64(block.timestamp));
+            return (expired, 0);
+        }
+
+        uint256 elapsed = s.rewardEntryExecElapsed[id];
+        // A horizon (re)configuration since this entry last accrued re-opens
+        // a fresh executable final notice: cap the accrual back to the
+        // horizon threshold so the full `notice` must be re-earned under the
+        // new configuration (the ratified re-notice-on-reconfiguration rule).
+        if (s.rewardEntryHorizonEpoch[id] != s.rewardHorizonActivatedAt) {
+            if (elapsed > hSec) {
+                elapsed = hSec;
+                emit RewardEntryExpiryArmed(id, e.user, uint64(block.timestamp));
             }
-            return (expired, 0);
+            s.rewardEntryHorizonEpoch[id] = s.rewardHorizonActivatedAt;
         }
 
-        uint64 stamp = s.rewardEntryFirstClaimableAt[id];
-        if (stamp == 0) {
-            // First observed claimability — start the clock, expire later.
-            // The stamp event is the notification pipeline's schedule
-            // signal (the indexer materialises the free pre-expiry notice
-            // from it); {rewardEntryExpiry} stays the authoritative
-            // expiry read (a later dark reset can lift it).
-            stamp = uint64(block.timestamp);
-            s.rewardEntryFirstClaimableAt[id] = stamp;
-            emit RewardEntryHorizonStamped(
-                id, e.user, stamp, uint64(_horizonExpiryAt(s, stamp, horizonDays))
-            );
-            return (expired, 0);
+        // Credit this interval only if short enough to trust as continuously
+        // claim-executable; a longer gap might hide an outage and is dropped.
+        uint256 gap = block.timestamp - uint256(lastObs);
+        if (gap <= uint256(LibVaipakam.REWARD_CLAIM_NOTICE_MAX_OBS_GAP_DAYS) * 1 days) {
+            uint256 credited = elapsed + gap;
+            if (elapsed < hSec && credited >= hSec) {
+                // Crossed into the final-notice window — last-call signal.
+                emit RewardEntryExpiryArmed(id, e.user, uint64(block.timestamp));
+            }
+            elapsed = credited;
         }
-        if (block.timestamp < _horizonExpiryAt(s, stamp, horizonDays)) {
-            return (expired, 0);
-        }
+        s.rewardEntryExecElapsed[id] = uint64(elapsed);
+        s.rewardEntryExecObsAt[id] = uint64(block.timestamp);
 
-        // Two-phase expiry arming: the first sweep that finds the entry
-        // due AND executable records the FUNDED-DUE observation; actual
-        // processing needs a second touch ≥ the notice window later. A
-        // funding outage straddling the horizon instant therefore can't
-        // consume the claimant's window — every expiry follows a funded
-        // final notice, with no need for anyone to observe the outage.
-        uint64 armedAt = s.rewardEntryDueFundedAt[id];
-        // An arm that predates the latest non-zero horizon (re)configuration
-        // is STALE: a dark reset or a retune must re-open a fresh funded
-        // final notice under the new rules, exactly as an unarmed stale
-        // entry would get one. Treat it as unarmed so it re-arms below.
-        if (armedAt != 0 && armedAt < s.rewardHorizonActivatedAt) {
-            armedAt = 0;
-        }
-        if (armedAt == 0) {
-            armedAt = uint64(block.timestamp);
-            s.rewardEntryDueFundedAt[id] = armedAt;
-            emit RewardEntryExpiryArmed(
-                id,
-                e.user,
-                uint64(
-                    uint256(armedAt) +
-                        uint256(LibVaipakam.REWARD_CLAIM_HORIZON_NOTICE_DAYS) *
-                        1 days
-                )
-            );
-            return (expired, 0);
-        }
-        if (
-            block.timestamp <
-            uint256(armedAt) +
-                uint256(LibVaipakam.REWARD_CLAIM_HORIZON_NOTICE_DAYS) * 1 days
-        ) {
+        uint256 required =
+            hSec + uint256(LibVaipakam.REWARD_CLAIM_HORIZON_NOTICE_DAYS) * 1 days;
+        if (elapsed < required) {
             return (expired, 0);
         }
 
@@ -1232,36 +1227,18 @@ function _dayPoolHalves(
         emit RewardEntryExpired(id, e.user, expired.total, expired.recycled);
     }
 
-    /// @dev RL-3 — the entry's expiry instant:
-    ///      `max(stamp + H days, activation + notice floor)`. Single home
-    ///      for the rule so the sweep and the countdown view can't drift.
-    function _horizonExpiryAt(
-        LibVaipakam.Storage storage s,
-        uint64 stamp,
-        uint32 horizonDays
-    ) private view returns (uint256 at) {
-        at = uint256(stamp) + uint256(horizonDays) * 1 days;
-        uint256 noticeFloor = uint256(s.rewardHorizonActivatedAt) +
-            uint256(LibVaipakam.REWARD_CLAIM_HORIZON_NOTICE_DAYS) * 1 days;
-        if (at < noticeFloor) at = noticeFloor;
-    }
-
     /// @notice RL-3 — UX view: the entry's horizon state for the
     ///         claim-center countdown.
-    /// @return firstClaimableAt Clock start (0 = not started).
-    /// @return expiresAt        The EARLIEST instant the entry can be
-    ///                          terminally removed (0 = dark or unstarted).
-    ///                          Removal is ALWAYS ≥ 90 days (the funded
-    ///                          final notice) after the entry is due, so:
-    ///                          - a CURRENT arm exists  → `armed + notice`
-    ///                            (exact — the funded notice is running);
-    ///                          - otherwise (unarmed, or a stale pre-
-    ///                            reconfiguration arm) → `horizon-due +
-    ///                            notice`, because the sweep must still arm
-    ///                            at/after the due time and then serve the
-    ///                            full 90-day funded notice. Never returns
-    ///                            the bare horizon-due time (which the
-    ///                            sweep can only ARM at, never expire).
+    /// @return firstClaimableAt Accumulator start (0 = not started).
+    /// @return expiresAt        The earliest instant the entry could be
+    ///                          terminally removed ASSUMING it stays
+    ///                          continuously claim-executable and observed
+    ///                          from now (0 = dark or unstarted). Because
+    ///                          removal is gated on EXECUTABLE-elapsed time
+    ///                          — which only advances while a claim would
+    ///                          succeed and keepers observe it — this is a
+    ///                          forward estimate, not a fixed deadline: a
+    ///                          funding outage or sanction pauses it.
     function rewardEntryExpiry(uint256 id)
         internal
         view
@@ -1271,24 +1248,21 @@ function _dayPoolHalves(
         firstClaimableAt = s.rewardEntryFirstClaimableAt[id];
         uint32 horizonDays = s.rewardClaimHorizonDays;
         if (firstClaimableAt != 0 && horizonDays != 0) {
-            uint256 at = _horizonExpiryAt(s, firstClaimableAt, horizonDays);
-            uint256 noticeSecs =
-                uint256(LibVaipakam.REWARD_CLAIM_HORIZON_NOTICE_DAYS) * 1 days;
-            // Only a CURRENT arm (set on/after the latest horizon
-            // (re)configuration) is exact; a stale arm is ignored exactly
-            // as the sweep re-arms it.
-            uint64 armedAt = s.rewardEntryDueFundedAt[id];
-            if (armedAt != 0 && armedAt >= s.rewardHorizonActivatedAt) {
-                uint256 armedFloor = uint256(armedAt) + noticeSecs;
-                if (at < armedFloor) at = armedFloor;
-            } else {
-                // Unarmed: the funded final notice has not begun, and the
-                // sweep needs a due+executable touch to ARM before the
-                // 90-day clock even starts — so the earliest terminal
-                // removal is the horizon-due time PLUS the notice.
-                at += noticeSecs;
+            uint256 hSec = uint256(horizonDays) * 1 days;
+            uint256 elapsed = s.rewardEntryExecElapsed[id];
+            // Reflect a not-yet-reconciled horizon reconfiguration exactly as
+            // the sweep will: the notice must be re-earned, so the countdown
+            // never understates the true remaining time.
+            if (
+                s.rewardEntryHorizonEpoch[id] != s.rewardHorizonActivatedAt &&
+                elapsed > hSec
+            ) {
+                elapsed = hSec;
             }
-            expiresAt = uint64(at);
+            uint256 required = hSec +
+                uint256(LibVaipakam.REWARD_CLAIM_HORIZON_NOTICE_DAYS) * 1 days;
+            uint256 remaining = required > elapsed ? required - elapsed : 0;
+            expiresAt = uint64(block.timestamp + remaining);
         }
     }
 

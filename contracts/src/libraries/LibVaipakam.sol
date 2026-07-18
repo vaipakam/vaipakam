@@ -668,6 +668,16 @@ library LibVaipakam {
     ///      what makes a dark interval safe: disabling and re-enabling the
     ///      feature always re-grants dormant claimants a fresh notice window.
     uint32 constant REWARD_CLAIM_HORIZON_NOTICE_DAYS = 90;
+    /// @dev RL-3 (Codex #1317 r7) — the maximum observation gap, in days,
+    ///      that the expiry sweep will credit as continuously
+    ///      claim-executable time. An interval between two executable
+    ///      observations longer than this might hide a funding outage or a
+    ///      sanction and is NOT counted toward the horizon+notice threshold,
+    ///      so an entry can only be reaped after keepers have observed it
+    ///      claim-executable with no gap over this bound across the whole
+    ///      window. Bounds the largest outage that could pass undetected;
+    ///      keepers sweep far more often than weekly, so this is slack.
+    uint32 constant REWARD_CLAIM_NOTICE_MAX_OBS_GAP_DAYS = 7;
 
     /// @dev Tariff `k` for peg-free discount entitlements (design §4.2): VPFI
     ///      (1e18) charged per 1 ETH (1e18) of loan volume per day, so a
@@ -5054,30 +5064,45 @@ library LibVaipakam {
         ///      set via {ConfigFacet.setRewardClaimHorizonDays}, bounded
         ///      `[REWARD_CLAIM_HORIZON_MIN_DAYS, REWARD_CLAIM_HORIZON_MAX_DAYS]`.
         uint32 rewardClaimHorizonDays;
-        /// @dev Per-entry first-observed-claimable timestamp — the horizon
-        ///      clock's start. Stamped LAZILY by the permissionless expiry
-        ///      sweep on its first touch of a claimable entry (never while a
-        ///      claim is blocked by missing finalization/broadcast, which is
-        ///      exactly the ratified "clock never runs while blocked" rule),
-        ///      so every pre-existing dormant entry's clock starts at or
-        ///      after feature activation — grandfathering by construction.
+        /// @dev Per-entry first-observed-claimable timestamp — set on the
+        ///      permissionless sweep's first touch that finds the entry
+        ///      claim-executable. Drives the {RewardEntryHorizonStamped}
+        ///      notification-schedule signal and marks that the horizon
+        ///      accumulator has started; every pre-existing dormant entry's
+        ///      clock therefore starts at/after feature activation
+        ///      (grandfathering by construction).
         mapping(uint256 => uint64) rewardEntryFirstClaimableAt;
         /// @dev Timestamp of the most recent non-zero horizon
-        ///      (re)configuration. Expiry additionally requires
-        ///      `now ≥ rewardHorizonActivatedAt + REWARD_CLAIM_HORIZON_NOTICE_DAYS`,
-        ///      so neither a dark reset + re-activation nor a horizon
-        ///      shortening can expire stale-stamped entries immediately
-        ///      (the ratified activation-notice floor).
+        ///      (re)configuration — the "horizon epoch". A per-entry
+        ///      {rewardEntryHorizonEpoch} that lags this value means the
+        ///      horizon was reconfigured since the entry last accrued, so
+        ///      the sweep caps its accrued time back to the horizon
+        ///      threshold and forces a fresh executable final notice to be
+        ///      re-earned (the ratified re-notice-on-reconfiguration rule).
         uint64 rewardHorizonActivatedAt;
-        /// @dev Per-entry FUNDED-DUE observation (two-phase expiry arming,
-        ///      Codex #1317 r4): the first sweep touch that finds the entry
-        ///      past its horizon AND currently claim-executable records this
-        ///      timestamp; actual expiry processing requires a second touch
-        ///      ≥ `REWARD_CLAIM_HORIZON_NOTICE_DAYS` later. Guarantees every
-        ///      expiry follows a funded final-notice window even when a
-        ///      funding outage straddled the horizon instant — without
-        ///      needing anyone to observe the outage itself.
-        mapping(uint256 => uint64) rewardEntryDueFundedAt;
+        /// @dev Codex #1317 r7 — FUNDED-NOTICE SOUNDNESS. Expiry is driven
+        ///      by *executable-elapsed* time, not wall-clock: an entry can
+        ///      only be swept once it has accrued `H + notice` days of time
+        ///      during which it was provably claim-executable. Wall-clock
+        ///      alone was unsound — an unobserved funding outage or sanction
+        ///      could let the clock run while the claimant genuinely could
+        ///      not claim.
+        ///
+        ///      `rewardEntryExecObsAt`  — last timestamp the sweep observed
+        ///        the entry claim-executable (0 = never). An interval since
+        ///        this stamp is credited toward {rewardEntryExecElapsed}
+        ///        ONLY if it is ≤ `REWARD_CLAIM_NOTICE_MAX_OBS_GAP_DAYS`
+        ///        (short enough to trust as continuously executable); a
+        ///        longer gap might hide an outage and is never counted.
+        ///      `rewardEntryExecElapsed` — accumulated provably-executable
+        ///        seconds toward the `H + notice` threshold.
+        ///      `rewardEntryHorizonEpoch` — the {rewardHorizonActivatedAt}
+        ///        value under which the accrual was made; a mismatch caps
+        ///        the accrual to the horizon threshold so the final notice
+        ///        is re-earned under the new configuration.
+        mapping(uint256 => uint64) rewardEntryExecObsAt;
+        mapping(uint256 => uint64) rewardEntryExecElapsed;
+        mapping(uint256 => uint64) rewardEntryHorizonEpoch;
     }
 
     /// @notice Governor PR-3b (#1217 §3.1) — the per-day pool composition

@@ -451,10 +451,17 @@ contract InteractionRewardsFacet is
     }
 
     /**
-     * @notice RL-3 (#1305, ratified §10.2) — permissionless claim-horizon
-     *         sweep. For each entry: starts the horizon clock on first
-     *         observed claimability, and once `H` days have passed since
-     *         that stamp, EXPIRES the entry into the recycle bucket.
+     * @notice RL-3 (#1305, ratified §10.2; Codex #1317 r7) — permissionless
+     *         claim-horizon sweep. For each entry it advances an
+     *         EXECUTABLE-ELAPSED accumulator: it starts on the first touch
+     *         that finds the entry claim-executable, and only intervals
+     *         during which the entry stayed claimable (with no observation
+     *         gap over `REWARD_CLAIM_NOTICE_MAX_OBS_GAP_DAYS`) are credited.
+     *         Once an entry has accrued a full `H + notice` of genuinely-
+     *         claimable time it is EXPIRED into the recycle bucket. Keepers
+     *         drive this on a heartbeat cadence; missed intervals only slow
+     *         accrual (safe), and no unobserved outage can reap an entry the
+     *         claimant could not actually claim.
      *
      *         Source-split per the ratified split-signals rule: the
      *         fresh-funded share genuinely leaves the fresh budget into
@@ -538,8 +545,11 @@ contract InteractionRewardsFacet is
     /// @notice RL-3 — claim-center countdown view: the horizon state of a
     ///         reward entry.
     /// @param  entryId Entry to inspect.
-    /// @return firstClaimableAt Clock start (0 = not started / dark).
-    /// @return expiresAt        Expiry timestamp (0 = dark or unstarted).
+    /// @return firstClaimableAt Accumulator start (0 = not started / dark).
+    /// @return expiresAt        Earliest terminal-removal instant ASSUMING
+    ///         the entry stays continuously claim-executable and observed
+    ///         from now (0 = dark or unstarted). A forward estimate, not a
+    ///         fixed deadline: a funding outage or sanction pauses accrual.
     function getRewardEntryExpiry(uint256 entryId)
         external
         view

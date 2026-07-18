@@ -744,7 +744,7 @@
         "internalType": "address"
       },
       {
-        "name": "executableAt",
+        "name": "finalNoticeFrom",
         "type": "uint64",
         "indexed": false,
         "internalType": "uint64"
@@ -770,12 +770,6 @@
       },
       {
         "name": "firstClaimableAt",
-        "type": "uint64",
-        "indexed": false,
-        "internalType": "uint64"
-      },
-      {
-        "name": "expiresAt",
         "type": "uint64",
         "indexed": false,
         "internalType": "uint64"

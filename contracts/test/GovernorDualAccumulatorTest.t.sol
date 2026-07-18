@@ -144,6 +144,24 @@ contract GovernorDualAccumulatorTest is SetupTest {
         _mut().closeRewardEntryRaw(id, endDayExcl);
     }
 
+    /// @dev RL-3 (Codex #1317 r7) — accrue `duration` of continuously-
+    ///      executable time toward the horizon+notice threshold via ≤7-day
+    ///      heartbeat sweeps. Stops early if the entry expires.
+    function _accrueExec(uint256[] memory ids, uint256 duration)
+        internal
+        returns (uint256 swept)
+    {
+        uint256 remaining = duration;
+        while (remaining > 0) {
+            uint256 step = remaining < 7 days ? remaining : 7 days;
+            vm.warp(vm.getBlockTimestamp() + step);
+            uint256 s = _facet().sweepExpiredInteractionRewards(ids);
+            swept += s;
+            remaining -= step;
+            if (s > 0) break;
+        }
+    }
+
     // ─── 1. Armed claim splits + consumes ────────────────────────────────────
 
     function testArmedClaimSplitsFreshAndRecycled() public {
@@ -307,21 +325,21 @@ contract GovernorDualAccumulatorTest is SetupTest {
         uint256[] memory ids = new uint256[](1);
         ids[0] = id;
         _facet().sweepExpiredInteractionRewards(ids); // stamp the clock
-        vm.warp(block.timestamp + 181 days);
-        _facet().sweepExpiredInteractionRewards(ids); // arm the final notice
-        vm.warp(block.timestamp + 91 days);
+        // Accrue to just under the H + notice threshold, funded throughout.
+        _accrueExec(ids, 180 days + 90 days - 7 days);
 
-        // Near-exhaust the fresh pool AFTER the armed notice (1 wei of
-        // headroom):
-        // the expiry's fresh share truncates to that sliver, but the entry
-        // is terminally processed, so its ENTIRE armed fresh commitment
-        // must still retire.
+        // Near-exhaust the fresh pool right before the final crossing (1 wei
+        // of headroom): the expiry's fresh share truncates to that sliver,
+        // but the entry is terminally processed, so its ENTIRE armed fresh
+        // commitment must still retire.
         _mut().setInteractionPoolPaidOut(
             LibVaipakam.VPFI_INTERACTION_POOL_CAP - 1
         );
         (, uint256 outFBefore, uint256 outRBefore, ) =
             _agg().getGovernorCommitState();
 
+        // The final executable interval crosses H + notice → processes.
+        vm.warp(vm.getBlockTimestamp() + 7 days);
         uint256 swept = _facet().sweepExpiredInteractionRewards(ids);
 
         assertApproxEqAbs(
@@ -355,9 +373,8 @@ contract GovernorDualAccumulatorTest is SetupTest {
         uint256[] memory ids = new uint256[](1);
         ids[0] = id;
         _facet().sweepExpiredInteractionRewards(ids); // stamp the clock
-        vm.warp(block.timestamp + 181 days);
-        _facet().sweepExpiredInteractionRewards(ids); // arm the final notice
-        vm.warp(block.timestamp + 91 days);
+        // Accrue to just under the H + notice threshold, funded throughout.
+        _accrueExec(ids, 180 days + 90 days - 7 days);
 
         // FULL fresh exhaustion: expiring now would credit the bucket
         // nothing for the fresh share — the entry must be DEFERRED (stay
@@ -366,6 +383,9 @@ contract GovernorDualAccumulatorTest is SetupTest {
             LibVaipakam.VPFI_INTERACTION_POOL_CAP
         );
         (, uint256 outFBefore, , ) = _agg().getGovernorCommitState();
+        // The final executable interval crosses H + notice, but the fresh
+        // share can't be credited (pool exhausted) → deferred, not burned.
+        vm.warp(vm.getBlockTimestamp() + 7 days);
         assertEq(
             _facet().sweepExpiredInteractionRewards(ids),
             0,

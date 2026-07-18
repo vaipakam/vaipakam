@@ -16,26 +16,32 @@ import {IVaipakamErrors} from "../src/interfaces/IVaipakamErrors.sol";
 
 /**
  * @title  RewardClaimHorizonTest
- * @notice RL-3 (#1305, ratified §10.2) — the 365-day post-claimability
- *         claim horizon. Pins the ratified rules:
+ * @notice RL-3 (#1305, ratified §10.2; Codex #1317 r7 heartbeat redesign) —
+ *         the post-claimability claim horizon. Expiry is driven by
+ *         EXECUTABLE-ELAPSED time: an entry can only be reaped once keepers
+ *         have observed it claim-executable, with no gap over the max
+ *         observation bound, for a full `H + notice` of accrued time. Pins:
  *
- *           1. DARK by default: with the knob unset nothing stamps and
- *              nothing ever expires.
- *           2. Two-phase sweep: first touch of a claimable entry STAMPS
- *              the clock (no expiry); a second touch inside the horizon is
- *              a no-op; past `stamp + H` the entry expires into the
- *              recycle bucket as `ExpiredReward` absorption (fresh share
- *              consumes the pool cap + feeds `credited[D]`).
- *           3. A claim before expiry always wins — and an expired entry
- *              pays a late claimant nothing (processed, like any claim).
- *           4. The clock never starts while claimability is blocked on
- *              finalization.
- *           5. Knob bounds `[180, 1095]`, 0 = dark reset.
+ *           1. DARK by default: with the knob unset nothing stamps/accrues.
+ *           2. First executable touch STAMPS + starts the accumulator; the
+ *              entry expires only once `execElapsed ≥ H + notice`, then it
+ *              lands in the recycle bucket as `ExpiredReward` absorption.
+ *           3. A claim before expiry always wins.
+ *           4. The accumulator never advances while claimability is blocked
+ *              on finalization, funding, or sanctions.
+ *           5. An UNOBSERVED gap over the bound is never credited (the core
+ *              soundness property: blocked time cannot consume the window).
+ *           6. A horizon reconfiguration re-earns a fresh executable notice.
+ *           7. Knob bounds `[180, 1095]`, 0 = dark reset.
  */
 contract RewardClaimHorizonTest is SetupTest, IVaipakamErrors {
     VPFIToken internal vpfi;
     uint256 internal constant DIAMOND_SEED = 100_000_000 ether;
     address internal alice;
+
+    // Mirror of the contract constants for readable arithmetic.
+    uint256 internal constant NOTICE = 90 days;
+    uint256 internal constant MAX_GAP = 7 days;
 
     function setUp() public {
         setupHelper();
@@ -89,6 +95,25 @@ contract RewardClaimHorizonTest is SetupTest, IVaipakamErrors {
         a[0] = id;
     }
 
+    /// @dev Accrue `duration` of CONTINUOUSLY-executable time by heartbeat
+    ///      sweeping every ≤ MAX_GAP (so each interval is credited). Stops
+    ///      early and returns >0 the moment the entry expires. Assumes the
+    ///      entry is already stamped (call sweep once first).
+    function _accrue(uint256 id, uint256 duration)
+        internal
+        returns (uint256 swept)
+    {
+        uint256 remaining = duration;
+        while (remaining > 0) {
+            uint256 step = remaining < MAX_GAP ? remaining : MAX_GAP;
+            vm.warp(vm.getBlockTimestamp() + step);
+            uint256 s = _facet().sweepExpiredInteractionRewards(_ids(id));
+            swept += s;
+            remaining -= step;
+            if (s > 0) break; // expired — stop warping
+        }
+    }
+
     function testDarkByDefaultNothingStampsOrExpires() public {
         uint256 id = _seedClaimableEntry();
         assertEq(_facet().sweepExpiredInteractionRewards(_ids(id)), 0);
@@ -106,45 +131,36 @@ contract RewardClaimHorizonTest is SetupTest, IVaipakamErrors {
     }
 
     function testStampThenExpireIntoBucketAsAbsorption() public {
-        _cfg().setRewardClaimHorizonDays(365);
+        _cfg().setRewardClaimHorizonDays(180);
         uint256 id = _seedClaimableEntry();
+        uint256 required = 180 days + NOTICE;
 
-        // Touch 1: stamps, expires nothing.
+        // Touch 1: stamps, accrues nothing yet.
         assertEq(_facet().sweepExpiredInteractionRewards(_ids(id)), 0);
         (uint64 stamp, uint64 expiry) = _facet().getRewardEntryExpiry(id);
         assertGt(stamp, 0, "clock started");
-        // Unarmed: earliest removal is horizon-due (stamp + H) PLUS the
-        // 90-day funded final notice the sweep must still arm and serve.
+        // Countdown = now + the full required executable time (nothing accrued).
         assertEq(
             expiry,
-            stamp + 365 days + 90 days,
-            "expiry = stamp + H + notice (unarmed)"
+            uint64(vm.getBlockTimestamp() + required),
+            "countdown = now + H + notice when nothing accrued"
         );
 
-        // Touch 2 inside the horizon: no-op.
-        vm.warp(block.timestamp + 364 days);
-        assertEq(_facet().sweepExpiredInteractionRewards(_ids(id)), 0);
+        // Accrue to just under the threshold — not expirable yet.
+        assertEq(_accrue(id, required - MAX_GAP), 0, "not yet H + notice");
+        (, expiry) = _facet().getRewardEntryExpiry(id);
+        assertEq(
+            expiry,
+            uint64(vm.getBlockTimestamp() + MAX_GAP),
+            "countdown shrinks as executable time accrues"
+        );
 
-        // Past the horizon: the first funded touch ARMS the final-notice
-        // window (nothing expires yet); processing needs a second touch
-        // ≥ 90 days later.
-        vm.warp(block.timestamp + 2 days);
-        assertEq(
-            _facet().sweepExpiredInteractionRewards(_ids(id)),
-            0,
-            "due touch only arms the funded final notice"
-        );
-        (, uint64 armedExpiry) = _facet().getRewardEntryExpiry(id);
-        assertEq(
-            armedExpiry,
-            uint64(vm.getBlockTimestamp() + 90 days),
-            "view reflects the armed final-notice window"
-        );
-        vm.warp(block.timestamp + 91 days);
+        // The final interval crosses H + notice → expires into the bucket.
         uint256 bucketBefore = _cfg().getRecycleBucket();
         uint256 poolBefore = _facet().getInteractionPoolPaidOut();
+        vm.warp(vm.getBlockTimestamp() + MAX_GAP);
         uint256 swept = _facet().sweepExpiredInteractionRewards(_ids(id));
-        assertGt(swept, 0, "expired value swept");
+        assertGt(swept, 0, "expires at H + notice of executable time");
         assertEq(
             _cfg().getRecycleBucket() - bucketBefore,
             swept,
@@ -156,34 +172,34 @@ contract RewardClaimHorizonTest is SetupTest, IVaipakamErrors {
             "fresh pool consumed by the expiry"
         );
 
-        // 3. The late claimant gets nothing (processed, like a claim).
+        // The late claimant gets nothing (processed, like a claim).
         vm.prank(alice);
-        vm.expectRevert(); // NoInteractionRewardsToClaim (nothing pending)
+        vm.expectRevert();
         _facet().claimInteractionRewards();
     }
 
     function testClaimBeforeExpiryAlwaysWins() public {
-        _cfg().setRewardClaimHorizonDays(365);
+        _cfg().setRewardClaimHorizonDays(180);
         uint256 id = _seedClaimableEntry();
         _facet().sweepExpiredInteractionRewards(_ids(id)); // stamp
+        _accrue(id, 120 days); // partway through the horizon
 
-        vm.warp(block.timestamp + 300 days); // inside the horizon
         vm.prank(alice);
         (uint256 paid, , ) = _facet().claimInteractionRewardsTo(
             LibVaipakam.RewardDelivery.Wallet
         );
-        assertGt(paid, 0, "claim wins inside the horizon");
+        assertGt(paid, 0, "claim wins before expiry");
 
-        vm.warp(block.timestamp + 100 days); // past would-be expiry
+        // Even a full further window can never expire a claimed entry.
         assertEq(
-            _facet().sweepExpiredInteractionRewards(_ids(id)),
+            _accrue(id, 180 days + NOTICE),
             0,
             "claimed entry can never expire"
         );
     }
 
     function testClockFrozenWhileClaimabilityBlocked() public {
-        _cfg().setRewardClaimHorizonDays(365);
+        _cfg().setRewardClaimHorizonDays(180);
         // Entry over day 2 — NOT finalized, so the claim is blocked.
         uint256 id = _mut().pushRewardEntry(
             alice, 43, LibVaipakam.RewardSide.Lender, 1e18, 2
@@ -203,262 +219,164 @@ contract RewardClaimHorizonTest is SetupTest, IVaipakamErrors {
         assertGt(stamp, 0, "clock starts once claimable");
     }
 
-    function testDarkResetRegrantsNoticeFloor() public {
-        _cfg().setRewardClaimHorizonDays(365);
-        uint256 id = _seedClaimableEntry();
-        _facet().sweepExpiredInteractionRewards(_ids(id)); // stamp
-
-        // Dark reset mid-horizon; a long dark interval passes, far beyond
-        // the stale stamp's `stamp + H`.
-        vm.warp(block.timestamp + 200 days);
-        _cfg().setRewardClaimHorizonDays(0);
-        vm.warp(block.timestamp + 400 days);
-
-        // Re-activation re-grants the ratified ≥90-day notice floor: the
-        // stale-stamped entry cannot be expired immediately.
-        _cfg().setRewardClaimHorizonDays(365);
-        assertEq(
-            _facet().sweepExpiredInteractionRewards(_ids(id)),
-            0,
-            "notice floor blocks immediate expiry after re-activation"
-        );
-        (, uint64 expiry) = _facet().getRewardEntryExpiry(id);
-        // Unarmed after reactivation: due (= activation + notice floor)
-        // PLUS the funded final notice → activation + 2×notice.
-        assertEq(
-            expiry,
-            uint64(vm.getBlockTimestamp() + 180 days),
-            "expiry lifted to activation + notice + notice (unarmed)"
-        );
-
-        vm.warp(block.timestamp + 89 days);
-        assertEq(
-            _facet().sweepExpiredInteractionRewards(_ids(id)),
-            0,
-            "still inside the notice window"
-        );
-        vm.warp(block.timestamp + 2 days);
-        assertEq(
-            _facet().sweepExpiredInteractionRewards(_ids(id)),
-            0,
-            "past the floor: arms the funded final notice"
-        );
-        vm.warp(block.timestamp + 91 days);
-        assertGt(
-            _facet().sweepExpiredInteractionRewards(_ids(id)),
-            0,
-            "expires once the armed notice elapses"
-        );
-    }
-
-    function testShorteningHorizonRegrantsNoticeFloor() public {
-        _cfg().setRewardClaimHorizonDays(1095);
-        uint256 id = _seedClaimableEntry();
-        _facet().sweepExpiredInteractionRewards(_ids(id)); // stamp
-
-        // Past the SHORT horizon but well inside the configured long one.
-        vm.warp(block.timestamp + 200 days);
+    /// @notice CORE SOUNDNESS: an unobserved gap longer than the max
+    ///         observation bound is never credited toward the window, so a
+    ///         funding/keeper outage cannot let the clock run past time the
+    ///         claimant could not actually claim.
+    function testUnobservedGapIsNotCreditedAsExecutableTime() public {
         _cfg().setRewardClaimHorizonDays(180);
+        uint256 id = _seedClaimableEntry();
+        _facet().sweepExpiredInteractionRewards(_ids(id)); // stamp
+        _accrue(id, 180 days + 60 days); // horizon + 60 of the 90 notice days
 
-        // The retune re-stamps the notice floor — the next sweep cannot
-        // spring instant expiry on the already-stamped dormant entry.
+        // A long UNOBSERVED interval passes with no keeper touch.
+        vm.warp(vm.getBlockTimestamp() + 200 days);
+        // A single executable sweep after: the 200-day gap > MAX_GAP is NOT
+        // credited, so the entry is NOT expirable despite 200 wall-clock days.
         assertEq(
             _facet().sweepExpiredInteractionRewards(_ids(id)),
             0,
-            "a shortened horizon cannot spring expiry"
+            "unobserved gap over the bound is not credited; no premature expiry"
         );
-        (, uint64 expiry) = _facet().getRewardEntryExpiry(id);
-        // Unarmed after the retune: due (= retune + notice floor) PLUS the
-        // funded final notice → retune + 2×notice.
-        assertEq(
-            expiry,
-            uint64(vm.getBlockTimestamp() + 180 days),
-            "expiry lifted to retune + notice + notice (unarmed)"
-        );
-        // Distinct absolute warp targets: two identical
-        // `block.timestamp + N` warp expressions can be CSE'd by the
-        // optimizer (TIMESTAMP is tx-constant in real EVM semantics),
-        // making the second warp a no-op.
-        uint256 tArm = block.timestamp + 91 days;
-        vm.warp(tArm);
-        assertEq(
-            _facet().sweepExpiredInteractionRewards(_ids(id)),
-            0,
-            "past the floor: arms the funded final notice"
-        );
-        vm.warp(tArm + 91 days);
+        // It still needs the remaining 30 executable days of the notice.
+        assertEq(_accrue(id, 30 days - MAX_GAP), 0, "still short of the window");
         assertGt(
-            _facet().sweepExpiredInteractionRewards(_ids(id)),
+            _accrue(id, 2 * MAX_GAP),
             0,
-            "expires once the armed notice elapses"
+            "expires only after the FULL executable window is genuinely served"
         );
     }
 
-    function testUnderfundedChainNeverStampsOrExpires() public {
-        _cfg().setRewardClaimHorizonDays(365);
+    /// @notice A boundary gap (== MAX_GAP) is credited; a gap one step over
+    ///         it is dropped — pinning the exact crediting rule.
+    function testMaxObservationGapBoundary() public {
+        _cfg().setRewardClaimHorizonDays(180);
+        uint256 id = _seedClaimableEntry();
+        _facet().sweepExpiredInteractionRewards(_ids(id)); // stamp
+        // Accrue the whole horizon, then all but MAX_GAP of the notice.
+        _accrue(id, 180 days + NOTICE - MAX_GAP);
+
+        // A gap just OVER the bound does not credit → still not expirable.
+        vm.warp(vm.getBlockTimestamp() + MAX_GAP + 1);
+        assertEq(
+            _facet().sweepExpiredInteractionRewards(_ids(id)),
+            0,
+            "gap over the bound is dropped"
+        );
+        // A gap exactly AT the bound credits → crosses the threshold, expires.
+        vm.warp(vm.getBlockTimestamp() + MAX_GAP);
+        assertGt(
+            _facet().sweepExpiredInteractionRewards(_ids(id)),
+            0,
+            "gap at the bound is credited and completes the window"
+        );
+    }
+
+    function testUnfundedTimeNeverAccrues() public {
+        _cfg().setRewardClaimHorizonDays(180);
         uint256 id = _seedClaimableEntry();
 
-        // Remittance outage: the chain cannot pay the entry's claim, so
-        // horizon time must not count — no stamp.
+        // Remittance outage: the chain cannot pay the claim → no stamp.
         deal(address(vpfi), address(diamond), 0);
         _facet().sweepExpiredInteractionRewards(_ids(id));
         (uint64 stamp, ) = _facet().getRewardEntryExpiry(id);
         assertEq(stamp, 0, "no clock while the chain cannot pay");
 
-        // Funding arrives → the clock starts from here, not earlier.
+        // Funding arrives → the accumulator starts here.
         deal(address(vpfi), address(diamond), DIAMOND_SEED);
         _facet().sweepExpiredInteractionRewards(_ids(id));
-        (stamp, ) = _facet().getRewardEntryExpiry(id);
-        assertGt(stamp, 0, "clock starts once funded");
+        _accrue(id, 180 days + 60 days); // horizon + 60 notice days
 
-        // An outage AT the expiry moment blocks even the ARMING touch.
-        vm.warp(block.timestamp + 366 days);
+        // Mid-notice outage: touches during it credit nothing; recovery does
+        // not spring expiry — the notice must be genuinely funded throughout.
         deal(address(vpfi), address(diamond), 0);
-        assertEq(
-            _facet().sweepExpiredInteractionRewards(_ids(id)),
-            0,
-            "outage blocks arming too"
-        );
-        (, uint64 preArmExpiry) = _facet().getRewardEntryExpiry(id);
-
-        // Funding returns: the funded touch arms the final notice, and
-        // only after it elapses does the entry expire — the outage never
-        // consumed the claimant's executable window.
+        assertEq(_accrue(id, 60 days), 0, "unfunded touches never accrue");
         deal(address(vpfi), address(diamond), DIAMOND_SEED);
         assertEq(
             _facet().sweepExpiredInteractionRewards(_ids(id)),
             0,
-            "funded touch arms, never expires instantly post-outage"
+            "recovery alone never expires"
         );
-        (, uint64 postArmExpiry) = _facet().getRewardEntryExpiry(id);
         assertGt(
-            postArmExpiry,
-            preArmExpiry,
-            "armed notice extends past the outage"
-        );
-        vm.warp(block.timestamp + 91 days);
-        assertGt(
-            _facet().sweepExpiredInteractionRewards(_ids(id)),
+            _accrue(id, 30 days + MAX_GAP),
             0,
-            "expires after a fully funded final notice"
+            "expires only after the remaining funded notice is served"
         );
     }
 
-    function testSanctionedOwnerFreezesClockAndDisarms() public {
-        _cfg().setRewardClaimHorizonDays(365);
+    function testSanctionedOwnerNeverAccrues() public {
+        _cfg().setRewardClaimHorizonDays(180);
         MockSanctionsList oracle = new MockSanctionsList();
         ProfileFacet(address(diamond)).setSanctionsOracle(address(oracle));
         uint256 id = _seedClaimableEntry();
 
-        // Flagged owner: the claim path would reject them, so the horizon
-        // clock must not even start.
+        // Flagged owner: the claim path rejects them → clock never starts.
         oracle.setFlagged(alice, true);
         _facet().sweepExpiredInteractionRewards(_ids(id));
         (uint64 stamp, ) = _facet().getRewardEntryExpiry(id);
         assertEq(stamp, 0, "no clock while the owner is sanctioned");
 
-        // Delisted: the clock starts, runs the horizon, and the entry arms.
+        // Delisted: the accumulator starts and accrues.
         oracle.setFlagged(alice, false);
         _facet().sweepExpiredInteractionRewards(_ids(id));
-        (stamp, ) = _facet().getRewardEntryExpiry(id);
-        assertGt(stamp, 0, "clock starts once delisted");
-        uint256 tDue = vm.getBlockTimestamp() + 366 days;
-        vm.warp(tDue);
-        _facet().sweepExpiredInteractionRewards(_ids(id)); // arm
-        (, uint64 armedExpiry) = _facet().getRewardEntryExpiry(id);
-        // vm.getBlockTimestamp() is opaque to the optimizer, so this exact
-        // check can't be CSE-folded back into `block.timestamp + …`.
-        assertEq(
-            armedExpiry,
-            uint64(vm.getBlockTimestamp() + 90 days),
-            "armed final notice"
-        );
+        _accrue(id, 180 days + 60 days);
 
-        // Re-flagged mid-final-notice: a touch DISARMS, so a later delist
-        // can't spring instant expiry off the stale arm.
+        // Re-flagged mid-notice: sanctioned touches credit nothing.
         oracle.setFlagged(alice, true);
-        vm.warp(tDue + 91 days);
-        assertEq(
-            _facet().sweepExpiredInteractionRewards(_ids(id)),
-            0,
-            "sanctioned touch past notice still cannot expire"
-        );
+        assertEq(_accrue(id, 60 days), 0, "sanctioned touches never accrue");
+        // Delist and serve the remaining funded notice → expires.
         oracle.setFlagged(alice, false);
-        assertEq(
-            _facet().sweepExpiredInteractionRewards(_ids(id)),
-            0,
-            "delist re-arms the funded notice, never instant expiry"
-        );
-        uint256 tReArm = block.timestamp;
-        vm.warp(tReArm + 91 days);
         assertGt(
-            _facet().sweepExpiredInteractionRewards(_ids(id)),
+            _accrue(id, 30 days + MAX_GAP),
             0,
-            "expires after a fresh funded final notice"
+            "expires only after a genuinely claimable window"
         );
     }
 
-    function testReconfigurationReArmsAlreadyArmedEntry() public {
-        _cfg().setRewardClaimHorizonDays(180);
-        uint256 id = _seedClaimableEntry();
-        _facet().sweepExpiredInteractionRewards(_ids(id)); // stamp
-        uint256 tDue = vm.getBlockTimestamp() + 181 days;
-        vm.warp(tDue);
-        _facet().sweepExpiredInteractionRewards(_ids(id)); // arm
-
-        // Governance dark-resets then re-enables the horizon in a LATER
-        // block, after the arm — the arm now predates the latest activation
-        // and must be treated as stale, so the entry re-arms rather than
-        // expiring off the old window. (A same-block arm+reconfig is a
-        // non-issue: the arm already is a valid 90-day funded notice.)
-        vm.warp(tDue + 1 days);
-        _cfg().setRewardClaimHorizonDays(0);
-        _cfg().setRewardClaimHorizonDays(180);
-        vm.warp(tDue + 92 days); // past the OLD arm's notice
-        assertEq(
-            _facet().sweepExpiredInteractionRewards(_ids(id)),
-            0,
-            "stale arm re-arms after reconfiguration, no instant expiry"
-        );
-        uint256 tReArm = vm.getBlockTimestamp();
-        vm.warp(tReArm + 91 days);
-        assertGt(
-            _facet().sweepExpiredInteractionRewards(_ids(id)),
-            0,
-            "expires after the re-granted funded final notice"
-        );
-    }
-
-    function testUnpayableTouchDisarmsArmedEntry() public {
+    function testReconfigurationReEarnsExecutableNotice() public {
         _cfg().setRewardClaimHorizonDays(365);
         uint256 id = _seedClaimableEntry();
         _facet().sweepExpiredInteractionRewards(_ids(id)); // stamp
-        uint256 tDue = block.timestamp + 366 days;
-        vm.warp(tDue);
-        _facet().sweepExpiredInteractionRewards(_ids(id)); // arm
+        // Accrue 300 executable days — inside the 365-day horizon phase.
+        _accrue(id, 300 days);
 
-        // A keeper touch DURING a funding outage past the notice window
-        // disarms, so recovery can't spring instant expiry off the stale
-        // arm — the funded final notice re-counts from a payable state.
-        vm.warp(tDue + 91 days);
-        deal(address(vpfi), address(diamond), 0);
+        // Governance shortens the horizon to 180: the 300 accrued days now
+        // exceed the new horizon, so the accrual is CAPPED back to 180 and
+        // the full notice must be re-earned under the new configuration.
+        _cfg().setRewardClaimHorizonDays(180);
         assertEq(
-            _facet().sweepExpiredInteractionRewards(_ids(id)),
+            _accrue(id, NOTICE - MAX_GAP),
             0,
-            "unfunded touch past notice cannot expire"
+            "shortening caps to the new horizon; notice must be re-earned"
         );
-        deal(address(vpfi), address(diamond), DIAMOND_SEED);
-        assertEq(
-            _facet().sweepExpiredInteractionRewards(_ids(id)),
-            0,
-            "recovery re-arms, never instant expiry off a stale arm"
-        );
-        uint256 tReArm = block.timestamp;
-        vm.warp(tReArm + 91 days);
         assertGt(
-            _facet().sweepExpiredInteractionRewards(_ids(id)),
+            _accrue(id, 2 * MAX_GAP),
             0,
-            "expires after a fully funded final notice"
+            "expires only after the re-earned funded notice is served"
+        );
+    }
+
+    function testDarkResetReEarnsNotice() public {
+        _cfg().setRewardClaimHorizonDays(180);
+        uint256 id = _seedClaimableEntry();
+        _facet().sweepExpiredInteractionRewards(_ids(id)); // stamp
+        // Accrue the ENTIRE window — the entry is at the brink of expiry.
+        _accrue(id, 180 days + NOTICE - MAX_GAP);
+
+        // Dark reset then re-enable BEFORE the last step: the accrual is
+        // capped to the horizon, so a fresh full notice must be re-earned —
+        // a dormant claimant is never reaped without a fresh funded notice.
+        _cfg().setRewardClaimHorizonDays(0);
+        _cfg().setRewardClaimHorizonDays(180);
+        assertEq(
+            _accrue(id, NOTICE - MAX_GAP),
+            0,
+            "dark reset re-earns the full notice"
+        );
+        assertGt(
+            _accrue(id, 2 * MAX_GAP),
+            0,
+            "expires after the re-earned funded notice"
         );
     }
 
