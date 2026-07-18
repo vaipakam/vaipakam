@@ -672,6 +672,109 @@ contract RewardClaimHorizonTest is SetupTest, IVaipakamErrors {
         );
     }
 
+    /// @notice The aggregate funding gate must account for the user's OTHER
+    ///         finalized entries even when a keeper has only swept one — their
+    ///         cumulative cursor reads behind until advanced, so a naive
+    ///         view-only preview understates the claim. The sweep advances
+    ///         every one of the user's side cursors before the funding check,
+    ///         so a large unswept entry still keeps the swept entry's clock
+    ///         paused while its claim would revert (Codex #1317 r2 xkk).
+    function testUnadvancedEntryCountsInAggregateFundingGate() public {
+        _cfg().setRewardClaimHorizonDays(180);
+        // Finalize days 1..5 so a later entry is claimable but cursor-behind.
+        for (uint32 d = 2; d <= 5; d++) {
+            _mut().setKnownGlobalDailyInterest(d, 1e18, 1e18, true);
+            _mut().setDayCapThreshold18(d, type(uint256).max);
+        }
+        vm.warp(block.timestamp + 10 days); // today past day 5
+
+        // A: small, over day 1. B: 1000x larger, over day 5 — finalized but its
+        // cursor stays behind until something advances the lender cursor to 5.
+        uint256 idA = _mut().pushRewardEntry(
+            alice, 42, LibVaipakam.RewardSide.Lender, 1e18, 1
+        );
+        _mut().closeRewardEntryRaw(idA, 2);
+        uint256 idB = _mut().pushRewardEntry(
+            alice, 43, LibVaipakam.RewardSide.Lender, 1000e18, 5
+        );
+        _mut().closeRewardEntryRaw(idB, 6);
+
+        // Before any sweep both cursors are behind, so the preview sees
+        // nothing — neither entry's value is resolvable yet.
+        (uint256 pre, , ) = _lens().previewInteractionRewards(alice);
+        assertEq(pre, 0, "cursors behind: preview is 0 pre-sweep");
+
+        // Stamp ONLY idA. The gate advances EVERY one of alice's side cursors
+        // (not just the swept entry's), so idB — which no keeper has swept —
+        // is now resolvable and counted (the xkk fix). The aggregate jumps to
+        // include B's ~1000x value.
+        _facet().sweepExpiredInteractionRewards(_ids(idA));
+        (uint256 aggFull, , ) = _lens().previewInteractionRewards(alice);
+        assertGt(aggFull, pre + 1000e18, "unswept idB is now counted");
+
+        // Balance one wei under the full aggregate — a gate that ignored the
+        // unswept idB would see only A and let the clock run; the fixed gate
+        // pauses because the real atomic claim (A + B) would revert.
+        deal(address(vpfi), address(diamond), aggFull - 1);
+        assertEq(
+            _accrue(idA, 180 days + NOTICE + MAX_GAP),
+            0,
+            "A never accrues while the unswept entry B is underfunded"
+        );
+
+        // Fund the full aggregate → A accrues and expires.
+        deal(address(vpfi), address(diamond), DIAMOND_SEED);
+        assertGt(
+            _accrue(idA, 180 days + NOTICE + MAX_GAP),
+            0,
+            "A expires once A + B is affordable"
+        );
+    }
+
+    /// @notice The claim also processes the user's FORFEITED entries, whose
+    ///         treasury credit reverts unless the post-payout balance backs
+    ///         `recycleBucket + forfeitFresh`. The gate folds that in, so a
+    ///         payable entry's clock pauses while a co-owned forfeited entry
+    ///         would make the atomic claim revert (Codex #1317 r2 xkq).
+    function testForfeitedEntryBackingCountsInFundingGate() public {
+        _cfg().setRewardClaimHorizonDays(180);
+        uint256 idA = _seedClaimableEntry();               // payable
+        uint256 idF = _mut().pushRewardEntry(
+            alice, 43, LibVaipakam.RewardSide.Borrower, 1e18, 1
+        );
+        _mut().closeRewardEntryRaw(idF, 2);
+        _mut().setRewardEntryForfeitedRaw(idF);            // forfeited → treasury
+
+        // Stamp A (funded) + advance cursors so the preview is exact.
+        uint256[] memory both = new uint256[](2);
+        both[0] = idA;
+        both[1] = idF;
+        _facet().sweepExpiredInteractionRewards(both);
+        (uint256 payout, , ) = _lens().previewInteractionRewards(alice);
+        assertGt(payout, 0, "A previews non-zero");
+
+        // Bucket ledger set high; balance covers the payout AND the bucket but
+        // leaves NO headroom for the forfeit's fresh treasury credit — so the
+        // atomic claim would revert and A's clock must pause.
+        uint256 bucket = 5_000 ether;
+        _mut().setRecycleBucketRaw(bucket);
+        deal(address(vpfi), address(diamond), payout + bucket);
+        assertEq(
+            _accrue(idA, 180 days + NOTICE + MAX_GAP),
+            0,
+            "A never accrues while the forfeit credit is unbacked"
+        );
+
+        // Full funding → the forfeit credit fits, the claim is executable, A
+        // accrues and expires.
+        deal(address(vpfi), address(diamond), DIAMOND_SEED);
+        assertGt(
+            _accrue(idA, 180 days + NOTICE + MAX_GAP),
+            0,
+            "A expires once the forfeit-inclusive claim is affordable"
+        );
+    }
+
     /// @notice Time during which the protocol is paused is NOT executable
     ///         (every claim reverts under the pause), so an observation
     ///         interval that straddles a pause window — even one shorter than
@@ -692,9 +795,12 @@ contract RewardClaimHorizonTest is SetupTest, IVaipakamErrors {
         vm.warp(vm.getBlockTimestamp() + 5 days);
         AdminFacet(address(diamond)).unpause();
 
-        // The first post-unpause sweep sees a 5-day gap that straddled the
-        // pause boundary — it must be DROPPED, so the entry is not reaped even
-        // though required-5d + 5d of wall time has elapsed.
+        // Keeper resumes a little after unpause (its observation timestamp is
+        // strictly past the pause boundary — the realistic cadence). The first
+        // post-unpause sweep sees a gap that straddled the pause boundary, so
+        // it must be DROPPED: the entry is not reaped even though the pause's
+        // wall time elapsed.
+        vm.warp(vm.getBlockTimestamp() + 1 hours);
         assertEq(
             _facet().sweepExpiredInteractionRewards(_ids(id)),
             0,

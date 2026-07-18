@@ -1022,6 +1022,96 @@ function _dayPoolHalves(
         pending += previewForUserWindow(user, fromDay, effectiveTo);
     }
 
+    /// @dev The SUFFICIENT VPFI balance the user's atomic claim needs to NOT
+    ///      revert — used by the horizon sweep's claim-executable gate. Unlike
+    ///      the pure {userClaimPendingUncapped}, this MUTATES: it advances
+    ///      every one of the user's side cursors first so the aggregate is
+    ///      exact even for entries no keeper has swept yet (a behind cursor
+    ///      makes {previewForUserEntries} read 0 for that entry — Codex #1317
+    ///      r2 xkk). It then adds, only when the user has forfeited entries,
+    ///      the headroom the claim's forfeit-credit path requires: that path
+    ///      calls {LibVpfiRecycle.credit}, which reverts unless the POST-payout
+    ///      balance still backs `recycleBucket + freshTreasury` — so the whole
+    ///      claim needs `payout + recycleBucket + forfeitFresh` (Codex #1317 r2
+    ///      xkq). A conservative sufficient bound (payout >= the pool-truncated
+    ///      transfer), so the gate never reaps unfairly. The window walk is
+    ///      capped at MAX_INTERACTION_CLAIM_DAYS and the entry scans are bounded
+    ///      by the user's entry count — acceptable for the dark, keeper-run
+    ///      reaper.
+    function userClaimFundingNeed(
+        LibVaipakam.Storage storage s,
+        address user
+    ) internal returns (uint256 need) {
+        _advanceUserCursors(s, user);
+        uint256 payout = userClaimPendingUncapped(s, user);
+        uint256 forfeitFresh = _userForfeitFresh(s, user);
+        // No forfeited entries → the claim does no bucket credit, so the plain
+        // payout is the whole requirement. Otherwise the forfeit credit must
+        // stay backed above the existing bucket after the payout leaves.
+        need = forfeitFresh == 0
+            ? payout
+            : payout + s.recycleBucket + forfeitFresh;
+    }
+
+    /// @dev Advance BOTH of the user's side cursors to the latest `endDay - 1`
+    ///      across their unprocessed entries, so a subsequent
+    ///      {previewForUserEntries} / {_entryWindowSplit} reads the exact
+    ///      finalized value for every entry (the cumulative-min arrays are
+    ///      built lazily by the cursor, so an un-advanced day reads behind).
+    ///      Idempotent and monotonic — advancing past the swept entry only
+    ///      does the finalized-day work a later claim would do anyway.
+    function _advanceUserCursors(
+        LibVaipakam.Storage storage s,
+        address user
+    ) private {
+        uint256[] storage ids = s.userRewardEntryIds[user];
+        uint256 len = ids.length;
+        uint256 maxLender;
+        uint256 maxBorrower;
+        for (uint256 i; i < len; ) {
+            LibVaipakam.RewardEntry storage e = s.rewardEntries[ids[i]];
+            if (!e.processed && e.endDay != 0) {
+                uint256 needD = e.endDay - 1;
+                if (e.side == LibVaipakam.RewardSide.Lender) {
+                    if (needD > maxLender) maxLender = needD;
+                } else {
+                    if (needD > maxBorrower) maxBorrower = needD;
+                }
+            }
+            unchecked { ++i; }
+        }
+        if (maxLender != 0 && s.cumLenderCursor < maxLender) {
+            advanceCumLenderThrough(maxLender);
+        }
+        if (maxBorrower != 0 && s.cumBorrowerCursor < maxBorrower) {
+            advanceCumBorrowerThrough(maxBorrower);
+        }
+    }
+
+    /// @dev Sum the FRESH (non-recycled) face value of the user's unprocessed
+    ///      FORFEITED entries — exactly the `freshTreasury` the claim's
+    ///      forfeit-credit path would absorb into the recycle bucket. Assumes
+    ///      the caller has already advanced the cursors (see
+    ///      {_advanceUserCursors}) so each {_entryWindowSplit} is exact.
+    function _userForfeitFresh(
+        LibVaipakam.Storage storage s,
+        address user
+    ) private view returns (uint256 fresh) {
+        uint256[] storage ids = s.userRewardEntryIds[user];
+        uint256 len = ids.length;
+        for (uint256 i; i < len; ) {
+            LibVaipakam.RewardEntry storage e = s.rewardEntries[ids[i]];
+            if (
+                !e.processed &&
+                (e.forfeited || _entryTerminalForfeit(s, e))
+            ) {
+                EntrySplit memory sp = _entryWindowSplit(s, e);
+                fresh += sp.total - sp.recycled;
+            }
+            unchecked { ++i; }
+        }
+    }
+
     /// @notice View-only preview of {claimForUserEntries}.
     function previewForUserEntries(address user)
         internal
@@ -1174,15 +1264,19 @@ function _dayPoolHalves(
         uint256 freshShare = split_.total - split_.recycled;
         // Claim-EXECUTABLE gate: the accumulator only advances while the
         // CLAIMANT could actually claim right now. The claim is ATOMIC-
-        // AGGREGATE — `claimInteractionRewardsTo` sums ALL of the user's
-        // claimable entries plus the finalized legacy window into ONE transfer
-        // and reverts if the local balance can't cover it — so the funding
-        // check is against the user's FULL pending, never this one entry:
-        // a per-entry balance check would let a partly-funded balance reap one
+        // AGGREGATE — `claimInteractionRewardsTo` processes ALL of the user's
+        // entries (payable AND forfeited) plus the finalized legacy window in
+        // ONE call and reverts if any part is underfunded — so the funding
+        // check is against the user's whole claim, never this one entry: a
+        // per-entry balance check would let a partly-funded balance reap one
         // entry while the real (aggregate) claim reverts (Codex #1317 P1).
-        // The recycle-bucket backing room is NOT checked here — it gates the
-        // all-or-nothing EXPIRY credit below, not the claimant's clock (a claim
-        // never touches the bucket). Blocked when:
+        // `userClaimFundingNeed` ADVANCES every one of the user's side cursors
+        // first, so the aggregate is exact even for entries a keeper hasn't
+        // swept yet (their cursors would otherwise read behind and understate
+        // the need — Codex #1317 r2 xkk), and it folds in the recycle-bucket
+        // backing the forfeit-credit path needs (Codex #1317 r2 xkq). The
+        // per-entry backing room is NOT checked here — it gates the all-or-
+        // nothing EXPIRY credit below, not the claimant's clock. Blocked when:
         //   1. this entry's pool-capped payable is zero (a reap of it would
         //      recycle nothing — nothing a claim could pay for it),
         //   2. the owner is sanctioned (the claim path rejects them),
@@ -1199,7 +1293,7 @@ function _dayPoolHalves(
             !LibVaipakam.isSanctionedAddress(e.user) &&
             !LibPausable.paused() &&
             IERC20Metadata(s.vpfiToken).balanceOf(address(this)) >=
-            userClaimPendingUncapped(s, e.user);
+            userClaimFundingNeed(s, e.user);
 
         uint64 lastObs = s.rewardEntryExecObsAt[id];
 
@@ -1258,8 +1352,12 @@ function _dayPoolHalves(
         // executable time (Codex #1317 P2 — the sweep itself is `whenNotPaused`,
         // so it cannot observe DURING a pause; the boundary marker is how a
         // post-unpause sweep discovers the gap it slept through).
+        // `<=`, not `<`: a pause boundary stored in the SAME block as the
+        // prior observation is ambiguous in ordering, so treat an equal
+        // timestamp as spanning the pause too — conservatively drop it rather
+        // than credit a possibly-paused interval (Codex #1317 r2 xkm).
         bool spannedPause =
-            uint256(lastObs) < uint256(LibPausable.lastPauseBoundaryAt());
+            uint256(lastObs) <= uint256(LibPausable.lastPauseBoundaryAt());
         if (!s.rewardEntryObsBlocked[id]) {
             uint256 gap = block.timestamp - uint256(lastObs);
             if (
@@ -1365,9 +1463,14 @@ function _dayPoolHalves(
             // unsanctioned, pool-capped payable non-zero, balance covers it),
             // mirroring the sweep's accrual gate. A blocked claimant's
             // countdown pauses here instead of ticking down through the block.
-            uint256 gap =
-                block.timestamp - uint256(s.rewardEntryExecObsAt[id]);
+            // An interval that straddled a pause boundary is dropped, matching
+            // the sweep — else a paused-then-unpaused entry would show
+            // `expiresAt == now` while a sweep-now would only re-baseline
+            // (Codex #1317 r2 xkn).
+            uint256 lastObs = uint256(s.rewardEntryExecObsAt[id]);
+            uint256 gap = block.timestamp - lastObs;
             if (
+                lastObs > uint256(LibPausable.lastPauseBoundaryAt()) &&
                 gap <=
                 uint256(LibVaipakam.REWARD_CLAIM_NOTICE_MAX_OBS_GAP_DAYS) *
                     1 days
