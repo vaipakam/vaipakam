@@ -73,10 +73,10 @@ test('language preference persists; translated es flips content + <html lang>; p
 
   const picker = page.getByLabel('Display language');
   await expect(picker).toBeVisible();
-  // Exactly the PICKER_VISIBLE set: wave-1 (en/es/zh/hi/ja) + ta + fr.
+  // Exactly the PICKER_VISIBLE set: wave-1 (en/es/zh/hi/ja) + ta + fr + de.
   // Grows by one with every locale promoted into PICKER_VISIBLE —
   // bump this count in the same diff as the promotion.
-  await expect(picker.locator('option')).toHaveCount(7);
+  await expect(picker.locator('option')).toHaveCount(8);
 
   await picker.selectOption('es');
   // es is a TRANSLATED locale now: the catalog re-resolves in Spanish
