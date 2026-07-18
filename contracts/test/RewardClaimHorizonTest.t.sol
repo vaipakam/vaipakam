@@ -759,6 +759,20 @@ contract RewardClaimHorizonTest is SetupTest, IVaipakamErrors {
         uint256 bucket = 5_000 ether;
         _mut().setRecycleBucketRaw(bucket);
         deal(address(vpfi), address(diamond), payout + bucket);
+
+        // The countdown view mirrors the sweep's forfeit-aware gate: with the
+        // forfeit unbacked it does NOT fold the pending interval, so the Claim
+        // Center shows the full remaining time (no imminent expiry a sweep
+        // would defer). Nothing has accrued since the stamp, so the estimate
+        // is exactly `now + H + notice`.
+        vm.warp(vm.getBlockTimestamp() + 3 days);
+        (, uint64 expiryV) = _lens().getRewardEntryExpiry(idA);
+        assertEq(
+            expiryV,
+            uint64(vm.getBlockTimestamp() + 180 days + NOTICE),
+            "view countdown pauses while the forfeit credit is unbacked"
+        );
+
         assertEq(
             _accrue(idA, 180 days + NOTICE + MAX_GAP),
             0,

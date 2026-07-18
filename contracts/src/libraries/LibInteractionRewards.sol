@@ -1042,15 +1042,11 @@ function _dayPoolHalves(
         LibVaipakam.Storage storage s,
         address user
     ) internal returns (uint256 need) {
+        // Advance every side cursor so the funding formula reads the EXACT
+        // value for each entry (a behind cursor would understate it — xkk),
+        // then apply the shared formula (payout + the forfeit-credit backing).
         _advanceUserCursors(s, user);
-        uint256 payout = userClaimPendingUncapped(s, user);
-        uint256 forfeitFresh = _userForfeitFresh(s, user);
-        // No forfeited entries → the claim does no bucket credit, so the plain
-        // payout is the whole requirement. Otherwise the forfeit credit must
-        // stay backed above the existing bucket after the payout leaves.
-        need = forfeitFresh == 0
-            ? payout
-            : payout + s.recycleBucket + forfeitFresh;
+        need = _userClaimFundingNeedView(s, user);
     }
 
     /// @dev Advance BOTH of the user's side cursors to the latest `endDay - 1`
@@ -1516,7 +1512,28 @@ function _dayPoolHalves(
         if (entryPayable == 0) return false; // nothing a claim could pay for it
         return
             IERC20Metadata(s.vpfiToken).balanceOf(address(this)) >=
-            userClaimPendingUncapped(s, e.user);
+            _userClaimFundingNeedView(s, e.user);
+    }
+
+    /// @dev View mirror of {userClaimFundingNeed}'s funding formula, WITHOUT
+    ///      the cursor advance a view can't perform. Used by the countdown
+    ///      estimate so it applies the SAME forfeit-credit backing the sweep
+    ///      does (`payout + recycleBucket + forfeitFresh` when the user has
+    ///      forfeited entries) — otherwise the view would show an imminent
+    ///      expiry for an unbacked-forfeit user whose claim actually reverts
+    ///      and whom the sweep will not accrue (Codex #1317 r4). It stays
+    ///      optimistic ONLY on the axis a view genuinely cannot resolve: an
+    ///      unadvanced entry reads behind (0), matching the documented
+    ///      conservative-estimate caveat on {rewardEntryExpiry}.
+    function _userClaimFundingNeedView(
+        LibVaipakam.Storage storage s,
+        address user
+    ) private view returns (uint256 need) {
+        uint256 payout = userClaimPendingUncapped(s, user);
+        uint256 forfeitFresh = _userForfeitFresh(s, user);
+        need = forfeitFresh == 0
+            ? payout
+            : payout + s.recycleBucket + forfeitFresh;
     }
 
     /// @dev PR-3c — accumulate `part` into `acc` (memory fold helper).
