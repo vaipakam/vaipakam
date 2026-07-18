@@ -113,7 +113,13 @@ contract RewardClaimHorizonTest is SetupTest, IVaipakamErrors {
         assertEq(_facet().sweepExpiredInteractionRewards(_ids(id)), 0);
         (uint64 stamp, uint64 expiry) = _facet().getRewardEntryExpiry(id);
         assertGt(stamp, 0, "clock started");
-        assertEq(expiry, stamp + 365 days, "expiry = stamp + H");
+        // Unarmed: earliest removal is horizon-due (stamp + H) PLUS the
+        // 90-day funded final notice the sweep must still arm and serve.
+        assertEq(
+            expiry,
+            stamp + 365 days + 90 days,
+            "expiry = stamp + H + notice (unarmed)"
+        );
 
         // Touch 2 inside the horizon: no-op.
         vm.warp(block.timestamp + 364 days);
@@ -131,7 +137,7 @@ contract RewardClaimHorizonTest is SetupTest, IVaipakamErrors {
         (, uint64 armedExpiry) = _facet().getRewardEntryExpiry(id);
         assertEq(
             armedExpiry,
-            uint64(block.timestamp + 90 days),
+            uint64(vm.getBlockTimestamp() + 90 days),
             "view reflects the armed final-notice window"
         );
         vm.warp(block.timestamp + 91 days);
@@ -217,10 +223,12 @@ contract RewardClaimHorizonTest is SetupTest, IVaipakamErrors {
             "notice floor blocks immediate expiry after re-activation"
         );
         (, uint64 expiry) = _facet().getRewardEntryExpiry(id);
+        // Unarmed after reactivation: due (= activation + notice floor)
+        // PLUS the funded final notice → activation + 2×notice.
         assertEq(
             expiry,
-            uint64(block.timestamp + 90 days),
-            "expiry lifted to activation + notice"
+            uint64(vm.getBlockTimestamp() + 180 days),
+            "expiry lifted to activation + notice + notice (unarmed)"
         );
 
         vm.warp(block.timestamp + 89 days);
@@ -260,10 +268,12 @@ contract RewardClaimHorizonTest is SetupTest, IVaipakamErrors {
             "a shortened horizon cannot spring expiry"
         );
         (, uint64 expiry) = _facet().getRewardEntryExpiry(id);
+        // Unarmed after the retune: due (= retune + notice floor) PLUS the
+        // funded final notice → retune + 2×notice.
         assertEq(
             expiry,
-            uint64(block.timestamp + 90 days),
-            "expiry lifted to retune + notice"
+            uint64(vm.getBlockTimestamp() + 180 days),
+            "expiry lifted to retune + notice + notice (unarmed)"
         );
         // Distinct absolute warp targets: two identical
         // `block.timestamp + N` warp expressions can be CSE'd by the

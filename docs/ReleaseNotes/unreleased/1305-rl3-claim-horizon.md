@@ -18,15 +18,22 @@ re-activation after a governance dark reset, and any retune including
 a shortening — re-grants every entry, however stale its clock, at
 least 90 days of fresh runway before it can expire, so neither a dark
 interval nor a horizon shortening is ever silently counted against
-dormant claimants. Horizon time also only counts while a claim would
-actually succeed — the bar is what a claim would really pay (fresh
-capped to remaining pool capacity, plus recycled), covered by local
-funding — so a cross-chain funding outage neither starts the clock nor
-advances a due expiry. Expiry itself is two-phase: past the horizon, a
-funded sweep touch first arms a public final-notice window, and removal
-happens no earlier than 90 days after that funded arming — every
-removal follows a funded last call, even when an outage straddled the
-horizon instant. A sanctioned owner cannot claim, so their entries'
+dormant claimants. The protected floor is the funded 90-day final
+notice, not the main horizon: an entry is removed only after a
+contiguous 90-day window counted solely from moments the reward is
+provably claim-executable — the amount a claim would really pay (fresh
+capped to remaining pool capacity, plus recycled) is non-zero, covered
+by local funding, and the owner unsanctioned. The horizon clock starts
+only from the first claim-executable moment (an outage or a sanction at
+first-claimability never anchors it early), and the H-day main horizon
+is coarse wall-clock grace before that final-notice clock can begin —
+so an entry blocked for part or all of the main horizon still gets its
+full funded final notice from the first moment it is both due and
+claim-executable. Expiry is two-phase: past the horizon, a funded sweep
+touch first arms a public final-notice window, and removal happens no
+earlier than 90 days after that funded arming — every removal follows a
+funded last call, even when an outage straddled the horizon instant. A
+sanctioned owner cannot claim, so their entries'
 clocks stay frozen and can never be swept while flagged (a delist
 re-opens the clock — freeze, not seize). And any funded arming is
 invalidated when a later touch finds the entry unpayable or sanctioned,
@@ -48,7 +55,11 @@ machinery: the fresh-funded share genuinely leaves the fresh budget
 absorption; the recycled-funded share never left the bucket and releases
 its commitment with zero new credit — dormant recycled rewards can never
 inflate the absorption average. A claim-center countdown view exposes
-each entry's clock start and expiry; the pre-expiry notice rides the
+each entry's clock start and its earliest terminal-removal time — for an
+entry not yet in its final notice the view reports the horizon-due time
+plus the full 90-day notice (never the bare horizon-due time, which the
+sweep can only arm at, never expire), so the countdown never understates
+how long a claimant has; the pre-expiry notice rides the
 free in-app notification channel per the design (paid push may only be
 additional). The governor design's "released only by forfeit — never by
 time" sentence gains its ratified superseding note, and functional spec

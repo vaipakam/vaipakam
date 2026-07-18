@@ -1249,13 +1249,19 @@ function _dayPoolHalves(
     /// @notice RL-3 — UX view: the entry's horizon state for the
     ///         claim-center countdown.
     /// @return firstClaimableAt Clock start (0 = not started).
-    /// @return expiresAt        `max(stamp + H days, activation + notice,
-    ///                          armed + notice)` (0 = dark or unstarted).
-    ///                          The EARLIEST instant the entry can be
-    ///                          expired: past the horizon a funded arming
-    ///                          touch must still start (or have started)
-    ///                          the final-notice window, so actual removal
-    ///                          never precedes this value.
+    /// @return expiresAt        The EARLIEST instant the entry can be
+    ///                          terminally removed (0 = dark or unstarted).
+    ///                          Removal is ALWAYS ≥ 90 days (the funded
+    ///                          final notice) after the entry is due, so:
+    ///                          - a CURRENT arm exists  → `armed + notice`
+    ///                            (exact — the funded notice is running);
+    ///                          - otherwise (unarmed, or a stale pre-
+    ///                            reconfiguration arm) → `horizon-due +
+    ///                            notice`, because the sweep must still arm
+    ///                            at/after the due time and then serve the
+    ///                            full 90-day funded notice. Never returns
+    ///                            the bare horizon-due time (which the
+    ///                            sweep can only ARM at, never expire).
     function rewardEntryExpiry(uint256 id)
         internal
         view
@@ -1266,16 +1272,21 @@ function _dayPoolHalves(
         uint32 horizonDays = s.rewardClaimHorizonDays;
         if (firstClaimableAt != 0 && horizonDays != 0) {
             uint256 at = _horizonExpiryAt(s, firstClaimableAt, horizonDays);
+            uint256 noticeSecs =
+                uint256(LibVaipakam.REWARD_CLAIM_HORIZON_NOTICE_DAYS) * 1 days;
             // Only a CURRENT arm (set on/after the latest horizon
-            // (re)configuration) floors the countdown; a stale arm is
-            // ignored here exactly as the sweep re-arms it, so the view
-            // never understates the true earliest expiry.
+            // (re)configuration) is exact; a stale arm is ignored exactly
+            // as the sweep re-arms it.
             uint64 armedAt = s.rewardEntryDueFundedAt[id];
             if (armedAt != 0 && armedAt >= s.rewardHorizonActivatedAt) {
-                uint256 armedFloor = uint256(armedAt) +
-                    uint256(LibVaipakam.REWARD_CLAIM_HORIZON_NOTICE_DAYS) *
-                    1 days;
+                uint256 armedFloor = uint256(armedAt) + noticeSecs;
                 if (at < armedFloor) at = armedFloor;
+            } else {
+                // Unarmed: the funded final notice has not begun, and the
+                // sweep needs a due+executable touch to ARM before the
+                // 90-day clock even starts — so the earliest terminal
+                // removal is the horizon-due time PLUS the notice.
+                at += noticeSecs;
             }
             expiresAt = uint64(at);
         }
