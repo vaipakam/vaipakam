@@ -27,7 +27,16 @@
         "language": "언어",
         "languageHint": "번역이 완료되지 않은 언어는 현재 영어 텍스트를 표시합니다.",
         "languagePickerAria": "표시 언어"
-      }
+      },
+      "loading": "불러오는 중…",
+      "modeAdvanced": "고급",
+      "modeBasic": "기본",
+      "modeSwitchAria": "인터페이스 모드",
+      "more": "더 보기",
+      "moreSheetAria": "다른 이동 위치",
+      "navPrimaryAria": "기본",
+      "navQuickAria": "빠른 탐색",
+      "skipToContent": "본문으로 건너뛰기"
     },
     "seo": {
       "home": {
@@ -178,7 +187,11 @@
       "pushEnable": "Push 전송 활성화",
       "pushEnabled": "이 월렛의 Push 전송이 켜져 있습니다.",
       "pushButton": "Push 채널 열기",
-      "loanNudge": "이 대출이 위험해지면 Telegram 경고를 받고 싶으세요? 설정에서 알림을 설정하세요."
+      "loanNudge": "이 대출이 위험해지면 Telegram 경고를 받고 싶으세요? 설정에서 알림을 설정하세요.",
+      "bandAlert": "알림",
+      "bandCritical": "위험",
+      "bandWarn": "경고",
+      "bandsSave": "저장"
     },
     "notifications": {
       "bellLabel": "알림",
@@ -206,7 +219,16 @@
       "title": "이 페이지에서 문제가 발생했습니다",
       "body": "페이지에서 예기치 않은 오류가 발생하여 렌더링이 중단되었습니다. 자금과 온체인 포지션은 영향을 받지 않습니다 — 이것은 표시 측 오류이며, 방금 서명한 트랜잭션은 그대로 처리되었을 수 있습니다(새로 고침 후 내 포지션을 확인하세요). 대개 새로 고치면 해결됩니다.",
       "reload": "페이지 새로 고침",
-      "home": "홈으로 돌아가기"
+      "home": "홈으로 돌아가기",
+      "detailAria": "오류 세부 정보",
+      "glosses": {
+        "185": "최대 업데이트 깊이를 초과했습니다 — 컴포넌트가 매 렌더마다 state를 업데이트하고 있습니다. 무한 렌더 루프입니다.",
+        "300": "예상보다 적은 hooks가 렌더링되었습니다 — 조건부 return으로 hook이 건너뛰어졌습니다.",
+        "301": "재렌더링이 너무 많습니다 — 렌더 중 state setter가 호출되고 있습니다.",
+        "310": "Rules of Hooks 위반 — hook이 조건부로 또는 순서가 맞지 않게 호출되었습니다.",
+        "321": "잘못된 hook 호출 — hooks는 React 함수 컴포넌트 안에서만 실행될 수 있습니다.",
+        "418": "Hydration 불일치 — 서버와 클라이언트가 서로 다른 markup을 렌더링했습니다."
+      }
     },
     "diagnostics": {
       "open": "지원 및 연결 확인",
@@ -264,7 +286,8 @@
       "tokenValid": "자산이 토큰으로 인식됨",
       "consent": "위험 고지 및 약관 동의함",
       "getTestAssets": "테스트 자산 받기",
-      "connectEarly": "계속하려면 월렛을 연결하세요 — 서명하려면 필요하므로 지금 연결하는 것이 가장 편합니다."
+      "connectEarly": "계속하려면 월렛을 연결하세요 — 서명하려면 필요하므로 지금 연결하는 것이 가장 편합니다.",
+      "sanctionsChecking": "컴플라이언스 상태 확인 중…"
     },
     "receipt": {
       "heading": "서명하기 전에 검토하세요",
@@ -293,7 +316,53 @@
         "대출: 이자는 차입자가 상환해야만 얻을 수 있습니다. 채무 불이행 시 회수 금액은 잠겨 있던 담보의 실제 가치에 따라 결정됩니다.",
         "NFT 임대: 임차인은 소유권이 아니라 임시 사용 권리만 받습니다. NFT는 소유자의 Vault에 그대로 보관됩니다. 임대료는 선불이며, 소액의 환불 가능한 버퍼가 포함됩니다.",
         "스마트 컨트랙트 위험: Vaipakam은 공개 네트워크상의 코드입니다. 버그, 네트워크 장애, 극단적인 시장 상황으로 손실이 발생할 수 있습니다 — 감당할 수 없는 자금은 절대 투입하지 마세요."
-      ]
+      ],
+      "buildDevFallback": "dev",
+      "buildLabel": "Build",
+      "faq": {
+        "alerts": {
+          "a": "알림 카드에서 Telegram을 연결하고 브라우저 push도 켜면, 대출 만기가 가까워지거나 포지션 건강도가 떨어질 때 경고를 받을 수 있습니다. 연결은 한 번의 서명으로 끝납니다. 테스트 알림을 보내 보면 실제로 의존하기 전에 채널이 동작하는지 확인할 수 있습니다.",
+          "q": "마감일이나 청산 전에 알림을 받으려면 어떻게 하나요?"
+        },
+        "assetsHeld": {
+          "a": "회원님의 Vaipakam Vault 안에 보관됩니다 — 지갑만 제어하는 온체인 계정입니다. Vaipakam은 사용자 자금을 한데 모으지 않으며 회원님 대신 사용할 수도 없습니다.",
+          "q": "내 자산은 어디에 보관되나요?"
+        },
+        "claimCenter": {
+          "a": "회원님이 참여한 대출이 정산되면 — 받아야 할 상환금이나 채무불이행 담보 — 자금은 회원님이 청구할 때까지 대기합니다. 청구 페이지는 프로토콜 기록과 대조해 어떤 포지션에서 무엇을 청구할 수 있는지 정확히 보여 주어, 아무것도 방치되지 않게 합니다.",
+          "q": "청구 센터는 무엇을 위한 곳인가요?"
+        },
+        "lenderInterest": {
+          "a": "아닙니다. 차입자가 제때 상환할 때 얻는 금액입니다. 채무불이행이 발생하면 회수액은 차입자가 잠근 담보에 따라 달라집니다 — 서명 전에 검토 화면에서 이 내용을 설명합니다.",
+          "q": "대출할 때 보이는 이자는 보장되나요?"
+        },
+        "missedRepayment": {
+          "a": "만기일과 유예 기간이 지나면 대출자는 회원님의 잠긴 담보를 받을 수 있습니다. 담보에 실시간 시장 가격이 있으면 가치가 너무 떨어질 때 자동 매각될 수도 있습니다 — 제때 상환하면 둘 다 피할 수 있습니다.",
+          "q": "대출을 갚지 않으면 어떻게 되나요?"
+        },
+        "modes": {
+          "a": "기본 모드는 대출받기, 대출하기, NFT 대여의 안내 흐름을 중심에 둡니다. 고급 모드는 Offer Book, Rate Desk 오더북, VPFI 할인, 전체 활동 기록 같은 고급 화면도 보여 줍니다. 탐색의 모드 토글에서 언제든 바꿀 수 있으며, 포지션은 이동하지 않습니다.",
+          "q": "기본 모드와 고급 모드는 무엇이 다른가요?"
+        },
+        "nftRental": {
+          "a": "NFT는 소유자의 vault에 잠긴 채로 유지되고, 대여자는 임시 사용 권한만 받으며 소유권은 절대 받지 않습니다. 대여 수수료는 선불이며 작은 환불 가능 버퍼가 있습니다.",
+          "q": "NFT 대여란 무엇인가요?"
+        },
+        "nftVerifier": {
+          "a": "NFT verifier(탐색 메뉴)는 Vaipakam 포지션 NFT를 체인에서 직접 읽어 실제 대출 조건과 상태를 보여 줍니다 — 2차 시장 매물을 신뢰하기 전에 listing이 실제로 무엇을 나타내는지 확인할 수 있습니다.",
+          "q": "플랫폼 밖에서 구매하기 전에 포지션 NFT를 어떻게 확인하나요?"
+        },
+        "vpfi": {
+          "a": "아니요. VPFI는 선택 사항입니다 — vault에 보유하면 대상 대출의 프로토콜 수수료가 줄어들 수 있습니다. 네트워크 gas는 줄지 않으며, 대출받기, 대출하기, 대여에 필요하지 않습니다.",
+          "q": "VPFI가 필요한가요?"
+        },
+        "wrongNetwork": {
+          "a": "제안, vault, faucet은 모두 네트워크별입니다. 지갑이 Vaipakam이 배포되지 않은 체인에 있으면 배너가 지원 네트워크로 한 번에 전환하는 버튼을 보여 줍니다. 앱은 지원되지 않는 체인에서 절대 동작하지 않습니다.",
+          "q": "잘못된 네트워크라고 나오면 어떻게 하나요?"
+        }
+      },
+      "lede": "쉬운 말로 빠르게 답합니다.",
+      "title": "도움말"
     },
     "consentParts": {
       "prefix": "다음 내용을 이해하고 동의합니다: ",
@@ -387,7 +456,42 @@
       "no4907Unknown": "이 NFT 컬렉션이 온체인 임대 표준(ERC-4907)을 지원하는지 확인하지 못했습니다. 지원하지 않는다면 Vaipakam 외부의 앱은 임차인을 인식하지 못합니다 — Vaipakam 내부에서의 임대는 여전히 작동합니다.",
       "vpfiPrepayListing": "이 매물은 VPFI로 결제할 것을 요구하는데, 임대에서는 이를 허용하지 않아 수락할 수 없습니다. 다른 매물을 선택해 주세요.",
       "vpfiCheckRetry": "지금 이 매물의 결제 자산을 확인하지 못했습니다 — 전송되거나 승인된 것은 없습니다. 잠시 후 다시 시도해 주세요.",
-      "vpfiPrepayNotAllowed": "VPFI는 임대 결제 자산으로 사용할 수 없습니다 — 다른 토큰을 선택하세요."
+      "vpfiPrepayNotAllowed": "VPFI는 임대 결제 자산으로 사용할 수 없습니다 — 다른 토큰을 선택하세요.",
+      "back": "뒤로",
+      "beforeYouSign": "서명 전 확인",
+      "continueToReview": "검토로 계속",
+      "contractHint": "ERC-4907을 지원하는 단일 NFT는 다른 앱도 볼 수 있는 사용 권한을 대여자에게 줍니다. 다른 NFT도 Vaipakam 내부 추적으로 대여할 수 있습니다.",
+      "contractLabel": "NFT 컨트랙트 주소",
+      "dailyFeeLabel": "일일 수수료",
+      "durationLabel": "대여 기간",
+      "listWhenEnds": "대여가 끝나면 대여자의 권리는 자동으로 초기화됩니다. 대여 상세 페이지에서 수수료를 청구하고 NFT를 회수하세요.",
+      "listYouCanLose": "대여 중 NFT의 임시 사용권 — 대여자는 이를 전송하거나 판매할 수 없습니다.",
+      "listingsLoading": "대여 listings 불러오는 중…",
+      "liveFeesLoaded": "실시간 수수료 조건을 불러왔습니다",
+      "liveFeesLoading": "실시간 수수료 조건 불러오는 중…",
+      "liveRentalLoaded": "실시간 대여 조건을 불러왔습니다",
+      "liveRentalLoading": "실시간 대여 조건 불러오는 중…",
+      "nftTypeErc1155": "다중 에디션 NFT (ERC-1155)",
+      "nftTypeErc721": "단일 NFT (ERC-721)",
+      "nftTypeLabel": "NFT 유형",
+      "nothing": "없음.",
+      "paymentAssetCheckFailed": "지금 결제 자산을 확인할 수 없습니다 — 잠시 후 다시 시도하세요.",
+      "paymentAssetRecognised": "결제 자산을 확인했습니다",
+      "preparingReview": "검토 내용을 준비 중…",
+      "prepayAssetHint": "대여자는 이 토큰으로 전체 대여료를 선불로 냅니다.",
+      "prepayAssetLabel": "대여자가 회원님에게 지불하는 자산",
+      "quantityLabel": "수량",
+      "rentFeesNote": "표시된 가격은 대여 수수료입니다. Vaipakam 몫은 소유자의 수익에서 나오며, 회원님이 추가로 내는 금액이 아닙니다.",
+      "rentYouMayOwe": "추가로 낼 것은 없습니다 — 수수료는 선불입니다.",
+      "stepChooseNft": "NFT 선택",
+      "stepDone": "완료",
+      "stepReview": "검토 및 서명",
+      "stepYourNft": "회원님의 NFT와 가격",
+      "tokenIdLabel": "토큰 ID",
+      "tryAgain": "다시 시도",
+      "viewPositions": "내 포지션 보기",
+      "viewTransaction": "트랜잭션 보기",
+      "waitingForWallet": "지갑 대기 중…"
     },
     "preclose": {
       "title": "이 대출 조기 종료",
@@ -430,7 +534,10 @@
       "multiStepNote": "등록에는 최대 세 번의 지갑 확인이 필요합니다(가드레일, 상환 승인, 요청 자체). 도중에 중단하면, 등록을 마치거나 취소할 때까지 이전 단계들은 온체인에 그대로 남아 있습니다 — 취소하면 승인도 함께 제거됩니다.",
       "partialBlockedByPending": "이 대출에 대한 리파이낸싱 요청이 진행 중입니다. 부분 상환은 금액을 변경하여 그 요청을 영구히 수락 불가능하게 만듭니다 — 먼저 리파이낸싱 요청을 취소하세요.",
       "precloseBlockedByPending": "이 대출에 대한 리파이낸싱 요청이 진행 중입니다. 지금 조기 종료하면 그 요청이 오도 가도 못하게 됩니다 — 먼저 리파이낸싱 요청을 취소하세요.",
-      "repayWarnPending": "이 대출에 대한 리파이낸싱 요청이 여전히 진행 중입니다. 상환하면 대출이 정산되고, 그 후에는 요청을 절대 완료할 수 없습니다 — 상환 후 해당 카드에서 요청을 취소하세요(이는 상시 상환 승인도 함께 제거합니다). 그 전까지는 만료될 때까지 그대로 남아 있습니다."
+      "repayWarnPending": "이 대출에 대한 리파이낸싱 요청이 여전히 진행 중입니다. 상환하면 대출이 정산되고, 그 후에는 요청을 절대 완료할 수 없습니다 — 상환 후 해당 카드에서 요청을 취소하세요(이는 상시 상환 승인도 함께 제거합니다). 그 전까지는 만료될 때까지 그대로 남아 있습니다.",
+      "consentLabel": "아래의 payoff 및 지갑 잔액 조건을 이해하고 동의합니다.",
+      "receiptLock": "새로 잠기는 것은 없습니다 — 기존 담보는 잠금 해제 없이 새 대출로 이어집니다.",
+      "receiptReceive": "대출자가 수락하는 순간 회원님이 선택한 조건의 새 대출이 됩니다 — 담보는 자동으로 이동하고 이 대출은 같은 트랜잭션에서 종료됩니다."
     },
     "approvals": {
       "title": "상시 토큰 승인",
@@ -549,7 +656,12 @@
       "loadingOffers": "조건이 맞는 대출 오퍼를 찾는 중…",
       "figureMoved": "시간이 지나면서 지급액이 변동되어 검토가 닫혔습니다 — 다시 열어 현재 금액을 기준으로 확인하세요.",
       "checking": "이 대출을 조기 종료할 수 있는지 확인하는 중…",
-      "checkFailed": "지금 이 대출의 종료 세부 정보를 읽을 수 없습니다 — 다시 시도 중입니다."
+      "checkFailed": "지금 이 대출의 종료 세부 정보를 읽을 수 없습니다 — 다시 시도 중입니다.",
+      "receiptCanLose": "지금까지 발생한 이자와 남은 기간의 금리 차이 중 더 큰 금액 — 둘 다는 아닙니다. 위 금액에 이미 반영되어 있으며, 확인 시 정확한 금액을 실시간으로 다시 읽습니다.",
+      "receiptEnds": "즉시 — 회원님의 포지션이 구매자에게 이전되고 이 대출은 끝납니다. 차입자의 금리와 만기일은 바뀌지 않습니다.",
+      "receiptFees": "프로토콜 몫은 포기되는 이자에서 나옵니다 — 표시된 금액을 넘어 회원님의 지급액에서 빠지지 않습니다.",
+      "receiptLockNothing": "없음.",
+      "receiptOweNothing": "없음 — 아무것도 승인하지 않고, 직접 지불하는 금액도 없습니다."
     },
     "loanSale": {
       "title": "이 포지션 판매 등록",
@@ -573,7 +685,12 @@
       "fundingUnknown": "이 기기에서는 이 등록의 오퍼 기록을 식별할 수 없어 정산 자금을 여기서 확인할 수 없습니다 — 등록한 기기에서 관리하거나, 넉넉한 승인과 잔액을 유지하세요.",
       "ended": "회원님의 판매 등록이 더 이상 활성 상태가 아닙니다. 인수자가 수락했다면 지급액은 이미 지갑에 들어왔고 정산은 상시 승인을 통해 인출되었습니다. 남은 승인은 지갑의 토큰 승인 화면에서 취소할 수 있습니다.",
       "listingUnavailable": "직접 가격으로 포지션을 등록하는 기능은 아직 사용할 수 없습니다 — 필요한 온체인 단계가 수정 중입니다. 위의 즉시 종료는 작동합니다: 조건이 맞는 열린 오퍼로 바로 판매합니다.",
-      "partialBlockedByListing": "대출자가 이 포지션을 현재 미상환 잔액에 판매 등록했습니다. 등록이 유지되는 동안에는 부분 상환이 일시 중지됩니다 — 부분 상환은 그 금액을 바꿔 인수자를 오도할 수 있기 때문입니다. 전액 상환이나 조기 종료는 언제든지 가능합니다."
+      "partialBlockedByListing": "대출자가 이 포지션을 현재 미상환 잔액에 판매 등록했습니다. 등록이 유지되는 동안에는 부분 상환이 일시 중지됩니다 — 부분 상환은 그 금액을 바꿔 인수자를 오도할 수 있기 때문입니다. 전액 상환이나 조기 종료는 언제든지 가능합니다.",
+      "consentLabel": "아래의 잠금, 정산 인출, 상시 승인을 이해하고 동의합니다.",
+      "receiptCanLose": "잔액이나 상시 승인이 부족해지면 구매자의 수락은 실패할 뿐입니다 — 아무것도 가져가지 않지만, 복구하거나 취소할 때까지 listing은 체결될 수 없습니다.",
+      "receiptEnds": "구매자가 수락할 때(모든 것이 구매자의 트랜잭션에서 정산됨) 또는 회원님이 listing을 취소할 때 끝납니다. 자동 만료되지 않습니다.",
+      "receiptFees": "프로토콜 몫은 정산 금액에서 나옵니다 — 그 이상은 없습니다.",
+      "receiptLock": "판매가 완료되거나 listing을 취소할 때까지 회원님의 대출자 포지션 NFT. 그 외에는 없습니다."
     },
     "positions": {
       "title": "내 포지션",
@@ -610,7 +727,117 @@
       "whatNextInternalMatchViewer": "이 대출은 내부 매칭으로 종료되었습니다 — 남은 청구는 포지션 보유자에게 속합니다.",
       "whatNextClosed": "이 대출은 완전히 정산되었습니다 — 더 이상 할 일이 없습니다.",
       "whatNextRentalEnded": "이 임대는 종료되었습니다. 벌어들인 수수료나 환불 가능한 버퍼는 아래에서 포지션 보유자가 청구할 수 있습니다 — 그 외에는 아무것도 바꿀 수 없습니다.",
-      "settledAhead": "이 포지션은 이미 온체인에서 종료되었습니다 — 여기 표시된 상태가 실시간입니다. 목록이 반영되는 데 잠시 걸릴 수 있습니다."
+      "settledAhead": "이 포지션은 이미 온체인에서 종료되었습니다 — 여기 표시된 상태가 실시간입니다. 목록이 반영되는 데 잠시 걸릴 수 있습니다.",
+      "details": {
+        "actions": {
+          "claimBuffer": "내 버퍼 돌려받기",
+          "claimCollateral": "내 담보 청구",
+          "claimFeesNft": "수수료 청구 및 NFT 회수",
+          "claimFunds": "내 자금 청구",
+          "claimRecovered": "이 대출이 회수한 금액 청구",
+          "claimResidual": "남은 금액 청구(있다면)",
+          "closeRental": "이 대여 종료",
+          "repay": "이 대출 상환"
+        },
+        "addCollateral": {
+          "amountAria": "추가할 담보 금액",
+          "button": "추가",
+          "confirm": "확인 — 담보 추가",
+          "endsImmediately": "추가 담보는 즉시 적용됩니다.",
+          "fallbackWarn": "이 대출은 청산 실패 상태입니다. 담보 추가는 필요한 건강 수준을 회복할 때만 Active로 되돌립니다 — 그렇지 않으면 대출자는 여전히 청구할 수 있고, 추가 담보도 위험에 놓입니다. 전액 상환은 항상 해결합니다. 확실하지 않다면 상환하세요.",
+          "loseFallback": "추가 금액은 위험에 놓인 담보에 합쳐집니다 — 완전히 회복하지 못하면 대출자는 여전히 전부를 청구할 수 있습니다.",
+          "loseNormal": "추가 금액은 기존 담보에 합쳐집니다 — 대출이 채무불이행이 되면 같은 방식으로 위험에 놓입니다.",
+          "oweNothingMore": "추가로 빚지는 것은 없습니다 — 회원님이 갚아야 할 금액은 바뀌지 않습니다.",
+          "receiveFallbackCure": "대출을 건강하게 되돌릴 기회 — 이 추가 담보가 필요한 건강 수준을 회복할 때만 가능합니다(위 경고 참조).",
+          "receiveSafer": "지금 받는 것은 없습니다 — 더 안전한 대출이 됩니다(청산이 멀어짐).",
+          "title": "담보 추가"
+        },
+        "backToPositions": "← 내 포지션으로 돌아가기",
+        "confirmingRole": "회원님의 역할 확인 중…",
+        "connectToAct": "이 대출 포지션을 보유한 지갑을 연결해야 조작할 수 있습니다.",
+        "done": {
+          "collateralAdded": "담보가 추가되었습니다 — 대출이 더 안전해졌습니다.",
+          "partialRepaid": "부분 상환이 확인되었습니다 — 이제 갚아야 할 금액이 줄었습니다.",
+          "rentalClosed": "대여가 종료되었습니다. 환불 가능한 버퍼가 있으면 준비되었습니다 — 청구 센터에서 청구하세요.",
+          "repaid": "상환이 확인되었습니다. 담보를 받을 준비가 되었습니다 — 아래 또는 청구 센터에서 청구하세요."
+        },
+        "healthChecking": "이 대출의 건강도 확인 중…",
+        "healthReadFailed": "이 대출의 건강도를 지금 읽을 수 없습니다 — 다시 시도 중입니다. 청산 보호는 온체인에서 계속 적용됩니다.",
+        "labels": {
+          "health": "건강도",
+          "ifNothing": "아무 일도 하지 않으면",
+          "locked": "잠김",
+          "owed": "상환할 금액",
+          "terms": "조건",
+          "whatNext": "다음에 일어나는 일"
+        },
+        "loadingLoan": "대출 불러오는 중…",
+        "noCollateral": "담보 없음",
+        "notFound": "이 대출을 지금 찾을 수 없습니다. 새 대출이라 아직 인덱싱 중이거나 링크가 오래되었을 수 있습니다.",
+        "owedRentalPrepaid": "상환할 것이 없습니다 — 대여 수수료는 선불입니다(만기 후 종료할 때만 연체 수수료).",
+        "partial": {
+          "amountAria": "지금 상환할 금액",
+          "blurb": "이 대출은 부분 상환을 허용합니다. 결제는 먼저 이자로 가고, 그 다음 갚아야 할 금액을 줄입니다 — 만기일은 절대 바뀌지 않습니다.",
+          "button": "일부 상환",
+          "confirm": "확인 — 일부 상환",
+          "endsPrincipalDrops": "남은 원금이 즉시 줄어듭니다. 이자는 더 작은 금액에 계속 발생합니다.",
+          "feesAccrued": "발생 이자에 대한 프로토콜 몫은 결제 안에서 정산됩니다.",
+          "loseNothingBeyondPayment": "결제 금액 외에는 없습니다.",
+          "receiveSmallerDebt": "지금 받는 것은 없습니다 — 더 작은 부채가 됩니다.",
+          "title": "대출 일부 상환"
+        },
+        "phase": {
+          "approving": "지갑에서 승인 중…",
+          "submitting": "제출 중…",
+          "waiting": "지갑 대기 중…"
+        },
+        "receipt": {
+          "bufferBack": "환불 가능한 버퍼가 있으면 반환됩니다 — 종료 직후 청구할 수 있습니다.",
+          "bufferBackShort": "환불 가능한 버퍼가 돌아옵니다.",
+          "endsClaim": "청구는 즉시 지급되고 회원님의 이 포지션은 종료됩니다.",
+          "endsPreclose": "즉시 — 대출이 오늘 정산되고 담보가 해제됩니다.",
+          "endsRepay": "즉시 — 대출이 정산되고 회원님의 쪽이 해제됩니다.",
+          "feesNone": "없음.",
+          "feesPreclose": "조기 종료에 추가 Vaipakam 수수료는 없습니다 — 프로토콜 몫은 대출자의 이자에서 나옵니다.",
+          "feesRental": "프로토콜 몫은 지급 전에 대여 수수료에서 나옵니다.",
+          "feesRepay": "상환에 추가 Vaipakam 수수료는 없습니다 — 프로토콜 몫은 대출자의 이자에서 나옵니다.",
+          "feesYield": "프로토콜 yield fee는 지급 전에 이자에서 나옵니다.",
+          "internalResidual": "내부 매칭이 회원님에게 남긴 잔여분과 VPFI 리베이트(0일 수 있음).",
+          "liquidationResidual": "청산 후 남은 것(0일 수 있음).",
+          "loseNothingBeyondOwed": "회원님이 빚진 금액을 넘지 않습니다.",
+          "loseNothingBeyondPay": "회원님이 지불하는 금액을 넘지 않습니다.",
+          "noCollateralBack": "추가로 돌아오는 것은 없습니다 — 이 대출에는 해제할 담보가 없습니다.",
+          "nothing": "없음.",
+          "nothingNew": "새로운 것은 없습니다.",
+          "oweRentalPrepaid": "추가로 낼 것은 없습니다 — 수수료는 선불입니다(만기 후에만 연체 수수료).",
+          "owedNoCollateral": "이 쪽에 아직 지급되어야 할 것(이 대출에는 담보가 없었으므로 없을 수 있음).",
+          "recoveredNoCollateral": "이 대출이 회수한 것(담보가 없었으므로 없을 수 있음).",
+          "rentalFeesAndNft": "획득한 대여 수수료와 반환되는 NFT."
+        },
+        "roleUnverified": "현재 이 포지션을 누가 보유하는지 확인할 수 없어 작업을 숨깁니다. 잠시 후 다시 시도하세요.",
+        "titleLoan": "대출",
+        "titleRental": "대여",
+        "whatIfNothingRentalOwner": "대여자의 권리는 만기일과 유예 기간 후 초기화됩니다. 회원님의 수수료는 여기서 계속 청구할 수 있습니다.",
+        "whatIfNothingRentalRenter": "사용 권한은 만기일에 끝나고 선불 버퍼는 소유자에게 갑니다 — 제때 종료해야 돌려받을 수 있습니다.",
+        "whatIfNothingRentalViewer": "대여자의 사용 권한은 만기일에 끝납니다. 소유자의 수수료와 버퍼는 대여 조건에 따라 정산됩니다."
+      },
+      "getStarted": "시작하기",
+      "loading": "포지션 불러오는 중…",
+      "offerRow": {
+        "cancel": "제안 취소",
+        "cancelling": "취소 중…",
+        "confirmCancel": "확인 — 취소하고 내 자산 잠금 해제",
+        "held": "보관 중 — 작성자가 관리",
+        "keep": "제안 유지",
+        "receiptEnds": "즉시 — 제안이 장부에서 사라지고 더 이상 수락될 수 없습니다. 언제든 새 제안을 게시할 수 있습니다.",
+        "receiptFees": "없음(네트워크 gas만).",
+        "receiptLose": "없음 — 열린 제안을 취소해도 페널티가 없습니다.",
+        "receiptNothing": "없음.",
+        "yourBorrowRequest": "회원님의 대출받기 요청",
+        "yourLendingOffer": "회원님의 대출 제안",
+        "yourNftListing": "회원님의 NFT listing"
+      },
+      "openOffers": "열린 제안"
     },
     "powerSurface": {
       "body": "이 화면은 파워 유저용입니다 — 안내가 적은 상태에서 원시 오퍼와 실시간 금리를 다룹니다. 안내형 차입 및 대출 플로우는 동일한 동작을 단계별 설명과 함께 제공합니다.",
@@ -635,7 +862,27 @@
       "allResidualNote": "준비되지 않은 항목은 개별적으로 청구할 수 있도록 아래에 계속 표시됩니다.",
       "allRewardsUnavailable": "회원님의 리워드를 확인할 수 없어 이 일괄 처리에 포함되지 않았습니다 — 별도로 청구하세요.",
       "allVpfiUnavailable": "회원님의 Vault VPFI를 확인할 수 없어 이 일괄 처리에 포함되지 않았습니다.",
-      "allWorking": "지갑을 기다리는 중…"
+      "allWorking": "지갑을 기다리는 중…",
+      "checking": "청구 항목 확인 중…",
+      "row": {
+        "heldProceeds": "이 대출에 보관된 수익",
+        "heldProceedsDefault": "채무불이행에서 회수되어 보관 중인 수익",
+        "loan": "대출",
+        "prepaidBufferBack": "선불 버퍼 반환",
+        "rental": "대여",
+        "repaidFunds": "상환된 자금",
+        "residualAfterMatch": "내부 매칭 후 남은 금액",
+        "surplusAfterLiquidation": "청산 후 남은 금액",
+        "whyDefaultBorrower": "이 대출은 채무불이행 상태입니다. 청산 후 잉여가 남았다면 청구할 수 있습니다.",
+        "whyDefaultLender": "대출이 채무불이행 상태가 되었습니다 — 채무불이행 정산에서 회원님을 위해 회수한 금액을 수령하세요.",
+        "whyFallbackPending": "자동 청산이 완료되지 않았습니다 — 청구하면 직접 회수를 확정합니다.",
+        "whyInternalMatchBorrower": "이 대출은 내부 매칭으로 종료되었습니다 — 회원님에게 남은 잔여분을 수령하세요.",
+        "whyInternalMatchLender": "이 대출은 내부 매칭으로 종료되었습니다 — 자금을 수령하세요.",
+        "whyRentalClosed": "대여가 종료되었습니다 — 환불 가능한 버퍼가 해제되었습니다.",
+        "whyRentalEnded": "대여가 끝났습니다 — 획득한 수수료를 받고 NFT를 회수하세요.",
+        "whyRepaidBorrower": "이 대출을 상환했으므로 담보가 해제되었습니다.",
+        "whyRepaidLender": "차입자가 이 대출을 상환했습니다."
+      }
     },
     "offers": {
       "title": "오퍼북",
@@ -644,7 +891,50 @@
       "emptyBody": "회원님의 오퍼를 만들고 상대방이 찾아오게 하세요.",
       "unavailable": "지금 오퍼북을 불러올 수 없습니다. 잠시 후 다시 시도해 주세요.",
       "lenderOffer": "대출 오퍼",
-      "borrowerOffer": "차입 요청"
+      "borrowerOffer": "차입 요청",
+      "advancedNoExpiry": "만료 없음",
+      "advancedNoPartialRepay": "부분 상환 없음",
+      "advancedPartialRepayOk": "부분 상환 가능",
+      "badgeBorrower": "차입자",
+      "badgeLender": "대출자",
+      "byCreator": "작성자",
+      "collateralLabel": "담보",
+      "collateralNone": "없음",
+      "createOffer": "제안 만들기",
+      "ctaBorrow": "이 제안으로 빌리기",
+      "ctaBuyPosition": "이 대출 포지션 구매",
+      "ctaFund": "이 요청에 자금 제공",
+      "ctaRent": "이 NFT 대여",
+      "dailyFeeLoading": "일일 수수료 불러오는 중…",
+      "feesPrepaid": "수수료 선불",
+      "filteredEmptyBody": "위 필터를 완화해 보세요 — 제안 장부 자체에는 열린 제안이 있습니다.",
+      "filteredEmptyTitle": "이 필터와 일치하는 제안이 없습니다",
+      "filters": {
+        "assetLabel": "자산 주소로 필터링",
+        "assetPlaceholder": "0x… (원금, 담보, 결제 중 어느 쪽이든)",
+        "clear": "필터 지우기",
+        "showLabel": "표시",
+        "sideAll": "전체",
+        "sideBorrowing": "대출받기 요청(여기에 대출하기)",
+        "sideLending": "대출 제안(여기서 빌리기)",
+        "sideRentals": "NFT 대여",
+        "sortDurationLong": "기간 — 긴 순",
+        "sortDurationShort": "기간 — 짧은 순",
+        "sortLabel": "정렬 기준",
+        "sortNewest": "최신순",
+        "sortRateHigh": "금리 — 높은 순",
+        "sortRateLow": "금리 — 낮은 순"
+      },
+      "footerParts": {
+        "borrowLink": "대출받기",
+        "lead": "여기서 제안 받기 — “이 제안으로 빌리기”, “이 요청에 자금 제공”, “이 대출 포지션 구매” — 는 안내형 ",
+        "lendLink": "대출하기",
+        "mid": " 및 ",
+        "tail": " 흐름과 같은 검토 및 서명 단계를 안내합니다."
+      },
+      "loading": "제안 장부 불러오는 중…",
+      "rentalListing": "NFT 대여",
+      "yearly": "연간"
     },
     "desk": {
       "title": "금리 데스크",
@@ -785,7 +1075,12 @@
         "blockGaslessService": "가스리스 등록에는 오퍼북 서비스가 필요하지만 지금은 사용할 수 없습니다 — 등록 방식을 온체인으로 전환하세요.",
         "consentRecheck": "약관이 변경되었습니다 — 다시 확인해 주세요.",
         "max": "최대",
-        "feePreviewTitle": "수수료 및 약정"
+        "feePreviewTitle": "수수료 및 약정",
+        "collateralAmount": "담보 금액",
+        "expiryGtcTitle": "취소 전까지 유효 — 회원님이 취소할 때까지 유지됩니다",
+        "expiryGttTitle": "지정 시각까지 유효 — 마감 시 자동 만료됩니다",
+        "rateBpsNote": "금리는 basis points로 저장됩니다(1% = 100 bps)",
+        "selfCollateral": "담보는 대출 자산과 같은 토큰일 수 없습니다."
       },
       "orders": {
         "tab": "열린 주문",
@@ -820,7 +1115,8 @@
         "signedCancelling": "취소 중…",
         "signedCancelNote": "등록은 무료였지만 취소에는 가스가 듭니다: 오퍼북이 이미 보유한 서명을 철회하는 유일한 방법은 온체인 트랜잭션입니다.",
         "signedCancelled": "서명된 주문이 온체인에서 취소되었습니다.",
-        "signedTruncated": "이 마켓에 한 번에 나열할 수 있는 것보다 더 많은 서명 주문이 있습니다 — 전체 목록이 아닙니다."
+        "signedTruncated": "이 마켓에 한 번에 나열할 수 있는 것보다 더 많은 서명 주문이 있습니다 — 전체 목록이 아닙니다.",
+        "loading": "열려 있는 주문 불러오는 중…"
       },
       "positions": {
         "tab": "포지션",
@@ -829,8 +1125,14 @@
         "health": "건전성",
         "notPriced": "자동 청산 없음",
         "manage": "관리",
-        "allPositions": "모든 포지션 →"
-      }
+        "allPositions": "모든 포지션 →",
+        "loading": "포지션 불러오는 중…"
+      },
+      "bookLoading": "오더북 불러오는 중…",
+      "cumHeadingTitle": "해당 방향 맨 위부터의 누적 깊이",
+      "loadMarket": "시장 불러오기",
+      "marketsLoading": "시장 불러오는 중…",
+      "oneSidedBook": "한쪽만 있는 장부"
     },
     "vpfi": {
       "title": "VPFI 할인",
@@ -840,7 +1142,51 @@
       "tokenChanged": "검토하신 이후 VPFI 토큰 구성이 변경되었습니다. 아무것도 승인되지 않았습니다 — 업데이트된 숫자를 확인하고 다시 시도해 주세요.",
       "tokenCheckRetry": "지금 VPFI 토큰을 확인할 수 없었습니다 — 아무것도 승인되지 않았습니다. 잠시 후 다시 시도해 주세요.",
       "addToWallet": "MetaMask에 VPFI 추가",
-      "addedToWallet": "지갑에 VPFI를 추적하도록 요청했습니다."
+      "addedToWallet": "지갑에 VPFI를 추적하도록 요청했습니다.",
+      "activeDiscount": "활성 할인",
+      "amountLabelDeposit": "vault로 옮길 VPFI",
+      "amountLabelWithdraw": "지갑으로 되돌릴 VPFI",
+      "consentToggle": "수수료 할인을 위해 vault의 VPFI 사용",
+      "consentToggleSub": "이 설정이 없으면 VPFI를 보유해도 할인이 없습니다.",
+      "deposit": "입금",
+      "depositCta": "VPFI 입금",
+      "depositDone": "입금이 확인되었습니다. 지금부터 할인 기록이 쌓입니다.",
+      "depositToActivate": " — 활성화하려면 입금",
+      "educationBody": "Vaipakam Vault에 VPFI를 보유하면 대상 대출의 프로토콜 수수료가 줄어듭니다. 할인은 최근 30일 평균 보유량을 사용합니다 — 오늘 추가해도 즉시가 아니라 점진적으로 할인이 커집니다.",
+      "educationTitle": "할인 작동 방식",
+      "inYourVault": "vault 안",
+      "inYourWallet": "지갑 안",
+      "max": "Max",
+      "noSellNote": "Vaipakam은 VPFI를 판매하지 않고 보유 수익도 지급하지 않습니다 — 공개 시장에서 취득합니다.",
+      "noneRightNow": "현재 없음",
+      "nothing": "없음.",
+      "offFeesSuffix": "대상 프로토콜 수수료에서 할인",
+      "optOutSyncFailed": "옵트아웃은 이 네트워크에 저장되었지만 다른 네트워크로 동기화되지 않았습니다 — 다음 VPFI 작업 때 동기화되거나, 토글을 다시 시도하세요.",
+      "overMaxHint": " — 보유량보다 많습니다.",
+      "phaseApproving": "VPFI 승인 중…",
+      "phasePermitting": "권한 서명 중… — 무료, gas 없음",
+      "phaseSubmitting": "제출 중…",
+      "phaseWaiting": "지갑 대기 중…",
+      "receiptDeposit": {
+        "fees": "입금에는 Vaipakam 수수료가 없습니다.",
+        "whenThisEnds": "사용 가능한 VPFI는 언제든 출금할 수 있습니다.",
+        "youCanLose": "없음 — vault의 사용 가능한 VPFI는 계속 출금 가능합니다.",
+        "youReceive": "지금 받는 것은 없습니다 — 시간이 지나며 대상 대출의 수수료 할인이 커집니다."
+      },
+      "receiptWithdraw": {
+        "fees": "출금에는 Vaipakam 수수료가 없습니다.",
+        "whenThisEnds": "즉시 — 남은 잔액은 계속 할인 기록을 쌓습니다.",
+        "youCanLoseLead": "향후 수수료 할인 —"
+      },
+      "reviewDeposit": "입금 검토",
+      "reviewWithdraw": "출금 검토",
+      "statusTitle": "할인 상태",
+      "switchToChange": "변경하려면 지원 네트워크로 전환하세요.",
+      "vaultActionLabel": "Vault 작업",
+      "warmingUp": "준비 중",
+      "withdraw": "출금",
+      "withdrawCta": "VPFI 출금",
+      "withdrawDone": "출금이 확인되었습니다. VPFI가 지갑으로 돌아왔습니다."
     },
     "errors": {
       "partialOverPrincipal": "그 금액은 대출의 남은 원금 전액을 감당합니다. 대신 “이 대출 상환”을 사용하세요 — 대출을 제대로 정산하고 담보를 해제합니다.",
@@ -920,7 +1266,14 @@
       "emptyCta": "시작하기",
       "emptyCtaFaucet": "테스트 자산 받기",
       "unavailable": "지금 Vault를 읽을 수 없었습니다. 자금에는 영향이 없습니다 — 잠시 후 다시 시도해 주세요.",
-      "lockedHint": "잠긴 금액은 열린 오퍼, 활성 대출, 임대를 뒷받침합니다. 그것들이 마감되면 풀립니다."
+      "lockedHint": "잠긴 금액은 열린 오퍼, 활성 대출, 임대를 뒷받침합니다. 그것들이 마감되면 풀립니다.",
+      "addressLabel": "Vault 주소:",
+      "badgeFree": "사용 가능",
+      "badgePartlyLocked": "일부 잠김",
+      "emptyBody": "제안을 게시하거나 대출을 열거나 VPFI를 입금하면 자산이 여기에 표시됩니다.",
+      "emptyTitle": "아직 vault에 아무것도 없습니다",
+      "loading": "vault 읽는 중…",
+      "noVaultTitle": "아직 vault가 없습니다"
     },
     "activity": {
       "title": "활동",
@@ -936,14 +1289,16 @@
       "loadMore": "이전 활동 불러오기",
       "loadingMore": "불러오는 중…",
       "unavailableFallback": "현재 대출과 임대는 항상 다음에서 확인할 수 있습니다",
-      "positionsLink": "내 포지션"
+      "positionsLink": "내 포지션",
+      "loading": "활동을 불러오는 중…"
     },
     "rewards": {
       "title": "상호작용 리워드",
       "blurb": "대출 및 차입 활동으로 받는 VPFI 리워드입니다. 대출이 마감되고 리워드 데이가 확정되면 청구할 수 있게 됩니다.",
       "empty": "아직 리워드가 없습니다. 리워드는 대출 또는 차입 활동 이후에 표시됩니다.",
       "waiting": "리워드가 확정되는 중입니다 — 청구하기 전에 모든 체인에서 리워드 데이가 마감됩니다. 잠시 후 다시 확인하세요.",
-      "claim": "리워드 청구"
+      "claim": "리워드 청구",
+      "unavailable": "지금 보상을 확인할 수 없습니다 — 잠시 후 다시 시도하세요."
     },
     "sanctions": {
       "title": "이 지갑은 컴플라이언스 오라클에 등재되어 있습니다.",
@@ -965,6 +1320,108 @@
       "title": "이 페이지는 존재하지 않습니다",
       "body": "링크가 오래되었거나 잘못 입력되었을 수 있습니다. 잃어버린 것은 없습니다 — 당신의 포지션은 안전합니다.",
       "backHome": "홈으로 돌아가기"
+    },
+    "assetPicker": {
+      "faucetBadge": "Faucet 테스트 토큰",
+      "invalidAddress": "올바른 컨트랙트 주소를 입력하세요 — “0x” 뒤에 40자리 16진수 문자가 와야 합니다.",
+      "pasteOption": "토큰 주소 붙여넣기…",
+      "placeholder": "자산 선택…"
+    },
+    "checklist": {
+      "checking": "확인 중",
+      "needsAttention": "확인이 필요함",
+      "ready": "준비됨"
+    },
+    "common": {
+      "back": "뒤로",
+      "tryAgain": "다시 시도",
+      "waitingForWallet": "지갑 대기 중…"
+    },
+    "copyAddress": {
+      "copied": "주소가 복사되었습니다"
+    },
+    "loanRow": {
+      "youRent": "회원님이 빌림",
+      "youRentOut": "회원님이 빌려줌"
+    },
+    "offerFlow": {
+      "advancedOptions": "고급 옵션",
+      "allowPartialRepay": "차입자가 나누어 상환할 수 있게 허용",
+      "back": "뒤로",
+      "beforeYouSign": "서명 전 확인",
+      "borrower": {
+        "acceptSubmitLabel": "지금 이 조건으로 대출받기",
+        "amountHint": "이 금액에 가까운 제안을 하는 대출자를 찾습니다.",
+        "amountLabel": "얼마를 빌리고 싶나요?",
+        "assetLabel": "빌릴 자산",
+        "collateralLabel": "잠글 담보",
+        "rateHint": "이 금리 이하를 제시한 대출자가 회원님에게 자금을 제공할 수 있습니다.",
+        "rateLabel": "수락할 최고 연이율 (%)"
+      },
+      "collateralAmountLabel": "담보 금액",
+      "continueToReview": "검토로 계속",
+      "counterAssetBorrowed": "빌린 자산",
+      "counterAssetCollateral": "담보 자산",
+      "durationLabel": "기간",
+      "lender": {
+        "acceptSubmitLabel": "이 차입자에게 자금 제공",
+        "amountHint": "제안이 열려 있는 동안 이 금액은 잠깁니다. 수락 전에는 언제든 취소할 수 있습니다.",
+        "amountLabel": "얼마를 빌려주고 싶나요?",
+        "assetLabel": "빌려줄 자산",
+        "collateralHint": "차입자는 회원님의 토큰을 받기 전에 이것을 잠가야 합니다.",
+        "collateralLabel": "차입자에게 요구할 담보",
+        "rateLabel": "원하는 연이율 (%)"
+      },
+      "liveFeesLoaded": "실시간 수수료 조건을 불러왔습니다",
+      "liveFeesLoading": "실시간 수수료 조건 불러오는 중…",
+      "lookingForMatches": "일치하는 제안 찾는 중…",
+      "postAnother": "다른 제안 게시",
+      "preparingReview": "검토 내용을 준비 중…",
+      "proRataInterest": "전체 기간 대신 사용한 시간만큼만 이자 부과(pro-rata)",
+      "receiptOweNothing": "없음 — 차입자가 회원님에게 빚집니다.",
+      "retry": "다시 시도",
+      "rowBorrow": "대출받기",
+      "rowLend": "대출하기",
+      "seeMatches": "일치하는 제안 보기",
+      "selfCollateralError": "담보는 빌리는 자산과 달라야 합니다 — 프로토콜은 같은 자산 제안을 거부합니다.",
+      "steps": {
+        "details": "세부 정보",
+        "done": "완료",
+        "offers": "제안",
+        "review": "검토 및 서명",
+        "terms": "회원님의 조건"
+      },
+      "viewPositions": "내 포지션 보기",
+      "viewTransaction": "트랜잭션 보기",
+      "waitingForWallet": "지갑 대기 중…"
+    },
+    "settingsPage": {
+      "experience": {
+        "advanced": "고급",
+        "basic": "기본",
+        "hint": "기본은 각 화면을 핵심만 남깁니다. 고급은 같은 페이지에서 더 많은 제어와 시장 세부 정보를 보여 줍니다 — 프로토콜 규칙은 둘 다 동일합니다.",
+        "title": "경험 수준"
+      },
+      "lede": "표시, 경험 수준, 기타 설정.",
+      "more": {
+        "activitySub": "회원님의 지갑이 Vaipakam에서 한 모든 일",
+        "claimsSub": "상환금, 담보, 보상 수령",
+        "helpSub": "쉬운 설명과 build 정보",
+        "offersSub": "이 네트워크의 모든 열린 제안 둘러보기",
+        "title": "더 보기",
+        "vaultSub": "자산 위치 — 전체, 잠김, 사용 가능",
+        "vpfiSub": "선택 사항 — VPFI 보유로 프로토콜 수수료 절감"
+      },
+      "theme": {
+        "dark": "다크",
+        "light": "라이트",
+        "system": "시스템",
+        "title": "테마"
+      },
+      "title": "설정"
+    },
+    "stepNav": {
+      "progressAria": "진행 상황"
     }
   }
 }
