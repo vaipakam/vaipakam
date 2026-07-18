@@ -1078,12 +1078,15 @@ function _dayPoolHalves(
      *             (the clock NEVER runs while a claim is blocked by
      *             missing finalization/broadcast — ratified rule)
      *           - claim not currently EXECUTABLE (post-cap payable is
-     *             zero, or local VPFI balance can't cover it)        → no-op
-     *             (underfunded/exhausted time never counts)
+     *             zero, local VPFI balance can't cover it, or the owner
+     *             is sanctioned) → no-op, and DISARM any prior arm
+     *             (underfunded/sanctioned time never counts, and can't
+     *             leave a stale arm that would expire on recovery)
      *           - executable, clock unset → STAMP `firstClaimableAt` → no-op
      *           - executable, `now < horizon expiry`                 → no-op
-     *           - executable + due, not yet armed → ARM
-     *             `rewardEntryDueFundedAt` (funded final notice)     → no-op
+     *           - executable + due, arm stale/unset (predates the latest
+     *             horizon (re)configuration) → ARM `rewardEntryDueFundedAt`
+     *             (funded final notice)                              → no-op
      *           - executable + due + armed ≥ notice ago → EXPIRE:
      *             process the entry (marks it `processed`) and return
      *             its {EntrySplit} for the facet's source-split routing.
@@ -1134,18 +1137,29 @@ function _dayPoolHalves(
             freshShare < freshHeadroom ? freshShare : freshHeadroom;
         // Claim-EXECUTABLE gate (every phase): horizon time only counts —
         // and expiry only arms/processes — while a claim would actually
-        // succeed right now. That means the POST-CAP payable (a claim
-        // truncates its fresh component to remaining pool capacity, so the
-        // face value is the wrong bar) must be non-zero AND covered by the
-        // local VPFI balance. On a mirror mid-remittance-outage, or at
-        // full fresh exhaustion with no recycled term, the claim's
-        // terminal transfer/exhaustion check would revert — so neither the
-        // clock nor the final notice may run there.
+        // succeed right now. Three ways it can't:
+        //   1. the POST-CAP payable is zero (a claim truncates its fresh
+        //      component to remaining pool capacity, so the face value is
+        //      the wrong bar — and a wholly-uncreditable fresh entry has
+        //      nothing to pay),
+        //   2. the local VPFI balance can't cover it (mirror mid-
+        //      remittance-outage — the claim's terminal transfer reverts),
+        //   3. the owner is sanctioned — the claim path rejects them via
+        //      `_assertNotSanctioned`, so the reward is not claimable while
+        //      flagged (frozen, not seized: a delist re-opens the clock).
+        // A non-executable touch also DISARMS any prior funded-notice arm,
+        // so an outage or a sanctioning that straddles the notice window
+        // can never expire the entry the instant it recovers — the funded
+        // final notice always re-arms and re-counts from a payable state.
         uint256 payableNow = cappedFresh + split_.recycled;
         if (
             payableNow == 0 ||
+            LibVaipakam.isSanctionedAddress(e.user) ||
             IERC20Metadata(s.vpfiToken).balanceOf(address(this)) < payableNow
         ) {
+            if (s.rewardEntryDueFundedAt[id] != 0) {
+                s.rewardEntryDueFundedAt[id] = 0;
+            }
             return (expired, 0);
         }
 
@@ -1174,6 +1188,13 @@ function _dayPoolHalves(
         // consume the claimant's window — every expiry follows a funded
         // final notice, with no need for anyone to observe the outage.
         uint64 armedAt = s.rewardEntryDueFundedAt[id];
+        // An arm that predates the latest non-zero horizon (re)configuration
+        // is STALE: a dark reset or a retune must re-open a fresh funded
+        // final notice under the new rules, exactly as an unarmed stale
+        // entry would get one. Treat it as unarmed so it re-arms below.
+        if (armedAt != 0 && armedAt < s.rewardHorizonActivatedAt) {
+            armedAt = 0;
+        }
         if (armedAt == 0) {
             armedAt = uint64(block.timestamp);
             s.rewardEntryDueFundedAt[id] = armedAt;
@@ -1245,8 +1266,12 @@ function _dayPoolHalves(
         uint32 horizonDays = s.rewardClaimHorizonDays;
         if (firstClaimableAt != 0 && horizonDays != 0) {
             uint256 at = _horizonExpiryAt(s, firstClaimableAt, horizonDays);
+            // Only a CURRENT arm (set on/after the latest horizon
+            // (re)configuration) floors the countdown; a stale arm is
+            // ignored here exactly as the sweep re-arms it, so the view
+            // never understates the true earliest expiry.
             uint64 armedAt = s.rewardEntryDueFundedAt[id];
-            if (armedAt != 0) {
+            if (armedAt != 0 && armedAt >= s.rewardHorizonActivatedAt) {
                 uint256 armedFloor = uint256(armedAt) +
                     uint256(LibVaipakam.REWARD_CLAIM_HORIZON_NOTICE_DAYS) *
                     1 days;

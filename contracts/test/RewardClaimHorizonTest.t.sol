@@ -8,8 +8,10 @@ import {VPFIToken} from "../src/token/VPFIToken.sol";
 import {VPFITokenFacet} from "../src/facets/VPFITokenFacet.sol";
 import {InteractionRewardsFacet} from "../src/facets/InteractionRewardsFacet.sol";
 import {ConfigFacet} from "../src/facets/ConfigFacet.sol";
+import {ProfileFacet} from "../src/facets/ProfileFacet.sol";
 import {LibVaipakam} from "../src/libraries/LibVaipakam.sol";
 import {TestMutatorFacet} from "./mocks/TestMutatorFacet.sol";
+import {MockSanctionsList} from "./mocks/MockSanctionsList.sol";
 import {IVaipakamErrors} from "../src/interfaces/IVaipakamErrors.sol";
 
 /**
@@ -325,6 +327,124 @@ contract RewardClaimHorizonTest is SetupTest, IVaipakamErrors {
             "armed notice extends past the outage"
         );
         vm.warp(block.timestamp + 91 days);
+        assertGt(
+            _facet().sweepExpiredInteractionRewards(_ids(id)),
+            0,
+            "expires after a fully funded final notice"
+        );
+    }
+
+    function testSanctionedOwnerFreezesClockAndDisarms() public {
+        _cfg().setRewardClaimHorizonDays(365);
+        MockSanctionsList oracle = new MockSanctionsList();
+        ProfileFacet(address(diamond)).setSanctionsOracle(address(oracle));
+        uint256 id = _seedClaimableEntry();
+
+        // Flagged owner: the claim path would reject them, so the horizon
+        // clock must not even start.
+        oracle.setFlagged(alice, true);
+        _facet().sweepExpiredInteractionRewards(_ids(id));
+        (uint64 stamp, ) = _facet().getRewardEntryExpiry(id);
+        assertEq(stamp, 0, "no clock while the owner is sanctioned");
+
+        // Delisted: the clock starts, runs the horizon, and the entry arms.
+        oracle.setFlagged(alice, false);
+        _facet().sweepExpiredInteractionRewards(_ids(id));
+        (stamp, ) = _facet().getRewardEntryExpiry(id);
+        assertGt(stamp, 0, "clock starts once delisted");
+        uint256 tDue = vm.getBlockTimestamp() + 366 days;
+        vm.warp(tDue);
+        _facet().sweepExpiredInteractionRewards(_ids(id)); // arm
+        (, uint64 armedExpiry) = _facet().getRewardEntryExpiry(id);
+        // vm.getBlockTimestamp() is opaque to the optimizer, so this exact
+        // check can't be CSE-folded back into `block.timestamp + …`.
+        assertEq(
+            armedExpiry,
+            uint64(vm.getBlockTimestamp() + 90 days),
+            "armed final notice"
+        );
+
+        // Re-flagged mid-final-notice: a touch DISARMS, so a later delist
+        // can't spring instant expiry off the stale arm.
+        oracle.setFlagged(alice, true);
+        vm.warp(tDue + 91 days);
+        assertEq(
+            _facet().sweepExpiredInteractionRewards(_ids(id)),
+            0,
+            "sanctioned touch past notice still cannot expire"
+        );
+        oracle.setFlagged(alice, false);
+        assertEq(
+            _facet().sweepExpiredInteractionRewards(_ids(id)),
+            0,
+            "delist re-arms the funded notice, never instant expiry"
+        );
+        uint256 tReArm = block.timestamp;
+        vm.warp(tReArm + 91 days);
+        assertGt(
+            _facet().sweepExpiredInteractionRewards(_ids(id)),
+            0,
+            "expires after a fresh funded final notice"
+        );
+    }
+
+    function testReconfigurationReArmsAlreadyArmedEntry() public {
+        _cfg().setRewardClaimHorizonDays(180);
+        uint256 id = _seedClaimableEntry();
+        _facet().sweepExpiredInteractionRewards(_ids(id)); // stamp
+        uint256 tDue = vm.getBlockTimestamp() + 181 days;
+        vm.warp(tDue);
+        _facet().sweepExpiredInteractionRewards(_ids(id)); // arm
+
+        // Governance dark-resets then re-enables the horizon in a LATER
+        // block, after the arm — the arm now predates the latest activation
+        // and must be treated as stale, so the entry re-arms rather than
+        // expiring off the old window. (A same-block arm+reconfig is a
+        // non-issue: the arm already is a valid 90-day funded notice.)
+        vm.warp(tDue + 1 days);
+        _cfg().setRewardClaimHorizonDays(0);
+        _cfg().setRewardClaimHorizonDays(180);
+        vm.warp(tDue + 92 days); // past the OLD arm's notice
+        assertEq(
+            _facet().sweepExpiredInteractionRewards(_ids(id)),
+            0,
+            "stale arm re-arms after reconfiguration, no instant expiry"
+        );
+        uint256 tReArm = vm.getBlockTimestamp();
+        vm.warp(tReArm + 91 days);
+        assertGt(
+            _facet().sweepExpiredInteractionRewards(_ids(id)),
+            0,
+            "expires after the re-granted funded final notice"
+        );
+    }
+
+    function testUnpayableTouchDisarmsArmedEntry() public {
+        _cfg().setRewardClaimHorizonDays(365);
+        uint256 id = _seedClaimableEntry();
+        _facet().sweepExpiredInteractionRewards(_ids(id)); // stamp
+        uint256 tDue = block.timestamp + 366 days;
+        vm.warp(tDue);
+        _facet().sweepExpiredInteractionRewards(_ids(id)); // arm
+
+        // A keeper touch DURING a funding outage past the notice window
+        // disarms, so recovery can't spring instant expiry off the stale
+        // arm — the funded final notice re-counts from a payable state.
+        vm.warp(tDue + 91 days);
+        deal(address(vpfi), address(diamond), 0);
+        assertEq(
+            _facet().sweepExpiredInteractionRewards(_ids(id)),
+            0,
+            "unfunded touch past notice cannot expire"
+        );
+        deal(address(vpfi), address(diamond), DIAMOND_SEED);
+        assertEq(
+            _facet().sweepExpiredInteractionRewards(_ids(id)),
+            0,
+            "recovery re-arms, never instant expiry off a stale arm"
+        );
+        uint256 tReArm = block.timestamp;
+        vm.warp(tReArm + 91 days);
         assertGt(
             _facet().sweepExpiredInteractionRewards(_ids(id)),
             0,

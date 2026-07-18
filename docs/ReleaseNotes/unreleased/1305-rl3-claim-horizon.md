@@ -26,7 +26,14 @@ advances a due expiry. Expiry itself is two-phase: past the horizon, a
 funded sweep touch first arms a public final-notice window, and removal
 happens no earlier than 90 days after that funded arming — every
 removal follows a funded last call, even when an outage straddled the
-horizon instant. A claim landing any time before expiry always wins.
+horizon instant. A sanctioned owner cannot claim, so their entries'
+clocks stay frozen and can never be swept while flagged (a delist
+re-opens the clock — freeze, not seize). And any funded arming is
+invalidated when a later touch finds the entry unpayable or sanctioned,
+or when governance reconfigures the horizon: the next payable touch
+re-arms and the 90-day final notice re-counts, so a stale arm can never
+spring an expiry the moment the entry becomes payable again. A claim
+landing any time before expiry always wins.
 
 The lifecycle is fully observable: reward-entry ids are enumerable
 per user, the clock start and the expiry each emit a public per-entry
