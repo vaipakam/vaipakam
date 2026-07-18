@@ -11,8 +11,13 @@ realized margin (the trailing absorption average times the margin
 weight actually stamped for that day), and it never draws the recycle
 bucket below a forward reserve of seven days of the trailing average —
 so a register split can never defund near-term recycled reward budgets.
-The keeper share is a pure ledger move inside protocol custody (recycle
-bucket → keeper budget, no token transfer), the weight is capped at
+The keeper share is earmarked within the recycle bucket (a keeper-budget
+ledger) rather than moved out of it: the bucket's custody total is
+unchanged at split time, so the protocol's standing backing invariant
+keeps the keeper budget fully backed, and the earmark is netted out of
+the fundable balance so a carved share can never be re-sized into a later
+day's reward budget (no token transfer at split time), the weight is
+capped at
 half, and every split emits a public event so indexers can replay the
 register from events alone. Spend paths for the accumulated keeper
 budget arrive with a later ratified stage.

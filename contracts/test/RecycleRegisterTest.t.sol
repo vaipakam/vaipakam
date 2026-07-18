@@ -17,8 +17,9 @@ import {IVaipakamErrors} from "../src/interfaces/IVaipakamErrors.sol";
  *         register. Pins the ratified rules: dormant defaults are a no-op
  *         (exactly today's behaviour); a non-dormant split is bounded by
  *         BOTH the day's realized margin and the forward-reserve floor
- *         (`fundable − 7×Ā`); the keeper share moves bucket → keeper
- *         ledger with no token movement; the keeper weight caps at 50%.
+ *         (`fundable − 7×Ā`); the keeper share is earmarked WITHIN the
+ *         bucket (custody total unchanged, netted from fundable — #1344);
+ *         the keeper weight caps at 50%.
  */
 contract RecycleRegisterTest is SetupTest, IVaipakamErrors {
     MockRewardMessenger internal messenger;
@@ -89,11 +90,45 @@ contract RecycleRegisterTest is SetupTest, IVaipakamErrors {
 
         (, uint256 keeperBudget) = _cfg().getRecycleRegisterState();
         assertApproxEqAbs(keeperBudget, 2 ether, 1e6, "keeper = 40% of margin");
-        assertApproxEqAbs(
+        // #1344 P1 — the carve is an EARMARK within the bucket, not a move out
+        // of it: `recycleBucket` stays the full Diamond-custody total so the
+        // backing invariant keeps the keeper budget backed. The earmark is
+        // netted from `fundable` (proven in testKeeperEarmarkReducesFundable),
+        // never subtracted from the custody ledger.
+        assertEq(
             _cfg().getRecycleBucket(),
-            1_000_000 ether - keeperBudget,
-            1e6,
-            "keeper share left the bucket ledger (reserve share stayed)"
+            1_000_000 ether,
+            "bucket custody total is unchanged (earmark stays in the bucket)"
+        );
+    }
+
+    /// @notice #1344 P1 — the keeper earmark accumulates in its own ledger
+    ///         across days while the custody bucket is never drawn down, so the
+    ///         audited `balance >= recycleBucket` backing keeps the growing
+    ///         keeper budget backed (the earmark is netted from `fundable` for
+    ///         reward-budget sizing, never subtracted from custody).
+    function testKeeperEarmarkAccumulatesWithoutDrawingCustody() public {
+        _cfg().setRecycleRegisterKeeperBps(4_000);
+        _mut().setRecycleBucketRaw(1_000_000 ether);
+        // Seed the trailing absorption average (Ā ≈ 100) for both days so the
+        // register has a realized margin to split.
+        _mut().setRecycledCreditedByDayRaw(5, 700 ether);
+        _mut().setRecycledCreditedByDayRaw(6, 700 ether);
+
+        _finalize(5);
+        (, uint256 afterDay5) = _cfg().getRecycleRegisterState();
+        assertGt(afterDay5, 0, "day 5 carves a keeper earmark");
+
+        _finalize(6);
+        (, uint256 afterDay6) = _cfg().getRecycleRegisterState();
+        assertGt(afterDay6, afterDay5, "day 6 accumulates onto the earmark");
+
+        // Across BOTH carves the custody bucket total is untouched — the
+        // earmark never left it, so it stays fully backed.
+        assertEq(
+            _cfg().getRecycleBucket(),
+            1_000_000 ether,
+            "custody bucket never drawn down by the carve"
         );
     }
 
