@@ -68,14 +68,18 @@ absorption; the recycled-funded share never left the bucket and releases
 its commitment with zero new credit — dormant recycled rewards can never
 inflate the absorption average. The claim-center countdown view exposes
 each entry's accumulator start and a forward estimate of the earliest
-removal (assuming continuous claimability from now). It credits the
-interval a sweep-now would apply — so it never reports a removal later
-than the contract enforces — but only while the entry is genuinely
-claim-executable, mirroring the sweep's own gate and its zero-credit-
-fresh defer exactly (owner unsanctioned, non-zero post-cap payable,
-balance covers it, fresh share creditable against the pool cap and
-bucket backing), so it never shows a false-imminent removal a sweep
-would defer; a processed (claimed/expired) entry carries no countdown.
+removal (assuming continuous claimability from now). It is a
+CONSERVATIVE estimate that errs optimistic — it never reports a removal
+LATER than the contract enforces, so it only ever urges the claimant to
+act sooner. It folds in the interval a sweep-now would credit, but only
+while the entry is genuinely claim-executable, mirroring the sweep's
+funding gate (owner unsanctioned, protocol unpaused, this entry's
+post-cap share payable, and the balance covering the claimant's FULL
+aggregate claim). It deliberately does NOT mirror the recycle-bucket
+backing check that gates the final all-or-nothing reap: a backing
+shortfall can defer the actual removal a little past the view's
+estimate, which is safe UX (the claimant can still claim right up to the
+reap). A processed (claimed/expired) entry carries no countdown.
 The final-notice and reconfiguration re-notice signals are timed from
 the true crossing, not the sweep timestamp; the pre-expiry notice rides
 the

@@ -9,6 +9,7 @@ import {VPFITokenFacet} from "../src/facets/VPFITokenFacet.sol";
 import {InteractionRewardsFacet} from "../src/facets/InteractionRewardsFacet.sol";
 import {InteractionRewardsLensFacet} from "../src/facets/InteractionRewardsLensFacet.sol";
 import {ConfigFacet} from "../src/facets/ConfigFacet.sol";
+import {AdminFacet} from "../src/facets/AdminFacet.sol";
 import {ProfileFacet} from "../src/facets/ProfileFacet.sol";
 import {LibVaipakam} from "../src/libraries/LibVaipakam.sol";
 import {TestMutatorFacet} from "./mocks/TestMutatorFacet.sol";
@@ -622,6 +623,90 @@ contract RewardClaimHorizonTest is SetupTest, IVaipakamErrors {
             _accrue(id, 180 days + NOTICE + MAX_GAP),
             0,
             "accrues + expires once the full claim is affordable"
+        );
+    }
+
+    /// @notice The claim is ATOMIC-AGGREGATE across all of a user's claimable
+    ///         entries — so the clock advances only when the balance covers the
+    ///         user's FULL claim, never a single entry. A balance that covers
+    ///         each entry alone but not the aggregate must start NEITHER clock
+    ///         (the real claim reverts), or a keeper could reap an entry the
+    ///         claimant never had a funded path to claim (Codex #1317 P1).
+    function testAggregateClaimUnderfundingPausesAllEntries() public {
+        _cfg().setRewardClaimHorizonDays(180);
+        // Two claimable entries for the same user, paid atomically by a claim.
+        uint256 idA = _mut().pushRewardEntry(
+            alice, 42, LibVaipakam.RewardSide.Lender, 1e18, 1
+        );
+        _mut().closeRewardEntryRaw(idA, 2);
+        uint256 idB = _mut().pushRewardEntry(
+            alice, 43, LibVaipakam.RewardSide.Borrower, 1e18, 1
+        );
+        _mut().closeRewardEntryRaw(idB, 2);
+
+        // Stamp both (funded) — this also advances the per-side cursors the
+        // preview reads, so the aggregate resolves to its true non-zero value.
+        uint256[] memory both = new uint256[](2);
+        both[0] = idA;
+        both[1] = idB;
+        _facet().sweepExpiredInteractionRewards(both);
+        (uint256 aggregate, , ) = _lens().previewInteractionRewards(alice);
+        assertGt(aggregate, 1, "user has an aggregate claim");
+
+        // Balance covers each single entry (each < aggregate) but NOT the
+        // atomic aggregate — a per-entry funding check would keep the clock
+        // ticking; the aggregate gate must PAUSE accrual for the entry.
+        deal(address(vpfi), address(diamond), aggregate - 1);
+        assertEq(
+            _accrue(idA, 180 days + NOTICE + MAX_GAP),
+            0,
+            "A never accrues while the aggregate claim is underfunded"
+        );
+
+        // Restore full funding → the clock resumes and the entry expires.
+        deal(address(vpfi), address(diamond), DIAMOND_SEED);
+        assertGt(
+            _accrue(idA, 180 days + NOTICE + MAX_GAP),
+            0,
+            "A expires once the full aggregate claim is affordable"
+        );
+    }
+
+    /// @notice Time during which the protocol is paused is NOT executable
+    ///         (every claim reverts under the pause), so an observation
+    ///         interval that straddles a pause window — even one shorter than
+    ///         the max observation gap — must not be credited toward the
+    ///         horizon (Codex #1317 P2). The sweep is `whenNotPaused`, so it
+    ///         can only discover the slept-through span after unpause.
+    function testPausedIntervalIsNotCreditedAsExecutableTime() public {
+        _cfg().setRewardClaimHorizonDays(180);
+        uint256 required = 180 days + NOTICE;
+        uint256 id = _seedClaimableEntry();
+        _facet().sweepExpiredInteractionRewards(_ids(id)); // stamp
+
+        // Accrue to five days under the threshold.
+        assertEq(_accrue(id, required - 5 days), 0, "just under threshold");
+
+        // A 5-day pause (< MAX_GAP). Keepers can't sweep while paused.
+        AdminFacet(address(diamond)).pause();
+        vm.warp(vm.getBlockTimestamp() + 5 days);
+        AdminFacet(address(diamond)).unpause();
+
+        // The first post-unpause sweep sees a 5-day gap that straddled the
+        // pause boundary — it must be DROPPED, so the entry is not reaped even
+        // though required-5d + 5d of wall time has elapsed.
+        assertEq(
+            _facet().sweepExpiredInteractionRewards(_ids(id)),
+            0,
+            "the paused span is not credited as executable time"
+        );
+
+        // A further genuinely-executable 5 days is still required to expire.
+        assertEq(_accrue(id, 4 days), 0, "still one day short after the pause");
+        assertGt(
+            _accrue(id, 2 days),
+            0,
+            "expires once a real 5 days elapses post-pause"
         );
     }
 

@@ -2,6 +2,7 @@
 pragma solidity ^0.8.29;
 
 import {LibVaipakam} from "./LibVaipakam.sol";
+import {LibPausable} from "./LibPausable.sol";
 import {Math} from "@openzeppelin/contracts/utils/math/Math.sol";
 import {OracleFacet} from "../facets/OracleFacet.sol";
 import {IERC20Metadata} from "@openzeppelin/contracts/token/ERC20/extensions/IERC20Metadata.sol";
@@ -990,6 +991,37 @@ function _dayPoolHalves(
         }
     }
 
+    /// @dev The FULL uncapped VPFI a claim by `user` would transfer right now
+    ///      — the entry-path aggregate PLUS the finalized legacy window,
+    ///      exactly what `claimInteractionRewardsTo` sums into one atomic
+    ///      transfer before it pool-truncates the fresh part. The live claim's
+    ///      actual `paid` is this figure truncated DOWN to the remaining 69M
+    ///      pool, so this is an UPPER BOUND: `balance >= this` guarantees the
+    ///      claimant's whole aggregate claim is funded. The claim-horizon
+    ///      accumulator gates on it so the clock advances only when the
+    ///      claimant had a working claim path for ALL their entries at once —
+    ///      never per-entry, which would let a partly-funded balance reap one
+    ///      entry while the real (aggregate) claim reverts (Codex #1317 P1).
+    ///      Bounded: the window walk is capped at MAX_INTERACTION_CLAIM_DAYS.
+    function userClaimPendingUncapped(
+        LibVaipakam.Storage storage s,
+        address user
+    ) internal view returns (uint256 pending) {
+        pending = previewForUserEntries(user);
+        (uint256 today, bool active) = currentDayOrZero();
+        if (!active || today == 0) return pending;
+        uint256 last = s.interactionLastClaimedDay[user];
+        uint256 lastFinalized = today - 1;
+        if (last >= lastFinalized) return pending;
+        uint256 fromDay = last + 1;
+        uint256 windowLast =
+            fromDay + LibVaipakam.MAX_INTERACTION_CLAIM_DAYS - 1;
+        uint256 toDay = windowLast < lastFinalized ? windowLast : lastFinalized;
+        (uint256 effectiveTo, bool any) = clampToFinalized(fromDay, toDay);
+        if (!any) return pending;
+        pending += previewForUserWindow(user, fromDay, effectiveTo);
+    }
+
     /// @notice View-only preview of {claimForUserEntries}.
     function previewForUserEntries(address user)
         internal
@@ -1141,26 +1173,33 @@ function _dayPoolHalves(
         EntrySplit memory split_ = _entryWindowSplit(s, e);
         uint256 freshShare = split_.total - split_.recycled;
         // Claim-EXECUTABLE gate: the accumulator only advances while the
-        // CLAIMANT could actually claim this entry right now — mirroring the
-        // claim path, which pays the fresh share truncated to the 69M POOL
-        // cap (NOT the recycle-bucket backing room, which a claim never
-        // touches) plus the recycled share, and reverts if the local balance
-        // can't cover that transfer. Backing room is an EXPIRY-credit
-        // constraint, handled all-or-nothing at processing below (Codex
-        // #1317) — never a reason to stop the claimant's clock. Blocked:
-        //   1. the pool-capped payable is zero (nothing a claim could pay),
-        //   2. the balance can't cover the claim transfer (mirror outage),
-        //   3. the owner is sanctioned (the claim path rejects them).
+        // CLAIMANT could actually claim right now. The claim is ATOMIC-
+        // AGGREGATE — `claimInteractionRewardsTo` sums ALL of the user's
+        // claimable entries plus the finalized legacy window into ONE transfer
+        // and reverts if the local balance can't cover it — so the funding
+        // check is against the user's FULL pending, never this one entry:
+        // a per-entry balance check would let a partly-funded balance reap one
+        // entry while the real (aggregate) claim reverts (Codex #1317 P1).
+        // The recycle-bucket backing room is NOT checked here — it gates the
+        // all-or-nothing EXPIRY credit below, not the claimant's clock (a claim
+        // never touches the bucket). Blocked when:
+        //   1. this entry's pool-capped payable is zero (a reap of it would
+        //      recycle nothing — nothing a claim could pay for it),
+        //   2. the owner is sanctioned (the claim path rejects them),
+        //   3. the protocol is paused (every claim reverts under the pause),
+        //   4. the balance can't cover the user's whole aggregate claim.
         uint256 poolReserved =
             s.interactionPoolPaidOut + s.rewardBudgetRemittedGlobal;
         uint256 poolRoom = LibVaipakam.VPFI_INTERACTION_POOL_CAP > poolReserved
             ? LibVaipakam.VPFI_INTERACTION_POOL_CAP - poolReserved
             : 0;
-        uint256 claimTransfer =
+        uint256 entryPayable =
             (freshShare < poolRoom ? freshShare : poolRoom) + split_.recycled;
-        bool executable = claimTransfer != 0 &&
+        bool executable = entryPayable != 0 &&
             !LibVaipakam.isSanctionedAddress(e.user) &&
-            IERC20Metadata(s.vpfiToken).balanceOf(address(this)) >= claimTransfer;
+            !LibPausable.paused() &&
+            IERC20Metadata(s.vpfiToken).balanceOf(address(this)) >=
+            userClaimPendingUncapped(s, e.user);
 
         uint64 lastObs = s.rewardEntryExecObsAt[id];
 
@@ -1212,10 +1251,19 @@ function _dayPoolHalves(
 
         // Credit this interval only if the entry was executable at BOTH ends
         // (the prior observation was not a block) AND the gap is short enough
-        // to trust as continuous; anything else is dropped.
+        // to trust as continuous AND the gap did not straddle a pause window;
+        // anything else is dropped (re-baselined below). An interval whose
+        // prior sample predates the last pause boundary spanned a pause during
+        // which every claim would have reverted, so it must not count as
+        // executable time (Codex #1317 P2 — the sweep itself is `whenNotPaused`,
+        // so it cannot observe DURING a pause; the boundary marker is how a
+        // post-unpause sweep discovers the gap it slept through).
+        bool spannedPause =
+            uint256(lastObs) < uint256(LibPausable.lastPauseBoundaryAt());
         if (!s.rewardEntryObsBlocked[id]) {
             uint256 gap = block.timestamp - uint256(lastObs);
             if (
+                !spannedPause &&
                 gap <=
                 uint256(LibVaipakam.REWARD_CLAIM_NOTICE_MAX_OBS_GAP_DAYS) * 1 days
             ) {
@@ -1337,9 +1385,11 @@ function _dayPoolHalves(
     ///      used only by {rewardEntryExpiry} to decide whether a sweep-now
     ///      would credit the pending heartbeat interval. Mirrors
     ///      {sweepExpiredEntry}'s accrual gate exactly: the accumulator
-    ///      advances only while the CLAIMANT could claim the entry now — the
-    ///      claim pays the fresh share truncated to the 69M pool cap plus the
-    ///      recycled share, covered by the local balance, owner unsanctioned.
+    ///      advances only while the CLAIMANT could claim the entry now —
+    ///      mirroring the sweep gate exactly: the entry's own pool-capped share
+    ///      is payable, the owner is unsanctioned, the protocol is unpaused,
+    ///      and the local balance covers the user's FULL aggregate claim (the
+    ///      claim is atomic across all their entries + the legacy window).
     ///      Backing room is deliberately NOT checked here: it gates the
     ///      all-or-nothing EXPIRY credit, not the claimant's clock (a claim
     ///      never touches the bucket), so a backing shortfall does not pause
@@ -1350,6 +1400,7 @@ function _dayPoolHalves(
         LibVaipakam.RewardEntry storage e
     ) private view returns (bool) {
         if (LibVaipakam.isSanctionedAddress(e.user)) return false;
+        if (LibPausable.paused()) return false; // every claim reverts paused
         EntrySplit memory split_ = _entryWindowSplit(s, e);
         uint256 freshShare = split_.total - split_.recycled;
         uint256 poolReserved =
@@ -1357,12 +1408,12 @@ function _dayPoolHalves(
         uint256 poolRoom = LibVaipakam.VPFI_INTERACTION_POOL_CAP > poolReserved
             ? LibVaipakam.VPFI_INTERACTION_POOL_CAP - poolReserved
             : 0;
-        uint256 claimTransfer =
+        uint256 entryPayable =
             (freshShare < poolRoom ? freshShare : poolRoom) + split_.recycled;
-        if (claimTransfer == 0) return false; // nothing a claim could pay
+        if (entryPayable == 0) return false; // nothing a claim could pay for it
         return
             IERC20Metadata(s.vpfiToken).balanceOf(address(this)) >=
-            claimTransfer;
+            userClaimPendingUncapped(s, e.user);
     }
 
     /// @dev PR-3c — accumulate `part` into `acc` (memory fold helper).
