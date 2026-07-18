@@ -27,7 +27,16 @@
         "language": "Sprache",
         "languageHint": "Sprachen ohne abgeschlossene Übersetzung zeigen vorerst englischen Text.",
         "languagePickerAria": "Anzeigesprache"
-      }
+      },
+      "loading": "Wird geladen…",
+      "modeAdvanced": "Erweitert",
+      "modeBasic": "Einfach",
+      "modeSwitchAria": "Oberflächenmodus",
+      "more": "Mehr",
+      "moreSheetAria": "Weitere Ziele",
+      "navPrimaryAria": "Primär",
+      "navQuickAria": "Schnellnavigation",
+      "skipToContent": "Zum Inhalt springen"
     },
     "seo": {
       "home": {
@@ -178,7 +187,11 @@
       "pushEnable": "Push-Zustellung aktivieren",
       "pushEnabled": "Push-Zustellung ist für diese Wallet aktiv.",
       "pushButton": "Push-Kanal öffnen",
-      "loanNudge": "Möchten Sie eine Telegram-Warnung, wenn dieser Kredit riskant wird? Richten Sie Benachrichtigungen in den Einstellungen ein."
+      "loanNudge": "Möchten Sie eine Telegram-Warnung, wenn dieser Kredit riskant wird? Richten Sie Benachrichtigungen in den Einstellungen ein.",
+      "bandAlert": "Alarm",
+      "bandCritical": "Kritisch",
+      "bandWarn": "Warnung",
+      "bandsSave": "Speichern"
     },
     "notifications": {
       "bellLabel": "Benachrichtigungen",
@@ -206,7 +219,16 @@
       "title": "Auf dieser Seite ist etwas schiefgelaufen",
       "body": "Die Seite ist auf einen unerwarteten Fehler gestoßen und wird nicht mehr dargestellt. Ihre Gelder und On-Chain-Positionen sind davon nicht betroffen — es handelt sich um einen Anzeigefehler, und eine gerade signierte Transaktion kann trotzdem durchgegangen sein (prüfen Sie nach dem Neuladen „Meine Positionen“). Neuladen behebt das Problem meist.",
       "reload": "Seite neu laden",
-      "home": "Zurück zur Startseite"
+      "home": "Zurück zur Startseite",
+      "detailAria": "Fehlerdetails",
+      "glosses": {
+        "185": "Maximale Update-Tiefe überschritten — eine Komponente aktualisiert ihren Zustand bei jedem Rendern. Das ist eine Endlosschleife beim Rendern.",
+        "300": "Weniger Hooks gerendert als erwartet — ein Hook wurde durch eine bedingte Rückgabe übersprungen.",
+        "301": "Zu viele Re-Renders — ein State-Setter wird während des Renderns aufgerufen.",
+        "310": "Verstoß gegen die Rules of Hooks — ein Hook wurde bedingt oder in falscher Reihenfolge aufgerufen.",
+        "321": "Ungültiger Hook-Aufruf — Hooks dürfen nur innerhalb einer React-Funktionskomponente laufen.",
+        "418": "Hydration-Abweichung — Server und Client haben unterschiedliches Markup gerendert."
+      }
     },
     "diagnostics": {
       "open": "Support und Verbindungsprüfung",
@@ -264,7 +286,8 @@
       "tokenValid": "Asset als Token erkannt",
       "consent": "Risikohinweise und Bedingungen akzeptiert",
       "getTestAssets": "Test-Assets erhalten",
-      "connectEarly": "Verbinden Sie Ihre Wallet, um fortzufahren — Sie benötigen sie zum Signieren, daher ist es am einfachsten, sie jetzt zu verbinden."
+      "connectEarly": "Verbinden Sie Ihre Wallet, um fortzufahren — Sie benötigen sie zum Signieren, daher ist es am einfachsten, sie jetzt zu verbinden.",
+      "sanctionsChecking": "Compliance-Status wird geprüft…"
     },
     "receipt": {
       "heading": "Vor dem Signieren prüfen",
@@ -293,7 +316,53 @@
         "Verleihen: Zinsen werden nur verdient, wenn der Kreditnehmer zurückzahlt. Bei Ausfall entspricht Ihre Rückgewinnung dem Wert der gesperrten Sicherheit.",
         "NFT-Vermietungen: Mieter erhalten nur vorübergehende Nutzungsrechte, niemals Eigentum; das NFT bleibt im Vault des Eigentümers. Mietgebühren werden im Voraus bezahlt, mit einem kleinen erstattbaren Puffer.",
         "Smart-Contract-Risiko: Vaipakam ist Code in einem öffentlichen Netzwerk. Fehler, Netzwerkausfälle oder extreme Marktbedingungen können Verluste verursachen — setzen Sie nie Mittel ein, deren Verlust Sie sich nicht leisten können."
-      ]
+      ],
+      "buildDevFallback": "dev",
+      "buildLabel": "Build",
+      "faq": {
+        "alerts": {
+          "a": "Auf der Alarmkarte können Sie Telegram verknüpfen (und Browser-Push aktivieren), um gewarnt zu werden, wenn ein Kredit sich seiner Fälligkeit nähert oder die Gesundheit einer Position fällt. Die Verknüpfung ist eine einmalige Signatur; eine Testwarnung an sich selbst bestätigt, dass der Kanal wirklich funktioniert, bevor Sie sich darauf verlassen.",
+          "q": "Wie bekomme ich vor einer Frist oder Liquidation Warnungen?"
+        },
+        "assetsHeld": {
+          "a": "In Ihrem eigenen Vaipakam Vault — einem On-Chain-Konto, das nur Ihre Wallet kontrolliert. Vaipakam bündelt Nutzergelder nie und kann sie nicht für Sie ausgeben.",
+          "q": "Wo werden meine Assets gehalten?"
+        },
+        "claimCenter": {
+          "a": "Wenn ein Kredit, an dem Sie beteiligt sind, abgewickelt wird — eine Ihnen zustehende Rückzahlung oder Sicherheiten aus einem Ausfall — warten die Mittel darauf, dass Sie sie beanspruchen. Die Anspruchsseite listet genau auf, was für welche Position beanspruchbar ist, geprüft gegen den Protokolldatensatz, damit nichts hängen bleibt.",
+          "q": "Wofür ist das Anspruchszentrum da?"
+        },
+        "lenderInterest": {
+          "a": "Nein. Das ist, was Sie verdienen, wenn der Kreditnehmer rechtzeitig zurückzahlt. Bei einem Ausfall hängt Ihre Rückgewinnung von den gesperrten Sicherheiten ab — der Prüfbildschirm erklärt das vor Ihrer Signatur.",
+          "q": "Sind die Zinsen garantiert, die ich beim Verleihen sehe?"
+        },
+        "missedRepayment": {
+          "a": "Nach dem Fälligkeitsdatum plus Nachfrist kann der Kreditgeber Ihre gesperrten Sicherheiten erhalten. Wenn die Sicherheit einen Live-Marktpreis hat, kann sie auch automatisch verkauft werden, wenn ihr Wert zu stark fällt — rechtzeitiges Zurückzahlen vermeidet beides.",
+          "q": "Was passiert, wenn ich einen Kredit nicht zurückzahle?"
+        },
+        "modes": {
+          "a": "Einfach hält die geführten Abläufe Leihen, Verleihen und NFT-Vermietung im Vordergrund. Erweitert zeigt zusätzlich die Power-Oberflächen — das Angebotsbuch, das Orderbuch im Zins-Desk, VPFI-Rabatte und Ihre vollständige Aktivitätshistorie. Wechseln Sie jederzeit über den Modus-Schalter in der Navigation; Ihre Positionen werden dadurch nie bewegt.",
+          "q": "Was ist der Unterschied zwischen einfachem und erweitertem Modus?"
+        },
+        "nftRental": {
+          "a": "Das NFT bleibt im Vault seines Eigentümers gesperrt; der Mieter erhält vorübergehende Nutzungsrechte, nie Eigentum. Mietgebühren werden vorausbezahlt, mit einem kleinen erstattbaren Puffer.",
+          "q": "Was ist eine NFT-Vermietung?"
+        },
+        "nftVerifier": {
+          "a": "Der NFT-Verifizierer (in der Navigation) liest jedes Vaipakam-Positions-NFT direkt von der Chain und zeigt seine echten Kreditbedingungen und seinen Status — damit Sie vor Vertrauen in einen Sekundärmarktverkauf prüfen können, was ein Listing tatsächlich repräsentiert.",
+          "q": "Wie prüfe ich ein Positions-NFT, bevor ich es außerhalb der Plattform kaufe?"
+        },
+        "vpfi": {
+          "a": "Nein. VPFI ist optional — VPFI im Vault zu halten kann Protokollgebühren auf berechtigte Kredite reduzieren. Netzwerk-Gas wird nie reduziert, und Sie brauchen es nie zum Leihen, Verleihen oder Mieten.",
+          "q": "Brauche ich VPFI?"
+        },
+        "wrongNetwork": {
+          "a": "Angebote, Ihr Vault und der Faucet sind netzwerkspezifisch. Wenn Ihre Wallet auf einer Chain ist, auf der Vaipakam nicht bereitgestellt ist, bietet ein Banner einen Ein-Klick-Wechsel zu einem unterstützten Netzwerk an; die App handelt nie auf einer nicht unterstützten Chain.",
+          "q": "Es heißt, ich bin im falschen Netzwerk — was soll ich tun?"
+        }
+      },
+      "lede": "Schnelle Antworten in einfacher Sprache.",
+      "title": "Hilfe"
     },
     "consentParts": {
       "prefix": "Ich verstehe und akzeptiere die ",
@@ -387,7 +456,42 @@
       "no4907Unknown": "Wir konnten nicht prüfen, ob diese NFT-Kollektion den On-Chain-Mietstandard (ERC-4907) unterstützt. Falls nicht, erkennen Apps außerhalb von Vaipakam den Mieter nicht — innerhalb von Vaipakam funktioniert die Vermietung trotzdem.",
       "vpfiPrepayListing": "Dieses Inserat verlangt die Bezahlung in VPFI, was bei Vermietungen nicht erlaubt ist — es kann nicht angenommen werden. Bitte wählen Sie ein anderes Inserat.",
       "vpfiCheckRetry": "Wir konnten das Zahlungs-Asset dieses Inserats gerade nicht überprüfen — es wurde nichts gesendet oder freigegeben. Bitte versuchen Sie es gleich noch einmal.",
-      "vpfiPrepayNotAllowed": "VPFI kann nicht als Zahlungs-Asset für Mieten verwendet werden — wählen Sie einen anderen Token."
+      "vpfiPrepayNotAllowed": "VPFI kann nicht als Zahlungs-Asset für Mieten verwendet werden — wählen Sie einen anderen Token.",
+      "back": "Zurück",
+      "beforeYouSign": "Vor dem Signieren",
+      "continueToReview": "Weiter zur Prüfung",
+      "contractHint": "Einzelne NFTs mit ERC-4907 geben Mietern Nutzungsrechte, die andere Apps sehen können; andere NFTs können trotzdem vermietet werden und werden innerhalb von Vaipakam verfolgt.",
+      "contractLabel": "NFT-Vertragsadresse",
+      "dailyFeeLabel": "Tagesgebühr",
+      "durationLabel": "Mietdauer",
+      "listWhenEnds": "Wenn die Vermietung endet, werden die Rechte des Mieters automatisch zurückgesetzt; Sie beanspruchen Ihre Gebühren und holen das NFT über die Detailseite der Vermietung zurück.",
+      "listYouCanLose": "Vorübergehende Nutzung des NFT, solange es vermietet ist — der Mieter kann es niemals übertragen oder verkaufen.",
+      "listingsLoading": "Vermietungsangebote werden geladen…",
+      "liveFeesLoaded": "Live-Gebührenbedingungen geladen",
+      "liveFeesLoading": "Live-Gebührenbedingungen werden geladen…",
+      "liveRentalLoaded": "Live-Mietbedingungen geladen",
+      "liveRentalLoading": "Live-Mietbedingungen werden geladen…",
+      "nftTypeErc1155": "Multi-Edition-NFT (ERC-1155)",
+      "nftTypeErc721": "Einzel-NFT (ERC-721)",
+      "nftTypeLabel": "NFT-Typ",
+      "nothing": "Nichts.",
+      "paymentAssetCheckFailed": "Wir konnten das Zahlungs-Asset gerade nicht verifizieren — bitte versuchen Sie es gleich noch einmal.",
+      "paymentAssetRecognised": "Zahlungs-Asset erkannt",
+      "preparingReview": "Ihre Prüfung wird vorbereitet…",
+      "prepayAssetHint": "Mieter zahlen die gesamte Miete in diesem Token im Voraus.",
+      "prepayAssetLabel": "Asset, in dem Mieter Sie bezahlen",
+      "quantityLabel": "Menge",
+      "rentFeesNote": "Der angezeigte Preis ist die Mietgebühr; Vaipakams Anteil kommt aus den Einnahmen des Eigentümers, nicht zusätzlich zu Ihren Kosten.",
+      "rentYouMayOwe": "Nichts weiter — Gebühren sind vorausbezahlt.",
+      "stepChooseNft": "NFT auswählen",
+      "stepDone": "Fertig",
+      "stepReview": "Prüfen und signieren",
+      "stepYourNft": "Ihr NFT und Preis",
+      "tokenIdLabel": "Token-ID",
+      "tryAgain": "Erneut versuchen",
+      "viewPositions": "Meine Positionen ansehen",
+      "viewTransaction": "Transaktion ansehen",
+      "waitingForWallet": "Warten auf die Wallet…"
     },
     "preclose": {
       "title": "Diesen Kredit vorzeitig schließen",
@@ -430,7 +534,10 @@
       "multiStepNote": "Das Einstellen erfordert bis zu drei Wallet-Bestätigungen (Leitplanken, Ablöse-Freigabe, die Anfrage selbst). Wenn Sie mittendrin aufhören, bleiben die früheren Schritte on-chain bestehen, bis Sie das Einstellen abschließen oder stornieren — die Stornierung entfernt auch die Freigabe.",
       "partialBlockedByPending": "Für diesen Kredit ist eine Refinanzierungsanfrage aktiv. Eine Teilrückzahlung würde den Betrag ändern und die Anfrage dauerhaft unannehmbar machen — stornieren Sie zuerst die Refinanzierungsanfrage.",
       "precloseBlockedByPending": "Für diesen Kredit ist eine Refinanzierungsanfrage aktiv. Ein vorzeitiges Schließen würde sie ins Leere laufen lassen — stornieren Sie zuerst die Refinanzierungsanfrage.",
-      "repayWarnPending": "Für diesen Kredit ist noch eine Refinanzierungsanfrage aktiv. Die Rückzahlung schließt den Kredit ab; danach kann die Anfrage nie mehr abgeschlossen werden — stornieren Sie sie anschließend über ihre Karte (das entfernt auch ihre bestehende Ablöse-Freigabe); bis dahin liegt sie einfach da, bis sie abläuft."
+      "repayWarnPending": "Für diesen Kredit ist noch eine Refinanzierungsanfrage aktiv. Die Rückzahlung schließt den Kredit ab; danach kann die Anfrage nie mehr abgeschlossen werden — stornieren Sie sie anschließend über ihre Karte (das entfernt auch ihre bestehende Ablöse-Freigabe); bis dahin liegt sie einfach da, bis sie abläuft.",
+      "consentLabel": "Ich verstehe die Ablöse- und Wallet-Guthabenbedingungen unten und stimme ihnen zu.",
+      "receiptLock": "Nichts Neues — Ihre bestehende Sicherheit wird in den neuen Kredit übernommen, ohne je entsperrt zu werden.",
+      "receiptReceive": "Ein neuer Kredit zu Ihren gewählten Bedingungen, sobald ein Kreditgeber annimmt — Ihre Sicherheit wandert automatisch dorthin und dieser Kredit schließt in derselben Transaktion."
     },
     "approvals": {
       "title": "Dauerhafte Token-Genehmigungen",
@@ -549,7 +656,12 @@
       "loadingOffers": "Passende Kreditangebote werden gesucht…",
       "figureMoved": "Der Auszahlungsbetrag hat sich mit der Zeit verändert, daher wurde die Übersicht geschlossen — öffnen Sie sie erneut, um die aktuelle Zahl zu bestätigen.",
       "checking": "Wir prüfen, ob Sie diesen Kredit vorzeitig verlassen können…",
-      "checkFailed": "Die Ausstiegs-Details dieses Kredits konnten gerade nicht gelesen werden — neuer Versuch läuft."
+      "checkFailed": "Die Ausstiegs-Details dieses Kredits konnten gerade nicht gelesen werden — neuer Versuch läuft.",
+      "receiptCanLose": "Der GRÖSSERE Betrag aus bisher aufgelaufenen Zinsen oder der Zinsdifferenz für die Restlaufzeit — niemals beides. In der Zahl oben bereits berücksichtigt; der genaue Betrag wird beim Bestätigen live neu gelesen.",
+      "receiptEnds": "Sofort — Ihre Position geht auf den Käufer über und Sie sind mit diesem Kredit fertig. Zinssatz und Fälligkeitsdatum des Kreditnehmers ändern sich nicht.",
+      "receiptFees": "Der Anteil des Protokolls kommt aus den aufgegebenen Zinsen — nie aus Ihrer Auszahlung über die angezeigte Zahl hinaus.",
+      "receiptLockNothing": "Nichts.",
+      "receiptOweNothing": "Nichts — Sie genehmigen nichts und zahlen nichts aus eigener Tasche."
     },
     "loanSale": {
       "title": "Diese Position zum Verkauf listen",
@@ -573,7 +685,12 @@
       "fundingUnknown": "Wir konnten den Angebotsdatensatz dieses Listings von diesem Gerät aus nicht ermitteln und können seine Abwicklungsdeckung hier daher nicht prüfen — verwalten Sie es über das Gerät, mit dem es erstellt wurde, oder halten Sie eine großzügige Freigabe und ein ausreichendes Guthaben bereit.",
       "ended": "Ihr Verkaufslisting ist nicht mehr aktiv. Falls ein Käufer es angenommen hat, ist die Auszahlung bereits in Ihrer Wallet und die Abwicklung wurde über die bestehende Freigabe eingezogen; eine verbleibende Freigabe können Sie in der Token-Freigaben-Ansicht Ihrer Wallet widerrufen.",
       "listingUnavailable": "Ihre Position zu einem eigenen Preis zu listen ist noch nicht möglich — der dafür nötige On-Chain-Schritt wird gerade repariert. Der Sofort-Ausstieg oben funktioniert: Er verkauft sofort in ein passendes offenes Angebot.",
-      "partialBlockedByListing": "Der Kreditgeber hat diese Position zum aktuellen Restbetrag zum Verkauf gelistet. Teilrückzahlungen sind pausiert, solange das Listing besteht — sie würden diesen Betrag verändern und Käufer in die Irre führen. Sie können den Kredit weiterhin jederzeit vollständig zurückzahlen oder vorzeitig schließen."
+      "partialBlockedByListing": "Der Kreditgeber hat diese Position zum aktuellen Restbetrag zum Verkauf gelistet. Teilrückzahlungen sind pausiert, solange das Listing besteht — sie würden diesen Betrag verändern und Käufer in die Irre führen. Sie können den Kredit weiterhin jederzeit vollständig zurückzahlen oder vorzeitig schließen.",
+      "consentLabel": "Ich verstehe die Sperre, den Abwicklungsabruf und die bestehende Freigabe unten und stimme ihnen zu.",
+      "receiptCanLose": "Wenn Ihr Guthaben oder die bestehende Freigabe zu knapp wird, schlägt die Annahme eines Käufers einfach fehl — nichts wird eingezogen, aber das Listing bleibt unausführbar, bis Sie es wiederherstellen oder stornieren.",
+      "receiptEnds": "Wenn ein Käufer annimmt (alles wird in seiner Transaktion abgewickelt) oder wenn Sie das Listing stornieren. Es läuft nicht von selbst ab.",
+      "receiptFees": "Der Anteil des Protokolls kommt aus der Abwicklungszahl — nichts darüber hinaus.",
+      "receiptLock": "Ihr Kreditgeber-Positions-NFT, bis der Verkauf abgeschlossen ist oder Sie das Listing stornieren. Nichts anderes."
     },
     "positions": {
       "title": "Meine Positionen",
@@ -610,7 +727,117 @@
       "whatNextInternalMatchViewer": "Dieser Kredit wurde durch internes Matching geschlossen — verbleibende Ansprüche gehören den Positionsinhabern.",
       "whatNextClosed": "Dieser Kredit ist vollständig abgewickelt — es gibt nichts mehr zu tun.",
       "whatNextRentalEnded": "Diese Vermietung ist beendet. Verdiente Gebühren oder ein erstattungsfähiger Puffer können unten von den Positionsinhabern beansprucht werden — sonst kann sich nichts mehr ändern.",
-      "settledAhead": "Diese Position ist on-chain bereits geschlossen — der Status hier ist live. Ihre Listen brauchen eventuell einen Moment, um nachzuziehen."
+      "settledAhead": "Diese Position ist on-chain bereits geschlossen — der Status hier ist live. Ihre Listen brauchen eventuell einen Moment, um nachzuziehen.",
+      "details": {
+        "actions": {
+          "claimBuffer": "Meinen Puffer zurückholen",
+          "claimCollateral": "Meine Sicherheit beanspruchen",
+          "claimFeesNft": "Gebühren beanspruchen und NFT zurückholen",
+          "claimFunds": "Meine Mittel beanspruchen",
+          "claimRecovered": "Beanspruchen, was dieser Kredit zurückgewonnen hat",
+          "claimResidual": "Beanspruchen, was übrig ist (falls etwas)",
+          "closeRental": "Diese Vermietung schließen",
+          "repay": "Diesen Kredit zurückzahlen"
+        },
+        "addCollateral": {
+          "amountAria": "Hinzuzufügender Sicherheitenbetrag",
+          "button": "Hinzufügen",
+          "confirm": "Bestätigen — Sicherheit hinzufügen",
+          "endsImmediately": "Die Aufstockung gilt sofort.",
+          "fallbackWarn": "Dieser Kredit befindet sich in einem Zustand fehlgeschlagener Liquidation. Zusätzliche Sicherheit bringt ihn nur dann zurück auf Aktiv, wenn die Aufstockung das erforderliche Gesundheitsniveau wiederherstellt — andernfalls kann der Kreditgeber weiterhin beanspruchen, und die hinzugefügte Sicherheit ist ebenfalls gefährdet. Vollständige Rückzahlung heilt immer. Wenn Sie unsicher sind, zahlen Sie stattdessen zurück.",
+          "loseFallback": "Der hinzugefügte Betrag wird Teil der gefährdeten Sicherheit — wenn die Aufstockung nicht vollständig heilt, kann der Kreditgeber weiterhin alles beanspruchen.",
+          "loseNormal": "Der hinzugefügte Betrag wird Teil der bestehenden Sicherheit — er ist genauso gefährdet, falls der Kredit ausfällt.",
+          "oweNothingMore": "Nichts weiter — das ändert nicht, was Sie schulden.",
+          "receiveFallbackCure": "Eine Chance, den Kredit wieder gesund zu machen — NUR wenn diese Aufstockung das erforderliche Gesundheitsniveau wiederherstellt (siehe Warnung oben).",
+          "receiveSafer": "Jetzt nichts — ein sichererer Kredit (Liquidation rückt weiter weg).",
+          "title": "Sicherheit hinzufügen"
+        },
+        "backToPositions": "← Zurück zu meinen Positionen",
+        "confirmingRole": "Ihre Rolle wird bestätigt…",
+        "connectToAct": "Verbinden Sie die Wallet, die die Position dieses Kredits hält, um darauf zu handeln.",
+        "done": {
+          "collateralAdded": "Sicherheit hinzugefügt — der Kredit ist jetzt sicherer.",
+          "partialRepaid": "Teilrückzahlung bestätigt — Sie schulden jetzt weniger.",
+          "rentalClosed": "Vermietung geschlossen. Jeder erstattbare Puffer ist bereit — beanspruchen Sie ihn im Anspruchszentrum.",
+          "repaid": "Rückzahlung bestätigt. Ihre Sicherheit ist bereit — beanspruchen Sie sie unten oder im Anspruchszentrum."
+        },
+        "healthChecking": "Gesundheit dieses Kredits wird geprüft…",
+        "healthReadFailed": "Wir konnten die Gesundheit dieses Kredits gerade nicht lesen — erneuter Versuch läuft. Der Liquidationsschutz gilt on-chain weiterhin.",
+        "labels": {
+          "health": "Gesundheit",
+          "ifNothing": "Wenn nichts passiert",
+          "locked": "Gesperrt",
+          "owed": "Geschuldet",
+          "terms": "Bedingungen",
+          "whatNext": "Was als Nächstes passiert"
+        },
+        "loadingLoan": "Kredit wird geladen…",
+        "noCollateral": "Keine Sicherheit",
+        "notFound": "Wir konnten diesen Kredit gerade nicht finden. Er ist vielleicht neu (noch in der Indexierung) oder der Link ist alt.",
+        "owedRentalPrepaid": "Nichts zurückzuzahlen — Mietgebühren wurden vorausbezahlt (Verspätungsgebühren nur, wenn nach Fälligkeit geschlossen wird).",
+        "partial": {
+          "amountAria": "Jetzt zurückzuzahlender Betrag",
+          "blurb": "Dieser Kredit erlaubt Teilrückzahlung. Zahlungen gehen zuerst auf Zinsen und reduzieren dann den geschuldeten Betrag — das Fälligkeitsdatum ändert sich nie.",
+          "button": "Teil zurückzahlen",
+          "confirm": "Bestätigen — Teil zurückzahlen",
+          "endsPrincipalDrops": "Ihr verbleibender Hauptbetrag sinkt sofort; Zinsen laufen auf den kleineren Betrag weiter.",
+          "feesAccrued": "Der Protokollanteil der aufgelaufenen Zinsen wird innerhalb der Zahlung beglichen.",
+          "loseNothingBeyondPayment": "Nichts über die Zahlung hinaus.",
+          "receiveSmallerDebt": "Jetzt nichts — eine kleinere Schuld.",
+          "title": "Einen Teil des Kredits zurückzahlen"
+        },
+        "phase": {
+          "approving": "Freigabe in Ihrer Wallet…",
+          "submitting": "Wird gesendet…",
+          "waiting": "Warten auf die Wallet…"
+        },
+        "receipt": {
+          "bufferBack": "Jeder erstattbare Puffer zurück — direkt nach dem Schließen beanspruchbar.",
+          "bufferBackShort": "Ihr erstattbarer Puffer zurück.",
+          "endsClaim": "Der Anspruch zahlt sofort aus und diese Position schließt für Sie.",
+          "endsPreclose": "Sofort — der Kredit wird heute abgewickelt und Ihre Sicherheit freigegeben.",
+          "endsRepay": "Sofort — der Kredit wird abgewickelt und Ihre Seite freigegeben.",
+          "feesNone": "Keine.",
+          "feesPreclose": "Keine zusätzliche Vaipakam-Gebühr für vorzeitiges Schließen — der Anteil des Protokolls kommt aus den Zinsen des Kreditgebers.",
+          "feesRental": "Der Anteil des Protokolls kommt vor der Auszahlung aus den Mietgebühren.",
+          "feesRepay": "Keine zusätzliche Vaipakam-Gebühr für Rückzahlung — der Anteil des Protokolls kommt aus den Zinsen des Kreditgebers.",
+          "feesYield": "Die Renditegebühr des Protokolls kommt vor der Auszahlung aus den Zinsen.",
+          "internalResidual": "Jeder Rest, den das interne Match für Sie hinterlassen hat, plus jeder VPFI-Rabatt (kann null sein).",
+          "liquidationResidual": "Alles, was nach der Liquidation übrig ist (kann null sein).",
+          "loseNothingBeyondOwed": "Nichts über das hinaus, was Sie schulden.",
+          "loseNothingBeyondPay": "Nichts über das hinaus, was Sie zahlen.",
+          "noCollateralBack": "Nichts extra zurück — dieser Kredit hat keine Sicherheit freizugeben.",
+          "nothing": "Nichts.",
+          "nothingNew": "Nichts Neues.",
+          "oweRentalPrepaid": "Nichts weiter — Gebühren wurden vorausbezahlt (Verspätungsgebühren nur nach Fälligkeit).",
+          "owedNoCollateral": "Was dieser Seite noch geschuldet ist (dieser Kredit hatte keine Sicherheit, daher kann es nichts sein).",
+          "recoveredNoCollateral": "Was dieser Kredit zurückgewonnen hat (er hatte keine Sicherheit, daher kann es nichts sein).",
+          "rentalFeesAndNft": "Ihre verdienten Mietgebühren plus Ihr NFT zurück."
+        },
+        "roleUnverified": "Wir konnten nicht verifizieren, wer diese Position derzeit hält, daher sind Aktionen vorerst ausgeblendet. Bitte versuchen Sie es gleich erneut.",
+        "titleLoan": "Kredit",
+        "titleRental": "Vermietung",
+        "whatIfNothingRentalOwner": "Die Rechte des Mieters werden nach Fälligkeit und Nachfrist zurückgesetzt; Ihre Gebühren bleiben hier beanspruchbar.",
+        "whatIfNothingRentalRenter": "Ihre Nutzungsrechte enden am Fälligkeitsdatum und der vorausbezahlte Puffer geht an den Eigentümer — schließen Sie rechtzeitig, um ihn zurückzubekommen.",
+        "whatIfNothingRentalViewer": "Die Nutzungsrechte des Mieters enden am Fälligkeitsdatum; Gebühren und Puffer des Eigentümers werden gemäß den Mietbedingungen abgewickelt."
+      },
+      "getStarted": "Loslegen",
+      "loading": "Ihre Positionen werden geladen…",
+      "offerRow": {
+        "cancel": "Angebot stornieren",
+        "cancelling": "Wird storniert…",
+        "confirmCancel": "Bestätigen — stornieren und meine Assets entsperren",
+        "held": "Gehalten — vom Ersteller verwaltet",
+        "keep": "Angebot behalten",
+        "receiptEnds": "Sofort — das Angebot verlässt das Buch und kann nicht mehr angenommen werden. Sie können jederzeit ein neues Angebot veröffentlichen.",
+        "receiptFees": "Keine (nur Netzwerk-Gas).",
+        "receiptLose": "Nichts — das Stornieren eines offenen Angebots hat keine Strafe.",
+        "receiptNothing": "Nichts.",
+        "yourBorrowRequest": "Ihre Leihanfrage",
+        "yourLendingOffer": "Ihr Verleihangebot",
+        "yourNftListing": "Ihr NFT-Listing"
+      },
+      "openOffers": "Offene Angebote"
     },
     "powerSurface": {
       "body": "Dies ist ein Bildschirm für Power-User — rohe Angebote und Live-Zinssätze mit weniger Anleitung. Die geführten Abläufe unter „Leihen“ und „Verleihen“ decken dieselben Aktionen mit Schritt-für-Schritt-Erklärungen ab.",
@@ -635,7 +862,27 @@
       "allResidualNote": "Alles, was noch nicht bereit war, bleibt unten gelistet und kann einzeln beansprucht werden.",
       "allRewardsUnavailable": "Wir konnten Ihre Rewards nicht prüfen, daher sind sie in dieser Sammelabholung nicht enthalten — beanspruchen Sie sie separat.",
       "allVpfiUnavailable": "Ihr Vault-VPFI konnte nicht geprüft werden, daher ist es nicht in diesem Batch enthalten.",
-      "allWorking": "Warten auf die Wallet…"
+      "allWorking": "Warten auf die Wallet…",
+      "checking": "Ansprüche werden geprüft…",
+      "row": {
+        "heldProceeds": "Für diesen Kredit verwahrter Erlös",
+        "heldProceedsDefault": "Aus dem Ausfall zurückgewonnener verwahrter Erlös",
+        "loan": "Kredit",
+        "prepaidBufferBack": "Ihr vorausbezahlter Puffer zurück",
+        "rental": "Vermietung",
+        "repaidFunds": "Zurückgezahlte Mittel",
+        "residualAfterMatch": "Alles, was nach dem internen Match übrig ist",
+        "surplusAfterLiquidation": "Alles, was nach der Liquidation übrig ist",
+        "whyDefaultBorrower": "Dieser Kredit ist ausgefallen. Wenn die Liquidation einen Überschuss hinterlassen hat, können Sie ihn beanspruchen.",
+        "whyDefaultLender": "Der Kredit ist ausgefallen — holen Sie ab, was die Ausfallabwicklung für Sie zurückgewonnen hat.",
+        "whyFallbackPending": "Eine automatische Liquidation wurde nicht abgeschlossen — durch Beanspruchen finalisieren Sie die Rückgewinnung selbst.",
+        "whyInternalMatchBorrower": "Dieser Kredit wurde durch internes Matching geschlossen — holen Sie alles ab, was für Sie übrig ist.",
+        "whyInternalMatchLender": "Dieser Kredit wurde durch internes Matching geschlossen — holen Sie Ihre Mittel ab.",
+        "whyRentalClosed": "Die Vermietung wurde geschlossen — der erstattbare Puffer ist freigegeben.",
+        "whyRentalEnded": "Die Vermietung ist beendet — holen Sie Ihre verdienten Gebühren ab und nehmen Sie das NFT zurück.",
+        "whyRepaidBorrower": "Sie haben diesen Kredit zurückgezahlt, daher ist Ihre Sicherheit freigegeben.",
+        "whyRepaidLender": "Der Kreditnehmer hat diesen Kredit zurückgezahlt."
+      }
     },
     "offers": {
       "title": "Angebotsbuch",
@@ -644,7 +891,50 @@
       "emptyBody": "Erstellen Sie Ihr eigenes Angebot und lassen Sie die Gegenseite zu Ihnen kommen.",
       "unavailable": "Wir konnten das Angebotsbuch gerade nicht laden. Bitte versuchen Sie es gleich noch einmal.",
       "lenderOffer": "Kreditangebot",
-      "borrowerOffer": "Leihanfrage"
+      "borrowerOffer": "Leihanfrage",
+      "advancedNoExpiry": "kein Ablauf",
+      "advancedNoPartialRepay": "keine Teilrückzahlung",
+      "advancedPartialRepayOk": "Teilrückzahlung OK",
+      "badgeBorrower": "Kreditnehmer",
+      "badgeLender": "Kreditgeber",
+      "byCreator": "von",
+      "collateralLabel": "Sicherheit",
+      "collateralNone": "keine",
+      "createOffer": "Angebot erstellen",
+      "ctaBorrow": "Dieses Angebot leihen",
+      "ctaBuyPosition": "Diese Kreditposition kaufen",
+      "ctaFund": "Diese Anfrage finanzieren",
+      "ctaRent": "Dieses NFT mieten",
+      "dailyFeeLoading": "Tagesgebühr wird geladen…",
+      "feesPrepaid": "Gebühren vorausbezahlt",
+      "filteredEmptyBody": "Lockern Sie die Filter oben — das Angebotsbuch selbst hat offene Angebote.",
+      "filteredEmptyTitle": "Keine Angebote passen zu diesen Filtern",
+      "filters": {
+        "assetLabel": "Nach Asset-Adresse filtern",
+        "assetPlaceholder": "0x… (beliebige Seite: Hauptbetrag, Sicherheit, Zahlung)",
+        "clear": "Filter löschen",
+        "showLabel": "Anzeigen",
+        "sideAll": "Alles",
+        "sideBorrowing": "Leihanfragen (an diese verleihen)",
+        "sideLending": "Verleihangebote (von diesen leihen)",
+        "sideRentals": "NFT-Vermietungen",
+        "sortDurationLong": "Laufzeit — längste zuerst",
+        "sortDurationShort": "Laufzeit — kürzeste zuerst",
+        "sortLabel": "Sortieren nach",
+        "sortNewest": "Neueste zuerst",
+        "sortRateHigh": "Satz — hoch bis niedrig",
+        "sortRateLow": "Satz — niedrig bis hoch"
+      },
+      "footerParts": {
+        "borrowLink": "Leihen",
+        "lead": "Ein Angebot hier anzunehmen — „Dieses Angebot leihen“, „Diese Anfrage finanzieren“ oder „Diese Kreditposition kaufen“ — führt Sie durch dieselben Prüf- und Signaturschritte wie die geführten Abläufe ",
+        "lendLink": "Verleihen",
+        "mid": " und ",
+        "tail": "."
+      },
+      "loading": "Angebotsbuch wird geladen…",
+      "rentalListing": "NFT-Vermietung",
+      "yearly": "jährlich"
     },
     "desk": {
       "title": "Zins-Desk",
@@ -785,7 +1075,12 @@
         "blockGaslessService": "Gasloses Posten benötigt den Orderbuch-Dienst, der gerade nicht verfügbar ist — stellen Sie das Posten auf On-Chain um.",
         "consentRecheck": "Bedingungen geändert — bitte erneut bestätigen.",
         "max": "Max",
-        "feePreviewTitle": "Gebühren und Bindung"
+        "feePreviewTitle": "Gebühren und Bindung",
+        "collateralAmount": "Sicherheitenbetrag",
+        "expiryGtcTitle": "Gültig bis zur Stornierung — bleibt liegen, bis Sie stornieren",
+        "expiryGttTitle": "Gültig bis Zeitpunkt — läuft zur Frist automatisch ab",
+        "rateBpsNote": "Sätze werden in Basispunkten gespeichert (1% = 100 bps)",
+        "selfCollateral": "Die Sicherheit darf nicht derselbe Token wie das Kredit-Asset sein."
       },
       "orders": {
         "tab": "Offene Orders",
@@ -820,7 +1115,8 @@
         "signedCancelling": "Wird abgebrochen…",
         "signedCancelNote": "Das Posten war kostenlos, das Stornieren kostet aber Gas: Eine Signatur, die das Buch bereits hält, lässt sich nur mit einer On-Chain-Transaktion widerrufen.",
         "signedCancelled": "Signierte Order on-chain abgebrochen.",
-        "signedTruncated": "Sie haben in diesem Markt mehr signierte Orders, als wir auf einmal anzeigen können — dies ist nicht die vollständige Liste."
+        "signedTruncated": "Sie haben in diesem Markt mehr signierte Orders, als wir auf einmal anzeigen können — dies ist nicht die vollständige Liste.",
+        "loading": "Ihre offenen Orders werden geladen…"
       },
       "positions": {
         "tab": "Positionen",
@@ -829,8 +1125,14 @@
         "health": "Gesundheit",
         "notPriced": "Keine Auto-Liquidation",
         "manage": "Verwalten",
-        "allPositions": "Alle Positionen →"
-      }
+        "allPositions": "Alle Positionen →",
+        "loading": "Ihre Positionen werden geladen…"
+      },
+      "bookLoading": "Orderbuch wird geladen…",
+      "cumHeadingTitle": "Kumulative Tiefe von der Spitze dieser Seite",
+      "loadMarket": "Markt laden",
+      "marketsLoading": "Märkte werden geladen…",
+      "oneSidedBook": "einseitiges Buch"
     },
     "vpfi": {
       "title": "VPFI-Rabatte",
@@ -840,7 +1142,51 @@
       "tokenChanged": "Die VPFI-Token-Konfiguration hat sich seit Ihrer Prüfung geändert. Es wurde nichts freigegeben — bitte prüfen Sie die aktualisierten Zahlen und versuchen Sie es erneut.",
       "tokenCheckRetry": "Wir konnten den VPFI-Token gerade nicht bestätigen — es wurde nichts freigegeben. Bitte versuchen Sie es gleich noch einmal.",
       "addToWallet": "VPFI zu MetaMask hinzufügen",
-      "addedToWallet": "Ihre Wallet wurde gebeten, VPFI zu verfolgen."
+      "addedToWallet": "Ihre Wallet wurde gebeten, VPFI zu verfolgen.",
+      "activeDiscount": "Aktiver Rabatt",
+      "amountLabelDeposit": "VPFI, die in Ihren Vault verschoben werden",
+      "amountLabelWithdraw": "VPFI, die zurück in Ihre Wallet gehen",
+      "consentToggle": "Meine im Vault gehaltenen VPFI für Gebührenrabatte nutzen",
+      "consentToggleSub": "Ohne dies bringt das Halten von VPFI keinen Rabatt.",
+      "deposit": "Einzahlen",
+      "depositCta": "VPFI einzahlen",
+      "depositDone": "Einzahlung bestätigt. Ihre Rabatt-Historie baut sich ab jetzt auf.",
+      "depositToActivate": " — einzahlen zum Aktivieren",
+      "educationBody": "Halten Sie VPFI in Ihrem Vaipakam Vault, und die Protokollgebühr auf berechtigte Kredite sinkt. Der Rabatt nutzt Ihren durchschnittlichen Bestand der letzten 30 Tage — eine Aufstockung heute erhöht Ihren Rabatt schrittweise, nicht sofort.",
+      "educationTitle": "So funktioniert der Rabatt",
+      "inYourVault": "In Ihrem Vault",
+      "inYourWallet": "In Ihrer Wallet",
+      "max": "Max",
+      "noSellNote": "Vaipakam verkauft kein VPFI und zahlt keine Halterendite — Sie erwerben es am offenen Markt.",
+      "noneRightNow": "Derzeit keiner",
+      "nothing": "Nichts.",
+      "offFeesSuffix": "auf berechtigte Protokollgebühren",
+      "optOutSyncFailed": "Ihre Abmeldung ist in diesem Netzwerk gespeichert, aber die Synchronisierung in andere Netzwerke ist nicht durchgegangen — sie synchronisiert sich bei Ihrer nächsten VPFI-Aktion, oder versuchen Sie den Schalter erneut.",
+      "overMaxHint": " — das ist mehr, als Sie haben.",
+      "phaseApproving": "VPFI wird genehmigt…",
+      "phasePermitting": "Berechtigung wird signiert… — kostenlos, kein Gas",
+      "phaseSubmitting": "Wird gesendet…",
+      "phaseWaiting": "Warten auf die Wallet…",
+      "receiptDeposit": {
+        "fees": "Keine Vaipakam-Gebühr auf Einzahlungen.",
+        "whenThisEnds": "Ziehen Sie Ihre freien VPFI jederzeit ab.",
+        "youCanLose": "Nichts — freie VPFI in Ihrem Vault bleiben auszahlbar.",
+        "youReceive": "Jetzt nichts — mit der Zeit einen wachsenden Gebührenrabatt auf berechtigte Kredite."
+      },
+      "receiptWithdraw": {
+        "fees": "Keine Vaipakam-Gebühr auf Auszahlungen.",
+        "whenThisEnds": "Sofort — Ihr verbleibender Bestand baut weiter Rabatt-Historie auf.",
+        "youCanLoseLead": "Künftige Gebührenrabatte —"
+      },
+      "reviewDeposit": "Einzahlung prüfen",
+      "reviewWithdraw": "Auszahlung prüfen",
+      "statusTitle": "Ihr Rabattstatus",
+      "switchToChange": "Wechseln Sie zu einem unterstützten Netzwerk, um dies zu ändern.",
+      "vaultActionLabel": "Vault-Aktion",
+      "warmingUp": "Läuft warm",
+      "withdraw": "Auszahlen",
+      "withdrawCta": "VPFI auszahlen",
+      "withdrawDone": "Auszahlung bestätigt. Die VPFI sind zurück in Ihrer Wallet."
     },
     "errors": {
       "partialOverPrincipal": "Das deckt den gesamten verbleibenden Kreditbetrag ab. Verwenden Sie stattdessen „Diesen Kredit zurückzahlen“ — das wickelt den Kredit ordnungsgemäß ab und gibt Ihre Sicherheiten frei.",
@@ -920,7 +1266,14 @@
       "emptyCta": "Loslegen",
       "emptyCtaFaucet": "Test-Assets erhalten",
       "unavailable": "Wir konnten Ihren Vault gerade nicht lesen. Ihre Gelder sind davon nicht betroffen — bitte versuchen Sie es gleich noch einmal.",
-      "lockedHint": "Gesperrte Beträge sichern Ihre offenen Angebote, aktiven Kredite und Vermietungen ab. Sie werden wieder frei, wenn diese schließen."
+      "lockedHint": "Gesperrte Beträge sichern Ihre offenen Angebote, aktiven Kredite und Vermietungen ab. Sie werden wieder frei, wenn diese schließen.",
+      "addressLabel": "Vault-Adresse:",
+      "badgeFree": "Frei",
+      "badgePartlyLocked": "Teilweise gesperrt",
+      "emptyBody": "Assets erscheinen hier, wenn Sie Angebote veröffentlichen, Kredite eröffnen oder VPFI einzahlen.",
+      "emptyTitle": "Noch nichts in Ihrem Vault",
+      "loading": "Ihr Vault wird gelesen…",
+      "noVaultTitle": "Noch kein Vault"
     },
     "activity": {
       "title": "Aktivität",
@@ -936,14 +1289,16 @@
       "loadMore": "Ältere Aktivität laden",
       "loadingMore": "Wird geladen…",
       "unavailableFallback": "Ihre aktuellen Kredite und Vermietungen sind jederzeit verfügbar auf",
-      "positionsLink": "Meine Positionen"
+      "positionsLink": "Meine Positionen",
+      "loading": "Ihre Aktivität wird geladen…"
     },
     "rewards": {
       "title": "Interaktionsbelohnungen",
       "blurb": "VPFI-Rewards aus Ihrer Verleih- und Leihaktivität. Sie werden beanspruchbar, sobald ein Kredit schließt und der Reward-Tag finalisiert ist.",
       "empty": "Noch keine Rewards. Rewards erscheinen nach Kreditvergabe- oder Leih-Aktivität.",
       "waiting": "Ihre Rewards werden gerade finalisiert — ein Reward-Tag schließt über alle Chains hinweg ab, bevor er beansprucht werden kann. Schauen Sie bald wieder vorbei.",
-      "claim": "Belohnungen beanspruchen"
+      "claim": "Belohnungen beanspruchen",
+      "unavailable": "Wir konnten Ihre Rewards gerade nicht prüfen — bitte versuchen Sie es gleich erneut."
     },
     "sanctions": {
       "title": "Diese Wallet ist vom Compliance-Oracle gelistet.",
@@ -965,6 +1320,108 @@
       "title": "Diese Seite existiert nicht",
       "body": "Der Link ist möglicherweise alt oder falsch eingegeben. Nichts ist verloren — Ihre Positionen sind sicher.",
       "backHome": "Zurück zur Startseite"
+    },
+    "assetPicker": {
+      "faucetBadge": "Faucet-Test-Token",
+      "invalidAddress": "Geben Sie eine gültige Vertragsadresse ein — „0x“ gefolgt von 40 Hex-Zeichen.",
+      "pasteOption": "Token-Adresse einfügen…",
+      "placeholder": "Asset auswählen…"
+    },
+    "checklist": {
+      "checking": "Wird geprüft",
+      "needsAttention": "Benötigt Aufmerksamkeit",
+      "ready": "Bereit"
+    },
+    "common": {
+      "back": "Zurück",
+      "tryAgain": "Erneut versuchen",
+      "waitingForWallet": "Warten auf die Wallet…"
+    },
+    "copyAddress": {
+      "copied": "Adresse kopiert"
+    },
+    "loanRow": {
+      "youRent": "Sie mieten",
+      "youRentOut": "Sie vermieten"
+    },
+    "offerFlow": {
+      "advancedOptions": "Erweiterte Optionen",
+      "allowPartialRepay": "Dem Kreditnehmer erlauben, in Teilen zurückzuzahlen",
+      "back": "Zurück",
+      "beforeYouSign": "Vor dem Signieren",
+      "borrower": {
+        "acceptSubmitLabel": "Jetzt leihen",
+        "amountHint": "Wir suchen nach Kreditgebern, die ungefähr diesen Betrag anbieten.",
+        "amountLabel": "Wie viel möchten Sie leihen?",
+        "assetLabel": "Zu leihendes Asset",
+        "collateralLabel": "Sicherheit, die Sie sperren werden",
+        "rateHint": "Kreditgeber mit diesem oder einem niedrigeren Satz können Sie finanzieren.",
+        "rateLabel": "Höchster jährlicher Zinssatz, den Sie akzeptieren (%)"
+      },
+      "collateralAmountLabel": "Sicherheitenbetrag",
+      "continueToReview": "Weiter zur Prüfung",
+      "counterAssetBorrowed": "Geliehenes Asset",
+      "counterAssetCollateral": "Sicherheiten-Asset",
+      "durationLabel": "Laufzeit",
+      "lender": {
+        "acceptSubmitLabel": "Diesen Kreditnehmer finanzieren",
+        "amountHint": "Dieser Betrag ist gesperrt, solange Ihr Angebot offen ist. Sie können vor Annahme jederzeit stornieren.",
+        "amountLabel": "Wie viel möchten Sie verleihen?",
+        "assetLabel": "Zu verleihendes Asset",
+        "collateralHint": "Der Kreditnehmer muss dies sperren, bevor er Ihre Tokens erhält.",
+        "collateralLabel": "Sicherheit, die Sie vom Kreditnehmer verlangen",
+        "rateLabel": "Gewünschter jährlicher Zinssatz (%)"
+      },
+      "liveFeesLoaded": "Live-Gebührenbedingungen geladen",
+      "liveFeesLoading": "Live-Gebührenbedingungen werden geladen…",
+      "lookingForMatches": "Passende Angebote werden gesucht…",
+      "postAnother": "Ein weiteres Angebot veröffentlichen",
+      "preparingReview": "Ihre Prüfung wird vorbereitet…",
+      "proRataInterest": "Zinsen nur für die genutzte Zeit berechnen (anteilig) statt für die volle Laufzeit",
+      "receiptOweNothing": "Nichts — der Kreditnehmer schuldet Ihnen.",
+      "retry": "Erneut versuchen",
+      "rowBorrow": "Leihen",
+      "rowLend": "Verleihen",
+      "seeMatches": "Passende Angebote ansehen",
+      "selfCollateralError": "Die Sicherheit muss ein anderes Asset sein als das geliehene — das Protokoll weist Gleich-Asset-Angebote zurück.",
+      "steps": {
+        "details": "Details",
+        "done": "Fertig",
+        "offers": "Angebote",
+        "review": "Prüfen und signieren",
+        "terms": "Ihre Bedingungen"
+      },
+      "viewPositions": "Meine Positionen ansehen",
+      "viewTransaction": "Transaktion ansehen",
+      "waitingForWallet": "Warten auf die Wallet…"
+    },
+    "settingsPage": {
+      "experience": {
+        "advanced": "Erweitert",
+        "basic": "Einfach",
+        "hint": "Einfach reduziert jeden Bildschirm auf das Wesentliche. Erweitert zeigt auf denselben Seiten mehr Kontrollen und Marktdetails — die Protokollregeln sind in beiden identisch.",
+        "title": "Erfahrungsniveau"
+      },
+      "lede": "Darstellung, Erfahrungsniveau und mehr.",
+      "more": {
+        "activitySub": "Alles, was Ihre Wallet auf Vaipakam getan hat",
+        "claimsSub": "Rückzahlungen, Sicherheiten und Rewards abholen",
+        "helpSub": "Antworten in einfacher Sprache und Build-Infos",
+        "offersSub": "Alle offenen Angebote in diesem Netzwerk durchsuchen",
+        "title": "Mehr",
+        "vaultSub": "Wo Ihre Assets liegen — gesamt, gesperrt und frei",
+        "vpfiSub": "Optional — Protokollgebühren durch Halten von VPFI reduzieren"
+      },
+      "theme": {
+        "dark": "Dunkel",
+        "light": "Hell",
+        "system": "System",
+        "title": "Theme"
+      },
+      "title": "Einstellungen"
+    },
+    "stepNav": {
+      "progressAria": "Fortschritt"
     }
   }
 }
