@@ -15,7 +15,7 @@
         "claims": "Ansprüche",
         "vault": "Mein Vault",
         "faucet": "Test-Assets erhalten",
-        "offers": "Angebotebuch",
+        "offers": "Angebotsbuch",
         "desk": "Zins-Desk",
         "vpfi": "VPFI-Rabatte",
         "activity": "Aktivität",
@@ -47,7 +47,7 @@
         "description": "Verdienen Sie Gebühren mit einem NFT, das Ihnen gehört, oder nutzen Sie eines vorübergehend. Das Eigentum wechselt nie — das NFT bleibt für die Mietdauer im Vault des Eigentümers gesperrt."
       },
       "offers": {
-        "title": "Angebotebuch — Vaipakam",
+        "title": "Angebotsbuch — Vaipakam",
         "description": "Durchsuchen Sie alle offenen Kredit- und Leihangebote im Netzwerk — Assets, Zinssätze, Laufzeiten und Sicherheitenbedingungen live von der Chain."
       },
       "desk": {
@@ -482,38 +482,38 @@
       "actions": {
         "initPreclose": {
           "label": "Für mich das vorzeitige Schließen eines Kredits starten",
-          "side": "acts on Kredite Sie leihened",
+          "side": "wirkt auf Kredite, bei denen Sie Kreditnehmer sind",
           "blurb": "Startet jeden Weg zum vorzeitigen Schließen bei einem Kredit, bei dem Sie Kreditnehmer sind. Die Ablösesumme kommt weiterhin aus Ihrer Wallet im Rahmen Ihrer bestehenden Freigaben."
         },
         "refinance": {
           "label": "Eine Refinanzierung für mich abschließen",
-          "side": "acts on Kredite Sie leihened",
+          "side": "wirkt auf Kredite, bei denen Sie Kreditnehmer sind",
           "blurb": "Schließt eine von Ihnen aufgesetzte Refinanzierung ab, begrenzt durch die von Ihnen genehmigten Leitplanken (Zins-Obergrenze, Enddatum) — und den Keeper-Notausschalter des Protokolls."
         },
         "completeOffset": {
           "label": "Einen Offset-Abschluss für mich fertigstellen",
-          "side": "acts on Kredite Sie leihened",
+          "side": "wirkt auf Kredite, bei denen Sie Kreditnehmer sind",
           "blurb": "Schließt ein vorzeitiges Schließen per Verrechnung ab, sobald dessen Angebot angenommen wurde."
         },
         "extend": {
           "label": "Für mich einen Kredit direkt verlängern",
-          "side": "acts on Kredite Sie leihened",
+          "side": "wirkt auf Kredite, bei denen Sie Kreditnehmer sind",
           "blurb": "Verlängert einen Kredit, ohne ihn neu zu eröffnen — nur wenn BEIDE Seiten Verlängerungslimits aktiviert haben."
         },
         "initEarlyWithdraw": {
           "label": "Meine Kreditposition zum Verkauf inserieren",
-          "side": "acts on Kredite Sie funded",
+          "side": "wirkt auf Kredite, die Sie finanziert haben",
           "blurb": "Startet einen vorzeitigen Ausstieg als Kreditgeber, indem ein von Ihnen finanzierter Kredit inseriert wird. Der Erlös geht weiterhin nur an Sie."
         },
         "completeLoanSale": {
           "label": "Für mich einen Positionsverkauf abschließen",
-          "side": "acts on Kredite Sie funded",
+          "side": "wirkt auf Kredite, die Sie finanziert haben",
           "blurb": "Schließt einen angenommenen Positionsverkauf ab und überträgt den Kredit an seinen Käufer. Die Zahlung fließt weiterhin nur an Sie."
         }
       },
       "enabledOn": "Keeper-Zugriff aktiviert. Keeper können jetzt dort handeln, wo Sie Berechtigungen erteilt haben UND der Schalter des jeweiligen Kredits an ist.",
       "enabledOff": "Keeper-Zugriff deaktiviert — kein Keeper kann für Sie handeln, solange dies ausgeschaltet bleibt.",
-      "addTitle": "Genehmigen a keeper",
+      "addTitle": "Keeper genehmigen",
       "add": "Keeper genehmigen",
       "added": "Keeper freigegeben. Denken Sie daran: Er kann nur bei Krediten handeln, bei denen Sie zusätzlich den Keeper-Schalter des jeweiligen Kredits umlegen.",
       "alreadyListed": "Dieser Keeper ist bereits freigegeben — bearbeiten Sie stattdessen oben seine Berechtigungen.",
@@ -582,7 +582,7 @@
       "emptyBody": "Leihen oder verleihen Sie, um zu beginnen.",
       "unavailable": "Wir konnten Ihre Positionen gerade nicht laden. Ihre Gelder sind davon nicht betroffen — bitte versuchen Sie es gleich noch einmal.",
       "sourcesDegraded": "Eine der Datenquellen dieser Seite ist vorübergehend nicht verfügbar. Ihre aktuellen Positionen werden aus der verbleibenden Quelle angezeigt; kürzlich geänderte Einträge können mit etwas Verzögerung erscheinen.",
-      "roleBorrower": "Sie leihened",
+      "roleBorrower": "Sie haben geliehen",
       "roleLender": "Sie haben verliehen",
       "groupAttention": "Benötigt Ihre Aufmerksamkeit",
       "groupActive": "Aktive Kredite",
@@ -614,8 +614,8 @@
     },
     "powerSurface": {
       "body": "Dies ist ein Bildschirm für Power-User — rohe Angebote und Live-Zinssätze mit weniger Anleitung. Die geführten Abläufe unter „Leihen“ und „Verleihen“ decken dieselben Aktionen mit Schritt-für-Schritt-Erklärungen ab.",
-      "guidedBorrow": "Guided Leihen",
-      "guidedLend": "Guided Verleihen",
+      "guidedBorrow": "Geführtes Leihen",
+      "guidedLend": "Geführtes Verleihen",
       "enableAdvanced": "Ich weiß, was ich tue — Erweiterten Modus aktivieren",
       "dismiss": "Schließen"
     },
@@ -638,7 +638,7 @@
       "allWorking": "Warten auf die Wallet…"
     },
     "offers": {
-      "title": "Angebotebuch",
+      "title": "Angebotsbuch",
       "lede": "Offene Kreditangebote und Leihanfragen anderer Benutzer.",
       "emptyTitle": "Derzeit keine offenen Angebote",
       "emptyBody": "Erstellen Sie Ihr eigenes Angebot und lassen Sie die Gegenseite zu Ihnen kommen.",
@@ -673,7 +673,7 @@
       "bookUnavailable": "Wir konnten das Orderbuch gerade nicht laden. Bitte versuchen Sie es gleich noch einmal.",
       "bookIndexedCopy": "Live-Abruf von der Chain nicht verfügbar — angezeigt wird die indexierte Kopie des Buchs, die der Chain hinterherhinken kann.",
       "yourOrderMark": "Ihre Order zu diesem Zinssatz",
-      "takeAsk": "Dieses leihen",
+      "takeAsk": "Dieses Angebot leihen",
       "takeBid": "Zu diesem Satz verleihen",
       "rowPrefills": "Tippen Sie auf einen Zinssatz, um das Ticket vorab auszufüllen. Das Annehmen der Buchspitze durchläuft dieselbe geführte Prüfung wie „Leihen“ und „Verleihen“.",
       "tapeTitle": "Letzte Ausführungen",
@@ -693,7 +693,7 @@
         "partialBadgeTooltip": "Teilweise gematchte signierte Order — ihr Rest zählt weiterhin als Tiefe und wird über den öffentlichen Matcher ausgeführt, eine direkte Ausführung ist aber nicht mehr möglich.",
         "rangedBadgeTooltip": "Signierte Order mit Größenspanne — ihre Größe zählt weiterhin als Tiefe, aber nur der öffentliche Matcher kann sie in Teilstücken verbrauchen; eine direkte Ausführung der ganzen Order gibt es nicht.",
         "fill": "Ausführen",
-        "confirmTitle": "Fill signiert Order",
+        "confirmTitle": "Signierte Order ausführen",
         "confirmLede": "Sie führen die gesamte Ausführung in einer Transaktion aus: Ihre Seite kommt aus Ihrer Wallet, die Seite des Makers aus dessen Vault, und der Kredit startet sofort.",
         "gone": "Diese signierte Order ist nicht mehr ausführbar (ausgeführt, storniert oder abgelaufen). Das Buch zieht in Kürze nach. Es wurde nichts gesendet.",
         "makerNotFunded": "Der Vault des Makers deckt diese Order derzeit nicht, daher würde die Ausführung on-chain fehlschlagen. Es wurde nichts gesendet — der Maker muss zuerst seinen Vault auffüllen.",
@@ -740,8 +740,8 @@
         "sideBorrow": "Leihen",
         "amountLend": "Zu verleihender Betrag",
         "amountBorrow": "Zu leihender Betrag",
-        "rateLend": "Satz — minimum Sie werden accept (APR %)",
-        "rateBorrow": "Satz — maximum Sie werden pay (APR %)",
+        "rateLend": "Satz — Minimum, das Sie akzeptieren (APR %)",
+        "rateBorrow": "Satz — Maximum, das Sie zahlen (APR %)",
         "collateralRequire": "Geforderte Sicherheit",
         "collateralLock": "Gesperrte Sicherheit",
         "collateralFixedNote": "Durch den ausgewählten Markt vorgegeben — wechseln Sie den Markt in der Kopfzeile, um gegen ein anderes Sicherheiten-Asset zu posten.",
@@ -845,8 +845,8 @@
     "errors": {
       "partialOverPrincipal": "Das deckt den gesamten verbleibenden Kreditbetrag ab. Verwenden Sie stattdessen „Diesen Kredit zurückzahlen“ — das wickelt den Kredit ordnungsgemäß ab und gibt Ihre Sicherheiten frei.",
       "notAToken": "Diese Adresse sieht nicht nach einem Token in diesem Netzwerk aus. Prüfen Sie sie noch einmal oder wählen Sie ein vorgeschlagenes Asset.",
-      "txRejected": "Sie abgebrochen in Ihre Wallet. Es wurde nichts gesendet.",
-      "txFailed": "Die Transaktion didn’t go through. Nichts was taken beyond Netzwerk gas. Bitte versuchen Sie es erneut.",
+      "txRejected": "Sie haben in Ihrer Wallet abgebrochen. Es wurde nichts gesendet.",
+      "txFailed": "Die Transaktion wurde nicht ausgeführt. Außer Netzwerk-Gas wurde nichts abgezogen. Bitte versuchen Sie es erneut.",
       "sanctionsBlocked": "Diese Wallet ist vom Sanktions-Oracle markiert, daher sind neue Positionen und Auszahlungen blockiert. Es wurde nichts gesendet. Die Rückzahlung und das Schließen bestehender Positionen bleiben weiterhin möglich.",
       "sanctionsCheckRetry": "Wir konnten die Compliance-Prüfung gerade nicht durchführen — es wurde nichts gesendet. Bitte versuchen Sie es gleich noch einmal.",
       "checkRetry": "Wir konnten das gerade nicht on-chain verifizieren — es wurde nichts gesendet. Bitte versuchen Sie es gleich noch einmal.",
@@ -872,18 +872,18 @@
       "lede": "Prägen Sie Mock-Tokens und ein Test-NFT, um Leihen, Verleihen und Mieten in einem Testnetzwerk auszuprobieren — ohne echten Wert und ohne Kosten außer Gas.",
       "notTestnetTitle": "Test-Assets sind hier nicht verfügbar",
       "backHome": "Zurück zur Startseite",
-      "minting": "Minting…",
+      "minting": "Wird geprägt…",
       "viewTx": "Transaktion anzeigen",
       "nextSteps": "Als Nächstes: einsetzen —",
-      "nextBorrow": "Leihen gegen it",
-      "nextLend": "Verleihen Sie sie",
+      "nextBorrow": "Dagegen leihen",
+      "nextLend": "Verleihen",
       "nextRent": "Zur Miete anbieten",
       "footer": "Geprägte Assets landen in Ihrer Wallet. Nutzen Sie „Mein Vault“ und die Bildschirme Leihen, Verleihen und NFT-Vermietung, um sie einzusetzen.",
       "mintedNft": "Ein Test-Vermietungs-NFT wurde in Ihre Wallet geprägt. Seine Token-ID — Sie brauchen sie, um die Vermietung zu listen:",
       "copyTokenId": "Token-ID kopieren",
       "copiedTokenId": "Kopiert.",
       "liquid": {
-        "title": "Liquid test Token (tLIQ)",
+        "title": "Liquider Test-Token (tLIQ)",
         "blurb": "Von einem Test-Oracle bepreist und verhält sich daher wie ein liquides Asset — Health Factor, Liquidation und Refinanzierung funktionieren damit. Kombinieren Sie es mit mWETH (eines als Kredit, eines als Sicherheit), wenn ein Ablauf zwei verschiedene liquide Tokens braucht."
       },
       "liquid2": {
@@ -894,21 +894,21 @@
         "blurb": "Ein oracle-bepreister Test-Token, der in Demos die Rolle des „Wrapped ETH“ spielt. Er ist KEIN echtes WETH — er wird kostenlos geprägt und hat keinen Wert."
       },
       "nft2": {
-        "title": "Second vermietbares test NFT (vART)",
+        "title": "Zweites vermietbares Test-NFT (vART)",
         "blurb": "Eine weitere ERC-4907-Kollektion — praktisch, wenn Sie ein NFT listen und ein anderes mieten oder mehrere Vermietungen gleichzeitig laufen lassen möchten.",
         "action": "vART-NFT minten"
       },
       "addedToWallet": "Ihre Wallet wurde gebeten, ihn zu verfolgen.",
       "illiquid": {
-        "title": "Illiquid test Token (tILQ)",
+        "title": "Illiquider Test-Token (tILQ)",
         "blurb": "Kein Preis-Feed, daher verhält er sich wie ein illiquides Asset — beide Seiten müssen zustimmen, und im Ausfall werden die Sicherheiten in natura übertragen."
       },
       "illiquid2": {
-        "title": "Second illiquid test Token (tILQ2)",
+        "title": "Zweiter illiquider Test-Token (tILQ2)",
         "blurb": "Ebenfalls unbepreist. Kombinieren Sie ihn mit tILQ (einen als Kredit, einen als Sicherheit), um ein Geschäft auszuprobieren, bei dem KEINE Seite einen Preis hat — beide Parteien müssen zustimmen, es gilt kein Health Factor, und im Ausfall werden die Sicherheiten in natura übergeben."
       },
       "nft": {
-        "title": "Vermietung test NFT (vRENT)",
+        "title": "Vermietbares Test-NFT (vRENT)",
         "blurb": "Ein mietbares ERC-4907-NFT zum Ausprobieren der NFT-Vermietungsabläufe.",
         "action": "Test-NFT minten"
       }
