@@ -883,22 +883,24 @@ contract ConfigFacet is DiamondAccessControl {
     /// @custom:event-category informational/config
     event RewardClaimHorizonDaysSet(uint32 horizonDays);
 
-    /// @notice RL-3 (#1305, ratified §10.2) — set the post-claimability
-    ///         reward claim horizon `H` (days). While `0` (deploy default)
-    ///         the feature is DARK: no clock runs, nothing expires. Bounded
-    ///         `[180, 1095]` so a horizon can never be sprung on dormant
-    ///         claimants nor stretched into an unbounded liability tail.
-    ///         Setting it activates the horizon: the permissionless expiry
-    ///         sweep stamps each entry's first-observed claimability from
-    ///         then on, and an entry expires `H` days after its stamp —
-    ///         every pre-existing dormant entry therefore gets at least a
-    ///         full `H` of notice after first activation (grandfathering by
-    ///         construction). Every non-zero (re)configuration — activation
-    ///         after a dark reset AND any horizon retune, including a
-    ///         shortening — re-stamps the activation-notice floor: every
-    ///         entry, however stale its clock stamp, gets at least
-    ///         `REWARD_CLAIM_HORIZON_NOTICE_DAYS` (90) of fresh runway
-    ///         before it can expire (the ratified notice floor).
+    /// @notice RL-3 (#1305, ratified §10.2; Codex #1317 heartbeat model) —
+    ///         set the post-claimability reward claim horizon `H` (days).
+    ///         While `0` (deploy default) the feature is DARK: no clock
+    ///         accrues, nothing expires. Bounded `[180, 1095]` so a horizon
+    ///         can never be sprung on dormant claimants nor stretched into
+    ///         an unbounded liability tail.
+    ///
+    ///         Once set, the permissionless sweep accrues per entry the time
+    ///         during which it stayed CLAIM-EXECUTABLE, and an entry can be
+    ///         removed only after it has accrued a full
+    ///         `H + REWARD_CLAIM_HORIZON_NOTICE_DAYS` (H + 90) of such time —
+    ///         the notice is served IN ADDITION to `H`, never within it.
+    ///         Every non-zero (re)configuration advances a strictly-monotonic
+    ///         epoch, so a dark reset or any retune (including a shortening)
+    ///         caps every entry's accrual back to the horizon threshold and
+    ///         forces the full 90-day executable notice to be re-earned under
+    ///         the new configuration — a dormant claimant is never reaped
+    ///         without a fresh funded notice after the rules change.
     function setRewardClaimHorizonDays(uint32 horizonDays)
         external
         onlyRole(LibAccessControl.ADMIN_ROLE)
