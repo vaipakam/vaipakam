@@ -764,7 +764,7 @@
         "healthChecking": "இந்த loan health check செய்யப்படுகிறது…",
         "healthReadFailed": "இந்த loan healthஐ இப்போது read செய்ய முடியவில்லை — retry செய்கிறது. Liquidation protection on-chain தொடர்கிறது.",
         "labels": {
-          "health": "Health",
+          "health": "ஆரோக்கியம்",
           "ifNothing": "எதுவும் நடக்காவிட்டால்",
           "locked": "Locked",
           "owed": "Owed",
@@ -815,8 +815,8 @@
           "rentalFeesAndNft": "உங்கள் earned rental fees, plus உங்கள் NFT திரும்ப."
         },
         "roleUnverified": "இந்த position தற்போது யாரிடம் உள்ளது என்பதை verify செய்ய முடியவில்லை, அதனால் actions இப்போது hidden. சிறிது நேரத்தில் மீண்டும் முயற்சிக்கவும்.",
-        "titleLoan": "Loan",
-        "titleRental": "Rental",
+        "titleLoan": "கடன்",
+        "titleRental": "வாடகை",
         "whatIfNothingRentalOwner": "Renter rights due date மற்றும் grace periodக்குப் பிறகு reset ஆகும்; உங்கள் fees இங்கே claimable ஆகவே இருக்கும்.",
         "whatIfNothingRentalRenter": "உங்கள் use rights due dateல் முடிவடையும், prepaid buffer ownerக்கு செல்லும் — அதை திரும்பப் பெற நேரத்தில் close செய்யுங்கள்.",
         "whatIfNothingRentalViewer": "Renter use rights due dateல் முடிவடையும்; owner fees மற்றும் buffer rental terms படி settle ஆகும்."
@@ -895,8 +895,8 @@
       "advancedNoExpiry": "expiry இல்லை",
       "advancedNoPartialRepay": "partial repay இல்லை",
       "advancedPartialRepayOk": "partial repay OK",
-      "badgeBorrower": "Borrower",
-      "badgeLender": "Lender",
+      "badgeBorrower": "கடன் வாங்குபவர்",
+      "badgeLender": "கடனளிப்பாளர்",
       "byCreator": "மூலம்",
       "collateralLabel": "collateral",
       "collateralNone": "எதுவும் இல்லை",
@@ -926,9 +926,9 @@
         "sortRateLow": "Rate — low to high"
       },
       "footerParts": {
-        "borrowLink": "Borrow",
+        "borrowLink": "கடன் வாங்கு",
         "lead": "இங்கே offer எடுப்பது — “இதை borrow செய்யுங்கள்”, “இந்த requestஐ fund செய்யுங்கள்”, அல்லது “இந்த loan position வாங்கவும்” — guided ",
-        "lendLink": "Lend",
+        "lendLink": "கடனளி",
         "mid": " மற்றும் ",
         "tail": " flows போலவே review-and-sign படிகளில் அழைத்துச் செல்லும்."
       },
@@ -1129,7 +1129,7 @@
         "loading": "உங்கள் positions ஏற்றப்படுகின்றன…"
       },
       "bookLoading": "Order book ஏற்றப்படுகிறது…",
-      "cumHeadingTitle": "இந்தப் பக்கத்தின் மேலிருந்து cumulative depth",
+      "cumHeadingTitle": "ஆர்டர் புத்தகத்தின் இந்தப் பக்கத்தின் மேலிருந்து cumulative depth",
       "loadMarket": "Market ஏற்று",
       "marketsLoading": "Markets ஏற்றப்படுகின்றன…",
       "oneSidedBook": "ஒருபக்க book"
@@ -1380,8 +1380,8 @@
       "proRataInterest": "Full termக்கு பதிலாக பயன்படுத்திய நேரத்திற்கே interest charge செய்யுங்கள் (pro-rata)",
       "receiptOweNothing": "எதுவும் இல்லை — borrower உங்களுக்கு owe செய்கிறார்.",
       "retry": "மீண்டும் முயற்சிக்கவும்",
-      "rowBorrow": "Borrow",
-      "rowLend": "Lend",
+      "rowBorrow": "கடன் வாங்கு",
+      "rowLend": "கடனளி",
       "seeMatches": "Matching offers பார்க்கவும்",
       "selfCollateralError": "Collateral borrow செய்யப்படும் assetஇலிருந்து வேறு asset ஆக இருக்க வேண்டும் — protocol same-asset offersஐ reject செய்கிறது.",
       "steps": {
@@ -1418,7 +1418,7 @@
         "system": "System",
         "title": "Theme"
       },
-      "title": "Settings"
+      "title": "அமைப்புகள்"
     },
     "stepNav": {
       "progressAria": "Progress"
