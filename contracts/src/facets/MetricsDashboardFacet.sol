@@ -7,7 +7,8 @@ import {LibMetricsHooks} from "../libraries/LibMetricsHooks.sol";
 import {LibMetricsTypes} from "../libraries/LibMetricsTypes.sol";
 import {LibVPFIDiscount} from "../libraries/LibVPFIDiscount.sol";
 import {RiskFacet} from "./RiskFacet.sol";
-import {InteractionRewardsFacet} from "./InteractionRewardsFacet.sol";
+// #1306 follow-up — previewInteractionRewards moved to the read-only lens.
+import {InteractionRewardsLensFacet} from "./InteractionRewardsLensFacet.sol";
 
 /**
  * @title MetricsDashboardFacet
@@ -153,7 +154,7 @@ contract MetricsDashboardFacet {
         // Reward + vault scalars — pulled via cross-facet view so
         // each subsystem stays the source of truth for its own
         // calculations.
-        try InteractionRewardsFacet(address(this)).previewInteractionRewards(user) returns (
+        try InteractionRewardsLensFacet(address(this)).previewInteractionRewards(user) returns (
             uint256 pending,
             uint256 /* finalizedThroughDay */,
             uint256 /* userStartDay */

@@ -8,6 +8,7 @@ import {VPFIToken} from "../src/token/VPFIToken.sol";
 import {VPFITokenFacet} from "../src/facets/VPFITokenFacet.sol";
 import {VPFIDiscountFacet} from "../src/facets/VPFIDiscountFacet.sol";
 import {InteractionRewardsFacet} from "../src/facets/InteractionRewardsFacet.sol";
+import {InteractionRewardsLensFacet} from "../src/facets/InteractionRewardsLensFacet.sol";
 import {IVaipakamErrors} from "../src/interfaces/IVaipakamErrors.sol";
 
 /// @title StakingAndInteractionRewardsTest
@@ -68,6 +69,11 @@ contract StakingAndInteractionRewardsTest is SetupTest, IVaipakamErrors {
         return InteractionRewardsFacet(address(diamond));
     }
 
+    ///  #1306 follow-up — read-only lens accessor.
+    function _interactionLens() internal view returns (InteractionRewardsLensFacet) {
+        return InteractionRewardsLensFacet(address(diamond));
+    }
+
     // ─── Vault deposit / withdraw ──────────────────────────────────────────────
     // #687-B: the 5% staking-yield accrual/claim tests were removed with the
     // yield. The deposit/withdraw mechanics (which back the discount tiers) stay.
@@ -105,31 +111,31 @@ contract StakingAndInteractionRewardsTest is SetupTest, IVaipakamErrors {
 
     function testInteractionScheduleBands() public {
         // Spot-check a few decay-band boundaries.
-        assertEq(_interaction().getInteractionAnnualRateBps(0), 3200);
-        assertEq(_interaction().getInteractionAnnualRateBps(182), 3200);
-        assertEq(_interaction().getInteractionAnnualRateBps(183), 2900);
-        assertEq(_interaction().getInteractionAnnualRateBps(547), 2900);
-        assertEq(_interaction().getInteractionAnnualRateBps(548), 2400);
-        assertEq(_interaction().getInteractionAnnualRateBps(2373), 500);
-        assertEq(_interaction().getInteractionAnnualRateBps(10_000), 500);
+        assertEq(_interactionLens().getInteractionAnnualRateBps(0), 3200);
+        assertEq(_interactionLens().getInteractionAnnualRateBps(182), 3200);
+        assertEq(_interactionLens().getInteractionAnnualRateBps(183), 2900);
+        assertEq(_interactionLens().getInteractionAnnualRateBps(547), 2900);
+        assertEq(_interactionLens().getInteractionAnnualRateBps(548), 2400);
+        assertEq(_interactionLens().getInteractionAnnualRateBps(2373), 500);
+        assertEq(_interactionLens().getInteractionAnnualRateBps(10_000), 500);
     }
 
     function testInteractionHalfPoolMatchesFormula() public {
         // Day 0 of the global emissions window is excluded per
         // docs/TokenomicsTechSpec.md §4 so sub-24h-old loans don't compete
         // for the first day's emission.
-        assertEq(_interaction().getInteractionHalfPoolForDay(0), 0);
+        assertEq(_interactionLens().getInteractionHalfPoolForDay(0), 0);
 
         // halfPool_d = bps * 23M * 1e18 / (BPS * 365 * 2)
         // Day 1 is still in band 0 (bps=3200).
         uint256 bps = 3200;
         uint256 expected = (bps * 23_000_000 ether) / (10_000 * 365 * 2);
-        assertEq(_interaction().getInteractionHalfPoolForDay(1), expected);
+        assertEq(_interactionLens().getInteractionHalfPoolForDay(1), expected);
     }
 
     function testInteractionSnapshotReturnsCapAndLaunch() public {
         (uint256 cap, uint256 paidOut, uint256 remaining, uint256 launch, , ) =
-            _interaction().getInteractionSnapshot();
+            _interactionLens().getInteractionSnapshot();
         assertEq(cap, 69_000_000 ether);
         assertEq(paidOut, 0);
         assertEq(remaining, cap);
@@ -137,7 +143,7 @@ contract StakingAndInteractionRewardsTest is SetupTest, IVaipakamErrors {
 
         _interaction().setInteractionLaunchTimestamp(block.timestamp);
         (, , , uint256 launch2, uint256 today, uint256 aprBps) =
-            _interaction().getInteractionSnapshot();
+            _interactionLens().getInteractionSnapshot();
         assertEq(launch2, block.timestamp);
         assertEq(today, 0);
         assertEq(aprBps, 3200);

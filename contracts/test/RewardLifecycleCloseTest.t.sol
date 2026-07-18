@@ -8,6 +8,7 @@ import {OfferCreateFacet} from "../src/facets/OfferCreateFacet.sol";
 import {RepayFacet} from "../src/facets/RepayFacet.sol";
 import {PrecloseFacet} from "../src/facets/PrecloseFacet.sol";
 import {InteractionRewardsFacet} from "../src/facets/InteractionRewardsFacet.sol";
+import {InteractionRewardsLensFacet} from "../src/facets/InteractionRewardsLensFacet.sol";
 import {LibAcceptTestSigner} from "./helpers/LibAcceptTestSigner.sol";
 
 /**
@@ -74,7 +75,7 @@ contract RewardLifecycleCloseTest is SetupTest {
         view
         returns (LibVaipakam.RewardEntry[] memory)
     {
-        return InteractionRewardsFacet(address(diamond)).getUserRewardEntries(user);
+        return InteractionRewardsLensFacet(address(diamond)).getUserRewardEntries(user);
     }
 
     // ─── S4: entries open at origination, closed by closeLoan ────────────────
@@ -98,7 +99,7 @@ contract RewardLifecycleCloseTest is SetupTest {
         // Warp well past the 30-day maturity; the loan is still Active (open).
         vm.warp(block.timestamp + 45 days);
         (uint256 preview,,) =
-            InteractionRewardsFacet(address(diamond)).previewInteractionRewards(lender);
+            InteractionRewardsLensFacet(address(diamond)).previewInteractionRewards(lender);
         assertEq(preview, 0, "no entry reward payable while the loan is open");
     }
 

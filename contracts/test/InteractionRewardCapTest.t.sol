@@ -7,6 +7,7 @@ import {ERC1967Proxy} from "@openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy.s
 import {VPFIToken} from "../src/token/VPFIToken.sol";
 import {VPFITokenFacet} from "../src/facets/VPFITokenFacet.sol";
 import {InteractionRewardsFacet} from "../src/facets/InteractionRewardsFacet.sol";
+import {InteractionRewardsLensFacet} from "../src/facets/InteractionRewardsLensFacet.sol";
 import {LibVaipakam} from "../src/libraries/LibVaipakam.sol";
 import {TestMutatorFacet} from "./mocks/TestMutatorFacet.sol";
 import {MockChainlinkAggregator} from "./mocks/MockChainlinkAggregator.sol";
@@ -73,12 +74,18 @@ contract InteractionRewardCapTest is SetupTest, IVaipakamErrors {
         return InteractionRewardsFacet(address(diamond));
     }
 
+    ///  #1306 follow-up — read-only lens accessor (getters moved off
+    ///      InteractionRewardsFacet into InteractionRewardsLensFacet).
+    function _lens() internal view returns (InteractionRewardsLensFacet) {
+        return InteractionRewardsLensFacet(address(diamond));
+    }
+
     function _mut() internal view returns (TestMutatorFacet) {
         return TestMutatorFacet(address(diamond));
     }
 
     function _halfPool(uint256 day) internal view returns (uint256) {
-        return _facet().getInteractionHalfPoolForDay(day);
+        return _lens().getInteractionHalfPoolForDay(day);
     }
 
     /// @dev Expected per-side cap for a user holding `interestNumeraire18` on
@@ -216,7 +223,7 @@ contract InteractionRewardCapTest is SetupTest, IVaipakamErrors {
         uint256 newRatio = LibVaipakam.INTERACTION_CAP_DEFAULT_VPFI_PER_ETH * 2;
         _facet().setInteractionCapVpfiPerEth(newRatio);
         assertEq(
-            _facet().getInteractionCapVpfiPerEth(),
+            _lens().getInteractionCapVpfiPerEth(),
             newRatio,
             "effective cap reflects override"
         );
@@ -273,11 +280,11 @@ contract InteractionRewardCapTest is SetupTest, IVaipakamErrors {
     ///         resolved value.
     function testOverrideZeroFallsBackToDefault() public {
         _facet().setInteractionCapVpfiPerEth(777); // arbitrary nonzero
-        assertEq(_facet().getInteractionCapVpfiPerEthRaw(), 777);
+        assertEq(_lens().getInteractionCapVpfiPerEthRaw(), 777);
         _facet().setInteractionCapVpfiPerEth(0);
-        assertEq(_facet().getInteractionCapVpfiPerEthRaw(), 0, "raw cleared");
+        assertEq(_lens().getInteractionCapVpfiPerEthRaw(), 0, "raw cleared");
         assertEq(
-            _facet().getInteractionCapVpfiPerEth(),
+            _lens().getInteractionCapVpfiPerEth(),
             LibVaipakam.INTERACTION_CAP_DEFAULT_VPFI_PER_ETH,
             "effective value uses default"
         );
@@ -310,6 +317,6 @@ contract InteractionRewardCapTest is SetupTest, IVaipakamErrors {
     // ─── Helpers ───────────────────────────────────────────────────────────
 
     function _previewAmount(address user) internal view returns (uint256 amount) {
-        (amount,,) = _facet().previewInteractionRewards(user);
+        (amount,,) = _lens().previewInteractionRewards(user);
     }
 }

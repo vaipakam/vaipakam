@@ -7,6 +7,7 @@ import {ERC1967Proxy} from "@openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy.s
 import {VPFIToken} from "../src/token/VPFIToken.sol";
 import {VPFITokenFacet} from "../src/facets/VPFITokenFacet.sol";
 import {InteractionRewardsFacet} from "../src/facets/InteractionRewardsFacet.sol";
+import {InteractionRewardsLensFacet} from "../src/facets/InteractionRewardsLensFacet.sol";
 import {RewardReporterFacet} from "../src/facets/RewardReporterFacet.sol";
 import {RewardAggregatorFacet} from "../src/facets/RewardAggregatorFacet.sol";
 import {ConfigFacet} from "../src/facets/ConfigFacet.sol";
@@ -82,6 +83,12 @@ contract GovernorDualAccumulatorTest is SetupTest {
 
     function _facet() internal view returns (InteractionRewardsFacet) {
         return InteractionRewardsFacet(address(diamond));
+    }
+
+    ///  #1306 follow-up — read-only lens accessor (getters moved off
+    ///      InteractionRewardsFacet into InteractionRewardsLensFacet).
+    function _lens() internal view returns (InteractionRewardsLensFacet) {
+        return InteractionRewardsLensFacet(address(diamond));
     }
 
     function _rep() internal view returns (RewardReporterFacet) {
@@ -166,7 +173,7 @@ contract GovernorDualAccumulatorTest is SetupTest {
         );
         // Fresh consumed the 69M pool ONLY for the fresh share.
         assertApproxEqAbs(
-            _facet().getInteractionPoolPaidOut(),
+            _lens().getInteractionPoolPaidOut(),
             expectFresh,
             1e6,
             "pool consumed fresh share only"
@@ -217,7 +224,7 @@ contract GovernorDualAccumulatorTest is SetupTest {
             "only the fresh share credits the bucket"
         );
         // credited[D] must exclude the recycled share too (never feeds A-bar).
-        (uint256 today, ) = _facet().getInteractionCurrentDay();
+        (uint256 today, ) = _lens().getInteractionCurrentDay();
         assertApproxEqAbs(
             _cfg().getRecycledCreditedByDay(today),
             expectFresh,
@@ -324,7 +331,7 @@ contract GovernorDualAccumulatorTest is SetupTest {
     // ─── 6. Arming guards ────────────────────────────────────────────────────
 
     function testArmingIsFutureOnlyAndOneShot() public {
-        (uint256 today, ) = _facet().getInteractionCurrentDay();
+        (uint256 today, ) = _lens().getInteractionCurrentDay();
         vm.expectRevert(
             abi.encodeWithSelector(
                 RewardAggregatorFacet.GovernorArmingDayNotFuture.selector,

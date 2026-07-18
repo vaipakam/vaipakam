@@ -69,6 +69,7 @@ import {VPFIDiscountAccumulatorFacet} from "../src/facets/VPFIDiscountAccumulato
 import {MirrorTierReceiverFacet} from "../src/facets/MirrorTierReceiverFacet.sol";
 import {ProtocolBroadcastFacet} from "../src/facets/ProtocolBroadcastFacet.sol";
 import {InteractionRewardsFacet} from "../src/facets/InteractionRewardsFacet.sol";
+import {InteractionRewardsLensFacet} from "../src/facets/InteractionRewardsLensFacet.sol";
 import {RewardReporterFacet} from "../src/facets/RewardReporterFacet.sol";
 import {RewardAggregatorFacet} from "../src/facets/RewardAggregatorFacet.sol";
 import {RewardRemittanceFacet} from "../src/facets/RewardRemittanceFacet.sol";
@@ -1744,35 +1745,48 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](24);
+        // #1306 follow-up — the 14 read-only view/getter selectors moved to
+        // {InteractionRewardsLensFacet} (see getInteractionRewardsLensFacetSelectors).
+        selectors = new bytes4[](10);
         selectors[0] = InteractionRewardsFacet.claimInteractionRewards.selector;
         selectors[1] = InteractionRewardsFacet.setInteractionLaunchTimestamp.selector;
-        selectors[2] = InteractionRewardsFacet.getInteractionLaunchTimestamp.selector;
-        selectors[3] = InteractionRewardsFacet.getInteractionCurrentDay.selector;
-        selectors[4] = InteractionRewardsFacet.getInteractionAnnualRateBps.selector;
-        selectors[5] = InteractionRewardsFacet.getInteractionHalfPoolForDay.selector;
-        selectors[6] = InteractionRewardsFacet.getInteractionLastClaimedDay.selector;
-        selectors[7] = InteractionRewardsFacet.getInteractionDayEntry.selector;
-        selectors[8] = InteractionRewardsFacet.previewInteractionRewards.selector;
-        selectors[9] = InteractionRewardsFacet.getInteractionPoolRemaining.selector;
-        selectors[10] = InteractionRewardsFacet.getInteractionPoolPaidOut.selector;
-        selectors[11] = InteractionRewardsFacet.getInteractionSnapshot.selector;
-        selectors[12] = InteractionRewardsFacet.getInteractionClaimability.selector;
-        selectors[13] = InteractionRewardsFacet.setInteractionCapVpfiPerEth.selector;
-        selectors[14] = InteractionRewardsFacet.getInteractionCapVpfiPerEth.selector;
-        selectors[15] = InteractionRewardsFacet.getInteractionCapVpfiPerEthRaw.selector;
-        selectors[16] = InteractionRewardsFacet.sweepForfeitedInteractionRewards.selector;
-        selectors[17] = InteractionRewardsFacet.getUserRewardEntries.selector;
+        selectors[2] = InteractionRewardsFacet.setInteractionCapVpfiPerEth.selector;
+        selectors[3] = InteractionRewardsFacet.sweepForfeitedInteractionRewards.selector;
         // #969 / S5 — diamond-internal reward-lifecycle hooks for PrecloseFacet.
-        selectors[18] = InteractionRewardsFacet.precloseRewardClose.selector;
-        selectors[19] = InteractionRewardsFacet.precloseRewardTransferObligation.selector;
+        selectors[4] = InteractionRewardsFacet.precloseRewardClose.selector;
+        selectors[5] = InteractionRewardsFacet.precloseRewardTransferObligation.selector;
         // #1067 / S13 Part 2 — diamond-internal terminal reward-close hooks
         // (self-only; fired best-effort by the terminal facets).
-        selectors[20] = InteractionRewardsFacet.liquidationRewardClose.selector;
-        selectors[21] = InteractionRewardsFacet.terminalRewardClose.selector;
-        selectors[22] = InteractionRewardsFacet.transferLenderRewardEntry.selector;
+        selectors[6] = InteractionRewardsFacet.liquidationRewardClose.selector;
+        selectors[7] = InteractionRewardsFacet.terminalRewardClose.selector;
+        selectors[8] = InteractionRewardsFacet.transferLenderRewardEntry.selector;
         // RL-1 — explicit-delivery claim (vault default / wallet opt-out).
-        selectors[23] = InteractionRewardsFacet.claimInteractionRewardsTo.selector;
+        selectors[9] = InteractionRewardsFacet.claimInteractionRewardsTo.selector;
+        return selectors;
+    }
+
+    /// @dev #1306 follow-up — the 14 read-only view/getter selectors split off
+    ///      {InteractionRewardsFacet} into {InteractionRewardsLensFacet}.
+    function getInteractionRewardsLensFacetSelectors()
+        public
+        pure
+        returns (bytes4[] memory selectors)
+    {
+        selectors = new bytes4[](14);
+        selectors[0] = InteractionRewardsLensFacet.getInteractionLaunchTimestamp.selector;
+        selectors[1] = InteractionRewardsLensFacet.getInteractionCurrentDay.selector;
+        selectors[2] = InteractionRewardsLensFacet.getInteractionAnnualRateBps.selector;
+        selectors[3] = InteractionRewardsLensFacet.getInteractionHalfPoolForDay.selector;
+        selectors[4] = InteractionRewardsLensFacet.getInteractionLastClaimedDay.selector;
+        selectors[5] = InteractionRewardsLensFacet.getInteractionDayEntry.selector;
+        selectors[6] = InteractionRewardsLensFacet.previewInteractionRewards.selector;
+        selectors[7] = InteractionRewardsLensFacet.getInteractionPoolRemaining.selector;
+        selectors[8] = InteractionRewardsLensFacet.getInteractionPoolPaidOut.selector;
+        selectors[9] = InteractionRewardsLensFacet.getInteractionSnapshot.selector;
+        selectors[10] = InteractionRewardsLensFacet.getInteractionClaimability.selector;
+        selectors[11] = InteractionRewardsLensFacet.getInteractionCapVpfiPerEth.selector;
+        selectors[12] = InteractionRewardsLensFacet.getInteractionCapVpfiPerEthRaw.selector;
+        selectors[13] = InteractionRewardsLensFacet.getUserRewardEntries.selector;
         return selectors;
     }
 

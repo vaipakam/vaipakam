@@ -3,7 +3,7 @@ pragma solidity ^0.8.29;
 
 import {Script} from "forge-std/Script.sol";
 import {console} from "forge-std/console.sol";
-import {InteractionRewardsFacet} from "../src/facets/InteractionRewardsFacet.sol";
+import {InteractionRewardsLensFacet} from "../src/facets/InteractionRewardsLensFacet.sol";
 import {RewardReporterFacet} from "../src/facets/RewardReporterFacet.sol";
 import {RewardAggregatorFacet} from "../src/facets/RewardAggregatorFacet.sol";
 import {Deployments} from "./lib/Deployments.sol";
@@ -74,11 +74,12 @@ contract FinalizeInteractionDays is Script {
         // what FINALIZE_FROM_DAY to pass next.
         uint256 scanCap = vm.envOr("FINALIZE_SCAN_CAP", uint256(500));
 
-        InteractionRewardsFacet ir = InteractionRewardsFacet(diamond);
+        // #1306 follow-up — the read-only getter moved to the lens facet.
+        InteractionRewardsLensFacet irLens = InteractionRewardsLensFacet(diamond);
         RewardReporterFacet rr = RewardReporterFacet(diamond);
         RewardAggregatorFacet ra = RewardAggregatorFacet(diamond);
 
-        (uint256 today, bool active) = ir.getInteractionCurrentDay();
+        (uint256 today, bool active) = irLens.getInteractionCurrentDay();
         require(
             active,
             "FinalizeInteractionDays: interaction rewards not launched (run SetInteractionLaunch first)"
