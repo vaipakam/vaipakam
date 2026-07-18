@@ -27,7 +27,16 @@
         "language": "மொழி",
         "languageHint": "முழுமையாக மொழிபெயர்க்கப்படாத மொழிகளில் இப்போது ஆங்கில உரை காட்டப்படும்.",
         "languagePickerAria": "காட்சி மொழி"
-      }
+      },
+      "loading": "ஏற்றப்படுகிறது…",
+      "modeAdvanced": "Advanced",
+      "modeBasic": "Basic",
+      "modeSwitchAria": "Interface முறை",
+      "more": "மேலும்",
+      "moreSheetAria": "மேலும் இடங்கள்",
+      "navPrimaryAria": "முதன்மை",
+      "navQuickAria": "விரைவு வழிசெலுத்தல்",
+      "skipToContent": "உள்ளடக்கத்துக்கு செல்லவும்"
     },
     "seo": {
       "home": {
@@ -178,7 +187,11 @@
       "pushEnable": "Push அனுப்புகையை இயக்கு",
       "pushEnabled": "இந்த வாலெட்டுக்கு Push அனுப்புகை இயக்கத்தில் உள்ளது.",
       "pushButton": "Push சேனலைத் திற",
-      "loanNudge": "இந்த கடன் அபாய நிலைக்கு சென்றால் Telegram எச்சரிக்கை வேண்டுமா? அமைப்புகளில் எச்சரிக்கைகளை அமையுங்கள்."
+      "loanNudge": "இந்த கடன் அபாய நிலைக்கு சென்றால் Telegram எச்சரிக்கை வேண்டுமா? அமைப்புகளில் எச்சரிக்கைகளை அமையுங்கள்.",
+      "bandAlert": "அலர்ட்",
+      "bandCritical": "மிகவும் முக்கியம்",
+      "bandWarn": "எச்சரிக்கை",
+      "bandsSave": "சேமி"
     },
     "notifications": {
       "bellLabel": "அறிவிப்புகள்",
@@ -206,7 +219,16 @@
       "title": "இந்த பக்கத்தில் ஏதோ தவறு நடந்தது",
       "body": "பக்கம் எதிர்பாராத பிழையைச் சந்தித்து காட்சியை நிறுத்திவிட்டது. உங்கள் நிதியும் ஆன்-செயின் நிலைகளும் பாதிக்கப்படவில்லை — இது காட்சிப் பக்கத்தின் கோளாறு மட்டுமே; நீங்கள் இப்போது கையொப்பமிட்ட பரிவர்த்தனை நிறைவேறியிருக்கக்கூடும் (மீண்டும் ஏற்றிய பிறகு ‘என் நிலைகள்’ பகுதியைப் பாருங்கள்). பொதுவாக பக்கத்தை மீண்டும் ஏற்றினால் சரியாகிவிடும்.",
       "reload": "பக்கத்தை மீண்டும் ஏற்று",
-      "home": "முகப்புக்குத் திரும்பு"
+      "home": "முகப்புக்குத் திரும்பு",
+      "detailAria": "Error விவரம்",
+      "glosses": {
+        "185": "Maximum update depth exceeded — component ஒவ்வொரு renderலும state update செய்கிறது. இது infinite render loop.",
+        "300": "Expected hooksஐ விடக் குறைவாக render ஆனது — conditional return காரணமாக hook skip ஆனது.",
+        "301": "மிக அதிக re-renders — render நடக்கும் போது state setter call செய்யப்படுகிறது.",
+        "310": "Rules of Hooks violation — hook conditionally அல்லது தவறான orderல் call செய்யப்பட்டது.",
+        "321": "Invalid hook call — hooks React function component உள்ளே மட்டுமே run ஆகலாம்.",
+        "418": "Hydration mismatch — server மற்றும் client வேறு markup render செய்தன."
+      }
     },
     "diagnostics": {
       "open": "ஆதரவு மற்றும் இணைப்பு சோதனை",
@@ -264,7 +286,8 @@
       "tokenValid": "சொத்து ஒரு டோக்கனாக அங்கீகரிக்கப்பட்டது",
       "consent": "அபாய வெளிப்பாடுகளும் நிபந்தனைகளும் ஏற்கப்பட்டன",
       "getTestAssets": "சோதனை சொத்துகளைப் பெறு",
-      "connectEarly": "தொடர உங்கள் வாலெட்டை இணைக்கவும் — கையொப்பமிட அது தேவைப்படும், எனவே இப்போதே இணைப்பதே எளிது."
+      "connectEarly": "தொடர உங்கள் வாலெட்டை இணைக்கவும் — கையொப்பமிட அது தேவைப்படும், எனவே இப்போதே இணைப்பதே எளிது.",
+      "sanctionsChecking": "Compliance நிலை சரிபார்க்கப்படுகிறது…"
     },
     "receipt": {
       "heading": "கையொப்பமிடும் முன் மதிப்பாய்வு செய்யுங்கள்",
@@ -293,7 +316,53 @@
         "கடனளிப்பு: கடன் வாங்கியவர் திருப்பிச் செலுத்தினால் மட்டுமே வட்டி கிடைக்கும். அவர் தவறினால், பூட்டப்பட்ட பிணையத்தின் அப்போதைய மதிப்பே உங்களுக்குக் கிடைக்கும் மீட்பு.",
         "NFT வாடகை: வாடகைதாரர்களுக்கு தற்காலிக பயன்பாட்டு உரிமைகள் மட்டுமே கிடைக்கும், உரிமையாளர் ஆக முடியாது; NFT உரிமையாளரின் வால்ட்டிலேயே இருக்கும். வாடகைக் கட்டணம் முன்பணமாகச் செலுத்தப்படும்; திருப்பித் தரக்கூடிய சிறிய இருப்புத் தொகையும் (buffer) உண்டு.",
         "ஸ்மார்ட் காண்ட்ராக்ட் இடர்: Vaipakam என்பது பொது நெட்வொர்க்கில் இயங்கும் கோட். பிழைகள், நெட்வொர்க் கோளாறுகள் அல்லது தீவிர சந்தை நிலைமைகள் இழப்பை ஏற்படுத்தலாம் — இழக்கத் தாங்க முடியாத நிதியை ஒருபோதும் ஈடுபடுத்தாதீர்கள்."
-      ]
+      ],
+      "buildDevFallback": "dev",
+      "buildLabel": "Build",
+      "faq": {
+        "alerts": {
+          "a": "Alerts cardல் Telegramஐ link செய்யலாம் (browser pushயும் enable செய்யலாம்), கடன் due dateக்கு அருகில் வந்தாலோ position health குறைந்தாலோ எச்சரிக்கை பெற. Linking ஒரு one-time signature. Test alert அனுப்புவது, அதைப் நம்புவதற்கு முன் channel உண்மையில் வேலை செய்கிறதா என்பதை உறுதி செய்கிறது.",
+          "q": "Deadline அல்லது liquidationக்கு முன் alerts எப்படி பெறுவது?"
+        },
+        "assetsHeld": {
+          "a": "உங்கள் சொந்த Vaipakam Vaultல் — உங்கள் wallet மட்டும் control செய்யும் on-chain account. Vaipakam user fundsஐ pool செய்யாது, உங்கள் பதிலாக spend செய்ய முடியாது.",
+          "q": "என் assets எங்கு வைத்திருக்கப்படுகின்றன?"
+        },
+        "claimCenter": {
+          "a": "நீங்கள் பங்கேற்கும் loan settle ஆனதும் — உங்களுக்குக் கிடைக்க வேண்டிய repayment அல்லது default collateral — funds நீங்கள் claim செய்யும் வரை காத்திருக்கும். Claims page எது claimable, எந்த positionக்கு என்பதை protocol recordஐ எதிர்த்து சரிபார்த்து காட்டும்; எதுவும் stranded ஆகாது.",
+          "q": "Claim Center எதற்காக?"
+        },
+        "lenderInterest": {
+          "a": "இல்லை. Borrower நேரத்தில் repay செய்தால் நீங்கள் earn செய்வது அது. Default ஆனால், recovery அவர் lock செய்த collateralஐப் பொறுத்தது — review screen sign செய்வதற்கு முன் இதைச் சொல்லும்.",
+          "q": "நான் lend செய்யும்போது காணும் interest guaranteed ஆ?"
+        },
+        "missedRepayment": {
+          "a": "Due date plus grace periodக்குப் பிறகு lender உங்கள் locked collateral பெறலாம். Collateralக்கு live market price இருந்தால், அதன் value மிகக் குறைந்தால் தானாக விற்கப்படவும் முடியும் — நேரத்தில் repay செய்வது இரண்டையும் தவிர்க்கும்.",
+          "q": "நான் loan repay செய்யவில்லை என்றால் என்ன நடக்கும்?"
+        },
+        "modes": {
+          "a": "Basic guided Borrow, Lend, NFT-rental journeysஐ முன்னிலைப்படுத்தும். Advanced மேலும் power surfacesஐ காட்டும் — Offer Book, Rate Desk order book, VPFI discounts, முழு activity history. Navigation mode toggleலிருந்து எப்போது வேண்டுமானாலும் மாற்றலாம்; அது உங்கள் positionsஐ move செய்யாது.",
+          "q": "Basic மற்றும் Advanced mode வித்தியாசம் என்ன?"
+        },
+        "nftRental": {
+          "a": "NFT owner vaultல் locked ஆகவே இருக்கும்; renterக்கு temporary use rights மட்டுமே கிடைக்கும், ownership கிடையாது. Rental fees prepaid, சிறிய refundable buffer உடன்.",
+          "q": "NFT rental என்றால் என்ன?"
+        },
+        "nftVerifier": {
+          "a": "NFT verifier (navigationல்) எந்த Vaipakam position NFTயையும் chainலிருந்து நேரடியாகப் படித்து அதன் உண்மையான loan terms மற்றும் status காட்டும் — secondary-market saleஐ நம்புவதற்கு முன் listing உண்மையில் எதை represent செய்கிறது என்பதை உறுதி செய்யலாம்.",
+          "q": "Platformக்கு வெளியே வாங்குவதற்கு முன் position NFTயை எப்படி check செய்வது?"
+        },
+        "vpfi": {
+          "a": "இல்லை. VPFI optional — vaultல் வைத்திருப்பது eligible loansல் protocol fees குறைக்கலாம். Network gasஐ குறைக்காது, borrow/lend/rent செய்ய அது தேவைப்படாது.",
+          "q": "எனக்கு VPFI தேவையா?"
+        },
+        "wrongNetwork": {
+          "a": "Offers, உங்கள் vault, faucet எல்லாம் per-network. Wallet Vaipakam deploy செய்யப்படாத chainல் இருந்தால், banner supported networkக்கு one-click switch தரும்; app unsupported chainல் act செய்யாது.",
+          "q": "நான் wrong networkல் இருக்கிறேன் என்று சொல்கிறது — என்ன செய்ய வேண்டும்?"
+        }
+      },
+      "lede": "எளிய மொழியில் விரைவு பதில்கள்.",
+      "title": "உதவி"
     },
     "consentParts": {
       "prefix": "நான் ",
@@ -387,7 +456,42 @@
       "no4907Unknown": "இந்த NFT சேகரிப்பு ஆன்-செயின் வாடகை தரநிலையை (ERC-4907) ஆதரிக்கிறதா என்பதைச் சரிபார்க்க முடியவில்லை. ஆதரிக்கவில்லை என்றால், Vaipakam-க்கு வெளியே உள்ள ஆப்கள் வாடகைதாரரை அங்கீகரிக்காது — Vaipakam-க்குள் வாடகை இயல்பாகச் செயல்படும்.",
       "vpfiPrepayListing": "இந்தப் பட்டியல் VPFI-இல் கட்டணம் கேட்கிறது; வாடகைகளில் அது அனுமதிக்கப்படுவதில்லை — எனவே இதை ஏற்க முடியாது. வேறொரு பட்டியலைத் தேர்வு செய்யவும்.",
       "vpfiCheckRetry": "இந்தப் பட்டியலின் கட்டணச் சொத்தை இப்போது சரிபார்க்க முடியவில்லை — எதுவும் அனுப்பப்படவோ அனுமதிக்கப்படவோ இல்லை. சிறிது நேரம் கழித்து மீண்டும் முயற்சிக்கவும்.",
-      "vpfiPrepayNotAllowed": "VPFI-ஐ வாடகைக் கட்டணச் சொத்தாகப் பயன்படுத்த முடியாது — வேறு டோக்கனைத் தேர்வு செய்யவும்."
+      "vpfiPrepayNotAllowed": "VPFI-ஐ வாடகைக் கட்டணச் சொத்தாகப் பயன்படுத்த முடியாது — வேறு டோக்கனைத் தேர்வு செய்யவும்.",
+      "back": "பின் செல்லவும்",
+      "beforeYouSign": "Sign செய்வதற்கு முன்",
+      "continueToReview": "Reviewக்கு தொடரவும்",
+      "contractHint": "ERC-4907 support செய்யும் single NFTs rentersக்கு மற்ற apps காணக்கூடிய use rights தரும்; மற்ற NFTsயும் Vaipakam உள்ளே tracked ஆக rent செய்யப்படும்.",
+      "contractLabel": "NFT contract முகவரி",
+      "dailyFeeLabel": "தினசரி fee",
+      "durationLabel": "Rental நீளம்",
+      "listWhenEnds": "Rental முடிந்தால் renter rights தானாக reset ஆகும்; rental detail pageஇல் இருந்து fees claim செய்து NFT reclaim செய்யுங்கள்.",
+      "listYouCanLose": "NFT rented இருக்கும் போது அதன் temporary use — renter அதை transfer அல்லது sell செய்ய முடியாது.",
+      "listingsLoading": "Rental listings ஏற்றப்படுகின்றன…",
+      "liveFeesLoaded": "Live fee terms loaded",
+      "liveFeesLoading": "Live fee terms ஏற்றப்படுகின்றன…",
+      "liveRentalLoaded": "Live rental terms loaded",
+      "liveRentalLoading": "Live rental terms ஏற்றப்படுகின்றன…",
+      "nftTypeErc1155": "Multi-edition NFT (ERC-1155)",
+      "nftTypeErc721": "Single NFT (ERC-721)",
+      "nftTypeLabel": "NFT வகை",
+      "nothing": "எதுவும் இல்லை.",
+      "paymentAssetCheckFailed": "Payment assetஐ இப்போது verify செய்ய முடியவில்லை — சிறிது நேரத்தில் retry செய்யவும்.",
+      "paymentAssetRecognised": "Payment asset அறியப்பட்டது",
+      "preparingReview": "உங்கள் review தயாராகிறது…",
+      "prepayAssetHint": "Renters இந்த tokenல் முழு rentalஐ prepay செய்கிறார்கள்.",
+      "prepayAssetLabel": "Renters உங்களுக்கு pay செய்யும் asset",
+      "quantityLabel": "அளவு",
+      "rentFeesNote": "காட்டப்படும் price rental fee; Vaipakam cut owner earningsலிருந்து வரும், உங்கள் costக்கு மேலாக இல்லை.",
+      "rentYouMayOwe": "மேலும் எதுவும் இல்லை — fees prepaid.",
+      "stepChooseNft": "NFT தேர்வு செய்",
+      "stepDone": "Done",
+      "stepReview": "Review & sign",
+      "stepYourNft": "உங்கள் NFT மற்றும் price",
+      "tokenIdLabel": "Token id",
+      "tryAgain": "மீண்டும் முயற்சிக்கவும்",
+      "viewPositions": "என் positions பார்க்கவும்",
+      "viewTransaction": "Transaction பார்க்கவும்",
+      "waitingForWallet": "வாலெட்டுக்காக காத்திருக்கிறது…"
     },
     "preclose": {
       "title": "இந்தக் கடனை முன்கூட்டியே மூடு",
@@ -430,7 +534,10 @@
       "multiStepNote": "இடுவதற்கு மூன்று வாலெட் உறுதிப்படுத்தல்கள் வரை தேவைப்படலாம் (பாதுகாப்பு எல்லைகள், தீர்வு அனுமதி, கோரிக்கை). இடையில் நிறுத்தினால், நீங்கள் இடுவதை முடிக்கும் வரை அல்லது ரத்து செய்யும் வரை முந்தைய படிகள் ஆன்-செயினில் அப்படியே இருக்கும் — ரத்து செய்தால் அனுமதியும் நீக்கப்படும்.",
       "partialBlockedByPending": "இந்தக் கடனுக்கு ஒரு மறுநிதியாக்கக் கோரிக்கை செயலில் உள்ளது. பகுதி திருப்பிச் செலுத்துதல் தொகையை மாற்றி, அந்தக் கோரிக்கையை நிரந்தரமாக ஏற்க முடியாததாக்கிவிடும் — முதலில் மறுநிதியாக்கக் கோரிக்கையை ரத்து செய்யுங்கள்.",
       "precloseBlockedByPending": "இந்தக் கடனுக்கு ஒரு மறுநிதியாக்கக் கோரிக்கை செயலில் உள்ளது. இப்போது முன்கூட்டியே மூடினால் அது நிலுவையில் சிக்கிவிடும் — முதலில் மறுநிதியாக்கக் கோரிக்கையை ரத்து செய்யுங்கள்.",
-      "repayWarnPending": "இந்தக் கடனுக்கு ஒரு மறுநிதியாக்கக் கோரிக்கை இன்னும் செயலில் உள்ளது. திருப்பிச் செலுத்தினால் கடன் தீர்ந்துவிடும்; அதன் பிறகு அந்தக் கோரிக்கை ஒருபோதும் நிறைவேறாது — பின்னர் அதன் அட்டையிலிருந்து அதை ரத்து செய்யுங்கள் (அது அதன் நிலையான தீர்வு அனுமதியையும் நீக்கும்); அதுவரை அது காலாவதியாகும் வரை வெறுமனே கிடக்கும்."
+      "repayWarnPending": "இந்தக் கடனுக்கு ஒரு மறுநிதியாக்கக் கோரிக்கை இன்னும் செயலில் உள்ளது. திருப்பிச் செலுத்தினால் கடன் தீர்ந்துவிடும்; அதன் பிறகு அந்தக் கோரிக்கை ஒருபோதும் நிறைவேறாது — பின்னர் அதன் அட்டையிலிருந்து அதை ரத்து செய்யுங்கள் (அது அதன் நிலையான தீர்வு அனுமதியையும் நீக்கும்); அதுவரை அது காலாவதியாகும் வரை வெறுமனே கிடக்கும்.",
+      "consentLabel": "கீழே உள்ள payoff மற்றும் wallet-balance termsஐ புரிந்துகொண்டு ஒப்புக்கொள்கிறேன்.",
+      "receiptLock": "புதியது எதுவும் இல்லை — உங்கள் existing collateral unlock ஆகாமல் new loanக்கு carry over ஆகும்.",
+      "receiptReceive": "Lender accept செய்தவுடன் உங்கள் தேர்ந்த termsல் new loan — உங்கள் collateral தானாக அதற்கு move ஆகி இந்த loan அதே transactionல் close ஆகும்."
     },
     "approvals": {
       "title": "நிலையான டோக்கன் அனுமதிகள்",
@@ -549,7 +656,12 @@
       "loadingOffers": "பொருந்தும் கடனளிப்பு வாய்ப்புகள் தேடப்படுகின்றன…",
       "figureMoved": "நேரம் செல்லச் செல்ல பணப்பெறுதொகை மாறியதால் மதிப்பாய்வு மூடப்பட்டது — தற்போதைய எண்ணுடன் உறுதிப்படுத்த அதை மீண்டும் திறக்கவும்.",
       "checking": "இந்தக் கடனிலிருந்து முன்கூட்டியே வெளியேற முடியுமா என்று சரிபார்க்கப்படுகிறது…",
-      "checkFailed": "இந்தக் கடனின் வெளியேற்ற விவரங்களை இப்போது படிக்க முடியவில்லை — மீண்டும் முயற்சிக்கப்படுகிறது."
+      "checkFailed": "இந்தக் கடனின் வெளியேற்ற விவரங்களை இப்போது படிக்க முடியவில்லை — மீண்டும் முயற்சிக்கப்படுகிறது.",
+      "receiptCanLose": "இதுவரை accrued interest அல்லது மீதமுள்ள காலத்திற்கான rate difference — இதில் பெரியது மட்டும்; இரண்டும் இல்லை. மேலுள்ள figureல் ஏற்கனவே பிரதிபலிக்கப்பட்டுள்ளது; confirm செய்யும் போது exact amount liveஆக மீண்டும் படிக்கப்படும்.",
+      "receiptEnds": "உடனே — உங்கள் position buyerக்கு transfer ஆகி, இந்தக் கடனில் உங்கள் வேலை முடியும். Borrower rate மற்றும் due date மாறாது.",
+      "receiptFees": "Protocol பகுதி forfeited interestலிருந்து வரும் — காட்டப்பட்ட figureக்கு அப்பால் உங்கள் payoutலிருந்து எடுக்கப்படாது.",
+      "receiptLockNothing": "எதுவும் இல்லை.",
+      "receiptOweNothing": "எதுவும் இல்லை — நீங்கள் எதையும் approve செய்யவும், pocketலிருந்து pay செய்யவும் வேண்டாம்."
     },
     "loanSale": {
       "title": "இந்த நிலையை விற்பனைக்குப் பட்டியலிடு",
@@ -573,7 +685,12 @@
       "fundingUnknown": "இந்தச் சாதனத்திலிருந்து இந்தப் பட்டியலின் வாய்ப்புப் பதிவை அடையாளம் காண முடியவில்லை, எனவே அதன் தீர்வு நிதியை இங்கு சரிபார்க்க முடியாது — பட்டியலிட்ட சாதனத்திலிருந்தே அதை நிர்வகியுங்கள், அல்லது தாராளமான அங்கீகாரத்தையும் இருப்பையும் வைத்திருங்கள்.",
       "ended": "உங்கள் விற்பனைப் பட்டியல் இப்போது செயலில் இல்லை. வாங்குபவர் அதை ஏற்றுக்கொண்டிருந்தால், பணப்பெறுதொகை ஏற்கனவே உங்கள் வாலெட்டில் உள்ளது; தீர்வுத் தொகை நிரந்தர அங்கீகாரம் வழியாக எடுக்கப்பட்டது. மீதமுள்ள அங்கீகாரத்தை உங்கள் வாலெட்டின் டோக்கன்-அங்கீகாரங்கள் பார்வையிலிருந்து ரத்து செய்யலாம்.",
       "listingUnavailable": "உங்கள் சொந்த விலையில் நிலையைப் பட்டியலிடுவது இன்னும் கிடைக்கவில்லை — அதற்குத் தேவையான ஆன்-செயின் படி சரிசெய்யப்பட்டு வருகிறது. மேலே உள்ள உடனடி வெளியேற்றம் வேலை செய்கிறது: அது பொருந்தும் திறந்த வாய்ப்பில் உடனேயே விற்கிறது.",
-      "partialBlockedByListing": "கடனளிப்பாளர் இந்த நிலையை அதன் தற்போதைய நிலுவைத் தொகையில் விற்பனைக்குப் பட்டியலிட்டுள்ளார். பட்டியல் நிலுவையில் இருக்கும்வரை பகுதி திருப்பிச் செலுத்துதல் இடைநிறுத்தப்பட்டுள்ளது — அது அந்தத் தொகையை மாற்றி வாங்குபவரைத் தவறாக வழிநடத்தும். எப்போது வேண்டுமானாலும் முழுமையாகத் திருப்பிச் செலுத்தலாம் அல்லது முன்கூட்டியே மூடலாம்."
+      "partialBlockedByListing": "கடனளிப்பாளர் இந்த நிலையை அதன் தற்போதைய நிலுவைத் தொகையில் விற்பனைக்குப் பட்டியலிட்டுள்ளார். பட்டியல் நிலுவையில் இருக்கும்வரை பகுதி திருப்பிச் செலுத்துதல் இடைநிறுத்தப்பட்டுள்ளது — அது அந்தத் தொகையை மாற்றி வாங்குபவரைத் தவறாக வழிநடத்தும். எப்போது வேண்டுமானாலும் முழுமையாகத் திருப்பிச் செலுத்தலாம் அல்லது முன்கூட்டியே மூடலாம்.",
+      "consentLabel": "கீழே உள்ள lock, settlement pull, standing approval ஆகியவற்றை புரிந்துகொண்டு ஒப்புக்கொள்கிறேன்.",
+      "receiptCanLose": "உங்கள் balance அல்லது standing approval குறைந்தால், buyer acceptance சாதாரணமாக fail ஆகும் — எதுவும் எடுக்கப்படாது, ஆனால் restore அல்லது cancel செய்யும் வரை listing fill ஆகாது.",
+      "receiptEnds": "Buyer accept செய்தால் (அவரது transactionல் எல்லாம் settle ஆகும்) அல்லது நீங்கள் listing cancel செய்தால். இது தானாக expire ஆகாது.",
+      "receiptFees": "Protocol பகுதி settlement figureலிருந்து வரும் — அதற்கு மேல் எதுவும் இல்லை.",
+      "receiptLock": "Sale complete ஆகும் வரை அல்லது நீங்கள் listing cancel செய்யும் வரை, உங்கள் lender position NFT. வேறு எதுவும் இல்லை."
     },
     "positions": {
       "title": "என் நிலைகள்",
@@ -610,7 +727,117 @@
       "whatNextInternalMatchViewer": "இந்தக் கடன் உள்ளகப் பொருத்தத்தின் மூலம் மூடப்பட்டது — மீதமுள்ள கோரிக்கைகள் நிலை வைத்திருப்பவர்களுக்கு உரியவை.",
       "whatNextClosed": "இந்தக் கடன் முழுமையாகத் தீர்வடைந்தது — இனி செய்ய எதுவும் இல்லை.",
       "whatNextRentalEnded": "இந்த வாடகை முடிந்துவிட்டது. ஈட்டிய கட்டணங்களோ திரும்பப்பெறத்தக்க இடையிருப்புத் தொகையோ இருந்தால், நிலை வைத்திருப்பவர்கள் கீழே கோரலாம் — இனி வேறு எதுவும் இதை மாற்றாது.",
-      "settledAhead": "இந்த நிலை ஏற்கனவே ஆன்-செயினில் மூடப்பட்டுவிட்டது — இங்கே காட்டப்படும் நிலைமை நேரடியானது. உங்கள் பட்டியல்கள் புதுப்பிக்கச் சிறிது நேரம் ஆகலாம்."
+      "settledAhead": "இந்த நிலை ஏற்கனவே ஆன்-செயினில் மூடப்பட்டுவிட்டது — இங்கே காட்டப்படும் நிலைமை நேரடியானது. உங்கள் பட்டியல்கள் புதுப்பிக்கச் சிறிது நேரம் ஆகலாம்.",
+      "details": {
+        "actions": {
+          "claimBuffer": "என் buffer திரும்ப claim செய்யுங்கள்",
+          "claimCollateral": "என் collateral claim செய்யுங்கள்",
+          "claimFeesNft": "Fees claim செய்து NFT reclaim செய்யுங்கள்",
+          "claimFunds": "என் funds claim செய்யுங்கள்",
+          "claimRecovered": "இந்த loan recover செய்ததை claim செய்யுங்கள்",
+          "claimResidual": "மீதமுள்ளது claim செய்யுங்கள் (ஏதேனும் இருந்தால்)",
+          "closeRental": "இந்த rentalஐ close செய்யுங்கள்",
+          "repay": "இந்த loanஐ repay செய்யுங்கள்"
+        },
+        "addCollateral": {
+          "amountAria": "Add செய்யும் collateral amount",
+          "button": "Add",
+          "confirm": "Confirm — collateral add செய்யுங்கள்",
+          "endsImmediately": "Top-up உடனே apply ஆகும்.",
+          "fallbackWarn": "இந்த loan failed-liquidation stateல் உள்ளது. Top-up required health levelஐ restore செய்தால் மட்டுமே collateral add செய்வது இதை Activeக்கு திரும்ப கொண்டுவரும் — இல்லையெனில் lender இன்னும் claim செய்யலாம், added collateral கூட riskல் இருக்கும். Full repay எப்போதும் cure செய்யும். உறுதி இல்லையெனில் repay செய்யுங்கள்.",
+          "loseFallback": "Added amount riskல் உள்ள collateralக்கு சேரும் — top-up முழுமையாக cure செய்யாவிட்டால் lender இன்னும் அனைத்தையும் claim செய்யலாம்.",
+          "loseNormal": "Added amount existing collateralக்கு சேரும் — loan default ஆனால் அதேபோல் riskல் இருக்கும்.",
+          "oweNothingMore": "மேலும் எதுவும் இல்லை — நீங்கள் owe செய்கிறது மாறாது.",
+          "receiveFallbackCure": "Loanஐ மீண்டும் healthy ஆக்க வாய்ப்பு — இந்த top-up required health levelஐ restore செய்தால் மட்டும் (மேலுள்ள warning பார்க்கவும்).",
+          "receiveSafer": "இப்போது எதுவும் இல்லை — safer loan (liquidation மேலும் தள்ளிப்போகும்).",
+          "title": "Collateral add செய்யுங்கள்"
+        },
+        "backToPositions": "← என் positionsக்கு திரும்ப",
+        "confirmingRole": "உங்கள் role உறுதி செய்யப்படுகிறது…",
+        "connectToAct": "இந்த loan position வைத்திருக்கும் walletஐ connect செய்து அதில் act செய்யுங்கள்.",
+        "done": {
+          "collateralAdded": "Collateral added — loan இப்போது safer.",
+          "partialRepaid": "Partial repayment confirmed — இப்போது நீங்கள் குறைவாக owe செய்கிறீர்கள்.",
+          "rentalClosed": "Rental closed. Refundable buffer ஏதேனும் ready — Claim Centerஇல் claim செய்யுங்கள்.",
+          "repaid": "Repayment confirmed. உங்கள் collateral ready — கீழே அல்லது Claim Centerஇல் claim செய்யுங்கள்."
+        },
+        "healthChecking": "இந்த loan health check செய்யப்படுகிறது…",
+        "healthReadFailed": "இந்த loan healthஐ இப்போது read செய்ய முடியவில்லை — retry செய்கிறது. Liquidation protection on-chain தொடர்கிறது.",
+        "labels": {
+          "health": "Health",
+          "ifNothing": "எதுவும் நடக்காவிட்டால்",
+          "locked": "Locked",
+          "owed": "Owed",
+          "terms": "Terms",
+          "whatNext": "அடுத்து என்ன நடக்கும்"
+        },
+        "loadingLoan": "Loan ஏற்றப்படுகிறது…",
+        "noCollateral": "Collateral இல்லை",
+        "notFound": "இந்த loanஐ இப்போது கண்டுபிடிக்க முடியவில்லை. இது புதியதாக இருக்கலாம் (இன்னும் indexing), அல்லது link பழையதாக இருக்கலாம்.",
+        "owedRentalPrepaid": "Repay செய்ய எதுவும் இல்லை — rental fees prepaid (due dateக்குப் பிறகு close செய்தால் late fees மட்டும்).",
+        "partial": {
+          "amountAria": "இப்போது repay செய்யும் amount",
+          "blurb": "இந்த loan partial repayment அனுமதிக்கிறது. Payments முதலில் interestக்கு, பிறகு நீங்கள் owe செய்கிறது குறைக்கப்படும் — due date ஒருபோதும் மாறாது.",
+          "button": "ஒரு பகுதி repay செய்யுங்கள்",
+          "confirm": "Confirm — ஒரு பகுதி repay செய்யுங்கள்",
+          "endsPrincipalDrops": "உங்கள் remaining principal உடனே குறையும்; interest சிறிய amount மீது accrue ஆகத் தொடரும்.",
+          "feesAccrued": "Accrued interestல் protocol cut paymentக்குள் settle ஆகும்.",
+          "loseNothingBeyondPayment": "Paymentக்கு அப்பால் எதுவும் இல்லை.",
+          "receiveSmallerDebt": "இப்போது எதுவும் இல்லை — சிறிய debt.",
+          "title": "Loanன் ஒரு பகுதி repay செய்யுங்கள்"
+        },
+        "phase": {
+          "approving": "உங்கள் walletல் approval…",
+          "submitting": "சமர்ப்பிக்கப்படுகிறது…",
+          "waiting": "வாலெட்டுக்காக காத்திருக்கிறது…"
+        },
+        "receipt": {
+          "bufferBack": "Refundable buffer ஏதேனும் திரும்ப — close செய்த உடனே claimable.",
+          "bufferBackShort": "உங்கள் refundable buffer திரும்ப.",
+          "endsClaim": "Claim உடனே payout செய்து இந்த position உங்களுக்காக close ஆகும்.",
+          "endsPreclose": "உடனே — loan இன்று settle ஆகி உங்கள் collateral release ஆகும்.",
+          "endsRepay": "உடனே — loan settle ஆகி உங்கள் side release ஆகும்.",
+          "feesNone": "எதுவும் இல்லை.",
+          "feesPreclose": "Early closeக்கு extra Vaipakam fee இல்லை — protocol cut lender interestலிருந்து வரும்.",
+          "feesRental": "Protocol cut payoutக்கு முன் rental feesலிருந்து வரும்.",
+          "feesRepay": "Repayக்கு extra Vaipakam fee இல்லை — protocol cut lender interestலிருந்து வரும்.",
+          "feesYield": "Protocol yield fee payoutக்கு முன் interestலிருந்து வரும்.",
+          "internalResidual": "Internal match உங்களுக்காக விட்ட residual, plus VPFI rebate ஏதேனும் (zero ஆகலாம்).",
+          "liquidationResidual": "Liquidationக்குப் பிறகு மீதமுள்ளது (zero ஆகலாம்).",
+          "loseNothingBeyondOwed": "நீங்கள் owe செய்கிறதைத் தாண்டி எதுவும் இல்லை.",
+          "loseNothingBeyondPay": "நீங்கள் pay செய்கிறதைத் தாண்டி எதுவும் இல்லை.",
+          "noCollateralBack": "Extra எதுவும் திரும்ப இல்லை — இந்த loanல் release செய்ய collateral இல்லை.",
+          "nothing": "எதுவும் இல்லை.",
+          "nothingNew": "புதியது எதுவும் இல்லை.",
+          "oweRentalPrepaid": "மேலும் எதுவும் இல்லை — fees prepaid (due dateக்குப் பிறகு late fees மட்டும்).",
+          "owedNoCollateral": "இந்த sideக்கு இன்னும் owed இருப்பது (இந்த loanக்கு collateral இல்லை, ஆகவே எதுவும் இருக்காமல் இருக்கலாம்).",
+          "recoveredNoCollateral": "இந்த loan recover செய்தது (collateral இல்லை, ஆகவே எதுவும் இருக்காமல் இருக்கலாம்).",
+          "rentalFeesAndNft": "உங்கள் earned rental fees, plus உங்கள் NFT திரும்ப."
+        },
+        "roleUnverified": "இந்த position தற்போது யாரிடம் உள்ளது என்பதை verify செய்ய முடியவில்லை, அதனால் actions இப்போது hidden. சிறிது நேரத்தில் மீண்டும் முயற்சிக்கவும்.",
+        "titleLoan": "Loan",
+        "titleRental": "Rental",
+        "whatIfNothingRentalOwner": "Renter rights due date மற்றும் grace periodக்குப் பிறகு reset ஆகும்; உங்கள் fees இங்கே claimable ஆகவே இருக்கும்.",
+        "whatIfNothingRentalRenter": "உங்கள் use rights due dateல் முடிவடையும், prepaid buffer ownerக்கு செல்லும் — அதை திரும்பப் பெற நேரத்தில் close செய்யுங்கள்.",
+        "whatIfNothingRentalViewer": "Renter use rights due dateல் முடிவடையும்; owner fees மற்றும் buffer rental terms படி settle ஆகும்."
+      },
+      "getStarted": "தொடங்கு",
+      "loading": "உங்கள் positions ஏற்றப்படுகின்றன…",
+      "offerRow": {
+        "cancel": "Offer cancel செய்யுங்கள்",
+        "cancelling": "Cancel செய்யப்படுகிறது…",
+        "confirmCancel": "Confirm — cancel செய்து என் assets unlock செய்யுங்கள்",
+        "held": "Held — creator நிர்வகிக்கிறார்",
+        "keep": "Offer வைத்திருங்கள்",
+        "receiptEnds": "உடனே — offer bookஇலிருந்து நீங்கி இனி accept செய்ய முடியாது. எப்போது வேண்டுமானாலும் புதிய offer post செய்யலாம்.",
+        "receiptFees": "எதுவும் இல்லை (network gas மட்டும்).",
+        "receiptLose": "எதுவும் இல்லை — open offer cancel செய்வதற்கு penalty இல்லை.",
+        "receiptNothing": "எதுவும் இல்லை.",
+        "yourBorrowRequest": "உங்கள் borrow request",
+        "yourLendingOffer": "உங்கள் lending offer",
+        "yourNftListing": "உங்கள் NFT listing"
+      },
+      "openOffers": "Open offers"
     },
     "powerSurface": {
       "body": "இது வல்லுநர்களுக்கான திரை — குறைந்த வழிகாட்டுதலுடன், மூல வாய்ப்புகளும் நேரடி விகிதங்களும். வழிகாட்டப்பட்ட கடன் வாங்கு மற்றும் கடனளி ஓட்டங்கள் அதே செயல்களைப் படிப்படியான விளக்கங்களுடன் வழங்குகின்றன.",
@@ -635,7 +862,27 @@
       "allResidualNote": "தயாராகாதவை கீழே பட்டியலில் அப்படியே உள்ளன — அவற்றைத் தனித்தனியாகக் கோரலாம்.",
       "allRewardsUnavailable": "உங்கள் வெகுமதிகளைச் சரிபார்க்க முடியவில்லை, எனவே அவை இந்தத் தொகுப்பில் இல்லை — அவற்றைத் தனியாகக் கோருங்கள்.",
       "allVpfiUnavailable": "உங்கள் வால்ட்டில் உள்ள VPFI-ஐச் சரிபார்க்க முடியவில்லை, எனவே அது இந்தத் தொகுப்பில் சேர்க்கப்படவில்லை.",
-      "allWorking": "வாலெட்டுக்காகக் காத்திருக்கிறது…"
+      "allWorking": "வாலெட்டுக்காகக் காத்திருக்கிறது…",
+      "checking": "Claims சரிபார்க்கப்படுகின்றன…",
+      "row": {
+        "heldProceeds": "இந்தக் கடனுக்காக வைத்திருக்கும் வருவாய்",
+        "heldProceedsDefault": "Default-இலிருந்து மீட்கப்பட்ட வைத்திருக்கும் வருவாய்",
+        "loan": "கடன்",
+        "prepaidBufferBack": "உங்கள் முன்பணம் buffer திரும்ப",
+        "rental": "வாடகை",
+        "repaidFunds": "திருப்பிச் செலுத்தப்பட்ட funds",
+        "residualAfterMatch": "Internal matchக்குப் பிறகு மீதமுள்ளது",
+        "surplusAfterLiquidation": "Liquidationக்குப் பிறகு மீதமுள்ளது",
+        "whyDefaultBorrower": "இந்தக் கடன் default ஆனது. Liquidationக்குப் பிறகு surplus இருந்தால், அதை claim செய்யலாம்.",
+        "whyDefaultLender": "கடன் default ஆனது — default settlement உங்களுக்காக மீட்டதை collect செய்யுங்கள்.",
+        "whyFallbackPending": "Automatic liquidation முடிக்கப்படவில்லை — claim செய்வது recoveryயை நீங்களே finalize செய்வதாகும்.",
+        "whyInternalMatchBorrower": "இந்தக் கடன் internal matching மூலம் மூடப்பட்டது — உங்களுக்காக மீதமுள்ளதை collect செய்யுங்கள்.",
+        "whyInternalMatchLender": "இந்தக் கடன் internal matching மூலம் மூடப்பட்டது — உங்கள் funds collect செய்யுங்கள்.",
+        "whyRentalClosed": "வாடகை மூடப்பட்டது — refundable buffer release செய்யப்பட்டுள்ளது.",
+        "whyRentalEnded": "வாடகை முடிந்தது — நீங்கள் சம்பாதித்த fees collect செய்து NFTயை reclaim செய்யுங்கள்.",
+        "whyRepaidBorrower": "நீங்கள் இந்தக் கடனை திருப்பிச் செலுத்தியதால், உங்கள் collateral release செய்யப்பட்டது.",
+        "whyRepaidLender": "Borrower இந்தக் கடனை திருப்பிச் செலுத்தினார்."
+      }
     },
     "offers": {
       "title": "வாய்ப்பு புத்தகம்",
@@ -644,7 +891,50 @@
       "emptyBody": "உங்கள் சொந்த வாய்ப்பை உருவாக்குங்கள் — மறுபக்கம் உங்களைத் தேடி வரட்டும்.",
       "unavailable": "வாய்ப்பு புத்தகத்தை இப்போது ஏற்ற முடியவில்லை. சிறிது நேரம் கழித்து மீண்டும் முயற்சிக்கவும்.",
       "lenderOffer": "கடனளிப்பு வாய்ப்பு",
-      "borrowerOffer": "கடன் கோரிக்கை"
+      "borrowerOffer": "கடன் கோரிக்கை",
+      "advancedNoExpiry": "expiry இல்லை",
+      "advancedNoPartialRepay": "partial repay இல்லை",
+      "advancedPartialRepayOk": "partial repay OK",
+      "badgeBorrower": "Borrower",
+      "badgeLender": "Lender",
+      "byCreator": "மூலம்",
+      "collateralLabel": "collateral",
+      "collateralNone": "எதுவும் இல்லை",
+      "createOffer": "Offer உருவாக்கவும்",
+      "ctaBorrow": "இதை borrow செய்யுங்கள்",
+      "ctaBuyPosition": "இந்த loan position வாங்கவும்",
+      "ctaFund": "இந்த requestஐ fund செய்யுங்கள்",
+      "ctaRent": "இந்த NFTயை rent செய்யுங்கள்",
+      "dailyFeeLoading": "daily fee ஏற்றப்படுகிறது…",
+      "feesPrepaid": "fees prepaid",
+      "filteredEmptyBody": "மேலுள்ள filtersஐ தளர்த்துங்கள் — offer bookல் open offers உள்ளன.",
+      "filteredEmptyTitle": "இந்த filtersக்கு பொருந்தும் offers இல்லை",
+      "filters": {
+        "assetLabel": "Asset address மூலம் filter செய்யவும்",
+        "assetPlaceholder": "0x… (எந்த leg: principal, collateral, payment)",
+        "clear": "Filters clear செய்யவும்",
+        "showLabel": "காட்டு",
+        "sideAll": "எல்லாம்",
+        "sideBorrowing": "Borrow requests (இவைகளுக்கு lend செய்யுங்கள்)",
+        "sideLending": "Lending offers (இவையிலிருந்து borrow செய்யுங்கள்)",
+        "sideRentals": "NFT rentals",
+        "sortDurationLong": "Duration — நீளமானவை முதலில்",
+        "sortDurationShort": "Duration — குறுகியவை முதலில்",
+        "sortLabel": "வரிசைப்படுத்து",
+        "sortNewest": "புதியவை முதலில்",
+        "sortRateHigh": "Rate — high to low",
+        "sortRateLow": "Rate — low to high"
+      },
+      "footerParts": {
+        "borrowLink": "Borrow",
+        "lead": "இங்கே offer எடுப்பது — “இதை borrow செய்யுங்கள்”, “இந்த requestஐ fund செய்யுங்கள்”, அல்லது “இந்த loan position வாங்கவும்” — guided ",
+        "lendLink": "Lend",
+        "mid": " மற்றும் ",
+        "tail": " flows போலவே review-and-sign படிகளில் அழைத்துச் செல்லும்."
+      },
+      "loading": "Offer book ஏற்றப்படுகிறது…",
+      "rentalListing": "NFT rental",
+      "yearly": "yearly"
     },
     "desk": {
       "title": "விகித மேசை",
@@ -785,7 +1075,12 @@
         "blockGaslessService": "கேஸ் இல்லாத பதிவிற்கு ஆர்டர்-புக் சேவை தேவை; அது இப்போது கிடைக்கவில்லை — ‘பதிவிடும் முறை’-ஐ ஆன்-செயினுக்கு மாற்றவும்.",
         "consentRecheck": "விதிமுறைகள் மாறிவிட்டன — மீண்டும் உறுதிப்படுத்தவும்.",
         "max": "அதிகபட்சம்",
-        "feePreviewTitle": "கட்டணங்களும் உறுதித் தொகையும்"
+        "feePreviewTitle": "கட்டணங்களும் உறுதித் தொகையும்",
+        "collateralAmount": "Collateral தொகை",
+        "expiryGtcTitle": "ரத்து செய்யும் வரை செல்லுபடியாகும் — நீங்கள் ரத்து செய்யும் வரை இருக்கும்",
+        "expiryGttTitle": "குறித்த நேரம் வரை செல்லுபடியாகும் — deadlineல் தானாக lapse ஆகும்",
+        "rateBpsNote": "Rates basis points ஆக சேமிக்கப்படும் (1% = 100 bps)",
+        "selfCollateral": "Collateral loan asset அதே token ஆக இருக்க முடியாது."
       },
       "orders": {
         "tab": "திறந்த ஆர்டர்கள்",
@@ -820,7 +1115,8 @@
         "signedCancelling": "ரத்து செய்யப்படுகிறது…",
         "signedCancelNote": "பதிவிடுவது இலவசம், ஆனால் ரத்து செய்யக் கேஸ் செலவாகும்: புத்தகம் ஏற்கனவே வைத்திருக்கும் கையொப்பத்தைத் திரும்பப் பெற ஒரே வழி ஆன்-செயின் பரிவர்த்தனைதான்.",
         "signedCancelled": "கையொப்பமிட்ட ஆர்டர் ஆன்-செயினில் ரத்து செய்யப்பட்டது.",
-        "signedTruncated": "ஒரே நேரத்தில் பட்டியலிடக்கூடியதை விட அதிகமான கையொப்பமிட்ட ஆர்டர்கள் இந்தச் சந்தையில் உங்களிடம் உள்ளன — இது முழுமையான பட்டியல் அல்ல."
+        "signedTruncated": "ஒரே நேரத்தில் பட்டியலிடக்கூடியதை விட அதிகமான கையொப்பமிட்ட ஆர்டர்கள் இந்தச் சந்தையில் உங்களிடம் உள்ளன — இது முழுமையான பட்டியல் அல்ல.",
+        "loading": "உங்கள் open orders ஏற்றப்படுகின்றன…"
       },
       "positions": {
         "tab": "நிலைகள்",
@@ -829,8 +1125,14 @@
         "health": "ஆரோக்கியம்",
         "notPriced": "தானியங்கி லிக்விடேஷன் இல்லை",
         "manage": "நிர்வகி",
-        "allPositions": "அனைத்து நிலைகள் →"
-      }
+        "allPositions": "அனைத்து நிலைகள் →",
+        "loading": "உங்கள் positions ஏற்றப்படுகின்றன…"
+      },
+      "bookLoading": "Order book ஏற்றப்படுகிறது…",
+      "cumHeadingTitle": "இந்தப் பக்கத்தின் மேலிருந்து cumulative depth",
+      "loadMarket": "Market ஏற்று",
+      "marketsLoading": "Markets ஏற்றப்படுகின்றன…",
+      "oneSidedBook": "ஒருபக்க book"
     },
     "vpfi": {
       "title": "VPFI தள்ளுபடிகள்",
@@ -840,7 +1142,51 @@
       "tokenChanged": "நீங்கள் பார்வையிட்ட பிறகு VPFI டோக்கன் கட்டமைப்பு மாறிவிட்டது. எதற்கும் ஒப்புதல் அளிக்கப்படவில்லை — புதுப்பிக்கப்பட்ட எண்களைச் சரிபார்த்து மீண்டும் முயற்சிக்கவும்.",
       "tokenCheckRetry": "இப்போது VPFI டோக்கனை உறுதிப்படுத்த முடியவில்லை — எதற்கும் ஒப்புதல் அளிக்கப்படவில்லை. சிறிது நேரம் கழித்து மீண்டும் முயற்சிக்கவும்.",
       "addToWallet": "VPFI-ஐ MetaMask-இல் சேர்",
-      "addedToWallet": "VPFI-ஐக் கண்காணிக்க உங்கள் வாலெட்டிடம் கோரப்பட்டது."
+      "addedToWallet": "VPFI-ஐக் கண்காணிக்க உங்கள் வாலெட்டிடம் கோரப்பட்டது.",
+      "activeDiscount": "Active discount",
+      "amountLabelDeposit": "உங்கள் vaultக்கு move செய்யும் VPFI",
+      "amountLabelWithdraw": "உங்கள் walletக்கு திரும்ப எடுக்கும் VPFI",
+      "consentToggle": "Fee discountsக்கு என் vaulted VPFIயை use செய்யவும்",
+      "consentToggleSub": "இல்லையெனில் VPFI வைத்திருப்பதால் discount கிடையாது.",
+      "deposit": "Deposit",
+      "depositCta": "VPFI deposit செய்யுங்கள்",
+      "depositDone": "Deposit confirmed. உங்கள் discount history இப்போது build ஆகத் தொடங்குகிறது.",
+      "depositToActivate": " — activate செய்ய deposit செய்யுங்கள்",
+      "educationBody": "உங்கள் Vaipakam Vaultல் VPFI வைத்திருந்தால் eligible loansல் protocol fee குறையும். Discount கடந்த 30 நாட்களின் average holdingஐ use செய்கிறது — இன்று top up செய்தால் discount படிப்படியாக வளரும், உடனடியாக அல்ல.",
+      "educationTitle": "Discount எப்படி வேலை செய்கிறது",
+      "inYourVault": "உங்கள் vaultல்",
+      "inYourWallet": "உங்கள் walletல்",
+      "max": "Max",
+      "noSellNote": "Vaipakam VPFI விற்காது, holding yield கொடுக்காது — open marketல் acquire செய்கிறீர்கள்.",
+      "noneRightNow": "இப்போது எதுவும் இல்லை",
+      "nothing": "எதுவும் இல்லை.",
+      "offFeesSuffix": "eligible protocol feesலிருந்து off",
+      "optOutSyncFailed": "உங்கள் opt-out இந்த networkல் saved, ஆனால் மற்ற networksக்கு sync ஆகவில்லை — அடுத்த VPFI actionல் sync ஆகும், அல்லது toggle மீண்டும் முயற்சிக்கவும்.",
+      "overMaxHint": " — அது உங்களிடம் இருப்பதை விட அதிகம்.",
+      "phaseApproving": "VPFI approve செய்யப்படுகிறது…",
+      "phasePermitting": "Permission sign செய்யப்படுகிறது… — free, gas இல்லை",
+      "phaseSubmitting": "சமர்ப்பிக்கப்படுகிறது…",
+      "phaseWaiting": "வாலெட்டுக்காக காத்திருக்கிறது…",
+      "receiptDeposit": {
+        "fees": "Depositsக்கு Vaipakam fee இல்லை.",
+        "whenThisEnds": "உங்கள் free VPFIயை எப்போது வேண்டுமானாலும் withdraw செய்யுங்கள்.",
+        "youCanLose": "எதுவும் இல்லை — உங்கள் vaultல் free VPFI withdrawable ஆகவே இருக்கும்.",
+        "youReceive": "இப்போது எதுவும் இல்லை — காலப்போக்கில் eligible loansல் வளரும் fee discount."
+      },
+      "receiptWithdraw": {
+        "fees": "Withdrawalsக்கு Vaipakam fee இல்லை.",
+        "whenThisEnds": "உடனே — உங்கள் remaining balance discount history earn செய்யத் தொடரும்.",
+        "youCanLoseLead": "எதிர்கால fee discounts —"
+      },
+      "reviewDeposit": "Deposit review செய்யுங்கள்",
+      "reviewWithdraw": "Withdraw review செய்யுங்கள்",
+      "statusTitle": "உங்கள் discount status",
+      "switchToChange": "இதைக் change செய்ய supported networkக்கு switch செய்யுங்கள்.",
+      "vaultActionLabel": "Vault action",
+      "warmingUp": "Warming up",
+      "withdraw": "Withdraw",
+      "withdrawCta": "VPFI withdraw செய்யுங்கள்",
+      "withdrawDone": "Withdrawal confirmed. VPFI உங்கள் walletக்கு திரும்பியுள்ளது."
     },
     "errors": {
       "partialOverPrincipal": "அது கடனின் மீதமுள்ள முழு அசலையும் ஈடுகட்டுகிறது. அதற்குப் பதிலாக “இந்தக் கடனைத் திருப்பிச் செலுத்து” என்பதைப் பயன்படுத்தவும் — அது கடனை முறையாக முடித்து உங்கள் பிணையத்தை விடுவிக்கும்.",
@@ -920,7 +1266,14 @@
       "emptyCta": "தொடங்குங்கள்",
       "emptyCtaFaucet": "சோதனை சொத்துகளைப் பெறு",
       "unavailable": "இப்போது உங்கள் வால்ட்டைப் படிக்க முடியவில்லை. உங்கள் நிதி பாதிக்கப்படவில்லை — சிறிது நேரம் கழித்து மீண்டும் முயற்சிக்கவும்.",
-      "lockedHint": "பூட்டப்பட்ட தொகைகள் உங்கள் திறந்த வாய்ப்புகள், நடப்புக் கடன்கள், வாடகைகளுக்கு ஆதரவாக உள்ளன. அவை மூடப்படும்போது இத்தொகைகள் விடுவிக்கப்படும்."
+      "lockedHint": "பூட்டப்பட்ட தொகைகள் உங்கள் திறந்த வாய்ப்புகள், நடப்புக் கடன்கள், வாடகைகளுக்கு ஆதரவாக உள்ளன. அவை மூடப்படும்போது இத்தொகைகள் விடுவிக்கப்படும்.",
+      "addressLabel": "Vault address:",
+      "badgeFree": "Free",
+      "badgePartlyLocked": "பகுதி locked",
+      "emptyBody": "நீங்கள் offers post செய்தால், loans open செய்தால், அல்லது VPFI deposit செய்தால் assets இங்கே தோன்றும்.",
+      "emptyTitle": "உங்கள் vaultல் இன்னும் எதுவும் இல்லை",
+      "loading": "உங்கள் vault படிக்கப்படுகிறது…",
+      "noVaultTitle": "இன்னும் vault இல்லை"
     },
     "activity": {
       "title": "செயல்பாடு",
@@ -936,14 +1289,16 @@
       "loadMore": "பழைய செயல்பாட்டை ஏற்று",
       "loadingMore": "ஏற்றப்படுகிறது…",
       "unavailableFallback": "உங்கள் நடப்புக் கடன்களும் வாடகைகளும் எப்போதும் கிடைக்கும் இடம்",
-      "positionsLink": "என் நிலைகள்"
+      "positionsLink": "என் நிலைகள்",
+      "loading": "உங்கள் செயல்பாடு ஏற்றப்படுகிறது…"
     },
     "rewards": {
       "title": "பயன்பாட்டு வெகுமதிகள்",
       "blurb": "உங்கள் கடனளிப்பு மற்றும் கடன் வாங்கும் செயல்பாட்டிலிருந்து கிடைக்கும் VPFI வெகுமதிகள். கடன் மூடப்பட்டு, வெகுமதி நாள் இறுதி செய்யப்பட்ட பிறகு அவற்றைக் கோரலாம்.",
       "empty": "இன்னும் வெகுமதிகள் இல்லை. கடனளிப்பு அல்லது கடன் வாங்கும் செயல்பாட்டிற்குப் பிறகு வெகுமதிகள் தோன்றும்.",
       "waiting": "உங்கள் வெகுமதிகள் இறுதி செய்யப்படுகின்றன — ஒரு வெகுமதி நாள் அனைத்து செயின்களிலும் மூடப்பட்ட பிறகே அதைக் கோர முடியும். சிறிது நேரம் கழித்து மீண்டும் பாருங்கள்.",
-      "claim": "வெகுமதிகளைக் கோரு"
+      "claim": "வெகுமதிகளைக் கோரு",
+      "unavailable": "உங்கள் rewardsஐ இப்போது check செய்ய முடியவில்லை — சிறிது நேரத்தில் மீண்டும் முயற்சிக்கவும்."
     },
     "sanctions": {
       "title": "இந்த வாலெட் இணக்க ஆரக்கிளின் பட்டியலில் உள்ளது.",
@@ -965,6 +1320,108 @@
       "title": "இந்தப் பக்கம் இல்லை",
       "body": "இணைப்பு பழையதாகவோ தவறாகத் தட்டச்சு செய்யப்பட்டதாகவோ இருக்கலாம். எதுவும் இழக்கப்படவில்லை — உங்கள் நிலைகள் பாதுகாப்பாக உள்ளன.",
       "backHome": "முகப்புக்குத் திரும்பு"
+    },
+    "assetPicker": {
+      "faucetBadge": "Faucet test token",
+      "invalidAddress": "செல்லுபடியாகும் contract முகவரியை உள்ளிடுங்கள் — “0x”க்கு பிறகு 40 hex எழுத்துகள் வேண்டும்.",
+      "pasteOption": "Token முகவரியை ஒட்டு…",
+      "placeholder": "Asset தேர்வு செய்…"
+    },
+    "checklist": {
+      "checking": "சரிபார்க்கப்படுகிறது",
+      "needsAttention": "கவனம் தேவை",
+      "ready": "தயார்"
+    },
+    "common": {
+      "back": "பின் செல்லவும்",
+      "tryAgain": "மீண்டும் முயற்சிக்கவும்",
+      "waitingForWallet": "வாலெட்டுக்காக காத்திருக்கிறது…"
+    },
+    "copyAddress": {
+      "copied": "முகவரி நகலெடுக்கப்பட்டது"
+    },
+    "loanRow": {
+      "youRent": "நீங்கள் rent செய்கிறீர்கள்",
+      "youRentOut": "நீங்கள் rentக்கு விடுகிறீர்கள்"
+    },
+    "offerFlow": {
+      "advancedOptions": "Advanced options",
+      "allowPartialRepay": "Borrower பகுதிகளாக repay செய்ய அனுமதி",
+      "back": "பின் செல்லவும்",
+      "beforeYouSign": "Sign செய்வதற்கு முன்",
+      "borrower": {
+        "acceptSubmitLabel": "இதை இப்போது borrow செய்யுங்கள்",
+        "amountHint": "இந்தத் தொகைக்கு அருகில் offer செய்யும் lendersஐ தேடுவோம்.",
+        "amountLabel": "நீங்கள் எவ்வளவு borrow செய்ய விரும்புகிறீர்கள்?",
+        "assetLabel": "Borrow செய்யும் asset",
+        "collateralLabel": "நீங்கள் lock செய்யும் collateral",
+        "rateHint": "இந்த rate அல்லது அதற்குக் குறைவாக offer செய்யும் lenders உங்களுக்கு fund செய்யலாம்.",
+        "rateLabel": "நீங்கள் ஏற்கும் மிக உயர்ந்த yearly interest rate (%)"
+      },
+      "collateralAmountLabel": "Collateral தொகை",
+      "continueToReview": "Reviewக்கு தொடரவும்",
+      "counterAssetBorrowed": "Borrowed asset",
+      "counterAssetCollateral": "Collateral asset",
+      "durationLabel": "காலம்",
+      "lender": {
+        "acceptSubmitLabel": "இந்த borrowerஐ fund செய்யுங்கள்",
+        "amountHint": "உங்கள் offer open இருக்கும் வரை இந்த amount locked இருக்கும். Acceptanceக்கு முன் எப்போது வேண்டுமானாலும் cancel செய்யலாம்.",
+        "amountLabel": "நீங்கள் எவ்வளவு lend செய்ய விரும்புகிறீர்கள்?",
+        "assetLabel": "Lend செய்யும் asset",
+        "collateralHint": "Borrower உங்கள் tokens பெறுவதற்கு முன் இதை lock செய்ய வேண்டும்.",
+        "collateralLabel": "Borrowerஇடமிருந்து நீங்கள் கேட்கும் collateral",
+        "rateLabel": "நீங்கள் விரும்பும் yearly interest rate (%)"
+      },
+      "liveFeesLoaded": "Live fee terms loaded",
+      "liveFeesLoading": "Live fee terms ஏற்றப்படுகின்றன…",
+      "lookingForMatches": "Matching offers தேடப்படுகிறது…",
+      "postAnother": "மற்றொன்றை post செய்யுங்கள்",
+      "preparingReview": "உங்கள் review தயாராகிறது…",
+      "proRataInterest": "Full termக்கு பதிலாக பயன்படுத்திய நேரத்திற்கே interest charge செய்யுங்கள் (pro-rata)",
+      "receiptOweNothing": "எதுவும் இல்லை — borrower உங்களுக்கு owe செய்கிறார்.",
+      "retry": "மீண்டும் முயற்சிக்கவும்",
+      "rowBorrow": "Borrow",
+      "rowLend": "Lend",
+      "seeMatches": "Matching offers பார்க்கவும்",
+      "selfCollateralError": "Collateral borrow செய்யப்படும் assetஇலிருந்து வேறு asset ஆக இருக்க வேண்டும் — protocol same-asset offersஐ reject செய்கிறது.",
+      "steps": {
+        "details": "Details",
+        "done": "Done",
+        "offers": "Offers",
+        "review": "Review & sign",
+        "terms": "உங்கள் terms"
+      },
+      "viewPositions": "என் positions பார்க்கவும்",
+      "viewTransaction": "Transaction பார்க்கவும்",
+      "waitingForWallet": "வாலெட்டுக்காக காத்திருக்கிறது…"
+    },
+    "settingsPage": {
+      "experience": {
+        "advanced": "Advanced",
+        "basic": "Basic",
+        "hint": "Basic ஒவ்வொரு screenஐ essentials மட்டும் வைத்திருக்கும். Advanced அதே pagesல் அதிக controls மற்றும் market detail காட்டும் — protocol rules இரண்டிலும் ஒரே மாதிரி.",
+        "title": "அனுபவ நிலை"
+      },
+      "lede": "Appearance, experience level, மேலும் பல.",
+      "more": {
+        "activitySub": "உங்கள் wallet Vaipakamல் செய்த அனைத்தும்",
+        "claimsSub": "Repayments, collateral, rewards collect செய்யுங்கள்",
+        "helpSub": "எளிய பதில்கள் மற்றும் build info",
+        "offersSub": "இந்த networkல் உள்ள ஒவ்வொரு open offerஐ browse செய்யுங்கள்",
+        "title": "மேலும்",
+        "vaultSub": "உங்கள் assets இருக்கும் இடம் — totals, locked, free",
+        "vpfiSub": "Optional — VPFI வைத்திருப்பதால் protocol fees குறைப்பு"
+      },
+      "theme": {
+        "dark": "Dark",
+        "light": "Light",
+        "system": "System",
+        "title": "Theme"
+      },
+      "title": "Settings"
+    },
+    "stepNav": {
+      "progressAria": "Progress"
     }
   }
 }
