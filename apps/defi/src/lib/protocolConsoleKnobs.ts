@@ -440,7 +440,8 @@ export const ADMIN_KNOBS: KnobMeta[] = [
     midMin: '1',
     midMax: '50000',
     getter: {
-      facet: 'InteractionRewardsFacet',
+      // #1333 — the read-only getter moved to the lens facet.
+      facet: 'InteractionRewardsLensFacet',
       fn: 'getInteractionCapVpfiPerEth',
       returns: 'uint256',
     },

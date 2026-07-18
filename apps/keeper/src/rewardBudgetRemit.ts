@@ -24,7 +24,7 @@ import {
   RewardRemittanceFacetABI,
   RewardReporterFacetABI,
   RewardAggregatorFacetABI,
-  InteractionRewardsFacetABI,
+  InteractionRewardsLensFacetABI,
 } from '@vaipakam/contracts/abis';
 import type { ChainConfig, Env } from './env';
 import { getChainConfigs } from './env';
@@ -33,7 +33,8 @@ import { buildKeeperContext, isKeeperEnabled, type KeeperContext } from './keepe
 const REMIT_ABI = RewardRemittanceFacetABI as Abi;
 const REPORTER_ABI = RewardReporterFacetABI as Abi;
 const AGGREGATOR_ABI = RewardAggregatorFacetABI as Abi;
-const INTERACTION_ABI = InteractionRewardsFacetABI as Abi;
+// `getInteractionCurrentDay` moved to the read-only lens facet (#1333).
+const INTERACTION_ABI = InteractionRewardsLensFacetABI as Abi;
 
 /** How many recent days to re-scan for un-remitted budget each tick. */
 const DEFAULT_LOOKBACK_DAYS = 45;

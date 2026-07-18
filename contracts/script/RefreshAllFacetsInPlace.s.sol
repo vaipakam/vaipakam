@@ -35,6 +35,7 @@ import {VPFITokenFacet} from "../src/facets/VPFITokenFacet.sol";
 import {VPFIDiscountFacet} from "../src/facets/VPFIDiscountFacet.sol";
 import {ConsolidationFacet} from "../src/facets/ConsolidationFacet.sol";
 import {InteractionRewardsFacet} from "../src/facets/InteractionRewardsFacet.sol";
+import {InteractionRewardsLensFacet} from "../src/facets/InteractionRewardsLensFacet.sol";
 import {RewardReporterFacet} from "../src/facets/RewardReporterFacet.sol";
 import {RewardAggregatorFacet} from "../src/facets/RewardAggregatorFacet.sol";
 import {ConfigFacet} from "../src/facets/ConfigFacet.sol";
@@ -146,7 +147,7 @@ contract RefreshAllFacetsInPlace is DeployDiamond {
 
     // Must equal DeployDiamond's `cuts` array length (currently cuts[0..63]).
     // A mismatch means a facet was added to DeployDiamond but not mirrored here.
-    uint256 internal constant EXPECTED_FACETS = 65;
+    uint256 internal constant EXPECTED_FACETS = 66;
 
     function refresh() external {
         uint256 cid = block.chainid;
@@ -417,6 +418,16 @@ contract RefreshAllFacetsInPlace is DeployDiamond {
         // (unrouted), so an in-place refresh installs Claim All instead of
         // leaving multicall(Call[]) unrouted while the ABI advertises it.
         items[64] = Item("multicallFacet", address(new MulticallFacet()), _getMulticallFacetSelectors());
+        // #1306 follow-up — InteractionRewardsLensFacet. NEW facet carved off
+        // InteractionRewardsFacet (view/getter surface) for EIP-170 headroom.
+        // `_split` re-points the 14 view selectors (currently routed to the old
+        // InteractionRewardsFacet) to the lens via Replace, so an in-place
+        // refresh moves them cleanly.
+        items[65] = Item(
+            "interactionRewardsLensFacet",
+            address(new InteractionRewardsLensFacet()),
+            _getInteractionRewardsLensSelectors()
+        );
         // #1132 (S10 central enforcement) — terminal-transition register host.
     }
 

@@ -69,6 +69,7 @@ import {MirrorTierReceiverFacet} from "../src/facets/MirrorTierReceiverFacet.sol
 // T-087 Sub 2.D — protocol-funded mirror broadcast orchestrator.
 import {ProtocolBroadcastFacet} from "../src/facets/ProtocolBroadcastFacet.sol";
 import {InteractionRewardsFacet} from "../src/facets/InteractionRewardsFacet.sol";
+import {InteractionRewardsLensFacet} from "../src/facets/InteractionRewardsLensFacet.sol";
 import {RewardReporterFacet} from "../src/facets/RewardReporterFacet.sol";
 import {RewardAggregatorFacet} from "../src/facets/RewardAggregatorFacet.sol";
 import {RewardRemittanceFacet} from "../src/facets/RewardRemittanceFacet.sol";
@@ -231,6 +232,10 @@ contract DeployDiamond is Script {
         ProtocolBroadcastFacet protocolBroadcastFacet =
             new ProtocolBroadcastFacet();
         InteractionRewardsFacet interactionRewardsFacet = new InteractionRewardsFacet();
+        // #1306 follow-up — read-only lens carved off InteractionRewardsFacet
+        // for EIP-170 headroom (view/getter surface only, shared storage).
+        InteractionRewardsLensFacet interactionRewardsLensFacet =
+            new InteractionRewardsLensFacet();
         RewardReporterFacet rewardReporterFacet = new RewardReporterFacet();
         RewardAggregatorFacet rewardAggregatorFacet = new RewardAggregatorFacet();
         RewardRemittanceFacet rewardRemittanceFacet = new RewardRemittanceFacet();
@@ -264,7 +269,7 @@ contract DeployDiamond is Script {
 
         // ── Step 3: Build facet cuts ────────────────────────────────────
         // 37 facets (DiamondCutFacet already added by constructor)
-        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](65);
+        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](66);
 
         cuts[0] = _buildCut(address(loupeFacet), _getLoupeSelectors());
         cuts[1] = _buildCut(address(ownershipFacet), _getOwnershipSelectors());
@@ -506,6 +511,14 @@ contract DeployDiamond is Script {
         cuts[64] = _buildCut(
             address(multicallFacet),
             _getMulticallFacetSelectors()
+        );
+        // #1306 follow-up — InteractionRewardsLensFacet: the read-only view /
+        // getter surface split off InteractionRewardsFacet (cuts[25]) for
+        // EIP-170 headroom. Shares LibVaipakam storage; the 14 view selectors
+        // route here instead of the (now leaner) mutating facet.
+        cuts[65] = _buildCut(
+            address(interactionRewardsLensFacet),
+            _getInteractionRewardsLensSelectors()
         );
         // #594 — standalone holder-only consolidation entry points are cut at
         // slot 24 (see the #687-B note above).
@@ -815,6 +828,7 @@ contract DeployDiamond is Script {
         Deployments.writeFacet("mirrorTierReceiverFacet", address(mirrorTierReceiverFacet));
         Deployments.writeFacet("protocolBroadcastFacet", address(protocolBroadcastFacet));
         Deployments.writeFacet("interactionRewardsFacet", address(interactionRewardsFacet));
+        Deployments.writeFacet("interactionRewardsLensFacet", address(interactionRewardsLensFacet));
         Deployments.writeFacet("rewardReporterFacet",     address(rewardReporterFacet));
         Deployments.writeFacet("rewardAggregatorFacet",   address(rewardAggregatorFacet));
         Deployments.writeFacet("rewardRemittanceFacet",   address(rewardRemittanceFacet));
@@ -887,6 +901,7 @@ contract DeployDiamond is Script {
         console.log("MirrorTierReceiverFacet:", address(mirrorTierReceiverFacet));
         console.log("ProtocolBroadcastFacet:", address(protocolBroadcastFacet));
         console.log("InteractionRewardsFacet:", address(interactionRewardsFacet));
+        console.log("InteractionRewardsLensFacet:", address(interactionRewardsLensFacet));
         console.log("RewardReporterFacet:  ", address(rewardReporterFacet));
         console.log("RewardAggregatorFacet:", address(rewardAggregatorFacet));
         console.log("RewardRemittanceFacet:", address(rewardRemittanceFacet));
@@ -2027,35 +2042,46 @@ contract DeployDiamond is Script {
     // #687-B: _getStakingRewardsSelectors removed with the 5% VPFI staking yield.
 
     function _getInteractionRewardsSelectors() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](24);
+        // #1306 follow-up — the 14 read-only view/getter selectors moved to
+        // {InteractionRewardsLensFacet} (see _getInteractionRewardsLensSelectors).
+        // This facet keeps the mutating claim/sweep/admin surface + the
+        // diamond-internal reward-lifecycle hooks.
+        s = new bytes4[](10);
         s[0] = InteractionRewardsFacet.claimInteractionRewards.selector;
         s[1] = InteractionRewardsFacet.setInteractionLaunchTimestamp.selector;
-        s[2] = InteractionRewardsFacet.getInteractionLaunchTimestamp.selector;
-        s[3] = InteractionRewardsFacet.getInteractionCurrentDay.selector;
-        s[4] = InteractionRewardsFacet.getInteractionAnnualRateBps.selector;
-        s[5] = InteractionRewardsFacet.getInteractionHalfPoolForDay.selector;
-        s[6] = InteractionRewardsFacet.getInteractionLastClaimedDay.selector;
-        s[7] = InteractionRewardsFacet.getInteractionDayEntry.selector;
-        s[8] = InteractionRewardsFacet.previewInteractionRewards.selector;
-        s[9] = InteractionRewardsFacet.getInteractionPoolRemaining.selector;
-        s[10] = InteractionRewardsFacet.getInteractionPoolPaidOut.selector;
-        s[11] = InteractionRewardsFacet.getInteractionSnapshot.selector;
-        s[12] = InteractionRewardsFacet.getInteractionClaimability.selector;
-        s[13] = InteractionRewardsFacet.setInteractionCapVpfiPerEth.selector;
-        s[14] = InteractionRewardsFacet.getInteractionCapVpfiPerEth.selector;
-        s[15] = InteractionRewardsFacet.getInteractionCapVpfiPerEthRaw.selector;
-        s[16] = InteractionRewardsFacet.sweepForfeitedInteractionRewards.selector;
-        s[17] = InteractionRewardsFacet.getUserRewardEntries.selector;
+        s[2] = InteractionRewardsFacet.setInteractionCapVpfiPerEth.selector;
+        s[3] = InteractionRewardsFacet.sweepForfeitedInteractionRewards.selector;
         // #969 / S5 — diamond-internal reward-lifecycle hooks for PrecloseFacet.
-        s[18] = InteractionRewardsFacet.precloseRewardClose.selector;
-        s[19] = InteractionRewardsFacet.precloseRewardTransferObligation.selector;
+        s[4] = InteractionRewardsFacet.precloseRewardClose.selector;
+        s[5] = InteractionRewardsFacet.precloseRewardTransferObligation.selector;
         // #1067 / S13 Part 2 — diamond-internal terminal reward-close hooks
         // (self-only; fired best-effort by the terminal facets).
-        s[20] = InteractionRewardsFacet.liquidationRewardClose.selector;
-        s[21] = InteractionRewardsFacet.terminalRewardClose.selector;
-        s[22] = InteractionRewardsFacet.transferLenderRewardEntry.selector;
+        s[6] = InteractionRewardsFacet.liquidationRewardClose.selector;
+        s[7] = InteractionRewardsFacet.terminalRewardClose.selector;
+        s[8] = InteractionRewardsFacet.transferLenderRewardEntry.selector;
         // RL-1 — explicit-delivery claim (vault default / wallet opt-out).
-        s[23] = InteractionRewardsFacet.claimInteractionRewardsTo.selector;
+        s[9] = InteractionRewardsFacet.claimInteractionRewardsTo.selector;
+    }
+
+    /// @dev #1306 follow-up — read-only view/getter surface split off
+    ///      {InteractionRewardsFacet} into {InteractionRewardsLensFacet} for
+    ///      EIP-170 headroom. These 14 selectors route to the lens facet.
+    function _getInteractionRewardsLensSelectors() internal pure returns (bytes4[] memory s) {
+        s = new bytes4[](14);
+        s[0] = InteractionRewardsLensFacet.getInteractionLaunchTimestamp.selector;
+        s[1] = InteractionRewardsLensFacet.getInteractionCurrentDay.selector;
+        s[2] = InteractionRewardsLensFacet.getInteractionAnnualRateBps.selector;
+        s[3] = InteractionRewardsLensFacet.getInteractionHalfPoolForDay.selector;
+        s[4] = InteractionRewardsLensFacet.getInteractionLastClaimedDay.selector;
+        s[5] = InteractionRewardsLensFacet.getInteractionDayEntry.selector;
+        s[6] = InteractionRewardsLensFacet.previewInteractionRewards.selector;
+        s[7] = InteractionRewardsLensFacet.getInteractionPoolRemaining.selector;
+        s[8] = InteractionRewardsLensFacet.getInteractionPoolPaidOut.selector;
+        s[9] = InteractionRewardsLensFacet.getInteractionSnapshot.selector;
+        s[10] = InteractionRewardsLensFacet.getInteractionClaimability.selector;
+        s[11] = InteractionRewardsLensFacet.getInteractionCapVpfiPerEth.selector;
+        s[12] = InteractionRewardsLensFacet.getInteractionCapVpfiPerEthRaw.selector;
+        s[13] = InteractionRewardsLensFacet.getUserRewardEntries.selector;
     }
 
     function _getRewardReporterSelectors() internal pure returns (bytes4[] memory s) {

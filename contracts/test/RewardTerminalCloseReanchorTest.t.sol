@@ -5,6 +5,7 @@ pragma solidity ^0.8.29;
 import {SetupTest} from "./SetupTest.t.sol";
 import {LibVaipakam} from "../src/libraries/LibVaipakam.sol";
 import {InteractionRewardsFacet} from "../src/facets/InteractionRewardsFacet.sol";
+import {InteractionRewardsLensFacet} from "../src/facets/InteractionRewardsLensFacet.sol";
 import {TestMutatorFacet} from "./mocks/TestMutatorFacet.sol";
 import {IERC721} from "@openzeppelin/contracts/token/ERC721/IERC721.sol";
 
@@ -68,7 +69,7 @@ contract RewardTerminalCloseReanchorTest is SetupTest {
         TestMutatorFacet(address(diamond)).scaffoldActiveLoan(LOAN, l);
 
         (uint256 day, ) =
-            InteractionRewardsFacet(address(diamond)).getInteractionCurrentDay();
+            InteractionRewardsLensFacet(address(diamond)).getInteractionCurrentDay();
         uint32 today = uint32(day);
         lenderId = TestMutatorFacet(address(diamond)).pushRewardEntry(
             lenderOrig, uint64(LOAN), LibVaipakam.RewardSide.Lender, 1e18, today
@@ -94,7 +95,7 @@ contract RewardTerminalCloseReanchorTest is SetupTest {
         view
         returns (LibVaipakam.RewardEntry[] memory)
     {
-        return InteractionRewardsFacet(address(diamond)).getUserRewardEntries(user);
+        return InteractionRewardsLensFacet(address(diamond)).getUserRewardEntries(user);
     }
 
     function _closeAsDiamond(bytes memory data) internal {
