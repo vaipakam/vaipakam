@@ -246,11 +246,11 @@ flowchart LR
 | #1346 | Keep as filed = M1; add the #973 restamp note (comment posted) |
 | #1347 | **Blocked on D1** — on (b), re-base body to #1294 rev 14 (LIF·year, dual-fee, coupling); on (a), add the rev-14 supersession note instead |
 | #1222 | Adopt the parked B1–B4/C1–C2 cut with §M3's two corrections (B1 two report fields; two-pass funding in B2/B3); #1331 stays absorbed by B2 |
-| #1331 | Remains folded (close when B2 merges) |
+| #1331 | **CLOSED 2026-07-18 as duplicate of #1222** — its full scope (remit-ingress labeling; remitted-recycled = local credit vs locally-committed = pure release, across claim/forfeit/expiry) is §M3's B2; the B4 tests must cover it |
 | #1218 | Re-point at §M5 (net-emission = `freshDrawdown` under the governor; dashboard surface) |
 | #1204 / #1219 | Keep; note the RL-5 release-train commitment; schedule the #1219 legal glance |
 | New | Cut the M2 card set (per §M2 table) once D1 is decided; one M7 runbook card |
-| #1217 / #1301–#1306 family | Close as complete after M8's fragment assembly (Phase A′ + RL set shipped; #1217's task-2 conversion-routing superseded per its 2026-07-18 status comment) |
+| #1217 | **CLOSED 2026-07-18 as completed** — tasks 1/4 shipped (governor stack), task 2's conversion-routing superseded (successors: #1346 Layer 0, #1347 Layer 2), task 3 continues as #1218 (§M5); fragment assembly stays tracked by M8, not by the card. #1301–#1306 closed via their PRs |
 
 ## 6. Definition of done — "VPFI recycling complete"
 
