@@ -14,16 +14,16 @@
  *     `<html lang>` to es — the "lang follows shipped translations"
  *     half COVERAGE.md flagged as unassertable until a real bundle
  *     landed.
- *   - placeholder locales (bundle still `{}`, e.g. ta) render
+ *   - placeholder locales (bundle still `{}`, e.g. te) render
  *     ENGLISH fallback text — the fallback chain, not raw keys or a
  *     crash — and `<html lang>` honestly stays `en` until that
  *     locale's translation ships, no matter how the preference
  *     arrived (Codex #1309 r5). Asserted via a seeded
  *     `vaipakam_lang` cookie: on the CI origin the cookie is
  *     host-scoped (writeCookie omits Domain on an IP), so the real
- *     cookie-authoritative seed path runs end-to-end. ta is
- *     deliberately outside the first translation wave, so this leg
- *     stays valid as es/zh/hi/ja promote.
+ *     cookie-authoritative seed path runs end-to-end. te (Telugu)
+ *     has no scheduled bundle, so this leg stays valid as further
+ *     locales promote (ta itself ships in this PR).
  *
  *  The cross-subdomain `vaipakam_lang` cookie half of persistence is
  *  not assertable here (a `.vaipakam.com`-scoped cookie can't exist
@@ -73,8 +73,10 @@ test('language preference persists; translated es flips content + <html lang>; p
 
   const picker = page.getByLabel('Display language');
   await expect(picker).toBeVisible();
-  // Wave 1: English + the four first-wave codes, exactly.
-  await expect(picker.locator('option')).toHaveCount(5);
+  // Exactly the PICKER_VISIBLE set: wave-1 (en/es/zh/hi/ja) + ta.
+  // Grows by one with every locale promoted into PICKER_VISIBLE —
+  // bump this count in the same diff as the promotion.
+  await expect(picker.locator('option')).toHaveCount(6);
 
   await picker.selectOption('es');
   // es is a TRANSLATED locale now: the catalog re-resolves in Spanish
@@ -108,17 +110,17 @@ test('language preference persists; translated es flips content + <html lang>; p
   ).toBe('en');
 
   // Placeholder honesty, via the COOKIE leg: a `vaipakam_lang`
-  // cookie carrying a locale alpha02 hasn't translated (ta —
-  // deliberately outside the first wave; realistic, because www
-  // DOES translate ta, so a choice made there arrives here by
-  // cookie). The cookie is authoritative over localStorage by
+  // cookie carrying a locale alpha02 hasn't translated (te — no
+  // Telugu bundle is scheduled, so this leg stays stable as more
+  // locales promote; a sibling surface writing the cookie is how
+  // such a preference arrives). The cookie is authoritative by
   // design, and on the CI origin writeCookie emits it host-scoped
   // (no Domain on an IP), so the exact seed path runs: the factory
   // copies the cookie into localStorage, the text renders as
   // English fallback (not raw keys), `<html lang>` honestly stays
   // `en`, and the preference is preserved — not scrubbed to en.
   await page.evaluate(() => {
-    document.cookie = 'vaipakam_lang=ta; Path=/; SameSite=Lax';
+    document.cookie = 'vaipakam_lang=te; Path=/; SameSite=Lax';
   });
   await page.reload({ waitUntil: 'domcontentloaded' });
   await expect(
@@ -127,5 +129,5 @@ test('language preference persists; translated es flips content + <html lang>; p
   await expect(page.locator('html')).toHaveAttribute('lang', 'en');
   expect(
     await page.evaluate(() => localStorage.getItem('vaipakam:language')),
-  ).toBe('ta');
+  ).toBe('te');
 });
