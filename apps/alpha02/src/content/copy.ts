@@ -214,10 +214,11 @@ const copySource = {
           'A token in this offer could not be checked by the independent security screen. Treat it with extra care.',
       },
     },
-    matchesHidden: (n: number) =>
-      n === 1
-        ? '1 matching offer is hidden because an independent security check flagged one of its tokens as dangerous.'
-        : `${n} matching offers are hidden because an independent security check flagged one of their tokens as dangerous.`,
+    matchesHidden: tmpl(
+      '{{count}} matching offers are hidden because an independent security check flagged one of their tokens as dangerous.',
+      ['count'],
+      { one: '1 matching offer is hidden because an independent security check flagged one of its tokens as dangerous.' },
+    ),
     // CoinGecko reputation soft-signal (#1036 fallback layer) — only
     // on networks with market data; never a block, never a gate.
     reputationListedTop: (name: string, symbol: string | null, rank: number) =>
@@ -228,10 +229,11 @@ const copySource = {
       'No market listing found for this address — the wider market doesn’t know this token. That alone doesn’t make it bad, but verify the contract address with the project before dealing in it.',
   },
   signing: {
-    intro: (n: number) =>
-      n === 1
-        ? 'One wallet confirmation finishes this:'
-        : `You'll confirm ${n} times in your wallet, in this order:`,
+    intro: tmpl(
+      "You'll confirm {{count}} times in your wallet, in this order:",
+      ['count'],
+      { one: 'One wallet confirmation finishes this:' },
+    ),
     introUpTo: tmpl(`Up to {{n}} wallet confirmations, in this order:`, ['n']),
     approveUnknown:
       'Approve the token — one confirmation, or two if your wallet needs an older approval reset to zero first (still checking).',
@@ -369,8 +371,9 @@ const copySource = {
     } as Record<string, string>,
     // Secondary line — shown only for a loan-linked (tappable) row.
     loanRef: tmpl(`Loan #{{loanId}} · tap to view`, ['loanId']),
-    unreadBadgeTitle: (n: number) =>
-      n === 1 ? '1 unread notification' : `${n} unread notifications`,
+    unreadBadgeTitle: tmpl('{{count}} unread notifications', ['count'], {
+      one: '1 unread notification',
+    }),
   },
   errorBoundary: {
     detailAria: 'Error detail',
@@ -1138,8 +1141,11 @@ const copySource = {
     loadingOffers: 'Looking for matching lending offers…',
     figureMoved:
       'The payout figure moved with time, so the review closed — open it again to confirm against the current number.',
-    moreOffers: (n: number) =>
-      `${n} more matching offer${n === 1 ? '' : 's'} pay${n === 1 ? 's' : ''} less than the ones shown.`,
+    moreOffers: tmpl(
+      '{{count}} more matching offers pay less than the ones shown.',
+      ['count'],
+      { one: '{{count}} more matching offer pays less than the ones shown.' },
+    ),
     checking: 'Checking whether this loan can be exited early…',
     checkFailed:
       'We couldn’t read this loan’s exit details right now — retrying.',
@@ -1475,7 +1481,7 @@ const copySource = {
     allTitle: 'Claim everything at once',
     allBlurb:
       'Collect every ready payout in a single wallet signature instead of one at a time.',
-    allButton: (n: number) => `Claim ${n} ${n === 1 ? 'item' : 'items'}`,
+    allButton: tmpl('Claim {{count}} items', ['count'], { one: 'Claim {{count}} item' }),
     allEmpty: 'Nothing is batchable right now.',
     allTooMany: tmpl(
       `Select up to {{max}} at once — claim the rest in a second batch.`,
@@ -1692,8 +1698,11 @@ const copySource = {
       quotedMid: 'quoted mid',
       quotedMidHint:
         'Dashed line = the book’s current quoted mid — a resting quote, not an executed rate.',
-      sparseNote: (n: number) =>
-        `Sparse market — ${n} fill${n === 1 ? '' : 's'} in this range, drawn individually. Candles appear once there’s enough tape to mean something.`,
+      sparseNote: tmpl(
+        'Sparse market — {{count}} fills in this range, drawn individually. Candles appear once there’s enough tape to mean something.',
+        ['count'],
+        { one: 'Sparse market — {{count}} fill in this range, drawn individually. Candles appear once there’s enough tape to mean something.' },
+      ),
       // #1247 PAG-009 — the server scans the newest 10,000 fills; a
       // busy market's oldest history falls off. Say so instead of
       // letting an "all" chart read as complete.
@@ -1702,7 +1711,7 @@ const copySource = {
       intervalLabel: 'Interval',
       rangeLabel: 'Range',
       attribution: 'Charts by TradingView',
-      tooltipFills: (n: number) => `${n} fill${n === 1 ? '' : 's'}`,
+      tooltipFills: tmpl('{{count}} fills', ['count'], { one: '{{count}} fill' }),
       mobileBook: 'Book',
       mobileChart: 'Chart',
       mobileViewLabel: 'Desk view',
@@ -2234,7 +2243,7 @@ const copySource = {
     beingSettled: 'Being settled',
     pastDue: 'Past due',
     dueToday: 'Due today',
-    dueInDays: (n: number) => `Due in ${n} day${n === 1 ? '' : 's'}`,
+    dueInDays: tmpl('Due in {{count}} days', ['count'], { one: 'Due in {{count}} day' }),
   },
 
   activity: {

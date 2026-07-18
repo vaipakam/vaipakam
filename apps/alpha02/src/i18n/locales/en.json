@@ -141,9 +141,13 @@
           "title": "A token in this offer could not be checked by the independent security screen. Treat it with extra care."
         }
       },
+      "matchesHidden_one": "1 matching offer is hidden because an independent security check flagged one of its tokens as dangerous.",
+      "matchesHidden_other": "{{count}} matching offers are hidden because an independent security check flagged one of their tokens as dangerous.",
       "reputationUnlisted": "No market listing found for this address — the wider market doesn’t know this token. That alone doesn’t make it bad, but verify the contract address with the project before dealing in it."
     },
     "signing": {
+      "intro_one": "One wallet confirmation finishes this:",
+      "intro_other": "You'll confirm {{count}} times in your wallet, in this order:",
       "introUpTo": "Up to {{n}} wallet confirmations, in this order:",
       "approveUnknown": "Approve the token — one confirmation, or two if your wallet needs an older approval reset to zero first (still checking).",
       "sign": "Sign the terms you just read — a free signature, no gas.",
@@ -221,7 +225,9 @@
         "hf_critical": "A loan’s health dipped below 1.05, close to the 1.0 liquidation line — open it to act.",
         "generic": "There’s an update on your loan."
       },
-      "loanRef": "Loan #{{loanId}} · tap to view"
+      "loanRef": "Loan #{{loanId}} · tap to view",
+      "unreadBadgeTitle_one": "1 unread notification",
+      "unreadBadgeTitle_other": "{{count}} unread notifications"
     },
     "errorBoundary": {
       "detailAria": "Error detail",
@@ -697,6 +703,8 @@
       "done": "Position sold — the payout is already in your wallet, and this loan now belongs to the new lender. Nothing more to do here.",
       "loadingOffers": "Looking for matching lending offers…",
       "figureMoved": "The payout figure moved with time, so the review closed — open it again to confirm against the current number.",
+      "moreOffers_one": "{{count}} more matching offer pays less than the ones shown.",
+      "moreOffers_other": "{{count}} more matching offers pay less than the ones shown.",
       "checking": "Checking whether this loan can be exited early…",
       "checkFailed": "We couldn’t read this loan’s exit details right now — retrying."
     },
@@ -920,6 +928,8 @@
       "claimed": "Claim complete.",
       "allTitle": "Claim everything at once",
       "allBlurb": "Collect every ready payout in a single wallet signature instead of one at a time.",
+      "allButton_one": "Claim {{count}} item",
+      "allButton_other": "Claim {{count}} items",
       "allEmpty": "Nothing is batchable right now.",
       "allTooMany": "Select up to {{max}} at once — claim the rest in a second batch.",
       "allVpfiNote": "Withdrawing parked VPFI lowers your fee-discount tier — off by default.",
@@ -1060,10 +1070,14 @@
         "retry": "Retry",
         "quotedMid": "quoted mid",
         "quotedMidHint": "Dashed line = the book’s current quoted mid — a resting quote, not an executed rate.",
+        "sparseNote_one": "Sparse market — {{count}} fill in this range, drawn individually. Candles appear once there’s enough tape to mean something.",
+        "sparseNote_other": "Sparse market — {{count}} fills in this range, drawn individually. Candles appear once there’s enough tape to mean something.",
         "truncatedNote": "Long history — showing the most recent fills only. The oldest candles are not drawn.",
         "intervalLabel": "Interval",
         "rangeLabel": "Range",
         "attribution": "Charts by TradingView",
+        "tooltipFills_one": "{{count}} fill",
+        "tooltipFills_other": "{{count}} fills",
         "mobileBook": "Book",
         "mobileChart": "Chart",
         "mobileViewLabel": "Desk view"
@@ -1372,7 +1386,9 @@
       "closed": "Closed",
       "beingSettled": "Being settled",
       "pastDue": "Past due",
-      "dueToday": "Due today"
+      "dueToday": "Due today",
+      "dueInDays_one": "Due in {{count}} day",
+      "dueInDays_other": "Due in {{count}} days"
     },
     "activity": {
       "loading": "Loading your activity…",
