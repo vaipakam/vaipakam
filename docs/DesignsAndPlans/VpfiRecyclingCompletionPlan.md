@@ -32,7 +32,7 @@ health publicly observable; and the system **armed**, not just merged dark.
 
 | Piece | Landed via | Notes |
 | --- | --- | --- |
-| Recycle-bucket ledger, `LibVpfiRecycle.credit` chokepoint, `VpfiRecycled` day-bucketed feed, backing check, forfeited-reward re-route | #1217 PR-3a (#1312) | `RecycleSource` enum reserves every future class; only `ForfeitedReward` + `ExpiredReward` have credit sites today |
+| Recycle-bucket ledger, `LibVpfiRecycle.credit` chokepoint, `VpfiRecycled` day-bucketed feed, backing check, forfeited-reward re-route | #1217 PR-3a (#1312) | `RecycleSource` enum reserves the currently-designed classes (notification, tariff, LIF/yield/matcher, bond slash, forfeit/expiry); only `ForfeitedReward` + `ExpiredReward` have credit sites today. **Not yet reserved: a spend-gated-perk class — the #1204 build appends `SpendGatedPerk` (enum is append-only, stable ABI) rather than misclassifying perk absorption under another source** |
 | Governor: absorption-coupled day-pool stamps, commitment accounting, margin knob, `armedFromDay` arming | #1217 PR-3b (#1313) | Ships **unarmed** — schedule-only until the ceremony (§M7) |
 | Dual fresh/recycled accumulators, consume-at-claim, pool-composition + arming broadcast (8-word payload) | #1217 PR-3c (#1315) | Composition crosses the mesh already; custody stays Base-side |
 | RL-1 claim-to-vault delivery (Diamond-funded credit primitive, `deliverTo`, wrapper carve-outs, broadcast-safe rollup) | #1301 (#1302) | |
@@ -162,21 +162,50 @@ is adopted as the implementation cut. Two corrections before B1 resumes:
    attribution) — a cumulative delta spanning a missed day cannot be
    split between D and D+1, letting report *timing* rather than receipt
    timing shift budgets. Report payload goes 4→6 in one bump; the WIP
-   branch's test updates cover both.
+   branch's test updates cover both. **Rollout gate — receiver first:**
+   the report flows mirror→Base and Base's messenger pins one strict
+   `REPORT_PAYLOAD_SIZE`, so Base MUST ship dual-length decode (4 and 6
+   words accepted, nothing else) **before** any mirror sends the 6-word
+   shape — otherwise `closeDay` reports revert and the day finalizes
+   with that chain zeroed. Mirror senders upgrade only after Base
+   dual-decode is live (or behind a sender flag).
 2. **Per-chain two-pass funding resolution** (governor §3.1, Codex
    r5/r6) belongs in B2/B3: global `Ā` sizes the *target*;
    `localFunded_c = min(target_c, availRecycled_c)`; Base tops up
    pro-rata (claims-first, keeper residual); each chain's broadcast
    carries its own funded `recycledHalf_c`. A chain whose slice is
    unfunded gets a smaller add-on — never a claim against tokens parked
-   on another mirror.
+   on another mirror. **Accumulator semantics (load-bearing):** today's
+   `recycledHalf` slot is consumed by the accumulator as a numerator
+   over the **global** side denominator — broadcasting a chain's
+   absolute funded budget in that slot would divide it by the global
+   denominator and under-accrue (a 10%-share chain funded 100 VPFI
+   would accrue ~10). `recycledHalf_c` is therefore broadcast as a
+   **global-equivalent half**: the funded chain budget scaled back by
+   the chain's demand weight (`fundedBudget_c / p_c`, rounded down),
+   so the existing numerator/global-denominator math yields exactly
+   the funded budget for that chain's interest share — with the funded
+   budget itself remaining the binding cap at claim/remit (scaling
+   dust can never over-pay). The alternative (mirrors switching to
+   local denominators) is rejected: it changes claim math on every
+   chain instead of one broadcast-side scaling. The implementing PR
+   pins the rounding.
 
 Kept from the parked plan verbatim: commitment semantics (broadcast
 *commits*; bucket debited pro-rata at claim/remit), whole-day idempotency
 stamp covering every bucket-touching field, `consumed ≤ reported` per
 chain, source-scoped netting with commitment-netted `availRecycled`,
 per-destination arrays aligned to `broadcastDestinationChainIds`,
-mirrors-decode-first messenger redeploy. **Wire-format rule, stated as a
+mirrors-decode-first messenger redeploy. **Backward decodability
+(both message kinds, both directions):** the messenger dispatches by
+`msgType` then enforces strict payload sizes — every widening therefore
+ships **dual-length decode on the receiver first** (old + new sizes
+accepted for that kind, nothing else), because delayed CCIP deliveries
+and governance replays of pre-upgrade messages MUST keep decoding after
+the upgrade: mirrors keep accepting the 8-word kind-2 broadcast
+alongside the widened shape, Base keeps accepting the 4-word report
+alongside the 6-word one. Only after every receiver dual-decodes do
+senders switch. **Wire-format rule, stated as a
 field union — never an assumed word count:** standalone M3 widens the
 kind-2 broadcast with the two new fields (`recycleConsume`,
 `keeperAllocate`) and the report 4→6 — **and the broadcast build becomes
@@ -189,11 +218,17 @@ have every mirror accruing against the same recycled half even when a
 chain's slice was funding-trimmed. So the B2 change is per-destination
 payload assembly (or explicit per-destination array fields), not merely
 "+2 words". If M2's PR-2 D1 evolution lands in the same window, the
-combined shape is the **union of both field sets** — D1 replaces
-`capThreshold18` with `capMode` + `capPayload` (net +1 word) *and* the
-two recycle fields ride along (11 words, or a new kind with the explicit
-field list) — one evolution, one mirrors-decode-first gate, with the
-implementing PR pinning the exact layout. Naming a fixed word count
+combined shape is the **union of both field sets, in BOTH directions** —
+Base→mirror: D1's `capMode` + `capPayload` (replacing `capThreshold18`)
+*and* the two recycle fields; **mirror→Base: the union likewise covers
+the REPORT side** — the recycled cumulative + for-day fields (B1) *and*
+rev-15 D1's per-loan headroom commitments, plus the ack-timed remitted
+accounting on the remit path (Base must not compute
+`chainRewardBudgetForDay = min(uncappedSlice, Σ commitments)` without
+the commitment data, nor consume loan headroom on failed bridge
+deliveries without the ack timing). One evolution per direction, one
+receiver-dual-decode gate each, with the implementing PR pinning the
+exact layouts. Naming a fixed word count
 across both upgrades is exactly how a decoder silently drops `capMode`
 or a recycle field; the layout is derived from the union at
 implementation time. #1331 is absorbed by B2
@@ -245,8 +280,13 @@ GovernanceRunbook gains a recycling section, executed in order:
    drift becoming economically real). The runbook entry carries this
    gate as a precondition checklist item, not prose.
 2. **RL-3 horizon knob** — only after the free-channel pre-expiry notice
-   (in-app notification center) is verified live; the ≥90-day
-   grandfather window starts at activation.
+   (in-app notification center) is verified live, **AND under the same
+   mesh gate as arming: rewards Base-only/dark on mirrors OR M3
+   complete** (mirror expiry credits land in local buckets that Base
+   can neither count in `Ā` nor consume until B′ — activating the
+   horizon on live mirror reward chains without the mesh reproduces
+   the arming failure mode). The ≥90-day grandfather window starts at
+   activation.
 3. **RL-4 weights** — stay `[keeper 0, reserve 10000]` absent a keeper
    funding need.
 4. **`feeEntitlementEnabled`** — only at the M2 joint-cutover gate.
