@@ -123,10 +123,14 @@
       }
     },
     "tokenSecurity": {
+      "pickerBlock": "Danger — an independent security check flags this token: {{reasons}}. The flows will not let a deal with this token proceed.",
+      "pickerWarn": "Caution — an independent security check reports: {{reasons}}. You can continue, but read these carefully first.",
       "pickerUnknown": "The independent security check could not verify this token right now. Deals with unverified tokens are held back until the check succeeds.",
       "pickerUnsupported": "The independent security check does not cover this network (test networks are not indexed). Extra care: only use tokens you deployed or trust.",
+      "gateBlock": "This deal's {{leg}} failed an independent security check: {{reasons}}. Accepting it is disabled — a token like this can be impossible to sell or transfer no matter what the deal terms say.",
       "gateUnknown": "The independent security check for this deal's {{leg}} could not run. Try again in a moment — accepting is held back until the token can be verified.",
       "gateUnsupported": "The independent security check does not cover this network (test networks are not indexed), so this deal's {{leg}} was not screened. Extra care: only accept tokens you trust.",
+      "gateWarn": "Heads up on this deal's {{leg}}: {{reasons}}. Make sure you understand these before you continue.",
       "gateChanged": "The security check on this deal's {{leg}} reports new findings since you reviewed it. Nothing was signed. The review above now shows the update — read it and tick the consent box again if you still want to proceed.",
       "retry": "Check again",
       "badge": {
@@ -1149,6 +1153,7 @@
         "gaslessFundsWarn": "Heads up: your vault’s free balance is below the {{amount}} {{symbol}} this order commits. The fill will fail if the funds aren’t there when a taker accepts — deposit to your vault to keep the order fillable.",
         "gaslessRejected": "The book rejected this order ({{reason}}). Nothing was posted.",
         "gaslessUnavailable": "We couldn’t reach the order book right now — the order was NOT posted. Please try again in a moment.",
+        "securityBlocked": "Posting is held: an independent security check flags the {{leg}} ({{reasons}}).",
         "securityUnknown": "Posting is held until the independent security check for the {{leg}} succeeds.",
         "blockNetwork": "Switch to a supported network to post.",
         "blockNoMarket": "Pick a market in the header first.",

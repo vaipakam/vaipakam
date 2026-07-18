@@ -173,16 +173,22 @@ const copySource = {
   },
 
   tokenSecurity: {
-    pickerBlock: (reasons: string[]) =>
-      `Danger — an independent security check flags this token: ${reasons.join('; ')}. The flows will not let a deal with this token proceed.`,
-    pickerWarn: (reasons: string[]) =>
-      `Caution — an independent security check reports: ${reasons.join('; ')}. You can continue, but read these carefully first.`,
+    pickerBlock: tmpl(
+      `Danger — an independent security check flags this token: {{reasons}}. The flows will not let a deal with this token proceed.`,
+      ['reasons'],
+    ),
+    pickerWarn: tmpl(
+      `Caution — an independent security check reports: {{reasons}}. You can continue, but read these carefully first.`,
+      ['reasons'],
+    ),
     pickerUnknown:
       'The independent security check could not verify this token right now. Deals with unverified tokens are held back until the check succeeds.',
     pickerUnsupported:
       'The independent security check does not cover this network (test networks are not indexed). Extra care: only use tokens you deployed or trust.',
-    gateBlock: (leg: string, reasons: string[]) =>
-      `This deal's ${leg} failed an independent security check: ${reasons.join('; ')}. Accepting it is disabled — a token like this can be impossible to sell or transfer no matter what the deal terms say.`,
+    gateBlock: tmpl(
+      `This deal's {{leg}} failed an independent security check: {{reasons}}. Accepting it is disabled — a token like this can be impossible to sell or transfer no matter what the deal terms say.`,
+      ['leg', 'reasons'],
+    ),
     gateUnknown: tmpl(
       `The independent security check for this deal's {{leg}} could not run. Try again in a moment — accepting is held back until the token can be verified.`,
       ['leg'],
@@ -191,8 +197,10 @@ const copySource = {
       `The independent security check does not cover this network (test networks are not indexed), so this deal's {{leg}} was not screened. Extra care: only accept tokens you trust.`,
       ['leg'],
     ),
-    gateWarn: (leg: string, reasons: string[]) =>
-      `Heads up on this deal's ${leg}: ${reasons.join('; ')}. Make sure you understand these before you continue.`,
+    gateWarn: tmpl(
+      `Heads up on this deal's {{leg}}: {{reasons}}. Make sure you understand these before you continue.`,
+      ['leg', 'reasons'],
+    ),
     gateChanged: tmpl(
       `The security check on this deal's {{leg}} reports new findings since you reviewed it. Nothing was signed. The review above now shows the update — read it and tick the consent box again if you still want to proceed.`,
       ['leg'],
@@ -1812,8 +1820,10 @@ const copySource = {
       ),
       gaslessUnavailable:
         'We couldn’t reach the order book right now — the order was NOT posted. Please try again in a moment.',
-      securityBlocked: (leg: string, reasons: string[]) =>
-        `Posting is held: an independent security check flags the ${leg} (${reasons.join('; ')}).`,
+      securityBlocked: tmpl(
+        `Posting is held: an independent security check flags the {{leg}} ({{reasons}}).`,
+        ['leg', 'reasons'],
+      ),
       securityUnknown: tmpl(
         `Posting is held until the independent security check for the {{leg}} succeeds.`,
         ['leg'],

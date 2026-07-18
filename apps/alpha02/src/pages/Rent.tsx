@@ -1001,7 +1001,7 @@ function RentNftFlow() {
         ];
         if (v.kind === 'block') {
           queryClient.setQueryData(cacheKey, v);
-          throw new Error(copy.tokenSecurity.gateBlock('prepayment token', v.reasons));
+          throw new Error(copy.tokenSecurity.gateBlock('prepayment token', v.reasons.join('; ')));
         }
         if (v.kind === 'unknown') {
           // RESET (not invalidate): reset drops `data` to undefined
@@ -1309,7 +1309,7 @@ function RentNftFlow() {
                     ? copy.tokenSecurity.gateUnknown('prepayment token')
                     : copy.tokenSecurity.gateBlock(
                         'prepayment token',
-                        prepaySec.data.kind === 'block' ? prepaySec.data.reasons : [],
+                        (prepaySec.data.kind === 'block' ? prepaySec.data.reasons : []).join('; '),
                       )}
                 </span>
                 {prepaySec.isError ? (
@@ -1330,7 +1330,7 @@ function RentNftFlow() {
                 <span className="banner-body">
                   {copy.tokenSecurity.gateWarn(
                     'prepayment token',
-                    prepaySec.data?.kind === 'warn' ? prepaySec.data.reasons : [],
+                    (prepaySec.data?.kind === 'warn' ? prepaySec.data.reasons : []).join('; '),
                   )}
                 </span>
               </div>

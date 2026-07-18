@@ -1405,7 +1405,7 @@ export function OfferFlow({ side }: { side: Side }) {
       const cacheKey = ['tokenSecurity', readChain.chainId, addr.toLowerCase()];
       if (v.kind === 'block') {
         queryClient.setQueryData(cacheKey, v);
-        throw new Error(copy.tokenSecurity.gateBlock(leg, v.reasons));
+        throw new Error(copy.tokenSecurity.gateBlock(leg, v.reasons.join('; ')));
       }
       if (v.kind === 'unknown') {
         // RESET (not invalidate) the cached pass: reset drops `data`
@@ -1649,7 +1649,7 @@ export function OfferFlow({ side }: { side: Side }) {
         ];
         if (v.kind === 'block') {
           queryClient.setQueryData(cacheKey, v);
-          throw new Error(copy.tokenSecurity.gateBlock(leg, v.reasons));
+          throw new Error(copy.tokenSecurity.gateBlock(leg, v.reasons.join('; ')));
         }
         if (v.kind === 'unknown') {
           // RESET (not invalidate): reset drops `data` to undefined
@@ -2377,7 +2377,7 @@ export function OfferFlow({ side }: { side: Side }) {
                         ? copy.tokenSecurity.gateUnknown(l.leg)
                         : copy.tokenSecurity.gateBlock(
                             l.leg,
-                            l.verdict.kind === 'block' ? l.verdict.reasons : [],
+                            (l.verdict.kind === 'block' ? l.verdict.reasons : []).join('; '),
                           ),
                     )
                     .join(' ')}
@@ -2403,7 +2403,7 @@ export function OfferFlow({ side }: { side: Side }) {
                     .map((l) =>
                       copy.tokenSecurity.gateWarn(
                         l.leg,
-                        l.verdict?.kind === 'warn' ? l.verdict.reasons : [],
+                        (l.verdict?.kind === 'warn' ? l.verdict.reasons : []).join('; '),
                       ),
                     )
                     .join(' ')}

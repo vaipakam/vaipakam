@@ -1210,7 +1210,7 @@ export function OrderTicket({
             {securityBlocked
               .map((l) =>
                 l.verdict?.kind === 'block'
-                  ? text.securityBlocked(l.leg, l.verdict.reasons)
+                  ? text.securityBlocked(l.leg, l.verdict.reasons.join('; '))
                   : text.securityUnknown(l.leg),
               )
               .join(' ')}

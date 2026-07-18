@@ -198,11 +198,11 @@ export function AssetPicker({
       {showCustom && isAddressLike(value) && security.data ? (
         security.data.kind === 'block' ? (
           <span className="field-hint" style={{ color: 'var(--danger)' }}>
-            {copy.tokenSecurity.pickerBlock(security.data.reasons)}
+            {copy.tokenSecurity.pickerBlock(security.data.reasons.join('; '))}
           </span>
         ) : security.data.kind === 'warn' ? (
           <span className="field-hint" style={{ color: 'var(--danger)' }}>
-            {copy.tokenSecurity.pickerWarn(security.data.reasons)}
+            {copy.tokenSecurity.pickerWarn(security.data.reasons.join('; '))}
           </span>
         ) : security.data.kind === 'unsupported' ? (
           <span className="field-hint">{copy.tokenSecurity.pickerUnsupported}</span>
