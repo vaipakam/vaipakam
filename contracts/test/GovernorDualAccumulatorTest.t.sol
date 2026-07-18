@@ -321,9 +321,9 @@ contract GovernorDualAccumulatorTest is SetupTest {
         );
     }
 
-    // ─── 4b. RL-3 expiry sweep at fresh exhaustion retires commitments ───────
+    // ─── 4b. RL-3 expiry is ALL-OR-NOTHING (no partial-credit reap) ──────────
 
-    function testExpirySweepRetiresFullArmedCommitmentWhenTruncated() public {
+    function testExpiryIsAllOrNothingAtNearExhaustion() public {
         _cfg().setRewardClaimHorizonDays(180);
         (uint256 floor5, uint256 recycled5) = _armAndFinalize(5, 700 ether);
         assertGt(floor5, 0, "armed day has a fresh floor");
@@ -335,37 +335,44 @@ contract GovernorDualAccumulatorTest is SetupTest {
         // Accrue to just under the H + notice threshold, funded throughout.
         _accrueExec(ids, 180 days + 90 days - 7 days);
 
-        // Near-exhaust the fresh pool right before the final crossing (1 wei
-        // of headroom): the expiry's fresh share truncates to that sliver,
-        // but the entry is terminally processed, so its ENTIRE armed fresh
-        // commitment must still retire.
+        // Near-exhaust the fresh pool (1 wei of headroom) so the entry's fresh
+        // share does NOT fully fit. ALL-OR-NOTHING (Codex #1317): the sweep
+        // DEFERS the whole entry — it never partial-credits a sliver and drops
+        // the uncreditable remainder, which would silently reap the claimant.
         _mut().setInteractionPoolPaidOut(
             LibVaipakam.VPFI_INTERACTION_POOL_CAP - 1
         );
         (, uint256 outFBefore, uint256 outRBefore, ) =
             _agg().getGovernorCommitState();
 
-        // The final executable interval crosses H + notice → processes.
         vm.warp(vm.getBlockTimestamp() + 7 days);
-        uint256 swept = _facet().sweepExpiredInteractionRewards(ids);
+        assertEq(
+            _facet().sweepExpiredInteractionRewards(ids),
+            0,
+            "near-exhaustion defers the whole entry, never partial-credits"
+        );
+        (, uint256 outFMid, uint256 outRMid, ) = _agg().getGovernorCommitState();
+        assertEq(outFBefore, outFMid, "armed fresh commitment untouched by defer");
+        assertEq(outRBefore, outRMid, "recycled commitment untouched by defer");
 
+        // Restore full pool headroom → the entry expires FULLY: the WHOLE
+        // fresh share credits and the full armed fresh + recycled commitments
+        // retire (no remainder ever dropped).
+        _mut().setInteractionPoolPaidOut(0);
+        uint256 swept = _facet().sweepExpiredInteractionRewards(ids);
         assertApproxEqAbs(
-            swept, recycled5 / 2, 1e6,
-            "recycled share + 1 wei fresh sliver expirable at near-exhaustion"
+            swept,
+            floor5 / 2 + recycled5 / 2,
+            1e6,
+            "full fresh + recycled expirable once headroom is restored"
         );
         (, uint256 outFAfter, uint256 outRAfter, ) =
             _agg().getGovernorCommitState();
         assertApproxEqAbs(
-            outFBefore - outFAfter,
-            floor5 / 2,
-            1e6,
-            "full armed fresh commitment retired despite truncation"
+            outFBefore - outFAfter, floor5 / 2, 1e6, "full armed fresh retired"
         );
         assertApproxEqAbs(
-            outRBefore - outRAfter,
-            recycled5 / 2,
-            1e6,
-            "recycled commitment released"
+            outRBefore - outRAfter, recycled5 / 2, 1e6, "recycled released"
         );
     }
 

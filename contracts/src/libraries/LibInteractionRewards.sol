@@ -1140,23 +1140,27 @@ function _dayPoolHalves(
 
         EntrySplit memory split_ = _entryWindowSplit(s, e);
         uint256 freshShare = split_.total - split_.recycled;
-        uint256 cappedFresh =
-            freshShare < freshHeadroom ? freshShare : freshHeadroom;
-        // Claim-EXECUTABLE gate: the accumulator only ever advances while a
-        // claim would actually succeed right now. Three ways it can't:
-        //   1. the POST-CAP payable is zero (a claim truncates its fresh
-        //      component to remaining pool capacity — the face value is the
-        //      wrong bar — and a wholly-uncreditable fresh entry pays
-        //      nothing),
-        //   2. the local VPFI balance can't cover it (mirror mid-
-        //      remittance-outage — the claim's terminal transfer reverts),
-        //   3. the owner is sanctioned — the claim path rejects them via
-        //      `_assertNotSanctioned` (frozen, not seized: a delist re-opens
-        //      the clock).
-        uint256 payableNow = cappedFresh + split_.recycled;
-        bool executable = payableNow != 0 &&
+        // Claim-EXECUTABLE gate: the accumulator only advances while the
+        // CLAIMANT could actually claim this entry right now — mirroring the
+        // claim path, which pays the fresh share truncated to the 69M POOL
+        // cap (NOT the recycle-bucket backing room, which a claim never
+        // touches) plus the recycled share, and reverts if the local balance
+        // can't cover that transfer. Backing room is an EXPIRY-credit
+        // constraint, handled all-or-nothing at processing below (Codex
+        // #1317) — never a reason to stop the claimant's clock. Blocked:
+        //   1. the pool-capped payable is zero (nothing a claim could pay),
+        //   2. the balance can't cover the claim transfer (mirror outage),
+        //   3. the owner is sanctioned (the claim path rejects them).
+        uint256 poolReserved =
+            s.interactionPoolPaidOut + s.rewardBudgetRemittedGlobal;
+        uint256 poolRoom = LibVaipakam.VPFI_INTERACTION_POOL_CAP > poolReserved
+            ? LibVaipakam.VPFI_INTERACTION_POOL_CAP - poolReserved
+            : 0;
+        uint256 claimTransfer =
+            (freshShare < poolRoom ? freshShare : poolRoom) + split_.recycled;
+        bool executable = claimTransfer != 0 &&
             !LibVaipakam.isSanctionedAddress(e.user) &&
-            IERC20Metadata(s.vpfiToken).balanceOf(address(this)) >= payableNow;
+            IERC20Metadata(s.vpfiToken).balanceOf(address(this)) >= claimTransfer;
 
         uint64 lastObs = s.rewardEntryExecObsAt[id];
 
@@ -1241,17 +1245,22 @@ function _dayPoolHalves(
             return (expired, 0);
         }
 
-        // Never terminalise an entry whose FRESH share cannot be credited
-        // at all: with the batch's fresh headroom exhausted an all-fresh
-        // entry would be processed with ZERO bucket credit — value
-        // silently burned. Defer instead (entry stays live). A PARTIAL
-        // cap still processes (one bounded boundary entry per batch,
-        // identical to the claim path's truncation).
-        if (freshShare > 0 && cappedFresh == 0) {
+        // ALL-OR-NOTHING expiry (Codex #1317): terminalise ONLY if the
+        // entry's FULL fresh share fits the batch's remaining creditable
+        // headroom (`freshHeadroom` = the 69M pool cap AND the recycle-bucket
+        // backing room, minimised per entry by the caller). A PARTIAL credit
+        // would reap the claimant while silently dropping the uncreditable
+        // fresh remainder — so defer the whole entry instead, and RECORD the
+        // block so the countdown pauses and the next touch re-baselines from
+        // a creditable state (never a fresh accrual — the claimant already
+        // served the full window; the defer is a protocol-side crediting
+        // constraint, and the claim path stays open to them throughout).
+        if (freshShare > freshHeadroom) {
+            s.rewardEntryObsBlocked[id] = true;
             return (expired, 0);
         }
         expired = split_;
-        freshCredited = cappedFresh;
+        freshCredited = freshShare;
         e.processed = true;
         emit RewardEntryExpired(id, e.user, expired.total, expired.recycled);
     }
@@ -1259,18 +1268,24 @@ function _dayPoolHalves(
     /// @notice RL-3 — UX view: the entry's horizon state for the
     ///         claim-center countdown.
     /// @return firstClaimableAt Accumulator start (0 = not started).
-    /// @return expiresAt        The earliest instant the entry could be
-    ///                          terminally removed ASSUMING it stays
-    ///                          continuously claim-executable from now (0 =
-    ///                          dark, unstarted, OR already processed —
-    ///                          claimed/expired entries carry no countdown).
-    ///                          Because removal is gated on EXECUTABLE-
-    ///                          elapsed time — which only advances while a
-    ///                          claim would succeed and keepers observe it —
-    ///                          this is a forward estimate, not a fixed
-    ///                          deadline: a funding outage or sanction pauses
-    ///                          it (the pending heartbeat interval is only
-    ///                          folded in when the entry is executable now).
+    /// @return expiresAt        A CONSERVATIVE forward estimate of the
+    ///                          earliest instant the entry could be reaped,
+    ///                          assuming it stays continuously claim-executable
+    ///                          from now (0 = dark, unstarted, OR already
+    ///                          processed). The on-chain sweep is
+    ///                          authoritative; this view only estimates.
+    ///                          Removal is gated on claim-EXECUTABLE-elapsed
+    ///                          time, so a funding outage or sanction pauses
+    ///                          the countdown (the pending heartbeat interval
+    ///                          is folded in only while the entry is
+    ///                          claim-executable now). The estimate errs
+    ///                          OPTIMISTIC (never later than the true reap):
+    ///                          once the window is fully accrued it reports
+    ///                          `now` even if the actual reap is deferred a
+    ///                          little longer by a recycle-bucket backing
+    ///                          shortfall — which is safe UX, since it only
+    ///                          urges the claimant to claim sooner, and they
+    ///                          can claim right up until the reap.
     function rewardEntryExpiry(uint256 id)
         internal
         view
@@ -1288,20 +1303,20 @@ function _dayPoolHalves(
         uint256 hSec = uint256(horizonDays) * 1 days;
         uint256 elapsed = s.rewardEntryExecElapsed[id];
         if (s.rewardEntryHorizonEpoch[id] != s.rewardHorizonActivatedAt) {
-            // A sweep now would reconcile the reconfiguration: cap and
-            // re-baseline, crediting nothing this interval.
+            // A sweep would reconcile the reconfiguration: cap to the horizon
+            // so the notice re-accrues, crediting nothing this interval. The
+            // cap never understates remaining, so it is applied regardless of
+            // executability; the re-accrual's own claim-executable gating is
+            // covered by the conservative-estimate caveat above (Codex #1317).
             if (elapsed > hSec) elapsed = hSec;
         } else if (
             !s.rewardEntryObsBlocked[id] && _entryExecutableNow(s, e)
         ) {
             // Fold in the pending interval a sweep-now would credit — but
-            // ONLY when the entry is genuinely claim-executable at this
-            // block, mirroring the sweep's gate AND its zero-credit-fresh
-            // defer exactly (Codex #1317 r11/XuF): owner not sanctioned, a
-            // non-zero post-cap payable, local balance covers it, and the
-            // fresh share is actually creditable (pool cap + bucket backing
-            // room). If any of those blocks a sweep, the countdown pauses
-            // here instead of showing a false-imminent removal.
+            // ONLY while the entry is claim-executable at this block (owner
+            // unsanctioned, pool-capped payable non-zero, balance covers it),
+            // mirroring the sweep's accrual gate. A blocked claimant's
+            // countdown pauses here instead of ticking down through the block.
             uint256 gap =
                 block.timestamp - uint256(s.rewardEntryExecObsAt[id]);
             if (
@@ -1318,15 +1333,18 @@ function _dayPoolHalves(
         expiresAt = uint64(block.timestamp + remaining);
     }
 
-    /// @dev RL-3 (Codex #1317 XuF) — a view-side mirror of the sweep's
-    ///      claim-EXECUTABLE gate, used only by {rewardEntryExpiry} to decide
-    ///      whether a sweep-now would credit the pending heartbeat interval.
-    ///      Replicates {sweepExpiredEntry}'s single-entry executability AND
-    ///      its zero-credit-fresh defer: a sanctioned owner, a zero post-cap
-    ///      payable, an uncovered balance, or a fresh share that can't be
-    ///      credited (69M pool cap exhausted, or no recycle-bucket backing
-    ///      room) all make the entry non-executable, so the countdown pauses
-    ///      rather than showing a removal the sweep would defer.
+    /// @dev RL-3 — a view-side mirror of the sweep's CLAIM-executable gate,
+    ///      used only by {rewardEntryExpiry} to decide whether a sweep-now
+    ///      would credit the pending heartbeat interval. Mirrors
+    ///      {sweepExpiredEntry}'s accrual gate exactly: the accumulator
+    ///      advances only while the CLAIMANT could claim the entry now — the
+    ///      claim pays the fresh share truncated to the 69M pool cap plus the
+    ///      recycled share, covered by the local balance, owner unsanctioned.
+    ///      Backing room is deliberately NOT checked here: it gates the
+    ///      all-or-nothing EXPIRY credit, not the claimant's clock (a claim
+    ///      never touches the bucket), so a backing shortfall does not pause
+    ///      accrual — it only defers the final reap, which the view reflects
+    ///      as the estimate caveat documented on {rewardEntryExpiry}.
     function _entryExecutableNow(
         LibVaipakam.Storage storage s,
         LibVaipakam.RewardEntry storage e
@@ -1334,29 +1352,17 @@ function _dayPoolHalves(
         if (LibVaipakam.isSanctionedAddress(e.user)) return false;
         EntrySplit memory split_ = _entryWindowSplit(s, e);
         uint256 freshShare = split_.total - split_.recycled;
-
-        // The fresh share is capped to what a single-entry sweep could
-        // credit: the 69M pool cap headroom AND the bucket's backing room
-        // (mirrors the facet's per-entry cap in sweepExpiredInteractionRewards).
         uint256 poolReserved =
             s.interactionPoolPaidOut + s.rewardBudgetRemittedGlobal;
         uint256 poolRoom = LibVaipakam.VPFI_INTERACTION_POOL_CAP > poolReserved
             ? LibVaipakam.VPFI_INTERACTION_POOL_CAP - poolReserved
             : 0;
-        uint256 balance = IERC20Metadata(s.vpfiToken).balanceOf(address(this));
-        uint256 backingRoom =
-            balance > s.recycleBucket ? balance - s.recycleBucket : 0;
-        uint256 headroom = poolRoom < backingRoom ? poolRoom : backingRoom;
-        uint256 cappedFresh = freshShare < headroom ? freshShare : headroom;
-
-        uint256 payableNow = cappedFresh + split_.recycled;
-        if (payableNow == 0) return false; // nothing a sweep could process
-        if (balance < payableNow) return false; // claim/transfer would revert
-        // Sweep's zero-credit-fresh defer: an all-fresh (or fresh-bearing)
-        // entry whose fresh share is wholly uncreditable is deferred, not
-        // removed.
-        if (freshShare > 0 && cappedFresh == 0) return false;
-        return true;
+        uint256 claimTransfer =
+            (freshShare < poolRoom ? freshShare : poolRoom) + split_.recycled;
+        if (claimTransfer == 0) return false; // nothing a claim could pay
+        return
+            IERC20Metadata(s.vpfiToken).balanceOf(address(this)) >=
+            claimTransfer;
     }
 
     /// @dev PR-3c — accumulate `part` into `acc` (memory fold helper).

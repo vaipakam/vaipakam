@@ -590,6 +590,41 @@ contract RewardClaimHorizonTest is SetupTest, IVaipakamErrors {
         );
     }
 
+    /// @notice The accrual gate mirrors the CLAIM transfer (fresh capped to
+    ///         the pool, plus recycled), not a backing-capped sliver — so an
+    ///         entry whose FULL claim would revert for insufficient balance
+    ///         never accrues, even if a smaller capped amount is covered
+    ///         (Codex #1317). No partial-funded reap.
+    function testAccrualPausesWhenFullClaimExceedsBalance() public {
+        _cfg().setRewardClaimHorizonDays(180);
+        uint256 id = _seedClaimableEntry();
+        _facet().sweepExpiredInteractionRewards(_ids(id)); // stamp
+        (uint256 fullClaim, , ) = _lens().previewInteractionRewards(alice);
+        assertGt(fullClaim, 1, "entry has a claimable amount");
+
+        // Balance one wei below the full claim. A large bucket would have made
+        // the OLD backing-capped payable tiny (< balance) and wrongly kept the
+        // clock running; the fixed gate pauses because a real claim reverts.
+        deal(address(vpfi), address(diamond), fullClaim - 1);
+        _mut().setRecycleBucketRaw((fullClaim - 1) / 2);
+
+        // A full window of heartbeats must never expire it while unaffordable.
+        assertEq(
+            _accrue(id, 180 days + NOTICE + MAX_GAP),
+            0,
+            "no accrual/expiry while the full claim exceeds balance"
+        );
+
+        // Fund the full claim → it accrues and expires normally.
+        deal(address(vpfi), address(diamond), DIAMOND_SEED);
+        _mut().setRecycleBucketRaw(0);
+        assertGt(
+            _accrue(id, 180 days + NOTICE + MAX_GAP),
+            0,
+            "accrues + expires once the full claim is affordable"
+        );
+    }
+
     function testHorizonKnobBounds() public {
         vm.expectRevert();
         _cfg().setRewardClaimHorizonDays(179);
