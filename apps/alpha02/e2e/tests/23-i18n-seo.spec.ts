@@ -73,10 +73,10 @@ test('language preference persists; translated es flips content + <html lang>; p
 
   const picker = page.getByLabel('Display language');
   await expect(picker).toBeVisible();
-  // Exactly the PICKER_VISIBLE set: wave-1 (en/es/zh/hi/ja) + ta + fr + de.
-  // Grows by one with every locale promoted into PICKER_VISIBLE —
-  // bump this count in the same diff as the promotion.
-  await expect(picker.locator('option')).toHaveCount(8);
+  // Exactly the PICKER_VISIBLE set: wave-1 (en/es/zh/hi/ja) + ta + fr
+  // + de + ar. Grows by one with every locale promoted into
+  // PICKER_VISIBLE — bump this count in the same diff as the promotion.
+  await expect(picker.locator('option')).toHaveCount(9);
 
   await picker.selectOption('es');
   // es is a TRANSLATED locale now: the catalog re-resolves in Spanish
@@ -108,6 +108,27 @@ test('language preference persists; translated es flips content + <html lang>; p
   expect(
     await page.evaluate(() => localStorage.getItem('vaipakam:language')),
   ).toBe('en');
+
+  // RTL: Arabic is the first right-to-left locale promoted. Picking it
+  // must flip BOTH the content language (`lang="ar"`) AND the layout
+  // direction (`dir="rtl"`) — the applyDocumentDirection half of the
+  // factory that no LTR locale exercises. The picker's own aria-label
+  // switches to Arabic, so re-query by it (doubles as proof the chrome
+  // re-rendered in Arabic). English (and every other shipped locale) is
+  // LTR, so selecting back to en must restore `dir="ltr"`.
+  await page.getByLabel('Display language').selectOption('ar');
+  const pickerAr = page.getByLabel('لغة العرض');
+  await expect(pickerAr).toHaveValue('ar');
+  await expect(page.locator('html')).toHaveAttribute('lang', 'ar');
+  await expect(page.locator('html')).toHaveAttribute('dir', 'rtl');
+  await page.reload({ waitUntil: 'domcontentloaded' });
+  // The pre-paint bootstrap stamps dir before React mounts, so it
+  // survives a reload too (no first-paint LTR flash for RTL users).
+  await expect(page.locator('html')).toHaveAttribute('lang', 'ar');
+  await expect(page.locator('html')).toHaveAttribute('dir', 'rtl');
+  await page.getByLabel('لغة العرض').selectOption('en');
+  await expect(page.getByLabel('Display language')).toHaveValue('en');
+  await expect(page.locator('html')).toHaveAttribute('dir', 'ltr');
 
   // Placeholder honesty, via the COOKIE leg: a `vaipakam_lang`
   // cookie carrying a locale alpha02 hasn't translated (te — no
