@@ -60,6 +60,7 @@ const PICKER_VISIBLE: ReadonlySet<SupportedLocale> = new Set([
   'fr',
   'de',
   'ar',
+  'ko',
 ]);
 
 /** Per-locale picker config, derived from the shared native-label
