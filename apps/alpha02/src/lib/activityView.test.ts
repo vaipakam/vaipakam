@@ -5,6 +5,7 @@ import {
   labelForKind,
   ACTIVITY_LABELS,
 } from './activityView';
+import { copySource } from '../content/copy';
 import type { IndexedActivityEvent } from '../data/indexer';
 
 function ev(p: Partial<IndexedActivityEvent>): IndexedActivityEvent {
@@ -64,6 +65,54 @@ describe('labelForKind', () => {
       'PrepayCollateralSaleSettled',
     ]) {
       expect(ACTIVITY_LABELS[kind]).toBeDefined();
+    }
+  });
+});
+
+describe('activity feed labels are translatable (extraction guard)', () => {
+  // The Activity page renders copy.activity.labels[kind] (translatable),
+  // falling back to this pure module only for an unmapped kind. If a new
+  // event kind is added to ACTIVITY_LABELS but not to the catalog, its
+  // row would silently render English in every locale — this guard fails
+  // the build instead, mirroring the ACTIVITY_LABELS ↔ catalog contract.
+  it('every mapped kind has a matching catalog label', () => {
+    const catalog = copySource.activity.labels;
+    for (const [kind, meta] of Object.entries(ACTIVITY_LABELS)) {
+      expect(catalog[kind], `missing catalog label for ${kind}`).toBe(
+        meta.label,
+      );
+    }
+  });
+
+  it('the catalog adds no stale label for a kind the module dropped', () => {
+    for (const kind of Object.keys(copySource.activity.labels)) {
+      expect(ACTIVITY_LABELS[kind], `stale catalog label for ${kind}`).toBeDefined();
+    }
+  });
+
+  // Codex #1343 r1 — the label set must cover every event kind the
+  // indexer attributes to a wallet's OWN feed (pluckActivityRefs in
+  // apps/indexer/src/chainIndexer.ts); an attributed kind absent here
+  // renders humanized English in every locale. This list mirrors that
+  // switch's cases — add a kind here (and a label above) whenever the
+  // indexer starts attributing a new event to the activity feed.
+  it('covers every indexer-attributed activity kind', () => {
+    const ATTRIBUTED = [
+      'BackstopAbsorbedLoan', 'BorrowerFundsClaimed', 'BorrowerLifRebateClaimed',
+      'IntentLoanRolled', 'InteractionRewardsClaimed', 'InternalMatchExecuted',
+      'LenderFundsClaimed', 'LoanDefaulted', 'LoanExtended', 'LoanInitiated',
+      'LoanLiquidated', 'LoanRepaid', 'LoanSettled', 'LoanSettlementBreakdown',
+      'OfferAccepted', 'OfferCanceled', 'OfferConsumedBySale', 'OfferCreated',
+      'OfferMatched', 'OfferModified', 'PartialRepaid', 'PeriodicInterestAutoLiquidated',
+      'PeriodicInterestSettled', 'PeriodicSlippageOverBuffer', 'PrepayCollateralSaleSettled',
+      'PrepayListingCanceled', 'PrepayListingMatched', 'PrepayListingPosted',
+      'PrepayListingUpdated', 'RepayPartialPeriodAdvanced', 'RewardDeliveredToVault',
+      'SwapToRepayExecuted', 'SwapToRepayIntentCancelled', 'SwapToRepayIntentCommitted',
+      'SwapToRepayIntentFilled', 'SwapToRepayIntentForceCancelled', 'SwapToRepayPartialExecuted',
+      'Transfer', 'VPFIDepositedToVault', 'VPFIWithdrawnFromVault', 'VaultVpfiDebited',
+    ];
+    for (const kind of ATTRIBUTED) {
+      expect(ACTIVITY_LABELS[kind], `no activity label for indexer kind ${kind}`).toBeDefined();
     }
   });
 });

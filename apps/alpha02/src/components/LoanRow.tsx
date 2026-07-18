@@ -3,7 +3,7 @@
 import { Link } from 'react-router-dom';
 import { copy } from '../content/copy';
 import { formatBpsAsPercent, formatTokenAmount, shortAddress } from '../lib/format';
-import { loanStateView } from '../lib/loanState';
+import { loanStateView, loanStateLabel } from '../lib/loanState';
 import { useTokenMeta } from '../contracts/erc20';
 import { AssetType } from '../lib/types';
 import type { PositionLoan } from '../data/hooks';
@@ -72,10 +72,10 @@ export function LoanRow({
         </span>
       ) : healthUnknown && view.badge === 'ok' ? (
         <span className="badge badge-neutral" title={copy.risk.listCheckingTitle}>
-          {view.label} · {copy.risk.listChecking}
+          {loanStateLabel(view, copy.loanState)} · {copy.risk.listChecking}
         </span>
       ) : (
-        <span className={`badge badge-${view.badge}`}>{view.label}</span>
+        <span className={`badge badge-${view.badge}`}>{loanStateLabel(view, copy.loanState)}</span>
       )}
     </Link>
   );

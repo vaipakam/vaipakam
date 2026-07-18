@@ -24,6 +24,7 @@ import { DIAMOND_ABI_VIEM } from '@vaipakam/contracts/abis';
 import { AssetType } from '../lib/types';
 import { formatTokenAmount } from '../lib/format';
 import { VPFI_DECIMALS } from './vpfi';
+import { copySource } from '../content/copy';
 import type { ClaimableLoan } from './claimables';
 
 /** Upper bound mirrors `MulticallFacet.MAX_MULTICALL_CALLS` — a batch
@@ -53,6 +54,23 @@ export interface ClaimAllItem {
   defaultSelected: boolean;
 }
 
+/** The subset of copy.claimAll the builder composes labels from. Passed
+ *  in (defaulting to the English source) so the module stays a pure,
+ *  node-testable builder while the app supplies the translated copy. */
+export interface ClaimAllLabels {
+  loanNoun: string;
+  rentalNoun: string;
+  itemLabel: (noun: string, id: number, what: string) => string;
+  lenderProceeds: string;
+  lenderRentalFeesNft: string;
+  borrowerBufferBack: string;
+  borrowerSurplus: string;
+  borrowerResidual: string;
+  borrowerCollateralBack: string;
+  rewardsLabel: (amount: string) => string;
+  vaultVpfiLabel: (amount: string) => string;
+}
+
 export interface BuildClaimAllInput {
   /** Confirmed claimable loans (from `useMyClaimables`). */
   loans: ClaimableLoan[];
@@ -60,6 +78,9 @@ export interface BuildClaimAllInput {
   rewardsPending: bigint;
   /** Free (unencumbered) vault VPFI withdrawable now (18-dec). */
   vpfiFree: bigint;
+  /** Translatable label strings. Defaults to the English source so
+   *  existing callers / tests keep working unchanged. */
+  labels?: ClaimAllLabels;
 }
 
 /**
@@ -73,21 +94,24 @@ export function buildClaimAllItems({
   loans,
   rewardsPending,
   vpfiFree,
+  labels = copySource.claimAll,
 }: BuildClaimAllInput): ClaimAllItem[] {
   const items: ClaimAllItem[] = [];
 
   for (const loan of loans) {
     const isRental = loan.assetType !== AssetType.ERC20;
-    const noun = isRental ? 'Rental' : 'Loan';
+    const noun = isRental ? labels.rentalNoun : labels.loanNoun;
     if (loan.role === 'lender') {
       items.push({
         key: `loan-lender-${loan.loanId}`,
         kind: 'loan-lender',
         functionName: 'claimAsLender',
         args: [BigInt(loan.loanId)],
-        label: isRental
-          ? `${noun} #${loan.loanId} — fees + your NFT back`
-          : `${noun} #${loan.loanId} — your proceeds`,
+        label: labels.itemLabel(
+          noun,
+          loan.loanId,
+          isRental ? labels.lenderRentalFeesNft : labels.lenderProceeds,
+        ),
         defaultSelected: true,
       });
     } else {
@@ -98,20 +122,20 @@ export function buildClaimAllItems({
       // overstate what the batch returns (Codex #1291 r1).
       let borrowerWhat: string;
       if (isRental) {
-        borrowerWhat = 'your buffer back';
+        borrowerWhat = labels.borrowerBufferBack;
       } else if (loan.status === 'defaulted' || loan.status === 'liquidated') {
-        borrowerWhat = 'surplus after liquidation, if any';
+        borrowerWhat = labels.borrowerSurplus;
       } else if (loan.status === 'internal_matched') {
-        borrowerWhat = 'residual after the internal match';
+        borrowerWhat = labels.borrowerResidual;
       } else {
-        borrowerWhat = 'collateral back';
+        borrowerWhat = labels.borrowerCollateralBack;
       }
       items.push({
         key: `loan-borrower-${loan.loanId}`,
         kind: 'loan-borrower',
         functionName: 'claimAsBorrower',
         args: [BigInt(loan.loanId)],
-        label: `${noun} #${loan.loanId} — ${borrowerWhat}`,
+        label: labels.itemLabel(noun, loan.loanId, borrowerWhat),
         defaultSelected: true,
       });
     }
@@ -123,7 +147,7 @@ export function buildClaimAllItems({
       kind: 'rewards',
       functionName: 'claimInteractionRewards',
       args: [],
-      label: `Interaction rewards — ${formatTokenAmount(rewardsPending, VPFI_DECIMALS)} VPFI`,
+      label: labels.rewardsLabel(formatTokenAmount(rewardsPending, VPFI_DECIMALS)),
       defaultSelected: true,
     });
   }
@@ -143,7 +167,7 @@ export function buildClaimAllItems({
       // snapshot reports as withdrawable. Encumbered VPFI stays put.
       functionName: 'withdrawVPFIFromVault',
       args: [vpfiFree],
-      label: `Vault VPFI — ${formatTokenAmount(vpfiFree, VPFI_DECIMALS)} VPFI`,
+      label: labels.vaultVpfiLabel(formatTokenAmount(vpfiFree, VPFI_DECIMALS)),
       // Opt-in: withdrawing parked VPFI lowers the fee-discount tier.
       defaultSelected: false,
     });
