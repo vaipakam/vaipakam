@@ -27,7 +27,16 @@
         "language": "भाषा",
         "languageHint": "जिन भाषाओं का अनुवाद पूरा नहीं है, वे अभी अंग्रेज़ी टेक्स्ट दिखाती हैं।",
         "languagePickerAria": "प्रदर्शन भाषा"
-      }
+      },
+      "loading": "लोड हो रहा है…",
+      "modeAdvanced": "एडवांस्ड",
+      "modeBasic": "बेसिक",
+      "modeSwitchAria": "इंटरफेस मोड",
+      "more": "और",
+      "moreSheetAria": "और गंतव्य",
+      "navPrimaryAria": "मुख्य",
+      "navQuickAria": "त्वरित नेविगेशन",
+      "skipToContent": "कंटेंट पर जाएं"
     },
     "seo": {
       "home": {
@@ -178,7 +187,11 @@
       "pushEnable": "Push delivery enable करें",
       "pushEnabled": "इस wallet के लिए Push delivery on है।",
       "pushButton": "Push channel खोलें",
-      "loanNudge": "इस loan के risky होने पर Telegram warning चाहिए? Settings में alerts set up करें।"
+      "loanNudge": "इस loan के risky होने पर Telegram warning चाहिए? Settings में alerts set up करें।",
+      "bandAlert": "अलर्ट",
+      "bandCritical": "गंभीर",
+      "bandWarn": "चेतावनी",
+      "bandsSave": "सेव करें"
     },
     "notifications": {
       "bellLabel": "Notifications",
@@ -206,7 +219,16 @@
       "title": "इस page पर कुछ गलत हुआ",
       "body": "Page में unexpected error आया और rendering रुक गई। आपके funds और on-chain positions unaffected हैं — यह display-side fault है, और आपने अभी जो transaction sign की वह फिर भी pass हुई हो सकती है (reload के बाद My positions check करें)। Reload करने से आमतौर पर यह clear हो जाता है।",
       "reload": "Page reload करें",
-      "home": "Home पर वापस"
+      "home": "Home पर वापस",
+      "detailAria": "Error detail",
+      "glosses": {
+        "185": "Maximum update depth exceeded — component हर render पर state update कर रहा है। यह infinite render loop है।",
+        "300": "Expected से कम hooks render हुए — conditional return से hook skip हुआ।",
+        "301": "बहुत ज्यादा re-renders — render के दौरान state setter call हो रहा है।",
+        "310": "Rules of Hooks violation — hook conditionally या गलत order में call हुआ।",
+        "321": "Invalid hook call — hooks सिर्फ React function component के अंदर run हो सकते हैं।",
+        "418": "Hydration mismatch — server और client ने अलग markup render किया।"
+      }
     },
     "diagnostics": {
       "open": "Support और connection check",
@@ -264,7 +286,8 @@
       "tokenValid": "Asset token के रूप में recognised",
       "consent": "Risk disclosures और terms accepted",
       "getTestAssets": "Test assets लें",
-      "connectEarly": "Continue करने के लिए wallet connect करें — sign करने के लिए इसकी जरूरत होगी, इसलिए अभी connect करना easiest है।"
+      "connectEarly": "Continue करने के लिए wallet connect करें — sign करने के लिए इसकी जरूरत होगी, इसलिए अभी connect करना easiest है।",
+      "sanctionsChecking": "कम्प्लायंस स्थिति जांची जा रही है…"
     },
     "receipt": {
       "heading": "Sign करने से पहले review करें",
@@ -293,7 +316,53 @@
         "Lending: interest तभी earn होता है जब borrower repay करता है। Default पर आपकी recovery locked collateral की actual worth पर निर्भर है।",
         "NFT rentals: renters को temporary use rights मिलते हैं, ownership कभी नहीं; NFT owner के vault में रहता है। Rental fees prepaid होती हैं, साथ में छोटा refundable buffer।",
         "Smart-contract risk: Vaipakam public network पर code है। Bugs, network failures या extreme market conditions loss कर सकते हैं — ऐसे funds commit न करें जिन्हें खोना afford नहीं कर सकते।"
-      ]
+      ],
+      "buildDevFallback": "dev",
+      "buildLabel": "Build",
+      "faq": {
+        "alerts": {
+          "a": "Alerts card पर आप Telegram link कर सकते हैं (और browser push enable कर सकते हैं) ताकि loan due date के पास आए या position की health गिरे तो चेतावनी मिले। Linking एक one-time signature है; test alert भेजकर आप भरोसा करने से पहले channel सच में काम करता है यह confirm कर सकते हैं।",
+          "q": "Deadline या liquidation से पहले alerts कैसे मिलें?"
+        },
+        "assetsHeld": {
+          "a": "आपके अपने Vaipakam Vault में — एक on-chain account जिसे सिर्फ आपका wallet control करता है। Vaipakam user funds को pool नहीं करता और उन्हें आपके लिए spend नहीं कर सकता।",
+          "q": "मेरे assets कहाँ रखे जाते हैं?"
+        },
+        "claimCenter": {
+          "a": "जब जिस loan में आप शामिल हैं वह settle होता है — आपको owed repayment या default से collateral — funds आपके claim करने तक wait करती हैं। Claims page exactly दिखाता है कि कौन सा amount किस position के लिए claimable है, protocol record से verify करके, ताकि कुछ stranded न रहे।",
+          "q": "Claim Center किस लिए है?"
+        },
+        "lenderInterest": {
+          "a": "नहीं। यह वह है जो borrower समय पर repay करे तो आप कमाते हैं। अगर default होता है, recovery उस collateral पर निर्भर करती है जो उसने lock किया — review screen signing से पहले यह बताती है।",
+          "q": "Lend करते समय दिखने वाला interest guaranteed है?"
+        },
+        "missedRepayment": {
+          "a": "Due date plus grace period के बाद lender आपका locked collateral पा सकता है। अगर collateral का live market price है, value बहुत गिरने पर वह automatically बेचा भी जा सकता है — time पर repay करने से दोनों बचते हैं।",
+          "q": "अगर मैं loan repay नहीं करता तो क्या होता है?"
+        },
+        "modes": {
+          "a": "Basic guided Borrow, Lend और NFT-rental journeys को front and centre रखता है। Advanced power surfaces भी दिखाता है — Offer Book, Rate Desk order book, VPFI discounts और आपकी full activity history। Navigation में mode toggle से कभी भी switch करें; यह आपकी positions को move नहीं करता।",
+          "q": "Basic और Advanced mode में क्या फर्क है?"
+        },
+        "nftRental": {
+          "a": "NFT owner के vault में locked रहता है; renter को temporary use rights मिलते हैं, ownership कभी नहीं। Rental fees prepaid होती हैं, साथ में छोटा refundable buffer होता है।",
+          "q": "NFT rental क्या है?"
+        },
+        "nftVerifier": {
+          "a": "NFT verifier (navigation में) किसी भी Vaipakam position NFT को chain से सीधे पढ़ता है और उसकी real loan terms और status दिखाता है — ताकि secondary-market sale पर भरोसा करने से पहले आप confirm कर सकें कि listing असल में क्या represent करती है।",
+          "q": "Platform के बाहर खरीदने से पहले position NFT कैसे check करूं?"
+        },
+        "vpfi": {
+          "a": "नहीं। VPFI optional है — vault में रखना eligible loans पर protocol fees घटा सकता है। यह network gas कभी कम नहीं करता, और borrow, lend या rent करने के लिए कभी जरूरी नहीं।",
+          "q": "क्या मुझे VPFI चाहिए?"
+        },
+        "wrongNetwork": {
+          "a": "Offers, आपका vault और faucet हर network पर अलग हैं। अगर wallet ऐसी chain पर है जहाँ Vaipakam deployed नहीं है, banner supported network पर one-click switch देता है; app unsupported chain पर कभी act नहीं करती।",
+          "q": "यह कहता है कि मैं wrong network पर हूँ — क्या करूं?"
+        }
+      },
+      "lede": "साफ भाषा में quick answers।",
+      "title": "Help"
     },
     "consentParts": {
       "prefix": "मैं समझता/समझती हूँ और ",
@@ -387,7 +456,42 @@
       "no4907Unknown": "यह NFT collection on-chain rental standard (ERC-4907) support करता है या नहीं, check नहीं कर सके। अगर नहीं करता, Vaipakam के बाहर apps renter को recognise नहीं करेंगे — Vaipakam के अंदर renting फिर भी काम करती है।",
       "vpfiPrepayListing": "यह listing VPFI में paid होना चाहती है, जो rentals allow नहीं करते — accept नहीं हो सकती। अलग listing चुनें।",
       "vpfiCheckRetry": "अभी इस listing का payment asset verify नहीं कर सके — कुछ भेजा या approve नहीं हुआ। थोड़ी देर में फिर try करें।",
-      "vpfiPrepayNotAllowed": "VPFI rental payment asset के रूप में use नहीं हो सकता — दूसरा token चुनें।"
+      "vpfiPrepayNotAllowed": "VPFI rental payment asset के रूप में use नहीं हो सकता — दूसरा token चुनें।",
+      "back": "वापस",
+      "beforeYouSign": "Sign करने से पहले",
+      "continueToReview": "Review पर जारी रखें",
+      "contractHint": "ERC-4907 support करने वाले single NFTs renters को use rights देते हैं जिन्हें other apps देख सकती हैं; other NFTs भी rent होते हैं, Vaipakam के अंदर tracked।",
+      "contractLabel": "NFT contract address",
+      "dailyFeeLabel": "Daily fee",
+      "durationLabel": "Rental length",
+      "listWhenEnds": "Rental खत्म होने पर renter के rights automatically reset होते हैं; आप rental detail page से fees claim करते हैं और NFT reclaim करते हैं।",
+      "listYouCanLose": "NFT का temporary use जब तक वह rented है — renter उसे कभी transfer या sell नहीं कर सकता।",
+      "listingsLoading": "Rental listings लोड हो रही हैं…",
+      "liveFeesLoaded": "Live fee terms loaded",
+      "liveFeesLoading": "Live fee terms लोड हो रहे हैं…",
+      "liveRentalLoaded": "Live rental terms loaded",
+      "liveRentalLoading": "Live rental terms लोड हो रहे हैं…",
+      "nftTypeErc1155": "Multi-edition NFT (ERC-1155)",
+      "nftTypeErc721": "Single NFT (ERC-721)",
+      "nftTypeLabel": "NFT type",
+      "nothing": "कुछ नहीं।",
+      "paymentAssetCheckFailed": "हम payment asset अभी verify नहीं कर सके — थोड़ी देर में retry करें।",
+      "paymentAssetRecognised": "Payment asset recognized",
+      "preparingReview": "आपका review तैयार हो रहा है…",
+      "prepayAssetHint": "Renters इस token में पूरी rental prepay करते हैं।",
+      "prepayAssetLabel": "Asset जिसमें renters आपको pay करते हैं",
+      "quantityLabel": "Quantity",
+      "rentFeesNote": "Shown price rental fee है; Vaipakam का cut owner की earnings से आता है, आपके ऊपर extra नहीं।",
+      "rentYouMayOwe": "और कुछ नहीं — fees prepaid हैं।",
+      "stepChooseNft": "NFT चुनें",
+      "stepDone": "Done",
+      "stepReview": "Review और sign",
+      "stepYourNft": "आपका NFT और price",
+      "tokenIdLabel": "Token id",
+      "tryAgain": "फिर कोशिश करें",
+      "viewPositions": "मेरी positions देखें",
+      "viewTransaction": "Transaction देखें",
+      "waitingForWallet": "वॉलेट का इंतजार…"
     },
     "preclose": {
       "title": "इस loan को early close करें",
@@ -430,7 +534,10 @@
       "multiStepNote": "Posting में up to three wallet confirmations लगते हैं (guardrails, payoff approval, request itself)। अगर बीच में रुकते हैं, earlier steps on-chain रहेंगे जब तक posting finish या cancel न हो — cancel approval भी हटाता है।",
       "partialBlockedByPending": "इस loan के लिए refinance request live है। Partial repayment amount बदल देगा और request permanently unacceptable बना देगा — पहले refinance request cancel करें।",
       "precloseBlockedByPending": "इस loan के लिए refinance request live है। अभी early close करने से यह stranded हो जाएगी — पहले refinance request cancel करें।",
-      "repayWarnPending": "इस loan के लिए refinance request अभी भी live है। Repaying loan settle करता है, जिसके बाद request कभी complete नहीं हो सकती — बाद में card से cancel करें (standing payoff approval भी हटेगी); तब तक यह expiry तक बैठी रहती है।"
+      "repayWarnPending": "इस loan के लिए refinance request अभी भी live है। Repaying loan settle करता है, जिसके बाद request कभी complete नहीं हो सकती — बाद में card से cancel करें (standing payoff approval भी हटेगी); तब तक यह expiry तक बैठी रहती है।",
+      "consentLabel": "मैं नीचे दिए payoff और wallet-balance terms को समझता/समझती हूँ और उनसे सहमत हूँ।",
+      "receiptLock": "नया कुछ नहीं — आपका existing collateral unlock हुए बिना new loan में carry over होता है।",
+      "receiptReceive": "Lender accept करते ही आपकी चुनी terms पर new loan — आपका collateral automatically उसमें move होता है और यह loan उसी transaction में close होता है।"
     },
     "approvals": {
       "title": "स्थायी token approvals",
@@ -549,7 +656,12 @@
       "loadingOffers": "Matching lending offers खोज रहे हैं…",
       "figureMoved": "Payout figure time के साथ move हुआ, इसलिए review बंद हुआ — current number पर confirm करने के लिए फिर खोलें।",
       "checking": "Check कर रहे हैं कि यह loan early exit हो सकता है या नहीं…",
-      "checkFailed": "अभी इस loan की exit details read नहीं कर सके — retry कर रहे हैं।"
+      "checkFailed": "अभी इस loan की exit details read नहीं कर सके — retry कर रहे हैं।",
+      "receiptCanLose": "अब तक accrued interest या remaining term की rate difference — इनमें से जो बड़ा हो, वही; दोनों कभी नहीं। ऊपर की figure में पहले से शामिल है; confirm करते समय exact amount live फिर पढ़ा जाता है।",
+      "receiptEnds": "तुरंत — आपकी position buyer को transfer हो जाती है और इस loan से आपका काम खत्म। Borrower की rate और due date नहीं बदलती।",
+      "receiptFees": "Protocol का हिस्सा forfeited interest से आता है — shown figure से आगे आपकी payout से कभी नहीं।",
+      "receiptLockNothing": "कुछ नहीं।",
+      "receiptOweNothing": "कुछ नहीं — आप कुछ approve नहीं करते और अपनी जेब से कुछ नहीं pay करते।"
     },
     "loanSale": {
       "title": "इस position को sale के लिए list करें",
@@ -573,7 +685,12 @@
       "fundingUnknown": "इस device से इस listing का offer record identify नहीं कर सके, इसलिए यहाँ इसकी settlement funding verify नहीं कर सकते — जिस device से listed किया वहाँ manage करें, या generous approval और balance रखें।",
       "ended": "आपकी sale listing अब active नहीं है। अगर buyer ने accept किया, payout पहले से wallet में है और settlement standing approval से pulled हुआ; remaining approval wallet के token-approvals view से revoke कर सकते हैं।",
       "listingUnavailable": "अपनी price पर position list करना अभी available नहीं — on-chain step fix हो रहा है। ऊपर instant exit काम करता है: matching open offer में तुरंत sell करता है।",
-      "partialBlockedByListing": "Lender ने इस position को current outstanding amount पर sale के लिए listed किया है। Listing standing रहने तक partial repayment paused है — यह amount बदल देगा और buyer को mislead करेगा। आप अभी भी full repay या early close कभी भी कर सकते हैं।"
+      "partialBlockedByListing": "Lender ने इस position को current outstanding amount पर sale के लिए listed किया है। Listing standing रहने तक partial repayment paused है — यह amount बदल देगा और buyer को mislead करेगा। आप अभी भी full repay या early close कभी भी कर सकते हैं।",
+      "consentLabel": "मैं नीचे दिए lock, settlement pull और standing approval को समझता/समझती हूँ और उनसे सहमत हूँ।",
+      "receiptCanLose": "अगर आपका balance या standing approval short हो जाए, buyer की acceptance बस fail हो जाती है — कुछ नहीं लिया जाता, लेकिन listing unfillable रहती है जब तक आप restore या cancel न करें।",
+      "receiptEnds": "जब buyer accept करता है (सब कुछ उसकी transaction में settle होता है) या जब आप listing cancel करते हैं। यह अपने आप expire नहीं होती।",
+      "receiptFees": "Protocol का हिस्सा settlement figure से आता है — उससे आगे कुछ नहीं।",
+      "receiptLock": "आपका lender position NFT, जब तक sale complete हो या आप listing cancel करें। और कुछ नहीं।"
     },
     "positions": {
       "title": "मेरी पोजिशन",
@@ -610,7 +727,117 @@
       "whatNextInternalMatchViewer": "यह loan internal matching से closed हुआ — residual claims position holders के हैं।",
       "whatNextClosed": "यह loan fully settled है — करने को कुछ नहीं बचा।",
       "whatNextRentalEnded": "यह rental ended है। Earned fees या refundable buffer position holders नीचे claim कर सकते हैं — और कुछ change नहीं हो सकता।",
-      "settledAhead": "यह position on-chain already close हो चुकी है — यहाँ status live है। आपकी lists catch up करने में थोड़ा time ले सकती हैं।"
+      "settledAhead": "यह position on-chain already close हो चुकी है — यहाँ status live है। आपकी lists catch up करने में थोड़ा time ले सकती हैं।",
+      "details": {
+        "actions": {
+          "claimBuffer": "मेरा buffer वापस claim करें",
+          "claimCollateral": "मेरा collateral claim करें",
+          "claimFeesNft": "Fees claim करें और NFT वापस लें",
+          "claimFunds": "मेरी funds claim करें",
+          "claimRecovered": "इस loan ने जो recover किया उसे claim करें",
+          "claimResidual": "जो बचा है claim करें (अगर कुछ हो)",
+          "closeRental": "यह rental close करें",
+          "repay": "यह loan repay करें"
+        },
+        "addCollateral": {
+          "amountAria": "Add करने वाला collateral amount",
+          "button": "Add",
+          "confirm": "Confirm — collateral add करें",
+          "endsImmediately": "Top-up तुरंत apply होता है।",
+          "fallbackWarn": "यह loan failed-liquidation state में है। Collateral add करने से यह Active तभी लौटता है जब top-up required health level restore करे — नहीं तो lender अभी भी claim कर सकता है, और added collateral भी risk में है। Full repay हमेशा cure करता है। अगर unsure हैं, repay करें।",
+          "loseFallback": "Added amount risk वाले collateral में जुड़ता है — अगर top-up पूरी तरह cure नहीं करता, lender अभी भी सब claim कर सकता है।",
+          "loseNormal": "Added amount existing collateral में जुड़ता है — loan default होने पर वही risk रहता है।",
+          "oweNothingMore": "और कुछ नहीं — यह आपके owed amount को नहीं बदलता।",
+          "receiveFallbackCure": "Loan को वापस healthy बनाने का मौका — सिर्फ तब जब यह top-up required health level restore करे (ऊपर warning देखें)।",
+          "receiveSafer": "अभी कुछ नहीं — safer loan (liquidation दूर होती है)।",
+          "title": "Collateral add करें"
+        },
+        "backToPositions": "← मेरी positions पर वापस",
+        "confirmingRole": "आपकी role confirm हो रही है…",
+        "connectToAct": "इस loan की position रखने वाला wallet connect करें ताकि action कर सकें।",
+        "done": {
+          "collateralAdded": "Collateral added — loan अब safer है।",
+          "partialRepaid": "Partial repayment confirmed — अब आप कम owe करते हैं।",
+          "rentalClosed": "Rental closed. कोई refundable buffer ready है — Claim Center से claim करें।",
+          "repaid": "Repayment confirmed. आपका collateral ready है — नीचे या Claim Center से claim करें।"
+        },
+        "healthChecking": "इस loan की health check हो रही है…",
+        "healthReadFailed": "हम इस loan की health अभी read नहीं कर सके — retry हो रहा है। Liquidation protection on-chain लागू रहती है।",
+        "labels": {
+          "health": "Health",
+          "ifNothing": "अगर कुछ नहीं होता",
+          "locked": "Locked",
+          "owed": "Owed",
+          "terms": "Terms",
+          "whatNext": "आगे क्या होगा"
+        },
+        "loadingLoan": "Loan लोड हो रहा है…",
+        "noCollateral": "Collateral नहीं",
+        "notFound": "हम यह loan अभी नहीं ढूंढ सके। यह नया हो सकता है (अभी indexing में) या link पुराना हो सकता है।",
+        "owedRentalPrepaid": "Repay करने को कुछ नहीं — rental fees prepaid थीं (late fees सिर्फ due date के बाद close करने पर)।",
+        "partial": {
+          "amountAria": "अभी repay करने वाला amount",
+          "blurb": "यह loan partial repayment allow करता है। Payments पहले interest में जाती हैं, फिर owed amount घटाती हैं — due date कभी नहीं बदलती।",
+          "button": "Part repay करें",
+          "confirm": "Confirm — part repay करें",
+          "endsPrincipalDrops": "आपका remaining principal तुरंत घटता है; interest छोटे amount पर accrue होता रहता है।",
+          "feesAccrued": "Accrued interest पर protocol का cut payment के अंदर settle होता है।",
+          "loseNothingBeyondPayment": "Payment से आगे कुछ नहीं।",
+          "receiveSmallerDebt": "अभी कुछ नहीं — छोटी debt।",
+          "title": "Loan का हिस्सा repay करें"
+        },
+        "phase": {
+          "approving": "आपके wallet में approval…",
+          "submitting": "Submit हो रहा है…",
+          "waiting": "वॉलेट का इंतजार…"
+        },
+        "receipt": {
+          "bufferBack": "कोई refundable buffer वापस — close होते ही claimable।",
+          "bufferBackShort": "आपका refundable buffer वापस।",
+          "endsClaim": "Claim तुरंत payout करता है और यह position आपके लिए close होती है।",
+          "endsPreclose": "तुरंत — loan आज settle होता है और आपका collateral release होता है।",
+          "endsRepay": "तुरंत — loan settle होता है और आपका side release होता है।",
+          "feesNone": "कोई नहीं।",
+          "feesPreclose": "Early close पर extra Vaipakam fee नहीं — protocol का cut lender के interest से आता है।",
+          "feesRental": "Protocol का cut payout से पहले rental fees से आता है।",
+          "feesRepay": "Repay पर extra Vaipakam fee नहीं — protocol का cut lender के interest से आता है।",
+          "feesYield": "Protocol की yield fee payout से पहले interest से आती है।",
+          "internalResidual": "Internal match ने आपके लिए जो residual छोड़ा, plus कोई VPFI rebate (zero हो सकता है)।",
+          "liquidationResidual": "Liquidation के बाद जो बचा (zero हो सकता है)।",
+          "loseNothingBeyondOwed": "आप जितना owe करते हैं उससे आगे कुछ नहीं।",
+          "loseNothingBeyondPay": "आप जितना pay करते हैं उससे आगे कुछ नहीं।",
+          "noCollateralBack": "Extra कुछ वापस नहीं — इस loan में release करने के लिए collateral नहीं।",
+          "nothing": "कुछ नहीं।",
+          "nothingNew": "नया कुछ नहीं।",
+          "oweRentalPrepaid": "और कुछ नहीं — fees prepaid थीं (late fees सिर्फ due date के बाद)।",
+          "owedNoCollateral": "इस side को जो अभी owed है (इस loan में collateral नहीं था, इसलिए कुछ न हो सकता है)।",
+          "recoveredNoCollateral": "इस loan ने जो recover किया (collateral नहीं था, इसलिए कुछ न हो सकता है)।",
+          "rentalFeesAndNft": "आपकी earned rental fees, plus आपका NFT वापस।"
+        },
+        "roleUnverified": "हम verify नहीं कर सके कि यह position अभी किसके पास है, इसलिए actions फिलहाल hidden हैं। थोड़ी देर में फिर कोशिश करें।",
+        "titleLoan": "Loan",
+        "titleRental": "Rental",
+        "whatIfNothingRentalOwner": "Renter के rights due date और grace period के बाद reset होते हैं; आपकी fees यहाँ claimable रहती हैं।",
+        "whatIfNothingRentalRenter": "आपके use rights due date पर खत्म होते हैं और prepaid buffer owner को जाता है — वापस पाने के लिए time पर close करें।",
+        "whatIfNothingRentalViewer": "Renter के use rights due date पर खत्म होते हैं; owner की fees और buffer rental terms के अनुसार settle होते हैं।"
+      },
+      "getStarted": "शुरू करें",
+      "loading": "आपकी positions लोड हो रही हैं…",
+      "offerRow": {
+        "cancel": "Offer cancel करें",
+        "cancelling": "Cancel हो रहा है…",
+        "confirmCancel": "Confirm — cancel करें और मेरे assets unlock करें",
+        "held": "Held — creator द्वारा managed",
+        "keep": "Offer रखें",
+        "receiptEnds": "तुरंत — offer book से हटती है और अब accept नहीं हो सकती। कभी भी नया offer post करें।",
+        "receiptFees": "कोई नहीं (सिर्फ network gas)।",
+        "receiptLose": "कुछ नहीं — open offer cancel करने पर penalty नहीं।",
+        "receiptNothing": "कुछ नहीं।",
+        "yourBorrowRequest": "आपकी borrow request",
+        "yourLendingOffer": "आपका lending offer",
+        "yourNftListing": "आपकी NFT listing"
+      },
+      "openOffers": "Open offers"
     },
     "powerSurface": {
       "body": "यह power-user screen है — raw offers और live rates, कम hand-holding के साथ। Guided Borrow और Lend flows वही actions step-by-step explanations के साथ cover करते हैं।",
@@ -635,7 +862,27 @@
       "allResidualNote": "जो ready नहीं था वह नीचे individually claim करने के लिए listed है।",
       "allRewardsUnavailable": "Rewards check नहीं कर सके, इसलिए वे इस batch में नहीं हैं — separately claim करें।",
       "allVpfiUnavailable": "Vault VPFI check नहीं कर सके, इसलिए यह batch में नहीं है।",
-      "allWorking": "Wallet का wait…"
+      "allWorking": "Wallet का wait…",
+      "checking": "क्लेम जांचे जा रहे हैं…",
+      "row": {
+        "heldProceeds": "इस loan के लिए रोकी गई राशि",
+        "heldProceedsDefault": "default से रिकवर की गई रोकी गई राशि",
+        "loan": "Loan",
+        "prepaidBufferBack": "आपका prepaid buffer वापस",
+        "rental": "Rental",
+        "repaidFunds": "चुकाई गई funds",
+        "residualAfterMatch": "internal match के बाद जो बचा",
+        "surplusAfterLiquidation": "liquidation के बाद जो बचा",
+        "whyDefaultBorrower": "यह loan default हुआ। अगर liquidation के बाद surplus बचा है, तो आप उसे claim कर सकते हैं।",
+        "whyDefaultLender": "Loan default हुआ — default settlement ने आपके लिए जो recover किया, उसे collect करें।",
+        "whyFallbackPending": "automatic liquidation पूरी नहीं हुई — claim करने से recovery आप खुद finalize करते हैं।",
+        "whyInternalMatchBorrower": "यह loan internal matching से बंद हुआ — आपके लिए बचा residual collect करें।",
+        "whyInternalMatchLender": "यह loan internal matching से बंद हुआ — अपनी funds collect करें।",
+        "whyRentalClosed": "Rental बंद हुई — refundable buffer release हो गया है।",
+        "whyRentalEnded": "Rental खत्म हुई — अपनी earned fees collect करें और NFT वापस लें।",
+        "whyRepaidBorrower": "आपने यह loan repay किया, इसलिए आपका collateral release हो गया है।",
+        "whyRepaidLender": "Borrower ने यह loan repay किया।"
+      }
     },
     "offers": {
       "title": "Offer Book",
@@ -644,7 +891,50 @@
       "emptyBody": "अपना offer create करें और दूसरे side को आने दें।",
       "unavailable": "अभी offer book load नहीं कर सके। थोड़ी देर में try करें।",
       "lenderOffer": "Lending offer",
-      "borrowerOffer": "Borrow request"
+      "borrowerOffer": "Borrow request",
+      "advancedNoExpiry": "expiry नहीं",
+      "advancedNoPartialRepay": "partial repay नहीं",
+      "advancedPartialRepayOk": "partial repay OK",
+      "badgeBorrower": "Borrower",
+      "badgeLender": "Lender",
+      "byCreator": "द्वारा",
+      "collateralLabel": "collateral",
+      "collateralNone": "none",
+      "createOffer": "Offer बनाएं",
+      "ctaBorrow": "इसे borrow करें",
+      "ctaBuyPosition": "यह loan position खरीदें",
+      "ctaFund": "इस request को fund करें",
+      "ctaRent": "यह NFT rent करें",
+      "dailyFeeLoading": "daily fee लोड हो रही है…",
+      "feesPrepaid": "fees prepaid",
+      "filteredEmptyBody": "ऊपर के filters ढीले करें — offer book में open offers हैं।",
+      "filteredEmptyTitle": "इन filters से कोई offer match नहीं करता",
+      "filters": {
+        "assetLabel": "Asset address से filter करें",
+        "assetPlaceholder": "0x… (कोई भी leg: principal, collateral, payment)",
+        "clear": "Filters clear करें",
+        "showLabel": "दिखाएं",
+        "sideAll": "सब कुछ",
+        "sideBorrowing": "Borrow requests (इन्हें lend करें)",
+        "sideLending": "Lending offers (इनसे borrow करें)",
+        "sideRentals": "NFT rentals",
+        "sortDurationLong": "Duration — longest first",
+        "sortDurationShort": "Duration — shortest first",
+        "sortLabel": "Sort by",
+        "sortNewest": "Newest first",
+        "sortRateHigh": "Rate — high to low",
+        "sortRateLow": "Rate — low to high"
+      },
+      "footerParts": {
+        "borrowLink": "Borrow",
+        "lead": "यहाँ offer लेना — “इसे borrow करें”, “इस request को fund करें”, या “यह loan position खरीदें” — आपको guided ",
+        "lendLink": "Lend",
+        "mid": " और ",
+        "tail": " flows जैसे ही review-and-sign steps से ले जाता है।"
+      },
+      "loading": "Offer book लोड हो रही है…",
+      "rentalListing": "NFT rental",
+      "yearly": "yearly"
     },
     "desk": {
       "title": "Rate Desk",
@@ -785,7 +1075,12 @@
         "blockGaslessService": "Gasless posting को order-book service चाहिए, जो अभी available नहीं — Posting को On-chain पर switch करें।",
         "consentRecheck": "Terms बदल गईं — फिर confirm करें।",
         "max": "Max",
-        "feePreviewTitle": "फ़ीस और commitment"
+        "feePreviewTitle": "फ़ीस और commitment",
+        "collateralAmount": "Collateral amount",
+        "expiryGtcTitle": "cancel होने तक valid — जब तक आप cancel न करें, order रहती है",
+        "expiryGttTitle": "समय तक valid — deadline पर खुद expire हो जाती है",
+        "rateBpsNote": "Rates basis points में store होती हैं (1% = 100 bps)",
+        "selfCollateral": "Collateral loan asset जैसा token नहीं हो सकता।"
       },
       "orders": {
         "tab": "Open orders",
@@ -820,7 +1115,8 @@
         "signedCancelling": "Cancelling…",
         "signedCancelNote": "Posting free थी, लेकिन cancelling gas cost करती है: book के पास held signature revoke करने का only way on-chain transaction है।",
         "signedCancelled": "Signed order on-chain cancel हो गया।",
-        "signedTruncated": "इस market में आपके signed orders list limit से ज्यादा हैं — यह complete set नहीं है।"
+        "signedTruncated": "इस market में आपके signed orders list limit से ज्यादा हैं — यह complete set नहीं है।",
+        "loading": "आपकी open orders लोड हो रही हैं…"
       },
       "positions": {
         "tab": "Positions",
@@ -829,8 +1125,14 @@
         "health": "Health",
         "notPriced": "Auto-liquidation नहीं",
         "manage": "Manage",
-        "allPositions": "सभी positions →"
-      }
+        "allPositions": "सभी positions →",
+        "loading": "आपकी positions लोड हो रही हैं…"
+      },
+      "bookLoading": "order book लोड हो रही है…",
+      "cumHeadingTitle": "इस side के top से cumulative depth",
+      "loadMarket": "Market लोड करें",
+      "marketsLoading": "Markets लोड हो रहे हैं…",
+      "oneSidedBook": "एक-sided book"
     },
     "vpfi": {
       "title": "VPFI discounts",
@@ -840,7 +1142,51 @@
       "tokenChanged": "Review के बाद VPFI token configuration बदल गया। कुछ approve नहीं हुआ — updated numbers check करके फिर try करें।",
       "tokenCheckRetry": "अभी VPFI token confirm नहीं कर सके — कुछ approve नहीं हुआ। थोड़ी देर में try करें।",
       "addToWallet": "MetaMask में VPFI जोड़ें",
-      "addedToWallet": "आपके wallet से VPFI track करने को कहा।"
+      "addedToWallet": "आपके wallet से VPFI track करने को कहा।",
+      "activeDiscount": "Active discount",
+      "amountLabelDeposit": "आपके vault में move करने वाला VPFI",
+      "amountLabelWithdraw": "आपके wallet में वापस लेने वाला VPFI",
+      "consentToggle": "Fee discounts के लिए मेरा vaulted VPFI use करें",
+      "consentToggleSub": "इसके बिना VPFI hold करने से discount नहीं मिलता।",
+      "deposit": "Deposit",
+      "depositCta": "VPFI deposit करें",
+      "depositDone": "Deposit confirmed. आपकी discount history अब build होना शुरू होती है।",
+      "depositToActivate": " — activate करने के लिए deposit करें",
+      "educationBody": "अपने Vaipakam Vault में VPFI hold करें और eligible loans पर protocol fee घटती है। Discount पिछले 30 दिनों की average holding use करता है — आज top up करने से discount gradually बढ़ता है, तुरंत नहीं।",
+      "educationTitle": "Discount कैसे काम करता है",
+      "inYourVault": "आपके vault में",
+      "inYourWallet": "आपके wallet में",
+      "max": "Max",
+      "noSellNote": "Vaipakam VPFI नहीं बेचता और holding yield नहीं देता — आप इसे open market से acquire करते हैं।",
+      "noneRightNow": "अभी कोई नहीं",
+      "nothing": "कुछ नहीं।",
+      "offFeesSuffix": "eligible protocol fees से off",
+      "optOutSyncFailed": "आपका opt-out इस network पर saved है, लेकिन other networks पर sync नहीं हुआ — यह आपकी next VPFI action के साथ sync होगा, या toggle फिर try करें।",
+      "overMaxHint": " — यह आपके पास से ज्यादा है।",
+      "phaseApproving": "VPFI approve हो रहा है…",
+      "phasePermitting": "Permission sign हो रही है… — free, no gas",
+      "phaseSubmitting": "Submit हो रहा है…",
+      "phaseWaiting": "वॉलेट का इंतजार…",
+      "receiptDeposit": {
+        "fees": "Deposits पर Vaipakam fee नहीं।",
+        "whenThisEnds": "अपना free VPFI जब चाहें withdraw करें।",
+        "youCanLose": "कुछ नहीं — आपके vault में free VPFI withdrawable रहता है।",
+        "youReceive": "अभी कुछ नहीं — समय के साथ eligible loans पर बढ़ता fee discount।"
+      },
+      "receiptWithdraw": {
+        "fees": "Withdrawals पर Vaipakam fee नहीं।",
+        "whenThisEnds": "तुरंत — आपका remaining balance discount history कमाता रहता है।",
+        "youCanLoseLead": "Future fee discounts —"
+      },
+      "reviewDeposit": "Deposit review करें",
+      "reviewWithdraw": "Withdraw review करें",
+      "statusTitle": "आपका discount status",
+      "switchToChange": "इसे change करने के लिए supported network पर switch करें।",
+      "vaultActionLabel": "Vault action",
+      "warmingUp": "Warming up",
+      "withdraw": "Withdraw",
+      "withdrawCta": "VPFI withdraw करें",
+      "withdrawDone": "Withdrawal confirmed. VPFI आपके wallet में वापस है।"
     },
     "errors": {
       "partialOverPrincipal": "यह loan के पूरे remaining principal को cover करता है। इसके बजाय “इस loan को repay करें” use करें — यह loan properly settle करता है और collateral release करता है।",
@@ -920,7 +1266,14 @@
       "emptyCta": "शुरू करें",
       "emptyCtaFaucet": "Test assets लें",
       "unavailable": "अभी आपका vault read नहीं कर सके। Funds unaffected हैं — थोड़ी देर में try करें।",
-      "lockedHint": "Locked amounts आपके open offers, active loans और rentals back करते हैं। वे close होने पर free up होते हैं।"
+      "lockedHint": "Locked amounts आपके open offers, active loans और rentals back करते हैं। वे close होने पर free up होते हैं।",
+      "addressLabel": "Vault address:",
+      "badgeFree": "Free",
+      "badgePartlyLocked": "Partly locked",
+      "emptyBody": "Assets यहाँ दिखते हैं जब आप offers post करते, loans open करते या VPFI deposit करते हैं।",
+      "emptyTitle": "आपके vault में अभी कुछ नहीं",
+      "loading": "आपका vault पढ़ा जा रहा है…",
+      "noVaultTitle": "अभी vault नहीं"
     },
     "activity": {
       "title": "Activity",
@@ -936,14 +1289,16 @@
       "loadMore": "Older activity load करें",
       "loadingMore": "Loading…",
       "unavailableFallback": "आपके current loans और rentals हमेशा available हैं",
-      "positionsLink": "My positions"
+      "positionsLink": "My positions",
+      "loading": "आपकी गतिविधि लोड हो रही है…"
     },
     "rewards": {
       "title": "इंटरैक्शन rewards",
       "blurb": "आपकी lending और borrowing activity से VPFI rewards. Loan close और reward day finalize होने के बाद claimable होते हैं।",
       "empty": "अभी कोई rewards नहीं। Rewards lending या borrowing activity के बाद दिखते हैं।",
       "waiting": "आपके rewards finalize हो रहे हैं — reward day सभी chains पर close होकर ही claimable होता है। बाद में check करें।",
-      "claim": "Rewards claim करें"
+      "claim": "Rewards claim करें",
+      "unavailable": "हम आपके rewards अभी check नहीं कर सके — थोड़ी देर में फिर कोशिश करें।"
     },
     "sanctions": {
       "title": "यह wallet compliance oracle में listed है।",
@@ -965,6 +1320,108 @@
       "title": "यह page मौजूद नहीं है",
       "body": "Link पुराना या mistyped हो सकता है। कुछ lost नहीं — आपकी positions safe हैं।",
       "backHome": "Home पर वापस"
+    },
+    "assetPicker": {
+      "faucetBadge": "Faucet टेस्ट टोकन",
+      "invalidAddress": "एक मान्य कॉन्ट्रैक्ट पता डालें — “0x” के बाद 40 hex अक्षर।",
+      "pasteOption": "टोकन पता पेस्ट करें…",
+      "placeholder": "एसेट चुनें…"
+    },
+    "checklist": {
+      "checking": "जांच हो रही है",
+      "needsAttention": "ध्यान चाहिए",
+      "ready": "तैयार"
+    },
+    "common": {
+      "back": "वापस",
+      "tryAgain": "फिर कोशिश करें",
+      "waitingForWallet": "वॉलेट का इंतजार…"
+    },
+    "copyAddress": {
+      "copied": "पता कॉपी हुआ"
+    },
+    "loanRow": {
+      "youRent": "आप rent करते हैं",
+      "youRentOut": "आप rent पर देते हैं"
+    },
+    "offerFlow": {
+      "advancedOptions": "Advanced options",
+      "allowPartialRepay": "Borrower को parts में repay करने दें",
+      "back": "वापस",
+      "beforeYouSign": "Sign करने से पहले",
+      "borrower": {
+        "acceptSubmitLabel": "इसे अभी borrow करें",
+        "amountHint": "हम इस amount के करीब offer करने वाले lenders ढूंढेंगे।",
+        "amountLabel": "आप कितना borrow करना चाहते हैं?",
+        "assetLabel": "Borrow करने वाला asset",
+        "collateralLabel": "आप जो collateral lock करेंगे",
+        "rateHint": "इस rate या उससे कम offer करने वाले lenders आपको fund कर सकते हैं।",
+        "rateLabel": "सबसे ऊंची yearly interest rate जो आप accept करेंगे (%)"
+      },
+      "collateralAmountLabel": "Collateral amount",
+      "continueToReview": "Review पर जारी रखें",
+      "counterAssetBorrowed": "Borrowed asset",
+      "counterAssetCollateral": "Collateral asset",
+      "durationLabel": "Duration",
+      "lender": {
+        "acceptSubmitLabel": "इस borrower को fund करें",
+        "amountHint": "आपका offer open रहते यह amount locked रहता है। Acceptance से पहले कभी भी cancel करें।",
+        "amountLabel": "आप कितना lend करना चाहते हैं?",
+        "assetLabel": "Lend करने वाला asset",
+        "collateralHint": "Borrower को आपके tokens पाने से पहले यह lock करना होगा।",
+        "collateralLabel": "Borrower से required collateral",
+        "rateLabel": "आपकी desired yearly interest rate (%)"
+      },
+      "liveFeesLoaded": "Live fee terms loaded",
+      "liveFeesLoading": "Live fee terms लोड हो रहे हैं…",
+      "lookingForMatches": "Matching offers खोजे जा रहे हैं…",
+      "postAnother": "एक और post करें",
+      "preparingReview": "आपका review तैयार हो रहा है…",
+      "proRataInterest": "Full term के बजाय सिर्फ used time के लिए interest charge करें (pro-rata)",
+      "receiptOweNothing": "कुछ नहीं — borrower आपको owe करता है।",
+      "retry": "Retry",
+      "rowBorrow": "Borrow",
+      "rowLend": "Lend",
+      "seeMatches": "Matching offers देखें",
+      "selfCollateralError": "Collateral borrowed asset से अलग होना चाहिए — protocol same-asset offers reject करता है।",
+      "steps": {
+        "details": "Details",
+        "done": "Done",
+        "offers": "Offers",
+        "review": "Review और sign",
+        "terms": "आपकी terms"
+      },
+      "viewPositions": "मेरी positions देखें",
+      "viewTransaction": "Transaction देखें",
+      "waitingForWallet": "वॉलेट का इंतजार…"
+    },
+    "settingsPage": {
+      "experience": {
+        "advanced": "Advanced",
+        "basic": "Basic",
+        "hint": "Basic हर screen को essentials तक रखता है। Advanced उन्हीं pages पर ज्यादा controls और market detail दिखाता है — protocol rules दोनों में identical हैं।",
+        "title": "Experience level"
+      },
+      "lede": "Appearance, experience level और more।",
+      "more": {
+        "activitySub": "Vaipakam पर आपके wallet ने जो कुछ किया",
+        "claimsSub": "Repayments, collateral और rewards collect करें",
+        "helpSub": "Plain-language answers और build info",
+        "offersSub": "इस network पर हर open offer browse करें",
+        "title": "More",
+        "vaultSub": "आपके assets कहाँ हैं — totals, locked और free",
+        "vpfiSub": "Optional — VPFI hold करके protocol fees घटाएं"
+      },
+      "theme": {
+        "dark": "Dark",
+        "light": "Light",
+        "system": "System",
+        "title": "Theme"
+      },
+      "title": "Settings"
+    },
+    "stepNav": {
+      "progressAria": "Progress"
     }
   }
 }
