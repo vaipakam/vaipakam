@@ -43,10 +43,19 @@ The lifecycle is fully observable: reward-entry ids are enumerable per
 user, and the accumulator start, the entry into the final-notice window,
 and the removal each emit a public per-entry signal (the notification
 pipeline schedules the free pre-expiry notice from indexed events
-alone). An entry whose fresh share cannot be credited at removal — the
-fresh budget fully exhausted — is deferred, never processed with its
-value silently burned; a batch draws fresh capacity per entry, so it can
-never terminalise several entries against one remaining sliver.
+alone). An entry whose fresh share cannot be credited at removal — the fresh
+budget fully exhausted, or no recycle-bucket backing room — is deferred,
+never processed with its value silently burned; a batch draws fresh
+capacity (against both the pool cap and the bucket's backing room) per
+entry, so it can never terminalise several entries against one remaining
+sliver, and it can never revert on the bucket-backing invariant and
+poison the whole permissionless batch. Every horizon reconfiguration
+advances a strictly-monotonic epoch, so even two reconfigurations in the
+same block are distinguishable and an entry is never measured against a
+stale epoch that would skip its fresh notice. (The mirror-chain
+remitted-recycled bucket-credit accounting is tracked separately as a
+Phase-B′ follow-up, #1331 — it is a benign ledger-label gap, not a fund
+movement, and RL-3 is dark by default.)
 
 Removal uses the ratified split signals riding the governor's PR-3c
 machinery: the fresh-funded share genuinely leaves the fresh budget

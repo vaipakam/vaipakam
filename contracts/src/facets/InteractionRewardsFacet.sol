@@ -499,6 +499,18 @@ contract InteractionRewardsFacet is
         uint256 headroom = LibVaipakam.VPFI_INTERACTION_POOL_CAP > reserved
             ? LibVaipakam.VPFI_INTERACTION_POOL_CAP - reserved
             : 0;
+        // The fresh credit also grows the recycle bucket, so it must stay
+        // within the bucket's BACKING headroom — {LibVpfiRecycle.credit}
+        // reverts unless `balance >= recycleBucket + freshTotal`, and a
+        // reverting credit would poison the whole permissionless batch
+        // (Codex #1317 r9). Cap fresh to the smaller of the pool cap and
+        // the backing room; both shrink by the same credited amount, so a
+        // single running minimum tracks them.
+        uint256 backingRoom = IERC20(s.vpfiToken).balanceOf(address(this));
+        backingRoom = backingRoom > s.recycleBucket
+            ? backingRoom - s.recycleBucket
+            : 0;
+        if (backingRoom < headroom) headroom = backingRoom;
         uint256 freshTotal;
         uint256 recycledTotal;
         uint256 armedFreshTotal;

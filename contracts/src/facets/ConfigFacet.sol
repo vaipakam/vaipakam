@@ -917,14 +917,18 @@ contract ConfigFacet is DiamondAccessControl {
         }
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         if (horizonDays != 0) {
-            // EVERY (re)configuration re-stamps the ≥90-day notice floor —
-            // not just a 0→non-zero activation. Shortening the horizon
-            // (e.g. 1095 → 180) must never let the next sweep expire an
-            // already-stamped dormant entry immediately; the floor gives
-            // every claimant at least the ratified notice from the moment
-            // the rules changed. Lengthening re-stamps too, harmlessly
-            // (the floor only binds entries already past `stamp + H`).
-            s.rewardHorizonActivatedAt = uint64(block.timestamp);
+            // EVERY (re)configuration advances the horizon epoch so the
+            // sweep re-earns a fresh executable notice under the new rules
+            // (dark reset, lengthening, or shortening alike). The epoch is
+            // STRICTLY MONOTONIC — normally the block timestamp, but bumped
+            // to `prev + 1` when two reconfigurations land in the same block
+            // — so every retune is distinguishable and a same-block double
+            // retune can never leave an entry reconciled against a stale
+            // epoch (Codex #1317 r9).
+            uint64 nowTs = uint64(block.timestamp);
+            s.rewardHorizonActivatedAt = nowTs > s.rewardHorizonActivatedAt
+                ? nowTs
+                : s.rewardHorizonActivatedAt + 1;
         }
         s.rewardClaimHorizonDays = horizonDays;
         emit RewardClaimHorizonDaysSet(horizonDays);

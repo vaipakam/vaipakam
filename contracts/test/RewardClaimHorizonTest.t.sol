@@ -433,6 +433,66 @@ contract RewardClaimHorizonTest is SetupTest, IVaipakamErrors {
         );
     }
 
+    /// @notice Two shortenings in the SAME block, with a reconcile sweep
+    ///         between, must each re-earn a fresh notice — the epoch is
+    ///         strictly monotonic so the second retune is distinguishable
+    ///         even at an unchanged block timestamp (Codex #1317 r9).
+    function testSameBlockDoubleRetuneReEarnsNotice() public {
+        _cfg().setRewardClaimHorizonDays(365);
+        uint256 id = _seedClaimableEntry();
+        _facet().sweepExpiredInteractionRewards(_ids(id)); // stamp
+        _accrue(id, 300 days); // elapsed ≈ 300, inside the 365 horizon
+
+        // retune1 → reconcile (caps 300→250) → retune2, all same block.
+        _cfg().setRewardClaimHorizonDays(250);
+        _facet().sweepExpiredInteractionRewards(_ids(id)); // reconcile to 250
+        _cfg().setRewardClaimHorizonDays(180);
+
+        // Under a non-monotonic epoch the second retune would be a no-op and
+        // the entry (elapsed 250) would expire after only ~20 more days
+        // against the 270 threshold. Monotonic ⇒ it re-caps to 180 and the
+        // full 90-day notice is required afresh.
+        assertEq(
+            _accrue(id, 30 days),
+            0,
+            "same-block retune2 re-earns the full notice, not ~20 days"
+        );
+        assertGt(
+            _accrue(id, NOTICE),
+            0,
+            "expires only after the re-earned 90-day notice"
+        );
+    }
+
+    /// @notice The expiry credit grows the recycle bucket, so it is capped
+    ///         to the bucket's backing room — a batch can never revert on
+    ///         {LibVpfiRecycle.credit}'s backing assertion (Codex #1317 r9).
+    function testExpiryNeverRevertsOnBucketBacking() public {
+        _cfg().setRewardClaimHorizonDays(180);
+        uint256 id = _seedClaimableEntry();
+        _facet().sweepExpiredInteractionRewards(_ids(id)); // stamp
+        _accrue(id, 180 days + NOTICE - MAX_GAP); // to just under threshold
+
+        // Label the ENTIRE Diamond balance as bucket ⇒ zero backing room for
+        // a fresh credit. The final crossing must NOT revert the batch; the
+        // all-fresh entry simply defers (its fresh share is uncreditable).
+        _mut().setRecycleBucketRaw(vpfi.balanceOf(address(diamond)));
+        vm.warp(vm.getBlockTimestamp() + MAX_GAP);
+        assertEq(
+            _facet().sweepExpiredInteractionRewards(_ids(id)),
+            0,
+            "no revert at zero backing - deferred, not reverted"
+        );
+
+        // Restore backing ⇒ the entry expires on the next funded window.
+        _mut().setRecycleBucketRaw(0);
+        assertGt(
+            _accrue(id, 3 * MAX_GAP),
+            0,
+            "expires once the bucket backing is restored"
+        );
+    }
+
     function testHorizonKnobBounds() public {
         vm.expectRevert();
         _cfg().setRewardClaimHorizonDays(179);

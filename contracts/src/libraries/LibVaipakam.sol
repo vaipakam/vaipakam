@@ -5072,8 +5072,10 @@ library LibVaipakam {
         ///      clock therefore starts at/after feature activation
         ///      (grandfathering by construction).
         mapping(uint256 => uint64) rewardEntryFirstClaimableAt;
-        /// @dev Timestamp of the most recent non-zero horizon
-        ///      (re)configuration — the "horizon epoch". A per-entry
+        /// @dev STRICTLY-MONOTONIC epoch token bumped on every non-zero
+        ///      horizon (re)configuration — normally the block timestamp,
+        ///      but `prev + 1` on a same-block collision so every retune is
+        ///      distinguishable (Codex #1317 r9). A per-entry
         ///      {rewardEntryHorizonEpoch} that lags this value means the
         ///      horizon was reconfigured since the entry last accrued, so
         ///      the sweep caps its accrued time back to the horizon
