@@ -484,8 +484,8 @@
       "rentFeesNote": "காட்டப்படும் price rental fee; Vaipakam cut owner earningsலிருந்து வரும், உங்கள் costக்கு மேலாக இல்லை.",
       "rentYouMayOwe": "மேலும் எதுவும் இல்லை — fees prepaid.",
       "stepChooseNft": "NFT தேர்வு செய்",
-      "stepDone": "Done",
-      "stepReview": "Review & sign",
+      "stepDone": "முடிந்தது",
+      "stepReview": "சரிபார்த்து கையொப்பமிடு",
       "stepYourNft": "உங்கள் NFT மற்றும் price",
       "tokenIdLabel": "Token id",
       "tryAgain": "மீண்டும் முயற்சிக்கவும்",
@@ -766,9 +766,9 @@
         "labels": {
           "health": "ஆரோக்கியம்",
           "ifNothing": "எதுவும் நடக்காவிட்டால்",
-          "locked": "Locked",
-          "owed": "Owed",
-          "terms": "Terms",
+          "locked": "பூட்டப்பட்டது",
+          "owed": "செலுத்த வேண்டியது",
+          "terms": "விதிமுறைகள்",
           "whatNext": "அடுத்து என்ன நடக்கும்"
         },
         "loadingLoan": "Loan ஏற்றப்படுகிறது…",
@@ -1385,11 +1385,11 @@
       "seeMatches": "Matching offers பார்க்கவும்",
       "selfCollateralError": "Collateral borrow செய்யப்படும் assetஇலிருந்து வேறு asset ஆக இருக்க வேண்டும் — protocol same-asset offersஐ reject செய்கிறது.",
       "steps": {
-        "details": "Details",
-        "done": "Done",
-        "offers": "Offers",
-        "review": "Review & sign",
-        "terms": "உங்கள் terms"
+        "details": "விவரங்கள்",
+        "done": "முடிந்தது",
+        "offers": "வாய்ப்புகள்",
+        "review": "சரிபார்த்து கையொப்பமிடு",
+        "terms": "உங்கள் விதிமுறைகள்"
       },
       "viewPositions": "என் positions பார்க்கவும்",
       "viewTransaction": "Transaction பார்க்கவும்",
@@ -1413,10 +1413,10 @@
         "vpfiSub": "Optional — VPFI வைத்திருப்பதால் protocol fees குறைப்பு"
       },
       "theme": {
-        "dark": "Dark",
-        "light": "Light",
-        "system": "System",
-        "title": "Theme"
+        "dark": "இருள்",
+        "light": "ஒளி",
+        "system": "கணினி",
+        "title": "தீம்"
       },
       "title": "அமைப்புகள்"
     },
