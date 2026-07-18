@@ -6,7 +6,7 @@
 | **Author** | Vaipakam Developer Team |
 | **Date** | 2026-07-18 |
 | **Status** | **Draft — programme plan + Phase B′ implementation design** for owner review. Single document of record for *everything still required* to complete VPFI recycling, re-verified against `main` (through the RL-4 landing) and reconciled with the 2026-07-18 completeness-scout state (#1346, #1347, the #1222 parked B1–B4/C1–C2 plan + WIP branch) |
-| **Cards** | #1222 (Phase B′ mesh + Phase C′) · #1331 (folds into B2) · #1346 (Layer 0) · #1347 (Layer 2 — formulation decision needed, §M2/D1) · #1218 (metric completion) · #1204 / #1219 (channels 3–4) · #1294 stack remainder (cards to cut — §5) |
+| **Cards** | Umbrella **#1349** · #1222 (Phase B′ mesh + Phase C′) · #1331 (folds into B2) · #1346 (Layer 0) · #1347 (Layer 2 — **D1 DECIDED (b)**, owner 2026-07-18; re-based to the formula doc) · #1218 (metric completion) · #1204 / #1219 (channels 3–4) · M2 card set (cut per §M2) |
 | **Substrate (binding)** | [`VpfiRecyclingBalanceGovernorDesign.md`](VpfiRecyclingBalanceGovernorDesign.md) (RATIFIED governor), [`VpfiCrossChainRecyclingDesign.md`](VpfiCrossChainRecyclingDesign.md) (Option-B mesh), [`VpfiRecyclingLoopClosureDesign.md`](VpfiRecyclingLoopClosureDesign.md) (RATIFIED RL-1…6), [`VpfiAbsorptionDistributionFormulaRedesign.md`](VpfiAbsorptionDistributionFormulaRedesign.md) **at its CURRENT revision** (rev 15 at time of writing — adds ack-timed remitted accounting + reward-haircut snapshotting over the rev-8–14 freezes; M2 cards scope against the live file, never a pinned rev — see the §M2 divergence decision) |
 
 ---
@@ -18,8 +18,8 @@ against different code states, plus a completeness scout (2026-07-18) that
 filed cards and parked WIP. This plan consolidates all of it into one
 verified programme: what is **done** on `main`, what **remains**, in what
 **order**, which older checklist items are **superseded**, and the one
-genuine **design divergence** that needs an owner decision before the
-biggest remaining block can be cut (§M2/D1). It also carries the Phase B′
+genuine **design divergence** that gated the biggest remaining block —
+**resolved: D1 decided (b), owner 2026-07-18** (§M2/§7.1). It also carries the Phase B′
 mesh implementation design (§M3), aligned to the #1222 parked
 decomposition with two corrections.
 
@@ -92,12 +92,18 @@ VPFI without the mandatory discount/tier restamp; the re-route must run
 the standard tracked-balance/rollup tail. First live non-forfeit
 absorption class; ships dark like everything else.
 
-### M2 — The absorption formula stack — card **#1347** + cards to cut, **after decision D1**
+### M2 — The absorption formula stack — card **#1347** + the M2 card set
+
+> **D1 DECIDED: (b)** — owner, 2026-07-18. The
+> `VpfiAbsorptionDistributionFormulaRedesign.md` LIF·year dual-fee
+> package at its current revision governs M2; option (a) is retired
+> (the governor §4.2 formula gets its supersession note; the unwired
+> `recycleTariffKPer1e18EthDay` knob is deleted once no caller remains).
+> The divergence table is retained below for the record.
 
 The launch-era absorption path is the tariff-priced discount entitlement
-— on this everything agrees. **What the tariff IS diverges between two
-documents, and the divergence must be resolved by the owner before
-cutting implementation cards** (D1, §7):
+— on this everything agrees. What the tariff IS diverged between two
+documents; the owner resolved it as recorded above (historical table):
 
 | | **(a) Governor §4.2** (RATIFIED 2026-07-15; how #1347 is currently written) | **(b) #1294 rev 8–15** (merged doc, Draft status, but carrying later owner product decisions C1–C6 dated 2026-07-16) |
 | --- | --- | --- |
@@ -284,7 +290,7 @@ constituent cards below remain the working tickets.
 | --- | --- |
 | #1349 | Umbrella — keep in lockstep with this plan; tick milestones as constituent cards close |
 | #1346 | Keep as filed = M1; add the #973 restamp note (comment posted) |
-| #1347 | **Blocked on D1** — on (b), re-base body to #1294 at current rev (LIF·year, dual-fee, coupling); on (a), add the supersession note to the formula doc instead |
+| #1347 | **D1 decided (b)** — body re-based to the formula doc at current rev (LIF·year, dual-fee, per-party double absorption, PR-5a/5b scope) |
 | #1222 | Adopt the parked B1–B4/C1–C2 cut with §M3's two corrections (B1 two report fields; two-pass funding in B2/B3); #1331 stays absorbed by B2 |
 | #1331 | **CLOSED 2026-07-18 as duplicate of #1222** — its full scope (remit-ingress labeling; remitted-recycled = local credit vs locally-committed = pure release, across claim/forfeit/expiry) is §M3's B2; the B4 tests must cover it |
 | #1218 | Re-point at §M5 (net-emission = `freshDrawdown` under the governor; dashboard surface) |
@@ -322,15 +328,13 @@ constituent cards below remain the working tickets.
 
 ## 7. Decisions asked of the owner
 
-1. **D1 — tariff formulation** (§M2): (a) governor §4.2 ETH·day
-   entitlement as #1347 currently reads, or **(b) the
-   `VpfiAbsorptionDistributionFormulaRedesign.md` LIF·year dual-fee
-   package at its CURRENT revision — rev 15 at time of writing, whose
-   later freezes (reward-haircut snapshotting, ack-timed remitted
-   accounting) are part of the package (recommended — the later decision
-   set, Codex-hardened, explicitly retires (a))**. This gates cutting the
-   M2 cards; on (b) they scope against the live document, never a pinned
-   rev.
+1. **D1 — tariff formulation** (§M2): **DECIDED (b)** — owner,
+   2026-07-18: the `VpfiAbsorptionDistributionFormulaRedesign.md`
+   LIF·year dual-fee package at its CURRENT revision (rev 15 at time of
+   writing, whose later freezes — reward-haircut snapshotting, ack-timed
+   remitted accounting — are part of the package). M2 cards scope
+   against the live document, never a pinned rev; #1347 re-based;
+   option (a) retired with a supersession note.
 2. Confirm this plan as the **programme of record** (supersedes the
    Phase-B checklist in #1222's body; adopts the parked B1–B4/C1–C2 cut
    with §M3's two corrections).
