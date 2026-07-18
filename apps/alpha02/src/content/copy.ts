@@ -402,8 +402,11 @@ const copySource = {
       'Not responding — the app can’t reach the blockchain right now. Reloading, or switching networks and back, often clears it.',
     indexer: 'Market data cache',
     indexerOk: (age: string) => `Up to date (refreshed ${age} ago)`,
-    indexerStale: (age: string) =>
-      `Running behind (last refreshed ${age} ago) — market lists may lag; your own positions still load directly from the chain.`,
+    indexerStale: tmpl(
+
+        `Running behind (last refreshed {{age}} ago) — market lists may lag; your own positions still load directly from the chain.`,
+
+      ),
     indexerUnreachable:
       'Unreachable right now — market lists may not load until it recovers. Your own positions still load directly from the chain.',
     indexerNoCursor:
@@ -614,8 +617,11 @@ const copySource = {
       'The other side of this offer can’t transact right now (compliance flag), so it can’t be accepted. Nothing was sent.',
     offerNotFound:
       'We couldn’t find that offer — the link may be old, or the data source is catching up. Browse current offers below.',
-    wrongChainLink: (chainName: string) =>
-      `That link points to an offer on ${chainName}. Switch to that network (top of the page), then open the link again — offer numbers repeat across networks, so we won’t guess.`,
+    wrongChainLink: tmpl(
+
+        `That link points to an offer on {{chainName}}. Switch to that network (top of the page), then open the link again — offer numbers repeat across networks, so we won’t guess.`,
+
+      ),
     termsChanged:
       'This offer’s terms changed since you reviewed it. Nothing was sent — please review the updated offer.',
     // "Not priced" is broader than "no feed exists" — the protocol also
@@ -634,8 +640,11 @@ const copySource = {
     // does NOT describe their real terms (a sale vehicle shows 0
     // collateral and a term that already partly elapsed), so accepting
     // them here is BLOCKED, not warned-past. See issue #951 / #927.
-    linkedLoanAcceptBlocked: (loanId: string) =>
-      `This offer is tied to already-running loan #${loanId} — accepting it would settle or transfer that loan's position, not start the fresh loan reviewed above. This app can't yet show you the real terms of that kind of deal, so accepting it here is disabled for now.`,
+    linkedLoanAcceptBlocked: tmpl(
+
+        `This offer is tied to already-running loan #{{loanId}} — accepting it would settle or transfer that loan's position, not start the fresh loan reviewed above. This app can't yet show you the real terms of that kind of deal, so accepting it here is disabled for now.`,
+
+      ),
     // #986 P3 — the honest buy-a-running-loan review. Sale vehicles get
     // a REAL review (loan-derived numbers) instead of the block above;
     // preclose-offset links keep the block.
@@ -920,8 +929,11 @@ const copySource = {
       'Vaipakam position NFTs carry real claim rights — whoever holds one controls that side of its loan. Check any token id before trusting it.',
     placeholder: 'Position NFT token id',
     check: 'Check',
-    chainNote: (chain: string) =>
-      `Checked on ${chain}. Token ids repeat across networks — a token that exists here says nothing about other networks.`,
+    chainNote: tmpl(
+
+        `Checked on {{chain}}. Token ids repeat across networks — a token that exists here says nothing about other networks.`,
+
+      ),
     checking: 'Checking this token on-chain…',
     checkFailed: 'We couldn’t check this token right now — please try again in a moment.',
     liveTitle: (id: string) => `Token #${id} is live on this network`,
@@ -1466,8 +1478,11 @@ const copySource = {
     emptyBody: 'Create your own offer and let the other side come to you.',
     // F-20260703-003 (#988) — shown by MarketFreshnessNote when the
     // indexer cursor has stalled, on every market-list surface.
-    staleList: (age: string) =>
-      `This list last updated ${age} ago and may be behind — new offers may exist that aren’t shown yet. Check back shortly.`,
+    staleList: tmpl(
+
+        `This list last updated {{age}} ago and may be behind — new offers may exist that aren’t shown yet. Check back shortly.`,
+
+      ),
     unavailable:
       'We couldn’t load the offer book right now. Please try again in a moment.',
     lenderOffer: 'Lending offer',
