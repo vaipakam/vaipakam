@@ -27,7 +27,16 @@
         "language": "Idioma",
         "languageHint": "Los idiomas sin traducción terminada muestran texto en inglés por ahora.",
         "languagePickerAria": "Idioma de visualización"
-      }
+      },
+      "loading": "Cargando…",
+      "modeAdvanced": "Avanzado",
+      "modeBasic": "Básico",
+      "modeSwitchAria": "Modo de interfaz",
+      "more": "Más",
+      "moreSheetAria": "Más destinos",
+      "navPrimaryAria": "Principal",
+      "navQuickAria": "Navegación rápida",
+      "skipToContent": "Saltar al contenido"
     },
     "seo": {
       "home": {
@@ -178,7 +187,11 @@
       "pushEnable": "Activar entrega Push",
       "pushEnabled": "La entrega Push está activa para esta billetera.",
       "pushButton": "Abrir el canal Push",
-      "loanNudge": "¿Quieres un aviso de Telegram si este préstamo se vuelve riesgoso? Configura alertas en Configuración."
+      "loanNudge": "¿Quieres un aviso de Telegram si este préstamo se vuelve riesgoso? Configura alertas en Configuración.",
+      "bandAlert": "Alerta",
+      "bandCritical": "Crítico",
+      "bandWarn": "Advertencia",
+      "bandsSave": "Guardar"
     },
     "notifications": {
       "bellLabel": "Notificaciones",
@@ -206,7 +219,16 @@
       "title": "Algo salió mal en esta página",
       "body": "La página encontró un error inesperado y dejó de renderizar. Tus fondos y posiciones on-chain no se ven afectados — es un fallo de visualización, y una transacción que acabas de firmar aún puede haber pasado (revisa Mis posiciones después de recargar). Recargar normalmente lo corrige.",
       "reload": "Recargar página",
-      "home": "Volver al inicio"
+      "home": "Volver al inicio",
+      "detailAria": "Detalle del error",
+      "glosses": {
+        "185": "Se superó la profundidad máxima de actualización — un componente actualiza estado en cada render. Es un bucle infinito de renderizado.",
+        "300": "Se renderizaron menos hooks de lo esperado — un hook se saltó por un retorno condicional.",
+        "301": "Demasiados re-renderizados — se llama a un setter de estado durante el render.",
+        "310": "Violación de Rules of Hooks — se llamó un hook condicionalmente o fuera de orden.",
+        "321": "Llamada de hook inválida — los hooks solo pueden ejecutarse dentro de un componente función de React.",
+        "418": "Desajuste de hidratación — servidor y cliente renderizaron marcado diferente."
+      }
     },
     "diagnostics": {
       "open": "Soporte y revisión de conexión",
@@ -264,7 +286,8 @@
       "tokenValid": "Activo reconocido como token",
       "consent": "Avisos de riesgo y términos aceptados",
       "getTestAssets": "Obtener activos de prueba",
-      "connectEarly": "Conecta tu billetera para continuar — la necesitarás para firmar, así que es más fácil conectarla ahora."
+      "connectEarly": "Conecta tu billetera para continuar — la necesitarás para firmar, así que es más fácil conectarla ahora.",
+      "sanctionsChecking": "Comprobando estado de cumplimiento…"
     },
     "receipt": {
       "heading": "Revisa antes de firmar",
@@ -293,7 +316,53 @@
         "Prestar: solo se ganan intereses si el prestatario paga. En caso de incumplimiento, tu recuperación es lo que finalmente valga la garantía bloqueada.",
         "Alquileres de NFT: los arrendatarios reciben derechos de uso temporales, nunca propiedad; el NFT permanece en el vault del propietario. Las tarifas de alquiler se prepagan, con un pequeño colchón reembolsable.",
         "Riesgo de contrato inteligente: Vaipakam es código en una red pública. Errores, fallos de red o condiciones extremas de mercado pueden causar pérdidas — nunca comprometas fondos que no puedas permitirte perder."
-      ]
+      ],
+      "buildDevFallback": "dev",
+      "buildLabel": "Build",
+      "faq": {
+        "alerts": {
+          "a": "En la tarjeta de alertas puedes vincular Telegram (y activar push del navegador) para recibir aviso cuando un préstamo se acerca a su vencimiento o baja la salud de una posición. Vincular requiere una firma única; enviarte una alerta de prueba confirma que el canal funciona antes de depender de él.",
+          "q": "¿Cómo recibo alertas antes de un vencimiento o liquidación?"
+        },
+        "assetsHeld": {
+          "a": "En tu propio Vaipakam Vault — una cuenta on-chain que solo controla tu billetera. Vaipakam nunca agrupa fondos de usuarios y no puede gastarlos por ti.",
+          "q": "¿Dónde se guardan mis activos?"
+        },
+        "claimCenter": {
+          "a": "Cuando se liquida un préstamo en el que participas — un pago que se te debe, o garantía de un incumplimiento — los fondos esperan a que los reclames. La página de Reclamos lista exactamente qué puedes cobrar y para qué posición, verificado contra el registro del protocolo, para que nada quede varado.",
+          "q": "¿Para qué sirve el centro de reclamos?"
+        },
+        "lenderInterest": {
+          "a": "No. Es lo que ganas si el prestatario paga a tiempo. Si incumple, tu recuperación depende de la garantía que bloqueó — la pantalla de revisión lo explica antes de firmar.",
+          "q": "¿Está garantizado el interés que veo al prestar?"
+        },
+        "missedRepayment": {
+          "a": "Después del vencimiento más un periodo de gracia, el prestamista puede recibir tu garantía bloqueada. Si la garantía tiene precio de mercado en vivo, también puede venderse automáticamente cuando su valor cae demasiado — pagar a tiempo evita ambas cosas.",
+          "q": "¿Qué pasa si no pago un préstamo?"
+        },
+        "modes": {
+          "a": "Básico mantiene al frente los recorridos guiados de Pedir prestado, Prestar y alquiler de NFT. Avanzado además muestra las superficies para usuarios expertos — el Libro de ofertas, el libro de órdenes de la Mesa de tasas, descuentos VPFI y tu historial completo de actividad. Cambia cuando quieras desde el selector de modo en la navegación; nunca mueve tus posiciones.",
+          "q": "¿Cuál es la diferencia entre modo Básico y Avanzado?"
+        },
+        "nftRental": {
+          "a": "El NFT permanece bloqueado en el vault de su propietario; el arrendatario obtiene derechos de uso temporales, nunca propiedad. Las tarifas se prepagan, con un pequeño colchón reembolsable.",
+          "q": "¿Qué es un alquiler de NFT?"
+        },
+        "nftVerifier": {
+          "a": "El verificador NFT (en la navegación) lee cualquier NFT de posición Vaipakam directamente de la chain y muestra sus términos reales y estado — para confirmar qué representa una publicación antes de confiar en una venta en mercado secundario.",
+          "q": "¿Cómo verifico un NFT de posición antes de comprarlo fuera de la plataforma?"
+        },
+        "vpfi": {
+          "a": "No. VPFI es opcional — mantenerlo en tu vault puede reducir comisiones del protocolo en préstamos elegibles. Nunca reduce el gas de red, y nunca lo necesitas para pedir prestado, prestar o alquilar.",
+          "q": "¿Necesito VPFI?"
+        },
+        "wrongNetwork": {
+          "a": "Las ofertas, tu vault y el faucet son por red. Si tu billetera está en una chain donde Vaipakam no está desplegado, una bandera ofrece cambiar con un clic a una red compatible; la app nunca actúa en una chain no compatible.",
+          "q": "Dice que estoy en la red equivocada — ¿qué hago?"
+        }
+      },
+      "lede": "Respuestas rápidas en lenguaje claro.",
+      "title": "Ayuda"
     },
     "consentParts": {
       "prefix": "Entiendo y acepto los ",
@@ -387,7 +456,42 @@
       "no4907Unknown": "No pudimos comprobar si esta colección NFT admite el estándar de alquiler on-chain (ERC-4907). Si no lo admite, las apps fuera de Vaipakam no reconocerán al arrendatario — alquilar dentro de Vaipakam sigue funcionando.",
       "vpfiPrepayListing": "Este listado pide pago en VPFI, cosa que los alquileres no permiten — no puede aceptarse. Elige otro listado.",
       "vpfiCheckRetry": "No pudimos verificar ahora mismo el activo de pago de este listado — no se envió ni aprobó nada. Inténtalo de nuevo en un momento.",
-      "vpfiPrepayNotAllowed": "VPFI no puede usarse como activo de pago de alquiler — elige otro token."
+      "vpfiPrepayNotAllowed": "VPFI no puede usarse como activo de pago de alquiler — elige otro token.",
+      "back": "Atrás",
+      "beforeYouSign": "Antes de firmar",
+      "continueToReview": "Continuar a revisión",
+      "contractHint": "Los NFT únicos compatibles con ERC-4907 dan derechos de uso que otras apps pueden ver; otros NFT igual se alquilan, rastreados dentro de Vaipakam.",
+      "contractLabel": "Dirección del contrato NFT",
+      "dailyFeeLabel": "Tarifa diaria",
+      "durationLabel": "Duración del alquiler",
+      "listWhenEnds": "Cuando termina el alquiler, los derechos del arrendatario se reinician automáticamente; reclamas tus tarifas y recuperas el NFT desde la página de detalle del alquiler.",
+      "listYouCanLose": "Uso temporal del NFT mientras está alquilado — el arrendatario nunca puede transferirlo ni venderlo.",
+      "listingsLoading": "Cargando publicaciones de alquiler…",
+      "liveFeesLoaded": "Términos de comisión en vivo cargados",
+      "liveFeesLoading": "Cargando términos de comisión en vivo…",
+      "liveRentalLoaded": "Términos de alquiler en vivo cargados",
+      "liveRentalLoading": "Cargando términos de alquiler en vivo…",
+      "nftTypeErc1155": "NFT multiedición (ERC-1155)",
+      "nftTypeErc721": "NFT único (ERC-721)",
+      "nftTypeLabel": "Tipo de NFT",
+      "nothing": "Nada.",
+      "paymentAssetCheckFailed": "No pudimos verificar el activo de pago ahora — inténtalo de nuevo en un momento.",
+      "paymentAssetRecognised": "Activo de pago reconocido",
+      "preparingReview": "Preparando tu revisión…",
+      "prepayAssetHint": "Los arrendatarios prepagan todo el alquiler en este token.",
+      "prepayAssetLabel": "Activo en el que los arrendatarios te pagan",
+      "quantityLabel": "Cantidad",
+      "rentFeesNote": "El precio mostrado es la tarifa de alquiler; la parte de Vaipakam sale de las ganancias del propietario, no encima de lo tuyo.",
+      "rentYouMayOwe": "Nada más — las tarifas son prepagadas.",
+      "stepChooseNft": "Elegir un NFT",
+      "stepDone": "Listo",
+      "stepReview": "Revisar y firmar",
+      "stepYourNft": "Tu NFT y precio",
+      "tokenIdLabel": "ID del token",
+      "tryAgain": "Intentar de nuevo",
+      "viewPositions": "Ver mis posiciones",
+      "viewTransaction": "Ver la transacción",
+      "waitingForWallet": "Esperando la billetera…"
     },
     "preclose": {
       "title": "Cerrar este préstamo antes",
@@ -430,7 +534,10 @@
       "multiStepNote": "Publicar requiere hasta tres confirmaciones de billetera (límites, aprobación de pago, la solicitud). Si te detienes a mitad de camino, los pasos anteriores quedan on-chain hasta que termines de publicar o canceles — cancelar también elimina la aprobación.",
       "partialBlockedByPending": "Hay una solicitud de refinanciación activa para este préstamo. Un pago parcial cambiaría el monto y haría que esa solicitud fuera permanentemente inaceptable — cancela primero la solicitud de refinanciación.",
       "precloseBlockedByPending": "Hay una solicitud de refinanciación activa para este préstamo. Cerrarlo antes ahora la dejaría varada — cancela primero la solicitud de refinanciación.",
-      "repayWarnPending": "Una solicitud de refinanciación sigue activa para este préstamo. Pagar liquida el préstamo, tras lo cual la solicitud nunca podrá completarse — cancélala luego desde su tarjeta (eso también elimina su aprobación permanente de pago); hasta entonces simplemente queda allí hasta vencer."
+      "repayWarnPending": "Una solicitud de refinanciación sigue activa para este préstamo. Pagar liquida el préstamo, tras lo cual la solicitud nunca podrá completarse — cancélala luego desde su tarjeta (eso también elimina su aprobación permanente de pago); hasta entonces simplemente queda allí hasta vencer.",
+      "consentLabel": "Entiendo los términos de pago y saldo de billetera de abajo, y los acepto.",
+      "receiptLock": "Nada nuevo — tu garantía existente pasa al nuevo préstamo sin desbloquearse nunca.",
+      "receiptReceive": "Un nuevo préstamo en los términos que elegiste en cuanto un prestamista acepte — tu garantía se mueve automáticamente y este préstamo se cierra en la misma transacción."
     },
     "approvals": {
       "title": "Aprobaciones permanentes de tokens",
@@ -549,7 +656,12 @@
       "loadingOffers": "Buscando ofertas de préstamo compatibles…",
       "figureMoved": "La cifra de pago cambió con el tiempo, así que la revisión se cerró — ábrela otra vez para confirmar con el número actual.",
       "checking": "Comprobando si este préstamo puede salirse antes…",
-      "checkFailed": "No pudimos leer ahora mismo los detalles de salida de este préstamo — reintentando."
+      "checkFailed": "No pudimos leer ahora mismo los detalles de salida de este préstamo — reintentando.",
+      "receiptCanLose": "El MAYOR entre el interés acumulado hasta ahora o la diferencia de tasa por el plazo restante — nunca ambos. Ya está reflejado en la cifra de arriba; el monto exacto se vuelve a leer en vivo cuando confirmas.",
+      "receiptEnds": "De inmediato — tu posición se transfiere al comprador y terminas con este préstamo. La tasa y la fecha de vencimiento del prestatario no cambian.",
+      "receiptFees": "La parte del protocolo sale del interés cedido — nunca de tu pago más allá de la cifra mostrada.",
+      "receiptLockNothing": "Nada.",
+      "receiptOweNothing": "Nada — no apruebas nada y no pagas nada de tu bolsillo."
     },
     "loanSale": {
       "title": "Listar esta posición para venta",
@@ -573,7 +685,12 @@
       "fundingUnknown": "No pudimos identificar el registro de oferta de este listado desde este dispositivo, así que no podemos verificar aquí su financiación de liquidación — gestiónalo desde el dispositivo que lo listó, o mantén una aprobación y saldo generosos.",
       "ended": "Tu listado de venta ya no está activo. Si un comprador lo aceptó, el pago ya está en tu billetera y la liquidación se extrajo mediante la aprobación permanente; cualquier aprobación restante puede revocarse desde la vista de aprobaciones de tokens de tu billetera.",
       "listingUnavailable": "Listar tu posición a tu propio precio aún no está disponible — el paso on-chain que necesita se está arreglando. La salida instantánea de arriba funciona: vende de inmediato contra una oferta abierta compatible.",
-      "partialBlockedByListing": "El prestamista tiene esta posición listada para venta por su monto pendiente actual. El pago parcial está pausado mientras el listado exista — cambiaría ese monto y engañaría a un comprador. Aún puedes pagar completo o cerrar antes en cualquier momento."
+      "partialBlockedByListing": "El prestamista tiene esta posición listada para venta por su monto pendiente actual. El pago parcial está pausado mientras el listado exista — cambiaría ese monto y engañaría a un comprador. Aún puedes pagar completo o cerrar antes en cualquier momento.",
+      "consentLabel": "Entiendo el bloqueo, el cobro de liquidación y la aprobación permanente de abajo, y los acepto.",
+      "receiptCanLose": "Si tu saldo o la aprobación permanente quedan cortos, la aceptación de un comprador simplemente falla — no se toma nada, pero la publicación queda imposible de llenar hasta que la restaures o canceles.",
+      "receiptEnds": "Cuando un comprador acepta (todo se liquida en su transacción) o cuando cancelas la publicación. No vence sola.",
+      "receiptFees": "La parte del protocolo sale de la cifra de liquidación — nada más allá de eso.",
+      "receiptLock": "Tu NFT de posición de prestamista, hasta que la venta se complete o canceles la publicación. Nada más."
     },
     "positions": {
       "title": "Mis posiciones",
@@ -610,7 +727,117 @@
       "whatNextInternalMatchViewer": "Este préstamo se cerró por emparejamiento interno — cualquier reclamo residual pertenece a los titulares de posición.",
       "whatNextClosed": "Este préstamo está completamente liquidado — no queda nada por hacer.",
       "whatNextRentalEnded": "Este alquiler terminó. Cualquier tarifa ganada o colchón reembolsable puede reclamarse abajo por los titulares de posición — nada más puede cambiarlo.",
-      "settledAhead": "Esta posición ya cerró on-chain — el estado aquí está en vivo. Tus listas pueden tardar un momento en ponerse al día."
+      "settledAhead": "Esta posición ya cerró on-chain — el estado aquí está en vivo. Tus listas pueden tardar un momento en ponerse al día.",
+      "details": {
+        "actions": {
+          "claimBuffer": "Recuperar mi colchón",
+          "claimCollateral": "Reclamar mi garantía",
+          "claimFeesNft": "Reclamar tarifas y recuperar NFT",
+          "claimFunds": "Reclamar mis fondos",
+          "claimRecovered": "Reclamar lo que este préstamo recuperó",
+          "claimResidual": "Reclamar lo que queda (si queda algo)",
+          "closeRental": "Cerrar este alquiler",
+          "repay": "Pagar este préstamo"
+        },
+        "addCollateral": {
+          "amountAria": "Monto de garantía a añadir",
+          "button": "Añadir",
+          "confirm": "Confirmar — añadir garantía",
+          "endsImmediately": "El aumento se aplica de inmediato.",
+          "fallbackWarn": "Este préstamo está en estado de liquidación fallida. Añadir garantía solo lo devuelve a Activo si el aumento restaura el nivel de salud requerido — si no, el prestamista aún puede reclamar, y la garantía añadida también queda en riesgo. Pagar completo siempre cura. Si tienes dudas, paga en su lugar.",
+          "loseFallback": "El monto añadido se une a la garantía en riesgo — si el aumento no cura por completo, el prestamista aún puede reclamarlo todo.",
+          "loseNormal": "El monto añadido se une a la garantía existente — queda en riesgo igual si el préstamo incumple.",
+          "oweNothingMore": "Nada más — esto no cambia lo que debes.",
+          "receiveFallbackCure": "Una oportunidad de devolver el préstamo a salud — SOLO si este aumento restaura el nivel de salud requerido (ver la advertencia de arriba).",
+          "receiveSafer": "Nada ahora — un préstamo más seguro (la liquidación queda más lejos).",
+          "title": "Añadir garantía"
+        },
+        "backToPositions": "← Volver a mis posiciones",
+        "confirmingRole": "Confirmando tu rol…",
+        "connectToAct": "Conecta la billetera que tiene la posición de este préstamo para actuar sobre él.",
+        "done": {
+          "collateralAdded": "Garantía añadida — el préstamo ahora es más seguro.",
+          "partialRepaid": "Pago parcial confirmado — ahora debes menos.",
+          "rentalClosed": "Alquiler cerrado. Cualquier colchón reembolsable está listo — reclámalo desde el centro de reclamos.",
+          "repaid": "Pago confirmado. Tu garantía está lista — reclámala abajo o desde el centro de reclamos."
+        },
+        "healthChecking": "Comprobando la salud de este préstamo…",
+        "healthReadFailed": "No pudimos leer la salud de este préstamo ahora — reintentando. La protección contra liquidación sigue aplicando on-chain.",
+        "labels": {
+          "health": "Salud",
+          "ifNothing": "Si no pasa nada",
+          "locked": "Bloqueado",
+          "owed": "Debido",
+          "terms": "Términos",
+          "whatNext": "Qué pasa después"
+        },
+        "loadingLoan": "Cargando el préstamo…",
+        "noCollateral": "Sin garantía",
+        "notFound": "No pudimos encontrar este préstamo ahora. Puede ser nuevo (aún indexándose) o el enlace puede ser antiguo.",
+        "owedRentalPrepaid": "Nada que pagar — las tarifas de alquiler fueron prepagadas (penalizaciones solo si se cierra después del vencimiento).",
+        "partial": {
+          "amountAria": "Monto a pagar ahora",
+          "blurb": "Este préstamo permite pago parcial. Los pagos van primero a intereses y luego reducen lo que debes — la fecha de vencimiento nunca cambia.",
+          "button": "Pagar parte",
+          "confirm": "Confirmar — pagar parte",
+          "endsPrincipalDrops": "Tu principal restante baja de inmediato; los intereses siguen acumulándose sobre el monto menor.",
+          "feesAccrued": "La parte del protocolo del interés acumulado se liquida dentro del pago.",
+          "loseNothingBeyondPayment": "Nada más allá del pago.",
+          "receiveSmallerDebt": "Nada ahora — una deuda menor.",
+          "title": "Pagar parte del préstamo"
+        },
+        "phase": {
+          "approving": "Aprobando en tu billetera…",
+          "submitting": "Enviando…",
+          "waiting": "Esperando la billetera…"
+        },
+        "receipt": {
+          "bufferBack": "Cualquier colchón reembolsable vuelve a ti — reclamable justo después de cerrar.",
+          "bufferBackShort": "Tu colchón reembolsable de vuelta.",
+          "endsClaim": "El reclamo paga de inmediato y esta posición se cierra para ti.",
+          "endsPreclose": "De inmediato — el préstamo se liquida hoy y tu garantía se libera.",
+          "endsRepay": "De inmediato — el préstamo se liquida y tu lado se libera.",
+          "feesNone": "Ninguna.",
+          "feesPreclose": "Sin comisión Vaipakam extra por cerrar temprano — la parte del protocolo sale del interés del prestamista.",
+          "feesRental": "La parte del protocolo sale de las tarifas de alquiler antes del pago.",
+          "feesRepay": "Sin comisión Vaipakam extra por pagar — la parte del protocolo sale del interés del prestamista.",
+          "feesYield": "La comisión de rendimiento del protocolo sale del interés antes del pago.",
+          "internalResidual": "Cualquier residual que dejó el match interno para ti, más cualquier rebate VPFI (puede ser cero).",
+          "liquidationResidual": "Lo que quede después de la liquidación (puede ser cero).",
+          "loseNothingBeyondOwed": "Nada más allá de lo que debes.",
+          "loseNothingBeyondPay": "Nada más allá de lo que pagas.",
+          "noCollateralBack": "Nada extra de vuelta — este préstamo no tiene garantía que liberar.",
+          "nothing": "Nada.",
+          "nothingNew": "Nada nuevo.",
+          "oweRentalPrepaid": "Nada más — las tarifas fueron prepagadas (penalizaciones solo después del vencimiento).",
+          "owedNoCollateral": "Lo que todavía se debe a este lado (este préstamo no tenía garantía, así que puede no haber nada).",
+          "recoveredNoCollateral": "Lo que este préstamo recuperó (no tenía garantía, así que puede no haber nada).",
+          "rentalFeesAndNft": "Tus tarifas de alquiler ganadas, más tu NFT de vuelta."
+        },
+        "roleUnverified": "No pudimos verificar quién tiene actualmente esta posición, así que las acciones están ocultas por ahora. Inténtalo de nuevo en un momento.",
+        "titleLoan": "Préstamo",
+        "titleRental": "Alquiler",
+        "whatIfNothingRentalOwner": "Los derechos del arrendatario se reinician después del vencimiento y el periodo de gracia; tus tarifas siguen reclamables aquí.",
+        "whatIfNothingRentalRenter": "Tus derechos de uso terminan en la fecha de vencimiento y el colchón prepagado va al propietario — cierra a tiempo para recuperarlo.",
+        "whatIfNothingRentalViewer": "Los derechos de uso del arrendatario terminan en la fecha de vencimiento; las tarifas del propietario y el colchón se liquidan según los términos del alquiler."
+      },
+      "getStarted": "Empezar",
+      "loading": "Cargando tus posiciones…",
+      "offerRow": {
+        "cancel": "Cancelar oferta",
+        "cancelling": "Cancelando…",
+        "confirmCancel": "Confirmar — cancelar y desbloquear mis activos",
+        "held": "Retenida — gestionada por su creador",
+        "keep": "Mantener la oferta",
+        "receiptEnds": "De inmediato — la oferta sale del libro y ya no puede aceptarse. Publica una nueva cuando quieras.",
+        "receiptFees": "Ninguna (solo gas de red).",
+        "receiptLose": "Nada — cancelar una oferta abierta no tiene penalización.",
+        "receiptNothing": "Nada.",
+        "yourBorrowRequest": "Tu solicitud de préstamo",
+        "yourLendingOffer": "Tu oferta de préstamo",
+        "yourNftListing": "Tu publicación de NFT"
+      },
+      "openOffers": "Ofertas abiertas"
     },
     "powerSurface": {
       "body": "Esta es una pantalla para usuarios avanzados — ofertas brutas y tasas en vivo con menos guía. Los flujos guiados de Pedir prestado y Prestar cubren las mismas acciones con explicaciones paso a paso.",
@@ -635,7 +862,27 @@
       "allResidualNote": "Todo lo que no estaba listo sigue listado abajo para reclamarlo por separado.",
       "allRewardsUnavailable": "No pudimos revisar tus recompensas, así que no están en este lote — reclámalas por separado.",
       "allVpfiUnavailable": "No pudimos revisar tu VPFI en el vault, así que no está en este lote.",
-      "allWorking": "Esperando billetera…"
+      "allWorking": "Esperando billetera…",
+      "checking": "Comprobando reclamos…",
+      "row": {
+        "heldProceeds": "Ingresos retenidos para este préstamo",
+        "heldProceedsDefault": "Ingresos retenidos recuperados del incumplimiento",
+        "loan": "Préstamo",
+        "prepaidBufferBack": "Devolución de tu colchón prepagado",
+        "rental": "Alquiler",
+        "repaidFunds": "Fondos reembolsados",
+        "residualAfterMatch": "Lo que queda después del match interno",
+        "surplusAfterLiquidation": "Lo que queda después de la liquidación",
+        "whyDefaultBorrower": "Este préstamo cayó en incumplimiento. Si la liquidación dejó un excedente, puedes reclamarlo.",
+        "whyDefaultLender": "El préstamo cayó en incumplimiento — cobra lo que la liquidación del incumplimiento recuperó para ti.",
+        "whyFallbackPending": "Una liquidación automática no se completó — reclamar finaliza la recuperación por tu cuenta.",
+        "whyInternalMatchBorrower": "Este préstamo se cerró por matching interno — cobra cualquier residuo que haya quedado para ti.",
+        "whyInternalMatchLender": "Este préstamo se cerró por matching interno — cobra tus fondos.",
+        "whyRentalClosed": "El alquiler se cerró — el colchón reembolsable queda liberado.",
+        "whyRentalEnded": "El alquiler terminó — cobra tus tarifas ganadas y recupera el NFT.",
+        "whyRepaidBorrower": "Pagaste este préstamo, así que tu garantía queda liberada.",
+        "whyRepaidLender": "El prestatario pagó este préstamo."
+      }
     },
     "offers": {
       "title": "Libro de ofertas",
@@ -644,7 +891,50 @@
       "emptyBody": "Crea tu propia oferta y deja que la otra parte venga a ti.",
       "unavailable": "No pudimos cargar el libro de ofertas ahora mismo. Inténtalo de nuevo en un momento.",
       "lenderOffer": "Oferta de préstamo",
-      "borrowerOffer": "Solicitud de préstamo"
+      "borrowerOffer": "Solicitud de préstamo",
+      "advancedNoExpiry": "sin vencimiento",
+      "advancedNoPartialRepay": "sin pago parcial",
+      "advancedPartialRepayOk": "pago parcial OK",
+      "badgeBorrower": "Prestatario",
+      "badgeLender": "Prestamista",
+      "byCreator": "por",
+      "collateralLabel": "garantía",
+      "collateralNone": "ninguna",
+      "createOffer": "Crear una oferta",
+      "ctaBorrow": "Pedir esto",
+      "ctaBuyPosition": "Comprar esta posición de préstamo",
+      "ctaFund": "Financiar esta solicitud",
+      "ctaRent": "Alquilar este NFT",
+      "dailyFeeLoading": "cargando tarifa diaria…",
+      "feesPrepaid": "tarifas prepagadas",
+      "filteredEmptyBody": "Afloja los filtros de arriba — el libro de ofertas sí tiene ofertas abiertas.",
+      "filteredEmptyTitle": "Ninguna oferta coincide con estos filtros",
+      "filters": {
+        "assetLabel": "Filtrar por dirección de activo",
+        "assetPlaceholder": "0x… (cualquier pata: principal, garantía, pago)",
+        "clear": "Limpiar filtros",
+        "showLabel": "Mostrar",
+        "sideAll": "Todo",
+        "sideBorrowing": "Solicitudes de préstamo (prestar a estas)",
+        "sideLending": "Ofertas de préstamo (pedir a estas)",
+        "sideRentals": "Alquileres de NFT",
+        "sortDurationLong": "Duración — más larga primero",
+        "sortDurationShort": "Duración — más corta primero",
+        "sortLabel": "Ordenar por",
+        "sortNewest": "Más recientes primero",
+        "sortRateHigh": "Tasa — alta a baja",
+        "sortRateLow": "Tasa — baja a alta"
+      },
+      "footerParts": {
+        "borrowLink": "Pedir prestado",
+        "lead": "Tomar una oferta aquí — “Pedir esto”, “Financiar esta solicitud” o “Comprar esta posición de préstamo” — te lleva por los mismos pasos de revisión y firma que los flujos guiados de ",
+        "lendLink": "Prestar",
+        "mid": " y ",
+        "tail": "."
+      },
+      "loading": "Cargando el libro de ofertas…",
+      "rentalListing": "Alquiler de NFT",
+      "yearly": "anual"
     },
     "desk": {
       "title": "Mesa de tasas",
@@ -785,7 +1075,12 @@
         "blockGaslessService": "La publicación sin gas necesita el servicio de libro de órdenes, que no está disponible ahora mismo — cambia Publicación a On-chain.",
         "consentRecheck": "Los términos cambiaron — confirma de nuevo.",
         "max": "Máx",
-        "feePreviewTitle": "Comisiones y compromiso"
+        "feePreviewTitle": "Comisiones y compromiso",
+        "collateralAmount": "Monto de garantía",
+        "expiryGtcTitle": "Válida hasta cancelar — queda activa hasta que la canceles",
+        "expiryGttTitle": "Válida hasta la hora indicada — vence sola en el plazo",
+        "rateBpsNote": "Las tasas se guardan en puntos básicos (1% = 100 bps)",
+        "selfCollateral": "La garantía no puede ser el mismo token que el activo del préstamo."
       },
       "orders": {
         "tab": "Órdenes abiertas",
@@ -820,7 +1115,8 @@
         "signedCancelling": "Cancelando…",
         "signedCancelNote": "Publicar fue gratis, pero cancelar cuesta gas: la única forma de revocar una firma que el libro ya tiene es una transacción on-chain.",
         "signedCancelled": "Orden firmada cancelada on-chain.",
-        "signedTruncated": "Tienes más órdenes firmadas en este mercado de las que podemos listar de una vez — este no es el conjunto completo."
+        "signedTruncated": "Tienes más órdenes firmadas en este mercado de las que podemos listar de una vez — este no es el conjunto completo.",
+        "loading": "Cargando tus órdenes abiertas…"
       },
       "positions": {
         "tab": "Posiciones",
@@ -829,8 +1125,14 @@
         "health": "Salud",
         "notPriced": "Sin liquidación automática",
         "manage": "Gestionar",
-        "allPositions": "Todas las posiciones →"
-      }
+        "allPositions": "Todas las posiciones →",
+        "loading": "Cargando tus posiciones…"
+      },
+      "bookLoading": "Cargando el libro de órdenes…",
+      "cumHeadingTitle": "Profundidad acumulada desde la parte superior del lado",
+      "loadMarket": "Cargar mercado",
+      "marketsLoading": "Cargando mercados…",
+      "oneSidedBook": "libro de un solo lado"
     },
     "vpfi": {
       "title": "Descuentos VPFI",
@@ -840,7 +1142,51 @@
       "tokenChanged": "La configuración del token VPFI cambió desde que revisaste. No se aprobó nada — revisa los números actualizados e inténtalo de nuevo.",
       "tokenCheckRetry": "No pudimos confirmar el token VPFI ahora mismo — no se aprobó nada. Inténtalo de nuevo en un momento.",
       "addToWallet": "Añadir VPFI a MetaMask",
-      "addedToWallet": "Se pidió a tu billetera que rastree VPFI."
+      "addedToWallet": "Se pidió a tu billetera que rastree VPFI.",
+      "activeDiscount": "Descuento activo",
+      "amountLabelDeposit": "VPFI para mover a tu vault",
+      "amountLabelWithdraw": "VPFI para devolver a tu billetera",
+      "consentToggle": "Usar mi VPFI en el vault para descuentos de comisión",
+      "consentToggleSub": "Sin esto, mantener VPFI no da descuento.",
+      "deposit": "Depositar",
+      "depositCta": "Depositar VPFI",
+      "depositDone": "Depósito confirmado. Tu historial de descuento empieza a acumularse ahora.",
+      "depositToActivate": " — deposita para activar",
+      "educationBody": "Mantén VPFI en tu Vaipakam Vault y la comisión del protocolo en préstamos elegibles baja. El descuento usa tu saldo promedio de los últimos 30 días — recargar hoy aumenta tu descuento gradualmente, no al instante.",
+      "educationTitle": "Cómo funciona el descuento",
+      "inYourVault": "En tu vault",
+      "inYourWallet": "En tu billetera",
+      "max": "Max",
+      "noSellNote": "Vaipakam no vende VPFI ni paga rendimiento por mantenerlo — lo adquieres en el mercado abierto.",
+      "noneRightNow": "Ninguno ahora",
+      "nothing": "Nada.",
+      "offFeesSuffix": "de descuento en comisiones de protocolo elegibles",
+      "optOutSyncFailed": "Tu exclusión está guardada en esta red, pero sincronizarla con otras redes no se completó — se sincronizará con tu próxima acción VPFI, o intenta cambiar el interruptor de nuevo.",
+      "overMaxHint": " — eso es más de lo que tienes.",
+      "phaseApproving": "Aprobando VPFI…",
+      "phasePermitting": "Firmando el permiso… — gratis, sin gas",
+      "phaseSubmitting": "Enviando…",
+      "phaseWaiting": "Esperando la billetera…",
+      "receiptDeposit": {
+        "fees": "Sin comisión Vaipakam en depósitos.",
+        "whenThisEnds": "Retira tu VPFI libre cuando quieras.",
+        "youCanLose": "Nada — el VPFI libre en tu vault sigue siendo retirable.",
+        "youReceive": "Nada ahora — un descuento de comisión creciente en préstamos elegibles con el tiempo."
+      },
+      "receiptWithdraw": {
+        "fees": "Sin comisión Vaipakam en retiros.",
+        "whenThisEnds": "De inmediato — tu saldo restante sigue acumulando historial de descuento.",
+        "youCanLoseLead": "Descuentos futuros de comisión —"
+      },
+      "reviewDeposit": "Revisar depósito",
+      "reviewWithdraw": "Revisar retiro",
+      "statusTitle": "Tu estado de descuento",
+      "switchToChange": "Cambia a una red compatible para modificar esto.",
+      "vaultActionLabel": "Acción del Vault",
+      "warmingUp": "Calentando",
+      "withdraw": "Retirar",
+      "withdrawCta": "Retirar VPFI",
+      "withdrawDone": "Retiro confirmado. El VPFI está de vuelta en tu billetera."
     },
     "errors": {
       "partialOverPrincipal": "Eso cubre todo el principal restante del préstamo. Usa “Pagar este préstamo” en su lugar — liquida el préstamo correctamente y libera tu garantía.",
@@ -920,7 +1266,14 @@
       "emptyCta": "Empezar",
       "emptyCtaFaucet": "Obtener activos de prueba",
       "unavailable": "No pudimos leer tu vault ahora mismo. Tus fondos no se ven afectados — inténtalo de nuevo en un momento.",
-      "lockedHint": "Los montos bloqueados respaldan tus ofertas abiertas, préstamos activos y alquileres. Se liberan cuando esos cierran."
+      "lockedHint": "Los montos bloqueados respaldan tus ofertas abiertas, préstamos activos y alquileres. Se liberan cuando esos cierran.",
+      "addressLabel": "Dirección del Vault:",
+      "badgeFree": "Libre",
+      "badgePartlyLocked": "Parcialmente bloqueado",
+      "emptyBody": "Los activos aparecen aquí cuando publicas ofertas, abres préstamos o depositas VPFI.",
+      "emptyTitle": "Nada en tu vault todavía",
+      "loading": "Leyendo tu vault…",
+      "noVaultTitle": "Aún no hay vault"
     },
     "activity": {
       "title": "Actividad",
@@ -936,14 +1289,16 @@
       "loadMore": "Cargar actividad anterior",
       "loadingMore": "Cargando…",
       "unavailableFallback": "Tus préstamos y alquileres actuales siempre están disponibles en",
-      "positionsLink": "Mis posiciones"
+      "positionsLink": "Mis posiciones",
+      "loading": "Cargando tu actividad…"
     },
     "rewards": {
       "title": "Recompensas por interacción",
       "blurb": "Recompensas VPFI de tu actividad de préstamo y crédito. Se vuelven reclamables después de que un préstamo cierra y el día de recompensa finaliza.",
       "empty": "Aún no hay recompensas. Las recompensas aparecen después de actividad de prestar o pedir prestado.",
       "waiting": "Tus recompensas se están finalizando — un día de recompensa cierra en todas las cadenas antes de que pueda reclamarse. Vuelve pronto.",
-      "claim": "Reclamar recompensas"
+      "claim": "Reclamar recompensas",
+      "unavailable": "No pudimos comprobar tus recompensas ahora — inténtalo de nuevo en un momento."
     },
     "sanctions": {
       "title": "Esta billetera aparece en el oráculo de cumplimiento.",
@@ -965,6 +1320,108 @@
       "title": "Esta página no existe",
       "body": "El enlace puede ser antiguo o estar mal escrito. Nada se perdió — tus posiciones están seguras.",
       "backHome": "Volver al inicio"
+    },
+    "assetPicker": {
+      "faucetBadge": "Token de prueba del faucet",
+      "invalidAddress": "Introduce una dirección de contrato válida — “0x” seguido de 40 caracteres hexadecimales.",
+      "pasteOption": "Pegar una dirección de token…",
+      "placeholder": "Elige un activo…"
+    },
+    "checklist": {
+      "checking": "Comprobando",
+      "needsAttention": "Necesita atención",
+      "ready": "Listo"
+    },
+    "common": {
+      "back": "Atrás",
+      "tryAgain": "Intentar de nuevo",
+      "waitingForWallet": "Esperando la billetera…"
+    },
+    "copyAddress": {
+      "copied": "Dirección copiada"
+    },
+    "loanRow": {
+      "youRent": "Alquilas",
+      "youRentOut": "Das en alquiler"
+    },
+    "offerFlow": {
+      "advancedOptions": "Opciones avanzadas",
+      "allowPartialRepay": "Permitir que el prestatario pague en partes",
+      "back": "Atrás",
+      "beforeYouSign": "Antes de firmar",
+      "borrower": {
+        "acceptSubmitLabel": "Pedir esto ahora",
+        "amountHint": "Buscaremos prestamistas que ofrezcan cerca de este monto.",
+        "amountLabel": "¿Cuánto quieres pedir prestado?",
+        "assetLabel": "Activo a pedir prestado",
+        "collateralLabel": "Garantía que bloquearás",
+        "rateHint": "Los prestamistas que ofrezcan esta tasa o menos pueden financiarte.",
+        "rateLabel": "Tasa anual máxima que aceptarás (%)"
+      },
+      "collateralAmountLabel": "Monto de garantía",
+      "continueToReview": "Continuar a revisión",
+      "counterAssetBorrowed": "Activo prestado",
+      "counterAssetCollateral": "Activo de garantía",
+      "durationLabel": "Duración",
+      "lender": {
+        "acceptSubmitLabel": "Financiar a este prestatario",
+        "amountHint": "Este monto queda bloqueado mientras tu oferta esté abierta. Cancela cuando quieras antes de la aceptación.",
+        "amountLabel": "¿Cuánto quieres prestar?",
+        "assetLabel": "Activo a prestar",
+        "collateralHint": "El prestatario debe bloquear esto antes de recibir tus tokens.",
+        "collateralLabel": "Garantía que exiges al prestatario",
+        "rateLabel": "Tasa anual que quieres (%)"
+      },
+      "liveFeesLoaded": "Términos de comisión en vivo cargados",
+      "liveFeesLoading": "Cargando términos de comisión en vivo…",
+      "lookingForMatches": "Buscando ofertas compatibles…",
+      "postAnother": "Publicar otra",
+      "preparingReview": "Preparando tu revisión…",
+      "proRataInterest": "Cobrar interés solo por el tiempo usado (pro rata), en vez de por todo el plazo",
+      "receiptOweNothing": "Nada — el prestatario te debe a ti.",
+      "retry": "Reintentar",
+      "rowBorrow": "Pedir prestado",
+      "rowLend": "Prestar",
+      "seeMatches": "Ver ofertas compatibles",
+      "selfCollateralError": "La garantía debe ser un activo distinto del que se pide prestado — el protocolo rechaza ofertas con el mismo activo.",
+      "steps": {
+        "details": "Detalles",
+        "done": "Listo",
+        "offers": "Ofertas",
+        "review": "Revisar y firmar",
+        "terms": "Tus términos"
+      },
+      "viewPositions": "Ver mis posiciones",
+      "viewTransaction": "Ver la transacción",
+      "waitingForWallet": "Esperando la billetera…"
+    },
+    "settingsPage": {
+      "experience": {
+        "advanced": "Avanzado",
+        "basic": "Básico",
+        "hint": "Básico mantiene cada pantalla en lo esencial. Avanzado muestra más controles y detalle de mercado en las mismas páginas — las reglas del protocolo son idénticas en ambos.",
+        "title": "Nivel de experiencia"
+      },
+      "lede": "Apariencia, nivel de experiencia y más.",
+      "more": {
+        "activitySub": "Todo lo que tu billetera ha hecho en Vaipakam",
+        "claimsSub": "Cobrar pagos, garantías y recompensas",
+        "helpSub": "Respuestas en lenguaje claro e info de build",
+        "offersSub": "Explorar toda oferta abierta en esta red",
+        "title": "Más",
+        "vaultSub": "Dónde están tus activos — totales, bloqueados y libres",
+        "vpfiSub": "Opcional — reducir comisiones del protocolo manteniendo VPFI"
+      },
+      "theme": {
+        "dark": "Oscuro",
+        "light": "Claro",
+        "system": "Sistema",
+        "title": "Tema"
+      },
+      "title": "Configuración"
+    },
+    "stepNav": {
+      "progressAria": "Progreso"
     }
   }
 }
