@@ -114,12 +114,20 @@ retires (a)'s formula ("do not wire `setRecycleTariffKPer1e18EthDay` for
 Phase-1 absorption"). But (b) is materially bigger (it re-prices list
 fees and replaces the reward-cap regime), so the choice is the owner's,
 made consciously — not defaulted. On (b), #1347's body is re-based to
-the current revision (rev 15) and the card set below is cut; on (a), the formula doc's fee/tariff
-sections get a supersession note instead (its D1 + messenger content
-survives either way).
+the current revision (rev 15) and the card set below is cut; on (a), the
+formula doc's fee/tariff sections get a supersession note instead. **The
+formula doc's D1 + messenger content survives either way — with one
+non-negotiable coupling under (a) too:** ShareOfPool must never cut over
+without a per-loan fee-linked reward cap in force. Under (b) that is
+PR-5c; under (a) the equivalent cap must be defined from (a)'s own
+tariff (e.g. `½ × kEthDay-tariff × (1−m_reward)` per side) **or** the
+D1 ShareOfPool cutover stays blocked (keep #1008) until one exists —
+choosing (a) never licenses the documented D1-only thin-book
+over-reward path.
 
-Cards to cut on (b) (titles per the #1294 PR plan; PR-3 landed, PR-7 =
-#1346):
+Cards to cut on (b) (titles per the #1294 PR plan; PR-3a–3c landed —
+**PR-3d, the metrics slice, is NOT landed and lives on as M5/#1218** —
+PR-7 = #1346):
 
 | Card | Scope | Hard deps |
 | --- | --- | --- |
@@ -164,8 +172,17 @@ chain, source-scoped netting with commitment-netted `availRecycled`,
 per-destination arrays aligned to `broadcastDestinationChainIds`,
 mirrors-decode-first messenger redeploy. **Wire-format rule, stated as a
 field union — never an assumed word count:** standalone M3 widens the
-kind-2 broadcast 8→10 words (+`recycleConsume`, +`keeperAllocate`) and
-the report 4→6. If M2's PR-2 D1 evolution lands in the same window, the
+kind-2 broadcast with the two new fields (`recycleConsume`,
+`keeperAllocate`) and the report 4→6 — **and the broadcast build becomes
+per-destination**: today's messenger builds ONE payload and loops over
+`broadcastDestinationChainIds`, but under the §M3 two-pass funding
+correction each chain must receive its OWN funded values —
+`recycledHalf_c` (replacing the today-global `recycledHalf` slot),
+`recycleConsume_c`, `keeperAllocate_c`. A single shared payload would
+have every mirror accruing against the same recycled half even when a
+chain's slice was funding-trimmed. So the B2 change is per-destination
+payload assembly (or explicit per-destination array fields), not merely
+"+2 words". If M2's PR-2 D1 evolution lands in the same window, the
 combined shape is the **union of both field sets** — D1 replaces
 `capThreshold18` with `capMode` + `capPayload` (net +1 word) *and* the
 two recycle fields ride along (11 words, or a new kind with the explicit
@@ -201,7 +218,11 @@ day-bucketed credits after M3.
 ### M6 — Absorption channels 3–4 (RL-5's four-channel posture)
 
 **E-2 spend-gated perks (#1204)** — the two spend-gated perks charge
-VPFI → `credit(…)`; ratified (RL-5) to ride M2's release train.
+VPFI → `credit(…)`; ratified (RL-5) to ride M2's release train. **Gate:
+the #1204 design's own status is `legal glance → per-perk build` — the
+glance precedes the build here exactly as for bonds**, and §6 counts
+perks complete only in a decided state (glance passed + built, or an
+explicit owner deferral recorded on #1204).
 **#1219 service bonds** — schedule the legal glance now (the bounded
 review slot the excision doc recommends); slash path →
 `credit(ServiceBondSlash, …)` on build.
@@ -273,9 +294,11 @@ constituent cards below remain the working tickets.
 
 ## 6. Definition of done — "VPFI recycling complete"
 
-1. **Absorption**: notification tariff (M1) + Full tariff (M2) + perks
-   (M6) live and crediting the bucket; forfeit/expiry classes live
-   (already); **service bonds (#1219) in a DECIDED state** — either the
+1. **Absorption**: notification tariff (M1) + Full tariff (M2) live and
+   crediting the bucket; forfeit/expiry classes live (already);
+   **spend-gated perks (#1204) in a DECIDED state** — legal glance passed
+   + built and crediting, or an explicit owner deferral recorded on
+   #1204; **service bonds (#1219) in a DECIDED state** — either the
    legal glance passed and the slash path (`credit(ServiceBondSlash, …)`)
    built and live, **or** an explicit owner deferral recorded on #1219
    (the same completed-deferral treatment as the conversion classes) —
@@ -300,9 +323,14 @@ constituent cards below remain the working tickets.
 ## 7. Decisions asked of the owner
 
 1. **D1 — tariff formulation** (§M2): (a) governor §4.2 ETH·day
-   entitlement as #1347 currently reads, or **(b) #1294 rev-14 LIF·year
-   dual-fee package (recommended — the later decision set, Codex-hardened,
-   explicitly retires (a))**. This gates cutting the M2 cards.
+   entitlement as #1347 currently reads, or **(b) the
+   `VpfiAbsorptionDistributionFormulaRedesign.md` LIF·year dual-fee
+   package at its CURRENT revision — rev 15 at time of writing, whose
+   later freezes (reward-haircut snapshotting, ack-timed remitted
+   accounting) are part of the package (recommended — the later decision
+   set, Codex-hardened, explicitly retires (a))**. This gates cutting the
+   M2 cards; on (b) they scope against the live document, never a pinned
+   rev.
 2. Confirm this plan as the **programme of record** (supersedes the
    Phase-B checklist in #1222's body; adopts the parked B1–B4/C1–C2 cut
    with §M3's two corrections).
