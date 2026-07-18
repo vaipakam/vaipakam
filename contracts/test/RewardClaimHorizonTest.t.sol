@@ -7,6 +7,7 @@ import {ERC1967Proxy} from "@openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy.s
 import {VPFIToken} from "../src/token/VPFIToken.sol";
 import {VPFITokenFacet} from "../src/facets/VPFITokenFacet.sol";
 import {InteractionRewardsFacet} from "../src/facets/InteractionRewardsFacet.sol";
+import {InteractionRewardsLensFacet} from "../src/facets/InteractionRewardsLensFacet.sol";
 import {ConfigFacet} from "../src/facets/ConfigFacet.sol";
 import {ProfileFacet} from "../src/facets/ProfileFacet.sol";
 import {LibVaipakam} from "../src/libraries/LibVaipakam.sol";
@@ -74,6 +75,11 @@ contract RewardClaimHorizonTest is SetupTest, IVaipakamErrors {
         return InteractionRewardsFacet(address(diamond));
     }
 
+    /// @dev #1306 follow-up — read-only countdown view moved to the lens.
+    function _lens() internal view returns (InteractionRewardsLensFacet) {
+        return InteractionRewardsLensFacet(address(diamond));
+    }
+
     function _cfg() internal view returns (ConfigFacet) {
         return ConfigFacet(address(diamond));
     }
@@ -117,7 +123,7 @@ contract RewardClaimHorizonTest is SetupTest, IVaipakamErrors {
     function testDarkByDefaultNothingStampsOrExpires() public {
         uint256 id = _seedClaimableEntry();
         assertEq(_facet().sweepExpiredInteractionRewards(_ids(id)), 0);
-        (uint64 stamp, uint64 expiry) = _facet().getRewardEntryExpiry(id);
+        (uint64 stamp, uint64 expiry) = _lens().getRewardEntryExpiry(id);
         assertEq(stamp, 0, "dark: no clock");
         assertEq(expiry, 0, "dark: no expiry");
         // A year later, still nothing.
@@ -137,7 +143,7 @@ contract RewardClaimHorizonTest is SetupTest, IVaipakamErrors {
 
         // Touch 1: stamps, accrues nothing yet.
         assertEq(_facet().sweepExpiredInteractionRewards(_ids(id)), 0);
-        (uint64 stamp, uint64 expiry) = _facet().getRewardEntryExpiry(id);
+        (uint64 stamp, uint64 expiry) = _lens().getRewardEntryExpiry(id);
         assertGt(stamp, 0, "clock started");
         // Countdown = now + the full required executable time (nothing accrued).
         assertEq(
@@ -148,7 +154,7 @@ contract RewardClaimHorizonTest is SetupTest, IVaipakamErrors {
 
         // Accrue to just under the threshold — not expirable yet.
         assertEq(_accrue(id, required - MAX_GAP), 0, "not yet H + notice");
-        (, expiry) = _facet().getRewardEntryExpiry(id);
+        (, expiry) = _lens().getRewardEntryExpiry(id);
         assertEq(
             expiry,
             uint64(vm.getBlockTimestamp() + MAX_GAP),
@@ -157,7 +163,7 @@ contract RewardClaimHorizonTest is SetupTest, IVaipakamErrors {
 
         // The final interval crosses H + notice → expires into the bucket.
         uint256 bucketBefore = _cfg().getRecycleBucket();
-        uint256 poolBefore = _facet().getInteractionPoolPaidOut();
+        uint256 poolBefore = _lens().getInteractionPoolPaidOut();
         vm.warp(vm.getBlockTimestamp() + MAX_GAP);
         uint256 swept = _facet().sweepExpiredInteractionRewards(_ids(id));
         assertGt(swept, 0, "expires at H + notice of executable time");
@@ -167,7 +173,7 @@ contract RewardClaimHorizonTest is SetupTest, IVaipakamErrors {
             "bucket credited (all-fresh entry)"
         );
         assertEq(
-            _facet().getInteractionPoolPaidOut() - poolBefore,
+            _lens().getInteractionPoolPaidOut() - poolBefore,
             swept,
             "fresh pool consumed by the expiry"
         );
@@ -207,7 +213,7 @@ contract RewardClaimHorizonTest is SetupTest, IVaipakamErrors {
         _mut().closeRewardEntryRaw(id, 3);
 
         assertEq(_facet().sweepExpiredInteractionRewards(_ids(id)), 0);
-        (uint64 stamp, ) = _facet().getRewardEntryExpiry(id);
+        (uint64 stamp, ) = _lens().getRewardEntryExpiry(id);
         assertEq(stamp, 0, "clock never starts while blocked");
 
         // Finalize day 2 → the next touch starts the clock.
@@ -215,7 +221,7 @@ contract RewardClaimHorizonTest is SetupTest, IVaipakamErrors {
         _mut().setDayCapThreshold18(2, type(uint256).max);
         vm.warp(block.timestamp + 1 days);
         _facet().sweepExpiredInteractionRewards(_ids(id));
-        (stamp, ) = _facet().getRewardEntryExpiry(id);
+        (stamp, ) = _lens().getRewardEntryExpiry(id);
         assertGt(stamp, 0, "clock starts once claimable");
     }
 
@@ -279,7 +285,7 @@ contract RewardClaimHorizonTest is SetupTest, IVaipakamErrors {
         // Remittance outage: the chain cannot pay the claim → no stamp.
         deal(address(vpfi), address(diamond), 0);
         _facet().sweepExpiredInteractionRewards(_ids(id));
-        (uint64 stamp, ) = _facet().getRewardEntryExpiry(id);
+        (uint64 stamp, ) = _lens().getRewardEntryExpiry(id);
         assertEq(stamp, 0, "no clock while the chain cannot pay");
 
         // Funding arrives → the accumulator starts here.
@@ -313,7 +319,7 @@ contract RewardClaimHorizonTest is SetupTest, IVaipakamErrors {
         // Flagged owner: the claim path rejects them → clock never starts.
         oracle.setFlagged(alice, true);
         _facet().sweepExpiredInteractionRewards(_ids(id));
-        (uint64 stamp, ) = _facet().getRewardEntryExpiry(id);
+        (uint64 stamp, ) = _lens().getRewardEntryExpiry(id);
         assertEq(stamp, 0, "no clock while the owner is sanctioned");
 
         // Delisted: the accumulator starts and accrues.
@@ -420,7 +426,7 @@ contract RewardClaimHorizonTest is SetupTest, IVaipakamErrors {
         // Exactly a max-gap later: a sweep now would credit the pending 7
         // days and remove the entry, so the view must report expiry at NOW.
         vm.warp(vm.getBlockTimestamp() + MAX_GAP);
-        (, uint64 expiry) = _facet().getRewardEntryExpiry(id);
+        (, uint64 expiry) = _lens().getRewardEntryExpiry(id);
         assertEq(
             expiry,
             uint64(vm.getBlockTimestamp()),
@@ -512,7 +518,7 @@ contract RewardClaimHorizonTest is SetupTest, IVaipakamErrors {
         oracle.setFlagged(alice, true);
         // The view must NOT fold the pending gap (a sweep-now credits nothing
         // for a sanctioned owner), so it reports remaining time, not `now`.
-        (, uint64 blockedExpiry) = _facet().getRewardEntryExpiry(id);
+        (, uint64 blockedExpiry) = _lens().getRewardEntryExpiry(id);
         assertGt(
             blockedExpiry,
             uint64(vm.getBlockTimestamp()),
@@ -522,7 +528,7 @@ contract RewardClaimHorizonTest is SetupTest, IVaipakamErrors {
         // Once delisted (still no intervening keeper touch), the view folds
         // the pending gap and reports NOW.
         oracle.setFlagged(alice, false);
-        (, uint64 fundedExpiry) = _facet().getRewardEntryExpiry(id);
+        (, uint64 fundedExpiry) = _lens().getRewardEntryExpiry(id);
         assertEq(
             fundedExpiry,
             uint64(vm.getBlockTimestamp()),
@@ -538,14 +544,50 @@ contract RewardClaimHorizonTest is SetupTest, IVaipakamErrors {
         _facet().sweepExpiredInteractionRewards(_ids(id)); // stamp
         _accrue(id, 60 days);
 
-        (, uint64 liveExpiry) = _facet().getRewardEntryExpiry(id);
+        (, uint64 liveExpiry) = _lens().getRewardEntryExpiry(id);
         assertGt(liveExpiry, 0, "live entry has a countdown");
 
         vm.prank(alice);
         _facet().claimInteractionRewardsTo(LibVaipakam.RewardDelivery.Wallet);
 
-        (, uint64 processedExpiry) = _facet().getRewardEntryExpiry(id);
+        (, uint64 processedExpiry) = _lens().getRewardEntryExpiry(id);
         assertEq(processedExpiry, 0, "claimed entry shows no countdown");
+    }
+
+    /// @notice The countdown must also pause when the sweep would DEFER for a
+    ///         zero-creditable fresh share (69M pool cap exhausted / no
+    ///         recycle-bucket backing room), not just for a sanction — the
+    ///         view mirrors the sweep's payability + defer exactly
+    ///         (Codex #1317 XuF).
+    function testCountdownPausesAtPoolExhaustion() public {
+        _cfg().setRewardClaimHorizonDays(180);
+        uint256 id = _seedClaimableEntry(); // all-fresh entry
+        _facet().sweepExpiredInteractionRewards(_ids(id)); // stamp
+        _accrue(id, 180 days + NOTICE - MAX_GAP); // to just under threshold
+
+        // Exhaust the 69M fresh pool with NO keeper touch (so only the VIEW
+        // can catch it): a sweep-now would defer (zero-credit fresh), so the
+        // view must NOT fold the pending gap — it reports remaining time,
+        // not `now`. (The sweep-side defer itself is pinned by the governor
+        // suite's testExpirySweepDefersAtFullFreshExhaustion.)
+        vm.warp(vm.getBlockTimestamp() + MAX_GAP);
+        _mut().setInteractionPoolPaidOut(LibVaipakam.VPFI_INTERACTION_POOL_CAP);
+        (, uint64 blockedExpiry) = _lens().getRewardEntryExpiry(id);
+        assertGt(
+            blockedExpiry,
+            uint64(vm.getBlockTimestamp()),
+            "countdown paused at pool exhaustion, not imminent"
+        );
+
+        // Restore pool headroom (still no keeper touch) → the view folds the
+        // pending gap and reports now.
+        _mut().setInteractionPoolPaidOut(0);
+        (, uint64 fundedExpiry) = _lens().getRewardEntryExpiry(id);
+        assertEq(
+            fundedExpiry,
+            uint64(vm.getBlockTimestamp()),
+            "countdown resumes once the pool has headroom"
+        );
     }
 
     function testHorizonKnobBounds() public {

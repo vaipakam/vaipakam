@@ -2042,13 +2042,12 @@ contract DeployDiamond is Script {
     // #687-B: _getStakingRewardsSelectors removed with the 5% VPFI staking yield.
 
     function _getInteractionRewardsSelectors() internal pure returns (bytes4[] memory s) {
-        // #1306 follow-up — the 14 read-only view/getter selectors moved to
+        // #1306 follow-up — the read-only view/getter selectors (incl. the
+        // RL-3 reads getRewardEntryExpiry + getUserRewardEntryIds) moved to
         // {InteractionRewardsLensFacet} (see _getInteractionRewardsLensSelectors).
-        // This facet keeps the mutating claim/sweep/admin surface, the
-        // diamond-internal reward-lifecycle hooks, and the RL-3 (#1305)
-        // claim-horizon reaper surface (the sweep + its two id-keyed reads,
-        // which stay next to the sweep they serve).
-        s = new bytes4[](13);
+        // This facet keeps the mutating claim/sweep/admin surface + the
+        // diamond-internal reward-lifecycle hooks.
+        s = new bytes4[](11);
         s[0] = InteractionRewardsFacet.claimInteractionRewards.selector;
         s[1] = InteractionRewardsFacet.setInteractionLaunchTimestamp.selector;
         s[2] = InteractionRewardsFacet.setInteractionCapVpfiPerEth.selector;
@@ -2063,18 +2062,16 @@ contract DeployDiamond is Script {
         s[8] = InteractionRewardsFacet.transferLenderRewardEntry.selector;
         // RL-1 — explicit-delivery claim (vault default / wallet opt-out).
         s[9] = InteractionRewardsFacet.claimInteractionRewardsTo.selector;
-        // RL-3 (#1305) — claim-horizon reaper surface (sweep + id-keyed reads).
+        // RL-3 (#1305) — the mutating claim-horizon sweep (its id-keyed
+        // read views live on the lens facet).
         s[10] = InteractionRewardsFacet.sweepExpiredInteractionRewards.selector;
-        s[11] = InteractionRewardsFacet.getRewardEntryExpiry.selector;
-        // RL-3 Codex r2 — id enumeration for the id-keyed horizon surface.
-        s[12] = InteractionRewardsFacet.getUserRewardEntryIds.selector;
     }
 
     /// @dev #1306 follow-up — read-only view/getter surface split off
     ///      {InteractionRewardsFacet} into {InteractionRewardsLensFacet} for
     ///      EIP-170 headroom. These 14 selectors route to the lens facet.
     function _getInteractionRewardsLensSelectors() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](14);
+        s = new bytes4[](16);
         s[0] = InteractionRewardsLensFacet.getInteractionLaunchTimestamp.selector;
         s[1] = InteractionRewardsLensFacet.getInteractionCurrentDay.selector;
         s[2] = InteractionRewardsLensFacet.getInteractionAnnualRateBps.selector;
@@ -2089,6 +2086,9 @@ contract DeployDiamond is Script {
         s[11] = InteractionRewardsLensFacet.getInteractionCapVpfiPerEth.selector;
         s[12] = InteractionRewardsLensFacet.getInteractionCapVpfiPerEthRaw.selector;
         s[13] = InteractionRewardsLensFacet.getUserRewardEntries.selector;
+        // RL-3 (#1305) — the read-only claim-horizon views.
+        s[14] = InteractionRewardsLensFacet.getUserRewardEntryIds.selector;
+        s[15] = InteractionRewardsLensFacet.getRewardEntryExpiry.selector;
     }
 
     function _getRewardReporterSelectors() internal pure returns (bytes4[] memory s) {

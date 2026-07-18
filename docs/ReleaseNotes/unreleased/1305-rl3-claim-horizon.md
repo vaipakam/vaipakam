@@ -68,11 +68,17 @@ absorption; the recycled-funded share never left the bucket and releases
 its commitment with zero new credit — dormant recycled rewards can never
 inflate the absorption average. The claim-center countdown view exposes
 each entry's accumulator start and a forward estimate of the earliest
-removal (assuming continuous claimability from now — an outage or
-sanction pauses it, and it credits the interval a sweep-now would apply
-so it never reports a removal later than the contract enforces); the
-final-notice and reconfiguration re-notice signals are timed from the
-true crossing, not the sweep timestamp; the pre-expiry notice rides the
+removal (assuming continuous claimability from now). It credits the
+interval a sweep-now would apply — so it never reports a removal later
+than the contract enforces — but only while the entry is genuinely
+claim-executable, mirroring the sweep's own gate and its zero-credit-
+fresh defer exactly (owner unsanctioned, non-zero post-cap payable,
+balance covers it, fresh share creditable against the pool cap and
+bucket backing), so it never shows a false-imminent removal a sweep
+would defer; a processed (claimed/expired) entry carries no countdown.
+The final-notice and reconfiguration re-notice signals are timed from
+the true crossing, not the sweep timestamp; the pre-expiry notice rides
+the
 free in-app notification channel per the design (paid push may only be
 additional). The governor design's "released only by forfeit — never by
 time" sentence gains its ratified superseding note, and functional spec

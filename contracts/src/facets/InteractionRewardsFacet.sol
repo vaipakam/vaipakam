@@ -554,22 +554,6 @@ contract InteractionRewardsFacet is
         expiredTotal = freshTotal + recycledTotal;
     }
 
-    /// @notice RL-3 — claim-center countdown view: the horizon state of a
-    ///         reward entry.
-    /// @param  entryId Entry to inspect.
-    /// @return firstClaimableAt Accumulator start (0 = not started / dark).
-    /// @return expiresAt        Earliest terminal-removal instant ASSUMING
-    ///         the entry stays continuously claim-executable and observed
-    ///         from now (0 = dark or unstarted). A forward estimate, not a
-    ///         fixed deadline: a funding outage or sanction pauses accrual.
-    function getRewardEntryExpiry(uint256 entryId)
-        external
-        view
-        returns (uint64 firstClaimableAt, uint64 expiresAt)
-    {
-        return LibInteractionRewards.rewardEntryExpiry(entryId);
-    }
-
     // ─── Admin ───────────────────────────────────────────────────────────────
 
     /**
@@ -638,33 +622,14 @@ contract InteractionRewardsFacet is
         emit InteractionCapVpfiPerEthSet(value);
     }
 
-    // The read-only view/getter surface (getInteractionLaunchTimestamp,
-    // getInteractionCapVpfiPerEth[/Raw], getInteractionCurrentDay,
-    // getInteractionAnnualRateBps, getInteractionHalfPoolForDay,
-    // getInteractionLastClaimedDay, getInteractionDayEntry,
-    // previewInteractionRewards, getInteractionClaimability,
-    // getInteractionPoolRemaining, getInteractionPoolPaidOut,
-    // getInteractionSnapshot, getUserRewardEntries) was EXTRACTED verbatim
-    // into {InteractionRewardsLensFacet} to reclaim EIP-170 runtime-bytecode
+    // The read-only view/getter surface — the interaction getters
+    // (previewInteractionRewards, getInteractionSnapshot, etc.) PLUS the RL-3
+    // reads getRewardEntryExpiry + getUserRewardEntryIds — was EXTRACTED into
+    // {InteractionRewardsLensFacet} to reclaim EIP-170 runtime-bytecode
     // headroom on this facet. Both facets share the same LibVaipakam storage,
     // so the Diamond routes those selectors to the sibling lens facet with no
-    // behaviour change.
-
-    /// @notice RL-3 (#1305) — the storage ids backing
-    ///         {getUserRewardEntries}, same length and registration order,
-    ///         so keepers and the Claim Center can address
-    ///         {getRewardEntryExpiry} / {sweepExpiredInteractionRewards}
-    ///         (both are id-keyed) without reconstructing internal storage
-    ///         from events off-chain.
-    /// @param  user Address whose entry ids to enumerate.
-    /// @return ids Entry ids in registration order.
-    function getUserRewardEntryIds(address user)
-        external
-        view
-        returns (uint256[] memory ids)
-    {
-        return LibVaipakam.storageSlot().userRewardEntryIds[user];
-    }
+    // behaviour change. This facet keeps only the mutating claim/sweep/admin
+    // surface + the diamond-internal reward-lifecycle hooks.
 
     // ─── #969 / S5 — diamond-internal reward-lifecycle hooks ─────────────────
     //

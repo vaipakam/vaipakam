@@ -401,7 +401,7 @@ contract GovernorDualAccumulatorTest is SetupTest {
         (, uint256 outFAfter, , ) = _agg().getGovernorCommitState();
         assertEq(outFBefore, outFAfter, "commitments untouched by a defer");
         // The id surface keepers/UI drive this from is enumerable on-chain.
-        uint256[] memory got = _facet().getUserRewardEntryIds(alice);
+        uint256[] memory got = _lens().getUserRewardEntryIds(alice);
         assertEq(got.length, 1, "id enumeration exposed");
         assertEq(got[0], id, "id matches the entry");
     }

@@ -1292,17 +1292,16 @@ function _dayPoolHalves(
             // re-baseline, crediting nothing this interval.
             if (elapsed > hSec) elapsed = hSec;
         } else if (
-            !s.rewardEntryObsBlocked[id] &&
-            !LibVaipakam.isSanctionedAddress(e.user)
+            !s.rewardEntryObsBlocked[id] && _entryExecutableNow(s, e)
         ) {
             // Fold in the pending interval a sweep-now would credit — but
-            // ONLY if the entry is plausibly claim-executable at this block.
-            // A sanctioned owner can't claim, so a sweep credits nothing and
-            // neither does the countdown (it stays paused). Funding is not
-            // re-checked here: on the canonical chain the balance is the
-            // whole reward pool (never blocks), and the mirror partial-
-            // underfunding view-pause is the deferred #1332 aggregate-
-            // funding domain (Codex #1317 r11).
+            // ONLY when the entry is genuinely claim-executable at this
+            // block, mirroring the sweep's gate AND its zero-credit-fresh
+            // defer exactly (Codex #1317 r11/XuF): owner not sanctioned, a
+            // non-zero post-cap payable, local balance covers it, and the
+            // fresh share is actually creditable (pool cap + bucket backing
+            // room). If any of those blocks a sweep, the countdown pauses
+            // here instead of showing a false-imminent removal.
             uint256 gap =
                 block.timestamp - uint256(s.rewardEntryExecObsAt[id]);
             if (
@@ -1317,6 +1316,47 @@ function _dayPoolHalves(
             uint256(LibVaipakam.REWARD_CLAIM_HORIZON_NOTICE_DAYS) * 1 days;
         uint256 remaining = required > elapsed ? required - elapsed : 0;
         expiresAt = uint64(block.timestamp + remaining);
+    }
+
+    /// @dev RL-3 (Codex #1317 XuF) — a view-side mirror of the sweep's
+    ///      claim-EXECUTABLE gate, used only by {rewardEntryExpiry} to decide
+    ///      whether a sweep-now would credit the pending heartbeat interval.
+    ///      Replicates {sweepExpiredEntry}'s single-entry executability AND
+    ///      its zero-credit-fresh defer: a sanctioned owner, a zero post-cap
+    ///      payable, an uncovered balance, or a fresh share that can't be
+    ///      credited (69M pool cap exhausted, or no recycle-bucket backing
+    ///      room) all make the entry non-executable, so the countdown pauses
+    ///      rather than showing a removal the sweep would defer.
+    function _entryExecutableNow(
+        LibVaipakam.Storage storage s,
+        LibVaipakam.RewardEntry storage e
+    ) private view returns (bool) {
+        if (LibVaipakam.isSanctionedAddress(e.user)) return false;
+        EntrySplit memory split_ = _entryWindowSplit(s, e);
+        uint256 freshShare = split_.total - split_.recycled;
+
+        // The fresh share is capped to what a single-entry sweep could
+        // credit: the 69M pool cap headroom AND the bucket's backing room
+        // (mirrors the facet's per-entry cap in sweepExpiredInteractionRewards).
+        uint256 poolReserved =
+            s.interactionPoolPaidOut + s.rewardBudgetRemittedGlobal;
+        uint256 poolRoom = LibVaipakam.VPFI_INTERACTION_POOL_CAP > poolReserved
+            ? LibVaipakam.VPFI_INTERACTION_POOL_CAP - poolReserved
+            : 0;
+        uint256 balance = IERC20Metadata(s.vpfiToken).balanceOf(address(this));
+        uint256 backingRoom =
+            balance > s.recycleBucket ? balance - s.recycleBucket : 0;
+        uint256 headroom = poolRoom < backingRoom ? poolRoom : backingRoom;
+        uint256 cappedFresh = freshShare < headroom ? freshShare : headroom;
+
+        uint256 payableNow = cappedFresh + split_.recycled;
+        if (payableNow == 0) return false; // nothing a sweep could process
+        if (balance < payableNow) return false; // claim/transfer would revert
+        // Sweep's zero-credit-fresh defer: an all-fresh (or fresh-bearing)
+        // entry whose fresh share is wholly uncreditable is deferred, not
+        // removed.
+        if (freshShare > 0 && cappedFresh == 0) return false;
+        return true;
     }
 
     /// @dev PR-3c — accumulate `part` into `acc` (memory fold helper).

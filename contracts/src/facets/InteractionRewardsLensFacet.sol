@@ -302,4 +302,35 @@ contract InteractionRewardsLensFacet {
             entries[i] = s.rewardEntries[ids[i]];
         }
     }
+
+    /// @notice RL-3 (#1305) — the storage ids backing {getUserRewardEntries},
+    ///         same length and registration order, so keepers and the Claim
+    ///         Center can address {getRewardEntryExpiry} /
+    ///         {InteractionRewardsFacet.sweepExpiredInteractionRewards} (both
+    ///         id-keyed) without reconstructing internal storage off-chain.
+    /// @param  user Address whose entry ids to enumerate.
+    /// @return ids Entry ids in registration order.
+    function getUserRewardEntryIds(address user)
+        external
+        view
+        returns (uint256[] memory ids)
+    {
+        return LibVaipakam.storageSlot().userRewardEntryIds[user];
+    }
+
+    /// @notice RL-3 — claim-center countdown view: the horizon state of a
+    ///         reward entry.
+    /// @param  entryId Entry to inspect.
+    /// @return firstClaimableAt Accumulator start (0 = not started / dark).
+    /// @return expiresAt        Earliest terminal-removal instant ASSUMING
+    ///         the entry stays continuously claim-executable and observed
+    ///         from now (0 = dark or unstarted). A forward estimate, not a
+    ///         fixed deadline: a funding outage or sanction pauses accrual.
+    function getRewardEntryExpiry(uint256 entryId)
+        external
+        view
+        returns (uint64 firstClaimableAt, uint64 expiresAt)
+    {
+        return LibInteractionRewards.rewardEntryExpiry(entryId);
+    }
 }

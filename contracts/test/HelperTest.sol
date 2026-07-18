@@ -1749,10 +1749,11 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        // #1306 follow-up — the 14 read-only view/getter selectors moved to
+        // #1306 follow-up — the read-only view/getter selectors (incl. the
+        // RL-3 reads getRewardEntryExpiry + getUserRewardEntryIds) moved to
         // {InteractionRewardsLensFacet}. This facet keeps the mutating surface
-        // + the RL-3 (#1305) claim-horizon reaper (sweep + its id-keyed reads).
-        selectors = new bytes4[](13);
+        // + the RL-3 (#1305) claim-horizon sweep.
+        selectors = new bytes4[](11);
         selectors[0] = InteractionRewardsFacet.claimInteractionRewards.selector;
         selectors[1] = InteractionRewardsFacet.setInteractionLaunchTimestamp.selector;
         selectors[2] = InteractionRewardsFacet.setInteractionCapVpfiPerEth.selector;
@@ -1767,11 +1768,9 @@ contract HelperTest {
         selectors[8] = InteractionRewardsFacet.transferLenderRewardEntry.selector;
         // RL-1 — explicit-delivery claim (vault default / wallet opt-out).
         selectors[9] = InteractionRewardsFacet.claimInteractionRewardsTo.selector;
-        // RL-3 (#1305) — claim-horizon reaper surface (sweep + id-keyed reads).
+        // RL-3 (#1305) — the mutating claim-horizon sweep (its id-keyed read
+        // views live on the lens facet).
         selectors[10] = InteractionRewardsFacet.sweepExpiredInteractionRewards.selector;
-        selectors[11] = InteractionRewardsFacet.getRewardEntryExpiry.selector;
-        // RL-3 Codex r2 — id enumeration for the id-keyed horizon surface.
-        selectors[12] = InteractionRewardsFacet.getUserRewardEntryIds.selector;
         return selectors;
     }
 
@@ -1782,7 +1781,7 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](14);
+        selectors = new bytes4[](16);
         selectors[0] = InteractionRewardsLensFacet.getInteractionLaunchTimestamp.selector;
         selectors[1] = InteractionRewardsLensFacet.getInteractionCurrentDay.selector;
         selectors[2] = InteractionRewardsLensFacet.getInteractionAnnualRateBps.selector;
@@ -1797,6 +1796,9 @@ contract HelperTest {
         selectors[11] = InteractionRewardsLensFacet.getInteractionCapVpfiPerEth.selector;
         selectors[12] = InteractionRewardsLensFacet.getInteractionCapVpfiPerEthRaw.selector;
         selectors[13] = InteractionRewardsLensFacet.getUserRewardEntries.selector;
+        // RL-3 (#1305) — the read-only claim-horizon views.
+        selectors[14] = InteractionRewardsLensFacet.getUserRewardEntryIds.selector;
+        selectors[15] = InteractionRewardsLensFacet.getRewardEntryExpiry.selector;
         return selectors;
     }
 
