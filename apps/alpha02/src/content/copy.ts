@@ -295,6 +295,11 @@ const copySource = {
     bandsInvalid:
       'The three levels must decrease — warn above alert, alert above critical, and critical above 1.00.',
     saved: 'Saved.',
+    // Rollout-window failure surfaced to the user when the agent can't
+    // yet store a due-date-reminder opt-out (thrown, shown as the card's
+    // error line).
+    optoutUnavailable:
+      'That switch can’t be saved right now — the alert service is being upgraded. Please try again in a little while.',
     pushTitle: 'Prefer app push instead?',
     pushBody:
       'The same alerts are published to Vaipakam’s Push Protocol channel — subscribe there with your wallet and any Push-compatible app delivers them.',
@@ -2053,6 +2058,36 @@ const copySource = {
       'Locked amounts back your open offers, active loans, and rentals. They free up when those close.',
   },
 
+  /** Claim-All batch preview labels (data/claimAll.ts). The pure builder
+   *  picks which phrase applies per loan/role/status; these are the
+   *  translatable strings it composes into each row's label. */
+  claimAll: {
+    loanNoun: 'Loan',
+    rentalNoun: 'Rental',
+    itemLabel: (noun: string, id: number, what: string) => `${noun} #${id} — ${what}`,
+    lenderProceeds: 'your proceeds',
+    lenderRentalFeesNft: 'fees + your NFT back',
+    borrowerBufferBack: 'your buffer back',
+    borrowerSurplus: 'surplus after liquidation, if any',
+    borrowerResidual: 'residual after the internal match',
+    borrowerCollateralBack: 'collateral back',
+    rewardsLabel: (amount: string) => `Interaction rewards — ${amount} VPFI`,
+    vaultVpfiLabel: (amount: string) => `Vault VPFI — ${amount} VPFI`,
+  },
+
+  /** Plain-language loan-state badge labels (lib/loanState.ts). The pure
+   *  module derives which key applies from the indexer row; these are the
+   *  translatable strings it resolves to via loanStateLabel(). */
+  loanState: {
+    repaid: 'Repaid',
+    defaulted: 'Defaulted',
+    closed: 'Closed',
+    beingSettled: 'Being settled',
+    pastDue: 'Past due',
+    dueToday: 'Due today',
+    dueInDays: (n: number) => `Due in ${n} day${n === 1 ? '' : 's'}`,
+  },
+
   activity: {
     loading: 'Loading your activity…',
     title: 'Activity',
@@ -2080,9 +2115,71 @@ const copySource = {
       'Nothing of yours in recent protocol activity. This page lists recent activity only, so anything older isn’t shown here.',
     // UX-008 — one substantive sub-line per row.
     plusMore: (n: number) => ` · +${n} more in this transaction`,
+    // Row context refs — the loan / offer a row belongs to.
+    loanRef: (loanId: number) => `Loan #${loanId}`,
+    offerRef: (offerId: number) => `Offer #${offerId}`,
     viewTx: 'View transaction',
     loadMore: 'Load older activity',
     loadingMore: 'Loading…',
+    // UX-008 — readable, translatable labels for each feed row, keyed by
+    // the raw contract event kind. The pure lib/activityView.ts module
+    // owns each kind's category + coalescing priority (and an English
+    // label used only as the ultimate fallback); the DISPLAY label is
+    // translated here. The component prefers this map and falls back to
+    // the module's humanizeKind result for a kind the app doesn't know
+    // yet (English — unavoidable for an unmapped event). A unit test
+    // (lib/activityView.test.ts) asserts every ACTIVITY_LABELS key has a
+    // matching entry here so the two can't drift.
+    labels: {
+      OfferCreated: 'Offer created',
+      OfferAccepted: 'Offer accepted',
+      OfferCanceled: 'Offer cancelled',
+      OfferClosed: 'Offer closed',
+      OfferModified: 'Offer amended',
+      OfferMatched: 'Offers matched',
+      OfferConsumedBySale: 'Offer used for a sale',
+      LoanInitiated: 'Loan started',
+      LoanInitiatedDetails: 'Loan started',
+      LoanRepaid: 'Loan repaid',
+      PartialRepaid: 'Partial repayment',
+      LoanSettled: 'Loan settled',
+      LoanDefaulted: 'Loan defaulted',
+      LoanLiquidated: 'Loan liquidated',
+      BackstopAbsorbedLoan: 'Loan absorbed by backstop',
+      LoanExtended: 'Loan extended',
+      LoanRefinanced: 'Loan refinanced',
+      LoanPreclosedDirect: 'Loan closed early',
+      LenderFundsClaimed: 'Funds claimed',
+      BorrowerFundsClaimed: 'Collateral claimed',
+      OffsetCompleted: 'Loan offset',
+      OffsetOfferCreated: 'Offset offer created',
+      LoanSold: 'Loan sold',
+      LoanSaleCompleted: 'Loan sale completed',
+      LoanSaleOfferLinked: 'Loan listed for sale',
+      LoanObligationTransferred: 'Loan position transferred',
+      CollateralAdded: 'Collateral added',
+      InternalMatchExecuted: 'Loan matched internally',
+      PrepayListingPosted: 'Collateral listed for sale',
+      PrepayListingMatched: 'Collateral sale matched',
+      PrepayListingUpdated: 'Collateral listing updated',
+      PrepayListingCanceled: 'Collateral listing cancelled',
+      PrepayCollateralSaleSettled: 'Collateral sale settled',
+      SwapToRepayExecuted: 'Repaid via collateral swap',
+      SwapToRepayPartialExecuted: 'Partial repay via swap',
+      SwapToRepayIntentCommitted: 'Swap-to-repay set up',
+      SwapToRepayIntentFilled: 'Swap-to-repay filled',
+      SwapToRepayIntentCancelled: 'Swap-to-repay cancelled',
+      SwapToRepayIntentForceCancelled: 'Swap-to-repay cancelled',
+      PeriodicInterestSettled: 'Interest settled',
+      PeriodicInterestAutoLiquidated: 'Auto-liquidated for interest',
+      RepayPartialPeriodAdvanced: 'Interest period advanced',
+      SignedOfferFilled: 'Signed offer filled',
+      SignedOfferMatched: 'Signed offers matched',
+      SignedOfferCancelled: 'Signed offer cancelled',
+      SignedOfferNonceBurned: 'Signed offer voided',
+      Transfer: 'Transfer',
+      Approval: 'Approval',
+    } as Record<string, string>,
     // UX-050 — when the indexer is degraded, the event feed can't
     // render, but the user's positions are chain-authoritative — point
     // there instead of dead-ending.

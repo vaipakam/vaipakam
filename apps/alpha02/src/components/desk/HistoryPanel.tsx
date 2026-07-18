@@ -17,7 +17,7 @@ import { useActiveChain } from '../../chain/useActiveChain';
 import { useDeskHistory } from '../../data/desk';
 import { useTokenMeta } from '../../contracts/erc20';
 import { EmptyState, UnavailableState } from '../EmptyState';
-import { loanStateView } from '../../lib/loanState';
+import { loanStateView, loanStateLabel } from '../../lib/loanState';
 import type { IndexedParticipantLoan } from '../../data/indexer';
 import {
   formatBpsAsPercent,
@@ -62,7 +62,7 @@ function HistoryRow({ loan }: { loan: IndexedParticipantLoan }) {
             {role === 'lender' ? text.roleLender : text.roleBorrower}
           </span>
         ))}
-        <span className={`badge badge-${state.badge}`}>{state.label}</span>
+        <span className={`badge badge-${state.badge}`}>{loanStateLabel(state, copy.loanState)}</span>
       </span>
     </div>
   );

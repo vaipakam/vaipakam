@@ -90,6 +90,7 @@ export function ClaimAllCard({ loans }: { loans: ClaimableLoan[] }) {
     loans,
     rewardsPending: rewards.data?.pending ?? 0n,
     vpfiFree: vpfi.data?.freeBalance ?? 0n,
+    labels: copy.claimAll,
   });
 
   // The batch only makes sense for two or more payouts — a single claim

@@ -49,7 +49,7 @@ import {
   fullTermInterest,
   shortAddress,
 } from '../lib/format';
-import { loanStateView } from '../lib/loanState';
+import { loanStateView, loanStateLabel } from '../lib/loanState';
 import { EmptyState, UnavailableState } from '../components/EmptyState';
 import { type ReceiptData } from '../components/ReviewReceipt';
 import { ConfirmReceipt } from '../components/ConfirmReceipt';
@@ -1361,7 +1361,7 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
                   : `A loan of ${principalStr} between two other wallets`}
           </p>
         </div>
-        <span className={`badge badge-${view.badge}`}>{view.label}</span>
+        <span className={`badge badge-${view.badge}`}>{loanStateLabel(view, copy.loanState)}</span>
       </div>
 
       {statusIsReconciled &&

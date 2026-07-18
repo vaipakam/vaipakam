@@ -436,6 +436,15 @@ Thin-market honesty rules apply.
   wrong-direction layout).
 - Protocol-specific terms (VPFI, HF, LTV, asset and network names)
   stay verbatim in every language.
+- The translation covers the whole displayed interface, not only the
+  page chrome: the Activity feed's plain-language event labels, the
+  loan-status badges shown on positions and history, and the Claim
+  Center's per-item labels all switch with the chosen language once a
+  locale's bundle is filled in. Labels that embed a live value
+  mid-sentence (for example a day count or a position number) may
+  remain in English until the platform supports translating
+  value-interpolating text — the same limit that applies everywhere
+  such phrases appear.
 
 ## Indexing Policy
 

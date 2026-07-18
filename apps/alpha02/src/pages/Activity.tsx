@@ -27,9 +27,13 @@ import { signalAware } from '../chain/railHealth';
  *  · how many sub-events it stood in for), and an explorer link. */
 function ActivityRow({ row, explorer }: { row: ActivityRowView; explorer: string }) {
   const { event, label, hiddenCount } = row;
+  // Prefer the translated catalog label for a known event kind; fall
+  // back to the pure module's humanized label for a kind the app
+  // doesn't map yet (English — unavoidable for an unknown event).
+  const displayLabel = copy.activity.labels[event.kind] ?? label;
   const context = [
-    event.loanId !== null ? `Loan #${event.loanId}` : null,
-    event.offerId !== null ? `Offer #${event.offerId}` : null,
+    event.loanId !== null ? copy.activity.loanRef(event.loanId) : null,
+    event.offerId !== null ? copy.activity.offerRef(event.offerId) : null,
   ].filter(Boolean);
 
   const sub = (
@@ -42,7 +46,7 @@ function ActivityRow({ row, explorer }: { row: ActivityRowView; explorer: string
 
   const inner = (
     <span className="row-main">
-      <span className="row-title">{label}</span>
+      <span className="row-title">{displayLabel}</span>
       <br />
       {sub}
     </span>

@@ -38,6 +38,7 @@
  * liquidation instead of total silence. Raw bands are editable only
  * under the advanced-mode reveal.
  */
+import { copy } from '../content/copy';
 
 const TIMEOUT_MS = 6_000;
 
@@ -241,9 +242,7 @@ export async function saveAlertPrefs(
         // Rollout window: the agent can't store an opt-out until its
         // storage migration lands. Honest, plain-words failure — the
         // opposite of silently pretending the switch worked.
-        throw new Error(
-          'That switch can’t be saved right now — the alert service is being upgraded. Please try again in a little while.',
-        );
+        throw new Error(copy.alerts.optoutUnavailable);
       }
     }
     throw new Error(`saving alert settings failed (${res.status})`);
