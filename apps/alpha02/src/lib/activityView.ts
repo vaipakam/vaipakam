@@ -60,6 +60,9 @@ export const ACTIVITY_LABELS: Record<string, ActivityLabel> = {
   LoanRepaid: { label: 'Loan repaid', category: 'loan-repay', priority: 90 },
   PartialRepaid: { label: 'Partial repayment', category: 'loan-repay', priority: 70 },
   LoanSettled: { label: 'Loan settled', category: 'loan-close', priority: 85 },
+  // Companion breakdown of a settle — low priority so it never
+  // represents a tx that also emitted the real LoanSettled.
+  LoanSettlementBreakdown: { label: 'Loan settled', category: 'loan-close', priority: 10 },
   LoanDefaulted: { label: 'Loan defaulted', category: 'loan-default', priority: 90 },
   LoanLiquidated: { label: 'Loan liquidated', category: 'loan-default', priority: 90 },
   BackstopAbsorbedLoan: { label: 'Loan absorbed by backstop', category: 'loan-default', priority: 88 },
@@ -74,12 +77,17 @@ export const ACTIVITY_LABELS: Record<string, ActivityLabel> = {
   // settled" and bury the real action in "+1 more".
   LenderFundsClaimed: { label: 'Funds claimed', category: 'loan-close', priority: 92 },
   BorrowerFundsClaimed: { label: 'Collateral claimed', category: 'loan-close', priority: 92 },
+  // Borrower's VPFI loan-initiation-fee rebate, paid alongside the
+  // borrower claim (lower priority than it so the claim represents).
+  BorrowerLifRebateClaimed: { label: 'Fee rebate claimed', category: 'loan-close', priority: 60 },
   OffsetCompleted: { label: 'Loan offset', category: 'loan-close', priority: 80 },
   OffsetOfferCreated: { label: 'Offset offer created', category: 'offer', priority: 50 },
   LoanSold: { label: 'Loan sold', category: 'loan-modify', priority: 80 },
   LoanSaleCompleted: { label: 'Loan sale completed', category: 'loan-modify', priority: 82 },
   LoanSaleOfferLinked: { label: 'Loan listed for sale', category: 'loan-modify', priority: 60 },
   LoanObligationTransferred: { label: 'Loan position transferred', category: 'loan-modify', priority: 70 },
+  // Swap-to-repay roll: proceeds re-capitalized into the position.
+  IntentLoanRolled: { label: 'Loan rolled over', category: 'loan-modify', priority: 75 },
   CollateralAdded: { label: 'Collateral added', category: 'collateral', priority: 75 },
   InternalMatchExecuted: { label: 'Loan matched internally', category: 'loan-open', priority: 82 },
   // Prepay collateral-sale listings (the borrower's parallel-sale exit).
@@ -99,11 +107,23 @@ export const ACTIVITY_LABELS: Record<string, ActivityLabel> = {
   PeriodicInterestSettled: { label: 'Interest settled', category: 'loan-repay', priority: 50 },
   PeriodicInterestAutoLiquidated: { label: 'Auto-liquidated for interest', category: 'loan-default', priority: 85 },
   RepayPartialPeriodAdvanced: { label: 'Interest period advanced', category: 'loan-repay', priority: 45 },
+  // Informational: the periodic swap cleared the slippage gate but the
+  // lender still received less interest than owed.
+  PeriodicSlippageOverBuffer: { label: 'Interest settled with slippage', category: 'loan-repay', priority: 40 },
   // Signed offers
   SignedOfferFilled: { label: 'Signed offer filled', category: 'loan-open', priority: 80 },
   SignedOfferMatched: { label: 'Signed offers matched', category: 'loan-open', priority: 80 },
   SignedOfferCancelled: { label: 'Signed offer cancelled', category: 'offer', priority: 55 },
   SignedOfferNonceBurned: { label: 'Signed offer voided', category: 'offer', priority: 30 },
+  // VPFI / rewards / vault — surfaced in the wallet's OWN feed (the
+  // indexer's pluckActivityRefs attributes these to the acting wallet;
+  // apps/indexer/src/chainIndexer.ts). Without explicit labels they
+  // rendered humanized English in every locale.
+  InteractionRewardsClaimed: { label: 'Rewards claimed', category: 'other', priority: 60 },
+  RewardDeliveredToVault: { label: 'Rewards delivered to your vault', category: 'other', priority: 55 },
+  VPFIDepositedToVault: { label: 'VPFI deposited to vault', category: 'other', priority: 60 },
+  VPFIWithdrawnFromVault: { label: 'VPFI withdrawn from vault', category: 'other', priority: 60 },
+  VaultVpfiDebited: { label: 'VPFI spent from vault', category: 'other', priority: 50 },
   // Low-priority book-keeping — never represents a transaction alone.
   Transfer: { label: 'Transfer', category: 'other', priority: 5 },
   Approval: { label: 'Approval', category: 'other', priority: 5 },

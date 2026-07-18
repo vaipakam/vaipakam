@@ -89,6 +89,32 @@ describe('activity feed labels are translatable (extraction guard)', () => {
       expect(ACTIVITY_LABELS[kind], `stale catalog label for ${kind}`).toBeDefined();
     }
   });
+
+  // Codex #1343 r1 — the label set must cover every event kind the
+  // indexer attributes to a wallet's OWN feed (pluckActivityRefs in
+  // apps/indexer/src/chainIndexer.ts); an attributed kind absent here
+  // renders humanized English in every locale. This list mirrors that
+  // switch's cases — add a kind here (and a label above) whenever the
+  // indexer starts attributing a new event to the activity feed.
+  it('covers every indexer-attributed activity kind', () => {
+    const ATTRIBUTED = [
+      'BackstopAbsorbedLoan', 'BorrowerFundsClaimed', 'BorrowerLifRebateClaimed',
+      'IntentLoanRolled', 'InteractionRewardsClaimed', 'InternalMatchExecuted',
+      'LenderFundsClaimed', 'LoanDefaulted', 'LoanExtended', 'LoanInitiated',
+      'LoanLiquidated', 'LoanRepaid', 'LoanSettled', 'LoanSettlementBreakdown',
+      'OfferAccepted', 'OfferCanceled', 'OfferConsumedBySale', 'OfferCreated',
+      'OfferMatched', 'OfferModified', 'PartialRepaid', 'PeriodicInterestAutoLiquidated',
+      'PeriodicInterestSettled', 'PeriodicSlippageOverBuffer', 'PrepayCollateralSaleSettled',
+      'PrepayListingCanceled', 'PrepayListingMatched', 'PrepayListingPosted',
+      'PrepayListingUpdated', 'RepayPartialPeriodAdvanced', 'RewardDeliveredToVault',
+      'SwapToRepayExecuted', 'SwapToRepayIntentCancelled', 'SwapToRepayIntentCommitted',
+      'SwapToRepayIntentFilled', 'SwapToRepayIntentForceCancelled', 'SwapToRepayPartialExecuted',
+      'Transfer', 'VPFIDepositedToVault', 'VPFIWithdrawnFromVault', 'VaultVpfiDebited',
+    ];
+    for (const kind of ATTRIBUTED) {
+      expect(ACTIVITY_LABELS[kind], `no activity label for indexer kind ${kind}`).toBeDefined();
+    }
+  });
 });
 
 describe('coalesceByTx', () => {

@@ -33,11 +33,19 @@ helper has — so they are deliberately deferred, not missed. As with
 English in every locale until translated (tracked in #1323 alongside
 the remaining locale bundles).
 
+The Activity label set also now covers every event kind the indexer
+attributes to a wallet's own feed — nine reward / VPFI-vault / roll /
+settlement-breakdown kinds (e.g. "Rewards claimed", "VPFI deposited to
+vault", "Loan rolled over") that previously fell through to a humanized
+English label in every locale.
+
 To stop the activity-label map from silently drifting back out of the
 catalog, a unit guard (`lib/activityView.test.ts`) now fails the build
 if any `ACTIVITY_LABELS` kind lacks a matching `copy.activity.labels`
-entry (or vice-versa) — the same "can't drift" contract the notification
-and indexer event maps carry.
+entry (or vice-versa), and — Codex #1343 r1 — if the label set doesn't
+cover the indexer's full attributed-event set (the `pluckActivityRefs`
+cases) — the same "can't drift" contract the notification and indexer
+event maps carry.
 
 Part of the #1329/#1323 extraction lineage (the `.ts`-module leg);
 does not close #1323, which still tracks the locale bundle backfills
