@@ -1536,7 +1536,7 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](82);
+        selectors = new bytes4[](84);
         selectors[0] = ConfigFacet.setFeesConfig.selector;
         selectors[1] = ConfigFacet.setLiquidationConfig.selector;
         selectors[2] = ConfigFacet.setRiskConfig.selector;
@@ -1676,6 +1676,9 @@ contract HelperTest {
         // RL-3 (#1305) — reward claim-horizon knob.
         selectors[80] = ConfigFacet.setRewardClaimHorizonDays.selector;
         selectors[81] = ConfigFacet.getRewardClaimHorizonDays.selector;
+        // RL-4 (#1306) — recycled-stream allocation register.
+        selectors[82] = ConfigFacet.setRecycleRegisterKeeperBps.selector;
+        selectors[83] = ConfigFacet.getRecycleRegisterState.selector;
         return selectors;
     }
 

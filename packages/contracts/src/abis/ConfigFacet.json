@@ -567,6 +567,24 @@
   },
   {
     "type": "function",
+    "name": "getRecycleRegisterState",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "keeperBps",
+        "type": "uint16",
+        "internalType": "uint16"
+      },
+      {
+        "name": "keeperBudget",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
     "name": "getRecycledCreditedByDay",
     "inputs": [
       {
@@ -1268,6 +1286,19 @@
     "inputs": [
       {
         "name": "newMarginBps",
+        "type": "uint16",
+        "internalType": "uint16"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "setRecycleRegisterKeeperBps",
+    "inputs": [
+      {
+        "name": "keeperBps",
         "type": "uint16",
         "internalType": "uint16"
       }
@@ -2059,6 +2090,19 @@
     "inputs": [
       {
         "name": "newMarginBps",
+        "type": "uint16",
+        "indexed": false,
+        "internalType": "uint16"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "RecycleRegisterKeeperBpsSet",
+    "inputs": [
+      {
+        "name": "keeperBps",
         "type": "uint16",
         "indexed": false,
         "internalType": "uint16"

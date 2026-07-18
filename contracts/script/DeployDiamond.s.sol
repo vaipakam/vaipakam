@@ -2166,7 +2166,7 @@ contract DeployDiamond is Script {
     }
 
     function _getConfigSelectors() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](82);
+        s = new bytes4[](84);
         // Setters
         s[0] = ConfigFacet.setFeesConfig.selector;
         s[1] = ConfigFacet.setLiquidationConfig.selector;
@@ -2340,6 +2340,9 @@ contract DeployDiamond is Script {
         // RL-3 (#1305) — reward claim-horizon knob.
         s[80] = ConfigFacet.setRewardClaimHorizonDays.selector;
         s[81] = ConfigFacet.getRewardClaimHorizonDays.selector;
+        // RL-4 (#1306) — recycled-stream allocation register.
+        s[82] = ConfigFacet.setRecycleRegisterKeeperBps.selector;
+        s[83] = ConfigFacet.getRecycleRegisterState.selector;
     }
 
     /// T-034 / T-048 numeraire / PAD / periodic-interest config

@@ -451,9 +451,9 @@ contract RewardAggregatorFacet is
             : freshAvailable;
 
         uint256 marginBps = LibVaipakam.cfgRecycleMarginBps();
-        uint256 fundable = s.recycleBucket > s.outstandingCommitRecycled
-            ? s.recycleBucket - s.outstandingCommitRecycled
-            : 0;
+        // Net of outstanding recycled commitments AND the keeper earmark, so a
+        // carved keeper share is never re-sized into a reward budget (#1344).
+        uint256 fundable = _recycleFundable(s);
         uint256 coupled = (aBar * (10_000 - marginBps)) / 10_000;
         uint256 recycledBudget = schedule == 0
             ? 0
@@ -494,6 +494,82 @@ contract RewardAggregatorFacet is
             aBar,
             marginBps
         );
+
+        _applyRecycleRegister(s, dayId, aBar, marginBps);
+    }
+
+    /// @notice RL-4 (#1306, ratified §10.3) — emitted when the allocation
+    ///         register splits a day's residual (non-dormant weights only).
+    /// @custom:event-category state-change/treasury-mutation
+    event RecycleRegisterSplit(
+        uint256 indexed dayId,
+        uint256 splittable,
+        uint256 keeperShare
+    );
+
+    /// @dev RL-4 — the recycled-stream allocation register, applied at the
+    ///      SAME finalization snapshot as the day-pool stamp (weights read
+    ///      once, deterministic — no per-epoch discretion). Defined over
+    ///      the RESIDUAL only, claims-first by construction:
+    ///
+    ///        splittable = min( marginRealized,                    // Ā×m
+    ///                          max(0, fundable − RESERVE_N × Ā) )
+    ///
+    ///      where `fundable` is the bucket net of ALL outstanding recycled
+    ///      commitments (this day's included — claims were funded first,
+    ///      structurally) AND the standing keeper earmark, and the forward
+    ///      reserve keeps at least one trailing week of coupled budget in the
+    ///      bucket for future days. The keeper share is EARMARKED within the
+    ///      bucket (`recycleKeeperBudget`), not moved out of it: `recycleBucket`
+    ///      stays the full Diamond-custody total so the audited backing
+    ///      invariant (`balance >= recycleBucket`, enforced by every
+    ///      `LibVpfiRecycle.credit` and the RL-3 claim gate) keeps the keeper
+    ///      budget backed — the earmark only removes it from `fundable` so it
+    ///      can't be re-lent to reward budgets, and the later spend stage
+    ///      decrements both ledgers on transfer-out (Codex #1344 P1). Dormant
+    ///      (`keeperBps == 0`, the deploy default) this is a no-op — exactly
+    ///      today's ratified behaviour.
+    function _applyRecycleRegister(
+        LibVaipakam.Storage storage s,
+        uint256 dayId,
+        uint256 aBar,
+        uint256 marginBps
+    ) internal {
+        uint16 keeperBps = s.recycleRegisterKeeperBps;
+        if (keeperBps == 0 || aBar == 0) return;
+
+        uint256 marginRealized = (aBar * marginBps) / 10_000;
+        uint256 fundable = _recycleFundable(s);
+        uint256 forwardReserve =
+            LibVaipakam.RECYCLE_FORWARD_RESERVE_DAYS * aBar;
+        uint256 aboveReserve =
+            fundable > forwardReserve ? fundable - forwardReserve : 0;
+        uint256 splittable =
+            marginRealized < aboveReserve ? marginRealized : aboveReserve;
+        if (splittable == 0) return;
+
+        uint256 keeperShare = (splittable * keeperBps) / 10_000;
+        if (keeperShare == 0) return;
+        // Earmark within the bucket — `recycleBucket` is unchanged (it stays
+        // the full custody total that the backing checks reserve), only the
+        // keeper-budget earmark grows. The reserve share never moves either.
+        s.recycleKeeperBudget += keeperShare;
+        emit RecycleRegisterSplit(dayId, splittable, keeperShare);
+    }
+
+    /// @dev RL-4 — recycled VPFI genuinely AVAILABLE for new recycled reward
+    ///      budgets: the bucket net of outstanding recycled commitments AND
+    ///      the standing keeper earmark. `recycleBucket` itself remains the
+    ///      full Diamond-custody total (so `LibVpfiRecycle.credit` and the RL-3
+    ///      claim gate keep the keeper budget backed); the earmark is netted
+    ///      out HERE so a carved keeper share can never be re-lent to a reward
+    ///      budget (Codex #1344 P1). Floored at zero.
+    function _recycleFundable(
+        LibVaipakam.Storage storage s
+    ) internal view returns (uint256) {
+        uint256 reserved =
+            s.outstandingCommitRecycled + s.recycleKeeperBudget;
+        return s.recycleBucket > reserved ? s.recycleBucket - reserved : 0;
     }
 
     /// @notice Governor PR-3b — read a finalized day's stamped pool

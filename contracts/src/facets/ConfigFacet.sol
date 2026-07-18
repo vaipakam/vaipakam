@@ -878,6 +878,45 @@ contract ConfigFacet is DiamondAccessControl {
         );
     }
 
+    /// @notice RL-4 (#1306) — emitted when the allocation-register keeper
+    ///         weight changes.
+    /// @custom:event-category informational/config
+    event RecycleRegisterKeeperBpsSet(uint16 keeperBps);
+
+    /// @notice RL-4 (#1306, ratified §10.3) — set the recycled-stream
+    ///         allocation register's keeper-budget weight. `0` (deploy
+    ///         default) keeps the register DORMANT — the whole residual
+    ///         stays in the bucket, exactly today's ratified behaviour.
+    ///         Bounded at 50%; the reserve weight is the implicit
+    ///         complement, so the weights always sum to 10000. Deliberately
+    ///         NOT a gauge: users never vote reward direction.
+    function setRecycleRegisterKeeperBps(uint16 keeperBps)
+        external
+        onlyRole(LibAccessControl.ADMIN_ROLE)
+    {
+        if (keeperBps > LibVaipakam.RECYCLE_REGISTER_KEEPER_MAX_BPS) {
+            revert IVaipakamErrors.ParameterOutOfRange(
+                "recycleRegisterKeeperBps",
+                keeperBps,
+                0,
+                LibVaipakam.RECYCLE_REGISTER_KEEPER_MAX_BPS
+            );
+        }
+        LibVaipakam.storageSlot().recycleRegisterKeeperBps = keeperBps;
+        emit RecycleRegisterKeeperBpsSet(keeperBps);
+    }
+
+    /// @notice RL-4 — register state: the keeper weight and the accumulated
+    ///         keeper-gas budget ledger.
+    function getRecycleRegisterState()
+        external
+        view
+        returns (uint16 keeperBps, uint256 keeperBudget)
+    {
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        return (s.recycleRegisterKeeperBps, s.recycleKeeperBudget);
+    }
+
     /// @notice RL-3 (#1305) — emitted when the reward claim horizon knob
     ///         changes. `0` = feature dark.
     /// @custom:event-category informational/config
