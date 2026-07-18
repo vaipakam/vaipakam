@@ -7,7 +7,7 @@
 | **Date** | 2026-07-18 |
 | **Status** | **Draft — programme plan + Phase B′ implementation design** for owner review. Single document of record for *everything still required* to complete VPFI recycling, re-verified against `main` (through the RL-4 landing) and reconciled with the 2026-07-18 completeness-scout state (#1346, #1347, the #1222 parked B1–B4/C1–C2 plan + WIP branch) |
 | **Cards** | #1222 (Phase B′ mesh + Phase C′) · #1331 (folds into B2) · #1346 (Layer 0) · #1347 (Layer 2 — formulation decision needed, §M2/D1) · #1218 (metric completion) · #1204 / #1219 (channels 3–4) · #1294 stack remainder (cards to cut — §5) |
-| **Substrate (binding)** | [`VpfiRecyclingBalanceGovernorDesign.md`](VpfiRecyclingBalanceGovernorDesign.md) (RATIFIED governor), [`VpfiCrossChainRecyclingDesign.md`](VpfiCrossChainRecyclingDesign.md) (Option-B mesh), [`VpfiRecyclingLoopClosureDesign.md`](VpfiRecyclingLoopClosureDesign.md) (RATIFIED RL-1…6), [`VpfiAbsorptionDistributionFormulaRedesign.md`](VpfiAbsorptionDistributionFormulaRedesign.md) rev 14 (fee/tariff/D1 freezes — see the §M2 divergence decision) |
+| **Substrate (binding)** | [`VpfiRecyclingBalanceGovernorDesign.md`](VpfiRecyclingBalanceGovernorDesign.md) (RATIFIED governor), [`VpfiCrossChainRecyclingDesign.md`](VpfiCrossChainRecyclingDesign.md) (Option-B mesh), [`VpfiRecyclingLoopClosureDesign.md`](VpfiRecyclingLoopClosureDesign.md) (RATIFIED RL-1…6), [`VpfiAbsorptionDistributionFormulaRedesign.md`](VpfiAbsorptionDistributionFormulaRedesign.md) **at its CURRENT revision** (rev 15 at time of writing — adds ack-timed remitted accounting + reward-haircut snapshotting over the rev-8–14 freezes; M2 cards scope against the live file, never a pinned rev — see the §M2 divergence decision) |
 
 ---
 
@@ -99,10 +99,10 @@ The launch-era absorption path is the tariff-priced discount entitlement
 documents, and the divergence must be resolved by the owner before
 cutting implementation cards** (D1, §7):
 
-| | **(a) Governor §4.2** (RATIFIED 2026-07-15; how #1347 is currently written) | **(b) #1294 rev 8–14** (merged doc, Draft status, but carrying later owner product decisions C1–C6 dated 2026-07-16) |
+| | **(a) Governor §4.2** (RATIFIED 2026-07-15; how #1347 is currently written) | **(b) #1294 rev 8–15** (merged doc, Draft status, but carrying later owner product decisions C1–C6 dated 2026-07-16) |
 | --- | --- | --- |
 | Formula | `k × loanVolumeETH × durationDays` (ETH·day) | `C* = baseLif_list × tYears × K` (LIF·year; K default 5e18) |
-| Knob | `recycleTariffKPer1e18EthDay` (exists, unwired) | **New** `tariffKPerLifYear`; rev 14 explicitly **forbids** wiring the ETH·day knob and retires it |
+| Knob | `recycleTariffKPer1e18EthDay` (exists, unwired) | **New** `tariffKPerLifYear`; rev 14+ explicitly **forbids** wiring the ETH·day knob and retires it |
 | Effect of paying | Buys that loan's LIF + yield-fee **discount entitlement** (applied at settlement) | **Dual-fee Full**: asset fees always charged; +10% own-side discount (CAP 50%); tariff absorbed at init, never a waiver/offset |
 | Who pays | Party opting in | **Per-party double absorption** (each Full party pays own `C*`; both ⇒ 2×C*) |
 | Coupling | Standalone charger | Drags the **loan-side reward cap** (`½×C*×(1−m_reward)` replaces #1008) + **D1 share cap** + joint `D*` cutover — `feeEntitlementEnabled=true` is forbidden until PR-5c is live |
@@ -114,7 +114,7 @@ retires (a)'s formula ("do not wire `setRecycleTariffKPer1e18EthDay` for
 Phase-1 absorption"). But (b) is materially bigger (it re-prices list
 fees and replaces the reward-cap regime), so the choice is the owner's,
 made consciously — not defaulted. On (b), #1347's body is re-based to
-rev 14 and the card set below is cut; on (a), rev 14's fee/tariff
+the current revision (rev 15) and the card set below is cut; on (a), the formula doc's fee/tariff
 sections get a supersession note instead (its D1 + messenger content
 survives either way).
 
@@ -162,9 +162,18 @@ Kept from the parked plan verbatim: commitment semantics (broadcast
 stamp covering every bucket-touching field, `consumed ≤ reported` per
 chain, source-scoped netting with commitment-netted `availRecycled`,
 per-destination arrays aligned to `broadcastDestinationChainIds`,
-mirrors-decode-first messenger redeploy (report 6-word + broadcast
-10-word — and if M2's PR-2 kind-5/D1 evolution lands in the same window,
-fold into **one** wire evolution, not two). #1331 is absorbed by B2
+mirrors-decode-first messenger redeploy. **Wire-format rule, stated as a
+field union — never an assumed word count:** standalone M3 widens the
+kind-2 broadcast 8→10 words (+`recycleConsume`, +`keeperAllocate`) and
+the report 4→6. If M2's PR-2 D1 evolution lands in the same window, the
+combined shape is the **union of both field sets** — D1 replaces
+`capThreshold18` with `capMode` + `capPayload` (net +1 word) *and* the
+two recycle fields ride along (11 words, or a new kind with the explicit
+field list) — one evolution, one mirrors-decode-first gate, with the
+implementing PR pinning the exact layout. Naming a fixed word count
+across both upgrades is exactly how a decoder silently drops `capMode`
+or a recycle field; the layout is derived from the union at
+implementation time. #1331 is absorbed by B2
 (remit-ingress labeling + remitted-recycled = local credit vs
 locally-committed = pure release, across claim/forfeit/expiry paths).
 RL-3 mirror expiries then report their day-bucketed credits to Base like
@@ -202,7 +211,12 @@ review slot the excision doc recommends); slash path →
 GovernanceRunbook gains a recycling section, executed in order:
 
 1. **Arm the governor** (`armedFromDay`) once M1b gives absorption a
-   live feed.
+   live feed — **AND only while reward claims are Base-only / dark on
+   mirrors, or M3 (Phase B′) is complete.** Arming with active mirror
+   claims and no mesh produces exactly the §2 failure set (mirror
+   buckets invisible to global `Ā`, Base over-remitting, the #1331-class
+   drift becoming economically real). The runbook entry carries this
+   gate as a precondition checklist item, not prose.
 2. **RL-3 horizon knob** — only after the free-channel pre-expiry notice
    (in-app notification center) is verified live; the ≥90-day
    grandfather window starts at activation.
@@ -221,7 +235,7 @@ reconciliation (#882) when that copy is next touched.
 
 ```mermaid
 flowchart LR
-  D1{{"D1: tariff formulation<br/>(a) §4.2 vs (b) rev 14"}} --> M2
+  D1{{"D1: tariff formulation<br/>(a) §4.2 vs (b) rev 15"}} --> M2
   M1a[#1346 M1a flat tariff] --> M1b[#1346 M1b custody re-route]
   M1b --> ARM[M7.1 arm governor]
   subgraph M2 [M2 — absorption stack]
@@ -244,7 +258,7 @@ flowchart LR
 | Card | Action |
 | --- | --- |
 | #1346 | Keep as filed = M1; add the #973 restamp note (comment posted) |
-| #1347 | **Blocked on D1** — on (b), re-base body to #1294 rev 14 (LIF·year, dual-fee, coupling); on (a), add the rev-14 supersession note instead |
+| #1347 | **Blocked on D1** — on (b), re-base body to #1294 at current rev (LIF·year, dual-fee, coupling); on (a), add the supersession note to the formula doc instead |
 | #1222 | Adopt the parked B1–B4/C1–C2 cut with §M3's two corrections (B1 two report fields; two-pass funding in B2/B3); #1331 stays absorbed by B2 |
 | #1331 | **CLOSED 2026-07-18 as duplicate of #1222** — its full scope (remit-ingress labeling; remitted-recycled = local credit vs locally-committed = pure release, across claim/forfeit/expiry) is §M3's B2; the B4 tests must cover it |
 | #1218 | Re-point at §M5 (net-emission = `freshDrawdown` under the governor; dashboard surface) |
@@ -256,10 +270,14 @@ flowchart LR
 
 1. **Absorption**: notification tariff (M1) + Full tariff (M2) + perks
    (M6) live and crediting the bucket; forfeit/expiry classes live
-   (already); bonds pending only its legal glance; conversion classes
-   (borrower LIF-in-VPFI, yield-fee-in-VPFI, matcher remainders)
-   explicitly **market-era deferred** behind the single §14 legal item —
-   deferral is a completed state, not an omission.
+   (already); **service bonds (#1219) in a DECIDED state** — either the
+   legal glance passed and the slash path (`credit(ServiceBondSlash, …)`)
+   built and live, **or** an explicit owner deferral recorded on #1219
+   (the same completed-deferral treatment as the conversion classes) —
+   "pending" is not a done state; conversion classes (borrower
+   LIF-in-VPFI, yield-fee-in-VPFI, matcher remainders) explicitly
+   **market-era deferred** behind the single §14 legal item — deferral
+   is a completed state, not an omission.
 2. **Distribution**: governor armed; `dailyPool = scheduleFloor +
    (1−m)×Ā` live with commitment discipline; D1 + loan-side cap cut over
    jointly; rewards delivered claim-to-vault by default.
