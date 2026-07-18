@@ -121,6 +121,32 @@ from ever regressing the way `ActivePositionsBanner` did.
 | Inline interpolated notices | ~51 | 13 components (`ActivePositionsBanner`, `OfferFlow`, `Rent`, `Vpfi`, `Claims`, `PositionDetails`, `RefinanceFlow`, `EarlyExitFlow`, `LoanSaleFlow`, `LoanSalePendingCard`, `LoanRow`, `CopyAddress`, `desk/DeskHeader`) |
 | Factory + exporter + guardrail | 3 files | `reactiveCopy.ts`, `export-i18n-template.ts` / `template.ts`, `check-hardcoded-strings.mjs` |
 
+## Contract-error friendly copy (distinct workstream)
+
+Solidity custom-error names and event names are on-chain identifiers,
+never displayed raw — so the **contract source stays English** (changing
+it changes audited bytecode). But the frontend copy users actually SEE
+when a transaction reverts is `FRIENDLY_ERROR_MESSAGES` in
+`packages/lib/src/decodeContractError.ts` — **~287 hardcoded-English
+messages** keyed by error name/selector, displayed by alpha02
+(`submitErrorText` → `decodeContractError`) AND apps/defi. These are
+website-displayed text, so per the "displayed → translated" rule they
+DO need translation.
+
+Because they live in a **shared** lib consumed by two apps with separate
+catalogs, this is its own workstream, not part of the copy.ts sweep:
+
+- Keep `decodeContractError` resolving selector → stable error NAME and
+  the English `FRIENDLY_ERROR_MESSAGES` as the built-in default.
+- Each app maps error name → its own catalog entry
+  (`copy.contractErrors[name]`, a `tmpl` when parametrized), falling back
+  to the lib's English when absent.
+- alpha02's `submitErrorText` looks up the name in `copy.contractErrors`
+  before returning; same shape for apps/defi.
+
+Scope: 287 entries × per-app catalog wiring — a dedicated PR after the
+copy.ts sweep lands. Tracked here so it isn't lost.
+
 ## Special cases to handle
 
 - **Pluralization** — entries like `unreadBadgeTitle: (n) => n === 1 ?
