@@ -1,1 +1,970 @@
-{}
+{
+  "copy": {
+    "app": {
+      "name": "Vaipakam",
+      "tagline": "Prêtez, empruntez et louez des NFT — directement avec d'autres personnes."
+    },
+    "chrome": {
+      "nav": {
+        "home": "Accueil",
+        "borrow": "Emprunter",
+        "lend": "Prêter",
+        "rent": "Location de NFT",
+        "positions": "Mes positions",
+        "positionsShort": "Positions",
+        "claims": "Retraits",
+        "vault": "Mon vault",
+        "faucet": "Obtenir des actifs de test",
+        "offers": "Carnet d'offres",
+        "desk": "Bureau des taux",
+        "vpfi": "Réductions VPFI",
+        "activity": "Activité",
+        "nftVerifier": "Vérificateur NFT",
+        "settings": "Paramètres",
+        "help": "Aide"
+      },
+      "settings": {
+        "language": "Langue",
+        "languageHint": "Les langues dont la traduction n'est pas terminée affichent du texte anglais pour l'instant.",
+        "languagePickerAria": "Langue d'affichage"
+      }
+    },
+    "seo": {
+      "home": {
+        "title": "Vaipakam — prêt P2P, emprunt et location de NFT",
+        "description": "Prêtez, empruntez et louez des NFT directement avec d'autres personnes. Définissez vos propres conditions — vos actifs restent dans votre propre vault on-chain, sans pool et sans intermédiaire."
+      },
+      "borrow": {
+        "title": "Emprunter des actifs — Vaipakam",
+        "description": "Verrouillez une garantie que vous possédez et recevez les tokens dont vous avez besoin. Des prêts directs de personne à personne, aux conditions que vous choisissez, depuis votre propre vault on-chain."
+      },
+      "lend": {
+        "title": "Gagner en prêtant — Vaipakam",
+        "description": "Proposez vos tokens aux emprunteurs et gagnez des intérêts s'ils remboursent. Vos actifs restent dans votre propre vault on-chain jusqu'à ce qu'un emprunteur accepte vos conditions."
+      },
+      "rent": {
+        "title": "Location de NFT — Vaipakam",
+        "description": "Gagnez des frais avec un NFT que vous possédez, ou obtenez l'usage temporaire d'un NFT. La propriété ne bouge jamais — le NFT reste verrouillé dans le vault du propriétaire pendant la location."
+      },
+      "offers": {
+        "title": "Carnet d'offres — Vaipakam",
+        "description": "Parcourez toutes les offres de prêt et demandes d'emprunt ouvertes sur le réseau — actifs, taux, durées et conditions de garantie, en direct depuis la chaîne."
+      },
+      "desk": {
+        "title": "Bureau des taux — Vaipakam",
+        "description": "Taux de prêt directs en direct par paire d'actifs et durée, historique des taux exécutés et carnet d'offres signées."
+      },
+      "vpfi": {
+        "title": "Réductions de frais VPFI — Vaipakam",
+        "description": "Optionnel : conservez des VPFI dans votre vault pour réduire les frais du protocole. Jamais obligatoire pour prêter, emprunter ou louer."
+      },
+      "nftVerifier": {
+        "title": "Vérificateur de location NFT — Vaipakam",
+        "description": "Vérifiez si une location de NFT listée sur Vaipakam est authentique, et consultez l'état de location actuel du token directement depuis la chaîne."
+      },
+      "help": {
+        "title": "Aide — Vaipakam",
+        "description": "Des réponses claires sur le prêt, l'emprunt, les locations de NFT, les frais et les risques — ainsi que les infos de build et de contrats pour ce déploiement."
+      },
+      "positions": {
+        "title": "Mes positions — Vaipakam"
+      },
+      "claims": {
+        "title": "Retraits — Vaipakam"
+      },
+      "vault": {
+        "title": "Mon vault — Vaipakam"
+      },
+      "activity": {
+        "title": "Activité — Vaipakam"
+      },
+      "settings": {
+        "title": "Paramètres — Vaipakam"
+      },
+      "faucet": {
+        "title": "Actifs de test — Vaipakam"
+      },
+      "notFound": {
+        "title": "Page introuvable — Vaipakam"
+      }
+    },
+    "home": {
+      "title": "Que voulez-vous faire ?",
+      "lede": "Choisissez une action pour commencer. Vous pouvez passer au mode Avancé à tout moment dans les Paramètres.",
+      "jobs": {
+        "borrow": {
+          "title": "Emprunter des actifs",
+          "blurb": "Verrouillez une garantie que vous possédez et recevez les tokens dont vous avez besoin."
+        },
+        "lend": {
+          "title": "Gagner en prêtant",
+          "blurb": "Proposez vos tokens aux emprunteurs et gagnez des intérêts s'ils remboursent."
+        },
+        "rent": {
+          "title": "Louer ou prêter un NFT",
+          "blurb": "Gagnez des frais avec un NFT que vous possédez, ou obtenez l'usage temporaire d'un NFT."
+        },
+        "manage": {
+          "title": "Gérer mes positions",
+          "blurb": "Consultez vos prêts et locations, remboursez, ajoutez une garantie ou retirez."
+        }
+      }
+    },
+    "tokenSecurity": {
+      "pickerUnknown": "Le contrôle de sécurité indépendant n'a pas pu vérifier ce token pour le moment. Les opérations avec des tokens non vérifiés restent bloquées jusqu'à la réussite du contrôle.",
+      "pickerUnsupported": "Le contrôle de sécurité indépendant ne couvre pas ce réseau (les réseaux de test ne sont pas indexés). Soyez prudent : utilisez uniquement les tokens que vous avez déployés ou auxquels vous faites confiance.",
+      "retry": "Vérifier à nouveau",
+      "badge": {
+        "block": {
+          "label": "Risque signalé",
+          "title": "Un contrôle de sécurité indépendant signale un token de cette offre comme dangereux (par exemple impossible à vendre). L'examen ne laissera pas cette opération se poursuivre."
+        },
+        "warn": {
+          "label": "Attention",
+          "title": "Un contrôle de sécurité indépendant signale des pouvoirs du propriétaire ou des taxes sur un token de cette offre. L'examen affiche les détails avant toute signature."
+        },
+        "unchecked": {
+          "label": "Non vérifié",
+          "title": "Un token de cette offre n'a pas pu être vérifié par le filtre de sécurité indépendant. Traitez-le avec une prudence supplémentaire."
+        }
+      },
+      "reputationUnlisted": "Aucune cotation de marché trouvée pour cette adresse — le marché au sens large ne connaît pas ce token. Cela ne le rend pas mauvais en soi, mais vérifiez l'adresse du contrat auprès du projet avant de l'utiliser."
+    },
+    "signing": {
+      "approveUnknown": "Approuvez le token — une confirmation, ou deux si votre portefeuille doit d'abord remettre une ancienne approbation à zéro (vérification en cours).",
+      "sign": "Signez les conditions que vous venez de lire — une signature gratuite, sans gas.",
+      "approve": "Approuvez le token — vous autorisez le protocole à prendre le montant affiché ci-dessus. C'est une transaction.",
+      "approveReset": "Approuvez le token — deux confirmations ici : votre portefeuille doit remettre une ancienne approbation à zéro avant de définir le nouveau montant.",
+      "post": "Publier l'offre — la transaction finale.",
+      "accept": "Ouvrir l'opération — la transaction finale.",
+      "approveNft": "Autoriser le protocole à déplacer les NFT de cette collection — une transaction unique par collection.",
+      "postListing": "Publier l'annonce — la transaction finale.",
+      "acceptRental": "Démarrer la location — la transaction finale."
+    },
+    "killSwitch": {
+      "disabled": "Cette action est désactivée pour le moment — les opérateurs l'ont mise en pause par précaution pendant qu'un point est examiné. Ce qui vous appartient déjà n'est pas affecté : remboursements, retraits et réclamations restent ouverts."
+    },
+    "alerts": {
+      "title": "Alertes",
+      "lede": "Recevez un message Telegram sur vos positions lorsque le site est fermé — les échéances et les risques n'attendent pas que vous ouvriez un onglet.",
+      "notConfigured": "Les alertes ne sont pas configurées dans ce build. L'opérateur ne l'a pas relié à un backend d'alertes ; rien ici ne fonctionnerait — cette section reste donc désactivée.",
+      "connectFirst": "Connectez votre portefeuille pour configurer ses alertes.",
+      "privacy": "La liaison stocke votre adresse de portefeuille, vos préférences d'alerte de cette carte et votre chat id Telegram sur le service d'alertes Vaipakam, ainsi qu'un petit historique de livraison par alerte envoyée (quel prêt, quel niveau, quand) afin de ne jamais vous envoyer deux fois le même message. La dissociation supprime la connexion Telegram.",
+      "linkButton": "Lier Telegram",
+      "linkSignNote": "Votre portefeuille vous demandera d'abord de signer un court message — c'est gratuit, ce n'est pas une transaction, et cela prouve que la demande vient bien de vous.",
+      "linkIssued": "Ouvrez notre bot et appuyez sur Start — ou envoyez-lui ce code en message. Cela connecte ce portefeuille à votre Telegram.",
+      "openBot": "Ouvrir Telegram",
+      "testAlertButton": "Envoyer une alerte de test",
+      "testAlertNote": "Une fois le code envoyé au bot, appuyez ici — nous pousserons un message vers votre Telegram pour prouver que la connexion fonctionne. Votre portefeuille signe d'abord un court message gratuit.",
+      "testAlertSending": "Envoi de votre alerte de test…",
+      "testAlertSent": "Alerte de test envoyée — vérifiez Telegram. Les alertes pour ce portefeuille sont maintenant activées.",
+      "testAlertNotLinked": "Nous n'avons pas encore trouvé votre chat Telegram. Ouvrez le bot et envoyez-lui le code ci-dessus, puis appuyez de nouveau sur “Envoyer une alerte de test”. Si le code a expiré, appuyez sur “Recommencer” pour en obtenir un nouveau.",
+      "testAlertError": "Impossible d'envoyer l'alerte de test pour le moment. Réessayez dans un instant.",
+      "startOver": "Recommencer",
+      "linked": "Telegram lié — les alertes pour ce portefeuille vont dans votre chat.",
+      "unlink": "Dissocier",
+      "unlinkElsewhereTitle": "Vous avez lié ce portefeuille sur un autre appareil ?",
+      "unlinkElsewhereBody": "Son lien Telegram vit sur notre serveur, pas seulement dans ce navigateur. Déconnectez-le ici — cela arrête les messages partout.",
+      "unlinkElsewhere": "Dissocier ce portefeuille",
+      "unlinked": "Dissocié. Plus aucun message Telegram pour ce portefeuille.",
+      "toggleRepayDue": "M'envoyer un message avant l'échéance d'un paiement d'intérêts",
+      "toggleRisky": "M'envoyer un message si mon prêt devient risqué",
+      "riskyOffNote": "Même désactivé, vous serez averti juste avant qu'un prêt puisse être liquidé.",
+      "advancedBands": "Seuils de risque (facteur de santé) : un message est envoyé lorsqu'un prêt franchit chaque niveau.",
+      "bandsInvalid": "Les trois niveaux doivent décroître — warn au-dessus de alert, alert au-dessus de critical, et critical au-dessus de 1.00.",
+      "saved": "Enregistré.",
+      "pushTitle": "Vous préférez les push d'application ?",
+      "pushBody": "Les mêmes alertes sont publiées sur le canal Push Protocol de Vaipakam — abonnez-vous avec votre portefeuille et toute app compatible Push les livrera.",
+      "pushEnable": "Activer la livraison Push",
+      "pushEnabled": "La livraison Push est activée pour ce portefeuille.",
+      "pushButton": "Ouvrir le canal Push",
+      "loanNudge": "Vous voulez un avertissement Telegram si ce prêt devient risqué ? Configurez les alertes dans les Paramètres."
+    },
+    "notifications": {
+      "bellLabel": "Notifications",
+      "title": "Notifications",
+      "loading": "Chargement de vos notifications…",
+      "empty": "Rien pour l'instant. Les mises à jour sur vos prêts apparaîtront ici.",
+      "unavailable": "Impossible de charger vos notifications pour le moment. Elles seront ici lorsque la connexion reviendra.",
+      "connectFirst": "Connectez votre portefeuille pour voir les mises à jour sur vos prêts.",
+      "line": {
+        "loan_matched": "Votre prêt est maintenant actif.",
+        "partial_repay": "Un remboursement est arrivé sur votre prêt.",
+        "loan_repaid": "Un prêt a été entièrement remboursé — voyez ce que vous pouvez retirer.",
+        "loan_defaulted": "Un prêt a fait défaut — voyez ce que vous pouvez retirer.",
+        "internal_matched": "Un de vos prêts a été clôturé par matching — voyez ce que vous pouvez retirer.",
+        "maturity_7d": "Un prêt était à une semaine de son échéance — ouvrez-le pour voir où il en est.",
+        "maturity_1d": "Un prêt était à un jour de son échéance — ouvrez-le pour voir où il en est.",
+        "grace_entered": "Un prêt a dépassé son échéance — ouvrez-le pour voir où il en est.",
+        "hf_warn": "La santé d'un prêt est passée sous 1.5 — ouvrez-le pour voir où il en est.",
+        "hf_alert": "La santé d'un prêt est passée sous 1.2 — ouvrez-le pour voir où il en est.",
+        "hf_critical": "La santé d'un prêt est passée sous 1.05, proche de la ligne de liquidation 1.0 — ouvrez-le pour agir.",
+        "generic": "Il y a une mise à jour sur votre prêt."
+      }
+    },
+    "errorBoundary": {
+      "title": "Un problème est survenu sur cette page",
+      "body": "La page a rencontré une erreur inattendue et a cessé de s'afficher. Vos fonds et positions on-chain ne sont pas affectés — il s'agit d'un problème côté affichage, et une transaction que vous venez de signer peut tout de même être passée (vérifiez Mes positions après rechargement). Recharger règle généralement le problème.",
+      "reload": "Recharger la page",
+      "home": "Retour à l'accueil"
+    },
+    "diagnostics": {
+      "open": "Support et vérification de connexion",
+      "title": "Support",
+      "lede": "Un contrôle rapide des connexions dont dépend cette app, et un moyen de signaler un problème.",
+      "close": "Fermer",
+      "network": "Réseau",
+      "wallet": "Portefeuille",
+      "walletNotConnected": "Non connecté",
+      "rpc": "Connexion blockchain",
+      "rpcChecking": "Vérification…",
+      "rpcFailing": "Ne répond pas — l'app ne peut pas joindre la blockchain pour le moment. Recharger, ou changer de réseau puis revenir, règle souvent le problème.",
+      "indexer": "Cache de données de marché",
+      "indexerUnreachable": "Injoignable pour le moment — les listes de marché peuvent ne pas charger avant son rétablissement. Vos propres positions se chargent toujours directement depuis la chaîne.",
+      "indexerNoCursor": "Joignable, mais aucune donnée n'a encore été enregistrée pour ce réseau — elle se remplira lorsque l'activité arrivera.",
+      "indexerNotConfigured": "Non configuré sur ce build — les listes de marché ne peuvent pas charger ici. Vos propres positions se chargent toujours directement depuis la chaîne.",
+      "build": "Version de l'app",
+      "lastErrorTitle": "Dernière erreur sur cet appareil",
+      "noError": "Aucune erreur enregistrée dans cette session.",
+      "report": "Signaler un problème sur GitHub",
+      "reportHint": "Ouvre une issue GitHub préremplie avec les détails ci-dessus et la dernière erreur enregistrée. Votre adresse complète de portefeuille n'est jamais incluse.",
+      "copyDetails": "Copier les détails",
+      "copied": "Copié."
+    },
+    "support": {
+      "title": "Contacter le support",
+      "lede": "Envoyez un message à l'équipe — vous recevez immédiatement un numéro de ticket.",
+      "notConfigured": "La boîte de support n'est pas connectée dans ce build ; les messages in-app ne peuvent donc pas être envoyés ici. L'e-mail fonctionne à la place :",
+      "messageLabel": "Que s'est-il passé ?",
+      "messagePlaceholder": "Dites-nous ce que vous faisiez et ce qui a mal tourné, avec vos propres mots.",
+      "emailLabel": "E-mail pour la réponse (optionnel)",
+      "emailHint": "Laissez vide si vous préférez suivre vous-même — le numéro de ticket ci-dessous suffit au support.",
+      "attach": "Joindre les détails de santé affichés ci-dessus (recommandé — ils contiennent souvent la cause)",
+      "privacy": "L'envoi stocke votre message, la page depuis laquelle vous l'avez envoyé et le réseau utilisé, l'adresse de réponse si vous en avez fourni une, et — seulement si vous cochez la case — les détails de santé ci-dessus, sur le service de support Vaipakam sous votre numéro de ticket. L'équipe est notifiée de l'arrivée d'un ticket (son numéro et des indicateurs de contexte — jamais le texte de votre message ni votre e-mail). Votre adresse complète de portefeuille n'est jamais incluse dans les détails de santé.",
+      "send": "Envoyer au support",
+      "sending": "Envoi…",
+      "mailHint": "Vous préférez l'e-mail, ou voulez ajouter plus d'informations ? Écrivez-nous en citant le numéro de ticket :",
+      "mailButton": "Envoyer un e-mail à support@vaipakam.com",
+      "invalidMessage": "Écrivez d'abord quelques mots sur ce qui s'est passé.",
+      "invalidEmail": "Cet e-mail ne semble pas complet — corrigez-le ou videz le champ (il est optionnel).",
+      "rateLimited": "Plusieurs messages viennent d'être envoyés — attendez une minute et réessayez.",
+      "unavailable": "La boîte de support n'a pas pu recevoir le message pour le moment. Rien n'a été perdu de votre côté — envoyez-nous un e-mail :",
+      "failed": "Le message n'est pas parti. Réessayez dans un instant, ou envoyez-nous un e-mail :",
+      "helpTitle": "Besoin d'un humain ?",
+      "helpBody": "Ouvrez le panneau Support (le bouton rond dans le coin de chaque page) pour envoyer un message à l'équipe en un clic — il peut joindre les détails de santé de l'app, qui contiennent souvent la cause. Ou écrivez-nous directement :"
+    },
+    "wallet": {
+      "connect": "Connecter le portefeuille",
+      "connectFirst": "Connectez un portefeuille pour continuer.",
+      "switchNetwork": "Changer de réseau"
+    },
+    "checks": {
+      "walletConnected": "Portefeuille connecté",
+      "supportedChain": "Sur un réseau pris en charge",
+      "tokenValid": "Actif reconnu comme token",
+      "consent": "Risques et conditions acceptés",
+      "getTestAssets": "Obtenir des actifs de test",
+      "connectEarly": "Connectez votre portefeuille pour continuer — vous en aurez besoin pour signer, donc autant le connecter maintenant."
+    },
+    "receipt": {
+      "heading": "Vérifiez avant de signer",
+      "youReceive": "Vous recevez",
+      "youLock": "Vous verrouillez",
+      "youMayOwe": "Vous pourriez devoir",
+      "youCanLose": "Vous pouvez perdre",
+      "fees": "Frais",
+      "whenThisEnds": "Quand cela se termine",
+      "gasNote": "Le gas réseau est séparé des frais du protocole Vaipakam."
+    },
+    "simulation": {
+      "running": "Simulation gratuite de cette transaction…",
+      "passed": "La simulation a réussi — cette transaction devrait passer telle qu'examinée.",
+      "wouldFail": "Attention — cette transaction échouerait si vous la signiez maintenant. Rien n'a été envoyé et aucun gas n'a été dépensé.",
+      "wouldFailNote": "Vous pouvez ajuster les détails ci-dessus et réessayer dans un instant, ou signer quand même.",
+      "approvalNeeded": "Une approbation de token sera d'abord demandée — la simulation ne voit pas encore cette étape, c'est donc attendu, pas un problème.",
+      "unavailable": "La simulation gratuite n'est pas disponible pour le moment. Vous pouvez tout de même continuer — ce contrôle n'est qu'un avertissement supplémentaire."
+    },
+    "help": {
+      "disclaimer": "Vaipakam est un protocole décentralisé et non dépositaire. Aucun KYC n'est requis. Les utilisateurs sont responsables de leur propre conformité réglementaire.",
+      "risksTitle": "Informations sur les risques",
+      "risks": [
+        "Emprunt : si vous ne remboursez pas avant l'échéance plus la période de grâce, votre garantie verrouillée revient au prêteur. Une garantie sans prix de marché en direct est transférée en totalité.",
+        "Emprunt : une garantie avec prix de marché en direct peut être vendue automatiquement (liquidée) avant l'échéance si sa valeur baisse trop.",
+        "Prêt : les intérêts ne sont gagnés que si l'emprunteur rembourse. En cas de défaut, votre récupération dépend de la valeur réelle de la garantie verrouillée.",
+        "Locations de NFT : les locataires reçoivent des droits d'usage temporaires, jamais la propriété ; le NFT reste dans le vault du propriétaire. Les frais de location sont prépayés, avec un petit tampon remboursable.",
+        "Risque de smart contract : Vaipakam est du code sur un réseau public. Bugs, pannes réseau ou conditions de marché extrêmes peuvent provoquer des pertes — n'engagez jamais des fonds que vous ne pouvez pas vous permettre de perdre."
+      ]
+    },
+    "consentParts": {
+      "prefix": "Je comprends et j'accepte les ",
+      "risk": "Informations sur les risques",
+      "mid": " et les ",
+      "terms": "Conditions Vaipakam",
+      "suffix": "."
+    },
+    "match": {
+      "borrowTitle": "Prêteurs prêts à vous financer maintenant",
+      "borrowLede": "Ces offres correspondent à votre actif. En accepter une ouvre immédiatement le prêt — vous prenez le montant complet et les conditions de l'offre.",
+      "lendTitle": "Emprunteurs en attente de financement",
+      "lendLede": "Ces demandes correspondent à votre actif. En financer une ouvre immédiatement le prêt aux conditions de la demande.",
+      "wholeOfferNote": "Les offres sont prises en entier — le montant affiché sera celui du prêt.",
+      "choose": "Choisir",
+      "emptyBorrow": "Aucune offre correspondante pour le moment.",
+      "emptyLend": "Aucune demande correspondante pour le moment.",
+      "orPostBorrow": "Publier plutôt ma propre demande d'emprunt",
+      "orPostLend": "Publier plutôt ma propre offre de prêt",
+      "unavailable": "Impossible de charger les offres correspondantes pour le moment. Vous pouvez tout de même publier la vôtre ci-dessous.",
+      "loanOpened": "Prêt ouvert",
+      "borrowerNext": "Les fonds sont dans votre Vaipakam Vault et votre garantie est verrouillée. Remboursez avant l'échéance pour la récupérer — tout est dans Mes positions.",
+      "lenderNext": "Vos fonds sont prêtés et la garantie de l'emprunteur est verrouillée. Suivez le remboursement dans Mes positions ; vous récupérerez vos fonds après son remboursement.",
+      "wrongSide": "Ce lien pointe vers l'autre côté du marché — une offre de prêt s'accepte depuis Emprunter, une demande d'emprunt depuis Prêter.",
+      "wrongKind": "Cette offre implique un NFT — ouvrez-la depuis la page Location de NFT.",
+      "ownOffer": "C'est votre propre offre — vous pouvez l'annuler depuis Mes positions, mais vous ne pouvez pas l'accepter vous-même.",
+      "offerGone": "Cette offre n'est plus ouverte. Parcourez les correspondances actuelles ci-dessous ou publiez la vôtre.",
+      "counterpartyBlocked": "L'autre côté de cette offre ne peut pas transiger pour le moment (marque de conformité), elle ne peut donc pas être acceptée. Rien n'a été envoyé.",
+      "offerNotFound": "Nous n'avons pas trouvé cette offre — le lien est peut-être ancien, ou la source de données est en train de rattraper son retard. Parcourez les offres actuelles ci-dessous.",
+      "termsChanged": "Les conditions de cette offre ont changé depuis votre examen. Rien n'a été envoyé — veuillez examiner l'offre mise à jour.",
+      "illiquidWarning": "Un côté de cette opération n'est pas valorisé par le protocole — il n'a pas de prix de marché utilisable ni de marché assez profond pour l'instant. En cas de défaut, toute la garantie est transférée directement au prêteur — personne ne la vend d'abord à un prix de marché équitable, et il n'y a pas de liquidation automatique basée sur le prix. Continuez seulement si vous l'acceptez.",
+      "interestModeFullTerm": "L'intérêt porte sur toute la durée : l'intérêt de toute la durée s'applique même si le prêt est remboursé tôt.",
+      "interestModeProRata": "L'intérêt s'accumule jour après jour — rembourser tôt coûte moins cher.",
+      "interestModeProRataLender": "L'intérêt s'accumule jour après jour — si l'emprunteur rembourse tôt, vous gagnez moins.",
+      "saleLoanChecking": "Lecture du prêt en cours derrière cette annonce — l'examen doit afficher ses vrais chiffres avant que vous puissiez signer.",
+      "saleLoanCheckFailed": "Impossible de lire le prêt en cours derrière cette annonce, et l'examen doit afficher ses vrais chiffres — la signature reste en pause jusqu'à réussite.",
+      "saleLoanNotActive": "Le prêt derrière cette annonce n'est plus actif, cet achat ne peut donc pas se terminer. Rien n'a été envoyé ni approuvé.",
+      "saleSellerNotCovered": "L'approbation permanente de règlement du vendeur ne couvre plus la finalisation de cette vente, l'achat échouerait donc on-chain. Rien n'a été envoyé ni approuvé — le vendeur doit restaurer son approbation (sa carte d'annonce affiche une action de restauration).",
+      "saleMaturityPassed": "Ce prêt a atteint son échéance — la position ne peut plus être achetée. Rien n'a été envoyé ni approuvé.",
+      "saleBought": "Position achetée",
+      "saleSelfBuy": "Vous êtes l'emprunteur de ce prêt, vous ne pouvez donc pas aussi acheter son côté prêteur — le protocole le rejette. Rembourser ou clôturer tôt depuis Mes positions sont vos options. Rien n'a été envoyé ni approuvé.",
+      "liquidityChecking": "Vérification de la manière dont ces actifs sont valorisés par le protocole…",
+      "liquidityCheckFailed": "Impossible de vérifier la valorisation de ces actifs, et cette vérification détermine un avertissement important — la signature reste en pause jusqu'à réussite.",
+      "linkedLoanCheckFailed": "Impossible de vérifier si cette offre est une vente de position d'un prêt en cours, et cette vérification détermine une information importante — la signature reste en pause jusqu'à réussite.",
+      "graceChecking": "Confirmation de la fenêtre de grâce de remboursement utilisée pour juger cette opération…",
+      "graceCheckFailed": "Impossible de confirmer la fenêtre de grâce de remboursement, et l'examen doit afficher la vraie — la signature reste en pause jusqu'à réussite.",
+      "riskGateBlocked": "Les règles d'accès au risque du protocole bloquent cette acceptation pour votre portefeuille pour le moment — il faut un accord on-chain permanent ou un niveau d'accès que cette app ne peut pas encore collecter. Rien n'a été envoyé ni approuvé."
+    },
+    "borrow": {
+      "title": "Emprunter des actifs",
+      "lede": "Dites-nous ce dont vous avez besoin et ce que vous pouvez verrouiller en garantie. Nous vous montrerons exactement ce que vous devrez avant toute signature.",
+      "postRequest": "Publier une demande d'emprunt",
+      "posted": "Demande d'emprunt publiée",
+      "postedNext": "Votre garantie est verrouillée tant que la demande est ouverte. Les fonds arrivent seulement lorsqu'un prêteur accepte — nous afficherons le prêt dans Mes positions.",
+      "collateralWarning": "Si vous ne remboursez pas à temps, le prêteur peut recevoir votre garantie.",
+      "lockNow": "Votre garantie est verrouillée lorsque vous publiez cette demande. Vous pouvez l'annuler avant qu'un prêteur accepte pour la déverrouiller.",
+      "collateralPrecheck": "Avant de continuer —"
+    },
+    "lend": {
+      "title": "Gagner en prêtant",
+      "lede": "Choisissez quoi prêter et le rendement que vous voulez. Prêter, c'est choisir un risque, pas seulement un rendement — vous verrez le revers avant de signer.",
+      "postOffer": "Publier une offre de prêt",
+      "posted": "Offre de prêt publiée",
+      "postedNext": "Vos tokens sont verrouillés tant que l'offre est ouverte. Lorsqu'un emprunteur accepte, le prêt apparaît dans Mes positions. Vous pouvez annuler avant acceptation pour déverrouiller vos tokens.",
+      "yieldNotGuaranteed": "Intérêt attendu si l'emprunteur rembourse à temps.",
+      "defaultOutcome": "Si l'emprunteur fait défaut, votre récupération dépend de sa garantie."
+    },
+    "rent": {
+      "title": "Louer ou prêter un NFT",
+      "lede": "Les locations de NFT donnent des droits d'usage temporaires — jamais la propriété. Le NFT reste verrouillé dans le vault de son propriétaire pendant toute la location.",
+      "ownPath": "Je possède un NFT à louer",
+      "ownPathBlurb": "Fixez des frais quotidiens — les locataires prépaient toute la location.",
+      "wantPath": "Je veux louer un NFT",
+      "wantPathBlurb": "Payez d'avance, utilisez le NFT jusqu'à la fin de la location.",
+      "browseCta": "Parcourir les NFT disponibles à la location",
+      "custodyNote": "Le NFT ne quitte jamais la garde du vault. Le locataire reçoit seulement des droits d'usage temporaires — pas la propriété.",
+      "postListing": "Publier une annonce de location",
+      "listingPosted": "Annonce de location publiée",
+      "listingPostedNext": "Votre NFT est détenu dans votre vault tant que l'annonce est ouverte. Lorsqu'un locataire accepte, la location apparaît dans Mes positions ; annulez l'annonce à tout moment avant cela pour récupérer le NFT.",
+      "acceptRental": "Louer ce NFT",
+      "rentalOpened": "Location démarrée",
+      "rentalOpenedNext": "Vous détenez maintenant les droits d'usage jusqu'à la fin de la location — le NFT lui-même reste dans le vault du propriétaire. Vos frais prépayés couvrent toute la durée ; clôturez à temps et le tampon vous revient.",
+      "checkOwnNft": "Vous possédez ce NFT",
+      "checkNotOwner": "Le portefeuille connecté ne possède pas ce NFT — vérifiez l'adresse du contrat et le token id.",
+      "browseTitle": "NFT disponibles à la location",
+      "browseEmpty": "Aucune annonce de location pour le moment.",
+      "browseEmptyCta": "Vous possédez un NFT ? Utilisez le sélecteur ci-dessus pour le proposer à la location — les locataires prépaient toute la location, donc un marché vide est une opportunité.",
+      "browseUnavailable": "Impossible de charger les annonces de location pour le moment. Réessayez dans un instant.",
+      "notDebt": "Une location n'est pas un prêt : il n'y a rien à rembourser — vos frais sont prépayés et vos droits expirent simplement à la fin de la durée.",
+      "no4907Warning": "Attention : cette collection NFT ne prend pas en charge le standard de location on-chain (ERC-4907). La location fonctionne tout de même — Vaipakam suit les droits d'usage du locataire dans votre vault — mais les apps et jeux hors Vaipakam ne reconnaîtront pas le locataire.",
+      "no4907Unknown": "Nous n'avons pas pu vérifier si cette collection NFT prend en charge le standard de location on-chain (ERC-4907). Si ce n'est pas le cas, les apps hors Vaipakam ne reconnaîtront pas le locataire — la location dans Vaipakam fonctionne tout de même.",
+      "vpfiPrepayListing": "Cette annonce demande un paiement en VPFI, ce que les locations n'autorisent pas — elle ne peut pas être acceptée. Choisissez une autre annonce.",
+      "vpfiCheckRetry": "Impossible de vérifier l'actif de paiement de cette annonce pour le moment — rien n'a été envoyé ni approuvé. Réessayez dans un instant.",
+      "vpfiPrepayNotAllowed": "VPFI ne peut pas servir d'actif de paiement de location — choisissez un autre token."
+    },
+    "preclose": {
+      "title": "Clôturer ce prêt en avance",
+      "blurb": "Payez tout maintenant et clôturez le prêt aujourd'hui — votre garantie est libérée juste après.",
+      "fullTermNote": "Ce prêt utilise un intérêt sur toute la durée, donc le clôturer tôt paie tout de même l'intérêt de toute la durée.",
+      "proRataNote": "Ce prêt accumule l'intérêt jour après jour, donc le clôturer tôt paie seulement ce qui a été accumulé.",
+      "action": "Clôturer tôt",
+      "confirm": "Confirmer — payer et clôturer maintenant",
+      "done": "Prêt clôturé en avance. Votre garantie est prête — retirez-la ci-dessous ou depuis le Centre de retrait.",
+      "checking": "Vérification de la possibilité de clôturer ce prêt en avance…",
+      "checkFailed": "Impossible de lire le coût de clôture anticipée de ce prêt pour le moment — nouvelle tentative. Le remboursement normal reste disponible ci-dessous.",
+      "graceNote": "Ce prêt a dépassé son échéance. Le montant ci-dessous inclut déjà les frais de retard (ils augmentent un peu chaque jour), et cette méthode de clôture reste possible seulement jusqu'à la fin de la fenêtre de grâce.",
+      "graceFeeReceiptNote": "Les frais de retard pour échéance dépassée sont inclus dans ce montant — les mêmes frais qu'un remboursement normal facturerait."
+    },
+    "refinance": {
+      "title": "Refinancer ce prêt",
+      "blurb": "Publiez une demande de nouveau prêt à de meilleures conditions. Dès qu'un prêteur l'accepte, votre prêt actuel est remboursé et clôturé automatiquement dans la même transaction — votre garantie passe au nouveau prêt sans jamais être déverrouillée.",
+      "rateLabel": "Taux annuel le plus élevé que vous accepteriez",
+      "durationLabel": "Nouvelle durée du prêt (jours)",
+      "action": "Examiner la demande de refinancement",
+      "confirm": "Confirmer — publier la demande de refinancement",
+      "payoffNote": "Le remboursement de sortie de l'ancien prêt est toujours le principal plus l'intérêt complet de la durée restante — même si le prêt accumule normalement jour après jour. C'est le droit fixe du prêteur sortant lors d'une sortie anticipée.",
+      "shortIsSafe": "Si votre portefeuille est insuffisant lorsqu'un prêteur tente d'accepter, l'acceptation échoue simplement — rien n'est pris et votre prêt actuel continue inchangé.",
+      "periodicWarning": "Ce prêt paie l'intérêt selon un calendrier périodique. Si une période de paiement devient en retard pendant que la demande est ouverte, l'acceptation d'un prêteur échouera jusqu'à règlement de cette période — gardez les paiements du prêt à jour.",
+      "done": "Demande de refinancement publiée. Lorsqu'un prêteur l'acceptera, ce prêt se clôturera automatiquement — vous n'avez rien d'autre à faire. Vous pouvez annuler la demande ci-dessous (l'annulation s'ouvre quelques minutes après la publication).",
+      "pendingAccepted": "Votre demande de refinancement a été acceptée — ce prêt est en cours de remplacement par le nouveau. Actualisez dans un instant pour voir l'état final.",
+      "pendingLoanClosed": "Ce prêt s'est clôturé autrement depuis, la demande ne peut donc plus se terminer — annulez-la pour supprimer aussi son approbation permanente de payoff.",
+      "cancel": "Annuler la demande de refinancement",
+      "cancelSoon": "L'annulation s'ouvre quelques minutes après la publication — réessayez bientôt.",
+      "cancelled": "Demande de refinancement annulée et approbation de payoff supprimée — ce prêt continue inchangé. Si vous avez d'autres annonces ou demandes utilisant le même token, restaurez leurs approbations depuis leurs cartes.",
+      "cancelledRevokeFailed": "Demande de refinancement annulée — ce prêt continue inchangé. L'approbation permanente de payoff n'a pas pu être supprimée automatiquement ; vous pouvez la révoquer depuis la vue des approbations de tokens de votre portefeuille.",
+      "allowanceShort": "L'approbation de payoff ne couvre plus tout ce que cette demande pourrait tirer — l'acceptation d'un prêteur pourrait échouer (une acceptation après l'échéance tire aussi les frais de retard et l'intérêt supplémentaire). Restaurez-la ci-dessous ou annulez la demande.",
+      "reapprove": "Restaurer l'approbation de payoff",
+      "reapproved": "Approbation de payoff restaurée — la demande peut à nouveau se terminer.",
+      "reapproveAborted": "Cette demande ne peut plus se terminer (acceptée, annulée ou prêt clôturé) — rien n'a été approuvé. Actualisez pour voir l'état le plus récent.",
+      "guardrailNote": "Votre demande porte sa propre expiration et ses garde-fous on-chain : elle ne peut se terminer qu'au taux défini ici ou en dessous, et jamais après l'expiration affichée dans cet examen.",
+      "graceNote": "Ce prêt a dépassé son échéance. Un prêteur peut encore accepter cette demande jusqu'à la fin de la fenêtre de grâce, et le payoff inclut déjà les frais de retard (ils augmentent un peu chaque jour).",
+      "pendingPastGrace": "Ce prêt a dépassé son échéance et sa fenêtre de grâce, aucun prêteur ne peut donc plus accepter cette demande — elle ne bloque plus vos autres actions ici. Annulez-la ci-dessous pour supprimer aussi son approbation permanente de payoff.",
+      "cadenceChangeNote": "Votre prêt actuel paie l'intérêt selon un calendrier. Le prêt de remplacement ne le fera PAS — son intérêt se règle à la clôture. Assurez-vous que ce changement de trésorerie est bien ce que vous voulez.",
+      "multiStepNote": "La publication prend jusqu'à trois confirmations de portefeuille (garde-fous, approbation de payoff, demande elle-même). Si vous vous arrêtez en cours de route, les étapes précédentes restent on-chain jusqu'à publication complète ou annulation — l'annulation supprime aussi l'approbation.",
+      "partialBlockedByPending": "Une demande de refinancement est active pour ce prêt. Un remboursement partiel changerait le montant et rendrait cette demande définitivement inacceptable — annulez d'abord la demande de refinancement.",
+      "precloseBlockedByPending": "Une demande de refinancement est active pour ce prêt. Le clôturer tôt maintenant la laisserait bloquée — annulez d'abord la demande de refinancement.",
+      "repayWarnPending": "Une demande de refinancement est encore active pour ce prêt. Le remboursement règle le prêt, après quoi la demande ne pourra jamais se terminer — annulez-la ensuite depuis sa carte (cela supprime aussi son approbation permanente de payoff) ; d'ici là elle reste simplement en place jusqu'à expiration."
+    },
+    "approvals": {
+      "title": "Approbations permanentes de tokens",
+      "blurb": "Ce sont les permissions de dépense que votre portefeuille a accordées au contrat Vaipakam pour les tokens touchés par vos prêts et offres. Certains flux les définissent volontairement (payoff d'une demande de refinancement, règlement d'une annonce de vente) ; tout reste d'une tentative abandonnée peut être supprimé ici.",
+      "revokeWarning": "Attention : si une demande de refinancement active ou une annonce de vente dépend de l'approbation d'un token, la révoquer fera échouer ce flux jusqu'à restauration depuis sa carte — la carte vous avertira rapidement.",
+      "scopeNote": "Cette liste couvre les tokens vus dans vos prêts et offres Vaipakam sur ce réseau. Les approbations accordées à d'autres apps ou pour d'autres tokens ne sont pas affichées — la vue d'approbations de tokens de votre portefeuille reste la référence complète.",
+      "none": "Aucune approbation permanente à Vaipakam trouvée pour vos tokens connus.",
+      "loading": "Lecture de vos approbations permanentes…",
+      "unavailable": "Impossible de lire vos approbations pour le moment — réessayez dans un instant.",
+      "sourcesUnavailable": "Impossible de charger vos prêts et offres pour le moment, cette liste ne peut donc pas être complète — plutôt qu'afficher une image partielle, réessayez dans un instant.",
+      "revoke": "Révoquer",
+      "staleNote": "Impossible de rafraîchir cette liste pour le moment — les lignes affichées peuvent être légèrement obsolètes. La révocation fonctionne tout de même."
+    },
+    "nftVerifier": {
+      "title": "Vérificateur NFT",
+      "lede": "Les NFT de position Vaipakam portent de vrais droits de retrait — celui qui en détient un contrôle ce côté du prêt. Vérifiez tout token id avant de lui faire confiance.",
+      "placeholder": "Token id du NFT de position",
+      "check": "Vérifier",
+      "checking": "Vérification de ce token on-chain…",
+      "checkFailed": "Impossible de vérifier ce token pour le moment — réessayez dans un instant.",
+      "ownerLabel": "Détenteur actuel",
+      "roleLabel": "Côté qu'il contrôle",
+      "roleLender": "Côté prêteur — son détenteur encaisse le remboursement ou la récupération.",
+      "roleBorrower": "Côté emprunteur — son détenteur rembourse et récupère la garantie.",
+      "roleUnknown": "Impossible de lire les détails de rôle de ce token pour le moment.",
+      "loanLabel": "Prêt lié",
+      "offerLabel": "Créé pour l'offre",
+      "lockUnrecognized": "Verrouillé au transfert pour une raison que cette version de l'app ne reconnaît pas — il ne peut pas être transféré tant que ce flux n'est pas terminé ou annulé.",
+      "lockUnknown": "Impossible de lire si ce token est verrouillé au transfert pour le moment — ne vous fiez pas à sa transférabilité tant que cette lecture n'est pas nette.",
+      "positionRowLabel": "Votre NFT de position",
+      "lockLabel": "Verrou de transfert",
+      "lockPrecloseOffset": "Verrouillé pour une clôture anticipée par offset — il ne peut pas être transféré tant que cela n'est pas terminé ou annulé.",
+      "lockSale": "Verrouillé pour une annonce de vente de position — il ne peut pas être transféré tant que la vente n'est pas terminée ou l'annonce annulée.",
+      "lockPrepayListing": "Verrouillé pour une annonce de garantie — il ne peut pas être transféré tant que cette annonce existe.",
+      "sanctionsLabel": "Statut de conformité",
+      "sanctionsFlagged": "Le détenteur actuel est signalé par la conformité : ce NFT ne peut pas entrer ni sortir de son portefeuille, et ses retraits restent gelés jusqu'à levée du signalement. N'achetez pas ce token en espérant sa livraison.",
+      "sanctionsUnknown": "Impossible de vérifier le statut de conformité du détenteur pour le moment — un détenteur signalé signifie que le token ne peut pas être transféré ; revérifiez avant de vous y fier.",
+      "inKindLabel": "Paiement en cas de défaut",
+      "inKindNote": "Si l'emprunteur du prêt lié fait défaut, ce retrait paie la garantie brute du prêt en nature — le protocole ne la valorise ni ne la vend pour vous. Évaluez ce que vous recevriez réellement avant d'acheter cette position.",
+      "liveNote": "Live signifie exactement ceci : le token existe ici et son détenteur contrôle la position liée. Cela ne garantit pas la santé du prêt ni le comportement de l'autre côté.",
+      "goneBody": "Soit son retrait a été effectué et le token a été retiré, soit il n'a jamais été minté ici — le réseau ne précise pas lequel. Traitez toute offre de vente ou transfert de ce token id comme sans valeur sur ce réseau."
+    },
+    "keepers": {
+      "title": "Permissions de keepers",
+      "blurb": "Les keepers sont des services tiers (ou votre propre bot) que vous pouvez autoriser à exécuter certaines actions de prêt POUR vous — démarrer une clôture anticipée, terminer un refinancement configuré, lister une position à vendre. Tout est désactivé tant que vous ne l'activez pas, et trois interrupteurs doivent être d'accord avant qu'un keeper puisse agir : l'interrupteur principal, l'action sur ce keeper et un interrupteur par prêt sur chaque page de prêt.",
+      "safetyNote": "Un keeper ne peut jamais recevoir votre argent — les paiements vont toujours au détenteur de la position. Vous pouvez révoquer n'importe quel keeper (ou couper l'interrupteur principal) à tout moment, le protocole peut mettre tous les keepers en pause d'un coup, et les refinancements sont aussi bornés par les garde-fous que vous définissez par prêt. Si une position change de mains, ces permissions s'appliquent aux paramètres du nouveau détenteur, pas aux vôtres.",
+      "masterLabel": "Autoriser mes keepers approuvés à agir (interrupteur principal — rien ne s'exécute lorsqu'il est désactivé)",
+      "addressPlaceholder": "0x… adresse du keeper",
+      "actions": {
+        "initPreclose": {
+          "label": "Démarrer une clôture anticipée de prêt pour moi",
+          "side": "agit sur les prêts que vous avez empruntés",
+          "blurb": "Démarre tout chemin de clôture anticipée sur un prêt dont vous êtes l'emprunteur. Le payoff vient toujours de votre portefeuille selon vos approbations permanentes."
+        },
+        "refinance": {
+          "label": "Terminer un refinancement pour moi",
+          "side": "agit sur les prêts que vous avez empruntés",
+          "blurb": "Termine un refinancement que vous avez configuré, borné par les garde-fous (plafond de taux, date de fin) que vous avez approuvés — et par le kill switch keeper du protocole."
+        },
+        "completeOffset": {
+          "label": "Terminer une clôture par offset pour moi",
+          "side": "agit sur les prêts que vous avez empruntés",
+          "blurb": "Termine une clôture anticipée par offset une fois son offre acceptée."
+        },
+        "extend": {
+          "label": "Prolonger un prêt en place pour moi",
+          "side": "agit sur les prêts que vous avez empruntés",
+          "blurb": "Prolonge un prêt sans le rouvrir — seulement lorsque les DEUX côtés ont accepté des limites de prolongation."
+        },
+        "initEarlyWithdraw": {
+          "label": "Lister ma position de prêt à vendre",
+          "side": "agit sur les prêts que vous avez financés",
+          "blurb": "Démarre une sortie anticipée prêteur en listant un prêt que vous avez financé. Le produit vous est toujours versé uniquement à vous."
+        },
+        "completeLoanSale": {
+          "label": "Terminer une vente de position pour moi",
+          "side": "agit sur les prêts que vous avez financés",
+          "blurb": "Termine une vente de position acceptée, transférant le prêt à son acheteur. Le paiement est toujours routé uniquement vers vous."
+        }
+      },
+      "enabledOn": "Accès keeper activé. Les keepers peuvent maintenant agir là où vous avez donné des permissions ET où l'interrupteur du prêt est activé.",
+      "enabledOff": "Accès keeper désactivé — aucun keeper ne peut agir pour vous où que ce soit tant que cela reste désactivé.",
+      "addTitle": "Approuver un keeper",
+      "add": "Approuver le keeper",
+      "added": "Keeper approuvé. Rappel : il ne peut agir que sur les prêts où vous activez aussi l'interrupteur keeper de ce prêt.",
+      "alreadyListed": "Ce keeper est déjà approuvé — modifiez plutôt ses permissions ci-dessus.",
+      "save": "Enregistrer les permissions",
+      "updated": "Permissions de keeper mises à jour.",
+      "revoke": "Révoquer",
+      "revoked": "Keeper révoqué — il ne peut plus agir pour vous nulle part.",
+      "maskUnreadable": "Impossible de lire les permissions actuelles de ce keeper, l'édition est donc désactivée (enregistrer maintenant pourrait les écraser silencieusement). Réessayez dans un instant ; la révocation fonctionne toujours.",
+      "extraBitsNote": "Ce keeper détient aussi des permissions avancées non affichées ici — elles sont conservées inchangées lorsque vous enregistrez.",
+      "perLoanReminder": "Approuver un keeper ici ne suffit pas : chaque page de prêt a aussi un interrupteur keeper par prêt qui doit être activé.",
+      "loading": "Chargement de vos paramètres de keepers…",
+      "staleWarning": "Impossible de rafraîchir vos paramètres de keepers pour le moment — ce qui est affiché peut être légèrement obsolète. Révoquer et enregistrer fonctionnent toujours.",
+      "unavailable": "Impossible de charger vos paramètres de keepers pour le moment — réessayez dans un instant.",
+      "loanTitle": "Keepers pour ce prêt",
+      "loanBlurb": "Vos keepers approuvés ne peuvent agir sur ce prêt que lorsque son interrupteur est activé. Les actions restent bornées par les permissions accordées dans Paramètres.",
+      "loanToggleOn": "Keeper activé pour ce prêt.",
+      "loanToggleOff": "Keeper désactivé pour ce prêt.",
+      "loanEnablesUnavailable": "Impossible de lire les interrupteurs keeper de ce prêt pour le moment — les bascules sont en pause jusqu'à réussite de la lecture (leur état affiché peut être obsolète).",
+      "loanNoKeepers": "Vous n'avez encore approuvé aucun keeper — configurez-les dans Paramètres → Permissions de keepers.",
+      "loanMasterOff": "Votre interrupteur principal keeper est désactivé, donc rien ne peut s'exécuter même si l'interrupteur de ce prêt est activé — activez-le dans Paramètres → Permissions de keepers."
+    },
+    "earlyExit": {
+      "title": "Sortir tôt de ce prêt",
+      "blurb": "Vendez votre côté de ce prêt à un autre prêteur disposant d'une offre de prêt ouverte correspondante. Vous êtes payé immédiatement depuis ses fonds déjà verrouillés — rien à approuver, rien à retirer ensuite — et les conditions de l'emprunteur ne changent pas.",
+      "pickerLead": "Offres de prêt ouvertes pouvant vous racheter :",
+      "none": "Aucune offre de prêt correspondante pour le moment. Une offre doit correspondre aux actifs de ce prêt, couvrir son montant restant et tenir dans sa durée restante — revenez plus tard.",
+      "unavailable": "Impossible de charger les offres correspondantes pour le moment — réessayez dans un instant.",
+      "shortfallWarn": "Cet acheteur attend un taux plus élevé que celui payé par votre prêt, et pour ce candidat cette différence de taux (pas l'intérêt accumulé — vous payez le plus grand des deux, jamais les deux) fixe votre paiement.",
+      "forfeitNote": "Sortir tôt abandonne l'intérêt accumulé jusqu'ici : il couvre la part du protocole et, lorsque le taux de l'acheteur est plus élevé, aide à combler l'écart. Le chiffre affiché en tient déjà compte.",
+      "action": "Examiner la sortie",
+      "confirm": "Confirmer — vendre ma position",
+      "done": "Position vendue — le paiement est déjà dans votre portefeuille, et ce prêt appartient maintenant au nouveau prêteur. Plus rien à faire ici.",
+      "loadingOffers": "Recherche d'offres de prêt correspondantes…",
+      "figureMoved": "Le chiffre de paiement a évolué avec le temps, l'examen s'est donc fermé — rouvrez-le pour confirmer sur le chiffre actuel.",
+      "checking": "Vérification de la possibilité de sortir tôt de ce prêt…",
+      "checkFailed": "Impossible de lire les détails de sortie de ce prêt pour le moment — nouvelle tentative."
+    },
+    "loanSale": {
+      "title": "Lister cette position à vendre",
+      "blurb": "Définissez le taux annuel que gagnerait un acheteur pour la durée restante du prêt et listez publiquement votre position. Lorsqu'un acheteur accepte, vous recevez le montant restant dû complet dans cette même transaction. (Si une offre correspondante ci-dessus paie déjà assez, la sortie instantanée est plus simple — la listing sert à nommer votre prix et attendre.)",
+      "rateLabel": "Taux annuel gagné par l'acheteur",
+      "action": "Examiner l'annonce",
+      "confirm": "Confirmer — lister ma position",
+      "lockWarning": "Lister verrouille votre NFT de position prêteur — il ne peut pas être transféré tant que la vente n'est pas terminée ou que vous n'annulez pas l'annonce. Vos droits de retrait ne sont pas affectés.",
+      "sweetenNote": "Un taux supérieur au taux du prêt attire plus vite les acheteurs, mais la différence pour la durée restante sort de votre portefeuille à la finalisation.",
+      "done": "Position listée. Lorsqu'un acheteur accepte, la vente se règle automatiquement — gardez l'approbation permanente (et un solde suffisant pour le montant de règlement) en place jusque-là, ou annulez l'annonce ci-dessous.",
+      "pendingNoId": "Cette position est listée à vendre (listée depuis un autre appareil, donc l'annulation n'est pas disponible ici — annulez là où elle a été listée). Votre NFT prêteur est verrouillé tant que l'annonce existe.",
+      "allowanceShort": "L'approbation permanente de règlement (ou le solde de votre portefeuille) ne couvre plus ce que l'acceptation d'un acheteur tirerait — la vente échouerait maintenant. Restaurez-la ci-dessous ou annulez l'annonce.",
+      "restore": "Restaurer l'approbation de règlement",
+      "restored": "Approbation de règlement restaurée — l'annonce peut à nouveau se terminer.",
+      "cancel": "Annuler l'annonce",
+      "cancelled": "Annonce annulée — votre NFT prêteur est déverrouillé et l'approbation de règlement a été supprimée (si vous avez d'autres annonces ou demandes utilisant le même token, restaurez leurs approbations depuis leurs cartes). Le prêt continue inchangé.",
+      "cancelledRevokeFailed": "Annonce annulée et votre NFT prêteur déverrouillé. L'approbation permanente de règlement n'a pas pu être supprimée automatiquement — vous pouvez la révoquer depuis la vue des approbations de tokens de votre portefeuille.",
+      "cancelSoon": "L'annulation s'ouvre quelques minutes après la listing — réessayez bientôt.",
+      "restoreAborted": "Cette annonce n'existe plus (vendue, annulée ou déverrouillée) — rien n'a été approuvé. Actualisez pour voir l'état le plus récent.",
+      "loanSettledWhileListed": "Ce prêt a été réglé, la vente listée ne pourra donc jamais se terminer — annulez-la pour déverrouiller votre NFT prêteur et supprimer l'approbation permanente.",
+      "fundingUnknown": "Impossible d'identifier l'enregistrement d'offre de cette annonce depuis cet appareil, nous ne pouvons donc pas vérifier son financement de règlement ici — gérez-la depuis l'appareil qui l'a listée, ou gardez une approbation et un solde généreux.",
+      "ended": "Votre annonce de vente n'est plus active. Si un acheteur l'a acceptée, le paiement est déjà dans votre portefeuille et le règlement a été tiré via l'approbation permanente ; toute approbation restante peut être révoquée depuis la vue des approbations de tokens de votre portefeuille.",
+      "listingUnavailable": "Lister votre position à votre propre prix n'est pas encore disponible — l'étape on-chain nécessaire est en cours de correction. La sortie instantanée ci-dessus fonctionne : elle vend immédiatement dans une offre ouverte correspondante.",
+      "partialBlockedByListing": "Le prêteur a listé cette position à vendre au montant restant dû actuel. Le remboursement partiel est en pause tant que l'annonce existe — il changerait ce montant et induirait un acheteur en erreur. Vous pouvez toujours rembourser intégralement ou clôturer tôt à tout moment."
+    },
+    "positions": {
+      "title": "Mes positions",
+      "lede": "Vos prêts et locations, avec l'action dont chacun a besoin maintenant.",
+      "emptyTitle": "Aucune position active pour l'instant",
+      "emptyBody": "Empruntez ou prêtez pour commencer.",
+      "unavailable": "Impossible de charger vos positions pour le moment. Vos fonds ne sont pas affectés — réessayez dans un instant.",
+      "sourcesDegraded": "Une des sources de données de cette page est temporairement indisponible. Vos positions actuelles sont affichées depuis la source restante et les éléments récemment modifiés peuvent mettre un moment à apparaître.",
+      "roleBorrower": "Vous avez emprunté",
+      "roleLender": "Vous avez prêté",
+      "groupAttention": "Nécessite votre attention",
+      "groupActive": "Prêts actifs",
+      "groupEnded": "Prêts terminés",
+      "claimWaiting": "Retrait en attente",
+      "seeActivity": "Voir tout votre historique d'activité →",
+      "graceOverViewer": "La période de grâce est terminée — le prêt peut maintenant être marqué en défaut, et la garantie revient au prêteur.",
+      "graceUnknownBorrower": "Ce prêt est en retard et la fenêtre de grâce peut être proche de la fin — impossible de lire l'échéance exacte pour le moment. Remboursez dès que possible, avant que le prêteur puisse prendre la garantie.",
+      "graceUnknownLender": "Ce prêt est en retard — impossible de lire l'échéance exacte de la grâce pour le moment. Une fois la fenêtre de grâce terminée et le défaut enregistré, le retrait de garantie apparaîtra ici.",
+      "graceUnknownViewer": "Ce prêt est en retard. Une fois sa fenêtre de grâce terminée, le prêteur pourra réclamer la garantie.",
+      "graceOverBorrower": "La période de grâce est terminée — le protocole n'accepte plus le remboursement, et le prêteur peut prendre la garantie à tout moment. Une fois réclamée, le résultat apparaîtra ici.",
+      "graceOverLender": "La période de grâce est terminée — ce prêt peut maintenant être marqué en défaut. Cela se produit normalement automatiquement peu après ; une fois le défaut enregistré, le retrait de garantie apparaîtra ici.",
+      "fallbackCureBorrower": "Ce prêt a dépassé sa période de grâce et un défaut est en cours de règlement. Vous pouvez encore rembourser intégralement pour le régulariser et récupérer votre garantie — mais seulement jusqu'à ce que le prêteur finalise le défaut, ce qui peut arriver à tout moment.",
+      "owedDefaulted": "Plus rien à rembourser — ce prêt s'est terminé en défaut et la garantie le couvre.",
+      "owedDefaultedNoCollateral": "Plus rien à rembourser — ce prêt s'est terminé en défaut et a été réglé.",
+      "owedClosed": "Rien — ce prêt est clôturé et réglé.",
+      "whatNextRepaidBorrower": "Vous avez remboursé ce prêt. Plus rien ne peut lui arriver — retirez votre garantie ci-dessous si ce n'est pas déjà fait.",
+      "whatNextRepaidLender": "L'emprunteur a remboursé. Plus rien ne peut arriver à ce prêt — retirez vos fonds ci-dessous si ce n'est pas déjà fait.",
+      "whatNextRepaidViewer": "L'emprunteur a remboursé. Plus rien ne peut arriver à ce prêt — les retraits restants appartiennent aux détenteurs de position.",
+      "whatNextDefaultedBorrower": "Ce prêt s'est déjà terminé en défaut. Tout reste après règlement est retirable (il peut être nul).",
+      "whatNextDefaultedLender": "Ce prêt s'est déjà terminé en défaut — ce qui a été récupéré est retirable dans le Centre de retrait.",
+      "whatNextDefaultedViewer": "Ce prêt s'est déjà terminé en défaut — la récupération du règlement appartient aux détenteurs de position.",
+      "whatNextInternalMatchBorrower": "Ce prêt a été clôturé par matching interne. Récupérez tout résidu et rebate VPFI ci-dessous (chacun peut être nul).",
+      "whatNextInternalMatchLender": "Ce prêt a été clôturé par matching interne — récupérez vos fonds ci-dessous si ce n'est pas déjà fait.",
+      "whatNextInternalMatchViewer": "Ce prêt a été clôturé par matching interne — les retraits résiduels appartiennent aux détenteurs de position.",
+      "whatNextClosed": "Ce prêt est entièrement réglé — il ne reste rien à faire.",
+      "whatNextRentalEnded": "Cette location est terminée. Les frais gagnés ou le tampon remboursable peuvent être retirés ci-dessous par les détenteurs de position — rien d'autre ne peut changer.",
+      "settledAhead": "Cette position est déjà clôturée on-chain — l'état ici est live. Vos listes peuvent mettre un moment à se mettre à jour."
+    },
+    "powerSurface": {
+      "body": "Ceci est un écran pour utilisateurs avancés — offres brutes et taux en direct, avec moins d'accompagnement. Les flux guidés Emprunter et Prêter couvrent les mêmes actions avec des explications étape par étape.",
+      "guidedBorrow": "Emprunt guidé",
+      "guidedLend": "Prêt guidé",
+      "enableAdvanced": "Je sais ce que je fais — activer le mode Avancé",
+      "dismiss": "Fermer"
+    },
+    "claims": {
+      "title": "Retraits",
+      "lede": "Argent et actifs prêts à être récupérés.",
+      "empty": "Rien à retirer pour le moment.",
+      "emptyBody": "Lorsqu'un prêt ou une location auquel vous participez se termine, tout ce qui vous est dû apparaît ici automatiquement.",
+      "emptyCta": "Voir mes positions",
+      "unavailable": "Impossible de charger vos retraits pour le moment. Vos fonds ne sont pas affectés — réessayez dans un instant.",
+      "claim": "Retirer",
+      "claimed": "Retrait terminé.",
+      "allTitle": "Tout retirer en une fois",
+      "allBlurb": "Récupérez tous les paiements prêts avec une seule signature de portefeuille au lieu d'un par un.",
+      "allEmpty": "Rien ne peut être groupé pour le moment.",
+      "allVpfiNote": "Retirer des VPFI stationnés baisse votre niveau de réduction de frais — désactivé par défaut.",
+      "allResidualNote": "Tout ce qui n'était pas prêt reste listé ci-dessous pour être retiré seul.",
+      "allRewardsUnavailable": "Impossible de vérifier vos récompenses, elles ne sont donc pas dans ce lot — retirez-les séparément.",
+      "allVpfiUnavailable": "Impossible de vérifier vos VPFI de vault, ils ne sont donc pas dans ce lot.",
+      "allWorking": "En attente du portefeuille…"
+    },
+    "offers": {
+      "title": "Carnet d'offres",
+      "lede": "Offres de prêt ouvertes et demandes d'emprunt d'autres utilisateurs.",
+      "emptyTitle": "Aucune offre ouverte pour le moment",
+      "emptyBody": "Créez votre propre offre et laissez l'autre côté venir à vous.",
+      "unavailable": "Impossible de charger le carnet d'offres pour le moment. Réessayez dans un instant.",
+      "lenderOffer": "Offre de prêt",
+      "borrowerOffer": "Demande d'emprunt"
+    },
+    "desk": {
+      "title": "Bureau des taux",
+      "lede": "Le carnet d'ordres d'un marché — lisez les taux, publiez ou modifiez des offres à taux limite, et suivez vos ordres ouverts et positions au même endroit.",
+      "marketLabel": "Marché",
+      "tenorLabel": "Durée",
+      "customPair": "Paire personnalisée…",
+      "customLend": "Adresse de l'actif prêté",
+      "customCollateral": "Adresse de l'actif de garantie",
+      "marketsUnavailable": "La liste des marchés n'a pas pu charger pour le moment, la découverte de paires est donc limitée — entrez une paire manuellement et le carnet pourra tout de même charger.",
+      "marketsEmpty": "Aucun marché live pour le moment. Choisissez une paire et publiez la première offre avec le ticket.",
+      "marketsTruncated": "Affichage des marchés les plus actifs — les plus petits ne sont pas listés ici, mais vous pouvez charger toute paire avec “Paire personnalisée…”.",
+      "pickPair": "Choisissez un marché pour charger son carnet.",
+      "lastFill": "Dernière exécution",
+      "quotedMid": "Milieu coté",
+      "spread": "Spread",
+      "crossed": "croisé",
+      "statUnknown": "—",
+      "bookTitle": "Carnet d'ordres",
+      "rateHeading": "Taux (APR %)",
+      "sizeHeading": "Taille",
+      "cumHeading": "Profondeur",
+      "asksHeading": "Offres prêteurs (asks)",
+      "bidsHeading": "Demandes emprunteurs (bids)",
+      "bookEmpty": "Aucune offre ouverte pour ce marché pour l'instant — la vôtre peut être la première.",
+      "bookUnavailable": "Impossible de charger le carnet d'ordres pour le moment. Réessayez dans un instant.",
+      "bookIndexedCopy": "Lecture live de la chaîne indisponible — affichage de la copie indexée du carnet, qui peut retarder sur la chaîne.",
+      "yourOrderMark": "Votre ordre à ce taux",
+      "takeAsk": "Emprunter ceci",
+      "takeBid": "Prêter à ceci",
+      "rowPrefills": "Appuyez sur un taux pour préremplir le ticket. Prendre le haut du carnet passe par le même examen guidé qu'Emprunter/Prêter.",
+      "tapeTitle": "Exécutions récentes",
+      "tapeEmpty": "Aucune exécution encore pour ce marché.",
+      "tapeUnavailable": "Impossible de charger les exécutions récentes pour le moment.",
+      "match": {
+        "body": "Ces offres en haut de carnet peuvent se croiser. N'importe qui peut exécuter ce matching et gagner les frais de matcher — vous payez le gas réseau pour l'exécuter.",
+        "execute": "Exécuter le matching",
+        "executing": "Matching…",
+        "executed": "Matching exécuté — les offres croisées ont été réglées en prêt.",
+        "noLongerMatchable": "Ces offres ne peuvent plus se croiser — le carnet a bougé avant l'envoi du matching. Rien n'a été envoyé.",
+        "matchingDisabled": "Le matching d'offres vient d'être désactivé par la gouvernance du protocole, ce matching ne peut donc pas être envoyé maintenant. Rien n'a été envoyé."
+      },
+      "signed": {
+        "badge": "Signé",
+        "badgeTooltip": "Ordre signé gasless depuis le carnet off-chain — le maker l'a signé sans transaction, et il se remplit en une seule transaction on-chain par celui qui le prend. Les lignes signées viennent toujours du service de carnet d'ordres, jamais de la chaîne, jusqu'à leur exécution.",
+        "partialBadgeTooltip": "Ordre signé partiellement matché — son reste compte encore dans la profondeur et se remplit via le matcher permissionless, mais un remplissage direct n'est plus possible.",
+        "rangedBadgeTooltip": "Ordre signé à taille en plage — sa taille compte encore dans la profondeur, mais seul le matcher permissionless peut le consommer par tranches ; aucun remplissage direct de l'ordre entier.",
+        "fill": "Remplir",
+        "confirmTitle": "Remplir l'ordre signé",
+        "confirmLede": "Vous exécutez tout le remplissage en une transaction : votre côté bouge depuis votre portefeuille, le côté maker depuis son vault, et le prêt démarre immédiatement.",
+        "gone": "Cet ordre signé n'est plus remplissable (rempli, annulé ou expiré). Le carnet se mettra à jour bientôt. Rien n'a été envoyé.",
+        "makerNotFunded": "Le vault du maker ne couvre pas actuellement cet ordre, le remplissage échouerait donc on-chain. Rien n'a été envoyé — le maker doit d'abord recharger son vault.",
+        "illiquid": "L'un des actifs de cet ordre n'est pas valorisé par le protocole pour le moment, et cette confirmation compacte ne peut pas vous guider dans les conditions de défaut en nature que cela implique. Rien n'a été envoyé.",
+        "kycBlocked": "Les règles de vérification d'identité de ce déploiement ne couvrent pas un côté de cet ordre à cette valeur, le remplissage échouerait donc on-chain. Rien n'a été envoyé ni approuvé.",
+        "riskBlocked": "Les règles d'accès au risque de ce déploiement bloquent actuellement un côté de cet ordre — le maker ou votre portefeuille a besoin d'un niveau d'accès on-chain ou d'un consentement permanent que cette confirmation compacte ne peut pas collecter. Rien n'a été envoyé ni approuvé.",
+        "accept": "Remplir l'ordre",
+        "accepting": "Remplissage…",
+        "accepted": "Ordre signé rempli — le prêt est live."
+      },
+      "chart": {
+        "title": "Taux exécutés",
+        "loading": "Chargement du graphique…",
+        "lastFillNone": "aucune exécution encore",
+        "empty": "Aucune exécution encore pour ce marché — le graphique ne trace que les taux exécutés.",
+        "emptyRange": "Aucune exécution dans cette plage — essayez une plage plus longue.",
+        "unavailable": "Impossible de charger l'historique des taux pour le moment.",
+        "retry": "Réessayer",
+        "quotedMid": "milieu coté",
+        "quotedMidHint": "Ligne pointillée = milieu coté actuel du carnet — une cotation au repos, pas un taux exécuté.",
+        "truncatedNote": "Historique long — affichage des exécutions les plus récentes seulement. Les bougies les plus anciennes ne sont pas tracées.",
+        "intervalLabel": "Intervalle",
+        "rangeLabel": "Plage",
+        "attribution": "Graphiques par TradingView",
+        "mobileBook": "Carnet",
+        "mobileChart": "Graphique",
+        "mobileViewLabel": "Vue bureau"
+      },
+      "history": {
+        "tab": "Historique",
+        "caption": "Tout ce que ce portefeuille a déjà tradé sur le bureau — chaque marché, chaque statut. Les positions remboursées, retirées et transférées restent listées.",
+        "empty": "Aucun historique de bureau pour ce portefeuille pour l'instant.",
+        "unavailable": "Impossible de charger votre historique pour le moment.",
+        "loadMore": "Charger plus",
+        "loadingMore": "Chargement…",
+        "loading": "Chargement de votre historique…",
+        "roleLender": "Prêteur",
+        "roleBorrower": "Emprunteur",
+        "started": "démarré"
+      },
+      "ticket": {
+        "title": "Ticket d'ordre",
+        "sideLend": "Prêter",
+        "sideBorrow": "Emprunter",
+        "amountLend": "Montant à prêter",
+        "amountBorrow": "Montant à emprunter",
+        "rateLend": "Taux — minimum que vous accepterez (APR %)",
+        "rateBorrow": "Taux — maximum que vous paierez (APR %)",
+        "collateralRequire": "Garantie que vous exigez",
+        "collateralLock": "Garantie que vous verrouillez",
+        "collateralFixedNote": "Défini par le marché sélectionné — changez de marché dans l'en-tête pour publier contre un autre actif de garantie.",
+        "expiryLabel": "Expiration",
+        "expiryGtc": "GTC",
+        "expiryCustom": "Personnalisée…",
+        "expiryInvalid": "L'expiration personnalisée doit être une date et une heure futures.",
+        "expiryTooFar": "L'expiration personnalisée peut être au maximum dans un an — le protocole limite l'expiration des offres à 365 jours.",
+        "fillModeLabel": "Mode de remplissage",
+        "fillPartial": "Partiel",
+        "fillAon": "AON",
+        "fillIoc": "IOC",
+        "fillPartialHint": "Partiel : l'offre peut se remplir en morceaux jusqu'à un minimum.",
+        "fillAonHint": "Tout ou rien : se remplit uniquement comme un prêt entier au montant complet.",
+        "fillIocHint": "Immédiat ou annulation : reste seulement jusqu'à son expiration — une expiration est requise.",
+        "iocNeedsExpiry": "Les ordres IOC nécessitent une expiration — choisissez 24h, 7j ou une heure personnalisée.",
+        "post": "Publier l'ordre",
+        "posting": "Publication…",
+        "posted": "Ordre publié",
+        "postedNext": "Votre offre est live dans le carnet. Gérez-la dans Ordres ouverts ci-dessous — modifiez ou annulez à tout moment avant son remplissage.",
+        "modeLabel": "Publication",
+        "modeOnchain": "On-chain",
+        "modeGasless": "Gasless (signature seule)",
+        "modeOnchainHint": "Publier l'offre comme transaction — les fonds sont maintenant en escrow dans votre vault.",
+        "modeGaslessHint": "Signer l'ordre off-chain et le publier dans le carnet — aucune transaction, aucun gas. Les fonds bougent seulement lorsqu'un taker le remplit.",
+        "gaslessEscrowNote": "Rien n'est mis en escrow lorsque vous signez — le remplissage d'un taker tire du solde libre de votre vault à ce moment-là. Annuler plus tard est une transaction on-chain (contrairement à la publication).",
+        "gaslessNeedsIndexer": "La publication gasless nécessite le service de carnet d'ordres, qui n'est pas configuré pour le moment. La publication on-chain fonctionne toujours.",
+        "gaslessLenderAonNote": "Les ordres de prêt gasless se remplissent seulement comme un prêt entier — un ordre prêteur signé ne peut pas être découpé on-chain, il se publie donc en tout-ou-rien. Le partiel reste disponible avec la publication on-chain.",
+        "gaslessPost": "Signer et publier dans le carnet",
+        "gaslessPosting": "Signature…",
+        "gaslessConsentRequired": "Examinez et acceptez d'abord les informations de risque et les conditions — pour un ordre gasless, votre signature enregistre ce consentement.",
+        "gaslessPosted": "Ordre signé publié dans le carnet — aucun gas dépensé. Il se remplit lorsqu'un taker l'accepte.",
+        "gaslessUnavailable": "Impossible de joindre le carnet d'ordres pour le moment — l'ordre n'a PAS été publié. Réessayez dans un instant.",
+        "blockNetwork": "Passez à un réseau pris en charge pour publier.",
+        "blockNoMarket": "Choisissez d'abord un marché dans l'en-tête.",
+        "blockAmount": "Entrez le montant ci-dessus.",
+        "blockRate": "Entrez un taux entre 0 et 100%.",
+        "blockCollateral": "Entrez le montant de garantie ci-dessus.",
+        "blockLoading": "Chargement des détails du marché — un instant.",
+        "blockConsent": "Examinez et acceptez les conditions de risque ci-dessus pour publier.",
+        "blockGaslessService": "La publication gasless nécessite le service de carnet d'ordres, qui n'est pas disponible pour le moment — passez Publication à On-chain.",
+        "consentRecheck": "Les conditions ont changé — veuillez confirmer à nouveau.",
+        "max": "Max",
+        "feePreviewTitle": "Frais et engagement"
+      },
+      "orders": {
+        "tab": "Ordres ouverts",
+        "empty": "Aucun ordre ouvert. Publiez-en un avec le ticket.",
+        "unavailable": "Impossible de charger vos ordres ouverts pour le moment.",
+        "heldNotCreated": "Détenu — géré par son créateur",
+        "cancel": "Annuler",
+        "cancelling": "Annulation…",
+        "amend": "Modifier",
+        "amendTitle": "Modifier en place — même offre, même position, une transaction.",
+        "amendLoadFailed": "Impossible de lire les valeurs live de cette offre, et la modification doit commencer depuis ces valeurs. Réessayez.",
+        "amendMinAmount": "Montant min",
+        "amendMaxAmount": "Montant max",
+        "amendAmountAon": "Montant (tout-ou-rien)",
+        "amendRate": "Taux (APR %)",
+        "amendRateMax": "Taux max (APR %)",
+        "amendCollateral": "Garantie",
+        "amendCollateralMax": "Garantie max",
+        "amendNoChange": "Rien n'a encore changé.",
+        "amendMalformed": "Entrez uniquement des nombres décimaux simples — chiffres avec un point décimal optionnel.",
+        "amendInvalid": "Chaque minimum doit être inférieur ou égal à son maximum, et aucun maximum ne peut descendre sous ce qui est déjà rempli.",
+        "amendPositive": "Les montants et la garantie doivent être supérieurs à zéro.",
+        "amendAllowanceLost": "L'approbation de token pour cette augmentation n'est plus suffisante — rien n'a été modifié. Veuillez approuver à nouveau.",
+        "approveFirst": "Approuver d'abord",
+        "approving": "Approbation…",
+        "save": "Enregistrer les modifications",
+        "saving": "Modification…",
+        "amended": "Ordre modifié.",
+        "signedTitle": "Ordres signés (ce marché)",
+        "signedNote": "Ordres signés gasless que vous avez publiés pour le marché sélectionné. Les ordres d'autres marchés ne s'affichent pas ici — changez de marché dans l'en-tête pour les gérer.",
+        "signedCancel": "Annuler on-chain",
+        "signedCancelling": "Annulation…",
+        "signedCancelNote": "La publication était gratuite, mais l'annulation coûte du gas : le seul moyen de révoquer une signature déjà détenue par le carnet est une transaction on-chain.",
+        "signedCancelled": "Ordre signé annulé on-chain.",
+        "signedTruncated": "Vous avez plus d'ordres signés dans ce marché que nous ne pouvons en lister à la fois — ce n'est pas l'ensemble complet."
+      },
+      "positions": {
+        "tab": "Positions",
+        "empty": "Aucune position ouverte dans ce portefeuille.",
+        "unavailable": "Impossible de charger vos positions pour le moment.",
+        "health": "Santé",
+        "notPriced": "Pas de liquidation auto",
+        "manage": "Gérer",
+        "allPositions": "Toutes les positions →"
+      }
+    },
+    "vpfi": {
+      "title": "Réductions VPFI",
+      "optional": "Optionnel : conservez des VPFI dans votre vault pour réduire les frais du protocole sur les prêts éligibles. Vous n'avez jamais besoin de VPFI pour utiliser Vaipakam.",
+      "noGasDiscount": "Votre réduction VPFI ne réduit pas le gas réseau.",
+      "withdrawWarning": "Retirer des VPFI peut réduire les futures réductions de frais.",
+      "tokenChanged": "La configuration du token VPFI a changé depuis votre examen. Rien n'a été approuvé — vérifiez les chiffres mis à jour et réessayez.",
+      "tokenCheckRetry": "Impossible de confirmer le token VPFI pour le moment — rien n'a été approuvé. Réessayez dans un instant.",
+      "addToWallet": "Ajouter VPFI à MetaMask",
+      "addedToWallet": "Demande envoyée à votre portefeuille pour suivre VPFI."
+    },
+    "errors": {
+      "partialOverPrincipal": "Cela couvre tout le principal restant du prêt. Utilisez plutôt “Rembourser ce prêt” — cela règle correctement le prêt et libère votre garantie.",
+      "notAToken": "Cette adresse ne ressemble pas à un token sur ce réseau. Vérifiez-la ou choisissez un actif suggéré.",
+      "txRejected": "Vous avez annulé dans votre portefeuille. Rien n'a été envoyé.",
+      "txFailed": "La transaction n'est pas passée. Rien n'a été pris au-delà du gas réseau. Réessayez.",
+      "sanctionsBlocked": "Ce portefeuille est signalé par l'oracle de sanctions : les nouvelles positions et les retraits de fonds sont donc bloqués. Rien n'a été envoyé. Rembourser et clôturer les positions existantes reste ouvert.",
+      "sanctionsCheckRetry": "Impossible d'exécuter le contrôle de conformité pour le moment — rien n'a été envoyé. Réessayez dans un instant.",
+      "checkRetry": "Impossible de vérifier cela on-chain pour le moment — rien n'a été envoyé. Réessayez dans un instant.",
+      "assetPaused": "Un des actifs de cette opération est temporairement mis en pause par le protocole, cette action ne peut donc pas passer pour le moment. Rien n'a été envoyé — réessayez plus tard.",
+      "positionMoved": "Cette position n'est plus détenue par le portefeuille connecté (elle a peut-être été transférée ou déjà retirée). Rien n'a été envoyé — actualisez pour voir l'état actuel.",
+      "collateralNotPriced": "La garantie de ce prêt n'est pas actuellement valorisée par le protocole, les ajouts de garantie ne sont donc pas disponibles. Rien n'a été envoyé.",
+      "pastGrace": "Ce prêt a dépassé son échéance et sa fenêtre de grâce, le remboursement est donc fermé on-chain — le processus de défaut s'applique maintenant. Rien n'a été envoyé.",
+      "loanAlreadySettled": "Ce prêt semble déjà réglé on-chain — rien n'a été envoyé. Actualisez dans un instant pour voir son état final.",
+      "nothingToClaim": "Il n'y a rien à retirer on-chain pour ce côté pour le moment — le paiement peut être nul ou déjà collecté. Rien n'a été envoyé.",
+      "preclosePastGrace": "Ce prêt a dépassé son échéance et sa fenêtre de grâce, la clôture anticipée n'est donc plus possible — rien n'a été envoyé. Le processus de défaut s'applique maintenant.",
+      "refinancePastGrace": "Ce prêt a dépassé son échéance et sa fenêtre de grâce, il ne peut donc plus être refinancé — rien n'a été envoyé. Le processus de défaut s'applique maintenant.",
+      "saleListingMatured": "Ce prêt a dépassé son échéance, la position ne peut donc plus être listée à vendre — rien n'a été envoyé.",
+      "refinanceNotOriginalBorrower": "Cette position a changé de mains depuis le début du prêt, sa garantie ne peut donc pas être reportée dans un refinancement — rien n'a été envoyé. Rembourser ou clôturer tôt reste disponible.",
+      "lenderBlockedPartial": "Le portefeuille du prêteur ne peut pas recevoir de paiement partiel direct pour le moment (marque de conformité). Rembourser intégralement le prêt reste ouvert — ce chemin conserve les fonds pour un retrait filtré."
+    },
+    "fees": {
+      "lateFee": "Un remboursement en retard ajoute 1% du montant restant dû après le premier jour, augmente de 0.5% par jour, avec un plafond à 5%.",
+      "faqQuestion": "Quels frais Vaipakam facture-t-il ?",
+      "faqAnswerGeneric": "Vaipakam facture des frais d'ouverture de prêt sur le montant emprunté et conserve une part de l'intérêt gagné par le prêteur. Un remboursement en retard ajoute 1% du montant restant dû après le premier jour, augmente de 0.5% par jour, avec un plafond à 5%. Le gas réseau est séparé et va à la blockchain, pas à Vaipakam. Connectez votre portefeuille pour voir les taux actuels exacts."
+    },
+    "faucet": {
+      "title": "Obtenir des actifs de test",
+      "lede": "Mintez des tokens mock et un NFT de test pour essayer l'emprunt, le prêt et la location sur un réseau de test — aucune valeur réelle, aucun coût hors gas.",
+      "notTestnetTitle": "Les actifs de test ne sont pas disponibles ici",
+      "backHome": "Retour à l'accueil",
+      "minting": "Mint…",
+      "viewTx": "Voir la transaction",
+      "nextSteps": "Ensuite : mettez-le au travail —",
+      "nextBorrow": "Emprunter contre lui",
+      "nextLend": "Le prêter",
+      "nextRent": "Le lister à la location",
+      "footer": "Les actifs mintés arrivent dans votre portefeuille. Utilisez “Mon vault” et les écrans Emprunter, Prêter et Location de NFT pour les mettre au travail.",
+      "mintedNft": "NFT de location de test minté dans votre portefeuille. Son token ID — vous en aurez besoin pour lister la location :",
+      "copyTokenId": "Copier le token ID",
+      "copiedTokenId": "Copié.",
+      "liquid": {
+        "title": "Token de test liquide (tLIQ)",
+        "blurb": "Valorisé par un oracle de test, il se comporte comme un actif liquide — facteur de santé, liquidation et refinancement fonctionnent avec lui. Associez-le à mWETH (l'un comme prêt, l'autre comme garantie) lorsqu'un flux nécessite deux tokens liquides différents."
+      },
+      "liquid2": {
+        "blurb": "Un USDC de test valorisé à $1 par un oracle de test — un deuxième token liquide distinct pour exécuter une opération où le prêt et la garantie sont tous deux liquides (avec un spread réaliste contre tLIQ / mWETH) sans associer un token à lui-même."
+      },
+      "mweth": {
+        "title": "Mock wrapped ETH (mWETH)",
+        "blurb": "Un token de test valorisé par oracle qui joue le rôle de “wrapped ETH” dans les démos. Ce n'est PAS du vrai WETH — il se mint gratuitement et n'a aucune valeur."
+      },
+      "nft2": {
+        "title": "Deuxième NFT de test louable (vART)",
+        "blurb": "Une autre collection ERC-4907 — pratique si vous voulez lister un NFT et en louer un autre, ou faire tourner plusieurs locations à la fois.",
+        "action": "Minter un NFT vART"
+      },
+      "addedToWallet": "Demande envoyée à votre portefeuille pour le suivre.",
+      "illiquid": {
+        "title": "Token de test illiquide (tILQ)",
+        "blurb": "Sans flux de prix, il se comporte comme un actif illiquide — les deux côtés doivent consentir, et le défaut transfère la garantie en nature."
+      },
+      "illiquid2": {
+        "title": "Deuxième token de test illiquide (tILQ2)",
+        "blurb": "Également non valorisé. Associez-le à tILQ (l'un comme prêt, l'autre comme garantie) pour essayer une opération où AUCUN côté n'a de prix — les deux parties doivent consentir, aucun facteur de santé ne s'applique et le défaut remet la garantie en nature."
+      },
+      "nft": {
+        "title": "NFT de test de location (vRENT)",
+        "blurb": "Un NFT louable ERC-4907 pour essayer les flux de location de NFT.",
+        "action": "Minter un NFT de test"
+      }
+    },
+    "vault": {
+      "title": "Mon vault",
+      "lede": "Votre propre compte on-chain. Seul votre portefeuille le contrôle — Vaipakam ne met jamais les fonds des utilisateurs en pool.",
+      "noVaultYet": "Votre vault est créé automatiquement avec votre première offre, prêt ou dépôt. Rien à configurer.",
+      "emptyCta": "Commencer",
+      "emptyCtaFaucet": "Obtenir des actifs de test",
+      "unavailable": "Impossible de lire votre vault pour le moment. Vos fonds ne sont pas affectés — réessayez dans un instant.",
+      "lockedHint": "Les montants verrouillés soutiennent vos offres ouvertes, prêts actifs et locations. Ils se libèrent lorsque ceux-ci se ferment."
+    },
+    "activity": {
+      "title": "Activité",
+      "lede": "Tout ce que votre portefeuille a fait sur Vaipakam, du plus récent au plus ancien.",
+      "empty": "Aucune activité pour l'instant. Elle apparaîtra ici lorsque vous utiliserez Vaipakam.",
+      "emptyCtaBorrow": "Emprunter quelque chose",
+      "emptyCtaLend": "Prêter quelque chose",
+      "unavailable": "Impossible de charger votre activité pour le moment. Réessayez dans un instant.",
+      "truncatedNote": "Affichage de l'activité récente seulement — le flux du protocole est chargé et les événements plus anciens peuvent ne pas être listés.",
+      "participantTruncatedNote": "Ce portefeuille a plus d'historique de prêts que nous ne pouvons vérifier d'un coup — certains événements liés à ses plus anciens prêts peuvent manquer ici.",
+      "truncatedEmpty": "Rien à vous dans l'activité récente du protocole. Cette page liste seulement l'activité récente, donc ce qui est plus ancien n'apparaît pas ici.",
+      "viewTx": "Voir la transaction",
+      "loadMore": "Charger l'activité plus ancienne",
+      "loadingMore": "Chargement…",
+      "unavailableFallback": "Vos prêts et locations actuels sont toujours disponibles dans",
+      "positionsLink": "Mes positions"
+    },
+    "rewards": {
+      "title": "Récompenses d'interaction",
+      "blurb": "Récompenses VPFI issues de votre activité de prêt et d'emprunt. Elles deviennent retirables après la clôture d'un prêt et la finalisation du jour de récompense.",
+      "empty": "Aucune récompense pour l'instant. Les récompenses apparaissent après une activité de prêt ou d'emprunt.",
+      "waiting": "Vos récompenses sont en cours de finalisation — un jour de récompense se clôture sur toutes les chaînes avant de pouvoir être retiré. Revenez bientôt.",
+      "claim": "Retirer les récompenses"
+    },
+    "sanctions": {
+      "title": "Ce portefeuille est listé par l'oracle de conformité.",
+      "line1": "L'adresse connectée apparaît sur l'oracle de sanctions on-chain contre lequel Vaipakam vérifie.",
+      "line2": "Les nouvelles positions (offres, prêts, locations, dépôts) sont bloquées et ne passeront pas.",
+      "line3": "Rembourser et clôturer les positions existantes reste ouvert afin que vos contreparties puissent être indemnisées, mais les réclamations et retraits de fonds vers ce portefeuille sont bloqués tant qu'il est signalé. Si vous pensez qu'il s'agit d'une erreur, contactez le fournisseur de l'oracle (Chainalysis)."
+    },
+    "risk": {
+      "notPriced": "Les actifs de ce prêt ne sont pas valorisés par le protocole, il n'y a donc pas de liquidation automatique — la garantie est transférée telle quelle en cas de défaut.",
+      "healthy": "Sain",
+      "watch": "À surveiller",
+      "danger": "Proche de la liquidation",
+      "liquidatable": "Liquidable maintenant",
+      "explain": "Si la valeur de la garantie baisse trop face au montant emprunté, le prêt peut être liquidé. Ajouter de la garantie le rend plus sûr.",
+      "listChecking": "vérification de la santé",
+      "listCheckingTitle": "La santé de ce prêt n'a pas encore été lue, le badge reste donc neutre. La protection contre la liquidation s'applique toujours on-chain."
+    },
+    "notFound": {
+      "title": "Cette page n'existe pas",
+      "body": "Le lien est peut-être ancien ou mal saisi. Rien n'est perdu — vos positions sont en sécurité.",
+      "backHome": "Retour à l'accueil"
+    }
+  }
+}
