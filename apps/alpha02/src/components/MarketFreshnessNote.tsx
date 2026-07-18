@@ -33,7 +33,7 @@ export function MarketFreshnessNote() {
   return (
     <div className="banner banner-warn" role="status">
       <span className="banner-body">
-        {copy.offers.staleList({ age: formatAge(ageSec) })}
+        {copy.offers.staleList(formatAge(ageSec))}
       </span>
     </div>
   );

@@ -44,7 +44,14 @@
  */
 
 import i18n from 'i18next';
-import { isTmpl, englishVariant, TMPL, type TmplParams, type TmplFn } from './tmpl';
+import {
+  isTmpl,
+  englishVariant,
+  toParams,
+  TMPL,
+  type TmplArg,
+  type TmplFn,
+} from './tmpl';
 
 /** Sub-proxy cache — one proxy per nested object, so identity is
  *  stable across reads (React deps arrays, Set membership). */
@@ -53,26 +60,25 @@ const subProxyCache = new WeakMap<object, Map<PropertyKey, object>>();
 /** Bound-tmpl cache — one wrapper fn per (source fn), so a captured
  *  reference keeps a stable identity across reads (same reason as the
  *  sub-proxy cache). Keyed by the source tmpl fn itself. */
-const tmplFnCache = new WeakMap<TmplFn, (params?: TmplParams) => string>();
+const tmplFnCache = new WeakMap<TmplFn, (...args: TmplArg[]) => string>();
 
 /** Bind a `tmpl` entry to its key path: route calls through i18next so
  *  a locale bundle wins, with the count-correct English template as the
  *  defaultValue (alpha02 registers an EMPTY `en` bundle, so English is
- *  always served from here). Translated bundles carry i18next's
- *  locale-aware `_one` / `_other` plural keys. */
-function bindTmpl(fn: TmplFn, key: string): (params?: TmplParams) => string {
+ *  always served from here). Positional args map to named params per
+ *  the entry's `paramNames`; a `count` param drives i18next's
+ *  locale-aware `_one` / `_other` plural selection. */
+function bindTmpl(fn: TmplFn, key: string): (...args: TmplArg[]) => string {
   const cached = tmplFnCache.get(fn);
   if (cached) return cached;
-  const bound = (params?: TmplParams): string => {
+  const meta = fn[TMPL];
+  const bound = (...args: TmplArg[]): string => {
     // Before i18next is ready, serve the English template directly.
-    if (!i18n.isInitialized) return fn(params);
-    // defaultValue is the English text (count-correct) — used whenever
-    // the active bundle lacks the key (always, for en). A translated
-    // bundle carrying the key (or its `_one`/`_other` plural variants)
-    // wins; `count` drives i18next's locale-aware plural selection.
+    if (!i18n.isInitialized) return fn(...args);
+    const params = toParams(meta, args);
     return i18n.t(key, {
       ...params,
-      defaultValue: englishVariant(fn[TMPL], params),
+      defaultValue: englishVariant(meta, params),
     }) as string;
   };
   tmplFnCache.set(fn, bound);

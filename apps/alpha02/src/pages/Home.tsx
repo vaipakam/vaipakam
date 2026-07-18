@@ -87,7 +87,7 @@ export function Home() {
         <Link to="/faucet" className="banner banner-info" style={{ display: 'flex' }}>
           <Droplets aria-hidden />
           <span className="banner-body">
-            {copy.home.testnetNudge({ chainName: readChain.name })}
+            {copy.home.testnetNudge(readChain.name)}
           </span>
         </Link>
       ) : null}

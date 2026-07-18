@@ -336,9 +336,9 @@ export function OfferFlow({ side }: { side: Side }) {
     if (chainParam !== null && Number(chainParam) !== readChain.chainId) {
       const target = getSupportedChain(Number(chainParam));
       clear(
-        copy.match.wrongChainLink({
-          chainName: target ? target.name : `network #${chainParam}`,
-        }),
+        copy.match.wrongChainLink(
+          target ? target.name : `network #${chainParam}`,
+        ),
       );
       return;
     }
@@ -2275,7 +2275,7 @@ export function OfferFlow({ side }: { side: Side }) {
             ) : saleData.kind !== 'sale' ? (
               <div className="banner banner-warn" role="alert">
                 <span className="banner-body">
-                  {copy.match.linkedLoanAcceptBlocked({ loanId: linkedLoan.data ?? '' })}
+                  {copy.match.linkedLoanAcceptBlocked(linkedLoan.data ?? '')}
                 </span>
               </div>
             ) : saleData.live.status !== 0 ? (

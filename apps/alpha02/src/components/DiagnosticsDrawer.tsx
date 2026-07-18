@@ -187,7 +187,7 @@ function DrawerPanel({ onClose }: { onClose: () => void }) {
       indexerLine = copy.diagnostics.indexerOk(formatAge(ageSec));
       indexerTone = 'ok';
     } else {
-      indexerLine = copy.diagnostics.indexerStale({ age: formatAge(ageSec) });
+      indexerLine = copy.diagnostics.indexerStale(formatAge(ageSec));
       indexerTone = 'warn';
     }
   } else if (freshness.data?.kind === 'no-cursor') {

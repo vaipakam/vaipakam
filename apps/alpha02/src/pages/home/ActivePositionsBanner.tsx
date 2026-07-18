@@ -29,7 +29,7 @@ export default function ActivePositionsBanner() {
     <Link to="/positions" className="banner banner-info" style={{ display: 'flex' }}>
       <ListChecks aria-hidden />
       <span className="banner-body">
-        {copy.home.activePositions({ count: activeCount })}
+        {copy.home.activePositions(activeCount)}
       </span>
     </Link>
   );

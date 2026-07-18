@@ -752,9 +752,9 @@ function RentNftFlow() {
     if (chainParam !== null && Number(chainParam) !== readChain.chainId) {
       const target = getSupportedChain(Number(chainParam));
       clear(
-        copy.match.wrongChainLink({
-          chainName: target ? target.name : `network #${chainParam}`,
-        }),
+        copy.match.wrongChainLink(
+          target ? target.name : `network #${chainParam}`,
+        ),
       );
       return;
     }

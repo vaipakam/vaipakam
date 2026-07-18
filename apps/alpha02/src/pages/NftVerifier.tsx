@@ -231,7 +231,7 @@ export function NftVerifier() {
           </button>
         </div>
         <p className="muted" style={{ marginTop: 8 }}>
-          {copy.nftVerifier.chainNote({ chain: readChain.name })}
+          {copy.nftVerifier.chainNote(readChain.name)}
         </p>
       </section>
 
