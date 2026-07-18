@@ -878,6 +878,69 @@ contract ConfigFacet is DiamondAccessControl {
         );
     }
 
+    /// @notice RL-3 (#1305) — emitted when the reward claim horizon knob
+    ///         changes. `0` = feature dark.
+    /// @custom:event-category informational/config
+    event RewardClaimHorizonDaysSet(uint32 horizonDays);
+
+    /// @notice RL-3 (#1305, ratified §10.2; Codex #1317 heartbeat model) —
+    ///         set the post-claimability reward claim horizon `H` (days).
+    ///         While `0` (deploy default) the feature is DARK: no clock
+    ///         accrues, nothing expires. Bounded `[180, 1095]` so a horizon
+    ///         can never be sprung on dormant claimants nor stretched into
+    ///         an unbounded liability tail.
+    ///
+    ///         Once set, the permissionless sweep accrues per entry the time
+    ///         during which it stayed CLAIM-EXECUTABLE, and an entry can be
+    ///         removed only after it has accrued a full
+    ///         `H + REWARD_CLAIM_HORIZON_NOTICE_DAYS` (H + 90) of such time —
+    ///         the notice is served IN ADDITION to `H`, never within it.
+    ///         Every non-zero (re)configuration advances a strictly-monotonic
+    ///         epoch, so a dark reset or any retune (including a shortening)
+    ///         caps every entry's accrual back to the horizon threshold and
+    ///         forces the full 90-day executable notice to be re-earned under
+    ///         the new configuration — a dormant claimant is never reaped
+    ///         without a fresh funded notice after the rules change.
+    function setRewardClaimHorizonDays(uint32 horizonDays)
+        external
+        onlyRole(LibAccessControl.ADMIN_ROLE)
+    {
+        if (
+            horizonDays != 0 &&
+            (horizonDays < LibVaipakam.REWARD_CLAIM_HORIZON_MIN_DAYS ||
+                horizonDays > LibVaipakam.REWARD_CLAIM_HORIZON_MAX_DAYS)
+        ) {
+            revert IVaipakamErrors.ParameterOutOfRange(
+                "rewardClaimHorizonDays",
+                horizonDays,
+                LibVaipakam.REWARD_CLAIM_HORIZON_MIN_DAYS,
+                LibVaipakam.REWARD_CLAIM_HORIZON_MAX_DAYS
+            );
+        }
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        if (horizonDays != 0) {
+            // EVERY (re)configuration advances the horizon epoch so the
+            // sweep re-earns a fresh executable notice under the new rules
+            // (dark reset, lengthening, or shortening alike). The epoch is
+            // STRICTLY MONOTONIC — normally the block timestamp, but bumped
+            // to `prev + 1` when two reconfigurations land in the same block
+            // — so every retune is distinguishable and a same-block double
+            // retune can never leave an entry reconciled against a stale
+            // epoch (Codex #1317 r9).
+            uint64 nowTs = uint64(block.timestamp);
+            s.rewardHorizonActivatedAt = nowTs > s.rewardHorizonActivatedAt
+                ? nowTs
+                : s.rewardHorizonActivatedAt + 1;
+        }
+        s.rewardClaimHorizonDays = horizonDays;
+        emit RewardClaimHorizonDaysSet(horizonDays);
+    }
+
+    /// @notice RL-3 — the live claim-horizon knob (`0` = dark).
+    function getRewardClaimHorizonDays() external view returns (uint32) {
+        return LibVaipakam.storageSlot().rewardClaimHorizonDays;
+    }
+
     /// @notice Governor PR-3a (#1217) — the recycle bucket's live ledger
     ///         balance (a slice of the Diamond's own VPFI balance; see
     ///         {LibVpfiRecycle}). Transparency read for #1218 metrics and

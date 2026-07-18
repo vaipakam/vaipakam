@@ -450,6 +450,110 @@ contract InteractionRewardsFacet is
         }
     }
 
+    /**
+     * @notice RL-3 (#1305, ratified §10.2; Codex #1317 r7) — permissionless
+     *         claim-horizon sweep. For each entry it advances an
+     *         EXECUTABLE-ELAPSED accumulator: it starts on the first touch
+     *         that finds the entry claim-executable, and only intervals
+     *         during which the entry stayed claimable (with no observation
+     *         gap over `REWARD_CLAIM_NOTICE_MAX_OBS_GAP_DAYS`) are credited.
+     *         Once an entry has accrued a full `H + notice` of genuinely-
+     *         claimable time it is EXPIRED into the recycle bucket. Keepers
+     *         drive this on a heartbeat cadence; missed intervals only slow
+     *         accrual (safe), and no unobserved outage can reap an entry the
+     *         claimant could not actually claim.
+     *
+     *         Source-split per the ratified split-signals rule: the
+     *         fresh-funded share genuinely leaves the fresh budget into
+     *         protocol custody — it consumes the 69M pool and credits the
+     *         bucket as `ExpiredReward` absorption (feeds `credited[D]`/Ā);
+     *         the recycled-funded share never left the bucket, so it is a
+     *         pure commitment RELEASE with zero new credit.
+     *
+     *         Forfeited entries are out of scope (the forfeit sweep owns
+     *         them); a claim landing before expiry always wins (an expired
+     *         entry is simply `processed`, identical to a claimed one).
+     * @param  entryIds Entries to advance/expire (keeper batches).
+     * @return expiredTotal VPFI wei expired into the bucket by this call.
+     */
+    function sweepExpiredInteractionRewards(uint256[] calldata entryIds)
+        external
+        nonReentrant
+        whenNotPaused
+        returns (uint256 expiredTotal)
+    {
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        if (s.interactionLaunchTimestamp == 0) {
+            revert InteractionEmissionsNotStarted();
+        }
+        if (s.vpfiToken == address(0)) revert VPFITokenNotSet();
+
+        // Fresh headroom is tracked PER ENTRY across the batch (Codex
+        // #1317 r4): each processed entry's creditable fresh share is
+        // capped inside {sweepExpiredEntry} against what the batch has
+        // left, so several fresh entries can never all go terminal
+        // against one remaining-capacity sliver — at most one bounded
+        // boundary entry is partially credited, then the rest defer.
+        uint256 paidOut = s.interactionPoolPaidOut;
+        uint256 reserved = paidOut + s.rewardBudgetRemittedGlobal;
+        uint256 headroom = LibVaipakam.VPFI_INTERACTION_POOL_CAP > reserved
+            ? LibVaipakam.VPFI_INTERACTION_POOL_CAP - reserved
+            : 0;
+        // The fresh credit also grows the recycle bucket, so it must stay
+        // within the bucket's BACKING headroom — {LibVpfiRecycle.credit}
+        // reverts unless `balance >= recycleBucket + freshTotal`, and a
+        // reverting credit would poison the whole permissionless batch
+        // (Codex #1317 r9). Cap fresh to the smaller of the pool cap and
+        // the backing room; both shrink by the same credited amount, so a
+        // single running minimum tracks them.
+        uint256 backingRoom = IERC20(s.vpfiToken).balanceOf(address(this));
+        backingRoom = backingRoom > s.recycleBucket
+            ? backingRoom - s.recycleBucket
+            : 0;
+        if (backingRoom < headroom) headroom = backingRoom;
+        uint256 freshTotal;
+        uint256 recycledTotal;
+        uint256 armedFreshTotal;
+        for (uint256 i = 0; i < entryIds.length; ) {
+            (
+                LibInteractionRewards.EntrySplit memory ex,
+                uint256 freshCredited
+            ) = LibInteractionRewards.sweepExpiredEntry(entryIds[i], headroom);
+            headroom -= freshCredited;
+            freshTotal += freshCredited;
+            recycledTotal += ex.recycled;
+            armedFreshTotal += ex.armedFresh;
+            unchecked { ++i; }
+        }
+        if (freshTotal + recycledTotal == 0) return 0;
+
+        // Fresh share: consumes the 69M pool (tokens leave the fresh
+        // budget) exactly like a forfeit — already per-entry capped above.
+        s.interactionPoolPaidOut = paidOut + freshTotal;
+        // Every swept entry is terminally `processed`, so its ENTIRE armed
+        // fresh commitment retires here even when the pool cap truncated the
+        // creditable fresh — otherwise the truncated remainder would sit
+        // in the outstanding-commitment sum forever (same rule as the claim
+        // and forfeit paths).
+        LibInteractionRewards.consumeArmedFresh(armedFreshTotal);
+
+        if (freshTotal > 0) {
+            LibVpfiRecycle.credit(
+                LibVpfiRecycle.RecycleSource.ExpiredReward,
+                0,
+                freshTotal
+            );
+        }
+        if (recycledTotal > 0) {
+            LibVpfiRecycle.releaseCommitment(
+                LibVpfiRecycle.RecycleSource.ExpiredReward,
+                0,
+                recycledTotal
+            );
+        }
+        expiredTotal = freshTotal + recycledTotal;
+    }
+
     // ─── Admin ───────────────────────────────────────────────────────────────
 
     /**
@@ -518,17 +622,14 @@ contract InteractionRewardsFacet is
         emit InteractionCapVpfiPerEthSet(value);
     }
 
-    // The read-only view/getter surface (getInteractionLaunchTimestamp,
-    // getInteractionCapVpfiPerEth[/Raw], getInteractionCurrentDay,
-    // getInteractionAnnualRateBps, getInteractionHalfPoolForDay,
-    // getInteractionLastClaimedDay, getInteractionDayEntry,
-    // previewInteractionRewards, getInteractionClaimability,
-    // getInteractionPoolRemaining, getInteractionPoolPaidOut,
-    // getInteractionSnapshot, getUserRewardEntries) was EXTRACTED verbatim
-    // into {InteractionRewardsLensFacet} to reclaim EIP-170 runtime-bytecode
+    // The read-only view/getter surface — the interaction getters
+    // (previewInteractionRewards, getInteractionSnapshot, etc.) PLUS the RL-3
+    // reads getRewardEntryExpiry + getUserRewardEntryIds — was EXTRACTED into
+    // {InteractionRewardsLensFacet} to reclaim EIP-170 runtime-bytecode
     // headroom on this facet. Both facets share the same LibVaipakam storage,
     // so the Diamond routes those selectors to the sibling lens facet with no
-    // behaviour change.
+    // behaviour change. This facet keeps only the mutating claim/sweep/admin
+    // surface + the diamond-internal reward-lifecycle hooks.
 
     // ─── #969 / S5 — diamond-internal reward-lifecycle hooks ─────────────────
     //

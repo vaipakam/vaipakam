@@ -31,6 +31,15 @@ library LibPausable {
         //   - admin's `unpause()` (short-circuit when verified
         //     false-positive)
         uint64 pausedUntilTimestamp;
+        // Block-timestamp at which the pause STATE last changed — stamped by
+        // `pause()`, `unpause()`, and `autoPause()`. Consumers that credit
+        // "elapsed time the protocol was live" (e.g. the interaction-reward
+        // claim-horizon accumulator) read this to DISCARD any observation
+        // interval that straddled a pause: an interval whose prior sample
+        // predates this boundary spanned a pause window during which every
+        // gated action would have reverted, so it must not count as
+        // executable time. Zero ⇒ the pause state has never changed.
+        uint64 lastPauseBoundaryAt;
     }
 
     /// @custom:event-category informational/admin
@@ -76,7 +85,9 @@ library LibPausable {
     }
 
     function pause() internal {
-        _storage().paused = true;
+        PausableStorage storage ps = _storage();
+        ps.paused = true;
+        ps.lastPauseBoundaryAt = SafeCast.toUint64(block.timestamp);
         emit Paused(msg.sender);
     }
 
@@ -85,8 +96,18 @@ library LibPausable {
         // false-positive auto-pause without waiting for the window
         // to elapse.
         PausableStorage storage ps = _storage();
+        // A pause boundary is a real live→paused→live transition, so stamp it
+        // ONLY when this call actually clears an active pause (manual, or an
+        // auto-pause window still in the future). A no-op / cleanup unpause —
+        // already live, or clearing an already-elapsed window — blocked no
+        // claim, and stamping it would spuriously drop up to a heartbeat of
+        // executable accrual for every RL-3-stamped entry (Codex #1317 r3 P3).
+        bool wasPaused = ps.paused || ps.pausedUntilTimestamp > block.timestamp;
         ps.paused = false;
         ps.pausedUntilTimestamp = 0;
+        if (wasPaused) {
+            ps.lastPauseBoundaryAt = SafeCast.toUint64(block.timestamp);
+        }
         emit Unpaused(msg.sender);
     }
 
@@ -106,6 +127,11 @@ library LibPausable {
         if (ps.pausedUntilTimestamp > block.timestamp) return;
         uint64 until = SafeCast.toUint64(block.timestamp + duration);
         ps.pausedUntilTimestamp = until;
+        // Stamp the boundary at the START of the auto-pause window. Passive
+        // expiry fires no unpause tx, so this is the only boundary marker for
+        // an auto-pause; a later observation whose prior sample predates it
+        // still discards the interval that straddled the (now-elapsed) window.
+        ps.lastPauseBoundaryAt = SafeCast.toUint64(block.timestamp);
         emit AutoPaused(msg.sender, reason, until);
     }
 
@@ -116,6 +142,15 @@ library LibPausable {
     function pausedUntil() internal view returns (uint256) {
         uint64 t = _storage().pausedUntilTimestamp;
         return uint256(t) > block.timestamp ? uint256(t) : 0;
+    }
+
+    /// @dev Block-timestamp at which the pause STATE last changed (pause /
+    ///      unpause / auto-pause set). Zero when the protocol has never been
+    ///      paused. Time-accounting consumers use it to drop any observation
+    ///      interval that straddled a pause window — see `lastPauseBoundaryAt`
+    ///      in {PausableStorage}.
+    function lastPauseBoundaryAt() internal view returns (uint64) {
+        return _storage().lastPauseBoundaryAt;
     }
 }
 

@@ -2,6 +2,7 @@
 pragma solidity ^0.8.29;
 
 import {LibVaipakam} from "./LibVaipakam.sol";
+import {LibPausable} from "./LibPausable.sol";
 import {Math} from "@openzeppelin/contracts/utils/math/Math.sol";
 import {OracleFacet} from "../facets/OracleFacet.sol";
 import {IERC20Metadata} from "@openzeppelin/contracts/token/ERC20/extensions/IERC20Metadata.sol";
@@ -68,6 +69,51 @@ library LibInteractionRewards {
         uint256 recycled;
         uint256 armedFresh;
     }
+
+    /// @notice RL-3 (#1305) — the horizon clock started for `entryId`: the
+    ///         sweep observed the entry claim-executable for the first time,
+    ///         so the executable-elapsed accumulator has begun. This is the
+    ///         notification pipeline's schedule signal.
+    /// @dev    Deliberately carries NO expiry timestamp: expiry is driven by
+    ///         *executable-elapsed* time (it advances only while the entry
+    ///         is provably claimable and keepers observe it), so no fixed
+    ///         removal time exists at stamp time — {rewardEntryExpiry} is
+    ///         the authoritative, continuously-recomputed countdown.
+    /// @custom:event-category state-change/reward-claim
+    event RewardEntryHorizonStamped(
+        uint256 indexed entryId,
+        address indexed user,
+        uint64 firstClaimableAt
+    );
+
+    /// @notice RL-3 — `entryId` accrued its full horizon of executable time
+    ///         and entered the final-notice window: it now needs a further
+    ///         `notice` days of provably-executable time before it can be
+    ///         swept. This is the notification pipeline's LAST-CALL signal.
+    /// @custom:event-category state-change/reward-claim
+    event RewardEntryExpiryArmed(
+        uint256 indexed entryId,
+        address indexed user,
+        uint64 finalNoticeFrom
+    );
+
+    /// @notice RL-3 — `entryId` expired past its claim horizon and was
+    ///         swept into the recycle bucket (`total` split into the
+    ///         fresh absorption credit and the `recycled` release).
+    /// @dev    FACE-VALUE decomposition, deliberately non-accounting: in
+    ///         the pool-cap boundary case the batch's fresh credit is
+    ///         truncated AFTER this emits, so the authoritative
+    ///         absorbed/released amounts are the `VpfiRecycled` /
+    ///         `RewardCommitmentReleased` events (both post-truncation) —
+    ///         the designated accounting feeds. Reconcile from those,
+    ///         never from this event.
+    /// @custom:event-category state-change/reward-claim
+    event RewardEntryExpired(
+        uint256 indexed entryId,
+        address indexed user,
+        uint256 total,
+        uint256 recycled
+    );
 
     // ─── Schedule helpers ────────────────────────────────────────────────────
 
@@ -945,6 +991,123 @@ function _dayPoolHalves(
         }
     }
 
+    /// @dev The FULL uncapped VPFI a claim by `user` would transfer right now
+    ///      — the entry-path aggregate PLUS the finalized legacy window,
+    ///      exactly what `claimInteractionRewardsTo` sums into one atomic
+    ///      transfer before it pool-truncates the fresh part. The live claim's
+    ///      actual `paid` is this figure truncated DOWN to the remaining 69M
+    ///      pool, so this is an UPPER BOUND: `balance >= this` guarantees the
+    ///      claimant's whole aggregate claim is funded. The claim-horizon
+    ///      accumulator gates on it so the clock advances only when the
+    ///      claimant had a working claim path for ALL their entries at once —
+    ///      never per-entry, which would let a partly-funded balance reap one
+    ///      entry while the real (aggregate) claim reverts (Codex #1317 P1).
+    ///      Bounded: the window walk is capped at MAX_INTERACTION_CLAIM_DAYS.
+    function userClaimPendingUncapped(
+        LibVaipakam.Storage storage s,
+        address user
+    ) internal view returns (uint256 pending) {
+        pending = previewForUserEntries(user);
+        (uint256 today, bool active) = currentDayOrZero();
+        if (!active || today == 0) return pending;
+        uint256 last = s.interactionLastClaimedDay[user];
+        uint256 lastFinalized = today - 1;
+        if (last >= lastFinalized) return pending;
+        uint256 fromDay = last + 1;
+        uint256 windowLast =
+            fromDay + LibVaipakam.MAX_INTERACTION_CLAIM_DAYS - 1;
+        uint256 toDay = windowLast < lastFinalized ? windowLast : lastFinalized;
+        (uint256 effectiveTo, bool any) = clampToFinalized(fromDay, toDay);
+        if (!any) return pending;
+        pending += previewForUserWindow(user, fromDay, effectiveTo);
+    }
+
+    /// @dev The SUFFICIENT VPFI balance the user's atomic claim needs to NOT
+    ///      revert — used by the horizon sweep's claim-executable gate. Unlike
+    ///      the pure {userClaimPendingUncapped}, this MUTATES: it advances
+    ///      every one of the user's side cursors first so the aggregate is
+    ///      exact even for entries no keeper has swept yet (a behind cursor
+    ///      makes {previewForUserEntries} read 0 for that entry — Codex #1317
+    ///      r2 xkk). It then adds, only when the user has forfeited entries,
+    ///      the headroom the claim's forfeit-credit path requires: that path
+    ///      calls {LibVpfiRecycle.credit}, which reverts unless the POST-payout
+    ///      balance still backs `recycleBucket + freshTreasury` — so the whole
+    ///      claim needs `payout + recycleBucket + forfeitFresh` (Codex #1317 r2
+    ///      xkq). A conservative sufficient bound (payout >= the pool-truncated
+    ///      transfer), so the gate never reaps unfairly. The window walk is
+    ///      capped at MAX_INTERACTION_CLAIM_DAYS and the entry scans are bounded
+    ///      by the user's entry count — acceptable for the dark, keeper-run
+    ///      reaper.
+    function userClaimFundingNeed(
+        LibVaipakam.Storage storage s,
+        address user
+    ) internal returns (uint256 need) {
+        // Advance every side cursor so the funding formula reads the EXACT
+        // value for each entry (a behind cursor would understate it — xkk),
+        // then apply the shared formula (payout + the forfeit-credit backing).
+        _advanceUserCursors(s, user);
+        need = _userClaimFundingNeedView(s, user);
+    }
+
+    /// @dev Advance BOTH of the user's side cursors to the latest `endDay - 1`
+    ///      across their unprocessed entries, so a subsequent
+    ///      {previewForUserEntries} / {_entryWindowSplit} reads the exact
+    ///      finalized value for every entry (the cumulative-min arrays are
+    ///      built lazily by the cursor, so an un-advanced day reads behind).
+    ///      Idempotent and monotonic — advancing past the swept entry only
+    ///      does the finalized-day work a later claim would do anyway.
+    function _advanceUserCursors(
+        LibVaipakam.Storage storage s,
+        address user
+    ) private {
+        uint256[] storage ids = s.userRewardEntryIds[user];
+        uint256 len = ids.length;
+        uint256 maxLender;
+        uint256 maxBorrower;
+        for (uint256 i; i < len; ) {
+            LibVaipakam.RewardEntry storage e = s.rewardEntries[ids[i]];
+            if (!e.processed && e.endDay != 0) {
+                uint256 needD = e.endDay - 1;
+                if (e.side == LibVaipakam.RewardSide.Lender) {
+                    if (needD > maxLender) maxLender = needD;
+                } else {
+                    if (needD > maxBorrower) maxBorrower = needD;
+                }
+            }
+            unchecked { ++i; }
+        }
+        if (maxLender != 0 && s.cumLenderCursor < maxLender) {
+            advanceCumLenderThrough(maxLender);
+        }
+        if (maxBorrower != 0 && s.cumBorrowerCursor < maxBorrower) {
+            advanceCumBorrowerThrough(maxBorrower);
+        }
+    }
+
+    /// @dev Sum the FRESH (non-recycled) face value of the user's unprocessed
+    ///      FORFEITED entries — exactly the `freshTreasury` the claim's
+    ///      forfeit-credit path would absorb into the recycle bucket. Assumes
+    ///      the caller has already advanced the cursors (see
+    ///      {_advanceUserCursors}) so each {_entryWindowSplit} is exact.
+    function _userForfeitFresh(
+        LibVaipakam.Storage storage s,
+        address user
+    ) private view returns (uint256 fresh) {
+        uint256[] storage ids = s.userRewardEntryIds[user];
+        uint256 len = ids.length;
+        for (uint256 i; i < len; ) {
+            LibVaipakam.RewardEntry storage e = s.rewardEntries[ids[i]];
+            if (
+                !e.processed &&
+                (e.forfeited || _entryTerminalForfeit(s, e))
+            ) {
+                EntrySplit memory sp = _entryWindowSplit(s, e);
+                fresh += sp.total - sp.recycled;
+            }
+            unchecked { ++i; }
+        }
+    }
+
     /// @notice View-only preview of {claimForUserEntries}.
     function previewForUserEntries(address user)
         internal
@@ -1020,6 +1183,357 @@ function _dayPoolHalves(
             }
             unchecked { ++i; }
         }
+    }
+
+    /**
+     * @notice RL-3 (#1305, Codex #1317 r7) — advance an entry's
+     *         EXECUTABLE-ELAPSED claim-horizon accumulator and, once it has
+     *         accrued a full `H + notice` of provably-claimable time,
+     *         process it into the EXPIRED channel.
+     *
+     *         Expiry is driven by executable time, never wall-clock: an
+     *         interval between two sweep observations is credited toward the
+     *         threshold ONLY if the entry was claim-executable at both ends
+     *         AND the gap is ≤ `REWARD_CLAIM_NOTICE_MAX_OBS_GAP_DAYS` (short
+     *         enough to trust as continuous). A longer gap — or any observed
+     *         non-executable state (unfunded / zero-payable / sanctioned) —
+     *         is never counted, so an unobserved outage can never let the
+     *         clock run past a window the claimant could not actually claim.
+     *
+     *         State machine per call (permissionless, keeper-class):
+     *           - feature dark (`rewardClaimHorizonDays == 0`)        → no-op
+     *           - processed / not claimable (finalization) / forfeited → no-op
+     *           - not claim-EXECUTABLE now (zero post-cap payable, local
+     *             VPFI can't cover it, or owner sanctioned) → no-op, and do
+     *             NOT advance the observation stamp (the outage interval
+     *             will exceed the gap bound and stay uncredited)
+     *           - executable, first observation → STAMP + start accumulator
+     *           - executable, gap ≤ bound → CREDIT the interval; emit the
+     *             final-notice signal on crossing `H`; a horizon
+     *             reconfiguration since the last accrual first caps the
+     *             accumulator back to `H` so the notice is re-earned
+     *           - executable, `execElapsed ≥ H + notice` → EXPIRE: process
+     *             the entry and return its {EntrySplit} for source-split
+     *             routing.
+     *
+     *         Forfeited entries are excluded — {sweepForfeitedByLoanId}
+     *         owns those; this sweep only ever expires PAYABLE value whose
+     *         owner never came back.
+     * @param  freshHeadroom Remaining fresh-pool capacity the CALLER's
+     *                       batch may still consume — the fresh share is
+     *                       capped to it per entry, so a batch can never
+     *                       terminalise several fresh entries against one
+     *                       capacity sliver.
+     * @return expired The expired FACE-VALUE decomposition (all zeros
+     *                 unless the entry expired on this call).
+     * @return freshCredited The post-cap fresh amount actually creditable
+     *                       for this entry — the caller decrements its
+     *                       headroom and credits the bucket with this.
+     */
+    function sweepExpiredEntry(uint256 id, uint256 freshHeadroom)
+        internal
+        returns (EntrySplit memory expired, uint256 freshCredited)
+    {
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        uint32 horizonDays = s.rewardClaimHorizonDays;
+        if (horizonDays == 0) return (expired, 0);
+        LibVaipakam.RewardEntry storage e = s.rewardEntries[id];
+        if (e.processed || e.user == address(0)) return (expired, 0);
+        if (e.forfeited || _entryTerminalForfeit(s, e)) return (expired, 0);
+        if (!_entryClaimable(s, e)) return (expired, 0);
+        if (e.startDay >= e.endDay) return (expired, 0);
+
+        // The cursor must actually cover the window — a claim blocked on
+        // finalization keeps the clock frozen (never stamps, never accrues).
+        uint256 need = e.endDay - 1;
+        uint256 cursor = e.side == LibVaipakam.RewardSide.Lender
+            ? s.cumLenderCursor
+            : s.cumBorrowerCursor;
+        if (cursor < need) {
+            cursor = e.side == LibVaipakam.RewardSide.Lender
+                ? advanceCumLenderThrough(need)
+                : advanceCumBorrowerThrough(need);
+            if (cursor < need) return (expired, 0);
+        }
+
+        EntrySplit memory split_ = _entryWindowSplit(s, e);
+        uint256 freshShare = split_.total - split_.recycled;
+        // Claim-EXECUTABLE gate: the accumulator only advances while the
+        // CLAIMANT could actually claim right now. The claim is ATOMIC-
+        // AGGREGATE — `claimInteractionRewardsTo` processes ALL of the user's
+        // entries (payable AND forfeited) plus the finalized legacy window in
+        // ONE call and reverts if any part is underfunded — so the funding
+        // check is against the user's whole claim, never this one entry: a
+        // per-entry balance check would let a partly-funded balance reap one
+        // entry while the real (aggregate) claim reverts (Codex #1317 P1).
+        // `userClaimFundingNeed` ADVANCES every one of the user's side cursors
+        // first, so the aggregate is exact even for entries a keeper hasn't
+        // swept yet (their cursors would otherwise read behind and understate
+        // the need — Codex #1317 r2 xkk), and it folds in the recycle-bucket
+        // backing the forfeit-credit path needs (Codex #1317 r2 xkq). The
+        // per-entry backing room is NOT checked here — it gates the all-or-
+        // nothing EXPIRY credit below, not the claimant's clock. Blocked when:
+        //   1. this entry's pool-capped payable is zero (a reap of it would
+        //      recycle nothing — nothing a claim could pay for it),
+        //   2. the owner is sanctioned (the claim path rejects them),
+        //   3. the protocol is paused (every claim reverts under the pause),
+        //   4. the balance can't cover the user's whole aggregate claim.
+        uint256 poolReserved =
+            s.interactionPoolPaidOut + s.rewardBudgetRemittedGlobal;
+        uint256 poolRoom = LibVaipakam.VPFI_INTERACTION_POOL_CAP > poolReserved
+            ? LibVaipakam.VPFI_INTERACTION_POOL_CAP - poolReserved
+            : 0;
+        uint256 entryPayable =
+            (freshShare < poolRoom ? freshShare : poolRoom) + split_.recycled;
+        bool executable = entryPayable != 0 &&
+            !LibVaipakam.isSanctionedAddress(e.user) &&
+            !LibPausable.paused() &&
+            IERC20Metadata(s.vpfiToken).balanceOf(address(this)) >=
+            userClaimFundingNeed(s, e.user);
+
+        uint64 lastObs = s.rewardEntryExecObsAt[id];
+
+        if (!executable) {
+            // Observed non-executable. Before the first executable
+            // observation there is no clock to break (stay unstarted).
+            // Afterwards, record the block and advance the stamp so the
+            // interval spanning this OBSERVED outage — however short — is
+            // never credited on recovery (Codex #1317 r8).
+            if (lastObs != 0) {
+                s.rewardEntryObsBlocked[id] = true;
+                s.rewardEntryExecObsAt[id] = uint64(block.timestamp);
+            }
+            return (expired, 0);
+        }
+
+        uint256 hSec = uint256(horizonDays) * 1 days;
+
+        if (lastObs == 0) {
+            // First claim-executable observation — start the accumulator.
+            // The stamp event is the notification pipeline's schedule signal.
+            s.rewardEntryFirstClaimableAt[id] = uint64(block.timestamp);
+            s.rewardEntryExecObsAt[id] = uint64(block.timestamp);
+            s.rewardEntryHorizonEpoch[id] = s.rewardHorizonActivatedAt;
+            emit RewardEntryHorizonStamped(id, e.user, uint64(block.timestamp));
+            return (expired, 0);
+        }
+
+        uint256 elapsed = s.rewardEntryExecElapsed[id];
+        // A horizon (re)configuration since this entry last accrued re-opens
+        // a fresh executable final notice: cap the accrual back to the
+        // horizon threshold so the full `notice` must be re-earned under the
+        // new configuration (the ratified re-notice-on-reconfiguration rule).
+        // The interval spanning the reconfiguration is NOT credited toward
+        // the fresh notice — re-baseline the observation and wait for the
+        // next touch (Codex #1317 r8).
+        if (s.rewardEntryHorizonEpoch[id] != s.rewardHorizonActivatedAt) {
+            if (elapsed >= hSec) {
+                elapsed = hSec;
+                s.rewardEntryExecElapsed[id] = uint64(elapsed);
+                // Entering the fresh final notice now — last-call signal.
+                emit RewardEntryExpiryArmed(id, e.user, uint64(block.timestamp));
+            }
+            s.rewardEntryHorizonEpoch[id] = s.rewardHorizonActivatedAt;
+            s.rewardEntryExecObsAt[id] = uint64(block.timestamp);
+            s.rewardEntryObsBlocked[id] = false;
+            return (expired, 0);
+        }
+
+        // Credit this interval only if the entry was executable at BOTH ends
+        // (the prior observation was not a block) AND the gap is short enough
+        // to trust as continuous AND the gap did not straddle a pause window;
+        // anything else is dropped (re-baselined below). An interval whose
+        // prior sample predates the last pause boundary spanned a pause during
+        // which every claim would have reverted, so it must not count as
+        // executable time (Codex #1317 P2 — the sweep itself is `whenNotPaused`,
+        // so it cannot observe DURING a pause; the boundary marker is how a
+        // post-unpause sweep discovers the gap it slept through).
+        // `<=`, not `<`: a pause boundary stored in the SAME block as the
+        // prior observation is ambiguous in ordering, so treat an equal
+        // timestamp as spanning the pause too — conservatively drop it rather
+        // than credit a possibly-paused interval (Codex #1317 r2 xkm).
+        bool spannedPause =
+            uint256(lastObs) <= uint256(LibPausable.lastPauseBoundaryAt());
+        if (!s.rewardEntryObsBlocked[id]) {
+            uint256 gap = block.timestamp - uint256(lastObs);
+            if (
+                !spannedPause &&
+                gap <=
+                uint256(LibVaipakam.REWARD_CLAIM_NOTICE_MAX_OBS_GAP_DAYS) * 1 days
+            ) {
+                uint256 credited = elapsed + gap;
+                if (elapsed < hSec && credited >= hSec) {
+                    // Crossed into the final-notice window. Emit the TRUE
+                    // crossing instant (the overshoot accrued before now),
+                    // so the notice pipeline schedules from when the notice
+                    // actually began, not this sweep's timestamp.
+                    emit RewardEntryExpiryArmed(
+                        id, e.user, uint64(block.timestamp - (credited - hSec))
+                    );
+                }
+                elapsed = credited;
+                s.rewardEntryExecElapsed[id] = uint64(elapsed);
+            }
+        } else {
+            // Recovery from an observed block — re-baseline without
+            // crediting the blocked interval.
+            s.rewardEntryObsBlocked[id] = false;
+        }
+        s.rewardEntryExecObsAt[id] = uint64(block.timestamp);
+
+        uint256 required =
+            hSec + uint256(LibVaipakam.REWARD_CLAIM_HORIZON_NOTICE_DAYS) * 1 days;
+        if (elapsed < required) {
+            return (expired, 0);
+        }
+
+        // ALL-OR-NOTHING expiry (Codex #1317): terminalise ONLY if the
+        // entry's FULL fresh share fits the batch's remaining creditable
+        // headroom (`freshHeadroom` = the 69M pool cap AND the recycle-bucket
+        // backing room, minimised per entry by the caller). A PARTIAL credit
+        // would reap the claimant while silently dropping the uncreditable
+        // fresh remainder — so defer the whole entry instead, and RECORD the
+        // block so the countdown pauses and the next touch re-baselines from
+        // a creditable state (never a fresh accrual — the claimant already
+        // served the full window; the defer is a protocol-side crediting
+        // constraint, and the claim path stays open to them throughout).
+        if (freshShare > freshHeadroom) {
+            s.rewardEntryObsBlocked[id] = true;
+            return (expired, 0);
+        }
+        expired = split_;
+        freshCredited = freshShare;
+        e.processed = true;
+        emit RewardEntryExpired(id, e.user, expired.total, expired.recycled);
+    }
+
+    /// @notice RL-3 — UX view: the entry's horizon state for the
+    ///         claim-center countdown.
+    /// @return firstClaimableAt Accumulator start (0 = not started).
+    /// @return expiresAt        A CONSERVATIVE forward estimate of the
+    ///                          earliest instant the entry could be reaped,
+    ///                          assuming it stays continuously claim-executable
+    ///                          from now (0 = dark, unstarted, OR already
+    ///                          processed). The on-chain sweep is
+    ///                          authoritative; this view only estimates.
+    ///                          Removal is gated on claim-EXECUTABLE-elapsed
+    ///                          time, so a funding outage or sanction pauses
+    ///                          the countdown (the pending heartbeat interval
+    ///                          is folded in only while the entry is
+    ///                          claim-executable now). The estimate errs
+    ///                          OPTIMISTIC (never later than the true reap):
+    ///                          once the window is fully accrued it reports
+    ///                          `now` even if the actual reap is deferred a
+    ///                          little longer by a recycle-bucket backing
+    ///                          shortfall — which is safe UX, since it only
+    ///                          urges the claimant to claim sooner, and they
+    ///                          can claim right up until the reap.
+    function rewardEntryExpiry(uint256 id)
+        internal
+        view
+        returns (uint64 firstClaimableAt, uint64 expiresAt)
+    {
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        firstClaimableAt = s.rewardEntryFirstClaimableAt[id];
+        uint32 horizonDays = s.rewardClaimHorizonDays;
+        if (firstClaimableAt == 0 || horizonDays == 0) return (firstClaimableAt, 0);
+        LibVaipakam.RewardEntry storage e = s.rewardEntries[id];
+        // A processed entry (claimed or already expired) can never be swept,
+        // so it has no live countdown (Codex #1317 r11).
+        if (e.processed) return (firstClaimableAt, 0);
+
+        uint256 hSec = uint256(horizonDays) * 1 days;
+        uint256 elapsed = s.rewardEntryExecElapsed[id];
+        if (s.rewardEntryHorizonEpoch[id] != s.rewardHorizonActivatedAt) {
+            // A sweep would reconcile the reconfiguration: cap to the horizon
+            // so the notice re-accrues, crediting nothing this interval. The
+            // cap never understates remaining, so it is applied regardless of
+            // executability; the re-accrual's own claim-executable gating is
+            // covered by the conservative-estimate caveat above (Codex #1317).
+            if (elapsed > hSec) elapsed = hSec;
+        } else if (
+            !s.rewardEntryObsBlocked[id] && _entryExecutableNow(s, e)
+        ) {
+            // Fold in the pending interval a sweep-now would credit — but
+            // ONLY while the entry is claim-executable at this block (owner
+            // unsanctioned, pool-capped payable non-zero, balance covers it),
+            // mirroring the sweep's accrual gate. A blocked claimant's
+            // countdown pauses here instead of ticking down through the block.
+            // An interval that straddled a pause boundary is dropped, matching
+            // the sweep — else a paused-then-unpaused entry would show
+            // `expiresAt == now` while a sweep-now would only re-baseline
+            // (Codex #1317 r2 xkn).
+            uint256 lastObs = uint256(s.rewardEntryExecObsAt[id]);
+            uint256 gap = block.timestamp - lastObs;
+            if (
+                lastObs > uint256(LibPausable.lastPauseBoundaryAt()) &&
+                gap <=
+                uint256(LibVaipakam.REWARD_CLAIM_NOTICE_MAX_OBS_GAP_DAYS) *
+                    1 days
+            ) {
+                elapsed += gap;
+            }
+        }
+        uint256 required = hSec +
+            uint256(LibVaipakam.REWARD_CLAIM_HORIZON_NOTICE_DAYS) * 1 days;
+        uint256 remaining = required > elapsed ? required - elapsed : 0;
+        expiresAt = uint64(block.timestamp + remaining);
+    }
+
+    /// @dev RL-3 — a view-side mirror of the sweep's CLAIM-executable gate,
+    ///      used only by {rewardEntryExpiry} to decide whether a sweep-now
+    ///      would credit the pending heartbeat interval. Mirrors
+    ///      {sweepExpiredEntry}'s accrual gate exactly: the accumulator
+    ///      advances only while the CLAIMANT could claim the entry now —
+    ///      mirroring the sweep gate exactly: the entry's own pool-capped share
+    ///      is payable, the owner is unsanctioned, the protocol is unpaused,
+    ///      and the local balance covers the user's FULL aggregate claim (the
+    ///      claim is atomic across all their entries + the legacy window).
+    ///      Backing room is deliberately NOT checked here: it gates the
+    ///      all-or-nothing EXPIRY credit, not the claimant's clock (a claim
+    ///      never touches the bucket), so a backing shortfall does not pause
+    ///      accrual — it only defers the final reap, which the view reflects
+    ///      as the estimate caveat documented on {rewardEntryExpiry}.
+    function _entryExecutableNow(
+        LibVaipakam.Storage storage s,
+        LibVaipakam.RewardEntry storage e
+    ) private view returns (bool) {
+        if (LibVaipakam.isSanctionedAddress(e.user)) return false;
+        if (LibPausable.paused()) return false; // every claim reverts paused
+        EntrySplit memory split_ = _entryWindowSplit(s, e);
+        uint256 freshShare = split_.total - split_.recycled;
+        uint256 poolReserved =
+            s.interactionPoolPaidOut + s.rewardBudgetRemittedGlobal;
+        uint256 poolRoom = LibVaipakam.VPFI_INTERACTION_POOL_CAP > poolReserved
+            ? LibVaipakam.VPFI_INTERACTION_POOL_CAP - poolReserved
+            : 0;
+        uint256 entryPayable =
+            (freshShare < poolRoom ? freshShare : poolRoom) + split_.recycled;
+        if (entryPayable == 0) return false; // nothing a claim could pay for it
+        return
+            IERC20Metadata(s.vpfiToken).balanceOf(address(this)) >=
+            _userClaimFundingNeedView(s, e.user);
+    }
+
+    /// @dev View mirror of {userClaimFundingNeed}'s funding formula, WITHOUT
+    ///      the cursor advance a view can't perform. Used by the countdown
+    ///      estimate so it applies the SAME forfeit-credit backing the sweep
+    ///      does (`payout + recycleBucket + forfeitFresh` when the user has
+    ///      forfeited entries) — otherwise the view would show an imminent
+    ///      expiry for an unbacked-forfeit user whose claim actually reverts
+    ///      and whom the sweep will not accrue (Codex #1317 r4). It stays
+    ///      optimistic ONLY on the axis a view genuinely cannot resolve: an
+    ///      unadvanced entry reads behind (0), matching the documented
+    ///      conservative-estimate caveat on {rewardEntryExpiry}.
+    function _userClaimFundingNeedView(
+        LibVaipakam.Storage storage s,
+        address user
+    ) private view returns (uint256 need) {
+        uint256 payout = userClaimPendingUncapped(s, user);
+        uint256 forfeitFresh = _userForfeitFresh(s, user);
+        need = forfeitFresh == 0
+            ? payout
+            : payout + s.recycleBucket + forfeitFresh;
     }
 
     /// @dev PR-3c — accumulate `part` into `acc` (memory fold helper).

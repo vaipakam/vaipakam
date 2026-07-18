@@ -652,6 +652,32 @@ library LibVaipakam {
     ///      elapsed days would count a launch-day spike ≈2.6×, violating
     ///      the ≤1× lifetime-contribution bound (Codex r2).
     uint256 constant RECYCLE_TRAILING_WINDOW_DAYS = 7;
+    /// @dev RL-3 (#1305, VpfiRecyclingLoopClosureDesign §6 — ratified
+    ///      §10.2) — bounds for the post-claimability reward claim horizon
+    ///      `H` (days). The ratified default is 365; the knob is bounded
+    ///      below at 180 so governance can never spring a short horizon on
+    ///      dormant claimants, and above at 1095 so the liability tail
+    ///      stays genuinely bounded. Stored `0` ⇒ the feature is DARK
+    ///      (deploy default): nothing expires, no clock runs.
+    uint32 constant REWARD_CLAIM_HORIZON_MIN_DAYS = 180;
+    uint32 constant REWARD_CLAIM_HORIZON_MAX_DAYS = 1095;
+    /// @dev RL-3 — the ratified ≥90-day activation notice floor: after every
+    ///      horizon activation (including a re-activation following a dark
+    ///      reset), NO entry may expire before this many days have passed,
+    ///      regardless of how stale its first-claimable stamp is. This is
+    ///      what makes a dark interval safe: disabling and re-enabling the
+    ///      feature always re-grants dormant claimants a fresh notice window.
+    uint32 constant REWARD_CLAIM_HORIZON_NOTICE_DAYS = 90;
+    /// @dev RL-3 (Codex #1317 r7) — the maximum observation gap, in days,
+    ///      that the expiry sweep will credit as continuously
+    ///      claim-executable time. An interval between two executable
+    ///      observations longer than this might hide a funding outage or a
+    ///      sanction and is NOT counted toward the horizon+notice threshold,
+    ///      so an entry can only be reaped after keepers have observed it
+    ///      claim-executable with no gap over this bound across the whole
+    ///      window. Bounds the largest outage that could pass undetected;
+    ///      keepers sweep far more often than weekly, so this is slack.
+    uint32 constant REWARD_CLAIM_NOTICE_MAX_OBS_GAP_DAYS = 7;
 
     /// @dev Tariff `k` for peg-free discount entitlements (design §4.2): VPFI
     ///      (1e18) charged per 1 ETH (1e18) of loan volume per day, so a
@@ -5033,6 +5059,59 @@ library LibVaipakam {
         ///      post-cutover (recycled payouts debit {recycleBucket}
         ///      instead). Transparency + reconciliation counter.
         uint256 paidOutRecycled;
+        // ─── RL-3 (#1305) — post-claimability reward claim horizon ─────────
+        /// @dev Horizon `H` in days. `0` ⇒ feature DARK (deploy default);
+        ///      set via {ConfigFacet.setRewardClaimHorizonDays}, bounded
+        ///      `[REWARD_CLAIM_HORIZON_MIN_DAYS, REWARD_CLAIM_HORIZON_MAX_DAYS]`.
+        uint32 rewardClaimHorizonDays;
+        /// @dev Per-entry first-observed-claimable timestamp — set on the
+        ///      permissionless sweep's first touch that finds the entry
+        ///      claim-executable. Drives the {RewardEntryHorizonStamped}
+        ///      notification-schedule signal and marks that the horizon
+        ///      accumulator has started; every pre-existing dormant entry's
+        ///      clock therefore starts at/after feature activation
+        ///      (grandfathering by construction).
+        mapping(uint256 => uint64) rewardEntryFirstClaimableAt;
+        /// @dev STRICTLY-MONOTONIC epoch token bumped on every non-zero
+        ///      horizon (re)configuration — normally the block timestamp,
+        ///      but `prev + 1` on a same-block collision so every retune is
+        ///      distinguishable (Codex #1317 r9). A per-entry
+        ///      {rewardEntryHorizonEpoch} that lags this value means the
+        ///      horizon was reconfigured since the entry last accrued, so
+        ///      the sweep caps its accrued time back to the horizon
+        ///      threshold and forces a fresh executable final notice to be
+        ///      re-earned (the ratified re-notice-on-reconfiguration rule).
+        uint64 rewardHorizonActivatedAt;
+        /// @dev Codex #1317 r7 — FUNDED-NOTICE SOUNDNESS. Expiry is driven
+        ///      by *executable-elapsed* time, not wall-clock: an entry can
+        ///      only be swept once it has accrued `H + notice` days of time
+        ///      during which it was provably claim-executable. Wall-clock
+        ///      alone was unsound — an unobserved funding outage or sanction
+        ///      could let the clock run while the claimant genuinely could
+        ///      not claim.
+        ///
+        ///      `rewardEntryExecObsAt`  — last timestamp the sweep observed
+        ///        the entry claim-executable (0 = never). An interval since
+        ///        this stamp is credited toward {rewardEntryExecElapsed}
+        ///        ONLY if it is ≤ `REWARD_CLAIM_NOTICE_MAX_OBS_GAP_DAYS`
+        ///        (short enough to trust as continuously executable); a
+        ///        longer gap might hide an outage and is never counted.
+        ///      `rewardEntryExecElapsed` — accumulated provably-executable
+        ///        seconds toward the `H + notice` threshold.
+        ///      `rewardEntryHorizonEpoch` — the {rewardHorizonActivatedAt}
+        ///        value under which the accrual was made; a mismatch caps
+        ///        the accrual to the horizon threshold so the final notice
+        ///        is re-earned under the new configuration.
+        mapping(uint256 => uint64) rewardEntryExecObsAt;
+        mapping(uint256 => uint64) rewardEntryExecElapsed;
+        mapping(uint256 => uint64) rewardEntryHorizonEpoch;
+        /// @dev Codex #1317 r8 — set true when the last observation found the
+        ///      entry NON-executable (a funding shortfall, zero-payable, or
+        ///      sanction seen by a keeper touch). The next executable touch
+        ///      then re-baselines WITHOUT crediting the interval spanning
+        ///      that observed block, so even a short (< max-gap) outage that
+        ///      a keeper actually saw is never counted toward the window.
+        mapping(uint256 => bool) rewardEntryObsBlocked;
     }
 
     /// @notice Governor PR-3b (#1217 §3.1) — the per-day pool composition
