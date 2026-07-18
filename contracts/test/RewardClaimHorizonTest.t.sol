@@ -493,6 +493,61 @@ contract RewardClaimHorizonTest is SetupTest, IVaipakamErrors {
         );
     }
 
+    /// @notice The countdown view must pause (not fold in the pending gap)
+    ///         while the entry is currently non-executable, so it never
+    ///         shows a false imminent removal a sweep-now can't perform
+    ///         (Codex #1317 r11).
+    function testCountdownPausesWhileBlocked() public {
+        _cfg().setRewardClaimHorizonDays(180);
+        MockSanctionsList oracle = new MockSanctionsList();
+        ProfileFacet(address(diamond)).setSanctionsOracle(address(oracle));
+        uint256 id = _seedClaimableEntry();
+        _facet().sweepExpiredInteractionRewards(_ids(id)); // stamp
+        _accrue(id, 180 days + NOTICE - MAX_GAP); // to just under threshold
+
+        // A max-gap passes and the owner is sanctioned, with NO keeper touch —
+        // so the observed-block flag stays clear and only the VIEW can catch
+        // it.
+        vm.warp(vm.getBlockTimestamp() + MAX_GAP);
+        oracle.setFlagged(alice, true);
+        // The view must NOT fold the pending gap (a sweep-now credits nothing
+        // for a sanctioned owner), so it reports remaining time, not `now`.
+        (, uint64 blockedExpiry) = _facet().getRewardEntryExpiry(id);
+        assertGt(
+            blockedExpiry,
+            uint64(vm.getBlockTimestamp()),
+            "countdown paused while sanctioned, not imminent"
+        );
+
+        // Once delisted (still no intervening keeper touch), the view folds
+        // the pending gap and reports NOW.
+        oracle.setFlagged(alice, false);
+        (, uint64 fundedExpiry) = _facet().getRewardEntryExpiry(id);
+        assertEq(
+            fundedExpiry,
+            uint64(vm.getBlockTimestamp()),
+            "countdown resumes and reports now once delisted"
+        );
+    }
+
+    /// @notice A claimed (processed) entry carries no expiry countdown
+    ///         (Codex #1317 r11).
+    function testProcessedEntryHasNoCountdown() public {
+        _cfg().setRewardClaimHorizonDays(180);
+        uint256 id = _seedClaimableEntry();
+        _facet().sweepExpiredInteractionRewards(_ids(id)); // stamp
+        _accrue(id, 60 days);
+
+        (, uint64 liveExpiry) = _facet().getRewardEntryExpiry(id);
+        assertGt(liveExpiry, 0, "live entry has a countdown");
+
+        vm.prank(alice);
+        _facet().claimInteractionRewardsTo(LibVaipakam.RewardDelivery.Wallet);
+
+        (, uint64 processedExpiry) = _facet().getRewardEntryExpiry(id);
+        assertEq(processedExpiry, 0, "claimed entry shows no countdown");
+    }
+
     function testHorizonKnobBounds() public {
         vm.expectRevert();
         _cfg().setRewardClaimHorizonDays(179);

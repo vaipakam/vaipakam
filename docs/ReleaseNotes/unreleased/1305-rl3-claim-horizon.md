@@ -20,17 +20,21 @@ means the amount a claim would really pay (fresh capped to remaining
 pool capacity, plus recycled) is non-zero, covered by local funding, and
 the owner unsanctioned.
 
-This is a genuine soundness guarantee, not best-effort: because credit
-requires observation at both ends with a bounded gap, no unobserved
-funding outage or sanction can let the clock run past time the claimant
-could not actually claim — the earlier wall-clock design could, if no
-keeper happened to touch the entry during the outage. The cost is a
-keeper heartbeat: an entry only ever expires if keepers observed it
-claim-executable throughout with no gap over the bound; otherwise it
-simply never reaps, a safe failure mode that errs toward not-reaping.
-A non-executable touch also RECORDS the block, so even a short outage a
-keeper actually observed is dropped on recovery (not just unobserved
-gaps over the bound). A sanctioned owner cannot claim, so their entries
+This is a genuine soundness guarantee up to the sampling resolution, not
+best-effort: no outage longer than the max observation gap (observed or
+not), and no observed outage of any length, is ever credited — the
+earlier wall-clock design credited any outage the moment funding
+returned, if no keeper touched the entry during it. The one residual is
+a sub-max-gap unobserved outage that starts and ends between two
+executable touches: the sweep sees both endpoints executable and credits
+it, bounded by the max gap — so the max gap is the sampling resolution,
+and a tighter gap tightens the guarantee at the cost of a denser
+heartbeat. The cost is a keeper heartbeat: an entry only ever expires if
+keepers observed it claim-executable throughout with no gap over the
+bound; otherwise it simply never reaps, a safe failure mode that errs
+toward not-reaping. A non-executable touch also RECORDS the block, so an
+outage a keeper actually observed is dropped on recovery regardless of
+length. A sanctioned owner cannot claim, so their entries
 never accrue and can never be swept while flagged (a delist resumes
 accrual — freeze, not seize). A horizon reconfiguration — dark reset or any retune — caps the
 accumulator back to the horizon threshold on the next touch, so the full

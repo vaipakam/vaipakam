@@ -1261,13 +1261,16 @@ function _dayPoolHalves(
     /// @return firstClaimableAt Accumulator start (0 = not started).
     /// @return expiresAt        The earliest instant the entry could be
     ///                          terminally removed ASSUMING it stays
-    ///                          continuously claim-executable and observed
-    ///                          from now (0 = dark or unstarted). Because
-    ///                          removal is gated on EXECUTABLE-elapsed time
-    ///                          — which only advances while a claim would
-    ///                          succeed and keepers observe it — this is a
-    ///                          forward estimate, not a fixed deadline: a
-    ///                          funding outage or sanction pauses it.
+    ///                          continuously claim-executable from now (0 =
+    ///                          dark, unstarted, OR already processed —
+    ///                          claimed/expired entries carry no countdown).
+    ///                          Because removal is gated on EXECUTABLE-
+    ///                          elapsed time — which only advances while a
+    ///                          claim would succeed and keepers observe it —
+    ///                          this is a forward estimate, not a fixed
+    ///                          deadline: a funding outage or sanction pauses
+    ///                          it (the pending heartbeat interval is only
+    ///                          folded in when the entry is executable now).
     function rewardEntryExpiry(uint256 id)
         internal
         view
@@ -1276,34 +1279,44 @@ function _dayPoolHalves(
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         firstClaimableAt = s.rewardEntryFirstClaimableAt[id];
         uint32 horizonDays = s.rewardClaimHorizonDays;
-        if (firstClaimableAt != 0 && horizonDays != 0) {
-            uint256 hSec = uint256(horizonDays) * 1 days;
-            uint256 elapsed = s.rewardEntryExecElapsed[id];
+        if (firstClaimableAt == 0 || horizonDays == 0) return (firstClaimableAt, 0);
+        LibVaipakam.RewardEntry storage e = s.rewardEntries[id];
+        // A processed entry (claimed or already expired) can never be swept,
+        // so it has no live countdown (Codex #1317 r11).
+        if (e.processed) return (firstClaimableAt, 0);
+
+        uint256 hSec = uint256(horizonDays) * 1 days;
+        uint256 elapsed = s.rewardEntryExecElapsed[id];
+        if (s.rewardEntryHorizonEpoch[id] != s.rewardHorizonActivatedAt) {
+            // A sweep now would reconcile the reconfiguration: cap and
+            // re-baseline, crediting nothing this interval.
+            if (elapsed > hSec) elapsed = hSec;
+        } else if (
+            !s.rewardEntryObsBlocked[id] &&
+            !LibVaipakam.isSanctionedAddress(e.user)
+        ) {
+            // Fold in the pending interval a sweep-now would credit — but
+            // ONLY if the entry is plausibly claim-executable at this block.
+            // A sanctioned owner can't claim, so a sweep credits nothing and
+            // neither does the countdown (it stays paused). Funding is not
+            // re-checked here: on the canonical chain the balance is the
+            // whole reward pool (never blocks), and the mirror partial-
+            // underfunding view-pause is the deferred #1332 aggregate-
+            // funding domain (Codex #1317 r11).
+            uint256 gap =
+                block.timestamp - uint256(s.rewardEntryExecObsAt[id]);
             if (
-                s.rewardEntryHorizonEpoch[id] != s.rewardHorizonActivatedAt
+                gap <=
+                uint256(LibVaipakam.REWARD_CLAIM_NOTICE_MAX_OBS_GAP_DAYS) *
+                    1 days
             ) {
-                // A sweep now would reconcile the reconfiguration: cap and
-                // re-baseline, crediting nothing this interval.
-                if (elapsed > hSec) elapsed = hSec;
-            } else if (!s.rewardEntryObsBlocked[id]) {
-                // Mirror the pending interval a sweep-now would credit, so
-                // the countdown never claims a removal LATER than the
-                // contract would actually enforce.
-                uint256 gap =
-                    block.timestamp - uint256(s.rewardEntryExecObsAt[id]);
-                if (
-                    gap <=
-                    uint256(LibVaipakam.REWARD_CLAIM_NOTICE_MAX_OBS_GAP_DAYS) *
-                        1 days
-                ) {
-                    elapsed += gap;
-                }
+                elapsed += gap;
             }
-            uint256 required = hSec +
-                uint256(LibVaipakam.REWARD_CLAIM_HORIZON_NOTICE_DAYS) * 1 days;
-            uint256 remaining = required > elapsed ? required - elapsed : 0;
-            expiresAt = uint64(block.timestamp + remaining);
         }
+        uint256 required = hSec +
+            uint256(LibVaipakam.REWARD_CLAIM_HORIZON_NOTICE_DAYS) * 1 days;
+        uint256 remaining = required > elapsed ? required - elapsed : 0;
+        expiresAt = uint64(block.timestamp + remaining);
     }
 
     /// @dev PR-3c — accumulate `part` into `acc` (memory fold helper).
