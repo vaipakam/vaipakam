@@ -27,7 +27,16 @@
         "language": "言語",
         "languageHint": "翻訳が完了していない言語は、当面英語で表示されます。",
         "languagePickerAria": "表示言語"
-      }
+      },
+      "loading": "読み込み中…",
+      "modeAdvanced": "詳細",
+      "modeBasic": "基本",
+      "modeSwitchAria": "インターフェースモード",
+      "more": "その他",
+      "moreSheetAria": "その他の移動先",
+      "navPrimaryAria": "メイン",
+      "navQuickAria": "クイックナビゲーション",
+      "skipToContent": "コンテンツへスキップ"
     },
     "seo": {
       "home": {
@@ -178,7 +187,11 @@
       "pushEnable": "Push 配信を有効化",
       "pushEnabled": "このウォレットの Push 配信はオンです。",
       "pushButton": "Push チャンネルを開く",
-      "loanNudge": "このローンがリスク状態になったら Telegram で警告を受け取りたいですか？設定でアラートを設定してください。"
+      "loanNudge": "このローンがリスク状態になったら Telegram で警告を受け取りたいですか？設定でアラートを設定してください。",
+      "bandAlert": "アラート",
+      "bandCritical": "重大",
+      "bandWarn": "警告",
+      "bandsSave": "保存"
     },
     "notifications": {
       "bellLabel": "通知",
@@ -206,7 +219,16 @@
       "title": "このページで問題が発生しました",
       "body": "ページで予期しないエラーが発生し、表示が停止しました。資金やオンチェーンのポジションには影響しません — 表示側の不具合です。直前に署名したトランザクションは通っている可能性があります（再読み込み後に自分のポジションを確認してください）。通常は再読み込みで解消します。",
       "reload": "ページを再読み込み",
-      "home": "ホームに戻る"
+      "home": "ホームに戻る",
+      "detailAria": "エラー詳細",
+      "glosses": {
+        "185": "最大更新深度を超えました — コンポーネントが毎回のレンダーで state を更新しています。無限レンダーループです。",
+        "300": "期待より少ない hooks がレンダーされました — 条件付き return により hook がスキップされました。",
+        "301": "再レンダーが多すぎます — レンダー中に state setter が呼ばれています。",
+        "310": "Rules of Hooks 違反 — hook が条件付き、または順序違いで呼ばれました。",
+        "321": "無効な hook 呼び出し — hooks は React 関数コンポーネント内でのみ実行できます。",
+        "418": "Hydration の不一致 — サーバーとクライアントが異なるマークアップをレンダーしました。"
+      }
     },
     "diagnostics": {
       "open": "サポートと接続チェック",
@@ -264,7 +286,8 @@
       "tokenValid": "資産はトークンとして認識済み",
       "consent": "リスク開示と条件を承諾済み",
       "getTestAssets": "テスト資産を取得",
-      "connectEarly": "続行するにはウォレットを接続してください — 署名に必要なので、今接続しておくのが簡単です。"
+      "connectEarly": "続行するにはウォレットを接続してください — 署名に必要なので、今接続しておくのが簡単です。",
+      "sanctionsChecking": "コンプライアンス状態を確認中…"
     },
     "receipt": {
       "heading": "署名前に確認",
@@ -293,7 +316,53 @@
         "貸付: 利息を得られるのは借り手が返済した場合だけです。デフォルト時の回収額は、ロックされた担保が結果的にどれだけの価値を持つかに依存します。",
         "NFT レンタル: レンタル利用者が受け取るのは一時的な利用権であり、所有権ではありません。NFT は所有者の vault に残ります。レンタル料は前払いで、小さな返金可能バッファがあります。",
         "スマートコントラクトリスク: Vaipakam は公開ネットワーク上のコードです。バグ、ネットワーク障害、極端な市場環境により損失が発生する可能性があります — 失って困る資金は投入しないでください。"
-      ]
+      ],
+      "buildDevFallback": "dev",
+      "buildLabel": "Build",
+      "faq": {
+        "alerts": {
+          "a": "アラートカードで Telegram を連携し（ブラウザ push も有効化できます）、ローンが期日に近づいたりポジションの健全性が下がったりしたときに通知を受け取れます。連携は一度だけの署名です。テストアラートを自分に送ると、実際に頼る前にチャネルが動くことを確認できます。",
+          "q": "期限や清算の前にアラートを受け取るには？"
+        },
+        "assetsHeld": {
+          "a": "あなた自身の Vaipakam Vault 内です — あなたのウォレットだけが管理するオンチェーンアカウントです。Vaipakam がユーザー資金をプールすることはなく、あなたの代わりに使うこともできません。",
+          "q": "私の資産はどこに保管されますか？"
+        },
+        "claimCenter": {
+          "a": "あなたが関わるローンが決済されると、受け取るべき返済やデフォルト担保は、あなたが請求するまで待機します。請求ページは、プロトコル自身の記録に照らして、どのポジションで何が請求可能かを正確に表示するため、取り残されるものがありません。",
+          "q": "請求センターは何のためにありますか？"
+        },
+        "lenderInterest": {
+          "a": "いいえ。借り手が期限どおり返済した場合に得られるものです。デフォルトした場合の回収額は、借り手がロックした担保によって決まります — 署名前の確認画面でその点を説明します。",
+          "q": "貸すときに表示される利息は保証されていますか？"
+        },
+        "missedRepayment": {
+          "a": "期日と猶予期間を過ぎると、貸し手はあなたのロック済み担保を受け取れます。担保にライブ市場価格がある場合、価値が下がりすぎると自動的に売却されることもあります — 期限内の返済で両方を避けられます。",
+          "q": "ローンを返済しないとどうなりますか？"
+        },
+        "modes": {
+          "a": "基本モードでは、借りる、貸す、NFT レンタルのガイド付きフローが中心です。詳細モードではさらに、オファーブック、レートデスクのオーダーブック、VPFI 割引、全アクティビティ履歴などの上級者向け画面が表示されます。ナビゲーションのモード切替からいつでも変更できます。ポジションが移動することはありません。",
+          "q": "基本モードと詳細モードの違いは？"
+        },
+        "nftRental": {
+          "a": "NFT は所有者の vault にロックされたままです。借り手は一時的な使用権だけを受け取り、所有権は受け取りません。レンタル料は前払いで、小さな返金可能バッファがあります。",
+          "q": "NFT レンタルとは何ですか？"
+        },
+        "nftVerifier": {
+          "a": "NFT 検証ツール（ナビゲーション内）は、Vaipakam のポジション NFT をチェーンから直接読み取り、本当のローン条件とステータスを表示します — セカンダリーマーケットの売買を信頼する前に、その listing が実際に何を表すか確認できます。",
+          "q": "プラットフォーム外で買う前にポジション NFT を確認するには？"
+        },
+        "vpfi": {
+          "a": "いいえ。VPFI は任意です — vault に保有すると対象ローンのプロトコル手数料を減らせることがあります。ネットワーク gas は減らず、借りる、貸す、レンタルするために必要になることもありません。",
+          "q": "VPFI は必要ですか？"
+        },
+        "wrongNetwork": {
+          "a": "オファー、vault、faucet はネットワークごとに分かれています。ウォレットが Vaipakam 未対応のチェーンにある場合、バナーから対応ネットワークへワンクリックで切り替えられます。アプリが未対応チェーンで動作することはありません。",
+          "q": "違うネットワークだと言われます — どうすればいいですか？"
+        }
+      },
+      "lede": "わかりやすい短い回答です。",
+      "title": "ヘルプ"
     },
     "consentParts": {
       "prefix": "",
@@ -387,7 +456,42 @@
       "no4907Unknown": "この NFT コレクションがオンチェーンレンタル標準 (ERC-4907) に対応しているか確認できませんでした。対応していない場合、Vaipakam 外のアプリはレンタル利用者を認識しません — Vaipakam 内のレンタルは引き続き動作します。",
       "vpfiPrepayListing": "このリスティングは VPFI での支払いを求めていますが、レンタルでは許可されません — 受け入れられません。別のリスティングを選んでください。",
       "vpfiCheckRetry": "このリスティングの支払い資産を現在確認できませんでした — 何も送信または承認されていません。少し待って再試行してください。",
-      "vpfiPrepayNotAllowed": "VPFI はレンタル支払い資産として使用できません — 別のトークンを選んでください。"
+      "vpfiPrepayNotAllowed": "VPFI はレンタル支払い資産として使用できません — 別のトークンを選んでください。",
+      "back": "戻る",
+      "beforeYouSign": "署名前に確認",
+      "continueToReview": "確認へ進む",
+      "contractHint": "ERC-4907 対応の単一 NFT は、他のアプリにも見える使用権を借り手に与えます。それ以外の NFT も Vaipakam 内で追跡され、レンタルできます。",
+      "contractLabel": "NFT コントラクトアドレス",
+      "dailyFeeLabel": "日額料金",
+      "durationLabel": "レンタル期間",
+      "listWhenEnds": "レンタル終了時、借り手の権利は自動的にリセットされます。手数料を請求し、レンタル詳細ページから NFT を取り戻します。",
+      "listYouCanLose": "レンタル中の NFT の一時使用 — 借り手が NFT を譲渡または売却することはできません。",
+      "listingsLoading": "レンタル listing を読み込み中…",
+      "liveFeesLoaded": "ライブ手数料条件を読み込みました",
+      "liveFeesLoading": "ライブ手数料条件を読み込み中…",
+      "liveRentalLoaded": "ライブレンタル条件を読み込みました",
+      "liveRentalLoading": "ライブレンタル条件を読み込み中…",
+      "nftTypeErc1155": "複数エディション NFT (ERC-1155)",
+      "nftTypeErc721": "単一 NFT (ERC-721)",
+      "nftTypeLabel": "NFT タイプ",
+      "nothing": "なし。",
+      "paymentAssetCheckFailed": "支払い資産を今は確認できませんでした — しばらくしてから再試行してください。",
+      "paymentAssetRecognised": "支払い資産を認識しました",
+      "preparingReview": "確認内容を準備中…",
+      "prepayAssetHint": "借り手はこのトークンでレンタル全額を前払いします。",
+      "prepayAssetLabel": "借り手が支払う資産",
+      "quantityLabel": "数量",
+      "rentFeesNote": "表示価格はレンタル料です。Vaipakam の取り分は所有者の収益から出るため、あなたの支払いに上乗せされません。",
+      "rentYouMayOwe": "追加で支払うものはありません — 手数料は前払いです。",
+      "stepChooseNft": "NFT を選択",
+      "stepDone": "完了",
+      "stepReview": "確認と署名",
+      "stepYourNft": "あなたの NFT と価格",
+      "tokenIdLabel": "トークン ID",
+      "tryAgain": "再試行",
+      "viewPositions": "自分のポジションを見る",
+      "viewTransaction": "トランザクションを見る",
+      "waitingForWallet": "ウォレットを待機中…"
     },
     "preclose": {
       "title": "このローンを早期終了",
@@ -430,7 +534,10 @@
       "multiStepNote": "投稿には最大 3 回のウォレット確認が必要です（guardrail、payoff 承認、リクエスト本体）。途中で止めた場合、前の手順は投稿完了またはキャンセルまでオンチェーンに残ります — キャンセルすると承認も削除されます。",
       "partialBlockedByPending": "このローンには借り換えリクエストが有効です。部分返済は金額を変え、そのリクエストを永久に受け入れ不能にします — 先に借り換えリクエストをキャンセルしてください。",
       "precloseBlockedByPending": "このローンには借り換えリクエストが有効です。今早期終了するとそれを取り残します — 先に借り換えリクエストをキャンセルしてください。",
-      "repayWarnPending": "このローンには借り換えリクエストがまだ有効です。返済するとローンが決済され、その後リクエストは完了できなくなります — 後でカードからキャンセルしてください（常設 payoff 承認も削除されます）。それまでは期限切れまで残るだけです。"
+      "repayWarnPending": "このローンには借り換えリクエストがまだ有効です。返済するとローンが決済され、その後リクエストは完了できなくなります — 後でカードからキャンセルしてください（常設 payoff 承認も削除されます）。それまでは期限切れまで残るだけです。",
+      "consentLabel": "以下の payoff とウォレット残高の条件を理解し、同意します。",
+      "receiptLock": "新たにロックされるものはありません — 既存の担保はアンロックされずに新しいローンへ引き継がれます。",
+      "receiptReceive": "貸し手が受け入れた瞬間、選んだ条件の新しいローンになります — 担保は自動的に移り、このローンは同じトランザクションで終了します。"
     },
     "approvals": {
       "title": "常設トークン承認",
@@ -549,7 +656,12 @@
       "loadingOffers": "一致する貸付オファーを探しています…",
       "figureMoved": "時間経過で受取額が変わったため、レビューを閉じました — 現在の数値で確認するにはもう一度開いてください。",
       "checking": "このローンを早期退出できるか確認中…",
-      "checkFailed": "現在このローンの退出詳細を読み取れませんでした — 再試行中です。"
+      "checkFailed": "現在このローンの退出詳細を読み取れませんでした — 再試行中です。",
+      "receiptCanLose": "これまでに発生した利息、または残り期間のレート差のうち大きい方 — 両方ではありません。上の数値にすでに反映されています。正確な金額は確認時にライブで再読み取りされます。",
+      "receiptEnds": "即時 — あなたのポジションは買い手に移り、このローンから離れます。借り手のレートと期日は変わりません。",
+      "receiptFees": "プロトコルの取り分は放棄される利息から出ます — 表示額を超えてあなたの受取額から引かれることはありません。",
+      "receiptLockNothing": "なし。",
+      "receiptOweNothing": "なし — 何も承認せず、自己負担で支払うものもありません。"
     },
     "loanSale": {
       "title": "このポジションを売却に出す",
@@ -573,7 +685,12 @@
       "fundingUnknown": "この端末からはこのリスティングのオファー記録を特定できないため、ここで決済資金を確認できません — リストした端末で管理するか、十分大きな承認と残高を維持してください。",
       "ended": "あなたの売却リスティングはもうアクティブではありません。買い手が受け入れていた場合、支払いはすでにウォレットにあり、決済は常設承認を通じて引き出されています。残っている承認はウォレットのトークン承認ビューから取り消せます。",
       "listingUnavailable": "自分の価格でポジションをリストする機能はまだ利用できません — 必要なオンチェーン手順を修正中です。上の即時退出は動作します: 一致するオープンオファーへすぐ売却します。",
-      "partialBlockedByListing": "貸し手はこのポジションを現在の未払い額で売却に出しています。リスティング中は部分返済が一時停止されます — 金額が変わり、買い手を誤解させるためです。全額返済または早期終了はいつでも可能です。"
+      "partialBlockedByListing": "貸し手はこのポジションを現在の未払い額で売却に出しています。リスティング中は部分返済が一時停止されます — 金額が変わり、買い手を誤解させるためです。全額返済または早期終了はいつでも可能です。",
+      "consentLabel": "以下のロック、決済引き落とし、継続承認を理解し、同意します。",
+      "receiptCanLose": "残高または継続承認が不足すると、買い手の受け入れは単に失敗します — 何も取られませんが、復元またはキャンセルするまで listing は約定できません。",
+      "receiptEnds": "買い手が受け入れたとき（すべて買い手のトランザクションで決済）またはあなたが listing をキャンセルしたとき。自然には期限切れになりません。",
+      "receiptFees": "プロトコルの取り分は決済額から出ます — それ以上はありません。",
+      "receiptLock": "売却完了または listing キャンセルまで、あなたの貸し手ポジション NFT。ほかには何もありません。"
     },
     "positions": {
       "title": "自分のポジション",
@@ -610,7 +727,117 @@
       "whatNextInternalMatchViewer": "このローンは内部マッチングで終了しました — 残余請求はポジション保有者に属します。",
       "whatNextClosed": "このローンは完全に決済済みです — 残っている操作はありません。",
       "whatNextRentalEnded": "このレンタルは終了しました。獲得した手数料や返金可能バッファは、ポジション保有者が下で請求できます — それ以外はもう変わりません。",
-      "settledAhead": "このポジションはすでにオンチェーンで終了しています — ここに表示される状態はライブです。リストの反映には少し時間がかかる場合があります。"
+      "settledAhead": "このポジションはすでにオンチェーンで終了しています — ここに表示される状態はライブです。リストの反映には少し時間がかかる場合があります。",
+      "details": {
+        "actions": {
+          "claimBuffer": "バッファを取り戻す",
+          "claimCollateral": "担保を請求",
+          "claimFeesNft": "手数料を請求して NFT を取り戻す",
+          "claimFunds": "資金を請求",
+          "claimRecovered": "このローンが回収した分を請求",
+          "claimResidual": "残りを請求（あれば）",
+          "closeRental": "このレンタルを終了",
+          "repay": "このローンを返済"
+        },
+        "addCollateral": {
+          "amountAria": "追加する担保額",
+          "button": "追加",
+          "confirm": "確認 — 担保を追加",
+          "endsImmediately": "追加はすぐに反映されます。",
+          "fallbackWarn": "このローンは清算失敗状態です。担保追加で必要な健全性水準を回復した場合に限り、Active に戻ります — そうでなければ貸し手はまだ請求でき、追加担保もリスクにさらされます。全額返済すれば必ず回復します。不安なら返済を選んでください。",
+          "loseFallback": "追加額はリスク中の担保に加わります — 完全に回復しなければ、貸し手はそれも含めてすべて請求できます。",
+          "loseNormal": "追加額は既存担保に加わります — ローンがデフォルトすれば同じようにリスクにさらされます。",
+          "oweNothingMore": "追加で支払うものはありません — 借りている額は変わりません。",
+          "receiveFallbackCure": "ローンを健全に戻せる可能性 — この追加で必要な健全性水準を回復した場合に限ります（上の警告を参照）。",
+          "receiveSafer": "今受け取るものはありません — より安全なローンになります（清算が遠ざかります）。",
+          "title": "担保を追加"
+        },
+        "backToPositions": "← 自分のポジションへ戻る",
+        "confirmingRole": "あなたの役割を確認中…",
+        "connectToAct": "このローンのポジションを保持しているウォレットを接続して操作してください。",
+        "done": {
+          "collateralAdded": "担保が追加されました — ローンはより安全になりました。",
+          "partialRepaid": "一部返済が確認されました — 借入残高が減りました。",
+          "rentalClosed": "レンタルが終了しました。返金可能なバッファがあれば準備できています — 請求センターから請求してください。",
+          "repaid": "返済が確認されました。担保を受け取れます — 下、または請求センターから請求してください。"
+        },
+        "healthChecking": "このローンの健全性を確認中…",
+        "healthReadFailed": "このローンの健全性を今は読み取れませんでした — 再試行中です。清算保護はオンチェーンで引き続き適用されます。",
+        "labels": {
+          "health": "健全性",
+          "ifNothing": "何もしない場合",
+          "locked": "ロック済み",
+          "owed": "支払額",
+          "terms": "条件",
+          "whatNext": "次に起きること"
+        },
+        "loadingLoan": "ローンを読み込み中…",
+        "noCollateral": "担保なし",
+        "notFound": "このローンを今は見つけられませんでした。新しいためまだインデックス中か、リンクが古い可能性があります。",
+        "owedRentalPrepaid": "返済するものはありません — レンタル料は前払い済みです（期日後に終了した場合のみ遅延手数料）。",
+        "partial": {
+          "amountAria": "今返済する金額",
+          "blurb": "このローンは一部返済ができます。支払いはまず利息に充てられ、その後借入額を減らします — 期日は変わりません。",
+          "button": "一部返済",
+          "confirm": "確認 — 一部返済",
+          "endsPrincipalDrops": "残り元本がすぐに減ります。利息は小さくなった金額に対して発生し続けます。",
+          "feesAccrued": "発生済み利息に対するプロトコルの取り分は支払い内で決済されます。",
+          "loseNothingBeyondPayment": "支払い以外に失うものはありません。",
+          "receiveSmallerDebt": "今受け取るものはありません — 借入が小さくなります。",
+          "title": "ローンの一部を返済"
+        },
+        "phase": {
+          "approving": "ウォレットで承認中…",
+          "submitting": "送信中…",
+          "waiting": "ウォレットを待機中…"
+        },
+        "receipt": {
+          "bufferBack": "返金可能なバッファがあれば返ります — 終了直後に請求できます。",
+          "bufferBackShort": "返金可能なバッファが返ります。",
+          "endsClaim": "請求はすぐに支払われ、このポジションはあなた側で終了します。",
+          "endsPreclose": "即時 — ローンは今日決済され、担保が解放されます。",
+          "endsRepay": "即時 — ローンが決済され、あなた側が解放されます。",
+          "feesNone": "なし。",
+          "feesPreclose": "早期終了に追加の Vaipakam 手数料はありません — プロトコルの取り分は貸し手の利息から出ます。",
+          "feesRental": "プロトコルの取り分は支払い前にレンタル料から出ます。",
+          "feesRepay": "返済に追加の Vaipakam 手数料はありません — プロトコルの取り分は貸し手の利息から出ます。",
+          "feesYield": "プロトコルの yield fee は支払い前に利息から出ます。",
+          "internalResidual": "内部マッチであなたに残された残余と、VPFI リベート（ゼロの場合あり）。",
+          "liquidationResidual": "清算後に残ったもの（ゼロの場合あり）。",
+          "loseNothingBeyondOwed": "借りている額以上に失うものはありません。",
+          "loseNothingBeyondPay": "支払う額以上に失うものはありません。",
+          "noCollateralBack": "追加で返るものはありません — このローンには解放する担保がありません。",
+          "nothing": "なし。",
+          "nothingNew": "新たなものはありません。",
+          "oweRentalPrepaid": "追加で支払うものはありません — 手数料は前払い済みです（期日後のみ遅延手数料）。",
+          "owedNoCollateral": "この側にまだ支払われるべきもの（このローンには担保がなかったため、何もない場合があります）。",
+          "recoveredNoCollateral": "このローンが回収したもの（担保がなかったため、何もない場合があります）。",
+          "rentalFeesAndNft": "獲得したレンタル料と、返却される NFT。"
+        },
+        "roleUnverified": "このポジションを現在誰が保持しているか確認できないため、操作は一時的に非表示です。しばらくしてから再試行してください。",
+        "titleLoan": "ローン",
+        "titleRental": "レンタル",
+        "whatIfNothingRentalOwner": "借り手の権利は期日と猶予期間後にリセットされます。あなたの手数料はここで請求可能なままです。",
+        "whatIfNothingRentalRenter": "使用権は期日に終了し、前払いバッファは所有者へ渡ります — 期限内に終了して取り戻してください。",
+        "whatIfNothingRentalViewer": "借り手の使用権は期日に終了します。所有者の手数料とバッファはレンタル条件に従って決済されます。"
+      },
+      "getStarted": "始める",
+      "loading": "ポジションを読み込み中…",
+      "offerRow": {
+        "cancel": "オファーをキャンセル",
+        "cancelling": "キャンセル中…",
+        "confirmCancel": "確認 — キャンセルして資産をアンロック",
+        "held": "保持中 — 作成者が管理",
+        "keep": "オファーを維持",
+        "receiptEnds": "即時 — オファーはブックから消え、もう受け入れられません。いつでも新しいオファーを投稿できます。",
+        "receiptFees": "なし（ネットワーク gas のみ）。",
+        "receiptLose": "なし — 未決済オファーのキャンセルにペナルティはありません。",
+        "receiptNothing": "なし。",
+        "yourBorrowRequest": "あなたの借入リクエスト",
+        "yourLendingOffer": "あなたの貸付オファー",
+        "yourNftListing": "あなたの NFT listing"
+      },
+      "openOffers": "未決済オファー"
     },
     "powerSurface": {
       "body": "これはパワーユーザー向け画面です — 生のオファーとライブレートを、少ない手助けで表示します。ガイド付きの借りる・貸すフローでも同じ操作をステップごとの説明付きで行えます。",
@@ -635,7 +862,27 @@
       "allResidualNote": "準備できていなかったものは、個別に請求できるよう下に残ります。",
       "allRewardsUnavailable": "報酬を確認できなかったため、このバッチには含まれていません — 別途請求してください。",
       "allVpfiUnavailable": "vault 内の VPFI を確認できなかったため、このバッチには含まれていません。",
-      "allWorking": "ウォレット待ち…"
+      "allWorking": "ウォレット待ち…",
+      "checking": "請求可能な項目を確認中…",
+      "row": {
+        "heldProceeds": "このローンの保留中の受取金",
+        "heldProceedsDefault": "デフォルトから回収された保留中の受取金",
+        "loan": "ローン",
+        "prepaidBufferBack": "前払いバッファの返却",
+        "rental": "レンタル",
+        "repaidFunds": "返済された資金",
+        "residualAfterMatch": "内部マッチ後に残ったもの",
+        "surplusAfterLiquidation": "清算後に残ったもの",
+        "whyDefaultBorrower": "このローンはデフォルトしました。清算後に余剰が残っていれば請求できます。",
+        "whyDefaultLender": "ローンがデフォルトしました — デフォルト処理であなたのために回収された分を受け取ってください。",
+        "whyFallbackPending": "自動清算が完了しませんでした — 請求すると自分で回収を確定します。",
+        "whyInternalMatchBorrower": "このローンは内部マッチで終了しました — あなたに残った残余を受け取ってください。",
+        "whyInternalMatchLender": "このローンは内部マッチで終了しました — 資金を受け取ってください。",
+        "whyRentalClosed": "レンタルが終了しました — 返金可能なバッファが解放されています。",
+        "whyRentalEnded": "レンタルが終了しました — 獲得した手数料を受け取り、NFT を取り戻してください。",
+        "whyRepaidBorrower": "このローンを返済したため、担保が解放されています。",
+        "whyRepaidLender": "借り手がこのローンを返済しました。"
+      }
     },
     "offers": {
       "title": "オファーブック",
@@ -644,7 +891,50 @@
       "emptyBody": "自分のオファーを作成し、相手側を待ちましょう。",
       "unavailable": "現在オファーブックを読み込めませんでした。少し待って再試行してください。",
       "lenderOffer": "貸付オファー",
-      "borrowerOffer": "借入リクエスト"
+      "borrowerOffer": "借入リクエスト",
+      "advancedNoExpiry": "期限なし",
+      "advancedNoPartialRepay": "分割返済なし",
+      "advancedPartialRepayOk": "分割返済 OK",
+      "badgeBorrower": "借り手",
+      "badgeLender": "貸し手",
+      "byCreator": "作成者",
+      "collateralLabel": "担保",
+      "collateralNone": "なし",
+      "createOffer": "オファーを作成",
+      "ctaBorrow": "これを借りる",
+      "ctaBuyPosition": "このローンポジションを購入",
+      "ctaFund": "このリクエストに資金提供",
+      "ctaRent": "この NFT を借りる",
+      "dailyFeeLoading": "日額手数料を読み込み中…",
+      "feesPrepaid": "手数料前払い済み",
+      "filteredEmptyBody": "上のフィルターを緩めてください — オファーブック自体には未決済オファーがあります。",
+      "filteredEmptyTitle": "このフィルターに一致するオファーはありません",
+      "filters": {
+        "assetLabel": "資産アドレスで絞り込み",
+        "assetPlaceholder": "0x…（元本、担保、支払いのどれでも）",
+        "clear": "フィルターをクリア",
+        "showLabel": "表示",
+        "sideAll": "すべて",
+        "sideBorrowing": "借入リクエスト（これらに貸す）",
+        "sideLending": "貸付オファー（これらから借りる）",
+        "sideRentals": "NFT レンタル",
+        "sortDurationLong": "期間 — 長い順",
+        "sortDurationShort": "期間 — 短い順",
+        "sortLabel": "並び替え",
+        "sortNewest": "新しい順",
+        "sortRateHigh": "レート — 高い順",
+        "sortRateLow": "レート — 低い順"
+      },
+      "footerParts": {
+        "borrowLink": "借りる",
+        "lead": "ここでオファーを受ける — 「これを借りる」「このリクエストに資金提供」「このローンポジションを購入」 — と、ガイド付きの ",
+        "lendLink": "貸す",
+        "mid": " と ",
+        "tail": " フローと同じ確認・署名ステップに進みます。"
+      },
+      "loading": "オファーブックを読み込み中…",
+      "rentalListing": "NFT レンタル",
+      "yearly": "年率"
     },
     "desk": {
       "title": "レートデスク",
@@ -785,7 +1075,12 @@
         "blockGaslessService": "Gasless 投稿には注文ブックサービスが必要ですが、現在利用できません — 投稿を On-chain に切り替えてください。",
         "consentRecheck": "条件が変わりました — もう一度確認してください。",
         "max": "最大",
-        "feePreviewTitle": "手数料とコミットメント"
+        "feePreviewTitle": "手数料とコミットメント",
+        "collateralAmount": "担保額",
+        "expiryGtcTitle": "キャンセルまで有効 — あなたがキャンセルするまで残ります",
+        "expiryGttTitle": "指定時刻まで有効 — 締切で自動的に失効します",
+        "rateBpsNote": "レートはベーシスポイントで保存されます (1% = 100 bps)",
+        "selfCollateral": "担保はローン資産と同じトークンにはできません。"
       },
       "orders": {
         "tab": "オープン注文",
@@ -820,7 +1115,8 @@
         "signedCancelling": "キャンセル中…",
         "signedCancelNote": "投稿は無料でしたが、キャンセルには gas がかかります: ブックが保持している署名を取り消す唯一の方法はオンチェーントランザクションです。",
         "signedCancelled": "署名済み注文をオンチェーンでキャンセルしました。",
-        "signedTruncated": "この市場には一度に一覧できる数を超える署名済み注文があります — これは完全な一覧ではありません。"
+        "signedTruncated": "この市場には一度に一覧できる数を超える署名済み注文があります — これは完全な一覧ではありません。",
+        "loading": "未決済注文を読み込み中…"
       },
       "positions": {
         "tab": "ポジション",
@@ -829,8 +1125,14 @@
         "health": "健全性",
         "notPriced": "自動清算なし",
         "manage": "管理",
-        "allPositions": "すべてのポジション →"
-      }
+        "allPositions": "すべてのポジション →",
+        "loading": "ポジションを読み込み中…"
+      },
+      "bookLoading": "オーダーブックを読み込み中…",
+      "cumHeadingTitle": "その側の先頭からの累積深度",
+      "loadMarket": "市場を読み込む",
+      "marketsLoading": "市場を読み込み中…",
+      "oneSidedBook": "片側だけのブック"
     },
     "vpfi": {
       "title": "VPFI 割引",
@@ -840,7 +1142,51 @@
       "tokenChanged": "レビュー後に VPFI トークン設定が変わりました。何も承認されていません — 更新後の数値を確認して再試行してください。",
       "tokenCheckRetry": "現在 VPFI トークンを確認できませんでした — 何も承認されていません。少し待って再試行してください。",
       "addToWallet": "MetaMask に VPFI を追加",
-      "addedToWallet": "ウォレットに VPFI を追跡するよう依頼しました。"
+      "addedToWallet": "ウォレットに VPFI を追跡するよう依頼しました。",
+      "activeDiscount": "有効な割引",
+      "amountLabelDeposit": "vault に移す VPFI",
+      "amountLabelWithdraw": "ウォレットに戻す VPFI",
+      "consentToggle": "vault 内の VPFI を手数料割引に使う",
+      "consentToggleSub": "これがないと、VPFI を保有しても割引はありません。",
+      "deposit": "入金",
+      "depositCta": "VPFI を入金",
+      "depositDone": "入金が確認されました。割引履歴は今から積み上がります。",
+      "depositToActivate": " — 有効化するには入金",
+      "educationBody": "Vaipakam Vault に VPFI を保有すると、対象ローンのプロトコル手数料が下がります。割引は過去30日間の平均保有量を使います — 今日追加しても割引は即時ではなく、徐々に増えます。",
+      "educationTitle": "割引の仕組み",
+      "inYourVault": "vault 内",
+      "inYourWallet": "ウォレット内",
+      "max": "Max",
+      "noSellNote": "Vaipakam は VPFI を販売せず、保有利回りも支払いません — オープンマーケットで取得します。",
+      "noneRightNow": "現在なし",
+      "nothing": "なし。",
+      "offFeesSuffix": "対象プロトコル手数料から割引",
+      "optOutSyncFailed": "オプトアウトはこのネットワークに保存されましたが、他ネットワークへの同期は完了しませんでした — 次の VPFI 操作で同期されます。またはもう一度切り替えてください。",
+      "overMaxHint": " — 保有量を超えています。",
+      "phaseApproving": "VPFI を承認中…",
+      "phasePermitting": "許可に署名中… — 無料、gas なし",
+      "phaseSubmitting": "送信中…",
+      "phaseWaiting": "ウォレットを待機中…",
+      "receiptDeposit": {
+        "fees": "入金に Vaipakam 手数料はありません。",
+        "whenThisEnds": "利用可能な VPFI はいつでも引き出せます。",
+        "youCanLose": "なし — vault 内の利用可能 VPFI は引き出し可能なままです。",
+        "youReceive": "今受け取るものはありません — 時間とともに対象ローンの手数料割引が育ちます。"
+      },
+      "receiptWithdraw": {
+        "fees": "出金に Vaipakam 手数料はありません。",
+        "whenThisEnds": "即時 — 残高は引き続き割引履歴を積み上げます。",
+        "youCanLoseLead": "将来の手数料割引 —"
+      },
+      "reviewDeposit": "入金を確認",
+      "reviewWithdraw": "出金を確認",
+      "statusTitle": "割引ステータス",
+      "switchToChange": "変更するには対応ネットワークへ切り替えてください。",
+      "vaultActionLabel": "Vault 操作",
+      "warmingUp": "準備中",
+      "withdraw": "出金",
+      "withdrawCta": "VPFI を出金",
+      "withdrawDone": "出金が確認されました。VPFI はウォレットに戻りました。"
     },
     "errors": {
       "partialOverPrincipal": "これはローンの残り元本全体をカバーします。代わりに “このローンを返済” を使ってください — ローンを正しく決済し、担保を解放します。",
@@ -920,7 +1266,14 @@
       "emptyCta": "始める",
       "emptyCtaFaucet": "テスト資産を取得",
       "unavailable": "現在 vault を読み取れませんでした。資金には影響しません — 少し待って再試行してください。",
-      "lockedHint": "ロック済み金額は、オープンオファー、アクティブローン、レンタルを支えています。それらが終了すると解放されます。"
+      "lockedHint": "ロック済み金額は、オープンオファー、アクティブローン、レンタルを支えています。それらが終了すると解放されます。",
+      "addressLabel": "Vault アドレス:",
+      "badgeFree": "利用可能",
+      "badgePartlyLocked": "一部ロック中",
+      "emptyBody": "オファーを投稿、ローンを開始、または VPFI を入金すると、資産がここに表示されます。",
+      "emptyTitle": "まだ vault に何もありません",
+      "loading": "vault を読み込み中…",
+      "noVaultTitle": "まだ vault がありません"
     },
     "activity": {
       "title": "アクティビティ",
@@ -936,14 +1289,16 @@
       "loadMore": "古いアクティビティを読み込む",
       "loadingMore": "読み込み中…",
       "unavailableFallback": "現在のローンとレンタルは常にこちらで利用できます",
-      "positionsLink": "自分のポジション"
+      "positionsLink": "自分のポジション",
+      "loading": "アクティビティを読み込み中…"
     },
     "rewards": {
       "title": "インタラクション報酬",
       "blurb": "貸付と借入アクティビティからの VPFI 報酬です。ローン終了後、報酬日が確定すると請求可能になります。",
       "empty": "まだ報酬はありません。報酬は貸付または借入アクティビティ後に表示されます。",
       "waiting": "報酬を確定中です — 報酬日は全チェーンで終了してから請求可能になります。後でもう一度確認してください。",
-      "claim": "報酬を請求"
+      "claim": "報酬を請求",
+      "unavailable": "報酬を今は確認できませんでした — しばらくしてから再試行してください。"
     },
     "sanctions": {
       "title": "このウォレットはコンプライアンスオラクルに掲載されています。",
@@ -965,6 +1320,108 @@
       "title": "このページは存在しません",
       "body": "リンクが古いか、入力ミスの可能性があります。何も失われていません — ポジションは安全です。",
       "backHome": "ホームに戻る"
+    },
+    "assetPicker": {
+      "faucetBadge": "Faucet テストトークン",
+      "invalidAddress": "有効なコントラクトアドレスを入力してください — “0x” に続く40文字の16進文字です。",
+      "pasteOption": "トークンアドレスを貼り付け…",
+      "placeholder": "資産を選択…"
+    },
+    "checklist": {
+      "checking": "確認中",
+      "needsAttention": "確認が必要",
+      "ready": "準備完了"
+    },
+    "common": {
+      "back": "戻る",
+      "tryAgain": "再試行",
+      "waitingForWallet": "ウォレットを待機中…"
+    },
+    "copyAddress": {
+      "copied": "アドレスをコピーしました"
+    },
+    "loanRow": {
+      "youRent": "あなたが借りる",
+      "youRentOut": "あなたが貸し出す"
+    },
+    "offerFlow": {
+      "advancedOptions": "詳細オプション",
+      "allowPartialRepay": "借り手に分割返済を許可する",
+      "back": "戻る",
+      "beforeYouSign": "署名前に確認",
+      "borrower": {
+        "acceptSubmitLabel": "今すぐ借りる",
+        "amountHint": "この金額に近いオファーを出している貸し手を探します。",
+        "amountLabel": "いくら借りますか？",
+        "assetLabel": "借りる資産",
+        "collateralLabel": "ロックする担保",
+        "rateHint": "このレート以下で提供する貸し手が資金を出せます。",
+        "rateLabel": "受け入れる最大年利 (%)"
+      },
+      "collateralAmountLabel": "担保額",
+      "continueToReview": "確認へ進む",
+      "counterAssetBorrowed": "借りた資産",
+      "counterAssetCollateral": "担保資産",
+      "durationLabel": "期間",
+      "lender": {
+        "acceptSubmitLabel": "この借り手に資金提供",
+        "amountHint": "オファーが開いている間、この金額はロックされます。受け入れ前ならいつでもキャンセルできます。",
+        "amountLabel": "いくら貸しますか？",
+        "assetLabel": "貸す資産",
+        "collateralHint": "借り手はあなたのトークンを受け取る前にこれをロックする必要があります。",
+        "collateralLabel": "借り手に求める担保",
+        "rateLabel": "希望する年利 (%)"
+      },
+      "liveFeesLoaded": "ライブ手数料条件を読み込みました",
+      "liveFeesLoading": "ライブ手数料条件を読み込み中…",
+      "lookingForMatches": "一致するオファーを検索中…",
+      "postAnother": "別のオファーを投稿",
+      "preparingReview": "確認内容を準備中…",
+      "proRataInterest": "全期間ではなく、使った時間分だけ利息を請求する（日割り）",
+      "receiptOweNothing": "なし — 借り手があなたに支払います。",
+      "retry": "再試行",
+      "rowBorrow": "借りる",
+      "rowLend": "貸す",
+      "seeMatches": "一致するオファーを見る",
+      "selfCollateralError": "担保は借りる資産とは別の資産である必要があります — プロトコルは同一資産のオファーを拒否します。",
+      "steps": {
+        "details": "詳細",
+        "done": "完了",
+        "offers": "オファー",
+        "review": "確認と署名",
+        "terms": "あなたの条件"
+      },
+      "viewPositions": "自分のポジションを見る",
+      "viewTransaction": "トランザクションを見る",
+      "waitingForWallet": "ウォレットを待機中…"
+    },
+    "settingsPage": {
+      "experience": {
+        "advanced": "詳細",
+        "basic": "基本",
+        "hint": "基本モードは各画面を要点だけにします。詳細モードでは同じページでより多くの操作と市場情報を表示します — プロトコルのルールはどちらも同じです。",
+        "title": "経験レベル"
+      },
+      "lede": "外観、経験レベル、その他。",
+      "more": {
+        "activitySub": "あなたのウォレットが Vaipakam で行ったすべて",
+        "claimsSub": "返済、担保、報酬を受け取る",
+        "helpSub": "わかりやすい回答と build 情報",
+        "offersSub": "このネットワーク上のすべての未決済オファーを見る",
+        "title": "その他",
+        "vaultSub": "資産の場所 — 合計、ロック済み、利用可能",
+        "vpfiSub": "任意 — VPFI を保有してプロトコル手数料を減らす"
+      },
+      "theme": {
+        "dark": "ダーク",
+        "light": "ライト",
+        "system": "システム",
+        "title": "テーマ"
+      },
+      "title": "設定"
+    },
+    "stepNav": {
+      "progressAria": "進行状況"
     }
   }
 }
