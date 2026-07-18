@@ -1195,6 +1195,11 @@
     "errors": {
       "partialOverPrincipal": "That covers the loan’s whole remaining principal. Use “Repay this loan” instead — it settles the loan properly and releases your collateral.",
       "notAToken": "That address doesn’t look like a token on this network. Double-check it or pick a suggested asset.",
+      "walletConnectFirst": "Connect a wallet on a supported network first.",
+      "walletNotConnected": "Wallet not connected",
+      "walletClientUnavailable": "Wallet client not available",
+      "publicClientUnavailable": "Public client not available",
+      "noRpcClient": "No RPC client for the active chain.",
       "txRejected": "You cancelled in your wallet. Nothing was sent.",
       "txFailed": "The transaction didn’t go through. Nothing was taken beyond network gas. Please try again.",
       "sanctionsBlocked": "This wallet is flagged by the sanctions oracle, so new positions and payouts are blocked. Nothing was sent. Repaying and closing existing positions stays open.",

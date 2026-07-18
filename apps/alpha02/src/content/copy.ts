@@ -1889,6 +1889,15 @@ const copySource = {
       'That covers the loan’s whole remaining principal. Use “Repay this loan” instead — it settles the loan properly and releases your collateral.',
     notAToken:
       'That address doesn’t look like a token on this network. Double-check it or pick a suggested asset.',
+    // Pre-submit guard errors (thrown by the contract hooks when a
+    // precondition the UI normally enforces is somehow unmet). Routed
+    // through the catalog so they translate wherever a flow surfaces
+    // err.message raw rather than through submitErrorText.
+    walletConnectFirst: 'Connect a wallet on a supported network first.',
+    walletNotConnected: 'Wallet not connected',
+    walletClientUnavailable: 'Wallet client not available',
+    publicClientUnavailable: 'Public client not available',
+    noRpcClient: 'No RPC client for the active chain.',
     txRejected: 'You cancelled in your wallet. Nothing was sent.',
     txFailed:
       'The transaction didn’t go through. Nothing was taken beyond network gas. Please try again.',

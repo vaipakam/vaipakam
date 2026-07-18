@@ -10,6 +10,7 @@
  */
 import { useCallback } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
+import { copy } from '../content/copy';
 import { usePublicClient, useWalletClient } from 'wagmi';
 import type { TransactionReceipt } from 'viem';
 import { DIAMOND_ABI_VIEM } from '@vaipakam/contracts/abis';
@@ -43,9 +44,9 @@ export function useDiamondWrite() {
       args: readonly unknown[],
     ): Promise<DiamondWriteResult> => {
       if (!onSupportedChain || !walletChain || !walletClient || !address) {
-        throw new Error('Connect a wallet on a supported network first.');
+        throw new Error(copy.errors.walletConnectFirst);
       }
-      if (!publicClient) throw new Error('No RPC client for the active chain.');
+      if (!publicClient) throw new Error(copy.errors.noRpcClient);
       const hash = await walletClient.writeContract({
         address: walletChain.diamondAddress,
         abi: DIAMOND_ABI_VIEM,
