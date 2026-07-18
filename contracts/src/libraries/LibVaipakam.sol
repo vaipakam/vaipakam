@@ -5103,6 +5103,13 @@ library LibVaipakam {
         mapping(uint256 => uint64) rewardEntryExecObsAt;
         mapping(uint256 => uint64) rewardEntryExecElapsed;
         mapping(uint256 => uint64) rewardEntryHorizonEpoch;
+        /// @dev Codex #1317 r8 — set true when the last observation found the
+        ///      entry NON-executable (a funding shortfall, zero-payable, or
+        ///      sanction seen by a keeper touch). The next executable touch
+        ///      then re-baselines WITHOUT crediting the interval spanning
+        ///      that observed block, so even a short (< max-gap) outage that
+        ///      a keeper actually saw is never counted toward the window.
+        mapping(uint256 => bool) rewardEntryObsBlocked;
     }
 
     /// @notice Governor PR-3b (#1217 §3.1) — the per-day pool composition

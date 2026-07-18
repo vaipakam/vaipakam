@@ -380,6 +380,59 @@ contract RewardClaimHorizonTest is SetupTest, IVaipakamErrors {
         );
     }
 
+    /// @notice A SHORT outage the keeper actually observes (< max gap) must
+    ///         still not be credited — the observed-block flag drops the
+    ///         interval spanning it (Codex #1317 r8 P1).
+    function testObservedShortOutageIsNotCredited() public {
+        _cfg().setRewardClaimHorizonDays(180);
+        uint256 id = _seedClaimableEntry();
+        _facet().sweepExpiredInteractionRewards(_ids(id)); // stamp
+        _accrue(id, 180 days + 50 days); // elapsed ≈ 230, needs 40 more
+
+        // Short observed outage: keeper sees non-executable, then recovery
+        // within the max-gap bound (total 6 days < 7).
+        vm.warp(vm.getBlockTimestamp() + 3 days);
+        deal(address(vpfi), address(diamond), 0);
+        _facet().sweepExpiredInteractionRewards(_ids(id)); // observed block
+        deal(address(vpfi), address(diamond), DIAMOND_SEED);
+        vm.warp(vm.getBlockTimestamp() + 3 days);
+        _facet().sweepExpiredInteractionRewards(_ids(id)); // recovery re-baseline
+
+        // The FULL 40 executable days are still required: 37 is not enough
+        // (would be, at 34, had the 6-day observed outage been credited).
+        assertEq(_accrue(id, 37 days), 0, "observed outage was not credited");
+        assertGt(
+            _accrue(id, 2 * MAX_GAP),
+            0,
+            "expires only after the genuine executable window"
+        );
+    }
+
+    /// @notice The countdown view must credit the pending heartbeat gap a
+    ///         sweep-now would apply, so it never reports a removal LATER
+    ///         than the contract enforces (Codex #1317 r8 P2).
+    function testCountdownIncludesPendingHeartbeatGap() public {
+        _cfg().setRewardClaimHorizonDays(180);
+        uint256 id = _seedClaimableEntry();
+        _facet().sweepExpiredInteractionRewards(_ids(id)); // stamp
+        _accrue(id, 180 days + NOTICE - MAX_GAP); // elapsed ≈ required − 7
+
+        // Exactly a max-gap later: a sweep now would credit the pending 7
+        // days and remove the entry, so the view must report expiry at NOW.
+        vm.warp(vm.getBlockTimestamp() + MAX_GAP);
+        (, uint64 expiry) = _facet().getRewardEntryExpiry(id);
+        assertEq(
+            expiry,
+            uint64(vm.getBlockTimestamp()),
+            "view credits the pending heartbeat gap"
+        );
+        assertGt(
+            _facet().sweepExpiredInteractionRewards(_ids(id)),
+            0,
+            "and a sweep indeed removes it now"
+        );
+    }
+
     function testHorizonKnobBounds() public {
         vm.expectRevert();
         _cfg().setRewardClaimHorizonDays(179);

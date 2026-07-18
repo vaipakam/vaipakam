@@ -1153,22 +1153,28 @@ function _dayPoolHalves(
         //   3. the owner is sanctioned — the claim path rejects them via
         //      `_assertNotSanctioned` (frozen, not seized: a delist re-opens
         //      the clock).
-        // On a non-executable touch we return WITHOUT advancing the
-        // observation stamp, so the interval spanning this outage will
-        // exceed the gap bound on the next executable touch and stay
-        // uncredited — the claimant is never charged blocked time.
         uint256 payableNow = cappedFresh + split_.recycled;
-        if (
-            payableNow == 0 ||
-            LibVaipakam.isSanctionedAddress(e.user) ||
-            IERC20Metadata(s.vpfiToken).balanceOf(address(this)) < payableNow
-        ) {
+        bool executable = payableNow != 0 &&
+            !LibVaipakam.isSanctionedAddress(e.user) &&
+            IERC20Metadata(s.vpfiToken).balanceOf(address(this)) >= payableNow;
+
+        uint64 lastObs = s.rewardEntryExecObsAt[id];
+
+        if (!executable) {
+            // Observed non-executable. Before the first executable
+            // observation there is no clock to break (stay unstarted).
+            // Afterwards, record the block and advance the stamp so the
+            // interval spanning this OBSERVED outage — however short — is
+            // never credited on recovery (Codex #1317 r8).
+            if (lastObs != 0) {
+                s.rewardEntryObsBlocked[id] = true;
+                s.rewardEntryExecObsAt[id] = uint64(block.timestamp);
+            }
             return (expired, 0);
         }
 
         uint256 hSec = uint256(horizonDays) * 1 days;
 
-        uint64 lastObs = s.rewardEntryExecObsAt[id];
         if (lastObs == 0) {
             // First claim-executable observation — start the accumulator.
             // The stamp event is the notification pipeline's schedule signal.
@@ -1184,26 +1190,49 @@ function _dayPoolHalves(
         // a fresh executable final notice: cap the accrual back to the
         // horizon threshold so the full `notice` must be re-earned under the
         // new configuration (the ratified re-notice-on-reconfiguration rule).
+        // The interval spanning the reconfiguration is NOT credited toward
+        // the fresh notice — re-baseline the observation and wait for the
+        // next touch (Codex #1317 r8).
         if (s.rewardEntryHorizonEpoch[id] != s.rewardHorizonActivatedAt) {
-            if (elapsed > hSec) {
+            if (elapsed >= hSec) {
                 elapsed = hSec;
+                s.rewardEntryExecElapsed[id] = uint64(elapsed);
+                // Entering the fresh final notice now — last-call signal.
                 emit RewardEntryExpiryArmed(id, e.user, uint64(block.timestamp));
             }
             s.rewardEntryHorizonEpoch[id] = s.rewardHorizonActivatedAt;
+            s.rewardEntryExecObsAt[id] = uint64(block.timestamp);
+            s.rewardEntryObsBlocked[id] = false;
+            return (expired, 0);
         }
 
-        // Credit this interval only if short enough to trust as continuously
-        // claim-executable; a longer gap might hide an outage and is dropped.
-        uint256 gap = block.timestamp - uint256(lastObs);
-        if (gap <= uint256(LibVaipakam.REWARD_CLAIM_NOTICE_MAX_OBS_GAP_DAYS) * 1 days) {
-            uint256 credited = elapsed + gap;
-            if (elapsed < hSec && credited >= hSec) {
-                // Crossed into the final-notice window — last-call signal.
-                emit RewardEntryExpiryArmed(id, e.user, uint64(block.timestamp));
+        // Credit this interval only if the entry was executable at BOTH ends
+        // (the prior observation was not a block) AND the gap is short enough
+        // to trust as continuous; anything else is dropped.
+        if (!s.rewardEntryObsBlocked[id]) {
+            uint256 gap = block.timestamp - uint256(lastObs);
+            if (
+                gap <=
+                uint256(LibVaipakam.REWARD_CLAIM_NOTICE_MAX_OBS_GAP_DAYS) * 1 days
+            ) {
+                uint256 credited = elapsed + gap;
+                if (elapsed < hSec && credited >= hSec) {
+                    // Crossed into the final-notice window. Emit the TRUE
+                    // crossing instant (the overshoot accrued before now),
+                    // so the notice pipeline schedules from when the notice
+                    // actually began, not this sweep's timestamp.
+                    emit RewardEntryExpiryArmed(
+                        id, e.user, uint64(block.timestamp - (credited - hSec))
+                    );
+                }
+                elapsed = credited;
+                s.rewardEntryExecElapsed[id] = uint64(elapsed);
             }
-            elapsed = credited;
+        } else {
+            // Recovery from an observed block — re-baseline without
+            // crediting the blocked interval.
+            s.rewardEntryObsBlocked[id] = false;
         }
-        s.rewardEntryExecElapsed[id] = uint64(elapsed);
         s.rewardEntryExecObsAt[id] = uint64(block.timestamp);
 
         uint256 required =
@@ -1250,14 +1279,25 @@ function _dayPoolHalves(
         if (firstClaimableAt != 0 && horizonDays != 0) {
             uint256 hSec = uint256(horizonDays) * 1 days;
             uint256 elapsed = s.rewardEntryExecElapsed[id];
-            // Reflect a not-yet-reconciled horizon reconfiguration exactly as
-            // the sweep will: the notice must be re-earned, so the countdown
-            // never understates the true remaining time.
             if (
-                s.rewardEntryHorizonEpoch[id] != s.rewardHorizonActivatedAt &&
-                elapsed > hSec
+                s.rewardEntryHorizonEpoch[id] != s.rewardHorizonActivatedAt
             ) {
-                elapsed = hSec;
+                // A sweep now would reconcile the reconfiguration: cap and
+                // re-baseline, crediting nothing this interval.
+                if (elapsed > hSec) elapsed = hSec;
+            } else if (!s.rewardEntryObsBlocked[id]) {
+                // Mirror the pending interval a sweep-now would credit, so
+                // the countdown never claims a removal LATER than the
+                // contract would actually enforce.
+                uint256 gap =
+                    block.timestamp - uint256(s.rewardEntryExecObsAt[id]);
+                if (
+                    gap <=
+                    uint256(LibVaipakam.REWARD_CLAIM_NOTICE_MAX_OBS_GAP_DAYS) *
+                        1 days
+                ) {
+                    elapsed += gap;
+                }
             }
             uint256 required = hSec +
                 uint256(LibVaipakam.REWARD_CLAIM_HORIZON_NOTICE_DAYS) * 1 days;
