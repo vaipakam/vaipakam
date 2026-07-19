@@ -512,9 +512,14 @@ library LibVPFIDiscount {
      *         it at ACCEPT so it is pinned at origination (no settle-time
      *         top-up gaming). No VPFI is moved: a pure direct reduction, NOT
      *         the retired peg-custody path. Shared by `_acceptOffer` (the
-     *         charge), `OfferPreviewFacet` (the quote), and the `OfferMatched`
-     *         matcher-fee event, so all three agree to the wei — including the
-     *         two-step rounding. The discount applies on LIQUID lending assets
+     *         charge) and `OfferPreviewFacet` (the quote), so those two agree to
+     *         the wei — including the two-step rounding. The `OfferMatched`
+     *         matcher-fee field is deliberately NOT computed from this helper:
+     *         it logs the GROSS list-rate matcher slice (folding the discount in
+     *         pushed `OfferMatchFacet` past EIP-170), so the actual matcher
+     *         transfer on a HoldOnly-discounted fill is lower than the event
+     *         reports — treat that field as a display-only upper bound, never
+     *         the charged amount. The discount applies on LIQUID lending assets
      *         only (see `isLiquid`); illiquid loans pay the full LIF.
      * @param  borrower  The borrowing party whose tier is read.
      * @param  principal The loan principal in lending-asset wei.

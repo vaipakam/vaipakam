@@ -25,6 +25,20 @@ import {FacetSelectors} from "./lib/FacetSelectors.sol";
  *         facets with freshly-compiled bytecode removes any pre-refactor copy
  *         left on chain.
  *
+ * @dev    PARTIAL refresh — NOT a fee-default rollout vehicle. This script
+ *         redeploys only the facets listed above. A change to a `LibVaipakam`
+ *         fee-default CONSTANT (e.g. the #1352 freeze bumping
+ *         `LOAN_INITIATION_FEE_BPS` 10→20 / `TREASURY_FEE_BPS` 100→200) inlines
+ *         into EVERY facet that calls `cfgLoanInitiationFeeBps()` /
+ *         `cfgTreasuryFeeBps()` — `LoanFacet._snapshotFeeBps`, `OfferPreviewFacet`,
+ *         and every settlement facet (Repay / Preclose / Refinance) — not just
+ *         the ones refreshed here. Running ONLY this script after such a change
+ *         leaves those facets on the OLD constant, so on a diamond with zero
+ *         fee config new loans would charge/snapshot/quote inconsistent
+ *         defaults. Roll a fee-default constant change out via the ALL-facet
+ *         path instead: `RefreshAllFacetsInPlace.s.sol` (testnet) or a fresh
+ *         `DeployDiamond`.
+ *
  * Env vars: DEPLOYER_PRIVATE_KEY, DIAMOND_ADDRESS
  *
  * Usage:
