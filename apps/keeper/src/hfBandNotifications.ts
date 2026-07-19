@@ -122,10 +122,13 @@ const ZERO_ADDR = '0x0000000000000000000000000000000000000000';
  *  defers (Codex #1300 r1). The watermark is stamped only when a scan
  *  BOTH reached the safe head AND finished materializing notifications
  *  — so a fresh stamp means D1's ownership and notification rows are
- *  current. The indexer's round-robin gives each chain a scan roughly
- *  every `len(chains) × 1min`; 6 minutes tolerates a busy rotation
- *  while still bounding how stale a resolved recipient can be. */
-const WATERMARK_MAX_AGE_SEC = 360;
+ *  current. The indexer cron runs every FIVE minutes now (free-plan DO
+ *  rows_written diet — webhooks still trigger event scans immediately),
+ *  so a healthy quiet chain refreshes the watermark ~every 5 min; 15
+ *  minutes tolerates two missed/busy ticks while still bounding how
+ *  stale a resolved recipient can be. MUST stay comfortably above the
+ *  indexer's cron interval or this pass defers forever. */
+const WATERMARK_MAX_AGE_SEC = 900;
 
 /**
  * Record band crossings for one chain's full active-book HF readings.
