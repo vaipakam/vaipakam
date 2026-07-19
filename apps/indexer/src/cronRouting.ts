@@ -1,38 +1,48 @@
-// Dual-cron tick routing (Codex #1357 r1) — free-plan DO rows_written
-// diet, WITHOUT degrading the legacy rollback path.
+// Cron tick routing (Codex #1357 r1, reworked post-merge) — free-plan
+// DO rows_written diet, WITHOUT degrading the legacy rollback path and
+// WITHOUT a second cron trigger.
 //
-// The Worker registers TWO cron schedules (wrangler.jsonc):
+// The first cut registered TWO schedules (every-minute for the legacy
+// fallback, every-5-minutes for the DO path) and routed by which one
+// fired. That deploy failed in production: the free plan caps cron
+// triggers at FIVE per ACCOUNT, and this account's five Workers already
+// use all five slots — a sixth schedule cannot exist. Same routing,
+// different discriminator: ONE every-minute schedule, and the tick's
+// SCHEDULED TIME decides who acts.
 //
-//   - "* * * * *"  (every minute)   — drives the LEGACY inline ingest,
-//     which round-robins ONE chain per invocation (the 50-subrequest
-//     budget forbids all-chains-inline). If the DO path is disabled for
-//     an incident rollback (`CHAIN_INGEST_VIA_DO` off / binding gone),
-//     per-chain freshness must stay `N × 1min`, not `N × 5min`.
-//   - "*/5 * * * *" (every 5 min)   — drives the DO ingest path, where
-//     the cron is only the time-driven backstop (webhooks trigger
-//     immediate scans) and each ping costs DO storage rows.
+//   - Legacy inline ingest (DO path disabled — incident rollback): acts
+//     on EVERY tick. It round-robins one chain per invocation (the
+//     50-subrequest budget forbids all-chains-inline), so rollback
+//     freshness stays `N × 1min`.
+//   - DO ingest path: acts only when the scheduled minute is divisible
+//     by 5 (:00, :05, …) — behaviourally identical to an every-5-minutes
+//     schedule. A skipped minute-tick returns before any work: one
+//     Worker request (a separate, ~60x larger free budget), zero DO
+//     writes, zero RPC.
 //
-// `scheduled()` routes each tick by the fired cron expression: exactly
-// one schedule acts per mode, the other returns before doing any work
-// (a skipped minute-tick invocation costs one Worker request and zero
-// DO writes). An UNRECOGNISED cron string — a renamed schedule, or the
-// empty string `wrangler dev --test-scheduled` sends — runs in both
-// modes (fail-open: a doubled tick is idempotent and merely wasteful;
-// a never-running tick is an outage).
-//
-// (Line comments on purpose: the 5-minute cron pattern contains the
-// star-slash sequence that terminates a block comment.)
+// Fail-open: an unparseable/absent scheduled time runs the tick in both
+// modes — a doubled tick is idempotent and merely wasteful; a
+// never-running tick is an outage. EXPECTED_SCAN_CADENCE_SEC
+// (chainIngestDO.ts) MUST match the DO path's effective 5-minute
+// cadence — clients size rail-health windows from the reported value.
 
-/** The schedule that drives the DO ingest path (must match wrangler.jsonc). */
-export const DO_PATH_CRON = '*/5 * * * *';
-/** The schedule that drives the legacy inline fallback. */
-export const LEGACY_CRON = '* * * * *';
+/** Effective DO-path cadence in minutes — the modulo the router applies
+ *  and the source of EXPECTED_SCAN_CADENCE_SEC's 300s. */
+export const DO_PATH_CADENCE_MINUTES = 5;
 
-/** Should this cron invocation do the tick's work? */
+/** Should this cron invocation do the tick's work?
+ *  `scheduledTimeMs` is `controller.scheduledTime` — the tick's
+ *  SCHEDULED epoch (not the actual run time), so the modulo is exact
+ *  even when the runtime fires a few seconds late. */
 export function shouldRunCronTick(
-  cron: string | undefined,
+  scheduledTimeMs: number | undefined,
   doPathEnabled: boolean,
 ): boolean {
-  if (doPathEnabled) return cron !== LEGACY_CRON;
-  return cron !== DO_PATH_CRON;
+  if (!doPathEnabled) return true; // legacy: every minute
+  if (typeof scheduledTimeMs !== 'number' || !Number.isFinite(scheduledTimeMs)) {
+    return true; // fail-open — see header
+  }
+  return (
+    new Date(scheduledTimeMs).getUTCMinutes() % DO_PATH_CADENCE_MINUTES === 0
+  );
 }

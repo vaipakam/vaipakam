@@ -26,12 +26,18 @@ changes bring usage well under the cap:
   minting.
 
 Two review-round refinements keep every latency property that the old
-schedule provided: the every-minute schedule still exists and drives the
+schedule provided: the every-minute tick still exists and drives the
 LEGACY fallback path (so an incident rollback away from the new ingest
-plumbing keeps its old per-chain freshness — each tick routes to exactly
-one path), and a webhook whose block hasn't reached the safe
-confirmation depth yet keeps being retried by the ingest object itself
-(a slower self-driven retry lane) instead of waiting for the next cron.
+plumbing keeps its old per-chain freshness), and a webhook whose block
+hasn't reached the safe confirmation depth yet keeps being retried by
+the ingest object itself (a slower self-driven retry lane) instead of
+waiting for the next cron. A production follow-up reshaped HOW the two
+cadences coexist: the hosting free plan also caps cron schedules at
+five per account — all five already in use — so instead of a second
+schedule, the single every-minute schedule remains and each tick
+decides by its own timestamp whether the 5-minute ingest work runs
+(minutes divisible by five) — behaviourally identical, one trigger
+slot.
 
 What users may notice: nothing on event-driven updates (webhook-fast as
 before). The purely time-driven inbox reminders (due-date, grace,
