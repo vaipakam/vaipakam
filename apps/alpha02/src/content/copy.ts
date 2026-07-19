@@ -1272,6 +1272,38 @@ const copySource = {
 
   positions: {
     details: {
+      // Interpolated receipt / summary lines (extracted from
+      // PositionDetails.tsx inline templates).
+      collateralBackAfterRepay: tmpl(
+        '{{collateral}} collateral back — claimable right after repayment settles.',
+        ['collateral'],
+      ),
+      collateralBackAfterClose: tmpl(
+        '{{collateral}} collateral back — claimable right after closing.',
+        ['collateral'],
+      ),
+      principalPlusInterest: tmpl('{{principal}} plus the earned interest.', ['principal']),
+      loanAssetFallback: 'the loan asset',
+      recoveredSummary: tmpl(
+        'What this loan recovered: sale proceeds in {{asset}}, or the {{collateral}} collateral itself, depending on how the default settled.',
+        ['asset', 'collateral'],
+      ),
+      nftRentedOut: tmpl('Your {{nft}} is rented out', ['nft']),
+      nftRentalBetween: tmpl('A rental of {{nft}} between two other wallets', ['nft']),
+      loanBetween: tmpl('A loan of {{principal}} between two other wallets', ['principal']),
+      nftStaysVault: tmpl('{{nft}} stays in the owner’s vault{{collateralSuffix}}', [
+        'nft',
+        'collateralSuffix',
+      ]),
+      vaultCollateralSuffix: tmpl(', plus {{collateral}} collateral', ['collateral']),
+      addCollateralReceipt: tmpl(
+        '{{amount}} {{symbol}} more collateral, returned with the rest when the loan closes properly.',
+        ['amount', 'symbol'],
+      ),
+      partialOwe: tmpl(
+        '{{amount}} {{symbol}} now, plus the interest accrued so far (pulled together in this payment). The due date doesn’t move.',
+        ['amount', 'symbol'],
+      ),
       loadingLoan: 'Loading the loan…',
       notFound: 'We couldn’t find this loan right now. It may be new (still indexing) or the link may be old.',
       titleLoan: 'Loan',

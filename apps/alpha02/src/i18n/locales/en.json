@@ -765,6 +765,18 @@
     },
     "positions": {
       "details": {
+        "collateralBackAfterRepay": "{{collateral}} collateral back — claimable right after repayment settles.",
+        "collateralBackAfterClose": "{{collateral}} collateral back — claimable right after closing.",
+        "principalPlusInterest": "{{principal}} plus the earned interest.",
+        "loanAssetFallback": "the loan asset",
+        "recoveredSummary": "What this loan recovered: sale proceeds in {{asset}}, or the {{collateral}} collateral itself, depending on how the default settled.",
+        "nftRentedOut": "Your {{nft}} is rented out",
+        "nftRentalBetween": "A rental of {{nft}} between two other wallets",
+        "loanBetween": "A loan of {{principal}} between two other wallets",
+        "nftStaysVault": "{{nft}} stays in the owner’s vault{{collateralSuffix}}",
+        "vaultCollateralSuffix": ", plus {{collateral}} collateral",
+        "addCollateralReceipt": "{{amount}} {{symbol}} more collateral, returned with the rest when the loan closes properly.",
+        "partialOwe": "{{amount}} {{symbol}} now, plus the interest accrued so far (pulled together in this payment). The due date doesn’t move.",
         "loadingLoan": "Loading the loan…",
         "notFound": "We couldn’t find this loan right now. It may be new (still indexing) or the link may be old.",
         "titleLoan": "Loan",

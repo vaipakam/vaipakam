@@ -1287,7 +1287,7 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
           youReceive: isRental
             ? copy.positions.details.receipt.bufferBack
             : hasCollateral
-              ? `${collateralStr} collateral back — claimable right after repayment settles.`
+              ? copy.positions.details.collateralBackAfterRepay(collateralStr)
               : copy.positions.details.receipt.noCollateralBack,
           youLock: copy.positions.details.receipt.nothingNew,
           youMayOwe: isRental
@@ -1319,14 +1319,14 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
               youReceive: isRental
                 ? copy.positions.details.receipt.rentalFeesAndNft
                 : properClose
-                  ? `${principalStr} plus the earned interest.`
+                  ? copy.positions.details.principalPlusInterest(principalStr)
                   : // Liquid-collateral defaults settle by SWAP — the
                     // lender's claim pays proceeds in the loan asset,
                     // not the collateral itself. Only in-kind (illiquid)
                     // paths hand over the raw collateral, so promise
                     // neither specifically.
                     hasCollateral
-                    ? `What this loan recovered: sale proceeds in ${principal?.symbol ?? 'the loan asset'}, or the ${collateralStr} collateral itself, depending on how the default settled.`
+                    ? copy.positions.details.recoveredSummary(principal?.symbol ?? copy.positions.details.loanAssetFallback, collateralStr)
                     : copy.positions.details.receipt.recoveredNoCollateral,
               youLock: copy.positions.details.receipt.nothing,
               youMayOwe: copy.positions.details.receipt.nothing,
@@ -1352,13 +1352,13 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
               ? role === 'borrower'
                 ? `You rent ${nftStr}`
                 : role === 'lender'
-                  ? `Your ${nftStr} is rented out`
-                  : `A rental of ${nftStr} between two other wallets`
+                  ? copy.positions.details.nftRentedOut(nftStr)
+                  : copy.positions.details.nftRentalBetween(nftStr)
               : role === 'borrower'
                 ? `You borrowed ${principalStr}`
                 : role === 'lender'
                   ? `You lent ${principalStr}`
-                  : `A loan of ${principalStr} between two other wallets`}
+                  : copy.positions.details.loanBetween(principalStr)}
           </p>
         </div>
         <span className={`badge badge-${view.badge}`}>{loanStateLabel(view, copy.loanState)}</span>
@@ -1417,7 +1417,7 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
             <dt>{copy.positions.details.labels.locked}</dt>
             <dd>
               {isRental
-                ? `${nftStr} stays in the owner’s vault${hasCollateral ? `, plus ${collateralStr} collateral` : ''}`
+                ? copy.positions.details.nftStaysVault(nftStr, hasCollateral ? copy.positions.details.vaultCollateralSuffix(collateralStr) : '')
                 : `${collateralStr} collateral (borrower’s)`}
             </dd>
           </div>
@@ -1637,7 +1637,7 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
                     row.status === 'fallback_pending'
                       ? copy.positions.details.addCollateral.receiveFallbackCure
                       : copy.positions.details.addCollateral.receiveSafer,
-                  youLock: `${collateralInput} ${collateral.symbol} more collateral, returned with the rest when the loan closes properly.`,
+                  youLock: copy.positions.details.addCollateralReceipt(collateralInput, collateral.symbol),
                   youMayOwe: copy.positions.details.addCollateral.oweNothingMore,
                   youCanLose:
                     row.status === 'fallback_pending'
@@ -1750,7 +1750,7 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
                 data={{
                   youReceive: copy.positions.details.partial.receiveSmallerDebt,
                   youLock: copy.positions.details.receipt.nothing,
-                  youMayOwe: `${partialInput} ${principal.symbol} now, plus the interest accrued so far (pulled together in this payment). The due date doesn’t move.`,
+                  youMayOwe: copy.positions.details.partialOwe(partialInput, principal.symbol),
                   youCanLose: copy.positions.details.partial.loseNothingBeyondPayment,
                   fees: copy.positions.details.partial.feesAccrued,
                   whenThisEnds: copy.positions.details.partial.endsPrincipalDrops,
@@ -1838,7 +1838,7 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
                 disabled={!onSupportedChain || !walletClient || !publicClient}
                 data={{
                   youReceive: hasCollateral
-                    ? `${collateralStr} collateral back — claimable right after closing.`
+                    ? copy.positions.details.collateralBackAfterClose(collateralStr)
                     : copy.positions.details.receipt.noCollateralBack,
                   youLock: copy.positions.details.receipt.nothingNew,
                   youMayOwe: `~${formatTokenAmount(
