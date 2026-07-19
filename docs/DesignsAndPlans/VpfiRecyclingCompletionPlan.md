@@ -7,7 +7,7 @@
 | **Date** | 2026-07-18 |
 | **Status** | **Draft — programme plan + Phase B′ implementation design** for owner review. Single document of record for *everything still required* to complete VPFI recycling, re-verified against `main` (through the RL-4 landing) and reconciled with the 2026-07-18 completeness-scout state (#1346, #1347, the #1222 parked B1–B4/C1–C2 plan + WIP branch) |
 | **Cards** | Umbrella **#1349** · #1222 (Phase B′ mesh + Phase C′) · #1331 (folds into B2) · #1346 (Layer 0) · #1347 (Layer 2 — **D1 DECIDED (b)**, owner 2026-07-18; re-based to the formula doc) · #1218 (metric completion) · #1204 / #1219 (channels 3–4) · M2 card set (cut per §M2) |
-| **Substrate (binding)** | [`VpfiRecyclingBalanceGovernorDesign.md`](VpfiRecyclingBalanceGovernorDesign.md) (RATIFIED governor), [`VpfiCrossChainRecyclingDesign.md`](VpfiCrossChainRecyclingDesign.md) (Option-B mesh), [`VpfiRecyclingLoopClosureDesign.md`](VpfiRecyclingLoopClosureDesign.md) (RATIFIED RL-1…6), [`VpfiAbsorptionDistributionFormulaRedesign.md`](VpfiAbsorptionDistributionFormulaRedesign.md) **at its CURRENT revision** (rev 15 at time of writing — adds ack-timed remitted accounting + reward-haircut snapshotting over the rev-8–14 freezes; M2 cards scope against the live file, never a pinned rev — see the §M2 divergence decision) |
+| **Substrate (binding)** | [`VpfiRecyclingBalanceGovernorDesign.md`](VpfiRecyclingBalanceGovernorDesign.md) (RATIFIED governor), [`VpfiCrossChainRecyclingDesign.md`](VpfiCrossChainRecyclingDesign.md) (Option-B mesh), [`VpfiRecyclingLoopClosureDesign.md`](VpfiRecyclingLoopClosureDesign.md) (RATIFIED RL-1…6), [`VpfiAbsorptionDistributionFormulaRedesign.md`](VpfiAbsorptionDistributionFormulaRedesign.md) **pinned at rev 15 — the revision the owner's D1 decision (2026-07-18) approved** (adds ack-timed remitted accounting + reward-haircut snapshotting over the rev-8–14 freezes). A later formula-doc rev enters implementation scope ONLY after this completion plan is updated to adopt it (a conscious re-ratification step) — cards must never silently follow a mutable draft past the decided revision |
 
 ---
 
@@ -104,7 +104,7 @@ numeraire linkage at all.
 
 > **D1 DECIDED: (b)** — owner, 2026-07-18. The
 > `VpfiAbsorptionDistributionFormulaRedesign.md` LIF·year dual-fee
-> package at its current revision governs M2; option (a) is retired
+> package at rev 15 (the D1-approved revision) governs M2; option (a) is retired
 > (the governor §4.2 formula gets its supersession note; the unwired
 > `recycleTariffKPer1e18EthDay` knob is deleted once no caller remains).
 > The divergence table is retained below for the record.
@@ -128,7 +128,7 @@ retires (a)'s formula ("do not wire `setRecycleTariffKPer1e18EthDay` for
 Phase-1 absorption"). But (b) is materially bigger (it re-prices list
 fees and replaces the reward-cap regime), so the choice is the owner's,
 made consciously — not defaulted. On (b), #1347's body is re-based to
-the current revision (rev 15) and the card set below is cut; on (a), the
+rev 15 (the D1-approved revision) and the card set below is cut; on (a), the
 formula doc's fee/tariff sections get a supersession note instead. **The
 formula doc's D1 + messenger content survives either way — with one
 non-negotiable coupling under (a) too:** ShareOfPool must never cut over
@@ -191,7 +191,16 @@ is adopted as the implementation cut. Two corrections before B1 resumes:
    fields (out-of-order earlier days are held/retried until in order —
    consistent with the existing cumulative self-heal), or clamps
    against the nearest lower-day accepted cumulative snapshot; the
-   implementing PR picks one and tests the delayed-day case.
+   implementing PR picks one and tests the delayed-day case. **If the
+   cursor option is chosen, it MUST advance over grace-finalized-zero
+   days**: the aggregator can finalize a missing chain as zero after
+   the grace window and then reject that day's late report forever — a
+   cursor that simply waits would wedge behind an unacceptable day and
+   hold every later report. Rule: a day finalized-zero for the chain
+   advances the cursor with zero day credit, keeping the last accepted
+   cumulative as baseline (the cumulative self-heal then recovers
+   availability on the next accepted report); otherwise use the
+   lower-day snapshot approach.
 2. **Per-chain two-pass funding resolution** (governor §3.1, Codex
    r5/r6) belongs in B2/B3: global `Ā` sizes the *target*;
    `localFunded_c = min(target_c, availRecycled_c)` — **with a
@@ -319,7 +328,16 @@ become undeliverable: the report carries a **bounded** scheme
 (aggregate per-side headroom + a commitment root with chunked detail,
 or paginated commitment chunks), and ShareOfPool remittance for a day
 is gated on **all chunks present and verified** — never computed from a
-partial set (a missing chunk delays, never zeroes, that chain). (2)
+partial set (a missing chunk delays, never zeroes, that chain). **This
+gate must be wired into day-finalization readiness itself** (PR-2): the
+aggregator's grace/force-finalize path currently zeroes a missing
+chain and rejects late reports — unless chunk completeness is a
+readiness input, a delayed chunk still yields a finalized day with
+partial/zero commitments and permanently underfunds that mirror. If a
+force-finalize genuinely must proceed without a chain's chunks, that
+chain's ShareOfPool remittance for the day is marked
+remit-ineligible-pending-reconciliation (operator path) — never
+computed from the partial set. (2)
 *pending-remittance reservation* — ack-timed accounting alone allows
 duplicate in-flight allocations (two remits before the first ack both
 see the same headroom), while incrementing at send reintroduces the
@@ -336,7 +354,15 @@ resolves through a bounded reconciliation path — after a timeout, the
 operator finalizes or releases the reservation against the observed
 CCIP delivery status (manual, evidenced, Base-ledgered) — so one lost
 ack can never permanently suppress remits for a loan/side, and a blind
-release can never double-allocate. One evolution per direction, one
+release can never double-allocate. **Storage width note (every
+equivalent-half field):** the global-equivalent numerators scale funded
+budgets by `1 / p_c,side`, so a thin chain with a tiny nonzero side
+weight legitimately produces values orders of magnitude above the
+actual daily pool — the live mirror day-pool stamp's `uint128` casts
+are NOT a safe container. Implementing PRs use widened storage/wire
+fields (uint256) or an explicitly bounded numerator scheme; a
+skewed-demand broadcast must never revert or truncate. One evolution
+per direction, one
 receiver-dual-decode gate each, with the implementing PR pinning the
 exact layouts. Naming a fixed word count
 across both upgrades is exactly how a decoder silently drops `capMode`
@@ -478,7 +504,7 @@ constituent cards below remain the working tickets.
 | --- | --- |
 | #1349 | Umbrella — keep in lockstep with this plan; tick milestones as constituent cards close |
 | #1346 | Keep as filed = M1; add the #973 restamp note (comment posted) |
-| #1347 | **D1 decided (b)** — body re-based to the formula doc at current rev (LIF·year, dual-fee, per-party double absorption, PR-5a/5b scope) |
+| #1347 | **D1 decided (b)** — body re-based to the formula doc at rev 15 (LIF·year, dual-fee, per-party double absorption, PR-5a/5b scope) |
 | #1222 | Adopt the parked B1–B4/C1–C2 cut with §M3's two corrections (B1 two report fields; two-pass funding in B2/B3); #1331 stays absorbed by B2 |
 | #1331 | **CLOSED 2026-07-18 as duplicate of #1222** — its full scope (remit-ingress labeling; remitted-recycled = local credit vs locally-committed = pure release, across claim/forfeit/expiry) is §M3's B2; the B4 tests must cover it |
 | #1218 | Re-point at §M5 (net-emission = `freshDrawdown` under the governor; dashboard surface) |
@@ -521,7 +547,7 @@ constituent cards below remain the working tickets.
    LIF·year dual-fee package at its CURRENT revision (rev 15 at time of
    writing, whose later freezes — reward-haircut snapshotting, ack-timed
    remitted accounting — are part of the package). M2 cards scope
-   against the live document, never a pinned rev; #1347 re-based;
+   against rev 15 as pinned — a later formula-doc rev enters scope only via a plan update (re-ratification); #1347 re-based;
    option (a) retired with a supersession note.
 2. Confirm this plan as the **programme of record** (supersedes the
    Phase-B checklist in #1222's body; adopts the parked B1–B4/C1–C2 cut
