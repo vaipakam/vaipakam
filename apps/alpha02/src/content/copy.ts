@@ -1551,6 +1551,27 @@ const copySource = {
   claims: {
     checking: 'Checking for claims…',
     row: {
+      // Interpolated claim-row "what you get" lines (extracted from
+      // Claims.tsx). The " + rebate" / held-proceeds suffixes are
+      // composed at the call site from these catalog pieces.
+      rebateAmount: tmpl('{{amount}} VPFI rebate', ['amount']),
+      heldProceedsSuffix: ' + held proceeds',
+      amountWithSuffix: tmpl('{{amount}}{{suffix}}', ['amount', 'suffix']),
+      feesNftBack: tmpl('{{amount}} fees + your {{nft}} back', ['amount', 'nft']),
+      rentalFeesNftBack: tmpl('Rental fees + your {{nft}} back', ['nft']),
+      bufferBack: tmpl('{{amount}} buffer back', ['amount']),
+      principalPlusInterest: tmpl('{{amount}} {{symbol}} + interest', ['amount', 'symbol']),
+      collateralLabel: tmpl('{{collateral}} collateral', ['collateral']),
+      recoveredFromDefault: tmpl(
+        '{{amount}}{{held}} recovered from the default',
+        ['amount', 'held'],
+      ),
+      defaultRecovery: tmpl('Default recovery — {{collateral}}', ['collateral']),
+      collateralBack: tmpl('{{collateral}} collateral back', ['collateral']),
+      collateralBackWithAmount: tmpl(
+        '{{amount}} collateral back{{rebateSuffix}}',
+        ['amount', 'rebateSuffix'],
+      ),
       rental: 'Rental',
       loan: 'Loan',
       prepaidBufferBack: 'Your prepaid buffer back',

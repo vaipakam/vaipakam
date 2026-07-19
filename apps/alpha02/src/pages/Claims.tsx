@@ -154,10 +154,10 @@ function ClaimRow({ loan }: { loan: ClaimableLoan }) {
       : null;
   const rebateStr =
     loan.claim.lifRebate > 0n
-      ? `${formatTokenAmount(loan.claim.lifRebate, 18)} VPFI rebate`
+      ? copy.claims.row.rebateAmount(formatTokenAmount(loan.claim.lifRebate, 18))
       : null;
   const hasHeld = loan.role === 'lender' && loan.claim.heldForLender > 0n;
-  const heldSuffix = hasHeld ? ' + held proceeds' : '';
+  const heldSuffix = hasHeld ? copy.claims.row.heldProceedsSuffix : '';
   // Per-branch composition below (Codex #1156 r2): a blended string
   // can't distinguish "this number IS the collateral leg" from "this
   // is only a VPFI rebate", and a held-only lane must still surface.
@@ -180,30 +180,33 @@ function ClaimRow({ loan }: { loan: ClaimableLoan }) {
       // getClaimable's amount is the fee payout (in the prepay asset)
       // when fungible fees are due — show the number (Codex #1156 r2).
       what = baseAmountStr
-        ? `${baseAmountStr} fees + your ${nft} back`
-        : `Rental fees + your ${nft} back`;
+        ? copy.claims.row.feesNftBack(baseAmountStr, nft)
+        : copy.claims.row.rentalFeesNftBack(nft);
       why = copy.claims.row.whyRentalEnded;
     } else {
       what = baseAmountStr
-        ? `${baseAmountStr} buffer back`
+        ? copy.claims.row.bufferBack(baseAmountStr)
         : copy.claims.row.prepaidBufferBack;
       why = copy.claims.row.whyRentalClosed;
     }
   } else if (loan.role === 'lender') {
     if (properClose) {
       what = baseAmountStr
-        ? `${baseAmountStr}${heldSuffix}`
+        ? copy.claims.row.amountWithSuffix(baseAmountStr, heldSuffix)
         : hasHeld
           ? copy.claims.row.heldProceeds
           : principalMeta.data
-            ? `${formatTokenAmount(loan.principal, principalMeta.data.decimals)} ${principalMeta.data.symbol} + interest`
+            ? copy.claims.row.principalPlusInterest(
+                formatTokenAmount(loan.principal, principalMeta.data.decimals),
+                principalMeta.data.symbol,
+              )
             : copy.claims.row.repaidFunds;
       why =
         loan.status === 'repaid'
           ? copy.claims.row.whyRepaidLender
           : copy.claims.row.whyInternalMatchLender;
     } else if (loan.status === 'fallback_pending') {
-      what = `${collateralStr} collateral`;
+      what = copy.claims.row.collateralLabel(collateralStr);
       why = copy.claims.row.whyFallbackPending;
     } else {
       // Liquid-collateral defaults settle by swap (proceeds in the
@@ -212,30 +215,30 @@ function ClaimRow({ loan }: { loan: ClaimableLoan }) {
       // when the read gave no fungible amount (pure in-kind transfer)
       // fall back to a plain-language title.
       what = baseAmountStr
-        ? `${baseAmountStr}${heldSuffix} recovered from the default`
+        ? copy.claims.row.recoveredFromDefault(baseAmountStr, heldSuffix)
         : hasHeld
           ? copy.claims.row.heldProceedsDefault
-          : `Default recovery — ${collateralStr}`;
+          : copy.claims.row.defaultRecovery(collateralStr);
       why = copy.claims.row.whyDefaultLender;
     }
   } else if (defaulted) {
     // After a liquidation only a residue (if any) is claimable — never
     // promise the full original collateral, and never say "you repaid".
     what = baseAmountStr
-      ? `${baseAmountStr}${rebateStr ? ` + ${rebateStr}` : ''}`
+      ? copy.claims.row.amountWithSuffix(baseAmountStr, rebateStr ? ` + ${rebateStr}` : '')
       : (rebateStr ?? copy.claims.row.surplusAfterLiquidation);
     why = copy.claims.row.whyDefaultBorrower;
   } else if (loan.status === 'internal_matched') {
     // An internal match leaves the borrower a residual and/or VPFI
     // rebate at most — never promise the full collateral back.
     what = baseAmountStr
-      ? `${baseAmountStr}${rebateStr ? ` + ${rebateStr}` : ''}`
+      ? copy.claims.row.amountWithSuffix(baseAmountStr, rebateStr ? ` + ${rebateStr}` : '')
       : (rebateStr ?? copy.claims.row.residualAfterMatch);
     why = copy.claims.row.whyInternalMatchBorrower;
   } else {
     what = baseAmountStr
-      ? `${baseAmountStr} collateral back${rebateStr ? ` + ${rebateStr}` : ''}`
-      : (rebateStr ?? `${collateralStr} collateral back`);
+      ? copy.claims.row.collateralBackWithAmount(baseAmountStr, rebateStr ? ` + ${rebateStr}` : '')
+      : (rebateStr ?? copy.claims.row.collateralBack(collateralStr));
     why = copy.claims.row.whyRepaidBorrower;
   }
 

@@ -940,6 +940,18 @@
     "claims": {
       "checking": "Checking for claims…",
       "row": {
+        "rebateAmount": "{{amount}} VPFI rebate",
+        "heldProceedsSuffix": " + held proceeds",
+        "amountWithSuffix": "{{amount}}{{suffix}}",
+        "feesNftBack": "{{amount}} fees + your {{nft}} back",
+        "rentalFeesNftBack": "Rental fees + your {{nft}} back",
+        "bufferBack": "{{amount}} buffer back",
+        "principalPlusInterest": "{{amount}} {{symbol}} + interest",
+        "collateralLabel": "{{collateral}} collateral",
+        "recoveredFromDefault": "{{amount}}{{held}} recovered from the default",
+        "defaultRecovery": "Default recovery — {{collateral}}",
+        "collateralBack": "{{collateral}} collateral back",
+        "collateralBackWithAmount": "{{amount}} collateral back{{rebateSuffix}}",
         "rental": "Rental",
         "loan": "Loan",
         "prepaidBufferBack": "Your prepaid buffer back",
