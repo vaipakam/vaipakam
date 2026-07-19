@@ -138,7 +138,7 @@ PR-7 = #1346):
 | Card | Scope | Hard deps |
 | --- | --- | --- |
 | PR-1 | Spec supersession (docs; fee defaults 20/200 + grandfather resolver) | D1 decided |
-| PR-2 | D1 `(user,side,day)` share cap + joint day SM + broadcast evolution (coordinate with §M3 wire rule) | mirrors decode first |
+| PR-2 | D1 `(user,side,day)` share cap + joint day SM + broadcast evolution — **scope includes the report/remit side even standalone**: mirror→Base per-loan headroom commitments + ack-timed `loanSideRewardRemitted` attribution (rev-15 freezes) are prerequisites for safe ShareOfPool remittance (`chainRewardBudgetForDay = min(uncappedSlice, Σ commitments)`), with or without the mesh — never broadcast-only (coordinate with §M3 wire rule when same-window) | mirrors decode first |
 | PR-4 | HoldOnly hybrid borrower LIF + fee-default migration | PR-1 |
 | PR-5a/5b | Per-party Full tariff (LIF·year `C*`, `maxCStar` auth, no silent downgrade) + `credit(FullTariff, …)` at init | PR-4; #1347 re-based |
 | PR-5c | Loan-side reward cap + `cStar` backfill gate | PR-5b |
@@ -188,8 +188,13 @@ is adopted as the implementation cut. Two corrections before B1 resumes:
    budget itself remaining the binding cap at claim/remit (scaling
    dust can never over-pay). The alternative (mirrors switching to
    local denominators) is rejected: it changes claim math on every
-   chain instead of one broadcast-side scaling. The implementing PR
-   pins the rounding.
+   chain instead of one broadcast-side scaling. **Zero-demand guard:**
+   when `p_c == 0` (no finalized demand on that side/chain for the
+   day — quiet or force-finalized days, still-broadcast-configured
+   destinations), never divide: send `recycledHalf_c = 0` / skip that
+   destination's recycled add-on — the same zero-denominator
+   convention the live remittance math already uses. The implementing
+   PR pins the rounding.
 
 Kept from the parked plan verbatim: commitment semantics (broadcast
 *commits*; bucket debited pro-rata at claim/remit), whole-day idempotency
@@ -206,9 +211,16 @@ the upgrade: mirrors keep accepting the 8-word kind-2 broadcast
 alongside the widened shape, Base keeps accepting the 4-word report
 alongside the 6-word one. Only after every receiver dual-decodes do
 senders switch. **Wire-format rule, stated as a
-field union — never an assumed word count:** standalone M3 widens the
-kind-2 broadcast with the two new fields (`recycleConsume`,
-`keeperAllocate`) and the report 4→6 — **and the broadcast build becomes
+field union — never an assumed word count, applied to WHICHEVER
+broadcast kind is ACTIVE when M3 lands:** if M2's D1 evolution has
+already cut over, Base no longer sends legacy kind-2 for ShareOfPool
+days — widening kind-2 then would bolt the recycle fields onto an
+inactive shape while post-cutover mirrors receive the D1 kind without
+them. M3 therefore widens the **active** kind (kind-2 only if D1 has
+not landed; otherwise the D1 successor kind, or a new union kind),
+keeping every superseded kind backward-decodable as legacy. Standalone
+M3 adds the two new fields (`recycleConsume`, `keeperAllocate`) and
+the report 4→6 — **and the broadcast build becomes
 per-destination**: today's messenger builds ONE payload and loops over
 `broadcastDestinationChainIds`, but under the §M3 two-pass funding
 correction each chain must receive its OWN funded values —
@@ -305,6 +317,9 @@ flowchart LR
   D1{{"D1: tariff formulation<br/>(a) §4.2 vs (b) rev 15"}} --> M2
   M1a[#1346 M1a flat tariff] --> M1b[#1346 M1b custody re-route]
   M1b --> ARM[M7.1 arm governor]
+  GATE{{"mesh/dark gate:<br/>mirrors dark OR M3 complete"}} --> ARM
+  M3 -.-> GATE
+  GATE --> RL3KNOB[M7.2 RL-3 horizon knob]
   subgraph M2 [M2 — absorption stack]
     PR1[PR-1 specs] --> PR4[PR-4 HoldOnly]
     PR4 --> PR5[#1347 PR-5a/5b Full tariff]
