@@ -226,7 +226,8 @@ Distribution rules:
 - **M2 PR-1 supersession (recycling completion plan §M2; D1 decided (b); intent source: [`VpfiAbsorptionDistributionFormulaRedesign.md`](../DesignsAndPlans/VpfiAbsorptionDistributionFormulaRedesign.md) rev 15):** the `500 VPFI/ETH` ETH-ratio cap (#1008) is the **legacy** rate cap. Under the new package the reward cap becomes a **loan-side, fee-linked** cap — `loanSideRewardCap = ½ × C* × (1 − m_reward)` (with `C*` the loan's notional Full tariff, defined for every loan even when neither party opts into Full) — **plus** the D1 absolute `(user, side, day)` share-of-pool cap. The ETH-ratio cap and the share-of-pool cap are cut over **jointly** (the ShareOfPool distribution rule must never activate without the per-loan fee-linked cap in force — a non-negotiable coupling), at which point `500 VPFI/ETH` is retired for **new** loans; days priced before the cutover keep the legacy cap. This cutover is a later M2 code milestone — PR-1 states only the intended end-state.
   - **Haircut snapshot (rev 15):** the `m_reward` reward haircut in `½ × C* × (1 − m_reward)` (default `200 bps`) is **snapshotted at loan origination** together with `C*` — stored per-loan (`rewardHaircutBpsAtOpen`), **not** re-read from live config at claim/finalisation. A later governance retune of the haircut must never retroactively shrink or expand the reward cap of an already-open loan (the same forward-protection discipline as the fee-BPS snapshots).
   - **Scope of the legacy-cap bullets below (per-day ceiling, ETH-equivalent computation, finalisation pricing + outage-uncapped fallback, per-chain trim, remainder handling):** these describe the **legacy ETH-ratio cap** and govern **pre-cutover / legacy-range days only**. For post-cutover days the loan-side + D1 caps govern, and — because those caps are fee-linked and pool-relative, not ETH-priced — **there is no ETH-price fallback that can make a post-cutover day uncapped**: a missing reward price feed cannot lift the fee-linked cap.
-  - **Testing (M2):** the `0.5 VPFI / 0.001 ETH` cap test is a **legacy / pre-cutover** test. Post-cutover behaviour additionally requires tests that the loan-side cap `½ × C* × (1 − m_reward)` (with the haircut read from the origination snapshot) **and** the D1 `(user, side, day)` share-of-pool cap both bind, and that ShareOfPool never activates without the loan-side cap in force.
+  - **Loans open when the cutover is armed (spanning loans) — legacy-per-loan rule:** the split is by **loan-origination watermark**, not purely by day. A loan **originated before** the cutover has no `C*` / haircut snapshot (those fields did not exist at its origination), so it stays on the **legacy ETH-ratio cap for ALL of its reward days**, including days finalised after the cutover date — it is grandfathered, never retroactively assigned a `C*` of zero and never left uncapped. The fee-linked loan-side cap applies **only** to loans **originated at/after** the cutover (which carry the `C*` + haircut snapshot). Consequently the ShareOfPool cutover does **not** block on old loans closing and does not wait for every open loan to settle: pre-watermark loans price their reward days under the legacy cap, post-watermark loans under the loan-side + D1 caps, and the two coexist. (This is the same forward-only, snapshot-at-origination discipline the fee-BPS grandfather resolver uses.)
+  - **Testing (M2):** the `0.5 VPFI / 0.001 ETH` cap test is a **legacy / pre-cutover** test. Post-cutover behaviour additionally requires tests that the loan-side cap `½ × C* × (1 − m_reward)` (with the haircut read from the origination snapshot) **and** the D1 `(user, side, day)` share-of-pool cap both bind, that ShareOfPool never activates without the loan-side cap in force, **and** that a loan originated before the cutover keeps the legacy cap on its post-cutover days (the spanning-loan watermark case).
 - the cap is a strictly **per-day** ceiling: it is applied to each day's reward on its own and only the per-day-trimmed amounts are summed — a day whose reward would exceed the ceiling is trimmed that day, and its excess can **not** be absorbed by other days that sat below the ceiling (there is no netting of an over-cap day against under-cap days across a loan's reward window) *(legacy ETH-ratio cap — pre-cutover days, per the supersession above)*
 - the ETH-equivalent cap must be computed from the same eligible per-user interest amount already credited into the interaction-reward accounting for that day, using the protocol's on-chain pricing path *(legacy ETH-ratio cap — pre-cutover days)*
 - the ceiling for a day is priced **when that day is finalised**, not when a user claims: both the ETH reference price and the governance cap ratio are captured at finalisation and are the same value on every chain (finalised once on the canonical chain and broadcast). A change to the cap ratio therefore applies to days not yet finalised and does not retroactively re-price already-finalised days; if the reward price feed is unavailable at finalisation, that single day is treated as uncapped rather than blocking finalisation *(legacy ETH-ratio cap — pre-cutover days; the post-cutover fee-linked cap has no ETH-price fallback and cannot be made uncapped by a feed outage)*
@@ -381,7 +382,7 @@ Testing requirements beyond §9:
 - invariant: no user can claim `dayId` before the day's known-global-set flag (`knownGlobalSet[dayId]`) is stamped on their chain — the gate is the flag, not a non-zero denominator (a finalized day may carry zero on either side)
 - test that interaction rewards remain non-claimable while a loan is still active, and become claimable only after the loan is closed
 - test that `day 0` / the first reward day is excluded from interaction-reward calculation
-- test that a user's reward is capped at `0.5 VPFI` per `0.001 ETH` equivalent of eligible interest even when the proportional formula would otherwise pay more
+- test that a user's reward is capped at `0.5 VPFI` per `0.001 ETH` equivalent of eligible interest even when the proportional formula would otherwise pay more *(legacy ETH-ratio cap — **pre-cutover days only**, per the §4 supersession; for post-cutover days test the loan-side cap `½ × C* × (1 − m_reward)` (haircut from the origination snapshot) + the D1 `(user, side, day)` cap instead — the ETH-ratio cap test alone is not sufficient coverage)*
 - negative test: a mirror report arriving after finalization is rejected (`ReportAfterFinalization`) and does not alter payouts
 
 ## 5. Yield Fee
@@ -391,8 +392,11 @@ Testing requirements beyond §9:
 > [`VpfiAbsorptionDistributionFormulaRedesign.md`](../DesignsAndPlans/VpfiAbsorptionDistributionFormulaRedesign.md)
 > rev 15).** The intended **list yield fee is `2%`** (frozen), not `1%` —
 > the package that also freezes the list Loan-Initiation Fee at `0.2%`
-> (§6/§6b) doubles both list rates as the launch baseline. The `1%` figure
-> throughout this section is the **legacy** rate. **Grandfather resolver
+> (§6/§6b) doubles both list rates as the launch baseline. Only the **list
+> yield-fee rate** `1%` is the legacy figure superseded here → `2%`; the
+> `1%` in **§5a (the LIF matcher-share default)** is a *different*
+> parameter, unrelated to the yield-fee freeze, and stays `1%`.
+> **Grandfather resolver
 > (intent):** a fee-rate change must **never reprice an already-open
 > loan**. A loan resolves its settlement yield fee from the rate in force
 > **at its origination** — the platform snapshots the initiation-time fee
@@ -977,6 +981,20 @@ Testing requirements:
 
 Frontend integration requirements:
 
+> **M2 PR-1 supersession (D1 decided (b); see §6/§6b).** The **borrower
+> VPFI-LIF peg-custody** frontend + acceptance bullets in §12 — the Offer
+> Book accept-review copy that says the borrower "pays the full `0.1%` LIF
+> up front in VPFI and earns … a rebate", and any acceptance criterion
+> requiring the exact up-front VPFI deduction before sending `100%` of
+> principal — are **grandfather / legacy-only** (open custody-path loans).
+> For **new** loans the UI/acceptance target is the §6b HoldOnly / Full
+> model: HoldOnly charges the LIF in the **lending asset** (no VPFI
+> moved), Full is an optional non-refundable native-VPFI **tariff** (no
+> rebate), and no new-loan copy tells a borrower they pay the full LIF in
+> VPFI for a rebate. An M2 implementer must not build new-loan UI or
+> acceptance tests against the retired custody/rebate model. (The full
+> new-loan copy treatment ships with the M2 frontend card #1355.)
+
 - Phase 1 frontend requirements should focus on token-address transparency, supply
   visibility, mint/cap visibility where exposed, fee-discount status, and clear
   separation between the cross-chain VPFI token and the single-chain core protocol
@@ -1034,14 +1052,14 @@ Acceptance criteria:
   withdraw only the free, protocol-tracked portion
 - the connected app does not expose a protocol fixed-rate VPFI purchase flow or
   staking-yield claim path
-- eligible liquid-asset loan acceptance checks liquidity, fee-discount consent,
+- *(legacy / grandfather-only — open custody-path loans; see the §12 Testing/Frontend supersession + §6b)* eligible liquid-asset loan acceptance checks liquidity, fee-discount consent,
   borrower fee-payment balance, effective-tier availability, Chainlink-led ETH
   conversion, full `0.1%` LIF computation, and exact VPFI deduction before
-  sending `100%` of requested lending asset to the borrower
-- properly closed loans credit an effective-tier VPFI rebate; defaulted or
+  sending `100%` of requested lending asset to the borrower. **For new loans** acceptance instead follows §6b: HoldOnly charges the LIF in the lending asset (no VPFI deduction, no custody); Full pulls the per-party `C*` tariff to the recycle bucket (non-refundable); and `borrowerLifRebate[loanId].vpfiHeld == 0` holds for every new loan.
+- *(legacy / grandfather-only — open custody-path loans)* properly closed loans credit an effective-tier VPFI rebate; defaulted or
   HF-liquidated loans forfeit the held VPFI with no rebate — a matched loan
   pays the matcher's configured share first and forfeits the net to Treasury,
-  an unmatched loan forfeits the full amount to Treasury
+  an unmatched loan forfeits the full amount to Treasury. **New loans have no up-front VPFI custody and no rebate** (HoldOnly/Full per §6b).
 - event transparency, NatSpec coverage, and Diamond storage compatibility are
   satisfied
 

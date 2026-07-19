@@ -389,6 +389,17 @@ discount entitlement. This replaces the peg-gated conversion family as the
 highest-volume absorption path and makes the ENTIRE absorption plan
 launchable with zero legal spend.
 
+> **SUPERSEDED — D1 decision (b), owner 2026-07-18 (see §4.2 banner +
+> [`VpfiRecyclingCompletionPlan.md`](VpfiRecyclingCompletionPlan.md) §M2).**
+> The `k × loanVolumeETH × durationDays` (ETH·day) formula and the "buy the
+> entitlement" purchase framing in this one-line summary are **retired**.
+> The adopted launch tariff is the **LIF·year dual-fee package**
+> (`C* = baseLif_list × tYears × K`, [`VpfiAbsorptionDistributionFormulaRedesign.md`](VpfiAbsorptionDistributionFormulaRedesign.md)
+> rev 15); the tariff is a **fee** (a native-VPFI quantity charged at
+> initiation), never a purchase/price. Layer 2 remains the load-bearing
+> launch absorption path — only its formula and framing change. Read this
+> summary through §4.2's superseded banner.
+
 **Layer 3 — optional, market-era only:** `FixedRate`/`MarketFeed` activation
 (§13) wakes the conversion-based classes (fee *equivalents* paid in VPFI).
 No longer load-bearing for absorption — purely a UX/pricing refinement once
