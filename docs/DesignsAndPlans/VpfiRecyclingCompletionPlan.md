@@ -182,10 +182,29 @@ is adopted as the implementation cut. Two corrections before B1 resumes:
    the last accepted report — otherwise a mirror sender bug or stale
    replay could feed excess into `Ā` that the cumulative availability
    ledger does not back, making Base fund "absorption" that never
-   happened.
+   happened. **Ordering precondition:** the clamp's baseline is only
+   sound if reports are accepted in day order per chain — today's flow
+   is merely per-day idempotent, so a delayed earlier day accepted
+   after a later one would be clamped against the later (higher)
+   cumulative and permanently under-credit that chain. B1 therefore
+   adds a **per-chain monotonic report cursor** for the recycled
+   fields (out-of-order earlier days are held/retried until in order —
+   consistent with the existing cumulative self-heal), or clamps
+   against the nearest lower-day accepted cumulative snapshot; the
+   implementing PR picks one and tests the delayed-day case.
 2. **Per-chain two-pass funding resolution** (governor §3.1, Codex
    r5/r6) belongs in B2/B3: global `Ā` sizes the *target*;
-   `localFunded_c = min(target_c, availRecycled_c)`; Base tops up
+   `localFunded_c = min(target_c, availRecycled_c)` — **with a
+   deterministic per-side allocation of the shared availability**: a
+   chain's `availRecycled_c` is one bucket serving both side halves, so
+   the split is computed at ONE allocation point, pro-rata to the two
+   side targets (`fundedSide_c = availRecycled_c × targetSide_c /
+   (targetLender_c + targetBorrower_c)` when short, rounded down),
+   preserving `fundedLenderBudget_c + fundedBorrowerBudget_c ≤ local +
+   top-up availability` by construction — computing the sides
+   independently against the same availability would spend it twice,
+   and split rules chosen per-component would drift between claim caps
+   and remittance; Base tops up
    pro-rata (claims-first, keeper residual) **from its REMAINING
    availability only** — Base is itself a chain in the set, so its own
    `localFunded_Base` slice reserves first and the top-up pool is
@@ -308,7 +327,16 @@ failed-bridge bug: sends therefore reserve into a separate
 `pendingRemitted` ledger at dispatch, finalized into
 `loanSideRewardRemitted` on an **authenticated delivery ack** and
 released on failure — headroom visible to later remits =
-`capEff − paid − remitted − pending`. One evolution per direction, one
+`capEff − paid − remitted − pending`. **Ack-loss recovery (must be
+specified before this is implementable):** reservations are bound to
+the CCIP message ID; the ack is idempotent and retryable (a
+re-delivered ack finalizes the same reservation exactly once); and an
+ambiguous outcome (ack delayed/lost while delivery status is unknown)
+resolves through a bounded reconciliation path — after a timeout, the
+operator finalizes or releases the reservation against the observed
+CCIP delivery status (manual, evidenced, Base-ledgered) — so one lost
+ack can never permanently suppress remits for a loan/side, and a blind
+release can never double-allocate. One evolution per direction, one
 receiver-dual-decode gate each, with the implementing PR pinning the
 exact layouts. Naming a fixed word count
 across both upgrades is exactly how a decoder silently drops `capMode`
@@ -431,6 +459,8 @@ flowchart LR
     PR5c --> DSTAR
   end
   DSTAR --> FEE[M7.4 feeEntitlementEnabled]
+  PR6[#1354 PR-6 settlement sweep] --> FEE
+  GATE --> FEE
   PR2 -. one wire evolution .-> M3[M3 #1222 B1..B4]
   M1b -.-> M3
   M3 --> M4[M4 Phase C' C1..C2]
