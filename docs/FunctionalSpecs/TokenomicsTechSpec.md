@@ -226,7 +226,7 @@ Distribution rules:
 - **M2 PR-1 supersession (recycling completion plan §M2; D1 decided (b); intent source: [`VpfiAbsorptionDistributionFormulaRedesign.md`](../DesignsAndPlans/VpfiAbsorptionDistributionFormulaRedesign.md) rev 15):** the `500 VPFI/ETH` ETH-ratio cap (#1008) is the **legacy** rate cap. Under the new package the reward cap becomes a **loan-side, fee-linked** cap — `loanSideRewardCap = ½ × C* × (1 − m_reward)` (with `C*` the loan's notional Full tariff, defined for every loan even when neither party opts into Full) — **plus** the D1 absolute `(user, side, day)` share-of-pool cap. **The loan-side cap is a per-loan, per-side LIFETIME remaining budget**, not a per-day ceiling: it is keyed by `(loanId, side)` and tracked cumulatively (`loanSideRewardPaidVpfi[loanId][side] ≤ loanSideRewardCapEff`), so a multi-day loan's TOTAL post-cutover payout on a side can never exceed `½ × C* × (1 − m_reward)` (with early-close proration per rev 15). The daily-pool share runs first; this cap only ceilings the cumulative per-loan-per-side payout — applying it once per day would let an `N`-day loan pay `~N ×` the cap and break the wash-economics invariant. The ETH-ratio cap and the share-of-pool cap are cut over **jointly** (the ShareOfPool distribution rule must never activate without the per-loan fee-linked cap in force — a non-negotiable coupling), at which point `500 VPFI/ETH` is retired for **new** loans; days priced before the cutover keep the legacy cap. This cutover is a later M2 code milestone — PR-1 states only the intended end-state.
   - **Haircut snapshot (rev 15):** the `m_reward` reward haircut in `½ × C* × (1 − m_reward)` (default `200 bps`) is **snapshotted at loan origination** together with `C*` — stored per-loan (`rewardHaircutBpsAtOpen`), **not** re-read from live config at claim/finalisation. A later governance retune of the haircut must never retroactively shrink or expand the reward cap of an already-open loan (the same forward-protection discipline as the fee-BPS snapshots).
   - **Scope of the legacy-cap bullets below (per-day ceiling, ETH-equivalent computation, finalisation pricing + outage-uncapped fallback, per-chain trim, remainder handling):** these describe the **legacy ETH-ratio cap** and govern **pre-cutover / legacy-range days only**. For post-cutover days the loan-side + D1 caps govern, and — because those caps are fee-linked and pool-relative, not ETH-priced — **there is no ETH-price fallback that can make a post-cutover day uncapped**: a missing reward price feed cannot lift the fee-linked cap.
-  - **Cap mode is DAY-scoped, and every reward-eligible loan carries a `C*` snapshot (rev 15):** the cutover is a **day** switch — for every day `d ≥ D*` the day is stamped ShareOfPool mode and priced under the D1 + loan-side caps, **fail-closed** (the legacy ETH-ratio product path is never used for a post-cutover day; a claim/sweep on such a day reverts rather than falling back to legacy). This is NOT a per-loan "legacy forever" split — rev 15 explicitly **forbids** a reward-eligible loan without a `C*` snapshot (it would force the zero/undefined-cap ambiguity), and it rejects "unstamped entries stay on Legacy forever." Instead, **every reward-eligible origination stamps a notional `C*` (and the reward-haircut) at loan-init — Full, HoldOnly, or None alike** (a numeraire quote for the list LIF is required to do so; a reward-eligible loan that cannot get one is stamped reward-ineligible, `cStar = 0`, no reward entries). **Loans open across the cutover:** they already carry a `C*` snapshot, so their post-cutover days simply price under the new caps like any other. On a **fresh deploy** (the pre-live posture, #1349) `cStar` is stamped from genesis, so no un-stamped loan exists; on a **post-launch cutover**, the PR-5c backfill gate stamps `cStar` for open reward-eligible loans **before** the cutover arms (never leaving them legacy-forever, never zeroing them). The cutover therefore does not block on old loans closing, and there is no day on which an old loan is priced under the legacy ETH-ratio cap after `D*`.
+  - **Cap mode is DAY-scoped, and every reward-eligible loan carries a `C*` snapshot (rev 15):** the cutover is a **day** switch — for every day `d ≥ D*` the day is stamped ShareOfPool mode and priced under the D1 + loan-side caps, **fail-closed** (the legacy ETH-ratio product path is never used for a post-cutover day; a claim/sweep on such a day reverts rather than falling back to legacy). This is NOT a per-loan "legacy forever" split — rev 15 explicitly **forbids** a reward-eligible loan without a `C*` snapshot (it would force the zero/undefined-cap ambiguity), and it rejects "unstamped entries stay on Legacy forever." Instead, **every reward-eligible origination stamps a notional `C*` (and the reward-haircut) at loan-init — Full, HoldOnly, or None alike** (a numeraire quote for the list LIF is required to do so; a reward-eligible loan that cannot get one is stamped reward-ineligible, `cStar = 0`, no reward entries). **Refinance / rollover anti-farming carve-out (rev 15):** a new loan gets a **fresh** `C*` / loan-side cap **only if** it pays the new-loan list LIF (and the Full tariff if Full) under the same incidence as a fresh origination. A refinance/rollover path that does **not** charge that fresh LIF must **not** reset the cap — the new loan instead **inherits the parent's remaining `loanSideRewardPaidVpfi` / cap budget**, or is stamped **reward-ineligible** (`cStar = 0`). A free cap reset via a LIF-free refinance is **forbidden** (it would let a borrower farm a fresh reward budget with no matching absorption). **Loans open across the cutover:** they already carry a `C*` snapshot, so their post-cutover days simply price under the new caps like any other. On a **fresh deploy** (the pre-live posture, #1349) `cStar` is stamped from genesis, so no un-stamped loan exists; on a **post-launch cutover**, the PR-5c backfill gate stamps `cStar` for open reward-eligible loans **before** the cutover arms (never leaving them legacy-forever, never zeroing them). The cutover therefore does not block on old loans closing, and there is no day on which an old loan is priced under the legacy ETH-ratio cap after `D*`.
   - **Testing (M2):** the `0.5 VPFI / 0.001 ETH` cap test is a **legacy / pre-cutover** test. Post-cutover behaviour additionally requires tests that (a) the loan-side **lifetime** cap `½ × C* × (1 − m_reward)` (haircut + `C*` from the origination snapshot) bounds cumulative per-`(loanId, side)` payout across the loan's days, (b) the D1 `(user, side, day)` share-of-pool cap binds, (c) every day `d ≥ D*` is ShareOfPool-moded and fail-closed (a fabricated non-zero legacy window counter still pays `0`), and (d) a loan open across the cutover (with its origination `C*` snapshot) prices its post-cutover days under the new caps.
 - the cap is a strictly **per-day** ceiling: it is applied to each day's reward on its own and only the per-day-trimmed amounts are summed — a day whose reward would exceed the ceiling is trimmed that day, and its excess can **not** be absorbed by other days that sat below the ceiling (there is no netting of an over-cap day against under-cap days across a loan's reward window) *(legacy ETH-ratio cap — pre-cutover days, per the supersession above)*
 - the ETH-equivalent cap must be computed from the same eligible per-user interest amount already credited into the interaction-reward accounting for that day, using the protocol's on-chain pricing path *(legacy ETH-ratio cap — pre-cutover days)*
@@ -378,7 +378,7 @@ Diamond surface (Phase 1 to add):
 Testing requirements beyond §9:
 
 - simulate a 3-chain mesh (Base + 2 mirrors) end-to-end including day rollover, finalization, broadcast, and local claim
-- invariant: `sum(userPayout[d]) across all chains == dailyPool[d]` for every finalized `d`
+- invariant: `sum(userPayout[d]) across all chains == dailyPool[d]` for every finalized `d` — **holds for legacy / pre-cutover days only.** **M2 PR-1 supersession (D1 (b); rev 15 / completion-plan §M2):** on **post-cutover** days the per-loan/per-side reward is bounded by the loan-side lifetime cap (`loanSideRewardPaidVpfi`), so a mirror's actual claims can fall **below** its uncapped chain/global slice. To avoid over-remitting and stranding VPFI on that mirror, Base must remit the **headroom-committed** budget — `chainRewardBudgetForDay = min(uncappedSlice, Σ per-loan headroom commitments)` — not the raw uncapped slice (the §4a "per-chain budget" + "remit on-demand" bullets above describe the pre-cutover uncapped-slice path). Consequently the exact-equality invariant **relaxes to `sum(userPayout[d]) ≤ dailyPool[d]`** for post-cutover days: unclaimed loan-side headroom stays in the pool, never remitted and never stranded on a mirror. (This ties into the M3 mesh's per-loan headroom-commitment reporting — completion-plan §M3.)
 - invariant: no user can claim `dayId` before the day's known-global-set flag (`knownGlobalSet[dayId]`) is stamped on their chain — the gate is the flag, not a non-zero denominator (a finalized day may carry zero on either side)
 - test that interaction rewards remain non-claimable while a loan is still active, and become claimable only after the loan is closed
 - test that `day 0` / the first reward day is excluded from interaction-reward calculation
@@ -460,23 +460,30 @@ Rules:
 >   borrower-path supersession.
 >   **Binding Full-opt-in constraints (rev 15 — do not omit at
 >   implementation):**
->   - **Mandatory `maxCStar`:** every Full authorization — a lender's
->     offer / signed intent, or the borrower's accept calldata — MUST
->     carry an absolute `maxCStar` (VPFI). At fill, if the quoted `C*`
->     exceeds it the accept/match **reverts** (`FeeEntitlementTariffAboveAuth`)
->     unless that party pre-authorised `allowFullDowngrade` (then it falls
->     back to HoldOnly/None). This bounds how much VPFI a `K`/oracle move
->     between quote and fill can pull from a user's vault.
->   - **Lender Full needs the lender's own prior authorization** (offer /
->     intent / EIP-712) — a borrower- or matcher-set flag can NEVER pull
->     `C*` from the lender's vault.
+>   - **Mandatory `maxCStar`:** **every** Full authorization — in ANY
+>     shape and from EITHER party (a lender's or borrower's standing
+>     offer, an EIP-712 signed intent, or same-tx accept/match calldata) —
+>     MUST carry an absolute `maxCStar` (VPFI). At fill, if the quoted
+>     `C*` exceeds it the accept/match **reverts**
+>     (`FeeEntitlementTariffAboveAuth`) unless that party pre-authorised
+>     `allowFullDowngrade` (then it falls back to HoldOnly/None). This
+>     bounds how much VPFI a `K`/oracle move between quote and fill can
+>     pull from a user's vault.
+>   - **Each party's Full needs that party's own prior authorization**
+>     (their offer / intent / EIP-712 / calldata) — a counterparty- or
+>     matcher-set flag can NEVER pull `C*` from the other party's vault.
 >   - **Enablement gate:** Full is governed by `feeEntitlementEnabled`,
 >     **default off**, and may be turned on ONLY at the M2 joint cutover —
 >     which includes the settlement-sweep milestone (completion-plan PR-6)
 >     as a hard dependency, so a lender can never pay `C*` while yield-fee
 >     settlement sites still ignore the lender Full stamp (paying the
->     tariff without receiving the purchased discount). With the flag off,
->     a presented Full auth is a **failed opt-in** (revert) unless
+>     tariff without receiving the authorized Full discount) — **AND** only
+>     when rewards are Base-only / dark on mirrors, OR the M3 cross-chain
+>     mesh is complete, OR Full is limited to Base (completion-plan M7.4):
+>     a mirror user paying `C*` into a mirror-local bucket that Base can
+>     neither count in `Ā` nor fund from would strand the absorbed tariff
+>     outside the governor loop it exists to fund. With the flag off, a
+>     presented Full auth is a **failed opt-in** (revert) unless
 >     `allowFullDowngrade` is set.
 
 Phase note:
