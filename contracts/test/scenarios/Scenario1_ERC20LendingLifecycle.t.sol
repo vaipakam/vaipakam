@@ -70,7 +70,7 @@ contract Scenario1_ERC20LendingLifecycle is Test {
     uint256 constant COLLATERAL = 2000 ether;
     uint256 constant DURATION   = 30; // days
     uint256 constant RATE_BPS   = 500; // 5%
-    uint256 constant TREASURY_FEE_BPS = 100; // 1%
+    uint256 constant TREASURY_FEE_BPS = 200; // 2% (rev-8 freeze #1352)
     uint256 constant BASIS_POINTS = 10000;
 
     function mockLiquidity(address asset, LibVaipakam.LiquidityStatus status) internal {

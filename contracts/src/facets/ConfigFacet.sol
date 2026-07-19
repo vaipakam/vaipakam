@@ -161,8 +161,8 @@ contract ConfigFacet is DiamondAccessControl {
 
     /**
      * @notice Update the two protocol fees in one atomic call.
-     * @param treasuryFeeBps       Fee on lender interest (defaults to 100 ≡ 1%).
-     * @param loanInitiationFeeBps Fee on ERC-20 principal at initiation (defaults to 10 ≡ 0.1%).
+     * @param treasuryFeeBps       Fee on lender interest (defaults to 200 ≡ 2%; rev-8 fee freeze, #1352).
+     * @param loanInitiationFeeBps Fee on ERC-20 principal at initiation (defaults to 20 ≡ 0.2%; rev-8 fee freeze, #1352).
      * @dev ADMIN_ROLE-only. Pass `0` for either field to reset it to the
      *      library default. Both values are capped at {MAX_FEE_BPS}.
      */

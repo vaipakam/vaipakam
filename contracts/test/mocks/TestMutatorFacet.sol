@@ -1159,6 +1159,18 @@ contract TestMutatorFacet {
         );
     }
 
+    /// @notice #1352 test — seed the Diamond's borrower-LIF custody
+    ///         (`borrowerLifRebate[loanId].vpfiHeld`) directly. New HoldOnly
+    ///         loans never take custody, so this is the only way to exercise
+    ///         the still-live grandfathered `settleBorrowerLifProper` /
+    ///         `forfeitBorrowerLif` settlement helpers on an open loan that
+    ///         already carried custody (a pre-#1352 origination).
+    function setBorrowerLifVpfiHeldRaw(uint256 loanId, uint256 amount)
+        external
+    {
+        LibVaipakam.storageSlot().borrowerLifRebate[loanId].vpfiHeld = amount;
+    }
+
     /// @dev Route `data` back through the diamond fallback (bubbling the raw
     ///      revert) so a routed `onlyDiamondInternal` host sees `msg.sender ==
     ///      address(this)`.

@@ -1056,7 +1056,8 @@ contract LoanFacetTest is Test {
 
         // #957 (Codex #989 P3) — the sale vehicle skips the LIF charge, so its
         // LIF receipt must read 0 (no fee paid), while the treasury fee — which
-        // is not path-specific — is still snapshotted at the 1% default.
+        // is not path-specific — is still snapshotted at the live 2% default
+        // (rev-8 fee freeze, #1352; was 1%).
         assertEq(
             loan.loanInitiationFeeBpsAtInit,
             0,
@@ -1064,7 +1065,7 @@ contract LoanFacetTest is Test {
         );
         assertEq(
             loan.treasuryFeeBpsAtInit,
-            100,
+            200,
             "treasury fee is still snapshotted on the sale vehicle"
         );
     }

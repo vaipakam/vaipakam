@@ -183,7 +183,7 @@ contract PreviewAcceptTest is SetupTest {
         assertEq(p.collateralAmount, 500, "collateral = offer.collateralAmount");
         assertEq(p.collateralResidualRefund, 0, "lender offer has no residual");
         // LIF on 10k @ 10 bps = 10
-        assertEq(p.lifEstimate, 10, "LIF = 0.1% of 10k principal");
+        assertEq(p.lifEstimate, 20, "LIF = 0.2% of 10k principal (rev-8 freeze #1352)");
 
         // Pin: real accept lands the loan with the same shape the
         // preview projected. If `previewAccept` drifts from
@@ -220,7 +220,7 @@ contract PreviewAcceptTest is SetupTest {
         assertEq(p.collateralAmount, 500);
         assertEq(p.collateralResidualRefund, 0, "no residual when max == floor");
         // LIF on 1k @ 10 bps = 1
-        assertEq(p.lifEstimate, 1, "LIF = 0.1% of 1k principal");
+        assertEq(p.lifEstimate, 2, "LIF = 0.2% of 1k principal (rev-8 freeze #1352)");
 
         uint256 loanId = _signAndAcceptOffer(lender, lenderPk, offerId);
         LibVaipakam.Loan memory loan =
@@ -275,8 +275,8 @@ contract PreviewAcceptTest is SetupTest {
         assertEq(p.effectivePrincipal, 5_000);
         assertEq(p.interestRateBps, 500);
         assertEq(p.collateralAmount, 1_000);
-        // 0.1% of 5_000 = 5
-        assertEq(p.lifEstimate, 5);
+        // 0.2% of 5_000 = 10 (rev-8 freeze #1352)
+        assertEq(p.lifEstimate, 10);
 
         uint256 loanId = _signAndAcceptOffer(borrower, borrowerPk, offerId);
         LibVaipakam.Loan memory loan =

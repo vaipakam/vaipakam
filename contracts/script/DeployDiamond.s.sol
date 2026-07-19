@@ -1304,7 +1304,7 @@ contract DeployDiamond is Script {
     }
 
     function _getOfferAcceptSelectors() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](5);
+        s = new bytes4[](6);
         s[0] = OfferAcceptFacet.acceptOffer.selector;
         // Phase 8b.1 Permit2 addition.
         s[1] = OfferAcceptFacet.acceptOfferWithPermit.selector;
@@ -1328,6 +1328,11 @@ contract DeployDiamond is Script {
         // The direct-path offerKey (`keccak256(abi.encode(offerId))`) is likewise
         // client-side.
         s[4] = OfferAcceptFacet.verifyAndBindAccept.selector;
+        // #1352 — diamond-internal (`address(this)`-only) borrower LIF charge,
+        // invoked by `_acceptOffer` via `crossFacetCall` so the HoldOnly-LIF
+        // work runs in a fresh stack frame (viaIR budget). Must be routed for
+        // that self-call to reach it.
+        s[5] = OfferAcceptFacet.chargeBorrowerLifAndDeliver.selector;
         // `cancelOffer`, `getCompatibleOffers`, `getOffer`, and
         // `getOfferDetails` live on `OfferCancelFacet` — see
         // `_getOfferCancelSelectors`.

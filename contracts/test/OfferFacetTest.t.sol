@@ -297,7 +297,7 @@ contract OfferFacetTest is Test {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](1);
+        selectors = new bytes4[](2);
         // #662 anti-phishing accept binding — the public entry now takes the
         // EIP-712-signed `AcceptTerms` struct + signature. Cut the new 3-arg
         // selector so the typed accept calls route through the diamond. The
@@ -305,6 +305,11 @@ contract OfferFacetTest is Test {
         // `hashAcceptTerms` view was removed for EIP-170 headroom (#730), and the
         // direct-path offerKey is likewise client-side.
         selectors[0] = OfferAcceptFacet.acceptOffer.selector;
+        // #1352 HoldOnly LIF — `_acceptOffer` cross-facet-calls this internal
+        // charge+deliver entry (an `address(this).call` boundary), so it must
+        // be routed on the diamond or the ERC-20 accept path reverts
+        // FunctionDoesNotExist.
+        selectors[1] = OfferAcceptFacet.chargeBorrowerLifAndDeliver.selector;
         return selectors;
     }
 
@@ -2454,10 +2459,12 @@ contract OfferFacetTest is Test {
         VaultFactoryFacet(address(diamond)).getOrCreateUserVault(user2);
         VaultFactoryFacet(address(diamond)).getOrCreateUserVault(user1);
 
-        // Mock the specific vaultWithdrawERC20 call for principal transfer (lender=user1)
+        // Mock the specific vaultWithdrawERC20 call for the net principal
+        // delivery (lender=user1). Net = principal (1000) − LIF (2, the 0.2%
+        // rev-8 freeze #1352 charged in full since user2 has no VPFI) = 998.
         vm.mockCallRevert(
             address(diamond),
-            abi.encodeWithSelector(VaultFactoryFacet.vaultWithdrawERC20.selector, user1, mockERC20, user2, uint256(999)),
+            abi.encodeWithSelector(VaultFactoryFacet.vaultWithdrawERC20.selector, user1, mockERC20, user2, uint256(998)),
             "transfer fail"
         );
 

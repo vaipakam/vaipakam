@@ -1508,9 +1508,10 @@ contract RefinanceFacetTest is Test {
         vm.warp(block.timestamp + 15 days);
         uint256 oldProRataInterest =
             (PRINCIPAL * 500 * 15) / (10_000 * 365);
-        // Phase 5 treasury split — 1% of interest as treasury cut.
+        // Treasury split — the active loan was originated under the rev-8
+        // freeze (#1352), so its snapshotted treasury fee is 2% (200 bps).
         // splitTreasury rounds down on the treasury side, so:
-        uint256 expectedTreasuryCut = (oldProRataInterest * 100) / 10_000;
+        uint256 expectedTreasuryCut = (oldProRataInterest * 200) / 10_000;
         uint256 expectedLenderInterest =
             oldProRataInterest - expectedTreasuryCut;
         uint256 expectedLenderDue = PRINCIPAL + expectedLenderInterest;

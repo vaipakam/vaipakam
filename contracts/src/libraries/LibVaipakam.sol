@@ -74,7 +74,20 @@ library LibVaipakam {
     ///      `MIN_HEALTH_FACTOR` (1.5e18) sits inside the band as the default.
     uint256 constant MIN_ADMISSION_HEALTH_FACTOR = 120 * 1e16; // 1.2e18
     uint256 constant MAX_ADMISSION_HEALTH_FACTOR = 200 * 1e16; // 2.0e18
-    uint256 constant TREASURY_FEE_BPS = 100; // 1% of interest
+    uint256 constant TREASURY_FEE_BPS = 200; // 2% of interest (rev-8 fee freeze, #1352; was 100 = 1%)
+    /// @dev Pre-freeze 1% yield fee. The FROZEN grandfather fallback for a
+    ///      snapshot-0 (pre-#957) open loan in {effectiveTreasuryFeeBps} — a
+    ///      snapshot-0 loan resolves to this, NOT the live 200-bps default, so
+    ///      the #1352 freeze can never retroactively reprice an already-open
+    ///      loan from 1% → 2% at settlement.
+    uint256 constant LEGACY_TREASURY_FEE_BPS = 100;
+    /// @dev Universal 50% ceiling on any effective FEE discount (borrower LIF
+    ///      and lender yield fee), redesign §F2/§F3 `min(d_hold + d_tariff,
+    ///      5000)`. A per-tier discount is admin-tunable up to
+    ///      `MAX_DISCOUNT_BPS = 9000` (90%), so this cap bounds the applied
+    ///      fee reduction (and keeps the Full `+10%` own-side bump from
+    ///      pushing a high tier past 50%). #1352.
+    uint256 constant MAX_FEE_DISCOUNT_BPS = 5000;
     uint256 constant BASIS_POINTS = 10000;
     uint256 constant HF_SCALE = 1e18; // Health Factor precision
     uint256 constant HF_LIQUIDATION_THRESHOLD = 1e18; // HF < 1 for liquidation
@@ -372,7 +385,7 @@ library LibVaipakam {
     //    misconfigured floor can't turn every routine partial into a full
     //    close.
     uint256 constant MAX_LIQUIDATION_DUST_FLOOR_NUMERAIRE = 100_000;
-    uint256 constant LOAN_INITIATION_FEE_BPS = 10; // 0.1% fee deducted from ERC-20 principal at loan initiation (README §6 lines 280, 332)
+    uint256 constant LOAN_INITIATION_FEE_BPS = 20; // 0.2% fee deducted from ERC-20 principal at loan initiation (rev-8 fee freeze, #1352; was 10 = 0.1%). Charged once at accept — no post-init reader, so the bump affects new originations only (open loans already paid their LIF)
     // Fallback-path split (README §7): lender gets principal + accrued
     // interest + {FALLBACK_LENDER_BONUS_BPS} of principal; treasury gets
     // {FALLBACK_TREASURY_BPS} of principal; borrower gets the remainder.
@@ -925,8 +938,8 @@ library LibVaipakam {
      */
     struct ProtocolConfig {
         // ── Packed BPS slot (14 × uint16 = 224 bits; 32 bits of headroom) ──
-        uint16 treasuryFeeBps; // 0 ⇒ TREASURY_FEE_BPS (100)
-        uint16 loanInitiationFeeBps; // 0 ⇒ LOAN_INITIATION_FEE_BPS (10)
+        uint16 treasuryFeeBps; // 0 ⇒ TREASURY_FEE_BPS (200)
+        uint16 loanInitiationFeeBps; // 0 ⇒ LOAN_INITIATION_FEE_BPS (20)
         uint16 liquidationHandlingFeeBps; // 0 ⇒ LIQUIDATION_HANDLING_FEE_BPS (200)
         uint16 maxLiquidationSlippageBps; // 0 ⇒ MAX_LIQUIDATION_SLIPPAGE_BPS (600)
         uint16 maxLiquidatorIncentiveBps; // 0 ⇒ MAX_LIQUIDATOR_INCENTIVE_BPS (300)
@@ -5809,13 +5822,19 @@ library LibVaipakam {
     ///      Every settlement / close-out treasury split for that loan uses
     ///      this (NOT the live `cfgTreasuryFeeBps()`), so a mid-loan
     ///      governance retune never changes the economics of a loan already
-    ///      originated. `0` (pre-#957 loan) ⇒ the live knob — the
-    ///      conservative legacy behaviour.
+    ///      originated. `0` (pre-#957 loan) ⇒ the FROZEN legacy default
+    ///      `LEGACY_TREASURY_FEE_BPS` (100 = 1%), NOT the live knob — the
+    ///      #1352 rev-8 fee freeze bumped the live default to 200 (2%), and
+    ///      falling back to the live knob would retroactively reprice every
+    ///      pre-#957 open loan from 1% → 2% at repay. Freezing the fallback
+    ///      at 100 grandfathers those loans (the grandfather resolver of
+    ///      redesign §"Fee-default migration"; new loans stamp the live 200
+    ///      at origination via `LoanFacet._snapshotFeeBps`).
     function effectiveTreasuryFeeBps(
         Loan storage loan
     ) internal view returns (uint256) {
         uint16 atInit = loan.treasuryFeeBpsAtInit;
-        return atInit == 0 ? cfgTreasuryFeeBps() : uint256(atInit);
+        return atInit == 0 ? LEGACY_TREASURY_FEE_BPS : uint256(atInit);
     }
 
     /// @dev Phase 1 follow-up — auto-pause duration (seconds) used by

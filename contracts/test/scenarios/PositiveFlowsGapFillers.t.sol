@@ -76,7 +76,7 @@ contract PositiveFlowsGapFillers is Test {
     uint256 constant DURATION = 30;
     uint256 constant RATE_BPS = 500;
     uint256 constant BASIS_POINTS = 10_000;
-    uint256 constant LOAN_INITIATION_FEE_BPS = 10; // 0.1%
+    uint256 constant LOAN_INITIATION_FEE_BPS = 20; // 0.2% (rev-8 freeze #1352)
 
     HelperTest internal helperTest;
 
@@ -170,12 +170,14 @@ contract PositiveFlowsGapFillers is Test {
         uint256 loanId = LibAcceptTestSigner.signAndAccept(address(diamond), borrower, borrowerPk, offerId);
 
         uint256 expectedFee = (PRINCIPAL * LOAN_INITIATION_FEE_BPS) / BASIS_POINTS;
-        // Range Orders Phase 1 — 1% LIF matcher kickback. The acceptor
-        // (borrower in this test, since they call acceptOffer on a
-        // lender offer) is the matcher in the legacy single-value path,
-        // so msg.sender receives the 1% slice. Borrower's net credit:
-        // principal - 99% of LIF (treasury share). Treasury's net:
-        // 99% of LIF only.
+        // #1352 HoldOnly LIF — the charge now runs inside the internal
+        // `chargeBorrowerLifAndDeliver` cross-facet call, but the matcher
+        // recipient is resolved correctly: this is the signed-offer fill path,
+        // so `s.signedOfferAcceptor` (the borrower) is the matcher and receives
+        // the 1% kickback (the diamond `msg.sender` inside the cross-facet call
+        // is NOT used here). No borrower hold-tier consent in this fixture ⇒
+        // full (undiscounted) LIF. Net: principal − 99% of LIF (treasury
+        // share); the 1% matcher cut kicks back to the acceptor (borrower).
         uint256 expectedMatcherCut =
             (expectedFee * LibVaipakam.LIF_MATCHER_FEE_BPS) / BASIS_POINTS;
         uint256 expectedTreasuryCut = expectedFee - expectedMatcherCut;
@@ -183,7 +185,7 @@ contract PositiveFlowsGapFillers is Test {
             PRINCIPAL - expectedTreasuryCut; // includes their matcher kickback
 
         // Borrower wallet credit is principal minus the treasury share
-        // (the matcher cut comes back to them as msg.sender).
+        // (the matcher cut comes back to them as the signed-offer acceptor).
         uint256 borrowerUsdcAfter = IERC20(mockUsdc).balanceOf(borrower);
         assertEq(
             borrowerUsdcAfter - borrowerUsdcBefore,

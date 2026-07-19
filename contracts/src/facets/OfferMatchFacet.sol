@@ -1274,13 +1274,15 @@ contract OfferMatchFacet is DiamondReentrancyGuard, DiamondPausable {
             mr.matchAmount,
             mr.matchRateBps,
             lenderRemaining,
-            // lifMatcherFee: paid synchronously inside `_acceptOffer`'s
-            // LIF split (lender-asset path) or zero (VPFI path —
-            // settles at terminal). Computed here for the event so
-            // downstream indexers can render the matcher's earnings
-            // without re-deriving from the LIF settings. Reads the
-            // governance-tunable matcher BPS from cfg, not the
-            // constant.
+            // lifMatcherFee (event display, gross): the matcher share of the
+            // LIST-rate LIF. #1352 — the actual matcher payment inside
+            // `_acceptOffer` is on the borrower's HoldOnly-DISCOUNTED LIF, so a
+            // consenting tier-holder's real matcher fee is lower than this
+            // figure; the exact paid amount is the on-chain transfer. Computed
+            // at the list rate here on purpose: threading the borrower's
+            // hold-tier discount into this facet inlines the discount resolver
+            // and pushes OfferMatchFacet past the EIP-170 runtime-size limit,
+            // and this is a convenience estimate, not the authoritative amount.
             (mr.matchAmount * LibVaipakam.cfgLoanInitiationFeeBps()
                 * LibVaipakam.cfgLifMatcherFeeBps())
                 / (LibVaipakam.BASIS_POINTS * LibVaipakam.BASIS_POINTS),
