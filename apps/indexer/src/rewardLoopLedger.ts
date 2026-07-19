@@ -310,7 +310,7 @@ function eventFromActivityRow(row: {
   try {
     const args = JSON.parse(row.args_json) as Record<string, unknown>;
     // Per-kind arg shapes (serializeArgs coerces bigints to strings):
-    //   NotificationFeeBilled(loanId, isLenderSide, payer, vpfiAmount)
+    //   NotificationFeeBilled(loanId, isLenderSide, payer, vpfiAmount, …)
     //   VPFIDiscountApplied(loanId, borrower, lendingAsset, vpfiDeducted)
     //   VpfiRecycled(source, refId, amount, dayId) — not user-keyed
     //   everything else carries (user, amount).

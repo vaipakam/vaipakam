@@ -260,6 +260,16 @@ contract RefreshAllFacetsInPlace is DeployDiamond {
             )
         );
         if (loupe.facetAddress(oldSetNumeraire) != address(0)) {
+            // Order matters (Codex r2): reset the slot FIRST, Remove the
+            // selector LAST. The still-routed old selector is the DURABLE
+            // completion marker for the whole migration — the gate above
+            // stays true until the Remove mines, so if the reset lands but
+            // the Remove is dropped/reverted, a rerun re-enters this block
+            // and re-does both (the reset is idempotent — 0 → the same
+            // 0.5-VPFI default). Removing first would clear the marker while
+            // the reset could still fail, permanently skipping it and
+            // leaving a stale numeraire value reinterpreted as VPFI wei.
+            ConfigFacet(diamond).setNotificationFee(0);
             bytes4[] memory rm = new bytes4[](1);
             rm[0] = oldSetNumeraire;
             IDiamondCut.FacetCut[] memory rmCut = new IDiamondCut.FacetCut[](1);
@@ -269,9 +279,8 @@ contract RefreshAllFacetsInPlace is DeployDiamond {
                 functionSelectors: rm
             });
             IDiamondCut(diamond).diamondCut(rmCut, address(0), "");
-            ConfigFacet(diamond).setNotificationFee(0);
             console.log(
-                "M1 (#1346): removed stale 8-arg setNumeraire selector + reset notification tariff to VPFI default"
+                "M1 (#1346): reset notification tariff to VPFI default + removed stale 8-arg setNumeraire selector"
             );
         }
 

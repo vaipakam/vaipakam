@@ -54,14 +54,26 @@ library LibNotificationFee {
     ///         successful bill. Indexes the loan + side + payer for
     ///         off-chain reconciliation against the watcher's
     ///         per-notification audit log. `vpfiAmount` is the flat VPFI
-    ///         tariff billed (== the configured `notificationFee` at bill
-    ///         time — a native quantity, no numeraire figure).
+    ///         tariff billed.
+    /// @dev    The 5th field is retained across the Recycling M1 (#1346)
+    ///         re-denomination purely for **event-topic stability**: the
+    ///         topic hash is `keccak256("NotificationFeeBilled(uint256,
+    ///         bool,address,uint256,uint256)")`, so keeping the 5-field
+    ///         shape lets a cold reindex decode pre- and post-M1 logs with
+    ///         one derived ABI entry (the indexer's `rewardLoopLedger`
+    ///         backfill replays historical bills as retention debits —
+    ///         a dropped field would change the topic and silently skip
+    ///         those old logs, overstating retained VPFI). Under the flat
+    ///         tariff the configured fee IS the billed amount, so
+    ///         `configuredFeeVpfi1e18 == vpfiAmount`; the field is kept
+    ///         (rather than removed) for that decode-stability reason.
     /// @custom:event-category state-change/treasury-mutation
     event NotificationFeeBilled(
         uint256 indexed loanId,
         bool indexed isLenderSide,
         address indexed payer,
-        uint256 vpfiAmount
+        uint256 vpfiAmount,
+        uint256 configuredFeeVpfi1e18
     );
 
     error NotifFeeVpfiTokenNotSet();
@@ -147,6 +159,15 @@ library LibNotificationFee {
         }
         s.notificationFeesAccrued += vpfiAmount;
 
-        emit NotificationFeeBilled(loanId, isLenderSide, payer, vpfiAmount);
+        // 5th field == vpfiAmount under the flat tariff; retained for
+        // event-topic stability across the M1 re-denomination (see the
+        // event's @dev).
+        emit NotificationFeeBilled(
+            loanId,
+            isLenderSide,
+            payer,
+            vpfiAmount,
+            vpfiAmount
+        );
     }
 }
