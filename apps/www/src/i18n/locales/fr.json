@@ -1285,7 +1285,7 @@
     "eventPartialRepayReceivedTitle": "Remboursement partiel reçu",
     "eventPartialRepayReceivedDesc": "Côté prêteur : un emprunteur a remboursé une partie du principal/intérêts en cours de prêt. Permet de réconcilier les entrées sans surveiller le tableau de bord.",
     "pushFeeTitle": "Notifications Push : divulgation des frais",
-    "pushFeeBody": "L'envoi Push consomme du gas pour le canal de notification du protocole. Nous le récupérons sous forme d'équivalent fixe de 2 $ USD (ajustable par la gouvernance) prélevé sur votre dépôt VPFI à la PREMIÈRE notification payante par côté de prêt. Les notifications suivantes du même côté sont gratuites. Telegram est toujours gratuit."
+    "pushFeeBody": "L'envoi Push consomme du gas pour le canal de notification du protocole. Nous le récupérons sous forme de tarif fixe de 0.5 VPFI (ajustable par la gouvernance) prélevé sur votre dépôt VPFI à la PREMIÈRE notification payante par côté de prêt. Les notifications suivantes du même côté sont gratuites. Telegram est toujours gratuit."
   },
   "allowancesPage": {
     "subtitle": "Toute approbation ERC-20 accordée au Vaipakam Diamond par le portefeuille connecté sur cette chaîne. Révoquer celles qui ne sont plus nécessaires en un clic. Les autorisations non nulles apparaissent en premier ; les lignes à autorisation nulle figurent en dessous comme référence pour confirmer que la liste est propre.",

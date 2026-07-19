@@ -1273,7 +1273,7 @@
     "eventPartialRepayReceivedTitle": "부분 상환 수신",
     "eventPartialRepayReceivedDesc": "대출자 측: 차입자가 대출 중에 원금/이자의 일부를 상환했습니다. 대시보드를 모니터링하지 않고도 입금을 조정할 수 있습니다.",
     "pushFeeTitle": "Push 알림: 수수료 공시",
-    "pushFeeBody": "Push 전송에는 프로토콜의 알림 채널 가스 비용이 듭니다. 대출 측당 첫 유료 알림 시 VPFI Vault에서 차감되는 고정 $2 USD 상당(거버넌스 조정 가능)으로 회수합니다. 같은 측의 후속 알림은 무료입니다. Telegram은 항상 무료입니다."
+    "pushFeeBody": "Push 전송에는 프로토콜의 알림 채널 가스 비용이 듭니다. 대출 측당 첫 유료 알림 시 VPFI Vault에서 차감되는 0.5 VPFI 정액 수수료(거버넌스 조정 가능)로 회수합니다. 같은 측의 후속 알림은 무료입니다. Telegram은 항상 무료입니다."
   },
   "allowancesPage": {
     "subtitle": "이 체인에서 연결된 지갑이 Vaipakam Diamond에 부여한 모든 ERC-20 승인입니다. 더 이상 필요하지 않은 항목을 한 번의 클릭으로 취소하십시오. 0이 아닌 승인이 먼저 표시되며, 0 승인 행은 목록이 깨끗한지 확인하기 위한 참조로 아래에 표시됩니다.",

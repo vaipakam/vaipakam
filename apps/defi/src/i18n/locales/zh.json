@@ -1273,7 +1273,7 @@
     "eventPartialRepayReceivedTitle": "已收到部分还款",
     "eventPartialRepayReceivedDesc": "出借方一侧:借款人在贷款期间偿还了部分本金/利息。让您无需监视仪表板即可对账。",
     "pushFeeTitle": "Push 通知:费用披露",
-    "pushFeeBody": "Push 投递需要协议通知通道的 gas 成本。我们以固定的 $2 USD 等值(可由治理调整)收回此费用,在每个贷款方第一次付费通知时从您的 VPFI 保管中扣除。同一贷款方的后续通知对您是免费的。Telegram 始终免费。"
+    "pushFeeBody": "Push 投递需要协议通知通道的 gas 成本。我们以 0.5 VPFI 的固定费率(可由治理调整)收回此费用,在每个贷款方第一次付费通知时从您的 VPFI 保管中扣除。同一贷款方的后续通知对您是免费的。Telegram 始终免费。"
   },
   "allowancesPage": {
     "subtitle": "已连接钱包在此链上授予Vaipakam Diamond的每一项ERC-20授权。一键撤销不再需要的授权。非零授权显示在前；零授权行显示在下方作为参考，以确认列表干净。",

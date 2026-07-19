@@ -30,6 +30,19 @@ discount-tier restamp that every other VPFI-outflow path runs, closing a
 long-standing gap where billing this fee left a stale fee-discount stamp
 on VPFI that had already left the user's vault.
 
+**Upgrade safety.** Because the stored notification-fee value changed
+meaning (numeraire units → VPFI wei) and `setNumeraire` dropped an
+argument (an 8→7-argument selector change), the testnet in-place refresh
+script now runs a one-time migration on the first refresh that carries
+this change: it removes the retired 8-argument `setNumeraire` selector
+(so a stale, still-routed copy can't clobber the new flat tariff on a
+numeraire rotation) and resets the stored notification fee to zero (so
+any pre-existing numeraire-denominated override can't be silently
+reinterpreted as a VPFI amount). Mainnet rollouts are always fresh
+deploys, where neither artifact exists. The user-facing Push-billing fee
+disclosure (app + website, all locales) is updated from the old
+"$2 USD-equivalent" wording to the flat 0.5 VPFI tariff.
+
 Everything ships dark alongside the rest of the recycling stack — the
 credit is real bookkeeping, but no interaction-reward emissions are
 running yet, so nothing is economically live until the activation

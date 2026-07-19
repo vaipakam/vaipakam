@@ -238,6 +238,43 @@ contract RefreshAllFacetsInPlace is DeployDiamond {
             _sendBatch(diamond, cuts, batchStart, nCuts);
         }
 
+        // Recycling M1 (#1346) — one-time notification-tariff migration.
+        // M1 changed the notification fee from a numeraire-denominated value
+        // to a flat native-VPFI quantity, and dropped `setNumeraire`'s 8th
+        // (notification-fee) argument — an 8→7-arg SELECTOR change. On the
+        // FIRST in-place refresh carrying M1 the old 8-arg selector is still
+        // routed to stale bytecode that writes `c.notificationFee`, so a
+        // queued numeraire rotation could clobber the flat tariff, and any
+        // pre-existing numeraire-denominated `notificationFee` override would
+        // now be reinterpreted as VPFI wei. Both are cleared here: Remove the
+        // retired selector and reset the slot to 0 (→ the new 0.5-VPFI
+        // default). Gated on the old selector still being routed so this runs
+        // EXACTLY ONCE — a later refresh (selector already gone) skips it and
+        // never wipes a deliberately-set VPFI tariff. This is the one place
+        // this script Removes a selector (see the SCOPE note above); it is
+        // required because the selector's storage SEMANTICS changed, not just
+        // its implementation.
+        bytes4 oldSetNumeraire = bytes4(
+            keccak256(
+                "setNumeraire(address,address,bytes32,bytes32,uint256,uint256,uint256,uint256)"
+            )
+        );
+        if (loupe.facetAddress(oldSetNumeraire) != address(0)) {
+            bytes4[] memory rm = new bytes4[](1);
+            rm[0] = oldSetNumeraire;
+            IDiamondCut.FacetCut[] memory rmCut = new IDiamondCut.FacetCut[](1);
+            rmCut[0] = IDiamondCut.FacetCut({
+                facetAddress: address(0),
+                action: IDiamondCut.FacetCutAction.Remove,
+                functionSelectors: rm
+            });
+            IDiamondCut(diamond).diamondCut(rmCut, address(0), "");
+            ConfigFacet(diamond).setNotificationFee(0);
+            console.log(
+                "M1 (#1346): removed stale 8-arg setNumeraire selector + reset notification tariff to VPFI default"
+            );
+        }
+
         // Post-cut verification: every canonical selector must route to its
         // fresh implementation. Runs BEFORE the unpause (still inside the
         // broadcast; these are view calls) so a failed refresh stays frozen.
