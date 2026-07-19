@@ -284,9 +284,7 @@ function ListNftFlow() {
       youLock: copy.rent.receiptListYouLock(nftStr),
       youMayOwe: copy.rent.nothing,
       youCanLose: `${copy.rent.listYouCanLose} ${copy.rent.notDebt}`,
-      fees: copy.fees
-        .lenderYieldFee(bpsToPercentText(fees.treasuryFeeBps))
-        .replace('interest', 'rental fees'),
+      fees: copy.fees.lenderRentalFee(bpsToPercentText(fees.treasuryFeeBps)),
       whenThisEnds: copy.rent.listWhenEnds,
     };
   }, [

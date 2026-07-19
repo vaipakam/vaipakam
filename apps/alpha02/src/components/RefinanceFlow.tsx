@@ -490,7 +490,7 @@ export function RefinanceFlow({
         </div>
         {!durationValid && durationInput !== '' ? (
           <p className="field-hint" style={{ color: 'var(--danger)', marginTop: 8 }}>
-            Between 1 and {fees.maxOfferDurationDays} days.
+            {copy.refinance.durationRange(fees.maxOfferDurationDays)}
           </p>
         ) : null}
 

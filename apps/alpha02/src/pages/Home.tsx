@@ -107,8 +107,7 @@ export function Home() {
       </div>
 
       <p className="muted" style={{ marginTop: 24 }}>
-        {copy.app.tagline} Your assets sit in your own on-chain vault — Vaipakam
-        never pools or holds them for you.
+        {copy.app.tagline} {copy.home.assetsNote}
       </p>
     </div>
   );

@@ -136,6 +136,8 @@ const copySource = {
   },
 
   home: {
+    assetsNote:
+      'Your assets sit in your own on-chain vault — Vaipakam never pools or holds them for you.',
     title: 'What would you like to do?',
     lede: 'Pick a job to get started. You can switch to Advanced mode any time in Settings.',
     // Migrated to tmpl (translatable interpolation). Call:
@@ -908,6 +910,7 @@ const copySource = {
       ['branch'],
     ),
     expiresAfterDays: tmpl('when it expires {{days}} days after posting', ['days']),
+    durationRange: tmpl('Between 1 and {{max}} days.', ['max']),
     consentLabel: 'I understand the payoff and wallet-balance terms below and agree to them.',
     receiptReceive: 'A new loan at your chosen terms the moment a lender accepts — your collateral moves to it automatically and this loan closes in the same transaction.',
     receiptLock: 'Nothing new — your existing collateral carries over to the new loan without ever unlocking.',
@@ -1319,6 +1322,10 @@ const copySource = {
       paidNow: tmpl('~{{amount}} {{symbol}}, paid now.', ['amount', 'symbol']),
       exactAmountNote:
         'The exact amount is read live when you confirm; the approval carries small headroom that is never spent.',
+      toppingUp: tmpl(
+        'Topping up your {{symbol}} collateral makes the loan safer and moves liquidation further away.',
+        ['symbol'],
+      ),
       principalPlusInterest: tmpl('{{principal}} plus the earned interest.', ['principal']),
       loanAssetFallback: 'the loan asset',
       recoveredSummary: tmpl(
@@ -2263,6 +2270,10 @@ const copySource = {
       `Vaipakam keeps {{pct}} of the interest you earn.`,
       ['pct'],
     ),
+    lenderRentalFee: tmpl(
+      `Vaipakam keeps {{pct}} of the rental fees you earn.`,
+      ['pct'],
+    ),
     // The late-fee ladder tracks contract CONSTANTS (no governance
     // setter), so a static string is accurate here.
     lateFee:
@@ -2391,6 +2402,15 @@ const copySource = {
   },
 
   vault: {
+    unreadableCount: tmpl('{{count}} assets', ['count'], { one: 'one asset' }),
+    unreadableWarn: tmpl(
+      'We couldn’t read {{assets}} just now ({{list}}) — the list below may be missing balances. This usually clears on the next refresh.',
+      ['assets', 'list'],
+    ),
+    noBalancesInWindow: tmpl(
+      'No balances among the first {{count}} tokens checked — widen the scan below to keep looking.',
+      ['count'],
+    ),
     loading: 'Reading your vault…',
     addressLabel: 'Vault address:',
     noVaultTitle: 'No vault yet',

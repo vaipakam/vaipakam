@@ -1578,8 +1578,7 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
             <h3 style={{ margin: 0 }}>{copy.positions.details.addCollateral.title}</h3>
           </div>
           <p className="muted">
-            Topping up your {collateral.symbol} collateral makes the loan safer
-            and moves liquidation further away.
+            {copy.positions.details.toppingUp(collateral.symbol)}
           </p>
           <div className="cluster">
             <input

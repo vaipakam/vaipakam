@@ -71,7 +71,9 @@ const BACKTICK = /`([^`]*)`/g;
 // Tightly bounded to real JSX text — starts with a word, and the run
 // carries NO code tokens (`; = < > backtick [ ]`) outside its `{expr}`s
 // — so TypeScript generics / comparisons don't false-positive.
-const JSX_TEXT_CHARS = "[A-Za-z0-9 ,.'’\"%$#·—–:&!?()\\-]";
+// Includes whitespace/newlines so the common MULTILINE JSX text style
+// (`<span>\n  You have {n} …\n</span>`) is caught too (Codex #1345 r2).
+const JSX_TEXT_CHARS = "[A-Za-z0-9 \\t\\r\\n,.'’\"%$#·—–:&!?()\\-]";
 const JSX_INTERP = new RegExp(
   `>(${JSX_TEXT_CHARS}*\\{[^{}]*\\}${JSX_TEXT_CHARS}*)<`,
   'g',
