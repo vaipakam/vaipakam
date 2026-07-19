@@ -1016,6 +1016,11 @@ export default function OfferBook() {
     if (!offer) return;
     setRiskAndTermsConsent(false);
     setDiscountPreview(null);
+    // Clear the prior offer's LIF preview SYNCHRONOUSLY as the new offer is
+    // selected, so the modal's first render for this offer never reuses the
+    // previous offer's fee/net-proceeds (the effect-based reset runs only after
+    // React commits, and the confirm button is live during that first render).
+    setLifPreview(null);
     setPendingOffer(offer);
   };
 
@@ -1135,12 +1140,13 @@ export default function OfferBook() {
     setPendingOffer(null);
     setRiskAndTermsConsent(false);
     setDiscountPreview(null);
+    setLifPreview(null);
     // acceptOffer(id, acceptorRiskAndTermsConsent) — fallback consent is
-    // mandatory on every offer (liquid or illiquid). When the caller has
-    // platform VPFI-discount consent enabled AND holds sufficient VPFI in
-    // vault (see DiscountPreview), the contract swaps the 0.1%
-    // lending-asset fee for a tiered VPFI deduction (0.09% / 0.085% /
-    // 0.08% / 0.076% by tier) — no extra arg.
+    // mandatory on every offer (liquid or illiquid). #1352 HoldOnly: when the
+    // caller has platform VPFI-discount consent enabled and an effective tier
+    // on a liquid ERC-20 loan, the contract reduces the lending-asset LIF
+    // directly by the (≤50%) hold-tier discount — no VPFI is moved and no extra
+    // arg is passed.
     void submitAccept(id, true);
   };
 
@@ -1148,6 +1154,7 @@ export default function OfferBook() {
     setPendingOffer(null);
     setRiskAndTermsConsent(false);
     setDiscountPreview(null);
+    setLifPreview(null);
   };
 
   // Market filter predicate — applied to both the live offers and the
@@ -1840,7 +1847,14 @@ function AcceptReviewModal({ offer, illiquid, consent, onConsentChange, submitti
             // list rate only until the preview resolves. A discount is showing
             // iff the quoted fee is below the list fee.
             const effectiveFee = lifPreview != null ? lifPreview : normalFee;
-            const holdApplies = lifPreview != null && lifPreview < normalFee;
+            // A lender-sale-vehicle accept skips the LIF entirely, so
+            // previewAccept returns 0 — that is a fee WAIVER, not a hold
+            // discount (the 50% cap floors a discount at half the list fee,
+            // never zero). Distinguish the two so the sale path doesn't read as
+            // a "100% hold discount".
+            const feeWaived = lifPreview === 0n && normalFee > 0n;
+            const holdApplies =
+              lifPreview != null && lifPreview > 0n && lifPreview < normalFee;
             const savedBps = holdApplies && normalFee > 0n
               ? Number(((normalFee - effectiveFee) * 10000n) / normalFee)
               : 0;
@@ -1853,9 +1867,11 @@ function AcceptReviewModal({ offer, illiquid, consent, onConsentChange, submitti
                   <span className="mono"><TokenAmount amount={effectiveFee} address={offer.lendingAsset} compact /></span>{' '}
                   <AssetSymbol address={offer.lendingAsset} />
                   <span style={{ opacity: 0.6 }}>
-                    {holdApplies
-                      ? ` (${baseFeePctLabel} list − ${(savedBps / 100).toString()}% hold discount, charged in the lending asset — no VPFI moved)`
-                      : ` (${baseFeePctLabel} — routed to treasury at loan start)`}
+                    {feeWaived
+                      ? ' (no origination fee — secondary-market sale accept)'
+                      : holdApplies
+                        ? ` (${baseFeePctLabel} list − ${(savedBps / 100).toString()}% hold discount, charged in the lending asset — no VPFI moved)`
+                        : ` (${baseFeePctLabel} — routed to treasury at loan start)`}
                   </span>
                 </dd>
 
@@ -1906,11 +1922,21 @@ function AcceptReviewModal({ offer, illiquid, consent, onConsentChange, submitti
           // consent flag is only used to word the "not applied" branch.
           const baseFeeBps = BigInt(protocolConfig?.loanInitiationFeeBps ?? 20);
           const normalFee = (headlineAmount * baseFeeBps) / 10000n;
-          const holdApplies = lifPreview != null && lifPreview < normalFee;
+          // `> 0n` so a sale-vehicle fee WAIVER (lifEstimate 0) is not read as a
+          // discount; the 50% cap floors a real discount above zero.
+          const holdApplies =
+            lifPreview != null && lifPreview > 0n && lifPreview < normalFee;
           const savedBps = holdApplies && normalFee > 0n
             ? Number(((normalFee - lifPreview!) * 10000n) / normalFee)
             : 0;
           const lifPct = formatBpsPct(protocolConfig?.loanInitiationFeeBps ?? 20);
+          // Displayed tier discounts are clamped to the applied fee ceiling
+          // (`MAX_FEE_DISCOUNT_BPS` = 5000): governance can configure a tier
+          // above 50%, but the fee path never reduces the LIF by more, so the
+          // consent prompt must not advertise a bigger benefit than applies.
+          const tierPctLabels = protocolConfig
+            ? protocolConfig.tierDiscountBps.map((b) => formatBpsPct(Math.min(b, 5000)))
+            : ['10%', '15%', '20%', '24%'];
           return (
           <div
             className="alert"
@@ -1937,13 +1963,13 @@ function AcceptReviewModal({ offer, illiquid, consent, onConsentChange, submitti
                   <Link to="" style={{ textDecoration: 'underline' }}>
                     Dashboard
                   </Link>{' '}
-                  and hold VPFI to earn a tier-based discount (up to {protocolConfig ? protocolConfig.tierDiscountBps.map((b) => formatBpsPct(b)).join(' / ') : '10% / 15% / 20% / 24%'} by vault balance) applied directly as a lower lending-asset LIF. Without consent this acceptance pays the full {lifPct} LIF.
+                  and hold VPFI to earn a tier-based discount (up to {tierPctLabels.join(' / ')} by vault balance) applied directly as a lower lending-asset LIF. Without consent this acceptance pays the full {lifPct} LIF.
                 </>
               ) : (
                 <>
-                  <strong>Tier-1 threshold not met.</strong>{' '}
-                  Consent is on, but your vault holds{' '}
-                  <span className="mono">{Number(discountPreview.vaultVpfi) / 1e18}</span> VPFI — below the tier-1 threshold, so this acceptance pays the full {lifPct} LIF. Hold more VPFI to earn a tier discount; top up on{' '}
+                  <strong>No hold discount on this accept.</strong>{' '}
+                  Consent is on, but the quoted fee is the full {lifPct} LIF — either your effective tier is below tier-1 (your vault holds{' '}
+                  <span className="mono">{Number(discountPreview.vaultVpfi) / 1e18}</span> VPFI) or the lending asset is not currently liquid (the hold discount requires a live-liquid asset). If it's the tier, hold more VPFI to earn one; if the asset is illiquid, topping up won't change this fee.{' '}
                   <a
                     href="/vpfi-vault"
                     target="_blank"
