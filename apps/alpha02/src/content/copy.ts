@@ -2508,6 +2508,79 @@ const copySource = {
     backHome: 'Back to Home',
   },
   offerFlow: {
+    // Review-receipt lines (extracted from OfferFlow.tsx). Prose +
+    // interpolated values; catalog refs (lend.defaultOutcome,
+    // borrow.collateralWarning, match.illiquidWarning, interest-mode
+    // notes) stay composed at the call site.
+    receipts: {
+      buyYouReceive: tmpl(
+        'The lender position of running loan #{{loanId}}: up to ~{{interest}} interest from now to the due date if the borrower repays on time, plus the full {{principal}} principal back.',
+        ['loanId', 'interest', 'principal'],
+      ),
+      buyYouLock: tmpl(
+        '{{principal}} paid now to the exiting lender — the loan itself doesn’t change for the borrower.',
+        ['principal'],
+      ),
+      buyCollateralLocked: tmpl('Their {{collateral}} is already locked.', ['collateral']),
+      buyWhenEnds: tmpl(
+        'Repayment is due by {{due}} (grace period: {{grace}}). You then claim your funds.',
+        ['due', 'grace'],
+      ),
+      borrowerYouReceiveNow: tmpl(
+        '{{principal}} now (minus the {{lif}} initiation fee).',
+        ['principal', 'lif'],
+      ),
+      borrowerYouReceiveOnAccept: tmpl(
+        '{{principal}} when a lender accepts your request.',
+        ['principal'],
+      ),
+      borrowerYouLockNow: tmpl('{{collateral}} as collateral, now.', ['collateral']),
+      borrowerYouLockStarting: tmpl(
+        '{{collateral}} as collateral, starting now.',
+        ['collateral'],
+      ),
+      borrowerYouMayOwe: tmpl(
+        '{{principal}} plus up to ~{{interest}} interest by the due date.',
+        ['principal', 'interest'],
+      ),
+      borrowerYouCanLose: tmpl(
+        'Your {{collateral}} collateral if you do not repay on time.',
+        ['collateral'],
+      ),
+      borrowerWhenEndsAccept: tmpl(
+        'Repay within {{duration}} (grace period: {{grace}}), then claim your collateral back.',
+        ['duration', 'grace'],
+      ),
+      borrowerWhenEndsPost: tmpl(
+        'Repay within {{duration}} of acceptance (grace period: {{grace}}), then claim your collateral back.',
+        ['duration', 'grace'],
+      ),
+      lenderYouReceive: tmpl(
+        'Up to ~{{interest}} interest if the borrower repays on time, plus your {{principal}} back.',
+        ['interest', 'principal'],
+      ),
+      lenderYouLockAccept: tmpl('{{principal}} lent to the borrower, now.', ['principal']),
+      lenderYouLockPost: tmpl(
+        '{{principal}} now, until your offer is accepted or you cancel it.',
+        ['principal'],
+      ),
+      lenderCollateralLock: tmpl('They lock {{collateral}}.', ['collateral']),
+      lenderCollateralMustLock: tmpl('They must lock {{collateral}}.', ['collateral']),
+      lenderWhenEndsAccept: tmpl(
+        'Repayment is due within {{duration}} (grace period: {{grace}}). You then claim your funds.',
+        ['duration', 'grace'],
+      ),
+      lenderWhenEndsPost: tmpl(
+        'Repayment is due {{duration}} after a borrower accepts (grace period: {{grace}}). You then claim your funds.',
+        ['duration', 'grace'],
+      ),
+      youLockCollateral: tmpl('you lock {{collateral}} as collateral', ['collateral']),
+      theyLockCollateral: tmpl('they lock {{collateral}} as collateral', ['collateral']),
+      rateOutOfRange: tmpl(
+        'Enter a number between 0 and {{max}} — the protocol caps rates at {{max}}% yearly.',
+        ['max'],
+      ),
+    },
     lender: {
       assetLabel: 'Asset to lend',
       amountLabel: 'How much do you want to lend?',

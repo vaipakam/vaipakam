@@ -246,8 +246,8 @@ function MatchOfferRow({
         <span className="row-sub">
           {formatDurationDays(offer.durationDays)} ·{' '}
           {side === 'borrower'
-            ? `you lock ${collateralStr} as collateral`
-            : `they lock ${collateralStr} as collateral`}{' '}
+            ? copy.offerFlow.receipts.youLockCollateral(collateralStr)
+            : copy.offerFlow.receipts.theyLockCollateral(collateralStr)}{' '}
           · offer #{offer.offerId}
         </span>
       </span>
@@ -977,12 +977,12 @@ export function OfferFlow({ side }: { side: Side }) {
             ? ` ${copy.match.illiquidWarning}`
             : '';
           return {
-            youReceive: `The lender position of running loan #${saleData.loanId}: up to ~${interestStr} interest from now to the due date if the borrower repays on time, plus the full ${principalStr} principal back.`,
-            youLock: `${principalStr} paid now to the exiting lender — the loan itself doesn't change for the borrower.`,
+            youReceive: copy.offerFlow.receipts.buyYouReceive(saleData.loanId, interestStr, principalStr),
+            youLock: copy.offerFlow.receipts.buyYouLock(principalStr),
             youMayOwe: copy.offerFlow.receiptOweNothing,
-            youCanLose: `${copy.lend.defaultOutcome} Their ${collateralStr} is already locked.${illiquidSuffix}`,
+            youCanLose: `${copy.lend.defaultOutcome} ${copy.offerFlow.receipts.buyCollateralLocked(collateralStr)}${illiquidSuffix}`,
             fees: copy.fees.lenderYieldFee(yieldPct),
-            whenThisEnds: `Repayment is due by ${dueStr} (grace period: ${grace.label}). You then claim your funds.`,
+            whenThisEnds: copy.offerFlow.receipts.buyWhenEnds(dueStr, grace.label),
           };
         }
         const principal = offerPrincipal(selected);
@@ -1005,21 +1005,21 @@ export function OfferFlow({ side }: { side: Side }) {
 
         if (side === 'borrower') {
           return {
-            youReceive: `${principalStr} now (minus the ${lifPct} initiation fee).`,
-            youLock: `${collateralStr} as collateral, now.`,
-            youMayOwe: `${principalStr} plus up to ~${interestStr} interest by the due date. ${acceptModeNote}`,
-            youCanLose: `Your ${collateralStr} collateral if you do not repay on time. ${copy.borrow.collateralWarning}${illiquidSuffix}`,
+            youReceive: copy.offerFlow.receipts.borrowerYouReceiveNow(principalStr, lifPct),
+            youLock: copy.offerFlow.receipts.borrowerYouLockNow(collateralStr),
+            youMayOwe: `${copy.offerFlow.receipts.borrowerYouMayOwe(principalStr, interestStr)} ${acceptModeNote}`,
+            youCanLose: `${copy.offerFlow.receipts.borrowerYouCanLose(collateralStr)} ${copy.borrow.collateralWarning}${illiquidSuffix}`,
             fees: copy.fees.borrowerLIF(lifPct),
-            whenThisEnds: `Repay within ${durationStr} (grace period: ${graceStr}), then claim your collateral back.`,
+            whenThisEnds: copy.offerFlow.receipts.borrowerWhenEndsAccept(durationStr, graceStr),
           };
         }
         return {
-          youReceive: `Up to ~${interestStr} interest if the borrower repays on time, plus your ${principalStr} back. ${acceptModeNote}`,
-          youLock: `${principalStr} lent to the borrower, now.`,
+          youReceive: `${copy.offerFlow.receipts.lenderYouReceive(interestStr, principalStr)} ${acceptModeNote}`,
+          youLock: copy.offerFlow.receipts.lenderYouLockAccept(principalStr),
           youMayOwe: copy.offerFlow.receiptOweNothing,
-          youCanLose: `${copy.lend.defaultOutcome} They lock ${collateralStr}.${illiquidSuffix}`,
+          youCanLose: `${copy.lend.defaultOutcome} ${copy.offerFlow.receipts.lenderCollateralLock(collateralStr)}${illiquidSuffix}`,
           fees: copy.fees.lenderYieldFee(yieldPct),
-          whenThisEnds: `Repayment is due within ${durationStr} (grace period: ${graceStr}). You then claim your funds.`,
+          whenThisEnds: copy.offerFlow.receipts.lenderWhenEndsAccept(durationStr, graceStr),
         };
       }
 
@@ -1048,21 +1048,21 @@ export function OfferFlow({ side }: { side: Side }) {
 
       if (side === 'lender') {
         return {
-          youReceive: `Up to ~${interestStr} interest if the borrower repays on time, plus your ${principalStr} back. ${modeNote}`,
-          youLock: `${principalStr} now, until your offer is accepted or you cancel it.`,
+          youReceive: `${copy.offerFlow.receipts.lenderYouReceive(interestStr, principalStr)} ${modeNote}`,
+          youLock: copy.offerFlow.receipts.lenderYouLockPost(principalStr),
           youMayOwe: copy.offerFlow.receiptOweNothing,
-          youCanLose: `${copy.lend.defaultOutcome} They must lock ${collateralStr}.${postIlliquidSuffix}`,
+          youCanLose: `${copy.lend.defaultOutcome} ${copy.offerFlow.receipts.lenderCollateralMustLock(collateralStr)}${postIlliquidSuffix}`,
           fees: copy.fees.lenderYieldFee(yieldPct),
-          whenThisEnds: `Repayment is due ${durationStr} after a borrower accepts (grace period: ${graceStr}). You then claim your funds.`,
+          whenThisEnds: copy.offerFlow.receipts.lenderWhenEndsPost(durationStr, graceStr),
         };
       }
       return {
-        youReceive: `${principalStr} when a lender accepts your request.`,
-        youLock: `${collateralStr} as collateral, starting now.`,
-        youMayOwe: `${principalStr} plus up to ~${interestStr} interest by the due date. ${modeNote}`,
-        youCanLose: `Your ${collateralStr} collateral if you do not repay on time. ${copy.borrow.collateralWarning}${postIlliquidSuffix}`,
+        youReceive: copy.offerFlow.receipts.borrowerYouReceiveOnAccept(principalStr),
+        youLock: copy.offerFlow.receipts.borrowerYouLockStarting(collateralStr),
+        youMayOwe: `${copy.offerFlow.receipts.borrowerYouMayOwe(principalStr, interestStr)} ${modeNote}`,
+        youCanLose: `${copy.offerFlow.receipts.borrowerYouCanLose(collateralStr)} ${copy.borrow.collateralWarning}${postIlliquidSuffix}`,
         fees: copy.fees.borrowerLIF(lifPct),
-        whenThisEnds: `Repay within ${durationStr} of acceptance (grace period: ${graceStr}), then claim your collateral back.`,
+        whenThisEnds: copy.offerFlow.receipts.borrowerWhenEndsPost(durationStr, graceStr),
       };
     } catch {
       return null;
@@ -2149,7 +2149,7 @@ export function OfferFlow({ side }: { side: Side }) {
             />
             <span className="field-hint">
               {form.interestRate !== '' && !rateValid
-                ? `Enter a number between 0 and ${MAX_RATE_PERCENT} — the protocol caps rates at ${MAX_RATE_PERCENT}% yearly.`
+                ? copy.offerFlow.receipts.rateOutOfRange(MAX_RATE_PERCENT)
                 : text.rateHint}
             </span>
           </div>

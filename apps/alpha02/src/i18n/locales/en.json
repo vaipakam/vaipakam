@@ -1555,6 +1555,30 @@
       "backHome": "Back to Home"
     },
     "offerFlow": {
+      "receipts": {
+        "buyYouReceive": "The lender position of running loan #{{loanId}}: up to ~{{interest}} interest from now to the due date if the borrower repays on time, plus the full {{principal}} principal back.",
+        "buyYouLock": "{{principal}} paid now to the exiting lender — the loan itself doesn’t change for the borrower.",
+        "buyCollateralLocked": "Their {{collateral}} is already locked.",
+        "buyWhenEnds": "Repayment is due by {{due}} (grace period: {{grace}}). You then claim your funds.",
+        "borrowerYouReceiveNow": "{{principal}} now (minus the {{lif}} initiation fee).",
+        "borrowerYouReceiveOnAccept": "{{principal}} when a lender accepts your request.",
+        "borrowerYouLockNow": "{{collateral}} as collateral, now.",
+        "borrowerYouLockStarting": "{{collateral}} as collateral, starting now.",
+        "borrowerYouMayOwe": "{{principal}} plus up to ~{{interest}} interest by the due date.",
+        "borrowerYouCanLose": "Your {{collateral}} collateral if you do not repay on time.",
+        "borrowerWhenEndsAccept": "Repay within {{duration}} (grace period: {{grace}}), then claim your collateral back.",
+        "borrowerWhenEndsPost": "Repay within {{duration}} of acceptance (grace period: {{grace}}), then claim your collateral back.",
+        "lenderYouReceive": "Up to ~{{interest}} interest if the borrower repays on time, plus your {{principal}} back.",
+        "lenderYouLockAccept": "{{principal}} lent to the borrower, now.",
+        "lenderYouLockPost": "{{principal}} now, until your offer is accepted or you cancel it.",
+        "lenderCollateralLock": "They lock {{collateral}}.",
+        "lenderCollateralMustLock": "They must lock {{collateral}}.",
+        "lenderWhenEndsAccept": "Repayment is due within {{duration}} (grace period: {{grace}}). You then claim your funds.",
+        "lenderWhenEndsPost": "Repayment is due {{duration}} after a borrower accepts (grace period: {{grace}}). You then claim your funds.",
+        "youLockCollateral": "you lock {{collateral}} as collateral",
+        "theyLockCollateral": "they lock {{collateral}} as collateral",
+        "rateOutOfRange": "Enter a number between 0 and {{max}} — the protocol caps rates at {{max}}% yearly."
+      },
       "lender": {
         "assetLabel": "Asset to lend",
         "amountLabel": "How much do you want to lend?",
