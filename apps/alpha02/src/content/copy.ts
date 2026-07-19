@@ -1160,6 +1160,10 @@ const copySource = {
   },
 
   earlyExit: {
+    receiptYouReceive: tmpl(
+      '~{{toSeller}}, paid straight to your wallet in the same transaction — selling to offer #{{offerId}} at {{rate}} yearly. Nothing to claim afterwards.',
+      ['toSeller', 'offerId', 'rate'],
+    ),
     receiptLockNothing: 'Nothing.',
     receiptOweNothing: 'Nothing — you approve nothing and pay nothing out of pocket.',
     receiptCanLose: 'The LARGER of the interest accrued so far or the rate difference for the remaining term — never both. Already reflected in the figure above; the exact amount is re-read live when you confirm.',
@@ -1196,6 +1200,20 @@ const copySource = {
   },
 
   loanSale: {
+    // Review-receipt / hint lines (extracted from LoanSaleFlow.tsx +
+    // LoanSalePendingCard.tsx inline templates).
+    receiptYouReceive: tmpl(
+      '{{principal}} — the full outstanding amount, paid to your wallet the moment a buyer accepts.',
+      ['principal'],
+    ),
+    receiptYouMayOwe: tmpl(
+      'At acceptance, the settlement is pulled from your wallet: the LARGER of the interest accrued by then or the rate difference for the remaining term — never both. Right now that would be ~{{amount}} {{sym}}.',
+      ['amount', 'sym'],
+    ),
+    allowanceShortDetail: tmpl(
+      '(a buyer’s acceptance would pull ~{{amount}} {{symbol}} right now)',
+      ['amount', 'symbol'],
+    ),
     consentLabel: 'I understand the lock, the settlement pull, and the standing approval below and agree to them.',
     receiptLock: 'Your lender position NFT, until the sale completes or you cancel the listing. Nothing else.',
     receiptCanLose: 'If your balance or the standing approval goes short, a buyer’s acceptance simply fails — nothing is taken, but the listing sits unfillable until you restore it or cancel.',

@@ -335,9 +335,9 @@ export function LoanSaleFlow({
             onConfirm={() => void submit()}
             disabled={!walletReady || !consent || flowDisabled('post-offer')}
             data={{
-              youReceive: `${principalStr} — the full outstanding amount, paid to your wallet the moment a buyer accepts.`,
+              youReceive: copy.loanSale.receiptYouReceive(principalStr),
               youLock: copy.loanSale.receiptLock,
-              youMayOwe: `At acceptance, the settlement is pulled from your wallet: the LARGER of the interest accrued by then or the rate difference for the remaining term — never both. Right now that would be ~${formatTokenAmount(nowCost, dec)} ${sym}. ${copy.loanSale.approvalNote(boundStr)}`,
+              youMayOwe: `${copy.loanSale.receiptYouMayOwe(formatTokenAmount(nowCost, dec), sym)} ${copy.loanSale.approvalNote(boundStr)}`,
               youCanLose: copy.loanSale.receiptCanLose,
               fees: copy.loanSale.receiptFees,
               whenThisEnds: copy.loanSale.receiptEnds,
