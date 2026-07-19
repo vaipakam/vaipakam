@@ -242,11 +242,6 @@
         "internalType": "uint256"
       },
       {
-        "name": "newNotificationFeeInNewNumeraire",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
         "name": "newKycTier0InNewNumeraire",
         "type": "uint256",
         "internalType": "uint256"

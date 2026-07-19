@@ -90,21 +90,23 @@ contract NumeraireConfigFacet is DiamondAccessControl {
     ///        Pyth gate — soft-skip behaviour).
     /// @param newThresholdInNewNumeraire Finer-cadence principal
     ///        threshold in numeraire-units (1e18-scaled). 0 ⇒ default.
-    /// @param newNotificationFeeInNewNumeraire Per-loan-side
-    ///        notification fee in numeraire-units (1e18-scaled). 0 ⇒
-    ///        default.
     /// @param newKycTier0InNewNumeraire KYC Tier-0 threshold in
     ///        numeraire-units (1e18-scaled). 0 ⇒ default. MUST be <
     ///        `newKycTier1InNewNumeraire` when both non-zero.
     /// @param newKycTier1InNewNumeraire KYC Tier-1 threshold in
     ///        numeraire-units (1e18-scaled). 0 ⇒ default.
+    /// @dev Recycling M1 (#1346): the notification tariff is NO LONGER a
+    ///      numeraire-denominated knob — it is a flat native-VPFI quantity
+    ///      (`LibNotificationFee`), so it is deliberately absent from this
+    ///      rotation. Rotating it here would clobber a VPFI amount with a
+    ///      fiat-denominated value on the next numeraire change; tune it
+    ///      only via `ConfigFacet.setNotificationFee`.
     function setNumeraire(
         address ethNumeraireFeed,
         address numeraireChainlinkDenominator,
         bytes32 numeraireSymbol,
         bytes32 pythCrossCheckFeedId,
         uint256 newThresholdInNewNumeraire,
-        uint256 newNotificationFeeInNewNumeraire,
         uint256 newKycTier0InNewNumeraire,
         uint256 newKycTier1InNewNumeraire
     ) external onlyRole(LibAccessControl.ADMIN_ROLE) {
@@ -140,21 +142,6 @@ contract NumeraireConfigFacet is DiamondAccessControl {
                 newThresholdInNewNumeraire,
                 LibVaipakam.PERIODIC_MIN_PRINCIPAL_FOR_FINER_CADENCE_FLOOR,
                 LibVaipakam.PERIODIC_MIN_PRINCIPAL_FOR_FINER_CADENCE_CEIL
-            );
-        }
-        if (
-            newNotificationFeeInNewNumeraire != 0 &&
-            (
-                newNotificationFeeInNewNumeraire < LibVaipakam.MIN_NOTIFICATION_FEE_FLOOR ||
-                newNotificationFeeInNewNumeraire > LibVaipakam.MAX_NOTIFICATION_FEE_CEIL
-            )
-        ) {
-            revert IVaipakamErrors.ParameterOutOfRange(
-                // forge-lint: disable-next-line(unsafe-typecast)
-                bytes32("notificationFee"),
-                newNotificationFeeInNewNumeraire,
-                LibVaipakam.MIN_NOTIFICATION_FEE_FLOOR,
-                LibVaipakam.MAX_NOTIFICATION_FEE_CEIL
             );
         }
         // KYC tier monotonicity — only enforce when both are non-zero
@@ -213,7 +200,8 @@ contract NumeraireConfigFacet is DiamondAccessControl {
         s.numeraireSymbol = numeraireSymbol;
         s.pythCrossCheckFeedId = pythCrossCheckFeedId;
         c.minPrincipalForFinerCadence = newThresholdInNewNumeraire;
-        c.notificationFee = newNotificationFeeInNewNumeraire;
+        // Recycling M1 (#1346): notification tariff is a flat native-VPFI
+        // knob, intentionally NOT rotated here (see the setter's @dev).
         s.kycTier0ThresholdNumeraire = newKycTier0InNewNumeraire;
         s.kycTier1ThresholdNumeraire = newKycTier1InNewNumeraire;
         emit NumeraireUpdated(oldEthFeed, ethNumeraireFeed, numeraireSymbol);

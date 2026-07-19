@@ -384,7 +384,7 @@ contract PeriodicInterestCadenceTest is SetupTest {
         vm.prank(owner);
         NumeraireConfigFacet(address(diamond)).setNumeraire(
             // forge-lint: disable-next-line(unsafe-typecast)
-            fakeFeed, fakeDenom, bytes32("eur"), bytes32(0), 50_000 * 1e18, 0, 0, 0
+            fakeFeed, fakeDenom, bytes32("eur"), bytes32(0), 50_000 * 1e18, 0, 0
         );
     }
 
@@ -395,7 +395,7 @@ contract PeriodicInterestCadenceTest is SetupTest {
         vm.prank(owner);
         NumeraireConfigFacet(address(diamond)).setNumeraire(
             // forge-lint: disable-next-line(unsafe-typecast)
-            address(0), makeAddr("denom"), bytes32("eur"), bytes32(0), 0, 0, 0, 0
+            address(0), makeAddr("denom"), bytes32("eur"), bytes32(0), 0, 0, 0
         );
     }
 
@@ -406,7 +406,7 @@ contract PeriodicInterestCadenceTest is SetupTest {
         vm.prank(owner);
         NumeraireConfigFacet(address(diamond)).setNumeraire(
             // forge-lint: disable-next-line(unsafe-typecast)
-            makeAddr("ethFeed"), address(0), bytes32("eur"), bytes32(0), 0, 0, 0, 0
+            makeAddr("ethFeed"), address(0), bytes32("eur"), bytes32(0), 0, 0, 0
         );
     }
 
@@ -416,7 +416,7 @@ contract PeriodicInterestCadenceTest is SetupTest {
         vm.expectPartialRevert(IVaipakamErrors.ParameterOutOfRange.selector);
         vm.prank(owner);
         NumeraireConfigFacet(address(diamond)).setNumeraire(
-            makeAddr("ethFeed"), makeAddr("denom"), bytes32(0), bytes32(0), 0, 0, 0, 0
+            makeAddr("ethFeed"), makeAddr("denom"), bytes32(0), bytes32(0), 0, 0, 0
         );
     }
 
@@ -437,7 +437,7 @@ contract PeriodicInterestCadenceTest is SetupTest {
         vm.prank(owner);
         NumeraireConfigFacet(address(diamond)).setNumeraire(
             ethEurFeed, eurDenom, eurSymbol, pythEurFeedId,
-            thresholdInEur, 0, 0, 0
+            thresholdInEur, 0, 0
         );
         (bytes32 sym, uint256 threshold, , ,) =
             NumeraireConfigFacet(address(diamond)).getPeriodicInterestConfig();

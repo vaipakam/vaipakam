@@ -6,69 +6,55 @@ import {ERC1967Proxy} from "@openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy.s
 
 import {VPFIToken} from "../src/token/VPFIToken.sol";
 import {VPFIDiscountFacet} from "../src/facets/VPFIDiscountFacet.sol";
+import {VPFIDiscountAccumulatorFacet} from "../src/facets/VPFIDiscountAccumulatorFacet.sol";
 import {VPFITokenFacet} from "../src/facets/VPFITokenFacet.sol";
 import {LoanFacet} from "../src/facets/LoanFacet.sol";
 import {ConfigFacet} from "../src/facets/ConfigFacet.sol";
+import {NumeraireConfigFacet} from "../src/facets/NumeraireConfigFacet.sol";
 import {AdminFacet} from "../src/facets/AdminFacet.sol";
-import {OracleFacet} from "../src/facets/OracleFacet.sol";
 import {AccessControlFacet} from "../src/facets/AccessControlFacet.sol";
 import {VaultFactoryFacet} from "../src/facets/VaultFactoryFacet.sol";
 import {LibAccessControl} from "../src/libraries/LibAccessControl.sol";
 import {LibVaipakam} from "../src/libraries/LibVaipakam.sol";
+import {LibVpfiRecycle} from "../src/libraries/LibVpfiRecycle.sol";
 import {IVaipakamErrors} from "../src/interfaces/IVaipakamErrors.sol";
 import {TestMutatorFacet} from "./mocks/TestMutatorFacet.sol";
 
 /**
  * @title NotificationFeeTest
- * @notice T-032 — coverage for `LoanFacet.markNotifBilled` + the
- *         `LibNotificationFee` library + the two new ConfigFacet
- *         setters (`setNotificationFee` /
- *         `setNotificationFeeOracle`).
+ * @notice T-032 + Recycling M1 (#1346) — coverage for
+ *         `LoanFacet.markNotifBilled` + the `LibNotificationFee` library
+ *         + the `ConfigFacet.setNotificationFee` setter.
  *
- * Coverage:
- *   - Bill happy-path: lender side AND borrower side.
- *   - Idempotent: second `markNotifBilled` is a silent no-op.
- *   - Role gating: non-NOTIF_BILLER caller reverts via
- *     `AccessControlUnauthorizedAccount`.
- *   - Loan-existence guard: loanId 0 + loanId > nextLoanId revert
- *     with `InvalidLoanStatus`.
- *   - Insufficient VPFI in payer vault: bill reverts (vault
- *     withdraw fails — error propagates as a clean revert).
- *   - Oracle math: at ETH=$2000, $2 fee ⇒ 1 VPFI charged
- *     (verifies the Phase 1 fixed-rate formula).
- *   - Governance bounds: fee below floor / above ceil reverts;
- *     zero resets to library default.
- *   - Both sides independent: billing the lender doesn't
- *     short-circuit the borrower's side.
- *   - Treasury accrual + counter increment.
- *   - No Diamond custody invariant: Diamond's VPFI balance
- *     unchanged across the bill (asset routes user-vault → treasury
- *     directly).
+ * M1 re-shapes the tariff (see `LibNotificationFee` /
+ * `VpfiRecyclingBalanceGovernorDesign.md` §4.1):
+ *   - **Flat native-VPFI tariff** — the configured fee IS the VPFI amount
+ *     billed, a quantity, NOT a numeraire figure converted through the
+ *     ETH/numeraire oracle + `VPFI_PER_ETH_FIXED_PHASE1` peg (the §14.2
+ *     conversion class is forbidden at launch). No oracle in the path.
+ *   - **Custody re-route into the recycle loop** — the tariff moves
+ *     user-vault → Diamond custody and credits the recycle bucket
+ *     (`RecycleSource.NotificationFee`), never routed to treasury.
+ *   - **#973/L26 restamp** — the vault debit runs the mandatory discount
+ *     accumulator rollup at the post-mutation balance.
+ *   - **Numeraire de-link** — a `setNumeraire` rotation no longer touches
+ *     the flat VPFI tariff.
  */
 contract NotificationFeeTest is SetupTest {
     // #229: VPFIDiscountFacet now cut by `SetupTest.setupHelper()`.
-    // Prior local declaration + local cut dropped — references resolve
-    // to the inherited SetupTest field.
     VPFIToken internal vpfiToken;
-    address internal weth;
     address internal treasuryRecipient;
     address internal billerBot;
 
-    // ETH/numeraire price for the oracle mock — gives a clean math
-    // result. Concrete example uses USD-as-numeraire (the default):
-    // at ETH=$2000, $2 fee ⇒ 1 VPFI charged (since 1 VPFI = 0.001 ETH
-    // = $2). Same math under any other numeraire — the unit cancels.
-    uint256 internal constant ETH_NUMERAIRE_PRICE_8DEC = 2000e8;
-    // Default 2.0 fee in 1e18 numeraire-unit scaling (= $2 under
-    // USD-as-numeraire).
-    uint256 internal constant DEFAULT_FEE_NUMERAIRE = 2e18;
-    // Expected VPFI charged at the example: ETH=$2000, fee=$2.
-    uint256 internal constant EXPECTED_VPFI_AMOUNT = 1e18; // 1 VPFI
+    // Recycling M1: the default flat tariff is 0.5 VPFI — the exact amount
+    // billed with no config override (no oracle, no numeraire conversion).
+    uint256 internal constant EXPECTED_VPFI_AMOUNT = 5e17; // 0.5 VPFI
 
     function setUp() public {
         setupHelper();
 
-        // Treasury — a real address so we can balance-check it post-bill.
+        // Treasury — a real address so we can assert it is NOT credited
+        // (M1 routes the tariff into the recycle bucket, not treasury).
         treasuryRecipient = makeAddr("treasury");
         AdminFacet(address(diamond)).setTreasury(treasuryRecipient);
 
@@ -89,35 +75,11 @@ contract NotificationFeeTest is SetupTest {
         vpfiToken = VPFIToken(address(proxy));
         VPFITokenFacet(address(diamond)).setVPFIToken(address(vpfiToken));
 
-        // #229 — VPFIDiscountFacet is now cut by setupHelper(). The
-        // prior local cut here would double-cut and revert. Dropped.
-
-        // WETH — referenced by LibNotificationFee's Phase 1 path. Use
-        // the existing test mock setup: register a dummy WETH address
-        // and mock OracleFacet.getAssetPrice for it.
-        weth = makeAddr("weth");
-        // Mock the OracleFacet ETH/numeraire read at 2000/8dec —
-        // directly on the diamond (the path LibNotificationFee uses).
-        // Post-b1 `getAssetPrice(WETH)` returns numeraire-quoted; with
-        // USD-as-numeraire (the default) this is the ETH/USD price.
-        vm.mockCall(
-            address(diamond),
-            abi.encodeWithSelector(OracleFacet.getAssetPrice.selector, weth),
-            abi.encode(ETH_NUMERAIRE_PRICE_8DEC, uint8(8))
-        );
-        // OracleAdminFacet isn't cut into the minimal test diamond, so
-        // the production owner-gated `setWethContract` setter isn't
-        // reachable. Use the test-only TestMutatorFacet shortcut to
-        // stamp `s.wethContract` directly.
-        TestMutatorFacet(address(diamond)).setWethContractRaw(weth);
-
-        // Fund lender + borrower with enough VPFI to cover the fee.
-        // Mint generously to avoid edge cases on the basic happy-paths.
+        // Fund lender + borrower with VPFI, then deposit into their vaults
+        // so `markNotifBilled` has something to pull.
         vpfiToken.transfer(lender, 100e18);
         vpfiToken.transfer(borrower, 100e18);
 
-        // Both lender and borrower deposit VPFI into their vaults so
-        // `markNotifBilled` has something to pull.
         vm.startPrank(lender);
         vpfiToken.approve(address(diamond), type(uint256).max);
         VPFIDiscountFacet(address(diamond)).depositVPFIToVault(50e18);
@@ -129,12 +91,9 @@ contract NotificationFeeTest is SetupTest {
         vm.stopPrank();
     }
 
-    /// @dev Scaffolds a minimal Loan record on chain. We don't run the
-    ///      full offer→loan flow because the tests under exam care
-    ///      only about the bill's behaviour — the loan being valid in
-    ///      LoanStatus terms is irrelevant for `markNotifBilled` (it
-    ///      gates on existence, not status). Uses TestMutatorFacet to
-    ///      write the struct + bump nextLoanId.
+    /// @dev Scaffolds a minimal Loan record. `markNotifBilled` gates on
+    ///      existence, not status, so the full offer→loan flow is
+    ///      unnecessary for these tests.
     function _scaffoldLoan(uint256 loanId) internal {
         LibVaipakam.Loan memory loan;
         loan.lender = lender;
@@ -150,9 +109,11 @@ contract NotificationFeeTest is SetupTest {
         }
     }
 
-    // ─── Happy-path bills ────────────────────────────────────────────────
+    // ─── Happy-path bills — custody re-route + recycle credit ────────────
 
-    function test_markNotifBilled_LenderSide_DebitsVaultToTreasury() public {
+    function test_markNotifBilled_LenderSide_DebitsVaultToRecycleBucket()
+        public
+    {
         _scaffoldLoan(1);
         address lenderVault = VaultFactoryFacet(address(diamond))
             .getOrCreateUserVault(lender);
@@ -160,27 +121,35 @@ contract NotificationFeeTest is SetupTest {
         uint256 vaultBefore = vpfiToken.balanceOf(lenderVault);
         uint256 treasuryBefore = vpfiToken.balanceOf(treasuryRecipient);
         uint256 diamondBefore = vpfiToken.balanceOf(address(diamond));
+        uint256 bucketBefore =
+            ConfigFacet(address(diamond)).getRecycleBucket();
 
         vm.prank(billerBot);
         LoanFacet(address(diamond)).markNotifBilled(1, true);
 
-        // Vault lost EXPECTED_VPFI_AMOUNT.
+        // Vault lost the flat tariff.
         assertEq(
             vaultBefore - vpfiToken.balanceOf(lenderVault),
             EXPECTED_VPFI_AMOUNT,
             "lender vault debited"
         );
-        // Treasury gained EXPECTED_VPFI_AMOUNT.
+        // Diamond GAINED the tariff — it now sits in Diamond custody.
         assertEq(
-            vpfiToken.balanceOf(treasuryRecipient) - treasuryBefore,
+            vpfiToken.balanceOf(address(diamond)) - diamondBefore,
             EXPECTED_VPFI_AMOUNT,
-            "treasury credited"
+            "Diamond took custody"
         );
-        // Diamond balance unchanged — no custody window.
+        // Recycle bucket grew by the tariff (the absorption credit).
         assertEq(
-            vpfiToken.balanceOf(address(diamond)),
-            diamondBefore,
-            "no Diamond custody"
+            ConfigFacet(address(diamond)).getRecycleBucket() - bucketBefore,
+            EXPECTED_VPFI_AMOUNT,
+            "recycle bucket credited"
+        );
+        // Treasury UNCHANGED — the tariff is recycled, not a treasury cut.
+        assertEq(
+            vpfiToken.balanceOf(treasuryRecipient),
+            treasuryBefore,
+            "treasury not credited"
         );
         // Flag set.
         LibVaipakam.Loan memory loan = LoanFacet(address(diamond))
@@ -189,13 +158,16 @@ contract NotificationFeeTest is SetupTest {
         assertFalse(loan.borrowerNotifBilled, "borrower flag NOT set");
     }
 
-    function test_markNotifBilled_BorrowerSide_DebitsVaultToTreasury() public {
+    function test_markNotifBilled_BorrowerSide_DebitsVaultToRecycleBucket()
+        public
+    {
         _scaffoldLoan(1);
         address borrowerVault = VaultFactoryFacet(address(diamond))
             .getOrCreateUserVault(borrower);
 
         uint256 vaultBefore = vpfiToken.balanceOf(borrowerVault);
-        uint256 treasuryBefore = vpfiToken.balanceOf(treasuryRecipient);
+        uint256 bucketBefore =
+            ConfigFacet(address(diamond)).getRecycleBucket();
 
         vm.prank(billerBot);
         LoanFacet(address(diamond)).markNotifBilled(1, false);
@@ -206,14 +178,60 @@ contract NotificationFeeTest is SetupTest {
             "borrower vault debited"
         );
         assertEq(
-            vpfiToken.balanceOf(treasuryRecipient) - treasuryBefore,
+            ConfigFacet(address(diamond)).getRecycleBucket() - bucketBefore,
             EXPECTED_VPFI_AMOUNT,
-            "treasury credited"
+            "recycle bucket credited"
         );
         LibVaipakam.Loan memory loan = LoanFacet(address(diamond))
             .getLoanDetails(1);
         assertFalse(loan.lenderNotifBilled, "lender flag NOT set");
         assertTrue(loan.borrowerNotifBilled, "borrower flag set");
+    }
+
+    /// @notice The credit surfaces on the `VpfiRecycled` feed under the
+    ///         `NotificationFee` source, keyed by loanId — the first live
+    ///         non-forfeit absorption class.
+    function test_markNotifBilled_EmitsVpfiRecycledWithNotificationFeeSource()
+        public
+    {
+        _scaffoldLoan(1);
+
+        // Match indexed source + indexed refId (loanId); leave the data
+        // (amount, dayId) unchecked — the bucket-delta assertions above
+        // pin the amount, and dayId depends on schedule state.
+        vm.expectEmit(true, true, false, false, address(diamond));
+        emit LibVpfiRecycle.VpfiRecycled(
+            uint8(LibVpfiRecycle.RecycleSource.NotificationFee),
+            1,
+            EXPECTED_VPFI_AMOUNT,
+            0
+        );
+
+        vm.prank(billerBot);
+        LoanFacet(address(diamond)).markNotifBilled(1, true);
+    }
+
+    // ─── #973 / L26 — discount restamp on the vault debit ────────────────
+
+    /// @notice The bill runs the mandatory discount-accumulator rollup at
+    ///         the post-mutation balance — closing the L26 gap where a
+    ///         VPFI outflow left a stale fee-tier stamp behind.
+    function test_markNotifBilled_RestampsPayerDiscountTier() public {
+        _scaffoldLoan(1);
+
+        // Assert the accumulator rollup is invoked during the bill (the
+        // self-call routes through the Diamond by selector). A prefix
+        // match on the selector proves the restamp tail runs, without
+        // coupling to the TWA internals.
+        vm.expectCall(
+            address(diamond),
+            abi.encodeWithSelector(
+                VPFIDiscountAccumulatorFacet.rollupUserDiscount.selector
+            )
+        );
+
+        vm.prank(billerBot);
+        LoanFacet(address(diamond)).markNotifBilled(1, true);
     }
 
     // ─── Idempotent ──────────────────────────────────────────────────────
@@ -223,12 +241,10 @@ contract NotificationFeeTest is SetupTest {
         address lenderVault = VaultFactoryFacet(address(diamond))
             .getOrCreateUserVault(lender);
 
-        // First bill — debits vault.
         vm.prank(billerBot);
         LoanFacet(address(diamond)).markNotifBilled(1, true);
         uint256 vaultAfterFirst = vpfiToken.balanceOf(lenderVault);
 
-        // Second bill — silent no-op.
         vm.prank(billerBot);
         LoanFacet(address(diamond)).markNotifBilled(1, true);
 
@@ -284,19 +300,14 @@ contract NotificationFeeTest is SetupTest {
         LoanFacet(address(diamond)).markNotifBilled(1, true);
     }
 
-    // ─── Oracle math sanity ──────────────────────────────────────────────
+    // ─── Flat tariff — no oracle, exact configured amount ────────────────
 
-    function test_markNotifBilled_AtDifferentEthPriceChargesProportionally()
-        public
-    {
+    /// @notice The bill charges EXACTLY the configured flat VPFI tariff,
+    ///         with no oracle/ETH-price dependence.
+    function test_markNotifBilled_ChargesExactConfiguredFlatTariff() public {
         _scaffoldLoan(1);
-        // Re-mock at ETH=$4000 → $2 fee should be 0.5 VPFI now
-        // (1 VPFI = 0.001 ETH = $4, so $2 = 0.5 VPFI).
-        vm.mockCall(
-            address(diamond),
-            abi.encodeWithSelector(OracleFacet.getAssetPrice.selector, weth),
-            abi.encode(uint256(4000e8), uint8(8))
-        );
+        // Governance sets a distinct flat tariff (VPFI wei).
+        ConfigFacet(address(diamond)).setNotificationFee(3e18); // 3 VPFI
 
         address lenderVault = VaultFactoryFacet(address(diamond))
             .getOrCreateUserVault(lender);
@@ -307,8 +318,8 @@ contract NotificationFeeTest is SetupTest {
 
         assertEq(
             vaultBefore - vpfiToken.balanceOf(lenderVault),
-            5e17, // 0.5 VPFI
-            "fee scales inversely with ETH price"
+            3e18,
+            "charges the exact flat tariff"
         );
     }
 
@@ -328,34 +339,57 @@ contract NotificationFeeTest is SetupTest {
         assertTrue(loan.borrowerNotifBilled, "borrower billed");
     }
 
+    // ─── Numeraire de-link (M1a) ─────────────────────────────────────────
+
+    /// @notice A `setNumeraire` rotation MUST NOT touch the flat VPFI
+    ///         tariff — it has no numeraire linkage. (Pre-M1 the fee lived
+    ///         in the numeraire-denominated slot the rotation clobbered.)
+    function test_setNumeraire_LeavesNotificationTariffUntouched() public {
+        // Set a distinct flat tariff first.
+        ConfigFacet(address(diamond)).setNotificationFee(7e18); // 7 VPFI
+
+        // Rotate to a hypothetical EUR numeraire (structure-only; the
+        // notification tariff is deliberately absent from the signature).
+        NumeraireConfigFacet(address(diamond)).setNumeraireSwapEnabled(true);
+        NumeraireConfigFacet(address(diamond)).setNumeraire(
+            makeAddr("ethEurFeed"),
+            makeAddr("eurDenom"),
+            // forge-lint: disable-next-line(unsafe-typecast)
+            bytes32("eur"),
+            bytes32(0),
+            5_000 * 1e18, // threshold
+            0, // kyc tier0
+            0 // kyc tier1
+        );
+
+        (uint256 feeVpfi, ) =
+            ConfigFacet(address(diamond)).getNotificationFeeConfig();
+        assertEq(feeVpfi, 7e18, "tariff survived the numeraire rotation");
+    }
+
     // ─── Governance bounds on setNotificationFee ──────────────────────
 
     function test_setNotificationFee_AcceptsValidValue() public {
-        ConfigFacet(address(diamond)).setNotificationFee(5e18); // $5
-        // Read via the production getter (which delegatecalls through
-        // the Diamond into the library, where the storage slot
-        // resolves correctly). Calling `LibVaipakam.cfgNotificationFee()`
-        // directly from the test contract reads the test's own
-        // (empty) storage slot, not the Diamond's.
-        (uint256 feeUsd, ) = ConfigFacet(address(diamond))
+        ConfigFacet(address(diamond)).setNotificationFee(5e18); // 5 VPFI
+        (uint256 feeVpfi, ) = ConfigFacet(address(diamond))
             .getNotificationFeeConfig();
-        assertEq(feeUsd, 5e18, "fee updated");
+        assertEq(feeVpfi, 5e18, "tariff updated");
     }
 
     function test_setNotificationFee_ZeroResetsToDefault() public {
         ConfigFacet(address(diamond)).setNotificationFee(5e18);
         ConfigFacet(address(diamond)).setNotificationFee(0);
-        (uint256 feeUsd, ) = ConfigFacet(address(diamond))
+        (uint256 feeVpfi, ) = ConfigFacet(address(diamond))
             .getNotificationFeeConfig();
         assertEq(
-            feeUsd,
+            feeVpfi,
             LibVaipakam.NOTIFICATION_FEE_DEFAULT,
-            "fee reset to default"
+            "tariff reset to default (0.5 VPFI)"
         );
     }
 
     function test_setNotificationFee_RevertsBelowFloor() public {
-        // Floor = 1e17 ($0.10); 5e16 ($0.05) is below floor.
+        // Floor = 1e17 (0.1 VPFI); 5e16 (0.05 VPFI) is below floor.
         vm.expectRevert(
             abi.encodeWithSelector(
                 ConfigFacet.InvalidNotificationFee.selector,
@@ -368,7 +402,7 @@ contract NotificationFeeTest is SetupTest {
     }
 
     function test_setNotificationFee_RevertsAboveCeiling() public {
-        // Ceiling = 50e18 ($50); 60e18 ($60) is above ceiling.
+        // Ceiling = 50e18 (50 VPFI); 60e18 is above ceiling.
         vm.expectRevert(
             abi.encodeWithSelector(
                 ConfigFacet.InvalidNotificationFee.selector,
@@ -380,30 +414,26 @@ contract NotificationFeeTest is SetupTest {
         ConfigFacet(address(diamond)).setNotificationFee(60e18);
     }
 
-    // ─── Treasury accrual counter ────────────────────────────────────────
+    // ─── Accrual counter ─────────────────────────────────────────────────
 
     function test_markNotifBilled_IncrementsAccruedCounter() public {
         _scaffoldLoan(1);
 
-        // Read counter via the storage. There's no public getter so we
-        // bill twice (once per side) and verify the counter sum below.
-        // Since only the explicit getter is via the LibVaipakam internal
-        // accessor, we can confirm via the treasury balance instead —
-        // the accrued counter mirrors the treasury inflow.
-        uint256 treasuryBefore = vpfiToken.balanceOf(treasuryRecipient);
+        (, uint256 accruedBefore) =
+            ConfigFacet(address(diamond)).getNotificationFeeConfig();
 
         vm.prank(billerBot);
         LoanFacet(address(diamond)).markNotifBilled(1, true);
         vm.prank(billerBot);
         LoanFacet(address(diamond)).markNotifBilled(1, false);
 
-        uint256 treasuryDelta = vpfiToken.balanceOf(treasuryRecipient) -
-            treasuryBefore;
-        // Two bills × 1 VPFI each = 2 VPFI.
+        (, uint256 accruedAfter) =
+            ConfigFacet(address(diamond)).getNotificationFeeConfig();
+        // Two bills × the flat tariff each.
         assertEq(
-            treasuryDelta,
+            accruedAfter - accruedBefore,
             2 * EXPECTED_VPFI_AMOUNT,
-            "treasury saw both bills"
+            "accrued counter saw both bills"
         );
     }
 }
