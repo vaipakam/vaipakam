@@ -538,9 +538,7 @@ function ListNftFlow() {
             />
             {!durationValid ? (
               <span className="field-hint">
-                The protocol currently caps listings at{' '}
-                {formatDurationDays(fees.maxOfferDurationDays)} — pick a shorter
-                length.
+                {copy.rent.durationCap(formatDurationDays(fees.maxOfferDurationDays))}
               </span>
             ) : null}
           </div>

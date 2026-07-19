@@ -74,8 +74,15 @@ const BACKTICK = /`([^`]*)`/g;
 // Includes whitespace/newlines so the common MULTILINE JSX text style
 // (`<span>\n  You have {n} …\n</span>`) is caught too (Codex #1345 r2).
 const JSX_TEXT_CHARS = "[A-Za-z0-9 \\t\\r\\n,.'’\"%$#·—–:&!?()\\-]";
+// The run may carry MORE THAN ONE `{expr}` — e.g. the pre-migration
+// `You have {n} active {n === 1 ? 'position' : 'positions'}.` shape.
+// A single fixed `{expr}` slot can't reach the second one (text chars
+// exclude `{`), so model the body as "one-or-more `text…{expr}` groups
+// then trailing text" — requiring at least one interpolation, matching
+// any count (Codex #1345 r3). Each group must consume a `{…}`, so the
+// `+` can't run away on failing input.
 const JSX_INTERP = new RegExp(
-  `>(${JSX_TEXT_CHARS}*\\{[^{}]*\\}${JSX_TEXT_CHARS}*)<`,
+  `>((?:${JSX_TEXT_CHARS}*\\{[^{}]*\\})+${JSX_TEXT_CHARS}*)<`,
   'g',
 );
 // Two real (3+ letter) words in a row = prose, not a css class / path.

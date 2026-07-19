@@ -760,6 +760,11 @@ const copySource = {
     ),
     browseRowUnpriced: tmpl('{{duration}} · listing #{{id}}', ['duration', 'id']),
     perDaySuffix: tmpl(' ({{symbol}} per day)', ['symbol']),
+    // Duration field hint when the picked term exceeds the protocol cap.
+    durationCap: tmpl(
+      'The protocol currently caps listings at {{max}} — pick a shorter length.',
+      ['max'],
+    ),
     // Review-receipt lines (extracted from Rent.tsx inline templates).
     receiptListYouReceive: tmpl(
       '~{{fees}} in rental fees for the full {{term}} term — the renter prepays everything up front.',
@@ -2579,6 +2584,7 @@ const copySource = {
     waiting:
       'Your rewards are being finalized — a reward day closes across all chains before it can be claimed. Check back soon.',
     claim: 'Claim rewards',
+    readyToClaim: tmpl('{{amount}} VPFI ready to claim.', ['amount']),
   },
 
   sanctions: {
@@ -2627,6 +2633,11 @@ const copySource = {
     backHome: 'Back to Home',
   },
   offerFlow: {
+    // Duration field hint when the picked term exceeds the protocol cap.
+    durationCap: tmpl(
+      'The protocol currently caps offers at {{max}} — pick a shorter duration.',
+      ['max'],
+    ),
     // Review-receipt lines (extracted from OfferFlow.tsx). Prose +
     // interpolated values; catalog refs (lend.defaultOutcome,
     // borrow.collateralWarning, match.illiquidWarning, interest-mode

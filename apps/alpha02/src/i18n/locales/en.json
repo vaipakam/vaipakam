@@ -472,6 +472,7 @@
       "browseRowPriced": "{{daily}} {{pay}}/day · {{duration}} · {{total}} {{pay}} up front (incl. buffer)",
       "browseRowUnpriced": "{{duration}} · listing #{{id}}",
       "perDaySuffix": " ({{symbol}} per day)",
+      "durationCap": "The protocol currently caps listings at {{max}} — pick a shorter length.",
       "receiptListYouReceive": "~{{fees}} in rental fees for the full {{term}} term — the renter prepays everything up front.",
       "receiptListYouLock": "Your NFT {{nft}} moves into your vault and stays there for the whole listing and rental.",
       "receiptRentYouReceive": "Use rights of {{nft}} for {{duration}}, starting now.",
@@ -1582,7 +1583,8 @@
       "blurb": "VPFI rewards from your lending and borrowing activity. They become claimable after a loan closes and the reward day finalizes.",
       "empty": "No rewards yet. Rewards appear after lending or borrowing activity.",
       "waiting": "Your rewards are being finalized — a reward day closes across all chains before it can be claimed. Check back soon.",
-      "claim": "Claim rewards"
+      "claim": "Claim rewards",
+      "readyToClaim": "{{amount}} VPFI ready to claim."
     },
     "sanctions": {
       "title": "This wallet is listed by the compliance oracle.",
@@ -1609,6 +1611,7 @@
       "backHome": "Back to Home"
     },
     "offerFlow": {
+      "durationCap": "The protocol currently caps offers at {{max}} — pick a shorter duration.",
       "receipts": {
         "buyYouReceive": "The lender position of running loan #{{loanId}}: up to ~{{interest}} interest from now to the due date if the borrower repays on time, plus the full {{principal}} principal back.",
         "buyYouLock": "{{principal}} paid now to the exiting lender — the loan itself doesn’t change for the borrower.",

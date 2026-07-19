@@ -102,7 +102,7 @@ function RewardsCard() {
       {snapshot.pending > 0n ? (
         <>
           <p>
-            {formatTokenAmount(snapshot.pending, 18)} VPFI ready to claim.{' '}
+            {copy.rewards.readyToClaim(formatTokenAmount(snapshot.pending, 18))}{' '}
             {copy.rewards.blurb}
           </p>
           {error ? (

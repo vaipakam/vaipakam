@@ -2012,9 +2012,7 @@ export function OfferFlow({ side }: { side: Side }) {
             />
             {!durationValid ? (
               <span className="field-hint">
-                The protocol currently caps offers at{' '}
-                {formatDurationDays(fees.maxOfferDurationDays)} — pick a shorter
-                duration.
+                {copy.offerFlow.durationCap(formatDurationDays(fees.maxOfferDurationDays))}
               </span>
             ) : null}
           </div>
