@@ -414,6 +414,16 @@ an organic market exists, behind the one bounded legal glance.
 > (non-refundable, loan-bound, illiquid-excluded), and the governor's
 > `Ā` / margin coupling. The paragraphs below are retained for the design
 > record; read them through the LIF·year formula, not the ETH·day one.
+>
+> **Excluded from the carry-forward — purchase framing (legal surface).**
+> The retained mechanics below use "buys the entitlement" and "the
+> discounted schedule … was purchased" wording. That **purchase / price
+> framing does NOT carry forward** into the user-facing copy or spec for
+> the Full tariff: the tariff is a **fee** (a native-VPFI quantity
+> charged at initiation), never framed as buying, redeeming, or pricing
+> VPFI, and never a published price — consistent with §13/§14.2 and the
+> RL-6 copy rules. Read those verbs internally as "the tariff is charged
+> for the discounted fee schedule," not as a purchase.
 
 **The load-bearing rule — tariff, not conversion:** the VPFI amount is a
 QUANTITY schedule sized by the loan's characteristics (`k` VPFI per
