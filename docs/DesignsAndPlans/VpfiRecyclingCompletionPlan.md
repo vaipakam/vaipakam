@@ -90,7 +90,15 @@ custody re-route into Diamond custody with
 Reconcile with **#973 (L26)** in the same PR: the bill path moves vault
 VPFI without the mandatory discount/tier restamp; the re-route must run
 the standard tracked-balance/rollup tail. First live non-forfeit
-absorption class; ships dark like everything else.
+absorption class; ships dark like everything else. **Numeraire-rotation
+surface (in scope):** the current code treats the notification fee as a
+numeraire-denominated knob — `NumeraireConfigFacet.setNumeraire` writes
+`newNotificationFeeInNewNumeraire` into the same storage slot. Once the
+slot is reinterpreted as a flat VPFI amount, that rotation path would
+clobber it with a fiat-denominated value on the next numeraire change.
+M1 therefore also removes the notification fee from the numeraire
+rotation (config/event rename included) — the flat VPFI tariff has no
+numeraire linkage at all.
 
 ### M2 — The absorption formula stack — card **#1347** + the M2 card set
 
@@ -138,7 +146,7 @@ PR-7 = #1346):
 | Card | Scope | Hard deps |
 | --- | --- | --- |
 | PR-1 | Spec supersession (docs; fee defaults 20/200 + grandfather resolver) | D1 decided |
-| PR-2 | D1 `(user,side,day)` share cap + joint day SM + broadcast evolution — **scope includes the report/remit side even standalone**: mirror→Base per-loan headroom commitments + ack-timed `loanSideRewardRemitted` attribution (rev-15 freezes) are prerequisites for safe ShareOfPool remittance (`chainRewardBudgetForDay = min(uncappedSlice, Σ commitments)`), with or without the mesh — never broadcast-only (coordinate with §M3 wire rule when same-window) | Receiver-first in BOTH directions: mirrors dual-decode the widened broadcast before Base sends it, AND **Base dual-decodes the widened report before any mirror report sender switches** (else day-close reports revert/zero) |
+| PR-2 | D1 `(user,side,day)` share cap + joint day SM + broadcast evolution — **scope includes the report/remit side even standalone**: mirror→Base per-loan headroom commitments + ack-timed `loanSideRewardRemitted` attribution (rev-15 freezes) are prerequisites for safe ShareOfPool remittance (`chainRewardBudgetForDay = min(uncappedSlice, Σ commitments)`), with or without the mesh — never broadcast-only. **Broadcast shape rule: the D1 evolution EXTENDS the live PR-3c tuple** — `scheduleFloorHalf`, `recycledHalf`, and `armedFromDay` are load-bearing live fields and must survive (cap field replaced/extended by `capMode`+`capPayload`); the formula doc's older "cap-only v2 minimum" wording is superseded — a cap-only shape would lose the pool composition + arming stamp and stall or misprice armed days on mirrors (coordinate with §M3 wire rule when same-window) | Receiver-first in BOTH directions: mirrors dual-decode the widened broadcast before Base sends it, AND **Base dual-decodes the widened report before any mirror report sender switches** (else day-close reports revert/zero) |
 | PR-4 | HoldOnly hybrid borrower LIF + fee-default migration | PR-1 |
 | PR-5a/5b | Per-party Full tariff (LIF·year `C*`, `maxCStar` auth, no silent downgrade) + `credit(FullTariff, …)` at init | PR-4; #1347 re-based |
 | PR-5c | Loan-side reward cap + `cStar` backfill gate | PR-5b |
@@ -172,7 +180,12 @@ is adopted as the implementation cut. Two corrections before B1 resumes:
 2. **Per-chain two-pass funding resolution** (governor §3.1, Codex
    r5/r6) belongs in B2/B3: global `Ā` sizes the *target*;
    `localFunded_c = min(target_c, availRecycled_c)`; Base tops up
-   pro-rata (claims-first, keeper residual); each chain's broadcast
+   pro-rata (claims-first, keeper residual) **from its REMAINING
+   availability only** — Base is itself a chain in the set, so its own
+   `localFunded_Base` slice reserves first and the top-up pool is
+   `BaseAvail − localFunded_Base` (funding top-ups from total Base
+   availability would double-commit the same bucket whenever Base has
+   local demand and mirrors have shortfalls); each chain's broadcast
    carries its own funded recycled figures. A chain whose slice is
    unfunded gets a smaller add-on — never a claim against tokens parked
    on another mirror. **Accumulator semantics (load-bearing, PER
@@ -202,7 +215,14 @@ Kept from the parked plan verbatim: commitment semantics (broadcast
 *commits*; bucket debited pro-rata at claim/remit), whole-day idempotency
 stamp covering every bucket-touching field, `consumed ≤ reported` per
 chain, source-scoped netting with commitment-netted `availRecycled`,
-per-destination arrays aligned to `broadcastDestinationChainIds`,
+per-destination values with a **replay-stable binding**: alignment to
+the mutable `broadcastDestinationChainIds` list alone is NOT stable —
+a message built before a list reorder/add/remove would decode against
+a different ordering on delayed CCIP delivery or governance replay,
+applying another chain's funded halves/consume amounts. Either one
+payload per destination, or array fields that embed the destination
+chain-ids (with the mirror selecting its element by `block.chainid`),
+never positional alignment to the live list,
 mirrors-decode-first messenger redeploy. **Backward decodability
 (both message kinds, both directions):** the messenger dispatches by
 `msgType` then enforces strict payload sizes — every widening therefore
@@ -220,7 +240,14 @@ days — widening kind-2 then would bolt the recycle fields onto an
 inactive shape while post-cutover mirrors receive the D1 kind without
 them. M3 therefore widens the **active** kind (kind-2 only if D1 has
 not landed; otherwise the D1 successor kind, or a new union kind),
-keeping every superseded kind backward-decodable as legacy. Standalone
+keeping every superseded kind backward-decodable as legacy. **The same
+active-shape rule applies to the REPORT direction:** M3 widens
+whichever report shape is active when it lands, preserving all
+existing fields — if PR-2 landed first, the active report already
+carries per-loan headroom commitments + ack-timed remitted accounting,
+and M3's recycled fields ADD to that shape (never a regression to the
+old 4-word report + recycled fields that would drop the commitment
+data ShareOfPool remittance depends on). Standalone
 M3 adds the two new fields (`recycleConsume`, `keeperAllocate`) and
 the report 4→6 — **and the broadcast build becomes
 per-destination**: today's messenger builds ONE payload and loops over
@@ -320,7 +347,13 @@ GovernanceRunbook gains a recycling section, executed in order:
    at origination while every yield-fee site still ignores the lender
    Full stamp — collecting the tariff without delivering the purchased
    +10% discount. Gate = PR-2 + PR-5c live + PR-6 live + `D*` armed
-   (asserted by PR-9/#1356).
+   (asserted by PR-9/#1356). **Multi-chain `D*` precondition:** before
+   Base arms, the SAME `shareOfPoolCutoverDay` must be configured on
+   EVERY reward chain — the fail-closed predicate is
+   `D* != 0 && d ≥ D*`, so a mirror left at the default 0 never enters
+   the post-cutover path while Base sends ShareOfPool days, and claim
+   vs remittance behaviour diverges. All-chains-configured is a
+   checklist item ahead of Base arming.
 5. Deploy asserts (M2 PR-9) wired into `predeploy-check.sh`.
 
 ### M8 — Docs housekeeping
