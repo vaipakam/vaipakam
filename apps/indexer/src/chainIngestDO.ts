@@ -56,6 +56,54 @@ interface TriggerBody {
   targetBlock?: string; // bigint as decimal string
 }
 
+/** The slice of `DurableObjectStorage` the trigger/loop-state helpers
+ *  use — factored so the write-guard logic is unit-testable with a
+ *  Map-backed fake (no DO runtime in vitest). */
+export interface LoopStateStorage {
+  get<T = unknown>(key: string): Promise<T | undefined>;
+  put(entries: Record<string, unknown>): Promise<void>;
+  delete(key: string): Promise<boolean>;
+}
+
+/**
+ * Persist a trigger's state — WRITE-GUARDED (free-plan DO rows_written
+ * diet). Every DO storage put/delete bills a row, and the steady-state
+ * cron ping used to spend ~4 rows/chain/minute writing values that
+ * never changed: `chainId` is immutable per DO, cron pings always carry
+ * target '0' (never raising the stored one), and `attempts` was reset
+ * to 0 when the key didn't even exist. Reads are ~free (5M/day) — so
+ * read-compare-skip turns the idle ping into ZERO storage rows, leaving
+ * only the (unavoidable, race-required) `setAlarm` in `fetch()`.
+ * Changed values still batch into ONE put.
+ */
+export async function recordTrigger(
+  storage: LoopStateStorage,
+  chainId: number,
+  target: bigint,
+  resetAttempts: boolean,
+): Promise<void> {
+  const writes: Record<string, unknown> = {};
+  const prev = (await storage.get<string>('pendingTarget')) ?? '0';
+  const raised = target > BigInt(prev) ? target : BigInt(prev);
+  if (raised.toString() !== prev) writes.pendingTarget = raised.toString();
+  if ((await storage.get<number>('chainId')) !== chainId) {
+    writes.chainId = chainId;
+  }
+  if (resetAttempts && ((await storage.get<number>('attempts')) ?? 0) !== 0) {
+    writes.attempts = 0;
+  }
+  if (Object.keys(writes).length > 0) await storage.put(writes);
+}
+
+/** Clear the catch-up counter — but only when it exists: `alarm()`'s
+ *  caught-up exit runs every quiet tick, and an unconditional delete of
+ *  an absent key still billed a DO row per chain per tick. */
+export async function clearAttempts(storage: LoopStateStorage): Promise<void> {
+  if ((await storage.get<number>('attempts')) !== undefined) {
+    await storage.delete('attempts');
+  }
+}
+
 /**
  * #757 Phase B — the typed invalidation keys the DO pushes to subscribed dapp
  * clients after each D1 write. Each key names a coarse data slice that changed;
@@ -82,14 +130,17 @@ export type InvalidationKey =
   | 'activity.appended';
 
 /** RPC read-diet PR 0 — the DO path's expected per-chain scan cadence. The
- *  cron (`crons: ["* * * * *"]`, wrangler.jsonc) pings EVERY configured
- *  chain's DO each minute, and webhook deliveries only make scans MORE
- *  frequent — so 60s is the worst-case gap between cursor advances on a
- *  healthy rail. Clients size their rail-health staleness window from this
- *  reported value (design §4.1.1: cadence × ~1.5) instead of hard-coding a
- *  guess; a missing value means "unknown" and clients stay in the polling
+ *  cron (every-5-minutes schedule in wrangler.jsonc) pings EVERY configured
+ *  chain's DO every FIVE minutes, and webhook deliveries only make scans
+ *  MORE frequent — so 300s is the worst-case gap between cursor advances
+ *  on a healthy rail. (Was 60s; relaxed with the cron in the free-plan
+ *  DO rows_written diet — webhooks carry event latency, the cron is the
+ *  time-driven backstop.) Clients size their rail-health staleness window
+ *  from this reported value (design §4.1.1: cadence × ~1.5) instead of
+ *  hard-coding a guess — bumping it here retunes every connected client;
+ *  a missing value means "unknown" and clients stay in the polling
  *  fallback posture. */
-export const EXPECTED_SCAN_CADENCE_SEC = 60;
+export const EXPECTED_SCAN_CADENCE_SEC = 300;
 
 /** Push frame the DO `ws.send`s. `t` discriminates the frame kind. Clients
  *  ignore unknown `t` values, so adding a frame kind is backward-compatible. */
@@ -247,12 +298,18 @@ export class ChainIngestDO {
       }
     })();
 
-    const prev = (await this.state.storage.get<string>('pendingTarget')) ?? '0';
-    const raised = target > BigInt(prev) ? target : BigInt(prev);
-    await this.state.storage.put({
-      pendingTarget: raised.toString(),
-      chainId: body.chainId,
-    });
+    // Durably record the trigger — write-guarded (see recordTrigger): an
+    // idle cron ping costs zero storage rows; only genuinely raised
+    // targets / first-contact `chainId` / a stale nonzero `attempts`
+    // write anything. `attempts` is reset only when no scan is live, so a
+    // fresh burst gets the full catch-up budget without an in-flight loop
+    // clobbering its own counter.
+    await recordTrigger(
+      this.state.storage,
+      body.chainId,
+      target,
+      !this.scanRunning,
+    );
 
     // ALWAYS (re)arm the alarm. The Cloudflare runtime never runs `alarm()`
     // concurrently with itself and `setAlarm` holds a single slot, so arming
@@ -263,12 +320,8 @@ export class ChainIngestDO {
     // `alarm()` already took its final `pendingTarget` read — but before
     // `finally` clears `scanRunning` — still leaves a pending alarm behind, so
     // the raised target is serviced promptly instead of waiting for the next
-    // cron ping. `attempts` is reset only when no scan is live, so a fresh burst
-    // gets the full catch-up budget without an in-flight loop clobbering its own
-    // counter.
-    if (!this.scanRunning) {
-      await this.state.storage.put({ attempts: 0 });
-    }
+    // cron ping. This is the one write an idle ping still pays — the safety
+    // property above is exactly why it cannot be guarded away.
     await this.state.storage.setAlarm(Date.now());
     return new Response('queued', { status: 202 });
   }
@@ -369,7 +422,7 @@ export class ChainIngestDO {
   }
 
   private async clearLoopState(): Promise<void> {
-    await this.state.storage.delete('attempts');
+    await clearAttempts(this.state.storage);
   }
 
   /**

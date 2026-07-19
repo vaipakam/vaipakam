@@ -18,12 +18,19 @@
   "compatibility_date": "2026-04-23",
   "compatibility_flags": ["nodejs_compat"],
 
-  // Cron — every minute. The chain-event scan rate-limits itself
-  // internally (per-chain round-robin + max-blocks-per-tick), so
-  // tighter schedules don't help. Matches the existing
-  // ops/hf-watcher cadence the indexer used to ride.
+  // Cron — every FIVE minutes (free-plan DO rows_written diet). The
+  // cron is only the time-driven BACKSTOP on the DO ingest path:
+  // webhook deliveries trigger the per-chain DO immediately on real
+  // events, so event latency does not ride this cadence — only the
+  // quiet-tick duties do (calendar sweep, market-expiry sweep, config
+  // backstop, the `notified` watermark refresh), and those tolerate
+  // minutes. Each cron ping costs Durable Object storage writes per
+  // chain, so every-minute pinging burned ~5x the DO row budget for
+  // no latency benefit. EXPECTED_SCAN_CADENCE_SEC (chainIngestDO.ts)
+  // MUST match this schedule — clients size rail-health windows from
+  // the value the DO reports.
   "triggers": {
-    "crons": ["* * * * *"],
+    "crons": ["*/5 * * * *"],
   },
 
   // D1 binding — the same `vaipakam-alerts-db` database that
