@@ -609,9 +609,17 @@ Governance effects:
 >   lending asset only — an illiquid loan pays the full (undiscounted)
 >   lending-asset LIF, consistent with the prior borrower-path posture and
 >   with a reward-eligible origination requiring a priceable asset. The
->   accept charge, the accept-preview quote, and the offer-match event all
->   compute this from one shared formula, so a borrower is quoted exactly
->   what they are charged.
+>   **accept charge and the accept-preview quote** compute this from one
+>   shared formula, so a borrower is quoted exactly what they are charged.
+>   The **offer-match event's `lifMatcherFee` field is gross/display-only**:
+>   it reports the **list-rate** matcher slice (`principal × LIF_bps ×
+>   matcherFee_bps`), NOT the borrower's tier-discounted figure — the actual
+>   matcher transfer is lower after the HoldOnly discount. (The event carries
+>   the list rate deliberately: folding the discount into the match event
+>   pushed `OfferMatchFacet` past the EIP-170 runtime limit, and the matcher
+>   slice is an informational log, not the borrower's charge.) Indexers/UI
+>   reading matcher kickbacks from this event MUST treat it as a gross
+>   upper bound, not the settled amount.
 > - **Full (borrower opt-in):** the borrower additionally pays a native-VPFI
 >   **tariff** `C*` from their own vault, credited to the recycle bucket
 >   **at initiation** (non-refundable, no rebate on any outcome), in

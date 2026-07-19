@@ -28,6 +28,16 @@ up-front VPFI custody; loans already open on the legacy custody path keep
 settling through their existing rebate/forfeit helpers unchanged. The
 per-party VPFI "Full" tariff is a separate later card.
 
-The accept charge, the accept-preview quote, and the offer-match event all
-share one fee-computation helper so a user is quoted exactly what they are
-charged. Closes #1352.
+The accept charge and the accept-preview quote share one fee-computation
+helper so a borrower is quoted exactly what they are charged. The offer-match
+event's matcher-fee field is **gross/display-only** — it logs the list-rate
+matcher slice, not the borrower's tier-discounted figure (folding the discount
+into that event pushed the match facet past the runtime-bytecode limit, and
+the field is an informational log rather than the borrower's charge).
+
+**Uniform 50% fee-discount ceiling.** The 50% cap the borrower Loan-Initiation
+Fee already respected is now applied symmetrically to the **lender yield-fee**
+discount as well. Governance can configure a per-tier discount as high as 90%,
+but the *applied* reduction on either fee line is clamped at 50%, so a
+high-tier lender can never under-collect treasury by more than half the yield
+fee. Closes #1352.

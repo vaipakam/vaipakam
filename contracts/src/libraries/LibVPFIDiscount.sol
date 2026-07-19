@@ -463,6 +463,15 @@ library LibVPFIDiscount {
         if (loan.startTime == 0 || block.timestamp <= loan.startTime) return 0;
         ( , uint16 effBps) = effectiveTierAndBps(loan.lender);
         avgBps = uint256(effBps);
+        // #1352 (Codex P2): the 50% fee-discount ceiling is a UNIFORM cap.
+        // `ConfigFacet.setVpfiTierDiscountBps` still permits per-tier values
+        // above `MAX_FEE_DISCOUNT_BPS` (up to 9000), so clamp here — the same
+        // clamp `holdOnlyBorrowerLif` applies to the borrower LIF — or a
+        // lender could realize a >50% yield-fee reduction and under-collect
+        // treasury on repay/preclose/refinance settlements.
+        if (avgBps > LibVaipakam.MAX_FEE_DISCOUNT_BPS) {
+            avgBps = LibVaipakam.MAX_FEE_DISCOUNT_BPS;
+        }
     }
 
     /**
@@ -484,6 +493,11 @@ library LibVPFIDiscount {
         if (loan.startTime == 0 || block.timestamp <= loan.startTime) return 0;
         ( , uint16 effBps) = effectiveTierAndBps(loan.borrower);
         avgBps = uint256(effBps);
+        // #1352 (Codex P2): uniform 50% fee-discount ceiling — symmetric with
+        // {lenderTimeWeightedDiscountBps} and `holdOnlyBorrowerLif`.
+        if (avgBps > LibVaipakam.MAX_FEE_DISCOUNT_BPS) {
+            avgBps = LibVaipakam.MAX_FEE_DISCOUNT_BPS;
+        }
     }
 
     /**

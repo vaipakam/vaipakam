@@ -12,6 +12,8 @@ import {VPFIDiscountFacet} from "../src/facets/VPFIDiscountFacet.sol";
 import {VPFITokenFacet} from "../src/facets/VPFITokenFacet.sol";
 import {TreasuryFacet} from "../src/facets/TreasuryFacet.sol";
 import {OfferCreateFacet} from "../src/facets/OfferCreateFacet.sol";
+import {ConfigFacet} from "../src/facets/ConfigFacet.sol";
+import {LoanFacet} from "../src/facets/LoanFacet.sol";
 import {OfferAcceptFacet} from "../src/facets/OfferAcceptFacet.sol";
 import {OracleFacet} from "../src/facets/OracleFacet.sol";
 import {VaultFactoryFacet} from "../src/facets/VaultFactoryFacet.sol";
@@ -757,6 +759,89 @@ contract VPFIDiscountFacetTest is SetupTest {
             principal,
             "lender vault at least principal"
         );
+    }
+
+    /// @notice #1352 (Codex P2) — the lender yield-fee discount is clamped at
+    ///         the uniform 50% ceiling (`MAX_FEE_DISCOUNT_BPS`), even when
+    ///         governance configures a tier discount above it (the setter
+    ///         permits up to `MAX_DISCOUNT_BPS = 9000`). Differential proof
+    ///         over the direct-reduction path (peg unset, so both loans take
+    ///         the SAME settlement branch): two identical loans by the same
+    ///         tier-4 lender — one with the tier-4 discount set to exactly 50%,
+    ///         one set to 90% — must leave the SAME lending-asset yield fee in
+    ///         the treasury. Without the clamp the 90% loan would let the
+    ///         treasury collect only 10% (a 90% reduction) vs. 50%, so equality
+    ///         ⇒ the 90% tier was clamped to 50%. The full yield fee is
+    ///         identical across the two loans (same principal / rate / duration).
+    function testLenderYieldFeeDiscountClampedAtFiftyPercent() public {
+        uint256 principal = 10_000 ether;
+
+        // Stake the lender above the tier-4 threshold (20,000e18) so both loans
+        // resolve at tier 4, and consent so the discount path engages.
+        vpfiToken.transfer(lender, 30_000 ether);
+        vm.startPrank(lender);
+        vpfiToken.approve(address(diamond), 30_000 ether);
+        _facet().depositVPFIToVault(25_000 ether); // tier 4 (> 20,000e18)
+        _facet().setVPFIDiscountConsent(true);
+        vm.stopPrank();
+        vm.warp(block.timestamp + 4 days); // clear min-history gate
+
+        // Force the DIRECT-REDUCTION branch (E-1 #1203): with the VPFI price
+        // peg unset, `tryApplyYieldFee` fails and settlement reduces the
+        // lending-asset treasury cut by the (clamped) tier bps. This keeps both
+        // loans on one path, so the treasury delta is a clean, monotonic proxy
+        // for the applied discount.
+        _facet().setVPFIDiscountRate(0);
+
+        // ── Loan A: tier-4 discount = exactly 50% (the clamp boundary) ──
+        ConfigFacet(address(diamond)).setVpfiTierDiscountBps(1000, 1500, 2000, 5000);
+        uint256 treasuryFeeA = _openRepayAndMeasureTreasuryYieldFee(principal, 1);
+
+        // ── Loan B: tier-4 discount = 90% (above the clamp) ──
+        ConfigFacet(address(diamond)).setVpfiTierDiscountBps(1000, 1500, 2000, 9000);
+        uint256 treasuryFeeB = _openRepayAndMeasureTreasuryYieldFee(principal, 2);
+
+        assertGt(treasuryFeeA, 0, "clamp test: treasury collected the un-discounted half");
+        assertEq(
+            treasuryFeeB,
+            treasuryFeeA,
+            "90% tier clamps to the same 50% yield-fee discount as the 50% tier"
+        );
+    }
+
+    /// @dev Opens a fresh lender-funded loan, advances a full 30-day term,
+    ///      repays it, and returns the lending-asset yield fee the treasury
+    ///      actually collected at settlement. Used by the yield-fee clamp
+    ///      differential above. `expectedLoanId` is the sequential id.
+    function _openRepayAndMeasureTreasuryYieldFee(
+        uint256 principal,
+        uint256 expectedLoanId
+    ) internal returns (uint256 treasuryFee) {
+        uint256 offerId = _createLenderErc20Offer(principal);
+        _approveAndAcceptForLoan(offerId, principal);
+
+        // Warp to THIS loan's due, read from storage. Deriving the target from
+        // an SLOAD (`loan.startTime`) rather than `block.timestamp + 30 days`
+        // is deliberate: this helper runs twice, and viaIR folds a
+        // `block.timestamp`-derived warp target (even via a local) back to a
+        // single cached `TIMESTAMP`, so the second warp lands at
+        // now + 30 days instead of open + 30 days — overshooting the grace
+        // period. The per-loan due is full-interest and exactly at maturity.
+        LibVaipakam.Loan memory ln = LoanFacet(address(diamond)).getLoanDetails(
+            expectedLoanId
+        );
+        vm.warp(ln.startTime + ln.durationDays * 1 days); // due; full interest, within grace
+
+        uint256 approvalPad = principal + (principal / 10);
+        ERC20Mock(mockERC20).mint(borrower, approvalPad);
+        vm.prank(borrower);
+        IERC20(mockERC20).approve(address(diamond), approvalPad);
+
+        uint256 treasuryErc20Before = IERC20(mockERC20).balanceOf(treasuryRecipient);
+        vm.prank(borrower);
+        RepayFacet(address(diamond)).repayLoan(expectedLoanId);
+
+        treasuryFee = IERC20(mockERC20).balanceOf(treasuryRecipient) - treasuryErc20Before;
     }
 
     /// @notice Fallback: lender has consent but ZERO VPFI in vault → the

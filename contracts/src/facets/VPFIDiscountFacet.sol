@@ -501,7 +501,20 @@ contract VPFIDiscountFacet is
      * @notice Quote the VPFI required to apply the borrower discount on a
      *         given offer — only meaningful when the borrower address is
      *         known (offer is a Borrower offer).
-     * @dev Frontend helper and acceptance-time pre-flight check. Returns
+     * @dev **DEPRECATED (#1352 HoldOnly hybrid).** This view models the
+     *      retired peg-custody borrower LIF: it returns a fee-sized
+     *      `vpfiRequired` the borrower must HOLD in vault and gates on the
+     *      VPFI price peg. Under the #1352 HoldOnly mechanic no VPFI is moved
+     *      at accept — the discount is a consent-gated, liquidity-gated
+     *      hold-tier reduction applied directly to the lending-asset LIF, with
+     *      no peg dependency — so a consenting tier holder can be shown "no
+     *      discount" here even though the accept path WILL charge the
+     *      discounted LIF. The #1352-accurate surface is
+     *      `OfferPreviewFacet.previewAccept(...).lifEstimate`
+     *      ({LibVPFIDiscount.holdOnlyBorrowerLif}); the frontend switch to it
+     *      is tracked under PR-8 (#1355). Retained only until that switch
+     *      lands, to keep the modal's current ABI stable.
+     *      Frontend helper and acceptance-time pre-flight check. Returns
      *      `eligible == false` if the offer is non-ERC20, the lending asset
      *      is illiquid, any oracle is missing/stale, the admin has not
      *      configured the rate / ETH reference asset, or the known borrower
