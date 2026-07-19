@@ -310,6 +310,32 @@ launch-time status stated honestly:
 | Forfeited interaction rewards | `InteractionRewardsFacet` forfeit → treasury | **LIVE** (see below) |
 | Service-bond slashes (#1219) | — | Future |
 
+> **SUPERSEDED by D1 decision (b), owner 2026-07-18 (see §4.2 banner +
+> [`VpfiRecyclingCompletionPlan.md`](VpfiRecyclingCompletionPlan.md) §M2).**
+> This table (and the "bootstrap honesty" note below) predates the D1
+> tariff decision and describes the peg-gated **conversion** approach. Two
+> corrections for implementers:
+> - **`FullTariff` is the load-bearing LAUNCH loan-fee absorption class**,
+>   missing from the table above. Add a row: **Full tariff `C*` (LIF·year,
+>   per-party)** — code anchor `credit(RecycleSource.FullTariff, …)` at
+>   loan-init (completion-plan #1347) — **status: launches with M2, NOT
+>   peg-gated** (the tariff is a native-VPFI quantity, no price peg). An
+>   implementer must wire `credit(FullTariff, …)` and count it in `Ā`;
+>   omitting it leaves the adopted Layer-2 path out of the coupled term.
+> - The **peg-gated LIF/yield-fee-in-VPFI conversion classes** (rows 1–3,
+>   5) are **market-era-deferred** (Layer 3, §4.2/§13) — they are NOT the
+>   launch ramp. The "bootstrap honesty" note below (which says the
+>   LIF/yield families start feeding when the peg is configured) reflects
+>   the retired approach: under D1 (b) the launch absorption ramp is the
+>   **Full tariff + notification tariff (M1, #1346) + forfeits**, and the
+>   peg is intentionally never configured at launch. **Status of the
+>   notification class:** it credits the bucket only after **M1 (#1346)**
+>   re-denominates the fee to a flat VPFI tariff and reroutes it through
+>   `credit(NotificationFee, …)`; before M1 the `LibNotificationFee.bill`
+>   path sends vault VPFI straight to treasury and feeds nothing, so an
+>   implementer must not count it as a live `Ā` source until M1 has landed
+>   (the table row above marks the *pre-M1* fixed-peg path).
+
 Two consequences the design owns explicitly:
 
 - **Bootstrap honesty (P3):** until the peg is set, `A ≈ notification fees +
@@ -389,12 +415,52 @@ discount entitlement. This replaces the peg-gated conversion family as the
 highest-volume absorption path and makes the ENTIRE absorption plan
 launchable with zero legal spend.
 
+> **SUPERSEDED — D1 decision (b), owner 2026-07-18 (see §4.2 banner +
+> [`VpfiRecyclingCompletionPlan.md`](VpfiRecyclingCompletionPlan.md) §M2).**
+> The `k × loanVolumeETH × durationDays` (ETH·day) formula and the "buy the
+> entitlement" purchase framing in this one-line summary are **retired**.
+> The adopted launch tariff is the **LIF·year dual-fee package**
+> (`C* = baseLif_list × tYears × K`, [`VpfiAbsorptionDistributionFormulaRedesign.md`](VpfiAbsorptionDistributionFormulaRedesign.md)
+> rev 15); the tariff is a **fee** (a native-VPFI quantity charged at
+> initiation), never a purchase/price. Layer 2 remains the load-bearing
+> launch absorption path — only its formula and framing change. Read this
+> summary through §4.2's superseded banner.
+
 **Layer 3 — optional, market-era only:** `FixedRate`/`MarketFeed` activation
 (§13) wakes the conversion-based classes (fee *equivalents* paid in VPFI).
 No longer load-bearing for absorption — purely a UX/pricing refinement once
 an organic market exists, behind the one bounded legal glance.
 
 ### 4.2 Tariff-priced discount entitlements (Layer 2, adopted)
+
+> **SUPERSEDED — D1 decision (b), owner 2026-07-18 (recycling completion
+> plan [`VpfiRecyclingCompletionPlan.md`](VpfiRecyclingCompletionPlan.md)
+> §M2 / §7.1).** The **`k × ETH-volume × day` (ETH·day) tariff formula**
+> below is **retired**. The launch-era tariff is the **LIF·year dual-fee
+> package** in
+> [`VpfiAbsorptionDistributionFormulaRedesign.md`](VpfiAbsorptionDistributionFormulaRedesign.md)
+> (pinned at **rev 15**): `C* = baseLif_list × tYears × K` (VPFI per
+> list-LIF·year, default `K = 5`), charged **per Full party** from that
+> party's own vault → recycle bucket, with the loan-side reward cap
+> `½ × C* × (1 − m_reward)` replacing the #1008 ETH ratio. The
+> `recycleTariffKPer1e18EthDay` knob named below is **unwired and will be
+> deleted** once no caller remains (completion plan §M2). What survives
+> from this section unchanged: the **load-bearing "tariff, not conversion"
+> rule** (the charge is a native-VPFI QUANTITY, never a fee-value price
+> conversion — §13/§14.2), absorb-at-initiation into the bucket
+> (non-refundable, loan-bound, illiquid-excluded), and the governor's
+> `Ā` / margin coupling. The paragraphs below are retained for the design
+> record; read them through the LIF·year formula, not the ETH·day one.
+>
+> **Excluded from the carry-forward — purchase framing (legal surface).**
+> The retained mechanics below use "buys the entitlement" and "the
+> discounted schedule … was purchased" wording. That **purchase / price
+> framing does NOT carry forward** into the user-facing copy or spec for
+> the Full tariff: the tariff is a **fee** (a native-VPFI quantity
+> charged at initiation), never framed as buying, redeeming, or pricing
+> VPFI, and never a published price — consistent with §13/§14.2 and the
+> RL-6 copy rules. Read those verbs internally as "the tariff is charged
+> for the discounted fee schedule," not as a purchase.
 
 **The load-bearing rule — tariff, not conversion:** the VPFI amount is a
 QUANTITY schedule sized by the loan's characteristics (`k` VPFI per
