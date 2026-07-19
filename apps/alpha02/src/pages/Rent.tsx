@@ -280,8 +280,8 @@ function ListNftFlow() {
       standard === 'erc1155' ? ` ×${quantity || '1'}` : ''
     }`;
     return {
-      youReceive: `~${feesStr} in rental fees for the full ${formatDurationDays(days)} term — the renter prepays everything up front.`,
-      youLock: `Your NFT ${nftStr} moves into your vault and stays there for the whole listing and rental.`,
+      youReceive: copy.rent.receiptListYouReceive(feesStr, formatDurationDays(days)),
+      youLock: copy.rent.receiptListYouLock(nftStr),
       youMayOwe: copy.rent.nothing,
       youCanLose: `${copy.rent.listYouCanLose} ${copy.rent.notDebt}`,
       fees: copy.fees
@@ -899,12 +899,12 @@ function RentNftFlow() {
     const nftStr = `${shortAddress(selected.lendingAsset)} #${selected.tokenId}`;
     const durationStr = formatDurationDays(selected.durationDays);
     return {
-      youReceive: `Use rights of ${nftStr} for ${durationStr}, starting now. ${copy.rent.custodyNote}`,
-      youLock: `${totalStr} prepaid — the full term’s fees plus a ${bufferPct(bufferBps)} refundable buffer.`,
+      youReceive: `${copy.rent.receiptRentYouReceive(nftStr, durationStr)} ${copy.rent.custodyNote}`,
+      youLock: copy.rent.receiptRentYouLock(totalStr, bufferPct(bufferBps)),
       youMayOwe: `${copy.rent.rentYouMayOwe} ${copy.rent.notDebt}`,
-      youCanLose: `The ${bufferPct(bufferBps)} buffer if the rental isn’t closed on time. Your use rights end at expiry either way.`,
+      youCanLose: copy.rent.receiptRentYouCanLose(bufferPct(bufferBps)),
       fees: copy.rent.rentFeesNote,
-      whenThisEnds: `Rights reset automatically after ${durationStr}. Close the rental on time from its detail page to get the buffer back.`,
+      whenThisEnds: copy.rent.receiptRentWhenEnds(durationStr),
     };
   }, [selected, prepayMeta.data, totalPrepay, bufferBps]);
 

@@ -751,6 +751,31 @@ const copySource = {
   },
 
   rent: {
+    // Review-receipt lines (extracted from Rent.tsx inline templates).
+    receiptListYouReceive: tmpl(
+      '~{{fees}} in rental fees for the full {{term}} term — the renter prepays everything up front.',
+      ['fees', 'term'],
+    ),
+    receiptListYouLock: tmpl(
+      'Your NFT {{nft}} moves into your vault and stays there for the whole listing and rental.',
+      ['nft'],
+    ),
+    receiptRentYouReceive: tmpl(
+      'Use rights of {{nft}} for {{duration}}, starting now.',
+      ['nft', 'duration'],
+    ),
+    receiptRentYouLock: tmpl(
+      '{{total}} prepaid — the full term’s fees plus a {{buffer}} refundable buffer.',
+      ['total', 'buffer'],
+    ),
+    receiptRentYouCanLose: tmpl(
+      'The {{buffer}} buffer if the rental isn’t closed on time. Your use rights end at expiry either way.',
+      ['buffer'],
+    ),
+    receiptRentWhenEnds: tmpl(
+      'Rights reset automatically after {{duration}}. Close the rental on time from its detail page to get the buffer back.',
+      ['duration'],
+    ),
     stepYourNft: 'Your NFT & price',
     stepChooseNft: 'Choose an NFT',
     stepReview: 'Review & sign',

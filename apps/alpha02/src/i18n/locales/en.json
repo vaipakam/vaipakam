@@ -468,6 +468,12 @@
       "defaultOutcome": "If the borrower defaults, your recovery depends on their collateral."
     },
     "rent": {
+      "receiptListYouReceive": "~{{fees}} in rental fees for the full {{term}} term — the renter prepays everything up front.",
+      "receiptListYouLock": "Your NFT {{nft}} moves into your vault and stays there for the whole listing and rental.",
+      "receiptRentYouReceive": "Use rights of {{nft}} for {{duration}}, starting now.",
+      "receiptRentYouLock": "{{total}} prepaid — the full term’s fees plus a {{buffer}} refundable buffer.",
+      "receiptRentYouCanLose": "The {{buffer}} buffer if the rental isn’t closed on time. Your use rights end at expiry either way.",
+      "receiptRentWhenEnds": "Rights reset automatically after {{duration}}. Close the rental on time from its detail page to get the buffer back.",
       "stepYourNft": "Your NFT & price",
       "stepChooseNft": "Choose an NFT",
       "stepReview": "Review & sign",
