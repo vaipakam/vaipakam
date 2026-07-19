@@ -66,7 +66,7 @@ export function LoanRow({
       {healthOverrides && health ? (
         <span
           className={`badge badge-${health.badge}`}
-          title={`Health ${health.ratio} — 1.00 is the liquidation line`}
+          title={copy.risk.healthTitle(health.ratio)}
         >
           {health.label}
         </span>

@@ -1334,6 +1334,10 @@ const copySource = {
       confirmCancel: 'Confirm — cancel & unlock my assets',
       cancelling: 'Cancelling…',
       receiptNothing: 'Nothing.',
+      receiptUnlocked: tmpl(
+        '{{locked}} back — unlocked from this offer immediately.',
+        ['locked'],
+      ),
       receiptLose: 'Nothing — cancelling an open offer has no penalty.',
       receiptFees: 'None (network gas only).',
       receiptEnds: 'Immediately — the offer leaves the book and can’t be accepted anymore. Post a new offer any time.',
@@ -1591,6 +1595,10 @@ const copySource = {
   // column is always "Rate (APR %)", never "price"; exact bps live in
   // tooltips only.
   desk: {
+    // Tenor-tab + mid tooltips (extracted from DeskHeader.tsx).
+    tenorLiveTitle: tmpl('{{tenor}} — live offers on the book', ['tenor']),
+    tenorNoOffersTitle: tmpl('{{tenor}} — no live offers yet', ['tenor']),
+    midQuotedTitle: tmpl('{{bps}} bps (quoted, not executed)', ['bps']),
     marketsLoading: 'Loading markets…',
     loadMarket: 'Load market',
     bookLoading: 'Loading the order book…',
@@ -1951,6 +1959,22 @@ const copySource = {
 
   vpfi: {
     nothing: 'Nothing.',
+    // Interpolated receipt / hint lines (extracted from Vpfi.tsx inline
+    // templates so they translate).
+    depositYouLock: tmpl(
+      '{{amt}} moves from your wallet into your Vaipakam Vault.',
+      ['amt'],
+    ),
+    withdrawYouReceive: tmpl('{{amt}} back in your wallet.', ['amt']),
+    availabilityCheckFailed: tmpl(
+      'We couldn’t check VPFI availability on {{chain}} right now. Please try again in a moment.',
+      ['chain'],
+    ),
+    walletBalanceHint: tmpl('In your wallet: {{amount}} VPFI', ['amount']),
+    withdrawableHint: tmpl(
+      'Withdrawable now: {{free}} VPFI of {{vault}} in your vault',
+      ['free', 'vault'],
+    ),
     receiptDeposit: {
       youReceive: 'Nothing now — a growing fee discount on eligible loans over time.',
       youCanLose: 'Nothing — free VPFI in your vault stays withdrawable.',
@@ -2406,6 +2430,8 @@ const copySource = {
   },
 
   risk: {
+    // Health badge tooltip (extracted from LoanRow.tsx).
+    healthTitle: tmpl('Health {{ratio}} — 1.00 is the liquidation line', ['ratio']),
     notPriced:
       'This loan’s assets aren’t priced by the protocol, so there is no automatic liquidation — the collateral transfers as-is on default.',
     healthy: 'Healthy',

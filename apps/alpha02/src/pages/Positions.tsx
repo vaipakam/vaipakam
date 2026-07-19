@@ -119,7 +119,7 @@ function OfferRow({ offer }: { offer: IndexedOffer }) {
         <div className="card" style={{ marginTop: 8 }}>
           <ReviewReceipt
             data={{
-              youReceive: `${lockedStr} back — unlocked from this offer immediately.`,
+              youReceive: copy.positions.offerRow.receiptUnlocked(lockedStr),
               youLock: copy.positions.offerRow.receiptNothing,
               youMayOwe: copy.positions.offerRow.receiptNothing,
               youCanLose: copy.positions.offerRow.receiptLose,

@@ -860,6 +860,7 @@
         "confirmCancel": "Confirm — cancel & unlock my assets",
         "cancelling": "Cancelling…",
         "receiptNothing": "Nothing.",
+        "receiptUnlocked": "{{locked}} back — unlocked from this offer immediately.",
         "receiptLose": "Nothing — cancelling an open offer has no penalty.",
         "receiptFees": "None (network gas only).",
         "receiptEnds": "Immediately — the offer leaves the book and can’t be accepted anymore. Post a new offer any time."
@@ -1009,6 +1010,9 @@
       "borrowerOffer": "Borrow request"
     },
     "desk": {
+      "tenorLiveTitle": "{{tenor}} — live offers on the book",
+      "tenorNoOffersTitle": "{{tenor}} — no live offers yet",
+      "midQuotedTitle": "{{bps}} bps (quoted, not executed)",
       "marketsLoading": "Loading markets…",
       "loadMarket": "Load market",
       "bookLoading": "Loading the order book…",
@@ -1232,6 +1236,11 @@
     },
     "vpfi": {
       "nothing": "Nothing.",
+      "depositYouLock": "{{amt}} moves from your wallet into your Vaipakam Vault.",
+      "withdrawYouReceive": "{{amt}} back in your wallet.",
+      "availabilityCheckFailed": "We couldn’t check VPFI availability on {{chain}} right now. Please try again in a moment.",
+      "walletBalanceHint": "In your wallet: {{amount}} VPFI",
+      "withdrawableHint": "Withdrawable now: {{free}} VPFI of {{vault}} in your vault",
       "receiptDeposit": {
         "youReceive": "Nothing now — a growing fee discount on eligible loans over time.",
         "youCanLose": "Nothing — free VPFI in your vault stays withdrawable.",
@@ -1518,6 +1527,7 @@
       "line3": "Repaying and closing existing positions stays open so your counterparties can be made whole, but claims and payouts to this wallet are blocked while it is flagged. If you believe this is an error, contact the oracle provider (Chainalysis)."
     },
     "risk": {
+      "healthTitle": "Health {{ratio}} — 1.00 is the liquidation line",
       "notPriced": "This loan’s assets aren’t priced by the protocol, so there is no automatic liquidation — the collateral transfers as-is on default.",
       "healthy": "Healthy",
       "watch": "Watch closely",

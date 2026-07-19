@@ -200,8 +200,8 @@ export function DeskHeader({
                 }`}
                 title={
                   tenorLive.has(d)
-                    ? `${formatDurationDays(d)} — live offers on the book`
-                    : `${formatDurationDays(d)} — no live offers yet`
+                    ? copy.desk.tenorLiveTitle(formatDurationDays(d))
+                    : copy.desk.tenorNoOffersTitle(formatDurationDays(d))
                 }
                 onClick={() => onDays(d)}
               >
@@ -286,7 +286,7 @@ export function DeskHeader({
           <span
             className="desk-stat-value"
             title={
-              ladder?.midBps != null ? `${ladder.midBps} bps (quoted, not executed)` : undefined
+              ladder?.midBps != null ? copy.desk.midQuotedTitle(ladder.midBps) : undefined
             }
           >
             {ladder?.midBps != null
