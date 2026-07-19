@@ -327,8 +327,14 @@ launch-time status stated honestly:
 >   launch ramp. The "bootstrap honesty" note below (which says the
 >   LIF/yield families start feeding when the peg is configured) reflects
 >   the retired approach: under D1 (b) the launch absorption ramp is the
->   **Full tariff + notification tariff (M1, LIVE) + forfeits**, and the
->   peg is intentionally never configured at launch.
+>   **Full tariff + notification tariff (M1, #1346) + forfeits**, and the
+>   peg is intentionally never configured at launch. **Status of the
+>   notification class:** it credits the bucket only after **M1 (#1346)**
+>   re-denominates the fee to a flat VPFI tariff and reroutes it through
+>   `credit(NotificationFee, …)`; before M1 the `LibNotificationFee.bill`
+>   path sends vault VPFI straight to treasury and feeds nothing, so an
+>   implementer must not count it as a live `Ā` source until M1 has landed
+>   (the table row above marks the *pre-M1* fixed-peg path).
 
 Two consequences the design owns explicitly:
 
