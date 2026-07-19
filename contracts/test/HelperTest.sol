@@ -37,6 +37,7 @@ import {LenderIntentFacet} from "../src/facets/LenderIntentFacet.sol";
 import {RiskAccessFacet} from "../src/facets/RiskAccessFacet.sol";
 import {RiskPreviewFacet} from "../src/facets/RiskPreviewFacet.sol";
 import {MulticallFacet} from "../src/facets/MulticallFacet.sol";
+import {FeeEntitlementFacet} from "../src/facets/FeeEntitlementFacet.sol";
 import {AggregatorAdapterFactoryFacet} from "../src/facets/AggregatorAdapterFactoryFacet.sol";
 import {BackstopFacet} from "../src/facets/BackstopFacet.sol";
 import {ReceiverFacet} from "../src/facets/ReceiverFacet.sol";
@@ -941,6 +942,17 @@ contract HelperTest {
         selectors[0] = MulticallFacet.multicall.selector;
     }
 
+    function getFeeEntitlementFacetSelectors()
+        public
+        pure
+        returns (bytes4[] memory selectors)
+    {
+        selectors = new bytes4[](3);
+        selectors[0] = FeeEntitlementFacet.chargeFullTariff.selector;
+        selectors[1] = FeeEntitlementFacet.quoteCStar.selector;
+        selectors[2] = FeeEntitlementFacet.getFeeEntitlement.selector;
+    }
+
     function getAggregatorAdapterFactoryFacetSelectors()
         public
         pure
@@ -1539,7 +1551,7 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](84);
+        selectors = new bytes4[](87);
         selectors[0] = ConfigFacet.setFeesConfig.selector;
         selectors[1] = ConfigFacet.setLiquidationConfig.selector;
         selectors[2] = ConfigFacet.setRiskConfig.selector;
@@ -1682,6 +1694,10 @@ contract HelperTest {
         // RL-4 (#1306) — recycled-stream allocation register.
         selectors[82] = ConfigFacet.setRecycleRegisterKeeperBps.selector;
         selectors[83] = ConfigFacet.getRecycleRegisterState.selector;
+        // #1347 (M2 PR-5a/5b) — Full VPFI tariff knobs.
+        selectors[84] = ConfigFacet.setTariffKPerLifYear.selector;
+        selectors[85] = ConfigFacet.setFeeEntitlementEnabled.selector;
+        selectors[86] = ConfigFacet.getFeeEntitlementConfig.selector;
         return selectors;
     }
 
