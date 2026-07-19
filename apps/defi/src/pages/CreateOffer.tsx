@@ -135,7 +135,7 @@ export default function CreateOffer() {
             : (max / 100).toFixed(2).replace(/\.?0+$/, '');
         })(),
       }
-    : { treasuryFee: '1', loanInitiationFee: '0.1', maxDiscount: '24' };
+    : { treasuryFee: '2', loanInitiationFee: '0.2', maxDiscount: '24' }; // #1352 fee freeze defaults
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
 

@@ -64,12 +64,14 @@ interface KnobSpec {
 
 const KNOB_REGISTRY: Record<KnobName, KnobSpec> = {
   treasuryFeeBps: {
-    defaultValue: 100,
+    // 2% since the #1352 fee freeze (mirrors LibVaipakam.TREASURY_FEE_BPS).
+    defaultValue: 200,
     read: (c) => (c ? c.treasuryFeeBps : null),
     format: 'percent',
   },
   loanInitiationFeeBps: {
-    defaultValue: 10,
+    // 0.2% since the #1352 fee freeze (mirrors LibVaipakam.LOAN_INITIATION_FEE_BPS).
+    defaultValue: 20,
     read: (c) => (c ? c.loanInitiationFeeBps : null),
     format: 'percent',
   },

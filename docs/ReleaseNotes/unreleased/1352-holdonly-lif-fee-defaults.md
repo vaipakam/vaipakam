@@ -47,4 +47,11 @@ the **list-rate schedule** the loan was originated under — a consenting
 tier-holding borrower pays a lower effective rate after their HoldOnly discount,
 derivable from their consent + tier. The client-side default fee mirrors and the
 stale-facet upgrade script's selector list were also brought in sync with the
-new defaults. Closes #1352.
+new defaults.
+
+The connected-app accept modal was reframed to match the HoldOnly mechanic: a
+consenting tier-holder now sees the discounted Loan-Initiation Fee charged in
+the lending asset (with net proceeds = principal − fee), instead of the old
+"pay the full fee in VPFI and receive a later rebate" framing that no longer
+matches how the fee is charged. (The broader Full-tariff frontend surface
+remains tracked under PR-8.) Closes #1352.

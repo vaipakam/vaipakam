@@ -117,7 +117,7 @@ export function LenderDiscountCard({ loanId, lender }: Props) {
     ? (protocolConfig.treasuryFeeBps / 100).toFixed(
         protocolConfig.treasuryFeeBps % 100 === 0 ? 0 : 2,
       )
-    : '1';
+    : '2'; // #1352 fee freeze: 2% default when config is pending/unavailable
 
   return (
     <div className="card">

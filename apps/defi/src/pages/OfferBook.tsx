@@ -215,18 +215,11 @@ interface DiscountPreview {
   tier: number;
 }
 
-// Tier → effective initiation-fee percent after the tiered discount, per
-// docs/TokenomicsTechSpec.md §6. Tier 0 means no discount (0.1% flat).
-// Phase 5 removed the inline "tierFeeLabel" render helper since the
-// flow now always charges the full 0.1% LIF in VPFI up-front and pays
-// a time-weighted rebate later — the per-tier effective-fee label no
-// longer applies at quote time. Rebate percentage is shown directly.
-
-function tierDiscountPct(tier: number, config: ProtocolConfig | null): string {
-  if (tier < 1 || tier > 4) return '0%';
-  const bps = config?.tierDiscountBps[tier - 1] ?? 0;
-  return formatBpsPct(bps);
-}
+// #1352 HoldOnly: the borrower discount is now a direct reduction of the
+// lending-asset LIF, computed inline in the accept modal from the effective
+// tier bps (clamped to the 50% ceiling). The former `tierDiscountPct` helper —
+// a leftover of the retired peg-custody rebate framing — was removed with the
+// modal reframe; the modal renders the tier discount % directly.
 
 /** BPS → "0.1%" / "10%" — min of 3 sig figs to avoid rendering "0.08%" as "0.1%".
  *  Locale-aware: emits "5,00 %" in fr-FR / "5.00%" in en-US / "٥٫٠٠٪" in ar etc.
@@ -1789,42 +1782,40 @@ function AcceptReviewModal({ offer, illiquid, consent, onConsentChange, submitti
           )}
 
           {isERC20 && (() => {
-            const discountFires = !!discountPreview?.willFire;
             const baseFeeBps = BigInt(protocolConfig?.loanInitiationFeeBps ?? 20);
             const normalFee = (headlineAmount * baseFeeBps) / 10000n;
-            const netToBorrower = discountFires ? headlineAmount : headlineAmount - normalFee;
             const tier = discountPreview?.tier ?? 0;
+            // #1352 HoldOnly: a consenting tier-holder's discount now reduces the
+            // Loan Initiation Fee DIRECTLY in the lending asset (no VPFI moved,
+            // no rebate). It applies on a liquid loan (the caller already gates
+            // on `principalLiquidity === 0`) when platform consent is on and the
+            // effective tier ≥ 1. The tier discount is clamped to the uniform
+            // 50% ceiling, matching the on-chain `holdOnlyBorrowerLif` cap.
+            const holdApplies = !!discountPreview?.consentEnabled && tier >= 1;
+            const tierBps = holdApplies && protocolConfig
+              ? Math.min(protocolConfig.tierDiscountBps[tier - 1] ?? 0, 5000)
+              : 0;
+            const effectiveFee = normalFee - (normalFee * BigInt(tierBps)) / 10000n;
+            const netToBorrower = headlineAmount - effectiveFee;
             const baseFeePctLabel = formatBpsPct(protocolConfig?.loanInitiationFeeBps ?? 20);
             return (
               <>
                 <dt style={{ opacity: 0.7 }}>Loan Initiation Fee</dt>
                 <dd style={{ margin: 0 }}>
-                  {discountFires ? (
-                    <>
-                      <span className="mono">{Number(discountPreview!.vpfiRequired) / 1e18}</span>{' '}
-                      VPFI{' '}
-                      <span style={{ opacity: 0.6 }}>
-                        (full {baseFeePctLabel} equivalent paid from your vault into protocol custody — tier-{tier} rebate up to {tierDiscountPct(tier, protocolConfig)} earned time-weighted, claimable at proper loan close)
-                      </span>
-                    </>
-                  ) : (
-                    <>
-                      <span className="mono"><TokenAmount amount={normalFee} address={offer.lendingAsset} compact /></span>{' '}
-                      <AssetSymbol address={offer.lendingAsset} />
-                      <span style={{ opacity: 0.6 }}> ({baseFeePctLabel} — routed to treasury at loan start)</span>
-                    </>
-                  )}
+                  <span className="mono"><TokenAmount amount={effectiveFee} address={offer.lendingAsset} compact /></span>{' '}
+                  <AssetSymbol address={offer.lendingAsset} />
+                  <span style={{ opacity: 0.6 }}>
+                    {holdApplies
+                      ? ` (${baseFeePctLabel} list − ${(tierBps / 100).toString()}% tier-${tier} hold discount, charged in the lending asset — no VPFI moved)`
+                      : ` (${baseFeePctLabel} — routed to treasury at loan start)`}
+                  </span>
                 </dd>
 
                 <dt style={{ opacity: 0.7 }}>Net proceeds to borrower</dt>
                 <dd style={{ margin: 0 }}>
                   <span className="mono"><TokenAmount amount={netToBorrower} address={offer.lendingAsset} compact /></span>{' '}
                   <AssetSymbol address={offer.lendingAsset} />
-                  <span style={{ opacity: 0.6 }}>
-                    {discountFires
-                      ? ' (full principal — fee paid separately in VPFI; borrower still owes full principal back)'
-                      : ' (borrower still owes full principal back)'}
-                  </span>
+                  <span style={{ opacity: 0.6 }}> (principal − Loan Initiation Fee; borrower still owes full principal back)</span>
                 </dd>
               </>
             );
@@ -1857,53 +1848,51 @@ function AcceptReviewModal({ offer, illiquid, consent, onConsentChange, submitti
             consent + VPFI-in-vault check that governs the tiered discount
             (0.09% / 0.085% / 0.08% / 0.076% by vault tier) is driven by the
             borrower side. */}
-        {isERC20 && offer.offerType === 0 && offer.principalLiquidity === 0 && discountPreview && (
+        {isERC20 && offer.offerType === 0 && offer.principalLiquidity === 0 && discountPreview && (() => {
+          // #1352 HoldOnly reframe: the borrower discount is a direct reduction
+          // of the lending-asset LIF (no VPFI custody, no rebate). It applies
+          // when platform consent is on and the effective tier ≥ 1; the old
+          // peg-custody gates (`willFire` / `vpfiRequired` / `vaultVpfi ≥
+          // required`) no longer drive it.
+          const tier = discountPreview.tier ?? 0;
+          const holdApplies = !!discountPreview.consentEnabled && tier >= 1;
+          const tierBps = holdApplies && protocolConfig
+            ? Math.min(protocolConfig.tierDiscountBps[tier - 1] ?? 0, 5000)
+            : 0;
+          const lifPct = formatBpsPct(protocolConfig?.loanInitiationFeeBps ?? 20);
+          return (
           <div
             className="alert"
             style={{
               marginTop: 0,
-              borderColor: discountPreview.willFire ? 'var(--accent-green, #10b981)' : undefined,
-              background: discountPreview.willFire ? 'rgba(16, 185, 129, 0.08)' : undefined,
+              borderColor: holdApplies ? 'var(--accent-green, #10b981)' : undefined,
+              background: holdApplies ? 'rgba(16, 185, 129, 0.08)' : undefined,
             }}
           >
             <ShieldCheck
               size={18}
-              style={{ color: discountPreview.willFire ? 'var(--accent-green, #10b981)' : undefined }}
+              style={{ color: holdApplies ? 'var(--accent-green, #10b981)' : undefined }}
             />
             <div style={{ fontSize: '0.88rem' }}>
-              {discountPreview.willFire ? (
+              {holdApplies ? (
                 <>
-                  <strong>Tier-{discountPreview.tier} VPFI path will apply (up to {tierDiscountPct(discountPreview.tier, protocolConfig)} rebate at proper close).</strong>{' '}
-                  Platform consent is enabled and your vault holds the required{' '}
-                  <span className="mono">{Number(discountPreview.vpfiRequired) / 1e18}</span> VPFI.
-                  You pay the full {formatBpsPct(protocolConfig?.loanInitiationFeeBps ?? 20)} LIF up front in VPFI; the discount is earned time-weighted
-                  over the loan's lifetime and paid back as a VPFI rebate when you repay, preclose, or refinance properly. Default or
-                  liquidation forfeits the rebate.
+                  <strong>Tier-{tier} hold discount applies (−{(tierBps / 100).toString()}% off the {lifPct} LIF).</strong>{' '}
+                  Platform consent is on and your effective tier reduces the Loan Initiation Fee directly in the lending asset — you simply pay a lower fee. No VPFI is moved and there is no rebate to claim; the discount is pinned at your current tier when you accept.
                 </>
               ) : !discountPreview.consentEnabled ? (
                 <>
-                  <strong>Borrower VPFI rebate available.</strong>{' '}
+                  <strong>Borrower LIF discount available.</strong>{' '}
                   Enable platform consent on your{' '}
                   <Link to="" style={{ textDecoration: 'underline' }}>
                     Dashboard
                   </Link>{' '}
-                  to pay the {formatBpsPct(protocolConfig?.loanInitiationFeeBps ?? 20)} LIF up front in VPFI and earn a tier-based rebate (up to {protocolConfig ? protocolConfig.tierDiscountBps.map((b) => formatBpsPct(b)).join(' / ') : '10% / 15% / 20% / 24%'} by vault balance held across the loan). Without consent this acceptance uses
-                  the normal {formatBpsPct(protocolConfig?.loanInitiationFeeBps ?? 20)} lending-asset fee path (no rebate).
-                </>
-              ) : !discountPreview.eligible ? (
-                <>
-                  <strong>Borrower VPFI rebate unavailable.</strong>{' '}
-                  No oracle route, rate unset, or vault balance below the tier-1 threshold — this acceptance uses the
-                  normal {formatBpsPct(protocolConfig?.loanInitiationFeeBps ?? 20)} lending-asset fee path (no rebate).
+                  and hold VPFI to earn a tier-based discount (up to {protocolConfig ? protocolConfig.tierDiscountBps.map((b) => formatBpsPct(b)).join(' / ') : '10% / 15% / 20% / 24%'} by vault balance) applied directly as a lower lending-asset LIF. Without consent this acceptance pays the full {lifPct} LIF.
                 </>
               ) : (
                 <>
-                  <strong>Tier-{discountPreview.tier} VPFI path pending vault balance.</strong>{' '}
-                  Consent is enabled but your vault holds{' '}
-                  <span className="mono">{Number(discountPreview.vaultVpfi) / 1e18}</span> VPFI —
-                  paying the {formatBpsPct(protocolConfig?.loanInitiationFeeBps ?? 20)} LIF up front in VPFI (up to {tierDiscountPct(discountPreview.tier, protocolConfig)} rebate at proper close) needs{' '}
-                  <span className="mono">{Number(discountPreview.vpfiRequired) / 1e18}</span> VPFI.
-                  Top up on{' '}
+                  <strong>Tier-1 threshold not met.</strong>{' '}
+                  Consent is on, but your vault holds{' '}
+                  <span className="mono">{Number(discountPreview.vaultVpfi) / 1e18}</span> VPFI — below the tier-1 threshold, so this acceptance pays the full {lifPct} LIF. Hold more VPFI to earn a tier discount; top up on{' '}
                   <a
                     href="/vpfi-vault"
                     target="_blank"
@@ -1911,13 +1900,13 @@ function AcceptReviewModal({ offer, illiquid, consent, onConsentChange, submitti
                     style={{ textDecoration: 'underline' }}
                   >
                     Buy VPFI
-                  </a>{' '}
-                  or proceed with the normal {formatBpsPct(protocolConfig?.loanInitiationFeeBps ?? 20)} path (no rebate).
+                  </a>.
                 </>
               )}
             </div>
           </div>
-        )}
+          );
+        })()}
 
         {illiquid && (
           <div className="alert alert-warning" style={{ marginTop: 0 }}>
