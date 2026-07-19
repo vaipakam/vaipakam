@@ -1096,15 +1096,18 @@ export default function OfferBook() {
   // fee/proceeds are correct whichever side the connected wallet is on. Silent
   // on error — the modal falls back to the list-rate fee.
   useEffect(() => {
-    if (!pendingOffer || !address) {
-      setLifPreview(null);
-      return;
-    }
-    if (pendingOffer.assetType !== 0 || pendingOffer.principalLiquidity !== 0) {
-      // ERC-20 + liquid only; illiquid / non-ERC20 accepts pay no discounted LIF.
-      setLifPreview(null);
-      return;
-    }
+    // Clear any prior offer's preview up front so a newly-selected offer never
+    // briefly renders the previous offer's fee/proceeds while its own read is
+    // in flight (a stale-economics confirm hazard).
+    setLifPreview(null);
+    if (!pendingOffer || !address) return;
+    // ERC-20 principal only. NOTE: we deliberately do NOT gate on the offer's
+    // create-time `principalLiquidity` — `previewAccept` (like the accept path)
+    // resolves liquidity LIVE via `checkLiquidity`, so it returns the full LIF
+    // for a currently-illiquid asset and the discounted LIF once it becomes
+    // liquid, matching what the accept will actually charge regardless of the
+    // liquidity state the offer was created under.
+    if (pendingOffer.assetType !== 0) return;
     let cancelled = false;
     (async () => {
       const d = diamondRead as unknown as {
