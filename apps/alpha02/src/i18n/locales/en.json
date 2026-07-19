@@ -468,6 +468,8 @@
       "defaultOutcome": "If the borrower defaults, your recovery depends on their collateral."
     },
     "rent": {
+      "browseRowPriced": "{{daily}} {{pay}}/day · {{duration}} · {{total}} {{pay}} up front (incl. buffer)",
+      "browseRowUnpriced": "{{duration}} · listing #{{id}}",
       "receiptListYouReceive": "~{{fees}} in rental fees for the full {{term}} term — the renter prepays everything up front.",
       "receiptListYouLock": "Your NFT {{nft}} moves into your vault and stays there for the whole listing and rental.",
       "receiptRentYouReceive": "Use rights of {{nft}} for {{duration}}, starting now.",
@@ -768,6 +770,8 @@
       "partialBlockedByListing": "The lender has this position listed for sale at its current outstanding amount. Partial repayment is paused while the listing stands — it would change that amount and mislead a buyer. You can still repay in full or close early at any time."
     },
     "positions": {
+      "rowRental": "Rental #{{id}} · fees prepaid",
+      "rowLoan": "Loan #{{id}} · {{rate}} yearly interest",
       "details": {
         "collateralBackAfterRepay": "{{collateral}} collateral back — claimable right after repayment settles.",
         "collateralBackAfterClose": "{{collateral}} collateral back — claimable right after closing.",

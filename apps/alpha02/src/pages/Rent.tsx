@@ -694,8 +694,16 @@ function RentalListingRow({
         <br />
         <span className="row-sub">
           {prepayMeta.data
-            ? `${formatTokenAmount(dailyFee, prepayMeta.data.decimals)} ${pay}/day · ${formatDurationDays(offer.durationDays)} · ${formatTokenAmount(total, prepayMeta.data.decimals)} ${pay} up front (incl. buffer)`
-            : `${formatDurationDays(offer.durationDays)} · listing #${offer.offerId}`}
+            ? copy.rent.browseRowPriced(
+                formatTokenAmount(dailyFee, prepayMeta.data.decimals),
+                pay,
+                formatDurationDays(offer.durationDays),
+                formatTokenAmount(total, prepayMeta.data.decimals),
+              )
+            : copy.rent.browseRowUnpriced(
+                formatDurationDays(offer.durationDays),
+                offer.offerId,
+              )}
         </span>
       </span>
       <button type="button" className="btn btn-primary btn-sm" onClick={onChoose}>

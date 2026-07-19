@@ -751,6 +751,12 @@ const copySource = {
   },
 
   rent: {
+    // Rent browse-row sub-lines.
+    browseRowPriced: tmpl(
+      '{{daily}} {{pay}}/day · {{duration}} · {{total}} {{pay}} up front (incl. buffer)',
+      ['daily', 'pay', 'duration', 'total'],
+    ),
+    browseRowUnpriced: tmpl('{{duration}} · listing #{{id}}', ['duration', 'id']),
     // Review-receipt lines (extracted from Rent.tsx inline templates).
     receiptListYouReceive: tmpl(
       '~{{fees}} in rental fees for the full {{term}} term — the renter prepays everything up front.',
@@ -1287,6 +1293,9 @@ const copySource = {
   },
 
   positions: {
+    // Row sub-lines (extracted from LoanRow.tsx).
+    rowRental: tmpl('Rental #{{id}} · fees prepaid', ['id']),
+    rowLoan: tmpl('Loan #{{id}} · {{rate}} yearly interest', ['id', 'rate']),
     details: {
       // Interpolated receipt / summary lines (extracted from
       // PositionDetails.tsx inline templates).

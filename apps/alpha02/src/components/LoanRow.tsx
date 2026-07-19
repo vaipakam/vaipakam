@@ -56,8 +56,8 @@ export function LoanRow({
         <br />
         <span className="row-sub">
           {isRental
-            ? `Rental #${loan.loanId} · fees prepaid`
-            : `Loan #${loan.loanId} · ${formatBpsAsPercent(loan.interestRateBps)} yearly interest`}
+            ? copy.positions.rowRental(loan.loanId)
+            : copy.positions.rowLoan(loan.loanId, formatBpsAsPercent(loan.interestRateBps))}
         </span>
       </span>
       {claimWaiting ? (
