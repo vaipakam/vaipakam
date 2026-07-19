@@ -988,7 +988,7 @@ export function OrderTicket({
               type="button"
               className="input-max"
               onClick={fillAmountMax}
-              title={`In your wallet: ${exactAmountString(lendingBalance.data!, lendingMeta.data!.decimals)} ${lendingMeta.data!.symbol}`}
+              title={copy.desk.walletBalanceTitle(exactAmountString(lendingBalance.data!, lendingMeta.data!.decimals), lendingMeta.data!.symbol)}
             >
               {text.max}
             </button>
@@ -1057,7 +1057,7 @@ export function OrderTicket({
               type="button"
               className="input-max"
               onClick={fillCollateralMax}
-              title={`In your wallet: ${exactAmountString(collateralBalance.data!, collateralMeta.data!.decimals)} ${collateralMeta.data!.symbol}`}
+              title={copy.desk.walletBalanceTitle(exactAmountString(collateralBalance.data!, collateralMeta.data!.decimals), collateralMeta.data!.symbol)}
             >
               {text.max}
             </button>

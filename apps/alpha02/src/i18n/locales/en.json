@@ -470,6 +470,7 @@
     "rent": {
       "browseRowPriced": "{{daily}} {{pay}}/day · {{duration}} · {{total}} {{pay}} up front (incl. buffer)",
       "browseRowUnpriced": "{{duration}} · listing #{{id}}",
+      "perDaySuffix": " ({{symbol}} per day)",
       "receiptListYouReceive": "~{{fees}} in rental fees for the full {{term}} term — the renter prepays everything up front.",
       "receiptListYouLock": "Your NFT {{nft}} moves into your vault and stays there for the whole listing and rental.",
       "receiptRentYouReceive": "Use rights of {{nft}} for {{duration}}, starting now.",
@@ -775,6 +776,13 @@
       "details": {
         "collateralBackAfterRepay": "{{collateral}} collateral back — claimable right after repayment settles.",
         "collateralBackAfterClose": "{{collateral}} collateral back — claimable right after closing.",
+        "collateralBackPlain": "{{collateral}} collateral back.",
+        "owedPrincipalPlusInterest": "{{principal}} + this loan's interest. For full-term loans (the protocol default) the whole term's interest applies even when repaying early; day-by-day loans charge only what has accrued. The exact amount is read live when you confirm; the approval carries small headroom that is never spent.",
+        "youRent": "You rent {{nft}}",
+        "youBorrowed": "You borrowed {{principal}}",
+        "youLent": "You lent {{principal}}",
+        "paidNow": "~{{amount}} {{symbol}}, paid now.",
+        "exactAmountNote": "The exact amount is read live when you confirm; the approval carries small headroom that is never spent.",
         "principalPlusInterest": "{{principal}} plus the earned interest.",
         "loanAssetFallback": "the loan asset",
         "recoveredSummary": "What this loan recovered: sale proceeds in {{asset}}, or the {{collateral}} collateral itself, depending on how the default settled.",
@@ -881,6 +889,7 @@
       "openOffers": "Open offers",
       "getStarted": "Get started",
       "offerRow": {
+        "youNft": "Your NFT {{addr}} #{{id}}",
         "yourLendingOffer": "Your lending offer",
         "yourBorrowRequest": "Your borrow request",
         "yourNftListing": "Your NFT listing",
@@ -1046,6 +1055,7 @@
       "lede": "Open lending offers and borrow requests from other users.",
       "emptyTitle": "No open offers right now",
       "emptyBody": "Create your own offer and let the other side come to you.",
+      "rateBand": "rate band {{min}}–{{max}} bps",
       "staleList": "This list last updated {{age}} ago and may be behind — new offers may exist that aren’t shown yet. Check back shortly.",
       "unavailable": "We couldn’t load the offer book right now. Please try again in a moment.",
       "lenderOffer": "Lending offer",
@@ -1053,6 +1063,10 @@
     },
     "desk": {
       "tenorLiveTitle": "{{tenor}} — live offers on the book",
+      "walletBalanceTitle": "In your wallet: {{amount}} {{symbol}}",
+      "healthLtvTitle": "Health factor {{ratio}} · LTV {{ltv}}",
+      "rateLadderTitle_one": "{{rate}} bps · {{count}} offer{{ownMark}} — tap to pre-fill this rate",
+      "rateLadderTitle_other": "{{rate}} bps · {{count}} offers{{ownMark}} — tap to pre-fill this rate",
       "tenorNoOffersTitle": "{{tenor}} — no live offers yet",
       "midQuotedTitle": "{{bps}} bps (quoted, not executed)",
       "marketsLoading": "Loading markets…",
@@ -1710,6 +1724,8 @@
       "invalidAddress": "Enter a valid contract address — “0x” followed by 40 hex characters."
     },
     "copyAddress": {
+      "copyAria": "Copy address {{address}}",
+      "viewAria": "View {{address}} on the block explorer",
       "copied": "Address copied"
     }
   }

@@ -80,7 +80,7 @@ function OfferRow({ offer }: { offer: IndexedOffer }) {
   }
 
   const lockedStr = isRental
-    ? `Your NFT ${shortAddress(offer.lendingAsset)} #${offer.tokenId}`
+    ? copy.positions.offerRow.youNft(shortAddress(offer.lendingAsset), offer.tokenId)
     : `${amount} ${meta.data?.symbol ?? ''}`;
 
   return (

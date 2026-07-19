@@ -507,7 +507,7 @@ function ListNftFlow() {
           />
           <div className="field">
             <label htmlFor="daily-fee">
-              {copy.rent.dailyFeeLabel}{prepayMeta.data ? ` (${prepayMeta.data.symbol} per day)` : ''}
+              {copy.rent.dailyFeeLabel}{prepayMeta.data ? copy.rent.perDaySuffix(prepayMeta.data.symbol) : ''}
             </label>
             <input
               id="daily-fee"

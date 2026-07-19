@@ -114,9 +114,11 @@ function LevelRow({
   // button), NOT the whole row. That un-nests the Take / Fill controls,
   // which used to sit inside a `role="button"` row (a nested-interactive
   // a11y violation); they are now siblings of the rate button.
-  const rateTitle = `${level.rateBps} bps · ${level.offers.length} offer${
-    level.offers.length === 1 ? '' : 's'
-  }${level.own ? ` · ${copy.desk.yourOrderMark}` : ''} — tap to pre-fill this rate`;
+  const rateTitle = copy.desk.rateLadderTitle(
+    level.rateBps,
+    level.offers.length,
+    level.own ? ` · ${copy.desk.yourOrderMark}` : '',
+  );
   return (
     <div
       className={`desk-ladder-row${level.own ? ' desk-own' : ''}${

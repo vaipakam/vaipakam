@@ -57,6 +57,19 @@ const UI_PROP =
 const JSX_TEXT = /(?:>)\s*([A-Z][A-Za-z0-9,'’.\-–—%$ ()?!&:/]{5,}?)\s*(?:<)/g;
 const EXPR_STR = /[{(,?:]\s*'([A-Z][^']{6,})'/g;
 
+// Interpolation blind spot (#1345): a backtick template literal whose
+// literal (non-`${}`) text is a real prose fragment — the inline-notice
+// class that bypassed the quote-based checks above (it renders through
+// JSX with values interpolated mid-sentence, so no clean `>text<` and no
+// quoted literal). Route these through a `tmpl(...)` catalog entry.
+const BACKTICK = /`([^`]*)`/g;
+// Two real (3+ letter) words in a row = prose, not a css class / path.
+const PROSE_PAIR = /[A-Za-z]{3,} [A-Za-z]{3,}/;
+// Attribute/identifier contexts that legitimately hold backtick values
+// (class names, routes, keys, styles) — blanked before the prose scan.
+const NON_UI_BACKTICK =
+  /\b(?:className|class|to|href|key|id|htmlFor|style|role|data-[\w-]+)\s*=\s*\{?\s*`[^`]*`/g;
+
 function walk(dir, out = []) {
   for (const name of readdirSync(dir)) {
     const p = join(dir, name);
@@ -89,6 +102,29 @@ for (const file of walk(SRC)) {
     const t = m[1];
     if (t.includes('/') && !t.includes(' ')) continue;
     add(t);
+  }
+  // Backtick prose scan — strip comments (which describe HTML/JSX and
+  // would false-positive) and blank the non-UI attribute backticks
+  // (`className={`badge ${x}`}`, route templates) first.
+  const scrubbed = src
+    .replace(/\/\*[\s\S]*?\*\//g, '')
+    .replace(/\{\/\*[\s\S]*?\*\/\}/g, '')
+    .replace(/^\s*\/\/.*$/gm, '')
+    .replace(NON_UI_BACKTICK, (mm) => mm.replace(/`[^`]*`/, '``'));
+  BACKTICK.lastIndex = 0;
+  while ((m = BACKTICK.exec(scrubbed))) {
+    const lit = m[1].replace(/\$\{[^}]*\}/g, ' ').replace(/\s+/g, ' ').trim();
+    if (!PROSE_PAIR.test(lit)) continue;
+    // Developer diagnostics / thrown tx-hash errors — not catalog copy.
+    if (/react\.dev|Component stack|component threw|Transaction reverted/.test(lit)) {
+      continue;
+    }
+    // A path/selector fragment (has `/` but no sentence spacing).
+    if (lit.includes('/') && !/[a-z] [a-z]/.test(lit)) continue;
+    // An all-lowercase-hyphen token run (css classes that slipped the
+    // attribute scrub, e.g. a `cn(`...`)` helper) — not prose.
+    if (/^[a-z][a-z-]*( [a-z][a-z-]*)*$/.test(lit)) continue;
+    add(lit);
   }
 }
 

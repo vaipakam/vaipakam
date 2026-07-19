@@ -1292,7 +1292,7 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
           youLock: copy.positions.details.receipt.nothingNew,
           youMayOwe: isRental
             ? copy.positions.details.receipt.oweRentalPrepaid
-            : `${principalStr} + this loan's interest. For full-term loans (the protocol default) the whole term's interest applies even when repaying early; day-by-day loans charge only what has accrued. The exact amount is read live when you confirm; the approval carries small headroom that is never spent.`,
+            : copy.positions.details.owedPrincipalPlusInterest(principalStr),
           youCanLose: copy.positions.details.receipt.loseNothingBeyondOwed,
           fees: copy.positions.details.receipt.feesRepay,
           whenThisEnds: copy.positions.details.receipt.endsRepay,
@@ -1303,7 +1303,7 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
               ? copy.positions.details.receipt.bufferBackShort
               : row.status === 'repaid'
                 ? hasCollateral
-                  ? `${collateralStr} collateral back.`
+                  ? copy.positions.details.collateralBackPlain(collateralStr)
                   : copy.positions.details.receipt.owedNoCollateral
                 : row.status === 'internal_matched'
                   ? copy.positions.details.receipt.internalResidual
@@ -1350,14 +1350,14 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
           <p className="muted" style={{ margin: 0 }}>
             {isRental
               ? role === 'borrower'
-                ? `You rent ${nftStr}`
+                ? copy.positions.details.youRent(nftStr)
                 : role === 'lender'
                   ? copy.positions.details.nftRentedOut(nftStr)
                   : copy.positions.details.nftRentalBetween(nftStr)
               : role === 'borrower'
-                ? `You borrowed ${principalStr}`
+                ? copy.positions.details.youBorrowed(principalStr)
                 : role === 'lender'
-                  ? `You lent ${principalStr}`
+                  ? copy.positions.details.youLent(principalStr)
                   : copy.positions.details.loanBetween(principalStr)}
           </p>
         </div>
@@ -1841,16 +1841,16 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
                     ? copy.positions.details.collateralBackAfterClose(collateralStr)
                     : copy.positions.details.receipt.noCollateralBack,
                   youLock: copy.positions.details.receipt.nothingNew,
-                  youMayOwe: `~${formatTokenAmount(
-                    loanLive.data.calcDue,
-                    principal.decimals,
-                  )} ${principal.symbol}, paid now. ${
+                  youMayOwe: `${copy.positions.details.paidNow(
+                    formatTokenAmount(loanLive.data.calcDue, principal.decimals),
+                    principal.symbol,
+                  )} ${
                     loanLive.data.live.useFullTermInterest
                       ? copy.preclose.fullTermNote
                       : copy.preclose.proRataNote
                   }${
                     livePastDue ? ` ${copy.preclose.graceFeeReceiptNote}` : ''
-                  } The exact amount is read live when you confirm; the approval carries small headroom that is never spent.`,
+                  } ${copy.positions.details.exactAmountNote}`,
                   youCanLose: copy.positions.details.receipt.loseNothingBeyondPay,
                   fees: copy.positions.details.receipt.feesPreclose,
                   whenThisEnds: copy.positions.details.receipt.endsPreclose,

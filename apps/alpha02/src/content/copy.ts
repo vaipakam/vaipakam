@@ -757,6 +757,7 @@ const copySource = {
       ['daily', 'pay', 'duration', 'total'],
     ),
     browseRowUnpriced: tmpl('{{duration}} · listing #{{id}}', ['duration', 'id']),
+    perDaySuffix: tmpl(' ({{symbol}} per day)', ['symbol']),
     // Review-receipt lines (extracted from Rent.tsx inline templates).
     receiptListYouReceive: tmpl(
       '~{{fees}} in rental fees for the full {{term}} term — the renter prepays everything up front.',
@@ -1307,6 +1308,17 @@ const copySource = {
         '{{collateral}} collateral back — claimable right after closing.',
         ['collateral'],
       ),
+      collateralBackPlain: tmpl('{{collateral}} collateral back.', ['collateral']),
+      owedPrincipalPlusInterest: tmpl(
+        "{{principal}} + this loan's interest. For full-term loans (the protocol default) the whole term's interest applies even when repaying early; day-by-day loans charge only what has accrued. The exact amount is read live when you confirm; the approval carries small headroom that is never spent.",
+        ['principal'],
+      ),
+      youRent: tmpl('You rent {{nft}}', ['nft']),
+      youBorrowed: tmpl('You borrowed {{principal}}', ['principal']),
+      youLent: tmpl('You lent {{principal}}', ['principal']),
+      paidNow: tmpl('~{{amount}} {{symbol}}, paid now.', ['amount', 'symbol']),
+      exactAmountNote:
+        'The exact amount is read live when you confirm; the approval carries small headroom that is never spent.',
       principalPlusInterest: tmpl('{{principal}} plus the earned interest.', ['principal']),
       loanAssetFallback: 'the loan asset',
       recoveredSummary: tmpl(
@@ -1425,6 +1437,7 @@ const copySource = {
     openOffers: 'Open offers',
     getStarted: 'Get started',
     offerRow: {
+      youNft: tmpl('Your NFT {{addr}} #{{id}}', ['addr', 'id']),
       yourLendingOffer: 'Your lending offer',
       yourBorrowRequest: 'Your borrow request',
       yourNftListing: 'Your NFT listing',
@@ -1698,6 +1711,7 @@ const copySource = {
     emptyBody: 'Create your own offer and let the other side come to you.',
     // F-20260703-003 (#988) — shown by MarketFreshnessNote when the
     // indexer cursor has stalled, on every market-list surface.
+    rateBand: tmpl('rate band {{min}}–{{max}} bps', ['min', 'max']),
     staleList: tmpl(
 
         `This list last updated {{age}} ago and may be behind — new offers may exist that aren’t shown yet. Check back shortly.`,
@@ -1718,6 +1732,13 @@ const copySource = {
   desk: {
     // Tenor-tab + mid tooltips (extracted from DeskHeader.tsx).
     tenorLiveTitle: tmpl('{{tenor}} — live offers on the book', ['tenor']),
+    walletBalanceTitle: tmpl('In your wallet: {{amount}} {{symbol}}', ['amount', 'symbol']),
+    healthLtvTitle: tmpl('Health factor {{ratio}} · LTV {{ltv}}', ['ratio', 'ltv']),
+    rateLadderTitle: tmpl(
+      '{{rate}} bps · {{count}} offers{{ownMark}} — tap to pre-fill this rate',
+      ['rate', 'count', 'ownMark'],
+      { one: '{{rate}} bps · {{count}} offer{{ownMark}} — tap to pre-fill this rate' },
+    ),
     tenorNoOffersTitle: tmpl('{{tenor}} — no live offers yet', ['tenor']),
     midQuotedTitle: tmpl('{{bps}} bps (quoted, not executed)', ['bps']),
     marketsLoading: 'Loading markets…',
@@ -2758,6 +2779,8 @@ const copySource = {
     invalidAddress: 'Enter a valid contract address — “0x” followed by 40 hex characters.',
   },
   copyAddress: {
+    copyAria: tmpl('Copy address {{address}}', ['address']),
+    viewAria: tmpl('View {{address}} on the block explorer', ['address']),
     copied: 'Address copied',
   },
 } as const;
