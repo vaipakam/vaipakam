@@ -223,6 +223,7 @@ Distribution rules:
 - an entry that was already closed before the terminal (a frozen slice a prior holder already earned) is **never** re-anchored to a later holder — only still-open entries follow the live holder
 - on each reward side, each user's daily interaction reward is capped at `0.5 VPFI` for every `0.001 ETH` equivalent of eligible interest
 - equivalently, the maximum interaction reward rate is `500 VPFI` per `1 ETH` equivalent of eligible interest
+- **M2 PR-1 supersession (recycling completion plan §M2; D1 decided (b); intent source: [`VpfiAbsorptionDistributionFormulaRedesign.md`](../DesignsAndPlans/VpfiAbsorptionDistributionFormulaRedesign.md) rev 15):** the `500 VPFI/ETH` ETH-ratio cap (#1008) is the **legacy** rate cap. Under the new package the reward cap becomes a **loan-side, fee-linked** cap — `loanSideRewardCap = ½ × C* × (1 − m_reward)` (with `m_reward` defaulting to `200 bps`, and `C*` the loan's notional Full tariff, defined for every loan even when neither party opts into Full) — **plus** the D1 absolute `(user, side, day)` share-of-pool cap. The ETH-ratio cap and the share-of-pool cap are cut over **jointly** (the ShareOfPool distribution rule must never activate without the per-loan fee-linked cap in force — a non-negotiable coupling), at which point `500 VPFI/ETH` is retired for **new** loans; days priced before the cutover keep the legacy cap. This cutover is a later M2 code milestone — PR-1 states only the intended end-state.
 - the cap is a strictly **per-day** ceiling: it is applied to each day's reward on its own and only the per-day-trimmed amounts are summed — a day whose reward would exceed the ceiling is trimmed that day, and its excess can **not** be absorbed by other days that sat below the ceiling (there is no netting of an over-cap day against under-cap days across a loan's reward window)
 - the ETH-equivalent cap must be computed from the same eligible per-user interest amount already credited into the interaction-reward accounting for that day, using the protocol's on-chain pricing path
 - the ceiling for a day is priced **when that day is finalised**, not when a user claims: both the ETH reference price and the governance cap ratio are captured at finalisation and are the same value on every chain (finalised once on the canonical chain and broadcast). A change to the cap ratio therefore applies to days not yet finalised and does not retroactively re-price already-finalised days; if the reward price feed is unavailable at finalisation, that single day is treated as uncapped rather than blocking finalisation
@@ -382,7 +383,25 @@ Testing requirements beyond §9:
 
 ## 5. Yield Fee
 
-The protocol charges a **Yield Fee of `1%`** on interest **and late fees** accrued by lenders — both are lender yield economically, so both are in the fee base at settlement.
+> **Fee freeze — M2 PR-1 supersession (recycling completion plan §M2; D1
+> decided (b) 2026-07-18; source of intent:
+> [`VpfiAbsorptionDistributionFormulaRedesign.md`](../DesignsAndPlans/VpfiAbsorptionDistributionFormulaRedesign.md)
+> rev 15).** The intended **list yield fee is `2%`** (frozen), not `1%` —
+> the package that also freezes the list Loan-Initiation Fee at `0.2%`
+> (§6/§6b) doubles both list rates as the launch baseline. The `1%` figure
+> throughout this section is the **legacy** rate. **Grandfather resolver
+> (intent):** a fee-rate change must **never reprice an already-open
+> loan**. A loan resolves its settlement yield fee from the rate in force
+> **at its origination** — the platform snapshots the initiation-time fee
+> BPS per loan, and a loan whose snapshot predates the freeze keeps
+> resolving to the legacy `1%` (100 bps) at settlement, never repriced by a
+> later default/sentinel flip to `2%`. New loans originated after the
+> freeze resolve to `2%`. (Pre-live sequencing note: no live mainnet loans
+> exist today, so on a fresh deploy the `2%` default is simply in force
+> from genesis; the snapshot-at-init discipline is retained as
+> forward-protection for any post-launch retune — see umbrella #1349.)
+
+The protocol charges a **Yield Fee** on interest **and late fees** accrued by lenders — both are lender yield economically, so both are in the fee base at settlement. The list rate is `2%` under the frozen package above (legacy `1%`).
 
 This fee is automatically collected and directed to Treasury for protocol sustainability, buybacks, reward distribution, and ecosystem growth.
 
@@ -408,6 +427,30 @@ Rules:
 ---
 
 ## 6. Fee Discounts and VPFI Utility
+
+> **M2 PR-1 supersession (recycling completion plan §M2; D1 decided (b);
+> intent source:
+> [`VpfiAbsorptionDistributionFormulaRedesign.md`](../DesignsAndPlans/VpfiAbsorptionDistributionFormulaRedesign.md)
+> rev 15).** Two intent changes for **new** loans (open loans are
+> grandfathered — see §6b):
+> - **List fees frozen at `0.2%` LIF / `2%` yield** (was `0.1%` / `1%`).
+>   The Tiered Discount Table's effective-fee columns below are **derived
+>   off the legacy `0.1%`/`1%` list rates**; under the freeze the same
+>   discount **percentages** apply to the doubled base (e.g. a Tier-1 10%
+>   discount yields `0.18%` effective LIF / `1.8%` effective yield). The
+>   discount **bps** are unchanged; only the base list rate doubles.
+> - **Two opt-in fee modes replace the peg-custody borrower path** (§6b):
+>   **HoldOnly** (tier discount only, delivered as a direct reduction of
+>   the lending-asset fee — E-1) and **Full (dual-fee)** — a per-party
+>   opt-in where that party pays a native-VPFI **tariff** `C*` from their
+>   own vault into the recycle bucket AND receives an extra `+10%` own-side
+>   discount (capped at `50%`). Full **never waives** the lending-asset
+>   fee; it is always charged (tier/Full-discounted) and the tariff is an
+>   **additional** absorption, never an offset. The lender **VPFI-payment
+>   mode** below stays **dormant** at launch (no VPFI price source
+>   configured — direct-reduction E-1 is the Phase-1 posture). Full detail
+>   and the `C*` formula live in the formula-redesign doc; §6b carries the
+>   borrower-path supersession.
 
 Phase note:
 
@@ -504,6 +547,33 @@ Governance effects:
 ---
 
 ### 6b. Borrower Loan-Initiation Fee VPFI Path
+
+> **M2 PR-1 supersession (recycling completion plan §M2; D1 decided (b);
+> intent source:
+> [`VpfiAbsorptionDistributionFormulaRedesign.md`](../DesignsAndPlans/VpfiAbsorptionDistributionFormulaRedesign.md)
+> rev 15).** For **new** loans, the "borrower pays the FULL LIF in VPFI at a
+> fixed peg → Diamond custody (`vpfiHeld`) → rebate/forfeit at terminal"
+> path described below is **retired**. It is replaced by the §6
+> two-mode model:
+> - **HoldOnly (default when a tier holder consents):** the borrower's LIF
+>   is charged in the **lending asset**, reduced by the borrower's tier
+>   discount (E-1 direct reduction). No VPFI is moved, no custody, no
+>   rebate — a hybrid asset-LIF path, not the peg-custody path.
+> - **Full (borrower opt-in):** the borrower additionally pays a native-VPFI
+>   **tariff** `C*` from their own vault, credited to the recycle bucket
+>   **at initiation** (non-refundable, no rebate on any outcome), in
+>   exchange for an extra `+10%` own-side discount (capped `50%`). The
+>   lending-asset LIF is still charged (Full-discounted) — the tariff is an
+>   **absorption**, never a fee waiver.
+> - **Invariant for new loans:** `borrowerLifRebate[loanId].vpfiHeld == 0`
+>   for every loan originated under this package (Full, HoldOnly, or
+>   None) — the peg-custody hold is never taken.
+> **Grandfathering:** loans **already open** with `vpfiHeld > 0` keep
+> settling/forfeiting through the legacy custody path exactly as described
+> below (they paid VPFI up front and earned their rebate window fairly);
+> the legacy terminal call sites are retained for them. The prose below
+> documents that legacy path; read it as the **open-loan** behaviour, not
+> the new-loan intent.
 
 Objective:
 

@@ -396,6 +396,25 @@ an organic market exists, behind the one bounded legal glance.
 
 ### 4.2 Tariff-priced discount entitlements (Layer 2, adopted)
 
+> **SUPERSEDED — D1 decision (b), owner 2026-07-18 (recycling completion
+> plan [`VpfiRecyclingCompletionPlan.md`](VpfiRecyclingCompletionPlan.md)
+> §M2 / §7.1).** The **`k × ETH-volume × day` (ETH·day) tariff formula**
+> below is **retired**. The launch-era tariff is the **LIF·year dual-fee
+> package** in
+> [`VpfiAbsorptionDistributionFormulaRedesign.md`](VpfiAbsorptionDistributionFormulaRedesign.md)
+> (pinned at **rev 15**): `C* = baseLif_list × tYears × K` (VPFI per
+> list-LIF·year, default `K = 5`), charged **per Full party** from that
+> party's own vault → recycle bucket, with the loan-side reward cap
+> `½ × C* × (1 − m_reward)` replacing the #1008 ETH ratio. The
+> `recycleTariffKPer1e18EthDay` knob named below is **unwired and will be
+> deleted** once no caller remains (completion plan §M2). What survives
+> from this section unchanged: the **load-bearing "tariff, not conversion"
+> rule** (the charge is a native-VPFI QUANTITY, never a fee-value price
+> conversion — §13/§14.2), absorb-at-initiation into the bucket
+> (non-refundable, loan-bound, illiquid-excluded), and the governor's
+> `Ā` / margin coupling. The paragraphs below are retained for the design
+> record; read them through the LIF·year formula, not the ETH·day one.
+
 **The load-bearing rule — tariff, not conversion:** the VPFI amount is a
 QUANTITY schedule sized by the loan's characteristics (`k` VPFI per
 ETH-of-volume × day), governed like the #1008 reward ratio. It must NEVER be
