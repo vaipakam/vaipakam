@@ -13,7 +13,7 @@ import {
   recordTrigger,
   type AlarmStorage,
 } from '../src/chainIngestDO';
-import { DO_PATH_CRON, LEGACY_CRON, shouldRunCronTick } from '../src/cronRouting';
+import { shouldRunCronTick } from '../src/cronRouting';
 
 /** Map-backed fake that counts billed operations. */
 function fakeStorage(seed: Record<string, unknown> = {}) {
@@ -126,21 +126,27 @@ describe('rearmOrFinishAttempts (fast lane → slow lane → cron backstop, Code
   });
 });
 
-describe('shouldRunCronTick (dual-cron routing, Codex #1357 r1)', () => {
-  it('DO path acts only on the 5-minute schedule', () => {
-    expect(shouldRunCronTick(DO_PATH_CRON, true)).toBe(true);
-    expect(shouldRunCronTick(LEGACY_CRON, true)).toBe(false);
+describe('shouldRunCronTick (scheduled-time routing — single trigger, 5-per-account cap)', () => {
+  // 2026-07-19T03:05:00Z / 03:07:00Z — minute divisible by 5, and not.
+  const AT_05 = Date.UTC(2026, 6, 19, 3, 5, 0);
+  const AT_07 = Date.UTC(2026, 6, 19, 3, 7, 0);
+
+  it('DO path acts only on minutes divisible by 5', () => {
+    expect(shouldRunCronTick(AT_05, true)).toBe(true);
+    expect(shouldRunCronTick(AT_07, true)).toBe(false);
+    // Scheduled time, not run time: a late-firing :05 tick still acts.
+    expect(shouldRunCronTick(AT_05, true)).toBe(true);
   });
 
-  it('legacy rollback acts only on the every-minute schedule (N×1min freshness preserved)', () => {
-    expect(shouldRunCronTick(LEGACY_CRON, false)).toBe(true);
-    expect(shouldRunCronTick(DO_PATH_CRON, false)).toBe(false);
+  it('legacy rollback acts on EVERY minute tick (N×1min freshness preserved)', () => {
+    expect(shouldRunCronTick(AT_05, false)).toBe(true);
+    expect(shouldRunCronTick(AT_07, false)).toBe(true);
   });
 
-  it('an unknown/empty cron string runs in BOTH modes (fail-open — a doubled tick is idempotent, a never-running tick is an outage)', () => {
+  it('an absent/unparseable scheduled time runs in BOTH modes (fail-open — a doubled tick is idempotent, a never-running tick is an outage)', () => {
     for (const doPath of [true, false]) {
       expect(shouldRunCronTick(undefined, doPath)).toBe(true);
-      expect(shouldRunCronTick('', doPath)).toBe(true);
+      expect(shouldRunCronTick(Number.NaN, doPath)).toBe(true);
     }
   });
 });

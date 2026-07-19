@@ -18,22 +18,23 @@
   "compatibility_date": "2026-04-23",
   "compatibility_flags": ["nodejs_compat"],
 
-  // TWO cron schedules, routed by `controller.cron` in scheduled()
-  // (src/cronRouting.ts — Codex #1357 r1):
-  //   - "* * * * *"  drives the LEGACY inline fallback when the DO
-  //     path is disabled (incident rollback): it round-robins ONE
-  //     chain per invocation, so rollback freshness must stay N x 1min.
-  //   - "*/5 * * * *" drives the DO ingest path (free-plan DO
-  //     rows_written diet): there the cron is only the time-driven
-  //     BACKSTOP — webhooks trigger immediate scans, so event latency
-  //     does not ride this cadence, and each ping costs DO storage
-  //     writes per chain. EXPECTED_SCAN_CADENCE_SEC (chainIngestDO.ts)
-  //     MUST match this schedule — clients size rail-health windows
-  //     from the value the DO reports.
-  // The non-matching schedule's invocation returns without doing any
-  // work (one Worker request, zero DO writes).
+  // ONE every-minute schedule — the free plan caps cron triggers at
+  // FIVE per ACCOUNT and this account's five Workers use all five
+  // slots (a second schedule here failed the deploy with API error
+  // 10072). scheduled() routes each tick by its SCHEDULED TIME
+  // (src/cronRouting.ts): the legacy inline fallback (incident
+  // rollback; round-robins ONE chain per invocation) acts every
+  // minute, while the DO ingest path acts only on minutes divisible
+  // by 5 (free-plan DO rows_written diet) — there the cron is only
+  // the time-driven BACKSTOP; webhooks trigger immediate scans, so
+  // event latency does not ride this cadence, and each ping costs DO
+  // storage writes per chain. A skipped minute-tick returns without
+  // doing any work (one Worker request, zero DO writes).
+  // EXPECTED_SCAN_CADENCE_SEC (chainIngestDO.ts) MUST match the DO
+  // path's effective 5-minute cadence — clients size rail-health
+  // windows from the value the DO reports.
   "triggers": {
-    "crons": ["* * * * *", "*/5 * * * *"],
+    "crons": ["* * * * *"],
   },
 
   // D1 binding — the same `vaipakam-alerts-db` database that

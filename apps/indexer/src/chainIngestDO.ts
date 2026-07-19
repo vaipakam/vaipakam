@@ -172,17 +172,18 @@ export type InvalidationKey =
   | 'notification.created'
   | 'activity.appended';
 
-/** RPC read-diet PR 0 — the DO path's expected per-chain scan cadence. The
- *  cron (every-5-minutes schedule in wrangler.jsonc) pings EVERY configured
- *  chain's DO every FIVE minutes, and webhook deliveries only make scans
+/** RPC read-diet PR 0 — the DO path's expected per-chain scan cadence.
+ *  The cron router (cronRouting.ts) admits the DO path only on minutes
+ *  divisible by DO_PATH_CADENCE_MINUTES, so every configured chain's DO
+ *  is pinged every FIVE minutes, and webhook deliveries only make scans
  *  MORE frequent — so 300s is the worst-case gap between cursor advances
- *  on a healthy rail. (Was 60s; relaxed with the cron in the free-plan
- *  DO rows_written diet — webhooks carry event latency, the cron is the
- *  time-driven backstop.) Clients size their rail-health staleness window
- *  from this reported value (design §4.1.1: cadence × ~1.5) instead of
- *  hard-coding a guess — bumping it here retunes every connected client;
- *  a missing value means "unknown" and clients stay in the polling
- *  fallback posture. */
+ *  on a healthy rail. (Was 60s; relaxed in the free-plan DO rows_written
+ *  diet — webhooks carry event latency, the cron is the time-driven
+ *  backstop.) Clients size their rail-health staleness window from this
+ *  reported value (design §4.1.1: cadence × ~1.5) instead of hard-coding
+ *  a guess — bumping it here retunes every connected client; a missing
+ *  value means "unknown" and clients stay in the polling fallback
+ *  posture. */
 export const EXPECTED_SCAN_CADENCE_SEC = 300;
 
 /** Push frame the DO `ws.send`s. `t` discriminates the frame kind. Clients

@@ -128,14 +128,17 @@ export default {
     env: WorkerEnv,
     ctx: ExecutionContext,
   ): Promise<void> {
-    // Dual-cron routing (Codex #1357 r1) — see cronRouting.ts: the
-    // every-minute schedule drives the legacy fallback (round-robin =
-    // one chain per invocation, so a rollback must keep N×1min
-    // freshness), the every-5-minutes schedule drives the DO path
-    // (where the cron is only the backstop and each ping bills DO
-    // storage rows). The other schedule's invocation returns here
-    // having done no work at all.
-    if (!shouldRunCronTick(controller.cron, doIngestEnabled(env))) return;
+    // Cron tick routing — see cronRouting.ts: ONE every-minute schedule
+    // (the free plan caps cron triggers at 5 per ACCOUNT and all five
+    // slots are taken), routed by the tick's scheduled time. The legacy
+    // fallback (round-robin = one chain per invocation, so a rollback
+    // must keep N×1min freshness) acts every minute; the DO path — where
+    // the cron is only the backstop and each ping bills DO storage
+    // rows — acts on minutes divisible by 5. A skipped tick returns
+    // here having done no work at all.
+    if (!shouldRunCronTick(controller.scheduledTime, doIngestEnabled(env))) {
+      return;
+    }
     // T-078 — resolve the Secrets Store RPC bindings once, here at
     // the entry point; both passes get the plain resolved env.
     const resolved = await resolveEnv(env);
