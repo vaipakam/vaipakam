@@ -310,6 +310,26 @@ launch-time status stated honestly:
 | Forfeited interaction rewards | `InteractionRewardsFacet` forfeit → treasury | **LIVE** (see below) |
 | Service-bond slashes (#1219) | — | Future |
 
+> **SUPERSEDED by D1 decision (b), owner 2026-07-18 (see §4.2 banner +
+> [`VpfiRecyclingCompletionPlan.md`](VpfiRecyclingCompletionPlan.md) §M2).**
+> This table (and the "bootstrap honesty" note below) predates the D1
+> tariff decision and describes the peg-gated **conversion** approach. Two
+> corrections for implementers:
+> - **`FullTariff` is the load-bearing LAUNCH loan-fee absorption class**,
+>   missing from the table above. Add a row: **Full tariff `C*` (LIF·year,
+>   per-party)** — code anchor `credit(RecycleSource.FullTariff, …)` at
+>   loan-init (completion-plan #1347) — **status: launches with M2, NOT
+>   peg-gated** (the tariff is a native-VPFI quantity, no price peg). An
+>   implementer must wire `credit(FullTariff, …)` and count it in `Ā`;
+>   omitting it leaves the adopted Layer-2 path out of the coupled term.
+> - The **peg-gated LIF/yield-fee-in-VPFI conversion classes** (rows 1–3,
+>   5) are **market-era-deferred** (Layer 3, §4.2/§13) — they are NOT the
+>   launch ramp. The "bootstrap honesty" note below (which says the
+>   LIF/yield families start feeding when the peg is configured) reflects
+>   the retired approach: under D1 (b) the launch absorption ramp is the
+>   **Full tariff + notification tariff (M1, LIVE) + forfeits**, and the
+>   peg is intentionally never configured at launch.
+
 Two consequences the design owns explicitly:
 
 - **Bootstrap honesty (P3):** until the peg is set, `A ≈ notification fees +
