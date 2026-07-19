@@ -53,5 +53,9 @@ The connected-app accept modal was reframed to match the HoldOnly mechanic: a
 consenting tier-holder now sees the discounted Loan-Initiation Fee charged in
 the lending asset (with net proceeds = principal − fee), instead of the old
 "pay the full fee in VPFI and receive a later rebate" framing that no longer
-matches how the fee is charged. (The broader Full-tariff frontend surface
-remains tracked under PR-8.) Closes #1352.
+matches how the fee is charged. The fee and net-proceeds figures are read from
+the authoritative on-chain accept preview (the exact fee the accept path will
+charge), so they are correct whether the connected wallet is borrowing or
+lending, independent of the VPFI price oracle, and rounded exactly as the
+contract does. (The broader Full-tariff frontend surface remains tracked under
+PR-8.) Closes #1352.
