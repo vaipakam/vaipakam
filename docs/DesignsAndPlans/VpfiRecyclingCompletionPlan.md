@@ -176,7 +176,13 @@ is adopted as the implementation cut. Two corrections before B1 resumes:
    words accepted, nothing else) **before** any mirror sends the 6-word
    shape — otherwise `closeDay` reports revert and the day finalizes
    with that chain zeroed. Mirror senders upgrade only after Base
-   dual-decode is live (or behind a sender flag).
+   dual-decode is live (or behind a sender flag). **Consistency clamp
+   (Base-side):** Base rejects or clamps any report whose for-day
+   credit exceeds the increase in that chain's cumulative counter since
+   the last accepted report — otherwise a mirror sender bug or stale
+   replay could feed excess into `Ā` that the cumulative availability
+   ledger does not back, making Base fund "absorption" that never
+   happened.
 2. **Per-chain two-pass funding resolution** (governor §3.1, Codex
    r5/r6) belongs in B2/B3: global `Ā` sizes the *target*;
    `localFunded_c = min(target_c, availRecycled_c)`; Base tops up
@@ -186,9 +192,15 @@ is adopted as the implementation cut. Two corrections before B1 resumes:
    `BaseAvail − localFunded_Base` (funding top-ups from total Base
    availability would double-commit the same bucket whenever Base has
    local demand and mirrors have shortfalls); each chain's broadcast
-   carries its own funded recycled figures. A chain whose slice is
-   unfunded gets a smaller add-on — never a claim against tokens parked
-   on another mirror. **Accumulator semantics (load-bearing, PER
+   carries its own funded recycled figures — **and Base is an explicit
+   "destination" for stamping purposes**: Base receives no broadcast (it
+   stamps its local day record directly at finalization), so that stamp
+   MUST be Base's own per-side funded equivalents, never the aggregate
+   `Σ recycledBudget_c` (a Base claim against the aggregate would
+   compute ≈ `p_Base × Σ funded` instead of Base's reserved slice; the
+   aggregate is a metric, not a claimable figure). A chain whose slice
+   is unfunded gets a smaller add-on — never a claim against tokens
+   parked on another mirror. **Accumulator semantics (load-bearing, PER
    SIDE):** today's `recycledHalf` slot is consumed by the accumulator
    as a numerator over the **global** side denominators — and the
    lender and borrower sides have **separate** global denominators, so
@@ -259,10 +271,16 @@ pair (replacing the today-global `recycledHalf` slot),
 varies per destination too**: near 69M exhaustion the governor's
 ceil-dust trims bind the `scheduleFloor` slice as well, and the
 governor's "trim propagates" rule requires the trimmed chain's
-broadcast to carry the trimmed figures — so `scheduleFloorHalf_c` is
-per-destination whenever a fresh trim binds (global value otherwise),
-or a fresh-trimmed mirror would accrue/remit against the untrimmed
-floor and overrun remaining fresh availability. A single shared
+broadcast to carry the trimmed figures — so the fresh component is
+per-destination **and PER SIDE** whenever a fresh trim binds
+(`scheduleFloorLenderHalfEquiv_c` / `scheduleFloorBorrowerHalfEquiv_c`;
+global value otherwise): the trims arise from per-side ceil-div sums,
+so lender and borrower slices can trim against different demand
+weights — one `scheduleFloorHalf_c` would reproduce for the fresh
+component exactly the per-side denominator mismatch fixed above for
+the recycled halves. Without this, a fresh-trimmed mirror would
+accrue/remit against the untrimmed floor and overrun remaining fresh
+availability. A single shared
 payload would have every mirror accruing against the same halves even
 when a chain's slice was trimmed. So the B2 change is per-destination
 payload assembly (or explicit per-destination array fields), not merely
@@ -275,7 +293,22 @@ rev-15 D1's per-loan headroom commitments, plus the ack-timed remitted
 accounting on the remit path (Base must not compute
 `chainRewardBudgetForDay = min(uncappedSlice, Σ commitments)` without
 the commitment data, nor consume loan headroom on failed bridge
-deliveries without the ack timing). One evolution per direction, one
+deliveries without the ack timing). **Two hardening rules on those
+report/remit fields:** (1) *bounded commitments* — per-loan headroom is
+dynamic data, and a busy chain's day-close CCIP report must never
+become undeliverable: the report carries a **bounded** scheme
+(aggregate per-side headroom + a commitment root with chunked detail,
+or paginated commitment chunks), and ShareOfPool remittance for a day
+is gated on **all chunks present and verified** — never computed from a
+partial set (a missing chunk delays, never zeroes, that chain). (2)
+*pending-remittance reservation* — ack-timed accounting alone allows
+duplicate in-flight allocations (two remits before the first ack both
+see the same headroom), while incrementing at send reintroduces the
+failed-bridge bug: sends therefore reserve into a separate
+`pendingRemitted` ledger at dispatch, finalized into
+`loanSideRewardRemitted` on an **authenticated delivery ack** and
+released on failure — headroom visible to later remits =
+`capEff − paid − remitted − pending`. One evolution per direction, one
 receiver-dual-decode gate each, with the implementing PR pinning the
 exact layouts. Naming a fixed word count
 across both upgrades is exactly how a decoder silently drops `capMode`
@@ -283,8 +316,20 @@ or a recycle field; the layout is derived from the union at
 implementation time. #1331 is absorbed by B2
 (remit-ingress labeling + remitted-recycled = local credit vs
 locally-committed = pure release, across claim/forfeit/expiry paths).
-RL-3 mirror expiries then report their day-bucketed credits to Base like
-any other receipt. Phase C′ (C1 surplus knob, C2 batched repatriation,
+**`Ā`-feed exclusion for remitted-recycled (consciously supersedes the
+governor §4 Codex-r7 "reported like any other receipt" wording):** the
+remitted-recycled share of a mirror forfeit/expiry credits the mirror
+bucket for **availability/custody labeling only** (bucket balance +
+reported cumulative, so netting works and no balance goes unlabelled) —
+it is **excluded from the day-bucketed `credited[d]` feed**, because
+those tokens were already `Ā`-counted once when first absorbed on Base:
+re-crediting them would let one protocol receipt cycle
+bucket → budget → expiry → bucket and manufacture repeat reward budget
+(geometrically decaying via the margin, but with no new user activity
+behind it). A distinct custody-relocation credit class carries this
+(e.g. a non-`Ā` flag on `VpfiRecycled` or a sibling event). Fresh-funded
+forfeit/expiry shares still credit `Ā` — those tokens enter the
+recycled economy for the first time. Phase C′ (C1 surplus knob, C2 batched repatriation,
 Base-ledgered before the send) stays sequenced last, unchanged.
 
 Invariants/tests: the B4 list, plus the governor §7 commitment
@@ -353,7 +398,13 @@ GovernanceRunbook gains a recycling section, executed in order:
    `D* != 0 && d ≥ D*`, so a mirror left at the default 0 never enters
    the post-cutover path while Base sends ShareOfPool days, and claim
    vs remittance behaviour diverges. All-chains-configured is a
-   checklist item ahead of Base arming.
+   checklist item ahead of Base arming. **Mesh/dark precondition
+   (same as governor arming and RL-3):** Full enablement on
+   reward-active mirrors before M3 would strand `FullTariff` credits
+   in mirror-local buckets Base can neither count in `Ā` nor fund
+   from — so `feeEntitlementEnabled` additionally requires rewards
+   Base-only/dark on mirrors OR M3 complete (or Full is explicitly
+   limited to Base until B′ lands).
 5. Deploy asserts (M2 PR-9) wired into `predeploy-check.sh`.
 
 ### M8 — Docs housekeeping
