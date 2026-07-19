@@ -63,6 +63,19 @@ const EXPR_STR = /[{(,?:]\s*'([A-Z][^']{6,})'/g;
 // JSX with values interpolated mid-sentence, so no clean `>text<` and no
 // quoted literal). Route these through a `tmpl(...)` catalog entry.
 const BACKTICK = /`([^`]*)`/g;
+// Interpolation-interspersed JSX children: `<span>You have {n} active
+// positions. View them.</span>` — real prose with `{expr}` mid-sentence,
+// so it yields no clean `>text<` (JSX_TEXT), no quoted literal, and no
+// backtick. This is the ORIGINAL blind spot (the ActivePositionsBanner
+// class), so scan the `>…{expr}…<` children too (Codex #1345 r1).
+// Tightly bounded to real JSX text — starts with a word, and the run
+// carries NO code tokens (`; = < > backtick [ ]`) outside its `{expr}`s
+// — so TypeScript generics / comparisons don't false-positive.
+const JSX_TEXT_CHARS = "[A-Za-z0-9 ,.'’\"%$#·—–:&!?()\\-]";
+const JSX_INTERP = new RegExp(
+  `>(${JSX_TEXT_CHARS}*\\{[^{}]*\\}${JSX_TEXT_CHARS}*)<`,
+  'g',
+);
 // Two real (3+ letter) words in a row = prose, not a css class / path.
 const PROSE_PAIR = /[A-Za-z]{3,} [A-Za-z]{3,}/;
 // Attribute/identifier contexts that legitimately hold backtick values
@@ -111,20 +124,28 @@ for (const file of walk(SRC)) {
     .replace(/\{\/\*[\s\S]*?\*\/\}/g, '')
     .replace(/^\s*\/\/.*$/gm, '')
     .replace(NON_UI_BACKTICK, (mm) => mm.replace(/`[^`]*`/, '``'));
-  BACKTICK.lastIndex = 0;
-  while ((m = BACKTICK.exec(scrubbed))) {
-    const lit = m[1].replace(/\$\{[^}]*\}/g, ' ').replace(/\s+/g, ' ').trim();
-    if (!PROSE_PAIR.test(lit)) continue;
+  // Shared prose filter for the interpolation scans below.
+  const flagIfProse = (raw) => {
+    const lit = raw.replace(/\s+/g, ' ').trim();
+    if (!PROSE_PAIR.test(lit)) return;
     // Developer diagnostics / thrown tx-hash errors — not catalog copy.
     if (/react\.dev|Component stack|component threw|Transaction reverted/.test(lit)) {
-      continue;
+      return;
     }
     // A path/selector fragment (has `/` but no sentence spacing).
-    if (lit.includes('/') && !/[a-z] [a-z]/.test(lit)) continue;
+    if (lit.includes('/') && !/[a-z] [a-z]/.test(lit)) return;
     // An all-lowercase-hyphen token run (css classes that slipped the
     // attribute scrub, e.g. a `cn(`...`)` helper) — not prose.
-    if (/^[a-z][a-z-]*( [a-z][a-z-]*)*$/.test(lit)) continue;
+    if (/^[a-z][a-z-]*( [a-z][a-z-]*)*$/.test(lit)) return;
     add(lit);
+  };
+  BACKTICK.lastIndex = 0;
+  while ((m = BACKTICK.exec(scrubbed))) {
+    flagIfProse(m[1].replace(/\$\{[^}]*\}/g, ' '));
+  }
+  JSX_INTERP.lastIndex = 0;
+  while ((m = JSX_INTERP.exec(scrubbed))) {
+    flagIfProse(m[1].replace(/\{[^{}]*\}/g, ' '));
   }
 }
 
