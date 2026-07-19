@@ -138,11 +138,11 @@ PR-7 = #1346):
 | Card | Scope | Hard deps |
 | --- | --- | --- |
 | PR-1 | Spec supersession (docs; fee defaults 20/200 + grandfather resolver) | D1 decided |
-| PR-2 | D1 `(user,side,day)` share cap + joint day SM + broadcast evolution — **scope includes the report/remit side even standalone**: mirror→Base per-loan headroom commitments + ack-timed `loanSideRewardRemitted` attribution (rev-15 freezes) are prerequisites for safe ShareOfPool remittance (`chainRewardBudgetForDay = min(uncappedSlice, Σ commitments)`), with or without the mesh — never broadcast-only (coordinate with §M3 wire rule when same-window) | mirrors decode first |
+| PR-2 | D1 `(user,side,day)` share cap + joint day SM + broadcast evolution — **scope includes the report/remit side even standalone**: mirror→Base per-loan headroom commitments + ack-timed `loanSideRewardRemitted` attribution (rev-15 freezes) are prerequisites for safe ShareOfPool remittance (`chainRewardBudgetForDay = min(uncappedSlice, Σ commitments)`), with or without the mesh — never broadcast-only (coordinate with §M3 wire rule when same-window) | Receiver-first in BOTH directions: mirrors dual-decode the widened broadcast before Base sends it, AND **Base dual-decodes the widened report before any mirror report sender switches** (else day-close reports revert/zero) |
 | PR-4 | HoldOnly hybrid borrower LIF + fee-default migration | PR-1 |
 | PR-5a/5b | Per-party Full tariff (LIF·year `C*`, `maxCStar` auth, no silent downgrade) + `credit(FullTariff, …)` at init | PR-4; #1347 re-based |
 | PR-5c | Loan-side reward cap + `cStar` backfill gate | PR-5b |
-| — | **Joint cutover `D*`** (arm ShareOfPool only when 5c live) | PR-2 + PR-5c |
+| — | **Joint cutover `D*`** (arm ShareOfPool only when 5c live); **Full enablement additionally requires PR-6** (settlement sites must honor the lender Full stamp before anyone pays `C*` for it) | PR-2 + PR-5c (+ PR-6 for `feeEntitlementEnabled`) |
 | PR-6 | Settlement sweep honors lender hold + Full stamps | PR-4 + PR-5b |
 | PR-8 | Frontend (tariff quote, incidence copy, no purchase-price language) | PR-5b ABIs |
 | PR-9 | Deploy asserts (peg unset, fee 20/200, knob states) | before mainnet |
@@ -173,28 +173,30 @@ is adopted as the implementation cut. Two corrections before B1 resumes:
    r5/r6) belongs in B2/B3: global `Ā` sizes the *target*;
    `localFunded_c = min(target_c, availRecycled_c)`; Base tops up
    pro-rata (claims-first, keeper residual); each chain's broadcast
-   carries its own funded `recycledHalf_c`. A chain whose slice is
+   carries its own funded recycled figures. A chain whose slice is
    unfunded gets a smaller add-on — never a claim against tokens parked
-   on another mirror. **Accumulator semantics (load-bearing):** today's
-   `recycledHalf` slot is consumed by the accumulator as a numerator
-   over the **global** side denominator — broadcasting a chain's
-   absolute funded budget in that slot would divide it by the global
-   denominator and under-accrue (a 10%-share chain funded 100 VPFI
-   would accrue ~10). `recycledHalf_c` is therefore broadcast as a
-   **global-equivalent half**: the funded chain budget scaled back by
-   the chain's demand weight (`fundedBudget_c / p_c`, rounded down),
-   so the existing numerator/global-denominator math yields exactly
-   the funded budget for that chain's interest share — with the funded
-   budget itself remaining the binding cap at claim/remit (scaling
-   dust can never over-pay). The alternative (mirrors switching to
-   local denominators) is rejected: it changes claim math on every
-   chain instead of one broadcast-side scaling. **Zero-demand guard:**
-   when `p_c == 0` (no finalized demand on that side/chain for the
-   day — quiet or force-finalized days, still-broadcast-configured
-   destinations), never divide: send `recycledHalf_c = 0` / skip that
-   destination's recycled add-on — the same zero-denominator
-   convention the live remittance math already uses. The implementing
-   PR pins the rounding.
+   on another mirror. **Accumulator semantics (load-bearing, PER
+   SIDE):** today's `recycledHalf` slot is consumed by the accumulator
+   as a numerator over the **global** side denominators — and the
+   lender and borrower sides have **separate** global denominators, so
+   a chain whose lender and borrower demand weights differ cannot be
+   made correct on both sides by one scaled value. The broadcast
+   therefore carries **side-specific global-equivalent halves**:
+   `recycledLenderHalfEquiv_c = fundedLenderBudget_c / p_c,lender` and
+   `recycledBorrowerHalfEquiv_c = fundedBorrowerBudget_c /
+   p_c,borrower` (each rounded down), so the existing per-side
+   numerator/global-denominator math yields exactly that side's funded
+   budget — with the funded budgets remaining the binding caps at
+   claim/remit (scaling dust can never over-pay). Alternatives
+   rejected: mirrors switching to local denominators (changes claim
+   math on every chain); a single scaled value under an
+   equal-side-weights invariant (the invariant does not hold in
+   general). **Zero-demand guard, per side:** when a side's
+   `p_c,side == 0` (no finalized demand on that side/chain for the day
+   — quiet or force-finalized days, still-broadcast-configured
+   destinations), never divide: send that side's equiv half as 0 /
+   skip — the same zero-denominator convention the live remittance
+   math already uses. The implementing PR pins the rounding.
 
 Kept from the parked plan verbatim: commitment semantics (broadcast
 *commits*; bucket debited pro-rata at claim/remit), whole-day idempotency
@@ -224,10 +226,18 @@ the report 4→6 — **and the broadcast build becomes
 per-destination**: today's messenger builds ONE payload and loops over
 `broadcastDestinationChainIds`, but under the §M3 two-pass funding
 correction each chain must receive its OWN funded values —
-`recycledHalf_c` (replacing the today-global `recycledHalf` slot),
-`recycleConsume_c`, `keeperAllocate_c`. A single shared payload would
-have every mirror accruing against the same recycled half even when a
-chain's slice was funding-trimmed. So the B2 change is per-destination
+the per-side `recycledLenderHalfEquiv_c` / `recycledBorrowerHalfEquiv_c`
+pair (replacing the today-global `recycledHalf` slot),
+`recycleConsume_c`, `keeperAllocate_c` — **and the FRESH component
+varies per destination too**: near 69M exhaustion the governor's
+ceil-dust trims bind the `scheduleFloor` slice as well, and the
+governor's "trim propagates" rule requires the trimmed chain's
+broadcast to carry the trimmed figures — so `scheduleFloorHalf_c` is
+per-destination whenever a fresh trim binds (global value otherwise),
+or a fresh-trimmed mirror would accrue/remit against the untrimmed
+floor and overrun remaining fresh availability. A single shared
+payload would have every mirror accruing against the same halves even
+when a chain's slice was trimmed. So the B2 change is per-destination
 payload assembly (or explicit per-destination array fields), not merely
 "+2 words". If M2's PR-2 D1 evolution lands in the same window, the
 combined shape is the **union of both field sets, in BOTH directions** —
@@ -291,17 +301,26 @@ GovernanceRunbook gains a recycling section, executed in order:
    buckets invisible to global `Ā`, Base over-remitting, the #1331-class
    drift becoming economically real). The runbook entry carries this
    gate as a precondition checklist item, not prose.
-2. **RL-3 horizon knob** — only after the free-channel pre-expiry notice
-   (in-app notification center) is verified live, **AND under the same
-   mesh gate as arming: rewards Base-only/dark on mirrors OR M3
-   complete** (mirror expiry credits land in local buckets that Base
+2. **RL-3 horizon knob** — only after BOTH ratified RL-3 UX safeguards
+   are verified live: the free-channel pre-expiry notice (in-app
+   notification center) **and the claim-center countdown surface**
+   (users must see when claimable rewards become terminally sweepable —
+   notice alone does not satisfy the ratified safeguard), **AND under
+   the same mesh gate as arming: rewards Base-only/dark on mirrors OR
+   M3 complete** (mirror expiry credits land in local buckets that Base
    can neither count in `Ā` nor consume until B′ — activating the
    horizon on live mirror reward chains without the mesh reproduces
    the arming failure mode). The ≥90-day grandfather window starts at
    activation.
 3. **RL-4 weights** — stay `[keeper 0, reserve 10000]` absent a keeper
    funding need.
-4. **`feeEntitlementEnabled`** — only at the M2 joint-cutover gate.
+4. **`feeEntitlementEnabled`** — only at the M2 joint-cutover gate,
+   **which includes PR-6 (#1354) as a hard dependency**: with Full
+   enabled before the settlement sweep lands, a lender could pay `C*`
+   at origination while every yield-fee site still ignores the lender
+   Full stamp — collecting the tariff without delivering the purchased
+   +10% discount. Gate = PR-2 + PR-5c live + PR-6 live + `D*` armed
+   (asserted by PR-9/#1356).
 5. Deploy asserts (M2 PR-9) wired into `predeploy-check.sh`.
 
 ### M8 — Docs housekeeping
