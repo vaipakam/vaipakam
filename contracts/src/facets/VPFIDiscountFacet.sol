@@ -683,7 +683,16 @@ contract VPFIDiscountFacet is
         if (!LibVaipakam.storageSlot().vpfiDiscountConsent[user]) {
             return (0, 0);
         }
-        return LibVPFIDiscount.effectiveTierAndBps(user);
+        (effTier, effBps) = LibVPFIDiscount.effectiveTierAndBps(user);
+        // #1352 (Codex P2): this getter is documented as "the BPS the fee path
+        // applies", and the fee path now clamps every discount to the uniform
+        // 50% ceiling (`MAX_FEE_DISCOUNT_BPS`). A tier configured above it
+        // (`setVpfiTierDiscountBps` still permits up to 9000) would otherwise
+        // let a UI simulate a 90% reduction the accept/settlement path never
+        // grants. Clamp so the view matches the applied discount.
+        if (effBps > LibVaipakam.MAX_FEE_DISCOUNT_BPS) {
+            effBps = uint16(LibVaipakam.MAX_FEE_DISCOUNT_BPS);
+        }
     }
 
     /// @custom:event-category state-change/vpfi-discount

@@ -37,7 +37,14 @@ the field is an informational log rather than the borrower's charge).
 
 **Uniform 50% fee-discount ceiling.** The 50% cap the borrower Loan-Initiation
 Fee already respected is now applied symmetrically to the **lender yield-fee**
-discount as well. Governance can configure a per-tier discount as high as 90%,
-but the *applied* reduction on either fee line is clamped at 50%, so a
-high-tier lender can never under-collect treasury by more than half the yield
-fee. Closes #1352.
+discount as well, and to the public `getEffectiveDiscount` view. Governance can
+configure a per-tier discount as high as 90%, but the *applied* reduction on
+either fee line — and what the view reports — is clamped at 50%, so a high-tier
+lender can never under-collect treasury by more than half the yield fee.
+
+The Loan-Initiation-Fee receipt (`loanInitiationFeeBpsAtInit`) is clarified as
+the **list-rate schedule** the loan was originated under — a consenting
+tier-holding borrower pays a lower effective rate after their HoldOnly discount,
+derivable from their consent + tier. The client-side default fee mirrors and the
+stale-facet upgrade script's selector list were also brought in sync with the
+new defaults. Closes #1352.

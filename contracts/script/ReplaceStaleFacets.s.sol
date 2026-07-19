@@ -226,9 +226,14 @@ contract ReplaceStaleFacets is Script {
         pure
         returns (bytes4[] memory s)
     {
-        s = new bytes4[](2);
+        s = new bytes4[](3);
         s[0] = OfferAcceptFacet.calculateTransactionValueNumeraire.selector;
         s[1] = OfferAcceptFacet.verifyAndBindAccept.selector;
+        // #1352 (Codex P2) — the HoldOnly LIF charge is a cross-facet self-call
+        // to this new external selector. A stale-facet Replace that swaps in
+        // the new accept bytecode WITHOUT routing this selector would revert
+        // every fresh ERC-20 non-sale accept at the LIF delivery step.
+        s[2] = OfferAcceptFacet.chargeBorrowerLifAndDeliver.selector;
     }
 
     /// @dev #778 — a Replace cut MUST carry the facet's FULL selector surface;

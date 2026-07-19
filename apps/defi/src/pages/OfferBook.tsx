@@ -1790,11 +1790,11 @@ function AcceptReviewModal({ offer, illiquid, consent, onConsentChange, submitti
 
           {isERC20 && (() => {
             const discountFires = !!discountPreview?.willFire;
-            const baseFeeBps = BigInt(protocolConfig?.loanInitiationFeeBps ?? 10);
+            const baseFeeBps = BigInt(protocolConfig?.loanInitiationFeeBps ?? 20);
             const normalFee = (headlineAmount * baseFeeBps) / 10000n;
             const netToBorrower = discountFires ? headlineAmount : headlineAmount - normalFee;
             const tier = discountPreview?.tier ?? 0;
-            const baseFeePctLabel = formatBpsPct(protocolConfig?.loanInitiationFeeBps ?? 10);
+            const baseFeePctLabel = formatBpsPct(protocolConfig?.loanInitiationFeeBps ?? 20);
             return (
               <>
                 <dt style={{ opacity: 0.7 }}>Loan Initiation Fee</dt>
@@ -1876,7 +1876,7 @@ function AcceptReviewModal({ offer, illiquid, consent, onConsentChange, submitti
                   <strong>Tier-{discountPreview.tier} VPFI path will apply (up to {tierDiscountPct(discountPreview.tier, protocolConfig)} rebate at proper close).</strong>{' '}
                   Platform consent is enabled and your vault holds the required{' '}
                   <span className="mono">{Number(discountPreview.vpfiRequired) / 1e18}</span> VPFI.
-                  You pay the full {formatBpsPct(protocolConfig?.loanInitiationFeeBps ?? 10)} LIF up front in VPFI; the discount is earned time-weighted
+                  You pay the full {formatBpsPct(protocolConfig?.loanInitiationFeeBps ?? 20)} LIF up front in VPFI; the discount is earned time-weighted
                   over the loan's lifetime and paid back as a VPFI rebate when you repay, preclose, or refinance properly. Default or
                   liquidation forfeits the rebate.
                 </>
@@ -1887,21 +1887,21 @@ function AcceptReviewModal({ offer, illiquid, consent, onConsentChange, submitti
                   <Link to="" style={{ textDecoration: 'underline' }}>
                     Dashboard
                   </Link>{' '}
-                  to pay the {formatBpsPct(protocolConfig?.loanInitiationFeeBps ?? 10)} LIF up front in VPFI and earn a tier-based rebate (up to {protocolConfig ? protocolConfig.tierDiscountBps.map((b) => formatBpsPct(b)).join(' / ') : '10% / 15% / 20% / 24%'} by vault balance held across the loan). Without consent this acceptance uses
-                  the normal {formatBpsPct(protocolConfig?.loanInitiationFeeBps ?? 10)} lending-asset fee path (no rebate).
+                  to pay the {formatBpsPct(protocolConfig?.loanInitiationFeeBps ?? 20)} LIF up front in VPFI and earn a tier-based rebate (up to {protocolConfig ? protocolConfig.tierDiscountBps.map((b) => formatBpsPct(b)).join(' / ') : '10% / 15% / 20% / 24%'} by vault balance held across the loan). Without consent this acceptance uses
+                  the normal {formatBpsPct(protocolConfig?.loanInitiationFeeBps ?? 20)} lending-asset fee path (no rebate).
                 </>
               ) : !discountPreview.eligible ? (
                 <>
                   <strong>Borrower VPFI rebate unavailable.</strong>{' '}
                   No oracle route, rate unset, or vault balance below the tier-1 threshold — this acceptance uses the
-                  normal {formatBpsPct(protocolConfig?.loanInitiationFeeBps ?? 10)} lending-asset fee path (no rebate).
+                  normal {formatBpsPct(protocolConfig?.loanInitiationFeeBps ?? 20)} lending-asset fee path (no rebate).
                 </>
               ) : (
                 <>
                   <strong>Tier-{discountPreview.tier} VPFI path pending vault balance.</strong>{' '}
                   Consent is enabled but your vault holds{' '}
                   <span className="mono">{Number(discountPreview.vaultVpfi) / 1e18}</span> VPFI —
-                  paying the {formatBpsPct(protocolConfig?.loanInitiationFeeBps ?? 10)} LIF up front in VPFI (up to {tierDiscountPct(discountPreview.tier, protocolConfig)} rebate at proper close) needs{' '}
+                  paying the {formatBpsPct(protocolConfig?.loanInitiationFeeBps ?? 20)} LIF up front in VPFI (up to {tierDiscountPct(discountPreview.tier, protocolConfig)} rebate at proper close) needs{' '}
                   <span className="mono">{Number(discountPreview.vpfiRequired) / 1e18}</span> VPFI.
                   Top up on{' '}
                   <a
@@ -1912,7 +1912,7 @@ function AcceptReviewModal({ offer, illiquid, consent, onConsentChange, submitti
                   >
                     Buy VPFI
                   </a>{' '}
-                  or proceed with the normal {formatBpsPct(protocolConfig?.loanInitiationFeeBps ?? 10)} path (no rebate).
+                  or proceed with the normal {formatBpsPct(protocolConfig?.loanInitiationFeeBps ?? 20)} path (no rebate).
                 </>
               )}
             </div>

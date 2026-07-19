@@ -2048,13 +2048,21 @@ library LibVaipakam {
         // `treasuryFeeBpsAtInit` (via `effectiveTreasuryFeeBps`) — NOT the
         // live knob — so a mid-loan governance retune never changes an
         // open loan's economics after it is originated.
-        // `loanInitiationFeeBpsAtInit` records the LIF rate the loan was
-        // originated under. The LIF is charged ONCE at init from the live knob
-        // (the loan struct doesn't exist yet at the charge site), and this
-        // field is stamped from the SAME live knob in the same tx — so the
-        // recorded rate equals the charged rate by construction. It is a
-        // per-loan economics RECEIPT (exposed via `getLoanDetails` for the
-        // frontend / indexer / audit), with no post-init on-chain reader —
+        // `loanInitiationFeeBpsAtInit` records the LIST LIF rate schedule the
+        // loan was originated under — the governance knob in force at accept,
+        // NOT the effective per-borrower charge. Since #1352 a consenting
+        // tier-holding borrower pays a HoldOnly-discounted LIF
+        // (`list × (1 − d_borrower)`, d capped at 50%), so the actual
+        // lending-asset amount withdrawn can be LOWER than this recorded rate
+        // implies (e.g. a tier-4 borrower on the 20 bps default pays ~10 bps).
+        // This field is deliberately the LIST-RATE anchor, not the effective
+        // haircut: it fixes the fee SCHEDULE at origination (so a later retune
+        // can't rewrite it) while the per-borrower discount is a separate,
+        // off-chain-derivable reduction (from the borrower's consent + tier).
+        // A consumer wanting the amount actually charged must apply the
+        // borrower's effective discount, not read this rate as the fee paid.
+        // It is a per-loan economics RECEIPT (exposed via `getLoanDetails` for
+        // the frontend / indexer / audit), with no post-init on-chain reader —
         // hence there is no `effectiveLoanInitiationFeeBps` resolver, unlike
         // the treasury field every settlement split reads. The RESOLVED value
         // is stored (never 0, since `cfg*` map a 0 config to the default), so
