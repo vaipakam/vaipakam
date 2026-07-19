@@ -885,6 +885,22 @@ const copySource = {
   },
 
   refinance: {
+    // Composed receipt lines (extracted from RefinanceFlow.tsx); catalog
+    // refs (payoffNote, walletNote, guardrailNote, …) stay composed at
+    // the call site.
+    receiptYouMayOwe: tmpl(
+      '~{{payoff}} to pay off this loan, pulled automatically when a lender accepts.',
+      ['payoff'],
+    ),
+    feesTreasuryNote: tmpl(
+      'The protocol’s {{cut}} cut of the payoff interest settles inside the payoff.',
+      ['cut'],
+    ),
+    whenEndsComposed: tmpl(
+      'When a lender accepts your request, when you cancel it, or {{branch}}.',
+      ['branch'],
+    ),
+    expiresAfterDays: tmpl('when it expires {{days}} days after posting', ['days']),
     consentLabel: 'I understand the payoff and wallet-balance terms below and agree to them.',
     receiptReceive: 'A new loan at your chosen terms the moment a lender accepts — your collateral moves to it automatically and this loan closes in the same transaction.',
     receiptLock: 'Nothing new — your existing collateral carries over to the new loan without ever unlocking.',

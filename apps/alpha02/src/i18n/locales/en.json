@@ -551,6 +551,10 @@
       "graceFeeReceiptNote": "The late fee for being past due is included in this amount — the same fee a normal repayment would charge."
     },
     "refinance": {
+      "receiptYouMayOwe": "~{{payoff}} to pay off this loan, pulled automatically when a lender accepts.",
+      "feesTreasuryNote": "The protocol’s {{cut}} cut of the payoff interest settles inside the payoff.",
+      "whenEndsComposed": "When a lender accepts your request, when you cancel it, or {{branch}}.",
+      "expiresAfterDays": "when it expires {{days}} days after posting",
       "consentLabel": "I understand the payoff and wallet-balance terms below and agree to them.",
       "receiptReceive": "A new loan at your chosen terms the moment a lender accepts — your collateral moves to it automatically and this loan closes in the same transaction.",
       "receiptLock": "Nothing new — your existing collateral carries over to the new loan without ever unlocking.",

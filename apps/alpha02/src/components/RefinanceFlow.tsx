@@ -546,20 +546,18 @@ export function RefinanceFlow({
               data={{
                 youReceive: copy.refinance.receiptReceive,
                 youLock: copy.refinance.receiptLock,
-                youMayOwe: `~${payoffStr} to pay off this loan, pulled automatically when a lender accepts. ${copy.refinance.payoffNote} ${
+                youMayOwe: `${copy.refinance.receiptYouMayOwe(payoffStr)} ${copy.refinance.payoffNote} ${
                   payoffHeadroom > 0n
                     ? `${copy.refinance.lateFeeDisclosure(headroomStr)} `
                     : ''
                 }${copy.refinance.walletNote(topUpStr)}`,
                 youCanLose: copy.refinance.shortIsSafe,
-                fees: `${copy.fees.borrowerLIF(formatBpsAsPercent(fees.loanInitiationFeeBps))} The protocol's ${formatBpsAsPercent(fees.treasuryFeeBps)} cut of the payoff interest settles inside the payoff.`,
-                whenThisEnds: `When a lender accepts your request, when you cancel it, or ${
+                fees: `${copy.fees.borrowerLIF(formatBpsAsPercent(fees.loanInitiationFeeBps))} ${copy.refinance.feesTreasuryNote(formatBpsAsPercent(fees.treasuryFeeBps))}`,
+                whenThisEnds: `${copy.refinance.whenEndsComposed(
                   expiryGraceClamped
-                    ? copy.refinance.expiresAtGraceEnd(
-                        formatDate(Number(graceEndTs)),
-                      )
-                    : `when it expires ${Number(REQUEST_WINDOW_DAYS)} days after posting`
-                }. ${copy.refinance.guardrailNote}`,
+                    ? copy.refinance.expiresAtGraceEnd(formatDate(Number(graceEndTs)))
+                    : copy.refinance.expiresAfterDays(Number(REQUEST_WINDOW_DAYS)),
+                )} ${copy.refinance.guardrailNote}`,
               }}
             >
               {live.periodicInterestCadence !== 0 ? (
