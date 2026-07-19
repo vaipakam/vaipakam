@@ -18,19 +18,22 @@
   "compatibility_date": "2026-04-23",
   "compatibility_flags": ["nodejs_compat"],
 
-  // Cron — every FIVE minutes (free-plan DO rows_written diet). The
-  // cron is only the time-driven BACKSTOP on the DO ingest path:
-  // webhook deliveries trigger the per-chain DO immediately on real
-  // events, so event latency does not ride this cadence — only the
-  // quiet-tick duties do (calendar sweep, market-expiry sweep, config
-  // backstop, the `notified` watermark refresh), and those tolerate
-  // minutes. Each cron ping costs Durable Object storage writes per
-  // chain, so every-minute pinging burned ~5x the DO row budget for
-  // no latency benefit. EXPECTED_SCAN_CADENCE_SEC (chainIngestDO.ts)
-  // MUST match this schedule — clients size rail-health windows from
-  // the value the DO reports.
+  // TWO cron schedules, routed by `controller.cron` in scheduled()
+  // (src/cronRouting.ts — Codex #1357 r1):
+  //   - "* * * * *"  drives the LEGACY inline fallback when the DO
+  //     path is disabled (incident rollback): it round-robins ONE
+  //     chain per invocation, so rollback freshness must stay N x 1min.
+  //   - "*/5 * * * *" drives the DO ingest path (free-plan DO
+  //     rows_written diet): there the cron is only the time-driven
+  //     BACKSTOP — webhooks trigger immediate scans, so event latency
+  //     does not ride this cadence, and each ping costs DO storage
+  //     writes per chain. EXPECTED_SCAN_CADENCE_SEC (chainIngestDO.ts)
+  //     MUST match this schedule — clients size rail-health windows
+  //     from the value the DO reports.
+  // The non-matching schedule's invocation returns without doing any
+  // work (one Worker request, zero DO writes).
   "triggers": {
-    "crons": ["*/5 * * * *"],
+    "crons": ["* * * * *", "*/5 * * * *"],
   },
 
   // D1 binding — the same `vaipakam-alerts-db` database that

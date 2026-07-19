@@ -75,6 +75,7 @@ import {
 // #757 — the per-chain ingest Durable Object. Re-exported from the Worker
 // entry so `wrangler.jsonc`'s `durable_objects` binding can resolve the class.
 export { ChainIngestDO } from './chainIngestDO';
+import { shouldRunCronTick } from './cronRouting';
 
 /**
  * #757 — is the DO ingest path active? Gated on BOTH the DO binding being
@@ -121,10 +122,18 @@ import {
 
 export default {
   async scheduled(
-    _controller: ScheduledController,
+    controller: ScheduledController,
     env: WorkerEnv,
     ctx: ExecutionContext,
   ): Promise<void> {
+    // Dual-cron routing (Codex #1357 r1) — see cronRouting.ts: the
+    // every-minute schedule drives the legacy fallback (round-robin =
+    // one chain per invocation, so a rollback must keep N×1min
+    // freshness), the every-5-minutes schedule drives the DO path
+    // (where the cron is only the backstop and each ping bills DO
+    // storage rows). The other schedule's invocation returns here
+    // having done no work at all.
+    if (!shouldRunCronTick(controller.cron, doIngestEnabled(env))) return;
     // T-078 — resolve the Secrets Store RPC bindings once, here at
     // the entry point; both passes get the plain resolved env.
     const resolved = await resolveEnv(env);

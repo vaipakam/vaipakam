@@ -44,12 +44,22 @@ import {
   type ChainIndexerResult,
 } from './chainIndexer';
 
-/** Max alarm iterations per single-flight session before deferring the rest to
- *  the cron backstop (bounds subrequest/wall cost; a deep backlog finalizes
- *  cron-paced). */
+/** Max FAST alarm iterations per single-flight session (3s apart) —
+ *  bounds subrequest/wall cost on the hot retry path. */
 const MAX_ALARM_ATTEMPTS = 12;
-/** Delay between catch-up iterations — cheap wait while a target finalizes. */
+/** Delay between fast catch-up iterations — cheap wait while a target
+ *  finalizes. */
 const ALARM_DELAY_MS = 3_000;
+/** SLOW-lane re-arm (Codex #1357 r1): when the fast budget is spent but
+ *  the target is still unmet — the common "webhook block not yet at the
+ *  RPC safe head" tail — keep the DO self-driving with a longer-period
+ *  alarm instead of parking on the (now 5-minute) cron backstop, which
+ *  would make event freshness ride the cron after ~36s. 30s × 20 keeps
+ *  the DO chasing the target for ~10 more minutes (2 storage rows per
+ *  re-arm, only while a target is actually pending) before genuinely
+ *  deferring to the cron. */
+const SLOW_ALARM_DELAY_MS = 30_000;
+const MAX_SLOW_ALARM_ATTEMPTS = 20;
 
 interface TriggerBody {
   chainId?: number;
@@ -101,6 +111,39 @@ export async function recordTrigger(
 export async function clearAttempts(storage: LoopStateStorage): Promise<void> {
   if ((await storage.get<number>('attempts')) !== undefined) {
     await storage.delete('attempts');
+  }
+}
+
+/** LoopStateStorage plus the alarm slot — what the re-arm helper needs. */
+export interface AlarmStorage extends LoopStateStorage {
+  setAlarm(scheduledTime: number): Promise<void>;
+}
+
+/**
+ * Re-arm the catch-up loop after an iteration that did NOT reach the
+ * target, or finish when the budget is spent. Two lanes (Codex #1357
+ * r1): the fast 3s lane for the first MAX_ALARM_ATTEMPTS iterations,
+ * then a 30s slow lane while a target is still pending (webhook block
+ * beyond the safe head), and only after BOTH budgets does the loop
+ * genuinely park on the cron backstop. A fresh trigger mid-slow-lane
+ * resets `attempts` (recordTrigger) and restores the fast lane.
+ * Exported for the unit test; `nowMs` injected for determinism.
+ */
+export async function rearmOrFinishAttempts(
+  storage: AlarmStorage,
+  attempts: number,
+  nowMs: number,
+): Promise<void> {
+  const next = attempts + 1;
+  if (next < MAX_ALARM_ATTEMPTS) {
+    await storage.put({ attempts: next });
+    await storage.setAlarm(nowMs + ALARM_DELAY_MS);
+  } else if (next < MAX_ALARM_ATTEMPTS + MAX_SLOW_ALARM_ATTEMPTS) {
+    await storage.put({ attempts: next });
+    await storage.setAlarm(nowMs + SLOW_ALARM_DELAY_MS);
+  } else {
+    // Both budgets exhausted — defer the rest to the cron backstop.
+    await clearAttempts(storage);
   }
 }
 
@@ -412,13 +455,7 @@ export class ChainIngestDO {
   }
 
   private async rearmOrFinish(attempts: number): Promise<void> {
-    if (attempts + 1 < MAX_ALARM_ATTEMPTS) {
-      await this.state.storage.put({ attempts: attempts + 1 });
-      await this.state.storage.setAlarm(Date.now() + ALARM_DELAY_MS);
-    } else {
-      // Budget exhausted — defer the rest to the cron backstop.
-      await this.clearLoopState();
-    }
+    await rearmOrFinishAttempts(this.state.storage, attempts, Date.now());
   }
 
   private async clearLoopState(): Promise<void> {

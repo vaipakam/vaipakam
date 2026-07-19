@@ -25,6 +25,14 @@ changes bring usage well under the cap:
   had its freshness tolerance widened to match, so health warnings keep
   minting.
 
+Two review-round refinements keep every latency property that the old
+schedule provided: the every-minute schedule still exists and drives the
+LEGACY fallback path (so an incident rollback away from the new ingest
+plumbing keeps its old per-chain freshness — each tick routes to exactly
+one path), and a webhook whose block hasn't reached the safe
+confirmation depth yet keeps being retried by the ingest object itself
+(a slower self-driven retry lane) instead of waiting for the next cron.
+
 What users may notice: nothing on event-driven updates (webhook-fast as
 before). The purely time-driven inbox reminders (due-date, grace,
 health-band) and market-expiry cleanup can now land up to ~5 minutes
