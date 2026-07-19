@@ -16,8 +16,8 @@ import { DIAMOND_ABI_VIEM } from '@vaipakam/contracts/abis';
 import { useActiveChain } from '../chain/useActiveChain';
 import { fetchProtocolConfig, protocolConfigFresh } from './indexer';
 
-const TREASURY_FEE_BPS_DEFAULT = 100; // 1% of interest
-const LIF_BPS_DEFAULT = 10; // 0.1% of principal
+const TREASURY_FEE_BPS_DEFAULT = 200; // 2% of interest (#1352 fee freeze)
+const LIF_BPS_DEFAULT = 20; // 0.2% of principal (#1352 fee freeze)
 const MAX_OFFER_DURATION_DAYS_DEFAULT = 365; // deploy default; tunable [7d, 5y]
 
 export interface ProtocolFees {

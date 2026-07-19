@@ -80,43 +80,83 @@ contract ReplaceStaleFacets is Script {
         (bytes4[] memory vfAdd, bytes4[] memory vfReplace) =
             _partitionByRouting(diamond, _vaultFactorySelectors());
 
-        // 10 cuts (+1 when the diamond is missing new VaultFactory selectors):
-        //   3 Replace (Offer / Oracle / VaultFactory bytecode refresh)
-        //   1 Replace + 1 Add (ConfigFacet — existing 28 selectors + 8 missing for protocol-console knobs)
-        //   1 Add (NumeraireConfigFacet — 19 numeraire/PAD/periodic selectors carved out of ConfigFacet)
-        //   1 Replace + 1 Add (OracleAdminFacet — existing 20 + 10 missing Pyth/admin getters)
-        //   1 Replace + 1 Add (OfferAcceptFacet — existing 4 selectors + 1 missing #627 KYC-value view)
-        //   [+1 Add] (VaultFactoryFacet — selectors the target diamond doesn't route yet)
+        // #1352 (Codex P2) — the offer-accept "missing" list now mixes
+        // already-routed selectors (`calculateTransactionValueNumeraire` /
+        // `verifyAndBindAccept`, live since #627/#662) with a genuinely-new one
+        // (`chargeBorrowerLifAndDeliver`, the HoldOnly LIF self-call target). A
+        // blanket `Add` of the whole list reverts on any diamond that already
+        // routes the first two (`LibDiamond.addFunctions` rejects a routed
+        // selector). Partition by live routing exactly like the VaultFactory
+        // path: already-routed missing selectors fold into the offer-accept
+        // Replace (re-point them at the fresh bytecode), only the unrouted ones
+        // get an Add — kept as a conditional tail so an empty Add never reverts.
+        (bytes4[] memory oaAdd, bytes4[] memory oaReplace) =
+            _partitionByRouting(diamond, _offerAcceptMissingSelectors());
+
+        // 9 base cuts + one conditional tail Add per non-empty {vfAdd, oaAdd}:
+        //   3 Replace (OfferCreate / Oracle / VaultFactory bytecode refresh)
+        //   1 Replace + 1 Add (ConfigFacet — existing + protocol-console knobs)
+        //   1 Add (NumeraireConfigFacet — numeraire/PAD/periodic selectors)
+        //   1 Replace + 1 Add (OracleAdminFacet — existing + Pyth/admin getters)
+        //   1 Replace (OfferAcceptFacet — base + already-routed new selectors)
+        //   [+1 Add] (VaultFactoryFacet — selectors not routed yet)
+        //   [+1 Add] (OfferAcceptFacet — genuinely-new selectors not routed yet)
+        uint256 tailCount =
+            (vfAdd.length > 0 ? 1 : 0) + (oaAdd.length > 0 ? 1 : 0);
         IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](
-            vfAdd.length > 0 ? 11 : 10
+            9 + tailCount
         );
         cuts[0] = _replace(address(offerCreateFacet), _offerCreateSelectors());
-        cuts[7] = _replace(address(offerAcceptFacet), _offerAcceptSelectors());
         cuts[1] = _replace(address(oracleFacet), _oracleSelectors());
         cuts[2] = _replace(address(vaultFactoryFacet), vfReplace);
-        if (vfAdd.length > 0) {
-            cuts[10] = _add(address(vaultFactoryFacet), vfAdd);
-        }
         cuts[3] = _replace(address(configFacet), _configFacetExistingSelectors());
         cuts[4] = _add(address(configFacet), _configFacetMissingSelectors());
         cuts[5] = _replace(address(oracleAdminFacet), _oracleAdminExistingSelectors());
         cuts[6] = _add(address(oracleAdminFacet), _oracleAdminMissingSelectors());
-        // #627 — Add the new public KYC-value view so the aggregator adapter's
-        // `matchLoan` can call it after an upgrade (a Replace would revert: not
-        // yet routed). Without this, `matchLoan` reverts in the Diamond fallback.
-        cuts[8] = _add(address(offerAcceptFacet), _offerAcceptMissingSelectors());
+        // Re-point the offer-accept base selectors AND any already-routed new
+        // selectors at the fresh bytecode in one Replace.
+        cuts[7] = _replace(
+            address(offerAcceptFacet),
+            _concat(_offerAcceptSelectors(), oaReplace)
+        );
         // #394 (Codex #647 round-3) — Add the carved-out numeraire/PAD/periodic
         // selectors to the NumeraireConfigFacet address (NOT ConfigFacet).
-        cuts[9] = _add(address(numeraireConfigFacet), _getNumeraireConfigSelectors());
+        cuts[8] = _add(address(numeraireConfigFacet), _getNumeraireConfigSelectors());
+        uint256 t = 9;
+        if (vfAdd.length > 0) {
+            cuts[t++] = _add(address(vaultFactoryFacet), vfAdd);
+        }
+        // #627 / #1352 — the genuinely-unrouted offer-accept selectors (KYC-value
+        // view + HoldOnly LIF self-call target). A Replace would revert on these
+        // (not yet routed); Add is correct.
+        if (oaAdd.length > 0) {
+            cuts[t++] = _add(address(offerAcceptFacet), oaAdd);
+        }
 
         IDiamondCut(diamond).diamondCut(cuts, address(0), "");
 
         vm.stopBroadcast();
 
         console.log(
-            "DiamondCut applied: 5 facets replaced; missing selectors added:",
-            38 + vfAdd.length
+            "DiamondCut applied: facets replaced; missing selectors added (VF + offer-accept):",
+            vfAdd.length + oaAdd.length
         );
+    }
+
+    /// @dev Concatenate two selector lists (base Replace set + already-routed
+    ///      new selectors) into one Replace cut.
+    function _concat(bytes4[] memory a, bytes4[] memory b)
+        internal
+        pure
+        returns (bytes4[] memory out)
+    {
+        out = new bytes4[](a.length + b.length);
+        for (uint256 i; i < a.length; i++) {
+            out[i] = a[i];
+        }
+        for (uint256 j; j < b.length; j++) {
+            out[a.length + j] = b[j];
+        }
     }
 
     function _add(address facet, bytes4[] memory selectors)
