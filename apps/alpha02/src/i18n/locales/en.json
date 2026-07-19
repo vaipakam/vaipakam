@@ -1298,6 +1298,7 @@
       "nothing": "Nothing.",
       "depositYouLock": "{{amt}} moves from your wallet into your Vaipakam Vault.",
       "withdrawYouReceive": "{{amt}} back in your wallet.",
+      "checkingAvailability": "Checking VPFI availability on {{chain}}…",
       "availabilityCheckFailed": "We couldn’t check VPFI availability on {{chain}} right now. Please try again in a moment.",
       "walletBalanceHint": "In your wallet: {{amount}} VPFI",
       "withdrawableHint": "Withdrawable now: {{free}} VPFI of {{vault}} in your vault",

@@ -2120,6 +2120,7 @@ const copySource = {
       ['amt'],
     ),
     withdrawYouReceive: tmpl('{{amt}} back in your wallet.', ['amt']),
+    checkingAvailability: tmpl('Checking VPFI availability on {{chain}}…', ['chain']),
     availabilityCheckFailed: tmpl(
       'We couldn’t check VPFI availability on {{chain}} right now. Please try again in a moment.',
       ['chain'],

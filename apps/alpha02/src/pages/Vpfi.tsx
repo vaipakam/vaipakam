@@ -367,8 +367,8 @@ export function Vpfi() {
         <h1 className="page-title">{copy.vpfi.title}</h1>
         <p className="page-lede">{copy.vpfi.optional}</p>
         <p className="muted">
-          <LoaderCircle className="spin" aria-hidden size={16} /> Checking VPFI
-          availability on {readChain.name}…
+          <LoaderCircle className="spin" aria-hidden size={16} />{' '}
+          {copy.vpfi.checkingAvailability(readChain.name)}
         </p>
       </div>
     );

@@ -73,7 +73,10 @@ const BACKTICK = /`([^`]*)`/g;
 // — so TypeScript generics / comparisons don't false-positive.
 // Includes whitespace/newlines so the common MULTILINE JSX text style
 // (`<span>\n  You have {n} …\n</span>`) is caught too (Codex #1345 r2).
-const JSX_TEXT_CHARS = "[A-Za-z0-9 \\t\\r\\n,.'’\"%$#·—–:&!?()\\-]";
+// The `…` (Unicode ellipsis) is common in loading/pending notices
+// (`Checking … on {chain}…`); without it the run can't reach the
+// closing tag and the node slips the scan (Codex #1345 r4).
+const JSX_TEXT_CHARS = "[A-Za-z0-9 \\t\\r\\n,.'’\"%$#·—–…:&!?()\\-]";
 // The run may carry MORE THAN ONE `{expr}` — e.g. the pre-migration
 // `You have {n} active {n === 1 ? 'position' : 'positions'}.` shape.
 // A single fixed `{expr}` slot can't reach the second one (text chars
