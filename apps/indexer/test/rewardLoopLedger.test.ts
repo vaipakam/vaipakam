@@ -436,7 +436,7 @@ describe('robustness (Codex #1310 round 1)', () => {
       isLenderSide: true,
       payer: ALICE,
       vpfiAmount: '15',
-      feeNumeraire1e18: '0',
+      configuredFeeVpfi1e18: '15',
     });
     seed(21, 0, 'VPFIDiscountApplied', {
       loanId: '2',
@@ -462,7 +462,7 @@ describe('robustness (Codex #1310 round 1)', () => {
       isLenderSide: false,
       payer: ALICE,
       vpfiAmount: '20',
-      feeNumeraire1e18: '0',
+      configuredFeeVpfi1e18: '20',
     });
 
     await applyRewardLoopLedger([], env, CHAIN, ts([]));

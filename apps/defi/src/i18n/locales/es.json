@@ -1272,7 +1272,7 @@
     "eventPartialRepayReceivedTitle": "Pago parcial recibido",
     "eventPartialRepayReceivedDesc": "Lado del prestamista: un prestatario pagó parte del principal/interés a mitad del préstamo. Permite reconciliar entradas sin vigilar el panel.",
     "pushFeeTitle": "Notificaciones Push: divulgación de tarifas",
-    "pushFeeBody": "La entrega Push cuesta gas al canal del protocolo. Lo recuperamos como un equivalente fijo de $2 USD (ajustable por gobernanza) deducido de tu depósito VPFI en la PRIMERA notificación pagada por lado de préstamo. Las siguientes notificaciones en el mismo lado son gratis. Telegram siempre es gratuito."
+    "pushFeeBody": "La entrega Push cuesta gas al canal del protocolo. Lo recuperamos como una tarifa fija de 0.5 VPFI (ajustable por gobernanza) deducida de tu depósito VPFI en la PRIMERA notificación pagada por lado de préstamo. Las siguientes notificaciones en el mismo lado son gratis. Telegram siempre es gratuito."
   },
   "allowancesPage": {
     "subtitle": "Cada aprobación ERC-20 otorgada al Vaipakam Diamond por la cartera conectada en esta cadena. Revocar las que ya no se necesiten con un clic. Las asignaciones distintas de cero aparecen primero; las filas con asignación cero aparecen abajo como referencia para confirmar que la lista está limpia.",

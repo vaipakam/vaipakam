@@ -446,22 +446,33 @@ library LibVaipakam {
     ///      caps the worst-case bill on a per-loan basis if governance
     ///      misfires upward.
     ///
-    ///      The numeraire-quoted fee converts to VPFI via the
-    ///      ETH/numeraire price returned by `OracleFacet.getAssetPrice(WETH)`
-    ///      (anchored at the oracle layer post-b1) times the fixed
-    ///      `VPFI_PER_ETH_FIXED_PHASE1` rate. No USD-intermediate is
-    ///      involved — the fee storage value, the oracle return, and
-    ///      the resulting math are all in the active numeraire end to
-    ///      end. Atomic multi-arg `setNumeraire` in `ConfigFacet` keeps
-    ///      this in lockstep with the threshold and KYC tiers when
-    ///      governance rotates.
-    uint256 constant NOTIFICATION_FEE_DEFAULT = 2 * 1e18;
-    uint256 constant MIN_NOTIFICATION_FEE_FLOOR = 1e17; // 0.1 numeraire-units
-    uint256 constant MAX_NOTIFICATION_FEE_CEIL = 50 * 1e18; // 50 numeraire-units
+    ///      Recycling M1 (#1346, governor §4.1/§13/§14.2) — the fee is a
+    ///      **flat native-VPFI tariff**: the stored value IS the VPFI wei
+    ///      amount billed, a quantity, not a numeraire figure converted
+    ///      through a price. There is no oracle step and no
+    ///      `VPFI_PER_ETH_FIXED_PHASE1` peg in the bill path — the launch
+    ///      conversion class (§14.2) is forbidden, so a flat tariff
+    ///      replaces the retired ETH/numeraire conversion. The default
+    ///      `0.5 VPFI` preserves the ≈0.5-VPFI bill the old
+    ///      `$2 ÷ ($4000 × 1e-3)` conversion produced at typical prices.
+    ///      The fee has **no numeraire linkage** — `setNumeraire` no
+    ///      longer rotates it (it would clobber a VPFI quantity with a
+    ///      fiat-denominated value); it is tuned only via
+    ///      `ConfigFacet.setNotificationFee`.
+    uint256 constant NOTIFICATION_FEE_DEFAULT = 5e17; // 0.5 VPFI (flat tariff)
+    uint256 constant MIN_NOTIFICATION_FEE_FLOOR = 1e17; // 0.1 VPFI
+    uint256 constant MAX_NOTIFICATION_FEE_CEIL = 50 * 1e18; // 50 VPFI
 
-    /// @dev T-032 — Phase 1 fixed VPFI/ETH rate. VPFI doesn't have a
-    ///      real market price yet; the fee math is anchored to
-    ///      ETH/numeraire times this fixed rate so VPFI gets a
+    /// @dev T-032 — Phase 1 fixed VPFI/ETH rate. **Dormant since
+    ///      Recycling M1 (#1346):** the notification-fee bill path — its
+    ///      last on-chain consumer — moved to a flat native-VPFI tariff
+    ///      (the §14.2 conversion class is forbidden at launch), so this
+    ///      peg no longer has a code caller. Retained as the documented
+    ///      Phase-2 VPFI/ETH relationship should a peg-based helper be
+    ///      reintroduced once VPFI has a market. Original intent below.
+    ///
+    ///      VPFI doesn't have a real market price yet; the fee math was
+    ///      anchored to ETH/numeraire times this fixed rate so VPFI got a
     ///      synthetic numeraire quote without needing a tradable VPFI
     ///      market:
     ///        `vpfiAmount = feeNumeraire
@@ -985,26 +996,25 @@ library LibVaipakam {
         uint256 vpfiTier2Min; // 0 ⇒ VPFI_TIER2_MIN (1_000e18)
         uint256 vpfiTier3Min; // 0 ⇒ VPFI_TIER3_MIN (5_000e18)
         uint256 vpfiTier4Threshold; // 0 ⇒ VPFI_TIER4_THRESHOLD (20_000e18)
-        // ── T-032 / Numeraire generalization (b1) — Notification fee config ─────────
-        // Flat per-loan-side notification fee, denominated in the
-        // ACTIVE NUMERAIRE (1e18 scaled — USD by post-deploy default;
-        // whatever governance has rotated to otherwise). Charged in
-        // VPFI from the user's vault at the moment the off-chain
+        // ── T-032 / Recycling M1 (#1346) — Notification fee config ─────────
+        // Flat per-loan-side notification tariff, denominated directly in
+        // **native VPFI wei** (1e18 scaled) — a quantity, NOT a numeraire
+        // figure. Billed from the user's vault at the moment the off-chain
         // hf-watcher fires the FIRST notification on a PaidPush-tier
-        // subscription for that loan-side. Zero (default) means use
-        // the library constant `NOTIFICATION_FEE_DEFAULT` (2.0
-        // numeraire-units); set via `ConfigFacet.setNotificationFee`.
-        // Bounded `[MIN_NOTIFICATION_FEE_FLOOR, MAX_NOTIFICATION_FEE_CEIL]`
-        // at the setter so a misfire can't lock users out OR drain
-        // their vaults. The fee → VPFI math is anchored end-to-end
-        // in the active numeraire: `getAssetPrice(WETH)` returns
-        // ETH/numeraire post-b1, multiplied by the fixed
-        // `VPFI_PER_ETH_FIXED_PHASE1` peg gives a synthetic
-        // VPFI/numeraire rate, and the stored fee divides directly. No
-        // USD-intermediate is involved at any step (the per-knob
-        // `notificationFeeUsdOracle` was retired in Numeraire generalization (Phase 1);
-        // the `INumeraireOracle` abstraction was retired in b1).
-        uint256 notificationFee; // 0 ⇒ NOTIFICATION_FEE_DEFAULT (2e18)
+        // subscription for that loan-side, moving the VPFI into Diamond
+        // custody where it credits the recycle bucket
+        // (`RecycleSource.NotificationFee`) — the first live non-forfeit
+        // absorption class (governor §4.1 Layer 0). Zero (default) means
+        // use the library constant `NOTIFICATION_FEE_DEFAULT` (0.5 VPFI);
+        // set via `ConfigFacet.setNotificationFee`. Bounded
+        // `[MIN_NOTIFICATION_FEE_FLOOR, MAX_NOTIFICATION_FEE_CEIL]` at the
+        // setter so a misfire can't lock users out OR drain their vaults.
+        // There is NO numeraire linkage and NO oracle conversion — the
+        // stored value IS the VPFI amount billed. `setNumeraire` does not
+        // rotate this slot (a rotation would clobber a VPFI quantity with a
+        // fiat-denominated value); the §14.2 conversion class the old
+        // `VPFI_PER_ETH_FIXED_PHASE1`-peg path used is forbidden at launch.
+        uint256 notificationFee; // 0 ⇒ NOTIFICATION_FEE_DEFAULT (5e17 = 0.5 VPFI)
         // ── T-034 / b1 — Periodic Interest Payment config ─────────────
         // See docs/DesignsAndPlans/PeriodicInterestPaymentDesign.md §6.
         //
@@ -5829,15 +5839,13 @@ library LibVaipakam {
         return v == 0 ? MAX_OFFER_DURATION_DAYS_DEFAULT : uint256(v);
     }
 
-    /// @dev T-032 / Numeraire generalization (Phase 1) — Notification fee in NUMERAIRE
-    ///      units (1e18 scaled). Governance-tunable via
-    ///      `ConfigFacet.setNotificationFee` within
+    /// @dev T-032 / Recycling M1 (#1346) — Notification tariff in **native
+    ///      VPFI wei** (1e18 scaled), a flat quantity. Governance-tunable
+    ///      via `ConfigFacet.setNotificationFee` within
     ///      [MIN_NOTIFICATION_FEE_FLOOR, MAX_NOTIFICATION_FEE_CEIL].
-    ///      Falls back to `NOTIFICATION_FEE_DEFAULT` (2.0 numeraire-units
-    ///      = $2 under USD-as-numeraire) when unset. The numeraire-to-USD
-    ///      conversion happens at the `LibNotificationFee.vpfiAmountForFee`
-    ///      boundary so the stored value can be re-anchored when
-    ///      governance rotates the numeraire.
+    ///      Falls back to `NOTIFICATION_FEE_DEFAULT` (0.5 VPFI) when unset.
+    ///      No numeraire/oracle conversion — `LibNotificationFee.bill`
+    ///      reads this value as the VPFI amount to bill directly.
     function cfgNotificationFee() internal view returns (uint256) {
         uint256 v = storageSlot().protocolCfg.notificationFee;
         return v == 0 ? NOTIFICATION_FEE_DEFAULT : v;

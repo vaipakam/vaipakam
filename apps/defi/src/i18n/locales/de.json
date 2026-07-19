@@ -1273,7 +1273,7 @@
     "eventPartialRepayReceivedTitle": "Teilrückzahlung erhalten",
     "eventPartialRepayReceivedDesc": "Kreditgeberseite: Ein Kreditnehmer hat Teile von Kapital/Zinsen während der Laufzeit gezahlt. Ermöglicht den Abgleich eingehender Beträge ohne ständiges Dashboard-Monitoring.",
     "pushFeeTitle": "Push-Benachrichtigungen: Gebührenoffenlegung",
-    "pushFeeBody": "Push-Zustellung kostet den Benachrichtigungskanal des Protokolls Gas. Wir holen das als festen $2-USD-Äquivalent (governance-tunbar) zurück, abgezogen von deinem VPFI-Depot bei der ERSTEN bezahlten Benachrichtigung pro Kreditseite. Folgende Benachrichtigungen auf derselben Seite sind kostenlos. Telegram ist immer kostenlos."
+    "pushFeeBody": "Push-Zustellung kostet den Benachrichtigungskanal des Protokolls Gas. Wir holen das als feste Pauschale von 0.5 VPFI (governance-tunbar) zurück, abgezogen von deinem VPFI-Depot bei der ERSTEN bezahlten Benachrichtigung pro Kreditseite. Folgende Benachrichtigungen auf derselben Seite sind kostenlos. Telegram ist immer kostenlos."
   },
   "allowancesPage": {
     "subtitle": "Jede ERC-20-Genehmigung, die das verbundene Wallet dem Vaipakam Diamond auf dieser Chain erteilt hat. Nicht mehr benötigte mit einem Klick widerrufen. Genehmigungen ungleich Null erscheinen zuerst; Zeilen mit Null-Genehmigung darunter dienen als Referenz, um zu bestätigen, dass die Liste sauber ist.",

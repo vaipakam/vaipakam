@@ -177,26 +177,27 @@ emergency rollback if a bad schedule was pushed by mistake.
 
 ### Notification fee (per loan-side)
 
-Per-loan-side notification fee charged in VPFI at the first paid-tier
-notification. Stored in **numeraire-units** (1e18-scaled — interpreted
-as USD when `numeraireSymbol == bytes32(0)`, the post-deploy default).
-Range: `[MIN_NOTIFICATION_FEE_FLOOR, MAX_NOTIFICATION_FEE_CEIL]` —
-0.1 to 50.0 numeraire-units (= $0.10 to $50 under USD-as-numeraire).
-Zero means "use library default" (2.0 numeraire-units = $2). Setter:
-`setNotificationFee(uint256)`. Governance-tunable so a market shift
-in Push Protocol fees can be passed through without redeploy.
+Per-loan-side notification tariff billed at the first paid-tier
+notification. **Recycling M1 (#1346): a flat native-VPFI quantity** —
+the stored value IS the VPFI wei amount billed, not a numeraire figure
+converted through an oracle. Range:
+`[MIN_NOTIFICATION_FEE_FLOOR, MAX_NOTIFICATION_FEE_CEIL]` — 0.1 to 50
+VPFI. Zero means "use library default" (0.5 VPFI). Setter:
+`setNotificationFee(uint256)` (VPFI wei). Governance-tunable so a
+market shift in Push Protocol fees can be passed through without
+redeploy.
 
-> **Numeraire generalization (2026-05-03).** The retired per-knob
-> `notificationFeeUsdOracle` slot was removed from
-> `ProtocolConfig`. The notification fee's denomination now flows
-> through `OracleFacet.getAssetPrice(WETH)` which returns the
-> numeraire-quoted ETH price natively after generalizing the
-> numeraire to the oracle layer (B1) — single
-> source of truth across the protocol. To change the notification
-> fee's reference currency, governance rotates the numeraire via
-> the atomic `setNumeraire` setter (under "Periodic Interest Payment"
-> below); the per-knob setter only re-tunes within the same
-> numeraire.
+> **Recycling M1 (#1346).** The tariff is no longer numeraire-denominated
+> and no longer converted through `OracleFacet.getAssetPrice(WETH)` ×
+> `VPFI_PER_ETH_FIXED_PHASE1` — the launch-era conversion class (§14.2)
+> is forbidden, so a flat native-VPFI tariff replaces it. Consequently
+> the tariff has **no numeraire linkage**: it is deliberately absent from
+> the atomic `setNumeraire` rotation (which would otherwise clobber a
+> VPFI quantity with a fiat-denominated value), and is tuned only via
+> `setNotificationFee`. The billed tariff moves into Diamond custody and
+> credits the recycle bucket (`RecycleSource.NotificationFee`) — the
+> first live non-forfeit absorption class (governor §4.1 Layer 0) — never
+> routed to treasury.
 
 ## Order matching and durations
 
@@ -511,19 +512,23 @@ intermediate USD detour.
 within the same numeraire OR atomically as part of `setNumeraire`):
 
 - `minPrincipalForFinerCadence` (numeraire-units, 1e18-scaled)
-- `notificationFee` (numeraire-units)
 - `kycTier0ThresholdNumeraire` + `kycTier1ThresholdNumeraire`
+
+> The notification tariff is **NOT** a value-side knob here anymore —
+> Recycling M1 (#1346) made it a flat native-VPFI quantity with no
+> numeraire linkage, so it is deliberately excluded from this rotation
+> (tune it via `setNotificationFee`; see "Notification fee" above).
 
 **Atomic rotation setter** —
 `setNumeraire(ethNumeraireFeed, numeraireChainlinkDenominator,
-numeraireSymbol, pythCrossCheckFeedId, threshold, notificationFee,
-kycTier0, kycTier1)`. Eight args, single Safe transaction. By
+numeraireSymbol, pythCrossCheckFeedId, threshold,
+kycTier0, kycTier1)`. Seven args, single Safe transaction. By
 construction governance cannot rotate the numeraire without
 simultaneously re-anchoring every value denominated in it AND every
 oracle-side input that produces numeraire-quoted prices.
 
-Inconsistent intermediate state ("numeraire = EUR but notification
-fee still in USD-units" or "Tellor still queries `<symbol>/usd`") is
+Inconsistent intermediate state ("numeraire = EUR but a threshold
+still in USD-units" or "Tellor still queries `<symbol>/usd`") is
 unreachable.
 
 Each numeraire-denominated value carries its per-knob bounded

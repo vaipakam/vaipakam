@@ -749,53 +749,49 @@ contract ConfigFacet is DiamondAccessControl {
     );
 
     /**
-     * @notice Update the per-loan-side notification fee, denominated
-     *         in NUMERAIRE-units (1e18 scaled). Charged in VPFI from
-     *         the user's vault on the FIRST PaidPush-tier notification
-     *         fired by the off-chain hf-watcher.
+     * @notice Update the per-loan-side notification tariff, a flat amount
+     *         in **native VPFI wei** (1e18 scaled). Billed from the user's
+     *         vault on the FIRST PaidPush-tier notification fired by the
+     *         off-chain watcher.
      * @dev ADMIN_ROLE-only. Bounded inside
      *      `[MIN_NOTIFICATION_FEE_FLOOR, MAX_NOTIFICATION_FEE_CEIL]`
-     *      (0.1 – 50.0 numeraire-units, = $0.10 – $50 under
-     *      USD-as-numeraire). Floor prevents a misfire that sets the
-     *      fee to ~zero and starves the Push channel; ceiling caps the
+     *      (0.1 – 50 VPFI). Floor prevents a misfire that sets the tariff
+     *      to ~zero and starves the Push channel; ceiling caps the
      *      worst-case user bill if governance misfires upward. Pass
      *      exactly 0 to reset to the library default
-     *      `NOTIFICATION_FEE_DEFAULT` (2.0 numeraire-units = `2e18`).
+     *      `NOTIFICATION_FEE_DEFAULT` (0.5 VPFI = `5e17`).
      *
-     *      Numeraire generalization (b1) — the per-knob `notificationFeeUsdOracle`
-     *      was retired in Phase 1, and the `INumeraireOracle`
-     *      abstraction was retired in b1. The protocol's reference
-     *      currency now lives at the oracle layer
-     *      (`s.ethNumeraireFeed` / `s.numeraireSymbol` /
-     *      `s.numeraireChainlinkDenominator`); the fee → VPFI math is
-     *      anchored to `getAssetPrice(WETH)` (which returns
-     *      ETH/numeraire natively) times `VPFI_PER_ETH_FIXED_PHASE1`
-     *      with no USD-intermediate. `setNumeraire` rotates everything
-     *      atomically — the four feed-side slots plus the four
-     *      numeraire-denominated value knobs (threshold + this fee +
-     *      KYC tier 0 + KYC tier 1).
-     * @param newFeeNumeraire1e18 New per-loan-side fee in numeraire-
-     *                  unit 1e18 scaling; pass 0 to reset.
+     *      Recycling M1 (#1346): the tariff is a flat native-VPFI quantity
+     *      — NOT a numeraire figure. There is no oracle conversion and no
+     *      `VPFI_PER_ETH_FIXED_PHASE1` peg; the stored value IS the VPFI
+     *      amount billed (the §14.2 conversion class is forbidden at
+     *      launch). It has no numeraire linkage — `setNumeraire` does not
+     *      rotate it (a rotation would clobber this VPFI quantity with a
+     *      fiat-denominated value). The billed tariff moves into Diamond
+     *      custody and credits the recycle bucket
+     *      (`RecycleSource.NotificationFee`), never routed to treasury.
+     * @param newFeeVpfi1e18 New per-loan-side tariff in native VPFI wei;
+     *                  pass 0 to reset to the default.
      */
-    function setNotificationFee(uint256 newFeeNumeraire1e18)
+    function setNotificationFee(uint256 newFeeVpfi1e18)
         external
         onlyRole(LibAccessControl.ADMIN_ROLE)
     {
         if (
-            newFeeNumeraire1e18 != 0 &&
+            newFeeVpfi1e18 != 0 &&
             (
-                newFeeNumeraire1e18 < LibVaipakam.MIN_NOTIFICATION_FEE_FLOOR ||
-                newFeeNumeraire1e18 > LibVaipakam.MAX_NOTIFICATION_FEE_CEIL
+                newFeeVpfi1e18 < LibVaipakam.MIN_NOTIFICATION_FEE_FLOOR ||
+                newFeeVpfi1e18 > LibVaipakam.MAX_NOTIFICATION_FEE_CEIL
             )
         ) {
             revert InvalidNotificationFee(
-                newFeeNumeraire1e18,
+                newFeeVpfi1e18,
                 LibVaipakam.MIN_NOTIFICATION_FEE_FLOOR,
                 LibVaipakam.MAX_NOTIFICATION_FEE_CEIL
             );
         }
-        LibVaipakam.storageSlot().protocolCfg.notificationFee = newFeeNumeraire1e18;
-        emit NotificationFeeSet(newFeeNumeraire1e18);
+        LibVaipakam.storageSlot().protocolCfg.notificationFee = newFeeVpfi1e18;
+        emit NotificationFeeSet(newFeeVpfi1e18);
     }
 
     /// @notice Emitted when the recycling governor's platform margin changes.
@@ -1004,24 +1000,24 @@ contract ConfigFacet is DiamondAccessControl {
     }
 
     /**
-     * @notice T-032 / Numeraire generalization (Phase 1) — read the live notification-
-     *         fee config in one RPC. Frontend reads this to render the
+     * @notice T-032 / Recycling M1 (#1346) — read the live notification-
+     *         tariff config in one RPC. Frontend reads this to render the
      *         cost disclosure on the subscription opt-in UI.
-     * @return feeNumeraire1e18 Resolved fee in numeraire-units —
+     * @return feeVpfi1e18 Resolved flat tariff in native VPFI wei —
      *                     either the storage override or the library
-     *                     default. Convert to USD via the global
-     *                     `numeraireOracle` (read separately via
-     *                     `getNumeraireOracle()`).
-     * @return feesAccrued Cumulative VPFI debited via
-     *                     `markNotifBilled` since deploy. Operator
-     *                     monitors for anomalies.
+     *                     default (0.5 VPFI). A quantity, not a numeraire
+     *                     figure — no oracle conversion.
+     * @return feesAccrued Cumulative VPFI billed via `markNotifBilled`
+     *                     since deploy (now recycled into the bucket, not
+     *                     paid to treasury). Operator monitors for
+     *                     anomalies.
      */
     function getNotificationFeeConfig()
         external
         view
-        returns (uint256 feeNumeraire1e18, uint256 feesAccrued)
+        returns (uint256 feeVpfi1e18, uint256 feesAccrued)
     {
-        feeNumeraire1e18 = LibVaipakam.cfgNotificationFee();
+        feeVpfi1e18 = LibVaipakam.cfgNotificationFee();
         feesAccrued = LibVaipakam.storageSlot().notificationFeesAccrued;
     }
 

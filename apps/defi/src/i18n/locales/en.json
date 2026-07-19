@@ -384,7 +384,7 @@
     "eventPartialRepayReceivedTitle": "Partial repayment received",
     "eventPartialRepayReceivedDesc": "Lender-side: a borrower paid down some principal/interest mid-loan. Lets you reconcile incoming flows without watching the dashboard.",
     "pushFeeTitle": "Push notifications: fee disclosure",
-    "pushFeeBody": "Push delivery costs the protocol's notification channel gas to broadcast. We recoup that as a flat $2 USD-equivalent (governance-tunable) deducted from your VPFI vault on the FIRST paid notification per loan-side. Subsequent notifications on the same loan-side are free for you. Telegram is always free."
+    "pushFeeBody": "Push delivery costs the protocol's notification channel gas to broadcast. We recoup that as a flat 0.5 VPFI tariff (governance-tunable) deducted from your VPFI vault on the FIRST paid notification per loan-side. Subsequent notifications on the same loan-side are free for you. Telegram is always free."
   },
   "allowancesPage": {
     "subtitle": "Every ERC-20 approval granted to the Vaipakam Diamond by the connected wallet on this chain. Revoke ones no longer needed in one click. Non-zero allowances appear first; zero-allowance rows below are a reference so the list can be confirmed clean.",

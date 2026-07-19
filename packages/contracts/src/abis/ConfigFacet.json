@@ -364,7 +364,7 @@
     "inputs": [],
     "outputs": [
       {
-        "name": "feeNumeraire1e18",
+        "name": "feeVpfi1e18",
         "type": "uint256",
         "internalType": "uint256"
       },
@@ -1155,7 +1155,7 @@
     "name": "setNotificationFee",
     "inputs": [
       {
-        "name": "newFeeNumeraire1e18",
+        "name": "newFeeVpfi1e18",
         "type": "uint256",
         "internalType": "uint256"
       }
