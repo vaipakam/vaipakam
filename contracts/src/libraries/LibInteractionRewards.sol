@@ -1839,7 +1839,9 @@ function _dayPoolHalves(
             // truncation: the payout `total` shrinks but the `recycled` /
             // `armedFresh` commitment components stay whole so the facet retires
             // the full commitment (the trimmed remainder is "gone for good" like
-            // a truncated fresh share, not leaked). DARK until `D*` is armed.
+            // a truncated fresh share, not leaked). A solo fully-capped entry
+            // leaves `total == 0` with `armedFresh > 0` — the facet retires the
+            // commitment instead of reverting (Codex #1371 r6). DARK until `D*`.
             if (mutate) split = _applyLoanSideCap(s, e, split);
             toUser = split;
         }
@@ -2001,6 +2003,21 @@ function _dayPoolHalves(
     ) private view returns (uint256) {
         LibVaipakam.FeeEntitlement storage fe = s.feeEntitlementByLoanId[loanId];
         uint256 capOpen = fe.loanSideRewardCapOpen;
+        if (capOpen == 0 && fe.cStarOpen != 0) {
+            // #1353 (M2 PR-5c) — LAZY BACKFILL: a record STAMPED before the cap
+            // cache existed (an in-place upgrade from #1347, where
+            // `loanSideRewardCapOpen` was an appended slot reading 0) still has a
+            // real `cStarOpen`. Derive the ceiling from it (rev-15 "recompute
+            // only as a consistency check") so the legacy loan is capped at its
+            // true fee-linked ceiling rather than treated as a real zero (Codex
+            // #1371 r6). A genuine dust record (`cStarOpen == 0`) keeps a 0
+            // ceiling (capped to ~0).
+            capOpen =
+                (fe.cStarOpen *
+                    (LibVaipakam.BASIS_POINTS - fe.rewardHaircutBpsAtOpen)) /
+                LibVaipakam.BASIS_POINTS /
+                2;
+        }
         if (capOpen == 0) return 0;
         uint256 openDays = fe.openDays;
         if (openDays == 0) return capOpen; // defensive; stamp guarantees ≥ 1
@@ -2009,27 +2026,17 @@ function _dayPoolHalves(
         return (capOpen * daysCounted) / openDays;
     }
 
-    /// @dev The armed-fresh payout `armedFresh` is trimmed to `remaining`, and
-    ///      `total` is reduced by the shortfall. `recycled` and `armedFresh`
-    ///      stay UNTOUCHED — they are the commitment-retirement figures the
-    ///      facet consumes in FULL, so the trimmed remainder is retired (not
-    ///      leaked) just like a pool-truncated fresh share. Returns the amount
-    ///      actually paid toward the cap.
-    function _trimArmedFreshPayout(
-        EntrySplit memory split,
-        uint256 remaining
-    ) private pure returns (EntrySplit memory, uint256 paidArmedFresh) {
-        uint256 armedFresh = split.armedFresh;
-        if (armedFresh <= remaining) return (split, armedFresh);
-        split.total -= (armedFresh - remaining);
-        return (split, remaining);
-    }
-
     /// @dev MUTATING loan-side cap — trims an entry's ARMED-FRESH payout to the
     ///      remaining per-(loanId, side) lifetime budget and persists the paid /
-    ///      armed-day accumulators. Returns `split` untouched (DARK) when the
-    ///      entry has no armed-fresh reward or the loan is UNSTAMPED
-    ///      (`openDays == 0`), so it never zeroes a legitimately-unstamped loan.
+    ///      armed-day accumulators. Reduces the payout `total` by the capped-off
+    ///      shortfall while leaving `recycled` / `armedFresh` WHOLE — they are the
+    ///      commitment-retirement figures the facet consumes in FULL, so the
+    ///      trimmed remainder is retired (not leaked) just like a pool-truncated
+    ///      fresh share. Returns `split` untouched (DARK) when the entry has no
+    ///      armed-fresh reward or the loan is UNSTAMPED (`openDays == 0`), so an
+    ///      unstamped loan is never zeroed. (A solo fully-capped entry yields
+    ///      `total == 0` with `armedFresh > 0`; the facet detects that and still
+    ///      retires the commitment instead of reverting — Codex #1371 r6.)
     function _applyLoanSideCap(
         LibVaipakam.Storage storage s,
         LibVaipakam.RewardEntry storage e,
@@ -2065,9 +2072,13 @@ function _dayPoolHalves(
         uint256 capEff = _loanSideRewardCapEff(s, loanId, daysIncl);
         uint256 paid = s.loanSideRewardPaidVpfi[loanId][side];
         uint256 remaining = capEff > paid ? capEff - paid : 0;
-        uint256 paidArmedFresh;
-        (split, paidArmedFresh) = _trimArmedFreshPayout(split, remaining);
-        s.loanSideRewardPaidVpfi[loanId][side] = paid + paidArmedFresh;
+        uint256 armedFresh = split.armedFresh;
+        if (armedFresh > remaining) {
+            split.total -= (armedFresh - remaining); // reduce payout; keep commitment figures
+            s.loanSideRewardPaidVpfi[loanId][side] = paid + remaining;
+        } else {
+            s.loanSideRewardPaidVpfi[loanId][side] = paid + armedFresh;
+        }
         return split;
     }
 

@@ -230,9 +230,44 @@ contract LoanSideRewardCapTest is SetupTest {
                 loanSideRewardCapOpen: 0 // ceiling rounds to 0
             })
         );
+        // Fully capped ⇒ pays 0, but the claim SUCCEEDS (does not revert): the
+        // entry is processed and its armed-fresh commitment retired, so a solo
+        // zero-payout entry is not stranded/retried forever (Codex #1371 r6).
         vm.prank(rewardLender);
-        vm.expectRevert(); // armed-fresh trimmed to 0 ⇒ nothing to claim
-        _facet().claimInteractionRewards();
+        (uint256 paid, , ) = _facet().claimInteractionRewards();
+        assertEq(paid, 0, "stamped dust loan capped to 0 (claim clears it, no revert)");
+    }
+
+    // ── Legacy in-place-upgrade record (cStarOpen set, cap cache 0) is derived ──
+
+    function test_ArmedClaim_LegacyRecordDerivesCapFromCStar() public {
+        _seedArmedDay(1, 1e18, 1e18);
+        _seedArmedDay(2, 1e18, 1e18);
+        _mut().setGovernorCommitArmedFromDayRaw(1);
+        _pushEntry(1e18, 1, 3); // raw reward 2e18
+
+        // Simulate a record stamped by the parent (#1347) impl BEFORE the cap
+        // cache slot existed: `cStarOpen` / `openDays` are set but
+        // `loanSideRewardCapOpen` reads 0 (appended slot). The cap must be
+        // DERIVED from `cStarOpen`, not treated as a real zero ceiling (Codex
+        // #1371 r6). cStarOpen 0.2e18, 0% stamped haircut ⇒ capOpen = 0.1e18;
+        // full-term (openDays 2 == armed days) ⇒ capEff 0.1e18 < raw 2e18.
+        _mut().setFeeEntitlementRaw(
+            LOAN_ID,
+            LibVaipakam.FeeEntitlement({
+                borrowerMode: LibVaipakam.FeeEntitlementMode.None,
+                lenderMode: LibVaipakam.FeeEntitlementMode.None,
+                openDays: 2,
+                rewardHaircutBpsAtOpen: 0, // legacy record never stamped a haircut
+                borrowerTariffPaid: 0,
+                lenderTariffPaid: 0,
+                cStarOpen: 0.2e18, // real notional from the parent stamp
+                loanSideRewardCapOpen: 0 // cache slot did not exist at parent-stamp time
+            })
+        );
+        vm.prank(rewardLender);
+        (uint256 paid, , ) = _facet().claimInteractionRewards();
+        assertEq(paid, 0.1e18, "cap derived from cStarOpen for a legacy record");
     }
 
     // ── Cutover-spanning entry: only the ARMED (post-D*) portion is capped ──
