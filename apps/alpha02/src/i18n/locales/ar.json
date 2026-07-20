@@ -117,7 +117,15 @@
           "title": "إدارة مراكزي",
           "blurb": "اطّلع على قروضك وإيجاراتك، وسدّد، وأضف ضمانًا، أو طالِب."
         }
-      }
+      },
+      "activePositions_few": "لديك {{count}} positions نشطة. شاهدها ضمن My positions.",
+      "activePositions_many": "لديك {{count}} positions نشطة. شاهدها ضمن My positions.",
+      "activePositions_one": "لديك {{count}} position نشطة. شاهدها ضمن My positions.",
+      "activePositions_other": "لديك {{count}} positions نشطة. شاهدها ضمن My positions.",
+      "activePositions_two": "لديك {{count}} positions نشطة. شاهدها ضمن My positions.",
+      "activePositions_zero": "لديك {{count}} positions نشطة. شاهدها ضمن My positions.",
+      "assetsNote": "أصولك تبقى في vault الخاص بك on-chain — Vaipakam لا يجمعها ولا يحتفظ بها نيابة عنك.",
+      "testnetNudge": "أنت على {{chainName}}، وهي test network. احصل على test assets مجانية للتجربة →"
     },
     "tokenSecurity": {
       "pickerUnknown": "تعذّر على فحص الأمان المستقل التحقق من هذا الرمز الآن. تُحجب الصفقات التي تتضمن رموزًا غير مُتحقَّق منها حتى ينجح الفحص.",
@@ -137,7 +145,22 @@
           "title": "تعذّر على فحص الأمان المستقل فحص أحد الرموز في هذا العرض. تعامل معه بعناية إضافية."
         }
       },
-      "reputationUnlisted": "لم يُعثر على أي إدراج سوقي لهذا العنوان — السوق الأوسع لا يعرف هذا الرمز. هذا وحده لا يجعله سيئًا، لكن تحقّق من عنوان العقد مع المشروع قبل التعامل به."
+      "reputationUnlisted": "لم يُعثر على أي إدراج سوقي لهذا العنوان — السوق الأوسع لا يعرف هذا الرمز. هذا وحده لا يجعله سيئًا، لكن تحقّق من عنوان العقد مع المشروع قبل التعامل به.",
+      "gateBlock": "فشل {{leg}} لهذه الصفقة في فحص أمني مستقل: {{reasons}}. القبول معطل — قد يكون token مثل هذا مستحيلا للبيع أو التحويل مهما كانت شروط الصفقة.",
+      "gateChanged": "فحص الأمان لـ {{leg}} في هذه الصفقة يعرض نتائج جديدة منذ مراجعتك. لم يتم توقيع شيء. المراجعة أعلاه تعرض التحديث — اقرأها وضع علامة consent مرة أخرى إذا كنت ما زلت تريد المتابعة.",
+      "gateUnknown": "تعذر تشغيل الفحص الأمني المستقل لـ {{leg}} في هذه الصفقة. حاول بعد قليل — القبول موقوف حتى يمكن التحقق من token.",
+      "gateUnsupported": "الفحص الأمني المستقل لا يغطي هذه الشبكة (test networks غير مفهرسة)، لذلك لم يتم فحص {{leg}} لهذه الصفقة. انتبه أكثر: اقبل tokens التي تثق بها فقط.",
+      "gateWarn": "تنبيه على {{leg}} لهذه الصفقة: {{reasons}}. تأكد أنك تفهمها قبل المتابعة.",
+      "matchesHidden_few": "تم إخفاء {{count}} عروض مطابقة لأن فحصا أمنيا مستقلا وضع علامة خطورة على أحد tokens الخاصة بها.",
+      "matchesHidden_many": "تم إخفاء {{count}} عروض مطابقة لأن فحصا أمنيا مستقلا وضع علامة خطورة على أحد tokens الخاصة بها.",
+      "matchesHidden_one": "تم إخفاء عرض مطابق واحد لأن فحصا أمنيا مستقلا وضع علامة خطورة على أحد tokens الخاصة به.",
+      "matchesHidden_other": "تم إخفاء {{count}} عروض مطابقة لأن فحصا أمنيا مستقلا وضع علامة خطورة على أحد tokens الخاصة بها.",
+      "matchesHidden_two": "تم إخفاء {{count}} عروض مطابقة لأن فحصا أمنيا مستقلا وضع علامة خطورة على أحد tokens الخاصة بها.",
+      "matchesHidden_zero": "تم إخفاء {{count}} عروض مطابقة لأن فحصا أمنيا مستقلا وضع علامة خطورة على أحد tokens الخاصة بها.",
+      "pickerBlock": "خطر — فحص أمني مستقل يضع علامة على هذا token: {{reasons}}. لن تسمح التدفقات بمتابعة صفقة بهذا token.",
+      "pickerWarn": "حذر — فحص أمني مستقل يبلغ: {{reasons}}. يمكنك المتابعة، لكن اقرأ هذا بعناية أولا.",
+      "reputationListedDeep": "تم العثور على market listing: {{name}}{{symbolSuffix}} — خارج أعلى 200 حسب حجم السوق. tokens الأصغر أصعب في الحركة وتختفي أسرع؛ تحقق من المشروع.",
+      "reputationListedTop": "تم العثور على market listing: {{name}}{{symbolSuffix}}، المرتبة #{{rank}} حسب حجم السوق. تحقق أنه يطابق token المقصود."
     },
     "signing": {
       "approveUnknown": "وافق على الرمز — تأكيد واحد، أو تأكيدان إذا كانت محفظتك تحتاج إلى إعادة ضبط موافقة قديمة إلى الصفر أولًا (لا يزال قيد الفحص).",
@@ -148,7 +171,18 @@
       "accept": "افتح الصفقة — المعاملة الأخيرة.",
       "approveNft": "اسمح للبروتوكول بنقل NFTs من هذه المجموعة — معاملة تُجرى مرة واحدة لكل مجموعة.",
       "postListing": "انشر الإدراج — المعاملة الأخيرة.",
-      "acceptRental": "ابدأ التأجير — المعاملة الأخيرة."
+      "acceptRental": "ابدأ التأجير — المعاملة الأخيرة.",
+      "introUpTo": "حتى {{n}} تأكيدات wallet، بهذا الترتيب:",
+      "intro_few": "ستؤكد {{count}} مرات في محفظتك، بهذا الترتيب:",
+      "intro_many": "ستؤكد {{count}} مرات في محفظتك، بهذا الترتيب:",
+      "intro_one": "تأكيد wallet واحد ينهي هذا:",
+      "intro_other": "ستؤكد {{count}} مرات في محفظتك، بهذا الترتيب:",
+      "intro_two": "ستؤكد {{count}} مرات في محفظتك، بهذا الترتيب:",
+      "intro_zero": "ستؤكد {{count}} مرات في محفظتك، بهذا الترتيب:",
+      "phaseApprove": "جار approval… ({{c}} من {{t}})",
+      "phasePermit": "جار توقيع permission… ({{c}} من {{t}}) — مجاني، بلا gas",
+      "phaseSend": "جار الإرسال… ({{c}} من {{t}})",
+      "phaseSign": "جار توقيع الشروط… ({{c}} من {{t}})"
     },
     "killSwitch": {
       "disabled": "هذا الإجراء متوقف الآن — أوقفه المشغّلون مؤقتًا كإجراء احترازي بينما يجري فحص أمر ما. كل ما هو ملكك بالفعل غير متأثر: السداد والمطالبات والسحوبات تبقى مفتوحة جميعها."
@@ -191,7 +225,8 @@
       "bandAlert": "تنبيه",
       "bandCritical": "حرج",
       "bandWarn": "تحذير",
-      "bandsSave": "حفظ"
+      "bandsSave": "حفظ",
+      "optoutUnavailable": "لا يمكن حفظ هذا المفتاح الآن — خدمة التنبيهات قيد الترقية. حاول بعد قليل."
     },
     "notifications": {
       "bellLabel": "الإشعارات",
@@ -213,7 +248,14 @@
         "hf_alert": "انخفضت صحة قرض دون 1.2 — افتحه لمعرفة وضعه.",
         "hf_critical": "انخفضت صحة قرض دون 1.05، قريبًا من خط التصفية عند 1.0 — افتحه لتتصرف.",
         "generic": "هناك تحديث على قرضك."
-      }
+      },
+      "loanRef": "Loan #{{loanId}} · اضغط للعرض",
+      "unreadBadgeTitle_few": "{{count}} إشعارات غير مقروءة",
+      "unreadBadgeTitle_many": "{{count}} إشعارات غير مقروءة",
+      "unreadBadgeTitle_one": "إشعار واحد غير مقروء",
+      "unreadBadgeTitle_other": "{{count}} إشعارات غير مقروءة",
+      "unreadBadgeTitle_two": "{{count}} إشعارات غير مقروءة",
+      "unreadBadgeTitle_zero": "{{count}} إشعارات غير مقروءة"
     },
     "errorBoundary": {
       "title": "حدث خطأ ما في هذه الصفحة",
@@ -251,7 +293,11 @@
       "report": "أبلغ عن مشكلة على GitHub",
       "reportHint": "يفتح مشكلة GitHub مملوءة مسبقًا بالتفاصيل أعلاه وآخر خطأ مسجّل. عنوان محفظتك الكامل لا يُضمَّن أبدًا.",
       "copyDetails": "نسخ التفاصيل",
-      "copied": "تم النسخ."
+      "copied": "تم النسخ.",
+      "indexerOk": "محدث (تم التحديث قبل {{age}})",
+      "indexerStale": "متأخر (آخر تحديث قبل {{age}}) — قد تتأخر قوائم السوق؛ positions الخاصة بك لا تزال تحمل مباشرة من chain.",
+      "networkUnsupported": "المحفظة على شبكة غير مدعومة (chain id {{walletChainId}}) — البيانات المعروضة تأتي من {{readName}} ({{readChainId}}). بدل الشبكة لإجراء المعاملات.",
+      "rpcOk": "يعمل — أحدث block {{block}}"
     },
     "support": {
       "title": "التواصل مع الدعم",
@@ -273,12 +319,15 @@
       "unavailable": "تعذّر على صندوق وارد الدعم استلام الرسالة الآن. لم يُفقد شيء من جانبك — راسلنا عبر البريد الإلكتروني بدلًا من ذلك:",
       "failed": "لم تمر الرسالة. حاول مرة أخرى بعد لحظة، أو راسلنا عبر البريد الإلكتروني:",
       "helpTitle": "تحتاج إلى مساعدة بشرية؟",
-      "helpBody": "افتح لوحة الدعم (الزر الدائري في زاوية كل صفحة) لإرسال رسالة إلى الفريق بنقرة واحدة — يمكنها إرفاق تفاصيل صحة التطبيق نفسه، والتي عادةً ما تحمل السبب. أو راسلنا مباشرة عبر البريد الإلكتروني:"
+      "helpBody": "افتح لوحة الدعم (الزر الدائري في زاوية كل صفحة) لإرسال رسالة إلى الفريق بنقرة واحدة — يمكنها إرفاق تفاصيل صحة التطبيق نفسه، والتي عادةً ما تحمل السبب. أو راسلنا مباشرة عبر البريد الإلكتروني:",
+      "sent": "تم الإرسال. رقم تذكرتك {{id}} — احتفظ به؛ ذكره يربط أي متابعة بهذا التقرير."
     },
     "wallet": {
       "connect": "اربط المحفظة",
       "connectFirst": "اربط محفظة للمتابعة.",
-      "switchNetwork": "بدّل الشبكة"
+      "switchNetwork": "بدّل الشبكة",
+      "switchToChain": "بدل إلى {{chain}}",
+      "unsupportedNetwork": "هذه الشبكة غير مدعومة. Vaipakam متاح على {{chainNames}}. بدل الشبكات للمتابعة."
     },
     "checks": {
       "walletConnected": "المحفظة متصلة",
@@ -287,7 +336,9 @@
       "consent": "تم قبول إفصاحات المخاطر والشروط",
       "getTestAssets": "الحصول على أصول اختبار",
       "connectEarly": "اربط محفظتك للمتابعة — ستحتاج إليها للتوقيع، لذا من الأسهل ربطها الآن.",
-      "sanctionsChecking": "جارٍ فحص حالة الامتثال…"
+      "sanctionsChecking": "جارٍ فحص حالة الامتثال…",
+      "balanceSufficient": "يوجد {{asset}} كاف في محفظتك",
+      "recognised": "تم التعرف على {{label}} ({{symbol}})"
     },
     "receipt": {
       "heading": "راجِع قبل أن توقّع",
@@ -409,7 +460,11 @@
       "linkedLoanCheckFailed": "تعذّر علينا التحقق مما إذا كان هذا العرض بيعًا لمركز قرض جارٍ، وهذا الفحص يحدّد إفصاحًا مهمًا — يبقى التوقيع موقوفًا حتى ينجح ذلك.",
       "graceChecking": "نؤكّد مهلة سماح السداد التي تُقيَّم هذه الصفقة بناءً عليها…",
       "graceCheckFailed": "تعذّر علينا تأكيد مهلة سماح السداد، ويجب أن تُظهر المراجعة المهلة الحقيقية — يبقى التوقيع موقوفًا حتى ينجح ذلك.",
-      "riskGateBlocked": "قواعد الوصول القائمة على المخاطر في البروتوكول تحجب هذا القبول لمحفظتك الآن — فهو يتطلب إقرارًا دائمًا على السلسلة أو مستوى وصول لا يستطيع هذا التطبيق جمعه بعد. لم يُرسَل أو يُعتمد أي شيء."
+      "riskGateBlocked": "قواعد الوصول القائمة على المخاطر في البروتوكول تحجب هذا القبول لمحفظتك الآن — فهو يتطلب إقرارًا دائمًا على السلسلة أو مستوى وصول لا يستطيع هذا التطبيق جمعه بعد. لم يُرسَل أو يُعتمد أي شيء.",
+      "linkedLoanAcceptBlocked": "هذا العرض مرتبط بـ loan #{{loanId}} جار بالفعل — قبوله سيقوم بتسوية أو نقل position لذلك loan، وليس بدء loan جديد تمت مراجعته أعلاه. هذا التطبيق لا يستطيع بعد عرض الشروط الحقيقية لهذا النوع من الصفقات، لذلك القبول هنا معطل حاليا.",
+      "saleBuyerNext": "أنت الآن lender لـ loan #{{loanId}} — يستمر loan دون تغيير للمقترض، وتأتي مدفوعاته إليك. تابعه ضمن My positions؛ عندما يسدد، تطالب بالـ principal والفائدة المتبقية.",
+      "saleVehicleBanner": "هذا position sale: ستشتري جانب lender من loan #{{loanId}} الجاري، وليس loan جديدا. المقترض والتزاماته لا تتغير — يتغير lender فقط. الأرقام أدناه مباشرة من ذلك loan.",
+      "wrongChainLink": "هذا الرابط يشير إلى offer على {{chainName}}. بدل إلى تلك الشبكة (أعلى الصفحة)، ثم افتح الرابط مرة أخرى — أرقام offers تتكرر عبر الشبكات، لذلك لن نخمن."
     },
     "borrow": {
       "title": "اقتراض الأصول",
@@ -491,7 +546,18 @@
       "tryAgain": "حاول مرة أخرى",
       "viewPositions": "عرض مراكزي",
       "viewTransaction": "عرض المعاملة",
-      "waitingForWallet": "بانتظار المحفظة…"
+      "waitingForWallet": "بانتظار المحفظة…",
+      "browseRowPriced": "{{daily}} {{pay}}/يوم · {{duration}} · {{total}} {{pay}} مقدما (يشمل buffer)",
+      "browseRowUnpriced": "{{duration}} · listing #{{id}}",
+      "bufferNote": "يدفع renters كامل المدة مسبقا زائد {{pct}} buffer قابل للاسترداد. أغلق rental في الوقت ويعاد buffer.",
+      "durationCap": "البروتوكول يحد listings حاليا عند {{max}} — اختر مدة أقصر.",
+      "perDaySuffix": " ({{symbol}} في اليوم)",
+      "receiptListYouLock": "ينتقل NFT الخاص بك {{nft}} إلى vault الخاص بك ويبقى هناك طوال listing و rental.",
+      "receiptListYouReceive": "~{{fees}} رسوم rental لكامل مدة {{term}} — renter يدفع كل شيء مقدما.",
+      "receiptRentWhenEnds": "تتم إعادة الحقوق تلقائيا بعد {{duration}}. أغلق rental في الوقت من صفحة التفاصيل لاسترجاع buffer.",
+      "receiptRentYouCanLose": "قد تخسر {{buffer}} buffer إذا لم يغلق rental في الوقت. تنتهي حقوق الاستخدام عند expiry في كل الأحوال.",
+      "receiptRentYouLock": "{{total}} مدفوع مسبقا — رسوم كامل المدة زائد {{buffer}} buffer قابل للاسترداد.",
+      "receiptRentYouReceive": "حقوق استخدام {{nft}} لمدة {{duration}}، بدءا الآن."
     },
     "preclose": {
       "title": "أغلق هذا القرض مبكرًا",
@@ -537,7 +603,20 @@
       "repayWarnPending": "لا يزال هناك طلب إعادة تمويل نشط لهذا القرض. السداد يسوّي القرض، وبعدها لا يمكن للطلب أن يكتمل أبدًا — ألغِه من بطاقته بعد ذلك (يزيل ذلك أيضًا إذن التسديد الدائم الخاص به)؛ حتى ذلك الحين يبقى قائمًا حتى تنتهي مدته.",
       "consentLabel": "أفهم شروط payoff ورصيد المحفظة أدناه وأوافق عليها.",
       "receiptLock": "لا شيء جديد — ينتقل ضمانك الحالي إلى القرض الجديد دون أن يُفتح أبدًا.",
-      "receiptReceive": "قرض جديد بالشروط التي اخترتها لحظة قبول مقرض — ينتقل ضمانك إليه تلقائيًا ويُغلق هذا القرض في نفس المعاملة."
+      "receiptReceive": "قرض جديد بالشروط التي اخترتها لحظة قبول مقرض — ينتقل ضمانك إليه تلقائيًا ويُغلق هذا القرض في نفس المعاملة.",
+      "balanceShort": "محفظتك تحتوي أقل من ~{{topUp}} spare المطلوب لهذا الطلب — قبول lender سيفشل الآن. زد رصيد محفظتك أو ألغ الطلب.",
+      "durationRange": "بين 1 و {{max}} أيام.",
+      "expiresAfterDays": "عندما ينتهي بعد {{days}} أيام من النشر",
+      "expiresAtGraceEnd": "عندما ينتهي مع grace window لهذا loan ({{date}}) — طلب refinance لا يمكن أن يتجاوز loan الذي يستبدله",
+      "feesTreasuryNote": "حصة البروتوكول {{cut}} من فائدة payoff تتم تسويتها داخل payoff.",
+      "lateFeeDisclosure": "إذا قبل lender بعد due date للـ loan، يكبر payoff — late fee زائد فائدة تستمر بالتراكم — بما يصل إلى ~{{maxGrowth}} إضافية لهذا الطلب. approval الذي تمنحه يغطي ذلك أيضا، لذلك لا يفشل القبول المتأخر بسببه.",
+      "pending": "طلب refinance #{{offerId}} مباشر. عندما يقبله lender، يغلق هذا loan تلقائيا في نفس المعاملة.",
+      "pendingChecking": "يتم فحص حالة طلب refinance #{{offerId}}…",
+      "pendingExpired": "انتهى طلب refinance هذا في {{date}} — لا يمكن لأي lender قبوله الآن، ولم يعد يعيق إجراءاتك هنا. ألغِه أدناه لإزالة standing payoff approval أيضا؛ يستمر loan دون تغيير.",
+      "pendingExpires": "ينتهي الطلب في {{date}} إذا لم يقبله أحد.",
+      "receiptYouMayOwe": "~{{payoff}} لسداد هذا loan، يسحب تلقائيا عندما يقبل lender.",
+      "walletNote": "يسحب payoff تلقائيا من محفظتك لحظة قبول lender. تصل أموال loan الجديد في نفس المعاملة، لذا أبق حوالي {{topUp}} spare في محفظتك (جزء الفائدة زائد initiation fee للـ loan الجديد) ما دام الطلب مفتوحا.",
+      "whenEndsComposed": "عندما يقبل lender طلبك، عندما تلغيه، أو {{branch}}."
     },
     "approvals": {
       "title": "أذونات الرموز الدائمة",
@@ -549,7 +628,15 @@
       "unavailable": "تعذّر علينا قراءة أذوناتك الآن — يرجى المحاولة مجددًا بعد لحظة.",
       "sourcesUnavailable": "تعذّر علينا تحميل قروضك وعروضك الآن، لذا لا يمكن بناء هذه القائمة كاملة — بدلًا من عرض صورة جزئية، حاول مجددًا بعد لحظة.",
       "revoke": "إبطال",
-      "staleNote": "تعذّر علينا تحديث هذه القائمة الآن — قد تكون الصفوف المعروضة قديمة قليلًا. لا يزال الإبطال يعمل."
+      "staleNote": "تعذّر علينا تحديث هذه القائمة الآن — قد تكون الصفوف المعروضة قديمة قليلًا. لا يزال الإبطال يعمل.",
+      "checkMoreUnchecked": "افحص {{next}} tokens أخرى ({{total}} غير مفحوصة)",
+      "checkMore_few": "افحص {{count}} tokens أخرى",
+      "checkMore_many": "افحص {{count}} tokens أخرى",
+      "checkMore_one": "افحص {{count}} token آخر",
+      "checkMore_other": "افحص {{count}} tokens أخرى",
+      "checkMore_two": "افحص {{count}} tokens أخرى",
+      "checkMore_zero": "افحص {{count}} tokens أخرى",
+      "revoked": "تمت إزالة approval لـ {{symbol}}. إذا احتاجها طلب أو listing مباشر، ستنبه بطاقته وتعرض الاستعادة."
     },
     "nftVerifier": {
       "title": "مدقّق NFT",
@@ -578,7 +665,12 @@
       "inKindLabel": "دفع التعثّر",
       "inKindNote": "إذا تعثّر مقترض القرض المرتبط، تدفع هذه المطالبة ضمان القرض الخام عينًا — لا يسعّره البروتوكول ولا يبيعه لك. قدّر ما ستستلمه فعليًا قبل شراء هذا المركز.",
       "liveNote": "\"حي\" يعني تحديدًا هذا: الرمز موجود هنا وحائزه يتحكم بالمركز المرتبط. لا يضمن سلامة القرض ولا سلوك الجانب الآخر.",
-      "goneBody": "إما أن مطالبته اكتملت وتقاعد الرمز، أو أنه لم يُسك هنا قط — لا تسجّل الشبكة أيًّا من الحالتين. عامِل أي عرض لبيع أو نقل معرّف الرمز هذا على أنه عديم القيمة على هذه الشبكة."
+      "goneBody": "إما أن مطالبته اكتملت وتقاعد الرمز، أو أنه لم يُسك هنا قط — لا تسجّل الشبكة أيًّا من الحالتين. عامِل أي عرض لبيع أو نقل معرّف الرمز هذا على أنه عديم القيمة على هذه الشبكة.",
+      "chainNote": "تم الفحص على {{chain}}. token ids تتكرر عبر الشبكات — وجود token هنا لا يقول شيئا عن الشبكات الأخرى.",
+      "goneTitle": "Token #{{id}} غير موجود حاليا على هذه الشبكة",
+      "liveTitle": "Token #{{id}} مباشر على هذه الشبكة",
+      "offerValue": "#{{offerId}} — تم mint هذا token لعرض لم يصبح loan بعد.",
+      "positionRowNote": "— يحمل حقوق {{role}} لهذا loan؛ تحقق من أي position NFT قبل الوثوق به."
     },
     "keepers": {
       "title": "أذونات المشغّلين (Keepers)",
@@ -640,7 +732,8 @@
       "loanToggleOff": "تم تعطيل الـ keeper لهذا القرض.",
       "loanEnablesUnavailable": "تعذّر علينا قراءة مفاتيح الـ keeper لهذا القرض الآن — أُوقفت المفاتيح مؤقتًا حتى تنجح القراءة (قد تكون حالتها المعروضة قديمة).",
       "loanNoKeepers": "لم تعتمد أي keeper بعد — أعدّها من الإعدادات ← أذونات الـ keeper.",
-      "loanMasterOff": "المفتاح الرئيسي للـ keeper مُطفأ لديك، لذا لن يعمل شيء حتى لو كان مفتاح هذا القرض مفعّلًا — فعّله من الإعدادات ← أذونات الـ keeper."
+      "loanMasterOff": "المفتاح الرئيسي للـ keeper مُطفأ لديك، لذا لن يعمل شيء حتى لو كان مفتاح هذا القرض مفعّلًا — فعّله من الإعدادات ← أذونات الـ keeper.",
+      "atCap": "وصلت إلى الحد الأقصى {{max}} من keepers المعتمدين — revoke واحدا لإضافة آخر."
     },
     "earlyExit": {
       "title": "الخروج من هذا القرض مبكرًا",
@@ -661,7 +754,15 @@
       "receiptEnds": "فورًا — ينتقل مركزك إلى المشتري وتنتهي علاقتك بهذا القرض. لا يتغير معدل المقترض ولا تاريخ الاستحقاق.",
       "receiptFees": "حصة البروتوكول تأتي من الفائدة المتنازل عنها — لا تُخصم أبدًا من دفعتك فوق الرقم المعروض.",
       "receiptLockNothing": "لا شيء.",
-      "receiptOweNothing": "لا شيء — لا توافق على شيء ولا تدفع شيئًا من جيبك."
+      "receiptOweNothing": "لا شيء — لا توافق على شيء ولا تدفع شيئًا من جيبك.",
+      "moreOffers_few": "{{count}} عروض مطابقة أخرى تدفع أقل من المعروضة.",
+      "moreOffers_many": "{{count}} عروض مطابقة أخرى تدفع أقل من المعروضة.",
+      "moreOffers_one": "{{count}} عرض مطابق آخر يدفع أقل من المعروض.",
+      "moreOffers_other": "{{count}} عروض مطابقة أخرى تدفع أقل من المعروضة.",
+      "moreOffers_two": "{{count}} عروض مطابقة أخرى تدفع أقل من المعروضة.",
+      "moreOffers_zero": "{{count}} عروض مطابقة أخرى تدفع أقل من المعروضة.",
+      "receiptYouReceive": "~{{toSeller}}، تدفع مباشرة إلى محفظتك في نفس المعاملة — بيع إلى offer #{{offerId}} عند {{rate}} سنويا. لا يوجد شيء للمطالبة به لاحقا.",
+      "rowReceive": "ستتلقى الآن ~{{amount}}"
     },
     "loanSale": {
       "title": "اعرض هذه الحصة للبيع",
@@ -690,7 +791,12 @@
       "receiptCanLose": "إذا أصبح رصيدك أو الموافقة الدائمة غير كافيين، يفشل قبول المشتري فقط — لا يُؤخذ شيء، لكن يبقى listing غير قابل للتنفيذ حتى تستعيده أو تلغيه.",
       "receiptEnds": "عندما يقبل مشتري (تتم التسوية كلها في معاملته) أو عندما تلغي listing. لا تنتهي وحدها.",
       "receiptFees": "حصة البروتوكول تأتي من رقم التسوية — لا شيء فوقه.",
-      "receiptLock": "NFT مركز المقرض الخاص بك، حتى تكتمل عملية البيع أو تلغي listing. لا شيء آخر."
+      "receiptLock": "NFT مركز المقرض الخاص بك، حتى تكتمل عملية البيع أو تلغي listing. لا شيء آخر.",
+      "allowanceShortDetail": "(قبول buyer سيسحب الآن ~{{amount}} {{symbol}})",
+      "approvalNote": "listing يضع standing approval حتى {{amount}} — بحجم يكفي لتسوية البيع في أي وقت خلال مدة loan زائد شهر headroom (الأكبر بين الفائدة المتراكمة عند القبول أو فرق rate للمدة المتبقية). لا يسحب إلا المبلغ الفعلي في معاملة buyer؛ إذا تجاوز listing هذا headroom، ستنبه البطاقة وتعرض زيادة approval.",
+      "pending": "sale listing #{{offerId}} مباشر و lender NFT الخاص بك مقفل طالما هو قائم. عندما يقبل buyer، تدفع لك القيمة المستحقة وتسحب التسوية في نفس المعاملة.",
+      "receiptYouMayOwe": "عند القبول، تسحب التسوية من محفظتك: الأكبر بين الفائدة المتراكمة حينها أو فرق rate للمدة المتبقية — وليس الاثنين. حاليا سيكون ذلك ~{{amount}} {{sym}}.",
+      "receiptYouReceive": "{{principal}} — كامل المبلغ المستحق، يدفع إلى محفظتك لحظة قبول buyer."
     },
     "positions": {
       "title": "حصصي",
@@ -819,7 +925,27 @@
         "titleRental": "تأجير",
         "whatIfNothingRentalOwner": "تُعاد حقوق المستأجر بعد تاريخ الاستحقاق ومهلة السماح؛ وتبقى رسومك قابلة للمطالبة هنا.",
         "whatIfNothingRentalRenter": "تنتهي حقوق استخدامك عند تاريخ الاستحقاق ويذهب الهامش المدفوع مسبقًا إلى المالك — أغلق في الوقت المحدد لاستعادته.",
-        "whatIfNothingRentalViewer": "تنتهي حقوق استخدام المستأجر عند تاريخ الاستحقاق؛ وتُسوى رسوم المالك والهامش حسب شروط التأجير."
+        "whatIfNothingRentalViewer": "تنتهي حقوق استخدام المستأجر عند تاريخ الاستحقاق؛ وتُسوى رسوم المالك والهامش حسب شروط التأجير.",
+        "addCollateralReceipt": "{{amount}} {{symbol}} collateral إضافي، يعاد مع الباقي عندما يغلق loan بشكل صحيح.",
+        "collateralBackAfterClose": "{{collateral}} collateral عائد — قابل للمطالبة بعد الإغلاق مباشرة.",
+        "collateralBackAfterRepay": "{{collateral}} collateral عائد — قابل للمطالبة بعد تسوية السداد مباشرة.",
+        "collateralBackPlain": "{{collateral}} collateral عائد.",
+        "exactAmountNote": "يقرأ المبلغ الدقيق مباشرة عند التأكيد؛ approval يحتوي headroom صغيرا لا يتم إنفاقه أبدا.",
+        "loanAssetFallback": "أصل loan",
+        "loanBetween": "loan بقيمة {{principal}} بين محفظتين أخريين",
+        "nftRentalBetween": "إيجار {{nft}} بين محفظتين أخريين",
+        "nftRentedOut": "{{nft}} الخاص بك مؤجر",
+        "nftStaysVault": "{{nft}} يبقى في vault المالك{{collateralSuffix}}",
+        "owedPrincipalPlusInterest": "{{principal}} + فائدة هذا loan. في full-term loans (افتراضي البروتوكول) تطبق فائدة كامل المدة حتى عند السداد المبكر؛ day-by-day loans لا تفرض إلا المتراكم. يقرأ المبلغ الدقيق مباشرة عند التأكيد؛ approval يحتوي headroom صغيرا لا يتم إنفاقه أبدا.",
+        "paidNow": "~{{amount}} {{symbol}}، مدفوع الآن.",
+        "partialOwe": "{{amount}} {{symbol}} الآن، زائد الفائدة المتراكمة حتى الآن (تسحب معا في هذه الدفعة). due date لا يتغير.",
+        "principalPlusInterest": "{{principal}} زائد الفائدة المكتسبة.",
+        "recoveredSummary": "ما استرده هذا loan: عائدات sale في {{asset}}، أو {{collateral}} collateral نفسه، حسب كيفية تسوية default.",
+        "toppingUp": "زيادة collateral {{symbol}} تجعل loan أكثر أمانا وتبعد liquidation.",
+        "vaultCollateralSuffix": "، زائد {{collateral}} collateral",
+        "youBorrowed": "اقترضت {{principal}}",
+        "youLent": "أقرضت {{principal}}",
+        "youRent": "تستأجر {{nft}}"
       },
       "getStarted": "ابدأ",
       "loading": "جارٍ تحميل مراكزك…",
@@ -835,9 +961,20 @@
         "receiptNothing": "لا شيء.",
         "yourBorrowRequest": "طلب اقتراضك",
         "yourLendingOffer": "عرض إقراضك",
-        "yourNftListing": "إدراج NFT الخاص بك"
+        "yourNftListing": "إدراج NFT الخاص بك",
+        "receiptUnlocked": "{{locked}} عائد — مفكوك من هذا العرض فورا.",
+        "youNft": "NFT الخاص بك {{addr}} #{{id}}"
       },
-      "openOffers": "العروض المفتوحة"
+      "openOffers": "العروض المفتوحة",
+      "graceCountdownBorrower": "هذا loan متأخر. سدد خلال حوالي {{remaining}} — بعد ذلك يمكن لـ lender أخذ collateral.",
+      "graceCountdownLender": "هذا loan متأخر. إذا لم يسدد borrower خلال حوالي {{remaining}}، يمكنك المطالبة بـ collateral الخاص به.",
+      "graceCountdownViewer": "هذا loan متأخر. إذا لم يسدد خلال حوالي {{remaining}}، يمكن لـ lender المطالبة بـ collateral.",
+      "owedRepaid": "لا شيء — {{principal}} زائد الفائدة تم سدادهما بالكامل.",
+      "rowLoan": "Loan #{{id}} · {{rate}} فائدة سنوية",
+      "rowRental": "Rental #{{id}} · الرسوم مدفوعة مسبقا",
+      "whatIfNothingBorrower": "إذا لم تفعل شيئا وتجاوز loan due date و {{grace}}grace period (نافذة قصيرة إضافية للسداد قبل أن يأخذ lender collateral)، يمكن لـ lender استلام {{collateral}} collateral الخاص بك.",
+      "whatIfNothingLender": "إذا لم يسدد borrower بحلول due date زائد {{grace}}grace period (نافذة سداد إضافية قصيرة)، يمكنك المطالبة بـ collateral الخاص به.",
+      "whatIfNothingViewer": "إذا لم يسدد borrower بحلول due date زائد {{grace}}grace period (نافذة سداد إضافية قصيرة)، يمكن لـ lender المطالبة بـ collateral."
     },
     "powerSurface": {
       "body": "هذه شاشة للمستخدمين المتمرّسين — عروض خام وأسعار مباشرة بإرشاد أقل. يغطّي مسارا الاقتراض والإقراض الموجَّهان الإجراءات نفسها مع شرح خطوة بخطوة.",
@@ -881,8 +1018,27 @@
         "whyRentalClosed": "أُغلق التأجير — تم تحرير الهامش القابل للاسترداد.",
         "whyRentalEnded": "انتهى التأجير — احصل على الرسوم التي كسبتها واستعد NFT.",
         "whyRepaidBorrower": "لقد سددت هذا القرض، لذلك تم تحرير ضمانك.",
-        "whyRepaidLender": "سدد المقترض هذا القرض."
-      }
+        "whyRepaidLender": "سدد المقترض هذا القرض.",
+        "amountWithSuffix": "{{amount}}{{suffix}}",
+        "bufferBack": "{{amount}} buffer عائد",
+        "collateralBack": "{{collateral}} collateral عائد",
+        "collateralBackWithAmount": "{{amount}} collateral عائد{{rebateSuffix}}",
+        "collateralLabel": "{{collateral}} collateral",
+        "defaultRecovery": "استرداد من default — {{collateral}}",
+        "feesNftBack": "{{amount}} رسوم + {{nft}} الخاص بك عائد",
+        "heldProceedsSuffix": " + عائدات محتجزة",
+        "principalPlusInterest": "{{amount}} {{symbol}} + فائدة",
+        "rebateAmount": "خصم {{amount}} VPFI",
+        "recoveredFromDefault": "تم استرداد {{amount}}{{held}} من default",
+        "rentalFeesNftBack": "رسوم الإيجار + {{nft}} الخاص بك عائد"
+      },
+      "allButton_few": "طالب بـ {{count}} عناصر",
+      "allButton_many": "طالب بـ {{count}} عناصر",
+      "allButton_one": "طالب بـ {{count}} عنصر",
+      "allButton_other": "طالب بـ {{count}} عناصر",
+      "allButton_two": "طالب بـ {{count}} عنصرين",
+      "allButton_zero": "طالب بـ {{count}} عناصر",
+      "allTooMany": "اختر حتى {{max}} مرة واحدة — طالب بالباقي في دفعة ثانية."
     },
     "offers": {
       "title": "دفتر العروض",
@@ -934,7 +1090,10 @@
       },
       "loading": "جارٍ تحميل دفتر العروض…",
       "rentalListing": "تأجير NFT",
-      "yearly": "سنوي"
+      "yearly": "سنوي",
+      "expiresLabel": "ينتهي {{date}}",
+      "rateBand": "rate band {{min}}–{{max}} bps",
+      "staleList": "تم تحديث هذه القائمة قبل {{age}} وقد تكون متأخرة — قد توجد عروض جديدة لا تظهر بعد. تحقق قريبا."
     },
     "desk": {
       "title": "مكتب الأسعار",
@@ -975,7 +1134,9 @@
         "executing": "جارٍ المطابقة…",
         "executed": "تم تنفيذ المطابقة — تسوّت العروض المتقاطعة إلى قرض.",
         "noLongerMatchable": "لم يعد بإمكان هذه العروض التقاطع — تحرّك الدفتر قبل إرسال المطابقة. لم يُرسَل شيء.",
-        "matchingDisabled": "أوقفت حوكمة البروتوكول مطابقة العروض للتو، لذا لا يمكن إرسال هذه المطابقة الآن. لم يُرسَل شيء."
+        "matchingDisabled": "أوقفت حوكمة البروتوكول مطابقة العروض للتو، لذا لا يمكن إرسال هذه المطابقة الآن. لم يُرسَل شيء.",
+        "amount": "سيتم match لـ {{amount}} {{symbol}}.",
+        "matchable": "قابل للمطابقة عند {{rate}}"
       },
       "signed": {
         "badge": "موقّع",
@@ -992,7 +1153,10 @@
         "riskBlocked": "قواعد الوصول المتعلقة بالمخاطر في هذا النشر تحجب أحد طرفي هذا الأمر الآن — يحتاج صاحب الأمر أو محفظتك إلى مستوى وصول على السلسلة أو موافقة دائمة لا يمكن لهذا التأكيد المختصر جمعها. لم يُرسَل أو يُوافَق على شيء.",
         "accept": "تنفيذ الأمر",
         "accepting": "جارٍ التنفيذ…",
-        "accepted": "تم تنفيذ الأمر الموقّع — القرض نشط."
+        "accepted": "تم تنفيذ الأمر الموقّع — القرض نشط.",
+        "payCollateral": "تقفل {{amount}} {{symbol}} كـ collateral وتتلقى loan principal.",
+        "payPrincipal": "تمول loan principal بقيمة {{amount}} {{symbol}}.",
+        "rateLine": "{{rate}} APR · {{days}}"
       },
       "chart": {
         "title": "الأسعار المنفَّذة",
@@ -1010,7 +1174,20 @@
         "attribution": "الرسوم البيانية من TradingView",
         "mobileBook": "الدفتر",
         "mobileChart": "الرسم البياني",
-        "mobileViewLabel": "عرض المكتب"
+        "mobileViewLabel": "عرض المكتب",
+        "lastFill": "آخر fill: {{rate}} · {{ago}}",
+        "sparseNote_few": "سوق sparse — {{count}} fills في هذا النطاق، مرسومة منفردة. تظهر الشموع عندما توجد بيانات كافية لتكون ذات معنى.",
+        "sparseNote_many": "سوق sparse — {{count}} fills في هذا النطاق، مرسومة منفردة. تظهر الشموع عندما توجد بيانات كافية لتكون ذات معنى.",
+        "sparseNote_one": "سوق sparse — {{count}} fill في هذا النطاق، مرسوم منفردا. تظهر الشموع عندما توجد بيانات كافية لتكون ذات معنى.",
+        "sparseNote_other": "سوق sparse — {{count}} fills في هذا النطاق، مرسومة منفردة. تظهر الشموع عندما توجد بيانات كافية لتكون ذات معنى.",
+        "sparseNote_two": "سوق sparse — {{count}} fills في هذا النطاق، مرسومة منفردة. تظهر الشموع عندما توجد بيانات كافية لتكون ذات معنى.",
+        "sparseNote_zero": "سوق sparse — {{count}} fills في هذا النطاق، مرسومة منفردة. تظهر الشموع عندما توجد بيانات كافية لتكون ذات معنى.",
+        "tooltipFills_few": "{{count}} fills",
+        "tooltipFills_many": "{{count}} fills",
+        "tooltipFills_one": "{{count}} fill",
+        "tooltipFills_other": "{{count}} fills",
+        "tooltipFills_two": "{{count}} fills",
+        "tooltipFills_zero": "{{count}} fills"
       },
       "history": {
         "tab": "السجل",
@@ -1080,7 +1257,19 @@
         "expiryGtcTitle": "صالح حتى الإلغاء — يبقى حتى تلغيه",
         "expiryGttTitle": "صالح حتى الوقت — ينقضي تلقائيًا عند الموعد النهائي",
         "rateBpsNote": "تُخزن المعدلات بنقاط الأساس (1% = 100 bps)",
-        "selfCollateral": "لا يمكن أن يكون الضمان هو نفس رمز أصل القرض."
+        "selfCollateral": "لا يمكن أن يكون الضمان هو نفس رمز أصل القرض.",
+        "commitAtFill": "تلتزم بـ {{amount}} {{symbol}} — تسحب من vault فقط عندما يملأ taker.",
+        "escrowNow": "تضع في escrow الآن: {{amount}} {{symbol}}.",
+        "gaslessFundsWarn": "تنبيه: الرصيد الحر في vault أقل من {{amount}} {{symbol}} التي يلتزم بها هذا order. سيفشل fill إذا لم تكن الأموال موجودة عندما يقبل taker — أودع في vault لإبقاء order قابلا للfill.",
+        "gaslessRejected": "رفض book هذا order ({{reason}}). لم يتم نشر شيء.",
+        "lifNote": "Loan initiation fee: {{feePct}}% من principal (≈ {{amount}} {{symbol}})، تفرض عند بدء loan.",
+        "lockAtFill": "تلتزم بـ {{amount}} {{symbol}} كـ collateral — تقفل فقط عندما يملأ taker.",
+        "lockNow": "تقفل الآن: {{amount}} {{symbol}} كـ collateral.",
+        "netYield": "صافي العائد ≈ {{net}}% APR بعد protocol fee {{feePct}}% على الفائدة التي تكسبها.",
+        "overDurationCap": "البروتوكول يحد مدة العرض حاليا بـ {{max}} يوم — اختر مدة أقصر أعلاه.",
+        "securityBlocked": "النشر موقوف: فحص أمني مستقل يضع علامة على {{leg}} ({{reasons}}).",
+        "securityUnknown": "النشر موقوف حتى ينجح الفحص الأمني المستقل لـ {{leg}}.",
+        "tenorNote": "النشر في سوق {{label}} المحدد — غير المدة بالشرائح أعلاه."
       },
       "orders": {
         "tab": "الأوامر المفتوحة",
@@ -1116,7 +1305,11 @@
         "signedCancelNote": "كان النشر مجانيًا، لكن الإلغاء يكلّف غازًا: الطريقة الوحيدة لإبطال توقيع يحتفظ به الدفتر بالفعل هي معاملة على السلسلة.",
         "signedCancelled": "تم إلغاء الأمر الموقّع على السلسلة.",
         "signedTruncated": "لديك في هذا السوق أوامر موقّعة أكثر مما يمكننا عرضه دفعة واحدة — هذه ليست المجموعة الكاملة.",
-        "loading": "جارٍ تحميل أوامرك المفتوحة…"
+        "loading": "جارٍ تحميل أوامرك المفتوحة…",
+        "amendGrowNote": "تكبير هذا order يقفل {{amount}} {{symbol}} إضافية من محفظتك — يحتاج token approval أولا.",
+        "cancelCooldown": "الإلغاء متاح خلال {{secs}}s — العروض الجديدة غير الممتلئة لديها protocol cooldown قصير.",
+        "fillSummary": " · filled {{filled}} ({{pct}}) · {{remaining}} متبقي",
+        "filledTooltip": "{{pct}} filled"
       },
       "positions": {
         "tab": "المراكز",
@@ -1132,7 +1325,18 @@
       "cumHeadingTitle": "العمق التراكمي من أعلى هذا الجانب",
       "loadMarket": "تحميل السوق",
       "marketsLoading": "جارٍ تحميل الأسواق…",
-      "oneSidedBook": "دفتر من جانب واحد"
+      "oneSidedBook": "دفتر من جانب واحد",
+      "healthLtvTitle": "Health factor {{ratio}} · LTV {{ltv}}",
+      "midQuotedTitle": "{{bps}} bps (quoted، غير منفذ)",
+      "rateLadderTitle_few": "{{rate}} bps · {{count}} عروض{{ownMark}} — اضغط لتعبئة هذا rate",
+      "rateLadderTitle_many": "{{rate}} bps · {{count}} عروض{{ownMark}} — اضغط لتعبئة هذا rate",
+      "rateLadderTitle_one": "{{rate}} bps · {{count}} عرض{{ownMark}} — اضغط لتعبئة هذا rate",
+      "rateLadderTitle_other": "{{rate}} bps · {{count}} عروض{{ownMark}} — اضغط لتعبئة هذا rate",
+      "rateLadderTitle_two": "{{rate}} bps · {{count}} عروض{{ownMark}} — اضغط لتعبئة هذا rate",
+      "rateLadderTitle_zero": "{{rate}} bps · {{count}} عروض{{ownMark}} — اضغط لتعبئة هذا rate",
+      "tenorLiveTitle": "{{tenor}} — عروض مباشرة في book",
+      "tenorNoOffersTitle": "{{tenor}} — لا توجد عروض مباشرة بعد",
+      "walletBalanceTitle": "في محفظتك: {{amount}} {{symbol}}"
     },
     "vpfi": {
       "title": "خصومات VPFI",
@@ -1186,7 +1390,15 @@
       "warmingUp": "جارٍ التجهيز",
       "withdraw": "سحب",
       "withdrawCta": "سحب VPFI",
-      "withdrawDone": "تم تأكيد السحب. عاد VPFI إلى محفظتك."
+      "withdrawDone": "تم تأكيد السحب. عاد VPFI إلى محفظتك.",
+      "availabilityCheckFailed": "تعذر فحص توفر VPFI على {{chain}} الآن. حاول بعد قليل.",
+      "belowMinNote": "الاحتفاظ بأقل من {{floor}} VPFI لا يمنح خصم رسوم.",
+      "checkingAvailability": "جار فحص توفر VPFI على {{chain}}…",
+      "depositYouLock": "{{amt}} تنتقل من محفظتك إلى Vaipakam Vault.",
+      "notOnThisChain": "إيداعات VPFI غير متاحة على {{chain}} بعد. كل شيء آخر في Vaipakam يعمل بدون VPFI.",
+      "walletBalanceHint": "في محفظتك: {{amount}} VPFI",
+      "withdrawYouReceive": "{{amt}} عائدة إلى محفظتك.",
+      "withdrawableHint": "قابل للسحب الآن: {{free}} VPFI من {{vault}} في vault الخاص بك"
     },
     "errors": {
       "partialOverPrincipal": "هذا يغطّي كامل أصل القرض المتبقي. استخدم ”سدّد هذا القرض“ بدلًا من ذلك — فهو يسوّي القرض بشكل صحيح ويحرّر ضمانك.",
@@ -1206,12 +1418,23 @@
       "refinancePastGrace": "تجاوز هذا القرض تاريخ استحقاقه ونافذة السماح، لذا لم يعد بالإمكان إعادة تمويله — لم يُرسل شيء. تنطبق عملية التخلّف عن السداد الآن.",
       "saleListingMatured": "تجاوز هذا القرض تاريخ استحقاقه، لذا لم يعد بالإمكان عرض المركز للبيع — لم يُرسل شيء.",
       "refinanceNotOriginalBorrower": "انتقل هذا المركز إلى مالك آخر منذ بدء القرض، لذا لا يمكن ترحيل ضمانه إلى إعادة تمويل — لم يُرسل شيء. يبقى السداد أو الإغلاق المبكر متاحًا.",
-      "lenderBlockedPartial": "لا يمكن لمحفظة المقرض استلام دفعة جزئية مباشرة الآن (علامة امتثال). يبقى سداد القرض بالكامل متاحًا — فهذا المسار يحتجز الأموال لمطالبة خاضعة للفحص بدلًا من ذلك."
+      "lenderBlockedPartial": "لا يمكن لمحفظة المقرض استلام دفعة جزئية مباشرة الآن (علامة امتثال). يبقى سداد القرض بالكامل متاحًا — فهذا المسار يحتجز الأموال لمطالبة خاضعة للفحص بدلًا من ذلك.",
+      "needMore": "تحتاج إلى مزيد من {{asset}} للمتابعة.",
+      "needMoreBy": "تحتاج إلى حوالي {{shortBy}} {{asset}} إضافية للمتابعة.",
+      "noRpcClient": "لا يوجد RPC client للـ chain النشطة.",
+      "publicClientUnavailable": "Public client غير متاح",
+      "walletClientUnavailable": "Wallet client غير متاح",
+      "walletConnectFirst": "صل محفظة على شبكة مدعومة أولا.",
+      "walletNotConnected": "المحفظة غير متصلة"
     },
     "fees": {
       "lateFee": "يضيف السداد المتأخر 1% من المبلغ المستحق بعد اليوم الأول، ويزيد 0.5% يوميًا، بحد أقصى 5%.",
       "faqQuestion": "ما الرسوم التي يفرضها Vaipakam؟",
-      "faqAnswerGeneric": "يفرض Vaipakam رسوم بدء قرض على المبلغ المقترض ويحتفظ بحصة من الفائدة التي يكسبها المقرض. يضيف السداد المتأخر 1% من المبلغ المستحق بعد اليوم الأول، ويزيد 0.5% يوميًا، بحد أقصى 5%. رسوم غاز الشبكة منفصلة وتذهب إلى البلوكتشين، وليس إلى Vaipakam. اربط محفظتك لرؤية الأسعار الحالية الدقيقة."
+      "faqAnswerGeneric": "يفرض Vaipakam رسوم بدء قرض على المبلغ المقترض ويحتفظ بحصة من الفائدة التي يكسبها المقرض. يضيف السداد المتأخر 1% من المبلغ المستحق بعد اليوم الأول، ويزيد 0.5% يوميًا، بحد أقصى 5%. رسوم غاز الشبكة منفصلة وتذهب إلى البلوكتشين، وليس إلى Vaipakam. اربط محفظتك لرؤية الأسعار الحالية الدقيقة.",
+      "borrowerLIF": "Vaipakam يفرض {{pct}} loan initiation fee على المبلغ المقترض.",
+      "faqAnswer": "Vaipakam يفرض {{lifPct}} loan initiation fee على المبلغ المقترض. يحتفظ Vaipakam بـ {{yieldPct}} من الفائدة التي تكسبها. السداد المتأخر يضيف 1% من المبلغ المستحق بعد اليوم الأول، ثم 0.5% يوميا، بحد أقصى 5%. Network gas منفصل ويذهب إلى blockchain، لا إلى Vaipakam.",
+      "lenderRentalFee": "Vaipakam يحتفظ بـ {{pct}} من رسوم الإيجار التي تكسبها.",
+      "lenderYieldFee": "Vaipakam يحتفظ بـ {{pct}} من الفائدة التي تكسبها."
     },
     "faucet": {
       "title": "الحصول على أصول اختبار",
@@ -1230,14 +1453,20 @@
       "copiedTokenId": "تم النسخ.",
       "liquid": {
         "title": "رمز اختبار سائل (tLIQ)",
-        "blurb": "مُسعّر بأوراكل اختباري، فيتصرّف كأصل سائل — عامل الصحة والتصفية وإعادة التمويل تعمل جميعها معه. اقرنه بـ mWETH (أحدهما كقرض والآخر كضمان) عندما يحتاج تدفّق إلى رمزين سائلين مختلفين."
+        "blurb": "مُسعّر بأوراكل اختباري، فيتصرّف كأصل سائل — عامل الصحة والتصفية وإعادة التمويل تعمل جميعها معه. اقرنه بـ mWETH (أحدهما كقرض والآخر كضمان) عندما يحتاج تدفّق إلى رمزين سائلين مختلفين.",
+        "action": "Mint {{units, number}} tLIQ"
       },
       "liquid2": {
-        "blurb": "USDC اختباري مُسعّر بـ 1$ من أوراكل اختباري — رمز سائل ثانٍ ومتميز حتى تتمكن من تشغيل صفقة يكون فيها كل من القرض والضمان سائلًا (مع فارق سعري واقعي مقابل tLIQ / mWETH) دون قرن رمز بنفسه."
+        "blurb": "USDC اختباري مُسعّر بـ 1$ من أوراكل اختباري — رمز سائل ثانٍ ومتميز حتى تتمكن من تشغيل صفقة يكون فيها كل من القرض والضمان سائلًا (مع فارق سعري واقعي مقابل tLIQ / mWETH) دون قرن رمز بنفسه.",
+        "action": "Mint {{units, number}} {{symbol}}",
+        "actionGeneric": "Mint {{units, number}} test stablecoin",
+        "title": "Mock USD Coin ({{symbol}})",
+        "titleGeneric": "Mock USD Coin (test stablecoin)"
       },
       "mweth": {
         "title": "ETH مغلّف وهمي (mWETH)",
-        "blurb": "رمز اختباري مُسعّر بأوراكل يؤدي دور ”ETH المغلّف“ في العروض التوضيحية. إنه ليس WETH حقيقيًا — يُسك مجانًا وبلا قيمة."
+        "blurb": "رمز اختباري مُسعّر بأوراكل يؤدي دور ”ETH المغلّف“ في العروض التوضيحية. إنه ليس WETH حقيقيًا — يُسك مجانًا وبلا قيمة.",
+        "action": "Mint {{units, number}} mWETH"
       },
       "nft2": {
         "title": "NFT اختباري ثانٍ قابل للتأجير (vART)",
@@ -1247,17 +1476,25 @@
       "addedToWallet": "طلبنا من محفظتك تتبّعه.",
       "illiquid": {
         "title": "رمز اختبار غير سائل (tILQ)",
-        "blurb": "بلا موجز أسعار، فيتصرّف كأصل غير سائل — يجب أن يوافق الطرفان، ويحوّل التخلّف عن السداد الضمان عينًا."
+        "blurb": "بلا موجز أسعار، فيتصرّف كأصل غير سائل — يجب أن يوافق الطرفان، ويحوّل التخلّف عن السداد الضمان عينًا.",
+        "action": "Mint {{units, number}} tILQ"
       },
       "illiquid2": {
         "title": "رمز اختبار غير سائل ثانٍ (tILQ2)",
-        "blurb": "غير مُسعّر أيضًا. اقرنه بـ tILQ (أحدهما كقرض والآخر كضمان) لتجرّب صفقة لا يملك فيها أيٌّ من الطرفين سعرًا — يجب أن يوافق الطرفان، ولا ينطبق عامل صحة، ويسلّم التخلّف عن السداد الضمان عينًا."
+        "blurb": "غير مُسعّر أيضًا. اقرنه بـ tILQ (أحدهما كقرض والآخر كضمان) لتجرّب صفقة لا يملك فيها أيٌّ من الطرفين سعرًا — يجب أن يوافق الطرفان، ولا ينطبق عامل صحة، ويسلّم التخلّف عن السداد الضمان عينًا.",
+        "action": "Mint {{units, number}} tILQ2"
       },
       "nft": {
         "title": "NFT اختبار للتأجير (vRENT)",
         "blurb": "NFT قابل للتأجير بمعيار ERC-4907 لتجربة تدفّقات تأجير NFT.",
         "action": "اسكك NFT اختباري"
-      }
+      },
+      "addToWallet": "إضافة {{symbol}} إلى MetaMask",
+      "mintedTokens": "تم mint لـ {{units, number}} {{symbol}} إلى محفظتك.",
+      "noMocksBody": "لم يتم إعداد test assets على {{chainName}} بعد. جرب شبكة اختبار أخرى أو عد لاحقا.",
+      "notTestnetBody": "faucet يعمل فقط على test networks الخاصة بنا. أنت على {{chainName}}، وهي تستخدم أصولا حقيقية — بدل إلى test network لmint practice tokens.",
+      "switchTitle": "بدل محفظتك إلى {{chainName}} لmint test assets.",
+      "testnetNote": "أنت على {{chainName}}، وهي test network. هذه tokens للاختبار فقط ولا تملك قيمة حقيقية."
     },
     "vault": {
       "title": "مخزني",
@@ -1273,7 +1510,15 @@
       "emptyBody": "تظهر الأصول هنا عندما تنشر عروضًا أو تفتح قروضًا أو تودع VPFI.",
       "emptyTitle": "لا شيء في vault الخاص بك بعد",
       "loading": "جارٍ قراءة vault الخاص بك…",
-      "noVaultTitle": "لا يوجد vault بعد"
+      "noVaultTitle": "لا يوجد vault بعد",
+      "noBalancesInWindow": "لا أرصدة بين أول {{count}} tokens تم فحصها — وسع الفحص أدناه للمتابعة.",
+      "unreadableCount_few": "{{count}} أصول",
+      "unreadableCount_many": "{{count}} أصول",
+      "unreadableCount_one": "أصل واحد",
+      "unreadableCount_other": "{{count}} أصول",
+      "unreadableCount_two": "{{count}} أصول",
+      "unreadableCount_zero": "{{count}} أصول",
+      "unreadableWarn": "لم نستطع قراءة {{assets}} الآن ({{list}}) — قد تفقد القائمة أدناه بعض الأرصدة. غالبا يزول هذا في التحديث التالي."
     },
     "activity": {
       "title": "النشاط",
@@ -1290,7 +1535,69 @@
       "loadingMore": "جارٍ التحميل…",
       "unavailableFallback": "قروضك وعمليات تأجيرك الحالية متاحة دائمًا في",
       "positionsLink": "مراكزي",
-      "loading": "جارٍ تحميل نشاطك…"
+      "loading": "جارٍ تحميل نشاطك…",
+      "labels": {
+        "Approval": "موافقة",
+        "BackstopAbsorbedLoan": "تم امتصاص loan بواسطة backstop",
+        "BorrowerFundsClaimed": "تمت المطالبة بالضمان",
+        "BorrowerLifRebateClaimed": "تمت المطالبة بخصم الرسوم",
+        "CollateralAdded": "تمت إضافة collateral",
+        "IntentLoanRolled": "تم تدوير loan",
+        "InteractionRewardsClaimed": "تمت المطالبة بالمكافآت",
+        "InternalMatchExecuted": "تمت مطابقة loan داخليا",
+        "LenderFundsClaimed": "تمت المطالبة بالأموال",
+        "LoanDefaulted": "loan تعثر",
+        "LoanExtended": "تم تمديد loan",
+        "LoanInitiated": "بدأ loan",
+        "LoanInitiatedDetails": "بدأ loan",
+        "LoanLiquidated": "تمت تصفية loan",
+        "LoanObligationTransferred": "تم نقل position loan",
+        "LoanPreclosedDirect": "تم إغلاق loan مبكرا",
+        "LoanRefinanced": "تم refinance loan",
+        "LoanRepaid": "تم سداد loan",
+        "LoanSaleCompleted": "اكتمل بيع loan",
+        "LoanSaleOfferLinked": "تم إدراج loan للبيع",
+        "LoanSettled": "تمت تسوية loan",
+        "LoanSettlementBreakdown": "تمت تسوية loan",
+        "LoanSold": "تم بيع loan",
+        "OfferAccepted": "تم قبول العرض",
+        "OfferCanceled": "تم إلغاء العرض",
+        "OfferClosed": "تم إغلاق العرض",
+        "OfferConsumedBySale": "استخدم العرض في sale",
+        "OfferCreated": "تم إنشاء العرض",
+        "OfferMatched": "تمت مطابقة العروض",
+        "OfferModified": "تم تعديل العرض",
+        "OffsetCompleted": "تم offset loan",
+        "OffsetOfferCreated": "تم إنشاء عرض offset",
+        "PartialRepaid": "سداد جزئي",
+        "PeriodicInterestAutoLiquidated": "تمت التصفية تلقائيا بسبب الفائدة",
+        "PeriodicInterestSettled": "تمت تسوية الفائدة",
+        "PeriodicSlippageOverBuffer": "تمت تسوية الفائدة مع slippage",
+        "PrepayCollateralSaleSettled": "تمت تسوية بيع collateral",
+        "PrepayListingCanceled": "تم إلغاء listing الضمان",
+        "PrepayListingMatched": "تمت مطابقة بيع collateral",
+        "PrepayListingPosted": "تم إدراج collateral للبيع",
+        "PrepayListingUpdated": "تم تحديث listing الضمان",
+        "RepayPartialPeriodAdvanced": "تم تقديم فترة الفائدة",
+        "RewardDeliveredToVault": "وصلت المكافآت إلى vault الخاص بك",
+        "SignedOfferCancelled": "تم إلغاء العرض الموقع",
+        "SignedOfferFilled": "تم fill العرض الموقع",
+        "SignedOfferMatched": "تمت مطابقة العروض الموقعة",
+        "SignedOfferNonceBurned": "تم إبطال العرض الموقع",
+        "SwapToRepayExecuted": "تم السداد عبر collateral swap",
+        "SwapToRepayIntentCancelled": "تم إلغاء swap-to-repay",
+        "SwapToRepayIntentCommitted": "تم إعداد swap-to-repay",
+        "SwapToRepayIntentFilled": "تم fill swap-to-repay",
+        "SwapToRepayIntentForceCancelled": "تم إلغاء swap-to-repay",
+        "SwapToRepayPartialExecuted": "سداد جزئي عبر swap",
+        "Transfer": "تحويل",
+        "VPFIDepositedToVault": "تم إيداع VPFI في vault",
+        "VPFIWithdrawnFromVault": "تم سحب VPFI من vault",
+        "VaultVpfiDebited": "تم إنفاق VPFI من vault"
+      },
+      "loanRef": "Loan #{{loanId}}",
+      "offerRef": "Offer #{{offerId}}",
+      "plusMore": " · +{{n}} أخرى في هذه المعاملة"
     },
     "rewards": {
       "title": "مكافآت التفاعل",
@@ -1298,7 +1605,8 @@
       "empty": "لا مكافآت بعد. تظهر المكافآت بعد نشاط الإقراض أو الاقتراض.",
       "waiting": "جارٍ إنهاء مكافآتك — يُغلق يوم المكافأة عبر جميع السلاسل قبل أن يمكن المطالبة بها. عاود التحقق قريبًا.",
       "claim": "المطالبة بالمكافآت",
-      "unavailable": "لم نستطع فحص مكافآتك الآن — حاول مرة أخرى بعد قليل."
+      "unavailable": "لم نستطع فحص مكافآتك الآن — حاول مرة أخرى بعد قليل.",
+      "readyToClaim": "{{amount}} VPFI جاهزة للمطالبة."
     },
     "sanctions": {
       "title": "هذه المحفظة مُدرجة من قِبل أوراكل الامتثال.",
@@ -1314,7 +1622,10 @@
       "liquidatable": "قابل للتصفية الآن",
       "explain": "إذا انخفضت قيمة الضمان كثيرًا مقابل المبلغ المقترض، يمكن تصفية القرض. إضافة ضمان تجعله أكثر أمانًا.",
       "listChecking": "جارٍ فحص الصحة",
-      "listCheckingTitle": "لم تُقرأ صحة هذا القرض بعد، لذا تبقى الشارة محايدة. لا تزال حماية التصفية سارية على السلسلة."
+      "listCheckingTitle": "لم تُقرأ صحة هذا القرض بعد، لذا تبقى الشارة محايدة. لا تزال حماية التصفية سارية على السلسلة.",
+      "advancedDetail": "(Health factor {{ratio}} — قيمة collateral مقاسة مقابل ما هو مستحق؛ دون 1.00 يمكن تصفية loan. Loan-to-value {{ltvPct}} — المبلغ المقترض كنسبة من قيمة collateral.{{dropClause}})",
+      "advancedDetailDrop": " تقريبا، تبدأ التصفية إذا انخفضت قيمة collateral حوالي {{drop}}.",
+      "healthTitle": "Health {{ratio}} — 1.00 هو خط التصفية"
     },
     "notFound": {
       "title": "هذه الصفحة غير موجودة",
@@ -1338,7 +1649,9 @@
       "waitingForWallet": "بانتظار المحفظة…"
     },
     "copyAddress": {
-      "copied": "تم نسخ العنوان"
+      "copied": "تم نسخ العنوان",
+      "copyAria": "نسخ العنوان {{address}}",
+      "viewAria": "عرض {{address}} في block explorer"
     },
     "loanRow": {
       "youRent": "أنت تستأجر",
@@ -1393,7 +1706,32 @@
       },
       "viewPositions": "عرض مراكزي",
       "viewTransaction": "عرض المعاملة",
-      "waitingForWallet": "بانتظار المحفظة…"
+      "waitingForWallet": "بانتظار المحفظة…",
+      "durationCap": "البروتوكول يحد العروض حاليا عند {{max}} — اختر مدة أقصر.",
+      "receipts": {
+        "borrowerWhenEndsAccept": "سدد خلال {{duration}} (grace period: {{grace}})، ثم طالب بـ collateral.",
+        "borrowerWhenEndsPost": "سدد خلال {{duration}} من القبول (grace period: {{grace}})، ثم طالب بـ collateral.",
+        "borrowerYouCanLose": "collateral الخاص بك {{collateral}} إذا لم تسدد في الوقت المحدد.",
+        "borrowerYouLockNow": "{{collateral}} كـ collateral الآن.",
+        "borrowerYouLockStarting": "{{collateral}} كـ collateral بدءا من الآن.",
+        "borrowerYouMayOwe": "{{principal}} زائد ما يصل إلى ~{{interest}} فائدة عند due date.",
+        "borrowerYouReceiveNow": "{{principal}} الآن (ناقص {{lif}} initiation fee).",
+        "borrowerYouReceiveOnAccept": "{{principal}} عندما يقبل lender طلبك.",
+        "buyCollateralLocked": "{{collateral}} الخاص بهم مقفل بالفعل.",
+        "buyWhenEnds": "السداد مستحق بحلول {{due}} (grace period: {{grace}}). بعدها تطالب بأموالك.",
+        "buyYouLock": "{{principal}} يدفع الآن إلى lender الخارج — loan نفسه لا يتغير للمقترض.",
+        "buyYouReceive": "position lender لـ loan #{{loanId}} الجاري: حتى ~{{interest}} فائدة من الآن إلى due date إذا سدد المقترض في الوقت، زائد كامل {{principal}} principal عائدا.",
+        "lenderCollateralLock": "يقفلون {{collateral}}.",
+        "lenderCollateralMustLock": "يجب أن يقفلوا {{collateral}}.",
+        "lenderWhenEndsAccept": "السداد مستحق خلال {{duration}} (grace period: {{grace}}). بعدها تطالب بأموالك.",
+        "lenderWhenEndsPost": "السداد مستحق بعد {{duration}} من قبول borrower (grace period: {{grace}}). بعدها تطالب بأموالك.",
+        "lenderYouLockAccept": "{{principal}} مقرض للمقترض الآن.",
+        "lenderYouLockPost": "{{principal}} الآن، حتى يقبل عرضك أو تلغيه.",
+        "lenderYouReceive": "حتى ~{{interest}} فائدة إذا سدد borrower في الوقت، زائد {{principal}} الخاص بك عائدا.",
+        "rateOutOfRange": "أدخل رقما بين 0 و {{max}} — البروتوكول يحد rates عند {{max}}% سنويا.",
+        "theyLockCollateral": "يقفلون {{collateral}} كـ collateral",
+        "youLockCollateral": "تقفل {{collateral}} كـ collateral"
+      }
     },
     "settingsPage": {
       "experience": {
@@ -1422,6 +1760,201 @@
     },
     "stepNav": {
       "progressAria": "التقدم"
+    },
+    "claimAll": {
+      "borrowerBufferBack": "buffer الخاص بك عائد",
+      "borrowerCollateralBack": "collateral عائد",
+      "borrowerResidual": "المتبقي بعد المطابقة الداخلية",
+      "borrowerSurplus": "الفائض بعد التصفية، إن وجد",
+      "itemLabel": "{{noun}} #{{id}} — {{what}}",
+      "lenderProceeds": "عائداتك",
+      "lenderRentalFeesNft": "الرسوم + NFT الخاص بك عائد",
+      "loanNoun": "Loan",
+      "rentalNoun": "Rental",
+      "rewardsLabel": "مكافآت التفاعل — {{amount}} VPFI",
+      "vaultVpfiLabel": "Vault VPFI — {{amount}} VPFI"
+    },
+    "lists": {
+      "showMore": "إظهار {{next}} أخرى",
+      "showMoreHidden": "إظهار {{next}} أخرى ({{total}} مخفية)"
+    },
+    "loanState": {
+      "beingSettled": "قيد التسوية",
+      "closed": "مغلق",
+      "defaulted": "متعثر",
+      "dueInDays_few": "مستحق خلال {{count}} أيام",
+      "dueInDays_many": "مستحق خلال {{count}} أيام",
+      "dueInDays_one": "مستحق خلال {{count}} يوم",
+      "dueInDays_other": "مستحق خلال {{count}} أيام",
+      "dueInDays_two": "مستحق خلال {{count}} أيام",
+      "dueInDays_zero": "مستحق خلال {{count}} أيام",
+      "dueToday": "مستحق اليوم",
+      "pastDue": "متأخر",
+      "repaid": "مسدد"
     }
+  },
+  "contractError": {
+    "AccessControlUnauthorizedAccount": "لا يملك حسابك الدور المطلوب لهذا الإجراء.",
+    "AlreadyRegistered": "البلد مسجل مسبقا — لا يمكن تغييره بعد الإعداد الأولي.",
+    "AmountMaxMustBePositive": "أدخل مبلغا أقصى أكبر من صفر.",
+    "AmountMustBePositive": "أدخل مبلغا أكبر من صفر.",
+    "AmountMutationUnsupportedForShape": "تعديل المبلغ غير مدعوم لهذا الشكل.",
+    "AmountTooHigh": "مبلغ السحب يتجاوز الحد الأقصى المسموح به دون خرق health factor.",
+    "AonRequiresFullFill": "هذا العرض All-or-Nothing — سيؤدي matcher إلى fill جزئي فقط، وهذا يخالف شروط العرض. طابق الحجم الكامل أو تخط هذا الزوج.",
+    "AonRequiresSingleValueAmount": "عروض All-or-Nothing تتطلب مبلغا بقيمة واحدة (min يساوي max). عدل النطاق حتى يتطابق الطرفان.",
+    "AssetPaused": "هذا الأصل موقوف حاليا بواسطة governance. انتظر رفع الإيقاف قبل إعادة المحاولة.",
+    "BorrowerSanctioned": "محفظة المقترض معلومة من on-chain sanctions oracle، لذلك لا يمكن متابعة هذا التطابق.",
+    "CancelCooldownActive": "فترة تهدئة الإلغاء 5 دقائق مفعلة للعروض غير الممتلئة. يظهر العد التنازلي في الصف متى يصبح العرض قابلا للإلغاء.",
+    "CollateralAmountMaxMustBePositive": "أدخل مبلغ ضمان أقصى أكبر من صفر.",
+    "CollateralMustBePositive": "أدخل مبلغ ضمان أكبر من صفر.",
+    "CollateralMutationUnsupportedForShape": "لا يمكن تعديل collateral في شكل العرض هذا (عروض borrower NFT-rental تدفع مسبقا إلى vault، وليست collateral). استخدم modifyOffer للمبلغ أو rate فقط.",
+    "CountriesNotCompatible": "بلدان الأطراف غير متوافقة (sanctions/compliance).",
+    "CrossFacetCallFailed": "فشل استدعاء cross-facet داخل المعاملة. شارك diagnostics export مع الدعم.",
+    "ERC20InsufficientAllowance": "token allowance غير كاف. وافق على token بالمبلغ المطلوب ثم حاول مرة أخرى.",
+    "ERC20InsufficientBalance": "رصيد token غير كاف. محفظتك لا تحتوي ما يكفي من هذا token لهذا المبلغ.",
+    "ERC20InvalidReceiver": "عنوان المستلم غير صالح لتحويل token.",
+    "ERC20InvalidSender": "عنوان المرسل غير صالح لتحويل token.",
+    "ERC20InvalidSpender": "عنوان spender غير صالح لموافقة token.",
+    "ERC721IncorrectOwner": "أنت لا تملك هذا NFT.",
+    "ERC721InsufficientApproval": "موافقة NFT مفقودة — وافق على NFT أولا.",
+    "ERC721InvalidOwner": "مالك NFT غير صالح.",
+    "ERC721InvalidReceiver": "مستلم NFT غير صالح.",
+    "ERC721InvalidSender": "مرسل NFT غير صالح.",
+    "ERC721NonexistentToken": "هذا NFT غير موجود.",
+    "EnforcedPause": "البروتوكول متوقف حاليا للصيانة. حاول مرة أخرى لاحقا.",
+    "FeeTooHigh": "رسوم هذا الإجراء تتجاوز الحد الأقصى المسموح.",
+    "FunctionDisabled": "هذه الميزة معطلة حاليا بواسطة protocol governance. حاول مرة أخرى لاحقا.",
+    "FunctionDoesNotExist": "الدالة غير متاحة في نشر العقد هذا (قد لا تكون facet مضافة).",
+    "GetUserVaultFailed": "تعذر حل user vault الخاص بك. أعد توصيل المحفظة أو تواصل مع الدعم.",
+    "HealthFactorCalculationFailed": "فشل حساب health factor — حاول مرة أخرى.",
+    "HealthFactorNotLow": "health factor ليس أدنى من عتبة التصفية.",
+    "HealthFactorTooLow": "health factor منخفض جدا. أضف collateral لرفعه فوق 1.5.",
+    "IllegalTransition": "انتقال حالة loan غير قانوني — لا يمكن نقل loan إلى الحالة المطلوبة.",
+    "IlliquidAsset": "هذا الأصل illiquid (لا يوجد price feed أو DEX pool).",
+    "IlliquidAssetNotAcknowledged": "أحد الأصول illiquid. فعل إقرار illiquid-asset للمتابعة.",
+    "IlliquidPairNotConsented": "يجب أن يوافق الطرفان على شروط illiquid-asset قبل المتابعة.",
+    "InitLtvAboveTier": "هذا loan سيتجاوز حد LTV لطبقة المخاطر الخاصة به (تحركت الأسعار أو حدود الطبقة). خفض مبلغ الاقتراض أو أضف collateral ثم حاول مرة أخرى.",
+    "InsufficientAllowance": "allowance غير كاف",
+    "InsufficientCollateral": "collateral الجديد للمقترض غير كاف (يجب أن يكون ≥ الأصلي).",
+    "InsufficientLiquidity": "السيولة on-chain غير كافية لهذا الأصل.",
+    "InsufficientPartialAmount": "مبلغ السداد الجزئي صغير جدا (أدنى من الحد الأدنى).",
+    "InsufficientPrepay": "رصيد الإيجار المدفوع مسبقا غير كاف لتغطية الرسوم المتراكمة.",
+    "InsufficientProceeds": "عائدات التصفية لم تكن كافية لتغطية loan.",
+    "InterestRateAboveCeiling": "interest rate أعلى من سقف البروتوكول الحالي. خفض rate ثم حاول مرة أخرى.",
+    "InvalidAddress": "عنوان غير صالح",
+    "InvalidAmount": "مبلغ غير صالح — يجب أن تكون القيمة أكبر من صفر.",
+    "InvalidAmountRange": "نطاق المبلغ غير صالح — يجب أن يكون الحد الأقصى على الأقل الحد الأدنى.",
+    "InvalidAsset": "أصل غير صالح",
+    "InvalidAssetType": "نوع أصل غير صالح.",
+    "InvalidCollateralAmountRange": "نطاق collateral غير صالح — يجب أن يكون الحد الأقصى على الأقل الحد الأدنى.",
+    "InvalidCountry": "رمز البلد غير صالح.",
+    "InvalidLoan": "loan غير صالح — غير موجود أو ليس في الحالة المتوقعة.",
+    "InvalidLoanStatus": "loan ليس في الحالة المطلوبة لهذا الإجراء.",
+    "InvalidNewBorrower": "عنوان المقترض الجديد غير صالح.",
+    "InvalidOffer": "العرض غير موجود أو لم يعد صالحا.",
+    "InvalidOfferTerms": "شروط العرض البديل لا تلبي متطلبات الأفضلية للمقرض.",
+    "InvalidOfferType": "نوع العرض غير صالح — يجب أن تكون المدة يوما واحدا على الأقل.",
+    "InvalidRateRange": "نطاق interest-rate غير صالح — يجب أن يكون الحد الأقصى على الأقل الحد الأدنى.",
+    "InvalidRefinanceOffer": "عرض refinance غير صالح — يجب أن يكون عرض borrower لنفس الأصل.",
+    "InvalidRoyalty": "إعداد royalty غير صالح.",
+    "InvalidSaleOffer": "عرض sale غير صالح — يجب أن يكون عرض lender لنفس نوع الأصل.",
+    "InvalidThresholds": "عتبات KYC غير صالحة (Tier0 يجب أن يكون أقل من Tier1).",
+    "InvalidTokenId": "NFT token ID غير صالح.",
+    "InvalidTosParams": "نسخة Terms-of-Service أو content hash المرسلة غير صالحة (خطأ إعداد من جهة governance).",
+    "InvalidTosVersion": "نسخة Terms of Service التي وقعتها لم تعد current. أعد تحميل التطبيق، راجع الشروط المحدثة، ووقع من جديد.",
+    "IocRequiresExpiry": "عروض Immediate-or-Cancel تحتاج نافذة expiry. حدد deadline قبل النشر.",
+    "KYCRequired": "KYC مطلوب — أكمل التحقق لهذا حجم المعاملة قبل المتابعة.",
+    "KeeperAccessRequired": "وصول keeper مطلوب — لست مخولا للتنفيذ نيابة عن هذا الطرف.",
+    "KeeperAlreadyApproved": "هذا keeper موجود مسبقا في whitelist الخاصة بك.",
+    "KeeperNotApproved": "هذا keeper ليس في whitelist الخاصة بك.",
+    "KeeperWhitelistFull": "keeper whitelist ممتلئة — أزل keeper موجودا قبل إضافة جديد.",
+    "LTVCalculationFailed": "فشل حساب LTV — حاول مرة أخرى.",
+    "LTVExceeded": "نسبة loan-to-value مرتفعة جدا. أضف collateral أو خفض مبلغ الاقتراض.",
+    "LenderCannotRepayOwnLoan": "لا يمكنك سداد loan تكون فيه lender — سداد loan الخاص بك غير مسموح.",
+    "LenderResolutionFailed": "فشل حل lender vault — حاول مرة أخرى.",
+    "LiquidationFailed": "فشل liquidation swap — حاول مرة أخرى.",
+    "LiquidityMismatch": "عدم تطابق السيولة — أحد الأصول illiquid ولم توافق على مسار illiquid-asset.",
+    "LoanInitiationFailed": "فشل بدء loan — حاول مرة أخرى.",
+    "LoanNotActive": "loan غير نشط.",
+    "LoanNotInRepayablePhase": "هذا loan ليس في مرحلة تقبل السداد الآن.",
+    "MatchHFTooLow": "سيترك هذا loan دون الحد الأدنى من health factor (1.5). أضف collateral أو خفض مبلغ الاقتراض.",
+    "MaxLendingAboveCeiling": "collateral الخاص بك منخفض للمبلغ الذي تريد اقتراضه. خفض مبلغ الاقتراض أو اقفل collateral أكثر ثم حاول مرة أخرى.",
+    "MinCollateralBelowFloor": "collateral لهذا loan أدنى من الحد الأدنى المطلوب لحجمه. زد collateral المطلوب أو خفض مبلغ loan ثم حاول مرة أخرى.",
+    "ModifyBelowFilledFloor": "لا يمكن تقليص cap دون الجزء الممتلئ بالفعل — partial fills لهذا العرض التزمت بقيمة على الحجم الحالي.",
+    "NFTAlreadyBurned": "position NFT هذا محروق مسبقا.",
+    "NFTBurnFailed": "فشل حرق position NFT — حاول مرة أخرى.",
+    "NFTMintFailed": "فشل mint لـ position NFT — حاول مرة أخرى. إذا استمر، تواصل مع الدعم.",
+    "NFTRenterUpdateFailed": "فشل تحديث NFT renter — حاول مرة أخرى.",
+    "NFTStatusUpdateFailed": "فشل تحديث حالة NFT — حاول مرة أخرى.",
+    "NFTTransferFailed": "فشل تحويل NFT — حاول مرة أخرى.",
+    "NoDexPool": "لم يتم العثور على DEX liquidity pool لهذا الأصل.",
+    "NoPriceFeed": "لم يتم العثور على price feed لهذا الأصل. قد لا يكون token مدعوما على هذه الشبكة.",
+    "NoVault": "هذه المحفظة لا تملك vault بعد. افتح واحدا عبر إيداع أو أول loan ثم أعد المحاولة.",
+    "NonLiquidAsset": "أصل واحد أو أكثر في هذا loan illiquid. يجب أن يوافق الطرفان على شروط illiquid.",
+    "NonLiquidAssetAndNoIlliquidAsset": "يجب أن يوافق الطرفان صراحة قبل قبول عرض illiquid-asset.",
+    "NotAuthorized": "غير مخول. هذا الإجراء مقيد بدور أو caller محدد.",
+    "NotBorrower": "المقترض فقط يمكنه تنفيذ هذا الإجراء.",
+    "NotBorrowerNftOwner": "حامل borrower-position الحالي فقط يمكنه فعل ذلك.",
+    "NotCreatorOrNotExpired": "الإلغاء محفوظ للمنشئ طالما العرض live. بعد expiry يمكن لأي شخص تنظيفه — refund يذهب إلى المنشئ بغض النظر عن caller.",
+    "NotDailyYet": "الخصم اليومي غير مستحق بعد — انتظر مرور 24 ساعة.",
+    "NotDefaultedYet": "loan لم يتعثر بعد — grace period لم تنته.",
+    "NotLender": "المقرض فقط يمكنه تنفيذ هذا الإجراء.",
+    "NotLenderNftOwner": "حامل lender-position الحالي فقط يمكنه فعل ذلك.",
+    "NotNFTOwner": "يجب أن تملك position NFT لتنفيذ هذا الإجراء.",
+    "NotNFTRental": "هذا الإجراء ينطبق فقط على NFT rental loans.",
+    "NotOfferCreator": "منشئ هذا العرض فقط يمكنه تنفيذ هذا الإجراء.",
+    "OfferAcceptFailed": "فشل قبول العرض — حاول مرة أخرى.",
+    "OfferAlreadyAccepted": "تم قبول العرض مسبقا.",
+    "OfferCreationFailed": "فشل إنشاء العرض — حاول مرة أخرى.",
+    "OfferDurationExceedsCap": "مدة loan أطول مما يسمح به البروتوكول. اختر مدة أقصر.",
+    "OfferExpired": "انتهى هذا العرض ولا يمكن قبوله أو مطابقته.",
+    "OfferExpiryAboveCap": "expiry العرض بعيد جدا في المستقبل (حد أفق سنة واحدة). اختر deadline أقرب.",
+    "OfferExpiryInPast": "يجب أن يكون expiry العرض timestamp مستقبليا. اختر deadline بعد الآن بثانية واحدة على الأقل.",
+    "OfferNotAccepted": "عرض borrower لم يتم قبوله بعد.",
+    "OffsetNotLinked": "عرض offset غير مرتبط بهذا loan.",
+    "OffsetOfferNotAccepted": "عرض offset لم يتم قبوله بعد.",
+    "OraclePriceDivergence": "Chainlink و secondary oracles المهيأة (Tellor / API3 / DIA) اختلفت بما يتجاوز tolerance ضمن Soft 2-of-N quorum. تم رفض قراءة السعر حتى لا يتم تنفيذ أي إجراء على سعر غير متحقق. حاول لاحقا.",
+    "PartialRepayNotAllowed": "هذا loan لا يسمح بالسداد الجزئي — سدد المبلغ الكامل بدلا من ذلك.",
+    "PartialRepayWorsensHealthFactor": "هذا السداد الجزئي سيخفض health factor بدلا من تحسينه. يجب ألا يسيء partial repay إلى HF — عدل المبلغ وحاول مرة أخرى.",
+    "PartialSwapWorsensHealthFactor": "هذا collateral swap-to-repay سيخفض health factor بدلا من تحسينه. عدل swap حتى لا يسيء إلى HF.",
+    "PeriodicInterestDisabled": "مدفوعات الفائدة الدورية معطلة حاليا في هذا deployment.",
+    "PositionNFTLocked": "position NFT هذا مقفل أثناء تدفق استراتيجي (preclose / refinance / loan-sale).",
+    "PrincipalNotKYCd": "هذا الإجراء يتطلب تحقق هوية (KYC) لهذا الحجم في هذا deployment.",
+    "PrincipalSanctioned": "هذه المحفظة معلومة من on-chain sanctions oracle، لذلك لا يمكن للبروتوكول فتح position جديد لها.",
+    "RateShortfallTooHigh": "نقص interest rate يتجاوز الحد المسموح لهذا loan sale.",
+    "ReentrancyGuardReentrantCall": "تم revert المعاملة بسبب حماية reentrancy. حاول مرة أخرى.",
+    "RefinanceCarryOverCollateralShortfall": "نقص في collateral المرحل عند refinance",
+    "RentalNotActive": "NFT rental loan هذا غير نشط حاليا.",
+    "RepaymentPastGracePeriod": "نافذة السداد أغلقت — انتهت grace period. يجب default loan.",
+    "RiskAndTermsConsentRequired": "اقبل إفصاحات المخاطر والشروط قبل المتابعة.",
+    "RiskTierTooLow": "VPFI risk tier لديك أقل مما يتطلبه هذا العرض.",
+    "SaleListingActive": "sale listing نشط",
+    "SaleNotLinked": "عرض sale غير مرتبط بهذا loan.",
+    "SaleOfferAlreadyExists": "عرض sale موجود بالفعل",
+    "SaleOfferCollateralMustBeERC20": "collateral عرض sale يجب أن يكون ERC20",
+    "SaleOfferNotAccepted": "عرض sale لم يتم قبوله بعد.",
+    "SalePositionNotConsolidatable": "sale position غير قابل للدمج",
+    "SaleVehicleImmutable": "sale vehicle غير قابل للتغيير",
+    "SaleVehicleNotMatchable": "sale vehicle غير قابل للمطابقة",
+    "SanctionedAddress": "هذه المحفظة (أو منشئ العرض) معلومة من on-chain sanctions oracle. لا يمكن للبروتوكول مطابقتك مع عنوان sanctioned. إذا ظننت أن هذا خطأ، تواصل مباشرة مع مشغل sanctions-oracle — Vaipakam لا يحتفظ بقائمة sanctions خاصة به.",
+    "SelfCollateralizedOffer": "عرض self-collateralized — يجب أن يختلف principal asset عن collateral asset.",
+    "SelfTrade": "لا يمكنك مطابقة عرضك الخاص — lender و borrower لا يمكن أن يكونا نفس المحفظة.",
+    "SelfTradeForbidden": "self-trade غير مسموح — عناوين lender و borrower متطابقة. طابق عرض counterparty بدلا من ذلك.",
+    "SequencerDown": "L2 sequencer متوقف حاليا. قراءات السعر موقوفة حتى يصبح sequencer سليما.",
+    "SequencerGracePeriod": "L2 sequencer عاد للتو — الأسعار محجوبة لمدة ساعة بعد التعافي. حاول لاحقا.",
+    "SequencerUnhealthy": "L2 sequencer يعتبر غير سليم حاليا (متوقف أو ضمن نافذة grace بعد التعافي ساعة واحدة). حاول لاحقا.",
+    "StalePriceData": "بيانات السعر قديمة — oracle لم يتم تحديثه مؤخرا.",
+    "TradeNotAllowed": "التداول بين هذين البلدين غير مسموح في إعداد compliance الحالي.",
+    "TreasuryTransferFailed": "فشل تحويل treasury — حاول مرة أخرى.",
+    "UnauthorizedCrossFacetCall": "هذه الدالة يمكن استدعاؤها داخليا فقط بواسطة diamond (cross-facet).",
+    "UnsupportedLoanShape": "هذا الجمع من الأصول أو الشروط غير مدعوم لهذا الإجراء.",
+    "UpdateNotAllowed": "تحديث الإعداد هذا غير مسموح حاليا.",
+    "UserHasNoVault": "ليس لديك vault بعد — يتم إنشاؤه عند أول إيداع أو loan. جرب الإجراء الذي يفتحه ثم أعد المحاولة.",
+    "VaultResolutionFailed": "فشل حل vault — حاول مرة أخرى.",
+    "VaultTransferFailed": "فشل تحويل vault — حاول مرة أخرى.",
+    "VaultWithdrawFailed": "فشل سحب vault — حاول مرة أخرى.",
+    "ZeroAmount": "لا يوجد رصيد treasury للمطالبة به لهذا الأصل.",
+    "ZeroCollateral": "loan لا يحتوي على collateral.",
+    "_gasEstimateUnavailable": "لم تستطع المحفظة تقدير هذه المعاملة، لذلك ستفشل غالبا إذا تم توقيعها. هذا ليس نقص gas حقيقيا — إذا أشار review step إلى سبب محدد فهو السبب الفعلي. وإلا فالأسباب المعتادة هي token approval مفقود (وافق على المبلغ الدقيق وأعد المحاولة) أو app build قديم لا يطابق شكل استدعائه العقد المنشور (hard-reload لتحميل أحدث نسخة). إذا استمر، شارك diagnostics export مع الدعم."
   }
 }
