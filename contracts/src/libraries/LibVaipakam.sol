@@ -2524,11 +2524,13 @@ library LibVaipakam {
         // #1353 (M2 PR-5c) — REQUIRED cache of the per-side lifetime reward
         // ceiling at open: `½ × cStarOpen × (BPS − rewardHaircutBpsAtOpen) / BPS`.
         // Recompute only as a consistency check, never as the sole source (rev 15).
-        // May round to 0 for a STAMPED dust `C*` (nonzero `cStarOpen`); such a
-        // loan is still capped (to ~0). The loan-side cap distinguishes an
-        // UNSTAMPED loan (skip) from a stamped dust cap by checking `cStarOpen`,
-        // NOT this rounded ceiling — do not reintroduce a `loanSideRewardCapOpen
-        // == 0` skip (Codex #1371 r4).
+        // May round to 0 for a STAMPED dust `C*` (even `cStarOpen` itself can
+        // floor to 0 on a genuinely-priced tiny loan); such a loan is still
+        // capped (to ~0). The loan-side cap distinguishes an UNSTAMPED loan
+        // (skip) from a stamped dust record by checking `openDays == 0` (the
+        // stamp always writes `openDays >= 1`), NOT `cStarOpen` or this rounded
+        // ceiling — do not reintroduce a `cStarOpen == 0` or
+        // `loanSideRewardCapOpen == 0` skip (Codex #1371 r4/r5).
         uint128 loanSideRewardCapOpen;
     }
 

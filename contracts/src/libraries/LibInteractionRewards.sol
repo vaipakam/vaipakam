@@ -1963,13 +1963,14 @@ function _dayPoolHalves(
     //     capped-off commitments).
     // The cap applies to reward PAID TO A USER only — never a forfeit or an
     // expiry credit, which recycle to the bucket rather than emit to the side.
-    // An UNSTAMPED loan (`cStarOpen == 0` — a mirror-chain, dark-era, or
+    // An UNSTAMPED loan (`openDays == 0` — a mirror-chain, dark-era, or
     // pre-cutover loan) is NOT reward-ineligible here: the cap does not apply so
-    // it earns normally (Codex #1371 r1 P1 ×2). A STAMPED loan whose
-    // `loanSideRewardCapOpen` merely rounds to 0 (a dust `C*`) IS capped — to
-    // ~0 — because the `cStarOpen != 0` stamp is present (Codex #1371 r2 P1).
-    // TRUE reward-ineligibility (a canonical feed-fail origination) is enforced
-    // UPSTREAM by not creating reward entries at all (rev 15 §F6b), never here.
+    // it earns normally (Codex #1371 r1 P1 ×2). A STAMPED loan (the stamp always
+    // writes `openDays >= 1`) whose `cStarOpen` / `loanSideRewardCapOpen` merely
+    // round to 0 (a genuinely-priced dust `C*`) IS capped — to ~0 — since the
+    // stamp is present (Codex #1371 r2/r5 P1/P2). TRUE reward-ineligibility (a
+    // canonical feed-fail origination) is enforced UPSTREAM by not creating
+    // reward entries at all (rev 15 §F6b), never here.
 
     /// @dev Armed (post-`D*`) rewarded-day count an entry contributes to its
     ///      loanId+side union — `[max(startDay, D*), endDay-1]`. Only these days
@@ -1992,7 +1993,7 @@ function _dayPoolHalves(
     ///      Reads the at-open cache (`loanSideRewardCapOpen` / `openDays`), never
     ///      the live cfg. A `capOpen == 0` on a STAMPED loan (dust `C*`) yields a
     ///      0 ceiling here — the intended near-zero cap, distinct from the
-    ///      unstamped skip the callers gate on `cStarOpen`.
+    ///      unstamped skip the callers gate on `openDays == 0`.
     function _loanSideRewardCapEff(
         LibVaipakam.Storage storage s,
         uint256 loanId,
@@ -2027,8 +2028,8 @@ function _dayPoolHalves(
     /// @dev MUTATING loan-side cap — trims an entry's ARMED-FRESH payout to the
     ///      remaining per-(loanId, side) lifetime budget and persists the paid /
     ///      armed-day accumulators. Returns `split` untouched (DARK) when the
-    ///      entry has no armed-fresh reward or the loan is unstamped
-    ///      (`cStarOpen == 0`), so it never zeroes a legitimately-unstamped loan.
+    ///      entry has no armed-fresh reward or the loan is UNSTAMPED
+    ///      (`openDays == 0`), so it never zeroes a legitimately-unstamped loan.
     function _applyLoanSideCap(
         LibVaipakam.Storage storage s,
         LibVaipakam.RewardEntry storage e,
@@ -2036,7 +2037,13 @@ function _dayPoolHalves(
     ) private returns (EntrySplit memory) {
         if (split.armedFresh == 0) return split; // no post-cutover fresh ⇒ dark
         uint256 loanId = e.loanId;
-        if (s.feeEntitlementByLoanId[loanId].cStarOpen == 0) {
+        // The STAMP marker is `openDays != 0` — the stamp always writes
+        // `openDays >= 1`, whereas a genuinely-priced dust loan can have BOTH
+        // `cStarOpen` and `loanSideRewardCapOpen` round to 0, so keying the skip
+        // on `cStarOpen == 0` would wrongly exempt such a stamped loan from the
+        // cap (Codex #1371 r5). A stamped zero-`C*` loan therefore falls through
+        // and is capped to ~0; only a truly missing stamp skips.
+        if (s.feeEntitlementByLoanId[loanId].openDays == 0) {
             // Unstamped (mirror / dark-era / pre-cutover) ⇒ no loan-side cap here
             // (never zeroed — Codex #1371 r1). ARMING PRECONDITION (`cStar`
             // backfill gate): `D*` must not be armed while any reward-eligible
@@ -2076,7 +2083,9 @@ function _dayPoolHalves(
     ) private view returns (uint256) {
         if (split.armedFresh == 0) return split.total;
         uint256 loanId = e.loanId;
-        if (s.feeEntitlementByLoanId[loanId].cStarOpen == 0) return split.total;
+        // Unstamped marker is `openDays == 0` (see {_applyLoanSideCap}); a
+        // stamped zero-`C*` dust loan is capped, not skipped (Codex #1371 r5).
+        if (s.feeEntitlementByLoanId[loanId].openDays == 0) return split.total;
         uint8 side = uint8(e.side);
         uint256 daysIncl =
             s.loanSideRewardedDays[loanId][side] + _entryArmedDays(s, e);

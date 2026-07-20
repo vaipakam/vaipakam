@@ -206,28 +206,28 @@ contract LoanSideRewardCapTest is SetupTest {
         assertEq(paid, 2e18, "unstamped loan earns full reward (cap skips, not zeroes)");
     }
 
-    // ── A STAMPED loan whose cap rounds to 0 (dust C*) IS capped, not skipped ──
+    // ── A STAMPED dust loan (even cStarOpen == 0) IS capped, not skipped ──
 
     function test_ArmedClaim_StampedDustCapZeroesArmedFresh() public {
         _seedArmedDay(1, 1e18, 1e18);
         _seedArmedDay(2, 1e18, 1e18);
         _mut().setGovernorCommitArmedFromDayRaw(1);
         _pushEntry(1e18, 1, 3);
-        // Stamp a NON-ZERO cStarOpen but a loanSideRewardCapOpen that rounded to
-        // 0 (a dust/short loan under a low-but-valid K). Distinguished from an
-        // unstamped loan by `cStarOpen != 0`, so the cap applies and trims the
-        // armed-fresh payout to ~0 (Codex #1371 r2 P1).
+        // Stamp a genuinely-priced dust loan where BOTH `cStarOpen` and the cap
+        // floor to 0. It is distinguished from an UNSTAMPED loan by `openDays !=
+        // 0` (the stamp always writes openDays >= 1), NOT by `cStarOpen`, so the
+        // cap applies and trims the armed-fresh payout to ~0 (Codex #1371 r5 P2).
         _mut().setFeeEntitlementRaw(
             LOAN_ID,
             LibVaipakam.FeeEntitlement({
                 borrowerMode: LibVaipakam.FeeEntitlementMode.None,
                 lenderMode: LibVaipakam.FeeEntitlementMode.None,
-                openDays: 2,
+                openDays: 2, // stamped (>= 1) — the unstamped marker is openDays == 0
                 rewardHaircutBpsAtOpen: 200,
                 borrowerTariffPaid: 0,
                 lenderTariffPaid: 0,
-                cStarOpen: 1, // stamped (non-zero) but dust
-                loanSideRewardCapOpen: 0 // rounded to zero
+                cStarOpen: 0, // dust: list LIF floored to 0
+                loanSideRewardCapOpen: 0 // ceiling rounds to 0
             })
         );
         vm.prank(rewardLender);

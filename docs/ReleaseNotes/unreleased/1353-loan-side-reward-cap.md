@@ -27,11 +27,12 @@ The new ceiling is a per-`(loanId, side)` **lifetime budget**, priced off the
   loan whose reward window spans the cutover keeps its pre-`D*` days under the
   legacy #1008 regime and has only its post-`D*` slice loan-side-capped.
 
-A loan that carries no `C*` **stamp** (`cStarOpen == 0`) — a mirror-chain loan, a
+A loan that carries no `C*` **stamp** (`openDays == 0`) — a mirror-chain loan, a
 dark-era pre-enable loan, or any pre-cutover loan — is **not** zeroed: the cap
-simply **does not apply** and it earns normally. (A **stamped** loan whose ceiling
-merely rounds to 0 — a dust `C*` — IS still capped; the skip keys on the
-`cStarOpen` stamp, not the rounded ceiling.) True reward-**ineligibility** (a
+simply **does not apply** and it earns normally. (A **stamped** loan whose `C*` /
+ceiling merely rounds to 0 — a genuinely-priced dust loan — IS still capped; the
+skip keys on the `openDays` stamp marker, always ≥ 1 when stamped, not on
+`cStarOpen` or the rounded ceiling.) True reward-**ineligibility** (a
 canonical origination whose list LIF cannot be priced) is enforced **upstream** by
 not creating reward entries at all — never by zeroing a payout at the cap. This is
 the anti-farming rule stated correctly: an unpriced loan draws nothing because it
