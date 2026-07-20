@@ -27,9 +27,26 @@ absorbed the Full tariff (`lenderMode == Full`), all still capped at the uniform
 The bump is delivered through **both** existing delivery modes with no call-site
 duplication: the discount computation was centralised so the VPFI-payment path
 (peg configured) and the Phase-1 direct-reduction path (peg unset) both charge
-against the same Full-aware total. All four lender-yield settlement facets —
-repay, preclose, refinance, and the auto-lifecycle sweep — pick up the change
-through the shared helper.
+against the same Full-aware total. The four **primary** lender-yield settlement
+facets — repay, preclose direct close, refinance, and the auto-lifecycle sweep —
+pick up the change through the shared helper.
+
+Because the VPFI-payment delivery **debits** the lender's vault, and settlement
+consolidates `loan.lender` to the current position-NFT holder before quoting,
+that path is gated on the charged party's own consent: an unsolicited transfer
+of a Full-stamped lender position can never spend a non-consenting recipient's
+VPFI. A Full lender without hold consent still receives the `+10%` — but only
+through the no-token-move direct-reduction path, in every peg posture.
+
+**Scope — secondary paths still pending (follow-up #1383).** The `+10%` is not
+yet honored on the *secondary* lender-yield settlement paths — swap-to-repay,
+preclose obligation-transfer (Option 2b) / offset (Option 3), and the
+rental-prepay treasury split — which today apply neither the hold nor the Full
+discount. Extending them cleanly needs a size-reducing shared-helper refactor
+(preclose sits close to the EIP-170 limit), so it is tracked separately as a
+**hard blocker on the `feeEntitlementEnabled` cut-over**: no lender may pay `C*`
+while any settlement path they can be closed through ignores the stamp. The
+PR-9 (#1356) deploy-asserts enforce that gate.
 
 This ships **dark**: no loan carries a `Full` lender stamp until the Full opt-in
 path (`feeEntitlementEnabled`) is enabled at the M2 joint cutover, so every

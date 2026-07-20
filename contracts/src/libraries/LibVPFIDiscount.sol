@@ -735,6 +735,19 @@ library LibVPFIDiscount {
     {
         if (interestAmount == 0 || loan.lender == address(0)) return (false, 0, 0);
 
+        // #1354 (Codex r1 P2) — the VPFI-PAYMENT delivery DEBITS `loan.lender`'s
+        // vault, so it requires that party's own platform consent. Settlement
+        // hosts consolidate `loan.lender` to the CURRENT position-NFT holder
+        // before quoting, so without this gate an unsolicited transfer of a
+        // Full-stamped lender position could spend the (non-consenting)
+        // recipient's VPFI. A Full lender WITHOUT consent still receives the
+        // +10% bump — but only through the no-token-move direct-reduction path
+        // ({directReductionYieldFee}), never a vault debit. This is a no-op for
+        // the pre-existing hold path (callers only reached here with consent).
+        if (!LibVaipakam.storageSlot().vpfiDiscountConsent[loan.lender]) {
+            return (false, 0, 0);
+        }
+
         // #1354 §F2 — total discount `min(d_hold + d_tariff, 5000)`: the
         // consent-gated hold slice PLUS the +10% Full-tariff bump.
         avgBps = _effectiveYieldFeeDiscountBps(loan);
@@ -1062,9 +1075,12 @@ library LibVPFIDiscount {
      *      Returns the lending-asset amount to move from treasury to the
      *      lender: `treasuryShareFull × effBps / BASIS_POINTS`. Returns `0`
      *      when:
-     *        - a VPFI price source IS configured — VPFI-payment mode
-     *          ({tryApplyYieldFee}) is authoritative there, so this fallback
-     *          stays inert;
+     *        - a VPFI price source IS configured AND the lender consented —
+     *          VPFI-payment mode ({tryApplyYieldFee}) is authoritative and
+     *          available there, so this fallback stays inert. (When the peg is
+     *          set but the lender did NOT consent, VPFI-payment is unavailable
+     *          to them, so a Full lender's +10% is delivered here instead — see
+     *          the consent note below.);
      *        - the lender's effective discount is tier-0 / zero; or
      *        - the fee is zero.
      *
@@ -1087,14 +1103,18 @@ library LibVPFIDiscount {
     ) internal view returns (uint256 reduction) {
         if (treasuryShareFull == 0) return 0;
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
-        // Price source configured ⇒ VPFI-payment mode is authoritative; this
-        // direct-reduction fallback is the peg-unset launch posture only. Keyed
-        // on the config fields directly (not `canQuote`, which is also false on
-        // a transient oracle gap even when the peg IS set).
-        if (
-            s.vpfiDiscountWeiPerVpfi != 0 &&
-            s.vpfiDiscountEthPriceAsset != address(0)
-        ) {
+        // Defer to VPFI-payment mode ONLY when it is actually available to the
+        // party being settled — a configured price source AND the lender's own
+        // consent (the VPFI-payment path debits `loan.lender`'s vault, so
+        // {quoteYieldFee} now requires consent, #1354 Codex r1 P2). A Full
+        // lender with NO consent cannot take the VPFI-payment path, so their
+        // +10% bump must be delivered here (no token move) even when the peg is
+        // set — otherwise a Full lender would pay `C*` and receive nothing in
+        // the peg-set + no-consent corner. Keyed on the config fields directly
+        // (not `canQuote`, which is also false on a transient oracle gap).
+        bool pegSet = s.vpfiDiscountWeiPerVpfi != 0 &&
+            s.vpfiDiscountEthPriceAsset != address(0);
+        if (pegSet && s.vpfiDiscountConsent[loan.lender]) {
             return 0;
         }
         // #1354 §F2 — total discount `min(d_hold + d_tariff, 5000)`: the

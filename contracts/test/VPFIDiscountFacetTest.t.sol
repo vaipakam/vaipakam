@@ -1540,4 +1540,48 @@ contract VPFIDiscountFacetTest is SetupTest {
         );
         assertEq(fee, _discountedFee(baseFee, 1500), "no stamp -> hold-only 15% (dark)");
     }
+
+    /// @notice #1354 Codex r1 P2 — a Full lender with NO hold consent must
+    ///         receive the +10% via the no-token-move direct-reduction path
+    ///         even when the VPFI price peg IS set, and their vault must NEVER
+    ///         be debited. Models the unsolicited-transfer victim: the current
+    ///         `loan.lender` holds VPFI but never consented, so the
+    ///         VPFI-payment path (which would debit them) must not fire.
+    function testSettlementSweep_FullNoConsentPegSet_NoVaultDebit() public {
+        // Peg stays SET (setUp seeds it) — VPFI-payment mode is configured.
+        ConfigFacet(address(diamond)).setVpfiTierDiscountBps(1000, 1500, 2000, 2400);
+
+        // Reference: no consent, no stamp -> undiscounted 2% treasury fee.
+        uint256 baseFee = _openStampRepayTreasuryFee(
+            1,
+            LibVaipakam.FeeEntitlementMode.None,
+            LibVaipakam.FeeEntitlementMode.None
+        );
+
+        // Fund the lender's vault with VPFI but do NOT consent — a party who
+        // could be VPFI-debited if the guard were missing.
+        vpfiToken.transfer(lender, 5_000 ether);
+        vm.startPrank(lender);
+        vpfiToken.approve(address(diamond), 5_000 ether);
+        _facet().depositVPFIToVault(5_000 ether);
+        vm.stopPrank();
+
+        address lenderVault = VaultFactoryFacet(address(diamond)).getUserVaultAddress(lender);
+        uint256 vaultVpfiBefore = vpfiToken.balanceOf(lenderVault);
+
+        uint256 fee = _openStampRepayTreasuryFee(
+            2,
+            LibVaipakam.FeeEntitlementMode.Full,
+            LibVaipakam.FeeEntitlementMode.None
+        );
+
+        // +10% delivered via direct-reduction (treasury keeps 90% of the fee)...
+        assertEq(fee, _discountedFee(baseFee, 1000), "Full-no-consent peg-set -> 10% via direct-reduction");
+        // ...and NO VPFI left the non-consenting lender's vault.
+        assertEq(
+            vpfiToken.balanceOf(lenderVault),
+            vaultVpfiBefore,
+            "non-consenting lender vault must not be VPFI-debited"
+        );
+    }
 }
