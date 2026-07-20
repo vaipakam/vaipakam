@@ -1584,4 +1584,41 @@ contract VPFIDiscountFacetTest is SetupTest {
             "non-consenting lender vault must not be VPFI-debited"
         );
     }
+
+    /// @notice #1354 Codex r2 P2 — a Full lender must never be WORSE off for
+    ///         having consent. With the peg SET and consent ON but too little
+    ///         free VPFI to pay the discounted yield fee, the VPFI-payment
+    ///         attempt fails; the paid +10% Full tariff slice must still be
+    ///         delivered via the no-token-move direct-reduction fallback (the
+    ///         VPFI-contingent hold slice is dropped, which is correct in
+    ///         peg-set mode).
+    function testSettlementSweep_FullConsentPegSet_InsufficientVpfi_StillGetsBump() public {
+        // Peg stays SET (setUp seeds it).
+        ConfigFacet(address(diamond)).setVpfiTierDiscountBps(1000, 1500, 2000, 2400);
+
+        // Reference: no consent, no stamp -> undiscounted 2% treasury fee.
+        uint256 baseFee = _openStampRepayTreasuryFee(
+            1,
+            LibVaipakam.FeeEntitlementMode.None,
+            LibVaipakam.FeeEntitlementMode.None
+        );
+
+        // Lender CONSENTS but holds ZERO VPFI -> VPFI-payment cannot run, and
+        // the hold tier is 0 (no stake). Only the paid Full slice remains.
+        vm.prank(lender);
+        _facet().setVPFIDiscountConsent(true);
+
+        uint256 fee = _openStampRepayTreasuryFee(
+            2,
+            LibVaipakam.FeeEntitlementMode.Full,
+            LibVaipakam.FeeEntitlementMode.None
+        );
+
+        // +10% Full slice delivered via direct-reduction despite consent + peg.
+        assertEq(
+            fee,
+            _discountedFee(baseFee, 1000),
+            "consenting Full lender w/o free VPFI still gets the paid +10%"
+        );
+    }
 }
