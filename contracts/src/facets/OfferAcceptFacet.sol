@@ -1629,6 +1629,13 @@ contract OfferAcceptFacet is
             // charge (Full requires a liquid principal, not just a priceable one).
             isLiquid
         );
+        // #1347 (Codex #1366 r5) — snapshot the borrower's PRE-MINT free VPFI
+        // (the same balance `fullOptInConfirmed` just gated the +10% bump on) so
+        // the post-mint `chargeFullTariff` charges Full against THIS value, not
+        // the post-lien-release balance. Runs before the offer-collateral lien
+        // release, so a borrower whose VPFI collateral is freed at accept can't
+        // have Full charged post-mint without the paired pre-mint discount.
+        s.acceptAckBorrowerPreFreeVpfi = LibFeeEntitlement.freeVpfiBalance(borrower);
         uint256 initiationFee = LibVPFIDiscount.holdOnlyBorrowerLif(
             borrower,
             effectivePrincipal,

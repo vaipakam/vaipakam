@@ -134,6 +134,12 @@ contract FeeEntitlementFacet is IVaipakamErrors {
                     : offer.creatorAllowFullDowngrade,
                 _holdEligible(s, borrower, principalLiquid, /*isBorrowerSide=*/ true),
                 principalLiquid,
+                // Borrower gates on its PRE-MINT free VPFI (snapshotted by
+                // chargeBorrowerLifAndDeliver before the lien release), so the
+                // `C*` charge matches the pre-mint `+10%` verdict exactly and
+                // `resolveAndCharge` keeps its full revert/downgrade semantics
+                // (Codex #1366 r5 P2).
+                s.acceptAckBorrowerPreFreeVpfi,
                 cStar,
                 numeraireOk
             );
@@ -152,6 +158,11 @@ contract FeeEntitlementFacet is IVaipakamErrors {
                     : s.acceptAckAcceptorAllowFullDowngrade,
                 _holdEligible(s, lender, principalLiquid, /*isBorrowerSide=*/ false),
                 principalLiquid,
+                // Lender gates on its LIVE free VPFI — it has no pre-mint +10% to
+                // stay in sync with (its yield-fee discount is a settlement /
+                // PR-6 concern), and the loan lien is on the borrower's
+                // collateral, not the lender's vault.
+                LibFeeEntitlement.freeVpfiBalance(lender),
                 cStar,
                 numeraireOk
             );

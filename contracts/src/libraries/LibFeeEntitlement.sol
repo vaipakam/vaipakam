@@ -116,6 +116,7 @@ library LibFeeEntitlement {
         bool allowDowngrade,
         bool holdEligible,
         bool liquid,
+        uint256 partyFreeVpfi,
         uint256 cStar,
         bool numeraireOk
     ) internal returns (LibVaipakam.FeeEntitlementMode mode, uint256 tariffPaid) {
@@ -148,7 +149,16 @@ library LibFeeEntitlement {
             revert FeeEntitlementTariffAboveAuth(cStar, maxCStar);
         }
 
-        if (_vaultVpfiBalance(party) < cStar) {
+        // Gate on the CALLER-SUPPLIED effective free balance, not a fresh read:
+        // the borrower's is its PRE-MINT (pre-lien-release) free VPFI, persisted
+        // before the offer-collateral lien is released, so charging Full here
+        // requires the SAME balance the pre-mint `+10%` LIF bump was confirmed
+        // against — the freed residual can't charge `C*` post-mint without the
+        // paired discount (Codex #1366 r5 P2). The lender passes its live free
+        // balance (no pre-mint bump to stay in sync with). The actual withdrawal
+        // below sees the post-mint free balance, which is ≥ the borrower's
+        // pre-mint value (the lien only shrank), so a passing gate never bricks.
+        if (partyFreeVpfi < cStar) {
             if (allowDowngrade) return _downgrade(holdEligible);
             revert FeeEntitlementFullOptInFailed(party);
         }
@@ -162,7 +172,7 @@ library LibFeeEntitlement {
         //
         // GUARD the withdrawal. The CLEAN-downgrade cases — vault short of `C*`,
         // or `C*` encumbered by an active lien — are already caught by the
-        // FREE-balance pre-check above ({_vaultVpfiBalance} mirrors
+        // FREE-balance pre-check above ({freeVpfiBalance} mirrors
         // `vaultWithdrawERC20`'s cap exactly), so a downgrade-authorized party
         // falls back to HoldOnly/None there WITHOUT the accept bricking (Codex
         // #1366 r2 P2) AND before the pre-mint borrower +10% LIF bump could have
@@ -230,7 +240,7 @@ library LibFeeEntitlement {
             durationDays
         );
         if (!numeraireOk || cStar > maxCStar) return false;
-        return _vaultVpfiBalance(party) >= cStar;
+        return freeVpfiBalance(party) >= cStar;
     }
 
     /// @dev The party's WITHDRAWABLE (FREE) VPFI vault balance — mirroring
@@ -246,7 +256,7 @@ library LibFeeEntitlement {
     ///      LIF discount with no paired `C*` on a downgrade-authorized accept
     ///      (Codex #1366 r3 P1). A residual token-PAUSE failure is still caught
     ///      by {resolveAndCharge}'s try/catch (accept never bricks).
-    function _vaultVpfiBalance(address party) private view returns (uint256) {
+    function freeVpfiBalance(address party) internal view returns (uint256) {
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         address vpfi = s.vpfiToken;
         if (vpfi == address(0)) return 0;

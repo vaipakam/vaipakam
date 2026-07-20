@@ -5296,6 +5296,17 @@ library LibVaipakam {
         bool acceptAckAcceptorFull;
         bool acceptAckAcceptorAllowFullDowngrade;
         uint256 acceptAckAcceptorMaxCStar;
+        // #1347 (Codex #1366 r5 P2) — the BORROWER's PRE-MINT free (withdrawable)
+        // VPFI balance, snapshotted by `OfferAcceptFacet.chargeBorrowerLifAndDeliver`
+        // (which runs BEFORE the offer-collateral lien is released + the loan is
+        // minted) and passed to the post-mint `FeeEntitlementFacet.chargeFullTariff`
+        // as the borrower's effective free balance in `resolveAndCharge`. Gating
+        // the `C*` charge on the SAME balance the pre-mint `+10%` LIF bump was
+        // confirmed against stops a direct borrower offer whose VPFI collateral
+        // lien is reduced at accept from letting the freed residual pull Full with
+        // no paired discount. Append-only tail; overwritten on every ERC-20 accept
+        // before the charge reads it, so no cross-accept staleness.
+        uint256 acceptAckBorrowerPreFreeVpfi;
     }
 
     /// @notice Governor PR-3b (#1217 §3.1) — the per-day pool composition
