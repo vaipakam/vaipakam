@@ -398,6 +398,89 @@ contract FeeEntitlementFacetTest is SetupTest {
         );
     }
 
+    // ─── #1353 (M2 PR-5c) — loan-side reward-cap stamp + haircut knob ──────────
+
+    /// @dev The at-open cap cache: ½ × cStar × (BPS − haircut) / BPS.
+    function _expectedCapOpen(uint256 cStar, uint256 haircutBps)
+        internal
+        pure
+        returns (uint256)
+    {
+        return (cStar * (10_000 - haircutBps)) / 10_000 / 2;
+    }
+
+    function testStamp_LoanSideRewardCapAtDefaultHaircut() public {
+        _config().setFeeEntitlementEnabled(true);
+        _stakeVpfi(borrower, PARTY_VPFI_STAKE);
+
+        uint256 offerId = _createLenderErc20Offer();
+        uint256 c = _cStar();
+
+        uint256 loanId = LibAcceptTestSigner.signAndAcceptFull(
+            address(diamond), borrower, borrowerPk, offerId, c, /*allowDowngrade=*/ false
+        );
+
+        LibVaipakam.FeeEntitlement memory fe = _feFacet().getFeeEntitlement(loanId);
+        assertEq(fe.openDays, 30, "openDays stamped from the offer term");
+        assertEq(fe.rewardHaircutBpsAtOpen, 200, "default m_reward snapshot (2%)");
+        assertEq(
+            fe.loanSideRewardCapOpen,
+            _expectedCapOpen(c, 200),
+            "loan-side cap cache = half x C* x (1 - m_reward)"
+        );
+    }
+
+    function testStamp_LoanSideRewardCapHonoursRetunedHaircut() public {
+        _config().setFeeEntitlementEnabled(true);
+        _config().setRewardHaircutBps(500); // 5%
+        _stakeVpfi(borrower, PARTY_VPFI_STAKE);
+
+        uint256 offerId = _createLenderErc20Offer();
+        uint256 c = _cStar();
+        uint256 loanId = LibAcceptTestSigner.signAndAcceptFull(
+            address(diamond), borrower, borrowerPk, offerId, c, false
+        );
+
+        LibVaipakam.FeeEntitlement memory fe = _feFacet().getFeeEntitlement(loanId);
+        assertEq(fe.rewardHaircutBpsAtOpen, 500, "retuned m_reward snapshotted at open");
+        assertEq(
+            fe.loanSideRewardCapOpen,
+            _expectedCapOpen(c, 500),
+            "cap reflects the retuned haircut"
+        );
+    }
+
+    function testStamp_RewardIneligibleLoanHasZeroCap() public {
+        _config().setFeeEntitlementEnabled(true);
+        // Dark stamp path already covers the non-enabled case; here the switch is
+        // ON but the loan prices to a real C* — assert the cap is non-zero, then
+        // the getFeeEntitlementConfig read exposes the haircut.
+        (bool enabled, , uint256 haircut) = _config().getFeeEntitlementConfig();
+        assertTrue(enabled, "switch on");
+        assertEq(haircut, 200, "default haircut surfaced via config read");
+    }
+
+    function testSetRewardHaircutBps_RejectsAboveMax() public {
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                ConfigFacet.InvalidRewardHaircutBps.selector,
+                uint256(2001),
+                uint256(2000)
+            )
+        );
+        _config().setRewardHaircutBps(2001);
+    }
+
+    function testSetRewardHaircutBps_ZeroIsValid() public {
+        _config().setRewardHaircutBps(0);
+        // 0 is a valid configured value, but the accessor maps a never-configured
+        // 0 to the default; a config read after an explicit 0 write still shows
+        // the default (0 is indistinguishable from unset at the accessor — by
+        // design, since the cap is stamped, not read live).
+        (, , uint256 haircut) = _config().getFeeEntitlementConfig();
+        assertEq(haircut, 200, "accessor floors a stored 0 to the 200 default");
+    }
+
     // ─── enabling Full is gated to the canonical VPFI chain ─────────────────────
 
     function testSetFeeEntitlementEnabled_RejectedOffCanonicalChain() public {

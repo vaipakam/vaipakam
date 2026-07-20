@@ -744,6 +744,17 @@ library LibVaipakam {
     uint256 constant TARIFF_K_PER_LIF_YEAR_MIN = 1e17; // 0.1 VPFI / list-LIF-numeraire / year
     uint256 constant TARIFF_K_PER_LIF_YEAR_MAX = 5e19; // 50 VPFI / list-LIF-numeraire / year
 
+    /// @dev #1353 (M2 PR-5c) — `m_reward`, the reward-cap haircut (BPS) in the
+    ///      loan-side interaction-reward cap
+    ///      `loanSideRewardCapOpen = ½ × C* × (BPS − m_reward) / BPS`. Default
+    ///      200 (2%). A stored `0` is a VALID configured value under the setter,
+    ///      but because the loan-side cap is stamped from
+    ///      {cfgRewardHaircutBps} at open (never re-read live), the `0`-⇒-default
+    ///      remap lives only in the accessor for the never-configured deploy. See
+    ///      the formula doc §F6b. Read via {cfgRewardHaircutBps}.
+    uint16 constant REWARD_HAIRCUT_DEFAULT_BPS = 200; // 2%
+    uint16 constant REWARD_HAIRCUT_MAX_BPS = 2000; // 20% ceiling on m_reward
+
     /// @custom:event-category informational/config
     event TreasurySet(address indexed newTreasury);
 
@@ -2493,15 +2504,34 @@ library LibVaipakam {
      *         recorded as `vpfiHeld`.
      *
      *         Field packing (rev 15): the two `uint8` modes + `uint32 openDays`
-     *         co-pack; the three VPFI amounts take a word each.
+     *         + `uint16 rewardHaircutBpsAtOpen` co-pack; the three VPFI amounts
+     *         take a word each; `uint128 loanSideRewardCapOpen` shares its slot
+     *         with the next field's low half only if appended (it takes a fresh
+     *         word here). Struct is a mapping VALUE (never inline in Storage), so
+     *         appending fields never shifts a Storage slot.
      */
     struct FeeEntitlement {
         FeeEntitlementMode borrowerMode; // borrower's selected mode
         FeeEntitlementMode lenderMode; // lender's selected mode
         uint32 openDays; // durationDays stamped at open (≥ 1); proration base for PR-5c
+        // #1353 (M2 PR-5c) — `m_reward` snapshot at open. The loan-side reward
+        // cap is priced from THIS stamped value, never the live cfg, so a
+        // later governance retune can't rewrite an open loan's reward ceiling.
+        uint16 rewardHaircutBpsAtOpen;
         uint256 borrowerTariffPaid; // VPFI C* pulled from borrower vault (0 unless borrowerMode == Full)
         uint256 lenderTariffPaid; // VPFI C* pulled from lender vault (0 unless lenderMode == Full)
         uint256 cStarOpen; // notional C* at open (full term); loan-side reward-cap base (PR-5c)
+        // #1353 (M2 PR-5c) — REQUIRED cache of the per-side lifetime reward
+        // ceiling at open: `½ × cStarOpen × (BPS − rewardHaircutBpsAtOpen) / BPS`.
+        // Recompute only as a consistency check, never as the sole source (rev 15).
+        // May round to 0 for a STAMPED dust `C*` (even `cStarOpen` itself can
+        // floor to 0 on a genuinely-priced tiny loan); such a loan is still
+        // capped (to ~0). The loan-side cap distinguishes an UNSTAMPED loan
+        // (skip) from a stamped dust record by checking `openDays == 0` (the
+        // stamp always writes `openDays >= 1`), NOT `cStarOpen` or this rounded
+        // ceiling — do not reintroduce a `cStarOpen == 0` or
+        // `loanSideRewardCapOpen == 0` skip (Codex #1371 r4/r5).
+        uint128 loanSideRewardCapOpen;
     }
 
     /**
@@ -5307,6 +5337,31 @@ library LibVaipakam {
         // no paired discount. Append-only tail; overwritten on every ERC-20 accept
         // before the charge reads it, so no cross-accept staleness.
         uint256 acceptAckBorrowerPreFreeVpfi;
+        // #1353 (M2 PR-5c) — the loan-side interaction-reward cap. APPEND-ONLY
+        // TAIL (kept after the acceptAck transient block; new fields extend the
+        // tail without shifting any existing slot). All THREE ship DARK: the cap
+        // is enforced only on POST-cutover reward days (`_isArmedDay`, i.e. the
+        // ShareOfPool arming = D*), which is unarmed on every current deploy, so
+        // these read/write nothing until the operator jointly arms D* with
+        // PR-2 + PR-6.
+        //
+        // `rewardHaircutBps` — `m_reward` policy knob (BPS). `0` is a valid
+        //   configured value; {cfgRewardHaircutBps} maps a never-configured `0`
+        //   to {REWARD_HAIRCUT_DEFAULT_BPS} (200).
+        uint16 rewardHaircutBps;
+        // Per-(loanId, side) LIFETIME VPFI paid toward the loan-side cap, shared
+        //   across every reward entry for that loanId+side (including after a
+        //   lender-sale entry split). side: 0 = Lender, 1 = Borrower (matches
+        //   {RewardSide}). Replaces the #1008 per-entry ETH-ratio cap on
+        //   post-cutover days.
+        mapping(uint256 => mapping(uint8 => uint256)) loanSideRewardPaidVpfi;
+        // Per-(loanId, side) cumulative reward-eligible day count credited so
+        //   far — the numerator of the early-close / sale-split proration
+        //   `loanSideRewardCapEff = loanSideRewardCapOpen × min(days, openDays)
+        //   / openDays`. Entries for a loanId+side are adjacent + non-overlapping
+        //   (a sale split ends the old window where the new one begins), so the
+        //   union of rewarded days equals the sum of each entry's window length.
+        mapping(uint256 => mapping(uint8 => uint256)) loanSideRewardedDays;
     }
 
     /// @notice Governor PR-3b (#1217 §3.1) — the per-day pool composition
@@ -5853,6 +5908,16 @@ library LibVaipakam {
     function cfgTariffKPerLifYear() internal view returns (uint256) {
         uint256 v = storageSlot().tariffKPerLifYear;
         return v == 0 ? TARIFF_K_PER_LIF_YEAR_DEFAULT : v;
+    }
+
+    /// @dev #1353 (M2 PR-5c) — effective reward-cap haircut `m_reward` (BPS).
+    ///      `0` ⇒ {REWARD_HAIRCUT_DEFAULT_BPS} (200). This is read ONLY at loan
+    ///      open (stamped into `FeeEntitlement.rewardHaircutBpsAtOpen`); the
+    ///      loan-side reward cap is then priced from the stamp, never live, so a
+    ///      governance retune can't rewrite an open loan's reward ceiling.
+    function cfgRewardHaircutBps() internal view returns (uint256) {
+        uint16 v = storageSlot().rewardHaircutBps;
+        return v == 0 ? uint256(REWARD_HAIRCUT_DEFAULT_BPS) : uint256(v);
     }
 
     /// @dev #1347 (M2 PR-5a/5b) — whether the Full VPFI tariff is EFFECTIVELY

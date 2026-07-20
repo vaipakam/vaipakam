@@ -64,6 +64,11 @@
             "internalType": "uint32"
           },
           {
+            "name": "rewardHaircutBpsAtOpen",
+            "type": "uint16",
+            "internalType": "uint16"
+          },
+          {
             "name": "borrowerTariffPaid",
             "type": "uint256",
             "internalType": "uint256"
@@ -77,6 +82,11 @@
             "name": "cStarOpen",
             "type": "uint256",
             "internalType": "uint256"
+          },
+          {
+            "name": "loanSideRewardCapOpen",
+            "type": "uint128",
+            "internalType": "uint128"
           }
         ]
       }

@@ -2,6 +2,8 @@
 // SPDX-License-Identifier: BUSL-1.1
 pragma solidity ^0.8.29;
 
+import {Math} from "@openzeppelin/contracts/utils/math/Math.sol";
+
 import {LibVaipakam} from "../libraries/LibVaipakam.sol";
 import {LibFeeEntitlement} from "../libraries/LibFeeEntitlement.sol";
 import {LibVPFIDiscount} from "../libraries/LibVPFIDiscount.sol";
@@ -119,61 +121,146 @@ contract FeeEntitlementFacet is IVaipakamErrors {
             offer.durationDays
         );
 
-        (
-            LibVaipakam.FeeEntitlementMode bMode,
-            uint256 bPaid
-        ) = LibFeeEntitlement.resolveAndCharge(
+        // Borrower gates on its PRE-MINT free VPFI (snapshotted by
+        // chargeBorrowerLifAndDeliver before the lien release), so the `C*`
+        // charge matches the pre-mint `+10%` verdict exactly and
+        // `resolveAndCharge` keeps its full revert/downgrade semantics (Codex
+        // #1366 r5 P2). The auth-side selection + hold-eligibility are pushed
+        // into `_resolveParty` so their ternary temporaries leave this
+        // at-viaIR-budget frame (#1353 PR-5c added the reward-cap stamp below).
+        (LibVaipakam.FeeEntitlementMode bMode, uint256 bPaid) = _resolveParty(
+            s,
+            offer,
+            loanId,
+            borrower,
+            /*useAcceptorAuth=*/ isLenderOffer,
+            acceptorFull,
+            /*isBorrowerSide=*/ true,
+            principalLiquid,
+            s.acceptAckBorrowerPreFreeVpfi,
+            cStar,
+            numeraireOk
+        );
+        // Lender gates on its LIVE free VPFI — it has no pre-mint +10% to stay in
+        // sync with (its yield-fee discount is a settlement / PR-6 concern), and
+        // the loan lien is on the borrower's collateral, not the lender's vault.
+        (LibVaipakam.FeeEntitlementMode lMode, uint256 lPaid) = _resolveParty(
+            s,
+            offer,
+            loanId,
+            lender,
+            /*useAcceptorAuth=*/ !isLenderOffer,
+            acceptorFull,
+            /*isBorrowerSide=*/ false,
+            principalLiquid,
+            LibFeeEntitlement.freeVpfiBalance(lender),
+            cStar,
+            numeraireOk
+        );
+
+        // Stamp the fee-entitlement record (incl. the PR-5c reward-cap fields) in
+        // a FRESH frame — the accept path is at the viaIR stack budget, so the
+        // 8-field struct write + cap compute + emit are extracted here (Codex
+        // #1366 pattern) to keep `chargeFullTariff`'s frame in bounds.
+        _stampEntitlement(
+            s,
+            loanId,
+            bMode,
+            lMode,
+            uint32(offer.durationDays == 0 ? 1 : offer.durationDays),
+            bPaid,
+            lPaid,
+            cStar
+        );
+    }
+
+    /// @dev Resolve + charge ONE party's Full tariff in its own frame. Selects
+    ///      the party's signed authorization by side — the ACCEPTOR's from the
+    ///      transient `s.acceptAck*` injection when `useAcceptorAuth`, else the
+    ///      CREATOR's from the offer — then resolves hold-eligibility and calls
+    ///      {LibFeeEntitlement.resolveAndCharge}. `acceptorFull` is the
+    ///      already-gated (`acceptAckActive && …`) acceptor opt-in; the raw
+    ///      transient `maxCStar` / `allowDowngrade` are safe to read unguarded
+    ///      because `resolveAndCharge` ignores them when `full == false`.
+    ///      Extracted so the caller's at-viaIR-budget frame doesn't carry the
+    ///      per-side ternary temporaries.
+    function _resolveParty(
+        LibVaipakam.Storage storage s,
+        LibVaipakam.Offer storage offer,
+        uint256 loanId,
+        address party,
+        bool useAcceptorAuth,
+        bool acceptorFull,
+        bool isBorrowerSide,
+        bool principalLiquid,
+        uint256 partyFreeVpfi,
+        uint256 cStar,
+        bool numeraireOk
+    ) private returns (LibVaipakam.FeeEntitlementMode mode, uint256 paid) {
+        return
+            LibFeeEntitlement.resolveAndCharge(
                 loanId,
-                borrower,
-                isLenderOffer ? acceptorFull : offer.creatorFull,
-                isLenderOffer
+                party,
+                useAcceptorAuth ? acceptorFull : offer.creatorFull,
+                useAcceptorAuth
                     ? s.acceptAckAcceptorMaxCStar
                     : offer.creatorMaxCStar,
-                isLenderOffer
+                useAcceptorAuth
                     ? s.acceptAckAcceptorAllowFullDowngrade
                     : offer.creatorAllowFullDowngrade,
-                _holdEligible(s, borrower, principalLiquid, /*isBorrowerSide=*/ true),
+                _holdEligible(s, party, principalLiquid, isBorrowerSide),
                 principalLiquid,
-                // Borrower gates on its PRE-MINT free VPFI (snapshotted by
-                // chargeBorrowerLifAndDeliver before the lien release), so the
-                // `C*` charge matches the pre-mint `+10%` verdict exactly and
-                // `resolveAndCharge` keeps its full revert/downgrade semantics
-                // (Codex #1366 r5 P2).
-                s.acceptAckBorrowerPreFreeVpfi,
+                partyFreeVpfi,
                 cStar,
                 numeraireOk
             );
-        (
-            LibVaipakam.FeeEntitlementMode lMode,
-            uint256 lPaid
-        ) = LibFeeEntitlement.resolveAndCharge(
-                loanId,
-                lender,
-                isLenderOffer ? offer.creatorFull : acceptorFull,
-                isLenderOffer
-                    ? offer.creatorMaxCStar
-                    : s.acceptAckAcceptorMaxCStar,
-                isLenderOffer
-                    ? offer.creatorAllowFullDowngrade
-                    : s.acceptAckAcceptorAllowFullDowngrade,
-                _holdEligible(s, lender, principalLiquid, /*isBorrowerSide=*/ false),
-                principalLiquid,
-                // Lender gates on its LIVE free VPFI — it has no pre-mint +10% to
-                // stay in sync with (its yield-fee discount is a settlement /
-                // PR-6 concern), and the loan lien is on the borrower's
-                // collateral, not the lender's vault.
-                LibFeeEntitlement.freeVpfiBalance(lender),
-                cStar,
-                numeraireOk
-            );
+    }
 
+    /// @dev #1353 (M2 PR-5c) — write `feeEntitlementByLoanId[loanId]` and emit
+    ///      {FeeEntitlementStamped}. Snapshots the reward-cap haircut and caches
+    ///      the per-side lifetime reward ceiling AT OPEN, both priced off the
+    ///      notional `cStar` (0 ⇒ reward-ineligible loan ⇒ 0 cap). Stamping from
+    ///      the snapshot (not the live cfg) freezes an open loan's reward ceiling
+    ///      against a later governance retune. Own frame: keeps the at-budget
+    ///      `chargeFullTariff` viaIR path in bounds. Ships DARK — the cap is
+    ///      enforced only on post-cutover reward days (`_isArmedDay`), unarmed on
+    ///      every deploy.
+    function _stampEntitlement(
+        LibVaipakam.Storage storage s,
+        uint256 loanId,
+        LibVaipakam.FeeEntitlementMode bMode,
+        LibVaipakam.FeeEntitlementMode lMode,
+        uint32 openDays,
+        uint256 bPaid,
+        uint256 lPaid,
+        uint256 cStar
+    ) private {
+        uint16 haircutAtOpen = uint16(LibVaipakam.cfgRewardHaircutBps());
+        // #1353 (M2 PR-5c) — cache the per-side ceiling ½ × C* × (1 − m). Use
+        // `Math.mulDiv` so an extreme `C*` (where `C* × (BPS − m)` would exceed
+        // `uint256`) computes via the 512-bit intermediate instead of REVERTING
+        // and bricking origination before the saturation check (Codex #1371 r10),
+        // then SATURATE at `type(uint128).max` rather than truncating a wider
+        // value: such a loan's ceiling reads as "effectively unbounded"
+        // (max ≫ the whole 69M pool ⇒ never binds), not a wrapped small
+        // low-128-bit value that would UNDER-pay it (Codex #1371 r9).
+        // `_loanSideRewardCapEff` trusts the cache, so a truncation would bind.
+        uint256 capOpen256 = Math.mulDiv(
+            cStar,
+            LibVaipakam.BASIS_POINTS - haircutAtOpen,
+            LibVaipakam.BASIS_POINTS
+        ) / 2;
         s.feeEntitlementByLoanId[loanId] = LibVaipakam.FeeEntitlement({
             borrowerMode: bMode,
             lenderMode: lMode,
-            openDays: uint32(offer.durationDays == 0 ? 1 : offer.durationDays),
+            openDays: openDays,
+            rewardHaircutBpsAtOpen: haircutAtOpen,
             borrowerTariffPaid: bPaid,
             lenderTariffPaid: lPaid,
-            cStarOpen: cStar
+            cStarOpen: cStar,
+            loanSideRewardCapOpen: capOpen256 > type(uint128).max
+                ? type(uint128).max
+                : uint128(capOpen256)
         });
 
         emit FeeEntitlementStamped(

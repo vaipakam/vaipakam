@@ -649,6 +649,40 @@ Governance effects:
 >   the loan-side reward cap that consumes the notional `C*`) begins the moment
 >   the switch arms — the "cStar-from-genesis" posture, with PR-5c backfilling
 >   any loans open across a post-launch cutover before it arms.
+> - **Loan-side reward cap (M2 PR-5c):** the notional `C*` stamped at open is
+>   the base of a per-`(loanId, side)` **lifetime** interaction-reward ceiling
+>   `loanSideRewardCapOpen = ½ × C* × (1 − m_reward)` — `m_reward` a governable
+>   haircut (default 2%, 0–20%) **snapshotted at open**, never re-read live. At
+>   claim the ceiling **prorates by rewarded days**
+>   (`× min(armedRewardedDays, openDays) / openDays`), and the paid budget is
+>   **shared** across every reward entry for that loanId+side (a lender-sale split
+>   cannot reset it). The cap governs only the **armed (post-`D*`) portion** of an
+>   entry, so a reward window spanning the cutover keeps its pre-`D*` days on the
+>   legacy #1008 regime. A loan with no `C*` **stamp** (`openDays == 0` — a
+>   mirror-chain, dark-era, or pre-cutover loan) is **not** zeroed: the cap does
+>   not apply and it earns normally. A **stamped** loan whose `C*` / ceiling
+>   merely rounds to 0 (a genuinely-priced dust loan) IS capped (to ~0) — the
+>   unstamped skip keys on the `openDays` stamp marker (always ≥ 1 when stamped),
+>   not on `cStarOpen` or the rounded ceiling (both of which a dust loan floors
+>   to 0). True reward-**ineligibility** (a
+>   canonical origination whose list LIF cannot be priced) is enforced
+>   **upstream** by not creating reward entries — never by voiding an earned
+>   payout at the cap. The cap only ever lowers a payout (the daily-pool share
+>   runs first) and is enforced **only on post-cutover days**
+>   (`D* != 0 && day ≥ D*`); while `D*` is unarmed — every current deploy — it is
+>   inert and the legacy #1008 ETH-ratio cap governs unchanged. `D*` is armed
+>   later, jointly with the D1 share cap (PR-2) and the settlement sweep (PR-6),
+>   at which point #1008 retires on post-cutover days.
+>   - **Arming precondition (`cStar` backfill gate):** because the unstamped skip
+>     leaves such a loan uncapped once #1008 also retires on armed days, `D*` may
+>     be armed **only** after every reward-eligible **canonical** loan carries a
+>     `C*` stamp — on a fresh (pre-live) deploy that holds from genesis
+>     (`cStar`-from-genesis); on a post-launch cutover the backfill stamps open
+>     loans first (rev-15 §4: "never leaving them legacy-forever, never zeroing
+>     them"). **Mirror-chain** loans (which never stamp, Full being
+>     canonical-only) are bounded by the D1 `(user, side, day)` share cap on their
+>     local claim, not the loan-side cap. The arming-time enforcement of this
+>     precondition is a deploy-assert (PR-9) coupled with the joint cutover.
 > - **Tier timing — pinned at acceptance (new loans):** because the
 >   new-loan borrower LIF is taken as an **origination cash haircut** (not
 >   a settle-time rebate), the borrower's effective discount tier for that

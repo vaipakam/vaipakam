@@ -239,7 +239,21 @@ contract InteractionRewardsFacet is
         }
 
         uint256 pending = entryReward + windowReward;
-        if (pending == 0 && treasuryDelta == 0) {
+        // #1353 (M2 PR-5c) — a fully loan-side-capped entry pays 0 yet still
+        // carries a finalized `armedFresh` commitment that MUST be retired
+        // (`consumeArmedFresh` below); reverting here would roll back its
+        // processing + the paid/day accumulators and strand the commitment,
+        // letting a solo zero-payout entry be retried forever (Codex #1371 r6).
+        // So only surface the "nothing to claim" states when there is ALSO no
+        // commitment to retire — otherwise fall through to a valid zero-payout
+        // claim that clears the entry and retires its commitment. (Inlined, no
+        // extra local, to stay within the at-viaIR-budget claim frame.)
+        if (
+            pending == 0 &&
+            treasuryDelta == 0 &&
+            userSplit.armedFresh == 0 &&
+            forfeitSplit.armedFresh == 0
+        ) {
             // No legacy claim possible AND nothing to sweep — surface the
             // same waiting / empty states the prior API used.
             if (!walkedWindow) {
