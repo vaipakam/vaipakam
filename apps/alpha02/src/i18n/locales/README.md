@@ -5,7 +5,13 @@
   i18n:template`. It is **not loaded at runtime** (copy.ts itself is
   the English source of truth); it exists so translators have the
   exact key structure to mirror. A vitest drift check fails CI when
-  copy.ts changes without regenerating it.
+  copy.ts changes without regenerating it. It has two top-level
+  namespaces: `copy.*` (from `copy.ts`) and `contractError.*` — the
+  friendly contract-revert messages, whose English is owned by
+  `@vaipakam/lib` (seeded into the template from its catalog, so the
+  strings live there once and aren't duplicated here). Translate the
+  `contractError.*` values in each locale bundle exactly like `copy.*`
+  ones; a missing key falls back to the lib English at runtime.
 - **Every other `<code>.json`** — that locale's translation bundle,
   lazy-loaded on first use. All start as **placeholder stubs (`{}`)**:
   picking the language renders English via i18next's `fallbackLng`

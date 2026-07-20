@@ -133,19 +133,34 @@ messages** keyed by error name/selector, displayed by alpha02
 website-displayed text, so per the "displayed → translated" rule they
 DO need translation.
 
-Because they live in a **shared** lib consumed by two apps with separate
-catalogs, this is its own workstream, not part of the copy.ts sweep:
+Because they live in a **shared** lib, this is its own workstream, not
+part of the copy.ts sweep.
 
-- Keep `decodeContractError` resolving selector → stable error NAME and
-  the English `FRIENDLY_ERROR_MESSAGES` as the built-in default.
-- Each app maps error name → its own catalog entry
-  (`copy.contractErrors[name]`, a `tmpl` when parametrized), falling back
-  to the lib's English when absent.
-- alpha02's `submitErrorText` looks up the name in `copy.contractErrors`
-  before returning; same shape for apps/defi.
+**Implemented (dedicated PR, alpha02-only).** `apps/defi` is slated for
+retirement, so this shipped for the connected app only; defi stays on the
+English default until it is retired. The mechanism:
 
-Scope: 287 entries × per-app catalog wiring — a dedicated PR after the
-copy.ts sweep lands. Tracked here so it isn't lost.
+- `decodeContractError` keeps English as its single source and resolves
+  each error to a **stable key** — the Solidity error NAME, or the 4-byte
+  selector when no name resolves (both decode paths converge on the same
+  key). It gained an optional `translate?: (key, english) => string` hook;
+  omitted (every non-frontend caller, keeper bot, tests) → English is
+  returned unchanged, so the change is backward-compatible.
+- `@vaipakam/lib` exports `contractErrorCatalog()` (key → English, mirroring
+  the decoder's runtime precedence) so the English lives in the lib **once**
+  and is never re-listed app-side.
+- alpha02's `submitErrorText` passes a `translate` that resolves
+  `contractError.<key>` from the active i18next bundle, with the lib English
+  as the `defaultValue`. The `contractError.*` keys are seeded into
+  `en.json` from `contractErrorCatalog()` by the template exporter (a second
+  top-level namespace alongside `copy.*`); the drift test guards both.
+- Curated count: **117 selector-keyed + 34 name-keyed = 151 messages**
+  (the earlier "~287" figure double-counted the selector→name resolver
+  table). Plus the #780 gas-estimate rewrite under `_gasEstimateUnavailable`.
+
+Backfill (translating the `contractError.*` values per locale) follows the
+same English-first model as `copy.*`. Follow-up: the decoder's unit suite
+still lives in the retiring `apps/defi` and should move to `@vaipakam/lib`.
 
 ## Special cases to handle
 

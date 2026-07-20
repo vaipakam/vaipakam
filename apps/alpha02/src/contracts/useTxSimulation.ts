@@ -27,6 +27,7 @@ import {
 } from 'viem';
 import { usePublicClient } from 'wagmi';
 import { friendlyContractError } from '@vaipakam/lib';
+import { translateContractError } from '../lib/errors';
 import { useActiveChain } from '../chain/useActiveChain';
 import { DIAMOND_ABI_VIEM } from './diamond';
 
@@ -221,10 +222,15 @@ function classifyError(
   // → "Max lending above ceiling"); fall back to the decoded name, then the
   // raw short message. The raw name rides along in `revertName` for the
   // diagnostics/support report.
-  const friendly = friendlyContractError({
-    name: decoded ?? undefined,
-    selector: selector || undefined,
-  });
+  const friendly = friendlyContractError(
+    {
+      name: decoded ?? undefined,
+      selector: selector || undefined,
+    },
+    // Localize the pre-sign footer copy the same way the submit-error banner
+    // is localized — same stable key, same locale bundle.
+    translateContractError,
+  );
   return {
     status: 'revert',
     revertReason: friendly ?? decoded ?? msg,

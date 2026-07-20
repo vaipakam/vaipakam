@@ -11,10 +11,25 @@
  *    which maps known revert selectors to friendly copy and rewrites
  *    the #780 "exceeds max transaction gas limit" RPC trap.
  */
+import i18n from 'i18next';
 import { BaseError, UserRejectedRequestError } from 'viem';
 import { decodeContractError, extractRevertSelector } from '@vaipakam/lib';
 import { copy } from '../content/copy';
 import { recordLastError } from '../diagnostics/lastError';
+
+/**
+ * Localize a decoded contract-revert message. `@vaipakam/lib` owns the English
+ * copy and hands us a STABLE key (the Solidity error name, or selector hex) +
+ * that English; we override it from the active locale's `contractError.<key>`
+ * bundle entry, falling back to the English default when a locale hasn't
+ * translated it (or before i18next is ready). The keys are seeded into the
+ * translators' `en.json` template from the lib catalog by the i18n:template
+ * exporter — the English is NOT duplicated into copy.ts.
+ */
+export const translateContractError = (key: string, english: string): string =>
+  i18n.isInitialized
+    ? (i18n.t(`contractError.${key}`, { defaultValue: english }) as string)
+    : english;
 
 export function isUserRejection(err: unknown): boolean {
   if (err instanceof BaseError) {
@@ -30,7 +45,10 @@ export function isUserRejection(err: unknown): boolean {
 
 export function submitErrorText(err: unknown): string {
   if (isUserRejection(err)) return copy.errors.txRejected;
-  return decodeContractError(err, copy.errors.txFailed);
+  return decodeContractError(err, {
+    fallback: copy.errors.txFailed,
+    translate: translateContractError,
+  });
 }
 
 /** Flatten a raw error's human-readable text for signal detection that
