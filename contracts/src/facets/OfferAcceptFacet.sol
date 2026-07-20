@@ -1617,7 +1617,11 @@ contract OfferAcceptFacet is
                 : offer.creatorMaxCStar,
             lendingAsset,
             effectivePrincipal,
-            offer.durationDays
+            offer.durationDays,
+            // Accept-time liquidity — the same value `holdOnlyBorrowerLif` gates
+            // the +10% bump on, so the pre-mint confirm agrees with the post-mint
+            // charge (Full requires a liquid principal, not just a priceable one).
+            isLiquid
         );
         uint256 initiationFee = LibVPFIDiscount.holdOnlyBorrowerLif(
             borrower,

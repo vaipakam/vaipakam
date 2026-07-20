@@ -114,6 +114,7 @@ library LibFeeEntitlement {
         uint256 maxCStar,
         bool allowDowngrade,
         bool holdEligible,
+        bool liquid,
         uint256 cStar,
         bool numeraireOk
     ) internal returns (LibVaipakam.FeeEntitlementMode mode, uint256 tariffPaid) {
@@ -132,7 +133,12 @@ library LibFeeEntitlement {
             if (allowDowngrade) return _downgrade(holdEligible);
             revert FeeEntitlementDisabled();
         }
-        if (!numeraireOk) {
+        // Full requires a LIQUID principal, not merely a priceable one: the
+        // own-side discount (`holdOnlyBorrowerLif`) is gated on accept-time
+        // liquidity, so a priceable-but-illiquid asset (feed exists but the DEX
+        // depth/slippage probe fails) would otherwise pull `C*` with NO paired
+        // discount. Treat `!liquid` as a failed Full opt-in — same as unpriced.
+        if (!numeraireOk || !liquid) {
             if (allowDowngrade) return _downgrade(holdEligible);
             revert FeeEntitlementFullOptInFailed(party);
         }
@@ -191,9 +197,12 @@ library LibFeeEntitlement {
         uint256 maxCStar,
         address lendingAsset,
         uint256 principal,
-        uint256 durationDays
+        uint256 durationDays,
+        bool liquid
     ) internal view returns (bool confirmed) {
-        if (!wantsFull || !LibVaipakam.cfgFeeEntitlementEnabled()) return false;
+        if (!wantsFull || !LibVaipakam.cfgFeeEntitlementEnabled() || !liquid) {
+            return false;
+        }
         (uint256 cStar, bool numeraireOk) = computeCStar(
             lendingAsset,
             principal,
@@ -203,16 +212,19 @@ library LibFeeEntitlement {
         return _vaultVpfiBalance(party) >= cStar;
     }
 
-    /// @dev The party's VPFI vault balance (0 when either the vault or the VPFI
-    ///      token is unset). Shared by {resolveAndCharge} (the authoritative
-    ///      pull gate) and {fullOptInConfirmed} (the pre-mint preview) so the two
-    ///      read balance identically.
+    /// @dev The party's WITHDRAWABLE VPFI vault balance — the protocol-tracked
+    ///      balance, NOT the raw `balanceOf`. `VaultFactoryFacet.vaultWithdrawERC20`
+    ///      caps every withdrawal at `protocolTrackedVaultBalance`, so gating the
+    ///      Full opt-in on the raw balance would let unsolicited VPFI sent
+    ///      directly to the proxy "confirm" a Full that the pull then reverts on
+    ///      — bricking an accept even when the party permitted a downgrade.
+    ///      Shared by {resolveAndCharge} (the authoritative pull gate) and
+    ///      {fullOptInConfirmed} (the pre-mint preview) so the two agree exactly.
     function _vaultVpfiBalance(address party) private view returns (uint256) {
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         address vpfi = s.vpfiToken;
-        address vault = s.userVaipakamVaults[party];
-        if (vault == address(0) || vpfi == address(0)) return 0;
-        return IERC20(vpfi).balanceOf(vault);
+        if (vpfi == address(0)) return 0;
+        return s.protocolTrackedVaultBalance[party][vpfi];
     }
 
     /// @dev A permitted downgrade from Full → HoldOnly (if the party is

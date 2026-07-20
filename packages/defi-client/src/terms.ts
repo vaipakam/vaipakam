@@ -45,6 +45,12 @@ const ACCEPT_TERMS_TYPES = {
     { name: 'nonce', type: 'uint256' },
     { name: 'deadline', type: 'uint256' },
     { name: 'riskTermsHash', type: 'bytes32' },
+    // #1347 — the acceptor's per-party Full VPFI tariff opt-in. MUST stay last,
+    // matching the append to `LibAcceptTerms.ACCEPT_TERMS_TYPEHASH`. Defaulted
+    // off (non-Full); the Full-tariff accept flow ships in PR-8 (#1355).
+    { name: 'acceptorFull', type: 'bool' },
+    { name: 'acceptorMaxCStar', type: 'uint256' },
+    { name: 'acceptorAllowFullDowngrade', type: 'bool' },
   ],
 } as const;
 
@@ -171,6 +177,10 @@ export async function signAcceptTerms(opts: {
     nonce,
     deadline,
     riskTermsHash,
+    // #1347 — non-Full accept (Full-tariff opt-in ships in PR-8 #1355).
+    acceptorFull: false,
+    acceptorMaxCStar: 0n,
+    acceptorAllowFullDowngrade: false,
   };
 
   const signature = await opts.walletClient.signTypedData({

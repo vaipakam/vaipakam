@@ -83,7 +83,13 @@ contract FeeEntitlementFacet is IVaipakamErrors {
 
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         LibVaipakam.Offer storage offer = s.offers[offerId];
-        bool principalLiquid = offer.principalLiquidity ==
+        // Accept-time liquidity, NOT the offer-creation snapshot: `LoanFacet`
+        // re-checks liquidity at accept and snapshots it onto the loan, and the
+        // borrower LIF discount is charged against that same accept-time value.
+        // Reading `offer.principalLiquidity` here could stamp HoldOnly/None (or
+        // gate Full) against a stale classification if the asset's liquidity
+        // flipped between create and accept (Codex #1366 P2).
+        bool principalLiquid = s.loans[loanId].principalLiquidity ==
             LibVaipakam.LiquidityStatus.Liquid;
 
         // Party-scoped authorization → borrower/lender by offer side. The
@@ -116,6 +122,7 @@ contract FeeEntitlementFacet is IVaipakamErrors {
                     ? s.acceptAckAcceptorAllowFullDowngrade
                     : offer.creatorAllowFullDowngrade,
                 _holdEligible(s, borrower, principalLiquid, /*needsConsent=*/ true),
+                principalLiquid,
                 cStar,
                 numeraireOk
             );
@@ -133,6 +140,7 @@ contract FeeEntitlementFacet is IVaipakamErrors {
                     ? offer.creatorAllowFullDowngrade
                     : s.acceptAckAcceptorAllowFullDowngrade,
                 _holdEligible(s, lender, principalLiquid, /*needsConsent=*/ false),
+                principalLiquid,
                 cStar,
                 numeraireOk
             );

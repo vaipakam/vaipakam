@@ -338,6 +338,32 @@ contract FeeEntitlementFacetTest is SetupTest {
         OfferAcceptFacet(address(diamond)).acceptOffer(offerId, t, sig);
     }
 
+    function testEnabled_UntrackedVpfi_DoesNotConfirmFull() public {
+        _config().setFeeEntitlementEnabled(true);
+        uint256 offerId = _createLenderErc20Offer();
+        uint256 c = _cStar();
+
+        // Fund the borrower's vault by a DIRECT transfer (bypasses the tracked
+        // deposit path), so raw balanceOf >= C* but protocol-tracked balance is
+        // 0. The Full opt-in must NOT confirm off the raw balance — else the
+        // vault-capped withdraw would revert and brick a downgrade-permitted
+        // accept (Codex #1366 P2). With downgrade permitted it cleanly falls back
+        // to non-Full with no C* pulled.
+        address bVault = _vault(borrower);
+        vpfiToken.transfer(bVault, c * 2);
+        uint256 vaultBefore = vpfiToken.balanceOf(bVault);
+
+        uint256 loanId = LibAcceptTestSigner.signAndAcceptFull(
+            address(diamond), borrower, borrowerPk, offerId, c, /*allowDowngrade=*/ true
+        );
+        assertEq(vpfiToken.balanceOf(bVault), vaultBefore, "no C* pulled off untracked VPFI");
+        LibVaipakam.FeeEntitlement memory fe = _feFacet().getFeeEntitlement(loanId);
+        assertTrue(
+            fe.borrowerMode != LibVaipakam.FeeEntitlementMode.Full,
+            "untracked balance cannot confirm Full"
+        );
+    }
+
     // ─── lender-Full authorization is creator-signed, never acceptor-forgeable ──
 
     function testCreatorFullTariff_MaxCStarMandatory() public {
