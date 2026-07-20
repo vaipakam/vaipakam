@@ -416,6 +416,69 @@ contract ProfileFacet is DiamondPausable, DiamondAccessControl, IVaipakamErrors 
         emit OfferKeeperEnabled(offerId, keeper, enabled);
     }
 
+    /// @notice Emitted when an offer creator sets their per-offer Full VPFI
+    ///         fee-entitlement tariff opt-in (#1347).
+    /// @param offerId The offer whose creator-Full authorization changed.
+    /// @param creatorFull Whether the creator opts into the Full tariff.
+    /// @param maxCStar The creator's mandatory absolute `C*` ceiling (VPFI 1e18).
+    /// @param allowDowngrade Whether a failed Full opt-in silently downgrades.
+    /// @custom:event-category state-change/offer-mutation
+    event OfferCreatorFullTariffSet(
+        uint256 indexed offerId,
+        bool creatorFull,
+        uint256 maxCStar,
+        bool allowDowngrade
+    );
+
+    /**
+     * @notice Authorize (or clear) the OFFER CREATOR's per-party Full VPFI
+     *         fee-entitlement tariff opt-in for `offerId` (#1347 M2 PR-5a/5b).
+     *
+     * @dev    The pre-acceptance, creator-signed counterpart to the acceptor's
+     *         `AcceptTerms.acceptorFull` — the two party-scoped halves of the
+     *         Full authorization (rev-15 §3). The creator authorizes draining
+     *         `C*` VPFI from their OWN vault; a counterparty can never set it.
+     *         Same creator-gated, pre-acceptance shape as {setOfferKeeperEnabled}
+     *         (kept off the ~60 `CreateOfferParams` construction sites and out of
+     *         the tight `OfferCreateFacet` bytecode). `OfferAcceptFacet` maps
+     *         creator↔acceptor to borrower↔lender by `offerType` at accept, so
+     *         this authorizes the creator's own side whichever role that is.
+     *
+     *         `maxCStar` is MANDATORY whenever `creatorFull` (rev-15 §3): it
+     *         bounds the worst-case tariff. The whole path is dark until
+     *         `cfgFeeEntitlementEnabled()`; while dark a Full opt-in resolves as
+     *         a failed opt-in at accept (revert unless `allowDowngrade`).
+     *
+     * @param offerId        The offer to authorize. Creator-only, pre-acceptance.
+     * @param creatorFull    True to opt the creator into the Full tariff.
+     * @param maxCStar       Absolute `C*` ceiling in VPFI wei (1e18); required
+     *                       (> 0) when `creatorFull`, ignored otherwise.
+     * @param allowDowngrade True to silently downgrade to HoldOnly/None if the
+     *                       Full opt-in cannot complete, instead of reverting.
+     */
+    function setOfferCreatorFullTariff(
+        uint256 offerId,
+        bool creatorFull,
+        uint256 maxCStar,
+        bool allowDowngrade
+    ) external whenNotPaused {
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        LibVaipakam.Offer storage offer = s.offers[offerId];
+        if (offer.creator == address(0)) revert InvalidOffer();
+        if (offer.accepted) revert OfferAlreadyAccepted();
+        if (msg.sender != offer.creator) revert NotNFTOwner();
+        if (creatorFull && maxCStar == 0) revert FullTariffMaxCStarRequired();
+        offer.creatorFull = creatorFull;
+        offer.creatorMaxCStar = maxCStar;
+        offer.creatorAllowFullDowngrade = allowDowngrade;
+        emit OfferCreatorFullTariffSet(
+            offerId,
+            creatorFull,
+            maxCStar,
+            allowDowngrade
+        );
+    }
+
     // ─── Keeper Whitelist (README §3/§9) ──────────────────────────────────
     //
     // Each user maintains a small whitelist of keeper addresses they trust

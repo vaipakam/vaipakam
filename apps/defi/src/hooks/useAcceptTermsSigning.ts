@@ -68,6 +68,13 @@ const ACCEPT_TERMS_TYPES = {
     // governance terms bump (which re-derives the hash) re-locks any older ack. A
     // hash, not the numeric version, because the version is guessable/pre-stampable.
     { name: 'riskTermsHash', type: 'bytes32' },
+    // #1347 — the acceptor's per-party Full VPFI fee-entitlement tariff opt-in.
+    // Field order + types MUST stay last, matching the append to
+    // `LibAcceptTerms.ACCEPT_TERMS_TYPEHASH`. Defaulted false/0 here (the
+    // non-Full path); the Full-tariff accept UI is wired in PR-8 (#1355).
+    { name: 'acceptorFull', type: 'bool' },
+    { name: 'acceptorMaxCStar', type: 'uint256' },
+    { name: 'acceptorAllowFullDowngrade', type: 'bool' },
   ],
 } as const;
 
@@ -103,6 +110,10 @@ export interface AcceptTerms {
   nonce: bigint;
   deadline: bigint;
   riskTermsHash: Hex;
+  // #1347 — acceptor's Full VPFI tariff opt-in (defaulted off until PR-8).
+  acceptorFull: boolean;
+  acceptorMaxCStar: bigint;
+  acceptorAllowFullDowngrade: boolean;
 }
 
 export interface AcceptTermsPayload {
@@ -262,6 +273,11 @@ export function useAcceptTermsSigning() {
           BigInt(Math.floor(Date.now() / 1000)) +
           BigInt(ACCEPT_DEADLINE_SECONDS),
         riskTermsHash,
+        // #1347 — non-Full accept (the Full-tariff opt-in UI ships in PR-8
+        // #1355). Zero-default keeps the accept on the existing HoldOnly path.
+        acceptorFull: false,
+        acceptorMaxCStar: 0n,
+        acceptorAllowFullDowngrade: false,
       };
 
       const signature = (await walletClient.signTypedData({

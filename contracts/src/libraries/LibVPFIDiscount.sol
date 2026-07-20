@@ -527,17 +527,42 @@ library LibVPFIDiscount {
      *                   applies ONLY on a liquid asset (illiquid loans pay the
      *                   full LIF — the legacy §6b posture); pass `false` to
      *                   force the un-discounted LIF.
+     * @param  fullMode  #1347 — whether the borrower's per-party Full VPFI
+     *                   tariff opt-in was CONFIRMED for this loan (kill-switch
+     *                   on, `C* ≤ maxCStar`, vault funded). When true the
+     *                   own-side discount is bumped by
+     *                   `FULL_MODE_FEE_DISCOUNT_BONUS_BPS` (`+10%`) —
+     *                   `min(d_hold + 1000, 5000)` (§F3) — on the liquid path
+     *                   ONLY, and independent of `vpfiDiscountConsent` (the
+     *                   Full opt-in is itself the consent). Callers pass `false`
+     *                   whenever the Full opt-in was not confirmed (the dark
+     *                   default, and every non-Full accept), so behaviour is
+     *                   byte-identical to the pre-#1347 path.
      * @return lifAsset  The discounted LIF in lending-asset wei.
      */
     function holdOnlyBorrowerLif(
         address borrower,
         uint256 principal,
-        bool isLiquid
+        bool isLiquid,
+        bool fullMode
     ) internal view returns (uint256 lifAsset) {
         uint256 dBorrower;
         if (isLiquid && LibVaipakam.storageSlot().vpfiDiscountConsent[borrower]) {
             ( , uint16 effBps) = effectiveTierAndBps(borrower);
             dBorrower = uint256(effBps);
+            if (dBorrower > LibVaipakam.MAX_FEE_DISCOUNT_BPS) {
+                dBorrower = LibVaipakam.MAX_FEE_DISCOUNT_BPS;
+            }
+        }
+        // #1347 §F3 — Full own-side bump: `min(d_hold + 1000, 5000)`, liquid
+        // only (an illiquid loan pays full LIF and cannot be Full — it has no
+        // numeraire price for `C*`). Applied on top of any hold-tier discount,
+        // and even with no `vpfiDiscountConsent` (the Full opt-in is the
+        // consent). `fullMode` is only ever true when the borrower's Full
+        // opt-in is CONFIRMED, so the LIF bonus and the `C*` charge stay in
+        // lockstep.
+        if (fullMode && isLiquid) {
+            dBorrower += LibVaipakam.FULL_MODE_FEE_DISCOUNT_BONUS_BPS;
             if (dBorrower > LibVaipakam.MAX_FEE_DISCOUNT_BPS) {
                 dBorrower = LibVaipakam.MAX_FEE_DISCOUNT_BPS;
             }

@@ -314,6 +314,21 @@
             "name": "riskTermsHash",
             "type": "bytes32",
             "internalType": "bytes32"
+          },
+          {
+            "name": "acceptorFull",
+            "type": "bool",
+            "internalType": "bool"
+          },
+          {
+            "name": "acceptorMaxCStar",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "acceptorAllowFullDowngrade",
+            "type": "bool",
+            "internalType": "bool"
           }
         ]
       },
@@ -681,6 +696,21 @@
             "name": "riskTermsHash",
             "type": "bytes32",
             "internalType": "bytes32"
+          },
+          {
+            "name": "acceptorFull",
+            "type": "bool",
+            "internalType": "bool"
+          },
+          {
+            "name": "acceptorMaxCStar",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "acceptorAllowFullDowngrade",
+            "type": "bool",
+            "internalType": "bool"
           }
         ]
       },

@@ -68,6 +68,14 @@ interface IVaipakamErrors {
     error HealthFactorCalculationFailed();
     error LenderResolutionFailed();
     error UnauthorizedCrossFacetCall();
+    /// @notice #1347 — the post-mint Full VPFI tariff cross-facet charge failed
+    ///         without a typed reason (the specific opt-in failures —
+    ///         disabled / above-auth / vault-short — bubble their own errors).
+    error FeeEntitlementChargeFailed();
+    /// @notice #1347 — a Full VPFI tariff opt-in was authorized without the
+    ///         MANDATORY absolute `maxCStar` ceiling (rev-15 §3). Every Full
+    ///         authorization must bound its worst-case tariff.
+    error FullTariffMaxCStarRequired();
 
     // ─── Access / Identity ───────────────────────────────────────────────────
     error NotBorrower();

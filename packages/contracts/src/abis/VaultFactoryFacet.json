@@ -1127,6 +1127,16 @@
   },
   {
     "type": "error",
+    "name": "FeeEntitlementChargeFailed",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "FullTariffMaxCStarRequired",
+    "inputs": []
+  },
+  {
+    "type": "error",
     "name": "HealthFactorCalculationFailed",
     "inputs": []
   },

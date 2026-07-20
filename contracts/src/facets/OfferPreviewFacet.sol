@@ -130,7 +130,13 @@ contract OfferPreviewFacet {
                 _borrower,
                 preview.effectivePrincipal,
                 OracleFacet(address(this)).checkLiquidity(offer.lendingAsset) ==
-                    LibVaipakam.LiquidityStatus.Liquid
+                    LibVaipakam.LiquidityStatus.Liquid,
+                // #1347 — the accept-time preview quotes the HoldOnly (non-Full)
+                // LIF: `previewAccept` takes no Full opt-in, and the borrower's
+                // `+10%` Full bump only materialises once the Full tariff is
+                // confirmed at accept. The Full-aware quote is a separate view
+                // (`FeeEntitlementFacet.quoteCStar` + the Stage-E preview wiring).
+                /*fullMode=*/ false
             );
         }
 

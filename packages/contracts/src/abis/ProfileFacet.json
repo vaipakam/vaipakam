@@ -438,6 +438,34 @@
   },
   {
     "type": "function",
+    "name": "setOfferCreatorFullTariff",
+    "inputs": [
+      {
+        "name": "offerId",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "creatorFull",
+        "type": "bool",
+        "internalType": "bool"
+      },
+      {
+        "name": "maxCStar",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "allowDowngrade",
+        "type": "bool",
+        "internalType": "bool"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
     "name": "setOfferKeeperEnabled",
     "inputs": [
       {
@@ -709,6 +737,37 @@
   },
   {
     "type": "event",
+    "name": "OfferCreatorFullTariffSet",
+    "inputs": [
+      {
+        "name": "offerId",
+        "type": "uint256",
+        "indexed": true,
+        "internalType": "uint256"
+      },
+      {
+        "name": "creatorFull",
+        "type": "bool",
+        "indexed": false,
+        "internalType": "bool"
+      },
+      {
+        "name": "maxCStar",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      },
+      {
+        "name": "allowDowngrade",
+        "type": "bool",
+        "indexed": false,
+        "internalType": "bool"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
     "name": "OfferKeeperEnabled",
     "inputs": [
       {
@@ -937,6 +996,16 @@
   {
     "type": "error",
     "name": "EnforcedPause",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "FeeEntitlementChargeFailed",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "FullTariffMaxCStarRequired",
     "inputs": []
   },
   {

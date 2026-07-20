@@ -114,6 +114,40 @@ library LibAcceptTestSigner {
         t.durationDays = loan.durationDays;
     }
 
+    /// @notice #1347 — build `AcceptTerms` with the acceptor's per-party Full
+    ///         VPFI tariff opt-in set. Layers the Full fields onto {buildTerms}.
+    /// @param  maxCStar       Mandatory absolute `C*` ceiling (VPFI 1e18).
+    /// @param  allowDowngrade Whether a failed Full opt-in downgrades vs reverts.
+    function buildFullTerms(
+        address diamond,
+        address acceptor,
+        uint256 offerId,
+        bool consent,
+        uint256 maxCStar,
+        bool allowDowngrade
+    ) internal view returns (LibAcceptTerms.AcceptTerms memory t) {
+        t = buildTerms(diamond, acceptor, offerId, consent, 0);
+        t.acceptorFull = true;
+        t.acceptorMaxCStar = maxCStar;
+        t.acceptorAllowFullDowngrade = allowDowngrade;
+    }
+
+    /// @notice Sign + accept `offerId` with the acceptor opting into Full.
+    function signAndAcceptFull(
+        address diamond,
+        address acceptor,
+        uint256 pk,
+        uint256 offerId,
+        uint256 maxCStar,
+        bool allowDowngrade
+    ) internal returns (uint256) {
+        LibAcceptTerms.AcceptTerms memory t =
+            buildFullTerms(diamond, acceptor, offerId, true, maxCStar, allowDowngrade);
+        bytes memory sig = sign(diamond, t, pk);
+        vm.prank(acceptor);
+        return OfferAcceptFacet(diamond).acceptOffer(offerId, t, sig);
+    }
+
     /// @dev The diamond's `currentRiskTermsHash`, read DEFENSIVELY: minimal-cut
     ///      tests (e.g. OfferFacetTest) may not route `RiskAccessFacet`, and such
     ///      a diamond can't enable the risk gate anyway, so a missing selector ⇒

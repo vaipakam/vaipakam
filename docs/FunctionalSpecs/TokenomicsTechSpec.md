@@ -625,7 +625,30 @@ Governance effects:
 >   **at initiation** (non-refundable, no rebate on any outcome), in
 >   exchange for an extra `+10%` own-side discount (capped `50%`). The
 >   lending-asset LIF is still charged (Full-discounted) — the tariff is an
->   **absorption**, never a fee waiver.
+>   **absorption**, never a fee waiver. The `+10%` own-side bump materialises
+>   only when the Full opt-in is **confirmed** (master switch on, quoted `C* ≤
+>   maxCStar`, vault funded), resolved in lockstep with the `C*` charge so the
+>   discount is never granted without the tariff being taken.
+> - **Per-party authorization (M2 PR-5a/5b):** Full is **per party** — the
+>   borrower and the lender each opt in independently, each paying one `C*`
+>   (double absorption: both in ⇒ `2 × C*` to the bucket). Authorization is
+>   party-scoped and cannot be forged across the counterparty: the **acceptor**
+>   authorizes their own Full inside the **signed accept terms**; the offer
+>   **creator** authorizes theirs via a creator-only, pre-acceptance setter that
+>   binds the authorization onto the offer. The accept path maps creator/acceptor
+>   to borrower/lender by offer side, so a borrower or a matcher can never drain
+>   the counterparty's vault, and a matcher/keeper fill (no acceptor-signed
+>   terms) always resolves the acceptor side as non-Full. Every Full
+>   authorization carries a **mandatory `maxCStar`** ceiling.
+> - **Dark master switch (M2 PR-5a/5b):** the whole tariff is gated behind a
+>   single fee-entitlement master switch, **off by default**. While off the
+>   accept path skips the tariff entirely — nothing is charged, and **no
+>   fee-entitlement record (per-party modes + notional `C*`) is stamped** — and a
+>   Full opt-in presented without downgrade permission **fails closed** (the
+>   accept reverts) rather than silently proceeding as non-Full. Stamping (and
+>   the loan-side reward cap that consumes the notional `C*`) begins the moment
+>   the switch arms — the "cStar-from-genesis" posture, with PR-5c backfilling
+>   any loans open across a post-launch cutover before it arms.
 > - **Tier timing — pinned at acceptance (new loans):** because the
 >   new-loan borrower LIF is taken as an **origination cash haircut** (not
 >   a settle-time rebate), the borrower's effective discount tier for that

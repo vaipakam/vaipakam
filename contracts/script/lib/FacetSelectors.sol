@@ -99,9 +99,9 @@ library FacetSelectors {
         s[31] = VaultFactoryFacet.vaultCreditFromDiamondERC20.selector;
     }
 
-    /// @notice Full external selector surface of {ProfileFacet} (25).
+    /// @notice Full external selector surface of {ProfileFacet} (31).
     function profile() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](30);
+        s = new bytes4[](31);
         s[0] = ProfileFacet.updateKYCStatus.selector;
         s[1] = ProfileFacet.getUserCountry.selector;
         s[2] = ProfileFacet.isKYCVerified.selector;
@@ -134,6 +134,8 @@ library FacetSelectors {
         s[28] = ProfileFacet.enforcePositionSaleMove.selector;
         // #1144 — registry-aware prepay-sale fill bar (read by CollateralListingExecutor).
         s[29] = ProfileFacet.isRecipientBarred.selector;
+        // #1347 — per-offer creator Full VPFI tariff opt-in.
+        s[30] = ProfileFacet.setOfferCreatorFullTariff.selector;
     }
 
     /// @notice Full external selector surface of {VaipakamNFTFacet} (29) — mirrors

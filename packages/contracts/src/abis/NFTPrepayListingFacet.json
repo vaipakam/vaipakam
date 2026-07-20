@@ -712,6 +712,11 @@
   },
   {
     "type": "error",
+    "name": "FeeEntitlementChargeFailed",
+    "inputs": []
+  },
+  {
+    "type": "error",
     "name": "FeeLegDecayNotAllowedOnFixedPrice",
     "inputs": [
       {
@@ -758,6 +763,11 @@
         "internalType": "uint256"
       }
     ]
+  },
+  {
+    "type": "error",
+    "name": "FullTariffMaxCStarRequired",
+    "inputs": []
   },
   {
     "type": "error",

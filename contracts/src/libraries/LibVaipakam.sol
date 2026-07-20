@@ -88,6 +88,13 @@ library LibVaipakam {
     ///      fee reduction (and keeps the Full `+10%` own-side bump from
     ///      pushing a high tier past 50%). #1352.
     uint256 constant MAX_FEE_DISCOUNT_BPS = 5000;
+    /// @dev #1347 (redesign §F2/§F3, rev 15) — the Full VPFI tariff own-side
+    ///      fee-discount BONUS: a party that pays the `C*` Full tariff gets its
+    ///      own-side fee discount bumped to `min(d_hold + 1000, 5000)`. Applied
+    ///      to the borrower's Loan-Initiation Fee at accept (this PR) and, at
+    ///      settlement, to the lender's yield fee (PR-6). The `MAX_FEE_DISCOUNT_BPS`
+    ///      clamp keeps a high hold-tier from crossing 50% after the bump.
+    uint256 constant FULL_MODE_FEE_DISCOUNT_BONUS_BPS = 1000;
     uint256 constant BASIS_POINTS = 10000;
     uint256 constant HF_SCALE = 1e18; // Health Factor precision
     uint256 constant HF_LIQUIDATION_THRESHOLD = 1e18; // HF < 1 for liquidation
@@ -1808,6 +1815,27 @@ library LibVaipakam {
         // Offer carries the BPS — the Loan already snapshots the ABSOLUTE buffer
         // (`bufferAmount`), which `calculateRentalLateFee` reads.
         uint16 rentalBufferBpsAtCreate;
+        // ── #1347 (M2 PR-5a/5b) — per-party Full VPFI fee-entitlement tariff:
+        //    the OFFER CREATOR's own Full opt-in. The creator signs offer
+        //    creation, so their Full authorization lives here (never on the
+        //    accept path a counterparty controls — rev-15 §3). Party-scoped:
+        //    the creator is the lender on a Lender offer, the borrower on a
+        //    Borrower offer; `OfferAcceptFacet` maps creator↔acceptor to
+        //    borrower↔lender by `offerType`. All three append-only + flat
+        //    (viaIR stack); zero-init on every legacy row ⇒ non-Full (the
+        //    pre-#1347 behaviour). Copied verbatim from `CreateOfferParams`
+        //    at `createOffer`.
+        // Slot 24 (packed: 1 byte of a fresh slot).
+        bool creatorFull;
+        // Slot 24 (packed alongside creatorFull) — if the creator's Full
+        // opt-in cannot complete (kill-switch off, over-max, vault-short),
+        // true silently downgrades to HoldOnly/None instead of reverting the
+        // accept/match (rev-15 §4/§6). Only read when `creatorFull`.
+        bool creatorAllowFullDowngrade;
+        // Slot 25 — MANDATORY ceiling (VPFI 1e18) on the creator's Full tariff
+        // (rev-15 §3): a quoted `C* > creatorMaxCStar` reverts unless
+        // `creatorAllowFullDowngrade`. Only read when `creatorFull`.
+        uint256 creatorMaxCStar;
     }
 
     /**
@@ -4817,6 +4845,22 @@ library LibVaipakam {
         // direct-accept illiquid-substitution path (the keeper-match path leaves
         // `acceptAckActive == false`).
         bytes32 acceptAckTermsHash;
+        // #1347 (M2 PR-5a/5b) — the ACCEPTOR's Full VPFI fee-entitlement tariff
+        // opt-in, injected by `OfferAcceptFacet._verifyAndBindAccept` from the
+        // signed `AcceptTerms.acceptorFull` / `acceptorMaxCStar` /
+        // `acceptorAllowFullDowngrade` for the post-mint `chargeFullTariff` +
+        // the pre-mint borrower-LIF +10% fold to read. Same transient-injection
+        // model as `acceptAckTermsHash`: written on every DIRECT accept entry,
+        // read ONLY while `acceptAckActive == true` (so a stale value from a
+        // prior accept can never leak into a keeper-match fill, which leaves
+        // `acceptAckActive == false` — matcher fills carry no acceptor-signed
+        // Full, so the acceptor's side stays non-Full there by construction).
+        // Not cleared on exit (like `acceptAckTermsHash`) — the `acceptAckActive`
+        // gate is the load-bearing reset, saving the high-offset SSTOREs the
+        // at-EIP-170 accept facet can't spare. Zero-default ⇒ non-Full.
+        bool acceptAckAcceptorFull;
+        bool acceptAckAcceptorAllowFullDowngrade;
+        uint256 acceptAckAcceptorMaxCStar;
         // #730 (Codex #736 r3–r7) — the live risk-terms ANCHOR, paired with
         // `currentRiskTermsVersion`. Set by `revealRiskTermsBump` to a fresh RANDOM
         // SECRET (`termsAnchor`) published via commit-reveal: the slow/timelock

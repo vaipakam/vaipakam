@@ -167,6 +167,21 @@
             "name": "riskTermsHash",
             "type": "bytes32",
             "internalType": "bytes32"
+          },
+          {
+            "name": "acceptorFull",
+            "type": "bool",
+            "internalType": "bool"
+          },
+          {
+            "name": "acceptorMaxCStar",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "acceptorAllowFullDowngrade",
+            "type": "bool",
+            "internalType": "bool"
           }
         ]
       },
@@ -377,6 +392,21 @@
             "name": "riskTermsHash",
             "type": "bytes32",
             "internalType": "bytes32"
+          },
+          {
+            "name": "acceptorFull",
+            "type": "bool",
+            "internalType": "bool"
+          },
+          {
+            "name": "acceptorMaxCStar",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "acceptorAllowFullDowngrade",
+            "type": "bool",
+            "internalType": "bool"
           }
         ]
       },
@@ -462,6 +492,11 @@
     "type": "function",
     "name": "chargeBorrowerLifAndDeliver",
     "inputs": [
+      {
+        "name": "offerId",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
       {
         "name": "lendingAsset",
         "type": "address",
@@ -669,6 +704,21 @@
             "name": "riskTermsHash",
             "type": "bytes32",
             "internalType": "bytes32"
+          },
+          {
+            "name": "acceptorFull",
+            "type": "bool",
+            "internalType": "bool"
+          },
+          {
+            "name": "acceptorMaxCStar",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "acceptorAllowFullDowngrade",
+            "type": "bool",
+            "internalType": "bool"
           }
         ]
       },
@@ -883,6 +933,16 @@
   {
     "type": "error",
     "name": "EnforcedPause",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "FeeEntitlementChargeFailed",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "FullTariffMaxCStarRequired",
     "inputs": []
   },
   {

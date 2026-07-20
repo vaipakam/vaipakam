@@ -4,6 +4,7 @@ pragma solidity ^0.8.29;
 
 import {LibVaipakam} from "../libraries/LibVaipakam.sol";
 import {LibFeeEntitlement} from "../libraries/LibFeeEntitlement.sol";
+import {LibVPFIDiscount} from "../libraries/LibVPFIDiscount.sol";
 import {IVaipakamErrors} from "../interfaces/IVaipakamErrors.sol";
 
 /**
@@ -30,28 +31,6 @@ import {IVaipakamErrors} from "../interfaces/IVaipakamErrors.sol";
  *         notional `cStarOpen`.
  */
 contract FeeEntitlementFacet is IVaipakamErrors {
-    /// @notice Cross-facet parameter bundle for {chargeFullTariff}, assembled by
-    ///         `OfferAcceptFacet` from the offer + accept terms once the loan
-    ///         exists. Lender Full authorization MUST originate from the
-    ///         lender's own offer (never a borrower/matcher-set accept flag);
-    ///         borrower Full from the EIP-712 accept terms.
-    struct FullTariffChargeParams {
-        uint256 loanId;
-        address lendingAsset;
-        address borrower;
-        address lender;
-        uint256 effectivePrincipal;
-        uint256 durationDays;
-        bool borrowerWantsFull;
-        uint256 borrowerMaxCStar;
-        bool borrowerAllowDowngrade;
-        bool borrowerHoldEligible;
-        bool lenderWantsFull;
-        uint256 lenderMaxCStar;
-        bool lenderAllowDowngrade;
-        bool lenderHoldEligible;
-    }
-
     /// @notice #1347 — emitted once per loan at initiation with the resolved
     ///         per-party modes, each Full party's absorbed tariff, and the
     ///         notional `C*`. Auxiliary fee-accounting log — the recycle credit
@@ -71,32 +50,72 @@ contract FeeEntitlementFacet is IVaipakamErrors {
      * @notice Charge the Full VPFI tariff for a freshly-initiated loan and stamp
      *         its fee-entitlement record.
      * @dev    Internal cross-facet entry — `msg.sender` MUST be the Diamond, so
-     *         only `OfferAcceptFacet` (behind the accept flow) can reach it. It
-     *         prices one shared notional `C*`, resolves and charges each party
-     *         independently (double absorption — both Full ⇒ `2 × C*` to the
-     *         bucket), then writes `feeEntitlementByLoanId[loanId]`. The
+     *         only `OfferAcceptFacet` (behind the accept flow, post-mint) can
+     *         reach it. It self-reads every Full authorization from the durable,
+     *         party-signed artifacts — the CREATOR's from `s.offers[offerId]`
+     *         (`creatorFull` / `creatorMaxCStar` / `creatorAllowFullDowngrade`),
+     *         the ACCEPTOR's from the `_verifyAndBindAccept` transient injection
+     *         (`s.acceptAckAcceptor*`, gated on `acceptAckActive` so a matcher
+     *         fill can never inherit a stale direct-accept opt-in) — then maps
+     *         creator↔acceptor to borrower↔lender by `offerType`. This keeps the
+     *         at-EIP-170 / at-viaIR-budget `_acceptOffer` caller down to five
+     *         scalar arguments. It prices one shared notional `C*`, resolves and
+     *         charges each party independently (double absorption — both Full ⇒
+     *         `2 × C*` to the bucket), then writes `feeEntitlementByLoanId`. The
      *         notional `cStarOpen` is stamped for EVERY loan (even None/HoldOnly)
-     *         because the loan-side reward cap (PR-5c) is defined from it.
+     *         because the loan-side reward cap (PR-5c) is defined from it. Only
+     *         ever invoked on the ERC-20 origination path (never a rental / a
+     *         sale-vehicle accept, which pay no LIF and so bear no tariff).
+     * @param  offerId            The accepted offer (source of the creator side).
+     * @param  loanId             The freshly-minted loan.
+     * @param  borrower           The loan's borrowing party.
+     * @param  lender             The loan's lending party.
+     * @param  effectivePrincipal The filled principal in lending-asset wei.
      */
-    function chargeFullTariff(FullTariffChargeParams calldata p) external {
+    function chargeFullTariff(
+        uint256 offerId,
+        uint256 loanId,
+        address borrower,
+        address lender,
+        uint256 effectivePrincipal
+    ) external {
         if (msg.sender != address(this)) revert UnauthorizedCrossFacetCall();
 
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        LibVaipakam.Offer storage offer = s.offers[offerId];
+        bool principalLiquid = offer.principalLiquidity ==
+            LibVaipakam.LiquidityStatus.Liquid;
+
+        // Party-scoped authorization → borrower/lender by offer side. The
+        // creator signed offer creation (auth on the Offer); the acceptor signed
+        // the accept terms (auth in the transient injection). On a Lender offer
+        // the acceptor is the borrower; on a Borrower offer the acceptor is the
+        // lender. A matcher fill leaves `acceptAckActive == false`, so the
+        // acceptor side reads as non-Full — the borrower can never have their
+        // vault drained by a keeper they didn't sign for.
+        bool acceptorFull = s.acceptAckActive && s.acceptAckAcceptorFull;
+        bool isLenderOffer = offer.offerType == LibVaipakam.OfferType.Lender;
+
         (uint256 cStar, bool numeraireOk) = LibFeeEntitlement.computeCStar(
-            p.lendingAsset,
-            p.effectivePrincipal,
-            p.durationDays
+            offer.lendingAsset,
+            effectivePrincipal,
+            offer.durationDays
         );
 
         (
             LibVaipakam.FeeEntitlementMode bMode,
             uint256 bPaid
         ) = LibFeeEntitlement.resolveAndCharge(
-                p.loanId,
-                p.borrower,
-                p.borrowerWantsFull,
-                p.borrowerMaxCStar,
-                p.borrowerAllowDowngrade,
-                p.borrowerHoldEligible,
+                loanId,
+                borrower,
+                isLenderOffer ? acceptorFull : offer.creatorFull,
+                isLenderOffer
+                    ? s.acceptAckAcceptorMaxCStar
+                    : offer.creatorMaxCStar,
+                isLenderOffer
+                    ? s.acceptAckAcceptorAllowFullDowngrade
+                    : offer.creatorAllowFullDowngrade,
+                _holdEligible(s, borrower, principalLiquid, /*needsConsent=*/ true),
                 cStar,
                 numeraireOk
             );
@@ -104,34 +123,59 @@ contract FeeEntitlementFacet is IVaipakamErrors {
             LibVaipakam.FeeEntitlementMode lMode,
             uint256 lPaid
         ) = LibFeeEntitlement.resolveAndCharge(
-                p.loanId,
-                p.lender,
-                p.lenderWantsFull,
-                p.lenderMaxCStar,
-                p.lenderAllowDowngrade,
-                p.lenderHoldEligible,
+                loanId,
+                lender,
+                isLenderOffer ? offer.creatorFull : acceptorFull,
+                isLenderOffer
+                    ? offer.creatorMaxCStar
+                    : s.acceptAckAcceptorMaxCStar,
+                isLenderOffer
+                    ? offer.creatorAllowFullDowngrade
+                    : s.acceptAckAcceptorAllowFullDowngrade,
+                _holdEligible(s, lender, principalLiquid, /*needsConsent=*/ false),
                 cStar,
                 numeraireOk
             );
 
-        LibVaipakam.storageSlot().feeEntitlementByLoanId[p.loanId] = LibVaipakam
-            .FeeEntitlement({
-                borrowerMode: bMode,
-                lenderMode: lMode,
-                openDays: uint32(p.durationDays == 0 ? 1 : p.durationDays),
-                borrowerTariffPaid: bPaid,
-                lenderTariffPaid: lPaid,
-                cStarOpen: cStar
-            });
+        s.feeEntitlementByLoanId[loanId] = LibVaipakam.FeeEntitlement({
+            borrowerMode: bMode,
+            lenderMode: lMode,
+            openDays: uint32(offer.durationDays == 0 ? 1 : offer.durationDays),
+            borrowerTariffPaid: bPaid,
+            lenderTariffPaid: lPaid,
+            cStarOpen: cStar
+        });
 
         emit FeeEntitlementStamped(
-            p.loanId,
+            loanId,
             uint8(bMode),
             uint8(lMode),
             bPaid,
             lPaid,
             cStar
         );
+    }
+
+    /// @dev Best-effort hold-discount eligibility for the non-Full mode stamp
+    ///      (HoldOnly vs None). Mirrors what the actual fee path applies: the
+    ///      borrower's HoldOnly LIF needs liquidity + `vpfiDiscountConsent` + a
+    ///      non-zero effective tier (so the stamp matches
+    ///      {LibVPFIDiscount.holdOnlyBorrowerLif}); the lender's yield-fee
+    ///      discount is tier-based only. This field is informational for now —
+    ///      the settlement sweep (PR-6) reads it — so keeping it consistent with
+    ///      the charged discount avoids a spurious HoldOnly stamp on a party that
+    ///      collected no discount.
+    function _holdEligible(
+        LibVaipakam.Storage storage s,
+        address party,
+        bool principalLiquid,
+        bool needsConsent
+    ) private view returns (bool) {
+        if (needsConsent && !(principalLiquid && s.vpfiDiscountConsent[party])) {
+            return false;
+        }
+        (, uint16 effBps) = LibVPFIDiscount.effectiveTierAndBps(party);
+        return effBps > 0;
     }
 
     /**

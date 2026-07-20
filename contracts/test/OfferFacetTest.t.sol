@@ -54,6 +54,7 @@ import {DefaultedFacet} from "../src/facets/DefaultedFacet.sol";
 import {console} from "forge-std/console.sol";
 import {RepayFacet} from "../src/facets/RepayFacet.sol";
 import {EncumbranceMutateFacet} from "../src/facets/EncumbranceMutateFacet.sol";
+import {FeeEntitlementFacet} from "../src/facets/FeeEntitlementFacet.sol";
 import {TestMutatorFacet} from "./mocks/TestMutatorFacet.sol";
 import {MockRentableNFT721} from "./mocks/MockRentableNFT721.sol";
 import {LibAcceptTerms} from "../src/libraries/LibAcceptTerms.sol";
@@ -128,7 +129,7 @@ contract OfferFacetTest is Test {
         HelperTest helperTest = new HelperTest();
 
         // Prepare cuts for required facets
-        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](11);
+        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](12);
         cuts[0] = IDiamondCut.FacetCut({
             facetAddress: address(new OfferCreateFacet()),
             action: IDiamondCut.FacetCutAction.Add,
@@ -194,6 +195,15 @@ contract OfferFacetTest is Test {
             facetAddress: address(new EncumbranceMutateFacet()),
             action: IDiamondCut.FacetCutAction.Add,
             functionSelectors: helperTest.getEncumbranceMutateFacetSelectors()
+        });
+        // #1347 — the ERC-20 accept path now cross-calls
+        // `FeeEntitlementFacet.chargeFullTariff` at origination (dark by default),
+        // so this minimal-cut diamond must route it or every ERC-20 accept
+        // reverts `FunctionDoesNotExist`.
+        cuts[11] = IDiamondCut.FacetCut({
+            facetAddress: address(new FeeEntitlementFacet()),
+            action: IDiamondCut.FacetCutAction.Add,
+            functionSelectors: helperTest.getFeeEntitlementFacetSelectors()
         });
 
         IDiamondCut(address(diamond)).diamondCut(cuts, address(0), "");

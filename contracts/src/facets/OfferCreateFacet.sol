@@ -1728,6 +1728,13 @@ contract OfferCreateFacet is
         // settlementInterest` reads to apply the full-term FLOOR
         // (when `true`) or pure pro-rata-elapsed (when `false`).
         offer.useFullTermInterest = params.useFullTermInterest;
+        // #1347 — the creator's Full VPFI tariff opt-in (`Offer.creatorFull` /
+        // `creatorMaxCStar` / `creatorAllowFullDowngrade`) is NOT a
+        // `CreateOfferParams` field: it is authorized post-create by the creator
+        // via `ProfileFacet.setOfferCreatorFullTariff` (the same per-offer
+        // creator-gated pattern as `setOfferKeeperEnabled`), so the 60-plus
+        // existing `CreateOfferParams` construction sites stay untouched. Absent
+        // that opt-in the fields stay zero ⇒ non-Full.
         // Phase 6: keeper access is per-keeper via
         // `offerKeeperEnabled[offerId][keeper]`. Creator enables specific
         // keepers post-create via `ProfileFacet.setOfferKeeperEnabled`.

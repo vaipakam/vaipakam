@@ -53,6 +53,7 @@ import OracleAdminFacetABI from './OracleAdminFacet.json';
 import VaultFactoryFacetABI from './VaultFactoryFacet.json';
 import VaipakamNFTFacetABI from './VaipakamNFTFacet.json';
 import ProfileFacetABI from './ProfileFacet.json';
+import FeeEntitlementFacetABI from './FeeEntitlementFacet.json';
 import AdminFacetABI from './AdminFacet.json';
 import AddCollateralFacetABI from './AddCollateralFacet.json';
 import PartialWithdrawalFacetABI from './PartialWithdrawalFacet.json';
@@ -149,6 +150,7 @@ export {
   VaultFactoryFacetABI,
   VaipakamNFTFacetABI,
   ProfileFacetABI,
+  FeeEntitlementFacetABI,
   AdminFacetABI,
   AddCollateralFacetABI,
   PartialWithdrawalFacetABI,
@@ -235,6 +237,7 @@ export const DIAMOND_ABI = [
   ...VaultFactoryFacetABI,
   ...VaipakamNFTFacetABI,
   ...ProfileFacetABI,
+  ...FeeEntitlementFacetABI,
   ...AdminFacetABI,
   ...AddCollateralFacetABI,
   ...PartialWithdrawalFacetABI,

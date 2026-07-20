@@ -256,6 +256,21 @@
             "name": "rentalBufferBpsAtCreate",
             "type": "uint16",
             "internalType": "uint16"
+          },
+          {
+            "name": "creatorFull",
+            "type": "bool",
+            "internalType": "bool"
+          },
+          {
+            "name": "creatorAllowFullDowngrade",
+            "type": "bool",
+            "internalType": "bool"
+          },
+          {
+            "name": "creatorMaxCStar",
+            "type": "uint256",
+            "internalType": "uint256"
           }
         ]
       }
@@ -472,6 +487,21 @@
             "name": "rentalBufferBpsAtCreate",
             "type": "uint16",
             "internalType": "uint16"
+          },
+          {
+            "name": "creatorFull",
+            "type": "bool",
+            "internalType": "bool"
+          },
+          {
+            "name": "creatorAllowFullDowngrade",
+            "type": "bool",
+            "internalType": "bool"
+          },
+          {
+            "name": "creatorMaxCStar",
+            "type": "uint256",
+            "internalType": "uint256"
           }
         ]
       }
@@ -776,6 +806,16 @@
   {
     "type": "error",
     "name": "EnforcedPause",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "FeeEntitlementChargeFailed",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "FullTariffMaxCStarRequired",
     "inputs": []
   },
   {

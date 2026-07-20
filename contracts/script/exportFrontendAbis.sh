@@ -140,6 +140,7 @@ FACETS=(
   "NFTPrepayListingAtomicFacet"
   "NFTPrepayAutoListFacet"
   "ProfileFacet"
+  "FeeEntitlementFacet"
   "RefinanceFacet"
   "RepayFacet"
   "RepayPeriodicFacet"

@@ -141,16 +141,12 @@ library LibFeeEntitlement {
             revert FeeEntitlementTariffAboveAuth(cStar, maxCStar);
         }
 
-        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
-        address vpfi = s.vpfiToken;
-        address vault = s.userVaipakamVaults[party];
-        uint256 bal = (vault == address(0) || vpfi == address(0))
-            ? 0
-            : IERC20(vpfi).balanceOf(vault);
-        if (bal < cStar) {
+        if (_vaultVpfiBalance(party) < cStar) {
             if (allowDowngrade) return _downgrade(holdEligible);
             revert FeeEntitlementFullOptInFailed(party);
         }
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        address vpfi = s.vpfiToken;
 
         // Pull C* into Diamond custody, restamp the discount accumulator at the
         // post-mutation tracked balance (an unstake must take effect
@@ -172,6 +168,51 @@ library LibFeeEntitlement {
             cStar
         );
         return (LibVaipakam.FeeEntitlementMode.Full, cStar);
+    }
+
+    /**
+     * @notice Whether a party's Full opt-in would CONFIRM at this instant —
+     *         kill switch on, list-LIF priceable, `C* ≤ maxCStar`, and the vault
+     *         holds `≥ C*` VPFI. Pure read (no state change, no revert).
+     * @dev    Lets the PRE-mint borrower Loan-Initiation-Fee path apply the Full
+     *         own-side `+10%` bump in lockstep with the POST-mint `C*` charge in
+     *         {resolveAndCharge}: both run in the same non-reentrant tx against
+     *         unchanged storage (the LIF is charged in the lending asset — no
+     *         VPFI moves between the two), so their verdicts are identical. If
+     *         this returns true the later {resolveAndCharge} necessarily also
+     *         charges Full; if false, {resolveAndCharge} downgrades or reverts —
+     *         and a revert rolls the whole accept (LIF included) back, so the
+     *         bump can never be granted without the tariff being taken.
+     * @return confirmed True iff a Full charge would complete right now.
+     */
+    function fullOptInConfirmed(
+        address party,
+        bool wantsFull,
+        uint256 maxCStar,
+        address lendingAsset,
+        uint256 principal,
+        uint256 durationDays
+    ) internal view returns (bool confirmed) {
+        if (!wantsFull || !LibVaipakam.cfgFeeEntitlementEnabled()) return false;
+        (uint256 cStar, bool numeraireOk) = computeCStar(
+            lendingAsset,
+            principal,
+            durationDays
+        );
+        if (!numeraireOk || cStar > maxCStar) return false;
+        return _vaultVpfiBalance(party) >= cStar;
+    }
+
+    /// @dev The party's VPFI vault balance (0 when either the vault or the VPFI
+    ///      token is unset). Shared by {resolveAndCharge} (the authoritative
+    ///      pull gate) and {fullOptInConfirmed} (the pre-mint preview) so the two
+    ///      read balance identically.
+    function _vaultVpfiBalance(address party) private view returns (uint256) {
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        address vpfi = s.vpfiToken;
+        address vault = s.userVaipakamVaults[party];
+        if (vault == address(0) || vpfi == address(0)) return 0;
+        return IERC20(vpfi).balanceOf(vault);
     }
 
     /// @dev A permitted downgrade from Full → HoldOnly (if the party is
