@@ -2,6 +2,8 @@
 // SPDX-License-Identifier: BUSL-1.1
 pragma solidity ^0.8.29;
 
+import {Math} from "@openzeppelin/contracts/utils/math/Math.sol";
+
 import {LibVaipakam} from "../libraries/LibVaipakam.sol";
 import {LibFeeEntitlement} from "../libraries/LibFeeEntitlement.sol";
 import {LibVPFIDiscount} from "../libraries/LibVPFIDiscount.sol";
@@ -234,17 +236,20 @@ contract FeeEntitlementFacet is IVaipakamErrors {
         uint256 cStar
     ) private {
         uint16 haircutAtOpen = uint16(LibVaipakam.cfgRewardHaircutBps());
-        // #1353 (M2 PR-5c) — cache the per-side ceiling ½ × C* × (1 − m). SATURATE
-        // at `type(uint128).max` rather than truncating a wider value: an
-        // extreme-`C*` loan whose ceiling exceeds the cache width should read as
-        // "effectively unbounded" (max ≫ the whole 69M pool ⇒ never binds), not
-        // wrap to a small low-128-bit value that would UNDER-pay it (Codex #1371
-        // r9). `_loanSideRewardCapEff` trusts the cache, so a truncation would
-        // silently bind.
-        uint256 capOpen256 = (cStar *
-            (LibVaipakam.BASIS_POINTS - haircutAtOpen)) /
-            LibVaipakam.BASIS_POINTS /
-            2;
+        // #1353 (M2 PR-5c) — cache the per-side ceiling ½ × C* × (1 − m). Use
+        // `Math.mulDiv` so an extreme `C*` (where `C* × (BPS − m)` would exceed
+        // `uint256`) computes via the 512-bit intermediate instead of REVERTING
+        // and bricking origination before the saturation check (Codex #1371 r10),
+        // then SATURATE at `type(uint128).max` rather than truncating a wider
+        // value: such a loan's ceiling reads as "effectively unbounded"
+        // (max ≫ the whole 69M pool ⇒ never binds), not a wrapped small
+        // low-128-bit value that would UNDER-pay it (Codex #1371 r9).
+        // `_loanSideRewardCapEff` trusts the cache, so a truncation would bind.
+        uint256 capOpen256 = Math.mulDiv(
+            cStar,
+            LibVaipakam.BASIS_POINTS - haircutAtOpen,
+            LibVaipakam.BASIS_POINTS
+        ) / 2;
         s.feeEntitlementByLoanId[loanId] = LibVaipakam.FeeEntitlement({
             borrowerMode: bMode,
             lenderMode: lMode,

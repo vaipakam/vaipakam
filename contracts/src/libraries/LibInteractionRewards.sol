@@ -2045,10 +2045,14 @@ function _dayPoolHalves(
             // #1371 r7).
             uint256 haircut = fe.rewardHaircutBpsAtOpen;
             if (haircut == 0) haircut = LibVaipakam.REWARD_HAIRCUT_DEFAULT_BPS;
+            // `Math.mulDiv` so an extreme `cStarOpen` can't overflow the
+            // intermediate product (Codex #1371 r10), matching the stamp site.
             capOpen =
-                (fe.cStarOpen * (LibVaipakam.BASIS_POINTS - haircut)) /
-                LibVaipakam.BASIS_POINTS /
-                2;
+                Math.mulDiv(
+                    fe.cStarOpen,
+                    LibVaipakam.BASIS_POINTS - haircut,
+                    LibVaipakam.BASIS_POINTS
+                ) / 2;
         }
         if (capOpen == 0) return 0;
         uint256 openDays = fe.openDays;
