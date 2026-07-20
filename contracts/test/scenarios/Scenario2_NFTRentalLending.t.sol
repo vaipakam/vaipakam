@@ -56,7 +56,7 @@ contract Scenario2_NFTRentalLending is Test {
     address mockZeroExProxy;
 
     uint256 constant BASIS_POINTS = 10000;
-    uint256 constant TREASURY_FEE_BPS = 100; // 1%
+    uint256 constant TREASURY_FEE_BPS = 200; // 2% (rev-8 freeze #1352; loans snapshot the live default at origination)
     uint256 constant RENTAL_BUFFER_BPS = 500; // 5%
 
     uint256 constant DAILY_FEE = 10 ether;

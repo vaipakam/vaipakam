@@ -176,7 +176,7 @@ export function BorrowWizard() {
   const publicClient = useDiamondPublicClient();
   const { data: walletClient } = useWalletClient();
   const sanctions = useSanctionsCheck(address);
-  const { data: lifBps = 10 } = useLoanInitiationFeeBps();
+  const { data: lifBps = 20 } = useLoanInitiationFeeBps();
   const { data: minHf1e18 = MIN_HEALTH_FACTOR_1E18 } = useMinHealthFactor1e18();
   const { data: offers, isLoading, isError: offersError, error: offersErr } = useLenderOffersForBorrow();
 

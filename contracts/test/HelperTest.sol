@@ -84,7 +84,7 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](114);
+        selectors = new bytes4[](115);
         selectors[0] = TestMutatorFacet.setLoan.selector;
         selectors[1] = TestMutatorFacet.setOffer.selector;
         selectors[2] = TestMutatorFacet.setNextLoanId.selector;
@@ -293,6 +293,7 @@ contract HelperTest {
         selectors[111] = TestMutatorFacet.setRecycleBucketRaw.selector;
         selectors[112] = TestMutatorFacet.setRecycledCreditedByDayRaw.selector;
         selectors[113] = TestMutatorFacet.setGovernorCommitArmedFromDayRaw.selector;
+        selectors[114] = TestMutatorFacet.setBorrowerLifVpfiHeldRaw.selector;
         // #951 v2 (Codex #959 bind-to-live) — setSaleListingCollateralRaw removed
         // with the snapshot mapping; the accept binds `>=` live collateral.
         // #687-B: the former tail entries ([83]-[87]: setBackstopAbsorbCashRaw,
@@ -354,7 +355,7 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](5);
+        selectors = new bytes4[](6);
         // #662 — `acceptOffer(uint256,AcceptTerms,bytes)` now binds the
         // acceptor's EIP-712-signed terms to every loan-affecting offer field
         // (anti-phishing; OfferAcceptTermBindingDesign.md).
@@ -374,6 +375,8 @@ contract HelperTest {
         // `hashAcceptTerms` view was removed for EIP-170 headroom, #730; the test
         // signer uses `LibAcceptTerms.digestFor`.)
         selectors[4] = OfferAcceptFacet.verifyAndBindAccept.selector;
+        // #1352 — diamond-internal borrower LIF charge, `crossFacetCall`-routed.
+        selectors[5] = OfferAcceptFacet.chargeBorrowerLifAndDeliver.selector;
         return selectors;
     }
 

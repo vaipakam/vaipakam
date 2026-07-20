@@ -135,7 +135,7 @@ export default function CreateOffer() {
             : (max / 100).toFixed(2).replace(/\.?0+$/, '');
         })(),
       }
-    : { treasuryFee: '1', loanInitiationFee: '0.1', maxDiscount: '24' };
+    : { treasuryFee: '2', loanInitiationFee: '0.2', maxDiscount: '24' }; // #1352 fee freeze defaults
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
 
@@ -1932,7 +1932,7 @@ export default function CreateOffer() {
           // protocol-config so the alert reads "Loan Initiation Fee
           // (0.1%): … remaining 99.9%" using the deployed bps, not a
           // baked-in `0.1` / `99.9`.
-          const lifBps = protocolConfig ? protocolConfig.loanInitiationFeeBps : 10;
+          const lifBps = protocolConfig ? protocolConfig.loanInitiationFeeBps : 20;
           const lifPctNum = lifBps / 100;
           const lifPct = lifPctNum % 1 === 0
             ? lifPctNum.toString()

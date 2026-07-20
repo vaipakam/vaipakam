@@ -27,7 +27,6 @@ import {LoanFacet} from "./LoanFacet.sol";
 import {ProfileFacet} from "./ProfileFacet.sol";
 import {EarlyWithdrawalFacet} from "./EarlyWithdrawalFacet.sol";
 import {PrecloseFacet} from "./PrecloseFacet.sol";
-import {VPFIDiscountFacet} from "./VPFIDiscountFacet.sol";
 import {LibUserVault} from "../libraries/LibUserVault.sol";
 
 /**
@@ -930,6 +929,11 @@ contract OfferAcceptFacet is
             }
         }
 
+        // #1352 — the borrower's HoldOnly LIF discount applies only on a LIQUID
+        // lending asset (illiquid loans pay the full LIF, matching the legacy
+        // §6b posture; a reward-eligible origination requires a priceable asset
+        // anyway per the redesign). Resolve liquidity here at the accept path's
+        // canonical valuation point and gate the discount on it below.
         LibVaipakam.LiquidityStatus lendingAssetLiquidity = OracleFacet(
             address(this)
         ).checkLiquidity(offer.lendingAsset);
@@ -1025,7 +1029,6 @@ contract OfferAcceptFacet is
         // `effectivePrincipal` was computed earlier (before KYC) so the
         // value is available for KYC, LIF math, principal transfer, and
         // the OfferAccepted event payload below. See #183.
-        uint256 vpfiDiscountDeducted;
         if (offer.assetType == LibVaipakam.AssetType.ERC20) {
             // Borrower-offer ERC-20 path: lender is the acceptor and has
             // NOT pre-funded principal at any earlier step (only Lender
@@ -1110,25 +1113,16 @@ contract OfferAcceptFacet is
             // `offer.amount` back — the fee is paid out of the lender's
             // funded principal, not added on top of the debt.
             //
-            // VPFI path (Phase 5 / §5.2b): activates when the borrower has
-            // enabled the platform-level VPFI-discount consent setting
-            // (s.vpfiDiscountConsent[borrower]), the lending asset is
-            // liquid, AND the borrower's vault holds ≥ the FULL 0.1%
-            // LIF equivalent in VPFI. On success:
-            //   - Borrower pays the FULL 0.1% LIF equivalent in VPFI from
-            //     vault into Diamond custody (via
-            //     LibVPFIDiscount.tryApplyBorrowerLif). No tier discount
-            //     at init — the discount is realized as a time-weighted
-            //     rebate on proper settlement (see ClaimFacet and
-            //     LibVPFIDiscount.settleBorrowerLifProper).
-            //   - Lender delivers FULL 100% principal — no lender-side
-            //     haircut.
-            //   - vpfiDiscountDeducted is recorded against the loan via
-            //     s.borrowerLifRebate[loanId].vpfiHeld once the loan id
-            //     is known (see post-initiateLoan block below).
-            // On any precondition failure tryApplyBorrowerLif returns
-            // (false, 0) silently and we fall through to the normal 0.1%
-            // lending-asset fee path — no rebate eligibility on that path.
+            // HoldOnly hybrid LIF (#1352, redesign §F3): a consenting,
+            // tier-holding borrower gets their hold-tier discount applied
+            // DIRECTLY to the lending-asset LIF at accept — `lifAsset =
+            // base × (BPS − d_borrower) / BPS`, `d_borrower` resolved at
+            // origination (pinned, so no settle-time top-up gaming). No VPFI
+            // is moved and no `vpfiHeld` is taken; the peg-custody VPFI path
+            // (tryApplyBorrowerLif → Diamond custody → time-weighted rebate)
+            // is retired for new loans. Open custody loans keep settling via
+            // settleBorrowerLifProper / forfeitBorrowerLif. The per-party VPFI
+            // Full tariff is a separate later card (#1347 PR-5).
             // #951 (Codex #959 round-4) — a lender-sale-vehicle accept is a
             // SECONDARY-MARKET position transfer, not a fresh origination: the
             // underlying loan already paid its 0.1% LIF when it was first
@@ -1139,88 +1133,52 @@ contract OfferAcceptFacet is
             // real economics settle in `completeLoanSale`. See
             // LenderSaleVehicleRedesign.md.
             bool isSaleVehicleAccept = s.saleOfferToLoanId[offerId] != 0;
-            bool discountApplied;
-            if (
-                !isSaleVehicleAccept &&
-                s.vpfiDiscountConsent[borrower] &&
-                lendingAssetLiquidity == LibVaipakam.LiquidityStatus.Liquid
-            ) {
-                (discountApplied, vpfiDiscountDeducted) = LibVPFIDiscount
-                    .tryApplyBorrowerLif(offer.lendingAsset, effectivePrincipal, borrower);
-            }
 
-            uint256 netToBorrower;
-            if (isSaleVehicleAccept || discountApplied) {
-                netToBorrower = effectivePrincipal;
-            } else {
-                uint256 initiationFee = (effectivePrincipal *
-                    LibVaipakam.cfgLoanInitiationFeeBps()) /
-                    LibVaipakam.BASIS_POINTS;
-                netToBorrower = effectivePrincipal - initiationFee;
-
-                if (initiationFee > 0) {
-                    // Range Orders Phase 1 — 1% LIF matcher kickback.
-                    // `matcher` resolves to msg.sender on the legacy
-                    // acceptOffer path (same person who triggered the
-                    // match). Under matchOffers, matcher is the bot
-                    // recorded in the matchOverride slot. Either way:
-                    // 99% to treasury, 1% to matcher. Splits inline so
-                    // a single LIF flow never lands 100% in either
-                    // bucket. See design §"1% match fee mechanic".
-                    uint256 matcherCut =
-                        LibOfferMatch.matcherShareOf(initiationFee);
-                    uint256 treasuryCut = initiationFee - matcherCut;
-                    LibFacet.crossFacetCall(
-                        abi.encodeWithSelector(
-                            VaultFactoryFacet.vaultWithdrawERC20.selector,
-                            lender,
-                            offer.lendingAsset,
-                            LibFacet.getTreasury(),
-                            treasuryCut
-                        ),
-                        TreasuryTransferFailed.selector
-                    );
-                    LibFacet.recordTreasuryAccrual(
+            if (isSaleVehicleAccept) {
+                // Secondary-market position transfer — deliver the full sale
+                // principal to the seller (the underlying loan already paid its
+                // LIF at origination; #951).
+                LibFacet.crossFacetCall(
+                    abi.encodeWithSelector(
+                        VaultFactoryFacet.vaultWithdrawERC20.selector,
+                        lender,
                         offer.lendingAsset,
-                        treasuryCut
-                    );
-                    if (matcherCut > 0) {
-                        LibFacet.crossFacetCall(
-                            abi.encodeWithSelector(
-                                VaultFactoryFacet.vaultWithdrawERC20.selector,
-                                lender,
-                                offer.lendingAsset,
-                                // Read matcher inline from storage to
-                                // keep this function under viaIR's
-                                // stack-too-deep budget. #396 v0.5: on a
-                                // signed-offer fill `msg.sender` is the
-                                // diamond (cross-facet `acceptOfferInternal`),
-                                // so fall back to the injected real filler.
-                                s.matchOverride.active
-                                    ? s.matchOverride.matcher
-                                    : (s.signedOfferAcceptor != address(0)
-                                        ? s.signedOfferAcceptor
-                                        : msg.sender),
-                                matcherCut
-                            ),
-                            VaultWithdrawFailed.selector
-                        );
-                    }
-                }
+                        borrower,
+                        effectivePrincipal
+                    ),
+                    VaultWithdrawFailed.selector
+                );
+            } else {
+                // HoldOnly hybrid borrower LIF (#1352, redesign §F3): charge the
+                // consent-gated, hold-tier-discounted lending-asset LIF and
+                // deliver the net principal to the borrower. No VPFI is moved
+                // and no `vpfiHeld` custody is taken — the peg-custody path
+                // (LibVPFIDiscount.tryApplyBorrowerLif) is RETIRED for new
+                // loans, so a new loan never sets `vpfiHeld`; open custody-path
+                // loans (`vpfiHeld > 0`) still settle via settleBorrowerLifProper
+                // / forfeitBorrowerLif (untouched). The per-party VPFI Full
+                // tariff is a separate later card (#1347 PR-5). Incidence
+                // unchanged: the fee is a borrower cash haircut sourced from the
+                // lender's funded principal; borrower debt stays the full
+                // `effectivePrincipal`. The whole charge + net delivery runs
+                // through a cross-facet call to {chargeBorrowerLifAndDeliver}
+                // (an `address(this).call` boundary) so NONE of its locals (the
+                // fee, matcherCut/treasuryCut, discount staticcall, net) land in
+                // this already-at-budget viaIR frame.
+                LibFacet.crossFacetCall(
+                    abi.encodeWithSelector(
+                        OfferAcceptFacet.chargeBorrowerLifAndDeliver.selector,
+                        offer.lendingAsset,
+                        lender,
+                        borrower,
+                        effectivePrincipal,
+                        lendingAssetLiquidity ==
+                            LibVaipakam.LiquidityStatus.Liquid,
+                        msg.sender
+                    ),
+                    VaultWithdrawFailed.selector
+                );
             }
-
-            // Transfer net principal to borrower (full amount when the VPFI
-            // discount path fired; principal − fee otherwise).
-            LibFacet.crossFacetCall(
-                abi.encodeWithSelector(
-                    VaultFactoryFacet.vaultWithdrawERC20.selector,
-                    lender,
-                    offer.lendingAsset,
-                    borrower,
-                    netToBorrower
-                ),
-                VaultWithdrawFailed.selector
-            );
         } else {
             if (offer.offerType == LibVaipakam.OfferType.Lender) {
                 // NFT renting: borrower prepays (rate × days + buffer).
@@ -1450,32 +1408,13 @@ contract OfferAcceptFacet is
             }
         }
 
-        // Phase 5: record the Diamond-held VPFI against the loan once
-        // the loan id is known. The settlement helpers
-        // (settleBorrowerLifProper / forfeitBorrowerLif) read this slot
-        // to split the held amount between the borrower rebate and
-        // treasury at resolution time.
-        if (vpfiDiscountDeducted > 0) {
-            LibVaipakam.storageSlot()
-                .borrowerLifRebate[loanId]
-                .vpfiHeld = vpfiDiscountDeducted;
-        }
-
-        // Emit the discount event (after loanId is known) via
-        // VPFIDiscountFacet so indexers can subscribe to a single facet for
-        // discount analytics.
-        if (vpfiDiscountDeducted > 0) {
-            LibFacet.crossFacetCall(
-                abi.encodeWithSelector(
-                    VPFIDiscountFacet.emitDiscountApplied.selector,
-                    loanId,
-                    borrower,
-                    offer.lendingAsset,
-                    vpfiDiscountDeducted
-                ),
-                OfferAcceptFailed.selector
-            );
-        }
+        // #1352 — the peg-custody borrower-LIF origination path is retired for
+        // new loans, so nothing sets `vpfiHeld` here any more (HoldOnly charges
+        // the discounted LIF in the lending asset at accept; no VPFI custody).
+        // The `borrowerLifRebate[loanId].vpfiHeld` write + the
+        // `emitDiscountApplied` event were removed with it. Open custody-path
+        // loans keep their existing `vpfiHeld` and still settle via
+        // settleBorrowerLifProper / forfeitBorrowerLif.
 
         // Auto-complete linked flows atomically so there is no gap where the
         // live loan could be repaid/defaulted between acceptance and completion.
@@ -1573,6 +1512,97 @@ contract OfferAcceptFacet is
     ///      `offer.amount` (which under Phase 2 is the lender's
     ///      `minPartialFillAmount` for lender offers, NOT the lent
     ///      amount). KYC must gate on real value at risk.
+    /// @notice Diamond-internal: the full borrower LIF charge + net delivery
+    ///         for a NEW (non-sale) ERC-20 loan (#1352).
+    /// @dev    Deliberately an EXTERNAL, `msg.sender == address(this)`-gated
+    ///         method invoked by {_acceptOffer} through
+    ///         `LibFacet.crossFacetCall` — the `address(this).call` boundary
+    ///         runs this entire charge (the HoldOnly discount staticcall + the
+    ///         three vault withdraws) in a FRESH stack frame, so none of its
+    ///         depth lands in `_acceptOffer` / the permit entry, which sit at
+    ///         the viaIR stack-too-deep budget. Same trust model as the
+    ///         `vaultWithdrawERC20` cross-facet calls it wraps. Computes the
+    ///         HoldOnly-discounted lending-asset LIF (§F3, consent-gated
+    ///         hold-tier direct reduction — no VPFI moved), charges it from the
+    ///         lender's funded principal split 99/1 treasury/matcher, and
+    ///         delivers `principal − fee` to the borrower. Matcher resolves to
+    ///         the matchOverride bot / injected signed-offer filler /
+    ///         msg.sender — read at the ORIGINAL call's context via the stored
+    ///         match/signed-offer slots (this method's own `msg.sender` is the
+    ///         diamond).
+    /// @param  lendingAsset       The ERC-20 principal asset.
+    /// @param  lender             The offer's lender (funds the principal + fee).
+    /// @param  borrower           The borrowing party (LIF discount + net recipient).
+    /// @param  effectivePrincipal The loan principal in lending-asset wei.
+    /// @param originalCaller The ORIGINAL accept caller (`msg.sender` in
+    ///        `_acceptOffer`). It is threaded in because this method runs
+    ///        behind an `address(this).call`, so its own `msg.sender` is the
+    ///        diamond — using that as the direct-path matcher would send the
+    ///        1% LIF kickback to the diamond instead of the caller who brought
+    ///        the fill on-chain.
+    function chargeBorrowerLifAndDeliver(
+        address lendingAsset,
+        address lender,
+        address borrower,
+        uint256 effectivePrincipal,
+        bool isLiquid,
+        address originalCaller
+    ) external {
+        if (msg.sender != address(this)) {
+            revert UnauthorizedCrossFacetCall();
+        }
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        uint256 initiationFee = LibVPFIDiscount.holdOnlyBorrowerLif(
+            borrower,
+            effectivePrincipal,
+            isLiquid
+        );
+
+        if (initiationFee > 0) {
+            uint256 matcherCut = LibOfferMatch.matcherShareOf(initiationFee);
+            uint256 treasuryCut = initiationFee - matcherCut;
+            LibFacet.crossFacetCall(
+                abi.encodeWithSelector(
+                    VaultFactoryFacet.vaultWithdrawERC20.selector,
+                    lender,
+                    lendingAsset,
+                    LibFacet.getTreasury(),
+                    treasuryCut
+                ),
+                TreasuryTransferFailed.selector
+            );
+            LibFacet.recordTreasuryAccrual(lendingAsset, treasuryCut);
+            if (matcherCut > 0) {
+                LibFacet.crossFacetCall(
+                    abi.encodeWithSelector(
+                        VaultFactoryFacet.vaultWithdrawERC20.selector,
+                        lender,
+                        lendingAsset,
+                        s.matchOverride.active
+                            ? s.matchOverride.matcher
+                            : (s.signedOfferAcceptor != address(0)
+                                ? s.signedOfferAcceptor
+                                : originalCaller),
+                        matcherCut
+                    ),
+                    VaultWithdrawFailed.selector
+                );
+            }
+        }
+
+        // Deliver the net principal (principal − fee) to the borrower.
+        LibFacet.crossFacetCall(
+            abi.encodeWithSelector(
+                VaultFactoryFacet.vaultWithdrawERC20.selector,
+                lender,
+                lendingAsset,
+                borrower,
+                effectivePrincipal - initiationFee
+            ),
+            VaultWithdrawFailed.selector
+        );
+    }
+
     /// @dev 1e18-scaled numeraire value of `amount` units of `asset`, or 0 when
     ///      the asset is illiquid (unpriced). Shared by both legs of
     ///      {_calculateTransactionValueNumeraire}; kept as a single private helper

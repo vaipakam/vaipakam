@@ -603,7 +603,23 @@ Governance effects:
 > - **HoldOnly (default when a tier holder consents):** the borrower's LIF
 >   is charged in the **lending asset**, reduced by the borrower's tier
 >   discount (E-1 direct reduction). No VPFI is moved, no custody, no
->   rebate — a hybrid asset-LIF path, not the peg-custody path.
+>   rebate — a hybrid asset-LIF path, not the peg-custody path. The tier
+>   is resolved at **acceptance** (pinned at origination, so a settle-time
+>   top-up cannot game it), and the discount applies on a **liquid**
+>   lending asset only — an illiquid loan pays the full (undiscounted)
+>   lending-asset LIF, consistent with the prior borrower-path posture and
+>   with a reward-eligible origination requiring a priceable asset. The
+>   **accept charge and the accept-preview quote** compute this from one
+>   shared formula, so a borrower is quoted exactly what they are charged.
+>   The **offer-match event's `lifMatcherFee` field is gross/display-only**:
+>   it reports the **list-rate** matcher slice (`principal × LIF_bps ×
+>   matcherFee_bps`), NOT the borrower's tier-discounted figure — the actual
+>   matcher transfer is lower after the HoldOnly discount. (The event carries
+>   the list rate deliberately: folding the discount into the match event
+>   pushed `OfferMatchFacet` past the EIP-170 runtime limit, and the matcher
+>   slice is an informational log, not the borrower's charge.) Indexers/UI
+>   reading matcher kickbacks from this event MUST treat it as a gross
+>   upper bound, not the settled amount.
 > - **Full (borrower opt-in):** the borrower additionally pays a native-VPFI
 >   **tariff** `C*` from their own vault, credited to the recycle bucket
 >   **at initiation** (non-refundable, no rebate on any outcome), in

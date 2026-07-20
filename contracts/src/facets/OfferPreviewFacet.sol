@@ -8,7 +8,6 @@ import {LibERC721} from "../libraries/LibERC721.sol";
 import {OfferAcceptFacet} from "./OfferAcceptFacet.sol";
 import {OracleFacet} from "./OracleFacet.sol";
 import {ProfileFacet} from "./ProfileFacet.sol";
-import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 
 /**
  * @title OfferPreviewFacet
@@ -121,37 +120,18 @@ contract OfferPreviewFacet {
         // phantom fee; `lifEstimate` stays 0.
         if (_isErc20 && _saleLoanId == 0) {
             address _borrower = _isLender ? acceptor : offer.creator;
-            bool _vpfiDiscountApplies;
-            if (
-                s.vpfiDiscountConsent[_borrower]
-                    && OracleFacet(address(this)).checkLiquidity(
-                        offer.lendingAsset
-                    ) == LibVaipakam.LiquidityStatus.Liquid
-            ) {
-                (bool _canQuote, uint256 _vpfiRequired, ) =
-                    LibVPFIDiscount.quote(
-                        offer.lendingAsset,
-                        preview.effectivePrincipal,
-                        _borrower
-                    );
-                if (_canQuote) {
-                    address _borrowerVault =
-                        s.userVaipakamVaults[_borrower];
-                    if (
-                        _borrowerVault != address(0)
-                            && IERC20(s.vpfiToken).balanceOf(_borrowerVault)
-                                >= _vpfiRequired
-                    ) {
-                        _vpfiDiscountApplies = true;
-                    }
-                }
-            }
-            if (!_vpfiDiscountApplies) {
-                preview.lifEstimate =
-                    (preview.effectivePrincipal *
-                        LibVaipakam.cfgLoanInitiationFeeBps()) /
-                    LibVaipakam.BASIS_POINTS;
-            }
+            // HoldOnly hybrid (#1352, §F3): quote exactly what `_acceptOffer`
+            // will charge — the shared helper resolves the consent-gated
+            // hold-tier discount (capped 50%, liquid-asset only) and applies it
+            // to the lending-asset LIF. The retired peg-custody VPFI path is
+            // gone. Resolve liquidity the same way accept does so the discount
+            // gate matches.
+            preview.lifEstimate = LibVPFIDiscount.holdOnlyBorrowerLif(
+                _borrower,
+                preview.effectivePrincipal,
+                OracleFacet(address(this)).checkLiquidity(offer.lendingAsset) ==
+                    LibVaipakam.LiquidityStatus.Liquid
+            );
         }
 
         // ─── Precondition chain (first failure wins) ────────────────

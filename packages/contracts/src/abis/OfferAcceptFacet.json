@@ -460,6 +460,44 @@
   },
   {
     "type": "function",
+    "name": "chargeBorrowerLifAndDeliver",
+    "inputs": [
+      {
+        "name": "lendingAsset",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "lender",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "borrower",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "effectivePrincipal",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "isLiquid",
+        "type": "bool",
+        "internalType": "bool"
+      },
+      {
+        "name": "originalCaller",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
     "name": "verifyAndBindAccept",
     "inputs": [
       {

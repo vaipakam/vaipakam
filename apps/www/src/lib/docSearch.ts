@@ -169,8 +169,8 @@ function sliceSections(raw: string): RawSection[] {
  * default actually changes in the contract, update this map too.
  */
 const LIVE_VALUE_DEFAULTS_FOR_INDEX: Record<string, string> = {
-  treasuryFeeBps: '1',
-  loanInitiationFeeBps: '0.1',
+  treasuryFeeBps: '2',
+  loanInitiationFeeBps: '0.2',
   tier1Min: '100',
   tier2Min: '1,000',
   tier3Min: '5,000',

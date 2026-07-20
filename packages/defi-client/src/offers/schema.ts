@@ -14,8 +14,11 @@ export const OFFER_DURATION_DEFAULT_DAYS = 30;
 /** Mirrors LibVaipakam.MAX_INTEREST_BPS (100% APR protocol cap). */
 const MAX_INTEREST_BPS = 10_000n;
 
-/** Mirrors LibVaipakam.LOAN_INITIATION_FEE_BPS — ERC-20 principal path default. */
-export const LOAN_INITIATION_FEE_BPS = 10n;
+/** Mirrors LibVaipakam.LOAN_INITIATION_FEE_BPS — ERC-20 principal path default.
+ *  0.2% since the #1352 fee freeze (was 0.1%); keep in sync with the contract
+ *  constant so receipts don't understate the upfront borrower haircut when the
+ *  live fee-config read is unavailable. */
+export const LOAN_INITIATION_FEE_BPS = 20n;
 
 /** Net wallet proceeds after the upfront ERC-20 LIF deduction at accept. */
 export function netBorrowProceedsWei(

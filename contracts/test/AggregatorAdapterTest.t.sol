@@ -234,7 +234,7 @@ contract AggregatorAdapterTest is SetupTest {
         // pays it the LIF kickback in the LENDING asset. #626 round-6 P2 re-liens
         // that raw balance into idle so it re-enters NAV (instead of stranding
         // outside ERC-4626 accounting until a manual sweep). So idle is STRICTLY
-        // ABOVE (deposit - fill) by the kickback (1% of the 0.1% LIF on the fill).
+        // ABOVE (deposit - fill) by the kickback (1% of the 0.2% LIF on the fill, rev-8 freeze #1352).
         uint256 idle = _idle();
         assertGt(idle, DEPOSIT - fill, "matcher kickback re-funded into idle");
         // ...but the kickback is a small fee, not a double-count of the fill.

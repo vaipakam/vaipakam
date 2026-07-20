@@ -65,7 +65,7 @@ contract RepayFacetTest is Test {
     address mockCollateralERC20;
     address mockNft721;
     uint256 constant BASIS_POINTS = 10000;
-    uint256 constant TREASURY_FEE_BPS = 100;
+    uint256 constant TREASURY_FEE_BPS = 200; // rev-8 freeze #1352 (was 100)
 
     // Mock Oracle responses
     function mockOracleLiquidity(
@@ -451,13 +451,13 @@ contract RepayFacetTest is Test {
         LibVaipakam.Loan memory loan = LoanFacet(address(diamond)).getLoanDetails(1);
         assertEq(
             loan.treasuryFeeBpsAtInit,
-            100,
-            "treasury fee snapshotted at the 1% default at init"
+            200,
+            "treasury fee snapshotted at the 2% default at init (rev-8 freeze #1352)"
         );
         assertEq(
             loan.loanInitiationFeeBpsAtInit,
-            10,
-            "LIF snapshotted at the 0.1% default at init"
+            20,
+            "LIF snapshotted at the 0.2% default at init (rev-8 freeze #1352)"
         );
 
         // Loan 2 (created by helperOfferLoan) is an NFT rental — no ERC-20 LIF
@@ -471,8 +471,8 @@ contract RepayFacetTest is Test {
         );
         assertEq(
             rental.treasuryFeeBpsAtInit,
-            100,
-            "treasury fee still snapshotted on the NFT rental"
+            200,
+            "treasury fee still snapshotted on the NFT rental (rev-8 freeze #1352)"
         );
     }
 

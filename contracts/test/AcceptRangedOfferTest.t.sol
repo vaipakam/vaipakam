@@ -256,15 +256,15 @@ contract AcceptRangedOfferTest is SetupTest {
             "direct-accept does NOT update amountFilled (terminal via accepted=true)"
         );
 
-        // Borrower wallet credit - net of the 0.1% LIF that
-        // `tryApplyBorrowerLif` short-circuits past when the borrower
-        // hasn't staked VPFI (default SetupTest harness). 10_000 * 10 /
-        // 10000 = 10 LIF (99% treasury / 1% matcher kickback per the
-        // Phase 1 split). Borrower nets 9_990 of the 10k principal.
+        // Borrower wallet credit - net of the 0.2% LIF (rev-8 freeze,
+        // #1352) that the HoldOnly path charges in full when the borrower
+        // hasn't staked VPFI (default SetupTest harness). 10_000 * 20 /
+        // 10000 = 20 LIF (99% treasury / 1% matcher kickback per the
+        // Phase 1 split). Borrower nets 9_980 of the 10k principal.
         assertEq(
             ERC20(mockERC20).balanceOf(borrower),
-            borrowerWalletBefore + 9_990,
-            "borrower nets 9990 = effectivePrincipal (10k) - LIF (10)"
+            borrowerWalletBefore + 9_980,
+            "borrower nets 9980 = effectivePrincipal (10k) - LIF (20)"
         );
     }
 
@@ -334,11 +334,12 @@ contract AcceptRangedOfferTest is SetupTest {
             "lender wallet down by the 1k principal"
         );
         // Borrower's wallet - credited by the 1k principal net of LIF
-        // (10 BPS = 1). See scenario 1's note for the LIF semantic.
+        // (20 BPS = 2, rev-8 freeze #1352). See scenario 1's note for the
+        // LIF semantic.
         assertEq(
             ERC20(mockERC20).balanceOf(borrower),
-            borrowerWalletBefore + 999,
-            "borrower nets 999 = effectivePrincipal (1k) - LIF (1)"
+            borrowerWalletBefore + 998,
+            "borrower nets 998 = effectivePrincipal (1k) - LIF (2)"
         );
 
         // Offer state - direct-accept marks accepted=true, leaves
@@ -515,8 +516,8 @@ contract AcceptRangedOfferTest is SetupTest {
         );
         assertEq(
             ERC20(mockERC20).balanceOf(borrower),
-            borrowerWalletBefore + 4_995,
-            "borrower nets 4_995 = principal 5k - LIF (5) - single-value path unchanged from #183"
+            borrowerWalletBefore + 4_990,
+            "borrower nets 4_990 = principal 5k - LIF (10, 20 BPS rev-8 #1352) - single-value path unchanged from #183"
         );
     }
 }

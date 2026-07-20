@@ -463,6 +463,15 @@ library LibVPFIDiscount {
         if (loan.startTime == 0 || block.timestamp <= loan.startTime) return 0;
         ( , uint16 effBps) = effectiveTierAndBps(loan.lender);
         avgBps = uint256(effBps);
+        // #1352 (Codex P2): the 50% fee-discount ceiling is a UNIFORM cap.
+        // `ConfigFacet.setVpfiTierDiscountBps` still permits per-tier values
+        // above `MAX_FEE_DISCOUNT_BPS` (up to 9000), so clamp here — the same
+        // clamp `holdOnlyBorrowerLif` applies to the borrower LIF — or a
+        // lender could realize a >50% yield-fee reduction and under-collect
+        // treasury on repay/preclose/refinance settlements.
+        if (avgBps > LibVaipakam.MAX_FEE_DISCOUNT_BPS) {
+            avgBps = LibVaipakam.MAX_FEE_DISCOUNT_BPS;
+        }
     }
 
     /**
@@ -484,6 +493,61 @@ library LibVPFIDiscount {
         if (loan.startTime == 0 || block.timestamp <= loan.startTime) return 0;
         ( , uint16 effBps) = effectiveTierAndBps(loan.borrower);
         avgBps = uint256(effBps);
+        // #1352 (Codex P2): uniform 50% fee-discount ceiling — symmetric with
+        // {lenderTimeWeightedDiscountBps} and `holdOnlyBorrowerLif`.
+        if (avgBps > LibVaipakam.MAX_FEE_DISCOUNT_BPS) {
+            avgBps = LibVaipakam.MAX_FEE_DISCOUNT_BPS;
+        }
+    }
+
+    /**
+     * @notice HoldOnly hybrid borrower Loan-Initiation Fee (#1352, redesign
+     *         §F3) — the LENDING-ASSET LIF reduced by the borrower's
+     *         consent-gated hold-tier discount. Two-step per §F3:
+     *         `baseLifAsset = principal × LIF_BPS / BPS`, then
+     *         `lifAsset = baseLifAsset × (BPS − d_borrower) / BPS`.
+     * @dev    `d_borrower` is the borrower's effective hold-tier discount bps
+     *         (0 without platform consent), clamped to `MAX_FEE_DISCOUNT_BPS`
+     *         (50%). Resolved from the LIVE tier at the call — callers invoke
+     *         it at ACCEPT so it is pinned at origination (no settle-time
+     *         top-up gaming). No VPFI is moved: a pure direct reduction, NOT
+     *         the retired peg-custody path. Shared by `_acceptOffer` (the
+     *         charge) and `OfferPreviewFacet` (the quote), so those two agree to
+     *         the wei — including the two-step rounding. The `OfferMatched`
+     *         matcher-fee field is deliberately NOT computed from this helper:
+     *         it logs the GROSS list-rate matcher slice (folding the discount in
+     *         pushed `OfferMatchFacet` past EIP-170), so the actual matcher
+     *         transfer on a HoldOnly-discounted fill is lower than the event
+     *         reports — treat that field as a display-only upper bound, never
+     *         the charged amount. The discount applies on LIQUID lending assets
+     *         only (see `isLiquid`); illiquid loans pay the full LIF.
+     * @param  borrower  The borrowing party whose tier is read.
+     * @param  principal The loan principal in lending-asset wei.
+     * @param  isLiquid  Whether the lending asset is liquid. The discount
+     *                   applies ONLY on a liquid asset (illiquid loans pay the
+     *                   full LIF — the legacy §6b posture); pass `false` to
+     *                   force the un-discounted LIF.
+     * @return lifAsset  The discounted LIF in lending-asset wei.
+     */
+    function holdOnlyBorrowerLif(
+        address borrower,
+        uint256 principal,
+        bool isLiquid
+    ) internal view returns (uint256 lifAsset) {
+        uint256 dBorrower;
+        if (isLiquid && LibVaipakam.storageSlot().vpfiDiscountConsent[borrower]) {
+            ( , uint16 effBps) = effectiveTierAndBps(borrower);
+            dBorrower = uint256(effBps);
+            if (dBorrower > LibVaipakam.MAX_FEE_DISCOUNT_BPS) {
+                dBorrower = LibVaipakam.MAX_FEE_DISCOUNT_BPS;
+            }
+        }
+        // baseLifAsset = principal × LIF_BPS / BPS  (§F3)
+        lifAsset = (principal * LibVaipakam.cfgLoanInitiationFeeBps()) /
+            LibVaipakam.BASIS_POINTS;
+        // discounted = baseLifAsset × (BPS − d_borrower) / BPS
+        lifAsset = (lifAsset * (LibVaipakam.BASIS_POINTS - dBorrower)) /
+            LibVaipakam.BASIS_POINTS;
     }
 
     // ─── Quotes (view) ───────────────────────────────────────────────────────
