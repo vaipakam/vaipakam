@@ -206,6 +206,35 @@ contract LoanSideRewardCapTest is SetupTest {
         assertEq(paid, 2e18, "unstamped loan earns full reward (cap skips, not zeroes)");
     }
 
+    // ── A STAMPED loan whose cap rounds to 0 (dust C*) IS capped, not skipped ──
+
+    function test_ArmedClaim_StampedDustCapZeroesArmedFresh() public {
+        _seedArmedDay(1, 1e18, 1e18);
+        _seedArmedDay(2, 1e18, 1e18);
+        _mut().setGovernorCommitArmedFromDayRaw(1);
+        _pushEntry(1e18, 1, 3);
+        // Stamp a NON-ZERO cStarOpen but a loanSideRewardCapOpen that rounded to
+        // 0 (a dust/short loan under a low-but-valid K). Distinguished from an
+        // unstamped loan by `cStarOpen != 0`, so the cap applies and trims the
+        // armed-fresh payout to ~0 (Codex #1371 r2 P1).
+        _mut().setFeeEntitlementRaw(
+            LOAN_ID,
+            LibVaipakam.FeeEntitlement({
+                borrowerMode: LibVaipakam.FeeEntitlementMode.None,
+                lenderMode: LibVaipakam.FeeEntitlementMode.None,
+                openDays: 2,
+                rewardHaircutBpsAtOpen: 200,
+                borrowerTariffPaid: 0,
+                lenderTariffPaid: 0,
+                cStarOpen: 1, // stamped (non-zero) but dust
+                loanSideRewardCapOpen: 0 // rounded to zero
+            })
+        );
+        vm.prank(rewardLender);
+        vm.expectRevert(); // armed-fresh trimmed to 0 ⇒ nothing to claim
+        _facet().claimInteractionRewards();
+    }
+
     // ── Cutover-spanning entry: only the ARMED (post-D*) portion is capped ──
 
     function test_ArmedClaim_SpanningEntryCapsOnlyArmedPortion() public {
