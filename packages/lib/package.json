@@ -50,7 +50,7 @@
   },
   "devDependencies": {
     "@vaipakam/contracts": "workspace:*",
-    "viem": "^2.48.4",
-    "vitest": "^4.1.4"
+    "viem": "^2.55.4",
+    "vitest": "^4.1.10"
   }
 }
