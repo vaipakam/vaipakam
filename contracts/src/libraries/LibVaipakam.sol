@@ -4845,22 +4845,6 @@ library LibVaipakam {
         // direct-accept illiquid-substitution path (the keeper-match path leaves
         // `acceptAckActive == false`).
         bytes32 acceptAckTermsHash;
-        // #1347 (M2 PR-5a/5b) — the ACCEPTOR's Full VPFI fee-entitlement tariff
-        // opt-in, injected by `OfferAcceptFacet._verifyAndBindAccept` from the
-        // signed `AcceptTerms.acceptorFull` / `acceptorMaxCStar` /
-        // `acceptorAllowFullDowngrade` for the post-mint `chargeFullTariff` +
-        // the pre-mint borrower-LIF +10% fold to read. Same transient-injection
-        // model as `acceptAckTermsHash`: written on every DIRECT accept entry,
-        // read ONLY while `acceptAckActive == true` (so a stale value from a
-        // prior accept can never leak into a keeper-match fill, which leaves
-        // `acceptAckActive == false` — matcher fills carry no acceptor-signed
-        // Full, so the acceptor's side stays non-Full there by construction).
-        // Not cleared on exit (like `acceptAckTermsHash`) — the `acceptAckActive`
-        // gate is the load-bearing reset, saving the high-offset SSTOREs the
-        // at-EIP-170 accept facet can't spare. Zero-default ⇒ non-Full.
-        bool acceptAckAcceptorFull;
-        bool acceptAckAcceptorAllowFullDowngrade;
-        uint256 acceptAckAcceptorMaxCStar;
         // #730 (Codex #736 r3–r7) — the live risk-terms ANCHOR, paired with
         // `currentRiskTermsVersion`. Set by `revealRiskTermsBump` to a fresh RANDOM
         // SECRET (`termsAnchor`) published via commit-reveal: the slow/timelock
@@ -5293,6 +5277,25 @@ library LibVaipakam {
         ///      by `loanId`. Zero default ⇒ neither party opted into the VPFI
         ///      discount/tariff path for that loan.
         mapping(uint256 => FeeEntitlement) feeEntitlementByLoanId;
+        // #1347 (M2 PR-5a/5b) — the ACCEPTOR's Full VPFI fee-entitlement tariff
+        // opt-in, injected by `OfferAcceptFacet._verifyAndBindAccept` from the
+        // signed `AcceptTerms.acceptorFull` / `acceptorMaxCStar` /
+        // `acceptorAllowFullDowngrade` for the post-mint `chargeFullTariff` +
+        // the pre-mint borrower-LIF +10% fold to read. Same transient-injection
+        // model as `acceptAckTermsHash`: written on every DIRECT accept entry,
+        // read ONLY while `acceptAckActive == true` (so a stale value from a
+        // prior accept can never leak into a keeper-match fill, which leaves
+        // `acceptAckActive == false` — matcher fills carry no acceptor-signed
+        // Full, so the acceptor's side stays non-Full there by construction).
+        // Not cleared on exit (like `acceptAckTermsHash`) — the `acceptAckActive`
+        // gate is the load-bearing reset, saving the high-offset SSTOREs the
+        // at-EIP-170 accept facet can't spare. Zero-default ⇒ non-Full.
+        // APPEND-ONLY TAIL: these MUST stay at the very end of Storage so an
+        // in-place diamond refresh never shifts an existing field's slot
+        // (Codex #1366 r2 P1).
+        bool acceptAckAcceptorFull;
+        bool acceptAckAcceptorAllowFullDowngrade;
+        uint256 acceptAckAcceptorMaxCStar;
     }
 
     /// @notice Governor PR-3b (#1217 §3.1) — the per-day pool composition

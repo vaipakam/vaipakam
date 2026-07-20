@@ -158,12 +158,26 @@ library LibFeeEntitlement {
         // post-mutation tracked balance (an unstake must take effect
         // immediately for every open loan's average), then credit the bucket.
         // Mirrors LibNotificationFee.bill's pull → rollup → credit sequence.
-        VaultFactoryFacet(address(this)).vaultWithdrawERC20(
-            party,
-            vpfi,
-            address(this),
-            cStar
-        );
+        //
+        // GUARD the withdrawal: even past the tracked-balance pre-check it can
+        // still revert — the vault caps at the FREE (unencumbered) balance and
+        // the VPFI token can be paused — so a downgrade-authorized party must
+        // fall back cleanly to HoldOnly/None instead of the whole accept
+        // bricking (Codex #1366 r2 P2). Without downgrade permission the revert
+        // is the party's chosen failure (surfaced as the same FullOptInFailed).
+        try
+            VaultFactoryFacet(address(this)).vaultWithdrawERC20(
+                party,
+                vpfi,
+                address(this),
+                cStar
+            )
+        {
+            // pulled — fall through to rollup + credit
+        } catch {
+            if (allowDowngrade) return _downgrade(holdEligible);
+            revert FeeEntitlementFullOptInFailed(party);
+        }
         LibVPFIDiscount.rollupUserDiscount(
             party,
             s.protocolTrackedVaultBalance[party][vpfi]

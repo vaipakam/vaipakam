@@ -99,6 +99,17 @@ contract FeeEntitlementFacet is IVaipakamErrors {
         // lender. A matcher fill leaves `acceptAckActive == false`, so the
         // acceptor side reads as non-Full — the borrower can never have their
         // vault drained by a keeper they didn't sign for.
+        //
+        // KNOWN LIMITATION (matched fills): `matchOffers` routes
+        // `acceptOfferInternal` with the BORROWER offer id, so `offer` here is
+        // the borrower offer and the counterparty lender's `creatorFull` (which
+        // lives on the SEPARATE lender offer, not read here) is silently ignored
+        // — a matched fill therefore resolves the lender side as non-Full rather
+        // than charging or downgrading it. This is SAFE (no wrong charge; the
+        // design treats matched-fill lender-Full as a "may", rev-15 §3) and dark;
+        // honoring lender Full on the match path (threading the lender offer's
+        // auth through `OfferMatchFacet`) is tracked as follow-up #1369. Borrower
+        // Full on a matched borrower offer IS honored via `offer.creatorFull`.
         bool acceptorFull = s.acceptAckActive && s.acceptAckAcceptorFull;
         bool isLenderOffer = offer.offerType == LibVaipakam.OfferType.Lender;
 
@@ -121,7 +132,7 @@ contract FeeEntitlementFacet is IVaipakamErrors {
                 isLenderOffer
                     ? s.acceptAckAcceptorAllowFullDowngrade
                     : offer.creatorAllowFullDowngrade,
-                _holdEligible(s, borrower, principalLiquid, /*needsConsent=*/ true),
+                _holdEligible(s, borrower, principalLiquid, /*isBorrowerSide=*/ true),
                 principalLiquid,
                 cStar,
                 numeraireOk
@@ -139,7 +150,7 @@ contract FeeEntitlementFacet is IVaipakamErrors {
                 isLenderOffer
                     ? offer.creatorAllowFullDowngrade
                     : s.acceptAckAcceptorAllowFullDowngrade,
-                _holdEligible(s, lender, principalLiquid, /*needsConsent=*/ false),
+                _holdEligible(s, lender, principalLiquid, /*isBorrowerSide=*/ false),
                 principalLiquid,
                 cStar,
                 numeraireOk
@@ -164,24 +175,25 @@ contract FeeEntitlementFacet is IVaipakamErrors {
         );
     }
 
-    /// @dev Best-effort hold-discount eligibility for the non-Full mode stamp
-    ///      (HoldOnly vs None). Mirrors what the actual fee path applies: the
-    ///      borrower's HoldOnly LIF needs liquidity + `vpfiDiscountConsent` + a
-    ///      non-zero effective tier (so the stamp matches
-    ///      {LibVPFIDiscount.holdOnlyBorrowerLif}); the lender's yield-fee
-    ///      discount is tier-based only. This field is informational for now —
-    ///      the settlement sweep (PR-6) reads it — so keeping it consistent with
-    ///      the charged discount avoids a spurious HoldOnly stamp on a party that
-    ///      collected no discount.
+    /// @dev Hold-discount eligibility for the non-Full mode stamp (HoldOnly vs
+    ///      None) that the settlement sweep (PR-6) reads. Mirrors what the actual
+    ///      fee paths apply so the durable stamp never records an entitlement a
+    ///      party never authorized:
+    ///       - BOTH sides require the shared `vpfiDiscountConsent` — settlement
+    ///         only applies either discount when that consent is on, so a
+    ///         tier-holding but non-consenting party is stamped `None` (Codex
+    ///         #1366 r2 P2).
+    ///       - the borrower's HoldOnly LIF discount is additionally LIQUID-only
+    ///         (matching {LibVPFIDiscount.holdOnlyBorrowerLif}); the lender's
+    ///         yield-fee discount is tier-based and not liquidity-gated.
     function _holdEligible(
         LibVaipakam.Storage storage s,
         address party,
         bool principalLiquid,
-        bool needsConsent
+        bool isBorrowerSide
     ) private view returns (bool) {
-        if (needsConsent && !(principalLiquid && s.vpfiDiscountConsent[party])) {
-            return false;
-        }
+        if (!s.vpfiDiscountConsent[party]) return false;
+        if (isBorrowerSide && !principalLiquid) return false;
         (, uint16 effBps) = LibVPFIDiscount.effectiveTierAndBps(party);
         return effBps > 0;
     }
