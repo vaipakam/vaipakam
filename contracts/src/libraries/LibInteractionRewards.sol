@@ -1588,6 +1588,17 @@ function _dayPoolHalves(
         uint256 capRatio = LibVaipakam.getInteractionCapVpfiPerEth();
         (uint256 ethPriceRaw, uint8 ethPriceDec) = _ethUsdPriceRawAndDec();
         for (uint256 d = fromDay; d <= toDayInclusive; ) {
+            // #1353 (M2 PR-5c) — an armed (post-`D*`) day pays via the ShareOfPool
+            // ENTRY path only; the legacy per-day window must NEVER pay on an
+            // armed day — it would double-pay atop the entry path, and #1008 is
+            // retired there ({snapshotDayCapThreshold}). Clear any residual /
+            // fabricated legacy counter without crediting (Codex #1371 r4).
+            if (_isArmedDay(s, d)) {
+                delete s.userLenderInterestNumeraire18[d][user];
+                delete s.userBorrowerInterestNumeraire18[d][user];
+                unchecked { ++d; }
+                continue;
+            }
             uint256 half = halfPoolForDay(d);
             if (half > 0) {
                 (uint256 totalL, uint256 totalB) = _denominatorsForDay(s, d);
@@ -1630,6 +1641,10 @@ function _dayPoolHalves(
         uint256 capRatio = LibVaipakam.getInteractionCapVpfiPerEth();
         (uint256 ethPriceRaw, uint8 ethPriceDec) = _ethUsdPriceRawAndDec();
         for (uint256 d = fromDay; d <= toDayInclusive; ) {
+            // #1353 (M2 PR-5c) — mirror {claimForUserWindow}: an armed (post-`D*`)
+            // day never pays via the legacy window (ShareOfPool entry path only),
+            // so the preview must not credit it either (Codex #1371 r4).
+            if (_isArmedDay(s, d)) { unchecked { ++d; } continue; }
             uint256 half = halfPoolForDay(d);
             if (half > 0) {
                 (uint256 totalL, uint256 totalB) = _denominatorsForDay(s, d);

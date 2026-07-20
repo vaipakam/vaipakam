@@ -957,13 +957,17 @@ contract ConfigFacet is DiamondAccessControl {
      *         `m_reward` (BPS) in `loanSideRewardCapOpen = ½ × C* × (BPS −
      *         m_reward) / BPS`.
      * @dev    ADMIN_ROLE-only (TimelockController post-handover). Bounded
-     *         `[0, REWARD_HAIRCUT_MAX_BPS]` (0–2000). Unlike most knobs `0` is a
-     *         VALID configured value (a 0% haircut), but because the loan-side
-     *         cap is priced from the value STAMPED at each loan's open, this
-     *         setter only affects loans originated AFTER it; open loans keep
-     *         their `rewardHaircutBpsAtOpen`. A never-configured deploy reads the
-     *         200-BPS default via {LibVaipakam.cfgRewardHaircutBps}.
-     * @param  newHaircutBps New `m_reward` (BPS); accepted verbatim (0 allowed).
+     *         `[0, REWARD_HAIRCUT_MAX_BPS]` (0–2000). **`0` is the RESET-to-
+     *         default sentinel, NOT a literal 0% haircut:** per the rev-15
+     *         parameter table ("0 ⇒ default 200"), {LibVaipakam.cfgRewardHaircutBps}
+     *         maps a stored `0` back to {REWARD_HAIRCUT_DEFAULT_BPS} (200), the
+     *         same zero-sentinel convention as every other `0 ⇒ default` knob.
+     *         A literal 0% haircut is therefore not reachable through this knob
+     *         (the 2% default is the effective floor). Because the loan-side cap
+     *         is priced from the value STAMPED at each loan's open, a change here
+     *         only affects loans originated AFTER it; open loans keep their
+     *         `rewardHaircutBpsAtOpen`.
+     * @param  newHaircutBps New `m_reward` (BPS); `0` resets to the 200-BPS default.
      */
     function setRewardHaircutBps(uint16 newHaircutBps)
         external

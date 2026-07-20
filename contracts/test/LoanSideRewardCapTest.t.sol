@@ -257,4 +257,20 @@ contract LoanSideRewardCapTest is SetupTest {
         // Total = uncapped day-1 reward + capped day-2 slice (0.05e18).
         assertEq(paid, day1 + 0.05e18, "pre-cutover day uncapped; only armed day capped");
     }
+
+    // ── Legacy per-day window must NOT pay on armed days (entry-path only) ──
+
+    function test_ArmedDay_LegacyWindowNotPaid() public {
+        // Codex #1371 r4: a residual/fabricated legacy per-day counter on an
+        // ARMED day must never pay via the legacy window — armed days settle
+        // through the ShareOfPool entry path only, and #1008 is retired there.
+        // With D* = 1 the seeded legacy day-1 counter is armed; the claim skips
+        // (and clears) it and, with no reward entry, reverts — instead of paying
+        // `halfPoolForDay(1)` as it would on an unarmed day.
+        _mut().setGovernorCommitArmedFromDayRaw(1);
+        _mut().setDailyLenderInterest(1, rewardLender, 100e18, 100e18);
+        vm.prank(rewardLender);
+        vm.expectRevert();
+        _facet().claimInteractionRewards();
+    }
 }
