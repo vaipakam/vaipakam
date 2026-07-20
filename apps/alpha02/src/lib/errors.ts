@@ -26,7 +26,7 @@ import { recordLastError } from '../diagnostics/lastError';
  * translators' `en.json` template from the lib catalog by the i18n:template
  * exporter — the English is NOT duplicated into copy.ts.
  */
-const translateContractError = (key: string, english: string): string =>
+export const translateContractError = (key: string, english: string): string =>
   i18n.isInitialized
     ? (i18n.t(`contractError.${key}`, { defaultValue: english }) as string)
     : english;

@@ -418,12 +418,19 @@ function resolveFriendly(opts: {
  * Resolve friendly copy from an error NAME and/or 4-byte selector. Returns
  * curated copy when available, else a humanized sentence from the name, else
  * `null` (caller falls back to its own default).
+ *
+ * Pass `translate` to localize the same way {@link decodeContractError} does —
+ * it receives the resolved stable key + English copy. Omit it (the default)
+ * for the English string. Used by the pre-sign simulation footer so its
+ * friendly revert copy localizes alongside the submit-error banner.
  */
-export function friendlyContractError(opts: {
-  name?: string;
-  selector?: string;
-}): string | null {
-  return resolveFriendly(opts)?.message ?? null;
+export function friendlyContractError(
+  opts: { name?: string; selector?: string },
+  translate?: ContractErrorTranslator,
+): string | null {
+  const r = resolveFriendly(opts);
+  if (!r) return null;
+  return translate ? translate(r.key, r.message) : r.message;
 }
 
 /**
@@ -432,13 +439,24 @@ export function friendlyContractError(opts: {
  * seeds its locale template from, so the English lives here ONCE and apps
  * localize by key via the `translate` hook rather than re-listing copy.
  *
- * Mirrors {@link decodeContractError}'s runtime precedence: the name-keyed map
- * is laid down first, then the selector-keyed map (resolved to its name)
- * overrides it — so the catalog value for a key equals what the decoder would
- * actually return for that error. Includes the #780 gas-estimate rewrite.
+ * Mirrors {@link decodeContractError}'s runtime precedence: the humanized
+ * fallback for every KNOWN selector name is laid down first, then the
+ * name-keyed curated map, then the selector-keyed curated map (resolved to
+ * its name) overrides on top — so the catalog value for a key equals what the
+ * decoder actually returns for that error, curated or humanized. This means a
+ * reachable-but-uncurated error (e.g. `SaleListingActive`, `InvalidAsset`) is
+ * still seeded (as its humanized sentence) so translators see it. Includes the
+ * #780 gas-estimate rewrite. Only genuinely UNKNOWN selectors (in no table)
+ * can't be pre-seeded — they surface as a support-triage `Name (0x…)` string.
  */
 export function contractErrorCatalog(): Record<string, string> {
   const out: Record<string, string> = {};
+  // Humanized fallback for every known selector name — the decoder returns
+  // this for a reachable error with no curated copy, so it must be translatable.
+  for (const signature of Object.values(KNOWN_ERROR_SELECTORS)) {
+    const name = signature.replace(/\(.*/, '');
+    out[name] = humanizeErrorName(name);
+  }
   for (const [name, message] of Object.entries(FRIENDLY_ERROR_BY_NAME)) {
     out[name] = message;
   }

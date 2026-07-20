@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import {
   decodeContractError,
+  friendlyContractError,
   contractErrorCatalog,
   GAS_ESTIMATE_UNAVAILABLE_KEY,
 } from './decodeContractError.js';
@@ -61,6 +62,21 @@ describe('decodeContractError — translate hook', () => {
     expect(out).toBe('GAS_LOCALE');
   });
 
+  it('localizes the pre-sign friendly path via friendlyContractError(translate)', () => {
+    // English by default (no translator).
+    expect(friendlyContractError({ name: 'MaxLendingAboveCeiling' })).toMatch(
+      /collateral is too low/i,
+    );
+    // With a translator: routed by the same stable key (the error name).
+    expect(
+      friendlyContractError({ name: 'MaxLendingAboveCeiling' }, (key) => `L:${key}`),
+    ).toBe('L:MaxLendingAboveCeiling');
+    // A humanized fallback for a known-but-uncurated name is localizable too.
+    expect(friendlyContractError({ name: 'SaleListingActive' }, (key) => `L:${key}`)).toBe(
+      'L:SaleListingActive',
+    );
+  });
+
   it('does NOT invoke the translator for a generic base revert (no curated copy)', () => {
     let called = false;
     const out = decodeContractError(
@@ -82,8 +98,20 @@ describe('contractErrorCatalog', () => {
     const cat = contractErrorCatalog();
     expect(cat.MaxLendingAboveCeiling).toMatch(/collateral is too low/i);
     expect(cat[GAS_ESTIMATE_UNAVAILABLE_KEY]).toMatch(/could not estimate/i);
-    // 117 selector-keyed + 34 name-keyed curated strings (deduped) + gas.
-    expect(Object.keys(cat).length).toBeGreaterThan(120);
+    // Curated (selector + name) plus a humanized fallback for every known
+    // selector name, so translators see every key the decoder can emit.
+    expect(Object.keys(cat).length).toBeGreaterThan(150);
+  });
+
+  it('seeds humanized fallbacks for known-but-uncurated selector names', () => {
+    const cat = contractErrorCatalog();
+    // Reachable errors with no curated copy still appear (as their humanized
+    // sentence) so a locale bundle can translate them (Codex #1367 r1).
+    expect(cat.SaleListingActive).toBe('Sale listing active');
+    expect(cat.InvalidAsset).toBe('Invalid asset');
+    // Curated copy still wins over the humanized fallback for the same name.
+    expect(cat.MaxLendingAboveCeiling).toMatch(/collateral is too low/i);
+    expect(cat.MaxLendingAboveCeiling).not.toBe('Max lending above ceiling');
   });
 
   it("catalog value for a key equals what the decoder returns for that error", () => {
