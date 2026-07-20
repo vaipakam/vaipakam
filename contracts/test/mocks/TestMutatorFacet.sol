@@ -723,6 +723,37 @@ contract TestMutatorFacet {
         LibVaipakam.storageSlot().governorCommitArmedFromDay = dayId;
     }
 
+    /// @notice #1353 (M2 PR-5c) test-only — stamp a loan's fee-entitlement
+    ///         record directly, so a loan-side reward-cap test can seed a known
+    ///         `loanSideRewardCapOpen` / `openDays` without driving a full Full
+    ///         accept (production stamps via {FeeEntitlementFacet.chargeFullTariff}).
+    function setFeeEntitlementRaw(
+        uint256 loanId,
+        LibVaipakam.FeeEntitlement memory fe
+    ) external {
+        LibVaipakam.storageSlot().feeEntitlementByLoanId[loanId] = fe;
+    }
+
+    /// @notice #1353 (M2 PR-5c) test-only — stamp an armed day's pool composition
+    ///         directly (production writes this at {finalizeDay}). Lets a
+    ///         post-cutover reward-cap test seed the ShareOfPool `scheduleFloor` /
+    ///         `recycledBudget` halves without driving the full governor finalize
+    ///         flow. `stamped = true`, so an armed day resolves its pool from
+    ///         here instead of halting.
+    function setDayPoolStampRaw(
+        uint256 dayId,
+        uint128 scheduleFloor,
+        uint128 recycledBudget
+    ) external {
+        LibVaipakam.storageSlot().dayPoolStamp[dayId] = LibVaipakam.DayPoolStamp({
+            scheduleFloor: scheduleFloor,
+            recycledBudget: recycledBudget,
+            aBarAtFinalize: 0,
+            marginBpsAtFinalize: 0,
+            stamped: true
+        });
+    }
+
     /// @notice Governor PR-3a test-only — stamp a seeded entry as forfeited
     ///         (production stamps it via {LibInteractionRewards.closeLoan}
     ///         on liquidation-class terminals) so recycle-bucket tests can

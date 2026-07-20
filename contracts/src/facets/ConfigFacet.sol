@@ -813,7 +813,13 @@ contract ConfigFacet is DiamondAccessControl {
     /// @custom:event-category informational/config
     event FeeEntitlementEnabledSet(bool enabled);
 
+    /// @notice #1353 (M2 PR-5c) — emitted when the loan-side reward-cap haircut
+    ///         `m_reward` (BPS) changes.
+    /// @custom:event-category informational/config
+    event RewardHaircutBpsSet(uint16 rewardHaircutBps);
+
     error InvalidTariffKPerLifYear(uint256 k, uint256 minAllowed, uint256 maxAllowed);
+    error InvalidRewardHaircutBps(uint256 bps, uint256 maxAllowed);
 
     /**
      * @notice Set the platform-retained recycling margin (bps) — the slight
@@ -946,18 +952,47 @@ contract ConfigFacet is DiamondAccessControl {
         emit FeeEntitlementEnabledSet(enabled);
     }
 
-    /// @notice #1347 (M2 PR-5a/5b) — read the effective Full-tariff knobs in
-    ///         one RPC.
-    /// @return enabled       Whether the Full VPFI tariff is enabled (DARK when false).
-    /// @return kPerLifYear   Effective `K` (VPFI-1e18 per list-LIF-numeraire per year).
+    /**
+     * @notice #1353 (M2 PR-5c) — set the loan-side reward-cap haircut
+     *         `m_reward` (BPS) in `loanSideRewardCapOpen = ½ × C* × (BPS −
+     *         m_reward) / BPS`.
+     * @dev    ADMIN_ROLE-only (TimelockController post-handover). Bounded
+     *         `[0, REWARD_HAIRCUT_MAX_BPS]` (0–2000). Unlike most knobs `0` is a
+     *         VALID configured value (a 0% haircut), but because the loan-side
+     *         cap is priced from the value STAMPED at each loan's open, this
+     *         setter only affects loans originated AFTER it; open loans keep
+     *         their `rewardHaircutBpsAtOpen`. A never-configured deploy reads the
+     *         200-BPS default via {LibVaipakam.cfgRewardHaircutBps}.
+     * @param  newHaircutBps New `m_reward` (BPS); accepted verbatim (0 allowed).
+     */
+    function setRewardHaircutBps(uint16 newHaircutBps)
+        external
+        onlyRole(LibAccessControl.ADMIN_ROLE)
+    {
+        if (newHaircutBps > LibVaipakam.REWARD_HAIRCUT_MAX_BPS) {
+            revert InvalidRewardHaircutBps(
+                newHaircutBps,
+                LibVaipakam.REWARD_HAIRCUT_MAX_BPS
+            );
+        }
+        LibVaipakam.storageSlot().rewardHaircutBps = newHaircutBps;
+        emit RewardHaircutBpsSet(newHaircutBps);
+    }
+
+    /// @notice #1347 (M2 PR-5a/5b) + #1353 (PR-5c) — read the effective
+    ///         fee-entitlement / reward-cap knobs in one RPC.
+    /// @return enabled          Whether the Full VPFI tariff is enabled (DARK when false).
+    /// @return kPerLifYear      Effective `K` (VPFI-1e18 per list-LIF-numeraire per year).
+    /// @return rewardHaircutBps Effective loan-side reward-cap haircut `m_reward` (BPS).
     function getFeeEntitlementConfig()
         external
         view
-        returns (bool enabled, uint256 kPerLifYear)
+        returns (bool enabled, uint256 kPerLifYear, uint256 rewardHaircutBps)
     {
         return (
             LibVaipakam.cfgFeeEntitlementEnabled(),
-            LibVaipakam.cfgTariffKPerLifYear()
+            LibVaipakam.cfgTariffKPerLifYear(),
+            LibVaipakam.cfgRewardHaircutBps()
         );
     }
 

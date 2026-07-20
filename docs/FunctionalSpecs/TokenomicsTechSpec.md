@@ -649,6 +649,20 @@ Governance effects:
 >   the loan-side reward cap that consumes the notional `C*`) begins the moment
 >   the switch arms — the "cStar-from-genesis" posture, with PR-5c backfilling
 >   any loans open across a post-launch cutover before it arms.
+> - **Loan-side reward cap (M2 PR-5c):** the notional `C*` stamped at open is
+>   the base of a per-`(loanId, side)` **lifetime** interaction-reward ceiling
+>   `loanSideRewardCapOpen = ½ × C* × (1 − m_reward)` — `m_reward` a governable
+>   haircut (default 2%, 0–20%) **snapshotted at open**, never re-read live. At
+>   claim the ceiling **prorates by rewarded days**
+>   (`× min(rewardedDays, openDays) / openDays`), and the paid budget is **shared**
+>   across every reward entry for that loanId+side (a lender-sale split cannot
+>   reset it). A loan that priced no `C*` (unstamped / feed-fail) carries a zero
+>   ceiling and is **reward-ineligible**. The cap only ever lowers a payout (the
+>   daily-pool share runs first) and is enforced **only on post-cutover days**
+>   (`D* != 0 && day ≥ D*`); while `D*` is unarmed — every current deploy — it is
+>   inert and the legacy #1008 ETH-ratio cap governs unchanged. `D*` is armed
+>   later, jointly with the D1 share cap (PR-2) and the settlement sweep (PR-6),
+>   at which point #1008 retires on post-cutover days.
 > - **Tier timing — pinned at acceptance (new loans):** because the
 >   new-loan borrower LIF is taken as an **origination cash haircut** (not
 >   a settle-time rebate), the borrower's effective discount tier for that

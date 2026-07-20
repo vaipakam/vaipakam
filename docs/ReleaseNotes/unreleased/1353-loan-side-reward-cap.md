@@ -1,0 +1,39 @@
+## Thread — Loan-side interaction-reward cap (M2 PR-5c) (PR #<n>)
+
+Adds the third piece of the VPFI fee package the spec supersession (#1350)
+described: the **loan-side interaction-reward cap**. Where the Full tariff
+(#1347) makes a party *absorb* a fee-native `C*` at loan origination, this card
+uses that same notional `C*` to **bound how much interaction-reward VPFI a
+single loan can emit per side** — replacing the old #1008 "VPFI-per-ETH-of-
+interest" ratio cap that scaled with loan volume and let a thin, high-share
+book over-reward.
+
+The new ceiling is a per-`(loanId, side)` **lifetime budget**, priced off the
+`C*` stamped at open:
+
+- `loanSideRewardCapOpen = ½ × C* × (1 − m_reward)`, cached at origination.
+  `m_reward` is a new governable haircut (`setRewardHaircutBps`, default **2%**,
+  bounded 0–20%), **snapshotted** at open so a later retune can't rewrite an
+  open loan's ceiling.
+- At claim the ceiling **prorates by rewarded days**:
+  `loanSideRewardCapEff = loanSideRewardCapOpen × min(rewardedDays, openDays) /
+  openDays`. An early-closed loan (few rewarded days) earns proportionally less;
+  a lender sale splits the reward entry but the day count and paid budget are
+  **shared** across both halves, so a sale can't reset the budget.
+- Each side (lender / borrower) owns the per-side half of the tariff-linked
+  ceiling; the 50/50 pool split is unchanged and the daily-pool share still runs
+  first — the cap only ever **lowers** a payout, never raises it.
+
+A loan that priced no `C*` (unstamped, or a feed-fail origination) carries a
+**zero** ceiling and is **reward-ineligible** — the anti-farming rule that stops
+a LIF-free or unpriceable loan from drawing free rewards.
+
+The whole cap is gated on the **joint cutover `D*`** (the ShareOfPool arming):
+while `D*` is unarmed — the state of every current deploy — the cap is a
+complete no-op and the pre-cutover #1008 regime is untouched, so this ships
+**dark**. `D*` is armed later, jointly with the D1 share cap (PR-2 #1351) and
+the settlement sweep (PR-6 #1354); the master `feeEntitlementEnabled` switch
+stays forbidden until all three are live. On a fresh (pre-live) deploy every
+loan stamps its notional `C*` from genesis, so there is no backfill step. The
+lender-Full settlement discount (+10% yield-fee) and the frontend tariff quote
+remain separate later cards (PR-6 #1354 / PR-8 #1355). Closes #1353.

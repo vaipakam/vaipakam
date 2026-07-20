@@ -1,0 +1,208 @@
+// SPDX-License-Identifier: BUSL-1.1
+pragma solidity ^0.8.29;
+
+import {SetupTest} from "./SetupTest.t.sol";
+import {ERC1967Proxy} from "@openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy.sol";
+
+import {VPFIToken} from "../src/token/VPFIToken.sol";
+import {VPFITokenFacet} from "../src/facets/VPFITokenFacet.sol";
+import {InteractionRewardsFacet} from "../src/facets/InteractionRewardsFacet.sol";
+import {InteractionRewardsLensFacet} from "../src/facets/InteractionRewardsLensFacet.sol";
+import {LibVaipakam} from "../src/libraries/LibVaipakam.sol";
+import {IVaipakamErrors} from "../src/interfaces/IVaipakamErrors.sol";
+import {TestMutatorFacet} from "./mocks/TestMutatorFacet.sol";
+
+/// @title  LoanSideRewardCapTest
+/// @notice #1353 (M2 PR-5c) — the loan-side interaction-reward cap replaces the
+///         #1008 per-entry ETH-ratio cap on POST-cutover (armed) reward days.
+///         The ceiling is a per-(loanId, side) LIFETIME budget derived from the
+///         Full tariff's notional `C*` stamped at open:
+///
+///           loanSideRewardCapOpen = ½ × C* × (BPS − m_reward) / BPS   (at open)
+///           loanSideRewardCapEff  = capOpen × min(rewardedDays, openDays)
+///                                           / openDays                (at claim)
+///
+///         Everything is gated on `_isArmedDay` (the ShareOfPool arming = D*):
+///         while unarmed the cap is a NO-OP and the pre-cutover #1008 regime is
+///         untouched (proven by the other reward suites). These tests arm D*,
+///         stamp the ShareOfPool day pools + globals directly (via the test
+///         mutator, bypassing the governor finalize flow), disable #1008, and
+///         assert the claim is trimmed to the loan-side ceiling.
+contract LoanSideRewardCapTest is SetupTest {
+    VPFIToken internal vpfi;
+    address internal rewardLender = makeAddr("pr5c-rewardLender");
+
+    uint256 internal constant DIAMOND_SEED = 100_000_000 ether;
+    uint256 internal constant LOAN_ID = 7;
+
+    function setUp() public {
+        setupHelper();
+
+        VPFIToken impl = new VPFIToken();
+        ERC1967Proxy proxy = new ERC1967Proxy(
+            address(impl),
+            abi.encodeCall(
+                VPFIToken.initialize,
+                (address(this), address(this), address(this))
+            )
+        );
+        vpfi = VPFIToken(address(proxy));
+        VPFITokenFacet(address(diamond)).setCanonicalVPFIChain(true);
+        VPFITokenFacet(address(diamond)).setVPFIToken(address(vpfi));
+        uint256 have = vpfi.balanceOf(address(this));
+        if (DIAMOND_SEED > have) vpfi.mint(address(this), DIAMOND_SEED - have);
+        vpfi.transfer(address(diamond), DIAMOND_SEED);
+
+        _facet().setInteractionLaunchTimestamp(block.timestamp);
+        // Warp so days 1 + 2 are finalized past.
+        vm.warp(block.timestamp + 5 days);
+    }
+
+    function _facet() internal view returns (InteractionRewardsFacet) {
+        return InteractionRewardsFacet(address(diamond));
+    }
+
+    function _lens() internal view returns (InteractionRewardsLensFacet) {
+        return InteractionRewardsLensFacet(address(diamond));
+    }
+
+    function _mut() internal view returns (TestMutatorFacet) {
+        return TestMutatorFacet(address(diamond));
+    }
+
+    /// @dev Seed one armed reward day: stamp its ShareOfPool composition
+    ///      (`scheduleFloor = 2·freshHalf`, no recycled), the finalized global
+    ///      lender denominator, and DISABLE #1008 for the day so only the
+    ///      loan-side cap can trim. Returns Δ_d = freshHalf·1e18/global.
+    function _seedArmedDay(
+        uint256 dayId,
+        uint256 freshHalf,
+        uint256 global
+    ) internal returns (uint256 deltaRpn) {
+        _mut().setDayPoolStampRaw(dayId, uint128(freshHalf * 2), 0);
+        _mut().setKnownGlobalDailyInterest(dayId, global, 0, true);
+        _mut().setDayCapThreshold18(dayId, type(uint256).max); // #1008 off
+        deltaRpn = (freshHalf * 1e18) / global;
+    }
+
+    /// @dev Stamp a fee-entitlement record carrying a known loan-side ceiling.
+    function _stampCap(uint256 openDays, uint256 capOpen) internal {
+        _mut().setFeeEntitlementRaw(
+            LOAN_ID,
+            LibVaipakam.FeeEntitlement({
+                borrowerMode: LibVaipakam.FeeEntitlementMode.None,
+                lenderMode: LibVaipakam.FeeEntitlementMode.None,
+                openDays: uint32(openDays),
+                rewardHaircutBpsAtOpen: 200,
+                borrowerTariffPaid: 0,
+                lenderTariffPaid: 0,
+                cStarOpen: capOpen * 2, // any non-zero notional; cap read from cache
+                loanSideRewardCapOpen: uint128(capOpen)
+            })
+        );
+    }
+
+    /// @dev Push a CLOSED lender entry on LOAN_ID spanning `[startDay, endDay)`.
+    function _pushEntry(uint256 perDay, uint32 startDay, uint32 endDay)
+        internal
+        returns (uint256 id)
+    {
+        id = _mut().pushRewardEntry(
+            rewardLender, uint64(LOAN_ID), LibVaipakam.RewardSide.Lender, perDay, startDay
+        );
+        _mut().closeRewardEntryRaw(id, endDay);
+    }
+
+    // ── The core enforcement: an armed claim is trimmed to the flat ceiling ──
+
+    function test_ArmedClaim_TrimmedToLoanSideCap() public {
+        // Δ1 = Δ2 = 1e18, perDay 1e18 ⇒ raw reward = 2e18 across the 2-day window.
+        _seedArmedDay(1, 1e18, 1e18);
+        _seedArmedDay(2, 1e18, 1e18);
+        _mut().setGovernorCommitArmedFromDayRaw(1); // D* = day 1 ⇒ both armed
+        _pushEntry(1e18, 1, 3);
+
+        // Full-term (openDays == window) so the proration factor is 1; the flat
+        // ceiling 0.5e18 is the only binding constraint (raw would be 2e18).
+        _stampCap({openDays: 2, capOpen: 0.5e18});
+
+        uint256 balBefore = vpfi.balanceOf(rewardLender);
+        vm.prank(rewardLender);
+        (uint256 paid, , ) = _facet().claimInteractionRewards();
+
+        assertEq(paid, 0.5e18, "claim trimmed to the loan-side ceiling");
+        assertEq(vpfi.balanceOf(rewardLender) - balBefore, 0.5e18, "paid out");
+    }
+
+    // ── Early-close / partial-term proration binds before the flat ceiling ──
+
+    function test_ArmedClaim_ProratesByRewardedDays() public {
+        _seedArmedDay(1, 1e18, 1e18);
+        _seedArmedDay(2, 1e18, 1e18);
+        _mut().setGovernorCommitArmedFromDayRaw(1);
+        _pushEntry(1e18, 1, 3); // 2 rewarded days, raw 2e18
+
+        // openDays 4 but only 2 rewarded ⇒ capEff = 3e18 × 2/4 = 1.5e18 < raw.
+        _stampCap({openDays: 4, capOpen: 3e18});
+
+        vm.prank(rewardLender);
+        (uint256 paid, , ) = _facet().claimInteractionRewards();
+        assertEq(paid, 1.5e18, "cap prorated to min(days,openDays)/openDays");
+    }
+
+    // ── Dark: an unarmed claim is uncapped (the #1008 regime is untouched) ──
+
+    function test_UnarmedClaim_Uncapped() public {
+        _seedArmedDay(1, 1e18, 1e18);
+        _seedArmedDay(2, 1e18, 1e18);
+        // NO arming ⇒ pre-cutover ⇒ loan-side cap is a no-op even though a tiny
+        // ceiling is stamped. But an unarmed day resolves its pool from
+        // halfPoolForDay(), NOT the stamp, so seed the legacy half too.
+        _pushEntry(1e18, 1, 3);
+        _stampCap({openDays: 2, capOpen: 0.5e18});
+
+        vm.prank(rewardLender);
+        (uint256 paid, , ) = _facet().claimInteractionRewards();
+        // Unarmed days derive the pool from halfPoolForDay(), so the raw reward
+        // is whatever that pool yields — the load-bearing assertion is only that
+        // the 0.5e18 loan-side ceiling did NOT bite (paid strictly exceeds it).
+        assertGt(paid, 0.5e18, "loan-side cap does not bite while unarmed (dark)");
+    }
+
+    // ── Lifetime budget is SHARED across entries of the same (loanId, side) ──
+
+    function test_ArmedClaim_LifetimeBudgetSharedAcrossEntries() public {
+        _seedArmedDay(1, 1e18, 1e18);
+        _seedArmedDay(2, 1e18, 1e18);
+        _mut().setGovernorCommitArmedFromDayRaw(1);
+        // Two adjacent single-day entries on the SAME loanId+side (a lender-sale
+        // split shape): A = day 1, B = day 2, raw 1e18 each ⇒ 2e18 combined.
+        _pushEntry(1e18, 1, 2); // [1,2) ⇒ day 1
+        _pushEntry(1e18, 2, 3); // [2,3) ⇒ day 2
+
+        // openDays 2, capOpen 1.2e18 ⇒ full-term capEff 1.2e18 shared across both
+        // entries (NOT 1.2e18 each). A takes min(1e18, 1.2×1/2)=0.6; B takes
+        // min(1e18, 1.2×2/2 − 0.6)=0.6 ⇒ 1.2e18 total.
+        _stampCap({openDays: 2, capOpen: 1.2e18});
+
+        vm.prank(rewardLender);
+        (uint256 paid, , ) = _facet().claimInteractionRewards();
+        assertEq(paid, 1.2e18, "shared lifetime ceiling across the two entries");
+    }
+
+    // ── A reward-ineligible loan (unstamped cStar ⇒ 0 cap) earns nothing armed ──
+
+    function test_ArmedClaim_RewardIneligibleLoanEarnsZero() public {
+        _seedArmedDay(1, 1e18, 1e18);
+        _seedArmedDay(2, 1e18, 1e18);
+        _mut().setGovernorCommitArmedFromDayRaw(1);
+        _pushEntry(1e18, 1, 3);
+        // No fee-entitlement stamp ⇒ loanSideRewardCapOpen == 0 ⇒ reward-ineligible.
+        // The whole reward trims to 0, so the claim has nothing to pay and
+        // reverts (the same fail-state as a user with no finalized rewards) —
+        // exactly the anti-farming outcome: an unpriced loan draws nothing.
+        vm.prank(rewardLender);
+        vm.expectRevert(IVaipakamErrors.NoInteractionRewardsToClaim.selector);
+        _facet().claimInteractionRewards();
+    }
+}

@@ -85,7 +85,7 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](115);
+        selectors = new bytes4[](117);
         selectors[0] = TestMutatorFacet.setLoan.selector;
         selectors[1] = TestMutatorFacet.setOffer.selector;
         selectors[2] = TestMutatorFacet.setNextLoanId.selector;
@@ -295,6 +295,10 @@ contract HelperTest {
         selectors[112] = TestMutatorFacet.setRecycledCreditedByDayRaw.selector;
         selectors[113] = TestMutatorFacet.setGovernorCommitArmedFromDayRaw.selector;
         selectors[114] = TestMutatorFacet.setBorrowerLifVpfiHeldRaw.selector;
+        // #1353 (M2 PR-5c) — direct fee-entitlement stamp + armed day-pool stamp
+        // for loan-side cap tests.
+        selectors[115] = TestMutatorFacet.setFeeEntitlementRaw.selector;
+        selectors[116] = TestMutatorFacet.setDayPoolStampRaw.selector;
         // #951 v2 (Codex #959 bind-to-live) — setSaleListingCollateralRaw removed
         // with the snapshot mapping; the accept binds `>=` live collateral.
         // #687-B: the former tail entries ([83]-[87]: setBackstopAbsorbCashRaw,
@@ -1553,7 +1557,7 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](87);
+        selectors = new bytes4[](88);
         selectors[0] = ConfigFacet.setFeesConfig.selector;
         selectors[1] = ConfigFacet.setLiquidationConfig.selector;
         selectors[2] = ConfigFacet.setRiskConfig.selector;
@@ -1700,6 +1704,8 @@ contract HelperTest {
         selectors[84] = ConfigFacet.setTariffKPerLifYear.selector;
         selectors[85] = ConfigFacet.setFeeEntitlementEnabled.selector;
         selectors[86] = ConfigFacet.getFeeEntitlementConfig.selector;
+        // #1353 (M2 PR-5c) — loan-side reward-cap haircut knob.
+        selectors[87] = ConfigFacet.setRewardHaircutBps.selector;
         return selectors;
     }
 

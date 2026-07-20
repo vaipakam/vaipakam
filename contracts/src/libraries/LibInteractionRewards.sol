@@ -1801,6 +1801,15 @@ function _dayPoolHalves(
             return (toUser, toTreasury);
         }
 
+        // #1353 (M2 PR-5c) — trim the entry to the per-(loanId, side) LIFETIME
+        // reward cap and persist the paid / rewarded-day accumulators. Governs
+        // only POST-cutover (armed) reward windows; `_isArmedDay` is unarmed on
+        // every current deploy, so this is a no-op (DARK) until the operator
+        // jointly arms D* with PR-2 + PR-6. Runs only on the mutating claim path
+        // (persisting is the whole point); the preview path caps read-only in
+        // {_previewEntryReward}.
+        if (mutate) split = _applyLoanSideCap(s, e, split);
+
         if (mutate) e.processed = true;
         // #1061 P2 — route to treasury on an explicit forfeit OR a terminal
         // forfeit derived from an unclosed liquidation/default (so a liquidated
@@ -1894,6 +1903,130 @@ function _dayPoolHalves(
         }
         if (cumEnd <= cumStart) return 0;
         reward = (e.perDayNumeraire18 * (cumEnd - cumStart)) / 1e18;
+        // #1353 (M2 PR-5c) — mirror the claim's loan-side lifetime cap so the
+        // preview never over-reports what a post-cutover claim would actually
+        // pay. DARK until D* is armed (`_isArmedDay` unarmed ⇒ raw reward).
+        reward = _loanSideCapPreview(s, e, reward);
+    }
+
+    // ─── #1353 (M2 PR-5c) — loan-side interaction-reward cap ─────────────────
+    //
+    // Replaces the #1008 per-entry ETH-ratio cap on POST-cutover reward days.
+    // The ceiling is a per-(loanId, side) LIFETIME budget derived from the Full
+    // tariff's notional `C*` stamped at open:
+    //
+    //     loanSideRewardCapOpen = ½ × C* × (BPS − m_reward) / BPS   (at open)
+    //     loanSideRewardCapEff  = loanSideRewardCapOpen
+    //                             × min(cumulativeRewardedDays, openDays)
+    //                             / openDays                        (at claim)
+    //
+    // and `Σ paid ≤ loanSideRewardCapEff` per side. The proration makes an
+    // early-closed loan (few rewarded days) earn proportionally less; a lender
+    // sale splits the entry but the day union / paid budget are SHARED across
+    // both halves (rev 15 §F6b). ALL of this is gated on `_isArmedDay` (the
+    // ShareOfPool arming = D*), unarmed on every current deploy ⇒ DARK.
+    //
+    // Cutover-spanning entry: the gate keys off the entry's LAST reward day
+    // (`endDay-1`), so an entry with ANY post-cutover day is governed by the
+    // loan-side cap in FULL. That is the conservative direction — a spanning
+    // entry's pre-cutover days already had the #1008 day cap baked into their
+    // `cumMin` at finalization, and applying the lifetime cap on top can only
+    // ever LOWER the payout, never over-pay. On the intended fresh (pre-live)
+    // deploy every loan stamps `C*` from genesis, so a spanning entry is an edge
+    // rather than the norm.
+
+    /// @dev Rewarded-day count an entry contributes to its loanId+side union.
+    ///      Entries for a loanId+side are adjacent + non-overlapping (a sale
+    ///      split ends the old window where the new one begins), so the union is
+    ///      the sum of window lengths. Window `[startDay, endDay-1]` ⇒
+    ///      `endDay-startDay` days (a `startDay == 0` entry covers `[1,endDay-1]`).
+    function _entryRewardedDays(
+        LibVaipakam.RewardEntry storage e
+    ) private view returns (uint256) {
+        return e.startDay == 0 ? e.endDay - 1 : e.endDay - e.startDay;
+    }
+
+    /// @dev Effective per-side lifetime reward ceiling for `loanId` once
+    ///      `rewardedDaysIncl` reward-eligible days have been credited. Reads the
+    ///      at-open cache (`loanSideRewardCapOpen` / `openDays`), never the live
+    ///      cfg. `capOpen == 0` ⇔ `cStarOpen == 0` (a reward-INELIGIBLE loan:
+    ///      unstamped, or a feed-fail origination) ⇒ 0 ceiling.
+    function _loanSideRewardCapEff(
+        LibVaipakam.Storage storage s,
+        uint256 loanId,
+        uint256 rewardedDaysIncl
+    ) private view returns (uint256) {
+        LibVaipakam.FeeEntitlement storage fe = s.feeEntitlementByLoanId[loanId];
+        uint256 capOpen = fe.loanSideRewardCapOpen;
+        if (capOpen == 0) return 0;
+        uint256 openDays = fe.openDays;
+        if (openDays == 0) return capOpen; // defensive; stamp guarantees ≥ 1
+        uint256 daysCounted =
+            rewardedDaysIncl < openDays ? rewardedDaysIncl : openDays;
+        return (capOpen * daysCounted) / openDays;
+    }
+
+    /// @dev Scale an {EntrySplit} down to `newTotal`, keeping the recycled /
+    ///      armedFresh components proportional so `recycled ≤ armedFresh ≤ total`
+    ///      survives the trim (both floor-scale by the same ratio). A no-op when
+    ///      `newTotal >= total`.
+    function _scaleSplit(
+        EntrySplit memory split,
+        uint256 newTotal
+    ) private pure returns (EntrySplit memory) {
+        uint256 old = split.total;
+        if (old == 0 || newTotal >= old) {
+            split.total = newTotal;
+            return split;
+        }
+        split.recycled = (split.recycled * newTotal) / old;
+        split.armedFresh = (split.armedFresh * newTotal) / old;
+        split.total = newTotal;
+        return split;
+    }
+
+    /// @dev MUTATING loan-side cap — trims `split` to the remaining lifetime
+    ///      budget and persists the paid / rewarded-day accumulators. Armed
+    ///      (post-cutover) claim path only; pre-cutover windows return `split`
+    ///      untouched (#1008 regime), so the feature is DARK until D* is armed.
+    function _applyLoanSideCap(
+        LibVaipakam.Storage storage s,
+        LibVaipakam.RewardEntry storage e,
+        EntrySplit memory split
+    ) private returns (EntrySplit memory) {
+        if (!_isArmedDay(s, e.endDay - 1)) return split;
+        uint8 side = uint8(e.side);
+        uint256 loanId = e.loanId;
+        uint256 daysIncl =
+            s.loanSideRewardedDays[loanId][side] + _entryRewardedDays(e);
+        // The day union grows monotonically whether or not the split is trimmed.
+        s.loanSideRewardedDays[loanId][side] = daysIncl;
+        uint256 capEff = _loanSideRewardCapEff(s, loanId, daysIncl);
+        uint256 paid = s.loanSideRewardPaidVpfi[loanId][side];
+        uint256 remaining = capEff > paid ? capEff - paid : 0;
+        if (split.total > remaining) split = _scaleSplit(split, remaining);
+        s.loanSideRewardPaidVpfi[loanId][side] = paid + split.total;
+        return split;
+    }
+
+    /// @dev READ-ONLY loan-side cap for the preview path — trims `rawReward` to
+    ///      the remaining lifetime budget without persisting. Projects this
+    ///      entry's days onto the stored union so a post-cutover preview matches
+    ///      the claim it foreshadows. DARK until D* is armed.
+    function _loanSideCapPreview(
+        LibVaipakam.Storage storage s,
+        LibVaipakam.RewardEntry storage e,
+        uint256 rawReward
+    ) private view returns (uint256) {
+        if (!_isArmedDay(s, e.endDay - 1)) return rawReward;
+        uint8 side = uint8(e.side);
+        uint256 loanId = e.loanId;
+        uint256 daysIncl =
+            s.loanSideRewardedDays[loanId][side] + _entryRewardedDays(e);
+        uint256 capEff = _loanSideRewardCapEff(s, loanId, daysIncl);
+        uint256 paid = s.loanSideRewardPaidVpfi[loanId][side];
+        uint256 remaining = capEff > paid ? capEff - paid : 0;
+        return rawReward < remaining ? rawReward : remaining;
     }
 
     /// @dev Allocate a fresh RewardEntry and push it into the user's
