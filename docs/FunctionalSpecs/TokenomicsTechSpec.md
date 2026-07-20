@@ -654,10 +654,16 @@ Governance effects:
 >   `loanSideRewardCapOpen = ½ × C* × (1 − m_reward)` — `m_reward` a governable
 >   haircut (default 2%, 0–20%) **snapshotted at open**, never re-read live. At
 >   claim the ceiling **prorates by rewarded days**
->   (`× min(rewardedDays, openDays) / openDays`), and the paid budget is **shared**
->   across every reward entry for that loanId+side (a lender-sale split cannot
->   reset it). A loan that priced no `C*` (unstamped / feed-fail) carries a zero
->   ceiling and is **reward-ineligible**. The cap only ever lowers a payout (the
+>   (`× min(armedRewardedDays, openDays) / openDays`), and the paid budget is
+>   **shared** across every reward entry for that loanId+side (a lender-sale split
+>   cannot reset it). The cap governs only the **armed (post-`D*`) portion** of an
+>   entry, so a reward window spanning the cutover keeps its pre-`D*` days on the
+>   legacy #1008 regime. A loan carrying no `C*` stamp
+>   (`loanSideRewardCapOpen == 0` — a mirror-chain, dark-era, or pre-cutover loan)
+>   is **not** zeroed: the cap does not apply and it earns normally. True
+>   reward-**ineligibility** (a canonical origination whose list LIF cannot be
+>   priced) is enforced **upstream** by not creating reward entries — never by
+>   voiding an earned payout at the cap. The cap only ever lowers a payout (the
 >   daily-pool share runs first) and is enforced **only on post-cutover days**
 >   (`D* != 0 && day ≥ D*`); while `D*` is unarmed — every current deploy — it is
 >   inert and the legacy #1008 ETH-ratio cap governs unchanged. `D*` is armed

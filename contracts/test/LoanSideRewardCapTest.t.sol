@@ -9,7 +9,6 @@ import {VPFITokenFacet} from "../src/facets/VPFITokenFacet.sol";
 import {InteractionRewardsFacet} from "../src/facets/InteractionRewardsFacet.sol";
 import {InteractionRewardsLensFacet} from "../src/facets/InteractionRewardsLensFacet.sol";
 import {LibVaipakam} from "../src/libraries/LibVaipakam.sol";
-import {IVaipakamErrors} from "../src/interfaces/IVaipakamErrors.sol";
 import {TestMutatorFacet} from "./mocks/TestMutatorFacet.sol";
 
 /// @title  LoanSideRewardCapTest
@@ -190,19 +189,43 @@ contract LoanSideRewardCapTest is SetupTest {
         assertEq(paid, 1.2e18, "shared lifetime ceiling across the two entries");
     }
 
-    // ── A reward-ineligible loan (unstamped cStar ⇒ 0 cap) earns nothing armed ──
+    // ── An UNSTAMPED loan (capOpen == 0) is NOT zeroed — the cap simply skips ──
 
-    function test_ArmedClaim_RewardIneligibleLoanEarnsZero() public {
+    function test_ArmedClaim_UnstampedLoanUncapped() public {
         _seedArmedDay(1, 1e18, 1e18);
         _seedArmedDay(2, 1e18, 1e18);
         _mut().setGovernorCommitArmedFromDayRaw(1);
         _pushEntry(1e18, 1, 3);
-        // No fee-entitlement stamp ⇒ loanSideRewardCapOpen == 0 ⇒ reward-ineligible.
-        // The whole reward trims to 0, so the claim has nothing to pay and
-        // reverts (the same fail-state as a user with no finalized rewards) —
-        // exactly the anti-farming outcome: an unpriced loan draws nothing.
+        // No fee-entitlement stamp ⇒ loanSideRewardCapOpen == 0. Such loans
+        // (mirror-chain / dark-era / pre-cutover) are NOT reward-ineligible here
+        // — the cap does not apply and they earn their full reward. True
+        // reward-ineligibility (a canonical feed-fail origination) is enforced
+        // upstream by not creating reward entries at all (Codex #1371 r1 P1 ×2).
         vm.prank(rewardLender);
-        vm.expectRevert(IVaipakamErrors.NoInteractionRewardsToClaim.selector);
-        _facet().claimInteractionRewards();
+        (uint256 paid, , ) = _facet().claimInteractionRewards();
+        assertEq(paid, 2e18, "unstamped loan earns full reward (cap skips, not zeroes)");
+    }
+
+    // ── Cutover-spanning entry: only the ARMED (post-D*) portion is capped ──
+
+    function test_ArmedClaim_SpanningEntryCapsOnlyArmedPortion() public {
+        // D* = day 2, so day 1 is PRE-cutover (uncapped, #1008 regime) and day 2
+        // is armed. Only day 2's reward is loan-side-capped.
+        _seedArmedDay(1, 1e18, 1e18); // pre-cutover; pool from stamp is ignored (unarmed)
+        _seedArmedDay(2, 1e18, 1e18); // armed
+        _mut().setGovernorCommitArmedFromDayRaw(2);
+        _pushEntry(1e18, 1, 3); // [1,3): day 1 pre-D*, day 2 armed
+
+        // openDays 2, capOpen 0.1e18. Armed slice = day 2 only (1 armed day).
+        // capEff = 0.1e18 × min(1,2)/2 = 0.05e18. Day-1 pre-cutover reward stays.
+        _stampCap({openDays: 2, capOpen: 0.1e18});
+
+        // Day 1 pre-cutover reward: halfPoolForDay(1) (NOT the stamp, unarmed).
+        uint256 day1 = _lens().getInteractionHalfPoolForDay(1);
+
+        vm.prank(rewardLender);
+        (uint256 paid, , ) = _facet().claimInteractionRewards();
+        // Total = uncapped day-1 reward + capped day-2 slice (0.05e18).
+        assertEq(paid, day1 + 0.05e18, "pre-cutover day uncapped; only armed day capped");
     }
 }

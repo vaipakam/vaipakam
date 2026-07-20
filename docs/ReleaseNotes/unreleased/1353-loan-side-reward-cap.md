@@ -23,10 +23,18 @@ The new ceiling is a per-`(loanId, side)` **lifetime budget**, priced off the
 - Each side (lender / borrower) owns the per-side half of the tariff-linked
   ceiling; the 50/50 pool split is unchanged and the daily-pool share still runs
   first — the cap only ever **lowers** a payout, never raises it.
+- The cap governs only the **armed (post-`D*`) portion** of a reward entry, so a
+  loan whose reward window spans the cutover keeps its pre-`D*` days under the
+  legacy #1008 regime and has only its post-`D*` slice loan-side-capped.
 
-A loan that priced no `C*` (unstamped, or a feed-fail origination) carries a
-**zero** ceiling and is **reward-ineligible** — the anti-farming rule that stops
-a LIF-free or unpriceable loan from drawing free rewards.
+A loan that carries no `C*` stamp (`loanSideRewardCapOpen == 0`) — a mirror-chain
+loan, a dark-era pre-enable loan, or any pre-cutover loan — is **not**
+zeroed: the cap simply **does not apply** and it earns normally. True
+reward-**ineligibility** (a canonical origination whose list LIF cannot be priced)
+is enforced **upstream** by not creating reward entries at all — never by zeroing
+a payout at the cap. This is the anti-farming rule stated correctly: an unpriced
+loan draws nothing because it has no reward entries, not because a live loan's
+earned reward is retroactively voided.
 
 The whole cap is gated on the **joint cutover `D*`** (the ShareOfPool arming):
 while `D*` is unarmed — the state of every current deploy — the cap is a

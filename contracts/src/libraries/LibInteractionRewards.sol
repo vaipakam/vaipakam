@@ -1401,8 +1401,15 @@ function _dayPoolHalves(
             s.rewardEntryObsBlocked[id] = true;
             return (expired, 0);
         }
-        expired = split_;
-        freshCredited = freshShare;
+        // #1353 (M2 PR-5c) — the loan-side lifetime cap governs the EXPIRY
+        // credit too, not just live claims: a post-cutover reward the user lets
+        // expire into the recycle bucket must consume (and be bounded by) the
+        // same per-(loanId, side) budget, so the expiry path can't emit more
+        // than a claim would. Dark until `D*` armed. Applied AFTER the
+        // headroom gate (the cap only lowers the fresh share, so an uncapped
+        // fit still fits) and BEFORE the terminalising credit.
+        expired = _applyLoanSideCap(s, e, split_);
+        freshCredited = expired.total - expired.recycled;
         e.processed = true;
         emit RewardEntryExpired(id, e.user, expired.total, expired.recycled);
     }
@@ -1926,31 +1933,39 @@ function _dayPoolHalves(
     // both halves (rev 15 §F6b). ALL of this is gated on `_isArmedDay` (the
     // ShareOfPool arming = D*), unarmed on every current deploy ⇒ DARK.
     //
-    // Cutover-spanning entry: the gate keys off the entry's LAST reward day
-    // (`endDay-1`), so an entry with ANY post-cutover day is governed by the
-    // loan-side cap in FULL. That is the conservative direction — a spanning
-    // entry's pre-cutover days already had the #1008 day cap baked into their
-    // `cumMin` at finalization, and applying the lifetime cap on top can only
-    // ever LOWER the payout, never over-pay. On the intended fresh (pre-live)
-    // deploy every loan stamps `C*` from genesis, so a spanning entry is an edge
-    // rather than the norm.
+    // The cap governs only the ARMED (post-D*) PORTION of an entry — the
+    // `recycled + armedFresh` components, which accrue solely on armed days
+    // (`cumMinArmed` / `cumMinRecycled` are 0 on pre-arming days). A cutover-
+    // SPANNING entry therefore keeps its pre-`D*` fresh reward under the #1008
+    // regime and has only its post-`D*` slice loan-side-capped (Codex #1371 r1
+    // P2). An unstamped loan (`capOpen == 0`) — a mirror-chain loan, a dark-era
+    // pre-enable loan, or a pre-cutover loan — is NOT reward-ineligible here:
+    // the cap simply does not apply, so it earns normally (Codex #1371 r1 P1 ×2).
+    // TRUE reward-ineligibility (a canonical feed-fail origination) is enforced
+    // UPSTREAM by not creating reward entries at all (rev 15 §F6b: "no reward
+    // entries"), never by zeroing a payout here.
 
-    /// @dev Rewarded-day count an entry contributes to its loanId+side union.
+    /// @dev Armed (post-`D*`) rewarded-day count an entry contributes to its
+    ///      loanId+side union — `[max(startDay, D*), endDay-1]`. Only these days
+    ///      carry loan-side-capped reward; the pre-`D*` slice stays on #1008.
     ///      Entries for a loanId+side are adjacent + non-overlapping (a sale
-    ///      split ends the old window where the new one begins), so the union is
-    ///      the sum of window lengths. Window `[startDay, endDay-1]` ⇒
-    ///      `endDay-startDay` days (a `startDay == 0` entry covers `[1,endDay-1]`).
-    function _entryRewardedDays(
+    ///      split ends the old window where the new one begins), so the armed
+    ///      union is the sum of armed sub-window lengths.
+    function _entryArmedDays(
+        LibVaipakam.Storage storage s,
         LibVaipakam.RewardEntry storage e
     ) private view returns (uint256) {
-        return e.startDay == 0 ? e.endDay - 1 : e.endDay - e.startDay;
+        uint256 armedFrom = s.governorCommitArmedFromDay; // D*; 0 ⇒ unarmed
+        uint256 start = e.startDay == 0 ? 1 : e.startDay;
+        uint256 firstArmed = start > armedFrom ? start : armedFrom;
+        return e.endDay > firstArmed ? e.endDay - firstArmed : 0;
     }
 
     /// @dev Effective per-side lifetime reward ceiling for `loanId` once
-    ///      `rewardedDaysIncl` reward-eligible days have been credited. Reads the
-    ///      at-open cache (`loanSideRewardCapOpen` / `openDays`), never the live
-    ///      cfg. `capOpen == 0` ⇔ `cStarOpen == 0` (a reward-INELIGIBLE loan:
-    ///      unstamped, or a feed-fail origination) ⇒ 0 ceiling.
+    ///      `rewardedDaysIncl` armed reward-eligible days have been credited.
+    ///      Reads the at-open cache (`loanSideRewardCapOpen` / `openDays`), never
+    ///      the live cfg. Callers guard `capOpen == 0` (unstamped ⇒ no ceiling)
+    ///      before reaching here, so a 0 return only occurs on a 0-day slice.
     function _loanSideRewardCapEff(
         LibVaipakam.Storage storage s,
         uint256 loanId,
@@ -1966,63 +1981,78 @@ function _dayPoolHalves(
         return (capOpen * daysCounted) / openDays;
     }
 
-    /// @dev Scale an {EntrySplit} down to `newTotal`, keeping the recycled /
-    ///      armedFresh components proportional so `recycled ≤ armedFresh ≤ total`
-    ///      survives the trim (both floor-scale by the same ratio). A no-op when
-    ///      `newTotal >= total`.
-    function _scaleSplit(
+    /// @dev Scale an {EntrySplit}'s ARMED portion (`recycled + armedFresh`) down
+    ///      to `newArmed`, keeping the pre-`D*` fresh reward
+    ///      (`total − recycled − armedFresh`) intact and the components
+    ///      proportional so `recycled ≤ recycled + armedFresh ≤ total` survives
+    ///      (both floor-scale by the same ratio). `total` is re-derived from the
+    ///      scaled parts. A no-op when `newArmed >= oldArmed`.
+    function _scaleArmedPortion(
         EntrySplit memory split,
-        uint256 newTotal
+        uint256 newArmed
     ) private pure returns (EntrySplit memory) {
-        uint256 old = split.total;
-        if (old == 0 || newTotal >= old) {
-            split.total = newTotal;
-            return split;
-        }
-        split.recycled = (split.recycled * newTotal) / old;
-        split.armedFresh = (split.armedFresh * newTotal) / old;
-        split.total = newTotal;
+        uint256 oldArmed = split.recycled + split.armedFresh;
+        if (oldArmed == 0 || newArmed >= oldArmed) return split;
+        uint256 preArm = split.total - oldArmed;
+        split.recycled = (split.recycled * newArmed) / oldArmed;
+        split.armedFresh = (split.armedFresh * newArmed) / oldArmed;
+        split.total = preArm + split.recycled + split.armedFresh;
         return split;
     }
 
-    /// @dev MUTATING loan-side cap — trims `split` to the remaining lifetime
-    ///      budget and persists the paid / rewarded-day accumulators. Armed
-    ///      (post-cutover) claim path only; pre-cutover windows return `split`
-    ///      untouched (#1008 regime), so the feature is DARK until D* is armed.
+    /// @dev MUTATING loan-side cap — trims an entry's ARMED (post-`D*`) reward
+    ///      portion to the remaining per-(loanId, side) lifetime budget and
+    ///      persists the paid / armed-day accumulators. A pre-cutover-only entry
+    ///      (no armed reward) or an unstamped loan (`capOpen == 0`) returns
+    ///      `split` untouched, so the feature is DARK until `D*` is armed and
+    ///      never zeroes a legitimately-unstamped loan.
     function _applyLoanSideCap(
         LibVaipakam.Storage storage s,
         LibVaipakam.RewardEntry storage e,
         EntrySplit memory split
     ) private returns (EntrySplit memory) {
-        if (!_isArmedDay(s, e.endDay - 1)) return split;
-        uint8 side = uint8(e.side);
+        uint256 armedReward = split.recycled + split.armedFresh;
+        if (armedReward == 0) return split; // no post-cutover reward ⇒ dark
         uint256 loanId = e.loanId;
+        if (s.feeEntitlementByLoanId[loanId].loanSideRewardCapOpen == 0) {
+            return split; // unstamped (mirror / dark-era / pre-cutover) ⇒ no cap
+        }
+        uint8 side = uint8(e.side);
         uint256 daysIncl =
-            s.loanSideRewardedDays[loanId][side] + _entryRewardedDays(e);
-        // The day union grows monotonically whether or not the split is trimmed.
+            s.loanSideRewardedDays[loanId][side] + _entryArmedDays(s, e);
+        // The armed-day union grows monotonically whether or not the split trims.
         s.loanSideRewardedDays[loanId][side] = daysIncl;
         uint256 capEff = _loanSideRewardCapEff(s, loanId, daysIncl);
         uint256 paid = s.loanSideRewardPaidVpfi[loanId][side];
         uint256 remaining = capEff > paid ? capEff - paid : 0;
-        if (split.total > remaining) split = _scaleSplit(split, remaining);
-        s.loanSideRewardPaidVpfi[loanId][side] = paid + split.total;
+        if (armedReward > remaining) {
+            split = _scaleArmedPortion(split, remaining);
+            armedReward = split.recycled + split.armedFresh; // actual after floor
+        }
+        s.loanSideRewardPaidVpfi[loanId][side] = paid + armedReward;
         return split;
     }
 
     /// @dev READ-ONLY loan-side cap for the preview path — trims `rawReward` to
-    ///      the remaining lifetime budget without persisting. Projects this
-    ///      entry's days onto the stored union so a post-cutover preview matches
-    ///      the claim it foreshadows. DARK until D* is armed.
+    ///      the remaining lifetime budget without persisting. CONSERVATIVE: it
+    ///      caps against the WHOLE entry reward (not just the armed portion the
+    ///      claim isolates), so a spanning-entry preview can only UNDER-report
+    ///      what the claim pays — never over-report (the accepted preview
+    ///      tolerance, cf. #1147 r8 L3). Skips unstamped loans and pre-cutover
+    ///      entries, matching the claim's dark behaviour.
     function _loanSideCapPreview(
         LibVaipakam.Storage storage s,
         LibVaipakam.RewardEntry storage e,
         uint256 rawReward
     ) private view returns (uint256) {
         if (!_isArmedDay(s, e.endDay - 1)) return rawReward;
-        uint8 side = uint8(e.side);
         uint256 loanId = e.loanId;
+        if (s.feeEntitlementByLoanId[loanId].loanSideRewardCapOpen == 0) {
+            return rawReward; // unstamped ⇒ no cap
+        }
+        uint8 side = uint8(e.side);
         uint256 daysIncl =
-            s.loanSideRewardedDays[loanId][side] + _entryRewardedDays(e);
+            s.loanSideRewardedDays[loanId][side] + _entryArmedDays(s, e);
         uint256 capEff = _loanSideRewardCapEff(s, loanId, daysIncl);
         uint256 paid = s.loanSideRewardPaidVpfi[loanId][side];
         uint256 remaining = capEff > paid ? capEff - paid : 0;
@@ -2252,8 +2282,18 @@ function _dayPoolHalves(
     ///         entry's claim AND the per-chain remittance.
     /// @return t The stored threshold (`type(uint256).max` = cap disabled).
     function snapshotDayCapThreshold(uint256 dayId) internal returns (uint256 t) {
-        t = _computeDayCapThreshold18();
-        LibVaipakam.storageSlot().dayCapThreshold18[dayId] = t;
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        // #1353 (M2 PR-5c) — retire #1008 on ARMED (post-`D*`) days automatically:
+        // an armed day is priced under the loan-side + D1 caps, so its legacy
+        // ETH-ratio threshold is DISABLED (max) rather than left baked into
+        // `cumMin`, which would stack the old cap under the new one and underpay
+        // (Codex #1371 r1 P2). This is finalize-time on Base and broadcast to
+        // mirrors, so every chain retires #1008 on the same days with no
+        // operator step. Pre-arming days keep the computed #1008 threshold ⇒ dark.
+        t = _isArmedDay(s, dayId)
+            ? type(uint256).max
+            : _computeDayCapThreshold18();
+        s.dayCapThreshold18[dayId] = t;
     }
 
     /// @notice Store a broadcast-canonical threshold on a mirror (from Base's
