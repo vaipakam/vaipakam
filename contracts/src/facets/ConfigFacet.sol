@@ -926,12 +926,22 @@ contract ConfigFacet is DiamondAccessControl {
      *         honoring the lender Full stamp (PR-6) are live** — enabling
      *         earlier lets a Full loan pay `C*` for a discount the settlement
      *         path would not yet honor, and arms an uncapped loan-side reward.
+     *
+     *         Enabling is REJECTED on a non-canonical (mirror) VPFI chain: a
+     *         `C*` absorbed there credits only that chain's mirror-local
+     *         `recycleBucket`, which the Base reward governor cannot count or
+     *         fund from until the cross-chain mesh is live — stranding the
+     *         user's tariff outside the reward loop it is meant to fund (Codex
+     *         #1366 r3 P2). Disabling (`false`) is always allowed.
      * @param  enabled New kill-switch state.
      */
     function setFeeEntitlementEnabled(bool enabled)
         external
         onlyRole(LibAccessControl.ADMIN_ROLE)
     {
+        if (enabled && !LibVaipakam.storageSlot().isCanonicalVpfiChain) {
+            revert IVaipakamErrors.FeeEntitlementRequiresCanonicalVpfiChain();
+        }
         LibVaipakam.storageSlot().feeEntitlementEnabled = enabled;
         emit FeeEntitlementEnabledSet(enabled);
     }

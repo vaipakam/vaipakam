@@ -4,6 +4,7 @@ pragma solidity ^0.8.29;
 import {LibVaipakam} from "./LibVaipakam.sol";
 import {LibVpfiRecycle} from "./LibVpfiRecycle.sol";
 import {LibVPFIDiscount} from "./LibVPFIDiscount.sol";
+import {LibEncumbrance} from "./LibEncumbrance.sol";
 import {VaultFactoryFacet} from "../facets/VaultFactoryFacet.sol";
 import {OracleFacet} from "../facets/OracleFacet.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
@@ -226,19 +227,29 @@ library LibFeeEntitlement {
         return _vaultVpfiBalance(party) >= cStar;
     }
 
-    /// @dev The party's WITHDRAWABLE VPFI vault balance — the protocol-tracked
-    ///      balance, NOT the raw `balanceOf`. `VaultFactoryFacet.vaultWithdrawERC20`
-    ///      caps every withdrawal at `protocolTrackedVaultBalance`, so gating the
-    ///      Full opt-in on the raw balance would let unsolicited VPFI sent
-    ///      directly to the proxy "confirm" a Full that the pull then reverts on
-    ///      — bricking an accept even when the party permitted a downgrade.
-    ///      Shared by {resolveAndCharge} (the authoritative pull gate) and
-    ///      {fullOptInConfirmed} (the pre-mint preview) so the two agree exactly.
+    /// @dev The party's WITHDRAWABLE (FREE) VPFI vault balance — mirroring
+    ///      `VaultFactoryFacet.vaultWithdrawERC20`'s cap EXACTLY: the raw
+    ///      `balanceOf` capped by `protocolTrackedVaultBalance` (which excludes
+    ///      unsolicited dust) and then reduced by the active `(user, VPFI, 0)`
+    ///      lien aggregate via {LibEncumbrance.freeBalance}. Both the pre-mint
+    ///      {fullOptInConfirmed} preview (which gates the borrower's +10% LIF
+    ///      bump) and {resolveAndCharge}'s authoritative pull-gate read THIS, so
+    ///      they agree with the withdrawal. Using the gross tracked balance would
+    ///      let ENCUMBERED VPFI (e.g. locked by the user's own borrower offer)
+    ///      "confirm" a Full whose withdrawal then reverts — stranding the +10%
+    ///      LIF discount with no paired `C*` on a downgrade-authorized accept
+    ///      (Codex #1366 r3 P1). A residual token-PAUSE failure is still caught
+    ///      by {resolveAndCharge}'s try/catch (accept never bricks).
     function _vaultVpfiBalance(address party) private view returns (uint256) {
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         address vpfi = s.vpfiToken;
         if (vpfi == address(0)) return 0;
-        return s.protocolTrackedVaultBalance[party][vpfi];
+        address vault = s.userVaipakamVaults[party];
+        if (vault == address(0)) return 0;
+        uint256 tracked = s.protocolTrackedVaultBalance[party][vpfi];
+        uint256 raw = IERC20(vpfi).balanceOf(vault);
+        uint256 capped = tracked < raw ? tracked : raw;
+        return LibEncumbrance.freeBalance(party, vpfi, 0, capped);
     }
 
     /// @dev A permitted downgrade from Full → HoldOnly (if the party is

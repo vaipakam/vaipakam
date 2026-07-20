@@ -313,6 +313,11 @@
   },
   {
     "type": "error",
+    "name": "FeeEntitlementRequiresCanonicalVpfiChain",
+    "inputs": []
+  },
+  {
+    "type": "error",
     "name": "FeeEntitlementTariffAboveAuth",
     "inputs": [
       {

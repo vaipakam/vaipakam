@@ -383,4 +383,20 @@ contract FeeEntitlementFacetTest is SetupTest {
             offerId, true, 1 ether, false
         );
     }
+
+    // ─── enabling Full is gated to the canonical VPFI chain ─────────────────────
+
+    function testSetFeeEntitlementEnabled_RejectedOffCanonicalChain() public {
+        // Flip this deploy to a non-canonical (mirror) chain — enabling Full
+        // there would strand C* in a mirror-local bucket the Base governor can't
+        // fund (Codex #1366 r3 P2).
+        VPFITokenFacet(address(diamond)).setCanonicalVPFIChain(false);
+        vm.expectRevert(
+            IVaipakamErrors.FeeEntitlementRequiresCanonicalVpfiChain.selector
+        );
+        _config().setFeeEntitlementEnabled(true);
+
+        // Disabling stays allowed on a mirror chain.
+        _config().setFeeEntitlementEnabled(false);
+    }
 }

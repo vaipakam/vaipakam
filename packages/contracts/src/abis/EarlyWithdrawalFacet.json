@@ -392,6 +392,11 @@
   },
   {
     "type": "error",
+    "name": "FeeEntitlementRequiresCanonicalVpfiChain",
+    "inputs": []
+  },
+  {
+    "type": "error",
     "name": "FullTariffMaxCStarRequired",
     "inputs": []
   },

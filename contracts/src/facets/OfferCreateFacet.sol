@@ -1735,6 +1735,13 @@ contract OfferCreateFacet is
         // creator-gated pattern as `setOfferKeeperEnabled`), so the 60-plus
         // existing `CreateOfferParams` construction sites stay untouched. Absent
         // that opt-in the fields stay zero ⇒ non-Full.
+        //
+        // SIGNED OFFERS (materialized + accepted atomically) therefore CANNOT
+        // authorize maker Full — there is no post-create / pre-accept moment to
+        // call the setter, so a signed-offer maker always resolves as non-Full
+        // (safe: no wrong charge). Threading maker Full through the signed-offer
+        // EIP-712 / materialization path is a deliberate follow-up (#1369),
+        // alongside the matched-fill lender-Full gap (Codex #1366 r3 P2).
         // Phase 6: keeper access is per-keeper via
         // `offerKeeperEnabled[offerId][keeper]`. Creator enables specific
         // keepers post-create via `ProfileFacet.setOfferKeeperEnabled`.
