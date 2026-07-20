@@ -679,9 +679,12 @@ contract AutoLifecycleFacet is DiamondReentrancyGuard, DiamondPausable {
             // receiving — a mis-aligned charge. When the NFT changed
             // hands, fall back to the standard 1% split in the
             // lending asset (no VPFI debit).
+            // #1354 §F2 — eligibility is `consent OR lenderMode == Full` (a
+            // Full lender earns the +10% even without hold-discount consent);
+            // still gated on the position NFT living with the recorded lender.
             if (
                 treasuryShare > 0 &&
-                s.vpfiDiscountConsent[loan.lender] &&
+                LibVPFIDiscount.lenderYieldFeeEligible(loan) &&
                 lenderNftOwner == loan.lender
             ) {
                 (bool yieldApplied, ) =

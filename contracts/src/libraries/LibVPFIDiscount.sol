@@ -475,6 +475,76 @@ library LibVPFIDiscount {
     }
 
     /**
+     * @notice #1354 (M2 PR-6) — the TOTAL lender yield-fee discount BPS for a
+     *         settlement: the consent-gated hold-tier discount plus the +10%
+     *         Full-tariff bump, capped at the uniform 50% ceiling. This is the
+     *         `d = min(d_hold + d_tariff, 5000)` of formula §F2, and it is what
+     *         both yield-fee delivery paths ({quoteYieldFee} VPFI-payment and
+     *         {directReductionYieldFee} peg-unset) charge against.
+     *
+     * @dev Unlike {lenderTimeWeightedDiscountBps} — a pure hold-tier primitive
+     *      that assumes the caller already verified consent — this wrapper
+     *      internalises the §F2 consent split:
+     *        - `d_hold` counts ONLY when `vpfiDiscountConsent[lender]` is set;
+     *          without consent the hold slice is 0.
+     *        - `d_tariff` (+10%) counts whenever the lender absorbed the Full
+     *          `C*` tariff (`feeEntitlementByLoanId[loan.id].lenderMode ==
+     *          Full`, #1347). The Full opt-in is itself the consent, so the
+     *          bump applies even to a lender with no separate hold consent —
+     *          symmetric with the borrower LIF bump in {holdOnlyBorrowerLif}.
+     *
+     *      DARK until the Full tariff path (#1347) is enabled: no loan carries
+     *      a `Full` lender stamp yet, so `d_tariff` is 0 for every current loan
+     *      and this returns exactly the pre-#1354 consent-gated hold discount.
+     */
+    function _effectiveYieldFeeDiscountBps(
+        LibVaipakam.Loan storage loan
+    ) private view returns (uint256 d) {
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        // d_hold — gated on the lender's platform VPFI-discount consent (§F2).
+        if (s.vpfiDiscountConsent[loan.lender]) {
+            d = lenderTimeWeightedDiscountBps(loan);
+        }
+        // d_tariff — +10% Full own-side bump, independent of hold consent.
+        if (
+            s.feeEntitlementByLoanId[loan.id].lenderMode ==
+            LibVaipakam.FeeEntitlementMode.Full
+        ) {
+            d += LibVaipakam.FULL_MODE_FEE_DISCOUNT_BONUS_BPS;
+        }
+        // Uniform 50% ceiling — `min(d_hold + d_tariff, 5000)` (§F2).
+        if (d > LibVaipakam.MAX_FEE_DISCOUNT_BPS) {
+            d = LibVaipakam.MAX_FEE_DISCOUNT_BPS;
+        }
+    }
+
+    /**
+     * @notice #1354 (M2 PR-6) — whether a loan's lender qualifies for ANY
+     *         yield-fee discount at settlement, i.e. whether the settlement
+     *         sites should attempt the discount delivery at all.
+     *
+     * @dev Eligibility is `consent OR lenderMode == Full`. A lender who
+     *      absorbed the Full `C*` tariff earns the +10% even with no separate
+     *      hold-discount consent (§F2/§F3 — the Full opt-in is the consent), so
+     *      the pre-#1354 consent-only gate would have wrongly skipped them. The
+     *      actual discount magnitude (0 when neither slice applies) is computed
+     *      by {_effectiveYieldFeeDiscountBps}; this is only the cheap
+     *      attempt-or-skip guard the call sites branch on.
+     *
+     *      DARK-safe: while no loan is `Full`-stamped this reduces to the
+     *      original `vpfiDiscountConsent[lender]` gate.
+     */
+    function lenderYieldFeeEligible(
+        LibVaipakam.Loan storage loan
+    ) internal view returns (bool) {
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        return
+            s.vpfiDiscountConsent[loan.lender] ||
+            s.feeEntitlementByLoanId[loan.id].lenderMode ==
+            LibVaipakam.FeeEntitlementMode.Full;
+    }
+
+    /**
      * @notice Time-weighted average discount BPS a borrower earned across a
      *         specific loan's lifetime (Phase 5 / §5.2b). Borrower mirror
      *         of {lenderTimeWeightedDiscountBps}.
@@ -665,7 +735,9 @@ library LibVPFIDiscount {
     {
         if (interestAmount == 0 || loan.lender == address(0)) return (false, 0, 0);
 
-        avgBps = lenderTimeWeightedDiscountBps(loan);
+        // #1354 §F2 — total discount `min(d_hold + d_tariff, 5000)`: the
+        // consent-gated hold slice PLUS the +10% Full-tariff bump.
+        avgBps = _effectiveYieldFeeDiscountBps(loan);
         if (avgBps == 0) return (false, 0, 0);
 
         // #957 (#921 item 6) — size the yield-fee VPFI requirement against the
@@ -996,10 +1068,13 @@ library LibVPFIDiscount {
      *        - the lender's effective discount is tier-0 / zero; or
      *        - the fee is zero.
      *
-     *      Consent is NOT re-checked here — the caller must have verified
-     *      `s.vpfiDiscountConsent[loan.lender]` (identical contract to
-     *      {tryApplyYieldFee}), which every call site already does before the
-     *      VPFI-mode attempt this is the else-branch of.
+     *      Consent handling (#1354): the hold slice of the discount is
+     *      consent-gated INSIDE {_effectiveYieldFeeDiscountBps}, so a lender
+     *      with no `vpfiDiscountConsent` contributes `d_hold = 0` here. The
+     *      call sites still guard the whole attempt on
+     *      {lenderYieldFeeEligible} (`consent OR lenderMode == Full`) so a
+     *      Full lender with no hold consent still reaches this path for the
+     *      +10% tariff bump.
      *
      * @param loan             Live loan the yield fee settles against.
      * @param treasuryShareFull The full (undiscounted) lending-asset treasury
@@ -1022,7 +1097,9 @@ library LibVPFIDiscount {
         ) {
             return 0;
         }
-        uint256 effBps = lenderTimeWeightedDiscountBps(loan);
+        // #1354 §F2 — total discount `min(d_hold + d_tariff, 5000)`: the
+        // consent-gated hold slice PLUS the +10% Full-tariff bump.
+        uint256 effBps = _effectiveYieldFeeDiscountBps(loan);
         if (effBps == 0) return 0;
         reduction = (treasuryShareFull * effBps) / LibVaipakam.BASIS_POINTS;
     }

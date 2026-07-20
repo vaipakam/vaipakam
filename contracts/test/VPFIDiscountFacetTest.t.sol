@@ -1325,4 +1325,219 @@ contract VPFIDiscountFacetTest is SetupTest {
                 })
             );
     }
+
+    // --- #1354 (M2 PR-6) --- settlement sweep honors the lender Full stamp ----
+    //
+    // Formula section F2: at every lender-yield settlement the treasury cut is
+    // discounted by d = min(d_hold + d_tariff, 5000), where d_hold is the
+    // consent-gated hold-tier discount and d_tariff = (lenderMode == Full) ?
+    // 1000 : 0. These tests drive the peg-unset DIRECT-REDUCTION path (the
+    // Phase-1 delivery mode), where the treasury delta at repay is a clean,
+    // exact proxy for the applied d. Each test first measures the undiscounted
+    // baseFee from a reference loan (consent off, no stamp) and asserts the
+    // treated loan collects baseFee - baseFee*d/BPS -- the exact integer order
+    // directReductionYieldFee uses.
+
+    uint256 private constant _SWEEP_PRINCIPAL = 10_000 ether;
+
+    /// @dev Expected discounted treasury fee, matching the contract integer
+    ///      order: reduction = full*d/BPS; fee = full - reduction.
+    function _discountedFee(uint256 baseFee, uint256 d) internal pure returns (uint256) {
+        return baseFee - (baseFee * d) / LibVaipakam.BASIS_POINTS;
+    }
+
+    /// @dev Open a fresh lender-funded loan, optionally stamp the
+    ///      FeeEntitlement modes the #1347 charger would write, run the full
+    ///      30-day term, repay, and return the lending-asset yield fee the
+    ///      treasury actually collected. Deriving the warp target from the
+    ///      loan's own startTime (an SLOAD) keeps the second call landing at
+    ///      open + 30 days under viaIR TIMESTAMP folding, per the clamp helper.
+    function _openStampRepayTreasuryFee(
+        uint256 loanId,
+        LibVaipakam.FeeEntitlementMode lenderMode,
+        LibVaipakam.FeeEntitlementMode borrowerMode
+    ) internal returns (uint256 treasuryFee) {
+        uint256 offerId = _createLenderErc20Offer(_SWEEP_PRINCIPAL);
+        _approveAndAcceptForLoan(offerId, _SWEEP_PRINCIPAL);
+
+        LibVaipakam.Loan memory ln = LoanFacet(address(diamond)).getLoanDetails(loanId);
+
+        // Only stamp when a party opts in; a None/None reference loan leaves
+        // the zero entitlement struct so it takes the undiscounted path.
+        if (
+            lenderMode != LibVaipakam.FeeEntitlementMode.None ||
+            borrowerMode != LibVaipakam.FeeEntitlementMode.None
+        ) {
+            TestMutatorFacet(address(diamond)).setFeeEntitlementRaw(
+                loanId,
+                LibVaipakam.FeeEntitlement({
+                    borrowerMode: borrowerMode,
+                    lenderMode: lenderMode,
+                    openDays: uint32(ln.durationDays),
+                    rewardHaircutBpsAtOpen: 0,
+                    borrowerTariffPaid: 0,
+                    lenderTariffPaid: 0,
+                    cStarOpen: 0,
+                    loanSideRewardCapOpen: 0
+                })
+            );
+        }
+
+        vm.warp(ln.startTime + ln.durationDays * 1 days); // due; full interest, within grace
+
+        uint256 approvalPad = _SWEEP_PRINCIPAL + (_SWEEP_PRINCIPAL / 10);
+        ERC20Mock(mockERC20).mint(borrower, approvalPad);
+        vm.prank(borrower);
+        IERC20(mockERC20).approve(address(diamond), approvalPad);
+
+        uint256 balBefore = IERC20(mockERC20).balanceOf(treasuryRecipient);
+        vm.prank(borrower);
+        RepayFacet(address(diamond)).repayLoan(loanId);
+        treasuryFee = IERC20(mockERC20).balanceOf(treasuryRecipient) - balBefore;
+    }
+
+    /// @dev Stake `amount` VPFI into the lender's vault, consent, and clear the
+    ///      min-history gate so the hold tier releases at settlement.
+    function _stakeLenderConsent(uint256 amount) internal {
+        vpfiToken.transfer(lender, amount);
+        vm.startPrank(lender);
+        vpfiToken.approve(address(diamond), amount);
+        _facet().depositVPFIToVault(amount);
+        _facet().setVPFIDiscountConsent(true);
+        vm.stopPrank();
+        vm.warp(block.timestamp + 4 days);
+    }
+
+    /// @notice Lender who absorbed the Full C* tariff but has NO separate
+    ///         hold-discount consent still earns the +10% yield-fee discount --
+    ///         the Full opt-in is itself the consent (section F2/F3).
+    function testSettlementSweep_LenderFullNoConsent_TenPercentOff() public {
+        _facet().setVPFIDiscountRate(0); // direct-reduction regime
+        ConfigFacet(address(diamond)).setVpfiTierDiscountBps(1000, 1500, 2000, 2400);
+
+        // Reference: no consent, no stamp -> undiscounted 2% treasury fee.
+        uint256 baseFee = _openStampRepayTreasuryFee(
+            1,
+            LibVaipakam.FeeEntitlementMode.None,
+            LibVaipakam.FeeEntitlementMode.None
+        );
+        assertGt(baseFee, 0, "reference collected the full yield fee");
+
+        // Treatment: Full lender, NO consent, NO stake -> d = 0 + 1000 = 1000.
+        uint256 fee = _openStampRepayTreasuryFee(
+            2,
+            LibVaipakam.FeeEntitlementMode.Full,
+            LibVaipakam.FeeEntitlementMode.None
+        );
+        assertEq(fee, _discountedFee(baseFee, 1000), "Full-no-consent -> 10% off");
+    }
+
+    /// @notice Full lender + consenting tier-2 hold (15%) => 25% off (F2).
+    function testSettlementSweep_LenderFullTier2_TwentyFivePercentOff() public {
+        _facet().setVPFIDiscountRate(0);
+        ConfigFacet(address(diamond)).setVpfiTierDiscountBps(1000, 1500, 2000, 2400);
+
+        uint256 baseFee = _openStampRepayTreasuryFee(
+            1,
+            LibVaipakam.FeeEntitlementMode.None,
+            LibVaipakam.FeeEntitlementMode.None
+        );
+
+        _stakeLenderConsent(2_000 ether); // tier 2 (>= 1,000, < 5,000)
+        uint256 fee = _openStampRepayTreasuryFee(
+            2,
+            LibVaipakam.FeeEntitlementMode.Full,
+            LibVaipakam.FeeEntitlementMode.None
+        );
+        assertEq(fee, _discountedFee(baseFee, 2500), "hold 15% + Full 10% -> 25% off");
+    }
+
+    /// @notice Full lender + consenting tier-4 hold (24%) => 34% off (F2).
+    function testSettlementSweep_LenderFullTier4_ThirtyFourPercentOff() public {
+        _facet().setVPFIDiscountRate(0);
+        ConfigFacet(address(diamond)).setVpfiTierDiscountBps(1000, 1500, 2000, 2400);
+
+        uint256 baseFee = _openStampRepayTreasuryFee(
+            1,
+            LibVaipakam.FeeEntitlementMode.None,
+            LibVaipakam.FeeEntitlementMode.None
+        );
+
+        _stakeLenderConsent(25_000 ether); // tier 4 (> 20,000)
+        uint256 fee = _openStampRepayTreasuryFee(
+            2,
+            LibVaipakam.FeeEntitlementMode.Full,
+            LibVaipakam.FeeEntitlementMode.None
+        );
+        assertEq(fee, _discountedFee(baseFee, 3400), "hold 24% + Full 10% -> 34% off");
+    }
+
+    /// @notice The Full bump never breaches the uniform 50% ceiling: a tier
+    ///         whose hold discount is already 50% stays at 50% after +10%
+    ///         (F2 min(d_hold + d_tariff, 5000)).
+    function testSettlementSweep_LenderFullClampedAtFiftyPercent() public {
+        _facet().setVPFIDiscountRate(0);
+        // Tier-4 hold discount = 50% (the clamp boundary).
+        ConfigFacet(address(diamond)).setVpfiTierDiscountBps(1000, 1500, 2000, 5000);
+
+        uint256 baseFee = _openStampRepayTreasuryFee(
+            1,
+            LibVaipakam.FeeEntitlementMode.None,
+            LibVaipakam.FeeEntitlementMode.None
+        );
+
+        _stakeLenderConsent(25_000 ether); // tier 4 -> 50% hold
+        uint256 fee = _openStampRepayTreasuryFee(
+            2,
+            LibVaipakam.FeeEntitlementMode.Full,
+            LibVaipakam.FeeEntitlementMode.None
+        );
+        assertEq(fee, _discountedFee(baseFee, 5000), "50% hold + Full -> clamped 50% off");
+    }
+
+    /// @notice A BORROWER Full stamp must never leak into the LENDER's
+    ///         yield-fee discount -- only the lender's own hold + own Full count
+    ///         (F2 "borrower mode never appears in lender d").
+    function testSettlementSweep_BorrowerFullDoesNotDiscountLenderFee() public {
+        _facet().setVPFIDiscountRate(0);
+        ConfigFacet(address(diamond)).setVpfiTierDiscountBps(1000, 1500, 2000, 2400);
+
+        uint256 baseFee = _openStampRepayTreasuryFee(
+            1,
+            LibVaipakam.FeeEntitlementMode.None,
+            LibVaipakam.FeeEntitlementMode.None
+        );
+
+        _stakeLenderConsent(2_000 ether); // lender tier 2 (15% hold)
+        // Borrower Full, lender NOT Full -> lender d = hold 15% only, no +10%.
+        uint256 fee = _openStampRepayTreasuryFee(
+            2,
+            LibVaipakam.FeeEntitlementMode.None,
+            LibVaipakam.FeeEntitlementMode.Full
+        );
+        assertEq(fee, _discountedFee(baseFee, 1500), "borrower Full ignored -> 15% off");
+    }
+
+    /// @notice DARK no-op proof: with no Full stamp the settlement discount is
+    ///         exactly the pre-#1354 consent-gated hold discount (15% for a
+    ///         tier-2 lender) -- this card changes nothing until a loan is
+    ///         Full-stamped.
+    function testSettlementSweep_DarkNoStampMatchesHoldOnly() public {
+        _facet().setVPFIDiscountRate(0);
+        ConfigFacet(address(diamond)).setVpfiTierDiscountBps(1000, 1500, 2000, 2400);
+
+        uint256 baseFee = _openStampRepayTreasuryFee(
+            1,
+            LibVaipakam.FeeEntitlementMode.None,
+            LibVaipakam.FeeEntitlementMode.None
+        );
+
+        _stakeLenderConsent(2_000 ether); // tier 2, consent on, NO stamp
+        uint256 fee = _openStampRepayTreasuryFee(
+            2,
+            LibVaipakam.FeeEntitlementMode.None,
+            LibVaipakam.FeeEntitlementMode.None
+        );
+        assertEq(fee, _discountedFee(baseFee, 1500), "no stamp -> hold-only 15% (dark)");
+    }
 }

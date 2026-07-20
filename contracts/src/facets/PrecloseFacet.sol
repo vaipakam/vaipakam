@@ -293,7 +293,9 @@ contract PrecloseFacet is
             // lender's vault and the lender keeps 100% of interest in the
             // lending asset. tryApplyYieldFee is a silent fallback.
             uint256 yieldVpfiDeducted;
-            if (s.vpfiDiscountConsent[loan.lender] && plan.treasuryShare > 0) {
+            // #1354 §F2 — eligibility is `consent OR lenderMode == Full` (a
+            // Full lender earns the +10% even without hold-discount consent).
+            if (LibVPFIDiscount.lenderYieldFeeEligible(loan) && plan.treasuryShare > 0) {
                 bool yieldApplied;
                 // Pass-2 A1/D5 (#1189) — base the VPFI treasury-cut equivalent on
                 // `interest + lateFee` and let the lender keep the whole
