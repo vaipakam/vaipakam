@@ -27,14 +27,24 @@ The new ceiling is a per-`(loanId, side)` **lifetime budget**, priced off the
   loan whose reward window spans the cutover keeps its pre-`D*` days under the
   legacy #1008 regime and has only its post-`D*` slice loan-side-capped.
 
-A loan that carries no `C*` stamp (`loanSideRewardCapOpen == 0`) — a mirror-chain
-loan, a dark-era pre-enable loan, or any pre-cutover loan — is **not**
-zeroed: the cap simply **does not apply** and it earns normally. True
-reward-**ineligibility** (a canonical origination whose list LIF cannot be priced)
-is enforced **upstream** by not creating reward entries at all — never by zeroing
-a payout at the cap. This is the anti-farming rule stated correctly: an unpriced
-loan draws nothing because it has no reward entries, not because a live loan's
-earned reward is retroactively voided.
+A loan that carries no `C*` **stamp** (`cStarOpen == 0`) — a mirror-chain loan, a
+dark-era pre-enable loan, or any pre-cutover loan — is **not** zeroed: the cap
+simply **does not apply** and it earns normally. (A **stamped** loan whose ceiling
+merely rounds to 0 — a dust `C*` — IS still capped; the skip keys on the
+`cStarOpen` stamp, not the rounded ceiling.) True reward-**ineligibility** (a
+canonical origination whose list LIF cannot be priced) is enforced **upstream** by
+not creating reward entries at all — never by zeroing a payout at the cap. This is
+the anti-farming rule stated correctly: an unpriced loan draws nothing because it
+has no reward entries, not because a live loan's earned reward is retroactively
+voided.
+
+Because that skip leaves an unstamped loan uncapped once #1008 also retires on
+armed days, arming `D*` has a **precondition** (the `cStar` **backfill gate**):
+every reward-eligible **canonical** loan must be stamped before `D*` arms — which
+holds from genesis on a fresh (pre-live) deploy, and is backfilled first on a
+post-launch cutover. Mirror-chain loans are bounded by the D1 share cap (PR-2) on
+their local claim, not the loan-side cap. The arming-time enforcement is a
+deploy-assert (PR-9).
 
 The whole cap is gated on the **joint cutover `D*`** (the ShareOfPool arming):
 while `D*` is unarmed — the state of every current deploy — the cap is a

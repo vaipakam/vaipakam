@@ -2022,7 +2022,18 @@ function _dayPoolHalves(
         if (split.armedFresh == 0) return split; // no post-cutover fresh ⇒ dark
         uint256 loanId = e.loanId;
         if (s.feeEntitlementByLoanId[loanId].cStarOpen == 0) {
-            return split; // unstamped (mirror / dark-era / pre-cutover) ⇒ no cap
+            // Unstamped (mirror / dark-era / pre-cutover) ⇒ no loan-side cap here
+            // (never zeroed — Codex #1371 r1). ARMING PRECONDITION (`cStar`
+            // backfill gate): `D*` must not be armed while any reward-eligible
+            // CANONICAL loan is unstamped, because #1008 also retires on armed
+            // days ({snapshotDayCapThreshold}) and this skip would then leave it
+            // uncapped (Codex #1371 r3). On a fresh (pre-live) deploy that holds
+            // from genesis; a post-launch cutover backfills open loans first.
+            // MIRROR-chain loans (never stamped) are bounded by the D1
+            // (user, side, day) share cap on their local claim, not here. The
+            // arming-time enforcement is a deploy-assert (PR-9 #1356) coupled
+            // with the joint cutover.
+            return split;
         }
         uint8 side = uint8(e.side);
         uint256 daysIncl =
