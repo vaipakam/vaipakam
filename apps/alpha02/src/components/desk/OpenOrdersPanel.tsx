@@ -747,18 +747,22 @@ function OrderRow({ offer }: { offer: IndexedOffer }) {
           <span className="row-sub">
             #{offer.offerId} · {formatDurationDays(offer.durationDays)} ·{' '}
             {offer.expiresAt
-              ? `expires ${formatDate(offer.expiresAt)}`
-              : 'no expiry'}
+              ? copy.offers.expiresLabel(formatDate(offer.expiresAt))
+              : copy.offers.advancedNoExpiry}
             {filled > 0n && meta.data
-              ? ` · filled ${formatTokenAmount(filled, meta.data.decimals)} (${fillLabel}) · ${formatTokenAmount(remaining, meta.data.decimals)} left`
+              ? text.fillSummary(
+                  formatTokenAmount(filled, meta.data.decimals),
+                  fillLabel,
+                  formatTokenAmount(remaining, meta.data.decimals),
+                )
               : ''}
           </span>
           {filled > 0n ? (
             <span
               className="desk-fill-bar"
-              title={`${fillLabel} filled`}
+              title={text.filledTooltip(fillLabel)}
               role="img"
-              aria-label={`${fillLabel} filled`}
+              aria-label={text.filledTooltip(fillLabel)}
             >
               <span style={{ width: `${barPct}%` }} />
             </span>
@@ -940,8 +944,8 @@ function SignedOrdersBlock({
                   {shortAddress(row.orderHash)} ·{' '}
                   {formatDurationDays(Number(row.order.durationDays))} ·{' '}
                   {row.expiresAt
-                    ? `expires ${formatDate(row.expiresAt)}`
-                    : 'no expiry'}
+                    ? copy.offers.expiresLabel(formatDate(row.expiresAt))
+                    : copy.offers.advancedNoExpiry}
                 </span>
                 {cancelledHashes.has(row.orderHash) ? (
                   <>

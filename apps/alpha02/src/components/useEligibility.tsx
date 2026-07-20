@@ -150,7 +150,7 @@ export function useEligibility(inputs: EligibilityInputs): CheckItem[] {
       id: 'counter-token',
       label: counter.metaError
         ? `${counter.label}: ${copy.errors.notAToken}`
-        : `${counter.label} recognised (${counter.meta?.symbol ?? '…'})`,
+        : copy.checks.recognised(counter.label, counter.meta?.symbol ?? '…'),
       state: counter.metaError ? 'fail' : counter.meta ? 'pass' : 'pending',
     });
   }

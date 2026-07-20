@@ -19,6 +19,20 @@ missing keys fall back to English. Respect the do-not-translate
 glossary in `packages/i18n/src/glossary.ts` (VPFI, HF, LTV, asset and
 network names, …).
 
+**Preserve every `{{placeholder}}` verbatim.** The migrated `tmpl(...)`
+values carry live i18next interpolation tokens — `{{chainName}}`,
+`{{amount}}`, and format-suffixed ones like `{{units, number}}`. These
+are NOT words to translate: the name inside the braces (and any
+`, number` / `, ...` format suffix) must appear unchanged in the
+translation, or i18next renders the string without its dynamic value (or
+with raw braces). You may reorder placeholders to fit the target
+grammar, but never rename, translate, or drop one, and keep the same set
+that appears in the English value. A count-plural key ships as its full
+CLDR category set (`_zero` / `_one` / `_two` / `_few` / `_many` /
+`_other`); fill each category your locale grammatically uses and leave
+the placeholder tokens intact in every one. (Automated placeholder-set
+validation for the machine-assisted flow is tracked in #1362.)
+
 Machine-assisted alternative:
 
 ```bash

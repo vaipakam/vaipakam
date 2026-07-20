@@ -89,6 +89,14 @@ const JSX_INTERP = new RegExp(
   'g',
 );
 // Two real (3+ letter) words in a row = prose, not a css class / path.
+// NOTE (Codex #1345 r5): a SINGLE prose word adjacent to an interpolation
+// (`expires ${d}`, `${x} recognised (...)`, ` · filled ${a} … ${b} left`)
+// is real untranslated copy this line-based scan can't catch precisely —
+// a ≥6-letter-lowercase-word rule flags ~13 false positives on the tree
+// (TS fragments leaking through nested `${...}` blanking, and separator
+// soup left by catalog-ref compositions). All CURRENT-tree instances are
+// extracted into the catalog; the general single-word detector needs an
+// AST/ESLint-rule or i18next `saveMissing` runtime pass — tracked in #1365.
 const PROSE_PAIR = /[A-Za-z]{3,} [A-Za-z]{3,}/;
 // Attribute/identifier contexts that legitimately hold backtick values
 // (class names, routes, keys, styles) — blanked before the prose scan.

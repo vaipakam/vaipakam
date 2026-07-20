@@ -162,7 +162,7 @@ function OfferRow({ offer, risk }: { offer: IndexedOffer; risk: RiskLevel | null
     }
     advancedBits.push(
       offer.expiresAt
-        ? `expires ${formatDate(offer.expiresAt)}`
+        ? copy.offers.expiresLabel(formatDate(offer.expiresAt))
         : copy.offers.advancedNoExpiry,
     );
   }

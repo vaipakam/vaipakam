@@ -44,14 +44,21 @@ describe('buildTemplate emits tmpl entries', () => {
     expect(out).toEqual({ nudge: 'On {{chain}}' });
   });
 
-  it('emits _one / _other siblings for a plural', () => {
+  it('emits the full CLDR category set for a plural (superset for ar etc.)', () => {
     const out = buildTemplate({
       active: tmpl('You have {{count}} positions.', ['count'], {
         one: 'You have {{count}} position.',
       }),
     }) as Record<string, string>;
+    // English defines only `one`; every other category falls back to the
+    // base (`_other`) template as a fill slot so many-category locales
+    // (Arabic: zero/two/few/many) have every key to translate (#1345 r5).
     expect(out).toEqual({
+      active_zero: 'You have {{count}} positions.',
       active_one: 'You have {{count}} position.',
+      active_two: 'You have {{count}} positions.',
+      active_few: 'You have {{count}} positions.',
+      active_many: 'You have {{count}} positions.',
       active_other: 'You have {{count}} positions.',
     });
   });

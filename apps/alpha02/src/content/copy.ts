@@ -509,6 +509,8 @@ const copySource = {
     supportedChain: 'On a supported network',
     balanceSufficient: tmpl(`Enough {{asset}} in your wallet`, ['asset']),
     tokenValid: 'Asset recognised as a token',
+    // Live payment-asset check row: "<Asset> recognised (SYMBOL)".
+    recognised: tmpl('{{label}} recognised ({{symbol}})', ['label', 'symbol']),
     consent: 'Risk disclosures and terms accepted',
     // UX-010 — the inline remedy on a failing balance check (testnets
     // with deployed mocks only).
@@ -1684,6 +1686,8 @@ const copySource = {
     advancedPartialRepayOk: 'partial repay OK',
     advancedNoPartialRepay: 'no partial repay',
     advancedNoExpiry: 'no expiry',
+    // Offer/order expiry sub-line: "expires <date>".
+    expiresLabel: tmpl('expires {{date}}', ['date']),
     ctaRent: 'Rent this NFT',
     ctaBuyPosition: 'Buy this loan position',
     ctaBorrow: 'Borrow this',
@@ -2050,6 +2054,12 @@ const copySource = {
       loading: 'Loading your open orders…',
       tab: 'Open orders',
       empty: 'No open orders. Post one with the ticket.',
+      // Partial-fill row sub-line + fill-bar tooltip.
+      fillSummary: tmpl(
+        ' · filled {{filled}} ({{pct}}) · {{remaining}} left',
+        ['filled', 'pct', 'remaining'],
+      ),
+      filledTooltip: tmpl('{{pct}} filled', ['pct']),
       unavailable: 'We couldn’t load your open orders right now.',
       heldNotCreated: 'Held — managed by its creator',
       cancel: 'Cancel',
