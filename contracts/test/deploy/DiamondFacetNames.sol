@@ -49,7 +49,7 @@ abstract contract DiamondFacetNames {
     ///      60 → 61 in #1104 with `RiskPreviewFacet` (the read-only preview
     ///      cluster + the two cross-facet gate asserts split off
     ///      `RiskAccessFacet` for EIP-170 header room).)
-    function cutFacetNames() internal pure returns (string[66] memory) {
+    function cutFacetNames() internal pure returns (string[67] memory) {
         return [
             "AccessControlFacet",
             "AddCollateralFacet",
@@ -221,7 +221,14 @@ abstract contract DiamondFacetNames {
             // batched claim's auth) is preserved, and each item enters+exits
             // the shared reentrancy guard in its own frame. Stateless facet;
             // the on-chain substance behind the one-click Claim All flow.
-            "MulticallFacet"
+            "MulticallFacet",
+            // #1347 (M2 PR-5a/5b) — Full VPFI tariff surface: prices the
+            // per-loan `C*` (LIF·year), charges each opting-in party's tariff
+            // from their vault into the recycle bucket, and stamps the
+            // per-loan fee-entitlement record PR-5c / PR-6 read. Its own facet
+            // for a fresh viaIR stack frame off the at-budget accept path and
+            // to keep the Full-tariff bytecode off the large OfferAcceptFacet.
+            "FeeEntitlementFacet"
         ];
     }
 }

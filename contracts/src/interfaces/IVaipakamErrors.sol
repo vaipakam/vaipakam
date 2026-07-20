@@ -68,6 +68,19 @@ interface IVaipakamErrors {
     error HealthFactorCalculationFailed();
     error LenderResolutionFailed();
     error UnauthorizedCrossFacetCall();
+    /// @notice #1347 — the post-mint Full VPFI tariff cross-facet charge failed
+    ///         without a typed reason (the specific opt-in failures —
+    ///         disabled / above-auth / vault-short — bubble their own errors).
+    error FeeEntitlementChargeFailed();
+    /// @notice #1347 — a Full VPFI tariff opt-in was authorized without the
+    ///         MANDATORY absolute `maxCStar` ceiling (rev-15 §3). Every Full
+    ///         authorization must bound its worst-case tariff.
+    error FullTariffMaxCStarRequired();
+    /// @notice #1347 — attempted to enable the Full VPFI tariff on a
+    ///         non-canonical (mirror) VPFI chain, where an absorbed `C*` would
+    ///         strand in a mirror-local recycle bucket the Base reward governor
+    ///         cannot fund until the cross-chain mesh is live.
+    error FeeEntitlementRequiresCanonicalVpfiChain();
 
     // ─── Access / Identity ───────────────────────────────────────────────────
     error NotBorrower();

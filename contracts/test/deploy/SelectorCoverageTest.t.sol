@@ -78,7 +78,7 @@ contract SelectorCoverageTest is Test, DeployDiamond, DiamondFacetNames {
     function test_DeployDiamond_RoutesEveryFacetSelector() public {
         _populateRoutedSet();
 
-        string[66] memory facets = cutFacetNames();
+        string[67] memory facets = cutFacetNames();
         uint256 missing;
         for (uint256 i; i < facets.length; ++i) {
             string memory name = facets[i];
@@ -108,7 +108,7 @@ contract SelectorCoverageTest is Test, DeployDiamond, DiamondFacetNames {
     ///         4-byte selector — such a collision makes `diamondCut`
     ///         revert and the Diamond undeployable.
     function test_NoSelectorCollisionAcrossFacets() public {
-        string[66] memory facets = cutFacetNames();
+        string[67] memory facets = cutFacetNames();
         uint256 collisions;
         for (uint256 i; i < facets.length; ++i) {
             collisions += _recordAndCountCollisions(facets[i]);
@@ -279,6 +279,8 @@ contract SelectorCoverageTest is Test, DeployDiamond, DiamondFacetNames {
         _addAll(_getNFTPrepayAutoListSelectors());
         // #1212 (E-10 Claim-All) — generic best-effort delegatecall batcher.
         _addAll(_getMulticallFacetSelectors());
+        // #1347 (M2 PR-5a/5b) — Full VPFI tariff surface.
+        _addAll(_getFeeEntitlementFacetSelectors());
     }
 
     /// @dev Add a selector list to the routed set, rejecting two faults:

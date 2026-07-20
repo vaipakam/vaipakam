@@ -74,6 +74,12 @@ const ACCEPT_TERMS_TYPES = {
     { name: 'deadline', type: 'uint256' },
     // #730 — the live risk-terms HASH this acknowledgement is bound to.
     { name: 'riskTermsHash', type: 'bytes32' },
+    // #1347 — the acceptor's per-party Full VPFI fee-entitlement tariff opt-in.
+    // MUST stay last, matching the append to `LibAcceptTerms.ACCEPT_TERMS_TYPEHASH`.
+    // Defaulted off here (non-Full); the Full-tariff accept UI ships in PR-8 (#1355).
+    { name: 'acceptorFull', type: 'bool' },
+    { name: 'acceptorMaxCStar', type: 'uint256' },
+    { name: 'acceptorAllowFullDowngrade', type: 'bool' },
   ],
 } as const;
 
@@ -109,6 +115,10 @@ export interface AcceptTerms {
   nonce: bigint;
   deadline: bigint;
   riskTermsHash: Hex;
+  // #1347 — acceptor's Full VPFI tariff opt-in (defaulted off until PR-8).
+  acceptorFull: boolean;
+  acceptorMaxCStar: bigint;
+  acceptorAllowFullDowngrade: boolean;
 }
 
 export interface AcceptTermsPayload {
@@ -375,6 +385,10 @@ export function useAcceptTermsSigning() {
         nonce: randomNonce(),
         deadline: chainNow + BigInt(ACCEPT_DEADLINE_SECONDS),
         riskTermsHash,
+        // #1347 — non-Full accept (Full-tariff opt-in UI ships in PR-8 #1355).
+        acceptorFull: false,
+        acceptorMaxCStar: 0n,
+        acceptorAllowFullDowngrade: false,
       };
 
       // The signed terms acknowledge BOTH assets as potentially
@@ -665,6 +679,10 @@ export function useSignedOfferAcceptTermsSigning() {
         nonce: randomNonce(),
         deadline: chainNow + BigInt(ACCEPT_DEADLINE_SECONDS),
         riskTermsHash,
+        // #1347 — non-Full accept (Full-tariff opt-in UI ships in PR-8 #1355).
+        acceptorFull: false,
+        acceptorMaxCStar: 0n,
+        acceptorAllowFullDowngrade: false,
       };
 
       const signature = (await walletClient.signTypedData({

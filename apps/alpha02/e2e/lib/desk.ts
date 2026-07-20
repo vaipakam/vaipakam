@@ -253,6 +253,10 @@ const ACCEPT_TERMS_TYPES = {
     { name: 'nonce', type: 'uint256' },
     { name: 'deadline', type: 'uint256' },
     { name: 'riskTermsHash', type: 'bytes32' },
+    // #1347 — acceptor's Full VPFI tariff opt-in (append, matches typehash).
+    { name: 'acceptorFull', type: 'bool' },
+    { name: 'acceptorMaxCStar', type: 'uint256' },
+    { name: 'acceptorAllowFullDowngrade', type: 'bool' },
   ],
 } as const;
 
@@ -349,6 +353,10 @@ export async function acceptOfferDirect(
     nonce: randomNonce(),
     deadline: chainNow + 1800n,
     riskTermsHash,
+    // #1347 — non-Full accept (Full-tariff opt-in ships in PR-8 #1355).
+    acceptorFull: false,
+    acceptorMaxCStar: 0n,
+    acceptorAllowFullDowngrade: false,
   };
   const signature = await account.signTypedData({
     domain: {

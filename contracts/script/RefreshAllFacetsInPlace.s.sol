@@ -14,6 +14,7 @@ import {OwnershipFacet} from "../src/facets/OwnershipFacet.sol";
 import {AccessControlFacet} from "../src/facets/AccessControlFacet.sol";
 import {AdminFacet} from "../src/facets/AdminFacet.sol";
 import {ProfileFacet} from "../src/facets/ProfileFacet.sol";
+import {FeeEntitlementFacet} from "../src/facets/FeeEntitlementFacet.sol";
 import {OracleFacet} from "../src/facets/OracleFacet.sol";
 import {OracleAdminFacet} from "../src/facets/OracleAdminFacet.sol";
 import {VaipakamNFTFacet} from "../src/facets/VaipakamNFTFacet.sol";
@@ -147,7 +148,7 @@ contract RefreshAllFacetsInPlace is DeployDiamond {
 
     // Must equal DeployDiamond's `cuts` array length (currently cuts[0..63]).
     // A mismatch means a facet was added to DeployDiamond but not mirrored here.
-    uint256 internal constant EXPECTED_FACETS = 66;
+    uint256 internal constant EXPECTED_FACETS = 67;
 
     function refresh() external {
         uint256 cid = block.chainid;
@@ -473,6 +474,16 @@ contract RefreshAllFacetsInPlace is DeployDiamond {
             "interactionRewardsLensFacet",
             address(new InteractionRewardsLensFacet()),
             _getInteractionRewardsLensSelectors()
+        );
+        // #1347 (M2 PR-5a/5b) — Full VPFI fee-entitlement tariff facet. An
+        // in-place refresh MUST re-cut this alongside OfferAcceptFacet/Config/
+        // Profile, or `_fullTariffShouldRun` reaches an unrouted `chargeFullTariff`
+        // selector once the master switch arms (or a user presents a Full opt-in)
+        // and every ERC-20 accept reverts (Codex #1366 P2).
+        items[66] = Item(
+            "feeEntitlementFacet",
+            address(new FeeEntitlementFacet()),
+            _getFeeEntitlementFacetSelectors()
         );
         // #1132 (S10 central enforcement) — terminal-transition register host.
     }

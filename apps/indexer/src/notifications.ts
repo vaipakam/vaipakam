@@ -163,6 +163,8 @@ export const NOTIF_DELIBERATELY_NOT_HANDLED: Readonly<Record<string, string>> = 
   OfferClosed: 'bookkeeping status flip — no distinct user meaning',
   OfferConsumedBySale: 'surfaced via the sale terminal rows (PR2), not the consume marker',
   OfferKeeperEnabled: 'per-offer keeper authorization — own config action',
+  OfferCreatorFullTariffSet:
+    'per-offer creator Full VPFI tariff opt-in (#1347) — the creator’s own pre-acceptance config action, not a counterparty-facing event (dark until the fee-entitlement master switch arms)',
   LoanKeeperEnabled: 'per-loan keeper authorization — own config action',
   OffsetOfferCreated: 'own action — offset offer creation',
   LoanSaleOfferLinked: 'internal linkage breadcrumb — no user meaning',

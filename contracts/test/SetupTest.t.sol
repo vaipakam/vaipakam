@@ -96,6 +96,7 @@ import {ConsolidationFacet} from "../src/facets/ConsolidationFacet.sol";
 import {RiskAccessFacet} from "../src/facets/RiskAccessFacet.sol";
 import {RiskPreviewFacet} from "../src/facets/RiskPreviewFacet.sol";
 import {MulticallFacet} from "../src/facets/MulticallFacet.sol";
+import {FeeEntitlementFacet} from "../src/facets/FeeEntitlementFacet.sol";
 import {IntentConfigFacet} from "../src/facets/IntentConfigFacet.sol";
 import {AdminFacet} from "../src/facets/AdminFacet.sol";
 import {ClaimFacet} from "../src/facets/ClaimFacet.sol";
@@ -271,6 +272,7 @@ contract SetupTest is Test {
     RiskPreviewFacet riskPreviewFacet;
     // #1212 (E-10 Claim-All) — generic delegatecall batcher.
     MulticallFacet multicallFacet;
+    FeeEntitlementFacet feeEntitlementFacet;
     IntentConfigFacet intentConfigFacet;
     AdminFacet adminFacet;
     ClaimFacet claimFacet;
@@ -380,6 +382,7 @@ contract SetupTest is Test {
         riskAccessFacet = new RiskAccessFacet();
         riskPreviewFacet = new RiskPreviewFacet();
         multicallFacet = new MulticallFacet();
+        feeEntitlementFacet = new FeeEntitlementFacet();
         intentConfigFacet = new IntentConfigFacet();
         adminFacet = new AdminFacet();
         claimFacet = new ClaimFacet();
@@ -445,7 +448,7 @@ contract SetupTest is Test {
         // Preclose / Refinance / EarlyWithdrawal / PartialWithdrawal
         // quartet at slots 24-27 to unblock the PauseGating fold —
         // those slots stay where they are.
-        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](67);
+        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](68);
         cuts[0] = IDiamondCut.FacetCut({
             facetAddress: address(offerCreateFacet),
             action: IDiamondCut.FacetCutAction.Add,
@@ -474,6 +477,12 @@ contract SetupTest is Test {
             facetAddress: address(multicallFacet),
             action: IDiamondCut.FacetCutAction.Add,
             functionSelectors: helperTest.getMulticallFacetSelectors()
+        });
+        // #1347 (M2 PR-5a/5b) — Full VPFI tariff surface.
+        cuts[67] = IDiamondCut.FacetCut({
+            facetAddress: address(feeEntitlementFacet),
+            action: IDiamondCut.FacetCutAction.Add,
+            functionSelectors: helperTest.getFeeEntitlementFacetSelectors()
         });
         cuts[1] = IDiamondCut.FacetCut({
             facetAddress: address(profileFacet),

@@ -50,6 +50,8 @@ const DELIBERATELY_NOT_HANDLED = {
     'transient — pairs with LoanFallbackPending; D1 status was never moved off active',
   LoanKeeperEnabled: 'per-loan keeper authorization — not modelled in the indexer schema',
   OfferKeeperEnabled: 'per-offer keeper authorization — not modelled',
+  OfferCreatorFullTariffSet:
+    'per-offer creator Full VPFI fee-entitlement tariff opt-in (#1347) — a pre-acceptance authorization knob, not an offer-lifecycle state the indexer projects (dark until the fee-entitlement master switch arms)',
   OfferCreatedDetails:
     'companion to OfferCreated — the offer row is still built via a getOfferDetails read-back; switching the offer side to consume this companion event (the loan side already consumes LoanInitiatedDetails) is a follow-up',
   OfferCanceledDetails: 'companion to OfferCanceled — extra fields not needed beyond the status flip',

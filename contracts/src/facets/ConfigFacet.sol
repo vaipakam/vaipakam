@@ -804,6 +804,17 @@ contract ConfigFacet is DiamondAccessControl {
     error InvalidRecycleMarginBps(uint256 bps, uint256 maxAllowed);
     error InvalidRecycleTariffK(uint256 k, uint256 minAllowed, uint256 maxAllowed);
 
+    /// @notice #1347 (M2 PR-5a/5b) — emitted when the Full-tariff `K`
+    ///         (LIF·year) coefficient changes.
+    /// @custom:event-category informational/config
+    event TariffKPerLifYearSet(uint256 newKPerLifYear);
+    /// @notice #1347 (M2 PR-5a/5b) — emitted when the Full-tariff kill switch
+    ///         is toggled.
+    /// @custom:event-category informational/config
+    event FeeEntitlementEnabledSet(bool enabled);
+
+    error InvalidTariffKPerLifYear(uint256 k, uint256 minAllowed, uint256 maxAllowed);
+
     /**
      * @notice Set the platform-retained recycling margin (bps) — the slight
      *         edge the VPFI recycling governor keeps from absorption before
@@ -871,6 +882,82 @@ contract ConfigFacet is DiamondAccessControl {
         return (
             LibVaipakam.cfgRecycleMarginBps(),
             LibVaipakam.cfgRecycleTariffKPer1e18EthDay()
+        );
+    }
+
+    /**
+     * @notice #1347 (M2 PR-5a/5b) — set the Full-tariff coefficient `K` in the
+     *         LIF·year absorption formula `C* = baseLif_list × tYears × K`.
+     * @dev    ADMIN_ROLE-only (TimelockController post-handover). Bounded
+     *         `[TARIFF_K_PER_LIF_YEAR_MIN, TARIFF_K_PER_LIF_YEAR_MAX]`; pass
+     *         exactly `0` to reset to `TARIFF_K_PER_LIF_YEAR_DEFAULT` (5e18).
+     *         This is the LIF·year successor to
+     *         {setRecycleTariffKPer1e18EthDay}; the ETH·day knob is NOT wired
+     *         for Phase-1 absorption (formula doc §F4, rev 14+).
+     * @param  newKPerLifYear New `K`; `0` resets to default.
+     */
+    function setTariffKPerLifYear(uint256 newKPerLifYear)
+        external
+        onlyRole(LibAccessControl.ADMIN_ROLE)
+    {
+        if (
+            newKPerLifYear != 0 &&
+            (
+                newKPerLifYear < LibVaipakam.TARIFF_K_PER_LIF_YEAR_MIN ||
+                newKPerLifYear > LibVaipakam.TARIFF_K_PER_LIF_YEAR_MAX
+            )
+        ) {
+            revert InvalidTariffKPerLifYear(
+                newKPerLifYear,
+                LibVaipakam.TARIFF_K_PER_LIF_YEAR_MIN,
+                LibVaipakam.TARIFF_K_PER_LIF_YEAR_MAX
+            );
+        }
+        LibVaipakam.storageSlot().tariffKPerLifYear = newKPerLifYear;
+        emit TariffKPerLifYearSet(newKPerLifYear);
+    }
+
+    /**
+     * @notice #1347 (M2 PR-5a/5b) — flip the Full VPFI tariff kill switch.
+     * @dev    ADMIN_ROLE-only (TimelockController post-handover). Ships DARK:
+     *         the post-deploy default is `false`, under which every Full opt-in
+     *         fails closed and no `C*` is pulled. **Do NOT enable on any deploy
+     *         until the loan-side reward cap (PR-5c) and the settlement sweep
+     *         honoring the lender Full stamp (PR-6) are live** — enabling
+     *         earlier lets a Full loan pay `C*` for a discount the settlement
+     *         path would not yet honor, and arms an uncapped loan-side reward.
+     *
+     *         Enabling is REJECTED on a non-canonical (mirror) VPFI chain: a
+     *         `C*` absorbed there credits only that chain's mirror-local
+     *         `recycleBucket`, which the Base reward governor cannot count or
+     *         fund from until the cross-chain mesh is live — stranding the
+     *         user's tariff outside the reward loop it is meant to fund (Codex
+     *         #1366 r3 P2). Disabling (`false`) is always allowed.
+     * @param  enabled New kill-switch state.
+     */
+    function setFeeEntitlementEnabled(bool enabled)
+        external
+        onlyRole(LibAccessControl.ADMIN_ROLE)
+    {
+        if (enabled && !LibVaipakam.storageSlot().isCanonicalVpfiChain) {
+            revert IVaipakamErrors.FeeEntitlementRequiresCanonicalVpfiChain();
+        }
+        LibVaipakam.storageSlot().feeEntitlementEnabled = enabled;
+        emit FeeEntitlementEnabledSet(enabled);
+    }
+
+    /// @notice #1347 (M2 PR-5a/5b) — read the effective Full-tariff knobs in
+    ///         one RPC.
+    /// @return enabled       Whether the Full VPFI tariff is enabled (DARK when false).
+    /// @return kPerLifYear   Effective `K` (VPFI-1e18 per list-LIF-numeraire per year).
+    function getFeeEntitlementConfig()
+        external
+        view
+        returns (bool enabled, uint256 kPerLifYear)
+    {
+        return (
+            LibVaipakam.cfgFeeEntitlementEnabled(),
+            LibVaipakam.cfgTariffKPerLifYear()
         );
     }
 

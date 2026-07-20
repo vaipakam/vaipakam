@@ -40,6 +40,7 @@ import {ConsolidationFacet} from "../src/facets/ConsolidationFacet.sol";
 import {RiskAccessFacet} from "../src/facets/RiskAccessFacet.sol";
 import {RiskPreviewFacet} from "../src/facets/RiskPreviewFacet.sol";
 import {MulticallFacet} from "../src/facets/MulticallFacet.sol";
+import {FeeEntitlementFacet} from "../src/facets/FeeEntitlementFacet.sol";
 import {IntentConfigFacet} from "../src/facets/IntentConfigFacet.sol";
 import {DefaultedFacet} from "../src/facets/DefaultedFacet.sol";
 import {RiskFacet} from "../src/facets/RiskFacet.sol";
@@ -196,6 +197,8 @@ contract DeployDiamond is Script {
         RiskPreviewFacet riskPreviewFacet = new RiskPreviewFacet();
         // #1212 (E-10 Claim-All) — generic best-effort delegatecall batcher.
         MulticallFacet multicallFacet = new MulticallFacet();
+        // #1347 (M2 PR-5a/5b) — Full VPFI tariff surface.
+        FeeEntitlementFacet feeEntitlementFacet = new FeeEntitlementFacet();
         // T-090 v1.1 (#389) — intent-based swap-to-repay config knobs.
         // Carved off `ConfigFacet` after the round-2 PR #420 CI block
         // pushed it past EIP-170.
@@ -269,7 +272,7 @@ contract DeployDiamond is Script {
 
         // ── Step 3: Build facet cuts ────────────────────────────────────
         // 37 facets (DiamondCutFacet already added by constructor)
-        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](66);
+        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](67);
 
         cuts[0] = _buildCut(address(loupeFacet), _getLoupeSelectors());
         cuts[1] = _buildCut(address(ownershipFacet), _getOwnershipSelectors());
@@ -519,6 +522,13 @@ contract DeployDiamond is Script {
         cuts[65] = _buildCut(
             address(interactionRewardsLensFacet),
             _getInteractionRewardsLensSelectors()
+        );
+        // #1347 (M2 PR-5a/5b) — FeeEntitlementFacet: Full VPFI tariff pricing +
+        // per-party absorption + fee-entitlement stamp. Own facet for a fresh
+        // viaIR stack frame off the at-budget accept path and EIP-170 headroom.
+        cuts[66] = _buildCut(
+            address(feeEntitlementFacet),
+            _getFeeEntitlementFacetSelectors()
         );
         // #594 — standalone holder-only consolidation entry points are cut at
         // slot 24 (see the #687-B note above).
@@ -846,6 +856,7 @@ contract DeployDiamond is Script {
         Deployments.writeFacet("riskAccessFacet",         address(riskAccessFacet));
         Deployments.writeFacet("riskPreviewFacet",        address(riskPreviewFacet));
         Deployments.writeFacet("multicallFacet",          address(multicallFacet));
+        Deployments.writeFacet("feeEntitlementFacet",     address(feeEntitlementFacet));
 
         console.log(
             "Wrote addresses to deployments/",
@@ -902,6 +913,7 @@ contract DeployDiamond is Script {
         console.log("ProtocolBroadcastFacet:", address(protocolBroadcastFacet));
         console.log("InteractionRewardsFacet:", address(interactionRewardsFacet));
         console.log("InteractionRewardsLensFacet:", address(interactionRewardsLensFacet));
+        console.log("FeeEntitlementFacet: ", address(feeEntitlementFacet));
         console.log("RewardReporterFacet:  ", address(rewardReporterFacet));
         console.log("RewardAggregatorFacet:", address(rewardAggregatorFacet));
         console.log("RewardRemittanceFacet:", address(rewardRemittanceFacet));
@@ -1041,7 +1053,7 @@ contract DeployDiamond is Script {
     }
 
     function _getProfileSelectors() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](30);
+        s = new bytes4[](31);
         s[0] = ProfileFacet.updateKYCStatus.selector;
         s[1] = ProfileFacet.getUserCountry.selector;
         s[2] = ProfileFacet.isKYCVerified.selector;
@@ -1080,6 +1092,8 @@ contract DeployDiamond is Script {
         s[28] = ProfileFacet.enforcePositionSaleMove.selector;
         // #1144 — registry-aware prepay-sale fill bar (read by CollateralListingExecutor).
         s[29] = ProfileFacet.isRecipientBarred.selector;
+        // #1347 — per-offer creator Full VPFI tariff opt-in.
+        s[30] = ProfileFacet.setOfferCreatorFullTariff.selector;
     }
 
     function _getOracleSelectors() internal pure returns (bytes4[] memory s) {
@@ -1615,6 +1629,17 @@ contract DeployDiamond is Script {
     function _getMulticallFacetSelectors() internal pure returns (bytes4[] memory s) {
         s = new bytes4[](1);
         s[0] = MulticallFacet.multicall.selector;
+    }
+
+    function _getFeeEntitlementFacetSelectors()
+        internal
+        pure
+        returns (bytes4[] memory s)
+    {
+        s = new bytes4[](3);
+        s[0] = FeeEntitlementFacet.chargeFullTariff.selector;
+        s[1] = FeeEntitlementFacet.quoteCStar.selector;
+        s[2] = FeeEntitlementFacet.getFeeEntitlement.selector;
     }
 
     function _getAggregatorAdapterFactorySelectors()
@@ -2171,7 +2196,7 @@ contract DeployDiamond is Script {
     }
 
     function _getConfigSelectors() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](84);
+        s = new bytes4[](87);
         // Setters
         s[0] = ConfigFacet.setFeesConfig.selector;
         s[1] = ConfigFacet.setLiquidationConfig.selector;
@@ -2348,6 +2373,10 @@ contract DeployDiamond is Script {
         // RL-4 (#1306) — recycled-stream allocation register.
         s[82] = ConfigFacet.setRecycleRegisterKeeperBps.selector;
         s[83] = ConfigFacet.getRecycleRegisterState.selector;
+        // #1347 (M2 PR-5a/5b) — Full VPFI tariff knobs.
+        s[84] = ConfigFacet.setTariffKPerLifYear.selector;
+        s[85] = ConfigFacet.setFeeEntitlementEnabled.selector;
+        s[86] = ConfigFacet.getFeeEntitlementConfig.selector;
     }
 
     /// T-034 / T-048 numeraire / PAD / periodic-interest config

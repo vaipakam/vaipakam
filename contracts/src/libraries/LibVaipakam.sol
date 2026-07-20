@@ -88,6 +88,13 @@ library LibVaipakam {
     ///      fee reduction (and keeps the Full `+10%` own-side bump from
     ///      pushing a high tier past 50%). #1352.
     uint256 constant MAX_FEE_DISCOUNT_BPS = 5000;
+    /// @dev #1347 (redesign §F2/§F3, rev 15) — the Full VPFI tariff own-side
+    ///      fee-discount BONUS: a party that pays the `C*` Full tariff gets its
+    ///      own-side fee discount bumped to `min(d_hold + 1000, 5000)`. Applied
+    ///      to the borrower's Loan-Initiation Fee at accept (this PR) and, at
+    ///      settlement, to the lender's yield fee (PR-6). The `MAX_FEE_DISCOUNT_BPS`
+    ///      clamp keeps a high hold-tier from crossing 50% after the bump.
+    uint256 constant FULL_MODE_FEE_DISCOUNT_BONUS_BPS = 1000;
     uint256 constant BASIS_POINTS = 10000;
     uint256 constant HF_SCALE = 1e18; // Health Factor precision
     uint256 constant HF_LIQUIDATION_THRESHOLD = 1e18; // HF < 1 for liquidation
@@ -723,6 +730,19 @@ library LibVaipakam {
     uint256 constant RECYCLE_TARIFF_K_DEFAULT = 5e16; // 0.05 VPFI / ETH·day
     uint256 constant RECYCLE_TARIFF_K_MIN = 1e15; // 0.001 VPFI / ETH·day
     uint256 constant RECYCLE_TARIFF_K_MAX = 1e18; // 1.0 VPFI / ETH·day
+
+    /// @dev #1347 (M2 PR-5a/5b) — the Full-tariff schedule coefficient `K`
+    ///      in the LIF·year absorption formula
+    ///      `C* = baseLif_list × tYears × K` (formula doc §F4, rev 15). Unit:
+    ///      "VPFI-1e18 per 1.0 numeraire-unit (1e18) of list LIF per year".
+    ///      Default `5e18` ⇒ 5 VPFI per whole numeraire-unit of list LIF per
+    ///      year, so a 20-USDC list LIF on a 30-day loan absorbs ≈8.22 VPFI
+    ///      per Full party. This is the SUCCESSOR to the retired ETH·day
+    ///      `RECYCLE_TARIFF_K_*` family — rev 14+ forbids wiring the ETH·day
+    ///      knob for Phase-1 absorption. Read via {cfgTariffKPerLifYear}.
+    uint256 constant TARIFF_K_PER_LIF_YEAR_DEFAULT = 5e18; // 5 VPFI / list-LIF-numeraire / year
+    uint256 constant TARIFF_K_PER_LIF_YEAR_MIN = 1e17; // 0.1 VPFI / list-LIF-numeraire / year
+    uint256 constant TARIFF_K_PER_LIF_YEAR_MAX = 5e19; // 50 VPFI / list-LIF-numeraire / year
 
     /// @custom:event-category informational/config
     event TreasurySet(address indexed newTreasury);
@@ -1795,6 +1815,27 @@ library LibVaipakam {
         // Offer carries the BPS — the Loan already snapshots the ABSOLUTE buffer
         // (`bufferAmount`), which `calculateRentalLateFee` reads.
         uint16 rentalBufferBpsAtCreate;
+        // ── #1347 (M2 PR-5a/5b) — per-party Full VPFI fee-entitlement tariff:
+        //    the OFFER CREATOR's own Full opt-in. The creator signs offer
+        //    creation, so their Full authorization lives here (never on the
+        //    accept path a counterparty controls — rev-15 §3). Party-scoped:
+        //    the creator is the lender on a Lender offer, the borrower on a
+        //    Borrower offer; `OfferAcceptFacet` maps creator↔acceptor to
+        //    borrower↔lender by `offerType`. All three append-only + flat
+        //    (viaIR stack); zero-init on every legacy row ⇒ non-Full (the
+        //    pre-#1347 behaviour). Copied verbatim from `CreateOfferParams`
+        //    at `createOffer`.
+        // Slot 24 (packed: 1 byte of a fresh slot).
+        bool creatorFull;
+        // Slot 24 (packed alongside creatorFull) — if the creator's Full
+        // opt-in cannot complete (kill-switch off, over-max, vault-short),
+        // true silently downgrades to HoldOnly/None instead of reverting the
+        // accept/match (rev-15 §4/§6). Only read when `creatorFull`.
+        bool creatorAllowFullDowngrade;
+        // Slot 25 — MANDATORY ceiling (VPFI 1e18) on the creator's Full tariff
+        // (rev-15 §3): a quoted `C* > creatorMaxCStar` reverts unless
+        // `creatorAllowFullDowngrade`. Only read when `creatorFull`.
+        uint256 creatorMaxCStar;
     }
 
     /**
@@ -2411,6 +2452,56 @@ library LibVaipakam {
     struct BorrowerLifRebate {
         uint256 vpfiHeld; // Diamond's custody while the loan is live
         uint256 rebateAmount; // Claimable VPFI after proper settlement
+    }
+
+    /**
+     * @notice #1347 (M2 PR-5a/5b) — the fee-entitlement mode a party selected
+     *         for a loan, per the LIF·year absorption design (formula doc §F,
+     *         rev 15).
+     * @dev    Per-party (borrower and lender each carry their own mode):
+     *         - `None`     — no VPFI involvement; that party's fee line is the
+     *                        plain list rate with no discount.
+     *         - `HoldOnly` — hold-tier discount `d_hold` on that party's fee
+     *                        line only; NO tariff pulled (the #1352 hybrid).
+     *         - `Full`     — that party paid one `C*` VPFI tariff from their
+     *                        own vault into the recycle bucket AND earns a
+     *                        deeper own-side discount `min(d_hold + 1000, 5000)`
+     *                        (+10%). Non-refundable; the tariff travels with the
+     *                        loan/position, never waived or offset.
+     *         Append-only: `None` MUST stay index 0 so a zero-default
+     *         {FeeEntitlement} reads as "neither party opted in".
+     */
+    enum FeeEntitlementMode {
+        None,
+        HoldOnly,
+        Full
+    }
+
+    /**
+     * @notice #1347 (M2 PR-5a/5b) — per-loan fee-entitlement record: the two
+     *         parties' modes, each Full party's absorbed tariff, and the
+     *         notional `C*` / open-term stamp the loan-side reward cap (PR-5c)
+     *         and settlement sweep (PR-6) will read.
+     * @dev    Keyed by `loanId` in {Storage.feeEntitlementByLoanId}. A loan
+     *         that never touched the Full path keeps this at the zero default
+     *         (both modes `None`, tariffs 0). `cStarOpen` is stamped as a
+     *         NOTIONAL value for EVERY reward-eligible loan (even None/HoldOnly)
+     *         because the loan-side reward cap is defined from it — see the
+     *         formula doc §F6b. Full is NON-refundable and lives OUTSIDE the
+     *         `borrowerLifRebate` settle/forfeit machinery: `*TariffPaid` is
+     *         credited straight to the recycle bucket at init and is never
+     *         recorded as `vpfiHeld`.
+     *
+     *         Field packing (rev 15): the two `uint8` modes + `uint32 openDays`
+     *         co-pack; the three VPFI amounts take a word each.
+     */
+    struct FeeEntitlement {
+        FeeEntitlementMode borrowerMode; // borrower's selected mode
+        FeeEntitlementMode lenderMode; // lender's selected mode
+        uint32 openDays; // durationDays stamped at open (≥ 1); proration base for PR-5c
+        uint256 borrowerTariffPaid; // VPFI C* pulled from borrower vault (0 unless borrowerMode == Full)
+        uint256 lenderTariffPaid; // VPFI C* pulled from lender vault (0 unless lenderMode == Full)
+        uint256 cStarOpen; // notional C* at open (full term); loan-side reward-cap base (PR-5c)
     }
 
     /**
@@ -5165,6 +5256,57 @@ library LibVaipakam {
         ///      bucket). Consumption arrives with the keeper-payment
         ///      surface; until then it is a transparency counter.
         uint256 recycleKeeperBudget;
+        /// @dev #1347 (M2 PR-5a/5b) — kill switch for the Full VPFI tariff.
+        ///      While `false` (the post-deploy default) every Full opt-in is
+        ///      treated as a FAILED opt-in (revert `FeeEntitlementDisabled`
+        ///      unless the party set `allowFullDowngrade`), so no `C*` is ever
+        ///      pulled — the feature ships DARK. Governance MUST NOT flip this
+        ///      `true` until the loan-side reward cap (PR-5c) and the
+        ///      settlement sweep honoring the lender Full stamp (PR-6) are
+        ///      live; enabling earlier lets a Full loan pay `C*` for a
+        ///      discount the settlement path would not yet honor. Read via
+        ///      {cfgFeeEntitlementEnabled}.
+        bool feeEntitlementEnabled;
+        /// @dev #1347 (M2 PR-5a/5b) — the Full-tariff coefficient `K`
+        ///      (VPFI-1e18 per 1.0 numeraire-unit of list LIF per year). `0` ⇒
+        ///      {TARIFF_K_PER_LIF_YEAR_DEFAULT} (5e18). Bounded
+        ///      `[TARIFF_K_PER_LIF_YEAR_MIN, TARIFF_K_PER_LIF_YEAR_MAX]` by the
+        ///      setter. Read via {cfgTariffKPerLifYear}.
+        uint256 tariffKPerLifYear;
+        /// @dev #1347 (M2 PR-5a/5b) — per-loan fee-entitlement records. Keyed
+        ///      by `loanId`. Zero default ⇒ neither party opted into the VPFI
+        ///      discount/tariff path for that loan.
+        mapping(uint256 => FeeEntitlement) feeEntitlementByLoanId;
+        // #1347 (M2 PR-5a/5b) — the ACCEPTOR's Full VPFI fee-entitlement tariff
+        // opt-in, injected by `OfferAcceptFacet._verifyAndBindAccept` from the
+        // signed `AcceptTerms.acceptorFull` / `acceptorMaxCStar` /
+        // `acceptorAllowFullDowngrade` for the post-mint `chargeFullTariff` +
+        // the pre-mint borrower-LIF +10% fold to read. Same transient-injection
+        // model as `acceptAckTermsHash`: written on every DIRECT accept entry,
+        // read ONLY while `acceptAckActive == true` (so a stale value from a
+        // prior accept can never leak into a keeper-match fill, which leaves
+        // `acceptAckActive == false` — matcher fills carry no acceptor-signed
+        // Full, so the acceptor's side stays non-Full there by construction).
+        // Not cleared on exit (like `acceptAckTermsHash`) — the `acceptAckActive`
+        // gate is the load-bearing reset, saving the high-offset SSTOREs the
+        // at-EIP-170 accept facet can't spare. Zero-default ⇒ non-Full.
+        // APPEND-ONLY TAIL: these MUST stay at the very end of Storage so an
+        // in-place diamond refresh never shifts an existing field's slot
+        // (Codex #1366 r2 P1).
+        bool acceptAckAcceptorFull;
+        bool acceptAckAcceptorAllowFullDowngrade;
+        uint256 acceptAckAcceptorMaxCStar;
+        // #1347 (Codex #1366 r5 P2) — the BORROWER's PRE-MINT free (withdrawable)
+        // VPFI balance, snapshotted by `OfferAcceptFacet.chargeBorrowerLifAndDeliver`
+        // (which runs BEFORE the offer-collateral lien is released + the loan is
+        // minted) and passed to the post-mint `FeeEntitlementFacet.chargeFullTariff`
+        // as the borrower's effective free balance in `resolveAndCharge`. Gating
+        // the `C*` charge on the SAME balance the pre-mint `+10%` LIF bump was
+        // confirmed against stops a direct borrower offer whose VPFI collateral
+        // lien is reduced at accept from letting the freed residual pull Full with
+        // no paired discount. Append-only tail; overwritten on every ERC-20 accept
+        // before the charge reads it, so no cross-accept staleness.
+        uint256 acceptAckBorrowerPreFreeVpfi;
     }
 
     /// @notice Governor PR-3b (#1217 §3.1) — the per-day pool composition
@@ -5701,6 +5843,38 @@ library LibVaipakam {
     function cfgRecycleTariffKPer1e18EthDay() internal view returns (uint256) {
         uint256 v = storageSlot().recycleTariffKPer1e18EthDay;
         return v == 0 ? RECYCLE_TARIFF_K_DEFAULT : v;
+    }
+
+    /// @dev #1347 (M2 PR-5a/5b) — effective Full-tariff coefficient `K`
+    ///      (VPFI-1e18 per 1.0 numeraire-unit of list LIF per year). `0` ⇒
+    ///      {TARIFF_K_PER_LIF_YEAR_DEFAULT}. This is the LIF·year successor to
+    ///      {cfgRecycleTariffKPer1e18EthDay}, which is NOT wired for Phase-1
+    ///      absorption (formula doc §F4, rev 14+).
+    function cfgTariffKPerLifYear() internal view returns (uint256) {
+        uint256 v = storageSlot().tariffKPerLifYear;
+        return v == 0 ? TARIFF_K_PER_LIF_YEAR_DEFAULT : v;
+    }
+
+    /// @dev #1347 (M2 PR-5a/5b) — whether the Full VPFI tariff is EFFECTIVELY
+    ///      enabled. `false` (the post-deploy default) keeps the feature DARK:
+    ///      every Full opt-in fails closed and no `C*` is pulled. No `0 ⇒ default`
+    ///      sentinel — a bool defaults to `false`, which is exactly the safe
+    ///      state.
+    ///
+    ///      The canonical-VPFI-chain requirement is folded into the EFFECTIVE
+    ///      read, not just the {ConfigFacet.setFeeEntitlementEnabled} setter: a
+    ///      `C*` absorbed on a mirror chain would strand in a mirror-local
+    ///      recycle bucket the Base governor can't fund. Gating only the setter
+    ///      would still arm Full if the stored bit were already true (an
+    ///      in-place-refreshed mirror enabled before the gate) or if
+    ///      `setCanonicalVPFIChain(false)` were later flipped. Every consumer
+    ///      (`_fullTariffShouldRun`, `fullOptInConfirmed`, `resolveAndCharge`)
+    ///      reads through here, so the invariant "Full never operates off the
+    ///      canonical VPFI chain" holds regardless of stored/flag order (Codex
+    ///      #1366 r4 P2).
+    function cfgFeeEntitlementEnabled() internal view returns (bool) {
+        Storage storage s = storageSlot();
+        return s.feeEntitlementEnabled && s.isCanonicalVpfiChain;
     }
 
     /// @dev #1193 (Pass-2 D3) — the rental buffer BPS an offer FUNDED, read from

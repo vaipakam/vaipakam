@@ -72,6 +72,9 @@ library LibAcceptTerms {
         uint256 nonce; // per-acceptor replay nonce
         uint256 deadline; // signature validity deadline (unix-seconds)
         bytes32 riskTermsHash; // #730 — the live `currentRiskTermsHash` this ack acknowledges; an UNGUESSABLE per-bump anchor that re-locks the #662⇄#671 illiquid ack-substitution on a governance terms bump (a numeric version was pre-stampable — Codex #736 r3)
+        bool acceptorFull; // #1347 — the ACCEPTOR's own opt-in to the Full VPFI fee-entitlement tariff (drains `C*` VPFI from the acceptor's OWN vault). Party-scoped: the acceptor is the borrower on a Lender offer, the lender on a Borrower offer. A borrower/relayer can never set a counterparty's flag — the counterparty's Full lives on the Offer (`creatorFull`). Defaults false ⇒ non-Full (the pre-#1347 behaviour).
+        uint256 acceptorMaxCStar; // #1347 — MANDATORY ceiling (VPFI 1e18) on the acceptor's Full tariff (rev-15 §3): a quoted `C* > acceptorMaxCStar` reverts unless `acceptorAllowFullDowngrade`. Only read when `acceptorFull`.
+        bool acceptorAllowFullDowngrade; // #1347 — if the acceptor's Full opt-in cannot complete (kill-switch off, over-max, vault-short), true silently downgrades to HoldOnly/None instead of reverting the accept (rev-15 §4/§6). Only read when `acceptorFull`.
     }
 
     /// @dev keccak256 of the canonical type string. The string MUST list the
@@ -110,7 +113,10 @@ library LibAcceptTerms {
         "address acknowledgedIlliquidCollateralAsset,"
         "uint256 nonce,"
         "uint256 deadline,"
-        "bytes32 riskTermsHash"
+        "bytes32 riskTermsHash,"
+        "bool acceptorFull,"
+        "uint256 acceptorMaxCStar,"
+        "bool acceptorAllowFullDowngrade"
         ")"
     );
 
@@ -188,7 +194,14 @@ library LibAcceptTerms {
                     a.acknowledgedIlliquidLendingAsset,
                     a.acknowledgedIlliquidCollateralAsset
                 ),
-                abi.encode(a.nonce, a.deadline, a.riskTermsHash)
+                abi.encode(
+                    a.nonce,
+                    a.deadline,
+                    a.riskTermsHash,
+                    a.acceptorFull,
+                    a.acceptorMaxCStar,
+                    a.acceptorAllowFullDowngrade
+                )
             )
         );
     }

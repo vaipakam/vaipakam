@@ -565,7 +565,22 @@
   },
   {
     "type": "error",
+    "name": "FeeEntitlementChargeFailed",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "FeeEntitlementRequiresCanonicalVpfiChain",
+    "inputs": []
+  },
+  {
+    "type": "error",
     "name": "FeeTooHigh",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "FullTariffMaxCStarRequired",
     "inputs": []
   },
   {

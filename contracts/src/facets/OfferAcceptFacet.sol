@@ -27,6 +27,8 @@ import {LoanFacet} from "./LoanFacet.sol";
 import {ProfileFacet} from "./ProfileFacet.sol";
 import {EarlyWithdrawalFacet} from "./EarlyWithdrawalFacet.sol";
 import {PrecloseFacet} from "./PrecloseFacet.sol";
+import {FeeEntitlementFacet} from "./FeeEntitlementFacet.sol";
+import {LibFeeEntitlement} from "../libraries/LibFeeEntitlement.sol";
 import {LibUserVault} from "../libraries/LibUserVault.sol";
 
 /**
@@ -506,6 +508,22 @@ contract OfferAcceptFacet is
         // `acceptAckActive` is true, and every accept re-injects it) — saving the
         // high-offset SSTORE the facet can't spare under EIP-170.
         s.acceptAckTermsHash = terms.riskTermsHash;
+        // #1347 — inject the acceptor's signed Full VPFI tariff opt-in for the
+        // post-mint `chargeFullTariff` (and the pre-mint borrower-LIF +10% fold)
+        // to read. Party-scoped: the acceptor authorizes draining `C*` from
+        // their OWN vault. Like the ack fields above, read only while
+        // `acceptAckActive`, so the keeper-match path (which never sets these)
+        // keeps the acceptor's side non-Full. `maxCStar` is MANDATORY whenever
+        // `acceptorFull` (rev-15 §3) — fail fast here, symmetric with the creator
+        // setter's `FullTariffMaxCStarRequired`, so a malformed signature can't
+        // fill as non-Full (any positive `C*` over-max) or, if `C*` rounds to 0,
+        // stamp Full with no bound (Codex #1366 r4 P3).
+        if (terms.acceptorFull && terms.acceptorMaxCStar == 0) {
+            revert FullTariffMaxCStarRequired();
+        }
+        s.acceptAckAcceptorFull = terms.acceptorFull;
+        s.acceptAckAcceptorAllowFullDowngrade = terms.acceptorAllowFullDowngrade;
+        s.acceptAckAcceptorMaxCStar = terms.acceptorMaxCStar;
     }
 
     /// @dev Equality-bind every loan-affecting `AcceptTerms` field against the
@@ -1168,6 +1186,7 @@ contract OfferAcceptFacet is
                 LibFacet.crossFacetCall(
                     abi.encodeWithSelector(
                         OfferAcceptFacet.chargeBorrowerLifAndDeliver.selector,
+                        offerId,
                         offer.lendingAsset,
                         lender,
                         borrower,
@@ -1332,6 +1351,34 @@ contract OfferAcceptFacet is
             : (s.signedOfferAcceptor != address(0)
                 ? s.signedOfferAcceptor
                 : msg.sender);
+
+        // #1347 (M2 PR-5a/5b) — per-party Full VPFI fee-entitlement tariff at
+        // origination. ERC-20 originations ONLY: a rental pays no LIF, and a
+        // sale-vehicle accept is a secondary-market transfer whose underlying
+        // loan already paid its LIF (no fresh tariff — mirrors the LIF skip at
+        // the charge site above). The whole resolution + `C*` pulls run in
+        // `FeeEntitlementFacet`'s FRESH frame (an `address(this).call` boundary),
+        // so none of its locals land in this at-viaIR-budget path — same trust
+        // model as `chargeBorrowerLifAndDeliver`. The facet self-reads every Full
+        // authorization from the offer (creator) + the transient accept binding
+        // (acceptor).
+        //
+        // Invoke the tariff facet when the master switch is on OR a party
+        // presented a Full opt-in (see {_fullTariffShouldRun}). The predicate is
+        // in a helper so its storage reads stay OFF this at-viaIR-budget frame.
+        if (_fullTariffShouldRun(offerId)) {
+            LibFacet.crossFacetCall(
+                abi.encodeWithSelector(
+                    FeeEntitlementFacet.chargeFullTariff.selector,
+                    offerId,
+                    loanId,
+                    borrower,
+                    lender,
+                    effectivePrincipal
+                ),
+                FeeEntitlementChargeFailed.selector
+            );
+        }
 
         // Update offer.
         //
@@ -1541,6 +1588,7 @@ contract OfferAcceptFacet is
     ///        1% LIF kickback to the diamond instead of the caller who brought
     ///        the fill on-chain.
     function chargeBorrowerLifAndDeliver(
+        uint256 offerId,
         address lendingAsset,
         address lender,
         address borrower,
@@ -1552,10 +1600,47 @@ contract OfferAcceptFacet is
             revert UnauthorizedCrossFacetCall();
         }
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        // #1347 — resolve whether the BORROWER's per-party Full opt-in will
+        // confirm at this instant (dark ⇒ always false ⇒ byte-identical to the
+        // pre-#1347 charge). Party-scoped auth: on a Lender offer the borrower is
+        // the acceptor (transient accept binding, gated on `acceptAckActive` so a
+        // matcher fill can't inherit a stale opt-in); on a Borrower offer the
+        // borrower is the creator (auth on the offer). A confirmed opt-in bumps
+        // the own-side LIF discount `+10%` in lockstep with the post-mint `C*`
+        // charge — {LibFeeEntitlement.fullOptInConfirmed} is the shared verdict
+        // {FeeEntitlementFacet.chargeFullTariff} re-derives against the same
+        // (same-tx, unchanged) storage, so the bump is never granted without the
+        // tariff being taken.
+        LibVaipakam.Offer storage offer = s.offers[offerId];
+        bool isLenderOffer = offer.offerType == LibVaipakam.OfferType.Lender;
+        bool borrowerFull = LibFeeEntitlement.fullOptInConfirmed(
+            borrower,
+            isLenderOffer
+                ? (s.acceptAckActive && s.acceptAckAcceptorFull)
+                : offer.creatorFull,
+            isLenderOffer
+                ? s.acceptAckAcceptorMaxCStar
+                : offer.creatorMaxCStar,
+            lendingAsset,
+            effectivePrincipal,
+            offer.durationDays,
+            // Accept-time liquidity — the same value `holdOnlyBorrowerLif` gates
+            // the +10% bump on, so the pre-mint confirm agrees with the post-mint
+            // charge (Full requires a liquid principal, not just a priceable one).
+            isLiquid
+        );
+        // #1347 (Codex #1366 r5) — snapshot the borrower's PRE-MINT free VPFI
+        // (the same balance `fullOptInConfirmed` just gated the +10% bump on) so
+        // the post-mint `chargeFullTariff` charges Full against THIS value, not
+        // the post-lien-release balance. Runs before the offer-collateral lien
+        // release, so a borrower whose VPFI collateral is freed at accept can't
+        // have Full charged post-mint without the paired pre-mint discount.
+        s.acceptAckBorrowerPreFreeVpfi = LibFeeEntitlement.freeVpfiBalance(borrower);
         uint256 initiationFee = LibVPFIDiscount.holdOnlyBorrowerLif(
             borrower,
             effectivePrincipal,
-            isLiquid
+            isLiquid,
+            borrowerFull
         );
 
         if (initiationFee > 0) {
@@ -1601,6 +1686,33 @@ contract OfferAcceptFacet is
             ),
             VaultWithdrawFailed.selector
         );
+    }
+
+    /// @dev Whether the post-mint Full VPFI tariff cross-facet call should run
+    ///      for `offerId`. Only ERC-20 originations bear a tariff (a rental pays
+    ///      no LIF; a sale-vehicle accept already paid its LIF at origination).
+    ///      Among those it runs when the master switch is on OR a party presented
+    ///      a Full opt-in — the acceptor's (transient, read only while
+    ///      `acceptAckActive`, so a matcher fill carries none) or the creator's
+    ///      (on the offer). A Full opt-in presented while the switch is off still
+    ///      routes so it fails closed / downgrades per the party's signed terms
+    ///      (kill-switch-first, rev-15 §4); a plain non-Full accept while dark
+    ///      skips the call entirely (nothing to charge, and no routing dependency
+    ///      for minimal-cut diamonds). Kept in its own frame so the compound read
+    ///      set stays off the at-viaIR-budget `_acceptOffer` path.
+    function _fullTariffShouldRun(uint256 offerId)
+        private
+        view
+        returns (bool)
+    {
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        LibVaipakam.Offer storage offer = s.offers[offerId];
+        if (offer.assetType != LibVaipakam.AssetType.ERC20) return false;
+        if (s.saleOfferToLoanId[offerId] != 0) return false;
+        return
+            LibVaipakam.cfgFeeEntitlementEnabled() ||
+            (s.acceptAckActive && s.acceptAckAcceptorFull) ||
+            offer.creatorFull;
     }
 
     /// @dev 1e18-scaled numeraire value of `amount` units of `asset`, or 0 when
