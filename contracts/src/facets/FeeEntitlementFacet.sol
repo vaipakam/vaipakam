@@ -234,6 +234,17 @@ contract FeeEntitlementFacet is IVaipakamErrors {
         uint256 cStar
     ) private {
         uint16 haircutAtOpen = uint16(LibVaipakam.cfgRewardHaircutBps());
+        // #1353 (M2 PR-5c) — cache the per-side ceiling ½ × C* × (1 − m). SATURATE
+        // at `type(uint128).max` rather than truncating a wider value: an
+        // extreme-`C*` loan whose ceiling exceeds the cache width should read as
+        // "effectively unbounded" (max ≫ the whole 69M pool ⇒ never binds), not
+        // wrap to a small low-128-bit value that would UNDER-pay it (Codex #1371
+        // r9). `_loanSideRewardCapEff` trusts the cache, so a truncation would
+        // silently bind.
+        uint256 capOpen256 = (cStar *
+            (LibVaipakam.BASIS_POINTS - haircutAtOpen)) /
+            LibVaipakam.BASIS_POINTS /
+            2;
         s.feeEntitlementByLoanId[loanId] = LibVaipakam.FeeEntitlement({
             borrowerMode: bMode,
             lenderMode: lMode,
@@ -242,11 +253,9 @@ contract FeeEntitlementFacet is IVaipakamErrors {
             borrowerTariffPaid: bPaid,
             lenderTariffPaid: lPaid,
             cStarOpen: cStar,
-            loanSideRewardCapOpen: uint128(
-                (cStar * (LibVaipakam.BASIS_POINTS - haircutAtOpen)) /
-                    LibVaipakam.BASIS_POINTS /
-                    2
-            )
+            loanSideRewardCapOpen: capOpen256 > type(uint128).max
+                ? type(uint128).max
+                : uint128(capOpen256)
         });
 
         emit FeeEntitlementStamped(
