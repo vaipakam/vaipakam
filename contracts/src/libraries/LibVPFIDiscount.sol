@@ -1030,6 +1030,15 @@ library LibVPFIDiscount {
         (bool canQuote, uint256 vpfiRequired, ) = quoteYieldFee(loan, interestAmount);
         if (!canQuote) return (false, 0);
         if (vaultBal < vpfiRequired) return (false, 0);
+        // #1354 (Codex r3 P2) — require TRACKED coverage, not just the raw
+        // vault balance. Since the Full tariff bump can make `quoteYieldFee`
+        // return a positive `vpfiRequired` for a lender with little/no
+        // protocol-tracked VPFI, unsolicited VPFI dust sent directly to the
+        // vault could satisfy the raw `vaultBal` check above while
+        // `prevTracked < vpfiRequired` — underflowing `prevTracked - vpfiRequired`
+        // below and reverting settlement instead of falling back to the
+        // no-token-move direct-reduction bump. Bail to the fallback here.
+        if (prevTracked < vpfiRequired) return (false, 0);
 
         // 3. Checkpoint staking accrual at the post-mutation balance.
         //    Mirrors the pattern at every other vault-mutation site.

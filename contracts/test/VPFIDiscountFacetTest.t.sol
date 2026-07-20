@@ -1621,4 +1621,43 @@ contract VPFIDiscountFacetTest is SetupTest {
             "consenting Full lender w/o free VPFI still gets the paid +10%"
         );
     }
+
+    /// @notice #1354 Codex r3 P2 — a consenting Full lender with unsolicited
+    ///         VPFI DUST in the vault (raw balance passes but protocol-tracked
+    ///         balance is 0) must NOT revert settlement on the
+    ///         `prevTracked - vpfiRequired` underflow. The VPFI-payment attempt
+    ///         bails on the tracked-coverage guard and the paid +10% is
+    ///         delivered via the direct-reduction fallback instead.
+    function testSettlementSweep_FullConsentPegSet_UntrackedDust_NoRevert() public {
+        // Peg stays SET (setUp seeds it).
+        ConfigFacet(address(diamond)).setVpfiTierDiscountBps(1000, 1500, 2000, 2400);
+
+        // Reference: no consent, no stamp -> undiscounted 2% treasury fee.
+        uint256 baseFee = _openStampRepayTreasuryFee(
+            1,
+            LibVaipakam.FeeEntitlementMode.None,
+            LibVaipakam.FeeEntitlementMode.None
+        );
+
+        // Lender CONSENTS; seed the vault with raw VPFI dust sent DIRECTLY to
+        // the vault (bypassing depositVPFIToVault), so raw `balanceOf` is high
+        // while `protocolTrackedVaultBalance` stays 0 — the exact underflow
+        // pre-condition (`vaultBal >= vpfiRequired` but `prevTracked == 0`).
+        vm.prank(lender);
+        _facet().setVPFIDiscountConsent(true);
+        address lenderVault = _buyerVault(lender);
+        vpfiToken.transfer(lenderVault, 50_000 ether); // untracked dust >> vpfiRequired
+
+        // Full stamp -> eligible. Must NOT revert; +10% via direct-reduction.
+        uint256 fee = _openStampRepayTreasuryFee(
+            2,
+            LibVaipakam.FeeEntitlementMode.Full,
+            LibVaipakam.FeeEntitlementMode.None
+        );
+        assertEq(
+            fee,
+            _discountedFee(baseFee, 1000),
+            "untracked-dust Full lender falls back to +10%, no underflow revert"
+        );
+    }
 }

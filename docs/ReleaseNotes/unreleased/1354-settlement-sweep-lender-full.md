@@ -38,15 +38,25 @@ of a Full-stamped lender position can never spend a non-consenting recipient's
 VPFI. A Full lender without hold consent still receives the `+10%` — but only
 through the no-token-move direct-reduction path, in every peg posture.
 
-**Scope — secondary paths still pending (follow-up #1383).** The `+10%` is not
-yet honored on the *secondary* lender-yield settlement paths — swap-to-repay,
-preclose obligation-transfer (Option 2b) / offset (Option 3), and the
-rental-prepay treasury split — which today apply neither the hold nor the Full
-discount. Extending them cleanly needs a size-reducing shared-helper refactor
-(preclose sits close to the EIP-170 limit), so it is tracked separately as a
-**hard blocker on the `feeEntitlementEnabled` cut-over**: no lender may pay `C*`
-while any settlement path they can be closed through ignores the stamp. The
-PR-9 (#1356) deploy-asserts enforce that gate.
+**Scope — still pending before `feeEntitlementEnabled` cut-over (hard blockers).**
+Two tracked items remain, both enforced by the PR-9 (#1356) deploy-asserts so
+the master switch cannot cut over while either is open:
+
+- **#1383 — secondary settlement paths.** The `+10%` is not yet honored on
+  swap-to-repay, preclose obligation-transfer (Option 2b) / offset (Option 3),
+  rental-prepay, **partial repay** (`RepayFacet.repayPartial`),
+  **periodic-interest** (`RepayPeriodicFacet`), or the **auto-lifecycle
+  transferred-position** case (where the current holder ≠ the recorded lender).
+  These apply neither the hold nor the Full discount today; extending them
+  cleanly needs a size-reducing shared-helper refactor (preclose sits close to
+  the EIP-170 limit) that also keys eligibility on the current holder.
+- **#1384 — extension repricing.** `extendLoanInPlace` overwrites the loan term
+  without restamping the fee entitlement, so an extended Full loan would keep
+  the `+10%` (and the #1353 reward-cap budget) on unpriced added term until the
+  entitlement is restamped/recharged for the new term.
+
+No lender may pay `C*` while any settlement path they can be closed through
+ignores the stamp, so both must close before the cut-over.
 
 This ships **dark**: no loan carries a `Full` lender stamp until the Full opt-in
 path (`feeEntitlementEnabled`) is enabled at the M2 joint cutover, so every
