@@ -447,6 +447,14 @@ Thin-market honesty rules apply.
   text (the exact message a wallet signs, cryptographic domain names)
   and proper nouns (chain and asset names) stay in one language by
   necessity.
+- The plain-language explanation shown when a transaction fails — the
+  friendly cause a contract revert is decoded to ("Health factor too
+  low", "This offer has expired", "Only the lender can perform this
+  action", and the "the wallet could not estimate this transaction"
+  guidance) — is translatable and shows in the chosen language once a
+  locale's bundle is filled in. Until then it falls back to English (never
+  a raw error code or hex). An error with no curated explanation still
+  surfaces as a readable sentence rather than a code.
 
 ## Indexing Policy
 

@@ -8,12 +8,18 @@
  */
 
 import { describe, expect, it } from 'vitest';
+import { contractErrorCatalog } from '@vaipakam/lib';
 import { copySource } from '../content/copy';
 import { buildTemplate } from './template';
 import committed from './locales/en.json';
 
 describe('i18n en.json template', () => {
   it('matches copy.ts (run `pnpm i18n:template` after editing copy.ts)', () => {
-    expect(committed).toEqual({ copy: buildTemplate(copySource) });
+    // Mirror the exporter: `copy.*` from copy.ts + the shared `contractError.*`
+    // revert-copy catalog from @vaipakam/lib. Fails if either drifts.
+    expect(committed).toEqual({
+      copy: buildTemplate(copySource),
+      contractError: contractErrorCatalog(),
+    });
   });
 });

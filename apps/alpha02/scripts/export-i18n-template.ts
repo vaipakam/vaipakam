@@ -19,6 +19,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { contractErrorCatalog } from '@vaipakam/lib';
 import { copySource } from '../src/content/copy.ts';
 import { buildTemplate } from '../src/i18n/template.ts';
 
@@ -32,6 +33,13 @@ const OUT_PATH = path.resolve(
   'en.json',
 );
 
-const template = { copy: buildTemplate(copySource) };
+// `copy.*` comes from copy.ts; `contractError.*` is the shared revert-copy
+// catalog owned by @vaipakam/lib (English source), seeded here so translators
+// localize it per key — the app's decode path resolves `contractError.<key>`
+// at runtime with the lib English as the defaultValue.
+const template = {
+  copy: buildTemplate(copySource),
+  contractError: contractErrorCatalog(),
+};
 fs.writeFileSync(OUT_PATH, JSON.stringify(template, null, 2) + '\n');
 console.log(`[i18n:template] wrote ${OUT_PATH}`);

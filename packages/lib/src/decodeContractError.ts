@@ -361,28 +361,92 @@ export function humanizeErrorName(name: string): string {
 }
 
 /**
- * Resolve friendly copy from an error NAME and/or 4-byte selector. Returns
- * curated copy when available, else a humanized sentence from the name, else
- * `null` (caller falls back to its own default). The pre-sign simulation
- * passes the ABI-decoded `name`; the write-path decoder passes the `selector`.
+ * Localizer hook: given a resolved error's STABLE key and its English copy,
+ * return the display string (localized, or the English as-is). Passed in by a
+ * frontend that wants translated revert copy; omitted everywhere else so the
+ * decoder stays English-by-default (keeper bot, tests, servers). The English
+ * text is the single source — the lib owns it; an app localizes by key, it
+ * does NOT re-list these strings.
  */
-export function friendlyContractError(opts: {
+export type ContractErrorTranslator = (key: string, english: string) => string;
+
+/**
+ * The stable translation key for a resolved error: the Solidity error NAME
+ * when we can resolve one (readable + drift-proof — a selector is a hash of
+ * the full signature, so a param-type tweak breaks selector-keying but never
+ * name-keying), else the raw 4-byte selector. BOTH decode paths (raw selector
+ * and ABI-decoded name) converge on the same key, so a locale override lands
+ * regardless of how the error arrived.
+ */
+function contractErrorKey(opts: { name?: string; selector?: string }): string | null {
+  const sel = opts.selector?.toLowerCase();
+  const nameFromSelector = sel
+    ? KNOWN_ERROR_SELECTORS[sel]?.replace(/\(.*/, '')
+    : undefined;
+  return opts.name ?? nameFromSelector ?? sel ?? null;
+}
+
+/**
+ * Resolve friendly copy + its stable key from an error NAME and/or 4-byte
+ * selector. Returns curated copy when available, else a humanized sentence
+ * from the name, else `null` (caller falls back to its own default). The
+ * pre-sign simulation passes the ABI-decoded `name`; the write-path decoder
+ * passes the `selector`.
+ */
+function resolveFriendly(opts: {
   name?: string;
   selector?: string;
-}): string | null {
+}): { key: string; message: string } | null {
   const sel = opts.selector?.toLowerCase();
   // Prefer the curated SELECTOR copy the write-path banner uses
   // (`FRIENDLY_ERROR_MESSAGES`), so the dry-run footer and the submit
   // banner speak with one voice — e.g. `ERC20InsufficientBalance` /
   // `HealthFactorTooLow` keep their fuller selector-specific guidance
   // instead of degrading to a humanized name (#1094 Codex).
-  if (sel && FRIENDLY_ERROR_MESSAGES[sel]) return FRIENDLY_ERROR_MESSAGES[sel];
+  if (sel && FRIENDLY_ERROR_MESSAGES[sel]) {
+    return { key: contractErrorKey({ selector: sel }) ?? sel, message: FRIENDLY_ERROR_MESSAGES[sel] };
+  }
   const nameFromSelector = sel
     ? KNOWN_ERROR_SELECTORS[sel]?.replace(/\(.*/, '')
     : undefined;
   const name = opts.name ?? nameFromSelector;
   if (!name) return null;
-  return FRIENDLY_ERROR_BY_NAME[name] ?? humanizeErrorName(name);
+  return { key: name, message: FRIENDLY_ERROR_BY_NAME[name] ?? humanizeErrorName(name) };
+}
+
+/**
+ * Resolve friendly copy from an error NAME and/or 4-byte selector. Returns
+ * curated copy when available, else a humanized sentence from the name, else
+ * `null` (caller falls back to its own default).
+ */
+export function friendlyContractError(opts: {
+  name?: string;
+  selector?: string;
+}): string | null {
+  return resolveFriendly(opts)?.message ?? null;
+}
+
+/**
+ * Every curated contract-error string keyed by its STABLE translation key
+ * (error name, or selector hex when no name resolves) — the source a frontend
+ * seeds its locale template from, so the English lives here ONCE and apps
+ * localize by key via the `translate` hook rather than re-listing copy.
+ *
+ * Mirrors {@link decodeContractError}'s runtime precedence: the name-keyed map
+ * is laid down first, then the selector-keyed map (resolved to its name)
+ * overrides it — so the catalog value for a key equals what the decoder would
+ * actually return for that error. Includes the #780 gas-estimate rewrite.
+ */
+export function contractErrorCatalog(): Record<string, string> {
+  const out: Record<string, string> = {};
+  for (const [name, message] of Object.entries(FRIENDLY_ERROR_BY_NAME)) {
+    out[name] = message;
+  }
+  for (const [selector, message] of Object.entries(FRIENDLY_ERROR_MESSAGES)) {
+    out[contractErrorKey({ selector }) ?? selector] = message;
+  }
+  out[GAS_ESTIMATE_UNAVAILABLE_KEY] = GAS_ESTIMATE_UNAVAILABLE_MESSAGE;
+  return out;
 }
 
 /**
@@ -727,27 +791,59 @@ export function namedRevertSelector(err: unknown): string | undefined {
   return name ? `${name} (${sel})` : sel;
 }
 
-export function decodeContractError(err: unknown, fallback = 'Transaction failed'): string {
+/** Stable key + English copy for the #780 gas-estimate rewrite below, so it
+ *  can be localized (via the `translate` hook) and seeded into an app's
+ *  locale template alongside the curated selector/name copy. */
+export const GAS_ESTIMATE_UNAVAILABLE_KEY = '_gasEstimateUnavailable';
+const GAS_ESTIMATE_UNAVAILABLE_MESSAGE =
+  'The wallet could not estimate this transaction, so it would most ' +
+  'likely fail if signed. This is NOT a real gas shortage — if the ' +
+  'review step flagged a specific reason, that is the actual cause. ' +
+  'Otherwise the usual causes are a missing token approval (approve the ' +
+  'exact amount and retry) or a stale app build whose call shape no ' +
+  'longer matches the deployed contract (hard-reload to load the latest ' +
+  'version). If it persists, share the diagnostics export with support.';
+
+/** Options for {@link decodeContractError}. Passing a bare string keeps the
+ *  historical `decodeContractError(err, 'fallback')` signature working. */
+export interface DecodeContractErrorOptions {
+  /** Generic message when nothing decodes. Default `'Transaction failed'`. */
+  fallback?: string;
+  /** Localizer for curated revert copy (see {@link ContractErrorTranslator}).
+   *  Omit → English is returned unchanged (default for every non-frontend
+   *  caller). */
+  translate?: ContractErrorTranslator;
+}
+
+export function decodeContractError(
+  err: unknown,
+  fallbackOrOptions: string | DecodeContractErrorOptions = 'Transaction failed',
+): string {
+  const opts: DecodeContractErrorOptions =
+    typeof fallbackOrOptions === 'string' ? { fallback: fallbackOrOptions } : fallbackOrOptions;
+  const fallback = opts.fallback ?? 'Transaction failed';
+  // Route curated copy through the caller's localizer when present, else
+  // return the English as-is. The stable key drives the locale override.
+  const localize = (key: string, english: string): string =>
+    opts.translate ? opts.translate(key, english) : english;
+
   if (!err || typeof err !== 'object') return fallback;
   const e = err as DecodableError;
 
   // Prefer a human-friendly message when the revert selector is known. This
   // takes precedence over ethers' raw "unknown custom error" text so users
-  // see "Insufficient token balance" instead of a hex blob.
-  const sel = extractRevertSelector(err);
-  if (sel && FRIENDLY_ERROR_MESSAGES[sel]) {
-    return FRIENDLY_ERROR_MESSAGES[sel];
-  }
-  // Name-keyed friendly copy (drift-proof) + humanized fallback for any
-  // selector we can resolve to a known error name. A decodable custom-error
-  // selector is always more informative than the raw `base` revert text
-  // ("execution reverted" / "unknown custom error 0x…"), so prefer it — but
-  // ONLY when we actually have a selector, so genuine Error(string) reverts
-  // (whose human text lives in `base`) and the #780 gas-limit trap below are
+  // see "Insufficient token balance" instead of a hex blob. `resolveFriendly`
+  // returns the curated SELECTOR copy first, then the name-keyed copy /
+  // humanized fallback for any selector we can resolve to a known name — a
+  // decodable custom-error selector is always more informative than the raw
+  // `base` revert text ("execution reverted" / "unknown custom error 0x…").
+  // Guarded on an actual selector so genuine Error(string) reverts (whose
+  // human text lives in `base`) and the #780 gas-limit trap below are
   // untouched.
+  const sel = extractRevertSelector(err);
   if (sel) {
-    const byName = friendlyContractError({ selector: sel });
-    if (byName) return byName;
+    const r = resolveFriendly({ selector: sel });
+    if (r) return localize(r.key, r.message);
   }
 
   // viem/libraries attach the DECODED custom-error name to the error without
@@ -758,8 +854,8 @@ export function decodeContractError(err: unknown, fallback = 'Transaction failed
   // the name-keyed friendly map before falling back to `base` (#1094 Codex).
   const revertName = extractRevertName(err);
   if (revertName) {
-    const byName = friendlyContractError({ name: revertName });
-    if (byName) return byName;
+    const r = resolveFriendly({ name: revertName });
+    if (r) return localize(r.key, r.message);
   }
 
   const base =
@@ -784,15 +880,7 @@ export function decodeContractError(err: unknown, fallback = 'Transaction failed
     !sel &&
     /exceeds max (?:transaction )?gas limit/i.test(base)
   ) {
-    return (
-      'The wallet could not estimate this transaction, so it would most ' +
-      'likely fail if signed. This is NOT a real gas shortage — if the ' +
-      'review step flagged a specific reason, that is the actual cause. ' +
-      'Otherwise the usual causes are a missing token approval (approve the ' +
-      'exact amount and retry) or a stale app build whose call shape no ' +
-      'longer matches the deployed contract (hard-reload to load the latest ' +
-      'version). If it persists, share the diagnostics export with support.'
-    );
+    return localize(GAS_ESTIMATE_UNAVAILABLE_KEY, GAS_ESTIMATE_UNAVAILABLE_MESSAGE);
   }
 
   // Unknown custom error + no friendly copy: append the selector name so
