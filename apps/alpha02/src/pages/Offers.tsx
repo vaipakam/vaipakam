@@ -149,7 +149,7 @@ function OfferRow({ offer, risk }: { offer: IndexedOffer; risk: RiskLevel | null
       // design — a zero floor is still a real band, so don't suppress it.
       if (!isLending && offer.interestRateBpsMax !== offer.interestRateBps) {
         advancedBits.push(
-          `rate band ${offer.interestRateBps}–${offer.interestRateBpsMax} bps`,
+          copy.offers.rateBand(offer.interestRateBps, offer.interestRateBpsMax),
         );
       }
       // Always state the flag both ways — on rows where it's absent an
@@ -162,7 +162,7 @@ function OfferRow({ offer, risk }: { offer: IndexedOffer; risk: RiskLevel | null
     }
     advancedBits.push(
       offer.expiresAt
-        ? `expires ${formatDate(offer.expiresAt)}`
+        ? copy.offers.expiresLabel(formatDate(offer.expiresAt))
         : copy.offers.advancedNoExpiry,
     );
   }

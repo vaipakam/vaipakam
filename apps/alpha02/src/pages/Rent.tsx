@@ -280,13 +280,11 @@ function ListNftFlow() {
       standard === 'erc1155' ? ` ×${quantity || '1'}` : ''
     }`;
     return {
-      youReceive: `~${feesStr} in rental fees for the full ${formatDurationDays(days)} term — the renter prepays everything up front.`,
-      youLock: `Your NFT ${nftStr} moves into your vault and stays there for the whole listing and rental.`,
+      youReceive: copy.rent.receiptListYouReceive(feesStr, formatDurationDays(days)),
+      youLock: copy.rent.receiptListYouLock(nftStr),
       youMayOwe: copy.rent.nothing,
       youCanLose: `${copy.rent.listYouCanLose} ${copy.rent.notDebt}`,
-      fees: copy.fees
-        .lenderYieldFee(bpsToPercentText(fees.treasuryFeeBps))
-        .replace('interest', 'rental fees'),
+      fees: copy.fees.lenderRentalFee(bpsToPercentText(fees.treasuryFeeBps)),
       whenThisEnds: copy.rent.listWhenEnds,
     };
   }, [
@@ -507,7 +505,7 @@ function ListNftFlow() {
           />
           <div className="field">
             <label htmlFor="daily-fee">
-              {copy.rent.dailyFeeLabel}{prepayMeta.data ? ` (${prepayMeta.data.symbol} per day)` : ''}
+              {copy.rent.dailyFeeLabel}{prepayMeta.data ? copy.rent.perDaySuffix(prepayMeta.data.symbol) : ''}
             </label>
             <input
               id="daily-fee"
@@ -540,9 +538,7 @@ function ListNftFlow() {
             />
             {!durationValid ? (
               <span className="field-hint">
-                The protocol currently caps listings at{' '}
-                {formatDurationDays(fees.maxOfferDurationDays)} — pick a shorter
-                length.
+                {copy.rent.durationCap(formatDurationDays(fees.maxOfferDurationDays))}
               </span>
             ) : null}
           </div>
@@ -694,8 +690,16 @@ function RentalListingRow({
         <br />
         <span className="row-sub">
           {prepayMeta.data
-            ? `${formatTokenAmount(dailyFee, prepayMeta.data.decimals)} ${pay}/day · ${formatDurationDays(offer.durationDays)} · ${formatTokenAmount(total, prepayMeta.data.decimals)} ${pay} up front (incl. buffer)`
-            : `${formatDurationDays(offer.durationDays)} · listing #${offer.offerId}`}
+            ? copy.rent.browseRowPriced(
+                formatTokenAmount(dailyFee, prepayMeta.data.decimals),
+                pay,
+                formatDurationDays(offer.durationDays),
+                formatTokenAmount(total, prepayMeta.data.decimals),
+              )
+            : copy.rent.browseRowUnpriced(
+                formatDurationDays(offer.durationDays),
+                offer.offerId,
+              )}
         </span>
       </span>
       <button type="button" className="btn btn-primary btn-sm" onClick={onChoose}>
@@ -899,12 +903,12 @@ function RentNftFlow() {
     const nftStr = `${shortAddress(selected.lendingAsset)} #${selected.tokenId}`;
     const durationStr = formatDurationDays(selected.durationDays);
     return {
-      youReceive: `Use rights of ${nftStr} for ${durationStr}, starting now. ${copy.rent.custodyNote}`,
-      youLock: `${totalStr} prepaid — the full term’s fees plus a ${bufferPct(bufferBps)} refundable buffer.`,
+      youReceive: `${copy.rent.receiptRentYouReceive(nftStr, durationStr)} ${copy.rent.custodyNote}`,
+      youLock: copy.rent.receiptRentYouLock(totalStr, bufferPct(bufferBps)),
       youMayOwe: `${copy.rent.rentYouMayOwe} ${copy.rent.notDebt}`,
-      youCanLose: `The ${bufferPct(bufferBps)} buffer if the rental isn’t closed on time. Your use rights end at expiry either way.`,
+      youCanLose: copy.rent.receiptRentYouCanLose(bufferPct(bufferBps)),
       fees: copy.rent.rentFeesNote,
-      whenThisEnds: `Rights reset automatically after ${durationStr}. Close the rental on time from its detail page to get the buffer back.`,
+      whenThisEnds: copy.rent.receiptRentWhenEnds(durationStr),
     };
   }, [selected, prepayMeta.data, totalPrepay, bufferBps]);
 
@@ -1001,7 +1005,7 @@ function RentNftFlow() {
         ];
         if (v.kind === 'block') {
           queryClient.setQueryData(cacheKey, v);
-          throw new Error(copy.tokenSecurity.gateBlock('prepayment token', v.reasons));
+          throw new Error(copy.tokenSecurity.gateBlock('prepayment token', v.reasons.join('; ')));
         }
         if (v.kind === 'unknown') {
           // RESET (not invalidate): reset drops `data` to undefined
@@ -1309,7 +1313,7 @@ function RentNftFlow() {
                     ? copy.tokenSecurity.gateUnknown('prepayment token')
                     : copy.tokenSecurity.gateBlock(
                         'prepayment token',
-                        prepaySec.data.kind === 'block' ? prepaySec.data.reasons : [],
+                        (prepaySec.data.kind === 'block' ? prepaySec.data.reasons : []).join('; '),
                       )}
                 </span>
                 {prepaySec.isError ? (
@@ -1330,7 +1334,7 @@ function RentNftFlow() {
                 <span className="banner-body">
                   {copy.tokenSecurity.gateWarn(
                     'prepayment token',
-                    prepaySec.data?.kind === 'warn' ? prepaySec.data.reasons : [],
+                    (prepaySec.data?.kind === 'warn' ? prepaySec.data.reasons : []).join('; '),
                   )}
                 </span>
               </div>

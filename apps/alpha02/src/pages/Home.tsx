@@ -86,7 +86,9 @@ export function Home() {
       {readChain.testnet && getDeployment(readChain.chainId)?.testnetMocks ? (
         <Link to="/faucet" className="banner banner-info" style={{ display: 'flex' }}>
           <Droplets aria-hidden />
-          <span className="banner-body">{copy.home.testnetNudge(readChain.name)}</span>
+          <span className="banner-body">
+            {copy.home.testnetNudge(readChain.name)}
+          </span>
         </Link>
       ) : null}
 
@@ -105,8 +107,7 @@ export function Home() {
       </div>
 
       <p className="muted" style={{ marginTop: 24 }}>
-        {copy.app.tagline} Your assets sit in your own on-chain vault — Vaipakam
-        never pools or holds them for you.
+        {copy.app.tagline} {copy.home.assetsNote}
       </p>
     </div>
   );

@@ -88,10 +88,10 @@ export function Vault() {
             // funds — never let the list look complete without it.
             <div className="banner banner-warn" role="status">
               <span className="banner-body">
-                We couldn’t read {vault.data.unreadable.length === 1 ? 'one asset' : `${vault.data.unreadable.length} assets`} just now (
-                {vault.data.unreadable.map((t) => shortAddress(t)).join(', ')}
-                ) — the list below may be missing balances. This usually
-                clears on the next refresh.
+                {copy.vault.unreadableWarn(
+                  copy.vault.unreadableCount(vault.data.unreadable.length),
+                  vault.data.unreadable.map((t) => shortAddress(t)).join(', '),
+                )}
               </span>
             </div>
           ) : null}
@@ -116,8 +116,7 @@ export function Vault() {
                   below stays reachable. */}
               {vault.data.assets.length === 0 ? (
                 <p className="muted" style={{ marginBottom: 8 }}>
-                  No balances among the first {scanWindow} tokens checked —
-                  widen the scan below to keep looking.
+                  {copy.vault.noBalancesInWindow(scanWindow)}
                 </p>
               ) : null}
               <WindowedRowList
@@ -152,10 +151,14 @@ export function Vault() {
                   style={{ marginTop: 12 }}
                   onClick={() => setScanWindow((w) => w + LIST_WINDOW_PAGE)}
                 >
-                  {copy.approvals.checkMore(
-                    Math.min(LIST_WINDOW_PAGE, vault.data.moreTokens),
-                    vault.data.moreTokens,
-                  )}
+                  {vault.data.moreTokens > LIST_WINDOW_PAGE
+                    ? copy.approvals.checkMoreUnchecked(
+                        Math.min(LIST_WINDOW_PAGE, vault.data.moreTokens),
+                        vault.data.moreTokens,
+                      )
+                    : copy.approvals.checkMore(
+                        Math.min(LIST_WINDOW_PAGE, vault.data.moreTokens),
+                      )}
                 </button>
               ) : null}
               <p className="muted" style={{ marginTop: 12 }}>

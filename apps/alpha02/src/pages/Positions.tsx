@@ -80,7 +80,7 @@ function OfferRow({ offer }: { offer: IndexedOffer }) {
   }
 
   const lockedStr = isRental
-    ? `Your NFT ${shortAddress(offer.lendingAsset)} #${offer.tokenId}`
+    ? copy.positions.offerRow.youNft(shortAddress(offer.lendingAsset), offer.tokenId)
     : `${amount} ${meta.data?.symbol ?? ''}`;
 
   return (
@@ -119,7 +119,7 @@ function OfferRow({ offer }: { offer: IndexedOffer }) {
         <div className="card" style={{ marginTop: 8 }}>
           <ReviewReceipt
             data={{
-              youReceive: `${lockedStr} back — unlocked from this offer immediately.`,
+              youReceive: copy.positions.offerRow.receiptUnlocked(lockedStr),
               youLock: copy.positions.offerRow.receiptNothing,
               youMayOwe: copy.positions.offerRow.receiptNothing,
               youCanLose: copy.positions.offerRow.receiptLose,

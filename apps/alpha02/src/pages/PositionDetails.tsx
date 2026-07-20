@@ -1287,12 +1287,12 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
           youReceive: isRental
             ? copy.positions.details.receipt.bufferBack
             : hasCollateral
-              ? `${collateralStr} collateral back — claimable right after repayment settles.`
+              ? copy.positions.details.collateralBackAfterRepay(collateralStr)
               : copy.positions.details.receipt.noCollateralBack,
           youLock: copy.positions.details.receipt.nothingNew,
           youMayOwe: isRental
             ? copy.positions.details.receipt.oweRentalPrepaid
-            : `${principalStr} + this loan's interest. For full-term loans (the protocol default) the whole term's interest applies even when repaying early; day-by-day loans charge only what has accrued. The exact amount is read live when you confirm; the approval carries small headroom that is never spent.`,
+            : copy.positions.details.owedPrincipalPlusInterest(principalStr),
           youCanLose: copy.positions.details.receipt.loseNothingBeyondOwed,
           fees: copy.positions.details.receipt.feesRepay,
           whenThisEnds: copy.positions.details.receipt.endsRepay,
@@ -1303,7 +1303,7 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
               ? copy.positions.details.receipt.bufferBackShort
               : row.status === 'repaid'
                 ? hasCollateral
-                  ? `${collateralStr} collateral back.`
+                  ? copy.positions.details.collateralBackPlain(collateralStr)
                   : copy.positions.details.receipt.owedNoCollateral
                 : row.status === 'internal_matched'
                   ? copy.positions.details.receipt.internalResidual
@@ -1319,14 +1319,14 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
               youReceive: isRental
                 ? copy.positions.details.receipt.rentalFeesAndNft
                 : properClose
-                  ? `${principalStr} plus the earned interest.`
+                  ? copy.positions.details.principalPlusInterest(principalStr)
                   : // Liquid-collateral defaults settle by SWAP — the
                     // lender's claim pays proceeds in the loan asset,
                     // not the collateral itself. Only in-kind (illiquid)
                     // paths hand over the raw collateral, so promise
                     // neither specifically.
                     hasCollateral
-                    ? `What this loan recovered: sale proceeds in ${principal?.symbol ?? 'the loan asset'}, or the ${collateralStr} collateral itself, depending on how the default settled.`
+                    ? copy.positions.details.recoveredSummary(principal?.symbol ?? copy.positions.details.loanAssetFallback, collateralStr)
                     : copy.positions.details.receipt.recoveredNoCollateral,
               youLock: copy.positions.details.receipt.nothing,
               youMayOwe: copy.positions.details.receipt.nothing,
@@ -1350,15 +1350,15 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
           <p className="muted" style={{ margin: 0 }}>
             {isRental
               ? role === 'borrower'
-                ? `You rent ${nftStr}`
+                ? copy.positions.details.youRent(nftStr)
                 : role === 'lender'
-                  ? `Your ${nftStr} is rented out`
-                  : `A rental of ${nftStr} between two other wallets`
+                  ? copy.positions.details.nftRentedOut(nftStr)
+                  : copy.positions.details.nftRentalBetween(nftStr)
               : role === 'borrower'
-                ? `You borrowed ${principalStr}`
+                ? copy.positions.details.youBorrowed(principalStr)
                 : role === 'lender'
-                  ? `You lent ${principalStr}`
-                  : `A loan of ${principalStr} between two other wallets`}
+                  ? copy.positions.details.youLent(principalStr)
+                  : copy.positions.details.loanBetween(principalStr)}
           </p>
         </div>
         <span className={`badge badge-${view.badge}`}>{loanStateLabel(view, copy.loanState)}</span>
@@ -1417,7 +1417,7 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
             <dt>{copy.positions.details.labels.locked}</dt>
             <dd>
               {isRental
-                ? `${nftStr} stays in the owner’s vault${hasCollateral ? `, plus ${collateralStr} collateral` : ''}`
+                ? copy.positions.details.nftStaysVault(nftStr, hasCollateral ? copy.positions.details.vaultCollateralSuffix(collateralStr) : '')
                 : `${collateralStr} collateral (borrower’s)`}
             </dd>
           </div>
@@ -1492,7 +1492,11 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
                           {copy.risk.advancedDetail(
                             healthView(risk.data).ratio,
                             healthView(risk.data).ltvPct,
-                            healthView(risk.data).dropToLiquidationPct,
+                            healthView(risk.data).dropToLiquidationPct
+                              ? copy.risk.advancedDetailDrop(
+                                  healthView(risk.data).dropToLiquidationPct!,
+                                )
+                              : '',
                           )}
                         </span>
                       </>
@@ -1538,13 +1542,13 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
                   : role === 'borrower'
                     ? copy.positions.whatIfNothingBorrower(
                         collateral?.symbol ?? 'locked',
-                        graceLengthStr,
+                        graceLengthStr ? `${graceLengthStr} ` : '',
                       )
                     : role === 'lender'
-                      ? copy.positions.whatIfNothingLender(graceLengthStr)
+                      ? copy.positions.whatIfNothingLender(graceLengthStr ? `${graceLengthStr} ` : '')
                       : // #1166 live-review follow-up — a wallet holding
                         // neither position is never addressed as a party.
-                        copy.positions.whatIfNothingViewer(graceLengthStr)}
+                        copy.positions.whatIfNothingViewer(graceLengthStr ? `${graceLengthStr} ` : '')}
             </dd>
           </div>
         </dl>
@@ -1574,8 +1578,7 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
             <h3 style={{ margin: 0 }}>{copy.positions.details.addCollateral.title}</h3>
           </div>
           <p className="muted">
-            Topping up your {collateral.symbol} collateral makes the loan safer
-            and moves liquidation further away.
+            {copy.positions.details.toppingUp(collateral.symbol)}
           </p>
           <div className="cluster">
             <input
@@ -1610,16 +1613,15 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
           </div>
           {collateralOverBalance ? (
             <p className="field-hint" style={{ color: 'var(--danger)', marginTop: 8 }}>
-              {copy.errors.needMore(
-                collateral.symbol,
-                collateralInputWei !== null &&
-                  collateralBalance.data !== undefined
-                  ? formatTokenAmount(
+              {collateralInputWei !== null && collateralBalance.data !== undefined
+                ? copy.errors.needMoreBy(
+                    formatTokenAmount(
                       collateralInputWei - collateralBalance.data,
                       collateral.decimals,
-                    )
-                  : undefined,
-              )}
+                    ),
+                    collateral.symbol,
+                  )
+                : copy.errors.needMore(collateral.symbol)}
             </p>
           ) : null}
           {confirmingSurface === 'collateral' && collateralInputWei !== null ? (
@@ -1634,7 +1636,7 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
                     row.status === 'fallback_pending'
                       ? copy.positions.details.addCollateral.receiveFallbackCure
                       : copy.positions.details.addCollateral.receiveSafer,
-                  youLock: `${collateralInput} ${collateral.symbol} more collateral, returned with the rest when the loan closes properly.`,
+                  youLock: copy.positions.details.addCollateralReceipt(collateralInput, collateral.symbol),
                   youMayOwe: copy.positions.details.addCollateral.oweNothingMore,
                   youCanLose:
                     row.status === 'fallback_pending'
@@ -1726,15 +1728,15 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
           </div>
           {partialOverBalance ? (
             <p className="field-hint" style={{ color: 'var(--danger)', marginTop: 8 }}>
-              {copy.errors.needMore(
-                principal.symbol,
-                partialInputWei !== null && principalBalance.data !== undefined
-                  ? formatTokenAmount(
+              {partialInputWei !== null && principalBalance.data !== undefined
+                ? copy.errors.needMoreBy(
+                    formatTokenAmount(
                       partialInputWei - principalBalance.data,
                       principal.decimals,
-                    )
-                  : undefined,
-              )}
+                    ),
+                    principal.symbol,
+                  )
+                : copy.errors.needMore(principal.symbol)}
             </p>
           ) : null}
           {confirmingSurface === 'partial' && partialInputWei !== null ? (
@@ -1747,7 +1749,7 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
                 data={{
                   youReceive: copy.positions.details.partial.receiveSmallerDebt,
                   youLock: copy.positions.details.receipt.nothing,
-                  youMayOwe: `${partialInput} ${principal.symbol} now, plus the interest accrued so far (pulled together in this payment). The due date doesn’t move.`,
+                  youMayOwe: copy.positions.details.partialOwe(partialInput, principal.symbol),
                   youCanLose: copy.positions.details.partial.loseNothingBeyondPayment,
                   fees: copy.positions.details.partial.feesAccrued,
                   whenThisEnds: copy.positions.details.partial.endsPrincipalDrops,
@@ -1835,19 +1837,19 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
                 disabled={!onSupportedChain || !walletClient || !publicClient}
                 data={{
                   youReceive: hasCollateral
-                    ? `${collateralStr} collateral back — claimable right after closing.`
+                    ? copy.positions.details.collateralBackAfterClose(collateralStr)
                     : copy.positions.details.receipt.noCollateralBack,
                   youLock: copy.positions.details.receipt.nothingNew,
-                  youMayOwe: `~${formatTokenAmount(
-                    loanLive.data.calcDue,
-                    principal.decimals,
-                  )} ${principal.symbol}, paid now. ${
+                  youMayOwe: `${copy.positions.details.paidNow(
+                    formatTokenAmount(loanLive.data.calcDue, principal.decimals),
+                    principal.symbol,
+                  )} ${
                     loanLive.data.live.useFullTermInterest
                       ? copy.preclose.fullTermNote
                       : copy.preclose.proRataNote
                   }${
                     livePastDue ? ` ${copy.preclose.graceFeeReceiptNote}` : ''
-                  } The exact amount is read live when you confirm; the approval carries small headroom that is never spent.`,
+                  } ${copy.positions.details.exactAmountNote}`,
                   youCanLose: copy.positions.details.receipt.loseNothingBeyondPay,
                   fees: copy.positions.details.receipt.feesPreclose,
                   whenThisEnds: copy.positions.details.receipt.endsPreclose,

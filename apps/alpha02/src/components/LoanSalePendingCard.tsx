@@ -173,7 +173,10 @@ export function LoanSalePendingCard({
           <span className="banner-body">
             {copy.loanSale.allowanceShort}{' '}
             {principalMeta
-              ? `(a buyer’s acceptance would pull ~${formatTokenAmount(state.requiredNow, principalMeta.decimals)} ${principalMeta.symbol} right now)`
+              ? copy.loanSale.allowanceShortDetail(
+                  formatTokenAmount(state.requiredNow, principalMeta.decimals),
+                  principalMeta.symbol,
+                )
               : null}
           </span>
         </div>

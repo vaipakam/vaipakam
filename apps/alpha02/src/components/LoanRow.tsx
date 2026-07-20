@@ -56,8 +56,8 @@ export function LoanRow({
         <br />
         <span className="row-sub">
           {isRental
-            ? `Rental #${loan.loanId} · fees prepaid`
-            : `Loan #${loan.loanId} · ${formatBpsAsPercent(loan.interestRateBps)} yearly interest`}
+            ? copy.positions.rowRental(loan.loanId)
+            : copy.positions.rowLoan(loan.loanId, formatBpsAsPercent(loan.interestRateBps))}
         </span>
       </span>
       {claimWaiting ? (
@@ -66,7 +66,7 @@ export function LoanRow({
       {healthOverrides && health ? (
         <span
           className={`badge badge-${health.badge}`}
-          title={`Health ${health.ratio} — 1.00 is the liquidation line`}
+          title={copy.risk.healthTitle(health.ratio)}
         >
           {health.label}
         </span>

@@ -161,10 +161,10 @@ export function useAcceptTermsSigning() {
       };
     }): Promise<AcceptTermsPayload> => {
       if (!address || !walletChain) {
-        throw new Error('Connect a wallet on a supported network first.');
+        throw new Error(copy.errors.walletConnectFirst);
       }
-      if (!walletClient) throw new Error('Wallet client not available');
-      if (!publicClient) throw new Error('No RPC client for the active chain.');
+      if (!walletClient) throw new Error(copy.errors.walletClientUnavailable);
+      if (!publicClient) throw new Error(copy.errors.noRpcClient);
 
       const diamondAddr = walletChain.diamondAddress;
 
@@ -534,10 +534,10 @@ export function useSignedOfferAcceptTermsSigning() {
       consent: boolean;
     }): Promise<{ payload: AcceptTermsPayload; orderHash: Hex }> => {
       if (!address || !walletChain) {
-        throw new Error('Connect a wallet on a supported network first.');
+        throw new Error(copy.errors.walletConnectFirst);
       }
-      if (!walletClient) throw new Error('Wallet client not available');
-      if (!publicClient) throw new Error('No RPC client for the active chain.');
+      if (!walletClient) throw new Error(copy.errors.walletClientUnavailable);
+      if (!publicClient) throw new Error(copy.errors.noRpcClient);
 
       const diamondAddr = walletChain.diamondAddress;
       const o = input.order;

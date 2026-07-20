@@ -27,6 +27,7 @@
  */
 
 import { createTranslatedCopy } from '../i18n/reactiveCopy';
+import { tmpl } from '../i18n/tmpl';
 
 const copySource = {
   app: {
@@ -135,10 +136,24 @@ const copySource = {
   },
 
   home: {
+    assetsNote:
+      'Your assets sit in your own on-chain vault — Vaipakam never pools or holds them for you.',
     title: 'What would you like to do?',
     lede: 'Pick a job to get started. You can switch to Advanced mode any time in Settings.',
-    testnetNudge: (chainName: string) =>
-      `You’re on ${chainName}, a test network. Get free test assets to try things out →`,
+    // Migrated to tmpl (translatable interpolation). Call:
+    // copy.home.testnetNudge({ chainName }).
+    testnetNudge: tmpl(
+      'You’re on {{chainName}}, a test network. Get free test assets to try things out →',
+      ['chainName'],
+    ),
+    // The home "you have N active positions" nudge — extracted from
+    // ActivePositionsBanner (was inline JSX the guardrail couldn't see).
+    // Plural via i18next count. Call: copy.home.activePositions({ count }).
+    activePositions: tmpl(
+      'You have {{count}} active positions. View them under My positions.',
+      ['count'],
+      { one: 'You have {{count}} active position. View them under My positions.' },
+    ),
     jobs: {
       borrow: {
         title: 'Borrow assets',
@@ -160,24 +175,38 @@ const copySource = {
   },
 
   tokenSecurity: {
-    pickerBlock: (reasons: string[]) =>
-      `Danger — an independent security check flags this token: ${reasons.join('; ')}. The flows will not let a deal with this token proceed.`,
-    pickerWarn: (reasons: string[]) =>
-      `Caution — an independent security check reports: ${reasons.join('; ')}. You can continue, but read these carefully first.`,
+    pickerBlock: tmpl(
+      `Danger — an independent security check flags this token: {{reasons}}. The flows will not let a deal with this token proceed.`,
+      ['reasons'],
+    ),
+    pickerWarn: tmpl(
+      `Caution — an independent security check reports: {{reasons}}. You can continue, but read these carefully first.`,
+      ['reasons'],
+    ),
     pickerUnknown:
       'The independent security check could not verify this token right now. Deals with unverified tokens are held back until the check succeeds.',
     pickerUnsupported:
       'The independent security check does not cover this network (test networks are not indexed). Extra care: only use tokens you deployed or trust.',
-    gateBlock: (leg: string, reasons: string[]) =>
-      `This deal's ${leg} failed an independent security check: ${reasons.join('; ')}. Accepting it is disabled — a token like this can be impossible to sell or transfer no matter what the deal terms say.`,
-    gateUnknown: (leg: string) =>
-      `The independent security check for this deal's ${leg} could not run. Try again in a moment — accepting is held back until the token can be verified.`,
-    gateUnsupported: (leg: string) =>
-      `The independent security check does not cover this network (test networks are not indexed), so this deal's ${leg} was not screened. Extra care: only accept tokens you trust.`,
-    gateWarn: (leg: string, reasons: string[]) =>
-      `Heads up on this deal's ${leg}: ${reasons.join('; ')}. Make sure you understand these before you continue.`,
-    gateChanged: (leg: string) =>
-      `The security check on this deal's ${leg} reports new findings since you reviewed it. Nothing was signed. The review above now shows the update — read it and tick the consent box again if you still want to proceed.`,
+    gateBlock: tmpl(
+      `This deal's {{leg}} failed an independent security check: {{reasons}}. Accepting it is disabled — a token like this can be impossible to sell or transfer no matter what the deal terms say.`,
+      ['leg', 'reasons'],
+    ),
+    gateUnknown: tmpl(
+      `The independent security check for this deal's {{leg}} could not run. Try again in a moment — accepting is held back until the token can be verified.`,
+      ['leg'],
+    ),
+    gateUnsupported: tmpl(
+      `The independent security check does not cover this network (test networks are not indexed), so this deal's {{leg}} was not screened. Extra care: only accept tokens you trust.`,
+      ['leg'],
+    ),
+    gateWarn: tmpl(
+      `Heads up on this deal's {{leg}}: {{reasons}}. Make sure you understand these before you continue.`,
+      ['leg', 'reasons'],
+    ),
+    gateChanged: tmpl(
+      `The security check on this deal's {{leg}} reports new findings since you reviewed it. Nothing was signed. The review above now shows the update — read it and tick the consent box again if you still want to proceed.`,
+      ['leg'],
+    ),
     retry: 'Check again',
     // Browsing-surface badges (#1036) — early warning on the book and
     // the guided-match cards; the accept review stays the enforcement
@@ -199,25 +228,31 @@ const copySource = {
           'A token in this offer could not be checked by the independent security screen. Treat it with extra care.',
       },
     },
-    matchesHidden: (n: number) =>
-      n === 1
-        ? '1 matching offer is hidden because an independent security check flagged one of its tokens as dangerous.'
-        : `${n} matching offers are hidden because an independent security check flagged one of their tokens as dangerous.`,
+    matchesHidden: tmpl(
+      '{{count}} matching offers are hidden because an independent security check flagged one of their tokens as dangerous.',
+      ['count'],
+      { one: '1 matching offer is hidden because an independent security check flagged one of its tokens as dangerous.' },
+    ),
     // CoinGecko reputation soft-signal (#1036 fallback layer) — only
     // on networks with market data; never a block, never a gate.
-    reputationListedTop: (name: string, symbol: string | null, rank: number) =>
-      `Market listing found: ${name}${symbol ? ` (${symbol})` : ''}, ranked #${rank} by market size. Check that this matches the token you meant.`,
-    reputationListedDeep: (name: string, symbol: string | null) =>
-      `Market listing found: ${name}${symbol ? ` (${symbol})` : ''} — outside the top 200 by market size. Smaller tokens move harder and disappear faster; double-check the project.`,
+    reputationListedTop: tmpl(
+      `Market listing found: {{name}}{{symbolSuffix}}, ranked #{{rank}} by market size. Check that this matches the token you meant.`,
+      ['name', 'symbolSuffix', 'rank'],
+    ),
+    reputationListedDeep: tmpl(
+      `Market listing found: {{name}}{{symbolSuffix}} — outside the top 200 by market size. Smaller tokens move harder and disappear faster; double-check the project.`,
+      ['name', 'symbolSuffix'],
+    ),
     reputationUnlisted:
       'No market listing found for this address — the wider market doesn’t know this token. That alone doesn’t make it bad, but verify the contract address with the project before dealing in it.',
   },
   signing: {
-    intro: (n: number) =>
-      n === 1
-        ? 'One wallet confirmation finishes this:'
-        : `You'll confirm ${n} times in your wallet, in this order:`,
-    introUpTo: (n: number) => `Up to ${n} wallet confirmations, in this order:`,
+    intro: tmpl(
+      "You'll confirm {{count}} times in your wallet, in this order:",
+      ['count'],
+      { one: 'One wallet confirmation finishes this:' },
+    ),
+    introUpTo: tmpl(`Up to {{n}} wallet confirmations, in this order:`, ['n']),
     approveUnknown:
       'Approve the token — one confirmation, or two if your wallet needs an older approval reset to zero first (still checking).',
     sign: 'Sign the terms you just read — a free signature, no gas.',
@@ -231,11 +266,13 @@ const copySource = {
       'Allow the protocol to move NFTs from this collection — a one-time transaction per collection.',
     postListing: 'Post the listing — the final transaction.',
     acceptRental: 'Start the rental — the final transaction.',
-    phaseSign: (c: number, t: number) => `Signing terms… (${c} of ${t})`,
-    phaseApprove: (c: number, t: number) => `Approving… (${c} of ${t})`,
-    phasePermit: (c: number, t: number) =>
-      `Signing the permission… (${c} of ${t}) — free, no gas`,
-    phaseSend: (c: number, t: number) => `Submitting… (${c} of ${t})`,
+    phaseSign: tmpl(`Signing terms… ({{c}} of {{t}})`, ['c', 't']),
+    phaseApprove: tmpl(`Approving… ({{c}} of {{t}})`, ['c', 't']),
+    phasePermit: tmpl(
+      `Signing the permission… ({{c}} of {{t}}) — free, no gas`,
+      ['c', 't'],
+    ),
+    phaseSend: tmpl(`Submitting… ({{c}} of {{t}})`, ['c', 't']),
   },
   killSwitch: {
     disabled:
@@ -351,9 +388,10 @@ const copySource = {
       generic: 'There’s an update on your loan.',
     } as Record<string, string>,
     // Secondary line — shown only for a loan-linked (tappable) row.
-    loanRef: (loanId: number) => `Loan #${loanId} · tap to view`,
-    unreadBadgeTitle: (n: number) =>
-      n === 1 ? '1 unread notification' : `${n} unread notifications`,
+    loanRef: tmpl(`Loan #{{loanId}} · tap to view`, ['loanId']),
+    unreadBadgeTitle: tmpl('{{count}} unread notifications', ['count'], {
+      one: '1 unread notification',
+    }),
   },
   errorBoundary: {
     detailAria: 'Error detail',
@@ -385,22 +423,29 @@ const copySource = {
     wallet: 'Wallet',
     walletNotConnected: 'Not connected',
     rpc: 'Blockchain connection',
-    rpcOk: (block: string) => `Working — latest block ${block}`,
+    rpcOk: tmpl(`Working — latest block {{block}}`, ['block']),
     rpcChecking: 'Checking…',
     rpcFailing:
       'Not responding — the app can’t reach the blockchain right now. Reloading, or switching networks and back, often clears it.',
     indexer: 'Market data cache',
-    indexerOk: (age: string) => `Up to date (refreshed ${age} ago)`,
-    indexerStale: (age: string) =>
-      `Running behind (last refreshed ${age} ago) — market lists may lag; your own positions still load directly from the chain.`,
+    indexerOk: tmpl(`Up to date (refreshed {{age}} ago)`, ['age']),
+    indexerStale: tmpl(
+
+        `Running behind (last refreshed {{age}} ago) — market lists may lag; your own positions still load directly from the chain.`,
+
+        ['age'],
+
+      ),
     indexerUnreachable:
       'Unreachable right now — market lists may not load until it recovers. Your own positions still load directly from the chain.',
     indexerNoCursor:
       'Reachable, but no data has been recorded for this network yet — it will fill as activity arrives.',
     indexerNotConfigured:
       'Not configured on this build — market lists can’t load here. Your own positions still load directly from the chain.',
-    networkUnsupported: (walletChainId: string, readName: string, readChainId: number) =>
-      `Wallet is on an unsupported network (chain id ${walletChainId}) — data shown comes from ${readName} (${readChainId}). Switch networks to transact.`,
+    networkUnsupported: tmpl(
+      `Wallet is on an unsupported network (chain id {{walletChainId}}) — data shown comes from {{readName}} ({{readChainId}}). Switch networks to transact.`,
+      ['walletChainId', 'readName', 'readChainId'],
+    ),
     build: 'App version',
     lastErrorTitle: 'Last error on this device',
     noError: 'No errors recorded in this session.',
@@ -427,8 +472,10 @@ const copySource = {
       'Sending stores your message, the page you sent it from and the network you were on, the reply address if you gave one, and — only if you ticked the box — the health details above, on Vaipakam’s support service under your ticket number. The team is notified that a ticket arrived (its number and context flags — never your message text or email). Your full wallet address is never included in the health details.',
     send: 'Send to support',
     sending: 'Sending…',
-    sent: (id: string) =>
-      `Sent. Your ticket number is ${id} — keep it; quoting it connects any follow-up to this report.`,
+    sent: tmpl(
+      `Sent. Your ticket number is {{id}} — keep it; quoting it connects any follow-up to this report.`,
+      ['id'],
+    ),
     mailHint: 'Prefer email, or want to add more? Write to us quoting the ticket number:',
     mailButton: 'Email support@vaipakam.com',
     invalidMessage: 'Write a few words about what happened first.',
@@ -445,21 +492,25 @@ const copySource = {
   wallet: {
     connect: 'Connect wallet',
     connectFirst: 'Connect a wallet to continue.',
-    unsupportedNetwork: (chainNames: string) =>
-      `This network isn’t supported. Vaipakam is available on ${chainNames}. Switch networks to continue.`,
+    unsupportedNetwork: tmpl(
+      `This network isn’t supported. Vaipakam is available on {{chainNames}}. Switch networks to continue.`,
+      ['chainNames'],
+    ),
     switchNetwork: 'Switch network',
     // UX2-005 — named-target variant for surfaces that know exactly
     // which chain has what the user came for (faucet mocks, VPFI
     // deposits): offer the remedy, don't just describe it.
-    switchToChain: (chain: string) => `Switch to ${chain}`,
+    switchToChain: tmpl(`Switch to {{chain}}`, ['chain']),
   },
 
   checks: {
     sanctionsChecking: 'Checking compliance status…',
     walletConnected: 'Wallet connected',
     supportedChain: 'On a supported network',
-    balanceSufficient: (asset: string) => `Enough ${asset} in your wallet`,
+    balanceSufficient: tmpl(`Enough {{asset}} in your wallet`, ['asset']),
     tokenValid: 'Asset recognised as a token',
+    // Live payment-asset check row: "<Asset> recognised (SYMBOL)".
+    recognised: tmpl('{{label}} recognised ({{symbol}})', ['label', 'symbol']),
     consent: 'Risk disclosures and terms accepted',
     // UX-010 — the inline remedy on a failing balance check (testnets
     // with deployed mocks only).
@@ -603,8 +654,13 @@ const copySource = {
       'The other side of this offer can’t transact right now (compliance flag), so it can’t be accepted. Nothing was sent.',
     offerNotFound:
       'We couldn’t find that offer — the link may be old, or the data source is catching up. Browse current offers below.',
-    wrongChainLink: (chainName: string) =>
-      `That link points to an offer on ${chainName}. Switch to that network (top of the page), then open the link again — offer numbers repeat across networks, so we won’t guess.`,
+    wrongChainLink: tmpl(
+
+        `That link points to an offer on {{chainName}}. Switch to that network (top of the page), then open the link again — offer numbers repeat across networks, so we won’t guess.`,
+
+        ['chainName'],
+
+      ),
     termsChanged:
       'This offer’s terms changed since you reviewed it. Nothing was sent — please review the updated offer.',
     // "Not priced" is broader than "no feed exists" — the protocol also
@@ -623,13 +679,20 @@ const copySource = {
     // does NOT describe their real terms (a sale vehicle shows 0
     // collateral and a term that already partly elapsed), so accepting
     // them here is BLOCKED, not warned-past. See issue #951 / #927.
-    linkedLoanAcceptBlocked: (loanId: string) =>
-      `This offer is tied to already-running loan #${loanId} — accepting it would settle or transfer that loan's position, not start the fresh loan reviewed above. This app can't yet show you the real terms of that kind of deal, so accepting it here is disabled for now.`,
+    linkedLoanAcceptBlocked: tmpl(
+
+        `This offer is tied to already-running loan #{{loanId}} — accepting it would settle or transfer that loan's position, not start the fresh loan reviewed above. This app can't yet show you the real terms of that kind of deal, so accepting it here is disabled for now.`,
+
+        ['loanId'],
+
+      ),
     // #986 P3 — the honest buy-a-running-loan review. Sale vehicles get
     // a REAL review (loan-derived numbers) instead of the block above;
     // preclose-offset links keep the block.
-    saleVehicleBanner: (loanId: string) =>
-      `This is a position sale: you'd be buying the lender side of already-running loan #${loanId}, not starting a new loan. The borrower and their repayment obligations don't change — only the lender does. The numbers below come from that loan, live.`,
+    saleVehicleBanner: tmpl(
+      `This is a position sale: you'd be buying the lender side of already-running loan #{{loanId}}, not starting a new loan. The borrower and their repayment obligations don't change — only the lender does. The numbers below come from that loan, live.`,
+      ['loanId'],
+    ),
     saleLoanChecking:
       'Reading the running loan behind this listing — the review must show its real numbers before you can sign.',
     saleLoanCheckFailed:
@@ -641,8 +704,10 @@ const copySource = {
     saleMaturityPassed:
       'This loan has reached its due date — the position can no longer be bought. Nothing was sent or approved.',
     saleBought: 'Position bought',
-    saleBuyerNext: (loanId: string) =>
-      `You\u2019re now the lender of loan #${loanId} \u2014 the loan keeps running unchanged for the borrower, and their repayment comes to you. Track it under My positions; when they repay you claim the principal and the remaining interest.`,
+    saleBuyerNext: tmpl(
+      `You\u2019re now the lender of loan #{{loanId}} \u2014 the loan keeps running unchanged for the borrower, and their repayment comes to you. Track it under My positions; when they repay you claim the principal and the remaining interest.`,
+      ['loanId'],
+    ),
     saleSelfBuy:
       'You are the borrower of this loan, so you can\u2019t also buy its lender side \u2014 the protocol rejects that. Repaying or closing early from My positions are your moves instead. Nothing was sent or approved.',
     liquidityChecking:
@@ -690,6 +755,43 @@ const copySource = {
   },
 
   rent: {
+    // Rent browse-row sub-lines.
+    browseRowPriced: tmpl(
+      '{{daily}} {{pay}}/day · {{duration}} · {{total}} {{pay}} up front (incl. buffer)',
+      ['daily', 'pay', 'duration', 'total'],
+    ),
+    browseRowUnpriced: tmpl('{{duration}} · listing #{{id}}', ['duration', 'id']),
+    perDaySuffix: tmpl(' ({{symbol}} per day)', ['symbol']),
+    // Duration field hint when the picked term exceeds the protocol cap.
+    durationCap: tmpl(
+      'The protocol currently caps listings at {{max}} — pick a shorter length.',
+      ['max'],
+    ),
+    // Review-receipt lines (extracted from Rent.tsx inline templates).
+    receiptListYouReceive: tmpl(
+      '~{{fees}} in rental fees for the full {{term}} term — the renter prepays everything up front.',
+      ['fees', 'term'],
+    ),
+    receiptListYouLock: tmpl(
+      'Your NFT {{nft}} moves into your vault and stays there for the whole listing and rental.',
+      ['nft'],
+    ),
+    receiptRentYouReceive: tmpl(
+      'Use rights of {{nft}} for {{duration}}, starting now.',
+      ['nft', 'duration'],
+    ),
+    receiptRentYouLock: tmpl(
+      '{{total}} prepaid — the full term’s fees plus a {{buffer}} refundable buffer.',
+      ['total', 'buffer'],
+    ),
+    receiptRentYouCanLose: tmpl(
+      'The {{buffer}} buffer if the rental isn’t closed on time. Your use rights end at expiry either way.',
+      ['buffer'],
+    ),
+    receiptRentWhenEnds: tmpl(
+      'Rights reset automatically after {{duration}}. Close the rental on time from its detail page to get the buffer back.',
+      ['duration'],
+    ),
     stepYourNft: 'Your NFT & price',
     stepChooseNft: 'Choose an NFT',
     stepReview: 'Review & sign',
@@ -743,8 +845,10 @@ const copySource = {
     rentalOpened: 'Rental started',
     rentalOpenedNext:
       'You now hold the use rights until the rental ends — the NFT itself stays in the owner’s vault. Your prepaid fees cover the whole term; close on time and the buffer comes back to you.',
-    bufferNote: (pct: string) =>
-      `Renters prepay the full term plus a ${pct} refundable buffer. Close the rental on time and the buffer is returned.`,
+    bufferNote: tmpl(
+      `Renters prepay the full term plus a {{pct}} refundable buffer. Close the rental on time and the buffer is returned.`,
+      ['pct'],
+    ),
     checkOwnNft: 'You own this NFT',
     checkNotOwner:
       'The connected wallet doesn’t own this NFT — check the contract address and token id.',
@@ -797,6 +901,23 @@ const copySource = {
   },
 
   refinance: {
+    // Composed receipt lines (extracted from RefinanceFlow.tsx); catalog
+    // refs (payoffNote, walletNote, guardrailNote, …) stay composed at
+    // the call site.
+    receiptYouMayOwe: tmpl(
+      '~{{payoff}} to pay off this loan, pulled automatically when a lender accepts.',
+      ['payoff'],
+    ),
+    feesTreasuryNote: tmpl(
+      'The protocol’s {{cut}} cut of the payoff interest settles inside the payoff.',
+      ['cut'],
+    ),
+    whenEndsComposed: tmpl(
+      'When a lender accepts your request, when you cancel it, or {{branch}}.',
+      ['branch'],
+    ),
+    expiresAfterDays: tmpl('when it expires {{days}} days after posting', ['days']),
+    durationRange: tmpl('Between 1 and {{max}} days.', ['max']),
     consentLabel: 'I understand the payoff and wallet-balance terms below and agree to them.',
     receiptReceive: 'A new loan at your chosen terms the moment a lender accepts — your collateral moves to it automatically and this loan closes in the same transaction.',
     receiptLock: 'Nothing new — your existing collateral carries over to the new loan without ever unlocking.',
@@ -814,26 +935,36 @@ const copySource = {
     // full-term is the lender's maximum entitlement).
     payoffNote:
       'The old loan’s payoff is always principal plus the full remaining term’s interest — even if the loan normally accrues day by day. That is the exiting lender’s fixed entitlement on an early exit.',
-    walletNote: (topUp: string) =>
-      `The payoff is pulled from your wallet automatically at the moment a lender accepts. The new loan’s money arrives in the same transaction, so keep about ${topUp} spare in your wallet (the interest portion plus the new loan’s initiation fee) while the request is open.`,
+    walletNote: tmpl(
+      `The payoff is pulled from your wallet automatically at the moment a lender accepts. The new loan’s money arrives in the same transaction, so keep about {{topUp}} spare in your wallet (the interest portion plus the new loan’s initiation fee) while the request is open.`,
+      ['topUp'],
+    ),
     shortIsSafe:
       'If your wallet is short when a lender tries to accept, the acceptance simply fails — nothing is taken and your current loan continues unchanged.',
     periodicWarning:
       'This loan pays interest on a periodic schedule. If a payment period becomes overdue while the request is open, a lender’s acceptance will fail until the period is settled — keep the loan’s payments current.',
     done:
       'Refinance request posted. When a lender accepts it, this loan closes automatically — you don’t need to do anything else. You can cancel the request below (cancellation opens a few minutes after posting).',
-    pending: (offerId: string) =>
-      `Refinance request #${offerId} is live. When a lender accepts it, this loan closes automatically in the same transaction.`,
-    pendingChecking: (offerId: string) =>
-      `Checking the state of refinance request #${offerId}…`,
-    pendingExpires: (date: string) =>
-      `The request expires on ${date} if nobody accepts it.`,
+    pending: tmpl(
+      `Refinance request #{{offerId}} is live. When a lender accepts it, this loan closes automatically in the same transaction.`,
+      ['offerId'],
+    ),
+    pendingChecking: tmpl(
+      `Checking the state of refinance request #{{offerId}}…`,
+      ['offerId'],
+    ),
+    pendingExpires: tmpl(
+      `The request expires on {{date}} if nobody accepts it.`,
+      ['date'],
+    ),
     pendingAccepted:
       'Your refinance request was accepted — this loan is being replaced by the new one. Refresh in a moment to see the final state.',
     pendingLoanClosed:
       'This loan has since closed another way, so the request can no longer complete — cancel it to also remove its standing payoff approval.',
-    pendingExpired: (date: string) =>
-      `This refinance request expired on ${date} — no lender can accept it any more, and it no longer holds up your other actions here. Cancel it below to also remove its standing payoff approval; the loan continues unchanged.`,
+    pendingExpired: tmpl(
+      `This refinance request expired on {{date}} — no lender can accept it any more, and it no longer holds up your other actions here. Cancel it below to also remove its standing payoff approval; the loan continues unchanged.`,
+      ['date'],
+    ),
     cancel: 'Cancel refinance request',
     cancelSoon:
       'Cancellation opens a few minutes after posting — try again shortly.',
@@ -843,8 +974,10 @@ const copySource = {
       'Refinance request cancelled — this loan continues unchanged. The standing payoff approval couldn’t be removed automatically; you can revoke it from your wallet’s token-approvals view.',
     allowanceShort:
       'The payoff approval no longer covers everything this request could pull — a lender’s acceptance could fail (an acceptance after the due date also pulls the late fee and extra interest). Restore it below or cancel the request.',
-    balanceShort: (topUp: string) =>
-      `Your wallet holds less than the ~${topUp} spare this request needs — a lender’s acceptance would fail right now. Top up your wallet or cancel the request.`,
+    balanceShort: tmpl(
+      `Your wallet holds less than the ~{{topUp}} spare this request needs — a lender’s acceptance would fail right now. Top up your wallet or cancel the request.`,
+      ['topUp'],
+    ),
     reapprove: 'Restore the payoff approval',
     reapproved: 'Payoff approval restored — the request can complete again.',
     reapproveAborted:
@@ -858,10 +991,14 @@ const copySource = {
     // acceptance can't fail on a short allowance.
     graceNote:
       'This loan is past its due date. A lender can still accept this request until the grace window ends, and the payoff already includes the late fee for being late (it grows a little each day).',
-    lateFeeDisclosure: (maxGrowth: string) =>
-      `If a lender accepts after the loan’s due date, the payoff grows — the late fee for being late plus interest that keeps accruing — by up to ~${maxGrowth} more for this request. The approval you grant covers that too, so a late acceptance can’t fail on it.`,
-    expiresAtGraceEnd: (date: string) =>
-      `when it expires with this loan’s grace window (${date}) — a refinance request can’t outlive the loan it replaces`,
+    lateFeeDisclosure: tmpl(
+      `If a lender accepts after the loan’s due date, the payoff grows — the late fee for being late plus interest that keeps accruing — by up to ~{{maxGrowth}} more for this request. The approval you grant covers that too, so a late acceptance can’t fail on it.`,
+      ['maxGrowth'],
+    ),
+    expiresAtGraceEnd: tmpl(
+      `when it expires with this loan’s grace window ({{date}}) — a refinance request can’t outlive the loan it replaces`,
+      ['date'],
+    ),
     pendingPastGrace:
       'This loan has passed its due date and grace window, so no lender can accept this request any more — it no longer holds up your other actions here. Cancel it below to also remove its standing payoff approval.',
     cadenceChangeNote:
@@ -887,10 +1024,13 @@ const copySource = {
     none: 'No standing approvals to Vaipakam found for your known tokens.',
     // #1247 PAG-006 — the checked-token window's widen affordance.
     // Same one-click honesty as lists.showMore.
-    checkMore: (next: number, total: number) =>
-      total > next
-        ? `Check ${next} more tokens (${total} unchecked)`
-        : `Check ${next} more token${next === 1 ? '' : 's'}`,
+    checkMore: tmpl(`Check {{count}} more tokens`, ['count'], {
+      one: `Check {{count}} more token`,
+    }),
+    checkMoreUnchecked: tmpl(
+      `Check {{next}} more tokens ({{total}} unchecked)`,
+      ['next', 'total'],
+    ),
     loading: 'Reading your standing approvals…',
     unavailable:
       'We couldn’t read your approvals right now — please try again in a moment.',
@@ -899,8 +1039,10 @@ const copySource = {
     revoke: 'Revoke',
     staleNote:
       'We couldn’t refresh this list just now — the rows shown may be slightly stale. Revoking still works.',
-    revoked: (symbol: string) =>
-      `Approval removed for ${symbol}. If a live request or listing needed it, its card will warn and offer a restore.`,
+    revoked: tmpl(
+      `Approval removed for {{symbol}}. If a live request or listing needed it, its card will warn and offer a restore.`,
+      ['symbol'],
+    ),
   },
 
   nftVerifier: {
@@ -909,11 +1051,16 @@ const copySource = {
       'Vaipakam position NFTs carry real claim rights — whoever holds one controls that side of its loan. Check any token id before trusting it.',
     placeholder: 'Position NFT token id',
     check: 'Check',
-    chainNote: (chain: string) =>
-      `Checked on ${chain}. Token ids repeat across networks — a token that exists here says nothing about other networks.`,
+    chainNote: tmpl(
+
+        `Checked on {{chain}}. Token ids repeat across networks — a token that exists here says nothing about other networks.`,
+
+        ['chain'],
+
+      ),
     checking: 'Checking this token on-chain…',
     checkFailed: 'We couldn’t check this token right now — please try again in a moment.',
-    liveTitle: (id: string) => `Token #${id} is live on this network`,
+    liveTitle: tmpl(`Token #{{id}} is live on this network`, ['id']),
     ownerLabel: 'Current holder',
     roleLabel: 'Side it controls',
     roleLender: 'Lender side — its holder collects the repayment or recovery.',
@@ -921,15 +1068,19 @@ const copySource = {
     roleUnknown: 'We couldn’t read this token’s role details right now.',
     loanLabel: 'Linked loan',
     offerLabel: 'Created for offer',
-    offerValue: (offerId: string) =>
-      `#${offerId} — this token was minted for an offer that hasn’t become a loan yet.`,
+    offerValue: tmpl(
+      `#{{offerId}} — this token was minted for an offer that hasn’t become a loan yet.`,
+      ['offerId'],
+    ),
     lockUnrecognized:
       'Transfer-locked for a reason this app version doesn’t recognise — it can’t be transferred until that flow completes or is cancelled.',
     lockUnknown:
       'We couldn’t read whether this token is transfer-locked right now — don’t rely on it being transferable until this reads clean.',
     positionRowLabel: 'Your position NFT',
-    positionRowNote: (role: string) =>
-      `— holds this loan’s ${role} rights; verify any position NFT before trusting it.`,
+    positionRowNote: tmpl(
+      `— holds this loan’s {{role}} rights; verify any position NFT before trusting it.`,
+      ['role'],
+    ),
     lockLabel: 'Transfer lock',
     lockPrecloseOffset:
       'Locked for a preclose-by-offset — it can’t be transferred until that completes or is cancelled.',
@@ -947,7 +1098,7 @@ const copySource = {
       'If the borrower of the linked loan defaults, this claim pays out the loan’s raw collateral in kind — the protocol does not price or sell it for you. Value what you would actually receive before buying this position.',
     liveNote:
       'Live means exactly this: the token exists here and its holder controls the linked position. It does not vouch for the loan’s health or the other side’s behaviour.',
-    goneTitle: (id: string) => `Token #${id} does not currently exist on this network`,
+    goneTitle: tmpl(`Token #{{id}} does not currently exist on this network`, ['id']),
     goneBody:
       'Either its claim was completed and the token was retired, or it was never minted here at all — the network doesn’t record which. Treat any offer to sell or transfer this token id as worthless on this network.',
   },
@@ -1017,8 +1168,10 @@ const copySource = {
       'We couldn’t read this keeper’s current permissions, so editing is disabled (saving now could silently overwrite them). Retry in a moment; revoking still works.',
     extraBitsNote:
       'This keeper also holds advanced permissions not shown here — they are preserved unchanged when you save.',
-    atCap: (max: number) =>
-      `You’ve reached the maximum of ${max} approved keepers — revoke one to add another.`,
+    atCap: tmpl(
+      `You’ve reached the maximum of {{max}} approved keepers — revoke one to add another.`,
+      ['max'],
+    ),
     perLoanReminder:
       'Approving a keeper here is not enough by itself: each loan’s page has a per-loan keeper switch that must also be on.',
     loading: 'Loading your keeper settings…',
@@ -1040,6 +1193,10 @@ const copySource = {
   },
 
   earlyExit: {
+    receiptYouReceive: tmpl(
+      '~{{toSeller}}, paid straight to your wallet in the same transaction — selling to offer #{{offerId}} at {{rate}} yearly. Nothing to claim afterwards.',
+      ['toSeller', 'offerId', 'rate'],
+    ),
     receiptLockNothing: 'Nothing.',
     receiptOweNothing: 'Nothing — you approve nothing and pay nothing out of pocket.',
     receiptCanLose: 'The LARGER of the interest accrued so far or the rate difference for the remaining term — never both. Already reflected in the figure above; the exact amount is re-read live when you confirm.',
@@ -1053,7 +1210,7 @@ const copySource = {
       'No matching lending offers right now. An offer must match this loan’s assets, cover its remaining amount, and fit inside its remaining time — check back later.',
     unavailable:
       'We couldn’t load matching offers right now — please try again in a moment.',
-    rowReceive: (amount: string) => `you’d receive ~${amount} now`,
+    rowReceive: tmpl(`you’d receive ~{{amount}} now`, ['amount']),
     shortfallWarn:
       'This buyer expects a higher rate than your loan pays, and for this candidate that rate difference (not the accrued interest — you pay the larger of the two, never both) is what sets your payout.',
     forfeitNote:
@@ -1065,14 +1222,31 @@ const copySource = {
     loadingOffers: 'Looking for matching lending offers…',
     figureMoved:
       'The payout figure moved with time, so the review closed — open it again to confirm against the current number.',
-    moreOffers: (n: number) =>
-      `${n} more matching offer${n === 1 ? '' : 's'} pay${n === 1 ? 's' : ''} less than the ones shown.`,
+    moreOffers: tmpl(
+      '{{count}} more matching offers pay less than the ones shown.',
+      ['count'],
+      { one: '{{count}} more matching offer pays less than the ones shown.' },
+    ),
     checking: 'Checking whether this loan can be exited early…',
     checkFailed:
       'We couldn’t read this loan’s exit details right now — retrying.',
   },
 
   loanSale: {
+    // Review-receipt / hint lines (extracted from LoanSaleFlow.tsx +
+    // LoanSalePendingCard.tsx inline templates).
+    receiptYouReceive: tmpl(
+      '{{principal}} — the full outstanding amount, paid to your wallet the moment a buyer accepts.',
+      ['principal'],
+    ),
+    receiptYouMayOwe: tmpl(
+      'At acceptance, the settlement is pulled from your wallet: the LARGER of the interest accrued by then or the rate difference for the remaining term — never both. Right now that would be ~{{amount}} {{sym}}.',
+      ['amount', 'sym'],
+    ),
+    allowanceShortDetail: tmpl(
+      '(a buyer’s acceptance would pull ~{{amount}} {{symbol}} right now)',
+      ['amount', 'symbol'],
+    ),
     consentLabel: 'I understand the lock, the settlement pull, and the standing approval below and agree to them.',
     receiptLock: 'Your lender position NFT, until the sale completes or you cancel the listing. Nothing else.',
     receiptCanLose: 'If your balance or the standing approval goes short, a buyer’s acceptance simply fails — nothing is taken, but the listing sits unfillable until you restore it or cancel.',
@@ -1088,14 +1262,18 @@ const copySource = {
     // NFT lock must be disclosed BEFORE confirmation.
     lockWarning:
       'Listing locks your lender position NFT — it can’t be transferred until the sale completes or you cancel the listing. Your claim rights are unaffected.',
-    approvalNote: (amount: string) =>
-      `Listing sets a standing approval of up to ${amount} — sized to cover settling the sale any time through the loan’s term plus a month’s headroom (the larger of interest accrued by acceptance or the rate difference). Only the actual amount is pulled, in the buyer’s own transaction; if the listing somehow outlives the headroom, the listing card warns and offers to top the approval up.`,
+    approvalNote: tmpl(
+      `Listing sets a standing approval of up to {{amount}} — sized to cover settling the sale any time through the loan’s term plus a month’s headroom (the larger of interest accrued by acceptance or the rate difference). Only the actual amount is pulled, in the buyer’s own transaction; if the listing somehow outlives the headroom, the listing card warns and offers to top the approval up.`,
+      ['amount'],
+    ),
     sweetenNote:
       'A rate above the loan’s own rate attracts buyers faster, but the difference for the remaining term comes out of your wallet at completion.',
     done:
       'Position listed. When a buyer accepts, the sale settles automatically — keep the standing approval (and enough balance for the settlement figure) in place until then, or cancel the listing below.',
-    pending: (offerId: string) =>
-      `Sale listing #${offerId} is live and your lender NFT is locked while it stands. When a buyer accepts, you’re paid the outstanding amount and the settlement is pulled in the same transaction.`,
+    pending: tmpl(
+      `Sale listing #{{offerId}} is live and your lender NFT is locked while it stands. When a buyer accepts, you’re paid the outstanding amount and the settlement is pulled in the same transaction.`,
+      ['offerId'],
+    ),
     pendingNoId:
       'This position is listed for sale (listed from another device, so cancelling here isn’t available — cancel where it was listed). Your lender NFT is locked while the listing stands.',
     allowanceShort:
@@ -1126,7 +1304,57 @@ const copySource = {
   },
 
   positions: {
+    // Row sub-lines (extracted from LoanRow.tsx).
+    rowRental: tmpl('Rental #{{id}} · fees prepaid', ['id']),
+    rowLoan: tmpl('Loan #{{id}} · {{rate}} yearly interest', ['id', 'rate']),
     details: {
+      // Interpolated receipt / summary lines (extracted from
+      // PositionDetails.tsx inline templates).
+      collateralBackAfterRepay: tmpl(
+        '{{collateral}} collateral back — claimable right after repayment settles.',
+        ['collateral'],
+      ),
+      collateralBackAfterClose: tmpl(
+        '{{collateral}} collateral back — claimable right after closing.',
+        ['collateral'],
+      ),
+      collateralBackPlain: tmpl('{{collateral}} collateral back.', ['collateral']),
+      owedPrincipalPlusInterest: tmpl(
+        "{{principal}} + this loan's interest. For full-term loans (the protocol default) the whole term's interest applies even when repaying early; day-by-day loans charge only what has accrued. The exact amount is read live when you confirm; the approval carries small headroom that is never spent.",
+        ['principal'],
+      ),
+      youRent: tmpl('You rent {{nft}}', ['nft']),
+      youBorrowed: tmpl('You borrowed {{principal}}', ['principal']),
+      youLent: tmpl('You lent {{principal}}', ['principal']),
+      paidNow: tmpl('~{{amount}} {{symbol}}, paid now.', ['amount', 'symbol']),
+      exactAmountNote:
+        'The exact amount is read live when you confirm; the approval carries small headroom that is never spent.',
+      toppingUp: tmpl(
+        'Topping up your {{symbol}} collateral makes the loan safer and moves liquidation further away.',
+        ['symbol'],
+      ),
+      principalPlusInterest: tmpl('{{principal}} plus the earned interest.', ['principal']),
+      loanAssetFallback: 'the loan asset',
+      recoveredSummary: tmpl(
+        'What this loan recovered: sale proceeds in {{asset}}, or the {{collateral}} collateral itself, depending on how the default settled.',
+        ['asset', 'collateral'],
+      ),
+      nftRentedOut: tmpl('Your {{nft}} is rented out', ['nft']),
+      nftRentalBetween: tmpl('A rental of {{nft}} between two other wallets', ['nft']),
+      loanBetween: tmpl('A loan of {{principal}} between two other wallets', ['principal']),
+      nftStaysVault: tmpl('{{nft}} stays in the owner’s vault{{collateralSuffix}}', [
+        'nft',
+        'collateralSuffix',
+      ]),
+      vaultCollateralSuffix: tmpl(', plus {{collateral}} collateral', ['collateral']),
+      addCollateralReceipt: tmpl(
+        '{{amount}} {{symbol}} more collateral, returned with the rest when the loan closes properly.',
+        ['amount', 'symbol'],
+      ),
+      partialOwe: tmpl(
+        '{{amount}} {{symbol}} now, plus the interest accrued so far (pulled together in this payment). The due date doesn’t move.',
+        ['amount', 'symbol'],
+      ),
       loadingLoan: 'Loading the loan…',
       notFound: 'We couldn’t find this loan right now. It may be new (still indexing) or the link may be old.',
       titleLoan: 'Loan',
@@ -1223,6 +1451,7 @@ const copySource = {
     openOffers: 'Open offers',
     getStarted: 'Get started',
     offerRow: {
+      youNft: tmpl('Your NFT {{addr}} #{{id}}', ['addr', 'id']),
       yourLendingOffer: 'Your lending offer',
       yourBorrowRequest: 'Your borrow request',
       yourNftListing: 'Your NFT listing',
@@ -1232,6 +1461,10 @@ const copySource = {
       confirmCancel: 'Confirm — cancel & unlock my assets',
       cancelling: 'Cancelling…',
       receiptNothing: 'Nothing.',
+      receiptUnlocked: tmpl(
+        '{{locked}} back — unlocked from this offer immediately.',
+        ['locked'],
+      ),
       receiptLose: 'Nothing — cancelling an open offer has no penalty.',
       receiptFees: 'None (network gas only).',
       receiptEnds: 'Immediately — the offer leaves the book and can’t be accepted anymore. Post a new offer any time.',
@@ -1248,14 +1481,20 @@ const copySource = {
     roleLender: 'You lent',
     // UX-030 — "grace period" glossed inline, with the concrete window
     // length when the live read has it.
-    whatIfNothingBorrower: (collateral: string, grace?: string) =>
-      `If you do nothing and the loan passes its due date and the ${grace ? `${grace} ` : ''}grace period (a short extra window to repay before the lender can take the collateral), the lender can receive your ${collateral} collateral.`,
-    whatIfNothingLender: (grace?: string) =>
-      `If the borrower does not repay by the due date plus the ${grace ? `${grace} ` : ''}grace period (a short extra repayment window), you can claim their collateral.`,
+    whatIfNothingBorrower: tmpl(
+      `If you do nothing and the loan passes its due date and the {{grace}}grace period (a short extra window to repay before the lender can take the collateral), the lender can receive your {{collateral}} collateral.`,
+      ['collateral', 'grace'],
+    ),
+    whatIfNothingLender: tmpl(
+      `If the borrower does not repay by the due date plus the {{grace}}grace period (a short extra repayment window), you can claim their collateral.`,
+      ['grace'],
+    ),
     // #1166 live-review follow-up — a wallet holding neither position
     // must not be addressed as a party ("you can claim…").
-    whatIfNothingViewer: (grace?: string) =>
-      `If the borrower does not repay by the due date plus the ${grace ? `${grace} ` : ''}grace period (a short extra repayment window), the lender can claim the collateral.`,
+    whatIfNothingViewer: tmpl(
+      `If the borrower does not repay by the due date plus the {{grace}}grace period (a short extra repayment window), the lender can claim the collateral.`,
+      ['grace'],
+    ),
     // UX-024 — the list groups by what needs the user, and rows with a
     // pending claim say so instead of a bare status badge.
     groupAttention: 'Needs your attention',
@@ -1266,12 +1505,18 @@ const copySource = {
     // Activity in the nav.
     seeActivity: 'See your full activity history →',
     // UX-004 — past-due escalation banner with the live countdown.
-    graceCountdownBorrower: (remaining: string) =>
-      `This loan is past due. Repay within about ${remaining} — after that the lender can take the collateral.`,
-    graceCountdownLender: (remaining: string) =>
-      `This loan is past due. If the borrower does not repay within about ${remaining}, you can claim their collateral.`,
-    graceCountdownViewer: (remaining: string) =>
-      `This loan is past due. If it isn’t repaid within about ${remaining}, the lender can claim the collateral.`,
+    graceCountdownBorrower: tmpl(
+      `This loan is past due. Repay within about {{remaining}} — after that the lender can take the collateral.`,
+      ['remaining'],
+    ),
+    graceCountdownLender: tmpl(
+      `This loan is past due. If the borrower does not repay within about {{remaining}}, you can claim their collateral.`,
+      ['remaining'],
+    ),
+    graceCountdownViewer: tmpl(
+      `This loan is past due. If it isn’t repaid within about {{remaining}}, the lender can claim the collateral.`,
+      ['remaining'],
+    ),
     graceOverViewer:
       'The grace period has ended — the loan can now be marked defaulted, and the collateral goes to the lender.',
     // Codex #1166 r3 — a failed grace-window read must not silence the
@@ -1301,8 +1546,10 @@ const copySource = {
     // UX-001 — a loan that is already over must never show a live
     // obligation or a live default warning: contradictory state on a
     // money page erodes trust in every other number.
-    owedRepaid: (principal: string) =>
-      `Nothing — ${principal} plus interest was repaid in full.`,
+    owedRepaid: tmpl(
+      `Nothing — {{principal}} plus interest was repaid in full.`,
+      ['principal'],
+    ),
     owedDefaulted:
       'Nothing to repay anymore — this loan ended in default and the collateral covers it.',
     owedDefaultedNoCollateral:
@@ -1356,6 +1603,27 @@ const copySource = {
   claims: {
     checking: 'Checking for claims…',
     row: {
+      // Interpolated claim-row "what you get" lines (extracted from
+      // Claims.tsx). The " + rebate" / held-proceeds suffixes are
+      // composed at the call site from these catalog pieces.
+      rebateAmount: tmpl('{{amount}} VPFI rebate', ['amount']),
+      heldProceedsSuffix: ' + held proceeds',
+      amountWithSuffix: tmpl('{{amount}}{{suffix}}', ['amount', 'suffix']),
+      feesNftBack: tmpl('{{amount}} fees + your {{nft}} back', ['amount', 'nft']),
+      rentalFeesNftBack: tmpl('Rental fees + your {{nft}} back', ['nft']),
+      bufferBack: tmpl('{{amount}} buffer back', ['amount']),
+      principalPlusInterest: tmpl('{{amount}} {{symbol}} + interest', ['amount', 'symbol']),
+      collateralLabel: tmpl('{{collateral}} collateral', ['collateral']),
+      recoveredFromDefault: tmpl(
+        '{{amount}}{{held}} recovered from the default',
+        ['amount', 'held'],
+      ),
+      defaultRecovery: tmpl('Default recovery — {{collateral}}', ['collateral']),
+      collateralBack: tmpl('{{collateral}} collateral back', ['collateral']),
+      collateralBackWithAmount: tmpl(
+        '{{amount}} collateral back{{rebateSuffix}}',
+        ['amount', 'rebateSuffix'],
+      ),
       rental: 'Rental',
       loan: 'Loan',
       prepaidBufferBack: 'Your prepaid buffer back',
@@ -1390,10 +1658,12 @@ const copySource = {
     allTitle: 'Claim everything at once',
     allBlurb:
       'Collect every ready payout in a single wallet signature instead of one at a time.',
-    allButton: (n: number) => `Claim ${n} ${n === 1 ? 'item' : 'items'}`,
+    allButton: tmpl('Claim {{count}} items', ['count'], { one: 'Claim {{count}} item' }),
     allEmpty: 'Nothing is batchable right now.',
-    allTooMany: (max: number) =>
-      `Select up to ${max} at once — claim the rest in a second batch.`,
+    allTooMany: tmpl(
+      `Select up to {{max}} at once — claim the rest in a second batch.`,
+      ['max'],
+    ),
     allVpfiNote:
       'Withdrawing parked VPFI lowers your fee-discount tier — off by default.',
     allResidualNote:
@@ -1416,6 +1686,8 @@ const copySource = {
     advancedPartialRepayOk: 'partial repay OK',
     advancedNoPartialRepay: 'no partial repay',
     advancedNoExpiry: 'no expiry',
+    // Offer/order expiry sub-line: "expires <date>".
+    expiresLabel: tmpl('expires {{date}}', ['date']),
     ctaRent: 'Rent this NFT',
     ctaBuyPosition: 'Buy this loan position',
     ctaBorrow: 'Borrow this',
@@ -1455,8 +1727,14 @@ const copySource = {
     emptyBody: 'Create your own offer and let the other side come to you.',
     // F-20260703-003 (#988) — shown by MarketFreshnessNote when the
     // indexer cursor has stalled, on every market-list surface.
-    staleList: (age: string) =>
-      `This list last updated ${age} ago and may be behind — new offers may exist that aren’t shown yet. Check back shortly.`,
+    rateBand: tmpl('rate band {{min}}–{{max}} bps', ['min', 'max']),
+    staleList: tmpl(
+
+        `This list last updated {{age}} ago and may be behind — new offers may exist that aren’t shown yet. Check back shortly.`,
+
+        ['age'],
+
+      ),
     unavailable:
       'We couldn’t load the offer book right now. Please try again in a moment.',
     lenderOffer: 'Lending offer',
@@ -1468,6 +1746,17 @@ const copySource = {
   // column is always "Rate (APR %)", never "price"; exact bps live in
   // tooltips only.
   desk: {
+    // Tenor-tab + mid tooltips (extracted from DeskHeader.tsx).
+    tenorLiveTitle: tmpl('{{tenor}} — live offers on the book', ['tenor']),
+    walletBalanceTitle: tmpl('In your wallet: {{amount}} {{symbol}}', ['amount', 'symbol']),
+    healthLtvTitle: tmpl('Health factor {{ratio}} · LTV {{ltv}}', ['ratio', 'ltv']),
+    rateLadderTitle: tmpl(
+      '{{rate}} bps · {{count}} offers{{ownMark}} — tap to pre-fill this rate',
+      ['rate', 'count', 'ownMark'],
+      { one: '{{rate}} bps · {{count}} offer{{ownMark}} — tap to pre-fill this rate' },
+    ),
+    tenorNoOffersTitle: tmpl('{{tenor}} — no live offers yet', ['tenor']),
+    midQuotedTitle: tmpl('{{bps}} bps (quoted, not executed)', ['bps']),
     marketsLoading: 'Loading markets…',
     loadMarket: 'Load market',
     bookLoading: 'Loading the order book…',
@@ -1517,10 +1806,12 @@ const copySource = {
     // bid >= ask alone is NOT matchable — range constraints can still
     // fail) and the partial-fill master flag is on.
     match: {
-      matchable: (rate: string) => `Matchable at ${rate}`,
+      matchable: tmpl(`Matchable at {{rate}}`, ['rate']),
       body: 'These top-of-book offers can cross. Anyone can execute this match and earn the matcher fee — you pay the network gas to execute it.',
-      amount: (amount: string, symbol: string) =>
-        `${amount} ${symbol} would match.`,
+      amount: tmpl(
+        `{{amount}} {{symbol}} would match.`,
+        ['amount', 'symbol'],
+      ),
       execute: 'Execute match',
       executing: 'Matching…',
       executed: 'Match executed — the crossed offers settled into a loan.',
@@ -1549,11 +1840,15 @@ const copySource = {
       confirmTitle: 'Fill signed order',
       confirmLede:
         'You execute the whole fill in one transaction: your side moves from your wallet, the maker’s side from their vault, and the loan starts immediately.',
-      payCollateral: (amount: string, symbol: string) =>
-        `You lock ${amount} ${symbol} as collateral and receive the loan principal.`,
-      payPrincipal: (amount: string, symbol: string) =>
-        `You fund the ${amount} ${symbol} loan principal.`,
-      rateLine: (rate: string, days: string) => `${rate} APR · ${days}`,
+      payCollateral: tmpl(
+        `You lock {{amount}} {{symbol}} as collateral and receive the loan principal.`,
+        ['amount', 'symbol'],
+      ),
+      payPrincipal: tmpl(
+        `You fund the {{amount}} {{symbol}} loan principal.`,
+        ['amount', 'symbol'],
+      ),
+      rateLine: tmpl(`{{rate}} APR · {{days}}`, ['rate', 'days']),
       gone: 'This signed order is no longer fillable (filled, cancelled, or expired). The book will catch up shortly. Nothing was sent.',
       makerNotFunded:
         'The maker’s vault doesn’t currently cover this order, so the fill would fail on-chain. Nothing was sent — the maker must top up their vault first.',
@@ -1578,7 +1873,7 @@ const copySource = {
       loading: 'Loading chart…',
       // §5.3 rule 5 — the header shows the last executed print, never
       // a %-change ticker.
-      lastFill: (rate: string, ago: string) => `last fill: ${rate} · ${ago}`,
+      lastFill: tmpl(`last fill: {{rate}} · {{ago}}`, ['rate', 'ago']),
       lastFillNone: 'no fills yet',
       // Two empty states (Codex #1139 round-1 P3, tightened round 4):
       // `empty` may only claim "never filled" when the evidence covers
@@ -1594,8 +1889,11 @@ const copySource = {
       quotedMid: 'quoted mid',
       quotedMidHint:
         'Dashed line = the book’s current quoted mid — a resting quote, not an executed rate.',
-      sparseNote: (n: number) =>
-        `Sparse market — ${n} fill${n === 1 ? '' : 's'} in this range, drawn individually. Candles appear once there’s enough tape to mean something.`,
+      sparseNote: tmpl(
+        'Sparse market — {{count}} fills in this range, drawn individually. Candles appear once there’s enough tape to mean something.',
+        ['count'],
+        { one: 'Sparse market — {{count}} fill in this range, drawn individually. Candles appear once there’s enough tape to mean something.' },
+      ),
       // #1247 PAG-009 — the server scans the newest 10,000 fills; a
       // busy market's oldest history falls off. Say so instead of
       // letting an "all" chart read as complete.
@@ -1604,7 +1902,7 @@ const copySource = {
       intervalLabel: 'Interval',
       rangeLabel: 'Range',
       attribution: 'Charts by TradingView',
-      tooltipFills: (n: number) => `${n} fill${n === 1 ? '' : 's'}`,
+      tooltipFills: tmpl('{{count}} fills', ['count'], { one: '{{count}} fill' }),
       mobileBook: 'Book',
       mobileChart: 'Chart',
       mobileViewLabel: 'Desk view',
@@ -1653,10 +1951,14 @@ const copySource = {
       fillAonHint: 'All-or-nothing: fills only as one whole loan at the full amount.',
       fillIocHint: 'Immediate-or-cancel: rests only until its expiry — an expiry is required.',
       iocNeedsExpiry: 'IOC orders need an expiry — pick 24h, 7d, or a custom time.',
-      tenorNote: (label: string) =>
-        `Posting into the selected ${label} market — change the term with the chips above.`,
-      overDurationCap: (max: number) =>
-        `The protocol currently caps offer duration at ${max} days — pick a shorter term above.`,
+      tenorNote: tmpl(
+        `Posting into the selected {{label}} market — change the term with the chips above.`,
+        ['label'],
+      ),
+      overDurationCap: tmpl(
+        `The protocol currently caps offer duration at {{max}} days — pick a shorter term above.`,
+        ['max'],
+      ),
       post: 'Post order',
       posting: 'Posting…',
       posted: 'Order posted',
@@ -1687,16 +1989,24 @@ const copySource = {
         'Review and accept the risk disclosures and terms first — for a gasless order, your signature is what records that consent.',
       gaslessPosted:
         'Signed order posted to the book — no gas spent. It fills when a taker accepts it.',
-      gaslessFundsWarn: (amount: string, symbol: string) =>
-        `Heads up: your vault’s free balance is below the ${amount} ${symbol} this order commits. The fill will fail if the funds aren’t there when a taker accepts — deposit to your vault to keep the order fillable.`,
-      gaslessRejected: (reason: string) =>
-        `The book rejected this order (${reason}). Nothing was posted.`,
+      gaslessFundsWarn: tmpl(
+        `Heads up: your vault’s free balance is below the {{amount}} {{symbol}} this order commits. The fill will fail if the funds aren’t there when a taker accepts — deposit to your vault to keep the order fillable.`,
+        ['amount', 'symbol'],
+      ),
+      gaslessRejected: tmpl(
+        `The book rejected this order ({{reason}}). Nothing was posted.`,
+        ['reason'],
+      ),
       gaslessUnavailable:
         'We couldn’t reach the order book right now — the order was NOT posted. Please try again in a moment.',
-      securityBlocked: (leg: string, reasons: string[]) =>
-        `Posting is held: an independent security check flags the ${leg} (${reasons.join('; ')}).`,
-      securityUnknown: (leg: string) =>
-        `Posting is held until the independent security check for the ${leg} succeeds.`,
+      securityBlocked: tmpl(
+        `Posting is held: an independent security check flags the {{leg}} ({{reasons}}).`,
+        ['leg', 'reasons'],
+      ),
+      securityUnknown: tmpl(
+        `Posting is held until the independent security check for the {{leg}} succeeds.`,
+        ['leg'],
+      ),
       // UX-009 — the FIRST unmet gate, shown under the disabled Post
       // button so the greyed state always says why (the ticket has no
       // review checklist like the guided flow's).
@@ -1715,29 +2025,49 @@ const copySource = {
       // UX-027 — Max chip + a fee/commitment summary before consent.
       max: 'Max',
       feePreviewTitle: 'Fees & commitment',
-      escrowNow: (amount: string, symbol: string) =>
-        `You escrow now: ${amount} ${symbol}.`,
-      commitAtFill: (amount: string, symbol: string) =>
-        `You commit ${amount} ${symbol} — pulled from your vault only when a taker fills.`,
-      lockNow: (amount: string, symbol: string) =>
-        `You lock now: ${amount} ${symbol} as collateral.`,
-      lockAtFill: (amount: string, symbol: string) =>
-        `You commit ${amount} ${symbol} collateral — locked only when a taker fills.`,
-      netYield: (net: string, feePct: string) =>
-        `Net yield ≈ ${net}% APR after the ${feePct}% protocol fee on the interest you earn.`,
-      lifNote: (feePct: string, amount: string, symbol: string) =>
-        `Loan initiation fee: ${feePct}% of principal (≈ ${amount} ${symbol}), charged when the loan starts.`,
+      escrowNow: tmpl(
+        `You escrow now: {{amount}} {{symbol}}.`,
+        ['amount', 'symbol'],
+      ),
+      commitAtFill: tmpl(
+        `You commit {{amount}} {{symbol}} — pulled from your vault only when a taker fills.`,
+        ['amount', 'symbol'],
+      ),
+      lockNow: tmpl(
+        `You lock now: {{amount}} {{symbol}} as collateral.`,
+        ['amount', 'symbol'],
+      ),
+      lockAtFill: tmpl(
+        `You commit {{amount}} {{symbol}} collateral — locked only when a taker fills.`,
+        ['amount', 'symbol'],
+      ),
+      netYield: tmpl(
+        `Net yield ≈ {{net}}% APR after the {{feePct}}% protocol fee on the interest you earn.`,
+        ['net', 'feePct'],
+      ),
+      lifNote: tmpl(
+        `Loan initiation fee: {{feePct}}% of principal (≈ {{amount}} {{symbol}}), charged when the loan starts.`,
+        ['feePct', 'amount', 'symbol'],
+      ),
     },
     orders: {
       loading: 'Loading your open orders…',
       tab: 'Open orders',
       empty: 'No open orders. Post one with the ticket.',
+      // Partial-fill row sub-line + fill-bar tooltip.
+      fillSummary: tmpl(
+        ' · filled {{filled}} ({{pct}}) · {{remaining}} left',
+        ['filled', 'pct', 'remaining'],
+      ),
+      filledTooltip: tmpl('{{pct}} filled', ['pct']),
       unavailable: 'We couldn’t load your open orders right now.',
       heldNotCreated: 'Held — managed by its creator',
       cancel: 'Cancel',
       cancelling: 'Cancelling…',
-      cancelCooldown: (secs: number) =>
-        `Cancel available in ${secs}s — new unfilled offers have a short protocol cooldown.`,
+      cancelCooldown: tmpl(
+        `Cancel available in {{secs}}s — new unfilled offers have a short protocol cooldown.`,
+        ['secs'],
+      ),
       amend: 'Amend',
       amendTitle: 'Amend in place — same offer, same position, one transaction.',
       amendLoadFailed:
@@ -1754,8 +2084,10 @@ const copySource = {
         'Enter plain decimal numbers only — digits with an optional decimal point.',
       amendInvalid: 'Each minimum must be at or below its maximum, and neither maximum can drop below what’s already filled.',
       amendPositive: 'Amounts and collateral must be greater than zero.',
-      amendGrowNote: (amount: string, symbol: string) =>
-        `Growing this order locks ${amount} ${symbol} more from your wallet — it needs a token approval first.`,
+      amendGrowNote: tmpl(
+        `Growing this order locks {{amount}} {{symbol}} more from your wallet — it needs a token approval first.`,
+        ['amount', 'symbol'],
+      ),
       amendAllowanceLost:
         'The token approval for this grow is no longer sufficient — nothing was changed. Please approve again.',
       approveFirst: 'Approve first',
@@ -1791,6 +2123,23 @@ const copySource = {
 
   vpfi: {
     nothing: 'Nothing.',
+    // Interpolated receipt / hint lines (extracted from Vpfi.tsx inline
+    // templates so they translate).
+    depositYouLock: tmpl(
+      '{{amt}} moves from your wallet into your Vaipakam Vault.',
+      ['amt'],
+    ),
+    withdrawYouReceive: tmpl('{{amt}} back in your wallet.', ['amt']),
+    checkingAvailability: tmpl('Checking VPFI availability on {{chain}}…', ['chain']),
+    availabilityCheckFailed: tmpl(
+      'We couldn’t check VPFI availability on {{chain}} right now. Please try again in a moment.',
+      ['chain'],
+    ),
+    walletBalanceHint: tmpl('In your wallet: {{amount}} VPFI', ['amount']),
+    withdrawableHint: tmpl(
+      'Withdrawable now: {{free}} VPFI of {{vault}} in your vault',
+      ['free', 'vault'],
+    ),
     receiptDeposit: {
       youReceive: 'Nothing now — a growing fee discount on eligible loans over time.',
       youCanLose: 'Nothing — free VPFI in your vault stays withdrawable.',
@@ -1843,10 +2192,14 @@ const copySource = {
     // isn't left guessing. The threshold is admin-tunable, so the note
     // is derived from the LIVE first tier threshold (Codex #1175) rather
     // than a hardcoded number that could contradict the table above.
-    belowMinNote: (floor: string) =>
-      `Holding under ${floor} VPFI earns no fee discount.`,
-    notOnThisChain: (chain: string) =>
-      `VPFI deposits aren’t available on ${chain} yet. Everything else on Vaipakam works without VPFI.`,
+    belowMinNote: tmpl(
+      `Holding under {{floor}} VPFI earns no fee discount.`,
+      ['floor'],
+    ),
+    notOnThisChain: tmpl(
+      `VPFI deposits aren’t available on {{chain}} yet. Everything else on Vaipakam works without VPFI.`,
+      ['chain'],
+    ),
     tokenChanged:
       'The VPFI token configuration changed since you reviewed. Nothing was approved — please check the updated numbers and try again.',
     tokenCheckRetry:
@@ -1862,22 +2215,32 @@ const copySource = {
     // The label promises what ONE click reveals; when more is still
     // hidden beyond that page, say so (Codex #1265 r1 — "Show 475
     // more" revealing 25 would mislead on exactly the big-list path).
-    showMore: (next: number, total: number) =>
-      total > next ? `Show ${next} more (${total} hidden)` : `Show ${next} more`,
+    showMore: tmpl(`Show {{next}} more`, ['next']),
+    showMoreHidden: tmpl(`Show {{next}} more ({{total}} hidden)`, ['next', 'total']),
   },
 
   errors: {
     // F-20260703-005 (#988) — say HOW MUCH more whenever the caller can
     // compute the shortfall; the amount-less form is the fallback for
     // sites that can't (e.g. unknown decimals).
-    needMore: (asset: string, shortBy?: string) =>
-      shortBy
-        ? `You need about ${shortBy} more ${asset} to continue.`
-        : `You need more ${asset} to continue.`,
+    needMore: tmpl(`You need more {{asset}} to continue.`, ['asset']),
+    needMoreBy: tmpl(
+      `You need about {{shortBy}} more {{asset}} to continue.`,
+      ['shortBy', 'asset'],
+    ),
     partialOverPrincipal:
       'That covers the loan’s whole remaining principal. Use “Repay this loan” instead — it settles the loan properly and releases your collateral.',
     notAToken:
       'That address doesn’t look like a token on this network. Double-check it or pick a suggested asset.',
+    // Pre-submit guard errors (thrown by the contract hooks when a
+    // precondition the UI normally enforces is somehow unmet). Routed
+    // through the catalog so they translate wherever a flow surfaces
+    // err.message raw rather than through submitErrorText.
+    walletConnectFirst: 'Connect a wallet on a supported network first.',
+    walletNotConnected: 'Wallet not connected',
+    walletClientUnavailable: 'Wallet client not available',
+    publicClientUnavailable: 'Public client not available',
+    noRpcClient: 'No RPC client for the active chain.',
     txRejected: 'You cancelled in your wallet. Nothing was sent.',
     txFailed:
       'The transaction didn’t go through. Nothing was taken beyond network gas. Please try again.',
@@ -1915,10 +2278,18 @@ const copySource = {
     // Fee percentages come from the LIVE protocol config
     // (data/fees.ts) — governance can retune them, and the receipt a
     // user signs against must quote the deployed values.
-    borrowerLIF: (pct: string) =>
-      `Vaipakam charges a ${pct} loan initiation fee on the borrowed amount.`,
-    lenderYieldFee: (pct: string) =>
-      `Vaipakam keeps ${pct} of the interest you earn.`,
+    borrowerLIF: tmpl(
+      `Vaipakam charges a {{pct}} loan initiation fee on the borrowed amount.`,
+      ['pct'],
+    ),
+    lenderYieldFee: tmpl(
+      `Vaipakam keeps {{pct}} of the interest you earn.`,
+      ['pct'],
+    ),
+    lenderRentalFee: tmpl(
+      `Vaipakam keeps {{pct}} of the rental fees you earn.`,
+      ['pct'],
+    ),
     // The late-fee ladder tracks contract CONSTANTS (no governance
     // setter), so a static string is accurate here.
     lateFee:
@@ -1929,8 +2300,10 @@ const copySource = {
     // lives in a lazy chunk with a default-value fallback; these strings
     // are ABI-free and shared by both).
     faqQuestion: 'What fees does Vaipakam charge?',
-    faqAnswer: (lifPct: string, yieldPct: string) =>
-      `Vaipakam charges a ${lifPct} loan initiation fee on the borrowed amount. Vaipakam keeps ${yieldPct} of the interest you earn. Late repayment adds 1% of the outstanding amount after day one, growing 0.5% per day, capped at 5%. Network gas is separate and goes to the blockchain, not to Vaipakam.`,
+    faqAnswer: tmpl(
+      `Vaipakam charges a {{lifPct}} loan initiation fee on the borrowed amount. Vaipakam keeps {{yieldPct}} of the interest you earn. Late repayment adds 1% of the outstanding amount after day one, growing 0.5% per day, capped at 5%. Network gas is separate and goes to the blockchain, not to Vaipakam.`,
+      ['lifPct', 'yieldPct'],
+    ),
     // Non-committal variant for the disconnected /help fallback — the
     // exact loan-initiation and yield-fee percentages are live,
     // governance-tunable config (a wallet-free RPC read pulls the ABI,
@@ -1948,16 +2321,24 @@ const copySource = {
     // Shown when someone lands on /faucet on a network without mocks
     // (any mainnet, or a testnet we haven't seeded).
     notTestnetTitle: 'Test assets aren’t available here',
-    notTestnetBody: (chainName: string) =>
-      `The faucet only works on our test networks. You’re on ${chainName}, which uses real assets — switch to a test network to mint practice tokens.`,
+    notTestnetBody: tmpl(
+      `The faucet only works on our test networks. You’re on {{chainName}}, which uses real assets — switch to a test network to mint practice tokens.`,
+      ['chainName'],
+    ),
     // A testnet we support but haven't seeded with faucet assets yet.
-    noMocksBody: (chainName: string) =>
-      `Test assets haven’t been set up on ${chainName} yet. Try a different test network, or check back soon.`,
+    noMocksBody: tmpl(
+      `Test assets haven’t been set up on {{chainName}} yet. Try a different test network, or check back soon.`,
+      ['chainName'],
+    ),
     backHome: 'Back to home',
-    testnetNote: (chainName: string) =>
-      `You’re on ${chainName}, a test network. These tokens exist only for testing and have no real value.`,
-    switchTitle: (chainName: string) =>
-      `Switch your wallet to ${chainName} to mint test assets.`,
+    testnetNote: tmpl(
+      `You’re on {{chainName}}, a test network. These tokens exist only for testing and have no real value.`,
+      ['chainName'],
+    ),
+    switchTitle: tmpl(
+      `Switch your wallet to {{chainName}} to mint test assets.`,
+      ['chainName'],
+    ),
     minting: 'Minting…',
     viewTx: 'View transaction',
     // UX-023 — the mint-success banner carries the next hop so the
@@ -1970,8 +2351,10 @@ const copySource = {
     nextRent: 'List it for rent',
     footer:
       'Minted assets land in your wallet. Use “My vault” and the Borrow, Lend, and NFT Rental screens to put them to work.',
-    mintedTokens: (units: number, symbol: string) =>
-      `Minted ${units.toLocaleString()} ${symbol} to your wallet.`,
+    mintedTokens: tmpl(
+      `Minted {{units, number}} {{symbol}} to your wallet.`,
+      ['units', 'symbol'],
+    ),
     // The full token ID matters: the NFT Rental listing form needs the
     // EXACT id, so the success banner shows it whole with a copy button
     // (never truncated — a random 256-bit id can't be retyped).
@@ -1983,7 +2366,7 @@ const copySource = {
       title: 'Liquid test token (tLIQ)',
       blurb:
         'Priced by a test oracle, so it behaves like a liquid asset — health factor, liquidation, and refinancing all work with it. Pair it with mWETH (one as the loan, one as collateral) when a flow needs two different liquid tokens.',
-      action: (units: number) => `Mint ${units.toLocaleString()} tLIQ`,
+      action: tmpl(`Mint {{units, number}} tLIQ`, ['units']),
     },
     liquid2: {
       // Symbol is resolved from the token's live on-chain symbol() (#1103).
@@ -1994,20 +2377,18 @@ const copySource = {
       // the symbol is `null` and we show a GENERIC label — never asserting a
       // specific ticker we haven't confirmed, which would re-open the exact
       // stale-label window this resolves (Codex #1109 P2).
-      title: (symbol: string | null) =>
-        symbol ? `Mock USD Coin (${symbol})` : 'Mock USD Coin (test stablecoin)',
+      title: tmpl(`Mock USD Coin ({{symbol}})`, ['symbol']),
+      titleGeneric: 'Mock USD Coin (test stablecoin)',
       blurb:
         'A test USDC priced at $1 by a test oracle — a second, distinct liquid token so you can run a deal where both the loan and the collateral are liquid (with a realistic price spread against tLIQ / mWETH) without pairing a token against itself.',
-      action: (units: number, symbol: string | null) =>
-        symbol
-          ? `Mint ${units.toLocaleString()} ${symbol}`
-          : `Mint ${units.toLocaleString()} test stablecoin`,
+      action: tmpl(`Mint {{units, number}} {{symbol}}`, ['units', 'symbol']),
+      actionGeneric: tmpl(`Mint {{units, number}} test stablecoin`, ['units']),
     },
     mweth: {
       title: 'Mock wrapped ETH (mWETH)',
       blurb:
         'An oracle-priced test token that plays the “wrapped ETH” role in demos. It is NOT real WETH — it mints for free and has no value.',
-      action: (units: number) => `Mint ${units.toLocaleString()} mWETH`,
+      action: tmpl(`Mint {{units, number}} mWETH`, ['units']),
     },
     nft2: {
       title: 'Second rentable test NFT (vART)',
@@ -2015,19 +2396,19 @@ const copySource = {
         'Another ERC-4907 collection — handy when you want to list one NFT and rent a different one, or run several rentals at once.',
       action: 'Mint a vART NFT',
     },
-    addToWallet: (symbol: string) => `Add ${symbol} to MetaMask`,
+    addToWallet: tmpl(`Add {{symbol}} to MetaMask`, ['symbol']),
     addedToWallet: 'Asked your wallet to track it.',
     illiquid: {
       title: 'Illiquid test token (tILQ)',
       blurb:
         'No price feed, so it behaves like an illiquid asset — both sides must consent, and default transfers the collateral in kind.',
-      action: (units: number) => `Mint ${units.toLocaleString()} tILQ`,
+      action: tmpl(`Mint {{units, number}} tILQ`, ['units']),
     },
     illiquid2: {
       title: 'Second illiquid test token (tILQ2)',
       blurb:
         'Also unpriced. Pair it with tILQ (one as the loan, one as collateral) to try a deal where NEITHER side has a price — both parties must consent, no health factor applies, and default hands the collateral over in kind.',
-      action: (units: number) => `Mint ${units.toLocaleString()} tILQ2`,
+      action: tmpl(`Mint {{units, number}} tILQ2`, ['units']),
     },
     nft: {
       title: 'Rental test NFT (vRENT)',
@@ -2037,6 +2418,15 @@ const copySource = {
   },
 
   vault: {
+    unreadableCount: tmpl('{{count}} assets', ['count'], { one: 'one asset' }),
+    unreadableWarn: tmpl(
+      'We couldn’t read {{assets}} just now ({{list}}) — the list below may be missing balances. This usually clears on the next refresh.',
+      ['assets', 'list'],
+    ),
+    noBalancesInWindow: tmpl(
+      'No balances among the first {{count}} tokens checked — widen the scan below to keep looking.',
+      ['count'],
+    ),
     loading: 'Reading your vault…',
     addressLabel: 'Vault address:',
     noVaultTitle: 'No vault yet',
@@ -2064,15 +2454,15 @@ const copySource = {
   claimAll: {
     loanNoun: 'Loan',
     rentalNoun: 'Rental',
-    itemLabel: (noun: string, id: number, what: string) => `${noun} #${id} — ${what}`,
+    itemLabel: tmpl(`{{noun}} #{{id}} — {{what}}`, ['noun', 'id', 'what']),
     lenderProceeds: 'your proceeds',
     lenderRentalFeesNft: 'fees + your NFT back',
     borrowerBufferBack: 'your buffer back',
     borrowerSurplus: 'surplus after liquidation, if any',
     borrowerResidual: 'residual after the internal match',
     borrowerCollateralBack: 'collateral back',
-    rewardsLabel: (amount: string) => `Interaction rewards — ${amount} VPFI`,
-    vaultVpfiLabel: (amount: string) => `Vault VPFI — ${amount} VPFI`,
+    rewardsLabel: tmpl(`Interaction rewards — {{amount}} VPFI`, ['amount']),
+    vaultVpfiLabel: tmpl(`Vault VPFI — {{amount}} VPFI`, ['amount']),
   },
 
   /** Plain-language loan-state badge labels (lib/loanState.ts). The pure
@@ -2085,7 +2475,7 @@ const copySource = {
     beingSettled: 'Being settled',
     pastDue: 'Past due',
     dueToday: 'Due today',
-    dueInDays: (n: number) => `Due in ${n} day${n === 1 ? '' : 's'}`,
+    dueInDays: tmpl('Due in {{count}} days', ['count'], { one: 'Due in {{count}} day' }),
   },
 
   activity: {
@@ -2114,10 +2504,10 @@ const copySource = {
     truncatedEmpty:
       'Nothing of yours in recent protocol activity. This page lists recent activity only, so anything older isn’t shown here.',
     // UX-008 — one substantive sub-line per row.
-    plusMore: (n: number) => ` · +${n} more in this transaction`,
+    plusMore: tmpl(` · +{{n}} more in this transaction`, ['n']),
     // Row context refs — the loan / offer a row belongs to.
-    loanRef: (loanId: number) => `Loan #${loanId}`,
-    offerRef: (offerId: number) => `Offer #${offerId}`,
+    loanRef: tmpl(`Loan #{{loanId}}`, ['loanId']),
+    offerRef: tmpl(`Offer #{{offerId}}`, ['offerId']),
     viewTx: 'View transaction',
     loadMore: 'Load older activity',
     loadingMore: 'Loading…',
@@ -2205,6 +2595,7 @@ const copySource = {
     waiting:
       'Your rewards are being finalized — a reward day closes across all chains before it can be claimed. Check back soon.',
     claim: 'Claim rewards',
+    readyToClaim: tmpl('{{amount}} VPFI ready to claim.', ['amount']),
   },
 
   sanctions: {
@@ -2218,6 +2609,8 @@ const copySource = {
   },
 
   risk: {
+    // Health badge tooltip (extracted from LoanRow.tsx).
+    healthTitle: tmpl('Health {{ratio}} — 1.00 is the liquidation line', ['ratio']),
     notPriced:
       'This loan’s assets aren’t priced by the protocol, so there is no automatic liquidation — the collateral transfers as-is on default.',
     healthy: 'Healthy',
@@ -2235,8 +2628,14 @@ const copySource = {
     // UX-030 — the advanced numbers carry their own one-clause
     // definitions; a bare "HF 1.42 / LTV 51%" is noise to anyone who
     // hasn't already internalized the jargon.
-    advancedDetail: (ratio: string, ltvPct: string, drop: string | null) =>
-      `(Health factor ${ratio} — the collateral’s value measured against what’s owed; below 1.00 the loan can be liquidated. Loan-to-value ${ltvPct} — the borrowed amount as a share of the collateral’s value.${drop ? ` Roughly, liquidation begins if the collateral’s value falls about ${drop}.` : ''})`,
+    advancedDetail: tmpl(
+      `(Health factor {{ratio}} — the collateral’s value measured against what’s owed; below 1.00 the loan can be liquidated. Loan-to-value {{ltvPct}} — the borrowed amount as a share of the collateral’s value.{{dropClause}})`,
+      ['ratio', 'ltvPct', 'dropClause'],
+    ),
+    advancedDetailDrop: tmpl(
+      ` Roughly, liquidation begins if the collateral’s value falls about {{drop}}.`,
+      ['drop'],
+    ),
   },
 
   notFound: {
@@ -2245,6 +2644,84 @@ const copySource = {
     backHome: 'Back to Home',
   },
   offerFlow: {
+    // Duration field hint when the picked term exceeds the protocol cap.
+    durationCap: tmpl(
+      'The protocol currently caps offers at {{max}} — pick a shorter duration.',
+      ['max'],
+    ),
+    // Review-receipt lines (extracted from OfferFlow.tsx). Prose +
+    // interpolated values; catalog refs (lend.defaultOutcome,
+    // borrow.collateralWarning, match.illiquidWarning, interest-mode
+    // notes) stay composed at the call site.
+    receipts: {
+      buyYouReceive: tmpl(
+        'The lender position of running loan #{{loanId}}: up to ~{{interest}} interest from now to the due date if the borrower repays on time, plus the full {{principal}} principal back.',
+        ['loanId', 'interest', 'principal'],
+      ),
+      buyYouLock: tmpl(
+        '{{principal}} paid now to the exiting lender — the loan itself doesn’t change for the borrower.',
+        ['principal'],
+      ),
+      buyCollateralLocked: tmpl('Their {{collateral}} is already locked.', ['collateral']),
+      buyWhenEnds: tmpl(
+        'Repayment is due by {{due}} (grace period: {{grace}}). You then claim your funds.',
+        ['due', 'grace'],
+      ),
+      borrowerYouReceiveNow: tmpl(
+        '{{principal}} now (minus the {{lif}} initiation fee).',
+        ['principal', 'lif'],
+      ),
+      borrowerYouReceiveOnAccept: tmpl(
+        '{{principal}} when a lender accepts your request.',
+        ['principal'],
+      ),
+      borrowerYouLockNow: tmpl('{{collateral}} as collateral, now.', ['collateral']),
+      borrowerYouLockStarting: tmpl(
+        '{{collateral}} as collateral, starting now.',
+        ['collateral'],
+      ),
+      borrowerYouMayOwe: tmpl(
+        '{{principal}} plus up to ~{{interest}} interest by the due date.',
+        ['principal', 'interest'],
+      ),
+      borrowerYouCanLose: tmpl(
+        'Your {{collateral}} collateral if you do not repay on time.',
+        ['collateral'],
+      ),
+      borrowerWhenEndsAccept: tmpl(
+        'Repay within {{duration}} (grace period: {{grace}}), then claim your collateral back.',
+        ['duration', 'grace'],
+      ),
+      borrowerWhenEndsPost: tmpl(
+        'Repay within {{duration}} of acceptance (grace period: {{grace}}), then claim your collateral back.',
+        ['duration', 'grace'],
+      ),
+      lenderYouReceive: tmpl(
+        'Up to ~{{interest}} interest if the borrower repays on time, plus your {{principal}} back.',
+        ['interest', 'principal'],
+      ),
+      lenderYouLockAccept: tmpl('{{principal}} lent to the borrower, now.', ['principal']),
+      lenderYouLockPost: tmpl(
+        '{{principal}} now, until your offer is accepted or you cancel it.',
+        ['principal'],
+      ),
+      lenderCollateralLock: tmpl('They lock {{collateral}}.', ['collateral']),
+      lenderCollateralMustLock: tmpl('They must lock {{collateral}}.', ['collateral']),
+      lenderWhenEndsAccept: tmpl(
+        'Repayment is due within {{duration}} (grace period: {{grace}}). You then claim your funds.',
+        ['duration', 'grace'],
+      ),
+      lenderWhenEndsPost: tmpl(
+        'Repayment is due {{duration}} after a borrower accepts (grace period: {{grace}}). You then claim your funds.',
+        ['duration', 'grace'],
+      ),
+      youLockCollateral: tmpl('you lock {{collateral}} as collateral', ['collateral']),
+      theyLockCollateral: tmpl('they lock {{collateral}} as collateral', ['collateral']),
+      rateOutOfRange: tmpl(
+        'Enter a number between 0 and {{max}} — the protocol caps rates at {{max}}% yearly.',
+        ['max'],
+      ),
+    },
     lender: {
       assetLabel: 'Asset to lend',
       amountLabel: 'How much do you want to lend?',
@@ -2344,6 +2821,8 @@ const copySource = {
     invalidAddress: 'Enter a valid contract address — “0x” followed by 40 hex characters.',
   },
   copyAddress: {
+    copyAria: tmpl('Copy address {{address}}', ['address']),
+    viewAria: tmpl('View {{address}} on the block explorer', ['address']),
     copied: 'Address copied',
   },
 } as const;

@@ -31,7 +31,7 @@ export function CopyAddress({
       <button
         type="button"
         className="copy-address-chip mono"
-        aria-label={`Copy address ${address}`}
+        aria-label={copy.copyAddress.copyAria(address)}
         onClick={async () => {
           try {
             await navigator.clipboard.writeText(address);
@@ -55,7 +55,7 @@ export function CopyAddress({
           href={`${explorerBase}/address/${address}`}
           target="_blank"
           rel="noreferrer"
-          aria-label={`View ${shortAddress(address)} on the block explorer`}
+          aria-label={copy.copyAddress.viewAria(shortAddress(address))}
         >
           <ExternalLink size={14} aria-hidden />
         </a>

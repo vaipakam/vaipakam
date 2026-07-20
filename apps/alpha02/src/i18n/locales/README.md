@@ -19,6 +19,20 @@ missing keys fall back to English. Respect the do-not-translate
 glossary in `packages/i18n/src/glossary.ts` (VPFI, HF, LTV, asset and
 network names, …).
 
+**Preserve every `{{placeholder}}` verbatim.** The migrated `tmpl(...)`
+values carry live i18next interpolation tokens — `{{chainName}}`,
+`{{amount}}`, and format-suffixed ones like `{{units, number}}`. These
+are NOT words to translate: the name inside the braces (and any
+`, number` / `, ...` format suffix) must appear unchanged in the
+translation, or i18next renders the string without its dynamic value (or
+with raw braces). You may reorder placeholders to fit the target
+grammar, but never rename, translate, or drop one, and keep the same set
+that appears in the English value. A count-plural key ships as its full
+CLDR category set (`_zero` / `_one` / `_two` / `_few` / `_many` /
+`_other`); fill each category your locale grammatically uses and leave
+the placeholder tokens intact in every one. (Automated placeholder-set
+validation for the machine-assisted flow is tracked in #1362.)
+
 Machine-assisted alternative:
 
 ```bash
@@ -30,7 +44,10 @@ Then promote the locale in `src/i18n/localeConfig.ts`
 (`TRANSLATED_LOCALES` + picker visibility) — the lazy loader map
 already covers every code.
 
-Note: parametrized strings (function values in copy.ts, e.g.
-`testnetNudge(chainName)`) are not yet in the template and render
-English in every locale — converting them to i18next interpolation
-keys is tracked in docs/DesignsAndPlans/I18nPlan.md.
+Note: parametrized strings are being migrated from JS template
+functions to `tmpl(...)` entries (src/i18n/tmpl.ts), which DO appear in
+the template as i18next `{{var}}` interpolation keys (with `_one` /
+`_other` plural siblings) and translate like any other key. Plain
+function entries not yet migrated still render English in every locale —
+progress + plan in
+docs/DesignsAndPlans/Alpha02InterpolatedCopyI18n.md.

@@ -98,7 +98,9 @@ export function ShowMoreButton({
       style={{ marginTop: 12 }}
       onClick={onClick}
     >
-      {copy.lists.showMore(nextCount, hiddenCount)}
+      {hiddenCount > nextCount
+        ? copy.lists.showMoreHidden(nextCount, hiddenCount)
+        : copy.lists.showMore(nextCount)}
     </button>
   );
 }

@@ -258,10 +258,14 @@ export function ApprovalsCard() {
               className="btn btn-secondary"
               onClick={() => setTokenWindow((w) => w + LIST_WINDOW_PAGE)}
             >
-              {copy.approvals.checkMore(
-                Math.min(LIST_WINDOW_PAGE, approvals.data.moreTokens),
-                approvals.data.moreTokens,
-              )}
+              {approvals.data.moreTokens > LIST_WINDOW_PAGE
+                ? copy.approvals.checkMoreUnchecked(
+                    Math.min(LIST_WINDOW_PAGE, approvals.data.moreTokens),
+                    approvals.data.moreTokens,
+                  )
+                : copy.approvals.checkMore(
+                    Math.min(LIST_WINDOW_PAGE, approvals.data.moreTokens),
+                  )}
             </button>
           ) : null}
           <p className="muted">{copy.approvals.scopeNote}</p>

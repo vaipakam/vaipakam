@@ -49,7 +49,7 @@ function HealthBadge({ loan }: { loan: PositionLoan }) {
   return (
     <span
       className={`badge badge-${view.badge}`}
-      title={`Health factor ${view.ratio} · LTV ${view.ltvPct}`}
+      title={copy.desk.healthLtvTitle(view.ratio, view.ltvPct)}
     >
       {view.label} · {view.ratio}
     </span>

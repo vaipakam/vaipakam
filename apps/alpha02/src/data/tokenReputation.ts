@@ -95,8 +95,8 @@ export function reputationNotice(
   switch (rep.kind) {
     case 'listed':
       return rep.rank !== null && rep.rank <= 200
-        ? copy.tokenSecurity.reputationListedTop(rep.name, rep.symbol, rep.rank)
-        : copy.tokenSecurity.reputationListedDeep(rep.name, rep.symbol);
+        ? copy.tokenSecurity.reputationListedTop(rep.name, rep.symbol ? ` (${rep.symbol})` : '', rep.rank)
+        : copy.tokenSecurity.reputationListedDeep(rep.name, rep.symbol ? ` (${rep.symbol})` : '');
     case 'unlisted':
       return copy.tokenSecurity.reputationUnlisted;
     default:

@@ -121,15 +121,15 @@ export function useEligibility(inputs: EligibilityInputs): CheckItem[] {
         balanceKnown && asset.balance! < asset.required!
           ? // F-20260703-005 (#988) — state the shortfall when decimals
             // are known; plain "need more" only when they aren't.
-            copy.errors.needMore(
-              symbol,
-              asset.meta
-                ? formatTokenAmount(
+            (asset.meta
+              ? copy.errors.needMoreBy(
+                  formatTokenAmount(
                     asset.required! - asset.balance!,
                     asset.meta.decimals,
-                  )
-                : undefined,
-            )
+                  ),
+                  symbol,
+                )
+              : copy.errors.needMore(symbol))
           : copy.checks.balanceSufficient(symbol),
       state: !balanceKnown
         ? 'pending'
@@ -150,7 +150,7 @@ export function useEligibility(inputs: EligibilityInputs): CheckItem[] {
       id: 'counter-token',
       label: counter.metaError
         ? `${counter.label}: ${copy.errors.notAToken}`
-        : `${counter.label} recognised (${counter.meta?.symbol ?? '…'})`,
+        : copy.checks.recognised(counter.label, counter.meta?.symbol ?? '…'),
       state: counter.metaError ? 'fail' : counter.meta ? 'pass' : 'pending',
     });
   }

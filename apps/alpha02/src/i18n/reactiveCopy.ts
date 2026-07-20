@@ -17,13 +17,14 @@
  * registered as an i18next resource; `defaultValue` IS the English
  * text, so copy.ts edits are live without regenerating anything).
  *
- * Non-string leaves pass through untouched:
- *   - FUNCTIONS (parametrized strings like `testnetNudge(chainName)`)
- *     return their English template output in every locale for now.
- *     Translating those requires converting each to an i18next
- *     interpolation key — tracked as a follow-up in
- *     docs/DesignsAndPlans/I18nPlan.md, deliberately not blocking the
- *     static-string corpus (~90% of the catalog).
+ * Non-string leaves:
+ *   - `tmpl(...)` entries (parametrized strings — see i18n/tmpl.ts) are
+ *     translated: the proxy binds each to its key path and routes calls
+ *     through `i18n.t(key, params)`, so a locale bundle wins and the
+ *     English template (count-correct for plurals) is the defaultValue.
+ *   - PLAIN FUNCTIONS not yet migrated to `tmpl` still pass through and
+ *     render their English output in every locale (tracked in
+ *     docs/DesignsAndPlans/Alpha02InterpolatedCopyI18n.md).
  *   - Numbers / booleans reflect through.
  *
  * Arrays are proxied like objects — elements resolve under numeric
@@ -43,10 +44,46 @@
  */
 
 import i18n from 'i18next';
+import {
+  isTmpl,
+  englishVariant,
+  toParams,
+  TMPL,
+  type TmplArg,
+  type TmplFn,
+} from './tmpl';
 
 /** Sub-proxy cache — one proxy per nested object, so identity is
  *  stable across reads (React deps arrays, Set membership). */
 const subProxyCache = new WeakMap<object, Map<PropertyKey, object>>();
+
+/** Bound-tmpl cache — one wrapper fn per (source fn), so a captured
+ *  reference keeps a stable identity across reads (same reason as the
+ *  sub-proxy cache). Keyed by the source tmpl fn itself. */
+const tmplFnCache = new WeakMap<TmplFn, (...args: TmplArg[]) => string>();
+
+/** Bind a `tmpl` entry to its key path: route calls through i18next so
+ *  a locale bundle wins, with the count-correct English template as the
+ *  defaultValue (alpha02 registers an EMPTY `en` bundle, so English is
+ *  always served from here). Positional args map to named params per
+ *  the entry's `paramNames`; a `count` param drives i18next's
+ *  locale-aware `_one` / `_other` plural selection. */
+function bindTmpl(fn: TmplFn, key: string): (...args: TmplArg[]) => string {
+  const cached = tmplFnCache.get(fn);
+  if (cached) return cached;
+  const meta = fn[TMPL];
+  const bound = (...args: TmplArg[]): string => {
+    // Before i18next is ready, serve the English template directly.
+    if (!i18n.isInitialized) return fn(...args);
+    const params = toParams(meta, args);
+    return i18n.t(key, {
+      ...params,
+      defaultValue: englishVariant(meta, params),
+    }) as string;
+  };
+  tmplFnCache.set(fn, bound);
+  return bound;
+}
 
 export function createTranslatedCopy<T extends object>(
   source: T,
@@ -62,6 +99,11 @@ export function createTranslatedCopy<T extends object>(
       if (typeof value === 'string') {
         if (!i18n.isInitialized) return value;
         return i18n.t(`${prefix}.${prop}`, { defaultValue: value });
+      }
+
+      // Parametrized-but-translatable entries — bound to their key path.
+      if (isTmpl(value)) {
+        return bindTmpl(value, `${prefix}.${String(prop)}`);
       }
 
       if (value !== null && typeof value === 'object') {

@@ -425,7 +425,11 @@ export function EarlyExitFlow({
                   data={{
                     // Names the exact offer — an open review must
                     // never be ambiguous about which row it binds.
-                    youReceive: `~${toSellerStr}, paid straight to your wallet in the same transaction — selling to offer #${selected.offerId} at ${formatBpsAsPercent(selected.interestRateBps)} yearly. Nothing to claim afterwards.`,
+                    youReceive: copy.earlyExit.receiptYouReceive(
+                      toSellerStr,
+                      selected.offerId,
+                      formatBpsAsPercent(selected.interestRateBps),
+                    ),
                     youLock: copy.earlyExit.receiptLockNothing,
                     youMayOwe: `${copy.earlyExit.receiptOweNothing} ${copy.earlyExit.forfeitNote}`,
                     // max(accrued, shortfall) — never the sum.

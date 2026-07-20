@@ -15,6 +15,7 @@
 import { useCallback } from 'react';
 import type { Hex } from 'viem';
 import { useWalletClient } from 'wagmi';
+import { copy } from '../content/copy';
 import { useActiveChain } from '../chain/useActiveChain';
 import {
   SIGNED_OFFER_TYPES,
@@ -28,8 +29,8 @@ export function useSignedOfferSigning() {
 
   const sign = useCallback(
     async (order: SignedOrderWire): Promise<Hex> => {
-      if (!address || !walletChain) throw new Error('Wallet not connected');
-      if (!walletClient) throw new Error('Wallet client not available');
+      if (!address || !walletChain) throw new Error(copy.errors.walletNotConnected);
+      if (!walletClient) throw new Error(copy.errors.walletClientUnavailable);
       return walletClient.signTypedData({
         account: address,
         domain: {

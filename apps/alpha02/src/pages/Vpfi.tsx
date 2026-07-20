@@ -103,7 +103,7 @@ export function Vpfi() {
     if (action === 'deposit') {
       return {
         youReceive: copy.vpfi.receiptDeposit.youReceive,
-        youLock: `${amtStr} moves from your wallet into your Vaipakam Vault.`,
+        youLock: copy.vpfi.depositYouLock(amtStr),
         youMayOwe: copy.vpfi.nothing,
         youCanLose: copy.vpfi.receiptDeposit.youCanLose,
         fees: copy.vpfi.receiptDeposit.fees,
@@ -111,7 +111,7 @@ export function Vpfi() {
       };
     }
     return {
-      youReceive: `${amtStr} back in your wallet.`,
+      youReceive: copy.vpfi.withdrawYouReceive(amtStr),
       youLock: copy.vpfi.nothing,
       youMayOwe: copy.vpfi.nothing,
       youCanLose: `${copy.vpfi.receiptWithdraw.youCanLoseLead} ${copy.vpfi.withdrawWarning}`,
@@ -367,8 +367,8 @@ export function Vpfi() {
         <h1 className="page-title">{copy.vpfi.title}</h1>
         <p className="page-lede">{copy.vpfi.optional}</p>
         <p className="muted">
-          <LoaderCircle className="spin" aria-hidden size={16} /> Checking VPFI
-          availability on {readChain.name}…
+          <LoaderCircle className="spin" aria-hidden size={16} />{' '}
+          {copy.vpfi.checkingAvailability(readChain.name)}
         </p>
       </div>
     );
@@ -378,7 +378,7 @@ export function Vpfi() {
     // Honesty rule: "not available on this chain" only when the chain
     // POSITIVELY said so; a failed read gets a couldn't-check state.
     const body = vpfi.isError
-      ? `We couldn’t check VPFI availability on ${readChain.name} right now. Please try again in a moment.`
+      ? copy.vpfi.availabilityCheckFailed(readChain.name)
       : copy.vpfi.notOnThisChain(readChain.name);
     // UX2-005 — offer the remedy, not just the diagnosis: VPFI's home
     // chain is statically known (the canonical-VPFI deployment), so a
@@ -603,8 +603,13 @@ export function Vpfi() {
               </div>
               <span className="field-hint">
                 {action === 'deposit'
-                  ? `In your wallet: ${formatTokenAmount(snapshot.walletBalance, VPFI_DECIMALS)} VPFI`
-                  : `Withdrawable now: ${formatTokenAmount(snapshot.freeBalance, VPFI_DECIMALS)} VPFI of ${formatTokenAmount(snapshot.vaultBalance, VPFI_DECIMALS)} in your vault`}
+                  ? copy.vpfi.walletBalanceHint(
+                      formatTokenAmount(snapshot.walletBalance, VPFI_DECIMALS),
+                    )
+                  : copy.vpfi.withdrawableHint(
+                      formatTokenAmount(snapshot.freeBalance, VPFI_DECIMALS),
+                      formatTokenAmount(snapshot.vaultBalance, VPFI_DECIMALS),
+                    )}
                 {overMax ? copy.vpfi.overMaxHint : ''}
               </span>
             </div>

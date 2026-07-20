@@ -1,6 +1,21 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, beforeAll } from 'vitest';
+import i18n from 'i18next';
 import { resolveMintSymbol } from './mintSymbol';
 import { copy } from '../content/copy';
+
+// The faucet labels use tmpl `{{units, number}}` formatting, which
+// i18next applies only once initialised — init so the label reads with
+// its locale-formatted count (else the fallback shows a raw number).
+beforeAll(async () => {
+  if (!i18n.isInitialized) {
+    await i18n.init({
+      lng: 'en',
+      fallbackLng: 'en',
+      resources: { en: { translation: {} } },
+      interpolation: { escapeValue: false },
+    });
+  }
+});
 
 /**
  * #1111 — prove the second-liquid faucet label is DYNAMIC, not a hard-coded
@@ -40,18 +55,21 @@ describe('liquid2 faucet label composition (#1111)', () => {
   });
 
   it('falls back to a GENERIC label when the symbol is unresolved (null)', () => {
-    expect(liquid2.title(null)).toBe('Mock USD Coin (test stablecoin)');
-    expect(liquid2.action(10_000, null)).toBe('Mint 10,000 test stablecoin');
+    // The caller (Faucet.tsx) picks the generic key when the symbol is
+    // null; these are the generic labels it renders.
+    expect(liquid2.titleGeneric).toBe('Mock USD Coin (test stablecoin)');
+    expect(liquid2.actionGeneric(10_000)).toBe('Mint 10,000 test stablecoin');
     // Never advertises the specific "mUSDC" ticker while unresolved.
-    expect(liquid2.title(null)).not.toContain('mUSDC');
-    expect(liquid2.action(10_000, null)).not.toContain('mUSDC');
+    expect(liquid2.titleGeneric).not.toContain('mUSDC');
+    expect(liquid2.actionGeneric(10_000)).not.toContain('mUSDC');
   });
 
   // End-to-end at the pure-logic level: a live read of a non-mUSDC symbol
   // produces a non-mUSDC button label — the regression #1111 guards against.
   it('a non-mUSDC live read yields a non-mUSDC button label', () => {
     const sym = resolveMintSymbol('tLQ2');
-    expect(liquid2.action(10_000, sym)).toBe('Mint 10,000 tLQ2');
-    expect(liquid2.action(10_000, sym)).not.toContain('mUSDC');
+    const label = sym ? liquid2.action(10_000, sym) : liquid2.actionGeneric(10_000);
+    expect(label).toBe('Mint 10,000 tLQ2');
+    expect(label).not.toContain('mUSDC');
   });
 });

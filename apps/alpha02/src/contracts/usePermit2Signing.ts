@@ -25,6 +25,7 @@
  */
 import { useCallback } from 'react';
 import { usePublicClient, useWalletClient } from 'wagmi';
+import { copy } from '../content/copy';
 import type { Address, Hex } from 'viem';
 import { useActiveChain } from '../chain/useActiveChain';
 
@@ -93,9 +94,9 @@ export function usePermit2Signing() {
 
   const sign = useCallback(
     async (input: Permit2SignInput): Promise<Permit2Payload> => {
-      if (!address || !walletChain) throw new Error('Wallet not connected');
-      if (!walletClient) throw new Error('Wallet client not available');
-      if (!publicClient) throw new Error('Public client not available');
+      if (!address || !walletChain) throw new Error(copy.errors.walletNotConnected);
+      if (!walletClient) throw new Error(copy.errors.walletClientUnavailable);
+      if (!publicClient) throw new Error(copy.errors.publicClientUnavailable);
 
       // Deadline judged by CHAIN time, matching useAcceptTerms —
       // Permit2 compares it to block.timestamp, so a device clock
