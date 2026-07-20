@@ -1828,22 +1828,26 @@ function _dayPoolHalves(
         if (e.forfeited || _entryTerminalForfeit(s, e)) {
             // #1353 (M2 PR-5c) — the loan-side cap bounds reward PAID TO A USER,
             // never a forfeit: a forfeited reward recycles to the bucket (it is
-            // NOT emitted to the side), so it neither consumes the loan-side
-            // budget nor is trimmed here (Codex #1371 r2). Uncapped ⇒ its full
-            // armed-fresh commitment retires and the fresh share credits the
-            // recycle bucket, exactly as before.
+            // NOT emitted to the side), so it is not trimmed here (Codex #1371
+            // r2). But its armed days STILL count toward the per-(loanId, side)
+            // day union, so a mid-loan lender sale (whose outgoing slice is
+            // forfeited by `transferLenderEntry`) does not understate the
+            // incoming lender's cap proration (rev-15 union rule; Codex #1371 r7).
+            if (mutate) _accrueForfeitArmedDays(s, e, split);
             toTreasury = split;
         } else {
-            // #1353 (M2 PR-5c) — trim ONLY the armed (post-`D*`) FRESH payout to
-            // the per-(loanId, side) lifetime budget, mirroring the facet's pool
-            // truncation: the payout `total` shrinks but the `recycled` /
-            // `armedFresh` commitment components stay whole so the facet retires
-            // the full commitment (the trimmed remainder is "gone for good" like
-            // a truncated fresh share, not leaked). A solo fully-capped entry
-            // leaves `total == 0` with `armedFresh > 0` — the facet retires the
-            // commitment instead of reverting (Codex #1371 r6). DARK until `D*`.
-            if (mutate) split = _applyLoanSideCap(s, e, split);
-            toUser = split;
+            // #1353 (M2 PR-5c) — bound the WHOLE armed (post-`D*`) reward
+            // (`armedFresh + recycled`) to the per-(loanId, side) lifetime
+            // budget. `armedFresh` is left whole for full commitment retirement
+            // (payout shrinks like a pool-truncated fresh share); the capped-off
+            // recycled is routed to the treasury channel as a pure commitment
+            // RELEASE. A solo fully-capped entry leaves the facet a commitment to
+            // retire (no revert — Codex #1371 r6/r7). DARK until `D*`.
+            if (mutate) {
+                (toUser, toTreasury) = _applyLoanSideCap(s, e, split);
+            } else {
+                toUser = split;
+            }
         }
     }
 
@@ -1949,22 +1953,25 @@ function _dayPoolHalves(
     // both halves (rev 15 §F6b). ALL of this is gated on `_isArmedDay` (the
     // ShareOfPool arming = D*), unarmed on every current deploy ⇒ DARK.
     //
-    // The cap governs only an entry's ARMED (post-`D*`) FRESH emission — the
-    // `armedFresh` component, which accrues solely on armed days (`cumMinArmed`
-    // is 0 on pre-arming days). It deliberately does NOT touch:
+    // The cap governs an entry's WHOLE ARMED (post-`D*`) reward —
+    // `armedFresh + recycled`, both of which accrue solely on armed days
+    // (`cumMinArmed` / `cumMinRecycled` are 0 on pre-arming days) — because the
+    // ceiling `½ × C* × (1 − m)` bounds the TOTAL post-cutover per-side payout,
+    // not just its fresh half (Codex #1371 r7). It deliberately does NOT touch:
     //   • the PRE-`D*` fresh reward (`total − recycled − armedFresh`) — that
-    //     slice stays under the #1008 regime (Codex #1371 r1: spanning entries);
-    //   • the RECYCLED reward — a bucket-backed redistribution bounded by `Ā`,
-    //     not new emission, and always paid (mirrors the facet's fresh-only pool
-    //     truncation, which never trims `recycled`);
-    //   • the `recycled` / `armedFresh` COMMITMENT components themselves — the
-    //     cap only shrinks the payout `total`, leaving those whole so the facet
-    //     retires the FULL armed-fresh commitment (`consumeArmedFresh`). The
-    //     capped-off fresh is "gone for good" exactly like a pool-truncated
-    //     fresh share — retired, not leaked, not paid (Codex #1371 r2: release
-    //     capped-off commitments).
+    //     slice stays under the #1008 regime (Codex #1371 r1: spanning entries).
+    // The capped-off amount is PARTITIONED by funding source so each commitment
+    // is retired exactly once and nothing is double-paid or leaked:
+    //   • capped-off FRESH — `armedFresh` stays WHOLE on the user split so the
+    //     facet retires the full fresh commitment (`consumeArmedFresh`) while the
+    //     payout shrinks; the remainder is "gone for good" like a pool-truncated
+    //     fresh share (retired, not paid);
+    //   • capped-off RECYCLED — routed out as a `recycleRelease` split so the
+    //     facet RELEASES its commitment (`releaseCommitment`): no payout AND no
+    //     bucket credit / `Ā` inflation, hence no expiry-funding-gate ripple.
     // The cap applies to reward PAID TO A USER only — never a forfeit or an
-    // expiry credit, which recycle to the bucket rather than emit to the side.
+    // expiry credit, which recycle to the bucket rather than emit to the side
+    // (a forfeit's armed days still count toward the day union — Codex #1371 r7).
     // An UNSTAMPED loan (`openDays == 0` — a mirror-chain, dark-era, or
     // pre-cutover loan) is NOT reward-ineligible here: the cap does not apply so
     // it earns normally (Codex #1371 r1 P1 ×2). A STAMPED loan (the stamp always
@@ -1990,6 +1997,24 @@ function _dayPoolHalves(
         return e.endDay > firstArmed ? e.endDay - firstArmed : 0;
     }
 
+    /// @dev #1353 (M2 PR-5c) — accrue a FORFEITED entry's armed days into the
+    ///      per-(loanId, side) day union (a forfeit is not paid to the side and
+    ///      never consumes the paid budget, but its window is part of the loan's
+    ///      rewarded age — so the incoming lender's proration after a mid-loan
+    ///      sale reflects old + new windows, not just its residual days; Codex
+    ///      #1371 r7). Same STAMP/armed guards as {_applyLoanSideCap}.
+    function _accrueForfeitArmedDays(
+        LibVaipakam.Storage storage s,
+        LibVaipakam.RewardEntry storage e,
+        EntrySplit memory split
+    ) private {
+        if (split.armedFresh + split.recycled == 0) return; // no armed reward
+        uint256 loanId = e.loanId;
+        if (s.feeEntitlementByLoanId[loanId].openDays == 0) return; // unstamped
+        uint8 side = uint8(e.side);
+        s.loanSideRewardedDays[loanId][side] += _entryArmedDays(s, e);
+    }
+
     /// @dev Effective per-side lifetime reward ceiling for `loanId` once
     ///      `rewardedDaysIncl` armed reward-eligible days have been credited.
     ///      Reads the at-open cache (`loanSideRewardCapOpen` / `openDays`), never
@@ -2012,9 +2037,16 @@ function _dayPoolHalves(
             // true fee-linked ceiling rather than treated as a real zero (Codex
             // #1371 r6). A genuine dust record (`cStarOpen == 0`) keeps a 0
             // ceiling (capped to ~0).
+            // A legacy record also predates `rewardHaircutBpsAtOpen`, so that
+            // field reads 0 even though no party selected a literal 0% haircut;
+            // fall back to the {REWARD_HAIRCUT_DEFAULT_BPS} default (matching
+            // {cfgRewardHaircutBps}'s zero-sentinel) so the derived ceiling is
+            // `½ × C* × (1 − default)`, not the too-generous `½ × C*` (Codex
+            // #1371 r7).
+            uint256 haircut = fe.rewardHaircutBpsAtOpen;
+            if (haircut == 0) haircut = LibVaipakam.REWARD_HAIRCUT_DEFAULT_BPS;
             capOpen =
-                (fe.cStarOpen *
-                    (LibVaipakam.BASIS_POINTS - fe.rewardHaircutBpsAtOpen)) /
+                (fe.cStarOpen * (LibVaipakam.BASIS_POINTS - haircut)) /
                 LibVaipakam.BASIS_POINTS /
                 2;
         }
@@ -2026,23 +2058,31 @@ function _dayPoolHalves(
         return (capOpen * daysCounted) / openDays;
     }
 
-    /// @dev MUTATING loan-side cap — trims an entry's ARMED-FRESH payout to the
-    ///      remaining per-(loanId, side) lifetime budget and persists the paid /
-    ///      armed-day accumulators. Reduces the payout `total` by the capped-off
-    ///      shortfall while leaving `recycled` / `armedFresh` WHOLE — they are the
-    ///      commitment-retirement figures the facet consumes in FULL, so the
-    ///      trimmed remainder is retired (not leaked) just like a pool-truncated
-    ///      fresh share. Returns `split` untouched (DARK) when the entry has no
-    ///      armed-fresh reward or the loan is UNSTAMPED (`openDays == 0`), so an
-    ///      unstamped loan is never zeroed. (A solo fully-capped entry yields
-    ///      `total == 0` with `armedFresh > 0`; the facet detects that and still
-    ///      retires the commitment instead of reverting — Codex #1371 r6.)
+    /// @dev MUTATING loan-side cap — bounds an entry's WHOLE post-`D*` armed
+    ///      reward (`armedFresh + recycled`) to the remaining per-(loanId, side)
+    ///      lifetime budget and persists the paid / armed-day accumulators. The
+    ///      ceiling `½ × C* × (1 − m)` bounds the total post-cutover per-side
+    ///      payout, so the RECYCLED portion is capped too, not just the fresh one
+    ///      (Codex #1371 r7). The capped-off amount is PARTITIONED:
+    ///        • capped-off fresh — `armedFresh` is left WHOLE on `userSplit` so
+    ///          the facet retires the full fresh commitment (`consumeArmedFresh`)
+    ///          while the payout `total` shrinks (retired-not-paid, like a
+    ///          pool-truncated fresh share);
+    ///        • capped-off recycled — routed out via the returned `recycleRelease`
+    ///          split so the facet RELEASES its commitment
+    ///          (`LibVpfiRecycle.releaseCommitment`) — no payout AND no bucket
+    ///          credit (no `Ā` inflation, so no expiry-funding-gate ripple).
+    ///      Both are empty of a cap effect (DARK) when the entry has no armed
+    ///      reward or the loan is UNSTAMPED (`openDays == 0`), so an unstamped
+    ///      loan is never zeroed. Fresh is paid before recycled.
     function _applyLoanSideCap(
         LibVaipakam.Storage storage s,
         LibVaipakam.RewardEntry storage e,
         EntrySplit memory split
-    ) private returns (EntrySplit memory) {
-        if (split.armedFresh == 0) return split; // no post-cutover fresh ⇒ dark
+    ) private returns (EntrySplit memory userSplit, EntrySplit memory recycleRelease) {
+        userSplit = split;
+        uint256 armedReward = split.armedFresh + split.recycled; // post-`D*` reward
+        if (armedReward == 0) return (userSplit, recycleRelease); // pre-cutover only ⇒ dark
         uint256 loanId = e.loanId;
         // The STAMP marker is `openDays != 0` — the stamp always writes
         // `openDays >= 1`, whereas a genuinely-priced dust loan can have BOTH
@@ -2062,7 +2102,7 @@ function _dayPoolHalves(
             // (user, side, day) share cap on their local claim, not here. The
             // arming-time enforcement is a deploy-assert (PR-9 #1356) coupled
             // with the joint cutover.
-            return split;
+            return (userSplit, recycleRelease);
         }
         uint8 side = uint8(e.side);
         uint256 daysIncl =
@@ -2072,27 +2112,41 @@ function _dayPoolHalves(
         uint256 capEff = _loanSideRewardCapEff(s, loanId, daysIncl);
         uint256 paid = s.loanSideRewardPaidVpfi[loanId][side];
         uint256 remaining = capEff > paid ? capEff - paid : 0;
-        uint256 armedFresh = split.armedFresh;
-        if (armedFresh > remaining) {
-            split.total -= (armedFresh - remaining); // reduce payout; keep commitment figures
-            s.loanSideRewardPaidVpfi[loanId][side] = paid + remaining;
-        } else {
-            s.loanSideRewardPaidVpfi[loanId][side] = paid + armedFresh;
+        if (armedReward <= remaining) {
+            s.loanSideRewardPaidVpfi[loanId][side] = paid + armedReward;
+            return (userSplit, recycleRelease); // nothing capped
         }
-        return split;
+        s.loanSideRewardPaidVpfi[loanId][side] = paid + remaining;
+        // Pay fresh first, then recycled, up to `remaining`.
+        uint256 paidArmedFresh =
+            split.armedFresh <= remaining ? split.armedFresh : remaining;
+        uint256 cappedRecycled = split.recycled - (remaining - paidArmedFresh);
+        // userSplit keeps `armedFresh` WHOLE (full fresh-commitment retirement)
+        // but pays only `paidArmedFresh` of it; `recycled` drops to the paid
+        // amount; `total` sheds the capped-off fresh + recycled.
+        userSplit.total =
+            split.total - (split.armedFresh - paidArmedFresh) - cappedRecycled;
+        userSplit.recycled = split.recycled - cappedRecycled;
+        // The capped-off recycled routes to the treasury channel as a pure
+        // RELEASE (recycled == total ⇒ the facet's `freshTreasury` is 0, so it
+        // only releases the commitment and credits nothing).
+        recycleRelease.total = cappedRecycled;
+        recycleRelease.recycled = cappedRecycled;
     }
 
     /// @dev READ-ONLY loan-side cap for the preview path — returns the CLAIM's
-    ///      trimmed `total` for `split` without persisting, so the preview
+    ///      trimmed user `total` for `split` without persisting, so the preview
     ///      exactly matches what the mutating claim would pay (load-bearing for
-    ///      the expiry funding gate). Skips unstamped loans and entries with no
-    ///      armed-fresh reward, matching the claim's dark behaviour.
+    ///      the expiry funding gate). Bounds the WHOLE armed reward
+    ///      (`armedFresh + recycled`) like the claim. Skips unstamped loans and
+    ///      entries with no armed reward, matching the claim's dark behaviour.
     function _loanSideCapPreviewTotal(
         LibVaipakam.Storage storage s,
         LibVaipakam.RewardEntry storage e,
         EntrySplit memory split
     ) private view returns (uint256) {
-        if (split.armedFresh == 0) return split.total;
+        uint256 armedReward = split.armedFresh + split.recycled;
+        if (armedReward == 0) return split.total;
         uint256 loanId = e.loanId;
         // Unstamped marker is `openDays == 0` (see {_applyLoanSideCap}); a
         // stamped zero-`C*` dust loan is capped, not skipped (Codex #1371 r5).
@@ -2103,8 +2157,8 @@ function _dayPoolHalves(
         uint256 capEff = _loanSideRewardCapEff(s, loanId, daysIncl);
         uint256 paid = s.loanSideRewardPaidVpfi[loanId][side];
         uint256 remaining = capEff > paid ? capEff - paid : 0;
-        return split.armedFresh > remaining
-            ? split.total - (split.armedFresh - remaining)
+        return armedReward > remaining
+            ? split.total - (armedReward - remaining)
             : split.total;
     }
 

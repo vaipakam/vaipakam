@@ -84,6 +84,22 @@ contract LoanSideRewardCapTest is SetupTest {
         deltaRpn = (freshHalf * 1e18) / global;
     }
 
+    /// @dev Seed an armed day with BOTH a fresh (`scheduleFloor`) and a recycled
+    ///      (`recycledBudget`) half, so a reward has a recycled component the cap
+    ///      must also bound. Δ_fresh + Δ_recycled per 1e18 numeraire.
+    function _seedArmedDayWithRecycled(
+        uint256 dayId,
+        uint256 freshHalf,
+        uint256 recycledHalf,
+        uint256 global
+    ) internal {
+        _mut().setDayPoolStampRaw(
+            dayId, uint128(freshHalf * 2), uint128(recycledHalf * 2)
+        );
+        _mut().setKnownGlobalDailyInterest(dayId, global, 0, true);
+        _mut().setDayCapThreshold18(dayId, type(uint256).max); // #1008 off
+    }
+
     /// @dev Stamp a fee-entitlement record carrying a known loan-side ceiling.
     function _stampCap(uint256 openDays, uint256 capOpen) internal {
         _mut().setFeeEntitlementRaw(
@@ -250,15 +266,17 @@ contract LoanSideRewardCapTest is SetupTest {
         // cache slot existed: `cStarOpen` / `openDays` are set but
         // `loanSideRewardCapOpen` reads 0 (appended slot). The cap must be
         // DERIVED from `cStarOpen`, not treated as a real zero ceiling (Codex
-        // #1371 r6). cStarOpen 0.2e18, 0% stamped haircut ⇒ capOpen = 0.1e18;
-        // full-term (openDays 2 == armed days) ⇒ capEff 0.1e18 < raw 2e18.
+        // #1371 r6). A legacy record also predates `rewardHaircutBpsAtOpen`, so
+        // its 0 is defaulted to the 200-bps default, NOT read as a literal 0%
+        // (Codex #1371 r7): cStarOpen 0.2e18, default 2% haircut ⇒ capOpen =
+        // ½ × 0.2e18 × 0.98 = 0.098e18; full-term ⇒ capEff 0.098e18 < raw 2e18.
         _mut().setFeeEntitlementRaw(
             LOAN_ID,
             LibVaipakam.FeeEntitlement({
                 borrowerMode: LibVaipakam.FeeEntitlementMode.None,
                 lenderMode: LibVaipakam.FeeEntitlementMode.None,
                 openDays: 2,
-                rewardHaircutBpsAtOpen: 0, // legacy record never stamped a haircut
+                rewardHaircutBpsAtOpen: 0, // legacy record never stamped a haircut ⇒ defaulted to 200
                 borrowerTariffPaid: 0,
                 lenderTariffPaid: 0,
                 cStarOpen: 0.2e18, // real notional from the parent stamp
@@ -267,7 +285,7 @@ contract LoanSideRewardCapTest is SetupTest {
         );
         vm.prank(rewardLender);
         (uint256 paid, , ) = _facet().claimInteractionRewards();
-        assertEq(paid, 0.1e18, "cap derived from cStarOpen for a legacy record");
+        assertEq(paid, 0.098e18, "cap derived from cStarOpen + default haircut for a legacy record");
     }
 
     // ── Cutover-spanning entry: only the ARMED (post-D*) portion is capped ──
@@ -291,6 +309,26 @@ contract LoanSideRewardCapTest is SetupTest {
         (uint256 paid, , ) = _facet().claimInteractionRewards();
         // Total = uncapped day-1 reward + capped day-2 slice (0.05e18).
         assertEq(paid, day1 + 0.05e18, "pre-cutover day uncapped; only armed day capped");
+    }
+
+    // ── The cap bounds the WHOLE armed reward, including the RECYCLED portion ──
+
+    function test_ArmedClaim_CapsRecycledReward() public {
+        // Day 1 armed with equal fresh + recycled halves: Δ_fresh = Δ_recycled =
+        // 1e18, perDay 1e18 ⇒ armedFresh 1e18 + recycled 1e18 = 2e18 armed reward.
+        _seedArmedDayWithRecycled(1, 1e18, 1e18, 1e18);
+        _mut().setGovernorCommitArmedFromDayRaw(1);
+        _pushEntry(1e18, 1, 2); // [1,2): day 1 only
+
+        // Ceiling 0.5e18 < fresh 1e18, so the recycled 1e18 is ENTIRELY capped
+        // off (released, not paid). Before the r7 fix the recycled half escaped
+        // the cap and the user would have received 0.5e18 fresh + 1e18 recycled
+        // = 1.5e18, above the ½×C*×(1−m) ceiling (Codex #1371 r7 P1).
+        _stampCap({openDays: 1, capOpen: 0.5e18});
+
+        vm.prank(rewardLender);
+        (uint256 paid, , ) = _facet().claimInteractionRewards();
+        assertEq(paid, 0.5e18, "whole armed reward (fresh + recycled) capped to the ceiling");
     }
 
     // ── Legacy per-day window must NOT pay on armed days (entry-path only) ──
