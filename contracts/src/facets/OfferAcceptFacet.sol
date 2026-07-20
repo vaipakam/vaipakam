@@ -513,8 +513,14 @@ contract OfferAcceptFacet is
         // to read. Party-scoped: the acceptor authorizes draining `C*` from
         // their OWN vault. Like the ack fields above, read only while
         // `acceptAckActive`, so the keeper-match path (which never sets these)
-        // keeps the acceptor's side non-Full. `maxCStar` is mandatory whenever
-        // `acceptorFull` — enforced downstream in `LibFeeEntitlement`.
+        // keeps the acceptor's side non-Full. `maxCStar` is MANDATORY whenever
+        // `acceptorFull` (rev-15 §3) — fail fast here, symmetric with the creator
+        // setter's `FullTariffMaxCStarRequired`, so a malformed signature can't
+        // fill as non-Full (any positive `C*` over-max) or, if `C*` rounds to 0,
+        // stamp Full with no bound (Codex #1366 r4 P3).
+        if (terms.acceptorFull && terms.acceptorMaxCStar == 0) {
+            revert FullTariffMaxCStarRequired();
+        }
         s.acceptAckAcceptorFull = terms.acceptorFull;
         s.acceptAckAcceptorAllowFullDowngrade = terms.acceptorAllowFullDowngrade;
         s.acceptAckAcceptorMaxCStar = terms.acceptorMaxCStar;

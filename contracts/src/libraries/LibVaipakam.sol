@@ -5844,13 +5844,26 @@ library LibVaipakam {
         return v == 0 ? TARIFF_K_PER_LIF_YEAR_DEFAULT : v;
     }
 
-    /// @dev #1347 (M2 PR-5a/5b) — whether the Full VPFI tariff is enabled.
-    ///      `false` (the post-deploy default) keeps the feature DARK: every
-    ///      Full opt-in fails closed and no `C*` is pulled. No `0 ⇒ default`
+    /// @dev #1347 (M2 PR-5a/5b) — whether the Full VPFI tariff is EFFECTIVELY
+    ///      enabled. `false` (the post-deploy default) keeps the feature DARK:
+    ///      every Full opt-in fails closed and no `C*` is pulled. No `0 ⇒ default`
     ///      sentinel — a bool defaults to `false`, which is exactly the safe
     ///      state.
+    ///
+    ///      The canonical-VPFI-chain requirement is folded into the EFFECTIVE
+    ///      read, not just the {ConfigFacet.setFeeEntitlementEnabled} setter: a
+    ///      `C*` absorbed on a mirror chain would strand in a mirror-local
+    ///      recycle bucket the Base governor can't fund. Gating only the setter
+    ///      would still arm Full if the stored bit were already true (an
+    ///      in-place-refreshed mirror enabled before the gate) or if
+    ///      `setCanonicalVPFIChain(false)` were later flipped. Every consumer
+    ///      (`_fullTariffShouldRun`, `fullOptInConfirmed`, `resolveAndCharge`)
+    ///      reads through here, so the invariant "Full never operates off the
+    ///      canonical VPFI chain" holds regardless of stored/flag order (Codex
+    ///      #1366 r4 P2).
     function cfgFeeEntitlementEnabled() internal view returns (bool) {
-        return storageSlot().feeEntitlementEnabled;
+        Storage storage s = storageSlot();
+        return s.feeEntitlementEnabled && s.isCanonicalVpfiChain;
     }
 
     /// @dev #1193 (Pass-2 D3) — the rental buffer BPS an offer FUNDED, read from

@@ -160,12 +160,19 @@ library LibFeeEntitlement {
         // immediately for every open loan's average), then credit the bucket.
         // Mirrors LibNotificationFee.bill's pull → rollup → credit sequence.
         //
-        // GUARD the withdrawal: even past the tracked-balance pre-check it can
-        // still revert — the vault caps at the FREE (unencumbered) balance and
-        // the VPFI token can be paused — so a downgrade-authorized party must
-        // fall back cleanly to HoldOnly/None instead of the whole accept
-        // bricking (Codex #1366 r2 P2). Without downgrade permission the revert
-        // is the party's chosen failure (surfaced as the same FullOptInFailed).
+        // GUARD the withdrawal. The CLEAN-downgrade cases — vault short of `C*`,
+        // or `C*` encumbered by an active lien — are already caught by the
+        // FREE-balance pre-check above ({_vaultVpfiBalance} mirrors
+        // `vaultWithdrawERC20`'s cap exactly), so a downgrade-authorized party
+        // falls back to HoldOnly/None there WITHOUT the accept bricking (Codex
+        // #1366 r2 P2) AND before the pre-mint borrower +10% LIF bump could have
+        // been granted on stale info. This catch therefore only fires on the
+        // RESIDUAL (a paused VPFI token / an unexpected transfer failure), where
+        // it must REVERT rather than silently downgrade: {chargeBorrowerLifAndDeliver}
+        // may already have applied the Full +10% LIF discount (keyed on the same
+        // free-balance {fullOptInConfirmed}), so downgrading here would leave the
+        // borrower the cheaper fee with no paired `C*` (Codex #1366 r4 P2). A
+        // revert rolls the whole accept — bump included — back atomically.
         try
             VaultFactoryFacet(address(this)).vaultWithdrawERC20(
                 party,
@@ -176,7 +183,6 @@ library LibFeeEntitlement {
         {
             // pulled — fall through to rollup + credit
         } catch {
-            if (allowDowngrade) return _downgrade(holdEligible);
             revert FeeEntitlementFullOptInFailed(party);
         }
         LibVPFIDiscount.rollupUserDiscount(
@@ -288,13 +294,15 @@ library LibFeeEntitlement {
         }
         if (price == 0) return (0, false);
 
+        // A zero-decimal ERC-20 is legitimately priceable (`10 ** 0 == 1`); only
+        // a REVERTING `decimals()` is treated as unpriceable, matching the other
+        // numeraire conversions in this codebase (Codex #1366 r4 P3).
         uint8 tokenDec;
         try IERC20Metadata(asset).decimals() returns (uint8 d) {
             tokenDec = d;
         } catch {
             return (0, false);
         }
-        if (tokenDec == 0) return (0, false);
 
         feedOk = true;
         value = (amount * price * 1e18) / (10 ** feedDec) / (10 ** tokenDec);

@@ -375,6 +375,20 @@ contract FeeEntitlementFacetTest is SetupTest {
         );
     }
 
+    function testAcceptorFullTariff_MaxCStarMandatory() public {
+        _config().setFeeEntitlementEnabled(true);
+        uint256 offerId = _createLenderErc20Offer();
+        // Acceptor opts into Full but omits the mandatory maxCStar — must fail
+        // fast at bind, symmetric with the creator setter (Codex #1366 r4 P3).
+        LibAcceptTerms.AcceptTerms memory t = LibAcceptTestSigner.buildFullTerms(
+            address(diamond), borrower, offerId, true, /*maxCStar=*/ 0, /*allowDowngrade=*/ true
+        );
+        bytes memory sig = LibAcceptTestSigner.sign(address(diamond), t, borrowerPk);
+        vm.prank(borrower);
+        vm.expectRevert(IVaipakamErrors.FullTariffMaxCStarRequired.selector);
+        OfferAcceptFacet(address(diamond)).acceptOffer(offerId, t, sig);
+    }
+
     function testCreatorFullTariff_OnlyCreator() public {
         uint256 offerId = _createLenderErc20Offer();
         vm.prank(borrower); // not the creator
