@@ -2764,7 +2764,20 @@ function _dayPoolHalves(
     /// @param user          The claimant/forfeiter.
     /// @param d             The reward day.
     /// @param entryIds      Entries of `user` on one side covering `d` that are
-    ///                      ready to transfer NOW for this call.
+    ///                      ready to transfer NOW for this call. Each MUST be
+    ///                      sitting exactly on day `d` (`rewardEntryClaimNextDay`,
+    ///                      or `startDay` while unset) — see the cursor check.
+    ///
+    ///                      CALLER OBLIGATION at the `D*` cutover (Codex #1399
+    ///                      r5): an entry that opened BEFORE `D*` and is still
+    ///                      open after it must have its cursor WALKED to `D*`
+    ///                      through the legacy day branch, which advances the
+    ///                      same cursor — never jumped, and never pre-seeded to
+    ///                      `D*` in bulk. Jumping would skip the entry's
+    ///                      pre-cutover days entirely; this primitive cannot
+    ///                      tell a jumped cursor from an honest one, so it
+    ///                      rejects anything not sitting on `d` and the
+    ///                      spanning-entry bootstrap is the day walk's job.
     /// @param pool          Budget left in the caller's pool this tx, per
     ///                      funding source. (Named `pool` to avoid shadowing
     ///                      the {poolRemaining} accessor.)
