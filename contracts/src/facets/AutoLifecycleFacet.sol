@@ -13,6 +13,7 @@ import {LibInteractionRewards} from "../libraries/LibInteractionRewards.sol";
 import {DiamondReentrancyGuard} from "../libraries/LibReentrancyGuard.sol";
 import {DiamondPausable} from "../libraries/LibPausable.sol";
 import {VaultFactoryFacet} from "./VaultFactoryFacet.sol";
+import {FeeEntitlementFacet} from "./FeeEntitlementFacet.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import {IVaipakamErrors} from "../interfaces/IVaipakamErrors.sol";
@@ -183,6 +184,11 @@ contract AutoLifecycleFacet is DiamondReentrancyGuard, DiamondPausable {
     /// @notice T-092 #508 — admin kill switches.
     error AutoLendDisabled();
     error AutoExtendDisabled();
+
+    /// @notice #1384 — the fee-entitlement reprice cross-facet call on
+    ///         extension reverted (should be unreachable: the target is a
+    ///         diamond-internal storage write).
+    error FeeEntitlementRepriceFailed();
 
     /// @notice T-092 Phase 3 — emitted on a successful in-place
     ///         loan extension. The position NFTs are untouched; only
@@ -778,6 +784,24 @@ contract AutoLifecycleFacet is DiamondReentrancyGuard, DiamondPausable {
                 newDurationDays
             );
         }
+
+        // #1384 — reprice the fee entitlement for the NEW term. The extension
+        // pays no fresh Full `C*` tariff, so the un-tariffed added term must not
+        // keep a lender Full `+10%` (#1354) or an oversized loan-side reward
+        // budget (#1353). Runs UNCONDITIONALLY (not gated on `inTermExtension`):
+        // even a late in-grace extension continues to accrue future interest the
+        // stale Full stamp would discount. No-op on an unstamped loan and while
+        // the M2 fee package is dark. The borrower Full custody is untouched
+        // (whole-loan `vpfiHeld` → terminal rebate). `newDurationDays` is
+        // validated 1..365 above, so the uint32 cast is exact.
+        LibFacet.crossFacetCall(
+            abi.encodeWithSelector(
+                FeeEntitlementFacet.repriceFeeEntitlementOnExtension.selector,
+                loanId,
+                uint32(newDurationDays)
+            ),
+            FeeEntitlementRepriceFailed.selector
+        );
 
         emit LoanExtended(
             loanId,

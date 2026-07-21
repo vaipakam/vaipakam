@@ -953,10 +953,11 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](3);
+        selectors = new bytes4[](4);
         selectors[0] = FeeEntitlementFacet.chargeFullTariff.selector;
         selectors[1] = FeeEntitlementFacet.quoteCStar.selector;
         selectors[2] = FeeEntitlementFacet.getFeeEntitlement.selector;
+        selectors[3] = FeeEntitlementFacet.repriceFeeEntitlementOnExtension.selector;
     }
 
     function getAggregatorAdapterFactoryFacetSelectors()
