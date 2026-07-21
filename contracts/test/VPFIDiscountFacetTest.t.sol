@@ -1396,6 +1396,74 @@ contract VPFIDiscountFacetTest is SetupTest {
         treasuryFee = IERC20(mockERC20).balanceOf(treasuryRecipient) - balBefore;
     }
 
+    /// @dev #1383 — open a fresh loan, optionally stamp the lender mode, run the
+    ///      full term, and PARTIAL-repay half the principal, returning the
+    ///      lending-asset yield fee the treasury collected on the accrued
+    ///      interest. Mirrors {_openStampRepayTreasuryFee} but exercises the
+    ///      `repayPartial` secondary settlement path (host-resolved discount).
+    function _openStampPartialRepayTreasuryFee(
+        uint256 loanId,
+        LibVaipakam.FeeEntitlementMode lenderMode
+    ) internal returns (uint256 treasuryFee) {
+        uint256 offerId = _createLenderErc20Offer(_SWEEP_PRINCIPAL);
+        _approveAndAcceptForLoan(offerId, _SWEEP_PRINCIPAL);
+
+        LibVaipakam.Loan memory ln = LoanFacet(address(diamond)).getLoanDetails(loanId);
+        // The sweep-harness offer opts OUT of partial repay; flip it on for this
+        // path (a mechanical field toggle — the fee-entitlement is a separate
+        // mapping, untouched by the round-trip).
+        ln.allowsPartialRepay = true;
+        TestMutatorFacet(address(diamond)).setLoan(loanId, ln);
+
+        if (lenderMode != LibVaipakam.FeeEntitlementMode.None) {
+            TestMutatorFacet(address(diamond)).setFeeEntitlementRaw(
+                loanId,
+                LibVaipakam.FeeEntitlement({
+                    borrowerMode: LibVaipakam.FeeEntitlementMode.None,
+                    lenderMode: lenderMode,
+                    openDays: uint32(ln.durationDays),
+                    rewardHaircutBpsAtOpen: 0,
+                    borrowerTariffPaid: 0,
+                    lenderTariffPaid: 0,
+                    cStarOpen: 0,
+                    loanSideRewardCapOpen: 0
+                })
+            );
+        }
+
+        vm.warp(ln.startTime + ln.durationDays * 1 days); // accrue full-term interest, in grace
+
+        uint256 approvalPad = _SWEEP_PRINCIPAL * 2;
+        ERC20Mock(mockERC20).mint(borrower, approvalPad);
+        vm.prank(borrower);
+        IERC20(mockERC20).approve(address(diamond), approvalPad);
+
+        uint256 balBefore = IERC20(mockERC20).balanceOf(treasuryRecipient);
+        vm.prank(borrower);
+        RepayFacet(address(diamond)).repayPartial(loanId, _SWEEP_PRINCIPAL / 2);
+        treasuryFee = IERC20(mockERC20).balanceOf(treasuryRecipient) - balBefore;
+    }
+
+    /// @notice #1383 — a Full-stamped lender settled through `repayPartial` now
+    ///         receives the +10% yield-fee discount (peg unset → direct
+    ///         reduction of the treasury cut), which the path ignored before.
+    function testSettlementSweep_RepayPartial_LenderFull_TenPercentOff() public {
+        _facet().setVPFIDiscountRate(0); // direct-reduction regime
+        ConfigFacet(address(diamond)).setVpfiTierDiscountBps(1000, 1500, 2000, 2400);
+
+        uint256 base = _openStampPartialRepayTreasuryFee(
+            1,
+            LibVaipakam.FeeEntitlementMode.None
+        );
+        assertGt(base, 0, "reference partial collected the full yield fee");
+
+        uint256 fee = _openStampPartialRepayTreasuryFee(
+            2,
+            LibVaipakam.FeeEntitlementMode.Full
+        );
+        assertEq(fee, _discountedFee(base, 1000), "repayPartial Full -> 10% off");
+    }
+
     /// @dev Stake `amount` VPFI into the lender's vault, consent, and clear the
     ///      min-history gate so the hold tier releases at settlement.
     function _stakeLenderConsent(uint256 amount) internal {

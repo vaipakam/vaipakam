@@ -322,16 +322,22 @@ contract RepayFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErrors 
             // any precondition failure — we then fall through to the normal
             // ERC-20 split.
             // #1354 §F2 / #1383 — eligibility is `consent OR lenderMode ==
-            // Full`; the shared resolve helper runs the whole
-            // VPFI-payment-then-direct-reduction delivery and returns the deltas
-            // to fold into the plan. `loan.lender` is consolidated to the
-            // current holder earlier in this terminal, so keying on it is safe.
-            (uint256 lenderExtra, uint256 newTreasury, uint256 yieldVpfiDeducted) =
-                LibVPFIDiscount.resolveLenderYieldFee(
-                    loan,
-                    plan.interest + plan.lateFee,
-                    plan.treasuryShare
-                );
+            // Full`; the resolve host runs the whole VPFI-payment-then-direct-
+            // reduction delivery and emits the analytics passthrough itself.
+            // Keyed on the CURRENT lender-NFT holder (not `loan.lender`): the
+            // terminal consolidation is skip-not-block, so keying on the live
+            // `ownerOf(lenderTokenId)` resolves the discount + any VPFI debit for
+            // the right party even when consolidation was skipped (Codex #1387
+            // P1). Routing through the host (rather than inlining
+            // `LibVPFIDiscount.resolveLenderYieldFee`) keeps the delivery
+            // bytecode off this at-EIP-170 facet — headroom the repayPartial
+            // secondary path below also needs (#1383).
+            (uint256 lenderExtra, uint256 newTreasury) = _hostResolveLenderYieldFee(
+                loan.id,
+                IERC721(address(this)).ownerOf(loan.lenderTokenId),
+                plan.interest + plan.lateFee,
+                plan.treasuryShare
+            );
             if (lenderExtra > 0) {
                 plan.lenderShare += lenderExtra;
                 plan.lenderDue = plan.principal + plan.lenderShare;
@@ -426,20 +432,9 @@ contract RepayFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErrors 
                 plan.lenderShare
             );
 
-            // Passthrough-event for the yield fee VPFI discount, so indexers
-            // subscribe to a single facet for all VPFI-discount analytics.
-            if (yieldVpfiDeducted > 0) {
-                LibFacet.crossFacetCall(
-                    abi.encodeWithSelector(
-                        VPFIDiscountFacet.emitYieldFeeDiscountApplied.selector,
-                        loanId,
-                        loan.lender,
-                        loan.principalAsset,
-                        yieldVpfiDeducted
-                    ),
-                    TreasuryTransferFailed.selector
-                );
-            }
+            // #1383 — the yield-fee VPFI-discount analytics event is now emitted
+            // by the resolve host (`_hostResolveLenderYieldFee`), so no separate
+            // passthrough is needed here.
 
             // Phase-2 reward accrual close (docs/TokenomicsTechSpec.md §4).
             // Borrower side is CLEAN only on in-grace full repayment; a
@@ -813,6 +808,24 @@ contract RepayFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErrors 
                 accrued
             );
 
+            // #1383 — honor the lender Full/hold discount (§F2 / #1354) for the
+            // CURRENT lender-NFT holder (this partial path does NOT reliably
+            // consolidate `loan.lender`). The shift is treasury→lender; the
+            // lender payout below reads the increased `lenderShare` and the
+            // treasury transfer the reduced `treasuryShare`. Dark until cut-over.
+            {
+                (uint256 lenderExtra, uint256 newTreasury) = _hostResolveLenderYieldFee(
+                    loan.id,
+                    IERC721(address(this)).ownerOf(loan.lenderTokenId),
+                    accrued,
+                    treasuryShare
+                );
+                if (lenderExtra > 0) {
+                    lenderShare += lenderExtra;
+                    treasuryShare = newTreasury;
+                }
+            }
+
             // #921 item 3 — reject a "partial" that would retire the FULL
             // remaining principal (`>=`, not just overshoot). This path only
             // decrements `loan.principal`; it runs no settlement / collateral
@@ -857,6 +870,10 @@ contract RepayFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErrors 
                 ),
                 bytes4(0)
             );
+            // #1383 — a yield-fee discount can drive `treasuryShare` to 0 on the
+            // VPFI-payment path; a 0-value `safeTransferFrom` is a harmless no-op
+            // (and `recordTreasuryAccrual(asset, 0)` is a no-op), so the transfer
+            // stays unconditional as before.
             IERC20(loan.principalAsset).safeTransferFrom(
                 msg.sender,
                 treasury,
@@ -1012,6 +1029,22 @@ contract RepayFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErrors 
                 accrued
             );
 
+            // #1383 — honor the lender Full/hold discount for the CURRENT
+            // lender-NFT holder (rentals skip the eager consolidation, so
+            // `loan.lender` can be stale). Shift is treasury→lender.
+            {
+                (uint256 lenderExtra, uint256 newTreasury) = _hostResolveLenderYieldFee(
+                    loan.id,
+                    IERC721(address(this)).ownerOf(loan.lenderTokenId),
+                    accrued,
+                    treasuryShare
+                );
+                if (lenderExtra > 0) {
+                    lenderShare += lenderExtra;
+                    treasuryShare = newTreasury;
+                }
+            }
+
             // #569 D-1 (2026-06-13) — NFT rentals carry no collateral
             // lien (the prepay pool is drained by this very mechanism,
             // not protected by a lien), so no decrement here.
@@ -1040,6 +1073,9 @@ contract RepayFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErrors 
             // #821 (Codex #832 r3 P1) — the treasury deduction also pulls the
             // prepay from the payer's own vault; arm the move-out exemption so a
             // borrower flagged after init can still service the partial rental.
+            // #1383 — a yield-fee discount can drive `treasuryShare` to 0 on the
+            // VPFI-payment path; `vaultWithdrawERC20(..., 0)` is a harmless no-op
+            // (0-value ERC-20 transfer), so this stays unconditional as before.
             LibSanctionedLock.beginMoveOut(LibVaipakam.storageSlot(), msg.sender);
             LibFacet.crossFacetCall(
                 abi.encodeWithSelector(
@@ -1214,5 +1250,43 @@ contract RepayFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErrors 
             abi.encodeWithSelector(selector, loanId, arg2),
             bytes4(0)
         );
+    }
+
+    /// @dev #1383 — resolve the lender yield-fee discount for `settlingLender`
+    ///      via the `VPFIDiscountFacet` host (delivery bytecode stays off this
+    ///      at-EIP-170 facet). `repayPartial` does NOT reliably consolidate
+    ///      `loan.lender` (the #597 `heldForLender` exclusion), so its call
+    ///      sites pass the CURRENT `ownerOf(lenderTokenId)`. Returns the deltas
+    ///      to fold in (`lenderShare += lenderExtra; treasuryShare = newTreasury`).
+    function _hostResolveLenderYieldFee(
+        uint256 loanId,
+        address settlingLender,
+        uint256 interestForQuote,
+        uint256 treasuryShare
+    ) private returns (uint256 lenderExtra, uint256 newTreasury) {
+        // #1383 — short-circuit the ineligible/dark case with an INLINED
+        // eligibility read (`consent OR Full`, no cross-facet routing) before
+        // the host call. This keeps the resolve a strict no-op for every
+        // unstamped/no-consent loan — including test diamonds that don't cut
+        // `VPFIDiscountFacet` — and only routes to the host when a discount can
+        // actually apply.
+        LibVaipakam.Loan storage loan = LibVaipakam.storageSlot().loans[loanId];
+        if (
+            treasuryShare == 0 ||
+            !LibVPFIDiscount.lenderYieldFeeEligible(loan, settlingLender)
+        ) {
+            return (0, treasuryShare);
+        }
+        bytes memory ret = LibFacet.crossFacetCallReturn(
+            abi.encodeWithSelector(
+                VPFIDiscountFacet.resolveLenderYieldFeeFor.selector,
+                loanId,
+                settlingLender,
+                interestForQuote,
+                treasuryShare
+            ),
+            bytes4(0)
+        );
+        (lenderExtra, newTreasury, ) = abi.decode(ret, (uint256, uint256, uint256));
     }
 }

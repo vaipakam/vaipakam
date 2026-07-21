@@ -12,6 +12,9 @@ import {LibPeriodicInterest} from "../libraries/LibPeriodicInterest.sol";
 import {LibSwap} from "../libraries/LibSwap.sol";
 import {LibFallback} from "../libraries/LibFallback.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
+import {IERC721} from "@openzeppelin/contracts/token/ERC721/IERC721.sol";
+import {VPFIDiscountFacet} from "./VPFIDiscountFacet.sol";
+import {LibVPFIDiscount} from "../libraries/LibVPFIDiscount.sol";
 import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import {DiamondReentrancyGuard} from "../libraries/LibReentrancyGuard.sol";
 import {DiamondPausable} from "../libraries/LibPausable.sol";
@@ -163,6 +166,36 @@ contract RepayPeriodicFacet is DiamondReentrancyGuard, DiamondPausable, IVaipaka
             loan,
             dayFee
         );
+
+        // #1383 — honor the lender Full/hold discount (§F2 / #1354) for the
+        // CURRENT lender-NFT holder (the periodic payout already routes to
+        // `ownerOf(lenderTokenId)`, not the stale `loan.lender`). Resolved via
+        // the `VPFIDiscountFacet` host so the delivery bytecode stays off this
+        // facet; the shift is treasury→lender. Dark until `feeEntitlementEnabled`.
+        // Gated on an INLINED eligibility read so the ineligible/dark case never
+        // routes to the host (no cross-facet dependency for unstamped loans).
+        if (treasuryShare > 0) {
+            address settlingLender = IERC721(address(this)).ownerOf(loan.lenderTokenId);
+            if (LibVPFIDiscount.lenderYieldFeeEligible(loan, settlingLender)) {
+                bytes memory ret = LibFacet.crossFacetCallReturn(
+                    abi.encodeWithSelector(
+                        VPFIDiscountFacet.resolveLenderYieldFeeFor.selector,
+                        loanId,
+                        settlingLender,
+                        dayFee,
+                        treasuryShare
+                    ),
+                    bytes4(0)
+                );
+                (uint256 lenderExtra, uint256 newTreasury, ) =
+                    abi.decode(ret, (uint256, uint256, uint256));
+                if (lenderExtra > 0) {
+                    lenderShare += lenderExtra;
+                    treasuryShare = newTreasury;
+                }
+            }
+        }
+
         address treasury = LibFacet.getTreasury();
 
         // #569 D-1 (2026-06-13) — NFT rentals carry no collateral lien
@@ -198,6 +231,9 @@ contract RepayPeriodicFacet is DiamondReentrancyGuard, DiamondPausable, IVaipaka
             bytes4(0)
         );
 
+        // #1383 — a yield-fee discount can drive `treasuryShare` to 0 on the
+        // VPFI-payment path; `vaultWithdrawERC20(..., 0)` is a harmless no-op, so
+        // this stays unconditional as before.
         LibFacet.crossFacetCall(
             abi.encodeWithSelector(
                 VaultFactoryFacet.vaultWithdrawERC20.selector,
