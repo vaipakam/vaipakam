@@ -797,6 +797,11 @@ contract TestMutatorFacet {
         if (s.cumLenderCursor < d) s.cumLenderCursor = d;
     }
 
+    /// @dev #1351 slice 2b — set an entry's D1 claim cursor directly.
+    function setRewardEntryClaimNextDayRaw(uint256 id, uint64 nextDay) external {
+        LibVaipakam.storageSlot().rewardEntryClaimNextDay[id] = nextDay;
+    }
+
     function setDayCapModeRaw(uint256 d, uint8 mode) external {
         LibVaipakam.storageSlot().dayCapMode[d] = LibVaipakam.CapMode(mode);
     }

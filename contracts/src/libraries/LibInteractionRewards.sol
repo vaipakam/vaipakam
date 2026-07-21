@@ -2527,6 +2527,16 @@ function _dayPoolHalves(
         LibVaipakam.RewardSide side,
         uint256 rewardedDaysIncl
     ) private view returns (uint256) {
+        // #1351 (Codex #1399 P2) — an UNSTAMPED loan carries NO loan-side cap;
+        // it is NOT a zero cap. This mirrors `_applyLoanSideCap`, which returns
+        // the untrimmed split on `openDays == 0`. Treating unstamped as 0 would
+        // clamp `cEff` to 0, make `rawPay == 0`, and advance the day as if the
+        // budget were exhausted — permanently losing that day's reward for a
+        // cutover/backfill miss. Unbounded here defers to the D1 ceiling, which
+        // still binds.
+        if (s.feeEntitlementByLoanId[loanId].openDays == 0) {
+            return type(uint256).max;
+        }
         uint256 capEff = _loanSideRewardCapEff(s, loanId, rewardedDaysIncl);
         uint256 paid = s.loanSideRewardPaidVpfi[loanId][uint8(side)];
         return capEff > paid ? capEff - paid : 0;
@@ -2680,6 +2690,31 @@ function _dayPoolHalves(
             ) {
                 revert IVaipakamErrors.RewardEntrySetMismatch(entryIds[i]);
             }
+            // Codex #1399 P2 — the entry must be AT day `d` on its own cursor.
+            // Covering `d` is not enough: a stale worklist could re-present an
+            // entry that already advanced past `d` and get it priced a SECOND
+            // time out of any unsaturated `C`, and the loan-side proration
+            // (recomputed from `stored + 1`) would not catch it.
+            uint256 nd = s.rewardEntryClaimNextDay[entryIds[i]];
+            if ((nd == 0 ? uint256(v.startDay) : nd) != d) {
+                revert IVaipakamErrors.RewardEntrySetMismatch(entryIds[i]);
+            }
+            // Codex #1399 P2 — an entry is payable only once CLOSED and not yet
+            // processed. The legacy `_processEntry` blocks unclosed Active /
+            // FallbackPending loans before pricing; a shared fund-moving
+            // primitive must not depend on the outer worklist remembering to.
+            if (!v.closed || v.processed) {
+                revert IVaipakamErrors.RewardEntrySetMismatch(entryIds[i]);
+            }
+            // Codex #1399 P2 — a duplicated id would read the SAME unchanged
+            // loan-side remaining twice, count the entry twice in `rawPay`, and
+            // let the caller persist both slices past the loan-side cap.
+            for (uint256 j; j < i; ) {
+                if (entryIds[j] == entryIds[i]) {
+                    revert IVaipakamErrors.RewardEntrySetMismatch(entryIds[i]);
+                }
+                unchecked { ++j; }
+            }
             unchecked { ++i; }
         }
 
@@ -2749,7 +2784,12 @@ function _dayPoolHalves(
         slices = _proRataFloorWithCapacityBoundedDust(budget, cEff, rawPay);
         for (uint256 i; i < n; ) {
             LibVaipakam.RewardEntry storage e = s.rewardEntries[entryIds[i]];
-            if (e.forfeited) {
+            // Codex #1399 P2 — mirror the legacy `_processEntry` routing:
+            // a borrower entry that became claimable only via a Defaulted /
+            // InternalMatched terminal keeps `e.forfeited == false`, so routing
+            // on that flag alone would pay the BORROWER what the forfeit rules
+            // send to treasury.
+            if (e.forfeited || _entryTerminalForfeit(s, e)) {
                 charge.toTreasury += slices[i];
             } else {
                 charge.toUser += slices[i];

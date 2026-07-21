@@ -150,6 +150,69 @@ contract ShareOfPoolDayPrimitiveTest is SetupTest {
         _mut().processUserSideDayRaw(alice, DAY, _ids(id), type(uint256).max);
     }
 
+    /// @dev Codex #1399 P2 — an entry already advanced past `d` must be
+    ///      REJECTED, not re-priced. Covering `d` is not enough: a stale
+    ///      worklist could otherwise route the same entry/day a second time out
+    ///      of any unsaturated ceiling.
+    function test_RevertsWhenEntryIsNotAtItsOwnCursorDay() public {
+        uint256 id = _entry(alice, LOAN_A, 1 ether);
+        _mut().setRewardEntryClaimNextDayRaw(id, uint64(DAY + 1)); // already past
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                IVaipakamErrors.RewardEntrySetMismatch.selector, id
+            )
+        );
+        _mut().processUserSideDayRaw(alice, DAY, _ids(id), type(uint256).max);
+    }
+
+    /// @dev Codex #1399 P2 — an UNCLOSED (still-active) loan must never be paid.
+    ///      The legacy path blocks this before pricing; a shared fund-moving
+    ///      primitive must not rely on the outer worklist remembering to.
+    function test_RevertsOnUnclosedEntry() public {
+        uint256 id = _mut().pushRewardEntry(
+            alice, LOAN_A, LibVaipakam.RewardSide.Lender, 1 ether, uint32(DAY)
+        );
+        // deliberately NOT closed
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                IVaipakamErrors.RewardEntrySetMismatch.selector, id
+            )
+        );
+        _mut().processUserSideDayRaw(alice, DAY, _ids(id), type(uint256).max);
+    }
+
+    /// @dev Codex #1399 P2 — a duplicated id would read the SAME unchanged
+    ///      loan-side remaining twice and count the entry twice in `rawPay`,
+    ///      letting the caller persist both slices past the loan-side cap.
+    function test_RevertsOnDuplicateEntryId() public {
+        uint256 id = _entry(alice, LOAN_A, 1 ether);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                IVaipakamErrors.RewardEntrySetMismatch.selector, id
+            )
+        );
+        _mut().processUserSideDayRaw(alice, DAY, _ids(id, id), type(uint256).max);
+    }
+
+    /// @dev Codex #1399 P2 — an UNSTAMPED loan carries NO loan-side cap, not a
+    ///      ZERO cap. Treating it as zero would clamp `cEff` to 0, make
+    ///      `rawPay == 0`, and advance the day as "exhausted" — permanently
+    ///      losing that day's reward on a cutover/backfill miss. It must still
+    ///      pay, bounded by the D1 ceiling.
+    function test_UnstampedLoanIsUncappedNotZero() public {
+        uint64 unstamped = 4099; // no _stampLoanCap -> openDays == 0
+        uint256 id = _entry(alice, unstamped, 1 ether);
+        (uint256 toUser, , bool advanced, ) =
+            _mut().processUserSideDayRaw(alice, DAY, _ids(id), type(uint256).max);
+        assertTrue(advanced, "paid day advances");
+        assertGt(toUser, 0, "unstamped loan still pays (no cap != zero cap)");
+        assertLe(
+            toUser,
+            _mut().dayUserSideCapVpfi18Raw(DAY),
+            "still bounded by the D1 ceiling"
+        );
+    }
+
     // ─── Pool shortage: all-or-nothing, no advance ───────────────────────────
 
     /// @dev A pool that cannot cover the day's budget pays NOTHING and does NOT
