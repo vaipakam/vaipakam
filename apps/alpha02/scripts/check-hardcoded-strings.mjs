@@ -291,12 +291,29 @@ function isProse(text) {
  *     prose branch is enough to flag,
  *   - paren / `as` / `!` / `satisfies` / `<T>` wrappers → unwrapped.
  *  Anything else (a call, an identifier) contributes no static text. */
-/** Leftmost identifier of a (possibly nested) property/element access —
- *  `copy.foo.bar` → 'copy', `x[0].y` → 'x' — or null. */
-function accessRoot(expr) {
-  let e = expr;
-  while (ts.isPropertyAccessExpression(e) || ts.isElementAccessExpression(e)) {
+/** Peel TS-only / grouping wrappers (`(x)`, `x as T`, `x!`, `x satisfies T`,
+ *  `<T>x`) off an expression so the underlying value node is reached. */
+function unwrapExpr(e) {
+  while (
+    ts.isParenthesizedExpression(e) ||
+    ts.isAsExpression(e) ||
+    ts.isNonNullExpression(e) ||
+    (typeof ts.isTypeAssertionExpression === 'function' && ts.isTypeAssertionExpression(e)) ||
+    (typeof ts.isSatisfiesExpression === 'function' && ts.isSatisfiesExpression(e))
+  ) {
     e = e.expression;
+  }
+  return e;
+}
+
+/** Leftmost identifier of a (possibly nested) property/element access —
+ *  `copy.foo.bar` → 'copy', `x[0].y` → 'x' — or null. Wrappers are peeled
+ *  at each step so `(copy.x).y`, `(copy.x.y)()`, and `copy.x as const`
+ *  still resolve to their root. */
+function accessRoot(expr) {
+  let e = unwrapExpr(expr);
+  while (ts.isPropertyAccessExpression(e) || ts.isElementAccessExpression(e)) {
+    e = unwrapExpr(e.expression);
   }
   return ts.isIdentifier(e) ? e.text : null;
 }
@@ -349,6 +366,12 @@ function renderedStatic(node) {
  *  (identifier or string key), or null for computed/other keys. */
 function propKey(name, sf) {
   if (ts.isIdentifier(name) || ts.isStringLiteralLike(name)) return name.text;
+  // A computed key with a static string literal — `{ ['label']: '…' }` — is
+  // the same visible key as `{ label: '…' }`; resolve its statically-known
+  // name. (Non-literal computed keys stay unknown, i.e. null.)
+  if (ts.isComputedPropertyName(name) && ts.isStringLiteralLike(name.expression)) {
+    return name.expression.text;
+  }
   if (ts.isNumericLiteral(name)) return null;
   return null;
 }
@@ -488,7 +511,17 @@ export function analyzeSource(rel, src) {
     // into the enclosing function frame — otherwise a later real
     // `text.gateUnknown('…')` after the block would resolve as non-copy and
     // slip its arg. Push/pop a frame so the shadow is restored at the brace.
-    if (ts.isBlock(node) || ts.isCaseBlock(node)) {
+    // `for` / `for…of` / `for…in` loop variables and a `catch (text)`
+    // binding are block-scoped to their statement the same way, so those
+    // nodes open a frame too.
+    if (
+      ts.isBlock(node) ||
+      ts.isCaseBlock(node) ||
+      ts.isForStatement(node) ||
+      ts.isForInStatement(node) ||
+      ts.isForOfStatement(node) ||
+      ts.isCatchClause(node)
+    ) {
       scopes.push(new Map());
       ts.forEachChild(node, visit);
       scopes.pop();

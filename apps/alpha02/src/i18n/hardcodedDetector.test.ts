@@ -300,4 +300,46 @@ describe('AST hardcoded-string detector (#1365)', () => {
     expect(out).toContain('We are matching');
     expect(out).toContain('or post an offer');
   });
+
+  // --- Codex #1394 round-10 coverage gaps ---
+
+  it('restores for-loop and catch alias shadows at the statement boundary', () => {
+    const forOf =
+      "const text = copy.desk.x; function f(){ for (const text of rows) {} return text.gateUnknown('prepayment token'); }";
+    expect(strings(forOf)).toContain('prepayment token');
+    const catchShadow =
+      "const text = copy.desk.x; function f(){ try{}catch(text){} return text.gateUnknown('prepayment token'); }";
+    expect(strings(catchShadow)).toContain('prepayment token');
+  });
+
+  it('unwraps parenthesized / as-const copy callees and alias initializers', () => {
+    expect(
+      strings("const X = () => <span>{(copy.tokenSecurity).gateUnknown('prepayment token')}</span>;"),
+    ).toContain('prepayment token');
+    expect(
+      strings("const X = () => <span>{(copy.tokenSecurity.gateUnknown)('prepayment token')}</span>;"),
+    ).toContain('prepayment token');
+    expect(
+      strings(
+        "const text = copy.desk.x as const; const X = () => <span>{text.gateUnknown('prepayment token')}</span>;",
+      ),
+    ).toContain('prepayment token');
+  });
+
+  it('flags a computed static-string object key (but not shorthand — no literal)', () => {
+    expect(strings("const X = () => <SelectMenu options={[{ ['label']: 'Newest first' }]} />;")).toContain(
+      'Newest first',
+    );
+    // Shorthand `{ label }` carries no inline literal (identifier reference,
+    // a data-flow case), so it stays out — consistent with the round-1 refute.
+    expect(strings("const l = 'Newest first'; const X = () => <SelectMenu options={[{ label: l }]} />;")).toEqual(
+      [],
+    );
+  });
+
+  it('does NOT flag state-machine setter values (refuted — not UI copy)', () => {
+    // The tree's 68 setX('literal') calls are all state values, never copy;
+    // errors route through copy.* / captureTxError. See the round-10 refute.
+    expect(strings("const X = () => { setMode('accept'); setStep('review'); return null; };")).toEqual([]);
+  });
 });
