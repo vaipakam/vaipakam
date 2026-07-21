@@ -10,6 +10,9 @@ import {OfferAcceptFacet} from "../src/facets/OfferAcceptFacet.sol";
 import {OfferMutateFacet} from "../src/facets/OfferMutateFacet.sol";
 import {OfferMatchFacet} from "../src/facets/OfferMatchFacet.sol";
 import {ConfigFacet} from "../src/facets/ConfigFacet.sol";
+import {FeeEntitlementFacet} from "../src/facets/FeeEntitlementFacet.sol";
+import {TestMutatorFacet} from "./mocks/TestMutatorFacet.sol";
+import {ERC20Mock} from "./mocks/ERC20Mock.sol";
 import {PrecloseFacet} from "../src/facets/PrecloseFacet.sol";
 import {ProfileFacet} from "../src/facets/ProfileFacet.sol";
 import {RefinanceFacet} from "../src/facets/RefinanceFacet.sol";
@@ -431,6 +434,149 @@ contract T092AutoLifecycleIntegrationTest is SetupTest {
         );
         vm.prank(borrower);
         _f().extendLoanInPlace(loanId, 500, 30);
+    }
+
+    // ─── #1384 — fee-entitlement reprice on in-place extension ───────
+
+    /// @dev Build an active ERC20 loan with both-side auto-extend caps set and
+    ///      the borrower vault pre-funded to cover accrued interest, so a
+    ///      subsequent {extendLoanInPlace} succeeds. Warps 2 days past the
+    ///      "too soon after start" accrual guard. Caller stamps the fee
+    ///      entitlement as needed before extending.
+    function _setupExtendableLoan() internal returns (uint256 loanId) {
+        loanId = _buildActiveLoan();
+
+        // Both sides opt into auto-extend within a wide rate / expiry band.
+        uint64 farExpiry = uint64(block.timestamp + 400 days);
+        vm.prank(borrower);
+        _f().setAutoExtendBorrowerCaps(loanId, true, 0, 1000, farExpiry);
+        vm.prank(lender);
+        _f().setAutoExtendLenderCaps(loanId, true, 0, 1000, farExpiry);
+
+        // Pre-fund the borrower's vault with principal asset so the extension's
+        // per-term interest settlement (`_routeInterest` → vault withdraw) clears.
+        address borrowerVault =
+            VaultFactoryFacet(address(diamond)).getOrCreateUserVault(borrower);
+        ERC20Mock(mockERC20).mint(borrowerVault, 10 ether);
+        TestMutatorFacet(address(diamond)).setProtocolTrackedVaultBalanceRaw(
+            borrower, mockERC20, 10 ether
+        );
+
+        // Past the 1-day "too soon after start" accrual guard.
+        vm.warp(block.timestamp + 2 days);
+    }
+
+    /// @notice #1384 — an in-place extension downgrades a lender Full stamp so
+    ///         the un-tariffed added term earns no `+10%` (#1354), while leaving
+    ///         the per-loanId LIFETIME loan-side reward-cap budget (#1353) and
+    ///         the borrower stamp intact (resetting the cap would wipe the
+    ///         unclaimed original-term reward budget — Codex #1386 P1).
+    function test_1384_ExtendReprice_LenderFullDowngraded_RewardCapPreserved()
+        public
+    {
+        uint256 loanId = _setupExtendableLoan();
+
+        // Stamp the Full/Full record the #1347 charger would write at open.
+        TestMutatorFacet(address(diamond)).setFeeEntitlementRaw(
+            loanId,
+            LibVaipakam.FeeEntitlement({
+                borrowerMode: LibVaipakam.FeeEntitlementMode.Full,
+                lenderMode: LibVaipakam.FeeEntitlementMode.Full,
+                openDays: 30,
+                rewardHaircutBpsAtOpen: 2000,
+                borrowerTariffPaid: 7 ether,
+                lenderTariffPaid: 5 ether,
+                cStarOpen: 10 ether,
+                loanSideRewardCapOpen: 4 ether
+            })
+        );
+
+        vm.prank(borrower);
+        _f().extendLoanInPlace(loanId, 500, 45);
+
+        LibVaipakam.FeeEntitlement memory fe =
+            FeeEntitlementFacet(address(diamond)).getFeeEntitlement(loanId);
+
+        // Lender Full downgraded → no unpriced +10% on the added term. The
+        // paid-tariff record is cleared to hold the struct invariant.
+        assertEq(
+            uint8(fe.lenderMode),
+            uint8(LibVaipakam.FeeEntitlementMode.None),
+            "lender Full downgraded on extension"
+        );
+        assertEq(fe.lenderTariffPaid, 0, "lender tariff record cleared");
+        // Loan-side reward-cap budget PRESERVED (lifetime per-loanId; resetting
+        // would wipe the unclaimed original-term reward). openDays + haircut
+        // snapshot untouched — the proration base stays the origination term.
+        assertEq(fe.cStarOpen, 10 ether, "cStarOpen preserved");
+        assertEq(uint256(fe.loanSideRewardCapOpen), 4 ether, "reward cap preserved");
+        assertEq(uint256(fe.openDays), 30, "openDays unchanged");
+        assertEq(uint256(fe.rewardHaircutBpsAtOpen), 2000, "haircut snapshot unchanged");
+        // Borrower stamp untouched (nothing reads borrowerMode; it is a record).
+        assertEq(
+            uint8(fe.borrowerMode),
+            uint8(LibVaipakam.FeeEntitlementMode.Full),
+            "borrower stamp preserved across extension"
+        );
+        assertEq(fe.borrowerTariffPaid, 7 ether, "borrower tariff preserved");
+    }
+
+    /// @notice #1384 — a HoldOnly/None-lender loan is not modified on extension
+    ///         (only a Full lender stamp is downgraded).
+    function test_1384_ExtendReprice_NonFullLenderUntouched() public {
+        uint256 loanId = _setupExtendableLoan();
+        TestMutatorFacet(address(diamond)).setFeeEntitlementRaw(
+            loanId,
+            LibVaipakam.FeeEntitlement({
+                borrowerMode: LibVaipakam.FeeEntitlementMode.Full,
+                lenderMode: LibVaipakam.FeeEntitlementMode.None,
+                openDays: 30,
+                rewardHaircutBpsAtOpen: 2000,
+                borrowerTariffPaid: 7 ether,
+                lenderTariffPaid: 0,
+                cStarOpen: 10 ether,
+                loanSideRewardCapOpen: 4 ether
+            })
+        );
+
+        vm.prank(borrower);
+        _f().extendLoanInPlace(loanId, 500, 45);
+
+        LibVaipakam.FeeEntitlement memory fe =
+            FeeEntitlementFacet(address(diamond)).getFeeEntitlement(loanId);
+        assertEq(uint256(fe.openDays), 30, "non-Full lender loan untouched");
+        assertEq(fe.cStarOpen, 10 ether, "cStarOpen untouched");
+        assertEq(
+            uint8(fe.borrowerMode),
+            uint8(LibVaipakam.FeeEntitlementMode.Full),
+            "borrower stamp untouched"
+        );
+    }
+
+    /// @notice #1384 — the reprice is a no-op on a plain (unstamped) loan: no
+    ///         entitlement record is fabricated on extension.
+    function test_1384_ExtendReprice_UnstampedLoanStaysUnstamped() public {
+        uint256 loanId = _setupExtendableLoan();
+
+        LibVaipakam.FeeEntitlement memory before =
+            FeeEntitlementFacet(address(diamond)).getFeeEntitlement(loanId);
+        assertEq(uint256(before.openDays), 0, "precondition: unstamped");
+
+        vm.prank(borrower);
+        _f().extendLoanInPlace(loanId, 500, 45);
+
+        LibVaipakam.FeeEntitlement memory fe =
+            FeeEntitlementFacet(address(diamond)).getFeeEntitlement(loanId);
+        assertEq(
+            uint256(fe.openDays),
+            0,
+            "unstamped loan stays unstamped (reprice no-op)"
+        );
+        assertEq(
+            uint8(fe.lenderMode),
+            uint8(LibVaipakam.FeeEntitlementMode.None),
+            "no mode fabricated"
+        );
     }
 
     function test_T092B_AutoOptInGate_PopulatesOnLiquidCollateral() public {

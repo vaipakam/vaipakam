@@ -48,6 +48,17 @@ contract FeeEntitlementFacet is IVaipakamErrors {
         uint256 cStarOpen
     );
 
+    /// @notice #1384 — emitted when a loan's fee entitlement is repriced on an
+    ///         in-place extension: the lender Full stamp is downgraded so the
+    ///         un-tariffed added term earns no `+10%`. Auxiliary fee-accounting
+    ///         log, mirroring {FeeEntitlementStamped}.
+    /// @custom:event-category informational/fee-entitlement
+    event FeeEntitlementRepriced(
+        uint256 indexed loanId,
+        uint8 borrowerMode,
+        uint8 lenderMode
+    );
+
     /**
      * @notice Charge the Full VPFI tariff for a freshly-initiated loan and stamp
      *         its fee-entitlement record.
@@ -331,5 +342,78 @@ contract FeeEntitlementFacet is IVaipakamErrors {
         uint256 loanId
     ) external view returns (LibVaipakam.FeeEntitlement memory) {
         return LibVaipakam.storageSlot().feeEntitlementByLoanId[loanId];
+    }
+
+    /**
+     * @notice #1384 — reprice a loan's fee entitlement when it is extended in
+     *         place, so the un-tariffed added term carries no unpriced lender
+     *         Full benefit. Internal cross-facet entry (`msg.sender` MUST be the
+     *         Diamond) — only `AutoLifecycleFacet.extendLoanInPlace` reaches it.
+     *
+     * @dev    An in-place extension settles the current term's interest (the
+     *         lender Full `+10%` yield-fee bump is delivered per-term at that
+     *         boundary, #1354) and rolls the loan onto a NEW term — but pays NO
+     *         new Full `C*` tariff for the added term (the keeper-driven extend
+     *         path carries no fresh per-party Full authorization). Leaving the
+     *         origination stamp intact would let a lender who paid ONE
+     *         original-term `C*` keep earning the `+10%` on later extended-term
+     *         interest.
+     *
+     *         The single repricing action is therefore to **downgrade a lender
+     *         Full stamp to None** (and zero `lenderTariffPaid` to preserve the
+     *         struct invariant `tariffPaid == 0 unless mode == Full`). Because
+     *         the `+10%` is settled per-term, the original term's bump is already
+     *         paid out at the extension boundary; the downgrade only stops it on
+     *         the term no `C*` was paid for. The lender's consent-gated hold
+     *         discount is untouched — it flows from `vpfiDiscountConsent[lender]`,
+     *         independent of `lenderMode`.
+     *
+     *         Everything ELSE is deliberately left untouched:
+     *
+     *           - **The loan-side reward-cap fields** (`cStarOpen`, `openDays`,
+     *             `loanSideRewardCapOpen`, `rewardHaircutBpsAtOpen`). The cap is
+     *             a per-`loanId` LIFETIME budget consumed lazily when rewards are
+     *             counted (`_loanSideRewardCapEff` reads the live `fe`), so
+     *             resetting it here would retroactively cap an UNCLAIMED
+     *             original-term reward budget to 0 (Codex #1386 P1). The single
+     *             `C*` funds the whole loan's reward budget across all terms; the
+     *             per-day proration already clamps at `openDays`, so an extension
+     *             can never over-credit. Refining the proration base across the
+     *             extension boundary is tracked separately as #1372.
+     *           - **The borrower stamp** (`borrowerMode`, `borrowerTariffPaid`).
+     *             No settlement path reads `borrowerMode` — it is an
+     *             informational record — so there is no per-term borrower benefit
+     *             to reprice. (A NEW #1347 Full borrower's `C*` was routed to the
+     *             recycle bucket at origination, not held per-loan; the legacy
+     *             peg-custody `borrowerLifRebate[loanId].vpfiHeld` path is a
+     *             separate, pre-#1347 mechanism and is untouched here regardless.)
+     *
+     *         No-op on an unstamped loan (`openDays == 0`) — a plain loan that
+     *         never touched the tariff/discount path stays unstamped. Ships DARK
+     *         with the rest of the M2 fee package: while no loan carries a Full
+     *         stamp, this only ever reads zero-default fields and returns.
+     *
+     * @param  loanId The loan being extended in place.
+     */
+    function repriceFeeEntitlementOnExtension(uint256 loanId) external {
+        if (msg.sender != address(this)) revert UnauthorizedCrossFacetCall();
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        LibVaipakam.FeeEntitlement storage fe = s.feeEntitlementByLoanId[loanId];
+        // Unstamped loan — nothing to reprice (`_stampEntitlement` always writes
+        // `openDays >= 1`, so `openDays == 0` uniquely identifies "never stamped").
+        // Also skip when the lender did not absorb Full (nothing to downgrade).
+        if (fe.lenderMode != LibVaipakam.FeeEntitlementMode.Full) return;
+
+        // Downgrade the lender Full stamp: the added term paid no `C*`, so it
+        // earns no `+10%`. Zero the paid-tariff record so the struct invariant
+        // (`tariffPaid == 0 unless mode == Full`) holds.
+        fe.lenderMode = LibVaipakam.FeeEntitlementMode.None;
+        fe.lenderTariffPaid = 0;
+
+        emit FeeEntitlementRepriced(
+            loanId,
+            uint8(fe.borrowerMode),
+            uint8(fe.lenderMode)
+        );
     }
 }

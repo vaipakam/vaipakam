@@ -1636,10 +1636,11 @@ contract DeployDiamond is Script {
         pure
         returns (bytes4[] memory s)
     {
-        s = new bytes4[](3);
+        s = new bytes4[](4);
         s[0] = FeeEntitlementFacet.chargeFullTariff.selector;
         s[1] = FeeEntitlementFacet.quoteCStar.selector;
         s[2] = FeeEntitlementFacet.getFeeEntitlement.selector;
+        s[3] = FeeEntitlementFacet.repriceFeeEntitlementOnExtension.selector;
     }
 
     function _getAggregatorAdapterFactorySelectors()

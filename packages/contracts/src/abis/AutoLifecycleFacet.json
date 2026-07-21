@@ -760,6 +760,11 @@
   },
   {
     "type": "error",
+    "name": "FeeEntitlementRepriceFailed",
+    "inputs": []
+  },
+  {
+    "type": "error",
     "name": "IntentPending",
     "inputs": [
       {
