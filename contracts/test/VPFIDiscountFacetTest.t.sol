@@ -19,6 +19,7 @@ import {OracleFacet} from "../src/facets/OracleFacet.sol";
 import {VaultFactoryFacet} from "../src/facets/VaultFactoryFacet.sol";
 import {TestMutatorFacet} from "./mocks/TestMutatorFacet.sol";
 import {RepayFacet} from "../src/facets/RepayFacet.sol";
+import {PrecloseFacet} from "../src/facets/PrecloseFacet.sol";
 import {ClaimFacet} from "../src/facets/ClaimFacet.sol";
 import {DefaultedFacet} from "../src/facets/DefaultedFacet.sol";
 import {AdminFacet} from "../src/facets/AdminFacet.sol";
@@ -1462,6 +1463,74 @@ contract VPFIDiscountFacetTest is SetupTest {
             LibVaipakam.FeeEntitlementMode.Full
         );
         assertEq(fee, _discountedFee(base, 1000), "repayPartial Full -> 10% off");
+    }
+
+    /// @dev #1383 part B3 — open a fresh loan, optionally stamp the lender mode,
+    ///      then close it EARLY through `precloseDirect`, returning the
+    ///      lending-asset yield fee the treasury collected. Guards the
+    ///      conversion of the preclose primary from an inlined discount delivery
+    ///      to the shared diamond-internal resolve host: the discount must land
+    ///      identically through the cross-facet call.
+    function _openStampPrecloseTreasuryFee(
+        uint256 loanId,
+        LibVaipakam.FeeEntitlementMode lenderMode
+    ) internal returns (uint256 treasuryFee) {
+        uint256 offerId = _createLenderErc20Offer(_SWEEP_PRINCIPAL);
+        _approveAndAcceptForLoan(offerId, _SWEEP_PRINCIPAL);
+
+        LibVaipakam.Loan memory ln = LoanFacet(address(diamond)).getLoanDetails(loanId);
+
+        if (lenderMode != LibVaipakam.FeeEntitlementMode.None) {
+            TestMutatorFacet(address(diamond)).setFeeEntitlementRaw(
+                loanId,
+                LibVaipakam.FeeEntitlement({
+                    borrowerMode: LibVaipakam.FeeEntitlementMode.None,
+                    lenderMode: lenderMode,
+                    openDays: uint32(ln.durationDays),
+                    rewardHaircutBpsAtOpen: 0,
+                    borrowerTariffPaid: 0,
+                    lenderTariffPaid: 0,
+                    cStarOpen: 0,
+                    loanSideRewardCapOpen: 0
+                })
+            );
+        }
+
+        // Close EARLY (mid-term) — that is the whole point of preclose. The
+        // borrower still owes full-term interest (README section 8 Option 1), so
+        // the treasury cut is sized on the full term either way.
+        vm.warp(ln.startTime + (ln.durationDays / 2) * 1 days);
+
+        uint256 approvalPad = _SWEEP_PRINCIPAL * 2;
+        ERC20Mock(mockERC20).mint(borrower, approvalPad);
+        vm.prank(borrower);
+        IERC20(mockERC20).approve(address(diamond), approvalPad);
+
+        uint256 balBefore = IERC20(mockERC20).balanceOf(treasuryRecipient);
+        vm.prank(borrower);
+        PrecloseFacet(address(diamond)).precloseDirect(loanId);
+        treasuryFee = IERC20(mockERC20).balanceOf(treasuryRecipient) - balBefore;
+    }
+
+    /// @notice #1383 part B3 — a Full-stamped lender closing early through
+    ///         `precloseDirect` still receives the +10% yield-fee discount after
+    ///         the path was switched to the shared resolve host. Regression
+    ///         guard for the host conversion (peg unset -> direct reduction).
+    function testSettlementSweep_PrecloseDirect_LenderFull_TenPercentOff() public {
+        _facet().setVPFIDiscountRate(0); // direct-reduction regime
+        ConfigFacet(address(diamond)).setVpfiTierDiscountBps(1000, 1500, 2000, 2400);
+
+        uint256 base = _openStampPrecloseTreasuryFee(
+            1,
+            LibVaipakam.FeeEntitlementMode.None
+        );
+        assertGt(base, 0, "reference preclose collected the full yield fee");
+
+        uint256 fee = _openStampPrecloseTreasuryFee(
+            2,
+            LibVaipakam.FeeEntitlementMode.Full
+        );
+        assertEq(fee, _discountedFee(base, 1000), "preclose Full -> 10% off");
     }
 
     /// @dev Stake `amount` VPFI into the lender's vault, consent, and clear the
