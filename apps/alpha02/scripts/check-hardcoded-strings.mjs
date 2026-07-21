@@ -304,6 +304,12 @@ function renderedStatic(node) {
     const interp = node.templateSpans.flatMap((s) => renderedStatic(s.expression));
     return [literalRun, ...interp];
   }
+  // A tagged template in a rendered position (`{String.raw`Switch network`}`,
+  // `{dedent`…`}`) renders the tag's string result — recurse into the
+  // template portion so its literal/interpolation text is scanned.
+  if (ts.isTaggedTemplateExpression(node)) {
+    return renderedStatic(node.template);
+  }
   if (
     ts.isParenthesizedExpression(node) ||
     ts.isAsExpression(node) ||
@@ -353,6 +359,28 @@ export function analyzeSource(rel, src) {
   const findings = [];
   const sf = ts.createSourceFile(rel, src, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
 
+  // Pre-pass: collect local aliases of a `copy.*` branch — the established
+  // desk pattern `const text = copy.desk.ticket` (and `const seo = copy.seo`).
+  // A hardcoded arg passed through such an alias (`text.gateUnknown('x')`)
+  // is the same user-facing interpolation value as `copy.…('x')`, so the
+  // call-arg scan must treat these alias roots like `copy` itself. This is
+  // a bounded, single-file SYNTACTIC alias map (initializer rooted at
+  // `copy`), NOT general data-flow — no symbol table needed.
+  const copyAliases = new Set();
+  const collectAliases = (node) => {
+    if (
+      ts.isVariableDeclaration(node) &&
+      node.initializer &&
+      ts.isIdentifier(node.name) &&
+      accessRoot(node.initializer) === 'copy'
+    ) {
+      copyAliases.add(node.name.text);
+    }
+    ts.forEachChild(node, collectAliases);
+  };
+  collectAliases(sf);
+  const isCopyRoot = (name) => name === 'copy' || copyAliases.has(name);
+
   const report = (node, raw) => {
     const s = staticText(raw);
     if (!s || !isProse(s)) return;
@@ -391,7 +419,13 @@ export function analyzeSource(rel, src) {
     //    property is reached here too).
     else if (ts.isPropertyAssignment(node)) {
       const key = propKey(node.name, sf);
-      if (key && isUiName(key, UI_KEYS)) reportExpr(node, node.initializer);
+      // Check BOTH copy-key sets: an object property carries visible copy
+      // whether the object is a data/option record (UI_KEYS) or a spread
+      // prop bag `{...{ children: '…', steps: […] }}` (UI_ATTRS names —
+      // children / steps / aria-* — reach this node too).
+      if (key && (isUiName(key, UI_KEYS) || isUiName(key, UI_ATTRS))) {
+        reportExpr(node, node.initializer);
+      }
     }
     // 5. ANY `copy.*` call, wherever it sits — a hardcoded string arg
     //    (`copy.tokenSecurity.gateUnknown('prepayment token')`) is a
@@ -400,7 +434,7 @@ export function analyzeSource(rel, src) {
     //    to a variable, etc.). Visiting every node means this catches
     //    the call in or out of a rendered position; only `copy.*`
     //    callees are scanned, so ordinary calls stay untouched.
-    else if (ts.isCallExpression(node) && accessRoot(node.expression) === 'copy') {
+    else if (ts.isCallExpression(node) && isCopyRoot(accessRoot(node.expression))) {
       for (const arg of node.arguments) {
         for (const part of renderedStatic(arg)) report(node, part);
       }

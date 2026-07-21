@@ -221,4 +221,40 @@ describe('AST hardcoded-string detector (#1365)', () => {
     // rule matches capitalized boundaries only, so it is not flagged.
     expect(strings("const X = () => <C context='some code value' subtext='more' />;")).toEqual([]);
   });
+
+  // --- Codex #1394 round-7 coverage gaps ---
+
+  it('flags a hardcoded arg passed through a copy.* branch alias (the desk pattern)', () => {
+    const src =
+      "const text = copy.tokenSecurity; const X = () => <span>{text.gateUnknown('prepayment token')}</span>;";
+    expect(strings(src)).toContain('prepayment token');
+  });
+
+  it('does NOT flag calls rooted at a non-copy alias (no data-flow guessing)', () => {
+    const src =
+      "const fmt = helper.thing; const X = () => <span>{fmt.build('Some words here')}</span>;";
+    expect(strings(src)).toEqual([]);
+  });
+
+  it('flags UI-attribute names supplied via an object spread (children / steps)', () => {
+    expect(strings("const X = () => <Button {...{ children: 'Click me' }} />;")).toContain(
+      'Click me',
+    );
+    expect(strings("const X = () => <StepNav {...{ steps: ['Pick asset'] }} />;")).toContain(
+      'Pick asset',
+    );
+  });
+
+  it('flags prose inside a tagged template used as a JSX child', () => {
+    expect(strings('const X = () => <span>{String.raw`Switch network`}</span>;')).toContain(
+      'Switch network',
+    );
+  });
+
+  it('does NOT flag a submit input value (refuted — form values, not copy)', () => {
+    // The app uses <button> (child text already scanned), not submit inputs;
+    // treating `value` as copy would false-positive on <option value="…"> and
+    // text-input values. Left out deliberately — see the round-7 refute.
+    expect(strings("const X = () => <input type='submit' value='Place order' />;")).toEqual([]);
+  });
 });
