@@ -166,14 +166,20 @@ contract ShareOfPoolDayPrimitiveTest is SetupTest {
         _mut().processUserSideDayRaw(alice, DAY, _ids(id), type(uint256).max);
     }
 
-    /// @dev Codex #1399 P2 — an UNCLOSED (still-active) loan must never be paid.
-    ///      The legacy path blocks this before pricing; a shared fund-moving
-    ///      primitive must not rely on the outer worklist remembering to.
-    function test_RevertsOnUnclosedEntry() public {
+    /// @dev Codex #1399 P2 — an entry whose loan is still ACTIVE must never be
+    ///      paid. The legacy path blocks this before pricing; a shared
+    ///      fund-moving primitive must not rely on the outer worklist
+    ///      remembering to.
+    ///
+    ///      The window is stamped explicitly so the entry reaches the
+    ///      claimability gate: with `endDay == 0` the coverage check would
+    ///      reject it first and the test would pass for the wrong reason.
+    function test_RevertsOnEntryWhoseLoanIsStillActive() public {
         uint256 id = _mut().pushRewardEntry(
             alice, LOAN_A, LibVaipakam.RewardSide.Lender, 1 ether, uint32(DAY)
         );
-        // deliberately NOT closed
+        _mut().setRewardEntryEndDayRaw(id, uint32(DAY + 1)); // real window, NOT closed
+        // Loan status defaults to Active, so `_entryClaimable` stays shut.
         vm.expectRevert(
             abi.encodeWithSelector(
                 IVaipakamErrors.RewardEntrySetMismatch.selector, id
@@ -276,6 +282,38 @@ contract ShareOfPoolDayPrimitiveTest is SetupTest {
         assertEq(toUser + toTreasury, c, "two oversized entries saturate C");
         assertLe(toUser + toTreasury, c, "Sigma paid <= C");
         assertLe(sl[0] + sl[1], c, "Sigma slices <= C");
+    }
+
+    /// @dev Codex #1399 r2 P2 — the counterpart to the test above, and the
+    ///      reason the gate keys on CLAIMABILITY rather than `closed`. A
+    ///      borrower entry on a Defaulted loan is made claimable by the
+    ///      loan-terminal fallback WITHOUT `_closeEntry` ever running, so it
+    ///      stays `closed == false` — which is exactly the population
+    ///      `_entryTerminalForfeit` routes to treasury. A `closed`-only gate
+    ///      would revert these before the routing branch could see them,
+    ///      making that branch dead code and stranding the forfeit forever
+    ///      (its cursor would never advance).
+    function test_TerminalForfeitEntryIsPayableWithoutClose() public {
+        // Borrower-side day plumbing (setUp seeds the lender side only).
+        _mut().setKnownGlobalDailyInterest(DAY, 1000 ether, 1000 ether, true);
+        _mut().seedCumBorrowerDayRaw(DAY, 0, 1e18);
+
+        uint256 id = _mut().pushRewardEntry(
+            alice, LOAN_A, LibVaipakam.RewardSide.Borrower, 900 ether, uint32(DAY)
+        );
+        _mut().setRewardEntryEndDayRaw(id, uint32(DAY + 1)); // open window
+        _mut().scaffoldLoanStatusChange(
+            LOAN_A,
+            LibVaipakam.LoanStatus.Active,
+            LibVaipakam.LoanStatus.Defaulted
+        );
+
+        (LibInteractionRewards.DayCharge memory ch, ) =
+            _mut().processUserSideDayRaw(alice, DAY, _ids(id), type(uint256).max);
+
+        assertTrue(ch.advanced, "terminal forfeit advances (never strands)");
+        assertGt(ch.toTreasury.total, 0, "routed to treasury, not reverted");
+        assertEq(ch.toUser.total, 0, "defaulted borrower collects nothing");
     }
 
     // ─── Funding-source split (Codex #1399 P2) ───────────────────────────────

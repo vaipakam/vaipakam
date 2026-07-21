@@ -50,5 +50,9 @@ tell apart.
 Finally, the calculation refuses to run on a mismatched request — one mixing
 different participants or sides, or naming a day a reward doesn't cover — rather
 than trusting its caller, since two separate callers construct those requests.
+It accepts a reward whose loan simply *ended* (defaulted or was liquidated)
+without being formally wound down, because those are exactly the rewards that
+get redirected to the treasury: refusing them would have left them stuck
+forever, never paid and never redirected.
 
 Part of #1351. Umbrella: #1349.

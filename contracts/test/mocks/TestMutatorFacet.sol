@@ -798,6 +798,27 @@ contract TestMutatorFacet {
         if (s.cumLenderCursor < d) s.cumLenderCursor = d;
     }
 
+    /// @dev #1351 slice 2b — borrower-side twin of {seedCumLenderDayRaw}.
+    function seedCumBorrowerDayRaw(
+        uint256 d,
+        uint256 prevCum,
+        uint256 delta
+    ) external {
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        if (d > 0) s.cumBorrowerRpn18[d - 1] = prevCum;
+        s.cumBorrowerRpn18[d] = prevCum + delta;
+        if (s.cumBorrowerCursor < d) s.cumBorrowerCursor = d;
+    }
+
+    /// @dev #1351 slice 2b — set an entry's accrual bound WITHOUT closing it.
+    ///      Production `_allocEntry` stamps a forward `endDay` at creation and
+    ///      only `_closeEntry` sets `closed`, so an open entry legitimately has
+    ///      a real window; `pushRewardEntry` above seeds `endDay = 0`, which
+    ///      cannot express that state.
+    function setRewardEntryEndDayRaw(uint256 id, uint32 endDay) external {
+        LibVaipakam.storageSlot().rewardEntries[id].endDay = endDay;
+    }
+
     /// @dev #1351 slice 2b — set an entry's D1 claim cursor directly.
     function setRewardEntryClaimNextDayRaw(uint256 id, uint64 nextDay) external {
         LibVaipakam.storageSlot().rewardEntryClaimNextDay[id] = nextDay;

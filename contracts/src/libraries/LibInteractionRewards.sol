@@ -2778,11 +2778,21 @@ function _dayPoolHalves(
             if ((nd == 0 ? uint256(v.startDay) : nd) != d) {
                 revert IVaipakamErrors.RewardEntrySetMismatch(entryIds[i]);
             }
-            // Codex #1399 P2 — an entry is payable only once CLOSED and not yet
-            // processed. The legacy `_processEntry` blocks unclosed Active /
-            // FallbackPending loans before pricing; a shared fund-moving
-            // primitive must not depend on the outer worklist remembering to.
-            if (!v.closed || v.processed) {
+            // Codex #1399 r1/r2 P2 — an entry is payable only once CLAIMABLE
+            // and not yet processed. The legacy `_processEntry` applies exactly
+            // this gate before pricing, and a shared fund-moving primitive must
+            // not depend on the outer worklist remembering to.
+            //
+            // {_entryClaimable}, NOT `closed`: an entry made claimable by the
+            // LOAN-TERMINAL fallback is never `closed` (`_closeEntry` didn't
+            // run), and that is precisely the population {_entryTerminalForfeit}
+            // exists to route below. Gating on `closed` would revert those
+            // entries before the routing branch could ever see them — the
+            // branch would be dead code, and a defaulted borrower's forfeit
+            // would strand, never advancing its cursor. Active /
+            // FallbackPending loans are still rejected, which is the part that
+            // actually protects funds.
+            if (!_entryClaimable(s, v) || v.processed) {
                 revert IVaipakamErrors.RewardEntrySetMismatch(entryIds[i]);
             }
             // Codex #1399 P2 — a duplicated id would read the SAME unchanged
